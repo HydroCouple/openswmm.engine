@@ -118,31 +118,34 @@ int vj_rule_violation(const SimulationContext& ctx, int node_idx) {
         std::fabs(offset_at_node(ctx, j2, node_idx)) > VJ_OFFSET_TOL)
         return ERR_VJ_OFFSET;
 
-    // Rule 5: no lateral inflow source may target the node.
-    for (int r = 0; r < ctx.ext_inflows.count(); ++r)
-        if (ctx.ext_inflows.node_idx[static_cast<std::size_t>(r)] == node_idx)
-            return ERR_VJ_LATERAL_INFLOW;
-    for (int r = 0; r < ctx.dwf_inflows.count(); ++r)
-        if (ctx.dwf_inflows.node_idx[static_cast<std::size_t>(r)] == node_idx)
-            return ERR_VJ_LATERAL_INFLOW;
-    for (int r = 0; r < ctx.rdii_assigns.count(); ++r)
-        if (ctx.rdii_assigns.node_idx[static_cast<std::size_t>(r)] == node_idx)
-            return ERR_VJ_LATERAL_INFLOW;
-    for (int s = 0; s < ctx.subcatches.count(); ++s)
-        if (ctx.subcatches.outlet_node[static_cast<std::size_t>(s)] == node_idx)
-            return ERR_VJ_LATERAL_INFLOW;
-    {
-        const std::string& name = ctx.node_names.name_of(node_idx);
-        for (const auto& d : ctx.lid_usage.drain_to)
-            if (!d.empty() && d == name)
-                return ERR_VJ_LATERAL_INFLOW;
-    }
+    // Rule 5: no 2D surface coupling. A virtual junction has no opening —
+    // its sealed head cannot pond against the overlying surface — so it
+    // cannot be a coupling point. Every point lateral source ([INFLOWS],
+    // [DWF], RDII, subcatchment outlets, LID drains, interface files, the
+    // runtime API) IS permitted: the dynamic-wave update integrates it at
+    // the zero-storage node and the finite-volume solver splits it into the
+    // two spliced cells (plans/VJ_LATERAL_INFLOW_PLAN_2026-09-04.md).
     if (ctx.twod_io.mesh != nullptr) {
         const auto& m = *ctx.twod_io.mesh;
-        for (const int n : m.vert_coupled_node)
-            if (n == node_idx) return ERR_VJ_LATERAL_INFLOW;
-        for (const int n : m.tri_coupled_node)
-            if (n == node_idx) return ERR_VJ_LATERAL_INFLOW;
+        // The [2D_*_NODE_MAP] handlers store the node NAME; the index is
+        // resolved only when the surface router initialises, so at post-parse
+        // validation the name is what identifies the coupling point.
+        const auto targets = [&](int stored, const std::string& name) {
+            if (stored >= 0) return stored == node_idx;
+            return !name.empty() && ctx.node_names.find(name) == node_idx;
+        };
+        for (std::size_t v = 0; v < m.vert_coupled_node.size(); ++v) {
+            const std::string& nm = (v < m.vert_coupled_node_name.size())
+                ? m.vert_coupled_node_name[v] : std::string{};
+            if (targets(m.vert_coupled_node[v], nm)) return ERR_VJ_LATERAL_INFLOW;
+        }
+        for (std::size_t t = 0; t < m.tri_coupled_node.size(); ++t) {
+            const std::string& nm = (t < m.tri_coupled_node_name.size())
+                ? m.tri_coupled_node_name[t] : std::string{};
+            if (targets(m.tri_coupled_node[t], nm)) return ERR_VJ_LATERAL_INFLOW;
+        }
+        for (const auto& row : m.tri_couplings)
+            if (targets(row.node, row.node_name)) return ERR_VJ_LATERAL_INFLOW;
     }
 
     return 0;
@@ -174,6 +177,14 @@ void vj_clear_virtual(SimulationContext& ctx, int node_idx) {
     if (ui >= ctx.nodes.is_virtual.size() || !ctx.nodes.is_virtual[ui]) return;
 
     ctx.nodes.is_virtual[ui] = 0;
+    // An inlet junction is a virtual junction, so leaving virtual leaves inlet
+    // too — and its node-hosted usage row goes with it (a row whose host is a
+    // plain junction has no meaning and would fail validation with 633).
+    if (ui < ctx.nodes.is_inlet.size() && ctx.nodes.is_inlet[ui]) {
+        ctx.nodes.is_inlet[ui] = 0;
+        const int row = ctx.inlet_usages.find_by_node_host(node_idx);
+        if (row >= 0) ctx.inlet_usages.erase_row(row);
+    }
     // The node keeps a real full depth from here on, so the rendering-only
     // rim becomes it — a junction that was made virtual and then made regular
     // again gets its max depth back instead of keeping the pipe crown.
@@ -331,6 +342,10 @@ SplitResult vj_split_conduit(SimulationContext& ctx, int link_idx, double t,
     links.xsect_geom3[unj]  = links.xsect_geom3[uj];
     links.xsect_geom4[unj]  = links.xsect_geom4[uj];
     links.xsect_curve[unj]  = links.xsect_curve[uj];
+    // Named cross-section slot (STREET / IRREGULAR / CUSTOM reference the
+    // section BY NAME here). Without it a split STREET conduit loses its
+    // [STREETS] reference and no longer round-trips or resolves a street.
+    links.pump_curve_name[unj] = links.pump_curve_name[uj];
     links.xsect_r_full[unj] = links.xsect_r_full[uj];
     links.xsect_s_full[unj] = links.xsect_s_full[uj];
     links.xsect_s_max[unj]  = links.xsect_s_max[uj];
@@ -518,7 +533,12 @@ int vj_fuse(SimulationContext& ctx, int node_idx, int* surviving_link_out) {
         CD.slope[uur] = slope_from_ends(eu, ed, L);
     }
 
-    // Retire the downstream conduit, then the (now link-free) node.
+    // Retire the downstream conduit, then the (now link-free) node. The node
+    // deletion runs the ordinary cascade: any [INFLOWS]/[DWF]/RDII rows and
+    // treatment stripe attached to the virtual junction are erased, and
+    // subcatchment outlets / LID drains that targeted it are unassigned —
+    // the same outcome as deleting the node outright (documented policy,
+    // plans/VJ_LATERAL_INFLOW_PLAN_2026-09-04.md).
     edit::delete_link(ctx, dn);
     const int surviving = (up > dn) ? up - 1 : up;
     edit::delete_node(ctx, node_idx);
@@ -527,6 +547,150 @@ int vj_fuse(SimulationContext& ctx, int node_idx, int* surviving_link_out) {
 
     if (surviving_link_out) *surviving_link_out = surviving;
     return 0;
+}
+
+// ============================================================================
+// Inlet junctions
+// ============================================================================
+
+namespace {
+
+/// Rule 623 for one conduit: the cross-section the design needs.
+bool ij_conduit_shape_ok(const SimulationContext& ctx, int link_idx,
+                         bool for_drop_inlet) {
+    if (link_idx < 0 || link_idx >= ctx.n_links()) return false;
+    const XsectShape shape = ctx.links.xsect_shape[static_cast<std::size_t>(link_idx)];
+    if (for_drop_inlet)
+        return shape == XsectShape::RECT_OPEN || shape == XsectShape::TRAPEZOIDAL;
+    return shape == XsectShape::STREET_XSECT;
+}
+
+/// True when the design at `design_idx` is a drop inlet (open-channel shapes).
+bool ij_design_is_drop(const SimulationContext& ctx, int design_idx) {
+    if (design_idx < 0 || design_idx >= ctx.inlets.count()) return false;
+    const std::string& t = ctx.inlets.inlet_type[static_cast<std::size_t>(design_idx)];
+    return t == "DROP_GRATE" || t == "DROP_CURB";
+}
+
+} // namespace
+
+int ij_host_conduit(const SimulationContext& ctx, int host_kind, int host_idx) {
+    if (host_kind == 0) {
+        if (host_idx < 0 || host_idx >= ctx.n_links()) return -1;
+        return (ctx.links.type[static_cast<std::size_t>(host_idx)] == LinkType::CONDUIT)
+                   ? host_idx : -1;
+    }
+    if (host_idx < 0 || host_idx >= ctx.n_nodes()) return -1;
+    int a = -1, b = -1;
+    if (find_attached(ctx, host_idx, a, b) == 0) return -1;
+    if (a >= 0 && ctx.links.node2[static_cast<std::size_t>(a)] == host_idx) return a;
+    if (b >= 0 && ctx.links.node2[static_cast<std::size_t>(b)] == host_idx) return b;
+    return a;
+}
+
+bool ij_usage_shape_ok(const SimulationContext& ctx, int design_idx, int link_idx) {
+    if (design_idx < 0 || design_idx >= ctx.inlets.count()) return false;
+    if (link_idx < 0 || link_idx >= ctx.n_links()) return false;
+    const std::string& t = ctx.inlets.inlet_type[static_cast<std::size_t>(design_idx)];
+    if (t == "CUSTOM") return true;
+    return ij_conduit_shape_ok(ctx, link_idx, ij_design_is_drop(ctx, design_idx));
+}
+
+int ij_rule_violation(const SimulationContext& ctx, int node_idx,
+                      bool for_drop_inlet) {
+    const int code = vj_rule_violation(ctx, node_idx);
+    if (code != 0) return code;
+
+    // vj_rule_violation guarantees exactly two attached conduits here.
+    int j1 = -1, j2 = -1;
+    find_attached(ctx, node_idx, j1, j2);
+    if (!ij_conduit_shape_ok(ctx, j1, for_drop_inlet) ||
+        !ij_conduit_shape_ok(ctx, j2, for_drop_inlet))
+        return ERR_IJ_NOT_STREET;
+    return 0;
+}
+
+int ij_set_inlet(SimulationContext& ctx, int node_idx, bool make_inlet) {
+    if (node_idx < 0 || node_idx >= ctx.n_nodes()) return -1;
+    const auto ui = static_cast<std::size_t>(node_idx);
+
+    if (!make_inlet) {
+        if (ui < ctx.nodes.is_inlet.size() && ctx.nodes.is_inlet[ui]) {
+            ctx.nodes.is_inlet[ui] = 0;
+            const int row = ctx.inlet_usages.find_by_node_host(node_idx);
+            if (row >= 0) ctx.inlet_usages.erase_row(row);
+        }
+        return 0;
+    }
+
+    if (ctx.nodes.type[ui] != NodeType::JUNCTION) return -1;
+
+    // Rules first: ij_rule_violation is read-only, so a violated rule leaves
+    // the node exactly as it was instead of stranding it as a virtual junction.
+    const int row = ctx.inlet_usages.find_by_node_host(node_idx);
+    const bool drop = (row >= 0) &&
+        ij_design_is_drop(ctx, ctx.inlet_usages.design_index[static_cast<std::size_t>(row)]);
+    const int code = ij_rule_violation(ctx, node_idx, drop);
+    if (code != 0) return code;
+
+    if (!ctx.nodes.is_virtual[ui]) {
+        const int vcode = vj_set_virtual(ctx, node_idx, true);
+        if (vcode != 0) return vcode;
+    }
+    ctx.nodes.is_inlet[ui] = 1;
+    return 0;
+}
+
+SplitResult ij_split_conduit(SimulationContext& ctx, int link_idx, double t,
+                             const std::string& new_node_name,
+                             const std::string& new_link_name,
+                             int design_idx, int capture_node_idx) {
+    SplitResult res;
+    // Both references are validated BEFORE the split so the common failure
+    // modes never disturb the model at all.
+    if (design_idx < 0 || design_idx >= ctx.inlets.count()) {
+        res.err = ERR_IJ_DESIGN;
+        return res;
+    }
+    if (capture_node_idx < 0 || capture_node_idx >= ctx.n_nodes() ||
+        ctx.nodes.is_virtual[static_cast<std::size_t>(capture_node_idx)] != 0) {
+        res.err = ERR_IJ_CAPTURE_NODE;
+        return res;
+    }
+
+    res = vj_split_conduit(ctx, link_idx, t, new_node_name, new_link_name, true);
+    if (res.new_node_idx < 0) return res;              // split itself refused
+    const int ni = res.new_node_idx;
+
+    auto undo = [&](int err) {
+        int surviving = -1;
+        vj_fuse(ctx, ni, &surviving);
+        SplitResult failed;
+        failed.err = err;
+        return failed;
+    };
+    if (res.err != 0) return undo(res.err);            // make_virtual rule failed
+
+    // The usage row must exist before ij_set_inlet so rule 623 can tell a drop
+    // inlet from a street inlet.
+    const int row = ctx.inlet_usages.add_row(-1, ni, design_idx, capture_node_idx);
+    const int code = ij_set_inlet(ctx, ni, true);
+    if (code != 0) {
+        ctx.inlet_usages.erase_row(row);
+        return undo(code);
+    }
+    return res;
+}
+
+int ij_fuse(SimulationContext& ctx, int node_idx, int* surviving_link_out) {
+    if (node_idx < 0 || node_idx >= ctx.n_nodes()) return -1;
+    const auto ui = static_cast<std::size_t>(node_idx);
+    if (ui >= ctx.nodes.is_inlet.size() || !ctx.nodes.is_inlet[ui]) return -1;
+
+    // vj_fuse merges the pair and deletes the node; delete_node's cascade
+    // erases the node-hosted usage row along with it. A failed fuse leaves the
+    // node, its flag and its row untouched.
+    return vj_fuse(ctx, node_idx, surviving_link_out);
 }
 
 } // namespace openswmm::edit

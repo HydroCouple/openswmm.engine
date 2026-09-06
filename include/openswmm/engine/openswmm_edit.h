@@ -525,6 +525,36 @@ SWMM_ENGINE_API int swmm_conduit_split(
 SWMM_ENGINE_API int swmm_virtual_junction_fuse(
     SWMM_Engine engine, int node_idx, int* surviving_link_idx);
 
+/**
+ * @brief Split a STREET conduit at `t` and make the inserted node an inlet
+ *        junction with the given design and capture node (2026-09-05).
+ *
+ * @details Equivalent to swmm_conduit_split(make_virtual=1) followed by
+ *          swmm_node_set_inlet(1) and swmm_inlet_usage_set(host=node), but
+ *          atomic: on any failure after the split the split is undone
+ *          (fused back) and the error returned. The usage row is created
+ *          with num_inlets=1, 0 % clogged, no flow limit, no local
+ *          depression, AUTOMATIC placement; adjust with swmm_inlet_usage_set.
+ *
+ * @param inlet_id      Existing inlet design name.
+ * @param capture_node  Existing node name (not virtual, not the new node).
+ * @returns SWMM_OK; generic codes; ERR_VJ_ / ERR_IJ_ rule codes; 625 for an
+ *          unknown design; 627 for a bad capture node.
+ */
+SWMM_ENGINE_API int swmm_conduit_split_inlet(
+    SWMM_Engine engine, int link_idx, double t,
+    const char* new_node_name, const char* new_link_name,
+    const char* inlet_id, const char* capture_node,
+    int* new_node_idx, int* new_link_idx);
+
+/**
+ * @brief Inverse of swmm_conduit_split_inlet: removes the inlet junction's
+ *        usage row, then re-fuses the conduit pair exactly as
+ *        swmm_virtual_junction_fuse does.
+ */
+SWMM_ENGINE_API int swmm_inlet_junction_fuse(
+    SWMM_Engine engine, int node_idx, int* surviving_link_idx);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

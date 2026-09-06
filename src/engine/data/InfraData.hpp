@@ -87,35 +87,145 @@ struct StreetStore {
 // Inlet definitions (from [INLETS] section)
 // ============================================================================
 
+/// Inlet design store. All lengths/velocities are kept in USER (display)
+/// units exactly as read from the .inp (as StreetStore does); the runtime
+/// InletSolver converts to internal units at init.
+///
+/// Column usage by type (2026-09-05 schema, see
+/// plans/INLET_JUNCTION_IMPLEMENTATION_PLAN_2026-09-05.md §2.5):
+///   GRATE / DROP_GRATE : length, width, grate_type, open_area, splash_veloc
+///   SLOTTED            : length, width
+///   CURB / DROP_CURB   : curb_length, curb_height, curb_throat
+///   COMBO              : grate columns + curb columns (legacy two-line form:
+///                        a GRATE line and a CURB line sharing one name are
+///                        merged into a single COMBO row by handle_inlets)
+///   CUSTOM             : curve_id, curve_index, curve_kind
 struct InletStore {
     int count() const { return static_cast<int>(names.size()); }
 
     std::vector<std::string> names;
-    std::vector<std::string> inlet_type;   ///< GRATE/CURB/SLOTTED/DROP_GRATE/DROP_CURB/CUSTOM
-    std::vector<double>      length;
-    std::vector<double>      width;        ///< or height for curb
-    std::vector<std::string> grate_type;   ///< P-50, P-50x100, CURVED_VANE, etc.
-    std::vector<double>      open_area;
-    std::vector<double>      splash_veloc;
+    std::vector<std::string> inlet_type;   ///< GRATE/CURB/COMBO/SLOTTED/DROP_GRATE/DROP_CURB/CUSTOM
+    std::vector<double>      length;       ///< grate or slotted length
+    std::vector<double>      width;        ///< grate or slotted width
+    std::vector<std::string> grate_type;   ///< P_BAR-50, P_BAR-50x100, P_BAR-30, CURVED_VANE, TILT_BAR-45, TILT_BAR-30, RETICULINE, GENERIC
+    std::vector<double>      open_area;    ///< GENERIC only: open-area fraction (0,1]
+    std::vector<double>      splash_veloc; ///< GENERIC only: splash-over velocity
+    std::vector<double>      curb_length;  ///< CURB/DROP_CURB/COMBO
+    std::vector<double>      curb_height;  ///< CURB/DROP_CURB/COMBO
+    std::vector<int>         curb_throat;  ///< 0=HORIZONTAL 1=INCLINED 2=VERTICAL (legacy ThroatAngleWords order); default 2
+    std::vector<std::string> curve_id;     ///< CUSTOM: capture curve name
+    std::vector<int>         curve_index;  ///< CUSTOM: resolved curve index (-1 until PostParseResolver)
+    std::vector<int>         curve_kind;   ///< CUSTOM: 0=unresolved, 1=DIVERSION (captured vs approach flow), 2=RATING (captured vs depth)
+    std::vector<std::string> comments;     ///< optional description (round-tripped as ';' comment)
+
+    /// Append a fully defaulted row; returns its index.
+    int add_row(const std::string& name, const std::string& type) {
+        names.push_back(name);
+        inlet_type.push_back(type);
+        length.push_back(0.0);
+        width.push_back(0.0);
+        grate_type.push_back("");
+        open_area.push_back(0.0);
+        splash_veloc.push_back(0.0);
+        curb_length.push_back(0.0);
+        curb_height.push_back(0.0);
+        curb_throat.push_back(2);
+        curve_id.push_back("");
+        curve_index.push_back(-1);
+        curve_kind.push_back(0);
+        comments.push_back("");
+        return count() - 1;
+    }
+
+    void erase_row(int idx) {
+        auto u = static_cast<std::size_t>(idx);
+        names.erase(names.begin() + static_cast<std::ptrdiff_t>(u));
+        inlet_type.erase(inlet_type.begin() + static_cast<std::ptrdiff_t>(u));
+        length.erase(length.begin() + static_cast<std::ptrdiff_t>(u));
+        width.erase(width.begin() + static_cast<std::ptrdiff_t>(u));
+        grate_type.erase(grate_type.begin() + static_cast<std::ptrdiff_t>(u));
+        open_area.erase(open_area.begin() + static_cast<std::ptrdiff_t>(u));
+        splash_veloc.erase(splash_veloc.begin() + static_cast<std::ptrdiff_t>(u));
+        curb_length.erase(curb_length.begin() + static_cast<std::ptrdiff_t>(u));
+        curb_height.erase(curb_height.begin() + static_cast<std::ptrdiff_t>(u));
+        curb_throat.erase(curb_throat.begin() + static_cast<std::ptrdiff_t>(u));
+        curve_id.erase(curve_id.begin() + static_cast<std::ptrdiff_t>(u));
+        curve_index.erase(curve_index.begin() + static_cast<std::ptrdiff_t>(u));
+        curve_kind.erase(curve_kind.begin() + static_cast<std::ptrdiff_t>(u));
+        comments.erase(comments.begin() + static_cast<std::ptrdiff_t>(u));
+    }
 };
 
 // ============================================================================
 // Inlet usage (from [INLET_USAGE] section)
 // ============================================================================
 
+/// One row per inlet placement. Two host kinds share the store:
+///   * conduit-attribute usage ([INLET_USAGE]): link_index >= 0, node_host == -1
+///   * inlet junction ([INLET_JUNCTIONS]):      link_index == -1, node_host >= 0
+/// flow_limit / local_depress / local_width are kept in USER units (as read);
+/// InletSolver converts at init.
 struct InletUsageStore {
-    int count() const { return static_cast<int>(link_index.size()); }
+    int count() const { return static_cast<int>(design_index.size()); }
 
-    std::vector<int>         link_index;     ///< Conduit link index
+    std::vector<int>         link_index;     ///< Host conduit link index (-1 for an inlet junction)
+    std::vector<int>         node_host;      ///< Host inlet-junction node index (-1 for a conduit usage)
     std::vector<int>         design_index;   ///< Index into InletStore
-    std::vector<int>         node_index;     ///< Receiving node index
+    std::vector<int>         node_index;     ///< Capture (receiving / underdrain) node index
     std::vector<int>         num_inlets;     ///< Number of inlets per side
     std::vector<int>         placement;      ///< 0=auto, 1=on_grade, 2=on_sag
     std::vector<double>      clog_factor;    ///< 1.0 - pctClogged/100
-    std::vector<double>      flow_limit;     ///< Max capture flow (cfs), 0=unlimited
-    std::vector<double>      local_depress;  ///< Local gutter depression (ft)
-    std::vector<double>      local_width;    ///< Local depression width (ft)
-    std::vector<int>         street_index;   ///< Index into StreetStore (-1 if none)
+    std::vector<double>      flow_limit;     ///< Max capture flow per inlet (user flow units), 0=unlimited
+    std::vector<double>      local_depress;  ///< Local gutter depression (user length units)
+    std::vector<double>      local_width;    ///< Local depression width (user length units)
+    std::vector<int>         street_index;   ///< Index into StreetStore, resolved by PostParseResolver (-1 if host xsect is not STREET)
+    /// Design / capture-node names of an [INLET_JUNCTIONS] row, kept until
+    /// PostParseResolver turns them into design_index / node_index. Empty on a
+    /// row whose references were already resolved at parse time.
+    std::vector<std::string> pending_design_name;
+    std::vector<std::string> pending_capture_name;
+
+    /// Append a defaulted row; returns its index.
+    int add_row(int link_idx, int node_host_idx, int design_idx, int capture_node_idx) {
+        link_index.push_back(link_idx);
+        node_host.push_back(node_host_idx);
+        design_index.push_back(design_idx);
+        node_index.push_back(capture_node_idx);
+        num_inlets.push_back(1);
+        placement.push_back(0);
+        clog_factor.push_back(1.0);
+        flow_limit.push_back(0.0);
+        local_depress.push_back(0.0);
+        local_width.push_back(0.0);
+        street_index.push_back(-1);
+        pending_design_name.emplace_back();
+        pending_capture_name.emplace_back();
+        return count() - 1;
+    }
+
+    void erase_row(int idx) {
+        auto e = [idx](auto& v) {
+            if (static_cast<std::size_t>(idx) < v.size())
+                v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx));
+        };
+        e(link_index); e(node_host); e(design_index); e(node_index); e(num_inlets);
+        e(placement); e(clog_factor); e(flow_limit); e(local_depress); e(local_width);
+        e(street_index); e(pending_design_name); e(pending_capture_name);
+        e(stat_capture_vol); e(stat_bypass_vol); e(stat_backflow_vol); e(stat_peak_flow);
+    }
+
+    /// Row index of the usage hosted by conduit `link_idx`, or -1.
+    int find_by_link(int link_idx) const {
+        for (int i = 0; i < count(); ++i)
+            if (link_index[static_cast<std::size_t>(i)] == link_idx) return i;
+        return -1;
+    }
+    /// Row index of the usage hosted by inlet-junction node `node_idx`, or -1.
+    int find_by_node_host(int node_idx) const {
+        for (int i = 0; i < count(); ++i)
+            if (node_host[static_cast<std::size_t>(i)] == node_idx) return i;
+        return -1;
+    }
 
     // Stats (populated by InletSolver::gatherStats() before reporting)
     std::vector<double> stat_capture_vol;   ///< Total captured volume (ft³)

@@ -29,6 +29,8 @@
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_infrastructure.h"
 #include "StringCase.hpp"
+#include "ErrorCodes.hpp"
+#include "../edit/VirtualJunctionOps.hpp"
 
 #include <cctype>
 #include <string>
@@ -441,16 +443,7 @@ SWMM_ENGINE_API int swmm_inlet_add(SWMM_Engine engine, const char* id, const cha
     if (!id || !type) return SWMM_ERR_BADPARAM;
 
     auto& ctx = to_engine(engine)->context();
-    auto& inl = ctx.inlets;
-
-    inl.names.push_back(id);
-    inl.inlet_type.push_back(type);
-    inl.length.push_back(0.0);
-    inl.width.push_back(0.0);
-    inl.grate_type.push_back("");
-    inl.open_area.push_back(0.0);
-    inl.splash_veloc.push_back(0.0);
-
+    ctx.inlets.add_row(id, type);
     return SWMM_OK;
 }
 
@@ -477,6 +470,16 @@ SWMM_ENGINE_API int swmm_inlet_rename(SWMM_Engine engine, int idx, const char* n
     return SWMM_OK;
 }
 
+namespace {
+// A curb-opening design keeps its length/height in its own columns, so the
+// legacy 5-arg convenience API maps length/width onto them for CURB and
+// DROP_CURB and onto the grate/slot columns for everything else.
+bool inlet_is_curb(const openswmm::SimulationContext& ctx, std::size_t ui) {
+    const std::string& t = ctx.inlets.inlet_type[ui];
+    return t == "CURB" || t == "DROP_CURB";
+}
+} // namespace
+
 SWMM_ENGINE_API int swmm_inlet_set_params(SWMM_Engine engine, int idx, double length, double width,
                                             const char* grate_type, double open_area, double splash_veloc) {
     CHECK_HANDLE(engine);
@@ -484,8 +487,13 @@ SWMM_ENGINE_API int swmm_inlet_set_params(SWMM_Engine engine, int idx, double le
     CHECK_INDEX(idx >= 0 && idx < ctx.inlets.count());
     const auto ui = static_cast<std::size_t>(idx);
 
-    ctx.inlets.length[ui]       = length;
-    ctx.inlets.width[ui]        = width;
+    if (inlet_is_curb(ctx, ui)) {
+        ctx.inlets.curb_length[ui] = length;
+        ctx.inlets.curb_height[ui] = width;
+    } else {
+        ctx.inlets.length[ui] = length;
+        ctx.inlets.width[ui]  = width;
+    }
     ctx.inlets.grate_type[ui]   = grate_type ? grate_type : "";
     ctx.inlets.open_area[ui]    = open_area;
     ctx.inlets.splash_veloc[ui] = splash_veloc;
@@ -536,8 +544,9 @@ SWMM_ENGINE_API int swmm_inlet_get_params(SWMM_Engine engine, int idx,
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.inlets.count());
     const auto ui = static_cast<std::size_t>(idx);
-    if (length)       *length       = ctx.inlets.length[ui];
-    if (width)        *width        = ctx.inlets.width[ui];
+    const bool curb = inlet_is_curb(ctx, ui);
+    if (length)       *length       = curb ? ctx.inlets.curb_length[ui] : ctx.inlets.length[ui];
+    if (width)        *width        = curb ? ctx.inlets.curb_height[ui] : ctx.inlets.width[ui];
     if (open_area)    *open_area    = ctx.inlets.open_area[ui];
     if (splash_veloc) *splash_veloc = ctx.inlets.splash_veloc[ui];
     if (grate_type) {
@@ -552,6 +561,294 @@ SWMM_ENGINE_API int swmm_inlet_get_type(SWMM_Engine engine, int idx, char* buf, 
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.inlets.count());
     return copy_str(ctx.inlets.inlet_type[static_cast<std::size_t>(idx)], buf, buflen);
+}
+
+// ============================================================================
+// Full inlet-design surface + inlet usage rows (2026-09-05)
+// ============================================================================
+
+namespace {
+
+// SWMM_InletType order (== legacy InletTypeWords, with COMBO in slot 2).
+const char* const kInletTypeWords[] = {
+    "GRATE", "CURB", "COMBO", "SLOTTED", "DROP_GRATE", "DROP_CURB", "CUSTOM"};
+// SWMM_GrateType order (== legacy GrateTypeWords).
+const char* const kGrateTypeWords[] = {
+    "P_BAR-50", "P_BAR-50x100", "P_BAR-30", "CURVED_VANE",
+    "TILT_BAR-45", "TILT_BAR-30", "RETICULINE", "GENERIC"};
+
+int word_index(const char* const* words, int n, const std::string& w) {
+    for (int i = 0; i < n; ++i)
+        if (openswmm::ieq(words[i], w)) return i;
+    return -1;
+}
+
+bool is_grate_kind(int type) {
+    return type == SWMM_INLET_GRATE || type == SWMM_INLET_DROP_GRATE ||
+           type == SWMM_INLET_COMBO;
+}
+bool is_curb_kind(int type) {
+    return type == SWMM_INLET_CURB || type == SWMM_INLET_DROP_CURB ||
+           type == SWMM_INLET_COMBO;
+}
+
+} // namespace
+
+SWMM_ENGINE_API int swmm_inlet_get_design(SWMM_Engine engine, int idx, SWMM_InletDesign* out) {
+    CHECK_HANDLE(engine);
+    if (!out) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.inlets.count());
+    const auto ui = static_cast<std::size_t>(idx);
+    const auto& I = ctx.inlets;
+
+    *out = SWMM_InletDesign{};
+    out->type = word_index(kInletTypeWords, 7, I.inlet_type[ui]);
+    if (out->type < 0) out->type = SWMM_INLET_GRATE;
+
+    if (is_grate_kind(out->type)) {
+        out->grate_length = I.length[ui];
+        out->grate_width  = I.width[ui];
+    } else if (out->type == SWMM_INLET_SLOTTED) {
+        out->slot_length = I.length[ui];
+        out->slot_width  = I.width[ui];
+    }
+    out->grate_type   = word_index(kGrateTypeWords, 8, I.grate_type[ui]);
+    if (out->grate_type < 0) out->grate_type = SWMM_GRATE_P_BAR_50;
+    out->open_area    = I.open_area[ui];
+    out->splash_veloc = I.splash_veloc[ui];
+
+    if (is_curb_kind(out->type)) {
+        out->curb_length = I.curb_length[ui];
+        out->curb_height = I.curb_height[ui];
+    }
+    out->throat = I.curb_throat[ui];
+
+    copy_str(I.curve_id[ui], out->curve_id, static_cast<int>(sizeof(out->curve_id)));
+    out->curve_kind = I.curve_kind[ui];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_inlet_set_design(SWMM_Engine engine, int idx, const SWMM_InletDesign* design) {
+    CHECK_HANDLE(engine);
+    if (!design) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.inlets.count());
+    if (design->type < 0 || design->type > SWMM_INLET_CUSTOM) return SWMM_ERR_BADPARAM;
+
+    // --- validate only the fields the type actually uses ---
+    if (is_grate_kind(design->type)) {
+        if (design->grate_length <= 0.0 || design->grate_width <= 0.0) return SWMM_ERR_BADPARAM;
+        if (design->grate_type < 0 || design->grate_type > SWMM_GRATE_GENERIC) return SWMM_ERR_BADPARAM;
+        if (design->grate_type == SWMM_GRATE_GENERIC &&
+            (design->open_area <= 0.0 || design->open_area > 1.0)) return SWMM_ERR_BADPARAM;
+        if (design->splash_veloc < 0.0) return SWMM_ERR_BADPARAM;
+    }
+    if (is_curb_kind(design->type)) {
+        if (design->curb_length <= 0.0 || design->curb_height <= 0.0) return SWMM_ERR_BADPARAM;
+        if (design->throat < SWMM_THROAT_HORIZONTAL ||
+            design->throat > SWMM_THROAT_VERTICAL) return SWMM_ERR_BADPARAM;
+    }
+    if (design->type == SWMM_INLET_SLOTTED &&
+        (design->slot_length <= 0.0 || design->slot_width <= 0.0)) return SWMM_ERR_BADPARAM;
+    // CUSTOM: the legacy [INLETS] grammar carries no kind token, so the curve's
+    // own table type is the authority and PostParseResolver re-derives the kind
+    // on load. Resolve it here as well when the curve already exists, so a
+    // programmatically built model is complete without a reparse, and reject a
+    // kind that contradicts the curve.
+    int custom_curve_index = -1;
+    int custom_curve_kind  = SWMM_INLET_CURVE_NONE;
+    if (design->type == SWMM_INLET_CUSTOM) {
+        if (design->curve_id[0] == '\0') return SWMM_ERR_BADPARAM;
+        if (design->curve_kind < SWMM_INLET_CURVE_NONE ||
+            design->curve_kind > SWMM_INLET_CURVE_RATING) return SWMM_ERR_BADPARAM;
+        custom_curve_kind  = design->curve_kind;
+        custom_curve_index = ctx.find_curve(design->curve_id);
+        if (custom_curve_index >= 0) {
+            const openswmm::TableType tt =
+                ctx.tables[static_cast<std::size_t>(custom_curve_index)].type;
+            const int actual = (tt == openswmm::TableType::CURVE_DIVERSION)
+                                   ? SWMM_INLET_CURVE_DIVERSION
+                                   : (tt == openswmm::TableType::CURVE_RATING)
+                                         ? SWMM_INLET_CURVE_RATING
+                                         : SWMM_INLET_CURVE_NONE;
+            if (actual == SWMM_INLET_CURVE_NONE) return SWMM_ERR_BADPARAM;
+            if (custom_curve_kind != SWMM_INLET_CURVE_NONE &&
+                custom_curve_kind != actual) return SWMM_ERR_BADPARAM;
+            custom_curve_kind = actual;
+        }
+    }
+
+    const auto ui = static_cast<std::size_t>(idx);
+    auto& I = ctx.inlets;
+    I.inlet_type[ui] = kInletTypeWords[design->type];
+
+    if (is_grate_kind(design->type)) {
+        I.length[ui]       = design->grate_length;
+        I.width[ui]        = design->grate_width;
+        I.grate_type[ui]   = kGrateTypeWords[design->grate_type];
+        I.open_area[ui]    = design->open_area;
+        I.splash_veloc[ui] = design->splash_veloc;
+    } else if (design->type == SWMM_INLET_SLOTTED) {
+        I.length[ui]       = design->slot_length;
+        I.width[ui]        = design->slot_width;
+        I.grate_type[ui].clear();
+        I.open_area[ui]    = 0.0;
+        I.splash_veloc[ui] = 0.0;
+    } else {
+        I.length[ui] = 0.0;
+        I.width[ui]  = 0.0;
+        I.grate_type[ui].clear();
+        I.open_area[ui]    = 0.0;
+        I.splash_veloc[ui] = 0.0;
+    }
+
+    if (is_curb_kind(design->type)) {
+        I.curb_length[ui] = design->curb_length;
+        I.curb_height[ui] = design->curb_height;
+        I.curb_throat[ui] = design->throat;
+    } else {
+        I.curb_length[ui] = 0.0;
+        I.curb_height[ui] = 0.0;
+        I.curb_throat[ui] = SWMM_THROAT_VERTICAL;
+    }
+
+    if (design->type == SWMM_INLET_CUSTOM) {
+        I.curve_id[ui]    = design->curve_id;
+        I.curve_index[ui] = custom_curve_index;  // -1 until PostParseResolver
+        I.curve_kind[ui]  = custom_curve_kind;
+    } else {
+        I.curve_id[ui].clear();
+        I.curve_index[ui] = -1;
+        I.curve_kind[ui]  = SWMM_INLET_CURVE_NONE;
+    }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_inlet_get_comment(SWMM_Engine engine, int idx, char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.inlets.count());
+    return copy_str(ctx.inlets.comments[static_cast<std::size_t>(idx)], buf, buflen);
+}
+
+SWMM_ENGINE_API int swmm_inlet_set_comment(SWMM_Engine engine, int idx, const char* text) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.inlets.count());
+    ctx.inlets.comments[static_cast<std::size_t>(idx)] = text ? text : "";
+    return SWMM_OK;
+}
+
+// ---------------------------------------------------------------------------
+// Inlet usage rows
+// ---------------------------------------------------------------------------
+
+SWMM_ENGINE_API int swmm_inlet_usage_count(SWMM_Engine engine) {
+    if (!engine) return -1;
+    return to_engine(engine)->context().inlet_usages.count();
+}
+
+SWMM_ENGINE_API int swmm_inlet_usage_find_link(SWMM_Engine engine, int link_idx) {
+    if (!engine) return -1;
+    return to_engine(engine)->context().inlet_usages.find_by_link(link_idx);
+}
+
+SWMM_ENGINE_API int swmm_inlet_usage_find_node(SWMM_Engine engine, int node_idx) {
+    if (!engine) return -1;
+    return to_engine(engine)->context().inlet_usages.find_by_node_host(node_idx);
+}
+
+SWMM_ENGINE_API int swmm_inlet_usage_get(SWMM_Engine engine, int usage_idx, SWMM_InletUsage* out) {
+    CHECK_HANDLE(engine);
+    if (!out) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(usage_idx >= 0 && usage_idx < ctx.inlet_usages.count());
+    const auto ur = static_cast<std::size_t>(usage_idx);
+    const auto& U = ctx.inlet_usages;
+
+    const bool node_host = U.node_host[ur] >= 0;
+    out->host_kind        = node_host ? SWMM_INLET_HOST_NODE : SWMM_INLET_HOST_LINK;
+    out->host_idx         = node_host ? U.node_host[ur] : U.link_index[ur];
+    out->design_idx       = U.design_index[ur];
+    out->capture_node_idx = U.node_index[ur];
+    out->num_inlets       = U.num_inlets[ur];
+    out->pct_clogged      = (1.0 - U.clog_factor[ur]) * 100.0;
+    out->flow_limit       = U.flow_limit[ur];
+    out->local_depress    = U.local_depress[ur];
+    out->local_width      = U.local_width[ur];
+    out->placement        = U.placement[ur];
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_inlet_usage_set(SWMM_Engine engine, const SWMM_InletUsage* usage, int* usage_idx) {
+    CHECK_HANDLE(engine);
+    if (!usage) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+
+    const bool node_host = (usage->host_kind == SWMM_INLET_HOST_NODE);
+    if (usage->host_kind != SWMM_INLET_HOST_LINK && !node_host) return SWMM_ERR_BADPARAM;
+
+    if (node_host) {
+        CHECK_INDEX(usage->host_idx >= 0 && usage->host_idx < ctx.n_nodes());
+        const auto uh = static_cast<std::size_t>(usage->host_idx);
+        // Only a node already promoted to an inlet junction may host a row.
+        if (uh >= ctx.nodes.is_inlet.size() || !ctx.nodes.is_inlet[uh]) return SWMM_ERR_BADPARAM;
+    } else {
+        CHECK_INDEX(usage->host_idx >= 0 && usage->host_idx < ctx.n_links());
+        if (ctx.links.type[static_cast<std::size_t>(usage->host_idx)] !=
+            openswmm::LinkType::CONDUIT) return SWMM_ERR_BADPARAM;
+    }
+    CHECK_INDEX(usage->design_idx >= 0 && usage->design_idx < ctx.inlets.count());
+    CHECK_INDEX(usage->capture_node_idx >= 0 && usage->capture_node_idx < ctx.n_nodes());
+    if (node_host && usage->capture_node_idx == usage->host_idx) return SWMM_ERR_BADPARAM;
+    if (ctx.nodes.is_virtual[static_cast<std::size_t>(usage->capture_node_idx)]) return SWMM_ERR_BADPARAM;
+    if (usage->num_inlets < 1) return SWMM_ERR_BADPARAM;
+    if (usage->pct_clogged < 0.0 || usage->pct_clogged > 99.0) return SWMM_ERR_BADPARAM;
+    if (usage->flow_limit < 0.0 || usage->local_depress < 0.0 ||
+        usage->local_width < 0.0) return SWMM_ERR_BADPARAM;
+    if (usage->placement < SWMM_INLET_AUTOMATIC ||
+        usage->placement > SWMM_INLET_ON_SAG) return SWMM_ERR_BADPARAM;
+
+    // Legacy inlet_validate shape rule (inlet.c:498-505).
+    const int host_link = openswmm::edit::ij_host_conduit(
+        ctx, node_host ? 1 : 0, usage->host_idx);
+    if (!openswmm::edit::ij_usage_shape_ok(ctx, usage->design_idx, host_link))
+        return openswmm::ERR_INLET_USAGE_SHAPE;
+
+    // At most one row per host: replace in place, else append.
+    int row = node_host ? ctx.inlet_usages.find_by_node_host(usage->host_idx)
+                        : ctx.inlet_usages.find_by_link(usage->host_idx);
+    if (row < 0) {
+        row = ctx.inlet_usages.add_row(node_host ? -1 : usage->host_idx,
+                                       node_host ? usage->host_idx : -1,
+                                       usage->design_idx, usage->capture_node_idx);
+    }
+    const auto ur = static_cast<std::size_t>(row);
+    auto& U = ctx.inlet_usages;
+    U.design_index[ur]   = usage->design_idx;
+    U.node_index[ur]     = usage->capture_node_idx;
+    U.num_inlets[ur]     = usage->num_inlets;
+    U.placement[ur]      = usage->placement;
+    U.clog_factor[ur]    = 1.0 - usage->pct_clogged / 100.0;
+    U.flow_limit[ur]     = usage->flow_limit;
+    U.local_depress[ur]  = usage->local_depress;
+    U.local_width[ur]    = usage->local_width;
+    U.pending_design_name[ur].clear();
+    U.pending_capture_name[ur].clear();
+    if (usage_idx) *usage_idx = row;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_inlet_usage_remove(SWMM_Engine engine, int usage_idx) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(usage_idx >= 0 && usage_idx < ctx.inlet_usages.count());
+    ctx.inlet_usages.erase_row(usage_idx);
+    return SWMM_OK;
 }
 
 // ============================================================================

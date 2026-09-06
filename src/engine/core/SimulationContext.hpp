@@ -1474,6 +1474,58 @@ struct SimulationContext {
     } vj_diag;
 
     // =========================================================================
+    // Street inlet performance diagnostics
+    // =========================================================================
+
+    /**
+     * @brief Per-inlet-usage performance block for the .rpt street tables.
+     *
+     * @details Row i corresponds to `inlet_usages` row i. Populated by
+     *          `inlet::InletSolver::gatherStats()` before the summary is
+     *          written; these are the legacy `TInletStats` counters
+     *          (inlet.c:78-87) that the Street Flow Summary reports and that
+     *          `InletUsageStore` (a persistent .inp store) deliberately does
+     *          not carry.
+     */
+    struct InletDiag {
+        std::vector<int>     host_node;         ///< inlet-junction node (−1 = conduit host)
+        std::vector<int>     up_link;           ///< approach conduit (−1 = none)
+        std::vector<uint8_t> is_sag;            ///< resolved placement: 1 = ON_SAG
+        std::vector<int>     num_inlets;
+        std::vector<int>     flow_periods;      ///< # periods with approach flow
+        std::vector<int>     capture_periods;   ///< # periods with captured flow
+        std::vector<int>     backflow_periods;  ///< # periods with backflow
+        std::vector<double>  peak_flow;         ///< peak approach flow (cfs)
+        std::vector<double>  peak_flow_capture; ///< capture efficiency at peak flow (%)
+        std::vector<double>  avg_flow_capture;  ///< Σ capture efficiency over capture periods
+        std::vector<double>  bypass_freq;       ///< # capture periods that also bypassed
+
+        int count() const { return static_cast<int>(host_node.size()); }
+
+        void resize(int n) {
+            auto un = static_cast<std::size_t>(n);
+            host_node.assign(un, -1);
+            up_link.assign(un, -1);
+            is_sag.assign(un, static_cast<uint8_t>(0));
+            num_inlets.assign(un, 1);
+            flow_periods.assign(un, 0);
+            capture_periods.assign(un, 0);
+            backflow_periods.assign(un, 0);
+            peak_flow.assign(un, 0.0);
+            peak_flow_capture.assign(un, 0.0);
+            avg_flow_capture.assign(un, 0.0);
+            bypass_freq.assign(un, 0.0);
+        }
+
+        void clear() {
+            host_node.clear(); up_link.clear(); is_sag.clear(); num_inlets.clear();
+            flow_periods.clear(); capture_periods.clear(); backflow_periods.clear();
+            peak_flow.clear(); peak_flow_capture.clear(); avg_flow_capture.clear();
+            bypass_freq.clear();
+        }
+    } inlet_diag;
+
+    // =========================================================================
     // Control action log — Gap #67
     // Populated by ControlEngine::applyPendingActions() when rpt_controls is on.
     // =========================================================================
@@ -1619,6 +1671,7 @@ struct SimulationContext {
 
         // Virtual-junction diagnostics
         vj_diag.clear();
+        inlet_diag.clear();
 
         // Clear daily climate state (re-initialized by SWMMEngine on next run)
         climate_state = climate::ClimateState{};

@@ -1190,6 +1190,94 @@ cdef class ModelEditor:
         _check(swmm_virtual_junction_fuse(self._handle, idx, &surviving))
         return surviving
 
+    def set_node_inlet(self, id_or_idx, bint make_inlet=True) -> None:
+        """Promote a node to an inlet junction, or demote it back.
+
+        An inlet junction is a virtual junction on a STREET conduit pair that
+        also carries a street inlet (INP C{[INLET_JUNCTIONS]}). Promotion runs
+        the virtual-junction rules plus the street shape rule (623) B{before}
+        changing anything, and makes the node virtual first if it is not
+        already; on a violated rule the node is left exactly as it was.
+        Demotion clears the flag and deletes the node's inlet-usage row,
+        leaving a plain virtual junction.
+
+        Give the node a usage row (C{infrastructure.inlet_usages.set} with
+        C{host_kind=InletHostKind.NODE}) before running the model — an inlet
+        junction without one fails validation.
+
+        @param id_or_idx: Node name (C{str}) or zero-based index (C{int}).
+        @type id_or_idx: int or str
+        @param make_inlet: C{True} to promote, C{False} to demote.
+        @type make_inlet: bool
+        @raise KeyError: If C{id_or_idx} is a name and the node is not found.
+        @raise EngineError: On a violated usage rule or C API failure.
+        """
+        cdef int idx = self._node_idx(id_or_idx)
+        _check(swmm_node_set_inlet(self._handle, idx, 1 if make_inlet else 0))
+
+    def split_conduit_inlet(self, id_or_idx, double t, str new_node_name,
+                            str new_link_name, str inlet_id,
+                            str capture_node) -> tuple:
+        """Split a street conduit, inserting an B{inlet junction}.
+
+        L{split_conduit} with C{make_virtual=True}, followed by the inlet
+        promotion and the usage row in one step: the inserted node captures
+        gutter flow with design C{inlet_id} and delivers it to
+        C{capture_node}. The usage row takes the C{[INLET_USAGE]} defaults
+        (one inlet, no clogging, no flow limit, no local depression,
+        AUTOMATIC placement); edit it afterwards through
+        C{infrastructure.inlet_usages}.
+
+        @param id_or_idx: Conduit name (C{str}) or zero-based index (C{int}).
+        @type id_or_idx: int or str
+        @param t: Normalized split position, exclusive (0, 1).
+        @type t: float
+        @param new_node_name: Unique name for the inserted inlet junction.
+        @type new_node_name: str
+        @param new_link_name: Unique name for the new downstream conduit.
+        @type new_link_name: str
+        @param inlet_id: Name of an existing C{[INLETS]} design.
+        @type inlet_id: str
+        @param capture_node: Name of the receiving (underdrain) node.
+        @type capture_node: str
+        @return: C{(new_node_index, new_link_index)}.
+        @rtype: tuple[int, int]
+        @raise KeyError: If C{id_or_idx} is a name and the link is not found.
+        @raise EngineError: On invalid C{t}, duplicate names, an unknown
+            design or capture node, a non-STREET conduit, or a rule failure.
+        """
+        cdef int idx = self._link_idx(id_or_idx)
+        cdef bytes node_b = new_node_name.encode('utf-8')
+        cdef bytes link_b = new_link_name.encode('utf-8')
+        cdef bytes inlet_b = inlet_id.encode('utf-8')
+        cdef bytes cap_b = capture_node.encode('utf-8')
+        cdef int new_node = -1
+        cdef int new_link = -1
+        _check(swmm_conduit_split_inlet(self._handle, idx, t, node_b, link_b,
+                                        inlet_b, cap_b, &new_node, &new_link))
+        return (new_node, new_link)
+
+    def fuse_inlet_junction(self, id_or_idx) -> int:
+        """Re-fuse the two conduits of an inlet junction into one.
+
+        Inverse of L{split_conduit_inlet}: the node's inlet-usage row is
+        removed, then the pair is fused exactly as
+        L{fuse_virtual_junction} does.
+
+        @param id_or_idx: Node name (C{str}) or zero-based index (C{int}) of
+            the inlet junction.
+        @type id_or_idx: int or str
+        @return: Index of the surviving conduit AFTER deletions renumber.
+        @rtype: int
+        @raise KeyError: If C{id_or_idx} is a name and the node is not found.
+        @raise EngineError: If the node is not a two-conduit through
+            junction, or on C API failure.
+        """
+        cdef int idx = self._node_idx(id_or_idx)
+        cdef int surviving = -1
+        _check(swmm_inlet_junction_fuse(self._handle, idx, &surviving))
+        return surviving
+
     # =========================================================================
     # Convenience: node / link counts (useful after deletions)
     # =========================================================================

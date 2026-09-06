@@ -602,4 +602,53 @@ SWMM_ENGINE_API int swmm_virtual_junction_fuse(SWMM_Engine engine, int node_idx,
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_conduit_split_inlet(SWMM_Engine engine, int link_idx, double t,
+                                             const char* new_node_name,
+                                             const char* new_link_name,
+                                             const char* inlet_id,
+                                             const char* capture_node,
+                                             int* new_node_idx, int* new_link_idx) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(link_idx >= 0 && link_idx < ctx.n_links());
+    if (!new_node_name || !new_link_name || !inlet_id || !capture_node)
+        return SWMM_ERR_BADPARAM;
+
+    // Inlet designs have no NameIndex — swmm_inlet_index scans with ieq.
+    int design = -1;
+    for (int i = 0; i < ctx.inlets.count(); ++i)
+        if (openswmm::ieq(ctx.inlets.names[static_cast<std::size_t>(i)], inlet_id)) {
+            design = i;
+            break;
+        }
+    const int capture = ctx.node_names.find(capture_node);
+
+    const auto res = openswmm::edit::ij_split_conduit(
+        ctx, link_idx, t, new_node_name, new_link_name, design, capture);
+    if (res.err != 0) {
+        // -1 is the split's own rejection (bad t / duplicate or empty name /
+        // non-conduit); everything else is a distinct rule code.
+        return (res.err == -1) ? SWMM_ERR_BADPARAM : res.err;
+    }
+    if (new_node_idx) *new_node_idx = res.new_node_idx;
+    if (new_link_idx) *new_link_idx = res.new_link_idx;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_inlet_junction_fuse(SWMM_Engine engine, int node_idx,
+                                             int* surviving_link_idx) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(node_idx >= 0 && node_idx < ctx.n_nodes());
+
+    int surviving = -1;
+    const int code = openswmm::edit::ij_fuse(ctx, node_idx, &surviving);
+    if (code == -1) return SWMM_ERR_BADPARAM;   // not an inlet junction
+    if (code != 0)  return code;                // ERR_VJ_LINK_COUNT
+    if (surviving_link_idx) *surviving_link_idx = surviving;
+    return SWMM_OK;
+}
+
 } // extern "C"

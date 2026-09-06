@@ -81,6 +81,8 @@ class Node:
     type: NodeType
     is_virtual: bool
     virtual_rule_violation: int
+    is_inlet: bool
+    def inlet_rule_violation(self, for_drop_inlet: bool = ...) -> int: ...
     solver: Solver
 
     # Geometry

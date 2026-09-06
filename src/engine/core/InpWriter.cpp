@@ -250,21 +250,48 @@ static bool hasNT(const SimulationContext& c, NodeType t) {
 static bool isVirtualNode(const SimulationContext& c, size_t u) {
     return u < c.nodes.is_virtual.size() && c.nodes.is_virtual[u] != 0;
 }
+// Inlet junctions are virtual junctions carrying a street inlet; they emit into
+// [INLET_JUNCTIONS] instead. A node flagged is_inlet whose usage row is missing
+// or unresolved cannot be written in that grammar, so it falls back to
+// [VIRTUAL_JUNCTIONS] (with a warning) rather than disappearing.
+static int inletUsageRow(const SimulationContext& c, size_t u) {
+    if(u>=c.nodes.is_inlet.size()||!c.nodes.is_inlet[u]) return -1;
+    const int r=c.inlet_usages.find_by_node_host(static_cast<int>(u));
+    if(r<0) return -1;
+    const auto ur=static_cast<size_t>(r);
+    const int di=c.inlet_usages.design_index[ur];
+    const int ni=c.inlet_usages.node_index[ur];
+    if(di<0||di>=c.inlets.count()||ni<0||ni>=c.n_nodes()) return -1;
+    return r;
+}
+static bool isInletNode(const SimulationContext& c, size_t u) {
+    return inletUsageRow(c,u)>=0;
+}
 static bool hasRegularJunction(const SimulationContext& c) {
     for(int j=0;j<c.n_nodes();++j){auto u=static_cast<size_t>(j);
         if(c.nodes.type[u]==NodeType::JUNCTION && !isVirtualNode(c,u)) return true;}
     return false;
 }
 static bool hasVirtualJunction(const SimulationContext& c) {
-    for(int j=0;j<c.n_nodes();++j) if(isVirtualNode(c,static_cast<size_t>(j))) return true;
+    for(int j=0;j<c.n_nodes();++j){auto u=static_cast<size_t>(j);
+        if(isVirtualNode(c,u) && !isInletNode(c,u)) return true;}
     return false;
 }
+static bool hasInletJunction(const SimulationContext& c) {
+    for(int j=0;j<c.n_nodes();++j) if(isInletNode(c,static_cast<size_t>(j))) return true;
+    return false;
+}
+// Placement words, [INLET_USAGE] token 9 / [INLET_JUNCTIONS] token 11.
+static const char* const kInletPlacementWords[]={"AUTOMATIC","ON_GRADE","ON_SAG"};
+// Curb-opening throat words, legacy inlet.c ThroatAngleWords order.
+static const char* const kInletThroatWords[]={"HORIZONTAL","INCLINED","VERTICAL"};
 // True when any virtual junction carries a rendering rim depth, which is what
 // widens [VIRTUAL_JUNCTIONS] to its optional third column. Models without one
 // keep writing the two-column section byte-for-byte.
 static bool hasVirtualJunctionRim(const SimulationContext& c) {
     for(int j=0;j<c.n_nodes();++j){auto u=static_cast<size_t>(j);
-        if(isVirtualNode(c,u) && u<c.nodes.rim_depth.size() && c.nodes.rim_depth[u]>0.0) return true;}
+        if(isVirtualNode(c,u) && !isInletNode(c,u) &&
+           u<c.nodes.rim_depth.size() && c.nodes.rim_depth[u]>0.0) return true;}
     return false;
 }
 static bool hasLT(const SimulationContext& c, LinkType t) {
@@ -1600,13 +1627,46 @@ int writeInpFile(const SimulationContext& ctx_internal,
         std::fprintf(f,";;%-16s %-12s\n","Name","Elev");
         std::fprintf(f,";;%-16s %-12s\n","----------------","------------");
     }
-    for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);if(!isVirtualNode(ctx,u))continue;
+    for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);
+    if(!isVirtualNode(ctx,u)||isInletNode(ctx,u))continue;
+    if(u<ctx.nodes.is_inlet.size()&&ctx.nodes.is_inlet[u]&&warnings)
+        warnings->push_back("Node "+ctx.node_names.name_of(j)+
+                            ": inlet junction has no resolved inlet usage; "
+                            "written as a plain [VIRTUAL_JUNCTIONS] row");
     write_obj_comment(f, ctx.nodes.comments, u);
     const double rim = (u<ctx.nodes.rim_depth.size()) ? ctx.nodes.rim_depth[u] : 0.0;
     if(rim>0.0)
         std::fprintf(f,"%-16s %12.4f %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],rim);
     else
         std::fprintf(f,"%-16s %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u]);
+    }}
+
+    // [INLET_JUNCTIONS] — a virtual junction plus its street inlet. Tokens 1-3
+    // mirror [VIRTUAL_JUNCTIONS] (MaxDepth here is the flood threshold, carried
+    // in rim_depth); tokens 4-11 are the [INLET_USAGE] tail.
+    if(hasInletJunction(ctx)){sec(f,"INLET_JUNCTIONS");
+    std::fprintf(f,";;%-16s %-12s %-12s %-16s %-16s %-8s %-8s %-10s %-10s %-10s %-10s\n",
+        "Name","Elev","MaxDepth","Inlet","CaptureNode","#Inlets","%Clog","Qmax","aLocal","wLocal","Placement");
+    std::fprintf(f,";;%-16s %-12s %-12s %-16s %-16s %-8s %-8s %-10s %-10s %-10s %-10s\n",
+        "----------------","------------","------------","----------------","----------------",
+        "--------","--------","----------","----------","----------","----------");
+    for(int j=0;j<ctx.n_nodes();++j){auto u=static_cast<size_t>(j);
+    const int r=inletUsageRow(ctx,u); if(r<0)continue;
+    const auto ur=static_cast<size_t>(r);
+    write_obj_comment(f, ctx.nodes.comments, u);
+    int pl=ctx.inlet_usages.placement[ur]; if(pl<0||pl>2)pl=0;
+    std::fprintf(f,"%-16s %12.4f %12.4f %-16s %-16s %8d %8.4g %10.4g %10.4g %10.4g %-10s\n",
+        ctx.node_names.name_of(j).c_str(),
+        ctx.nodes.invert_elev[u],
+        (u<ctx.nodes.rim_depth.size())?ctx.nodes.rim_depth[u]:0.0,
+        ctx.inlets.names[static_cast<size_t>(ctx.inlet_usages.design_index[ur])].c_str(),
+        ctx.node_names.name_of(ctx.inlet_usages.node_index[ur]).c_str(),
+        ctx.inlet_usages.num_inlets[ur],
+        (1.0-ctx.inlet_usages.clog_factor[ur])*100.0,
+        ctx.inlet_usages.flow_limit[ur],
+        ctx.inlet_usages.local_depress[ur],
+        ctx.inlet_usages.local_width[ur],
+        kInletPlacementWords[pl]);
     }}
 
     // [OUTFALLS]
@@ -1969,19 +2029,39 @@ int writeInpFile(const SimulationContext& ctx_internal,
         ctx.streets.back_width[u],ctx.streets.back_slope[u],ctx.streets.back_n[u]);
     }}
 
-    // [INLETS]
+    // [INLETS] — the legacy per-type grammar (inlet.c:321-327). A COMBO design
+    // is written the way legacy encodes it: a GRATE line and a CURB line
+    // sharing one name, which handle_inlets merges back into one row.
     if(ctx.inlets.count()>0){sec(f,"INLETS");
+    auto grate_line=[&](const std::string& name,size_t u,const char* kw){
+        std::fprintf(f,"%-16s %-12s %10.4f %10.4f %s",name.c_str(),kw,
+            ctx.inlets.length[u],ctx.inlets.width[u],ctx.inlets.grate_type[u].c_str());
+        if(ieq(ctx.inlets.grate_type[u],"GENERIC")){
+            std::fprintf(f," %g",ctx.inlets.open_area[u]);
+            if(ctx.inlets.splash_veloc[u]>0) std::fprintf(f," %g",ctx.inlets.splash_veloc[u]);
+        }
+        std::fprintf(f,"\n");
+    };
+    auto curb_line=[&](const std::string& name,size_t u,bool drop){
+        std::fprintf(f,"%-16s %-12s %10.4f %10.4f",name.c_str(),drop?"DROP_CURB":"CURB",
+            ctx.inlets.curb_length[u],ctx.inlets.curb_height[u]);
+        // DROP_CURB has no throat token in the legacy grammar.
+        if(!drop){int th=ctx.inlets.curb_throat[u]; if(th<0||th>2)th=2;
+            std::fprintf(f," %s",kInletThroatWords[th]);}
+        std::fprintf(f,"\n");
+    };
     for(int j=0;j<ctx.inlets.count();++j){auto u=static_cast<size_t>(j);
-    std::fprintf(f,"%-16s %-12s %10.4f %10.4f",
-        ctx.inlets.names[u].c_str(),ctx.inlets.inlet_type[u].c_str(),
-        ctx.inlets.length[u],ctx.inlets.width[u]);
-    if(!ctx.inlets.grate_type[u].empty())
-        std::fprintf(f," %s",ctx.inlets.grate_type[u].c_str());
-    if(ctx.inlets.open_area[u]>0)
-        std::fprintf(f," %g",ctx.inlets.open_area[u]);
-    if(ctx.inlets.splash_veloc[u]>0)
-        std::fprintf(f," %g",ctx.inlets.splash_veloc[u]);
-    std::fprintf(f,"\n");
+    write_obj_comment(f, ctx.inlets.comments, u);
+    const std::string& name=ctx.inlets.names[u];
+    const std::string& t=ctx.inlets.inlet_type[u];
+    if(t=="COMBO"){ grate_line(name,u,"GRATE"); curb_line(name,u,false); }
+    else if(t=="GRATE"||t=="DROP_GRATE") grate_line(name,u,t.c_str());
+    else if(t=="CURB"||t=="DROP_CURB")   curb_line(name,u,t=="DROP_CURB");
+    else if(t=="CUSTOM")
+        std::fprintf(f,"%-16s %-12s %s\n",name.c_str(),"CUSTOM",ctx.inlets.curve_id[u].c_str());
+    else   // SLOTTED (and any type string carried through verbatim)
+        std::fprintf(f,"%-16s %-12s %10.4f %10.4f\n",name.c_str(),t.c_str(),
+            ctx.inlets.length[u],ctx.inlets.width[u]);
     }}
 
     // [INLET_USAGE]
@@ -1989,11 +2069,16 @@ int writeInpFile(const SimulationContext& ctx_internal,
     // Parsed into ctx.inlet_usages but previously never written, so every
     // inlet-to-link assignment was lost on save and [STREETS]/[INLETS] became
     // inert. clog_factor is stored as 1 - pctClogged/100 (InfraHandler).
-    if(ctx.inlet_usages.count()>0){sec(f,"INLET_USAGE");
+    // Node-hosted rows belong to [INLET_JUNCTIONS] and are skipped here.
+    bool anyLinkUsage=false;
+    for(int j=0;j<ctx.inlet_usages.count();++j)
+        if(ctx.inlet_usages.node_host[static_cast<size_t>(j)]<0){anyLinkUsage=true;break;}
+    if(anyLinkUsage){sec(f,"INLET_USAGE");
     std::fprintf(f,";;%-16s %-16s %-16s %-8s %-8s %-10s %-10s %-10s %-10s\n","Link","Inlet","Node","#Inlets","%Clog","Qmax","aLocal","wLocal","Placement");
     std::fprintf(f,";;%-16s %-16s %-16s %-8s %-8s %-10s %-10s %-10s %-10s\n","----------------","----------------","----------------","--------","--------","----------","----------","----------","----------");
-    static const char* kPlacement[]={"AUTOMATIC","ON_GRADE","ON_SAG"};
+    const char* const* kPlacement=kInletPlacementWords;
     for(int j=0;j<ctx.inlet_usages.count();++j){auto u=static_cast<size_t>(j);
+    if(ctx.inlet_usages.node_host[u]>=0)continue;
     const int li=ctx.inlet_usages.link_index[u];
     const int di=ctx.inlet_usages.design_index[u];
     const int ni=ctx.inlet_usages.node_index[u];

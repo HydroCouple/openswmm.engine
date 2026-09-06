@@ -321,9 +321,17 @@ SWMM_ENGINE_API const char* swmm_error_message(int code) {
         case 611: return "Virtual junction connects conduits with different cross sections";
         case 613: return "Virtual junction has a conduit with a nonzero offset";
         case 615: return "Virtual junction conduit inverts do not agree at the node";
-        case 617: return "Virtual junction cannot receive lateral inflow";
-        case 619: return "Virtual junctions require DYNWAVE flow routing";
+        case 617: return "Virtual junction cannot be coupled to a 2D surface mesh";
+        case 619: return "Virtual junctions require DYNWAVE or FV flow routing";
         case 621: return "Too many items for virtual junction";
+        // Inlet-junction rule codes (ErrorCodes.hpp ERR_IJ_* / ERR_INLET_*)
+        case 623: return "Inlet junction must connect two STREET conduits (RECT_OPEN or TRAPEZOIDAL for drop inlets)";
+        case 625: return "Inlet junction references an unknown inlet design";
+        case 627: return "Inlet junction has an invalid capture node (missing, itself, or virtual)";
+        case 629: return "Inlet junction conduit also carries an inlet usage entry";
+        case 631: return "Too many items for inlet junction";
+        case 633: return "Inlet junction has no inlet design assigned";
+        case 635: return "Inlet cannot be used with the cross section of its host";
         default:                 return "Unknown error";
     }
 }

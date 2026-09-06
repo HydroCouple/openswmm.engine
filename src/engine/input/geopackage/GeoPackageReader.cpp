@@ -327,8 +327,13 @@ static void read_nodes(sqlite3* db, SimulationContext& ctx, const std::string& s
         // how such a file behaved before.
         const bool has_virtual = column_exists(db, "nodes", "is_virtual") &&
                                  column_exists(db, "nodes", "rim_depth");
+        const bool has_inlet = has_virtual && column_exists(db, "nodes", "is_inlet");
         auto stmt = prepare(db,
-            has_virtual
+            has_inlet
+                ? "SELECT node_id, node_type, geom, invert_elev, max_depth, init_depth, "
+                  "surcharge_depth, ponded_area, tag, is_virtual, rim_depth, is_inlet "
+                  "FROM nodes WHERE simulation_id = ? ORDER BY fid"
+            : has_virtual
                 ? "SELECT node_id, node_type, geom, invert_elev, max_depth, init_depth, "
                   "surcharge_depth, ponded_area, tag, is_virtual, rim_depth "
                   "FROM nodes WHERE simulation_id = ? ORDER BY fid"
@@ -365,6 +370,12 @@ static void read_nodes(sqlite3* db, SimulationContext& ctx, const std::string& s
                     (!column_is_null(stmt.get(), 9) && column_int(stmt.get(), 9) != 0) ? 1 : 0;
                 if (!column_is_null(stmt.get(), 10))
                     ctx.nodes.rim_depth[u] = column_double(stmt.get(), 10);
+                // The inlet-usage row (design + capture node) has no table in
+                // the schema, so a node read back as is_inlet has no usage and
+                // fails validation with 633 until one is assigned.
+                if (has_inlet)
+                    ctx.nodes.is_inlet[u] =
+                        (!column_is_null(stmt.get(), 11) && column_int(stmt.get(), 11) != 0) ? 1 : 0;
             }
         }
     }

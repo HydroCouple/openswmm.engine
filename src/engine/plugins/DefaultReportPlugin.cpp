@@ -38,10 +38,13 @@
 #include "../core/UnitConversion.hpp"
 #include "../core/DateTime.hpp"
 #include "../hydraulics/Node.hpp"   // node::getVolume — storage volume from its depth-relation
+#include "../hydraulics/Link.hpp"       // link::buildXSectParams — street spread at max depth
+#include "../hydraulics/XSectBatch.hpp" // xsect::getWofY
 
 #include <version.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <ctime>
@@ -1439,6 +1442,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             "\n  Name                 Conduit          Conduit               Maximum          Mean");
         std::fprintf(f,
             "\n  ------------------------------------------------------------------------------------");
+        bool any_fed = false;
         for (std::size_t r = 0; r < ctx.vj_diag.node_idx.size(); ++r) {
             const int ni = ctx.vj_diag.node_idx[r];
             const int ju = ctx.vj_diag.up_link[r];
@@ -1446,12 +1450,32 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             const long long n = ctx.vj_diag.resid_n[r];
             const double mean = (n > 0)
                 ? ctx.vj_diag.resid_sum[r] / static_cast<double>(n) : 0.0;
-            std::fprintf(f, "\n  %-20s %-16s %-16s %13.6f %13.6f",
-                ctx.node_names.name_of(ni).c_str(),
-                (ju >= 0) ? ctx.link_names.name_of(ju).c_str() : "*",
-                (jd >= 0) ? ctx.link_names.name_of(jd).c_str() : "*",
-                ctx.vj_diag.resid_max[r], mean);
+            // A virtual junction fed by a lateral inflow (plans/
+            // VJ_LATERAL_INFLOW_PLAN_2026-09-04.md) legitimately shows a
+            // nonzero residual — the added mass carries no momentum — so
+            // the row says so. Unfed rows keep the original format.
+            const auto uni = static_cast<std::size_t>(ni);
+            const double max_lat = (ni >= 0 && uni < ctx.nodes.stat_max_lat_inflow.size())
+                ? ctx.nodes.stat_max_lat_inflow[uni] : 0.0;
+            if (max_lat > 0.0) {
+                std::fprintf(f, "\n  %-20s %-16s %-16s %13.6f %13.6f   lateral %.3f %s",
+                    ctx.node_names.name_of(ni).c_str(),
+                    (ju >= 0) ? ctx.link_names.name_of(ju).c_str() : "*",
+                    (jd >= 0) ? ctx.link_names.name_of(jd).c_str() : "*",
+                    ctx.vj_diag.resid_max[r], mean,
+                    max_lat * Qcf, FlowUnitWords[fu]);
+                any_fed = true;
+            } else {
+                std::fprintf(f, "\n  %-20s %-16s %-16s %13.6f %13.6f",
+                    ctx.node_names.name_of(ni).c_str(),
+                    (ju >= 0) ? ctx.link_names.name_of(ju).c_str() : "*",
+                    (jd >= 0) ? ctx.link_names.name_of(jd).c_str() : "*",
+                    ctx.vj_diag.resid_max[r], mean);
+            }
         }
+        if (any_fed)
+            std::fprintf(f, "\n  (lateral: maximum lateral inflow at the node; "
+                            "its residual includes the added zero-momentum mass)");
         WRITE(f, "");
         WRITE(f, "");
     }
@@ -2366,13 +2390,91 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     }
 
     // =====================================================================
-    // Street Inlet Flow Summary — Gap #68
-    // Volumes in ft³; convert to 1000 gal: × 7.48052 / 1000
+    // Street tables — Street Flow Summary (Gap #9) and the Street Inlet Flow
+    // Summary (Gap #68). Both are gated the same way the inlet table already
+    // was: link reporting on, and something street-related in the model.
+    //
+    // Street index of a STREET conduit: xsect_curve is the built transect
+    // table, whose name is the street it was built from
+    // (PostParseResolver.cpp:2298-2310).
     // =====================================================================
+    auto street_of_link = [&ctx](int j) -> int {
+        const auto uj = static_cast<std::size_t>(j);
+        if (ctx.links.xsect_shape[uj] != XsectShape::STREET_XSECT) return -1;
+        const int tt = ctx.links.xsect_curve[uj];
+        if (tt < 0 || tt >= static_cast<int>(ctx.transect_tables.size())) return -1;
+        const std::string& sname = ctx.transect_tables[static_cast<std::size_t>(tt)].name;
+        for (int s = 0; s < ctx.streets.count(); ++s) {
+            const std::string& a = ctx.streets.names[static_cast<std::size_t>(s)];
+            if (a.size() != sname.size()) continue;
+            bool same = true;
+            for (std::size_t c = 0; c < a.size(); ++c)
+                if (std::tolower(static_cast<unsigned char>(a[c])) !=
+                    std::tolower(static_cast<unsigned char>(sname[c]))) { same = false; break; }
+            if (same) return s;
+        }
+        return -1;
+    };
+
+    // ---------------------------------------------------------------------
+    // Street Flow Summary — legacy writeStreetStats (inlet.c:1055-1094):
+    // peak flow, SWMM's spread (flow width at max depth / sides, clipped to
+    // the street's curb-to-crown width) and max depth per STREET conduit.
+    // ---------------------------------------------------------------------
+    if (ctx.streets.count() > 0 && opt.rpt_links != 0) {
+        bool header = false;
+        const double inv_len = 1.0 / len_ucf;   // display → ft (street store is user units)
+        for (int j = 0; j < ctx.n_links(); ++j) {
+            const int si = street_of_link(j);
+            if (si < 0) continue;
+            const auto uj = static_cast<std::size_t>(j);
+            const auto su = static_cast<std::size_t>(si);
+
+            if (!header) {
+                WRITE(f, "*******************");
+                WRITE(f, "Street Flow Summary");
+                WRITE(f, "*******************");
+                std::fprintf(f,
+"\n\n  -------------------------------------------------------"
+"\n                          Peak   Maximum   Maximum"
+"\n                          Flow    Spread     Depth"
+"\n  Street Conduit           %-3s     %-5s     %-5s"
+"\n  -------------------------------------------------------",
+                    FlowUnitWords[fu], si_report ? "m" : "ft",
+                    si_report ? "m" : "ft");
+                header = true;
+            }
+
+            const double max_flow  = ctx.links.stat_max_flow[uj];
+            const double max_depth = ctx.links.stat_max_filling[uj]
+                                   * ctx.links.xsect_y_full[uj];
+
+            // SWMM's spread (flow width) at max depth — not HEC-22's, which is
+            // based on max flow and cannot see backwater (inlet.c:1077-1089).
+            const XSectParams xs =
+                link::buildXSectParams(ctx.links, uj, &ctx.transect_tables);
+            const int sides = std::max(ctx.streets.sides[su], 1);
+            double max_spread = xsect::getWofY(xs, max_depth) / sides;
+            max_spread = std::min(max_spread, ctx.streets.t_crown[su] * inv_len);
+
+            std::fprintf(f, "\n  %-16s %9.3f %9.3f %9.3f",
+                ctx.link_names.name_of(j).c_str(),
+                max_flow * Qcf, max_spread * len_ucf, max_depth * len_ucf);
+        }
+        if (header) { WRITE(f, ""); WRITE(f, ""); }
+    }
+
+    // ---------------------------------------------------------------------
+    // Street Inlet Flow Summary — Gap #68 volumes plus the legacy per-inlet
+    // performance columns (inlet.c:1096-1124). Inlet junctions are listed
+    // under their node name with a "(node)" marker.
+    // Volumes in ft³; convert to 1000 gal: × 7.48052 / 1000
+    // ---------------------------------------------------------------------
     if (ctx.inlet_usages.count() > 0 && opt.rpt_links != 0) {
         int ni = ctx.inlet_usages.count();
         // Only write if stats arrays are populated
         bool has_stats = (static_cast<int>(ctx.inlet_usages.stat_capture_vol.size()) >= ni);
+        const bool has_diag = (ctx.inlet_diag.count() >= ni);
 
         WRITE(f, "**************************");
         WRITE(f, "Street Inlet Flow Summary");
@@ -2384,34 +2486,81 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         } else {
             static constexpr double FT3_TO_KGAL = 7.48052 / 1000.0;
             std::fprintf(f,
-"\n\n  -----------------------------------------------------------------------------------------"
-"\n                                          Peak        Pcnt        Pcnt       Vol.       Vol."
-"\n  Conduit               Inlet           Flow        Captured    Bypassed   Captured   Bypassed"
-"\n                                        %-3s         Percent     Percent    1000 Gal   1000 Gal"
-"\n  -----------------------------------------------------------------------------------------",
-                FlowUnitWords[fu]);
+"\n\n  ------------------------------------------------------------------------------------------------------------------------------------------"
+"\n                                                              Peak      Peak       Avg.    Bypass      Back      Peak      Peak      Vol.      Vol."
+"\n                                                              Flow   Capture    Capture      Flow      Flow   Capture    Bypass  Captured  Bypassed"
+"\n  Inlet Location        Inlet Design       Placement  Count     %-3s      Pcnt       Pcnt      Pcnt      Pcnt   / Inlet      %-3s  1000 Gal  1000 Gal"
+"\n  ------------------------------------------------------------------------------------------------------------------------------------------",
+                FlowUnitWords[fu], FlowUnitWords[fu]);
 
             for (int i = 0; i < ni; ++i) {
                 auto ui = static_cast<std::size_t>(i);
                 int li  = ctx.inlet_usages.link_index[i];
+                int nh  = ctx.inlet_usages.node_host[ui];
                 int di  = ctx.inlet_usages.design_index[i];
 
-                const char* link_name  = (li >= 0) ? ctx.link_names.name_of(li).c_str() : "?";
+                std::string host_name = "?";
+                if (nh >= 0) host_name = ctx.node_names.name_of(nh) + " (node)";
+                else if (li >= 0) host_name = ctx.link_names.name_of(li);
+
                 const char* inlet_name = (di >= 0 && di < ctx.inlets.count())
                                          ? ctx.inlets.names[di].c_str() : "?";
 
                 double cap_vol  = ctx.inlet_usages.stat_capture_vol[ui];
                 double byp_vol  = ctx.inlet_usages.stat_bypass_vol[ui];
-                double peak     = ctx.inlet_usages.stat_peak_flow[ui] * Qcf;
-                double total    = cap_vol + byp_vol;
-                double cap_pct  = (total > 0.0) ? cap_vol / total * 100.0 : 0.0;
-                double byp_pct  = (total > 0.0) ? byp_vol / total * 100.0 : 0.0;
+                // "Peak Flow" is the peak APPROACH flow the inlet saw, like
+                // legacy's street maxFlow column (inlet.c:1092); the peak
+                // captured flow is the stat_peak_flow fallback only when the
+                // solver never ran (no diagnostics block).
+                double peak     = (has_diag ? ctx.inlet_diag.peak_flow[ui]
+                                            : ctx.inlet_usages.stat_peak_flow[ui]) * Qcf;
                 double cap_kgal = cap_vol * FT3_TO_KGAL;
                 double byp_kgal = byp_vol * FT3_TO_KGAL;
 
-                std::fprintf(f, "\n  %-20s  %-14s  %9.3f  %9.2f  %9.2f  %9.3f  %9.3f",
-                    link_name, inlet_name,
-                    peak, cap_pct, byp_pct, cap_kgal, byp_kgal);
+                // Legacy performance block. fp/cp are the legacy period counts
+                // divided by 100 so the sums below read out as percentages
+                // (inlet.c:1106-1122).
+                const char* placement = "ON-GRADE";
+                int    n_inlets = 1;
+                double pfc = 0.0, afc = 0.0, bpf = 0.0, bff = 0.0;
+                double peak_cap_per_inlet = 0.0, peak_bypass = 0.0;
+                if (has_diag) {
+                    const auto& dg = ctx.inlet_diag;
+                    placement = (dg.is_sag[ui] != 0) ? "ON-SAG  " : "ON-GRADE";
+                    n_inlets  = std::max(dg.num_inlets[ui], 1);
+                    const double fp = dg.flow_periods[ui] / 100.0;
+                    if (fp > 0.0) {
+                        const double cp = dg.capture_periods[ui] / 100.0;
+                        pfc = dg.peak_flow_capture[ui];
+                        if (cp > 0.0) {
+                            afc = dg.avg_flow_capture[ui] / cp;
+                            bpf = dg.bypass_freq[ui] / cp;
+                        }
+                        bff = dg.backflow_periods[ui] / fp;
+
+                        // Peak capture per inlet / peak bypass are scaled off
+                        // the approach conduit's peak flow (the host link, or
+                        // the inlet junction's approach conduit).
+                        const int hl = (li >= 0) ? li : dg.up_link[ui];
+                        if (hl >= 0 && hl < ctx.n_links()) {
+                            const auto uh = static_cast<std::size_t>(hl);
+                            const double max_flow = ctx.links.stat_max_flow[uh];
+                            const int si = street_of_link(hl);
+                            const int sides = (si >= 0)
+                                ? std::max(ctx.streets.sides[static_cast<std::size_t>(si)], 1)
+                                : 1;
+                            peak_cap_per_inlet = (max_flow / sides) * Qcf * 0.01
+                                                 * pfc / n_inlets;
+                            peak_bypass = max_flow * Qcf * 0.01 * (100.0 - pfc);
+                        }
+                    }
+                }
+
+                std::fprintf(f,
+                    "\n  %-20s  %-16s   %-9s  %5d  %8.3f  %8.2f  %9.2f  %8.2f  %8.2f  %8.3f  %8.3f  %8.3f  %8.3f",
+                    host_name.c_str(), inlet_name, placement, n_inlets,
+                    peak, pfc, afc, bpf, bff,
+                    peak_cap_per_inlet, peak_bypass, cap_kgal, byp_kgal);
             }
         }
         WRITE(f, "");

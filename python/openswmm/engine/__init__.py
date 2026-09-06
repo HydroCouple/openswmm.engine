@@ -322,6 +322,9 @@ from ._enums import (
     HeatFluxModule, HeatShortwaveMode, HeatRadiativeParam, HeatSolarParam,
     HeatCloudParam, HeatSourceKind, WaterAgeSource,
     ReactionScope, ReactionExprForm,
+    # Street inlets
+    InletType, GrateType, ThroatType, InletCurveKind,
+    InletPlacement, InletHostKind,
     # Mass-balance totals
     RunoffTotal, RoutingTotal,
 )
@@ -393,6 +396,9 @@ __all__ = [
     "HeatFluxModule", "HeatShortwaveMode", "HeatRadiativeParam", "HeatSolarParam",
     "HeatCloudParam", "HeatSourceKind", "WaterAgeSource",
     "ReactionScope", "ReactionExprForm",
+    # --- Enumerations: street inlets ---
+    "InletType", "GrateType", "ThroatType", "InletCurveKind",
+    "InletPlacement", "InletHostKind",
     # --- Enumerations: mass-balance totals ---
     "RunoffTotal", "RoutingTotal",
 ]

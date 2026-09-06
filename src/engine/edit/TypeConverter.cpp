@@ -120,9 +120,12 @@ ConversionResult convert_node(SimulationContext& ctx, int idx, NodeType new_type
     // flag (the zero-storage contract only exists for JUNCTION-typed nodes).
     // vj_clear_virtual also promotes the rendering rim depth back to the real
     // full depth, so the converted node keeps the surface it was drawn at.
+    // An inlet junction also loses its inlet flag and its usage row there.
     if (ui < nd.is_virtual.size() && nd.is_virtual[ui]) {
+        const bool was_inlet = ui < nd.is_inlet.size() && nd.is_inlet[ui] != 0;
         vj_clear_virtual(ctx, idx);
         result.cleared_fields.push_back("is_virtual");
+        if (was_inlet) result.cleared_fields.push_back("is_inlet");
     }
 
     // Move the subtype row and set nd.type (single source of truth). Erases the

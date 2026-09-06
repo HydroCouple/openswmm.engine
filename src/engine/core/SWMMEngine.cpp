@@ -3756,8 +3756,11 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     surface_router_.advancePostRouting(ctx_, dt_routing, ctx_.current_time);
 #endif
 
-    // B3a. Inlet capture (street inlet HEC-22 calculations)
-    inlet_.computeAll(ctx_, dt_routing);
+    // B3a. Inlet capture (street inlet HEC-22 calculations) runs at the END of
+    //      assembleLateralInflows — i.e. BEFORE routing, like legacy
+    //      inlet_findCapturedFlows at routing.c:244. Computing it here would
+    //      write a sink into lat_flow that the next step's assembly overwrites
+    //      before the router ever sees it (plan G6).
 
     // B3b. Culvert inlet control (FHWA HEC-5 equations)
     //      Uses pre-built culvert_links_ (populated in initHydraulics)
@@ -5819,9 +5822,9 @@ int SWMMEngine::report() noexcept {
         }
     }
 
-    // Gap #68: copy inlet stats into inlet_usages for reporting
+    // Gap #68: copy inlet stats into inlet_usages / inlet_diag for reporting
     if (ctx_.inlet_usages.count() > 0)
-        inlet_.gatherStats(ctx_.inlet_usages);
+        inlet_.gatherStats(ctx_);
 
     // Phase 4: write summary reports via all report plugins
     if (!plugins_.empty()) {
@@ -7907,6 +7910,14 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
     ctx_.mass_balance.step_gw_inflow   = sum_gw;
     ctx_.mass_balance.step_rdii_inflow = sum_rdii;
     ctx_.mass_balance.step_ext_inflow  = sum_ext;
+
+    // Street inlet capture / backflow: a transfer between the bypass and
+    // capture nodes, applied after every other lateral source is summed and
+    // before the router runs — legacy inlet_findCapturedFlows (routing.c:244,
+    // "called after regular lateral flows to all nodes have been set but
+    // before a flow routing step has been taken"). Not a mass-balance source:
+    // both sides of the transfer stay inside the system.
+    inlet_.computeAll(ctx_, dt_routing);
 }
 
 // ============================================================================

@@ -180,6 +180,13 @@ from ._enums import (
     WaterAgeSource as WaterAgeSource,
     ReactionScope as ReactionScope,
     ReactionExprForm as ReactionExprForm,
+    # Street inlets
+    InletType as InletType,
+    GrateType as GrateType,
+    ThroatType as ThroatType,
+    InletCurveKind as InletCurveKind,
+    InletPlacement as InletPlacement,
+    InletHostKind as InletHostKind,
     # Output variables
     OutLinkVar as OutLinkVar,
     OutNodeVar as OutNodeVar,

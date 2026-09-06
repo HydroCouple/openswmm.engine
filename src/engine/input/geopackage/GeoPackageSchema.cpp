@@ -102,6 +102,11 @@ CREATE TABLE IF NOT EXISTS nodes (
     -- written before they existed and the reader treats that as 0.
     is_virtual      INTEGER,
     rim_depth       REAL,
+    -- Inlet junctions are virtual junctions that also carry a street inlet.
+    -- The flag round-trips here; the inlet USAGE row it needs ([INLETS] design
+    -- + capture node) has no GeoPackage table, so a .gpkg round-trip preserves
+    -- the flag but not the inlet assignment.
+    is_inlet        INTEGER,
     UNIQUE(simulation_id, node_id)
 );
 

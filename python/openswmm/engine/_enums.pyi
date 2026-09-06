@@ -932,3 +932,59 @@ class ReactionExprForm(IntEnum):
     RATE = 1
     EQUIL = 2
     FORMULA = 3
+
+
+class InletType(IntEnum):
+    """Street-inlet design type (``[INLETS]`` token 2). Mirrors ``SWMM_InletType``."""
+
+    GRATE = 0
+    CURB = 1
+    COMBO = 2
+    SLOTTED = 3
+    DROP_GRATE = 4
+    DROP_CURB = 5
+    CUSTOM = 6
+
+
+class GrateType(IntEnum):
+    """Grate bar pattern (HEC-22 Table 4-6). Mirrors ``SWMM_GrateType``."""
+
+    P_BAR_50 = 0
+    P_BAR_50x100 = 1
+    P_BAR_30 = 2
+    CURVED_VANE = 3
+    TILT_BAR_45 = 4
+    TILT_BAR_30 = 5
+    RETICULINE = 6
+    GENERIC = 7
+
+
+class ThroatType(IntEnum):
+    """Curb-opening throat orientation. Mirrors ``SWMM_ThroatType``."""
+
+    HORIZONTAL = 0
+    INCLINED = 1
+    VERTICAL = 2
+
+
+class InletCurveKind(IntEnum):
+    """Capture-curve kind of a ``CUSTOM`` inlet. Mirrors ``SWMM_InletCurveKind``."""
+
+    NONE = 0
+    DIVERSION = 1
+    RATING = 2
+
+
+class InletPlacement(IntEnum):
+    """Inlet placement mode (``[INLET_USAGE]`` token 9). Mirrors ``SWMM_InletPlacement``."""
+
+    AUTOMATIC = 0
+    ON_GRADE = 1
+    ON_SAG = 2
+
+
+class InletHostKind(IntEnum):
+    """Inlet-usage host kind. Mirrors ``SWMM_InletHostKind``."""
+
+    LINK = 0
+    NODE = 1

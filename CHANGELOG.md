@@ -23,6 +23,36 @@ retroactive.
 
 ### Added
 
+- **Street inlets: legacy-parity HEC-22 capture kernel, `[INLET_JUNCTIONS]`, and an inlet
+  design/usage C API** — `[INLETS]` / `[INLET_USAGE]` were parsed, but the street geometry never
+  reached the capture calculation and capture ran after routing:
+  - `[INLET_JUNCTIONS]` and the inlet-junction node: a virtual junction (zero storage, exactly two
+    STREET conduits of the same section) that is *unsealed* — it floods above the street section
+    or its `MaxDepth` — and captures the arriving gutter flow to a capture node, with backflow when
+    that node surcharges. `Name Elev MaxDepth Inlet CaptureNode (#Inlets %Clog Qmax aLocal wLocal
+    Placement)`, written after `[VIRTUAL_JUNCTIONS]` and excluded from `[JUNCTIONS]` /
+    `[VIRTUAL_JUNCTIONS]`. Errors 623 (host conduits are not streets), 625 (unknown design),
+    627 (capture node missing, the host itself, or virtual), 629 (`[INLET_USAGE]` row on an
+    inlet-junction conduit), 631 (extra tokens), 633 (inlet junction without a usage row);
+    warning 635 (design incompatible with the host section — legacy WARNING 12, row ignored).
+  - C API: `SWMM_InletDesign` with `swmm_inlet_get_design` / `set_design` / `get_comment` /
+    `set_comment`; `SWMM_InletUsage` with `swmm_inlet_usage_count` / `find_link` / `find_node` /
+    `get` / `set` / `remove`; `swmm_node_is_inlet` / `inlet_eligible` / `set_inlet`;
+    `swmm_conduit_split_inlet` (atomic split of a street conduit inserting an inlet junction) and
+    `swmm_inlet_junction_fuse`. Python: `Inlets.get_design` / `set_design`, `InletUsages`,
+    `Node.is_inlet`, `inlet_rule_violation`, `split_conduit_inlet`, `fuse_inlet_junction`, enums
+    `InletType` / `GrateType` / `ThroatType` / `InletCurveKind` / `InletPlacement` /
+    `InletHostKind` (`python/tests/engine/test_inlet_api.py`).
+  - HEC-22 kernel ported 1:1 from legacy `inlet.c` (on-grade grate / curb / slotted / combination
+    sweeper, on-sag weir-orifice, custom curves, drop inlets), run at the end of lateral-inflow
+    assembly — before routing, as legacy does — for conduit- and node-hosted inlets alike.
+    Report: legacy "Street Flow Summary" plus a "Street Inlet Flow Summary" with the legacy
+    performance columns (node hosts as `NAME (node)`). Example
+    `examples/inlets/street_inlet_junction.inp`; parity set `tests/parity/inlets/` (EPA 5.2 inlet
+    decks through both engines: capture efficiency at peak identical on every on-grade / on-sag
+    deck and physical captured volumes identical; the attributed divergences are listed in its
+    README). (`test_engine_inlet_capture`, `test_engine_inlet_junction_io`.)
+
 - **GUI-editor round-trip API for `[GWF]` expressions** — a subcatchment's custom groundwater
   flow expressions were reachable only through the stringly-typed `swmm_options_get/set_ext`
   key `"GWF:<subcatch>:LATERAL|DEEP"`, with no validator:
@@ -317,6 +347,15 @@ retroactive.
 
 ### Fixed
 
+- **Street inlets** — `[INLETS]` two-line combination inlets were not merged, the curb throat
+  angle and custom capture curves were dropped, on-sag capture never ran, street geometry never
+  reached the capture calculation, and capture was applied after the routing step (so the router
+  never saw it); splitting a STREET conduit lost the lower half's street reference
+  (`vj_split_conduit` now copies the named cross-section). An `[INLET_USAGE]` row naming a capture
+  node declared later in the file (legacy parsing is order-independent) is deferred to the
+  post-parse pass instead of failing the open with ERROR 209, and the inlet summary's "Peak Flow"
+  column is the peak approach flow, as in legacy, not the peak captured flow.
+
 - **DUMMY links are routed under `FLOW_ROUTING FV` instead of failing the
   model.** A DUMMY conduit carries no cross-section, so the FV mesh builder
   rejected it as unmeshable (`y_full <= 0`) and the run aborted — DUMMY links
@@ -450,6 +489,9 @@ retroactive.
   reproduction: `tests/manual/fv_phase_timers/RESULTS.md`.
 
 ### Changed
+
+- **Inlet `MIN_RUNOFF_FLOW` / `FUDGE` aligned with legacy** (`0.001` cfs / `0.0001`; both were
+  `2.5e-5`) — results change for any model with conduit inlets. Error codes 623–635 are new.
 
 - **Hydraulics Reference Manual §8.6 and §8.7 rewritten to describe the solver
   that ships.** §8.6.1 documented junctions as `MIN_SURFAREA` linear reservoirs

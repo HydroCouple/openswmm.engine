@@ -122,14 +122,7 @@ static bool treatment_stripe_valid(const TreatmentData& T, int node_idx) {
 
 // Erase inlet_usage at idx (all parallel arrays in InletUsageStore)
 static void erase_inlet_usage(SimulationContext& ctx, int idx) {
-    auto& iu = ctx.inlet_usages;
-    const auto ui = static_cast<std::size_t>(idx);
-    auto e = [&](auto& v) { if (ui < v.size()) v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx)); };
-    e(iu.link_index); e(iu.design_index); e(iu.node_index); e(iu.num_inlets);
-    e(iu.placement); e(iu.clog_factor); e(iu.flow_limit);
-    e(iu.local_depress); e(iu.local_width); e(iu.street_index);
-    e(iu.stat_capture_vol); e(iu.stat_bypass_vol);
-    e(iu.stat_backflow_vol); e(iu.stat_peak_flow);
+    ctx.inlet_usages.erase_row(idx);
 }
 
 // ============================================================================
@@ -206,9 +199,14 @@ CascadeResult analyze_node_impact(const SimulationContext& ctx, int node_idx) {
             result.add(SWMM_REF_NODE, i, "outfall_route_to", false);
     }
     const int niu = ctx.inlet_usages.count();
-    for (int i = 0; i < niu; ++i) {
-        if (ctx.inlet_usages.node_index[static_cast<std::size_t>(i)] == node_idx)
-            result.add(SWMM_REF_INLET_USAGE, i, "node_index", false);
+    for (int i = niu - 1; i >= 0; --i) {
+        const auto uu = static_cast<std::size_t>(i);
+        // A node-hosted row IS the inlet junction, and a row whose capture node
+        // disappears has nowhere to send its flow: both go with the node.
+        if (ctx.inlet_usages.node_host[uu] == node_idx)
+            result.add(SWMM_REF_INLET_USAGE, i, "node_host", true);
+        else if (ctx.inlet_usages.node_index[uu] == node_idx)
+            result.add(SWMM_REF_INLET_USAGE, i, "node_index", true);
     }
     for (int i = ctx.ext_inflows.count() - 1; i >= 0; --i)
         if (ctx.ext_inflows.node_idx[static_cast<std::size_t>(i)] == node_idx)
@@ -480,13 +478,18 @@ CascadeResult delete_node(SimulationContext& ctx, int node_idx) {
         }
     }
 
-    // --- Step 4: nullify inlet_usage node_index references ---
-    const int niu = ctx.inlet_usages.count();
-    for (int i = 0; i < niu; ++i) {
-        if (ctx.inlet_usages.node_index[static_cast<std::size_t>(i)] == node_idx) {
-            ctx.inlet_usages.node_index[static_cast<std::size_t>(i)] = -1;
-            result.add(SWMM_REF_INLET_USAGE, i, "node_index", false);
-        }
+    // --- Step 4: cascade-delete inlet_usage rows tied to this node ---
+    // Mirrors the link case (delete_link Step 2): a node-hosted row IS the
+    // inlet junction being deleted, and a row whose capture node is deleted
+    // has nowhere to deliver captured flow. Descending so the erase does not
+    // shift rows still to be visited.
+    for (int i = ctx.inlet_usages.count() - 1; i >= 0; --i) {
+        const auto uu = static_cast<std::size_t>(i);
+        const bool hosted  = ctx.inlet_usages.node_host[uu] == node_idx;
+        const bool capture = ctx.inlet_usages.node_index[uu] == node_idx;
+        if (!hosted && !capture) continue;
+        result.add(SWMM_REF_INLET_USAGE, i, hosted ? "node_host" : "node_index", true);
+        erase_inlet_usage(ctx, i);
     }
 
     // --- Step 4b: cascade-delete ext-inflow / DWF / RDII rows for this node ---
@@ -539,6 +542,7 @@ CascadeResult delete_node(SimulationContext& ctx, int node_idx) {
     renumber_refs(ctx.subcatches.outlet_node, node_idx);
     renumber_refs(ctx.node_subtypes.outfalls.route_to, node_idx);
     renumber_refs(ctx.inlet_usages.node_index, node_idx);
+    renumber_refs(ctx.inlet_usages.node_host, node_idx);
     // gw_node in subcatches also references nodes
     renumber_refs(ctx.subcatches.gw_node, node_idx);
     // inflow-row stores also key on node index (rows for node_idx already erased)
@@ -1487,13 +1491,7 @@ CascadeResult delete_inlet(SimulationContext& ctx, int inlet_idx) {
     }
 
     // --- Step 2: erase the inlet-design row ---
-    {
-        auto& I = ctx.inlets;
-        const auto ui = static_cast<std::size_t>(inlet_idx);
-        auto e = [&](auto& v) { if (ui < v.size()) v.erase(v.begin() + static_cast<std::ptrdiff_t>(inlet_idx)); };
-        e(I.names); e(I.inlet_type); e(I.length); e(I.width);
-        e(I.grate_type); e(I.open_area); e(I.splash_veloc);
-    }
+    ctx.inlets.erase_row(inlet_idx);
 
     // --- Step 3: renumber ---
     renumber_refs(ctx.inlet_usages.design_index, inlet_idx);

@@ -183,9 +183,16 @@ static const std::unordered_map<int, const char*>& error_table() {
         {611, "Virtual Junction %s connects conduits with different cross sections."},
         {613, "Virtual Junction %s has a conduit with a nonzero offset."},
         {615, "Virtual Junction %s conduit inverts do not agree at the node."},
-        {617, "Virtual Junction %s cannot receive lateral inflow."},
+        {617, "Virtual Junction %s cannot be coupled to a 2D surface mesh."},
         {619, "Virtual Junction %s requires DYNWAVE or FV flow routing."},
         {621, "too many items for Virtual Junction %s."},
+        {623, "Inlet Junction %s must connect two STREET conduits."},
+        {625, "Inlet Junction %s references an unknown inlet design."},
+        {627, "Inlet Junction %s has an invalid capture node."},
+        {629, "Inlet Junction %s has a conduit that also carries an [INLET_USAGE] entry."},
+        {631, "too many items for Inlet Junction %s."},
+        {633, "Inlet Junction %s has no inlet design assigned."},
+        {635, "Inlet %s cannot be used with the cross section of its host."},
     };
     return table;
 }

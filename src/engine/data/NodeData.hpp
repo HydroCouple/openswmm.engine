@@ -178,6 +178,18 @@ struct NodeData {
     std::vector<uint8_t>    is_virtual;
 
     /**
+     * @brief Inlet-junction flag (0 = plain node, 1 = inlet junction).
+     *
+     * @details An inlet junction is a virtual junction (`is_virtual` is always
+     *          set alongside this flag) that additionally carries a street
+     *          inlet: it sits between two STREET conduits and diverts captured
+     *          gutter flow to a separate capture node through the usage row
+     *          `InletUsageStore::find_by_node_host(idx)` (INP section
+     *          [INLET_JUNCTIONS]). Refactored engine only.
+     */
+    std::vector<uint8_t>    is_inlet;
+
+    /**
      * @brief Rendering-only rim (ground) depth above the invert, project
      *        length units. 0 = unset.
      *
@@ -724,6 +736,7 @@ struct NodeData {
         sur_depth.assign(un, 0.0);
         ponded_area.assign(un, 0.0);
         is_virtual.assign(un, 0);
+        is_inlet.assign(un, 0);
         rim_depth.assign(un, 0.0);
 
         // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables.
@@ -813,6 +826,7 @@ struct NodeData {
         g(invert_elev, 0.0); g(full_depth, 0.0); g(init_depth, 0.0);
         g(sur_depth, 0.0); g(ponded_area, 0.0);
         g(is_virtual, static_cast<uint8_t>(0));
+        g(is_inlet, static_cast<uint8_t>(0));
         g(rim_depth, 0.0);
         // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables.
         g(depth, 0.0); g(head, 0.0); g(volume, 0.0);
@@ -875,7 +889,7 @@ struct NodeData {
         if (type.capacity() >= un) return;
         auto r = [&](auto& vec) { vec.reserve(un); };
         r(type); r(invert_elev); r(full_depth); r(init_depth);
-        r(sur_depth); r(ponded_area); r(is_virtual); r(rim_depth); r(depth);
+        r(sur_depth); r(ponded_area); r(is_virtual); r(is_inlet); r(rim_depth); r(depth);
         r(head); r(volume); r(lat_flow); r(user_lat_flow);
         r(runoff_inflow); r(gw_inflow); r(ext_inflow); r(dwf_inflow);
         r(rdii_inflow); r(iface_inflow); r(coupling_inflow); r(coupling_volume);
@@ -908,7 +922,7 @@ struct NodeData {
         auto e = [&](auto& v) { if (ui < v.size()) v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx)); };
 
         e(type); e(invert_elev); e(full_depth); e(init_depth); e(sur_depth); e(ponded_area);
-        e(is_virtual); e(rim_depth);
+        e(is_virtual); e(is_inlet); e(rim_depth);
 
         // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables;
         // its rows are erased/renumbered by NodeSubtypes::erase_node (called by the
@@ -1013,6 +1027,7 @@ struct NodeData {
         sur_depth.shrink_to_fit();
         ponded_area.shrink_to_fit();
         is_virtual.shrink_to_fit();
+        is_inlet.shrink_to_fit();
         rim_depth.shrink_to_fit();
 
         // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables.

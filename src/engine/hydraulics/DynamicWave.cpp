@@ -1040,6 +1040,17 @@ void DWSolver::vjPrepareIteration(const SimulationContext& ctx, double dt) {
         p.dq4j = 0.0;
         if (!p.through || p.up_link < 0 || p.dn_link < 0) continue;
 
+        // Inlet junctions run mechanism 1 (zero storage) ONLY. Mechanisms 2-4
+        // — the shared junction sigma, the cross-junction upwind state and the
+        // dq4_j convective correction — assume a SEALED pair with no lateral
+        // exchange at the node; an inlet junction is unsealed (it floods) and
+        // carries a capture sink, so leaving p.active at 0 keeps the pair's
+        // per-link momentum treatment. See
+        // plans/INLET_JUNCTION_IMPLEMENTATION_PLAN_2026-09-05.md §4.1.
+        if (p.node >= 0 &&
+            static_cast<std::size_t>(p.node) < ctx.nodes.is_inlet.size() &&
+            ctx.nodes.is_inlet[static_cast<std::size_t>(p.node)] != 0) continue;
+
         const auto uu = static_cast<std::size_t>(p.up_link);
         const auto ud = static_cast<std::size_t>(p.dn_link);
         const auto ucu = static_cast<std::size_t>(tile_uj_to_ci_[uu]);
@@ -3882,11 +3893,21 @@ void DWSolver::commitNodeDepthState(SimulationContext& ctx, int node_idx,
     // --- Depth cannot be negative ---
     y_new = std::max(y_new, 0.0);
 
+    // --- Inlet junction: virtual, but NOT sealed ---
+    // An inlet junction sits on a street surface, so water above the section
+    // leaves the corridor: it must flood (or pond) like an ordinary junction
+    // rather than surcharge without bound. It keeps every other virtual-
+    // junction property — the unfloored natural surface area and the
+    // zero-storage head update in setNodeDepth still apply.
+    // See plans/INLET_JUNCTION_IMPLEMENTATION_PLAN_2026-09-05.md §2.2.7.
+    const bool is_inlet_node =
+        (ui < ctx.nodes.is_inlet.size() && ctx.nodes.is_inlet[ui] != 0);
+
     // --- Virtual junction: zero storage, no flooding by construction ---
     // The head may rise above the pipe crown without cap (surcharge is
     // expressed through the connecting conduits' slot/EXTRAN treatment,
     // like a sealed manhole); volume and overflow are identically zero.
-    if (t.is_virtual != 0) {
+    if (t.is_virtual != 0 && !is_inlet_node) {
         nodes.overflow[ui] = 0.0;
         nodes.volume[ui]   = 0.0;
         if (dt > 0.0)
@@ -3903,7 +3924,13 @@ void DWSolver::commitNodeDepthState(SimulationContext& ctx, int node_idx,
         (ctx.options.allow_ponding || is_coupled) && (t.ponded_area > 0.0);
 
     // --- Determine max non-flooded depth ---
+    // Plan D-E2: an inlet junction's flood threshold is the [INLET_JUNCTIONS]
+    // MaxDepth token when one was supplied (carried on NodeData::rim_depth),
+    // else the derived street y_full. Never below the derived depth, so a
+    // rendering-only rim cannot make the node flood early.
     double y_max = t.full_depth;
+    if (is_inlet_node && nodes.rim_depth[ui] > 0.0)
+        y_max = std::max(y_max, nodes.rim_depth[ui]);
     if (!can_pond) y_max += t.sur_depth;
 
     // --- Flooding logic (matching legacy getFloodedDepth) ---
@@ -3928,6 +3955,13 @@ void DWSolver::commitNodeDepthState(SimulationContext& ctx, int node_idx,
         nodes.volume[ui] = node::getVolume(nodes, node_idx, y_new, &ctx.tables,
                                            unit_sys_, &ctx.node_subtypes);
     }
+
+    // An inlet junction floods (above) but is still a zero-storage node: the
+    // half-link surface area it carries is the continuity linearization of the
+    // adjacent conduits, not storage of its own, and node::getVolume would
+    // book the artificial MIN_SURFAREA junction volume the feature exists to
+    // remove (VJ plan D3; inlet plan §2.2.7 "no MIN_SURFAREA floor").
+    if (is_inlet_node) nodes.volume[ui] = 0.0;
 
     // --- Compute change in depth w.r.t. time (for CFL) ---
     if (dt > 0.0) {

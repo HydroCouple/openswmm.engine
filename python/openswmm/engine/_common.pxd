@@ -209,6 +209,10 @@ cdef extern from "openswmm_nodes.h":
     cdef int swmm_node_is_virtual(SWMM_Engine e, int idx, int* is_virtual)
     cdef int swmm_node_set_virtual(SWMM_Engine e, int idx, int make_virtual)
     cdef int swmm_node_virtual_eligible(SWMM_Engine e, int idx, int* rule_code)
+    cdef int swmm_node_is_inlet(SWMM_Engine e, int idx, int* is_inlet)
+    cdef int swmm_node_inlet_eligible(SWMM_Engine e, int idx, int for_drop_inlet,
+                                       int* rule_code)
+    cdef int swmm_node_set_inlet(SWMM_Engine e, int idx, int make_inlet)
     # Geometry getters
     cdef int swmm_node_get_type(SWMM_Engine e, int idx, int* type)
     cdef int swmm_node_get_invert_elev(SWMM_Engine e, int idx, double* elev)
@@ -828,6 +832,46 @@ cdef extern from "openswmm_infrastructure.h":
                                     char* grate_type, int grate_buflen, double* open_area, double* splash_veloc)
     cdef int swmm_inlet_get_type(SWMM_Engine e, int idx, char* buf, int buflen)
     cdef int swmm_inlet_count(SWMM_Engine e)
+    # Full inlet-design surface (2026-09-05): every field of the [INLETS]
+    # grammar, including curb height, throat angle, combination inlets and
+    # custom capture curves.
+    cdef struct SWMM_InletDesign:
+        int    type
+        double grate_length
+        double grate_width
+        int    grate_type
+        double open_area
+        double splash_veloc
+        double curb_length
+        double curb_height
+        int    throat
+        double slot_length
+        double slot_width
+        char   curve_id[64]
+        int    curve_kind
+    cdef int swmm_inlet_get_design(SWMM_Engine e, int idx, SWMM_InletDesign* out)
+    cdef int swmm_inlet_set_design(SWMM_Engine e, int idx, const SWMM_InletDesign* design)
+    cdef int swmm_inlet_get_comment(SWMM_Engine e, int idx, char* buf, int buflen)
+    cdef int swmm_inlet_set_comment(SWMM_Engine e, int idx, const char* text)
+    # Inlet usage rows — one per placement, hosted by a conduit
+    # ([INLET_USAGE]) or by an inlet junction ([INLET_JUNCTIONS]).
+    cdef struct SWMM_InletUsage:
+        int    host_kind
+        int    host_idx
+        int    design_idx
+        int    capture_node_idx
+        int    num_inlets
+        double pct_clogged
+        double flow_limit
+        double local_depress
+        double local_width
+        int    placement
+    cdef int swmm_inlet_usage_count(SWMM_Engine e)
+    cdef int swmm_inlet_usage_find_link(SWMM_Engine e, int link_idx)
+    cdef int swmm_inlet_usage_find_node(SWMM_Engine e, int node_idx)
+    cdef int swmm_inlet_usage_get(SWMM_Engine e, int usage_idx, SWMM_InletUsage* out)
+    cdef int swmm_inlet_usage_set(SWMM_Engine e, const SWMM_InletUsage* usage, int* usage_idx)
+    cdef int swmm_inlet_usage_remove(SWMM_Engine e, int usage_idx)
     # LID controls
     cdef int swmm_lid_add(SWMM_Engine e, const char* id, int type)
     cdef int swmm_lid_set_surface(SWMM_Engine e, int idx, double storage, double roughness, double slope)
@@ -1126,6 +1170,14 @@ cdef extern from "openswmm_edit.h":
                                 int* new_node_idx, int* new_link_idx)
     cdef int swmm_virtual_junction_fuse(SWMM_Engine e, int node_idx,
                                         int* surviving_link_idx)
+    cdef int swmm_conduit_split_inlet(SWMM_Engine e, int link_idx, double t,
+                                      const char* new_node_name,
+                                      const char* new_link_name,
+                                      const char* inlet_id,
+                                      const char* capture_node,
+                                      int* new_node_idx, int* new_link_idx)
+    cdef int swmm_inlet_junction_fuse(SWMM_Engine e, int node_idx,
+                                      int* surviving_link_idx)
 
 
 cdef extern from "openswmm_forcing.h":

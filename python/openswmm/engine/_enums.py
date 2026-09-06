@@ -1263,3 +1263,112 @@ class ReactionExprForm(IntEnum):
     RATE = 1
     EQUIL = 2
     FORMULA = 3
+
+
+class InletType(IntEnum):
+    """Street-inlet design type (C{[INLETS]} token 2).
+
+    Mirrors C{SWMM_InletType}. C{COMBO} has no keyword in the .inp grammar:
+    legacy encodes a combination inlet as a C{GRATE} line and a C{CURB} line
+    sharing one name, which the parser merges into a single COMBO design.
+
+    @cvar GRATE: Grate inlet in the gutter.
+    @cvar CURB: Curb-opening inlet.
+    @cvar COMBO: Grate plus curb opening (written back as two lines).
+    @cvar SLOTTED: Slotted drain.
+    @cvar DROP_GRATE: Grate inlet in a drainage channel (RECT_OPEN/TRAPEZOIDAL).
+    @cvar DROP_CURB: Curb opening in a drainage channel; always solved on-sag.
+    @cvar CUSTOM: Capture from a user DIVERSION or RATING curve.
+    """
+
+    GRATE = 0
+    CURB = 1
+    COMBO = 2
+    SLOTTED = 3
+    DROP_GRATE = 4
+    DROP_CURB = 5
+    CUSTOM = 6
+
+
+class GrateType(IntEnum):
+    """Grate bar pattern (HEC-22 Table 4-6). Mirrors C{SWMM_GrateType}.
+
+    @cvar P_BAR_50: Parallel bars at 50 mm spacing.
+    @cvar P_BAR_50x100: Parallel bars at 50 mm with 100 mm cross bars.
+    @cvar P_BAR_30: Parallel bars at 30 mm spacing.
+    @cvar CURVED_VANE: Curved vane grate.
+    @cvar TILT_BAR_45: 45-degree tilt bar grate.
+    @cvar TILT_BAR_30: 30-degree tilt bar grate.
+    @cvar RETICULINE: Reticuline (honeycomb) grate.
+    @cvar GENERIC: User-supplied open-area fraction and splash-over velocity.
+    """
+
+    P_BAR_50 = 0
+    P_BAR_50x100 = 1
+    P_BAR_30 = 2
+    CURVED_VANE = 3
+    TILT_BAR_45 = 4
+    TILT_BAR_30 = 5
+    RETICULINE = 6
+    GENERIC = 7
+
+
+class ThroatType(IntEnum):
+    """Curb-opening throat orientation. Mirrors C{SWMM_ThroatType}.
+
+    Sets the orifice head of a curb-opening inlet operating on sag. The
+    C{[INLETS]} C{DROP_CURB} form has no throat token; VERTICAL is used.
+
+    @cvar HORIZONTAL: Horizontal throat.
+    @cvar INCLINED: Inclined throat.
+    @cvar VERTICAL: Vertical throat (the .inp default).
+    """
+
+    HORIZONTAL = 0
+    INCLINED = 1
+    VERTICAL = 2
+
+
+class InletCurveKind(IntEnum):
+    """Capture-curve kind of a C{CUSTOM} inlet design.
+
+    Mirrors C{SWMM_InletCurveKind}. The C{[INLETS]} grammar carries no kind
+    token — the named curve's own C{[CURVES]} type is the authority, so the
+    engine re-derives this when the model is validated.
+
+    @cvar NONE: Not resolved yet (the curve has not been seen).
+    @cvar DIVERSION: Captured flow as a function of approach flow.
+    @cvar RATING: Captured flow as a function of water depth.
+    """
+
+    NONE = 0
+    DIVERSION = 1
+    RATING = 2
+
+
+class InletPlacement(IntEnum):
+    """Inlet placement mode (C{[INLET_USAGE]} token 9).
+
+    Mirrors C{SWMM_InletPlacement}.
+
+    @cvar AUTOMATIC: On-sag at a network sink, on-grade otherwise. For an
+        inlet junction the test is slope-based (both attached street conduits
+        fall toward the node).
+    @cvar ON_GRADE: Continuous-slope capture (HEC-22 4-16..4-25).
+    @cvar ON_SAG: Sag-point capture: weir/orifice on ponded depth.
+    """
+
+    AUTOMATIC = 0
+    ON_GRADE = 1
+    ON_SAG = 2
+
+
+class InletHostKind(IntEnum):
+    """What an inlet-usage row is attached to. Mirrors C{SWMM_InletHostKind}.
+
+    @cvar LINK: A conduit — the row came from / is written to C{[INLET_USAGE]}.
+    @cvar NODE: An inlet junction — C{[INLET_JUNCTIONS]}.
+    """
+
+    LINK = 0
+    NODE = 1

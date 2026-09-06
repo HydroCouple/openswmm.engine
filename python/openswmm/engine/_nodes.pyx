@@ -474,17 +474,71 @@ cdef class Node:
         """Dry-run check of the virtual-junction usage rules for this node.
 
         C{0} when the node satisfies every structural rule (exactly two
-        attached conduits of identical cross-section, zero offsets, no
-        lateral inflow sources, dynamic-wave routing) — i.e. setting
-        L{is_virtual} to C{True} would succeed on a JUNCTION-typed node —
-        else the distinct ERR_VJ_* rule code (609-621) identifying the
-        violated rule. Read-only; no state is changed.
+        attached conduits of identical cross-section, zero offsets, not a
+        2D surface-coupling point, dynamic-wave or FV routing) — i.e.
+        setting L{is_virtual} to C{True} would succeed on a JUNCTION-typed
+        node — else the distinct ERR_VJ_* rule code (609-621) identifying
+        the violated rule. Point lateral inflows ([INFLOWS], [DWF], RDII,
+        subcatchment outlets, LID drains) do not disqualify a node.
+        Read-only; no state is changed.
 
         @rtype: int
         """
         _check_fresh(self)
         cdef int code = 0
         _check(swmm_node_virtual_eligible(_h(self._solver), self._index, &code))
+        return code
+
+    @property
+    def is_inlet(self) -> bool:
+        """C{True} when this node is an B{inlet junction}.
+
+        An inlet junction is a virtual junction on a STREET conduit pair that
+        also carries a street inlet: it captures gutter flow from the
+        approaching conduit, delivers it to a designated capture (underdrain)
+        node, passes the uncaptured flow on through the downstream conduit,
+        and receives the capture node's overflow back as backflow (INP
+        C{[INLET_JUNCTIONS]}; refactored engine only). C{is_inlet} implies
+        L{is_virtual}.
+
+        Setting to C{True} runs the virtual-junction rules plus the street
+        shape rule (623) and promotes the node to a virtual junction first if
+        it is not one; a violated rule raises and leaves the node unchanged.
+        Setting to C{False} demotes it and deletes its inlet-usage row (the
+        node stays a virtual junction).
+
+        @rtype: bool
+        """
+        _check_fresh(self)
+        cdef int v = 0
+        _check(swmm_node_is_inlet(_h(self._solver), self._index, &v))
+        return v != 0
+
+    @is_inlet.setter
+    def is_inlet(self, value) -> None:
+        _check_fresh(self)
+        _check(swmm_node_set_inlet(_h(self._solver), self._index,
+                                   1 if value else 0))
+
+    def inlet_rule_violation(self, bint for_drop_inlet=False) -> int:
+        """Dry-run check of the inlet-junction usage rules for this node.
+
+        C{0} when setting L{is_inlet} to C{True} would succeed — every
+        virtual-junction rule holds B{and} both attached conduits carry the
+        cross-section the design needs — else the violated rule's code (the
+        ERR_VJ_* codes 609-621, or 623 when the conduits are not STREET).
+        Read-only; no state is changed.
+
+        @param for_drop_inlet: Check against a C{DROP_GRATE}/C{DROP_CURB}
+            design, whose conduits must be C{RECT_OPEN} or C{TRAPEZOIDAL}
+            rather than C{STREET}.
+        @type for_drop_inlet: bool
+        @rtype: int
+        """
+        _check_fresh(self)
+        cdef int code = 0
+        _check(swmm_node_inlet_eligible(_h(self._solver), self._index,
+                                        1 if for_drop_inlet else 0, &code))
         return code
 
     @property

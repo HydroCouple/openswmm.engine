@@ -1202,6 +1202,188 @@ static void validate_virtual_junctions(SimulationContext& ctx) {
     }
 }
 
+// ============================================================================
+// Inlet reference resolution + validate_inlet_junctions()
+// ============================================================================
+// Refactored engine only — see
+// plans/INLET_JUNCTION_IMPLEMENTATION_PLAN_2026-09-05.md §2.4/§4.8. Runs with
+// validate_virtual_junctions, after slope computation and adverse-slope
+// reversal, so the attachment orientation observed here is final.
+
+namespace {
+
+/// Up to two conduits attached to `node_idx`; returns how many ends touch it.
+int ij_attached_conduits(const SimulationContext& ctx, int node_idx,
+                         int& link_a, int& link_b) {
+    link_a = link_b = -1;
+    int touches = 0;
+    for (int j = 0; j < ctx.n_links(); ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
+        const int ends[2] = { ctx.links.node1[uj], ctx.links.node2[uj] };
+        for (const int n : ends) {
+            if (n != node_idx) continue;
+            if      (touches == 0) link_a = j;
+            else if (touches == 1) link_b = j;
+            ++touches;
+        }
+    }
+    return touches;
+}
+
+/// Index into ctx.streets for a link carrying a STREET cross-section, else -1.
+/// The street is referenced BY NAME on the link (LinkData::pump_curve_name is
+/// the named-xsect slot — see the STREET resolution pass below), so a street
+/// re-assigned to the conduit can never desynchronise the usage row.
+int ij_street_of_link(const SimulationContext& ctx, int link_idx) {
+    if (link_idx < 0 || link_idx >= ctx.n_links()) return -1;
+    const auto uj = static_cast<std::size_t>(link_idx);
+    if (ctx.links.xsect_shape[uj] != XsectShape::STREET_XSECT) return -1;
+    if (uj >= ctx.links.pump_curve_name.size()) return -1;
+    const std::string& sname = ctx.links.pump_curve_name[uj];
+    if (sname.empty()) return -1;
+    for (int s = 0; s < ctx.streets.count(); ++s)
+        if (ieq(ctx.streets.names[static_cast<std::size_t>(s)], sname)) return s;
+    return -1;
+}
+
+bool ij_is_drop_design(const SimulationContext& ctx, int design_idx) {
+    if (design_idx < 0 || design_idx >= ctx.inlets.count()) return false;
+    const std::string& t = ctx.inlets.inlet_type[static_cast<std::size_t>(design_idx)];
+    return t == "DROP_GRATE" || t == "DROP_CURB";
+}
+
+} // namespace
+
+static void resolve_inlet_references(SimulationContext& ctx) {
+    // --- CUSTOM designs: capture curve name → index + kind ---
+    for (int i = 0; i < ctx.inlets.count(); ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        if (ctx.inlets.inlet_type[ui] != "CUSTOM") continue;
+        const int c = ctx.find_curve(ctx.inlets.curve_id[ui]);
+        if (c < 0) {
+            ctx.errors.push_back(format_error(ERR_NAME, ctx.inlets.curve_id[ui]));
+            continue;
+        }
+        const TableType tt = ctx.tables[c].type;
+        if (tt == TableType::CURVE_DIVERSION)   ctx.inlets.curve_kind[ui] = 1;
+        else if (tt == TableType::CURVE_RATING) ctx.inlets.curve_kind[ui] = 2;
+        else {
+            // Legacy drops the usage (WARN12); the curve itself is the defect,
+            // so report it against the only curve-specific parse code we have.
+            ctx.errors.push_back(format_error(ERR_CURVE_SEQUENCE, ctx.inlets.curve_id[ui],
+                                              "(a custom inlet needs a DIVERSION or RATING curve)"));
+            continue;
+        }
+        ctx.inlets.curve_index[ui] = c;
+    }
+
+    // --- Usage rows: pending names, host conduit, street, shape ---
+    for (int r = 0; r < ctx.inlet_usages.count(); ++r) {
+        const auto ur = static_cast<std::size_t>(r);
+        auto& U = ctx.inlet_usages;
+        const int host_node = U.node_host[ur];
+
+        if (host_node >= 0) {
+            const std::string& node_name = ctx.node_names.name_of(host_node);
+            // Design name → index (625).
+            if (!U.pending_design_name[ur].empty()) {
+                int di = -1;
+                for (int i = 0; i < ctx.inlets.count(); ++i)
+                    if (ieq(ctx.inlets.names[static_cast<std::size_t>(i)],
+                            U.pending_design_name[ur])) { di = i; break; }
+                if (di < 0)
+                    ctx.errors.push_back(format_error(ERR_IJ_DESIGN, node_name,
+                                                      "('" + U.pending_design_name[ur] + "')"));
+                U.design_index[ur] = di;
+                U.pending_design_name[ur].clear();
+            }
+            // Capture node name → index (627): must exist, differ from the
+            // host, and be a real (non-virtual) node.
+            if (!U.pending_capture_name[ur].empty()) {
+                const int ci = ctx.node_names.find(U.pending_capture_name[ur]);
+                const bool bad = (ci < 0) || (ci == host_node) ||
+                                 ctx.nodes.is_virtual[static_cast<std::size_t>(ci)] != 0;
+                if (bad)
+                    ctx.errors.push_back(format_error(ERR_IJ_CAPTURE_NODE, node_name,
+                                                      "('" + U.pending_capture_name[ur] + "')"));
+                U.node_index[ur] = bad ? -1 : ci;
+                U.pending_capture_name[ur].clear();
+            }
+        } else if (!U.pending_capture_name[ur].empty()) {
+            // Conduit-hosted row whose capture node was a forward reference
+            // in [INLET_USAGE]: bind it now, ERR_NAME (legacy
+            // inlet_readUsageParams parity) if the node never appeared.
+            const int ci = ctx.node_names.find(U.pending_capture_name[ur]);
+            if (ci < 0)
+                ctx.errors.push_back(format_error(ERR_NAME, U.pending_capture_name[ur]));
+            U.node_index[ur] = ci;
+            U.pending_capture_name[ur].clear();
+        }
+
+        // Street geometry always comes from the host conduit's cross-section,
+        // never from the row (plan §4.8) — so it is resolved for both host
+        // kinds and stays -1 when that conduit is not a street.
+        const int host_link = (host_node >= 0)
+            ? edit::ij_host_conduit(ctx, /*host_kind=*/1, host_node)
+            : U.link_index[ur];
+        U.street_index[ur] = ij_street_of_link(ctx, host_link);
+
+        // Shape compatibility, LINK-hosted rows only. Legacy simply drops an
+        // incompatible conduit usage with WARNING 12 rather than refusing the
+        // model, so this is a warning and the row is disarmed by clearing its
+        // design. A node-hosted row keeps its design: an inlet junction has a
+        // dedicated rule (623) which validate_inlet_junctions below reports,
+        // and disarming the row here would mask it behind 633.
+        if (host_node < 0 && U.design_index[ur] >= 0 &&
+            !edit::ij_usage_shape_ok(ctx, U.design_index[ur], host_link)) {
+            const std::string host = (host_link >= 0)
+                ? ("Link " + ctx.link_names.name_of(host_link))
+                : std::string("an unknown host");
+            ctx.warnings.push_back(format_error(
+                ERR_INLET_USAGE_SHAPE,
+                ctx.inlets.names[static_cast<std::size_t>(U.design_index[ur])],
+                "(" + host + "; the inlet is ignored)"));
+            U.design_index[ur] = -1;
+        }
+    }
+}
+
+static void validate_inlet_junctions(SimulationContext& ctx) {
+    const int n_nodes = ctx.nodes.count();
+    for (int i = 0; i < n_nodes; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        if (ui >= ctx.nodes.is_inlet.size() || !ctx.nodes.is_inlet[ui]) continue;
+        const std::string& name = ctx.node_names.name_of(i);
+
+        // Rule 633: the node must own a usage row. The virtual-junction rules
+        // (609/611/613/617/619) already ran for this node in
+        // validate_virtual_junctions — is_inlet implies is_virtual.
+        const int row = ctx.inlet_usages.find_by_node_host(i);
+        if (row < 0 || ctx.inlet_usages.design_index[static_cast<std::size_t>(row)] < 0) {
+            ctx.errors.push_back(format_error(ERR_IJ_NO_USAGE, name));
+            continue;
+        }
+
+        int j1 = -1, j2 = -1;
+        if (ij_attached_conduits(ctx, i, j1, j2) != 2) continue;  // 609 already reported
+
+        // Rule 623: both conduits carry the street section the inlet needs.
+        const int design = ctx.inlet_usages.design_index[static_cast<std::size_t>(row)];
+        if (!edit::ij_usage_shape_ok(ctx, design, j1) ||
+            !edit::ij_usage_shape_ok(ctx, design, j2))
+            ctx.errors.push_back(format_error(ERR_IJ_NOT_STREET, name,
+                ij_is_drop_design(ctx, design)
+                    ? "(a drop inlet needs RECT_OPEN or TRAPEZOIDAL conduits)"
+                    : ""));
+
+        // Rule 629: no conduit-attribute inlet on the same pair (double capture).
+        if (ctx.inlet_usages.find_by_link(j1) >= 0 ||
+            ctx.inlet_usages.find_by_link(j2) >= 0)
+            ctx.errors.push_back(format_error(ERR_IJ_USAGE_ON_PAIR, name));
+    }
+}
+
 void resolve_cross_references(SimulationContext& ctx) {
     // -------------------------------------------------------------------------
     // Final counts → allocate SoA arrays to exact size
@@ -2561,6 +2743,13 @@ void resolve_cross_references(SimulationContext& ctx) {
     // and adverse-slope reversal so orientation is final)
     // -------------------------------------------------------------------------
     validate_virtual_junctions(ctx);
+
+    // -------------------------------------------------------------------------
+    // Inlet references (deferred [INLET_JUNCTIONS] names, street index, custom
+    // curves, shape compatibility) then the inlet-junction rules 623/629/633
+    // -------------------------------------------------------------------------
+    resolve_inlet_references(ctx);
+    validate_inlet_junctions(ctx);
 
     // -------------------------------------------------------------------------
     // Node fullDepth adjustment from connected link crowns

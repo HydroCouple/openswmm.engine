@@ -21,6 +21,12 @@ docs/2D_MULTISCALE_FORMULATION_REVIEW.md
 # Keep the canonical 2D fixture — tests/unit/engine/CMakeLists.txt and
 # python/tests/engine/{test_2d_evap,test_surface2d_view}.py load it from here.
 !/examples/2d_complete_example.inp
+# Keep the street-inlet / inlet-junction example (deck + README only; the
+# .rpt/.out a run writes next to them stay out).
+!/examples/inlets/
+/examples/inlets/*
+!/examples/inlets/street_inlet_junction.inp
+!/examples/inlets/README.md
 
 # Eclipse Stuff
 .metadata/
