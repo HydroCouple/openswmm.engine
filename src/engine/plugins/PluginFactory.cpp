@@ -56,6 +56,10 @@
 #if defined(_WIN32)
 #  define WIN32_LEAN_AND_MEAN
 #  include <windows.h>
+#elif defined(__EMSCRIPTEN__)
+   // WebAssembly: no dynamic loading (engine is statically linked into the
+   // .wasm). platform_* helpers below are stubs; built-in plugins
+   // (register_builtin_infos) are unaffected.
 #elif defined(__APPLE__) || defined(__linux__)
 #  include <dlfcn.h>
 #else
@@ -86,6 +90,9 @@ PluginFactory::~PluginFactory() {
 void* PluginFactory::platform_load(const std::string& path) {
 #if defined(_WIN32)
     return static_cast<void*>(::LoadLibraryA(path.c_str()));
+#elif defined(__EMSCRIPTEN__)
+    (void)path;
+    return nullptr;
 #else
     return ::dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
 #endif
@@ -95,6 +102,8 @@ void PluginFactory::platform_unload(void* handle) noexcept {
     if (!handle) return;
 #if defined(_WIN32)
     ::FreeLibrary(static_cast<HMODULE>(handle));
+#elif defined(__EMSCRIPTEN__)
+    // nothing to unload
 #else
     ::dlclose(handle);
 #endif
@@ -105,6 +114,9 @@ void* PluginFactory::platform_sym(void* handle, const char* sym) noexcept {
 #if defined(_WIN32)
     return reinterpret_cast<void*>(
         ::GetProcAddress(static_cast<HMODULE>(handle), sym));
+#elif defined(__EMSCRIPTEN__)
+    (void)sym;
+    return nullptr;
 #else
     return ::dlsym(handle, sym);
 #endif
@@ -118,6 +130,8 @@ std::string PluginFactory::platform_error() noexcept {
                      MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
                      buf, sizeof(buf), nullptr);
     return std::string(buf);
+#elif defined(__EMSCRIPTEN__)
+    return "dynamic plugin loading is not available in WebAssembly";
 #else
     const char* msg = ::dlerror();
     return msg ? std::string(msg) : "(unknown dlerror)";
@@ -143,6 +157,8 @@ std::string PluginFactory::get_library_directory() {
             return p.parent_path().string();
         }
     }
+    return {};
+#elif defined(__EMSCRIPTEN__)
     return {};
 #else
     // Use dladdr to find the shared library containing this function
