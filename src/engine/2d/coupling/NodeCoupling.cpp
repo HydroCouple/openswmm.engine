@@ -392,10 +392,10 @@ std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh,
         // The coupling flux is distributed to triangles sharing this vertex
         cp.cell_idx = -1;
         int nt = mesh.n_triangles();
-        for (int t = 0; t < nt; ++t) {
-            if (mesh.tri_v0[t] == v || mesh.tri_v1[t] == v || mesh.tri_v2[t] == v) {
-                cp.cell_idx = t;
-                break;
+        for (int t = 0; t < nt && cp.cell_idx < 0; ++t) {
+            const int nvc = mesh.cell_vertex_count(t);
+            for (int k = 0; k < nvc; ++k) {
+                if (mesh.cell_vertex(t, k) == v) { cp.cell_idx = t; break; }
             }
         }
         if (cp.cell_idx < 0) continue;

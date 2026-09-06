@@ -529,6 +529,17 @@ if(OPENSWMM_BUILD_2D)
     # multiscale dam-break, K-tier ≈ global-dt equivalence, and the
     # fine-patch-in-coarse-watershed stability case.
     add_gtest_unit(test_engine_2d_lts_equivalence test_2d_lts_equivalence.cpp)
+    # Mixed triangle/quad meshes (plans/2D_TRI_QUAD_MESH_PLAN_2026-09-06.md):
+    # padded stride-4 layout, quad geometry, B&S 2007 quad VFR closure vs a
+    # brute-force integration oracle, marcher gates on quads / mixed strips
+    # (lake at rest, dry wall, positivity with four exporting faces, Manning
+    # quad strip), [2D_QUADS] parser + MOMENTUM_EQUATION option contract.
+    add_gtest_unit(test_engine_2d_quad_mesh test_2d_quad_mesh.cpp)
+    # MOMENTUM_EQUATION FULL_SWE / DIFFUSIVE_WAVE closures
+    # (plans/2D_FULL_SWE_SHOCK_CAPTURING_PLAN_2026-09-05.md): HLLC kernel
+    # properties, well-balanced rest, Stoker / Ritter dam breaks vs exact
+    # solutions (first and second order), Manning steady slope, conservation.
+    add_gtest_unit(test_engine_2d_momentum_modes test_2d_momentum_modes.cpp)
     # Overland transport S1 (D-2DT1..D-2DT3): species MASS rides the marcher's
     # own face accumulators on the face's tier. The uniform-concentration
     # property to round-off across a 6-tier dam-break with a wet/dry front is

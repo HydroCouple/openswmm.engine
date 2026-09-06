@@ -127,15 +127,59 @@ cdef class Surface2D:
 
     @property
     def n_triangles(self) -> int:
-        """Number of mesh triangles.
+        """Number of mesh cells (triangles + quads; historical name).
 
-        @return: Triangle count.
+        @return: Cell count.
         @rtype: int
         @raise RuntimeError: If the C API call fails.
         """
         cdef int count = 0
         _check(swmm_2d_triangle_count(self._engine, &count))
         return count
+
+    @property
+    def n_cells(self) -> int:
+        """Number of mesh cells (triangles + quads)."""
+        cdef int count = 0
+        _check(swmm_2d_cell_count(self._engine, &count))
+        return count
+
+    @property
+    def n_quads(self) -> int:
+        """Number of quadrilateral cells (0 for an all-triangle mesh)."""
+        cdef int count = 0
+        _check(swmm_2d_quad_count(self._engine, &count))
+        return count
+
+    @property
+    def edge_stride(self) -> int:
+        """Edge slots per cell row in the bulk edge arrays: 3 for an
+        all-triangle mesh (historical C{[tri*3 + localEdge]} layout), 4 once
+        the mesh holds any quad (C{[cell*4 + localEdge]})."""
+        cdef int stride = 3
+        _check(swmm_2d_edge_stride(self._engine, &stride))
+        return stride
+
+    def get_cell_vertex_count(self, int idx) -> int:
+        """Vertices (== edges) of a cell: 3 or 4."""
+        cdef int nv = 0
+        _check(swmm_2d_cell_vertex_count(self._engine, idx, &nv))
+        return nv
+
+    def get_cell_vertices(self, int idx):
+        """Vertex indices of any cell as a tuple of length 3 or 4.
+        Local edge k has endpoints v[(k+1)%nv], v[(k+2)%nv]."""
+        cdef int v[4]
+        cdef int nv = 0
+        _check(swmm_2d_cell_get_vertices(self._engine, idx, v, &nv))
+        return tuple(v[k] for k in range(nv))
+
+    def get_cell_neighbours(self, int idx):
+        """Neighbour cell across each local edge (-1 = boundary), length 3 or 4."""
+        cdef int n[4]
+        cdef int nv = 0
+        _check(swmm_2d_cell_get_neighbours(self._engine, idx, n, &nv))
+        return tuple(n[k] for k in range(nv))
 
     def get_vertex_coords(self):
         """Return (x, y, z) NumPy arrays for all vertices.
@@ -703,15 +747,15 @@ cdef class Surface2D:
         """Return normal edge fluxes for all triangle edges as a NumPy array.
         The GIL is released during the C call.
 
-        The array is indexed as C{[tri*3 + localEdge]} where C{localEdge}
-        is the edge opposite vertex C{localEdge} (0, 1, or 2). Positive
+        The array is indexed as C{[cell*edge_stride + localEdge]} (stride 3 for
+        an all-triangle mesh, 4 when quads exist; see L{edge_stride}). Positive
         flux flows outward through the edge's outward normal.
 
-        @return: Array of shape C{(n_triangles*3,)} with dtype C{float64}.
+        @return: Array of shape C{(n_triangles*edge_stride,)} with dtype C{float64}.
         @rtype: np.ndarray
         @raise RuntimeError: If the C API call fails.
         """
-        cdef int n = self.n_triangles * 3
+        cdef int n = self.n_triangles * self.edge_stride
         cdef np.ndarray[double, ndim=1] arr = np.empty(n, dtype=np.float64)
         cdef void* eng = self._engine
         cdef double* p = <double*>arr.data
@@ -734,7 +778,7 @@ cdef class Surface2D:
         @rtype: tuple
         @raise RuntimeError: If the C API call fails.
         """
-        cdef int n = self.n_triangles * 3
+        cdef int n = self.n_triangles * self.edge_stride
         cdef np.ndarray[double, ndim=1] length = np.empty(n, dtype=np.float64)
         cdef np.ndarray[double, ndim=1] nx = np.empty(n, dtype=np.float64)
         cdef np.ndarray[double, ndim=1] ny = np.empty(n, dtype=np.float64)
@@ -1453,12 +1497,14 @@ cdef class Surface2D:
     def get_edge_conveyance_bulk(self):
         """Return a NumPy array of all per-edge conveyance factors.
 
-        Length is C{triangle_count * 3}, indexed C{[tri*3 + edge]}.
+        Length is C{triangle_count * edge_stride}, indexed C{[cell*stride + edge]}.
         """
         import numpy as np
         cdef int nt = 0
         _check(swmm_2d_triangle_count(self._engine, &nt))
-        cdef double[::1] out = np.empty(nt * 3, dtype=np.float64)
+        cdef int stride = 3
+        _check(swmm_2d_edge_stride(self._engine, &stride))
+        cdef double[::1] out = np.empty(nt * stride, dtype=np.float64)
         cdef double* p = &out[0]
         cdef int err
         with nogil:

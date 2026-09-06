@@ -104,8 +104,8 @@ inline std::vector<PendingBoundaryRow> collectBCRows(
         if (type == BoundaryType::WALL) continue;
 
         PendingBoundaryRow r;
-        r.tri     = idx / 3;
-        r.edge    = idx % 3;
+        r.tri     = MeshData::slot_cell(idx);
+        r.edge    = MeshData::slot_local(idx);
         r.bc_type = static_cast<int>(type);
 
         switch (type) {
@@ -139,11 +139,11 @@ inline std::vector<PendingBoundaryRow> collectBCRows(
         std::unordered_map<int, const std::string*> groups;
         groups.reserve(pending->size());
         for (const auto& p : *pending) {
-            if (!p.group.empty()) groups[p.tri * 3 + p.edge] = &p.group;
+            if (!p.group.empty()) groups[MeshData::slot(p.tri, p.edge)] = &p.group;
         }
         if (!groups.empty()) {
             for (auto& r : rows) {
-                auto it = groups.find(r.tri * 3 + r.edge);
+                auto it = groups.find(MeshData::slot(r.tri, r.edge));
                 if (it != groups.end()) r.group = *it->second;
             }
         }
@@ -182,17 +182,19 @@ inline std::vector<PendingEdgeConveyanceRow> collectConveyanceRows(
 
     const int nt = mesh->n_triangles();
     if (nt < 1 ||
-        mesh->edge_conveyance.size() < static_cast<std::size_t>(nt) * 3)
+        mesh->edge_conveyance.size() < static_cast<std::size_t>(mesh->n_edge_slots()))
         return rows;
 
     std::unordered_set<std::int64_t> seen;
     for (int t = 0; t < nt; ++t) {
-        const int v[3] = { mesh->tri_v0[t], mesh->tri_v1[t], mesh->tri_v2[t] };
-        for (int e = 0; e < 3; ++e) {
-            const double k = mesh->edge_conveyance[t * 3 + e];
+        const int nvc = mesh->cell_vertex_count(t);
+        for (int e = 0; e < nvc; ++e) {
+            const double k = mesh->edge_conveyance[MeshData::slot(t, e)];
             if (k == 1.0) continue;
-            const int va = std::min(v[(e + 1) % 3], v[(e + 2) % 3]);
-            const int vb = std::max(v[(e + 1) % 3], v[(e + 2) % 3]);
+            int ea, eb;
+            mesh->cell_edge_vertices(t, e, ea, eb);
+            const int va = std::min(ea, eb);
+            const int vb = std::max(ea, eb);
             const std::int64_t key =
                 (static_cast<std::int64_t>(va) << 32)
                 | (static_cast<std::int64_t>(vb) & 0xFFFFFFFFLL);

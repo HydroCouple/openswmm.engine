@@ -5450,8 +5450,13 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
 #ifdef OPENSWMM_HAS_2D
     if (!surface_router_.isActive()) return;
     const auto& st  = surface_router_.state();
-    snap.surface_tri_count     = surface_router_.mesh().n_triangles();
-    snap.surface_vert_count    = surface_router_.mesh().n_vertices();
+    const auto& msh = surface_router_.mesh();
+    snap.surface_tri_count     = msh.n_triangles();
+    snap.surface_vert_count    = msh.n_vertices();
+    snap.surface_quad_count    = msh.n_quads();
+    snap.surface_edge_stride   = msh.edge_stride();
+    if (snap.surface_quad_count > 0) snap.surface_cell_nv = msh.cell_nv;
+    else                             snap.surface_cell_nv.clear();
     snap.surface_depth          = st.depth;
     snap.surface_head           = st.head;
     // Report-time blend (the 2D analogue of the 1D old/new interpolation):
@@ -5532,8 +5537,18 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
     // reported velocity is the physical down-gradient flow. Flip the sign here,
     // at the output boundary only; the internal state is untouched so the volume
     // update and mass balance are unaffected.
-    snap.surface_edge_flux      = st.edge_flux;
-    for (double& f : snap.surface_edge_flux) f = -f;
+    // Public stride: pack the internal kMaxCellVerts-stride slots down to 3
+    // for an all-triangle mesh so pre-quad consumers see the historical
+    // [tri*3+edge] layout; mixed meshes publish the full stride.
+    {
+        const int stride = snap.surface_edge_stride;
+        const int nc     = snap.surface_tri_count;
+        snap.surface_edge_flux.assign(static_cast<std::size_t>(nc) * stride, 0.0);
+        for (int c = 0; c < nc; ++c)
+            for (int k = 0; k < stride; ++k)
+                snap.surface_edge_flux[static_cast<std::size_t>(c) * stride + k] =
+                    -st.edge_flux[static_cast<std::size_t>(twoD::MeshData::slot(c, k))];
+    }
     snap.surface_vert_head      = st.vert_head;
     snap.surface_vert_depth     = st.vert_depth_signed;
     snap.surface_face_vx        = st.face_vx;

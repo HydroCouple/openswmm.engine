@@ -23,6 +23,31 @@ retroactive.
 
 ### Added
 
+- **2D: momentum closures `MOMENTUM_EQUATION FULL_SWE | DIFFUSIVE_WAVE` and mixed
+  triangle/quadrilateral meshes `[2D_QUADS]`** (plans/2D_FULL_SWE_SHOCK_CAPTURING_PLAN_2026-09-05.md,
+  plans/2D_TRI_QUAD_MESH_PLAN_2026-09-06.md; handoff plans/HANDOFF_2D_TRIQUAD_FULLSWE_2026-09-06.md).
+  - `FULL_SWE`: conservative shallow-water equations with the convective term on the same explicit
+    marcher — cell (h, hu, hv), hydrostatic reconstruction, rotated HLLC Riemann flux with the
+    Audusse bed-slope correction (lake at rest exact, walls included), ghost-cell Riemann boundaries,
+    semi-implicit friction; `RECONSTRUCTION_ORDER 2` = MUSCL (Barth–Jespersen) + SSP-RK2 in global-dt
+    mode. SWASHES strips: Stoker 6.5 % → 0.7 % (0.3 % second order), Ritter 13 % → 1.7 %, subcritical
+    bump 6.8 % → 0.5 %, transcritical bump 27 % → 4.4 %, bump-with-shock 12 % → 7.3 %.
+  - `DIFFUSIVE_WAVE`: explicit Manning quasi-steady face law (Hunter et al. 2005) with the Δx²
+    step bound per cell absorbed by the LTS tiers.
+  - `FRONT_REBUILD AUTO|YES|NO`: breach-triggered active-set rebuild with a five-ring halo and
+    front-cadence tiers for dry halo cells (AUTO = on for the new closures, off for local-inertial).
+  - `[2D_QUADS]` convex quadrilateral cells (cells numbered triangles first, then quads; unified
+    edge rule `edge k = (v[(k+1)%nv], v[(k+2)%nv])`), padded stride-4 `MeshData` layout, quad
+    geometry (shoelace area, area centroid), Begnudelli & Sanders (2007) quad VFR closure
+    (`mesh/QuadVfr.hpp`, verified against a brute-force integration oracle), `β/nv` positivity
+    share, GeoPackage `mesh_2d_quads`, UGRID mixed-topology HDF5 output (`Mesh2_face_nodes [n,4]` +
+    `_FillValue` + `Mesh2_face_nv`), C API `swmm_2d_cell_count / quad_count / edge_stride /
+    cell_vertex_count / cell_get_vertices / cell_get_neighbours`, Python mirrors.
+  - All-triangle LOCAL_INERTIAL models are byte-identical (verified on four decks: `.h5` datasets,
+    `.out`, `.rpt`); the SWASHES harness gains the `2d-swe`, `2d-swe2`, `2d-dw` columns.
+  - `ADVECTION YES` is deprecated (warns on load; still honoured). The Kokkos plugin serves only
+    all-triangle LOCAL_INERTIAL models and hands everything else to the CPU marcher with a notice.
+
 - **Street inlets: legacy-parity HEC-22 capture kernel, `[INLET_JUNCTIONS]`, and an inlet
   design/usage C API** — `[INLETS]` / `[INLET_USAGE]` were parsed, but the street geometry never
   reached the capture calculation and capture ran after routing:

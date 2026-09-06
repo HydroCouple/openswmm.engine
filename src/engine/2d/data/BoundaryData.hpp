@@ -19,8 +19,8 @@
  * @brief Structure-of-Arrays (SoA) storage for 2D mesh boundary conditions.
  *
  * @details Stores per-edge boundary condition type, parameters, and cumulative
- *          flux tracking. Arrays are flat 2D [tri * 3 + edge_local], sized to
- *          n_triangles * 3 (matching edge_flux, edge_length, etc.).
+ *          flux tracking. Arrays are flat 2D [cell * kMaxCellVerts + edge_local],
+ *          sized to n_cells * kMaxCellVerts (matching edge_flux, edge_length, etc.).
  *
  *          Boundary types:
  *          - WALL: Zero-flux (default). No water crosses the boundary.
@@ -64,7 +64,7 @@ enum class BoundaryType : int8_t {
 /**
  * @brief SoA storage for per-edge boundary conditions.
  *
- * All arrays are flat 2D: indexed as [tri * 3 + edge_local] where
+ * All arrays are flat 2D: indexed as [cell * kMaxCellVerts + edge_local] where
  * edge_local ∈ {0,1,2}. Only meaningful for boundary edges (tri_nbr == -1),
  * but allocated for all edges to avoid indirection in the flux loop.
  */
@@ -128,7 +128,7 @@ struct BoundaryData {
 
     /**
      * @brief Resize all arrays to n_edges and initialize to WALL defaults.
-     * @param n_edges Total number of edge slots (n_triangles * 3).
+     * @param n_edges Total number of edge slots (n_cells * kMaxCellVerts).
      */
     void resize(int n_edges) {
         auto n = static_cast<std::size_t>(n_edges);

@@ -94,10 +94,10 @@ static MeshData makeUnitSquareMesh() {
 
     mesh.resize_triangles(2);
     // T0: lower-right triangle
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 3;
+    mesh.set_triangle(0, 0, 1, 3);
     mesh.mannings_n[0] = 0.035;
     // T1: upper-left triangle
-    mesh.tri_v0[1] = 0; mesh.tri_v1[1] = 3; mesh.tri_v2[1] = 2;
+    mesh.set_triangle(1, 0, 3, 2);
     mesh.mannings_n[1] = 0.035;
 
     buildMeshTopology(mesh);
@@ -120,8 +120,8 @@ static MeshData makeTiltedPlaneMesh() {
     mesh.vz = {0.0, 1.0, 2.0, 3.0};
 
     mesh.resize_triangles(2);
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 3;
-    mesh.tri_v0[1] = 0; mesh.tri_v1[1] = 3; mesh.tri_v2[1] = 2;
+    mesh.set_triangle(0, 0, 1, 3);
+    mesh.set_triangle(1, 0, 3, 2);
     mesh.mannings_n[0] = 0.03;
     mesh.mannings_n[1] = 0.03;
 
@@ -155,10 +155,10 @@ TEST(MeshBuilder, FindsSharedNeighbour) {
     auto mesh = makeUnitSquareMesh();
     // The two triangles share one edge (v0-v3 diagonal).
     // At least one neighbour of T0 must be T1, and vice versa.
-    bool t0_sees_t1 = (mesh.tri_nbr0[0] == 1 || mesh.tri_nbr1[0] == 1
-                       || mesh.tri_nbr2[0] == 1);
-    bool t1_sees_t0 = (mesh.tri_nbr0[1] == 0 || mesh.tri_nbr1[1] == 0
-                       || mesh.tri_nbr2[1] == 0);
+    bool t0_sees_t1 = (mesh.cell_neighbour(0, 0) == 1 || mesh.cell_neighbour(0, 1) == 1
+                       || mesh.cell_neighbour(0, 2) == 1);
+    bool t1_sees_t0 = (mesh.cell_neighbour(1, 0) == 0 || mesh.cell_neighbour(1, 1) == 0
+                       || mesh.cell_neighbour(1, 2) == 0);
     EXPECT_TRUE(t0_sees_t1);
     EXPECT_TRUE(t1_sees_t0);
 }
@@ -167,35 +167,44 @@ TEST(MeshBuilder, BoundaryEdgesAreMinusOne) {
     auto mesh = makeUnitSquareMesh();
     // Each triangle has 3 edges; 1 is shared, 2 are boundary.
     int boundary_count_t0 = 0;
-    if (mesh.tri_nbr0[0] == -1) ++boundary_count_t0;
-    if (mesh.tri_nbr1[0] == -1) ++boundary_count_t0;
-    if (mesh.tri_nbr2[0] == -1) ++boundary_count_t0;
+    if (mesh.cell_neighbour(0, 0) == -1) ++boundary_count_t0;
+    if (mesh.cell_neighbour(0, 1) == -1) ++boundary_count_t0;
+    if (mesh.cell_neighbour(0, 2) == -1) ++boundary_count_t0;
     EXPECT_EQ(boundary_count_t0, 2);
 
     int boundary_count_t1 = 0;
-    if (mesh.tri_nbr0[1] == -1) ++boundary_count_t1;
-    if (mesh.tri_nbr1[1] == -1) ++boundary_count_t1;
-    if (mesh.tri_nbr2[1] == -1) ++boundary_count_t1;
+    if (mesh.cell_neighbour(1, 0) == -1) ++boundary_count_t1;
+    if (mesh.cell_neighbour(1, 1) == -1) ++boundary_count_t1;
+    if (mesh.cell_neighbour(1, 2) == -1) ++boundary_count_t1;
     EXPECT_EQ(boundary_count_t1, 2);
 }
 
 TEST(MeshBuilder, EdgeLengthsPositive) {
     auto mesh = makeUnitSquareMesh();
-    int n3 = mesh.n_triangles() * 3;
-    for (int i = 0; i < n3; ++i) {
-        EXPECT_GT(mesh.edge_length[i], 0.0)
-            << "Edge " << i << " has non-positive length";
+    // Padded layout: every REAL slot (k < cell_nv) has positive length; the
+    // padding slot of a triangle row is zero by contract.
+    for (int t = 0; t < mesh.n_triangles(); ++t) {
+        for (int e = 0; e < kMaxCellVerts; ++e) {
+            const int i = MeshData::slot(t, e);
+            if (e < mesh.cell_vertex_count(t))
+                EXPECT_GT(mesh.edge_length[i], 0.0)
+                    << "Edge " << i << " has non-positive length";
+            else
+                EXPECT_EQ(mesh.edge_length[i], 0.0) << "padding slot " << i;
+        }
     }
 }
 
 TEST(MeshBuilder, EdgeNormalsUnitLength) {
     auto mesh = makeUnitSquareMesh();
-    int n3 = mesh.n_triangles() * 3;
-    for (int i = 0; i < n3; ++i) {
-        double len = std::sqrt(mesh.edge_nx[i] * mesh.edge_nx[i]
-                               + mesh.edge_ny[i] * mesh.edge_ny[i]);
-        EXPECT_NEAR(len, 1.0, 1e-12)
-            << "Edge " << i << " normal is not unit length";
+    for (int t = 0; t < mesh.n_triangles(); ++t) {
+        for (int e = 0; e < mesh.cell_vertex_count(t); ++e) {
+            const int i = MeshData::slot(t, e);
+            double len = std::sqrt(mesh.edge_nx[i] * mesh.edge_nx[i]
+                                   + mesh.edge_ny[i] * mesh.edge_ny[i]);
+            EXPECT_NEAR(len, 1.0, 1e-12)
+                << "Edge " << i << " normal is not unit length";
+        }
     }
 }
 
@@ -216,15 +225,15 @@ TEST(MeshBuilder, RecomputeVertexZDependentsUpdatesIncidentTriangles) {
     // Edges incident to v3 see midpoint Z = 0.5 * (0 + 3) = 1.5;
     // edges not incident to v3 stay at 0.
     for (int t = 0; t < mesh.n_triangles(); ++t) {
-        const int v0 = mesh.tri_v0[t];
-        const int v1 = mesh.tri_v1[t];
-        const int v2 = mesh.tri_v2[t];
+        const int v0 = mesh.cell_vertex(t, 0);
+        const int v1 = mesh.cell_vertex(t, 1);
+        const int v2 = mesh.cell_vertex(t, 2);
         const int endpoints[3][2] = {{v1, v2}, {v2, v0}, {v0, v1}};
         for (int e = 0; e < 3; ++e) {
             const int va = endpoints[e][0];
             const int vb = endpoints[e][1];
             const double expected = 0.5 * (mesh.vz[va] + mesh.vz[vb]);
-            EXPECT_NEAR(mesh.edge_mz[t * 3 + e], expected, 1e-12)
+            EXPECT_NEAR(mesh.edge_mz[MeshData::slot(t, e)], expected, 1e-12)
                 << "t=" << t << " e=" << e;
         }
     }
@@ -307,8 +316,8 @@ TEST(MeshBuilder, RecomputeVertexZDependentsLeavesNonIncidentTrianglesAlone) {
     mesh.vz = {0, 0, 0,   0,  0,  0};
 
     mesh.resize_triangles(2);
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 2;
-    mesh.tri_v0[1] = 3; mesh.tri_v1[1] = 4; mesh.tri_v2[1] = 5;
+    mesh.set_triangle(0, 0, 1, 2);
+    mesh.set_triangle(1, 3, 4, 5);
     mesh.mannings_n[0] = 0.035;
     mesh.mannings_n[1] = 0.035;
     buildMeshTopology(mesh);
@@ -327,7 +336,7 @@ TEST(MeshBuilder, ValidationRejectsNegativeArea) {
     mesh.vz = {0.0, 0.0, 0.0};
 
     mesh.resize_triangles(1);
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 2;
+    mesh.set_triangle(0, 0, 1, 2);
     mesh.mannings_n[0] = 0.035;
 
     buildMeshTopology(mesh);
@@ -347,7 +356,7 @@ TEST(MeshBuilder, ValidationRejectsDuplicateVertices) {
 
     mesh.resize_triangles(1);
     // Degenerate: two vertices are the same index
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 0; mesh.tri_v2[0] = 2;
+    mesh.set_triangle(0, 0, 0, 2);
     mesh.mannings_n[0] = 0.035;
     mesh.tri_area[0] = 1.0;  // Fake area so we reach the duplicate check
 
@@ -364,7 +373,7 @@ TEST(MeshBuilder, ValidationRejectsOutOfRangeIndex) {
     mesh.vz = {0.0, 0.0, 0.0};
 
     mesh.resize_triangles(1);
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 99;  // out of range
+    mesh.set_triangle(0, 0, 1, 99);  // out of range
     mesh.mannings_n[0] = 0.035;
     mesh.tri_area[0] = 1.0;
 
@@ -540,8 +549,8 @@ static MeshData makeStepMesh() {
     mesh.vz = {0.0, 0.0, 5.0, 0.0};
 
     mesh.resize_triangles(2);
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 3;
-    mesh.tri_v0[1] = 0; mesh.tri_v1[1] = 3; mesh.tri_v2[1] = 2;
+    mesh.set_triangle(0, 0, 1, 3);
+    mesh.set_triangle(1, 0, 3, 2);
     mesh.mannings_n[0] = 0.035;
     mesh.mannings_n[1] = 0.035;
 
@@ -783,13 +792,13 @@ static MeshData makeCentralTriangleMesh() {
 
     mesh.resize_triangles(4);
     // T0 (central): v0, v1, v2
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 2;
+    mesh.set_triangle(0, 0, 1, 2);
     // T1 (left,  shares edge v0-v2 with T0): v0, v2, v3
-    mesh.tri_v0[1] = 0; mesh.tri_v1[1] = 2; mesh.tri_v2[1] = 3;
+    mesh.set_triangle(1, 0, 2, 3);
     // T2 (right, shares edge v1-v2 with T0): v1, v4, v2
-    mesh.tri_v0[2] = 1; mesh.tri_v1[2] = 4; mesh.tri_v2[2] = 2;
+    mesh.set_triangle(2, 1, 4, 2);
     // T3 (below, shares edge v0-v1 with T0): v0, v5, v1
-    mesh.tri_v0[3] = 0; mesh.tri_v1[3] = 5; mesh.tri_v2[3] = 1;
+    mesh.set_triangle(3, 0, 5, 1);
 
     for (int i = 0; i < 4; ++i) mesh.mannings_n[i] = 0.035;
 
@@ -801,9 +810,9 @@ TEST(GradientComputation, LimiterIsPermutationInvariant) {
     auto mesh = makeCentralTriangleMesh();
 
     // Confirm the central triangle (T0) really has three interior neighbours.
-    ASSERT_GE(mesh.tri_nbr0[0], 0);
-    ASSERT_GE(mesh.tri_nbr1[0], 0);
-    ASSERT_GE(mesh.tri_nbr2[0], 0);
+    ASSERT_GE(mesh.cell_neighbour(0, 0), 0);
+    ASSERT_GE(mesh.cell_neighbour(0, 1), 0);
+    ASSERT_GE(mesh.cell_neighbour(0, 2), 0);
 
     SurfaceStateData state;
     state.resize(mesh.n_triangles(), mesh.n_vertices());
@@ -826,9 +835,9 @@ TEST(GradientComputation, LimiterIsPermutationInvariant) {
         state.grad_hy[0] = self_grad.gy;
         int order[3] = {p0, p1, p2};
         for (int slot = 0; slot < 3; ++slot) {
-            int nbr = (slot == 0) ? mesh.tri_nbr0[0]
-                    : (slot == 1) ? mesh.tri_nbr1[0]
-                    :               mesh.tri_nbr2[0];
+            int nbr = (slot == 0) ? mesh.cell_neighbour(0, 0)
+                    : (slot == 1) ? mesh.cell_neighbour(0, 1)
+                    :               mesh.cell_neighbour(0, 2);
             state.grad_hx[nbr] = neighbour_grads[order[slot]].gx;
             state.grad_hy[nbr] = neighbour_grads[order[slot]].gy;
         }
@@ -869,9 +878,9 @@ TEST(GradientComputation, LimiterEqualsAverageForUniformMagnitudes) {
     // normalization step that masked the asymmetric denominator; the new
     // form satisfies it structurally with no normalization fix-up.
     auto mesh = makeCentralTriangleMesh();
-    ASSERT_GE(mesh.tri_nbr0[0], 0);
-    ASSERT_GE(mesh.tri_nbr1[0], 0);
-    ASSERT_GE(mesh.tri_nbr2[0], 0);
+    ASSERT_GE(mesh.cell_neighbour(0, 0), 0);
+    ASSERT_GE(mesh.cell_neighbour(0, 1), 0);
+    ASSERT_GE(mesh.cell_neighbour(0, 2), 0);
 
     SurfaceStateData state;
     state.resize(mesh.n_triangles(), mesh.n_vertices());
@@ -883,7 +892,7 @@ TEST(GradientComputation, LimiterEqualsAverageForUniformMagnitudes) {
     double gy[4] = { 0.0,  1.0,  0.0,  1.0};
 
     state.grad_hx[0] = gx[0]; state.grad_hy[0] = gy[0];
-    int nbrs[3] = {mesh.tri_nbr0[0], mesh.tri_nbr1[0], mesh.tri_nbr2[0]};
+    int nbrs[3] = {mesh.cell_neighbour(0, 0), mesh.cell_neighbour(0, 1), mesh.cell_neighbour(0, 2)};
     for (int k = 0; k < 3; ++k) {
         state.grad_hx[nbrs[k]] = gx[k + 1];
         state.grad_hy[nbrs[k]] = gy[k + 1];
@@ -960,7 +969,7 @@ TEST(FaceVelocity, ReconstructsUniformField) {
     std::fill(state.depth.begin(), state.depth.end(), depth);
     for (int i = 0; i < mesh.n_triangles(); ++i)
         for (int e = 0; e < 3; ++e) {
-            int idx = i * 3 + e;
+            int idx = MeshData::slot(i, e);
             state.edge_flux[idx] =
                 (qx * mesh.edge_nx[idx] + qy * mesh.edge_ny[idx])
                 * mesh.edge_length[idx];
@@ -1187,9 +1196,9 @@ TEST(InputParsing, Parse2DTriangleLine) {
     auto err = parse2DTriangleLine({"0", "1", "2", "0.035"}, mesh);
     EXPECT_TRUE(err.empty()) << err;
     EXPECT_EQ(mesh.n_triangles(), 1);
-    EXPECT_EQ(mesh.tri_v0[0], 0);
-    EXPECT_EQ(mesh.tri_v1[0], 1);
-    EXPECT_EQ(mesh.tri_v2[0], 2);
+    EXPECT_EQ(mesh.cell_vertex(0, 0), 0);
+    EXPECT_EQ(mesh.cell_vertex(0, 1), 1);
+    EXPECT_EQ(mesh.cell_vertex(0, 2), 2);
     EXPECT_NEAR(mesh.mannings_n[0], 0.035, 1e-12);
 
     err = parse2DTriangleLine({"0", "2", "1", "0.025", "road"}, mesh);
@@ -1296,7 +1305,7 @@ TEST(SurfaceState, ResizeSetsZero) {
     EXPECT_EQ(state.depth.size(), 10u);
     EXPECT_EQ(state.head.size(), 10u);
     EXPECT_EQ(state.vert_head.size(), 5u);
-    EXPECT_EQ(state.edge_flux.size(), 30u);  // 10 * 3
+    EXPECT_EQ(state.edge_flux.size(), 40u);  // 10 * kMaxCellVerts (padded)
 
     for (int i = 0; i < 10; ++i) {
         EXPECT_EQ(state.depth[i], 0.0);
@@ -1458,15 +1467,21 @@ TEST(MeshData, ResizeTriangles) {
     mesh.resize_triangles(3);
 
     EXPECT_EQ(mesh.n_triangles(), 3);
-    EXPECT_EQ(mesh.tri_v0.size(), 3u);
-    EXPECT_EQ(mesh.edge_length.size(), 9u);  // 3 * 3
+    EXPECT_EQ(mesh.cell_nv.size(), 3u);
+    EXPECT_EQ(mesh.edge_length.size(), 12u);  // 3 * kMaxCellVerts (padded)
+    EXPECT_EQ(mesh.n_quads(), 0);
+    EXPECT_EQ(mesh.edge_stride(), 3);        // public stride stays 3 for all-tri
     EXPECT_EQ(mesh.mannings_n.size(), 3u);
 
-    // Default neighbours are -1
+    // Default neighbours are -1; the padding slot of a triangle is -2 and
+    // its padding vertex is -1.
     for (int i = 0; i < 3; ++i) {
-        EXPECT_EQ(mesh.tri_nbr0[i], -1);
-        EXPECT_EQ(mesh.tri_nbr1[i], -1);
-        EXPECT_EQ(mesh.tri_nbr2[i], -1);
+        EXPECT_EQ(mesh.cell_vertex_count(i), 3);
+        EXPECT_EQ(mesh.cell_neighbour(i, 0), -1);
+        EXPECT_EQ(mesh.cell_neighbour(i, 1), -1);
+        EXPECT_EQ(mesh.cell_neighbour(i, 2), -1);
+        EXPECT_EQ(mesh.cell_neighbour(i, 3), -2);
+        EXPECT_EQ(mesh.cell_vertex(i, 3), -1);
     }
 
     // Default Manning's n
@@ -1500,13 +1515,13 @@ static MeshData makeDiamondMesh() {
 
     mesh.resize_triangles(4);
     // T0: v0, v1, v2 (right-upper)
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 2;
+    mesh.set_triangle(0, 0, 1, 2);
     // T1: v0, v2, v3 (left-upper)
-    mesh.tri_v0[1] = 0; mesh.tri_v1[1] = 2; mesh.tri_v2[1] = 3;
+    mesh.set_triangle(1, 0, 2, 3);
     // T2: v0, v3, v4 (left-lower)
-    mesh.tri_v0[2] = 0; mesh.tri_v1[2] = 3; mesh.tri_v2[2] = 4;
+    mesh.set_triangle(2, 0, 3, 4);
     // T3: v0, v4, v1 (right-lower)
-    mesh.tri_v0[3] = 0; mesh.tri_v1[3] = 4; mesh.tri_v2[3] = 1;
+    mesh.set_triangle(3, 0, 4, 1);
 
     for (int i = 0; i < 4; ++i) mesh.mannings_n[i] = 0.03;
 
@@ -1521,9 +1536,9 @@ TEST(DiamondMesh, AllTrianglesHaveOneNeighbourEach) {
     // adjacent triangles) and 1 boundary edge.
     for (int t = 0; t < 4; ++t) {
         int internal = 0;
-        if (mesh.tri_nbr0[t] >= 0) ++internal;
-        if (mesh.tri_nbr1[t] >= 0) ++internal;
-        if (mesh.tri_nbr2[t] >= 0) ++internal;
+        if (mesh.cell_neighbour(t, 0) >= 0) ++internal;
+        if (mesh.cell_neighbour(t, 1) >= 0) ++internal;
+        if (mesh.cell_neighbour(t, 2) >= 0) ++internal;
         EXPECT_EQ(internal, 2) << "Triangle " << t << " has "
                                 << internal << " internal edges, expected 2";
     }
@@ -1584,8 +1599,8 @@ TEST(DiamondMesh, VertexReconstructionConstantExact) {
 // ============================================================================
 
 TEST(EdgeConveyance, DefaultsToOneForEveryEdgeAfterResize) {
-    MeshData mesh = makeUnitSquareMesh();   // 2 triangles → 6 edge slots
-    ASSERT_EQ(mesh.edge_conveyance.size(), 6u);
+    MeshData mesh = makeUnitSquareMesh();   // 2 triangles → 8 padded edge slots
+    ASSERT_EQ(mesh.edge_conveyance.size(), 8u);
     for (double c : mesh.edge_conveyance) EXPECT_DOUBLE_EQ(c, 1.0);
 }
 
@@ -1633,7 +1648,7 @@ TEST(RecomputeAllZDependents, MatchesPerVertexFormBitwise) {
         EXPECT_EQ(a.tri_cz[t], b.tri_cz[t])
             << "tri_cz diverged at triangle " << t;
         for (int e = 0; e < 3; ++e)
-            EXPECT_EQ(a.edge_mz[t * 3 + e], b.edge_mz[t * 3 + e])
+            EXPECT_EQ(a.edge_mz[MeshData::slot(t, e)], b.edge_mz[MeshData::slot(t, e)])
                 << "edge_mz diverged at triangle " << t << " edge " << e;
     }
 }

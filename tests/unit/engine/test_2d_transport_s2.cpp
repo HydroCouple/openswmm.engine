@@ -86,8 +86,8 @@ MeshData makeStrip(int nx, int ny, double dx, double n = 0.03) {
         for (int i = 0; i < nx; ++i) {
             const int v00 = j * nvx + i,       v10 = j * nvx + i + 1;
             const int v01 = (j + 1) * nvx + i, v11 = (j + 1) * nvx + i + 1;
-            mesh.tri_v0[t] = v00; mesh.tri_v1[t] = v10; mesh.tri_v2[t] = v11; ++t;
-            mesh.tri_v0[t] = v00; mesh.tri_v1[t] = v11; mesh.tri_v2[t] = v01; ++t;
+            mesh.set_triangle(t, v00, v10, v11); ++t;
+            mesh.set_triangle(t, v00, v11, v01); ++t;
         }
     for (int i = 0; i < mesh.n_triangles(); ++i) mesh.mannings_n[i] = n;
     buildMeshTopology(mesh);
@@ -145,14 +145,14 @@ void xMoments(const MeshData& mesh, const SurfaceTransportState& tr, int sp,
 /// Flat mesh edge slot (tri*3+e) of the first boundary edge lying on x == x0.
 int boundaryEdgeOnX(const MeshData& mesh, double x0) {
     for (int i = 0; i < mesh.n_triangles(); ++i) {
-        const int vv[3]  = {mesh.tri_v0[i], mesh.tri_v1[i], mesh.tri_v2[i]};
-        const int nbr[3] = {mesh.tri_nbr0[i], mesh.tri_nbr1[i], mesh.tri_nbr2[i]};
+        const int vv[3]  = {mesh.cell_vertex(i, 0), mesh.cell_vertex(i, 1), mesh.cell_vertex(i, 2)};
+        const int nbr[3] = {mesh.cell_neighbour(i, 0), mesh.cell_neighbour(i, 1), mesh.cell_neighbour(i, 2)};
         for (int e = 0; e < 3; ++e) {
             if (nbr[e] >= 0) continue;
             const int va = vv[(e + 1) % 3], vb = vv[(e + 2) % 3];
             if (std::fabs(mesh.vx[va] - x0) < 1e-12 &&
                 std::fabs(mesh.vx[vb] - x0) < 1e-12)
-                return i * 3 + e;
+                return MeshData::slot(i, e);
         }
     }
     return -1;
@@ -364,7 +364,7 @@ TEST(SurfaceTransportS2, BoundaryInflowAtPondConcentrationKeepsPondUniform) {
     const double c0 = 4.0;
     auto s = makePond(mesh, opts, 2, 0.5, c0);   // two species: stride check
     BoundaryData bd;
-    bd.resize(3 * mesh.n_triangles());
+    bd.resize(mesh.n_edge_slots());
     const int slot = boundaryEdgeOnX(mesh, 0.0);
     ASSERT_GE(slot, 0);
     bd.edge_bc_type[slot] = static_cast<int8_t>(BoundaryType::SPECIFIED_FLOW);
@@ -416,7 +416,7 @@ TEST(SurfaceTransportS2, BoundaryQualityOnWallEdgeIsRefused) {
     SolverOptions2D opts;
     auto s = makePond(mesh, opts, 1, 0.5, 1.0);
     BoundaryData bd;
-    bd.resize(3 * mesh.n_triangles());
+    bd.resize(mesh.n_edge_slots());
     s.boundary = &bd;
     const int slot = boundaryEdgeOnX(mesh, 0.0);   // left as WALL
     ASSERT_GE(slot, 0);

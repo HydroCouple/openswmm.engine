@@ -268,9 +268,10 @@ std::string backend_name(Backend2D b) {
 
 std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
                                                   std::string* chosen,
-                                                  int n_cells) {
+                                                  int n_cells,
+                                                  bool plugin_capable) {
     auto serial_marcher = [&]() -> std::unique_ptr<ISurfaceSolver> {
-        if (chosen) *chosen = "cpu (explicit local-inertial marcher)";
+        if (chosen) *chosen = "cpu (explicit marcher)";
         return std::make_unique<ExplicitInertialSolver>();
     };
 
@@ -280,6 +281,20 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
     std::string mode = lower(env("OPENSWMM_2D_BACKEND"));
     if (mode.empty()) mode = backend_name(opts.backend);
     if (mode == "cpu") return serial_marcher();
+
+    // R6 (2D_TRI_QUAD_MESH_PLAN / 2D_FULL_SWE plan): the Kokkos plugin
+    // implements the triangle-only LOCAL_INERTIAL scheme. A mixed tri-quad
+    // mesh or a non-LI momentum closure is refused LOUDLY and served by the
+    // CPU marcher — never a silent physics substitution.
+    if (!plugin_capable) {
+        if (mode != "auto" && !mode.empty())
+            std::fprintf(stderr,
+                "[openswmm 2D] backend '%s' requested, but the GPU/Kokkos "
+                "plugin supports only all-triangle meshes under "
+                "MOMENTUM_EQUATION LOCAL_INERTIAL; using the CPU marcher for "
+                "this model.\n", mode.c_str());
+        return serial_marcher();
+    }
 
     // Explicit backend request bypasses every mesh-size gate — the operator
     // asked for it by name (OPENSWMM_2D_BACKEND / BACKEND = omp|cuda|hip|sycl).

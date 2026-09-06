@@ -104,9 +104,9 @@ void buildMesh(MeshData& m, SurfaceStateData& s) {
                            { 1,  3, -1},
                            { 2, -1, -1}};
     for (int i = 0; i < nt; ++i) {
-        m.tri_nbr0[i] = nbr[i][0];
-        m.tri_nbr1[i] = nbr[i][1];
-        m.tri_nbr2[i] = nbr[i][2];
+        m.cell_neighbour(i, 0) = nbr[i][0];
+        m.cell_neighbour(i, 1) = nbr[i][1];
+        m.cell_neighbour(i, 2) = nbr[i][2];
         for (int e = 0; e < 3; ++e) {
             const int idx = i * 3 + e;
             m.edge_length[idx]     = 1.0 + 0.25 * e;

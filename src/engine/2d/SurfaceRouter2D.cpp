@@ -10,6 +10,7 @@
 #include "mesh/MeshBuilder.hpp"
 #include "mesh/VertexReconstruction.hpp"
 #include "mesh/VfrClosure.hpp"
+#include "mesh/QuadVfr.hpp"
 #include "solver/SurfaceFluxCalculator.hpp"
 #include "solver/ExplicitInertialSolver.hpp"
 #ifdef OPENSWMM_HAS_2D
@@ -58,9 +59,16 @@ void refreshOutputGradients(const MeshData& mesh, SurfaceStateData& state,
 double headFromMeanDepth(const MeshData& mesh, const SolverOptions2D& opts,
                          int i, double d) {
     if (opts.cell_closure == CellClosure2D::VFR) {
-        double z1 = mesh.vz[mesh.tri_v0[i]];
-        double z2 = mesh.vz[mesh.tri_v1[i]];
-        double z3 = mesh.vz[mesh.tri_v2[i]];
+        if (mesh.cell_vertex_count(i) == 4) {
+            const auto u = static_cast<std::size_t>(i);
+            return quadEtaFromMeanDepth(&mesh.quad_vfr_z[u * kQuadVfrZ],
+                                        mesh.quad_vfr_a[u * 2],
+                                        mesh.quad_vfr_a[u * 2 + 1], d,
+                                        opts.vfr_min_wet_frac);
+        }
+        double z1 = mesh.vz[mesh.cell_vertex(i, 0)];
+        double z2 = mesh.vz[mesh.cell_vertex(i, 1)];
+        double z3 = mesh.vz[mesh.cell_vertex(i, 2)];
         vfrSort3(z1, z2, z3);
         return vfrEtaFromMeanDepth(z1, z2, z3, d, opts.vfr_min_wet_frac);
     }
@@ -72,9 +80,9 @@ double headFromMeanDepth(const MeshData& mesh, const SolverOptions2D& opts,
 void SurfaceRouter2D::drainPendingRows() {
     if (mesh_.n_triangles() < 1) return;             // nothing to drain into
 
-    // Initialize per-edge boundary condition storage (n_triangles * 3 slots,
-    // all initialized to WALL with zero head/slope/cum_flux).
-    boundary_.resize(mesh_.n_triangles() * 3);
+    // Initialize per-edge boundary condition storage (n_cells * kMaxCellVerts
+    // slots, all initialized to WALL with zero head/slope/cum_flux).
+    boundary_.resize(mesh_.n_edge_slots());
 
     // V-E3 — drain any [2D_BOUNDARY_CONDITIONS] rows the parser accumulated
     // into boundary_. Out-of-range rows are silently skipped — defensive
@@ -83,8 +91,8 @@ void SurfaceRouter2D::drainPendingRows() {
         const int n_edges = boundary_.size();
         for (const auto& r : pending_bc_rows_) {
             if (r.tri < 0 || r.tri >= mesh_.n_triangles()) continue;
-            if (r.edge < 0 || r.edge > 2) continue;
-            const int idx = r.tri * 3 + r.edge;
+            if (r.edge < 0 || r.edge >= mesh_.cell_vertex_count(r.tri)) continue;
+            const int idx = MeshData::slot(r.tri, r.edge);
             if (idx < 0 || idx >= n_edges) continue;
             boundary_.edge_bc_type[idx] = static_cast<int8_t>(r.bc_type);
             switch (static_cast<BoundaryType>(r.bc_type)) {
@@ -141,15 +149,15 @@ void SurfaceRouter2D::drainPendingRows() {
         };
 
         std::unordered_map<EdgeKey, std::vector<int>, EdgeKeyHash> edge_key_to_slots;
-        edge_key_to_slots.reserve(static_cast<std::size_t>(mesh_.n_triangles()) * 3);
+        edge_key_to_slots.reserve(static_cast<std::size_t>(mesh_.n_edge_slots()));
 
         const int nt = mesh_.n_triangles();
         for (int t = 0; t < nt; ++t) {
-            const int v[3] = { mesh_.tri_v0[t], mesh_.tri_v1[t], mesh_.tri_v2[t] };
-            for (int e = 0; e < 3; ++e) {
-                const int va = v[(e + 1) % 3];
-                const int vb = v[(e + 2) % 3];
-                edge_key_to_slots[makeKey(va, vb)].push_back(t * 3 + e);
+            const int nvc = mesh_.cell_vertex_count(t);
+            for (int e = 0; e < nvc; ++e) {
+                int va, vb;
+                mesh_.cell_edge_vertices(t, e, va, vb);
+                edge_key_to_slots[makeKey(va, vb)].push_back(MeshData::slot(t, e));
             }
         }
 
@@ -600,9 +608,16 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         if (cp.vertex_idx >= 0) {
             const int s = mesh_.vert_stencil_ptr[cp.vertex_idx];
             const int e = mesh_.vert_stencil_ptr[cp.vertex_idx + 1];
-            for (int k = s; k < e; ++k)
-                foot_m2 += mesh_.tri_area[mesh_.vert_stencil_idx[k]];
-            foot_m2 /= 3.0;  // each triangle contributes ~1/3 of its area per vertex
+            // Each cell contributes ~1/nv of its area per vertex (1/3 for a
+            // triangle, 1/4 for a quad). Triangle-only meshes keep the
+            // historical Σ/3 arithmetic exactly.
+            double foot_tri = 0.0, foot_quad = 0.0;
+            for (int k = s; k < e; ++k) {
+                const int c = mesh_.vert_stencil_idx[k];
+                if (mesh_.cell_vertex_count(c) == 4) foot_quad += mesh_.tri_area[c];
+                else                                 foot_tri  += mesh_.tri_area[c];
+            }
+            foot_m2 = foot_tri / 3.0 + foot_quad / 4.0;
         } else {
             foot_m2 = mesh_.tri_area[cp.cell_idx];
         }
@@ -790,7 +805,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                         "' — declare it in [POLLUTANTS] / the reactions "
                         "component, or name __WATER_AGE__ / __TEMPERATURE__ "
                         "with that option on.");
-                tr.bc_quality_rows.push_back({r.tri * 3 + r.edge, sp, r.conc});
+                tr.bc_quality_rows.push_back({MeshData::slot(r.tri, r.edge), sp, r.conc});
             }
         } else if (!pending_bq_rows_.empty()) {
             throw std::runtime_error(
@@ -806,7 +821,13 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     }
 
     if (!solver_) {
-        solver_ = makeSurfaceSolver(options_, nullptr, mesh_.n_triangles());
+        // The Kokkos plugin covers all-triangle LOCAL_INERTIAL models only
+        // (SurfaceSolverFactory R6 gate); everything else runs on the CPU.
+        const bool plugin_ok =
+            mesh_.n_quads() == 0 &&
+            options_.momentum == Momentum2D::LOCAL_INERTIAL;
+        solver_ = makeSurfaceSolver(options_, nullptr, mesh_.n_triangles(),
+                                    plugin_ok);
     }
     solver_->initialize(mesh_, state_, options_);
 #endif
@@ -1646,7 +1667,7 @@ void SurfaceRouter2D::resolveBoundaryValues(SimulationContext& ctx, double t) {
                     // metre of edge — so the SI head converts back to display
                     // for the query and the result scales to m³/s/m,
                     // consistent with SPECIFIED_FLOW.
-                    const int i = idx / 3;
+                    const int i = MeshData::slot_cell(idx);
                     boundary_.edge_bc_flow[idx] = bc_flow_scale_ *
                         table_lookupEx(ctx.tables.tables[cv],
                                        state_.head[i] / bc_stage_ts_scale_);

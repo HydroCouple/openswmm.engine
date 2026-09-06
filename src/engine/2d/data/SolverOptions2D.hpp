@@ -139,12 +139,48 @@ enum class Backend2D : int8_t {
 };
 
 /**
+ * @brief Momentum closure of the explicit 2D marcher
+ *        (2D_FULL_SWE_SHOCK_CAPTURING_PLAN_2026-09-05 §2).
+ *
+ * Parsed from [2D_OPTIONS] MOMENTUM_EQUATION. One marcher (tiered LTS,
+ * active sets, positivity, coupling, transport) with three face laws:
+ *  - LOCAL_INERTIAL  de Almeida & Bates face-q update (default; bit-identical
+ *                    to the pre-2026-09 marcher).
+ *  - FULL_SWE        conservative shallow-water equations with the convective
+ *                    term: cell (h, hu, hv), hydrostatic reconstruction,
+ *                    rotated HLLC Riemann flux, shock capturing.
+ *  - DIFFUSIVE_WAVE  Manning quasi-steady face flux, no inertia (Hunter et al.
+ *                    2005 explicit diffusive wave; Δt ∝ Δx² per cell, absorbed
+ *                    by the LTS tiers).
+ */
+enum class Momentum2D : int8_t {
+    LOCAL_INERTIAL = 0,
+    FULL_SWE       = 1,
+    DIFFUSIVE_WAVE = 2
+};
+
+/**
  * @brief Configuration for the 2D surface routing solver.
  *
  * Populated from [2D_OPTIONS] input section. Defaults are chosen for
  * typical urban drainage surface routing problems.
  */
 struct SolverOptions2D {
+    /// [2D_OPTIONS] MOMENTUM_EQUATION — momentum closure (see Momentum2D).
+    Momentum2D momentum = Momentum2D::LOCAL_INERTIAL;
+    /// [2D_OPTIONS] FRONT_REBUILD AUTO|YES|NO — rebuild the flux-active set
+    /// as soon as a wetting front reaches the edge of the active halo instead
+    /// of waiting for the fixed rebuild cadence (kRebuildEveryCycles macro
+    /// cycles). Without it a dry-bed front can advance at most one cell ring
+    /// per cadence — the stall that pins the SWASHES Ritter/Thacker results.
+    /// AUTO (default): YES for FULL_SWE / DIFFUSIVE_WAVE, NO for
+    /// LOCAL_INERTIAL (which stays bit-identical to its pre-2026-09 results).
+    int front_rebuild = -1;   ///< -1 AUTO, 0 NO, 1 YES
+    /// [2D_OPTIONS] RECONSTRUCTION_ORDER 1|2 — FULL_SWE only: 1 = piecewise
+    /// constant (first-order Godunov, forward Euler); 2 = MUSCL on (η, u, v)
+    /// with the Barth–Jespersen-limited Green-Gauss gradient + SSP-RK2
+    /// (global-dt mode; LTS_TIERS > 1 is reduced to 1 with a warning).
+    int reconstruction_order = 1;
     /// Max marcher step (s): caps film-cell CFL steps (and thus the LTS tier
     /// spread) and the co-advance sync-batch span.
     double max_timestep      = 10.0;

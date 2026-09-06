@@ -91,9 +91,7 @@ MeshData makeTaggedMesh() {
     const int v1[4] = {1, 4, 2, 5};
     const int v2[4] = {4, 3, 5, 4};
     for (int t = 0; t < 4; ++t) {
-        mesh.tri_v0[t] = v0[t];
-        mesh.tri_v1[t] = v1[t];
-        mesh.tri_v2[t] = v2[t];
+        mesh.set_triangle(t, v0[t], v1[t], v2[t]);
         mesh.mannings_n[t] = 0.03;
     }
     mesh.tri_tag = {"LAWN", "WOODS", "LAWN", ""};

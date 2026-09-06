@@ -1239,6 +1239,41 @@ CREATE INDEX IF NOT EXISTS idx_mesh2d_tri_v1 ON mesh_2d_triangles(simulation_id,
 CREATE INDEX IF NOT EXISTS idx_mesh2d_tri_v2 ON mesh_2d_triangles(simulation_id, v2);
 
 -- ----------------------------------------------------------------------------
+-- 2D mesh quadrilaterals (mixed tri-quad meshes, 2D_TRI_QUAD_MESH_PLAN
+-- 2026-09-06). quad_idx is the 0-based index WITHIN the quads; the engine
+-- cell index is n_triangles + quad_idx (cells are triangles first, then
+-- quads). Absent in older files (all-triangle).
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS mesh_2d_quads (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    quad_idx        INTEGER NOT NULL,
+    geom            BLOB,
+    v0              INTEGER NOT NULL,
+    v1              INTEGER NOT NULL,
+    v2              INTEGER NOT NULL,
+    v3              INTEGER NOT NULL,
+    mannings_n      REAL NOT NULL DEFAULT 0.035,
+    init_depth      REAL NOT NULL DEFAULT 0,
+    tag             TEXT,
+    bed_elev        REAL,
+    coupled_node    TEXT,
+    UNIQUE(simulation_id, quad_idx),
+    FOREIGN KEY (simulation_id, v0)
+        REFERENCES mesh_2d_vertices(simulation_id, vertex_idx)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (simulation_id, v1)
+        REFERENCES mesh_2d_vertices(simulation_id, vertex_idx)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (simulation_id, v2)
+        REFERENCES mesh_2d_vertices(simulation_id, vertex_idx)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (simulation_id, v3)
+        REFERENCES mesh_2d_vertices(simulation_id, vertex_idx)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- ----------------------------------------------------------------------------
 -- Per-edge boundary conditions; canonical (tri_idx, edge) form matching
 -- [2D_BOUNDARY_CONDITIONS]. Rows exist only for non-default edges (absent
 -- row == WALL). bc_type uses the .inp grammar tokens (WALL | NORMAL_FLOW |

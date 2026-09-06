@@ -59,6 +59,7 @@
 #include "../data/MeshData.hpp"
 #include "../data/SolverOptions2D.hpp"
 #include "../mesh/VfrClosure.hpp"
+#include "../mesh/QuadVfr.hpp"
 
 // Portable kernel-function marker (P5 Kokkos port): host builds get plain
 // `inline`; the GPU plugin defines OPENSWMM_KERNEL_FN to
@@ -126,9 +127,34 @@ OPENSWMM_KERNEL_FN double volumeFromEtaScalar(double area, double cz,
     return (d > 0.0) ? area * d : 0.0;
 }
 
+/// Quad (B&S 2007 two-plane) V → (η, depth) closure core. @p zs / @p A1 /
+/// @p A2 are the precomputed quad VFR data (MeshData::quad_vfr_*).
+OPENSWMM_KERNEL_FN void etaDepthQuadScalar(double area, double cz,
+                                           const double* zs, double A1, double A2,
+                                           bool vfr, double vfr_min_wet_frac,
+                                           double V, double& eta,
+                                           double& depth) noexcept {
+    const double v = (V > 0.0) ? V : 0.0;
+    depth = (area > 1.0e-30) ? v / area : 0.0;
+    if (vfr) eta = quadEtaFromMeanDepth(zs, A1, A2, depth, vfr_min_wet_frac);
+    else     eta = cz + depth;
+}
+
+/// Quad η → V inverse (device-callable).
+OPENSWMM_KERNEL_FN double volumeFromEtaQuadScalar(double area, double cz,
+                                                  const double* zs, double A1,
+                                                  double A2, bool vfr,
+                                                  double vfr_min_wet_frac,
+                                                  double eta) noexcept {
+    if (vfr) return area * quadMeanDepthFromEta(zs, A1, A2, eta, vfr_min_wet_frac);
+    const double d = eta - cz;
+    return (d > 0.0) ? area * d : 0.0;
+}
+
 /// Volume → (η, depth) closure — the SAME semantics as the CVODE/ARKODE
 /// reconstructFromVolume: depth = max(V,0)/A; FLAT η = z_c + depth, VFR η from
-/// the Begnudelli–Sanders planar-bed relation (ε-regularized).
+/// the Begnudelli–Sanders planar-bed relation (ε-regularized) for triangles
+/// and the B&S 2007 two-plane relation for quads.
 inline void cellEtaDepth(const MeshData& m, const SolverOptions2D& o,
                          int i, double V, double& eta, double& depth) noexcept {
     // Branch BEFORE the geometry loads: under the default FLAT closure the
@@ -140,8 +166,17 @@ inline void cellEtaDepth(const MeshData& m, const SolverOptions2D& o,
                        false, o.vfr_min_wet_frac, V, eta, depth);
         return;
     }
+    if (m.cell_nv[static_cast<std::size_t>(i)] == 4) {
+        etaDepthQuadScalar(m.tri_area[i], m.tri_cz[i],
+                           &m.quad_vfr_z[static_cast<std::size_t>(i) * kQuadVfrZ],
+                           m.quad_vfr_a[static_cast<std::size_t>(i) * 2],
+                           m.quad_vfr_a[static_cast<std::size_t>(i) * 2 + 1],
+                           true, o.vfr_min_wet_frac, V, eta, depth);
+        return;
+    }
     etaDepthScalar(m.tri_area[i], m.tri_cz[i],
-                   m.vz[m.tri_v0[i]], m.vz[m.tri_v1[i]], m.vz[m.tri_v2[i]],
+                   m.vz[m.cell_vertex(i, 0)], m.vz[m.cell_vertex(i, 1)],
+                   m.vz[m.cell_vertex(i, 2)],
                    true, o.vfr_min_wet_frac, V, eta, depth);
 }
 
@@ -150,9 +185,17 @@ inline void cellEtaDepth(const MeshData& m, const SolverOptions2D& o,
 /// with cellEtaDepth). Closure-consistent seeding for tests/hotstart.
 inline double cellVolumeFromEta(const MeshData& m, const SolverOptions2D& o,
                                 int i, double eta) noexcept {
+    if (m.cell_nv[static_cast<std::size_t>(i)] == 4) {
+        return volumeFromEtaQuadScalar(
+            m.tri_area[i], m.tri_cz[i],
+            &m.quad_vfr_z[static_cast<std::size_t>(i) * kQuadVfrZ],
+            m.quad_vfr_a[static_cast<std::size_t>(i) * 2],
+            m.quad_vfr_a[static_cast<std::size_t>(i) * 2 + 1],
+            o.cell_closure == CellClosure2D::VFR, o.vfr_min_wet_frac, eta);
+    }
     return volumeFromEtaScalar(m.tri_area[i], m.tri_cz[i],
-                               m.vz[m.tri_v0[i]], m.vz[m.tri_v1[i]],
-                               m.vz[m.tri_v2[i]],
+                               m.vz[m.cell_vertex(i, 0)], m.vz[m.cell_vertex(i, 1)],
+                               m.vz[m.cell_vertex(i, 2)],
                                o.cell_closure == CellClosure2D::VFR,
                                o.vfr_min_wet_frac, eta);
 }

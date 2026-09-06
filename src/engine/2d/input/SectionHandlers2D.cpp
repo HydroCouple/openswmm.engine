@@ -78,8 +78,8 @@ int findTriangleByTag(const MeshData& mesh, const std::string& tag) {
 const std::string RETIRED_SUFFIX =
     " was retired with the CVODE/ARKODE 2D solvers: the explicit "
     "local-inertial marcher is the only 2D integrator. Remove the line; "
-    "marcher settings are THETA, CFL_NUMBER, LTS_TIERS, H_MOVE, FROUDE_MAX, "
-    "ADVECTION, MAX_TIMESTEP, COUPLING_AREA.";
+    "marcher settings are MOMENTUM_EQUATION, THETA, CFL_NUMBER, LTS_TIERS, "
+    "H_MOVE, FROUDE_MAX, RECONSTRUCTION_ORDER, MAX_TIMESTEP, COUPLING_AREA.";
 
 /// Retired [2D_OPTIONS] material: warn-and-ignore when a warnings sink is
 /// available (the file-load path — legacy models must still open), hard
@@ -178,6 +178,28 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
         // and hard-error on the programmatic set path.
         if (!iequals(val, "EXPLICIT"))
             return retiredOption("INTEGRATOR " + val, warnings);
+    } else if (iequals(key, "MOMENTUM_EQUATION")) {
+        if      (iequals(val, "LOCAL_INERTIAL") || iequals(val, "LI"))
+            opts.momentum = Momentum2D::LOCAL_INERTIAL;
+        else if (iequals(val, "FULL_SWE") || iequals(val, "SWE") ||
+                 iequals(val, "FULL"))
+            opts.momentum = Momentum2D::FULL_SWE;
+        else if (iequals(val, "DIFFUSIVE_WAVE") || iequals(val, "DW") ||
+                 iequals(val, "DIFFUSIVE"))
+            opts.momentum = Momentum2D::DIFFUSIVE_WAVE;
+        else
+            return "Unknown MOMENTUM_EQUATION: " + val +
+                   " (expected LOCAL_INERTIAL|FULL_SWE|DIFFUSIVE_WAVE)";
+    } else if (iequals(key, "FRONT_REBUILD")) {
+        if      (iequals(val, "AUTO")) opts.front_rebuild = -1;
+        else if (iequals(val, "YES") || iequals(val, "ON"))  opts.front_rebuild = 1;
+        else if (iequals(val, "NO")  || iequals(val, "OFF")) opts.front_rebuild = 0;
+        else return "Unknown FRONT_REBUILD: " + val + " (expected AUTO|YES|NO)";
+    } else if (iequals(key, "RECONSTRUCTION_ORDER")) {
+        const int k = tryParseInt(val, ok);
+        if (!ok || (k != 1 && k != 2))
+            return "Invalid RECONSTRUCTION_ORDER value (expected 1|2)";
+        opts.reconstruction_order = k;
     } else if (iequals(key, "THETA")) {
         const double th = tryParseDouble(val, ok);
         if (!ok || th <= 0.0 || th > 1.0)
@@ -204,6 +226,15 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
             return "Invalid FROUDE_MAX value (expected > 0)";
         opts.froude_max = f;
     } else if (iequals(key, "ADVECTION")) {
+        // DEPRECATED (2026-09-06): the LI + staggered-advection experiment is
+        // superseded by MOMENTUM_EQUATION FULL_SWE. Still honoured so an old
+        // deck keeps its physics, but a file load names the replacement.
+        if (warnings && (iequals(val, "YES") || iequals(val, "ON") ||
+                         iequals(val, "TRUE")))
+            warnings->push_back(
+                "[2D_OPTIONS] ADVECTION YES is deprecated — use "
+                "MOMENTUM_EQUATION FULL_SWE for a conservative convective "
+                "term with shock capturing.");
         if (iequals(val, "YES") || iequals(val, "ON") || iequals(val, "TRUE"))
             opts.advection = true;
         else if (iequals(val, "NO") || iequals(val, "OFF") ||
@@ -263,7 +294,8 @@ bool is2DOptionKey(const std::string& key) {
         "LIMITER_EPSILON", "FLUX_DH_EPS", "RAINFALL_MODE", "REPORT_2D",
         "CELL_CLOSURE", "FACE_RECONSTRUCTION", "VFR_MIN_WET_FRAC",
         "OUTPUT_FILE",
-        "INTEGRATOR", "THETA", "CFL_NUMBER", "H_MOVE",
+        "INTEGRATOR", "MOMENTUM_EQUATION", "RECONSTRUCTION_ORDER", "FRONT_REBUILD",
+        "THETA", "CFL_NUMBER", "H_MOVE",
         "LTS_TIERS", "FROUDE_MAX", "ADVECTION", "COUPLING_AREA",
         "BACKEND",
     };
@@ -305,6 +337,18 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
         return "NATURAL_NEIGHBOUR";
     }
     if (iequals(key, "INTEGRATOR"))    return "EXPLICIT";
+    if (iequals(key, "MOMENTUM_EQUATION")) {
+        switch (opts.momentum) {
+            case Momentum2D::FULL_SWE:       return "FULL_SWE";
+            case Momentum2D::DIFFUSIVE_WAVE: return "DIFFUSIVE_WAVE";
+            case Momentum2D::LOCAL_INERTIAL: break;
+        }
+        return "LOCAL_INERTIAL";
+    }
+    if (iequals(key, "RECONSTRUCTION_ORDER"))
+        return std::to_string(opts.reconstruction_order);
+    if (iequals(key, "FRONT_REBUILD"))
+        return opts.front_rebuild < 0 ? "AUTO" : (opts.front_rebuild ? "YES" : "NO");
     if (iequals(key, "THETA"))         return fmt_g(opts.theta);
     if (iequals(key, "CFL_NUMBER"))    return fmt_g(opts.cfl_number);
     if (iequals(key, "H_MOVE"))        return fmt_g(opts.h_move);
@@ -393,10 +437,60 @@ std::string parse2DTriangleLine(const std::vector<std::string>& tokens,
     }
 
     int idx = mesh.n_triangles();
+    // Cell index contract: triangles first, then quads (2D_TRI_QUAD_MESH_PLAN
+    // §2.4). A triangle row arriving after a quad row would renumber every
+    // cell-addressed section behind it.
+    if (idx > 0 && mesh.cell_vertex_count(idx - 1) == 4)
+        return "[2D_TRIANGLES] rows must precede all [2D_QUADS] rows "
+               "(cells are numbered triangles first, then quads)";
     mesh.resize_triangles(idx + 1);
-    mesh.tri_v0[idx] = v0;
-    mesh.tri_v1[idx] = v1;
-    mesh.tri_v2[idx] = v2;
+    mesh.set_triangle(idx, v0, v1, v2);
+    mesh.mannings_n[idx] = n;
+    mesh.tri_init_depth[idx] = init_depth;
+    mesh.tri_tag[idx] = tag;
+
+    return {};
+}
+
+
+// [2D_QUADS] — convex quadrilateral cells, appended AFTER every triangle:
+//   V1 V2 V3 V4 MANNINGS_N [INIT_DEPTH] [TAG]
+// The four vertices are listed in cyclic order (either orientation; the
+// builder orients edge normals outward from the centroid). Cell index of the
+// j-th quad row is n_triangles + j — the unified index every cell-addressed
+// section (`TRI` columns) uses. Local edge k = (V[(k+1)%4], V[(k+2)%4]).
+std::string parse2DQuadLine(const std::vector<std::string>& tokens,
+                            MeshData& mesh) {
+    if (tokens.size() < 5)
+        return "Expected V1 V2 V3 V4 MANNINGS_N [INIT_DEPTH] [TAG]";
+
+    bool ok = false;
+    int v[4];
+    for (int k = 0; k < 4; ++k) {
+        v[k] = tryParseInt(tokens[static_cast<std::size_t>(k)], ok);
+        if (!ok) return "Invalid V" + std::to_string(k + 1) + " index";
+    }
+
+    double n = tryParseDouble(tokens[4], ok);
+    if (!ok) return "Invalid MANNINGS_N value";
+
+    double init_depth = 0.0;
+    std::string tag;
+    if (tokens.size() >= 6) {
+        bool num = false;
+        double d = tryParseDouble(tokens[5], num);
+        if (num) {
+            if (d < 0.0) return "Invalid INIT_DEPTH (must be >= 0)";
+            init_depth = d;
+            if (tokens.size() >= 7) tag = tokens[6];
+        } else {
+            tag = tokens[5];
+        }
+    }
+
+    int idx = mesh.n_triangles();
+    mesh.resize_triangles(idx + 1);
+    mesh.set_quad(idx, v[0], v[1], v[2], v[3]);
     mesh.mannings_n[idx] = n;
     mesh.tri_init_depth[idx] = init_depth;
     mesh.tri_tag[idx] = tag;
@@ -579,8 +673,9 @@ std::string parse2DBoundaryConditionsLine(
     if (!ok || row.tri < 0)
         return "[2D_BOUNDARY_CONDITIONS] invalid TRI index";
     row.edge = tryParseInt(tokens[1], ok);
-    if (!ok || row.edge < 0 || row.edge > 2)
-        return "[2D_BOUNDARY_CONDITIONS] invalid EDGE (must be 0..2)";
+    if (!ok || row.edge < 0 || row.edge >= kMaxCellVerts)
+        return "[2D_BOUNDARY_CONDITIONS] invalid EDGE (must be 0..2 for a "
+               "triangle, 0..3 for a quad)";
 
     const std::string &type_tok = tokens[2];
     if      (iequals(type_tok, "WALL"))            row.bc_type = static_cast<int>(BoundaryType::WALL);
@@ -887,8 +982,9 @@ std::string parse2DBoundaryQualityLine(
     if (!ok || r.tri < 0)
         return "[2D_BOUNDARY_QUALITY] invalid TRI index: " + tokens[0];
     r.edge = tryParseInt(tokens[1], ok);
-    if (!ok || r.edge < 0 || r.edge > 2)
-        return "[2D_BOUNDARY_QUALITY] invalid EDGE (must be 0..2): " + tokens[1];
+    if (!ok || r.edge < 0 || r.edge >= kMaxCellVerts)
+        return "[2D_BOUNDARY_QUALITY] invalid EDGE (must be 0..2 for a "
+               "triangle, 0..3 for a quad): " + tokens[1];
     r.species = tokens[2];
     bool okc = false;
     r.conc = tryParseDouble(tokens[3], okc);
@@ -950,6 +1046,11 @@ void register2DSections(MeshData& mesh,
     registry.register_custom("2D_TRIANGLES",
         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
             return parse2DTriangleLine(tokens, mesh);
+        }));
+
+    registry.register_custom("2D_QUADS",
+        makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DQuadLine(tokens, mesh);
         }));
 
     registry.register_custom("2D_INITIAL_VELOCITY",
@@ -1053,6 +1154,10 @@ std::string load2DMeshExternalFile(MeshData& mesh,
     mini.register_custom("2D_TRIANGLES",
         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
             return parse2DTriangleLine(tokens, mesh);
+        }));
+    mini.register_custom("2D_QUADS",
+        makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DQuadLine(tokens, mesh);
         }));
     mini.register_custom("2D_INITIAL_VELOCITY",
         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {

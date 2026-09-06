@@ -20,7 +20,7 @@
  *
  * @details Phase 2 of docs/IMEX_LOCAL_INERTIAL_IMPLEMENTATION_PLAN.md. The
  *          diffusive-wave path stores edges redundantly per cell
- *          (MeshData edge arrays are flat [tri*3+edge]); the local-inertial
+ *          (MeshData edge arrays are flat [cell*kMaxCellVerts+edge]); the local-inertial
  *          scheme instead carries ONE prognostic discharge q per shared
  *          interior edge (the conservation invariant: a single antisymmetric
  *          flux per edge). This builds that canonical unique-edge enumeration
@@ -72,7 +72,7 @@ struct InertialEdges {
     /// of the centroid-diluted zface (same endpoint rule as the boundary
     /// path's edgeEndpointZ — both incident cells see the identical pair).
     std::vector<double> ze_lo, ze_hi;
-    std::vector<int>    slotL, slotR; ///< flat mesh edge slots [tri*3+e] for writeback
+    std::vector<int>    slotL, slotR; ///< flat mesh edge slots [cell*kMaxCellVerts+e] for writeback
 
     // Explicit-marcher extension (ExplicitInertialSolver). Precomputed here so
     // the per-substep kernels stay pure arithmetic.
@@ -84,9 +84,16 @@ struct InertialEdges {
     /// (inv_dx above) overestimates slopes on non-orthogonal triangle pairs.
     std::vector<double> inv_dx_normal;
     std::vector<double> n2_face;      ///< (½(n_L+n_R))² Manning coefficient
-    /// Per-CELL characteristic length L_char = 2A/ξ_max (smallest altitude, m)
-    /// for the CFL step bound dt = α·L_char/√(g·h).
+    /// Per-CELL characteristic length (m) for the CFL step bound
+    /// dt = α·L_char/√(g·h): √(2A/Σξ·inv_dx_normal) from the discrete wave
+    /// operator; isolated cells fall back to 2A/ξ_max (triangle) or
+    /// 2·min centroid→edge distance (quad).
     std::vector<double> cell_lchar;
+    /// Per-CELL positivity length 2A/P (P = full perimeter, boundary edges
+    /// included; Δx/2 for a square). The FULL_SWE Godunov update uses
+    /// dt = α·(2A/P)/(√(gh)+|u|): α = 1 is the linear stability limit and
+    /// α = ½ the Audusse–Bristeau positivity bound (Σ_faces outflow ≤ ½·V).
+    std::vector<double> cell_lpos;
 
     // Per-cell CSR incidence for the conservative continuity gather. For cell i,
     // the incident edges are cell_edge[cell_ptr[i] .. cell_ptr[i+1]) with sign

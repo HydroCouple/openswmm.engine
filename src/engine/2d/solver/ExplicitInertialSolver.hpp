@@ -51,6 +51,7 @@
 
 #include "ISurfaceSolver.hpp"
 #include "InertialEdges.hpp"
+#include "../data/SolverOptions2D.hpp"   // Momentum2D
 
 namespace openswmm::twoD {
 
@@ -110,8 +111,61 @@ private:
     SolverOptions2D*  opts_  = nullptr;
 
     InertialEdges edges_;
-    std::vector<double>  q_;            ///< per unique interior face (m²/s)
-    std::vector<double>  qcx_, qcy_;    ///< Perot cell discharge vector (θ < 1)
+    /// Per unique interior face (m²/s). LOCAL_INERTIAL: the prognostic face
+    /// discharge. FULL_SWE / DIFFUSIVE_WAVE: the last evaluated face mass
+    /// flux per unit width (diagnostic — published as edge_flux).
+    std::vector<double>  q_;
+    /// LOCAL_INERTIAL: Perot cell discharge vector (θ < 1 / ADVECTION).
+    /// FULL_SWE: the PROGNOSTIC cell-mean unit discharge (h·u, h·v), m²/s.
+    std::vector<double>  qcx_, qcy_;
+
+    // -----------------------------------------------------------------------
+    // Momentum closure (MOMENTUM_EQUATION, 2D_FULL_SWE plan §2.1). One
+    // marcher, three face laws; everything below the face/cell kernels
+    // (tiers, active sets, positivity, coupling, transport) is shared.
+    // -----------------------------------------------------------------------
+    Momentum2D mode_ = Momentum2D::LOCAL_INERTIAL;
+    /// FULL_SWE momentum accumulators per face side (m⁴/s = m²·m²/s): the
+    /// x/y momentum the face booked for cL / cR, gathered and cleared by the
+    /// cell exactly like facc_L_/facc_R_ (same writer, same cadence).
+    std::vector<double>  macc_x_L_, macc_x_R_, macc_y_L_, macc_y_R_;
+    /// RECONSTRUCTION_ORDER 2 (FULL_SWE): limited Green-Gauss gradients of
+    /// (η, u, v) per cell, refreshed at every face pass, and the SSP-RK2
+    /// stage buffers. Empty at order 1.
+    bool                 second_order_ = false;
+    std::vector<double>  gex_, gey_, gux_, guy_, gvx_, gvy_;
+    std::vector<double>  rk_v0_, rk_qx0_, rk_qy0_;
+    void computeLimitedGradientsSwe();
+    /// One SSP-RK2 (Heun) step of length dt over the active lists: two
+    /// forward-Euler substeps averaged with the start state; the ledgers
+    /// that accumulated over both stages are halved to the trapezoidal value.
+    void runRk2Step(double dt);
+    /// FRONT_REBUILD: frontier_[i] = 1 for an active cell with at least one
+    /// inactive neighbour (the outer ring of the halo). When such a cell
+    /// crosses the activation depth the front has used up the halo, and the
+    /// next macro cycle rebuilds the active set instead of waiting for the
+    /// cadence (front_breach_).
+    bool                 front_rebuild_ = false;
+    std::vector<uint8_t> frontier_;
+    bool                 front_breach_  = false;
+    double               h_on_front_    = 0.0;   ///< activation depth of the last rebuild
+    /// DIFFUSIVE_WAVE: per-cell largest |surface slope| over its faces, from
+    /// the last rebuild/refresh — the explicit diffusion step bound's slope.
+    std::vector<double>  dw_slope_;
+    /// Face kernels of the three closures (fireFaces dispatches on mode_).
+    void fireFacesInertial(const std::vector<int>& faces, double dt_f, bool global_step);
+    void fireFacesSwe(const std::vector<int>& faces, double dt_f, bool global_step);
+    void fireFacesDiffusive(const std::vector<int>& faces, double dt_f, bool global_step);
+    /// Species advection + dispersion booked on face e for the mass transfer
+    /// dM (m³, positive cL→cR) at face depth hf — shared by every closure.
+    void bookFaceSpecies(int e, int a, int b, double dM, double hf, double dt_f,
+                         bool global_step) noexcept;
+    /// FULL_SWE ghost-cell Riemann boundary flux for BC entry k on cell i:
+    /// returns the inflow-positive volumetric flux (m³/s) and adds the
+    /// momentum change (with the bed-slope correction) to the cell's q⃗.
+    double boundaryFluxSwe(std::size_t k, int i, double dt_c);
+    /// DIFFUSIVE_WAVE step bound helper: refresh dw_slope_ for the active cells.
+    void refreshDiffusiveSlopes();
     std::vector<uint8_t> cell_active_;
     std::vector<int>     active_cells_;
     /// Every face with both sides active, ascending — the union of the face

@@ -38,7 +38,7 @@
  *   USER_FLAGS, USER_FLAG_VALUES, PLUGINS,
  *   2D_OPTIONS, 2D_INFILTRATION_OPTIONS, 2D_INFILTRATION_DEFAULTS,
  *   2D_INFILTRATION, 2D_MESH_FILE (external mode) or 2D_VERTICES,
- *   2D_TRIANGLES, 2D_VERTEX_NODE_MAP, 2D_TRIANGLE_NODE_MAP,
+ *   2D_TRIANGLES, 2D_QUADS, 2D_VERTEX_NODE_MAP, 2D_TRIANGLE_NODE_MAP,
  *   2D_BOUNDARY_CONDITIONS, 2D_EDGE_CONVEYANCE (inline mode),
  *   2D_INITIAL_QUALITY, 2D_BOUNDARY_QUALITY
  *
@@ -501,6 +501,16 @@ static void write2DSections(FILE* f, const SimulationContext& ctx,
     std::fprintf(f, "%-22s %.12g\n", "VFR_MIN_WET_FRAC",  o.vfr_min_wet_frac);
     // Explicit-marcher configuration (the only 2D integrator).
     std::fprintf(f, "%-22s %s\n",    "INTEGRATOR",        "EXPLICIT");
+    // Momentum closure: the LOCAL_INERTIAL default is omitted (option-default
+    // rule — pre-2026-09 files round-trip byte-identically).
+    if (o.momentum == twoD::Momentum2D::FULL_SWE)
+        std::fprintf(f, "%-22s %s\n", "MOMENTUM_EQUATION", "FULL_SWE");
+    else if (o.momentum == twoD::Momentum2D::DIFFUSIVE_WAVE)
+        std::fprintf(f, "%-22s %s\n", "MOMENTUM_EQUATION", "DIFFUSIVE_WAVE");
+    if (o.reconstruction_order != 1)
+        std::fprintf(f, "%-22s %d\n", "RECONSTRUCTION_ORDER", o.reconstruction_order);
+    if (o.front_rebuild >= 0)
+        std::fprintf(f, "%-22s %s\n", "FRONT_REBUILD", o.front_rebuild ? "YES" : "NO");
     std::fprintf(f, "%-22s %.12g\n", "THETA",             o.theta);
     std::fprintf(f, "%-22s %.12g\n", "CFL_NUMBER",        o.cfl_number);
     std::fprintf(f, "%-22s %.12g\n", "H_MOVE",            o.h_move);
@@ -627,6 +637,9 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
         if (!mesh.tri_tag[t].empty()) any_tag = true;
     }
     const bool write_depth_col = any_init_depth || any_tag;
+    // Cells are triangles first, then quads (MeshData contract); the two
+    // sections below preserve that order so cell indices round-trip.
+    const int n_quads = mesh.n_quads();
     sec(f, "2D_TRIANGLES");
     if (write_depth_col)
         std::fprintf(f, ";;%-6s %-8s %-8s %-12s %-12s %s\n", "V1", "V2", "V3",
@@ -635,13 +648,38 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
         std::fprintf(f, ";;%-6s %-8s %-8s %-12s %s\n", "V1", "V2", "V3",
                      "MANNINGS_N", "TAG");
     for (int t = 0; t < nt; ++t) {
-        std::fprintf(f, "%-8d %-8d %-8d %-12.6g", mesh.tri_v0[t],
-                     mesh.tri_v1[t], mesh.tri_v2[t], mesh.mannings_n[t]);
+        if (mesh.cell_vertex_count(t) != 3) continue;
+        std::fprintf(f, "%-8d %-8d %-8d %-12.6g", mesh.cell_vertex(t, 0),
+                     mesh.cell_vertex(t, 1), mesh.cell_vertex(t, 2), mesh.mannings_n[t]);
         if (write_depth_col)
             std::fprintf(f, " %-12.6g", mesh.tri_init_depth[t]);
         if (!mesh.tri_tag[t].empty())
             std::fprintf(f, " %s", mesh.tri_tag[t].c_str());
         std::fprintf(f, "\n");
+    }
+
+    // ---- [2D_QUADS] -----------------------------------------------------------
+    // Emitted only when the mesh holds quads (all-triangle files are
+    // byte-identical to the triangle-only writer). Same INIT_DEPTH/TAG rule.
+    if (n_quads > 0) {
+        sec(f, "2D_QUADS");
+        if (write_depth_col)
+            std::fprintf(f, ";;%-6s %-8s %-8s %-8s %-12s %-12s %s\n", "V1", "V2",
+                         "V3", "V4", "MANNINGS_N", "INIT_DEPTH", "TAG");
+        else
+            std::fprintf(f, ";;%-6s %-8s %-8s %-8s %-12s %s\n", "V1", "V2", "V3",
+                         "V4", "MANNINGS_N", "TAG");
+        for (int t = 0; t < nt; ++t) {
+            if (mesh.cell_vertex_count(t) != 4) continue;
+            std::fprintf(f, "%-8d %-8d %-8d %-8d %-12.6g", mesh.cell_vertex(t, 0),
+                         mesh.cell_vertex(t, 1), mesh.cell_vertex(t, 2),
+                         mesh.cell_vertex(t, 3), mesh.mannings_n[t]);
+            if (write_depth_col)
+                std::fprintf(f, " %-12.6g", mesh.tri_init_depth[t]);
+            if (!mesh.tri_tag[t].empty())
+                std::fprintf(f, " %s", mesh.tri_tag[t].c_str());
+            std::fprintf(f, "\n");
+        }
     }
 
     // ---- [2D_INITIAL_VELOCITY] ------------------------------------------------

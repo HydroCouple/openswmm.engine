@@ -15,12 +15,6 @@
 
 namespace openswmm::twoD {
 
-namespace {
-inline int nbr_of(const MeshData& m, int t, int e) {
-    return (e == 0) ? m.tri_nbr0[t] : (e == 1) ? m.tri_nbr1[t] : m.tri_nbr2[t];
-}
-} // namespace
-
 void InertialEdges::build(const MeshData& mesh) {
     const int nt = mesh.n_triangles();
 
@@ -29,52 +23,56 @@ void InertialEdges::build(const MeshData& mesh) {
     slotL.clear(); slotR.clear();
     nx.clear(); ny.clear(); mx.clear(); my.clear();
     inv_dx_normal.clear(); n2_face.clear(); cell_lchar.clear();
+    cell_lpos.clear();
 
     // slot_edge[t][e] = unique-edge id incident to (t, local edge e), or −1 for
     // a boundary edge. Filled for BOTH sides of every interior edge.
-    std::vector<std::array<int, 3>> slot_edge(
-        static_cast<std::size_t>(nt), std::array<int, 3>{-1, -1, -1});
+    std::vector<std::array<int, kMaxCellVerts>> slot_edge(
+        static_cast<std::size_t>(nt), std::array<int, kMaxCellVerts>{-1, -1, -1, -1});
 
     // 1. Enumerate unique interior edges. Count each once (nbr > t), and stamp
     //    the matching local edge on the neighbour so the CSR pass sees both.
     for (int t = 0; t < nt; ++t) {
-        for (int e = 0; e < 3; ++e) {
-            const int nb = nbr_of(mesh, t, e);
+        const int nv_t = mesh.cell_vertex_count(t);
+        for (int e = 0; e < nv_t; ++e) {
+            const int nb = mesh.cell_neighbour(t, e);
             if (nb < 0 || nb < t) continue;   // boundary, or already counted
 
             const int eid = static_cast<int>(cL.size());
             cL.push_back(t);
             cR.push_back(nb);
-            xi.push_back(mesh.edge_length[t * 3 + e]);
+            xi.push_back(mesh.edge_length[MeshData::slot(t, e)]);
             const double ddx = std::hypot(mesh.tri_cx[t] - mesh.tri_cx[nb],
                                           mesh.tri_cy[t] - mesh.tri_cy[nb]);
             inv_dx.push_back(ddx > 1.0e-12 ? 1.0 / ddx : 0.0);
             zface.push_back(std::max(mesh.tri_cz[t], mesh.tri_cz[nb]));
             {
-                // Endpoint bed elevations of the shared edge (MeshBuilder
-                // convention: edge e is opposite vertex e). Same rule as
-                // SurfaceFluxCalculator's edgeEndpointZ — both incident cells
-                // see identical (z_lo, z_hi), so the VFR face depth is
+                // Endpoint bed elevations of the shared edge (MeshData
+                // convention: edge k = (v[(k+1)%nv], v[(k+2)%nv])). Same rule
+                // as SurfaceFluxCalculator's edgeEndpointZ — both incident
+                // cells see identical (z_lo, z_hi), so the VFR face depth is
                 // antisymmetric and the FV flux mass-conservative.
-                const int v[3] = {mesh.tri_v0[t], mesh.tri_v1[t], mesh.tri_v2[t]};
-                const double za = mesh.vz[v[(e + 1) % 3]];
-                const double zb = mesh.vz[v[(e + 2) % 3]];
+                int va, vb;
+                mesh.cell_edge_vertices(t, e, va, vb);
+                const double za = mesh.vz[va];
+                const double zb = mesh.vz[vb];
                 ze_lo.push_back(std::min(za, zb));
                 ze_hi.push_back(std::max(za, zb));
             }
-            slotL.push_back(t * 3 + e);
+            slotL.push_back(MeshData::slot(t, e));
 
             // Find nb's local edge facing t (the mirror slot) and record it.
+            const int nv_nb = mesh.cell_vertex_count(nb);
             int e2 = 0;
-            for (; e2 < 3; ++e2) if (nbr_of(mesh, nb, e2) == t) break;
-            slotR.push_back(nb * 3 + e2);
+            for (; e2 < nv_nb; ++e2) if (mesh.cell_neighbour(nb, e2) == t) break;
+            slotR.push_back(MeshData::slot(nb, e2));
 
             slot_edge[t][e]  = eid;
-            if (e2 < 3) slot_edge[nb][e2] = eid;
+            if (e2 < nv_nb) slot_edge[nb][e2] = eid;
 
             // Marcher extension. The mesh stores the OUTWARD normal per cell
             // slot; cL's slot normal already points cL→cR.
-            const int sl = t * 3 + e;
+            const int sl = MeshData::slot(t, e);
             nx.push_back(mesh.edge_nx[sl]);
             ny.push_back(mesh.edge_ny[sl]);
             mx.push_back(mesh.edge_mx[sl]);
@@ -121,21 +119,37 @@ void InertialEdges::build(const MeshData& mesh) {
         for (int t = 0; t < nt; ++t) {
             if (S[t] > 1.0e-30) {
                 cell_lchar[t] = std::sqrt(2.0 * mesh.tri_area[t] / S[t]);
-            } else {
+            } else if (mesh.cell_vertex_count(t) == 3) {
                 double xi_max = 0.0;
                 for (int e = 0; e < 3; ++e)
-                    xi_max = std::max(xi_max, mesh.edge_length[t * 3 + e]);
+                    xi_max = std::max(xi_max, mesh.edge_length[MeshData::slot(t, e)]);
                 cell_lchar[t] =
                     (xi_max > 0.0) ? 2.0 * mesh.tri_area[t] / xi_max : 0.0;
+            } else {
+                // Quad with no interior face: twice the smallest centroid→edge
+                // normal distance (Δx for a square; conservative for skewed
+                // cells). Only matters until a neighbour opens.
+                double dmin = 1.0e300;
+                for (int e = 0; e < mesh.cell_vertex_count(t); ++e)
+                    dmin = std::min(dmin, mesh.edge_dist_c[MeshData::slot(t, e)]);
+                cell_lchar[t] = (dmin > 0.0 && dmin < 1.0e300) ? 2.0 * dmin : 0.0;
             }
         }
+    }
+
+    cell_lpos.assign(static_cast<std::size_t>(nt), 0.0);
+    for (int t = 0; t < nt; ++t) {
+        double P = 0.0;
+        for (int e = 0; e < mesh.cell_vertex_count(t); ++e)
+            P += mesh.edge_length[MeshData::slot(t, e)];
+        cell_lpos[t] = (P > 0.0) ? 2.0 * mesh.tri_area[t] / P : 0.0;
     }
 
     // 2. Per-cell CSR incidence with orientation signs.
     cell_ptr.assign(static_cast<std::size_t>(nt) + 1, 0);
     for (int t = 0; t < nt; ++t) {
         int c = 0;
-        for (int e = 0; e < 3; ++e) if (slot_edge[t][e] >= 0) ++c;
+        for (int e = 0; e < kMaxCellVerts; ++e) if (slot_edge[t][e] >= 0) ++c;
         cell_ptr[t + 1] = cell_ptr[t] + c;
     }
     const int total = cell_ptr[nt];
@@ -146,7 +160,7 @@ void InertialEdges::build(const MeshData& mesh) {
 
     std::vector<int> fill(static_cast<std::size_t>(nt), 0);
     for (int t = 0; t < nt; ++t) {
-        for (int e = 0; e < 3; ++e) {
+        for (int e = 0; e < kMaxCellVerts; ++e) {
             const int eid = slot_edge[t][e];
             if (eid < 0) continue;
             const int pos = cell_ptr[t] + fill[t]++;

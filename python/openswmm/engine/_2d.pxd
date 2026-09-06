@@ -37,6 +37,13 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_get_vertex_tag(void* engine, int idx, char* buf, int buflen)
     int swmm_2d_triangle_get_neighbours(void* engine, int idx,
                                          int* n0, int* n1, int* n2)
+    # Mixed triangle/quad meshes (2D_TRI_QUAD_MESH_PLAN_2026-09-06)
+    int swmm_2d_cell_count(void* engine, int* count)
+    int swmm_2d_quad_count(void* engine, int* count)
+    int swmm_2d_edge_stride(void* engine, int* stride)
+    int swmm_2d_cell_vertex_count(void* engine, int idx, int* nv)
+    int swmm_2d_cell_get_vertices(void* engine, int idx, int* v, int* nv)
+    int swmm_2d_cell_get_neighbours(void* engine, int idx, int* n, int* nv)
     int swmm_2d_edge_get_geometry_bulk(void* engine,
                                         double* length, double* nx, double* ny) nogil
 

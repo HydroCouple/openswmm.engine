@@ -91,6 +91,15 @@ std::string parse2DTriangleLine(const std::vector<std::string>& tokens,
                                  MeshData& mesh);
 
 /**
+ * @brief Parse a single line from the [2D_QUADS] section.
+ *
+ * Format: V1 V2 V3 V4 MANNINGS_N [INIT_DEPTH] [TAG]
+ * Quads are appended after every triangle (cell index = n_triangles + j).
+ */
+std::string parse2DQuadLine(const std::vector<std::string>& tokens,
+                            MeshData& mesh);
+
+/**
  * @brief Parse a single line from the [2D_INITIAL_VELOCITY] section.
  *
  * Format: TRI U V   (m/s; default 0,0 — rows may cover any subset)

@@ -234,6 +234,7 @@ private:
 
     hsize_t n_faces_  = 0;
     hsize_t n_nodes_  = 0;
+    hsize_t edge_stride_ = 3;  ///< Public edge-slot stride (3 all-tri, 4 mixed)
     hsize_t n_steps_  = 0;  ///< Current time step count (grows with each update)
 
     // Helpers

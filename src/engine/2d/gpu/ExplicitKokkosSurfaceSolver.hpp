@@ -91,7 +91,7 @@ private:
 
     // ---- device geometry (const after initialize) -------------------------
     DView d_tri_area_, d_tri_cz_, d_tri_cx_, d_tri_cy_, d_vz_, d_vx_, d_vy_;
-    IView d_tri_v0_, d_tri_v1_, d_tri_v2_;
+    IView d_cell_v_;                   ///< padded [cell*kMaxCellVerts + k] connectivity
     DView d_vs_wt_;                    ///< vertex-stencil weights
     IView d_vs_ptr_, d_vs_idx_;        ///< vertex-stencil CSR
     DView d_edge_length_, d_mannings_n_;
@@ -112,7 +112,7 @@ private:
     /// lose or double-count whatever fell between the two.
     DView d_infil_applied_;
     std::vector<double> infil_applied_host_;  ///< drain scratch (nt)
-    DView d_edge_flux_;                ///< 3·nt flat slots (published)
+    DView d_edge_flux_;                ///< kMaxCellVerts·nt flat slots (published)
     IView d_active_, d_pin_t0_, d_tier_, d_face_tier_;
     IView d_cells_compact_, d_edges_compact_;  ///< per-tier segments
     IView d_scratch_;                  ///< seed flags scratch (nt)

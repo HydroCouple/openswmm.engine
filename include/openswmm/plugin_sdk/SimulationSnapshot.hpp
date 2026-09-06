@@ -239,9 +239,13 @@ struct SimulationSnapshot {
     // 2D surface routing state (optional; populated only when the engine was
     // built with OPENSWMM_BUILD_2D and the input file contains a 2D mesh)
     //
-    // Layout: per-triangle vectors are sized `surface_tri_count`; per-vertex
-    // vectors are sized `surface_vert_count`. `surface_edge_flux` is flat
-    // [tri * 3 + edge] of size `surface_tri_count * 3`.
+    // Layout: per-cell vectors are sized `surface_tri_count` (a "tri" is any
+    // cell — triangle or quadrilateral, triangles first); per-vertex vectors
+    // are sized `surface_vert_count`. `surface_edge_flux` is flat
+    // [cell * surface_edge_stride + edge] of size
+    // `surface_tri_count * surface_edge_stride`, where the stride is 3 for an
+    // all-triangle mesh (byte-compatible with pre-quad consumers) and 4 once
+    // any quad exists; padding slots of a triangle row are 0.
     //
     // Fields are deep-copied from `SurfaceRouter2D::state()` on the main
     // simulation thread; consumers (Default2DOutputPlugin and any third-party
@@ -253,8 +257,13 @@ struct SimulationSnapshot {
     // `surface_tri_count == 0` to skip 2D-specific work in that case.
     // -----------------------------------------------------------------------
 
-    int surface_tri_count  = 0;             ///< Number of triangles (faces)
+    int surface_tri_count  = 0;             ///< Number of cells (faces): triangles + quads
     int surface_vert_count = 0;             ///< Number of vertices (nodes)
+    int surface_quad_count = 0;             ///< Number of quadrilateral cells (0 = all triangles)
+    int surface_edge_stride = 3;            ///< Edge slots per cell row in surface_edge_flux (3 | 4)
+    /// Vertices per cell (3 or 4), sized surface_tri_count. Empty when the
+    /// mesh is all triangles (consumers may treat empty as "all 3").
+    std::vector<uint8_t> surface_cell_nv;
 
     std::vector<double> surface_depth;          ///< Overland flow depth ψ_o (m), per face
     std::vector<double> surface_head;           ///< Total head h_o = z_s + ψ_o (m), per face

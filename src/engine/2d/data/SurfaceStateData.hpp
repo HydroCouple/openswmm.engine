@@ -39,6 +39,7 @@
 #include <vector>
 
 #include "SurfaceTransportState.hpp"   // S1 — species mass per cell
+#include "MeshData.hpp"                 // kMaxCellVerts edge-slot stride
 
 namespace openswmm { struct NodeData; }  // 1D node data (held during a 2D advance)
 
@@ -50,7 +51,7 @@ struct CouplingPoint;  // fwd decl — 1D↔2D coupling descriptor (NodeCoupling
  * @brief SoA storage for 2D surface routing state variables.
  *
  * Per-triangle arrays are indexed [0, n_triangles).
- * Edge arrays are flat 2D: [tri * 3 + edge].
+ * Edge arrays are flat 2D: [cell * kMaxCellVerts + edge] (padded stride).
  * Vertex arrays are indexed [0, n_vertices).
  */
 struct BoundaryData;  // fwd decl — per-edge boundary conditions (BoundaryData.hpp)
@@ -119,7 +120,7 @@ struct SurfaceStateData {
     // Per-cell continuity residual — per triangle (m³/s, ≈0 when conservative)
     std::vector<double> cell_continuity_err;
 
-    // Fluxes — flat 2D: [tri * 3 + edge]
+    // Fluxes — flat 2D: [cell * kMaxCellVerts + edge]
     std::vector<double> edge_flux;      ///< Normal flux through each edge
 
     // Source/sink terms — per triangle
@@ -205,7 +206,7 @@ struct SurfaceStateData {
     void resize(int n_triangles, int n_vertices) {
         auto nt = static_cast<std::size_t>(n_triangles);
         auto nv = static_cast<std::size_t>(n_vertices);
-        auto n3 = nt * 3;
+        auto n3 = nt * static_cast<std::size_t>(kMaxCellVerts);
 
         depth.assign(nt, 0.0);
         head.assign(nt, 0.0);

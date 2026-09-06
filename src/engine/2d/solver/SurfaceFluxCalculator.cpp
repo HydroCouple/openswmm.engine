@@ -25,27 +25,22 @@ namespace openswmm::twoD {
 namespace {
 
 inline int tri_nbr(const MeshData& mesh, int t, int e) {
-    switch (e) {
-        case 0: return mesh.tri_nbr0[t];
-        case 1: return mesh.tri_nbr1[t];
-        case 2: return mesh.tri_nbr2[t];
-        default: return -1;
-    }
+    return (e >= 0 && e < mesh.cell_vertex_count(t)) ? mesh.cell_neighbour(t, e) : -1;
 }
 
 inline double sq(double x) noexcept { return x * x; }
 
-// Endpoint bed elevations of local edge e of triangle t, sorted z_lo <= z_hi.
-// MeshBuilder convention: edge e is opposite vertex e; its endpoints are the
-// triangle's other two vertices (same rule as MeshBuilder::edgeVertices and
-// recomputeVertexZDependents). For an interior edge both incident cells see
+// Endpoint bed elevations of local edge e of cell t, sorted z_lo <= z_hi.
+// MeshData convention: edge k = (v[(k+1)%nv], v[(k+2)%nv]) (for a triangle:
+// edge e is opposite vertex e). For an interior edge both incident cells see
 // the same two vertices, so both compute identical (z_lo, z_hi) — the face
 // depth below stays antisymmetric and the FV flux mass-conservative.
 inline void edgeEndpointZ(const MeshData& mesh, int t, int e,
                           double& z_lo, double& z_hi) noexcept {
-    const int v[3] = {mesh.tri_v0[t], mesh.tri_v1[t], mesh.tri_v2[t]};
-    const double za = mesh.vz[v[(e + 1) % 3]];
-    const double zb = mesh.vz[v[(e + 2) % 3]];
+    int va, vb;
+    mesh.cell_edge_vertices(t, e, va, vb);
+    const double za = mesh.vz[va];
+    const double zb = mesh.vz[vb];
     z_lo = (za < zb) ? za : zb;
     z_hi = (za < zb) ? zb : za;
 }
@@ -117,7 +112,7 @@ inline double boundaryEdgeFlux(const MeshData& mesh, const SurfaceStateData& sta
             double h_out = depth;
             if (vfr_face) {
                 double z_lo, z_hi;
-                edgeEndpointZ(mesh, i, idx % 3, z_lo, z_hi);
+                edgeEndpointZ(mesh, i, MeshData::slot_local(idx), z_lo, z_hi);
                 h_out = faceDepthFromEta(state.head[i], z_lo, z_hi);
                 if (h_out <= 0.0) return 0.0;
             }
@@ -142,7 +137,11 @@ inline double boundaryEdgeFlux(const MeshData& mesh, const SurfaceStateData& sta
             const double h_bc = b->edge_bc_head[idx];
             const double dh   = state.head[i] - h_bc;
             const double A    = mesh.tri_area[i];
-            const double dx_b = (L > 1.0e-12) ? (2.0 * A) / (3.0 * L) : 0.0;
+            // Triangle expression retained verbatim (bit-identity); a quad
+            // uses the precomputed centroid→edge normal distance.
+            const double dx_b = (mesh.cell_vertex_count(i) == 3)
+                ? ((L > 1.0e-12) ? (2.0 * A) / (3.0 * L) : 0.0)
+                : mesh.edge_dist_c[idx];
             if (dx_b <= 1.0e-12) return 0.0;
             double h_up;
             if (vfr_face) {
@@ -150,7 +149,7 @@ inline double boundaryEdgeFlux(const MeshData& mesh, const SurfaceStateData& sta
                 // side is higher (cell surface on outflow, prescribed stage on
                 // inflow) — mirrors the interior Eq. 14 treatment.
                 double z_lo, z_hi;
-                edgeEndpointZ(mesh, i, idx % 3, z_lo, z_hi);
+                edgeEndpointZ(mesh, i, MeshData::slot_local(idx), z_lo, z_hi);
                 h_up = faceDepthFromEta((dh > 0.0) ? state.head[i] : h_bc,
                                         z_lo, z_hi);
             } else {
@@ -183,8 +182,9 @@ void computeUnlimitedGradients(const MeshData& mesh, SurfaceStateData& state,
                               ? 1.0 / mesh.tri_area[i] : 0.0;
         double gx = 0.0, gy = 0.0;
 
-        for (int e = 0; e < 3; ++e) {
-            int idx = i * 3 + e;
+        const int nv_i = mesh.cell_vertex_count(i);
+        for (int e = 0; e < nv_i; ++e) {
+            int idx = MeshData::slot(i, e);
             int nbr = tri_nbr(mesh, i, e);
 
             // Head at edge midpoint: average of this cell and neighbour
@@ -224,10 +224,11 @@ void computeLimitedGradients(const MeshData& mesh, SurfaceStateData& state,
         // 1/4 weights as all |∇h| → 0, avoiding a degenerate-division branch.
         double q0 = sq(state.grad_hx[i]) + sq(state.grad_hy[i]) + eps2;
 
-        double q[3];
-        double gx_nbr[3], gy_nbr[3];
+        double q[kMaxCellVerts];
+        double gx_nbr[kMaxCellVerts], gy_nbr[kMaxCellVerts];
+        const int nv_i = mesh.cell_vertex_count(i);
 
-        for (int e = 0; e < 3; ++e) {
+        for (int e = 0; e < nv_i; ++e) {
             int nbr = tri_nbr(mesh, i, e);
             if (nbr >= 0) {
                 q[e] = sq(state.grad_hx[nbr]) + sq(state.grad_hy[nbr]) + eps2;
@@ -239,6 +240,25 @@ void computeLimitedGradients(const MeshData& mesh, SurfaceStateData& state,
                 gx_nbr[e] = state.grad_hx[i];
                 gy_nbr[e] = state.grad_hy[i];
             }
+        }
+
+        if (nv_i == 4) {
+            // Quad: the same JK product weights over 5 contributing
+            // gradients (self + 4 neighbours), w_k = ∏_{j≠k} q_j / Σ.
+            double qq[5] = {q0, q[0], q[1], q[2], q[3]};
+            double gx[5] = {state.grad_hx[i], gx_nbr[0], gx_nbr[1], gx_nbr[2], gx_nbr[3]};
+            double gy[5] = {state.grad_hy[i], gy_nbr[0], gy_nbr[1], gy_nbr[2], gy_nbr[3]};
+            double num[5], den = 0.0;
+            for (int k = 0; k < 5; ++k) {
+                double pr = 1.0;
+                for (int j = 0; j < 5; ++j) if (j != k) pr *= qq[j];
+                num[k] = pr; den += pr;
+            }
+            double sx = 0.0, sy = 0.0;
+            for (int k = 0; k < 5; ++k) { sx += num[k] / den * gx[k]; sy += num[k] / den * gy[k]; }
+            state.grad_hx_lim[i] = sx;
+            state.grad_hy_lim[i] = sy;
+            continue;
         }
 
         // Canonical Jawahar-Kamath (JK 2000) weights for 4 contributing
@@ -287,8 +307,8 @@ void computeCellContinuity(const MeshData& mesh, SurfaceStateData& state,
 
         // Net inflow (m³/s): edge_flux is inflow-positive volumetric flux.
         double flux_sum = 0.0;
-        for (int e = 0; e < 3; ++e) {
-            flux_sum += state.edge_flux[i * 3 + e];
+        for (int e = 0; e < mesh.cell_vertex_count(i); ++e) {
+            flux_sum += state.edge_flux[MeshData::slot(i, e)];
         }
 
         // Source volume rate (m³/s): same source terms assembleRHS uses. The
@@ -332,8 +352,8 @@ void computeFaceVelocity(const MeshData& mesh, SurfaceStateData& state,
         // Normal equations for N·q ≈ b: NᵀN (2×2 SPD) and Nᵀb.
         double a00 = 0.0, a01 = 0.0, a11 = 0.0;
         double b0  = 0.0, b1  = 0.0;
-        for (int e = 0; e < 3; ++e) {
-            int idx = i * 3 + e;
+        for (int e = 0; e < mesh.cell_vertex_count(i); ++e) {
+            int idx = MeshData::slot(i, e);
             double nx  = mesh.edge_nx[idx];
             double ny  = mesh.edge_ny[idx];
             double len = mesh.edge_length[idx];

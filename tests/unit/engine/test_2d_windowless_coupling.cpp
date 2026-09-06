@@ -238,7 +238,7 @@ TEST(WindowlessCouplingConductance, SignAndFdParity) {
     mesh.vy = {0.0, 0.0, 10.0};
     mesh.vz = {1.0, 1.0, 1.0};
     mesh.resize_triangles(1);
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 2;
+    mesh.set_triangle(0, 0, 1, 2);
     buildMeshTopology(mesh);
 
     SurfaceStateData state;

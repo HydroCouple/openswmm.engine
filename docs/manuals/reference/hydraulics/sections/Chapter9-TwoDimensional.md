@@ -1377,16 +1377,77 @@ likewise problem-dependent (§9.7.3: every routing step is a host↔device
 round trip, and the junction-exchange and boundary passes run serially),
 so a model that measures slower on `AUTO` should pin `BACKEND CPU`.
 
+## 9.11a Momentum closures (`MOMENTUM_EQUATION`) — added 2026-09-06
+
+The marcher of §9.5 is one time-stepping engine — tiered local
+time-stepping, flux-active sets, the positivity share, coupling,
+transport — with a choice of face law. `[2D_OPTIONS] MOMENTUM_EQUATION`
+selects it; the default reproduces §9.2–§9.5 bit for bit.
+
+| Closure | Prognostic state | Face law | Valid regime | Cost |
+|---|---|---|---|---|
+| `LOCAL_INERTIAL` (default) | V per cell, q per face | de Almeida & Bates (9-7)…(9-10) | Fr ≲ 0.5; ponds, streets, floodplains | 1× |
+| `FULL_SWE` | V, hu, hv per cell | hydrostatic reconstruction (Audusse et al. 2004) → rotated HLLC Riemann flux (Toro 2001) → per-face bed-slope correction ½g(h*² − h²)n̂; semi-implicit Manning friction per cell | all Froude numbers: transcritical control, hydraulic jumps, dam breaks, drawdown over crests | ≈2–3× (Courant ≤ ½ on 2A/P; the β share becomes a backstop) |
+| `DIFFUSIVE_WAVE` | V per cell | Manning quasi-steady q = −h^{5/3}S/(n√max(|S|,S_ε)) (Hunter et al. 2005) | slow floodplain inundation; steady uniform flow (exact) | Δx²-bound steps, carried by the LTS tiers |
+
+`FULL_SWE` keeps every property of §9.5: the lake at rest is exact
+(the Audusse correction cancels the ½g h*² pressure flux face by face,
+including at walls, which contribute a mirror-state Riemann flux), a
+dry higher neighbour is a wall, ΣV closes to round-off across tiers,
+species ride the mass flux. Boundary edges are ghost-cell Riemann
+problems: WALL mirrors u_n; NORMAL_FLOW is transmissive;
+SPECIFIED_STAGE holds η_bc with the outgoing Riemann invariant fixing
+the ghost velocity and becomes transmissive under supercritical
+outflow; SPECIFIED_FLOW / RATING_CURVE prescribe the per-metre discharge
+with the interior depth (the critical depth of that discharge on a dry
+cell). `RECONSTRUCTION_ORDER 2` adds MUSCL reconstruction of (η, u, v)
+with the Barth–Jespersen-limited Green-Gauss gradient and SSP-RK2 time
+stepping in global-dt mode. `FRONT_REBUILD` (AUTO) rebuilds the active
+set as soon as a wetting front reaches the halo edge, with a five-ring
+halo and front-cadence tiers for the dry cells — without it a dry-bed
+front advances one cell ring per rebuild cadence.
+
+Measured on the SWASHES strips of §9.10 (relative L1 depth; local-inertial
+in parentheses): Stoker wet dam break 0.7 % (6.5 %), second order 0.3 %;
+Ritter dry dam break 1.7 % (13 %), second order 1.1 %; subcritical bump
+0.5 % (6.8 %); transcritical bump 4.4 % (27 %); bump with shock 7.3 %
+(12 %). The transcritical and shock residuals are the 25-cell crest
+resolution of those decks (the 1D finite-volume solver of Chapter 8
+sits at 7.5 % and 2.5 % on the same cases).
+
+## 9.11b Quadrilateral cells — added 2026-09-06
+
+The mesh may mix triangles and convex quadrilaterals (`[2D_QUADS]`,
+listed after every triangle; cells are numbered triangles first). Every
+per-cell and per-edge array is padded to four slots per cell
+(`kMaxCellVerts`), and local edge k has endpoints `v[(k+1)%nv],
+v[(k+2)%nv]` — for a triangle exactly the "opposite vertex" rule of
+§9.3. A quad's area is the shoelace area and its centroid the area
+centroid (the vertex mean is not the centroid of a skewed quad, and the
+Perot arms and ghost-cell distances need the real one). Under
+`CELL_CLOSURE VFR` a quad uses the Begnudelli & Sanders (2007)
+two-plane storage model: the cell is split along the diagonal chosen by
+the elevation ordering of its vertices (their Cases 1–3), and the
+volume–free-surface relationship is the area-weighted sum of the two
+planar-triangle closures of §9.4 — the paper's piecewise cubic /
+quadratic / linear relations are that sum written out. The positivity
+share (9-15) is β/nv per face, and the stage-boundary ghost distance
+2A/(3L) generalises to the centroid→edge normal distance. Results of a
+mixed mesh are written as UGRID mixed topology (`Mesh2_face_nodes
+[nFace, 4]` with `_FillValue = −1`, plus `Mesh2_face_nv`); all-triangle
+meshes keep the `[nFace, 3]` layout.
+
 ## 9.12 Limitations
 
-- **No convective acceleration.** (9-2) omits it. Persistently
-  supercritical flow, drawdown over a crest, and momentum-dominated
-  contractions fall outside the model's validity rather than merely
-  being under-resolved in it. §9.10 quantifies this.
+- **No convective acceleration under the default closure.** (9-2) omits
+  it. Persistently supercritical flow, drawdown over a crest, and
+  momentum-dominated contractions fall outside the local-inertial
+  model's validity rather than merely being under-resolved in it. §9.10
+  quantifies this; `MOMENTUM_EQUATION FULL_SWE` (§9.11a) restores the term.
 - **No infiltration on the mesh.** Water on the surface leaves by
   flowing away, evaporating, or entering the network. Losses to the
   ground must be represented through the subcatchments.
-- **The Froude clamp is a numerical device.** It
+- **The Froude clamp is a numerical device** (local-inertial only). It
   bounds a velocity the momentum equation would otherwise leave
   unbounded. Results that sit on the clamp should not be regarded as
   physically meaningful.

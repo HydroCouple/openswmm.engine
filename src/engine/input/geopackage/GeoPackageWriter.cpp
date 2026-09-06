@@ -1824,6 +1824,9 @@ static void write_mesh_2d(sqlite3* db, const SimulationContext& ctx,
     };
 
     // ---- triangles -------------------------------------------------------
+    // Cells are triangles first, then quads; tri_idx / quad_idx are the
+    // 0-based positions within each shape, and the triangle's tri_idx is
+    // also its cell index.
     {
         auto stmt = prepare(db,
             "INSERT INTO mesh_2d_triangles "
@@ -1832,9 +1835,11 @@ static void write_mesh_2d(sqlite3* db, const SimulationContext& ctx,
             "VALUES (?,?,?,?,?,?,?,?,?,?,?)");
         std::vector<double> xs(3), ys(3);
         for (int t = 0; t < nt; ++t) {
+            if (mesh.cell_vertex_count(t) != 3) continue;
             sqlite3_reset(stmt.get());
             sqlite3_clear_bindings(stmt.get());
-            const int v[3] = { mesh.tri_v0[t], mesh.tri_v1[t], mesh.tri_v2[t] };
+            const int v[3] = { mesh.cell_vertex(t, 0), mesh.cell_vertex(t, 1),
+                               mesh.cell_vertex(t, 2) };
             bind_text(stmt.get(), 1, sim_id);
             bind_int(stmt.get(), 2, t);
             if (v[0] >= 0 && v[0] < nv && v[1] >= 0 && v[1] < nv &&
@@ -1863,6 +1868,51 @@ static void write_mesh_2d(sqlite3* db, const SimulationContext& ctx,
             else             bind_null(stmt.get(), 10);
             bind_double(stmt.get(), 11, mesh.tri_init_depth[t]);
             step_or_throw(db, stmt.get(), "mesh_2d_triangles insert failed");
+        }
+    }
+
+    // ---- quads -----------------------------------------------------------
+    if (mesh.n_quads() > 0) {
+        auto stmt = prepare(db,
+            "INSERT INTO mesh_2d_quads "
+            "(simulation_id, quad_idx, geom, v0, v1, v2, v3, mannings_n, tag, "
+            "bed_elev, coupled_node, init_depth) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)");
+        std::vector<double> xs(4), ys(4);
+        int q = 0;
+        for (int t = 0; t < nt; ++t) {
+            if (mesh.cell_vertex_count(t) != 4) continue;
+            sqlite3_reset(stmt.get());
+            sqlite3_clear_bindings(stmt.get());
+            const int v[4] = { mesh.cell_vertex(t, 0), mesh.cell_vertex(t, 1),
+                               mesh.cell_vertex(t, 2), mesh.cell_vertex(t, 3) };
+            bind_text(stmt.get(), 1, sim_id);
+            bind_int(stmt.get(), 2, q++);
+            bool ok = true;
+            for (int k = 0; k < 4; ++k) ok = ok && v[k] >= 0 && v[k] < nv;
+            if (ok) {
+                for (int k = 0; k < 4; ++k) {
+                    xs[static_cast<size_t>(k)] = mesh.vx[v[k]] * f;
+                    ys[static_cast<size_t>(k)] = mesh.vy[v[k]] * f;
+                }
+                auto geom = encode_polygon(xs, ys, srs_id);
+                bind_blob(stmt.get(), 3, geom.data(), static_cast<int>(geom.size()));
+                bind_double(stmt.get(), 10,
+                    (mesh.vz[v[0]] + mesh.vz[v[1]] + mesh.vz[v[2]] + mesh.vz[v[3]]) / 4.0 * f);
+            } else {
+                bind_null(stmt.get(), 3);
+                bind_null(stmt.get(), 10);
+            }
+            for (int k = 0; k < 4; ++k) bind_int(stmt.get(), 4 + k, v[k]);
+            bind_double(stmt.get(), 8, mesh.mannings_n[t]);
+            if (!mesh.tri_tag[t].empty()) bind_text(stmt.get(), 9, mesh.tri_tag[t]);
+            else                          bind_null(stmt.get(), 9);
+            const std::string cn = node_name_for(mesh.tri_coupled_node_name[t],
+                                                 mesh.tri_coupled_node[t]);
+            if (!cn.empty()) bind_text(stmt.get(), 11, cn);
+            else             bind_null(stmt.get(), 11);
+            bind_double(stmt.get(), 12, mesh.tri_init_depth[t]);
+            step_or_throw(db, stmt.get(), "mesh_2d_quads insert failed");
         }
     }
 
@@ -1923,7 +1973,7 @@ static void write_mesh_2d(sqlite3* db, const SimulationContext& ctx,
             for (const auto& r : rows) {
                 // Defensive: rows the initialize() drain would silently skip
                 // must not abort the save via an FK violation.
-                if (r.tri < 0 || r.tri >= nt || r.edge < 0 || r.edge > 2) continue;
+                if (r.tri < 0 || r.tri >= nt || r.edge < 0 || r.edge >= mesh.cell_vertex_count(r.tri)) continue;
                 sqlite3_reset(stmt.get());
                 sqlite3_clear_bindings(stmt.get());
                 bind_text(stmt.get(), 1, sim_id);

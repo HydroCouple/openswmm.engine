@@ -255,10 +255,14 @@ void Default2DOutputPlugin::writeCrsVariable() {
 // ============================================================================
 
 void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
-                      hsize_t& n_faces, hsize_t& n_nodes,
+                      hsize_t& n_faces, hsize_t& n_nodes, hsize_t& edge_stride,
                       auto& writeStringAttrFn) {
     n_faces = static_cast<hsize_t>(mesh.n_triangles());
     n_nodes = static_cast<hsize_t>(mesh.n_vertices());
+    // UGRID mixed topology: [nFace, max_nv] with _FillValue in the padding.
+    // All-triangle meshes keep the historical {n, 3} layout byte-for-byte.
+    edge_stride = static_cast<hsize_t>(mesh.edge_stride());
+    const int stride = static_cast<int>(edge_stride);
 
     // --- Mesh2 topology variable (UGRID convention) ---
     {
@@ -315,24 +319,60 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         H5Sclose(space);
     }
 
-    // --- Face-node connectivity [nFace, 3] ---
+    // --- Face-node connectivity [nFace, 3 | 4] ---
     {
-        hsize_t dims[2] = { n_faces, 3 };
+        hsize_t dims[2] = { n_faces, edge_stride };
         hid_t space = H5Screate_simple(2, dims, nullptr);
+        const int fill = -1;
+        hid_t dcpl = H5P_DEFAULT;
+        if (stride > 3) {
+            dcpl = H5Pcreate(H5P_DATASET_CREATE);
+            H5Pset_fill_value(dcpl, H5T_NATIVE_INT, &fill);
+        }
         hid_t ds = H5Dcreate2(file_id, "Mesh2_face_nodes", H5T_NATIVE_INT,
-                                space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+                                space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
+        if (dcpl != H5P_DEFAULT) H5Pclose(dcpl);
 
-        // Interleave v0, v1, v2 into [nFace, 3] row-major
-        std::vector<int> conn(n_faces * 3);
+        // Interleave the cell vertices into [nFace, stride] row-major;
+        // padding slots of a triangle row carry −1 (the UGRID fill value).
+        std::vector<int> conn(n_faces * edge_stride);
         for (hsize_t i = 0; i < n_faces; ++i) {
-            conn[i * 3 + 0] = mesh.tri_v0[i];
-            conn[i * 3 + 1] = mesh.tri_v1[i];
-            conn[i * 3 + 2] = mesh.tri_v2[i];
+            const int c  = static_cast<int>(i);
+            const int nv = mesh.cell_vertex_count(c);
+            for (int k = 0; k < stride; ++k)
+                conn[i * edge_stride + static_cast<hsize_t>(k)] =
+                    (k < nv) ? mesh.cell_vertex(c, k) : -1;
         }
         H5Dwrite(ds, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, conn.data());
 
         writeStringAttrFn(ds, "cf_role", "face_node_connectivity");
         writeStringAttrFn(ds, "start_index", "0");
+        if (stride > 3) {
+            // UGRID: the fill value is what marks a mixed-shape row's padding.
+            hid_t aspace = H5Screate(H5S_SCALAR);
+            hid_t attr   = H5Acreate2(ds, "_FillValue", H5T_NATIVE_INT, aspace,
+                                      H5P_DEFAULT, H5P_DEFAULT);
+            H5Awrite(attr, H5T_NATIVE_INT, &fill);
+            H5Aclose(attr);
+            H5Sclose(aspace);
+        }
+        H5Dclose(ds);
+        H5Sclose(space);
+    }
+
+    // --- Vertices per face [nFace] — only for mixed meshes (int8) ---
+    if (stride > 3) {
+        hsize_t dim = n_faces;
+        hid_t space = H5Screate_simple(1, &dim, nullptr);
+        hid_t ds = H5Dcreate2(file_id, "Mesh2_face_nv", H5T_NATIVE_INT8,
+                                space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        std::vector<int8_t> nv(n_faces);
+        for (hsize_t i = 0; i < n_faces; ++i)
+            nv[i] = static_cast<int8_t>(mesh.cell_vertex_count(static_cast<int>(i)));
+        H5Dwrite(ds, H5T_NATIVE_INT8, H5S_ALL, H5S_ALL, H5P_DEFAULT, nv.data());
+        writeStringAttrFn(ds, "long_name", "vertices per face (3 = triangle, 4 = quadrilateral)");
+        writeStringAttrFn(ds, "mesh", "Mesh2");
+        writeStringAttrFn(ds, "location", "face");
         H5Dclose(ds);
         H5Sclose(space);
     }
@@ -390,13 +430,27 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
     // can reconstruct cell-centred velocity via RT0 without re-deriving edge
     // length / outward normals from the vertex coordinates.
     {
-        hsize_t dims[2] = { n_faces, 3 };
+        hsize_t dims[2] = { n_faces, edge_stride };
         hid_t space = H5Screate_simple(2, dims, nullptr);
+
+        // Pack the internal kMaxCellVerts-stride slots to the public stride.
+        auto packed = [&](const std::vector<double>& src) {
+            std::vector<double> out(n_faces * edge_stride, 0.0);
+            for (hsize_t i = 0; i < n_faces; ++i)
+                for (int k = 0; k < stride; ++k)
+                    out[i * edge_stride + static_cast<hsize_t>(k)] =
+                        src[static_cast<std::size_t>(
+                            MeshData::slot(static_cast<int>(i), k))];
+            return out;
+        };
+        const std::vector<double> len_p = packed(mesh.edge_length);
+        const std::vector<double> nx_p  = packed(mesh.edge_nx);
+        const std::vector<double> ny_p  = packed(mesh.edge_ny);
 
         hid_t ds_len = H5Dcreate2(file_id, "Mesh2_edge_length", H5T_NATIVE_DOUBLE,
                                     space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         H5Dwrite(ds_len, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
-                 mesh.edge_length.data());
+                 len_p.data());
         writeStringAttrFn(ds_len, "long_name", "edge length");
         writeStringAttrFn(ds_len, "units", "m");
         writeStringAttrFn(ds_len, "mesh", "Mesh2");
@@ -406,7 +460,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         hid_t ds_nx = H5Dcreate2(file_id, "Mesh2_edge_nx", H5T_NATIVE_DOUBLE,
                                    space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         H5Dwrite(ds_nx, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
-                 mesh.edge_nx.data());
+                 nx_p.data());
         writeStringAttrFn(ds_nx, "long_name", "edge outward unit normal x component");
         writeStringAttrFn(ds_nx, "units", "1");
         writeStringAttrFn(ds_nx, "mesh", "Mesh2");
@@ -416,7 +470,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         hid_t ds_ny = H5Dcreate2(file_id, "Mesh2_edge_ny", H5T_NATIVE_DOUBLE,
                                    space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         H5Dwrite(ds_ny, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
-                 mesh.edge_ny.data());
+                 ny_p.data());
         writeStringAttrFn(ds_ny, "long_name", "edge outward unit normal y component");
         writeStringAttrFn(ds_ny, "units", "1");
         writeStringAttrFn(ds_ny, "mesh", "Mesh2");
@@ -435,18 +489,18 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
     auto writeAttr = [this](hid_t loc, const char* name, const char* val) {
         writeStringAttr(loc, name, val);
     };
-    writeMeshToHDF5(file_id_, mesh, n_faces_, n_nodes_, writeAttr);
+    writeMeshToHDF5(file_id_, mesh, n_faces_, n_nodes_, edge_stride_, writeAttr);
 
     // --- Create time-varying datasets with unlimited time dimension ---
     // Chunk size: 1 time step x all faces (or nodes)
     hsize_t face_chunk[2] = { 1, n_faces_ };
     hsize_t node_chunk[2] = { 1, n_nodes_ };
-    hsize_t edge_chunk[3] = { 1, n_faces_, 3 };
+    hsize_t edge_chunk[3] = { 1, n_faces_, edge_stride_ };
     hsize_t time_chunk[1] = { 64 };
 
     hsize_t zero2[2] = { 0, n_faces_ };
     hsize_t zero2n[2] = { 0, n_nodes_ };
-    hsize_t zero3[3] = { 0, n_faces_, 3 };
+    hsize_t zero3[3] = { 0, n_faces_, edge_stride_ };
     hsize_t zero1[1] = { 0 };
 
     // Time coordinate
@@ -582,8 +636,10 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
     extendAndWrite2D(ds_face_vy_,            snap.surface_face_vy.data(),       n_faces_);
     extendAndWrite2D(ds_face_continuity_err_, snap.surface_continuity_err.data(), n_faces_);
 
-    // Write per-edge fields [nFace, 3]
-    extendAndWrite3D(ds_edge_flux_, snap.surface_edge_flux.data(), n_faces_, 3);
+    // Write per-edge fields [nFace, edge_stride] (the snapshot is already
+    // packed to the public stride by SWMMEngine::fillSurfaceSnapshot).
+    extendAndWrite3D(ds_edge_flux_, snap.surface_edge_flux.data(), n_faces_,
+                     edge_stride_);
 
     // Overland transport S1: species concentration [nTime, nSpecies, nFace].
     // Created LAZILY on the first step that carries species, and only then:

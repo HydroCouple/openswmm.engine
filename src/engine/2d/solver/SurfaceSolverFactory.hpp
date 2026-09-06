@@ -85,7 +85,8 @@ class ISurfaceSolver;
  */
 std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
                                                   std::string* chosen = nullptr,
-                                                  int n_cells = 0);
+                                                  int n_cells = 0,
+                                                  bool plugin_capable = true);
 
 } // namespace openswmm::twoD
 

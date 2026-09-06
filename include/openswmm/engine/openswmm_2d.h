@@ -154,11 +154,59 @@ SWMM_ENGINE_API int swmm_2d_set_vertex_z_bulk(SWMM_Engine engine,
                                                 const double* z, int count);
 
 /** @brief Get triangle connectivity (3 vertex indices).
- *  @param idx Triangle index (0-based).
+ *  @param idx Cell index (0-based). Returns SWMM_ERR_BADPARAM when the cell
+ *             is a quadrilateral — use ::swmm_2d_cell_get_vertices.
  *  @param v0,v1,v2 Output vertex indices.
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_triangle_get_vertices(SWMM_Engine engine, int idx,
                                                     int* v0, int* v1, int* v2);
+
+/* -------------------------------------------------------------------------
+ * Mixed triangle / quadrilateral meshes (2D_TRI_QUAD_MESH_PLAN_2026-09-06).
+ *
+ * A "triangle index" everywhere in this header is a CELL index: cells are
+ * numbered triangles first (the [2D_TRIANGLES] rows), then quads (the
+ * [2D_QUADS] rows). Every swmm_2d_triangle_* accessor that reads a per-cell
+ * scalar (area, centroid, Manning, init depth/velocity, tag, coupling) works
+ * on a quad too; only the two 3-slot connectivity getters refuse quads.
+ * Local edge k of a cell has endpoints v[(k+1)%nv], v[(k+2)%nv].
+ * ------------------------------------------------------------------------- */
+
+/** @brief Number of cells (triangles + quads) — same value as
+ *  ::swmm_2d_triangle_count.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_cell_count(SWMM_Engine engine, int* count);
+
+/** @brief Number of quadrilateral cells (0 for an all-triangle mesh).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_quad_count(SWMM_Engine engine, int* count);
+
+/** @brief Edge-slot stride of the bulk edge arrays
+ *  (::swmm_2d_get_edge_flux_bulk, ::swmm_2d_edge_get_geometry_bulk,
+ *  ::swmm_2d_get_edge_conveyance_bulk): 3 for an all-triangle mesh (the
+ *  historical `[tri*3 + localEdge]` layout, byte-compatible), 4 once the mesh
+ *  holds any quad (`[cell*4 + localEdge]`, padding slots of a triangle row
+ *  are 0). Size every bulk buffer as `triangle_count * stride`.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_edge_stride(SWMM_Engine engine, int* stride);
+
+/** @brief Vertices (== edges) of a cell: 3 or 4.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_cell_vertex_count(SWMM_Engine engine, int idx, int* nv);
+
+/** @brief Cell connectivity for any shape.
+ *  @param v  Caller-provided int[4]; slots beyond @p nv are −1.
+ *  @param nv Output vertex count (3 or 4).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_cell_get_vertices(SWMM_Engine engine, int idx,
+                                              int* v, int* nv);
+
+/** @brief Neighbour cell across each local edge, any shape.
+ *  @param n  Caller-provided int[4]; −1 = boundary edge, −2 = padding slot.
+ *  @param nv Output edge count (3 or 4).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_cell_get_neighbours(SWMM_Engine engine, int idx,
+                                                int* n, int* nv);
 
 /** @brief Get triangle area.
  *  @param idx Triangle index.

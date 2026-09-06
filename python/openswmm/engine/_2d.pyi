@@ -112,6 +112,33 @@ class Surface2D:
         """
         ...
 
+    @property
+    def n_cells(self) -> int:
+        """Number of mesh cells (triangles + quads)."""
+        ...
+
+    @property
+    def n_quads(self) -> int:
+        """Number of quadrilateral cells (0 for an all-triangle mesh)."""
+        ...
+
+    @property
+    def edge_stride(self) -> int:
+        """Edge slots per cell row in the bulk edge arrays (3 all-tri, 4 mixed)."""
+        ...
+
+    def get_cell_vertex_count(self, idx: int) -> int:
+        """Vertices (== edges) of a cell: 3 or 4."""
+        ...
+
+    def get_cell_vertices(self, idx: int) -> tuple[int, ...]:
+        """Vertex indices of any cell (length 3 or 4)."""
+        ...
+
+    def get_cell_neighbours(self, idx: int) -> tuple[int, ...]:
+        """Neighbour cell across each local edge (-1 = boundary), length 3 or 4."""
+        ...
+
     def get_vertex_coords(
         self,
     ) -> tuple[

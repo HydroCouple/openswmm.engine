@@ -1903,13 +1903,46 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx,
         while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             const int t = column_int(stmt.get(), 0);
             if (t < 0 || t >= n) continue;
-            mesh.tri_v0[t]      = column_int(stmt.get(), 1);
-            mesh.tri_v1[t]      = column_int(stmt.get(), 2);
-            mesh.tri_v2[t]      = column_int(stmt.get(), 3);
+            mesh.set_triangle(t, column_int(stmt.get(), 1),
+                                 column_int(stmt.get(), 2),
+                                 column_int(stmt.get(), 3));
             mesh.mannings_n[t]  = column_double(stmt.get(), 4);
             mesh.tri_tag[t]     = column_text(stmt.get(), 5);
             if (has_init_depth)
                 mesh.tri_init_depth[t] = column_double(stmt.get(), 6);
+        }
+    }
+
+    // ---- quads (mixed meshes; absent in older files) -------------------------
+    // Cell index = n_triangles + quad_idx.
+    if (table_exists(db, "mesh_2d_quads")) {
+        auto cnt = prepare(db,
+            "SELECT COUNT(*), COALESCE(MAX(quad_idx), -1) "
+            "FROM mesh_2d_quads WHERE simulation_id = ?");
+        bind_text(cnt.get(), 1, sim_id);
+        if (sqlite3_step(cnt.get()) == SQLITE_ROW) {
+            const int nq = column_int(cnt.get(), 0);
+            if (nq > 0) {
+                if (column_int(cnt.get(), 1) != nq - 1)
+                    throw GpkgError("mesh_2d_quads: quad_idx values are not "
+                                    "contiguous [0, n)");
+                const int nt0 = mesh.n_triangles();
+                mesh.resize_triangles(nt0 + nq);
+                auto stmt = prepare(db,
+                    "SELECT quad_idx, v0, v1, v2, v3, mannings_n, tag, init_depth "
+                    "FROM mesh_2d_quads WHERE simulation_id = ? ORDER BY quad_idx");
+                bind_text(stmt.get(), 1, sim_id);
+                while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+                    const int q = column_int(stmt.get(), 0);
+                    if (q < 0 || q >= nq) continue;
+                    const int t = nt0 + q;
+                    mesh.set_quad(t, column_int(stmt.get(), 1), column_int(stmt.get(), 2),
+                                     column_int(stmt.get(), 3), column_int(stmt.get(), 4));
+                    mesh.mannings_n[t]     = column_double(stmt.get(), 5);
+                    mesh.tri_tag[t]        = column_text(stmt.get(), 6);
+                    mesh.tri_init_depth[t] = column_double(stmt.get(), 7);
+                }
+            }
         }
     }
 

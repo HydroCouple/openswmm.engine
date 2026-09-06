@@ -79,8 +79,8 @@ MeshData makeStrip(int nx, int ny, double dx, double n = 0.03) {
         for (int i = 0; i < nx; ++i) {
             const int v00 = j * nvx + i,       v10 = j * nvx + i + 1;
             const int v01 = (j + 1) * nvx + i, v11 = (j + 1) * nvx + i + 1;
-            mesh.tri_v0[t] = v00; mesh.tri_v1[t] = v10; mesh.tri_v2[t] = v11; ++t;
-            mesh.tri_v0[t] = v00; mesh.tri_v1[t] = v11; mesh.tri_v2[t] = v01; ++t;
+            mesh.set_triangle(t, v00, v10, v11); ++t;
+            mesh.set_triangle(t, v00, v11, v01); ++t;
         }
     for (int i = 0; i < mesh.n_triangles(); ++i) mesh.mannings_n[i] = n;
     buildMeshTopology(mesh);

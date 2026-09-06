@@ -107,6 +107,10 @@ inline double vertexHeadAt(const MeshData& mesh, const SurfaceStateData& state,
 double cellFreeSurfaceElevation(double mean_depth, double za, double zb,
                                 double zc);
 
+/// Cell-shape-aware form: triangle → cellFreeSurfaceElevation over the three
+/// vertex beds; quad → the B&S 2007 two-plane closure (mesh/QuadVfr.hpp).
+double cellFreeSurfaceElevationOf(const MeshData& mesh, int t, double mean_depth);
+
 /**
  * @brief Wet-masked, depth-weighted free-surface reconstruction at vertices
  *        for RENDERING/OUTPUT only (writes state.vert_depth_signed).
