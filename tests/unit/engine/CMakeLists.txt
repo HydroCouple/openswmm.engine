@@ -93,12 +93,17 @@ add_gtest_unit(test_engine_postparse_resolver test_postparse_resolver.cpp)
 add_gtest_unit(test_engine_warning_error_parity test_warning_error_parity.cpp)
 add_gtest_unit(test_engine_outfall_stage_data test_outfall_stage_data.cpp)
 add_gtest_unit(test_engine_inp_writer_relative_paths test_inp_writer_relative_paths.cpp)
+add_gtest_unit(test_engine_inp_writer_saveas_paths test_inp_writer_saveas_paths.cpp)
+add_gtest_unit(test_engine_inp_writer_roundtrip test_inp_writer_roundtrip.cpp)
+add_gtest_unit(test_engine_timeseries_time_modes test_timeseries_time_modes.cpp)
 add_gtest_unit(test_engine_plugin_lifecycle      test_plugin_lifecycle.cpp)
 add_gtest_unit(test_engine_plugin_filter_invariant test_plugin_filter_invariant.cpp)
 # Slice RC.5 — GeoPackage explicit-builtin registration + is_builtin flag.
 add_gtest_unit(test_engine_pluginfactory_builtins test_pluginfactory_builtins.cpp)
 # Slice QA-01.4 — per-node summary stats read from a SWMM_Output handle.
 add_gtest_unit(test_engine_output_node_stats     test_output_node_stats.cpp)
+# Live (footer-less) .out reading — swmm_output_open_live / _refresh.
+add_gtest_unit(test_engine_output_reader_live    test_output_reader_live.cpp)
 add_gtest_unit(test_engine_model_write_with_plugin test_model_write_with_plugin.cpp)
 add_gtest_unit(test_engine_files_section          test_files_section.cpp)
 add_gtest_unit(test_engine_iface_routing          test_iface_routing.cpp)
@@ -107,6 +112,61 @@ add_gtest_unit(test_engine_section_order_parity   test_section_order_parity.cpp)
 add_gtest_unit(test_engine_capi_file_paths        test_capi_file_paths.cpp)
 add_gtest_unit(test_engine_events_section         test_events_section.cpp)
 add_gtest_unit(test_engine_report_options_api     test_report_options_api.cpp)
+# Legacy parity for the .rpt analysis-timing block: the wall clock starts at
+# open() (before parsing) as in report_writeLogo(), and elapsed time rolls
+# whole days into a "d." prefix as in report_writeSysTime().
+add_gtest_unit(test_engine_report_timing          test_report_timing.cpp)
+add_gtest_unit(test_engine_ard_transport          test_ard_transport.cpp)
+add_gtest_unit(test_engine_initial_quality        test_initial_quality.cpp)
+add_gtest_unit(test_engine_process_components     test_process_components.cpp)
+add_gtest_unit(test_engine_reactions_config       test_reactions_config.cpp)
+add_gtest_unit(test_engine_reactions_api          test_reactions_api.cpp)
+add_gtest_unit(test_engine_reaction_expressions   test_reaction_expressions.cpp)
+add_gtest_unit(test_engine_reaction_integrators   test_reaction_integrators.cpp)
+add_gtest_unit(test_engine_reaction_legacy_binding test_reaction_legacy_binding.cpp)
+add_gtest_unit(test_engine_ard_dispersion         test_ard_dispersion.cpp)
+add_gtest_unit(test_engine_reaction_ard_binding   test_reaction_ard_binding.cpp)
+add_gtest_unit(test_engine_ard_transport_bcs      test_ard_transport_bcs.cpp)
+add_gtest_unit(test_engine_ard_e5b                test_ard_e5b.cpp)
+add_gtest_unit(test_engine_ard_node_store         test_ard_node_store.cpp)
+add_gtest_unit(test_engine_lard_wiring            test_lard_wiring.cpp)
+add_gtest_unit(test_engine_lard_heat              test_lard_heat.cpp)
+add_gtest_unit(test_engine_lard_transport         test_lard_transport.cpp)
+add_gtest_unit(test_engine_kinwave_storage        test_kinwave_storage_outlets.cpp)
+add_gtest_unit(test_engine_lard_age               test_lard_age.cpp)
+add_gtest_unit(test_engine_lard_dt_reference      test_lard_dt_reference.cpp)
+add_gtest_unit(test_engine_lard_rwpt              test_lard_rwpt.cpp)
+add_gtest_unit(test_engine_outfall_backflow       test_outfall_backflow_quality.cpp)
+add_gtest_unit(test_engine_negative_sources       test_negative_sources.cpp)
+add_gtest_unit(test_engine_water_age_api          test_water_age_api.cpp)
+add_gtest_unit(test_engine_transport_options_api  test_transport_options_api.cpp)
+add_gtest_unit(test_engine_options_malformed      test_options_malformed_values.cpp)
+add_gtest_unit(test_engine_water_age              test_water_age.cpp)
+add_gtest_unit(test_engine_water_age_watershed    test_water_age_watershed.cpp)
+add_gtest_unit(test_engine_water_age_lid          test_water_age_lid.cpp)
+add_gtest_unit(test_engine_heat_watershed         test_heat_watershed.cpp)
+add_gtest_unit(test_engine_heat_integrator        test_heat_integrator.cpp)
+add_gtest_unit(test_engine_heat_lid               test_heat_lid.cpp)
+add_gtest_unit(test_engine_transport_dt_reference test_transport_dt_reference.cpp)
+add_gtest_unit(test_engine_transport_snow       test_transport_snow.cpp)
+add_gtest_unit(test_engine_heat_transport         test_heat_transport.cpp)
+add_gtest_unit(test_engine_heat_surface_exchange  test_heat_surface_exchange.cpp)
+add_gtest_unit(test_engine_heat_radiative_exchange test_heat_radiative_exchange.cpp)
+# Step 3 — the [HEAT_SOURCES] C API (the one heat section H6a left without one).
+add_gtest_unit(test_engine_heat_sources_api       test_heat_sources_api.cpp)
+add_gtest_unit(test_engine_heat_solar_radiation   test_heat_solar_radiation.cpp)
+add_gtest_unit(test_engine_heat_ard_binding       test_heat_ard_binding.cpp)
+# H6b — the coupled bed / hyporheic stepper (pure-function gates).
+add_gtest_unit(test_engine_bed_exchange           test_bed_exchange.cpp)
+# 2026-09-01 closeout — five bindings, one gate each.
+add_gtest_unit(test_engine_quality_closeout_bindings test_quality_closeout_bindings.cpp)
+# PE1/PE2/PE4 — per-element heat attributes and per-element climate forcing.
+add_gtest_unit(test_engine_heat_per_element       test_heat_per_element.cpp)
+add_gtest_unit(test_engine_output_quality         test_output_quality.cpp)
+# In-place rename for snow packs / aquifers / inlets / streets / LID controls.
+# Without these APIs the GUI registries flushed a renamed object as a NEW one,
+# duplicating it in the engine and orphaning the original.
+add_gtest_unit(test_engine_object_rename          test_object_rename.cpp)
 add_gtest_unit(test_engine_options_api_units      test_options_api_units.cpp)
 add_gtest_unit(test_engine_climate_api             test_climate_api.cpp)
 add_gtest_unit(test_engine_hotstart          test_hotstart.cpp)
@@ -123,6 +183,10 @@ target_compile_definitions(test_engine_xsection PRIVATE
 )
 # STREET cross-section end-to-end (parse → street transect → routing).
 add_gtest_unit(test_engine_street_xsect      test_street_xsect.cpp)
+# ctx.transect_tables must keep cached element pointers valid as it grows —
+# XSectBatch and Link cache raw double* into its elements at initialize() and
+# swmm_link_set_xsect can append afterwards. Guards the deque choice.
+add_gtest_unit(test_engine_transect_table_stability test_transect_table_stability.cpp)
 # STREET cross-section programmatic builder API (set/get xsect + get_params).
 add_gtest_unit(test_engine_street_xsect_api  test_street_xsect_api.cpp)
 # Standalone cross-section geometry API + SWMM_XSectShape enum parity guard.
@@ -144,6 +208,10 @@ endif()
 # snowpack surfaces, inlet params/type, LID layers/type).
 add_gtest_unit(test_engine_editor_roundtrip_api test_editor_roundtrip_api.cpp)
 add_gtest_unit(test_engine_virtual_junction test_virtual_junction.cpp)
+add_gtest_unit(test_engine_fv_node_head_consistency test_fv_node_head_consistency.cpp)
+add_gtest_unit(test_engine_fv_slot_volume test_fv_slot_volume.cpp)
+add_gtest_unit(test_engine_fv_closure_shapes test_fv_closure_shapes.cpp)
+add_gtest_unit(test_engine_fv_pressurized_implicit test_fv_pressurized_implicit.cpp)
 
 add_gtest_unit(test_engine_infiltration     test_infiltration.cpp)
 target_compile_definitions(test_engine_infiltration PRIVATE
@@ -163,6 +231,18 @@ add_gtest_unit(test_engine_gage_scalefactor test_gage_scalefactor.cpp)
 add_gtest_unit(test_engine_subcatch_scale_factors test_subcatch_scale_factors.cpp)
 add_gtest_unit(test_engine_gage_attributes  test_gage_attributes.cpp)
 add_gtest_unit(test_engine_gage_file_roundtrip test_gage_file_roundtrip.cpp)
+
+# USER_CSV rain-file loading (documented in the manual, previously never read —
+# such a gage contributed zero rainfall silently) plus the guard that the
+# resolved-series API cannot drift from what updateAllGages applies.
+add_gtest_unit(test_engine_gage_rain_series test_gage_rain_series.cpp)
+# Parse-once multi-column series files (CSV/TSV/PCSWMM TSF) — wide rows,
+# AM/PM datetimes, delimiter sniff, single-read cache. See
+# plans/MULTICOLUMN_SERIES_SINGLE_READ_2026-08-17.md.
+add_gtest_unit(test_engine_multicolumn_series_file test_multicolumn_series_file.cpp)
+# B1 regression: set_station_id / set_filename must not corrupt a USER_CSV
+# gage's file format or column binding; new file-column accessors.
+add_gtest_unit(test_engine_gage_format_preservation test_gage_format_preservation.cpp)
 add_gtest_unit(test_engine_climate          test_climate.cpp)
 add_gtest_unit(test_engine_lid              test_lid.cpp)
 target_compile_definitions(test_engine_lid PRIVATE
@@ -192,6 +272,8 @@ target_compile_definitions(test_engine_benchmark_corpus PRIVATE
     "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
 )
 add_gtest_unit(test_engine_treatment        test_treatment.cpp)
+# [GWF] expression C API + validator (AQUIFER_GROUNDWATER_EXCHANGE_GUI_PLAN E1).
+add_gtest_unit(test_engine_gwf_api          test_gwf_api.cpp)
 add_gtest_unit(test_engine_rdii             test_rdii.cpp)
 add_gtest_unit(test_engine_hydrograph_mutation test_hydrograph_mutation_api.cpp)
 add_gtest_unit(test_engine_pattern_mutation  test_pattern_mutation_api.cpp)
@@ -217,6 +299,9 @@ add_gtest_unit(test_engine_report_section  test_report_section.cpp)
 add_gtest_unit(test_engine_concurrent       test_concurrent_engines.cpp)
 add_gtest_unit(test_engine_object_deletion test_object_deletion.cpp)
 add_gtest_unit(test_engine_object_deletion_ext test_object_deletion_ext.cpp)
+# Perf plan Phase A1 — swmm_*_delete_many parity with sequential descending
+# per-object deletes, all-or-nothing validation, and the one-rehash batch.
+add_gtest_unit(test_engine_object_deletion_many test_object_deletion_many.cpp)
 add_gtest_unit(test_engine_quality_roundtrip test_quality_roundtrip.cpp)
 add_gtest_unit(test_engine_type_conversion test_type_conversion.cpp)
 add_gtest_unit(test_engine_tags           test_tags.cpp)
@@ -249,6 +334,27 @@ set_property(TEST
     test_engine_runoff_interface_capi
     test_engine_site_drainage_builder
     APPEND PROPERTY RESOURCE_LOCK site_drainage_model_out)
+
+# ---- Same defect, second fixture: REMOVED AT THE ROOT, not locked ----
+# `test_engine_heat_watershed` and `test_engine_heat_lid` both WROTE
+# `_h5b.inp` / `_h5b.heat` into the shared data/ working directory and then
+# opened them. Under `ctest -jN` one suite's config landed between the other's
+# write and its open: measured 8 failures in 8 concurrent runs, every one
+# `SURFACE_EXCHANGE did not parse` — the gate's SETUP catching the WRONG FILE
+# rather than a wrong number. Both passed alone.
+#
+# A RESOURCE_LOCK fixed it by serialising the pair. The names are now unique
+# instead (`_h5lid.*` in the LID suite), which is strictly better for an
+# ACCIDENTAL collision: it costs no parallelism, and it protects against the
+# next test to pick the same name rather than only the pair someone noticed.
+#
+# The site_drainage lock above stays, because that case is different in kind —
+# a real committed fixture that nine tests genuinely share. You cannot rename
+# your way out of that one.
+#
+# A sweep at the time found a SECOND, unlocked instance nobody had hit:
+# `_out.inp`, shared by test_object_deletion_ext and test_quality_roundtrip.
+# Also renamed. The check below is what stops a third.
 
 # 2D surface routing tests — geometry, gradients, flux, parsing.
 # The 2D engine sources (MeshBuilder, VertexReconstruction, SurfaceFluxCalculator,
@@ -417,11 +523,54 @@ if(OPENSWMM_BUILD_2D)
     # multiscale dam-break, K-tier ≈ global-dt equivalence, and the
     # fine-patch-in-coarse-watershed stability case.
     add_gtest_unit(test_engine_2d_lts_equivalence test_2d_lts_equivalence.cpp)
+    # Overland transport S1 (D-2DT1..D-2DT3): species MASS rides the marcher's
+    # own face accumulators on the face's tier. The uniform-concentration
+    # property to round-off across a 6-tier dam-break with a wet/dry front is
+    # the whole of S1's claim; its single-tier control tells a tier defect
+    # from a donor-timing one. Plus mass conservation, the max principle,
+    # two-species stride isolation, infiltration ledgering vs evaporative
+    # up-concentration, and species-as-passenger bit-identity.
+    add_gtest_unit(test_engine_2d_transport_s1 test_2d_transport_s1.cpp)
+    # Overland transport S2: rain and boundary-inflow source concentrations
+    # (uniformity to round-off when the source matches the pond), limited
+    # explicit isotropic dispersion on the face cadence (conservation, max
+    # principle, Fickian 2·D·t rate, limiter bind at unstable D, D=0 inert),
+    # and [2D_BOUNDARY_QUALITY] refusal on a WALL edge.
+    add_gtest_unit(test_engine_2d_transport_s2 test_2d_transport_s2.cpp)
+    # Overland transport S3 (D-2DT4): the 1D↔2D coupling carries species —
+    # drain at the cell's concentration through the node mass queue (junction
+    # reads exactly c0), spill at nodes.conc (pan stays uniform), outfall
+    # discharge through coupling_src (max principle + bound), cross-domain
+    # mass identity, and species-as-passenger bit-identity on coupled decks.
+    add_gtest_unit(test_engine_2d_transport_s3 test_2d_transport_s3.cpp)
+    # Overland transport S4: age / temperature / MSX rows in the 1D layout —
+    # evaporation concentrates solutes but not temperature, the temperature
+    # row is signed end-to-end, a still pan ages exactly, the coupling tuple
+    # delivers temperature (not the EXTERNAL_INFLOW stand-in), spill arrives
+    # at the node temperature, kdecay applies and is ledgered, rows are
+    # passengers on the hydraulics.
+    add_gtest_unit(test_engine_2d_transport_s4 test_2d_transport_s4.cpp)
     # Windowless co-advance coupling gates: cross-domain conservation through
     # the live in-marcher exchange + batch queue delivery, COUPLING_AREA AUTO
     # rederivation, conductance sign + FD parity.
     add_gtest_unit(test_engine_2d_windowless_coupling
                    test_2d_windowless_coupling.cpp)
+    # Track I — per-cell 2D infiltration (plan §5.5, D-I1…D-I6). Unit gates
+    # over Infil2D itself: the SI⇄ft/project-unit adapter (anchored on
+    # hand-computed SI values, not on a re-derivation of the adapter), the
+    # D-I3 override>tag>'*'>none resolution order, and D-I4 validation.
+    add_gtest_unit(test_engine_2d_infil test_2d_infil.cpp)
+    # Track I end-to-end: mass-balance ledger closure, the per-cell continuity
+    # residual (the silent call site 4), lazy/inactive-cell equivalence,
+    # section round-trip and the C API surface.
+    add_gtest_unit(test_engine_2d_infil_integration test_2d_infil_integration.cpp)
+    # 1D↔2D unit exchange for boundary conditions on a US (ft / CFS) project:
+    # constant stage follows the mesh units, TS/rating stage follows
+    # FLOW_UNITS only, flows follow FLOW_UNITS, writers emit display units,
+    # and neither reopen nor a repeated initialize() converts twice.
+    add_gtest_unit(test_engine_2d_bc_units test_2d_bc_units.cpp)
+    target_compile_definitions(test_engine_2d_bc_units PRIVATE
+        OPENSWMM_BC_UNITS_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -433,6 +582,10 @@ endif()
 # I₁ as the antiderivative of A with an analytic above-crown extension, and the
 # FV_SLOT_CELERITY design value actually delivered.
 add_gtest_unit(test_engine_fv_closure test_fv_solver_closure.cpp)
+add_gtest_unit(test_engine_fv_unsteady_friction test_fv_unsteady_friction.cpp)
+add_gtest_unit(test_engine_dw_unsteady_friction test_dw_unsteady_friction.cpp)
+add_gtest_unit(test_engine_fv_tpa_closure test_fv_tpa_closure.cpp)
+add_gtest_unit(test_engine_dw_tpa test_dw_tpa.cpp)
 # Analytic scheme gates: exact lake-at-rest over a slope break AND while
 # pressurized, Ritter (dry) and Stoker (wet) dam break vs. the closed-form
 # solutions incl. shock SPEED, and mass conservation to machine precision over
@@ -456,6 +609,15 @@ target_compile_definitions(test_engine_fv_integration PRIVATE
     OPENSWMM_FV_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/regression/data"
     OPENSWMM_FV_UNIT_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
     OPENSWMM_FV_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+
+# Thread-capability query + THREADS resolution rules
+# (THREAD_LIMITS_AND_OVERSUBSCRIPTION_PLAN_2026-09-03): explicit THREADS is
+# honoured above the hardware limit with a warning, size gates still apply,
+# and an oversubscribed run matches the serial continuity block.
+add_gtest_unit(test_engine_thread_info test_thread_info.cpp)
+target_compile_definitions(test_engine_thread_info PRIVATE
+    OPENSWMM_THREAD_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/regression/data"
+    OPENSWMM_THREAD_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
 
 # Golden cross-section parity harness — diffs the new xsect:: implementation
 # against the legacy xsect.c. The legacy dylib hides its internal xsect_*
@@ -684,4 +846,47 @@ if(OPENSWMM_WITH_GEOPACKAGE)
     )
     set_tests_properties(test_engine_geopackage_external_content_reader
         PROPERTIES LABELS "unit")
+endif()
+
+
+# ---- No two test sources may share a scratch-fixture name ----
+# Every test here runs with data/ as its WORKING_DIRECTORY, so two files that
+# write the same "_name.ext" are one test wearing two names: under -jN they
+# race, and the failure surfaces as a CONTENT error (a parse failure, a wrong
+# value) rather than as a file conflict. That disguise is why the first
+# instance was written off as a flake and the second went unnoticed entirely.
+#
+# Fails at CONFIGURE time, before anything runs.
+# CONFIGURE_DEPENDS so ADDING a test file re-runs this check. Without it
+# the guard only sees the files that existed at the last configure — and
+# a new file is exactly when a name gets reused.
+file(GLOB _osw_test_sources CONFIGURE_DEPENDS
+     "${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp")
+set(_osw_seen_fixtures "")
+set(_osw_seen_owners "")
+set(_osw_fixture_clashes "")
+foreach(_src IN LISTS _osw_test_sources)
+    get_filename_component(_srcname "${_src}" NAME)
+    file(READ "${_src}" _content)
+    string(REGEX MATCHALL "\"_[A-Za-z0-9_]+\\.[A-Za-z0-9]+\"" _lits "${_content}")
+    list(REMOVE_DUPLICATES _lits)
+    foreach(_lit IN LISTS _lits)
+        list(FIND _osw_seen_fixtures "${_lit}" _idx)
+        if(_idx EQUAL -1)
+            list(APPEND _osw_seen_fixtures "${_lit}")
+            list(APPEND _osw_seen_owners "${_srcname}")
+        else()
+            list(GET _osw_seen_owners ${_idx} _first)
+            list(APPEND _osw_fixture_clashes
+                 "  ${_lit} written by both ${_first} and ${_srcname}")
+        endif()
+    endforeach()
+endforeach()
+if(_osw_fixture_clashes)
+    string(REPLACE ";" "\n" _osw_clash_text "${_osw_fixture_clashes}")
+    message(FATAL_ERROR
+        "Two or more unit tests share a scratch-fixture name, and they all run "
+        "with data/ as their working directory:\n${_osw_clash_text}\n"
+        "Rename one of them. A RESOURCE_LOCK also works but costs parallelism "
+        "and only protects the pair you noticed. See the note above this check.")
 endif()

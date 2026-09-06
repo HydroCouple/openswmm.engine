@@ -4,7 +4,15 @@
 # Working notes not intended for version control
 doc/FlashX_SWMM_crosswalk.md
 doc/Verification_Implementation_Plan.md
-/plans/
+# plans/transport is TRACKED (user decision 2026-09-01, closing the debt
+# UNIFIED_PLAN_STATUS §8 carried twice: the entire plan corpus -- roadmap,
+# handoffs, ~217 numbered lessons -- existed in one working tree on one
+# machine, unprotected by the very version control it documents). Everything
+# else under /plans/ stays out. The _scratch subtree stays out too: it is
+# working notes, not record.
+/plans/*
+!/plans/transport/
+/plans/transport/_scratch/
 /tools/
 docs/2D_MULTISCALE_FORMULATION_REVIEW.md
 # Ignore examples/ contents (not the dir itself, so the fixture below can be
@@ -98,3 +106,15 @@ tests/unit/legacy/engine/data/hotstart/site_drainage_model_save_hotstart.rpt
 # SQLite side-car files left when a GeoPackage fixture is opened WAL-mode.
 *.gpkg-shm
 *.gpkg-wal
+
+# Model-load benchmark corpus. Generated on demand by
+# tests/benchmarks/scripts/gen_load_bench.py (326 MB at the plan's sizes) —
+# the generator is committed, its output is not. Results docs written here ARE
+# committed, hence the negations.
+tests/benchmarks/generated/*.inp
+tests/benchmarks/generated/*.rpt
+tests/benchmarks/generated/*.out
+tests/benchmarks/generated/*.json
+
+# Working copies written by test_engine_output_reader_live (reviewable, not tracked)
+tests/unit/engine/data/live_out/

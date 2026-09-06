@@ -19,6 +19,101 @@
 
 namespace openswmm::gpkg {
 
+namespace {
+
+/// The `variables.units` label for a species column.
+///
+/// Water age is HOURS; a pollutant carries its own concentration unit. The
+/// binary `.out` cannot express this (its per-column unit field is a
+/// three-value concentration enum with no HOURS slot, which is why the
+/// species NAME is the discriminator there) — the GeoPackage `variables`
+/// table has a free-text `units` column, so here the unit can simply be
+/// stated.
+const char* species_units_label(MassUnits u) {
+    switch (u) {
+        case MassUnits::UG_PER_L:     return "ug/L";
+        case MassUnits::COUNTS_PER_L: return "#/L";
+        case MassUnits::MG_PER_L:     break;
+    }
+    return "mg/L";
+}
+
+}  // namespace
+
+int GeoPackageOutputPlugin::register_species_variables(const SimulationContext& ctx) {
+    // Mirrors DefaultOutputPlugin: IGNORE_QUALITY means no species columns
+    // anywhere, so nothing is registered and update()'s lookups keep
+    // returning −1 as before.
+    if (ctx.options.ignore_quality) return 0;
+
+    const int nr = ctx.n_reported_species();
+    if (nr <= 0) return 0;
+
+    // The REPORTED stride (pollutants, then __WATER_AGE__ when enabled) —
+    // the same single truth the .out writer strides by. Indices at or past
+    // n_pollutants() are the reserved age row.
+    const int np = ctx.n_pollutants();
+
+    // All three object types: update() already reads subcatch_quality,
+    // node_quality and link_quality and looks each species up per type.
+    // Subcatchment age reports 0 until plan phase A3; that is a VALUE
+    // question, not a registration one, and the .out already carries the
+    // same zero column, so the two outputs stay consistent.
+    static const char* const kObjTypes[] = {"NODE", "LINK", "SUBCATCH"};
+
+    auto probe = gpkg::prepare(db_.get(),
+        "SELECT category FROM variables WHERE name = ? AND object_type = ?");
+    auto ins = gpkg::prepare(db_.get(),
+        "INSERT INTO variables (name, object_type, category, units, description) "
+        "VALUES (?, ?, 'QUALITY', ?, ?)");
+
+    for (int s = 0; s < nr; ++s) {
+        const std::string& sname = ctx.reported_species_names[static_cast<std::size_t>(s)];
+        const bool is_age = (s >= np);
+        const std::string units = is_age
+            ? "hours"
+            : species_units_label(ctx.pollutants.units[static_cast<std::size_t>(s)]);
+        const std::string desc = is_age ? "Water age" : "Species concentration";
+
+        for (const char* obj : kObjTypes) {
+            sqlite3_reset(probe.get());
+            sqlite3_clear_bindings(probe.get());
+            bind_text(probe.get(), 1, sname);
+            bind_text(probe.get(), 2, obj);
+
+            if (sqlite3_step(probe.get()) == SQLITE_ROW) {
+                // A row already exists for this (name, object_type).
+                if (column_text(probe.get(), 0) == "QUALITY") continue;  // re-run into the same file
+
+                // NAME COLLISION with a hydraulic variable. This must not be
+                // ignored: `variables` is UNIQUE(name, object_type), so an
+                // INSERT OR IGNORE here would leave the hydraulic row in
+                // place and update()'s lookup_variable(sname, obj) would
+                // resolve to ITS id — writing species concentrations into,
+                // say, the node depth series. Silently corrupting an
+                // existing result is worse than refusing to open, and the
+                // condition is entirely under the user's control (rename the
+                // pollutant), so this fails loudly instead.
+                error_msg_ = "GeoPackage output: species '" + sname +
+                             "' collides with the built-in " + obj +
+                             " variable of the same name. Rename the "
+                             "pollutant; writing it would overwrite that "
+                             "variable's results.";
+                return -1;
+            }
+
+            sqlite3_reset(ins.get());
+            sqlite3_clear_bindings(ins.get());
+            bind_text(ins.get(), 1, sname);
+            bind_text(ins.get(), 2, obj);
+            bind_text(ins.get(), 3, units);
+            bind_text(ins.get(), 4, desc);
+            sqlite3_step(ins.get());
+        }
+    }
+    return 0;
+}
+
 int GeoPackageOutputPlugin::initialize(const std::vector<std::string>& init_args,
                                         const IPluginComponentInfo* /*info*/) {
     if (init_args.size() < 1) {
@@ -61,6 +156,14 @@ int GeoPackageOutputPlugin::prepare(const SimulationContext& ctx) {
         sqlite3_step(stmt.get());
 
         populate_default_variables(db_.get());
+
+        // Species are model-dependent, so they cannot live in the static
+        // default list. MUST run before the variable-ID cache below, which
+        // is built once from the table.
+        if (register_species_variables(ctx) != 0) {
+            state_ = PluginState::ERROR;
+            return -1;
+        }
 
         // Per-timestep results arrive pre-converted to display units (engine
         // boundary); no plugin-side conversion factors needed.

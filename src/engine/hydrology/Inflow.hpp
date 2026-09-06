@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file Inflow.hpp
  * @brief External inflows, dry weather flows, and RDII at nodes.
@@ -12,12 +28,13 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_INFLOW_HPP
 #define OPENSWMM_INFLOW_HPP
 
+#include <cstdint>
 #include <vector>
 
 namespace openswmm {
@@ -39,6 +56,21 @@ constexpr int WEEKEND_PATTERN = 3;
 // Per-node external inflow definition (SoA)
 // ============================================================================
 
+/// `[INFLOWS]` row kind. A row is either the node's direct flow hydrograph or
+/// a pollutant load riding on it — the two must not be summed together.
+/// @see Legacy: FLOW_INFLOW / CONCEN_INFLOW / MASS_INFLOW in enums.h
+enum class ExtInflowKind : int {
+    FLOW   = 0,  ///< Volumetric inflow (constituent FLOW)
+    CONCEN = 1,  ///< Pollutant concentration; mass rate = value * node flow
+    MASS   = 2,  ///< Pollutant mass rate directly
+    /// Z1 (amendment D-Y4): a row naming the reserved species
+    /// `__WATER_AGE__`. Its value is the AGE (hours in the file, seconds
+    /// after conv_factor) carried by the node's external inflow — it adds
+    /// no water and no mass; the EXTERNAL_INFLOW loader books q·age with
+    /// this age instead of the source table's.
+    AGE    = 3
+};
+
 struct ExtInflowSoA {
     int count = 0;
     std::vector<int>    node_idx;       ///< Which node this inflow applies to
@@ -47,6 +79,12 @@ struct ExtInflowSoA {
     std::vector<double> baseline;       ///< Constant baseline value
     std::vector<double> scale_factor;   ///< Timeseries scaling factor
     std::vector<double> conv_factor;    ///< Units conversion factor
+    /// Row kind (see ExtInflowKind). Without this every row — including
+    /// pollutant rows — was added to the node's flow, injecting phantom water.
+    std::vector<int>    kind;
+    /// Pollutant index for CONCEN/MASS rows; -1 for FLOW rows (and for a
+    /// constituent name that matches no declared pollutant).
+    std::vector<int>    pollut_idx;
 
     void resize(int n);
 };
@@ -63,6 +101,12 @@ struct DwfInflowSoA {
     std::vector<int>    pat_daily;      ///< Daily pattern index (-1 = none)
     std::vector<int>    pat_hourly;     ///< Hourly pattern index (-1 = none)
     std::vector<int>    pat_weekend;    ///< Weekend pattern index (-1 = none)
+    /// Constituent is FLOW (legacy TDwfInflow.param == -1). A pollutant DWF
+    /// row is a CONCENTRATION — it must never be added as water (legacy
+    /// addDryWeatherInflows reads only the FLOW row for the hydrograph).
+    std::vector<uint8_t> is_flow;
+    /// Pollutant index for a non-FLOW row (-1 when FLOW or unmatched).
+    std::vector<int>     pollut_idx;
 
     void resize(int n);
 };

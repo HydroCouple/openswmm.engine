@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file ForcingData.hpp
  * @brief Per-element runtime forcing state — SoA layout.
@@ -19,7 +35,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_FORCING_DATA_HPP
@@ -27,6 +43,8 @@
 
 #include <cstdint>
 #include <vector>
+
+#include "HeatOverrideData.hpp"   // HeatElement — PE4
 
 namespace openswmm {
 
@@ -113,6 +131,89 @@ struct ForcingData {
     ForcingMode    climate_evap_mode    = ForcingMode::NONE;
     double         climate_evap_value   = 0.0;         ///< ft/sec (internal; converted from in/day or mm/day at the C API boundary)
     ForcingPersist climate_evap_persist = ForcingPersist::RESET;
+
+    // ------ PE4: per-ELEMENT climate (API only; no deck syntax) -------------
+    //
+    // Air temperature, humidity, wind and incoming shortwave are GLOBAL in
+    // every deck and per-element ONLY through this API. The caller is a
+    // coupled driver — an MCP session, a calibration loop, or a HydroCouple
+    // composition where an atmospheric or riparian-shade model owns the
+    // near-surface field — asserting the heterogeneity deliberately, per
+    // step, and answerable for it. That is how the reference works too:
+    // RHEComponent and CSHComponent receive per-element meteorology through
+    // EXCHANGE ITEMS, never through their input files.
+    //
+    // ⚠ These are resolved AT THE FLUX CALL (SurfaceExchange/RadiativeExchange),
+    // never written into ClimateState. That is the whole safety property:
+    // ClimateState is shared with hydrology, snowmelt and evaporation, and a
+    // per-link push must not reach them. A "simplification" that assigned
+    // these into climate_state would silently give the snowpack above a
+    // conduit that conduit's air temperature.
+    //
+    // Scope is LINK and NODE only. Neither has a competing consumer for air
+    // temperature — snowmelt runs on subcatchments, evaporation on
+    // subcatchment and storage surfaces — so no subsystem divergence is
+    // possible. SUBCATCH is refused at the API boundary, naming that reason.
+    //
+    // Sized lazily on first use (the D-PE2 pattern): a model that never
+    // calls these allocates nothing and pays one `.empty()` check per flux.
+    struct ElemClimateChannel {
+        std::vector<ForcingMode>    mode;
+        std::vector<double>         value;
+        std::vector<ForcingPersist> persist;
+
+        void ensure(std::size_t n) {
+            if (mode.size() == n) return;
+            mode.assign(n, ForcingMode::NONE);
+            value.assign(n, 0.0);
+            persist.assign(n, ForcingPersist::RESET);
+        }
+        /// Apply this channel at `i` to `base`; `base` when unset.
+        double apply(int i, double base) const noexcept {
+            if (i < 0) return base;
+            const auto u = static_cast<std::size_t>(i);
+            if (u >= mode.size() || mode[u] == ForcingMode::NONE) return base;
+            return (mode[u] == ForcingMode::OVERRIDE) ? value[u]
+                                                      : base + value[u];
+        }
+        void resetPerStep() {
+            for (std::size_t i = 0; i < mode.size(); ++i)
+                if (persist[i] == ForcingPersist::RESET)
+                    mode[i] = ForcingMode::NONE;
+        }
+        void clear() { *this = ElemClimateChannel{}; }
+    };
+
+    /// [0] = LINK, [1] = NODE. Indexed by `elemSlot` below so the two kinds
+    /// cannot be confused at a call site.
+    ElemClimateChannel elem_air_temp[2];   ///< deg F
+    ElemClimateChannel elem_humidity[2];   ///< %
+    ElemClimateChannel elem_wind[2];       ///< mph
+    ElemClimateChannel elem_shortwave[2];  ///< W/m2
+
+    /// -1 for a kind that carries no per-element climate (SUBCATCH, LID).
+    static int elemSlot(HeatElemKind k) noexcept {
+        if (k == HeatElemKind::LINK) return 0;
+        if (k == HeatElemKind::NODE) return 1;
+        return -1;
+    }
+
+    double elementAirTempF(const HeatElement& e, double base) const noexcept {
+        const int s = elemSlot(e.kind);
+        return (s < 0) ? base : elem_air_temp[s].apply(e.index, base);
+    }
+    double elementHumidity(const HeatElement& e, double base) const noexcept {
+        const int s = elemSlot(e.kind);
+        return (s < 0) ? base : elem_humidity[s].apply(e.index, base);
+    }
+    double elementWindMph(const HeatElement& e, double base) const noexcept {
+        const int s = elemSlot(e.kind);
+        return (s < 0) ? base : elem_wind[s].apply(e.index, base);
+    }
+    double elementShortwave(const HeatElement& e, double base) const noexcept {
+        const int s = elemSlot(e.kind);
+        return (s < 0) ? base : elem_shortwave[s].apply(e.index, base);
+    }
 
     // ------ Counts (for iteration) ------------------------------------------
 
@@ -239,6 +340,19 @@ struct ForcingData {
             climate_wind_mode = ForcingMode::NONE;
         if (climate_evap_persist == ForcingPersist::RESET)
             climate_evap_mode = ForcingMode::NONE;
+        // PE4: the per-element channels join the SAME sweep, so RESET
+        // semantics cannot drift between the global and element spellings.
+        // RESET is the documented default for a coupled driver: under
+        // PERSIST, a driver that pushes on some steps and not others
+        // silently reuses a stale field that looks like data and is hours
+        // old. Under RESET the value falls back to the global broadcast the
+        // moment the driver stops feeding it.
+        for (int k = 0; k < 2; ++k) {
+            elem_air_temp[k].resetPerStep();
+            elem_humidity[k].resetPerStep();
+            elem_wind[k].resetPerStep();
+            elem_shortwave[k].resetPerStep();
+        }
     }
 
     /**

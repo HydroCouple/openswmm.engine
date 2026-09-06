@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file DefaultInputPlugin.cpp
  * @brief DefaultInputPlugin — reads/writes SWMM .inp files.
@@ -7,7 +23,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "DefaultInputPlugin.hpp"
@@ -27,6 +43,8 @@
 #include "../input/handlers/UserFlagsHandler.hpp"
 #include "../input/handlers/UserFlagValuesHandler.hpp"
 #include "../input/handlers/PluginsHandler.hpp"
+#include "../input/handlers/ProcessComponentsHandler.hpp"
+#include "../transport/components/ReactionModule/ReactionsComponent.hpp"
 #include "../input/handlers/FilesHandler.hpp"
 #include "../input/handlers/InflowsHandler.hpp"
 #include "../input/handlers/QualityHandler.hpp"
@@ -110,6 +128,7 @@ void DefaultInputPlugin::register_builtin_handlers() {
     registry_.register_builtin("BUILDUP",       input::handle_buildup);
     registry_.register_builtin("WASHOFF",       input::handle_washoff);
     registry_.register_builtin("TREATMENT",     input::handle_treatment);
+    registry_.register_builtin("INITIAL_QUALITY", input::handle_initial_quality);
 
     // Control / map / reporting
     registry_.register_builtin("CONTROLS",      input::handle_controls);
@@ -135,6 +154,19 @@ void DefaultInputPlugin::register_builtin_handlers() {
     registry_.register_builtin("USER_FLAGS",       input::handle_user_flags);
     registry_.register_builtin("USER_FLAG_VALUES", input::handle_user_flag_values);
     registry_.register_builtin("PLUGINS",          input::handle_plugins);
+    registry_.register_builtin("PROCESS_COMPONENTS",
+                               input::handle_process_components);
+
+    // Embedded component sections (D-UT8 fallback): [REACTION_*] in the
+    // legacy .inp are captured verbatim and consumed after component
+    // resolution (style warning; external config file wins on conflict).
+    for (const auto& tag : transport::reactionSectionTags()) {
+        registry_.register_builtin(tag,
+            [tag](SimulationContext& ctx,
+                  const std::vector<std::string>& lines) {
+                ctx.embedded_component_sections.emplace_back(tag, lines);
+            });
+    }
 }
 
 // ============================================================================
@@ -168,10 +200,30 @@ int DefaultInputPlugin::read(const std::string& path, SimulationContext& ctx) {
 }
 
 int DefaultInputPlugin::write(const std::string& path, const SimulationContext& ctx) {
-    int err = inp_writer::writeInpFile(ctx, path);
+    // The writer's warning sink is optional and this caller used to pass
+    // nullptr, which is half of why the "embedded [REACTION_*] sections are
+    // lost from this save" notice never reached a user (2026-08-26). The
+    // other two callers forward into ctx.warnings; this one cannot — the
+    // plugin interface hands it a CONST context by design — so the notice
+    // goes to the plugin's own diagnostic channel instead.
+    //
+    // ⚠ On a SUCCESSFUL write `last_error_message()` is not conventionally
+    // read, so a caller driving the engine through this interface can still
+    // miss it. That is a real residual gap, recorded rather than papered
+    // over: closing it needs a non-error diagnostic channel on IInputPlugin,
+    // which is an interface change and not this round's.
+    std::vector<std::string> warns;
+    int err = inp_writer::writeInpFile(ctx, path, &warns);
     if (err != 0) {
         last_error_ = "Failed to write .inp file: " + path;
+        // Losing model data is worth saying even while reporting the failure.
+        for (const auto& w : warns) last_error_ += "\n" + w;
     }
+    // On SUCCESS the warnings are collected and deliberately NOT written to
+    // last_error_. Putting a non-error in an error channel is worse than the
+    // silence it replaces: a caller that checks last_error_message() after a
+    // successful write would read a warning as a failure. The first draft of
+    // this hunk did exactly that and it was wrong.
     return err;
 }
 

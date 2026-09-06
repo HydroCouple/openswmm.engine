@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file LID.cpp
  * @brief LID control modules — batch-oriented, type-grouped.
@@ -5,7 +21,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "LID.hpp"
@@ -126,6 +142,7 @@ void LIDGroupSoA::resize(int n) {
     surf_side_slope.assign(un, 0.0);
     full_width.assign(un, 0.0);
     dry_time.assign(un, 0.0);
+    subcatch_rain.assign(un, 0.0);
 
     surf_depth.assign(un, 0.0);
     soil_moist.assign(un, 0.2);
@@ -134,6 +151,11 @@ void LIDGroupSoA::resize(int n) {
 
     // drain_rmvl sized separately in model builder (needs n_pollutants)
     drain_rmvl.clear();
+
+    in_surf.assign(un, 0.0);
+    in_pave.assign(un, 0.0);
+    in_soil.assign(un, 0.0);
+    in_stor.assign(un, 0.0);
 
     f_old_surf.assign(un, 0.0);
     f_old_soil.assign(un, 0.0);
@@ -230,23 +252,27 @@ void LIDSolver::init(SimulationContext& ctx) {
         int slot = type_cursor[static_cast<size_t>(ti)]++;
         auto us = static_cast<std::size_t>(slot);
 
-        // Underdrain head/rate conversion factors (used by getDrainRate).
-        g.ucf_raindepth = ucfRainDepth;
-        g.ucf_rainfall  = ucfRainfall;
-
-        // Usage-level fields. Fold the replicate count (Number) into area and
-        // width — legacy aggregates as lidArea = area × number everywhere
-        // (lid.c:1688 runon divisor, 1168 subcatch total, 1445 stored volume).
-        // Scaling BOTH area and width keeps the Manning width/area ratio, so
-        // the depth-based per-unit dynamics are those of one representative
-        // unit while all flux/volume aggregation covers every replicate.
-        int num = (uj < ctx.lid_usage.number.size()) ? ctx.lid_usage.number[uj] : 1;
-        if (num < 1) num = 1;
-        double n_units = static_cast<double>(num);
+        // Usage-level fields. area and full_width are scaled by the
+        // replicate count so g.area is the TOTAL footprint of the usage row
+        // (legacy lidUnit->area * lidUnit->number, lid.c:1688): every
+        // consumer — inflow capture, outflow/drain coupling,
+        // total_lid_area_ft2 — multiplies g.area as the footprint, while the
+        // per-unit flux dynamics only ever use the full_width/area ratio,
+        // which the common factor leaves unchanged (issue #131).
+        //
+        // They are also converted out of the deck's display units, like every
+        // other parameter read above: [LID_USAGE] Area is ft²|m² and Width is
+        // ft|m, while g.area / g.full_width are internal ft² / ft. Without the
+        // division `total_lid_area_ft2` (summed from g.area in initTotals())
+        // holds m² on an SI deck despite its name, and every consumer that
+        // divides a CFS rate by it — the inflow capture below, the full-
+        // coverage runon branch in SWMMEngine::stepRunoff — is off by 1/0.3048²
+        // (issue #102). US decks are unaffected: Ucf[LENGTH][US] is 1.0.
+        double n_units = static_cast<double>(ctx.lid_usage.number[uj]);
         g.subcatch_idx[us] = ctx.lid_usage.subcatch_index[uj];
         g.control_idx[us]  = li;
-        g.area[us]         = ctx.lid_usage.area[uj] * n_units / ucfLength2;  // ft²|m² → ft²
-        g.full_width[us]   = ctx.lid_usage.width[uj] * n_units / ucfLength;  // ft|m → ft
+        g.area[us]         = ctx.lid_usage.area[uj]  * n_units / ucfLength2;
+        g.full_width[us]   = ctx.lid_usage.width[uj] * n_units / ucfLength;
         g.from_imperv[us]  = ctx.lid_usage.from_imperv[uj] / 100.0;  // % → fraction
         g.from_perv[us]    = (uj < ctx.lid_usage.from_perv.size())
                              ? ctx.lid_usage.from_perv[uj] / 100.0 : 0.0;
@@ -405,7 +431,37 @@ void LIDSolver::init(SimulationContext& ctx) {
                     ctx.subcatches.total_lid_area_ft2[static_cast<std::size_t>(sc)] += grp.area[uu];
             }
         }
+        // Legacy lid_validate() (lid.c:1234): snap the LID total to the full
+        // subcatchment area when within 0.1%, so unit-conversion roundoff
+        // cannot leave a sliver of runoff-generating area on a fully
+        // LID-covered subcatchment (issue #131).
+        double ucf_area = ucf::UCF(ucf::LANDAREA, ctx.options);
+        for (int sc = 0; sc < n_sc; ++sc) {
+            auto usc = static_cast<std::size_t>(sc);
+            double full_ft2 = ctx.subcatches.area[usc] / ucf_area;
+            if (ctx.subcatches.total_lid_area_ft2[usc] > 0.999 * full_ft2)
+                ctx.subcatches.total_lid_area_ft2[usc] = full_ft2;
+        }
     }
+}
+
+double LIDSolver::storedVolume() const {
+    // Same per-unit water content the water-balance init uses above (and
+    // legacy lid_getStoredVolume(), lid.c:1426): void-weighted layer depths
+    // times the unit footprint.
+    double total = 0.0;
+    for (const auto& g : groups_) {
+        for (int i = 0; i < g.count; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            total += (g.surf_depth[ui] * g.surf_void_frac[ui]
+                      + g.soil_moist[ui] * g.soil_thick[ui]
+                      + g.stor_depth[ui] * g.stor_void[ui]
+                      + g.pave_depth[ui] * g.pave_void[ui]
+                          * (1.0 - g.pave_imperv_frac[ui]))
+                     * g.area[ui];
+        }
+    }
+    return total;
 }
 
 // ============================================================================
@@ -447,6 +503,29 @@ void LIDSolver::batchBioCellFlux(LIDGroupSoA& g, double rainfall,
                                      g.drain_hopen[ui], g.drain_hclose[ui],
                                      g.drain_open[ui],
                                      g.ucf_raindepth, g.ucf_rainfall);
+
+        // Limit percolation to the soil water actually above field capacity
+        // this step — the moisture clamp below otherwise hides the overdraft
+        // while the loss accounting still records it (issue #131).
+        if (g.soil_thick[ui] > 0.0)
+            soil_perc = std::min(soil_perc,
+                std::max(0.0, theta - g.soil_fc[ui]) * g.soil_thick[ui] / dt);
+
+        if (g.stor_void[ui] <= 0.0 || g.stor_thick[ui] <= 0.0) {
+            // No storage layer (rain garden): soil percolation exfiltrates
+            // directly to native soil (legacy lidproc.c biocellFluxRates);
+            // dropping it silently leaks water from the mass balance.
+            exfil = soil_perc;
+            drain = 0.0;
+        } else {
+            // Limit exfiltration, then drain, to the water available in the
+            // storage layer this step (legacy lidproc.c storage flux limit);
+            // otherwise the recorded loss exceeds the actual water and the
+            // runoff mass balance overcounts infiltration.
+            double avail = g.stor_depth[ui] * g.stor_void[ui] / dt + soil_perc;
+            exfil = std::min(exfil, avail);
+            drain = std::min(drain, std::max(0.0, avail - exfil));
+        }
 
         // Surface overflow
         double overflow = 0.0;
@@ -493,6 +572,18 @@ void LIDSolver::batchBioCellFlux(LIDGroupSoA& g, double rainfall,
         g.evap_loss[ui] = surf_evap * dt;
         g.infil_loss[ui] = exfil * dt;
 
+        // A4: per-layer inflows, after every clamp above. No pavement layer.
+        // With no storage layer (rain garden) the branch above turned soil
+        // percolation into native EXFILTRATION — it leaves the unit rather
+        // than entering a layer, so publishing it as a storage inflow would
+        // give an absent layer both water and an age.
+        const bool has_storage =
+            (g.stor_void[ui] > 0.0 && g.stor_thick[ui] > 0.0);
+        g.in_surf[ui] = inflow;
+        g.in_pave[ui] = 0.0;
+        g.in_soil[ui] = soil_infil;
+        g.in_stor[ui] = has_storage ? soil_perc : 0.0;
+
         // Water balance tracking
         double totalVolume = g.surf_depth[ui] * g.surf_void_frac[ui]
                            + g.soil_moist[ui] * g.soil_thick[ui]
@@ -518,12 +609,6 @@ void LIDSolver::batchBarrelFlux(LIDGroupSoA& g, double rainfall, double dt) {
         // Covered barrel blocks direct rainfall (legacy: storage.covered)
         double unit_inflow = (g.inflow[ui] > 0.0) ? g.inflow[ui] : rainfall;
         if (g.stor_covered[ui]) unit_inflow = 0.0;
-
-        // Track dry time for drain delay
-        if (unit_inflow > 0.0)
-            g.dry_time[ui] = 0.0;
-        else
-            g.dry_time[ui] += dt;
 
         // Inflow fills storage
         double new_depth = g.stor_depth[ui] + unit_inflow * dt;
@@ -561,10 +646,34 @@ void LIDSolver::batchBarrelFlux(LIDGroupSoA& g, double rainfall, double dt) {
         }
 
         g.stor_depth[ui] = std::max(new_depth, 0.0);
+
+        // A4: a barrel has only a storage layer, and it is the TOPMOST
+        // present layer — its inflow is external, not from a layer above.
+        g.in_surf[ui] = 0.0;
+        g.in_pave[ui] = 0.0;
+        g.in_soil[ui] = 0.0;
+        g.in_stor[ui] = unit_inflow;
+
         g.surface_runoff[ui] = overflow;
         g.drain_flow[ui] = drain;
         g.evap_loss[ui] = 0.0;
-        g.infil_loss[ui] = (dt > 0.0) ? exfil / dt : 0.0;
+        g.infil_loss[ui] = exfil;  // per-step loss depth (ft), like all types
+
+        // Track dry time for the drain delay — AFTER the flux computation
+        // used it (legacy order: barrelFluxRates reads dryTime as it stood
+        // BEFORE this step; lid.c:1920-1921 updates it at the END of
+        // evalLidUnit — with long DRY_STEP substeps a pre-update clock leads
+        // legacy by one substep and opens the drain a window early). Legacy
+        // resets on the parent subcatchment's RAINFALL above MIN_RUNOFF, NOT
+        // on unit inflow: a sub-MIN_RUNOFF runoff trickle (Horton recession
+        // holds ~1e-12 cfs for hours) must not keep the drain shut forever,
+        // and a covered barrel's blocked inflow must not let it drain
+        // mid-storm.
+        constexpr double MIN_RUNOFF = 2.31481e-8;  // ft/s (legacy consts.h)
+        if (g.subcatch_rain[ui] > MIN_RUNOFF)
+            g.dry_time[ui] = 0.0;
+        else
+            g.dry_time[ui] += dt;
 
         // Water balance tracking
         g.wb_inflow[ui]     += unit_inflow * dt;
@@ -674,11 +783,18 @@ void LIDSolver::batchInfilTrenchFlux(LIDGroupSoA& g, double rainfall,
         g.surf_depth[ui]    = newSurf;
         g.stor_depth[ui]    = newStor;
 
+        // A4: per-layer inflows. The trench has no soil or pavement layer,
+        // so storage receives straight from the surface.
+        g.in_surf[ui] = surfaceInflow;
+        g.in_pave[ui] = 0.0;
+        g.in_soil[ui] = 0.0;
+        g.in_stor[ui] = storageInflow;
+
         // Outputs
         g.surface_runoff[ui] = surfaceOutflow;
         g.drain_flow[ui]     = storageDrain;
-        g.evap_loss[ui]      = surfaceEvap + storageEvap;
-        g.infil_loss[ui]     = storageExfil;
+        g.evap_loss[ui]      = (surfaceEvap + storageEvap) * dt;
+        g.infil_loss[ui]     = storageExfil * dt;
 
         // Water balance
         g.wb_inflow[ui]     += surfaceInflow * dt;
@@ -719,6 +835,13 @@ void LIDSolver::batchSwaleFlux(LIDGroupSoA& g, double rainfall,
         // Update surface depth
         double new_surf = g.surf_depth[ui] + (inflow - surf_evap - infil - runoff) * dt;
         g.surf_depth[ui] = std::max(new_surf, 0.0);
+
+        // A4: a swale is a single surface layer — its infiltration leaves the
+        // unit for native soil rather than entering a soil LAYER.
+        g.in_surf[ui] = inflow;
+        g.in_pave[ui] = 0.0;
+        g.in_soil[ui] = 0.0;
+        g.in_stor[ui] = 0.0;
 
         g.surface_runoff[ui] = runoff;
         g.drain_flow[ui] = 0.0;
@@ -804,6 +927,12 @@ void LIDSolver::batchSwaleModPuls(LIDGroupSoA& g, double rainfall,
             runoff = std::pow(excess, 5.0 / 3.0) * std::sqrt(g.surf_slope[ui])
                      / g.surf_rough[ui];
         }
+
+        // A4: single surface layer, as in the explicit swale above.
+        g.in_surf[ui] = inflow;
+        g.in_pave[ui] = 0.0;
+        g.in_soil[ui] = 0.0;
+        g.in_stor[ui] = 0.0;
 
         g.surface_runoff[ui] = runoff;
         g.drain_flow[ui] = 0.0;
@@ -984,6 +1113,13 @@ void LIDSolver::batchGreenRoofFlux(LIDGroupSoA& g, double rainfall,
         g.surf_depth[ui] = newSurf;
         g.soil_moist[ui] = newTheta;
         g.stor_depth[ui] = newStor;
+
+        // A4: per-layer inflows, after every clamp above. The green roof's
+        // "storage" is its drainage mat; there is no pavement layer.
+        g.in_surf[ui] = surfaceInflow;
+        g.in_pave[ui] = 0.0;
+        g.in_soil[ui] = surfaceInfil;
+        g.in_stor[ui] = soilPerc;
 
         // --- outputs ---
         g.surface_runoff[ui] = surfaceOutflow;
@@ -1272,6 +1408,14 @@ void LIDSolver::batchPavementFlux(LIDGroupSoA& g, double rainfall,
         g.soil_moist[ui] = newTheta;
         g.stor_depth[ui] = newStor;
 
+        // A4: the only four-layer stack. `storageInflow_local` already
+        // resolves the soil-absent case, where pavement percolation reaches
+        // storage directly.
+        g.in_surf[ui] = surfaceInflow;
+        g.in_pave[ui] = surfaceInfil;
+        g.in_soil[ui] = (soilThickness > 0.0) ? pavePerc : 0.0;
+        g.in_stor[ui] = storageInflow_local;
+
         // --- outputs ---
         g.surface_runoff[ui] = surfaceOutflow;
         g.drain_flow[ui] = storageDrain;
@@ -1351,6 +1495,14 @@ void LIDSolver::batchRoofDisconFlux(LIDGroupSoA& g, double rainfall,
         g.surf_depth[ui] = newSurf;
 
         // --- outputs ---
+        // A4: roof disconnection has one surface layer; its "drain" is a
+        // routed fraction of the roof outflow, so it leaves at the SURFACE
+        // age rather than a storage age (see WaterAgeLid.cpp's drain source).
+        g.in_surf[ui] = surfaceInflow;
+        g.in_pave[ui] = 0.0;
+        g.in_soil[ui] = 0.0;
+        g.in_stor[ui] = 0.0;
+
         g.surface_runoff[ui] = surfaceOutflow;
         g.drain_flow[ui] = storageDrain;
         g.evap_loss[ui] = surfaceEvap * dt;

@@ -331,6 +331,108 @@ TEST_F(InpWriter2DTest, MeshFileReferencePreserved) {
 }
 
 // ---------------------------------------------------------------------------
+// Mesh-reference policy on Save-As to a DIFFERENT directory.
+//
+// Two regimes, and only one of them re-anchors:
+//   * mesh loaded    → the sidecar travels with the .inp, so the reference stays
+//                      a bare relative name and Save-As must NOT write back into
+//                      the source folder.
+//   * mesh NOT loaded → nothing is written, so the reference must be re-anchored
+//                      or the saved model silently opens 1D-only.
+// MeshFileReferencePreserved above writes to the same directory and so cannot
+// distinguish any of this.
+// ---------------------------------------------------------------------------
+
+// Extract the FILE token from the [2D_MESH_FILE] block.
+static std::string mesh_file_token(const std::string& text) {
+    const auto at = text.find("[2D_MESH_FILE]");
+    if (at == std::string::npos) return {};
+    std::istringstream is(text.substr(at));
+    std::string line;
+    while (std::getline(is, line)) {
+        if (line.rfind("FILE", 0) != 0) continue;
+        const auto sp = line.find_first_not_of(" \t", 4);
+        return (sp == std::string::npos) ? std::string{} : line.substr(sp);
+    }
+    return {};
+}
+
+TEST_F(InpWriter2DTest, MeshTravelsWithSaveAsAndLeavesSourceUntouched) {
+    const fs::path src_dir = dir_ / "src";
+    const fs::path dst_dir = dir_ / "saveas";
+    fs::create_directories(src_dir);
+    fs::create_directories(dst_dir);
+
+    const fs::path mesh_2dm = src_dir / "mesh_ext.2dm";
+    write_file(mesh_2dm, k2DSections);
+    const std::string source_mesh_before = read_file(mesh_2dm);
+
+    const fs::path inp_a = src_dir / "ext.inp";
+    write_file(inp_a, replace(k1DBase, "{FLOW_UNITS}", "CMS") +
+                          "\n[2D_MESH_FILE]\nFILE mesh_ext.2dm\n");
+
+    eng_a_ = open_engine(inp_a);
+    ASSERT_EQ(swmm_engine_initialize(eng_a_), 0);
+
+    const fs::path inp_b = dst_dir / "ext_out.inp";
+    ASSERT_EQ(swmm_model_write(eng_a_, inp_b.string().c_str()), 0);
+
+    const std::string tok = mesh_file_token(read_file(inp_b));
+    ASSERT_FALSE(tok.empty()) << "no FILE token in [2D_MESH_FILE]";
+    EXPECT_FALSE(fs::path(tok).is_absolute())
+        << "mesh reference leaked an absolute path: " << tok;
+    EXPECT_EQ(tok.find(".."), std::string::npos)
+        << "mesh travels with the .inp, so the reference must stay local: " << tok;
+
+    // The sidecar came along, and the ORIGINAL was not overwritten.
+    EXPECT_TRUE(fs::exists(dst_dir / "mesh_ext.2dm"))
+        << "sidecar must be written next to the destination .inp";
+    EXPECT_EQ(read_file(mesh_2dm), source_mesh_before)
+        << "Save-As must not write back into the source directory";
+
+    eng_b_ = open_engine(inp_b);
+    ASSERT_EQ(swmm_engine_initialize(eng_b_), 0);
+    int nvb = -1;
+    ASSERT_EQ(swmm_2d_vertex_count(eng_b_, &nvb), 0);
+    EXPECT_EQ(nvb, 4) << "saved model lost its external mesh";
+}
+
+TEST_F(InpWriter2DTest, UnloadableMeshReferenceReanchoredOnSaveAs) {
+    const fs::path src_dir = dir_ / "src_missing";
+    const fs::path dst_dir = dir_ / "saveas_missing";
+    fs::create_directories(src_dir);
+    fs::create_directories(dst_dir);
+
+    // Reference a .2dm that does not exist. A strict open rejects the model
+    // outright; the editor path (lenient open — what the GUI uses) keeps it
+    // loadable with no mesh in memory, so nothing will be written alongside
+    // the destination. That is exactly the case the re-anchor exists for.
+    const fs::path inp_a = src_dir / "ext.inp";
+    write_file(inp_a, replace(k1DBase, "{FLOW_UNITS}", "CMS") +
+                          "\n[2D_MESH_FILE]\nFILE absent_mesh.2dm\n");
+
+    eng_a_ = swmm_engine_create();
+    ASSERT_NE(eng_a_, nullptr);
+    swmm_engine_set_lenient_open(eng_a_, 1);
+    ASSERT_EQ(swmm_engine_open(eng_a_, inp_a.string().c_str(), "", "", nullptr), 0);
+
+    const fs::path inp_b = dst_dir / "ext_out.inp";
+    ASSERT_EQ(swmm_model_write(eng_a_, inp_b.string().c_str()), 0);
+
+    const std::string tok = mesh_file_token(read_file(inp_b));
+    ASSERT_FALSE(tok.empty()) << "no FILE token in [2D_MESH_FILE]";
+    EXPECT_EQ(tok.rfind("..", 0), 0u)
+        << "dangling mesh reference was not re-anchored on Save-As: " << tok;
+    EXPECT_NE(tok.find("absent_mesh.2dm"), std::string::npos);
+
+    // The re-anchored token must name the ORIGINAL location, so dropping the
+    // mesh back where it always was makes the saved model whole again.
+    const fs::path resolved =
+        fs::weakly_canonical(dst_dir / fs::path(tok));
+    EXPECT_EQ(resolved, fs::weakly_canonical(src_dir / "absent_mesh.2dm"));
+}
+
+// ---------------------------------------------------------------------------
 // 2D option keys set through swmm_options_set_ext reach the solver options
 // and persist through swmm_model_write (GUI tab-6 wiring fix)
 // ---------------------------------------------------------------------------

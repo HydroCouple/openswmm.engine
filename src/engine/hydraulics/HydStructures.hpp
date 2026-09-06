@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file HydStructures.hpp
  * @brief Non-conduit link flow: pumps, orifices, weirs, outlets.
@@ -26,7 +42,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_HYD_STRUCTURES_HPP
@@ -51,6 +67,34 @@ constexpr double GRAVITY = 32.2;
 constexpr double FUDGE   = 0.0001;
 
 // ============================================================================
+// Flap gates
+// ============================================================================
+
+/**
+ * @brief Is flow through link @p j blocked by a flap gate?
+ *
+ * @details Mirrors legacy `link_setFlapGate` (link.c:646-673), which applies
+ *          TWO independent tests and is called from all four link-flow paths
+ *          (dwflow.c:332 for conduits, link.c:1895/2303/2697 for
+ *          orifice/weir/outlet):
+ *
+ *          1. The link's OWN gate ([LOSSES] col 5, or the `Gated` column on
+ *             an orifice/weir/outlet) blocks flow opposing `links.direction`.
+ *          2. A gated OUTFALL on the link's INFLOW end blocks any flow that
+ *             would leave that outfall and enter the network — regardless of
+ *             whether the link itself carries a gate.
+ *
+ *          Test (2) is why this must be a shared predicate rather than an
+ *          inline `has_flap_gate` check: three structure kernels previously
+ *          implemented only test (1), so a tide gate modelled as a gated
+ *          outfall with an orifice or weir on it admitted reverse flow.
+ *
+ * @param q Signed flow (or a bare direction indicator — magnitude and units
+ *          are irrelevant, only the sign is read).
+ */
+bool flapGateBlocks(const SimulationContext& ctx, int j, int n1, int n2, double q);
+
+// ============================================================================
 // Per-type SoA groups (like XSectGroups but for structure types)
 // ============================================================================
 
@@ -69,13 +113,12 @@ struct OrificeGroup {
     int count = 0;
     std::vector<int>    link_idx;
     std::vector<int>    shape;         ///< BOTTOM or SIDE
-    std::vector<double> c_orifice;     ///< Cd * sqrt(2g) * Area
-    std::vector<double> c_weir;        ///< Cd * L * sqrt(2g) for partial fill
-    std::vector<double> h_crit;        ///< Transition depth
-    std::vector<uint8_t> has_flap;     ///< Flap gate (uint8_t, not bool: avoids
-                                       ///< vector<bool> bit-packing overhead in
-                                       ///< per-iteration hot loops and enables
-                                       ///< parallel-for writes without atomics).
+    // No cached cOrif/cWeir/hCrit: legacy orifice_setSetting recomputes them
+    // from the CURRENT setting every step, so computeOrificeFlowK derives
+    // them inline per call (see the legacy-exact block there) — an init-time
+    // snapshot at full opening could only ever go stale.
+    // No cached flap-gate flag: the kernels read ctx.links.has_flap_gate (and
+    // flapGateBlocks) directly, so a stale init-time snapshot cannot diverge.
     /// Most-recently-computed surface area (ft²) for scatter into node
     /// new_surf_area (matches legacy Orifice[k].surfArea).
     std::vector<double> surf_area;
@@ -95,7 +138,7 @@ struct WeirGroup {
     std::vector<double> end_con;       ///< End contraction factor
     std::vector<double> slope;         ///< V-notch slope or trap slope
     std::vector<int>    cd_curve;      ///< Optional Cd(head) curve index
-    std::vector<uint8_t> has_flap;     ///< See comment on OrificeGroup::has_flap.
+    // No cached flap-gate flag — see the note on OrificeGroup.
     /// Most-recently-computed surface area (ft²), populated by
     /// computeWeirFlows and scattered to node surface-area accumulators
     /// by the non_conduit_fn callback. Matches legacy Weir[k].surfArea.

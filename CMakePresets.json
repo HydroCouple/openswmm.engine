@@ -21,7 +21,7 @@
         {
             "name": "Windows",
             "inherits": "default",
-            "description": "Windows Release (Ninja Multi-Config, MSVC). FP policy: /fp:precise (IEEE-754, no FMA contraction). C extensions /we4013 promote implicit-decl to error.",
+            "description": "Windows Release (Ninja Multi-Config, MSVC). FP policy: /fp:precise (IEEE-754, no FMA contraction — VS2022 17.0+ generates no contractions under /fp:precise; /fp:contract would opt back IN, and there is no /fp:contract- spelling). C extensions /we4013 promote implicit-decl to error.",
             "generator": "Ninja Multi-Config",
             "binaryDir": "${sourceDir}/build/windows",
             "cacheVariables": {

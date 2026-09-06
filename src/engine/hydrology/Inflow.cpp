@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file Inflow.cpp
  * @brief External/DWF inflows — batch SoA, numerically identical to legacy.
@@ -5,7 +21,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "Inflow.hpp"
@@ -16,6 +32,7 @@
 #include "../data/TableData.hpp"
 #include <cctype>
 #include <cmath>
+#include <limits>
 #include <algorithm>
 #include <string>
 #include <unordered_map>
@@ -34,6 +51,8 @@ void ExtInflowSoA::resize(int n) {
     baseline.assign(un, 0.0);
     scale_factor.assign(un, 1.0);
     conv_factor.assign(un, 1.0);
+    kind.assign(un, static_cast<int>(ExtInflowKind::FLOW));
+    pollut_idx.assign(un, -1);
 }
 
 void DwfInflowSoA::resize(int n) {
@@ -45,6 +64,8 @@ void DwfInflowSoA::resize(int n) {
     pat_daily.assign(un, -1);
     pat_hourly.assign(un, -1);
     pat_weekend.assign(un, -1);
+    is_flow.assign(un, 0);
+    pollut_idx.assign(un, -1);
 }
 
 double InflowSolver::getPatternFactor(int pat_idx, int month, int day, int hour) const {
@@ -95,6 +116,17 @@ void InflowSolver::init(SimulationContext& ctx) {
     // ---- Copy patterns into runtime structures ----
     refreshPatterns(ctx);
 
+    // Z1 (amendment D-Y4): (re)assert the per-node inflow-age channel.
+    // Sized HERE — before the first routing step — because the loaders'
+    // lazy WaterAgeState::resize lands between Pass 3's first write and
+    // its first read; and re-filled with NaN on every init because init
+    // is the authority on which rows exist (an [INFLOWS] row removed via
+    // the API must not leave its last age behind).
+    if (ctx.options.water_age)
+        ctx.water_age_state.node_ext_inflow_age.assign(
+            static_cast<std::size_t>(ctx.n_nodes()),
+            std::numeric_limits<double>::quiet_NaN());
+
     // ---- Populate external inflows with name resolution ----
     int ne = ctx.ext_inflows.count();
     ext_inflows_.resize(ne);
@@ -112,9 +144,92 @@ void InflowSolver::init(SimulationContext& ctx) {
         // metric (CMS/LPS/MLD) direct inflows were applied ~35x too small.
         double cf = ctx.ext_inflows.m_factor[ui];
         const auto& cons = ctx.ext_inflows.constituent[ui];
-        if (cons == "FLOW" || cons == "flow" || cons == "Flow") {
+        // Classify the row. A constituent of FLOW is the node's hydrograph; any
+        // other constituent names a pollutant and carries a load, NOT water.
+        // Legacy: inflow_readExtInflow() / routing.c addExternalInflows().
+        auto upper = [](std::string s) {
+            for (auto& ch : s) ch = static_cast<char>(std::toupper(
+                static_cast<unsigned char>(ch)));
+            return s;
+        };
+        // Warnings below dedupe against ctx.warnings because init() re-runs
+        // on every swmm_ext_inflow_add() — without the check each API add
+        // would repeat every standing warning.
+        auto warn_once = [&ctx](const std::string& msg) {
+            for (const auto& w : ctx.warnings)
+                if (w == msg) return;
+            ctx.warnings.push_back(msg);
+        };
+        const std::string cons_u = upper(cons);
+        if (cons_u == "FLOW") {
+            ext_inflows_.kind[ui]       = static_cast<int>(ExtInflowKind::FLOW);
+            ext_inflows_.pollut_idx[ui] = -1;
             int fu = static_cast<int>(ctx.options.flow_units);
             if (fu >= 0 && fu < 6) cf /= ucf::Qcf[fu];
+        } else if (cons == "__WATER_AGE__") {
+            // Z1 (amendment D-Y4): the reserved age species is a legal
+            // [INFLOWS] constituent. The row's value is the AGE of the
+            // node's external inflow water — HOURS in the file (the
+            // [WATER_AGE_SOURCES] unit), SECONDS internally — and it wins
+            // over the source table's EXTERNAL_INFLOW entry at this node.
+            ext_inflows_.kind[ui]       = static_cast<int>(ExtInflowKind::AGE);
+            ext_inflows_.pollut_idx[ui] = -1;
+            cf *= 3600.0;   // hours → seconds
+            const std::string type_u = upper(ctx.ext_inflows.inflow_type[ui]);
+            if (type_u == "MASS")
+                warn_once(
+                    "[INFLOWS] __WATER_AGE__ at node '" +
+                    ctx.ext_inflows.node_name[ui] +
+                    "': MASS has no meaning for the age species — the value "
+                    "is taken as the inflow's age in hours (CONCEN).");
+            if (!ctx.options.water_age)
+                warn_once(
+                    "[INFLOWS] __WATER_AGE__ rows are present but [OPTIONS] "
+                    "WATER_AGE is OFF — the rows are inert this simulation.");
+            // Amendment 1 §6: two ways to state an external-inflow age.
+            // The [INFLOWS] row wins because it is the more specific
+            // statement; say so instead of letting one silently lose.
+            for (std::size_t k = 0;
+                 k < ctx.water_age_config.node_over_source.size(); ++k)
+                if (ctx.water_age_config.node_over_source[k] ==
+                        static_cast<int>(WaterAgeSource::EXTERNAL_INFLOW) &&
+                    ctx.water_age_config.node_over_node[k] ==
+                        ext_inflows_.node_idx[ui])
+                    warn_once(
+                        "[INFLOWS] __WATER_AGE__ at node '" +
+                        ctx.ext_inflows.node_name[ui] +
+                        "' overrides the [WATER_AGE_SOURCES] "
+                        "EXTERNAL_INFLOW row for the same node — the "
+                        "inflow row wins (amendment D-Y4).");
+        } else if (cons == "__TEMPERATURE__") {
+            // Heat keeps the dedicated-page treatment until its own round
+            // (amendment 1 §6) — but never the silent drop.
+            ext_inflows_.kind[ui]       = static_cast<int>(ExtInflowKind::CONCEN);
+            ext_inflows_.pollut_idx[ui] = -1;
+            warn_once(
+                "[INFLOWS] __TEMPERATURE__ rows arrive with heat's round — "
+                "the row at node '" + ctx.ext_inflows.node_name[ui] +
+                "' is ignored.");
+        } else {
+            const std::string type_u = upper(ctx.ext_inflows.inflow_type[ui]);
+            const bool is_mass = (type_u == "MASS");
+            ext_inflows_.kind[ui] = static_cast<int>(
+                is_mass ? ExtInflowKind::MASS : ExtInflowKind::CONCEN);
+            ext_inflows_.pollut_idx[ui] = ctx.pollutant_names.find(cons);
+            // Z1: a constituent matching nothing was SILENTLY dropped at
+            // routing (pollut_idx −1 skips the row); a typo in a pollutant
+            // name deserves words.
+            if (ext_inflows_.pollut_idx[ui] < 0)
+                warn_once(
+                    "[INFLOWS] constituent '" + cons + "' at node '" +
+                    ctx.ext_inflows.node_name[ui] +
+                    "' matches no pollutant or reserved species — the row "
+                    "is ignored.");
+            // Internal quality unit is ft3 x mg/L, so a user-supplied MASS rate
+            // divides by the liters-per-ft3 factor exactly as legacy does
+            // (inflow.c: "if ( type == MASS_INFLOW ) cf /= LperFT3").
+            constexpr double L_PER_FT3 = 28.317;   // legacy consts.h LperFT3
+            if (is_mass) cf /= L_PER_FT3;
         }
         ext_inflows_.conv_factor[ui]  = cf;
 
@@ -150,6 +265,12 @@ void InflowSolver::init(SimulationContext& ctx) {
         if (constituent == "FLOW" || constituent == "flow" || constituent == "Flow") {
             int fu = static_cast<int>(ctx.options.flow_units);
             avg_val /= ucf::Qcf[fu];
+            dwf_inflows_.is_flow[ui] = 1;
+        } else {
+            // Pollutant DWF row: a concentration tied to the node's DWF flow
+            // (legacy TDwfInflow.param = pollutant index). Unmatched names
+            // stay -1 and the row is inert, like a legacy parse would reject.
+            dwf_inflows_.pollut_idx[ui] = ctx.pollutant_names.find(constituent);
         }
         dwf_inflows_.avg_value[ui] = avg_val;
 
@@ -212,10 +333,14 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
     int month = datetime::monthOfYear(current_date) - 1;
 
     // ---- Batch external inflows (gather + multiply + scatter-add) ----
-    for (int i = 0; i < ext_inflows_.count; ++i) {
-        auto ui = static_cast<std::size_t>(i);
+    // Two passes, matching legacy routing.c addExternalInflows(): the FLOW rows
+    // establish each node's direct inflow first, because a CONCEN row's mass
+    // rate is that flow times the concentration.
+    const int np = ctx.n_pollutants();
 
-        // Baseline value, optionally modulated by a time pattern
+    // Value of one [INFLOWS] row at the current date: cf * (tsv + blv), as in
+    // legacy inflow_getExtInflow().
+    auto row_value = [&](std::size_t ui) {
         double base = ext_inflows_.baseline[ui];
         int bp = ext_inflows_.base_pat_idx[ui];
         if (bp >= 0) {
@@ -231,10 +356,16 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
             ts_val = table_tseries_lookup_cursor(ctx.tables[ts], current_date);
             ts_val *= ext_inflows_.scale_factor[ui];
         }
+        return ext_inflows_.conv_factor[ui] * (ts_val + base);
+    };
 
-        // Combined inflow: cf * (tsv + blv)
-        // Matches legacy: cf * (tsv + blv) in inflow_getExtInflow
-        double q = ext_inflows_.conv_factor[ui] * (ts_val + base);
+    // Pass 1 — FLOW rows only.
+    for (int i = 0; i < ext_inflows_.count; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (ext_inflows_.kind[ui] != static_cast<int>(ExtInflowKind::FLOW))
+            continue;
+
+        const double q = row_value(ui);
 
         // Write to decomposed external inflow array (assembled into lat_flow later)
         int ni = ext_inflows_.node_idx[ui];
@@ -243,26 +374,65 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
         }
     }
 
+    // Pass 2 — pollutant rows: a mass rate into ext_qual_mass, never into the
+    // flow. QualitySolver::addExtInflowLoads() folds these into qual_mass_in.
+    if (np > 0 && !ctx.nodes.ext_qual_mass.empty()) {
+        for (int i = 0; i < ext_inflows_.count; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            const int kind = ext_inflows_.kind[ui];
+            if (kind == static_cast<int>(ExtInflowKind::FLOW)) continue;
+            const int p  = ext_inflows_.pollut_idx[ui];
+            const int ni = ext_inflows_.node_idx[ui];
+            if (p < 0 || p >= np || ni < 0 || ni >= ctx.n_nodes()) continue;
+
+            double w = row_value(ui);
+            if (kind == static_cast<int>(ExtInflowKind::CONCEN))
+                w *= ctx.nodes.ext_inflow[static_cast<std::size_t>(ni)];
+
+            const auto idx = static_cast<std::size_t>(ni) *
+                             static_cast<std::size_t>(np) +
+                             static_cast<std::size_t>(p);
+            if (idx < ctx.nodes.ext_qual_mass.size())
+                ctx.nodes.ext_qual_mass[idx] += w;
+        }
+    }
+
+    // Pass 3 — __WATER_AGE__ rows (Z1, amendment D-Y4): the row's current
+    // value is the AGE (seconds after conv_factor) of this node's external
+    // inflow. It adds no water and no mass; the EXTERNAL_INFLOW loader
+    // (QualityRouting::addExtInflowLoads → addAgeVolume) reads it in place
+    // of the source table's age. Later rows at the same node win, matching
+    // write order. The state array is sized by the transport engine at
+    // init; the guard below only skips writes on an unsized array (age OFF).
+    if (ctx.options.water_age &&
+        !ctx.water_age_state.node_ext_inflow_age.empty()) {
+        auto& ov = ctx.water_age_state.node_ext_inflow_age;
+        for (int i = 0; i < ext_inflows_.count; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            if (ext_inflows_.kind[ui] != static_cast<int>(ExtInflowKind::AGE))
+                continue;
+            const int ni = ext_inflows_.node_idx[ui];
+            if (ni >= 0 && static_cast<std::size_t>(ni) < ov.size())
+                ov[static_cast<std::size_t>(ni)] = row_value(ui);
+        }
+    }
+
     // ---- Batch DWF inflows (pattern multiply chain + scatter-add) ----
     // Matches legacy inflow_getDwfInflow: f = monthly * daily * (hourly|weekend)
-    for (int i = 0; i < dwf_inflows_.count; ++i) {
-        auto ui = static_cast<std::size_t>(i);
 
+    // Legacy FLOW_TOL (consts.h): DWF flows below it are snapped to zero
+    // (routing.c addDryWeatherInflows: `if (fabs(q) < FLOW_TOL) q = 0`).
+    constexpr double DWF_FLOW_TOL = 0.00001;
+
+    // Pattern factor of one DWF row at the current date, legacy
+    // inflow_getDwfInflow: f = monthly * daily * (hourly | weekend).
+    auto dwfFactor = [&](std::size_t ui) {
         double factor = 1.0;
-
-        // Monthly pattern
         int pm = dwf_inflows_.pat_monthly[ui];
         if (pm >= 0) factor *= getPatternFactor(pm, month, day, hour);
-
-        // Daily pattern
         int pd = dwf_inflows_.pat_daily[ui];
         if (pd >= 0) factor *= getPatternFactor(pd, month, day, hour);
-
-        // Hourly vs weekend pattern (matches legacy logic exactly):
-        //   if weekend pattern exists:
-        //     if day is Sun(0) or Sat(6): use weekend pattern
-        //     else if hourly pattern exists: use hourly pattern
-        //   else if hourly pattern exists: use hourly pattern
+        // Hourly vs weekend (matches legacy logic exactly):
         int ph = dwf_inflows_.pat_hourly[ui];
         int pw = dwf_inflows_.pat_weekend[ui];
         if (pw >= 0) {
@@ -274,13 +444,52 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
         } else if (ph >= 0) {
             factor *= getPatternFactor(ph, month, day, hour);
         }
+        return factor;
+    };
 
-        double q = factor * dwf_inflows_.avg_value[ui];
+    // Pass 1 — FLOW rows only. A pollutant DWF row is a concentration, not
+    // water — legacy addDryWeatherInflows (routing.c) reads only the FLOW
+    // row for the node's hydrograph. Adding the TN/BOD5 baselines here
+    // inflated lateral inflow (wq-mass-extran1: node 80408 got 47+2 cfs).
+    for (int i = 0; i < dwf_inflows_.count; ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (!dwf_inflows_.is_flow[ui]) continue;
+
+        double q = dwfFactor(ui) * dwf_inflows_.avg_value[ui];
+        if (std::fabs(q) < DWF_FLOW_TOL) q = 0.0;
 
         // Write to decomposed DWF inflow array (assembled into lat_flow later)
         int ni = dwf_inflows_.node_idx[ui];
         if (ni >= 0 && ni < static_cast<int>(ctx.nodes.dwf_inflow.size())) {
             ctx.nodes.dwf_inflow[static_cast<std::size_t>(ni)] += q;
+        }
+    }
+
+    // Pass 2 — pollutant rows (legacy addDryWeatherInflows pollutant portion,
+    // routing.c:668-688): each row adds q · (pattern-adjusted concentration)
+    // and subtracts the global-default q · dwfConcen it displaces. The net
+    // adjustment lands in nodes.dwf_qual_mass; QualityRouting adds it on top
+    // of the global-default DWF load it already computes from c_dwf.
+    if (np > 0 && !ctx.nodes.dwf_qual_mass.empty()) {
+        for (int i = 0; i < dwf_inflows_.count; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            const int p = dwf_inflows_.pollut_idx[ui];
+            if (p < 0 || p >= np) continue;
+            const int ni = dwf_inflows_.node_idx[ui];
+            if (ni < 0 || ni >= ctx.n_nodes()) continue;
+
+            const double q = ctx.nodes.dwf_inflow[static_cast<std::size_t>(ni)];
+            if (q <= 0.0) continue;   // legacy: no DWF quality without DWF flow
+
+            double w = q * (dwfFactor(ui) * dwf_inflows_.avg_value[ui]);
+            const double c_glob = ctx.pollutants.c_dwf[static_cast<std::size_t>(p)];
+            if (c_glob > 0.0) w -= q * c_glob;
+
+            const auto idx = static_cast<std::size_t>(ni) *
+                             static_cast<std::size_t>(np) +
+                             static_cast<std::size_t>(p);
+            if (idx < ctx.nodes.dwf_qual_mass.size())
+                ctx.nodes.dwf_qual_mass[idx] += w;
         }
     }
 }

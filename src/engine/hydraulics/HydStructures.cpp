@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file HydStructures.cpp
  * @brief Non-conduit link flow — batch by type, numerically identical to legacy.
@@ -5,7 +21,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "HydStructures.hpp"
@@ -13,6 +29,7 @@
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../math/SIMD.hpp"
+#include "Divider.hpp"
 #include "Node.hpp"
 #include "XSectBatch.hpp"
 #include <cmath>
@@ -28,9 +45,48 @@ extern long g_trace_rstep_sn;
 
 namespace hydstruct {
 
+// PARITY link.c:1836-1845 (orifice), 2266-2275 (weir), 2664-2673 (outlet).
+// Legacy reads the tailwater head from the DOWNSTREAM node only under DW:
+//     if ( RouteModel == DW ) h2 = Node[n2].newDepth + Node[n2].invertElev;
+//     else                    h2 = Node[n1].invertElev;
+// Steady and Kinematic Wave routing carry no downstream head — they route on
+// a tree layout where a link's flow can only depend on its upstream end — so
+// every structure discharges freely to its own upstream invert. Using the
+// DW form under KW/SF submerges a structure against whatever depth its
+// downstream junction happened to reach, which is not information KW has.
+// FV keeps the DW form: it does solve for downstream head.
+static inline double tailwaterHead(const SimulationContext& ctx,
+                                   std::size_t un1, std::size_t un2) {
+    const auto rm = ctx.options.routing_model;
+    if (rm == RoutingModel::KINWAVE || rm == RoutingModel::STEADY)
+        return ctx.nodes.invert_elev[un1];
+    return ctx.nodes.depth[un2] + ctx.nodes.invert_elev[un2];
+}
+
+// PARITY link.c:646-673 link_setFlapGate. Both halves, in legacy's order.
+bool flapGateBlocks(const SimulationContext& ctx, int j, int n1, int n2, double q) {
+    const auto uj = static_cast<size_t>(j);
+
+    // --- reverse flow through the link's own flap gate
+    if (ctx.links.has_flap_gate[uj] &&
+        q * static_cast<double>(ctx.links.direction[uj]) < 0.0)
+        return true;
+
+    // --- gated OUTFALL on the INFLOW end of the link. q == 0 selects neither
+    //     end, matching legacy's `n = -1` initialisation.
+    int n = -1;
+    if (q < 0.0) n = n2;
+    if (q > 0.0) n = n1;
+    if (n < 0) return false;
+    if (ctx.nodes.type[static_cast<size_t>(n)] != NodeType::OUTFALL) return false;
+    const int ofr = ctx.node_subtypes.outfall_row(n);
+    return ofr >= 0 &&
+           ctx.node_subtypes.outfalls.has_flap_gate[static_cast<size_t>(ofr)] != 0;
+}
+
 void PumpGroup::resize(int n)    { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); curve_idx.resize(u,-1); curve_type.resize(u,0); speed.resize(u,1.0); y_on.resize(u,0); y_off.resize(u,0); }
-void OrificeGroup::resize(int n) { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); shape.resize(u,0); c_orifice.resize(u,0); c_weir.resize(u,0); h_crit.resize(u,0); has_flap.resize(u,false); surf_area.resize(u,0); length_eff.resize(u,0); }
-void WeirGroup::resize(int n)    { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); weir_type.resize(u,0); c_disch1.resize(u,0); c_disch2.resize(u,0); end_con.resize(u,0); slope.resize(u,0); cd_curve.resize(u,-1); has_flap.resize(u,false); surf_area.resize(u,0); length_eff.resize(u,0); can_surcharge.resize(u,1); }
+void OrificeGroup::resize(int n) { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); shape.resize(u,0); surf_area.resize(u,0); length_eff.resize(u,0); }
+void WeirGroup::resize(int n)    { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); weir_type.resize(u,0); c_disch1.resize(u,0); c_disch2.resize(u,0); end_con.resize(u,0); slope.resize(u,0); cd_curve.resize(u,-1); surf_area.resize(u,0); length_eff.resize(u,0); can_surcharge.resize(u,1); }
 void OutletGroup::resize(int n)  { count=n; auto u=static_cast<size_t>(n); link_idx.resize(u); curve_idx.resize(u,-1); q_coeff.resize(u,0); q_expon.resize(u,1); }
 
 void StructureSolver::init(SimulationContext& ctx) {
@@ -102,27 +158,14 @@ void StructureSolver::init(SimulationContext& ctx) {
             case LinkType::ORIFICE: {
                 auto uk = static_cast<size_t>(io);
                 orifices_.link_idx[uk] = j;
-                orifices_.has_flap[uk] = ctx.links.has_flap_gate[uj];
 
-                // Pre-compute orifice coefficients matching legacy orifice.c
-                // c_orifice = Cd * A_full * sqrt(2g)  (full orifice flow)
-                // c_weir = Cw * L                      (weir-like partial flow)
-                // h_crit = A_full / L                  (transition depth)
+                // No init-time cOrif/cWeir/hCrit snapshot: legacy
+                // orifice_setSetting derives them from the CURRENT setting,
+                // so computeOrificeFlowK computes them inline per call
+                // (legacy-exact, including the getWeirCoeff bottom/side
+                // split). See the OrificeGroup note in HydStructures.hpp.
                 using constants::GRAVITY;
-                double a_full = ctx.links.xsect_a_full[uj];
                 double y_full = ctx.links.xsect_y_full[uj];
-                double cd_val = ctx.link_subtypes.orifices.cd[
-                    static_cast<size_t>(ctx.link_subtypes.orifice_row(j))];
-
-                orifices_.c_orifice[uk] = cd_val * a_full * std::sqrt(2.0 * GRAVITY);
-                // Weir coefficient for partially-open orifice
-                // Legacy: CW = Cd * L * sqrt(2g) where L = perimeter
-                // For rectangular: L = 2*(w+h), for circular: L = pi*d
-                double w_max = ctx.links.xsect_w_max[uj];
-                double perim = (w_max > 0.0 && y_full > 0.0)
-                    ? 2.0 * (w_max + y_full) : 3.14159 * y_full;
-                orifices_.c_weir[uk] = cd_val * perim * std::sqrt(2.0 * GRAVITY);
-                orifices_.h_crit[uk] = (perim > 0.0) ? a_full / perim : y_full;
                 // Equivalent length for SIDE-orifice surface-area scatter
                 // (legacy link.c:1724: max(200, 2·routingStep·sqrt(g·yFull))).
                 {
@@ -142,7 +185,6 @@ void StructureSolver::init(SimulationContext& ctx) {
                 weirs_.c_disch1[uk]   = W.cd[wr];   // RAW (see PARITY note above)
                 weirs_.c_disch2[uk]   = W.cd2[wr];  // RAW end-section coeff
                 weirs_.can_surcharge[uk] = W.can_surcharge[wr];
-                weirs_.has_flap[uk]   = ctx.links.has_flap_gate[uj];
                 weirs_.weir_type[uk]  = static_cast<int>(W.weir_type[wr]);
                 weirs_.end_con[uk]    = W.end_contractions[wr];
                 // V-notch / trapezoidal side slope comes from the cross-section,
@@ -176,12 +218,17 @@ void StructureSolver::init(SimulationContext& ctx) {
         }
     }
 
-    // Build flat index of all non-conduit links for fast iteration
+    // Build flat index of all non-conduit links for fast iteration.
+    // DUMMY-xsect conduits belong here too: legacy isTrueConduit
+    // (dynwave.c:411-414) is false for them, so findLinkFlows routes them
+    // through findNonConduitFlow in link-index order — their flow is the
+    // upstream node's inflow + overflow, not a momentum solve.
     nc_indices_.clear();
     nc_indices_.reserve(static_cast<size_t>(n_pumps + n_orifices + n_weirs + n_outlets));
     for (int j = 0; j < ctx.n_links(); ++j) {
         auto uj = static_cast<size_t>(j);
-        if (ctx.links.type[uj] != LinkType::CONDUIT)
+        if (ctx.links.type[uj] != LinkType::CONDUIT ||
+            ctx.links.xsect_shape[uj] == XsectShape::DUMMY)
             nc_indices_.push_back(j);
     }
 
@@ -303,14 +350,20 @@ void StructureSolver::computePumpFlowK(SimulationContext& ctx, double dt,
                     q = table_intervalLookup(ctx.tables.tables[uci], depth * ucf_len);
                 }
                 break;
-            case 3: // Head-based with speed
-            case 5: {
-                double s = links.setting[uj];
+            case 3: // Head-based: Q = f(head) — PUMP3_CURVE
+            case 5: {  // Variable speed: Q = f(head/s²) — PUMP5_CURVE
+                // Legacy pump_getInflow PUMP3/PUMP5: s stays 1.0 for a PUMP3
+                // curve — ONLY PUMP5 reads the live speed setting (affinity
+                // scaling head/s² before the lookup). The setting multiplies
+                // the flow exactly ONCE, after the switch (legacy
+                // `return qIn * Link[j].setting`) — no *s here, or a
+                // fractional speed lands as s²·Curve instead of s·Curve.
+                double s = (ct == 5) ? links.setting[uj] : 1.0;
                 double h = (s > 0.0) ? std::max(head / (s * s), 0.0) : 0.0;
                 if (ci >= 0 && uci < ctx.tables.tables.size()) {
                     auto& curve = ctx.tables.tables[uci];
-                    q = table_lookup_cursor(curve, h * ucf_len) * s;
-                    // dQ/dh matching legacy pump.c PUMP3/5 lines 1606-1609:
+                    q = table_lookup_cursor(curve, h * ucf_len);
+                    // dQ/dh matching legacy link.c PUMP3/5:
                     //   Link[j].dqdh = -table_getSlope(&Curve[m], head)
                     //                  * UCF(LENGTH) / UCF(FLOW) / s
                     // sign reversed because flow decreases with increasing head.
@@ -507,7 +560,7 @@ void StructureSolver::computeOrificeFlowK(SimulationContext& ctx,
 
         // --- Compute nodal heads (matching legacy orifice_getInflow) ---
         double h1 = nodes.depth[un1] + nodes.invert_elev[un1];
-        double h2 = nodes.depth[un2] + nodes.invert_elev[un2];
+        double h2 = tailwaterHead(ctx, un1, un2);
         double dir = (h1 >= h2) ? 1.0 : -1.0;
 
         double y1 = nodes.depth[un1];
@@ -551,8 +604,9 @@ void StructureSolver::computeOrificeFlowK(SimulationContext& ctx,
             return;
         }
 
-        // Flap gate: block reverse flow
-        if (links.has_flap_gate[uj] && dir < 0.0) {
+        // Flap gate: the link's own gate OR a gated outfall on the inflow end
+        // (legacy link.c:1895 passes `dir` to link_setFlapGate).
+        if (flapGateBlocks(ctx, j, n1, n2, dir)) {
             links.flow[uj] = 0.0;
             links.depth[uj] = 0.0;
             links.dqdh[uj] = 0.0;
@@ -711,12 +765,12 @@ void StructureSolver::computeWeirFlowK(SimulationContext& ctx,
         auto un2 = static_cast<size_t>(n2);
 
         double hgl1 = nodes.depth[un1] + nodes.invert_elev[un1];
-        double hgl2 = nodes.depth[un2] + nodes.invert_elev[un2];
+        double hgl2 = tailwaterHead(ctx, un1, un2);
         double dir = (hgl1 >= hgl2) ? 1.0 : -1.0;
 
-        // Flap gate check — legacy link_setFlapGate: if forward flow blocked,
-        // zero flow. Our has_flap_gate flag matches the legacy sense.
-        if (links.has_flap_gate[uj] && dir < 0.0) {
+        // Flap gate check — legacy link_setFlapGate (link.c:2303 passes `dir`):
+        // the link's own gate OR a gated outfall on the inflow end.
+        if (flapGateBlocks(ctx, j, n1, n2, dir)) {
             links.flow[uj] = 0.0;
             links.depth[uj] = 0.0;
             links.dqdh[uj] = 0.0;
@@ -756,7 +810,10 @@ void StructureSolver::computeWeirFlowK(SimulationContext& ctx,
         double cd2    = weirs_.c_disch2[uk];
         double length = links.xsect_w_max[uj];
         int    wt     = weirs_.weir_type[uk];
-        const bool flap = weirs_.has_flap[uk] != 0;
+        // The ARMCO head loss keys on the LINK's own gate only — legacy passes
+        // Link[j].hasFlapGate into weir_getFlow (link.c:2343) rather than
+        // calling link_setFlapGate, so an outfall gate must NOT trigger it.
+        const bool flap = links.has_flap_gate[uj] != 0;
         double q = 0.0;
 
         // PARITY link.c weir_getFlow (2323-2412): legacy evaluates the weir
@@ -1026,7 +1083,7 @@ void StructureSolver::computeOutletFlowK(SimulationContext& ctx, int k) {
         auto un2 = static_cast<size_t>(n2);
 
         double h1 = nodes.depth[un1] + nodes.invert_elev[un1];
-        double h2 = nodes.depth[un2] + nodes.invert_elev[un2];
+        double h2 = tailwaterHead(ctx, un1, un2);
         int dir = (h1 >= h2) ? 1 : -1;
 
         // Track which node provides the upstream depth (legacy: y1 is
@@ -1056,8 +1113,9 @@ void StructureSolver::computeOutletFlowK(SimulationContext& ctx, int k) {
         double head = depth_based
                         ? (h1 - hcrest)
                         : (h1 - std::max(h2, hcrest));
-        // Flap gate (closed against reverse flow)
-        bool blocked_by_flap = (links.has_flap_gate[uj] && dir < 0);
+        // Flap gate (closed against reverse flow) — the link's own gate OR a
+        // gated outfall on the inflow end (legacy link.c:2697 passes `dir`).
+        bool blocked_by_flap = flapGateBlocks(ctx, j, n1, n2, dir);
 
         if (head <= FUDGE_OUT || y1 <= FUDGE_OUT || blocked_by_flap) {
             links.flow[uj] = 0.0;
@@ -1134,6 +1192,35 @@ void StructureSolver::computeNonConduitFlowOne(SimulationContext& ctx, double dt
                                                double* node_new_surf_area,
                                                int link_idx) {
     auto uj = static_cast<std::size_t>(link_idx);
+
+    // DUMMY conduit (legacy isTrueConduit == false): findNonConduitFlow →
+    // link_getInflow → conduit_getInflow — node_getOutflow's dispatch
+    // (DIVIDER split, else the upstream node's inflow + overflow) passes
+    // straight through, capped by the conduit's MaxFlow (link.c:1323-1333);
+    // a closed setting carries no flow (link.c:553). The STORAGE branch is
+    // unreachable for dummies — a storage node cannot have a dummy outflow
+    // link (link.c:1006 raises an input error).
+    // Surface area: findNonConduitSurfArea (dynwave.c:498) contributes 0
+    // for anything but an orifice, so there is nothing to scatter.
+    if (ctx.links.type[uj] == LinkType::CONDUIT) {
+        ctx.links.dqdh[uj] = 0.0;
+        double q = 0.0;
+        if (ctx.links.setting[uj] != 0.0) {
+            const int n1 = ctx.links.node1[uj];
+            if (n1 >= 0) {
+                const auto un1 = static_cast<std::size_t>(n1);
+                if (ctx.nodes.type[un1] == NodeType::DIVIDER)
+                    q = divider::getOutflow(ctx, n1, link_idx);
+                else
+                    q = ctx.nodes.inflow[un1] + ctx.nodes.overflow[un1];
+            }
+            const double qlim = ctx.links.q_limit[uj];
+            if (qlim > 0.0 && q > qlim) q = qlim;
+        }
+        ctx.links.flow[uj] = q;
+        return;
+    }
+
     int k = (uj < nc_group_k_.size()) ? nc_group_k_[uj] : -1;
     if (k < 0) return;
 

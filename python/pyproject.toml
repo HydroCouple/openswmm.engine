@@ -33,7 +33,7 @@
 # extensions compile against numpy 2.x and the produced wheels run on any
 # numpy >= 1.21 (since we use only the numpy 1.7+ stable ABI surface).
 requires = [
-    "scikit-build-core >= 0.10",
+    "scikit-build-core >= 0.11",
     "cython >= 3.0.12",
     "numpy >= 1.21",
 ]
@@ -48,7 +48,8 @@ version = "6.0.0a3"
 description = "Python bindings for the OpenSWMM stormwater modelling engine."
 requires-python = ">=3.10"
 readme = { file = "README.md", content-type = "text/markdown" }
-license = { file = "LICENSE" }
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 authors     = [{ name = "Caleb Buahin", email = "caleb.buahin@gmail.com" }]
 maintainers = [{ name = "Caleb Buahin", email = "caleb.buahin@gmail.com" }]
 keywords = [
@@ -100,7 +101,16 @@ Changelog     = "https://github.com/hydrocouple/openswmm.engine/blob/main/CHANGE
 # ============================================================================
 [tool.scikit-build]
 minimum-version  = "build-system.requires"
-cmake.version    = ">=3.24"
+# >=4.3, not >=3.24: configuring this project runs the vcpkg toolchain, and
+# vcpkg 2026.07.29's SPDX manifest generation calls
+# `string(JSON ... STRING_ENCODE ...)`, which arrived in CMake 4.3. The floor
+# is what scikit-build-core resolves its build-env CMake against — with
+# >=3.24 it picked 4.1.0 and every Linux wheel died on the first port
+# (`building sqlite3:x64-linux failed with: BUILD_FAILED`) during
+# `python -m build`, even though the cibuildwheel `before-all` vcpkg install
+# had already succeeded on its own pinned CMake. Both CMakes have to clear the
+# bar, because both invoke vcpkg.
+cmake.version    = ">=4.3"
 cmake.build-type = "Release"
 ninja.make-fallback = true
 
@@ -148,6 +158,7 @@ editable.verbose = false
 # sdist: include everything needed to build from scratch on a clean
 # machine, but exclude all build artefacts.
 sdist.include = [
+    "NOTICE",
     "openswmm/**/*.pyi",
     "openswmm/**/*.pxd",
     "openswmm/legacy/**/*.c",
@@ -236,18 +247,27 @@ else
   apt-get update && apt-get install -y curl zip unzip tar git ninja-build libgomp1
 fi
 
-# Pin CMake < 4 inside the container, ahead of the system cmake.
-# Why: manylinux_2_28_aarch64:2025.08.15-1 ships CMake 4.x. vcpkg-tool's
-# bundled cmakerc dep has cmake_minimum_required(VERSION 3.3), which CMake
-# 4.x rejects with "Compatibility with CMake < 3.5 has been removed". On
-# x86_64, bootstrap-vcpkg.sh downloads a pre-built binary and skips this
-# CMake compile entirely — the bug only fires on arm64. We apply the pin
-# unconditionally so the same fix protects any vcpkg port (SUNDIALS, HDF5,
-# ...) that might hit the same compatibility removal on either arch.
-# Belt-and-suspenders: CMAKE_POLICY_VERSION_MINIMUM=3.5 (set in `environment`
-# below, so it persists into the build phase) makes any CMake 4.x that still
-# gets invoked accept the < 3.5 minimum instead of failing.
-/opt/python/cp312-cp312/bin/pip install --quiet 'cmake<4'
+# Pin CMake >= 4.3 inside the container, ahead of the system cmake.
+#
+# LOWER bound: vcpkg 2026.07.29's SPDX manifest generation calls
+# `string(JSON ... STRING_ENCODE ...)` from z_vcpkg_add_spdx_resource
+# (scripts/cmake/vcpkg_download_distfile.cmake:160). STRING_ENCODE arrived in
+# CMake 4.3; anything older dies with "string sub-command JSON got an invalid
+# mode 'STRING_ENCODE'" on the FIRST port it downloads (sqlite3), before any
+# compilation. This is what the previous `cmake<4` pin caused once VCPKG_REF
+# moved to 2026.07.29.
+#
+# The `cmake<4` pin it replaces existed because manylinux_2_28_aarch64 ships
+# CMake 4.x and vcpkg-tool's bundled cmakerc dep has
+# cmake_minimum_required(VERSION 3.3), which CMake 4.x rejects with
+# "Compatibility with CMake < 3.5 has been removed" (arm64 only: on x86_64
+# bootstrap-vcpkg.sh downloads a prebuilt binary and never compiles cmakerc).
+# That is now handled solely by CMAKE_POLICY_VERSION_MINIMUM=3.5, set in
+# `environment` below so it persists into the build phase — it makes CMake 4.x
+# accept the < 3.5 minimum instead of failing. The pin was belt to that
+# suspenders; the two requirements are now in direct conflict, and the env var
+# is the one that can satisfy both.
+/opt/python/cp312-cp312/bin/pip install --quiet 'cmake>=4.3'
 export PATH="/opt/python/cp312-cp312/bin:$PATH"
 
 case "$(uname -m)" in
@@ -261,7 +281,7 @@ esac
 # it invokes the downloaded ninja ("vcpkg was unable to detect the active
 # compiler's information", CMAKE_MAKE_PROGRAM=.../downloads/tools/ninja/...).
 # The system tools are installed above (apk ninja/samurai, yum/apt ninja-build)
-# with the pinned cmake<4 on PATH. This is what unbreaks the musllinux wheels;
+# with the pinned cmake>=4.3 on PATH. This is what unbreaks the musllinux wheels;
 # it is a no-op on manylinux (glibc), where the same system tools are valid too.
 export VCPKG_FORCE_SYSTEM_BINARIES=1
 # /host persists across the manylinux and musllinux container runs within a
@@ -284,19 +304,23 @@ if [ -d /tmp/vcpkg-downloads ]; then
   mv /tmp/vcpkg-downloads /host/vcpkg/downloads
 fi
 /host/vcpkg/bootstrap-vcpkg.sh -disableMetrics
-# CPU-only base wheel: opt out of vcpkg default-features so the now-default `gpu`
-# feature (Kokkos) is NOT built/linked here. Mirrors the
-# CMake-side opt-out in python/CMakeLists.txt; keeps this wheel Kokkos-free and
-# portable. OpenMP acceleration ships via the openswmm-gpu-omp companion wheel.
-# `hypre` IS pulled here so PRECONDITIONER=AMG (the 2D solver default) works in
-# the wheel via the serial BoomerAMG preconditioner — must mirror the `2d;hypre`
-# feature list in python/CMakeLists.txt (OPENSWMM_WITH_HYPRE defaults ON).
+# Features are listed explicitly rather than taken from default-features, so
+# this wheel's dependency set is stated here and does not silently follow a
+# future edit of vcpkg.json. Keep in step with VCPKG_MANIFEST_FEATURES in
+# python/CMakeLists.txt, which the BUILD phase reads when it re-runs the vcpkg
+# toolchain in manifest mode.
+# `gpu` pulls Kokkos for the OpenMP surface-solver plugin, which the base wheel
+# now builds and ships in openswmm/engine/ (the companion wheel still builds
+# the same plugin; the discovery shim prefers the in-wheel copy).
+# `hypre` IS pulled so PRECONDITIONER=AMG (the 2D solver default) works in the
+# wheel via the serial BoomerAMG preconditioner (OPENSWMM_WITH_HYPRE defaults ON).
 /host/vcpkg/vcpkg install \
   --triplet "$VCPKG_TRIPLET" \
   --x-manifest-root /project \
   --x-install-root /host/vcpkg/installed \
   --x-no-default-features \
   --x-feature 2d \
+  --x-feature gpu \
   --x-feature hypre
 """
 before-build = "pip install ninja"

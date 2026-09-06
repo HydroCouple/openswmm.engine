@@ -1,5 +1,8 @@
 name: Unit Testing
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main, develop]
@@ -23,7 +26,6 @@ jobs:
     name: "C++ Engine (${{ matrix.alias }})"
     permissions:
       contents: read
-      actions: write
     strategy:
       fail-fast: false
       matrix:
@@ -65,7 +67,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: microsoft/vcpkg
-          ref: 2025.02.14
+          ref: 2026.07.29
           path: vcpkg
 
       - name: Install OpenMP (macOS)
@@ -116,6 +118,15 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+
+      - name: Re-pin VCPKG_ROOT (Windows)
+        # vcvars64 (VS 2022 17.6+) exports VCPKG_ROOT pointing at Visual
+        # Studio's bundled vcpkg, and msvc-dev-cmd forwards it to every later
+        # step, overriding the job-level env — so configure would silently
+        # build against VS's port snapshot instead of the pinned checkout.
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: echo "VCPKG_ROOT=${{ github.workspace }}\vcpkg" >> $env:GITHUB_ENV
 
       # gpu;hypre are vcpkg default-features and the plugin/hypre CMake options
       # default ON, but request them EXPLICITLY so the Kokkos `tests/gpu` parity

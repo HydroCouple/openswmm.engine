@@ -98,6 +98,7 @@ inline Channel makeWalledChannel(const XSectParams& xs, int n, double dx,
         ch.mesh.face_dir_l.push_back(1);
         ch.mesh.face_dir_r.push_back(1);
         ch.mesh.face_virtual.push_back(0);
+        ch.mesh.face_vj_node.push_back(-1);
     };
 
     add_face(-1, 0, -1, bedfn(0.0), 0.5 * dx);                 // upstream wall

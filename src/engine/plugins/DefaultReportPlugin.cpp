@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file DefaultReportPlugin.cpp
  * @brief DefaultReportPlugin — legacy SWMM-compatible .rpt report writer.
@@ -11,7 +27,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "DefaultReportPlugin.hpp"
@@ -26,9 +42,11 @@
 #include <version.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <ctime>
 #include <cmath>
+#include <vector>
 #include <cstring>
 
 namespace openswmm {
@@ -41,7 +59,7 @@ static const char* InfilModelWords[] = {
     "HORTON", "MODIFIED_HORTON", "GREEN_AMPT",
     "MODIFIED_GREEN_AMPT", "CURVE_NUMBER"
 };
-static const char* SurchargeWords[] = { "EXTRAN", "SLOT", "DYNAMIC_SLOT" };
+static const char* SurchargeWords[] = { "EXTRAN", "SLOT", "DYNAMIC_SLOT", "TPA" };
 static const char* NodeTypeWords[] = { "JUNCTION", "OUTFALL", "DIVIDER", "STORAGE" };
 static const char* LinkTypeWords[] = { "CONDUIT", "PUMP", "ORIFICE", "WEIR", "OUTLET" };
 static const char* RainTypeWords[] = { "INTENSITY", "VOLUME", "CUMULATIVE" };
@@ -153,8 +171,6 @@ int DefaultReportPlugin::validate(const SimulationContext& /*ctx*/) {
 }
 
 int DefaultReportPlugin::prepare(const SimulationContext& ctx) {
-    std::time(&wall_start_);
-
     // Open the report file early and write preamble (title, input summaries,
     // analysis options) so they are available immediately — even if the
     // simulation crashes before write_summary() is called.
@@ -222,7 +238,7 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
     write_results(f, ctx);
 
     // Write analysis timing and close
-    write_timing(f);
+    write_timing(f, ctx);
 
     std::fclose(f);
     file_ = nullptr;
@@ -375,6 +391,20 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
         std::fprintf(f,
             "\n  -------------------------------------------------------------------------------");
 
+        // Which nodes carry an inflow, resolved in one pass over the inflow
+        // rows instead of a scan of both row sets per node. The old form was
+        // O(n_nodes x n_inflow_rows) — around 10^10 comparisons on a model
+        // with 100k nodes and 100k inflows, all of it inside the report.
+        std::vector<std::uint8_t> has_inflow(
+            static_cast<std::size_t>(ctx.n_nodes()), 0u);
+        auto mark = [&](const std::vector<int>& node_idx) {
+            for (const int n : node_idx)
+                if (n >= 0 && n < ctx.n_nodes())
+                    has_inflow[static_cast<std::size_t>(n)] = 1u;
+        };
+        mark(ctx.ext_inflows.node_idx);
+        mark(ctx.dwf_inflows.node_idx);
+
         for (int i = 0; i < ctx.n_nodes(); ++i) {
             auto ui = static_cast<std::size_t>(i);
             int nt = static_cast<int>(ctx.nodes.type[ui]);
@@ -384,13 +414,7 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
                 ctx.nodes.invert_elev[ui],
                 ctx.nodes.full_depth[ui],
                 ctx.nodes.ponded_area[ui]);
-            // Check for external inflow
-            bool has_ext = false;
-            for (std::size_t k = 0; k < ctx.ext_inflows.node_idx.size(); ++k)
-                if (ctx.ext_inflows.node_idx[k] == i) { has_ext = true; break; }
-            for (std::size_t k = 0; !has_ext && k < ctx.dwf_inflows.node_idx.size(); ++k)
-                if (ctx.dwf_inflows.node_idx[k] == i) { has_ext = true; break; }
-            if (has_ext) std::fprintf(f, "    Yes");
+            if (has_inflow[ui] != 0u) std::fprintf(f, "    Yes");
         }
         WRITE(f, "");
         WRITE(f, "");
@@ -531,9 +555,20 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
                                         : "STEADY";
         std::fprintf(f, "\n  Flow Routing Method ...... %s", rm_name);
 
+        // TPA pressure closure (issue #156 Phase 4): FV, non-default only.
+        if (rm == 3 && opt.fv.pressure_closure == 1) {
+            std::fprintf(f, "\n  Pressure Closure ......... TPA");
+        }
+
+        // Unsteady friction (issue #156): applies to DW and FV alike.
+        if ((rm == 2 || rm == 3) && opt.unsteady_friction != 0) {
+            std::fprintf(f, "\n  Unsteady Friction ........ VITKOVSKY (k3 = %g)",
+                         opt.uf_k3);
+        }
+
         if (rm == 2) { // DYNWAVE
             int sm = opt.surcharge_method;
-            const char* sm_name = (sm >= 0 && sm <= 2) ? SurchargeWords[sm] : "EXTRAN";
+            const char* sm_name = (sm >= 0 && sm <= 3) ? SurchargeWords[sm] : "EXTRAN";
             std::fprintf(f, "\n  Surcharge Method ......... %s", sm_name);
             const char* nc_name = (opt.node_continuity == NodeContinuity::SEMI_IMPLICIT)
                                   ? "SEMI_IMPLICIT" : "EXPLICIT";
@@ -665,10 +700,42 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             std::fprintf(f, "\n  %s%14.3f%14.3f", label, af, depth_in);
         };
 
+        // F8 — the three snow rows the ledger never had. Guarded on the
+        // project having snowpacks at all, matching legacy's
+        // `Nobjects[SNOWMELT] > 0` (report.c:519, 560) rather than on the
+        // values being nonzero: a deck WITH packs that shows 0.000 here is
+        // saying something, and a deck without them should not carry the
+        // rows at all. Row ORDER matches legacy exactly, because these
+        // tables are read side by side against EPA SWMM output.
+        //
+        // The existing "Initial Storage" label is LEFT ALONE even though
+        // legacy calls the same row "Initial LID Storage". Renaming it is not
+        // part of this defect, and the 14-deck corpus compares report bytes —
+        // a label change would move decks that have nothing to do with snow
+        // and buy nothing. Recorded here so the difference is a decision
+        // rather than an oversight.
+        const bool has_snow = ctx.snowpack_names.size() > 0;
+
+        if (mb.runoff_init_store > 0.0)
+            row("Initial Storage ..........", mb.runoff_init_store);
+        if (has_snow)
+            row("Initial Snow Cover .......", mb.runoff_init_snow);
         row("Total Precipitation ......", mb.runoff_rainfall);
+        if (mb.runoff_runon > 0.0)
+            row("Outfall Runon ............", mb.runoff_runon);
         row("Evaporation Loss .........", mb.runoff_evap);
         row("Infiltration Loss ........", mb.runoff_infil);
         row("Surface Runoff ...........", mb.runoff_runoff);
+        // Legacy prints this row whenever the model has LID area
+        // (report.c:551); the plugin sees only the ledger, so it prints
+        // whenever the term is live — a deck with LIDs but zero drain
+        // outflow omits a 0.000 row legacy would show.
+        if (mb.runoff_lid_drain != 0.0)
+            row("LID Drainage .............", mb.runoff_lid_drain);
+        if (has_snow) {
+            row("Snow Removed .............", mb.runoff_snowremov);
+            row("Final Snow Cover .........", mb.runoff_final_snow);
+        }
         row("Final Storage ............", mb.runoff_final_store);
 
         std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", mb.runoff_error() * 100.0);
@@ -726,8 +793,21 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
             double total_in  = init_bu + surf_bu + wet_dep;
             double total_out = sweep + bmp + infil + runoff + final_bu;
-            double err_pct = (total_in > 0.0) ?
-                (total_in - total_out) / total_in * 100.0 : 0.0;
+            // Legacy's THREE branches (massbal.c:900-911). The third is the
+            // one this site lacked, and this is the site the user reads: the
+            // 2026-08-23 API fix landed in swmm_get_quality_continuity_error
+            // and left the printed row on the two-branch form, so a deck
+            // that discharged mass it never received still printed 0.000 --
+            // which is the exact symptom Finding 10 was raised on.
+            double err_pct;
+            if (std::fabs(total_in - total_out) < 0.001)
+                err_pct = 0.0;
+            else if (total_in > 0.0)
+                err_pct = (total_in - total_out) / total_in * 100.0;
+            else if (total_out > 0.0)
+                err_pct = (total_in - total_out) / total_out * 100.0;
+            else
+                err_pct = 0.0;
             std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", err_pct);
 
             WRITE(f, "");
@@ -825,6 +905,16 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         row("Initial Stored Volume ....", mb.routing_init_storage);
         row("Final Stored Volume ......", mb.routing_final_storage);
 
+        // FV only (slot_volume stays 0.0 under DW): the share of Final
+        // Stored Volume standing in the Preissmann slot. Informational —
+        // already inside Final Stored Volume, never added again.
+        {
+            double slot_ft3 = 0.0;
+            for (double sv : ctx.links.slot_volume) slot_ft3 += sv;
+            if (slot_ft3 > 0.0)
+                row("Final Slot Storage .......", slot_ft3);
+        }
+
         std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", mb.routing_error() * 100.0);
     }
 
@@ -855,6 +945,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         row2("Outfall Withdrawal .......", mb2.outfall_out);
         row2("Boundary Outflow .........", mb2.boundary_out);
         row2("Evaporation Loss .........", mb2.evap_out);
+        row2("Infiltration Loss ........", mb2.infil_out);
         row2("Final Stored Volume ......", mb2.final_storage);
 
         std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f",
@@ -996,7 +1087,6 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             double reacted = (up < mb.qual_routing_reacted.size())   ? mb.qual_routing_reacted[up]  : 0.0;
             double init    = (up < mb.qual_routing_init.size())      ? mb.qual_routing_init[up]     : 0.0;
             double final_  = (up < mb.qual_routing_final.size())     ? mb.qual_routing_final[up]    : 0.0;
-
             qrow("Dry Weather Inflow .......", dwf);
             qrow("Wet Weather Inflow .......", wet);
             qrow("Groundwater Inflow .......", gw);
@@ -1199,6 +1289,139 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         }
     }
 
+    // =====================================================================
+    // FV Solver Statistics — cumulative explicit-integrator throughput, the
+    // 1D counterpart of the "2D Solver Statistics" block above. The Routing
+    // Time Step Summary reports the ROUTING step; this reports the substeps
+    // the FV solver filled it with, which is the number that actually sets
+    // the run time.
+    //
+    // Already inside the rpt_flowstats guard opened well above (the braces
+    // that close just before this comment are the anonymous scope holding the
+    // Routing Time Step Summary's `rs`, not the conditional) — so the FV block
+    // follows FLOWSTATS, whereas the 2D block above follows CONTINUITY. The
+    // two solver blocks answer to different report flags; that is inherited,
+    // not chosen here.
+    //
+    // Skipped on the -1 sentinel, which means "not an FV run".
+    // =====================================================================
+    if (ctx.routing_stats.fv_nsteps >= 0) {
+        const auto& rs = ctx.routing_stats;
+        WRITE(f, "");
+        WRITE(f, "");
+        WRITE(f, "*********************");
+        WRITE(f, "FV Solver Statistics");
+        WRITE(f, "*********************");
+        auto srow = [&](const char* label, long v) {
+            std::fprintf(f, "\n  %s%14ld", label, v);
+        };
+        srow("Explicit Substeps ........", rs.fv_nsteps);
+        srow("Face Flux Evaluations ....", rs.fv_nflux);
+        std::fprintf(f, "\n  Avg Substep (s) ..........%14.6f", rs.fv_avg_h);
+        std::fprintf(f, "\n  Min Substep (s) ..........%14.6f", rs.fv_min_h);
+        std::fprintf(f, "\n  Last Substep (s) .........%14.6f", rs.fv_last_h);
+
+        // Compaction telemetry: the share of faces on the active list at each
+        // rebuild. A mean near 1.0 means compaction is finding nothing to skip.
+        if (rs.fv_active_mean >= 0.0) {
+            std::fprintf(f,
+                "\n  Active Faces min/mean/max %8.1f /%5.1f /%5.1f  (%%)",
+                100.0 * rs.fv_active_min,
+                100.0 * rs.fv_active_mean,
+                100.0 * rs.fv_active_max);
+        }
+
+        // dt-argmin attribution (slot program R0): which regime owned the
+        // binding CFL element, as a share of census/re-tier events. The
+        // number that says whether the step is set by the slot.
+        {
+            const long tot = rs.fv_dt_argmin_pressurized + rs.fv_dt_argmin_band +
+                             rs.fv_dt_argmin_free + rs.fv_dt_argmin_node;
+            if (tot > 0) {
+                auto pct = [&](long v) {
+                    return 100.0 * static_cast<double>(v) /
+                           static_cast<double>(tot);
+                };
+                std::fprintf(f, "\n  dt Argmin Pressurized (%%) %14.1f",
+                             pct(rs.fv_dt_argmin_pressurized));
+                std::fprintf(f, "\n  dt Argmin Taper Band (%%) .%14.1f",
+                             pct(rs.fv_dt_argmin_band));
+                std::fprintf(f, "\n  dt Argmin Free (%%) .......%14.1f",
+                             pct(rs.fv_dt_argmin_free));
+                std::fprintf(f, "\n  dt Argmin Node Bound (%%) .%14.1f",
+                             pct(rs.fv_dt_argmin_node));
+            }
+        }
+
+        // LTS tier occupancy. A run that quietly collapsed to one tier reads
+        // as n_tiers == 1 here rather than as a silently ordinary run — which
+        // is the difference between "tiering did not help" and "tiering never
+        // engaged", and they call for opposite responses.
+        if (rs.fv_n_tiers > 0) {
+            long total = 0;
+            for (int k = 0; k < rs.fv_n_tiers && k < 8; ++k)
+                total += rs.fv_tier_cells[k];
+            if (total > 0) {
+                for (int k = 0; k < rs.fv_n_tiers && k < 8; ++k)
+                    std::fprintf(f,
+                        "\n  LTS Tier %d Occupancy (%%) .%14.1f", k,
+                        100.0 * static_cast<double>(rs.fv_tier_cells[k])
+                              / static_cast<double>(total));
+            }
+        }
+    }
+
+    // =====================================================================
+    // Slot Storage Summary (FV slot program R0) — how much of the run's
+    // conduit storage stood in the Preissmann slot. The run share is the
+    // ratio of time integrals; links are listed when their peak share
+    // crossed the 1 % budget. Silent when the slot never held water.
+    // =====================================================================
+    {
+        double sum_slot_dt = 0.0, sum_vol_dt = 0.0;
+        for (std::size_t j = 0; j < ctx.links.stat_slot_vol_dt.size(); ++j) {
+            sum_slot_dt += ctx.links.stat_slot_vol_dt[j];
+            sum_vol_dt  += ctx.links.stat_vol_dt[j];
+        }
+        if (sum_slot_dt > 0.0) {
+            WRITE(f, "");
+            WRITE(f, "");
+            WRITE(f, "*********************");
+            WRITE(f, "Slot Storage Summary");
+            WRITE(f, "*********************");
+            std::fprintf(f, "\n  Run Slot Share (%%) .......%14.2f",
+                         100.0 * sum_slot_dt / std::max(sum_vol_dt, 1e-30));
+            std::fprintf(f, "\n  Peak Slot Share (%%) ......%14.2f",
+                         100.0 * ctx.routing_stats.slot_peak_share);
+            std::fprintf(f, "\n  Hours Share Above 1%% .....%14.2f",
+                         ctx.routing_stats.slot_time_above_s / 3600.0);
+
+            // Per-link rows for offenders (peak share >= 1%).
+            bool header = false;
+            for (int j = 0; j < ctx.n_links(); ++j) {
+                const auto uj = static_cast<std::size_t>(j);
+                if (ctx.links.stat_peak_slot_share[uj] < 0.01) continue;
+                if (!header) {
+                    std::fprintf(f,
+                        "\n\n  Link                    Peak Share    Run Share"
+                        "   Hrs >1%%"
+                        "\n  ----------------------------------------------------------");
+                    header = true;
+                }
+                const double run_share =
+                    (ctx.links.stat_vol_dt[uj] > 0.0)
+                        ? ctx.links.stat_slot_vol_dt[uj] /
+                              ctx.links.stat_vol_dt[uj]
+                        : 0.0;
+                std::fprintf(f, "\n  %-20s %9.2f%%   %9.2f%% %9.2f",
+                             ctx.link_names.name_of(j).c_str(),
+                             100.0 * ctx.links.stat_peak_slot_share[uj],
+                             100.0 * run_share,
+                             ctx.links.stat_time_slot_above[uj] / 3600.0);
+            }
+        }
+    }
+
     WRITE(f, "");
     WRITE(f, "");
 
@@ -1383,13 +1606,19 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
     // =====================================================================
     // Subcatchment Washoff Summary — Gap #64, matches legacy writeSubcatchLoads()
-    // total_load is in mg (washoff_load [mg/s] × dt [s]); convert to lbs: /453592
+    // total_load is in USER MASS (lbs/kg) since the 2026-08-23 units fix:
+    // the washoff loop applies mcf at the booking seam, exactly as legacy
+    // does at surfqual.c:357 — so this summary prints the value RAW, and it
+    // agrees with the Runoff Quality Continuity ledger row by construction.
+    // The /453592 that used to sit here was half of the defect: with the
+    // booking in mg/L·ft³ the summary printed 1/28.3 of the true pounds
+    // while the ledger row printed 16057× them (known-mass audit,
+    // QUALITY_LEDGER_UNITS_AUDIT §7).
     // =====================================================================
     if (ctx.n_subcatches() > 0 && ctx.n_pollutants() > 0 && opt.rpt_subcatchments != 0
         && !opt.ignore_quality) {
         int ns = ctx.n_subcatches();
         int np = ctx.n_pollutants();
-        static constexpr double MG_TO_LBS = 1.0 / 453592.0;
 
         WRITE(f, "****************************");
         WRITE(f, "Subcatchment Washoff Summary");
@@ -1420,9 +1649,8 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             for (int p = 0; p < np; ++p) {
                 auto up = static_cast<std::size_t>(p);
                 auto idx = uj * static_cast<std::size_t>(np) + up;
-                double load_mg = (idx < ctx.subcatches.total_load.size())
+                double load_lbs = (idx < ctx.subcatches.total_load.size())
                     ? ctx.subcatches.total_load[idx] : 0.0;
-                double load_lbs = load_mg * MG_TO_LBS;
                 sys_loads[up] += load_lbs;
                 std::fprintf(f, "%14.3f", load_lbs);
             }
@@ -1813,8 +2041,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 elapsedToParts(ctx.nodes.stat_max_depth_date[uj],
                                ctx.options.start_date, days, hrs, mins);
 
-                // Max outflow: use stat_max_total_inflow as proxy (outflow stats not separate)
-                double max_outflow = ctx.nodes.stat_max_total_inflow[uj] * Qcf;
+                double max_outflow = ctx.nodes.stat_storage_max_outflow[uj] * Qcf;
 
                 std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(j).c_str());
                 std::fprintf(f, "%10.3f  %5.1f  %5.1f  %5.1f  %10.3f  %5.1f",
@@ -2258,25 +2485,36 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 // write_timing — analysis timing section
 // ---------------------------------------------------------------------------
 
-void DefaultReportPlugin::write_timing(std::FILE* f) {
+void DefaultReportPlugin::write_timing(std::FILE* f, const SimulationContext& ctx) {
     // =====================================================================
-    // Analysis Timing — matches legacy report_writeRunTime()
+    // Analysis Timing — matches legacy report_writeSysTime()
+    //
+    // The start of the window is ctx.wall_start, stamped by
+    // SWMMEngine::open() before input parsing, mirroring legacy where
+    // report_writeLogo() takes SysTime ahead of project_readInput(). Elapsed
+    // time therefore covers parse + validation + initialization + routing,
+    // not just routing.
     // =====================================================================
     {
         char begin_str[64] = "";
         char end_str[64] = "";
 
-        if (wall_start_ != 0) {
-            const char* ct = std::ctime(&wall_start_);
+        std::time_t wall_end;
+        std::time(&wall_end);
+
+        // A zero wall_start means open() never ran (e.g. the plugin was
+        // driven directly). Fall back to the end time so the section reports
+        // "< 1 sec" rather than seconds-since-the-epoch.
+        std::time_t wall_start = (ctx.wall_start != 0) ? ctx.wall_start : wall_end;
+
+        {
+            const char* ct = std::ctime(&wall_start);
             if (ct) {
                 std::strncpy(begin_str, ct, sizeof(begin_str) - 1);
                 char* nl = std::strchr(begin_str, '\n');
                 if (nl) *nl = '\0';
             }
         }
-
-        std::time_t wall_end;
-        std::time(&wall_end);
         {
             const char* ct = std::ctime(&wall_end);
             if (ct) {
@@ -2290,12 +2528,17 @@ void DefaultReportPlugin::write_timing(std::FILE* f) {
         std::fprintf(f, "\n  Analysis ended on:  %s", end_str);
         std::fprintf(f, "\n  Total elapsed time: ");
 
-        double elapsed_secs = std::difftime(wall_end, wall_start_);
+        double elapsed_secs = std::difftime(wall_end, wall_start);
         if (elapsed_secs < 1.0) {
             std::fprintf(f, "< 1 sec");
         } else {
-            int es = static_cast<int>(elapsed_secs);
-            std::fprintf(f, "%02d:%02d:%02d", es / 3600, (es % 3600) / 60, es % 60);
+            // Legacy rolls whole days into a "d." prefix ahead of hh:mm:ss.
+            long es = static_cast<long>(elapsed_secs);
+            long days = es / 86400L;
+            long rem  = es % 86400L;
+            if (days > 0) std::fprintf(f, "%ld.", days);
+            std::fprintf(f, "%02ld:%02ld:%02ld",
+                         rem / 3600L, (rem % 3600L) / 60L, rem % 60L);
         }
         std::fprintf(f, "\n");
     }

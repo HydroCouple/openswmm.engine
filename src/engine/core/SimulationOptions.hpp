@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file SimulationOptions.hpp
  * @brief Simulation options parsed from the [OPTIONS] section.
@@ -18,7 +34,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_SIMULATION_OPTIONS_HPP
@@ -61,6 +77,29 @@ enum class RoutingModel : int {
     KINWAVE  = 1,  ///< Kinematic wave approximation
     DYNWAVE  = 2,  ///< Dynamic wave (full Saint-Venant, implicit Picard)
     FV       = 3   ///< Explicit conservative finite volume (Godunov, HLL/HLLC)
+};
+
+/**
+ * @brief Water-quality engine (`[OPTIONS] QUALITY_SOLVER`, master plan D-UT6).
+ */
+enum class QualitySolverKind : int {
+    LEGACY       = 0,  ///< Legacy-parity CSTR mixing (QualityRouting.cpp)
+    EULERIAN_ARD = 1,  ///< Eulerian ARD on the FV cell mesh (all routing models)
+    LAGRANGIAN   = 2   ///< LARD segment transport. LIVE: LTD advection +
+                       ///< junction/storage mixing (X2 `8c141a5e`), RWPT
+                       ///< dispersion (X3b `b9852cee`), water age (X4
+                       ///< `9f155227`), exact-exponential KDECAY.
+                       ///< NOT YET, each behind a live open() warning in
+                       ///< SWMMEngine::open: MSX reactions on segments (L3),
+                       ///< treatment interop, heat (H7). Storage mixing
+                       ///< beyond CMSTR is also absent but is NOT warned —
+                       ///< there is no input surface for it yet, so there is
+                       ///< nothing to bypass.
+                       ///< (This comment said "X1 skeleton dispatch only;
+                       ///< transport lands in X2" until 2026-08-25, five
+                       ///< rounds after X2 landed.)
+                       ///< (plans/transport/LARD_AGE_EXPEDITE_SUBPLAN_2026-08-23.md,
+                       ///< plans/LAGRANGIAN_QUALITY_STRATEGY.md)
 };
 
 /**
@@ -196,6 +235,138 @@ struct SimulationOptions {
     RoutingModel routing_model = RoutingModel::DYNWAVE;
 
     /**
+     * @brief Water-quality engine selection (`[OPTIONS] QUALITY_SOLVER`).
+     *
+     * @details LEGACY = the legacy-parity CSTR QualitySolver (default,
+     *          bit-identical behavior). EULERIAN_ARD = the solver-agnostic
+     *          Eulerian ARD engine on the FV cell mesh
+     *          (plans/transport/EULERIAN_ARD_TRANSPORT_PLAN.md rev. 2;
+     *          master plan D-UT6). LAGRANGIAN = the LARD segment engine —
+     *          X1 wiring only: the dispatch exists, transport does not, so
+     *          quality state reads zero and the open() warning says so
+     *          (plans/transport/LARD_AGE_EXPEDITE_SUBPLAN_2026-08-23.md).
+     */
+    QualitySolverKind quality_solver = QualitySolverKind::LEGACY;
+
+    /**
+     * @brief `[OPTIONS] QUALITY_STEP` — transport substep, seconds
+     *        (HH:MM:SS or seconds; 0 = follow ROUTING_STEP).
+     *
+     * @details X3a: consumed by the LARD engine only, which splits each
+     *          routing step into ceil(dt_routing / quality_step) equal
+     *          substeps (strategy §4.2). Setting it under LEGACY or
+     *          EULERIAN_ARD warns at open — those engines do not substep
+     *          on this key.
+     */
+    double quality_step = 0.0;
+
+    /**
+     * @brief `[OPTIONS] MAX_SEGMENTS_PER_LINK` — LARD slab capacity per
+     *        link (strategy §4.1; default 100, the EPANET MAXSEGS shape).
+     *
+     * @details Values below 2 are clamped to 2 at solver init. Consumed by
+     *          the LARD engine only; warns at open under other solvers.
+     */
+    int max_segments_per_link = 100;
+
+    /**
+     * @brief `[OPTIONS] DISPERSION RWPT|OFF` — LARD RWPT dispersion (X3b;
+     *        strategy §5; the GUI plan's Lagrangian-group key).
+     *
+     * @details Resolved vertical-shear dispersion on the segments
+     *          (RwptDispersion.hpp). LARD-only; warns under other solvers
+     *          (the ARD engine's dispersion is E3's `transport.ard`
+     *          machinery, deliberately separate).
+     */
+    bool lard_rwpt = false;
+
+    /**
+     * @brief `[OPTIONS] RWPT_SEED` — deterministic counter-RNG seed
+     *        (D-L6). Same seed ⇒ bit-identical runs at any thread count.
+     */
+    int rwpt_seed = 0;
+
+    /**
+     * @brief `[OPTIONS] WATER_AGE ON|OFF` — transported water-age tracking
+     *        (water age plan §1, reserved species __WATER_AGE__).
+     *
+     * @details A1a scope: the age species rides the EULERIAN_ARD mesh
+     *          (unit zero-order aging + volume-weighted mixing); per-source
+     *          initial ages come from the waterage component's
+     *          [WATER_AGE_SOURCES]. LEGACY-engine age arrives with A1b and
+     *          warns until then.
+     */
+    bool water_age = false;
+
+    /**
+     * @brief `[OPTIONS] OUTFALL_BACKFLOW_QUALITY LAST|ZERO` — quality carried
+     *        by reverse flow at outfalls (false = LAST, the default).
+     *
+     * @details LAST is the legacy convention (src/legacy/engine/qualrout.c
+     *          findNodeQual): an outfall that takes no inflow keeps its last
+     *          mixed concentration while wet, and backflow re-injects that
+     *          held value — under WATER_AGE the held boundary water also
+     *          keeps aging 1:1, so a permanently supplying outfall becomes an
+     *          unbounded age source. ZERO makes a supplying outfall a fresh
+     *          boundary: whenever it takes no volume inflow its held state
+     *          reads zero for every pollutant AND __WATER_AGE__, so
+     *          re-entering water carries no mass and no age (the
+     *          EPANET-reservoir picture). ZERO deliberately does NOT return
+     *          the mass that left through the outfall — the receiving water
+     *          is an infinite fresh reservoir; tidal-flushing studies where
+     *          returned mass matters keep LAST.
+     */
+    bool outfall_backflow_zero = false;
+
+    /**
+     * @brief `[OPTIONS] HEAT_TRANSPORT ON|OFF` — transported temperature
+     *        (heat plan §1, reserved species __TEMPERATURE__).
+     *
+     * @details H1 scope: TRANSPORT ONLY. Temperature is advected and mixed
+     *          as a conservative tracer under the LEGACY CSTR engine and
+     *          reported as a trailing species column; per-source inlet
+     *          temperatures come from the heat component's [HEAT_SOURCES].
+     *          The surface/radiative/sediment flux modules of plan §2 —
+     *          the terms that make temperature change rather than merely
+     *          move — arrive with H2–H4.
+     */
+    bool heat_transport = false;
+
+    /**
+     * @brief Monthly relative humidity, % (`[TEMPERATURE] HUMIDITY`).
+     *
+     * @details H2. `ClimateState::humidity` has existed with a 50 % default
+     *          since before this program and **nothing ever wrote to it** —
+     *          the GeoPackage climate format reads a humidity column that
+     *          never reached the running state. Surface heat exchange is the
+     *          first consumer, so the deck key arrives with it. Monthly like
+     *          `WINDSPEED`; a single value fills all twelve months.
+     */
+    double humidity[12] = {50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50};
+
+    /**
+     * @brief Water density, kg/m³ (`[OPTIONS] WATER_DENSITY`; CSH Table 4.1).
+     * @details H2. Load-bearing from this phase on: it sets the weight of a
+     *          surface flux against advected heat. H1 deliberately shipped
+     *          without it because with no fluxes it cancelled identically
+     *          and no gate could observe its value.
+     */
+    double water_density = 1000.0;
+
+    /// Water specific heat capacity, J/kg/°C (`WATER_SPECIFIC_HEAT_CAPACITY`).
+    double water_specific_heat = 4184.0;
+
+    /**
+     * @brief Wind-function coefficients (`WIND_FUNC_COEFF_A` / `_B`), CSH
+     *        Table 4.1 — `f(w) = a + b·w`, Dunne & Leopold (1978) defaults.
+     */
+    double wind_func_coeff_a = 1.505e-8;
+    double wind_func_coeff_b = 1.6e-8;
+
+    /// Pa/P elevation correction in the Bowen ratio (`PRESSURE_RATIO`).
+    double pressure_ratio = 1.0;
+
+    /**
      * @brief Knobs for FLOW_ROUTING FV, grouped rather than spread across this
      *        struct (plan §4.2 — first-class [OPTIONS] keys, no new section).
      *
@@ -225,6 +396,12 @@ struct SimulationOptions {
      *  @see Sharior et al. (2023) for DYNAMIC_SLOT */
     int surcharge_method = 0;
 
+    /** @brief TPA acoustic celerity a for SURCHARGE_METHOD TPA (PROJECT
+     *         length units per second, converted like FV_SLOT_CELERITY).
+     *         Sets the constant slot width w = g·A_full/a² (issue #156).
+     *  @see Vasconcelos, Wright & Roe (2006) */
+    double tpa_celerity = 100.0;
+
     /** @brief DPS target pressure celerity (m/s, converted to ft/s at init).
      *  @details Controls the maximum modeled pressure wave speed. Lower values
      *           allow larger timesteps but reduce transient fidelity.
@@ -245,16 +422,48 @@ struct SimulationOptions {
      *  @see Sharior et al. (2023) Eq. 22 */
     double dps_decay_time = 0.5;
 
+    /** @brief Unsteady friction model: 0=NONE (default, inert), 1=VITKOVSKY.
+     *  @details Adds the Pinto/Vasconcelos/Soares (2025) unsteady-friction
+     *           source term S_fu = (k3/g)(dV/dt + c·sgn(V)|dV/dx|) with
+     *           regime-dependent celerity c to the momentum equation.
+     *           CONSUMED BY THE FV SOLVER as of issue #156 Phase 2 (copied
+     *           into FvOptions by Router::initFv; applied by
+     *           kernels::ufUpdate after the steady-friction stage, with the
+     *           convective term precomputed per substep). Under DYNWAVE the
+     *           key is still parsed, round-tripped and echoed but inert —
+     *           the dynamic wave source term is Phase 3.
+     *  @see Pinto, Vasconcelos & Soares (2025), J. Hydraul. Eng. 152(1);
+     *       Vitkovsky et al. (2000). Plan: plans/MIXED_FLOW_CLOSURES_TPA_UF_PLAN_2026-08-29.md §3 */
+    int unsteady_friction = 0;
+
+    /** @brief Report signed piezometric heads: 0 = NO (default, legacy
+     *         bit-parity — NODE_HEAD is rebuilt as f32(floored depth) +
+     *         f32(invert)), 1 = YES — the .out HEAD field carries the TRUE
+     *         signed head (point-in-time), so sub-atmospheric TPA columns are
+     *         observable (issue #156 O-6). DEPTH stays floored either way. */
+    int report_signed_heads = 0;
+
+    /** @brief Unsteady friction coefficient k3 (dimensionless).
+     *  @details Brunone-type coefficient; used only when unsteady_friction != 0.
+     *           Paper-calibrated range 0.005–0.020 (tested to 0.045).
+     *  @see Pinto et al. (2025) Table 1 (issue #156) */
+    double uf_k3 = 0.015;
+
     /** @brief Node continuity formulation for depth update. Default: EXPLICIT (legacy). */
     NodeContinuity node_continuity = NodeContinuity::EXPLICIT;
 
-    /** @brief Virtual-junction momentum treatment: 0=BASIC, 1=FULL.
+    /** @brief Virtual-junction momentum treatment. Always 0 (BASIC).
      *  @details BASIC applies zero storage, the shared junction sigma and
-     *           cross-junction upwinding; FULL adds the cross-junction
-     *           convective flux correction (dq4_j). Refactored engine only.
+     *           cross-junction upwinding of area/hydraulic radius; it
+     *           transmits no cross-junction convective momentum. FULL, which
+     *           added the dq4_j correction, is RETIRED (2026-08-14): the term
+     *           was sign-inverted relative to the per-link convective term and
+     *           applied to both adjacent links, destroying 224-325 % of the
+     *           routed volume on SWASHES macdonald-periodic. The keyword is
+     *           still parsed, warns, and is treated as BASIC; the field is
+     *           kept only so existing writers/readers keep their layout.
      *  @code
-     *  VIRTUAL_JUNCTION_MOMENTUM  BASIC  ;; default
-     *  VIRTUAL_JUNCTION_MOMENTUM  FULL
+     *  VIRTUAL_JUNCTION_MOMENTUM  BASIC  ;; default; FULL warns and maps here
      *  @endcode
      */
     int virtual_junction_momentum = 0;
@@ -376,14 +585,24 @@ struct SimulationOptions {
     /**
      * @brief Number of OpenMP threads for parallel solver loops.
      *
-     * @details Parsed from the THREADS keyword in [OPTIONS].
-     *   - 0 → use all available threads (omp_get_max_threads()).
+     * @details Parsed from the THREADS keyword in [OPTIONS]. Resolution
+     * (core/ThreadInfo.hpp, THREAD_LIMITS_AND_OVERSUBSCRIPTION_PLAN):
+     *   - 0 → auto: omp_get_max_threads() — the logical processors the
+     *     OpenMP runtime allows (lowered by OMP_NUM_THREADS / OMP_THREAD_LIMIT
+     *     / CPU affinity) — then the model-size gates and, on Apple Silicon,
+     *     the dynamic-wave performance-core clamp.
      *   - 1 → single-threaded (default, no OpenMP overhead).
-     *   - N → use min(N, omp_get_max_threads()) threads.
+     *   - N → exactly N threads. Values above the logical processors or the
+     *     runtime limit are honoured (oversubscription) with a warning; the
+     *     active spin-wait policy is disabled for an oversubscribed run.
      *
-     * A performance threshold is applied at startup: if the number of
-     * conduit links is less than 4 × num_threads, threading is disabled
-     * to avoid overhead dominating on small networks.
+     * Model-size gates still apply to explicit values (warned): dynamic wave
+     * keeps >= 100 conduits per thread; the 2D marcher needs >= 4 triangles
+     * per thread. The 2D Kokkos OpenMP backend receives the raw value via
+     * the plugin ABI (v4) and initialises once per process.
+     *
+     * Environment overrides (each warned when active): SWMM_DW_THREADS forces
+     * the dynamic-wave count; OPENSWMM_2D_THREADS forces the Kokkos backend.
      *
      * @see Legacy reference: globals.h NumThreads, project.c
      */

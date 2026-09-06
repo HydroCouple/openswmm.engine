@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file QualityHandler.cpp
  * @brief Section handlers for [POLLUTANTS], [LANDUSES], [COVERAGES],
@@ -51,7 +67,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "QualityHandler.hpp"
@@ -63,6 +79,7 @@
 #include "../../data/QualityData.hpp"
 
 #include "../InputParseUtils.hpp"
+#include "../../core/Constants.hpp"
 
 #include <charconv>
 #include <string>
@@ -112,7 +129,11 @@ void handle_pollutants(SimulationContext& ctx, const std::vector<std::string>& l
         if (tok.size() > 2) ctx.pollutants.c_rain[idx]  = to_double(tok[2]);
         if (tok.size() > 3) ctx.pollutants.c_gw[idx]    = to_double(tok[3]);
         if (tok.size() > 4) ctx.pollutants.c_rdii[idx]  = to_double(tok[4]);
-        if (tok.size() > 5) ctx.pollutants.k_decay[idx] = to_double(tok[5]);
+        // The Kdecay column is 1/day; store 1/sec, exactly as legacy
+        // does (landuse.c divides by SECperDAY at parse) — KD1.
+        if (tok.size() > 5)
+            ctx.pollutants.k_decay[idx] =
+                to_double(tok[5]) / constants::SEC_PER_DAY;
 
         // SnowOnly
         if (tok.size() > 6) {
@@ -376,6 +397,62 @@ void handle_loadings(SimulationContext& ctx, const std::vector<std::string>& lin
         if (flat < ctx.subcatches.conc.size()) {
             ctx.subcatches.conc[flat] = to_double(tok[2]);
         }
+    }
+}
+
+// ============================================================================
+// handle_initial_quality()
+// ============================================================================
+// [INITIAL_QUALITY] format:
+//   ;;Scope   Element   Constituent      Value
+//   NODE      J1        TSS              12.5
+//   NODE      ST1       __WATER_AGE__    6.0        ; hours
+//   LINK      C3        __TEMPERATURE__  18.5       ; degC
+//
+// Per-element initial values overriding the global [POLLUTANTS] Cinit /
+// sidecar INITIAL_STATE seeds. Element names and constituents may be defined
+// in later sections, so both resolution and constituent classification are
+// deferred to PostParseResolver (legacy two-pass parsing is order-
+// independent); only row shape is validated here, loudly.
+// ============================================================================
+
+void handle_initial_quality(SimulationContext& ctx,
+                            const std::vector<std::string>& lines) {
+    for (const auto& line : lines) {
+        auto tok = Tokenizer::tokenize(line);
+        if (tok.empty()) continue;
+        if (tok.size() < 4) {
+            ctx.errors.push_back(
+                "[INITIAL_QUALITY] row needs NODE|LINK element constituent "
+                "value: '" + line + "'.");
+            continue;
+        }
+
+        const std::string scope = Tokenizer::to_upper(tok[0]);
+        bool link = false;
+        if (scope == "LINK") {
+            link = true;
+        } else if (scope != "NODE") {
+            ctx.errors.push_back(
+                "[INITIAL_QUALITY] scope must be NODE or LINK: '" + tok[0] +
+                "'.");
+            continue;
+        }
+
+        // Value must be fully numeric — a lenient default here would turn a
+        // typo into a silent 0.0 initial condition.
+        const std::string& vs = tok[3];
+        double v = 0.0;
+        auto [p, ec] = openswmm::from_chars_double(vs.data(),
+                                                   vs.data() + vs.size(), v);
+        if (ec != std::errc{} || p != vs.data() + vs.size()) {
+            ctx.errors.push_back(
+                "[INITIAL_QUALITY] bad value '" + vs + "' for '" + tok[2] +
+                "' at " + scope + " '" + tok[1] + "'.");
+            continue;
+        }
+
+        ctx.initial_quality.add(link, tok[1], tok[2], v);
     }
 }
 

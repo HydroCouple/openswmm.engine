@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 openswmm.engine
 ===============
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 Type stubs for the L{openswmm.engine} package.
 
@@ -74,10 +90,30 @@ from ._output_reader import OutputReader as OutputReader
 # =============================================================================
 from ._pollutants import Pollutants as Pollutants
 from ._quality import Quality as Quality
+from ._initial_quality import InitialQuality as InitialQuality
+from ._initial_quality import InitialQualityEntry as InitialQualityEntry
 from ._tables import Tables as Tables
 from ._inflows import Inflows as Inflows
 from ._controls import Controls as Controls
 from ._forcing import Forcing as Forcing
+
+# =============================================================================
+# Transport processes — heat, water age, reactions, process components
+# =============================================================================
+from ._heat import Heat as Heat
+from ._heat import HeatNodeOverride as HeatNodeOverride
+from ._water_age import WaterAge as WaterAge
+from ._water_age import WaterAgeOverride as WaterAgeOverride
+from ._reactions import Reactions as Reactions
+from ._reactions import ReactionSpecies as ReactionSpecies
+from ._reactions import ReactionCoefficient as ReactionCoefficient
+from ._reactions import ReactionTerm as ReactionTerm
+from ._reactions import ReactionInitialEntry as ReactionInitialEntry
+from ._reactions import ReactionHydVar as ReactionHydVar
+from ._reactions import ReactionFunction as ReactionFunction
+from ._reactions import ExpressionDiagnostic as ExpressionDiagnostic
+from ._process_components import ProcessComponents as ProcessComponents
+from ._process_components import ProcessComponent as ProcessComponent
 
 # =============================================================================
 # Spatial / infrastructure / 2D
@@ -85,6 +121,10 @@ from ._forcing import Forcing as Forcing
 from ._infrastructure import Infrastructure as Infrastructure
 from ._spatial import Spatial as Spatial
 from ._2d import Surface2D as Surface2D
+from ._2d import Infiltration2DView as Infiltration2DView
+from ._2d import Infil2DDefaults as Infil2DDefaults
+from ._2d import Infil2DRow as Infil2DRow
+from ._2d import Infil2DCell as Infil2DCell
 
 # =============================================================================
 # Optional GeoPackage I/O (only available with OPENSWMM_WITH_GEOPACKAGE build)
@@ -125,10 +165,21 @@ from ._enums import (
     InfilModel as InfilModel,
     # Water quality / LID
     AquiferParam as AquiferParam,
+    GwfType as GwfType,
     BuildupFunc as BuildupFunc,
     ConcentrationUnits as ConcentrationUnits,
     LidType as LidType,
     WashoffFunc as WashoffFunc,
+    # Transport processes — heat, water age, reactions
+    HeatFluxModule as HeatFluxModule,
+    HeatShortwaveMode as HeatShortwaveMode,
+    HeatRadiativeParam as HeatRadiativeParam,
+    HeatSolarParam as HeatSolarParam,
+    HeatCloudParam as HeatCloudParam,
+    HeatSourceKind as HeatSourceKind,
+    WaterAgeSource as WaterAgeSource,
+    ReactionScope as ReactionScope,
+    ReactionExprForm as ReactionExprForm,
     # Output variables
     OutLinkVar as OutLinkVar,
     OutNodeVar as OutNodeVar,
@@ -143,6 +194,8 @@ from ._enums import (
     # 2D surface routing
     SurfaceForcingMode as SurfaceForcingMode,
     SurfaceBoundaryType as SurfaceBoundaryType,
+    SurfaceInfilMethod as SurfaceInfilMethod,
+    SurfaceInfilDest as SurfaceInfilDest,
     # Nodes / editing
     DividerType as DividerType,
     RefType as RefType,

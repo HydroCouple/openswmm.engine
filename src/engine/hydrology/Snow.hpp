@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file Snow.hpp
  * @brief Snowmelt — degree-day and rain-on-snow methods.
@@ -18,7 +34,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_SNOW_HPP
@@ -66,6 +82,32 @@ struct SnowSoA {
     // Per subcatchment × 3 subareas: area fractions
     std::vector<double> fArea;    ///< Fraction of total area for each subarea
 
+    /// S2b — WATER AGE of the pack's water (seconds), per subcatchment ×
+    /// subarea. **Complete-mix over `wsnow + fw` TOGETHER.**
+    ///
+    /// Two stores would be more faithful — snow and free water have
+    /// genuinely different residence times — but the melt path moves water
+    /// between them within a single step anyway, and one age is the minimum
+    /// that carries residence time at all. Recorded as a deliberate
+    /// approximation in SNOW_DIVERGENCE_REGISTER.md rather than left
+    /// unnamed, which is what lesson 64 is actually about.
+    ///
+    /// Maintained inside this solver on purpose. Plowing moves water between
+    /// surfaces AND to another subcatchment inside `plowSnow`; an age update
+    /// running afterwards can see only the end state and would have to guess
+    /// which water went where. The age therefore moves at the point the
+    /// water moves, which is the only place that knows.
+    std::vector<double> age;
+    /// S2b — age of the water this step PUBLISHED as `imelt` (seconds).
+    ///
+    /// Not the same as `age`, and the difference is the whole reason this
+    /// array exists: in a complete-mix pool the water leaving carries the
+    /// pool's age, but a pack that EMPTIES this step leaves `age` at 0 with
+    /// no water to describe. Meltwater from such a pack still carries the
+    /// age the pack had. Sentinel-free — it is only meaningful where
+    /// `imelt > 0`, and callers gate on that.
+    std::vector<double> out_age;
+
     // Per subcatchment × 3 subareas: areal depletion state
     std::vector<double> si;       ///< Snow depth for 100% cover (ft)
     std::vector<double> sba;      ///< Snow coverage area at start of new-snow ADC
@@ -91,6 +133,21 @@ struct SnowSoA {
     double rnm     = 0.6;         ///< Negative melt ratio
     double season  = 0.0;         ///< Current snowmelt season factor (-1 to +1)
     double removed = 0.0;         ///< Cumulative snow plowed out of system (ft3)
+
+    /// S2b — age of water arriving from the sky (seconds). Set by the engine
+    /// each runoff step from the water-age component's `RAINFALL` source.
+    ///
+    /// A scalar set from outside rather than a lookup into the transport
+    /// config, so hydrology keeps no dependency on the transport layer —
+    /// the same shape as `season`, `tipm` and `rnm`.
+    double precip_age = 0.0;
+    /// S2b — whether to maintain `age` / `out_age` at all.
+    ///
+    /// The age arrays are pure bookkeeping: nothing in the water balance
+    /// reads them, so a deck is byte-identical either way. The flag exists
+    /// to keep the arithmetic off the hot path when WATER_AGE is off, not to
+    /// protect an answer.
+    bool track_age = false;
 
     void resize(int n);
 };

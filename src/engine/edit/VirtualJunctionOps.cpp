@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file VirtualJunctionOps.cpp
  * @brief Virtual-junction rule validation, flag editing, split and fusion.
@@ -6,7 +22,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "VirtualJunctionOps.hpp"
@@ -143,24 +159,55 @@ void vj_apply_derived_geometry(SimulationContext& ctx, int node_idx) {
     ctx.nodes.full_depth[ui]  = ctx.links.xsect_y_full[static_cast<std::size_t>(j1)];
     ctx.nodes.sur_depth[ui]   = 0.0;
     ctx.nodes.ponded_area[ui] = 0.0;
+    // rim_depth is deliberately NOT touched: it is user/split-supplied
+    // rendering data, not derived geometry, and this runs on every load and
+    // every set-virtual.
 }
 
 // ============================================================================
 // vj_set_virtual
 // ============================================================================
 
+void vj_clear_virtual(SimulationContext& ctx, int node_idx) {
+    if (node_idx < 0 || node_idx >= ctx.n_nodes()) return;
+    const auto ui = static_cast<std::size_t>(node_idx);
+    if (ui >= ctx.nodes.is_virtual.size() || !ctx.nodes.is_virtual[ui]) return;
+
+    ctx.nodes.is_virtual[ui] = 0;
+    // The node keeps a real full depth from here on, so the rendering-only
+    // rim becomes it — a junction that was made virtual and then made regular
+    // again gets its max depth back instead of keeping the pipe crown.
+    if (ui < ctx.nodes.rim_depth.size() && ctx.nodes.rim_depth[ui] > 0.0) {
+        ctx.nodes.full_depth[ui] = ctx.nodes.rim_depth[ui];
+        ctx.nodes.rim_depth[ui]  = 0.0;
+    }
+}
+
 int vj_set_virtual(SimulationContext& ctx, int node_idx, bool make_virtual) {
     if (node_idx < 0 || node_idx >= ctx.n_nodes()) return -1;
     const auto ui = static_cast<std::size_t>(node_idx);
 
     if (!make_virtual) {
-        ctx.nodes.is_virtual[ui] = 0;
+        vj_clear_virtual(ctx, node_idx);
         return 0;
     }
 
     if (ctx.nodes.type[ui] != NodeType::JUNCTION) return -1;
     const int code = vj_rule_violation(ctx, node_idx);
     if (code != 0) return code;
+
+    // The full depth is about to be replaced by the derived pipe crown. When
+    // the node carried a taller max depth (a real manhole being converted),
+    // keep it as the rendering rim so the drawn ground surface doesn't drop.
+    // Only the INTERACTIVE path reaches here — an INP load applies the derived
+    // geometry directly, where full_depth is still 0.
+    int j1 = -1, j2 = -1;
+    if (ui < ctx.nodes.rim_depth.size() && ctx.nodes.rim_depth[ui] == 0.0 &&
+        find_attached(ctx, node_idx, j1, j2) >= 1 && j1 >= 0) {
+        const double crown = ctx.links.xsect_y_full[static_cast<std::size_t>(j1)];
+        if (ctx.nodes.full_depth[ui] > crown)
+            ctx.nodes.rim_depth[ui] = ctx.nodes.full_depth[ui];
+    }
 
     ctx.nodes.is_virtual[ui] = 1;
     vj_apply_derived_geometry(ctx, node_idx);
@@ -197,6 +244,21 @@ SplitResult vj_split_conduit(SimulationContext& ctx, int link_idx, double t,
     const double e1 = nodes.invert_elev[static_cast<std::size_t>(n1)] + links.offset1[uj];
     const double e2 = nodes.invert_elev[static_cast<std::size_t>(n2)] + links.offset2[uj];
     const double break_invert = e1 + (e2 - e1) * t;
+
+    // --- Break-point rim (rendering only): interpolate the ground surface
+    // between the two end nodes the same way. A virtual junction's full depth
+    // is the pipe crown, so without this every split would punch a hole in the
+    // drawn ground line. Each end contributes its own rim: the rendering rim
+    // when it has one (a chain of splits), else its real full depth.
+    const auto un1 = static_cast<std::size_t>(n1);
+    const auto un2 = static_cast<std::size_t>(n2);
+    const double d1 = (nodes.rim_depth[un1] > 0.0) ? nodes.rim_depth[un1]
+                                                   : nodes.full_depth[un1];
+    const double d2 = (nodes.rim_depth[un2] > 0.0) ? nodes.rim_depth[un2]
+                                                   : nodes.full_depth[un2];
+    const double r1 = nodes.invert_elev[un1] + d1;
+    const double r2 = nodes.invert_elev[un2] + d2;
+    const double break_rim = r1 + (r2 - r1) * t;
 
     // --- Vertex-aware polyline split point + vertex partition ---
     std::vector<double> px, py;
@@ -344,6 +406,13 @@ SplitResult vj_split_conduit(SimulationContext& ctx, int link_idx, double t,
     if (make_virtual) {
         const int code = vj_set_virtual(ctx, ni, true);
         if (code != 0) { res.err = code; }  // node/link remain as a regular split
+        else {
+            // Carry the interpolated ground surface, but only when it clears
+            // the crown — a rim buried inside the pipe would draw worse than
+            // the crown fallback.
+            const double rim = break_rim - break_invert;
+            if (rim > nodes.full_depth[uni]) nodes.rim_depth[uni] = rim;
+        }
     }
 
     res.new_node_idx = ni;

@@ -10,8 +10,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <map>
+#include <tuple>
 
 #include "FvKernels.hpp"
+#include "../../core/ErrorCodes.hpp"
 #include "../Culvert.hpp"
 #include "../Link.hpp"
 #include "../Node.hpp"
@@ -227,17 +231,67 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
 
     rep.min_dx = 1.0e30;
 
+    // Tabulation memo. buildGeometry() runs ~2,200 areaOfDepth evaluations plus
+    // 127 bracketed root solves per call, and its result depends only on
+    // (cross-section, open/closed, slot celerity, barrels) — slot celerity
+    // being constant across this loop. Real models have tens of distinct
+    // sections and can have hundreds of thousands of conduits, so without a
+    // memo this dominates initialize().
+    //
+    // The key is an explicit tuple of every XSectParams field rather than the
+    // struct's bytes: the struct has padding, whose contents are unspecified,
+    // so memcmp would report spurious mismatches. The three table pointers are
+    // part of the key — same pointer means the same transect table, and two
+    // identical tables at different addresses merely miss the memo, which is
+    // safe. (After the STREET/CUSTOM memoization in the resolver, links sharing
+    // a street already share one table address, so they hit.)
+    using GeomKey = std::tuple<int, int, int,
+                               double, double, double, double, double, double,
+                               double, double, double, double, double,
+                               const double*, const double*, const double*,
+                               int, int, bool>;
+    const auto geom_key = [](const XSectParams& x, int barrels, bool is_open) {
+        return GeomKey{x.type, x.culvert_code, x.transect,
+                       x.y_full, x.w_max, x.yw_max, x.a_full, x.r_full,
+                       x.s_full, x.s_max, x.y_bot, x.a_bot, x.s_bot, x.r_bot,
+                       x.area_tbl, x.hrad_tbl, x.width_tbl,
+                       x.transect_tbl_size, barrels, is_open};
+    };
+    std::map<GeomKey, int> geom_memo;   // key -> conduit row already tabulated
+
+    // Slot-cap transparency tally (surfaced once after the loop): where
+    // g·A_full/c² exceeds the 5%-of-top-width cap, the cap sets the slot and
+    // the requested FV_SLOT_CELERITY is inert for that conduit — its
+    // effective celerity is the cap-implied √(g·A_full/T_cap).
+    int n_closed = 0, n_capped = 0;
+    double c_implied_max = 0.0;
+
     for (int r = 0; r < n_cond; ++r) {
         const auto ur = static_cast<std::size_t>(r);
         const int j = CD.link_idx[ur];
         if (j < 0 || j >= n_links) continue;
         const auto uj = static_cast<std::size_t>(j);
+
+        // A DUMMY conduit is connectivity, not a channel: it declares that
+        // water leaving one node arrives at another with no section, no
+        // storage and no head loss. Legacy isTrueConduit (dynwave.c:411-414)
+        // is false for it and DW never momentum-solves one — it is routed as a
+        // pass-through by findNonConduitFlow. Do the same here: leave the row
+        // unmeshed (cell_begin −1, count 0, conduit_link −1, so every downstream
+        // consumer skips it) and pick it up in the structure loop below.
+        //
+        // This has to be tested on the SHAPE, before buildXSectParams, rather
+        // than falling through to the zero-geometry check: that check must stay
+        // an error for a link whose geometry genuinely failed to resolve.
+        if (ctx.links.xsect_shape[uj] == XsectShape::DUMMY) continue;
+
         mesh.conduit_link[ur] = j;
 
         XSectParams xs = link::buildXSectParams(ctx.links, uj, &ctx.transect_tables);
         if (xs.y_full <= 0.0 || xs.a_full <= 0.0) {
-            // A control volume needs a real section. DUMMY-shape conduits and
-            // links whose geometry never resolved cannot be marched.
+            // A control volume needs a real section. A link whose geometry
+            // never resolved cannot be marched. (DUMMY shapes are handled
+            // above and never reach here.)
             rep.errors.push_back(
                 "FV routing: conduit '" + ctx.link_names.name_of(j) +
                 "' has no usable cross-section (full depth/area is zero). "
@@ -246,8 +300,29 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         }
 
         auto& g = mesh.geom[ur];
-        buildGeometry(xs, xsect::isOpen(xs.type), opts.slot_celerity, g,
-                      CD.barrels[ur]);
+        const bool is_open = xsect::isOpen(xs.type);
+        if (const auto hit = geom_memo.find(geom_key(xs, CD.barrels[ur], is_open));
+            hit != geom_memo.end()) {
+            // Copy the already-tabulated geometry wholesale. The per-conduit
+            // scalars below are assigned after this point in both branches, so
+            // the result is identical to re-running buildGeometry.
+            g = mesh.geom[static_cast<std::size_t>(hit->second)];
+        } else {
+            buildGeometry(xs, is_open, opts.slot_celerity, g, CD.barrels[ur]);
+            geom_memo.emplace(geom_key(xs, CD.barrels[ur], is_open), r);
+        }
+        if (!g.is_open) {
+            const double c_req = std::max(opts.slot_celerity, 1.0);
+            const double uncapped = kernels::kGravity * g.a_full / (c_req * c_req);
+            const double cap = 0.05 * ((g.w_max > 0.0) ? g.w_max : 1.0);
+            ++n_closed;
+            if (uncapped > cap && g.t_slot > 0.0) {
+                ++n_capped;
+                c_implied_max = std::max(
+                    c_implied_max,
+                    std::sqrt(kernels::kGravity * g.a_full / g.t_slot));
+            }
+        }
         g.roughness    = CD.roughness[ur];
         g.rough_factor = CD.rough_factor[ur];
         g.loss_inlet   = CD.loss_inlet[ur];
@@ -305,6 +380,14 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
     if (!rep.errors.empty()) return rep;
     if (rep.min_dx > 1.0e29) rep.min_dx = 0.0;
 
+    if (n_capped > 0) {
+        char buf[160];
+        std::snprintf(buf, sizeof(buf),
+                      "%d of %d closed conduits (cap-implied celerity up to "
+                      "%.0f ft/s)", n_capped, n_closed, c_implied_max);
+        rep.warnings.push_back(format_warning(WARN_FV_SLOT_CAP, buf));
+    }
+
     // -----------------------------------------------------------------------
     // Interior faces inside each conduit chain
     // -----------------------------------------------------------------------
@@ -318,6 +401,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         mesh.face_dir_l.push_back(dl);
         mesh.face_dir_r.push_back(dr);
         mesh.face_virtual.push_back(is_vj ? uint8_t{1} : uint8_t{0});
+        mesh.face_vj_node.push_back(-1);
         mesh.face_gate.push_back(0);
         mesh.face_culvert.push_back(-1);
     };
@@ -442,6 +526,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
             const double dxr = mesh.cell_dx[static_cast<std::size_t>(cr)];
             add_face(cl, cr, -1, mesh.node_invert[ui], 0.5 * (dxl + dxr),
                      dl, dr, true);
+            mesh.face_vj_node.back() = i;
             ++rep.n_virtual;
             continue;
         }
@@ -489,6 +574,85 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
             mesh.node_face_idx.push_back(nf_idx[ui][k]);
             mesh.node_face_sign.push_back(nf_sign[ui][k]);
             mesh.node_face_zb.push_back(nf_zb[ui][k]);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Face sections. Every face reconstructs BOTH sides in ONE section, so the
+    // Riemann problem it poses is well posed. That is already true everywhere
+    // the two sides share a conduit section — which is every face in a
+    // prismatic network, so this pass is a no-op there and the scheme is
+    // bit-identical.
+    //
+    // It is NOT true where two conduits of different section meet at a clean
+    // degree-2 node: each conduit's end face reconstructs its neighbour's
+    // state in its OWN section (ExplicitFvSolver::faceSide takes the geometry
+    // from the surviving cell), so the same physical interface is solved twice
+    // in two different geometries and the wall the width step presents exerts
+    // no force. Give both faces of such a pair one section-averaged geometry
+    // and the per-side hydrostatic correction becomes the wall-pressure term.
+    // -----------------------------------------------------------------------
+    mesh.face_geom.clear();
+    mesh.deriveFaceGeom();
+    {
+        // Averaged sections are memoized on the ordered conduit pair, so a
+        // 400-conduit variable-width chain adds ~400 entries, not one per face.
+        std::map<std::pair<int, int>, int> pair_geom;
+        for (int i = 0; i < n_nodes; ++i) {
+            const auto ui = static_cast<std::size_t>(i);
+            const int nb = mesh.node_face_ptr[ui];
+            const int ne = mesh.node_face_ptr[ui + 1];
+            if (ne - nb != 2) continue;              // only clean degree-2
+            const int f0 = mesh.node_face_idx[static_cast<std::size_t>(nb)];
+            const int f1 = mesh.node_face_idx[static_cast<std::size_t>(nb + 1)];
+            const int g0 = mesh.face_geom[static_cast<std::size_t>(f0)];
+            const int g1 = mesh.face_geom[static_cast<std::size_t>(f1)];
+            if (g0 < 0 || g1 < 0 || g0 == g1) continue;   // same section: no-op
+            const auto& a = mesh.geom[static_cast<std::size_t>(g0)];
+            const auto& b = mesh.geom[static_cast<std::size_t>(g1)];
+            // Only average like with like. Different shape types, transect
+            // tables (IRREGULAR/CUSTOM/STREET) and differing barrel counts have
+            // no meaningful average; those faces keep their own section, which
+            // is still well balanced (the C-property holds for ANY consistent
+            // choice) and merely first order in the step.
+            if (a.xs.type != b.xs.type || a.barrels != b.barrels ||
+                a.xs.transect >= 0 || b.xs.transect >= 0 ||
+                a.xs.area_tbl != nullptr || b.xs.area_tbl != nullptr)
+                continue;
+            const auto key = std::make_pair(std::min(g0, g1), std::max(g0, g1));
+            int gf;
+            if (const auto hit = pair_geom.find(key); hit != pair_geom.end()) {
+                gf = hit->second;
+            } else {
+                XSectParams xs = a.xs;               // shape, tables, culvert
+                const XSectParams& xb = b.xs;
+                const auto mid = [](double p, double q) { return 0.5 * (p + q); };
+                xs.y_full = mid(a.xs.y_full, xb.y_full);
+                xs.w_max  = mid(a.xs.w_max,  xb.w_max);
+                xs.yw_max = mid(a.xs.yw_max, xb.yw_max);
+                xs.a_full = mid(a.xs.a_full, xb.a_full);
+                xs.r_full = mid(a.xs.r_full, xb.r_full);
+                xs.s_full = mid(a.xs.s_full, xb.s_full);
+                xs.s_max  = mid(a.xs.s_max,  xb.s_max);
+                xs.y_bot  = mid(a.xs.y_bot,  xb.y_bot);
+                xs.a_bot  = mid(a.xs.a_bot,  xb.a_bot);
+                xs.s_bot  = mid(a.xs.s_bot,  xb.s_bot);
+                xs.r_bot  = mid(a.xs.r_bot,  xb.r_bot);
+                FvGeometry g{};
+                buildGeometry(xs, xsect::isOpen(xs.type), opts.slot_celerity, g,
+                              a.barrels);
+                // Friction/loss scalars are never read through the face
+                // section (faceSide uses only A, W and I₁ from it), but carry
+                // the average so nothing downstream sees an unset field.
+                g.roughness    = 0.5 * (a.roughness + b.roughness);
+                g.rough_factor = 0.5 * (a.rough_factor + b.rough_factor);
+                g.slope        = 0.5 * (a.slope + b.slope);
+                gf = static_cast<int>(mesh.geom.size());
+                mesh.geom.push_back(g);
+                pair_geom.emplace(key, gf);
+            }
+            mesh.face_geom[static_cast<std::size_t>(f0)] = gf;
+            mesh.face_geom[static_cast<std::size_t>(f1)] = gf;
         }
     }
 
@@ -601,16 +765,35 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
 
     // -----------------------------------------------------------------------
     // Non-conduit links — applied as node source/sink pairs (plan §3.4).
+    //
+    // The membership test matches StructureSolver::nc_indices_
+    // (HydStructures.cpp:221-233) exactly, DUMMY conduits included: the two
+    // lists have to agree or a link is computed by one side and applied by
+    // neither. Dummies are flagged so the solver knows to derive their
+    // discharge itself instead of reading it from the forcing array.
     // -----------------------------------------------------------------------
+    mesh.node_dummy_drain.assign(static_cast<std::size_t>(n_nodes), 0);
     for (int j = 0; j < n_links; ++j) {
         const auto uj = static_cast<std::size_t>(j);
-        if (ctx.links.type[uj] == LinkType::CONDUIT) continue;
+        const bool is_dummy = (ctx.links.type[uj] == LinkType::CONDUIT &&
+                               ctx.links.xsect_shape[uj] == XsectShape::DUMMY);
+        if (ctx.links.type[uj] == LinkType::CONDUIT && !is_dummy) continue;
         const int a = ctx.links.node1[uj];
         const int b = ctx.links.node2[uj];
         if (a < 0 || b < 0) continue;
         mesh.struct_link.push_back(j);
         mesh.struct_n1.push_back(a);
         mesh.struct_n2.push_back(b);
+        mesh.struct_is_dummy.push_back(is_dummy ? 1 : 0);
+        if (is_dummy) mesh.node_dummy_drain[static_cast<std::size_t>(a)] = 1;
+    }
+    // Leave both vectors EMPTY when the model has no dummy links at all, so
+    // `node_dummy_drain.empty()` is a cheap "nothing to do" test the solver's
+    // hot paths can branch on, and a model without dummies allocates nothing.
+    if (std::find(mesh.struct_is_dummy.begin(), mesh.struct_is_dummy.end(),
+                  uint8_t{1}) == mesh.struct_is_dummy.end()) {
+        mesh.struct_is_dummy.clear();
+        mesh.node_dummy_drain.clear();
     }
 
     rep.n_cells    = nc;

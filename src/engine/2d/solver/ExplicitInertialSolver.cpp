@@ -28,8 +28,13 @@
 
 #include <algorithm>
 #include <cmath>
+#if defined(SWMM_USE_OPENMP)
+#include <omp.h>
+#endif
 #include <cstdio>
 #include <cstdlib>
+#include <stdexcept>   // std::runtime_error ([2D_BOUNDARY_QUALITY] resolve)
+#include <string>      // std::to_string
 
 #include "../data/MeshData.hpp"
 #include "../data/SolverOptions2D.hpp"
@@ -64,6 +69,16 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     facc_L_.assign(ne, 0.0);
     facc_R_.assign(ne, 0.0);
     face_tier_.assign(ne, 0);
+    // S1: species accumulators, sized only when transport is live so a
+    // hydrodynamics-only model allocates nothing here.
+    if (state.transport.active()) {
+        const auto ns = static_cast<std::size_t>(state.transport.n_species);
+        sacc_L_.assign(ns * ne, 0.0);
+        sacc_R_.assign(ns * ne, 0.0);
+    } else {
+        sacc_L_.clear();
+        sacc_R_.clear();
+    }
     // The Perot cell vectors serve the θ-blend AND the convective term, so
     // ADVECTION forces them on even at θ = 1.
     if (opts.theta < 1.0 || opts.advection) {
@@ -98,6 +113,31 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     }
     bc_accum_.assign(bc_cell_.size(), 0.0);
     bc_q_.assign(bc_cell_.size(), 0.0);
+
+    // S2: resolve [2D_BOUNDARY_QUALITY] rows onto THIS solver's boundary-edge
+    // list. bc_conc is [bc_slot * ns + s]; a row naming an edge that is not a
+    // non-WALL boundary edge cannot take effect and is fatal (a WALL admits
+    // no water, so a concentration on it describes nothing).
+    if (state.transport.active()) {
+        auto& tr = state.transport;
+        const auto ns = static_cast<std::size_t>(tr.n_species);
+        tr.bc_conc.assign(bc_cell_.size() * ns, 0.0);
+        for (const auto& row : tr.bc_quality_rows) {
+            std::size_t k = 0;
+            bool found = false;
+            for (; k < bc_slot_.size(); ++k)
+                if (bc_slot_[k] == row.slot) { found = true; break; }
+            if (!found)
+                throw std::runtime_error(
+                    "[2D_BOUNDARY_QUALITY] edge slot " + std::to_string(row.slot) +
+                    " is not a non-WALL boundary edge, so its concentration "
+                    "could never enter the mesh.");
+            if (row.species < 0 || static_cast<std::size_t>(row.species) >= ns)
+                throw std::runtime_error(
+                    "[2D_BOUNDARY_QUALITY] species index out of range.");
+            tr.bc_conc[k * ns + static_cast<std::size_t>(row.species)] = row.conc;
+        }
+    }
 
     // Live junction exchange (windowless coupling): one ∫Q dt accumulator per
     // point; spill budget tracked per 1D node. Their cells pin to tier 0 (the
@@ -142,7 +182,7 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
                     double sx = 0.0, sy = 0.0;
                     for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
                         const int    e = ed.cell_edge[p];
-                        const double fq = ed.cell_sign[p] * q_[e] * ed.xi[e];
+                        const double fq = static_cast<double>(ed.cell_sign[p]) * q_[e] * ed.xi[e];
                         sx += fq * (ed.mx[e] - mesh.tri_cx[i]);
                         sy += fq * (ed.my[e] - mesh.tri_cy[i]);
                     }
@@ -162,6 +202,92 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     initialized_ = true;
 }
 
+double ExplicitInertialSolver::donorConc(int s, int cell) const noexcept {
+    const auto& tr = state_->transport;
+    const double v = state_->volume[static_cast<std::size_t>(cell)];
+    // Guard on V > 0 ONLY — deliberately NOT on the dry-depth threshold.
+    // A face fires when its FACE depth (from the two heads) exceeds
+    // dry_depth, which near a front can happen while the exporter's cell
+    // VOLUME sits below dry_depth·area. A depth-based guard here would let
+    // that face export water at zero species, concentrating what stays
+    // behind and breaking the uniform-concentration property exactly at the
+    // wet/dry front — where gate 1 looks hardest. The positivity share
+    // already bounds every take at β·V, so any V > 0 can export and its
+    // concentration is simply m/V. (The REPORTED concentration keeps the
+    // dry threshold: that is a display choice, this is a flux.)
+    if (!(v > 0.0)) return 0.0;
+    return tr.cell_mass[tr.idx(s, cell)] / v;
+}
+
+void ExplicitInertialSolver::sinkMassAtCellConc(int i, double dv_m3,
+                                                std::vector<double>& ledger,
+                                                double* per_point_ledger)
+    noexcept {
+    if (!(dv_m3 > 0.0)) return;
+    auto& tr = state_->transport;
+    if (!tr.active()) return;
+    // Concentration is read BEFORE the volume was reduced (callers pass the
+    // pre-sink volume through state_->volume unchanged until after this
+    // call), so the mass removed is exactly dv * c_old — the mass the water
+    // that left was carrying.
+    for (int s = 0; s < tr.n_species; ++s) {
+        const double c  = donorConc(s, i);
+        if (c == 0.0) continue;
+        const double dm = dv_m3 * c;
+        double& m = tr.cell_mass[tr.idx(s, i)];
+        // Cannot remove more than is there (the volume clamps identically);
+        // the residual is a rounding artefact, not a modelling event. The
+        // SIGNED temperature row (S4) has no floor: °C·m³ below zero is a
+        // state, and "min(dm, m)" on two negatives would empty the row.
+        const double taken = tr.signedRow(s) ? dm : ((dm < m) ? dm : m);
+        m -= taken;
+        ledger[static_cast<std::size_t>(s)] += taken;
+        if (per_point_ledger) per_point_ledger[s] += taken;
+    }
+}
+
+void ExplicitInertialSolver::addRainMass(int i, double rain_m3) noexcept {
+    if (!(rain_m3 > 0.0)) return;
+    auto& tr = state_->transport;
+    if (!tr.active() || tr.rain_conc.empty()) return;
+    for (int s = 0; s < tr.n_species; ++s) {
+        const auto us = static_cast<std::size_t>(s);
+        if (us >= tr.rain_conc.size() || tr.rain_conc[us] == 0.0) continue;
+        const double g = rain_m3 * tr.rain_conc[us];
+        tr.cell_mass[tr.idx(s, i)] += g;
+        tr.gained_rainfall[us] += g;
+    }
+}
+
+void ExplicitInertialSolver::sinkTemperatureWithEvap(int i, double evap_m3) noexcept {
+    // Evaporation removes WATER and no solute (S1: concentrations rise), but
+    // it removes water AT the water's temperature: the temperature row is a
+    // temperature-volume, so leaving it untouched while the volume falls would
+    // heat the cell by evaporating it. Sink the row at the cell's own
+    // temperature; no ledger — the enthalpy left with the vapour and the 1D
+    // engines book nothing for it either (H1's convention).
+    if (!(evap_m3 > 0.0)) return;
+    auto& tr = state_->transport;
+    if (!tr.active() || tr.temp_row < 0) return;
+    const double v = state_->volume[i];
+    if (!(v > 0.0)) return;
+    double& m = tr.cell_mass[tr.idx(tr.temp_row, i)];
+    const double dv = (evap_m3 < v) ? evap_m3 : v;
+    m -= dv * (m / v);
+}
+
+void ExplicitInertialSolver::addCouplingSourceMass(int i, double area_dt) noexcept {
+    if (!(state_->coupling_flux[i] > 0.0) || !(area_dt > 0.0)) return;
+    auto& tr = state_->transport;
+    if (!tr.active() || tr.coupling_src.empty()) return;
+    for (int s = 0; s < tr.n_species; ++s) {
+        const double g = tr.coupling_src[tr.idx(s, i)] * area_dt;
+        if (g == 0.0) continue;
+        tr.cell_mass[tr.idx(s, i)] += g;
+        tr.gained_coupling[static_cast<std::size_t>(s)] += g;
+    }
+}
+
 void ExplicitInertialSolver::reconstructAll() {
     const int nt = mesh_->n_triangles();
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
@@ -172,6 +298,8 @@ void ExplicitInertialSolver::reconstructAll() {
 }
 
 void ExplicitInertialSolver::settleAccumulators() {
+    if (!accumulators_pending_) return;
+    accumulators_pending_ = false;
     const int nt = mesh_->n_triangles();
     const auto& ed = edges_;
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
@@ -179,12 +307,38 @@ void ExplicitInertialSolver::settleAccumulators() {
         double pending = 0.0;
         for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
             const int e = ed.cell_edge[p];
-            if (ed.cell_sign[p] > 0.0) {
+            if (ed.cell_sign[p] > 0) {
                 pending += facc_L_[e];
                 facc_L_[e] = 0.0;
             } else {
                 pending += facc_R_[e];
                 facc_R_[e] = 0.0;
+            }
+        }
+        // S1: settle the species side in the SAME sweep. A cell re-tiered
+        // or deactivated with a pending species accumulator would strand
+        // mass exactly as the header warns for volume.
+        if (!sacc_L_.empty()) {
+            auto& tr = state_->transport;
+            const auto ns  = static_cast<std::size_t>(tr.n_species);
+            const auto nef = static_cast<std::size_t>(ed.ne);
+            for (std::size_t s = 0; s < ns; ++s) {
+                double dm = 0.0;
+                for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
+                    const auto e = static_cast<std::size_t>(ed.cell_edge[p]);
+                    if (ed.cell_sign[p] > 0) {
+                        dm += sacc_L_[s * nef + e]; sacc_L_[s * nef + e] = 0.0;
+                    } else {
+                        dm += sacc_R_[s * nef + e]; sacc_R_[s * nef + e] = 0.0;
+                    }
+                }
+                if (dm != 0.0) {
+                    double& m = tr.cell_mass[tr.idx(static_cast<int>(s), i)];
+                    m += dm;
+                    // Backstop is for nonnegative rows only: the SIGNED
+                    // temperature row holds °C·m³ below zero as a state.
+                    if (m < 0.0 && !tr.signedRow(static_cast<int>(s))) m = 0.0;
+                }
             }
         }
         if (pending == 0.0) continue;
@@ -202,11 +356,27 @@ void ExplicitInertialSolver::lazySourcesOnly(double t) {
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int i = 0; i < nt; ++i) {
         if (cell_active_[i]) continue;
+        const double infil = infilSink(state_->infil_rate[i], state_->depth[i],
+                                       opts_->dry_depth);
+        // Book before the early-out: rain exactly cancelling the sink leaves
+        // src == 0, but water still infiltrated and the ledger counts the rain.
+        state_->infil_applied[i] += infil * dt_lazy;
+        const double evap =
+            evapSink(state_->evap_rate[i], state_->depth[i], opts_->dry_depth);
         const double src =
-            state_->rainfall[i] + state_->coupling_flux[i]
-            - evapSink(state_->evap_rate[i], state_->depth[i],
-                       opts_->dry_depth);
+            state_->rainfall[i] + state_->coupling_flux[i] - evap - infil;
         if (src == 0.0) continue;
+        if (!sacc_L_.empty()) {   // S1: see syncAndRebuild's lazy pass
+            auto& tr = state_->transport;
+            const double area = mesh_->tri_area[i];
+            sinkTemperatureWithEvap(i, evap * dt_lazy * area);          // S4
+            sinkMassAtCellConc(i, infil * dt_lazy * area, tr.lost_infiltration);
+            if (state_->coupling_flux[i] < 0.0)
+                sinkMassAtCellConc(i, -state_->coupling_flux[i] * dt_lazy *
+                                          area, tr.lost_coupling);
+            addRainMass(i, state_->rainfall[i] * dt_lazy * area);   // S2
+            addCouplingSourceMass(i, dt_lazy * area);                // S3
+        }
         double v = state_->volume[i] + dt_lazy * src * mesh_->tri_area[i];
         state_->volume[i] = (v > 0.0) ? v : 0.0;
         inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i],
@@ -226,11 +396,28 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
         for (int i = 0; i < nt; ++i) {
             if (cell_active_[i]) continue;
+            const double infil = infilSink(state_->infil_rate[i],
+                                           state_->depth[i], opts_->dry_depth);
+            state_->infil_applied[i] += infil * dt_lazy;
+            const double evap = evapSink(state_->evap_rate[i],
+                                         state_->depth[i], opts_->dry_depth);
             const double src =
-                state_->rainfall[i] + state_->coupling_flux[i]
-                - evapSink(state_->evap_rate[i], state_->depth[i],
-                           opts_->dry_depth);
+                state_->rainfall[i] + state_->coupling_flux[i] - evap - infil;
             if (src == 0.0) continue;
+            // S1: the lazy tier moves water without faces; the sinks still
+            // carry the cell's species out (same rule as fireCells).
+            if (!sacc_L_.empty()) {
+                auto& tr = state_->transport;
+                const double area = mesh_->tri_area[i];
+                sinkTemperatureWithEvap(i, evap * dt_lazy * area);      // S4
+                sinkMassAtCellConc(i, infil * dt_lazy * area,
+                                   tr.lost_infiltration);
+                if (state_->coupling_flux[i] < 0.0)
+                    sinkMassAtCellConc(i, -state_->coupling_flux[i] * dt_lazy *
+                                              area, tr.lost_coupling);
+                addRainMass(i, state_->rainfall[i] * dt_lazy * area);   // S2
+                addCouplingSourceMass(i, dt_lazy * area);                // S3
+            }
             double v = state_->volume[i] + dt_lazy * src * mesh_->tri_area[i];
             state_->volume[i] = (v > 0.0) ? v : 0.0;
             inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i],
@@ -251,7 +438,8 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     const double band  = std::min(0.001, 0.5 * opts_->h_move);
     const double h_on  = opts_->h_move + band;
     const double h_off = std::max(0.0, opts_->h_move - band);
-    std::vector<uint8_t> next(static_cast<std::size_t>(nt), 0);
+    rebuild_seed_.assign(static_cast<std::size_t>(nt), 0);
+    std::vector<uint8_t>& next = rebuild_seed_;
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int i = 0; i < nt; ++i) {
         const double thresh = cell_active_[i] ? h_off : h_on;
@@ -278,23 +466,44 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     // 4. Tier assignment from the local CFL step. Pinned to tier 0: cells with
     //    concentrated sources (coupling points) and boundary cells — their
     //    forcing changes fastest. dt0_ = the finest active requirement.
-    const int K = static_cast<int>(cells_by_tier_.size());
+    const int K  = static_cast<int>(cells_by_tier_.size());
+    const int na = static_cast<int>(active_cells_.size());
     dt0_ = 1.0e30;
-    std::vector<double> dt_cell(active_cells_.size());
-    for (std::size_t k = 0; k < active_cells_.size(); ++k) {
-        const int i = active_cells_[k];
-        const double h = state_->depth[i];
-        double speed = 0.0;
-        if (!qcx_.empty() && h > 1.0e-6)
-            speed = std::hypot(qcx_[i], qcy_[i]) / h;
-        double dt = (h > opts_->dry_depth)
-                        ? inertial::cellCflDt(opts_->cfl_number,
-                                              edges_.cell_lchar[i], h, speed)
-                        : 1.0e30;
-        dt = std::min(dt, opts_->max_timestep);
-        dt_cell[k] = dt;
-        dt0_ = std::min(dt0_, dt);
+    rebuild_dt_cell_.resize(static_cast<std::size_t>(na));
+    std::vector<double>& dt_cell = rebuild_dt_cell_;
+    // Parallel, exactly like its twin refreshDt0(): each iteration writes only
+    // dt_cell[k], and the min is folded from per-thread partials. min over
+    // doubles is exact and order-independent, so the partition cannot change
+    // dt0_ — this was the longest serial stretch of the rebuild.
+    const int nthr = std::max(1, opts_->num_threads);
+    rebuild_dt_partial_.assign(static_cast<std::size_t>(nthr), 1.0e30);
+#pragma omp parallel num_threads(nthr)
+    {
+#if defined(SWMM_USE_OPENMP)
+        const int tid = omp_get_thread_num();
+#else
+        const int tid = 0;
+#endif
+        double local = 1.0e30;
+#pragma omp for schedule(static) nowait
+        for (int k = 0; k < na; ++k) {
+            const int i = active_cells_[static_cast<std::size_t>(k)];
+            const double h = state_->depth[i];
+            double speed = 0.0;
+            if (!qcx_.empty() && h > 1.0e-6)
+                speed = inertial::qMagnitude(qcx_[i], qcy_[i]) / h;
+            double dt = (h > opts_->dry_depth)
+                            ? inertial::cellCflDt(opts_->cfl_number,
+                                                  edges_.cell_lchar[i], h,
+                                                  speed)
+                            : 1.0e30;
+            dt = std::min(dt, opts_->max_timestep);
+            dt_cell[static_cast<std::size_t>(k)] = dt;
+            if (dt < local) local = dt;
+        }
+        rebuild_dt_partial_[static_cast<std::size_t>(tid)] = local;
     }
+    for (double v : rebuild_dt_partial_) dt0_ = std::min(dt0_, v);
     if (dt0_ >= 1.0e30) dt0_ = opts_->max_timestep;   // fully quiescent
 
     for (auto& v : cells_by_tier_) v.clear();
@@ -304,21 +513,26 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
         int tk = 0;
         if (K > 1) {
             const double ratio = dt_cell[k] / dt0_;
-            tk = (ratio >= 2.0)
-                     ? std::min(K - 1, static_cast<int>(std::log2(ratio)))
-                     : 0;
+            // ilogb(x) IS floor(log2(x)) for finite positive x, in a few
+            // cycles instead of a libm call (std::log2 measured 1.8 % of the
+            // run). They can only disagree where log2's <=1 ulp error crosses
+            // an integer — within an ulp of an exact power of two, where
+            // ilogb is the exactly-correct one.
+            tk = (ratio >= 2.0) ? std::min(K - 1, std::ilogb(ratio)) : 0;
             if (state_->coupling_flux[i] != 0.0 || pin_t0_[i]) tk = 0;
         }
         tier_[i] = static_cast<uint8_t>(tk);
         cells_by_tier_[static_cast<std::size_t>(tk)].push_back(i);
     }
 
+    active_faces_.clear();
     for (int e = 0; e < edges_.ne; ++e) {
         const int a = edges_.cL[e], b = edges_.cR[e];
         if (cell_active_[a] && cell_active_[b]) {
             const auto ft = std::min(tier_[a], tier_[b]);
             face_tier_[e] = ft;
             edges_by_tier_[ft].push_back(e);
+            active_faces_.push_back(e);
         } else {
             q_[e] = 0.0;   // walled faces carry no stale momentum
         }
@@ -354,7 +568,7 @@ void ExplicitInertialSolver::refreshDt0() {
             if (h <= opts_->dry_depth) continue;
             double speed = 0.0;
             if (!qcx_.empty() && h > 1.0e-6)
-                speed = std::hypot(qcx_[i], qcy_[i]) / h;
+                speed = inertial::qMagnitude(qcx_[i], qcy_[i]) / h;
             const double dt = inertial::cellCflDt(opts_->cfl_number,
                                                   edges_.cell_lchar[i], h, speed);
             if (dt < local) local = dt;
@@ -368,7 +582,7 @@ void ExplicitInertialSolver::refreshDt0() {
 }
 
 void ExplicitInertialSolver::fireFaces(const std::vector<int>& faces,
-                                       double dt_f) {
+                                       double dt_f, bool global_step) {
     const auto& ed = edges_;
     const int   na = static_cast<int>(faces.size());
     const double theta = opts_->theta;
@@ -401,7 +615,7 @@ void ExplicitInertialSolver::fireFaces(const std::vector<int>& faces,
             // Friction magnitude: the face flow VECTOR, floored at |q_n| so
             // a face whose reconstruction lags its own discharge (front
             // arrival, first firing after activation) never under-damps.
-            q_mag = std::max(q_mag, std::hypot(qfx, qfy));
+            q_mag = std::max(q_mag, inertial::qMagnitude(qfx, qfy));
         }
         double deta = state_->head[b] - state_->head[a];
         if (std::fabs(deta) < inertial::kEtaDeadband) deta = 0.0;
@@ -430,7 +644,8 @@ void ExplicitInertialSolver::fireFaces(const std::vector<int>& faces,
         // ratio or the repeated takes drain the cell into the backstop
         // (measured: a dam-break basin discarded to exactly zero).
         const int    exp_cell = (qn1 > 0.0) ? a : b;
-        const int    refire   = 1 << (tier_[exp_cell] - face_tier_[e]);
+        const int    refire   =
+            global_step ? 1 : (1 << (tier_[exp_cell] - face_tier_[e]));
         const double budget   = beta_share / refire *
                                 std::max(state_->volume[exp_cell], 0.0);
         const double take = std::fabs(qn1) * ed.xi[e] * dt_f;
@@ -442,33 +657,202 @@ void ExplicitInertialSolver::fireFaces(const std::vector<int>& faces,
         const double dM = qn1 * ed.xi[e] * dt_f;   // positive = cL→cR
         facc_L_[e] -= dM;
         facc_R_[e] += dM;
+
+        // S1 (D-2DT2): species mass rides THIS ΔM, from the FINAL qn1 —
+        // after the Froude cap and the positivity share — at the exporter's
+        // concentration read NOW, against the same published volume the
+        // share budgeted against. Same writer, same face, same substep:
+        // the species flux cannot disagree with the volume flux about
+        // cadence, direction or magnitude, which is the whole of the
+        // conservation argument.
+        if (!sacc_L_.empty() && dM != 0.0) {
+            const int   donor = (dM > 0.0) ? a : b;
+            const auto  ns    = static_cast<std::size_t>(
+                state_->transport.n_species);
+            const auto  ue    = static_cast<std::size_t>(e);
+            const auto  nef   = static_cast<std::size_t>(ed.ne);
+            for (std::size_t s = 0; s < ns; ++s) {
+                const double c = donorConc(static_cast<int>(s), donor);
+                if (c == 0.0) continue;
+                const double dMs = dM * c;
+                sacc_L_[s * nef + ue] -= dMs;
+                sacc_R_[s * nef + ue] += dMs;
+            }
+        }
+
+        // S2 (D-2DT7): isotropic dispersion, booked on the SAME face, at the
+        // SAME cadence, into the SAME accumulators as the advective term —
+        // so it inherits the marcher's tier consistency exactly as advection
+        // does. Explicit exchange F = D·(h_f·ξ)·(c_a − c_b)/d over dt_f.
+        //
+        // Explicit diffusion has its own stability limit, D·dt/d² ≤ ~½, and
+        // the marcher's dt0 is set by gravity waves, not by D. Rather than
+        // couple dt0 to D (a global cost for a local term), the exchange is
+        // LIMITED so the pair can never cross: at most the amount that
+        // equalises the two concentrations, and at most the same β share of
+        // the giver's mass the volume flux is held to. Positivity and the
+        // pairwise max principle follow; a bind is COUNTED, because a face
+        // that binds is telling the modeller the dispersion is
+        // under-resolved at this dt.
+        if (!sacc_L_.empty() && opts_->dispersion > 0.0) {
+            const double va = state_->volume[a], vb = state_->volume[b];
+            if (va > 0.0 && vb > 0.0) {
+                const double cond =
+                    opts_->dispersion * hf * ed.xi[e] * ed.inv_dx_normal[e] *
+                    dt_f;                                  // m³ exchanged
+                const auto  ns  = static_cast<std::size_t>(
+                    state_->transport.n_species);
+                const auto  ue  = static_cast<std::size_t>(e);
+                const auto  nef = static_cast<std::size_t>(ed.ne);
+                auto& tr = state_->transport;
+                for (std::size_t s = 0; s < ns; ++s) {
+                    const double ma = tr.cell_mass[tr.idx(static_cast<int>(s), a)];
+                    const double mb = tr.cell_mass[tr.idx(static_cast<int>(s), b)];
+                    const double ca = ma / va, cb = mb / vb;
+                    double dMd = cond * (ca - cb);          // + = a → b
+                    if (dMd == 0.0) continue;
+                    // Equalisation bound, divided by 3 because PAIRWISE
+                    // bounds do not compose: a cell receiving from up to
+                    // three faces, each capped at FULL pairwise equalisation
+                    // computed from the same start-of-substep state, can end
+                    // richer than every donor (the check measured 15.31 on
+                    // an initial max of 10 at D = 20). Each face may close
+                    // at most a third of its gap; with the harmonic volume
+                    // ≤ the receiver's own, the sum over ≤ 3 faces is then
+                    // bounded by the largest donor concentration — the same
+                    // 1/3 composition argument the volume side's β/3 makes.
+                    const double eq = (ca - cb) * va * vb / (va + vb) / 3.0;
+                    // β share of the GIVER's mass, divided by the refire
+                    // ratio exactly as the volume share is.
+                    const int    giver  = (dMd > 0.0) ? a : b;
+                    const int    refire = global_step
+                        ? 1 : (1 << (tier_[giver] - face_tier_[e]));
+                    // The giver-mass share is a POSITIVITY guard: give at
+                    // most a β share of what is there. The SIGNED temperature
+                    // row (S4) has no positivity to guard — its mass crosses
+                    // zero at a warm/cold front, where a mass share would
+                    // vanish and bind every smoothing exchange. For it the
+                    // equalisation bound alone is the cap: it is what
+                    // enforces the pairwise max principle in both directions.
+                    const double share  = beta_share / refire *
+                        std::fabs((dMd > 0.0) ? ma : mb);
+                    const double cap = tr.signedRow(static_cast<int>(s))
+                        ? std::fabs(eq)
+                        : std::min(std::fabs(eq), share);
+                    if (std::fabs(dMd) > cap) {
+                        dMd = (dMd > 0.0) ? cap : -cap;
+                        #pragma omp atomic
+                        ++tr.dispersion_limiter_binds;
+                    }
+                    sacc_L_[s * nef + ue] -= dMd;
+                    sacc_R_[s * nef + ue] += dMd;
+                }
+            }
+        }
     }
     face_passes_ += na;
+    accumulators_pending_ = true;
 }
 
 void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
-                                       double dt_c) {
+                                       double dt_c, bool tier0) {
     const auto& ed = edges_;
     const int   nc = static_cast<int>(cells.size());
 
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int k = 0; k < nc; ++k) {
         const int i = cells[static_cast<std::size_t>(k)];
-        // Gather + clear this cell's side of every incident face accumulator.
-        double flux_m3 = 0.0;
+        // ONE walk of this cell's CSR row: gather + clear its side of every
+        // incident face accumulator, and (when the Perot reconstruction is
+        // live) accumulate its discharge vector from the same face ids. The
+        // two loops used to load cell_edge/cell_sign twice for every incident
+        // face; the arms (m_e - c_i) are precomputed per CSR entry so the
+        // midpoint gather and the two subtractions are gone as well.
+        const bool   perot   = !qcx_.empty();
+        double flux_m3 = 0.0, sx = 0.0, sy = 0.0;
         for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
             const int e = ed.cell_edge[p];
-            if (ed.cell_sign[p] > 0.0) {
+            if (ed.cell_sign[p] > 0) {
                 flux_m3 += facc_L_[e];
                 facc_L_[e] = 0.0;
             } else {
                 flux_m3 += facc_R_[e];
                 facc_R_[e] = 0.0;
             }
+            if (perot) {
+                const double f =
+                    static_cast<double>(ed.cell_sign[p]) * q_[e] * ed.xi[e];
+                sx += f * ed.cell_arm_x[p];
+                sy += f * ed.cell_arm_y[p];
+            }
         }
+        const double infil =
+            infilSink(state_->infil_rate[i], state_->depth[i], opts_->dry_depth);
+        state_->infil_applied[i] += infil * dt_c;
+        const double evap =
+            evapSink(state_->evap_rate[i], state_->depth[i], opts_->dry_depth);
         const double src =
-            state_->rainfall[i] + state_->coupling_flux[i]
-            - evapSink(state_->evap_rate[i], state_->depth[i], opts_->dry_depth);
+            state_->rainfall[i] + state_->coupling_flux[i] - evap - infil;
+
+        // S1 species. ORDER MATTERS and is the same as the faces': sinks
+        // read this cell's concentration against its PUBLISHED volume
+        // (before the update below), then the face gather lands, then the
+        // volume moves. Infiltration and a negative (2D→1D) held coupling
+        // flux leave at the cell's concentration; rainfall and a positive
+        // coupling flux arrive at ZERO concentration in S1 (S2/S3 own their
+        // concentrations); evaporation removes no mass at all, so the
+        // concentration rises — the up-concentration the plan's §2.3 wants
+        // right from the start.
+        if (!sacc_L_.empty()) {
+            auto& tr = state_->transport;
+            const double area = mesh_->tri_area[i];
+            sinkTemperatureWithEvap(i, evap * dt_c * area);              // S4
+            sinkMassAtCellConc(i, infil * dt_c * area, tr.lost_infiltration);
+            if (state_->coupling_flux[i] < 0.0)
+                sinkMassAtCellConc(i, -state_->coupling_flux[i] * dt_c * area,
+                                   tr.lost_coupling);
+            // S2: rainfall arrives at the [POLLUTANTS] rain concentration.
+            // Volume × concentration, booked to the gained ledger so the
+            // continuity statement (S1 total − sources) still closes.
+            const double rain_m3 = state_->rainfall[i] * dt_c * area;
+            const auto ns  = static_cast<std::size_t>(tr.n_species);
+            const auto nef = static_cast<std::size_t>(ed.ne);
+            for (std::size_t s = 0; s < ns; ++s) {
+                double dm = 0.0;
+                if (rain_m3 > 0.0 && s < tr.rain_conc.size() &&
+                    tr.rain_conc[s] != 0.0) {
+                    const double gained = rain_m3 * tr.rain_conc[s];
+                    dm += gained;
+                    tr.gained_rainfall[s] += gained;
+                }
+                // S3: outfall discharge (positive coupling_flux) carries the
+                // outfall's concentration as a mass-rate density.
+                if (!tr.coupling_src.empty() && state_->coupling_flux[i] > 0.0) {
+                    const double g = tr.coupling_src[tr.idx(static_cast<int>(s), i)] *
+                                     dt_c * area;
+                    if (g != 0.0) { dm += g; tr.gained_coupling[s] += g; }
+                }
+                for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
+                    const auto e = static_cast<std::size_t>(ed.cell_edge[p]);
+                    if (ed.cell_sign[p] > 0) {
+                        dm += sacc_L_[s * nef + e];
+                        sacc_L_[s * nef + e] = 0.0;
+                    } else {
+                        dm += sacc_R_[s * nef + e];
+                        sacc_R_[s * nef + e] = 0.0;
+                    }
+                }
+                double& m = tr.cell_mass[tr.idx(static_cast<int>(s), i)];
+                m += dm;
+                // The same backstop the volume has, for the same reason: the
+                // face caps make a deficit ~impossible, and a −1 ulp of mass
+                // must not become a negative concentration in a report.
+                // Nonnegative rows only — the SIGNED temperature row holds
+                // °C·m³ below zero as a state, not an artefact.
+                if (m < 0.0 && !tr.signedRow(static_cast<int>(s))) m = 0.0;
+            }
+        }
+
         double v = state_->volume[i] + flux_m3 +
                    dt_c * src * mesh_->tri_area[i];
 #ifndef NDEBUG
@@ -489,14 +873,7 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
         inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i],
                                state_->head[i], state_->depth[i]);
         // Refresh this cell's Perot discharge vector at its own cadence.
-        if (!qcx_.empty()) {
-            double sx = 0.0, sy = 0.0;
-            for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
-                const int    e = ed.cell_edge[p];
-                const double f = ed.cell_sign[p] * q_[e] * ed.xi[e];
-                sx += f * (ed.mx[e] - mesh_->tri_cx[i]);
-                sy += f * (ed.my[e] - mesh_->tri_cy[i]);
-            }
+        if (perot) {
             const double inv_a = 1.0 / mesh_->tri_area[i];
             qcx_[i] = sx * inv_a;
             qcy_[i] = sy * inv_a;
@@ -511,7 +888,7 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
         if (tier_[i] != 0 || !cell_active_[i]) continue;
         // BC cells are pinned to tier 0, so they fire with every tier-0 list;
         // guard against double-firing when called for other tiers.
-        if (&cells != &cells_by_tier_[0]) continue;
+        if (!tier0) continue;
         const int    idx = bc_slot_[k];
         const auto   bt  = static_cast<BoundaryType>(
             state_->boundary->edge_bc_type[idx]);
@@ -588,6 +965,30 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
         // rescale of qn1) — the prescribed-flux types record theirs here too.
         bc_q_[k] = (L > 1.0e-12) ? f / L : 0.0;
         if (f != 0.0) {
+            // S1: an OUTFLOW boundary carries the cell's concentration out;
+            // an inflow boundary brings water at zero concentration until S2
+            // gives edges a species column. Applied volume, not requested,
+            // so the species booking matches the water booking exactly.
+            if (!sacc_L_.empty()) {
+                auto& tr = state_->transport;
+                if (v_new < v_old) {
+                    sinkMassAtCellConc(i, v_old - v_new, tr.lost_boundary);
+                } else {
+                    // S2: INFLOW carries the edge's [2D_BOUNDARY_QUALITY]
+                    // concentration (0 when none was given — clean water).
+                    const auto ns = static_cast<std::size_t>(tr.n_species);
+                    if (k * ns + ns <= tr.bc_conc.size()) {
+                        const double dv = v_new - v_old;
+                        for (std::size_t s = 0; s < ns; ++s) {
+                            const double c = tr.bc_conc[k * ns + s];
+                            if (c == 0.0) continue;
+                            const double g = dv * c;
+                            tr.cell_mass[tr.idx(static_cast<int>(s), i)] += g;
+                            tr.gained_boundary[s] += g;
+                        }
+                    }
+                }
+            }
             state_->volume[i] = v_new;
             bc_accum_[k] += dt_c * f;
             inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i],
@@ -618,7 +1019,7 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
     // Drains cap at the exchange-β share of the source cell; spills cap at
     // the node's stored volume for the whole advance (node_drawn_ ledger) —
     // the same water cannot spill twice within a routing step.
-    if (!exch_.empty() && &cells == &cells_by_tier_[0] &&
+    if (!exch_.empty() && tier0 &&
         state_->node_coupling && state_->nodes_1d) {
         const auto& pts = *state_->node_coupling;
         for (std::size_t k = 0; k < pts.size(); ++k) {
@@ -647,6 +1048,53 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
                 node_drawn_[ni] += take;
                 Q = -take / dt_c;
             }
+            // S1: a 2D→1D drain (Q > 0) leaves at the cell's concentration
+            // and is booked per coupling point so S3's tuple can hand it to
+            // the node's qual_mass_in; a 1D→2D spill arrives at zero
+            // concentration until S3 carries the node's published value.
+            if (!sacc_L_.empty() && Q > 0.0) {
+                auto& tr = state_->transport;
+                const auto ns = static_cast<std::size_t>(tr.n_species);
+                double* pt = (k * ns < tr.exch_mass.size())
+                                 ? &tr.exch_mass[k * ns] : nullptr;
+                sinkMassAtCellConc(ci, Q * dt_c, tr.lost_coupling, pt);
+            } else if (!sacc_L_.empty() && Q < 0.0) {
+                // S3 (D-2DT4): the spill arrives at the NODE's published
+                // concentration (`nodes.conc`, which all three 1D engines
+                // write), frozen for the batch like the node head. Nothing is
+                // queued back to the node: the CSTR mix already takes every
+                // outflow — the spill included — at the mixed concentration
+                // through the reduced inflow volume, so a debit here would
+                // remove the mass twice.
+                auto& tr = state_->transport;
+                const auto ns = static_cast<std::size_t>(tr.n_species);
+                const auto ni = static_cast<std::size_t>(cp.node_idx);
+                // S4: the router publishes every ROW's node value (pollutant
+                // conc, MSX conc, age, temperature) in one ns-strided array,
+                // frozen for the batch like the node head. nodes.conc alone
+                // is np-strided and would mis-index once age/temp rows exist.
+                const auto* conc_p = state_->node_row_conc;
+                if (conc_p && (ni + 1) * ns <= conc_p->size()) {
+                    const auto& conc = *conc_p;
+                    const double v_in = -Q * dt_c;
+                    for (std::size_t s = 0; s < ns; ++s) {
+                        const double c = conc[ni * ns + s];
+                        if (c == 0.0) continue;
+                        const double g = v_in * c;
+                        tr.cell_mass[tr.idx(static_cast<int>(s), ci)] += g;
+                        tr.gained_coupling[s] += g;
+                    }
+                    // The spill VOLUME is tracked per point so the router can
+                    // pair it against this window's drained mass — see
+                    // SurfaceTransportState::exch_spill. (An incremental
+                    // per-substep debit here is ORDER-DEPENDENT — a spill
+                    // substep that precedes the window's drain finds nothing
+                    // to debit — and the check measured the residue; the
+                    // pairing must be done at window granularity.)
+                    if (static_cast<std::size_t>(k) < tr.exch_spill.size())
+                        tr.exch_spill[static_cast<std::size_t>(k)] += v_in;
+                }
+            }
             state_->volume[ci] -= Q * dt_c;
             if (state_->volume[ci] < 0.0) state_->volume[ci] = 0.0;
             exch_[k] += Q * dt_c;
@@ -656,7 +1104,7 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
     }
     // Head-ramp clock: tier-0 fires once per finest substep, so dt_c here is
     // exactly the wall the batch has advanced since the last exchange pass.
-    if (&cells == &cells_by_tier_[0]) exch_tau_ += dt_c;
+    if (tier0) exch_tau_ += dt_c;
 }
 
 void ExplicitInertialSolver::runMacroCycle(double dt0, int nsub) {
@@ -691,7 +1139,7 @@ void ExplicitInertialSolver::runMacroCycle(double dt0, int nsub) {
         for (int k = 0; k < K; ++k) {
             if (s % (1 << k)) continue;
             if (!cells_by_tier_[k].empty() || k == 0)
-                fireCells(cells_by_tier_[k], (1 << k) * dt0);
+                fireCells(cells_by_tier_[k], (1 << k) * dt0, k == 0);
         }
         if (dbg_invariant) {
             const double inv2 = invariant();
@@ -717,6 +1165,12 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
     std::fill(bc_accum_.begin(), bc_accum_.end(), 0.0);
     std::fill(exch_.begin(), exch_.end(), 0.0);
     std::fill(node_drawn_.begin(), node_drawn_.end(), 0.0);
+    // S1: the per-point species drain resets with the per-point volume drain
+    // it rides on, so S3's tuple reads one advance's worth and not a total.
+    std::fill(state_->transport.exch_mass.begin(),
+              state_->transport.exch_mass.end(), 0.0);
+    std::fill(state_->transport.exch_spill.begin(),
+              state_->transport.exch_spill.end(), 0.0);
     exch_tau_ = 0.0;
     last_steps_ = 0;
     // Rebuild cadence persists ACROSS advances: under windowless co-advance
@@ -744,33 +1198,57 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
             break;
         }
 
-        double dt0 = std::min(dt0_, remaining);
-        int    nsub = nsub_full;
-        if (nsub_full * dt0_ > remaining) {
-            // Tail: not enough room for a full macro cycle — degenerate to
-            // global-dt stepping so the window lands exactly. Settle pending
-            // transfers first: the re-tiering below invalidates the cap
-            // bookkeeping of any in-flight accumulator.
-            settleAccumulators();
-            nsub = 1;
-            for (auto& v : edges_by_tier_) v.clear();
-            for (auto& v : cells_by_tier_) v.clear();
-            for (int i : active_cells_) {
-                tier_[i] = 0;
-                cells_by_tier_[0].push_back(i);
-            }
-            for (int e = 0; e < edges_.ne; ++e)
-                if (cell_active_[edges_.cL[e]] && cell_active_[edges_.cR[e]]) {
-                    face_tier_[e] = 0;
-                    edges_by_tier_[0].push_back(e);
-                }
-            cycles_since_rebuild = kRebuildEveryCycles;  // rebuild after tail
+        if (nsub_full * dt0_ <= remaining) {
+            // Full macro cycle fits (dt0_ <= remaining here, so no clamp).
+            runMacroCycle(dt0_, nsub_full);
+            t += nsub_full * dt0_;
+            last_dt_ = dt0_;
+            ++cycles_since_rebuild;
+            continue;
         }
 
-        runMacroCycle(dt0, nsub);
-        t += nsub * dt0;
-        last_dt_ = dt0;
-        ++cycles_since_rebuild;
+        // Tail: not enough room for a full macro cycle — split the WHOLE
+        // remaining span into nt EQUAL global substeps so the window lands
+        // exactly with no degenerate step. nt = ceil(remaining/dt0_) is at
+        // most the substep count the un-split tail sequence took, and each
+        // dt_tail = remaining/nt is in (dt0_/2, dt0_] for nt >= 2 — still
+        // CFL-safe, never arbitrarily small. Settle pending transfers first:
+        // a cell about to be stepped out of cadence must not carry an
+        // in-flight accumulator whose cap bookkeeping assumed the tiered
+        // schedule.
+        //
+        // This used to be expressed by collapsing every cell and face to
+        // tier 0 and running a ONE-substep macro cycle at dt0 = remaining,
+        // which cost an O(n_cells + n_faces) re-tiering, forced a full
+        // syncAndRebuild on the next entry, and — because the leftover has
+        // no floor — fired degenerate substeps (down to ~1e-13 s when the
+        // macro path's `t += nsub*dt0` landed 1 ulp short of t_target).
+        // Firing the union lists directly is the same arithmetic in the
+        // same order (the collapsed tier-0 lists WERE these lists) and
+        // leaves the tiering intact, so the rebuild keeps its own cadence.
+        {
+            // Sub-ulp residue (macro landing shortfall): land without
+            // firing physics on a span below any numerical significance.
+            if (remaining <= dt0_ * 1.0e-9) {
+                t = t_target;
+                break;
+            }
+            settleAccumulators();
+            const int nt = std::max(
+                1, static_cast<int>(std::ceil(remaining / dt0_)));
+            const double dt_tail = remaining / nt;
+            for (int s = 0; s < nt; ++s) {
+                fireFaces(active_faces_, dt_tail, /*global_step=*/true);
+                fireCells(active_cells_, dt_tail, /*tier0=*/true);
+                ++substeps_run_;
+                ++last_steps_;
+            }
+            accumulators_pending_ = false;   // every side just gathered
+            last_dt_ = dt_tail;
+            ++cycles_since_rebuild;
+            t = t_target;   // exact landing — no 1-ulp re-entry
+            break;
+        }
     }
 
     cycles_since_rebuild_ = cycles_since_rebuild;
@@ -795,7 +1273,12 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
     std::fill(state_->edge_flux.begin(), state_->edge_flux.end(), 0.0);
     const bool vfr_face =
         (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
-    for (int e = 0; e < edges_.ne; ++e) {
+    // Only the ACTIVE faces can carry flux: a face with an inactive side had
+    // its q zeroed when the side deactivated, so the old full sweep spent
+    // O(n_faces) recomputing a face depth and a Froude cap in order to publish
+    // the zero the fill above already wrote. Identical output, and a quiescent
+    // tail (active fraction reached 0.0 % in the storm run) now costs nothing.
+    for (const int e : active_faces_) {
         const double hf = vfr_face
             ? inertial::faceFlowDepthVfr(state_->head[edges_.cL[e]],
                                          state_->head[edges_.cR[e]],
@@ -826,6 +1309,7 @@ void ExplicitInertialSolver::reinitialize(double /*t0*/) {
     std::fill(bc_q_.begin(), bc_q_.end(), 0.0);
     std::fill(facc_L_.begin(), facc_L_.end(), 0.0);
     std::fill(facc_R_.begin(), facc_R_.end(), 0.0);
+    accumulators_pending_ = false;
     reconstructAll();
 }
 

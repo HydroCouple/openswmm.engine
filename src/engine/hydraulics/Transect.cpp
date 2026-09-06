@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file Transect.cpp
  * @brief Irregular transect — numerically identical to legacy transect.c.
@@ -5,10 +21,11 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "Transect.hpp"
+#include "../data/InfraData.hpp"
 #include <cmath>
 #include <algorithm>
 #include <numeric>
@@ -54,8 +71,19 @@ void buildTables(TransectData& td) {
 
     // add vertical end-walls reaching full height (legacy transect_validate)
     int N = n_in;
-    std::vector<double> X(static_cast<size_t>(N) + 2);
-    std::vector<double> Y(static_cast<size_t>(N) + 2);
+    // N+3, not N+2: getFlow() below reads X[k+1] at k == Nsta == N+1 when the
+    // right-bank branch is taken, which is one past the last written element.
+    // Legacy indexes fixed `static double Station[MAXSTATION+1]` arrays, so the
+    // same read lands on zero-initialised slack rather than out of bounds — the
+    // trailing element here is value-initialised to 0.0 to match it.
+    //
+    // Reachable only when accumulated `y` overshoots ymax by a rounding step,
+    // so the last end-wall segment is not skipped by `ylo >= y`. That made it a
+    // silent over-read on Linux and an abort on the Windows debug STL
+    // ("vector subscript out of range", exit 0xc0000409) — dependent on the
+    // deck: 7-station flood-plain transects trip it, 3-station V-notches do not.
+    std::vector<double> X(static_cast<size_t>(N) + 3);
+    std::vector<double> Y(static_cast<size_t>(N) + 3);
     X[0] = td.stations[0];              Y[0] = ymax;
     for (int i = 0; i < N; ++i) {
         X[static_cast<size_t>(i + 1)] = td.stations[static_cast<size_t>(i)];
@@ -177,6 +205,11 @@ void buildTables(TransectData& td) {
     }
     // width at zero depth = width at first increment (legacy createTables:309)
     td.width_tbl[0] = td.width_tbl[1];
+
+    // Bucket map for the getYofA inversion (plan XSECT_LOOKUP_ACCEL A1) — a
+    // search accelerator only; it returns the same bracketing index bisection
+    // would, so the interpolated depth is unchanged.
+    xsect::build_invlookup_lut(td.area_lut, td.area_tbl, N_TRANSECT_TBL);
 
     // --- A3 transect-table parity dump (env-gated), mirrors legacy transect.c
     if (const char* p = std::getenv("SWMM_TRACE_TRANSECT")) {
@@ -375,6 +408,42 @@ void buildCustomTables(TransectData& td, double y_full,
     td.w_max  = wMax * y_full;
     td.a_full = aFull * y_full * y_full;
     td.r_full = rFull * y_full;
+
+    xsect::build_invlookup_lut(td.area_lut, td.area_tbl, N_TRANSECT_TBL);
+}
+
+bool buildFromStore(const TransectStore& ts, int index, double ucf_length,
+                    TransectData& td) {
+    const auto ut = static_cast<std::size_t>(index);
+    td.name      = ts.names[ut];
+    td.n_left    = ts.n_left[ut];
+    td.n_right   = ts.n_right[ut];
+    td.n_channel = ts.n_channel[ut];
+    if (td.n_channel <= 0.0) return false;
+    td.stations   = ts.stations[ut];
+    td.elevations = ts.elevations[ut];
+    td.length_factor = ts.length_factor[ut];
+    // PARITY: legacy transect setParams/addStation (transect.c:360-410)
+    // transform the raw [TRANSECTS] GR data BEFORE building the tables:
+    //   Station = x * Xfactor / UCF(LENGTH)          (mult, then divide)
+    //   Elev    = (y + Yfactor) / UCF(LENGTH),  Yfactor = x9 / UCF
+    //   Xbank   = (xbank / UCF) * Xfactor            (divide, then mult)
+    // The elevation OFFSET (x9, e.g. 799/798 in extran8a) is the load-
+    // bearing part: legacy builds every slice area/width/hrad at the
+    // real bed elevation (~800 ft), so `y - yhi` rounds at that
+    // magnitude. Building on the raw ~0-ft elevations rounds
+    // differently (~1e-13 per entry) and breaks bit-parity even though
+    // the geometry is offset-invariant in exact arithmetic. Applied to
+    // the td COPY only, so [TRANSECTS] round-trips the raw GR values.
+    double xFactor = ts.x_factor[ut];      // parse-time 0→1 default
+    if (xFactor == 0.0) xFactor = 1.0;
+    const double yFactor = ts.y_factor[ut] / ucf_length;   // x9 / UCF
+    for (auto& s : td.stations)   s = s * xFactor / ucf_length;
+    for (auto& e : td.elevations) e = (e + yFactor) / ucf_length;
+    td.x_left_bank  = (ts.x_left_bank[ut]  / ucf_length) * xFactor;
+    td.x_right_bank = (ts.x_right_bank[ut] / ucf_length) * xFactor;
+    buildTables(td);
+    return true;
 }
 
 } // namespace transect

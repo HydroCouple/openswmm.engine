@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file CatchmentHandler.cpp
  * @brief Section handlers for [SUBCATCHMENTS], [SUBAREAS], and [RAINGAGES].
@@ -32,13 +48,15 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "CatchmentHandler.hpp"
 
 #include "../Tokenizer.hpp"
 #include "../SectionParser.hpp"
+#include "../MultiColumnSeriesFile.hpp"
+#include "../../core/ErrorCodes.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../data/SubcatchData.hpp"
 #include "../../data/GageData.hpp"
@@ -100,6 +118,10 @@ static void ensure_gage_capacity(SimulationContext& ctx, int idx) {
 // ============================================================================
 
 void handle_subcatchments(SimulationContext& ctx, const std::vector<std::string>& lines) {
+    // Pre-reserve from the section's row count (an upper bound: some rows
+    // are comments or duplicates). Capacity only — see reserve_to().
+    ctx.subcatches.reserve_to(ctx.subcatches.count() + static_cast<int>(lines.size()));
+    ctx.subcatch_names.reserve(static_cast<std::size_t>(ctx.subcatch_names.size()) + lines.size());
     for (const auto& pl : parse_section(lines)) {
         auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 7) continue;
@@ -226,12 +248,56 @@ void handle_infiltration(SimulationContext& ctx, const std::vector<std::string>&
         const int idx = ctx.subcatch_names.find(tok[0]);
         if (idx < 0) continue;
 
-        ctx.subcatches.infil_model[idx] = model;
-        ctx.subcatches.infil_p1[idx] = to_double(tok[1]);
-        ctx.subcatches.infil_p2[idx] = to_double(tok[2]);
-        ctx.subcatches.infil_p3[idx] = to_double(tok[3]);
-        if (tok.size() > 4) ctx.subcatches.infil_p4[idx] = to_double(tok[4]);
-        if (tok.size() > 5) ctx.subcatches.infil_p5[idx] = to_double(tok[5]);
+        // SWMM 5.2 allows a per-subcatchment method override as the LAST
+        // token (legacy infil.c:150-155: findmatch against InfilModelWords).
+        // Without this the keyword parsed as 0.0 into a parameter slot.
+        std::size_t ntoks = tok.size();
+        int row_model = model;
+        {
+            const std::string last = Tokenizer::to_upper(tok[ntoks - 1]);
+            if      (last == "HORTON")         { row_model = 0; --ntoks; }
+            else if (last == "MOD_HORTON")     { row_model = 1; --ntoks; }
+            else if (last == "GREEN_AMPT")     { row_model = 2; --ntoks; }
+            else if (last == "MOD_GREEN_AMPT") { row_model = 3; --ntoks; }
+            else if (last == "CURVE_NUMBER")   { row_model = 4; --ntoks; }
+        }
+
+        ctx.subcatches.infil_model[idx] = row_model;
+        if (ntoks > 1) ctx.subcatches.infil_p1[idx] = to_double(tok[1]);
+        if (ntoks > 2) ctx.subcatches.infil_p2[idx] = to_double(tok[2]);
+        if (ntoks > 3) ctx.subcatches.infil_p3[idx] = to_double(tok[3]);
+        if (ntoks > 4) ctx.subcatches.infil_p4[idx] = to_double(tok[4]);
+        if (ntoks > 5) ctx.subcatches.infil_p5[idx] = to_double(tok[5]);
+
+        // Parameter validation — legacy infil_readParams raises ERROR 235
+        // when the model's setParams rejects the values (infil.c:198).
+        // Checks run on the RAW display-unit values, as legacy does.
+        const double p1 = ctx.subcatches.infil_p1[idx];
+        const double p2 = ctx.subcatches.infil_p2[idx];
+        const double p3 = ctx.subcatches.infil_p3[idx];
+        const double p4 = ctx.subcatches.infil_p4[idx];
+        const double p5 = ctx.subcatches.infil_p5[idx];
+        bool ok = true;
+        switch (static_cast<InfiltrationModel>(row_model)) {
+            case InfiltrationModel::HORTON:
+            case InfiltrationModel::MOD_HORTON:
+                // horton_setParams (infil.c:328): no negatives, f0 >= fmin
+                ok = p1 >= 0.0 && p2 >= 0.0 && p3 >= 0.0 &&
+                     p4 >= 0.0 && p5 >= 0.0 && p1 >= p2;
+                break;
+            case InfiltrationModel::GREEN_AMPT:
+            case InfiltrationModel::MOD_GREEN_AMPT:
+                // grnampt_setParams (infil.c:605): suction >= 0, Ksat > 0,
+                // IMD a fraction in [0, 1]
+                ok = p1 >= 0.0 && p2 > 0.0 && p3 >= 0.0 && p3 <= 1.0;
+                break;
+            case InfiltrationModel::CURVE_NUMBER:
+                // curvenum_setParams (infil.c): drying time (3rd param) > 0
+                ok = p3 > 0.0;
+                break;
+        }
+        if (!ok)
+            ctx.errors.push_back(format_error(ERR_INFILTRATION, ""));
     }
 }
 
@@ -292,24 +358,21 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
         } else if (src == "FILE" && tok.size() > 5) {
             ctx.gages.source[idx] = RainSource::FILE_RAIN;
 
-            // tok[5] already has quotes stripped by the tokenizer
-            // Check for "path:COLUMN" syntax (R08)
-            const std::string& file_tok = tok[5];
-            const auto colon = file_tok.rfind(':');
-
-            // On Windows, drive letters look like "C:\path" — skip the first char
-            const auto search_start = (file_tok.size() > 1 && file_tok[1] == ':') ? 2 : 0;
-            const auto col_sep = file_tok.find(':', search_start);
-
-            if (col_sep != std::string::npos) {
-                ctx.gages.file_path[idx] = file_tok.substr(0, col_sep);
-                ctx.gages.col_name[idx]  = file_tok.substr(col_sep + 1);
+            // tok[5] already has quotes stripped by the tokenizer.
+            // Check for "path:COLUMN" syntax (R08) using the SHARED split
+            // rule (MultiColumnSeriesFile.hpp) — the timeseries loader used
+            // to split differently, so a path containing a colon produced two
+            // different cache keys for one file and defeated the single-read
+            // guarantee.
+            std::string file_only, file_col;
+            if (split_series_file_token(tok[5], file_only, file_col)) {
+                ctx.gages.file_path[idx]   = file_only;
+                ctx.gages.col_name[idx]    = file_col;
                 ctx.gages.file_format[idx] = RainFileFormat::USER_CSV;
             } else {
-                ctx.gages.file_path[idx]  = file_tok;
+                ctx.gages.file_path[idx]   = file_only;
                 ctx.gages.file_format[idx] = RainFileFormat::STAN_PRCP;
             }
-            (void)colon; // suppress warning
 
             // Standard SWMM FILE grammar (legacy gage.c gage_readParams):
             //   Name Format Interval SCF FILE Fname Station Units [StartDate] [SCF]

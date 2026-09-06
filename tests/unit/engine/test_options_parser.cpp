@@ -216,3 +216,33 @@ TEST(OptionsParserTest, InfiltrationGreenAmpt) {
 }
 
 } /* anonymous namespace */
+
+// ============================================================================
+// Unsteady friction (issue #156)
+// ============================================================================
+
+TEST(OptionsParserTest, UnsteadyFrictionDefaults) {
+    SimulationContext ctx;
+    parse(ctx, {});
+    EXPECT_EQ(ctx.options.unsteady_friction, 0);   // NONE
+    EXPECT_DOUBLE_EQ(ctx.options.uf_k3, 0.015);
+}
+
+TEST(OptionsParserTest, UnsteadyFrictionVitkovsky) {
+    SimulationContext ctx;
+    parse(ctx, {"UNSTEADY_FRICTION  VITKOVSKY", "UF_K3  0.02"});
+    EXPECT_EQ(ctx.options.unsteady_friction, 1);
+    EXPECT_DOUBLE_EQ(ctx.options.uf_k3, 0.02);
+}
+
+TEST(OptionsParserTest, UnsteadyFrictionNoneExplicit) {
+    SimulationContext ctx;
+    parse(ctx, {"UNSTEADY_FRICTION  none"});
+    EXPECT_EQ(ctx.options.unsteady_friction, 0);
+}
+
+TEST(OptionsParserTest, UnsteadyFrictionBadValueLeavesDefault) {
+    SimulationContext ctx;
+    parse(ctx, {"UNSTEADY_FRICTION  BOGUS"});
+    EXPECT_EQ(ctx.options.unsteady_friction, 0);
+}

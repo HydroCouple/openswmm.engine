@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file MathExpr.cpp
  * @brief Shunting-yard parser + stack evaluator.
@@ -5,7 +21,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "MathExpr.hpp"
@@ -63,6 +79,21 @@ static const std::unordered_map<std::string, TokenType> func_map = {
     {"coth",  TokenType::FUNC_COTH}, {"log10", TokenType::FUNC_LOG10},
     {"acot",  TokenType::FUNC_ACOT},
 };
+
+const std::vector<std::string>& function_names() {
+    // Ordered by TokenType value (declaration order of the FUNC_* enumerators),
+    // so the list is stable across runs regardless of unordered_map layout.
+    static const std::vector<std::string> names = [] {
+        std::vector<std::pair<int, std::string>> byType;
+        for (const auto& kv : func_map)
+            byType.emplace_back(static_cast<int>(kv.second), kv.first);
+        std::sort(byType.begin(), byType.end());
+        std::vector<std::string> out;
+        for (const auto& p : byType) out.push_back(p.second);
+        return out;
+    }();
+    return names;
+}
 
 static std::vector<Token> tokenize(const std::string& s) {
     std::vector<Token> tokens;

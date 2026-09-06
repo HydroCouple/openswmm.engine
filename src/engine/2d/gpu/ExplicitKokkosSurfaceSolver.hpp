@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file ExplicitKokkosSurfaceSolver.hpp
  * @brief Kokkos (OpenMP/CUDA/HIP/SYCL) port of the explicit local-inertial
@@ -30,7 +46,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_GPU_EXPLICIT_KOKKOS_SURFACE_SOLVER_HPP
@@ -87,7 +103,15 @@ private:
     // ---- device state -----------------------------------------------------
     DView d_volume_, d_head_, d_depth_;
     DView d_q_, d_faccL_, d_faccR_, d_qcx_, d_qcy_;
-    DView d_rain_, d_coup_, d_evap_;
+    DView d_rain_, d_coup_, d_evap_, d_infil_;
+
+    /// Infiltration APPLIED depth (m) accumulated on device since the last
+    /// publish, then drained ADDITIVELY into state_->infil_applied and zeroed.
+    /// Additive because the host array is consumed on the routing-step cadence
+    /// while this one drains on the publish cadence — a plain overwrite would
+    /// lose or double-count whatever fell between the two.
+    DView d_infil_applied_;
+    std::vector<double> infil_applied_host_;  ///< drain scratch (nt)
     DView d_edge_flux_;                ///< 3·nt flat slots (published)
     IView d_active_, d_pin_t0_, d_tier_, d_face_tier_;
     IView d_cells_compact_, d_edges_compact_;  ///< per-tier segments

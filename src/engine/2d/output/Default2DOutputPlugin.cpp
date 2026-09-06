@@ -12,6 +12,7 @@
 #include "../../core/SimulationContext.hpp"
 #include "../../2d/SurfaceRouter2D.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <cstring>
 
@@ -23,8 +24,13 @@ namespace openswmm::twoD {
 
 void Default2DOutputPlugin::writeStringAttr(hid_t loc, const char* name,
                                              const char* value) {
+    // H5Tset_size rejects 0, and nothing here checks return codes — an empty
+    // value would silently write no attribute at all. Store a single NUL
+    // instead, which reads back as the empty string.
+    const size_t len = (value && *value) ? std::strlen(value) : 1;
+
     hid_t atype = H5Tcopy(H5T_C_S1);
-    H5Tset_size(atype, std::strlen(value));
+    H5Tset_size(atype, len);
     H5Tset_strpad(atype, H5T_STR_NULLTERM);
 
     hid_t aspace = H5Screate(H5S_SCALAR);
@@ -191,8 +197,57 @@ int Default2DOutputPlugin::prepare(const SimulationContext& ctx) {
     writeStringAttr(file_id_, "institution", "OpenSWMM / HydroCouple");
     writeStringAttr(file_id_, "source", "OpenSWMM Engine 6.0");
 
+    // Model CRS for the `/crs` variable written in prepareMeshAndDatasets().
+    // ctx.spatial.crs and ctx.options.crs are both set by OptionsHandler from
+    // `[OPTIONS] CRS`; prefer the spatial frame, which is what the spatial API
+    // mutates at runtime. Empty is legitimate — models need not declare a CRS.
+    model_crs_ = !ctx.spatial.crs.empty() ? ctx.spatial.crs : ctx.options.crs;
+
     state_ = PluginState::PREPARED;
     return 0;
+}
+
+void Default2DOutputPlugin::setMeshCoordinateScale(double metres_per_model_unit) {
+    if (metres_per_model_unit > 0.0)
+        metres_per_model_unit_ = metres_per_model_unit;
+}
+
+void Default2DOutputPlugin::writeCrsVariable() {
+    if (file_id_ == H5I_INVALID_HID) return;
+
+    hid_t space = H5Screate(H5S_SCALAR);
+    hid_t ds = H5Dcreate2(file_id_, "crs", H5T_NATIVE_INT, space,
+                           H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    if (ds < 0) {
+        H5Sclose(space);
+        return;
+    }
+
+    writeStringAttr(ds, "long_name",
+                    "coordinate reference of the MODEL, plus the factor "
+                    "relating it to the metric Mesh2 coordinates stored here");
+    // Unit of the coordinates AS STORED here. The 2D solver runs in SI, so
+    // node/face x/y are metres whatever the model's own unit is.
+    writeStringAttr(ds, "units", "m");
+    // stored = model x factor; model = stored / factor.
+    writeDoubleAttr(ds, "metres_per_model_unit", metres_per_model_unit_);
+    writeStringAttr(ds, "comment",
+                    "Mesh2 x/y are stored in SI metres. Divide by "
+                    "metres_per_model_unit to obtain coordinates in the linear "
+                    "unit of model_crs; only then reproject from model_crs.");
+
+    if (!model_crs_.empty()) {
+        // CRS of the MODEL coordinates, not of the metric values stored here.
+        // Named model_crs rather than spatial_ref/crs_wkt on purpose: a
+        // generic reader honouring those would place metres in a foot-based
+        // CRS and reproduce the offset this variable exists to describe (#155).
+        writeStringAttr(ds, "model_crs", model_crs_.c_str());
+    }
+
+    int dummy = 0;
+    H5Dwrite(ds, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &dummy);
+    H5Dclose(ds);
+    H5Sclose(space);
 }
 
 // ============================================================================
@@ -216,6 +271,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         writeStringAttrFn(ds, "node_coordinates", "Mesh2_node_x Mesh2_node_y");
         writeStringAttrFn(ds, "face_node_connectivity", "Mesh2_face_nodes");
         writeStringAttrFn(ds, "face_coordinates", "Mesh2_face_x Mesh2_face_y");
+        writeStringAttrFn(ds, "openswmm_crs", "crs");
 
         // Write a dummy value
         int dummy = 0;
@@ -235,6 +291,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         H5Dwrite(ds_x, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.vx.data());
         writeStringAttrFn(ds_x, "standard_name", "projection_x_coordinate");
         writeStringAttrFn(ds_x, "units", "m");
+        writeStringAttrFn(ds_x, "openswmm_crs", "crs");
         H5Dclose(ds_x);
 
         // Mesh2_node_y
@@ -243,6 +300,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         H5Dwrite(ds_y, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.vy.data());
         writeStringAttrFn(ds_y, "standard_name", "projection_y_coordinate");
         writeStringAttrFn(ds_y, "units", "m");
+        writeStringAttrFn(ds_y, "openswmm_crs", "crs");
         H5Dclose(ds_y);
 
         // Mesh2_node_z (elevation)
@@ -288,12 +346,14 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
                                    space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         H5Dwrite(ds_cx, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.tri_cx.data());
         writeStringAttrFn(ds_cx, "units", "m");
+        writeStringAttrFn(ds_cx, "openswmm_crs", "crs");
         H5Dclose(ds_cx);
 
         hid_t ds_cy = H5Dcreate2(file_id, "Mesh2_face_y", H5T_NATIVE_DOUBLE,
                                    space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         H5Dwrite(ds_cy, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.tri_cy.data());
         writeStringAttrFn(ds_cy, "units", "m");
+        writeStringAttrFn(ds_cy, "openswmm_crs", "crs");
         H5Dclose(ds_cy);
 
         hid_t ds_cz = H5Dcreate2(file_id, "Mesh2_face_z", H5T_NATIVE_DOUBLE,
@@ -368,6 +428,10 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
 }
 
 void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
+    // Written first so the `openswmm_crs = "crs"` attributes the mesh
+    // variables carry resolve against a variable that already exists.
+    writeCrsVariable();
+
     auto writeAttr = [this](hid_t loc, const char* name, const char* val) {
         writeStringAttr(loc, name, val);
     };
@@ -422,6 +486,18 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
                                            "coupling flux with SWMM node", "m s-1");
     ds_face_net_source_    = createFaceDS("Mesh2_face_net_source",
                                            "net volumetric source/sink", "m s-1");
+    // Per-cell infiltration (plan §5.5.6): the held INFIL_STEP rate and the
+    // cumulative infiltrated depth. Both are all-zero when no
+    // [2D_INFILTRATION*] rows resolved; they are always written so the time
+    // axis stays aligned across every face variable.
+    ds_face_infil_rate_    = createFaceDS("Mesh2_face_infil_rate",
+                                           "infiltration loss rate", "m s-1");
+    ds_face_infil_cum_     = createFaceDS("Mesh2_face_infil_cum",
+                                           "cumulative infiltrated depth", "m");
+    // Cumulative rainfall VOLUME per cell (m³) — sums to mass_balance_2d
+    // rainfall_in by construction (SurfaceRouter2D::rainCumulative).
+    ds_face_rain_cum_      = createFaceDS("Mesh2_face_rain_cum",
+                                           "cumulative rainfall volume", "m3");
     ds_face_vx_            = createFaceDS("Mesh2_face_vx",
                                           "cell-centred velocity X (RT0)", "m s-1");
     ds_face_vy_            = createFaceDS("Mesh2_face_vy",
@@ -498,12 +574,67 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
     extendAndWrite2D(ds_face_rainfall_,      snap.surface_rainfall.data(),      n_faces_);
     extendAndWrite2D(ds_face_coupling_flux_, snap.surface_coupling_flux.data(), n_faces_);
     extendAndWrite2D(ds_face_net_source_,    snap.surface_net_source.data(),    n_faces_);
+    extendAndWrite2D(ds_face_infil_rate_,    snap.surface_infil_rate.data(),    n_faces_);
+    extendAndWrite2D(ds_face_infil_cum_,     snap.surface_infil_cum.data(),     n_faces_);
+    if (snap.surface_rain_cum.size() == static_cast<std::size_t>(n_faces_))
+        extendAndWrite2D(ds_face_rain_cum_,  snap.surface_rain_cum.data(),      n_faces_);
     extendAndWrite2D(ds_face_vx_,            snap.surface_face_vx.data(),       n_faces_);
     extendAndWrite2D(ds_face_vy_,            snap.surface_face_vy.data(),       n_faces_);
     extendAndWrite2D(ds_face_continuity_err_, snap.surface_continuity_err.data(), n_faces_);
 
     // Write per-edge fields [nFace, 3]
     extendAndWrite3D(ds_edge_flux_, snap.surface_edge_flux.data(), n_faces_, 3);
+
+    // Overland transport S1: species concentration [nTime, nSpecies, nFace].
+    // Created LAZILY on the first step that carries species, and only then:
+    // a model with no 2D transport gets no variable, which is the correct
+    // statement (unlike infiltration, whose all-zero rows exist to keep a
+    // per-face time axis aligned — a 3D block has its own). Creating at the
+    // first step keeps dim 0 aligned with every other variable; a species
+    // count that changes mid-run is not a thing this engine does.
+    if (snap.surface_species_count > 0 &&
+        snap.surface_species_conc.size() ==
+            static_cast<std::size_t>(snap.surface_species_count) * n_faces_) {
+        if (ds_face_species_conc_ == H5I_INVALID_HID) {
+            n_species_ = static_cast<hsize_t>(snap.surface_species_count);
+            hsize_t zero3[3]  = {0, n_species_, n_faces_};
+            hsize_t chunk3[3] = {1, n_species_, std::min<hsize_t>(n_faces_, 4096)};
+            ds_face_species_conc_ = createUnlimitedDataset(
+                "Mesh2_face_species_conc", 3, zero3, chunk3);
+            writeStringAttr(ds_face_species_conc_, "long_name",
+                            "surface species concentration");
+            // Species units are per species and live on the pollutant table;
+            // the dataset carries the layout and a name list so a reader can
+            // join. "1" here means "see species_names" — not dimensionless.
+            writeStringAttr(ds_face_species_conc_, "units", "1");
+            writeStringAttr(ds_face_species_conc_, "mesh", "Mesh2");
+            writeStringAttr(ds_face_species_conc_, "location", "face");
+            writeStringAttr(ds_face_species_conc_, "layout",
+                            "[time, species, face]; species order = "
+                            "pollutants, MSX, __WATER_AGE__, __TEMPERATURE__ "
+                            "(see species_names); dry cell reports 0");
+            // S4: the row names come from the surface itself; the pollutant
+            // list is the pre-S4 fallback.
+            const std::vector<std::string>* names_src =
+                snap.surface_species_names ? snap.surface_species_names
+                                           : snap.pollut_names;
+            if (names_src) {
+                std::string names;
+                for (std::size_t i = 0; i < names_src->size() &&
+                                        i < n_species_; ++i) {
+                    if (i) names += ",";
+                    names += (*names_src)[i];
+                }
+                if (!names.empty())
+                    writeStringAttr(ds_face_species_conc_, "species_names",
+                                    names.c_str());
+            }
+        }
+        if (n_species_ == static_cast<hsize_t>(snap.surface_species_count))
+            extendAndWrite3D(ds_face_species_conc_,
+                             snap.surface_species_conc.data(), n_species_,
+                             n_faces_);
+    }
 
     // Write per-node fields
     extendAndWrite2D(ds_node_head_, snap.surface_vert_head.data(), n_nodes_);
@@ -552,6 +683,11 @@ int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
             writeScalar(grp, "outfall_out",           mb.outfall_out);
             writeScalar(grp, "boundary_in",           mb.boundary_in);
             writeScalar(grp, "boundary_out",          mb.boundary_out);
+            // Both loss channels (plan §5.5.4): evap_out was previously
+            // omitted here, so writing infil_out alone would leave the
+            // sidecar's budget silently non-closing.
+            writeScalar(grp, "evap_out",              mb.evap_out);
+            writeScalar(grp, "infil_out",             mb.infil_out);
             writeDoubleAttr(grp, "continuity_error",  mb.error());
             H5Gclose(grp);
         }
@@ -571,6 +707,10 @@ int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
     closeDS(ds_face_rainfall_);
     closeDS(ds_face_coupling_flux_);
     closeDS(ds_face_net_source_);
+    closeDS(ds_face_infil_rate_);
+    closeDS(ds_face_infil_cum_);
+    closeDS(ds_face_rain_cum_);
+    closeDS(ds_face_species_conc_);
     closeDS(ds_face_vx_);
     closeDS(ds_face_vy_);
     closeDS(ds_face_continuity_err_);

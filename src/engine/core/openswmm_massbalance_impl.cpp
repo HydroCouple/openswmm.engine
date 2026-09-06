@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file openswmm_massbalance_impl.cpp
  * @brief C API implementation — continuity errors and flux totals.
@@ -7,8 +23,10 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
+
+#include <cmath>
 
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_massbalance.h"
@@ -65,8 +83,22 @@ SWMM_ENGINE_API int swmm_get_quality_continuity_error(SWMM_Engine engine,
     double init_stored = (p < mb.qual_routing_init.size()) ? mb.qual_routing_init[p] : 0.0;
     double final_stored = (p < mb.qual_routing_final.size()) ? mb.qual_routing_final[p] : 0.0;
 
-    if (total_in > 0.0) {
-        *error = (total_in + init_stored - final_stored - total_out) / total_in;
+    // Legacy massbal_getQualError (massbal.c:900-911) has THREE branches, and
+    // the third is the one this function lacked: when nothing came IN but
+    // something went OUT, the error is measured against the outflow. Without
+    // it, a system that discharges mass it never received reports a
+    // continuity error of exactly 0.000 — measured on the known-mass EMC
+    // deck, where 1.8M units of booked mass left a system whose total_in was
+    // zero under a printed error of 0.000 (Finding 10, third instance of the
+    // vacuous-denominator shape after runoff_error's F8 case).
+    const double in_total  = total_in + init_stored;
+    const double out_total = total_out + final_stored;
+    if (std::fabs(in_total - out_total) < 0.001) {
+        *error = 0.0;
+    } else if (in_total > 0.0) {
+        *error = (in_total - out_total) / in_total;
+    } else if (out_total > 0.0) {
+        *error = (in_total - out_total) / out_total;
     } else {
         *error = 0.0;
     }
@@ -87,6 +119,8 @@ SWMM_ENGINE_API int swmm_get_runoff_total(SWMM_Engine engine, int component, dou
         case SWMM_RUNOFF_INFIL:      *volume = mb.runoff_infil;       break;
         case SWMM_RUNOFF_RUNOFF:     *volume = mb.runoff_runoff;      break;
         case SWMM_RUNOFF_SNOWREMOV:  *volume = mb.runoff_snowremov;   break;
+        case SWMM_RUNOFF_INITSNOW:   *volume = mb.runoff_init_snow;   break;
+        case SWMM_RUNOFF_FINALSNOW:  *volume = mb.runoff_final_snow;  break;
         case SWMM_RUNOFF_INITSTORE:  *volume = mb.runoff_init_store;  break;
         case SWMM_RUNOFF_FINALSTORE: *volume = mb.runoff_final_store; break;
         default: return SWMM_ERR_BADPARAM;

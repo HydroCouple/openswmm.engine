@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 2D Surface Routing
 ==================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 Type stubs for :mod:`openswmm.engine._2d`.
 
@@ -12,10 +28,19 @@ The :class:`Surface2D` class provides read/write access to the optional 2D
 surface routing module (requires ``OPENSWMM_BUILD_2D=ON`` and SUNDIALS).
 """
 
+from collections.abc import Iterator, MutableMapping, Sequence
+from typing import NamedTuple
+
 import numpy as np
 import numpy.typing as npt
 
-from ._enums import SurfaceForcingMode, ForcingPersist, SurfaceBoundaryType
+from ._enums import (
+    SurfaceForcingMode,
+    ForcingPersist,
+    SurfaceBoundaryType,
+    SurfaceInfilMethod,
+    SurfaceInfilDest,
+)
 
 
 class Surface2D:
@@ -121,6 +146,20 @@ class Surface2D:
         @type idx: int
         @param z: New ground elevation (project vertical units).
         @type z: float
+        @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
+    def set_vertex_z_bulk(self, z: Sequence[float] | npt.NDArray[np.float64]) -> None:
+        """Set EVERY vertex ground elevation in one call.
+
+        Equivalent to calling :meth:`set_vertex_z` per vertex, but rescans the
+        mesh once instead of once per vertex. GIL is released during the C
+        call.
+
+        @param z: One ground elevation per vertex (project vertical units).
+        @type z: Sequence[float] | np.ndarray
+        @raise ValueError: If C{len(z)} does not equal L{n_vertices}.
         @raise RuntimeError: If the C API call fails.
         """
         ...
@@ -887,6 +926,19 @@ class Surface2D:
         """
         ...
 
+    def get_edge_bc_tseries_name(self, tri_idx: int, edge: int) -> str:
+        """Return the timeseries name driving a SPECIFIED_STAGE edge.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @return: Timeseries name; C{""} when the slot is clear.
+        @rtype: str
+        @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
     def set_edge_bc_flow_tseries_name(
         self, tri_idx: int, edge: int, name: str
     ) -> None:
@@ -902,6 +954,19 @@ class Surface2D:
         """
         ...
 
+    def get_edge_bc_flow_tseries_name(self, tri_idx: int, edge: int) -> str:
+        """Return the timeseries name driving a SPECIFIED_FLOW edge.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @return: Timeseries name; C{""} when the slot is clear.
+        @rtype: str
+        @raise RuntimeError: If the C API call fails.
+        """
+        ...
+
     def set_edge_bc_rating_curve_name(
         self, tri_idx: int, edge: int, name: str
     ) -> None:
@@ -914,6 +979,19 @@ class Surface2D:
         @param name: Rating-curve name, or C{""} to clear.
         @type name: str
         @raise RuntimeError: If the C API rejects the assignment.
+        """
+        ...
+
+    def get_edge_bc_rating_curve_name(self, tri_idx: int, edge: int) -> str:
+        """Return the rating-curve name driving a RATING_CURVE edge.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @return: Rating-curve name; C{""} when the slot is clear.
+        @rtype: str
+        @raise RuntimeError: If the C API call fails.
         """
         ...
 
@@ -960,4 +1038,102 @@ class Surface2D:
 
     def reset_edge_conveyance(self) -> None:
         """Reset every edge's conveyance factor to 1.0 (unrestricted)."""
+        ...
+
+    # ====================================================================
+    # Per-cell infiltration
+    # ====================================================================
+
+    @property
+    def infiltration(self) -> "Infiltration2DView":
+        """``surface2d.infiltration`` — the per-cell infiltration sub-view.
+
+        @rtype: Infiltration2DView
+        """
+        ...
+
+
+class Infil2DRow(NamedTuple):
+    """One infiltration specification.
+
+    C{method} is C{None} for "no infiltration model". C{params} carries up
+    to five POSITIONAL values in B{PROJECT UNITS} (the same numbers a user
+    types into a legacy C{[INFILTRATION]} row). Only
+    C{SurfaceInfilDest.LOST} is routed in this release.
+    """
+
+    method: SurfaceInfilMethod | None
+    params: tuple[float, ...] = (0.0, 0.0, 0.0, 0.0, 0.0)
+    dest: SurfaceInfilDest = SurfaceInfilDest.LOST
+
+
+class Infil2DCell(NamedTuple):
+    """The infiltration specification in force at one cell."""
+
+    row: Infil2DRow
+    is_override: bool
+
+
+class Infil2DDefaults(MutableMapping[str, Infil2DRow]):
+    """``surface2d.infiltration.defaults`` — tag → L{Infil2DRow} mapping.
+
+    Mirrors C{[2D_INFILTRATION_DEFAULTS]}. The key C{"*"} is the mesh-wide
+    fallback.
+    """
+
+    def __init__(self, engine_ptr: int) -> None: ...
+    def __len__(self) -> int: ...
+    def __iter__(self) -> Iterator[str]: ...
+    def __getitem__(self, key: str) -> Infil2DRow: ...
+    def __setitem__(self, key: str, value: Infil2DRow | None) -> None: ...
+    def __delitem__(self, key: str) -> None: ...
+
+
+class Infiltration2DView:
+    """``surface2d.infiltration`` — per-cell infiltration on the 2D mesh.
+
+    Row parameters are in B{project units}; every readback channel is SI.
+    Writers raise C{RuntimeError} once the solver has been initialized.
+    """
+
+    def __init__(self, engine_ptr: int) -> None: ...
+
+    @property
+    def infil_step(self) -> float:
+        """Evaluation cadence in seconds; C{<= 0} means "use C{WET_STEP}"."""
+        ...
+
+    @infil_step.setter
+    def infil_step(self, seconds: float) -> None: ...
+
+    @property
+    def defaults(self) -> Infil2DDefaults:
+        """The C{[2D_INFILTRATION_DEFAULTS]} tag → row mapping."""
+        ...
+
+    def cell(self, tri: int) -> Infil2DCell:
+        """Return C{(row, is_override)} for one triangle."""
+        ...
+
+    def set_cell(self, tri: int, row: Infil2DRow | None) -> None:
+        """Set (C{row}) or clear (C{None}) the per-cell override."""
+        ...
+
+    def set_cells(
+        self, tris: Sequence[int], row: Infil2DRow | None
+    ) -> None:
+        """Assign one row to many triangles — all-or-nothing."""
+        ...
+
+    def rate(self) -> npt.NDArray[np.float64]:
+        """Held per-cell infiltration rate (m/s), one entry per triangle."""
+        ...
+
+    def cumulative(self) -> npt.NDArray[np.float64]:
+        """Cumulative infiltrated depth (m), one entry per triangle."""
+        ...
+
+    @property
+    def total_volume(self) -> float:
+        """Cumulative 2D infiltration loss (m³) — the C{infil_out} row."""
         ...

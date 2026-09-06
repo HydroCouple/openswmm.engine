@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file HotStartManager.cpp
  * @brief Hot start file I/O — implementation.
@@ -22,7 +38,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "HotStartManager.hpp"
@@ -140,6 +156,10 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
         if (!write_pod(buf, n.depth))    return false;
         if (!write_pod(buf, n.head))     return false;
         if (!write_pod(buf, n.volume))   return false;
+        // V3 (A2a): water age, -1 = not tracked.
+        if (hs.header.version >= 3u) {
+            if (!write_pod(buf, n.age))  return false;
+        }
     }
 
     // Links
@@ -150,6 +170,10 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
         if (!write_pod(buf, l.flow))     return false;
         if (!write_pod(buf, l.depth))    return false;
         if (!write_pod(buf, l.volume))   return false;
+        // V3 (A2a): water age, -1 = not tracked.
+        if (hs.header.version >= 3u) {
+            if (!write_pod(buf, l.age))  return false;
+        }
     }
 
     // Subcatchments
@@ -241,7 +265,7 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
 
     // Header
     if (!read_pod(is, hs.header.version))    return false;
-    if (hs.header.version != 1u && hs.header.version != 2u) {
+    if (hs.header.version < 1u || hs.header.version > 3u) {
         tl_last_io_error = "Unsupported hot start version " +
                            std::to_string(hs.header.version) + " in '" + path + "'";
         return false;
@@ -261,6 +285,10 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
         if (!read_pod(is, n.depth))  return false;
         if (!read_pod(is, n.head))   return false;
         if (!read_pod(is, n.volume)) return false;
+        // V3 (A2a): water age; pre-V3 files leave the -1 default.
+        if (hs.header.version >= 3u) {
+            if (!read_pod(is, n.age)) return false;
+        }
     }
 
     // Links
@@ -272,6 +300,10 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
         if (!read_pod(is, l.flow))   return false;
         if (!read_pod(is, l.depth))  return false;
         if (!read_pod(is, l.volume)) return false;
+        // V3 (A2a): water age; pre-V3 files leave the -1 default.
+        if (hs.header.version >= 3u) {
+            if (!read_pod(is, l.age)) return false;
+        }
     }
 
     // Subcatchments
@@ -346,14 +378,17 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
                                     const std::string& path) {
     tl_last_io_error.clear();
 
-    // Auto-promote to V2 when ctx exposes solver-internal state via accessors.
+    // Auto-promote to V2 when ctx exposes solver-internal state via
+    // accessors, and to V3 when water age is tracked (A2a — the age field
+    // rides every node/link record; V3 implies the V2 subcatch fields,
+    // written as defaults when no accessors are wired).
     const bool use_v2 = ctx.state_accessors.can_read();
 
     auto* hs = new HotStartFile();
     hs->path = path;
 
     // Header
-    hs->header.version    = use_v2 ? 2u : 1u;
+    hs->header.version    = ctx.options.water_age ? 3u : (use_v2 ? 2u : 1u);
     hs->header.timestamp  = static_cast<int64_t>(std::time(nullptr));
     hs->header.sim_time   = ctx.current_time;
     hs->header.start_date = ctx.options.start_date;
@@ -369,6 +404,9 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
         hs->nodes[ui].depth  = ctx.nodes.depth[ui];
         hs->nodes[ui].head   = ctx.nodes.head[ui];
         hs->nodes[ui].volume = ctx.nodes.volume[ui];
+        if (ctx.options.water_age &&
+            ui < ctx.water_age_state.node_age.size())
+            hs->nodes[ui].age = ctx.water_age_state.node_age[ui];
     }
 
     // Links
@@ -380,6 +418,9 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
         hs->links[ui].flow   = ctx.links.flow[ui];
         hs->links[ui].depth  = ctx.links.depth[ui];
         hs->links[ui].volume = ctx.links.volume[ui];
+        if (ctx.options.water_age &&
+            ui < ctx.water_age_state.link_age.size())
+            hs->links[ui].age = ctx.water_age_state.link_age[ui];
     }
 
     // Subcatchments — V2 includes infil + GW state pulled via accessors
@@ -442,6 +483,9 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
         hs->nodes[ui].depth  = ctx.nodes.depth[ui];
         hs->nodes[ui].head   = ctx.nodes.head[ui];
         hs->nodes[ui].volume = ctx.nodes.volume[ui];
+        if (ctx.options.water_age &&
+            ui < ctx.water_age_state.node_age.size())
+            hs->nodes[ui].age = ctx.water_age_state.node_age[ui];
     }
 
     // Links
@@ -453,6 +497,9 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
         hs->links[ui].flow   = ctx.links.flow[ui];
         hs->links[ui].depth  = ctx.links.depth[ui];
         hs->links[ui].volume = ctx.links.volume[ui];
+        if (ctx.options.water_age &&
+            ui < ctx.water_age_state.link_age.size())
+            hs->links[ui].age = ctx.water_age_state.link_age[ui];
     }
 
     // Subcatchments — V2: include infil + GW state
@@ -533,6 +580,19 @@ int HotStartManager::apply(HotStartFile& hs,
         ctx.nodes.depth[i]  = rec.depth;
         ctx.nodes.head[i]   = rec.head;
         ctx.nodes.volume[i] = rec.volume;
+        // A2a: restore water age. Sizing happens once (guarded resize);
+        // both engines then seed FROM the loaded state instead of
+        // INITIAL_STATE (hotstart_loaded; legacy_seeded suppresses the
+        // mirror's first-step fill).
+        if (rec.age >= 0.0 && ctx.options.water_age) {
+            auto& ws = ctx.water_age_state;
+            if (ws.node_age.size() !=
+                static_cast<std::size_t>(ctx.n_nodes()))
+                ws.resize(ctx.n_nodes(), ctx.n_links(), ctx.n_subcatches());
+            ws.node_age[i]     = rec.age;
+            ws.hotstart_loaded = true;
+            ws.legacy_seeded   = true;
+        }
     }
 
     // Apply link records
@@ -546,6 +606,15 @@ int HotStartManager::apply(HotStartFile& hs,
         ctx.links.flow[i]  = rec.flow;
         ctx.links.depth[i] = rec.depth;
         ctx.links.volume[i] = rec.volume;
+        if (rec.age >= 0.0 && ctx.options.water_age) {
+            auto& ws = ctx.water_age_state;
+            if (ws.link_age.size() !=
+                static_cast<std::size_t>(ctx.n_links()))
+                ws.resize(ctx.n_nodes(), ctx.n_links(), ctx.n_subcatches());
+            ws.link_age[i]     = rec.age;
+            ws.hotstart_loaded = true;
+            ws.legacy_seeded   = true;
+        }
     }
 
     // Apply subcatchment records — and any V2 solver-internal state via

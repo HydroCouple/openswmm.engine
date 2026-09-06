@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file Routing.hpp
  * @brief Top-level routing dispatcher — KW / DW / Steady-state.
@@ -14,7 +30,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ROUTING_HPP
@@ -103,10 +119,18 @@ public:
     bool hasCycle() const { return cycle_detected_; }
 
     /// Set the DWSolver OpenMP thread count (delegates to DWSolver::setNumThreads).
-    void setDWNumThreads(int n) { dw_solver_.setNumThreads(n); }
+    void setDWNumThreads(int n, std::vector<std::string>* warnings = nullptr) {
+        dw_solver_.setNumThreads(n, warnings);
+    }
 
     /// Access the DW solver (for non-conduit node state scatter).
     dynwave::DWSolver& dwSolver() { return dw_solver_; }
+
+    /// Supply the structure solver used to evaluate pump/orifice/weir/outlet
+    /// discharge. DYNWAVE/FV get theirs through the non_conduit_fn callback,
+    /// but KINWAVE/STEADY evaluate structures inline (legacy getLinkInflow),
+    /// so they need the solver itself. Must be set before the first step().
+    void setStructureSolver(hydstruct::StructureSolver* s) { structures_ = s; }
 
     /// Whether the most recent step() converged. DYNWAVE returns the solver's
     /// real final Picard flag; other models always converge (legacy only tracks
@@ -136,6 +160,17 @@ private:
     RouteModel model_ = RouteModel::DYNWAVE;
     XSectGroups groups_;
 
+    /// Non-owning; set by SWMMEngine. Null in standalone Router unit tests,
+    /// where structures then carry no flow.
+    hydstruct::StructureSolver* structures_ = nullptr;
+
+    /// Per-node "already converged this step" flag for storage units under
+    /// STEADY (the KW solver keeps its own).
+    std::vector<char> steady_storage_updated_;
+    /// Per-link end-of-step flow depth under STEADY routing (uniform along
+    /// the conduit); consumed by kinwave::finishRouting's node-depth raises.
+    std::vector<double> steady_y_;
+
     // --- Explicit finite-volume solver (FLOW_ROUTING FV) -------------------
     // The mesh and state are owned here, not by the solver, exactly as
     // SurfaceRouter2D owns MeshData/SurfaceStateData: the solver is swappable
@@ -149,6 +184,12 @@ private:
 
     // Per-step forcing buffers, allocated once at init.
     std::vector<double> fv_lateral_, fv_fixed_head_, fv_struct_flow_, fv_cond_loss_;
+
+    /// Per-link cap on a DUMMY link's pass-through discharge: the control
+    /// setting and FLOW_LIMIT, which the solver cannot see. Negative means
+    /// unlimited; only DUMMY entries are ever read. Refreshed with the
+    /// structures, because a control rule can close the link mid-step.
+    std::vector<double> fv_link_q_cap_;
 
     /// Time integral of each structure's discharge over the routing step
     /// (ft³), and the elapsed time the last segment started at. Under

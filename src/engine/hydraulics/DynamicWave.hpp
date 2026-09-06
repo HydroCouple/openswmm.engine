@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file DynamicWave.hpp
  * @brief Dynamic wave routing solver — batch-oriented St. Venant equations.
@@ -22,7 +38,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_DYNAMIC_WAVE_HPP
@@ -35,6 +51,7 @@
 #include "../data/LinkData.hpp"
 #include <cstdint>
 #include <functional>
+#include <string>
 #include <vector>
 
 namespace openswmm {
@@ -141,7 +158,11 @@ struct DWNodeArrays {
 enum class SurchargeMethod : int {
     EXTRAN = 0,  ///< Classic EXTRAN approach — dQ/dH for surcharged nodes
     SLOT   = 1,  ///< Preissmann slot — fictitious narrow slot above crown
-    DYNAMIC_SLOT = 2   ///< Dynamic slot — slot width varies with flow conditions (experimental) Sharior, S., Hodges, B.R., & Vasconcelos, J.G. (2023). Generalized, Dynamic, and Transient-Storage Form of the Preissmann Slot. Journal of Hydraulic Engineering, 149(11), 04023046.
+    DYNAMIC_SLOT = 2,  ///< Dynamic slot — slot width varies with flow conditions (experimental) Sharior, S., Hodges, B.R., & Vasconcelos, J.G. (2023). Generalized, Dynamic, and Transient-Storage Form of the Preissmann Slot. Journal of Hydraulic Engineering, 149(11), 04023046.
+    TPA    = 3   ///< Two-component pressure approach (experimental, issue #156):
+                 ///< constant-width slot w = g·A_full/a² above the crown plus a
+                 ///< per-conduit sub-atmospheric latch below it. Vasconcelos,
+                 ///< Wright & Roe (2006), J. Hydraul. Eng. 132(6).
 };
 
 /**
@@ -178,12 +199,17 @@ public:
      * @brief Set the number of OpenMP threads for parallel loops.
      *
      * @details Called after init() when the thread count is finalized.
-     *          A threshold is applied: if n_links < 4 * n, threading is
-     *          disabled (matching legacy dynwave.c behaviour).
+     *          Resolution (threadinfo::dwThreads): 0 = auto —
+     *          omp_get_max_threads(), the conduits-per-thread gate and the
+     *          Apple Silicon P-core clamp; N > 0 = honoured exactly, subject
+     *          only to the conduits-per-thread gate, with warnings when N
+     *          exceeds the machine / runtime limits. SWMM_DW_THREADS forces
+     *          the count outright (warned).
      *
-     * @param n  Requested thread count (0 = use omp_get_max_threads()).
+     * @param n         Requested thread count ([OPTIONS] THREADS).
+     * @param warnings  Optional sink for human-readable warnings.
      */
-    void setNumThreads(int n);
+    void setNumThreads(int n, std::vector<std::string>* warnings = nullptr);
 
     /// Callback for computing non-conduit link flows inside the Picard loop.
     /// Parameters: (ctx, dt, picard_step) where step=0 is first iteration.
@@ -221,6 +247,30 @@ public:
     SurchargeMethod surcharge_method = SurchargeMethod::EXTRAN;
     NodeContinuity  node_continuity  = NodeContinuity::EXPLICIT;
     bool   anderson_accel = false;       ///< Enable Anderson acceleration
+
+    /// Unsteady friction (issue #156 Phase 3): 0 = NONE (default, bit-inert),
+    /// 1 = VITKOVSKY. Folded into the momentum denominator (so dqdh_ stays
+    /// consistent with the surcharge Jacobian) with the same dead-band and
+    /// half-momentum clamp as kernels::ufUpdate on the FV side.
+    int    unsteady_friction = 0;
+    double uf_k3 = 0.015;  ///< Brunone-type k3; consumed only when active.
+
+    /// TPA acoustic celerity a (PROJECT length units per second, converted to
+    /// ft/s at init like FV_SLOT_CELERITY). Sets the constant slot width
+    /// w_tpa = g·A_full/a² per conduit (TPA plan §B1). Issue #156.
+    double tpa_celerity = 100.0;
+
+    /// Cross-link ∂V/∂x stencil for UF (issue #156). A full link has equal
+    /// end areas, so the within-link |v2−v1| estimator is structurally ZERO
+    /// in exactly the pressurized cases UF exists for (measured: pure added
+    /// inertia, slight ANTI-damping). The gradient therefore comes from the
+    /// neighboring conduits' previous-iterate velocities across simple
+    /// degree-2 conduit junctions (links.flow is double-buffered within a
+    /// Picard iteration, so neighbor reads are deterministic at any thread
+    /// count). Built once in init() when unsteady_friction != 0; -1 = no
+    /// simple neighbor on that side (falls back one-sided / within-link).
+    std::vector<int>    uf_nb_up_, uf_nb_dn_;
+    std::vector<int8_t> uf_sg_up_, uf_sg_dn_;   ///< +1 same sense, -1 opposed
 
     /// Evaporation rate (ft/s) — set by Router::step() each timestep so that
     /// solveMomentumBatch can recompute dq6 per Picard iteration (Gap #14).
@@ -316,6 +366,8 @@ private:
     std::vector<double>  tile_loss_outlet_;
     std::vector<double>  tile_loss_avg_;     ///< ConduitData.loss_avg
     std::vector<double>  tile_roughness_;    ///< ConduitData.roughness (force-main detection)
+    std::vector<double>  tile_fm_sbot_;      ///< Force-main sBot rough factor (legacy link.c:1127-1131, incl. lengthFactor)
+    std::vector<double>  tile_fm_rbot_;      ///< Force-main C / roughness height (xsect rBot) for the D-W friction factor
     std::vector<uint8_t> tile_has_flap_gate_;
     std::vector<int8_t>  tile_direction_;
 
@@ -615,8 +667,6 @@ private:
 
     // Preissmann slot helpers (matching legacy dwflow.c)
     double getSlotWidth(double y, double y_full, double w_max, XsectShape shape) const;
-    double getSlotArea(double y, double y_full, double a_full, double slot_width) const;
-    double getSlotHydRad(double y, double y_full, double r_full) const;
     double getCrownCutoff() const;
 
     // Dynamic Preissmann Slot (DPS) state and methods
@@ -626,6 +676,29 @@ private:
 
     /// Apply DPS geometry overrides for surcharged conduits (replaces static slot in STEP E).
     void applyDPSGeometry(SimulationContext& ctx);
+
+    // -- TPA (SurchargeMethod::TPA, issue #156 Phase 5) ----------------------
+    /// Constant slot width g·A_full/a² per conduit (ft), from tpa_celerity.
+    std::vector<double> tpa_w_;
+    /// Sub-atmospheric latch per conduit: while set, the conduit keeps
+    /// full-pipe geometry (signed slot line) even when node heads drop below
+    /// the crown — the latch's only job is preventing the free-surface
+    /// tables from reinterpreting a sealed head as a depth (TPA plan §B2).
+    std::vector<uint8_t> tpa_latch_;
+    /// Latch transitions this routing step (for the AA skip walk, §B3).
+    std::vector<uint8_t> tpa_latch_changed_;
+
+    /// Once per routing step, BEFORE the Picard loop (the operator stays
+    /// fixed within the iteration): set on isFull; clear on atmosphere
+    /// contact at an UNSUBMERGED vented end (P4's submergence lesson) or on
+    /// column separation (yMid < y_full − 30 ft).
+    void updateTpaLatch(SimulationContext& ctx);
+
+    /// DPS-style geometry override for TPA conduits (called where
+    /// applyDPSGeometry is): engaged when latched or above the crown —
+    /// area on the SIGNED slot line, width w_tpa, hyd radius r_full, slot
+    /// surface areas at both ends.
+    void applyTpaGeometry(SimulationContext& ctx);
 
     /// Update DPS temporal state after Picard convergence (P decay, t_s tracking).
     void updateDPSState(SimulationContext& ctx, double dt);

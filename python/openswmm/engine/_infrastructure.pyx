@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Infrastructure (Pythonic v1 surface)
 ====================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 ``solver.infrastructure`` exposes the four hydraulic-infrastructure
 families: transects, streets, inlets, and LID controls/usage. The C
@@ -352,6 +368,18 @@ class Streets:
                 return False
         return 0 <= int(key) < len(self)
 
+    def rename(self, key, str new_id) -> None:
+        """Rename a street cross-section, updating stored references.
+
+        @param key: Integer index or string id.
+        @param new_id: New identifier.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int idx = key if isinstance(key, int) else self.get_index(key)
+        cdef bytes b = new_id.encode('utf-8')
+        _check(swmm_street_rename(h, idx, b))
+        self._solver._bump_generation()
+
 
 # ---- Inlets ---------------------------------------------------------
 
@@ -458,6 +486,18 @@ class Inlets:
                 return False
         return 0 <= int(key) < len(self)
 
+    def rename(self, key, str new_id) -> None:
+        """Rename an inlet design, updating stored references.
+
+        @param key: Integer index or string id.
+        @param new_id: New identifier.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int idx = key if isinstance(key, int) else self.get_index(key)
+        cdef bytes b = new_id.encode('utf-8')
+        _check(swmm_inlet_rename(h, idx, b))
+        self._solver._bump_generation()
+
 
 # ---- LID controls + usage ------------------------------------------
 
@@ -525,6 +565,18 @@ class LIDs:
             except KeyError:
                 return False
         return 0 <= int(key) < len(self)
+
+    def rename(self, key, str new_id) -> None:
+        """Rename an LID control, updating stored ``[LID_USAGE]`` references.
+
+        @param key: Integer index or string id.
+        @param new_id: New identifier.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int idx = key if isinstance(key, int) else self.get_index(key)
+        cdef bytes b = new_id.encode('utf-8')
+        _check(swmm_lid_rename(h, idx, b))
+        self._solver._bump_generation()
 
     def set_surface(self, int idx, *,
                     double storage, double roughness, double slope) -> None:

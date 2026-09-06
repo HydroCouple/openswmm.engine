@@ -292,11 +292,16 @@ void computeCellContinuity(const MeshData& mesh, SurfaceStateData& state,
         }
 
         // Source volume rate (m³/s): same source terms assembleRHS uses. The
-        // evaporation sink is evaluated at the accepted end-of-step depth
-        // (first-order, consistent with the diagnostic character above).
+        // evaporation and infiltration sinks are evaluated at the accepted
+        // end-of-step depth (first-order, consistent with the diagnostic
+        // character above). Omitting the infiltration term here would leave
+        // cell_continuity_err wrong on every infiltrating cell (plan §5.5.2,
+        // site 4) — a silently wrong diagnostic, not a crash.
         double source = (state.rainfall[i] + state.coupling_flux[i]
                          - evapSink(state.evap_rate[i], state.depth[i],
-                                    opts.dry_depth)) * area;
+                                    opts.dry_depth)
+                         - infilSink(state.infil_rate[i], state.depth[i],
+                                     opts.dry_depth)) * area;
 
         // Storage change rate (m³/s) — volume is the conserved state.
         double storage_rate =

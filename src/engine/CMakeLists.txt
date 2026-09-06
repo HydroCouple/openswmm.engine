@@ -40,6 +40,7 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_SOURCES
     output/*.cpp
     plugins/*.cpp
     math/*.cpp
+    transport/*.cpp
 )
 list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "input/geopackage/.*")
 
@@ -56,6 +57,7 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_HEADERS
     output/*.hpp
     plugins/*.hpp
     math/*.hpp
+    transport/*.hpp
 )
 list(FILTER OPENSWMM_ENGINE_HEADERS EXCLUDE REGEX "input/geopackage/.*")
 
@@ -433,6 +435,7 @@ if(OPENSWMM_BUILD_2D)
     file(GLOB_RECURSE OPENSWMM_2D_SOURCES
         RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
         2d/data/*.cpp
+        2d/infil/*.cpp
         2d/mesh/*.cpp
         2d/solver/SurfaceFluxCalculator.cpp
         2d/coupling/*.cpp

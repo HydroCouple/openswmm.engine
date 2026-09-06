@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Rain gage access (Pythonic v1 surface)
 ======================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 The :class:`Gages` collection and :class:`Gage` wrapper expose rain
 gages with the same shape as :mod:`openswmm.engine._nodes`.
@@ -28,6 +44,7 @@ import numpy as np
 cimport numpy as np
 
 from ._common cimport *
+from ._dates import oadate_to_datetime
 from ._enums import GageDataSource, GageRainType
 from ._exceptions import ElementNotFoundError, StaleObjectError
 
@@ -198,6 +215,48 @@ cdef class Gage:
         cdef bytes b = value.encode('utf-8')
         _check(swmm_gage_set_station_id(_h(self._solver), self._index, b))
 
+    @property
+    def file_column(self) -> str:
+        """Data column name for a multi-column rain file (empty when unset).
+
+        This is the ``COLUMN`` of the ``FILE "path:COLUMN"`` form (CSV, TSV,
+        or PCSWMM TSF). Assigning a non-empty name switches the gage's file
+        format to USER_CSV; an empty name on a USER_CSV gage selects the
+        file's first data column.
+        """
+        _check_fresh(self)
+        cdef char buf[256]
+        _check(swmm_gage_get_file_column(_h(self._solver), self._index, buf, 256))
+        return buf.decode('utf-8')
+
+    @file_column.setter
+    def file_column(self, str value) -> None:
+        _check_fresh(self)
+        cdef bytes b = value.encode('utf-8')
+        _check(swmm_gage_set_file_column(_h(self._solver), self._index, b))
+
+    @property
+    def file_format(self) -> int:
+        """Rain file format code (meaningful for FILE gages).
+
+        ``5`` = STAN_PRCP standard SWMM rain file, ``6`` = USER_CSV
+        multi-column CSV/TSV/TSF, ``-1`` = unknown/not a file gage.
+
+        Assigning is the way back out of USER_CSV (``file_column`` and
+        ``set_file`` both preserve it). Setting USER_CSV clears
+        ``station_id``; setting a station-based format clears
+        ``file_column``.
+        """
+        _check_fresh(self)
+        cdef int v = -1
+        _check(swmm_gage_get_file_format(_h(self._solver), self._index, &v))
+        return v
+
+    @file_format.setter
+    def file_format(self, int value) -> None:
+        _check_fresh(self)
+        _check(swmm_gage_set_file_format(_h(self._solver), self._index, value))
+
     def set_rain_interval(self, seconds) -> None:
         """Set the rain-interval duration. Accepts a number of seconds
         or a :class:`datetime.timedelta`."""
@@ -216,13 +275,63 @@ cdef class Gage:
         cdef bytes b = ts_id.encode('utf-8')
         _check(swmm_gage_set_timeseries(_h(self._solver), self._index, b))
 
-    def set_file(self, path: str, station_id: str) -> None:
-        """Configure the gage to read from an external file."""
+    def set_file(self, path: str, station_id: str, column: str = None) -> None:
+        """Configure the gage to read from an external file.
+
+        ``column`` selects a data column of a multi-column file (CSV/TSV/TSF,
+        the ``FILE "path:col"`` form) and switches the gage to the USER_CSV
+        format; omit it for a standard SWMM rain file.
+        """
         _check_fresh(self)
         cdef bytes b_path = path.encode('utf-8')
         cdef bytes b_id = station_id.encode('utf-8')
+        cdef bytes b_col
         _check(swmm_gage_set_filename(
             _h(self._solver), self._index, b_path, b_id))
+        if column is not None:
+            b_col = column.encode('utf-8')
+            _check(swmm_gage_set_file_column(
+                _h(self._solver), self._index, b_col))
+
+    # ---- Resolved rainfall series ----------------------------------
+
+    @property
+    def rainfall_series(self):
+        """The rainfall the engine will actually apply, as a structured array.
+
+        Columns are ``time: datetime64[s]`` and ``value: float64``, the same
+        shape as :attr:`openswmm.engine.TimeSeries.points`. Works for both
+        data sources — a TIMESERIES gage reports its table, a FILE gage the
+        series loaded from disk — with the rain-type transform, the rain-file
+        units factor and the scale factor already applied.
+
+        Each value is the intensity (rain units per hour) applying from its
+        own stamp until the recording interval elapses or the next entry
+        begins, whichever comes first; rainfall is zero in between. Pair with
+        :attr:`rain_interval` to reconstruct that.
+
+        A FILE gage's series is windowed to the ``[OPTIONS]`` simulation dates
+        (± one day) and reflects the file as read at open; call
+        :meth:`Gages.reload_rain_files` first if the path, column, station,
+        units or dates have changed. An empty array means that gage
+        contributes no rainfall to the run.
+        """
+        _check_fresh(self)
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = 0
+        _check(swmm_gage_get_rainfall_series_count(h, self._index, &n))
+        cdef np.ndarray[double, ndim=1] times = np.empty(n, dtype=np.float64)
+        cdef np.ndarray[double, ndim=1] values = np.empty(n, dtype=np.float64)
+        if n > 0:
+            _check(swmm_gage_get_rainfall_series(
+                h, self._index, <double*>times.data, <double*>values.data, n))
+        dtype = np.dtype([("time", "datetime64[s]"), ("value", "float64")])
+        out = np.empty(n, dtype=dtype)
+        for i in range(n):
+            dt = oadate_to_datetime(float(times[i])).replace(microsecond=0)
+            out["time"][i] = np.datetime64(dt)
+        out["value"][:] = values
+        return out
 
     # ---- Runtime state ---------------------------------------------
 
@@ -341,6 +450,20 @@ cdef class Gages:
     def ids(self):
         return np.asarray(
             [self.get_id(i) for i in range(len(self))], dtype=object)
+
+    def reload_rain_files(self) -> None:
+        """Re-read every FILE-source gage's rain data from disk.
+
+        Rain files are loaded once, during ``open()``; nothing re-runs that
+        afterwards, so editing a gage's path, column, station id or rain
+        units — or the simulation dates the data is windowed to — has no
+        effect until this is called. Rebuilds the resolved series and the
+        rainfall-file summary for every FILE gage.
+
+        Requires an editable model (BUILDING or OPENED); not valid mid-run.
+        """
+        _check(swmm_gage_reload_rain_files(_h(self._solver)))
+        self._solver._bump_generation()
 
     def __repr__(self) -> str:
         try:

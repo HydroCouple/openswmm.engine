@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file DefaultOutputPlugin.cpp
  * @brief DefaultOutputPlugin — SWMM 5.x binary .out file writer.
@@ -17,7 +33,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "DefaultOutputPlugin.hpp"
@@ -49,6 +65,13 @@ int DefaultOutputPlugin::validate(const SimulationContext& /*ctx*/) {
     return 0;
 }
 
+namespace {
+/// Output-stream buffer size. 1 MB: large enough that a 500k-element
+/// header is a handful of writes, small enough to be irrelevant next to
+/// the model itself.
+constexpr std::size_t kOutputBufferBytes = 1u << 20;
+}  // namespace
+
 int DefaultOutputPlugin::prepare(const SimulationContext& ctx) {
     // Open binary output file
     out_file_ = std::fopen(out_path_.c_str(), "w+b");
@@ -56,6 +79,17 @@ int DefaultOutputPlugin::prepare(const SimulationContext& ctx) {
         last_error_ = "Cannot open output file: " + out_path_;
         return -1;
     }
+
+    // Every scalar in the header and in every report period is its own fwrite —
+    // writeInt4/writeReal4/writeReal8 below — so a 500k-element model issues
+    // millions of calls, each taking the FILE lock and testing the buffer. The
+    // default buffer is a few kilobytes; a 1 MB one cuts the flush count by
+    // orders of magnitude for the cost of one allocation. Must be set before
+    // any I/O on the stream, which is why it sits immediately after fopen.
+    //
+    // Failure is not an error: setvbuf declining just leaves the default
+    // buffer, and the file is still perfectly writable.
+    std::setvbuf(out_file_, nullptr, _IOFBF, kOutputBufferBytes);
 
     // Per-timestep results arrive pre-converted to display units (engine
     // boundary). Only the static-object header below is written from the
@@ -175,6 +209,12 @@ int DefaultOutputPlugin::update(const SimulationSnapshot& snapshot) {
 
     std::fwrite(sys, sizeof(float), MAX_SYS_RESULTS, out_file_);
 
+    // Push the completed period to disk so a live reader (OutputReader::
+    // openLive / swmm_output_open_live) can count it from the file size.
+    // Runs on the IO thread; one write(2) per report step. The 1 MB stdio
+    // buffer still batches the per-element fwrites inside the period.
+    std::fflush(out_file_);
+
     ++n_periods_;
     ++step_count_;
     return 0;
@@ -219,7 +259,13 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
     for (const auto& f : link_rpt_flag_) if (f) ++n_links_;
     // IGNORE_QUALITY: drop all pollutant columns from the binary .out file so
     // OutputReader reads zero pollutants (legacy output.c:150 NumPolluts = 0).
-    n_polluts_ = ctx.options.ignore_quality ? 0 : ctx.n_pollutants();
+    // A2b: the pollutant column block reports pollutants AND, when
+    // [OPTIONS] WATER_AGE is on, a trailing __WATER_AGE__ pseudo-column.
+    // ctx.reported_species_names is the single naming/count truth shared
+    // with the snapshot builder (which strides its quality vectors by the
+    // same number) — striding by n_pollutants() here would truncate the
+    // block and misalign every consumer.
+    n_polluts_ = ctx.options.ignore_quality ? 0 : ctx.n_reported_species();
 
     n_subcatch_vars_ = 8 + n_polluts_;  // rainfall..soilmoist + pollutants
     n_node_vars_ = 6 + n_polluts_;      // depth..overflow + pollutants
@@ -252,11 +298,31 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
             writeID(ctx.link_names.name_of(j).c_str());
     }
     for (int p = 0; p < n_polluts_; ++p)
-        writeID(ctx.pollutant_names.name_of(p).c_str());
+        writeID(ctx.reported_species_names[static_cast<std::size_t>(p)]
+                    .c_str());
 
     // Pollutant concentration unit codes
     for (int p = 0; p < n_polluts_; ++p) {
-        writeInt4(static_cast<int>(ctx.pollutants.units[static_cast<std::size_t>(p)]));
+        // A RESERVED pseudo-column has no MassUnits member: water age is
+        // HOURS, temperature is degC, and the .out unit field is a 3-value
+        // concentration enum with no slot for either. Those columns write
+        // MG_PER_L's code and readers key on the NAME
+        // (swmm_output_get_pollut_id), not the unit code — a format decision
+        // rather than widening the enum, which would break every existing
+        // reader.
+        //
+        // Keyed on the INDEX, not on the name. reported_species_names is
+        // pollutants first, then the reserved rows, so anything at or past
+        // n_pollutants() has no entry in ctx.pollutants.units. Testing for
+        // "__WATER_AGE__" by name got this right only while age was the sole
+        // reserved species: adding __TEMPERATURE__ sent the unit lookup off
+        // the end of an EMPTY units vector on a heat-only deck (no
+        // [POLLUTANTS]) and segfaulted the writer.
+        const bool is_reserved = (p >= ctx.n_pollutants());
+        writeInt4(is_reserved
+                      ? 0
+                      : static_cast<int>(
+                            ctx.pollutants.units[static_cast<std::size_t>(p)]));
     }
 
     // Input data start

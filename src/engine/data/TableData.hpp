@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file TableData.hpp
  * @brief Time series and rating curve data with bidirectional cursor.
@@ -26,13 +42,14 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TABLE_DATA_HPP
 #define OPENSWMM_ENGINE_TABLE_DATA_HPP
 
 #include "../core/FilePathPair.hpp"
+#include "../core/StringCase.hpp"
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -130,6 +147,20 @@ struct Table {
     std::vector<double> x;       ///< Independent variable (time, depth, etc.)
     std::vector<double> y;       ///< Dependent variable (flow, volume, etc.)
     TableCursor         cursor;  ///< Bidirectional lookup cursor
+
+    // ---- Time-only (relative) timeseries rows ----
+    // Legacy SWMM seeds every timeseries' lastDate with StartDate+StartTime
+    // (input.c:170), so rows authored WITHOUT a date are elapsed times
+    // anchored at the simulation start, until an explicit date re-anchors
+    // the series. The parser counts those leading date-less rows here and
+    // resolve_cross_references() adds options.start_date to exactly those
+    // rows (recording the applied offset in rel_anchor so re-resolution is
+    // idempotent and a later START_DATE change re-anchors by the delta).
+    // InpWriter subtracts rel_anchor to emit the rows back in their
+    // authored time-only form; rows at index >= n_relative are absolute
+    // date/times and are written with explicit dates.
+    int    n_relative = 0;  ///< Leading rows authored as elapsed time-of-start
+    double rel_anchor = 0.0; ///< start_date offset currently baked into them
 
     // ---- File-backed time series support ----
     bool               is_file_based = false; ///< True if data is read from external file
@@ -658,6 +689,26 @@ inline double table_getMaxY(const Table& tbl) noexcept {
 struct TableData {
     std::vector<Table> tables;  ///< All tables in index order
 
+    /**
+     * @brief Case-insensitive name → table indices, ascending.
+     *
+     * @details Replaces the linear `ieq` scan that find_timeseries() /
+     *          find_curve() used to run over every table. That scan was the
+     *          load path's worst complexity defect: `[TIMESERIES]` and
+     *          `[CURVES]` rows repeat their object's name on every row in
+     *          standard SWMM files, so parsing a model with many long series
+     *          cost O(total_rows x n_tables) string compares before anything
+     *          else happened.
+     *
+     *          A name maps to a *list* because legacy keeps TSERIES and CURVE
+     *          in separate hash tables, so one name may legitimately denote
+     *          both a timeseries and a curve. Lists are in ascending index
+     *          order (add() only appends), which is what makes a hash hit
+     *          return the same winner the old first-match scan did — the
+     *          duplicate-name parity the name-case tests pin.
+     */
+    std::unordered_map<std::string, std::vector<int>, CiHash, CiEqual> by_name;
+
     std::size_t count() const noexcept { return tables.size(); }
 
     Table&       operator[](int idx)       { return tables[static_cast<std::size_t>(idx)]; }
@@ -668,8 +719,42 @@ struct TableData {
      * @returns Index of the new table.
      */
     int add(const std::string& id, TableType type) {
-        tables.push_back({id, type, {}, {}, {}});
-        return static_cast<int>(tables.size()) - 1;
+        Table t;
+        t.id   = id;
+        t.type = type;
+        tables.push_back(std::move(t));
+        const int idx = static_cast<int>(tables.size()) - 1;
+        by_name[id].push_back(idx);
+        return idx;
+    }
+
+    /**
+     * @brief Rebuilds by_name from `tables`.
+     * @details Required after any structural change that is not an append —
+     *          in practice only ObjectDeleter's erase-and-renumber, which is
+     *          already O(n). Anything that mutates `tables` directly without
+     *          calling this leaves lookups stale.
+     */
+    void rebuild_index() {
+        by_name.clear();
+        by_name.reserve(tables.size());
+        for (std::size_t i = 0; i < tables.size(); ++i)
+            by_name[tables[i].id].push_back(static_cast<int>(i));
+    }
+
+    /**
+     * @brief Lowest-indexed table with this name and kind; -1 if none.
+     * @param want_timeseries true for TIMESERIES, false for any CURVE_*.
+     */
+    int find_by_kind(std::string_view name, bool want_timeseries) const noexcept {
+        const auto it = by_name.find(name);
+        if (it == by_name.end()) return -1;
+        for (const int i : it->second) {
+            const bool is_ts =
+                tables[static_cast<std::size_t>(i)].type == TableType::TIMESERIES;
+            if (is_ts == want_timeseries) return i;
+        }
+        return -1;
     }
 
     /**

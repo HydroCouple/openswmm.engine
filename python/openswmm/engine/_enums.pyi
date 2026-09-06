@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Enumerations
 ============
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 Type stubs for L{openswmm.engine._enums}.
 
@@ -473,6 +489,17 @@ class AquiferParam(IntEnum):
     UPPER_MOISTURE = 11
 
 
+class GwfType(IntEnum):
+    """Which of a subcatchment's two [GWF] custom groundwater flow expressions.
+
+    @cvar LATERAL: Added to the standard A1/A2/A3 lateral groundwater flow.
+    @cvar DEEP: Replaces the standard deep-percolation term.
+    """
+
+    LATERAL = 0
+    DEEP = 1
+
+
 # =============================================================================
 # Output variables
 # =============================================================================
@@ -742,6 +769,25 @@ class SurfaceBoundaryType(IntEnum):
     RATING_CURVE = 4
 
 
+class SurfaceInfilMethod(IntEnum):
+    """Per-cell 2D infiltration method. Mirrors ``SWMM_INFIL2D_*``."""
+
+    HORTON = 0
+    MOD_HORTON = 1
+    GREEN_AMPT = 2
+    MOD_GREEN_AMPT = 3
+    CURVE_NUMBER = 4
+    CONSTANT = 5
+
+
+class SurfaceInfilDest(IntEnum):
+    """Destination of 2D infiltrated water. Mirrors ``SWMM_INFIL2D_DEST_*``."""
+
+    LOST = 0
+    SUBCATCH_AQUIFER = 1
+    AQUIFER_2D = 2
+
+
 class RefType(IntEnum):
     """Object kind holding a reference (editing API). Mirrors ``SWMM_RefType``."""
 
@@ -793,3 +839,96 @@ class UserFlagType(IntEnum):
     INTEGER = 1
     REAL = 2
     STRING = 3
+
+
+class HeatFluxModule(IntEnum):
+    """Independently toggleable heat-flux modules. Mirrors ``SWMM_HeatFluxModule``."""
+
+    SURFACE_EXCHANGE = 0
+    RADIATIVE_EXCHANGE = 1
+    LAYER_CONDUCTION = 2
+
+
+class HeatShortwaveMode(IntEnum):
+    """Source of incoming shortwave radiation. Mirrors ``SWMM_HeatShortwaveMode``."""
+
+    CONSTANT = 0
+    TIMESERIES = 1
+    COMPUTED = 2
+
+
+class HeatRadiativeParam(IntEnum):
+    """``[RADIATIVE_FLUXES]`` scalar parameters. Mirrors ``SWMM_HeatRadiativeParam``."""
+
+    SHORTWAVE = 0
+    ALBEDO = 1
+    SHADE_FACTOR = 2
+    SKY_VIEW = 3
+    EMISS_WATER = 4
+    EMISS_LANDCOVER = 5
+    ATM_EMISS_COEFF = 6
+    LW_REFLECTION = 7
+
+
+class HeatSolarParam(IntEnum):
+    """``[SOLAR_RADIATION]`` parameters. Mirrors ``SWMM_HeatSolarParam``."""
+
+    LATITUDE = 0
+    LONGITUDE = 1
+    TIMEZONE = 2
+    ELEVATION = 3
+    TURBIDITY_380 = 4
+    TURBIDITY_500 = 5
+    PRECIP_WATER = 6
+    OZONE = 7
+    GROUND_ALBEDO = 8
+
+
+class HeatCloudParam(IntEnum):
+    """``[CLOUD_COVER]`` parameters. Mirrors ``SWMM_HeatCloudParam``."""
+
+    FRACTION = 0
+    SW_ATTEN_K = 1
+    SW_ATTEN_N = 2
+    LW_CLOUD_K = 3
+
+
+class HeatSourceKind(IntEnum):
+    """``[HEAT_SOURCES]`` water sources. Mirrors ``SWMM_HeatSourceKind``."""
+
+    RAINFALL = 0
+    DWF = 1
+    GW = 2
+    RDII = 3
+    EXTERNAL_INFLOW = 4
+    IFACE = 5
+    INITIAL_STATE = 6
+
+
+class WaterAgeSource(IntEnum):
+    """``[WATER_AGE_SOURCES]`` pathways. Mirrors ``SWMM_WaterAgeSource`` (without ``COUNT``)."""
+
+    RAINFALL = 0
+    DWF = 1
+    GW = 2
+    RDII = 3
+    EXTERNAL_INFLOW = 4
+    IFACE = 5
+    INITIAL_STATE = 6
+
+
+class ReactionScope(IntEnum):
+    """Reaction-expression validation scope. Mirrors the ``SWMM_RXN_SCOPE_*`` macros."""
+
+    TERM = 0
+    PIPE = 1
+    TANK = 2
+
+
+class ReactionExprForm(IntEnum):
+    """Form of a species' reaction expression. Mirrors the ``SWMM_RXN_FORM_*`` macros."""
+
+    NONE = 0
+    RATE = 1
+    EQUIL = 2
+    FORMULA = 3

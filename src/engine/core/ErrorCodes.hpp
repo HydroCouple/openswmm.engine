@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file ErrorCodes.hpp
  * @brief Legacy-compatible error and warning codes with description lookup.
@@ -18,7 +34,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_ERROR_CODES_HPP
@@ -249,6 +265,8 @@ enum WarnCode : int {
     WARN_2D_OPTION_RETIRED      = 104, ///< [2D_OPTIONS] %s retired with CVODE/ARKODE and was ignored
     WARN_FV_OPTION_INERT        = 105, ///< %s has no effect under FLOW_ROUTING FV
     WARN_DW_OPTION_UNDER_FV     = 106, ///< %s is a dynamic wave option and does not apply under FLOW_ROUTING FV
+    WARN_RAIN_CSV_ROWS_SKIPPED  = 107, ///< unreadable row(s) skipped in rainfall CSV for Rain Gage %s
+    WARN_FV_SLOT_CAP            = 108, ///< slot width cap (5% of top width) overrides FV_SLOT_CELERITY for %s
 };
 
 // ============================================================================

@@ -777,6 +777,13 @@ int project_readOption(char* s1, char* s2)
           SurchargeMethod = m;
           break;
 
+      // --- quality carried by reverse flow at outfalls (LAST or ZERO)
+      case OUTFALL_BACKFLOW_QUALITY:
+          m = findmatch(s2, BackflowQualWords);
+          if (m < 0) return error_setInpError(ERR_KEYWORD, s2);
+          ZeroOutfallBackflowQual = (m == BACKFLOW_ZERO);
+          break;
+
       case TEMPDIR: // Temporary Directory
         sstrncpy(TempDir, s2, MAXFNAME);
         break;
@@ -870,6 +877,7 @@ void setDefaults()
    InfilModel      = HORTON;           // Horton infiltration method
    RouteModel      = DW;               // Dynamic wave flow routing method
    SurchargeMethod = EXTRAN;           // Use EXTRAN method for surcharging
+   ZeroOutfallBackflowQual = FALSE;    // Outfall backflow keeps last quality
    CrownCutoff     = 0.96;             // Fractional pipe crown cutoff 
    AllowPonding    = FALSE;            // No ponding at nodes
    InertDamping    = PARTIAL_DAMPING;  // Partial inertial damping

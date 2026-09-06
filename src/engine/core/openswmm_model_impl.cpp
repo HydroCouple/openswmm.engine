@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file openswmm_model_impl.cpp
  * @brief C API implementation — model building, options, user flags, CRS.
@@ -7,8 +23,12 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
+
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "openswmm_api_common.hpp"
 #include "InpWriter.hpp"
@@ -93,6 +113,67 @@ std::string upper_key(const char* key) {
 }
 
 std::string upper_copy(const std::string& v) { return upper_key(v.c_str()); }
+
+// ── Strict numeric parses for the options dispatch (H1) ────────────────
+// The exception guard in swmm_options_set catches what THROWS — but two
+// parse families never do: input::parse_time_seconds fabricates 0.0 from
+// junk (and "1e999999" becomes 3600 s through its H[:M] fallthrough), and
+// std::stoi/stol accept a numeric PREFIX ("1e999999" parses as 1). An API
+// caller must get SWMM_ERR_BADPARAM, never a silent guess. Deck parsing
+// (OptionsHandler) keeps the lenient forms deliberately — file semantics
+// are parity-bound; only the C API is strict.
+double stod_strict(const std::string& v) {
+    std::size_t pos = 0;
+    const double d = std::stod(v, &pos);              // throws on junk/overflow
+    while (pos < v.size() &&
+           isspace(static_cast<unsigned char>(v[pos]))) ++pos;
+    if (pos != v.size()) throw std::invalid_argument("trailing characters");
+    return d;
+}
+int stoi_strict(const std::string& v) {
+    std::size_t pos = 0;
+    const int i = std::stoi(v, &pos);
+    while (pos < v.size() &&
+           isspace(static_cast<unsigned char>(v[pos]))) ++pos;
+    if (pos != v.size()) throw std::invalid_argument("trailing characters");
+    return i;
+}
+long stol_strict(const std::string& v) {
+    std::size_t pos = 0;
+    const long l = std::stol(v, &pos);
+    while (pos < v.size() &&
+           isspace(static_cast<unsigned char>(v[pos]))) ++pos;
+    if (pos != v.size()) throw std::invalid_argument("trailing characters");
+    return l;
+}
+// Exactly the forms input::parse_time_seconds documents — a plain number
+// of seconds, or H:M[:S] with digit-only H and M — validated to full
+// consumption and computed with the SAME expression, so a well-formed
+// value is bit-identical to the deck parser's result.
+double time_seconds_strict(const std::string& v) {
+    try { return stod_strict(v); } catch (const std::exception&) {}
+    const auto c1 = v.find(':');
+    if (c1 == std::string::npos)
+        throw std::invalid_argument("neither seconds nor H:M[:S]");
+    auto uint_strict = [](const std::string& f) -> unsigned long {
+        if (f.empty()) throw std::invalid_argument("empty time field");
+        for (const char ch : f)
+            if (!isdigit(static_cast<unsigned char>(ch)))
+                throw std::invalid_argument("non-digit time field");
+        return std::stoul(f);
+    };
+    const unsigned long h = uint_strict(v.substr(0, c1));
+    const auto c2 = v.find(':', c1 + 1);
+    unsigned long m = 0;
+    double s = 0.0;
+    if (c2 == std::string::npos) {
+        m = uint_strict(v.substr(c1 + 1));
+    } else {
+        m = uint_strict(v.substr(c1 + 1, c2 - c1 - 1));
+        s = stod_strict(v.substr(c2 + 1));
+    }
+    return h * 3600.0 + m * 60.0 + s;
+}
 
 } // anonymous
 
@@ -182,10 +263,38 @@ SWMM_ENGINE_API int swmm_finalize_model(SWMM_Engine engine) {
 // Model serialisation
 // ============================================================================
 
+namespace {
+
+// The writer's `warnings` sink is OPTIONAL, and until 2026-08-26 every
+// production caller passed nullptr — so the "embedded [REACTION_*] sections
+// are lost from this save" notice (InpWriter.cpp:2580-2586) was real code
+// that NEVER FIRED. Opening a deck with embedded reaction sections, editing
+// anything and saving destroyed the reaction system silently, from the GUI
+// included. The test that certified the behaviour called the writer directly
+// WITH a sink, so it could not see this.
+//
+// Every write path now collects and forwards into `ctx.warnings` — the same
+// vector `swmm_get_warning_count`/`swmm_get_warning_at` read
+// (`openswmm_engine_impl.cpp:242-252`), which the GUI already consumes. The
+// save still SUCCEEDS: warn-not-refuse is the writer's existing intent and
+// the defect was the silence, not the policy. Whether a save that loses model
+// data should refuse outright is a real question, deliberately left to IO3 —
+// where per-component saveData() removes the loss and makes the question moot.
+void forwardWriteWarnings(openswmm::SimulationContext& ctx,
+                          std::vector<std::string>&    sink) {
+    for (auto& w : sink) ctx.warnings.push_back(std::move(w));
+}
+
+}  // namespace
+
 SWMM_ENGINE_API int swmm_model_write(SWMM_Engine engine, const char* new_inp_path) {
     CHECK_HANDLE(engine);
     if (!new_inp_path) return SWMM_ERR_BADPARAM;
-    return openswmm::inp_writer::writeInpFile(to_engine(engine)->context(), new_inp_path);
+    auto& ctx = to_engine(engine)->context();
+    std::vector<std::string> warns;
+    const int rc = openswmm::inp_writer::writeInpFile(ctx, new_inp_path, &warns);
+    forwardWriteWarnings(ctx, warns);
+    return rc;
 }
 
 SWMM_ENGINE_API int swmm_model_write_with_plugin(SWMM_Engine engine,
@@ -195,9 +304,14 @@ SWMM_ENGINE_API int swmm_model_write_with_plugin(SWMM_Engine engine,
     if (!new_path) return SWMM_ERR_BADPARAM;
 
     // Empty / NULL plugin id → built-in .inp writer.
+    // This is the path the GUI takes; see forwardWriteWarnings above for why
+    // the sink is no longer nullptr.
     if (!output_plugin_id || output_plugin_id[0] == '\0') {
-        return openswmm::inp_writer::writeInpFile(
-            to_engine(engine)->context(), new_path);
+        auto& ctx = to_engine(engine)->context();
+        std::vector<std::string> warns;
+        const int rc = openswmm::inp_writer::writeInpFile(ctx, new_path, &warns);
+        forwardWriteWarnings(ctx, warns);
+        return rc;
     }
 
     auto* eng = to_engine(engine);
@@ -363,7 +477,10 @@ SWMM_ENGINE_API int swmm_files_set(SWMM_Engine engine,
     }
     else if (k == "HOTSTART_SAVE_DATETIME") {
         double dt = 0.0;
-        try { dt = v.empty() ? 0.0 : std::stod(v); }
+        // H1 §7 residue: std::stod alone accepts a numeric PREFIX, so
+        // "1.5abc" stored 1.5 and "01/01/2026" stored 1.0 silently. The
+        // contract is a decimal-day floating-point string — strict.
+        try { dt = v.empty() ? 0.0 : stod_strict(v); }
         catch (...) { return SWMM_ERR_BADPARAM; }
         if (f.hotstart_saves.empty()) f.hotstart_saves.emplace_back();
         f.hotstart_saves.front().datetime = dt;
@@ -416,7 +533,9 @@ openswmm::FilePathPair* resolve_slot(SWMM_Engine             engine,
         case SWMM_FILE_HOTSTART_SAVE: {
             if (!owner) return nullptr;
             int idx = 0;
-            try { idx = std::stoi(owner); } catch (...) { return nullptr; }
+            // H1 §7 residue: a partial parse ("1.5") resolved to slot 1
+            // instead of failing. The owner contract is a decimal index.
+            try { idx = stoi_strict(owner); } catch (...) { return nullptr; }
             if (idx < 0 ||
                 static_cast<std::size_t>(idx) >= ctx.files.hotstart_saves.size())
                 return nullptr;
@@ -437,6 +556,32 @@ openswmm::FilePathPair* resolve_slot(SWMM_Engine             engine,
             if (idx < 0 || idx >= static_cast<int>(ctx.tables.tables.size()))
                 return nullptr;
             return &ctx.tables.tables[static_cast<std::size_t>(idx)].file_path;
+        }
+
+        case SWMM_FILE_MESH_2D:
+#ifdef OPENSWMM_HAS_2D
+            return ctx.twod_io.options ? &ctx.twod_io.options->mesh_file
+                                       : nullptr;
+#else
+            return nullptr;
+#endif
+        case SWMM_FILE_OUTPUT_2D:
+#ifdef OPENSWMM_HAS_2D
+            return ctx.twod_io.options ? &ctx.twod_io.options->output_file
+                                       : nullptr;
+#else
+            return nullptr;
+#endif
+        case SWMM_FILE_LID_REPORT: {
+            if (!owner) return nullptr;
+            int idx = 0;
+            // H1 §7 residue: a partial parse ("1.5") resolved to slot 1
+            // instead of failing. The owner contract is a decimal index.
+            try { idx = stoi_strict(owner); } catch (...) { return nullptr; }
+            if (idx < 0 ||
+                static_cast<std::size_t>(idx) >= ctx.lid_usage.rpt_file.size())
+                return nullptr;
+            return &ctx.lid_usage.rpt_file[static_cast<std::size_t>(idx)];
         }
     }
     return nullptr;
@@ -777,10 +922,11 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
     else if (k == "RULE_STEP") val = std::to_string(static_cast<long long>(opt.rule_step));
     else if (k == "DRY_DAYS")  val = std::to_string(opt.dry_days);
 
-    // Sweep day-of-year → MM/DD via year-2000 anchor (matches the
-    // OptionsHandler parser's convention).
+    // Sweep day-of-year → MM/DD via the NON-leap year-2001 anchor (matches
+    // OptionsHandler's parser and InpWriter's fmt_sweep — the 2000 anchor
+    // was the leap-year half of the SWEEP_END 12/31→1/1 drift).
     else if (k == "SWEEP_START") {
-        const auto dt = openswmm::datetime::encodeDate(2000, 1, 1)
+        const auto dt = openswmm::datetime::encodeDate(2001, 1, 1)
                       + (opt.sweep_start - 1);
         int y, m, d;
         openswmm::datetime::decodeDate(dt, y, m, d);
@@ -789,7 +935,7 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
         val = tmp;
     }
     else if (k == "SWEEP_END") {
-        const auto dt = openswmm::datetime::encodeDate(2000, 1, 1)
+        const auto dt = openswmm::datetime::encodeDate(2001, 1, 1)
                       + (opt.sweep_end - 1);
         int y, m, d;
         openswmm::datetime::decodeDate(dt, y, m, d);
@@ -822,8 +968,16 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
     else if (k == "SURCHARGE_METHOD") {
         if      (opt.surcharge_method == 0) val = "EXTRAN";
         else if (opt.surcharge_method == 1) val = "SLOT";
+        else if (opt.surcharge_method == 3) val = "TPA";   // issue #156
         else                                val = "DYNAMIC_SLOT";
     }
+    else if (k == "TPA_CELERITY")      val = std::to_string(opt.tpa_celerity);
+    else if (k == "UNSTEADY_FRICTION") {  // issue #156
+        val = (opt.unsteady_friction == 1) ? "VITKOVSKY" : "NONE";
+    }
+    else if (k == "UF_K3")             val = std::to_string(opt.uf_k3);
+    else if (k == "REPORT_SIGNED_HEADS")  // issue #156 O-6
+        val = opt.report_signed_heads ? "YES" : "NO";
     else if (k == "NODE_CONTINUITY") {
         val = (opt.node_continuity == openswmm::NodeContinuity::SEMI_IMPLICIT)
               ? "SEMI_IMPLICIT" : "EXPLICIT";
@@ -892,19 +1046,21 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
         val = (opt.fv.time_integration == openswmm::fv::TimeIntegration::RK2)
                   ? "RK2" : "EULER";
     else if (k == "FV_SLOT_CELERITY")  val = std::to_string(opt.fv.slot_celerity);
+    else if (k == "FV_PRESSURIZED_IMPLICIT")
+        val = opt.fv.pressurized_implicit ? "YES" : "NO";
+    else if (k == "FV_PRESSURE_CLOSURE")  // issue #156
+        val = (opt.fv.pressure_closure == 1) ? "TPA" : "SLOT";
     else if (k == "FV_DISPERSION")     val = std::to_string(opt.fv.dispersion);
     else if (k == "FV_STRUCTURE_COUPLING")
         val = (opt.fv.structure_coupling == openswmm::fv::StructureCoupling::ROUTING_STEP)
                   ? "ROUTING_STEP" : "SUBSTEP";
     else if (k == "FV_COMPACTION")     val = opt.fv.compaction ? "YES" : "NO";
     else if (k == "FV_NODE_COUPLING")
-        val = (opt.fv.node_coupling == openswmm::fv::NodeCoupling::EXPLICIT)
-                  ? "EXPLICIT" : "SEMI_IMPLICIT";
+        val = "SEMI_IMPLICIT";            // retired option; the only coupling
     else if (k == "FV_NODE_DT")
-        val = (opt.fv.node_dt_limit == openswmm::fv::NodeDtLimit::NONE)
-                  ? "NONE" : "STABILITY";
+        val = "STABILITY";                // retired option; bound always armed
     else if (k == "FV_NODE_PICARD")
-        val = std::to_string(opt.fv.node_picard_sweeps);
+        val = "1";                        // retired option; always one sweep
     else if (k == "FV_NODE_CELL_COUPLING")
         val = "NO";                       // retired option; kept readable
     else if (k == "FV_JUNCTION_MODEL")
@@ -926,6 +1082,31 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
     else if (k == "FV_CFL_CENSUS_INTERVAL")
         val = std::to_string(opt.fv.cfl_census_interval);
 
+    // Quality & transport (subplan Y0). Readable and writable under ANY
+    // solver — the keys are inert rather than rejected, the same contract
+    // the FV group above documents, so a GUI can configure LARD before
+    // selecting it. Without these the C API returned BADPARAM and the
+    // options dialog could not hydrate the page at all.
+    else if (k == "QUALITY_SOLVER") {
+        switch (opt.quality_solver) {
+            case openswmm::QualitySolverKind::EULERIAN_ARD:
+                val = "EULERIAN_ARD"; break;
+            case openswmm::QualitySolverKind::LAGRANGIAN:
+                val = "LAGRANGIAN";   break;
+            default:
+                val = "LEGACY";       break;
+        }
+    }
+    else if (k == "WATER_AGE")         val = opt.water_age ? "YES" : "NO";
+    else if (k == "OUTFALL_BACKFLOW_QUALITY")
+        val = opt.outfall_backflow_zero ? "ZERO" : "LAST";
+    else if (k == "HEAT_TRANSPORT")    val = opt.heat_transport ? "YES" : "NO";
+    else if (k == "QUALITY_STEP")      val = std::to_string(opt.quality_step);
+    else if (k == "MAX_SEGMENTS_PER_LINK")
+        val = std::to_string(opt.max_segments_per_link);
+    else if (k == "DISPERSION")        val = opt.lard_rwpt ? "RWPT" : "OFF";
+    else if (k == "RWPT_SEED")         val = std::to_string(opt.rwpt_seed);
+
     // System / Performance
     else if (k == "THREADS")           val = std::to_string(opt.num_threads);
 
@@ -945,6 +1126,24 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
     std::string k(key);
     for (auto& c : k) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
     std::string v(value);
+
+    // ── Exception guard at the C boundary ────────────────────────────────
+    // Thirty of this function's key branches parse with raw std::stod /
+    // std::stoi, which THROW on a malformed value. An exception crossing
+    // `extern "C"` terminates the process: measured, `swmm_options_set(e,
+    // "FV_CFL", "abc")` aborted, while `ROUTING_STEP = "xyz"` survived
+    // because that one branch already had a local try/catch. A caller that
+    // hands us a bad string — the MCP server's set_option tool takes
+    // arbitrary text, and a GUI line edit is transiently empty while being
+    // typed — must get SWMM_ERR_BADPARAM, never a dead process.
+    //
+    // One guard around the whole dispatch rather than 30 local ones: a
+    // per-site fix can miss a site (and a future branch would be born
+    // unguarded), whereas this cannot. Nothing in the dispatch throws for
+    // any reason OTHER than a bad parse — the rest is assignment — so the
+    // broad catch costs no diagnostic precision, and "no exception escapes
+    // a C entry point" is the correct contract regardless.
+    try {
 
     if (k == "FLOW_UNITS") {
         std::string vu(v);
@@ -978,16 +1177,16 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
     // zeroing the step.  Matches WET_STEP/DRY_STEP below and the OptionsHandler
     // parser, both of which use parse_time_seconds.
     else if (k == "ROUTING_STEP") {
-        opt.routing_step = openswmm::input::parse_time_seconds(v);
+        opt.routing_step = time_seconds_strict(v);
     }
     else if (k == "REPORT_STEP") {
-        opt.report_step = openswmm::input::parse_time_seconds(v);
+        opt.report_step = time_seconds_strict(v);
     }
     // Date/time keys are stored combined in a single OADate double. Get/set
     // for *_DATE addresses the integer (date) portion only and *_TIME the
     // fractional (time-of-day) portion, so the GUI can write them
     // independently — matching the OptionsHandler parser composition rule.
-    // The previous std::stod(v) implementation for START_DATE/END_DATE was
+    // The previous stod_strict(v) implementation for START_DATE/END_DATE was
     // a pre-existing bug — std::stod("01/01/2004") writes 1.0 — fixed here
     // as part of Slice CY (closes the §M.4 deferred get/set parity gap).
     else if (k == "START_DATE") {
@@ -997,7 +1196,7 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
     }
     else if (k == "START_TIME") {
         opt.start_date = std::floor(opt.start_date)
-                       + openswmm::input::parse_time_seconds(v)
+                       + time_seconds_strict(v)
                          / openswmm::datetime::SecsPerDay;
         opt.total_duration_ms = -1.0;  // stale — recompute via totalDurationMs()
     }
@@ -1008,7 +1207,7 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
     }
     else if (k == "END_TIME") {
         opt.end_date = std::floor(opt.end_date)
-                     + openswmm::input::parse_time_seconds(v)
+                     + time_seconds_strict(v)
                        / openswmm::datetime::SecsPerDay;
         opt.total_duration_ms = -1.0;  // stale — recompute via totalDurationMs()
     }
@@ -1018,7 +1217,7 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
     }
     else if (k == "REPORT_START_TIME") {
         opt.report_start = std::floor(opt.report_start)
-                         + openswmm::input::parse_time_seconds(v)
+                         + time_seconds_strict(v)
                            / openswmm::datetime::SecsPerDay;
     }
     else if (k == "CRS") {
@@ -1084,10 +1283,10 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
     // ------------------------------------------------------------------
 
     // Step keys — accept seconds or HH:MM:SS per parse_time_seconds.
-    else if (k == "DRY_STEP")  opt.dry_step  = openswmm::input::parse_time_seconds(v);
-    else if (k == "WET_STEP")  opt.wet_step  = openswmm::input::parse_time_seconds(v);
-    else if (k == "RULE_STEP") opt.rule_step = openswmm::input::parse_time_seconds(v);
-    else if (k == "DRY_DAYS")  opt.dry_days  = std::stod(v);
+    else if (k == "DRY_STEP")  opt.dry_step  = time_seconds_strict(v);
+    else if (k == "WET_STEP")  opt.wet_step  = time_seconds_strict(v);
+    else if (k == "RULE_STEP") opt.rule_step = time_seconds_strict(v);
+    else if (k == "DRY_DAYS")  opt.dry_days  = stod_strict(v);
 
     // Sweep — accept MM/DD (legacy form, what the GUI writes), convert to
     // day-of-year via year-2000 anchor matching the parser convention.
@@ -1101,7 +1300,7 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         std::from_chars(sp, se, sd);
         if (sm < 1 || sm > 12 || sd < 1 || sd > 31) return SWMM_ERR_BADPARAM;
         const int doy = openswmm::datetime::dayOfYear(
-            openswmm::datetime::encodeDate(2000,
+            openswmm::datetime::encodeDate(2001,   // non-leap: see the getter
                                            static_cast<int>(sm),
                                            static_cast<int>(sd)));
         if (k == "SWEEP_START") opt.sweep_start = doy;
@@ -1162,7 +1361,22 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         if      (vu == "EXTRAN")       opt.surcharge_method = 0;
         else if (vu == "SLOT")         opt.surcharge_method = 1;
         else if (vu == "DYNAMIC_SLOT") opt.surcharge_method = 2;
+        else if (vu == "TPA")          opt.surcharge_method = 3;  // issue #156
         else return SWMM_ERR_BADPARAM;
+    }
+    else if (k == "UNSTEADY_FRICTION") {  // issue #156
+        std::string vu(v);
+        for (auto& c : vu) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+        if      (vu == "NONE")      opt.unsteady_friction = 0;
+        else if (vu == "VITKOVSKY") opt.unsteady_friction = 1;
+        else return SWMM_ERR_BADPARAM;
+    }
+    else if (k == "UF_K3")             opt.uf_k3 = stod_strict(v);
+    else if (k == "TPA_CELERITY")      opt.tpa_celerity = stod_strict(v);
+    else if (k == "REPORT_SIGNED_HEADS") {  // issue #156 O-6
+        const std::string vu = upper_copy(v);
+        opt.report_signed_heads =
+            (vu == "YES" || vu == "TRUE" || vu == "ON" || vu == "1") ? 1 : 0;
     }
     else if (k == "NODE_CONTINUITY") {
         std::string vu(v);
@@ -1197,69 +1411,69 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
     }
 
     // Numeric scalars.
-    else if (k == "DPS_CELERITY")      opt.dps_target_celerity = std::stod(v);
-    else if (k == "DPS_ALPHA")         opt.dps_alpha           = std::stod(v);
-    else if (k == "DPS_DECAY_TIME")    opt.dps_decay_time      = std::stod(v);
-    else if (k == "LENGTHENING_STEP")  opt.lengthening_step    = std::stod(v);
-    else if (k == "VARIABLE_STEP")     opt.variable_step       = std::stod(v);
+    else if (k == "DPS_CELERITY")      opt.dps_target_celerity = stod_strict(v);
+    else if (k == "DPS_ALPHA")         opt.dps_alpha           = stod_strict(v);
+    else if (k == "DPS_DECAY_TIME")    opt.dps_decay_time      = stod_strict(v);
+    else if (k == "LENGTHENING_STEP")  opt.lengthening_step    = stod_strict(v);
+    else if (k == "VARIABLE_STEP")     opt.variable_step       = stod_strict(v);
     // MINIMUM_STEP takes seconds or HH:MM:SS, same grammar as the [OPTIONS]
     // parser (OptionsHandler) and ROUTING_STEP above.
     else if (k == "MINIMUM_STEP")
-        opt.min_routing_step = openswmm::input::parse_time_seconds(v);
-    else if (k == "MAX_TRIALS")        opt.max_trials          = std::stoi(v);
-    else if (k == "HEAD_TOLERANCE")    opt.head_tol            = std::stod(v);
+        opt.min_routing_step = time_seconds_strict(v);
+    else if (k == "MAX_TRIALS")        opt.max_trials          = stoi_strict(v);
+    else if (k == "HEAD_TOLERANCE")    opt.head_tol            = stod_strict(v);
     // Flow tolerances are percentages per the INP/[OPTIONS] contract; the
     // OptionsHandler parser and the routing solver store them as fractions
     // (value / 100), so convert here to match — a raw std::stod stored 500%
     // for a "5" input and skewed dynamic-wave convergence.
-    else if (k == "LAT_FLOW_TOL")      opt.lat_flow_tol        = std::stod(v) / 100.0;
-    else if (k == "SYS_FLOW_TOL")      opt.sys_flow_tol        = std::stod(v) / 100.0;
-    else if (k == "MIN_SURFAREA")      opt.min_surf_area       = std::stod(v);
-    else if (k == "MIN_SLOPE")         opt.min_slope           = std::stod(v);
-    else if (k == "THREADS")           opt.num_threads         = std::stoi(v);
+    else if (k == "LAT_FLOW_TOL")      opt.lat_flow_tol        = stod_strict(v) / 100.0;
+    else if (k == "SYS_FLOW_TOL")      opt.sys_flow_tol        = stod_strict(v) / 100.0;
+    else if (k == "MIN_SURFAREA")      opt.min_surf_area       = stod_strict(v);
+    else if (k == "MIN_SLOPE")         opt.min_slope           = stod_strict(v);
+    else if (k == "THREADS")           opt.num_threads         = stoi_strict(v);
 
     // Explicit finite-volume solver. Same value grammar as the [OPTIONS]
     // parser, so a value round-trips between the file and this API unchanged.
-    else if (k == "FV_CELL_LENGTH")    opt.fv.cell_length      = std::stod(v);
-    else if (k == "FV_MIN_CELLS")      opt.fv.min_cells        = std::max(1, std::stoi(v));
-    else if (k == "FV_CFL")            opt.fv.cfl              = std::stod(v);
-    else if (k == "FV_ORDER")          opt.fv.order            = std::stoi(v);
-    else if (k == "FV_SLOT_CELERITY")  opt.fv.slot_celerity    = std::stod(v);
-    else if (k == "FV_DISPERSION")     opt.fv.dispersion       = std::stod(v);
+    else if (k == "FV_CELL_LENGTH")    opt.fv.cell_length      = stod_strict(v);
+    else if (k == "FV_MIN_CELLS")      opt.fv.min_cells        = std::max(1, stoi_strict(v));
+    else if (k == "FV_CFL")            opt.fv.cfl              = stod_strict(v);
+    else if (k == "FV_ORDER")          opt.fv.order            = stoi_strict(v);
+    else if (k == "FV_SLOT_CELERITY")  opt.fv.slot_celerity    = stod_strict(v);
+    else if (k == "FV_PRESSURIZED_IMPLICIT") {
+        const std::string vu = upper_copy(v);
+        opt.fv.pressurized_implicit =
+            (vu == "YES" || vu == "TRUE" || vu == "ON" || vu == "1");
+    }
+    else if (k == "FV_PRESSURE_CLOSURE") {  // issue #156
+        const std::string vu = upper_copy(v);
+        if      (vu == "SLOT") opt.fv.pressure_closure = 0;
+        else if (vu == "TPA")  opt.fv.pressure_closure = 1;
+        else return SWMM_ERR_BADPARAM;
+    }
+    else if (k == "FV_DISPERSION")     opt.fv.dispersion       = stod_strict(v);
     else if (k == "FV_MIN_PARALLEL_CELLS")
-        opt.fv.min_parallel_cells = std::stol(v);
+        opt.fv.min_parallel_cells = stol_strict(v);
     else if (k == "FV_COMPACTION") {
         const std::string vu = upper_copy(v);
         opt.fv.compaction = !(vu == "NO" || vu == "FALSE" || vu == "0" || vu == "OFF");
     }
-    else if (k == "FV_NODE_COUPLING") {
-        const std::string vu = upper_copy(v);
-        if      (vu == "EXPLICIT")
-            opt.fv.node_coupling = openswmm::fv::NodeCoupling::EXPLICIT;
-        else if (vu == "SEMI_IMPLICIT")
-            opt.fv.node_coupling = openswmm::fv::NodeCoupling::SEMI_IMPLICIT;
-        else return SWMM_ERR_BADPARAM;
-    }
-    else if (k == "FV_NODE_DT") {
-        const std::string vu = upper_copy(v);
-        if      (vu == "STABILITY") opt.fv.node_dt_limit = openswmm::fv::NodeDtLimit::STABILITY;
-        else if (vu == "NONE")      opt.fv.node_dt_limit = openswmm::fv::NodeDtLimit::NONE;
-        else return SWMM_ERR_BADPARAM;
-    }
-    else if (k == "FV_NODE_PICARD")
-        opt.fv.node_picard_sweeps = std::max(1, std::stoi(v));
-    else if (k == "FV_NODE_CELL_COUPLING" || k == "FV_JUNCTION_MODEL") {
+    else if (k == "FV_NODE_CELL_COUPLING" || k == "FV_JUNCTION_MODEL" ||
+             k == "FV_NODE_COUPLING" || k == "FV_NODE_DT" ||
+             k == "FV_NODE_PICARD") {
         // Retired options, accepted and ignored: junctions are always
-        // algebraic interfaces now.
+        // algebraic interfaces, storage-node coupling is always semi-implicit
+        // with a single sweep, and the node accuracy bound is always armed.
+        // The .inp parser warns when a retired key asks for the behaviour that
+        // no longer exists; the C API stays silent, as for the older two.
     }
     else if (k == "FV_LTS") {
         const std::string vu = upper_copy(v);
         opt.fv.lts = !(vu == "NO" || vu == "FALSE" || vu == "0" || vu == "OFF");
     }
     else if (k == "FV_LTS_MAX_TIERS")
-        opt.fv.lts_max_tiers = std::max(1, std::stoi(v));
+        opt.fv.lts_max_tiers = std::max(1, stoi_strict(v));
     else if (k == "FV_CFL_CENSUS_INTERVAL")
-        opt.fv.cfl_census_interval = std::max(1, std::stoi(v));
+        opt.fv.cfl_census_interval = std::max(1, stoi_strict(v));
     else if (k == "FV_RIEMANN") {
         const std::string vu = upper_copy(v);
         if      (vu == "HLL")  opt.fv.riemann = openswmm::fv::RiemannSolver::HLL;
@@ -1306,7 +1520,58 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         else return SWMM_ERR_BADPARAM;
     }
 
+    // Quality & transport (subplan Y0) — the setter half of the getter
+    // block above. Enum keys REJECT unknown tokens (the FV precedent the
+    // hydration contract's rejectBadEnumTokens case relies on) so a typo
+    // surfaces as a failed set instead of a silently lost edit.
+    else if (k == "QUALITY_SOLVER") {
+        const std::string vu = upper_copy(v);
+        if      (vu == "LEGACY")
+            opt.quality_solver = openswmm::QualitySolverKind::LEGACY;
+        else if (vu == "EULERIAN_ARD" || vu == "ARD")
+            opt.quality_solver = openswmm::QualitySolverKind::EULERIAN_ARD;
+        else if (vu == "LAGRANGIAN" || vu == "LARD")
+            opt.quality_solver = openswmm::QualitySolverKind::LAGRANGIAN;
+        else return SWMM_ERR_BADPARAM;
+    }
+    else if (k == "WATER_AGE") {
+        const std::string vu = upper_copy(v);
+        opt.water_age = (vu == "YES" || vu == "ON" || vu == "TRUE" ||
+                         vu == "1");
+    }
+    else if (k == "OUTFALL_BACKFLOW_QUALITY") {
+        const std::string vu = upper_copy(v);
+        if      (vu == "LAST") opt.outfall_backflow_zero = false;
+        else if (vu == "ZERO") opt.outfall_backflow_zero = true;
+        else return SWMM_ERR_BADPARAM;
+    }
+    else if (k == "HEAT_TRANSPORT") {
+        const std::string vu = upper_copy(v);
+        opt.heat_transport = (vu == "YES" || vu == "ON" || vu == "TRUE" ||
+                              vu == "1");
+    }
+    else if (k == "QUALITY_STEP")
+        opt.quality_step = std::max(0.0, stod_strict(v));
+    else if (k == "MAX_SEGMENTS_PER_LINK")
+        opt.max_segments_per_link = std::max(2, stoi_strict(v));
+    else if (k == "DISPERSION") {
+        const std::string vu = upper_copy(v);
+        if      (vu == "RWPT")                 opt.lard_rwpt = true;
+        else if (vu == "OFF" || vu == "NONE")  opt.lard_rwpt = false;
+        else return SWMM_ERR_BADPARAM;
+    }
+    else if (k == "RWPT_SEED")
+        opt.rwpt_seed = stoi_strict(v);
+
     else {
+        return SWMM_ERR_BADPARAM;
+    }
+
+    } catch (...) {
+        // A malformed numeric for a recognised key. The key was valid, the
+        // value was not — BADPARAM is the same answer an out-of-range enum
+        // token gets, and the option keeps its previous value because the
+        // throwing branch assigned nothing.
         return SWMM_ERR_BADPARAM;
     }
 
@@ -1356,6 +1621,18 @@ SWMM_ENGINE_API int swmm_options_set_ext(SWMM_Engine engine,
     if (!key || !value) return SWMM_ERR_BADPARAM;
 
     auto& ctx = to_engine(engine)->context();
+
+    // WRITE_ABSOLUTE_PATHS is a first-class SimulationOptions field, not an
+    // extension key. Letting it fall through to ext_options produced a
+    // round-trip asymmetry: the save itself still wrote RELATIVE paths (the
+    // writer reads the bool, which stayed false), but the emitted deck carried
+    // WRITE_ABSOLUTE_PATHS YES and so re-opened with the opt-out armed.
+    if (upper_key(key) == "WRITE_ABSOLUTE_PATHS") {
+        ctx.options.write_absolute_paths =
+            openswmm::input::Tokenizer::parse_boolean(value);
+        ctx.options.ext_options.erase(key);
+        return SWMM_OK;
+    }
 
 #ifdef OPENSWMM_HAS_2D
     // [2D_MESH_FILE] reference: route to the live SolverOptions2D::mesh_file

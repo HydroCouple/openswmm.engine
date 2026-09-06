@@ -1115,13 +1115,27 @@ int EXPORT_OPENSWMMCORE_SOLVER_API swmm_close()
     if (IsOpenFlag)
         project_close();
     report_writeSysTime();
+    // Each handle is cleared as it is closed so a second swmm_close() is a
+    // no-op rather than a double fclose(). IsOpenFlag guards project_close()
+    // above but not these, and calling close twice is ordinary usage: a caller
+    // that closes explicitly to flush the report, then closes again in its own
+    // teardown, otherwise double-frees the FILE struct (glibc aborts with
+    // "free(): invalid pointer"). Reached whenever swmm_open() fails, since
+    // openFiles() has already opened Finp/Frpt by then.
     if (Finp.file != NULL)
+    {
         fclose(Finp.file);
+        Finp.file = NULL;
+    }
     if (Frpt.file != NULL)
+    {
         fclose(Frpt.file);
+        Frpt.file = NULL;
+    }
     if (Fout.file != NULL)
     {
         fclose(Fout.file);
+        Fout.file = NULL;
         if (Fout.mode == SCRATCH_FILE)
             remove(Fout.name);
     }

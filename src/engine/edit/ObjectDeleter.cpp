@@ -1,10 +1,26 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file ObjectDeleter.cpp
  * @brief Implementation of object deletion and cascade analysis.
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "ObjectDeleter.hpp"
@@ -13,6 +29,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <functional>
+#include <initializer_list>
 #include <sstream>
 #include <vector>
 
@@ -704,6 +722,74 @@ CascadeResult delete_gage(SimulationContext& ctx, int gage_idx) {
 }
 
 // ============================================================================
+// DELETE — batches (perf plan Phase A1)
+// ============================================================================
+// Each batch runs the per-object delete above in DESCENDING index order —
+// semantics identical by construction — inside a bulk-remove scope on the
+// name indexes that type can touch, so the name→index map rebuilds ONCE per
+// batch instead of once per delete (the dominant K-delete cost).  The map is
+// stale for the scope's duration; the delete paths are audited to perform no
+// name→index lookups (name_of() reads the vector, which stays exact).
+
+namespace {
+
+/// Scoped begin/end_bulk_remove over the name indexes a batch touches.
+class NameBulkScope {
+public:
+    NameBulkScope(std::initializer_list<NameIndex*> idxs) : idxs_(idxs) {
+        for (auto* n : idxs_) n->begin_bulk_remove();
+    }
+    ~NameBulkScope() {
+        for (auto* n : idxs_) n->end_bulk_remove();
+    }
+    NameBulkScope(const NameBulkScope&)            = delete;
+    NameBulkScope& operator=(const NameBulkScope&) = delete;
+
+private:
+    std::vector<NameIndex*> idxs_;
+};
+
+/// Dedupe + sort descending, then apply `del` per index, aggregating entries.
+template <typename DeleteFn>
+CascadeResult delete_many_impl(std::vector<int> indices, DeleteFn&& del) {
+    CascadeResult result;
+    std::sort(indices.begin(), indices.end(), std::greater<int>());
+    indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+    for (int idx : indices) {
+        CascadeResult r = del(idx);
+        for (auto& e : r.entries) result.entries.push_back(e);
+    }
+    return result;
+}
+
+} // namespace
+
+CascadeResult delete_nodes_many(SimulationContext& ctx, std::vector<int> indices) {
+    // delete_node removes node names AND cascade-deleted link names.
+    NameBulkScope scope{&ctx.node_names, &ctx.link_names};
+    return delete_many_impl(std::move(indices),
+                            [&ctx](int i) { return delete_node(ctx, i); });
+}
+
+CascadeResult delete_links_many(SimulationContext& ctx, std::vector<int> indices) {
+    NameBulkScope scope{&ctx.link_names};
+    return delete_many_impl(std::move(indices),
+                            [&ctx](int i) { return delete_link(ctx, i); });
+}
+
+CascadeResult delete_subcatches_many(SimulationContext& ctx, std::vector<int> indices) {
+    NameBulkScope scope{&ctx.subcatch_names};
+    return delete_many_impl(std::move(indices),
+                            [&ctx](int i) { return delete_subcatch(ctx, i); });
+}
+
+CascadeResult delete_gages_many(SimulationContext& ctx, std::vector<int> indices) {
+    NameBulkScope scope{&ctx.gage_names};
+    return delete_many_impl(std::move(indices),
+                            [&ctx](int i) { return delete_gage(ctx, i); });
+}
+
+// ============================================================================
 // DELETE — table/curve
 // ============================================================================
 
@@ -802,6 +888,10 @@ CascadeResult delete_table(SimulationContext& ctx, int table_idx) {
 
     // --- Step 2: erase the table entry ---
     ctx.tables.tables.erase(ctx.tables.tables.begin() + static_cast<std::ptrdiff_t>(table_idx));
+    // Every index at or past table_idx just shifted down by one, so the
+    // name→index map is stale. Erase is the only non-append mutation of the
+    // table store, and it is already O(n) from the renumbering below.
+    ctx.tables.rebuild_index();
 
     // Subcatchment adjustment patterns index ctx.tables (see InpWriter tN)
     auto clear_adj = [&](std::vector<int>& v, const char* field) {
@@ -868,14 +958,23 @@ CascadeResult delete_transect(SimulationContext& ctx, int transect_idx) {
     auto erase_ts = [&](auto& v) {
         if (ui < v.size()) v.erase(v.begin() + static_cast<std::ptrdiff_t>(transect_idx));
     };
+    // Lock-step with EVERY parallel array in TransectStore (InfraData.hpp:42)
+    // — missing one here leaves every transect past the deleted index reading
+    // its neighbour's value for that field (comments/encroachments/Lfactor
+    // were missed once and the writer then emitted the wrong Lfactor for all
+    // of them). swmm_transect_remove keeps its own complete copy of this list.
     erase_ts(ctx.transects.names);
+    erase_ts(ctx.transects.comments);
     erase_ts(ctx.transects.n_left);
     erase_ts(ctx.transects.n_right);
     erase_ts(ctx.transects.n_channel);
     erase_ts(ctx.transects.x_left_bank);
     erase_ts(ctx.transects.x_right_bank);
+    erase_ts(ctx.transects.x_left_encroachment);
+    erase_ts(ctx.transects.x_right_encroachment);
     erase_ts(ctx.transects.x_factor);
     erase_ts(ctx.transects.y_factor);
+    erase_ts(ctx.transects.length_factor);
     erase_ts(ctx.transects.stations);
     erase_ts(ctx.transects.elevations);
 

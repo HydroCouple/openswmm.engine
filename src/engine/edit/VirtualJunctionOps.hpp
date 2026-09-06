@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file VirtualJunctionOps.hpp
  * @brief Internal C++ API for virtual-junction editing: rule validation,
@@ -16,7 +32,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_VIRTUAL_JUNCTION_OPS_HPP
@@ -47,16 +63,29 @@ int vj_rule_violation(const SimulationContext& ctx, int node_idx);
 /**
  * @brief Apply the derived-geometry contract to a validated virtual junction:
  *        full depth = pipe crown (xsect y_full), zero surcharge depth,
- *        zero ponded area. The invert is user/split-supplied data.
+ *        zero ponded area. The invert and the rendering-only rim depth are
+ *        user/split-supplied data and are left alone.
  */
 void vj_apply_derived_geometry(SimulationContext& ctx, int node_idx);
+
+/**
+ * @brief Clear a node's virtual flag, promoting its rendering rim depth (if
+ *        any) back to the real full depth.
+ *
+ * @details The single exit from virtual: shared by swmm_node_set_virtual(0)
+ *          and the node type converter, so `J(4 ft) → VJ → J` returns 4 ft
+ *          instead of keeping the pipe crown. A no-op on a non-virtual node.
+ */
+void vj_clear_virtual(SimulationContext& ctx, int node_idx);
 
 /**
  * @brief Set or clear a node's virtual flag.
  *
  * @details Setting runs the full rule check first and applies the derived
- *          geometry on success; the node must be JUNCTION-typed. Clearing
- *          always succeeds for a virtual node.
+ *          geometry on success; the node must be JUNCTION-typed. A max depth
+ *          taller than the pipe crown is carried over as the node's rendering
+ *          rim depth so the drawn ground surface survives the conversion.
+ *          Clearing (vj_clear_virtual) always succeeds for a virtual node.
  *
  * @returns 0 on success, ERR_VJ_* on a violated rule, or -1 for a bad
  *          index / non-junction node.

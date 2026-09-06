@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file LinkData.hpp
  * @brief Structure-of-Arrays (SoA) storage for all link types.
@@ -18,7 +34,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_LINK_DATA_HPP
@@ -340,6 +356,29 @@ struct LinkData {
     std::vector<double>     volume;
 
     /**
+     * @brief Portion of `volume` held in the Preissmann slot (ft³).
+     * @details FV routing only — `Σ max(0, cell_a − a_crown)·dx` per conduit
+     *          (Router::publishFv). Always a subset of `volume`; stays 0.0
+     *          under the dynamic-wave router and below the pipe crown. No
+     *          legacy counterpart: legacy never separates slot storage.
+     */
+    std::vector<double>     slot_volume;
+
+    // Slot-storage share statistics (FV slot program R0). All stay 0.0
+    // under the dynamic-wave router. The share of a link at an instant is
+    // slot_volume/volume; the run-level share is the ratio of the two
+    // time integrals below, never an average of instantaneous ratios.
+
+    /** @brief ∫ slot_volume dt over the run (ft³·s). */
+    std::vector<double>     stat_slot_vol_dt;
+    /** @brief ∫ volume dt over the run (ft³·s) — the share denominator. */
+    std::vector<double>     stat_vol_dt;
+    /** @brief Peak instantaneous slot share (slot_volume/volume, 0..1). */
+    std::vector<double>     stat_peak_slot_share;
+    /** @brief Time (s) the instantaneous slot share exceeded 1 %. */
+    std::vector<double>     stat_time_slot_above;
+
+    /**
      * @brief Current froude number (absolute).
      * @see Legacy: Link[i].froude
      */
@@ -579,6 +618,11 @@ struct LinkData {
         flow.assign(un, 0.0);
         depth.assign(un, 0.0);
         volume.assign(un, 0.0);
+        slot_volume.assign(un, 0.0);
+        stat_slot_vol_dt.assign(un, 0.0);
+        stat_vol_dt.assign(un, 0.0);
+        stat_peak_slot_share.assign(un, 0.0);
+        stat_time_slot_above.assign(un, 0.0);
         froude.assign(un, 0.0);
         flow_class.assign(un, FlowClass::DRY);
         is_closed.assign(un, 0);
@@ -635,7 +679,9 @@ struct LinkData {
         g(direction, 1);
         g(has_flap_gate, uint8_t{0}); g(dqdh, 0.0);
         pump_curve_name.resize(un);
-        g(flow, 0.0); g(depth, 0.0); g(volume, 0.0);
+        g(flow, 0.0); g(depth, 0.0); g(volume, 0.0); g(slot_volume, 0.0);
+        g(stat_slot_vol_dt, 0.0); g(stat_vol_dt, 0.0);
+        g(stat_peak_slot_share, 0.0); g(stat_time_slot_above, 0.0);
         g(froude, 0.0); g(flow_class, FlowClass::DRY); g(is_closed, uint8_t{0});
         g(old_flow, 0.0); g(old_depth, 0.0); g(old_volume, 0.0);
         comments.resize(un, std::string{});
@@ -657,6 +703,48 @@ struct LinkData {
         stat_flow_class.resize(un * N_FLOW_CLASSES, 0L);
         // Note: conc, conc_old handled by resize_quality()
         // Note: stat_total_load handled by resize_loads()
+    }
+
+    /**
+     * @brief Reserve capacity for `n` links without changing count().
+     *
+     * @details Parsing grows these arrays one row at a time via grow_to(),
+     *          so each of the ~65 parallel vectors reallocates and copies
+     *          O(log n) times over a section — the dominant memory traffic in
+     *          handler dispatch on a large model.
+     *
+     *          This reserves capacity only. It deliberately does NOT resize:
+     *          count() is the vector size, and PostParseResolver compares it
+     *          against the final name count and calls resize() when they
+     *          differ — a call with destructive assign semantics. Growing the
+     *          SIZE speculatively here would trip that path and wipe parsed
+     *          data. Capacity is invisible to all of it.
+     *
+     *          Over-reserving is harmless, so callers pass the section's row
+     *          count as an upper bound.
+     */
+    void reserve_to(int n) {
+        if (n <= 0) return;
+        const auto un = static_cast<std::size_t>(n);
+        if (type.capacity() >= un) return;
+        auto r = [&](auto& vec) { vec.reserve(un); };
+        r(type); r(node1); r(node2); r(offset1);
+        r(offset2); r(q0); r(q_limit); r(xsect_shape);
+        r(xsect_y_full); r(xsect_a_full); r(xsect_w_max); r(xsect_geom1);
+        r(xsect_geom2); r(xsect_geom3); r(xsect_geom4); r(xsect_curve);
+        r(xsect_r_full); r(xsect_s_full); r(xsect_s_max); r(xsect_y_bot);
+        r(xsect_a_bot); r(xsect_s_bot); r(xsect_r_bot); r(xsect_yw_max);
+        r(xsect_batch_shape); r(setting); r(target_setting); r(time_last_set);
+        r(direction); r(has_flap_gate); r(dqdh); r(flow);
+        r(depth); r(volume); r(froude); r(flow_class);
+        r(is_closed); r(old_flow); r(old_depth); r(old_volume);
+        r(rpt_flag); r(stat_vol_flow); r(stat_max_flow); r(stat_max_veloc);
+        r(stat_max_filling); r(stat_time_surcharged); r(stat_max_flow_date); r(stat_time_full_upstream);
+        r(stat_time_full_dnstream); r(stat_time_full_both); r(stat_time_capacity_limited); r(stat_pump_cycles);
+        r(stat_pump_on_time); r(stat_pump_volume); r(stat_pump_energy); r(stat_pump_was_on);
+        r(stat_flow_turns); r(stat_flow_turn_sign); r(stat_time_courant_critical); r(stat_norm_ltd);
+        r(stat_inlet_ctrl); r(pump_curve_name); r(comments); r(tags);
+        r(stat_flow_class);
     }
 
     /**

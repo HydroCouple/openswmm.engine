@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file Runoff.cpp
  * @brief Subcatchment runoff — 3-subarea nonlinear reservoir model.
@@ -19,7 +35,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "Runoff.hpp"
@@ -414,6 +430,11 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                         cs.regen = save_regen;
                         break;
                     }
+                    case InfilModel::CONSTANT:
+                        // 2D-only method (plan §5.5.1): [INFILTRATION] has no
+                        // token for it, so no subcatchment can carry it. Listed
+                        // explicitly to keep the switch exhaustive.
+                        break;
                 }
             }
 
@@ -553,9 +574,22 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
 
         // Gap #23: Store per-subarea runoff CFS for LID inflow computation.
         // Matches legacy qImperv/qPerv used in lid_getRunoff() lid.c line ~1669.
-        soa_.imperv_runoff_cfs[ui] = (runoff0 * total_area * f0)
-                                   + (runoff1 * total_area * f1);
-        soa_.perv_runoff_cfs[ui]   =  runoff_p * total_area * fp;
+        //
+        // Legacy getImpervAreaRunoff()/getPervAreaRunoff() scale by the same
+        // fOutlet the outlet volume above uses, so only the share that actually
+        // reaches the outlet is offered to the LID. `total_area` is already
+        // max(0, area − lidArea), i.e. legacy's nonLidArea. Without the fOutlet
+        // factor the LID inflow is overstated on any deck with inter-subarea
+        // routing, and the −VlidIn subtraction in SWMMEngine::stepRunoff — which
+        // removes exactly this captured share from the outlet runoff — could
+        // then drive that runoff negative.
+        const double f_out_imperv = (route_mode == 2 && soa_.imperv_pct[ui] < 1.0)
+                                    ? 1.0 - pct : 1.0;
+        const double f_out_perv   = (route_mode == 1 && soa_.imperv_pct[ui] > 0.0)
+                                    ? 1.0 - pct : 1.0;
+        soa_.imperv_runoff_cfs[ui] = ((runoff0 * total_area * f0)
+                                    + (runoff1 * total_area * f1)) * f_out_imperv;
+        soa_.perv_runoff_cfs[ui]   =   runoff_p * total_area * fp  * f_out_perv;
 
         // ----- Step 4: Compute loss rates and net runoff -----
         // Matches legacy lines 700-709.
@@ -630,6 +664,8 @@ void RunoffSolver::infil_get_state(int i, int& model, double state[6]) const noe
             state[5] = c.T;
             break;
         }
+        case InfilModel::CONSTANT:
+            break;  // 2D-only, stateless — nothing to save
     }
 }
 
@@ -669,6 +705,8 @@ void RunoffSolver::infil_set_state(int i, int model, const double state[6]) noex
             c.T  = state[5];
             break;
         }
+        case InfilModel::CONSTANT:
+            break;  // 2D-only, stateless — nothing to restore
     }
 }
 

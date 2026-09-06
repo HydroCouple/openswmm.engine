@@ -131,6 +131,20 @@ if(OPENSWMM_BUILD_UNIT_TESTS)
     add_test(NAME test_legacy_solver_storage_shapes
         COMMAND $<TARGET_FILE:test_solver_storage_shapes>
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/engine/data)
+    # These two are built by add_solver_test() like the rest, but that helper
+    # only creates the executable -- ctest registration is this hand-kept list,
+    # so a target added there and not here BUILDS AND NEVER RUNS.
+    add_test(NAME test_legacy_solver_transect_nc
+        COMMAND $<TARGET_FILE:test_solver_transect_nc>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/engine/data)
+    add_test(NAME test_legacy_solver_backflow_quality
+        COMMAND $<TARGET_FILE:test_solver_backflow_quality>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/engine/data)
+    # NOT the data directory: this one reads "./data/gage_scalefactor.inp",
+    # so its working directory is the PARENT of the others'.
+    add_test(NAME test_legacy_gage_scalefactor
+        COMMAND $<TARGET_FILE:test_gage_scalefactor>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/engine)
     add_test(NAME test_legacy_output
         COMMAND $<TARGET_FILE:test_output>
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/output/data)
@@ -143,9 +157,50 @@ if(OPENSWMM_BUILD_UNIT_TESTS)
         test_legacy_solver_shapes
         test_legacy_solver_expanded_api
         test_legacy_solver_storage_shapes
+        test_legacy_solver_transect_nc
+        test_legacy_gage_scalefactor
         test_legacy_output
         PROPERTIES LABELS "unit"
     )
+
+    # ---- Load-optimization gates -------------------------------------------
+    # Sources live under benchmarks/ but the gates belong here: neither needs
+    # Google Benchmark, and tests/benchmarks/ is only added when
+    # OPENSWMM_BUILD_BENCHMARKS is ON — a configuration that has
+    # enable_testing() off, so add_test() there would silently register
+    # nothing. See plans/MODEL_LOAD_INIT_OPTIMIZATION_PLAN_2026-08-12.md §0.4.
+
+    # parity_probe emits the .rpt / .out / written-back .inp that the parity
+    # gate diffs; the shipped CLI has no write-back flag.
+    add_executable(parity_probe ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/parity_probe.cpp)
+    target_link_libraries(parity_probe PRIVATE openswmm_engine)
+    target_include_directories(parity_probe PRIVATE ${PROJECT_SOURCE_DIR}/include)
+    set_target_properties(parity_probe PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON)
+    openswmm_stage_test_runtime_deps(parity_probe)
+
+    # Determinism gate: two runs of the same build must produce identical
+    # artifacts. Without this, a `check` failure after an optimization could
+    # not be distinguished from run-to-run noise.
+    if(UNIX)
+        add_test(NAME load_parity_selfcheck
+            COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/scripts/load_parity.sh
+                    selfcheck $<TARGET_FILE:parity_probe>)
+        set_tests_properties(load_parity_selfcheck PROPERTIES LABELS "unit")
+    endif()
+
+    # Generator gate: proves gen_load_bench.py still emits every corpus model.
+    # Uses the tiny --smoke sizes so it costs seconds, not gigabytes.
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME bench_corpus_generator_smoke
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/scripts/gen_load_bench.py
+                    --smoke --force
+                    --out-dir ${CMAKE_CURRENT_BINARY_DIR}/corpus_smoke)
+        set_tests_properties(bench_corpus_generator_smoke PROPERTIES LABELS "unit")
+    endif()
 endif()
 
 # ---- Regression tests ----

@@ -200,6 +200,13 @@ std::unique_ptr<INetworkSolver> makeNetworkSolver(const FvOptions& opts,
     if (mode.empty()) mode = backend_name(opts.backend);
     if (mode == "cpu") return cpu();
 
+    // The implicit pressurized head update (FV_PRESSURIZED_IMPLICIT, slot
+    // program R2a) lives in the CPU reference solver only — a device plugin
+    // would silently run the pressurized subset explicitly at the edited
+    // (advective) census bound, which is exactly the instability the pass
+    // exists to remove. Honour the option over the backend request.
+    if (opts.pressurized_implicit) return cpu();
+
     // Small-problem gate. A Kokkos plugin pays a per-kernel launch overhead on
     // EVERY substep, and the built-in solver is itself OpenMP-threaded, so the
     // plugin only pays off once per-cell work amortizes the launches. Carried

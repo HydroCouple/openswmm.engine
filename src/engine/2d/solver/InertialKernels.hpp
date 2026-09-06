@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file InertialKernels.hpp
  * @brief Single-source flat kernels for the explicit local-inertial marcher.
@@ -31,7 +47,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_INERTIAL_KERNELS_HPP
@@ -66,6 +82,19 @@ inline constexpr double kGravity = 9.80665;  ///< matches the existing kernels
 /// below any physical head; with the slope zeroed the friction denominator
 /// decays q geometrically and rest states are exact.
 inline constexpr double kEtaDeadband = 1.0e-12;
+
+/// |(x, y)| for the marcher's discharge vectors.
+///
+/// std::hypot's overflow/underflow safety costs ~10x a plain sqrt and buys
+/// nothing here: the arguments are unit-width discharges (m^2/s), which the
+/// Froude cap and the positivity limiter already bound to O(1..10). It was
+/// measured at ~8% of the marcher's runtime. Values differ from std::hypot by
+/// at most 1 ulp — and the Kokkos face kernel had ALREADY taken this liberty
+/// while the serial marcher had not, so routing every backend through this
+/// helper closes a real cross-backend bit-difference instead of opening one.
+OPENSWMM_KERNEL_FN double qMagnitude(double x, double y) noexcept {
+    return std::sqrt(x * x + y * y);
+}
 
 /// Scalar core of the V → (η, depth) closure (device-callable; the MeshData
 /// wrapper below loads the geometry and forwards — identical ops and order).
@@ -102,10 +131,18 @@ OPENSWMM_KERNEL_FN double volumeFromEtaScalar(double area, double cz,
 /// the Begnudelli–Sanders planar-bed relation (ε-regularized).
 inline void cellEtaDepth(const MeshData& m, const SolverOptions2D& o,
                          int i, double V, double& eta, double& depth) noexcept {
+    // Branch BEFORE the geometry loads: under the default FLAT closure the
+    // three vertex-index loads and the three scattered vz gathers below are
+    // dead, and this is the hottest call in the marcher (every cell, every
+    // firing).
+    if (o.cell_closure != CellClosure2D::VFR) {
+        etaDepthScalar(m.tri_area[i], m.tri_cz[i], 0.0, 0.0, 0.0,
+                       false, o.vfr_min_wet_frac, V, eta, depth);
+        return;
+    }
     etaDepthScalar(m.tri_area[i], m.tri_cz[i],
                    m.vz[m.tri_v0[i]], m.vz[m.tri_v1[i]], m.vz[m.tri_v2[i]],
-                   o.cell_closure == CellClosure2D::VFR, o.vfr_min_wet_frac,
-                   V, eta, depth);
+                   true, o.vfr_min_wet_frac, V, eta, depth);
 }
 
 /// Exact inverse of the closure: cell volume holding free surface η — FLAT

@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file openswmm_2d.h
  * @brief Optional 2D surface routing module — C API.
@@ -16,7 +32,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_2D_H
@@ -110,6 +126,32 @@ SWMM_ENGINE_API int swmm_2d_vertex_get_xyz_bulk(SWMM_Engine engine,
  *  @param z   New ground elevation (project vertical units).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_set_vertex_z(SWMM_Engine engine, int idx, double z);
+
+/** @brief Set EVERY vertex Z in one call.
+ *
+ *  Equivalent to calling ::swmm_2d_set_vertex_z for each vertex in turn — the
+ *  dependent geometry (`tri_cz`, `edge_mz`) ends up bitwise identical — but the
+ *  scalar setter rescans all triangles on every call, so doing that per vertex
+ *  is O(nVertices x nTriangles). This writes all Zs first and recomputes the
+ *  dependent geometry in a single pass, i.e. O(nVertices + nTriangles). On a
+ *  million-cell mesh that is the difference between minutes and milliseconds,
+ *  which is why editors that rewrite a whole mesh should prefer it.
+ *
+ *  XY-derived fields (`tri_area`, `tri_cx`, `tri_cy`, `edge_length`,
+ *  `edge_nx`, `edge_ny`, `edge_mx`, `edge_my`) are unaffected.
+ *
+ *  When called while the engine is RUNNING, the solver state (`head`,
+ *  `depth`) is intentionally **not** rewritten — `head` remains the value
+ *  the solver is integrating; the implied `depth = head - bed` therefore changes
+ *  by the same amount as bed. This is the expected physical semantics
+ *  ("raising the bed under water reduces water depth there").
+ *
+ *  @param z     Array of `count` new ground elevations (project vertical
+ *               units), indexed by vertex.
+ *  @param count Must equal ::swmm_2d_vertex_count, else SWMM_ERR_BADPARAM.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_set_vertex_z_bulk(SWMM_Engine engine,
+                                                const double* z, int count);
 
 /** @brief Get triangle connectivity (3 vertex indices).
  *  @param idx Triangle index (0-based).
@@ -341,19 +383,26 @@ SWMM_ENGINE_API int swmm_2d_set_vertex_coupling_cd(SWMM_Engine engine,
                                                      double cd);
 
 /** @brief Get the coupling exchange area of a vertex
- *         (`[2D_VERTEX_NODE_MAP]` AREA column, m²; default 1.0).
+ *         (`[2D_VERTEX_NODE_MAP]` AREA column; default 1.0).
+ *
+ *  Units follow the MESH: mesh length units squared as authored (ft² for a
+ *  US-FLOW_UNITS project unless the mesh file declares `;; UNITS: SI (m)`),
+ *  converted to m² in place by swmm_engine_initialize() together with the
+ *  vertex coordinates. Before initialize the value is therefore in mesh
+ *  (project) units; after it, m².
  *  @param vertex_idx Vertex index in `[0, vertex_count)`.
- *  @param area Output exchange area (m²).
+ *  @param area Output exchange area (mesh length units²).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_vertex_coupling_area(SWMM_Engine engine,
                                                        int vertex_idx,
                                                        double* area);
 
 /** @brief Set the coupling exchange area of a vertex
- *         (`[2D_VERTEX_NODE_MAP]` AREA column, m²). Persisted by the `.inp`
- *         writer.
+ *         (`[2D_VERTEX_NODE_MAP]` AREA column). Persisted by the `.inp`
+ *         writer. Same units convention as the getter: mesh length units²
+ *         (project units before initialize, m² after).
  *  @param vertex_idx Vertex index in `[0, vertex_count)`.
- *  @param area Exchange area in m²; must be > 0.
+ *  @param area Exchange area in mesh length units²; must be > 0.
  *  @return SWMM_OK on success; SWMM_ERR_BADPARAM on non-positive area.
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_set_vertex_coupling_area(SWMM_Engine engine,
@@ -402,6 +451,21 @@ SWMM_ENGINE_API int swmm_2d_get_heads_bulk(SWMM_Engine engine, double* heads);
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_coupling_fluxes_bulk(SWMM_Engine engine,
                                                        double* fluxes);
+
+/** @brief Bulk get the rainfall intensity (m/s) applied to every triangle
+ *  this step — the same field the HDF5 `Mesh2_face_rainfall` dataset
+ *  carries. Output pre-allocated to `triangle_count`.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_rainfall_bulk(SWMM_Engine engine,
+                                               double* rainfall);
+
+/** @brief Bulk get the cumulative rainfall VOLUME (m³) booked onto every
+ *  triangle since the start of the run — the `Mesh2_face_rain_cum` field;
+ *  sums over cells to the 2D mass balance's rainfall inflow. Output
+ *  pre-allocated to `triangle_count`.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_rain_volume_bulk(SWMM_Engine engine,
+                                                  double* volumes);
 
 /** @brief Bulk get normal edge flux at every edge of every triangle.
  *
@@ -676,12 +740,17 @@ SWMM_ENGINE_API int swmm_2d_set_edge_bc_type(SWMM_Engine engine,
                                                int bc_type);
 
 /** @brief Get specified stage boundary head for an edge.
+ *
+ *  Units follow the mesh vertical datum: mesh length units as authored
+ *  (feet for a US project without an SI mesh header) before
+ *  swmm_engine_initialize(), metres after it.
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_edge_bc_head(SWMM_Engine engine,
                                                int tri_idx, int edge,
                                                double* head);
 
-/** @brief Set specified stage boundary head for an edge.
+/** @brief Set specified stage boundary head for an edge (same units
+ *         convention as the getter).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_set_edge_bc_head(SWMM_Engine engine,
                                                int tri_idx, int edge,
@@ -711,14 +780,31 @@ SWMM_ENGINE_API int swmm_2d_set_edge_bc_tseries_name(SWMM_Engine engine,
                                                        int edge,
                                                        const char* name);
 
-/** @brief Get prescribed flow per metre of edge (m³/s/m) for a
- *         SPECIFIED_FLOW edge. V-E4.
+/** @brief Get the timeseries NAME driving a SPECIFIED_STAGE edge.
+ *
+ *  SVBC A8 — the setter's mirror, so a caller can verify what the engine
+ *  holds after an edit push. Works in the OPENED state (mesh guard, like
+ *  the setter). Truncating copy into \p buf, always NUL-terminated.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_edge_bc_tseries_name(SWMM_Engine engine,
+                                                       int tri_idx,
+                                                       int edge,
+                                                       char* buf, int buflen);
+
+/** @brief Get prescribed flow per metre of edge for a SPECIFIED_FLOW edge.
+ *         V-E4.
+ *
+ *  Units: project display flow units per metre (the `[2D_BOUNDARY_CONDITIONS]`
+ *  file contract, e.g. CFS/m) before swmm_engine_initialize(); m³/s/m after
+ *  it (initialize scales the constants in place; the writers scale back).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_edge_bc_flow(SWMM_Engine engine,
                                                int tri_idx, int edge,
                                                double* flow);
 
-/** @brief Set prescribed flow per metre of edge (m³/s/m). V-E4. */
+/** @brief Set prescribed flow per metre of edge (same units convention as
+ *         the getter: display flow units/m before initialize, m³/s/m after).
+ *         V-E4. */
 SWMM_ENGINE_API int swmm_2d_set_edge_bc_flow(SWMM_Engine engine,
                                                int tri_idx, int edge,
                                                double flow);
@@ -730,6 +816,14 @@ SWMM_ENGINE_API int swmm_2d_set_edge_bc_flow_tseries_name(SWMM_Engine engine,
                                                             int edge,
                                                             const char* name);
 
+/** @brief Get the timeseries NAME driving a SPECIFIED_FLOW edge.
+ *  SVBC A8 — same contract as `swmm_2d_get_edge_bc_tseries_name`. */
+SWMM_ENGINE_API int swmm_2d_get_edge_bc_flow_tseries_name(SWMM_Engine engine,
+                                                            int tri_idx,
+                                                            int edge,
+                                                            char* buf,
+                                                            int buflen);
+
 /** @brief Set the curve NAME to drive a RATING_CURVE edge.
  *
  *  V-E5. Stage → flow lookup is resolved against the existing
@@ -739,6 +833,14 @@ SWMM_ENGINE_API int swmm_2d_set_edge_bc_rating_curve_name(SWMM_Engine engine,
                                                             int tri_idx,
                                                             int edge,
                                                             const char* name);
+
+/** @brief Get the curve NAME driving a RATING_CURVE edge.
+ *  SVBC A8 — same contract as `swmm_2d_get_edge_bc_tseries_name`. */
+SWMM_ENGINE_API int swmm_2d_get_edge_bc_rating_curve_name(SWMM_Engine engine,
+                                                            int tri_idx,
+                                                            int edge,
+                                                            char* buf,
+                                                            int buflen);
 
 /** @brief Get cumulative boundary flux at an edge (m³, + = outflow).
  *  @ingroup engine_2d */

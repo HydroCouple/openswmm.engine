@@ -1,0 +1,6 @@
+;legacy elapsed-time series file: "time value" rows, no dates.
+;Times are clock H:MM here; anchored at StartDate+StartTime by the engine.
+0:00 0.0
+1:00 2.0
+2:00 5.0
+3:00 3.0

@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file INetworkSolver.hpp
  * @brief Backend-neutral interface for the explicit FV 1D network integrator.
@@ -18,7 +34,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_FV_I_NETWORK_SOLVER_HPP
@@ -46,7 +62,20 @@ struct FvStepForcing {
 
     /// Non-conduit (pump/orifice/weir/outlet) link flows in cfs, signed
     /// positive from node1 to node2. Indexed by link; conduits are ignored.
+    ///
+    /// DUMMY-xsect conduits are the exception: they are structure links
+    /// (mesh.struct_is_dummy) but their discharge is not a head relation the
+    /// engine can evaluate outside the solver — it is whatever arrives at the
+    /// upstream node. The solver derives it from its own fluxes and ignores
+    /// this array for them; `link_q_cap` carries the only thing it cannot know.
     const double* structure_flow = nullptr;
+
+    /// Upper bound on the pass-through discharge of each DUMMY link (cfs),
+    /// indexed by link: the FLOW_LIMIT from [CONDUITS], or 0 when a control
+    /// rule has closed the link. Negative means unlimited. Only DUMMY entries
+    /// are read. Legacy applies both gates in the same order — setting first,
+    /// then the limit (computeNonConduitFlowOne, HydStructures.cpp:1196-1212).
+    const double* link_q_cap = nullptr;
 
     /// Distributed conduit loss rate per unit length (ft²/s, positive = loss)
     /// from evaporation and seepage. Indexed by conduit row.
@@ -131,10 +160,39 @@ public:
 
         long   tier_cells[8] = {0}; ///< cumulative rebuild-sampled cells per LTS tier
         int    n_tiers       = 0;   ///< populated tier count (≤ 8)
+
+        // dt-argmin attribution (slot program R0): which regime owned the
+        // binding CFL element, counted once per census (global path) or
+        // re-tier (LTS path). Answers "who sets the step" without a trace.
+        long   dt_argmin_pressurized = 0;  ///< h ≥ y_full (slot celerity)
+        long   dt_argmin_band        = 0;  ///< y_crown ≤ h < y_full (mouth)
+        long   dt_argmin_free        = 0;  ///< open-channel cell
+        long   dt_argmin_node        = 0;  ///< node storage / feedback bound
     };
 
     /// Read cumulative statistics. Default: zeros (backend has no counters).
     virtual RunStats run_stats() const noexcept { return {}; }
+
+    /// Worst offender of a diverged advance() (issue #156 R3). The substep
+    /// retry loop shrinks dt away from CFL violations, but a dt-INDEPENDENT
+    /// amplification fails all retries identically and the loop then accepts
+    /// the diverged step — after which nothing downstream said a word: the
+    /// published heads stay under the engine's absurd-value bound for a long
+    /// time while the physics is garbage (P6 finding F3: 30 of 118 study
+    /// series beyond 10x the observed range, every run status OK).
+    struct Divergence {
+        int         link  = -1;       ///< engine link index of the offender
+        double      value = 0.0;      ///< offending magnitude (internal units)
+        const char* what  = nullptr;  ///< "velocity (ft/s)" | "depth (ft)"
+    };
+
+    /// True when the last advance() left a cell beyond physical bounds (or
+    /// non-finite), with @p d describing the worst offender. Default: never
+    /// reports, for a backend without the check.
+    virtual bool divergence(Divergence& d) const noexcept {
+        (void)d;
+        return false;
+    }
 
     /// True once initialize() has completed and the solver is ready.
     virtual bool is_initialized() const noexcept = 0;

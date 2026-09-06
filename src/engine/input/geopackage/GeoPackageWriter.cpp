@@ -5,6 +5,7 @@
  */
 
 #include "GeoPackageWriter.hpp"
+#include "../../core/Constants.hpp"
 #include "ExternalContentWriter.hpp"
 #include "GeoPackageSchema.hpp"
 #include "GpkgUtils.hpp"
@@ -227,6 +228,11 @@ static void write_options(sqlite3* db, const SimulationContext& ctx,
     insert("NODE_CONTINUITY", std::to_string(static_cast<int>(opts.node_continuity)));
     insert("ANDERSON_ACCEL", std::to_string(opts.anderson_accel ? 1 : 0));
     insert("SURCHARGE_METHOD", std::to_string(opts.surcharge_method));
+    insert("UNSTEADY_FRICTION", std::to_string(opts.unsteady_friction));  // issue #156
+    insert_d("UF_K3", opts.uf_k3);
+    insert("FV_PRESSURE_CLOSURE", std::to_string(opts.fv.pressure_closure));  // issue #156
+    insert("REPORT_SIGNED_HEADS", std::to_string(opts.report_signed_heads));  // issue #156
+    insert_d("TPA_CELERITY", opts.tpa_celerity);  // issue #156
     if (opts.surcharge_method == 2) {
         insert_d("DPS_CELERITY", opts.dps_target_celerity);
         insert_d("DPS_ALPHA", opts.dps_alpha);
@@ -304,8 +310,9 @@ static void write_nodes(sqlite3* db, const SimulationContext& ctx,
     // node_id); the base row is inserted first each iteration so the FK resolves.
     auto stmt = prepare(db,
         "INSERT INTO nodes (simulation_id, node_id, node_type, geom, "
-        "invert_elev, max_depth, init_depth, surcharge_depth, ponded_area, tag) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?)");
+        "invert_elev, max_depth, init_depth, surcharge_depth, ponded_area, tag, "
+        "is_virtual, rim_depth) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)");
     auto st_stmt = prepare(db,
         "INSERT INTO storages (simulation_id, node_id, curve_name, shape, a, b, c, "
         "p1, p2, p3, seep_rate, evap_frac, exfil_suction, exfil_ksat, exfil_imd) "
@@ -352,6 +359,13 @@ static void write_nodes(sqlite3* db, const SimulationContext& ctx,
             bind_text(stmt.get(), 10, ctx.nodes.tags[utag]);
         else
             bind_null(stmt.get(), 10);
+
+        // Virtual-junction flag + its rendering-only rim depth. node_type says
+        // JUNCTION for both kinds, so without these two the round-trip loses
+        // the virtual junction entirely.
+        bind_int(stmt.get(), 11,
+                 (utag < ctx.nodes.is_virtual.size() && ctx.nodes.is_virtual[utag]) ? 1 : 0);
+        bind_double(stmt.get(), 12, safe_dbl(ctx.nodes.rim_depth, i));
 
         sqlite3_step(stmt.get());
 
@@ -1019,7 +1033,10 @@ static void write_pollutants(sqlite3* db, const SimulationContext& ctx,
         bind_int(stmt.get(), 3, static_cast<int>(safe_get(ctx.pollutants.units, (size_t)i, MassUnits::MG_PER_L)));
         bind_double(stmt.get(), 4, safe_dbl(ctx.pollutants.c_rain, i));
         bind_double(stmt.get(), 5, safe_dbl(ctx.pollutants.c_gw, i));
-        bind_double(stmt.get(), 6, safe_dbl(ctx.pollutants.k_decay, i));
+        // Kdecay column carries file units (1/day), like the INP column
+        // (KD1); internal storage is 1/sec.
+        bind_double(stmt.get(), 6,
+                    safe_dbl(ctx.pollutants.k_decay, i) * constants::SEC_PER_DAY);
         bind_int(stmt.get(), 7, safe_get(ctx.pollutants.snow_only, (size_t)i, false) ? 1 : 0);
         int co = safe_int(ctx.pollutants.co_pollut, i);
         if (co >= 0 && co < ctx.pollutant_names.size())
@@ -1794,7 +1811,8 @@ static void write_mesh_2d(sqlite3* db, const SimulationContext& ctx,
     {
         const auto rows = twoD::collectBCRows(
             ctx.twod_io.pending_bc, ctx.twod_io.boundary,
-            opts && opts->pending_rows_drained);
+            opts && opts->pending_rows_drained,
+            opts ? opts->bc_flow_to_si_applied : 1.0);
         if (!rows.empty()) {
             auto stmt = prepare(db,
                 "INSERT OR REPLACE INTO mesh_2d_boundary_conditions "

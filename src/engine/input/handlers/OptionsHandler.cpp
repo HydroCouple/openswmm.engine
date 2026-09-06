@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file OptionsHandler.cpp
  * @brief [OPTIONS] section handler for the new engine.
@@ -16,19 +32,19 @@
  *  FLOW_UNITS           → options.flow_units
  *  INFILTRATION         → options.infiltration
  *  FLOW_ROUTING         → options.routing_model
- *  LINK_OFFSETS         → (ignored — legacy compatibility)
- *  MIN_SLOPE            → (stored in ext_options — not used by new solver yet)
+ *  LINK_OFFSETS         → options.link_offsets (0 = DEPTH, 1 = ELEVATION)
+ *  MIN_SLOPE            → options.min_slope
  *  ALLOW_PONDING        → options.allow_ponding
- *  SKIP_STEADY_STATE    → (ignored)
+ *  SKIP_STEADY_STATE    → options.skip_steady_state
  *  START_DATE           → options.start_date (OADate (days since 12/30/1899))
  *  START_TIME           → combined with START_DATE
  *  END_DATE             → options.end_date
  *  END_TIME             → combined with END_DATE
  *  REPORT_START_DATE    → options.report_start
  *  REPORT_START_TIME    → combined with REPORT_START_DATE
- *  SWEEP_START          → (ext_options)
- *  SWEEP_END            → (ext_options)
- *  DRY_DAYS             → (ext_options)
+ *  SWEEP_START          → options.sweep_start (MM/DD → day-of-year)
+ *  SWEEP_END            → options.sweep_end (MM/DD → day-of-year)
+ *  DRY_DAYS             → options.dry_days
  *  REPORT_STEP          → options.report_step (HH:MM:SS or seconds)
  *  WET_STEP             → options.wet_step
  *  DRY_STEP             → options.dry_step
@@ -55,7 +71,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "OptionsHandler.hpp"
@@ -153,6 +169,55 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             else if (rv == "NONE" || rv == "NO_ROUTING") opt.ignore_routing = true;
             else opt.ext_options[key] = val;
 
+        } else if (key == "QUALITY_SOLVER") {
+            // Unified Transport suite, master plan D-UT6. LAGRANGIAN selects
+            // the LARD dispatch (X1 wiring — a warned no-op until X2 lands
+            // transport; LARD_AGE_EXPEDITE_SUBPLAN_2026-08-23.md). Unknown
+            // values still fall to ext_options for diagnostics.
+            const std::string qv = norm(val);
+            if      (qv == "LEGACY")       opt.quality_solver = QualitySolverKind::LEGACY;
+            else if (qv == "EULERIAN_ARD" || qv == "ARD")
+                opt.quality_solver = QualitySolverKind::EULERIAN_ARD;
+            else if (qv == "LAGRANGIAN" || qv == "LARD")
+                opt.quality_solver = QualitySolverKind::LAGRANGIAN;
+            else opt.ext_options[key] = val;
+
+        } else if (key == "WATER_AGE") {
+            // Water age plan §1 (phase A1a): transported age tracking.
+            opt.water_age = (norm(val) == "ON" || norm(val) == "YES");
+
+        } else if (key == "OUTFALL_BACKFLOW_QUALITY") {
+            // Boundary re-entry quality at outfalls. LAST = legacy held
+            // state (the default); ZERO = fresh boundary — a supplying
+            // outfall's held state reads zero for pollutants and
+            // __WATER_AGE__ alike. Unknown values fall to ext_options.
+            const std::string bv = norm(val);
+            if      (bv == "LAST") opt.outfall_backflow_zero = false;
+            else if (bv == "ZERO") opt.outfall_backflow_zero = true;
+            else opt.ext_options[key] = val;
+
+        } else if (key == "HEAT_TRANSPORT") {
+            // Heat plan §1 (phase H1): transported temperature.
+            opt.heat_transport = (norm(val) == "ON" || norm(val) == "YES");
+
+        // Heat plan §1/§2.1 (phase H2) — energy bookkeeping and the
+        // SurfaceExchange coefficients, CSH Table 4.1 names and defaults.
+        } else if (key == "WATER_DENSITY") {
+            openswmm::from_chars_double(val.data(), val.data() + val.size(),
+                                        opt.water_density);
+        } else if (key == "WATER_SPECIFIC_HEAT_CAPACITY") {
+            openswmm::from_chars_double(val.data(), val.data() + val.size(),
+                                        opt.water_specific_heat);
+        } else if (key == "WIND_FUNC_COEFF_A") {
+            openswmm::from_chars_double(val.data(), val.data() + val.size(),
+                                        opt.wind_func_coeff_a);
+        } else if (key == "WIND_FUNC_COEFF_B") {
+            openswmm::from_chars_double(val.data(), val.data() + val.size(),
+                                        opt.wind_func_coeff_b);
+        } else if (key == "PRESSURE_RATIO") {
+            openswmm::from_chars_double(val.data(), val.data() + val.size(),
+                                        opt.pressure_ratio);
+
         // -----------------------------------------------------------------
         // Timesteps
         // -----------------------------------------------------------------
@@ -168,6 +233,27 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             opt.wet_step = parse_time_seconds(val);
         } else if (key == "REPORT_STEP") {
             opt.report_step = parse_time_seconds(val);
+        } else if (key == "QUALITY_STEP") {
+            // X3a: LARD transport substep (strategy §4.2). Same time
+            // spelling as the other *_STEP keys.
+            opt.quality_step = parse_time_seconds(val);
+        } else if (key == "MAX_SEGMENTS_PER_LINK") {
+            // X3a: LARD slab capacity (strategy §4.1, EPANET MAXSEGS).
+            double d = 0.0;
+            openswmm::from_chars_double(val.data(), val.data() + val.size(), d);
+            opt.max_segments_per_link = static_cast<int>(d);
+        } else if (key == "DISPERSION") {
+            // X3b: LARD RWPT toggle (GUI-plan Lagrangian-group key).
+            // Unknown values fall to ext_options for diagnostics.
+            const std::string dv = norm(val);
+            if      (dv == "RWPT")           opt.lard_rwpt = true;
+            else if (dv == "OFF" || dv == "NONE") opt.lard_rwpt = false;
+            else opt.ext_options[key] = val;
+        } else if (key == "RWPT_SEED") {
+            // X3b: D-L6 deterministic counter-RNG seed.
+            double d = 0.0;
+            openswmm::from_chars_double(val.data(), val.data() + val.size(), d);
+            opt.rwpt_seed = static_cast<int>(d);
 
         // -----------------------------------------------------------------
         // Simulation dates / times
@@ -267,8 +353,13 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
               if (sp < se) ++sp;
               std::from_chars(sp, se, sd);
             }
+            // NON-leap anchor (2001), matching InpWriter's fmt_sweep and the
+            // 365-day default (sweep_end = 365 = 12/31). The old leap-year
+            // anchor (2000) made 12/31 parse as 366, which fmt_sweep then
+            // wrote back as 1/1 — every date past Feb 28 shifted a day per
+            // save/reopen cycle (found by the H6b save check).
             opt.sweep_start = datetime::dayOfYear(
-                datetime::encodeDate(2000, static_cast<int>(sm), static_cast<int>(sd)));
+                datetime::encodeDate(2001, static_cast<int>(sm), static_cast<int>(sd)));
         } else if (key == "SWEEP_END") {
             unsigned sm = 12, sd = 31;
             { const char* sp = val.data(); const char* se = sp + val.size();
@@ -278,7 +369,7 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
               std::from_chars(sp, se, sd);
             }
             opt.sweep_end = datetime::dayOfYear(
-                datetime::encodeDate(2000, static_cast<int>(sm), static_cast<int>(sd)));
+                datetime::encodeDate(2001, static_cast<int>(sm), static_cast<int>(sd)));
 
         } else if (key == "NORMAL_FLOW_LIMITED") {
             const std::string nv = norm(val);
@@ -305,6 +396,10 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             if      (sv == "EXTRAN")       opt.surcharge_method = 0;
             else if (sv == "SLOT")         opt.surcharge_method = 1;
             else if (sv == "DYNAMIC_SLOT") opt.surcharge_method = 2;
+            else if (sv == "TPA")          opt.surcharge_method = 3;  // issue #156
+
+        } else if (key == "TPA_CELERITY") {  // issue #156
+            opt.tpa_celerity = to_double(val);
 
         } else if (key == "DPS_CELERITY") {
             opt.dps_target_celerity = to_double(val);
@@ -314,6 +409,25 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
 
         } else if (key == "DPS_DECAY_TIME") {
             opt.dps_decay_time = to_double(val);
+
+        // Unsteady friction (issue #156). Accepted-and-INERT, the same
+        // posture as the FV block below: nothing downstream reads either key
+        // yet (the Vitkovsky source term is Phase 2), so parsing them only
+        // stops a deck that names them from drawing an unknown-option warning
+        // and lets the writer carry them across a save.
+        } else if (key == "UNSTEADY_FRICTION") {
+            const std::string uv = norm(val);
+            if      (uv == "NONE")      opt.unsteady_friction = 0;
+            else if (uv == "VITKOVSKY") opt.unsteady_friction = 1;
+
+        } else if (key == "UF_K3") {
+            opt.uf_k3 = to_double(val);
+
+        } else if (key == "REPORT_SIGNED_HEADS") {  // issue #156 O-6
+            const std::string sv2 = norm(val);
+            opt.report_signed_heads =
+                (sv2 == "YES" || sv2 == "TRUE" || sv2 == "ON" || sv2 == "1")
+                    ? 1 : 0;
 
         // -----------------------------------------------------------------
         // Explicit finite-volume solver (FLOW_ROUTING FV).
@@ -363,6 +477,16 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
         } else if (key == "FV_SLOT_CELERITY") {
             opt.fv.slot_celerity = to_double(val);
 
+        } else if (key == "FV_PRESSURIZED_IMPLICIT") {
+            const std::string pv = norm(val);
+            opt.fv.pressurized_implicit =
+                (pv == "YES" || pv == "TRUE" || pv == "ON" || pv == "1");
+
+        } else if (key == "FV_PRESSURE_CLOSURE") {  // issue #156 Phase 4
+            const std::string pc = norm(val);
+            if      (pc == "SLOT") opt.fv.pressure_closure = 0;
+            else if (pc == "TPA")  opt.fv.pressure_closure = 1;
+
         } else if (key == "FV_DISPERSION") {
             opt.fv.dispersion = to_double(val);
 
@@ -374,11 +498,21 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
                 opt.fv.structure_coupling = fv::StructureCoupling::ROUTING_STEP;
 
         } else if (key == "FV_NODE_COUPLING") {
-            const std::string nv = norm(val);
-            if      (nv == "EXPLICIT")
-                opt.fv.node_coupling = fv::NodeCoupling::EXPLICIT;
-            else if (nv == "SEMI_IMPLICIT")
-                opt.fv.node_coupling = fv::NodeCoupling::SEMI_IMPLICIT;
+            // RETIRED 2026-08-29 with FV_NODE_DT and FV_NODE_PICARD below.
+            // Two retirement tiers, on purpose: these three had an effect and
+            // warn when a deck asks for the behaviour that no longer exists
+            // (a calibrated model would otherwise change answers silently);
+            // FV_NODE_CELL_COUPLING / FV_JUNCTION_MODEL further down were
+            // already no-ops and stay silent. Spelling out the former default
+            // is not warned -- it is what every deck gets.
+            if (norm(val) == "EXPLICIT") {
+                ctx.warnings.push_back(
+                    "WARNING: FV_NODE_COUPLING EXPLICIT is retired and will be "
+                    "treated as SEMI_IMPLICIT - storage nodes are always coupled "
+                    "semi-implicitly (plain junctions are algebraic interfaces "
+                    "under either).");
+                if (ctx.warning_code == 0) ctx.warning_code = 101;
+            }
 
         } else if (key == "FV_COMPACTION") {
             const std::string bv = norm(val);
@@ -400,6 +534,11 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             const std::string bv = norm(val);
             opt.fv.lts = !(bv == "NO" || bv == "FALSE" || bv == "0" || bv == "OFF");
 
+        } else if (key == "FV_NODE_FEEDBACK_DT") {
+            const std::string bv = norm(val);
+            opt.fv.node_feedback_dt =
+                !(bv == "NO" || bv == "FALSE" || bv == "0" || bv == "OFF");
+
         } else if (key == "FV_LTS_MAX_TIERS") {
             opt.fv.lts_max_tiers = std::max(1, static_cast<int>(to_double(val)));
 
@@ -407,12 +546,25 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             opt.fv.cfl_census_interval = std::max(1, static_cast<int>(to_double(val)));
 
         } else if (key == "FV_NODE_DT") {
-            const std::string nd = norm(val);
-            if      (nd == "STABILITY") opt.fv.node_dt_limit = fv::NodeDtLimit::STABILITY;
-            else if (nd == "NONE")      opt.fv.node_dt_limit = fv::NodeDtLimit::NONE;
+            // RETIRED 2026-08-29 -- see FV_NODE_COUPLING above.
+            if (norm(val) == "NONE") {
+                ctx.warnings.push_back(
+                    "WARNING: FV_NODE_DT NONE is retired and will be treated as "
+                    "STABILITY - the node accuracy bound is always armed (it "
+                    "binds storage nodes only; algebraic junctions and outfalls "
+                    "are exempt).");
+                if (ctx.warning_code == 0) ctx.warning_code = 101;
+            }
 
         } else if (key == "FV_NODE_PICARD") {
-            opt.fv.node_picard_sweeps = std::max(1, static_cast<int>(to_double(val)));
+            // RETIRED 2026-08-29 -- see FV_NODE_COUPLING above.
+            if (std::max(1, static_cast<int>(to_double(val))) > 1) {
+                ctx.warnings.push_back(
+                    "WARNING: FV_NODE_PICARD " + val + " is retired and will be "
+                    "treated as 1 - the semi-implicit node correction is always "
+                    "a single sweep.");
+                if (ctx.warning_code == 0) ctx.warning_code = 101;
+            }
 
         } else if (key == "FV_NODE_CELL_COUPLING" ||
                    key == "FV_JUNCTION_MODEL") {
@@ -427,9 +579,29 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             else if (nc == "SEMI_IMPLICIT") opt.node_continuity = NodeContinuity::SEMI_IMPLICIT;
 
         } else if (key == "VIRTUAL_JUNCTION_MOMENTUM") {
+            // RETIRED 2026-08-14. FULL is accepted and warned for one release,
+            // then the keyword goes the way of FV_NODE_CELL_COUPLING above.
+            // It was measured to be defective, not merely inaccurate: its
+            // cross-junction term dq4j is sign-inverted with respect to the
+            // per-link convective term it supplements (at constant Q,
+            // Δ(v²A) = −v²ΔA), and it is applied to BOTH adjacent links on top
+            // of each link's own full-length dq4. On SWASHES macdonald-periodic
+            // it destroyed 224-325 % of the routed volume; negating the term
+            // restores mass conservation but still leaves l1 5.24 % against
+            // BASIC's 0.163 % and plain DW's 0.141 %, so there is no
+            // term-level correction worth keeping. Evidence:
+            // epaswmm5_qa suites/swashes plans/VJ_MOMENTUM_SCOPE.md Phase 3.
             const std::string vm = norm(val);
-            if      (vm == "BASIC") opt.virtual_junction_momentum = 0;
-            else if (vm == "FULL")  opt.virtual_junction_momentum = 1;
+            opt.virtual_junction_momentum = 0;
+            if (vm == "FULL") {
+                ctx.warnings.push_back(
+                    "WARNING: VIRTUAL_JUNCTION_MOMENTUM FULL is retired and "
+                    "will be treated as BASIC - the cross-junction momentum "
+                    "term was not mass conserving.");
+                if (ctx.warning_code == 0) {
+                    ctx.warning_code = 101;  // SWMM_WARN_UNKNOWN_OPTION
+                }
+            }
 
         } else if (key == "ANDERSON_ACCEL") {
             const std::string av = norm(val);

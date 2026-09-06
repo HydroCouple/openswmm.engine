@@ -16,9 +16,14 @@
 
 #include <gtest/gtest.h>
 #include <cmath>
+#include <cstddef>
+#include <fstream>
 #include <numeric>
 
+#include <openswmm/engine/openswmm_engine.h>
+
 #include "hydrology/Snow.hpp"
+#include "core/SWMMEngine.hpp"
 #include "core/SimulationContext.hpp"
 #include "core/UnitConversion.hpp"
 
@@ -619,7 +624,13 @@ TEST(SnowSeason, SeasonFactorMatchesSinFormula) {
     // Test multiple days match the expected sin formula
     for (int day = 1; day <= 365; day += 30) {
         solver.setMeltCoeffs(day);
-        double expected = std::sin(2.0 * 3.14159265358979 * (day - 81.0) / 365.0);
+        // Legacy's constant (climate.c:1176), not 2*pi/365. It is a
+        // calibration, not a mis-divided year: the period is exactly 364
+        // days, so with the day-81 equinox offset the peak lands exactly on
+        // day 172, the summer solstice. See the solstice gate in
+        // test_transport_snow.cpp, which asserts what it is calibrated TO
+        // rather than the formula itself.
+        double expected = std::sin(0.0172615 * (day - 81.0));
         EXPECT_NEAR(soa.season, expected, 1e-10)
             << "Season factor mismatch on day " << day;
     }
@@ -691,11 +702,64 @@ TEST(SnowRemoved, PlowingAccumulatesRemoved) {
 
     // Snow accumulated = 2e-4 * 3600 = 0.72 ft, > 0.5 threshold
     // removed = sfrac[0] * exc * fArea[plow] * area_ft2
-    //         = 0.25 * 0.72 * 0.3 * (10 * 43560)
+    //
+    // F9 — this line read `10.0 * 43560.0`. It is a US-only literal and it
+    // is not even the US number the engine uses: `subcatches.area` is in
+    // PROJECT land-area units and the conversion is `1 / UCF(LANDAREA)`,
+    // which is what legacy does too (`Subcatch.area` is parsed to ft² that
+    // way, `output.c:250` converts back the same way). `Ucf[LANDAREA][US]`
+    // is the rounded 2.2956e-5, so 1/UCF is 43561.596, not 43560 — the gate
+    // was 3.7e-5 off from the engine AND from legacy, and on SI it was off
+    // by the whole 2.471x hectare/acre ratio.
     double exc = snowfall * dt;
-    double expected_removed = 0.25 * exc * 0.3 * (10.0 * 43560.0);
+    double expected_removed =
+        0.25 * exc * 0.3 * (10.0 / ucf::UCF(ucf::LANDAREA, ctx.options));
     EXPECT_NEAR(soa.removed, expected_removed, 1e-3)
         << "Removed volume should match sfrac[0] * excess * plowArea * subcatchArea";
+}
+
+// F9's SI leg. The handoff predicted the defect was unobservable because
+// "no deck in any corpus is SI and snowy" — true of DECKS, and this gate
+// needs no deck. `plowSnow` takes the context directly, so the unit system
+// is a field, and the whole 2.471x is one assignment away.
+TEST(SnowRemoved, PlowingConvertsHectaresNotAcresUnderSI) {
+    auto removed_for = [](FlowUnits units) {
+        SnowSolver solver;
+        solver.init(1);
+        auto& soa = solver.state();
+        auto plow_idx = static_cast<std::size_t>(SNOW_PLOWABLE);
+        soa.fArea[plow_idx] = 0.3;
+        soa.fArea[static_cast<std::size_t>(SNOW_IMPERV)] = 0.3;
+        soa.fArea[static_cast<std::size_t>(SNOW_PERV)]   = 0.4;
+        soa.wsnow[plow_idx] = 0.0;
+        soa.weplow[0] = 0.5;
+        soa.sfrac[0]  = 0.25;
+        for (int i = 1; i < 5; ++i) soa.sfrac[static_cast<std::size_t>(i)] = 0.0;
+        SimulationContext ctx;
+        ctx.options.flow_units = units;
+        ctx.subcatches.area.push_back(10.0);   // 10 ACRES in US, 10 HECTARES in SI
+        solver.plowSnow(ctx, 3600.0, 2e-4);
+        return solver.state().removed;
+    };
+
+    const double us = removed_for(FlowUnits::CFS);
+    const double si = removed_for(FlowUnits::CMS);
+    ASSERT_GT(us, 0.0) << "nothing was ploughed, so neither leg means anything";
+
+    // 10 hectares is 2.471 times 10 acres, so the SI figure must be that
+    // much larger. Under the defect both legs multiplied by a hardcoded
+    // 43560 and this ratio was exactly 1.
+    const double expected = ucf::UCF(ucf::LANDAREA, [] {
+        SimulationContext c; c.options.flow_units = FlowUnits::CFS;
+        return c.options; }()) /
+        ucf::UCF(ucf::LANDAREA, [] {
+        SimulationContext c; c.options.flow_units = FlowUnits::CMS;
+        return c.options; }());
+    EXPECT_NEAR(si / us, expected, 1e-9)
+        << "SI removed " << si << " ft3 against US " << us
+        << " — a ratio of 1 means the area conversion is a hardcoded acre "
+           "factor and every SI snow deck under-reports its ploughed volume";
+    EXPECT_NEAR(expected, 2.4710, 1.0e-3) << "sanity: ha/ac is 2.471";
 }
 
 TEST(SnowRemoved, NoPlowingMeansNoRemoval) {
@@ -972,4 +1036,83 @@ TEST(SnowColdContent, ColdContentDelaysMelt) {
     }
     EXPECT_LT(melt_cold, melt_warm)
         << "Cold content should reduce effective melt output";
+}
+
+// ============================================================================
+// Engine integration — the seasonal melt coefficients
+//
+// Every gate above sets `dhm` by calling setMeltCoeffs() itself, which is
+// exactly how the engine went without ever calling it: `dhm` stayed at its
+// `assign(0.0)` value, `imelt = dhm * (temp - tbase)` was identically zero,
+// and degree-day melt never fired on any deck. Legacy sets them once a day
+// from setTemp (climate.c:1176-1180). This gate runs a real deck.
+// ============================================================================
+
+TEST(SnowEngineIntegration, ADegreeDayPackMeltsWhenSteppedThroughTheEngine) {
+    {
+        std::ofstream f("_snowdd.inp");
+        f << "[TITLE]\ndegree-day melt through the engine\n\n[OPTIONS]\n"
+             "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nINFILTRATION HORTON\n"
+             "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
+             "END_DATE 01/01/2026\nEND_TIME 01:00:00\n"
+             "WET_STEP 00:01:00\nDRY_STEP 00:01:00\nROUTING_STEP 10\n"
+             "REPORT_STEP 00:05:00\n\n"
+             "[TEMPERATURE]\nTIMESERIES air_ts\n"
+             "SNOWMELT 0.5 0.5 0.6 40.0 0.0 0.0\n\n"
+             "[RAINGAGES]\nRG1 INTENSITY 0:05 1.0 TIMESERIES rain_ts\n\n"
+             "[TIMESERIES]\n"
+             "rain_ts 01/01/2026 00:00 0.0\nrain_ts 01/01/2026 01:05 0.0\n\n"
+             "air_ts 01/01/2026 00:00 50.0\nair_ts 01/01/2026 01:05 50.0\n\n"
+             // A RIPE pack: free water already at capacity, so melt leaves
+             // the pack in the first step instead of filling the free-water
+             // store for the first 98 minutes.
+             "[SNOWPACKS]\n"
+             "SP1 PLOWABLE   0.02 0.06 32.0 0.10 6 0.6 0.0\n"
+             "SP1 IMPERVIOUS 0.02 0.06 32.0 0.10 6 0.6 0.0\n"
+             "SP1 PERVIOUS   0.01 0.03 32.0 0.10 6 0.6 0.0\n"
+             "SP1 REMOVAL    0.0 0.0 0.0 0.0 0.0 0.0\n\n"
+             "[SUBCATCHMENTS]\nS1 RG1 J1 5 50 500 0.5 0 SP1\n\n"
+             "[SUBAREAS]\nS1 0.01 0.1 0.02 0.02 25 OUTLET\n\n"
+             "[INFILTRATION]\nS1 3.0 0.5 4 7 0\n\n"
+             "[JUNCTIONS]\nJ1 10.0 10 0 0 0\n\n"
+             "[OUTFALLS]\nOUT 9.0 FREE  NO\n\n"
+             "[CONDUITS]\nC1 J1 OUT 400 0.013 0 0 0\n\n"
+             "[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\n\n"
+             "[REPORT]\nINPUT NO\n";
+    }
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_engine_open(e, "_snowdd.inp", "_snowdd.rpt", "_snowdd.out",
+                               nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+    double elapsed = 0.0;
+    int guard = 0;
+    do {
+        if (swmm_engine_step(e, &elapsed) != SWMM_OK) break;
+    } while (elapsed > 0.0 && ++guard < 40000);
+    swmm_engine_end(e);
+
+    auto& eng = *static_cast<SWMMEngine*>(e);
+    const auto& ctx = eng.context();
+    const auto& sn  = eng.snowSolver().state();
+    ASSERT_GE(ctx.n_subcatches(), 1);
+    ASSERT_GE(ctx.subcatches.snowpack[0], 0) << "the deck built no snowpack";
+
+    // The defect itself: nothing in the engine ever set these.
+    for (int k = SNOW_PLOWABLE; k <= SNOW_PERV; ++k)
+        EXPECT_GT(sn.dhm[static_cast<std::size_t>(k)], 0.0)
+            << "subarea " << k << ": the seasonal melt coefficient is zero "
+               "after a full run, so setMeltCoeffs() was never called and "
+               "imelt = dhm * (temp - tbase) can only ever be zero";
+
+    // And its consequence, on a deck 18 F above tbase for an hour.
+    EXPECT_GT(ctx.subcatches.snow_net_imperv[0], 0.0)
+        << "the pack published no net precipitation";
+    EXPECT_LT(sn.wsnow[SNOW_IMPERV], 0.5)
+        << "the impervious pack still holds its full 0.5 ft of water "
+           "equivalent, so nothing melted";
+    EXPECT_GT(ctx.subcatches.stat_runoff_vol[0], 0.0)
+        << "no runoff from an hour of melt";
+    swmm_engine_destroy(e);
 }

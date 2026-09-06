@@ -231,24 +231,33 @@ TEST(FvEngine, RefiningTheMeshConvergesTowardTheDynwaveHydrograph) {
        << "50," << e_mid << "\n"
        << "20," << e_fine << "\n";
 
-    // With the pass-through junction interface even COARSE sits at ~3 % mean
-    // peak-flow deviation from DW — inside solver-to-solver noise — so a
-    // strictly monotone trend can no longer be resolved there. Monotonicity
-    // is asserted only while the coarse error is above the noise floor;
-    // below it, every resolution must simply stay inside the floor, which is
-    // a STRONGER statement of convergence than the trend was.
+    // With the pass-through junction interface every resolution sits within a
+    // few percent of DW, so ADJACENT resolutions can differ by less than this
+    // metric can resolve — it measures agreement with a different solver, not
+    // distance from an exact solution, and refining FV moves it toward FV's
+    // own answer, not toward DW's. Two claims are therefore asserted directly
+    // instead of branching on the coarse value:
+    //
+    //   1. refinement across the FULL span reduces the error (the consistency
+    //      statement — this is where the signal is);
+    //   2. no intermediate resolution degrades beyond the noise band, so a
+    //      real blow-up at one Δx still fails.
+    //
+    // A branch keyed on `e_coarse > kNoiseFloor` used to select between a
+    // strict-monotonicity mode and a floor-only mode. That made the gate
+    // bistable exactly at the floor: a coarse error landing just above 0.05
+    // (measured here: 0.0525 coarse / 0.0552 at dx=50 / 0.0392 at dx=20)
+    // demanded strict monotonicity of two values 0.27 points apart, while a
+    // hair below it demanded nothing of the trend at all.
     constexpr double kNoiseFloor = 0.05;
-    if (e_coarse > kNoiseFloor) {
-        EXPECT_LT(e_mid, e_coarse)
-            << "refining from COARSE to dx=50 did not reduce the peak-flow error ("
-            << e_coarse << " -> " << e_mid << ")";
-        EXPECT_LT(e_fine, e_coarse)
-            << "refining from COARSE to dx=20 did not reduce the peak-flow error ("
-            << e_coarse << " -> " << e_fine << ")";
-    } else {
-        EXPECT_LT(e_mid, kNoiseFloor)
-            << "dx=50 fell out of the noise floor: " << e_mid;
-    }
+    constexpr double kNoiseBand  = 0.01;  // ~4x the observed coarse/dx=50 spread
+
+    EXPECT_LT(e_fine, e_coarse)
+        << "refining from COARSE to dx=20 did not reduce the peak-flow error ("
+        << e_coarse << " -> " << e_fine << ")";
+    EXPECT_LT(e_mid, e_coarse + kNoiseBand)
+        << "dx=50 degraded beyond the noise band vs COARSE ("
+        << e_coarse << " -> " << e_mid << ")";
     // At the finest resolution the peaks must be genuinely close to DW.
     EXPECT_LT(e_fine, kNoiseFloor)
         << "mean relative peak-flow error at dx=20 is " << e_fine;
@@ -910,6 +919,121 @@ TEST(FvEngine, FlapGatesMatchDynamicWave) {
 }
 
 // ===========================================================================
+// The same two gates on STRUCTURE links (orifice / weir / outlet)
+//
+// Legacy applies ONE predicate, link_setFlapGate (link.c:646), to conduits and
+// structures alike, and it has two halves: the link's own gate, and a gated
+// OUTFALL on the inflow end. The structure kernels in HydStructures.cpp
+// implemented only the first half, so a tide gate modelled the ordinary way —
+// a gated outfall with an orifice or weir on it — admitted the sea. FV routes
+// its structure links through the same code (Routing.cpp stepFv ->
+// non_conduit_fn), so both solvers failed identically.
+// ===========================================================================
+
+namespace {
+
+/// The backflow fixture again, but the junction reaches the sea through a
+/// STRUCTURE rather than a conduit. `kind` selects which one; @p link_gate and
+/// @p outfall_gate are the two independent flags under test.
+///
+/// A dead-end conduit JU->JA is present only so the FV mesh has a cell to
+/// build: a structure link contributes a node source/sink, not a cell, and a
+/// conduit-free network is not what this test is about. It carries no forcing
+/// and is identical across all cases, so it cannot separate them.
+std::string writeStructBackflowModel(const std::string& name, const char* routing,
+                                     const std::string& kind,
+                                     const char* link_gate, const char* outfall_gate) {
+    const std::string path = outDir() + "/" + name + ".inp";
+    std::ofstream os(path);
+    os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         " << routing
+       << "\nSTART_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+          "END_DATE             01/01/2026\nEND_TIME             01:00:00\n"
+          "REPORT_STEP          00:05:00\nROUTING_STEP         5\n"
+          "ALLOW_PONDING        NO\n\n"
+          "[JUNCTIONS]\nJU  100.0  10.0  0  0  0\nJA  100.0  10.0  0  0  0\n\n"
+          "[OUTFALLS]\nOF  100.0  FIXED  108.0  " << outfall_gate << "\n\n"
+          "[CONDUITS]\nC0  JU  JA  200  0.013  0  0  0  0\n\n";
+
+    if (kind == "orifice") {
+        os << "[ORIFICES]\nS1  JA  OF  SIDE  0  0.65  " << link_gate << "  0\n\n";
+    } else if (kind == "weir") {
+        os << "[WEIRS]\nS1  JA  OF  TRANSVERSE  0  3.33  " << link_gate
+           << "  0  0  YES\n\n";
+    } else {  // outlet
+        os << "[OUTLETS]\nS1  JA  OF  0  FUNCTIONAL/HEAD  10.0  0.5  "
+           << link_gate << "\n\n";
+    }
+
+    os << "[XSECTIONS]\nC0  CIRCULAR  2.0  0  0  0  1\n";
+    if (kind == "orifice")   os << "S1  RECT_CLOSED  2.0  2.0  0  0\n";
+    else if (kind == "weir") os << "S1  RECT_OPEN    2.0  4.0  0  0\n";
+    os << "\n[TIMESERIES]\n\n[REPORT]\nINPUT  NO\nCONTROLS  NO\n"
+          "NODES ALL\nLINKS ALL\n";
+    return path;
+}
+
+} // namespace
+
+// Each structure, each gate. The ungated run must admit real backflow or the
+// gated runs prove nothing, so that is asserted rather than assumed.
+TEST(FvEngine, StructureFlapGatesBlockBackflow) {
+    for (const char* routing : {"DYNWAVE", "FV"}) {
+        for (const char* kind : {"orifice", "weir", "outlet"}) {
+            const std::string stem =
+                std::string("sflap_") + routing + "_" + kind + "_";
+
+            const RunResult open = runModel(writeStructBackflowModel(
+                stem + "open", routing, kind, "NO", "NO"));
+            ASSERT_TRUE(open.parsed) << stem << "open";
+            const auto oit = open.peak_flow.find("S1");
+            ASSERT_NE(oit, open.peak_flow.end())
+                << stem << "open: no S1 row in the flow summary";
+            const double open_flow = oit->second;
+            ASSERT_GT(open_flow, 0.1)
+                << stem << ": the ungated fixture admitted no backflow ("
+                << open_flow << " cfs), so the gated cases prove nothing";
+
+            // "link" is the structure's own Gated column; "outfall" is the
+            // [OUTFALLS] Gated column, which the structure kernels ignored.
+            const struct { const char* tag; const char* lg; const char* og; }
+            gated[] = {{"link", "YES", "NO"}, {"outfall", "NO", "YES"}};
+
+            for (const auto& c : gated) {
+                const RunResult r = runModel(writeStructBackflowModel(
+                    stem + c.tag, routing, kind, c.lg, c.og));
+                ASSERT_TRUE(r.parsed) << stem << c.tag;
+                const auto it = r.peak_flow.find("S1");
+                ASSERT_NE(it, r.peak_flow.end()) << stem << c.tag;
+                EXPECT_LT(it->second, 0.01 * open_flow)
+                    << stem << c.tag << ": peak flow " << it->second
+                    << " cfs against " << open_flow
+                    << " cfs ungated — the gate is open";
+            }
+        }
+    }
+}
+
+// FV has to agree with DW on the gated answer, not merely be closed itself.
+TEST(FvEngine, StructureFlapGatesMatchDynamicWave) {
+    for (const char* kind : {"orifice", "weir", "outlet"}) {
+        const struct { const char* tag; const char* lg; const char* og; }
+        gated[] = {{"link", "YES", "NO"}, {"outfall", "NO", "YES"}};
+        for (const auto& c : gated) {
+            const std::string stem =
+                std::string("sflapcmp_") + kind + "_" + c.tag + "_";
+            const RunResult dw = runModel(writeStructBackflowModel(
+                stem + "dw", "DYNWAVE", kind, c.lg, c.og));
+            const RunResult fv = runModel(writeStructBackflowModel(
+                stem + "fv", "FV", kind, c.lg, c.og));
+            ASSERT_TRUE(dw.parsed && fv.parsed) << stem;
+            EXPECT_NEAR(fv.peak_flow.at("S1"), dw.peak_flow.at("S1"), 0.05)
+                << stem << ": FV " << fv.peak_flow.at("S1")
+                << " cfs vs DW " << dw.peak_flow.at("S1") << " cfs";
+        }
+    }
+}
+
+// ===========================================================================
 // Stage 2 — force-main friction, structure coupling, inert-option warnings
 // ===========================================================================
 
@@ -1192,10 +1316,19 @@ TEST(FvEngine, StructuresModelAgreesWithDynamicWave) {
 // ===========================================================================
 
 // initFv bails on a mesh-build error leaving fv_solver_ == nullptr, and stepFv
-// then returns 0 for every step. Before the diagnostics were surfaced, a model
-// with a DUMMY conduit therefore ran to completion, exited clean, and reported
-// a network through which no water had ever moved. Silence is the failure mode
-// this guards.
+// then returns 0 for every step. Before the diagnostics were surfaced, such a
+// model ran to completion, exited clean, and reported a network through which
+// no water had ever moved. Silence is the failure mode this guards.
+//
+// The trigger is a zero-diameter CIRCULAR conduit, which nothing upstream
+// rejects: legacy's conduit_validate raised ERROR 119 on aFull <= 0
+// (link.c:1050-1056) but that check was never ported, and PostParseResolver
+// silently stores y_full = a_full = 0 for it. The FV mesh builder is currently
+// the only thing in the engine that notices.
+//
+// It used to be a DUMMY conduit. That is no longer unmeshable — a dummy is
+// legitimate connectivity, routed as a pass-through the way DW routes it — and
+// the tests below cover it as a supported case instead.
 TEST(FvEngine, AnUnmeshableModelFailsInsteadOfRunningUnrouted) {
     const std::string dir = outDir();
     const std::string inp = dir + "/unmeshable.inp";
@@ -1209,15 +1342,165 @@ TEST(FvEngine, AnUnmeshableModelFailsInsteadOfRunningUnrouted) {
               "[OUTFALLS]\nOF   98.0  FREE  NO\n\n"
               "[CONDUITS]\nC1  JA  JB  400  0.013  0  0  0  0\n"
               "C2  JB  OF  400  0.013  0  0  0  0\n\n"
-              "[XSECTIONS]\nC1  DUMMY\nC2  CIRCULAR  3.0  0  0  0  1\n\n"
+              "[XSECTIONS]\nC1  CIRCULAR  0  0  0  0  1\n"
+              "C2  CIRCULAR  3.0  0  0  0  1\n\n"
               "[INFLOWS]\nJA  FLOW  \"\"  FLOW  1.0  1.0  15.0\n\n"
               "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\n";
     }
     const std::string rpt = dir + "/unmeshable.rpt";
     const std::string out = dir + "/unmeshable.out";
     EXPECT_NE(swmm_engine_run(inp.c_str(), rpt.c_str(), out.c_str(), nullptr), 0)
-        << "a DUMMY conduit under FV ran without error — the solver was never "
-           "constructed, so nothing was routed";
+        << "a conduit with no usable cross-section ran without error — the "
+           "solver was never constructed, so nothing was routed";
+}
+
+// ===========================================================================
+// DUMMY links: connectivity without a channel
+// ===========================================================================
+
+/// JA --C1(dummy)--> JB --C2--> OF, with a steady inflow at JA.
+///
+/// C1 declares that whatever reaches JA leaves immediately for JB. Under DW
+/// that is findNonConduitFlow's Q = inflow + overflow (dynwave.c:418-449);
+/// under FV it is the same statement written as a drain condition on JA.
+namespace {
+
+std::string writeDummyModel(const std::string& name, const std::string& routing) {
+    const std::string path = outDir() + "/" + name + ".inp";
+    std::ofstream os(path);
+    os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         " << routing
+       << "\n"
+          "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+          "END_DATE             01/01/2026\nEND_TIME             02:00:00\n"
+          "REPORT_STEP          00:05:00\nROUTING_STEP         5\n\n"
+          "[JUNCTIONS]\nJA  100.0  10.0  0  0  0\nJB   99.0  10.0  0  0  0\n\n"
+          "[OUTFALLS]\nOF   98.0  FREE  NO\n\n"
+          "[CONDUITS]\nC1  JA  JB  400  0.013  0  0  0  0\n"
+          "C2  JB  OF  400  0.013  0  0  0  0\n\n"
+          // The geometry columns are required even though a dummy has no
+          // geometry: handle_xsections drops any row with fewer than three
+          // tokens (LinksHandler.cpp:333), and a bare "C1 DUMMY" is then
+          // silently read as a zero-area CIRCULAR.
+          "[XSECTIONS]\nC1  DUMMY  0  0  0  0\n"
+          "C2  CIRCULAR  3.0  0  0  0  1\n\n"
+          "[INFLOWS]\nJA  FLOW  \"\"  FLOW  1.0  1.0  5.0\n\n"
+          "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\n";
+    return path;
+}
+
+RunResult runFile(const std::string& inp, const std::string& name) {
+    const std::string rpt = outDir() + "/" + name + ".rpt";
+    const std::string out = outDir() + "/" + name + ".out";
+    const int err = swmm_engine_run(inp.c_str(), rpt.c_str(), out.c_str(), nullptr);
+    EXPECT_EQ(err, 0) << name << " failed with code " << err;
+    return parseReport(rpt);
+}
+
+} // namespace
+
+// The bug this whole change exists for: FV rejected the model outright.
+TEST(FvEngine, ADummyConduitRunsAndCarriesTheUpstreamInflow) {
+    const RunResult fv = runFile(writeDummyModel("dummy_fv", "FV"), "dummy_fv");
+    ASSERT_TRUE(fv.parsed) << "FV refused a model with a DUMMY conduit";
+
+    ASSERT_TRUE(fv.peak_flow.count("C1"));
+    // 5 cfs in at JA has nowhere else to go. The number that matters is that it
+    // is the INFLOW and not merely nonzero: a drain fed from ctx.nodes.inflow
+    // instead of the solver's own fluxes reports a small fraction of this.
+    EXPECT_NEAR(fv.peak_flow.at("C1"), 5.0, 0.5)
+        << "dummy carried " << fv.peak_flow.at("C1")
+        << " cfs against 5 cfs of inflow — the pass-through is not seeing what "
+           "actually arrives at JA";
+    EXPECT_LT(std::fabs(fv.continuity_pct), 1.0)
+        << "routing continuity " << fv.continuity_pct
+        << " % — the pass-through is creating or destroying water";
+}
+
+TEST(FvEngine, DummyPassThroughAgreesWithDynamicWave) {
+    const RunResult fv = runFile(writeDummyModel("dummy_fv2", "FV"), "dummy_fv2");
+    const RunResult dw =
+        runFile(writeDummyModel("dummy_dw", "DYNWAVE"), "dummy_dw");
+    ASSERT_TRUE(fv.parsed && dw.parsed);
+
+    ASSERT_GT(dw.peak_flow.at("C1"), 0.1);
+    EXPECT_NEAR(fv.peak_flow.at("C1"), dw.peak_flow.at("C1"),
+                0.10 * dw.peak_flow.at("C1"))
+        << "FV " << fv.peak_flow.at("C1") << " vs DW " << dw.peak_flow.at("C1");
+    ASSERT_GT(dw.outflow_volume, 0.0);
+    EXPECT_NEAR(fv.outflow_volume, dw.outflow_volume, 0.05 * dw.outflow_volume)
+        << "routed volume " << fv.outflow_volume << " vs " << dw.outflow_volume;
+}
+
+// ===========================================================================
+// ERROR 134 — illegal DUMMY connections (legacy checkDummyLinks)
+// ===========================================================================
+
+/// A dummy's discharge is defined as everything arriving at its upstream node,
+/// so it must be that node's only outlet. With a second outlet both links claim
+/// the whole inflow and the model creates water. Legacy rejects it
+/// (flowrout.c:301-313); the C++ engine never did until now.
+TEST(FvEngine, ADummyThatIsNotTheOnlyOutletIsRejected) {
+    const std::string dir = outDir();
+    const std::string inp = dir + "/dummy_two_outlets.inp";
+    {
+        std::ofstream os(inp);
+        os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         FV\n"
+              "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+              "END_DATE             01/01/2026\nEND_TIME             00:30:00\n"
+              "REPORT_STEP          00:05:00\nROUTING_STEP         5\n\n"
+              "[JUNCTIONS]\nJA  100.0  10.0  0  0  0\nJB   99.0  10.0  0  0  0\n\n"
+              "[OUTFALLS]\nOF   98.0  FREE  NO\n\n"
+              // C1 is a dummy out of JA, C3 is a second outlet out of JA.
+              "[CONDUITS]\nC1  JA  JB  400  0.013  0  0  0  0\n"
+              "C3  JA  OF  400  0.013  0  0  0  0\n"
+              "C2  JB  OF  400  0.013  0  0  0  0\n\n"
+              "[XSECTIONS]\nC1  DUMMY  0  0  0  0\n"
+              "C2  CIRCULAR  3.0  0  0  0  1\n"
+              "C3  CIRCULAR  3.0  0  0  0  1\n\n"
+              "[INFLOWS]\nJA  FLOW  \"\"  FLOW  1.0  1.0  5.0\n\n"
+              "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\n";
+    }
+    EXPECT_NE(swmm_engine_run(inp.c_str(),
+                              (dir + "/dummy_two_outlets.rpt").c_str(),
+                              (dir + "/dummy_two_outlets.out").c_str(), nullptr), 0)
+        << "a dummy sharing its upstream node with a second outlet was accepted";
+}
+
+/// Two dummies in series: JA passes through to JB, which passes through to OF.
+/// Neither arrival rate is defined without the other. Legacy checkDummyLinks
+/// (toposort.c:480-528) rejects a node with both an incoming and an outgoing
+/// pass-through; this is the same model under both DW and FV.
+TEST(FvEngine, ChainedDummyLinksAreRejectedUnderBothModels) {
+    for (const char* routing : {"FV", "DYNWAVE"}) {
+        const std::string dir  = outDir();
+        const std::string name = std::string("dummy_chain_") + routing;
+        const std::string inp  = dir + "/" + name + ".inp";
+        {
+            std::ofstream os(inp);
+            os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         "
+               << routing << "\n"
+                  "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+                  "END_DATE             01/01/2026\nEND_TIME             00:30:00\n"
+                  "REPORT_STEP          00:05:00\nROUTING_STEP         5\n\n"
+                  "[JUNCTIONS]\nJA  100.0  10.0  0  0  0\n"
+                  "JB   99.0  10.0  0  0  0\n\n"
+                  "[OUTFALLS]\nOF   98.0  FREE  NO\n\n"
+                  "[CONDUITS]\nC1  JA  JB  400  0.013  0  0  0  0\n"
+                  "C2  JB  OF  400  0.013  0  0  0  0\n\n"
+                  // A DUMMY row still needs its geometry columns: handle_xsections
+                  // drops any [XSECTIONS] line with fewer than three tokens
+                  // (LinksHandler.cpp:333), so a bare "C1 DUMMY" is silently
+                  // read as a zero-area CIRCULAR instead.
+                  "[XSECTIONS]\nC1  DUMMY  0  0  0  0\n"
+                  "C2  DUMMY  0  0  0  0\n\n"
+                  "[INFLOWS]\nJA  FLOW  \"\"  FLOW  1.0  1.0  5.0\n\n"
+                  "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\n";
+        }
+        EXPECT_NE(swmm_engine_run(inp.c_str(), (dir + "/" + name + ".rpt").c_str(),
+                                  (dir + "/" + name + ".out").c_str(), nullptr), 0)
+            << routing << ": chained dummy links were accepted — JB has both an "
+               "incoming and an outgoing pass-through";
+    }
 }
 
 // ===========================================================================
@@ -1263,43 +1546,33 @@ TEST(FvEngine, StorageNodeLossesLeaveTheWater) {
 
 
 // ---------------------------------------------------------------------------
-// FV_NODE_PICARD — the semi-implicit node correction, iterated.
+// FV_NODE_COUPLING / FV_NODE_DT / FV_NODE_PICARD are RETIRED (2026-08-29).
 //
-// The correction freezes the characteristic resistance sqrt(g*A*T), the node's
-// storage response and the incident faces' fluxes at the head the substep
-// started from. That is exact for the LINEARIZED problem, so one sweep leaves
-// zero residual and more sweeps only matter because the real problem is not
-// linear. Sweeping re-evaluates all three at the head each pass lands on.
-//
-// Two properties are asserted, and the second is the one this repo keeps
-// getting wrong: FV_STRUCTURE_COUPLING and RK2 both shipped parsed, exposed
-// and READ NOWHERE. An option that cannot be shown to change a result is a
-// dead option, so the test requires a visible difference rather than trusting
-// the plumbing.
+// Each hardwires what was already its default: storage-node coupling is
+// semi-implicit, the node accuracy bound is armed, the correction is a single
+// sweep. Plain junctions never used any of them (algebraic interfaces), so
+// the fixture is the storage-node network the Picard gates used to run — the
+// only configuration where the retired knobs ever changed a result (the
+// pre-removal evidence record, openswmm.gui/test_artifacts/
+// eastboston_fv_node_options/EVIDENCE.md, has EXPLICIT and PICARD 6 live on
+// it). Three claims, and the last is what keeps the warning honest:
+//   1. a deck asking for the retired behaviour still opens and runs
+//      BIT-IDENTICALLY to the defaults — inert, not merely similar;
+//   2. it is told so: one WARNING per key, naming the key, in the .rpt;
+//   3. a deck spelling out the former DEFAULTS is not warned at all — a
+//      notice that fires on every FV deck is one users learn to ignore.
 // ---------------------------------------------------------------------------
 namespace {
-std::string writeNodePicardModel(const std::string& name, int sweeps) {
-    const std::string dir = outDir();
-    const std::string inp = dir + "/" + name + ".inp";
+std::string writeStorageNodeModel(const std::string& name,
+                                  const std::string& extra_options) {
+    const std::string inp = outDir() + "/" + name + ".inp";
     std::ofstream os(inp);
     os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         FV\n"
           "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
           "END_DATE             01/01/2026\nEND_TIME             02:00:00\n"
-          "REPORT_STEP          00:05:00\nROUTING_STEP         5\n";
-    // Sweeping only matters when the node is taking a step that is LARGE
-    // relative to its own stiffness. Under default tiering the node is handed
-    // a fine tier precisely so the frozen tangent stays accurate, and the
-    // first sweep's correction already falls under the tolerance — the option
-    // is inert, which is a property of the schedule, not of the option. One
-    // tier puts the node on the macro step, which is the regime it exists for.
-    os << "FV_LTS_MAX_TIERS     1\n";
-    if (sweeps > 1) os << "FV_NODE_PICARD       " << sweeps << "\n";
-    // Picard sweeps iterate the integrated-bucket node relaxation. Plain
-    // junctions are algebraic interfaces and never use it, so the machinery's
-    // remaining home is a STORAGE node — a small one, so its storage stays
-    // tiny against the conduit's conveyance, which is the configuration where
-    // the frozen tangent is furthest from the true flux response.
-    os << "\n[JUNCTIONS]\nJ1  100.0  8.0  0  0  0\n\n"
+          "REPORT_STEP          00:05:00\nROUTING_STEP         5\n"
+       << extra_options
+       << "\n[JUNCTIONS]\nJ1  100.0  8.0  0  0  0\n\n"
           "[STORAGE]\nJ2  99.0  8.0  0  FUNCTIONAL  0  0  12.5\n\n"
           "[OUTFALLS]\nOF   98.0  FREE  NO\n\n"
           "[CONDUITS]\nC1  J1  J2  300  0.02  0  0  0  0\n"
@@ -1310,83 +1583,64 @@ std::string writeNodePicardModel(const std::string& name, int sweeps) {
           "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\nCONTROLS  NO\n";
     return inp;
 }
+
+struct RetiredRun {
+    RunResult   result;
+    std::string report;   // the whole .rpt, for the warning lines
+};
+
+RetiredRun runStorageNodeModel(const std::string& name,
+                               const std::string& extra_options) {
+    const std::string inp = writeStorageNodeModel(name, extra_options);
+    const std::string rpt = outDir() + "/" + name + ".rpt";
+    const std::string out = outDir() + "/" + name + ".out";
+    const int err = swmm_engine_run(inp.c_str(), rpt.c_str(), out.c_str(), nullptr);
+    EXPECT_EQ(err, 0) << name << " run failed with code " << err;
+    RetiredRun rr;
+    rr.result = parseReport(rpt);
+    std::ifstream in(rpt);
+    std::stringstream ss;
+    ss << in.rdbuf();
+    rr.report = ss.str();
+    return rr;
+}
 }  // namespace
 
-TEST(FvEngine, NodePicardSweepsPreserveConservation) {
-    for (int sweeps : {1, 2, 4}) {
-        const RunResult r = runModel(
-            writeNodePicardModel("picard_" + std::to_string(sweeps), sweeps));
-        ASSERT_TRUE(r.parsed) << "sweeps=" << sweeps;
-        // Every sweep leaves its answer in the one shared face-flux array, so
-        // exactness is structural and must not depend on the sweep count.
-        EXPECT_LT(std::fabs(r.continuity_pct), 0.05)
-            << "sweeps=" << sweeps << " continuity " << r.continuity_pct << " %";
-    }
-}
+TEST(FvEngine, RetiredNodeOptionsAreInertAndWarn) {
+    const RetiredRun base = runStorageNodeModel("retired_node_base", "");
+    const RetiredRun asks = runStorageNodeModel(
+        "retired_node_asks",
+        "FV_NODE_COUPLING     EXPLICIT\n"
+        "FV_NODE_DT           NONE\n"
+        "FV_NODE_PICARD       3\n");
+    const RetiredRun spells = runStorageNodeModel(
+        "retired_node_defaults",
+        "FV_NODE_COUPLING     SEMI_IMPLICIT\n"
+        "FV_NODE_DT           STABILITY\n"
+        "FV_NODE_PICARD       1\n");
+    ASSERT_TRUE(base.result.parsed && asks.result.parsed && spells.result.parsed);
+    ASSERT_GT(base.result.peak_flow.at("C2"), 0.0) << "fixture never routed";
 
-// Sweeping UNDER LOCAL TIME STEPPING, which is the harder case and the one the
-// fixture above deliberately opts out of.
-//
-// A node's incident faces can sit in different tiers, so on any base step only
-// some are firing; the rest are holding the flux they will book over their own
-// 2^k*dt0 window. The sweep's flux re-solve must therefore touch only the live
-// faces — recomputing a held one re-times a flux against the wrong dt and
-// breaks the macro cycle's face-open/volume-close contract, which is what makes
-// a tiered step conservative in TIME as well as in mass. Mass alone would not
-// catch it (both sides of a face still see one number), so this asserts the
-// ledger through continuity across sweep counts WITH tiering active.
-TEST(FvEngine, NodePicardIsTierWindowSafeUnderLts) {
-    double base = 0.0;
-    for (int sweeps : {1, 3, 6}) {
-        const std::string name = "picard_lts_" + std::to_string(sweeps);
-        const std::string dir = outDir();
-        const std::string inp = dir + "/" + name + ".inp";
-        {
-            // Same network as above but with tiering LEFT ON, and a graded
-            // reach so the tiers genuinely separate rather than collapsing to
-            // K = 1 (which would make this a duplicate of the global-path test).
-            std::ofstream os(inp);
-            os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         FV\n"
-                  "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
-                  "END_DATE             01/01/2026\nEND_TIME             02:00:00\n"
-                  "REPORT_STEP          00:05:00\nROUTING_STEP         5\n";
-            if (sweeps > 1) os << "FV_NODE_PICARD       " << sweeps << "\n";
-            // Picard machinery lives on the storage node (junctions are
-            // algebraic); J2 sits between the tier-split conduits.
-            os << "\n[JUNCTIONS]\nJ1  100.0  8.0  0  0  0\n"
-                  "J3   99.0  8.0  0  0  0\n\n"
-                  "[STORAGE]\nJ2  99.4  8.0  0  FUNCTIONAL  0  0  12.5\n\n"
-                  "[OUTFALLS]\nOF   98.0  FREE  NO\n\n"
-                  // 40:1 length ratio — the tier spread the grading sweep exists for
-                  "[CONDUITS]\nC1  J1  J2  800  0.02  0  0  0  0\n"
-                  "C2  J2  J3   20  0.02  0  0  0  0\n"
-                  "C3  J3  OF  800  0.02  0  0  0  0\n\n"
-                  "[XSECTIONS]\nC1  RECT_OPEN  6.0  20.0  0  0  1\n"
-                  "C2  RECT_OPEN  6.0  20.0  0  0  1\n"
-                  "C3  RECT_OPEN  6.0  20.0  0  0  1\n\n"
-                  "[INFLOWS]\nJ1  FLOW  \"\"  FLOW  1.0  1.0  60.0\n\n"
-                  "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\nCONTROLS  NO\n";
-        }
-        const RunResult r = runModel(inp);
-        ASSERT_TRUE(r.parsed) << "sweeps=" << sweeps;
-        EXPECT_LT(std::fabs(r.continuity_pct), 0.05)
-            << "sweeps=" << sweeps << " continuity " << r.continuity_pct
-            << " % under LTS — a sweep re-solved a face outside its tier window";
-        if (sweeps == 1) base = r.peak_flow.at("C3");
-        else
-            EXPECT_NEAR(r.peak_flow.at("C3"), base, 0.25 * base)
-                << "sweeps=" << sweeps << " diverged from the single-sweep result";
-    }
-}
+    // 1. Inert: bit-equality, not a tolerance — the retired keys select no
+    //    code path any more.
+    EXPECT_EQ(asks.result.peak_flow.at("C2"), base.result.peak_flow.at("C2"))
+        << "a retired node option still changes the answer";
+    EXPECT_EQ(asks.result.continuity_pct, base.result.continuity_pct);
+    EXPECT_EQ(spells.result.peak_flow.at("C2"), base.result.peak_flow.at("C2"));
 
-TEST(FvEngine, NodePicardIsNotADeadOption) {
-    const RunResult one = runModel(writeNodePicardModel("picard_one", 1));
-    const RunResult many = runModel(writeNodePicardModel("picard_many", 6));
-    ASSERT_TRUE(one.parsed && many.parsed);
-    ASSERT_GT(one.peak_flow.at("C2"), 0.0) << "fixture never routed";
-    EXPECT_NE(one.peak_flow.at("C2"), many.peak_flow.at("C2"))
-        << "FV_NODE_PICARD changed nothing — the option is being parsed and "
-           "ignored, exactly as FV_STRUCTURE_COUPLING and RK2 once were";
+    // 2. Warned, one line per key, naming the key and the value asked for.
+    for (const char* key : {"FV_NODE_COUPLING EXPLICIT is retired",
+                            "FV_NODE_DT NONE is retired",
+                            "FV_NODE_PICARD 3 is retired"}) {
+        EXPECT_NE(asks.report.find(key), std::string::npos)
+            << "the .rpt does not carry: " << key;
+    }
+
+    // 3. Spelling out the former defaults asks for nothing that was retired —
+    //    no warning.
+    EXPECT_EQ(base.report.find("is retired"), std::string::npos);
+    EXPECT_EQ(spells.report.find("is retired"), std::string::npos)
+        << "the retirement warning fires on a deck that asked for nothing";
 }
 
 // ---------------------------------------------------------------------------

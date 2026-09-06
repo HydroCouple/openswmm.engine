@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file Routing.cpp
  * @brief Top-level routing dispatcher.
@@ -6,7 +22,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "Routing.hpp"
@@ -264,17 +280,38 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
             // compiled default (DEFAULT_HEAD_TOL, already in feet) is left as-is.
             // Skipping this made an SI model's 0.0015 m tolerance act as
             // 0.0015 ft (~3.3× too tight) → chronic non-convergence.
+            //
+            // A deck may also carry an explicit ZERO for either option.
+            // Legacy treats zero as "use the compiled default"
+            // (dynwave.c:182-184):
+            //     if (HeadTol == 0.0)  HeadTol  = DEFAULT_HEADTOL;
+            //     if (MaxTrials == 0)  MaxTrials = DEFAULT_MAXTRIALS;
+            // and SWMM itself writes those zeros — project.c:897-898 sets
+            // MaxTrials/HeadTol to 0 precisely to "force use of default", so
+            // decks saved by the GUI ship them. Without the substitution
+            // `while (t_steps < max_trials)` runs ZERO Picard iterations: every
+            // link flow and node depth stays at its initial value for the whole
+            // simulation, silently, with no error and a clean mass balance.
+            // 362 of the 1,396 corpus decks (26%) carry MAX_TRIALS 0.
             const double ucf_len = ucf::Ucf[ucf::LENGTH][
                 ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units))];
             dw_solver_.head_tol =
-                (ctx.options.head_tol == constants::DEFAULT_HEAD_TOL)
+                (ctx.options.head_tol == 0.0
+                 || ctx.options.head_tol == constants::DEFAULT_HEAD_TOL)
                     ? constants::DEFAULT_HEAD_TOL
                     : ctx.options.head_tol / ucf_len;
-            dw_solver_.max_trials = ctx.options.max_trials;
+            dw_solver_.max_trials = (ctx.options.max_trials > 0)
+                    ? ctx.options.max_trials
+                    : constants::DEFAULT_MAX_TRIALS;
             dw_solver_.surcharge_method =
                 static_cast<dynwave::SurchargeMethod>(ctx.options.surcharge_method);
             dw_solver_.node_continuity = ctx.options.node_continuity;
             dw_solver_.anderson_accel = ctx.options.anderson_accel;
+            // Unsteady friction (issue #156): dimensionless, no unit
+            // conversion.
+            dw_solver_.unsteady_friction = ctx.options.unsteady_friction;
+            dw_solver_.uf_k3             = ctx.options.uf_k3;
+            dw_solver_.tpa_celerity      = ctx.options.tpa_celerity;  // #156
 
             dw_solver_.init(n_nodes, n_links, groups_, ctx);
             break;
@@ -338,55 +375,11 @@ int Router::step(SimulationContext& ctx, double dt,
     int iters = 0;
     switch (model_) {
         case RouteModel::KINWAVE:
-            iters = kw_solver_.execute(ctx, dt);
-
-            // Storage node iterative update for KW (P8-G07)
-            // After KW routing, storage nodes need depth from volume balance
-            for (int j = 0; j < ctx.n_nodes(); ++j) {
-                auto uj = static_cast<std::size_t>(j);
-                if (ctx.nodes.type[uj] != NodeType::STORAGE) continue;
-
-                double v_old = ctx.nodes.old_volume[uj];
-                double q_in = ctx.nodes.inflow[uj];
-                double q_out = 0.0;
-                // Sum outgoing link flows
-                for (int k = 0; k < ctx.n_links(); ++k) {
-                    auto uk = static_cast<std::size_t>(k);
-                    if (ctx.links.node1[uk] == j && ctx.links.flow[uk] > 0.0)
-                        q_out += ctx.links.flow[uk];
-                    if (ctx.links.node2[uk] == j && ctx.links.flow[uk] < 0.0)
-                        q_out -= ctx.links.flow[uk];
-                }
-
-                // Successive approximation (omega=0.55, max 10 iters)
-                double d1 = ctx.nodes.depth[uj];
-                for (int iter = 0; iter < 10; ++iter) {
-                    double v_new = v_old + (q_in - q_out) * dt;
-                    v_new = std::max(v_new, 0.0);
-
-                    // Overflow check
-                    double full_vol = node::getVolume(ctx.nodes, j, ctx.nodes.full_depth[uj], &ctx.tables,
-                        ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)),
-                        &ctx.node_subtypes);
-                    if (v_new > full_vol) {
-                        ctx.nodes.overflow[uj] = (v_new - full_vol) / dt;
-                        v_new = full_vol;
-                    }
-
-                    ctx.nodes.volume[uj] = v_new;
-                    // Invert volume → depth using node::getDepth (Newton / table lookup)
-                    // Matches legacy node_getDepth() in node.c (Gap #12)
-                    int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
-                    double d2 = node::getDepth(ctx.nodes, j, v_new, &ctx.tables, us, &ctx.node_subtypes);
-
-                    // Under-relaxation
-                    d2 = 0.45 * d1 + 0.55 * d2;
-                    if (std::fabs(d2 - d1) < 0.005) { d1 = d2; break; }
-                    d1 = d2;
-                }
-                ctx.nodes.depth[uj] = d1;
-                ctx.nodes.head[uj] = ctx.nodes.invert_elev[uj] + d1;
-            }
+            // Storage nodes are converged INSIDE the sorted-link loop, before
+            // the links they drain through are routed (legacy flowrout.c:183).
+            // A post-pass cannot do it: an outlet structure's flow depends on
+            // the very depth the pass is trying to find.
+            iters = kw_solver_.execute(ctx, dt, structures_);
             break;
 
         case RouteModel::DYNWAVE:
@@ -404,11 +397,29 @@ int Router::step(SimulationContext& ctx, double dt,
             break;
     }
 
-    // 5. Compute divider flows (P8-G02)
-    divider::computeDividerFlows(ctx, ctx.node_subtypes.dividers);
+    // Divider flows are computed where legacy computes them — inside the
+    // routing passes via divider::getOutflow (node_getOutflow dispatch), not
+    // as a post-step overwrite. A post-step pass clobbered the diversion
+    // link's routed flow under every model, including DYNWAVE where legacy
+    // ignores the divider relation for true conduits.
 
     // 6. Update link final states (depth, volume)
-    updateLinkStates(ctx);
+    //
+    // NOT under FV: publishFv has already written every node's head, and an
+    // FV head is PIEZOMETRIC. `head = invert + depth` cannot express one that
+    // sits below the node's own invert, because the published depth is a
+    // water depth floored at zero — so recomputing here silently replaced it
+    // with the invert. Measured on the issue #156 TPA sealed-drawdown
+    // fixture: the apex head reached 3.5 ft inside the step (invert 6.0) and
+    // every reader outside the solver saw exactly 6.0, which is what made the
+    // sub-atmospheric gate unfalsifiable. For every node whose head is at or
+    // above its invert the two agree exactly, so this changes nothing else.
+    //
+    // The other routers still need it: they set depth as the primary variable
+    // and derive head from it, and DYNWAVE's own head writes happen per
+    // Picard pass rather than once at the end.
+    if (ctx.options.routing_model != RoutingModel::FV)
+        updateLinkStates(ctx);
 
     return iters;
 }
@@ -419,6 +430,13 @@ int Router::step(SimulationContext& ctx, double dt,
 
 double Router::getAdaptiveStep(SimulationContext& ctx,
                                 double fixed_step, double courant) {
+    // Legacy routing_getRoutingStep (routing.c:170): a model with no links
+    // always routes at the user's fixed step — the DW variable-step machinery
+    // is never entered. Without this guard the DW path returns MinRouteStep
+    // (0.5 s) for the FIRST step, permanently offsetting the routing grid so
+    // runoff windows advance one step early relative to every report
+    // boundary (all non-interpolated report values shift a window).
+    if (ctx.n_links() == 0) return fixed_step;
     if (model_ == RouteModel::DYNWAVE) {
         return dw_solver_.getRoutingStep(ctx, fixed_step, courant);
     }
@@ -563,41 +581,84 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
             // The transect top-width below uses the linear approximation; the
             // faithful getWofY was tried and does NOT resolve the parity gap
             // (the gap is the timing, not the width). See PARITY_FINDINGS.
-            if (xsect::isOpen(batch_shape) && evap_rate > 0.0) {
-                double top_width = 0.0;
-                if (batch_shape == static_cast<int>(XSectShape::IRREGULAR) ||
-                    batch_shape == static_cast<int>(XSectShape::CUSTOM)) {
-                    double y_full = links.xsect_y_full[uj];
-                    double w_max  = links.xsect_w_max[uj];
-                    top_width = (y_full > 0.0) ? w_max * std::min(depth / y_full, 1.0) : 0.0;
-                } else {
-                    XSectParams xs{};
-                    xs.type   = batch_shape;
-                    xs.y_full = links.xsect_y_full[uj];
-                    xs.a_full = links.xsect_a_full[uj];
-                    xs.w_max  = links.xsect_w_max[uj];
-                    top_width = xsect::getWofY(xs, depth);
-                }
-                evap_loss = top_width * length * evap_rate;
-            }
-
-            // Seepage loss
-            if (CD.seep_rate[ucr] > 0.0) {
+            const bool wantEvap = xsect::isOpen(batch_shape) && evap_rate > 0.0;
+            const bool wantSeep = CD.seep_rate[ucr] > 0.0;
+            if (wantEvap || wantSeep) {
+                // Faithful params (matching DynamicWave.cpp::buildXSP): the
+                // previous minimal {type, y_full, a_full, w_max} left y_bot/
+                // s_bot/a_bot/r_bot at 0, so getWofY returned width 0 — and
+                // seepage/evap were identically zero — for every shape whose
+                // width law needs them (TRAPEZOIDAL, TRIANGULAR, PARABOLIC,
+                // POWER, RECT_TRIANG, RECT_ROUND, MOD_BASKET) plus every
+                // tabulated shape (no transect tables wired). Legacy
+                // conduit_getLossRate uses the full xsect for all of them.
                 XSectParams xs{};
                 xs.type   = batch_shape;
                 xs.y_full = links.xsect_y_full[uj];
                 xs.a_full = links.xsect_a_full[uj];
                 xs.w_max  = links.xsect_w_max[uj];
                 xs.yw_max = links.xsect_yw_max[uj];
+                xs.r_full = links.xsect_r_full[uj];
+                xs.s_full = links.xsect_s_full[uj];
+                xs.s_max  = links.xsect_s_max[uj];
+                xs.y_bot  = links.xsect_y_bot[uj];
+                xs.a_bot  = links.xsect_a_bot[uj];
+                xs.s_bot  = links.xsect_s_bot[uj];
+                xs.r_bot  = links.xsect_r_bot[uj];
+                if (batch_shape == static_cast<int>(XSectShape::IRREGULAR) ||
+                    batch_shape == static_cast<int>(XSectShape::CUSTOM) ||
+                    batch_shape == static_cast<int>(XSectShape::STREET_XSECT)) {
+                    const int ci = links.xsect_curve[uj];
+                    if (ci >= 0 &&
+                        static_cast<std::size_t>(ci) < ctx.transect_tables.size()) {
+                        const auto& td =
+                            ctx.transect_tables[static_cast<std::size_t>(ci)];
+                        xs.transect          = ci;
+                        xs.area_tbl          = td.area_tbl;
+                        xs.hrad_tbl          = td.hrad_tbl;
+                        xs.width_tbl         = td.width_tbl;
+                        xs.area_lut          = &td.area_lut;
+                        xs.transect_tbl_size = transect::N_TRANSECT_TBL;
+                    }
+                }
 
-                double d_seep = depth;
-                // Limit depth to depth at max width (matching legacy)
-                if (batch_shape == static_cast<int>(XSectShape::RECT_CLOSED))
-                    ; // use wMax directly
-                else if (d_seep >= xs.yw_max)
-                    d_seep = xs.yw_max;
-                double width = xsect::getWofY(xs, d_seep);
-                seep_loss = CD.seep_rate[ucr] * width * length;
+                if (wantEvap) {
+                    double top_width;
+                    if (batch_shape == static_cast<int>(XSectShape::IRREGULAR) ||
+                        batch_shape == static_cast<int>(XSectShape::CUSTOM)) {
+                        // Deliberate linear approximation — see the PARITY
+                        // note above (the gap is timing, not the width law).
+                        top_width = (xs.y_full > 0.0)
+                            ? xs.w_max * std::min(depth / xs.y_full, 1.0) : 0.0;
+                    } else {
+                        top_width = xsect::getWofY(xs, depth);
+                    }
+                    evap_loss = top_width * length * evap_rate;
+                }
+
+                // Seepage loss
+                if (wantSeep) {
+                    double d_seep = depth;
+                    // Legacy conduit_getLossRate: RECT_CLOSED uses wMax
+                    // directly (getWofY's tabulated crown width is 0 exactly
+                    // at full depth); every other shape clamps depth to
+                    // yw_max first.
+                    double width;
+                    if (batch_shape ==
+                        static_cast<int>(XSectShape::RECT_CLOSED)) {
+                        width = xs.w_max;
+                    } else {
+                        if (d_seep >= xs.yw_max)
+                            d_seep = xs.yw_max;
+                        width = xsect::getWofY(xs, d_seep);
+                    }
+                    seep_loss = CD.seep_rate[ucr] * width * length;
+                    // Monthly conductivity adjustment (legacy link.c:1378:
+                    // seepLossRate *= Adjust.hydconFactor). infil_factor
+                    // mirrors adjust_hydcon[mon] each step (A2d) and is 1.0
+                    // exactly on unadjusted decks.
+                    seep_loss *= ctx.climate_state.infil_factor;
+                }
             }
 
             // Limit the total to what is actually there. A volume-tracking
@@ -649,48 +710,62 @@ int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
           }()
         : steady_sorted_links_;
 
+    steady_storage_updated_.assign(static_cast<std::size_t>(ctx.n_nodes()), 0);
+    steady_y_.assign(static_cast<std::size_t>(ctx.n_links()), 0.0);
+
     for (int idx = 0; idx < static_cast<int>(order.size()); ++idx) {
         int j   = order[static_cast<std::size_t>(idx)];
         auto uj = static_cast<std::size_t>(j);
 
-        // Non-conduit links: outflow equals upstream node inflow (pass-through).
-        // Matches legacy steadyflow_execute() else branch: *qout = *qin.
+        // PARITY flowrout.c:181-183 — converge a storage unit's depth before
+        // routing the links it drains through (see the KINWAVE case).
+        {
+            int n1s = links.node1[uj];
+            if (n1s >= 0
+                && nodes.type[static_cast<std::size_t>(n1s)] == NodeType::STORAGE
+                && !steady_storage_updated_[static_cast<std::size_t>(n1s)]) {
+                kinwave::updateStorageState(ctx, structures_, order, idx, n1s, dt);
+                steady_storage_updated_[static_cast<std::size_t>(n1s)] = 1;
+            }
+        }
+
+        // Non-conduit links are not routed — steadyflow_execute returns
+        // *qout = *qin for them — but their INFLOW is their own head-discharge
+        // relation, not the upstream node's inflow (legacy getLinkInflow).
         if (links.type[uj] != LinkType::CONDUIT) {
             int n1 = links.node1[uj];
-            if (n1 >= 0) {
-                double q = nodes.inflow[static_cast<std::size_t>(n1)];
-                links.flow[uj] = q;
-                int n2 = links.node2[uj];
-                if (n2 >= 0) nodes.inflow[static_cast<std::size_t>(n2)] += q;
-            }
+            int n2 = links.node2[uj];
+            double q = kinwave::getLinkInflow(ctx, structures_, j, dt);
+            links.flow[uj] = q;
+            if (n1 >= 0) nodes.outflow[static_cast<std::size_t>(n1)] += q;
+            if (n2 >= 0) nodes.inflow[static_cast<std::size_t>(n2)] += q;
             continue;
         }
         auto& CD = ctx.link_subtypes.conduits;
         const auto ucr = static_cast<std::size_t>(ctx.link_subtypes.conduit_row(j));
 
-        // DUMMY cross-section: zero area, pass flow through.
+        // DUMMY cross-section: routed like every other link in legacy —
+        // getLinkInflow (divider/storage dispatch, qLimit and max-outflow
+        // caps), steadyflow_execute passes it through, and BOTH end nodes'
+        // flow accumulators are updated (flowrout.c:196-197).
         if (links.xsect_shape[uj] == XsectShape::DUMMY) {
             int n1 = links.node1[uj];
             int n2 = links.node2[uj];
-            if (n1 >= 0) {
-                double q = nodes.inflow[static_cast<std::size_t>(n1)];
-                links.flow[uj] = q;
-                if (n2 >= 0) nodes.inflow[static_cast<std::size_t>(n2)] += q;
-            }
+            double q = kinwave::getLinkInflow(ctx, structures_, j, dt);
+            links.flow[uj] = q;
+            if (n1 >= 0) nodes.outflow[static_cast<std::size_t>(n1)] += q;
+            if (n2 >= 0) nodes.inflow[static_cast<std::size_t>(n2)] += q;
             links.depth[uj]  = 0.0;
             links.volume[uj] = 0.0;
             continue;
         }
 
-        // Gather inflow at upstream node, limited by available volume.
-        // Matches legacy getLinkInflow → node_getMaxOutflow.
+        // Gather inflow at upstream node — legacy getLinkInflow
+        // (storage/divider/junction dispatch, qLimit, max-outflow cap).
         int n1 = links.node1[uj];
         double qin = 0.0;
         if (n1 >= 0) {
-            auto un1 = static_cast<std::size_t>(n1);
-            qin = nodes.inflow[un1];
-            double q_max = node::getMaxOutflow(nodes, n1, qin, dt);
-            qin = std::min(qin, q_max);
+            qin = kinwave::getLinkInflow(ctx, structures_, j, dt);
         }
 
         double barrels = static_cast<double>(std::max(CD.barrels[ucr], 1));
@@ -744,29 +819,19 @@ int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
 
         links.depth[uj]  = y;
         links.volume[uj] = a * length * barrels;
+        steady_y_[uj]    = y;
 
         // Gap #57: steady flow — same area at both ends, so both full or neither.
         CD.full_state[ucr] = (a_full > 0.0 && a >= a_full) ? int8_t{3} : int8_t{0};
-
-        // Update non-storage end-node depths (max of current and conduit end).
-        // Matches legacy setNewLinkState → updateNodeDepth in flowrout.c.
-        auto updateNodeDepth = [&](int ni, double y_conduit, double link_offset) {
-            if (ni < 0) return;
-            auto uni = static_cast<std::size_t>(ni);
-            NodeType nt = nodes.type[uni];
-            if (nt == NodeType::STORAGE) return;
-            double y_node = y_conduit + link_offset;
-            if (nt != NodeType::OUTFALL && nodes.overflow[uni] > 0.0)
-                y_node = nodes.full_depth[uni];
-            if (nodes.depth[uni] < y_node) {
-                double full_d = nodes.full_depth[uni];
-                nodes.depth[uni] = (full_d > 0.0) ? std::min(y_node, full_d) : y_node;
-                nodes.head[uni]  = nodes.invert_elev[uni] + nodes.depth[uni];
-            }
-        };
-        updateNodeDepth(n1, y, links.offset1[uj]);
-        updateNodeDepth(n2, y, links.offset2[uj]);
+        // Node depths are raised AFTER the per-node volume/overflow pass, in
+        // kinwave::finishRouting — legacy runs setNewNodeState for every node
+        // before any setNewLinkState raises a depth (flowrout.c:203-205).
     }
+
+    // Legacy end-of-step passes: setNewNodeState for every node, then
+    // setNewLinkState's node-depth raises (steady: same depth at both ends).
+    kinwave::finishRouting(ctx, structures_, order, steady_storage_updated_,
+                           steady_y_, steady_y_, dt);
 
     return 1;  // steady flow always converges in one pass
 }
@@ -808,6 +873,10 @@ void Router::initFv(SimulationContext& ctx) {
     fv_opts_.cell_length   = ctx.options.fv.cell_length   / ucf_len;
     fv_opts_.slot_celerity = ctx.options.fv.slot_celerity / ucf_len;
     fv_opts_.dispersion    = ctx.options.fv.dispersion    / (ucf_len * ucf_len);
+    // Unsteady friction (issue #156): shared [OPTIONS] keys, dimensionless —
+    // copied here so the solver keeps seeing only FvOptions.
+    fv_opts_.unsteady_friction = ctx.options.unsteady_friction;
+    fv_opts_.uf_k3             = ctx.options.uf_k3;
 
     // Options that are parsed and stored but reach nothing. Saying so at open
     // is the whole point: a model calibrated with FV_DISPERSION set would
@@ -842,6 +911,103 @@ void Router::initFv(SimulationContext& ctx) {
     const int nc = fv_mesh_.n_cells();
     const int nn = fv_mesh_.n_nodes();
     fv_state_.resize(nc, nn, 0);
+
+    // Virtual junctions have no [JUNCTIONS] InitDepth row, and the post-parse
+    // seeding that interpolates one (issue #156 P1) is DYNWAVE-only by
+    // measurement — so under FV a VJ is dry here, links.depth on a conduit
+    // that ends at one has averaged in a zero, and a chain the mesh treats as
+    // ONE run of cells starts with a hole at every splice. On the mixed-flow
+    // study's e2 deck (initial level 0.073 m) the mid reach seeded at 0.001 m
+    // and the bore reached the 9.9 m station 3.6x late (P6 finding F1).
+    //
+    // So interpolate a free surface for every conduit-degree-2 VJ between the
+    // nearest NON-virtual nodes reached by walking its spliced chain in both
+    // directions — the same walk, with the same at-least-one-wet-endpoint
+    // rule, as PostParseResolver's DW seeding — and let the loop below read a
+    // VJ end through that surface. A VJ becomes as transparent to the initial
+    // condition as its spliced face is to the solution. CELL seeding only:
+    // node state is untouched, so the P1 measurement that live VJ node
+    // seeding destabilizes FV is not disturbed. Decks without VJs take the
+    // any_vj early-out and are bitwise unaffected.
+    std::vector<double> vj_eta;  // per node; NaN = no surface seeded
+    {
+        const int n_nodes = ctx.n_nodes();
+        const int n_links = ctx.n_links();
+        bool any_vj = false;
+        for (int n = 0; n < n_nodes && !any_vj; ++n)
+            any_vj = ctx.nodes.is_virtual[static_cast<std::size_t>(n)] != 0;
+        if (any_vj) {
+            vj_eta.assign(static_cast<std::size_t>(n_nodes),
+                          std::numeric_limits<double>::quiet_NaN());
+            // Incident CONDUITS per virtual node (VJ splices are conduit-only
+            // by validation; anything else is rejected by the mesh builder).
+            std::vector<int> incA(static_cast<std::size_t>(n_nodes), -1);
+            std::vector<int> incB(static_cast<std::size_t>(n_nodes), -1);
+            std::vector<int> inc_n(static_cast<std::size_t>(n_nodes), 0);
+            for (int j = 0; j < n_links; ++j) {
+                const auto ujj = static_cast<std::size_t>(j);
+                if (ctx.links.type[ujj] != LinkType::CONDUIT) continue;
+                for (int nd : {ctx.links.node1[ujj], ctx.links.node2[ujj]}) {
+                    if (nd < 0 || nd >= n_nodes) continue;
+                    const auto und = static_cast<std::size_t>(nd);
+                    if (ctx.nodes.is_virtual[und] == 0) continue;
+                    if (inc_n[und] == 0)      incA[und] = j;
+                    else if (inc_n[und] == 1) incB[und] = j;
+                    ++inc_n[und];
+                }
+            }
+            auto walk = [&](int start_node, int via_link, double& eta_out,
+                            double& dist_out, bool& wet_out) -> bool {
+                int node = start_node, link = via_link;
+                double dist = 0.0;
+                for (int guard = 0; guard <= n_links; ++guard) {
+                    const auto ul = static_cast<std::size_t>(link);
+                    const int cr = ctx.link_subtypes.conduit_row(link);
+                    dist += (cr >= 0)
+                        ? ctx.link_subtypes.conduits
+                              .length[static_cast<std::size_t>(cr)]
+                        : 0.0;
+                    const int other = (ctx.links.node1[ul] == node)
+                        ? ctx.links.node2[ul] : ctx.links.node1[ul];
+                    if (other < 0 || other >= n_nodes) return false;
+                    const auto uo = static_cast<std::size_t>(other);
+                    if (ctx.nodes.is_virtual[uo] == 0) {
+                        eta_out = ctx.nodes.invert_elev[uo] +
+                                  ctx.nodes.depth[uo];
+                        dist_out = dist;
+                        wet_out  = ctx.nodes.depth[uo] > 0.0;
+                        return true;
+                    }
+                    if (inc_n[uo] != 2) return false;
+                    link = (incA[uo] == link) ? incB[uo] : incA[uo];
+                    if (link < 0) return false;
+                    node = other;
+                }
+                return false;  // cycle of VJs (rejected elsewhere)
+            };
+            for (int i = 0; i < n_nodes; ++i) {
+                const auto ui = static_cast<std::size_t>(i);
+                if (ctx.nodes.is_virtual[ui] == 0 || inc_n[ui] != 2) continue;
+                double eA = 0.0, dA = 0.0, eB = 0.0, dB = 0.0;
+                bool wetA = false, wetB = false;
+                const bool okA = walk(i, incA[ui], eA, dA, wetA);
+                const bool okB = walk(i, incB[ui], eB, dB, wetB);
+                // A dry node's surface is just its invert — interpolating
+                // between two dry endpoints with differing inverts would
+                // MANUFACTURE water on a dry deck. At least one wet endpoint,
+                // exactly as the DW seeding requires.
+                if (!(okA && wetA) && !(okB && wetB)) continue;
+                if (okA && okB) {
+                    const double d_sum = dA + dB;
+                    vj_eta[ui] = (d_sum > 0.0)
+                        ? (eA * dB + eB * dA) / d_sum
+                        : 0.5 * (eA + eB);
+                } else {
+                    vj_eta[ui] = okA ? eA : eB;
+                }
+            }
+        }
+    }
 
     // Seed cell state from the model's initial condition. LinkData carries ONE
     // depth per conduit, and that depth is the average of the two end-node
@@ -883,10 +1049,17 @@ void Router::initFv(SimulationContext& ctx) {
         // links.flow is the aggregate discharge, so neither is divided here.
         const double q = ctx.links.flow[uj];
 
-        // Surface at each end, where that end has water to define one.
+        // Surface at each end, where that end has water to define one. A
+        // virtual end carries the surface interpolated across its chain above.
         auto bank_eta = [&](int nd, double& eta) {
             if (nd < 0) return false;
             const auto und = static_cast<std::size_t>(nd);
+            if (und < vj_eta.size() && ctx.nodes.is_virtual[und] != 0) {
+                if (!std::isfinite(vj_eta[und]) ||
+                    vj_eta[und] <= ctx.nodes.invert_elev[und]) return false;
+                eta = vj_eta[und];
+                return true;
+            }
             if (ctx.nodes.depth[und] <= 0.0) return false;
             eta = ctx.nodes.invert_elev[und] + ctx.nodes.depth[und];
             return true;
@@ -906,10 +1079,35 @@ void Router::initFv(SimulationContext& ctx) {
         const bool shoreline = (wet1 != wet2) && step;
         const double eta_wet = wet1 ? eta1 : eta2;
 
-        const double uniform =
-            fv::kernels::areaOfDepth(g, ctx.links.depth[uj]);
+        // links.depth is the average of the two end-node depths, and a virtual
+        // end contributed a zero to it. Rebuild the average through the
+        // interpolated VJ surfaces so the projection is the one the deck's
+        // real nodes define.
+        double init_depth = ctx.links.depth[uj];
+        {
+            const int n1 = ctx.links.node1[uj];
+            const int n2 = ctx.links.node2[uj];
+            const bool v1 = n1 >= 0 && static_cast<std::size_t>(n1) <
+                vj_eta.size() &&
+                ctx.nodes.is_virtual[static_cast<std::size_t>(n1)] != 0;
+            const bool v2 = n2 >= 0 && static_cast<std::size_t>(n2) <
+                vj_eta.size() &&
+                ctx.nodes.is_virtual[static_cast<std::size_t>(n2)] != 0;
+            if ((v1 || v2) && n1 >= 0 && n2 >= 0) {
+                auto end_depth = [&](int nd, bool v) {
+                    const auto und = static_cast<std::size_t>(nd);
+                    if (!v) return ctx.nodes.depth[und];
+                    return std::isfinite(vj_eta[und])
+                        ? std::max(0.0,
+                                   vj_eta[und] - ctx.nodes.invert_elev[und])
+                        : 0.0;
+                };
+                init_depth = 0.5 * (end_depth(n1, v1) + end_depth(n2, v2));
+            }
+        }
+        const double uniform = fv::kernels::areaOfDepth(g, init_depth);
 
-        double vol = 0.0, a_len = 0.0, sum_len = 0.0;
+        double vol = 0.0, a_len = 0.0, sum_len = 0.0, slot_vol = 0.0;
         for (int c = begin; c < begin + count; ++c) {
             const auto uc = static_cast<std::size_t>(c);
             double a_c = uniform;
@@ -924,9 +1122,10 @@ void Router::initFv(SimulationContext& ctx) {
             fv_state_.cell_q[uc] = (a_c > fv::kernels::kDryArea) ? q : 0.0;
 
             const double dx = fv_mesh_.cell_dx[uc];
-            sum_len += dx;
-            a_len   += a_c * dx;
-            vol     += a_c * dx;
+            sum_len  += dx;
+            a_len    += a_c * dx;
+            vol      += a_c * dx;
+            slot_vol += std::max(0.0, a_c - g.a_crown) * dx;
         }
 
         // Publish what was actually seeded, by the same reduction publishFv
@@ -938,9 +1137,11 @@ void Router::initFv(SimulationContext& ctx) {
         // acre-feet, reported as a 17 % continuity error on a model where
         // nothing moves and nothing leaves.
         if (sum_len > 0.0) {
-            ctx.links.volume[uj] = vol;
-            ctx.links.depth[uj]  =
-                fv::kernels::depthOfArea(g, a_len / sum_len);
+            ctx.links.volume[uj]      = vol;
+            ctx.links.slot_volume[uj] = slot_vol;
+            // R0b: published depth truncated to y_full (see publishFv).
+            ctx.links.depth[uj]  = std::min(
+                fv::kernels::depthOfArea(g, a_len / sum_len), g.y_full);
         }
     }
     for (int n = 0; n < nn; ++n) {
@@ -969,6 +1170,7 @@ void Router::initFv(SimulationContext& ctx) {
     fv_struct_flow_.assign(static_cast<std::size_t>(ctx.n_links()), 0.0);
     fv_cond_loss_.assign(static_cast<std::size_t>(fv_mesh_.n_conduits()), 0.0);
     fv_struct_int_.assign(static_cast<std::size_t>(ctx.n_links()), 0.0);
+    fv_link_q_cap_.assign(static_cast<std::size_t>(ctx.n_links()), -1.0);
 }
 
 /**
@@ -1012,12 +1214,28 @@ int Router::stepFv(SimulationContext& ctx, double dt,
     }
 
     // Non-conduit structures, evaluated against the CURRENT node heads.
+    //
+    // DUMMY conduits are in the callback's list too (StructureSolver::
+    // nc_indices_ matches mesh.struct_is_dummy), but the discharge it computes
+    // for them is not usable here: its pass-through reads ctx.nodes.inflow,
+    // which under FV holds only laterals and structure scatter until publishFv
+    // writes the real boundary fluxes at end of step. So the flow it produces
+    // is dropped by the CONDUIT test below and the solver derives its own from
+    // the fluxes it is actually integrating (ExplicitFvSolver::
+    // refreshDummyFlows). What the solver cannot see is the control setting and
+    // the FLOW_LIMIT, so those are forwarded as a cap.
     auto evaluate_structures = [&]() {
         if (non_conduit_fn) non_conduit_fn(ctx, dt, 0);
         for (int j = 0; j < nl; ++j) {
             const auto uj = static_cast<std::size_t>(j);
             fv_struct_flow_[uj] = (ctx.links.type[uj] == LinkType::CONDUIT)
                                       ? 0.0 : ctx.links.flow[uj];
+            if (ctx.links.xsect_shape[uj] == XsectShape::DUMMY) {
+                const double lim = ctx.links.q_limit[uj];
+                fv_link_q_cap_[uj] = (ctx.links.setting[uj] == 0.0)
+                                         ? 0.0
+                                         : ((lim > 0.0) ? lim : -1.0);
+            }
         }
     };
     std::fill(fv_struct_int_.begin(), fv_struct_int_.end(), 0.0);
@@ -1048,6 +1266,7 @@ int Router::stepFv(SimulationContext& ctx, double dt,
     forcing.node_lateral    = fv_lateral_.data();
     forcing.node_fixed_head = fv_fixed_head_.data();
     forcing.structure_flow  = fv_struct_flow_.data();
+    forcing.link_q_cap      = fv_link_q_cap_.data();
     forcing.conduit_loss    = fv_cond_loss_.data();
     forcing.n_nodes = nn;
     forcing.n_links = nl;
@@ -1157,6 +1376,7 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
         // Cell area and discharge are ALREADY the aggregate of all barrels
         // (FvGeometry::barrel_scale), so nothing here is scaled by the count.
         double sum_len = 0.0, q_len = 0.0, a_len = 0.0, vol = 0.0;
+        double slot_vol = 0.0;
         for (int c = begin; c < begin + count; ++c) {
             const auto uc = static_cast<std::size_t>(c);
             const double dx = fv_mesh_.cell_dx[uc];
@@ -1167,12 +1387,26 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
             q_len   += q * dx;
             a_len   += fv_state_.cell_a[uc] * dx;
             vol     += fv_state_.cell_a[uc] * dx;
+            // Slot share of the cell's storage: area above a_crown is water
+            // standing in the Preissmann slot (the crown-band taper's tiny
+            // content lives inside a_crown and is deliberately not counted).
+            slot_vol += std::max(0.0, fv_state_.cell_a[uc] - g.a_crown) * dx;
         }
         const double q_mean = (sum_len > 0.0) ? q_len / sum_len : 0.0;
         const double a_mean = (sum_len > 0.0) ? a_len / sum_len : 0.0;
 
         ctx.links.flow[uj]   = q_mean;
-        ctx.links.depth[uj]  = fv::kernels::depthOfArea(g, a_mean);
+        // Slot program R0b: the PUBLISHED depth is a water depth, truncated
+        // to the pipe's true max height — matching the dynamic-wave
+        // convention (DynamicWave.cpp links.depth = min(depth_mid, yf)).
+        // Above the crown the piezometric surplus lives in node heads and
+        // links.slot_volume; the .out depth column stops doubling as a head
+        // channel, and stat_max_filling reads ≤ 1 like legacy. The clamp is
+        // publish-only: every internal use of the mean state works from
+        // a_mean, and widthOfDepth(y_full) == widthOfDepth(piezo) == t_slot,
+        // so the derived hyd-depth/Froude below are unchanged.
+        ctx.links.depth[uj]  = std::min(
+            fv::kernels::depthOfArea(g, a_mean), g.y_full);
         // Inlet control was applied inside the solver, at the culvert's
         // upstream face; only the report flag comes back out here.
         if (impl) {
@@ -1181,11 +1415,19 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
                 ctx.link_subtypes.conduits.inlet_control[
                     static_cast<std::size_t>(cr)] = impl->inlet_control()[ur];
         }
-        ctx.links.volume[uj] = vol;
-        const double v = (a_mean > 0.0) ? q_mean / a_mean : 0.0;
+        ctx.links.volume[uj]      = vol;
+        ctx.links.slot_volume[uj] = slot_vol;
+        // Conveyance velocity: above the crown the conserved area carries
+        // Preissmann-slot content that conveys no momentum, so Q/a_mean is
+        // slot-diluted — the same rationale as the implicit face law
+        // (PressurizedHeadSolver). Open sections have no slot; their area
+        // above y_full is genuine conveyance and stays uncapped.
+        const double a_conv = (!g.is_open && a_mean > g.a_crown) ? g.a_crown
+                                                                 : a_mean;
+        const double v = (a_conv > 0.0) ? q_mean / a_conv : 0.0;
         const double hyd_depth =
             (fv::kernels::widthOfDepth(g, ctx.links.depth[uj]) > 0.0)
-                ? a_mean / fv::kernels::widthOfDepth(g, ctx.links.depth[uj])
+                ? a_conv / fv::kernels::widthOfDepth(g, ctx.links.depth[uj])
                 : 0.0;
         ctx.links.froude[uj] =
             (hyd_depth > 0.0)
@@ -1235,9 +1477,69 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
             // has a sensible head in the .out file.
             continue;
         }
-        const double depth = fv_state_.node_head[un] - fv_mesh_.node_invert[un];
+        double head = fv_state_.node_head[un];
+        // Storage-less clean junctions, ANY degree: publish the
+        // face-consistent stage — the same reconstruction the
+        // virtual-junction loop below uses — instead of the solver's own
+        // head, which sits ~S0·dx/2 above the face stage on steep COARSE
+        // chains and steps against the VJ rule in the plotted HGL
+        // (mechanism B).
+        //
+        // Originally this covered degree-2 pass-through junctions only,
+        // because that is the set the SOLVER splices. Measured on Example1
+        // under FLOW_ROUTING FV, that left two thirds of nodes publishing the
+        // raw head and standing up to 0.91 ft above their own adjacent cell
+        // at FV_MIN_CELLS 1 — falling ~first-order under refinement, so a
+        // datum term, not physics. Nodes inside the set never exceeded
+        // 0.0002 ft at any refinement, and the excess survives on nodes with
+        // NO lateral inflow, which rules out "head needed to drive the
+        // inflow out". See tests/manual/fv_node_stage/RESULTS.md.
+        //
+        // Culvert-inlet and flap-gate faces are excluded: those node heads
+        // are genuine headwaters that must not be reconstructed away. So are
+        // nodes carrying a structure flow or an unbled carry.
+        //
+        // REPORTING only, on purpose: changing the solver-internal head
+        // instead destabilized the lake-at-rest diameter-change case through
+        // the LTS-hold ghost channel (70 cfs standing oscillation from a
+        // 0.007 cfs residual).
+        // A dry cell's vote is bare ground, so only wet neighbours vote; the
+        // all-dry case keeps the solver's lowest-adjacent-bed contract.
+        if (impl && un < impl->node_publish_stage().size() &&
+            impl->node_publish_stage()[un]) {
+            const int b0 = fv_mesh_.node_face_ptr[un];
+            const int e0 = fv_mesh_.node_face_ptr[un + 1];
+            double eta = -1.0e30;
+            bool wet = false;
+            for (int p = b0; p < e0; ++p) {
+                const auto uf = static_cast<std::size_t>(
+                    fv_mesh_.node_face_idx[static_cast<std::size_t>(p)]);
+                const int c = (fv_mesh_.face_cl[uf] >= 0) ? fv_mesh_.face_cl[uf]
+                                                          : fv_mesh_.face_cr[uf];
+                if (c < 0) continue;
+                const auto uc = static_cast<std::size_t>(c);
+                if (fv_state_.cell_h[uc] <= fv::kernels::kDryDepth) continue;
+                // A face perched ABOVE the node's own water surface is
+                // discharging as a free overfall (manual §8.6, ghost state
+                // 8-28: "a node standing below the face invert presents a dry
+                // ghost"). Its stage describes the pipe, not the node, and
+                // letting it vote reads the pipe's OFFSET as node depth --
+                // measured on Example1's J11, where conduit C2 enters 4 ft
+                // above the invert and an unguarded vote drove the reported
+                // average depth from 0.28 ft to 4.11 ft. The solver head is
+                // used only as the submergence THRESHOLD here, never as the
+                // published value, so its datum bias cannot leak back in.
+                if (fv_mesh_.face_zb[uf] > head) continue;
+                eta = std::max(eta, std::min(fv_mesh_.cell_zb[uc],
+                                             fv_mesh_.face_zb[uf]) +
+                                    fv_state_.cell_h[uc]);
+                wet = true;
+            }
+            if (wet) head = eta;
+        }
+        const double depth = head - fv_mesh_.node_invert[un];
         ctx.nodes.depth[un] = std::max(0.0, depth);
-        ctx.nodes.head[un]  = fv_state_.node_head[un];
+        ctx.nodes.head[un]  = head;
         // Volume through the ENGINE's own storage relation, not the solver's
         // flattened table, so the reported mass balance stays on one authority.
         //
@@ -1298,12 +1600,35 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
         }
     }
 
+    // DUMMY links carry no section, so publishFv's conduit loop skipped them
+    // (their mesh row is unmeshed). Their discharge is the solver's own
+    // pass-through integral, published as the step mean for the same reason
+    // structure flow is. Depth and volume are zero by definition — legacy
+    // link_getYnorm returns 0 for a DUMMY xsect (link.c:798) — and have to be
+    // written rather than left at whatever the previous step held.
+    if (impl && dt > 0.0) {
+        const auto& dvol = impl->dummy_volume();
+        for (std::size_t s = 0; s < fv_mesh_.struct_link.size(); ++s) {
+            if (fv_mesh_.struct_is_dummy.empty() || !fv_mesh_.struct_is_dummy[s])
+                continue;
+            const auto uj = static_cast<std::size_t>(fv_mesh_.struct_link[s]);
+            ctx.links.flow[uj]   = dvol[s] / dt;
+            ctx.links.depth[uj]  = 0.0;
+            ctx.links.volume[uj] = 0.0;
+        }
+    }
+
     // Non-conduit structures move water between node ledgers exactly as they do
     // under DW (DynamicWave.cpp:2723-2727): positive flow leaves node1 and
-    // arrives at node2.
+    // arrives at node2. DUMMY links are included — the pass-through really did
+    // take water out of the upstream node and put it in the downstream one, and
+    // omitting it leaves the mass balance charging an outfall for water that
+    // never reached it.
     for (int j = 0; j < ctx.n_links(); ++j) {
         const auto uj = static_cast<std::size_t>(j);
-        if (ctx.links.type[uj] == LinkType::CONDUIT) continue;
+        if (ctx.links.type[uj] == LinkType::CONDUIT &&
+            ctx.links.xsect_shape[uj] != XsectShape::DUMMY)
+            continue;
         const int n1 = ctx.links.node1[uj];
         const int n2 = ctx.links.node2[uj];
         if (n1 < 0 || n2 < 0) continue;
@@ -1314,26 +1639,54 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
         else         { ctx.nodes.inflow[u1]  -= q;  ctx.nodes.outflow[u2] -= q; }
     }
 
-    // Virtual junctions take the head of the cell on either side of their
-    // spliced face, which is what "the shared face state" means for reporting.
+    // Virtual junctions take the head at their spliced face, reconstructed
+    // from BOTH adjacent cells. The face→node association comes from the mesh
+    // (face_vj_node, recorded at build); re-deriving it by matching inverts
+    // collided whenever two virtual junctions shared a bit-identical invert,
+    // leaving the loser permanently unreported (depth 0 for the whole run).
+    //
+    // Each cell's WSE extrapolated to the face is bracketed by its two
+    // first-order models: flat water surface (cell_zb + h — exact when the
+    // reach is ponded or pressurized) and uniform depth along the bed
+    // (face_zb + h — exact in steep shallow flow, where the flat-surface
+    // form from the downhill cell reads below the invert and used to clamp
+    // the reported depth to zero). Taking the per-cell MIN of the bracket and
+    // the MAX across the two cells reproduces the correct head in all three
+    // regimes: the uphill cell's uniform-depth vote carries shallow flow, the
+    // downhill cell's flat-surface vote carries ponding and surcharge.
     for (int f = 0; f < fv_mesh_.n_faces(); ++f) {
         const auto uf = static_cast<std::size_t>(f);
         if (!fv_mesh_.face_virtual[uf]) continue;
-        const int cl = fv_mesh_.face_cl[uf];
-        if (cl < 0) continue;
-        const auto ucl = static_cast<std::size_t>(cl);
-        // Find the virtual node this face replaced by matching its invert.
-        for (int n = 0; n < ctx.n_nodes(); ++n) {
-            const auto un = static_cast<std::size_t>(n);
-            if (fv_mesh_.node_kind[un] != fv::kNodeVirtual) continue;
-            if (std::fabs(fv_mesh_.node_invert[un] - fv_mesh_.face_zb[uf]) > 1.0e-9)
+        const int n = fv_mesh_.face_vj_node[uf];
+        if (n < 0) continue;
+        const auto un = static_cast<std::size_t>(n);
+        const double zf = fv_mesh_.face_zb[uf];
+        // TPA (issue #156): a FLAGGED side carries a signed piezometric
+        // level cell_zb + cell_h with no zf floor — the station VJ is
+        // exactly where E3's sub-atmospheric trace is measured. Unflagged
+        // sides keep the legacy wetting convention bit-for-bit.
+        double eta = zf;                    // both sides dry ⇒ dry node
+        bool any_tpa = false;
+        double eta_tpa = 0.0;
+        for (const int c : {fv_mesh_.face_cl[uf], fv_mesh_.face_cr[uf]}) {
+            if (c < 0) continue;
+            const auto uc = static_cast<std::size_t>(c);
+            if (!fv_state_.cell_tpa.empty() && fv_state_.cell_tpa[uc] != 0) {
+                const double e_t = fv_mesh_.cell_zb[uc] + fv_state_.cell_h[uc];
+                eta_tpa = any_tpa ? std::max(eta_tpa, e_t) : e_t;
+                any_tpa = true;
                 continue;
-            const double eta = fv_mesh_.cell_zb[ucl] + fv_state_.cell_h[ucl];
-            ctx.nodes.head[un]  = eta;
-            ctx.nodes.depth[un] = std::max(0.0, eta - fv_mesh_.node_invert[un]);
-            ctx.nodes.volume[un] = 0.0;   // zero-storage by construction
-            break;
+            }
+            eta = std::max(eta, std::min(fv_mesh_.cell_zb[uc], zf) +
+                                fv_state_.cell_h[uc]);
         }
+        // A TPA side sets the head; an unflagged side only competes when it
+        // is genuinely wet above the floor (the bare zf floor must not mask
+        // a signed TPA level).
+        if (any_tpa) eta = (eta > zf) ? std::max(eta, eta_tpa) : eta_tpa;
+        ctx.nodes.head[un]  = eta;
+        ctx.nodes.depth[un] = std::max(0.0, eta - fv_mesh_.node_invert[un]);
+        ctx.nodes.volume[un] = 0.0;   // zero-storage by construction
     }
 }
 

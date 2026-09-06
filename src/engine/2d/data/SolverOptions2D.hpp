@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file SolverOptions2D.hpp
  * @brief Configuration options for the 2D surface routing solver.
@@ -7,7 +23,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_SOLVER_OPTIONS_HPP
@@ -15,6 +31,8 @@
 
 #include <cstdint>
 #include <string>
+
+#include "../../core/FilePathPair.hpp"
 
 namespace openswmm::twoD {
 
@@ -96,6 +114,28 @@ enum class RainfallMode : int8_t {
     NONE              = 2   ///< No rain on the mesh. Use when subcatchments
                             ///< already capture the rainfall (runoff → nodes) —
                             ///< rain-on-mesh would double-count the same storm.
+};
+
+/**
+ * @brief Compute backend for the 2D marcher (mirrors fv::Backend).
+ *
+ * AUTO (default) lets SurfaceSolverFactory pick: a device plugin (cuda, hip,
+ * sycl) above the device mesh-size floor, the OpenMP plugin above its own
+ * (higher) floor, else the built-in CPU marcher. The named values request one
+ * backend outright and bypass the size floors; a plugin that is absent or has
+ * no usable device falls back to CPU with a stderr notice, never a hard fail.
+ * The OPENSWMM_2D_BACKEND environment variable, when set, overrides this
+ * option (same precedence as OPENSWMM_FV_BACKEND over FV_BACKEND).
+ *
+ * Parsed from [2D_OPTIONS] BACKEND (AUTO|CPU|OMP|CUDA|HIP|SYCL).
+ */
+enum class Backend2D : int8_t {
+    CPU  = 0,   ///< Built-in marcher (OpenMP-threaded on the host), no plugin.
+    AUTO = 1,   ///< Default: plugins above their size floors, else CPU.
+    OMP  = 2,   ///< Kokkos OpenMP host plugin.
+    CUDA = 3,   ///< Kokkos CUDA device plugin (NVIDIA).
+    HIP  = 4,   ///< Kokkos HIP device plugin (AMD).
+    SYCL = 5    ///< Kokkos SYCL device plugin (Intel).
 };
 
 /**
@@ -199,6 +239,14 @@ struct SolverOptions2D {
     /// Positivity/exchange availability fraction β: max share of a cell's
     /// volume that outgoing fluxes (or a coupling drain) may take per own-step.
     double exchange_beta  = 0.8;
+
+    /// Overland transport S2 — `[2D_OPTIONS] DISPERSION <m²/s>`: isotropic
+    /// species dispersion coefficient (D-2DT7). 0 (default) means the
+    /// dispersive face term is never entered, so pre-S2 answers are
+    /// bit-identical by construction rather than by a zero coefficient
+    /// multiplying through. Refused negative at parse: anti-diffusion is not
+    /// a modelling case.
+    double dispersion     = 0.0;
     /// Optional EMA sub-relaxation of per-substep coupling exchange (1 = off).
     double exchange_relax = 1.0;
     /// [2D_OPTIONS] COUPLING_AREA AUTO: derive exchange area at coupling-point
@@ -206,13 +254,23 @@ struct SolverOptions2D {
     /// 0.05, 2.0) m²) for rows that did not author an explicit area.
     bool   coupling_area_auto = false;
 
+    /// [2D_OPTIONS] BACKEND: which marcher implementation runs the mesh. See
+    /// Backend2D. Read once, at SurfaceRouter2D::initialize() (the solver is
+    /// constructed there), so a mid-run edit takes effect on the next open.
+    Backend2D backend = Backend2D::AUTO;
+
     /// Path from [2D_MESH_FILE] FILE token. Empty = mesh is inline in main .inp.
-    std::string mesh_file;
+    /// `.absolute` is filled by resolve_external_file_slots() against the source
+    /// .inp directory, which is what lets the writer re-anchor a RELATIVE token
+    /// when saving to a different folder (without it, a Save-As left the .2dm
+    /// reference pointing at the old directory).
+    openswmm::FilePathPair mesh_file;
 
     /// HDF5 output file path from [2D_OPTIONS] OUTPUT_FILE token. Empty =
     /// no 2D output is written. Resolved relative to the parent .inp directory
-    /// by the section handler.
-    std::string output_file;
+    /// at the point of use (SWMMEngine::open) and re-anchored on save from
+    /// `.absolute`, same as mesh_file.
+    openswmm::FilePathPair output_file;
 
     // -----------------------------------------------------------------------
     // Unit-system coupling factors — NOT parsed from input. Computed once in
@@ -244,6 +302,12 @@ struct SolverOptions2D {
      *  thread count is bit-identical to serial. Never parsed/persisted. */
     int num_threads = 1;
 
+    /*! Runtime-only: the RAW [OPTIONS] THREADS value (0 = auto) copied in
+     *  SurfaceRouter2D::initialize(), handed to the Kokkos OpenMP plugin as
+     *  OpenSwmmGpuProbe::requested_threads (ABI v4) so the 2D host backend
+     *  follows THREADS like the 1D solvers. Never parsed/persisted. */
+    int requested_threads = 0;
+
     /*! When true, the inline `.inp` or referenced `.2dm` declared
      *  `;; UNITS: SI (m)` (or an equivalent metric keyword). The mesh on
      *  disk is already in SI metres, so SurfaceRouter2D::initialize
@@ -261,6 +325,15 @@ struct SolverOptions2D {
      *  against double-scaling. Never parsed from input, never persisted. */
     bool mesh_scaled_to_si = false;
 
+    /*! Runtime-only: the linear factor SurfaceRouter2D::initialize() applied
+     *  to the authored mesh coordinates to reach the solver's SI metres —
+     *  0.3048 for US FLOW_UNITS, 1.0 for SI projects and for meshes that
+     *  declared `;; UNITS: SI (m)`. Equivalently: metres per model-CRS linear
+     *  unit. Georeferenced output (Default2DOutputPlugin) writes this into the
+     *  `/crs` variable so a consumer can return the stored metric coordinates
+     *  to the model CRS's own unit exactly. Never parsed/persisted. */
+    double mesh_to_si_factor = 1.0;
+
     /*! Runtime-only: true after SurfaceRouter2D::initialize() drained the
      *  pending [2D_BOUNDARY_CONDITIONS] / [2D_EDGE_CONVEYANCE] rows into
      *  BoundaryData / MeshData::edge_conveyance. Serialization collectors
@@ -268,6 +341,14 @@ struct SolverOptions2D {
      *  they are the live state that post-initialize API mutations edit;
      *  the retained pending rows would be stale. Never parsed/persisted. */
     bool pending_rows_drained = false;
+
+    /*! Runtime-only: the display-flow-units → m³/s factor initialize() has
+     *  applied IN PLACE to the constant SPECIFIED_FLOW values in BoundaryData
+     *  (1.0 until it runs, and for CMS projects). The [2D_BOUNDARY_CONDITIONS]
+     *  file contract is display flow units per metre — there is no SI header
+     *  for flows, unlike lengths — so the writers divide edge_bc_flow by this
+     *  before emitting. Never parsed/persisted. */
+    double bc_flow_to_si_applied = 1.0;
 };
 
 } // namespace openswmm::twoD

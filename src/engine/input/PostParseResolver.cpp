@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file PostParseResolver.cpp
  * @brief Post-parse cross-reference resolution.
@@ -6,13 +22,17 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "PostParseResolver.hpp"
+
+#include <array>
+#include "MultiColumnSeriesFile.hpp"
 #include "../core/Constants.hpp"
 #include "../core/ErrorCodes.hpp"
 #include "../core/PathResolver.hpp"
+#include "../core/PerfTimers.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/DateTime.hpp"
 #include "../core/UnitConversion.hpp"
@@ -22,11 +42,23 @@
 #include "../hydraulics/Street.hpp"
 #include "../hydraulics/ForceMain.hpp"
 #include "../edit/VirtualJunctionOps.hpp"
+
+#ifdef OPENSWMM_HAS_2D
+// SolverOptions2D is only forward-declared in SimulationContext.hpp; the full
+// definition is needed to resolve its mesh_file / output_file slots.
+#include "../2d/data/SolverOptions2D.hpp"
+#endif
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <map>
 #include <string>
+#include <system_error>
+#include <unordered_map>
 #include <utility>
 
 namespace openswmm::input {
@@ -49,6 +81,10 @@ using openswmm::WARN_MAX_DEPTH_INCREASED;
 //   MM/DD/YYYY  H:MM  value
 //   ...
 // Fields may be tab or space delimited.
+//
+// Multi-column files (CSV/TSV/TSF, optionally referenced as "path:column")
+// are routed through the shared MultiColumnSeriesFile parse-once cache
+// instead — see load_external_timeseries_files below.
 // -------------------------------------------------------------------------
 // -------------------------------------------------------------------------
 // Slice IO-3: resolve every external-file slot's `original` token against
@@ -94,9 +130,25 @@ void resolve_external_file_slots(SimulationContext& ctx,
         if (tbl.type != TableType::TIMESERIES) continue;
         resolve(tbl.file_path);
     }
+
+    for (auto& rpt : ctx.lid_usage.rpt_file) resolve(rpt);
+
+    // 2D slots live behind a non-owning pointer wired by SWMMEngine's
+    // constructor, so it is non-null well before parsing — but a
+    // SimulationContext built standalone (unit tests, programmatic models)
+    // leaves it null. Without these two the external mesh reference could not
+    // be re-anchored on Save-As: the writer only ever saw a bare relative
+    // token with no way to tell what it was relative TO.
+#ifdef OPENSWMM_HAS_2D
+    if (ctx.twod_io.options) {
+        resolve(ctx.twod_io.options->mesh_file);
+        resolve(ctx.twod_io.options->output_file);
+    }
+#endif
 }
 
-static void load_external_timeseries_files(SimulationContext& ctx, const std::string& inp_dir) {
+static void load_external_timeseries_files(SimulationContext& ctx, const std::string& inp_dir,
+                                           MultiColumnFileCache& file_cache) {
     for (std::size_t t = 0; t < ctx.tables.tables.size(); ++t) {
         auto& tbl = ctx.tables.tables[t];
         if (tbl.type != TableType::TIMESERIES) continue;
@@ -111,23 +163,90 @@ static void load_external_timeseries_files(SimulationContext& ctx, const std::st
         // the cached resolution; fall back to inline resolution for
         // callers that built the model programmatically and never ran
         // the resolver pass.
-        std::string file_path = !tbl.file_path.absolute.empty()
-                                  ? tbl.file_path.absolute
-                                  : tbl.file_path.str();
-
-        // Strip optional :column suffix (e.g. "path.dat:ColName")
-        auto colon_pos = file_path.rfind(':');
-        // Only strip if it's not a drive letter (e.g. "C:\path")
-        if (colon_pos != std::string::npos && colon_pos > 1) {
-            file_path = file_path.substr(0, colon_pos);
+        std::string file_path;
+        if (!tbl.file_path.absolute.empty()) {
+            file_path = tbl.file_path.absolute;  // already anchored to the .inp dir
+        } else {
+            file_path = tbl.file_path.str();
+            // Resolve relative paths against INP file directory (legacy
+            // fallback path — kept so a fresh programmatic Table still loads
+            // even without the resolver pass). Applies only to the verbatim
+            // token: .absolute is already anchored, and prepending inp_dir a
+            // second time broke cwd-relative opens.
+            if (!file_path.empty() && file_path[0] != '/' && file_path[0] != '\\') {
+                if (!inp_dir.empty())
+                    file_path = inp_dir + "/" + file_path;
+            }
         }
 
-        // Resolve relative paths against INP file directory (legacy
-        // fallback path — kept so a fresh programmatic Table still loads
-        // even without the resolver pass).
-        if (!file_path.empty() && file_path[0] != '/' && file_path[0] != '\\') {
-            if (!inp_dir.empty())
-                file_path = inp_dir + "/" + file_path;
+        // Split the optional :column suffix (e.g. "path.csv:ColName") with the
+        // SHARED rule the gage reader uses (MultiColumnSeriesFile.hpp): last
+        // colon, ignoring a drive letter and any colon that belongs to a
+        // directory name. Both consumers must derive the same path or they key
+        // the cache differently and the file is read twice.
+        std::string col_name;
+        {
+            std::string path_only;
+            split_series_file_token(file_path, path_only, col_name);
+            file_path = path_only;
+        }
+
+        // Multi-column route: an explicit `:column` selector, or a file
+        // whose first content line reads as a header (CSV/TSV/TSF), goes
+        // through the shared parse-once cache so a file referenced by many
+        // series — and by rain gages — is read from disk exactly once per
+        // resolve pass. Plain `date time value` files keep the legacy
+        // whitespace path below.
+        if (!col_name.empty() || looks_like_multicolumn_series_file(file_path)) {
+            std::vector<std::string> file_errors;
+            SeriesFileStatus st = SeriesFileStatus::OK;
+            const ParsedSeriesFile* pf =
+                file_cache.get_or_parse(file_path, file_errors, &st);
+            if (!pf && st == SeriesFileStatus::OPEN_FAILED) {
+                // Same final fallback the legacy fopen chain had: the
+                // verbatim token (minus any :column suffix) relative to the
+                // current working directory.
+                std::string verbatim, vcol;
+                split_series_file_token(tbl.file_path.str(), verbatim, vcol);
+                if (verbatim != file_path)
+                    pf = file_cache.get_or_parse(verbatim, file_errors, &st);
+            }
+            if (!pf) {
+                // Loud, not silent: an unreadable FILE series previously
+                // loaded as empty and read 0.0 at every lookup.
+                ctx.errors.push_back(format_error(
+                    st == SeriesFileStatus::OPEN_FAILED
+                        ? openswmm::ERR_TABLE_FILE_OPEN
+                        : openswmm::ERR_TABLE_FILE_READ,
+                    tbl.id));
+                continue;
+            }
+            const int col = col_name.empty() ? pf->first_data_column()
+                                             : pf->find_column(col_name);
+            if (col < 0) {
+                ctx.errors.push_back(format_error(
+                    openswmm::ERR_TABLE_FILE_READ, tbl.id,
+                    "column \"" + col_name + "\" not found in " + file_path));
+                continue;
+            }
+            const auto& vals = pf->columns[static_cast<std::size_t>(col)];
+            tbl.x.reserve(pf->dates.size());
+            tbl.y.reserve(pf->dates.size());
+            for (std::size_t i = 0; i < pf->dates.size(); ++i) {
+                if (std::isnan(vals[i])) continue;  // missing/unreadable cell
+                tbl.x.push_back(pf->dates[i]);
+                tbl.y.push_back(vals[i]);
+            }
+            if (tbl.x.empty()) {
+                ctx.errors.push_back(format_error(
+                    openswmm::ERR_TABLE_FILE_READ, tbl.id, file_path));
+                continue;
+            }
+            tbl.x.shrink_to_fit();
+            tbl.y.shrink_to_fit();
+            // file_path is intentionally retained (see the note at the end
+            // of the legacy path below).
+            continue;
         }
 
         // Open the file
@@ -136,43 +255,150 @@ static void load_external_timeseries_files(SimulationContext& ctx, const std::st
             // Try the verbatim token as a final fallback (covers absolute
             // paths and same-cwd cases when inp_dir was empty).
             fp = std::fopen(tbl.file_path.c_str(), "r");
-            if (!fp) continue; // Skip silently — legacy also reports ERROR 361
+            if (!fp) {
+                // Was a silent skip; legacy reports ERROR 361 and fails the
+                // open, so match it — an unloadable series otherwise reads
+                // as 0.0 everywhere with a clean-looking report.
+                ctx.errors.push_back(
+                    format_error(openswmm::ERR_TABLE_FILE_OPEN, tbl.id));
+                continue;
+            }
         }
 
-        // Reserve estimated capacity (large files can be millions of lines)
-        tbl.x.reserve(100000);
-        tbl.y.reserve(100000);
+        // Reserve from the file's actual size rather than a flat 100k rows.
+        // The old constant committed 1.6 MB per FILE-backed series before
+        // reading a byte — on a model with hundreds of small rain files that
+        // is hundreds of megabytes of untouched pages, and on a genuinely
+        // large file it was too small anyway. ~24 bytes per "date time value"
+        // row is a deliberate under-estimate: geometric growth handles the
+        // remainder, whereas over-reserving cannot be given back.
+        {
+            std::error_code ec;
+            const auto bytes = std::filesystem::file_size(file_path, ec);
+            std::size_t rows = ec ? std::size_t{1024}
+                                  : static_cast<std::size_t>(bytes) / 24u + 16u;
+            rows = std::min<std::size_t>(rows, 2000000u);
+            tbl.x.reserve(rows);
+            tbl.y.reserve(rows);
+        }
+
+        // Row grammar — mirror legacy table_parseFileLine() (table.c:838).
+        // Tokens split on space/tab/CR/LF/comma (legacy TBLSEPSTR); a first
+        // token starting with ';' is a comment. A row is either
+        //   date time value   — date M/D/Y with '/' or '-' separators,
+        //                       numeric or 3-letter month name (DateFormat
+        //                       is pinned M_D_Y at open, legacy swmm5.c:647)
+        //   time value        — date carried from the last dated row
+        // and the time token is decimal HOURS when it is entirely numeric,
+        // else H:MM[:SS] (legacy datetime_strToTime). Rows before the first
+        // dated row are elapsed times anchored at the simulation START
+        // DATETIME: legacy input.c:176 seeds every series' lastDate with
+        // StartDate + StartTime, and options are already parsed when this
+        // loader runs, so the anchor is applied directly here (the rows are
+        // stored absolute; the resolver's inline relative-row offset pass
+        // does not apply to them). The previous parser accepted ONLY
+        // "M/D/Y H:MM value" rows, so every elapsed-time or decimal-hour
+        // legacy file loaded zero rows and failed the open with ERROR 363.
+        double last_date = ctx.options.start_date; // date carried across rows
+
+        auto next_tok = [](char*& p) -> char* {
+            while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' ||
+                   *p == ',') ++p;
+            if (*p == '\0') return nullptr;
+            char* start = p;
+            while (*p && *p != ' ' && *p != '\t' && *p != '\n' &&
+                   *p != '\r' && *p != ',') ++p;
+            if (*p) { *p = '\0'; ++p; }
+            return start;
+        };
+
+        auto parse_file_date = [](const char* s, double& d_out) -> bool {
+            if (!std::strchr(s, '/') && !std::strchr(s, '-')) return false;
+            unsigned m = 0, d = 0, y = 0;
+            char sep1 = 0, sep2 = 0;
+            if (std::sscanf(s, "%u%c%u%c%u", &m, &sep1, &d, &sep2, &y) < 5) {
+                char mon[4] = {};
+                if (std::sscanf(s, "%3[A-Za-z]%c%u%c%u",
+                                mon, &sep1, &d, &sep2, &y) < 5) return false;
+                static const char* kMonths[12] = {
+                    "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+                    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+                m = 0;
+                for (unsigned i = 0; i < 12; ++i) {
+                    if (std::toupper(static_cast<unsigned char>(mon[0])) == kMonths[i][0] &&
+                        std::toupper(static_cast<unsigned char>(mon[1])) == kMonths[i][1] &&
+                        std::toupper(static_cast<unsigned char>(mon[2])) == kMonths[i][2]) {
+                        m = i + 1;
+                        break;
+                    }
+                }
+                if (m == 0) return false;
+            }
+            const double enc = datetime::encodeDate(static_cast<int>(y),
+                                                    static_cast<int>(m),
+                                                    static_cast<int>(d));
+            if (enc == -static_cast<double>(datetime::DateDelta)) return false;
+            d_out = enc;
+            return true;
+        };
+
+        auto parse_file_time = [](const char* s, double& t_out) -> bool {
+            char* endp = nullptr;
+            const double hrs = std::strtod(s, &endp);
+            if (endp && *endp == '\0') {           // decimal hours
+                t_out = hrs / 24.0;
+                return true;
+            }
+            int hr = 0, min = 0, sec = 0;
+            if (std::sscanf(s, "%d:%d:%d", &hr, &min, &sec) < 1) return false;
+            if (hr < 0 || min < 0 || sec < 0) return false;
+            t_out = datetime::encodeTime(hr, min, sec);
+            return true;
+        };
 
         char line[256];
         while (std::fgets(line, sizeof(line), fp)) {
-            // Skip comments and empty lines
-            if (line[0] == ';' || line[0] == '\n' || line[0] == '\r') continue;
+            char* p = line;
+            char* s1 = next_tok(p);
+            if (!s1 || *s1 == ';') continue;       // blank line or comment
+            char* s2 = next_tok(p);
+            char* s3 = next_tok(p);                // extra tokens ignored
 
-            // Parse: date  time  value
-            // Format: MM/DD/YYYY  H:MM  value  (tab or space delimited)
-            int month = 0, day = 0, year = 0;
-            int hour = 0, minute = 0;
-            double value = 0.0;
+            const char* time_tok;
+            const char* value_tok;
+            double d = 0.0;
+            if (s3) {                              // date  time  value
+                if (!parse_file_date(s1, d)) continue;
+                last_date = d;
+                time_tok  = s2;
+                value_tok = s3;
+            } else if (s2) {                       // time  value
+                d = last_date;
+                time_tok  = s1;
+                value_tok = s2;
+            } else {
+                continue;
+            }
 
-            // Try tab-delimited first, then space-delimited
-            char date_str[32] = {}, time_str[32] = {};
-            int fields = std::sscanf(line, "%31s %31s %lf", date_str, time_str, &value);
-            if (fields < 3) continue;
+            double t = 0.0;
+            if (!parse_file_time(time_tok, t)) continue;
+            char* endp = nullptr;
+            const double value = std::strtod(value_tok, &endp);
+            if (endp == value_tok || *endp != '\0') continue;
 
-            // Parse date: MM/DD/YYYY
-            if (std::sscanf(date_str, "%d/%d/%d", &month, &day, &year) != 3) continue;
-
-            // Parse time: H:MM or HH:MM or H:MM:SS
-            int second = 0;
-            if (std::sscanf(time_str, "%d:%d:%d", &hour, &minute, &second) < 2) continue;
-
-            double dt = datetime::encodeDate(year, month, day)
-                      + datetime::encodeTime(hour, minute, second);
-
-            tbl.x.push_back(dt);
+            tbl.x.push_back(d + t);
             tbl.y.push_back(value);
         }
         std::fclose(fp);
+
+        // Loud, not silent: a file that opened but yielded no parseable
+        // rows (wrong delimiter, wrong format) previously produced an
+        // empty series that read as 0.0 at every lookup.
+        if (tbl.x.empty()) {
+            ctx.errors.push_back(
+                format_error(openswmm::ERR_TABLE_FILE_READ, tbl.id, file_path));
+            continue;
+        }
 
         // Shrink to fit
         tbl.x.shrink_to_fit();
@@ -196,7 +422,96 @@ static void load_external_timeseries_files(SimulationContext& ctx, const std::st
 // `rain_series` Table so the runtime reuses the same step-function lookup as
 // an inline [TIMESERIES] gage without polluting ctx.tables.
 // -------------------------------------------------------------------------
-static void load_external_rain_files(SimulationContext& ctx) {
+// -------------------------------------------------------------------------
+// USER_CSV rain files (multi-column CSV / TSV / PCSWMM TSF)
+// -------------------------------------------------------------------------
+// `FILE "rain.csv:COLUMN"` — a header row, with the value taken from the
+// column whose header matches COLUMN (empty column = first data column).
+// Column 0 carries a full date-time. The delimiter and TSF header form are
+// auto-detected by MultiColumnSeriesFile. Values are in the PROJECT's rain
+// units and are stored verbatim: unlike the standard format there is no
+// legacy interface file to be bit-compatible with, so the read side
+// interprets them per the gage's declared Format exactly as it does for an
+// inline [TIMESERIES] gage. See gage::gageUnitsFactor, which is scoped to
+// STAN_PRCP for this reason.
+// -------------------------------------------------------------------------
+
+static void load_rain_file_user_csv(SimulationContext& ctx, int g,
+                                    const std::string& path,
+                                    double win_lo, double win_hi,
+                                    MultiColumnFileCache& file_cache) {
+    const auto ug = static_cast<std::size_t>(g);
+
+    // Parse-once: the shared cache reads the file on first request; every
+    // other gage (and FILE timeseries) on the same file copies out of the
+    // same ParsedSeriesFile. CSV/TSV/TSF are auto-detected by content, so
+    // USER_CSV now means "multi-column text file" generally.
+    std::vector<std::string> file_errors;
+    SeriesFileStatus st = SeriesFileStatus::OK;
+    const ParsedSeriesFile* pf = file_cache.get_or_parse(path, file_errors, &st);
+    if (!pf && st == SeriesFileStatus::OPEN_FAILED &&
+        ctx.gages.file_path[ug].str() != path) {
+        // Same fallback the direct fopen had: try the verbatim token.
+        pf = file_cache.get_or_parse(ctx.gages.file_path[ug].str(), file_errors, &st);
+    }
+    if (!pf) {
+        ctx.errors.push_back(format_error(
+            st == SeriesFileStatus::OPEN_FAILED ? openswmm::ERR_RAIN_FILE_OPEN
+                                                : openswmm::ERR_RAIN_FILE_FORMAT,
+            path));
+        return;
+    }
+
+    const std::string& want = ctx.gages.col_name[ug];
+    // B2 fix: an empty column name selects the first data column, matching
+    // the documented default (GageData.hpp col_name) instead of erroring.
+    const int col = want.empty() ? pf->first_data_column()
+                                 : pf->find_column(want);
+    if (col < 0) {
+        ctx.errors.push_back(format_error(openswmm::ERR_RAIN_FILE_FORMAT,
+                                          path + " (column \"" + want + "\")"));
+        return;
+    }
+    const auto uc = static_cast<std::size_t>(col);
+
+    Table series;
+    series.type = TableType::TIMESERIES;
+    series.id   = ctx.gage_names.name_of(g);
+
+    // Retain only the records needed to route the simulation window; the
+    // cache rows are already sorted ascending, so the copy stays sorted.
+    const auto& vals = pf->columns[uc];
+    for (std::size_t i = 0; i < pf->dates.size(); ++i) {
+        const double val = vals[i];
+        if (std::isnan(val)) continue;  // missing/unreadable cell
+        const double dt = pf->dates[i];
+        if (dt < win_lo || dt > win_hi) continue;
+        series.x.push_back(dt);
+        series.y.push_back(val);
+    }
+
+    const long unparsed_rows = pf->unparsed_rows + pf->col_unparsed_cells[uc];
+    if (unparsed_rows > 0) {
+        // One warning per gage, not per row: a mis-specified file would
+        // otherwise bury the report under thousands of identical lines.
+        ctx.warnings.push_back(
+            format_warning(openswmm::WARN_RAIN_CSV_ROWS_SKIPPED,
+                           ctx.gage_names.name_of(g),
+                           std::to_string(unparsed_rows) + " row(s), " + path));
+    }
+
+    series.x.shrink_to_fit();
+    series.y.shrink_to_fit();
+
+    // Whole-file, per-column statistics for the "Rainfall File Summary".
+    ctx.gages.file_first_date[ug]     = pf->col_first_date[uc];
+    ctx.gages.file_last_date[ug]      = pf->col_last_date[uc];
+    ctx.gages.file_periods_precip[ug] = pf->col_periods_precip[uc];
+    ctx.gages.rain_series[ug]         = std::move(series);
+}
+
+static void load_external_rain_files_impl(SimulationContext& ctx,
+                                          MultiColumnFileCache& file_cache) {
     const int n_gages = ctx.gages.count();
     if (n_gages == 0) return;
 
@@ -211,11 +526,35 @@ static void load_external_rain_files(SimulationContext& ctx) {
     for (int g = 0; g < n_gages; ++g) {
         const auto ug = static_cast<std::size_t>(g);
         if (ctx.gages.source[ug] != RainSource::FILE_RAIN) continue;
-        if (ctx.gages.file_format[ug] != RainFileFormat::STAN_PRCP) continue;
+
+        bool is_csv = ctx.gages.file_format[ug] == RainFileFormat::USER_CSV;
+        if (!is_csv && ctx.gages.file_format[ug] != RainFileFormat::STAN_PRCP) continue;
 
         std::string path = !ctx.gages.file_path[ug].absolute.empty()
                              ? ctx.gages.file_path[ug].absolute
                              : ctx.gages.file_path[ug].str();
+
+        // A USER_CSV gage whose column is empty (= "first data column") is
+        // written as a bare `FILE "path"` token, because `FILE "path:"` is
+        // malformed for EPA SWMM / PCSWMM. That token re-parses as STAN_PRCP,
+        // so recover the format here, where the path is resolved and the file
+        // can be inspected: an empty station id plus multi-column CONTENT can
+        // only mean the compact form. The STAN_PRCP reader would otherwise
+        // fail every sscanf and hand back a silently empty series — the exact
+        // failure mode this change set exists to remove. Gated on an empty
+        // station id and on content, so a whitespace station file (which the
+        // sniff rejects) and any gage that names a station are untouched.
+        if (!is_csv && ctx.gages.station_id[ug].empty() &&
+            looks_like_multicolumn_series_file(path)) {
+            ctx.gages.file_format[ug] = RainFileFormat::USER_CSV;
+            is_csv = true;
+        }
+
+        if (is_csv) {
+            load_rain_file_user_csv(ctx, g, path, win_lo, win_hi, file_cache);
+            continue;
+        }
+
         FILE* fp = std::fopen(path.c_str(), "r");
         if (!fp) {
             fp = std::fopen(ctx.gages.file_path[ug].c_str(), "r");
@@ -329,6 +668,15 @@ static void load_external_rain_files(SimulationContext& ctx) {
         ctx.gages.file_periods_precip[ug] = periods_precip;
         ctx.gages.rain_series[ug]         = std::move(series);
     }
+}
+
+void load_external_rain_files(SimulationContext& ctx) {
+    // Standalone entry point (swmm_gage_reload_rain_files): a fresh cache
+    // per call still guarantees one parse per unique file within the call.
+    // The resolve pass instead shares one cache with the timeseries loader
+    // (see resolve_cross_references).
+    MultiColumnFileCache file_cache;
+    load_external_rain_files_impl(ctx, file_cache);
 }
 
 void recompute_conduit_flow_properties(SimulationContext& ctx, int j) {
@@ -469,7 +817,34 @@ static void convert_inputs_to_internal(SimulationContext& ctx,
     }
 
     const double inv_len = ucf::Ucf_inv[ucf::LENGTH][usz];
-    if (inv_len == 1.0) return;  // US units: input already in internal units.
+    if (inv_len == 1.0) {
+        // US units: lengths are already internal feet, but flow-dimension
+        // inputs are in the deck's FLOW_UNITS — a GPM or MGD deck still
+        // needs the Qcf division legacy applies to every parsed flow
+        // (link.c:352-353 `x[4]/UCF(FLOW)`, node.c divider cutoff). Skipping
+        // it left q0/q_limit/cutoff in user units: a 2.6 MGD MaxFlow acted
+        // as a 2.6 cfs cap (small-orifice: pipe held to 1.68 instead of
+        // 4.02 cfs and the whole storage drawdown diverged).
+        const double qcf_us =
+            ucf::Qcf[static_cast<std::size_t>(ctx.options.flow_units)];
+        if (qcf_us != 1.0) {
+            for (int i = 0; i < n_nodes; ++i) {
+                if (ctx.nodes.type[static_cast<std::size_t>(i)] !=
+                    NodeType::DIVIDER) continue;
+                const int r = ctx.node_subtypes.divider_row(i);
+                if (r >= 0)
+                    ctx.node_subtypes.dividers.cutoff[
+                        static_cast<std::size_t>(r)] /= qcf_us;
+            }
+            for (int j = 0; j < n_links; ++j) {
+                const auto uj = static_cast<std::size_t>(j);
+                if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
+                ctx.links.q0[uj]      /= qcf_us;
+                ctx.links.q_limit[uj] /= qcf_us;
+            }
+        }
+        return;
+    }
 
     // PARITY: legacy converts metric input to internal feet by DIVIDING by the
     // forward factor (internal = display / UCF, e.g. m / 0.3048), NOT multiplying
@@ -494,6 +869,7 @@ static void convert_inputs_to_internal(SimulationContext& ctx,
         ctx.nodes.init_depth[ui]  /= len;
         ctx.nodes.sur_depth[ui]   /= len;
         ctx.nodes.ponded_area[ui] /= len2;
+        ctx.nodes.rim_depth[ui]   /= len;   // display-only, but still a length
         if (ctx.nodes.type[ui] == NodeType::OUTFALL) {
             const int r = ctx.node_subtypes.outfall_row(i);
             if (r >= 0 && ctx.node_subtypes.outfalls.bc_type[static_cast<std::size_t>(r)]
@@ -591,7 +967,30 @@ void convert_internal_to_display(SimulationContext& ctx) {
     }
 
     const double len = ucf::Ucf[ucf::LENGTH][usz];
-    if (len == 1.0) return;  // US units: internal already equals display.
+    if (len == 1.0) {
+        // US units: lengths are display-identical, but GPM/MGD flow fields
+        // were divided by Qcf on the way in (see convert_inputs_to_internal)
+        // and must be multiplied back for writer round-trips.
+        const double qcf_us =
+            ucf::Qcf[static_cast<std::size_t>(ctx.options.flow_units)];
+        if (qcf_us != 1.0) {
+            for (int i = 0; i < ctx.n_nodes(); ++i) {
+                if (ctx.nodes.type[static_cast<std::size_t>(i)] !=
+                    NodeType::DIVIDER) continue;
+                const int r = ctx.node_subtypes.divider_row(i);
+                if (r >= 0)
+                    ctx.node_subtypes.dividers.cutoff[
+                        static_cast<std::size_t>(r)] *= qcf_us;
+            }
+            for (int j = 0; j < ctx.n_links(); ++j) {
+                const auto uj = static_cast<std::size_t>(j);
+                if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
+                ctx.links.q0[uj]      *= qcf_us;
+                ctx.links.q_limit[uj] *= qcf_us;
+            }
+        }
+        return;
+    }
 
     const double area = len * len;
     const double flow = ucf::Qcf[static_cast<std::size_t>(ctx.options.flow_units)];
@@ -609,6 +1008,7 @@ void convert_internal_to_display(SimulationContext& ctx) {
         ctx.nodes.init_depth[ui]  *= len;
         ctx.nodes.sur_depth[ui]   *= len;
         ctx.nodes.ponded_area[ui] *= area;
+        ctx.nodes.rim_depth[ui]   *= len;   // display-only, but still a length
         if (ctx.nodes.type[ui] == NodeType::OUTFALL) {
             const int r = ctx.node_subtypes.outfall_row(i);
             if (r >= 0 && ctx.node_subtypes.outfalls.bc_type[static_cast<std::size_t>(r)]
@@ -671,6 +1071,88 @@ void convert_internal_to_display(SimulationContext& ctx) {
     // --- Subcatchments ---
     for (int s = 0; s < n_subcatch; ++s)
         ctx.subcatches.width[static_cast<std::size_t>(s)] *= len;
+}
+
+// ============================================================================
+// convert_internal_to_authored()
+// ============================================================================
+// resolve_cross_references applies two parse-time normalisations that mutate
+// authored link data in place: (1) adverse-slope conduits are reversed under
+// DYNWAVE/FV (node1/node2, offset1/offset2, q0 sign, inlet/outlet losses;
+// direction = -1), and (2) in LINK_OFFSETS=ELEVATION mode every offset/crest
+// is rewritten as a depth above its node invert. Neither was undone by the
+// .inp writer, so Open → Save silently swapped adverse conduits and wrote
+// depths under an ELEVATION header (destroying offsets on the next open).
+// Legacy SWMM-GUI never hit this because it exports its own object model, not
+// engine state. This is the exact inverse; call it on a COPY.
+bool needs_authored_conversion(const SimulationContext& ctx) {
+    if (ctx.options.link_offsets == 1) return true;
+    for (int j = 0; j < ctx.n_links(); ++j)
+        if (ctx.links.direction[static_cast<std::size_t>(j)] < 0) return true;
+    return false;
+}
+
+// Un-reverse adverse-slope conduits. Offsets/losses travel with their node, so
+// swapping both pairs keeps them aligned. Vertices were never touched by the
+// reversal and stay as authored. Safe on a live editing context: the GUI runs
+// simulations from a separately opened engine, never from the edit context.
+int restore_authored_orientation(SimulationContext& ctx) {
+    int n = 0;
+    for (int j = 0; j < ctx.n_links(); ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        if (ctx.links.type[uj] != LinkType::CONDUIT || ctx.links.direction[uj] >= 0)
+            continue;
+        std::swap(ctx.links.node1[uj], ctx.links.node2[uj]);
+        std::swap(ctx.links.offset1[uj], ctx.links.offset2[uj]);
+        ctx.links.q0[uj] = -ctx.links.q0[uj];
+        ctx.links.direction[uj] = 1;
+        const int cr = ctx.link_subtypes.conduit_row(j);
+        if (cr >= 0) {
+            const auto ucr = static_cast<std::size_t>(cr);
+            std::swap(ctx.link_subtypes.conduits.loss_inlet[ucr],
+                      ctx.link_subtypes.conduits.loss_outlet[ucr]);
+            ctx.link_subtypes.conduits.slope[ucr] = -ctx.link_subtypes.conduits.slope[ucr];
+        }
+        ++n;
+    }
+    return n;
+}
+
+void convert_internal_to_authored(SimulationContext& ctx) {
+    const int n_links = ctx.n_links();
+    const int n_nodes = ctx.n_nodes();
+
+    // (1) Orientation.
+    restore_authored_orientation(ctx);
+
+    // (2) Depth → elevation (inverse of the two ELEV_OFFSET passes above).
+    if (ctx.options.link_offsets != 1) return;
+    for (int j = 0; j < n_links; ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        const LinkType lt = ctx.links.type[uj];
+        if (lt == LinkType::PUMP) continue;
+        const int n1 = ctx.links.node1[uj];
+        const int n2 = ctx.links.node2[uj];
+        const bool ok1 = n1 >= 0 && n1 < n_nodes;
+        const bool ok2 = n2 >= 0 && n2 < n_nodes;
+        const double inv1 = ok1 ? ctx.nodes.invert_elev[static_cast<std::size_t>(n1)] : 0.0;
+        const double inv2 = ok2 ? ctx.nodes.invert_elev[static_cast<std::size_t>(n2)] : 0.0;
+
+        if (lt == LinkType::CONDUIT) {
+            if (ok1) ctx.links.offset1[uj] += inv1;
+            if (ok2) ctx.links.offset2[uj] += inv2;
+        } else if (lt == LinkType::ORIFICE) {
+            if (ok1) ctx.links.offset1[uj] += inv1;
+        } else if (lt == LinkType::WEIR || lt == LinkType::OUTLET) {
+            const int wr  = ctx.link_subtypes.weir_row(j);
+            const int olr = (wr < 0) ? ctx.link_subtypes.outlet_row(j) : -1;
+            double* crest = (wr >= 0)
+                ? &ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)]
+                : (olr >= 0 ? &ctx.link_subtypes.outlets.crest_height[static_cast<std::size_t>(olr)]
+                            : nullptr);
+            if (crest && ok1) *crest += inv1;
+        }
+    }
 }
 
 // ============================================================================
@@ -806,40 +1288,61 @@ void resolve_cross_references(SimulationContext& ctx) {
     // -------------------------------------------------------------------------
     // Timeseries with FILE references (e.g., rainfall .dat files) need to be
     // loaded into memory before any date offset or gage resolution.
-    load_external_timeseries_files(ctx, inp_dir);
+    const auto _pt_extfiles0 = perf::now();
+    {
+        // One parse-once cache shared by BOTH external-file loaders: a
+        // multi-column file referenced by any number of timeseries and rain
+        // gages is read from disk exactly once per resolve pass (plan
+        // MULTICOLUMN_SERIES_SINGLE_READ_2026-08-17 §5). Freed at the end of
+        // this scope — every consumer has copied its column into its own
+        // x/y arrays by then.
+        MultiColumnFileCache series_file_cache;
+        load_external_timeseries_files(ctx, inp_dir, series_file_cache);
 
-    // -------------------------------------------------------------------------
-    // Load external FILE-source rain-gage data (standard SWMM rain files).
-    // Must run after resolve_external_file_slots (for absolute paths) and after
-    // options parsing (needs the simulation window to bound retained records).
-    // -------------------------------------------------------------------------
-    load_external_rain_files(ctx);
+        // ---------------------------------------------------------------------
+        // Load external FILE-source rain-gage data (standard SWMM rain files).
+        // Must run after resolve_external_file_slots (for absolute paths) and
+        // after options parsing (needs the simulation window to bound retained
+        // records).
+        // ---------------------------------------------------------------------
+        load_external_rain_files_impl(ctx, series_file_cache);
+    }
+    perf::sec_res_extfiles += perf::since(_pt_extfiles0);
 
     // -------------------------------------------------------------------------
     // Timeseries date offset resolution
     // -------------------------------------------------------------------------
-    // Timeseries without explicit dates have x-values starting near 0 (fractional
-    // days from midnight). These are relative to the simulation start date.
-    // Offset them by start_date so absolute OADate lookups work.
+    // Rows authored without a date are elapsed times anchored at the
+    // simulation start (legacy input.c:170 seeds every series' lastDate with
+    // StartDate + StartTime before parsing). The parser stored those rows
+    // relative to 0 and counted them in Table::n_relative; add start_date to
+    // exactly those rows here so absolute OADate lookups work. Rows past
+    // n_relative carry explicit dates and must NOT move — the old x[0] < 366
+    // heuristic shifted a whole mixed series, pushing its dated rows ~107
+    // years out. rel_anchor records the offset currently baked in, which
+    // makes a re-resolve idempotent and re-anchors by the delta if
+    // START_DATE was edited between resolves.
     for (std::size_t t = 0; t < ctx.tables.tables.size(); ++t) {
         auto& tbl = ctx.tables.tables[t];
         if (tbl.type != TableType::TIMESERIES) continue;
-        if (tbl.x.empty()) continue;
+        if (tbl.n_relative <= 0) continue;
 
-        // If first x-value is small (< 366, i.e. less than one year in days),
-        // it's a relative timeseries and needs the start_date offset.
-        // Absolute dates (with MM/DD/YYYY) would produce values > 30000.
-        if (tbl.x[0] < 366.0) {
-            double offset = ctx.options.start_date;
-            for (auto& xv : tbl.x) {
-                xv += offset;
-            }
-        }
+        const double start = ctx.options.start_date;
+        const double delta = start - tbl.rel_anchor;
+        if (delta == 0.0) continue;
+        const std::size_t n = std::min(tbl.x.size(),
+                                       static_cast<std::size_t>(tbl.n_relative));
+        for (std::size_t k = 0; k < n; ++k) tbl.x[k] += delta;
+        tbl.rel_anchor = start;
     }
 
     // -------------------------------------------------------------------------
     // Gage timeseries re-resolution
     // -------------------------------------------------------------------------
+    // Start of the name-binding region: gage/co-gage, subcatchment outlet and
+    // gage, storage and outfall and pump curves, external-inflow series. These
+    // are the find_timeseries/find_curve callers.
+    const auto _pt_tables0 = perf::now();
     // If RAINGAGES section appeared before TIMESERIES, ts_index will be -1.
     // Re-resolve using the stored ts_name.
     for (int g = 0; g < n_gages; ++g) {
@@ -857,19 +1360,21 @@ void resolve_cross_references(SimulationContext& ctx) {
     // When two or more gages share the same TIMESERIES source and ts_index, the
     // secondary gages should copy rainfall from the primary (lowest-index gage)
     // rather than querying the timeseries independently.  Matches legacy coGage.
-    for (int gj = 0; gj < n_gages; ++gj) {
-        auto ugj = static_cast<std::size_t>(gj);
-        ctx.gages.co_gage_index[ugj] = -1;
-        if (ctx.gages.source[ugj] != RainSource::TIMESERIES) continue;
-        int ts_j = ctx.gages.ts_index[ugj];
-        if (ts_j < 0) continue;
-        for (int gi = 0; gi < gj; ++gi) {
-            auto ugi = static_cast<std::size_t>(gi);
-            if (ctx.gages.source[ugi] == RainSource::TIMESERIES &&
-                ctx.gages.ts_index[ugi] == ts_j) {
-                ctx.gages.co_gage_index[ugj] = gi;
-                break;
-            }
+    // Single pass: remember the first gage seen on each timeseries and point
+    // every later one at it. The inner scan this replaces was O(n_gages^2) and
+    // broke at its first hit, i.e. the LOWEST-indexed earlier gage — which is
+    // exactly the value first_on_ts holds, so the assignment is unchanged.
+    {
+        std::unordered_map<int, int> first_on_ts;   // ts index -> first gage
+        first_on_ts.reserve(static_cast<std::size_t>(n_gages));
+        for (int gj = 0; gj < n_gages; ++gj) {
+            auto ugj = static_cast<std::size_t>(gj);
+            ctx.gages.co_gage_index[ugj] = -1;
+            if (ctx.gages.source[ugj] != RainSource::TIMESERIES) continue;
+            const int ts_j = ctx.gages.ts_index[ugj];
+            if (ts_j < 0) continue;
+            const auto ins = first_on_ts.emplace(ts_j, gj);
+            if (!ins.second) ctx.gages.co_gage_index[ugj] = ins.first->second;
         }
     }
 
@@ -883,6 +1388,17 @@ void resolve_cross_references(SimulationContext& ctx) {
         if (us >= ctx.subcatches.outlet_name.size()) continue;
         const auto& name = ctx.subcatches.outlet_name[us];
         if (name.empty()) continue;
+
+        // Legacy subcatch_validate (subcatch.c:391-393): an outlet name that
+        // matches BOTH a node and a subcatchment is ambiguous — ERROR 108.
+        // Legacy stores the two resolutions independently and errors when
+        // both landed; here the single-slot model must check explicitly.
+        if (ctx.node_names.find(name) >= 0 &&
+            ctx.subcatch_names.find(name) >= 0) {
+            ctx.errors.push_back(format_error(
+                ERR_SUBCATCH_OUTLET, ctx.subcatch_names.name_of(s)));
+            continue;
+        }
 
         // Already resolved during parsing — validate it
         if (ctx.subcatches.outlet_node[us] >= 0 &&
@@ -912,6 +1428,23 @@ void resolve_cross_references(SimulationContext& ctx) {
             }
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Subcatchment groundwater receiving-node re-resolution
+    // -------------------------------------------------------------------------
+    // [GROUNDWATER] normally precedes [JUNCTIONS], so handle_groundwater()
+    // resolved the node against an empty name index and stored -1. The raw name
+    // was captured in ctx.pending_gw_nodes for exactly this pass. A name that
+    // still fails to resolve is left at -1: the runtime falls back to the
+    // subcatchment outlet node (Groundwater.cpp), and the [GROUNDWATER] writer
+    // skips the row rather than emitting '*'.
+    for (const auto& [si, nm] : ctx.pending_gw_nodes) {
+        if (si < 0 || si >= n_subcatch) continue;
+        auto us = static_cast<std::size_t>(si);
+        if (us < ctx.subcatches.gw_node.size() && ctx.subcatches.gw_node[us] < 0)
+            ctx.subcatches.gw_node[us] = ctx.node_names.find(nm);
+    }
+    ctx.pending_gw_nodes.clear();
 
     // -------------------------------------------------------------------------
     // Subcatchment snow pack resolution
@@ -1081,19 +1614,11 @@ void resolve_cross_references(SimulationContext& ctx) {
         ctx.nodes.depth[i] = ctx.nodes.init_depth[i];
     }
 
-    // -------------------------------------------------------------------------
-    // External inflow timeseries resolution
-    // -------------------------------------------------------------------------
-    // Resolve timeseries name → table index for all external inflows
-    for (int i = 0; i < ctx.ext_inflows.count(); ++i) {
-        auto ui = static_cast<std::size_t>(i);
-        if (!ctx.ext_inflows.ts_name[ui].empty()) {
-            int ts_idx = ctx.find_timeseries(ctx.ext_inflows.ts_name[ui]);
-            // Store resolved index - the inflow solver uses ts_name for lookup,
-            // but we can cache the index for performance
-            (void)ts_idx; // ts_name is used directly by InflowSolver
-        }
-    }
+    // No external-inflow timeseries resolution here: ExtInflowData carries no
+    // index field, only ts_name, and InflowSolver::init resolves the name
+    // itself (hydrology/Inflow.cpp). This used to run find_timeseries() once
+    // per external inflow and discard the result.
+    perf::sec_res_tables += perf::since(_pt_tables0);
 
     // -------------------------------------------------------------------------
     // [INFLOWS] / [DWF] / [RDII] node re-resolution
@@ -1126,6 +1651,123 @@ void resolve_cross_references(SimulationContext& ctx) {
                           ctx.dwf_inflows.node_name);
         resolve_node_rows(ctx.rdii_assigns, ctx.rdii_assigns.node_idx,
                           ctx.rdii_assigns.node_name);
+    }
+
+    // -------------------------------------------------------------------------
+    // [INITIAL_QUALITY] element + constituent resolution
+    // -------------------------------------------------------------------------
+    // The section may precede the node/link/pollutant sections, so the handler
+    // stored raw names; resolve and classify here. Every failure is loud
+    // (fatal on strict open) and the failing row is erased so downstream
+    // consumers never see an unresolved entry. Iterate backwards so erase()
+    // keeps remaining indices valid.
+    {
+        auto& iq = ctx.initial_quality;
+        for (int i = iq.count() - 1; i >= 0; --i) {
+            auto ui = static_cast<std::size_t>(i);
+            const bool  link = iq.is_link[ui] != 0;
+            const auto& en   = iq.elem_name[ui];
+            const auto& cons = iq.constituent[ui];
+
+            // Element name → index.
+            iq.elem_idx[ui] = link ? ctx.link_names.find(en)
+                                   : ctx.node_names.find(en);
+            if (iq.elem_idx[ui] < 0) {
+                ctx.errors.push_back(
+                    std::string("[INITIAL_QUALITY] unknown ") +
+                    (link ? "link" : "node") + " '" + en + "'.");
+                iq.erase(i);
+                continue;
+            }
+
+            // Constituent → kind. Pollutant first, then the reserved species.
+            if (cons == "__WATER_AGE__") {
+                iq.kind[ui] = InitialQualityData::kKindWaterAge;
+                if (!ctx.options.water_age)
+                    ctx.warnings.push_back(
+                        "[INITIAL_QUALITY] __WATER_AGE__ rows are present but "
+                        "[OPTIONS] WATER_AGE is OFF — the rows are inert this "
+                        "simulation.");
+            } else if (cons == "__TEMPERATURE__") {
+                iq.kind[ui] = InitialQualityData::kKindTemperature;
+                if (!ctx.options.heat_transport)
+                    ctx.warnings.push_back(
+                        "[INITIAL_QUALITY] __TEMPERATURE__ rows are present "
+                        "but [OPTIONS] HEAT_TRANSPORT is OFF — the rows are "
+                        "inert this simulation.");
+            } else {
+                iq.kind[ui] = ctx.pollutant_names.find(cons);
+                if (iq.kind[ui] < 0) {
+                    ctx.errors.push_back(
+                        "[INITIAL_QUALITY] unknown constituent '" + cons +
+                        "' at " + std::string(link ? "link" : "node") + " '" +
+                        en + "' — pollutant names and __WATER_AGE__/"
+                        "__TEMPERATURE__ are accepted here; MSX species "
+                        "initial values belong in the reactions config "
+                        "[REACTION_QUALITY] NODE|LINK scopes.");
+                    iq.erase(i);
+                    continue;
+                }
+                // Age (signed per D-NS1) and temperature (degC) may be
+                // negative; a pollutant concentration may not.
+                if (iq.value[ui] < 0.0) {
+                    ctx.errors.push_back(
+                        "[INITIAL_QUALITY] negative value for pollutant '" +
+                        cons + "' at " + std::string(link ? "link" : "node") +
+                        " '" + en + "'.");
+                    iq.erase(i);
+                    continue;
+                }
+            }
+        }
+
+        // Duplicate (scope, element, constituent) keys are an error, not
+        // last-wins — silent override order in a hand-edited deck is exactly
+        // the ambiguity this section should refuse. Forward scan so the
+        // SECOND occurrence is the one reported.
+        for (int i = 0; i < iq.count(); ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            for (int j = 0; j < i; ++j) {
+                auto uj = static_cast<std::size_t>(j);
+                if (iq.is_link[ui] == iq.is_link[uj] &&
+                    iq.elem_idx[ui] == iq.elem_idx[uj] &&
+                    iq.kind[ui] == iq.kind[uj]) {
+                    ctx.errors.push_back(
+                        "[INITIAL_QUALITY] duplicate row for '" +
+                        iq.constituent[ui] + "' at " +
+                        std::string(iq.is_link[ui] ? "link" : "node") + " '" +
+                        iq.elem_name[ui] + "'.");
+                    iq.erase(i);
+                    --i;
+                    break;
+                }
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Link end-node re-resolution
+    // -------------------------------------------------------------------------
+    // Legacy parsing is order-independent, so [CONDUITS]/[PUMPS]/[ORIFICES]/
+    // [WEIRS]/[OUTLETS] may precede the node sections. The handlers resolve
+    // eagerly (yielding -1) and record the raw names in ctx.pending_link_nodes;
+    // re-resolve them here. A name that still fails to resolve is a fatal
+    // ERR_NAME, matching legacy link_readParams(). Previously such a link was
+    // loaded silently orphaned and then written back out with '*' end nodes.
+    // Runs before any consumer of links.node1/node2 further down this function.
+    {
+        auto resolve_end = [&ctx, n_nodes](int& idx, const std::string& name) {
+            if (idx >= 0 && idx < n_nodes) return;
+            idx = ctx.node_names.find(name);
+            if (idx < 0) ctx.errors.push_back(format_error(ERR_NAME, name));
+        };
+        for (const auto& [li, names] : ctx.pending_link_nodes) {
+            if (li < 0 || li >= ctx.links.count()) continue;
+            auto ul = static_cast<std::size_t>(li);
+            resolve_end(ctx.links.node1[ul], names.first);
+            resolve_end(ctx.links.node2[ul], names.second);
+        }
+        ctx.pending_link_nodes.clear();
     }
 
     // -------------------------------------------------------------------------
@@ -1196,12 +1838,122 @@ void resolve_cross_references(SimulationContext& ctx) {
     // matching legacy flowrout.c::validateGeneralLayout.
 
     // -------------------------------------------------------------------------
+    // Virtual-junction initial-state seeding (issue #156)
+    // -------------------------------------------------------------------------
+    // [VIRTUAL_JUNCTIONS] carries no init-depth column, so VJs started dry
+    // regardless of their neighbors — a deck whose real nodes define an
+    // initial pool began with a hole at every splice (found by the mixed-flow
+    // study P0 verification: a station VJ drained the Aureli initial pool).
+    // Seed each VJ head by distance-weighted linear interpolation between the
+    // nearest NON-virtual nodes reached by walking its spliced conduit chain
+    // in both directions. Runs before the solver initializes; decks without
+    // VJs (or with all-dry neighbors) are bitwise untouched.
+    //
+    // DYNWAVE ONLY, and that restriction is measured, not cautionary. Under FV
+    // the initial condition does not live in the node state: Router::initFv
+    // lays each conduit's cells at a UNIFORM DEPTH taken from links.depth (the
+    // average of the two end-node depths), and only overrides that where one
+    // bank is dry across a bed step. Seeding the node alone therefore starts
+    // the run with a VJ head that its own adjacent cells contradict, and the
+    // junction coupling drives the difference: measured on the study's e3
+    // deck (a pressurized 0.094 m pipe, FV_SLOT_CELERITY 300), the flow-
+    // routing continuity error went 0.000% -> -19.133% and VJ99's head
+    // excursion reached 4371 m. Making FV benefit needs the level-surface
+    // both-wet cell projection that Router::initFv deliberately does not do
+    // (see the comment block there, and the P0 verification's open issue 2);
+    // that is its own change with its own gates, so FV is left exactly as it
+    // was rather than half-seeded.
+    if (ctx.options.routing_model == RoutingModel::DYNWAVE) {
+        // Incident CONDUITS per node (VJ splices are conduit-only by
+        // validation; a VJ with conduit-degree != 2 is left unseeded here and
+        // rejected later by the mesh builder / DW vjunc validation).
+        std::vector<std::array<int, 2>> inc(static_cast<std::size_t>(n_nodes),
+                                            {-1, -1});
+        std::vector<int> inc_n(static_cast<std::size_t>(n_nodes), 0);
+        for (int j = 0; j < n_links; ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
+            for (int nd : {ctx.links.node1[uj], ctx.links.node2[uj]}) {
+                if (nd < 0 || nd >= n_nodes) continue;
+                auto und = static_cast<std::size_t>(nd);
+                if (ctx.nodes.is_virtual[und] == 0) continue;
+                if (inc_n[und] < 2) inc[und][inc_n[und]] = j;
+                ++inc_n[und];
+            }
+        }
+        auto walk = [&](int start_vj, int via_link, double& head_out,
+                        double& dist_out, bool& wet_out) -> bool {
+            int node = start_vj, link = via_link;
+            double dist = 0.0;
+            for (int guard = 0; guard <= n_links; ++guard) {
+                auto ul = static_cast<std::size_t>(link);
+                const int cr = ctx.link_subtypes.conduit_row(link);
+                dist += (cr >= 0)
+                    ? ctx.link_subtypes.conduits.length[static_cast<std::size_t>(cr)]
+                    : 0.0;
+                const int other = (ctx.links.node1[ul] == node)
+                    ? ctx.links.node2[ul] : ctx.links.node1[ul];
+                if (other < 0 || other >= n_nodes) return false;
+                auto uo = static_cast<std::size_t>(other);
+                if (ctx.nodes.is_virtual[uo] == 0) {
+                    head_out = ctx.nodes.head[uo];
+                    dist_out = dist;
+                    wet_out  = ctx.nodes.depth[uo] > 0.0;
+                    return true;
+                }
+                if (inc_n[uo] != 2) return false;
+                link = (inc[uo][0] == link) ? inc[uo][1] : inc[uo][0];
+                if (link < 0) return false;
+                node = other;
+            }
+            return false;  // cycle of VJs (rejected elsewhere)
+        };
+        for (int i = 0; i < n_nodes; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            if (ctx.nodes.is_virtual[ui] == 0 || inc_n[ui] != 2) continue;
+            double hA = 0.0, dA = 0.0, hB = 0.0, dB = 0.0;
+            bool wetA = false, wetB = false;
+            const bool okA = walk(i, inc[ui][0], hA, dA, wetA);
+            const bool okB = walk(i, inc[ui][1], hB, dB, wetB);
+            // A dry node's head is just its invert — interpolating between two
+            // dry endpoints with differing inverts would MANUFACTURE water on a
+            // dry deck (P1 verification finding: vj_fv_invert_collision seeded
+            // 1 ft from nothing). Seeding requires at least one WET endpoint.
+            if (!(okA && wetA) && !(okB && wetB)) continue;
+            double head;
+            if (okA && okB) {
+                const double dt_sum = dA + dB;
+                head = (dt_sum > 0.0) ? (hA * dB + hB * dA) / dt_sum
+                                      : 0.5 * (hA + hB);
+            } else if (okA) {
+                head = hA;
+            } else if (okB) {
+                head = hB;
+            } else {
+                continue;
+            }
+            const double depth = head - ctx.nodes.invert_elev[ui];
+            if (depth > 0.0) {
+                // init_depth is the field that SURVIVES: SWMMEngine::initialize
+                // calls NodeData::reset_state(), which re-derives depth,
+                // old_depth and head from init_depth on every cold start. A
+                // seeding that wrote only depth/head was visible to a caller
+                // that just opened the model and gone by the first routing
+                // step — measured on the study's e4 deck, where base and
+                // seeded binaries produced byte-identical .out files.
+                ctx.nodes.init_depth[ui] = depth;
+                ctx.nodes.depth[ui]      = depth;
+                ctx.nodes.head[ui]       = head;
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Evaporation timeseries resolution
     // -------------------------------------------------------------------------
-    if (ctx.options.evap_type == 2 && !ctx.options.evap_ts_name.empty()) {
-        int ts_idx = ctx.find_timeseries(ctx.options.evap_ts_name);
-        (void)ts_idx; // stored by name, resolved at runtime
-    }
+    // Nothing to do: SWMMEngine::initHydrology resolves evap_ts_name into
+    // climate_state.evap_ts_index. The lookup that used to sit here discarded
+    // its result.
 
     // -------------------------------------------------------------------------
     // Link cross-section derived properties
@@ -1239,6 +1991,44 @@ void resolve_cross_references(SimulationContext& ctx) {
                 if (crest && n1 >= 0 && n1 < n_nodes) {
                     double rawCrest = *crest - ctx.nodes.invert_elev[static_cast<std::size_t>(n1)];
                     *crest = std::max(0.0, rawCrest);
+                }
+            }
+        }
+    } else {
+        // DEPTH mode: legacy link_validate (link.c:1061-1070) zeroes a
+        // NEGATIVE authored offset on every link with WARNING 03. Keeping it
+        // shifts the link's invert-relative geometry — slope, elevation
+        // drop, which conduit draws WARNING 04 — and diverges the hydraulics
+        // from the first routing step (800-node-sewer: legacy WARN03 on
+        // conduit 136687's -0.01 inOffset vs v6 WARN04 elsewhere). The ELEV
+        // branch above and the conduit conversion below already clamp their
+        // converted depths the same way. Weir/outlet crests live in the
+        // side tables (legacy keeps them in offset1 and zeroes them by the
+        // same check).
+        for (int j = 0; j < n_links; ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx.links.offset1[uj] < 0.0) {
+                ctx.warnings.push_back(format_warning(
+                    WARN_NEGATIVE_OFFSET, ctx.link_names.name_of(j)));
+                ctx.links.offset1[uj] = 0.0;
+            }
+            if (ctx.links.offset2[uj] < 0.0) {
+                ctx.warnings.push_back(format_warning(
+                    WARN_NEGATIVE_OFFSET, ctx.link_names.name_of(j)));
+                ctx.links.offset2[uj] = 0.0;
+            }
+            auto lt = ctx.links.type[uj];
+            if (lt == LinkType::WEIR || lt == LinkType::OUTLET) {
+                const int wr  = ctx.link_subtypes.weir_row(j);
+                const int olr = (wr < 0) ? ctx.link_subtypes.outlet_row(j) : -1;
+                double* crest = (wr >= 0)
+                    ? &ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)]
+                    : (olr >= 0 ? &ctx.link_subtypes.outlets.crest_height[static_cast<std::size_t>(olr)]
+                                : nullptr);
+                if (crest && *crest < 0.0) {
+                    ctx.warnings.push_back(format_warning(
+                        WARN_NEGATIVE_OFFSET, ctx.link_names.name_of(j)));
+                    *crest = 0.0;
                 }
             }
         }
@@ -1290,59 +2080,52 @@ void resolve_cross_references(SimulationContext& ctx) {
     // Build transect geometry tables for IRREGULAR cross-sections.
     // Each TransectStore entry → TransectData with precomputed area/width/hrad tables.
     {
+        perf::ScopedTimer _pt_transects(perf::sec_res_transects);
         int nt = ctx.transects.count();
         ctx.transect_tables.resize(static_cast<std::size_t>(nt));
+        // Copy-transform-build extracted to transect::buildFromStore so
+        // swmm_link_set_xsect (IRREGULAR) builds bit-identical tables; the
+        // parity notes on the legacy transforms live with the helper.
+        const int t_us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+        const double t_ucf = ucf::Ucf[ucf::LENGTH][static_cast<std::size_t>(t_us)];
         for (int t = 0; t < nt; ++t) {
             auto ut = static_cast<std::size_t>(t);
             auto& td = ctx.transect_tables[ut];
-            td.name      = ctx.transects.names[ut];
-            td.n_left    = ctx.transects.n_left[ut];
-            td.n_right   = ctx.transects.n_right[ut];
-            td.n_channel = ctx.transects.n_channel[ut];
-            if (td.n_channel <= 0.0) {
+            if (!transect::buildFromStore(ctx.transects, t, t_ucf, td)) {
                 ctx.errors.push_back(format_error(ERR_TRANSECT_MANNING, td.name));
                 continue;
             }
-            td.stations  = ctx.transects.stations[ut];
-            td.elevations = ctx.transects.elevations[ut];
-            td.length_factor = ctx.transects.length_factor[ut];
-            // PARITY: legacy transect setParams/addStation (transect.c:360-410)
-            // transform the raw [TRANSECTS] GR data BEFORE building the tables:
-            //   Station = x * Xfactor / UCF(LENGTH)          (mult, then divide)
-            //   Elev    = (y + Yfactor) / UCF(LENGTH),  Yfactor = x9 / UCF
-            //   Xbank   = (xbank / UCF) * Xfactor            (divide, then mult)
-            // The elevation OFFSET (x9, e.g. 799/798 in extran8a) is the load-
-            // bearing part: legacy builds every slice area/width/hrad at the
-            // real bed elevation (~800 ft), so `y - yhi` rounds at that
-            // magnitude. Building on the raw ~0-ft elevations rounds
-            // differently (~1e-13 per entry) and breaks bit-parity even though
-            // the geometry is offset-invariant in exact arithmetic. Applied to
-            // the td COPY only, so [TRANSECTS] round-trips the raw GR values.
-            const int t_us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
-            const double t_ucf = ucf::Ucf[ucf::LENGTH][static_cast<std::size_t>(t_us)];
-            double xFactor = ctx.transects.x_factor[ut];      // parse-time 0→1 default
-            if (xFactor == 0.0) xFactor = 1.0;
-            const double yFactor = ctx.transects.y_factor[ut] / t_ucf;   // x9 / UCF
-            for (auto& s : td.stations)   s = s * xFactor / t_ucf;
-            for (auto& e : td.elevations) e = (e + yFactor) / t_ucf;
-            td.x_left_bank  = (ctx.transects.x_left_bank[ut]  / t_ucf) * xFactor;
-            td.x_right_bank = (ctx.transects.x_right_bank[ut] / t_ucf) * xFactor;
-            transect::buildTables(td);
         }
-        // Resolve IRREGULAR link transect names → indices, then set properties
+        // Resolve IRREGULAR link transect names → indices, then set properties.
+        // The name→index map replaces a linear ieq scan per IRREGULAR link.
+        // emplace keeps the FIRST index for a duplicated name, which is what
+        // the scan returned (it broke at its first hit).
+        std::unordered_map<std::string, int, CiHash, CiEqual> transect_by_name;
+        transect_by_name.reserve(static_cast<std::size_t>(nt));
+        for (int t = 0; t < nt; ++t)
+            transect_by_name.emplace(ctx.transects.names[static_cast<std::size_t>(t)], t);
+
         for (int j = 0; j < n_links; ++j) {
             auto uj = static_cast<std::size_t>(j);
             if (ctx.links.xsect_shape[uj] != XsectShape::IRREGULAR) continue;
             // Resolve transect name (stored in pump_curve_name as temp field)
             const auto& tname = ctx.links.pump_curve_name[uj];
             if (!tname.empty()) {
-                for (int t = 0; t < nt; ++t) {
-                    if (ieq(ctx.transects.names[static_cast<std::size_t>(t)],
-                            tname)) {
-                        ctx.links.xsect_curve[uj] = t;
-                        break;
-                    }
-                }
+                const auto hit = transect_by_name.find(tname);
+                if (hit != transect_by_name.end())
+                    ctx.links.xsect_curve[uj] = hit->second;
+                else if (ctx.links.xsect_curve[uj] < 0)
+                    // Dangling reference: legacy raises fatal ERROR 209 here
+                    // (transect_validate). Leaving it silent let the link
+                    // degenerate to zero area with no diagnostic — the state a
+                    // corrupted save produced. Lenient opens still load for
+                    // repair; strict opens must fail loudly.
+                    ctx.errors.push_back(format_error(ERR_NAME, tname));
+            } else if (ctx.links.xsect_curve[uj] < 0) {
+                // No name and no resolved index: an IRREGULAR link with no
+                // transect at all is as dead as a dangling one.
+                ctx.errors.push_back(
+                    format_error(ERR_NAME, ctx.link_names.name_of(j)));
             }
             int ci = ctx.links.xsect_curve[uj];
             if (ci >= 0 && ci < nt) {
@@ -1360,10 +2143,21 @@ void resolve_cross_references(SimulationContext& ctx) {
         }
     }
 
+    // Per-link named cross-section resolution (CUSTOM shape curves, then
+    // STREET) followed by the full-flow xsect parameter loop. This is the
+    // region the per-link linear scans and per-link TransectData builds live
+    // in — see plan items 1.3 and 1.4.
+    const auto _pt_xsect0 = perf::now();
+
     // Resolve CUSTOM shape curves — these use [CURVES] Shape type entries
     // that define normalized (depth/yFull, width/wMax) relationships.
     {
         int n_tables = static_cast<int>(ctx.tables.tables.size());
+        // A CUSTOM table is fully determined by (shape curve, y_full): every
+        // link sharing both gets a byte-identical ~1.2 KB TransectData. Build
+        // one per distinct pair instead of one per link. Exact double equality
+        // is the right test here — identical inputs, identical tabulation.
+        std::map<std::pair<int, double>, int> custom_memo;
         for (int j = 0; j < n_links; ++j) {
             auto uj = static_cast<std::size_t>(j);
             if (ctx.links.xsect_shape[uj] != XsectShape::CUSTOM) continue;
@@ -1383,6 +2177,21 @@ void resolve_cross_references(SimulationContext& ctx) {
                 const auto& tbl = ctx.tables.tables[static_cast<std::size_t>(ci)];
                 double y_full = ctx.links.xsect_y_full[uj];
                 if (y_full <= 0.0 || tbl.x.size() < 2) continue;
+
+                // Already built for this (curve, y_full)? Point at it and skip
+                // the tabulation entirely.
+                {
+                    const auto memo = custom_memo.find({ci, y_full});
+                    if (memo != custom_memo.end()) {
+                        const auto& shared = ctx.transect_tables[
+                            static_cast<std::size_t>(memo->second)];
+                        ctx.links.xsect_a_full[uj] = shared.a_full;
+                        ctx.links.xsect_r_full[uj] = shared.r_full;
+                        ctx.links.xsect_w_max[uj]  = shared.w_max;
+                        ctx.links.xsect_curve[uj]  = memo->second;
+                        continue;
+                    }
+                }
 
                 // Find max width from curve (typically at y_norm ~0.5)
                 double w_max_norm = 0.0;
@@ -1420,6 +2229,7 @@ void resolve_cross_references(SimulationContext& ctx) {
                 int custom_idx = static_cast<int>(ctx.transect_tables.size());
                 ctx.transect_tables.push_back(std::move(ctd));
                 ctx.links.xsect_curve[uj] = custom_idx;
+                custom_memo.emplace(std::pair<int, double>{ci, y_full}, custom_idx);
             }
         }
     }
@@ -1431,6 +2241,23 @@ void resolve_cross_references(SimulationContext& ctx) {
     {
         const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
         const double inv_len = ucf::Ucf_inv[ucf::LENGTH][static_cast<std::size_t>(us)];
+        // StreetParams derives entirely from the street index (inv_len is
+        // constant across links), so every link on a street produces the same
+        // ~1.2 KB table. N links over S streets used to allocate and tabulate
+        // N of them; now it is S. TransectData::name is write-only for these
+        // entries — nothing reads it back — so sharing one is safe even when
+        // two links spell the street name with different case.
+        std::unordered_map<int, int> street_memo;
+        // Same treatment as transects: one map instead of a linear ieq scan
+        // per STREET link, first index wins on a duplicated name. Also hoists
+        // the ctx.streets.count() that the old inner loop re-read every pass.
+        std::unordered_map<std::string, int, CiHash, CiEqual> street_by_name;
+        {
+            const int n_streets = ctx.streets.count();
+            street_by_name.reserve(static_cast<std::size_t>(n_streets));
+            for (int s = 0; s < n_streets; ++s)
+                street_by_name.emplace(ctx.streets.names[static_cast<std::size_t>(s)], s);
+        }
         for (int j = 0; j < n_links; ++j) {
             auto uj = static_cast<std::size_t>(j);
             if (ctx.links.xsect_shape[uj] != XsectShape::STREET_XSECT) continue;
@@ -1438,14 +2265,23 @@ void resolve_cross_references(SimulationContext& ctx) {
             if (sname.empty()) continue;
 
             int si = -1;
-            for (int s = 0; s < ctx.streets.count(); ++s) {
-                if (ieq(ctx.streets.names[static_cast<std::size_t>(s)], sname)) {
-                    si = s;
-                    break;
-                }
-            }
+            if (const auto hit = street_by_name.find(sname);
+                hit != street_by_name.end())
+                si = hit->second;
             if (si < 0) continue;
             auto su = static_cast<std::size_t>(si);
+
+            if (const auto memo = street_memo.find(si);
+                memo != street_memo.end()) {
+                const auto& shared = ctx.transect_tables[
+                    static_cast<std::size_t>(memo->second)];
+                ctx.links.xsect_curve[uj]  = memo->second;
+                ctx.links.xsect_y_full[uj] = shared.y_full;
+                ctx.links.xsect_a_full[uj] = shared.a_full;
+                ctx.links.xsect_r_full[uj] = shared.r_full;
+                ctx.links.xsect_w_max[uj]  = shared.w_max;
+                continue;
+            }
 
             street::StreetParams sp;
             sp.width             = ctx.streets.t_crown[su]       * inv_len;
@@ -1465,6 +2301,7 @@ void resolve_cross_references(SimulationContext& ctx) {
 
             int idx_tbl = static_cast<int>(ctx.transect_tables.size());
             ctx.transect_tables.push_back(std::move(td));
+            street_memo.emplace(si, idx_tbl);
             const auto& built = ctx.transect_tables[static_cast<std::size_t>(idx_tbl)];
             ctx.links.xsect_curve[uj]  = idx_tbl;
             ctx.links.xsect_y_full[uj] = built.y_full;
@@ -1615,6 +2452,8 @@ void resolve_cross_references(SimulationContext& ctx) {
         ctx.links.xsect_yw_max[uj] = yw_max;
     }
 
+    perf::sec_res_xsect += perf::since(_pt_xsect0);
+
     // -------------------------------------------------------------------------
     // Conduit slope computation (matches legacy conduit_getSlope in link.c)
     // -------------------------------------------------------------------------
@@ -1664,15 +2503,22 @@ void resolve_cross_references(SimulationContext& ctx) {
             slope = delta / std::sqrt(length * length - delta * delta);
         }
 
-        // Apply minimum slope (legacy WARNING 05)
+        // Apply minimum slope (legacy WARNING 05). Legacy conduit_getSlope
+        // (link.c:1291-1298) RETURNS the positive MinSlope for SF/KW routing
+        // before the adverse-sign flip — a sub-MinSlope adverse conduit is
+        // sanitized to a positive slope under those models.
+        bool min_slope_kw_sf = false;
         if (ctx.options.min_slope > 0.0 && slope < ctx.options.min_slope) {
             slope = ctx.options.min_slope;
             ctx.warnings.push_back(
                 format_warning(WARN_MIN_SLOPE, ctx.link_names.name_of(j)));
+            min_slope_kw_sf =
+                (ctx.options.routing_model == RoutingModel::STEADY ||
+                 ctx.options.routing_model == RoutingModel::KINWAVE);
         }
 
         // Negative slope for adverse gradient
-        if (elev1 < elev2) slope = -slope;
+        if (elev1 < elev2 && !min_slope_kw_sf) slope = -slope;
 
         if (cr >= 0) ctx.link_subtypes.conduits.slope[ucr] = slope;
 
@@ -1821,7 +2667,10 @@ void resolve_cross_references(SimulationContext& ctx) {
     // -------------------------------------------------------------------------
     // Release excess vector capacity accumulated during parsing
     // -------------------------------------------------------------------------
-    ctx.shrink_all_to_fit();
+    {
+        perf::ScopedTimer _pt(perf::sec_res_shrink);
+        ctx.shrink_all_to_fit();
+    }
 
     // Relational refactor (Phase 4): the side-table rows were populated directly
     // by the parse/resolution writers above; this only re-derives the base→row

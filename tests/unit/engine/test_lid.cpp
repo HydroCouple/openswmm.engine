@@ -20,14 +20,19 @@
 
 #include <gtest/gtest.h>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <numeric>
 #include <sstream>
 #include <string>
 #include <vector>
 
+#include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_subcatchments.h>
+
 #include "hydrology/LID.hpp"
 #include "core/SimulationContext.hpp"
+#include "core/SWMMEngine.hpp"
 #include "data/HydrologyData.hpp"
 
 using namespace openswmm;
@@ -238,6 +243,41 @@ TEST(LIDModelBuilder, ReplicateNumberScalesAreaAndWidth) {
     EXPECT_NEAR(g.full_width[0], 3.0 * 50.0, 1e-10);
     // Subcatchment LID footprint must also carry the replicate count.
     EXPECT_NEAR(ctx.subcatches.total_lid_area_ft2[0], 3.0 * 1000.0, 1e-10);
+}
+
+// [LID_USAGE] Area is ft²|m² and Width is ft|m — display units, like every
+// other deck parameter — while the LID solver runs in internal ft² / ft. On an
+// SI deck the conversion is the whole difference between a 1000 m² unit and a
+// 1000 ft² one, and `total_lid_area_ft2` is summed straight from g.area, so
+// dropping it leaves that array holding m² despite its name.
+//
+// The conversion was computed but never applied for a stretch (ucfLength /
+// ucfLength2 sat unused in LIDSolver::init) — this is the gate for it. The US
+// path is covered by ReplicateNumberScalesAreaAndWidth above, where
+// Ucf[LENGTH][US] = 1.0 makes the division a no-op.
+TEST(LIDModelBuilder, MetricUsageAreaAndWidthConvertToInternalFeet) {
+    auto ctx = makeLidContext("BC",
+        {0.5, 0.0, 0.1, 1.0, 0.0},
+        {1.5, 0.45, 0.20, 0.10, 1e-5, 30.0, 6.0},
+        {1.0, 0.5, 0.0, 0.0},
+        {0.0, 0.5, 0.0, 0.0, 0.0, 0.0});
+    ctx.options.flow_units = FlowUnits::CMS;  // any of CMS/LPS/MLD → SI
+
+    LIDSolver solver;
+    solver.init(ctx);
+
+    constexpr double kFtPerM  = 0.3048;          // Ucf[LENGTH][SI]
+    const double area_ft2  = 1000.0 / (kFtPerM * kFtPerM);
+    const double width_ft  = 50.0 / kFtPerM;
+
+    const auto& g = solver.group(0);
+    EXPECT_NEAR(g.area[0], area_ft2, 1e-6);
+    EXPECT_NEAR(g.full_width[0], width_ft, 1e-9);
+    EXPECT_NEAR(ctx.subcatches.total_lid_area_ft2[0], area_ft2, 1e-6);
+
+    // The width/area ratio drives the Manning per-unit dynamics; converting
+    // both with the same length factor must leave it in metres-free form.
+    EXPECT_NEAR(g.full_width[0] / g.area[0], (50.0 / 1000.0) * kFtPerM, 1e-12);
 }
 
 TEST(LIDModelBuilder, ManningAlphaComputed) {
@@ -773,6 +813,50 @@ TEST(LIDModelBuilder, FromImpervConvertedToFraction) {
 
     EXPECT_NEAR(solver.group(0).from_imperv[0], 0.5, 1e-10)
         << "from_imperv should be converted from % to fraction";
+}
+
+// A [STORAGE] layer's second field is a void RATIO (voids/solids), which the
+// solver converts to a fraction p/(p+1). Legacy readStorageData accepts any
+// non-negative ratio. The Gap #82 validator capped it at 1.0 as if it were
+// the fraction, so 75 % voids (ratio 3) could not be expressed at all —
+// found when the LID fix round (2026-08-30) re-expressed the age/heat decks
+// in user units. This gate FAILS at base: ERROR 185 on open.
+TEST(LIDModelBuilder, StorageVoidRatioAboveOneIsLegal) {
+    std::filesystem::create_directories("lid_area_out");
+    const std::string inp = "lid_area_out/void_ratio.inp";
+    {
+        std::ofstream f(inp);
+        f << "[TITLE]\nstorage void ratio 3 = 75% voids\n\n[OPTIONS]\n"
+             "FLOW_UNITS CFS\nINFILTRATION HORTON\nFLOW_ROUTING KINWAVE\n"
+             "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
+             "END_DATE 01/01/2026\nEND_TIME 01:00:00\n"
+             "REPORT_STEP 00:05:00\nWET_STEP 00:05:00\nDRY_STEP 00:05:00\n"
+             "ROUTING_STEP 60\n\n"
+             "[RAINGAGES]\nRG INTENSITY 1:00 1.0 TIMESERIES STORM\n\n"
+             "[SUBCATCHMENTS]\nS1 RG O1 5 0 500 0.5 0\n\n"
+             "[SUBAREAS]\nS1 0.01 0.1 0.0 0.0 100 OUTLET\n\n"
+             "[INFILTRATION]\nS1 0.0 0.0 4.0 7.0 0\n\n"
+             "[LID_CONTROLS]\nBC1 BC\n"
+             "BC1 SURFACE  0.6  0.0  0.1  100  5\n"
+             "BC1 SOIL     3.0  0.5  0.2  0.1  0.864 10.0 3.6\n"
+             "BC1 STORAGE  12.0 3.0  0.0  0\n"
+             "BC1 DRAIN    0.5  0.5  0    0\n\n"
+             "[LID_USAGE]\nS1 BC1 1 43560 500 50 100 0\n\n"
+             "[OUTFALLS]\nO1 0.0 FREE NO\n\n"
+             "[TIMESERIES]\nSTORM 01/01/2026 00:00 0.5\n"
+             "STORM 01/01/2026 01:00 0.0\n";
+    }
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_engine_open(e, inp.c_str(), "lid_area_out/void_ratio.rpt",
+                               "lid_area_out/void_ratio.out", nullptr), 0)
+        << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
+    // And the solver holds the FRACTION: 3 / (3 + 1).
+    const auto& g = static_cast<openswmm::SWMMEngine*>(e)->lid().group(0);
+    ASSERT_GT(g.count, 0);
+    EXPECT_DOUBLE_EQ(g.stor_void[0], 0.75);
+    swmm_engine_destroy(e);
 }
 
 TEST(LIDModelBuilder, DrainToNodeResolved) {
@@ -1457,4 +1541,328 @@ TEST(LIDStorageExfil, CloggingTrajectoryMatchesBenchmark) {
         << "Storage depth RMS error exceeds 1e-10 ft";
     EXPECT_LT(std::sqrt(sum_sq_exfil / n), 1e-10)
         << "Cumulative exfil RMS error exceeds 1e-10 ft";
+}
+
+// ============================================================================
+// Issue #131: LID footprint must be excluded from the runoff-generating area
+// ============================================================================
+
+// RunoffSolver::init() subtracts total_lid_area_ft2 from the subcatchment
+// area (Gap #23), so LIDSolver::init() — the array's only writer — must run
+// first in initHydrology(). With the order reversed the subtraction is a
+// no-op: the LID footprint's rainfall is counted twice (full-area runoff +
+// the LID unit's own balance added on top), and a subcatchment half covered
+// by a storm-retaining rain garden produces ~2x its bare twin's runoff.
+TEST(LidRunoffAreaTest, LidFootprintExcludedFromRunoffArea) {
+    namespace fs = std::filesystem;
+    fs::create_directories("lid_area_out");
+    const std::string inp = "lid_area_out/issue131.inp";
+
+    // S_LID: 10 ac, half covered by a rain garden that retains the whole
+    // 2-in storm (13.2 in of surface+soil capacity, no drain).
+    // S_REF: 5 ac bare twin of the non-LID remainder (same width/slope).
+    // No infiltration, no depression storage: S_LID must shed the same
+    // volume as S_REF once the LID half is excluded.
+    std::ofstream(inp) <<
+        "[OPTIONS]\n"
+        "FLOW_UNITS           CFS\n"
+        "INFILTRATION         HORTON\n"
+        "FLOW_ROUTING         KINWAVE\n"
+        "START_DATE           01/01/2026\n"
+        "START_TIME           00:00:00\n"
+        "END_DATE             01/01/2026\n"
+        "END_TIME             12:00:00\n"
+        "REPORT_STEP          00:05:00\n"
+        "WET_STEP             00:05:00\n"
+        "DRY_STEP             01:00:00\n"
+        "ROUTING_STEP         30\n"
+        "\n"
+        "[RAINGAGES]\n"
+        ";;Name  Format     Interval SCF  Source\n"
+        "RG      INTENSITY  1:00     1.0  TIMESERIES STORM\n"
+        "\n"
+        "[SUBCATCHMENTS]\n"
+        ";;Name  Gage  Outlet  Area  %Imperv  Width  Slope  CurbLen\n"
+        "S_LID   RG    O1      10    0        200    0.5    0\n"
+        "S_REF   RG    O1      5     0        200    0.5    0\n"
+        "\n"
+        "[SUBAREAS]\n"
+        ";;Subcatch  N-Imperv  N-Perv  S-Imperv  S-Perv  PctZero  RouteTo\n"
+        "S_LID       0.01      0.1     0.0       0.0     100      OUTLET\n"
+        "S_REF       0.01      0.1     0.0       0.0     100      OUTLET\n"
+        "\n"
+        "[INFILTRATION]\n"
+        ";;Subcatch  MaxRate  MinRate  Decay  DryTime  MaxInfil\n"
+        "S_LID       0.0      0.0      4.0    7.0      0\n"
+        "S_REF       0.0      0.0      4.0    7.0      0\n"
+        "\n"
+        "[LID_CONTROLS]\n"
+        ";;Name  Type/Layer  Parameters\n"
+        "RG1     RG\n"
+        "RG1     SURFACE     6.0   0.0   0.1   1.0   5\n"
+        "RG1     SOIL        18.0  0.5   0.2   0.1   0.5  10.0  3.5\n"
+        "RG1     STORAGE     0     0     0     0\n"
+        "\n"
+        "[LID_USAGE]\n"
+        ";;Subcatch  LID  Number  Area    Width  InitSat  FromImp  ToPerv\n"
+        "S_LID       RG1  1       217800  0      0        0        0\n"
+        "\n"
+        "[OUTFALLS]\n"
+        ";;Name  Elev  Type  Gated\n"
+        "O1      0.0   FREE  NO\n"
+        "\n"
+        "[TIMESERIES]\n"
+        ";;Name  Date        Time   Value\n"
+        "STORM   01/01/2026  00:00  0.5\n"
+        "STORM   01/01/2026  01:00  0.5\n"
+        "STORM   01/01/2026  02:00  0.5\n"
+        "STORM   01/01/2026  03:00  0.5\n"
+        "STORM   01/01/2026  04:00  0.0\n";
+
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_engine_open(e, inp.c_str(),
+                               "lid_area_out/issue131.rpt",
+                               "lid_area_out/issue131.out", nullptr), 0)
+        << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_start(e, 0), 0) << swmm_get_last_error_msg(e);
+    double elapsed = 0.0;
+    do {
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), 0)
+            << swmm_get_last_error_msg(e);
+    } while (elapsed > 0.0);
+
+    const int i_lid = swmm_subcatch_index(e, "S_LID");
+    const int i_ref = swmm_subcatch_index(e, "S_REF");
+    ASSERT_GE(i_lid, 0);
+    ASSERT_GE(i_ref, 0);
+    double vol_lid = -1.0, vol_ref = -1.0;
+    EXPECT_EQ(swmm_subcatch_get_stat_runoff_vol(e, i_lid, &vol_lid), 0);
+    EXPECT_EQ(swmm_subcatch_get_stat_runoff_vol(e, i_ref, &vol_ref), 0);
+
+    swmm_engine_end(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+
+    // Guard against a silently dry run, then pin the area accounting: the
+    // buggy full-area init makes S_LID shed ~1.85x S_REF.
+    ASSERT_GT(vol_ref, 0.0);
+    EXPECT_NEAR(vol_lid, vol_ref, 0.10 * vol_ref)
+        << "S_LID/S_REF runoff ratio " << vol_lid / vol_ref
+        << " — LID footprint is being double-counted (issue #131)";
+}
+
+// −VlidIn: runoff routed ONTO a LID unit (FromImp) must leave the
+// subcatchment's outlet. Legacy subcatch.c:746-751 nets it out —
+// `vOutflow = Voutflow − VlidIn + VlidOut` — and the engine long applied only
+// the +VlidOut half, so captured water reached the outlet in full AND ran
+// through the LID: capture bought no reduction and the run gained volume.
+//
+// The two subcatchments here are identical in every respect INCLUDING the LID
+// footprint (so the issue #131 area exclusion is common to both, not what is
+// under test) and differ only in FromImp. Before the fix their runoff volumes
+// are bit-identical, because FromImp fed the LID without ever debiting the
+// outlet; after it, capture must show up as strictly less runoff.
+TEST(LidRunoffAreaTest, CapturedRunoffLeavesTheSubcatchmentOutlet) {
+    namespace fs = std::filesystem;
+    fs::create_directories("lid_area_out");
+    const std::string inp = "lid_area_out/vlidin.inp";
+
+    // 10 ac, fully impervious, 2 ac of it a rain garden that retains the storm.
+    // S_CAP routes 100% of the remaining 8 ac of impervious runoff onto it;
+    // S_NOCAP routes none. Same storm, same footprint, same everything else.
+    std::ofstream(inp) <<
+        "[OPTIONS]\n"
+        "FLOW_UNITS           CFS\n"
+        "INFILTRATION         HORTON\n"
+        "FLOW_ROUTING         KINWAVE\n"
+        "START_DATE           01/01/2026\n"
+        "START_TIME           00:00:00\n"
+        "END_DATE             01/01/2026\n"
+        "END_TIME             12:00:00\n"
+        "REPORT_STEP          00:05:00\n"
+        "WET_STEP             00:05:00\n"
+        "DRY_STEP             01:00:00\n"
+        "ROUTING_STEP         30\n"
+        "\n"
+        "[RAINGAGES]\n"
+        ";;Name  Format     Interval SCF  Source\n"
+        "RG      INTENSITY  1:00     1.0  TIMESERIES STORM\n"
+        "\n"
+        "[SUBCATCHMENTS]\n"
+        ";;Name   Gage  Outlet  Area  %Imperv  Width  Slope  CurbLen\n"
+        "S_CAP    RG    O1      10    100      200    0.5    0\n"
+        "S_NOCAP  RG    O1      10    100      200    0.5    0\n"
+        "\n"
+        "[SUBAREAS]\n"
+        ";;Subcatch  N-Imperv  N-Perv  S-Imperv  S-Perv  PctZero  RouteTo\n"
+        "S_CAP       0.01      0.1     0.0       0.0     100      OUTLET\n"
+        "S_NOCAP     0.01      0.1     0.0       0.0     100      OUTLET\n"
+        "\n"
+        "[INFILTRATION]\n"
+        ";;Subcatch  MaxRate  MinRate  Decay  DryTime  MaxInfil\n"
+        "S_CAP       0.0      0.0      4.0    7.0      0\n"
+        "S_NOCAP     0.0      0.0      4.0    7.0      0\n"
+        "\n"
+        "[LID_CONTROLS]\n"
+        ";;Name  Type/Layer  Parameters\n"
+        "RG1     RG\n"
+        "RG1     SURFACE     6.0   0.0   0.1   1.0   5\n"
+        "RG1     SOIL        18.0  0.5   0.2   0.1   0.5  10.0  3.5\n"
+        "RG1     STORAGE     0     0     0     0\n"
+        "\n"
+        "[LID_USAGE]\n"
+        ";;Subcatch  LID  Number  Area   Width  InitSat  FromImp  ToPerv\n"
+        "S_CAP       RG1  1       87120  0      0        100      0\n"
+        "S_NOCAP     RG1  1       87120  0      0        0        0\n"
+        "\n"
+        "[OUTFALLS]\n"
+        ";;Name  Elev  Type  Gated\n"
+        "O1      0.0   FREE  NO\n"
+        "\n"
+        "[TIMESERIES]\n"
+        ";;Name  Date        Time   Value\n"
+        "STORM   01/01/2026  00:00  0.5\n"
+        "STORM   01/01/2026  01:00  0.5\n"
+        "STORM   01/01/2026  02:00  0.5\n"
+        "STORM   01/01/2026  03:00  0.5\n"
+        "STORM   01/01/2026  04:00  0.0\n";
+
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_engine_open(e, inp.c_str(),
+                               "lid_area_out/vlidin.rpt",
+                               "lid_area_out/vlidin.out", nullptr), 0)
+        << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_start(e, 0), 0) << swmm_get_last_error_msg(e);
+    double elapsed = 0.0;
+    do {
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), 0)
+            << swmm_get_last_error_msg(e);
+    } while (elapsed > 0.0);
+
+    const int i_cap   = swmm_subcatch_index(e, "S_CAP");
+    const int i_nocap = swmm_subcatch_index(e, "S_NOCAP");
+    ASSERT_GE(i_cap, 0);
+    ASSERT_GE(i_nocap, 0);
+    double vol_cap = -1.0, vol_nocap = -1.0;
+    EXPECT_EQ(swmm_subcatch_get_stat_runoff_vol(e, i_cap, &vol_cap), 0);
+    EXPECT_EQ(swmm_subcatch_get_stat_runoff_vol(e, i_nocap, &vol_nocap), 0);
+
+    swmm_engine_end(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+
+    // Guard against a silently dry run, then the gate itself. The bound is
+    // deliberately loose: how much of the captured 8 ac the garden retains
+    // before overflowing is LID hydraulics, not what this test pins. What it
+    // pins is that capture debits the outlet at all — pre-fix the ratio is
+    // exactly 1.0.
+    ASSERT_GT(vol_nocap, 0.0);
+    EXPECT_LT(vol_cap, 0.95 * vol_nocap)
+        << "S_CAP/S_NOCAP runoff ratio " << vol_cap / vol_nocap
+        << " — runoff captured by the LID is not leaving the subcatchment "
+           "outlet (missing −VlidIn, legacy subcatch.c:746-751)";
+}
+
+// A subcatchment FULLY covered by replicated LID units (Number x Area == the
+// whole area) must generate ~zero runoff when the units retain the storm:
+// pins the replicate-count scaling of the LID footprint (g.area =
+// number x area, legacy lid.c:1688) and the 0.1% area snap of legacy
+// lid_validate() that zeroes the roundoff sliver of runoff-generating area.
+// With either missing, the full-coverage subcatchment sheds like bare ground
+// (issue #131, bench Upstream_w_wo_BC_2Subcatchments_Mod_GA.inp).
+TEST(LidRunoffAreaTest, FullCoverageByReplicateUnitsShedsNothing) {
+    namespace fs = std::filesystem;
+    fs::create_directories("lid_area_out");
+    const std::string inp = "lid_area_out/issue131_full.inp";
+
+    std::ofstream(inp) <<
+        "[OPTIONS]\n"
+        "FLOW_UNITS           CFS\n"
+        "INFILTRATION         HORTON\n"
+        "FLOW_ROUTING         KINWAVE\n"
+        "START_DATE           01/01/2026\n"
+        "START_TIME           00:00:00\n"
+        "END_DATE             01/01/2026\n"
+        "END_TIME             12:00:00\n"
+        "REPORT_STEP          00:05:00\n"
+        "WET_STEP             00:05:00\n"
+        "DRY_STEP             01:00:00\n"
+        "ROUTING_STEP         30\n"
+        "\n"
+        "[RAINGAGES]\n"
+        ";;Name  Format     Interval SCF  Source\n"
+        "RG      INTENSITY  1:00     1.0  TIMESERIES STORM\n"
+        "\n"
+        "[SUBCATCHMENTS]\n"
+        ";;Name  Gage  Outlet  Area  %Imperv  Width  Slope  CurbLen\n"
+        "S_FULL  RG    O1      5     0        200    0.5    0\n"
+        "S_REF   RG    O1      5     0        200    0.5    0\n"
+        "\n"
+        "[SUBAREAS]\n"
+        ";;Subcatch  N-Imperv  N-Perv  S-Imperv  S-Perv  PctZero  RouteTo\n"
+        "S_FULL      0.01      0.1     0.0       0.0     100      OUTLET\n"
+        "S_REF       0.01      0.1     0.0       0.0     100      OUTLET\n"
+        "\n"
+        "[INFILTRATION]\n"
+        ";;Subcatch  MaxRate  MinRate  Decay  DryTime  MaxInfil\n"
+        "S_FULL      0.0      0.0      4.0    7.0      0\n"
+        "S_REF       0.0      0.0      4.0    7.0      0\n"
+        "\n"
+        "[LID_CONTROLS]\n"
+        ";;Name  Type/Layer  Parameters\n"
+        "RG1     RG\n"
+        "RG1     SURFACE     6.0   0.0   0.1   1.0   5\n"
+        "RG1     SOIL        18.0  0.5   0.2   0.1   0.5  10.0  3.5\n"
+        "RG1     STORAGE     0     0     0     0\n"
+        "\n"
+        "[LID_USAGE]\n"
+        ";;Subcatch  LID  Number  Area   Width  InitSat  FromImp  ToPerv\n"
+        "S_FULL      RG1  10      21780  0      0        0        0\n"
+        "\n"
+        "[OUTFALLS]\n"
+        ";;Name  Elev  Type  Gated\n"
+        "O1      0.0   FREE  NO\n"
+        "\n"
+        "[TIMESERIES]\n"
+        ";;Name  Date        Time   Value\n"
+        "STORM   01/01/2026  00:00  0.5\n"
+        "STORM   01/01/2026  01:00  0.5\n"
+        "STORM   01/01/2026  02:00  0.5\n"
+        "STORM   01/01/2026  03:00  0.5\n"
+        "STORM   01/01/2026  04:00  0.0\n";
+
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_engine_open(e, inp.c_str(),
+                               "lid_area_out/issue131_full.rpt",
+                               "lid_area_out/issue131_full.out", nullptr), 0)
+        << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_start(e, 0), 0) << swmm_get_last_error_msg(e);
+    double elapsed = 0.0;
+    do {
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), 0)
+            << swmm_get_last_error_msg(e);
+    } while (elapsed > 0.0);
+
+    const int i_full = swmm_subcatch_index(e, "S_FULL");
+    const int i_ref = swmm_subcatch_index(e, "S_REF");
+    ASSERT_GE(i_full, 0);
+    ASSERT_GE(i_ref, 0);
+    double vol_full = -1.0, vol_ref = -1.0;
+    EXPECT_EQ(swmm_subcatch_get_stat_runoff_vol(e, i_full, &vol_full), 0);
+    EXPECT_EQ(swmm_subcatch_get_stat_runoff_vol(e, i_ref, &vol_ref), 0);
+
+    swmm_engine_end(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+
+    ASSERT_GT(vol_ref, 0.0);
+    EXPECT_LT(vol_full, 0.02 * vol_ref)
+        << "fully LID-covered subcatchment shed " << vol_full / vol_ref
+        << "x its bare twin (issue #131)";
 }

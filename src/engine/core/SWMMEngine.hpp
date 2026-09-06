@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file SWMMEngine.hpp
  * @brief Lifecycle manager for the new openswmm.engine.
@@ -30,7 +46,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_SWMM_ENGINE_HPP
@@ -52,6 +68,8 @@
 #include "../hydrology/RunoffInterface.hpp"
 #include "../hydrology/RdiiInterface.hpp"
 #include "../quality/QualityRouting.hpp"
+#include "../quality/lard/LagrangianSolver.hpp"
+#include "../transport/components/EulerianArdComponent/ArdEngine.hpp"
 #include "../quality/Landuse.hpp"
 #include "../controls/Controls.hpp"
 #include "../hydraulics/Exfiltration.hpp"
@@ -200,6 +218,11 @@ public:
 
     SimulationContext&       context()       noexcept { return ctx_; }
     const SimulationContext& context() const noexcept { return ctx_; }
+
+    /// A4: LID solver access. The per-layer age block is keyed on a FLAT unit
+    /// index while the units themselves live in per-type groups, so anything
+    /// reading that block needs the manager to resolve the two.
+    const lid::LIDSolver& lid() const noexcept { return lid_; }
 
     /// Groundwater solver access (for C API state injection).
     groundwater::GWSolver&       gwSolver()       noexcept { return groundwater_; }
@@ -351,6 +374,7 @@ private:
 
     SimulationContext      ctx_;        ///< All simulation data (SoA + options)
     bool                   lenient_open_ = false;  ///< permissive open (see setter)
+    bool                   plugins_prepare_attempted_ = false;  ///< start() reached prepare_all (report file may be open)
     PluginFactory          plugins_;   ///< Phase 4: plugin loader + lifecycle
     IOThread               io_thread_; ///< Phase 5: writer thread
 
@@ -359,9 +383,13 @@ private:
     runoff::RunoffSolver         runoff_;       ///< Subcatchment runoff (batch nonlinear reservoir)
     climate::ClimateFileReader   climate_file_; ///< Climate file reader (temp/evap/wind from file)
     snow::SnowSolver             snow_;         ///< Snowmelt (batch over subcatch×subareas)
+    int                          last_melt_doy_ = -1;  ///< Day the seasonal melt coeffs were last set (legacy climate.c LastDay)
     groundwater::GWSolver        groundwater_;  ///< Groundwater (batch ODE per subcatchment)
     lid::LIDSolver               lid_;          ///< LID (batch by type group)
     quality::QualitySolver       quality_;      ///< Quality routing (batch link-load + mixing)
+    transport::ArdEngine         ard_;          ///< QUALITY_SOLVER EULERIAN_ARD engine (phase E1)
+    bool                         ard_init_attempted_ = false;  ///< lazy init after Router::init
+    lard::LagrangianSolver       lard_;         ///< QUALITY_SOLVER LAGRANGIAN (X1 skeleton — no-op)
     landuse::LanduseSolver       landuse_solver_; ///< Buildup/washoff computation
     landuse::SurfaceQualitySoA   surface_quality_; ///< Per-subcatch surface quality state
     controls::ControlEngine      controls_;     ///< Control rule evaluation
@@ -429,6 +457,7 @@ private:
     // formed from MILLISECOND quantities to round identically to legacy.
     double old_runoff_ms_ = 0.0;    ///< legacy OldRunoffTime (msec)
     double new_runoff_ms_ = 0.0;    ///< legacy NewRunoffTime (msec)
+    double new_rule_time_ms_ = 0.0; ///< legacy NewRuleTime (msec, routing.c:58)
 
     // Previous cumulative LID exfiltration / evaporation volumes (ft³), so the
     // per-step delta can be folded into the runoff-continuity infil / evap
@@ -442,7 +471,7 @@ private:
     // ext, dwf, then PER-SUBCATCHMENT wet-weather q (routing.c:716), then GW,
     // RDII, iface into Node.newLatFlow. Pre-summing per node and adding in a
     // different source order rounds differently (1-ULP lat-flow drift).
-    std::vector<double> wet_q_interp_;  ///< per-subcatch interpolated runoff+runon (cfs)
+    std::vector<double> wet_q_interp_;  ///< per-subcatch interpolated runoff (cfs; NOT runon — it is already inside runoff[])
     std::vector<double> gw_q_interp_;   ///< per-subcatch interpolated GW flow (cfs)
     std::vector<int>    gw_q_node_;     ///< receiving node for gw_q_interp_ (-1 = skip)
 
@@ -469,54 +498,59 @@ private:
     // -----------------------------------------------------------------------
     // When rpt_averages is true, node and link results are accumulated over
     // each routing step and averaged at report boundaries.  Subcatchment
-    // results are always point-in-time (matching legacy).
+    // results are always interpolated point values (matching legacy).
+    // PARITY: the accumulators are float32 DISPLAY-unit sums — legacy's xAvg
+    // slots are REAL4 fed by node_getResults/link_getResults at f = 1.0
+    // (output.c:72, 853-901), so the whole accumulate/divide chain is float
+    // arithmetic on display values. Accumulating doubles (or internal units)
+    // diverges by ~1e-5 rel over a report period.
     struct AvgAccumulator {
         // Node accumulators (6 variables per node)
-        std::vector<double> node_depth;
-        std::vector<double> node_head;
-        std::vector<double> node_volume;
-        std::vector<double> node_lat_inflow;
-        std::vector<double> node_total_inflow;
-        std::vector<double> node_overflow;
+        std::vector<float> node_depth;
+        std::vector<float> node_head;
+        std::vector<float> node_volume;
+        std::vector<float> node_lat_inflow;
+        std::vector<float> node_total_inflow;
+        std::vector<float> node_overflow;
 
         // Link accumulators (5 variables per link)
-        std::vector<double> link_flow;
-        std::vector<double> link_depth;
-        std::vector<double> link_velocity;
-        std::vector<double> link_volume;
-        std::vector<double> link_capacity;
+        std::vector<float> link_flow;
+        std::vector<float> link_depth;
+        std::vector<float> link_velocity;
+        std::vector<float> link_volume;
+        std::vector<float> link_capacity;
 
         int n_steps = 0;  ///< Number of routing steps accumulated
 
         void resize(int n_nodes, int n_links) {
             auto un = static_cast<std::size_t>(n_nodes);
             auto ul = static_cast<std::size_t>(n_links);
-            node_depth.assign(un, 0.0);
-            node_head.assign(un, 0.0);
-            node_volume.assign(un, 0.0);
-            node_lat_inflow.assign(un, 0.0);
-            node_total_inflow.assign(un, 0.0);
-            node_overflow.assign(un, 0.0);
-            link_flow.assign(ul, 0.0);
-            link_depth.assign(ul, 0.0);
-            link_velocity.assign(ul, 0.0);
-            link_volume.assign(ul, 0.0);
-            link_capacity.assign(ul, 0.0);
+            node_depth.assign(un, 0.0f);
+            node_head.assign(un, 0.0f);
+            node_volume.assign(un, 0.0f);
+            node_lat_inflow.assign(un, 0.0f);
+            node_total_inflow.assign(un, 0.0f);
+            node_overflow.assign(un, 0.0f);
+            link_flow.assign(ul, 0.0f);
+            link_depth.assign(ul, 0.0f);
+            link_velocity.assign(ul, 0.0f);
+            link_volume.assign(ul, 0.0f);
+            link_capacity.assign(ul, 0.0f);
             n_steps = 0;
         }
 
         void reset() {
-            std::fill(node_depth.begin(), node_depth.end(), 0.0);
-            std::fill(node_head.begin(), node_head.end(), 0.0);
-            std::fill(node_volume.begin(), node_volume.end(), 0.0);
-            std::fill(node_lat_inflow.begin(), node_lat_inflow.end(), 0.0);
-            std::fill(node_total_inflow.begin(), node_total_inflow.end(), 0.0);
-            std::fill(node_overflow.begin(), node_overflow.end(), 0.0);
-            std::fill(link_flow.begin(), link_flow.end(), 0.0);
-            std::fill(link_depth.begin(), link_depth.end(), 0.0);
-            std::fill(link_velocity.begin(), link_velocity.end(), 0.0);
-            std::fill(link_volume.begin(), link_volume.end(), 0.0);
-            std::fill(link_capacity.begin(), link_capacity.end(), 0.0);
+            std::fill(node_depth.begin(), node_depth.end(), 0.0f);
+            std::fill(node_head.begin(), node_head.end(), 0.0f);
+            std::fill(node_volume.begin(), node_volume.end(), 0.0f);
+            std::fill(node_lat_inflow.begin(), node_lat_inflow.end(), 0.0f);
+            std::fill(node_total_inflow.begin(), node_total_inflow.end(), 0.0f);
+            std::fill(node_overflow.begin(), node_overflow.end(), 0.0f);
+            std::fill(link_flow.begin(), link_flow.end(), 0.0f);
+            std::fill(link_depth.begin(), link_depth.end(), 0.0f);
+            std::fill(link_velocity.begin(), link_velocity.end(), 0.0f);
+            std::fill(link_volume.begin(), link_volume.end(), 0.0f);
+            std::fill(link_capacity.begin(), link_capacity.end(), 0.0f);
             n_steps = 0;
         }
     };
@@ -546,6 +580,14 @@ private:
     /// from the internal volume-state (which keeps MIN_SURFAREA*depth for the
     /// volume-based solver + surcharge detection). See postOutputSnapshot().
     std::vector<double> report_full_volume_;
+
+    /// Legacy KW/SF Node.degree — OUTFLOW-link count per node with the
+    /// outfall quirk (legacy toposort.c:70-91: a link whose upstream node is
+    /// an outfall counts toward its DOWNSTREAM node). ctx_.nodes.degree
+    /// carries the DW-oriented hybrid (both-ends + conduit pass + sign), so
+    /// the non-DW terminal-node tests must not read it. Lazily sized in
+    /// updateRoutingMassBalance; topology is static during a run.
+    std::vector<int> outflow_degree_;
 
     /// Legacy-convention reported node volume (mirrors legacy node_getVolume):
     /// STORAGE → curve volume (ctx_.nodes.volume); junction/outfall/divider →
@@ -745,6 +787,11 @@ private:
      * @details Matches legacy behavior where a failed swmm_open still leaves a
      *          .rpt with the ERROR/WARNING lines. No-op if no report path is set.
      */
+    /*! Stop a routing solve that has gone non-physical (non-finite or absurd
+     *  head/flow) instead of letting it run on and write NaN into the report.
+     *  Returns SWMM_OK when the state is sane. */
+    [[nodiscard]] int checkRoutingDiverged() noexcept;
+
     void write_open_failure_report() noexcept;
 
     /** @brief Set a fatal error on the context and transition to ERROR_STATE. */

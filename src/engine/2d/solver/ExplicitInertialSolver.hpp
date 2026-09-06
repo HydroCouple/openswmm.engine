@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file ExplicitInertialSolver.hpp
  * @brief Explicit local-inertial FV time-marcher for the 2D surface.
@@ -22,7 +38,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_EXPLICIT_INERTIAL_SOLVER_HPP
@@ -74,11 +90,17 @@ private:
     void refreshDt0();
     // Fire one tier's faces over their Δt: inertial update + Froude cap +
     // face-cadence positivity share, booking ±ΔM into both side accumulators.
-    void fireFaces(const std::vector<int>& faces, double dt_f);
+    // global_step = every active cell fires at this same Δt (the window tail),
+    // so a face's exporter republishes its volume every time this face does
+    // and the positivity share is NOT divided down by a refire ratio.
+    void fireFaces(const std::vector<int>& faces, double dt_f,
+                   bool global_step = false);
     // Fire one tier's cells over their Δt: gather + clear own-side face
     // accumulators, apply sources, refresh closure + Perot vector; tier-0
     // firings also evaluate the availability-clamped boundary edges.
-    void fireCells(const std::vector<int>& cells, double dt_c);
+    // tier0 = this firing carries the tier-0 cadence work (boundary edges and
+    // the live junction exchange), which fires once per finest substep.
+    void fireCells(const std::vector<int>& cells, double dt_c, bool tier0);
     // One halving-order macro cycle of nsub base substeps: tier k fires every
     // 2^k substeps.
     void runMacroCycle(double dt0, int nsub);
@@ -92,6 +114,11 @@ private:
     std::vector<double>  qcx_, qcy_;    ///< Perot cell discharge vector (θ < 1)
     std::vector<uint8_t> cell_active_;
     std::vector<int>     active_cells_;
+    /// Every face with both sides active, ascending — the union of the face
+    /// tier lists, in the order the tier-0 list would have carried them after
+    /// a collapse. Rebuilt with the tier lists; fired as one list by the
+    /// window tail.
+    std::vector<int>     active_faces_;
     std::vector<uint8_t> pin_t0_;       ///< cells pinned active + tier 0
                                         ///< (boundary + live coupling)
 
@@ -101,10 +128,57 @@ private:
     // identical ±ΔM into facc_L_/facc_R_ (single writer per face); each cell
     // applies + clears its own side at its own firing — conservation across
     // tier interfaces is exact by construction.
+    /// Rebuild scratch, held as members so a rebuild allocates nothing:
+    /// the seed flags (n_triangles) and the per-active-cell CFL step.
+    std::vector<uint8_t> rebuild_seed_;
+    std::vector<double>  rebuild_dt_cell_;
+    /// Per-thread minima for the rebuild's CFL reduction (min is exact and
+    /// order-independent, so any partition gives the identical dt0).
+    std::vector<double>  rebuild_dt_partial_;
+
     std::vector<uint8_t> tier_;         ///< per-cell tier
     std::vector<uint8_t> face_tier_;    ///< per unique face
     std::vector<double>  facc_L_;       ///< pending ΔM for the cL side (m³)
     std::vector<double>  facc_R_;       ///< pending ΔM for the cR side (m³)
+
+    // S1 — species mass rides the SAME face accumulators, one pair per
+    // species, [s * ne + e]. Booked in fireFaces immediately after the volume
+    // ΔM, from the FINAL qn1 (after the Froude cap and the positivity share),
+    // at the exporting cell's concentration read at that same substep;
+    // gathered and cleared in fireCells alongside the volume side. That is
+    // D-2DT2: the species flux inherits the volume flux's tier cadence rather
+    // than reproducing it, so conservation across tier interfaces is the
+    // marcher's own property and not a second one to prove. Empty unless
+    // `state_->transport.active()`.
+    std::vector<double>  sacc_L_;
+    std::vector<double>  sacc_R_;
+    /// Exporter concentration for a species at a cell, read against the
+    /// cell's CURRENT published volume — the same volume the positivity share
+    /// budgets against, so cumulative species takes are bounded by the same
+    /// β share as the water and mass cannot go negative where volume cannot.
+    double donorConc(int s, int cell) const noexcept;
+    /// Remove `dv_m3` of water from cell `i` at the cell's concentration and
+    /// book it to `ledger` — infiltration, boundary outflow, coupling drain.
+    /// Evaporation deliberately does NOT go through here: it removes volume
+    /// and no mass, so the concentration rises (§2.3 of the plan).
+    void sinkMassAtCellConc(int i, double dv_m3, std::vector<double>& ledger,
+                            double* per_point_ledger = nullptr) noexcept;
+    /// S2: rainfall of `rain_m3` on cell `i` brings species at the
+    /// `[POLLUTANTS]` rain concentration; booked to the gained ledger.
+    void addRainMass(int i, double rain_m3) noexcept;
+    /// S3: outfall discharge onto cell `i` over `area_dt = area·dt` brings
+    /// species at `transport.coupling_src` (mass-rate density); gained ledger.
+    void addCouplingSourceMass(int i, double area_dt) noexcept;
+    /// S4: evaporation of `evap_m3` from cell `i` leaves at the cell's own
+    /// temperature (temperature row only; solutes concentrate, S1).
+    void sinkTemperatureWithEvap(int i, double evap_m3) noexcept;
+    /// False when every booked ΔM is known to have been consumed already —
+    /// true after a GLOBAL substep, where every active face fired and then
+    /// every active cell gathered both of its sides (faces touching an
+    /// inactive cell carry q = 0 and were zeroed when it deactivated). Under
+    /// per-routing-step coupling every substep is global, so without this the
+    /// marcher walked the whole per-cell CSR once per substep to find nothing.
+    bool accumulators_pending_ = false;
     std::vector<std::vector<int>> cells_by_tier_;
     std::vector<std::vector<int>> edges_by_tier_;
     double dt0_ = 0.0;                  ///< base (tier-0) step from the rebuild

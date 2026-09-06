@@ -52,7 +52,9 @@ Repository = "https://github.com/hydrocouple/openswmm.engine"
 # ============================================================================
 [tool.scikit-build]
 minimum-version  = "build-system.requires"
-cmake.version    = ">=3.24"
+# >=4.3: same reason as the base wheel — configure runs the vcpkg toolchain,
+# and vcpkg 2026.07.29 needs string(JSON ... STRING_ENCODE ...), new in 4.3.
+cmake.version    = ">=4.3"
 cmake.build-type = "Release"
 ninja.make-fallback = true
 build-dir = "build/{wheel_tag}"
@@ -104,9 +106,12 @@ else
   apt-get update && apt-get install -y curl zip unzip tar git ninja-build libgomp1
 fi
 
-# Pin CMake < 4 (same rationale as the base wheel: vcpkg-tool's bundled cmakerc
-# dep rejects CMake 4.x on arm64).
-/opt/python/cp312-cp312/bin/pip install --quiet 'cmake<4'
+# Pin CMake >= 4.3 (same rationale as the base wheel: vcpkg 2026.07.29's SPDX
+# generation needs string(JSON ... STRING_ENCODE ...), which arrived in CMake
+# 4.3; the old `cmake<4` pin failed on the first port downloaded. The cmakerc
+# cmake_minimum_required(VERSION 3.3) problem the old pin guarded against on
+# arm64 is covered by CMAKE_POLICY_VERSION_MINIMUM=3.5 in `environment`).
+/opt/python/cp312-cp312/bin/pip install --quiet 'cmake>=4.3'
 export PATH="/opt/python/cp312-cp312/bin:$PATH"
 
 case "$(uname -m)" in
@@ -118,7 +123,7 @@ esac
 # in downloads/tools. Those bundled binaries are glibc-linked; on musllinux
 # (Alpine) they cannot exec, so vcpkg's compiler-hash detection dies the instant
 # it invokes the downloaded ninja. The system tools are installed above (apk
-# ninja/samurai, yum/apt ninja-build) with the pinned cmake<4 on PATH. No-op on
+# ninja/samurai, yum/apt ninja-build) with the pinned cmake>=4.3 on PATH. No-op on
 # manylinux (glibc), where the same system tools are valid too.
 export VCPKG_FORCE_SYSTEM_BINARIES=1
 # /host persists across the manylinux and musllinux container runs within a

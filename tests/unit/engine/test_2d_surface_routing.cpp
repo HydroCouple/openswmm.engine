@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file test_2d_surface_routing.cpp
  * @brief Unit tests for the optional 2D surface routing module.
@@ -17,12 +33,14 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <cmath>
+#include <cctype>
+#include <cstdlib>
 #include <vector>
 #include <string>
 #include <numeric>
@@ -35,6 +53,10 @@
 #include "2d/mesh/VertexReconstruction.hpp"
 #include "2d/solver/SurfaceFluxCalculator.hpp"
 #include "2d/input/SectionHandlers2D.hpp"
+#include "2d/solver/SurfaceSolverFactory.hpp"
+#include "2d/solver/ISurfaceSolver.hpp"
+
+#include "platform_test_support.hpp"
 
 #ifdef OPENSWMM_HAS_2D
 #include "2d/output/Default2DOutputPlugin.hpp"
@@ -44,6 +66,11 @@
 #include <filesystem>
 #include <stdexcept>
 #endif
+
+// The backend-selection tests below set OPENSWMM_2D_BACKEND, which MSVC has
+// no setenv/unsetenv for.
+using plattest::setEnvVar;
+using plattest::unsetEnvVar;
 
 using namespace openswmm::twoD;
 
@@ -1042,6 +1069,80 @@ TEST(InputParsing, Parse2DOptionsLine) {
     EXPECT_TRUE(err.empty()) << err;
     EXPECT_EQ(opts.rainfall_mode, RainfallMode::NONE);
     EXPECT_EQ(format2DOptionValue(opts, "RAINFALL_MODE"), "NONE");
+
+    // BACKEND: the model's own marcher-backend request (AUTO default). Every
+    // token round-trips through format2DOptionValue, case-insensitively, and
+    // an unknown accelerator is rejected rather than silently becoming AUTO.
+    EXPECT_EQ(opts.backend, Backend2D::AUTO);
+    EXPECT_TRUE(is2DOptionKey("BACKEND"));
+    EXPECT_EQ(format2DOptionValue(opts, "BACKEND"), "AUTO");
+    const struct { const char* tok; Backend2D want; } backends[] = {
+        {"cpu", Backend2D::CPU},   {"OMP", Backend2D::OMP},
+        {"Cuda", Backend2D::CUDA}, {"HIP", Backend2D::HIP},
+        {"sycl", Backend2D::SYCL}, {"auto", Backend2D::AUTO},
+    };
+    for (const auto& b : backends) {
+        err = parse2DOptionsLine({"BACKEND", b.tok}, opts);
+        EXPECT_TRUE(err.empty()) << b.tok << ": " << err;
+        EXPECT_EQ(opts.backend, b.want) << b.tok;
+        std::string upper = b.tok;
+        for (char& c : upper) c = static_cast<char>(std::toupper(
+            static_cast<unsigned char>(c)));
+        EXPECT_EQ(format2DOptionValue(opts, "BACKEND"), upper) << b.tok;
+    }
+    err = parse2DOptionsLine({"BACKEND", "METAL"}, opts);
+    EXPECT_FALSE(err.empty()) << "BACKEND METAL must be rejected";
+    EXPECT_EQ(opts.backend, Backend2D::AUTO)
+        << "a rejected token must not clobber the previous value";
+}
+
+// The factory honours [2D_OPTIONS] BACKEND when OPENSWMM_2D_BACKEND is unset,
+// and the environment variable overrides the option when set — the same
+// precedence the FV module gives OPENSWMM_FV_BACKEND over FV_BACKEND. The
+// ctest harness pins OPENSWMM_2D_BACKEND=cpu for this binary, so the variable
+// is saved, cleared and restored around the checks.
+TEST(SurfaceSolverFactory, DeckBackendOptionSelectsMarcher) {
+    const char* prev = std::getenv("OPENSWMM_2D_BACKEND");
+    const std::string saved = prev ? prev : "";
+    struct Restore {
+        std::string v; bool had;
+        ~Restore() {
+            if (had) setEnvVar("OPENSWMM_2D_BACKEND", v.c_str());
+            else     unsetEnvVar("OPENSWMM_2D_BACKEND");
+        }
+    } restore{saved, prev != nullptr};
+
+    SolverOptions2D opts;
+    std::string chosen;
+
+    // CPU by option, no env: the built-in marcher, no plugin discovery.
+    unsetEnvVar("OPENSWMM_2D_BACKEND");
+    opts.backend = Backend2D::CPU;
+    auto s = openswmm::twoD::makeSurfaceSolver(opts, &chosen, 200000);
+    ASSERT_TRUE(s);
+    EXPECT_EQ(chosen.rfind("cpu", 0), 0u) << chosen;
+
+    // Env wins over the option: BACKEND OMP in the deck, cpu in the env.
+    setEnvVar("OPENSWMM_2D_BACKEND", "cpu");
+    opts.backend = Backend2D::OMP;
+    chosen.clear();
+    s = openswmm::twoD::makeSurfaceSolver(opts, &chosen, 200000);
+    ASSERT_TRUE(s);
+    EXPECT_EQ(chosen.rfind("cpu", 0), 0u) << chosen;
+
+    // OMP by option, no env: the Kokkos OpenMP plugin when it is discoverable
+    // (co-located beside the engine library in every default build); an
+    // absent plugin falls back to CPU by contract, which is not a failure of
+    // the option plumbing — so that case is reported as skipped, not passed.
+    unsetEnvVar("OPENSWMM_2D_BACKEND");
+    opts.backend = Backend2D::OMP;
+    chosen.clear();
+    s = openswmm::twoD::makeSurfaceSolver(opts, &chosen, 10);  // below every floor
+    ASSERT_TRUE(s);
+    if (chosen.rfind("omp", 0) != 0)
+        GTEST_SKIP() << "omp plugin not discoverable here (chosen='" << chosen
+                     << "'); CPU + env-precedence legs passed";
+    EXPECT_EQ(chosen.rfind("omp", 0), 0u) << chosen;
 }
 
 TEST(InputParsing, Parse2DOptionsRejectsUnknown) {
@@ -1274,7 +1375,11 @@ TEST(SurfaceState, ClearResetForcings) {
     SurfaceStateData state;
     state.resize(2, 1);
 
-    // Set RESET forcing on cell 0, PERSIST on cell 1
+    // Set RESET forcing on cell 0, PERSIST on cell 1. forcing_ever_set is
+    // what the swmm_2d_force_* API stamps when it writes a prescription; the
+    // expiry sweep is skipped without it (it is dead work on every deck that
+    // never forces anything), so a direct-write test must stamp it too.
+    state.forcing_ever_set = true;
     state.rainfall_forced[0] = 1;
     state.rainfall_force_val[0] = 0.001;
     state.rainfall_persist[0] = 0;  // RESET
@@ -1494,6 +1599,45 @@ TEST(EdgeConveyance, ParserAcceptsValidRowAndStashesIt) {
     EXPECT_DOUBLE_EQ(pending[0].conveyance, 0.4);
 }
 
+// ============================================================================
+// recomputeAllZDependents — whole-mesh form must equal the per-vertex form
+// ============================================================================
+//
+// swmm_2d_set_vertex_z_bulk exists because the scalar setter rescans every
+// triangle per call, making a whole-mesh rewrite O(nVertices x nTriangles).
+// The bulk path is only a legitimate substitute if it lands on bitwise the
+// same derived geometry — hence EXPECT_EQ on the raw doubles, not EXPECT_NEAR.
+
+TEST(RecomputeAllZDependents, MatchesPerVertexFormBitwise) {
+    // Irregular Zs so cancellation/ordering differences would show up.
+    const std::vector<double> zs = {1.25, -3.5, 7.125, 0.0, 12.875, -0.375};
+
+    MeshData a = makeUnitSquareMesh();
+    ASSERT_GE(static_cast<std::size_t>(a.n_vertices()), 4u);
+
+    // Reference: assign every Z, then recompute vertex by vertex, exactly what
+    // a loop of swmm_2d_set_vertex_z does.
+    for (int v = 0; v < a.n_vertices(); ++v) {
+        a.vz[v] = zs[static_cast<std::size_t>(v) % zs.size()];
+        recomputeVertexZDependents(a, v);
+    }
+
+    // Candidate: same Zs, one whole-mesh pass.
+    MeshData b = makeUnitSquareMesh();
+    for (int v = 0; v < b.n_vertices(); ++v)
+        b.vz[v] = zs[static_cast<std::size_t>(v) % zs.size()];
+    recomputeAllZDependents(b);
+
+    ASSERT_EQ(a.n_triangles(), b.n_triangles());
+    for (int t = 0; t < a.n_triangles(); ++t) {
+        EXPECT_EQ(a.tri_cz[t], b.tri_cz[t])
+            << "tri_cz diverged at triangle " << t;
+        for (int e = 0; e < 3; ++e)
+            EXPECT_EQ(a.edge_mz[t * 3 + e], b.edge_mz[t * 3 + e])
+                << "edge_mz diverged at triangle " << t << " edge " << e;
+    }
+}
+
 TEST(EdgeConveyance, ParserRejectsOutOfRangeConveyance) {
     std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow> pending;
     EXPECT_FALSE(parse2DEdgeConveyanceLine({"0", "1", "-0.1"}, pending).empty());
@@ -1547,6 +1691,7 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
     snap.surface_grad_hx_lim   = {0.0,  0.0};
     snap.surface_grad_hy_lim   = {0.0,  0.0};
     snap.surface_rainfall      = {0.0,  0.0};
+    snap.surface_rain_cum      = {3.0,  7.0};   // m³ per cell; sums to rainfall_in
     snap.surface_coupling_flux = {0.0,  0.0};
     snap.surface_net_source    = {0.0,  0.0};
     snap.surface_face_vx       = {0.0,  0.0};
@@ -1609,6 +1754,8 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
     EXPECT_TRUE(exists("Mesh2_node_depth"));
     EXPECT_TRUE(exists("Mesh2_face_vx"));
     EXPECT_TRUE(exists("Mesh2_face_vy"));
+    EXPECT_TRUE(exists("Mesh2_face_rainfall"));
+    EXPECT_TRUE(exists("Mesh2_face_rain_cum"));
     EXPECT_TRUE(exists("Mesh2_face_continuity_err"));
     EXPECT_TRUE(exists("Mesh2_face_max_depth"));
     EXPECT_TRUE(exists("Mesh2_face_max_velocity"));
@@ -1637,6 +1784,24 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
         H5Sget_simple_extent_dims(space, dims, nullptr);
         EXPECT_EQ(dims[0], 1u);
         EXPECT_EQ(dims[1], static_cast<hsize_t>(n_tri));
+        H5Sclose(space);
+        H5Dclose(ds);
+    }
+
+    // /Mesh2_face_rain_cum is [1, n_tri] and carries the per-cell cumulative
+    // rainfall volume (m³) verbatim.
+    {
+        hid_t ds = H5Dopen2(file_id, "Mesh2_face_rain_cum", H5P_DEFAULT);
+        ASSERT_GE(ds, 0);
+        hid_t space = H5Dget_space(ds);
+        hsize_t dims[2] = {0, 0};
+        H5Sget_simple_extent_dims(space, dims, nullptr);
+        EXPECT_EQ(dims[0], 1u);
+        EXPECT_EQ(dims[1], static_cast<hsize_t>(n_tri));
+        std::vector<double> vals(n_tri, 0.0);
+        H5Dread(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, vals.data());
+        EXPECT_NEAR(vals[0], 3.0, 1e-12);
+        EXPECT_NEAR(vals[1], 7.0, 1e-12);
         H5Sclose(space);
         H5Dclose(ds);
     }
@@ -1673,6 +1838,145 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
         H5Gclose(grp);
     }
 
+    H5Fclose(file_id);
+    fs::remove(h5_path);
+}
+
+// ---------------------------------------------------------------------------
+// Issue #155 — the .2d.h5 must say how its (always-SI) coordinates relate to
+// the model's CRS. Without it, a consumer of a foot-CRS model reasonably reads
+// the metres as feet and renders the results ~0.3048x toward the CRS origin
+// while the .2dm-backed mesh, which never leaves model units, sits correctly.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Read a fixed- or variable-length string attribute; "" when absent.
+std::string readStringAttrForTest(hid_t loc, const char* name) {
+    if (H5Aexists(loc, name) <= 0) return {};
+    hid_t attr = H5Aopen(loc, name, H5P_DEFAULT);
+    if (attr < 0) return {};
+    hid_t type = H5Aget_type(attr);
+    std::string out;
+    if (type >= 0 && H5Tget_class(type) == H5T_STRING) {
+        if (H5Tis_variable_str(type) > 0) {
+            char* raw = nullptr;
+            if (H5Aread(attr, type, &raw) >= 0 && raw) {
+                out = raw;
+                H5free_memory(raw);
+            }
+        } else {
+            std::vector<char> buf(H5Tget_size(type) + 1, '\0');
+            if (H5Aread(attr, type, buf.data()) >= 0) out = buf.data();
+        }
+    }
+    if (type >= 0) H5Tclose(type);
+    H5Aclose(attr);
+    return out;
+}
+
+} // namespace
+
+TEST(Default2DOutputPlugin, DeclaresModelCrsAndCoordinateScale) {
+    namespace fs = std::filesystem;
+
+    MeshData mesh = makeUnitSquareMesh();
+    const fs::path h5_path = fs::temp_directory_path() /
+                              "openswmm_test_2d_crs.h5";
+    fs::remove(h5_path);
+
+    Default2DOutputPlugin plugin(h5_path.string());
+    ASSERT_EQ(plugin.initialize({}, nullptr), 0);
+
+    openswmm::SimulationContext ctx{};
+    ctx.spatial.crs = "EPSG:2249";           // NAD83 / Mass. Mainland (ftUS)
+    ASSERT_EQ(plugin.validate(ctx), 0);
+    ASSERT_EQ(plugin.prepare(ctx),  0);
+
+    // What SurfaceRouter2D::initialize() applied for a US-FLOW_UNITS project.
+    plugin.setMeshCoordinateScale(0.3048);
+    plugin.prepareMeshAndDatasets(mesh);
+    // finalize() closes the file. Without it the plugin still holds it open
+    // RDWR, and the fs::remove below throws on Windows.
+    ASSERT_EQ(plugin.finalize(ctx), 0);
+
+    hid_t file_id = H5Fopen(h5_path.string().c_str(), H5F_ACC_RDONLY,
+                             H5P_DEFAULT);
+    ASSERT_GE(file_id, 0);
+
+    ASSERT_TRUE(H5Lexists(file_id, "crs", H5P_DEFAULT) > 0)
+        << "no /crs variable — consumers cannot tell metres from model units";
+
+    hid_t crs = H5Dopen2(file_id, "crs", H5P_DEFAULT);
+    ASSERT_GE(crs, 0);
+
+    EXPECT_EQ(readStringAttrForTest(crs, "model_crs"), "EPSG:2249");
+    EXPECT_EQ(readStringAttrForTest(crs, "units"), "m");
+
+    ASSERT_TRUE(H5Aexists(crs, "metres_per_model_unit") > 0);
+    {
+        hid_t attr = H5Aopen(crs, "metres_per_model_unit", H5P_DEFAULT);
+        double factor = 0.0;
+        ASSERT_GE(H5Aread(attr, H5T_NATIVE_DOUBLE, &factor), 0);
+        EXPECT_DOUBLE_EQ(factor, 0.3048);
+        H5Aclose(attr);
+    }
+    H5Dclose(crs);
+
+    // The mesh variables must point at it, or nothing leads a reader there.
+    // The attribute is `openswmm_crs`, NOT CF's `grid_mapping` — /crs is
+    // deliberately not a CF grid mapping (see the class docs and #155).
+    for (const char* name : {"Mesh2", "Mesh2_node_x", "Mesh2_node_y",
+                              "Mesh2_face_x", "Mesh2_face_y"}) {
+        hid_t ds = H5Dopen2(file_id, name, H5P_DEFAULT);
+        ASSERT_GE(ds, 0) << name;
+        EXPECT_EQ(readStringAttrForTest(ds, "openswmm_crs"), "crs")
+            << name << " does not reference the /crs variable";
+        EXPECT_FALSE(H5Aexists(ds, "grid_mapping") > 0)
+            << name << " advertises a CF grid mapping /crs cannot honour";
+        H5Dclose(ds);
+    }
+
+    H5Fclose(file_id);
+    fs::remove(h5_path);
+}
+
+TEST(Default2DOutputPlugin, CrsVariableClaimsNothingWhenModelDeclaresNoCrs) {
+    namespace fs = std::filesystem;
+
+    MeshData mesh = makeUnitSquareMesh();
+    const fs::path h5_path = fs::temp_directory_path() /
+                              "openswmm_test_2d_crs_absent.h5";
+    fs::remove(h5_path);
+
+    Default2DOutputPlugin plugin(h5_path.string());
+    ASSERT_EQ(plugin.initialize({}, nullptr), 0);
+
+    openswmm::SimulationContext ctx{};   // no [OPTIONS] CRS
+    ASSERT_EQ(plugin.validate(ctx), 0);
+    ASSERT_EQ(plugin.prepare(ctx),  0);
+    // setMeshCoordinateScale deliberately not called (SI project / no 2D
+    // router wiring): the file must report an identity factor, not guess.
+    plugin.prepareMeshAndDatasets(mesh);
+    ASSERT_EQ(plugin.finalize(ctx), 0);
+
+    hid_t file_id = H5Fopen(h5_path.string().c_str(), H5F_ACC_RDONLY,
+                             H5P_DEFAULT);
+    ASSERT_GE(file_id, 0);
+    hid_t crs = H5Dopen2(file_id, "crs", H5P_DEFAULT);
+    ASSERT_GE(crs, 0);
+
+    EXPECT_FALSE(H5Aexists(crs, "model_crs") > 0)
+        << "model_crs must be absent rather than empty when none was declared";
+
+    hid_t attr = H5Aopen(crs, "metres_per_model_unit", H5P_DEFAULT);
+    ASSERT_GE(attr, 0);
+    double factor = 0.0;
+    ASSERT_GE(H5Aread(attr, H5T_NATIVE_DOUBLE, &factor), 0);
+    EXPECT_DOUBLE_EQ(factor, 1.0);
+    H5Aclose(attr);
+
+    H5Dclose(crs);
     H5Fclose(file_id);
     fs::remove(h5_path);
 }

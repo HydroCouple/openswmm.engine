@@ -139,7 +139,7 @@ VARIABLE_STEP                value
 MINIMUM_STEP                seconds
 INERTIAL_DAMPING            NONE / PARTIAL / FULL
 NORMAL_FLOW_LIMITED        SLOPE / FROUDE / BOTH
-SURCHARGE_METHOD            EXTRAN / SLOT
+SURCHARGE_METHOD            EXTRAN / SLOT / DYNAMIC_SLOT / TPA
 MIN_SURFAREA                value
 MIN_SLOPE                    value
 MAX_TRIALS                    value
@@ -181,7 +181,7 @@ VARIABLE_STEP is a safety factor applied to a variable time step computed for ea
 MINIMUM_STEP is the smallest time step allowed when variable time steps are used for dynamic wave flow routing. The default value is 0.5 seconds. 
 INERTIAL_DAMPING    indicates how the inertial terms in the Saint Venant momentum equation will be handled under dynamic wave flow routing. Choosing NONE maintains these terms at their full value under all conditions. Selecting PARTIAL (the default) will reduce the terms as flow comes closer to being critical (and ignores them when flow is supercritical). Choosing FULL will drop the terms altogether.
 NORMAL_FLOW_LIMITED specifies which condition is checked to determine if flow in a conduit is supercritical and should thus be limited to the normal flow. Use SLOPE to check if the water surface slope is greater than the conduit slope, FROUDE to check if the Froude number is greater than 1.0, or BOTH to check both conditions. The default is BOTH.
-SURCHARGE_METHOD selects which method will be used to handle surcharge conditions. The EXTRAN option uses a variation of the Surcharge Algorithm from previous versions of SWMM to update nodal heads when all connecting links become full. The SLOT option uses a Preissmann Slot to add a small amount of virtual top surface width to full flowing pipes so that SWMM's normal procedure for updating nodal heads can continue to be used. The default is EXTRAN.
+SURCHARGE_METHOD selects which method will be used to handle surcharge conditions. The EXTRAN option uses a variation of the Surcharge Algorithm from previous versions of SWMM to update nodal heads when all connecting links become full. The SLOT option uses a Preissmann Slot to add a small amount of virtual top surface width to full flowing pipes so that SWMM's normal procedure for updating nodal heads can continue to be used. The default is EXTRAN. OpenSWMM adds two further methods: DYNAMIC_SLOT, a dynamic Preissmann slot whose pressure-wave celerity is set directly by the modeler (see the Hydraulics Reference Manual, Section 3.3.9, and its DPS_CELERITY, DPS_ALPHA and DPS_DECAY_TIME keywords), and TPA, an experimental two-component pressure approach that lets a sealed full pipe carry sub-atmospheric pressure (Hydraulics Reference Manual, Section 3.3.11).
 MIN_SURFAREA is a minimum surface area used at nodes when computing changes in water depth under dynamic wave routing. If 0 is entered, then the default value of 12.566 ft2 (1.167 m2) (i.e., the area of a 4-ft diameter manhole) is used.
 MIN_SLOPE is the minimum value allowed for a conduit’s slope (%). If zero (the default) then no minimum is imposed (although SWMM uses a lower limit on elevation drop of 0.001 ft (0.00035 m) when computing a conduit slope).
 MAX_TRIALS is the maximum number of trials allowed during a time step to reach convergence when updating hydraulic heads at the conveyance system’s nodes. The default value is 8.
@@ -191,6 +191,14 @@ THREADS is the number of parallel computing threads to use for dynamic wave flow
 **New in OpenSWMM v6:**
 
 CRS specifies a Coordinate Reference System for the model geometry, given as an EPSG code (e.g. `EPSG:4326`) or a PROJ string. This value is stored in `SimulationOptions::crs` and is available through the C API via `swmm_spatial_get_crs()`. When a CRS is set, all coordinate and polygon data in the `[COORDINATES]`, `[VERTICES]`, and `[POLYGONS]` sections are assumed to be in that reference system.
+
+TPA_CELERITY is the acoustic wave celerity, in project length units per second, used by `SURCHARGE_METHOD TPA` to size its constant-width slot. The default is 100. See the Hydraulics Reference Manual, Section 3.3.11.
+
+FV_PRESSURE_CLOSURE selects the pressurization closure of the finite-volume solver (`FLOW_ROUTING FV`): SLOT (the default, the standard Preissmann slot) or TPA (experimental — the two-component pressure approach, which can represent sub-atmospheric pressure in sealed full pipes). Under TPA the existing FV_SLOT_CELERITY value doubles as the acoustic celerity. See the Hydraulics Reference Manual, Section 8.4.5.
+
+UNSTEADY_FRICTION enables an unsteady (Vítkovský-type) friction term in both the dynamic wave and finite-volume solvers: NONE (the default, bit-identical to earlier releases) or VITKOVSKY. UF_K3 is its Brunone-type coefficient k3, used only when the method is not NONE; the default is 0.015 and the calibrated range reported in the literature is 0.005–0.020. See the Hydraulics Reference Manual, Sections 3.3.12 and 8.5.4.
+
+REPORT_SIGNED_HEADS controls how nodal heads are written to the binary output file: NO (the default) keeps the legacy convention, bit-identical to earlier releases, in which the head is rebuilt from a depth floored at zero; YES writes the true signed piezometric head in the HEAD field — required to observe sub-atmospheric heads produced by the TPA closures — while the DEPTH field stays floored either way. Applies to both solvers.
 
 Any option keyword not recognized by the parser is stored in an extension-options map as a key–value string pair (the key is upper-cased). A non-fatal warning is issued for each unrecognised key. Extension options can be queried at runtime with `swmm_options_get_ext()` and set with `swmm_options_set_ext()`. This allows plugins and coupled models to receive configuration through the `[OPTIONS]` section. 
 ### Section: [REPORT]
@@ -264,7 +272,7 @@ Remarks:
 Enclose the external file name in double quotes if it contains spaces and include its full path if it resides in a different directory than the SWMM input file.
 The station name and depth units entries are only required when using a user-prepared formatted rainfall file.
 
-**New in OpenSWMM v6:** A multi-column CSV rain file can be referenced by appending a colon and column name to the file path, e.g. `FILE "rain.csv:EAST_GAGE"`. The engine opens the CSV, locates the column whose header matches the given name, and reads the rainfall values from that column. This allows a single CSV file to supply data for multiple rain gages.
+**New in OpenSWMM v6:** A multi-column rain file can be referenced by appending a colon and column name to the file path, e.g. `FILE "rain.csv:EAST_GAGE"`. The engine opens the file, locates the column whose header matches the given name (case-insensitive), and reads the rainfall values from that column; an empty column name selects the first data column. Comma- and tab-delimited files with a header row are supported, as is the PCSWMM `.tsf` format (tab-delimited, `IDs:` header row, 12-hour AM/PM date-times) — the format is detected automatically from the file's contents. This allows a single file to supply data for multiple rain gages (and named time series — see the [TIMESERIES] section); each such file is read from disk only once per model open, regardless of how many gages or series reference it.
 
  
 ### Section: [EVAPORATION]
@@ -1613,6 +1621,8 @@ There are two options for supplying the data for a time series:
     through an external data file named with the third format.
 When direct data entry is used, multiple date-time-value or time-value entries can appear on a line. If more than one line is needed, the table's name must be repeated as the first entry on subsequent lines.
 When an external file is used, each line in the file must use the same formats listed above, except that only one date-time-value (or time-value) entry is allowed per line. Any line that begins with a semicolon is considered a comment line and is ignored. Blank lines are also permitted. Enclose the external file name in double quotes if it contains spaces and include its full path if it resides in a different directory than the SWMM input file. 
+
+**New in OpenSWMM v6:** The external file may also be a multi-column series file — a comma- or tab-delimited file with a header row whose first column holds a full date-time, or a PCSWMM `.tsf` file (tab-delimited with an `IDs:` header and 12-hour AM/PM date-times). Select a column by appending a colon and the column's header name to the file path, e.g. `TS_EAST FILE "rain_2024.csv:EAST_GAGE"`. Without a column name the first data column is used. A single multi-column file can supply any number of time series and rain gages and is read from disk only once per model open. The format (CSV/TSV/TSF) is detected automatically from the file's contents.
 
 There are two options for describing the occurrence time of time series data:  
     as calendar date plus time of day (which requires that at least one date, at the start of the series, be entered)  

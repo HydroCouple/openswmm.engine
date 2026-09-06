@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file openswmm_engine_impl.cpp
  * @brief C API implementation — engine lifecycle, callbacks, errors, timing.
@@ -7,10 +23,11 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "openswmm_api_common.hpp"
+#include "ThreadInfo.hpp"
 
 extern "C" {
 
@@ -233,6 +250,52 @@ SWMM_ENGINE_API const char* swmm_get_warning_at(SWMM_Engine engine, int index) {
     const auto& warns = to_engine(engine)->context().warnings;
     if (index < 0 || index >= static_cast<int>(warns.size())) return "";
     return warns[static_cast<std::size_t>(index)].c_str();
+}
+
+// ============================================================================
+// Thread capability query
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_get_thread_info(SWMM_ThreadInfo* out) {
+    if (!out) return SWMM_ERR_BADPARAM;
+    namespace ti = openswmm::threadinfo;
+    out->logical_cpus       = ti::logicalCpus();
+    out->omp_max_threads    = ti::ompMaxThreads();
+    out->omp_available      = ti::ompAvailable();
+    out->perf_cores         = ti::perfCores();
+    out->kokkos_omp_threads = ti::kokkosOmpThreads();
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_get_effective_threads(SWMM_Engine engine, int threads_option,
+                                               int* global_threads, int* dw_threads,
+                                               int* twod_threads) {
+    if (!engine) return SWMM_ERR_BADPARAM;
+    namespace ti = openswmm::threadinfo;
+    const auto& ctx = to_engine(engine)->context();
+
+    if (global_threads)
+        *global_threads = ti::resolveRequested(threads_option, "OpenMP team", nullptr);
+
+    if (dw_threads) {
+        *dw_threads = 0;
+        if (ctx.options.routing_model == openswmm::RoutingModel::DYNWAVE) {
+            int n_conduits = 0;
+            for (const auto t : ctx.links.type)
+                if (t == openswmm::LinkType::CONDUIT) ++n_conduits;
+            *dw_threads = ti::dwThreads(threads_option, n_conduits, nullptr);
+        }
+    }
+
+    if (twod_threads) {
+        *twod_threads = 0;
+#ifdef OPENSWMM_HAS_2D
+        const int n_tri = to_engine(engine)->surfaceRouter2D().mesh().n_triangles();
+        if (n_tri > 0 && !ctx.options.ignore_2d)
+            *twod_threads = ti::twoDThreads(threads_option, n_tri, nullptr);
+#endif
+    }
+    return SWMM_OK;
 }
 
 SWMM_ENGINE_API const char* swmm_error_message(int code) {

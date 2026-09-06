@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file OutputReader.cpp
  * @brief OutputReader — reads SWMM 5.x binary .out files.
@@ -13,7 +29,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "OutputReader.hpp"
@@ -65,6 +81,83 @@ bool OutputReader::open(const char* path) {
     return true;
 }
 
+bool OutputReader::openLive(const char* path) {
+    if (!path) return false;
+
+    close();
+
+    file_ = std::fopen(path, "rb");
+    if (!file_) return false;
+
+    // No footer yet (or maybe ever): derive every offset the footer would
+    // have supplied by parsing the header forward. The writer lays the
+    // sections down in exactly this order (DefaultOutputPlugin::writeHeader,
+    // legacy output_open): 7-int header, ID lists, pollutant unit codes,
+    // input properties, variable codes, report start date + step, records.
+    if (!readHeader()) { close(); return false; }
+    id_start_pos_ = std::ftell(file_);
+    if (!readIDs()) { close(); return false; }
+    // Pollutant concentration unit codes (one int per pollutant column).
+    if (std::fseek(file_, static_cast<long>(n_polluts_) * static_cast<long>(sizeof(int32_t)),
+                   SEEK_CUR) != 0) { close(); return false; }
+    input_start_pos_ = std::ftell(file_);
+    if (!readVariableCodes()) { close(); return false; }
+    output_start_pos_ = std::ftell(file_);
+
+    bytes_per_period_ = static_cast<long>(sizeof(double))
+        + static_cast<long>(n_subcatch_) * n_subcatch_vars_ * static_cast<long>(sizeof(float))
+        + static_cast<long>(n_nodes_)    * n_node_vars_     * static_cast<long>(sizeof(float))
+        + static_cast<long>(n_links_)    * n_link_vars_     * static_cast<long>(sizeof(float))
+        + static_cast<long>(n_system_vars_)                 * static_cast<long>(sizeof(float));
+
+    live_       = true;
+    error_code_ = 0;
+    n_periods_  = 0;
+    refresh();
+    return true;
+}
+
+int OutputReader::refresh() {
+    if (!file_) return -1;
+    if (!live_) return n_periods_;          // finalised: the footer is authoritative
+
+    // Current size. fseek discards stdio's read buffer, so bytes the writer
+    // appended since the last call are visible on the next read.
+    if (std::fseek(file_, 0, SEEK_END) != 0) return n_periods_;
+    const long size = std::ftell(file_);
+    if (size < 0) return n_periods_;
+
+    // Footer arrived? It is exactly 24 bytes after the last whole record and
+    // repeats output_start_pos_, so a chance magic inside a record can't
+    // masquerade as one.
+    constexpr long kFooterBytes = 6 * static_cast<long>(sizeof(int32_t));
+    if (size >= output_start_pos_ + kFooterBytes &&
+        std::fseek(file_, size - kFooterBytes, SEEK_SET) == 0)
+    {
+        int32_t id_pos = 0, input_pos = 0, output_pos = 0;
+        int32_t periods = 0, err = 0, magic = 0;
+        if (readInt4(id_pos) && readInt4(input_pos) && readInt4(output_pos) &&
+            readInt4(periods) && readInt4(err) && readInt4(magic) &&
+            magic == MAGIC_NUMBER &&
+            static_cast<long>(output_pos) == output_start_pos_ &&
+            output_start_pos_ + static_cast<long>(periods) * bytes_per_period_ + kFooterBytes == size)
+        {
+            n_periods_  = static_cast<int>(periods);
+            error_code_ = static_cast<int>(err);
+            live_       = false;
+            return n_periods_;
+        }
+    }
+
+    // Still being written: count whole records. A partially flushed last
+    // record is simply not counted yet.
+    const long avail = size - output_start_pos_;
+    n_periods_ = (bytes_per_period_ > 0 && avail > 0)
+                     ? static_cast<int>(avail / bytes_per_period_)
+                     : 0;
+    return n_periods_;
+}
+
 void OutputReader::close() {
     if (file_) {
         std::fclose(file_);
@@ -74,6 +167,7 @@ void OutputReader::close() {
     node_ids_.clear();
     link_ids_.clear();
     n_periods_ = 0;
+    live_      = false;
 }
 
 // ============================================================================
@@ -93,6 +187,12 @@ const char* OutputReader::node_id(int index) const {
 const char* OutputReader::link_id(int index) const {
     if (index < 0 || index >= n_links_) return nullptr;
     return link_ids_[static_cast<std::size_t>(index)].c_str();
+}
+
+const char* OutputReader::pollut_id(int index) const {
+    if (index < 0 || static_cast<std::size_t>(index) >= pollut_ids_.size())
+        return nullptr;
+    return pollut_ids_[static_cast<std::size_t>(index)].c_str();
 }
 
 // ============================================================================
@@ -348,6 +448,9 @@ bool OutputReader::readIDs() {
     if (!readIDList(n_subcatch_, subcatch_ids_)) return false;
     if (!readIDList(n_nodes_, node_ids_))        return false;
     if (!readIDList(n_links_, link_ids_))        return false;
+    // The species (pollutant) ID list — emitted by the writer immediately
+    // after the link IDs since the format's inception, but never read.
+    if (!readIDList(n_polluts_, pollut_ids_))    return false;
 
     return true;
 }

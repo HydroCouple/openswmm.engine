@@ -1,9 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 openswmm -- Python bindings for the OpenSWMM stormwater modelling engine.
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 Subpackages
 -----------
@@ -55,31 +71,39 @@ if platform.system() == "Windows" and hasattr(os, "add_dll_directory"):
 
 
 # ---------------------------------------------------------------------------
-# Optional GPU/OpenMP acceleration companion
+# GPU/OpenMP acceleration of the 2D surface solver
 #
-# The base `openswmm` wheel is CPU-only and portable (Kokkos-free). OpenMP
-# acceleration of the 2D surface solver is shipped separately as the
-# `openswmm-gpu-omp` companion distribution, which installs a sibling import
-# package (`openswmm_gpu_omp`) containing the `libopenswmm_gpu_omp` plugin.
+# The plugin can be present twice:
 #
-# The C++ engine discovers the plugin at runtime via the OPENSWMM_GPU_PLUGIN_PATH
-# search path (SurfaceSolverFactory::search_dirs). When the companion is
-# installed, surface its directory to the engine by PREPENDING it to that env
-# var — without clobbering a value the user set deliberately. With no companion
-# installed this is a silent no-op and 2D runs on the serial CPU solver.
+#   1. IN-WHEEL — this wheel builds it and installs it into openswmm/engine/,
+#      beside openswmm_engine and the single bundled libomp.
+#   2. COMPANION — the `openswmm-gpu-omp` distribution installs a sibling
+#      import package (`openswmm_gpu_omp`) holding the same plugin, so it can
+#      be added or refreshed against an already-installed base.
 #
-# This must happen before any 2D model is initialised; import time (here) is
-# comfortably early enough, since the factory reads the env var lazily when it
-# builds a solver.
+# The engine discovers the plugin at runtime through the
+# OPENSWMM_GPU_PLUGIN_PATH search path (SurfaceSolverFactory::search_dirs), and
+# loads the FIRST match. Only one may ever be dlopen()ed: each copy is linked
+# against the libomp bundled next to it, and loading two OpenMP runtimes into
+# one process aborts every 2D run with "OMP: Error #15".
+#
+# So the in-wheel copy wins when it exists. It is the one guaranteed to match
+# both the engine binary it ships with and that engine's libomp; a companion
+# installed from a different build could satisfy neither. The companion is
+# registered only as a fallback, which is exactly the situation it was built
+# for — no in-wheel plugin, so nothing to conflict with.
+#
+# An OPENSWMM_GPU_PLUGIN_PATH the caller set is preserved, not clobbered — but
+# it is appended after ours, so it does not override the chosen copy. That is
+# the pre-existing behaviour of this shim, kept deliberately: prepending is what
+# makes the packaged plugin the default without the user opting in. A caller who
+# needs their own build to win should point the env var at it and uninstall the
+# packaged copy, or set it after import.
+#
+# This must happen before any 2D model is initialised; import time is early
+# enough, since the factory reads the env var lazily when it builds a solver.
 # ---------------------------------------------------------------------------
-def _register_gpu_companion() -> None:
-    try:
-        import openswmm_gpu_omp
-    except ImportError:
-        return  # companion not installed → CPU-only, nothing to do
-    plugin_dir = os.path.dirname(os.path.abspath(openswmm_gpu_omp.__file__))
-    if not os.path.isdir(plugin_dir):
-        return
+def _prepend_plugin_dir(plugin_dir: str) -> None:
     sep = os.pathsep  # ';' on Windows, ':' elsewhere — matches search_dirs()
     existing = os.environ.get("OPENSWMM_GPU_PLUGIN_PATH", "")
     parts = existing.split(sep) if existing else []
@@ -93,7 +117,34 @@ def _register_gpu_companion() -> None:
         os.add_dll_directory(plugin_dir)
 
 
-_register_gpu_companion()
+def _in_wheel_plugin_dir() -> "str | None":
+    """openswmm/engine/ if it holds a built GPU plugin, else None."""
+    engine_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "engine")
+    if not os.path.isdir(engine_dir):
+        return None
+    for name in os.listdir(engine_dir):
+        # libopenswmm_gpu_omp.{so,dylib} / openswmm_gpu_omp.dll, and the same
+        # for any other backend the wheel was built with (cuda, hip, sycl).
+        if "openswmm_gpu_" in name and name.endswith((".so", ".dylib", ".dll")):
+            return engine_dir
+    return None
+
+
+def _register_gpu_plugin() -> None:
+    in_wheel = _in_wheel_plugin_dir()
+    if in_wheel is not None:
+        _prepend_plugin_dir(in_wheel)
+        return  # do NOT also register the companion — see the note above
+    try:
+        import openswmm_gpu_omp
+    except ImportError:
+        return  # no plugin anywhere → 2D runs on the serial CPU solver
+    plugin_dir = os.path.dirname(os.path.abspath(openswmm_gpu_omp.__file__))
+    if os.path.isdir(plugin_dir):
+        _prepend_plugin_dir(plugin_dir)
+
+
+_register_gpu_plugin()
 
 # ---------------------------------------------------------------------------
 # Version

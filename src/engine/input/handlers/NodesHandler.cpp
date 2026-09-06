@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file NodesHandler.cpp
  * @brief Section handlers for [JUNCTIONS], [OUTFALLS], [DIVIDERS], [STORAGE], [COORDINATES].
@@ -7,6 +23,15 @@
  * ;; Name      Elev   MaxDepth  InitDepth  SurDepth  Aponded
  * J1           0.0    5.0       0.0        0.0       0.0
  * ```
+ *
+ * ### [VIRTUAL_JUNCTIONS] format (refactored engine only)
+ * ```
+ * ;; Name      Elev   [MaxDepth]
+ * VJ1          9.0
+ * VJ2          9.0    4.5
+ * ```
+ * MaxDepth is optional and RENDERING ONLY — it is the rim/ground depth a
+ * viewer draws the surface at. The solver always uses the derived pipe crown.
  *
  * ### [OUTFALLS] format
  * ```
@@ -28,7 +53,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "NodesHandler.hpp"
@@ -42,6 +67,7 @@
 
 #include "../InputParseUtils.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <string>
 #include <string_view>
@@ -65,6 +91,10 @@ static void ensure_spatial_capacity(SimulationContext& ctx, int n_nodes) {
 // ============================================================================
 
 void handle_junctions(SimulationContext& ctx, const std::vector<std::string>& lines) {
+    // Pre-reserve from the section's row count (an upper bound: some rows
+    // are comments or duplicates). Capacity only — see reserve_to().
+    ctx.nodes.reserve_to(ctx.nodes.count() + static_cast<int>(lines.size()));
+    ctx.node_names.reserve(static_cast<std::size_t>(ctx.node_names.size()) + lines.size());
     for (const auto& pl : parse_section(lines)) {
         auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 2) continue;
@@ -99,10 +129,11 @@ void handle_virtual_junctions(SimulationContext& ctx, const std::vector<std::str
 
         const std::string& name = tok[0];
 
-        // Name + invert elevation only — everything else is derived from the
-        // two attached conduits, so extra tokens are an error (keeps the
-        // format extensible without ambiguity).
-        if (tok.size() > 2) {
+        // Name, invert elevation and an OPTIONAL rendering-only max depth.
+        // Everything the solver uses is derived from the two attached
+        // conduits, so a fourth token is still an error (keeps the format
+        // extensible without ambiguity).
+        if (tok.size() > 3) {
             ctx.errors.push_back(format_error(ERR_VJ_EXTRA_TOKENS, name));
             continue;
         }
@@ -115,6 +146,12 @@ void handle_virtual_junctions(SimulationContext& ctx, const std::vector<std::str
         ctx.node_subtypes.set_node_type(ctx.nodes, idx, NodeType::JUNCTION);
         ctx.nodes.is_virtual[static_cast<std::size_t>(idx)] = 1;
         ctx.nodes.invert_elev[idx] = to_double(tok[1]);
+        // MaxDepth: rim/ground elevation for drawings only — never read by the
+        // solver, which uses the derived pipe crown (NodeData::rim_depth).
+        // Negatives and unparseable text collapse to 0 = unset.
+        if (tok.size() > 2)
+            ctx.nodes.rim_depth[static_cast<std::size_t>(idx)] =
+                std::max(0.0, to_double(tok[2]));
         if (!pl.comment.empty())
             ctx.nodes.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
@@ -125,6 +162,10 @@ void handle_virtual_junctions(SimulationContext& ctx, const std::vector<std::str
 // ============================================================================
 
 void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lines) {
+    // Pre-reserve from the section's row count (an upper bound: some rows
+    // are comments or duplicates). Capacity only — see reserve_to().
+    ctx.nodes.reserve_to(ctx.nodes.count() + static_cast<int>(lines.size()));
+    ctx.node_names.reserve(static_cast<std::size_t>(ctx.node_names.size()) + lines.size());
     for (const auto& pl : parse_section(lines)) {
         auto tok = Tokenizer::tokenize(pl.data);
         if (tok.size() < 3) continue;
@@ -240,9 +281,11 @@ void handle_dividers(SimulationContext& ctx, const std::vector<std::string>& lin
             }
         } else if (dtype == "WEIR") {
             D.method[drow] = DividerType::WEIR;
+            // Legacy column order (node.c:1112): qMin dhMax cWeir — dhMax is
+            // token 5 and the discharge coefficient token 6 (was swapped).
             if (tok.size() > 4) D.cutoff[drow]    = to_double(tok[4]);
-            if (tok.size() > 5) D.cd[drow]        = to_double(tok[5]);
-            if (tok.size() > 6) D.max_depth[drow] = to_double(tok[6]);
+            if (tok.size() > 5) D.max_depth[drow] = to_double(tok[5]);
+            if (tok.size() > 6) D.cd[drow]        = to_double(tok[6]);
         }
 
         // MaxDepth after type-specific fields
@@ -341,8 +384,19 @@ void handle_storage(SimulationContext& ctx, const std::vector<std::string>& line
 void handle_coordinates(SimulationContext& ctx, const std::vector<std::string>& lines) {
     ensure_spatial_capacity(ctx, ctx.node_names.size());
 
+    // One row per node — hoist the token buffer so the loop allocates nothing
+    // after the first row. Quoted node names fall back to the owned tokenizer,
+    // which tokenize_views_into cannot handle; same result, more allocation.
+    std::vector<std::string_view> tok;
+    std::vector<std::string>      quoted;
+
     for (const auto& line : lines) {
-        auto tok = Tokenizer::tokenize(line);
+        if (line.find('"') == std::string::npos) {
+            Tokenizer::tokenize_views_into(line, tok);
+        } else {
+            quoted = Tokenizer::tokenize(line);
+            tok.assign(quoted.begin(), quoted.end());
+        }
         if (tok.size() < 3) continue;
 
         const int idx = ctx.node_names.find(tok[0]);

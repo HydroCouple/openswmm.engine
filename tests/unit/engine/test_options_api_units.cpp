@@ -183,3 +183,47 @@ TEST_F(OptionsApiUnitsTest, DiskRoundTrip) {
     EXPECT_NEAR(getd(reopened, "SYS_FLOW_TOL"), 3.0, 1e-9);
     EXPECT_EQ(getopt(reopened, "THREADS"), "8");
 }
+
+// ---------------------------------------------------------------------------
+// UNSTEADY_FRICTION / UF_K3 (issue #156): an enum key and its coefficient.
+// Nearest home for the pair — SURCHARGE_METHOD, the closest existing analogue,
+// is not pinned on the C API anywhere. Both keys are inert in this build (no
+// solver reads them), so the get/set surface is the only place a defect in the
+// dispatch would show.
+// ---------------------------------------------------------------------------
+
+TEST_F(OptionsApiUnitsTest, UnsteadyFrictionDefaults) {
+    // SimulationOptions.hpp: unsteady_friction = 0 (NONE), uf_k3 = 0.015.
+    EXPECT_EQ(getopt(engine, "UNSTEADY_FRICTION"), "NONE");
+    EXPECT_NEAR(getd(engine, "UF_K3"), 0.015, 1e-12);
+}
+
+TEST_F(OptionsApiUnitsTest, UnsteadyFrictionRoundTrip) {
+    ASSERT_EQ(swmm_options_set(engine, "UNSTEADY_FRICTION", "VITKOVSKY"), SWMM_OK);
+    ASSERT_EQ(swmm_options_set(engine, "UF_K3", "0.02"), SWMM_OK);
+    EXPECT_EQ(getopt(engine, "UNSTEADY_FRICTION"), "VITKOVSKY");
+    EXPECT_NEAR(getd(engine, "UF_K3"), 0.02, 1e-12);
+
+    // The setter upper-cases, matching the [OPTIONS] parser's norm().
+    ASSERT_EQ(swmm_options_set(engine, "UNSTEADY_FRICTION", "none"), SWMM_OK);
+    EXPECT_EQ(getopt(engine, "UNSTEADY_FRICTION"), "NONE");
+
+    // get -> set(returned) must be a no-op on both keys.
+    ASSERT_EQ(swmm_options_set(engine, "UNSTEADY_FRICTION", "VITKOVSKY"), SWMM_OK);
+    for (const char* key : {"UNSTEADY_FRICTION", "UF_K3"}) {
+        const std::string echoed = getopt(engine, key);
+        ASSERT_EQ(swmm_options_set(engine, key, echoed.c_str()), SWMM_OK) << key;
+    }
+    EXPECT_EQ(getopt(engine, "UNSTEADY_FRICTION"), "VITKOVSKY");
+    EXPECT_NEAR(getd(engine, "UF_K3"), 0.02, 1e-12);
+}
+
+TEST_F(OptionsApiUnitsTest, UnsteadyFrictionUnknownTokenIsBadParam) {
+    ASSERT_EQ(swmm_options_set(engine, "UNSTEADY_FRICTION", "VITKOVSKY"), SWMM_OK);
+    // BADPARAM specifically, not just "not OK" — the [OPTIONS] parser silently
+    // ignores an unknown token (accepted-and-inert posture), so the API is the
+    // only surface that reports the typo back to a caller.
+    EXPECT_EQ(swmm_options_set(engine, "UNSTEADY_FRICTION", "BOGUS"),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(getopt(engine, "UNSTEADY_FRICTION"), "VITKOVSKY");
+}

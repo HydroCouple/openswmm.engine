@@ -1,0 +1,1379 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * @file HeatComponent.cpp
+ * @brief heat component apply hook — phase H1 body.
+ *
+ * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license  Apache-2.0
+ */
+
+#include "HeatComponent.hpp"
+
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstdio>   // IO3a: snprintf in fmt_degc
+#include <cstdlib>
+#include <string>
+#include <vector>
+
+#include "../../../core/SimulationContext.hpp"
+#include "../../../plugins/ProcessComponentRegistry.hpp"
+
+namespace openswmm::transport {
+
+namespace {
+
+constexpr const char* kHeatId = "org.hydrocouple.openswmm.heat";
+
+/// Physically motivated guard rails on an inlet temperature (°C). Liquid
+/// water outside this band is not a modelling case H1 supports, and a
+/// typo (a Fahrenheit value, a stray exponent) is far more likely than a
+/// deck that means it.
+constexpr double kMinTemp = -50.0;
+constexpr double kMaxTemp = 100.0;
+
+std::vector<std::string> tokenize(const std::string& line) {
+    std::vector<std::string> toks;
+    std::string cur;
+    for (const char ch : line) {
+        if (ch == ' ' || ch == '\t') {
+            if (!cur.empty()) { toks.push_back(cur); cur.clear(); }
+        } else {
+            cur.push_back(ch);
+        }
+    }
+    if (!cur.empty()) toks.push_back(cur);
+    return toks;
+}
+
+std::string upper(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
+    return s;
+}
+
+/// Strict finite number. `std::strtod` ACCEPTS "nan" and "inf", and every
+/// range test in this file is written as `v < lo || v > hi` — both of which
+/// are FALSE for NaN, so a NaN sails through every guard and lands in the
+/// config looking like a value. H6a found this on the new [SOLAR_RADIATION]
+/// parser; it is checked here so the new sections cannot reintroduce it.
+///
+/// @note `parse_celsius` never had the hole — its range test is the
+///       conjunctive ACCEPT form (`v >= lo && v <= hi`), which NaN fails.
+///       The `[RADIATIVE_FLUXES]` ladder did, via its reject-form `frac()`
+///       guard; its parse now comes through here (step 3 validation round).
+bool parse_finite(const std::string& tok, double& out) {
+    char* end = nullptr;
+    out = std::strtod(tok.c_str(), &end);
+    if (end == nullptr || *end != '\0' || end == tok.c_str()) return false;
+    return std::isfinite(out);
+}
+
+/// Unlike the age parser's `parse_hours`, this accepts NEGATIVE values —
+/// sub-zero water temperatures are ordinary — so the range check is
+/// explicit rather than riding on a `>= 0` test.
+bool parse_celsius(const std::string& tok, double& out) {
+    char* end = nullptr;
+    out = std::strtod(tok.c_str(), &end);
+    if (end == nullptr || *end != '\0' || end == tok.c_str()) return false;
+    return out >= kMinTemp && out <= kMaxTemp;
+}
+
+int source_of(const std::string& u) {
+    if (u == "RAINFALL")        return static_cast<int>(HeatSource::RAINFALL);
+    if (u == "DWF")             return static_cast<int>(HeatSource::DWF);
+    if (u == "GW")              return static_cast<int>(HeatSource::GW);
+    if (u == "RDII")            return static_cast<int>(HeatSource::RDII);
+    if (u == "EXTERNAL_INFLOW") return static_cast<int>(HeatSource::EXTERNAL_INFLOW);
+    if (u == "IFACE")           return static_cast<int>(HeatSource::IFACE);
+    if (u == "INITIAL_STATE")   return static_cast<int>(HeatSource::INITIAL_STATE);
+    return -1;
+}
+
+/// Inverse of source_of, for IO3a serialization. Table order matches the
+/// enum, so a new HeatSource that forgets this array trips the static_assert
+/// rather than silently writing the wrong keyword.
+const char* source_name(int s) {
+    static const char* kNames[] = {"RAINFALL", "DWF", "GW", "RDII",
+                                   "EXTERNAL_INFLOW", "IFACE",
+                                   "INITIAL_STATE"};
+    static_assert(sizeof(kNames) / sizeof(kNames[0]) ==
+                      static_cast<std::size_t>(HeatSource::COUNT_),
+                  "source_name is missing a HeatSource");
+    return (s >= 0 && s < static_cast<int>(HeatSource::COUNT_))
+               ? kNames[s] : "?";
+}
+
+/// Shortest decimal that reads back EXACTLY — ReactionsWriter's fmt_double
+/// convention. A save that rounds is a save that moves the model.
+std::string fmt_degc(double v) {
+    char buf[64];
+    for (int prec = 15; prec <= 17; ++prec) {
+        std::snprintf(buf, sizeof(buf), "%.*g", prec, v);
+        if (std::strtod(buf, nullptr) == v) break;
+    }
+    return buf;
+}
+
+/**
+ * @brief PE2 — one attribute table shared by the parser, the resolver and
+ *        the serializer.
+ *
+ * @details `static_assert` against `HeatAttr::COUNT_` is load-bearing:
+ *          adding an attribute without teaching this table breaks the BUILD
+ *          rather than silently dropping the new key on save, which is the
+ *          IO3a/lesson-201 shape one enum over.
+ */
+struct AttrSpec {
+    const char* key;
+    HeatAttr    attr;
+    bool        is_fraction;   ///< refused outside [0,1]
+    bool        positive_only; ///< refused at or below zero
+};
+
+constexpr AttrSpec kAttrTable[] = {
+    {"ALBEDO",                 HeatAttr::ALBEDO,                  true,  false},
+    {"SHADE_FACTOR",           HeatAttr::SHADE_FACTOR,            true,  false},
+    {"SKY_VIEW",               HeatAttr::SKY_VIEW,                true,  false},
+    {"EMISS_WATER",            HeatAttr::EMISS_WATER,             true,  false},
+    {"EMISS_LANDCOVER",        HeatAttr::EMISS_LANDCOVER,         true,  false},
+    {"LANDCOVER_TEMPERATURE",  HeatAttr::LANDCOVER_TEMP,          false, false},
+    {"THERMAL_DIFFUSIVITY",    HeatAttr::SED_THERMAL_DIFFUSIVITY, false, true},
+    {"SOLUTE_DIFFUSIVITY",     HeatAttr::SED_SOLUTE_DIFFUSIVITY,  false, false},
+    {"BED_THICKNESS",          HeatAttr::SED_BED_THICKNESS,       false, true},
+    {"GROUND_DEPTH",           HeatAttr::SED_GROUND_DEPTH,        false, true},
+    {"GROUND_TEMPERATURE",     HeatAttr::SED_GROUND_TEMP,         false, false},
+    {"HYPORHEIC_VELOCITY",     HeatAttr::SED_HYPORHEIC_VELOCITY,  false, false},
+    {"SEDIMENT_DENSITY",       HeatAttr::SED_DENSITY,             false, true},
+    {"SEDIMENT_SPECIFIC_HEAT", HeatAttr::SED_SPECIFIC_HEAT,       false, true},
+};
+static_assert(sizeof(kAttrTable) / sizeof(kAttrTable[0]) ==
+                  static_cast<std::size_t>(HeatAttr::COUNT_),
+              "HeatAttr gained a member: add it to kAttrTable so the parser "
+              "and saveHeatConfig both learn it, then this pin passes");
+
+const AttrSpec* findAttr(HeatAttr a) {
+    for (const auto& e : kAttrTable) if (e.attr == a) return &e;
+    return nullptr;
+}
+const char* attrKey(HeatAttr a) {
+    const AttrSpec* e = findAttr(a);
+    return e ? e->key : "?";
+}
+
+/// PE2 — the scope prefix of an override row. `value_at` is where the
+/// numeric token starts, so a caller reads `toks[value_at]` regardless of
+/// which scope was written.
+struct ScopeRef {
+    HeatScope   scope = HeatScope::GLOBAL;
+    std::string name;
+    int         value_at = 2;
+    bool        ok = false;
+};
+
+ScopeRef parseScope(const std::vector<std::string>& toks,
+                    const std::string& section, const std::string& line,
+                    std::vector<std::string>& errors) {
+    ScopeRef r;
+    if (toks.size() < 3) {
+        errors.push_back("[" + section + "] expects '<param> GLOBAL <value>' "
+                         "or '<param> TAG|LINK|NODE <name> <value>': '" +
+                         line + "'.");
+        return r;
+    }
+    const std::string sc = upper(toks[1]);
+    if (sc == "GLOBAL") {
+        r.scope = HeatScope::GLOBAL; r.value_at = 2; r.ok = true; return r;
+    }
+    if (sc == "TAG" || sc == "LINK" || sc == "NODE") {
+        if (toks.size() < 4) {
+            errors.push_back("[" + section + "] " + sc +
+                             " scope needs a name and a value: '" + line +
+                             "'.");
+            return r;
+        }
+        r.scope = (sc == "TAG")  ? HeatScope::TAG
+                : (sc == "LINK") ? HeatScope::LINK
+                                 : HeatScope::NODE;
+        r.name = toks[2];
+        r.value_at = 3;
+        r.ok = true;
+        return r;
+    }
+    errors.push_back("[" + section + "] unknown scope '" + toks[1] +
+                     "' (GLOBAL, TAG, LINK, NODE): '" + line + "'.");
+    return r;
+}
+
+/**
+ * @brief One validator for every scope (D-PE6).
+ *
+ * @details The GLOBAL path already refused rather than clamped; a
+ *          per-element path with its own copy is how a global refusal and a
+ *          per-element clamp end up in the same file disagreeing about the
+ *          same key.
+ */
+bool validateAttr(const AttrSpec& spec, double v, const std::string& section,
+                  const std::string& tok, std::vector<std::string>& errors) {
+    if (spec.is_fraction && (v < 0.0 || v > 1.0)) {
+        errors.push_back("[" + section + "] '" + std::string(spec.key) +
+                         "' must be a fraction in [0,1], got " + tok + ".");
+        return false;
+    }
+    if (spec.positive_only && !(v > 0.0)) {
+        errors.push_back("[" + section + "] " + std::string(spec.key) +
+                         " must be greater than zero, got " + tok + ".");
+        return false;
+    }
+    if (spec.attr == HeatAttr::SED_HYPORHEIC_VELOCITY && v < 0.0) {
+        errors.push_back("[" + section + "] HYPORHEIC_VELOCITY cannot be "
+                         "negative: the exchange direction follows the "
+                         "gradient, not this sign. Got " + tok + ".");
+        return false;
+    }
+    if (spec.attr == HeatAttr::SED_SOLUTE_DIFFUSIVITY && v < 0.0) {
+        errors.push_back("[" + section + "] SOLUTE_DIFFUSIVITY cannot be "
+                         "negative, got " + tok + ".");
+        return false;
+    }
+    return true;
+}
+
+/// D-PE4 — two rows at the SAME scope for the same target mean the user
+/// believes one of them and cannot be told which won. Refused, following
+/// D-H6a-3 and the [REACTION_QUALITY] duplicate rule.
+bool recordOverride(SimulationContext& ctx, HeatAttr attr,
+                    const ScopeRef& sr, double v,
+                    const std::string& section, const std::string& line,
+                    std::vector<std::string>& errors) {
+    auto& rows = ctx.heat_config.overrides.rows;
+    for (const auto& r : rows) {
+        if (r.attr == attr && r.scope == sr.scope && r.name == sr.name) {
+            errors.push_back("[" + section + "] duplicate " +
+                             std::string(attrKey(attr)) +
+                             " row at the same scope for '" + sr.name +
+                             "' — one of the two would silently win: '" +
+                             line + "'.");
+            return false;
+        }
+    }
+    rows.push_back(HeatOverrideRow{attr, sr.scope, sr.name, v});
+    return true;
+}
+
+void applyHeatSections(SimulationContext& ctx,
+                       const components::ComponentConfigSections& config,
+                       std::vector<std::string>& errors) {
+    ctx.heat_config = HeatConfigData{};  // reopen hygiene
+    const std::size_t errors_before = errors.size();
+
+    // H6a (D-H6a-3). The three SHORTWAVE spellings are MUTUALLY EXCLUSIVE,
+    // so the parser has to remember whether it has seen one. A precedence
+    // ladder was the alternative and was rejected: it makes a deck that
+    // configures two sources run plausibly while silently discarding one.
+    bool shortwave_seen = false;
+
+    // Was an actual FRACTION row given, as opposed to coefficients alone?
+    // A [CLOUD_COVER] holding only k/n tunes a cloud fraction of zero,
+    // which is no cloud at all — worth saying so.
+    bool cloud_fraction_seen = false;
+
+    // Warnings are collected LOCALLY and merged into ctx only if the parse
+    // succeeds. Pushing them straight to `ctx.warnings` meant that an error
+    // anywhere in model.heat discarded the config via the reset below while
+    // the warnings survived — so on a lenient open the user was warned
+    // about a configuration that never took effect. Worse, a malformed
+    // COMPUTED row left `sw_mode` at CONSTANT and produced the advice
+    // "Set SHORTWAVE GLOBAL COMPUTED" to a user who had written exactly
+    // that.
+    std::vector<std::string> pending_warnings;
+
+    for (const auto& sec : config.sections) {
+        // H2: [HEAT_FLUXES] toggles the plan §2 modules, one row per module.
+        // H3: [RADIATIVE_FLUXES] carries the plan §2.2 parameters. GLOBAL
+        // scope only; RHE's per-element ranges are a later phase.
+        if (sec.first == "RADIATIVE_FLUXES") {
+            for (const auto& line : sec.second) {
+                const auto toks = tokenize(line);
+                const ScopeRef sr =
+                    parseScope(toks, "RADIATIVE_FLUXES", line, errors);
+                if (!sr.ok) continue;
+                auto& rc = ctx.heat_config.radiative;
+                const std::string k = upper(toks[0]);
+
+                // PE2 §2.2: SHORTWAVE stays GLOBAL. The deck states one
+                // incident resource and SHADE_FACTOR modulates it per
+                // element; making both per-element gives two ways to say one
+                // thing, and they will disagree. (A coupled driver CAN push
+                // Jin per element — through the forcing API, where the
+                // precedence is stated once. See ForcingData PE4.)
+                if (sr.scope != HeatScope::GLOBAL &&
+                    (k == "SHORTWAVE" || k == "ATM_EMISS_COEFF" ||
+                     k == "ATM_LW_REFLECTION")) {
+                    errors.push_back(
+                        "[RADIATIVE_FLUXES] " + toks[0] + " is GLOBAL only — "
+                        "it describes the incident resource or the "
+                        "atmosphere, not the reach. Per-element shading is "
+                        "SHADE_FACTOR / SKY_VIEW: '" + line + "'.");
+                    continue;
+                }
+
+                // H6a. SHORTWAVE is handled BEFORE the numeric parse for the
+                // same structural reason [HEAT_FLUXES] checks
+                // DRY_ELEMENT_TEMPERATURE before its ON|OFF test: two of its
+                // three spellings are keywords, not numbers, and a
+                // number-first test would reject them as "not a number"
+                // before their own branch could run — making the feature
+                // unreachable rather than merely unimplemented. That exact
+                // shape was the A1a defect.
+                if (k == "SHORTWAVE") {
+                    if (shortwave_seen) {
+                        errors.push_back(
+                            "[RADIATIVE_FLUXES] SHORTWAVE is given more than "
+                            "once. The constant, TIMESERIES and COMPUTED "
+                            "spellings are mutually exclusive — pick one "
+                            "(plan D-H6a-3).");
+                        continue;
+                    }
+                    const std::string spelling = upper(toks[2]);
+
+                    if (spelling == "COMPUTED") {
+                        if (toks.size() != 3) {
+                            errors.push_back(
+                                "[RADIATIVE_FLUXES] SHORTWAVE GLOBAL COMPUTED "
+                                "takes no further tokens: '" + line + "'.");
+                            continue;
+                        }
+                        rc.sw_mode = ShortwaveMode::COMPUTED;
+                        shortwave_seen = true;
+                        continue;
+                    }
+
+                    if (spelling == "TIMESERIES") {
+                        if (toks.size() != 4) {
+                            errors.push_back(
+                                "[RADIATIVE_FLUXES] SHORTWAVE GLOBAL "
+                                "TIMESERIES takes a series name: '" + line +
+                                "'.");
+                            continue;
+                        }
+                        const int ts = ctx.find_timeseries(toks[3]);
+                        if (ts < 0) {
+                            errors.push_back(
+                                "[RADIATIVE_FLUXES] SHORTWAVE TIMESERIES '" +
+                                toks[3] + "' is not a [TIMESERIES] in the "
+                                "model.");
+                            continue;
+                        }
+                        rc.sw_mode      = ShortwaveMode::TIMESERIES;
+                        rc.sw_ts_index  = ts;
+                        shortwave_seen  = true;
+                        continue;
+                    }
+
+                    // Constant — the H3 spelling, still the default.
+                    if (toks.size() != 3) {
+                        errors.push_back(
+                            "[RADIATIVE_FLUXES] malformed SHORTWAVE row: '" +
+                            line + "'.");
+                        continue;
+                    }
+                    double sw = 0.0;
+                    if (!parse_finite(toks[2], sw)) {
+                        errors.push_back(
+                            "[RADIATIVE_FLUXES] SHORTWAVE '" + toks[2] +
+                            "' is not a finite number, TIMESERIES, or "
+                            "COMPUTED.");
+                        continue;
+                    }
+                    if (sw < 0.0) {
+                        errors.push_back("[RADIATIVE_FLUXES] SHORTWAVE must "
+                                         "be >= 0 W/m2.");
+                        continue;
+                    }
+                    rc.shortwave_wm2 = sw;
+                    rc.sw_mode       = ShortwaveMode::CONSTANT;
+                    shortwave_seen   = true;
+                    continue;
+                }
+
+                const auto vt = static_cast<std::size_t>(sr.value_at);
+                double v = 0.0;
+                if (vt >= toks.size() || !parse_finite(toks[vt], v)) {
+                    errors.push_back("[RADIATIVE_FLUXES] '" + toks[0] +
+                                     "': missing or non-finite value in '" +
+                                     line + "'.");
+                    continue;
+                }
+                // Fractions are refused outside [0,1] rather than clamped: a
+                // 97 typed for an emissivity of 0.97 would otherwise scale
+                // every longwave term by a hundred, silently. The two
+                // atmosphere keys keep their own GLOBAL-only writes below;
+                // everything else goes through the shared table so the
+                // GLOBAL and per-element paths validate identically (D-PE6).
+                if (k == "ATM_EMISS_COEFF" || k == "ATM_LW_REFLECTION") {
+                    if (v < 0.0 || v > 1.0) {
+                        errors.push_back("[RADIATIVE_FLUXES] '" + toks[0] +
+                                         "' must be a fraction in [0,1], got "
+                                         + toks[vt] + ".");
+                        continue;
+                    }
+                    if (k == "ATM_EMISS_COEFF") rc.atm_emiss_coeff = v;
+                    else                        rc.lw_reflection   = v;
+                    continue;
+                }
+
+                const AttrSpec* spec = nullptr;
+                for (const auto& e : kAttrTable)
+                    if (k == e.key && !isSedimentAttr(e.attr)) spec = &e;
+                if (spec == nullptr) {
+                    errors.push_back("[RADIATIVE_FLUXES] unknown parameter '" +
+                                     toks[0] + "'.");
+                    continue;
+                }
+                if (!validateAttr(*spec, v, "RADIATIVE_FLUXES", toks[vt],
+                                  errors))
+                    continue;
+
+                if (sr.scope == HeatScope::GLOBAL) {
+                    switch (spec->attr) {
+                        case HeatAttr::ALBEDO:          rc.albedo = v; break;
+                        case HeatAttr::SHADE_FACTOR:    rc.shade_factor = v; break;
+                        case HeatAttr::SKY_VIEW:        rc.sky_view = v; break;
+                        case HeatAttr::EMISS_WATER:     rc.emiss_water = v; break;
+                        case HeatAttr::EMISS_LANDCOVER: rc.emiss_landcover = v; break;
+                        case HeatAttr::LANDCOVER_TEMP:  rc.landcover_temp = v; break;
+                        default: break;
+                    }
+                } else {
+                    recordOverride(ctx, spec->attr, sr, v,
+                                   "RADIATIVE_FLUXES", line, errors);
+                }
+            }
+            continue;
+        }
+        // H6a. Site geometry and Bird atmosphere, consulted only under
+        // SHORTWAVE ... COMPUTED. Same '<param> GLOBAL <value>' shape as
+        // [RADIATIVE_FLUXES] so the two sections read alike.
+        if (sec.first == "SOLAR_RADIATION") {
+            for (const auto& line : sec.second) {
+                const auto toks = tokenize(line);
+                if (toks.size() != 3 || upper(toks[1]) != "GLOBAL") {
+                    errors.push_back(
+                        "[SOLAR_RADIATION] expects '<param> GLOBAL <value>': '"
+                        + line + "'.");
+                    continue;
+                }
+                double v = 0.0;
+                if (!parse_finite(toks[2], v)) {
+                    errors.push_back("[SOLAR_RADIATION] '" + toks[0] + "': '" +
+                                     toks[2] + "' is not a finite number.");
+                    continue;
+                }
+                auto& sc = ctx.heat_config.solar;
+                const std::string k = upper(toks[0]);
+
+                // Ranges are REFUSED, not clamped — the [RADIATIVE_FLUXES]
+                // precedent. A latitude of 100 is a typo, and silently
+                // saturating it to 90 would put the model at the pole.
+                //
+                // `ranged` RETURNS whether it assigned, and the "was this
+                // provided" flags are set from that return value. Setting
+                // them from a second copy of the range predicate instead
+                // was the first spelling, and it disagreed with the
+                // assignment for exactly one input class — NaN, which
+                // passes `!(v < lo || v > hi)` and so got assigned while
+                // the flag read false.
+                auto ranged = [&](double lo, double hi, double& dst,
+                                  const char* units) -> bool {
+                    if (v < lo || v > hi) {
+                        errors.push_back("[SOLAR_RADIATION] '" + toks[0] +
+                                         "' must be in [" + std::to_string(lo) +
+                                         ", " + std::to_string(hi) + "] " +
+                                         units + ", got " + toks[2] + ".");
+                        return false;
+                    }
+                    dst = v;
+                    return true;
+                };
+                auto nonneg = [&](double& dst) {
+                    if (v < 0.0)
+                        errors.push_back("[SOLAR_RADIATION] '" + toks[0] +
+                                         "' must be >= 0, got " + toks[2] +
+                                         ".");
+                    else dst = v;
+                };
+
+                if (k == "LATITUDE") {
+                    if (ranged(-90.0, 90.0, sc.latitude_deg, "degrees"))
+                        sc.has_latitude = true;
+                } else if (k == "LONGITUDE") {
+                    if (ranged(-180.0, 180.0, sc.longitude_deg, "degrees"))
+                        sc.has_longitude = true;
+                } else if (k == "TIMEZONE") {
+                    // ±14 covers every real offset (Kiribati is +14).
+                    if (ranged(-14.0, 14.0, sc.timezone_hours,
+                               "hours from UTC"))
+                        sc.has_timezone = true;
+                } else if (k == "ELEVATION") {
+                    // Metres. Below sea level is legal — and the flag, not
+                    // the sign, is what marks it as provided, so a negative
+                    // elevation is no longer indistinguishable from "unset".
+                    if (ranged(-500.0, 9000.0, sc.elevation_m, "metres"))
+                        sc.has_elevation = true;
+                } else if (k == "TURBIDITY_380")  { nonneg(sc.aod380);
+                } else if (k == "TURBIDITY_500")  { nonneg(sc.aod500);
+                } else if (k == "PRECIP_WATER")   { nonneg(sc.precip_water_cm);
+                } else if (k == "OZONE")          { nonneg(sc.ozone_cm);
+                } else if (k == "GROUND_ALBEDO")  {
+                    if (v < 0.0 || v > 1.0)
+                        errors.push_back("[SOLAR_RADIATION] GROUND_ALBEDO must "
+                                         "be a fraction in [0,1], got " +
+                                         toks[2] + ".");
+                    else sc.ground_albedo = v;
+                } else {
+                    errors.push_back(
+                        "[SOLAR_RADIATION] unknown parameter '" + toks[0] +
+                        "' (LATITUDE, LONGITUDE, TIMEZONE, ELEVATION, "
+                        "TURBIDITY_380, TURBIDITY_500, PRECIP_WATER, OZONE, "
+                        "GROUND_ALBEDO).");
+                }
+            }
+            continue;
+        }
+
+        // H6a (D-H6a-2). ONE fraction, TWO modules — shortwave attenuation
+        // and the longwave emissivity correction both read it.
+        // H6b — the bed / hyporheic zone. Every key is GLOBAL scope: the
+        // reference takes these per element from a coupled subsurface model
+        // and SWMM has no such supplier, so a per-element spelling would be
+        // a table nothing could fill. Rows are '<KEY> GLOBAL <value>', the
+        // same shape [CLOUD_COVER] and [RADIATIVE_FLUXES] already use.
+        if (sec.first == "SEDIMENT_EXCHANGE") {
+            for (const auto& line : sec.second) {
+                const auto toks = tokenize(line);
+                const ScopeRef sr =
+                    parseScope(toks, "SEDIMENT_EXCHANGE", line, errors);
+                if (!sr.ok) continue;
+                auto& sd = ctx.heat_config.sediment;
+                const std::string k = upper(toks[0]);
+
+                // The bed zone is CONDUITS ONLY (BedZoneState), so a
+                // node-scoped bed attribute would describe a body that does
+                // not exist. Refused rather than accepted-and-ignored: a row
+                // that can never take effect is the silent-override failure
+                // D-PE5 exists to prevent.
+                if (sr.scope == HeatScope::NODE) {
+                    errors.push_back(
+                        "[SEDIMENT_EXCHANGE] NODE scope is not available — "
+                        "the bed zone exists beneath CONDUITS only. Use LINK "
+                        "or TAG: '" + line + "'.");
+                    continue;
+                }
+
+                // GROUND_TEMPERATURE is the one key with a TIMESERIES
+                // spelling: a deep-ground boundary that varies seasonally is
+                // the ordinary case, while a bed thickness that varies with
+                // time is not a thing a deck means.
+                if (k == "GROUND_TEMPERATURE" &&
+                    sr.scope == HeatScope::GLOBAL) {
+                    if (upper(toks[2]) == "TIMESERIES") {
+                        if (toks.size() != 4) {
+                            errors.push_back(
+                                "[SEDIMENT_EXCHANGE] GROUND_TEMPERATURE "
+                                "GLOBAL TIMESERIES takes a series name: '" +
+                                line + "'.");
+                            continue;
+                        }
+                        const int ts = ctx.find_timeseries(toks[3]);
+                        if (ts < 0) {
+                            errors.push_back(
+                                "[SEDIMENT_EXCHANGE] TIMESERIES '" + toks[3] +
+                                "' is not a [TIMESERIES] in the model.");
+                            continue;
+                        }
+                        sd.ground_ts_index  = ts;
+                        sd.has_ground_temp  = true;
+                        continue;
+                    }
+                }
+
+                const auto vt = static_cast<std::size_t>(sr.value_at);
+                double v = 0.0;
+                if (vt >= toks.size() || !parse_finite(toks[vt], v)) {
+                    errors.push_back(
+                        "[SEDIMENT_EXCHANGE] " + toks[0] +
+                        ": missing or non-finite value in '" + line + "'.");
+                    continue;
+                }
+
+                // PE2: per-element rows go through the SHARED validator and
+                // land as override rows; GLOBAL keeps the existing writes
+                // below so this round changes no global behaviour.
+                if (sr.scope != HeatScope::GLOBAL) {
+                    const AttrSpec* spec = nullptr;
+                    for (const auto& e : kAttrTable)
+                        if (k == e.key && isSedimentAttr(e.attr)) spec = &e;
+                    if (spec == nullptr) {
+                        errors.push_back(
+                            "[SEDIMENT_EXCHANGE] '" + toks[0] + "' has no "
+                            "per-element form (INITIAL_TEMPERATURE is the "
+                            "bed's own seed and is GLOBAL).");
+                        continue;
+                    }
+                    if (validateAttr(*spec, v, "SEDIMENT_EXCHANGE", toks[vt],
+                                     errors))
+                        recordOverride(ctx, spec->attr, sr, v,
+                                       "SEDIMENT_EXCHANGE", line, errors);
+                    continue;
+                }
+
+                // Lengths, diffusivities and material properties are refused
+                // at zero or below rather than clamped: every one of them is
+                // a DIVISOR or a capacity in BedExchange.cpp, and a silently
+                // repaired zero would produce an infinite conductance or a
+                // massless bed that tracks the water exactly — both of which
+                // look like a working model.
+                const auto positive = [&](double& dst) {
+                    if (!(v > 0.0)) {
+                        errors.push_back("[SEDIMENT_EXCHANGE] " + toks[0] +
+                                         " must be greater than zero, got " +
+                                         toks[vt] + ".");
+                        return;
+                    }
+                    dst = v;
+                };
+
+                if (k == "THERMAL_DIFFUSIVITY")           positive(sd.thermal_diffusivity);
+                else if (k == "SOLUTE_DIFFUSIVITY") {
+                    // The one quantity for which zero is meaningful: it
+                    // selects advection-only transient storage, which is a
+                    // configuration a tracer study deliberately runs.
+                    if (v < 0.0)
+                        errors.push_back("[SEDIMENT_EXCHANGE] "
+                                         "SOLUTE_DIFFUSIVITY cannot be "
+                                         "negative, got " + toks[vt] + ".");
+                    else sd.solute_diffusivity = v;
+                }
+                else if (k == "BED_THICKNESS")            positive(sd.bed_thickness);
+                else if (k == "GROUND_DEPTH")             positive(sd.ground_depth);
+                else if (k == "SEDIMENT_DENSITY")         positive(sd.sed_density);
+                else if (k == "SEDIMENT_SPECIFIC_HEAT")   positive(sd.sed_specific_heat);
+                else if (k == "HYPORHEIC_VELOCITY") {
+                    // Zero is the default and means conduction only. A
+                    // NEGATIVE exchange velocity has no reading — the
+                    // exchange is symmetric and its direction is set by the
+                    // temperature difference, not by a sign here.
+                    if (v < 0.0)
+                        errors.push_back("[SEDIMENT_EXCHANGE] "
+                                         "HYPORHEIC_VELOCITY cannot be "
+                                         "negative: the exchange direction "
+                                         "follows the gradient, not this "
+                                         "sign. Got " + toks[vt] + ".");
+                    else sd.hyporheic_velocity = v;
+                }
+                else if (k == "GROUND_TEMPERATURE") {
+                    sd.ground_temp     = v;
+                    sd.ground_ts_index = -1;
+                    sd.has_ground_temp = true;
+                }
+                else if (k == "INITIAL_TEMPERATURE") {
+                    sd.initial_temp     = v;
+                    sd.has_initial_temp = true;
+                }
+                else {
+                    errors.push_back(
+                        "[SEDIMENT_EXCHANGE] unknown parameter '" + toks[0] +
+                        "' (THERMAL_DIFFUSIVITY, SOLUTE_DIFFUSIVITY, "
+                        "BED_THICKNESS, GROUND_DEPTH, GROUND_TEMPERATURE, "
+                        "HYPORHEIC_VELOCITY, SEDIMENT_DENSITY, "
+                        "SEDIMENT_SPECIFIC_HEAT, INITIAL_TEMPERATURE).");
+                }
+            }
+            continue;
+        }
+
+        if (sec.first == "CLOUD_COVER") {
+            for (const auto& line : sec.second) {
+                const auto toks = tokenize(line);
+                if (toks.size() < 3 || upper(toks[1]) != "GLOBAL") {
+                    errors.push_back(
+                        "[CLOUD_COVER] expects '<param> GLOBAL <value>': '" +
+                        line + "'.");
+                    continue;
+                }
+                auto& cc = ctx.heat_config.cloud;
+                const std::string k = upper(toks[0]);
+
+                if (k == "FRACTION") {
+                    if (upper(toks[2]) == "TIMESERIES") {
+                        if (toks.size() != 4) {
+                            errors.push_back(
+                                "[CLOUD_COVER] FRACTION GLOBAL TIMESERIES "
+                                "takes a series name: '" + line + "'.");
+                            continue;
+                        }
+                        const int ts = ctx.find_timeseries(toks[3]);
+                        if (ts < 0) {
+                            errors.push_back(
+                                "[CLOUD_COVER] TIMESERIES '" + toks[3] +
+                                "' is not a [TIMESERIES] in the model.");
+                            continue;
+                        }
+                        cc.use_timeseries = true;
+                        cc.ts_index       = ts;
+                        cc.configured     = true;
+                        cloud_fraction_seen = true;
+                        continue;
+                    }
+                    if (toks.size() != 3) {
+                        errors.push_back("[CLOUD_COVER] malformed FRACTION "
+                                         "row: '" + line + "'.");
+                        continue;
+                    }
+                    double c = 0.0;
+                    if (!parse_finite(toks[2], c)) {
+                        errors.push_back("[CLOUD_COVER] FRACTION '" + toks[2] +
+                                         "' is not a finite number or "
+                                         "TIMESERIES.");
+                        continue;
+                    }
+                    // Refused, not clamped — a 75 meant as 75% would
+                    // otherwise blacken the sky and look deliberate. (The
+                    // TIMESERIES path DOES clamp, at runtime: a series value
+                    // arrives mid-run where there is no user to ask.)
+                    if (c < 0.0 || c > 1.0) {
+                        errors.push_back(
+                            "[CLOUD_COVER] FRACTION must be in [0,1], got " +
+                            toks[2] + " (it is a fraction, not a percent).");
+                        continue;
+                    }
+                    cc.use_timeseries = false;
+                    cc.fraction       = c;
+                    cc.configured     = true;
+                    cloud_fraction_seen = true;
+                    continue;
+                }
+
+                // Unknown key is checked BEFORE the numeric parse, so a
+                // misspelled parameter reports itself rather than reporting
+                // its value as "not a number" — the report should name the
+                // thing the user can act on.
+                if (k != "SW_ATTEN_K" && k != "SW_ATTEN_N" &&
+                    k != "LW_CLOUD_K") {
+                    errors.push_back(
+                        "[CLOUD_COVER] unknown parameter '" + toks[0] +
+                        "' (FRACTION, SW_ATTEN_K, SW_ATTEN_N, LW_CLOUD_K).");
+                    continue;
+                }
+                if (toks.size() != 3) {
+                    errors.push_back("[CLOUD_COVER] expects '<param> GLOBAL "
+                                     "<value>': '" + line + "'.");
+                    continue;
+                }
+                double v = 0.0;
+                if (!parse_finite(toks[2], v)) {
+                    errors.push_back("[CLOUD_COVER] '" + toks[0] + "': '" +
+                                     toks[2] + "' is not a finite number.");
+                    continue;
+                }
+                if (v < 0.0) {
+                    errors.push_back("[CLOUD_COVER] '" + toks[0] +
+                                     "' must be >= 0, got " + toks[2] + ".");
+                    continue;
+                }
+                if      (k == "SW_ATTEN_K") cc.sw_atten_k = v;
+                else if (k == "SW_ATTEN_N") cc.sw_atten_n = v;
+                else                        cc.lw_cloud_k = v;
+                // Marked configured on a COEFFICIENT row too, matching
+                // `swmm_heat_set_cloud`. Without this a section holding only
+                // coefficients left `configured` false, `updateSolarForcing`
+                // skipped the whole cloud read, and the section did nothing
+                // at all — with no error and no warning. The
+                // no-FRACTION-given case is warned about below; it is a
+                // different complaint from "the section was ignored".
+                cc.configured = true;
+            }
+            continue;
+        }
+
+        if (sec.first == "HEAT_FLUXES") {
+            for (const auto& line : sec.second) {
+                const auto toks = tokenize(line);
+                if (toks.size() != 2) {
+                    errors.push_back(
+                        "[HEAT_FLUXES] expects '<module> ON|OFF': '" + line +
+                        "'.");
+                    continue;
+                }
+                const std::string mod = upper(toks[0]);
+                const std::string val = upper(toks[1]);
+
+                // H5a/D-H5c. Checked BEFORE the ON|OFF validation because it
+                // is the one key in this section whose value is a named mode
+                // rather than a toggle; leaving it below would have it
+                // rejected as "not ON or OFF" before its own branch ran.
+                // Ladder shape follows ArdConfig.cpp:116-137 (SCALAR_SCHEME).
+                if (mod == "DRY_ELEMENT_TEMPERATURE") {
+                    if (val == "HOLD")
+                        ctx.heat_config.dry_temp_policy = DryTempPolicy::HOLD;
+                    else if (val == "AIR")
+                        ctx.heat_config.dry_temp_policy = DryTempPolicy::AIR;
+                    else if (val == "DEFAULT")
+                        ctx.heat_config.dry_temp_policy =
+                            DryTempPolicy::DEFAULT;
+                    else
+                        errors.push_back(
+                            "[HEAT_FLUXES] DRY_ELEMENT_TEMPERATURE '" +
+                            toks[1] + "' is not HOLD, AIR, or DEFAULT.");
+                    continue;
+                }
+
+                if (val != "ON" && val != "OFF" && val != "YES" &&
+                    val != "NO") {
+                    errors.push_back(
+                        "[HEAT_FLUXES] '" + toks[0] + "': '" + toks[1] +
+                        "' is not ON or OFF.");
+                    continue;
+                }
+                const bool on = (val == "ON" || val == "YES");
+                if (mod == "SURFACE_EXCHANGE") {
+                    ctx.heat_config.surface_exchange = on;
+                } else if (mod == "RADIATIVE_EXCHANGE") {
+                    ctx.heat_config.radiative_exchange = on;
+                } else if (mod == "LAYER_CONDUCTION") {
+                    ctx.heat_config.layer_conduction = on;
+                } else if (mod == "SEDIMENT_EXCHANGE") {
+                    ctx.heat_config.sediment_exchange = on;   // H6b
+                } else {
+                    errors.push_back(
+                        "[HEAT_FLUXES] unknown module '" + toks[0] +
+                        "' (SURFACE_EXCHANGE in H2, RADIATIVE_EXCHANGE in "
+                        "H3, DRY_ELEMENT_TEMPERATURE in H5a, "
+                        "LAYER_CONDUCTION in H5b, SEDIMENT_EXCHANGE in "
+                        "H6b).");
+                }
+            }
+            continue;
+        }
+        if (sec.first != "HEAT_SOURCES") {
+            errors.push_back(
+                "model.heat: unknown section [" + sec.first +
+                "] (recognized: [HEAT_SOURCES], [HEAT_FLUXES], "
+                "[RADIATIVE_FLUXES], [SOLAR_RADIATION], [CLOUD_COVER], "
+                "[SEDIMENT_EXCHANGE]).");
+            continue;
+        }
+        for (const auto& line : sec.second) {
+            const auto toks = tokenize(line);
+            if (toks.size() < 3) {
+                errors.push_back(
+                    "[HEAT_SOURCES] expects '<source> <scope> [name] "
+                    "<degC>': '" + line + "'.");
+                continue;
+            }
+            const int src = source_of(upper(toks[0]));
+            if (src < 0) {
+                errors.push_back(
+                    "[HEAT_SOURCES] unknown source '" + toks[0] +
+                    "' (RAINFALL, DWF, GW, RDII, EXTERNAL_INFLOW, IFACE, "
+                    "INITIAL_STATE).");
+                continue;
+            }
+            const std::string scope = upper(toks[1]);
+
+            // Deferral surface — precise phase names, never silence.
+            if (scope == "SUBCATCH") {
+                errors.push_back(
+                    "[HEAT_SOURCES] SUBCATCH scope arrives with plan phase "
+                    "H5 (watershed temperature states).");
+                continue;
+            }
+            if (scope == "EDGE_BC") {
+                errors.push_back(
+                    "[HEAT_SOURCES] EDGE_BC scope arrives with phase T6 "
+                    "(2D transport).");
+                continue;
+            }
+            // Bind the value token only once the row is known to HAVE that
+            // column (A1a lesson: reading toks[3] before the arity check
+            // was an out-of-bounds read on a 3-token NODE row).
+            const bool has_name = (scope == "NODE");
+            const std::size_t vpos = has_name ? 3u : 2u;
+            if (toks.size() <= vpos) {
+                errors.push_back(
+                    "[HEAT_SOURCES] malformed row: '" + line + "'.");
+                continue;
+            }
+            const std::string& vtok = toks[vpos];
+            // TIMESERIES is checked BEFORE the exact-arity test: its
+            // spelling carries a series NAME after the keyword, so it has
+            // one column more than a constant row, and an arity-first test
+            // would report "malformed" for the documented spelling —
+            // making this deferral unreachable (the A1a defect).
+            if (upper(vtok).rfind("TIMESERIES", 0) == 0) {
+                errors.push_back(
+                    "[HEAT_SOURCES] TIMESERIES temperatures arrive with a "
+                    "later heat phase — H1 takes constant degC.");
+                continue;
+            }
+            if (toks.size() != vpos + 1) {
+                errors.push_back(
+                    "[HEAT_SOURCES] malformed row: '" + line + "'.");
+                continue;
+            }
+            double degc = 0.0;
+            if (!parse_celsius(vtok, degc)) {
+                errors.push_back(
+                    "[HEAT_SOURCES] '" + toks[0] + "': '" + vtok +
+                    "' is not a temperature in degC between -50 and 100.");
+                continue;
+            }
+
+            if (scope == "GLOBAL") {
+                ctx.heat_config.global_temp[src] = degc;
+                ctx.heat_config.configured_source[src] = true;
+            } else if (scope == "NODE") {
+                if (src != static_cast<int>(HeatSource::DWF) &&
+                    src != static_cast<int>(HeatSource::EXTERNAL_INFLOW)) {
+                    errors.push_back(
+                        "[HEAT_SOURCES] NODE scope applies to DWF and "
+                        "EXTERNAL_INFLOW in H1; '" + toks[0] +
+                        "' takes GLOBAL.");
+                    continue;
+                }
+                const int nd = ctx.node_names.find(toks[2]);
+                if (nd < 0) {
+                    errors.push_back(
+                        "[HEAT_SOURCES] unknown node '" + toks[2] + "'.");
+                    continue;
+                }
+                bool dup = false;
+                for (std::size_t i = 0;
+                     i < ctx.heat_config.node_over_source.size(); ++i)
+                    if (ctx.heat_config.node_over_source[i] == src &&
+                        ctx.heat_config.node_over_node[i] == nd) {
+                        errors.push_back(
+                            "[HEAT_SOURCES] duplicate NODE row for '" +
+                            toks[0] + "' at '" + toks[2] + "'.");
+                        dup = true;
+                        break;
+                    }
+                if (dup) continue;
+                ctx.heat_config.node_over_source.push_back(src);
+                ctx.heat_config.node_over_node.push_back(nd);
+                ctx.heat_config.node_over_temp.push_back(degc);
+            } else {
+                errors.push_back(
+                    "[HEAT_SOURCES] unknown scope '" + toks[1] +
+                    "' (GLOBAL or NODE in H1).");
+            }
+        }
+    }
+
+    // ---- H6a cross-section checks. These need every section parsed, so
+    //      they cannot live inside the loop above.
+    {
+        const auto& rc = ctx.heat_config.radiative;
+        const auto& sc = ctx.heat_config.solar;
+
+        // D-H6a / plan §2.5 trap 1. COMPUTED without coordinates must be an
+        // ERROR, never a default. `ClimateState::latitude` is the
+        // [TEMPERATURE] SNOWMELT field: it defaults to 0 and is written only
+        // by decks carrying that line, so borrowing it would silently model
+        // equatorial noon — a plausible wrong answer, which is the only kind
+        // that survives review.
+        if (rc.sw_mode == ShortwaveMode::COMPUTED) {
+            if (!sc.has_latitude || !sc.has_longitude)
+                errors.push_back(
+                    "[RADIATIVE_FLUXES] SHORTWAVE GLOBAL COMPUTED requires "
+                    "[SOLAR_RADIATION] LATITUDE and LONGITUDE. They are NOT "
+                    "taken from the [TEMPERATURE] SNOWMELT line: that "
+                    "latitude defaults to 0 and its longitude field is a "
+                    "solar-time correction in minutes, not a longitude "
+                    "(plan §2.5).");
+        } else if (ctx.heat_config.solar.has_latitude ||
+                   ctx.heat_config.solar.has_longitude) {
+            // Not an error — the section is harmless — but silence here is
+            // exactly the bypass lessons 10/20 are about: the user wrote
+            // coordinates and nothing reads them.
+            pending_warnings.push_back(
+                "[SOLAR_RADIATION] is configured but [RADIATIVE_FLUXES] "
+                "SHORTWAVE is not COMPUTED, so the site coordinates are "
+                "unused. Set SHORTWAVE GLOBAL COMPUTED to use them.");
+        }
+
+        // Double-counting: a measured pyranometer series already contains
+        // the clouds that were over it. Attenuating it again is a real
+        // modelling error, but it is not unambiguously one — a user may be
+        // scaling a clear-sky-corrected record on purpose — so it warns.
+        if (rc.sw_mode == ShortwaveMode::TIMESERIES &&
+            ctx.heat_config.cloud.configured) {
+            pending_warnings.push_back(
+                "[CLOUD_COVER] is applied on top of a measured SHORTWAVE "
+                "TIMESERIES. A measured record already contains its clouds, "
+                "so this attenuates them twice. Drop [CLOUD_COVER] unless the "
+                "series is explicitly clear-sky. (The longwave cloud "
+                "correction still applies either way.)");
+        }
+
+        // Coefficients with nothing to scale. Both cloud factors are
+        // identities at C = 0, so this section changes nothing.
+        if (ctx.heat_config.cloud.configured && !cloud_fraction_seen) {
+            pending_warnings.push_back(
+                "[CLOUD_COVER] sets coefficients but no FRACTION, so the "
+                "cloud fraction is 0 and both cloud corrections are the "
+                "identity — the section has no effect. Add 'FRACTION GLOBAL "
+                "<C>' or 'FRACTION GLOBAL TIMESERIES <name>'.");
+        }
+
+        // An omitted TIMEZONE is a legal 0 (UTC), and it is also the single
+        // largest error available in this module: it shifts the whole
+        // diurnal curve by up to 12 h, dwarfing the 0.1° position accuracy
+        // D-H6a-4 spends its argument on. Not an error — a deck really may
+        // mean UTC — but never silent.
+        if (rc.sw_mode == ShortwaveMode::COMPUTED && !sc.has_timezone) {
+            pending_warnings.push_back(
+                "[SOLAR_RADIATION] has no TIMEZONE, so local time is taken "
+                "as UTC. If the deck's clock is local, the computed solar "
+                "day is shifted by the site's offset — up to 12 hours, "
+                "which is larger than every other error in this module. "
+                "Add 'TIMEZONE GLOBAL <hours from UTC>'.");
+        }
+    }
+
+    if (errors.size() != errors_before) {
+        ctx.heat_config = HeatConfigData{};  // never half-apply
+        return;                              // ...and never half-warn either:
+                                             // pending_warnings dies here.
+    }
+    ctx.heat_config.configured = true;
+
+    // The parse stood, so its warnings are about a configuration that
+    // actually took effect.
+    for (auto& w : pending_warnings)
+        ctx.warnings.push_back(std::move(w));
+
+    // Silent-bypass enumeration (lessons 10/20): every configuration in
+    // which this table reaches nothing says so. (ON + IGNORE_QUALITY warns
+    // engine-level in SWMMEngine::open — it applies with or without this
+    // component.)
+    if (!ctx.options.heat_transport) {
+        ctx.warnings.push_back(
+            "A heat component is configured but [OPTIONS] HEAT_TRANSPORT is "
+            "OFF — no temperature is tracked this simulation. Set "
+            "HEAT_TRANSPORT ON.");
+    }
+}
+
+/**
+ * @brief IO3a: render `heat_config` back to `model.heat` text.
+ *
+ * @details Only what the model actually SET is emitted. A source at its 20 °C
+ *          default with `configured_source == false` produces no row, so a
+ *          save does not invent configuration the user never wrote — the
+ *          reason `configured_source` exists at all.
+ *
+ *          Sections are emitted in the parser's own recognized order so the
+ *          file reads the way a hand-written one does, and every value is
+ *          written in the units the parser reads (°C here; the radiative and
+ *          solar blocks are H6a's own and stay in their documented units).
+ *
+ *          **Declines by returning empty when nothing is configured.** An
+ *          empty return means "copy the original instead" — writing an empty
+ *          file over a config the model never touched would be the data loss
+ *          this hook exists to end, inverted.
+ */
+/// IO3b: the renderer covers every heat section, so the IO3a decline guard
+/// (`hasUnrenderableSections`) is DELETED rather than kept as a safety net —
+/// a decline that cannot be reached is dead code pretending to be one. What
+/// replaces its protection is STRUCTURAL: the static_asserts below break the
+/// build when any of the three config structs grows a field, so the renderer
+/// must be taught about it before the engine compiles again — the failure
+/// mode is a build error, never a silent data loss (IO3b handoff §3).
+/// The sizes are the LP64 layouts (doubles + int-sized enums/bools with
+/// standard padding), identical on arm64 and x86-64; a platform where they
+/// differ fails the build loudly, which is the safe direction.
+// PE2 bumped this from 72 with `landcover_temp`. The pin FIRED on that
+// change, which is what it is for — compiler-measured, not hand-computed.
+static_assert(sizeof(RadiativeConfig) == 80,
+              "RadiativeConfig changed: teach saveHeatConfig its new field, "
+              "then update this size pin");
+static_assert(sizeof(SolarConfig) == 88,
+              "SolarConfig changed: teach saveHeatConfig its new field, "
+              "then update this size pin");
+// H6b. Compiler-measured, not hand-computed — IO3b's record notes the first
+// hand computation was wrong twice, which is the whole point of asking.
+static_assert(sizeof(SedimentConfig) == 88,
+              "SedimentConfig changed: teach saveHeatConfig its new field, "
+              "then update this size pin");
+static_assert(sizeof(CloudConfig) == 40,
+              "CloudConfig changed: teach saveHeatConfig its new field, "
+              "then update this size pin");
+
+/**
+ * @brief PE2 — render the per-element override rows of one section.
+ *
+ * @details Emitted in PARSE ORDER, not sorted: a save/reopen/save cycle must
+ *          be byte-stable (the `3e87868e` gen2 == gen3 gate), and parse
+ *          order is stable by construction while any sort would have to
+ *          agree with itself across two different in-memory orderings.
+ *
+ *          Written in the SAME round as the parser, deliberately. IO3a
+ *          shipped a renderer that did not know about H6a's sections and
+ *          every radiative deck would have lost its configuration on first
+ *          save (lesson 201); a config surface and its serializer landing
+ *          together is the only shape in which that cannot recur.
+ */
+std::string renderOverrides(const SimulationContext& ctx, bool sediment) {
+    std::string out;
+    for (const auto& r : ctx.heat_config.overrides.rows) {
+        if (isSedimentAttr(r.attr) != sediment) continue;
+        const char* scope = (r.scope == HeatScope::TAG)  ? "TAG"
+                          : (r.scope == HeatScope::LINK) ? "LINK"
+                          : (r.scope == HeatScope::NODE) ? "NODE"
+                                                         : "GLOBAL";
+        out += std::string(attrKey(r.attr)) + " " + scope + " " + r.name +
+               " " + fmt_degc(r.value) + "\n";
+    }
+    return out;
+}
+
+std::string saveHeatConfig(const SimulationContext& ctx) {
+    const auto& cfg = ctx.heat_config;
+    std::string out;
+
+    // [HEAT_SOURCES] — GLOBAL rows for explicitly configured sources, then
+    // NODE overrides in table order.
+    std::string rows;
+    for (int s = 0; s < static_cast<int>(HeatSource::COUNT_); ++s) {
+        const auto us = static_cast<std::size_t>(s);
+        if (!cfg.configured_source[us]) continue;
+        rows += std::string(source_name(s)) + " GLOBAL " +
+                fmt_degc(cfg.global_temp[us]) + "\n";
+    }
+    for (std::size_t i = 0; i < cfg.node_over_source.size(); ++i) {
+        const int nd = cfg.node_over_node[i];
+        if (nd < 0 || nd >= ctx.n_nodes()) continue;  // stale index: skip
+        rows += std::string(source_name(cfg.node_over_source[i])) + " NODE " +
+                ctx.node_names.name_of(nd) + " " +
+                fmt_degc(cfg.node_over_temp[i]) + "\n";
+    }
+    if (!rows.empty()) out += "[HEAT_SOURCES]\n" + rows + "\n";
+
+    // [HEAT_FLUXES] — only the modules that are ON. An OFF module is the
+    // default, and emitting it would make every saved file look configured.
+    std::string flux;
+    if (cfg.surface_exchange)   flux += "SURFACE_EXCHANGE ON\n";
+    if (cfg.radiative_exchange) flux += "RADIATIVE_EXCHANGE ON\n";
+    if (cfg.layer_conduction)   flux += "LAYER_CONDUCTION ON\n";
+    if (cfg.sediment_exchange)  flux += "SEDIMENT_EXCHANGE ON\n";   // H6b
+    if (!flux.empty()) out += "[HEAT_FLUXES]\n" + flux + "\n";
+
+    // [RADIATIVE_FLUXES] — H3's scalars plus H6a's three SHORTWAVE
+    // spellings. Emission conditions are the exact comparisons the IO3a
+    // decline guard used: only what departs from a default-constructed
+    // config is written (lesson 196 — a serializer that writes every
+    // default makes every saved model look configured).
+    {
+        const RadiativeConfig rd{};
+        const auto& r = cfg.radiative;
+        std::string rad;
+        switch (r.sw_mode) {
+            case ShortwaveMode::CONSTANT:
+                if (r.shortwave_wm2 != rd.shortwave_wm2)
+                    rad += "SHORTWAVE GLOBAL " + fmt_degc(r.shortwave_wm2) +
+                           "\n";
+                break;
+            case ShortwaveMode::TIMESERIES:
+                // sw_ts_index indexes ctx.tables; the file needs the NAME —
+                // `id` is the string `by_name` is built from, so this IS the
+                // back-mapping (never search by_name for a matching index).
+                if (r.sw_ts_index >= 0 &&
+                    r.sw_ts_index < static_cast<int>(ctx.tables.count()))
+                    rad += "SHORTWAVE GLOBAL TIMESERIES " +
+                           ctx.tables[r.sw_ts_index].id + "\n";
+                break;
+            case ShortwaveMode::COMPUTED:
+                rad += "SHORTWAVE GLOBAL COMPUTED\n";
+                break;
+        }
+        if (r.albedo != rd.albedo)
+            rad += "ALBEDO GLOBAL " + fmt_degc(r.albedo) + "\n";
+        if (r.shade_factor != rd.shade_factor)
+            rad += "SHADE_FACTOR GLOBAL " + fmt_degc(r.shade_factor) + "\n";
+        if (r.sky_view != rd.sky_view)
+            rad += "SKY_VIEW GLOBAL " + fmt_degc(r.sky_view) + "\n";
+        if (r.emiss_water != rd.emiss_water)
+            rad += "EMISS_WATER GLOBAL " + fmt_degc(r.emiss_water) + "\n";
+        if (r.emiss_landcover != rd.emiss_landcover)
+            rad += "EMISS_LANDCOVER GLOBAL " + fmt_degc(r.emiss_landcover) +
+                   "\n";
+        if (r.atm_emiss_coeff != rd.atm_emiss_coeff)
+            rad += "ATM_EMISS_COEFF GLOBAL " + fmt_degc(r.atm_emiss_coeff) +
+                   "\n";
+        if (r.lw_reflection != rd.lw_reflection)
+            rad += "ATM_LW_REFLECTION GLOBAL " + fmt_degc(r.lw_reflection) +
+                   "\n";
+        // PE2: NaN means "use air temperature" and is the default, so the
+        // emission test is `is not NaN` rather than `differs from the
+        // default` — NaN != NaN would make a value-compare emit the key on
+        // every save, inventing configuration on models that set nothing.
+        if (!std::isnan(r.landcover_temp))
+            rad += "LANDCOVER_TEMPERATURE GLOBAL " +
+                   fmt_degc(r.landcover_temp) + "\n";
+        // PE2: per-element rows for THIS section, in parse order so a
+        // save/reopen/save cycle is byte-stable (the gen2 == gen3 gate).
+        rad += renderOverrides(ctx, /*sediment=*/false);
+        if (!rad.empty()) out += "[RADIATIVE_FLUXES]\n" + rad + "\n";
+    }
+
+    // [SOLAR_RADIATION] — the sited fields carry explicit has_* flags (0 is
+    // a legal latitude/timezone/elevation, so presence cannot ride on the
+    // value); the Bird atmosphere fields compare against the paper defaults.
+    {
+        const SolarConfig sd{};
+        const auto& sl = cfg.solar;
+        std::string sol;
+        if (sl.has_latitude)
+            sol += "LATITUDE GLOBAL " + fmt_degc(sl.latitude_deg) + "\n";
+        if (sl.has_longitude)
+            sol += "LONGITUDE GLOBAL " + fmt_degc(sl.longitude_deg) + "\n";
+        if (sl.has_timezone)
+            sol += "TIMEZONE GLOBAL " + fmt_degc(sl.timezone_hours) + "\n";
+        if (sl.has_elevation)
+            sol += "ELEVATION GLOBAL " + fmt_degc(sl.elevation_m) + "\n";
+        if (sl.aod380 != sd.aod380)
+            sol += "TURBIDITY_380 GLOBAL " + fmt_degc(sl.aod380) + "\n";
+        if (sl.aod500 != sd.aod500)
+            sol += "TURBIDITY_500 GLOBAL " + fmt_degc(sl.aod500) + "\n";
+        if (sl.precip_water_cm != sd.precip_water_cm)
+            sol += "PRECIP_WATER GLOBAL " + fmt_degc(sl.precip_water_cm) +
+                   "\n";
+        if (sl.ozone_cm != sd.ozone_cm)
+            sol += "OZONE GLOBAL " + fmt_degc(sl.ozone_cm) + "\n";
+        if (sl.ground_albedo != sd.ground_albedo)
+            sol += "GROUND_ALBEDO GLOBAL " + fmt_degc(sl.ground_albedo) +
+                   "\n";
+        if (!sol.empty()) out += "[SOLAR_RADIATION]\n" + sol + "\n";
+    }
+
+    // [CLOUD_COVER] — `configured` is user intent (the one per-section flag
+    // these structs have), so a configured section always emits its FRACTION
+    // anchor row, even at 0.0: a coefficients-only original canonicalises to
+    // an explicit FRACTION 0 with identical physics (both cloud factors are
+    // identities at C = 0) and the file stops warning about a fraction it
+    // now visibly carries.
+    if (cfg.cloud.configured) {
+        const CloudConfig cd{};
+        const auto& c = cfg.cloud;
+        std::string cl;
+        if (c.use_timeseries) {
+            if (c.ts_index >= 0 &&
+                c.ts_index < static_cast<int>(ctx.tables.count()))
+                cl += "FRACTION GLOBAL TIMESERIES " +
+                      ctx.tables[c.ts_index].id + "\n";
+        } else {
+            cl += "FRACTION GLOBAL " + fmt_degc(c.fraction) + "\n";
+        }
+        if (c.sw_atten_k != cd.sw_atten_k)
+            cl += "SW_ATTEN_K GLOBAL " + fmt_degc(c.sw_atten_k) + "\n";
+        if (c.sw_atten_n != cd.sw_atten_n)
+            cl += "SW_ATTEN_N GLOBAL " + fmt_degc(c.sw_atten_n) + "\n";
+        if (c.lw_cloud_k != cd.lw_cloud_k)
+            cl += "LW_CLOUD_K GLOBAL " + fmt_degc(c.lw_cloud_k) + "\n";
+        if (!cl.empty()) out += "[CLOUD_COVER]\n" + cl + "\n";
+    }
+
+    // [SEDIMENT_EXCHANGE] — H6b. Rendered in the SAME round that added the
+    // section, deliberately. IO3a shipped a renderer that did not know about
+    // H6a's sections and every radiative deck would have lost its
+    // configuration on first save (lesson 201); adding a config struct and
+    // its serializer together is the only shape in which that cannot recur.
+    {
+        const SedimentConfig sd{};
+        const auto& s = cfg.sediment;
+        std::string bed;
+        if (s.thermal_diffusivity != sd.thermal_diffusivity)
+            bed += "THERMAL_DIFFUSIVITY GLOBAL " +
+                   fmt_degc(s.thermal_diffusivity) + "\n";
+        if (s.solute_diffusivity != sd.solute_diffusivity)
+            bed += "SOLUTE_DIFFUSIVITY GLOBAL " +
+                   fmt_degc(s.solute_diffusivity) + "\n";
+        if (s.bed_thickness != sd.bed_thickness)
+            bed += "BED_THICKNESS GLOBAL " + fmt_degc(s.bed_thickness) + "\n";
+        if (s.ground_depth != sd.ground_depth)
+            bed += "GROUND_DEPTH GLOBAL " + fmt_degc(s.ground_depth) + "\n";
+        if (s.hyporheic_velocity != sd.hyporheic_velocity)
+            bed += "HYPORHEIC_VELOCITY GLOBAL " +
+                   fmt_degc(s.hyporheic_velocity) + "\n";
+        if (s.sed_density != sd.sed_density)
+            bed += "SEDIMENT_DENSITY GLOBAL " + fmt_degc(s.sed_density) + "\n";
+        if (s.sed_specific_heat != sd.sed_specific_heat)
+            bed += "SEDIMENT_SPECIFIC_HEAT GLOBAL " +
+                   fmt_degc(s.sed_specific_heat) + "\n";
+        // Both temperatures are emitted on `has_*`, not on a value
+        // comparison: 12 °C is a perfectly ordinary deliberate choice and
+        // the flags are the only record that the user made it. This is the
+        // `configured_source` distinction, one struct over.
+        if (s.has_ground_temp) {
+            if (s.ground_ts_index >= 0 &&
+                s.ground_ts_index < static_cast<int>(ctx.tables.count()))
+                bed += "GROUND_TEMPERATURE GLOBAL TIMESERIES " +
+                       ctx.tables[s.ground_ts_index].id + "\n";
+            else
+                bed += "GROUND_TEMPERATURE GLOBAL " +
+                       fmt_degc(s.ground_temp) + "\n";
+        }
+        if (s.has_initial_temp)
+            bed += "INITIAL_TEMPERATURE GLOBAL " +
+                   fmt_degc(s.initial_temp) + "\n";
+        bed += renderOverrides(ctx, /*sediment=*/true);
+        if (!bed.empty()) out += "[SEDIMENT_EXCHANGE]\n" + bed + "\n";
+    }
+
+    // Empty still means DECLINE (a model with no heat configuration at all
+    // keeps the copy fallback) — but with every section rendered above, a
+    // configured model never declines again: IO3b is what retired the
+    // step-3 loss for H6a-configured models.
+    return out;
+}
+
+}  // namespace
+
+void registerHeatComponent() {
+    components::ProcessComponentRegistry::instance().register_component(
+        kHeatId,
+        "Heat transport coordinator ([HEAT_SOURCES] inlet temperatures, "
+        "[HEAT_FLUXES] module toggles, [RADIATIVE_FLUXES] parameters, and "
+        "H6a's [SOLAR_RADIATION] + [CLOUD_COVER] shortwave forcing)",
+        [](SimulationContext& ctx, const ProcessComponentSpec& /*spec*/,
+           const components::ComponentConfigSections& config,
+           std::vector<std::string>& errors) {
+            applyHeatSections(ctx, config, errors);
+        },
+        [](const SimulationContext& ctx,
+           const ProcessComponentSpec& /*spec*/) -> std::string {
+            return saveHeatConfig(ctx);
+        });
+}
+
+}  // namespace openswmm::transport

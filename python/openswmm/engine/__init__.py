@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 openswmm.engine
 ===============
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 Cython bindings for the OpenSWMM Engine 6.0 C API.
 
@@ -58,6 +74,21 @@ The package is split by domain to mirror the C header organisation:
    * - :class:`Quality`
      - ``openswmm_quality.h``
      - Landuse, buildup, washoff, treatment
+   * - :class:`InitialQuality`
+     - ``openswmm_initial_quality.h``
+     - ``[INITIAL_QUALITY]`` per-element starting concentrations
+   * - :class:`Reactions`
+     - ``openswmm_reactions.h``
+     - Multi-species reaction system: species, coefficients, terms, expressions
+   * - :class:`Heat`
+     - ``openswmm_heat.h``
+     - Heat-transport fluxes, solar/cloud forcing, inlet temperatures
+   * - :class:`WaterAge`
+     - ``openswmm_water_age.h``
+     - ``[WATER_AGE_SOURCES]`` per-pathway source ages
+   * - :class:`ProcessComponents`
+     - ``openswmm_process_components.h``
+     - ``[PROCESS_COMPONENTS]`` registrations and config-file bindings
    * - :class:`Tables`
      - ``openswmm_tables.h``
      - Time series, curves, patterns
@@ -209,11 +240,29 @@ from ._output_reader import OutputReader
 # =============================================================================
 from ._pollutants import Pollutants
 from ._quality import Quality
+from ._initial_quality import InitialQuality, InitialQualityEntry
 from ._tables import Tables, Patterns
 from ._inflows import Inflows
 from ._controls import Controls
 from ._forcing import Forcing
 from ._climate import Climate
+
+# =============================================================================
+# Transport processes — heat, water age, reactions, process components
+# =============================================================================
+from ._heat import Heat, HeatNodeOverride
+from ._water_age import WaterAge, WaterAgeOverride
+from ._reactions import (
+    Reactions,
+    ReactionSpecies,
+    ReactionCoefficient,
+    ReactionTerm,
+    ReactionInitialEntry,
+    ReactionHydVar,
+    ReactionFunction,
+    ExpressionDiagnostic,
+)
+from ._process_components import ProcessComponents, ProcessComponent
 
 # =============================================================================
 # Spatial / infrastructure / 2D
@@ -225,7 +274,8 @@ from ._spatial import Spatial
 # Optional extensions (require specific build flags)
 # =============================================================================
 try:
-    from ._2d import Surface2D
+    from ._2d import (Surface2D, Infiltration2DView, Infil2DDefaults,
+                      Infil2DRow, Infil2DCell)
     HAS_2D = True
 except ImportError:
     HAS_2D = False
@@ -256,17 +306,22 @@ from ._enums import (
     # Water quality / LID
     ConcentrationUnits, BuildupFunc, WashoffFunc, LidType,
     # Hydrology parameters
-    AquiferParam,
+    AquiferParam, GwfType,
     # Output variables
     OutSubcatchVar, OutNodeVar, OutLinkVar, OutSystemVar,
     # Forcing & patterns
     ForcingMode, ForcingTarget, ForcingType, ForcingPersist, PatternType,
     # 2D surface routing
     SurfaceForcingMode, SurfaceBoundaryType,
+    SurfaceInfilMethod, SurfaceInfilDest,
     # Nodes / editing
     DividerType, RefType,
     # Tables / model files
     TableType, FilePathRole, UserFlagType,
+    # Transport processes — heat, water age, reactions
+    HeatFluxModule, HeatShortwaveMode, HeatRadiativeParam, HeatSolarParam,
+    HeatCloudParam, HeatSourceKind, WaterAgeSource,
+    ReactionScope, ReactionExprForm,
     # Mass-balance totals
     RunoffTotal, RoutingTotal,
 )
@@ -299,10 +354,18 @@ __all__ = [
     "HotStart", "MassBalance", "Statistics", "OutputReader",
     # --- Hydrology, water quality, and time-varying inputs ---
     "Pollutants", "Quality", "Tables", "Patterns", "Inflows", "Controls", "Forcing",
-    "Climate",
+    "Climate", "InitialQuality", "InitialQualityEntry",
+    # --- Transport processes — heat, water age, reactions ---
+    "Heat", "HeatNodeOverride",
+    "WaterAge", "WaterAgeOverride",
+    "Reactions", "ReactionSpecies", "ReactionCoefficient", "ReactionTerm",
+    "ReactionInitialEntry", "ReactionHydVar", "ReactionFunction",
+    "ExpressionDiagnostic",
+    "ProcessComponents", "ProcessComponent",
     # --- Spatial / infrastructure / 2D ---
     "Infrastructure", "Spatial",
     "Surface2D", "HAS_2D",
+    "Infiltration2DView", "Infil2DDefaults", "Infil2DRow", "Infil2DCell",
     # --- Optional extensions ---
     "HAS_GEOPACKAGE",
     # --- Enumerations: lifecycle / errors ---
@@ -316,15 +379,20 @@ __all__ = [
     # --- Enumerations: water quality / LID ---
     "ConcentrationUnits", "BuildupFunc", "WashoffFunc", "LidType",
     # --- Enumerations: hydrology parameters ---
-    "AquiferParam",
+    "AquiferParam", "GwfType",
     # --- Enumerations: output variables ---
     "OutSubcatchVar", "OutNodeVar", "OutLinkVar", "OutSystemVar",
     # --- Enumerations: forcing & patterns ---
     "ForcingMode", "ForcingTarget", "ForcingType", "ForcingPersist", "PatternType",
     # --- Enumerations: 2D surface routing ---
     "SurfaceForcingMode", "SurfaceBoundaryType",
+    "SurfaceInfilMethod", "SurfaceInfilDest",
     "DividerType", "RefType",
     "TableType", "FilePathRole", "UserFlagType",
+    # --- Enumerations: transport processes ---
+    "HeatFluxModule", "HeatShortwaveMode", "HeatRadiativeParam", "HeatSolarParam",
+    "HeatCloudParam", "HeatSourceKind", "WaterAgeSource",
+    "ReactionScope", "ReactionExprForm",
     # --- Enumerations: mass-balance totals ---
     "RunoffTotal", "RoutingTotal",
 ]

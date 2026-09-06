@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file Outfall.cpp
  * @brief Outfall boundary depths — matching legacy link_setOutfallDepth / outfall_setOutletDepth.
@@ -5,7 +21,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "Outfall.hpp"
@@ -14,6 +30,7 @@
 #include "../core/UnitConversion.hpp"
 #include "XSectBatch.hpp"
 #include "Link.hpp"
+#include "Transect.hpp"
 
 #include <cmath>
 #include <algorithm>
@@ -68,6 +85,26 @@ static XSectParams buildXSectParams(const SimulationContext& ctx, std::size_t uk
     xs.a_bot  = ctx.links.xsect_a_bot[uk];
     xs.s_bot  = ctx.links.xsect_s_bot[uk];
     xs.r_bot  = ctx.links.xsect_r_bot[uk];
+    // Tabulated shapes (IRREGULAR / CUSTOM / STREET) carry their A/R/W vs
+    // depth in per-link transect tables. Without them getAofS/getYofA/
+    // getYcrit return 0, so a NORMAL or FREE outfall on such a conduit sat
+    // at depth 0 while legacy computed a real normal/critical depth
+    // (customconduitshape D/S_Culvert1). Same wiring as DynamicWave's
+    // buildXSP.
+    const auto ls = ctx.links.xsect_shape[uk];
+    if (ls == XsectShape::IRREGULAR || ls == XsectShape::CUSTOM ||
+        ls == XsectShape::STREET_XSECT) {
+        const int ci = ctx.links.xsect_curve[uk];
+        if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.transect_tables.size()) {
+            const auto& td = ctx.transect_tables[static_cast<std::size_t>(ci)];
+            xs.transect          = ci;
+            xs.area_tbl          = td.area_tbl;
+            xs.hrad_tbl          = td.hrad_tbl;
+            xs.width_tbl         = td.width_tbl;
+            xs.area_lut          = &td.area_lut;
+            xs.transect_tbl_size = transect::N_TRANSECT_TBL;
+        }
+    }
     return xs;
 }
 

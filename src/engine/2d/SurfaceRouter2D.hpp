@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file SurfaceRouter2D.hpp
  * @brief Top-level orchestrator for the optional 2D surface routing module.
@@ -16,7 +32,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_SURFACE_ROUTER_HPP
@@ -28,10 +44,13 @@
 #include "data/BoundaryData.hpp"
 #include "data/PendingRows2D.hpp"
 #include "coupling/NodeCoupling.hpp"
+#include "infil/Infil2D.hpp"
 #include "mesh/RainfallInterpolator.hpp"
 
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
+#include <string>
 #include <vector>
 #ifdef OPENSWMM_HAS_2D
 #include "solver/ISurfaceSolver.hpp"
@@ -114,6 +133,35 @@ public:
     void prepareOneShotForcing(SimulationContext& ctx);
 
     /**
+     * @brief Flush the pending (partial) sync batch, if any.
+     *
+     * Closes the accumulated routing span with one co-advance so the 2D
+     * clock reaches the current routing time. A no-op under default
+     * per-routing-step coupling (the batch closes every step). Used before
+     * a report snapshot — so the report-time blend brackets the report
+     * instant — and before a one-shot forcing.
+     */
+    void flushPendingBatch(SimulationContext& ctx);
+
+    /// Report-time interpolation weight for the 2D snapshot blend:
+    /// f = (report_ms − window_old_ms)/(window_new_ms − window_old_ms),
+    /// clamped to [0,1]; returns 1.0 (pure current state) when no batch has
+    /// crossed a report instant yet. Unlike the 1D weight there is no legacy
+    /// bit pattern to reproduce, so the clamp simply absorbs ulp-level clock
+    /// skew between the router's and the engine's ms accumulators.
+    double reportWeight(double report_ms) const noexcept;
+
+    /// Cell depth (m) at the start of the sync batch that crossed the
+    /// current report instant (meaningful when reportWeight() < 1).
+    const std::vector<double>& reportOldDepth() const noexcept {
+        return report_old_depth_;
+    }
+    /// Cell head (m) at the start of that batch.
+    const std::vector<double>& reportOldHead() const noexcept {
+        return report_old_head_;
+    }
+
+    /**
      * @brief Finalize the 2D module at simulation end.
      *
      * Flushes any partial macro-step window (routing time accumulated since
@@ -126,6 +174,11 @@ public:
 
     /// Check if the 2D module is active.
     bool isActive() const noexcept { return active_; }
+
+    /// Thread-count advisories produced by initialize() (THREADS above the
+    /// machine limits, triangle gate reducing an explicit request). The engine
+    /// forwards them to the report warnings and the host warning callback.
+    const std::vector<std::string>& threadWarnings() const noexcept { return thread_warnings_; }
 
     /// Windowless-coupling stabilizer: per coupled node, the exchange head
     /// sensitivity G = Σ_points −∂Q/∂h_1d ≥ 0 converted to 1D units (ft³/s per
@@ -172,6 +225,59 @@ public:
     /// Access per-edge boundary-condition data (mutable, for forcing/parsing).
     BoundaryData& boundary() noexcept { return boundary_; }
 
+    /// Announce that a boundary slot's TYPE changed (the API BC-type setter),
+    /// so the compact non-WALL slot list the per-step boundary passes walk is
+    /// rebuilt before it is next used.
+    void invalidateBoundaryIndex() noexcept { bc_nonwall_dirty_ = true; }
+
+    /// Bring the render fields (vertex heads, output gradients, vertex render
+    /// depths) up to date with the current solver state if a batch has run
+    /// since they were last computed. The API getters that expose those fields
+    /// call this so a reader arriving between reports is never served a stale
+    /// field; it is a no-op at a report instant, where the refresh already ran.
+    void refreshRenderFieldsIfStale() {
+        if (render_dirty_) refreshRenderFields();
+    }
+
+    /**
+     * @brief Access the per-cell infiltration model (plan §5.5, track I).
+     *
+     * Mutable so SWMMEngine can publish it on `ctx.twod_io.infil` — the
+     * [2D_INFILTRATION*] section handlers and the InpWriter reach it there.
+     * The router owns the object, resolves it against the mesh in
+     * initialize(), and drives its INFIL_STEP cadence in coAdvanceStep().
+     */
+    Infil2D& infil() noexcept { return infil_; }
+    const Infil2D& infil() const noexcept { return infil_; }
+
+    /**
+     * @brief Ledger-consistent cumulative infiltrated depth per cell (m).
+     *
+     * @details Drains the SAME `SurfaceStateData::infil_applied` accumulator
+     *          that `MassBalance2D::infil_out` books — the depth the marcher
+     *          actually removed, summed as it was removed — so
+     *          `sum(infilCumulative()[i] * tri_area[i]) == infil_out` holds by
+     *          construction. Prefer this over `Infil2D::cumulative()`, which is
+     *          the unramped capacity the kernels offered and therefore exceeds
+     *          the applied loss on drying cells. Empty when no
+     *          `[2D_INFILTRATION*]` model resolved.
+     */
+    const std::vector<double>& infilCumulative() const noexcept {
+        return infil_cum_applied_;
+    }
+
+    /**
+     * @brief Ledger-consistent cumulative rainfall volume per cell (m³).
+     *
+     * @details Booked in accumulateMassBalance() from the SAME per-cell
+     *          rainfall term that feeds `MassBalance2D::rainfall_in`, so
+     *          `sum(rainCumulative()[i]) == rainfall_in` holds by construction.
+     *          Sized [n_triangles] from initialize(); zero-filled when no rain.
+     */
+    const std::vector<double>& rainCumulative() const noexcept {
+        return rain_cum_;
+    }
+
     /**
      * @brief Per-row buffer for `[2D_BOUNDARY_CONDITIONS]` parse output.
      *
@@ -183,6 +289,15 @@ public:
      * Hoisted to data/PendingRows2D.hpp; alias kept for call sites.
      */
     using PendingBoundaryRow = twoD::PendingBoundaryRow;
+    using PendingInitialQualityRow = twoD::PendingInitialQualityRow;
+    using PendingBoundaryQualityRow = twoD::PendingBoundaryQualityRow;
+    /// S1/S2: raw [2D_INITIAL_QUALITY] rows, resolved at initialize().
+    std::vector<PendingInitialQualityRow>& pendingInitialQualityRows() noexcept {
+        return pending_iq_rows_;
+    }
+    std::vector<PendingBoundaryQualityRow>& pendingBoundaryQualityRows() noexcept {
+        return pending_bq_rows_;
+    }
     std::vector<PendingBoundaryRow>& pendingBCRows() noexcept { return pending_bc_rows_; }
     const std::vector<PendingBoundaryRow>& pendingBCRows() const noexcept { return pending_bc_rows_; }
 
@@ -232,9 +347,33 @@ private:
     SurfaceStateData state_;
     SolverOptions2D  options_;
     BoundaryData     boundary_;
+    std::vector<std::string> thread_warnings_;   ///< See threadWarnings().
+
+    /// §5.5 track I — per-cell infiltration parameters, kernel state and the
+    /// held rates published into state_.infil_rate. Inert (no allocation, no
+    /// per-step work) until a [2D_INFILTRATION*] section resolves a model.
+    Infil2D infil_;
+
+    /// Sim time since the last Infil2D::updateRates call (D-I1 INFIL_STEP
+    /// cadence). Advanced on the routing/co-advance cadence, NEVER per
+    /// marcher substep.
+    double infil_elapsed_ = 0.0;
+
+    /// Per-cell APPLIED cumulative infiltrated depth (m) — see
+    /// infilCumulative(). Filled in accumulateMassBalance() by draining the
+    /// same SurfaceStateData::infil_applied accumulator that feeds
+    /// MassBalance2D::infil_out; empty when no [2D_INFILTRATION*] model
+    /// resolved.
+    std::vector<double> infil_cum_applied_;
+
+    /// Per-cell cumulative rainfall volume (m³) — see rainCumulative().
+    /// Filled in accumulateMassBalance() alongside MassBalance2D::rainfall_in.
+    std::vector<double> rain_cum_;
 
     /// V-E3 — parse-time scratch for [2D_BOUNDARY_CONDITIONS] rows.
     std::vector<PendingBoundaryRow> pending_bc_rows_;
+    std::vector<PendingInitialQualityRow> pending_iq_rows_;   ///< S1/S2
+    std::vector<PendingBoundaryQualityRow> pending_bq_rows_;  ///< S2
 
     /// §11A — parse-time scratch for [2D_EDGE_CONVEYANCE] rows.
     /// Drained in initialize() into mesh_.edge_conveyance after
@@ -246,9 +385,39 @@ private:
     /// Stable storage that state_.node_coupling points at; built once in
     /// initialize().
     std::vector<CouplingPoint> node_coupling_points_;
+    /// S4: published 1D node row values `[node * n_species + s]` (pollutant
+    /// conc, MSX conc, age, temperature), refreshed once per batch by
+    /// publishNodeRows(); state_.node_row_conc points here.
+    std::vector<double> node_row_conc_;
+    void publishNodeRows(const SimulationContext& ctx);
+    /// S4: aging of the age row and the per-cell reaction stage (pollutant
+    /// kdecay + MSX via reactArdStage), Lie-split after each advance.
+    void applyAgingAndReactions(SimulationContext& ctx, double dt);
+    std::vector<double> react_phi_, react_a_, react_dx_;   ///< scratch
 
-    /// Sim time since the last co-advance output refresh (report-scale cadence).
+    /// Sim time since the last statistics/continuity sample (30 s cadence).
     double co_refresh_elapsed_ = 0.0;
+    /// Sim time since the last RENDER-field refresh (vertex heads, gradients,
+    /// render depths). Those fields have exactly two consumers — the output
+    /// snapshot and the bulk API getters — so they are refreshed on the
+    /// REPORT_STEP grid, and on demand for an API reader that arrives between
+    /// reports (render_dirty_).
+    double co_render_elapsed_ = 0.0;
+    bool   render_dirty_      = false;
+    /// Per-cell free-surface scratch for the render-depth reconstruction,
+    /// held across refreshes so the pass allocates nothing.
+    std::vector<double> render_eta_;
+    /// Flat mesh edge slots (3*i+e) carrying a non-WALL boundary condition.
+    /// The BC TYPE of a slot is fixed once the model is resolved, so the list
+    /// is built once in initialize(); the per-step boundary ledger and the
+    /// per-step TS/rating resolve walk it instead of all 3*n_triangles slots.
+    std::vector<int> bc_nonwall_slots_;
+    /// Set whenever a slot's BC TYPE changes (parse-time drain, API setter);
+    /// bc_nonwall_slots_ is rebuilt on the next resolve.
+    bool bc_nonwall_dirty_ = true;
+    /// Per-node dedupe for the coupling term of the per-batch mass balance;
+    /// a member so the batch does not build and destroy a hash set each time.
+    std::unordered_set<int> mb_seen_nodes_;
     /// Sim time since the last rainfall/forcing refresh (gage-scale cadence).
     double co_forcing_elapsed_ = 0.0;
     bool   co_forcing_first_   = true;
@@ -257,11 +426,30 @@ private:
     /// mass balance + output refresh. Replaces the whole window state machine
     /// on the marcher path.
     void coAdvanceStep(SimulationContext& ctx, double dt, double t);
+    /// True when the batch about to run (span @p dt) is the one that closes
+    /// the current output-refresh window — decided BEFORE the advance so the
+    /// continuity snapshot is only taken on batches that will use it.
+    bool refreshDue(const SimulationContext& ctx, double dt) const;
+    /// Recompute the render fields from the current state.
+    void refreshRenderFields();
 
     bool   active_           = false;
     double sim_time_         = 0.0;
     /// Routing time accumulated since the last co-advance sync batch.
     double pending_dt_       = 0.0;
+
+    /// Report-time blend support (the 2D analogue of the 1D old/new report
+    /// interpolation): cell depth/head captured at the START of the sync
+    /// batch that crosses the next report instant, plus that batch's ms
+    /// window [old, new] kept on the same `+= 1000*dt` recurrence as
+    /// ctx.elapsed_ms. fillSurfaceSnapshot blends old→current with
+    /// reportWeight() so the snapshot's depth/head are truthful at the
+    /// report datestamp instead of lagging at the window end.
+    std::vector<double> report_old_depth_;
+    std::vector<double> report_old_head_;
+    double report_window_old_ms_ = 0.0;
+    double report_window_new_ms_ = 0.0;
+    bool   report_old_valid_     = false;
 
     /// OPENSWMM_2D_HEAD_RAMP experiment: per-coupling-point 1D head at the
     /// previous batch (2D metre frame) + that batch's span, for the
@@ -298,13 +486,21 @@ private:
     /// then), not at parse time.
     bool boundary_names_resolved_ = false;
 
-    /// Project-display-units → SI factor for SPECIFIED_STAGE boundary heads
-    /// (0.3048 for US FLOW_UNITS with a non-SI mesh file, else 1.0). Set in
-    /// initialize() alongside the mesh scaling; applied once to constant
-    /// heads after drainPendingRows() and at every TS lookup in
-    /// resolveBoundaryValues(). Also converts the SI head back to display
-    /// units for rating-curve stage-axis queries.
+    /// Mesh-file-units → SI factor for CONSTANT SPECIFIED_STAGE heads
+    /// (0.3048 for US FLOW_UNITS with a non-SI mesh file, else 1.0). Constant
+    /// heads live in the mesh sections and share the mesh's vertical datum
+    /// and units, so they follow the mesh scaling exactly (including the
+    /// `;; UNITS: SI (m)` header). Applied once after drainPendingRows().
     double bc_stage_scale_ = 1.0;
+
+    /// Project-display-units → SI factor for TIME-SERIES / rating-curve
+    /// stage values (0.3048 for US FLOW_UNITS, else 1.0). [TIMESERIES] and
+    /// [CURVES] tables are 1D project data authored in display units
+    /// regardless of how the mesh file is tagged, so this is driven by
+    /// FLOW_UNITS alone (like bc_flow_scale_) — NOT by the mesh header.
+    /// Applied at every lookup in resolveBoundaryValues(); also converts the
+    /// SI head back to display units for rating-curve stage-axis queries.
+    double bc_stage_ts_scale_ = 1.0;
 
     /// Display flow units → m³/s factor for SPECIFIED_FLOW / TS_FLOW /
     /// RATING_CURVE per-metre discharges (from FLOW_UNITS; 1.0 for CMS).
@@ -340,7 +536,8 @@ private:
 
     /// Accumulate the global 2D mass-balance terms for one executed step
     /// into ctx.mass_balance_2d (rainfall, coupling, outfall, boundary,
-    /// latest storage) and the evaporation loss into state_.evap_loss_total.
+    /// infiltration, latest storage) and the evaporation loss into
+    /// state_.evap_loss_total.
     /// All terms in the 2D solver's SI internal units (m³).
     void accumulateMassBalance(SimulationContext& ctx, double dt);
 };
