@@ -893,10 +893,13 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
                                 head(i), (za < zb) ? za : zb,
                                 (za < zb) ? zb : za);
                         }
-                        if (S > 0.0 && h_out > 0.0 && n > 0.0) {
+                        // Signed slope, as the two CPU marchers: positive
+                        // drains the domain, negative feeds it.
+                        if (S != 0.0 && h_out > 0.0 && n > 0.0) {
+                            const double sgnS = (S > 0.0) ? 1.0 : -1.0;
                             const double h53 =
                                 h_out * std::cbrt(h_out * h_out);
-                            f = -(h53 * std::sqrt(S) / n) * L;
+                            f = -sgnS * (h53 * std::sqrt(S < 0.0 ? -S : S) / n) * L;
                         }
                     } else if (ty == bt_flow || ty == bt_rating) {
                         f = -bc_flow(kk) * L;

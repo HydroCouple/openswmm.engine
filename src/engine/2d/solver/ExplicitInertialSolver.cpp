@@ -1782,12 +1782,19 @@ double ExplicitInertialSolver::boundaryFluxSwe(std::size_t k, int i, double dt_c
             // per-metre outflow q = h^{5/3}·sqrt(S)/n. Under FULL_SWE this used
             // to be a bare zero-gradient ghost, i.e. the bed slope the modeller
             // set on the edge did nothing.
+            // The slope is SIGNED: positive falls away from the domain and
+            // drains it (unchanged), negative falls toward it and feeds it.
+            // A negative slope cannot bootstrap a DRY cell — the law conveys
+            // with the interior depth, and h_i = 0 carries nothing; use a
+            // SPECIFIED_FLOW edge for dry-bed inflow, which reconstructs the
+            // critical depth of its discharge.
             const double S = state_->boundary->edge_bed_slope[idx];
             const double n_man = mesh_->mannings_n[i];
             prescribed_mass = true;
-            if (S > 0.0 && h_i > 0.0 && n_man > 0.0) {
+            if (S != 0.0 && h_i > 0.0 && n_man > 0.0) {
+                const double sgnS = (S > 0.0) ? 1.0 : -1.0;
                 const double h53 = h_i * std::cbrt(h_i * h_i);
-                q_prescribed = h53 * std::sqrt(S) / n_man;       // outward +
+                q_prescribed = sgnS * h53 * std::sqrt(std::fabs(S)) / n_man; // outward +
                 un_g = q_prescribed / h_i;
                 ut_g = u_t;
             } else {

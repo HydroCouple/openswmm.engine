@@ -103,9 +103,18 @@ inline double boundaryEdgeFlux(const MeshData& mesh, const SurfaceStateData& sta
         case BoundaryType::WALL:
             return 0.0;
         case BoundaryType::NORMAL_FLOW: {
-            // Manning normal-flow outlet: per-metre outflow q = (1/n)·h^(5/3)·√S.
+            // Manning normal-flow boundary: per-metre discharge
+            // q = sign(S)·(1/n)·h^(5/3)·√|S|.
+            //
+            // The slope is SIGNED. A positive slope falls away from the
+            // domain and drains it (the historical behaviour, unchanged); a
+            // negative slope falls toward the domain and feeds it. Before
+            // this, S <= 0 conveyed nothing, so the only way to drive inflow
+            // was a SPECIFIED_FLOW edge with a negative discharge.
             const double S = b->edge_bed_slope[idx];
-            if (S <= 0.0 || depth <= 0.0 || n <= 0.0) return 0.0;
+            if (S == 0.0 || depth <= 0.0 || n <= 0.0) return 0.0;
+            const double sgnS = (S > 0.0) ? 1.0 : -1.0;
+            const double absS = std::fabs(S);
             // §VFR_FACE: convey with the depth AT the boundary edge (Eq. 14
             // from the cell's free surface) instead of the cell mean, so a
             // cell whose water pools away from the outlet edge does not leak.
@@ -117,7 +126,7 @@ inline double boundaryEdgeFlux(const MeshData& mesh, const SurfaceStateData& sta
                 if (h_out <= 0.0) return 0.0;
             }
             const double h53 = h_out * std::cbrt(h_out * h_out);
-            return -(h53 * std::sqrt(S) / n) * L;
+            return -sgnS * (h53 * std::sqrt(absS) / n) * L;
         }
         case BoundaryType::SPECIFIED_FLOW:
         case BoundaryType::RATING_CURVE:
