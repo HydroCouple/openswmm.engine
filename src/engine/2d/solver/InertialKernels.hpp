@@ -151,6 +151,31 @@ OPENSWMM_KERNEL_FN double volumeFromEtaQuadScalar(double area, double cz,
     return (d > 0.0) ? area * d : 0.0;
 }
 
+#if defined(__GNUC__) || defined(__clang__)
+#define OPENSWMM_2D_NOINLINE __attribute__((noinline))
+#elif defined(_MSC_VER)
+#define OPENSWMM_2D_NOINLINE __declspec(noinline)
+#else
+#define OPENSWMM_2D_NOINLINE
+#endif
+
+/// Quad (B&S 2007 two-plane) VFR closure, kept OUT OF LINE on purpose: its
+/// safeguarded Newton (QuadVfr.hpp) is large, and inlining it into
+/// cellEtaDepth made GCC stop inlining cellEtaDepth itself into the cell
+/// kernels — a call per cell per firing on every mesh, quads or not
+/// (2D_PERF_REGRESSION_DIAGNOSIS: measured +30 % on Bellinge LI, profile
+/// showed cellEtaDepth as a 10 M-call function that used to be inlined).
+OPENSWMM_2D_NOINLINE inline void cellEtaDepthQuad(const MeshData& m,
+                                                  const SolverOptions2D& o,
+                                                  int i, double V, double& eta,
+                                                  double& depth) noexcept {
+    etaDepthQuadScalar(m.tri_area[i], m.tri_cz[i],
+                       &m.quad_vfr_z[static_cast<std::size_t>(i) * kQuadVfrZ],
+                       m.quad_vfr_a[static_cast<std::size_t>(i) * 2],
+                       m.quad_vfr_a[static_cast<std::size_t>(i) * 2 + 1],
+                       true, o.vfr_min_wet_frac, V, eta, depth);
+}
+
 /// Volume → (η, depth) closure — the SAME semantics as the CVODE/ARKODE
 /// reconstructFromVolume: depth = max(V,0)/A; FLAT η = z_c + depth, VFR η from
 /// the Begnudelli–Sanders planar-bed relation (ε-regularized) for triangles
@@ -167,11 +192,7 @@ inline void cellEtaDepth(const MeshData& m, const SolverOptions2D& o,
         return;
     }
     if (m.cell_nv[static_cast<std::size_t>(i)] == 4) {
-        etaDepthQuadScalar(m.tri_area[i], m.tri_cz[i],
-                           &m.quad_vfr_z[static_cast<std::size_t>(i) * kQuadVfrZ],
-                           m.quad_vfr_a[static_cast<std::size_t>(i) * 2],
-                           m.quad_vfr_a[static_cast<std::size_t>(i) * 2 + 1],
-                           true, o.vfr_min_wet_frac, V, eta, depth);
+        cellEtaDepthQuad(m, o, i, V, eta, depth);
         return;
     }
     etaDepthScalar(m.tri_area[i], m.tri_cz[i],

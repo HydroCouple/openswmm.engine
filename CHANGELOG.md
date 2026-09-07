@@ -23,6 +23,23 @@ retroactive.
 
 ### Fixed
 
+- **2D marcher performance regression after the tri-quad / FULL_SWE work** (`plans/2D_PERF_REGRESSION_DIAGNOSIS_2026-09-07.md`).
+  LOCAL_INERTIAL results are byte-identical before and after; measured on the Bellinge storm slice the
+  LI cell pass had grown ~17 % and start-up ~0.3 s. Fixes: `MeshData::n_quads()` (an O(n_cells) scan) was
+  re-run at the top of every face-tier fire — now resolved once in `initialize()`; the FULL_SWE momentum
+  code is compiled out of the LI/DW cell kernel (`fireCellsImpl<bool>`), and the quad VFR Newton is kept
+  out of line so `cellEtaDepth` inlines into the cell kernels again; species booking is skipped without
+  species; `buildCouplingPoints` uses a vertex→cell map instead of an O(n_couplings × n_cells) scan.
+  FULL_SWE / DIFFUSIVE_WAVE: the front-rebuild halo and frontier sweeps are cell-parallel instead of
+  serial edge passes (the tier pull-down stays serial — Gauss-Seidel propagates further per pass than a
+  Jacobi form, and the difference moves DIFFUSIVE_WAVE results); `FRONT_REBUILD AUTO` is on for FULL_SWE
+  only (a diffusive front never breaches the 1-ring halo within the 4-cycle cadence) — a DIFFUSIVE_WAVE
+  deck that wants the old cadence sets `FRONT_REBUILD YES` and is byte-identical again; dry-dry faces
+  leave the FULL_SWE face pass
+  early; WALL mirror fluxes come from a per-cell CSR built once instead of a neighbour scan on every wet
+  cell; the RK2 step allocates nothing and averages in parallel; the diffusive law reads a precomputed
+  `n_face`. `THREADS 0` now applies the Apple P-core clamp to the 2D marcher as it already did to dynamic
+  wave. Nothing changes for the Kokkos plugin (still all-triangle LOCAL_INERTIAL only).
 - **2D `FULL_SWE`: a prescribed-discharge boundary now delivers exactly what it prescribes.** The
   ghost-cell Riemann boundary returned the Riemann solver's own mass flux — a wave-speed-weighted
   blend of the interior and prescribed states — so a `SPECIFIED_FLOW` / `RATING_CURVE` inlet

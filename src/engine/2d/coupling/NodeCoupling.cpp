@@ -375,6 +375,23 @@ std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh,
 
     // Vertex-to-node couplings
     int nv = mesh.n_vertices();
+    // First cell (lowest index) touching each vertex, built once in
+    // O(n_cells·nv). The per-coupling scan of every cell this replaces was
+    // O(n_couplings × n_cells): 0.05 → 0.36 s of the Bellinge start-up after
+    // the nv-generic rewrite (2D_PERF_REGRESSION_DIAGNOSIS). Same answer:
+    // the lowest cell index containing the vertex.
+    std::vector<int> first_cell_of_vertex(static_cast<std::size_t>(nv), -1);
+    {
+        const int nt_all = mesh.n_triangles();
+        for (int t = 0; t < nt_all; ++t) {
+            const int nvc = mesh.cell_vertex_count(t);
+            for (int k = 0; k < nvc; ++k) {
+                const int vv = mesh.cell_vertex(t, k);
+                if (vv >= 0 && vv < nv && first_cell_of_vertex[static_cast<std::size_t>(vv)] < 0)
+                    first_cell_of_vertex[static_cast<std::size_t>(vv)] = t;
+            }
+        }
+    }
     for (int v = 0; v < nv; ++v) {
         int node_idx = mesh.vert_coupled_node[v];
         if (node_idx < 0) continue;
@@ -390,14 +407,7 @@ std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh,
 
         // Find the triangle that contains this vertex (use first one)
         // The coupling flux is distributed to triangles sharing this vertex
-        cp.cell_idx = -1;
-        int nt = mesh.n_triangles();
-        for (int t = 0; t < nt && cp.cell_idx < 0; ++t) {
-            const int nvc = mesh.cell_vertex_count(t);
-            for (int k = 0; k < nvc; ++k) {
-                if (mesh.cell_vertex(t, k) == v) { cp.cell_idx = t; break; }
-            }
-        }
+        cp.cell_idx = first_cell_of_vertex[static_cast<std::size_t>(v)];
         if (cp.cell_idx < 0) continue;
 
         auto ui = static_cast<std::size_t>(node_idx);

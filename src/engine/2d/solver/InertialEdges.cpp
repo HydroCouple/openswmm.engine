@@ -22,7 +22,7 @@ void InertialEdges::build(const MeshData& mesh) {
     ze_lo.clear(); ze_hi.clear();
     slotL.clear(); slotR.clear();
     nx.clear(); ny.clear(); mx.clear(); my.clear();
-    inv_dx_normal.clear(); n2_face.clear(); cell_lchar.clear();
+    inv_dx_normal.clear(); n2_face.clear(); n_face.clear(); cell_lchar.clear();
     cell_lpos.clear();
 
     // slot_edge[t][e] = unique-edge id incident to (t, local edge e), or −1 for
@@ -89,6 +89,7 @@ void InertialEdges::build(const MeshData& mesh) {
             {
                 const double nf = 0.5 * (mesh.mannings_n[t] + mesh.mannings_n[nb]);
                 n2_face.push_back(nf * nf);
+                n_face.push_back(nf);
             }
         }
     }

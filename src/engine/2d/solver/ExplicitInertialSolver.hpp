@@ -102,6 +102,9 @@ private:
     // tier0 = this firing carries the tier-0 cadence work (boundary edges and
     // the live junction exchange), which fires once per finest substep.
     void fireCells(const std::vector<int>& cells, double dt_c, bool tier0);
+    /// Closure-specialised body of fireCells (kSwe = FULL_SWE momentum update).
+    template <bool kSwe>
+    void fireCellsImpl(const std::vector<int>& cells, double dt_c, bool tier0);
     // One halving-order macro cycle of nsub base substeps: tier k fires every
     // 2^k substeps.
     void runMacroCycle(double dt0, int nsub);
@@ -125,6 +128,14 @@ private:
     // (tiers, active sets, positivity, coupling, transport) is shared.
     // -----------------------------------------------------------------------
     Momentum2D mode_ = Momentum2D::LOCAL_INERTIAL;
+    /// Mesh carries at least one quad (2D_PERF_REGRESSION_DIAGNOSIS §2 F1):
+    /// resolved ONCE in initialize(). MeshData::n_quads() is an O(n_cells)
+    /// scan and was being re-run at the top of every face-tier fire.
+    bool       has_quads_ = false;
+    /// FULL_SWE: CSR of WALL boundary slots per cell (wall_ptr_[i] ..
+    /// wall_ptr_[i+1]) so the mirror-flux booking touches only the perimeter
+    /// cells that have one (F5); every other cell's row is empty.
+    std::vector<int>     wall_ptr_, wall_slot_;
     /// FULL_SWE momentum accumulators per face side (m⁴/s = m²·m²/s): the
     /// x/y momentum the face booked for cL / cR, gathered and cleared by the
     /// cell exactly like facc_L_/facc_R_ (same writer, same cadence).
@@ -139,6 +150,9 @@ private:
     bool                 second_order_ = false;
     std::vector<double>  gex_, gey_, gux_, guy_, gvx_, gvy_;
     std::vector<double>  rk_v0_, rk_qx0_, rk_qy0_;
+    /// Stage-0 copies of the per-advance ledgers (F6): members so the RK2
+    /// step allocates nothing.
+    std::vector<double>  rk_inf0_, rk_bc0_, rk_ex0_, rk_drawn0_;
     void computeLimitedGradientsSwe();
     /// One SSP-RK2 (Heun) step of length dt over the active lists: two
     /// forward-Euler substeps averaged with the start state; the ledgers

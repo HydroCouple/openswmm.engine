@@ -150,6 +150,14 @@ int dwThreads(int requested, int n_conduits, std::vector<std::string>* warnings)
 
 int twoDThreads(int requested, int n_triangles, std::vector<std::string>* warnings) {
     int nt = resolveRequested(requested, "2D surface", warnings);
+    // Auto only: the same Apple Silicon performance-core clamp dwThreads
+    // applies. The marcher forks 2·(2^K−1) parallel regions per macro cycle
+    // (30 at LTS_TIERS 4), and a team member on an efficiency core turns each
+    // barrier into a straggler wait. Leave two P-cores for the OS / IO thread.
+    if (requested == 0 && nt > 1) {
+        const int pcores = perfCores();
+        if (pcores > 2 && nt > pcores - 2) nt = pcores - 2;
+    }
     if (n_triangles < 4 * nt) {
         if (requested > 0 && nt > 1 && warnings) {
             char buf[256];

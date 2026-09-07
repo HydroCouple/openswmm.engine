@@ -120,11 +120,38 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     } else if (mode_ == Momentum2D::DIFFUSIVE_WAVE) {
         dw_slope_.assign(static_cast<std::size_t>(nt), 0.0);
     }
+    // FRONT_REBUILD AUTO: on for FULL_SWE only. A Godunov front travels
+    // ~2√(gh) and can cross the 1-ring halo inside the 4-cycle cadence; a
+    // diffusive-wave front cannot (its Δx²-bounded step moves it a fraction
+    // of a cell per cycle), so DIFFUSIVE_WAVE keeps LI's cheap cadence
+    // (2D_PERF_REGRESSION_DIAGNOSIS §4 fix 3).
     front_rebuild_ = (opts.front_rebuild < 0)
-        ? (mode_ != Momentum2D::LOCAL_INERTIAL)
+        ? (mode_ == Momentum2D::FULL_SWE)
         : (opts.front_rebuild != 0);
     frontier_.assign(front_rebuild_ ? static_cast<std::size_t>(nt) : 0, 0);
     front_breach_ = false;
+    // Resolved once: MeshData::n_quads() is an O(n_cells) scan (F1).
+    has_quads_ = mesh.n_quads() > 0;
+    // FULL_SWE: WALL boundary slots per cell, CSR (F5). Slot order within a
+    // cell is ascending k, the order the per-cell scan used to visit them.
+    wall_ptr_.clear(); wall_slot_.clear();
+    if (mode_ == Momentum2D::FULL_SWE) {
+        wall_ptr_.reserve(static_cast<std::size_t>(nt) + 1);
+        wall_ptr_.push_back(0);
+        for (int i = 0; i < nt; ++i) {
+            const int nvc = mesh.cell_vertex_count(i);
+            for (int k2 = 0; k2 < nvc; ++k2) {
+                if (mesh.cell_neighbour(i, k2) >= 0) continue;
+                const int slot = MeshData::slot(i, k2);
+                if (state.boundary &&
+                    static_cast<BoundaryType>(state.boundary->edge_bc_type[slot]) !=
+                        BoundaryType::WALL)
+                    continue;
+                wall_slot_.push_back(slot);
+            }
+            wall_ptr_.push_back(static_cast<int>(wall_slot_.size()));
+        }
+    }
     // S1: species accumulators, sized only when transport is live so a
     // hydrodynamics-only model allocates nothing here.
     if (state.transport.active()) {
@@ -551,12 +578,19 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     // several rings. Widen the halo so the front never runs out of active
     // receiving cells before the breach-triggered rebuild lands.
     if (front_rebuild_) {
+        // Cell-parallel Jacobi rings (each thread writes only its own cell,
+        // reading the previous ring's copy): the same set as the serial
+        // edge walk produced, without the O(n_edges) serial passes.
         for (int ring = 1; ring < kFrontHaloRings; ++ring) {
             rebuild_seed_ = cell_active_;
-            for (int e = 0; e < edges_.ne; ++e) {
-                const int a = edges_.cL[e], b = edges_.cR[e];
-                if (rebuild_seed_[a] && !rebuild_seed_[b]) cell_active_[b] = 1;
-                else if (rebuild_seed_[b] && !rebuild_seed_[a]) cell_active_[a] = 1;
+#pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
+            for (int i = 0; i < nt; ++i) {
+                if (rebuild_seed_[i]) continue;
+                const int nvc = mesh_->cell_vertex_count(i);
+                for (int k2 = 0; k2 < nvc; ++k2) {
+                    const int j = mesh_->cell_neighbour(i, k2);
+                    if (j >= 0 && rebuild_seed_[j]) { cell_active_[i] = 1; break; }
+                }
             }
         }
     }
@@ -565,11 +599,17 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
         if (cell_active_[i]) active_cells_.push_back(i);
     if (front_rebuild_) {
         // Outer ring of the halo: an active cell with an inactive neighbour.
-        std::fill(frontier_.begin(), frontier_.end(), 0);
-        for (int e = 0; e < edges_.ne; ++e) {
-            const int a = edges_.cL[e], b = edges_.cR[e];
-            if (cell_active_[a] != cell_active_[b])
-                frontier_[cell_active_[a] ? a : b] = 1;
+#pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
+        for (int i = 0; i < nt; ++i) {
+            uint8_t f = 0;
+            if (cell_active_[i]) {
+                const int nvc = mesh_->cell_vertex_count(i);
+                for (int k2 = 0; k2 < nvc; ++k2) {
+                    const int j = mesh_->cell_neighbour(i, k2);
+                    if (j >= 0 && !cell_active_[j]) { f = 1; break; }
+                }
+            }
+            frontier_[i] = f;
         }
         front_breach_ = false;
     }
@@ -650,6 +690,16 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
         // regardless of the halo width. Pull every dry active cell down to
         // the finest tier among its active neighbours, propagated across the
         // halo rings, so the receiving cells update at the front's cadence.
+        // Kept SERIAL (Gauss-Seidel over the edges) on purpose. The halo and
+        // frontier sweeps above are exact Jacobi rewrites of their edge loops,
+        // but this one is not: Gauss-Seidel propagates a pulled-down tier
+        // several rings within a single pass, so a Jacobi form reaches a
+        // different fixed point inside the kFrontHaloRings budget. Measured on
+        // the Bellinge 30-min slice, that changed DIFFUSIVE_WAVE materially
+        // (rainfall inflow +1.5 %, 1D→2D spill +165 %) and shifted the FULL_SWE
+        // LTS occupancy census, for ~4 % of the FULL_SWE deck time and nothing
+        // on LOCAL_INERTIAL or DIFFUSIVE_WAVE. It is O(n_edges) once per
+        // rebuild, not per firing.
         for (int ring = 0; ring < kFrontHaloRings; ++ring) {
             bool changed = false;
             for (int e = 0; e < edges_.ne; ++e) {
@@ -770,8 +820,10 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces,
     // meshes keep the historical β/3 exactly.
     const double beta3 = opts_->exchange_beta / 3.0;
     const double beta4 = opts_->exchange_beta / 4.0;
-    // All-triangle meshes skip the per-face cell_nv load entirely.
-    const bool   has_quads = mesh_->n_quads() > 0;
+    // All-triangle meshes skip the per-face cell_nv load entirely (resolved
+    // once in initialize(): the scan is O(n_cells)).
+    const bool   has_quads = has_quads_;
+    const bool   species   = !sacc_L_.empty();
     // VFR_FACE: block/convey at the shared edge's TRUE crest via the B&S
     // Eq. 14 wetted-edge depth; MEAN keeps the centroid zface bit-identical.
     const bool vfr_face =
@@ -845,7 +897,7 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces,
         facc_L_[e] -= dM;
         facc_R_[e] += dM;
 
-        bookFaceSpecies(e, a, b, dM, hf, dt_f, global_step);
+        if (species) bookFaceSpecies(e, a, b, dM, hf, dt_f, global_step);
     }
     face_passes_ += na;
     accumulators_pending_ = true;
@@ -867,6 +919,8 @@ void ExplicitInertialSolver::fireFacesSwe(const std::vector<int>& faces,
     static const bool muscl_off = std::getenv("OPENSWMM_2D_MUSCL_OFF") != nullptr;
     if (second_order_) computeLimitedGradientsSwe();
     const bool so = second_order_ && !muscl_off;
+    const bool species = !sacc_L_.empty();
+    const bool has_quads = has_quads_;
 
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int k = 0; k < na; ++k) {
@@ -903,10 +957,21 @@ void ExplicitInertialSolver::fireFacesSwe(const std::vector<int>& faces,
                 state_->head[b], state_->depth[b], qcx_[b], qcy_[b],
                 ed.nx[e], ed.ny[e], dry, F, cLx, cLy, cRx, cRy);
         }
+        // Dry-dry face: no flux, no correction (faceFlux zeroes both), so
+        // nothing to book — the accumulator read-modify-writes of zero and
+        // the conveyance gather are skipped (F4). Species dispersion still
+        // gets its call.
+        if (!wet) {
+            q_[e] = 0.0;
+            if (species) {
+                const double hf0 = std::max(state_->head[a], state_->head[b]) - ed.zface[e];
+                bookFaceSpecies(e, a, b, 0.0, (hf0 > 0.0) ? hf0 : 0.0, dt_f, global_step);
+            }
+            continue;
+        }
         // Face conveyance (leaky barriers) scales the whole flux vector.
         const double conv = mesh_->edge_conveyance[ed.slotL[e]];
         double fh = F.mass * conv, fmx = F.mx * conv, fmy = F.my * conv;
-        if (!wet) { q_[e] = 0.0; fh = fmx = fmy = 0.0; }
 
         // Positivity share (same contract as the inertial law): the mass a
         // face may take from its exporter over the exporter's cycle. Mass
@@ -916,7 +981,7 @@ void ExplicitInertialSolver::fireFacesSwe(const std::vector<int>& faces,
             const int    refire   =
                 global_step ? 1 : (1 << (tier_[exp_cell] - face_tier_[e]));
             const double beta_share =
-                (mesh_->cell_vertex_count(exp_cell) == 4) ? beta4 : beta3;
+                (has_quads && mesh_->cell_vertex_count(exp_cell) == 4) ? beta4 : beta3;
             const double budget = beta_share / refire *
                                   std::max(state_->volume[exp_cell], 0.0);
             const double take = std::fabs(fh) * ed.xi[e] * dt_f;
@@ -939,8 +1004,10 @@ void ExplicitInertialSolver::fireFacesSwe(const std::vector<int>& faces,
 
         // Species ride the mass flux at the face depth the inertial law
         // would have used (dispersion conductance only).
-        const double hf = std::max(state_->head[a], state_->head[b]) - ed.zface[e];
-        bookFaceSpecies(e, a, b, dM, (hf > 0.0) ? hf : 0.0, dt_f, global_step);
+        if (species) {
+            const double hf = std::max(state_->head[a], state_->head[b]) - ed.zface[e];
+            bookFaceSpecies(e, a, b, dM, (hf > 0.0) ? hf : 0.0, dt_f, global_step);
+        }
     }
     face_passes_ += na;
     accumulators_pending_ = true;
@@ -957,6 +1024,8 @@ void ExplicitInertialSolver::fireFacesDiffusive(const std::vector<int>& faces,
     const double beta4 = opts_->exchange_beta / 4.0;
     const bool vfr_face =
         (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
+    const bool species   = !sacc_L_.empty();
+    const bool has_quads = has_quads_;
 
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int k = 0; k < na; ++k) {
@@ -971,7 +1040,8 @@ void ExplicitInertialSolver::fireFacesDiffusive(const std::vector<int>& faces,
         if (std::fabs(deta) < inertial::kEtaDeadband) deta = 0.0;
         const double slope = deta * ed.inv_dx_normal[e];
         const double s_eps = opts_->flux_dh_eps * ed.inv_dx_normal[e];
-        double qn1 = diffusive::faceDischarge(hf, slope, std::sqrt(ed.n2_face[e]), s_eps);
+        // n_face = sqrt(n2_face) precomputed per face (F7).
+        double qn1 = diffusive::faceDischarge(hf, slope, ed.n_face[e], s_eps);
         qn1 *= mesh_->edge_conveyance[ed.slotL[e]];
 
         // Same positivity share as the other closures.
@@ -979,7 +1049,7 @@ void ExplicitInertialSolver::fireFacesDiffusive(const std::vector<int>& faces,
         const int    refire   =
             global_step ? 1 : (1 << (tier_[exp_cell] - face_tier_[e]));
         const double beta_share =
-            (mesh_->cell_vertex_count(exp_cell) == 4) ? beta4 : beta3;
+            (has_quads && mesh_->cell_vertex_count(exp_cell) == 4) ? beta4 : beta3;
         const double budget = beta_share / refire *
                               std::max(state_->volume[exp_cell], 0.0);
         const double take = std::fabs(qn1) * ed.xi[e] * dt_f;
@@ -988,7 +1058,7 @@ void ExplicitInertialSolver::fireFacesDiffusive(const std::vector<int>& faces,
         const double dM = qn1 * ed.xi[e] * dt_f;
         facc_L_[e] -= dM;
         facc_R_[e] += dM;
-        bookFaceSpecies(e, a, b, dM, hf, dt_f, global_step);
+        if (species) bookFaceSpecies(e, a, b, dM, hf, dt_f, global_step);
     }
     face_passes_ += na;
     accumulators_pending_ = true;
@@ -1100,10 +1170,30 @@ void ExplicitInertialSolver::bookFaceSpecies(int e, int a, int b, double dM,
     }
 }
 
+// The cell kernel is a template on the closure so the LOCAL_INERTIAL /
+// DIFFUSIVE_WAVE instantiation contains none of the FULL_SWE momentum code
+// (measured: the merged body cost the LI cell pass +17 % — register pressure
+// and dead branches inside the OpenMP-outlined loop; the LI instantiation is
+// the pre-FULL_SWE kernel again). Dispatch is one branch per firing.
 void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
                                        double dt_c, bool tier0) {
+    if (mode_ == Momentum2D::FULL_SWE) fireCellsImpl<true>(cells, dt_c, tier0);
+    else                               fireCellsImpl<false>(cells, dt_c, tier0);
+}
+
+template <bool kSwe>
+void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
+                                           double dt_c, bool tier0) {
     const auto& ed = edges_;
     const int   nc = static_cast<int>(cells.size());
+    // Loop-invariant closure flags, resolved outside the parallel region so
+    // the outlined body carries them as firstprivate constants instead of
+    // re-reading members through `this` on every cell.
+    constexpr bool swe = kSwe;
+    const bool   perot   = !qcx_.empty() && !swe;
+    const bool   species = !sacc_L_.empty();
+    const bool   front   = front_rebuild_;
+    const double dry     = opts_->dry_depth;
 
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int k = 0; k < nc; ++k) {
@@ -1114,8 +1204,6 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
         // two loops used to load cell_edge/cell_sign twice for every incident
         // face; the arms (m_e - c_i) are precomputed per CSR entry so the
         // midpoint gather and the two subtractions are gone as well.
-        const bool   swe     = (mode_ == Momentum2D::FULL_SWE);
-        const bool   perot   = !qcx_.empty() && !swe;
         double flux_m3 = 0.0, sx = 0.0, sy = 0.0;
         double dmx = 0.0, dmy = 0.0;          // FULL_SWE momentum gather (m⁴/s)
         for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
@@ -1123,14 +1211,14 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
             if (ed.cell_sign[p] > 0) {
                 flux_m3 += facc_L_[e];
                 facc_L_[e] = 0.0;
-                if (swe) {
+                if constexpr (swe) {
                     dmx += macc_x_L_[e]; macc_x_L_[e] = 0.0;
                     dmy += macc_y_L_[e]; macc_y_L_[e] = 0.0;
                 }
             } else {
                 flux_m3 += facc_R_[e];
                 facc_R_[e] = 0.0;
-                if (swe) {
+                if constexpr (swe) {
                     dmx += macc_x_R_[e]; macc_x_R_[e] = 0.0;
                     dmy += macc_y_R_[e]; macc_y_R_[e] = 0.0;
                 }
@@ -1143,10 +1231,10 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
             }
         }
         const double infil =
-            infilSink(state_->infil_rate[i], state_->depth[i], opts_->dry_depth);
+            infilSink(state_->infil_rate[i], state_->depth[i], dry);
         state_->infil_applied[i] += infil * dt_c;
         const double evap =
-            evapSink(state_->evap_rate[i], state_->depth[i], opts_->dry_depth);
+            evapSink(state_->evap_rate[i], state_->depth[i], dry);
         const double src =
             state_->rainfall[i] + state_->coupling_flux[i] - evap - infil;
 
@@ -1159,7 +1247,7 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
         // concentrations); evaporation removes no mass at all, so the
         // concentration rises — the up-concentration the plan's §2.3 wants
         // right from the start.
-        if (!sacc_L_.empty()) {
+        if (species) {
             auto& tr = state_->transport;
             const double area = mesh_->tri_area[i];
             sinkTemperatureWithEvap(i, evap * dt_c * area);              // S4
@@ -1229,7 +1317,7 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
         inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i],
                                state_->head[i], state_->depth[i]);
         // FRONT_REBUILD: the wetting front reached the halo's outer ring.
-        if (front_rebuild_ && !front_breach_ && frontier_[i] &&
+        if (front && !front_breach_ && frontier_[i] &&
             state_->depth[i] >= h_on_front_)
             front_breach_ = true;   // benign race: any writer sets true
         // Refresh this cell's Perot discharge vector at its own cadence.
@@ -1243,7 +1331,7 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
         // NEW depth. Sources (rain, coupling, infiltration, evaporation)
         // move volume only, so the velocity adjusts with the depth. A cell
         // that fell below the dry depth carries no momentum.
-        if (swe) {
+        if constexpr (swe) {
             const double A = mesh_->tri_area[i];
             const double h_new = state_->depth[i];
             // WALL boundary faces (every boundary slot without a non-WALL
@@ -1252,15 +1340,12 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
             // which a cell at rest beside a wall would accelerate away from
             // it. Booked here at the cell's own cadence (the non-WALL types
             // fire at tier 0 through boundaryFluxSwe).
-            if (h_new > opts_->dry_depth) {
-                const int nvc = mesh_->cell_vertex_count(i);
-                for (int k2 = 0; k2 < nvc; ++k2) {
-                    if (mesh_->cell_neighbour(i, k2) >= 0) continue;
-                    const int slot = MeshData::slot(i, k2);
-                    if (state_->boundary &&
-                        static_cast<BoundaryType>(state_->boundary->edge_bc_type[slot]) !=
-                            BoundaryType::WALL)
-                        continue;
+            if (h_new > dry) {
+                // WALL slots come from the CSR built in initialize() (F5):
+                // interior cells have an empty row instead of a neighbour
+                // + boundary-type scan on every firing.
+                for (int w = wall_ptr_[i]; w < wall_ptr_[i + 1]; ++w) {
+                    const int slot = wall_slot_[static_cast<std::size_t>(w)];
                     const double nx = mesh_->edge_nx[slot], ny = mesh_->edge_ny[slot];
                     const double ux = qcx_[i] / h_new, uy = qcy_[i] / h_new;
                     const double un = ux * nx + uy * ny, ut = -ux * ny + uy * nx;
@@ -1271,7 +1356,7 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
                     double cLx, cLy, cRx, cRy;
                     if (swe::faceFlux(state_->head[i], h_new, qcx_[i], qcy_[i],
                                       state_->head[i], h_new, qxg, qyg,
-                                      nx, ny, opts_->dry_depth, F,
+                                      nx, ny, dry, F,
                                       cLx, cLy, cRx, cRy)) {
                         const double xdt = mesh_->edge_length[slot] * dt_c;
                         dmx += (-F.mx + cLx) * xdt;
@@ -1279,7 +1364,7 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
                     }
                 }
             }
-            if (h_new > opts_->dry_depth) {
+            if (h_new > dry) {
                 double qx = (A * qcx_[i] + dmx) / A;
                 double qy = (A * qcy_[i] + dmy) / A;
                 swe::frictionUpdate(qx, qy, h_new, mesh_->mannings_n[i], dt_c);
@@ -1616,30 +1701,40 @@ void ExplicitInertialSolver::computeLimitedGradientsSwe() {
 // are reset to their trapezoidal value, ½·(stage-1 + stage-2) increments.
 void ExplicitInertialSolver::runRk2Step(double dt) {
     const int nt = mesh_->n_triangles();
+    // Member buffers: vector assignment reuses capacity, so no per-step
+    // allocation (F6).
     rk_v0_  = state_->volume;
     rk_qx0_ = qcx_;
     rk_qy0_ = qcy_;
-    const std::vector<double> bc0 = bc_accum_, ex0 = exch_, inf0 = state_->infil_applied;
-    const std::vector<double> drawn0 = node_drawn_;
+    rk_bc0_ = bc_accum_; rk_ex0_ = exch_; rk_inf0_ = state_->infil_applied;
+    rk_drawn0_ = node_drawn_;
     for (int stage = 0; stage < 2; ++stage) {
         fireFaces(active_faces_, dt, /*global_step=*/true);
         fireCells(active_cells_, dt, /*tier0=*/true);
     }
+    // Parallel over every cell. An INACTIVE cell was not fired by either
+    // stage, so its average is the identity (volume, q⃗ and the infiltration
+    // ledger are unchanged) and only the dry-momentum reset is evaluated —
+    // the same value the serial all-cell loop produced.
+#pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int i = 0; i < nt; ++i) {
-        state_->volume[i] = 0.5 * (rk_v0_[i] + state_->volume[i]);
-        qcx_[i] = 0.5 * (rk_qx0_[i] + qcx_[i]);
-        qcy_[i] = 0.5 * (rk_qy0_[i] + qcy_[i]);
-        inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i],
-                               state_->head[i], state_->depth[i]);
+        if (cell_active_[i]) {
+            state_->volume[i] = 0.5 * (rk_v0_[i] + state_->volume[i]);
+            qcx_[i] = 0.5 * (rk_qx0_[i] + qcx_[i]);
+            qcy_[i] = 0.5 * (rk_qy0_[i] + qcy_[i]);
+            inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i],
+                                   state_->head[i], state_->depth[i]);
+            state_->infil_applied[i] =
+                rk_inf0_[i] + 0.5 * (state_->infil_applied[i] - rk_inf0_[i]);
+        }
         if (state_->depth[i] <= opts_->dry_depth) { qcx_[i] = 0.0; qcy_[i] = 0.0; }
-        state_->infil_applied[i] = inf0[i] + 0.5 * (state_->infil_applied[i] - inf0[i]);
     }
     for (std::size_t k = 0; k < bc_accum_.size(); ++k)
-        bc_accum_[k] = bc0[k] + 0.5 * (bc_accum_[k] - bc0[k]);
+        bc_accum_[k] = rk_bc0_[k] + 0.5 * (bc_accum_[k] - rk_bc0_[k]);
     for (std::size_t k = 0; k < exch_.size(); ++k)
-        exch_[k] = ex0[k] + 0.5 * (exch_[k] - ex0[k]);
+        exch_[k] = rk_ex0_[k] + 0.5 * (exch_[k] - rk_ex0_[k]);
     for (std::size_t k = 0; k < node_drawn_.size(); ++k)
-        node_drawn_[k] = drawn0[k] + 0.5 * (node_drawn_[k] - drawn0[k]);
+        node_drawn_[k] = rk_drawn0_[k] + 0.5 * (node_drawn_[k] - rk_drawn0_[k]);
     accumulators_pending_ = false;
     substeps_run_ += 2;
     last_steps_   += 2;

@@ -84,6 +84,7 @@ struct InertialEdges {
     /// (inv_dx above) overestimates slopes on non-orthogonal triangle pairs.
     std::vector<double> inv_dx_normal;
     std::vector<double> n2_face;      ///< (½(n_L+n_R))² Manning coefficient
+    std::vector<double> n_face;       ///< ½(n_L+n_R) — sqrt(n2_face) precomputed for the diffusive law
     /// Per-CELL characteristic length (m) for the CFL step bound
     /// dt = α·L_char/√(g·h): √(2A/Σξ·inv_dx_normal) from the discrete wave
     /// operator; isolated cells fall back to 2A/ξ_max (triangle) or
