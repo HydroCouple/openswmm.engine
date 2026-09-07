@@ -129,6 +129,10 @@ private:
     /// x/y momentum the face booked for cL / cR, gathered and cleared by the
     /// cell exactly like facc_L_/facc_R_ (same writer, same cadence).
     std::vector<double>  macc_x_L_, macc_x_R_, macc_y_L_, macc_y_R_;
+    /// Momentum the last boundaryFluxSwe() call booked into qcx_/qcy_, so its
+    /// caller can rescale it when the availability clamp shrinks the mass.
+    /// Scalar: the boundary loop is serial (perimeter-sized).
+    double               swe_bc_dqx_ = 0.0, swe_bc_dqy_ = 0.0;
     /// RECONSTRUCTION_ORDER 2 (FULL_SWE): limited Green-Gauss gradients of
     /// (η, u, v) per cell, refreshed at every face pass, and the SSP-RK2
     /// stage buffers. Empty at order 1.

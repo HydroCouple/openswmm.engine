@@ -504,6 +504,118 @@ TEST(MomentumModes, ManningSteadySlopeQuadStrip) {
     }
 }
 
+// A prescribed-discharge boundary must deliver EXACTLY what it prescribes.
+// The ghost-cell Riemann boundary used to deliver a wave-speed-weighted blend
+// of the interior and prescribed fluxes instead: measured 7-21 % short on the
+// SWASHES bump inlets and reversed outright (+143 m³/s against a prescribed
+// 10) on a supercritical inlet. Subcritical inflow, supercritical inflow and
+// a dry-bed inflow are all checked, against the volume the domain gained.
+TEST(MomentumModes, SpecifiedFlowInflowIsExactFullSwe) {
+    struct Case { const char* name; double q_in; double h0; };
+    // q_in is per metre of edge (m²/s), inward. h0 = 0 starts the strip dry.
+    const Case cases[] = {
+        {"subcritical",   0.40, 0.60},   // Fr = q/(h sqrt(g h)) ~ 0.28
+        {"supercritical", 2.00, 0.30},   // Fr ~ 3.9 at the inlet cell
+        {"dry bed",       0.50, 0.00},
+    };
+    for (const auto& c : cases) {
+        const double dx = 1.0;
+        const int nx = 30, ny = 2;
+        auto mesh = makeQuadGrid(nx, ny, dx, [](double, double) { return 0.0; }, 0.02);
+        SolverOptions2D opts;
+        opts.momentum = Momentum2D::FULL_SWE;
+        auto state = makeState(mesh);
+        for (int i = 0; i < mesh.n_triangles(); ++i) {
+            state.depth[i] = c.h0;
+            state.head[i]  = c.h0;
+            state.volume[i] = c.h0 * mesh.tri_area[i];
+        }
+        BoundaryData boundary;
+        boundary.resize(mesh.n_edge_slots());
+        double inlet_len = 0.0;
+        for (int i = 0; i < mesh.n_triangles(); ++i)
+            for (int e = 0; e < mesh.cell_vertex_count(i); ++e) {
+                const int idx = MeshData::slot(i, e);
+                if (mesh.cell_neighbour(i, e) >= 0) continue;
+                // edge_mx / edge_my are the edge MIDPOINT: the inlet is the
+                // west face at x = 0 (the side walls sit at x >= dx/2).
+                if (mesh.edge_mx[idx] > 1.0e-9) continue;
+                boundary.edge_bc_type[idx] =
+                    static_cast<int8_t>(BoundaryType::SPECIFIED_FLOW);
+                boundary.edge_bc_flow[idx] = -c.q_in;           // outward +, so inflow < 0
+                inlet_len += mesh.edge_length[idx];
+            }
+        ASSERT_GT(inlet_len, 0.0) << c.name;
+        state.boundary = &boundary;
+        ExplicitInertialSolver solver;
+        solver.initialize(mesh, state, opts);
+        // Short window, and short enough that the front cannot reach the far
+        // (walled) end — every drop that entered is still in the domain.
+        const double T = 4.0;
+        const double v0 = totalVolume(state, mesh.n_triangles());
+        solver.advance(0.0, T);
+        const double v1 = totalVolume(state, mesh.n_triangles());
+        const double expected = c.q_in * inlet_len * T;
+        EXPECT_NEAR(v1 - v0, expected, 1.0e-3 * expected)
+            << c.name << ": inflow boundary delivered " << (v1 - v0)
+            << " m³ against a prescribed " << expected;
+        solver.finalize();
+    }
+}
+
+// NORMAL_FLOW under FULL_SWE is the Manning law the local-inertial and
+// diffusive paths apply, not a zero-gradient outlet: doubling the edge's bed
+// slope must raise the outflow by sqrt(2), and a zero slope must hold water.
+TEST(MomentumModes, NormalFlowOutletUsesManningFullSwe) {
+    auto run = [](double S) {
+        const double dx = 1.0, n_man = 0.03, h0 = 0.4;
+        const int nx = 20, ny = 2;
+        auto mesh = makeQuadGrid(nx, ny, dx, [](double, double) { return 0.0; }, n_man);
+        SolverOptions2D opts;
+        opts.momentum = Momentum2D::FULL_SWE;
+        auto state = makeState(mesh);
+        for (int i = 0; i < mesh.n_triangles(); ++i) {
+            state.depth[i] = h0; state.head[i] = h0;
+            state.volume[i] = h0 * mesh.tri_area[i];
+        }
+        BoundaryData boundary;
+        boundary.resize(mesh.n_edge_slots());
+        for (int i = 0; i < mesh.n_triangles(); ++i)
+            for (int e = 0; e < mesh.cell_vertex_count(i); ++e) {
+                const int idx = MeshData::slot(i, e);
+                if (mesh.cell_neighbour(i, e) >= 0) continue;
+                // Outlet = the east face at x = nx·dx (midpoint coordinate).
+                if (mesh.edge_mx[idx] < nx * dx - 1.0e-9) continue;
+                boundary.edge_bc_type[idx] =
+                    static_cast<int8_t>(BoundaryType::NORMAL_FLOW);
+                boundary.edge_bed_slope[idx] = S;
+            }
+        state.boundary = &boundary;
+        ExplicitInertialSolver solver;
+        solver.initialize(mesh, state, opts);
+        const double v0 = totalVolume(state, mesh.n_triangles());
+        solver.advance(0.0, 0.5);
+        const double v1 = totalVolume(state, mesh.n_triangles());
+        solver.finalize();
+        return v0 - v1;                                          // volume that left
+    };
+    // An inert outlet (no slope) conveys nothing — the local-inertial law's
+    // contract. A zero-gradient ghost would make it absorbing and drain the
+    // pond; that was the FULL_SWE behaviour before this law was applied.
+    EXPECT_NEAR(run(0.0), 0.0, 1.0e-9)
+        << "a zero-slope normal-flow outlet must not drain";
+    const double out1 = run(0.0025), out2 = run(0.01);
+    EXPECT_GT(out1, 0.0);
+    EXPECT_GT(out2, out1) << "more slope must convey more";
+    // Against the Manning prediction at the initial depth over the 2 m outlet
+    // (the outlet cells draw down over the window, so the integral lands
+    // under it — the gate is that the LAW is applied, not the exact integral).
+    const double h0 = 0.4, n_man = 0.03, T = 0.5, outlet = 2.0;
+    const double q_pred = std::pow(h0, 5.0 / 3.0) * std::sqrt(0.0025) / n_man;
+    EXPECT_GT(out1, 0.35 * q_pred * outlet * T) << q_pred;
+    EXPECT_LT(out1, 1.05 * q_pred * outlet * T) << q_pred;
+}
+
 // Options contract: FULL_SWE clamps CFL_NUMBER to ½ and ADVECTION/THETA are
 // inert; FRONT_REBUILD defaults on for the new closures only.
 TEST(MomentumModes, OptionContract) {

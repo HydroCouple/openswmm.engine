@@ -304,6 +304,46 @@ OPENSWMM_KERNEL_FN double criticalDepth(double q) noexcept {
     return std::cbrt(q * q / kGravity);
 }
 
+/*!
+ * \brief Ghost depth of a SUBCRITICAL prescribed-discharge boundary.
+ *
+ * One characteristic leaves the domain there, so its Riemann invariant
+ * \p r = u + 2c is carried out from the interior and, with the prescribed
+ * per-metre discharge \p q = u·h, fixes the boundary depth:
+ *
+ *     q/h + 2·sqrt(g·h) = r      ⇔      2·sqrt(g)·s³ − r·s² + q = 0,  s = sqrt(h)
+ *
+ * Safeguarded Newton on s from the interior depth (bracketed to s > 0, ≤ 40
+ * iterations); returns \p h_interior when it cannot converge — the caller's
+ * mass flux is prescribed either way, so a fallback only costs accuracy in
+ * the momentum flux, never conservation. Signs follow the outward normal:
+ * an inflow has q < 0.
+ */
+OPENSWMM_KERNEL_FN double depthFromInvariantAndDischarge(double r, double q,
+                                                         double h_interior) noexcept {
+    const double rg = std::sqrt(kGravity);
+    double s = std::sqrt(h_interior > 0.0 ? h_interior : 1.0e-6);
+    for (int it = 0; it < 40; ++it) {
+        const double f  = 2.0 * rg * s * s * s - r * s * s + q;
+        const double df = 6.0 * rg * s * s - 2.0 * r * s;
+        if (!(std::fabs(df) > 1.0e-12)) break;
+        const double s1 = s - f / df;
+        if (!(s1 > 0.0) || !std::isfinite(s1)) break;
+        const double step = std::fabs(s1 - s);
+        s = s1;
+        if (step < 1.0e-12 * (1.0 + s)) {
+            const double h = s * s;
+            return (h > 0.0 && std::isfinite(h)) ? h : h_interior;
+        }
+    }
+    const double h = s * s;
+    // Accept only a converged, physical root; otherwise keep the interior
+    // depth (transmissive), which is what the pre-invariant code did.
+    return (h > 0.0 && std::isfinite(h) &&
+            std::fabs(2.0 * rg * s * s * s - r * s * s + q) < 1.0e-6 * (1.0 + std::fabs(q)))
+               ? h : h_interior;
+}
+
 } // namespace openswmm::twoD::swe
 
 #endif // OPENSWMM_ENGINE_2D_SWE_KERNELS_HPP

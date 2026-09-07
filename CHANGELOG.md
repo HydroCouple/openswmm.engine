@@ -21,6 +21,23 @@ retroactive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **2D `FULL_SWE`: a prescribed-discharge boundary now delivers exactly what it prescribes.** The
+  ghost-cell Riemann boundary returned the Riemann solver's own mass flux — a wave-speed-weighted
+  blend of the interior and prescribed states — so a `SPECIFIED_FLOW` / `RATING_CURVE` inlet
+  under-delivered (measured 9 %, 7 % and 21 % short on the SWASHES subcritical, transcritical and
+  shock bumps) and, at a supercritical inlet, ran backwards. The prescribed discharge is now the
+  mass flux verbatim, as the local-inertial law has always done; the ghost state supplies only the
+  momentum flux, and its depth follows the outgoing Riemann invariant on a subcritical inflow
+  (critical depth into a dry cell, interior depth otherwise). `NORMAL_FLOW` under `FULL_SWE` applies
+  the same Manning outlet law as the other closures instead of a zero-gradient ghost, which was
+  absorbing and drained a pond through an inert (zero-slope) outlet. Boundary momentum is rescaled
+  when the availability clamp shrinks the mass, and `settleAccumulators` now settles the momentum
+  accumulators with the mass, so a cell re-tiered between firings cannot strand or replay them.
+  SWASHES depth error: bump-shock 0.070 → 0.032 (gate 0.05), bump-transcritical 0.042 → 0.033.
+  All-triangle `LOCAL_INERTIAL` results are unchanged (byte-identical on four decks).
+
 ### Added
 
 - **2D: `swmm_2d_get_run_stats` C API / `Surface2D.run_stats`** — the solver backend label, momentum

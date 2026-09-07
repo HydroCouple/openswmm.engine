@@ -404,6 +404,29 @@ void ExplicitInertialSolver::settleAccumulators() {
                 }
             }
         }
+        // FULL_SWE: settle the MOMENTUM accumulators in the same sweep, for
+        // the same reason as the species rows above — a cell re-tiered or
+        // deactivated between its firings would otherwise strand the momentum
+        // of mass that has already been applied, and pick it up stale on
+        // reactivation.
+        if (!macc_x_L_.empty()) {
+            double dmx = 0.0, dmy = 0.0;
+            for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
+                const int e = ed.cell_edge[p];
+                if (ed.cell_sign[p] > 0) {
+                    dmx += macc_x_L_[e]; macc_x_L_[e] = 0.0;
+                    dmy += macc_y_L_[e]; macc_y_L_[e] = 0.0;
+                } else {
+                    dmx += macc_x_R_[e]; macc_x_R_[e] = 0.0;
+                    dmy += macc_y_R_[e]; macc_y_R_[e] = 0.0;
+                }
+            }
+            if (dmx != 0.0 || dmy != 0.0) {
+                const double A = mesh_->tri_area[i];
+                qcx_[i] += dmx / A;      // same normalisation as fireCells
+                qcy_[i] += dmy / A;
+            }
+        }
         if (pending == 0.0) continue;
         double v = state_->volume[i] + pending;
         state_->volume[i] = (v > 0.0) ? v : 0.0;
@@ -1281,10 +1304,13 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
             state_->boundary->edge_bc_type[idx]);
         const double L = mesh_->edge_length[idx];
         double f;
+        double f_requested_swe = 0.0;
         if (mode_ == Momentum2D::FULL_SWE) {
             // Ghost-cell Riemann boundary: mass AND momentum, no clamp
             // beyond v ≥ 0 (the Riemann flux is bounded by the states).
+            swe_bc_dqx_ = swe_bc_dqy_ = 0.0;
             f = boundaryFluxSwe(k, i, dt_c);
+            f_requested_swe = f;
         } else if (mode_ == Momentum2D::DIFFUSIVE_WAVE) {
             // The diffusive-wave boundary law for every type (collapsed
             // Manning conductance against the prescribed stage).
@@ -1359,6 +1385,17 @@ void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
         }
         if (v_new < 0.0) v_new = 0.0;   // availability clamp (exact floor)
         f = (v_new - v_old) / dt_c;
+        // FULL_SWE booked its momentum inside boundaryFluxSwe against the
+        // REQUESTED mass; when the clamp above shrank that mass, take the
+        // same fraction of the momentum back (what the comment below has
+        // always promised, and what the interior positivity cap does).
+        if (mode_ == Momentum2D::FULL_SWE && f != f_requested_swe &&
+            (swe_bc_dqx_ != 0.0 || swe_bc_dqy_ != 0.0))
+        {
+            const double lam = (f_requested_swe != 0.0) ? f / f_requested_swe : 0.0;
+            qcx_[i] += swe_bc_dqx_ * (lam - 1.0);
+            qcy_[i] += swe_bc_dqy_ * (lam - 1.0);
+        }
         // Momentum matches applied mass (mirrors the interior positivity-cap
         // rescale of qn1) — the prescribed-flux types record theirs here too.
         bc_q_[k] = (L > 1.0e-12) ? f / L : 0.0;
@@ -1636,12 +1673,38 @@ double ExplicitInertialSolver::boundaryFluxSwe(std::size_t k, int i, double dt_c
     }
     // Ghost (h_g, u_ng, u_tg) in the outward-normal frame.
     double h_g = h_i, un_g = u_n, ut_g = u_t, eta_g = eta_i;
+    // A prescribed-discharge boundary imposes its mass flux exactly; the
+    // Riemann solve below then only supplies the momentum flux.
+    bool   prescribed_mass = false;
+    double q_prescribed    = 0.0;      // outward-positive, per metre of edge
     switch (bt) {
         case BoundaryType::WALL:
             un_g = -u_n;
             break;
-        case BoundaryType::NORMAL_FLOW:
-            break;                                   // transmissive
+        case BoundaryType::NORMAL_FLOW: {
+            // Manning normal-flow outlet, the same law the local-inertial and
+            // diffusive paths apply (SurfaceFluxCalculator::boundaryEdgeFlux):
+            // per-metre outflow q = h^{5/3}·sqrt(S)/n. Under FULL_SWE this used
+            // to be a bare zero-gradient ghost, i.e. the bed slope the modeller
+            // set on the edge did nothing.
+            const double S = state_->boundary->edge_bed_slope[idx];
+            const double n_man = mesh_->mannings_n[i];
+            prescribed_mass = true;
+            if (S > 0.0 && h_i > 0.0 && n_man > 0.0) {
+                const double h53 = h_i * std::cbrt(h_i * h_i);
+                q_prescribed = h53 * std::sqrt(S) / n_man;       // outward +
+                un_g = q_prescribed / h_i;
+                ut_g = u_t;
+            } else {
+                // No slope, no depth, no roughness: the law conveys nothing.
+                // The mirror ghost keeps the momentum consistent with that —
+                // a bare zero-gradient ghost is an ABSORBING boundary and
+                // drained a lake at rest through an inert outlet.
+                q_prescribed = 0.0;
+                un_g = -u_n;
+            }
+            break;
+        }
         case BoundaryType::SPECIFIED_STAGE: {
             const double eta_bc = state_->boundary->edge_bc_head[idx];
             const double c_i = std::sqrt(swe::kGravity * std::max(h_i, 0.0));
@@ -1661,15 +1724,35 @@ double ExplicitInertialSolver::boundaryFluxSwe(std::size_t k, int i, double dt_c
         }
         case BoundaryType::SPECIFIED_FLOW:
         case BoundaryType::RATING_CURVE: {
+            // A prescribed discharge is a FLUX boundary: the mass flux is the
+            // prescribed value (imposed below, as the local-inertial law does
+            // in SurfaceFluxCalculator), not whatever a Riemann problem
+            // against a ghost happens to deliver. The ghost still sets the
+            // MOMENTUM flux and keeps the Audusse pressure balance, so its
+            // depth should be the physical boundary depth:
+            //   * dry cell            — critical depth (dry-bed inflow),
+            //   * subcritical inflow  — from the outgoing invariant u + 2c
+            //                           together with q (one characteristic
+            //                           leaves, so depth is NOT free),
+            //   * supercritical inflow / any outflow — the interior depth.
             const double q_out = state_->boundary->edge_bc_flow[idx];   // outward +
             if (h_i > dry) {
-                h_g  = h_i;
+                h_g = h_i;
+                if (q_out < 0.0) {                       // inflow
+                    const double c_i = std::sqrt(swe::kGravity * h_i);
+                    if (std::fabs(u_n) < c_i)            // subcritical
+                        h_g = swe::depthFromInvariantAndDischarge(
+                            u_n + 2.0 * c_i, q_out, h_i);
+                }
+                eta_g = z_i + h_g;
             } else {
                 h_g  = swe::criticalDepth(std::fabs(q_out));
                 eta_g = z_i + h_g;
             }
             un_g = (h_g > 0.0) ? q_out / h_g : 0.0;
             ut_g = 0.0;
+            prescribed_mass = true;
+            q_prescribed    = q_out;
             break;
         }
     }
@@ -1682,14 +1765,29 @@ double ExplicitInertialSolver::boundaryFluxSwe(std::size_t k, int i, double dt_c
     const bool wet = swe::faceFlux(eta_i, h_i, qx_i, qy_i,
                                    eta_g, h_g, qxg, qyg,
                                    nx, ny, dry, F, cLx, cLy, cRx, cRy);
-    if (!wet) return 0.0;
     const double conv = mesh_->edge_conveyance[idx];
+    // A prescribed inflow must reach a DRY cell too — faceFlux reports "not
+    // wet" there (both reconstructed depths vanish), and returning 0 would
+    // make a dry-bed inflow boundary inert.
+    if (!wet)
+        return prescribed_mass ? -q_prescribed * conv * L : 0.0;
     const double A = mesh_->tri_area[i];
     // Momentum booked now (the mass is applied by the caller with the v ≥ 0
     // clamp; a clamp rescales the momentum in the same ratio there).
     const double fmx = -F.mx * conv + cLx, fmy = -F.my * conv + cLy;
-    qcx_[i] += fmx * L * dt_c / A;
-    qcy_[i] += fmy * L * dt_c / A;
+    // Remembered so the caller can rescale it in the same ratio when its
+    // availability clamp shrinks the mass (the boundary loop is serial).
+    swe_bc_dqx_ = fmx * L * dt_c / A;
+    swe_bc_dqy_ = fmy * L * dt_c / A;
+    qcx_[i] += swe_bc_dqx_;
+    qcy_[i] += swe_bc_dqy_;
+    // Mass: the prescribed discharge verbatim (the local-inertial law's
+    // contract, SurfaceFluxCalculator::boundaryEdgeFlux) — the Riemann
+    // solve's own mass flux is a wave-speed-weighted BLEND of the interior
+    // and prescribed states, which under-delivered the SWASHES bump inflows
+    // by 7-21 % and reversed a supercritical inlet outright.
+    if (prescribed_mass)
+        return -q_prescribed * conv * L;
     return -F.mass * conv * L;                            // inflow-positive m³/s
 }
 
