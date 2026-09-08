@@ -4306,6 +4306,12 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                 // mirroring the coupling-spill booking below.
                 ctx_.mass_balance.routing_external += q_out * dt_routing;
                 ctx_.mass_balance.step_ext_inflow  += q_out;
+                // Legacy node_getSystemOutflow (node.c:441-444): a backflowing
+                // outfall reports its discharge magnitude as node inflow
+                // (Node.inflow = fabs(outflow)). Without this the reported
+                // node.INFLOW is 0 at every backflowing-outfall step while
+                // legacy reports |outflow| — the outfall node.INFLOW parity gap.
+                ctx_.nodes.inflow[uj] = q_out;
             } else {
                 // Normal discharge — system outflow = inflow.
                 ctx_.mass_balance.routing_outflow += q_in * dt_routing;
