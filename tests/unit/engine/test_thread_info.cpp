@@ -132,8 +132,17 @@ TEST(ThreadInfo, DwSizeGateReducesExplicitRequestWithWarning) {
     EXPECT_EQ(ti::dwThreads(4, 40, &w), 1);
     EXPECT_TRUE(hasWarningContaining(w, "conduits"));
     // 1000 conduits → cap 10; a request of 4 within the machine passes.
+    //
+    // Silence needs BOTH gates open: enough logical processors, and an OpenMP
+    // runtime limit that allows 4. resolveRequested warns on either bound
+    // independently, and the second is not a property of the machine —
+    // OMP_NUM_THREADS / OMP_THREAD_LIMIT / CPU affinity set it per process.
+    // CI runs with OMP_NUM_THREADS=1, so on a 4-core runner logicalCpus() >= 4
+    // held while the OpenMP limit was 1, and the "exceeds the OpenMP limit"
+    // warning failed this w.empty() — a warning about the environment, not
+    // about the conduit-count gate this test covers.
     w.clear();
-    if (ti::logicalCpus() >= 4) {
+    if (ti::logicalCpus() >= 4 && ti::ompMaxThreads() >= 4) {
         EXPECT_EQ(ti::dwThreads(4, 1000, &w), 4);
         EXPECT_TRUE(w.empty()) << w.front();
     }

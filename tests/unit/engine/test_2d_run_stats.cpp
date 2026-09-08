@@ -20,6 +20,8 @@
 #include <sstream>
 #include <string>
 
+#include "platform_test_support.hpp"   // setEnvVar: MSVC has no setenv
+
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_2d.h>
 
@@ -72,7 +74,7 @@ std::string readAll(const fs::path& p) {
 TEST(RunStats2D, GetterPopulatesDuringTheRunAndReportNamesTheSolver) {
     // The AUTO backend is size-gated to the CPU marcher on 4 cells, but an
     // inherited OPENSWMM_2D_BACKEND would override it — pin it.
-    setenv("OPENSWMM_2D_BACKEND", "cpu", 1);
+    plattest::setEnvVar("OPENSWMM_2D_BACKEND", "cpu");
 
     std::error_code ec;
     fs::create_directories(kOutDir, ec);

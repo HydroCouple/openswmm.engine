@@ -29,7 +29,7 @@ surface routing module (requires ``OPENSWMM_BUILD_2D=ON`` and SUNDIALS).
 """
 
 from collections.abc import Iterator, MutableMapping, Sequence
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 import numpy.typing as npt
@@ -609,15 +609,20 @@ class Surface2D:
         ...
 
     @property
-    def run_stats(self) -> dict:
+    def run_stats(self) -> dict[str, Any]:
         """Cumulative marcher statistics and the backend of this 2D run.
 
         Keys: C{backend}, C{momentum}, C{lts_tiers}, C{steps},
         C{face_evals}, C{last_step}, C{active_frac} (min, mean, max) and
         C{tier_cells} (one entry per populated LTS tier).
 
+        The value type is C{Any} because the mapping is heterogeneous:
+        C{str} for C{backend}, C{str} or C{int} for C{momentum}, C{int}
+        counts, C{float} for C{last_step}, a 3-tuple for C{active_frac} and
+        a list for C{tier_cells}.
+
         @return: Statistics dictionary.
-        @rtype: dict
+        @rtype: dict[str, Any]
         @raise RuntimeError: If the C API call fails.
         """
         ...
