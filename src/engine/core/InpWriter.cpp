@@ -166,6 +166,7 @@ static const std::unordered_map<int, const char*> CURVE_TYPE_LABEL = {
     {static_cast<int>(TableType::CURVE_SHAPE),      "SHAPE"},
     {static_cast<int>(TableType::CURVE_CONTROL),    "CONTROL"},
     {static_cast<int>(TableType::CURVE_TIDAL),      "TIDAL"},
+    {static_cast<int>(TableType::CURVE_WEIR),       "WEIR"},
     {static_cast<int>(TableType::CURVE_PUMP1),      "PUMP1"},
     {static_cast<int>(TableType::CURVE_PUMP2),      "PUMP2"},
     {static_cast<int>(TableType::CURVE_PUMP3),      "PUMP3"},

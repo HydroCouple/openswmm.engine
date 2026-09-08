@@ -258,6 +258,7 @@ static const std::unordered_map<std::string, TableType> CURVE_TYPE_MAP = {
     {"SHAPE",     TableType::CURVE_SHAPE},
     {"CONTROL",   TableType::CURVE_CONTROL},
     {"TIDAL",     TableType::CURVE_TIDAL},
+    {"WEIR",      TableType::CURVE_WEIR},
     {"PUMP1",     TableType::CURVE_PUMP1},
     {"PUMP2",     TableType::CURVE_PUMP2},
     {"PUMP3",     TableType::CURVE_PUMP3},
@@ -288,11 +289,16 @@ void handle_curves(SimulationContext& ctx, const std::vector<std::string>& lines
             // object, matching legacy's separate hash tables.
             current_idx = ctx.find_curve(current_name);
             if (current_idx < 0) {
-                // Type may appear in tok[1] (first row only)
+                // Type appears in tok[1] on a new curve's first row. Legacy
+                // table_readCurve (table.c) rejects an unknown type keyword with
+                // ERR_KEYWORD; v6 formerly kept the default RATING and mis-parsed
+                // the token as data (e.g. a "GENERAL" curve was silently run).
                 if (tok.size() > 1) {
                     auto it = CURVE_TYPE_MAP.find(Tokenizer::to_upper(tok[1]));
                     if (it != CURVE_TYPE_MAP.end()) {
                         current_type = it->second;
+                    } else {
+                        ctx.errors.push_back(format_error(ERR_KEYWORD, tok[1]));
                     }
                 }
                 current_idx = ctx.tables.add(current_name, current_type);
