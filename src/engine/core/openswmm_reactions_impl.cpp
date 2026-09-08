@@ -353,6 +353,18 @@ SWMM_ENGINE_API int swmm_reaction_species_remove(SWMM_Engine engine,
             --rx.init_elem_species[ur];
         }
     }
+    // U2: the [INITIAL_QUALITY] rows that encode this species follow the
+    // same rule (their kind is kKindMsxFirst - species).
+    {
+        auto& iq = ctx.initial_quality;
+        for (int r = iq.count() - 1; r >= 0; --r) {
+            const auto ur = static_cast<std::size_t>(r);
+            const int m = openswmm::InitialQualityData::msxSpecies(iq.kind[ur]);
+            if (m < 0) continue;
+            if (m == idx)      iq.erase(r);
+            else if (m > idx)  iq.kind[ur] = openswmm::InitialQualityData::msxKind(m - 1);
+        }
+    }
     rebuild_msx_registry(ctx, old_base, old_n);
     if (!recompile_or_rollback(ctx, rx_backup, reg_backup))
         return SWMM_ERR_BADPARAM;

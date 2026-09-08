@@ -148,6 +148,25 @@ struct SurfaceStateData {
     std::vector<double> infil_applied;
 
     std::vector<double> coupling_flux;  ///< Exchange with SWMM node (m/s, + = into 2D)
+
+    /// SIGNED per-cell coupling exchange VOLUME (m³) accumulated since the
+    /// last mass-balance read, then zeroed by it. Positive = water arrived in
+    /// this cell from the 1D node (spill / outfall discharge); negative =
+    /// water was abstracted from this cell into the node (drain).
+    ///
+    /// Signed on purpose, and per cell on purpose. The domain totals
+    /// (`MassBalance2D::coupling_1d_to_2d_in` / `coupling_2d_to_1d_out`) are
+    /// two unsigned accumulators and cannot answer "what did THIS cell give
+    /// or take", which is the question asked of a coupling point that
+    /// flip-flops within a batch: the two directions cancel in the net and
+    /// both are invisible in the totals. `coupling_flux` is a rate that is
+    /// overwritten every step, so it cannot answer it either.
+    ///
+    /// Booked at the SAME dt and the same share the marcher applied, exactly
+    /// like `infil_applied` above and for the same reason — re-deriving it
+    /// from end-of-step state is first-order and under-books the cells that
+    /// dried mid-step.
+    std::vector<double> coupling_applied;
     std::vector<double> net_source;     ///< Net source/sink per cell (m/s)
 
     // -----------------------------------------------------------------------
@@ -225,6 +244,7 @@ struct SurfaceStateData {
         evap_rate.assign(nt, 0.0);
         infil_rate.assign(nt, 0.0);
         infil_applied.assign(nt, 0.0);
+        coupling_applied.assign(nt, 0.0);
         coupling_flux.assign(nt, 0.0);
         net_source.assign(nt, 0.0);
 

@@ -1615,8 +1615,10 @@ SWMM_ENGINE_API int swmm_options_get_ext(SWMM_Engine engine,
     // of truth, wired through ctx.twod_io) instead of the generic
     // ext_options map — see swmm_options_set_ext for the write side.
     if (ctx.twod_io.options && openswmm::twoD::is2DOptionKey(key)) {
-        const std::string v =
-            openswmm::twoD::format2DOptionValue(*ctx.twod_io.options, key);
+        // E2: the infiltration keys resolve AUTO / unset against the rows;
+        // U5: the groundwater keys likewise against the [2D_AQUIFER*] rows.
+        const std::string v = openswmm::twoD::format2DOptionValueEx(
+            *ctx.twod_io.options, ctx.twod_io.infil, ctx.twod_io.aquifer, key);
         std::strncpy(buf, v.c_str(), static_cast<std::size_t>(buflen - 1));
         buf[buflen - 1] = '\0';
         return SWMM_OK;
@@ -1686,6 +1688,20 @@ SWMM_ENGINE_API int swmm_options_set_ext(SWMM_Engine engine,
             openswmm::twoD::parse2DOptionsLine({key, value}, tmp);
         if (!err.empty()) return SWMM_ERR_BADPARAM;
         *ctx.twod_io.options = std::move(tmp);
+        // E2: INFIL_STEP is an alias — write through to the Infil2D options
+        // (the C API's swmm_infil2d_get_options and the writer read there).
+        if (ctx.twod_io.infil && upper_key(key) == "INFIL_STEP") {
+            ctx.twod_io.infil->options().infil_step = ctx.twod_io.options->infil_step;
+            ctx.twod_io.options->infil_step = 0.0;
+        }
+        // U5: GW_ET is an alias of [2D_AQUIFER_OPTIONS] GW_ET — write through
+        // so a host that sets it here and the 2D Groundwater editor are
+        // editing ONE value, not two that disagree.
+        if (ctx.twod_io.aquifer && upper_key(key) == "GW_ET") {
+            ctx.twod_io.aquifer->options.gw_et    = ctx.twod_io.options->gw_et;
+            ctx.twod_io.aquifer->options.authored = true;
+            ctx.twod_io.options->gw_et.clear();
+        }
         ctx.options.ext_options.erase(key);
         return SWMM_OK;
     }

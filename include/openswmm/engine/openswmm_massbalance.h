@@ -91,6 +91,24 @@ typedef enum SWMM_RoutingTotal {
                                        *   counts INP `[INFLOWS]`-derived,
                                        *   interface-file, and 2D-coupling
                                        *   inflow (issue #113). */
+    ,
+    SWMM_ROUTING_COUPLING_OUT = 12   /**< C2 (2026-09-07): cumulative volume
+                                       *   the 1D→2D coupling spill removed
+                                       *   from coupled nodes.
+                                       *
+                                       *   Previously folded into
+                                       *   `SWMM_ROUTING_FLOODING`, which
+                                       *   reported a coupling TRANSFER as
+                                       *   flooding. It is still an OUTFLOW of
+                                       *   the 1D system and still enters the
+                                       *   routing continuity error, so a host
+                                       *   summing the outflow categories must
+                                       *   now add this one too.
+                                       *
+                                       *   Zero (and the volume stays in
+                                       *   `SWMM_ROUTING_FLOODING`) under
+                                       *   `[2D_OPTIONS] COUPLING_IN_FLOODING
+                                       *   YES`. */
 } SWMM_RoutingTotal;
 
 /**

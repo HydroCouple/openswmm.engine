@@ -155,6 +155,18 @@ private:
     std::vector<double> node_mass_;
     std::vector<double> node_vol_;
 
+    // Lateral loads at VIRTUAL junctions (plans/VJ_LATERAL_INFLOW_PLAN_
+    // 2026-09-04.md §E4). A virtual junction owns no faces — its conduits
+    // were spliced into one interior face — so a node store there could
+    // never discharge and the per-step resync zeroed it: the load was
+    // destroyed. Its water and mass go straight into the two cells adjoining
+    // the splice, half each, mirroring the hydraulic solver's cell_qlat_
+    // split. Rebuilt every substep; has_vj_src_ gates the whole path so a
+    // deck without a fed virtual junction executes no new arithmetic.
+    std::vector<double> cell_src_vol_;    ///< water (ft³) per cell this substep
+    std::vector<double> cell_src_mass_;   ///< [s * nc + c] mass per cell this substep
+    bool has_vj_src_ = false;
+
     // Kernel scratch (sized once in init; see SpeciesKernelView).
     std::vector<double> f_mass_, f_sstar_, f_phi_l_, f_phi_r_, f_phi_flux_,
         cell_slope_, lo_flux_, anti_flux_, td_, anew_, rplus_, rminus_, cell_u_;
@@ -195,6 +207,10 @@ private:
     /// A1a: state row of the reserved __WATER_AGE__ species (after
     /// pollutants and MSX); -1 when WATER_AGE is off.
     int age_row_ = -1;
+
+    /// U2: MSX species rows carried on the mesh (rows np .. np+nm_-1); the
+    /// [INFLOWS] species loads (ReactionData::msx_ext_mass_in) land there.
+    int nm_ = 0;
 
     /// H4: per-cell surface heat exchange (plan §1's source term), the
     /// mesh twin of the LEGACY mirror's whole-link application.

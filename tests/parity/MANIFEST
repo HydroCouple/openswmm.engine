@@ -86,3 +86,4 @@ tests/parity/corpus/decks/steady_quality.inp	STEADY routing + pollutant + age --
 # (base: J1 read 0, the quality sections silently ignored at rc 0).  The census
 # also sweeps it (it has a mesh) -- one deck, two nets, attribute once.
 tests/parity/corpus/decks/twod_coupled_quality.inp	DYNWAVE + coupled 2D pan with [POLLUTANTS], [2D_INITIAL_QUALITY] (* and TAG), DISPERSION -- the only deck where species cross the 1D<->2D coupling
+tests/parity/corpus/decks/twod_mixed_quality.inp	the same pan tessellated as one [2D_QUADS] cell + two triangles -- the only deck on the padded kMaxCellVerts=4 / edge-stride-4 layout; a movement in ONLY this deck is the quad path (added 2026-09-07, E1)

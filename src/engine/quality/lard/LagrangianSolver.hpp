@@ -106,6 +106,7 @@
 #include "../NegativeSources.hpp"
 #include "../QualityRouting.hpp"
 #include "../../transport/components/ReactionModule/ReactionLegacyBinding.hpp"
+#include "../../transport/TransportPolicy.hpp"   // E2
 #include "RwptDispersion.hpp"
 #include "SegmentStore.hpp"
 #include "../../core/UnitConversion.hpp"
@@ -160,18 +161,25 @@ struct SpeciesRowLayout {
 /// after the pollutants in a fixed order (age, then temperature) so an index
 /// means the same thing everywhere.
 inline SpeciesRowLayout rowLayout(const SimulationContext& ctx) {
+    // E2: the class ENABLES come from the one policy
+    // (transport::network1DEnables — allocation-free, this runs per step).
+    // Identical to the pre-E2 reads: LARD only runs with IGNORE_QUALITY NO,
+    // where the policy's gate is a no-op. The row ORDER below is deliberately
+    // LARD's own (pollutants, age, temperature, MSX) — see the struct note;
+    // E2 unifies the decision, not the index arithmetic.
+    const transport::ClassEnables en = transport::network1DEnables(ctx);
     SpeciesRowLayout L;
-    L.np = ctx.n_pollutants();
+    L.np = en.n_pollut;
     L.ns = L.np;
-    if (ctx.options.water_age) L.age_row = L.ns++;
-    if (ctx.options.heat_transport) L.temp_row = L.ns++;   // H7b
+    if (en.age)         L.age_row  = L.ns++;
+    if (en.temperature) L.temp_row = L.ns++;   // H7b
     // L3: MSX species ride the segments after the reserved rows —
     // stable across the run (the compiled species table is fixed at
     // open). n_msx == 0 leaves every index above IDENTICAL to H7b's
     // layout, which is the bit-inertness claim the corpus checks.
     if (transport::legacyReactionsActive(ctx)) {
         L.msx_first = L.ns;
-        L.ns += ctx.reactions.n_species();
+        L.ns += en.n_msx;
     }
     return L;
 }
@@ -316,9 +324,8 @@ public:
                 const bool is_age  = (s == L.age_row);
                 const bool is_temp = (s == L.temp_row);
                 // L3: species rows — state lives in msx_node_conc
-                // ([node*nsp + sp]); no external-load pathway exists
-                // (species take no [INFLOWS]; ARD's boundary rows are
-                // ARD-engine content), so m_ext is zero.
+                // ([node*nsp + sp]); U2 gave them the [INFLOWS] pathway
+                // (msx_ext_mass_in, same index).
                 const bool is_msx =
                     (L.msx_first >= 0 && s >= L.msx_first);
                 const auto xi =
@@ -345,10 +352,13 @@ public:
                   : is_temp ? hs.node_temp[un]
                   : is_msx  ? ctx.reactions.msx_node_conc[xi]
                             : nodes.conc[ci];
+                // U2: species rows take the [INFLOWS] species loads
+                // (msx_ext_mass_in, a rate; empty when no such row).
                 const double m_ext =
                     is_age  ? ws.node_age_vol_in[un] * dt
                   : is_temp ? hs.node_temp_vol_in[un] * dt
-                  : is_msx  ? 0.0
+                  : is_msx  ? ((xi < ctx.reactions.msx_ext_mass_in.size())
+                                   ? ctx.reactions.msx_ext_mass_in[xi] * dt : 0.0)
                             : nodes.qual_mass_in[ci] * dt;
                 double m = st_old * v_old + node_mass_in_[li] + m_ext;
                 // P2.3: stash the ARRIVING mass for the treatment cin below

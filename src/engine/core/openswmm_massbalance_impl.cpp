@@ -145,6 +145,7 @@ SWMM_ENGINE_API int swmm_get_routing_total(SWMM_Engine engine, int component, do
         case SWMM_ROUTING_INIT_STORAGE:  *volume = mb.routing_init_storage;  break;
         case SWMM_ROUTING_FINAL_STORAGE: *volume = mb.routing_final_storage; break;
         case SWMM_ROUTING_FORCING_INFLOW: *volume = mb.routing_forcing_inflow; break;
+        case SWMM_ROUTING_COUPLING_OUT:  *volume = mb.routing_coupling_out;  break;
         default: return SWMM_ERR_BADPARAM;
     }
     return SWMM_OK;

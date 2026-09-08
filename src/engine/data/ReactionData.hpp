@@ -146,6 +146,16 @@ struct ReactionData {
     std::vector<double> msx_node_conc;
     std::vector<double> msx_link_conc;
 
+    // ---- U2 (2026-09-07): external MSX loads at the node seam ------------
+    // [node * n_species + m], a mass RATE in the species' internal unit
+    // convention (conc-units × ft3/s — the qual_mass_in shape), assembled
+    // every routing step by InflowSolver::computeAll from [INFLOWS] rows
+    // that name a species (CONCEN × node external flow, or MASS ÷ LperFT3).
+    // Empty until a species inflow row exists. Consumed by every quality
+    // engine's node mixing: routeLegacyMsx (LEGACY), ArdEngine stage 1b /
+    // 1a' (EULERIAN_ARD) and the LARD node stage.
+    std::vector<double> msx_ext_mass_in;
+
     bool configured = false;                 ///< a reactions component applied
 
     int n_species() const noexcept {

@@ -84,6 +84,19 @@ struct ForcingData {
     std::vector<double>         node_quality_value;     ///< mass rate (mass/sec)
     std::vector<ForcingPersist> node_quality_persist;
 
+    // U2 (2026-09-07) — the reserved species, the twins of node_quality:
+    // OVERRIDE sets the PUBLISHED state (degC / hours); ADD injects a rate
+    // into the loader accumulator every engine already reads
+    // (heat_state.node_temp_vol_in in degC·ft3/s,
+    // water_age_state.node_age_vol_in in s·ft3/s). One entry per node.
+    std::vector<ForcingMode>    node_temperature_mode;
+    std::vector<double>         node_temperature_value;
+    std::vector<ForcingPersist> node_temperature_persist;
+
+    std::vector<ForcingMode>    node_age_mode;
+    std::vector<double>         node_age_value;
+    std::vector<ForcingPersist> node_age_persist;
+
     // ------ Link forcing (sized to n_links) ---------------------------------
 
     std::vector<ForcingMode>    link_flow_mode;
@@ -257,6 +270,14 @@ struct ForcingData {
         node_quality_value.assign(unp, 0.0);
         node_quality_persist.assign(unp, ForcingPersist::RESET);
 
+        node_temperature_mode.assign(un, ForcingMode::NONE);
+        node_temperature_value.assign(un, 0.0);
+        node_temperature_persist.assign(un, ForcingPersist::RESET);
+
+        node_age_mode.assign(un, ForcingMode::NONE);
+        node_age_value.assign(un, 0.0);
+        node_age_persist.assign(un, ForcingPersist::RESET);
+
         link_flow_mode.assign(ul, ForcingMode::NONE);
         link_flow_value.assign(ul, 0.0);
         link_flow_persist.assign(ul, ForcingPersist::RESET);
@@ -298,6 +319,8 @@ struct ForcingData {
         set_none(node_lat_inflow_mode);
         set_none(node_head_boundary_mode);
         set_none(node_quality_mode);
+        set_none(node_temperature_mode);
+        set_none(node_age_mode);
         set_none(link_flow_mode);
         set_none(link_setting_mode);
         set_none(link_quality_mode);
@@ -327,6 +350,8 @@ struct ForcingData {
         clear_resets(node_lat_inflow_mode,      node_lat_inflow_persist);
         clear_resets(node_head_boundary_mode,    node_head_boundary_persist);
         clear_resets(node_quality_mode,          node_quality_persist);
+        clear_resets(node_temperature_mode,      node_temperature_persist);
+        clear_resets(node_age_mode,              node_age_persist);
         clear_resets(link_flow_mode,             link_flow_persist);
         clear_resets(link_setting_mode,          link_setting_persist);
         clear_resets(link_quality_mode,          link_quality_persist);

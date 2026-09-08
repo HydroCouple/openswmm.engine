@@ -26,6 +26,8 @@
 
 #include "ExplicitInertialSolver.hpp"
 
+#include "../subsurface/SubsurfaceSolver.hpp"
+
 #include <algorithm>
 #include <cmath>
 #if defined(SWMM_USE_OPENMP)
@@ -388,6 +390,12 @@ void ExplicitInertialSolver::reconstructAll() {
 }
 
 void ExplicitInertialSolver::settleAccumulators() {
+    // G1: the subsurface settles on the SAME trigger and for the same
+    // reason. A re-tier re-indexes the tier lists, so any volume still
+    // sitting in a side accumulator would be gathered by a cell that no
+    // longer fires at that cadence — the stranded-flux hazard. Done first so
+    // Dunne water settled here is visible to the surface pass below.
+    if (gw_) { gw_->settle(*state_); gw_->compactPending(); }
     if (!accumulators_pending_) return;
     accumulators_pending_ = false;
     const int nt = mesh_->n_triangles();
@@ -474,6 +482,14 @@ void ExplicitInertialSolver::lazySourcesOnly(double t) {
         // Book before the early-out: rain exactly cancelling the sink leaves
         // src == 0, but water still infiltrated and the ledger counts the rain.
         state_->infil_applied[i] += infil * dt_lazy;
+        // Signed per-cell coupling volume, booked at the SAME dt the sink
+        // below integrates. Also before the early-out: a spill exactly
+        // cancelled by evaporation leaves src == 0 while water still crossed
+        // the coupling point, and an accumulator that misses those cells
+        // cannot be reconciled against the domain totals.
+        if (state_->coupling_flux[i] != 0.0)
+            state_->coupling_applied[i] +=
+                state_->coupling_flux[i] * dt_lazy * mesh_->tri_area[i];
         const double evap =
             evapSink(state_->evap_rate[i], state_->depth[i], opts_->dry_depth);
         const double src =
@@ -512,6 +528,20 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
             const double infil = infilSink(state_->infil_rate[i],
                                            state_->depth[i], opts_->dry_depth);
             state_->infil_applied[i] += infil * dt_lazy;
+            if (state_->coupling_flux[i] != 0.0)
+                state_->coupling_applied[i] +=
+                    state_->coupling_flux[i] * dt_lazy * mesh_->tri_area[i];
+            // G1: the lazy tier infiltrates too, so its water must reach the
+            // aquifer on the same terms as an active cell's. Omitting this
+            // loses most of the recharge on a rain-on-grid deck, where the
+            // majority of cells sit below h_move for the whole storm and are
+            // never active — and loses it silently, since infil_applied still
+            // books it as an exit. The return direction needs nothing here:
+            // a cell the aquifer owes water to is seeded active by the pass
+            // below, so it takes it back through fireCellsImpl.
+            if (gw_ && infil > 0.0)
+                gw_->bookInfiltrationFromSurface(
+                    i, infil * dt_lazy * mesh_->tri_area[i]);
             const double evap = evapSink(state_->evap_rate[i],
                                          state_->depth[i], opts_->dry_depth);
             const double src =
@@ -560,6 +590,19 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
         if (state_->depth[i] >= thresh || state_->coupling_flux[i] != 0.0 ||
             pin_t0_[i])
             next[i] = 1;
+    }
+
+    // G1: a cell the aquifer owes water to must route it. Exfiltration and
+    // Dunne excess are booked into the subsurface's xacc_to_surface and
+    // drained by the SURFACE cell's firing — so a dry cell above a rising
+    // table would hold that water forever, because on a dry bed nothing else
+    // ever activates it. This is the one seed that does not come from the
+    // surface's own state. Serial: the list is short (cells that saturated),
+    // and settleAccumulators() above already compacted it, so every entry is
+    // still owed.
+    if (gw_) {
+        for (const int i : gw_->pendingSurfaceCells())
+            if (i >= 0 && i < nt) next[static_cast<std::size_t>(i)] = 1;
     }
 
     // 3. One-ring halo so fronts can enter their neighbours within a rebuild
@@ -732,6 +775,19 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     for (std::size_t tk = 0;
          tk < cells_by_tier_.size() && tk < tier_occupancy_.size(); ++tk)
         tier_occupancy_[tk] += static_cast<long>(cells_by_tier_[tk].size());
+
+    // G1: re-tier the subsurface on the same trigger, from ITS OWN stability
+    // steps against the same dt0_ and the same ladder height (G-A). A GW cell
+    // slower than 2^(K−1)·dt0_ lands on the coarsest rung and simply fires
+    // more often than it strictly needs — conservative, and it keeps the
+    // ladder height a single [2D_OPTIONS] LTS_TIERS rather than a second,
+    // silently different number. (D-N1's runtime tier count would let the
+    // ladder grow to `gw_->requiredTiers(dt0_)`; it is deliberately not taken
+    // here — see the handoff.)
+    if (gw_) {
+        gw_->refreshDtCell(*mesh_, edges_);
+        gw_->assignTiers(dt0_, static_cast<int>(cells_by_tier_.size()));
+    }
 
     telemetry_.emplace_back(t, static_cast<int>(active_cells_.size()));
 }
@@ -1233,10 +1289,27 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
         const double infil =
             infilSink(state_->infil_rate[i], state_->depth[i], dry);
         state_->infil_applied[i] += infil * dt_c;
+        if (state_->coupling_flux[i] != 0.0)
+            state_->coupling_applied[i] +=
+                state_->coupling_flux[i] * dt_c * mesh_->tri_area[i];
         const double evap =
             evapSink(state_->evap_rate[i], state_->depth[i], dry);
-        const double src =
-            state_->rainfall[i] + state_->coupling_flux[i] - evap - infil;
+        // G1 step 11b. With a `[2D_AQUIFER]` present, infiltration is not
+        // LOST — it is booked to the cell's aquifer column, and saturation
+        // excess (Dunne and top-layer rejection) comes back the other way.
+        // Both directions are per-cell slots, so this stays race-free inside
+        // the parallel cell loop; the LIST bookkeeping is compacted serially
+        // at the rebuild.
+        double gw_return = 0.0;
+        if (gw_) {
+            const double A = mesh_->tri_area[i];
+            if (infil > 0.0)
+                gw_->bookInfiltrationFromSurface(i, infil * dt_c * A);
+            const double back = gw_->takeToSurface(i);   // m³
+            if (back != 0.0) gw_return = back / (A * dt_c);
+        }
+        const double src = state_->rainfall[i] + state_->coupling_flux[i] +
+                           gw_return - evap - infil;
 
         // S1 species. ORDER MATTERS and is the same as the faces': sinks
         // read this cell's concentration against its PUBLISHED volume
@@ -1553,15 +1626,40 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
             if (Q > 0.0) {   // 2D → 1D drain: availability share of the cell
                 Q = std::min(Q, opts_->exchange_beta *
                                     std::max(state_->volume[ci], 0.0) / dt_c);
-            } else {         // 1D → 2D spill: node stored-volume budget
+            } else {
+                // 1D → 2D spill: the node may only give up its PONDED water,
+                // i.e. what it holds ABOVE full_volume.
+                //
+                // C3 (2026-09-07). This used to be the node's TOTAL stored
+                // volume, which let a surcharged-but-not-flooding node
+                // dewater its own pipes through the manhole cover: the spill
+                // physically exits at the rim, so below-crown conveyance
+                // storage is not reachable by it. On a surcharging network
+                // that is a large, one-signed transfer of water from the 1D
+                // system to the 2D surface with nothing to stop it.
+                //
+                // `full_volume` is the node's own capacity; SWMM's ponded
+                // branch stores ponded water as volume ABOVE it
+                // (commitNodeDepthState: volume = max(old + dV, full_volume)),
+                // so the difference is exactly the ponded share. Coupled
+                // junctions always pond — SurfaceRouter2D assigns them the
+                // 2D-cell footprint as ponded_area and DynamicWave lets
+                // is_coupled bypass ALLOW_PONDING — so this budget is the
+                // right one and is non-zero whenever there is water to give.
                 const auto ni = static_cast<std::size_t>(cp.node_idx);
+                const double ponded_1d =
+                    std::max(0.0, state_->nodes_1d->volume[ni] -
+                                      state_->nodes_1d->full_volume[ni]);
                 const double avail =
-                    std::max(0.0, state_->nodes_1d->volume[ni] *
-                                      opts_->vol_1d_to_2d) -
-                    node_drawn_[ni];
+                    ponded_1d * opts_->vol_1d_to_2d - node_drawn_[ni];
                 if (avail <= 0.0) continue;
                 const double want = -Q * dt_c;
                 const double take = std::min(want, avail);
+                // The shortfall is what the orifice law asked for and the
+                // node could not supply. Booked so it is visible instead of
+                // being absorbed by the 1D side's `y_new = max(y_new, 0)`
+                // floor, which would create the water silently.
+                spill_deficit_ += std::max(0.0, want - take);
                 node_drawn_[ni] += take;
                 Q = -take / dt_c;
             }
@@ -1612,6 +1710,14 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
                         tr.exch_spill[static_cast<std::size_t>(k)] += v_in;
                 }
             }
+            // C1: book the signed per-cell abstraction HERE, where the node
+            // exchange actually moves water. The other three sites book
+            // `coupling_flux`, which only ever carries the FORCING API's
+            // prescribed rate — the node coupling below never writes it, so
+            // booking only there left the per-cell series identically zero on
+            // every genuinely coupled deck while the domain totals grew.
+            // Sign follows the volume update: + = into the cell.
+            state_->coupling_applied[ci] += -Q * dt_c;
             state_->volume[ci] -= Q * dt_c;
             if (state_->volume[ci] < 0.0) state_->volume[ci] = 0.0;
             exch_[k] += Q * dt_c;
@@ -1707,6 +1813,7 @@ void ExplicitInertialSolver::runRk2Step(double dt) {
     rk_qx0_ = qcx_;
     rk_qy0_ = qcy_;
     rk_bc0_ = bc_accum_; rk_ex0_ = exch_; rk_inf0_ = state_->infil_applied;
+    rk_cpl0_ = state_->coupling_applied;
     rk_drawn0_ = node_drawn_;
     for (int stage = 0; stage < 2; ++stage) {
         fireFaces(active_faces_, dt, /*global_step=*/true);
@@ -1726,6 +1833,12 @@ void ExplicitInertialSolver::runRk2Step(double dt) {
                                    state_->head[i], state_->depth[i]);
             state_->infil_applied[i] =
                 rk_inf0_[i] + 0.5 * (state_->infil_applied[i] - rk_inf0_[i]);
+            // Same half-step average as every other accumulator the RK2
+            // predictor advanced: without it the coupling volume books the
+            // full predictor step while the volume books the average, and
+            // the per-cell series drifts from the domain totals.
+            state_->coupling_applied[i] =
+                rk_cpl0_[i] + 0.5 * (state_->coupling_applied[i] - rk_cpl0_[i]);
         }
         if (state_->depth[i] <= opts_->dry_depth) { qcx_[i] = 0.0; qcy_[i] = 0.0; }
     }
@@ -1914,6 +2027,11 @@ void ExplicitInertialSolver::runMacroCycle(double dt0, int nsub) {
             if (s % (1 << k)) continue;
             if (!edges_by_tier_[k].empty())
                 fireFaces(edges_by_tier_[k], (1 << k) * dt0);
+            // G1: the subsurface's lateral Darcy faces ride the SAME rung of
+            // the SAME ladder. Its tier lists are its own (G-A), so a GW face
+            // fires here only if the groundwater's stability step put it on
+            // rung k — the two domains share the cadence, not the criterion.
+            if (gw_) gw_->fireGwFaces(k, (1 << k) * dt0);
         }
         if (dbg_invariant) {
             const double inv1 = invariant();
@@ -1926,7 +2044,16 @@ void ExplicitInertialSolver::runMacroCycle(double dt0, int nsub) {
             if (s % (1 << k)) continue;
             if (!cells_by_tier_[k].empty() || k == 0)
                 fireCells(cells_by_tier_[k], (1 << k) * dt0, k == 0);
+            // The GW cells of this rung fire AFTER the surface cells of the
+            // same rung, so a cell that infiltrated in this substep hands the
+            // water down within the substep rather than a rung later.
+            if (gw_) gw_->fireGwCells(k, (1 << k) * dt0, *state_);
         }
+        // Node exchange is sampled at tier-0 cadence against the batch-frozen
+        // 1D heads, exactly like the surface's junction exchange, and booked
+        // into the GW cells' accumulators (G-B) rather than applied directly.
+        if (gw_ && state_->nodes_1d)
+            gw_->sampleNodeExchange(state_->nodes_1d, dt0);
         if (dbg_invariant) {
             const double inv2 = invariant();
             if (std::fabs(inv2 - inv0) > 1.0e-9 * (std::fabs(inv0) + 1.0))

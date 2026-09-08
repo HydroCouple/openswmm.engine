@@ -176,6 +176,35 @@ SWMM_ENGINE_API int swmm_forcing_node_quality(
     SWMM_Engine engine, int node_idx, int pollutant_idx,
     double mass_rate, int mode, int persist);
 
+/**
+ * @brief Force the water temperature at a node (U2, 2026-09-07).
+ *
+ * @details The reserved-species twin of @ref swmm_forcing_node_quality.
+ *          OVERRIDE sets the node's PUBLISHED temperature (degC) directly —
+ *          not mass-balanced, exactly like the pollutant OVERRIDE. ADD
+ *          injects a rate (degC × ft3/s, the `node_temp_vol_in` convention
+ *          every quality engine already reads), so the arriving water is
+ *          mixed with the store instead of replacing it.
+ *          Requires [OPTIONS] HEAT_TRANSPORT YES; otherwise SWMM_ERR_BADPARAM.
+ *
+ * @ingroup engine_forcing
+ */
+SWMM_ENGINE_API int swmm_forcing_node_temperature(
+    SWMM_Engine engine, int node_idx, double value, int mode, int persist);
+
+/**
+ * @brief Force the water age at a node (U2, 2026-09-07).
+ *
+ * @details OVERRIDE sets the node's published age in HOURS (the
+ *          [WATER_AGE_SOURCES] and [INFLOWS] __WATER_AGE__ unit); ADD
+ *          injects an age-volume rate (hours × ft3/s) into the loader
+ *          accumulator. Requires [OPTIONS] WATER_AGE YES.
+ *
+ * @ingroup engine_forcing
+ */
+SWMM_ENGINE_API int swmm_forcing_node_age(
+    SWMM_Engine engine, int node_idx, double value, int mode, int persist);
+
 /* =========================================================================
  * Link forcing
  * ========================================================================= */

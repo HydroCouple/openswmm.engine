@@ -14,6 +14,7 @@
 #include <openswmm/engine/openswmm_forcing.h>
 #include "../../core/SWMMEngine.hpp"
 #include "../mesh/MeshBuilder.hpp"
+#include "../data/Report2DVars.hpp"
 
 #include <cmath>
 #include <cstring>
@@ -658,6 +659,16 @@ int swmm_2d_get_rain_volume_bulk(SWMM_Engine engine, double* volumes) {
 
     const auto& rc = router2d.rainCumulative();
     std::memcpy(volumes, rc.data(), rc.size() * sizeof(double));
+    return SWMM_OK;
+}
+
+int swmm_2d_get_coupling_volume_bulk(SWMM_Engine engine, double* volumes) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    if (!volumes) return SWMM_ERR_BADPARAM;
+
+    const auto& cc = router2d.couplingCumulative();
+    std::memcpy(volumes, cc.data(), cc.size() * sizeof(double));
     return SWMM_OK;
 }
 
@@ -1409,6 +1420,33 @@ int swmm_2d_set_edge_bc_rating_curve_name(SWMM_Engine engine, int tri_idx, int e
         b.edge_bc_rating_curve[idx]      = -2;
     }
     return SWMM_OK;
+}
+
+// ============================================================================
+// Results-file variable selection helpers (engine-independent)
+// ============================================================================
+
+int swmm_2d_output_variable_count(void) {
+    return static_cast<int>(openswmm::twoD::report2d::tokens().size());
+}
+
+const char* swmm_2d_output_variable_name(int i) {
+    const auto& t = openswmm::twoD::report2d::tokens();
+    if (i < 0 || i >= static_cast<int>(t.size())) return "";
+    return t[static_cast<std::size_t>(i)].c_str();
+}
+
+unsigned swmm_2d_output_variable_mask(const char* text) {
+    if (!text) return 0u;
+    unsigned mask = 0u;
+    if (!openswmm::twoD::report2d::parseMask(text, mask).empty()) return 0u;
+    return mask;
+}
+
+const char* swmm_2d_output_variable_text(unsigned mask) {
+    static thread_local std::string buf;
+    buf = openswmm::twoD::report2d::formatMask(mask);
+    return buf.c_str();
 }
 
 } // extern "C"

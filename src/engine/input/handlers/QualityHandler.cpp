@@ -421,6 +421,17 @@ void handle_initial_quality(SimulationContext& ctx,
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
         if (tok.empty()) continue;
+        // U2: `FILE <path>` names a CSV sidecar (scope,element,constituent,
+        // value per line; header optional) read at open once the .inp
+        // directory is known (SWMMEngine::open → load_initial_quality_file).
+        if (Tokenizer::to_upper(tok[0]) == "FILE") {
+            if (tok.size() < 2) {
+                ctx.errors.push_back("[INITIAL_QUALITY] FILE needs a path.");
+                continue;
+            }
+            ctx.initial_quality.file = tok[1];
+            continue;
+        }
         if (tok.size() < 4) {
             ctx.errors.push_back(
                 "[INITIAL_QUALITY] row needs NODE|LINK element constituent "

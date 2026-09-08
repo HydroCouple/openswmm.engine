@@ -66,6 +66,7 @@ void DwfInflowSoA::resize(int n) {
     pat_weekend.assign(un, -1);
     is_flow.assign(un, 0);
     pollut_idx.assign(un, -1);
+    msx_idx.assign(static_cast<std::size_t>(n), -1);
 }
 
 double InflowSolver::getPatternFactor(int pat_idx, int month, int day, int hour) const {
@@ -216,6 +217,24 @@ void InflowSolver::init(SimulationContext& ctx) {
             ext_inflows_.kind[ui] = static_cast<int>(
                 is_mass ? ExtInflowKind::MASS : ExtInflowKind::CONCEN);
             ext_inflows_.pollut_idx[ui] = ctx.pollutant_names.find(cons);
+            // U2 (2026-09-07): a reactions-component species is a legal
+            // constituent on the same footing as a pollutant (the one
+            // species resolver). Its load rides msx_ext_mass_in.
+            if (ext_inflows_.pollut_idx[ui] < 0 && ctx.reactions.configured) {
+                const int m = ctx.reactions.find_species(cons);
+                if (m >= 0) {
+                    ext_inflows_.kind[ui] = static_cast<int>(
+                        is_mass ? ExtInflowKind::MSX_MASS : ExtInflowKind::MSX_CONCEN);
+                    ext_inflows_.pollut_idx[ui] = m;
+                    if (m < static_cast<int>(ctx.reactions.species_is_wall.size()) &&
+                        ctx.reactions.species_is_wall[static_cast<std::size_t>(m)])
+                        warn_once(
+                            "[INFLOWS] '" + cons + "' at node '" +
+                            ctx.ext_inflows.node_name[ui] +
+                            "' is a WALL species — inflow water carries no "
+                            "wall-bound mass; the row is ignored.");
+                }
+            }
             // Z1: a constituent matching nothing was SILENTLY dropped at
             // routing (pollut_idx −1 skips the row); a typo in a pollutant
             // name deserves words.
@@ -223,8 +242,8 @@ void InflowSolver::init(SimulationContext& ctx) {
                 warn_once(
                     "[INFLOWS] constituent '" + cons + "' at node '" +
                     ctx.ext_inflows.node_name[ui] +
-                    "' matches no pollutant or reserved species — the row "
-                    "is ignored.");
+                    "' matches no pollutant, reactions species or reserved "
+                    "species — the row is ignored.");
             // Internal quality unit is ft3 x mg/L, so a user-supplied MASS rate
             // divides by the liters-per-ft3 factor exactly as legacy does
             // (inflow.c: "if ( type == MASS_INFLOW ) cf /= LperFT3").
@@ -271,6 +290,10 @@ void InflowSolver::init(SimulationContext& ctx) {
             // (legacy TDwfInflow.param = pollutant index). Unmatched names
             // stay -1 and the row is inert, like a legacy parse would reject.
             dwf_inflows_.pollut_idx[ui] = ctx.pollutant_names.find(constituent);
+            // U2: a reactions-species DWF concentration (same footing as a
+            // pollutant row; the load goes to msx_ext_mass_in).
+            if (dwf_inflows_.pollut_idx[ui] < 0 && ctx.reactions.configured)
+                dwf_inflows_.msx_idx[ui] = ctx.reactions.find_species(constituent);
         }
         dwf_inflows_.avg_value[ui] = avg_val;
 
@@ -380,7 +403,9 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
         for (int i = 0; i < ext_inflows_.count; ++i) {
             auto ui = static_cast<std::size_t>(i);
             const int kind = ext_inflows_.kind[ui];
-            if (kind == static_cast<int>(ExtInflowKind::FLOW)) continue;
+            if (kind != static_cast<int>(ExtInflowKind::CONCEN) &&
+                kind != static_cast<int>(ExtInflowKind::MASS))
+                continue;
             const int p  = ext_inflows_.pollut_idx[ui];
             const int ni = ext_inflows_.node_idx[ui];
             if (p < 0 || p >= np || ni < 0 || ni >= ctx.n_nodes()) continue;
@@ -394,6 +419,49 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
                              static_cast<std::size_t>(p);
             if (idx < ctx.nodes.ext_qual_mass.size())
                 ctx.nodes.ext_qual_mass[idx] += w;
+        }
+    }
+
+    // Pass 2b — U2: reactions-species rows into msx_ext_mass_in (the same
+    // rate convention as ext_qual_mass, one stride per species). Sized on
+    // first use and re-zeroed every step here — this is the only writer.
+    {
+        auto& rx = ctx.reactions;
+        const int nsp = rx.configured ? rx.n_species() : 0;
+        if (nsp > 0 && ctx.n_nodes() > 0) {
+            bool any_msx = false;
+            for (int i = 0; i < ext_inflows_.count && !any_msx; ++i) {
+                const int kind = ext_inflows_.kind[static_cast<std::size_t>(i)];
+                any_msx = (kind == static_cast<int>(ExtInflowKind::MSX_CONCEN) ||
+                           kind == static_cast<int>(ExtInflowKind::MSX_MASS));
+            }
+            const auto want = static_cast<std::size_t>(ctx.n_nodes()) *
+                              static_cast<std::size_t>(nsp);
+            if (any_msx || rx.msx_ext_mass_in.size() == want) {
+                if (rx.msx_ext_mass_in.size() != want) rx.msx_ext_mass_in.assign(want, 0.0);
+                else std::fill(rx.msx_ext_mass_in.begin(), rx.msx_ext_mass_in.end(), 0.0);
+            }
+            if (any_msx) {
+                for (int i = 0; i < ext_inflows_.count; ++i) {
+                    auto ui = static_cast<std::size_t>(i);
+                    const int kind = ext_inflows_.kind[ui];
+                    if (kind != static_cast<int>(ExtInflowKind::MSX_CONCEN) &&
+                        kind != static_cast<int>(ExtInflowKind::MSX_MASS))
+                        continue;
+                    const int m  = ext_inflows_.pollut_idx[ui];
+                    const int ni = ext_inflows_.node_idx[ui];
+                    if (m < 0 || m >= nsp || ni < 0 || ni >= ctx.n_nodes()) continue;
+                    if (static_cast<std::size_t>(m) < rx.species_is_wall.size() &&
+                        rx.species_is_wall[static_cast<std::size_t>(m)])
+                        continue;   // wall species carry no inflow mass
+                    double w = row_value(ui);
+                    if (kind == static_cast<int>(ExtInflowKind::MSX_CONCEN))
+                        w *= ctx.nodes.ext_inflow[static_cast<std::size_t>(ni)];
+                    rx.msx_ext_mass_in[static_cast<std::size_t>(ni) *
+                                       static_cast<std::size_t>(nsp) +
+                                       static_cast<std::size_t>(m)] += w;
+                }
+            }
         }
     }
 
@@ -490,6 +558,39 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
                              static_cast<std::size_t>(p);
             if (idx < ctx.nodes.dwf_qual_mass.size())
                 ctx.nodes.dwf_qual_mass[idx] += w;
+        }
+    }
+
+    // Pass 2b — U2: species DWF rows: q · concentration into msx_ext_mass_in
+    // (no global default to displace — species have no c_dwf column).
+    {
+        auto& rx = ctx.reactions;
+        const int nsp = rx.configured ? rx.n_species() : 0;
+        if (nsp > 0 && ctx.n_nodes() > 0) {
+            bool any = false;
+            for (int i = 0; i < dwf_inflows_.count && !any; ++i)
+                any = dwf_inflows_.msx_idx[static_cast<std::size_t>(i)] >= 0;
+            if (any) {
+                const auto want = static_cast<std::size_t>(ctx.n_nodes()) *
+                                  static_cast<std::size_t>(nsp);
+                if (rx.msx_ext_mass_in.size() != want) rx.msx_ext_mass_in.assign(want, 0.0);
+                for (int i = 0; i < dwf_inflows_.count; ++i) {
+                    auto ui = static_cast<std::size_t>(i);
+                    const int m = dwf_inflows_.msx_idx[ui];
+                    if (m < 0 || m >= nsp) continue;
+                    if (static_cast<std::size_t>(m) < rx.species_is_wall.size() &&
+                        rx.species_is_wall[static_cast<std::size_t>(m)])
+                        continue;
+                    const int ni = dwf_inflows_.node_idx[ui];
+                    if (ni < 0 || ni >= ctx.n_nodes()) continue;
+                    const double q = ctx.nodes.dwf_inflow[static_cast<std::size_t>(ni)];
+                    if (q <= 0.0) continue;
+                    rx.msx_ext_mass_in[static_cast<std::size_t>(ni) *
+                                       static_cast<std::size_t>(nsp) +
+                                       static_cast<std::size_t>(m)] +=
+                        q * (dwfFactor(ui) * dwf_inflows_.avg_value[ui]);
+                }
+            }
         }
     }
 }

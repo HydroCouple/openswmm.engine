@@ -221,6 +221,8 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
     d_infil_ = DView("infil", nt);
     d_infil_applied_ = DView("infil_applied", nt);
     infil_applied_host_.assign(static_cast<std::size_t>(nt), 0.0);
+    d_coupling_applied_ = DView("coupling_applied", nt);
+    coupling_applied_host_.assign(static_cast<std::size_t>(nt), 0.0);
     d_edge_flux_ = DView("edge_flux", state.edge_flux.size());
     d_active_ = IView("active", nt);
     d_pin_t0_ = IView("pin_t0", nt);
@@ -295,11 +297,13 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
     d_node_head_      = DView("node_head", nn);
     d_node_depth_     = DView("node_depth", nn);
     d_node_volume_    = DView("node_volume", nn);
+    d_node_fullvol_   = DView("node_fullvol", nn);
     d_node_invert_    = DView("node_invert", nn);
     d_node_fulldepth_ = DView("node_fulldepth", nn);
     if (nn > 0) {
         devRefresh(d_node_invert_, state.nodes_1d->invert_elev);
         devRefresh(d_node_fulldepth_, state.nodes_1d->full_depth);
+        devRefresh(d_node_fullvol_, state.nodes_1d->full_volume);
     }
 
     // Tier-0 pins: BC cells + coupling cells (fastest-changing forcing).
@@ -442,6 +446,7 @@ void ExplicitKokkosSurfaceSolver::lazySourcesDev(double t) {
     auto vol = d_volume_, head = d_head_, depth = d_depth_;
     auto rain = d_rain_, coup = d_coup_, evap = d_evap_, infil = d_infil_;
     auto infil_app = d_infil_applied_;
+    auto coup_app = d_coupling_applied_;
     auto active = d_active_;
     auto area = d_tri_area_, cz = d_tri_cz_, vz = d_vz_;
     auto cvv = d_cell_v_;
@@ -457,6 +462,7 @@ void ExplicitKokkosSurfaceSolver::lazySourcesDev(double t) {
             const double inf = devInfilSink(infil(i), depth(i), dry);
             // Book before the early-out, as the serial marcher does.
             infil_app(i) += inf * dt_lazy;
+            if (coup(i) != 0.0) coup_app(i) += coup(i) * dt_lazy * area(i);
             const double src = rain(i) + coup(i)
                                - devEvapSink(evap(i), depth(i), dry)
                                - inf;
@@ -789,6 +795,7 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
     auto sign = d_sign_;
     auto rain = d_rain_, coup = d_coup_, evap = d_evap_, infil = d_infil_;
     auto infil_app = d_infil_applied_;
+    auto coup_app = d_coupling_applied_;
     auto qv = d_q_, xi = d_xi_, mx = d_mx_, my = d_my_;
     auto qcx = d_qcx_, qcy = d_qcy_;
     auto area = d_tri_area_, cz = d_tri_cz_, cx = d_tri_cx_, cy = d_tri_cy_;
@@ -818,6 +825,7 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
                 // against the remaining depth (== ExplicitInertialSolver).
                 const double inf = devInfilSink(infil(i), depth(i), dry);
                 infil_app(i) += inf * dt_c;
+                if (coup(i) != 0.0) coup_app(i) += coup(i) * dt_c * area(i);
                 const double src = rain(i) + coup(i)
                                    - devEvapSink(evap(i), depth(i), dry)
                                    - inf;
@@ -1010,7 +1018,9 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
              cp_node = d_cp_node_;
         auto cp_cd = d_cp_cd_, cp_area = d_cp_area_;
         auto exch = d_exch_, node_drawn = d_node_drawn_;
+        auto coup_app = d_coupling_applied_;
         auto nh = d_node_head_, nd = d_node_depth_, nv = d_node_volume_;
+        auto nfv = d_node_fullvol_;
         auto ninv = d_node_invert_, nfd = d_node_fulldepth_;
         auto active = d_active_;
         auto vs_ptr = d_vs_ptr_, vs_idx = d_vs_idx_;
@@ -1084,8 +1094,14 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
                         const double vmax = vol(ci) > 0.0 ? vol(ci) : 0.0;
                         const double cap = beta * vmax / dt_c;
                         if (Q > cap) Q = cap;
-                    } else {         // 1D → 2D spill: node stored budget
-                        const double avail0 = nv(ni) * vol12 - node_drawn(ni);
+                    } else {
+                        // 1D → 2D spill: PONDED budget only (C3). See the CPU
+                        // marcher for why total node storage is wrong — the
+                        // spill exits at the rim and cannot reach below-crown
+                        // conveyance storage. The two backends must agree.
+                        const double ponded =
+                            (nv(ni) > nfv(ni)) ? (nv(ni) - nfv(ni)) : 0.0;
+                        const double avail0 = ponded * vol12 - node_drawn(ni);
                         const double avail = (avail0 > 0.0) ? avail0 : 0.0;
                         if (avail <= 0.0) continue;
                         const double want = -Q * dt_c;
@@ -1093,6 +1109,11 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
                         node_drawn(ni) += take;
                         Q = -take / dt_c;
                     }
+                    // C1: mirror of the CPU marcher — book the signed
+                    // per-cell abstraction where the node exchange actually
+                    // moves water. The two sites above book `coup`, which
+                    // only carries the FORCING API's prescribed rate.
+                    coup_app(ci) += -Q * dt_c;
                     vol(ci) -= Q * dt_c;
                     if (vol(ci) < 0.0) vol(ci) = 0.0;
                     exch(kk) += Q * dt_c;
@@ -1219,6 +1240,10 @@ void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current,
         for (std::size_t i = 0; i < infil_applied_host_.size(); ++i)
             state_->infil_applied[i] += infil_applied_host_[i];
         Kokkos::deep_copy(d_infil_applied_, 0.0);
+        hostRefresh(coupling_applied_host_, d_coupling_applied_);
+        for (std::size_t i = 0; i < coupling_applied_host_.size(); ++i)
+            state_->coupling_applied[i] += coupling_applied_host_[i];
+        Kokkos::deep_copy(d_coupling_applied_, 0.0);
     }
 }
 

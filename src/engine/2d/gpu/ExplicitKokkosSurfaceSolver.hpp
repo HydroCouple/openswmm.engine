@@ -111,7 +111,18 @@ private:
     /// while this one drains on the publish cadence — a plain overwrite would
     /// lose or double-count whatever fell between the two.
     DView d_infil_applied_;
+    /// Signed per-cell coupling exchange volume (m³), mirroring
+    /// SurfaceStateData::coupling_applied. Kept on device beside
+    /// d_infil_applied_ and drained by the same host pass — a GPU run that
+    /// left it zero would report "no coupling" on exactly the decks the
+    /// plugin is chosen for.
+    DView d_coupling_applied_;
+    /// C3: node full_volume (1D ft³) on device, so the spill cap can use the
+    /// PONDED share (volume − full_volume) rather than total node storage.
+    /// Static for the run, uploaded once beside d_node_invert_.
+    DView d_node_fullvol_;
     std::vector<double> infil_applied_host_;  ///< drain scratch (nt)
+    std::vector<double> coupling_applied_host_;  ///< drain scratch (nt)
     DView d_edge_flux_;                ///< kMaxCellVerts·nt flat slots (published)
     IView d_active_, d_pin_t0_, d_tier_, d_face_tier_;
     IView d_cells_compact_, d_edges_compact_;  ///< per-tier segments

@@ -77,13 +77,21 @@ struct SurfaceStateData;
 // Value types
 // ============================================================================
 
-/// Destination of infiltrated water. D-I4: only LOST is accepted in this
-/// release; the others parse so the grammar is stable, and are rejected at
-/// validation with a "not supported in this release" message.
+/// Destination of infiltrated water. D-I4 as amended by U3 and G1: LOST and
+/// SUBCATCH_AQUIFER are routed, and AQUIFER_2D is accepted once a
+/// `[2D_AQUIFER]` section resolves — without one it is still refused, with a
+/// message naming the section to add.
+///
+/// @note With a `[2D_AQUIFER]` present the aquifer OWNS infiltration: every
+///       infiltrating cell recharges it and LOST reads as AQUIFER_2D. That is
+///       what a user means by putting an aquifer under the mesh, and it keeps
+///       the water to one owner. SUBCATCH_AQUIFER is the one destination that
+///       cannot coexist with it, for the same one-owner reason the integrated
+///       component conflict already states — see `SurfaceRouter2D::initialize`.
 enum class Infil2DDest : int {
     LOST             = 0,  ///< Leaves the domain; booked to MassBalance2D::infil_out
-    SUBCATCH_AQUIFER = 1,  ///< Reserved — legacy subcatchment aquifer (G1 step 11b)
-    AQUIFER_2D       = 2   ///< Reserved — the two-zone 2D kernel (G1 step 11b)
+    SUBCATCH_AQUIFER = 1,  ///< Legacy subcatchment aquifer (U3 track I-b)
+    AQUIFER_2D       = 2   ///< The two-zone 2D kernel (G1 step 11b)
 };
 
 /// Number of positional parameter columns carried per row. Matches the widest
@@ -116,6 +124,11 @@ struct Infil2DRow {
     InfilModel  method     = InfilModel::HORTON;
     double      p[kInfil2DMaxParams] = {0.0, 0.0, 0.0, 0.0, 0.0};
     Infil2DDest dest       = Infil2DDest::LOST;
+    /// E2: true when the row spelled its own DEST column. Rows that did not
+    /// take the project default ([2D_OPTIONS] INFIL_DESTINATION) at
+    /// initialize; the writer emits DEST only for explicit rows so a deck
+    /// round-trips unchanged.
+    bool        dest_explicit = false;
 };
 
 /// One `[2D_INFILTRATION_DEFAULTS]` row. `tag == "*"` is the mesh-wide
@@ -192,6 +205,18 @@ public:
                  std::string& err);
 
     /**
+     * @brief G1 — tell validation that a `[2D_AQUIFER]` resolved, so the
+     *        `AQUIFER_2D` destination has somewhere to send its water.
+     *
+     * @details Must be called before `resolve()`. Without it `AQUIFER_2D` is
+     *          refused, which is the right answer when there is no aquifer:
+     *          silently treating it as LOST would drain a model the user
+     *          believed was recharging.
+     */
+    void setAquifer2DAvailable(bool on) noexcept { aquifer_2d_available_ = on; }
+    bool aquifer2DAvailable() const noexcept { return aquifer_2d_available_; }
+
+    /**
      * @brief Recompute and publish per-cell infiltration rates (D-I1).
      *
      * @details Called on the `INFIL_STEP` cadence. Advances kernel state for
@@ -210,6 +235,10 @@ public:
 
     /// True when at least one cell resolved to a model.
     bool active() const noexcept { return active_; }
+
+    /// E2: [2D_OPTIONS] INFILTRATION NO — keep the rows (they still save)
+    /// but run without infiltration. Called after resolve().
+    void deactivate() noexcept { active_ = false; }
 
     /// Resolved method per triangle; `has_method == false` entries are NONE.
     const std::vector<Infil2DRow>& resolvedRows() const noexcept { return resolved_; }
@@ -240,6 +269,10 @@ private:
 
     bool   active_        = false;
     double step_seconds_  = 0.0;
+    /// G1: a `[2D_AQUIFER]` resolved, so AQUIFER_2D has a receiver. Set by
+    /// SurfaceRouter2D before resolve(), and cleared by reset() with the rest
+    /// of the authored state.
+    bool   aquifer_2d_available_ = false;
 
     // Per-triangle resolved state (empty when !active_).
     std::vector<Infil2DRow>        resolved_;

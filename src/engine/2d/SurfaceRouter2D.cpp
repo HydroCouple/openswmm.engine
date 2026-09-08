@@ -22,6 +22,8 @@
 #include "../core/PerfTimers.hpp"
 #include "../core/ThreadInfo.hpp"
 #include "../transport/components/ReactionModule/ReactionArdBinding.hpp"   // S4
+#include "../transport/TransportPolicy.hpp"                                  // E2
+#include "subsurface/SubsurfaceSections.hpp"                                 // G1
 
 #include <stdexcept>
 #include <cmath>
@@ -729,33 +731,34 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         // reserved temperature row LAST. IGNORE_QUALITY turns off the
         // pollutant and MSX rows only: age and temperature are their own
         // options, exactly as on the 1D side.
-        const int np = (ctx.options.ignore_quality) ? 0 : ctx.n_pollutants();
-        int nm = 0;
-        if (!ctx.options.ignore_quality && transport::ardReactionsActive(ctx)) {
-            if (transport::ardHasWallSpecies(ctx)) {
-                ctx.warnings.push_back(
-                    "2D transport: WALL species have no transport semantics on "
-                    "the surface yet — MSX rows are not carried on the mesh "
-                    "(the LEGACY element-local binding still runs them in 1D).");
-            } else {
-                nm = ctx.reactions.n_species();
-            }
+        // E2: the class enables come from the one policy (TransportPolicy:
+        // the 1D rule plus the [2D_OPTIONS] TRANSPORT_* keys); the row order
+        // is the canonical SpeciesRegistry order (pollutants, MSX, age,
+        // temperature) that ArdEngine also uses. Same values as the pre-E2
+        // inline derivation whenever no TRANSPORT_* key is set.
+        const transport::ClassEnables en = transport::surface2DEnables(ctx);
+        if (!ctx.options.ignore_quality && options_.transport_msx &&
+            transport::ardReactionsActive(ctx) && en.msx_has_wall) {
+            ctx.warnings.push_back(
+                "2D transport: WALL species have no transport semantics on "
+                "the surface yet — MSX rows are not carried on the mesh "
+                "(the LEGACY element-local binding still runs them in 1D).");
         }
-        const int na = ctx.options.water_age     ? 1 : 0;
-        const int nt = ctx.options.heat_transport ? 1 : 0;
-        const int ns = np + nm + na + nt;
+        const transport::RowLayout L = transport::canonicalRows(ctx, en);
+        const int np = L.n_pollut;
+        const int nm = L.n_msx;
+        const int na = en.age         ? 1 : 0;
+        const int nt = en.temperature ? 1 : 0;
+        const int ns = L.ns;
         state_.transport.resize(ns, mesh_.n_triangles(),
                                 static_cast<int>(node_coupling_points_.size()));
         auto& tr = state_.transport;
         tr.n_pollut = np;
         tr.n_msx    = nm;
-        tr.age_row  = (na > 0) ? np + nm : -1;
-        tr.temp_row = (nt > 0) ? np + nm + na : -1;
-        tr.row_names.clear();
-        for (int p = 0; p < np; ++p) tr.row_names.push_back(ctx.pollutant_names.name_of(p));
-        for (int m = 0; m < nm; ++m) tr.row_names.push_back(ctx.reactions.species_name[m]);
-        if (na) tr.row_names.push_back("__WATER_AGE__");
-        if (nt) tr.row_names.push_back("__TEMPERATURE__");
+        tr.age_row  = L.age_row;
+        tr.temp_row = L.temp_row;
+        tr.row_names = L.names;
+        (void)na; (void)nt;
         ctx.nodes.coupling_tuple_age  = (tr.age_row  >= 0);
         ctx.nodes.coupling_tuple_temp = (tr.temp_row >= 0);
         if (tr.active()) {
@@ -847,6 +850,39 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         thread_warnings_.emplace_back(buf);
     }
     solver_->initialize(mesh_, state_, options_);
+
+    // G1: the two-zone groundwater kernel, if [2D_AQUIFER] was authored. It
+    // shares the marcher's unique-edge topology (one graph, one orientation
+    // convention) and its LTS ladder, so it needs the concrete CPU marcher.
+    // The GPU/Kokkos backend has no subsurface hooks — say so plainly rather
+    // than running the surface with a silently inert aquifer.
+    // [2D_OPTIONS] GROUNDWATER is the process enable over the top of that:
+    // AUTO (the default, and what every deck written before the key means)
+    // runs iff rows were authored; NO keeps the rows — they still save — and
+    // runs without the subsurface, exactly as INFILTRATION NO does.
+    const bool gw_wanted = options_.groundwater < 0 ? !aquifer_cfg_.empty()
+                                                    : options_.groundwater > 0;
+    if (options_.groundwater == 0 && !aquifer_cfg_.empty())
+        ctx.warnings.push_back(
+            "[2D_OPTIONS] GROUNDWATER NO — the [2D_AQUIFER*] rows are kept "
+            "but no subsurface runs this simulation.");
+    if (gw_wanted && !aquifer_cfg_.empty()) {
+        auto* marcher = dynamic_cast<ExplicitInertialSolver*>(solver_.get());
+        if (marcher == nullptr)
+            throw std::runtime_error(
+                "[2D_AQUIFER] the two-zone groundwater kernel runs on the CPU "
+                "explicit marcher only; this run selected the '" +
+                backend_name_ + "' backend.");
+        const auto aq_errs = resolveSubsurface(ctx, mesh_, aquifer_cfg_,
+                                               aquifer_node_names_);
+        if (!aq_errs.empty()) throw std::runtime_error(aq_errs.front());
+        const std::string aq_err = subsurface_.initialize(
+            mesh_, marcher->inertialEdges(), options_, gwUnitFactors(ctx),
+            static_cast<int>(ctx.nodes.invert_elev.size()), aquifer_cfg_,
+            ctx.warnings);
+        if (!aq_err.empty()) throw std::runtime_error(aq_err);
+        marcher->setSubsurface(&subsurface_);
+    }
 #endif
 
     // §5.5 track I — resolve the [2D_INFILTRATION*] rows against the mesh
@@ -857,9 +893,169 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // Cheap no-op with no sections present: resolve() drops straight back to
     // the unconfigured fast path.
     {
+        // E2 — the [2D_OPTIONS] infiltration keys act on the rows here, once,
+        // before resolution: INFIL_DESTINATION fills every row that did not
+        // spell its own DEST; INFIL_DEFAULT_METHOD NONE drops the '*' row for
+        // the run, a method must agree with the '*' row (its parameters live
+        // there). INFIL_STEP was folded into infil_.options() at open.
+        if (!options_.infil_destination.empty() &&
+            options_.infil_destination != "LOST") {
+            Infil2DDest dest = Infil2DDest::LOST;
+            if (parseInfil2DDest(options_.infil_destination, dest)) {
+                for (auto& d : infil_.defaults())  if (!d.row.dest_explicit) d.row.dest = dest;
+                for (auto& o : infil_.overrides()) if (!o.row.dest_explicit) o.row.dest = dest;
+            }
+        }
+        if (!options_.infil_default_method.empty()) {
+            auto& defs = infil_.defaults();
+            auto star = std::find_if(defs.begin(), defs.end(),
+                                     [](const Infil2DDefault& d) { return d.tag == "*"; });
+            if (options_.infil_default_method == "NONE") {
+                if (star != defs.end()) {
+                    ctx.warnings.push_back(
+                        "[2D_OPTIONS] INFIL_DEFAULT_METHOD NONE — the '*' row of "
+                        "[2D_INFILTRATION_DEFAULTS] is not applied this run "
+                        "(tag and per-cell rows still are).");
+                    defs.erase(star);
+                }
+            } else if (star == defs.end()) {
+                ctx.warnings.push_back(
+                    "[2D_OPTIONS] INFIL_DEFAULT_METHOD " + options_.infil_default_method +
+                    " names no '*' row in [2D_INFILTRATION_DEFAULTS] — the method "
+                    "needs that row's parameters; nothing infiltrates by default.");
+            } else if (options_.infil_default_method !=
+                       std::string(infil2DMethodToken(star->row))) {
+                throw std::runtime_error(
+                    "[2D_OPTIONS] INFIL_DEFAULT_METHOD " + options_.infil_default_method +
+                    " conflicts with the '*' row of [2D_INFILTRATION_DEFAULTS] (" +
+                    infil2DMethodToken(star->row) + ") — edit the row, whose "
+                    "parameters belong to its method.");
+            }
+        }
+        // G1: AQUIFER_2D is legal exactly when a [2D_AQUIFER] resolved above.
+        // Told before resolve() because that is where the destinations are
+        // validated.
+        infil_.setAquifer2DAvailable(subsurface_.active());
         std::string infil_err;
         if (!infil_.resolve(mesh_, ctx.options, infil_err))
             throw std::runtime_error(infil_err);
+        // U3 (track I-b): resolve cell → containing subcatchment for every
+        // cell whose row routes to SUBCATCH_AQUIFER. Cell-generic: the
+        // centroid is MeshData's true-area centroid, valid for triangles and
+        // quads alike. Point-in-polygon (ray crossing) against the authored
+        // [Polygons]; the FIRST containing subcatchment wins and an overlap
+        // is reported once so a user does not silently lose recharge.
+        cell_subcatch_.clear();
+        subcatch_recharge_.clear();
+        {
+            bool any_aq = false;
+            for (const auto& r : infil_.resolvedRows())
+                if (r.has_method && r.dest == Infil2DDest::SUBCATCH_AQUIFER) {
+                    any_aq = true;
+                    break;
+                }
+            if (any_aq) {
+                const int nsub = ctx.n_subcatches();
+                if (nsub <= 0)
+                    throw std::runtime_error(
+                        "[2D_OPTIONS] INFIL_DESTINATION SUBCATCH_AQUIFER needs "
+                        "subcatchments with aquifers to receive the recharge; "
+                        "this model has none.");
+                // PROG §B.4 one-owner check: a subcatchment already owned by
+                // the integrated 2D groundwater component cannot also receive
+                // legacy recharge from the surface.
+                for (const auto& spec : ctx.process_component_specs)
+                    if (spec.id == "org.hydrocouple.openswmm.integrated2d")
+                        throw std::runtime_error(
+                            "[2D_OPTIONS] INFIL_DESTINATION SUBCATCH_AQUIFER "
+                            "conflicts with the registered "
+                            "org.hydrocouple.openswmm.integrated2d component: a "
+                            "subcatchment's aquifer has one owner. Use "
+                            "AQUIFER_2D with that component, or remove it.");
+
+                // G1, the same rule for the in-tree kernel. A [2D_AQUIFER]
+                // owns every infiltrating cell's water, so a cell routed to
+                // SUBCATCH_AQUIFER would be delivered TWICE — once into the
+                // subcatchment's legacy aquifer here, and once into the
+                // two-zone column by the marcher. Refused rather than
+                // silently arbitrated: which aquifer the recharge belongs to
+                // is the author's call, not ours.
+                if (subsurface_.active())
+                    throw std::runtime_error(
+                        "[2D_OPTIONS] INFIL_DESTINATION SUBCATCH_AQUIFER "
+                        "conflicts with the [2D_AQUIFER] section: infiltration "
+                        "has one owner, and a [2D_AQUIFER] already receives it. "
+                        "Use AQUIFER_2D (or LOST, which reads the same way "
+                        "under an aquifer), or remove the [2D_AQUIFER].");
+
+                const auto& px = ctx.spatial.subcatch_polygon_x;
+                const auto& py = ctx.spatial.subcatch_polygon_y;
+                auto contains = [&](std::size_t sub, double x, double y) {
+                    if (sub >= px.size() || px[sub].size() < 3) return false;
+                    const auto& xs = px[sub];
+                    const auto& ys = py[sub];
+                    bool in = false;
+                    for (std::size_t i = 0, j = xs.size() - 1; i < xs.size(); j = i++) {
+                        if (((ys[i] > y) != (ys[j] > y)) &&
+                            (x < (xs[j] - xs[i]) * (y - ys[i]) / (ys[j] - ys[i]) + xs[i]))
+                            in = !in;
+                    }
+                    return in;
+                };
+                // The mesh is SI metres here; the polygons are in the project's
+                // authored map units, which for a US-units project are feet
+                // (the same scaling initialize() applied to vx/vy).
+                const double inv = (options_.mesh_to_si_factor > 0.0)
+                                       ? 1.0 / options_.mesh_to_si_factor : 1.0;
+                cell_subcatch_.assign(static_cast<std::size_t>(mesh_.n_triangles()), -1);
+                subcatch_recharge_.assign(static_cast<std::size_t>(nsub), 0.0);
+                int unowned = 0, overlapped = 0;
+                for (int c = 0; c < mesh_.n_triangles(); ++c) {
+                    const auto uc = static_cast<std::size_t>(c);
+                    const auto& row = infil_.resolvedRows()[uc];
+                    if (!row.has_method || row.dest != Infil2DDest::SUBCATCH_AQUIFER)
+                        continue;
+                    const double x = mesh_.tri_cx[uc] * inv;
+                    const double y = mesh_.tri_cy[uc] * inv;
+                    int owner = -1, hits = 0;
+                    for (int sidx = 0; sidx < nsub; ++sidx)
+                        if (contains(static_cast<std::size_t>(sidx), x, y)) {
+                            if (owner < 0) owner = sidx;
+                            ++hits;
+                        }
+                    cell_subcatch_[uc] = owner;
+                    if (owner < 0) ++unowned;
+                    else if (hits > 1) ++overlapped;
+                }
+                if (unowned > 0)
+                    ctx.warnings.push_back(
+                        "[2D_OPTIONS] INFIL_DESTINATION SUBCATCH_AQUIFER: " +
+                        std::to_string(unowned) +
+                        " cell(s) lie outside every subcatchment polygon — "
+                        "their infiltration is LOST, as before.");
+                if (overlapped > 0)
+                    ctx.warnings.push_back(
+                        "[2D_OPTIONS] INFIL_DESTINATION SUBCATCH_AQUIFER: " +
+                        std::to_string(overlapped) +
+                        " cell(s) fall inside more than one subcatchment "
+                        "polygon — the first by index receives the recharge.");
+            }
+        }
+
+        // INFILTRATION NO keeps the rows (they still save) but runs dry;
+        // YES with nothing resolved is a deck that expects infiltration and
+        // gets none — say so.
+        if (options_.infiltration == 0 && infil_.active()) {
+            ctx.warnings.push_back(
+                "[2D_OPTIONS] INFILTRATION NO — the [2D_INFILTRATION*] rows are "
+                "kept but no cell infiltrates this run.");
+            infil_.deactivate();
+        } else if (options_.infiltration == 1 && !infil_.active()) {
+            ctx.warnings.push_back(
+                "[2D_OPTIONS] INFILTRATION YES but no [2D_INFILTRATION_DEFAULTS] "
+                "/ [2D_INFILTRATION] row resolved to a method — no cell "
+                "infiltrates this run.");
+        }
     }
 
     // S1/S2 — [2D_INITIAL_QUALITY]: seed species MASS = conc x cell volume,
@@ -936,6 +1132,11 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         infil_cum_applied_.clear();
     }
     rain_cum_.assign(static_cast<std::size_t>(mesh_.n_triangles()), 0.0);
+    // C1: always sized (unlike infil_cum_applied_, which is empty when no
+    // model resolved). Coupling has no "not configured" state — a mesh with
+    // no coupling points simply reports zeros, which is the true answer.
+    coupling_cum_applied_.assign(
+        static_cast<std::size_t>(mesh_.n_triangles()), 0.0);
 
     active_ = true;
     sim_time_ = 0.0;
@@ -1087,13 +1288,24 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
         state_.forcing_dirty) {
         state_.forcing_dirty = false;
         updateRainfall(ctx);
-        std::fill(state_.evap_rate.begin(), state_.evap_rate.end(), 0.0);
+        // E2 [2D_OPTIONS] EVAPORATION: YES (default) = forcing only, the
+        // pre-E2 sink; CLIMATE = unforced cells take the project
+        // [EVAPORATION] rate (climate_state.evap_rate is internal ft/s);
+        // NO = the sink stays zero and forcing is ignored.
+        const double evap_base =
+            (options_.evaporation == 2)
+                ? std::max(0.0, ctx.climate_state.evap_rate) * 0.3048
+                : 0.0;
+        std::fill(state_.evap_rate.begin(), state_.evap_rate.end(), evap_base);
+        const bool evap_on = options_.evaporation != 0;
         for (std::size_t i = 0; i < state_.depth.size(); ++i) {
             if (state_.rainfall_forced[i] == 1)
                 state_.rainfall[i] = state_.rainfall_force_val[i];
             else if (state_.rainfall_forced[i] == 2)
                 state_.rainfall[i] += state_.rainfall_force_val[i];
-            if (state_.evap_forced[i] == 1)
+            if (!evap_on)
+                state_.evap_rate[i] = 0.0;
+            else if (state_.evap_forced[i] == 1)
                 state_.evap_rate[i] = state_.evap_force_val[i];
             else if (state_.evap_forced[i] == 2)
                 state_.evap_rate[i] += state_.evap_force_val[i];
@@ -1260,6 +1472,40 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
     // Ledgers every batch (accumulateMassBalance reads coupling_volume as
     // "this batch's exchange", so it MUST run before the queue move below) …
     accumulateMassBalance(ctx, dt);
+
+    // G1: the aquifer's node exchange rides the same 1D delivery channel as
+    // the surface's — to the node they are the same thing, water arriving
+    // over the batch span — but it is booked HERE, and the position is the
+    // whole point.
+    //
+    // Two things above would eat it otherwise, and both did:
+    //
+    //  1. The surface pass a few lines up CLEARS `coupling_volume` for every
+    //     surface coupling point before accumulating `exch`. Booked before
+    //     that, an aquifer exchange on a node that ALSO has a surface
+    //     coupling point is silently zeroed — the water leaves the aquifer
+    //     ledger and never reaches the pipe. (The original comment here said
+    //     exactly that and the code then did it anyway.)
+    //  2. `accumulateMassBalance` reads `coupling_volume` back and books it
+    //     as `coupling_2d_to_1d_out` — a SURFACE term. Booked before that,
+    //     aquifer→pipe water is reported as surface exchange the surface
+    //     never lost, and the 2D surface continuity error grows by exactly
+    //     that volume.
+    //
+    // After both, the node still receives everything: `coupling_volume` is
+    // consumed by assembleLateralInflows at the start of the next routing
+    // step, not here. The aquifer's own ledger term is `led_node` (see
+    // swmm_gw2d_get_ledger), which is where this volume is accounted — it
+    // must not appear in the surface ledger as well.
+    if (subsurface_.active()) {
+        const auto& nv = subsurface_.nodeExchangeVolumes();
+        for (std::size_t ni = 0; ni < nv.size(); ++ni) {
+            if (nv[ni] == 0.0) continue;
+            if (ni < ctx.nodes.coupling_volume.size())
+                ctx.nodes.coupling_volume[ni] += nv[ni] * options_.flow_2d_to_1d;
+        }
+        subsurface_.resetNodeExchangeVolumes();
+    }
 
     // … then hand the batch's junction volumes to the delivery QUEUE so
     // assembleLateralInflows drains them at a uniform rate over the batch
@@ -1710,6 +1956,10 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     const bool track_cum =
         do_infil && infil_cum_applied_.size() == static_cast<std::size_t>(nt);
     double rain_vol = 0.0, evap_vol = 0.0, infil_vol = 0.0, storage = 0.0;
+    double aq_vol = 0.0;   // U3: the SUBCATCH_AQUIFER share of infil_vol
+    const bool route_aq =
+        do_infil && cell_subcatch_.size() == static_cast<std::size_t>(nt) &&
+        !subcatch_recharge_.empty();
     for (int i = 0; i < nt; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         const double area = mesh_.tri_area[ui];
@@ -1726,6 +1976,26 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
             state_.infil_applied[ui] = 0.0;
             infil_vol += applied * area;
             if (track_cum) infil_cum_applied_[ui] += applied;
+            // U3: the SUBCATCH_AQUIFER share is booked to its subcatchment
+            // here, from the same applied depth, so the recharge and the
+            // 2D ledger can never disagree.
+            if (route_aq && cell_subcatch_[ui] >= 0) {
+                const auto us = static_cast<std::size_t>(cell_subcatch_[ui]);
+                if (us < subcatch_recharge_.size()) {
+                    subcatch_recharge_[us] += applied * area;
+                    aq_vol += applied * area;
+                }
+            }
+        }
+        // C1: signed per-cell coupling volume (m³), drained on the SAME
+        // once-per-routing-step pass as infil_applied so the two series share
+        // a cadence and can be compared. Positive = the cell received from
+        // the node; negative = the node abstracted from the cell. Kept
+        // per-cell and signed because the domain totals are two unsigned
+        // accumulators that cancel a flip-flopping point to nothing.
+        if (coupling_cum_applied_.size() == static_cast<std::size_t>(nt)) {
+            coupling_cum_applied_[ui] += state_.coupling_applied[ui];
+            state_.coupling_applied[ui] = 0.0;
         }
         storage += state_.volume[ui];
     }
@@ -1764,6 +2034,27 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     // unramped capacity the kernel offered, which exceeds the applied loss
     // whenever a cell is drying.
     if (do_infil) mb.infil_out += infil_vol;
+    // U3 (track I-b): the aquifer-bound share is a transfer to the 1D
+    // groundwater, booked separately so the report can name it. It stays
+    // inside infil_out so the 2D-only continuity check is unchanged.
+    if (route_aq) mb.infil_to_aquifer += aq_vol;
+
+    // G1: and the reverse direction. The two-zone kernel books saturation
+    // excess into xacc_to_surface and the marcher's cell loop drains it into
+    // the surface as a source, so the volume the SURFACE has actually taken
+    // is everything the kernel ever handed over, less whatever is still
+    // waiting to be picked up. Cumulative, not incremental — led_dunne is
+    // itself cumulative — so this is an assignment.
+    //
+    // Deriving it here rather than accumulating inside fireCellsImpl is what
+    // keeps the hot parallel cell loop free of a shared reduction; the sum is
+    // one pass over a vector that only exists when an aquifer resolved.
+    if (subsurface_.active()) {
+        const auto& gws = subsurface_.state();
+        double pending = 0.0;
+        for (const double v : gws.xacc_to_surface) pending += v;
+        mb.aquifer_in = gws.led_dunne - pending;
+    }
 
     // Coupling and outfall exchange (m³, SI-native, already capped/clamped —
     // exactly what the 2D domain was asked to move). Outfall sign: + = pipe

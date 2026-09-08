@@ -24,6 +24,7 @@
  */
 
 #include "ReactionsComponent.hpp"
+#include "../../MsxInitialQuality.hpp"   // U2
 #include "ReactionsWriter.hpp"   // IO3a save hook
 
 #include <cstdlib>
@@ -382,6 +383,10 @@ void parseQuality(SimulationContext& ctx, const std::vector<std::string>& lines,
         }
         rx.init_global[static_cast<std::size_t>(s)] = v;
     }
+    // U2: [INITIAL_QUALITY] MSX rows live in ctx.initial_quality (already
+    // classified when this is a re-apply; PostParseResolver mirrors them at
+    // open). The block reset above emptied init_elem_*, so bring them back.
+    for (const auto& e : mirrorInitialQualityMsxRows(ctx)) errors.push_back(e);
 }
 
 }  // namespace

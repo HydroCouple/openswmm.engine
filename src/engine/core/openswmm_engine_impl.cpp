@@ -28,6 +28,9 @@
 
 #include "openswmm_api_common.hpp"
 #include "ThreadInfo.hpp"
+#include "../transport/TransportPolicy.hpp"   // E2: swmm_get_transport_matrix
+
+#include <cstring>
 
 extern "C" {
 
@@ -296,6 +299,41 @@ SWMM_ENGINE_API int swmm_get_effective_threads(SWMM_Engine engine, int threads_o
 #endif
     }
     return SWMM_OK;
+}
+
+// ---------------------------------------------------------------------------
+// E2 — transport matrix
+// ---------------------------------------------------------------------------
+
+SWMM_ENGINE_API int swmm_get_transport_matrix(SWMM_Engine engine,
+                                              SWMM_TransportMatrix* out) {
+    if (!engine || !out) return SWMM_ERR_BADPARAM;
+    namespace tp = openswmm::transport;
+    const tp::Matrix m = tp::resolve(to_engine(engine)->context());
+    std::memset(out, 0, sizeof(*out));
+    for (int d = 0; d < SWMM_TRANSPORT_DOMAIN_COUNT; ++d) {
+        for (int c = 0; c < SWMM_TRANSPORT_CLASS_COUNT; ++c) {
+            const tp::Cell& src = m.cells[d][c];
+            SWMM_TransportCell& dst = out->cell[d][c];
+            dst.state = static_cast<int>(src.state);
+            dst.count = src.count;
+            std::strncpy(dst.reason, src.reason.c_str(), sizeof(dst.reason) - 1);
+            dst.reason[sizeof(dst.reason) - 1] = '\0';
+        }
+    }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API const char* swmm_transport_domain_name(int domain) {
+    if (domain < 0 || domain >= SWMM_TRANSPORT_DOMAIN_COUNT) return "";
+    return openswmm::transport::domainName(
+        static_cast<openswmm::transport::Domain>(domain));
+}
+
+SWMM_ENGINE_API const char* swmm_transport_class_name(int species_class) {
+    if (species_class < 0 || species_class >= SWMM_TRANSPORT_CLASS_COUNT) return "";
+    return openswmm::transport::speciesClassName(
+        static_cast<openswmm::transport::SpeciesClass>(species_class));
 }
 
 SWMM_ENGINE_API const char* swmm_error_message(int code) {

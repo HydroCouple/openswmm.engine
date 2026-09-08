@@ -55,6 +55,8 @@
 
 namespace openswmm::twoD {
 
+class SubsurfaceSolver;   // G1: the two-zone groundwater kernel, if authored
+
 class ExplicitInertialSolver final : public ISurfaceSolver {
 public:
     void initialize(MeshData& mesh, SurfaceStateData& state,
@@ -72,6 +74,12 @@ public:
         const noexcept override {
         return exch_;
     }
+
+    /// C3: cumulative spill volume (m³) the coupled nodes could not supply
+    /// from their ponded storage. Should stay 0 on a well-posed deck; a
+    /// growing value means the orifice is sized to move more water than the
+    /// nodes hold above the rim.
+    double spillDeficit() const noexcept { return spill_deficit_; }
 
 private:
     // Recompute η/depth from state volumes for the whole mesh.
@@ -152,7 +160,7 @@ private:
     std::vector<double>  rk_v0_, rk_qx0_, rk_qy0_;
     /// Stage-0 copies of the per-advance ledgers (F6): members so the RK2
     /// step allocates nothing.
-    std::vector<double>  rk_inf0_, rk_bc0_, rk_ex0_, rk_drawn0_;
+    std::vector<double>  rk_inf0_, rk_bc0_, rk_ex0_, rk_drawn0_, rk_cpl0_;
     void computeLimitedGradientsSwe();
     /// One SSP-RK2 (Heun) step of length dt over the active lists: two
     /// forward-Euler substeps averaged with the start state; the ledgers
@@ -275,6 +283,13 @@ private:
     // volume so fill-and-spill thrash is structurally impossible.
     std::vector<double>  exch_;
     std::vector<double>  node_drawn_;   ///< spill drawn per node this advance (m³)
+    /// C3: cumulative volume (m³) the orifice law asked a node for and the
+    /// node's PONDED storage could not supply. Not an error — a spill that
+    /// empties the ponded water is the physically right outcome — but it must
+    /// be visible, because the 1D side's `y_new = max(y_new, 0)` floor would
+    /// otherwise absorb an over-draw silently and create water. A validator
+    /// watches this against zero on a well-posed deck.
+    double               spill_deficit_ = 0.0;
 
 public:
     /// Experimental (OPENSWMM_2D_HEAD_RAMP): per-coupling-point 1D head trend
@@ -307,6 +322,29 @@ private:
     std::string telemetry_path_;
     /// Cumulative rebuild-sampled cell count per LTS tier (report histogram).
     std::array<long, 8> tier_occupancy_{};
+
+    /// G1: the two-zone groundwater kernel, or nullptr when no
+    /// `[2D_AQUIFER]` was authored. Not owned — SurfaceRouter2D holds it.
+    ///
+    /// The marcher drives it through four hooks (SubsurfaceSolver.hpp
+    /// §gw_lts) so the subsurface shares this ladder instead of running a
+    /// loop of its own. The subsurface's tiers come from ITS OWN stability
+    /// steps (guarantee G-A): a GW cell that exchanges with a node or
+    /// receives infiltration is deliberately NOT pinned to tier 0 — only its
+    /// surface twin is. Cross-cadence volume rides the same ±Δ side
+    /// accumulators the surface faces use (G-B).
+    SubsurfaceSolver* gw_ = nullptr;
+
+public:
+    /// Attach (or detach, with nullptr) the groundwater kernel. Must be
+    /// called before the first advance and after `initialize`.
+    void setSubsurface(SubsurfaceSolver* gw) noexcept { gw_ = gw; }
+
+    /// The unique interior-edge topology this marcher built. Exposed so the
+    /// groundwater kernel can put its lateral Darcy flux on the SAME faces
+    /// rather than build a second, necessarily-consistent copy of the same
+    /// graph. Valid only after `initialize`.
+    const InertialEdges& inertialEdges() const noexcept { return edges_; }
 };
 
 } // namespace openswmm::twoD

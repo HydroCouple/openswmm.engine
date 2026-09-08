@@ -43,7 +43,12 @@
 #include <vector>
 #include "../hydraulics/TimestepController.hpp"
 #include "../input/PostParseResolver.hpp"
+#ifdef OPENSWMM_HAS_2D
+#include "../2d/gw/GwTransportSections.hpp"   // U4
+#include "../2d/subsurface/SubsurfaceSections.hpp"   // G1
+#endif
 #include "../transport/components/HeatFluxModules/HeatOverrides.hpp"  // PE2
+#include "../transport/components/HeatFluxModules/SurfaceExchange.hpp" // dew point -> RH
 #include "../plugins/DefaultInputPlugin.hpp"
 #include "../plugins/ProcessComponentRegistry.hpp"
 #include "../transport/components/EulerianArdComponent/ArdConfig.hpp"
@@ -132,6 +137,10 @@ void SWMMEngine::wire2DModelIO() noexcept {
     ctx_.twod_io.pending_iq = &surface_router_.pendingInitialQualityRows();
     ctx_.twod_io.pending_bq = &surface_router_.pendingBoundaryQualityRows();
     ctx_.twod_io.infil      = &surface_router_.infil();
+    ctx_.twod_io.gw         = &surface_router_.gwTransport();   // U4
+    ctx_.twod_io.aquifer       = &surface_router_.aquiferConfig();     // G1
+    ctx_.twod_io.aquifer_nodes = &surface_router_.aquiferNodeNames();  // G1
+    ctx_.twod_io.aquifer_state = &surface_router_.subsurface().state();  // G1
 }
 #endif
 
@@ -213,6 +222,17 @@ int SWMMEngine::open(const char* inp_path,
                                  surface_router_.pendingInitialQualityRows(),
                                  surface_router_.pendingBoundaryQualityRows(),
                                  dip->registry());
+        // U4 (2026-09-07): the [GW_*] subsurface-transport authoring
+        // sections. Parsed, validated and round-tripped; inert at run until
+        // the integrated groundwater kernel lands (one warning, below).
+        twoD::registerGwTransportSections(surface_router_.gwTransport(),
+                                          dip->registry());
+        // G1: the [2D_AQUIFER*] sections — the two-zone groundwater kernel's
+        // own parameters. Unlike the [GW_*] transport rows above, these are
+        // NOT inert: a resolved row runs the kernel.
+        twoD::registerSubsurfaceSections(surface_router_.aquiferConfig(),
+                                         surface_router_.aquiferNodeNames(),
+                                         dip->registry());
     }
 
     // Scan the inline .inp for `;; UNITS: SI (m)` so SurfaceRouter2D::initialize
@@ -266,6 +286,30 @@ int SWMMEngine::open(const char* inp_path,
                     return SWMM_ERR_PARSE;
                 }
             }
+        }
+    }
+    // E2: [2D_OPTIONS] INFIL_STEP is an alias of [2D_INFILTRATION_OPTIONS]
+    // INFIL_STEP. Infil2D::options().infil_step is the single source of
+    // truth (the C API and the writer read it); fold the alias in now that
+    // both the .inp and any sidecar have been read. The alias wins when both
+    // were spelled.
+    {
+        auto& o2d = surface_router_.options();
+        if (o2d.infil_step > 0.0) {
+            surface_router_.infil().options().infil_step = o2d.infil_step;
+            o2d.infil_step = 0.0;
+        }
+        // U5: [2D_OPTIONS] GW_ET is the same kind of alias, for
+        // [2D_AQUIFER_OPTIONS] GW_ET. GwOptions::gw_et is the single source of
+        // truth (the kernel reads it, the writer emits it); fold the alias in
+        // and clear it so the setting is never stored in two places. The alias
+        // wins when both were spelled, and it counts as authoring the section
+        // so a deck that only says GW_ET still reaches the kernel.
+        if (!o2d.gw_et.empty()) {
+            auto& gw = surface_router_.aquiferConfig();
+            gw.options.gw_et    = o2d.gw_et;
+            gw.options.authored = true;
+            o2d.gw_et.clear();
         }
     }
 #endif
@@ -496,6 +540,34 @@ int SWMMEngine::open(const char* inp_path,
         perf::ScopedTimer _pt(perf::sec_open_resolve);
         input::resolve_cross_references(ctx_);
     }
+
+#ifdef OPENSWMM_HAS_2D
+    // U4: validate the [GW_*] authoring rows now that the mesh, the species
+    // registry and the timeseries are all final — same timing (and same
+    // fatality) as the other cross-reference resolution above. The single
+    // "authored but inert" warning is emitted here so it reaches the report
+    // whether or not the run proceeds.
+    {
+        auto gw_errs = twoD::resolveGwTransport(ctx_, surface_router_.mesh(),
+                                                surface_router_.gwTransport());
+        for (auto& e : gw_errs) ctx_.errors.push_back(std::move(e));
+        const std::string inert =
+            twoD::gwTransportInertWarning(surface_router_.gwTransport());
+        if (!inert.empty()) push_report_warning(inert, 0);
+        // U5 (rewired 2026-09-07): GROUNDWATER is a real process enable now
+        // that the G1 two-zone kernel runs it. YES on a deck with no
+        // [2D_AQUIFER*] rows is a deck that expects groundwater and has
+        // none — the same "asked for it, got nothing" case INFILTRATION YES
+        // reports. NO and AUTO are silent: AUTO is the default, and NO is a
+        // deliberate switch-off whose rows are still saved.
+        const auto& o2d = surface_router_.options();
+        if (o2d.groundwater > 0 && surface_router_.aquiferConfig().empty())
+            push_report_warning(
+                "[2D_OPTIONS] GROUNDWATER YES but no [2D_AQUIFER_OPTIONS] / "
+                "[2D_AQUIFER] row was authored — there is no subsurface to "
+                "run this simulation.", 0);
+    }
+#endif
 
     // Project-level sanity checks + step-clamp warnings (legacy project_validate:
     // WARNING 01/06/07). Must run before the fatal gate below so any warnings it
@@ -1259,6 +1331,14 @@ int SWMMEngine::start(int save_results) noexcept {
         // own linear unit (issue #155). The CRS itself arrived via prepare().
         surface_output_plugin_->setMeshCoordinateScale(
             surface_router_.options().mesh_to_si_factor);
+        // Results-file size controls ([2D_OPTIONS] OUTPUT_PRECISION /
+        // OUTPUT_COMPRESSION / REPORT_2D_VARIABLES / REPORT_2D_SPECIES /
+        // REPORT_2D_STEP) — applied before the datasets are created.
+        {
+            const std::string cfg_err = surface_output_plugin_->configureOutput(
+                surface_router_.options(), ctx_.options.report_step);
+            if (!cfg_err.empty()) push_report_warning(cfg_err, 0);
+        }
         surface_output_plugin_->prepareMeshAndDatasets(surface_router_.mesh());
     }
 #endif
@@ -1657,11 +1737,32 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         ctx_.climate_state.wind_speed =
             ctx_.forcing.effective_wind(ctx_.climate_state.wind_speed_src);
 
-        // A2c''. H2: relative humidity, the same monthly lookup wind takes.
-        // ClimateState::humidity has carried a 50 % default since before the
-        // transport program with NO writer anywhere; SurfaceExchange is its
-        // first consumer, so this is where it starts being real.
-        ctx_.climate_state.humidity = ctx_.options.humidity[mon];
+        // A2c''. H2: relative humidity. ClimateState::humidity has carried a
+        // 50 % default since before the transport program with NO writer
+        // anywhere; SurfaceExchange is its first consumer, so this is where
+        // it starts being real. CONSTANT/MONTHLY read the monthly array;
+        // TIMESERIES looks the table up. A DEWPOINT deck stores dew-point
+        // temperature (project units) and is converted to RH here from the
+        // effective air temperature: RH = 100·e_s(Td)/e_s(Ta).
+        {
+            double h = ctx_.options.humidity[mon];
+            if (ctx_.climate_state.humidity_ts_index >= 0) {
+                auto& tbl = ctx_.tables.tables[
+                    static_cast<std::size_t>(ctx_.climate_state.humidity_ts_index)];
+                h = table_lookup_cursor(tbl, abs_time);
+            }
+            if (ctx_.options.humidity_var == 1) {
+                // Dew point: SI decks author degC, US decks degF; the air
+                // temperature is held in degF internally.
+                const double td_c = (unit_sys == 1)
+                    ? h : (h - 32.0) * 5.0 / 9.0;
+                const double ta_c = (ctx_.climate_state.temperature - 32.0) * 5.0 / 9.0;
+                using openswmm::transport::heat::saturationVapourPressure;
+                h = 100.0 * saturationVapourPressure(td_c) /
+                    saturationVapourPressure(ta_c);
+            }
+            ctx_.climate_state.humidity = std::clamp(h, 0.0, 100.0);
+        }
 
         // A2d. Monthly adjustment factors
         ctx_.climate_state.infil_factor = ctx_.adjust_hydcon[mon];
@@ -3346,10 +3447,40 @@ void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
         gw_perv_evap_[ui] = ctx_.subcatches.evap_loss[ui];
     }
 
+    // U3 (track I-b): 2D per-cell infiltration whose destination is
+    // SUBCATCH_AQUIFER recharges the containing subcatchment's legacy
+    // aquifer. The router accumulated it in m³ since the last drain; the GW
+    // solver's `infil_rate` is ft/s over the FULL subcatchment area, so the
+    // volume converts with the area and this runoff step. Cells outside every
+    // polygon contributed nothing (they stayed LOST, warned at initialize).
+    const double* gw_infil_ptr = ctx_.subcatches.infil_loss.data();
+#ifdef OPENSWMM_HAS_2D
+    if (surface_router_.isActive() && dt_runoff > 0.0) {
+        surface_router_.drainSubcatchRecharge(gw_2d_recharge_vol_);
+        if (!gw_2d_recharge_vol_.empty()) {
+            gw_infil_with_2d_.assign(ctx_.subcatches.infil_loss.begin(),
+                                     ctx_.subcatches.infil_loss.end());
+            constexpr double kM3ToFt3 = 1.0 / (0.3048 * 0.3048 * 0.3048);
+            for (int i = 0; i < ns && i < static_cast<int>(gw_2d_recharge_vol_.size());
+                 ++i) {
+                const auto ui = static_cast<std::size_t>(i);
+                const double vol_m3 = gw_2d_recharge_vol_[ui];
+                if (vol_m3 <= 0.0) continue;
+                const double area_ft2 = ctx_.subcatches.area[ui] * ucf::ACRES_TO_FT2;
+                if (area_ft2 <= 0.0) continue;
+                gw_infil_with_2d_[ui] +=
+                    (vol_m3 * kM3ToFt3) / (area_ft2 * dt_runoff);
+                ctx_.mass_balance.gw_infil_2d_recharge += vol_m3 * kM3ToFt3;
+            }
+            gw_infil_ptr = gw_infil_with_2d_.data();
+        }
+    }
+#endif
+
     // Pass actual infiltration rate to groundwater (upper zone percolation input).
     // sw_head is read from the pre-assembled subcatches.gw_sw_head[].
     groundwater_.execute(ctx_, dt_runoff, ctx_.climate_state.evap_rate,
-                         ctx_.subcatches.infil_loss.data(),
+                         gw_infil_ptr,
                          ctx_.subcatches.gw_sw_head.data(),
                          gw_frac_perv_.data(), gw_perv_evap_.data());
 
@@ -4416,14 +4547,31 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
         if (user_q_total > 0.0) {
             ctx_.mass_balance.routing_forcing_inflow += user_q_total * dt_routing;
         }
-        // 1D → 2D coupling spill folds into routing_flooding (and the
-        // per-step accumulator) so it appears under the existing "Flooding
-        // Loss" row in the continuity report. The positive (2D → 1D) side
+        // C2 (2026-09-07): the 1D → 2D spill gets its OWN outflow category.
+        // It used to fold into routing_flooding, which reported a coupling
+        // TRANSFER under "Flooding Loss": the water did not flood, it moved
+        // to the 2D surface, where MassBalance2D::coupling_1d_to_2d_in books
+        // it arriving. Both ledgers were individually right and the sum was
+        // conserved — only the row a modeller reads was wrong.
+        //
+        // It is still an outflow of the 1D system, so routing_error() is
+        // unchanged (routing_coupling_out joins total_out where the spill's
+        // share of routing_flooding used to sit). The positive (2D → 1D) side
         // was already added to step_ext_inflow → routing_external by
         // assembleLateralInflows. See review §11.
+        //
+        // step_flooding keeps the spill in BOTH groupings: it drives the
+        // per-step flood reporting and node flooding statistics, which are
+        // about "water leaving the node upward" — and a spill is that,
+        // whatever row the continuity table puts it in.
         if (coupling_out_q > 0.0) {
-            ctx_.mass_balance.routing_flooding += coupling_out_q * dt_routing;
-            ctx_.mass_balance.step_flooding    += coupling_out_q;
+            const bool as_flooding =
+                ctx_.twod_io.options && ctx_.twod_io.options->coupling_in_flooding;
+            if (as_flooding)
+                ctx_.mass_balance.routing_flooding     += coupling_out_q * dt_routing;
+            else
+                ctx_.mass_balance.routing_coupling_out += coupling_out_q * dt_routing;
+            ctx_.mass_balance.step_flooding += coupling_out_q;
         }
     }
 
@@ -6015,6 +6163,38 @@ void SWMMEngine::applyForcings(double dt) noexcept {
         }
     }
 
+    // ---- U2: reserved-species node forcing (temperature, age) ----
+    // OVERRIDE writes the published state (degC / hours -> the internal
+    // seconds for age); ADD injects into the loader accumulator every
+    // quality engine reads, so the value mixes instead of replacing.
+    if (ctx_.options.heat_transport &&
+        ctx_.heat_state.node_temp.size() == static_cast<std::size_t>(ctx_.n_nodes())) {
+        for (int i = 0; i < ctx_.n_nodes(); ++i) {
+            const auto u = static_cast<std::size_t>(i);
+            if (u >= f.node_temperature_mode.size()) break;
+            if (f.node_temperature_mode[u] == ForcingMode::OVERRIDE) {
+                ctx_.heat_state.node_temp[u] = f.node_temperature_value[u];
+            } else if (f.node_temperature_mode[u] == ForcingMode::ADD &&
+                       u < ctx_.heat_state.node_temp_vol_in.size()) {
+                ctx_.heat_state.node_temp_vol_in[u] += f.node_temperature_value[u];
+            }
+        }
+    }
+    if (ctx_.options.water_age &&
+        ctx_.water_age_state.node_age.size() == static_cast<std::size_t>(ctx_.n_nodes())) {
+        for (int i = 0; i < ctx_.n_nodes(); ++i) {
+            const auto u = static_cast<std::size_t>(i);
+            if (u >= f.node_age_mode.size()) break;
+            if (f.node_age_mode[u] == ForcingMode::OVERRIDE) {
+                ctx_.water_age_state.node_age[u] = f.node_age_value[u] * 3600.0;
+            } else if (f.node_age_mode[u] == ForcingMode::ADD &&
+                       u < ctx_.water_age_state.node_age_vol_in.size()) {
+                ctx_.water_age_state.node_age_vol_in[u] +=
+                    f.node_age_value[u] * 3600.0;
+            }
+        }
+    }
+
     // ---- Node quality mass flux forcing (transient via ForcingData) ----
     // For OVERRIDE mode, the concentration is set directly.
     // For ADD mode, mass_rate (mass/sec) is added as concentration delta.
@@ -7054,6 +7234,10 @@ void SWMMEngine::initHydrology() noexcept {
         }
         if (evap_type == 2 && !ctx_.options.evap_ts_name.empty()) {
             ctx_.climate_state.evap_ts_index = ctx_.find_timeseries(ctx_.options.evap_ts_name);
+        }
+        if (ctx_.options.humidity_type == 2 && !ctx_.options.humidity_ts_name.empty()) {
+            ctx_.climate_state.humidity_ts_index =
+                ctx_.find_timeseries(ctx_.options.humidity_ts_name);
         }
 
         // Resolve recovery pattern name to pattern index (case-insensitive)

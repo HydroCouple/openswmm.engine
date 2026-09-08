@@ -28,6 +28,7 @@
 
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_process_components.h"
+#include "../plugins/ProcessComponentRegistry.hpp"   // U1: built-in catalogue
 
 #include <cstring>
 #include <string>
@@ -65,6 +66,26 @@ SWMM_ENGINE_API int swmm_process_component_get(SWMM_Engine engine, int idx,
     copy_to_buf(s.id, id_buf, id_len);
     copy_to_buf(s.config_path, config_buf, config_len);
     copy_to_buf(s.resolved_config_path, resolved_buf, resolved_len);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_process_component_known_count(void) {
+    return static_cast<int>(
+        openswmm::components::ProcessComponentRegistry::instance().known_ids().size());
+}
+
+SWMM_ENGINE_API int swmm_process_component_known_get(int idx,
+        char* id_buf, int id_len, char* desc_buf, int desc_len,
+        int* implemented) {
+    const auto& reg = openswmm::components::ProcessComponentRegistry::instance();
+    const auto ids = reg.known_ids();
+    if (idx < 0 || idx >= static_cast<int>(ids.size())) return SWMM_ERR_BADINDEX;
+    const std::string& id = ids[static_cast<std::size_t>(idx)];
+    const auto* entry = reg.find(id);
+    if (!entry) return SWMM_ERR_INTERNAL;
+    copy_to_buf(id, id_buf, id_len);
+    copy_to_buf(entry->description, desc_buf, desc_len);
+    if (implemented) *implemented = entry->apply ? 1 : 0;
     return SWMM_OK;
 }
 

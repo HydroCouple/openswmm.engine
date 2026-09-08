@@ -9,6 +9,7 @@
 #include "SectionHandlers2D.hpp"
 
 #include "../data/BoundaryData.hpp"
+#include "../data/Report2DVars.hpp"
 #include "../../input/InputParseUtils.hpp"
 #include "../../input/InputReader.hpp"
 #include "../../input/Tokenizer.hpp"
@@ -242,6 +243,13 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
             opts.advection = false;
         else
             return "Unknown ADVECTION: " + val + " (expected YES|NO)";
+    } else if (iequals(key, "COUPLING_IN_FLOODING")) {
+        if (iequals(val, "YES") || iequals(val, "TRUE"))
+            opts.coupling_in_flooding = true;
+        else if (iequals(val, "NO") || iequals(val, "FALSE"))
+            opts.coupling_in_flooding = false;
+        else
+            return "Unknown COUPLING_IN_FLOODING: " + val + " (expected YES|NO)";
     } else if (iequals(key, "COUPLING_AREA")) {
         if (iequals(val, "AUTO"))
             opts.coupling_area_auto = true;
@@ -261,6 +269,113 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
         else
             return "Unknown BACKEND: " + val +
                    " (expected AUTO|CPU|OMP|CUDA|HIP|SYCL)";
+    } else if (iequals(key, "OUTPUT_PRECISION")) {
+        if      (iequals(val, "FLOAT32") || iequals(val, "F32") || iequals(val, "SINGLE"))
+            opts.output_precision = OutputPrecision2D::FLOAT32;
+        else if (iequals(val, "FLOAT64") || iequals(val, "F64") || iequals(val, "DOUBLE"))
+            opts.output_precision = OutputPrecision2D::FLOAT64;
+        else
+            return "Unknown OUTPUT_PRECISION: " + val + " (expected FLOAT32|FLOAT64)";
+    } else if (iequals(key, "OUTPUT_COMPRESSION")) {
+        const int lvl = tryParseInt(val, ok);
+        if (!ok || lvl < 0 || lvl > 9)
+            return "Invalid OUTPUT_COMPRESSION value (expected 0..9)";
+        opts.output_compression = lvl;
+    } else if (iequals(key, "REPORT_2D_VARIABLES")) {
+        // The value may span several tokens on a file line
+        // ("REPORT_2D_VARIABLES DEPTH VELOCITY") or arrive as one
+        // space/comma-separated string from the C API; join then split.
+        std::string joined;
+        for (std::size_t i = 1; i < tokens.size(); ++i) {
+            if (i > 1) joined += ' ';
+            joined += tokens[i];
+        }
+        unsigned mask = 0;
+        const std::string err = parseReport2DVars(joined, mask);
+        if (!err.empty()) return err;
+        opts.report_2d_vars = mask;
+    } else if (iequals(key, "REPORT_2D_SPECIES")) {
+        std::string joined;
+        for (std::size_t i = 1; i < tokens.size(); ++i) {
+            if (i > 1) joined += ' ';
+            joined += tokens[i];
+        }
+        opts.report_2d_species = report2d::parseSpecies(joined);   // ALL → empty
+    } else if (iequals(key, "REPORT_2D_STEP")) {
+        // HH:MM:SS, HH:MM or plain seconds — the [OPTIONS] *_STEP spelling.
+        const double sec = openswmm::input::parse_time_seconds(val);
+        if (!(sec >= 0.0) || !std::isfinite(sec))
+            return "Invalid REPORT_2D_STEP value (expected HH:MM:SS or seconds >= 0)";
+        opts.report_2d_step = sec;
+    } else if (iequals(key, "INFILTRATION")) {
+        // E2 process enable. AUTO restores the pre-E2 rule (on iff rows).
+        if      (iequals(val, "YES") || iequals(val, "ON"))  opts.infiltration = 1;
+        else if (iequals(val, "NO")  || iequals(val, "OFF")) opts.infiltration = 0;
+        else if (iequals(val, "AUTO"))                       opts.infiltration = -1;
+        else return "Unknown INFILTRATION: " + val + " (expected YES|NO|AUTO)";
+    } else if (iequals(key, "INFIL_STEP")) {
+        // Alias of [2D_INFILTRATION_OPTIONS] INFIL_STEP; same duration grammar
+        // as WET_STEP / DRY_STEP. 0 = unset.
+        const double secs = openswmm::input::parse_time_seconds(val);
+        if (!(secs >= 0.0) || !std::isfinite(secs))
+            return "Invalid INFIL_STEP value (expected hh:mm:ss or seconds >= 0)";
+        opts.infil_step = secs;
+    } else if (iequals(key, "INFIL_DEFAULT_METHOD")) {
+        static const char* kMethods[] = {
+            "NONE", "HORTON", "MOD_HORTON", "GREEN_AMPT", "MOD_GREEN_AMPT",
+            "CURVE_NUMBER", "CONSTANT",
+        };
+        bool known = false;
+        for (const char* m : kMethods) {
+            if (iequals(val, m)) { opts.infil_default_method = m; known = true; break; }
+        }
+        // Legacy [INFILTRATION] spellings of the same methods.
+        if (!known && iequals(val, "MODIFIED_HORTON"))     { opts.infil_default_method = "MOD_HORTON";     known = true; }
+        if (!known && iequals(val, "MODIFIED_GREEN_AMPT")) { opts.infil_default_method = "MOD_GREEN_AMPT"; known = true; }
+        if (!known && iequals(val, "CURVE_NUM"))           { opts.infil_default_method = "CURVE_NUMBER";   known = true; }
+        if (!known)
+            return "Unknown INFIL_DEFAULT_METHOD: " + val +
+                   " (expected NONE|HORTON|MOD_HORTON|GREEN_AMPT|MOD_GREEN_AMPT|"
+                   "CURVE_NUMBER|CONSTANT)";
+    } else if (iequals(key, "INFIL_DESTINATION")) {
+        if      (iequals(val, "LOST"))             opts.infil_destination = "LOST";
+        else if (iequals(val, "SUBCATCH_AQUIFER")) opts.infil_destination = "SUBCATCH_AQUIFER";
+        else if (iequals(val, "AQUIFER_2D"))       opts.infil_destination = "AQUIFER_2D";
+        else return "Unknown INFIL_DESTINATION: " + val +
+                    " (expected LOST|SUBCATCH_AQUIFER|AQUIFER_2D)";
+    } else if (iequals(key, "EVAPORATION")) {
+        if      (iequals(val, "YES") || iequals(val, "ON") || iequals(val, "FORCING"))
+            opts.evaporation = 1;
+        else if (iequals(val, "NO")  || iequals(val, "OFF"))
+            opts.evaporation = 0;
+        else if (iequals(val, "CLIMATE"))
+            opts.evaporation = 2;
+        else return "Unknown EVAPORATION: " + val + " (expected NO|YES|CLIMATE)";
+    } else if (iequals(key, "TRANSPORT_POLLUTANTS") || iequals(key, "TRANSPORT_MSX") ||
+               iequals(key, "TRANSPORT_AGE") || iequals(key, "TRANSPORT_TEMPERATURE")) {
+        bool on = false;
+        if      (iequals(val, "YES") || iequals(val, "ON"))  on = true;
+        else if (iequals(val, "NO")  || iequals(val, "OFF")) on = false;
+        else return "Unknown " + key + ": " + val + " (expected YES|NO)";
+        if      (iequals(key, "TRANSPORT_POLLUTANTS"))  opts.transport_pollutants  = on;
+        else if (iequals(key, "TRANSPORT_MSX"))         opts.transport_msx         = on;
+        else if (iequals(key, "TRANSPORT_AGE"))         opts.transport_age         = on;
+        else                                            opts.transport_temperature = on;
+    } else if (iequals(key, "GROUNDWATER")) {
+        // Process enable for the integrated 2D subsurface (G1 kernel).
+        // AUTO restores the pre-key rule (on iff [2D_AQUIFER*] rows).
+        if      (iequals(val, "ON")  || iequals(val, "YES")) opts.groundwater = 1;
+        else if (iequals(val, "OFF") || iequals(val, "NO"))  opts.groundwater = 0;
+        else if (iequals(val, "AUTO"))                       opts.groundwater = -1;
+        else return "Unknown GROUNDWATER: " + val + " (expected YES|NO|AUTO)";
+    } else if (iequals(key, "GW_ET")) {
+        static const char* kEt[] = {"NONE", "CAPILLARY_RISE", "BOUNDARY_ET", "BOTH"};
+        bool known = false;
+        for (const char* e : kEt)
+            if (iequals(val, e)) { opts.gw_et = e; known = true; break; }
+        if (!known)
+            return "Unknown GW_ET: " + val +
+                   " (expected NONE|CAPILLARY_RISE|BOUNDARY_ET|BOTH)";
     } else if (is2DRetiredOptionKey(key)) {
         // These keys configured the deleted CVODE/ARKODE stack. On file load
         // they are ignored with a WARNING 104 (legacy models must still
@@ -297,13 +412,29 @@ bool is2DOptionKey(const std::string& key) {
         "INTEGRATOR", "MOMENTUM_EQUATION", "RECONSTRUCTION_ORDER", "FRONT_REBUILD",
         "THETA", "CFL_NUMBER", "H_MOVE",
         "LTS_TIERS", "FROUDE_MAX", "ADVECTION", "COUPLING_AREA",
+        "COUPLING_IN_FLOODING",
         "BACKEND",
+        "OUTPUT_PRECISION", "OUTPUT_COMPRESSION", "REPORT_2D_VARIABLES",
+        "REPORT_2D_SPECIES", "REPORT_2D_STEP",
+        "INFILTRATION", "INFIL_STEP", "INFIL_DEFAULT_METHOD", "INFIL_DESTINATION",
+        "EVAPORATION", "TRANSPORT_POLLUTANTS", "TRANSPORT_MSX", "TRANSPORT_AGE",
+        "TRANSPORT_TEMPERATURE",
+        "GROUNDWATER", "GW_ET",
     };
     for (const char* k : kKeys) {
         if (iequals(key, k)) return true;
     }
     return false;
 }
+
+
+const std::vector<std::string>& report2DVarTokens() { return report2d::tokens(); }
+
+std::string parseReport2DVars(const std::string& text, unsigned& mask) {
+    return report2d::parseMask(text, mask);
+}
+
+std::string formatReport2DVars(unsigned mask) { return report2d::formatMask(mask); }
 
 
 std::string format2DOptionValue(const SolverOptions2D& opts,
@@ -356,6 +487,8 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
     if (iequals(key, "FROUDE_MAX"))    return fmt_g(opts.froude_max);
     if (iequals(key, "ADVECTION"))     return opts.advection ? "YES" : "NO";
     if (iequals(key, "COUPLING_AREA")) return opts.coupling_area_auto ? "AUTO" : "DEFAULT";
+    if (iequals(key, "COUPLING_IN_FLOODING"))
+        return opts.coupling_in_flooding ? "YES" : "NO";
     if (iequals(key, "BACKEND")) {
         switch (opts.backend) {
             case Backend2D::CPU:  return "CPU";
@@ -367,7 +500,73 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
         }
         return "AUTO";
     }
+    if (iequals(key, "OUTPUT_PRECISION"))
+        return opts.output_precision == OutputPrecision2D::FLOAT64 ? "FLOAT64" : "FLOAT32";
+    if (iequals(key, "OUTPUT_COMPRESSION")) return std::to_string(opts.output_compression);
+    if (iequals(key, "REPORT_2D_VARIABLES")) return formatReport2DVars(opts.report_2d_vars);
+    if (iequals(key, "REPORT_2D_SPECIES")) return report2d::formatSpecies(opts.report_2d_species);
+    if (iequals(key, "REPORT_2D_STEP"))    return report2d::formatStep(opts.report_2d_step);
+    // E2 process enables. INFILTRATION AUTO is reported as AUTO (a host
+    // derives the effective state from swmm_infil2d_defaults_count and the
+    // per-cell rows); INFIL_STEP / INFIL_DEFAULT_METHOD report the stored
+    // key only — format2DOptionValueEx resolves the unset cases against the
+    // Infil2D rows when a caller has them.
+    if (iequals(key, "INFILTRATION"))
+        return opts.infiltration < 0 ? "AUTO" : (opts.infiltration ? "YES" : "NO");
+    if (iequals(key, "INFIL_STEP"))           return report2d::formatStep(opts.infil_step);
+    if (iequals(key, "INFIL_DEFAULT_METHOD"))
+        return opts.infil_default_method.empty() ? "NONE" : opts.infil_default_method;
+    if (iequals(key, "INFIL_DESTINATION"))
+        return opts.infil_destination.empty() ? "LOST" : opts.infil_destination;
+    if (iequals(key, "EVAPORATION"))
+        return opts.evaporation == 0 ? "NO" : (opts.evaporation == 2 ? "CLIMATE" : "YES");
+    if (iequals(key, "TRANSPORT_POLLUTANTS"))  return opts.transport_pollutants  ? "YES" : "NO";
+    if (iequals(key, "TRANSPORT_MSX"))         return opts.transport_msx         ? "YES" : "NO";
+    if (iequals(key, "TRANSPORT_AGE"))         return opts.transport_age         ? "YES" : "NO";
+    if (iequals(key, "TRANSPORT_TEMPERATURE")) return opts.transport_temperature ? "YES" : "NO";
+    // Like INFILTRATION, GROUNDWATER reports what was STORED; the Ex form
+    // resolves AUTO against the [2D_AQUIFER*] rows, and reads GW_ET from the
+    // [2D_AQUIFER_OPTIONS] struct that owns it.
+    if (iequals(key, "GROUNDWATER"))
+        return opts.groundwater < 0 ? "AUTO" : (opts.groundwater ? "YES" : "NO");
+    if (iequals(key, "GW_ET"))       return opts.gw_et.empty() ? "NONE" : opts.gw_et;
     return {};
+}
+
+
+std::string format2DOptionValueEx(const SolverOptions2D& opts,
+                                  const Infil2D* infil,
+                                  const std::string& key) {
+    return format2DOptionValueEx(opts, infil, nullptr, key);
+}
+
+std::string format2DOptionValueEx(const SolverOptions2D& opts,
+                                  const Infil2D* infil,
+                                  const SubsurfaceConfig* aquifer,
+                                  const std::string& key) {
+    if (infil) {
+        if (iequals(key, "INFIL_STEP") && opts.infil_step <= 0.0)
+            return report2d::formatStep(infil->options().infil_step);
+        if (iequals(key, "INFIL_DEFAULT_METHOD") && opts.infil_default_method.empty()) {
+            for (const auto& d : infil->defaults())
+                if (d.tag == "*") return infil2DMethodToken(d.row);
+            return "NONE";
+        }
+    }
+    if (aquifer) {
+        // GW_ET lives in [2D_AQUIFER_OPTIONS]; the [2D_OPTIONS] spelling is an
+        // alias that open() folds away, so the staging field is normally empty
+        // and the authoritative value is the only one to report.
+        if (iequals(key, "GW_ET") && opts.gw_et.empty())
+            return aquifer->options.gw_et.empty() ? "NONE"
+                                                  : aquifer->options.gw_et;
+        // GROUNDWATER is deliberately NOT resolved here: like INFILTRATION it
+        // reports AUTO | YES | NO exactly AS STORED, so a host round-trips
+        // what the deck said rather than writing back a resolved YES/NO over
+        // a deck that never spelled the key. Hosts derive the effective state
+        // from the row count.
+    }
+    return format2DOptionValue(opts, key);
 }
 
 
@@ -798,6 +997,7 @@ std::string parseInfil2DRowTail(const std::vector<std::string>& tokens,
         if (!numeric && last != "-") {
             if (!parseInfil2DDest(last, row.dest))
                 return std::string(section) + " unknown DEST: " + last;
+            row.dest_explicit = true;   // E2: keeps its own DEST over INFIL_DESTINATION
             --end;
         }
     }

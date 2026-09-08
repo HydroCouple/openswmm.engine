@@ -30,6 +30,7 @@
 #include "2d/data/BoundaryData.hpp"
 #include "2d/data/PendingRows2D.hpp"
 #include "2d/data/Serialize2D.hpp"
+#include "2d/data/Report2DVars.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -1743,6 +1744,27 @@ static void write_options_2d(sqlite3* db, const SimulationContext& ctx,
     insert("2D_ADVECTION",         o.advection ? "YES" : "NO");
     insert("2D_COUPLING_AREA",     o.coupling_area_auto ? "AUTO" : "DEFAULT");
     insert("2D_REPORT_2D",         o.report_2d ? "YES" : "NO");
+    // Results-file size controls (same tokens as the .inp grammar).
+    insert("2D_OUTPUT_PRECISION",
+           o.output_precision == twoD::OutputPrecision2D::FLOAT64 ? "FLOAT64" : "FLOAT32");
+    insert("2D_OUTPUT_COMPRESSION", std::to_string(o.output_compression));
+    insert("2D_REPORT_2D_VARIABLES", twoD::report2d::formatMask(o.report_2d_vars));
+    insert("2D_REPORT_2D_SPECIES",   twoD::report2d::formatSpecies(o.report_2d_species));
+    insert("2D_REPORT_2D_STEP",      fmt_g17(o.report_2d_step));
+    // E2 process enables (defaults written too — the reader tolerates absence).
+    insert("2D_INFILTRATION",        o.infiltration < 0 ? "AUTO" : (o.infiltration ? "YES" : "NO"));
+    insert("2D_INFIL_DEFAULT_METHOD", o.infil_default_method.empty() ? "NONE" : o.infil_default_method);
+    insert("2D_INFIL_DESTINATION",   o.infil_destination.empty() ? "LOST" : o.infil_destination);
+    insert("2D_EVAPORATION",         o.evaporation == 0 ? "NO" : (o.evaporation == 2 ? "CLIMATE" : "YES"));
+    insert("2D_TRANSPORT_POLLUTANTS",  o.transport_pollutants  ? "YES" : "NO");
+    insert("2D_TRANSPORT_MSX",         o.transport_msx         ? "YES" : "NO");
+    insert("2D_TRANSPORT_AGE",         o.transport_age         ? "YES" : "NO");
+    insert("2D_TRANSPORT_TEMPERATURE", o.transport_temperature ? "YES" : "NO");
+    // U5 — the groundwater process enable. Tri-state like 2D_INFILTRATION;
+    // GW_ET is not stored here, it belongs to the [2D_AQUIFER_OPTIONS] round
+    // trip (writing it in both places would double-author one setting).
+    insert("2D_GROUNDWATER",
+           o.groundwater < 0 ? "AUTO" : (o.groundwater ? "YES" : "NO"));
     // HDF5 results path — 2D outputs always go to HDF5, never gpkg tables.
     // Restored to SolverOptions2D::output_file on read so SWMMEngine::open
     // re-creates the Default2DOutputPlugin.

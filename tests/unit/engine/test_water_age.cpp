@@ -1098,8 +1098,10 @@ TEST(WaterAgeTest, InflowConstituentSilentDropReplacedByWarnings) {
     const auto typo = run_recording("_z1_typo.inp", "_z1_typo.rpt",
                                     "_z1_typo.out");
     ASSERT_TRUE(typo.ok);
+    // U2 (2026-09-07) widened the accepted set — and the wording with it —
+    // now that a reactions species is a legal [INFLOWS] constituent.
     EXPECT_TRUE(has_needle(typo.warnings,
-                           "matches no pollutant or reserved species"))
+                           "matches no pollutant, reactions species or reserved"))
         << "a misspelled [INFLOWS] constituent still vanishes silently.";
 
     write_deck("_z1_temp.inp", "", true, false, false, "", 5, false,

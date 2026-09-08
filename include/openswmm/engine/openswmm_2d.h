@@ -515,6 +515,27 @@ SWMM_ENGINE_API int swmm_2d_get_rainfall_bulk(SWMM_Engine engine,
 SWMM_ENGINE_API int swmm_2d_get_rain_volume_bulk(SWMM_Engine engine,
                                                   double* volumes);
 
+/** @brief Bulk get the SIGNED cumulative 1D↔2D coupling exchange VOLUME (m³)
+ *  per triangle since the start of the run.
+ *
+ *  Sign is from the 2D cell's point of view: **positive = the 1D node
+ *  delivered water INTO this cell** (spill, submerged-outfall discharge);
+ *  **negative = the node abstracted water FROM it** (drain). Output
+ *  pre-allocated to `triangle_count`.
+ *
+ *  Summing the array gives `coupling_1d_to_2d_in − coupling_2d_to_1d_out`
+ *  from the 2D mass balance — the identity that ties this per-cell series to
+ *  the domain totals, and the natural check for a validator.
+ *
+ *  Why signed and per cell: the two domain accumulators are unsigned and
+ *  cannot answer "what did THIS cell give or take", which is exactly the
+ *  question at a coupling point that reverses within a batch — the two
+ *  directions cancel in the net and neither is visible in the totals.
+ *  `swmm_2d_get_coupling_flux` is a rate that is overwritten every step.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_coupling_volume_bulk(SWMM_Engine engine,
+                                                     double* volumes);
+
 /** @brief Bulk get normal edge flux at every edge of every triangle.
  *
  *  Output array must be pre-allocated to `triangle_count * 3` doubles,
@@ -921,6 +942,26 @@ SWMM_ENGINE_API int swmm_2d_get_edge_bc_rating_curve_name(SWMM_Engine engine,
 SWMM_ENGINE_API int swmm_2d_get_edge_bc_cum_flux(SWMM_Engine engine,
                                                     int tri_idx, int edge,
                                                     double* cum_flux);
+
+
+/* =========================================================================
+ * Results-file variable selection ([2D_OPTIONS] REPORT_2D_VARIABLES)
+ * =========================================================================
+ * Engine-independent helpers so a host can build a checklist without
+ * re-implementing the token vocabulary. Tokens are listed in bit order; the
+ * presets DEFAULT / MINIMAL / ALL map to masks. Use swmm_options_get_ext /
+ * swmm_options_set_ext with key "REPORT_2D_VARIABLES" to read/write a model.
+ */
+
+/** Number of selectable dataset groups. */
+SWMM_ENGINE_API int swmm_2d_output_variable_count(void);
+/** Token of group @p i (0-based, bit i), or "" when out of range. */
+SWMM_ENGINE_API const char* swmm_2d_output_variable_name(int i);
+/** Bitmask for a preset name ("DEFAULT", "MINIMAL", "ALL") or a token list;
+ *  returns 0 for an unparseable string. */
+SWMM_ENGINE_API unsigned swmm_2d_output_variable_mask(const char* text);
+/** Preset name or token list for @p mask (static buffer, valid until the next call). */
+SWMM_ENGINE_API const char* swmm_2d_output_variable_text(unsigned mask);
 
 #ifdef __cplusplus
 } /* extern "C" */

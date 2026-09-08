@@ -71,6 +71,29 @@ SWMM_ENGINE_API int swmm_process_component_register(SWMM_Engine engine,
 SWMM_ENGINE_API int swmm_process_component_remove(SWMM_Engine engine,
         int idx);
 
+/* ---- Built-in component catalogue (U1, 2026-09-07) -----------------------
+ * The ids the engine knows how to bind, independent of any model: the six
+ * planned/implemented built-ins of the process-global registry. This is the
+ * catalogue the GUI's Process Components table offers in its Id combo. The
+ * external component-library discovery (`swmm_component_library_*`,
+ * PROG stream D) is a separate, later seam; this one never scans disk.
+ */
+
+/** @brief Number of built-in component ids. */
+SWMM_ENGINE_API int swmm_process_component_known_count(void);
+
+/**
+ * @brief Read built-in id @p idx.
+ * @param id_buf       [out] The id (e.g. "org.hydrocouple.openswmm.reactions").
+ * @param desc_buf     [out] Short description.
+ * @param implemented  [out] 1 when the component has an apply hook in this
+ *                     build, 0 when it is a planned placeholder (its
+ *                     registration line is diagnosed at open).
+ */
+SWMM_ENGINE_API int swmm_process_component_known_get(int idx,
+        char* id_buf, int id_len, char* desc_buf, int desc_len,
+        int* implemented);
+
 #ifdef __cplusplus
 }
 #endif

@@ -106,10 +106,16 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
             sc.mass_in[udn * uns + s] += q * sc.link_old[uj * uns + s];
     }
 
-    // ---- 3. Node mixing (mixAtNodes mirror; no evap factor and no
-    //         external loads — header). The clamp is TWO-SIDED like the
-    //         heat mirror's: mixing cannot exceed the larger of the held
-    //         and incoming concentrations, nor go below zero. --------------
+    // ---- 3. Node mixing (mixAtNodes mirror; no evap factor). External
+    //         loads: U2 (2026-09-07) — [INFLOWS] rows naming a species
+    //         arrive through msx_ext_mass_in (a RATE, the qual_mass_in
+    //         shape) and join the link mass here; empty when no such row
+    //         exists, so species-only-from-reactions decks are unchanged.
+    //         The clamp is TWO-SIDED like the heat mirror's: mixing cannot
+    //         exceed the larger of the held and incoming concentrations,
+    //         nor go below zero. --------------------------------------------
+    const bool has_ext = rx.msx_ext_mass_in.size() >=
+                         static_cast<std::size_t>(nn) * uns;
     for (int i = 0; i < nn; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         const double v_old = ctx.nodes.old_volume[ui];
@@ -123,7 +129,8 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
                 rx.msx_node_conc[ui * uns + s] = zero_bf ? 0.0 : c_old;
                 continue;
             }
-            const double mass = sc.mass_in[ui * uns + s] * dt;
+            const double ext_rate = has_ext ? rx.msx_ext_mass_in[ui * uns + s] : 0.0;
+            const double mass = (sc.mass_in[ui * uns + s] + ext_rate) * dt;
             const double c_in = mass / v_in;
             const double c_max = std::max(c_old, c_in);
             double c_new = (v_old > kZeroVolume)

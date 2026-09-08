@@ -29,6 +29,7 @@
 #include "2d/data/SolverOptions2D.hpp"
 #include "2d/data/BoundaryData.hpp"
 #include "2d/data/PendingRows2D.hpp"
+#include "2d/data/Report2DVars.hpp"
 
 #include "core/DateTime.hpp"
 
@@ -201,6 +202,35 @@ static void apply_option_2d(SimulationContext& ctx, const std::string& key,
     else if (key == "2D_ADVECTION")     o->advection = (val == "YES");
     else if (key == "2D_COUPLING_AREA") o->coupling_area_auto = (val == "AUTO");
     else if (key == "2D_REPORT_2D")     o->report_2d = (val == "YES");
+    else if (key == "2D_OUTPUT_PRECISION")
+        o->output_precision = (val == "FLOAT64") ? twoD::OutputPrecision2D::FLOAT64
+                                                 : twoD::OutputPrecision2D::FLOAT32;
+    else if (key == "2D_OUTPUT_COMPRESSION") o->output_compression = std::stoi(val);
+    else if (key == "2D_REPORT_2D_VARIABLES") {
+        unsigned mask = 0;
+        if (twoD::report2d::parseMask(val, mask).empty()) o->report_2d_vars = mask;
+    }
+    else if (key == "2D_REPORT_2D_SPECIES") o->report_2d_species = twoD::report2d::parseSpecies(val);
+    else if (key == "2D_REPORT_2D_STEP")    o->report_2d_step = std::stod(val);
+    // E2 process enables.
+    else if (key == "2D_INFILTRATION")
+        o->infiltration = (val == "AUTO") ? -1 : (val == "YES" ? 1 : 0);
+    else if (key == "2D_INFIL_DEFAULT_METHOD")
+        o->infil_default_method = (val == "NONE" || val.empty()) ? std::string() : val;
+    else if (key == "2D_INFIL_DESTINATION")
+        o->infil_destination = (val == "LOST" || val.empty()) ? std::string() : val;
+    else if (key == "2D_EVAPORATION")
+        o->evaporation = (val == "NO") ? 0 : (val == "CLIMATE" ? 2 : 1);
+    else if (key == "2D_TRANSPORT_POLLUTANTS")  o->transport_pollutants  = (val != "NO");
+    else if (key == "2D_TRANSPORT_MSX")         o->transport_msx         = (val != "NO");
+    else if (key == "2D_TRANSPORT_AGE")         o->transport_age         = (val != "NO");
+    else if (key == "2D_TRANSPORT_TEMPERATURE") o->transport_temperature = (val != "NO");
+    // U5 — groundwater page keys.
+    // AUTO / absent both mean "unset"; older files spelled ON|OFF.
+    else if (key == "2D_GROUNDWATER")
+        o->groundwater = (val == "AUTO" || val.empty()) ? int8_t{-1}
+                       : ((val == "ON" || val == "YES") ? int8_t{1} : int8_t{0});
+    else if (key == "2D_GW_ET")       o->gw_et = (val == "NONE") ? "" : val;
     // HDF5 results path — restoring it lets SWMMEngine::open re-create the
     // Default2DOutputPlugin (2D results always stream to HDF5, never gpkg).
     else if (key == "2D_OUTPUT_FILE")   o->output_file = val;

@@ -40,6 +40,7 @@
 #include "../hydraulics/Node.hpp"   // node::getVolume — storage volume from its depth-relation
 #include "../hydraulics/Link.hpp"       // link::buildXSectParams — street spread at max depth
 #include "../hydraulics/XSectBatch.hpp" // xsect::getWofY
+#include "../transport/TransportPolicy.hpp"   // E2: Domain x Species matrix block
 
 #include <version.h>
 
@@ -544,6 +545,17 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
     std::fprintf(f, "\n    Water Quality .......... %s",
                  (ctx.n_pollutants() > 0 && !opt.ignore_quality) ? "YES" : "NO");
 
+    // E2 — the Domain x Species transport matrix (TransportPolicy), printed
+    // only when the project declares some species class at all, so a
+    // hydraulics-only report is unchanged. Answers "why is there no 2D
+    // quality" in the report itself.
+    if (ctx.n_pollutants() > 0 || ctx.options.water_age ||
+        ctx.options.heat_transport ||
+        (ctx.reactions.configured && ctx.reactions.compiled)) {
+        const auto matrix = openswmm::transport::resolve(ctx);
+        std::fprintf(f, "\n%s", openswmm::transport::formatReportBlock(matrix).c_str());
+    }
+
     if (ctx.n_subcatches() > 0) {
         int im = static_cast<int>(opt.infiltration);
         if (im < 0 || im > 4) im = 0;
@@ -853,6 +865,12 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
         gwRow("Initial Storage ..........", mb.gw_init_storage);
         gwRow("Infiltration .............", mb.gw_infil);
+        // U3 (track I-b): the 2D surface's share of that infiltration, named
+        // so a user can see the cross-domain transfer. Printed only when a
+        // deck actually routes it (INFIL_DESTINATION SUBCATCH_AQUIFER); it
+        // is INSIDE the Infiltration row above, not a second inflow.
+        if (mb.gw_infil_2d_recharge != 0.0)
+            gwRow("  of which from 2D .......", mb.gw_infil_2d_recharge);
         gwRow("Upper Zone ET ............", mb.gw_upper_evap);
         gwRow("Lower Zone ET ............", mb.gw_lower_evap);
         gwRow("Deep Percolation .........", mb.gw_lower_perc);
@@ -903,6 +921,12 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         row("External Inflow ..........", mb.routing_external);
         row("External Outflow .........", mb.routing_outflow);
         row("Flooding Loss ............", mb.routing_flooding);
+        // C2: the 1D→2D coupling spill, split out of Flooding Loss. Printed
+        // only when non-zero so an uncoupled model's report is unchanged
+        // line-for-line. (COUPLING_IN_FLOODING YES puts it back in the row
+        // above and leaves this one at zero, hence hidden.)
+        if (mb.routing_coupling_out != 0.0)
+            row("2D Coupling Outflow ......", mb.routing_coupling_out);
         row("Evaporation Loss .........", mb.routing_evap_loss);
         row("Exfiltration Loss ........", mb.routing_seep_loss);
         row("Initial Stored Volume ....", mb.routing_init_storage);
@@ -1024,12 +1048,19 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             rowx("Net 1D -> 2D .............", spill_1d - drain_1d);
 
             // Flow-routing continuity with the exchange internal: remove the
-            // drain from external inflow and the spill from flooding loss.
+            // drain from external inflow and the spill from whichever outflow
+            // category carries it.
+            //
+            // C2: the spill now lives in routing_coupling_out by default, and
+            // only in routing_flooding under COUPLING_IN_FLOODING. Subtracting
+            // it from the SUM of the two is correct in both groupings and
+            // needs no branch — the category it is not in contributes zero.
             const double in_adj  = mb1.routing_dry_weather + mb1.routing_wet_weather
                                  + mb1.routing_gw_inflow + mb1.routing_rdii
                                  + (mb1.routing_external - drain_1d)
                                  + mb1.routing_init_storage;
-            const double out_adj = (mb1.routing_flooding - spill_1d)
+            const double out_adj = (mb1.routing_flooding
+                                    + mb1.routing_coupling_out - spill_1d)
                                  + mb1.routing_outflow + mb1.routing_evap_loss
                                  + mb1.routing_seep_loss + mb1.routing_final_storage;
             const double err_adj = (in_adj > 0.0)

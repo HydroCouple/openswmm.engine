@@ -633,14 +633,24 @@ protected:
     MeshData mesh_ = makeTaggedMesh();
 };
 
-TEST_F(Infil2DValidationTest, UnsupportedDestinationsAreRejectedByName) {
-    for (auto dest : {Infil2DDest::SUBCATCH_AQUIFER, Infil2DDest::AQUIFER_2D}) {
+// U3 (2026-09-07): SUBCATCH_AQUIFER is now ROUTED (track I-b — recharge into
+// the containing subcatchment's legacy aquifer).
+//
+// G1 (2026-09-07): and AQUIFER_2D is no longer refused outright — the
+// two-zone kernel landed. It is refused when there is no `[2D_AQUIFER]` to
+// receive the recharge, which is this fixture: Infil2D is exercised directly
+// here, so nothing ever called setAquifer2DAvailable(). The accepting half
+// needs a whole model and lives in test_2d_aquifer.cpp.
+TEST_F(Infil2DValidationTest, Aquifer2DDestinationIsRejectedWithoutAnAquifer) {
+    for (auto dest : {Infil2DDest::AQUIFER_2D}) {
         Infil2D infil;
         Infil2DDefault d; d.tag = "LAWN";
         d.row = rowOf(InfilModel::CONSTANT, 1.0);
         d.row.dest = dest;
         infil.defaults().push_back(d);
 
+        ASSERT_FALSE(infil.aquifer2DAvailable())
+            << "the fixture is only meaningful with no aquifer authored";
         std::string err;
         EXPECT_FALSE(infil.resolve(mesh_, usOptions(), err))
             << "destination " << infil2DDestToken(dest) << " was accepted";
@@ -648,9 +658,36 @@ TEST_F(Infil2DValidationTest, UnsupportedDestinationsAreRejectedByName) {
             << "message does not name the destination: " << err;
         EXPECT_NE(err.find("LAWN"), std::string::npos)
             << "message does not name the offending tag: " << err;
-        EXPECT_NE(err.find("not supported in this release"), std::string::npos)
-            << "message is not the §5.5.4 wording: " << err;
+        EXPECT_NE(err.find("[2D_AQUIFER]"), std::string::npos)
+            << "message does not name the section that would fix it: " << err;
     }
+}
+
+// …and the same row resolves once an aquifer has been declared. This is the
+// unit-level half of the rule; test_2d_aquifer.cpp runs it on a model.
+TEST_F(Infil2DValidationTest, Aquifer2DDestinationResolvesWithAnAquifer) {
+    Infil2D infil;
+    Infil2DDefault d; d.tag = "LAWN";
+    d.row = rowOf(InfilModel::CONSTANT, 1.0);
+    d.row.dest = Infil2DDest::AQUIFER_2D;
+    infil.defaults().push_back(d);
+    infil.setAquifer2DAvailable(true);
+
+    std::string err;
+    EXPECT_TRUE(infil.resolve(mesh_, usOptions(), err)) << err;
+}
+
+// U3: SUBCATCH_AQUIFER resolves (its containment is a SurfaceRouter2D
+// concern; Infil2D only validates the row).
+TEST_F(Infil2DValidationTest, SubcatchAquiferDestinationResolves) {
+    Infil2D infil;
+    Infil2DDefault d; d.tag = "LAWN";
+    d.row = rowOf(InfilModel::CONSTANT, 1.0);
+    d.row.dest = Infil2DDest::SUBCATCH_AQUIFER;
+    infil.defaults().push_back(d);
+
+    std::string err;
+    EXPECT_TRUE(infil.resolve(mesh_, usOptions(), err)) << err;
 }
 
 TEST_F(Infil2DValidationTest, OutOfRangeCellIndexIsRejected) {

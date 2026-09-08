@@ -34,6 +34,8 @@
 #include "../../../quality/NegativeSources.hpp"
 #include "../../../hydraulics/Node.hpp"
 #include "../../InitialQualitySeeds.hpp"
+#include "../../TransportPolicy.hpp"   // E2
+#include "../ReactionModule/ReactionLegacyBinding.hpp"   // U2: ensureMsxState
 #include "../../../hydraulics/fv/FvKernels.hpp"
 #include "../../../hydraulics/fv/NetworkMeshBuilder.hpp"
 #include "../HeatFluxModules/BedExchange.hpp"
@@ -102,30 +104,37 @@ bool ArdEngine::init(SimulationContext& ctx) {
     // this engine, retiring the R4b element-local limitation here. WALL
     // species have no transport semantics yet: fall back to LEGACY (whose
     // R4 binding runs them element-locally) with a precise warning.
-    const int np = ctx.n_pollutants();
+    // E2: the class enables come from the one policy
+    // (transport::network1DEnables — identical values to the pre-E2 inline
+    // derivation: this engine only initialises when IGNORE_QUALITY is NO).
+    // The row ORDER is the canonical SpeciesRegistry order (pollutants,
+    // MSX, age, temperature), the same one the 2D surface state uses.
+    const transport::ClassEnables en = transport::network1DEnables(ctx);
+    const int np = en.n_pollut;
     int nm = 0;
     if (transport::ardReactionsActive(ctx)) {
-        if (transport::ardHasWallSpecies(ctx)) {
+        if (en.msx_has_wall) {
             warnings_.push_back(
                 "QUALITY_SOLVER EULERIAN_ARD: WALL species have no transport "
                 "semantics under this engine yet — falling back to LEGACY, "
                 "which runs them per element (R4).");
             return false;
         }
-        nm = ctx.reactions.n_species();
+        nm = en.n_msx;
     }
     // A1a: the reserved __WATER_AGE__ species rides the mesh as the LAST
     // row (after pollutants and MSX): zero-order aging + volume-weighted
     // mixing come free from the shared kernels; loaders deliver per-source
     // age-volume like a pollutant load.
-    const int na = ctx.options.water_age ? 1 : 0;
+    const int na = en.age ? 1 : 0;
     // H4: __TEMPERATURE__ takes the row AFTER age, so the mesh row order
     // matches the reported column order H1 fixed (pollutants, MSX, age,
     // temperature). Advection, FCT, node mixing, structure passthrough and
     // dispersion are all generic over `ns` — the row gets every one of them
     // for free, at the same dispersion coefficient as a solute.
-    const int nt = ctx.options.heat_transport ? 1 : 0;
+    const int nt = en.temperature ? 1 : 0;
     const int ns = np + nm + na + nt;
+    nm_       = nm;
     age_row_  = (na > 0) ? np + nm : -1;
     temp_row_ = (nt > 0) ? np + nm + na : -1;
     if (ns <= 0) return false;
@@ -206,6 +215,12 @@ bool ArdEngine::init(SimulationContext& ctx) {
     // stride audit); MSX rows (s >= np) from the component's GLOBAL initial
     // values, matching R4's element-state seeding.
     const auto unp = static_cast<std::size_t>(np);
+    // U2: MSX rows seed from the element state (msx_*_conc), which
+    // ensureMsxState fills from GLOBAL + the per-element rows and a V4
+    // hotstart overwrites. Sizing it here is idempotent and makes the seed
+    // path identical under all three engines (D-IQ5, D-IQ6).
+    const auto unm_msx = static_cast<std::size_t>(nm);
+    if (nm > 0) transport::ensureMsxState(ctx);
 
     // A2a: hotstart-loaded ages win over INITIAL_STATE. Snapshot them
     // BEFORE the resize below wipes the arrays, and consume the flag.
@@ -261,21 +276,18 @@ bool ArdEngine::init(SimulationContext& ctx) {
                     ctx.links.conc[static_cast<std::size_t>(link) * unp +
                                    static_cast<std::size_t>(s)];
             }
+            // U2: MSX rows seed from the element state (msx_link_conc),
+            // which ensureMsxState fills with GLOBAL + the per-element rows
+            // ([REACTION_QUALITY] LINK and, mirrored, [INITIAL_QUALITY]) —
+            // the same numbers the inline fill produced — and which a V4
+            // hotstart overwrites before this lazy init (D-IQ5).
             for (int m = 0; m < nm; ++m) {
+                const std::size_t xi = static_cast<std::size_t>(link) * unm_msx +
+                                       static_cast<std::size_t>(m);
                 state_.cell_phi[static_cast<std::size_t>(np + m) * unc + uc] =
-                    ctx.reactions.init_global[static_cast<std::size_t>(m)];
-            }
-            // E-B2: [REACTION_QUALITY] LINK rows override the GLOBAL fill —
-            // EVERY cell of the conduit, and only the named species' row
-            // (ns-strided (np + m) math, the E4/R6 stride audit).
-            for (std::size_t k = 0;
-                 k < ctx.reactions.init_elem_idx.size(); ++k) {
-                if (!ctx.reactions.init_elem_is_link[k]) continue;
-                if (ctx.reactions.init_elem_idx[k] != link) continue;
-                const int m = ctx.reactions.init_elem_species[k];
-                if (m < 0 || m >= nm) continue;
-                state_.cell_phi[static_cast<std::size_t>(np + m) * unc + uc] =
-                    ctx.reactions.init_elem_value[k];
+                    xi < ctx.reactions.msx_link_conc.size()
+                        ? ctx.reactions.msx_link_conc[xi]
+                        : ctx.reactions.init_global[static_cast<std::size_t>(m)];
             }
             if (age_row_ >= 0)
                 state_.cell_phi[static_cast<std::size_t>(age_row_) * unc + uc] =
@@ -292,18 +304,14 @@ bool ArdEngine::init(SimulationContext& ctx) {
             node_mass_[und * uns + static_cast<std::size_t>(s)] =
                 ctx.nodes.conc[und * unp + static_cast<std::size_t>(s)] *
                 node_vol_[und];
-        for (int m = 0; m < nm; ++m)
+        // U2: node MSX seeds from msx_node_conc (see the link loop).
+        for (int m = 0; m < nm; ++m) {
+            const std::size_t xi = und * unm_msx + static_cast<std::size_t>(m);
             node_mass_[und * uns + static_cast<std::size_t>(np + m)] =
-                ctx.reactions.init_global[static_cast<std::size_t>(m)] *
+                (xi < ctx.reactions.msx_node_conc.size()
+                     ? ctx.reactions.msx_node_conc[xi]
+                     : ctx.reactions.init_global[static_cast<std::size_t>(m)]) *
                 node_vol_[und];
-        // E-B2: NODE rows override the GLOBAL fill (mass = value * volume).
-        for (std::size_t k = 0; k < ctx.reactions.init_elem_idx.size(); ++k) {
-            if (ctx.reactions.init_elem_is_link[k]) continue;
-            if (ctx.reactions.init_elem_idx[k] != nd) continue;
-            const int m = ctx.reactions.init_elem_species[k];
-            if (m < 0 || m >= nm) continue;
-            node_mass_[und * uns + static_cast<std::size_t>(np + m)] =
-                ctx.reactions.init_elem_value[k] * node_vol_[und];
         }
         if (age_row_ >= 0)
             node_mass_[und * uns + static_cast<std::size_t>(age_row_)] =
@@ -714,11 +722,90 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
     //     ZERO MSX concentration, so sustained inflow dilutes MSX stores —
     //     the documented default, and the transport observable the R6 gate
     //     rides on.
+    // 1a'. Loads at a VIRTUAL junction go to the two cells adjoining its
+    //     spliced face, half each (see cell_src_vol_ in the header). The
+    //     node-store stages below skip these nodes. A negative (extraction)
+    //     load lands on the cells' own non-negativity floor in stage 3.
+    has_vj_src_ = false;
+    if (!mesh_.node_vj_face.empty()) {
+        const int np_v = ctx.n_pollutants();
+        const auto unp_v = static_cast<std::size_t>(np_v);
+        auto ensure = [&]() {
+            if (has_vj_src_) return;
+            cell_src_vol_.assign(unc, 0.0);
+            cell_src_mass_.assign(uns * unc, 0.0);
+            has_vj_src_ = true;
+        };
+        auto credit_mass = [&](std::size_t uf, std::size_t s_row, double amount) {
+            if (amount == 0.0) return;
+            ensure();
+            for (const int c : {mesh_.face_cl[uf], mesh_.face_cr[uf]})
+                if (c >= 0)
+                    cell_src_mass_[s_row * unc + static_cast<std::size_t>(c)] +=
+                        0.5 * amount;
+        };
+        for (int nd = 0; nd < nn && nd < ctx.n_nodes(); ++nd) {
+            const auto und = static_cast<std::size_t>(nd);
+            if (und >= mesh_.node_kind.size() ||
+                mesh_.node_kind[und] != fv::kNodeVirtual)
+                continue;
+            const int f = mesh_.node_vj_face[und];
+            if (f < 0) continue;
+            const auto uf = static_cast<std::size_t>(f);
+            const double vol = load_frac * ctx.nodes.qual_vol_in[und];
+            if (vol != 0.0) {
+                ensure();
+                for (const int c : {mesh_.face_cl[uf], mesh_.face_cr[uf]})
+                    if (c >= 0)
+                        cell_src_vol_[static_cast<std::size_t>(c)] += 0.5 * vol;
+            }
+            for (int s = 0; s < np_v; ++s)
+                credit_mass(uf, static_cast<std::size_t>(s),
+                            dt_sub * ctx.nodes.qual_mass_in[und * unp_v +
+                                                            static_cast<std::size_t>(s)]);
+            // U2: species rows np..np+nm-1 take the [INFLOWS] species loads.
+            if (nm_ > 0 && ctx.reactions.msx_ext_mass_in.size() >=
+                               static_cast<std::size_t>(ctx.n_nodes()) *
+                                   static_cast<std::size_t>(nm_))
+                for (int m = 0; m < nm_; ++m)
+                    credit_mass(uf, static_cast<std::size_t>(np_v + m),
+                                dt_sub * ctx.reactions.msx_ext_mass_in[
+                                    und * static_cast<std::size_t>(nm_) +
+                                    static_cast<std::size_t>(m)]);
+            if (age_row_ >= 0 &&
+                und < ctx.water_age_state.node_age_vol_in.size())
+                credit_mass(uf, static_cast<std::size_t>(age_row_),
+                            dt_sub * ctx.water_age_state.node_age_vol_in[und]);
+            if (temp_row_ >= 0 &&
+                und < ctx.heat_state.node_temp_vol_in.size())
+                credit_mass(uf, static_cast<std::size_t>(temp_row_),
+                            dt_sub * ctx.heat_state.node_temp_vol_in[und]);
+        }
+        // E5a transport boundaries riding a virtual junction's inflow water
+        // (the same rule as stage 1b(ii) below, routed to the cells).
+        for (std::size_t i = 0; i < bc_node_.size(); ++i) {
+            const auto und = static_cast<std::size_t>(bc_node_[i]);
+            if (static_cast<int>(und) >= nn || und >= mesh_.node_kind.size() ||
+                mesh_.node_kind[und] != fv::kNodeVirtual)
+                continue;
+            const int f = mesh_.node_vj_face[und];
+            const double vol_ext = load_frac * ctx.nodes.qual_vol_in[und];
+            if (f >= 0 && vol_ext > 0.0 && bc_now_[i] > 0.0)
+                credit_mass(static_cast<std::size_t>(f),
+                            static_cast<std::size_t>(bc_srow_[i]),
+                            vol_ext * bc_now_[i]);
+        }
+    }
+
     {
         const int np_l = ctx.n_pollutants();
         const auto unp_l = static_cast<std::size_t>(np_l);
         for (int nd = 0; nd < nn && nd < ctx.n_nodes(); ++nd) {
             const auto und = static_cast<std::size_t>(nd);
+            // Virtual junctions were credited to their spliced cells in 1a'.
+            if (und < mesh_.node_kind.size() &&
+                mesh_.node_kind[und] == fv::kNodeVirtual)
+                continue;
             node_vol_[und] += load_frac * ctx.nodes.qual_vol_in[und];
             for (int s = 0; s < np_l; ++s) {
                 // D-NS1 (X6): the old `max(0, ...)` silently DROPPED a
@@ -738,6 +825,22 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
                     delta = -mstore;
                 }
                 mstore += delta;
+            }
+            // U2: species rows np..np+nm-1 take the [INFLOWS] species loads
+            // (msx_ext_mass_in, a rate; empty when no such row exists).
+            // Same signed-with-floor rule as the pollutant rows above, minus
+            // the ledger booking (species have no ledger row, L3).
+            if (nm_ > 0 && ctx.reactions.msx_ext_mass_in.size() >=
+                               static_cast<std::size_t>(ctx.n_nodes()) *
+                                   static_cast<std::size_t>(nm_)) {
+                for (int m = 0; m < nm_; ++m) {
+                    double delta = dt_sub * ctx.reactions.msx_ext_mass_in[
+                        und * static_cast<std::size_t>(nm_) + static_cast<std::size_t>(m)];
+                    double& mstore =
+                        node_mass_[und * uns + static_cast<std::size_t>(np_l + m)];
+                    if (delta < 0.0 && mstore + delta < 0.0) delta = -mstore;
+                    mstore += delta;
+                }
             }
             // Persistent user quality mass flux is NOT added here: it is
             // folded into qual_mass_in by QualitySolver::addExtInflowLoads(),
@@ -776,6 +879,9 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
     for (std::size_t i = 0; i < bc_node_.size(); ++i) {
         const auto und = static_cast<std::size_t>(bc_node_[i]);
         if (static_cast<int>(und) >= nn) continue;
+        if (und < mesh_.node_kind.size() &&
+            mesh_.node_kind[und] == fv::kNodeVirtual)
+            continue;   // routed to the spliced cells in 1a'
         const double vol_ext = load_frac * ctx.nodes.qual_vol_in[und];
         if (vol_ext > 0.0 && bc_now_[i] > 0.0)
             node_mass_[und * uns + static_cast<std::size_t>(bc_srow_[i])] +=
@@ -875,7 +981,12 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
             dA += sg * f_mass_[uf];
         }
         const double a_old = state_.cell_a[uc];
-        const double a_new = std::max(0.0, a_old + dt_sub * dA * inv_dx);
+        double a_new = std::max(0.0, a_old + dt_sub * dA * inv_dx);
+        // Virtual-junction lateral water (1a') enters as a zero-momentum
+        // area source before the divide, so it dilutes the species exactly
+        // as the hydraulic solver's cell_qlat_ split does.
+        if (has_vj_src_)
+            a_new = std::max(0.0, a_new + cell_src_vol_[uc] * inv_dx);
         for (int s = 0; s < ns; ++s) {
             const auto sb = static_cast<std::size_t>(s);
             double dm = 0.0;
@@ -884,8 +995,9 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub,
                 const double sg = (sides[e2] == 0) ? -1.0 : 1.0;
                 dm += sg * f_phi_flux_[sb * unf + uf];
             }
-            const double m = a_old * state_.cell_phi[sb * unc + uc] +
-                             dt_sub * dm * inv_dx;
+            double m = a_old * state_.cell_phi[sb * unc + uc] +
+                       dt_sub * dm * inv_dx;
+            if (has_vj_src_) m += cell_src_mass_[sb * unc + uc] * inv_dx;
             // Debt 216: the temperature row is EXEMPT from the
             // non-negativity floor (its zero is 0 °C, an ordinary state —
             // H7b's LARD row made the same call) but CLAMPED to the

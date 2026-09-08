@@ -39,11 +39,13 @@
 #include "../../../../include/openswmm/plugin_sdk/IOutputPlugin.hpp"
 
 #include <string>
+#include <vector>
 #include <hdf5.h>
 
 namespace openswmm::twoD {
 
-struct MeshData;  // forward declaration
+struct MeshData;          // forward declaration
+struct SolverOptions2D;   // forward declaration
 
 /**
  * @brief Default 2D output plugin: writes CF/UGRID-compliant HDF5 file.
@@ -191,7 +193,36 @@ public:
      */
     void setMeshCoordinateScale(double metres_per_model_unit);
 
+    /**
+     * @brief Apply the results-file size controls from [2D_OPTIONS]
+     *        (OUTPUT_PRECISION, OUTPUT_COMPRESSION, REPORT_2D_VARIABLES,
+     *        REPORT_2D_SPECIES, REPORT_2D_STEP). Called by SWMMEngine before
+     *        prepareMeshAndDatasets(); datasets not selected are never
+     *        created, so readers must treat every time-varying dataset as
+     *        optional.
+     * @param report_step_sec  [OPTIONS] REPORT_STEP, the cadence update() is
+     *                         called at; REPORT_2D_STEP is validated against it.
+     * @return Empty on success, else a validation message (REPORT_2D_STEP not
+     *         a positive multiple of REPORT_STEP).
+     */
+    std::string configureOutput(const SolverOptions2D& opts, double report_step_sec);
+
+    /// Bitmask of report2d::Var groups in effect (for tests / the C API).
+    unsigned reportVariables() const noexcept { return report_vars_; }
+
 private:
+    // ---- results-file size controls (configureOutput) ----
+    hid_t    storage_type_ = H5T_NATIVE_DOUBLE;  ///< H5T_IEEE_F32LE when FLOAT32
+    int      compression_  = 4;                  ///< zlib level; 0 = none
+    unsigned report_vars_  = 0x7FFu;             ///< report2d::ALL_MASK until configured
+    std::vector<std::string> species_filter_;    ///< empty = every row
+    std::vector<int>         species_rows_;      ///< row indices written (resolved on first update)
+    double   report_2d_step_days_ = 0.0;         ///< 0 = every update() call
+    double   next_due_days_       = -1.0;        ///< next write instant (days)
+    bool     want(unsigned bit) const noexcept { return (report_vars_ & bit) != 0; }
+    /// Write \p n_sel selected species rows of a [n_species × n_faces] block.
+    void writeSpeciesRows(const double* all, hsize_t n_species_in);
+
     std::string  h5_path_;
     PluginState  state_ = PluginState::UNLOADED;
     std::string  last_error_;
@@ -241,9 +272,14 @@ private:
     void writeMeshTopology(const SimulationContext& ctx);
     /// Write the scalar `/crs` georeferencing variable (see class docs).
     void writeCrsVariable();
+    /// @param type  Storage type; -1 (the default) follows OUTPUT_PRECISION.
+    ///              The time axis passes H5T_NATIVE_DOUBLE explicitly: a day
+    ///              number in float32 loses ~0.1 ms on an hour, which the
+    ///              readers' time lookup cannot absorb.
     hid_t createUnlimitedDataset(const char* name, int rank,
                                   const hsize_t* dims,
-                                  const hsize_t* chunk_dims);
+                                  const hsize_t* chunk_dims,
+                                  hid_t type = -1);
     void writeStringAttr(hid_t loc, const char* name, const char* value);
     void writeDoubleAttr(hid_t loc, const char* name, double value);
     void extendAndWrite2D(hid_t ds, const double* data, hsize_t n_cols);

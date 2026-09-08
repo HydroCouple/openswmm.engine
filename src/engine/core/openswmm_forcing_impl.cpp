@@ -105,6 +105,40 @@ SWMM_ENGINE_API int swmm_forcing_node_quality(
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_forcing_node_temperature(
+    SWMM_Engine engine, int node_idx, double value, int mode, int persist)
+{
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_RUNNING(ctx);
+    CHECK_INDEX(node_idx >= 0 && node_idx < ctx.n_nodes());
+    if (!valid_mode(mode) || !valid_persist(persist)) return SWMM_ERR_BADPARAM;
+    if (!ctx.options.heat_transport) return SWMM_ERR_BADPARAM;
+    const auto u = static_cast<std::size_t>(node_idx);
+    if (u >= ctx.forcing.node_temperature_mode.size()) return SWMM_ERR_BADINDEX;
+    ctx.forcing.node_temperature_mode[u]    = static_cast<openswmm::ForcingMode>(mode);
+    ctx.forcing.node_temperature_value[u]   = value;
+    ctx.forcing.node_temperature_persist[u] = static_cast<openswmm::ForcingPersist>(persist);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_forcing_node_age(
+    SWMM_Engine engine, int node_idx, double value, int mode, int persist)
+{
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_RUNNING(ctx);
+    CHECK_INDEX(node_idx >= 0 && node_idx < ctx.n_nodes());
+    if (!valid_mode(mode) || !valid_persist(persist)) return SWMM_ERR_BADPARAM;
+    if (!ctx.options.water_age) return SWMM_ERR_BADPARAM;
+    const auto u = static_cast<std::size_t>(node_idx);
+    if (u >= ctx.forcing.node_age_mode.size()) return SWMM_ERR_BADINDEX;
+    ctx.forcing.node_age_mode[u]    = static_cast<openswmm::ForcingMode>(mode);
+    ctx.forcing.node_age_value[u]   = value;
+    ctx.forcing.node_age_persist[u] = static_cast<openswmm::ForcingPersist>(persist);
+    return SWMM_OK;
+}
+
 // ============================================================================
 // Link forcing
 // ============================================================================

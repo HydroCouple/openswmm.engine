@@ -11,8 +11,12 @@
 #include "Default2DOutputPlugin.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../2d/SurfaceRouter2D.hpp"
+#include "../data/SolverOptions2D.hpp"
+#include "../data/Report2DVars.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <cstring>
 
@@ -43,19 +47,28 @@ void Default2DOutputPlugin::writeStringAttr(hid_t loc, const char* name,
 
 hid_t Default2DOutputPlugin::createUnlimitedDataset(const char* name, int rank,
                                                       const hsize_t* dims,
-                                                      const hsize_t* chunk_dims) {
+                                                      const hsize_t* chunk_dims,
+                                                      hid_t type) {
     // Create dataspace with unlimited first dimension
     std::vector<hsize_t> maxdims(dims, dims + rank);
     maxdims[0] = H5S_UNLIMITED;
     hid_t space = H5Screate_simple(rank, dims, maxdims.data());
 
-    // Enable chunking (required for unlimited dimensions)
+    // Enable chunking (required for unlimited dimensions). The byte-shuffle
+    // filter precedes deflate: on smooth float fields it typically improves
+    // the zlib ratio 20-40% at negligible CPU. Level 0 = no filters.
     hid_t plist = H5Pcreate(H5P_DATASET_CREATE);
     H5Pset_chunk(plist, rank, chunk_dims);
-    H5Pset_deflate(plist, 4);  // zlib compression level 4
+    if (compression_ > 0) {
+        H5Pset_shuffle(plist);
+        H5Pset_deflate(plist, static_cast<unsigned>(compression_));
+    }
 
-    hid_t ds = H5Dcreate2(file_id_, name, H5T_NATIVE_DOUBLE, space,
-                           H5P_DEFAULT, plist, H5P_DEFAULT);
+    // Storage type follows OUTPUT_PRECISION unless the caller forces one; the
+    // memory type on every write stays H5T_NATIVE_DOUBLE and HDF5 converts, so
+    // no buffer copies.
+    hid_t ds = H5Dcreate2(file_id_, name, type >= 0 ? type : storage_type_,
+                           space, H5P_DEFAULT, plist, H5P_DEFAULT);
     H5Pclose(plist);
     H5Sclose(space);
     return ds;
@@ -112,7 +125,7 @@ hid_t Default2DOutputPlugin::createFaceEnvelopeDataset(const char* name,
     // Fixed [nFace] dataset — no time dimension, no chunking. Overwritten in
     // place each update(); since envelopes are monotone the last write is final.
     hid_t space = H5Screate_simple(1, &n_faces_, nullptr);
-    hid_t ds = H5Dcreate2(file_id_, name, H5T_NATIVE_DOUBLE, space,
+    hid_t ds = H5Dcreate2(file_id_, name, storage_type_, space,
                            H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
     writeStringAttr(ds, "long_name", long_name);
     writeStringAttr(ds, "units", units);
@@ -210,6 +223,35 @@ int Default2DOutputPlugin::prepare(const SimulationContext& ctx) {
 void Default2DOutputPlugin::setMeshCoordinateScale(double metres_per_model_unit) {
     if (metres_per_model_unit > 0.0)
         metres_per_model_unit_ = metres_per_model_unit;
+}
+
+std::string Default2DOutputPlugin::configureOutput(const SolverOptions2D& opts,
+                                                   double report_step_sec) {
+    storage_type_ = (opts.output_precision == OutputPrecision2D::FLOAT64)
+                        ? H5T_NATIVE_DOUBLE : H5T_IEEE_F32LE;
+    compression_  = std::max(0, std::min(9, opts.output_compression));
+    report_vars_  = (opts.report_2d_vars & report2d::ALL_MASK) | report2d::DEPTH;
+    species_filter_ = opts.report_2d_species;
+    species_rows_.clear();
+
+    report_2d_step_days_ = 0.0;
+    next_due_days_       = -1.0;
+    if (opts.report_2d_step > 0.0) {
+        if (report_step_sec > 0.0) {
+            const double ratio = opts.report_2d_step / report_step_sec;
+            const double rounded = std::round(ratio);
+            if (rounded < 1.0 || std::fabs(ratio - rounded) > 1e-6) {
+                char buf[192];
+                std::snprintf(buf, sizeof buf,
+                    "[2D_OPTIONS] REPORT_2D_STEP (%.0f s) must be a positive "
+                    "multiple of REPORT_STEP (%.0f s).",
+                    opts.report_2d_step, report_step_sec);
+                return buf;
+            }
+        }
+        report_2d_step_days_ = opts.report_2d_step / 86400.0;
+    }
+    return {};
 }
 
 void Default2DOutputPlugin::writeCrsVariable() {
@@ -486,6 +528,18 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
     // variables carry resolve against a variable that already exists.
     writeCrsVariable();
 
+    // Results-file size controls, recorded so readers and the parity tooling
+    // can tell how the time-varying datasets were stored.
+    writeStringAttr(file_id_, "precision",
+                    storage_type_ == H5T_NATIVE_DOUBLE ? "float64" : "float32");
+    {
+        char cbuf[16];
+        std::snprintf(cbuf, sizeof cbuf, "%d", compression_);
+        writeStringAttr(file_id_, "compression", cbuf);
+        writeStringAttr(file_id_, "report_2d_variables",
+                        report2d::formatMask(report_vars_).c_str());
+    }
+
     auto writeAttr = [this](hid_t loc, const char* name, const char* val) {
         writeStringAttr(loc, name, val);
     };
@@ -503,8 +557,10 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
     hsize_t zero3[3] = { 0, n_faces_, edge_stride_ };
     hsize_t zero1[1] = { 0 };
 
-    // Time coordinate
-    ds_time_ = createUnlimitedDataset("time", 1, zero1, time_chunk);
+    // Time coordinate — always float64: OUTPUT_PRECISION thins the state
+    // fields, not the axis every reader keys its lookup on.
+    ds_time_ = createUnlimitedDataset("time", 1, zero1, time_chunk,
+                                      H5T_NATIVE_DOUBLE);
     writeStringAttr(ds_time_, "standard_name", "time");
     writeStringAttr(ds_time_, "units", "days since simulation start");
     writeStringAttr(ds_time_, "calendar", "standard");
@@ -522,80 +578,102 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
         return ds;
     };
 
+    // Every dataset below is created ONLY when its REPORT_2D_VARIABLES group is
+    // selected (default: everything a user renders or plots; solver
+    // diagnostics off). Handles stay H5I_INVALID_HID otherwise and update()
+    // skips them. DEPTH is always on (the time axis every reader keys on).
     ds_face_depth_         = createFaceDS("Mesh2_face_depth",
                                            "overland flow depth", "m", "water_surface_height_above_reference_datum");
     ds_face_head_          = createFaceDS("Mesh2_face_head",
                                            "total hydraulic head", "m", "hydraulic_head");
-    ds_face_grad_hx_       = createFaceDS("Mesh2_face_grad_hx",
-                                           "head gradient dh/dx (unlimited)", "1");
-    ds_face_grad_hy_       = createFaceDS("Mesh2_face_grad_hy",
-                                           "head gradient dh/dy (unlimited)", "1");
-    ds_face_grad_hx_lim_   = createFaceDS("Mesh2_face_grad_hx_lim",
-                                           "head gradient dh/dx (slope limited)", "1");
-    ds_face_grad_hy_lim_   = createFaceDS("Mesh2_face_grad_hy_lim",
-                                           "head gradient dh/dy (slope limited)", "1");
-    ds_face_rainfall_      = createFaceDS("Mesh2_face_rainfall",
-                                           "rainfall intensity", "m s-1", "rainfall_rate");
-    ds_face_coupling_flux_ = createFaceDS("Mesh2_face_coupling_flux",
-                                           "coupling flux with SWMM node", "m s-1");
-    ds_face_net_source_    = createFaceDS("Mesh2_face_net_source",
-                                           "net volumetric source/sink", "m s-1");
-    // Per-cell infiltration (plan §5.5.6): the held INFIL_STEP rate and the
-    // cumulative infiltrated depth. Both are all-zero when no
-    // [2D_INFILTRATION*] rows resolved; they are always written so the time
-    // axis stays aligned across every face variable.
-    ds_face_infil_rate_    = createFaceDS("Mesh2_face_infil_rate",
-                                           "infiltration loss rate", "m s-1");
-    ds_face_infil_cum_     = createFaceDS("Mesh2_face_infil_cum",
-                                           "cumulative infiltrated depth", "m");
-    // Cumulative rainfall VOLUME per cell (m³) — sums to mass_balance_2d
-    // rainfall_in by construction (SurfaceRouter2D::rainCumulative).
-    ds_face_rain_cum_      = createFaceDS("Mesh2_face_rain_cum",
-                                           "cumulative rainfall volume", "m3");
-    ds_face_vx_            = createFaceDS("Mesh2_face_vx",
-                                          "cell-centred velocity X (RT0)", "m s-1");
-    ds_face_vy_            = createFaceDS("Mesh2_face_vy",
-                                          "cell-centred velocity Y (RT0)", "m s-1");
-    ds_face_continuity_err_ = createFaceDS("Mesh2_face_continuity_err",
-                                            "per-cell continuity residual", "m3 s-1");
+    if (want(report2d::GRADIENTS)) {
+        ds_face_grad_hx_       = createFaceDS("Mesh2_face_grad_hx",
+                                               "head gradient dh/dx (unlimited)", "1");
+        ds_face_grad_hy_       = createFaceDS("Mesh2_face_grad_hy",
+                                               "head gradient dh/dy (unlimited)", "1");
+        ds_face_grad_hx_lim_   = createFaceDS("Mesh2_face_grad_hx_lim",
+                                               "head gradient dh/dx (slope limited)", "1");
+        ds_face_grad_hy_lim_   = createFaceDS("Mesh2_face_grad_hy_lim",
+                                               "head gradient dh/dy (slope limited)", "1");
+    }
+    if (want(report2d::RAINFALL)) {
+        ds_face_rainfall_      = createFaceDS("Mesh2_face_rainfall",
+                                               "rainfall intensity", "m s-1", "rainfall_rate");
+        // Cumulative rainfall VOLUME per cell (m³) — sums to mass_balance_2d
+        // rainfall_in by construction (SurfaceRouter2D::rainCumulative).
+        ds_face_rain_cum_      = createFaceDS("Mesh2_face_rain_cum",
+                                               "cumulative rainfall volume", "m3");
+    }
+    if (want(report2d::COUPLING)) {
+        ds_face_coupling_flux_ = createFaceDS("Mesh2_face_coupling_flux",
+                                               "coupling flux with SWMM node", "m s-1");
+        ds_face_net_source_    = createFaceDS("Mesh2_face_net_source",
+                                               "net volumetric source/sink", "m s-1");
+    }
+    if (want(report2d::INFILTRATION)) {
+        // Per-cell infiltration (plan §5.5.6): the held INFIL_STEP rate and
+        // the cumulative infiltrated depth (all-zero when no
+        // [2D_INFILTRATION*] rows resolved).
+        ds_face_infil_rate_    = createFaceDS("Mesh2_face_infil_rate",
+                                               "infiltration loss rate", "m s-1");
+        ds_face_infil_cum_     = createFaceDS("Mesh2_face_infil_cum",
+                                               "cumulative infiltrated depth", "m");
+    }
+    if (want(report2d::VELOCITY)) {
+        ds_face_vx_            = createFaceDS("Mesh2_face_vx",
+                                              "cell-centred velocity X (RT0)", "m s-1");
+        ds_face_vy_            = createFaceDS("Mesh2_face_vy",
+                                              "cell-centred velocity Y (RT0)", "m s-1");
+    }
+    if (want(report2d::CONTINUITY))
+        ds_face_continuity_err_ = createFaceDS("Mesh2_face_continuity_err",
+                                                "per-cell continuity residual", "m3 s-1");
 
-    // Edge flux [nTime, nFace, 3]
-    ds_edge_flux_ = createUnlimitedDataset("Mesh2_edge_flux", 3, zero3, edge_chunk);
-    writeStringAttr(ds_edge_flux_, "long_name", "normal flux through cell edges");
-    // Volumetric edge flux F_e = -q·n_e·L_e (see SurfaceFluxCalculator
-    // computeEdgeFluxes, which derives the m3/s dimensioning). Matches the
-    // m3 s-1 units of the continuity-residual datasets that sum these fluxes.
-    writeStringAttr(ds_edge_flux_, "units", "m3 s-1");
-    writeStringAttr(ds_edge_flux_, "mesh", "Mesh2");
-    writeStringAttr(ds_edge_flux_, "location", "edge");
+    if (want(report2d::EDGE_FLUX)) {
+        // Edge flux [nTime, nFace, stride]
+        ds_edge_flux_ = createUnlimitedDataset("Mesh2_edge_flux", 3, zero3, edge_chunk);
+        writeStringAttr(ds_edge_flux_, "long_name", "normal flux through cell edges");
+        // Volumetric edge flux F_e = -q·n_e·L_e (see SurfaceFluxCalculator
+        // computeEdgeFluxes, which derives the m3/s dimensioning). Matches the
+        // m3 s-1 units of the continuity-residual datasets that sum these fluxes.
+        writeStringAttr(ds_edge_flux_, "units", "m3 s-1");
+        writeStringAttr(ds_edge_flux_, "mesh", "Mesh2");
+        writeStringAttr(ds_edge_flux_, "location", "edge");
+    }
 
-    // Node head [nTime, nNode]
-    ds_node_head_ = createUnlimitedDataset("Mesh2_node_head", 2, zero2n, node_chunk);
-    writeStringAttr(ds_node_head_, "long_name", "reconstructed vertex head");
-    writeStringAttr(ds_node_head_, "units", "m");
-    writeStringAttr(ds_node_head_, "mesh", "Mesh2");
-    writeStringAttr(ds_node_head_, "location", "node");
+    if (want(report2d::NODE_HEAD)) {
+        // Node head [nTime, nNode]
+        ds_node_head_ = createUnlimitedDataset("Mesh2_node_head", 2, zero2n, node_chunk);
+        writeStringAttr(ds_node_head_, "long_name", "reconstructed vertex head");
+        writeStringAttr(ds_node_head_, "units", "m");
+        writeStringAttr(ds_node_head_, "mesh", "Mesh2");
+        writeStringAttr(ds_node_head_, "location", "node");
 
-    // Node SIGNED depth [nTime, nNode] — wet-masked render reconstruction
-    // (eta_v - z_v; wetted-contact gated, so current engines emit > 0 or the
-    // 0 no-data sentinel; files from older engines may carry negatives). This
-    // is the field renderers/profilers should interpolate; Mesh2_node_head is
-    // the solver field (dry-cell head = bed elevation) kept for back-compat.
-    ds_node_depth_ = createUnlimitedDataset("Mesh2_node_depth", 2, zero2n, node_chunk);
-    writeStringAttr(ds_node_depth_, "long_name",
-                    "signed vertex water depth (wet-masked render reconstruction)");
-    writeStringAttr(ds_node_depth_, "units", "m");
-    writeStringAttr(ds_node_depth_, "mesh", "Mesh2");
-    writeStringAttr(ds_node_depth_, "location", "node");
+        // Node SIGNED depth [nTime, nNode] — wet-masked render reconstruction
+        // (eta_v - z_v; wetted-contact gated, so current engines emit > 0 or
+        // the 0 no-data sentinel; files from older engines may carry
+        // negatives). This is the field renderers/profilers should
+        // interpolate; Mesh2_node_head is the solver field (dry-cell head =
+        // bed elevation) kept for back-compat.
+        ds_node_depth_ = createUnlimitedDataset("Mesh2_node_depth", 2, zero2n, node_chunk);
+        writeStringAttr(ds_node_depth_, "long_name",
+                        "signed vertex water depth (wet-masked render reconstruction)");
+        writeStringAttr(ds_node_depth_, "units", "m");
+        writeStringAttr(ds_node_depth_, "mesh", "Mesh2");
+        writeStringAttr(ds_node_depth_, "location", "node");
+    }
 
     // --- Cumulative rendering envelopes (fixed [nFace], overwritten in place) ---
-    ds_face_max_depth_ = createFaceEnvelopeDataset(
-        "Mesh2_face_max_depth", "maximum overland flow depth", "m");
-    ds_face_max_velocity_ = createFaceEnvelopeDataset(
-        "Mesh2_face_max_velocity", "maximum cell velocity magnitude", "m s-1");
-    ds_face_max_continuity_err_ = createFaceEnvelopeDataset(
-        "Mesh2_face_max_continuity_err",
-        "maximum absolute per-cell continuity residual", "m3 s-1");
+    if (want(report2d::ENVELOPES)) {
+        ds_face_max_depth_ = createFaceEnvelopeDataset(
+            "Mesh2_face_max_depth", "maximum overland flow depth", "m");
+        ds_face_max_velocity_ = createFaceEnvelopeDataset(
+            "Mesh2_face_max_velocity", "maximum cell velocity magnitude", "m s-1");
+        if (want(report2d::CONTINUITY))
+            ds_face_max_continuity_err_ = createFaceEnvelopeDataset(
+                "Mesh2_face_max_continuity_err",
+                "maximum absolute per-cell continuity residual", "m3 s-1");
+    }
 }
 
 // ============================================================================
@@ -604,6 +682,16 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
 
 int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
     if (file_id_ < 0 || snap.surface_tri_count == 0) return 0;
+
+    // REPORT_2D_STEP cadence: update() arrives every [OPTIONS] REPORT_STEP;
+    // write only when the 2D instant is due (first call always writes).
+    if (report_2d_step_days_ > 0.0) {
+        if (next_due_days_ < 0.0) next_due_days_ = snap.sim_time;
+        if (snap.sim_time + 1e-9 < next_due_days_) return 0;
+        // Advance in whole 2D steps so a late call cannot double-write.
+        while (next_due_days_ <= snap.sim_time + 1e-9)
+            next_due_days_ += report_2d_step_days_;
+    }
 
     // Write time value
     {
@@ -618,83 +706,112 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
         H5Sclose(fspace);
     }
 
-    // Write per-face fields
-    extendAndWrite2D(ds_face_depth_,         snap.surface_depth.data(),          n_faces_);
-    extendAndWrite2D(ds_face_head_,          snap.surface_head.data(),           n_faces_);
-    extendAndWrite2D(ds_face_grad_hx_,       snap.surface_grad_hx.data(),       n_faces_);
-    extendAndWrite2D(ds_face_grad_hy_,       snap.surface_grad_hy.data(),       n_faces_);
-    extendAndWrite2D(ds_face_grad_hx_lim_,   snap.surface_grad_hx_lim.data(),   n_faces_);
-    extendAndWrite2D(ds_face_grad_hy_lim_,   snap.surface_grad_hy_lim.data(),   n_faces_);
-    extendAndWrite2D(ds_face_rainfall_,      snap.surface_rainfall.data(),      n_faces_);
-    extendAndWrite2D(ds_face_coupling_flux_, snap.surface_coupling_flux.data(), n_faces_);
-    extendAndWrite2D(ds_face_net_source_,    snap.surface_net_source.data(),    n_faces_);
-    extendAndWrite2D(ds_face_infil_rate_,    snap.surface_infil_rate.data(),    n_faces_);
-    extendAndWrite2D(ds_face_infil_cum_,     snap.surface_infil_cum.data(),     n_faces_);
-    if (snap.surface_rain_cum.size() == static_cast<std::size_t>(n_faces_))
-        extendAndWrite2D(ds_face_rain_cum_,  snap.surface_rain_cum.data(),      n_faces_);
-    extendAndWrite2D(ds_face_vx_,            snap.surface_face_vx.data(),       n_faces_);
-    extendAndWrite2D(ds_face_vy_,            snap.surface_face_vy.data(),       n_faces_);
-    extendAndWrite2D(ds_face_continuity_err_, snap.surface_continuity_err.data(), n_faces_);
+    // Per-face fields — each guarded by its dataset handle, which is
+    // H5I_INVALID_HID for groups REPORT_2D_VARIABLES left out.
+    auto face = [&](hid_t ds, const std::vector<double>& v) {
+        if (ds != H5I_INVALID_HID && v.size() == static_cast<std::size_t>(n_faces_))
+            extendAndWrite2D(ds, v.data(), n_faces_);
+    };
+    face(ds_face_depth_,          snap.surface_depth);
+    face(ds_face_head_,           snap.surface_head);
+    face(ds_face_grad_hx_,        snap.surface_grad_hx);
+    face(ds_face_grad_hy_,        snap.surface_grad_hy);
+    face(ds_face_grad_hx_lim_,    snap.surface_grad_hx_lim);
+    face(ds_face_grad_hy_lim_,    snap.surface_grad_hy_lim);
+    face(ds_face_rainfall_,       snap.surface_rainfall);
+    face(ds_face_coupling_flux_,  snap.surface_coupling_flux);
+    face(ds_face_net_source_,     snap.surface_net_source);
+    face(ds_face_infil_rate_,     snap.surface_infil_rate);
+    face(ds_face_infil_cum_,      snap.surface_infil_cum);
+    face(ds_face_rain_cum_,       snap.surface_rain_cum);
+    face(ds_face_vx_,             snap.surface_face_vx);
+    face(ds_face_vy_,             snap.surface_face_vy);
+    face(ds_face_continuity_err_, snap.surface_continuity_err);
 
-    // Write per-edge fields [nFace, edge_stride] (the snapshot is already
-    // packed to the public stride by SWMMEngine::fillSurfaceSnapshot).
-    extendAndWrite3D(ds_edge_flux_, snap.surface_edge_flux.data(), n_faces_,
-                     edge_stride_);
+    // Per-edge fields [nFace, edge_stride] (the snapshot is already packed to
+    // the public stride by SWMMEngine::fillSurfaceSnapshot).
+    if (ds_edge_flux_ != H5I_INVALID_HID &&
+        snap.surface_edge_flux.size() == static_cast<std::size_t>(n_faces_ * edge_stride_))
+        extendAndWrite3D(ds_edge_flux_, snap.surface_edge_flux.data(), n_faces_,
+                         edge_stride_);
 
     // Overland transport S1: species concentration [nTime, nSpecies, nFace].
     // Created LAZILY on the first step that carries species, and only then:
     // a model with no 2D transport gets no variable, which is the correct
-    // statement (unlike infiltration, whose all-zero rows exist to keep a
-    // per-face time axis aligned — a 3D block has its own). Creating at the
-    // first step keeps dim 0 aligned with every other variable; a species
-    // count that changes mid-run is not a thing this engine does.
-    if (snap.surface_species_count > 0 &&
+    // statement. REPORT_2D_SPECIES narrows the rows written; the
+    // species_names attribute always lists exactly the rows in the file.
+    if (want(report2d::SPECIES) && snap.surface_species_count > 0 &&
         snap.surface_species_conc.size() ==
             static_cast<std::size_t>(snap.surface_species_count) * n_faces_) {
         if (ds_face_species_conc_ == H5I_INVALID_HID) {
-            n_species_ = static_cast<hsize_t>(snap.surface_species_count);
-            hsize_t zero3[3]  = {0, n_species_, n_faces_};
-            hsize_t chunk3[3] = {1, n_species_, std::min<hsize_t>(n_faces_, 4096)};
-            ds_face_species_conc_ = createUnlimitedDataset(
-                "Mesh2_face_species_conc", 3, zero3, chunk3);
-            writeStringAttr(ds_face_species_conc_, "long_name",
-                            "surface species concentration");
-            // Species units are per species and live on the pollutant table;
-            // the dataset carries the layout and a name list so a reader can
-            // join. "1" here means "see species_names" — not dimensionless.
-            writeStringAttr(ds_face_species_conc_, "units", "1");
-            writeStringAttr(ds_face_species_conc_, "mesh", "Mesh2");
-            writeStringAttr(ds_face_species_conc_, "location", "face");
-            writeStringAttr(ds_face_species_conc_, "layout",
-                            "[time, species, face]; species order = "
-                            "pollutants, MSX, __WATER_AGE__, __TEMPERATURE__ "
-                            "(see species_names); dry cell reports 0");
-            // S4: the row names come from the surface itself; the pollutant
-            // list is the pre-S4 fallback.
+            // Resolve the row selection once, by name against the surface's
+            // own row names (S4) or the pollutant list (pre-S4 fallback).
             const std::vector<std::string>* names_src =
                 snap.surface_species_names ? snap.surface_species_names
                                            : snap.pollut_names;
-            if (names_src) {
-                std::string names;
-                for (std::size_t i = 0; i < names_src->size() &&
-                                        i < n_species_; ++i) {
-                    if (i) names += ",";
-                    names += (*names_src)[i];
+            species_rows_.clear();
+            const int n_in = snap.surface_species_count;
+            if (species_filter_.empty() || !names_src) {
+                for (int i = 0; i < n_in; ++i) species_rows_.push_back(i);
+            } else {
+                for (int i = 0; i < n_in && i < static_cast<int>(names_src->size()); ++i) {
+                    const std::string& nm = (*names_src)[static_cast<std::size_t>(i)];
+                    for (const auto& want_nm : species_filter_) {
+                        if (report2d::iequalsTok(want_nm, nm.c_str())) {
+                            species_rows_.push_back(i);
+                            break;
+                        }
+                    }
                 }
-                if (!names.empty())
-                    writeStringAttr(ds_face_species_conc_, "species_names",
-                                    names.c_str());
+            }
+            if (species_rows_.empty()) {
+                // Nothing selected matches — write nothing rather than an
+                // empty block; the mask says SPECIES, the filter said none.
+                n_species_ = 0;
+            } else {
+                n_species_ = static_cast<hsize_t>(species_rows_.size());
+                hsize_t zero3s[3]  = {0, n_species_, n_faces_};
+                hsize_t chunk3[3]  = {1, n_species_, std::min<hsize_t>(n_faces_, 4096)};
+                ds_face_species_conc_ = createUnlimitedDataset(
+                    "Mesh2_face_species_conc", 3, zero3s, chunk3);
+                writeStringAttr(ds_face_species_conc_, "long_name",
+                                "surface species concentration");
+                // Species units are per species and live on the pollutant
+                // table; the dataset carries the layout and a name list so a
+                // reader can join. "1" here means "see species_names".
+                writeStringAttr(ds_face_species_conc_, "units", "1");
+                writeStringAttr(ds_face_species_conc_, "mesh", "Mesh2");
+                writeStringAttr(ds_face_species_conc_, "location", "face");
+                writeStringAttr(ds_face_species_conc_, "layout",
+                                "[time, species, face]; species order = "
+                                "the species_names list (a REPORT_2D_SPECIES "
+                                "subset of pollutants, MSX, __WATER_AGE__, "
+                                "__TEMPERATURE__); dry cell reports 0");
+                if (names_src) {
+                    std::string names;
+                    for (std::size_t k = 0; k < species_rows_.size(); ++k) {
+                        const auto r = static_cast<std::size_t>(species_rows_[k]);
+                        if (r >= names_src->size()) break;
+                        if (k) names += ",";
+                        names += (*names_src)[r];
+                    }
+                    if (!names.empty())
+                        writeStringAttr(ds_face_species_conc_, "species_names",
+                                        names.c_str());
+                }
             }
         }
-        if (n_species_ == static_cast<hsize_t>(snap.surface_species_count))
-            extendAndWrite3D(ds_face_species_conc_,
-                             snap.surface_species_conc.data(), n_species_,
-                             n_faces_);
+        if (ds_face_species_conc_ != H5I_INVALID_HID && n_species_ > 0)
+            writeSpeciesRows(snap.surface_species_conc.data(),
+                             static_cast<hsize_t>(snap.surface_species_count));
     }
 
-    // Write per-node fields
-    extendAndWrite2D(ds_node_head_, snap.surface_vert_head.data(), n_nodes_);
-    if (static_cast<hsize_t>(snap.surface_vert_depth.size()) == n_nodes_)
+    // Per-node fields
+    if (ds_node_head_ != H5I_INVALID_HID &&
+        snap.surface_vert_head.size() == static_cast<std::size_t>(n_nodes_))
+        extendAndWrite2D(ds_node_head_, snap.surface_vert_head.data(), n_nodes_);
+    if (ds_node_depth_ != H5I_INVALID_HID &&
+        static_cast<hsize_t>(snap.surface_vert_depth.size()) == n_nodes_)
         extendAndWrite2D(ds_node_depth_, snap.surface_vert_depth.data(), n_nodes_);
 
     // Overwrite cumulative envelopes in place (monotone; last write is final).
@@ -708,6 +825,27 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
 
     ++n_steps_;
     return 0;
+}
+
+void Default2DOutputPlugin::writeSpeciesRows(const double* all, hsize_t n_species_in) {
+    // Fast path: every row selected in order — write the block directly.
+    bool identity = (n_species_ == n_species_in);
+    if (identity)
+        for (std::size_t k = 0; k < species_rows_.size(); ++k)
+            if (species_rows_[k] != static_cast<int>(k)) { identity = false; break; }
+    if (identity) {
+        extendAndWrite3D(ds_face_species_conc_, all, n_species_, n_faces_);
+        return;
+    }
+    // Gather the selected rows into a compact [n_sel × n_faces] block.
+    std::vector<double> sel(static_cast<std::size_t>(n_species_ * n_faces_));
+    for (std::size_t k = 0; k < species_rows_.size(); ++k) {
+        const auto r = static_cast<std::size_t>(species_rows_[k]);
+        if (r >= static_cast<std::size_t>(n_species_in)) continue;
+        std::copy(all + r * n_faces_, all + (r + 1) * n_faces_,
+                  sel.begin() + static_cast<std::ptrdiff_t>(k * n_faces_));
+    }
+    extendAndWrite3D(ds_face_species_conc_, sel.data(), n_species_, n_faces_);
 }
 
 // ============================================================================

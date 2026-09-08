@@ -400,6 +400,12 @@ private:
     std::vector<int>             culvert_links_;///< Pre-built culvert link indices (avoid per-timestep alloc)
     std::vector<double>          gw_frac_perv_; ///< Per-subcatch pervious fraction for GW evap
     std::vector<double>          gw_perv_evap_; ///< Per-subcatch pervious evap rate (ft/sec)
+    /// U3 (track I-b, 2026-09-07): the 2D surface's per-subcatchment
+    /// infiltration recharge, drained from SurfaceRouter2D once per runoff
+    /// step (m³) and converted to the ft/sec-over-full-area rate the GW
+    /// solver's `infil_rate` argument expects.
+    std::vector<double>          gw_2d_recharge_vol_;
+    std::vector<double>          gw_infil_with_2d_;
     std::vector<double>          snow_rain_;    ///< Per-subcatch rainfall into snow step (ft/sec)
     std::vector<double>          snow_snow_;    ///< Per-subcatch snowfall into snow step (ft/sec)
     hydstruct::StructureSolver  hydstruct_;    ///< Pumps, orifices, weirs, outlets

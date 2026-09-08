@@ -333,6 +333,9 @@ struct PendingBoundaryRow;
 struct PendingEdgeConveyanceRow;
 struct PendingInitialQualityRow;
 struct PendingBoundaryQualityRow;
+struct GwTransportData;   // U4 (2026-09-07)
+struct SubsurfaceConfig;  // G1: the [2D_AQUIFER*] rows
+struct SubsurfaceState;   // G1: the running two-zone kernel state
 } // namespace twoD
 
 // ============================================================================
@@ -925,6 +928,26 @@ struct SimulationContext {
         /// its defaults()/overrides()/options() and the InpWriter reads them
         /// back. Null when the engine was built without 2D support.
         twoD::Infil2D*                               infil      = nullptr;
+        /// U4 (2026-09-07): the `[GW_*]` subsurface-transport authoring rows.
+        /// Owned by SurfaceRouter2D like `infil`; null without 2D support.
+        /// Authoring-only until the integrated groundwater kernel lands —
+        /// see GwTransportData.hpp.
+        twoD::GwTransportData*                       gw         = nullptr;
+        /// G1: the `[2D_AQUIFER*]` rows, in the user's OWN units. Owned by
+        /// SurfaceRouter2D; the section handlers fill it and the InpWriter
+        /// echoes it back verbatim. The SI values live only in the kernel's
+        /// state — see SubsurfaceSections.hpp's GwUnitFactors note.
+        twoD::SubsurfaceConfig*                      aquifer    = nullptr;
+        /// The `[2D_AQUIFER_NODE]` node NAMES, parallel to
+        /// `aquifer->node_beds`, kept so the writer can round-trip names it
+        /// resolved to indices.
+        std::vector<std::string>*                    aquifer_nodes = nullptr;
+        /// G1: the RUNNING kernel state (SI), or null when no `[2D_AQUIFER]`
+        /// resolved. Published so the hotstart can carry a water table
+        /// across a restart without HotStartManager needing to know about
+        /// the 2D module's solver — an aquifer restarted dry has lost the
+        /// months of memory that were the reason to model it.
+        twoD::SubsurfaceState*                       aquifer_state = nullptr;
     } twod_io;
 
     /**
@@ -1057,6 +1080,22 @@ struct SimulationContext {
         double routing_rdii          = 0.0;
         double routing_external      = 0.0;
         double routing_flooding      = 0.0;
+        /// C2 (2026-09-07): cumulative water the 1D→2D coupling spill removed
+        /// from coupled nodes (ft³). It used to be folded into
+        /// `routing_flooding`, which reported a coupling TRANSFER under
+        /// "Flooding Loss" — the water did not flood, it went to the 2D
+        /// surface, where `MassBalance2D::coupling_1d_to_2d_in` books it
+        /// arriving. Both ledgers are individually right; only the 1D report
+        /// row was misleading, and a modeller reading it saw flooding they
+        /// did not have.
+        ///
+        /// It remains an OUTFLOW of the 1D system, so `routing_error()`
+        /// counts it exactly as before — this change moves a number between
+        /// report rows, it does not move water.
+        ///
+        /// `[2D_OPTIONS] COUPLING_IN_FLOODING YES` restores the old grouping
+        /// for run-to-run comparison against previous versions.
+        double routing_coupling_out  = 0.0;
         double routing_outflow       = 0.0;
         double routing_evap_loss     = 0.0;
         double routing_seep_loss     = 0.0;
@@ -1078,6 +1117,14 @@ struct SimulationContext {
         double gw_lateral_flow  = 0.0; ///< Cumulative lateral GW flow (ft)
         double gw_init_storage  = 0.0; ///< Initial GW storage (ft)
         double gw_final_storage = 0.0; ///< Final GW storage (ft)
+        /// U3 (track I-b, 2026-09-07): the part of the groundwater's
+        /// infiltration input that arrived from the 2D surface
+        /// ([2D_OPTIONS] INFIL_DESTINATION SUBCATCH_AQUIFER), ft³ — the same
+        /// unit as `gw_infil` (rate × area × dt). Already inside it: the
+        /// recharge is added to each subcatchment's infiltration rate before
+        /// GWSolver::execute books it, so this is a diagnostic split, not a
+        /// second inflow.
+        double gw_infil_2d_recharge = 0.0;
 
         // Per-step accumulators (reset each step for reporting)
         double step_flooding     = 0.0;
@@ -1219,7 +1266,8 @@ struct SimulationContext {
             double total_in = routing_dry_weather + routing_wet_weather +
                               routing_gw_inflow + routing_rdii + routing_external +
                               routing_init_storage;
-            double total_out = routing_flooding + routing_outflow +
+            double total_out = routing_flooding + routing_coupling_out +
+                               routing_outflow +
                                routing_evap_loss + routing_seep_loss +
                                routing_final_storage;
             return (total_in > 0.0) ? (total_in - total_out) / total_in : 0.0;
@@ -1285,6 +1333,21 @@ struct SimulationContext {
         /// from the modelled system and enters the continuity balance as a loss
         /// term alongside evap_out.
         double infil_out             = 0.0;
+        /// U3 (track I-b, 2026-09-07): the part of `infil_out` routed into a
+        /// legacy subcatchment aquifer ([2D_OPTIONS] INFIL_DESTINATION
+        /// SUBCATCH_AQUIFER), m³. It is a TRANSFER, not an exit: the same
+        /// volume enters the 1D groundwater ledger as recharge, so a
+        /// whole-model balance nets it out. `infil_out` still carries it,
+        /// so the 2D-only continuity check is unchanged.
+        double infil_to_aquifer      = 0.0;
+        /// G1 (2026-09-07): cumulative water the two-zone `[2D_AQUIFER]`
+        /// returned to the surface — Dunne saturation excess and top-layer
+        /// rejection — m³. An INFLOW to the surface domain, and the mirror of
+        /// the `infil_out` share the aquifer received. Without it the returned
+        /// water reads as storage created from nothing and the 2D continuity
+        /// error grows by exactly the volume that came back up. Zero unless a
+        /// `[2D_AQUIFER]` resolved.
+        double aquifer_in            = 0.0;
         bool   active                = false;///< True if the 2D module ran
 
         // Cumulative marcher statistics (published by SurfaceRouter2D at
@@ -1305,7 +1368,7 @@ struct SimulationContext {
         /// 2D surface continuity error (fraction).
         double error() const {
             double total_in  = rainfall_in + coupling_1d_to_2d_in + outfall_in
-                               + boundary_in + init_storage;
+                               + boundary_in + aquifer_in + init_storage;
             double total_out = coupling_2d_to_1d_out + outfall_out + boundary_out
                                + evap_out + infil_out + final_storage;
             return (total_in > 0.0) ? (total_in - total_out) / total_in : 0.0;

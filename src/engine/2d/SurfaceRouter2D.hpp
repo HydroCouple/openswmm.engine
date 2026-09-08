@@ -44,6 +44,8 @@
 #include "data/BoundaryData.hpp"
 #include "data/PendingRows2D.hpp"
 #include "coupling/NodeCoupling.hpp"
+#include "gw/GwTransportData.hpp"   // U4
+#include "subsurface/SubsurfaceSolver.hpp"   // G1: the two-zone GW kernel
 #include "infil/Infil2D.hpp"
 #include "mesh/RainfallInterpolator.hpp"
 
@@ -250,6 +252,27 @@ public:
     Infil2D& infil() noexcept { return infil_; }
     const Infil2D& infil() const noexcept { return infil_; }
 
+    /// U4 (2026-09-07): the `[GW_*]` subsurface-transport authoring rows.
+    /// Reached by the parser, the writer and the C API through
+    /// SimulationContext::twod_io.gw. Authoring-only in this release.
+    GwTransportData&       gwTransport()       noexcept { return gw_; }
+    const GwTransportData& gwTransport() const noexcept { return gw_; }
+
+    /// G1: the authored `[2D_AQUIFER*]` rows, in the user's own units.
+    /// Reached by the section handlers and the InpWriter through
+    /// `SimulationContext::twod_io.aquifer`.
+    SubsurfaceConfig&       aquiferConfig()       noexcept { return aquifer_cfg_; }
+    const SubsurfaceConfig& aquiferConfig() const noexcept { return aquifer_cfg_; }
+    std::vector<std::string>& aquiferNodeNames() noexcept {
+        return aquifer_node_names_;
+    }
+    const std::vector<std::string>& aquiferNodeNames() const noexcept {
+        return aquifer_node_names_;
+    }
+    /// The running kernel. `active()` is false until `[2D_AQUIFER]` resolves.
+    SubsurfaceSolver&       subsurface()       noexcept { return subsurface_; }
+    const SubsurfaceSolver& subsurface() const noexcept { return subsurface_; }
+
     /**
      * @brief Ledger-consistent cumulative infiltrated depth per cell (m).
      *
@@ -262,8 +285,49 @@ public:
      *          the applied loss on drying cells. Empty when no
      *          `[2D_INFILTRATION*]` model resolved.
      */
+    /**
+     * @brief U3 (track I-b) — per-subcatchment 2D infiltration recharge
+     *        pending delivery to the legacy aquifer, in m³.
+     *
+     * @details Filled in accumulateMassBalance() for every cell whose
+     *          resolved row says SUBCATCH_AQUIFER and that a subcatchment
+     *          contains. `drainSubcatchRecharge()` hands it to the runoff
+     *          step (which adds it to that subcatchment's infiltration rate
+     *          for GWSolver::execute) and zeroes it, so the accumulator is
+     *          drained exactly once per runoff step. Empty when the
+     *          destination is not in use.
+     */
+    const std::vector<double>& subcatchRecharge() const noexcept {
+        return subcatch_recharge_;
+    }
+    /// Move the pending recharge into @p out (m³ per subcatchment) and zero
+    /// the accumulator. @p out is sized to the accumulator (empty when the
+    /// destination is not in use).
+    void drainSubcatchRecharge(std::vector<double>& out) {
+        out = subcatch_recharge_;
+        std::fill(subcatch_recharge_.begin(), subcatch_recharge_.end(), 0.0);
+    }
+    /// Cell → containing subcatchment index (-1 = none). Empty unless the
+    /// SUBCATCH_AQUIFER destination resolved.
+    const std::vector<int>& cellSubcatchment() const noexcept {
+        return cell_subcatch_;
+    }
+
     const std::vector<double>& infilCumulative() const noexcept {
         return infil_cum_applied_;
+    }
+
+    /*!
+     * \brief Signed cumulative coupling exchange per cell (m³).
+     *
+     * \details Positive = water the 1D node delivered INTO this cell (spill,
+     *          submerged-outfall discharge); negative = water the node
+     *          abstracted FROM it (drain). Summing the vector gives
+     *          `coupling_1d_to_2d_in − coupling_2d_to_1d_out`, which is the
+     *          check that ties this series to the domain totals.
+     */
+    const std::vector<double>& couplingCumulative() const noexcept {
+        return coupling_cum_applied_;
     }
 
     /**
@@ -375,6 +439,29 @@ private:
     /// MassBalance2D::infil_out; empty when no [2D_INFILTRATION*] model
     /// resolved.
     std::vector<double> infil_cum_applied_;
+
+    /// C1: SIGNED cumulative coupling exchange volume per cell (m³).
+    /// + = received from the 1D node, − = abstracted by it. Drained from
+    /// SurfaceStateData::coupling_applied on the same once-per-routing-step
+    /// pass as infil_cum_applied_. Always sized once the mesh resolves.
+    std::vector<double> coupling_cum_applied_;
+
+    /// U3 (track I-b): cell → containing subcatchment (-1 = none), resolved
+    /// once at initialize() from the cell centroid and the [Polygons]; and
+    /// the per-subcatchment recharge volume (m³) awaiting delivery.
+    std::vector<int>    cell_subcatch_;
+    std::vector<double> subcatch_recharge_;
+
+    /// U4: subsurface-transport authoring rows (inert until the kernel).
+    GwTransportData gw_;
+
+    /// G1: the `[2D_AQUIFER*]` authoring rows (project units, never
+    /// converted in place) and the two-zone kernel that reads them into SI
+    /// state. Both are inert — no allocation, no per-step work — until a
+    /// `[2D_AQUIFER]` row resolves.
+    SubsurfaceConfig         aquifer_cfg_;
+    std::vector<std::string> aquifer_node_names_;
+    SubsurfaceSolver         subsurface_;
 
     /// Per-cell cumulative rainfall volume (m³) — see rainCumulative().
     /// Filled in accumulateMassBalance() alongside MassBalance2D::rainfall_in.

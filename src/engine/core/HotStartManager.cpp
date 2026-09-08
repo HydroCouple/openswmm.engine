@@ -45,9 +45,14 @@
 #include "SimulationContext.hpp"
 #include "../hydrology/Runoff.hpp"
 #include "../hydrology/Groundwater.hpp"
+#ifdef OPENSWMM_HAS_2D
+#include "../2d/subsurface/SubsurfaceData.hpp"   // G1: the V5 aquifer block
+#endif
 
+#include <algorithm>
 #include <cstring>
 #include <ctime>
+#include <functional>
 #include <fstream>
 #include <sstream>
 
@@ -195,6 +200,51 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
         }
     }
 
+    // V4 (U2, D-IQ5): species block — names, then [node * ns + s] and
+    // [link * ns + s] concentrations in the element order above.
+    if (hs.header.version >= 4u) {
+        const auto ns = static_cast<uint32_t>(hs.species.size());
+        if (!write_pod(buf, ns)) return false;
+        for (const auto& name : hs.species)
+            if (!write_string(buf, name)) return false;
+        const std::size_t want_n = hs.nodes.size() * hs.species.size();
+        const std::size_t want_l = hs.links.size() * hs.species.size();
+        for (std::size_t i = 0; i < want_n; ++i)
+            if (!write_pod(buf, i < hs.node_species.size() ? hs.node_species[i] : 0.0))
+                return false;
+        for (std::size_t i = 0; i < want_l; ++i)
+            if (!write_pod(buf, i < hs.link_species.size() ? hs.link_species[i] : 0.0))
+                return false;
+    }
+
+    // V5 (G1): the two-zone groundwater state. Written only when a kernel
+    // actually ran, so a model without [2D_AQUIFER] still produces a V4 file
+    // and every existing reader keeps working.
+    if (hs.header.version >= 5u) {
+        if (!write_pod(buf, hs.gw_n_cells))  return false;
+        if (!write_pod(buf, hs.gw_m_layers)) return false;
+        const auto nc = static_cast<std::size_t>(hs.gw_n_cells);
+        const std::size_t want_t =
+            nc * static_cast<std::size_t>(hs.gw_m_layers);
+        for (std::size_t i = 0; i < nc; ++i)
+            if (!write_pod(buf, i < hs.gw_hg.size() ? hs.gw_hg[i] : 0.0))
+                return false;
+        for (std::size_t i = 0; i < nc; ++i)
+            if (!write_pod(buf, i < hs.gw_hu.size() ? hs.gw_hu[i] : 0.0))
+                return false;
+        // An empty theta block is legal and means "no cell uses closure B";
+        // it is flagged by a zero layer count so the reader does not have to
+        // infer it from a size.
+        for (std::size_t i = 0; i < want_t; ++i)
+            if (!write_pod(buf, i < hs.gw_theta_sigma.size()
+                                    ? hs.gw_theta_sigma[i] : 0.0))
+                return false;
+        const auto nl = static_cast<uint32_t>(hs.gw_ledger.size());
+        if (!write_pod(buf, nl)) return false;
+        for (double v : hs.gw_ledger)
+            if (!write_pod(buf, v)) return false;
+    }
+
     // Compute CRC32 over the body
     const std::string body = buf.str();
     const uint32_t crc = crc32(
@@ -265,7 +315,7 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
 
     // Header
     if (!read_pod(is, hs.header.version))    return false;
-    if (hs.header.version < 1u || hs.header.version > 3u) {
+    if (hs.header.version < 1u || hs.header.version > 5u) {
         tl_last_io_error = "Unsupported hot start version " +
                            std::to_string(hs.header.version) + " in '" + path + "'";
         return false;
@@ -327,6 +377,44 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
         }
     }
 
+    // V4 (U2, D-IQ5): species block.
+    hs.species.clear();
+    hs.node_species.clear();
+    hs.link_species.clear();
+    if (hs.header.version >= 4u) {
+        uint32_t ns = 0;
+        if (!read_pod(is, ns)) return false;
+        hs.species.resize(ns);
+        for (auto& name : hs.species)
+            if (!read_string(is, name)) return false;
+        hs.node_species.resize(hs.nodes.size() * static_cast<std::size_t>(ns));
+        hs.link_species.resize(hs.links.size() * static_cast<std::size_t>(ns));
+        for (auto& v : hs.node_species) if (!read_pod(is, v)) return false;
+        for (auto& v : hs.link_species) if (!read_pod(is, v)) return false;
+    }
+
+    hs.gw_n_cells  = 0;
+    hs.gw_m_layers = 0;
+    hs.gw_hg.clear();
+    hs.gw_hu.clear();
+    hs.gw_theta_sigma.clear();
+    hs.gw_ledger.clear();
+    if (hs.header.version >= 5u) {
+        if (!read_pod(is, hs.gw_n_cells))  return false;
+        if (!read_pod(is, hs.gw_m_layers)) return false;
+        const auto nc = static_cast<std::size_t>(hs.gw_n_cells);
+        hs.gw_hg.resize(nc);
+        hs.gw_hu.resize(nc);
+        hs.gw_theta_sigma.resize(nc * static_cast<std::size_t>(hs.gw_m_layers));
+        for (auto& v : hs.gw_hg)          if (!read_pod(is, v)) return false;
+        for (auto& v : hs.gw_hu)          if (!read_pod(is, v)) return false;
+        for (auto& v : hs.gw_theta_sigma) if (!read_pod(is, v)) return false;
+        uint32_t nl = 0;
+        if (!read_pod(is, nl)) return false;
+        hs.gw_ledger.resize(nl);
+        for (auto& v : hs.gw_ledger) if (!read_pod(is, v)) return false;
+    }
+
     hs.path = path;
     return true;
 }
@@ -374,6 +462,231 @@ bool HotStartFile::set_subcatch_runoff(const std::string& id, double v) {
 // HotStartManager::save()
 // ============================================================================
 
+// ============================================================================
+// U2 (D-IQ5): species block capture / restore
+// ============================================================================
+
+namespace {
+
+/// Fill hs.species / node_species / link_species from the live arrays:
+/// pollutants from nodes.conc / links.conc, reactions species from the
+/// msx_*_conc state when it is sized (else the GLOBAL seed). Returns true
+/// when at least one species was captured (the file then promotes to V4).
+bool captureSpeciesBlock(const SimulationContext& ctx, HotStartFile& hs) {
+    const int np = ctx.n_pollutants();
+    const int nm = ctx.reactions.configured ? ctx.reactions.n_species() : 0;
+    const int ns = np + nm;
+    if (ns <= 0) return false;
+    const auto nn = static_cast<std::size_t>(ctx.n_nodes());
+    const auto nl = static_cast<std::size_t>(ctx.n_links());
+    const auto uns = static_cast<std::size_t>(ns);
+    const auto unp = static_cast<std::size_t>(np);
+    const auto unm = static_cast<std::size_t>(nm);
+    hs.species.clear();
+    for (int p = 0; p < np; ++p) hs.species.push_back(ctx.pollutant_names.name_of(p));
+    for (int m = 0; m < nm; ++m)
+        hs.species.push_back(ctx.reactions.species_name[static_cast<std::size_t>(m)]);
+    hs.node_species.assign(nn * uns, 0.0);
+    hs.link_species.assign(nl * uns, 0.0);
+    const bool msx_sized = ctx.reactions.msx_node_conc.size() == nn * unm &&
+                           ctx.reactions.msx_link_conc.size() == nl * unm;
+    for (std::size_t e = 0; e < nn; ++e) {
+        for (std::size_t p = 0; p < unp; ++p)
+            if (e * unp + p < ctx.nodes.conc.size())
+                hs.node_species[e * uns + p] = ctx.nodes.conc[e * unp + p];
+        for (std::size_t m = 0; m < unm; ++m)
+            hs.node_species[e * uns + unp + m] =
+                msx_sized ? ctx.reactions.msx_node_conc[e * unm + m]
+                          : (m < ctx.reactions.init_global.size()
+                                 ? ctx.reactions.init_global[m] : 0.0);
+    }
+    for (std::size_t e = 0; e < nl; ++e) {
+        for (std::size_t p = 0; p < unp; ++p)
+            if (e * unp + p < ctx.links.conc.size())
+                hs.link_species[e * uns + p] = ctx.links.conc[e * unp + p];
+        for (std::size_t m = 0; m < unm; ++m)
+            hs.link_species[e * uns + unp + m] =
+                msx_sized ? ctx.reactions.msx_link_conc[e * unm + m]
+                          : (m < ctx.reactions.init_global.size()
+                                 ? ctx.reactions.init_global[m] : 0.0);
+    }
+    return true;
+}
+
+/// Restore the species block by NAME. Pollutants land in nodes/links.conc
+/// (+conc_old); reactions species pre-size and fill msx_*_conc, which every
+/// engine seeds from (ensureMsxState skips its GLOBAL fill once sized).
+/// Runs after initialize()'s seeds, so the file wins (D-IQ5).
+void restoreSpeciesBlock(const HotStartFile& hs, SimulationContext& ctx,
+                         const std::function<void(const std::string&)>& warn) {
+    if (hs.species.empty()) return;
+    const int np = ctx.n_pollutants();
+    const int nm = ctx.reactions.configured ? ctx.reactions.n_species() : 0;
+    const auto nn = static_cast<std::size_t>(ctx.n_nodes());
+    const auto nl = static_cast<std::size_t>(ctx.n_links());
+    const auto unp = static_cast<std::size_t>(np);
+    const auto unm = static_cast<std::size_t>(nm);
+    const auto uns = hs.species.size();
+
+    // Column → (is_msx, index) in this model; -1 = not carried here.
+    std::vector<int> col_p(uns, -1), col_m(uns, -1);
+    int matched = 0;
+    for (std::size_t s = 0; s < uns; ++s) {
+        const int p = ctx.pollutant_names.find(hs.species[s]);
+        if (p >= 0) { col_p[s] = p; ++matched; continue; }
+        const int m = nm > 0 ? ctx.reactions.find_species(hs.species[s]) : -1;
+        if (m >= 0) { col_m[s] = m; ++matched; continue; }
+        warn("Hot start: species '" + hs.species[s] +
+             "' is not in the current model — its concentrations are skipped");
+    }
+    if (matched == 0) return;
+
+    bool any_msx = false;
+    for (std::size_t s = 0; s < uns; ++s) any_msx = any_msx || col_m[s] >= 0;
+    if (any_msx) {
+        auto& rx = ctx.reactions;
+        if (rx.msx_node_conc.size() != nn * unm || rx.msx_link_conc.size() != nl * unm) {
+            // Size and seed exactly as ensureMsxState would, then overwrite
+            // the restored columns below.
+            rx.msx_node_conc.assign(nn * unm, 0.0);
+            rx.msx_link_conc.assign(nl * unm, 0.0);
+            for (std::size_t e = 0; e < nn; ++e)
+                for (std::size_t m = 0; m < unm; ++m)
+                    rx.msx_node_conc[e * unm + m] =
+                        m < rx.init_global.size() ? rx.init_global[m] : 0.0;
+            for (std::size_t e = 0; e < nl; ++e)
+                for (std::size_t m = 0; m < unm; ++m)
+                    rx.msx_link_conc[e * unm + m] =
+                        m < rx.init_global.size() ? rx.init_global[m] : 0.0;
+            for (std::size_t k = 0; k < rx.init_elem_idx.size(); ++k) {
+                const auto e = static_cast<std::size_t>(rx.init_elem_idx[k]);
+                const auto m = static_cast<std::size_t>(rx.init_elem_species[k]);
+                if (m >= unm) continue;
+                auto& arr = rx.init_elem_is_link[k] ? rx.msx_link_conc : rx.msx_node_conc;
+                if (e * unm + m < arr.size()) arr[e * unm + m] = rx.init_elem_value[k];
+            }
+        }
+    }
+
+    for (std::size_t r = 0; r < hs.nodes.size(); ++r) {
+        const int idx = ctx.node_names.find(hs.nodes[r].id);
+        if (idx < 0) continue;   // already warned by the record pass
+        const auto e = static_cast<std::size_t>(idx);
+        for (std::size_t s = 0; s < uns; ++s) {
+            const std::size_t src = r * uns + s;
+            if (src >= hs.node_species.size()) break;
+            const double v = hs.node_species[src];
+            if (col_p[s] >= 0) {
+                const std::size_t i = e * unp + static_cast<std::size_t>(col_p[s]);
+                if (i < ctx.nodes.conc.size())     ctx.nodes.conc[i] = v;
+                if (i < ctx.nodes.conc_old.size()) ctx.nodes.conc_old[i] = v;
+            } else if (col_m[s] >= 0) {
+                const std::size_t i = e * unm + static_cast<std::size_t>(col_m[s]);
+                if (i < ctx.reactions.msx_node_conc.size()) ctx.reactions.msx_node_conc[i] = v;
+            }
+        }
+    }
+    for (std::size_t r = 0; r < hs.links.size(); ++r) {
+        const int idx = ctx.link_names.find(hs.links[r].id);
+        if (idx < 0) continue;
+        const auto e = static_cast<std::size_t>(idx);
+        for (std::size_t s = 0; s < uns; ++s) {
+            const std::size_t src = r * uns + s;
+            if (src >= hs.link_species.size()) break;
+            const double v = hs.link_species[src];
+            if (col_p[s] >= 0) {
+                const std::size_t i = e * unp + static_cast<std::size_t>(col_p[s]);
+                if (i < ctx.links.conc.size())     ctx.links.conc[i] = v;
+                if (i < ctx.links.conc_old.size()) ctx.links.conc_old[i] = v;
+            } else if (col_m[s] >= 0) {
+                const std::size_t i = e * unm + static_cast<std::size_t>(col_m[s]);
+                if (i < ctx.reactions.msx_link_conc.size()) ctx.reactions.msx_link_conc[i] = v;
+            }
+        }
+    }
+}
+
+
+/// G1 (V5): copy the running two-zone groundwater state into the file.
+/// @returns true when there was a kernel to capture.
+bool captureAquiferBlock(const SimulationContext& ctx, HotStartFile& hs) {
+#ifdef OPENSWMM_HAS_2D
+    const twoD::SubsurfaceState* st = ctx.twod_io.aquifer_state;
+    if (st == nullptr || !st->active || st->n_cells <= 0) return false;
+    hs.gw_n_cells = static_cast<uint32_t>(st->n_cells);
+    hs.gw_hg = st->hg;
+    hs.gw_hu = st->hu;
+    // The sigma layers are only meaningful if some cell actually uses
+    // closure B. Writing them for an all-closure-A model would triple the
+    // block for nothing, so a zero layer count is the signal.
+    const bool any_sigma =
+        std::any_of(st->closure.begin(), st->closure.end(), [](int8_t c) {
+            return c == static_cast<int8_t>(twoD::GwClosure::SIGMA);
+        });
+    if (any_sigma) {
+        hs.gw_m_layers    = static_cast<uint32_t>(st->m_layers);
+        hs.gw_theta_sigma = st->theta_sigma;
+    }
+    hs.gw_ledger = {st->led_recharge, st->led_lateral, st->led_deep,
+                    st->led_node,     st->led_dunne,   st->led_caprise,
+                    st->led_et,       st->led_infil_in, st->led_init_storage};
+    return true;
+#else
+    (void)ctx; (void)hs;
+    return false;
+#endif
+}
+
+/// …and back. Cells are matched by INDEX, so a mismatched count is refused
+/// outright: applying cell 400's table to cell 400 of a different mesh is a
+/// silent, plausible-looking corruption, which is worse than not restarting.
+void restoreAquiferBlock(const HotStartFile& hs, SimulationContext& ctx,
+                         const std::function<void(const std::string&)>& warn) {
+#ifdef OPENSWMM_HAS_2D
+    twoD::SubsurfaceState* st = ctx.twod_io.aquifer_state;
+    if (st == nullptr || !st->active || hs.gw_n_cells == 0) return;
+    if (static_cast<int>(hs.gw_n_cells) != st->n_cells) {
+        warn("Hot start: the file carries " + std::to_string(hs.gw_n_cells) +
+             " groundwater cells but this model has " +
+             std::to_string(st->n_cells) +
+             " — the aquifer state was NOT restored (cells are matched by "
+             "index; a mesh has no cell ids).");
+        return;
+    }
+    const auto nc = static_cast<std::size_t>(st->n_cells);
+    for (std::size_t i = 0; i < nc && i < hs.gw_hg.size(); ++i)
+        st->hg[i] = std::min(std::max(hs.gw_hg[i], 0.0), st->zs[i]);
+    for (std::size_t i = 0; i < nc && i < hs.gw_hu.size(); ++i)
+        st->hu[i] = std::max(hs.gw_hu[i], 0.0);
+    if (hs.gw_m_layers > 0) {
+        if (static_cast<int>(hs.gw_m_layers) != st->m_layers) {
+            warn("Hot start: the file has " + std::to_string(hs.gw_m_layers) +
+                 " sigma layers and this model has " +
+                 std::to_string(st->m_layers) +
+                 " — the columns were left at their seeded profiles. Set "
+                 "M_LAYERS to match, or accept the reseed.");
+        } else if (hs.gw_theta_sigma.size() == st->theta_sigma.size()) {
+            st->theta_sigma = hs.gw_theta_sigma;
+        }
+    }
+    if (hs.gw_ledger.size() >= 9) {
+        st->led_recharge     = hs.gw_ledger[0];
+        st->led_lateral      = hs.gw_ledger[1];
+        st->led_deep         = hs.gw_ledger[2];
+        st->led_node         = hs.gw_ledger[3];
+        st->led_dunne        = hs.gw_ledger[4];
+        st->led_caprise      = hs.gw_ledger[5];
+        st->led_et           = hs.gw_ledger[6];
+        st->led_infil_in     = hs.gw_ledger[7];
+        st->led_init_storage = hs.gw_ledger[8];
+    }
+#else
+    (void)hs; (void)ctx; (void)warn;
+#endif
+}
+
+}  // namespace
+
 HotStartFile* HotStartManager::save(const SimulationContext& ctx,
                                     const std::string& path) {
     tl_last_io_error.clear();
@@ -387,8 +700,13 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
     auto* hs = new HotStartFile();
     hs->path = path;
 
-    // Header
+    // Header. V4 (U2) whenever the model carries species: the block is
+    // written after the subcatchments and implies the V3 age field.
     hs->header.version    = ctx.options.water_age ? 3u : (use_v2 ? 2u : 1u);
+    if (captureSpeciesBlock(ctx, *hs)) hs->header.version = 4u;
+    // V5 (G1) implies V4: the aquifer block sits after the species block, so
+    // a reader that stops at V4 still reads a coherent file.
+    if (captureAquiferBlock(ctx, *hs)) hs->header.version = 5u;
     hs->header.timestamp  = static_cast<int64_t>(std::time(nullptr));
     hs->header.sim_time   = ctx.current_time;
     hs->header.start_date = ctx.options.start_date;
@@ -466,8 +784,12 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
     auto* hs = new HotStartFile();
     hs->path = path;
 
-    // Header — V2
+    // Header — V2 (V4 when the model carries species, U2)
     hs->header.version    = 2;
+    if (captureSpeciesBlock(ctx, *hs)) hs->header.version = 4u;
+    // V5 (G1) implies V4: the aquifer block sits after the species block, so
+    // a reader that stops at V4 still reads a coherent file.
+    if (captureAquiferBlock(ctx, *hs)) hs->header.version = 5u;
     hs->header.timestamp  = static_cast<int64_t>(std::time(nullptr));
     hs->header.sim_time   = ctx.current_time;
     hs->header.start_date = ctx.options.start_date;
@@ -641,6 +963,20 @@ int HotStartManager::apply(HotStartFile& hs,
             }
         }
     }
+
+    // V4 (U2, D-IQ5): species concentrations, by name.
+    if (hs.header.version >= 4u)
+        restoreSpeciesBlock(hs, ctx, [&](const std::string& m) {
+            hs.warnings.push_back(m);
+            if (warn_cb) warn_cb(m);
+        });
+
+    // V5 (G1): the two-zone groundwater state, by cell index.
+    if (hs.header.version >= 5u)
+        restoreAquiferBlock(hs, ctx, [&](const std::string& m) {
+            hs.warnings.push_back(m);
+            if (warn_cb) warn_cb(m);
+        });
 
     return missing;
 }

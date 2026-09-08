@@ -42,6 +42,11 @@
 #include "../hydraulics/Street.hpp"
 #include "../hydraulics/ForceMain.hpp"
 #include "../edit/VirtualJunctionOps.hpp"
+#include "../transport/MsxInitialQuality.hpp"   // U2: [INITIAL_QUALITY] MSX rows
+#include "Tokenizer.hpp"                          // U2: [INITIAL_QUALITY] FILE rows
+#include "InputParseUtils.hpp"
+#include <fstream>
+#include <system_error>
 
 #ifdef OPENSWMM_HAS_2D
 // SolverOptions2D is only forward-declared in SimulationContext.hpp; the full
@@ -1857,6 +1862,62 @@ void resolve_cross_references(SimulationContext& ctx) {
     // keeps remaining indices valid.
     {
         auto& iq = ctx.initial_quality;
+
+        // U2: `[INITIAL_QUALITY] FILE <csv>` — append the sidecar's rows
+        // (scope,element,constituent,value; comma or whitespace separated;
+        // a header line whose value column is not numeric is skipped) so
+        // they resolve below exactly like inline rows. Rows previously
+        // loaded from the file are dropped first (re-resolve is idempotent).
+        for (int i = iq.count() - 1; i >= 0; --i)
+            if (static_cast<std::size_t>(i) < iq.from_file.size() &&
+                iq.from_file[static_cast<std::size_t>(i)])
+                iq.erase(i);
+        if (!iq.file.empty()) {
+            const std::string dir  = openswmm::io::parentDir(ctx.inp_file_path);
+            const std::string path = openswmm::io::resolveRelative(iq.file, dir);
+            std::ifstream in(path);
+            if (!in.is_open()) {
+                ctx.errors.push_back("[INITIAL_QUALITY] FILE '" + iq.file +
+                                     "' not found or unreadable (" + path + ").");
+            } else {
+                std::string line;
+                int lineno = 0;
+                while (std::getline(in, line)) {
+                    ++lineno;
+                    for (char& ch : line) if (ch == ',' || ch == ';' || ch == '\t') ch = ' ';
+                    auto tok = Tokenizer::tokenize(line);
+                    if (tok.empty()) continue;
+                    if (tok.size() < 4) {
+                        ctx.errors.push_back("[INITIAL_QUALITY] FILE '" + iq.file +
+                                             "' line " + std::to_string(lineno) +
+                                             ": needs scope element constituent value.");
+                        continue;
+                    }
+                    const std::string scope = Tokenizer::to_upper(tok[0]);
+                    double v = 0.0;
+                    const bool numeric =
+                        openswmm::from_chars_double(tok[3].data(),
+                                                    tok[3].data() + tok[3].size(), v)
+                            .ec == std::errc{};
+                    if (!numeric) {
+                        if (lineno == 1) continue;   // header
+                        ctx.errors.push_back("[INITIAL_QUALITY] FILE '" + iq.file +
+                                             "' line " + std::to_string(lineno) +
+                                             ": bad value '" + tok[3] + "'.");
+                        continue;
+                    }
+                    if (scope != "NODE" && scope != "LINK") {
+                        ctx.errors.push_back("[INITIAL_QUALITY] FILE '" + iq.file +
+                                             "' line " + std::to_string(lineno) +
+                                             ": scope must be NODE or LINK.");
+                        continue;
+                    }
+                    iq.add(scope == "LINK", tok[1], tok[2], v, -1,
+                           InitialQualityData::kKindUnresolved, /*fromFile*/ true);
+                }
+            }
+        }
+
         for (int i = iq.count() - 1; i >= 0; --i) {
             auto ui = static_cast<std::size_t>(i);
             const bool  link = iq.is_link[ui] != 0;
@@ -1891,22 +1952,38 @@ void resolve_cross_references(SimulationContext& ctx) {
                         "inert this simulation.");
             } else {
                 iq.kind[ui] = ctx.pollutant_names.find(cons);
-                if (iq.kind[ui] < 0) {
+                // U2 (2026-09-07): an MSX species of the reactions component
+                // is accepted here on the same footing as a pollutant — the
+                // one species resolver (SpeciesRegistry) knows both. The
+                // row is mirrored into ReactionData::init_elem_* below, the
+                // table every quality engine seeds from; [REACTION_QUALITY]
+                // NODE|LINK in the .rxn remains a read alias.
+                //
+                // An MSX kind is ENCODED NEGATIVE (kKindMsxFirst - m), so
+                // "did it resolve" cannot be spelled `kind >= 0` here.
+                bool resolved = iq.kind[ui] >= 0;
+                if (!resolved && ctx.reactions.configured) {
+                    const int m = ctx.reactions.find_species(cons);
+                    if (m >= 0) {
+                        iq.kind[ui] = InitialQualityData::msxKind(m);
+                        resolved = true;
+                    }
+                }
+                if (!resolved) {
                     ctx.errors.push_back(
                         "[INITIAL_QUALITY] unknown constituent '" + cons +
                         "' at " + std::string(link ? "link" : "node") + " '" +
-                        en + "' — pollutant names and __WATER_AGE__/"
-                        "__TEMPERATURE__ are accepted here; MSX species "
-                        "initial values belong in the reactions config "
-                        "[REACTION_QUALITY] NODE|LINK scopes.");
+                        en + "' — [POLLUTANTS] names, reactions-component "
+                        "species and __WATER_AGE__/__TEMPERATURE__ are "
+                        "accepted here.");
                     iq.erase(i);
                     continue;
                 }
                 // Age (signed per D-NS1) and temperature (degC) may be
-                // negative; a pollutant concentration may not.
+                // negative; a pollutant or species concentration may not.
                 if (iq.value[ui] < 0.0) {
                     ctx.errors.push_back(
-                        "[INITIAL_QUALITY] negative value for pollutant '" +
+                        "[INITIAL_QUALITY] negative value for '" +
                         cons + "' at " + std::string(link ? "link" : "node") +
                         " '" + en + "'.");
                     iq.erase(i);
@@ -1936,6 +2013,13 @@ void resolve_cross_references(SimulationContext& ctx) {
                     break;
                 }
             }
+        }
+
+        // U2: mirror the MSX rows into the reactions component's
+        // per-element seed table (refusing a row the .rxn already carries).
+        if (ctx.reactions.configured) {
+            const auto errs = transport::mirrorInitialQualityMsxRows(ctx);
+            for (const auto& e : errs) ctx.errors.push_back(e);
         }
     }
 

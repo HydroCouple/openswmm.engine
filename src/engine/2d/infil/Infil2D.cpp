@@ -67,14 +67,22 @@ bool iequals(std::string_view a, std::string_view b) {
 }
 
 /// Validate one row. @p who names the offending cell or tag in every message.
-bool validateRow(const Infil2DRow& row, const std::string& who, std::string& err) {
+/// @p aquifer_2d is true once a `[2D_AQUIFER]` has resolved, which is what
+/// gives the AQUIFER_2D destination a receiver.
+bool validateRow(const Infil2DRow& row, const std::string& who,
+                 bool aquifer_2d, std::string& err) {
     if (!row.has_method) return true;
 
-    // D-I4: LOST is the only destination this release routes.
-    if (row.dest != Infil2DDest::LOST) {
-        err = "2D infiltration " + who + ": destination "
-            + infil2DDestToken(row.dest)
-            + " is not supported in this release; see plan §5.5.4";
+    // D-I4 as amended by U3 (2026-09-07) and G1: LOST and SUBCATCH_AQUIFER are
+    // routed. SUBCATCH_AQUIFER recharges the legacy aquifer of the
+    // subcatchment containing the cell (track I-b); AQUIFER_2D recharges the
+    // two-zone kernel and is legal exactly when there is a kernel to receive
+    // it. Refusing it when there is none is deliberate: quietly reading it as
+    // LOST would drain a model the author believed was recharging.
+    if (row.dest == Infil2DDest::AQUIFER_2D && !aquifer_2d) {
+        err = "2D infiltration " + who + ": destination AQUIFER_2D needs a "
+              "[2D_AQUIFER] section to receive the recharge; this model has "
+              "none — add one, or use LOST or SUBCATCH_AQUIFER";
         return false;
     }
 
@@ -216,7 +224,8 @@ bool Infil2D::resolve(const MeshData& mesh, const SimulationOptions& opts,
 
     const Infil2DDefault* star = nullptr;
     for (const auto& d : defaults_) {
-        if (!validateRow(d.row, "tag '" + d.tag + "'", err)) return false;
+        if (!validateRow(d.row, "tag '" + d.tag + "'",
+                         aquifer_2d_available_, err)) return false;
         if (d.tag == "*") star = &d;
     }
 
@@ -250,7 +259,8 @@ bool Infil2D::resolve(const MeshData& mesh, const SimulationOptions& opts,
                 + std::to_string(nt) + " triangles)";
             return false;
         }
-        if (!validateRow(o.row, "cell " + std::to_string(o.tri + 1), err)) return false;
+        if (!validateRow(o.row, "cell " + std::to_string(o.tri + 1),
+                         aquifer_2d_available_, err)) return false;
 
         const auto ui = static_cast<std::size_t>(o.tri);
         if (o.row.has_method) {
@@ -373,6 +383,7 @@ void Infil2D::reset() {
 
     active_       = false;
     step_seconds_ = 0.0;
+    aquifer_2d_available_ = false;
 
     resolved_.clear();
     prov_.clear();

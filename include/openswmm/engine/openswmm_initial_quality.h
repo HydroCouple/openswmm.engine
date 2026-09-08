@@ -102,6 +102,24 @@ SWMM_ENGINE_API int swmm_init_quality_set(SWMM_Engine engine, int is_link,
 SWMM_ENGINE_API int swmm_init_quality_remove(SWMM_Engine engine,
                                              int entry_idx);
 
+/* ---- U2 (2026-09-07): the `[INITIAL_QUALITY] FILE <csv>` sidecar --------
+ * Rows read from the sidecar carry is_file = 1 in swmm_init_quality_is_file
+ * and are not written back inline; the FILE line is. The CSV format is
+ * scope,element,constituent,value per line (comma / whitespace separated,
+ * optional header). The file is read at the next open; set/clear here only
+ * records the reference.
+ */
+
+/** @brief The FILE path as written ("" when none). */
+SWMM_ENGINE_API int swmm_init_quality_file_get(SWMM_Engine engine, char* buf, int buflen);
+
+/** @brief Set (or clear with "" / NULL) the FILE reference. */
+SWMM_ENGINE_API int swmm_init_quality_file_set(SWMM_Engine engine, const char* path);
+
+/** @brief 1 when row @p entry_idx was loaded from the FILE sidecar, else 0. */
+SWMM_ENGINE_API int swmm_init_quality_is_file(SWMM_Engine engine, int entry_idx);
+
+
 #ifdef __cplusplus
 }
 #endif

@@ -453,7 +453,9 @@ if(OPENSWMM_BUILD_2D)
     file(GLOB_RECURSE OPENSWMM_2D_SOURCES
         RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
         2d/data/*.cpp
+        2d/gw/*.cpp
         2d/infil/*.cpp
+        2d/subsurface/*.cpp
         2d/mesh/*.cpp
         2d/solver/SurfaceFluxCalculator.cpp
         2d/coupling/*.cpp

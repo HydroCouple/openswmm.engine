@@ -169,6 +169,9 @@ add_gtest_unit(test_engine_output_quality         test_output_quality.cpp)
 add_gtest_unit(test_engine_object_rename          test_object_rename.cpp)
 add_gtest_unit(test_engine_options_api_units      test_options_api_units.cpp)
 add_gtest_unit(test_engine_climate_api             test_climate_api.cpp)
+# [TEMPERATURE] HUMIDITY: CONSTANT/MONTHLY/TIMESERIES, DEWPOINT -> RH, writer
+# round-trip. The heat model's met input the GUI Climatology dialog edits.
+add_gtest_unit(test_engine_climate_humidity        test_climate_humidity.cpp)
 add_gtest_unit(test_engine_hotstart          test_hotstart.cpp)
 add_gtest_unit(test_engine_simd_math         test_simd_math.cpp)
 add_gtest_unit(test_engine_mathexpr          test_mathexpr.cpp)
@@ -214,6 +217,9 @@ add_gtest_unit(test_engine_inlet_capture test_inlet_capture.cpp)
 # Inlet designs, inlet usage rows and [INLET_JUNCTIONS] IO / validation / edits
 # (plans/INLET_JUNCTION_IMPLEMENTATION_PLAN_2026-09-05.md).
 add_gtest_unit(test_engine_inlet_junction_io test_inlet_junction_io.cpp)
+# Species/age loads carried by a lateral at a virtual junction, every routing
+# x quality-solver pair (plans/VJ_LATERAL_INFLOW_PLAN_2026-09-04.md E4).
+add_gtest_unit(test_engine_virtual_junction_quality test_virtual_junction_quality.cpp)
 add_gtest_unit(test_engine_fv_node_head_consistency test_fv_node_head_consistency.cpp)
 add_gtest_unit(test_engine_fv_slot_volume test_fv_slot_volume.cpp)
 add_gtest_unit(test_engine_fv_closure_shapes test_fv_closure_shapes.cpp)
@@ -592,7 +598,67 @@ if(OPENSWMM_BUILD_2D)
     add_gtest_unit(test_engine_2d_bc_units test_2d_bc_units.cpp)
     target_compile_definitions(test_engine_2d_bc_units PRIVATE
         OPENSWMM_BC_UNITS_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+    # Results-file size controls ([2D_OPTIONS] OUTPUT_PRECISION /
+    # OUTPUT_COMPRESSION / REPORT_2D_VARIABLES / REPORT_2D_SPECIES /
+    # REPORT_2D_STEP): grammar + C API round trip, float32 storage, unselected
+    # datasets absent, species subset, 2D report cadence. Reads the HDF5 file
+    # back, so it links HDF5 like test_engine_2d_surface.
+    add_gtest_unit(test_engine_2d_output_options test_2d_output_options.cpp)
+    target_compile_definitions(test_engine_2d_output_options PRIVATE
+        OPENSWMM_2D_OUTPUT_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+    if(TARGET hdf5::hdf5-shared)
+        target_link_libraries(test_engine_2d_output_options PRIVATE hdf5::hdf5-shared)
+    elseif(TARGET hdf5::hdf5-static)
+        target_link_libraries(test_engine_2d_output_options PRIVATE hdf5::hdf5-static)
+    else()
+        if(NOT HDF5_FOUND)
+            find_package(HDF5 REQUIRED COMPONENTS C)
+        endif()
+        target_link_libraries(test_engine_2d_output_options PRIVATE ${HDF5_C_LIBRARIES})
+        target_include_directories(test_engine_2d_output_options PRIVATE ${HDF5_INCLUDE_DIRS})
+    endif()
+    # E2 (2026-09-07) — TransportPolicy (Domain x Species matrix),
+    # swmm_get_transport_matrix, the .rpt matrix block and the [2D_OPTIONS]
+    # process keys (TRANSPORT_*, INFILTRATION, INFIL_STEP alias,
+    # INFIL_DEFAULT_METHOD, INFIL_DESTINATION, EVAPORATION). Decks and
+    # reports land under tests/output/transport_policy.
+    add_gtest_unit(test_engine_transport_policy test_transport_policy.cpp)
+    target_compile_definitions(test_engine_transport_policy PRIVATE
+        OPENSWMM_TRANSPORT_POLICY_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+    # U3 (track I-b, 2026-09-07) — [2D_OPTIONS] INFIL_DESTINATION
+    # SUBCATCH_AQUIFER: cell→subcatchment containment, the recharge into the
+    # legacy aquifer, the outside-every-polygon warning and the one-owner
+    # refusal. Decks under tests/output/infil_subcatch_aquifer.
+    add_gtest_unit(test_engine_2d_infil_subcatch_aquifer
+                   test_2d_infil_subcatch_aquifer.cpp)
+    target_compile_definitions(test_engine_2d_infil_subcatch_aquifer PRIVATE
+        OPENSWMM_INFIL_AQ_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+    # U4 + U5 (2026-09-07) — [GW_*] subsurface-transport authoring sections
+    # (round trip, cell-generic EDGE on a mixed tri/quad mesh, species/series
+    # resolution, one inert warning, the C API) and the 2D groundwater page
+    # keys (GROUNDWATER / GW_ET). Decks under tests/output/gw_transport.
+    add_gtest_unit(test_engine_gw_transport_authoring
+                   test_gw_transport_authoring.cpp)
+    target_compile_definitions(test_engine_gw_transport_authoring PRIVATE
+        OPENSWMM_GW_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+    # G1 (2026-09-07) — the [2D_AQUIFER*] authoring surface, its round trip
+    # and the swmm_gw2d_* C API, on a model. The kernel's own conservation
+    # gates are tests/verification/gw2d_gates, which needs no engine; this is
+    # everything between a user's .inp and that kernel. Decks under
+    # tests/output/aquifer_2d.
+    add_gtest_unit(test_engine_2d_aquifer test_2d_aquifer.cpp)
+    target_compile_definitions(test_engine_2d_aquifer PRIVATE
+        OPENSWMM_AQUIFER_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
 endif()
+
+# U2 (2026-09-07) — MSX parity at the authoring seams: [INITIAL_QUALITY]
+# species rows (all three quality solvers), [INFLOWS] CONCEN/MASS and [DWF]
+# species rows, the [INITIAL_QUALITY] FILE sidecar, the V4 hotstart species
+# block, and swmm_forcing_node_temperature / _age. Decks and CSVs land under
+# tests/output/msx_parity.
+add_gtest_unit(test_engine_msx_parity test_msx_parity.cpp)
+target_compile_definitions(test_engine_msx_parity PRIVATE
+    OPENSWMM_MSX_PARITY_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
 
 # ---------------------------------------------------------------------------
 # Explicit finite-volume 1D network solver (FLOW_ROUTING FV).

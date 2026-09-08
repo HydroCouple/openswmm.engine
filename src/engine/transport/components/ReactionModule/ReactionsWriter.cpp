@@ -20,6 +20,7 @@
  */
 
 #include "ReactionsWriter.hpp"
+#include "../../MsxInitialQuality.hpp"   // U2
 
 #include <cinttypes>
 #include <cstdio>
@@ -150,7 +151,18 @@ std::string serializeReactionSystem(const SimulationContext& ctx) {
         bool any = false;
         for (const auto v : rx.init_global)
             if (v != 0.0) any = true;
-        if (any || !rx.init_elem_idx.empty()) {
+        // U2: per-element rows mirrored from [INITIAL_QUALITY] are written
+        // THERE by the InpWriter; only rows the .rxn itself owns (authored in
+        // its NODE|LINK scopes or set through the reactions C API) stay here.
+        bool any_own_elem = false;
+        for (std::size_t k = 0; k < rx.init_elem_idx.size(); ++k) {
+            if (!initialQualityHasMsxRow(ctx, rx.init_elem_is_link[k] != 0,
+                                         rx.init_elem_idx[k], rx.init_elem_species[k])) {
+                any_own_elem = true;
+                break;
+            }
+        }
+        if (any || any_own_elem) {
             out += "\n[REACTION_QUALITY]\n";
             out += ";;Scope    [Element]        Species          Value\n";
             for (int s = 0; s < rx.n_species(); ++s) {
@@ -164,6 +176,7 @@ std::string serializeReactionSystem(const SimulationContext& ctx) {
                 const int ei = rx.init_elem_idx[k];
                 const int si = rx.init_elem_species[k];
                 if (si < 0 || si >= rx.n_species()) continue;
+                if (initialQualityHasMsxRow(ctx, link, ei, si)) continue;   // U2
                 const std::string en =
                     link ? ((ei >= 0 && ei < ctx.n_links())
                                 ? ctx.link_names.name_of(ei)
