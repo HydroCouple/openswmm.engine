@@ -2764,6 +2764,51 @@ void resolve_cross_references(SimulationContext& ctx) {
     validate_inlet_junctions(ctx);
 
     // -------------------------------------------------------------------------
+    // Table sequence check (legacy project_validate -> table_validate): every
+    // curve and time series must have STRICTLY increasing x. Legacy flags
+    // dx <= 0 (a backward OR duplicate abscissa) as ERR_*_SEQUENCE. v6 defines
+    // validate_table() but never wired it in, and it additionally applies
+    // v6-only empty/NaN/column checks that legacy's table_validate does not, so
+    // mirror ONLY legacy's monotonicity test here to avoid rejecting inputs
+    // legacy accepts. File-backed tables stream their data (in-memory x is
+    // empty) and are skipped; their boundaries are validated on load.
+    // -------------------------------------------------------------------------
+    for (const auto& tbl : ctx.tables.tables) {
+        const bool is_ts = (tbl.type == TableType::TIMESERIES);
+        for (std::size_t k = 1; k < tbl.x.size(); ++k) {
+            if (tbl.x[k] - tbl.x[k - 1] <= 0.0) {
+                ctx.errors.push_back(format_error(
+                    is_ts ? ERR_TIMESERIES_SEQUENCE : ERR_CURVE_SEQUENCE, tbl.id));
+                break;
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Rain-file station conflict (legacy rain.c rainFileConflict): a file-based
+    // rain gage whose station ID matches an EARLIER file-based gage's station ID
+    // but reads a DIFFERENT file is ambiguous — the shared station cannot pick
+    // one file — so legacy rejects the later gage with ERR_RAIN_FILE_CONFLICT
+    // (156). v6 normalizes a '*' station to empty; comparing the stored station
+    // IDs reproduces legacy's equal-staID test for the common all-'*' case.
+    // -------------------------------------------------------------------------
+    for (int i = 0; i < ctx.gages.count(); ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        if (ctx.gages.source[ui] != RainSource::FILE_RAIN) continue;
+        for (int j = 0; j < i; ++j) {
+            const auto uj = static_cast<std::size_t>(j);
+            if (ctx.gages.source[uj] != RainSource::FILE_RAIN) continue;
+            if (ieq(ctx.gages.station_id[ui], ctx.gages.station_id[uj]) &&
+                !ieq(ctx.gages.file_path[ui].original,
+                     ctx.gages.file_path[uj].original)) {
+                ctx.errors.push_back(format_error(ERR_RAIN_FILE_CONFLICT,
+                                                  ctx.gage_names.name_of(i)));
+                break;
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Node fullDepth adjustment from connected link crowns
     // (matches legacy link_validate → node fullDepth adjustment)
     // -------------------------------------------------------------------------
