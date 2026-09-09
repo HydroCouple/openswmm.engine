@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Version boundaries in this file: `6.0.0-alpha.2` covers work merged after the
 `v6.0.0-alpha.1` tag up to and including 2026-07-12; `6.0.0-alpha.3` covers
-everything from the `6.0.0-alpha.3` version bump (2026-07-12) onward. No
+everything from the `6.0.0-alpha.3` version bump (2026-07-12) up to the
+`v6.0.0-alpha.3` tag (2026-08-11); `6.0.0-alpha.4` covers everything from that
+tag to the `6.0.0-alpha.4` version bump (2026-09-08). No
 `v6.0.0-alpha.2` tag was ever cut — that version string lived only in
 `CMakeLists.txt` (`OPENSWMM_PRERELEASE`), `vcpkg.json` and
 `python/pyproject.toml` — so the `[6.0.0-alpha.2]` heading below is
@@ -20,6 +22,8 @@ retroactive.
 > here. See `git log v6.0.0-alpha.1..` for the interim record.
 
 ## [Unreleased]
+
+## [6.0.0-alpha.4] — 2026-09-08
 
 ### Fixed
 
