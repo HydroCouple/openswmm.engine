@@ -248,6 +248,51 @@ class Climate:
     def wind_monthly(self, values) -> None:
         _write_arr(_ch(self._solver), swmm_climate_set_wind_monthly, values, 12)
 
+    # -- Humidity ---------------------------------------------------
+
+    @property
+    def humidity_type(self) -> int:
+        """Humidity source: 0=CONSTANT, 1=MONTHLY, 2=TIMESERIES."""
+        cdef int v = 0
+        _check(swmm_climate_get_humidity_type(_ch(self._solver), &v))
+        return v
+
+    @humidity_type.setter
+    def humidity_type(self, int value) -> None:
+        _check(swmm_climate_set_humidity_type(_ch(self._solver), value))
+
+    @property
+    def humidity_variable(self) -> int:
+        """Humidity quantity: 0=RELATIVE (%), 1=DEWPOINT (project temperature units)."""
+        cdef int v = 0
+        _check(swmm_climate_get_humidity_variable(_ch(self._solver), &v))
+        return v
+
+    @humidity_variable.setter
+    def humidity_variable(self, int value) -> None:
+        _check(swmm_climate_set_humidity_variable(_ch(self._solver), value))
+
+    @property
+    def humidity_monthly(self) -> list:
+        """Twelve monthly humidity values (RH % or dew point per ``humidity_variable``)."""
+        return _read_arr(_ch(self._solver), swmm_climate_get_humidity_monthly, 12)
+
+    @humidity_monthly.setter
+    def humidity_monthly(self, values) -> None:
+        _write_arr(_ch(self._solver), swmm_climate_set_humidity_monthly, values, 12)
+
+    @property
+    def humidity_timeseries(self) -> str:
+        """Humidity time-series id (empty if none). Setting it selects TIMESERIES."""
+        cdef char buf[256]
+        _check(swmm_climate_get_humidity_timeseries(_ch(self._solver), buf, sizeof(buf)))
+        return (<bytes>buf).decode('utf-8')
+
+    @humidity_timeseries.setter
+    def humidity_timeseries(self, value) -> None:
+        cdef bytes b = value.encode('utf-8')
+        _check(swmm_climate_set_humidity_timeseries(_ch(self._solver), b))
+
     # -- Snowmelt globals -------------------------------------------
 
     @property

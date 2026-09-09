@@ -308,6 +308,74 @@ SWMM_ENGINE_API int swmm_climate_set_wind_monthly(SWMM_Engine engine, const doub
 }
 
 // ============================================================================
+// Humidity  ([TEMPERATURE] HUMIDITY)
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_climate_get_humidity_type(SWMM_Engine engine, int* type) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    if (type) *type = ctx.options.humidity_type;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_climate_set_humidity_type(SWMM_Engine engine, int type) {
+    CHECK_HANDLE(engine);
+    if (type < 0 || type > 2) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    ctx.options.humidity_type = type;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_climate_get_humidity_variable(SWMM_Engine engine, int* var) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    if (var) *var = ctx.options.humidity_var;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_climate_set_humidity_variable(SWMM_Engine engine, int var) {
+    CHECK_HANDLE(engine);
+    if (var < 0 || var > 1) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    ctx.options.humidity_var = var;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_climate_get_humidity_monthly(SWMM_Engine engine, double* buf, int count) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    return copy_array_out(buf, count, ctx.options.humidity, SWMM_CLIMATE_MONTHS);
+}
+
+SWMM_ENGINE_API int swmm_climate_set_humidity_monthly(SWMM_Engine engine, const double* values, int count) {
+    CHECK_HANDLE(engine);
+    if (!values || count != SWMM_CLIMATE_MONTHS) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    return copy_array_in(ctx.options.humidity, values, count, SWMM_CLIMATE_MONTHS);
+}
+
+SWMM_ENGINE_API int swmm_climate_get_humidity_timeseries(SWMM_Engine engine, char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    climate_fill_buf(buf, buflen, ctx.options.humidity_ts_name);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_climate_set_humidity_timeseries(SWMM_Engine engine, const char* ts_id) {
+    CHECK_HANDLE(engine);
+    if (!ts_id) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    ctx.options.humidity_ts_name = ts_id;
+    ctx.options.humidity_type = 2;  // TIMESERIES
+    return SWMM_OK;
+}
+
+// ============================================================================
 // Snowmelt globals  ([TEMPERATURE] SNOWMELT)
 // ============================================================================
 

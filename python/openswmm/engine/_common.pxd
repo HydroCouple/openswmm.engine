@@ -1254,6 +1254,15 @@ cdef extern from "openswmm_climate.h":
     cdef int swmm_climate_set_wind_type(SWMM_Engine e, int type)
     cdef int swmm_climate_get_wind_monthly(SWMM_Engine e, double* buf, int count)
     cdef int swmm_climate_set_wind_monthly(SWMM_Engine e, const double* values, int count)
+    # Humidity
+    cdef int swmm_climate_get_humidity_type(SWMM_Engine e, int* type)
+    cdef int swmm_climate_set_humidity_type(SWMM_Engine e, int type)
+    cdef int swmm_climate_get_humidity_variable(SWMM_Engine e, int* var)
+    cdef int swmm_climate_set_humidity_variable(SWMM_Engine e, int var)
+    cdef int swmm_climate_get_humidity_monthly(SWMM_Engine e, double* buf, int count)
+    cdef int swmm_climate_set_humidity_monthly(SWMM_Engine e, const double* values, int count)
+    cdef int swmm_climate_get_humidity_timeseries(SWMM_Engine e, char* buf, int buflen)
+    cdef int swmm_climate_set_humidity_timeseries(SWMM_Engine e, const char* ts_id)
     # Snowmelt globals
     cdef int swmm_climate_get_snow_temp(SWMM_Engine e, double* divide_temp)
     cdef int swmm_climate_set_snow_temp(SWMM_Engine e, double divide_temp)

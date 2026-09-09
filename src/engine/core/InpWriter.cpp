@@ -62,6 +62,9 @@
 // through ctx.twod_io — null in non-2D engine builds).
 #include "../2d/data/MeshData.hpp"
 #include "../2d/data/SolverOptions2D.hpp"
+#include "../2d/data/Report2DVars.hpp"
+#include "../2d/gw/GwTransportData.hpp"   // U4
+#include "../2d/subsurface/SubsurfaceSections.hpp"   // G1
 #include "../2d/data/BoundaryData.hpp"
 #include "../2d/data/PendingRows2D.hpp"
 #include "../2d/data/Serialize2D.hpp"
@@ -429,7 +432,12 @@ static void emit2DInfilSections(FILE* f, const SimulationContext& ctx) {
             else
                 std::fprintf(f, " %-12.12g", row.p[k]);
         }
-        std::fprintf(f, " %s\n", twoD::infil2DDestToken(row.dest));
+        // E2: DEST only when the row spelled it; unspelled rows follow
+        // [2D_OPTIONS] INFIL_DESTINATION and must not freeze a copy here.
+        if (row.dest_explicit)
+            std::fprintf(f, " %s\n", twoD::infil2DDestToken(row.dest));
+        else
+            std::fprintf(f, "\n");
     };
 
     if (infil->options().infil_step > 0.0) {
@@ -462,6 +470,168 @@ static void emit2DInfilSections(FILE* f, const SimulationContext& ctx) {
     }
 }
 #endif // OPENSWMM_HAS_2D
+
+// ---- U4 (2026-09-07) — [GW_*] subsurface-transport authoring sections -----
+//
+// Round-trip fidelity is the whole contract in this release: the kernel does
+// not run these rows, so a save that lost or reshaped one would be the ONLY
+// observable, and it would be silent. Every row is written back with the
+// scope token it was authored with; nothing is expanded, resolved or
+// defaulted away. The FILE sidecar is referenced, not inlined (its rows
+// carry layer == -2).
+static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
+    const twoD::GwTransportData* gw = ctx.twod_io.gw;
+    if (!gw || gw->empty()) return;
+
+    auto scope_col = [](const twoD::GwScope s, const std::string& tag, int cell,
+                        char* buf, std::size_t n) {
+        switch (s) {
+            case twoD::GwScope::TAG:
+                std::snprintf(buf, n, "TAG %s", tag.c_str());
+                break;
+            case twoD::GwScope::CELL:
+                std::snprintf(buf, n, "CELL %d", cell + 1);   // 1-based in file
+                break;
+            default:
+                std::snprintf(buf, n, "*");
+                break;
+        }
+    };
+    char sc[128];
+
+    // [GW_TRANSPORT_OPTIONS] — every key, so the file states the model
+    // (unlike [2D_OPTIONS], where the defaults are the pre-existing
+    // behaviour and omission means "unchanged").
+    {
+        const auto& o = gw->options;
+        sec(f, "GW_TRANSPORT_OPTIONS");
+        std::fprintf(f, ";;%-22s %s\n", "Parameter", "Value");
+        std::fprintf(f, "%-24s %s\n", "TRANSPORT_POLLUTANTS",  o.transport_pollutants  ? "YES" : "NO");
+        std::fprintf(f, "%-24s %s\n", "TRANSPORT_MSX",         o.transport_msx         ? "YES" : "NO");
+        std::fprintf(f, "%-24s %s\n", "TRANSPORT_AGE",         o.transport_age         ? "YES" : "NO");
+        std::fprintf(f, "%-24s %s\n", "TRANSPORT_TEMPERATURE", o.transport_temperature ? "YES" : "NO");
+        std::fprintf(f, "%-24s %s\n", "DISPERSION",            o.dispersion ? "YES" : "NO");
+        std::fprintf(f, "%-24s %s\n", "CONDUCTION",            o.conduction ? "YES" : "NO");
+        std::fprintf(f, "%-24s %s%s%s\n", "SURFACE_THERMAL_BC",
+                     o.surface_thermal_bc.c_str(),
+                     o.surface_thermal_arg.empty() ? "" : " ",
+                     o.surface_thermal_arg.c_str());
+        // Every DEEP_THERMAL_BC kind carries an argument (a flux, a
+        // temperature or a series name), so an empty one means the deck never
+        // authored the key. Writing the bare default kind would emit
+        // "DEEP_THERMAL_BC GEOTHERMAL_FLUX" — which the reader refuses for
+        // want of a value, making the saved file unloadable.
+        if (!o.deep_thermal_arg.empty()) {
+            if (o.deep_depth > 0.0)
+                std::fprintf(f, "%-24s %s %s DEPTH %.12g\n", "DEEP_THERMAL_BC",
+                             o.deep_thermal_bc.c_str(),
+                             o.deep_thermal_arg.c_str(), o.deep_depth);
+            else
+                std::fprintf(f, "%-24s %s %s\n", "DEEP_THERMAL_BC",
+                             o.deep_thermal_bc.c_str(),
+                             o.deep_thermal_arg.c_str());
+        }
+        std::fprintf(f, "%-24s %s\n", "THERMAL_MIXING", o.thermal_mixing.c_str());
+        std::fprintf(f, "%-24s %.12g\n", "C_DIFF", o.c_diff);
+    }
+
+    if (!gw->params.empty()) {
+        sec(f, "GW_TRANSPORT_PARAMS");
+        std::fprintf(f, ";;%-14s %-9s %-7s %-9s %-7s %-8s %-8s %-9s %-9s %s\n",
+                     "Scope", "rho_s", "c_s", "lambda_s", "a_s", "alpha_L",
+                     "alpha_T", "D_m", "D_v", "geo_flux");
+        for (const auto& r : gw->params) {
+            scope_col(r.scope, r.tag, r.cell, sc, sizeof sc);
+            std::fprintf(f,
+                "%-16s %-9.12g %-7.12g %-9.12g %-7.12g %-8.12g %-8.12g "
+                "%-9.12g %-9.12g %.12g\n",
+                sc, r.rho_s, r.c_s, r.lambda_s, r.a_s, r.alpha_L, r.alpha_T,
+                r.D_m, r.D_v, r.geo_flux);
+        }
+    }
+
+    if (!gw->sorption.empty()) {
+        sec(f, "GW_SORPTION");
+        std::fprintf(f, ";;%-14s %-16s %-12s %s\n", "Scope", "Species",
+                     "Kd(L/kg)", "Decay(1/d)");
+        for (const auto& r : gw->sorption) {
+            scope_col(r.scope, r.tag, r.cell, sc, sizeof sc);
+            if (r.decay >= 0.0)
+                std::fprintf(f, "%-16s %-16s %-12.12g %.12g\n", sc,
+                             r.species.c_str(), r.kd, r.decay);
+            else
+                std::fprintf(f, "%-16s %-16s %-12.12g -\n", sc,
+                             r.species.c_str(), r.kd);
+        }
+    }
+
+    {
+        bool any_inline = false;
+        for (const auto& r : gw->initial_quality)
+            if (r.layer != -2) { any_inline = true; break; }
+        if (any_inline || !gw->initial_quality_file.empty()) {
+            sec(f, "GW_INITIAL_QUALITY");
+            if (!gw->initial_quality_file.empty())
+                std::fprintf(f, "%-16s %s\n", "FILE",
+                             gw->initial_quality_file.c_str());
+            std::fprintf(f, ";;%-14s %-14s %-16s %s\n", "Scope", "Zone",
+                         "Species", "Value");
+            for (const auto& r : gw->initial_quality) {
+                if (r.layer == -2) continue;   // the FILE's row
+                scope_col(r.scope, r.tag, r.cell, sc, sizeof sc);
+                char zone[32];
+                if (r.zone == twoD::GwZone::LAYER)
+                    std::snprintf(zone, sizeof zone, "LAYER %d", r.layer);
+                else
+                    std::snprintf(zone, sizeof zone, "%s", twoD::gwZoneToken(r.zone));
+                std::fprintf(f, "%-16s %-14s %-16s %.12g\n", sc, zone,
+                             r.species.c_str(), r.value);
+            }
+        }
+    }
+
+    if (!gw->boundary_quality.empty()) {
+        sec(f, "GW_BOUNDARY_QUALITY");
+        std::fprintf(f, ";;%-6s %-6s %-16s %-10s %s\n", "Cell", "Edge",
+                     "Species", "Kind", "Value/Series");
+        for (const auto& r : gw->boundary_quality) {
+            // CELL 1-based, EDGE 0-based (0..nv-1 of its own cell).
+            if (!r.ts_name.empty())
+                std::fprintf(f, "%-8d %-6d %-16s %-10s %s\n", r.cell + 1, r.edge,
+                             r.species.c_str(), r.kind.c_str(), r.ts_name.c_str());
+            else
+                std::fprintf(f, "%-8d %-6d %-16s %-10s %.12g\n", r.cell + 1, r.edge,
+                             r.species.c_str(), r.kind.c_str(), r.value);
+        }
+    }
+
+    if (!gw->sources.empty()) {
+        sec(f, "GW_SOURCES");
+        std::fprintf(f, ";;%-12s %-16s %-16s %s\n", "Name", "Location",
+                     "Flow", "Species terms");
+        for (const auto& r : gw->sources) {
+            char loc[128];
+            if (r.by_xy)
+                std::snprintf(loc, sizeof loc, "XY %.12g %.12g", r.x, r.y);
+            else if (r.scope == twoD::GwScope::TAG)
+                std::snprintf(loc, sizeof loc, "TAG %s", r.tag.c_str());
+            else
+                std::snprintf(loc, sizeof loc, "CELL %d", r.cell + 1);
+            std::fprintf(f, "%-14s %-16s FLOW ", r.name.c_str(), loc);
+            if (!r.flow_ts.empty()) std::fprintf(f, "%-12s", r.flow_ts.c_str());
+            else                    std::fprintf(f, "%-12.12g", r.flow);
+            for (const auto& t : r.species) {
+                if (!t.ts_name.empty())
+                    std::fprintf(f, " %s %s %s", t.species.c_str(),
+                                 t.kind.c_str(), t.ts_name.c_str());
+                else
+                    std::fprintf(f, " %s %s %.12g", t.species.c_str(),
+                                 t.kind.c_str(), t.value);
+            }
+            std::fprintf(f, "\n");
+        }
+    }
+}
 
 static void write2DSections(FILE* f, const SimulationContext& ctx,
                             const std::string& dst_dir,
@@ -534,6 +704,44 @@ static void write2DSections(FILE* f, const SimulationContext& ctx,
         if (!of_tok.empty())
             std::fprintf(f, "%-22s %s\n", "OUTPUT_FILE", of_tok.c_str());
     }
+    // Results-file size controls — option-default rule: only non-defaults are
+    // emitted so pre-2026-09 files round-trip byte-identically.
+    if (o.output_precision != twoD::OutputPrecision2D::FLOAT32)
+        std::fprintf(f, "%-22s %s\n", "OUTPUT_PRECISION", "FLOAT64");
+    if (o.output_compression != 4)
+        std::fprintf(f, "%-22s %d\n", "OUTPUT_COMPRESSION", o.output_compression);
+    if ((o.report_2d_vars & twoD::report2d::ALL_MASK) != twoD::report2d::DEFAULT_MASK)
+        std::fprintf(f, "%-22s %s\n", "REPORT_2D_VARIABLES",
+                     twoD::report2d::formatMask(o.report_2d_vars).c_str());
+    if (!o.report_2d_species.empty())
+        std::fprintf(f, "%-22s %s\n", "REPORT_2D_SPECIES",
+                     twoD::report2d::formatSpecies(o.report_2d_species).c_str());
+    if (o.report_2d_step > 0.0)
+        std::fprintf(f, "%-22s %s\n", "REPORT_2D_STEP",
+                     twoD::report2d::formatStep(o.report_2d_step).c_str());
+
+    // ---- E2 process enables — non-defaults only (a deck without them is
+    // written back without them). INFIL_STEP is not emitted here: its
+    // single source of truth is Infil2D::options(), written as
+    // [2D_INFILTRATION_OPTIONS] beside the rows (§5.5.5, sidecar-follows-mesh).
+    if (o.infiltration >= 0)
+        std::fprintf(f, "%-22s %s\n", "INFILTRATION", o.infiltration ? "YES" : "NO");
+    if (!o.infil_default_method.empty())
+        std::fprintf(f, "%-22s %s\n", "INFIL_DEFAULT_METHOD", o.infil_default_method.c_str());
+    if (!o.infil_destination.empty() && o.infil_destination != "LOST")
+        std::fprintf(f, "%-22s %s\n", "INFIL_DESTINATION", o.infil_destination.c_str());
+    if (o.evaporation != 1)
+        std::fprintf(f, "%-22s %s\n", "EVAPORATION", o.evaporation == 0 ? "NO" : "CLIMATE");
+    if (!o.transport_pollutants)  std::fprintf(f, "%-22s NO\n", "TRANSPORT_POLLUTANTS");
+    if (!o.transport_msx)         std::fprintf(f, "%-22s NO\n", "TRANSPORT_MSX");
+    if (!o.transport_age)         std::fprintf(f, "%-22s NO\n", "TRANSPORT_AGE");
+    if (!o.transport_temperature) std::fprintf(f, "%-22s NO\n", "TRANSPORT_TEMPERATURE");
+    // U5 — the 2D groundwater process enable. AUTO is the default and is not
+    // written (same rule as INFILTRATION). GW_ET is NOT emitted here: it is an
+    // alias that open() folds into [2D_AQUIFER_OPTIONS], which writes it —
+    // emitting it in both places would double-author one setting.
+    if (o.groundwater >= 0)
+        std::fprintf(f, "%-22s %s\n", "GROUNDWATER", o.groundwater ? "YES" : "NO");
 
     // ---- [2D_MESH_FILE] — keep the reference, refresh the sidecar ----------
     if (external) {
@@ -844,6 +1052,27 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
     // whichever single destination this function was pointed at. THE ONLY CALL
     // SITE — see emit2DInfilSections.
     emit2DInfilSections(f, ctx);
+
+    // ---- U4 (2026-09-07) — [GW_*] subsurface transport --------------------
+    // Written to the MAIN .inp, never the mesh sidecar: these are model
+    // physics, not per-cell mesh geometry, and [2D_QUADS] must already be in
+    // hand before a [GW_*] CELL/EDGE row can be read (D-A15) — which the
+    // section order here guarantees, since the mesh sections precede this
+    // call in write2DSections.
+    emitGwTransportSections(f, ctx);
+
+    // G1: the [2D_AQUIFER*] rows, echoed in the units they were authored in.
+    // The writer is a verbatim echo because the config is never converted in
+    // place — see SubsurfaceSections.hpp's GwUnitFactors note.
+    if (ctx.twod_io.aquifer != nullptr) {
+        std::string aq;
+        static const std::vector<std::string> kNoNames;
+        twoD::writeSubsurfaceSections(
+            *ctx.twod_io.aquifer,
+            ctx.twod_io.aquifer_nodes ? *ctx.twod_io.aquifer_nodes : kNoNames,
+            aq);
+        if (!aq.empty()) std::fputs(aq.c_str(), f);
+    }
 #endif
 }
 
@@ -1185,6 +1414,12 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         // Check monthly wind speeds
         for (int i = 0; i < 12 && !has_temp; ++i)
             if (opts.wind_speed[i] != 0.0) has_temp = true;
+        // Humidity is written whenever it departs from the 50 % RH constant
+        // default (a HUMIDITY line used to be dropped on save).
+        bool has_humidity = (opts.humidity_type != 0 || opts.humidity_var != 0);
+        for (int i = 0; i < 12 && !has_humidity; ++i)
+            if (opts.humidity[i] != 50.0) has_humidity = true;
+        if (has_humidity) has_temp = true;
 
         if (has_temp) {
             sec(f,"TEMPERATURE");
@@ -1214,6 +1449,21 @@ int writeInpFile(const SimulationContext&  ctx_internal,
                 std::fprintf(f,"\n");
             } else {
                 std::fprintf(f,"WINDSPEED    FILE\n");
+            }
+
+            if (has_humidity) {
+                std::fprintf(f,"HUMIDITY    ");
+                if (opts.humidity_var == 1) std::fprintf(f," DEWPOINT");
+                if (opts.humidity_type == 2) {
+                    std::fprintf(f," TIMESERIES %s\n", opts.humidity_ts_name.c_str());
+                } else if (opts.humidity_type == 1) {
+                    std::fprintf(f," MONTHLY");
+                    for (int i = 0; i < 12; ++i)
+                        std::fprintf(f," %.4f", opts.humidity[i]);
+                    std::fprintf(f,"\n");
+                } else {
+                    std::fprintf(f," %.4f\n", opts.humidity[0]);
+                }
             }
 
             if (opts.snow_dtlong != 0.0) {
@@ -2243,11 +2493,16 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // [INITIAL_QUALITY] — per-element initial concentrations (raw constituent
     // name + raw value retained by the store; resolved element names preferred,
     // falling back to the retained raw name for never-resolved rows).
-    if(ctx.initial_quality.count()>0){sec(f,"INITIAL_QUALITY");
+    if(ctx.initial_quality.count()>0||!ctx.initial_quality.file.empty()){sec(f,"INITIAL_QUALITY");
+    // U2: the CSV sidecar is referenced, not expanded — its rows carry
+    // from_file and are skipped below.
+    if(!ctx.initial_quality.file.empty())
+        std::fprintf(f,"%-8s %s\n","FILE",ctx.initial_quality.file.c_str());
     std::fprintf(f,";;%-8s %-16s %-16s %-10s\n","Scope","Element","Constituent","Value");
     std::fprintf(f,";;%-8s %-16s %-16s %-10s\n","--------","----------------","----------------","----------");
     for(int j=0;j<ctx.initial_quality.count();++j){auto u=static_cast<size_t>(j);
     const auto& iq=ctx.initial_quality;
+    if(u<iq.from_file.size()&&iq.from_file[u])continue;
     const bool link=iq.is_link[u]!=0;
     const int ei=iq.elem_idx[u];
     const char*en;

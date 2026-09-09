@@ -28,6 +28,12 @@ class Climate:
     wind_type: int
     wind_monthly: List[float]
 
+    # Humidity ([TEMPERATURE] HUMIDITY)
+    humidity_type: int
+    humidity_variable: int
+    humidity_monthly: List[float]
+    humidity_timeseries: str
+
     # Snowmelt globals
     snow_temp: float
     ati_weight: float

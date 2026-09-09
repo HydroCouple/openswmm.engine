@@ -36,6 +36,7 @@
  * FILE  "filename"  StartDate
  * WINDSPEED  MONTHLY  1.0 1.0 ... (12 values)
  * WINDSPEED  FILE
+ * HUMIDITY  [DEWPOINT]  value | MONTHLY h1 ... h12 | TIMESERIES name
  * SNOWMELT  divT  ATIwt  nrgRatio  lat  minMelt  maxMelt
  * ADC  IMPERVIOUS  frac1  frac2  ... frac10
  * ADC  PERVIOUS    frac1  frac2  ... frac10
@@ -243,16 +244,34 @@ void handle_temperature(SimulationContext& ctx, const std::vector<std::string>& 
         }
         // H2: relative humidity, % — the met input SurfaceExchange needs and
         // the first thing ever to write ClimateState::humidity, which has
-        // carried a 50 % default with no writer. Monthly like WINDSPEED; a
-        // single value fills all twelve months so a constant-RH deck is one
-        // token.
+        // carried a 50 % default with no writer. Forms:
+        //   HUMIDITY [DEWPOINT] <value>
+        //   HUMIDITY [DEWPOINT] MONTHLY h1 ... h12
+        //   HUMIDITY [DEWPOINT] TIMESERIES <name>
+        // A bare value is CONSTANT and fills all twelve months. DEWPOINT
+        // stores dew-point temperature (project temperature units) that the
+        // engine converts to RH each step.
         else if (key == "HUMIDITY" && tok.size() >= 2) {
-            const std::string htype = Tokenizer::to_upper(tok[1]);
-            if (htype == "MONTHLY" && tok.size() >= 14) {
+            std::size_t p = 1;
+            ctx.options.humidity_var = 0;
+            if (Tokenizer::to_upper(tok[p]) == "DEWPOINT") {
+                ctx.options.humidity_var = 1;
+                ++p;
+            }
+            if (p >= tok.size()) continue;
+            const std::string htype = Tokenizer::to_upper(tok[p]);
+            if (htype == "MONTHLY" && tok.size() >= p + 13) {
+                ctx.options.humidity_type = 1;
                 for (int i = 0; i < 12; ++i)
-                    ctx.options.humidity[i] = to_double(tok[2 + i]);
-            } else {
-                const double h = to_double(tok[1]);
+                    ctx.options.humidity[i] = to_double(tok[p + 1 + static_cast<std::size_t>(i)]);
+            }
+            else if (htype == "TIMESERIES" && tok.size() >= p + 2) {
+                ctx.options.humidity_type = 2;
+                ctx.options.humidity_ts_name = tok[p + 1];
+            }
+            else if (htype != "MONTHLY" && htype != "TIMESERIES") {
+                ctx.options.humidity_type = 0;
+                const double h = to_double(tok[p]);
                 for (int i = 0; i < 12; ++i) ctx.options.humidity[i] = h;
             }
         }

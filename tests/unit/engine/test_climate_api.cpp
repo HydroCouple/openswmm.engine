@@ -54,6 +54,8 @@ constexpr double kEvapMonthly[12] =
     {0.10,0.11,0.12,0.13,0.14,0.15,0.16,0.17,0.18,0.19,0.20,0.21};
 constexpr double kWindMonthly[12] =
     {1,2,3,4,5,6,7,8,9,10,11,12};
+constexpr double kHumidityMonthly[12] =
+    {40,42,44,46,48,50,52,54,56,58,60,62};
 constexpr double kAdcImperv[10] =
     {1.0,0.9,0.8,0.7,0.6,0.5,0.4,0.3,0.2,0.1};
 constexpr double kAdcPerv[10] =
@@ -104,6 +106,12 @@ TEST_F(ClimateConfigCApi, ScalarsMatchParsedInput) {
     EXPECT_EQ(swmm_climate_get_wind_type(engine_, &wtype), SWMM_OK);
     EXPECT_EQ(wtype, SWMM_WIND_MONTHLY);
 
+    int htype = -1, hvar = -1;
+    EXPECT_EQ(swmm_climate_get_humidity_type(engine_, &htype), SWMM_OK);
+    EXPECT_EQ(htype, SWMM_HUMIDITY_MONTHLY);
+    EXPECT_EQ(swmm_climate_get_humidity_variable(engine_, &hvar), SWMM_OK);
+    EXPECT_EQ(hvar, SWMM_HUMIDITY_RELATIVE);
+
     EXPECT_EQ(swmm_climate_get_snow_temp(engine_, &d), SWMM_OK);
     EXPECT_DOUBLE_EQ(d, 32.5);
     EXPECT_EQ(swmm_climate_get_ati_weight(engine_, &d), SWMM_OK);
@@ -123,6 +131,9 @@ TEST_F(ClimateConfigCApi, ArraysMatchParsedInput) {
 
     EXPECT_EQ(swmm_climate_get_wind_monthly(engine_, m12.data(), 12), SWMM_OK);
     for (int i = 0; i < 12; ++i) EXPECT_DOUBLE_EQ(m12[i], kWindMonthly[i]) << "wind[" << i << "]";
+
+    EXPECT_EQ(swmm_climate_get_humidity_monthly(engine_, m12.data(), 12), SWMM_OK);
+    for (int i = 0; i < 12; ++i) EXPECT_DOUBLE_EQ(m12[i], kHumidityMonthly[i]) << "rh[" << i << "]";
 
     EXPECT_EQ(swmm_climate_get_adc_impervious(engine_, a10.data(), 10), SWMM_OK);
     for (int i = 0; i < 10; ++i) EXPECT_DOUBLE_EQ(a10[i], kAdcImperv[i]) << "adcI[" << i << "]";
@@ -212,6 +223,10 @@ TEST_F(ClimateConfigCApi, ArraySettersRoundTrip) {
     EXPECT_EQ(swmm_climate_get_wind_monthly(engine_, out12.data(), 12), SWMM_OK);
     EXPECT_EQ(in12, out12);
 
+    EXPECT_EQ(swmm_climate_set_humidity_monthly(engine_, in12.data(), 12), SWMM_OK);
+    EXPECT_EQ(swmm_climate_get_humidity_monthly(engine_, out12.data(), 12), SWMM_OK);
+    EXPECT_EQ(in12, out12);
+
     EXPECT_EQ(swmm_climate_set_adc_impervious(engine_, in10.data(), 10), SWMM_OK);
     EXPECT_EQ(swmm_climate_get_adc_impervious(engine_, out10.data(), 10), SWMM_OK);
     EXPECT_EQ(in10, out10);
@@ -250,6 +265,15 @@ TEST_F(ClimateConfigCApi, TimeseriesSettersSwitchSource) {
     EXPECT_EQ(t, SWMM_EVAP_TIMESERIES);
     EXPECT_EQ(swmm_climate_get_evap_timeseries(engine_, buf, sizeof(buf)), SWMM_OK);
     EXPECT_STREQ(buf, "TS1");
+
+    EXPECT_EQ(swmm_climate_set_humidity_timeseries(engine_, "TS1"), SWMM_OK);
+    EXPECT_EQ(swmm_climate_get_humidity_type(engine_, &t), SWMM_OK);
+    EXPECT_EQ(t, SWMM_HUMIDITY_TIMESERIES);
+    EXPECT_EQ(swmm_climate_get_humidity_timeseries(engine_, buf, sizeof(buf)), SWMM_OK);
+    EXPECT_STREQ(buf, "TS1");
+    EXPECT_EQ(swmm_climate_set_humidity_variable(engine_, SWMM_HUMIDITY_DEWPOINT), SWMM_OK);
+    EXPECT_EQ(swmm_climate_get_humidity_variable(engine_, &t), SWMM_OK);
+    EXPECT_EQ(t, SWMM_HUMIDITY_DEWPOINT);
 }
 
 // ---------------------------------------------------------------------------
@@ -264,6 +288,10 @@ TEST_F(ClimateConfigCApi, EnumSettersRejectOutOfRange) {
     EXPECT_NE(swmm_climate_set_evap_type(engine_, -1),   SWMM_OK);
     EXPECT_NE(swmm_climate_set_wind_type(engine_, 2),    SWMM_OK);
     EXPECT_NE(swmm_climate_set_wind_type(engine_, -1),   SWMM_OK);
+    EXPECT_NE(swmm_climate_set_humidity_type(engine_, 3),     SWMM_OK);
+    EXPECT_NE(swmm_climate_set_humidity_type(engine_, -1),    SWMM_OK);
+    EXPECT_NE(swmm_climate_set_humidity_variable(engine_, 2), SWMM_OK);
+    EXPECT_NE(swmm_climate_set_humidity_variable(engine_, -1),SWMM_OK);
     EXPECT_NE(swmm_climate_set_temp_units(engine_, 3),   SWMM_OK);
     EXPECT_NE(swmm_climate_set_temp_units(engine_, -2),  SWMM_OK);
     EXPECT_EQ(swmm_climate_set_temp_units(engine_, -1),  SWMM_OK);  // -1 is valid (unspecified)
