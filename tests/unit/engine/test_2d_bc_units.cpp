@@ -132,7 +132,11 @@ TEST(BcUnits2D, ConstantsScaleOnceAndRoundTripThroughWriter) {
 
     Eng a(inp, "const_us");
     ASSERT_EQ(a.open_rc, SWMM_OK);
-    // Pre-initialize: values are still the authored display units.
+    // Pre-initialize: values are still the authored display units. In the
+    // freshly OPENED state BoundaryData is unsized until the pending rows
+    // are drained (SVBC round A8 — the getters refuse cleanly before that),
+    // so drain them the way the GUI does before its opened-state reads.
+    ASSERT_EQ(swmm_2d_prepare_for_edit(a.e), SWMM_OK);
     EXPECT_NEAR(a.head(0, 2), 32.808, 1e-9);
     EXPECT_NEAR(a.flow(1, 2), 1.0, 1e-12);
 
@@ -184,9 +188,18 @@ double tsStageAfterOneStep(const std::string& stem, bool si_header) {
     if (e.open_rc != SWMM_OK) return std::nan("");
     if (swmm_engine_initialize(e.e) != SWMM_OK) return std::nan("");
     if (swmm_engine_start(e.e, 0) != SWMM_OK) return std::nan("");
-    double elapsed = 0.0;
-    if (swmm_engine_step(e.e, &elapsed) != SWMM_OK) return std::nan("");
-    const double h = e.head(0, 2);
+    // The 2D solver advances in sync windows that lag the 1D clock by one
+    // step, and a TS-driven head is written by resolveBoundaryValues() only
+    // when a window actually runs — after a single 1D step the slot still
+    // holds its drained 0.0. Step until the window has fired (bounded so a
+    // genuinely broken lookup still fails the test instead of hanging).
+    double h = 0.0;
+    for (int k = 0; k < 50; ++k) {
+        double elapsed = 0.0;
+        if (swmm_engine_step(e.e, &elapsed) != SWMM_OK) return std::nan("");
+        h = e.head(0, 2);
+        if (h != 0.0 || elapsed <= 0.0) break;
+    }
     swmm_engine_end(e.e);
     return h;
 }

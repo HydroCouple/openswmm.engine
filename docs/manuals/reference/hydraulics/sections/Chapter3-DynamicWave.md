@@ -986,10 +986,12 @@ the following, which are enforced when the input file is processed:
 3.  Both conduit offsets at the node are zero; the node's invert is
     continuous with both conduit inverts.
 
-4.  No lateral inflow of any kind targets the node — external or dry
-    weather inflows, RDII, subcatchment outlets, LID drains, or
-    two-dimensional surface coupling. All inflow must arrive through
-    the upstream conduit.
+4.  The node is not a two-dimensional surface coupling point. A virtual
+    junction has no opening, so it cannot exchange water with an
+    overlying surface mesh. Point lateral inflows — external and dry
+    weather inflows, RDII, subcatchment outlets, LID drains and the
+    runtime lateral-inflow API — are permitted; see *Lateral inflows*
+    below.
 
 5.  The routing method is dynamic wave (or the finite-volume method of
     @ref hydraulics_ref_ch8_finite_volume "Chapter 8", under which a
@@ -1069,6 +1071,36 @@ reports its maximum and mean in a Virtual Junction Summary in the
 status report. With identical cross-sections and a shared node head the
 hydrostatic terms cancel, so *R*<sub>j</sub> measures the discrete momentum-flux
 mismatch directly.
+
+**Lateral inflows.** A point lateral inflow at a virtual junction is
+integrated exactly as at any other node: it enters the flow balance
+\f$\sum Q\f$ of the zero-storage update, so at convergence the
+downstream conduit carries the upstream discharge plus the lateral.
+The node stays sealed — a lateral that exceeds the pair's capacity
+raises the head above the crown without flooding or ponding, as a tap
+into a buried main would — and its committed volume remains zero.
+One guard is added. At a dry pair the natural half-link area vanishes
+and \f$\sum \partial Q/\partial H\f$ is zero, so an imposed inflow
+would either divide a finite volume by nothing or fall into the
+dry-pair hold and be swallowed. While the node carries a lateral its
+surface area is therefore floored at a *wetting floor*: the pair's own
+natural half-link area evaluated at a seed depth of 2 % of the pipe's
+full depth, \f$w(0.02\,y_{full})\,(L_{up}+L_{dn})/2\f$ per barrel. The
+floor is continuous with the natural area (the larger of the two is
+used) and inert once the pair is wetter than the seed depth, so it
+scales with the reach instead of introducing the fixed
+*A*<sub>Smin</sub> storage the feature removes. Unfed virtual junctions
+keep their unfloored arithmetic. The momentum coupling is unchanged:
+the upwinding of Equations 3-19 and 3-20 hands the upstream conduit's
+state across the node, so with a lateral the treatment is first order
+in \f$q_{lat}/Q\f$ — the same class of approximation a regular junction
+makes for all of its momentum — and the residual *R*<sub>j</sub> of
+Equation 3-44 is legitimately nonzero at a fed node, which the Virtual
+Junction Summary marks. Under the finite-volume method the lateral is
+divided equally between the two cells adjoining the spliced face as a
+zero-momentum source (Chapter 8, §8.6.2). Re-fusing a fed virtual
+junction removes its inflow rows and unassigns any subcatchment or LID
+drain that targeted it, exactly as deleting the node would.
 
 **Modeling implications.** A virtual junction transmits streamwise
 momentum and is intended for grade breaks between near-collinear

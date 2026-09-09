@@ -1404,6 +1404,15 @@ flux continuity across a virtual junction are then properties of the
 scheme rather than a special treatment, and a conduit split by a
 virtual junction reproduces the unsplit conduit cell for cell.
 
+The one node-level quantity a virtual junction can still carry is a
+point lateral inflow (Chapter 3, §3.3.10). The node owns no face, so
+the inflow is divided equally between the two cells adjoining its
+spliced face and enters their mass equations as a zero-momentum source
+— the same treatment a clean degree-2 junction's lateral receives
+(§8.6.3) — and the node reports its through-flow plus the lateral as
+total inflow. A device backend that receives the per-node lateral must
+apply the same split; integrating it on the node would discard it.
+
 ### 8.6.3 Outfalls, structures and lateral inflow
 
 Outfalls are stage boundaries: the head computed by the existing
@@ -1437,9 +1446,10 @@ wall only while the flux would run the wrong way; closing it mirrors the
 interior state across the face, which returns exactly zero mass flux and
 leaves the interior its own hydrostatic pressure.
 
-Lateral inflows enter at regular nodes exactly as assembled for any
-other routing method. Distributed conduit losses — evaporation and
-seepage — enter the cell mass equation as \f$q_L\f$ in (8-1).
+Lateral inflows enter at nodes exactly as assembled for any other
+routing method; at a virtual junction the inflow is split between the
+two spliced cells (§8.6.2). Distributed conduit losses — evaporation
+and seepage — enter the cell mass equation as \f$q_L\f$ in (8-1).
 
 ### 8.6.4 Culvert inlet control
 
