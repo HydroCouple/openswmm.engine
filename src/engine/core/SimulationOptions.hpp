@@ -341,23 +341,8 @@ struct SimulationOptions {
      *          never reached the running state. Surface heat exchange is the
      *          first consumer, so the deck key arrives with it. Monthly like
      *          `WINDSPEED`; a single value fills all twelve months.
-     *
-     *          Holds RH (%) when `humidity_var == 0`, dew point (project
-     *          temperature units) when `humidity_var == 1`. Used when
-     *          `humidity_type` is CONSTANT (0) or MONTHLY (1).
      */
     double humidity[12] = {50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50};
-
-    /** @brief Humidity source: 0=CONSTANT, 1=MONTHLY, 2=TIMESERIES. */
-    int humidity_type = 0;
-
-    /** @brief Humidity quantity: 0=RELATIVE (%), 1=DEWPOINT (deg F US / deg C SI).
-     *  @details Dew point is converted to RH each step from the effective air
-     *           temperature: RH = 100·e_s(Td)/e_s(Ta), clamped to [0, 100]. */
-    int humidity_var = 0;
-
-    /** @brief Timeseries name for humidity (humidity_type == 2). */
-    std::string humidity_ts_name;
 
     /**
      * @brief Water density, kg/m³ (`[OPTIONS] WATER_DENSITY`; CSH Table 4.1).

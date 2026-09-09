@@ -383,15 +383,8 @@ void handle_aquifers(SimulationContext& ctx, const std::vector<std::string>& lin
 void handle_groundwater(SimulationContext& ctx, const std::vector<std::string>& lines) {
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
-        if (tok.empty()) continue;
+        if (tok.size() < 11) continue;
         // Subcatch  Aquifer  Node  SurfEl  A1  B1  A2  B2  A3  Twgr  Hstar
-        // Legacy gwater.c gwater_readGroundwaterParams requires >= 11 tokens;
-        // fewer is ERR_ITEMS (too few items). v6 formerly skipped short rows
-        // silently, so a truncated row ran instead of being rejected.
-        if (tok.size() < 11) {
-            ctx.errors.push_back(format_error(ERR_ITEMS, ""));
-            continue;
-        }
 
         const int idx = ctx.subcatch_names.find(tok[0]);
         if (idx < 0) continue;

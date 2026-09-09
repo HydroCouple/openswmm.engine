@@ -144,13 +144,7 @@ void StructureSolver::init(SimulationContext& ctx) {
                     if (tt >= 7 && tt <= 11)
                         pumps_.curve_type[uk] = tt - 6; // 7→1, 8→2, 9→3, 10→4, 11→5
                     else
-                        pumps_.curve_type[uk] = 6; // curve present but not a pump type
-                } else {
-                    // No curve ('*' in [PUMPS]) => IDEAL_PUMP (legacy link.c:81).
-                    // Without this the type stayed 0, matched no case in
-                    // computePumpFlowK, and the pump conveyed nothing — its inlet
-                    // node filled instead of draining (e.g. longfm node T).
-                    pumps_.curve_type[uk] = 6;
+                        pumps_.curve_type[uk] = 6; // Ideal pump if no curve
                 }
                 // Mirror curve_type for use by DW non_conduit_fn (TYPE4_PUMP
                 // excluded from dqdh per legacy dynwave.c:565-575). Phase 6
@@ -397,15 +391,8 @@ void StructureSolver::computePumpFlowK(SimulationContext& ctx, double dt,
         }
 
         q = std::max(q, 0.0);
-        // Convert from display flow units to CFS (matching legacy / UCF(FLOW)).
-        // The curve pumps (1-5) yield flow in display units; the ideal pump (6)
-        // already yields CFS (it is the node inflow), so it must NOT be divided
-        // again — legacy pump_getInflow applies UCF(FLOW) only inside the curve
-        // cases, never to IDEAL_PUMP (link.c:81-82). Under non-CFS units this
-        // spurious division shrank the ideal pump ~UCF-fold, so its inlet node
-        // filled instead of draining (e.g. longfm node T under LPS). No-op for
-        // CFS (ucf_flow == 1), so CFS decks stay bit-identical.
-        if (ct != 6) q /= ucf_flow;
+        // Convert from display flow units to CFS (matching legacy / UCF(FLOW))
+        q /= ucf_flow;
         q *= links.setting[uj];
 
         // Limit pump flow to prevent inlet node from going dry

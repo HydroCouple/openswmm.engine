@@ -138,7 +138,6 @@ struct ClimateState {
     // Resolved timeseries/pattern indices (set at init, -1 = none)
     int temp_ts_index     = -1;   ///< Temperature timeseries table index
     int evap_ts_index     = -1;   ///< Evaporation timeseries table index
-    int humidity_ts_index = -1;   ///< Humidity / dew-point timeseries table index
     int recovery_pat_index = -1;  ///< Recovery pattern index in ctx.patterns
 
     // Sub-daily sinusoidal temperature interpolation (Gap #9)
