@@ -39,6 +39,13 @@ int ompAvailable();
 /// 0 on Intel Macs, other platforms, or sysctl failure.
 int perfCores();
 
+/// Threads the HOST application keeps busy alongside the engine
+/// (OPENSWMM_HOST_RESERVED_THREADS; 0 when unset or invalid). A GUI that
+/// runs the engine in-process sets it — its own event thread, a render
+/// thread, the engine IO thread — so that isOversubscribed() and the
+/// active spin-wait decision see the whole process, not just the team.
+int hostReservedThreads();
+
 /// Threads the Kokkos OpenMP 2D backend was initialised with in this
 /// process; 0 until the plugin initialises (or when no plugin is loaded).
 int kokkosOmpThreads();
@@ -65,8 +72,10 @@ void setKokkosOmpThreads(int n);
 int resolveRequested(int requested, const char* what,
                      std::vector<std::string>* warnings);
 
-/// True when @p threads exceeds the logical CPU count (the runtime would
-/// oversubscribe). Used to decide whether an active spin-wait policy is safe.
+/// True when @p threads plus hostReservedThreads() exceed the logical CPU
+/// count (the runtime would oversubscribe). Used to decide whether an active
+/// spin-wait policy is safe: a spinner waiting on a DESCHEDULED spinner
+/// turns every barrier into a scheduler-quantum stall.
 bool isOversubscribed(int threads);
 
 /// Minimum conduits of momentum work per dynamic-wave team thread before an

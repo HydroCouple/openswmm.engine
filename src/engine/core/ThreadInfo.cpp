@@ -10,6 +10,7 @@
 
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <thread>
 
 #if defined(SWMM_USE_OPENMP)
@@ -69,9 +70,16 @@ void setKokkosOmpThreads(int n) {
     g_kokkos_omp_threads.store(n > 0 ? n : 0, std::memory_order_relaxed);
 }
 
+int hostReservedThreads() {
+    const char* s = std::getenv("OPENSWMM_HOST_RESERVED_THREADS");
+    if (!s || !*s) return 0;
+    const int n = std::atoi(s);
+    return n > 0 ? n : 0;
+}
+
 bool isOversubscribed(int threads) {
     const int logical = logicalCpus();
-    return logical > 0 && threads > logical;
+    return logical > 0 && threads + hostReservedThreads() > logical;
 }
 
 int resolveRequested(int requested, const char* what,
@@ -83,13 +91,22 @@ int resolveRequested(int requested, const char* what,
     if (!warnings) return nt;
 
     char buf[512];
-    const int logical = logicalCpus();
-    if (logical > 0 && nt > logical) {
-        std::snprintf(buf, sizeof buf,
-            "THREADS = %d exceeds the %d logical processors on this machine "
-            "(%s). The run will be oversubscribed and is likely to be slower; "
-            "active spin-wait is disabled for this run.",
-            nt, logical, what);
+    const int logical  = logicalCpus();
+    const int reserved = hostReservedThreads();
+    if (logical > 0 && nt + reserved > logical) {
+        if (reserved > 0)
+            std::snprintf(buf, sizeof buf,
+                "THREADS = %d plus the %d threads the host application reserves "
+                "for itself exceed the %d logical processors on this machine "
+                "(%s). The run is oversubscribed and is likely to be slower; "
+                "active spin-wait is disabled for this run.",
+                nt, reserved, logical, what);
+        else
+            std::snprintf(buf, sizeof buf,
+                "THREADS = %d exceeds the %d logical processors on this machine "
+                "(%s). The run will be oversubscribed and is likely to be slower; "
+                "active spin-wait is disabled for this run.",
+                nt, logical, what);
         warnings->emplace_back(buf);
     } else if (nt > omp_max) {
         std::snprintf(buf, sizeof buf,

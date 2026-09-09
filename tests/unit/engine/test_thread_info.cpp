@@ -17,6 +17,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -124,6 +125,47 @@ TEST(ThreadInfo, ExplicitAboveLogicalIsHonouredAndWarned) {
     EXPECT_TRUE(hasWarningContaining(w, "logical processors"));
     EXPECT_TRUE(ti::isOversubscribed(req));
     EXPECT_FALSE(ti::isOversubscribed(logical));
+}
+
+namespace {
+void setEnvVar(const char* name, const char* value) {
+#if defined(_WIN32)
+    _putenv_s(name, value ? value : "");
+#else
+    if (value) setenv(name, value, 1); else unsetenv(name);
+#endif
+}
+} // namespace
+
+// A host that runs the engine in-process (the GUI) declares the threads it
+// keeps busy itself (OPENSWMM_HOST_RESERVED_THREADS). They count toward
+// oversubscription, so the active spin-wait policy is not chosen for a team
+// that only "fits" the machine on paper.
+TEST(ThreadInfo, HostReservedThreadsCountTowardOversubscription) {
+    const int logical = ti::logicalCpus();
+    if (logical < 4) GTEST_SKIP() << "needs >= 4 logical CPUs";
+
+    setEnvVar("OPENSWMM_HOST_RESERVED_THREADS", nullptr);
+    EXPECT_EQ(ti::hostReservedThreads(), 0);
+    EXPECT_FALSE(ti::isOversubscribed(logical - 2));
+    EXPECT_TRUE(ti::isOversubscribed(logical + 1));
+
+    setEnvVar("OPENSWMM_HOST_RESERVED_THREADS", "3");
+    EXPECT_EQ(ti::hostReservedThreads(), 3);
+    EXPECT_TRUE(ti::isOversubscribed(logical - 2));
+    EXPECT_FALSE(ti::isOversubscribed(logical - 3));
+
+    std::vector<std::string> warnings;
+    EXPECT_EQ(ti::resolveRequested(logical - 2, "test", &warnings), logical - 2);
+    ASSERT_FALSE(warnings.empty());
+    bool named = false;
+    for (const auto& w : warnings)
+        named = named || w.find("host application reserves") != std::string::npos;
+    EXPECT_TRUE(named);
+
+    setEnvVar("OPENSWMM_HOST_RESERVED_THREADS", "garbage");
+    EXPECT_EQ(ti::hostReservedThreads(), 0);
+    setEnvVar("OPENSWMM_HOST_RESERVED_THREADS", nullptr);
 }
 
 TEST(ThreadInfo, DwSizeGateReducesExplicitRequestWithWarning) {

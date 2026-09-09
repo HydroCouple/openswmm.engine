@@ -6686,7 +6686,13 @@ void SWMMEngine::initHydraulics() noexcept {
                 // the values do not vary per engine. kmp_set_blocktime below
                 // stays per-call: it is a runtime call, not an environment write.
                 static std::once_flag omp_wait_policy_set;
+                // A host that pre-set KMP_BLOCKTIME (a GUI sharing the CPUs
+                // with its own threads, or a user A/B) keeps its value: the
+                // setenv below already leaves it alone, and the runtime call
+                // after it must not override it either.
+                static bool host_set_blocktime = false;
                 std::call_once(omp_wait_policy_set, [] {
+                    host_set_blocktime = std::getenv("KMP_BLOCKTIME") != nullptr;
                     setenv("OMP_WAIT_POLICY", "active", 0);
                     setenv("KMP_BLOCKTIME", "infinite", 0);
                 });
@@ -6694,7 +6700,7 @@ void SWMMEngine::initHydraulics() noexcept {
                 // libomp extension: set spin-wait blocktime on the calling
                 // (master) thread; workers forked by it inherit the setting.
                 // Effective even when the runtime pre-dates the setenv above.
-                kmp_set_blocktime(2147483647);
+                if (!host_set_blocktime) kmp_set_blocktime(2147483647);
 #endif
             }
         }
