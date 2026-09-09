@@ -326,6 +326,67 @@ TEST(FvNetwork, VirtualJunctionIsIndistinguishableFromAnInteriorCut) {
     }
 }
 
+// A lateral inflow AT the virtual junction (plans/VJ_LATERAL_INFLOW_PLAN_
+// 2026-09-04.md §E3). The node owns no faces, so the solver must split the
+// water into the two cells adjoining the spliced face; before that split the
+// forcing was silently discarded. Closed (walled) channel: every drop injected
+// has to show up in the cells.
+TEST(FvNetwork, VirtualJunctionLateralIsSplitIntoBothSpliceCells) {
+    const int half = 20;
+    const double dx = 8.0;
+    const XSectParams xs = rectOpen(15.0, 12.0);
+    Channel ch = makeSplitChannel(xs, half, dx, 0.02, false);
+
+    // One node — the virtual junction the split face (index `half`)
+    // replaced. It has no face list of its own; node_vj_face is the only
+    // association the solver gets.
+    const int f_vj = half;
+    ch.mesh.node_invert      = {ch.mesh.face_zb[static_cast<std::size_t>(f_vj)]};
+    ch.mesh.node_full_depth  = {1.0e6};
+    ch.mesh.node_ponded_area = {0.0};
+    ch.mesh.node_kind        = {kNodeVirtual};
+    ch.mesh.node_area        = {openswmm::constants::MIN_SURFAREA};
+    ch.mesh.node_vol_off     = {-1};
+    ch.mesh.node_vol_dmax    = {0.0};
+    ch.mesh.node_vol_atop    = {0.0};
+    ch.mesh.node_vj_face     = {f_vj};
+    ch.mesh.node_face_ptr    = {0, 0};
+    ch.mesh.face_vj_node[static_cast<std::size_t>(f_vj)] = 0;
+    ch.state.resize(2 * half, 1, 0);
+    seedLevel(ch, 11.0);            // level pool: nothing moves but the lateral
+
+    FvOptions o = defaultOptions();
+    ExplicitFvSolver s;
+    s.initialize(ch.mesh, ch.state, o);
+
+    const double q_lat = 2.0;
+    std::vector<double> lateral = {q_lat};
+    std::vector<double> fixed   = {std::numeric_limits<double>::quiet_NaN()};
+    FvStepForcing f;
+    f.node_lateral    = lateral.data();
+    f.node_fixed_head = fixed.data();
+    f.n_nodes = 1;
+
+    const auto ul = static_cast<std::size_t>(half - 1);
+    const auto ur = static_cast<std::size_t>(half);
+    const double v0   = totalVolume(ch);
+    const double a_l0 = ch.state.cell_a[ul];
+    const double a_r0 = ch.state.cell_a[ur];
+
+    s.advance(0.0, 1.0, f);
+    // The first second lands the water in the two spliced cells, half each
+    // (up to the flux exchange that already starts spreading it).
+    const double d_l = ch.state.cell_a[ul] - a_l0;
+    const double d_r = ch.state.cell_a[ur] - a_r0;
+    EXPECT_GT(d_l, 0.0);
+    EXPECT_GT(d_r, 0.0);
+    EXPECT_NEAR(d_l, d_r, 0.05 * std::max(d_l, d_r));
+
+    for (double t = 1.0; t < 60.0; t += 1.0) s.advance(t, t + 1.0, f);
+    EXPECT_NEAR(totalVolume(ch) - v0, q_lat * 60.0, 1.0e-9 * q_lat * 60.0)
+        << "the lateral at the virtual junction is not conserved";
+}
+
 // ===========================================================================
 // §6.6 — Mixed-flow transitions
 // ===========================================================================

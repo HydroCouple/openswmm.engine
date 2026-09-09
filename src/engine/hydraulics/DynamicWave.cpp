@@ -959,6 +959,7 @@ void DWSolver::buildVirtualJunctionPairs(const SimulationContext& ctx) {
     vjunc_.clear();
     vj_pair_n1_.assign(static_cast<std::size_t>(n_links_), -1);
     vj_pair_n2_.assign(static_cast<std::size_t>(n_links_), -1);
+    vj_wet_floor_.assign(static_cast<std::size_t>(n_nodes_), 0.0);
 
     std::vector<int> row_of_node(static_cast<std::size_t>(n_nodes_), -1);
     for (int i = 0; i < n_nodes_; ++i) {
@@ -1012,6 +1013,20 @@ void DWSolver::buildVirtualJunctionPairs(const SimulationContext& ctx) {
         const double la = (ca >= 0) ? CD.length[static_cast<std::size_t>(ca)] : 0.0;
         const double lb = (cb >= 0) ? CD.length[static_cast<std::size_t>(cb)] : 0.0;
         p.lambda = 0.5 * (la + lb);
+
+        // Wetting floor for a fed pair: end and mid widths both at the seed
+        // depth, through the same (w_end + w_mid)·L/4 per-link accumulation
+        // computeLinkGeometry feeds the node — two links ⇒ w·(L_a+L_b)/2 —
+        // per barrel. Read by setNodeDepth only while the node carries a
+        // lateral inflow (plans/VJ_LATERAL_INFLOW_PLAN_2026-09-04.md §E2).
+        {
+            const XSectParams xs = buildXSP(ctx, ua);
+            const double y_seed = kVjWetSeedFrac * links.xsect_y_full[ua];
+            const double w_seed = (y_seed > 0.0) ? xsect::getWofY(xs, y_seed) : 0.0;
+            const int barrels = (ca >= 0) ? CD.barrels[static_cast<std::size_t>(ca)] : 1;
+            vj_wet_floor_[static_cast<std::size_t>(p.node)] =
+                w_seed * p.lambda * static_cast<double>(barrels);
+        }
     }
 }
 
@@ -3606,6 +3621,8 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
     // committed volume stays identically zero).
     if (t.is_virtual == 0)
         surf_area = std::max(surf_area, min_surf_area_);
+    else if (nodes.lat_flow[ui] != 0.0 && ui < vj_wet_floor_.size())
+        surf_area = std::max(surf_area, vj_wet_floor_[ui]);
 
     // --- Net flow volume change (trapezoidal averaging with previous step) ---
     double dQ = nodes.inflow[ui] - nodes.outflow[ui];
@@ -3658,6 +3675,16 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
     // — the relation this node type actually obeys. sumdqdh is accumulated
     // non-negative (g*dt*A/L/denom per link), so the sum is positive whenever
     // the node has either storage or a live flow path.
+    // A lateral inflow at the node (allowed since
+    // plans/VJ_LATERAL_INFLOW_PLAN_2026-09-04.md) needs one more guard: at a
+    // dry pair the natural area is ~FUDGE·L and sumdqdh is 0, so the explicit
+    // dV/A step would divide an imposed volume by nothing and the dry-pair
+    // hold below would swallow it — booked as system inflow, never routed.
+    // While lat_flow is nonzero the area is floored at vj_wet_floor_ (applied
+    // above): the pair's own natural area at a seed depth of
+    // kVjWetSeedFrac·y_full, continuous with the natural area (max of the
+    // two) and inert once the pair is wetter than the seed depth. Unfed
+    // virtual junctions and every real node keep their exact arithmetic.
     if (t.is_virtual != 0) {
         const double sum = xnode_.sumdqdh[ui];
         const double denom_semi = surf_area + 0.5 * dt * sum;

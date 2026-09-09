@@ -162,7 +162,9 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
     // (no storage table) with at least one incident face. A node with only
     // structure links has no face flux to balance — its residual would carry
     // no head dependence — so it keeps the bucket machinery. Outfalls are
-    // excluded by kind; virtual junctions never reach the node paths at all.
+    // excluded by kind; virtual junctions never reach the node paths at all
+    // (their only node-level state is a lateral inflow, which
+    // refreshStructFlows diverts into the two spliced cells).
     node_alg_.assign(nn, 0);
     node_carry_.assign(nn, 0.0);
     node_vfull_.assign(nn, 0.0);
@@ -202,6 +204,36 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
         if (clean &&
             mesh_->node_face_ptr[un + 1] - mesh_->node_face_ptr[un] == 2)
             node_pass_static_[un] = 1;
+    }
+
+    // Rim cap for the diverted lateral (face_a_rim_ in the header): the
+    // receiving cell's area at the junction rim, per boundary face of every
+    // statically pass-through-eligible junction. Static for the run, as the
+    // rim and the cell bed are. The rim is the same ceiling the solved path
+    // brackets against (solveAlgebraicNode's `top`).
+    face_a_rim_.assign(nf, std::numeric_limits<double>::infinity());
+    face_lat_spill_.assign(nf, 0.0);
+    for (std::size_t un = 0; un < nn; ++un) {
+        if (!node_pass_static_[un]) continue;
+        const double full = mesh_->node_full_depth[un];
+        if (!(full > 0.0)) continue;
+        const double rim = mesh_->node_invert[un] + full +
+                           (mesh_->node_can_pond[un] ? 0.0
+                                                     : mesh_->node_sur_depth[un]);
+        for (int p = mesh_->node_face_ptr[un];
+             p < mesh_->node_face_ptr[un + 1]; ++p) {
+            const auto uf = static_cast<std::size_t>(
+                mesh_->node_face_idx[static_cast<std::size_t>(p)]);
+            const int c = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
+                                                    : mesh_->face_cr[uf];
+            if (c < 0) continue;
+            const auto uc = static_cast<std::size_t>(c);
+            const FvGeometry& g =
+                mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
+            if (g.is_open) continue;   // a real free surface has no slot to overfill
+            const double h_rim = rim - mesh_->cell_zb[uc];
+            face_a_rim_[uf] = (h_rim > 0.0) ? k::areaOfDepth(g, h_rim) : 0.0;
+        }
     }
 }
 
@@ -1723,9 +1755,10 @@ void ExplicitFvSolver::updateCells(double dt, const FvStepForcing& forcing) {
 
         // Diverted junction lateral inflow (refreshStructFlows): mass only,
         // zero momentum, added BEFORE the scalar divide so clean inflow
-        // dilutes the advected species.
+        // dilutes the advected species. Capped at the junction rim; the
+        // surplus is banked for the node update (face_a_rim_).
         if (!cell_qlat_.empty() && cell_qlat_[uc] != 0.0)
-            a_new += dt * cell_qlat_[uc] * inv_dx;
+            a_new = injectDivertedLateral(uc, a_new, dt, inv_dx);
 
         // ---- advected scalars, on the SAME divergence -----------------------
         // Updating m = A·φ with the same face MASS fluxes and dividing by the
@@ -2186,20 +2219,61 @@ void ExplicitFvSolver::refreshStructFlows(const FvStepForcing& forcing) {
         // presenting anything to each other.
         const bool drains =
             !mesh_->node_dummy_drain.empty() && mesh_->node_dummy_drain[un];
+        // A SURCHARGED degree-2 junction takes the solved path too. The splice
+        // has no head state and so no rim: the water an overloaded pipe cannot
+        // pass has nowhere to go but the Preissmann slot, and its ~1e-3 m² of
+        // storage per pipe turns a tenth of a m³ of excess into a hundred
+        // metres of head (Bellinge, 2026-09-05 — ERROR 14 within a routing
+        // step of the first overload). Capping the injection alone
+        // (face_a_rim_) bounds the mass but leaves an on/off relief valve on a
+        // stiff acoustic line, which chatters and still diverged on chains of
+        // small pipes. The solved path is the boundary condition DW provides:
+        // a ghost head clamped at the rim, the surplus booked as flooding or
+        // ponding. Under pressure the ~1 mm splice accuracy is moot, so the
+        // trade is free. Evaluated here, at the top of a cycle with the
+        // ledger settled, like every other forcing change; the injection cap
+        // covers the cycle in between. Sticky in practice — a solved node
+        // banks a tolerance-scale residual carry every substep, which the
+        // carry test below reads as "not clean" — exactly as a structure flow
+        // has always revoked the splice for good.
         const bool clean = node_pass_static_[un] && !drains &&
-                           node_qstruct_[un] == 0.0 && node_carry_[un] == 0.0;
+                           node_qstruct_[un] == 0.0 && node_carry_[un] == 0.0 &&
+                           !incidentPressurized(un);
         const double lat =
             forcing.node_lateral ? forcing.node_lateral[un] : 0.0;
         if (clean && lat != 0.0) {
-            node_lat_div_[un] = 1;
+            bool credited = false;
             for (int p = mesh_->node_face_ptr[un];
                  p < mesh_->node_face_ptr[un + 1]; ++p) {
                 const auto uf = static_cast<std::size_t>(
                     mesh_->node_face_idx[static_cast<std::size_t>(p)]);
                 const int c = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
                                                         : mesh_->face_cr[uf];
-                if (c >= 0)
+                if (c >= 0) {
                     cell_qlat_[static_cast<std::size_t>(c)] += 0.5 * lat;
+                    credited = true;
+                }
+            }
+            // Flag only once a cell actually took the water: nodeLateral()
+            // reads the flag as "already delivered", so flagging a node whose
+            // faces credited nothing would make the inflow vanish. (A clean
+            // node always has two boundary faces, so this is a no-op today.)
+            if (credited) node_lat_div_[un] = 1;
+        } else if (lat != 0.0 && mesh_->node_kind[un] == kNodeVirtual &&
+                   !mesh_->node_vj_face.empty() &&
+                   mesh_->node_vj_face[un] >= 0) {
+            // A virtual junction owns no faces — its two conduits were spliced
+            // into one interior face — so the same half/half zero-momentum
+            // split goes to the two cells adjoining that face. Without this
+            // the lateral was booked by the mass balance and routed nowhere
+            // (plans/VJ_LATERAL_INFLOW_PLAN_2026-09-04.md §E3).
+            const auto uf = static_cast<std::size_t>(mesh_->node_vj_face[un]);
+            const int cl = mesh_->face_cl[uf];
+            const int cr = mesh_->face_cr[uf];
+            if (cl >= 0 && cr >= 0) {
+                cell_qlat_[static_cast<std::size_t>(cl)] += 0.5 * lat;
+                cell_qlat_[static_cast<std::size_t>(cr)] += 0.5 * lat;
+                node_lat_div_[un] = 1;
             }
         }
         node_pass_[un] = (clean && (lat == 0.0 || node_lat_div_[un])) ? 1 : 0;
@@ -2296,6 +2370,11 @@ void ExplicitFvSolver::updateNodes(double dt, const FvStepForcing& forcing) {
         }
         return sum * dt;
     });
+
+    // Lateral the incident cells refused at their rim this substep
+    // (injectDivertedLateral) — booked before the ledger loop so a pondable
+    // node demoted by it integrates the bucket path in this same substep.
+    bookLateralSpills(nullptr);
 
     for (int n = 0; n < nn; ++n) {
         const auto un = static_cast<std::size_t>(n);
@@ -2394,7 +2473,17 @@ void ExplicitFvSolver::settleAlgebraicNode(int n, double carry) {
     // are where an interface junction's water physically stands — split
     // evenly, zero momentum. Anything a near-dry cell cannot absorb stays
     // in the carry and demotes the node next step (conservative fallback).
-    if (!node_pass_.empty() && node_pass_[un] && carry != 0.0) {
+    //
+    // Never into a PRESSURIZED cell. Above the crown a cell's storage is the
+    // Preissmann slot, t_slot·dx, so the O(ΔB) window residual that is
+    // harmless as free-surface volume lands as hundreds of metres of head
+    // (Bellinge 2026-09-05: single-step spikes to 0.7–1.8 km at width-step
+    // junctions, recovering within the next step). Bank it instead — the
+    // banked carry is also what hands the junction to the solved path at
+    // the next refresh (refreshStructFlows), where the solve absorbs the
+    // residual as forcing.
+    if (!node_pass_.empty() && node_pass_[un] && carry != 0.0 &&
+        !incidentPressurized(un)) {
         double left = carry;
         const int b = mesh_->node_face_ptr[un];
         const int e = mesh_->node_face_ptr[un + 1];
@@ -2438,6 +2527,66 @@ void ExplicitFvSolver::settleAlgebraicNode(int n, double carry) {
     // from its balance).
     node_carry_[un] = carry;
     state_->node_volume[un] = std::max(0.0, carry);
+}
+
+// ===========================================================================
+// Diverted lateral: rim cap and spill booking (face_a_rim_ in the header)
+// ===========================================================================
+
+double ExplicitFvSolver::injectDivertedLateral(std::size_t uc, double a_new,
+                                               double dt, double inv_dx) {
+    const double add = dt * cell_qlat_[uc] * inv_dx;
+    // Withdrawals are not capped (the a_new >= 0 clamp that follows handles
+    // them), and a cell with no rimmed face takes the whole inflow as before.
+    if (add <= 0.0 || face_a_rim_.empty()) return a_new + add;
+    const int faces[2] = {mesh_->cell_face0[uc], mesh_->cell_face1[uc]};
+    int    f_rim = -1;
+    double a_rim = std::numeric_limits<double>::infinity();
+    for (const int f : faces) {
+        const auto uf = static_cast<std::size_t>(f);
+        if (face_a_rim_[uf] < a_rim) { a_rim = face_a_rim_[uf]; f_rim = f; }
+    }
+    if (f_rim < 0 || a_new + add <= a_rim) return a_new + add;
+    // The lowest rim binds first, as it would for two manholes on one pipe.
+    // Nothing already in the cell is removed — water its neighbours pushed
+    // above the rim stays and drains through the fluxes; only the INJECTION
+    // is refused, and the refused volume is banked for the node update.
+    const double room = std::max(0.0, a_rim - a_new);
+    face_lat_spill_[static_cast<std::size_t>(f_rim)] += (add - room) / inv_dx;
+    return a_new + room;
+}
+
+void ExplicitFvSolver::bookLateralSpills(const std::vector<int>* nodes) {
+    if (face_lat_spill_.empty()) return;
+    auto book = [&](int n) {
+        const auto un = static_cast<std::size_t>(n);
+        if (!node_pass_static_[un]) return;      // only their faces carry a rim
+        double spill = 0.0;
+        for (int p = mesh_->node_face_ptr[un];
+             p < mesh_->node_face_ptr[un + 1]; ++p) {
+            const auto uf = static_cast<std::size_t>(
+                mesh_->node_face_idx[static_cast<std::size_t>(p)]);
+            spill += face_lat_spill_[uf];
+            face_lat_spill_[uf] = 0.0;
+        }
+        if (spill <= 0.0) return;
+        if (mesh_->node_can_pond[un]) {
+            // Same destination as settleAlgebraicNode's ponding branch: real
+            // water on the ponded area. algebraicActive() then reads the node
+            // as demoted and the ledger loop that follows integrates it on the
+            // bucket path, head from volume, until it drains below v_full.
+            state_->node_volume[un] =
+                std::max(state_->node_volume[un], node_vfull_[un]) + spill;
+        } else {
+            flood_vol_[un] += spill;
+        }
+    };
+    if (nodes) {
+        for (const int n : *nodes) book(n);
+    } else {
+        const int nn = mesh_->n_nodes();
+        for (int n = 0; n < nn; ++n) book(n);
+    }
 }
 
 // ===========================================================================
@@ -2556,6 +2705,10 @@ void ExplicitFvSolver::restoreState() {
     flood_vol_          = save_flood_;
     cell_q_int_         = save_qint_;
     node_carry_         = save_carry_;
+    // Spill banked by the cells is drained by the node update of the same
+    // substep, so nothing should be pending here; a rolled-back step must not
+    // leave any to be booked against the restored state.
+    std::fill(face_lat_spill_.begin(), face_lat_spill_.end(), 0.0);
     if (tpa_) state_->cell_tpa = save_tpa_;   // BEFORE refreshDepths: h(A)
                                               // is regime-dependent (#156)
     refreshDepths();               // cell_h / eta / u are derived
@@ -3359,9 +3512,10 @@ void ExplicitFvSolver::fireCells(const std::vector<int>& cells, double dt0,
         acc_q_[uc] = 0.0;
 
         // Diverted junction lateral inflow over this cell's LTS window
-        // (mirrors updateCells; dt here is the tier window span).
+        // (mirrors updateCells; dt here is the tier window span), capped at
+        // the junction rim exactly as on the global path.
         if (!cell_qlat_.empty() && cell_qlat_[uc] != 0.0)
-            a_new += dt * cell_qlat_[uc] * inv_dx;
+            a_new = injectDivertedLateral(uc, a_new, dt, inv_dx);
 
         if (forcing.conduit_loss) {
             const int cr = mesh_->cell_conduit[uc];
@@ -3404,6 +3558,11 @@ void ExplicitFvSolver::fireNodes(const std::vector<int>& nodes, double dt0,
     // window's arrival volume and is zeroed below, so the drain has to be
     // computed from it BEFORE the loop consumes it.
     refreshDummyFlows(dt0, forcing, [&](std::size_t un) { return acc_nvol_[un]; });
+
+    // A pass-through node is pinned to its finest incident cell (assignTiers),
+    // so it is due whenever either cell fired: everything the cells refused at
+    // their rim in this window is booked here, in the same window.
+    bookLateralSpills(&nodes);
 
     for (const int n : nodes) {
         const auto un = static_cast<std::size_t>(n);

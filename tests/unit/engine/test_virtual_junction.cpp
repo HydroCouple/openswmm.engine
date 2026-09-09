@@ -47,6 +47,10 @@
 #include <openswmm/engine/openswmm_links.h>
 #include <openswmm/engine/openswmm_edit.h>
 #include <openswmm/engine/openswmm_massbalance.h>
+#include <openswmm/engine/openswmm_inflows.h>
+#include <openswmm/engine/openswmm_subcatchments.h>
+
+#include "core/SWMMEngine.hpp"   // published node inflow (no C getter)
 
 namespace fs = std::filesystem;
 
@@ -241,6 +245,43 @@ RunProbe runModel(SWMM_Engine e, const std::string& link_name,
     swmm_engine_end(e);
     p.ran = true;
     return p;
+}
+
+// Sections that make `outlet` the outlet of a small subcatchment under a
+// constant 1 in/hr rain, optionally with a bio-cell whose underdrain also
+// drains to that node. Appended through splitModel's extra_sections.
+std::string subcatchSections(const std::string& outlet, bool with_lid) {
+    std::string s =
+        "\n[RAINGAGES]\n"
+        ";;Name  Format     Interval  SCF  Source\n"
+        "RG1     INTENSITY  0:15      1.0  TIMESERIES  TS_RAIN\n"
+        "\n[SUBCATCHMENTS]\n"
+        ";;Name  Gage  Outlet  Area  %Imperv  Width  Slope  CurbLen\n"
+        "S1      RG1   " + outlet + "     2.0   50       200    0.5    0\n"
+        "\n[SUBAREAS]\n"
+        ";;Subcatch  N-Imperv  N-Perv  S-Imperv  S-Perv  PctZero  RouteTo\n"
+        "S1          0.01      0.1     0.05      0.05    25       OUTLET\n"
+        "\n[INFILTRATION]\n"
+        ";;Subcatch  MaxRate  MinRate  Decay  DryTime  MaxInfil\n"
+        "S1          3.0      0.5      4      7        0\n"
+        "\n[TIMESERIES]\n"
+        ";;Name   Time  Value\n"
+        "TS_RAIN  0:00  1.0\n"
+        "TS_RAIN  0:30  1.0\n";
+    if (with_lid) {
+        s +=
+        "\n[LID_CONTROLS]\n"
+        ";;Name  Type/Layer  Parameters\n"
+        "BC1     BC\n"
+        "BC1     SURFACE   6    0.0   0.1   1.0   5\n"
+        "BC1     SOIL      12   0.5   0.2   0.1   0.5   10.0  3.5\n"
+        "BC1     STORAGE   12   0.75  0.5   0\n"
+        "BC1     DRAIN     0.5  0.5   6     6     0     0\n"
+        "\n[LID_USAGE]\n"
+        ";;Subcatch  LID  Number  Area    Width  InitSat  FromImp  ToPerv  RptFile  DrainTo\n"
+        "S1          BC1  1       1000.0  20.0   0        50       0       *        " + outlet + "\n";
+    }
+    return s;
 }
 
 } // namespace
@@ -445,10 +486,24 @@ TEST(VirtualJunction, ValidationRuleCodes) {
     expectOpenError("vj_err_offset",
         splitModel(true, "", "CIRCULAR  1.0  0   0   0   1", "0.5  0"), "613");
 
-    // 617: lateral inflow targets the virtual junction.
-    expectOpenError("vj_err_inflow",
+    // 617: the virtual junction is a 2D surface-coupling point. Point lateral
+    // inflows are permitted (LateralSourcesOpenClean); only coupling to the
+    // overlying mesh is refused — a virtual junction has no opening.
+    expectOpenError("vj_err_2d",
         splitModel(true, "", "CIRCULAR  1.0  0   0   0   1", "0   0",
-                   "\n[DWF]\nMID  FLOW  0.1\n"), "617");
+                   "\n[2D_OPTIONS]\n"
+                   "INTEGRATOR       EXPLICIT\n"
+                   "REPORT_2D        NO\n"
+                   "\n[2D_VERTICES]\n"
+                   " 90.0  -10.0  16.0\n"
+                   "110.0  -10.0  16.0\n"
+                   "110.0   10.0  16.0\n"
+                   " 90.0   10.0  16.0\n"
+                   "\n[2D_TRIANGLES]\n"
+                   "0  1  2  0.03\n"
+                   "0  2  3  0.03\n"
+                   "\n[2D_VERTEX_NODE_MAP]\n"
+                   "0  MID  0.7  25\n"), "617");
 
     // 619: KINWAVE routing.
     {
@@ -901,22 +956,269 @@ TEST(VirtualJunction, FuseRejectsNonVirtual) {
 }
 
 // ---------------------------------------------------------------------------
-// Runtime lateral-inflow guard
+// Lateral inflows at a virtual junction
+// (plans/VJ_LATERAL_INFLOW_PLAN_2026-09-04.md)
 // ---------------------------------------------------------------------------
 
-TEST(VirtualJunction, RuntimeLateralInflowRejected) {
-    SWMM_Engine e = openModel("vj_runtime_guard", splitModel(true), true);
+// The runtime lateral-inflow API is accepted at a virtual junction: 1 cfs set
+// at MID joins the 1.5 cfs arriving through C_UP, the node still stores and
+// floods nothing, and the pair passes the sum.
+TEST(VirtualJunction, RuntimeLateralInflowAccepted) {
+    SWMM_Engine e = openModel("vj_runtime_lateral", splitModel(true), true);
     ASSERT_EQ(swmm_engine_initialize(e), 0);
-    ASSERT_EQ(swmm_engine_start(e, 0), 0);
+    ASSERT_EQ(swmm_engine_start(e, 1), 0);
+    const int mid = swmm_node_index(e, "MID");
+    const int cdn = swmm_link_index(e, "C_DN");
+    ASSERT_GE(mid, 0);
+    ASSERT_GE(cdn, 0);
+
     double elapsed = 0.0;
     ASSERT_EQ(swmm_engine_step(e, &elapsed), 0);
+    EXPECT_EQ(swmm_node_set_lateral_inflow(e, mid, 1.0), SWMM_OK);
+    const int nn = swmm_node_count(e);
+    std::vector<double> bulk(static_cast<std::size_t>(nn), 0.0);
+    bulk[static_cast<std::size_t>(mid)] = 1.0;
+    EXPECT_EQ(swmm_node_set_lat_inflows_bulk(e, bulk.data(), nn), SWMM_OK);
 
-    const int mid = swmm_node_index(e, "MID");
-    EXPECT_EQ(swmm_node_set_lateral_inflow(e, mid, 1.0), SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_node_set_lateral_inflow(e, mid, 0.0), SWMM_OK);
+    double max_vol = 0.0, max_ov = 0.0;
+    do {
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), 0) << swmm_get_last_error_msg(e);
+        double v = 0.0, ov = 0.0;
+        swmm_node_get_volume(e, mid, &v);
+        swmm_node_get_overflow(e, mid, &ov);
+        max_vol = std::max(max_vol, std::fabs(v));
+        max_ov  = std::max(max_ov, std::fabs(ov));
+    } while (elapsed > 0.0);
 
+    double lat = 0.0, q = 0.0;
+    ASSERT_EQ(swmm_node_get_lateral_inflow(e, mid, &lat), SWMM_OK);
+    EXPECT_NEAR(lat, 1.0, 1e-9);
+    ASSERT_EQ(swmm_link_get_flow(e, cdn, &q), SWMM_OK);
+    EXPECT_NEAR(q, 2.5, 0.05);
+    EXPECT_EQ(max_vol, 0.0);
+    EXPECT_EQ(max_ov, 0.0);
     swmm_engine_end(e);
     destroy(e);
+}
+
+// Every point lateral source may target a virtual junction: the model opens
+// clean, the dry-run eligibility check passes, and a fed regular junction can
+// be converted in place.
+TEST(VirtualJunction, LateralSourcesOpenClean) {
+    const std::string xs = "CIRCULAR  1.0  0   0   0   1";
+    struct Case { const char* base; std::string sections; };
+    const std::vector<Case> cases = {
+        {"vj_lat_dwf",      "\n[DWF]\nMID  FLOW  0.5\n"},
+        {"vj_lat_inflows",  "\n[INFLOWS]\n"
+                            ";;Node  Constituent  TimeSeries  Type  Mfactor  Sfactor\n"
+                            "MID     FLOW         TS_LAT      FLOW  1.0      1.0\n"
+                            "\n[TIMESERIES]\n"
+                            "TS_LAT  0:00  0.5\n"
+                            "TS_LAT  1:00  0.5\n"},
+        {"vj_lat_subcatch", subcatchSections("MID", false)},
+        {"vj_lat_lid",      subcatchSections("MID", true)},
+    };
+    for (const auto& c : cases) {
+        SWMM_Engine e = openModel(c.base,
+            splitModel(true, "", xs, "0   0", c.sections), true);
+        const int mid = swmm_node_index(e, "MID");
+        ASSERT_GE(mid, 0) << c.base;
+        int isv = 0, code = -1;
+        EXPECT_EQ(swmm_node_is_virtual(e, mid, &isv), SWMM_OK);
+        EXPECT_EQ(isv, 1) << c.base;
+        EXPECT_EQ(swmm_node_virtual_eligible(e, mid, &code), SWMM_OK);
+        EXPECT_EQ(code, 0) << c.base << ": " << allErrors(e);
+        destroy(e);
+    }
+
+    SWMM_Engine e = openModel("vj_lat_convert",
+        splitModel(false, "", xs, "0   0", "\n[DWF]\nMID  FLOW  0.5\n"), true);
+    const int mid = swmm_node_index(e, "MID");
+    ASSERT_GE(mid, 0);
+    EXPECT_EQ(swmm_node_set_virtual(e, mid, 1), SWMM_OK);
+    int isv = 0;
+    swmm_node_is_virtual(e, mid, &isv);
+    EXPECT_EQ(isv, 1);
+    destroy(e);
+}
+
+// Re-fusing a fed virtual junction runs the ordinary node-delete cascade: its
+// own inflow rows are erased and a subcatchment that drained to it loses its
+// outlet — the same outcome as deleting the node (documented policy).
+TEST(VirtualJunction, FuseDropsLateralSourcesLikeDeleteNode) {
+    SWMM_Engine e = openModel("vj_fuse_fed",
+        splitModel(true, "", "CIRCULAR  1.0  0   0   0   1", "0   0",
+                   "\n[DWF]\nMID  FLOW  0.5\n" + subcatchSections("MID", false)),
+        true);
+    const int mid = swmm_node_index(e, "MID");
+    const int s1  = swmm_subcatch_index(e, "S1");
+    ASSERT_GE(mid, 0);
+    ASSERT_GE(s1, 0);
+    const int n_dwf0 = swmm_dwf_count(e);
+    int outlet = -2;
+    ASSERT_EQ(swmm_subcatch_get_outlet(e, s1, &outlet), SWMM_OK);
+    EXPECT_EQ(outlet, mid);
+
+    int surviving = -1;
+    ASSERT_EQ(swmm_virtual_junction_fuse(e, mid, &surviving), SWMM_OK);
+    EXPECT_EQ(swmm_dwf_count(e), n_dwf0 - 1);
+    ASSERT_EQ(swmm_subcatch_get_outlet(e, s1, &outlet), SWMM_OK);
+    EXPECT_EQ(outlet, -1);
+    const std::string after = outPath("vj_fuse_fed_after.inp");
+    EXPECT_EQ(swmm_model_write(e, after.c_str()), 0);
+    destroy(e);
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic-wave wetting floor for a fed virtual junction (plan §E2)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// splitModel with J_IN fed q_in (0 = dry start) and the midpoint node fed
+// q_lat through [DWF].
+std::string fedSplitModel(bool virtual_mid, const std::string& extra_options,
+                          double q_in, double q_lat) {
+    std::string m = splitModel(virtual_mid, extra_options,
+                               "CIRCULAR  1.0  0   0   0   1", "0   0",
+                               "MID     FLOW   " + std::to_string(q_lat) + "\n");
+    const std::string jin = "J_IN    FLOW   1.5\n";
+    const auto pos = m.find(jin);
+    if (pos != std::string::npos) {
+        if (q_in == 0.0) m.erase(pos, jin.size());
+        else m.replace(pos, jin.size(),
+                       "J_IN    FLOW   " + std::to_string(q_in) + "\n");
+    }
+    return m;
+}
+
+struct FedProbe {
+    double final_flow    = 0.0;   // C_DN at the end of the run
+    double max_depth     = 0.0;   // MID
+    double min_depth     = 0.0;
+    double max_volume    = 0.0;
+    double max_overflow  = 0.0;
+    int    reversals     = 0;     // depth-increment sign changes, last 10 min
+    double routing_error = 0.0;   // fraction
+    bool   ran = false;
+};
+
+FedProbe runFed(SWMM_Engine e) {
+    FedProbe p;
+    EXPECT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
+    EXPECT_EQ(swmm_engine_start(e, 1), 0) << swmm_get_last_error_msg(e);
+    const int link = swmm_link_index(e, "C_DN");
+    const int node = swmm_node_index(e, "MID");
+    if (link < 0 || node < 0) return p;
+
+    std::vector<double> depths;
+    double elapsed = 0.0;
+    do {
+        if (swmm_engine_step(e, &elapsed) != 0) {
+            ADD_FAILURE() << "step failed: " << swmm_get_last_error_msg(e);
+            return p;
+        }
+        double d = 0.0, v = 0.0, ov = 0.0;
+        swmm_node_get_depth(e, node, &d);
+        swmm_node_get_volume(e, node, &v);
+        swmm_node_get_overflow(e, node, &ov);
+        depths.push_back(d);
+        p.max_depth    = std::max(p.max_depth, d);
+        p.min_depth    = std::min(p.min_depth, d);
+        p.max_volume   = std::max(p.max_volume, std::fabs(v));
+        p.max_overflow = std::max(p.max_overflow, std::fabs(ov));
+    } while (elapsed > 0.0);
+    swmm_link_get_flow(e, link, &p.final_flow);
+
+    // Ringing detector: sign changes of the per-step depth increment over
+    // the last 10 minutes (600 one-second routing steps), ignoring
+    // increments below 1e-6 ft.
+    const std::size_t n = depths.size();
+    int last_sign = 0;
+    for (std::size_t i = (n > 600) ? n - 600 : 1; i < n; ++i) {
+        const double dd = depths[i] - depths[i - 1];
+        if (std::fabs(dd) < 1e-6) continue;
+        const int s = (dd > 0.0) ? 1 : -1;
+        if (last_sign != 0 && s != last_sign) ++p.reversals;
+        last_sign = s;
+    }
+    swmm_engine_end(e);
+    swmm_get_routing_continuity_error(e, &p.routing_error);
+    p.ran = true;
+    return p;
+}
+
+// A dry pair fed only at the virtual junction. Without the wetting floor the
+// explicit update divides the imposed volume by a vanishing natural area
+// (runaway head) or falls into the dry-pair hold that swallows the inflow
+// (continuity error equal to the injected volume).
+void lateralDryStart(const std::string& tag, const std::string& extra_opts) {
+    SWMM_Engine ref = openModel("vj_latdry_ref_" + tag,
+                                fedSplitModel(false, extra_opts, 0.0, 0.5), true);
+    FedProbe pr = runFed(ref);
+    destroy(ref);
+
+    SWMM_Engine vj = openModel("vj_latdry_" + tag,
+                               fedSplitModel(true, extra_opts, 0.0, 0.5), true);
+    FedProbe pv = runFed(vj);
+    destroy(vj);
+
+    ASSERT_TRUE(pr.ran && pv.ran);
+    EXPECT_LT(pv.max_depth, 10.0) << "runaway head (" << tag << ")";
+    EXPECT_EQ(pv.max_volume, 0.0);
+    EXPECT_EQ(pv.max_overflow, 0.0);
+    EXPECT_NEAR(pv.final_flow, 0.5, 0.02) << tag;
+    EXPECT_NEAR(pv.final_flow, pr.final_flow, 0.02) << tag;
+    EXPECT_LE(std::fabs(pv.routing_error), std::fabs(pr.routing_error) + 0.005)
+        << "continuity (" << tag << "): vj " << pv.routing_error
+        << " vs regular " << pr.routing_error;
+    EXPECT_LE(pv.reversals, 3) << "ringing (" << tag << ")";
+}
+
+} // namespace
+
+TEST(VirtualJunction, LateralDryStartExplicitExtran) {
+    lateralDryStart("explicit_extran", "SURCHARGE_METHOD     EXTRAN\n");
+}
+TEST(VirtualJunction, LateralDryStartExplicitSlot) {
+    lateralDryStart("explicit_slot", "SURCHARGE_METHOD     SLOT\n");
+}
+TEST(VirtualJunction, LateralDryStartSemiImplicitExtran) {
+    lateralDryStart("semi_extran",
+        "NODE_CONTINUITY      SEMI_IMPLICIT\nSURCHARGE_METHOD     EXTRAN\n");
+}
+TEST(VirtualJunction, LateralDryStartSemiImplicitSlot) {
+    lateralDryStart("semi_slot",
+        "NODE_CONTINUITY      SEMI_IMPLICIT\nSURCHARGE_METHOD     SLOT\n");
+}
+
+// A lateral joining a live through-flow: the pair passes the sum, matching
+// the same reach split at a regular junction.
+TEST(VirtualJunction, LateralSteadyEquivalence) {
+    SWMM_Engine ref = openModel("vj_latsteady_ref",
+                                fedSplitModel(false, "", 1.0, 0.5), true);
+    FedProbe pr = runFed(ref);
+    destroy(ref);
+    SWMM_Engine vj = openModel("vj_latsteady",
+                               fedSplitModel(true, "", 1.0, 0.5), true);
+    FedProbe pv = runFed(vj);
+    destroy(vj);
+    ASSERT_TRUE(pr.ran && pv.ran);
+    EXPECT_NEAR(pv.final_flow, 1.5, 0.02);
+    EXPECT_NEAR(pv.final_flow, pr.final_flow, 0.02);
+    EXPECT_EQ(pv.max_volume, 0.0);
+    EXPECT_EQ(pv.max_overflow, 0.0);
+}
+
+// A negative lateral (withdrawal) at the virtual junction.
+TEST(VirtualJunction, LateralExtractionAtVirtualJunction) {
+    SWMM_Engine vj = openModel("vj_latextract",
+                               fedSplitModel(true, "", 1.5, -0.3), true);
+    FedProbe pv = runFed(vj);
+    destroy(vj);
+    ASSERT_TRUE(pv.ran);
+    EXPECT_NEAR(pv.final_flow, 1.2, 0.02);
+    EXPECT_GE(pv.min_depth, 0.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1057,6 +1359,80 @@ TEST(VirtualJunction, FvSteepVJDepthTracksFlow) {
     EXPECT_GT(d, 0.02);
     EXPECT_LT(d, 2.0);
 
+    swmm_engine_end(e);
+    destroy(e);
+}
+
+// ---------------------------------------------------------------------------
+// FV lateral inflow at a virtual junction (plan §E3)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// The node's published TOTAL inflow (through-flow + lateral, ctx.nodes.inflow
+// in internal cfs). No public getter exposes it — swmm_node_get_inflow and
+// swmm_node_get_inflows_bulk both return the lateral alone — so read the
+// engine context the way the ARD gates do.
+double nodeInflow(SWMM_Engine e, const char* name) {
+    const int n = swmm_node_index(e, name);
+    EXPECT_GE(n, 0) << "missing node " << name;
+    if (n < 0) return -1.0;
+    const auto& ctx = static_cast<openswmm::SWMMEngine*>(e)->context();
+    return ctx.nodes.inflow[static_cast<std::size_t>(n)];
+}
+
+double linkFlow(SWMM_Engine e, const char* name) {
+    const int j = swmm_link_index(e, name);
+    EXPECT_GE(j, 0) << "missing link " << name;
+    double q = -1.0;
+    if (j >= 0) swmm_link_get_flow(e, j, &q);
+    return q;
+}
+
+} // namespace
+
+// A DWF at VJ_A under FV routing: the lateral is split into the two cells
+// adjoining the spliced face, so the reach passes 0.75 + 0.5 and continuity
+// closes. Before the split the water was booked by the mass balance and
+// routed nowhere (outlet 0.75, continuity error ~ -40 %).
+TEST(VirtualJunction, FvLateralAtVirtualJunctionIsRouted) {
+    std::string m = fvCollidingInvertModel();
+    const std::string jin = "J_IN    FLOW   0.75\n";
+    const auto pos = m.find(jin);
+    ASSERT_NE(pos, std::string::npos);
+    m.insert(pos + jin.size(), "VJ_A    FLOW   0.5\n");
+
+    SWMM_Engine e = openModel("vj_fv_lateral", m, true);
+    stepToEnd(e);
+
+    EXPECT_NEAR(linkFlow(e, "C_DN"), 1.25, 0.03);
+    // Node Inflow Summary: through-flow + lateral, as a DW virtual junction
+    // reports it. The through-flow is the conduit's published step-mean,
+    // and the cell adjoining the splice carries half the lateral, so the
+    // reading sits a few hundredths off the exact sum (0.78 + 0.5 at VJ_A,
+    // 1.22 at VJ_B for 10-cell conduits) — the same bias a diverted
+    // degree-2 junction shows.
+    EXPECT_NEAR(nodeInflow(e, "VJ_A"), 1.25, 0.06);
+    EXPECT_NEAR(nodeInflow(e, "VJ_B"), 1.25, 0.06);
+    double lat = 0.0;
+    ASSERT_EQ(swmm_node_get_lateral_inflow(e, swmm_node_index(e, "VJ_A"), &lat),
+              SWMM_OK);
+    EXPECT_NEAR(lat, 0.5, 1e-9);
+
+    swmm_engine_end(e);
+    double err = 1.0;
+    ASSERT_EQ(swmm_get_routing_continuity_error(e, &err), SWMM_OK);
+    EXPECT_LT(std::fabs(err), 0.01) << "routing continuity error " << err;
+    destroy(e);
+}
+
+// An unfed FV virtual junction reports its through-flow as total inflow
+// (it used to report zero, unlike the same node under DW).
+TEST(VirtualJunction, FvUnfedVirtualJunctionReportsThroughFlow) {
+    SWMM_Engine e = openModel("vj_fv_unfed_inflow", fvCollidingInvertModel(), true);
+    stepToEnd(e);
+    EXPECT_NEAR(nodeInflow(e, "VJ_A"), 0.75, 0.03);
+    EXPECT_NEAR(nodeInflow(e, "VJ_B"), 0.75, 0.03);
     swmm_engine_end(e);
     destroy(e);
 }

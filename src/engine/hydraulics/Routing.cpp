@@ -1194,7 +1194,8 @@ int Router::stepFv(SimulationContext& ctx, double dt,
     const int nl = ctx.n_links();
 
     // Lateral inflows exactly as assembled by SWMMEngine::assembleLateralInflows.
-    // Virtual junctions cannot carry them (rule 5), so they never appear here.
+    // A virtual junction may carry one too; the solver splits it into the two
+    // cells adjoining its spliced face (ExplicitFvSolver::refreshStructFlows).
     for (int n = 0; n < nn; ++n) {
         const auto un = static_cast<std::size_t>(n);
         // Net of the node's own losses. `nodes.losses` carries storage
@@ -1687,6 +1688,29 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
         ctx.nodes.head[un]  = eta;
         ctx.nodes.depth[un] = std::max(0.0, eta - fv_mesh_.node_invert[un]);
         ctx.nodes.volume[un] = 0.0;   // zero-storage by construction
+        ctx.nodes.overflow[un] = 0.0; // sealed: never floods
+
+        // Through-flow + lateral, so the node reports the same total inflow
+        // it would under DW (gatherConduitNodeFlows) and a lateral fed to it
+        // (plans/VJ_LATERAL_INFLOW_PLAN_2026-09-04.md) shows in the Node
+        // Inflow Summary. The two conduits are the ones owning the spliced
+        // face's cells; their step-mean flows were published above. Positive
+        // conduit flow runs node1 → node2, so it enters this node when the
+        // node is the conduit's downstream end.
+        double q_in = 0.0, q_out = 0.0;
+        for (const int c : {fv_mesh_.face_cl[uf], fv_mesh_.face_cr[uf]}) {
+            if (c < 0) continue;
+            const auto ur = static_cast<std::size_t>(
+                fv_mesh_.cell_conduit[static_cast<std::size_t>(c)]);
+            if (ur >= fv_mesh_.conduit_link.size()) continue;
+            const auto uj = static_cast<std::size_t>(fv_mesh_.conduit_link[ur]);
+            const double q = ctx.links.flow[uj];
+            const double toward = (ctx.links.node2[uj] == n) ? q : -q;
+            if (toward > 0.0) q_in += toward; else q_out -= toward;
+        }
+        const double lat = ctx.nodes.lat_flow[un];
+        ctx.nodes.inflow[un]  = q_in  + ((lat > 0.0) ? lat : 0.0);
+        ctx.nodes.outflow[un] = q_out + ((lat < 0.0) ? -lat : 0.0);
     }
 }
 

@@ -263,6 +263,31 @@ private:
         if (!node_lat_div_.empty() && node_lat_div_[un]) return 0.0;
         return forcing.node_lateral ? forcing.node_lateral[un] : 0.0;
     }
+    /// The diverted lateral's RIM. A pass-through junction has no head state,
+    /// so the injection above had no ceiling: once the incident cells were
+    /// full, every m³ the pipe could not convey went into the Preissmann
+    /// slot, whose storage is t_slot·L ≈ 1e-3 m² per pipe — about a kilometre
+    /// of head per m³ — and the divergence guard (ERROR 14) fired within a
+    /// routing step of the first overload (Bellinge, 2026-09-05: junction
+    /// depths of 90–200 m alternating with 0.1 m as the 2D drain toggled
+    /// sign, then 3,346 m). A solved junction clamps at its rim and books the
+    /// surplus as flooding or ponded volume; the diverted path now does the
+    /// same at the cell. face_a_rim_ is the receiving cell's area at the node
+    /// rim (invert + full depth, + surcharge depth when sealed; +inf where no
+    /// rim applies: open sections, no full depth on record, faces of
+    /// non-pass-through nodes). The injection stops at that area and the
+    /// remainder is banked per FACE in face_lat_spill_ (ft³) — per face, not
+    /// per cell, because a one-cell conduit can receive from a pass-through
+    /// junction at each end — and drained by bookLateralSpills at the node
+    /// update into flood_vol_ (sealed) or the ponded-volume ledger (pondable,
+    /// which demotes the node to the bucket path exactly as
+    /// settleAlgebraicNode's ponding branch does). Only the owning cell writes
+    /// a boundary face's slot, so the cell update stays race-free.
+    std::vector<double> face_a_rim_;
+    std::vector<double> face_lat_spill_;
+    double injectDivertedLateral(std::size_t uc, double a_new, double dt,
+                                 double inv_dx);
+    void   bookLateralSpills(const std::vector<int>* nodes);
     /// Cached V(full_depth) per node, for the ponding demote test.
     std::vector<double> node_vfull_;
 
@@ -276,6 +301,28 @@ private:
         if (mesh_->node_can_pond[un] &&
             state_->node_volume[un] > node_vfull_[un]) return false;
         return true;
+    }
+
+    /// Is any cell incident to node @p un pressurized (closed section at or
+    /// above its crown, or a TPA-flagged column)? Same predicate as the step
+    /// census and anyPressurizedCell(). Read by refreshStructFlows: a
+    /// surcharged degree-2 junction leaves the pass-through splice for the
+    /// solved path, whose rim clamp and flooding are what the splice lacks.
+    bool incidentPressurized(std::size_t un) const noexcept {
+        for (int p = mesh_->node_face_ptr[un];
+             p < mesh_->node_face_ptr[un + 1]; ++p) {
+            const auto uf = static_cast<std::size_t>(
+                mesh_->node_face_idx[static_cast<std::size_t>(p)]);
+            const int c = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
+                                                    : mesh_->face_cr[uf];
+            if (c < 0) continue;
+            const auto uc = static_cast<std::size_t>(c);
+            if (tpaCell(uc)) return true;
+            const FvGeometry& g =
+                mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
+            if (!g.is_open && state_->cell_h[uc] >= g.y_crown) return true;
+        }
+        return false;
     }
     void   updateCells(double dt, const FvStepForcing& forcing);
     void   updateNodes(double dt, const FvStepForcing& forcing);

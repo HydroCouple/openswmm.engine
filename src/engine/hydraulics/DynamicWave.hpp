@@ -479,6 +479,17 @@ private:
     std::vector<int32_t>   vj_pair_n1_;
     std::vector<int32_t>   vj_pair_n2_;
 
+    /// Wetting floor for a virtual junction that receives lateral inflow
+    /// (plans/VJ_LATERAL_INFLOW_PLAN_2026-09-04.md): the pair's natural
+    /// half-link free-surface area evaluated at the seed depth
+    /// kVjWetSeedFrac · y_full, so an imposed lateral can wet a dry pair
+    /// without dividing dV by a vanishing area — and without the fixed
+    /// MIN_SURFAREA storage the feature exists to remove. max(natural, floor)
+    /// is continuous at the seed depth and inert above it. Zero for every
+    /// other node; read only when is_virtual && lat_flow != 0.
+    static constexpr double kVjWetSeedFrac = 0.02;
+    std::vector<double>    vj_wet_floor_;
+
     /// Build vjunc_ / vj_of_link_ from topology (called from init(), post-CSR).
     void buildVirtualJunctionPairs(const SimulationContext& ctx);
     /// Per-Picard-iteration pair cache: shared sigma, upwind states, dq4j.

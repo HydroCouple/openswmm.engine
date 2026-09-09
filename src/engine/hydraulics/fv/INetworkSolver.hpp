@@ -51,8 +51,13 @@ struct FvOptions;
 /// and results pulled back after. Kept as a flat struct so the plugin ABI can
 /// pass it across the C boundary unchanged.
 struct FvStepForcing {
-    /// Lateral inflow at each regular node (cfs), as assembled by
-    /// SWMMEngine::assembleLateralInflows. Indexed by node.
+    /// Lateral inflow at each node (cfs), as assembled by
+    /// SWMMEngine::assembleLateralInflows. Indexed by node. May be nonzero at
+    /// a kNodeVirtual node too: the in-tree solver splits it half/half into
+    /// the two cells adjoining the node's spliced face (node_vj_face) as a
+    /// zero-momentum area source, and a device backend must do the same —
+    /// a virtual junction owns no faces, so any node-side integration of the
+    /// value silently drops the water.
     const double* node_lateral = nullptr;
 
     /// Prescribed head at boundary-controlled nodes (ft, absolute elevation);

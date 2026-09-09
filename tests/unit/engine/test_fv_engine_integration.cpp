@@ -698,6 +698,108 @@ TEST(FvEngine, SurchargeDepthDelaysFlooding) {
 }
 
 // ---------------------------------------------------------------------------
+// A pass-through junction must have a rim.
+//
+// A clean degree-2 junction keeps the direct splice and its lateral inflow is
+// diverted into the two incident cells. Nothing capped that injection: once
+// the pipe was full, every ft³ the outlet could not convey went into the
+// Preissmann slot, whose storage is t_slot·L ≈ 0.01 ft² per pipe, so a few
+// ft³ of excess became hundreds of feet of head and the divergence guard fired
+// within a routing step of the first overload (Bellinge, 2026-09-05: junction
+// depths of 90–200 m alternating with 0.1 m as the 2D drain toggled sign, then
+// ERROR 14 at 3,346 m). The injection now stops at the junction rim and the
+// remainder is booked as flooding, as at a solved junction and under DW.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// 20 cfs poured into a clean degree-2 junction between two 1 ft pipes that
+/// pass ~5 cfs. The headwater junction upstream has no inflow of its own, so
+/// the only rim in play is JM's.
+std::string writeOverloadedPassThroughModel(const std::string& name,
+                                            const char* routing) {
+    const std::string path = outDir() + "/" + name + ".inp";
+    std::ofstream os(path);
+    os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         " << routing
+       << "\nSTART_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+          "END_DATE             01/01/2026\nEND_TIME             02:00:00\n"
+          "REPORT_STEP          00:05:00\nROUTING_STEP         5\n"
+          "ALLOW_PONDING        NO\n\n"
+          "[JUNCTIONS]\nJU  100.0  6.0  0  0  0\nJM   99.0  5.0  0  0  0\n\n"
+          "[OUTFALLS]\nOF   97.0  FREE  NO\n\n"
+          "[CONDUITS]\nC1  JU  JM  100  0.013  0  0  0  0\n"
+          "C2  JM  OF  100  0.013  0  0  0  0\n\n"
+          "[XSECTIONS]\nC1  CIRCULAR  1.0  0  0  0  1\nC2  CIRCULAR  1.0  0  0  0  1\n\n"
+          "[INFLOWS]\nJM  FLOW  \"\"  FLOW  1.0  1.0  20.0\n\n"
+          "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\nCONTROLS  NO\nNODES ALL\nLINKS ALL\n";
+    return path;
+}
+
+/// Average and maximum depth columns of the Node Depth Summary for one node.
+/// Returns false when the node is not listed.
+bool nodeDepthSummary(const std::string& rpt, const std::string& node,
+                      double& avg, double& max) {
+    std::ifstream in(rpt);
+    EXPECT_TRUE(in.good()) << rpt;
+    std::string line;
+    bool in_summary = false;
+    int rules = 0;
+    while (std::getline(in, line)) {
+        if (line.find("Node Depth Summary") != std::string::npos) { in_summary = true; continue; }
+        if (!in_summary) continue;
+        if (line.find("---") != std::string::npos) { ++rules; continue; }
+        if (rules < 2) continue;
+        std::istringstream ss(line);
+        std::string first, type;
+        if (!(ss >> first)) break;
+        if (first == node && (ss >> type >> avg >> max)) return true;
+    }
+    return false;
+}
+
+} // namespace
+
+TEST(FvEngine, AnOverloadedPassThroughJunctionFloodsAtItsRim) {
+    const RunResult fv =
+        runModel(writeOverloadedPassThroughModel("passthru_overload_fv", "FV"));
+    ASSERT_TRUE(fv.parsed) << "the FV run did not finish";
+    const std::string rpt = outDir() + "/passthru_overload_fv.rpt";
+
+    // JM is 5 ft deep and DW holds it at 5.0 ft for the whole run. Measured
+    // on this fixture: the unrimmed splice averaged 27.6 ft (39 ft peak),
+    // capping the injection alone averaged 8.3 ft (an on/off relief valve on
+    // an acoustic line, 34 ft peak), and the solved-path fallback averages
+    // 4.8 ft. The maximum is only bounded loosely: switching 20 cfs into an
+    // empty 1 ft pipe raises a Joukowsky surge of order c·Δv/g ≈ 40 ft at
+    // the 100 ft/s slot celerity in the first minute, which is the slot
+    // model's transient, not the defect.
+    double davg = 0.0, dmax = 0.0;
+    ASSERT_TRUE(nodeDepthSummary(rpt, "JM", davg, dmax))
+        << "JM missing from the Node Depth Summary";
+    EXPECT_NEAR(davg, 5.0, 0.75) << "JM average depth " << davg
+                                 << " ft is not held at its 5 ft rim";
+    EXPECT_LT(dmax, 50.0) << "JM max depth " << dmax << " ft: runaway";
+    EXPECT_TRUE(nodeIsListedAsFlooded(rpt, "JM"))
+        << "the excess inflow was not booked as flooding at JM";
+    const double flood_fv = routingRow(rpt, "Flooding Loss");
+    EXPECT_GT(flood_fv, 1.0) << "flooding loss " << flood_fv
+                             << " acre-ft (15 cfs of excess for 2 h is ~2.5)";
+    EXPECT_LT(std::fabs(fv.continuity_pct), 0.5)
+        << "routing continuity " << fv.continuity_pct << " %";
+
+    // Dynamic wave has always flooded this junction at its rim; the two
+    // solvers must lose comparable water.
+    const RunResult dw = runModel(
+        writeOverloadedPassThroughModel("passthru_overload_dw", "DYNWAVE"));
+    ASSERT_TRUE(dw.parsed);
+    const double flood_dw =
+        routingRow(outDir() + "/passthru_overload_dw.rpt", "Flooding Loss");
+    ASSERT_GT(flood_dw, 0.0) << "the DW control never flooded";
+    EXPECT_NEAR(flood_fv, flood_dw, 0.3 * flood_dw)
+        << "FV flooded " << flood_fv << " acre-ft against DW's " << flood_dw;
+}
+
+// ---------------------------------------------------------------------------
 // Multi-barrel conduits.
 //
 // Two defects met here. The per-length conduit loss was divided by the barrel

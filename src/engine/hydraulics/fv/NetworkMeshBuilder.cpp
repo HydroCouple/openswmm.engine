@@ -157,6 +157,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
     mesh.node_sur_depth.resize(static_cast<std::size_t>(n_nodes));
     mesh.node_can_pond.resize(static_cast<std::size_t>(n_nodes));
     mesh.node_kind.resize(static_cast<std::size_t>(n_nodes));
+    mesh.node_vj_face.assign(static_cast<std::size_t>(n_nodes), -1);
     mesh.node_area.assign(static_cast<std::size_t>(n_nodes),
                           constants::MIN_SURFAREA);
     for (int i = 0; i < n_nodes; ++i) {
@@ -527,6 +528,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
             add_face(cl, cr, -1, mesh.node_invert[ui], 0.5 * (dxl + dxr),
                      dl, dr, true);
             mesh.face_vj_node.back() = i;
+            mesh.node_vj_face[ui] = mesh.n_faces() - 1;
             ++rep.n_virtual;
             continue;
         }

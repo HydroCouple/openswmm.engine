@@ -298,6 +298,14 @@ struct NetworkMeshData {
     /// permanently unreported).
     std::vector<int> face_vj_node;
 
+    /// Spliced face of each virtual junction (−1 for every other node): the
+    /// reverse of face_vj_node. A lateral inflow at a virtual junction is
+    /// diverted into the two cells adjoining that face
+    /// (ExplicitFvSolver::refreshStructFlows), and the reporting path reads
+    /// the same two cells' conduits for the node's through-flow — neither
+    /// should scan the face list per node per step.
+    std::vector<int> node_vj_face;
+
     // -----------------------------------------------------------------------
     // Conduit → cell map. Cells of a conduit are CONTIGUOUS by construction,
     // so a begin/count pair is a complete (and cheaper) CSR.
@@ -443,7 +451,7 @@ struct NetworkMeshData {
         face_geom.clear();
         face_culvert.clear();
         face_zb.clear(); face_dx.clear(); face_virtual.clear();
-        face_vj_node.clear();
+        face_vj_node.clear(); node_vj_face.clear();
         face_dir_l.clear(); face_dir_r.clear();
         conduit_cell_begin.clear(); conduit_cell_count.clear(); conduit_link.clear();
         chain_ptr.clear(); chain_cells.clear(); chain_dir.clear();
