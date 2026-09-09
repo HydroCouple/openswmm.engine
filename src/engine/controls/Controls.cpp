@@ -1274,10 +1274,16 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                             "' exists in the model");
             k++;
 
-            // Parse attribute (STATUS or SETTING)
+            // Parse attribute — legacy addAction (controls.c) accepts only
+            // STATUS or SETTING as an action attribute; any other keyword (e.g.
+            // FLOW) is ERR_KEYWORD. v6 formerly swallowed any attribute as a
+            // numeric setting.
             if (k >= static_cast<int>(toks.size()))
                 return fail("action is missing its attribute (STATUS or SETTING)");
             std::string attr = to_upper(toks[static_cast<size_t>(k)]);
+            if (attr != "STATUS" && attr != "SETTING")
+                return fail("'" + toks[static_cast<size_t>(k)] + "' is not a valid "
+                            "action attribute (expected STATUS or SETTING)");
             k++;
 
             // Skip '=' token
