@@ -109,6 +109,15 @@ struct H5File {
         H5Tclose(t); H5Dclose(ds);
         return sz;
     }
+    /// Allocated data bytes of a dataset — the sum of its chunks, excluding
+    /// the file's object headers and chunk index. This is the payload
+    /// OUTPUT_PRECISION actually thins.
+    hsize_t datasetBytes(const char* name) const {
+        hid_t ds = H5Dopen2(id, name, H5P_DEFAULT);
+        const hsize_t n = H5Dget_storage_size(ds);
+        H5Dclose(ds);
+        return n;
+    }
     std::vector<hsize_t> dims(const char* name) const {
         hid_t ds = H5Dopen2(id, name, H5P_DEFAULT);
         hid_t sp = H5Dget_space(ds);
@@ -402,11 +411,32 @@ TEST(Output2DWriter, Float32FileIsSmaller) {
     SolverOptions2D a;  a.output_precision = OutputPrecision2D::FLOAT64; a.output_compression = 0;
     SolverOptions2D b;  b.output_precision = OutputPrecision2D::FLOAT32; b.output_compression = 0;
     a.report_2d_vars = b.report_2d_vars = report2d::ALL_MASK;
-    // Enough ticks that the payload dominates the HDF5 metadata.
     const fs::path pa = writeFile("size_f64", a, 300.0, 400, 300.0 / 86400.0);
     const fs::path pb = writeFile("size_f32", b, 300.0, 400, 300.0 / 86400.0);
     const auto sa = fs::file_size(pa), sb = fs::file_size(pb);
     EXPECT_GT(sa, sb);
-    // On a 2-cell mesh metadata is a large share; still expect a clear win.
-    EXPECT_GT(static_cast<double>(sa) / static_cast<double>(sb), 1.3);
+
+    // The ratio is measured on the PAYLOAD, not the whole file.
+    //
+    // Chunks here are one tick wide ({1, n_faces}), so on this 2-cell mesh a
+    // chunk holds 8-16 bytes of data behind ~47 bytes of chunk-index entry —
+    // precision-blind overhead that grows with every tick. Whole-file ratio
+    // therefore does not approach 2.0 with more ticks, it converges DOWN to
+    // about 1.18, which is why a 1.3 whole-file floor could never pass at this
+    // mesh size (measured 1.155 at 400 ticks). The bytes OUTPUT_PRECISION
+    // governs are exactly the allocated chunk bytes of the state datasets, and
+    // those halve exactly: 400 ticks x 2 faces x 8 B vs 4 B.
+    const H5File fa(pa), fb(pb);
+    ASSERT_GE(fa.id, 0);
+    ASSERT_GE(fb.id, 0);
+    for (const char* ds : {"Mesh2_face_depth", "Mesh2_face_head",
+                           "Mesh2_node_head", "Mesh2_edge_flux"}) {
+        SCOPED_TRACE(ds);
+        const auto ba = fa.datasetBytes(ds), bb = fb.datasetBytes(ds);
+        ASSERT_GT(bb, 0u) << "dataset absent or unallocated under ALL_MASK";
+        EXPECT_EQ(ba, bb * 2) << "float32 payload is not half of float64";
+    }
+    // `time` is deliberately float64 in both files — OUTPUT_PRECISION thins the
+    // state fields, not the axis every reader keys its lookup on.
+    EXPECT_EQ(fa.datasetBytes("time"), fb.datasetBytes("time"));
 }
