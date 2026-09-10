@@ -80,7 +80,11 @@ python/tests/engine/output/
 python/tests/legacy/output/*
 !python/tests/legacy/output/b8_aq_probe.inp
 python/tests/output_pet_parity/
-tests/verification/
+# Scratch verification runs (d2_retirement/ is ~88 .rpt/.out/.log artifacts).
+# Trailing /* rather than /, so gw2d_gates below can be re-included: git
+# cannot re-include anything under an excluded *directory*.
+tests/verification/*
+!tests/verification/gw2d_gates/
 tests/regression_testing/p1c_parity/*
 !tests/regression_testing/p1c_parity/compare.py
 tests/regression_testing/p5_parity/
