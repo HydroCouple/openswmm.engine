@@ -24,6 +24,7 @@
  */
 
 #include "ExternalContentWriter.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "GpkgUtils.hpp"
 #include "formats/ClimateFormat.hpp"
 #include "formats/HotstartFormat.hpp"
@@ -56,7 +57,7 @@ using openswmm::FileMode;
 
 bool fileExists(const std::string& path) {
     if (path.empty()) return false;
-    std::FILE* fp = std::fopen(path.c_str(), "rb");
+    std::FILE* fp = openswmm::io::fopen_utf8(path, "rb");
     if (!fp) return false;
     std::fclose(fp);
     return true;

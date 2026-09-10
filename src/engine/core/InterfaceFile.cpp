@@ -39,6 +39,7 @@
  */
 
 #include "InterfaceFile.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "SimulationContext.hpp"
 #include "DateTime.hpp"
 #include "UnitConversion.hpp"
@@ -108,13 +109,13 @@ int InterfaceManager::openFiles(const std::string& infile_path,
 
     // Open output file for writing
     if (!outfile_path.empty()) {
-        outfile_ = std::fopen(outfile_path.c_str(), "wt");
+        outfile_ = openswmm::io::fopen_utf8(outfile_path, "wt");
         if (!outfile_) return -2;
     }
 
     // Open input file for reading
     if (!infile_path.empty()) {
-        infile_ = std::fopen(infile_path.c_str(), "rt");
+        infile_ = openswmm::io::fopen_utf8(infile_path, "rt");
         if (!infile_) return -3;
     }
 

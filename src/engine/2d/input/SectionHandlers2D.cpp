@@ -7,6 +7,7 @@
  */
 
 #include "SectionHandlers2D.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 
 #include "../data/BoundaryData.hpp"
 #include "../data/Report2DVars.hpp"
@@ -1448,7 +1449,7 @@ std::string load2DMeshExternalFile(MeshData& mesh,
 
 void prescan2DUnitsHeader(const std::string& inp_path, SolverOptions2D& opts)
 {
-    std::ifstream in(inp_path);
+    std::ifstream in(openswmm::io::utf8_path(inp_path));
     if (!in) return;  // file missing — caller will surface the error
 
     // Views, not strings. This pass reads the ENTIRE .inp — see the note below

@@ -28,6 +28,7 @@
  */
 
 #include "openswmm_api_common.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "../../../include/openswmm/engine/openswmm_reactions.h"
 
 #include "../transport/components/ReactionModule/ReactionExpression.hpp"
@@ -780,7 +781,7 @@ SWMM_ENGINE_API int swmm_reactions_save(SWMM_Engine engine,
 
     const std::string text =
         openswmm::transport::serializeReactionSystem(ctx);
-    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    std::ofstream f(openswmm::io::utf8_path(path), std::ios::binary | std::ios::trunc);
     if (!f.is_open()) return SWMM_ERR_BADPARAM;
     f << text;
     return f.good() ? SWMM_OK : SWMM_ERR_BADPARAM;

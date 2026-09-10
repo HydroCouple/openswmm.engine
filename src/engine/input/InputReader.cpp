@@ -27,6 +27,7 @@
  */
 
 #include "InputReader.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "Tokenizer.hpp"
 #include "../core/ErrorCodes.hpp"
 #include "../core/PerfTimers.hpp"
@@ -53,7 +54,7 @@ InputReader::InputReader(SectionRegistry& registry)
 // ============================================================================
 
 bool InputReader::read(const std::string& path, SimulationContext& ctx) {
-    std::ifstream ifs(path);
+    std::ifstream ifs(openswmm::io::utf8_path(path));
     if (!ifs.is_open()) {
         ctx.error_code    = 2;  // public SWMM_ERR_INPFILE (was 1 = NOMEM)
         ctx.error_message = "InputReader: cannot open file '" + path + "'";

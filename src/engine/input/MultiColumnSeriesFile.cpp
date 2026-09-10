@@ -26,6 +26,7 @@
  */
 
 #include "MultiColumnSeriesFile.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "../core/DateTime.hpp"
 
 #include <algorithm>
@@ -184,7 +185,7 @@ bool parse_series_datetime(const std::string& cell, double& out) {
 // ---------------------------------------------------------------------------
 
 bool looks_like_multicolumn_series_file(const std::string& abs_path) {
-    std::ifstream in(abs_path);
+    std::ifstream in(openswmm::io::utf8_path(abs_path));
     if (!in.is_open()) return false;
 
     std::string line;
@@ -254,7 +255,7 @@ bool parse_multicolumn_series_file(const std::string& abs_path,
     out = ParsedSeriesFile{};
     g_parse_count_total.fetch_add(1, std::memory_order_relaxed);
 
-    std::ifstream in(abs_path);
+    std::ifstream in(openswmm::io::utf8_path(abs_path));
     if (!in.is_open())
         return fail(SeriesFileStatus::OPEN_FAILED,
                     "cannot open series file " + abs_path);

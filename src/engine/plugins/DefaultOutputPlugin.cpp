@@ -37,6 +37,7 @@
  */
 
 #include "DefaultOutputPlugin.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "../../../include/openswmm/plugin_sdk/PluginState.hpp"
 #include "../../../include/openswmm/plugin_sdk/SimulationSnapshot.hpp"
 #include "../core/SimulationContext.hpp"
@@ -74,7 +75,7 @@ constexpr std::size_t kOutputBufferBytes = 1u << 20;
 
 int DefaultOutputPlugin::prepare(const SimulationContext& ctx) {
     // Open binary output file
-    out_file_ = std::fopen(out_path_.c_str(), "w+b");
+    out_file_ = openswmm::io::fopen_utf8(out_path_, "w+b");
     if (!out_file_) {
         last_error_ = "Cannot open output file: " + out_path_;
         return -1;

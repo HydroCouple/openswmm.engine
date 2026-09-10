@@ -50,6 +50,7 @@
  */
 
 #include "InpWriter.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "Constants.hpp"
 #include "PathResolver.hpp"
 #include "SimulationContext.hpp"
@@ -791,7 +792,7 @@ static void write2DSections(FILE* f, const SimulationContext& ctx,
             if (sp.is_relative() && !dst_dir.empty()) sp = fs::path(dst_dir) / sp;
             std::error_code ec;
             if (sp.has_parent_path()) fs::create_directories(sp.parent_path(), ec);
-            if (FILE* sf = std::fopen(sp.string().c_str(), "w")) {
+            if (FILE* sf = openswmm::io::fopen_path(sp, "w")) {
                 std::fprintf(sf, ";; OpenSWMM 2D mesh — written by the engine "
                                  "alongside the .inp save.\n");
                 emit2DMeshSections(sf, ctx);
@@ -1121,7 +1122,7 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     const bool swmm5 = (opts.profile == InpWriteOptions::Profile::Swmm5);
     auto note = [&](const std::string& s) { if (warnings) warnings->push_back(s); };
 
-    FILE* f = std::fopen(path.c_str(), "w");
+    FILE* f = openswmm::io::fopen_utf8(path, "w");
     if (!f) return -1;
     if (swmm5)
         std::fprintf(f, ";; Written by OpenSWMM for a SWMM 5.x engine: v6-only sections and "
@@ -3075,13 +3076,13 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     bool replacing_different_r=false;
     {std::error_code rec;
     if(fsys::exists(dst_w,rec)&&!rec){
-    std::ifstream prev(dst_w,std::ios::binary);
+    std::ifstream prev(openswmm::io::utf8_path(dst_w), std::ios::binary);
     if(prev.is_open()){
     const std::string pstr((std::istreambuf_iterator<char>(prev)),
     std::istreambuf_iterator<char>());
     replacing_different_r=(pstr!=text);
     }}}
-    std::ofstream cf(dst_w,std::ios::binary|std::ios::trunc);
+    std::ofstream cf(openswmm::io::utf8_path(dst_w), std::ios::binary|std::ios::trunc);
     if(cf.is_open()){cf<<text;component_wrote=cf.good();cf.close();}
     if(component_wrote&&replacing_different_r&&warnings)warnings->push_back(
     "Saving this model replaced an existing, different '"+pc.config_path+
@@ -3109,7 +3110,7 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // reported nothing.
     bool replacing_different=false;
     if(fsys::exists(dst,ec)){
-    std::ifstream a(src,std::ios::binary),b(dst,std::ios::binary);
+    std::ifstream a(openswmm::io::utf8_path(src), std::ios::binary),b(dst,std::ios::binary);
     const std::string sa((std::istreambuf_iterator<char>(a)),
     std::istreambuf_iterator<char>());
     const std::string sb((std::istreambuf_iterator<char>(b)),

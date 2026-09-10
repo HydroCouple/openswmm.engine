@@ -24,6 +24,7 @@
  */
 
 #include "ProcessComponentRegistry.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 
 #include <algorithm>
 #include <cctype>
@@ -125,7 +126,7 @@ std::string read_component_config(const std::string& path,
     if (p.is_relative() && !base_dir.empty()) p = fs::path(base_dir) / p;
     out.source_path = p.string();
 
-    std::ifstream in(p);
+    std::ifstream in(openswmm::io::utf8_path(p));
     if (!in.is_open())
         return "Process component config file not found or unreadable: '" +
                out.source_path + "'.";

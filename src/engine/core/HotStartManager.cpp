@@ -42,6 +42,7 @@
  */
 
 #include "HotStartManager.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "SimulationContext.hpp"
 #include "../hydrology/Runoff.hpp"
 #include "../hydrology/Groundwater.hpp"
@@ -253,7 +254,7 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
     );
 
     // Write body + checksum to actual file
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    std::ofstream file(openswmm::io::utf8_path(path), std::ios::binary | std::ios::trunc);
     if (!file) {
         tl_last_io_error = "Cannot open '" + path + "' for writing";
         return false;
@@ -271,7 +272,7 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
 // ============================================================================
 
 bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
-    std::ifstream file(path, std::ios::binary);
+    std::ifstream file(openswmm::io::utf8_path(path), std::ios::binary);
     if (!file) {
         tl_last_io_error = "Cannot open '" + path + "' for reading";
         return false;
@@ -1030,7 +1031,7 @@ int HotStartManager::apply_legacy_routing(
         const std::string& path,
         SimulationContext& ctx,
         std::function<void(const std::string&)> warn_cb) {
-    std::ifstream file(path, std::ios::binary);
+    std::ifstream file(openswmm::io::utf8_path(path), std::ios::binary);
     if (!file) {
         tl_last_io_error = "Cannot open hotstart file '" + path + "'";
         return 1;
@@ -1208,7 +1209,7 @@ int HotStartManager::apply_legacy_routing(
 
 int HotStartManager::save_legacy_routing(const std::string& path,
                                          const SimulationContext& ctx) {
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    std::ofstream file(openswmm::io::utf8_path(path), std::ios::binary | std::ios::trunc);
     if (!file) {
         tl_last_io_error = "Cannot open hotstart save file '" + path + "'";
         return 1;

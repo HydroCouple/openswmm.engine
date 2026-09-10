@@ -31,6 +31,7 @@
  */
 
 #include "DefaultReportPlugin.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 
 #include "../../../include/openswmm/plugin_sdk/PluginState.hpp"
 #include "../../../include/openswmm/plugin_sdk/SimulationSnapshot.hpp"
@@ -179,7 +180,7 @@ int DefaultReportPlugin::prepare(const SimulationContext& ctx) {
     // analysis options) so they are available immediately — even if the
     // simulation crashes before write_summary() is called.
     if (!rpt_path_.empty() && !ctx.options.rpt_disabled) {
-        file_ = std::fopen(rpt_path_.c_str(), "w");
+        file_ = openswmm::io::fopen_utf8(rpt_path_, "w");
         if (file_) {
             write_preamble(file_, ctx);
             std::fflush(file_);
@@ -227,7 +228,7 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
     if (!f) {
         // Fallback: prepare() was not called or file open failed.
         // Write the entire report monolithically.
-        f = std::fopen(rpt_path_.c_str(), "w");
+        f = openswmm::io::fopen_utf8(rpt_path_, "w");
         if (!f) return -1;
         write_preamble(f, ctx);
 

@@ -24,6 +24,7 @@
  */
 
 #include "GwTransportSections.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 
 #include "../data/MeshData.hpp"
 #include "../../core/PathResolver.hpp"
@@ -496,7 +497,7 @@ std::vector<std::string> resolveGwTransport(SimulationContext& ctx,
         const std::string dir  = openswmm::io::parentDir(ctx.inp_file_path);
         const std::string path =
             openswmm::io::resolveRelative(gw.initial_quality_file, dir);
-        std::ifstream in(path);
+        std::ifstream in(openswmm::io::utf8_path(path));
         if (!in.is_open()) {
             errs.push_back("[GW_INITIAL_QUALITY] FILE '" + gw.initial_quality_file +
                            "' not found or unreadable (" + path + ").");

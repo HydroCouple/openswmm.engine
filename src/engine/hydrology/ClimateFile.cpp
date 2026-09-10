@@ -25,6 +25,7 @@
  */
 
 #include "ClimateFile.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "../core/DateTime.hpp"
 #include <cstring>
 #include <cstdlib>
@@ -56,7 +57,7 @@ bool ClimateFileReader::open(const std::string& path, double /*start_oa_date*/,
     close();
     unit_system_ = unit_system;
 
-    file_ = std::fopen(path.c_str(), "r");
+    file_ = openswmm::io::fopen_utf8(path, "r");
     if (!file_) return false;
 
     // Read first line for format detection

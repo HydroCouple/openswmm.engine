@@ -28,6 +28,7 @@
  */
 
 #include "HotstartFormat.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 
 #include <cstdint>
 #include <cstdio>
@@ -64,7 +65,7 @@ bool writeFloat(std::FILE* fp, float v) {
 
 FormatResult parseHotstartHsf(const std::string&  path,
                                HotstartSnapshot&  snapshot) {
-    std::FILE* fp = std::fopen(path.c_str(), "rb");
+    std::FILE* fp = openswmm::io::fopen_utf8(path, "rb");
     if (!fp) return fail("could not open '" + path + "' for reading");
 
     // --- File-stamp ---
@@ -198,7 +199,7 @@ FormatResult writeHotstartHsf(const std::string&        path,
         }
     }
 
-    std::FILE* fp = std::fopen(path.c_str(), "wb");
+    std::FILE* fp = openswmm::io::fopen_utf8(path, "wb");
     if (!fp) return fail("could not open '" + path + "' for writing");
 
     // Stamp (v4).

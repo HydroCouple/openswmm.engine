@@ -28,6 +28,7 @@
  */
 
 #include "openswmm_api_common.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "../../../include/openswmm/engine/openswmm_water_age.h"
 #include "../transport/components/WaterAgeModule/WaterAgeComponent.hpp"
 
@@ -167,7 +168,7 @@ SWMM_ENGINE_API int swmm_water_age_save(SWMM_Engine engine,
     // the shortest-exact convention. An unconfigured model still writes
     // the empty header, this function's historical contract.
     const std::string text = openswmm::transport::serializeWaterAgeConfig(ctx);
-    std::FILE* f = std::fopen(path, "w");
+    std::FILE* f = openswmm::io::fopen_utf8(path, "w");
     if (f == nullptr) return SWMM_ERR_IO;
     if (text.empty())
         std::fprintf(f, "[WATER_AGE_SOURCES]\n");

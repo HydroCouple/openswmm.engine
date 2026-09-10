@@ -25,6 +25,7 @@
  */
 
 #include "ExternalContentReader.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "GpkgUtils.hpp"
 #include "formats/ClimateFormat.hpp"
 #include "formats/HotstartFormat.hpp"
@@ -429,7 +430,7 @@ void hydrateHotstart(sqlite3* db, SimulationContext& ctx,
 
         if (s.status != "populated") {
             // Create an empty placeholder so the path exists for the GUI.
-            std::FILE* fp = std::fopen(scratch_path.c_str(), "wb");
+            std::FILE* fp = openswmm::io::fopen_utf8(scratch_path, "wb");
             if (fp) std::fclose(fp);
         } else {
             // Build a HotstartSnapshot from state rows.

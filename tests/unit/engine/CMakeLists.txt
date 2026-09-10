@@ -172,6 +172,10 @@ add_gtest_unit(test_engine_climate_api             test_climate_api.cpp)
 # [TEMPERATURE] HUMIDITY: CONSTANT/MONTHLY/TIMESERIES, DEWPOINT -> RH, writer
 # round-trip. The heat model's met input the GUI Climatology dialog edits.
 add_gtest_unit(test_engine_climate_humidity        test_climate_humidity.cpp)
+# Issue #7: a model under a non-ASCII path (…/模拟情景8/模拟情景[8].inp) must
+# open, run and write its .rpt/.out. Windows' narrow file APIs decode in the
+# ANSI code page, so every engine open goes through core/FileIO.hpp.
+add_gtest_unit(test_engine_utf8_paths        test_utf8_paths.cpp)
 add_gtest_unit(test_engine_hotstart          test_hotstart.cpp)
 add_gtest_unit(test_engine_simd_math         test_simd_math.cpp)
 add_gtest_unit(test_engine_mathexpr          test_mathexpr.cpp)

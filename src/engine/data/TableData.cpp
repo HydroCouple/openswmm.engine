@@ -32,6 +32,7 @@
  */
 
 #include "TableData.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "../core/DateTime.hpp"
 #include "../core/ErrorCodes.hpp"
 #include "../core/charconv_compat.hpp"
@@ -426,7 +427,7 @@ TableValidation validate_table(Table& tbl) {
 bool table_open_file(Table& tbl, std::size_t boundary_rows) {
     if (tbl.file_path.empty()) return false;
 
-    std::FILE* fp = std::fopen(tbl.file_path.c_str(), "r");
+    std::FILE* fp = openswmm::io::fopen_utf8(tbl.file_path, "r");
     if (!fp) return false;
 
     tbl.file_handle = fp;

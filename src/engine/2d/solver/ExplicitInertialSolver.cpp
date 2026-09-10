@@ -25,6 +25,7 @@
  */
 
 #include "ExplicitInertialSolver.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 
 #include "../subsurface/SubsurfaceSolver.hpp"
 
@@ -2265,7 +2266,7 @@ void ExplicitInertialSolver::resyncFromVolumes(double /*t0*/) {
 
 void ExplicitInertialSolver::finalize() {
     if (!telemetry_path_.empty() && !telemetry_.empty()) {
-        if (std::FILE* f = std::fopen(telemetry_path_.c_str(), "w")) {
+        if (std::FILE* f = openswmm::io::fopen_utf8(telemetry_path_, "w")) {
             std::fprintf(f, "t_s,active_cells,active_frac\n");
             const double nt = std::max(1, mesh_ ? mesh_->n_triangles() : 1);
             for (const auto& [t, n] : telemetry_)

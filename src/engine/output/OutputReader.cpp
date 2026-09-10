@@ -33,6 +33,7 @@
  */
 
 #include "OutputReader.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 
 #include <cstring>
 #include <algorithm>
@@ -52,7 +53,7 @@ bool OutputReader::open(const char* path) {
 
     close();  // ensure clean state
 
-    file_ = std::fopen(path, "rb");
+    file_ = openswmm::io::fopen_utf8(path, "rb");
     if (!file_) return false;
 
     // Read footer first (last 6 × int32)
@@ -86,7 +87,7 @@ bool OutputReader::openLive(const char* path) {
 
     close();
 
-    file_ = std::fopen(path, "rb");
+    file_ = openswmm::io::fopen_utf8(path, "rb");
     if (!file_) return false;
 
     // No footer yet (or maybe ever): derive every offset the footer would

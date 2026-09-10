@@ -26,6 +26,7 @@
  */
 
 #include "PostParseResolver.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 
 #include <array>
 #include "MultiColumnSeriesFile.hpp"
@@ -255,11 +256,11 @@ static void load_external_timeseries_files(SimulationContext& ctx, const std::st
         }
 
         // Open the file
-        FILE* fp = std::fopen(file_path.c_str(), "r");
+        FILE* fp = openswmm::io::fopen_utf8(file_path, "r");
         if (!fp) {
             // Try the verbatim token as a final fallback (covers absolute
             // paths and same-cwd cases when inp_dir was empty).
-            fp = std::fopen(tbl.file_path.c_str(), "r");
+            fp = openswmm::io::fopen_utf8(tbl.file_path, "r");
             if (!fp) {
                 // Was a silent skip; legacy reports ERROR 361 and fails the
                 // open, so match it — an unloadable series otherwise reads
@@ -560,9 +561,9 @@ static void load_external_rain_files_impl(SimulationContext& ctx,
             continue;
         }
 
-        FILE* fp = std::fopen(path.c_str(), "r");
+        FILE* fp = openswmm::io::fopen_utf8(path, "r");
         if (!fp) {
-            fp = std::fopen(ctx.gages.file_path[ug].c_str(), "r");
+            fp = openswmm::io::fopen_utf8(ctx.gages.file_path[ug], "r");
             if (!fp) {
                 // A gage that declares FILE but whose file cannot be opened is
                 // FATAL, exactly as in legacy (ERROR 317). Skipping it silently
@@ -1875,7 +1876,7 @@ void resolve_cross_references(SimulationContext& ctx) {
         if (!iq.file.empty()) {
             const std::string dir  = openswmm::io::parentDir(ctx.inp_file_path);
             const std::string path = openswmm::io::resolveRelative(iq.file, dir);
-            std::ifstream in(path);
+            std::ifstream in(openswmm::io::utf8_path(path));
             if (!in.is_open()) {
                 ctx.errors.push_back("[INITIAL_QUALITY] FILE '" + iq.file +
                                      "' not found or unreadable (" + path + ").");
