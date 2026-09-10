@@ -97,7 +97,6 @@ int DefaultOutputPlugin::prepare(const SimulationContext& ctx) {
     // factors it needs.
     flow_units_code_ = static_cast<int>(ctx.options.flow_units);
     ucf_length_      = ucf::UCF(ucf::LENGTH,   ctx.options);
-    ucf_landarea_    = ucf::UCF(ucf::LANDAREA, ctx.options);
 
     // Write header
     writeHeader(ctx);
@@ -328,14 +327,18 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
     // Input data start
     input_start_pos_ = std::ftell(out_file_);
 
-    // Subcatchment input: area (converting to display units)
+    // Subcatchment input: area, in display units (acres / hectares).
+    // Legacy output.c:245-252 writes `Subcatch[j].area * UCF(LANDAREA)`
+    // because legacy stores the area in ft2. v6 stores it in DISPLAY units
+    // already — CatchmentHandler.cpp:159 keeps the [SUBCATCHMENTS] token
+    // verbatim, and every other consumer multiplies by ACRES_TO_FT2 to get
+    // ft2 — so applying UCF(LANDAREA) here divided every area by 43560.
     writeInt4(1);
     writeInt4(1);  // INPUT_AREA code
     for (int j = 0; j < ctx.n_subcatches(); ++j) {
         auto uj = static_cast<std::size_t>(j);
         if (uj >= subcatch_rpt_flag_.size() || !subcatch_rpt_flag_[uj]) continue;
-        writeReal4(static_cast<float>(
-            ctx.subcatches.area[uj] * ucf_landarea_));
+        writeReal4(static_cast<float>(ctx.subcatches.area[uj]));
     }
 
     // Node input: type, invert, max depth

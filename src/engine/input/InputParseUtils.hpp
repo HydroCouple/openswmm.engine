@@ -143,10 +143,23 @@ inline double parse_time_seconds(std::string_view sv) {
  * @details For use with datetime::encodeTime. Returns fractional day [0, 1).
  */
 inline double parse_time_day_fraction(std::string_view sv) {
-    unsigned h = 0, m = 0, s = 0;
     const char* p = sv.data();
     const char* end = sv.data() + sv.size();
 
+    // A time token is EITHER decimal hours (a bare number such as "0.167" or
+    // "10") OR a clock string "HH:MM[:SS]" — matching legacy datetime_strToTime
+    // ("accepts time as hr:min:sec or as decimal hours"). Try a full decimal
+    // parse first: if the WHOLE token is a number it is decimal hours (/24);
+    // otherwise fall back to integer HH:MM:SS. This helper (and parse_datetime
+    // through it) previously handled only HH:MM:SS, so a bare "0.167" on a dated
+    // [TIMESERIES] row was truncated to 0 — corrupting the series and colliding
+    // with the prior day's "24" row (dx == 0 -> spurious ERR 173).
+    double dec_hours = 0.0;
+    auto [dp, dec] = openswmm::from_chars_double(p, end, dec_hours);
+    if (dec == std::errc{} && dp == end)
+        return dec_hours / 24.0;
+
+    unsigned h = 0, m = 0, s = 0;
     auto read_uint = [&](unsigned& out) -> bool {
         auto [np, ec] = std::from_chars(p, end, out);
         if (ec != std::errc{}) return false;

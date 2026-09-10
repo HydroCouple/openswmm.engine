@@ -2896,42 +2896,57 @@ void resolve_cross_references(SimulationContext& ctx) {
     // Node fullDepth adjustment from connected link crowns
     // (matches legacy link_validate → node fullDepth adjustment)
     // -------------------------------------------------------------------------
-    std::vector<bool> warned_depth(static_cast<std::size_t>(n_nodes), false);
+    // Legacy stashes the AUTHORED depth (project.c:244, oldDepth = fullDepth)
+    // before validation, then node_validate (node.c:212-215) warns only when the
+    // crown raised it AND the authored depth was non-zero. The scope of the
+    // adjustment and the gate on the warning are independent: an outfall with
+    // no authored depth is still extended, it just does not warn.
+    std::vector<double> authored_full_depth(ctx.nodes.full_depth.begin(),
+                                            ctx.nodes.full_depth.end());
+
+    // Extend a node's full depth to a connected link's crown.
+    // Legacy link_validate (link.c:446-466): every node EXCEPT a storage node
+    // with no surcharge depth. Virtual junctions are a v6 concept and stay
+    // excluded — their full depth is exact by construction.
+    auto extend_to_crown = [&](int n, double crown) {
+        if (n < 0 || n >= n_nodes) return;
+        auto un = static_cast<std::size_t>(n);
+        if (ctx.nodes.is_virtual[un]) return;
+        if (ctx.nodes.type[un] == NodeType::STORAGE && !(ctx.nodes.sur_depth[un] > 0.0))
+            return;
+        if (crown <= ctx.nodes.full_depth[un]) return;
+        ctx.nodes.full_depth[un] = crown;
+    };
+
     for (int j = 0; j < n_links; ++j) {
         auto uj = static_cast<std::size_t>(j);
-        if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
+
+        // Legacy skips pumps and bottom orifices outright.
+        if (ctx.links.type[uj] == LinkType::PUMP) continue;
+        if (ctx.links.type[uj] == LinkType::ORIFICE) {
+            const int orr = ctx.link_subtypes.orifice_row(j);
+            // orifice_type: 0 = BOTTOM, 1 = SIDE (legacy param1)
+            if (orr >= 0 &&
+                ctx.link_subtypes.orifices.orifice_type[static_cast<std::size_t>(orr)] == 0.0)
+                continue;
+        }
 
         double y_full = ctx.links.xsect_y_full[uj];
-        int n1 = ctx.links.node1[uj];
-        int n2 = ctx.links.node2[uj];
 
-        // Upstream node: crown = offset1 + y_full (JUNCTION only, matches legacy Warning 02;
-        // virtual junctions skipped — their full depth is exact by construction)
-        if (n1 >= 0 && n1 < n_nodes &&
-            ctx.nodes.type[static_cast<std::size_t>(n1)] == NodeType::JUNCTION &&
-            !ctx.nodes.is_virtual[static_cast<std::size_t>(n1)]) {
-            double crown = ctx.links.offset1[uj] + y_full;
-            if (crown > ctx.nodes.full_depth[n1]) {
-                ctx.nodes.full_depth[n1] = crown;
-                if (!warned_depth[static_cast<std::size_t>(n1)]) {
-                    ctx.warnings.push_back(format_warning(WARN_MAX_DEPTH_INCREASED, ctx.node_names.name_of(n1)));
-                    warned_depth[static_cast<std::size_t>(n1)] = true;
-                }
-            }
-        }
-        // Downstream node: crown = offset2 + y_full (JUNCTION only, matches legacy Warning 02;
-        // virtual junctions skipped — their full depth is exact by construction)
-        if (n2 >= 0 && n2 < n_nodes &&
-            ctx.nodes.type[static_cast<std::size_t>(n2)] == NodeType::JUNCTION &&
-            !ctx.nodes.is_virtual[static_cast<std::size_t>(n2)]) {
-            double crown = ctx.links.offset2[uj] + y_full;
-            if (crown > ctx.nodes.full_depth[n2]) {
-                ctx.nodes.full_depth[n2] = crown;
-                if (!warned_depth[static_cast<std::size_t>(n2)]) {
-                    ctx.warnings.push_back(format_warning(WARN_MAX_DEPTH_INCREASED, ctx.node_names.name_of(n2)));
-                    warned_depth[static_cast<std::size_t>(n2)] = true;
-                }
-            }
+        // Upstream node: every non-pump, non-bottom-orifice link contributes.
+        extend_to_crown(ctx.links.node1[uj], ctx.links.offset1[uj] + y_full);
+
+        // Downstream node: conduits only.
+        if (ctx.links.type[uj] == LinkType::CONDUIT)
+            extend_to_crown(ctx.links.node2[uj], ctx.links.offset2[uj] + y_full);
+    }
+
+    for (int n = 0; n < n_nodes; ++n) {
+        auto un = static_cast<std::size_t>(n);
+        if (ctx.nodes.full_depth[un] > authored_full_depth[un] &&
+            authored_full_depth[un] > 0.0) {
+            ctx.warnings.push_back(
+                format_warning(WARN_MAX_DEPTH_INCREASED, ctx.node_names.name_of(n)));
         }
     }
 
