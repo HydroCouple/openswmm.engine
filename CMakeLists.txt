@@ -227,10 +227,27 @@ function(openswmm_bundle_runtime_deps TARGET_NAME SUBDIR)
     # unresolved-deps warnings on Windows and never get included in the
     # cpack zip. Linux/macOS usually resolve them via rpath, but the extra
     # dir is harmless on those platforms.
+    #
+    # vcpkg's DEBUG binaries live in <triplet>/debug/bin, not <triplet>/bin, so
+    # both trees are captured and the install script picks the order by config
+    # (issue #9). Searching only the release tree left Debug installs broken in
+    # two different ways:
+    #
+    #   - HDF5's debug DLLs carry a _D suffix (hdf5_D.dll, hdf5_hl_D.dll). The
+    #     name in the import table has no match under bin/, so it surfaced as
+    #     "unresolved runtime dep: hdf5_D.dll" and the installed exe died at
+    #     startup with STATUS_DLL_NOT_FOUND (0xC0000135).
+    #   - sqlite3's debug DLL keeps the release NAME, so it resolved happily —
+    #     against the RELEASE copy, quietly mixing a release sqlite3 into a
+    #     Debug package. That one never warned, which is why it looked fine.
+    #
     set(OPENSWMM_BUNDLE_EXTRA_DIRS "")
+    set(OPENSWMM_BUNDLE_EXTRA_DIRS_DEBUG "")
     if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
         list(APPEND OPENSWMM_BUNDLE_EXTRA_DIRS
             "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+        list(APPEND OPENSWMM_BUNDLE_EXTRA_DIRS_DEBUG
+            "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin")
     elseif(DEFINED ENV{VCPKG_ROOT})
         # Fallback: use the env-var-rooted classic-mode layout.
         set(_triplet "${VCPKG_TARGET_TRIPLET}")
@@ -240,6 +257,8 @@ function(openswmm_bundle_runtime_deps TARGET_NAME SUBDIR)
         if(_triplet)
             list(APPEND OPENSWMM_BUNDLE_EXTRA_DIRS
                 "$ENV{VCPKG_ROOT}/installed/${_triplet}/bin")
+            list(APPEND OPENSWMM_BUNDLE_EXTRA_DIRS_DEBUG
+                "$ENV{VCPKG_ROOT}/installed/${_triplet}/debug/bin")
         endif()
     endif()
 
