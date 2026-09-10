@@ -270,11 +270,16 @@ TEST_F(GwfApiTest, ValidateExpressionAcceptsAndRejects) {
     EXPECT_EQ(swmm_gwf_validate_expression(engine, "MIN(HGW, HCB) * KS", err, sizeof(err), &col), SWMM_OK);
     EXPECT_EQ(swmm_gwf_validate_expression(engine, "-HGW^2 + step(HGW-HCB)", err, sizeof(err), &col), SWMM_OK);
 
-    // Unknown identifier, column at the identifier.
-    EXPECT_EQ(swmm_gwf_validate_expression(engine, "Hgww", err, sizeof(err), &col), SWMM_ERR_BADPARAM);
-    EXPECT_NE(std::string(err).find("Hgww"), std::string::npos) << err;
+    // Legacy resolves GW variables with findmatch(): a name that has a GW
+    // variable as a case-insensitive PREFIX is ACCEPTED — "Ksat" -> KS, and,
+    // as in legacy, even "Hgww" -> HGW. v6 matches that leniency for parity.
+    EXPECT_EQ(swmm_gwf_validate_expression(engine, "Ksat", err, sizeof(err), &col), SWMM_OK);
+    EXPECT_EQ(swmm_gwf_validate_expression(engine, "Hgww", err, sizeof(err), &col), SWMM_OK);
+    // Unknown identifier (no GW variable is a prefix), column at the identifier.
+    EXPECT_EQ(swmm_gwf_validate_expression(engine, "Xyz", err, sizeof(err), &col), SWMM_ERR_BADPARAM);
+    EXPECT_NE(std::string(err).find("Xyz"), std::string::npos) << err;
     EXPECT_EQ(col, 0);
-    EXPECT_EQ(swmm_gwf_validate_expression(engine, "2 * Hgww", err, sizeof(err), &col), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_gwf_validate_expression(engine, "2 * Xyz", err, sizeof(err), &col), SWMM_ERR_BADPARAM);
     EXPECT_EQ(col, 4);
 
     // Unbalanced parenthesis.
@@ -303,7 +308,7 @@ TEST_F(GwfApiTest, ValidateExpressionAcceptsAndRejects) {
     // Trailing operator / NULL expression / optional outputs.
     EXPECT_EQ(swmm_gwf_validate_expression(engine, "HGW +", err, sizeof(err), &col), SWMM_ERR_BADPARAM);
     EXPECT_EQ(swmm_gwf_validate_expression(engine, nullptr, err, sizeof(err), &col), SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_gwf_validate_expression(engine, "Hgww", nullptr, 0, nullptr), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_gwf_validate_expression(engine, "Xyz", nullptr, 0, nullptr), SWMM_ERR_BADPARAM);
     EXPECT_EQ(swmm_gwf_validate_expression(engine, "HGW", nullptr, 0, nullptr), SWMM_OK);
 
     // Non-mutating: nothing was stored.
@@ -335,10 +340,10 @@ TEST_F(GwfApiTest, LoadAcceptsLatKeywordAndMixedCaseSubcatchName) {
 }
 
 TEST_F(GwfApiTest, LoadRejectsMalformedExpression) {
-    open_model("bad_load", gw_model("\n[GWF]\nS1  LATERAL  Hgww * 2\n"), SWMM_ERR_PARSE);
+    open_model("bad_load", gw_model("\n[GWF]\nS1  LATERAL  Xyz * 2\n"), SWMM_ERR_PARSE);
     const std::string msg = swmm_get_last_error_msg(engine);
     EXPECT_NE(msg.find("233"), std::string::npos) << msg;
-    EXPECT_NE(msg.find("Hgww"), std::string::npos) << msg;
+    EXPECT_NE(msg.find("Xyz"), std::string::npos) << msg;
 }
 
 TEST_F(GwfApiTest, InvalidExpressionSetViaApiFailsInitialize) {

@@ -428,8 +428,17 @@ struct GwfFail {
 };
 
 bool gwf_is_variable(const std::string& upper) {
-    for (const char* v : GW_VAR_NAMES)
-        if (upper == v) return true;
+    // Legacy getVariableIndex() resolves a GW variable with findmatch(): a
+    // variable NAME that is a case-insensitive PREFIX of the token matches, so
+    // "Ksat" -> "KS" (saturated conductivity), "Area" -> "A". An exact compare
+    // wrongly rejected such legacy-valid names as ERR 233. As in legacy this is
+    // lenient — a token like "Hgww" also resolves ("HGW" is a prefix). `upper`
+    // is already upper-cased by the caller and GW_VAR_NAMES are upper-case.
+    for (const char* v : GW_VAR_NAMES) {
+        std::size_t k = 0;
+        while (v[k] && k < upper.size() && upper[k] == v[k]) ++k;
+        if (v[k] == '\0') return true;   // whole variable name is a prefix of `upper`
+    }
     return false;
 }
 

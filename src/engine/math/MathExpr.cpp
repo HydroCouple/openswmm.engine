@@ -318,7 +318,13 @@ int bind_variables(Expression& expr,
     for (auto& tok : expr.postfix) {
         if (tok.type != TokenType::VARIABLE) continue;
         tok.var_idx = -1;
-        // Case-insensitive match against name table
+        // Case-insensitive PREFIX match against the name table, in table order,
+        // taking the first entry that is a prefix of the token — mirroring the
+        // legacy findmatch()/match() used by getVariableIndex (this binder is
+        // GWF-only). So a table name like "KS" binds "Ksat", and "K" binds
+        // anything else starting with K; an exact-only compare left such
+        // legacy-valid tokens unbound (var_idx -1, evaluated as 0). Table order
+        // matters: "KS" precedes "K" so "Ksat" binds to KS, not K.
         for (int v = 0; v < n_vars; ++v) {
             const char* tbl = name_table[v];
             const std::string& tn = tok.var_name;
@@ -331,7 +337,7 @@ int bind_variables(Expression& expr,
                     break;
                 }
             }
-            if (match && k == tn.size() && tbl[k] == '\0') {
+            if (match && tbl[k] == '\0') {  // whole table name is a prefix of the token
                 tok.var_idx = v;
                 ++bound;
                 break;
