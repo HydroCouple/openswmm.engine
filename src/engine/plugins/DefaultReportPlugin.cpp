@@ -1588,13 +1588,23 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 char datebuf[16], timebuf[16];
                 std::snprintf(datebuf, sizeof(datebuf), "%02d/%02d/%04d", mo, dy, yr);
                 std::snprintf(timebuf, sizeof(timebuf), "%02d:%02d:%02d", hr, mn, sc);
+                const char* rule_name =
+                    (entry.rule_idx >= 0
+                     && entry.rule_idx < static_cast<int>(ctx.control_rule_names.size()))
+                        ? ctx.control_rule_names[static_cast<std::size_t>(entry.rule_idx)].c_str()
+                        : "Rule?";
                 std::fprintf(f,
                     "\n  %11s: %8s Link %s setting changed to %6.2f by Control %s",
                     datebuf, timebuf,
                     ctx.link_names.name_of(entry.link_idx).c_str(),
                     entry.new_setting,
-                    entry.rule_name.c_str());
+                    rule_name);
             }
+            if (ctx.control_log_dropped > 0)
+                std::fprintf(f,
+                    "\n  (%zu further control actions not listed: the log is "
+                    "capped at %zu entries)",
+                    ctx.control_log_dropped, SimulationContext::kMaxControlLog);
         }
 
         WRITE(f, "");

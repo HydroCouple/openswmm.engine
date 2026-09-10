@@ -318,8 +318,15 @@ private:
     // rebuild; dumped as CSV at finalize() when OPENSWMM_2D_MARCHER_TELEMETRY
     // names a file. The Phase-1 gate reads this to verify the thin-film budget
     // assumption on the Bellinge storm slice.
-    std::vector<std::pair<double, int>> telemetry_;
+    std::vector<std::pair<double, int>> telemetry_;   ///< kept ONLY when telemetry_path_ is set
     std::string telemetry_path_;
+    /// Running active-fraction statistics for run_stats(). The samples above
+    /// used to be kept for the whole run unconditionally, just to be folded
+    /// into min/mean/max at the end (16 B per rebuild, ~10 MB per 2.6 M steps).
+    double active_frac_min_ = 1.0e30;
+    double active_frac_max_ = -1.0e30;
+    double active_frac_sum_ = 0.0;
+    long   active_samples_  = 0;
     /// Cumulative rebuild-sampled cell count per LTS tier (report histogram).
     std::array<long, 8> tier_occupancy_{};
 

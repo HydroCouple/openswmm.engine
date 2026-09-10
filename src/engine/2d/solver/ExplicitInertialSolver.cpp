@@ -289,6 +289,8 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     substeps_run_ = face_passes_ = last_steps_ = 0;
     last_dt_ = 0.0;
     telemetry_.clear();
+    active_frac_min_ = 1.0e30; active_frac_max_ = -1.0e30;
+    active_frac_sum_ = 0.0;    active_samples_  = 0;
     if (const char* p = std::getenv("OPENSWMM_2D_MARCHER_TELEMETRY"))
         telemetry_path_ = p;
     initialized_ = true;
@@ -789,7 +791,19 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
         gw_->assignTiers(dt0_, static_cast<int>(cells_by_tier_.size()));
     }
 
-    telemetry_.emplace_back(t, static_cast<int>(active_cells_.size()));
+    // Fold the sample into the run_stats() statistics now (same arithmetic,
+    // same order as the old end-of-run fold); keep the sample itself only
+    // when a telemetry CSV was requested.
+    const int n_active = static_cast<int>(active_cells_.size());
+    if (mesh_ && mesh_->n_triangles() > 0) {
+        const double frac = n_active / static_cast<double>(mesh_->n_triangles());
+        active_frac_min_ = std::min(active_frac_min_, frac);
+        active_frac_max_ = std::max(active_frac_max_, frac);
+        active_frac_sum_ += frac;
+        ++active_samples_;
+    }
+    if (!telemetry_path_.empty())
+        telemetry_.emplace_back(t, n_active);
 }
 
 void ExplicitInertialSolver::refreshDt0() {
@@ -2268,6 +2282,8 @@ void ExplicitInertialSolver::finalize() {
     cells_by_tier_.clear(); edges_by_tier_.clear();
     bc_cell_.clear(); bc_slot_.clear(); bc_accum_.clear(); bc_q_.clear();
     telemetry_.clear();
+    active_frac_min_ = 1.0e30; active_frac_max_ = -1.0e30;
+    active_frac_sum_ = 0.0;    active_samples_  = 0;
     initialized_ = false;
 }
 
@@ -2278,20 +2294,13 @@ ISurfaceSolver::RunStats ExplicitInertialSolver::run_stats() const noexcept {
     s.last_h = last_dt_;
 
     // Marcher telemetry for the report block: active-fraction spread over the
-    // rebuild samples + cumulative tier-occupancy histogram. Must be read
-    // BEFORE finalize() (which clears telemetry_) — SurfaceRouter2D does.
-    if (!telemetry_.empty() && mesh_ && mesh_->n_triangles() > 0) {
-        const double nt = static_cast<double>(mesh_->n_triangles());
-        double mn = 1.0e30, mx = -1.0e30, sum = 0.0;
-        for (const auto& [t, n] : telemetry_) {
-            const double frac = n / nt;
-            mn = std::min(mn, frac);
-            mx = std::max(mx, frac);
-            sum += frac;
-        }
-        s.active_frac_min  = mn;
-        s.active_frac_max  = mx;
-        s.active_frac_mean = sum / static_cast<double>(telemetry_.size());
+    // rebuild samples (folded as they are taken — see syncAndRebuild) +
+    // cumulative tier-occupancy histogram. Must be read BEFORE finalize()
+    // (which resets the statistics) — SurfaceRouter2D does.
+    if (active_samples_ > 0) {
+        s.active_frac_min  = active_frac_min_;
+        s.active_frac_max  = active_frac_max_;
+        s.active_frac_mean = active_frac_sum_ / static_cast<double>(active_samples_);
     }
     s.n_tiers = static_cast<int>(
         std::min(cells_by_tier_.size(), tier_occupancy_.size()));

@@ -331,15 +331,23 @@ int ControlEngine::applyPendingActions(SimulationContext& ctx, double current_ti
             // the report — match that here (P1-C08).
             if (ctx.options.rpt_controls &&
                 kv.second.type == ActionType::NUMERIC) {
-                int ri = kv.second.rule_idx;
-                std::string rname = (ri >= 0 && ri < static_cast<int>(rules_.size()))
-                    ? rules_[static_cast<std::size_t>(ri)].name : "Rule?";
+                const int  ri    = kv.second.rule_idx;
+                const bool known = ri >= 0 && ri < static_cast<int>(rules_.size());
+                if (known) {
+                    // Intern the rule name once; the entry carries the index
+                    // (no per-action string on a deck that toggles every step).
+                    auto& names = ctx.control_rule_names;
+                    if (names.size() < rules_.size()) names.resize(rules_.size());
+                    auto& slot = names[static_cast<std::size_t>(ri)];
+                    if (slot != rules_[static_cast<std::size_t>(ri)].name)
+                        slot = rules_[static_cast<std::size_t>(ri)].name;
+                }
                 SimulationContext::ControlLogEntry entry;
                 entry.link_idx    = kv.first;
-                entry.rule_name   = std::move(rname);
+                entry.rule_idx    = known ? ri : -1;
                 entry.new_setting = kv.second.value;
                 entry.date        = ctx.current_date;
-                ctx.control_log.push_back(std::move(entry));
+                ctx.logControlAction(entry);
             }
             changes++;
         }

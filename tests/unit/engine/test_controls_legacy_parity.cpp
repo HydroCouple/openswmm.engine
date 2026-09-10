@@ -368,7 +368,35 @@ TEST_F(ControlsParityTest, NumericActionAppearsInControlLog) {
         "THEN PUMP P1 STATUS = OFF\n";
     ASSERT_EQ(eng.parseRuleText(rule, ctx), 1);
     eng.evaluate(ctx, 0.0, 60.0);
-    EXPECT_FALSE(ctx.control_log.empty());
+    ASSERT_FALSE(ctx.control_log.empty());
+    // The entry carries the rule by interned index, not by string.
+    const auto& e = ctx.control_log.front();
+    ASSERT_GE(e.rule_idx, 0);
+    ASSERT_LT(static_cast<std::size_t>(e.rule_idx), ctx.control_rule_names.size());
+    EXPECT_EQ(ctx.control_rule_names[static_cast<std::size_t>(e.rule_idx)], "FireNow");
+}
+
+// The log is drained only at report time, so a multi-week deck toggling a
+// pump every routing step used to grow it without bound (with a heap string
+// per entry). Entries are POD now and the log is capped; the overflow is
+// counted for the report's one-line notice.
+TEST_F(ControlsParityTest, ControlLogIsCappedAndCountsTheOverflow) {
+    ctx.control_log.clear();
+    ctx.control_log_dropped = 0;
+    const std::size_t cap = SimulationContext::kMaxControlLog;
+    SimulationContext::ControlLogEntry e{};
+    for (std::size_t i = 0; i < cap + 10; ++i) {
+        e.link_idx    = static_cast<int>(i & 7u);
+        e.rule_idx    = 0;
+        e.new_setting = 1.0;
+        e.date        = static_cast<double>(i);
+        ctx.logControlAction(e);
+    }
+    EXPECT_EQ(ctx.control_log.size(), cap);
+    EXPECT_EQ(ctx.control_log_dropped, 10u);
+    EXPECT_DOUBLE_EQ(ctx.control_log.back().date, static_cast<double>(cap - 1));
+    ctx.control_log.clear();
+    ctx.control_log_dropped = 0;
 }
 
 // ============================================================================

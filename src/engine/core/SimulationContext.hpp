@@ -1593,16 +1593,33 @@ struct SimulationContext {
     // Populated by ControlEngine::applyPendingActions() when rpt_controls is on.
     // =========================================================================
 
-    /// One entry per control rule action that changed a link setting.
+    /// One entry per control rule action that changed a link setting. POD:
+    /// the rule NAME is interned in control_rule_names (index rule_idx), so a
+    /// deck that toggles a pump every routing step does not heap-allocate a
+    /// string per action — this log is only drained at report time.
     struct ControlLogEntry {
-        int         link_idx;    ///< Index of the link whose setting changed
-        std::string rule_name;   ///< Name of the rule that triggered the change
-        double      new_setting; ///< The new target setting value (0-1)
-        double      date;        ///< OADate when the change occurred
+        int    link_idx;    ///< Index of the link whose setting changed
+        int    rule_idx;    ///< Index into control_rule_names; -1 = unknown ("Rule?")
+        double new_setting; ///< The new target setting value (0-1)
+        double date;        ///< OADate when the change occurred
     };
 
-    /// Chronological log of all control actions taken during the simulation.
+    /// Chronological log of the control actions taken during the simulation,
+    /// capped at kMaxControlLog entries (see logControlAction).
     std::vector<ControlLogEntry> control_log;
+    /// Rule names by rule index, interned by ControlEngine as actions are logged.
+    std::vector<std::string> control_rule_names;
+    /// Actions NOT logged because the cap was reached; the report says so once.
+    std::size_t control_log_dropped = 0;
+    static constexpr std::size_t kMaxControlLog = 1'000'000;
+
+    /// Append to control_log unless the cap is reached, in which case count
+    /// the overflow instead: bounds memory on multi-week oscillating decks
+    /// (24 B per entry → 24 MB at the cap).
+    void logControlAction(const ControlLogEntry& e) {
+        if (control_log.size() >= kMaxControlLog) { ++control_log_dropped; return; }
+        control_log.push_back(e);
+    }
 
     // =========================================================================
     // Input file path (for model write / hot start)
@@ -1683,6 +1700,8 @@ struct SimulationContext {
     void reset() {
         state = EngineState::CREATED;
         control_log.clear();
+        control_rule_names.clear();
+        control_log_dropped = 0;
         current_time = 0.0;
         current_date = 0.0;
         dt_controls_remaining = 0.0;
