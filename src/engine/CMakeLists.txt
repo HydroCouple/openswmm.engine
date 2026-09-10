@@ -207,27 +207,37 @@ else()
     endif()
 endif()
 
-# ---- Fast geometry / Manning kernels (opt-OUT; default ON) ----
-# The refactored engine ships with the fast cross-section table lookup
-# (reciprocal-multiply + `*inv_delta`, no per-element IEEE divide) and the fast
-# Manning friction (x*cbrt(x) instead of libm pow). Together ~10% faster DW
-# routing. These are NOT bit-exact vs legacy (ULP-level; ~1e-4 flow accumulated
-# over long runs — well inside the abs 1e-8 / rel 1e-7 gate per lookup). Turn
-# BOTH off for bit-exact legacy parity (the QA parity harness / regression
-# baselines): -DOPENSWMM_FAST_XSECT_LOOKUP=OFF -DOPENSWMM_FAST_MANNING_POW=OFF
+# ---- Fast geometry / Manning kernels (opt-IN; default OFF) ----
+# The fast cross-section table lookup (reciprocal-multiply + `*inv_delta`, no
+# per-element IEEE divide) and the fast Manning friction (x*cbrt(x) instead of
+# libm pow) are together ~10% faster DW routing, but they are NOT bit-exact vs
+# legacy (ULP-level per lookup; the error accumulates over a long run — on the
+# East Boston 5-day model, ON diverges from legacy at routing step 1, OFF stays
+# bit-identical for 133,472 steps).
+#
+# They default OFF because the SHIPPED engine — the one the GUI loads — must be
+# bit-identical to the legacy engine: that is what makes a v6-vs-5.x comparison
+# in the GUI a parity comparison rather than an apples-to-oranges one. Perf is
+# opt-in, via the `<Platform>-fast` configure presets (or -D...=ON directly).
+#
+# BOTH must be ON to get the speedup and BOTH OFF for parity; do not mix.
 option(OPENSWMM_FAST_XSECT_LOOKUP
-    "Fast cross-section table lookup (reciprocal-multiply; not bit-exact vs legacy)" ON)
+    "Fast cross-section table lookup (reciprocal-multiply; NOT bit-exact vs legacy)" OFF)
 option(OPENSWMM_FAST_MANNING_POW
-    "Fast Manning friction via cbrt instead of libm pow (not bit-exact vs legacy)" ON)
+    "Fast Manning friction via cbrt instead of libm pow (NOT bit-exact vs legacy)" OFF)
 if(OPENSWMM_FAST_XSECT_LOOKUP)
     target_compile_definitions(openswmm_engine PRIVATE SWMM_XSECT_FAST_LOOKUP)
 endif()
 if(OPENSWMM_FAST_MANNING_POW)
     target_compile_definitions(openswmm_engine PRIVATE SWMM_FAST_MANNING_POW)
 endif()
-message(STATUS "OpenSWMM Engine: fast kernels — xsect_lookup=${OPENSWMM_FAST_XSECT_LOOKUP}"
-        " manning_pow=${OPENSWMM_FAST_MANNING_POW}"
-        " (ON ⇒ ~10% faster DW routing, NOT bit-exact vs legacy)")
+if(OPENSWMM_FAST_XSECT_LOOKUP OR OPENSWMM_FAST_MANNING_POW)
+    message(STATUS "OpenSWMM Engine: fast kernels — xsect_lookup=${OPENSWMM_FAST_XSECT_LOOKUP}"
+            " manning_pow=${OPENSWMM_FAST_MANNING_POW}"
+            " (~10% faster DW routing, NOT bit-exact vs legacy — do not ship)")
+else()
+    message(STATUS "OpenSWMM Engine: fast kernels OFF — bit-exact vs legacy (shipping default)")
+endif()
 
 # ---- Force-optimized override (for Debug parent builds) ----
 # When the engine is consumed as a subdirectory by a parent project that's
