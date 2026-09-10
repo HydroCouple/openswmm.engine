@@ -212,21 +212,26 @@ void handle_subareas(SimulationContext& ctx, const std::vector<std::string>& lin
         // PctZero → fraction of impervious with no depression storage
         ctx.subcatches.frac_imperv_no_store[idx] = to_double(tok[5]) / 100.0;
 
-        // RouteTo: OUTLET (0), IMPERV (1), or PERV (2)
+        // RouteTo: OUTLET (0), IMPERV (1), or PERV (2). Legacy subcatch.c uses
+        // findmatch(tok[6], {"OUTLET","IMPERV","PERV"}) where match() treats the
+        // keyword as a case-insensitive PREFIX of the token — so the full words
+        // "IMPERVIOUS"/"PERVIOUS" that decks actually write map to IMPERV/PERV.
+        // v6 formerly required an EXACT "IMPERV"/"PERV", so the full words fell
+        // through to OUTLET and silently dropped all inter-subarea runon.
         if (tok.size() > 6) {
             std::string rt = Tokenizer::to_upper(tok[6]);
-            if (rt == "IMPERV")       ctx.subcatches.subarea_routing[idx] = 1;
-            else if (rt == "PERV")    ctx.subcatches.subarea_routing[idx] = 2;
-            else                      ctx.subcatches.subarea_routing[idx] = 0; // OUTLET
-        }
+            auto has_prefix = [&](const char* p) { return rt.rfind(p, 0) == 0; };
+            int mode = 0;  // OUTLET
+            if      (has_prefix("OUTLET")) mode = 0;
+            else if (has_prefix("IMPERV")) mode = 1;
+            else if (has_prefix("PERV"))   mode = 2;
+            ctx.subcatches.subarea_routing[idx] = mode;
 
-        // PctRouted (default 100%)
-        if (tok.size() > 7) {
-            ctx.subcatches.pct_routed[idx] = to_double(tok[7]) / 100.0;
-        } else if (tok.size() > 6) {
-            // If RouteTo specified but no PctRouted, default to 100%
-            std::string rt = Tokenizer::to_upper(tok[6]);
-            if (rt == "IMPERV" || rt == "PERV")
+            // PctRouted: legacy defaults to 100% when RouteTo is given, then
+            // overrides with tok[7] if present.
+            if (tok.size() > 7)
+                ctx.subcatches.pct_routed[idx] = to_double(tok[7]) / 100.0;
+            else if (mode != 0)
                 ctx.subcatches.pct_routed[idx] = 1.0;
         }
     }
