@@ -18,7 +18,11 @@
 #define OPENSWMM_KERNEL_FN KOKKOS_INLINE_FUNCTION
 
 #include "ExplicitKokkosSurfaceSolver.hpp"
-#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
+// Relative, not "core/FileIO.hpp": this TU is also compiled into the STANDALONE
+// GPU plugin targets (openswmm_gpu_omp / _cuda), whose include path is only
+// ../solver and ../data — src/engine is not on it. Matches how every other
+// engine header is reached from this file (../data/MeshData.hpp, etc.).
+#include "../../core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 
 #include <algorithm>
 #include <cmath>
