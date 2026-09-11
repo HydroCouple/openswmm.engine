@@ -499,8 +499,18 @@ static void write_links(sqlite3* db, const SimulationContext& ctx,
 
         bind_text(stmt.get(), 5, from_name);
         bind_text(stmt.get(), 6, to_name);
-        bind_double(stmt.get(), 7, safe_dbl(ctx.links.offset1, i));
-        bind_double(stmt.get(), 8, safe_dbl(ctx.links.offset2, i));
+        // Persist the AUTHORED offsets: resolve_cross_references raises both
+        // offsets of a FILLED_CIRCULAR conduit by the sediment depth yBot
+        // (legacy link.c:1072-1077); undo it here (internal ft, as written).
+        double off1 = safe_dbl(ctx.links.offset1, i);
+        double off2 = safe_dbl(ctx.links.offset2, i);
+        if (ctx.links.type[i] == LinkType::CONDUIT &&
+            ctx.links.xsect_shape[i] == XsectShape::FILLED_CIRCULAR) {
+            off1 -= safe_dbl(ctx.links.xsect_y_bot, i);
+            off2 -= safe_dbl(ctx.links.xsect_y_bot, i);
+        }
+        bind_double(stmt.get(), 7, off1);
+        bind_double(stmt.get(), 8, off2);
 
         bind_double(stmt.get(), 9,  safe_dbl(ctx.links.q0, i));
         bind_double(stmt.get(), 10, safe_dbl(ctx.links.q_limit, i));

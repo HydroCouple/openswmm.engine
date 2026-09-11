@@ -1095,6 +1095,15 @@ bool needs_authored_conversion(const SimulationContext& ctx) {
     if (ctx.options.link_offsets == 1) return true;
     for (int j = 0; j < ctx.n_links(); ++j)
         if (ctx.links.direction[static_cast<std::size_t>(j)] < 0) return true;
+    // A partly filled circular conduit carries its sediment bump in offset1/2
+    // (resolve_cross_references, legacy link.c:1072-1077); the file must get
+    // the authored offsets back.
+    for (int j = 0; j < ctx.n_links(); ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        if (ctx.links.type[uj] == LinkType::CONDUIT &&
+            ctx.links.xsect_shape[uj] == XsectShape::FILLED_CIRCULAR &&
+            ctx.links.xsect_y_bot[uj] > 0.0) return true;
+    }
     return false;
 }
 
@@ -1130,6 +1139,26 @@ void convert_internal_to_authored(SimulationContext& ctx) {
 
     // (1) Orientation.
     restore_authored_orientation(ctx);
+
+    // (1b) FILLED_CIRCULAR: resolve_cross_references raised both offsets by the
+    // sediment depth yBot (legacy link.c:1072-1077) so the hydraulics see the
+    // effective invert. Restore the AUTHORED offsets before the ELEVATION step
+    // below reads them. xsect_y_bot stays in internal ft, while the offsets are
+    // in display units iff convert_internal_to_display() ran on this copy —
+    // which is exactly when the LENGTH factor is not 1 — so scaling yBot by that
+    // factor is right in both unit systems.
+    {
+        const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+        const double len = ucf::Ucf[ucf::LENGTH][static_cast<std::size_t>(us)];
+        for (int j = 0; j < n_links; ++j) {
+            const auto uj = static_cast<std::size_t>(j);
+            if (ctx.links.type[uj] != LinkType::CONDUIT ||
+                ctx.links.xsect_shape[uj] != XsectShape::FILLED_CIRCULAR) continue;
+            const double dz = ctx.links.xsect_y_bot[uj] * len;
+            ctx.links.offset1[uj] -= dz;
+            ctx.links.offset2[uj] -= dz;
+        }
+    }
 
     // (2) Depth → elevation (inverse of the two ELEV_OFFSET passes above).
     if (ctx.options.link_offsets != 1) return;
@@ -2759,6 +2788,18 @@ void resolve_cross_references(SimulationContext& ctx) {
                 ctx.warnings.push_back(format_warning(WARN_NEGATIVE_OFFSET, ctx.link_names.name_of(j)));
             ctx.links.offset1[uj] = std::max(0.0, raw1);
             ctx.links.offset2[uj] = std::max(0.0, raw2);
+        }
+
+        // Legacy conduit_validate (link.c:1072-1077): a partly filled circular
+        // section raises BOTH invert offsets by the sediment depth yBot before
+        // the slope, so every consumer of offset1/offset2 (z1/z2, the outfall z,
+        // crown extension, DRY/critical classification) sees the effective
+        // invert. The slope itself is unaffected (both ends move equally).
+        // convert_internal_to_authored() reverses this on the write-path copy so
+        // a saved deck keeps the AUTHORED offsets. Both values are internal ft.
+        if (ctx.links.xsect_shape[uj] == XsectShape::FILLED_CIRCULAR) {
+            ctx.links.offset1[uj] += ctx.links.xsect_y_bot[uj];
+            ctx.links.offset2[uj] += ctx.links.xsect_y_bot[uj];
         }
 
         double elev1 = ctx.links.offset1[uj] + ctx.nodes.invert_elev[n1];

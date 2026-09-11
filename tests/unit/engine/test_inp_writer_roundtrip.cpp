@@ -1165,3 +1165,22 @@ TEST(InpWriterRoundTrip, RestoreAuthoredOrientationApiUnreversesTheLiveContext) 
     swmm_engine_close(e);
     swmm_engine_destroy(e);
 }
+
+// ===========================================================================
+// Defect — FILLED_CIRCULAR offsets written bumped by the sediment depth
+// ===========================================================================
+//
+// resolve_cross_references raises both offsets of a partly filled circular
+// conduit by yBot (legacy link.c:1072-1077) so the hydraulics see the sediment
+// as the effective invert. That is engine state, not authored input: a save
+// must write the offsets the user typed, or every Open -> Save cycle grows
+// them by the fill depth and the next open raises the invert again.
+TEST(InpWriterRoundTrip, FilledCircularOffsetsStayAuthored) {
+    const auto g = gen1("filled_circular_offsets.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    const auto c1 = row(g.text, "CONDUITS", "C1");
+    ASSERT_GE(c1.size(), 7u);
+    EXPECT_NEAR(std::stod(c1.at(5)), 0.3, 1e-9) << "InOffset was bumped by the fill";
+    EXPECT_NEAR(std::stod(c1.at(6)), 0.7, 1e-9) << "OutOffset was bumped by the fill";
+}
