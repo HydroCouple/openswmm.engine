@@ -23,6 +23,47 @@ retroactive.
 
 ## [Unreleased]
 
+### Performance
+
+- **Explicit FV solver: five bit-identical fixed-cost removals** (Phase 1 of
+  `plans/FV1D_CLOSURE_KERNEL_PERF_PLAN_2026-09-11.md`). Measured on the new Phase 0
+  counters against a frozen base binary: `.out` byte-identical on all 28 synthetic
+  baseline rows and the 25-deck parity manifest (11 FV decks); every FV unit gate and the
+  full unit suite green.
+  - `advance()` no longer begins with a full-mesh depth inversion when the state is the
+    solver's own (`state_clean_`): nothing outside the solver writes `cell_a` between two
+    routing steps, so the refresh recomputed what was already there — 27-32 % of a reach
+    deck's step at one substep per routing step.
+  - `settleAccumulators()` returns at once when no LTS macro cycle has booked flux
+    (`acc_dirty_`): on every baseline deck LTS never fired a cycle, yet each re-tier drained
+    all-zero accumulators and ran two full-mesh refreshes. The LTS block's own census is
+    reused as the global path's when it falls through without re-tiering — one face sweep
+    per substep instead of two.
+  - A per-cell closure cache (`cell_ah_`/`cell_t_`/`cell_i1_`, filled wherever `cell_h` is
+    written) serves `faceSide`, the step census and the LTS stability bounds, which
+    re-evaluated the same section at the same stored depth several times per substep and
+    once per node-solve trial. `faceSide` also stops computing a ghost side's first moment,
+    which `computeFaceFlux` discards, and `relaxOneNode` no longer evaluates each face's
+    geometry twice.
+  - Work removed (Phase 0 → Phase 1, same substeps): depth inversions −57 % on Example1
+    and −75 % on a 500-conduit reach at the default mesh (LTS on/off rows now equal), area
+    calls −40…50 %, first-moment calls −50…60 %. Wall clock is recorded in
+    `plans/FV1D_PERF_BASELINE_2026-09-11.md` once measured on a quiet host.
+
+### Added
+
+- **FV solver instrumentation for the closure-kernel program.** `[PERF-FV]` gains
+  closure-call counters (`n.area n.width n.i1 n.hydrad`) and LTS macro-cycle counters
+  (`n.macro n.macrorej`); the report's "FV Solver Statistics" block gains
+  `LTS Macro Cycles Fired / Rejected`, which is what distinguishes "tiering never engaged"
+  from "tiering did not help" (the tier histogram alone cannot: it is filled whether or
+  not a cycle fits the routing step). `bench_fv_closure` times every closure kernel per
+  shape on the geometries the mesh builder builds (built in the tests tree too, no Google
+  Benchmark needed); `fv_perf_baseline.py` runs real decks as authored at THREADS 1/8
+  (`--real-deck`), parses the new rows, and reports closure calls per substep;
+  `fv_perf_phase0.sh` runs the whole Phase 0 as one detached job and
+  `fv_perf_compare.py` is the mechanical Tier A hash gate between two runs.
+
 ### Fixed
 
 - **FILLED_CIRCULAR conduit offsets cross the C API as authored values.** Once

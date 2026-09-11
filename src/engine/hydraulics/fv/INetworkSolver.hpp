@@ -173,6 +173,12 @@ public:
         long   dt_argmin_band        = 0;  ///< y_crown ≤ h < y_full (mouth)
         long   dt_argmin_free        = 0;  ///< open-channel cell
         long   dt_argmin_node        = 0;  ///< node storage / feedback bound
+
+        // LTS macro cycles that ran vs were rejected. The tier histogram
+        // above is filled by assignTiers whether or not a cycle ever fires,
+        // so these are what say tiering ENGAGED rather than was assigned.
+        long   n_macro_cycles   = 0;
+        long   n_macro_rejected = 0;
     };
 
     /// Read cumulative statistics. Default: zeros (backend has no counters).

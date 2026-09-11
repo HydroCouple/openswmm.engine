@@ -5899,6 +5899,8 @@ int SWMMEngine::end() noexcept {
         rs.fv_dt_argmin_band        = s.dt_argmin_band;
         rs.fv_dt_argmin_free        = s.dt_argmin_free;
         rs.fv_dt_argmin_node        = s.dt_argmin_node;
+        rs.fv_macro_cycles          = s.n_macro_cycles;
+        rs.fv_macro_rejected        = s.n_macro_rejected;
     }
 
     // Finalize per-element max stats for report (top-5 CFL-critical, flow turns,

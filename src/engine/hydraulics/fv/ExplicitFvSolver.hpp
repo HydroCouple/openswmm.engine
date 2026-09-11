@@ -599,6 +599,18 @@ private:
     std::vector<double> cell_eta_;     ///< z_b + h
     std::vector<double> cell_u_;       ///< Q/A, dry-guarded
 
+    /// Closure at the CELL depth, refreshed by cacheClosure() at every write
+    /// of cell_h: A(h), T(h) and I₁(h) of the cell's own section. Zero for a
+    /// dry or TPA-flagged cell (neither consumer reads it then). faceSide, the
+    /// census and the LTS stability bounds evaluated exactly these at the
+    /// stored depth, several times per substep and once per node-solve trial;
+    /// read from here the value is the same call on the same inputs, so the
+    /// results are bit-identical (plan Phase 1b).
+    std::vector<double> cell_ah_;      ///< areaOfDepth(g, cell_h)
+    std::vector<double> cell_t_;       ///< widthOfDepth(g, cell_h)
+    std::vector<double> cell_i1_;      ///< i1OfDepth(g, cell_h, cell_ah_)
+    void cacheClosure(std::size_t uc, const FvGeometry& g, double h) noexcept;
+
     /// Unsteady-friction convective term c·sgn(Vⁿ)·|∂V/∂x|ⁿ per cell
     /// (issue #156). Precomputed from a consistent old-state snapshot before
     /// each (parallel) cell-update loop so no update reads a mid-update
@@ -738,6 +750,30 @@ private:
     long   total_flux_   = 0;
     double min_h_        = 0.0;
     double sim_time_     = 0.0;
+    /// LTS macro cycles that ran / were rejected by the post-cycle census.
+    /// The tier histogram is filled whether or not a cycle ever fits the
+    /// routing step; these say whether tiering ENGAGED.
+    long   n_macro_cycles_   = 0;
+    long   n_macro_rejected_ = 0;
+
+    /// True while cell_h / cell_eta_ / cell_u_ are exactly what the solver's
+    /// own last update derived from cell_a. advance() then skips its entry
+    /// refreshDepths() — a full-mesh depth inversion that was 27-32 % of a
+    /// reach deck's step in the 2026-09-11 baseline — bit-identically, since
+    /// the refresh would recompute the same values from the same areas. The
+    /// Router writes cell_a only before initialize() (the initial seed), so
+    /// initialize()/reinitialize() are the only places that clear it; the
+    /// pressurized-implicit and TPA paths keep the refresh unconditional.
+    bool   state_clean_ = false;
+    /// True while acc_a_/acc_q_/acc_nvol_ hold flux fireFaces booked and no
+    /// volume has drained. Lets settleAccumulators() skip its transfer AND the
+    /// two full-mesh refreshDepths() it ends with when no macro cycle has run
+    /// since the last settle — which, on every deck of the 2026-09-11
+    /// baseline, was always (LTS fired 0 cycles) while costing 25-50 % of wall.
+    bool   acc_dirty_ = false;
+    /// Per-face √(g·A·T) scratch for relaxOneNode: pass 1 evaluates it into
+    /// here and pass 2 reads it, instead of evaluating the same geometry twice.
+    std::vector<double> relax_beta_;
 
     // dt-argmin attribution (slot program R0): who owned the binding CFL
     // element, counted once per censusDt (global path) / assignTiers (LTS

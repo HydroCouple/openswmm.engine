@@ -101,6 +101,23 @@ inline long n_fv_alg_solve   = 0;  // ...of which ran the root solve
 inline long n_fv_alg_resid   = 0;  // residual(h) evaluations inside them
 inline long n_fv_alg_flux    = 0;  // computeFaceFlux calls made from residuals
 
+// Closure-call counts at the solver's call sites (FV1D closure-kernel program,
+// Phase 0). share = count × per-op ns from bench_fv_closure, which is how the
+// closure's slice of the step is sized without a sampling profiler. These are
+// plain increments from inside parallel regions: EXACT at one thread, an
+// estimate above — read them from THREADS 1 rows only.
+inline long n_fv_geom_area   = 0;  // areaOfDepth
+inline long n_fv_geom_width  = 0;  // widthOfDepth
+inline long n_fv_geom_i1     = 0;  // i1OfDepth
+inline long n_fv_geom_hydrad = 0;  // hydRadOfDepth (friction)
+
+// LTS macro cycles that actually ran vs were rejected by the post-cycle
+// census. The tier histogram is filled by assignTiers whether or not a cycle
+// ever fires, so without these two the report cannot tell "tiering did not
+// help" from "tiering never engaged" (baseline verification 2026-08-20 §2.3).
+inline long n_fv_macro_cycles   = 0;
+inline long n_fv_macro_rejected = 0;
+
 /** @brief Zeroes the FV phase accumulators. Called from Router::initFv. */
 inline void reset_fv() noexcept {
     sec_fv_census = sec_fv_flux = sec_fv_nodesolve = sec_fv_positivity = 0.0;
@@ -113,6 +130,8 @@ inline void reset_fv() noexcept {
     n_fv_savestate = n_fv_restore = n_fv_structref = 0;
     n_fv_alg_visit = n_fv_alg_passthru = 0;
     n_fv_alg_solve = n_fv_alg_resid = n_fv_alg_flux = 0;
+    n_fv_geom_area = n_fv_geom_width = n_fv_geom_i1 = n_fv_geom_hydrad = 0;
+    n_fv_macro_cycles = n_fv_macro_rejected = 0;
 }
 
 /**
@@ -144,6 +163,8 @@ inline void dump_fv() noexcept {
         "n.savestate=%ld n.rollback=%ld n.structrefresh=%ld "
         "n.algvisit=%ld n.algpassthru=%ld n.algsolve=%ld "
         "n.algresidual=%ld n.algfaceflux=%ld "
+        "n.area=%ld n.width=%ld n.i1=%ld n.hydrad=%ld "
+        "n.macro=%ld n.macrorej=%ld "
         "passthru_frac=%.4f rollback_frac=%.4f "
         "algresid_per_solve=%.2f algflux_per_solve=%.2f\n",
         sec_1d_step, total,
@@ -156,6 +177,8 @@ inline void dump_fv() noexcept {
         n_fv_savestate, n_fv_restore, n_fv_structref,
         n_fv_alg_visit, n_fv_alg_passthru, n_fv_alg_solve,
         n_fv_alg_resid, n_fv_alg_flux,
+        n_fv_geom_area, n_fv_geom_width, n_fv_geom_i1, n_fv_geom_hydrad,
+        n_fv_macro_cycles, n_fv_macro_rejected,
         (n_fv_alg_visit > 0)
             ? static_cast<double>(n_fv_alg_passthru) / static_cast<double>(n_fv_alg_visit) : 0.0,
         (n_fv_savestate > 0)

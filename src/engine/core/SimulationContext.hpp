@@ -1509,6 +1509,12 @@ struct SimulationContext {
         long   fv_dt_argmin_band        = 0;
         long   fv_dt_argmin_free        = 0;
         long   fv_dt_argmin_node        = 0;
+
+        // LTS macro cycles that ran / were rejected. Distinguishes "tiering
+        // never engaged" from "tiering did not help" (the tier histogram
+        // alone cannot).
+        long   fv_macro_cycles   = 0;
+        long   fv_macro_rejected = 0;
     } routing_stats;
 
     // =========================================================================

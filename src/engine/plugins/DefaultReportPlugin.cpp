@@ -1355,6 +1355,13 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         std::fprintf(f, "\n  Avg Substep (s) ..........%14.6f", rs.fv_avg_h);
         std::fprintf(f, "\n  Min Substep (s) ..........%14.6f", rs.fv_min_h);
         std::fprintf(f, "\n  Last Substep (s) .........%14.6f", rs.fv_last_h);
+        // Whether local time stepping ever ran a macro cycle. The tier
+        // occupancy rows below are filled by the tier ASSIGNMENT, which runs
+        // whether or not a cycle fits the routing step, so on their own they
+        // cannot distinguish "tiering did not help" from "tiering never
+        // engaged" — these two rows can.
+        srow("LTS Macro Cycles Fired ...", rs.fv_macro_cycles);
+        srow("LTS Macro Cycles Rejected ", rs.fv_macro_rejected);
 
         // Compaction telemetry: the share of faces on the active list at each
         // rebuild. A mean near 1.0 means compaction is finding nothing to skip.

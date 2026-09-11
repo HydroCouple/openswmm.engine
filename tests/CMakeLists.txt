@@ -185,6 +185,25 @@ if(OPENSWMM_BUILD_UNIT_TESTS)
         CXX_STANDARD_REQUIRED ON)
     openswmm_stage_test_runtime_deps(parity_probe)
 
+    # bench_fv_closure: per-op cost of the explicit-FV cross-section closure
+    # (plans/FV1D_CLOSURE_KERNEL_PERF_PLAN_2026-09-11.md, Phase 0). Same
+    # reasoning as parity_probe: it needs no Google Benchmark, and the
+    # numbers must come from the SAME build the FV gates run in, so it is
+    # built here rather than only in the benchmarks-only tree. tests/benchmarks
+    # guards its own registration with `if(NOT TARGET ...)`.
+    if(NOT TARGET bench_fv_closure)
+        add_executable(bench_fv_closure ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/bench_fv_closure.cpp)
+        target_link_libraries(bench_fv_closure PRIVATE openswmm_engine)
+        target_include_directories(bench_fv_closure PRIVATE ${PROJECT_SOURCE_DIR}/include)
+        if(OPENSWMM_FAST_XSECT_LOOKUP)
+            target_compile_definitions(bench_fv_closure PRIVATE SWMM_XSECT_FAST_LOOKUP)
+        endif()
+        set_target_properties(bench_fv_closure PROPERTIES
+            CXX_STANDARD 20
+            CXX_STANDARD_REQUIRED ON)
+        openswmm_stage_test_runtime_deps(bench_fv_closure)
+    endif()
+
     # Determinism gate: two runs of the same build must produce identical
     # artifacts. Without this, a `check` failure after an optimization could
     # not be distinguished from run-to-run noise.
