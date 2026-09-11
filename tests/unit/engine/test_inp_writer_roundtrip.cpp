@@ -1184,3 +1184,24 @@ TEST(InpWriterRoundTrip, FilledCircularOffsetsStayAuthored) {
     EXPECT_NEAR(std::stod(c1.at(5)), 0.3, 1e-9) << "InOffset was bumped by the fill";
     EXPECT_NEAR(std::stod(c1.at(6)), 0.7, 1e-9) << "OutOffset was bumped by the fill";
 }
+
+// The resolver's slope loop skips a conduit with a dangling node or zero
+// length (a lenient open keeps such a model loadable), but the writers undo
+// the sediment bump for EVERY filled conduit, as the C API does. The bump must
+// therefore be applied to the skipped conduits as well, or a lenient-opened
+// filled conduit on a missing node is written yBot LOWER than authored.
+TEST(InpWriterRoundTrip, FilledCircularOffsetsStayAuthoredOnADanglingConduit) {
+    const auto g = writeOnceLenient("filled_circular_offsets_dangling.inp",
+                                    "_filled_circular_offsets_dangling_rt1.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    const auto c1 = row(g.text, "CONDUITS", "C1");
+    ASSERT_GE(c1.size(), 7u);
+    EXPECT_NEAR(std::stod(c1.at(5)), 0.3, 1e-9) << "resolved conduit InOffset";
+    EXPECT_NEAR(std::stod(c1.at(6)), 0.7, 1e-9) << "resolved conduit OutOffset";
+
+    const auto c2 = row(g.text, "CONDUITS", "C2");
+    ASSERT_GE(c2.size(), 7u);
+    EXPECT_NEAR(std::stod(c2.at(5)), 0.4, 1e-9) << "dangling conduit InOffset lost the bump";
+    EXPECT_NEAR(std::stod(c2.at(6)), 0.6, 1e-9) << "dangling conduit OutOffset lost the bump";
+}

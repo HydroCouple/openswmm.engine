@@ -2769,14 +2769,31 @@ void resolve_cross_references(SimulationContext& ctx) {
         auto uj = static_cast<std::size_t>(j);
         if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
 
+        // Legacy conduit_validate (link.c:1072-1077): a partly filled circular
+        // section raises BOTH invert offsets by the sediment depth yBot before
+        // the slope, so every consumer of offset1/offset2 (z1/z2, the outfall
+        // z, crown extension, DRY/critical classification) sees the effective
+        // invert. The slope itself is unaffected (both ends move equally). The
+        // C API (link::filledCircularOffsetBump) and the writers' inverse
+        // (convert_internal_to_authored, GeoPackageWriter) rely on the bump
+        // being present on EVERY resolved filled conduit, so a lenient-opened
+        // conduit with a dangling node or zero length — skipped by the guards
+        // below — is bumped on its way out of the loop too. Internal ft.
+        auto bump_filled = [&]() {
+            if (ctx.links.xsect_shape[uj] == XsectShape::FILLED_CIRCULAR) {
+                ctx.links.offset1[uj] += ctx.links.xsect_y_bot[uj];
+                ctx.links.offset2[uj] += ctx.links.xsect_y_bot[uj];
+            }
+        };
+
         int n1 = ctx.links.node1[uj];
         int n2 = ctx.links.node2[uj];
-        if (n1 < 0 || n2 < 0) continue;
+        if (n1 < 0 || n2 < 0) { bump_filled(); continue; }
 
         const int cr = ctx.link_subtypes.conduit_row(j);  // ≥0 (CONDUIT)
         const auto ucr = static_cast<std::size_t>(cr);
         double length = (cr >= 0) ? ctx.link_subtypes.conduits.length[ucr] : 0.0;
-        if (length <= 0.0) continue;
+        if (length <= 0.0) { bump_filled(); continue; }
 
         // Convert elevation offsets if ELEV_OFFSET mode
         if (ctx.options.link_offsets == 1) { // ELEV_OFFSET
@@ -2790,17 +2807,9 @@ void resolve_cross_references(SimulationContext& ctx) {
             ctx.links.offset2[uj] = std::max(0.0, raw2);
         }
 
-        // Legacy conduit_validate (link.c:1072-1077): a partly filled circular
-        // section raises BOTH invert offsets by the sediment depth yBot before
-        // the slope, so every consumer of offset1/offset2 (z1/z2, the outfall z,
-        // crown extension, DRY/critical classification) sees the effective
-        // invert. The slope itself is unaffected (both ends move equally).
-        // convert_internal_to_authored() reverses this on the write-path copy so
-        // a saved deck keeps the AUTHORED offsets. Both values are internal ft.
-        if (ctx.links.xsect_shape[uj] == XsectShape::FILLED_CIRCULAR) {
-            ctx.links.offset1[uj] += ctx.links.xsect_y_bot[uj];
-            ctx.links.offset2[uj] += ctx.links.xsect_y_bot[uj];
-        }
+        // FILLED_CIRCULAR sediment bump — after the negative-offset clamp and
+        // before the slope, as in legacy; see bump_filled above.
+        bump_filled();
 
         double elev1 = ctx.links.offset1[uj] + ctx.nodes.invert_elev[n1];
         double elev2 = ctx.links.offset2[uj] + ctx.nodes.invert_elev[n2];
