@@ -1487,13 +1487,18 @@ struct XsectEval {
     // ============================================================================
 
     OPENSWMM_KERNEL_FN bool isOpen(int type) const {
+        // PARITY xsect.c:215 xsect_isOpen() = (Amax[type] >= 1.0): the shapes
+        // whose Amax entry is 1.0 (xsect.c:59-85) are DUMMY, RECT_OPEN,
+        // TRAPEZOIDAL, TRIANGULAR, PARABOLIC, POWERFUNC, IRREGULAR and STREET.
         switch (static_cast<XSectShape>(type)) {
+            case XSectShape::DUMMY:
             case XSectShape::RECT_OPEN:
             case XSectShape::TRAPEZOIDAL:
             case XSectShape::TRIANGULAR:
             case XSectShape::PARABOLIC:
             case XSectShape::POWERFUNC:
             case XSectShape::IRREGULAR:
+            case XSectShape::STREET_XSECT:
                 return true;
             default:
                 return false;
