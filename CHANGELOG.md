@@ -23,6 +23,34 @@ retroactive.
 
 ## [Unreleased]
 
+### Fixed
+
+- **FILLED_CIRCULAR conduit offsets cross the C API as authored values.** Once
+  `resolve_cross_references` raised a partly filled circular conduit's stored offsets by the sediment
+  depth (legacy `link.c:1072-1077`), `swmm_link_get_offset_up/dn` reported the raised value, the setters
+  stored whatever they were handed, and `swmm_link_set_xsect` left `y_bot` stale on a live edit — while
+  the `.inp` and GeoPackage writers subtract the sediment depth unconditionally, so a GUI edit of such a
+  conduit saved offsets shifted by `yBot`. The getters and setters now remove / add the bump
+  (`link::filledCircularOffsetBump`; zero in the BUILDING state so `swmm_finalize_model` bumps exactly
+  once), `swmm_link_set_xsect` re-bases the stored offsets on every exit and derives a filled section
+  through `xsect::setParams` like the resolver does, and `swmm_conduit_split` stores an authored 0 at
+  the new junction. `test_engine_filled_circular_offset_api`.
+- **The control-action log and the 2D marcher's telemetry no longer grow without bound.** With
+  `[REPORT] CONTROLS YES` every numeric control action pushed an entry carrying a heap string for the
+  whole run; entries are POD now (rule names interned by index), capped at 1 000 000 with the overflow
+  counted at the end of the report's *Control Actions Taken* block. `ExplicitInertialSolver` kept a
+  `(t, active cells)` sample per rebuild only to fold min / mean / max at `run_stats()`; it folds as it
+  samples and keeps the vector only when `OPENSWMM_2D_MARCHER_TELEMETRY` names a CSV.
+
+### Changed
+
+- **Host-reserved threads count toward oversubscription.** `OPENSWMM_HOST_RESERVED_THREADS` (the GUI
+  exports 3: its main, render and engine-IO threads) is added to the requested team before the
+  logical-CPU comparison, so a `THREADS 8` deck run inside the GUI on a 10-CPU machine takes the
+  passive-wait path instead of spinning eight workers against the render thread; the oversubscription
+  warning names the reserved count. `kmp_set_blocktime(INT_MAX)` is skipped when the host pre-set
+  `KMP_BLOCKTIME`, which the old comment promised but the runtime call ignored. `test_thread_info`.
+
 ## [6.0.0-alpha.4] — 2026-09-08
 
 ### Fixed

@@ -160,6 +160,27 @@ XSectParams buildXSectParams(
 int translateShape(XsectShape link_shape);
 
 /**
+ * @brief Sediment bump carried by a FILLED_CIRCULAR conduit's stored offsets.
+ *
+ * @details Once resolve_cross_references() has run, offset1 / offset2 of a
+ *          partly filled circular conduit hold the AUTHORED offset plus the
+ *          sediment depth y_bot (legacy link.c:1072-1077), so the hydraulics
+ *          see the sediment surface as the invert. Everything that speaks
+ *          authored offsets — the C API getters / setters, the edit ops that
+ *          write an authored 0 at a new junction, and the writers' inverse in
+ *          convert_internal_to_authored() — adds or removes this amount.
+ *          @p resolved is false in the BUILDING state, where the stores hold
+ *          authored values until swmm_finalize_model() resolves them once.
+ * @return y_bot (internal ft) for a resolved FILLED_CIRCULAR conduit, else 0.
+ */
+inline double filledCircularOffsetBump(const LinkData& links, std::size_t j, bool resolved) {
+    if (!resolved) return 0.0;
+    if (links.type[j] != LinkType::CONDUIT ||
+        links.xsect_shape[j] != XsectShape::FILLED_CIRCULAR) return 0.0;
+    return links.xsect_y_bot[j];
+}
+
+/**
  * @brief Derive the full-flow properties of a tabulated cross-section.
  *
  * @details The counterpart of xsect::setParams() for the three shapes whose

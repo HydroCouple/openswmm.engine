@@ -28,6 +28,7 @@
 #include "VirtualJunctionOps.hpp"
 #include "ObjectDeleter.hpp"
 #include "../core/ErrorCodes.hpp"
+#include "../hydraulics/Link.hpp"
 #include "../input/PostParseResolver.hpp"
 #include "../2d/data/MeshData.hpp"
 
@@ -387,13 +388,17 @@ SplitResult vj_split_conduit(SimulationContext& ctx, int link_idx, double t,
     }
 
     // Rewire: original keeps the upstream end; new conduit takes the
-    // downstream end and its offset.
-    links.offset1[unj] = 0.0;
+    // downstream end and its offset. An authored 0 at the new junction is
+    // stored WITH the sediment bump of a filled circular section (see
+    // link::filledCircularOffsetBump), as the resolver would have stored it.
+    const double bump = link::filledCircularOffsetBump(
+        links, uj, ctx.state != EngineState::BUILDING);
+    links.offset1[unj] = bump;
     links.offset2[unj] = links.offset2[uj];
     links.node1[unj]   = ni;
     links.node2[unj]   = n2;
     links.node2[uj]    = ni;
-    links.offset2[uj]  = 0.0;
+    links.offset2[uj]  = bump;
 
     // Vertex partition: interior points at cumulative length <= t stay with
     // the original conduit; the rest move to the new conduit.
