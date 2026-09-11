@@ -2574,7 +2574,10 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         if (gw_node >= 0 && gw_node < ctx_.n_nodes()) {
             double gw_q = (1.0 - f) * ctx_.subcatches.old_gw_flow[ui]
                         +        f  * ctx_.subcatches.gw_flow[ui];
-            if (std::fabs(gw_q) > 1.0e-6) {
+            // PARITY routing.c addGroundwaterInflows:
+            // `if (fabs(q) < FLOW_TOL) continue;` — FLOW_TOL is 1e-5 cfs
+            // (consts.h), not the 1e-6 this used to carry.
+            if (std::fabs(gw_q) >= constants::FLOW_TOL) {
                 ctx_.nodes.gw_inflow[static_cast<std::size_t>(gw_node)] += gw_q;
                 gw_q_interp_[ui] = gw_q;
                 gw_q_node_[ui]   = gw_node;

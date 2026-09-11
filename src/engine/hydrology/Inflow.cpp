@@ -388,7 +388,13 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
         if (ext_inflows_.kind[ui] != static_cast<int>(ExtInflowKind::FLOW))
             continue;
 
-        const double q = row_value(ui);
+        double q = row_value(ui);
+        // PARITY routing.c addExternalInflows: `if (fabs(q) < FLOW_TOL) q = 0`
+        // — the node's external flow is dropped below FLOW_TOL before it joins
+        // newLatFlow (and before the CONCEN rows multiply by it). Without this
+        // the first step of a ramp starting at 0 injected ~1e-6 cfs that
+        // legacy zeroes (extran9: storage node depth 1.5e-7 ft off from step 1).
+        if (std::fabs(q) < constants::FLOW_TOL) q = 0.0;
 
         // Write to decomposed external inflow array (assembled into lat_flow later)
         int ni = ext_inflows_.node_idx[ui];
@@ -488,10 +494,6 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
     // ---- Batch DWF inflows (pattern multiply chain + scatter-add) ----
     // Matches legacy inflow_getDwfInflow: f = monthly * daily * (hourly|weekend)
 
-    // Legacy FLOW_TOL (consts.h): DWF flows below it are snapped to zero
-    // (routing.c addDryWeatherInflows: `if (fabs(q) < FLOW_TOL) q = 0`).
-    constexpr double DWF_FLOW_TOL = 0.00001;
-
     // Pattern factor of one DWF row at the current date, legacy
     // inflow_getDwfInflow: f = monthly * daily * (hourly | weekend).
     auto dwfFactor = [&](std::size_t ui) {
@@ -524,7 +526,8 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
         if (!dwf_inflows_.is_flow[ui]) continue;
 
         double q = dwfFactor(ui) * dwf_inflows_.avg_value[ui];
-        if (std::fabs(q) < DWF_FLOW_TOL) q = 0.0;
+        // PARITY routing.c addDryWeatherInflows: `if (fabs(q) < FLOW_TOL) q = 0`.
+        if (std::fabs(q) < constants::FLOW_TOL) q = 0.0;
 
         // Write to decomposed DWF inflow array (assembled into lat_flow later)
         int ni = dwf_inflows_.node_idx[ui];
