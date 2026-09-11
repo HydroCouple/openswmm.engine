@@ -115,43 +115,47 @@ double DWSolver::getCrownCutoff() const {
 }
 
 /**
+ * @brief Legacy xsect_isOpen(): a shape is open iff its Amax entry is 1.0
+ * (xsect.c:59-85, 215) — DUMMY, RECT_OPEN, TRAPEZOIDAL, TRIANGULAR,
+ * PARABOLIC, POWERFUNC, IRREGULAR and STREET. Every other shape has a crown.
+ */
+static bool isOpenShape(XsectShape shape) {
+    switch (shape) {
+        case XsectShape::DUMMY:
+        case XsectShape::RECT_OPEN:
+        case XsectShape::TRAPEZOIDAL:
+        case XsectShape::TRIANGULAR:
+        case XsectShape::PARABOLIC:
+        case XsectShape::POWER:
+        case XsectShape::IRREGULAR:
+        case XsectShape::STREET_XSECT:
+            return true;
+        default:
+            return false;
+    }
+}
+
+/**
  * @brief Compute Preissmann slot width at depth y.
  *
- * @details Matches legacy dwflow.c::getSlotWidth():
- *   - Returns 0 if SLOT method not used, shape is open, or y/yFull < cutoff
- *   - For y/yFull > 1.78: slot width = 1% of max width
- *   - Otherwise: Sjoberg formula: wMax * 0.5423 * exp(-yNorm^2.4)
- *
- * When EXTRAN method is used: slot width = y_full / 1000 (constant)
+ * @details Op-for-op legacy dwflow.c::getSlotWidth():
+ *   - 0 if the SLOT method is not in use, the shape is open (legacy
+ *     xsect_isOpen), or y/yFull < CrownCutoff (0.985257 under SLOT)
+ *   - y/yFull > 1.78: 1% of the max width
+ *   - otherwise the Sjoberg formula wMax * 0.5423 * exp(-pow(yNorm, 2.4)).
+ *     `pow` is the same libm call legacy makes; a former rewrite as
+ *     yNorm^2 * sqrt(cbrt(yNorm^2)) evaluated yNorm^(7/3), not yNorm^2.4.
+ * DYNAMIC_SLOT and TPA are v6 extensions with their own geometry; they take
+ * legacy's "not SLOT" branch here (0).
  */
 double DWSolver::getSlotWidth(double y, double y_full, double w_max,
                               XsectShape shape) const {
-    if (y_full <= 0.0) return 0.0;
-
-    // Open shapes (trapezoidal, triangular, rectangular open, parabolic)
-    // never use a slot -- they have no crown
-    bool is_open = (shape == XsectShape::RECT_OPEN ||
-                    shape == XsectShape::TRAPEZOIDAL ||
-                    shape == XsectShape::TRIANGULAR ||
-                    shape == XsectShape::PARABOLIC);
-    if (is_open) return 0.0;
-
-    double yNorm = y / y_full;
-
-    if (surcharge_method == SurchargeMethod::SLOT) {
-        if (yNorm < SLOT_CROWN_CUTOFF) return 0.0;
-        // For depth > 1.78 * pipe depth, slot width = 1% of max width
-        if (yNorm > 1.78) return 0.01 * w_max;
-        // Sjoberg formula: pow(yNorm, 2.4) = yNorm^2 * yNorm^0.4
-        // Use cbrt(yNorm^2) = yNorm^(2/3), then yNorm^0.4 = (yNorm^2)^0.2
-        // Faster: yNorm^2.4 = yNorm^2 * yNorm^(2/5) = yNorm^2 * sqrt(cbrt(yNorm^2))
-        double y2 = yNorm * yNorm;
-        return w_max * 0.5423 * std::exp(-y2 * std::sqrt(std::cbrt(y2)));
-    }
-
-    // EXTRAN method: no slot — surcharge uses dQ/dH in node depth solver.
-    // Legacy getSlotWidth() returns 0.0 when SurchargeMethod != SLOT.
-    return 0.0;
+    if (surcharge_method != SurchargeMethod::SLOT) return 0.0;
+    if (y_full <= 0.0 || isOpenShape(shape)) return 0.0;
+    const double yNorm = y / y_full;
+    if (yNorm < SLOT_CROWN_CUTOFF) return 0.0;
+    if (yNorm > 1.78) return 0.01 * w_max;
+    return w_max * 0.5423 * std::exp(-std::pow(yNorm, 2.4));
 }
 
 /**
@@ -647,10 +651,7 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
         const auto ucr = static_cast<std::size_t>(ctx.link_subtypes.conduit_row(j));
         XsectShape shape = links.xsect_shape[uj];
 
-        is_open_[uj] = (shape == XsectShape::RECT_OPEN ||
-                        shape == XsectShape::TRAPEZOIDAL ||
-                        shape == XsectShape::TRIANGULAR ||
-                        shape == XsectShape::PARABOLIC);
+        is_open_[uj] = isOpenShape(shape);   // legacy xsect_isOpen (Amax == 1)
         is_force_main_[uj] = (shape == XsectShape::FORCE_MAIN);
         has_losses_[uj] = (CD.loss_inlet[ucr] != 0.0 ||
                            CD.loss_outlet[ucr] != 0.0 ||
@@ -1798,18 +1799,16 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
             double yf = tile_y_full_[uci];
             double wm = tile_w_max_[uci];
             XsectShape shape = tile_shape_[uci];
-            if (depth1_[uj] > yf) {
-                double ws = getSlotWidth(depth1_[uj], yf, wm, shape);
-                if (ws > 0.0) width1_[uj] = ws;
-            }
-            if (depth2_[uj] > yf) {
-                double ws = getSlotWidth(depth2_[uj], yf, wm, shape);
-                if (ws > 0.0) width2_[uj] = ws;
-            }
-            if (depth_mid_[uj] > yf) {
-                double ws = getSlotWidth(depth_mid_[uj], yf, wm, shape);
-                if (ws > 0.0) width_mid_[uj] = ws;
-            }
+            // PARITY dwflow.c getWidth(): the slot width replaces the
+            // tabulated top width whenever getSlotWidth() is nonzero, i.e.
+            // from the crown cutoff (0.985257·yFull) upward — not only above
+            // full depth. Below the cutoff getSlotWidth() is 0 by itself.
+            double ws = getSlotWidth(depth1_[uj], yf, wm, shape);
+            if (ws > 0.0) width1_[uj] = ws;
+            ws = getSlotWidth(depth2_[uj], yf, wm, shape);
+            if (ws > 0.0) width2_[uj] = ws;
+            ws = getSlotWidth(depth_mid_[uj], yf, wm, shape);
+            if (ws > 0.0) width_mid_[uj] = ws;
         }
     }   // end STEP B
 
@@ -2332,25 +2331,28 @@ void DWSolver::momentumKernels(SimulationContext& ctx, double dt, int step) {
             double wm = tile_w_max_[uci];
             XsectShape shape = tile_shape_[uci];
 
+            // PARITY dwflow.c getArea()/getHydRad(): above full depth the
+            // area is aFull + (y - yFull)·wSlot UNCONDITIONALLY — wSlot is 0
+            // for an open shape under SLOT (its depth is not capped, so its
+            // area stops at aFull while its width keeps growing) — and the
+            // hydraulic radius is rFull. Legacy tests `y >= yFull`; at exactly
+            // full depth every kernel already returns aFull/rFull (tables end
+            // at 1.0, formula shapes reproduce setParams), so the strict test
+            // is numerically the same and leaves the kernel values in place.
             if (depth1_[uj] > yf) {
-                double wSlot = getSlotWidth(depth1_[uj], yf, wm, shape);
-                if (wSlot > 0.0) area1_[uj] = af + (depth1_[uj] - yf) * wSlot;
-                // Upstream hyd-rad clamps to r_full once surcharged (legacy
-                // behaviour: slot is narrow so wetted perimeter stays
-                // ~constant).
+                const double wSlot = getSlotWidth(depth1_[uj], yf, wm, shape);
+                area1_[uj] = af + (depth1_[uj] - yf) * wSlot;
                 hrad1_[uj] = rf;
             }
             if (depth2_[uj] > yf) {
-                double wSlot = getSlotWidth(depth2_[uj], yf, wm, shape);
-                if (wSlot > 0.0) area2_[uj] = af + (depth2_[uj] - yf) * wSlot;
+                const double wSlot = getSlotWidth(depth2_[uj], yf, wm, shape);
+                area2_[uj] = af + (depth2_[uj] - yf) * wSlot;
             }
-            double yMid = depth_mid_[uj];
+            const double yMid = depth_mid_[uj];
             if (yMid > yf) {
-                double wSlot = getSlotWidth(yMid, yf, wm, shape);
-                if (wSlot > 0.0) {
-                    area_mid_[uj] = af + (yMid - yf) * wSlot;
-                    width_mid_[uj] = wSlot;
-                }
+                const double wSlot = getSlotWidth(yMid, yf, wm, shape);
+                area_mid_[uj] = af + (yMid - yf) * wSlot;
+                if (wSlot > 0.0) width_mid_[uj] = wSlot;
                 hrad_mid_[uj] = rf;
             }
         }
