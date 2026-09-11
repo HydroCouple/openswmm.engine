@@ -35,6 +35,7 @@
 #include "../../../core/UnitConversion.hpp"
 #include "../../../hydraulics/Node.hpp"
 #include "../../../hydraulics/XSectBatch.hpp"
+#include "../../../hydraulics/Link.hpp"
 
 namespace openswmm::transport::heat {
 
@@ -49,7 +50,7 @@ namespace {
 XSectParams buildXsp(const LinkData& links, std::size_t uk) {
     XSectParams xs{};
     const auto ls = links.xsect_shape[uk];
-    xs.type   = (ls == XsectShape::DUMMY) ? 0 : static_cast<int>(ls) + 1;
+    xs.type   = link::translateShape(ls);
     xs.y_full = links.xsect_y_full[uk];
     xs.a_full = links.xsect_a_full[uk];
     xs.w_max  = links.xsect_w_max[uk];

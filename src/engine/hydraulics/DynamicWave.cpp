@@ -57,6 +57,7 @@
 #include "Node.hpp"
 #include "Outfall.hpp"
 #include "XSectBatch.hpp"
+#include "Link.hpp"
 #include "ForceMain.hpp"
 #include "Culvert.hpp"
 #include "../core/Constants.hpp"
@@ -1590,9 +1591,12 @@ void DWSolver::findBypassedLinks(const SimulationContext& ctx) {
 static XSectParams buildXSP(const SimulationContext& ctx, std::size_t uk) {
     const LinkData& links = ctx.links;
     XSectParams xs{};
-    // Translate LinkData enum (CIRCULAR=0) to batch enum (CIRCULAR=1)
+    // PARITY: LinkData::XsectShape and the batch XSectShape are NOT a uniform +1
+    // offset — the middle block (MODBASKET..ARCH, data 8-20) is ordered
+    // differently, so `+1` mapped e.g. CATENARY (12) onto VERT_ELLIPSE (13)
+    // and every tabular shape onto the wrong kernel. Use the canonical map.
     auto ls = links.xsect_shape[uk];
-    xs.type = (ls == XsectShape::DUMMY) ? 0 : static_cast<int>(ls) + 1;
+    xs.type = link::translateShape(ls);
     xs.y_full = links.xsect_y_full[uk];
     xs.a_full = links.xsect_a_full[uk];
     xs.w_max  = links.xsect_w_max[uk];

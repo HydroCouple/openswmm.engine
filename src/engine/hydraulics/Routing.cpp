@@ -54,7 +54,7 @@ namespace openswmm {
 static XSectParams buildXSP(const LinkData& links, std::size_t uk) {
     XSectParams xs{};
     auto ls = links.xsect_shape[uk];
-    xs.type   = (ls == XsectShape::DUMMY) ? 0 : static_cast<int>(ls) + 1;
+    xs.type   = link::translateShape(ls);
     xs.y_full = links.xsect_y_full[uk];
     xs.a_full = links.xsect_a_full[uk];
     xs.w_max  = links.xsect_w_max[uk];
