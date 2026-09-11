@@ -328,6 +328,22 @@ public:
      */
     void adjustQualInflows(SimulationContext& ctx, double dt);
 
+    /**
+     * @brief Take the backflow returned to the street back out of the
+     *        system flooding totals.
+     *
+     * @details A capture node's overflow is handed back to the street through
+     *          its inlets as backflow (computeAll), so it never leaves the
+     *          system — booking it as flooding counts the same water once as a
+     *          loss and once as water put back on the corridor. Matches legacy
+     *          `inlet_adjustQualOutflows()` (inlet.c:706), called from
+     *          routing.c:260 directly after `removeSystemOutflows()`.
+     *
+     * @param ctx  Simulation context.
+     * @param dt   Routing timestep (seconds).
+     */
+    void adjustFloodingTotals(SimulationContext& ctx, double dt) const;
+
     /// Copy accumulated statistics into `ctx.inlet_usages` (volumes, Gap #68)
     /// and `ctx.inlet_diag` (the legacy per-inlet performance block the report
     /// needs). Called by SWMMEngine::report() before the summary tables.

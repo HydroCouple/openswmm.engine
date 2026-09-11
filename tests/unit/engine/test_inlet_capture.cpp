@@ -495,12 +495,23 @@ namespace {
 // `mid_is_inlet_junction` swaps the [JUNCTIONS] row + [INLET_USAGE] row for a
 // single [INLET_JUNCTIONS] row on the same node — the equivalence pair of
 // plan Phase E4 (i).
-std::string streetModel(bool mid_is_inlet_junction) {
+//
+// `undersized_trunk` shrinks C_MH so the sewer cannot pass what the inlet
+// offers: MH1 sits at its rim and overflows nearly everything it captures, and
+// that overflow comes back up the inlet as backflow. The transfer must not
+// also be booked as flooding — see InletSolver::adjustFloodingTotals.
+std::string streetModel(bool mid_is_inlet_junction,
+                        bool undersized_trunk = false) {
+    const char* mh_depth = undersized_trunk ? "1.0" : "10.0";
+    const char* trunk    = undersized_trunk ? "0.25" : "1.0";
+
     std::string junctions =
         "[JUNCTIONS]\n"
         ";;Name  Elev   MaxDepth\n"
         "ST_UP   100.0  1.0\n"
-        "MH1      90.0  10.0\n";
+        "MH1      90.0  ";
+    junctions += mh_depth;
+    junctions += "\n";
     if (!mid_is_inlet_junction) junctions += "ST_MID   99.5  1.0\n";
 
     std::string mid_section = mid_is_inlet_junction
@@ -544,7 +555,7 @@ std::string streetModel(bool mid_is_inlet_junction) {
         ";;Link  Shape     G1        G2  G3  G4  Barrels\n"
         "C_ST1   STREET    StreetA\n"
         "C_ST2   STREET    StreetA\n"
-        "C_MH    CIRCULAR  1.0       0   0   0   1\n"
+        "C_MH    CIRCULAR  " + std::string(trunk) + "       0   0   0   1\n"
         "\n"
         "[STREETS]\n"
         ";;Name  Tcrown  Hcurb  Sx  nRoad  Hdep  Wdep  Sides\n"
@@ -629,8 +640,11 @@ TEST(InletCaptureDeck, ConduitAttributeInletCapturesAndCloses) {
     EXPECT_GT(r.peak_capture, 0.0) << "no flow reached the capture node";
     EXPECT_LE(r.peak_capture, r.peak_approach + 1e-6)
         << "captured more than the approach flow";
-    EXPECT_LT(std::fabs(r.routing_error), 0.5)
-        << "routing continuity error " << r.routing_error << " %";
+    // routing_error() is a FRACTION, so this is half a percent — the previous
+    // 0.5 here read as "< 50 %" and would not have caught a capture node
+    // bleeding mass (see SurchargedCaptureNodeBackflowClosesContinuity).
+    EXPECT_LT(std::fabs(r.routing_error), 0.005)
+        << "routing continuity error " << r.routing_error * 100.0 << " %";
 }
 
 TEST(InletCaptureDeck, InletJunctionMatchesConduitAttributeCapture) {
@@ -641,8 +655,8 @@ TEST(InletCaptureDeck, InletJunctionMatchesConduitAttributeCapture) {
 
     EXPECT_GT(ijunc.peak_capture, 0.0);
     EXPECT_LE(ijunc.peak_capture, ijunc.peak_approach + 1e-6);
-    EXPECT_LT(std::fabs(ijunc.routing_error), 0.5)
-        << "routing continuity error " << ijunc.routing_error << " %";
+    EXPECT_LT(std::fabs(ijunc.routing_error), 0.005)   // fraction: half a percent
+        << "routing continuity error " << ijunc.routing_error * 100.0 << " %";
 
     // Same reach, same inlet, same capture node — the materialised node must
     // reproduce the conduit-attribute capture (plan Phase E4 (i)).
@@ -651,4 +665,27 @@ TEST(InletCaptureDeck, InletJunctionMatchesConduitAttributeCapture) {
                      / usage.peak_capture;
     EXPECT_LT(rel, 0.05) << "peak capture " << ijunc.peak_capture
                          << " vs " << usage.peak_capture;
+}
+
+// A capture node that cannot pass what the inlet offers overflows, and that
+// overflow is handed back to the street as the inlet's backflow. Booking it as
+// flooding as well counts the same water twice, and because the returned water
+// is immediately re-captured the two feed each other: the error compounds
+// instead of staying bounded. Measured -44 % on the parity set's
+// street_grate_inlet_7_backflow deck and -255 % on a four-inlet street over a
+// 1 ft trunk before InletSolver::adjustFloodingTotals existed.
+TEST(InletCaptureDeck, SurchargedCaptureNodeBackflowClosesContinuity) {
+    for (const bool as_junction : {false, true}) {
+        const CaptureRun r = runStreetModel(
+            as_junction ? "street_ijunct_surch" : "street_usage_surch",
+            streetModel(as_junction, /*undersized_trunk=*/true));
+        ASSERT_TRUE(r.ran) << "as_junction=" << as_junction;
+        EXPECT_GT(r.peak_capture, 0.0)
+            << "no flow reached the capture node, as_junction=" << as_junction;
+        // routing_error() is a FRACTION (the report multiplies by 100), so
+        // this is one percent, not one hundred.
+        EXPECT_LT(std::fabs(r.routing_error), 0.01)
+            << "routing continuity error " << r.routing_error * 100.0
+            << " % with a surcharged capture node, as_junction=" << as_junction;
+    }
 }

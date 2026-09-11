@@ -4510,6 +4510,13 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
         ctx_.mass_balance.routing_evap_loss += ctx_.nodes.losses[uj] * dt_routing;
     }
 
+    // A street inlet's capture node hands its overflow back to the corridor as
+    // backflow, so that water never left the system and must come back out of
+    // the flooding total just booked. Legacy's slot exactly: routing.c:259-260
+    // runs removeSystemOutflows() then inlet_adjustQualOutflows(). Node-level
+    // flooding statistics are unaffected — updateStatistics() has already run.
+    inlet_.adjustFloodingTotals(ctx_, dt_routing);
+
     // Accumulate link evaporation and seepage losses
     for (int j = 0; j < ctx_.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);

@@ -1192,6 +1192,78 @@ void InletSolver::adjustQualInflows(SimulationContext& ctx, double dt) {
 }
 
 // ============================================================================
+// adjustFloodingTotals() — legacy inlet_adjustQualOutflows (inlet.c:706)
+// ============================================================================
+
+void InletSolver::adjustFloodingTotals(SimulationContext& ctx, double dt) const {
+    const int ni = soa_.count;
+    if (ni == 0) return;
+
+    auto& nodes = ctx.nodes;
+    auto& mb    = ctx.mass_balance;
+    const int nn = ctx.n_nodes();
+
+    // A capture node's overflow does not leave the system: computeAll hands it
+    // straight back to the street as the inlet's backflow (inlet.c:618, mirrored
+    // above). Booking it under Flooding Loss counts the same water twice — once
+    // as a loss, once as water returned to the corridor — and when the capture
+    // node cannot pass what the inlet offers (an undersized trunk sewer, so it
+    // sits at its rim and overflows nearly everything it receives) the two feed
+    // each other: capture -> flood -> backflow -> capture. Measured -255.6 %
+    // routing continuity on a four-inlet street over a 1 ft trunk.
+    //
+    // Legacy subtracts the overflow of every CAPTURE node (inlet.c:727-735).
+    // Summing each inlet's SHARE instead credits exactly what is returned: the
+    // ratios sum to 1 over the inlets on a shared capture node, and an inlet
+    // computeAll skipped contributes nothing — legacy's per-node subtraction
+    // over-credits in that case.
+    //
+    // Read the overflow fresh rather than reusing soa_.backflow: that column
+    // still holds the value computeAll derived from the PREVIOUS step's
+    // overflow, while the flooding just booked is this step's. Legacy reads the
+    // node for the same reason (routing.c:259-260 — removeSystemOutflows then
+    // inlet_adjustQualOutflows, both on current state).
+    for (int ii = 0; ii < ni; ++ii) {
+        const auto ui = static_cast<std::size_t>(ii);
+        const int host    = soa_.bypass_node[ui];
+        const int capture = soa_.node_idx[ui];
+        // Same validity guard as computeAll: an inlet it skips returns nothing.
+        if (host < 0 || host >= nn) continue;
+        if (capture < 0 || capture >= nn) continue;
+        const auto uc = static_cast<std::size_t>(capture);
+
+        // Credit only what updateRoutingMassBalance actually booked (the
+        // `overflow > 0 && volume <= full_volume` gate above), so the ledger is
+        // symmetric and Flooding Loss can never be driven negative. Legacy
+        // subtracts unconditionally; the two agree for every non-ponded capture
+        // node.
+        //
+        // KNOWN GAP (ponded capture node, present in legacy too): with
+        // ALLOW_PONDING and a ponded area the overflow is the rate of
+        // accumulation above the rim, so no flooding is booked and nothing is
+        // credited here — but computeAll still returns that rate to the street
+        // next step while the water also stays in the pond. Closing it means
+        // debiting nodes.volume[capture], i.e. node state rather than the
+        // ledger, and is deliberately out of scope here.
+        if (nodes.overflow[uc] <= 0.0) continue;
+        if (nodes.volume[uc] > nodes.full_volume[uc]) continue;
+
+        double qbf = nodes.overflow[uc] * soa_.backflow_ratio[ui];
+        if (std::fabs(qbf) < INLET_FUDGE) qbf = 0.0;   // as computeAll rounds it
+        if (qbf <= 0.0) continue;
+
+        mb.routing_flooding -= qbf * dt;
+        mb.step_flooding    -= qbf;
+    }
+
+    // The quality side of legacy inlet_adjustQualOutflows (inlet.c:737-743,
+    // StepQualTotals[p].flooding -= w) has no counterpart here: nothing in the
+    // engine writes mass_balance.qual_routing_flood at all, so there is no
+    // booked mass to credit and subtracting would only drive it negative. That
+    // accumulator being write-free is a separate, pre-existing gap.
+}
+
+// ============================================================================
 // gatherStats() — publish to InletUsageStore + ctx.inlet_diag for the report
 // ============================================================================
 
