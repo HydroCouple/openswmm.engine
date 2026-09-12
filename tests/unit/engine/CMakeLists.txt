@@ -169,6 +169,9 @@ add_gtest_unit(test_engine_output_quality         test_output_quality.cpp)
 # duplicating it in the engine and orphaning the original.
 add_gtest_unit(test_engine_object_rename          test_object_rename.cpp)
 add_gtest_unit(test_engine_options_api_units      test_options_api_units.cpp)
+# CRS lives in two stores (spatial frame + [OPTIONS]); every C-API write path
+# must fill both and the .inp writer must emit whichever is set.
+add_gtest_unit(test_engine_crs_api_roundtrip      test_crs_api_roundtrip.cpp)
 add_gtest_unit(test_engine_climate_api             test_climate_api.cpp)
 # [TEMPERATURE] HUMIDITY: CONSTANT/MONTHLY/TIMESERIES, DEWPOINT -> RH, writer
 # round-trip. The heat model's met input the GUI Climatology dialog edits.

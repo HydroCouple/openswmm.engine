@@ -1238,7 +1238,10 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
                            / openswmm::datetime::SecsPerDay;
     }
     else if (k == "CRS") {
+        // Mirror into the spatial frame as well — see swmm_spatial_set_crs
+        // for why the two CRS stores must stay in step.
         opt.crs = v;
+        to_engine(engine)->context().spatial.crs = v;
     }
 
     // [REPORT] section keys (Slice BV.1 — added 2026-05-22). Boolean keys
@@ -1714,7 +1717,10 @@ SWMM_ENGINE_API int swmm_options_set_ext(SWMM_Engine engine,
 SWMM_ENGINE_API int swmm_get_crs(SWMM_Engine engine, char* buf, int buflen) {
     CHECK_HANDLE(engine);
     if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
-    const auto& crs = to_engine(engine)->context().options.crs;
+    // Prefer the [OPTIONS] value; fall back to the spatial frame, which is
+    // the only store a GeoPackage open fills (see swmm_spatial_set_crs).
+    const auto& ctx = to_engine(engine)->context();
+    const auto& crs = !ctx.options.crs.empty() ? ctx.options.crs : ctx.spatial.crs;
     if (crs.empty()) return SWMM_ERR_CRS;
     std::strncpy(buf, crs.c_str(), static_cast<std::size_t>(buflen - 1));
     buf[buflen - 1] = '\0';

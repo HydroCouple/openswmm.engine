@@ -1357,8 +1357,13 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         if (fvo.cfl_census_interval != 1)
             std::fprintf(f,"%-20s %d\n","FV_CFL_CENSUS_INTERVAL", fvo.cfl_census_interval);
     }
-    if (!o.crs.empty())
-        std::fprintf(f,"%-20s %s\n",  "CRS",            o.crs.c_str());
+    // The spatial frame is the only CRS store a GeoPackage open fills, so
+    // fall back to it — otherwise a .gpkg model saved as .inp loses its CRS.
+    {
+        const std::string& crs = !o.crs.empty() ? o.crs : ctx.spatial.crs;
+        if (!crs.empty())
+            std::fprintf(f,"%-20s %s\n",  "CRS",            crs.c_str());
+    }
     if (o.write_absolute_paths)
         std::fprintf(f,"%-20s %s\n",  "WRITE_ABSOLUTE_PATHS", "YES");
     for (const auto& kv : o.ext_options) {
