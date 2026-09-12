@@ -2197,13 +2197,23 @@ void DWSolver::recomputeConduitLossOne(SimulationContext& ctx, double dt,
         const int uj = conduit_idx_[uci];
         const auto u = static_cast<std::size_t>(uj);
 
-        // Legacy dwflow.c:162 early return for DRY/UP_DRY/DN_DRY: link_getLossRate
-        // is NOT called, so the previously-stored rate is retained. Skip (leave
-        // CD.evap_loss_rate/seep_loss_rate[uci] untouched).
+        // PARITY dwflow.c:118-119 + :189-203: findConduitFlow ZEROES
+        // Conduit.evapLossRate/seepLossRate on entry and only recomputes them
+        // (link_getLossRate at :261) past the dry/closed/empty early return —
+        // a conduit that comes out DRY, UP_DRY, DN_DRY, closed by its setting,
+        // or with aMid <= FUDGE books NO loss that iteration. Retaining the
+        // previous value here left a stale evaporation loss on a near-dry
+        // reach (50-transects CDT-521), halved into both end nodes' outflow.
+        // A bypassed conduit keeps its last-computed class and aMid, so this
+        // recompute reproduces the value legacy retains for it.
         const FlowClass fc = links.flow_class[u];
         if (fc == FlowClass::DRY || fc == FlowClass::UP_DRY ||
-            fc == FlowClass::DN_DRY)
+            fc == FlowClass::DN_DRY || area_mid_[u] <= FUDGE ||
+            tile_is_closed_[uci]) {
+            CD.evap_loss_rate[uci] = 0.0;
+            CD.seep_loss_rate[uci] = 0.0;
             return;
+        }
 
         // depth = 0.5*(oldDepth + newDepth) — current iterate (legacy link.c:1349)
         const double depth = 0.5 * (links.old_depth[u] + links.depth[u]);
@@ -2307,12 +2317,18 @@ void DWSolver::momentumKernels(SimulationContext& ctx, double dt, int step) {
         // (90% non-converging vs legacy's ~36%).
         new_flow_[uj] = links.flow[uj];
 
-        // Per-iterate evap/seepage loss recompute (flow-class gated inside).
-        // Runs for bypassed conduits too, keeping the former whole-array
-        // pass's cadence bit-exactly (its inputs are all own-element).
-        if (do_losses) recomputeConduitLossOne(ctx, dt, ci);
-
+        // A BYPASSED conduit (both end nodes converged) is not solved this
+        // iteration, and legacy findLinkFlows does not call findConduitFlow
+        // for it — so its evap/seepage loss rates stay at whatever its LAST
+        // solve left (dwflow.c:118-119 zero them on entry, :261 recomputes
+        // them). Its depth keeps moving with its end nodes, so recomputing
+        // the loss here from that fresher depth booked a different loss than
+        // legacy into both end nodes (50-transects: node PURGATORY_7's
+        // outflow after step 1 was half a stale-vs-fresh evaporation loss).
         if (bypassed_[uj]) continue;
+
+        // Per-iterate evap/seepage loss recompute (flow-class gated inside).
+        if (do_losses) recomputeConduitLossOne(ctx, dt, ci);
 
         dqdh_[uj] = 0.0;
 
