@@ -50,8 +50,57 @@ retroactive.
     calls −40…50 %, first-moment calls −50…60 %. Wall clock is recorded in
     `plans/FV1D_PERF_BASELINE_2026-09-11.md` once measured on a quiet host.
 
+- **Explicit FV solver: cross sections from exact geometry, one POD closure kernel**
+  (Phase 2 of the same plan). FV no longer reads the legacy 51-row section tables
+  through the 25-way shape switch: `SectionGeometry.hpp` evaluates each section in
+  closed form at build time (circle segment, rectangle, trapezoid, triangle, parabola,
+  power; the arch/egg/horseshoe/… families and SWMM's elliptical pipes stay defined by
+  their tables), and `FvClosureKernels.hpp` samples it into a fixed-size, pointer-free
+  `FvClosure` — a monotone cubic-Hermite table (128 panels, Fritsch–Carlson limited) on
+  which the top width IS the derivative of the area and the first moment IS its
+  integral; RECT_OPEN / TRAPEZOIDAL / TRIANGULAR take an exact polynomial class with a
+  closed-form inverse. `depthOfArea` is a Newton iteration on the panel cubic instead
+  of Brent on tables that were never a derivative pair. Every hot-path function is an
+  `OPENSWMM_KERNEL_FN` over the POD struct (device-capturable, asserted by test).
+  Measured legacy → exact on one binary (`plans/FV1D_PERF_BASELINE_2026-09-11.md`
+  §Phase 2): circular inversion 3.3×, rect_open 7.9×, trapezoid 14.7×; same-moment wall
+  clocks base → Phase 1 → Phase 2 on reach_uniform_500 27.6 → 11.6 → 6.0 s, Example1
+  10.7 → 6.5 → 3.2 s. SWASHES `1d-fv` (33 cells) and the transitions suite are
+  IDENTICAL legacy vs exact; the explicit-slot lab column (e2_2006 C1) moves by 5e-4
+  NSE. The legacy path stays selectable with `OPENSWMM_FV_CLOSURE=legacy` for one
+  release cycle of A/B and is then deleted. DYNWAVE is untouched (still bit-exact on the
+  legacy tables).
+  - **Implicit pressurized head update: secant storage correction.** With a closure
+    whose crown is consistent, the tangent linearization of the head row overshot
+    rising cells into the Preissmann slot (head spikes on the e2 rapid-fill implicit
+    column, divergence on e3 at c = 300 m/s). `PressurizedHeadSolver::solve` now
+    re-solves with the secant compliance of each cell's own closure (three Picard
+    passes, dev knob `OPENSWMM_FV_PRESS_SECANT_PASSES`). This changes results only under
+    `FV_PRESSURIZED_IMPLICIT YES`; default decks are byte-identical before/after. Known
+    residual (follow-up item): the map is not contracting on very stiff slots, so
+    `FvUnsteadyFriction.ValveClosureDampsOnImplicitPath` (c = 1000 ft/s) stays red
+    until a converged Newton on the nonlinear storage lands.
+  - **Integration gates re-based** (`test_fv_engine_integration.cpp`): the culvert
+    inlet-control and SURCHARGE_DEPTH fixtures run under the implicit head update —
+    measured on the explicit slot path the 3 ft culvert entrance locks pressurized at
+    105/110/115/130/150 cfs and passed the fixture's 120 cfs only by luck of the table
+    closure (both closures pass every inflow with the implicit update, matching
+    DYNWAVE) — and the surcharge gate asserts the level the sealed node reaches;
+    mesh-refinement consistency is measured against FV's own dx = 10 answer (0.014 →
+    0.012 → 0.004) with DYNWAVE agreement kept as a floor; the storage-loss continuity
+    gate is 0.2 % (the deck's own ledger error is 0.04 % under either closure).
+
 ### Added
 
+- **`test_engine_fv_section_geometry`**: the exact section geometry against an
+  independent integration of the outline, the closure against the geometry (area, top
+  width, hydraulic radius), T ≡ dA/dh, I₁ ≡ ∫A, monotonicity, a 60 000-point
+  depth↔area round trip at 1e-12·y_full, the polynomial class in closed form, barrel
+  scaling, POD capture at a foreign address, and the recorded legacy-table error per
+  shape (circular: area 7.3e-4 of full, width 7.1 % of max, hydraulic radius 2.3 %).
+  `fv_perf_phase2_gates.sh` runs the Phase 2 gates as one job (bench, SWASHES,
+  transitions, lab cells, synthetic sweep; `FV_GATE_STEPS` selects steps) and
+  `fv_perf_compare_scores.py` diffs suite score files by verdict and metric.
 - **FV solver instrumentation for the closure-kernel program.** `[PERF-FV]` gains
   closure-call counters (`n.area n.width n.i1 n.hydrad`) and LTS macro-cycle counters
   (`n.macro n.macrorej`); the report's "FV Solver Statistics" block gains

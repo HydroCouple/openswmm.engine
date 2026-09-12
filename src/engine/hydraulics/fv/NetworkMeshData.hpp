@@ -50,6 +50,7 @@
 #include "../XSectBatch.hpp"
 #include "../HydClosureKernels.hpp"
 #include "../XSectKernels.hpp"
+#include "FvClosureKernels.hpp"
 
 namespace openswmm::fv {
 
@@ -167,6 +168,16 @@ struct FvGeometry {
     /// closure — they are the sample areas themselves. Built at init from the
     /// bracketed inverse, so it costs nothing at run time.
     double h_tbl[kI1Samples] = {};
+
+    /// The exact-geometry closure (FvClosureKernels.hpp): a monotone cubic
+    /// table sampled from SectionGeometry.hpp with the slot folded in, or the
+    /// polynomial class for open sections. When `use_closure` is set every
+    /// FvKernels closure function evaluates it instead of the legacy
+    /// `eval`/`i1_tbl`/`h_tbl` path above. Built by buildGeometry() unless
+    /// OPENSWMM_FV_CLOSURE=legacy (a development switch; the legacy path is
+    /// slated for removal once the Phase 2 gates pass).
+    uint8_t   use_closure = 0;
+    FvClosure closure_tbl{};
 
 };
 

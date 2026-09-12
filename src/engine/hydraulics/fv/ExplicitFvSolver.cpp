@@ -374,6 +374,15 @@ void ExplicitFvSolver::cacheClosure(std::size_t uc, const FvGeometry& g,
         perf::count(perf::n_fv_geom_area);
         perf::count(perf::n_fv_geom_width);
         perf::count(perf::n_fv_geom_i1);
+        if (g.use_closure) {
+            // One panel locate for all three (plan Phase 2b): the exact
+            // closure's A, T and I₁ come from the same cubic.
+            const k::ClosureEval e = k::closureEval(g.closure_tbl, h);
+            cell_ah_[uc] = e.a;
+            cell_t_[uc]  = e.t;
+            cell_i1_[uc] = e.i1;
+            return;
+        }
         const double a = k::areaOfDepth(g, h);
         cell_ah_[uc] = a;
         cell_t_[uc]  = k::widthOfDepth(g, h);
@@ -1155,7 +1164,11 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
         if (centred) {
             i1_raw = cell_i1_[uc_cached];   // I₁(cell_h), cached at the write
         } else {
-            i1_raw = k::i1OfDepth(*g, h_raw, k::areaOfDepth(*g, h_raw));
+            // Second-order side: reconstructed depth, no cache. The exact
+            // closure's I₁ needs no companion area (one locate).
+            i1_raw = g->use_closure
+                         ? k::closureI1(g->closure_tbl, h_raw)
+                         : k::i1OfDepth(*g, h_raw, k::areaOfDepth(*g, h_raw));
             perf::count(perf::n_fv_geom_area);
             perf::count(perf::n_fv_geom_i1);
         }
@@ -1181,14 +1194,24 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
         out.i1 = cell_i1_[uc_cached];
         return;
     }
+    perf::count(perf::n_fv_geom_area);
+    perf::count(perf::n_fv_geom_width);
+    perf::count(perf::n_fv_geom_i1);
+    if (gf->use_closure) {
+        // Fused: A, T and I₁ from one panel locate (plan Phase 2b).
+        const k::ClosureEval e = k::closureEval(gf->closure_tbl, h_star);
+        out.a  = e.a;
+        out.u  = u;
+        out.q  = e.a * u;
+        out.c  = k::celerity(e.a, e.t);
+        out.i1 = e.i1;
+        return;
+    }
     out.a  = k::areaOfDepth(*gf, h_star);
     out.u  = u;
     out.q  = out.a * u;
     out.c  = k::celerity(out.a, k::widthOfDepth(*gf, h_star));
     out.i1 = k::i1OfDepth(*gf, h_star, out.a);
-    perf::count(perf::n_fv_geom_area);
-    perf::count(perf::n_fv_geom_width);
-    perf::count(perf::n_fv_geom_i1);
 }
 
 void ExplicitFvSolver::computeFluxes() {

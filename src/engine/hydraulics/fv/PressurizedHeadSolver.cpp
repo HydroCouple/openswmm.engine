@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 
 #include "../HydClosureKernels.hpp"
@@ -416,43 +417,117 @@ void PressurizedHeadSolver::solve(const PressurizedView& v, double dt) {
     // floor) is demoted to a Dirichlet row at the clamp and the system is
     // re-solved; the flux imbalance that creates lands in the carry ledger,
     // where settleAlgebraicNode books flooding/ponding exactly as today.
-    for (int pass = 0; pass < 4; ++pass) {
-        assembleRhs(v, dt);
-        buildComponents();
-        const int ncomp =
-            static_cast<int>(comp_ptr_.empty() ? 0 : comp_ptr_.size() - 1);
-        for (int cidx = 0; cidx < ncomp; ++cidx)
-            solveComponent(cidx, v, dt);
+    auto solvePass = [&]() {
+        unk_dirichlet_.assign(unu, 0);
+        unk_dirvalue_.assign(unu, 0.0);
+        for (int pass = 0; pass < 4; ++pass) {
+            assembleRhs(v, dt);
+            buildComponents();
+            const int ncomp =
+                static_cast<int>(comp_ptr_.empty() ? 0 : comp_ptr_.size() - 1);
+            for (int cidx = 0; cidx < ncomp; ++cidx)
+                solveComponent(cidx, v, dt);
 
-        bool violated = false;
-        for (int u = 0; u < nu; ++u) {
-            const auto uu = static_cast<std::size_t>(u);
-            if (unk_dirichlet_[uu]) continue;
-            const int ent = unk_entity_[uu];
-            if (ent < mesh.n_cells()) continue;
-            const int n = ent - mesh.n_cells();
-            // TPA (issue #156 Phase 5): a SEALED folded junction inside a
-            // pressurized column carries sub-atmospheric head — demoting it
-            // to a Dirichlet row AT THE INVERT is what broke the sealed
-            // drawdown column under FV_PRESSURIZED_IMPLICIT (measured
-            // |TA−TB| 3.743 vs 0.003 explicit). Extend the floor by the
-            // column-separation bound, mirroring solveAlgebraicNode.
-            double lo = mesh.node_invert[static_cast<std::size_t>(n)];
-            if (!state.cell_tpa.empty() &&
-                mesh.node_sur_depth[static_cast<std::size_t>(n)] > 0.0)
-                lo -= 35.0;
-            const double hi = nodeCeiling(mesh, n);
-            if (unk_head_[uu] > hi) {
-                unk_dirichlet_[uu] = 1;
-                unk_dirvalue_[uu] = hi;
-                violated = true;
-            } else if (unk_head_[uu] < lo) {
-                unk_dirichlet_[uu] = 1;
-                unk_dirvalue_[uu] = lo;
-                violated = true;
+            bool violated = false;
+            for (int u = 0; u < nu; ++u) {
+                const auto uu = static_cast<std::size_t>(u);
+                if (unk_dirichlet_[uu]) continue;
+                const int ent = unk_entity_[uu];
+                if (ent < mesh.n_cells()) continue;
+                const int n = ent - mesh.n_cells();
+                // TPA (issue #156 Phase 5): a SEALED folded junction inside
+                // a pressurized column carries sub-atmospheric head —
+                // demoting it to a Dirichlet row AT THE INVERT is what broke
+                // the sealed drawdown column under FV_PRESSURIZED_IMPLICIT
+                // (measured |TA−TB| 3.743 vs 0.003 explicit). Extend the
+                // floor by the column-separation bound, mirroring
+                // solveAlgebraicNode.
+                double lo = mesh.node_invert[static_cast<std::size_t>(n)];
+                if (!state.cell_tpa.empty() &&
+                    mesh.node_sur_depth[static_cast<std::size_t>(n)] > 0.0)
+                    lo -= 35.0;
+                const double hi = nodeCeiling(mesh, n);
+                if (unk_head_[uu] > hi) {
+                    unk_dirichlet_[uu] = 1;
+                    unk_dirvalue_[uu] = hi;
+                    violated = true;
+                } else if (unk_head_[uu] < lo) {
+                    unk_dirichlet_[uu] = 1;
+                    unk_dirvalue_[uu] = lo;
+                    violated = true;
+                }
             }
+            if (!violated) break;
         }
-        if (!violated) break;
+    };
+    solvePass();
+
+    // ---- secant correction of the storage linearization --------------------
+    // The storage row above is the TANGENT dA/dh at the old depth, but the
+    // mass update that follows is exact: a cell rising through the crown
+    // realizes Δh = ΔA / T(new), not ΔA / T(old). Below a closed crown T
+    // falls to the slot width — the exact circle's width vanishes like
+    // √(y_full − h) — so a single tangent step overshoots into the slot and
+    // the realized head spikes by ΔA / t_slot (measured on the e2 rapid-fill
+    // implicit cell with the exact-geometry closure: single-substep spikes to
+    // 0.98 m against 0.37 m; e3 at c = 300 m/s diverged to 31 m). The legacy
+    // 51-row table hid this because its last chord kept dA/dh ≥ ~0.15·D
+    // right up to the crown. Picard corrections: re-solve with each cell's
+    // storage set to the SECANT of its own closure between the old depth and
+    // the latest predicted one (Casulli & Zanolli's nested iteration on the
+    // nonlinear wet area), until the predicted heads stop moving. One secant
+    // step toward a wild tangent prediction over-stiffens the crown cell and
+    // the front creeps (bore arrival 75 s at c = 660 against 45 s at
+    // c = 150), so the iteration is carried further. CAVEAT (measured
+    // 2026-09-11): on stiff slots (t_slot ~ 1e-4 ft²) this Picard map does
+    // NOT contract — the e2 c = 50 spike reads 1.17 / 1.41 / 0.38 / 0.98 m at
+    // 1 / 2 / 3 / 4 passes, and ½-under-relaxation does not cure it — so
+    // three passes is the best measured point, not a converged solve. The
+    // converged remedy is a Newton iteration on the nonlinear storage with a
+    // monotone line search (Casulli–Zanolli's nested Newton); until it lands
+    // the UF ring relation at c = 1000 ft/s does not hold under the exact
+    // closure (ValveClosureDampsOnImplicitPath). A cell that stays on the
+    // slot line keeps t_slot exactly, so a fully pressurized column re-solves
+    // to the same heads; TPA-flagged rows keep their regime width.
+    {
+        // Development knob for the closure A/B (removed with
+        // OPENSWMM_FV_CLOSURE): number of secant passes, default 3.
+        static const int kSecantPasses = [] {
+            const char* e = std::getenv("OPENSWMM_FV_PRESS_SECANT_PASSES");
+            return e ? std::atoi(e) : 3;
+        }();
+        std::vector<double> eta_prev(unu, 0.0);
+        for (int it = 0; it < kSecantPasses; ++it) {
+            bool changed = false;
+            double move = 0.0;
+            for (int u = 0; u < nu; ++u) {
+                const auto uu = static_cast<std::size_t>(u);
+                const int ent = unk_entity_[uu];
+                if (ent >= mesh.n_cells()) continue;
+                const auto uc = static_cast<std::size_t>(ent);
+                if (!state.cell_tpa.empty() && state.cell_tpa[uc] != 0) continue;
+                const FvGeometry& g =
+                    mesh.geom[static_cast<std::size_t>(mesh.cell_geom[uc])];
+                const double h0 = state.cell_h[uc];
+                const double eta1 =
+                    unk_dirichlet_[uu] ? unk_dirvalue_[uu] : unk_head_[uu];
+                if (it > 0) move = std::max(move, std::fabs(eta1 - eta_prev[uu]));
+                eta_prev[uu] = eta1;
+                double h1 = h0 + (eta1 - unk_eta0_[uu]);
+                if (h1 < 0.0) h1 = 0.0;
+                if (h0 >= g.y_full && h1 >= g.y_full) continue;   // slot: T = t_slot
+                const double dh = h1 - h0;
+                if (std::fabs(dh) <= 1.0e-12 * g.y_full) continue;
+                const double T_sec =
+                    std::max((k::areaOfDepth(g, h1) - k::areaOfDepth(g, h0)) / dh,
+                             1.0e-12);
+                unk_store_[uu] = T_sec * mesh.cell_dx[uc] / dt;
+                changed = true;
+            }
+            if (!changed) break;
+            if (it > 0 && move <= 1.0e-9) break;   // ft — predictions converged
+            solvePass();
+        }
     }
 
     backSubstitute(v);

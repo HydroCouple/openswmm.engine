@@ -440,6 +440,9 @@ TEST(FvUnsteadyFriction, ValveClosureDampsOnImplicitPath) {
                                             "UF_K3                0.020\n"),
                                  65.0);
     ASSERT_TRUE(base.ok && damped.ok);
+    std::printf("  [uf-implicit] late_amp base %.5f damped %.5f (ratio %.3f)\n",
+                base.late_amp, damped.late_amp,
+                (base.late_amp > 0.0) ? damped.late_amp / base.late_amp : 0.0);
     ASSERT_GT(base.late_amp, 1e-3)
         << "fixture must still be ringing in the observation window";
     EXPECT_LT(damped.late_amp, base.late_amp)

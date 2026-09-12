@@ -301,18 +301,33 @@ void bench_case(const Case& c, int n_samples, Lcg& rng) {
         g_sink = g_sink + acc;
     }));
 
-    // The counted replica: its ns must agree with `invert` (or the replica has
-    // drifted from the kernel), and its evaluation count is the number the
-    // kernel's own comment claims (5.9 circular / 3.1 rect / 6.3 trapezoid).
+    // The counted replica of the LEGACY Brent inverse: its ns must agree with
+    // `invert` in legacy mode (or the replica has drifted from the kernel), and
+    // its evaluation count is the number the kernel's own comment claims
+    // (5.9 circular / 3.1 rect / 6.3 trapezoid). Meaningless on the exact
+    // closure, whose inverse is Newton on the cubic — skipped there.
     long evals = 0;
     long sub_crown = 0;
-    report(c.name, "invert_counted", calls, time_sweep(calls, [&] {
-        double acc = 0.0;
-        long ev = 0;
-        for (double a : as) acc += depth_of_area_counted(g, a, ev);
-        evals = ev;
-        g_sink = g_sink + acc;
-    }));
+    if (!g.use_closure) {
+        report(c.name, "invert_counted", calls, time_sweep(calls, [&] {
+            double acc = 0.0;
+            long ev = 0;
+            for (double a : as) acc += depth_of_area_counted(g, a, ev);
+            evals = ev;
+            g_sink = g_sink + acc;
+        }));
+    } else {
+        // The fused evaluation the exact closure offers: A, T and I₁ from one
+        // panel locate — what faceSide and the per-cell cache should call.
+        report(c.name, "eval_fused", calls, time_sweep(calls, [&] {
+            double acc = 0.0;
+            for (double h : hs) {
+                const k::ClosureEval e = k::closureEval(g.closure_tbl, h);
+                acc += e.a + e.t + e.i1;
+            }
+            g_sink = g_sink + acc;
+        }));
+    }
     for (double a : as) if (a > 0.0 && a < g.a_crown) ++sub_crown;
 
     // Accuracy of the inverse over the same sweep, so cost and correctness
@@ -322,9 +337,9 @@ void bench_case(const Case& c, int n_samples, Lcg& rng) {
         const double back = k::depthOfArea(g, k::areaOfDepth(g, h));
         max_rel = std::max(max_rel, std::fabs(back - h) / g.y_full);
     }
-    std::printf("# %s roundtrip_max_rel=%.3e evals_per_subcrown_invert=%.2f "
+    std::printf("# %s closure=%s roundtrip_max_rel=%.3e evals_per_subcrown_invert=%.2f "
                 "subcrown_frac=%.3f y_full=%.6g a_crown=%.6g t_slot=%.6g\n",
-                c.name.c_str(), max_rel,
+                c.name.c_str(), g.use_closure ? "exact" : "legacy", max_rel,
                 (sub_crown > 0) ? static_cast<double>(evals) / static_cast<double>(sub_crown) : 0.0,
                 static_cast<double>(sub_crown) / static_cast<double>(as.size()),
                 g.y_full, g.a_crown, g.t_slot);

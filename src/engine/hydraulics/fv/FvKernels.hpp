@@ -164,6 +164,10 @@ OPENSWMM_KERNEL_FN double slotRampIntegral(double s) noexcept {
 /// Flow area at depth @p h, INCLUDING the tapered slot. Monotone in h for any
 /// section, which is what makes the depth inversion well posed.
 OPENSWMM_KERNEL_FN double areaOfDepth(const FvGeometry& g, double h) noexcept {
+    // Exact-geometry closure (FvClosureKernels.hpp) when the mesh builder
+    // built one; the legacy table path below is kept for OPENSWMM_FV_CLOSURE=
+    // legacy until the Phase 2 gates retire it.
+    if (g.use_closure) return closureArea(g.closure_tbl, h);
     if (h <= 0.0) return 0.0;
     if (h >= g.y_full) return g.a_crown + g.t_slot * (h - g.y_full);
     const double band = g.y_full - g.y_crown;
@@ -175,6 +179,7 @@ OPENSWMM_KERNEL_FN double areaOfDepth(const FvGeometry& g, double h) noexcept {
 
 /// Top width dA/dh at depth @p h, INCLUDING the tapered slot.
 OPENSWMM_KERNEL_FN double widthOfDepth(const FvGeometry& g, double h) noexcept {
+    if (g.use_closure) return closureWidth(g.closure_tbl, h);
     if (h <= 0.0) return 0.0;
     if (h >= g.y_full) return g.t_slot;
     const double band = g.y_full - g.y_crown;
@@ -186,6 +191,7 @@ OPENSWMM_KERNEL_FN double widthOfDepth(const FvGeometry& g, double h) noexcept {
 
 /// Hydraulic radius at depth @p h.
 OPENSWMM_KERNEL_FN double hydRadOfDepth(const FvGeometry& g, double h) noexcept {
+    if (g.use_closure) return closureHydRad(g.closure_tbl, h);
     if (h <= 0.0) return 0.0;
     if (h >= g.y_full) return g.r_full;
     return sectionHydRad(g, h);
@@ -204,6 +210,9 @@ OPENSWMM_KERNEL_FN double hydRadOfDepth(const FvGeometry& g, double h) noexcept 
  */
 OPENSWMM_KERNEL_FN double i1OfDepth(const FvGeometry& g, double h,
                                     double area_at_h) noexcept {
+    // The closure's I₁ is the exact integral of its own A; the caller's area
+    // is not needed (and stays consistent by construction).
+    if (g.use_closure) return closureI1(g.closure_tbl, h);
     if (h <= 0.0) return 0.0;
     if (h >= g.y_full) {
         const double d = h - g.y_full;
@@ -321,6 +330,9 @@ OPENSWMM_KERNEL_FN double depthOfAreaBracketed(const FvGeometry& g,
  *          somehow fails to contain the root.
  */
 OPENSWMM_KERNEL_FN double depthOfArea(const FvGeometry& g, double a) noexcept {
+    // Newton on the closure's own monotone cubic — 2-3 steps with the exact
+    // derivative, against Brent's 6-8 evaluations plus its divide chain here.
+    if (g.use_closure) return closureDepthOfArea(g.closure_tbl, a);
     if (a <= 0.0) return 0.0;
     if (a >= g.a_crown) return g.y_full + (a - g.a_crown) / g.t_slot;
 

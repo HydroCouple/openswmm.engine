@@ -11,10 +11,13 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <map>
 #include <tuple>
 
 #include "FvKernels.hpp"
+#include "SectionGeometry.hpp"
 #include "../../core/ErrorCodes.hpp"
 #include "../Culvert.hpp"
 #include "../Link.hpp"
@@ -82,6 +85,149 @@ void buildDepthTable(FvGeometry& g) {
     g.h_tbl[n - 1] = g.y_full;              // A(y_full) == a_crown by definition
 }
 
+/// Development switch for the closure-kernel program: OPENSWMM_FV_CLOSURE=
+/// legacy keeps the table/Brent path; anything else (the default) builds the
+/// exact-geometry closure. Read once.
+bool closureModeExact() {
+    static const bool exact = [] {
+        const char* e = std::getenv("OPENSWMM_FV_CLOSURE");
+        return !(e && (std::strcmp(e, "legacy") == 0 || std::strcmp(e, "LEGACY") == 0));
+    }();
+    return exact;
+}
+
+/**
+ * @brief Build the exact-geometry closure table for one section.
+ *
+ * Samples SectionGeometry (closed forms where they exist, the legacy
+ * evaluator where the table is the definition) at kClosurePanels+1 uniform
+ * depths with the tapered slot folded in, takes the exact top width as the
+ * Hermite slope, limits the slopes for monotonicity (Fritsch–Carlson), and
+ * integrates the panel cubics for I₁. Open polynomial sections get the
+ * closed-form class instead. Areas and widths are per cell (barrels folded
+ * in); R is per barrel. a_crown / i1_crown are then the closure's own values.
+ */
+void buildClosure(FvGeometry& g) {
+    FvClosure& c = g.closure_tbl;
+    c = FvClosure{};
+    g.use_closure = 0;
+    const int N = kClosurePanels;
+    if (!(g.y_full > 0.0)) return;
+
+    c.y_full = g.y_full;
+    c.dh     = g.y_full / static_cast<double>(N);
+    c.inv_dh = static_cast<double>(N) / g.y_full;
+    c.t_slot = g.t_slot;
+    c.r_full = g.r_full;
+    const double bs   = g.barrel_scale;
+    const double band = g.y_full - g.y_crown;
+    const XSectParams& xs = g.xs;
+
+    if (g.is_open && secgeom::isPolynomialOpen(xs.type)) {
+        c.kind = kClosurePolynomial;
+        switch (static_cast<XSectShape>(xs.type)) {
+            case XSectShape::RECT_OPEN:
+                c.c2 = 0.0;            c.c1 = bs * xs.w_max;
+                c.p0 = bs * xs.w_max;  c.p1 = bs * (2.0 - xs.s_bot);
+                break;
+            case XSectShape::TRAPEZOIDAL:
+                c.c2 = bs * xs.s_bot;  c.c1 = bs * xs.y_bot;
+                c.p0 = bs * xs.y_bot;  c.p1 = bs * xs.r_bot;
+                break;
+            default:  // TRIANGULAR
+                c.c2 = bs * xs.s_bot;  c.c1 = 0.0;
+                c.p0 = 0.0;            c.p1 = bs * 2.0 * xs.r_bot;
+                break;
+        }
+        c.a_crown  = (c.c2 * g.y_full + c.c1) * g.y_full;
+        c.i1_crown = (c.c2 * g.y_full / 3.0 + 0.5 * c.c1) * g.y_full * g.y_full;
+        c.inv_a_crown_n = (c.a_crown > 0.0) ? static_cast<double>(N) / c.a_crown : 0.0;
+    } else {
+        c.kind = kClosureTabulated;
+        for (int i = 0; i <= N; ++i) {
+            const double h = g.y_full * static_cast<double>(i) / static_cast<double>(N);
+            double a = bs * secgeom::areaOfDepth(xs, h);
+            double w = bs * secgeom::widthOfDepth(xs, h);
+            const double r = secgeom::hydRadOfDepth(xs, h);
+            if (band > 0.0 && h > g.y_crown) {
+                const double s = (h - g.y_crown) / band;
+                a += g.t_slot * band * kernels::slotRampIntegral(s);
+                w += g.t_slot * kernels::slotRamp(s);
+            }
+            c.A[i] = a;
+            c.M[i] = (w > 0.0) ? w : 0.0;
+            c.R[i] = (r > 0.0) ? r : 0.0;
+        }
+        c.A[0] = 0.0;
+        c.R[N] = g.r_full;
+
+        // Node slopes. For a closed-form section the exact top width IS dA/dh
+        // and is used directly. For a table-defined section the legacy W table
+        // is an INDEPENDENT tabulation that is not the derivative of the
+        // legacy A table (the very inconsistency this closure exists to
+        // remove), so the slopes come from the A samples themselves: the
+        // PCHIP three-point formula (harmonic mean of the adjacent secants),
+        // which is monotone by construction and keeps T consistent with A.
+        if (!secgeom::hasClosedForm(xs.type)) {
+            double d[kClosurePanels];
+            for (int i = 0; i < N; ++i) d[i] = (c.A[i + 1] - c.A[i]) * c.inv_dh;
+            c.M[0] = d[0];
+            c.M[N] = d[N - 1];
+            for (int i = 1; i < N; ++i) {
+                if (d[i - 1] > 0.0 && d[i] > 0.0)
+                    c.M[i] = 2.0 / (1.0 / d[i - 1] + 1.0 / d[i]);
+                else
+                    c.M[i] = 0.0;
+            }
+            // Keep the slot's own slope at the crown node: above it the
+            // closure is the slot line, and continuity of T there is what the
+            // taper band is for.
+            if (band > 0.0) c.M[N] = std::max(c.M[N], g.t_slot);
+        }
+
+        // Fritsch–Carlson: with the exact width as node slope the limiter
+        // almost never engages, but it is what makes monotonicity a property
+        // of the table rather than of the shape.
+        for (int i = 0; i < N; ++i) {
+            const double delta = (c.A[i + 1] - c.A[i]) * c.inv_dh;
+            if (!(delta > 0.0)) { c.M[i] = 0.0; c.M[i + 1] = 0.0; continue; }
+            double alpha = c.M[i] / delta, beta = c.M[i + 1] / delta;
+            if (alpha < 0.0) { alpha = 0.0; c.M[i] = 0.0; }
+            if (beta  < 0.0) { beta  = 0.0; c.M[i + 1] = 0.0; }
+            const double s2 = alpha * alpha + beta * beta;
+            if (s2 > 9.0) {
+                const double tau = 3.0 / std::sqrt(s2);
+                c.M[i]     = tau * alpha * delta;
+                c.M[i + 1] = tau * beta  * delta;
+            }
+        }
+
+        // I₁ = running integral of the panel cubics (Hermite quadrature).
+        c.I1[0] = 0.0;
+        for (int i = 0; i < N; ++i)
+            c.I1[i + 1] = c.I1[i] + c.dh * (0.5 * (c.A[i] + c.A[i + 1]) +
+                                            c.dh / 12.0 * (c.M[i] - c.M[i + 1]));
+        c.a_crown  = c.A[N];
+        c.i1_crown = c.I1[N];
+        c.inv_a_crown_n = (c.a_crown > 0.0) ? static_cast<double>(N) / c.a_crown : 0.0;
+
+        // Area-uniform panel index for the inverse.
+        for (int k = 0; k <= N; ++k) {
+            const double ak = c.a_crown * static_cast<double>(k) / static_cast<double>(N);
+            int lo = 0, hi = N;
+            while (hi - lo > 1) {
+                const int mid = (lo + hi) / 2;
+                if (c.A[mid] <= ak) lo = mid; else hi = mid;
+            }
+            c.j_of_a[k] = static_cast<int16_t>((lo > N - 1) ? N - 1 : lo);
+        }
+    }
+
+    g.use_closure = 1;
+    g.a_crown  = c.a_crown;
+    g.i1_crown = c.i1_crown;
+}
+
 } // namespace
 
 // ===========================================================================
@@ -129,8 +275,11 @@ void buildGeometry(const XSectParams& xs, bool is_open, double slot_celerity,
     const double band = g.y_full - g.y_crown;
     g.a_crown = g.a_full + g.t_slot * band * 0.5;   // ∫₀¹ ramp = ½
 
+    // Legacy table path (kept while OPENSWMM_FV_CLOSURE=legacy is a valid
+    // A/B), then the exact-geometry closure that supersedes it.
     buildI1Table(g);
     buildDepthTable(g);
+    if (closureModeExact()) buildClosure(g);
 }
 
 // ===========================================================================

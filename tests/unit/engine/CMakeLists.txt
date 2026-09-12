@@ -674,6 +674,13 @@ target_compile_definitions(test_engine_msx_parity PRIVATE
 # I₁ as the antiderivative of A with an analytic above-crown extension, and the
 # FV_SLOT_CELERITY design value actually delivered.
 add_gtest_unit(test_engine_fv_closure test_fv_solver_closure.cpp)
+# Exact-geometry closure (plans/FV1D_CLOSURE_KERNEL_PERF_PLAN_2026-09-11 §2c):
+# SectionGeometry's closed forms are self-consistent (A = ∫W) and match the
+# legacy full-depth properties; the monotone cubic closure reproduces the exact
+# section to interpolation accuracy, inverts to its tolerance, integrates to
+# its own I₁, the open polynomial class is exact, and a byte copy of the POD
+# closure evaluates bit-identically (the device-capture contract).
+add_gtest_unit(test_engine_fv_section_geometry test_fv_section_geometry.cpp)
 add_gtest_unit(test_engine_fv_unsteady_friction test_fv_unsteady_friction.cpp)
 add_gtest_unit(test_engine_dw_unsteady_friction test_dw_unsteady_friction.cpp)
 add_gtest_unit(test_engine_fv_tpa_closure test_fv_tpa_closure.cpp)

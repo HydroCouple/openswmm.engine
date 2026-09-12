@@ -362,6 +362,8 @@ TEST(PressBore, arrivalMatchesTheQuasiSteadyFillAndIsCelerityStable) {
     // The explicit baseline's arrival goes on record, not on a gate: its
     // entrance deficit is the very defect the program exists to remove.
     const double t_off = boreArrival(150.0, false);
+    std::printf("  [bore] implicit c=150: %.0f s, c=660: %.0f s; explicit c=150: %.0f s;"
+                " quasi-steady fill %.1f s\n", t_on, t_on_660, t_off, t_est);
     ::testing::Test::RecordProperty("explicit_arrival_s",
                                     std::to_string(t_off));
     ::testing::Test::RecordProperty("implicit_arrival_s",
