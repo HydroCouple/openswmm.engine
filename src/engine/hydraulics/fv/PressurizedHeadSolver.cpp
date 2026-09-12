@@ -49,7 +49,8 @@ namespace {
 /// Godunov flux — no bore-speed consistency binds it — so it is free to use
 /// the conveyance area, the same distinction legacy DW draws with
 /// conveyArea (#144).
-double frictionGamma(const FvGeometry& g, double q, double a, double h) {
+double frictionGamma(const FvGeometry& g, double roughness, double rough_factor,
+                     double q, double a, double h) {
     const double a_conv = std::min(a, std::max(g.a_crown, k::kDryArea));
     if (a_conv <= k::kDryArea) return 0.0;
     const double u = q / a_conv;
@@ -59,14 +60,14 @@ double frictionGamma(const FvGeometry& g, double q, double a, double h) {
     if (g.xs.type == static_cast<int>(XSectShape::FORCE_MAIN) &&
         h >= g.y_full) {
         if (absu <= 0.0) return 0.0;
-        const double sf = (g.roughness < 1.0)
-                              ? hydkernels::fricSlopeDW(u, r, g.roughness)
-                              : hydkernels::fricSlopeHW(u, r, g.roughness);
+        const double sf = (roughness < 1.0)
+                              ? hydkernels::fricSlopeDW(u, r, roughness)
+                              : hydkernels::fricSlopeHW(u, r, roughness);
         return k::kGravity * sf / absu;
     }
-    if (g.rough_factor <= 0.0) return 0.0;
+    if (rough_factor <= 0.0) return 0.0;
     const double r43 = r * std::cbrt(r);
-    return g.rough_factor * absu / r43;
+    return rough_factor * absu / r43;
 }
 
 bool fixedHead(const FvStepForcing* f, std::size_t un) {
@@ -352,8 +353,10 @@ void PressurizedHeadSolver::solve(const PressurizedView& v, double dt) {
                 (!state.cell_tpa.empty() && state.cell_tpa[uc] != 0 &&
                  state.cell_h[uc] < g.y_full)
                     ? g.y_full : state.cell_h[uc];
-            gamma += frictionGamma(g, state.cell_q[uc], state.cell_a[uc],
-                                   h_fric);
+            const auto ucd = static_cast<std::size_t>(mesh.cell_conduit[uc]);
+            gamma += frictionGamma(g, mesh.conduit_roughness[ucd],
+                                   mesh.conduit_rough_factor[ucd],
+                                   state.cell_q[uc], state.cell_a[uc], h_fric);
             ++ngam;
         }
         if (ngam > 0) gamma /= static_cast<double>(ngam);

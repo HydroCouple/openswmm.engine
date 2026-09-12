@@ -30,12 +30,24 @@ namespace k = kernels;
 namespace {
 
 /// Below this many faces the OpenMP fork/join costs more than the flux loop.
-constexpr int kOmpMinFaces = 4096;
+/// Env-overridable for the Phase 3 gate sweep (OPENSWMM_FV_OMP_MIN_FACES /
+/// _CELLS / _NODES); read once.
+int ompMinEnv(const char* name, int dflt) {
+    const char* e = std::getenv(name);
+    return (e && e[0]) ? std::atoi(e) : dflt;
+}
+const int kOmpMinFaces = ompMinEnv("OPENSWMM_FV_OMP_MIN_FACES", 4096);
 
 /// Same trade for the per-cell loops (depth refresh, cell update). Kept at the
 /// face threshold: a conduit mesh carries comparable cell and face counts, and
 /// the per-item work is the same order.
-constexpr int kOmpMinCells = 4096;
+const int kOmpMinCells = ompMinEnv("OPENSWMM_FV_OMP_MIN_CELLS", 4096);
+
+/// Node solves (Phase 3d): each junction's algebraic solve re-evaluates only
+/// its own incident faces and writes only its own head, so the loop is
+/// order-independent and bit-identical at any thread count. A solve costs
+/// ~10 face fluxes, so far fewer items amortize the fork/join than a cell loop.
+const int kOmpMinNodes = ompMinEnv("OPENSWMM_FV_OMP_MIN_NODES", 64);
 
 /// Column-separation vacuum limit, ~1 atm of water column (issue #156): a
 /// sealed TPA reach can sustain sub-atmospheric pressure only to about
@@ -1364,13 +1376,16 @@ void ExplicitFvSolver::computeFaceFlux(int f) {
         // compares Link.newFlow against a per-barrel capacity.
         const int cvr = mesh_->face_culvert[uf];
         if (cvr >= 0 && fl.mass > 0.0 && nd >= 0) {
-            const FvGeometry& gc = mesh_->geom[static_cast<std::size_t>(cvr)];
+            const auto ucv = static_cast<std::size_t>(cvr);
+            const FvGeometry& gc = mesh_->geom[
+                static_cast<std::size_t>(mesh_->conduit_section[ucv])];
             const double head =
                 state_->node_head[static_cast<std::size_t>(nd)] - mesh_->face_zb[uf];
             double dqdh = 0.0;
             const double q_cap = hydkernels::culvertInflow(
-                fl.mass, head, gc.y_full, gc.xs.a_full, gc.slope,
-                gc.culvert_curve, gc.culvert_mitered != 0, dqdh);
+                fl.mass, head, gc.y_full, gc.xs.a_full, mesh_->conduit_slope[ucv],
+                mesh_->conduit_culvert_curve[ucv],
+                mesh_->conduit_culvert_mitered[ucv] != 0, dqdh);
             if (q_cap < fl.mass) {
                 // Inlet control means the INLET is the control section, so the
                 // face becomes a prescribed-discharge boundary and its flux is
@@ -1484,16 +1499,74 @@ void ExplicitFvSolver::relaxNodeFluxes(double dt, const FvStepForcing& forcing) 
     const int nn = mesh_->n_nodes();
     const auto& fold = press_.foldedNodes();
     const bool have_fold = press_step_ && !fold.empty();
+    node_solve_list_.clear();
     for (int n = 0; n < nn; ++n) {
         // A junction the implicit pass folds is a ROW of the SPD head
         // system — solving or damping it here would overwrite the very
         // fluxes the solve is about to own (slot program R2).
         if (have_fold && fold[static_cast<std::size_t>(n)]) continue;
+        node_solve_list_.push_back(n);
+    }
+    solveNodes(node_solve_list_, [&](int) { return dt; }, forcing);
+}
+
+// Phase 3d: the node solves in parallel. Every node's solve reads cell state
+// and its own incident faces and writes only those faces and its own head
+// (a pass-through ghost reads the FAR CELL, never another node), so the
+// nodes are independent and the result is bit-identical in any order and at
+// any thread count. The `perf::n_fv_alg_*` counters inside are plain
+// increments: exact at THREADS 1, an estimate above (same as the closure
+// counters in the flux loop). Dynamic schedule: a junction's cost varies
+// with its bracket expansion (1 to ~80 residuals).
+template <class DtOf>
+void ExplicitFvSolver::solveNodes(const std::vector<int>& nodes, DtOf&& dt_of,
+                                  const FvStepForcing& forcing) {
+    // Split by cost. A pass-through junction (node_pass_) takes the degree-2
+    // shortcut inside solveAlgebraicNode — an average of two surfaces — and a
+    // storage node's relaxation is one pass over its faces; only a junction
+    // that actually runs the bracketed root solve (~10 face fluxes, up to ~80
+    // residuals) is worth a thread. Measured on TwinOaks (5084 pipes, 96 %
+    // pass-through): forking all 5000 nodes per substep cost more than the
+    // solves it distributed (+30 s at 8 threads on a 129 s run).
+    // Solver members, NOT thread_local scratch: the heavy list is read by
+    // every thread of the parallel loop below (a thread_local would hand each
+    // worker its own, empty, copy).
+    std::vector<int>& heavy = node_heavy_;
+    std::vector<int>& light = node_light_;
+    heavy.clear(); light.clear();
+    const bool have_pass = !node_pass_.empty();
+    for (const int n : nodes) {
+        const auto un = static_cast<std::size_t>(n);
+        const bool fixed = forcing.node_fixed_head &&
+                           std::isfinite(forcing.node_fixed_head[un]);
+        if (!fixed && algebraicActive(n) && !(have_pass && node_pass_[un]))
+            heavy.push_back(n);
+        else
+            light.push_back(n);
+    }
+    for (const int n : light) {
         // The algebraic solve is not a relaxation. Storage nodes (and demoted
         // ponding junctions) get the semi-implicit correction.
-        if (algebraicActive(n))  solveAlgebraicNode(n, dt, forcing);
-        else                     relaxOneNode(n, dt, forcing);
+        if (algebraicActive(n))  solveAlgebraicNode(n, dt_of(n), forcing);
+        else                     relaxOneNode(n, dt_of(n), forcing);
     }
+    const int nh = static_cast<int>(heavy.size());
+    // An explicit branch, not an `if` clause on the pragma: a parallel region
+    // that the clause disables still enters the runtime, and this loop runs
+    // once per tier firing — 13 M times on the 5-day East Boston deck, where
+    // the clause form cost 30 % of the run at ONE thread.
+#ifdef SWMM_USE_OPENMP
+    if (nh >= kOmpMinNodes && omp_get_max_threads() > 1) {
+#pragma omp parallel for schedule(dynamic, 2)
+        for (int i = 0; i < nh; ++i)
+            solveAlgebraicNode(heavy[static_cast<std::size_t>(i)],
+                               dt_of(heavy[static_cast<std::size_t>(i)]), forcing);
+        return;
+    }
+#endif
+    for (int i = 0; i < nh; ++i)
+        solveAlgebraicNode(heavy[static_cast<std::size_t>(i)],
+                           dt_of(heavy[static_cast<std::size_t>(i)]), forcing);
 }
 
 void ExplicitFvSolver::relaxOneNode(int n, double dt,
@@ -1822,7 +1895,9 @@ void ExplicitFvSolver::updateCells(double dt, const FvStepForcing& forcing) {
             // is: the node sitting on the face's LEFT means this is the
             // conduit's upstream end, hence the entrance loss.
             if (mesh_->face_node[uf] >= 0)
-                k_loss += (mesh_->face_cl[uf] < 0) ? g.loss_inlet : g.loss_outlet;
+                k_loss += (mesh_->face_cl[uf] < 0)
+                              ? mesh_->conduit_loss_inlet[static_cast<std::size_t>(mesh_->cell_conduit[uc])]
+                              : mesh_->conduit_loss_outlet[static_cast<std::size_t>(mesh_->cell_conduit[uc])];
         }
         // Reported DISCHARGE is the mass actually moving through the cell —
         // the mean of its two face fluxes in the conduit frame — not the
@@ -1939,7 +2014,9 @@ void ExplicitFvSolver::updateCells(double dt, const FvStepForcing& forcing) {
         const double u = q_new / a_new;
         // Friction for a flagged cell evaluates at full depth (R = r_full,
         // and a full FORCE_MAIN keeps its pressurized law).
-        q_new = frictionFor(g, q_new, u, tpa_cell ? g.y_full : h_new, dt);
+        q_new = frictionFor(g, mesh_->conduit_roughness[static_cast<std::size_t>(mesh_->cell_conduit[uc])],
+                            mesh_->conduit_rough_factor[static_cast<std::size_t>(mesh_->cell_conduit[uc])],
+                            q_new, u, tpa_cell ? g.y_full : h_new, dt);
         if (k_loss > 0.0) q_new = k::localLossUpdate(q_new, u, k_loss, dx, dt);
         // Unsteady friction (issue #156): cell_u_[uc] still holds Vⁿ here —
         // it is overwritten only below, and only by this cell's own iteration.
@@ -2749,19 +2826,20 @@ void ExplicitFvSolver::bookLateralSpills(const std::vector<int>* nodes) {
 // The friction laws come from HydClosureKernels.hpp — the same bodies
 // ForceMain.cpp's public entry points forward to — so this compiles unchanged
 // for the device backend (plan §5.1).
-double ExplicitFvSolver::frictionFor(const FvGeometry& g, double q, double u,
+double ExplicitFvSolver::frictionFor(const FvGeometry& g, double roughness,
+                                     double rough_factor, double q, double u,
                                      double h, double dt) const {
     perf::count(perf::n_fv_geom_hydrad);
     const double r = k::hydRadOfDepth(g, h);
     if (g.xs.type == static_cast<int>(XSectShape::FORCE_MAIN) && h >= g.y_full) {
         const double absu = std::fabs(u);
         if (absu <= 0.0) return q;
-        const double sf = (g.roughness < 1.0)
-                              ? hydkernels::fricSlopeDW(u, r, g.roughness)
-                              : hydkernels::fricSlopeHW(u, r, g.roughness);
+        const double sf = (roughness < 1.0)
+                              ? hydkernels::fricSlopeDW(u, r, roughness)
+                              : hydkernels::fricSlopeHW(u, r, roughness);
         return q / (1.0 + dt * k::kGravity * sf / absu);
     }
-    return k::frictionUpdate(q, u, r, dt, g.rough_factor);
+    return k::frictionUpdate(q, u, r, dt, rough_factor);
 }
 
 // ===========================================================================
@@ -3503,21 +3581,27 @@ void ExplicitFvSolver::fireFaces(const std::vector<int>& faces, double dt0) {
     // accumulators below.
     if (forcing_) {
         static thread_local std::vector<char> touched;
+        static thread_local std::vector<int> touched_nodes;
         touched.assign(acc_nvol_.size(), 0);
+        touched_nodes.clear();
         for (const int f : faces) {
             const int nd = mesh_->face_node[static_cast<std::size_t>(f)];
-            if (nd >= 0) touched[static_cast<std::size_t>(nd)] = 1;
+            if (nd >= 0 && !touched[static_cast<std::size_t>(nd)]) {
+                touched[static_cast<std::size_t>(nd)] = 1;
+                touched_nodes.push_back(nd);
+            }
         }
-        for (std::size_t nd = 0; nd < touched.size(); ++nd) {
-            if (!touched[nd]) continue;
-            const int n = static_cast<int>(nd);
-            const double dtn = static_cast<double>(1 << node_tier_[nd]) * dt0;
-            // Algebraic junctions share one tier across their incident faces
-            // (assignTiers pinning), so a touched node's faces are all in this
-            // due set and the flux-balance solve is complete.
-            if (algebraicActive(n))  solveAlgebraicNode(n, dtn, *forcing_);
-            else                     relaxOneNode(n, dtn, *forcing_);
-        }
+        // Face order, deduplicated by the bitmap: the node solves are
+        // independent, so the visiting order does not affect the result.
+        // Algebraic junctions share one tier across their incident faces
+        // (assignTiers pinning), so a touched node's faces are all in this
+        // due set and the flux-balance solve is complete.
+        solveNodes(touched_nodes,
+                   [&](int n) {
+                       return static_cast<double>(
+                                  1 << node_tier_[static_cast<std::size_t>(n)]) * dt0;
+                   },
+                   *forcing_);
     }
 
     // Positivity, in VOLUME rather than rate: the faces in this set fire with
@@ -3651,7 +3735,9 @@ void ExplicitFvSolver::fireCells(const std::vector<int>& cells, double dt0,
         for (const int f : faces) {
             const auto uf = static_cast<std::size_t>(f);
             if (mesh_->face_node[uf] >= 0)
-                k_loss += (mesh_->face_cl[uf] < 0) ? g.loss_inlet : g.loss_outlet;
+                k_loss += (mesh_->face_cl[uf] < 0)
+                              ? mesh_->conduit_loss_inlet[static_cast<std::size_t>(mesh_->cell_conduit[uc])]
+                              : mesh_->conduit_loss_outlet[static_cast<std::size_t>(mesh_->cell_conduit[uc])];
         }
 
         // Drain. Zeroing here — not at the top of the cycle — is what makes the
@@ -3688,7 +3774,9 @@ void ExplicitFvSolver::fireCells(const std::vector<int>& cells, double dt0,
             continue;
         }
         const double u = q_new / a_new;
-        q_new = frictionFor(g, q_new, u, tpa_cell ? g.y_full : h_new, dt);
+        q_new = frictionFor(g, mesh_->conduit_roughness[static_cast<std::size_t>(mesh_->cell_conduit[uc])],
+                            mesh_->conduit_rough_factor[static_cast<std::size_t>(mesh_->cell_conduit[uc])],
+                            q_new, u, tpa_cell ? g.y_full : h_new, dt);
         if (k_loss > 0.0) q_new = k::localLossUpdate(q_new, u, k_loss, dx, dt);
         // Unsteady friction (issue #156): dt here is the tier window span,
         // matching the local-acceleration difference (Vⁿ over the same span).

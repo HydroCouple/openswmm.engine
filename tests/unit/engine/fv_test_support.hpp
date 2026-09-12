@@ -69,15 +69,21 @@ inline Channel makeWalledChannel(const XSectParams& xs, int n, double dx,
 
     ch.mesh.geom.resize(1);
     buildGeometry(xs, xsect::isOpen(xs.type), slot_celerity, ch.mesh.geom[0]);
-    ch.mesh.geom[0].roughness = manning;
-    // g·(n/φ)², the same grouping ConduitData::rough_factor carries.
-    ch.mesh.geom[0].rough_factor =
-        32.2 * (manning / 1.486) * (manning / 1.486);
     ch.mesh.geom[0].barrels = 1;
 
     ch.mesh.conduit_cell_begin = {0};
     ch.mesh.conduit_cell_count = {n};
     ch.mesh.conduit_link       = {0};
+    ch.mesh.conduit_section    = {0};
+    ch.mesh.conduit_roughness  = {manning};
+    // g·(n/φ)², the same grouping ConduitData::rough_factor carries.
+    ch.mesh.conduit_rough_factor = {32.2 * (manning / 1.486) * (manning / 1.486)};
+    ch.mesh.conduit_loss_inlet = {0.0};
+    ch.mesh.conduit_loss_outlet = {0.0};
+    ch.mesh.conduit_slope = {0.0};
+    ch.mesh.conduit_culvert_code = {0};
+    ch.mesh.conduit_culvert_curve = {hydkernels::CulvertCurve{}};
+    ch.mesh.conduit_culvert_mitered = {0};
 
     for (int i = 0; i < n; ++i) {
         ch.mesh.cell_geom.push_back(0);

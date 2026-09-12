@@ -197,6 +197,14 @@ private:
     /// conservation for stability, which is the one trade this solver cannot
     /// make.
     void   relaxNodeFluxes(double dt, const FvStepForcing& forcing);
+    /// Phase 3d: solve/relax every node in @p nodes, in parallel above
+    /// kOmpMinNodes (order-independent, bit-identical at any thread count).
+    template <class DtOf>
+    void   solveNodes(const std::vector<int>& nodes, DtOf&& dt_of,
+                      const FvStepForcing& forcing);
+    std::vector<int> node_solve_list_;   ///< global-path node list (scratch)
+    std::vector<int> node_heavy_;        ///< junctions that run the bracketed solve (shared by the parallel loop)
+    std::vector<int> node_light_;        ///< pass-through / storage nodes (serial)
 
     /// One node's worth of the above. Split out because the tiered path applies
     /// it per node at that node's own Δt, while the global path applies it to
@@ -451,8 +459,8 @@ private:
     /// value). So an open-channel network pays nothing for this.
     double algebraicNodeStableDt(int n) const noexcept;
 
-    double frictionFor(const FvGeometry& g, double q, double u, double h,
-                       double dt) const;
+    double frictionFor(const FvGeometry& g, double roughness, double rough_factor,
+                       double q, double u, double h, double dt) const;
 
     /// Apply the node's capacity rule to a freshly-integrated volume: ponding,
     /// surcharge depth, and the flooding that removes water once neither can

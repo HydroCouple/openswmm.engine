@@ -106,27 +106,13 @@ struct FvGeometry {
 
     uint8_t is_open = 0;           ///< open section: no crown, no slot taper
 
-    // -- Friction and losses (already lengthening-adjusted, see Router::init) --
-
-    double roughness    = 0.01;    ///< Manning n
-    double rough_factor = 0.0;     ///< g·(n/PHI)² — friction denominator factor
-    double loss_inlet   = 0.0;     ///< entrance loss coefficient K
-    double loss_outlet  = 0.0;     ///< exit loss coefficient K
-
     int    barrels = 1;            ///< parallel identical barrels
 
-    /// [XSECTIONS] culvert code (0 = not a culvert), and the conduit slope the
-    /// HEC-5 inlet-control equations need. Cold: read only at the conduit's
-    /// upstream boundary face, and only when the code is set.
-    int    culvert_code = 0;
-    double slope        = 0.0;
-
-    /// The type code's inlet-control curve, RESOLVED at mesh build. Keeping the
-    /// resolved coefficients rather than the code is what lets the solver
-    /// evaluate the closure with no engine dependency — the table lookup is
-    /// host work, the curve is all the kernel needs.
-    hydkernels::CulvertCurve culvert_curve{};
-    uint8_t culvert_mitered = 0;
+    // Friction, losses, slope and the culvert curve are PER CONDUIT and live
+    // in NetworkMeshData::conduit_* (plan Phase 1f): this block is one shared
+    // entry per DISTINCT (section, barrels, open) so a 5000-pipe network with
+    // a dozen sections keeps a dozen closure tables cache-resident instead of
+    // streaming ~4 kB of geometry per cell every substep.
 
     /// The closure every FvKernels section function evaluates: the exact
     /// section (SectionGeometry.hpp) sampled at build time into a monotone
@@ -283,6 +269,21 @@ struct NetworkMeshData {
     std::vector<int> conduit_cell_begin; ///< first cell of conduit row r
     std::vector<int> conduit_cell_count; ///< cells in conduit row r
     std::vector<int> conduit_link;       ///< base LinkData index of conduit row r
+    std::vector<int> conduit_section;    ///< index into `geom` (shared section block)
+
+    // Per-conduit friction and losses (already lengthening-adjusted, see
+    // Router::init) and the culvert inlet-control data — everything that
+    // differs between conduits sharing one section block (plan Phase 1f).
+    std::vector<double>  conduit_roughness;      ///< Manning n
+    std::vector<double>  conduit_rough_factor;   ///< g·(n/PHI)² — friction denominator factor
+    std::vector<double>  conduit_loss_inlet;     ///< entrance loss coefficient K
+    std::vector<double>  conduit_loss_outlet;    ///< exit loss coefficient K
+    std::vector<double>  conduit_slope;          ///< bed slope the HEC-5 equations need
+    std::vector<int>     conduit_culvert_code;   ///< [XSECTIONS] culvert code (0 = none)
+    /// The type code's inlet-control curve, RESOLVED at mesh build so the
+    /// solver evaluates the closure with no engine dependency.
+    std::vector<hydkernels::CulvertCurve> conduit_culvert_curve;
+    std::vector<uint8_t> conduit_culvert_mitered;
 
     // -----------------------------------------------------------------------
     // Cell chains (CSR). A chain is a maximal run of cells joined by INTERIOR
@@ -423,6 +424,11 @@ struct NetworkMeshData {
         face_vj_node.clear(); node_vj_face.clear();
         face_dir_l.clear(); face_dir_r.clear();
         conduit_cell_begin.clear(); conduit_cell_count.clear(); conduit_link.clear();
+        conduit_section.clear();
+        conduit_roughness.clear(); conduit_rough_factor.clear();
+        conduit_loss_inlet.clear(); conduit_loss_outlet.clear(); conduit_slope.clear();
+        conduit_culvert_code.clear(); conduit_culvert_curve.clear();
+        conduit_culvert_mitered.clear();
         chain_ptr.clear(); chain_cells.clear(); chain_dir.clear();
         cell_chain.clear(); cell_chain_pos.clear();
         struct_link.clear(); struct_n1.clear(); struct_n2.clear();

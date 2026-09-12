@@ -306,7 +306,20 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
     // -----------------------------------------------------------------------
     // Per-conduit geometry + cell allocation
     // -----------------------------------------------------------------------
-    mesh.geom.resize(static_cast<std::size_t>(n_cond));
+    // One section block per DISTINCT (section, barrels, open) — plan Phase 1f.
+    mesh.geom.clear();
+    {
+        const auto un_cond = static_cast<std::size_t>(n_cond);
+        mesh.conduit_section.assign(un_cond, -1);
+        mesh.conduit_roughness.assign(un_cond, 0.01);
+        mesh.conduit_rough_factor.assign(un_cond, 0.0);
+        mesh.conduit_loss_inlet.assign(un_cond, 0.0);
+        mesh.conduit_loss_outlet.assign(un_cond, 0.0);
+        mesh.conduit_slope.assign(un_cond, 0.0);
+        mesh.conduit_culvert_code.assign(un_cond, 0);
+        mesh.conduit_culvert_curve.assign(un_cond, hydkernels::CulvertCurve{});
+        mesh.conduit_culvert_mitered.assign(un_cond, 0);
+    }
     mesh.conduit_cell_begin.assign(static_cast<std::size_t>(n_cond), -1);
     mesh.conduit_cell_count.assign(static_cast<std::size_t>(n_cond), 0);
     mesh.conduit_link.assign(static_cast<std::size_t>(n_cond), -1);
@@ -381,18 +394,24 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
             continue;
         }
 
-        auto& g = mesh.geom[ur];
         const bool is_open = xsect::isOpen(xs.type);
+        int sec;
         if (const auto hit = geom_memo.find(geom_key(xs, CD.barrels[ur], is_open));
             hit != geom_memo.end()) {
-            // Copy the already-tabulated geometry wholesale. The per-conduit
-            // scalars below are assigned after this point in both branches, so
-            // the result is identical to re-running buildGeometry.
-            g = mesh.geom[static_cast<std::size_t>(hit->second)];
+            // Shared section block (plan Phase 1f): the block carries nothing
+            // per-conduit any more, so every conduit with this key points at
+            // the same entry. Same bytes → bit-identical to the per-conduit
+            // copies it replaces.
+            sec = hit->second;
         } else {
-            buildGeometry(xs, is_open, opts.slot_celerity, g, CD.barrels[ur]);
-            geom_memo.emplace(geom_key(xs, CD.barrels[ur], is_open), r);
+            sec = static_cast<int>(mesh.geom.size());
+            mesh.geom.emplace_back();
+            buildGeometry(xs, is_open, opts.slot_celerity, mesh.geom.back(),
+                          CD.barrels[ur]);
+            geom_memo.emplace(geom_key(xs, CD.barrels[ur], is_open), sec);
         }
+        mesh.conduit_section[ur] = sec;
+        const FvGeometry& g = mesh.geom[static_cast<std::size_t>(sec)];
         if (!g.is_open) {
             const double c_req = std::max(opts.slot_celerity, 1.0);
             const double uncapped = kernels::kGravity * g.a_full / (c_req * c_req);
@@ -405,18 +424,18 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
                     std::sqrt(kernels::kGravity * g.a_full / g.t_slot));
             }
         }
-        g.roughness    = CD.roughness[ur];
-        g.rough_factor = CD.rough_factor[ur];
-        g.loss_inlet   = CD.loss_inlet[ur];
-        g.loss_outlet  = CD.loss_outlet[ur];
-        g.culvert_code = CD.culvert_code[ur];
-        g.slope        = CD.slope[ur];
-        if (g.culvert_code > 0) {
-            const culvert::CulvertCoeffs cc = culvert::getCoeffs(g.culvert_code);
-            g.culvert_curve = {cc.K, cc.M, cc.C, cc.Y};
-            g.culvert_mitered = static_cast<uint8_t>(
-                g.culvert_code == 5 || g.culvert_code == 37 ||
-                g.culvert_code == 46);
+        mesh.conduit_roughness[ur]    = CD.roughness[ur];
+        mesh.conduit_rough_factor[ur] = CD.rough_factor[ur];
+        mesh.conduit_loss_inlet[ur]   = CD.loss_inlet[ur];
+        mesh.conduit_loss_outlet[ur]  = CD.loss_outlet[ur];
+        mesh.conduit_culvert_code[ur] = CD.culvert_code[ur];
+        mesh.conduit_slope[ur]        = CD.slope[ur];
+        if (CD.culvert_code[ur] > 0) {
+            const culvert::CulvertCoeffs cc = culvert::getCoeffs(CD.culvert_code[ur]);
+            mesh.conduit_culvert_curve[ur] = {cc.K, cc.M, cc.C, cc.Y};
+            mesh.conduit_culvert_mitered[ur] = static_cast<uint8_t>(
+                CD.culvert_code[ur] == 5 || CD.culvert_code[ur] == 37 ||
+                CD.culvert_code[ur] == 46);
         }
 
         // Mesh length: the Courant-lengthened mod_length is reused as the Δx
@@ -452,7 +471,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         for (int i = 0; i < ncell; ++i) {
             const double t = (static_cast<double>(i) + 0.5) /
                              static_cast<double>(ncell);
-            mesh.cell_geom.push_back(r);
+            mesh.cell_geom.push_back(sec);
             mesh.cell_conduit.push_back(r);
             mesh.cell_dx.push_back(dx);
             mesh.cell_zb.push_back(z1 + (z2 - z1) * t);
@@ -635,7 +654,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
 
             // HEC-5 inlet control acts at the culvert's UPSTREAM face only.
             if (a.end == 0 &&
-                mesh.geom[static_cast<std::size_t>(a.conduit)].culvert_code > 0)
+                mesh.conduit_culvert_code[static_cast<std::size_t>(a.conduit)] > 0)
                 mesh.face_culvert[static_cast<std::size_t>(fidx)] = a.conduit;
         }
     }
@@ -724,12 +743,9 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
                 FvGeometry g{};
                 buildGeometry(xs, xsect::isOpen(xs.type), opts.slot_celerity, g,
                               a.barrels);
-                // Friction/loss scalars are never read through the face
-                // section (faceSide uses only A, W and I₁ from it), but carry
-                // the average so nothing downstream sees an unset field.
-                g.roughness    = 0.5 * (a.roughness + b.roughness);
-                g.rough_factor = 0.5 * (a.rough_factor + b.rough_factor);
-                g.slope        = 0.5 * (a.slope + b.slope);
+                // A face section is geometry only: friction and losses are
+                // read through the CELL's conduit (mesh.conduit_*), never
+                // through the face (faceSide uses only A, W and I₁ from it).
                 gf = static_cast<int>(mesh.geom.size());
                 mesh.geom.push_back(g);
                 pair_geom.emplace(key, gf);

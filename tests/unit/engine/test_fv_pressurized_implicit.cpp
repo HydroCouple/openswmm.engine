@@ -394,9 +394,16 @@ Tee makeTee(double celerity) {
 
     t.mesh.geom.resize(1);
     buildGeometry(circular(3.0), false, celerity, t.mesh.geom[0]);
-    t.mesh.geom[0].roughness = 0.013;
-    t.mesh.geom[0].rough_factor = 32.2 * (0.013 / 1.486) * (0.013 / 1.486);
     t.mesh.geom[0].barrels = 1;
+    t.mesh.conduit_section    = {0, 0, 0};
+    t.mesh.conduit_roughness  = {0.013, 0.013, 0.013};
+    t.mesh.conduit_rough_factor.assign(3, 32.2 * (0.013 / 1.486) * (0.013 / 1.486));
+    t.mesh.conduit_loss_inlet.assign(3, 0.0);
+    t.mesh.conduit_loss_outlet.assign(3, 0.0);
+    t.mesh.conduit_slope.assign(3, 0.0);
+    t.mesh.conduit_culvert_code.assign(3, 0);
+    t.mesh.conduit_culvert_curve.assign(3, hydkernels::CulvertCurve{});
+    t.mesh.conduit_culvert_mitered.assign(3, 0);
 
     // Cells: pipe p occupies [p·nc, (p+1)·nc). All beds flat at 0.
     const int ncell = 3 * nc;

@@ -50,6 +50,23 @@ retroactive.
     calls −40…50 %, first-moment calls −50…60 %. Wall clock is recorded in
     `plans/FV1D_PERF_BASELINE_2026-09-11.md` once measured on a quiet host.
 
+- **Explicit FV solver: section blocks shared across conduits, junction solves in
+  parallel** (Phase 1f and 3d of the same plan). The mesh carried one geometry block per
+  conduit (~4.4 kB with the closure table): TwinOaks v2 has 5086 conduits and eleven
+  distinct sections, East Boston 183 and forty. `mesh.geom` now holds one block per
+  distinct (section, barrels, open); friction, losses, slope and the culvert curve move to
+  `mesh.conduit_*` arrays; results are byte-identical (31-deck manifest). The algebraic
+  junction solves run in parallel on both the global path and the LTS tier firing — only
+  junctions that run the bracketed root solve are distributed, pass-through and storage
+  nodes stay serial, and the serial path is an explicit branch (a disabled pragma still
+  enters the runtime; on the 5-day East Boston deck the loop runs 13 M times and the
+  clause form cost 30 % at one thread). Bit-identical at any thread count. Measured on a
+  quiet host: TwinOaks 129.5 → 116.7 s at 1 thread and 103.0 s at 2 (183 → 125 s at 8);
+  East Boston 120.0 → 112.3 s at 1 thread and 104.7 s at 2. On this P+E-core host 8
+  threads is slower than 1 on both decks (East Boston is authored `THREADS 8`); the
+  OpenMP loop gates take `OPENSWMM_FV_OMP_MIN_{CELLS,FACES,NODES}` overrides for sweeps.
+  Cumulative since the Phase 0 base: East Boston 206 → 105 s, TwinOaks 153 → 103 s.
+
 - **Explicit FV solver: cross sections from exact geometry, one POD closure kernel**
   (Phase 2 of the same plan). FV no longer reads the legacy 51-row section tables
   through the 25-way shape switch: `SectionGeometry.hpp` evaluates each section in

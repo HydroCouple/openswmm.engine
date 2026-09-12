@@ -173,9 +173,16 @@ Channel makeSplitChannel(const XSectParams& xs, int half, double dx,
 
     ch.mesh.geom.resize(1);
     buildGeometry(xs, xsect::isOpen(xs.type), 100.0, ch.mesh.geom[0]);
-    ch.mesh.geom[0].roughness = manning;
-    ch.mesh.geom[0].rough_factor = 32.2 * (manning / 1.486) * (manning / 1.486);
     ch.mesh.geom[0].barrels = 1;
+    ch.mesh.conduit_section    = {0, 0};
+    ch.mesh.conduit_roughness  = {manning, manning};
+    ch.mesh.conduit_rough_factor.assign(2, 32.2 * (manning / 1.486) * (manning / 1.486));
+    ch.mesh.conduit_loss_inlet.assign(2, 0.0);
+    ch.mesh.conduit_loss_outlet.assign(2, 0.0);
+    ch.mesh.conduit_slope.assign(2, 0.0);
+    ch.mesh.conduit_culvert_code.assign(2, 0);
+    ch.mesh.conduit_culvert_curve.assign(2, hydkernels::CulvertCurve{});
+    ch.mesh.conduit_culvert_mitered.assign(2, 0);
 
     auto bed = [&](double x) { return 10.0 - 0.001 * x; };
 

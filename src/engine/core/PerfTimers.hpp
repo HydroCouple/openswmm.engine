@@ -63,9 +63,10 @@ inline double sec_start_plugins = 0.0;   // plugins_.prepare_all (report preambl
 // (`+= n`) at loop boundaries rather than by ++ inside the loop, which also
 // keeps them correct without atomics when the flux loop goes parallel.
 //
-// SERIAL-PATH ONLY. `n_fv_alg_*` are incremented inside solveAlgebraicNode,
-// which is serial today (plan Phase 3d proposes parallelizing it). If that
-// lands, these become per-thread accumulators or they become wrong.
+// `n_fv_alg_*` are incremented inside solveAlgebraicNode, which runs in
+// parallel over nodes above kOmpMinNodes since Phase 3d: exact at THREADS 1,
+// an estimate above (plain increments, like the closure counters in the
+// parallel flux loop) — the report says so.
 // ---------------------------------------------------------------------------
 
 inline double sec_fv_census      = 0.0;  // censusDt (Courant min-reduction)

@@ -1053,7 +1053,8 @@ void Router::initFv(SimulationContext& ctx) {
         if (begin < 0) continue;
         const int j = fv_mesh_.conduit_link[ur];
         const auto uj = static_cast<std::size_t>(j);
-        const fv::FvGeometry& g = fv_mesh_.geom[ur];
+        const fv::FvGeometry& g =
+            fv_mesh_.geom[static_cast<std::size_t>(fv_mesh_.conduit_section[ur])];
         // areaOfDepth already returns the AGGREGATE section of all barrels, and
         // links.flow is the aggregate discharge, so neither is divided here.
         const double q = ctx.links.flow[uj];
@@ -1382,7 +1383,8 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
         if (begin < 0 || count <= 0) continue;
         const int j = fv_mesh_.conduit_link[ur];
         const auto uj = static_cast<std::size_t>(j);
-        const fv::FvGeometry& g = fv_mesh_.geom[ur];
+        const fv::FvGeometry& g =
+            fv_mesh_.geom[static_cast<std::size_t>(fv_mesh_.conduit_section[ur])];
         // Cell area and discharge are ALREADY the aggregate of all barrels
         // (FvGeometry::barrel_scale), so nothing here is scaled by the count.
         double sum_len = 0.0, q_len = 0.0, a_len = 0.0, vol = 0.0;
