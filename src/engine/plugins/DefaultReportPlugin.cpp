@@ -450,11 +450,21 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
             if (lt == static_cast<int>(LinkType::CONDUIT)) {
                 const int cr = ctx.link_subtypes.conduit_row(i);
                 const auto& CD = ctx.link_subtypes.conduits;
+                // Legacy prints Conduit.roughness, which conduit_validate has
+                // replaced by the transect's channel n for an IRREGULAR
+                // conduit (link.c:1024); the stored value here stays authored.
+                double n_rep = (cr >= 0) ? CD.roughness[static_cast<size_t>(cr)] : 0.01;
+                if (cr >= 0 && ctx.links.xsect_shape[static_cast<size_t>(i)] == XsectShape::IRREGULAR) {
+                    const int ti = ctx.links.xsect_curve[static_cast<size_t>(i)];
+                    if (ti >= 0 && static_cast<size_t>(ti) < ctx.transects.n_channel.size() &&
+                        ctx.transects.n_channel[static_cast<size_t>(ti)] > 0.0)
+                        n_rep = ctx.transects.n_channel[static_cast<size_t>(ti)];
+                }
                 std::fprintf(f, "%-12s%10.1f%10.4f%10.4f",
                     "CONDUIT",
                     (cr >= 0) ? CD.length[static_cast<size_t>(cr)] : 0.0,
                     ((cr >= 0) ? CD.slope[static_cast<size_t>(cr)] : 0.0) * 100.0,
-                    (cr >= 0) ? CD.roughness[static_cast<size_t>(cr)] : 0.01);
+                    n_rep);
             } else {
                 std::fprintf(f, "%-12s", lt_str(lt));
             }

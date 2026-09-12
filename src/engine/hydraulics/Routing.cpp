@@ -38,6 +38,7 @@
 #include "Link.hpp"
 #include "TopoSort.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../input/PostParseResolver.hpp"
 
 #include <cmath>
 #include <algorithm>
@@ -182,18 +183,21 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
                 double yFull = ctx.links.xsect_y_full[uj];
                 double aFull = ctx.links.xsect_a_full[uj];
                 double sFull = ctx.links.xsect_s_full[uj];
-                double n_rough = CD.roughness[ucr];
+                // PARITY link.c:1085-1105: the roughness that feeds
+                // conduit_getLengthFactor is the EFFECTIVE n — a transect
+                // conduit's channel n (times its meander factor), a force
+                // main's equivalent n — not the [CONDUITS] value.
+                double n_rough = openswmm::input::conduit_manning_n(ctx, j);
                 double slope_abs = std::fabs(CD.slope[ucr]);
 
                 // For open channels, use hydraulic depth (aFull / top-width)
                 // rather than geometric full depth for the wave-speed term.
                 // Matches legacy link.c:1241-1243:
                 //   if (xsect_isOpen(type)) yFull = aFull / getWofY(yFull)
-                bool is_open = (ctx.links.xsect_shape[uj] == XsectShape::TRAPEZOIDAL ||
-                                ctx.links.xsect_shape[uj] == XsectShape::RECT_OPEN   ||
-                                ctx.links.xsect_shape[uj] == XsectShape::TRIANGULAR  ||
-                                ctx.links.xsect_shape[uj] == XsectShape::PARABOLIC);
-                if (is_open) {
+                // xsect_isOpen is Amax == 1 (POWERFUNC, IRREGULAR and STREET
+                // included), and W(yFull) is wMax for every open shape — a
+                // transect's wMax IS its top-of-table width (transect.c:299).
+                if (xsect::isOpen(ctx.links.xsect_batch_shape[uj])) {
                     double wFull = ctx.links.xsect_w_max[uj];
                     if (wFull > 0.0) yFull = aFull / wFull;
                 }
@@ -229,7 +233,12 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
 
             double factor = modL / L;
             double slope_abs = std::fabs(CD.slope[ucr]) / factor;
-            double roughness = CD.roughness[ucr] / std::sqrt(factor);
+            // PARITY link.c:1113-1116: the lengthening divides the EFFECTIVE
+            // n (see conduit_manning_n) by sqrt(factor). Dividing the stored
+            // [CONDUITS] value here silently dropped a transect conduit's
+            // channel n for every lengthened conduit (50-transects: the two
+            // short reaches routed with n = 1.0 instead of 0.1).
+            double roughness = openswmm::input::conduit_manning_n(ctx, j) / std::sqrt(factor);
 
             // Update conveyance with adjusted slope and roughness
             double beta = PHI * std::sqrt(slope_abs) / roughness;

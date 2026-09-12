@@ -175,6 +175,22 @@ void resolve_external_file_slots(SimulationContext& ctx,
  */
 void recompute_conduit_flow_properties(SimulationContext& ctx, int j);
 
+/**
+ * @brief The Manning's n a conduit actually routes with, before any Courant
+ *        lengthening adjustment — legacy conduit_validate's @c roughness.
+ *
+ * @details Starts from the [CONDUITS] value and applies, in legacy's order:
+ *          an IRREGULAR conduit takes its transect's main-channel n
+ *          (link.c:1024); a force main under dynamic-wave routing takes its
+ *          equivalent Manning n (link.c:1093-1096); an IRREGULAR conduit is
+ *          then scaled by the square root of its transect's meander length
+ *          factor (link.c:1101-1105). The stored @c roughness is never
+ *          overwritten — it is the authored value the writers persist.
+ *
+ * @return The effective n, or 0 for a non-conduit / missing conduit row.
+ */
+double conduit_manning_n(const SimulationContext& ctx, int j);
+
 } /* namespace openswmm::input */
 
 #endif /* OPENSWMM_ENGINE_POST_PARSE_RESOLVER_HPP */

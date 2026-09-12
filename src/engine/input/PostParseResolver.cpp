@@ -685,6 +685,60 @@ void load_external_rain_files(SimulationContext& ctx) {
     load_external_rain_files_impl(ctx, file_cache);
 }
 
+double conduit_manning_n(const SimulationContext& ctx, int j) {
+    const auto uj = static_cast<std::size_t>(j);
+    if (ctx.links.type[uj] != LinkType::CONDUIT) return 0.0;
+    const int cr = ctx.link_subtypes.conduit_row(j);
+    if (cr < 0) return 0.0;
+    const auto& CD = ctx.link_subtypes.conduits;
+    const auto ucr = static_cast<std::size_t>(cr);
+    const XsectShape shape = ctx.links.xsect_shape[uj];
+
+    double n_val = CD.roughness[ucr];
+
+    // IRREGULAR (transect) conduits take their Manning's n from the transect's
+    // MAIN-CHANNEL roughness, NOT the [CONDUITS] value — legacy link.c:1024
+    //   Conduit[k].roughness = Transect[xsect.transect].roughness;
+    // (Transect.roughness is the un-Lfactor-adjusted main-channel n.) Using the
+    // [CONDUITS] n made the dynamic-wave friction/conveyance wrong by the ratio
+    // n_conduit/n_transect — e.g. user5's LIB transects (conduit n=0.014 vs
+    // transect n=0.04) conveyed ~2.9× too much flow; 50-transects authors 1.0
+    // against a transect n of 0.1.
+    const int ti = (shape == XsectShape::IRREGULAR) ? ctx.links.xsect_curve[uj] : -1;
+    if (ti >= 0 && static_cast<std::size_t>(ti) < ctx.transects.n_channel.size()) {
+        const double nch = ctx.transects.n_channel[static_cast<std::size_t>(ti)];
+        if (nch > 0.0) n_val = nch;
+    }
+
+    // For DW force mains, substitute equivalent Manning's n (Gap #22)
+    // Matches legacy conduit_validate in link.c lines 1094-1096:
+    //   if (RouteModel == DW && xsect.type == FORCE_MAIN)
+    //       roughness = forcemain_getEquivN(j, k);
+    // ==DYNWAVE audit (plan §4.1): FV solves the same momentum equation, so
+    // the force-main equivalent-n substitution applies to it identically.
+    const bool is_dw = (ctx.options.routing_model == RoutingModel::DYNWAVE ||
+                        ctx.options.routing_model == RoutingModel::FV);
+    if (is_dw && shape == XsectShape::FORCE_MAIN) {
+        auto fm = static_cast<forcemain::FrictionModel>(ctx.options.force_main_eqn);
+        const double r_bot  = ctx.links.xsect_r_bot[uj];
+        const double y_full = ctx.links.xsect_y_full[uj];
+        const double slope  = std::fabs(CD.slope[ucr]);
+        const double eq = forcemain::getEquivN(fm, r_bot, y_full, slope, n_val);
+        n_val = (eq > 0.0) ? eq : CD.roughness[ucr];
+    }
+
+    // PARITY link.c:1101-1105: a meandering natural channel's n is raised by
+    // the square root of its transect's length factor (channel length over
+    // flood-plain length; legacy defaults a 0 on the X1 line to 1.0). This is
+    // on top of the sqrt(Lfactor) the transect table build already folds into
+    // its own conveyance (transect.c:232), exactly as legacy applies both.
+    if (ti >= 0 && static_cast<std::size_t>(ti) < ctx.transects.length_factor.size()) {
+        const double lf = ctx.transects.length_factor[static_cast<std::size_t>(ti)];
+        if (lf > 0.0) n_val *= std::sqrt(lf);
+    }
+    return n_val;
+}
+
 void recompute_conduit_flow_properties(SimulationContext& ctx, int j) {
     using constants::GRAVITY;
     using constants::PHI;
@@ -698,45 +752,17 @@ void recompute_conduit_flow_properties(SimulationContext& ctx, int j) {
     // that this link's cross-section-derived fields are changing.
     ++ctx.xsect_generation;
 
-    double n_val    = CD.roughness[ucr];
+    // The effective n (transect channel n / force-main equivalent n / meander
+    // factor — legacy conduit_validate's `roughness`); see conduit_manning_n.
+    // Router::init applies the same helper when it lengthens a conduit, so a
+    // lengthened transect conduit keeps its transect n as legacy does.
+    double n_val    = conduit_manning_n(ctx, j);
     double slope    = std::fabs(CD.slope[ucr]);
     double a_full   = ctx.links.xsect_a_full[uj];
     double s_full   = ctx.links.xsect_s_full[uj];
     double s_max    = ctx.links.xsect_s_max[uj];
 
-    // IRREGULAR (transect) conduits take their Manning's n from the transect's
-    // MAIN-CHANNEL roughness, NOT the [CONDUITS] value — legacy link.c:1024
-    //   Conduit[k].roughness = Transect[xsect.transect].roughness;
-    // (Transect.roughness is the un-Lfactor-adjusted main-channel n.) Using the
-    // [CONDUITS] n here made the dynamic-wave friction/conveyance wrong by the
-    // ratio n_conduit/n_transect — e.g. user5's LIB transects (conduit n=0.014
-    // vs transect n=0.04) conveyed ~2.9× too much flow.
-    if (ctx.links.xsect_shape[uj] == XsectShape::IRREGULAR) {
-        int ti = ctx.links.xsect_curve[uj];
-        if (ti >= 0 && static_cast<std::size_t>(ti) < ctx.transects.n_channel.size()) {
-            double nch = ctx.transects.n_channel[static_cast<std::size_t>(ti)];
-            if (nch > 0.0) n_val = nch;
-        }
-    }
-
     if (n_val <= 0.0 || a_full <= 0.0) return;
-
-    // For DW force mains, substitute equivalent Manning's n (Gap #22)
-    // Matches legacy conduit_validate in link.c lines 1094-1096:
-    //   if (RouteModel == DW && xsect.type == FORCE_MAIN)
-    //       roughness = forcemain_getEquivN(j, k);
-    bool is_force_main = (ctx.links.xsect_shape[uj] == XsectShape::FORCE_MAIN);
-    // ==DYNWAVE audit (plan §4.1): FV solves the same momentum equation, so
-    // the force-main equivalent-n substitution applies to it identically.
-    bool is_dw = (ctx.options.routing_model == RoutingModel::DYNWAVE ||
-                  ctx.options.routing_model == RoutingModel::FV);
-    if (is_dw && is_force_main) {
-        auto fm = static_cast<forcemain::FrictionModel>(ctx.options.force_main_eqn);
-        double r_bot  = ctx.links.xsect_r_bot[uj];
-        double y_full = ctx.links.xsect_y_full[uj];
-        n_val = forcemain::getEquivN(fm, r_bot, y_full, slope, n_val);
-        if (n_val <= 0.0) n_val = CD.roughness[ucr];
-    }
 
     // Roughness factor for DW friction slope: GRAVITY * (n/PHI)^2.
     // PARITY link.c:1133: GRAVITY * SQR(roughness/PHI) — the square is grouped
@@ -764,6 +790,9 @@ void recompute_conduit_flow_properties(SimulationContext& ctx, int j) {
     // Matches legacy link.c lines 1127-1130:
     //   Link[j].xsect.sBot = forcemain_getRoughFactor(j, lengthFactor)
     // The lengthFactor = mod_length / length (1.0 if not lengthened).
+    const bool is_force_main = (ctx.links.xsect_shape[uj] == XsectShape::FORCE_MAIN);
+    const bool is_dw = (ctx.options.routing_model == RoutingModel::DYNWAVE ||
+                        ctx.options.routing_model == RoutingModel::FV);
     if (is_dw && is_force_main) {
         double length_factor = (CD.length[ucr] > 0.0)
             ? mod_len / CD.length[ucr] : 1.0;
