@@ -263,6 +263,23 @@ OPENSWMM_KERNEL_FN void physicalFlux(const FaceState& S,
     fq = S.q * S.u + kGravity * S.i1;
 }
 
+/// The MASS component of riemannFlux alone — the same wave speeds and the
+/// same HLL expression, so the value is bit-identical to `riemannFlux().mass`;
+/// what it skips is the momentum flux, the contact speed and every store. The
+/// algebraic node solve reads back one scalar per trial head (plan Phase 1c).
+OPENSWMM_KERNEL_FN double riemannMassFlux(const FaceState& L,
+                                          const FaceState& R) noexcept {
+    if (L.a <= kDryArea && R.a <= kDryArea) return 0.0;
+    double sl = 0.0, sr = 0.0;
+    waveSpeeds(L, R, sl, sr);
+    double fal = 0.0, fql = 0.0, far = 0.0, fqr = 0.0;
+    physicalFlux(L, fal, fql);
+    physicalFlux(R, far, fqr);
+    if (sl >= 0.0) return fal;
+    if (sr <= 0.0) return far;
+    return (sr * fal - sl * far + sl * sr * (R.a - L.a)) / (sr - sl);
+}
+
 /**
  * @brief Flux for the conservative St. Venant system, plus the contact speed.
  *

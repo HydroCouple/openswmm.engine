@@ -50,6 +50,25 @@ retroactive.
     calls −40…50 %, first-moment calls −50…60 %. Wall clock is recorded in
     `plans/FV1D_PERF_BASELINE_2026-09-11.md` once measured on a quiet host.
 
+- **Explicit FV solver: the dt census bounds a pass-through junction's ghost by the cell
+  it actually fluxes; mass-only node residual; species-only face stores** (Phase 1e, 1c,
+  1g of the same plan). `faceSide` presents the far cell's centred state as a pass-through
+  junction's ghost, but both the face census and the per-cell LTS bound rebuilt a ghost from
+  `node_head − z_face`, which after a drop offset stands above the downstream crown and
+  carries the slot celerity the flux never sees. Both bounds now use the far cell's cached
+  state: East Boston 77 goes from 28.0 to 4.55 substeps per routing step and 123.8 to 60.5 s
+  at one thread (continuity 0.797 % unchanged, node-head rms difference 0.0008 ft on a
+  22 ft signal, overflow series identical; transitions and the lab columns identical) —
+  cumulative since the Phase 0 base 206 → 60.5 s, now faster than DYNWAVE's 64.4 s. The
+  algebraic node solve's trial fluxes are mass-only (`riemannMassFlux`, bit-identical to
+  `riemannFlux().mass`) with one full flux at the accepted head; the contact speed and the
+  full flux record are stored only when species are carried. Both bit-identical on the
+  31-deck manifest. Dev switches: `OPENSWMM_FV_CENSUS_PASS=0` (old bound), `OPENSWMM_FV_CFL`
+  (overrides FV_CFL for the Phase 4a sweep), `OPENSWMM_FV_LTS_FIT=1` (Phase 4c: a macro
+  cycle cut to fit the remaining routing-step window instead of global stepping; off by
+  default, measured in the baseline document). Phase 4b (laterals credited into a clean
+  pass-through junction's end cells) was already in the tree.
+
 - **Explicit FV solver: section blocks shared across conduits, junction solves in
   parallel** (Phase 1f and 3d of the same plan). The mesh carried one geometry block per
   conduit (~4.4 kB with the closure table): TwinOaks v2 has 5086 conduits and eleven

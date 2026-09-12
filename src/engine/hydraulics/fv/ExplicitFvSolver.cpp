@@ -133,6 +133,16 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
         mw_rh_  = mixed_wave_ && !(mw && mw[0] == '2');   // 2 = ghost cap only
         const char* d1 = std::getenv("OPENSWMM_FV_DEG1");
         deg1_guard_slot_ = !(d1 && d1[0] == '1');
+        const char* cp = std::getenv("OPENSWMM_FV_CENSUS_PASS");
+        census_pass_far_ = !(cp && cp[0] == '0');
+        const char* lf = std::getenv("OPENSWMM_FV_LTS_FIT");
+        lts_fit_ = (lf && lf[0] == '1');
+        // Phase 4a sweep: OPENSWMM_FV_CFL overrides the deck's FV_CFL so the
+        // analytic harnesses run unchanged. Dev only.
+        if (const char* cf = std::getenv("OPENSWMM_FV_CFL")) {
+            const double v = std::atof(cf);
+            if (v > 0.0 && v <= 1.0) opts_.cfl = v;
+        }
     }
     if (tpa_) {
         state.cell_tpa.assign(nc, 0);
@@ -606,6 +616,20 @@ void ExplicitFvSolver::rebuildActiveLists() {
 // CFL census
 // ===========================================================================
 
+int ExplicitFvSolver::passThroughFarCell(int face, int nd) const noexcept {
+    if (nd < 0 || node_pass_.empty() ||
+        !node_pass_[static_cast<std::size_t>(nd)] || !algebraicActive(nd))
+        return -1;
+    const auto und = static_cast<std::size_t>(nd);
+    for (int p = mesh_->node_face_ptr[und]; p < mesh_->node_face_ptr[und + 1]; ++p) {
+        const int of = mesh_->node_face_idx[static_cast<std::size_t>(p)];
+        if (of == face) continue;
+        const auto uof = static_cast<std::size_t>(of);
+        return (mesh_->face_cl[uof] >= 0) ? mesh_->face_cl[uof] : mesh_->face_cr[uof];
+    }
+    return -1;
+}
+
 double ExplicitFvSolver::censusDt(bool press_edit) const {
     perf::GatedTimer _pt(perf::sec_fv_census);
     perf::count(perf::n_fv_census);
@@ -670,7 +694,26 @@ double ExplicitFvSolver::censusDt(bool press_edit) const {
 
         if (nd >= 0) {
             const int other = (cl >= 0) ? cl : cr;
-            if (other >= 0) {
+            // Pass-through junction (plan Phase 1e): the flux presents the FAR
+            // cell's centred state at this face (faceSide), so the census
+            // bounds THAT state — not a ghost rebuilt from node_head − z_face,
+            // which after a drop offset stands above the downstream crown and
+            // carries the slot celerity the flux never sees (Bellinge measured
+            // a dry-weather dt0 of 0.036 s from exactly this).
+            const int far = census_pass_far_ ? passThroughFarCell(f, nd) : -1;
+            if (far >= 0) {
+                const auto ufar = static_cast<std::size_t>(far);
+                const bool tpa_f = tpaCell(ufar);
+                if (tpa_f || state_->cell_h[ufar] > k::kDryDepth) {
+                    const FvGeometry& gfar =
+                        mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[ufar])];
+                    speed = std::max(speed,
+                                     std::fabs(cell_u_[ufar]) +
+                                         k::celerity(state_->cell_a[ufar],
+                                                     tpa_f ? gfar.t_slot
+                                                           : cell_t_[ufar]));
+                }
+            } else if (other >= 0) {
                 const auto uo = static_cast<std::size_t>(other);
                 const FvGeometry& g =
                     mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uo])];
@@ -1263,7 +1306,7 @@ void ExplicitFvSolver::computeFluxes() {
     total_flux_ += n_act;
 }
 
-void ExplicitFvSolver::computeFaceFlux(int f) {
+void ExplicitFvSolver::computeFaceFlux(int f, bool mass_only) {
     {
         const auto uf = static_cast<std::size_t>(f);
         const int cl = mesh_->face_cl[uf];
@@ -1329,6 +1372,39 @@ void ExplicitFvSolver::computeFaceFlux(int f) {
         double i1l = 0.0, i1r = 0.0, zdummy = 0.0;
         faceSide(f, cl, nd, zstar, mesh_->face_dir_l[uf], u_int, L, i1l, zdummy, false);
         faceSide(f, cr, nd, zstar, mesh_->face_dir_r[uf], u_int, R, i1r, zdummy, false);
+
+        // Mass-only trial (plan Phase 1c): the algebraic node solve reads back
+        // f_mass_ alone per trial head. Same reconstruction, same wave speeds,
+        // same gate and culvert decisions — riemannMassFlux is bit-identical to
+        // riemannFlux().mass — so the residual sequence, hence the root and the
+        // final full flux, are unchanged; what is skipped is the momentum flux,
+        // the contact speed, the Audusse corrections and ~130 bytes of stores.
+        if (mass_only) {
+            double mass = k::riemannMassFlux(L, R);
+            const uint8_t gate_m = mesh_->face_gate[uf];
+            if (gate_m != 0 && ((mass > 0.0 && (gate_m & 1u)) ||
+                                (mass < 0.0 && (gate_m & 2u))))
+                mass = 0.0;
+            const int cvr_m = mesh_->face_culvert[uf];
+            if (cvr_m >= 0 && mass > 0.0 && nd >= 0) {
+                const auto ucv = static_cast<std::size_t>(cvr_m);
+                const FvGeometry& gc = mesh_->geom[
+                    static_cast<std::size_t>(mesh_->conduit_section[ucv])];
+                const double head =
+                    state_->node_head[static_cast<std::size_t>(nd)] - mesh_->face_zb[uf];
+                double dqdh = 0.0;
+                const double q_cap = hydkernels::culvertInflow(
+                    mass, head, gc.y_full, gc.xs.a_full, mesh_->conduit_slope[ucv],
+                    mesh_->conduit_culvert_curve[ucv],
+                    mesh_->conduit_culvert_mitered[ucv] != 0, dqdh);
+                if (q_cap < mass) {
+                    mass = q_cap;
+                    inlet_control_[ucv] = 1;
+                }
+            }
+            f_mass_[uf] = mass;
+            return;
+        }
 
         k::FaceFlux fl = k::riemannFlux(L, R);
 
@@ -1405,10 +1481,17 @@ void ExplicitFvSolver::computeFaceFlux(int f) {
 
         f_mass_[uf]  = fl.mass;
         f_mom_[uf]   = fl.mom;
-        f_sstar_[uf] = fl.sstar;
         f_state_l_[uf] = L;
         f_state_r_[uf] = R;
-        f_flux_[uf]    = fl;
+        // Species-only stores (plan Phase 1g): the contact speed and the whole
+        // flux record are read by the transport kernels alone (the implicit
+        // head update only WRITES them, to keep the species copies coherent),
+        // so a run without species skips the 48 bytes per face flux. The face
+        // STATES stay: the degree-1 fallback and the implicit view read them.
+        if (state_->n_species > 0) {
+            f_sstar_[uf] = fl.sstar;
+            f_flux_[uf]  = fl;
+        }
         // Audusse well-balanced correction — a CELL source, so it exists only
         // on sides that are cells.
         f_corr_l_[uf] = (cl >= 0) ? k::kGravity * (i1l - L.i1) : 0.0;
@@ -2210,9 +2293,11 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
     // every incident face shares one tier, so whenever this runs they are all
     // live and the balance is complete.
     double h_best = 0.0, r_best = std::numeric_limits<double>::infinity();
+    double h_last = std::numeric_limits<double>::quiet_NaN();
     auto residual = [&](double h) -> double {
         perf::count(perf::n_fv_alg_resid);
         state_->node_head[un] = h;
+        h_last = h;
         double r = q_ext;
         for (int p = b; p < e; ++p) {
             const auto up = static_cast<std::size_t>(p);
@@ -2225,16 +2310,37 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
                     (cl >= 0) && cell_active_[static_cast<std::size_t>(cl)];
                 const bool ra =
                     (cr >= 0) && cell_active_[static_cast<std::size_t>(cr)];
-                // The whole of Phase 3a rests on this number: every trial head
-                // pays a FULL flux (momentum, I1, wave speeds, 20 stores) to
-                // read back one scalar, f_mass_. Counted separately from the
-                // residual count so the multiplier is measured, not assumed.
-                if (la || ra) { perf::count(perf::n_fv_alg_flux); computeFaceFlux(f); }
+                // Every trial head reads back one scalar, f_mass_: the trial
+                // flux is MASS-ONLY (plan Phase 1c); finalize() below runs the
+                // full flux once at the accepted head. Counted separately from
+                // the residual count so the multiplier is measured, not assumed.
+                if (la || ra) { perf::count(perf::n_fv_alg_flux); computeFaceFlux(f, true); }
             }
             r += mesh_->node_face_sign[up] * f_mass_[uf];
         }
         if (std::fabs(r) < std::fabs(r_best)) { h_best = h; r_best = r; }
         return r;
+    };
+    // The full flux (momentum, corrections, face states) at the head the last
+    // trial evaluated — exactly what the last full-flux residual used to leave
+    // behind, so every exit below calls this first. The head itself is
+    // restored to whatever the exit chose (the balanced exit keeps h0).
+    auto finalize = [&]() {
+        if (!(h_last == h_last)) return;              // no trial ran
+        const double keep = state_->node_head[un];
+        state_->node_head[un] = h_last;
+        for (int p = b; p < e; ++p) {
+            const auto up = static_cast<std::size_t>(p);
+            const int f = mesh_->node_face_idx[up];
+            const auto uf = static_cast<std::size_t>(f);
+            if (!faceIsLive(f)) continue;
+            const int cl = mesh_->face_cl[uf];
+            const int cr = mesh_->face_cr[uf];
+            const bool la = (cl >= 0) && cell_active_[static_cast<std::size_t>(cl)];
+            const bool ra = (cr >= 0) && cell_active_[static_cast<std::size_t>(cr)];
+            if (la || ra) computeFaceFlux(f);
+        }
+        state_->node_head[un] = keep;
     };
     // Σ|dQ/dH| at the ghost states — the quasi-Newton step estimate.
     auto resistAt = [&](double h) -> double {
@@ -2311,7 +2417,7 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
     double r = (h == h0) ? residual(h0) : residual(h);
     // Already balanced (a lake at rest is the load-bearing case): leave the
     // head exactly where it is.
-    if (std::fabs(r) <= kAlgQEps) { state_->node_head[un] = h0; return; }
+    if (std::fabs(r) <= kAlgQEps) { state_->node_head[un] = h0; finalize(); return; }
 
     // Expanding bracket from the CURRENT head, never a probe of the domain
     // ends: the ceiling can be arbitrarily high (a junction with no rim gets
@@ -2334,7 +2440,7 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
         if (h_b <= lo) h_b = lo;
         if (h_b >= hi) h_b = hi;
         const double r_b = residual(h_b);
-        if (std::fabs(r_b) <= kAlgQEps) return;      // landed on the root
+        if (std::fabs(r_b) <= kAlgQEps) { finalize(); return; }   // landed on the root
         if ((r_a > 0.0) != (r_b > 0.0)) {            // sign change: bracketed
             if (dir > 0.0) { lo = h_a; hi = h_b; }
             else           { lo = h_b; hi = h_a; }
@@ -2345,6 +2451,7 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
         if (h_b == lo || h_b == hi) {                // clamped at an end
             // Ceiling with inflow still unpassed = the slot plateau; hand
             // the face to the prescribed-discharge fallback if it applies.
+            finalize();   // the fallback reads the face STATE at this head
             if (h_b == hi && r_b > 0.0 && prescribeDegree1()) return;
             return;
         }
@@ -2354,6 +2461,7 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
     if (!bracketed) {
         // Budget spent walking: settle on the best head seen.
         if (h_best != h_a) residual(h_best);
+        finalize();
         return;
     }
 
@@ -2378,9 +2486,10 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
     // would otherwise park the head a full tolerance away and bleed
     // tolerance-scale noise into a system at rest.
     if (std::fabs(r_best) < std::fabs(r)) residual(h_best);
-    // The final residual() evaluation left both the head and the incident
-    // fluxes at the accepted root — the solve owns the head; updateNodes will
-    // not overwrite it for this node.
+    // The final residual() evaluation left the head at the accepted root and
+    // finalize() the incident fluxes — the solve owns the head; updateNodes
+    // will not overwrite it for this node.
+    finalize();
 }
 
 // Structure links contribute a source/sink pair. They are held constant
@@ -3173,6 +3282,23 @@ double ExplicitFvSolver::cellStableDt(int c) const {
         const auto uf = static_cast<std::size_t>(f);
         const int nd = mesh_->face_node[uf];
         if (nd < 0) continue;
+        // Pass-through junction (plan Phase 1e): bound the far cell's state,
+        // which is what the face actually fluxes (see censusDt).
+        const int far = census_pass_far_ ? passThroughFarCell(f, nd) : -1;
+        if (far >= 0) {
+            const auto ufar = static_cast<std::size_t>(far);
+            const bool tpa_f = tpaCell(ufar);
+            if (tpa_f || state_->cell_h[ufar] > k::kDryDepth) {
+                const FvGeometry& gfar =
+                    mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[ufar])];
+                speed = std::max(speed,
+                                 std::fabs(cell_u_[ufar]) +
+                                     k::celerity(state_->cell_a[ufar],
+                                                 tpa_f ? gfar.t_slot
+                                                       : cell_t_[ufar]));
+            }
+            continue;
+        }
         const double hg = state_->node_head[static_cast<std::size_t>(nd)] -
                           mesh_->face_zb[uf];
         if (hg <= k::kDryDepth) continue;
@@ -3280,7 +3406,7 @@ double ExplicitFvSolver::nodeStableDt(int n) const {
     return dt;
 }
 
-int ExplicitFvSolver::assignTiers(double& dt0) {
+int ExplicitFvSolver::assignTiers(double& dt0, int k_cap_override) {
     perf::GatedTimer _pt(perf::sec_fv_tier);
     const int nc = mesh_->n_cells();
     const int nf = mesh_->n_faces();
@@ -3379,7 +3505,8 @@ int ExplicitFvSolver::assignTiers(double& dt0) {
         else                     ++dt_argmin_free_;
     }
 
-    const int k_cap = std::min(std::max(opts_.lts_max_tiers, 1), kMaxLtsTiers);
+    int k_cap = std::min(std::max(opts_.lts_max_tiers, 1), kMaxLtsTiers);
+    if (k_cap_override > 0) k_cap = std::min(k_cap, k_cap_override);
     auto tier_of = [&](double dt) -> int {
         if (dt >= 1.0e29) return k_cap - 1;
         const int k = static_cast<int>(std::floor(std::log2(dt / dt_min)));
@@ -4120,6 +4247,50 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
                     dt_cache_ = dt0;
                     census_count_ = 0;
                     continue;
+                }
+            } else if (K > 1 && lts_fit_ && (t_target - t) >= 2.0 * dt0) {
+                // Phase 4c experiment: the full cycle does not fit the rest of
+                // the routing step, which today hands the remainder to GLOBAL
+                // stepping at dt₀ — every face and cell at the finest step.
+                // Cut a cycle that fits instead: re-tier with the tier count
+                // capped so 2^(K_f−1)·dt₀ ≤ remaining, run it, and invalidate
+                // the cache so the next cycle re-tiers at the full cap.
+                const double remaining = t_target - t;
+                int kf = 1 + static_cast<int>(std::floor(std::log2(remaining / dt0)));
+                kf = std::min(kf, K);
+                if (kf >= 2) {
+                    settleAccumulators();
+                    double dt0f = lts_dt0_;
+                    const int Kf = assignTiers(dt0f, kf);
+                    lts_valid_ = false;
+                    lts_countdown_ = 0;
+                    census_count_ = 0;
+                    const int nsubf = 1 << (Kf - 1);
+                    const double spanf = static_cast<double>(nsubf) * dt0f;
+                    if (Kf > 1 && spanf <= remaining) {
+                        if (opts_.order < 2) reconstructState();
+                        saveState();
+                        runMacroCycle(dt0f, nsubf, forcing);
+                        if (censusDt() < kStepAcceptRatio * dt0f) {
+                            ++n_macro_rejected_;
+                            perf::count(perf::n_fv_macro_rejected);
+                            restoreState();
+                            std::fill(acc_a_.begin(), acc_a_.end(), 0.0);
+                            std::fill(acc_q_.begin(), acc_q_.end(), 0.0);
+                            std::fill(acc_nvol_.begin(), acc_nvol_.end(), 0.0);
+                            acc_dirty_ = false;
+                        } else {
+                            ++n_macro_cycles_;
+                            perf::count(perf::n_fv_macro_cycles);
+                            t += spanf;
+                            steps += nsubf;
+                            since_rebuild_ += nsubf;
+                            last_h_ = dt0f;
+                            min_h_ = (min_h_ <= 0.0) ? dt0f : std::min(min_h_, dt0f);
+                            dt_cache_ = dt0f;
+                            continue;
+                        }
+                    }
                 }
             }
             // Fell through to the global path without settling, re-tiering

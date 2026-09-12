@@ -176,7 +176,9 @@ private:
     /// the LTS macro path, and every run without FV_PRESSURIZED_IMPLICIT.
     double censusDt(bool press_edit = false) const;
     void   reconstructState();
-    void   computeFaceFlux(int face);
+    /// @p mass_only: the node solve's trial evaluation — same reconstruction
+    /// and wave speeds, writes f_mass_ only (plan Phase 1c).
+    void   computeFaceFlux(int face, bool mass_only = false);
     /// Species transport forwarders (phase E0): the reconstruction / FCT /
     /// dispersion bodies live in transport/fvkernels/SpeciesTransportKernels
     /// and consume this solver's members through the view below.
@@ -482,7 +484,9 @@ private:
     /// Partition the active mesh into power-of-two tiers. Returns the tier
     /// count K and writes the finest requirement to @p dt0. K == 1 means the
     /// mesh is uniformly stiff and the caller should take the global path.
-    int    assignTiers(double& dt0);
+    /// @p k_cap_override > 0 caps the tier count (plan Phase 4c: a cycle cut
+    /// to fit the remaining routing-step window).
+    int    assignTiers(double& dt0, int k_cap_override = 0);
 
     /// Fire every entity due at one base substep. Faces compute their flux and
     /// BOOK `±F·Δt` into both incident control volumes' accumulators; cells and
@@ -637,6 +641,11 @@ private:
     bool mw_cap_ = true;                  ///< vented-ghost crown celerity cap (dev: MW=2 cap only)
     bool mw_rh_  = true;                  ///< bore-speed bound at slot/free faces (dev: MW=3 RH only)
     bool deg1_guard_slot_ = true;         ///< degree-1 prescribed discharge skips a slot interior (dev: DEG1=1 off)
+    bool census_pass_far_ = true;         ///< census bounds a pass-through ghost by the FAR cell it fluxes (dev: CENSUS_PASS=0 off)
+    bool lts_fit_ = false;                ///< 4c experiment: a shorter macro cycle when the full one does not fit (OPENSWMM_FV_LTS_FIT=1)
+    /// The far cell a pass-through junction's ghost presents at @p face, or
+    /// -1 when the node is not an active pass-through (plan Phase 1e).
+    int  passThroughFarCell(int face, int nd) const noexcept;
     std::vector<uint8_t> tpa_scratch_;    ///< previous-flag snapshot (sweep)
     std::vector<uint8_t> save_tpa_;       ///< step-rejection snapshot
 
