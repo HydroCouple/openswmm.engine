@@ -87,8 +87,6 @@ FvGeometry build(const Case& c, double celerity = 100.0, int barrels = 1) {
     const XSectParams xs = params(c);
     FvGeometry g;
     buildGeometry(xs, xsect::isOpen(xs.type), celerity, g, barrels);
-    EXPECT_TRUE(g.use_closure) << c.name
-        << " (is OPENSWMM_FV_CLOSURE=legacy set in this environment?)";
     return g;
 }
 

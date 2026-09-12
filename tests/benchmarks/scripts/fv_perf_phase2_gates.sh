@@ -5,7 +5,7 @@
 #
 #   fv_perf_phase2_gates.sh <engine-cli> <bench-fv-closure> <outroot> <frozen-phase0-dir> [label]
 #
-#   1. bench_fv_closure in exact and legacy mode (OPENSWMM_FV_CLOSURE)
+#   1. bench_fv_closure against the frozen Phase 0 (legacy-table) bench
 #   2. SWASHES 1d-fv column, forced, then verdict/metric compare vs the
 #      score file as it was before the run
 #   3. transitions fv + fv-lts, same
@@ -48,25 +48,25 @@ echo "host:    $(uptime)"
 date
 
 if want 1; then
-echo; echo "== 1. bench_fv_closure exact vs legacy"; date
-OPENSWMM_FV_CLOSURE=exact  "$BENCH" --samples 4096 > "$OUT/closure_bench_exact.csv"  2> "$OUT/closure_bench_exact.err"
-OPENSWMM_FV_CLOSURE=legacy "$BENCH" --samples 4096 > "$OUT/closure_bench_legacy.csv" 2> "$OUT/closure_bench_legacy.err"
-python3 - "$OUT" <<'EOF'
-import csv, sys
-out = sys.argv[1]
+echo; echo "== 1. bench_fv_closure (exact closure) vs the frozen Phase 0 legacy bench"; date
+"$BENCH" --samples 4096 > "$OUT/closure_bench.csv" 2> "$OUT/closure_bench.err"
+python3 - "$OUT" "$FROZEN" <<'EOF'
+import csv, os, sys
+out, frozen = sys.argv[1], sys.argv[2]
 def load(p):
     d = {}
     for r in csv.DictReader(l for l in open(p) if not l.startswith('#')):
         d[(r['shape'], r['op'])] = float(r['ns_med'])
     return d
-e, l = load(f"{out}/closure_bench_exact.csv"), load(f"{out}/closure_bench_legacy.csv")
-print("| shape | op | legacy ns | exact ns | speedup |")
+e = load(f"{out}/closure_bench.csv")
+ref = f"{frozen}/closure_bench.csv"
+l = load(ref) if os.path.exists(ref) else {}
+print("| shape | op | Phase 0 legacy ns | exact ns | speedup |")
 print("|---|---|---:|---:|---:|")
-for k in sorted(l):
-    if k in e:
-        print(f"| {k[0]} | {k[1]} | {l[k]:.1f} | {e[k]:.1f} | {l[k]/e[k] if e[k] > 0 else 0:.2f} |")
 for k in sorted(e):
-    if k not in l:
+    if k in l:
+        print(f"| {k[0]} | {k[1]} | {l[k]:.1f} | {e[k]:.1f} | {l[k]/e[k] if e[k] > 0 else 0:.2f} |")
+    else:
         print(f"| {k[0]} | {k[1]} | — | {e[k]:.1f} | — |")
 EOF
 fi

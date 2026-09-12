@@ -54,13 +54,6 @@
 
 namespace openswmm::fv {
 
-/// Samples in the per-geometry first-moment (I₁) table over [0, y_full].
-/// I₁ is the antiderivative of A(h); above the crown the closure is exactly
-/// linear in h so the table is extended analytically rather than sampled
-/// (see FvKernels::i1OfDepth), which is what keeps deep surcharge accurate
-/// with a small table.
-inline constexpr int kI1Samples = 129;
-
 /// Samples in a STORAGE node's flattened depth→volume table.
 inline constexpr int kNodeVolSamples = 129;
 
@@ -77,14 +70,6 @@ inline constexpr int kNodeVolSamples = 129;
  */
 struct FvGeometry {
     XSectParams xs{};              ///< section parameters (owns transect table ptrs)
-
-    /// Where the section's own geometry is evaluated. A pointer, not a copy:
-    /// the evaluator carries the shared geometry tables, and which memory space
-    /// those live in is exactly what differs between the host solver and the
-    /// device backend. The mesh builder binds this to xsect::hostEval(); a
-    /// device backend rebinds it to its own device-resident pair, and the same
-    /// kernel bodies then run unchanged on both (plan §5.1).
-    const xsect::XsectEval* eval = nullptr;
 
     double y_full = 0.0;           ///< full depth (ft)
     double a_full = 0.0;           ///< area when full (ft²)
@@ -136,47 +121,13 @@ struct FvGeometry {
     hydkernels::CulvertCurve culvert_curve{};
     uint8_t culvert_mitered = 0;
 
-    /// First moment I₁(h) = ∫₀ʰ A(η)dη sampled uniformly on h ∈ [0, y_full],
-    /// followed by the companion A(h) samples on the same grid — 2·kI1Samples
-    /// entries, `[0, kI1Samples)` = I₁ and `[kI1Samples, 2·kI1Samples)` = A.
-    /// One buffer because both are read together on every evaluation.
-    ///
-    /// Built once at init by composite integration of the same A(h) the solver
-    /// evaluates. Quadrature error does not threaten well-balancedness — that
-    /// needs only a single-valued I₁(h) — but it does set the accuracy of the
-    /// pressure term, hence the fine sub-sampling in buildI1Table.
-    ///
-    /// A fixed inline array rather than a vector: the whole struct is copied
-    /// into device memory by the accelerated backend, and an owning container
-    /// cannot cross that boundary. At 129 samples this is 2 kB per DISTINCT
-    /// cross-section — a few hundred at most in a real model.
-    double i1_tbl[2 * kI1Samples] = {};
-
-    /// The INVERSE of the area column: depth sampled uniformly in AREA over
-    /// [0, a_crown], `h_tbl[j]` being the exact root of A(h) = j·a_crown/(n−1).
-    ///
-    /// The forward table is uniform in depth, which is the wrong grid to invert
-    /// on. Bracketing a query area in it costs a binary search — seven
-    /// dependent loads with unpredictable branches — and near the crown, where
-    /// A is nearly flat in h, one depth panel spans a wide range of areas, so
-    /// the bracket it yields is loose and the root-find needs several
-    /// evaluations of the closure. Profiling put `depthOfArea` and the area
-    /// lookups it drives at 87 % of solver time on a Δx = 20 ft run.
-    ///
-    /// Sampling uniformly in area instead makes the panel a single divide, and
-    /// makes the residuals at its two ends known WITHOUT evaluating the
-    /// closure — they are the sample areas themselves. Built at init from the
-    /// bracketed inverse, so it costs nothing at run time.
-    double h_tbl[kI1Samples] = {};
-
-    /// The exact-geometry closure (FvClosureKernels.hpp): a monotone cubic
-    /// table sampled from SectionGeometry.hpp with the slot folded in, or the
-    /// polynomial class for open sections. When `use_closure` is set every
-    /// FvKernels closure function evaluates it instead of the legacy
-    /// `eval`/`i1_tbl`/`h_tbl` path above. Built by buildGeometry() unless
-    /// OPENSWMM_FV_CLOSURE=legacy (a development switch; the legacy path is
-    /// slated for removal once the Phase 2 gates pass).
-    uint8_t   use_closure = 0;
+    /// The closure every FvKernels section function evaluates: the exact
+    /// section (SectionGeometry.hpp) sampled at build time into a monotone
+    /// cubic table with the slot folded in, or the polynomial class for open
+    /// sections (FvClosureKernels.hpp). A fixed-size, pointer-free POD block,
+    /// so the whole geometry can be captured by a device backend as plain
+    /// bytes; `xs` above still carries host table pointers for the table-
+    /// defined shapes and is read only at build time.
     FvClosure closure_tbl{};
 
 };

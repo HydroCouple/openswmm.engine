@@ -94,41 +94,6 @@ inline constexpr double kDryArea = 1.0e-12;
 inline constexpr double kEtaDeadband = 1.0e-12;
 
 // ===========================================================================
-// Section evaluation — the ONE place the cross-section machinery is called
-// ===========================================================================
-//
-// These three go through the geometry's own evaluator (XSectKernels.hpp) — the
-// SAME bodies XSection.cpp's public accessors and XSectBatch's kernels run.
-// Only where the evaluator's tables live differs between the host solver and
-// the device backend, so the §6.8 parity harness compares two instantiations of
-// one implementation rather than two implementations.
-
-/// Section area at depth h, EXCLUDING the slot (h clamped to the crown).
-/// Scaled by the barrel count: a cell is the aggregate of the parallel barrels
-/// at a shared depth (see FvGeometry::barrel_scale).
-OPENSWMM_KERNEL_FN double sectionArea(const FvGeometry& g, double h) noexcept {
-    if (h <= 0.0) return 0.0;
-    return g.barrel_scale * g.eval->getAofY(g.xs, (h < g.y_full) ? h : g.y_full);
-}
-
-/// Section top width at depth h, EXCLUDING the slot. RECT_CLOSED returns 0 at
-/// exactly y_full (the crown is a point); the slot term added by widthOfDepth
-/// is what keeps the total width — and hence the celerity — finite there.
-OPENSWMM_KERNEL_FN double sectionWidth(const FvGeometry& g, double h) noexcept {
-    if (h <= 0.0) return 0.0;
-    return g.barrel_scale * g.eval->getWofY(g.xs, (h < g.y_full) ? h : g.y_full);
-}
-
-/// Section hydraulic radius at depth h. Frozen at r_full above the crown —
-/// the slot is a numerical device and must not contribute wetted perimeter
-/// (same convention as legacy dwflow.c::getHydRad).
-OPENSWMM_KERNEL_FN double sectionHydRad(const FvGeometry& g, double h) noexcept {
-    if (h <= 0.0) return 0.0;
-    if (h >= g.y_full) return g.r_full;
-    return g.eval->getRofY(g.xs, h);
-}
-
-// ===========================================================================
 // Preissmann slot taper (plan §3.3.2)
 // ===========================================================================
 
@@ -162,73 +127,35 @@ OPENSWMM_KERNEL_FN double slotRampIntegral(double s) noexcept {
 // entire SLOT closure path — are untouched.
 
 /// Flow area at depth @p h, INCLUDING the tapered slot. Monotone in h for any
-/// section, which is what makes the depth inversion well posed.
+/// section, which is what makes the depth inversion well posed. Every closure
+/// function here evaluates the geometry's FvClosure (FvClosureKernels.hpp):
+/// the exact section sampled at build time into a monotone cubic on which the
+/// top width IS dA/dh and the first moment IS ∫A, with the slot folded in.
 OPENSWMM_KERNEL_FN double areaOfDepth(const FvGeometry& g, double h) noexcept {
-    // Exact-geometry closure (FvClosureKernels.hpp) when the mesh builder
-    // built one; the legacy table path below is kept for OPENSWMM_FV_CLOSURE=
-    // legacy until the Phase 2 gates retire it.
-    if (g.use_closure) return closureArea(g.closure_tbl, h);
-    if (h <= 0.0) return 0.0;
-    if (h >= g.y_full) return g.a_crown + g.t_slot * (h - g.y_full);
-    const double band = g.y_full - g.y_crown;
-    const double ax = sectionArea(g, h);
-    if (band <= 0.0) return ax;                 // open section: no taper band
-    const double s = (h - g.y_crown) / band;
-    return ax + g.t_slot * band * slotRampIntegral(s);
+    return closureArea(g.closure_tbl, h);
 }
 
 /// Top width dA/dh at depth @p h, INCLUDING the tapered slot.
 OPENSWMM_KERNEL_FN double widthOfDepth(const FvGeometry& g, double h) noexcept {
-    if (g.use_closure) return closureWidth(g.closure_tbl, h);
-    if (h <= 0.0) return 0.0;
-    if (h >= g.y_full) return g.t_slot;
-    const double band = g.y_full - g.y_crown;
-    const double wx = sectionWidth(g, h);
-    if (band <= 0.0) return wx;
-    const double s = (h - g.y_crown) / band;
-    return wx + g.t_slot * slotRamp(s);
+    return closureWidth(g.closure_tbl, h);
 }
 
 /// Hydraulic radius at depth @p h.
 OPENSWMM_KERNEL_FN double hydRadOfDepth(const FvGeometry& g, double h) noexcept {
-    if (g.use_closure) return closureHydRad(g.closure_tbl, h);
-    if (h <= 0.0) return 0.0;
-    if (h >= g.y_full) return g.r_full;
-    return sectionHydRad(g, h);
+    return closureHydRad(g.closure_tbl, h);
 }
 
 /**
- * @brief Hydrostatic first moment I₁(h) = ∫₀ʰ A(η)dη.
- *
- * Below the crown this reads the per-geometry table built at init (uniform on
- * [0, y_full]) and refines with one trapezoid step using the exact A(h) the
- * caller needs anyway — second-order accurate and, crucially, a single-valued
- * function of h, which is all the well-balanced property requires.
- *
- * Above the crown A is exactly linear (A = a_crown + t_slot·(h − y_full)), so
- * the extension is analytic — deep surcharge stays exact with a small table.
+ * @brief Hydrostatic first moment I₁(h) = ∫₀ʰ A(η)dη — the closure's own
+ *        integral of its own A, so it is single-valued in h by construction
+ *        (all the well-balanced property requires). Above the crown A is
+ *        exactly linear and the extension is analytic. @p area_at_h is kept
+ *        for the call sites that already hold it; the closure does not need it.
  */
 OPENSWMM_KERNEL_FN double i1OfDepth(const FvGeometry& g, double h,
                                     double area_at_h) noexcept {
-    // The closure's I₁ is the exact integral of its own A; the caller's area
-    // is not needed (and stays consistent by construction).
-    if (g.use_closure) return closureI1(g.closure_tbl, h);
-    if (h <= 0.0) return 0.0;
-    if (h >= g.y_full) {
-        const double d = h - g.y_full;
-        return g.i1_crown + g.a_crown * d + 0.5 * g.t_slot * d * d;
-    }
-    const int n = static_cast<int>(kI1Samples);
-    const double dh = g.y_full / static_cast<double>(n - 1);
-    int i = static_cast<int>(h / dh);
-    if (i < 0) i = 0;
-    if (i > n - 2) i = n - 2;
-    const double h_i = static_cast<double>(i) * dh;
-    // i1_tbl stores I₁ at the sample points; the companion area sample is the
-    // second half of the same buffer (see buildI1Table).
-    const double i1_i = g.i1_tbl[static_cast<std::size_t>(i)];
-    const double a_i  = g.i1_tbl[static_cast<std::size_t>(n + i)];
-    return i1_i + 0.5 * (a_i + area_at_h) * (h - h_i);
+    (void)area_at_h;
+    return closureI1(g.closure_tbl, h);
 }
 
 /**
@@ -242,157 +169,15 @@ OPENSWMM_KERNEL_FN double i1OfDepth(const FvGeometry& g, double h,
  *          whole well-balanced construction exists to deliver — would fail on
  *          every partly-full pipe.
  *
- *          `xsect::getYofA` cannot be used for this. The legacy geometry tables
- *          are INDEPENDENT tabulations of the same shape — `A_Circ` gives area
- *          from depth, `Y_Circ` gives depth from area — and they round-trip only
- *          to table resolution (measured: 0.016 ft on a 3 ft circular pipe near
- *          the crown, ~0.5 % of the diameter). That is fine for the legacy
- *          solver, which never composes them; it is fatal here.
- *
- *          So the inverse is built from the forward closure itself: bracket on
- *          the A samples stored alongside the I₁ table (both were produced by
- *          areaOfDepth, so the bracket is exact), then Illinois-regula-falsi
- *          inside the panel. A is strictly increasing — a monotone section plus
- *          a strictly increasing slot term — so the bracket always holds and
- *          convergence is unconditional; within one panel A is nearly linear, so
- *          it typically takes four or five evaluations.
- *
- *          Above the crown A is exactly linear, so that branch is closed-form.
- */
-OPENSWMM_KERNEL_FN double depthOfAreaBracketed(const FvGeometry& g,
-                                               double a) noexcept {
-    if (a <= 0.0) return 0.0;
-    if (a >= g.a_crown) return g.y_full + (a - g.a_crown) / g.t_slot;
-
-    const int n = static_cast<int>(kI1Samples);
-    const double dh = g.y_full / static_cast<double>(n - 1);
-
-    int lo = 0, hi = n - 1;
-    while (hi - lo > 1) {
-        const int mid = (lo + hi) / 2;
-        if (g.i1_tbl[static_cast<std::size_t>(n + mid)] <= a) lo = mid;
-        else                                                  hi = mid;
-    }
-
-    double xa = static_cast<double>(lo) * dh;
-    double xb = static_cast<double>(hi) * dh;
-    double fa = g.i1_tbl[static_cast<std::size_t>(n + lo)] - a;
-    double fb = g.i1_tbl[static_cast<std::size_t>(n + hi)] - a;
-    if (fa >= 0.0) return xa;
-    if (fb <= 0.0) return xb;
-
-    for (int it = 0; it < 40; ++it) {
-        double x = xb - fb * (xb - xa) / (fb - fa);
-        if (!(x > xa && x < xb)) x = 0.5 * (xa + xb);
-        const double f = areaOfDepth(g, x) - a;
-        if (f == 0.0) return x;
-        if (f < 0.0) { xa = x; fa = f; fb *= 0.5; }   // Illinois down-weighting
-        else         { xb = x; fb = f; fa *= 0.5; }
-        if (xb - xa <= 1.0e-15 * g.y_full) break;
-    }
-    return 0.5 * (xa + xb);
-}
-
-/**
- * @brief Invert A → h. Same root as depthOfAreaBracketed, found far faster.
- *
- * @details This is the solver's hottest kernel by a wide margin — profiling a
- *          Δx = 20 ft run put it and the closure evaluations it drives at 87 %
- *          of total time — so how it converges matters more than anywhere else
- *          in the scheme.
- *
- *          **Why the obvious approach is slow.** Illinois regula-falsi on the
- *          depth-uniform bracket does not converge superlinearly here: measured
- *          16 closure evaluations per call on a circular pipe and 35 on a
- *          trapezoid, with the iteration count falling only linearly as the
- *          tolerance is relaxed — the signature of bisection. Seeding it better
- *          changes nothing, because the exit test is the BRACKET collapsing and
- *          Illinois replaces only one end per step.
- *
- *          **Why not Newton.** The width is dA/dh analytically, and Newton with
- *          it needs 3–5 evaluations. But for tabulated shapes W and A are
- *          INDEPENDENT legacy tabulations rather than an exact derivative pair
- *          (§7A.2), and the error that introduces is not small: measured
- *          round-trip error 4.7e-4 ft on a 3 ft circular pipe, five orders
- *          worse than the scheme needs and enough to break lake-at-rest.
- *
- *          **Brent.** Inverse quadratic interpolation with a secant fallback
- *          and a bisection safeguard — superlinear using function values ONLY,
- *          so the width inconsistency cannot mislead it. 5.9 / 3.1 / 6.3
- *          evaluations on circular / rectangular / trapezoidal at full
- *          round-trip accuracy (≤ 2.7e-15 ft).
- *
- *          The bracket comes from the area-uniform inverse table widened by one
- *          panel each side and is then VERIFIED by evaluating both ends. The
- *          two evaluations that costs are why a rectangular pipe — which the
- *          old path nailed in 1.5 — now takes 3.1; that trade is worth it, and
- *          the guard falls back to the bracketed inverse if the table's bracket
- *          somehow fails to contain the root.
+ *          The inverse is therefore a bracketed Newton iteration on the same
+ *          panel cubic the forward closure evaluates (closureDepthOfArea):
+ *          the cubic is monotone by construction, its derivative is the
+ *          closure's own top width, and the exit is 1e-15·y_full in depth —
+ *          measured round trip ≤ 1.2e-15·y_full over the whole depth range,
+ *          slot band included. The polynomial class inverts in closed form.
  */
 OPENSWMM_KERNEL_FN double depthOfArea(const FvGeometry& g, double a) noexcept {
-    // Newton on the closure's own monotone cubic — 2-3 steps with the exact
-    // derivative, against Brent's 6-8 evaluations plus its divide chain here.
-    if (g.use_closure) return closureDepthOfArea(g.closure_tbl, a);
-    if (a <= 0.0) return 0.0;
-    if (a >= g.a_crown) return g.y_full + (a - g.a_crown) / g.t_slot;
-
-    const int n = static_cast<int>(kI1Samples);
-    const double da = g.a_crown / static_cast<double>(n - 1);
-    if (!(da > 0.0)) return depthOfAreaBracketed(g, a);
-
-    int j = static_cast<int>(a / da);
-    if (j < 1) j = 1;
-    if (j > n - 3) j = n - 3;
-
-    double xa = g.h_tbl[static_cast<std::size_t>(j - 1)];
-    double xb = g.h_tbl[static_cast<std::size_t>(j + 2)];
-    if (!(xb > xa)) return depthOfAreaBracketed(g, a);
-
-    double fa = areaOfDepth(g, xa) - a;
-    double fb = areaOfDepth(g, xb) - a;
-    if (fa > 0.0 || fb < 0.0) return depthOfAreaBracketed(g, a);
-    if (fa == 0.0) return xa;
-    if (fb == 0.0) return xb;
-
-    const double tol = 1.0e-15 * g.y_full;
-    double c = xa, fc = fa, d = xb - xa, e = d;
-    for (int it = 0; it < 60; ++it) {
-        if (fb * fc > 0.0) { c = xa; fc = fa; d = xb - xa; e = d; }
-        if (std::fabs(fc) < std::fabs(fb)) {
-            xa = xb; xb = c; c = xa;
-            fa = fb; fb = fc; fc = fa;
-        }
-        const double m = 0.5 * (c - xb);
-        if (std::fabs(m) <= tol || fb == 0.0) return xb;
-
-        if (std::fabs(e) < tol || std::fabs(fa) <= std::fabs(fb)) {
-            d = m; e = m;                                   // bisect
-        } else {
-            const double sfb = fb / fa;
-            double p, q;
-            if (xa == c) {                                  // secant
-                p = 2.0 * m * sfb;
-                q = 1.0 - sfb;
-            } else {                                        // inverse quadratic
-                const double qq = fa / fc;
-                const double r  = fb / fc;
-                p = sfb * (2.0 * m * qq * (qq - r) - (xb - xa) * (r - 1.0));
-                q = (qq - 1.0) * (r - 1.0) * (sfb - 1.0);
-            }
-            if (p > 0.0) q = -q; else p = -p;
-            if (2.0 * p < ((3.0 * m * q - std::fabs(tol * q) < std::fabs(e * q))
-                               ? 3.0 * m * q - std::fabs(tol * q)
-                               : std::fabs(e * q))) {
-                e = d; d = p / q;
-            } else {
-                d = m; e = m;
-            }
-        }
-        xa = xb; fa = fb;
-        xb += (std::fabs(d) > tol) ? d : ((m > 0.0) ? tol : -tol);
-        fb = areaOfDepth(g, xb) - a;
-    }
-    return xb;
+    return closureDepthOfArea(g.closure_tbl, a);
 }
 
 /// Gravity-wave celerity √(g·A/T). Guarded so a vanishing top width (dry, or a

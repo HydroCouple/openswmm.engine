@@ -11,8 +11,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <cstdlib>
-#include <cstring>
 #include <map>
 #include <tuple>
 
@@ -36,66 +34,6 @@ struct Attachment {
     int end     = 0;    ///< 0 = conduit's upstream (node1) end, 1 = downstream
 };
 
-/// Composite integration of A(h) over [0, y_full] onto the kI1Samples grid.
-/// Each table interval is integrated with kSub Simpson panels of the exact
-/// closure, so the tabulated I₁ is far more accurate than a trapezoid over the
-/// coarse grid would be — it is the pressure term of every momentum flux.
-void buildI1Table(FvGeometry& g) {
-    constexpr int kSub = 8;                      // Simpson panels per interval
-    const int n = kI1Samples;
-    for (int q = 0; q < 2 * n; ++q) g.i1_tbl[q] = 0.0;
-    if (g.y_full <= 0.0) return;
-
-    const double dh = g.y_full / static_cast<double>(n - 1);
-    const double hs = dh / static_cast<double>(2 * kSub);   // Simpson half-panel
-
-    double acc = 0.0;
-    g.i1_tbl[0] = 0.0;
-    g.i1_tbl[static_cast<std::size_t>(n)] = 0.0;            // A(0) = 0
-    for (int i = 1; i < n; ++i) {
-        const double h0 = static_cast<double>(i - 1) * dh;
-        // Composite Simpson over [h0, h0 + dh].
-        double s = kernels::areaOfDepth(g, h0) +
-                   kernels::areaOfDepth(g, h0 + dh);
-        for (int k = 1; k < 2 * kSub; ++k) {
-            const double hk = h0 + static_cast<double>(k) * hs;
-            s += ((k & 1) ? 4.0 : 2.0) * kernels::areaOfDepth(g, hk);
-        }
-        acc += s * hs / 3.0;
-        const double h_i = static_cast<double>(i) * dh;
-        g.i1_tbl[static_cast<std::size_t>(i)] = acc;
-        g.i1_tbl[static_cast<std::size_t>(n + i)] = kernels::areaOfDepth(g, h_i);
-    }
-    g.i1_crown = acc;
-}
-
-/// The area-uniform inverse table, built from the bracketed inverse so the
-/// fast path and the slow one converge to the same root by construction. Must
-/// run AFTER buildI1Table and after a_crown is set — it inverts what they
-/// produced.
-void buildDepthTable(FvGeometry& g) {
-    const int n = kI1Samples;
-    for (int j = 0; j < n; ++j) g.h_tbl[j] = 0.0;
-    if (!(g.a_crown > 0.0) || g.y_full <= 0.0) return;
-
-    const double da = g.a_crown / static_cast<double>(n - 1);
-    g.h_tbl[0] = 0.0;
-    for (int j = 1; j < n - 1; ++j)
-        g.h_tbl[j] = kernels::depthOfAreaBracketed(g, static_cast<double>(j) * da);
-    g.h_tbl[n - 1] = g.y_full;              // A(y_full) == a_crown by definition
-}
-
-/// Development switch for the closure-kernel program: OPENSWMM_FV_CLOSURE=
-/// legacy keeps the table/Brent path; anything else (the default) builds the
-/// exact-geometry closure. Read once.
-bool closureModeExact() {
-    static const bool exact = [] {
-        const char* e = std::getenv("OPENSWMM_FV_CLOSURE");
-        return !(e && (std::strcmp(e, "legacy") == 0 || std::strcmp(e, "LEGACY") == 0));
-    }();
-    return exact;
-}
-
 /**
  * @brief Build the exact-geometry closure table for one section.
  *
@@ -110,7 +48,6 @@ bool closureModeExact() {
 void buildClosure(FvGeometry& g) {
     FvClosure& c = g.closure_tbl;
     c = FvClosure{};
-    g.use_closure = 0;
     const int N = kClosurePanels;
     if (!(g.y_full > 0.0)) return;
 
@@ -223,7 +160,6 @@ void buildClosure(FvGeometry& g) {
         }
     }
 
-    g.use_closure = 1;
     g.a_crown  = c.a_crown;
     g.i1_crown = c.i1_crown;
 }
@@ -239,10 +175,6 @@ void buildGeometry(const XSectParams& xs, bool is_open, double slot_celerity,
     g.xs      = xs;
     g.barrels = std::max(1, barrels);
     g.barrel_scale = static_cast<double>(g.barrels);
-    // Host binding by default. A device backend rebinds this to its own
-    // evaluator over device copies of the same tables (plan §5.1); nothing else
-    // about the geometry changes.
-    g.eval    = &xsect::hostEval();
     // Area and width are aggregate over the barrels; depth and hydraulic radius
     // are per barrel and unscaled.
     g.y_full  = xs.y_full;
@@ -275,11 +207,7 @@ void buildGeometry(const XSectParams& xs, bool is_open, double slot_celerity,
     const double band = g.y_full - g.y_crown;
     g.a_crown = g.a_full + g.t_slot * band * 0.5;   // ∫₀¹ ramp = ½
 
-    // Legacy table path (kept while OPENSWMM_FV_CLOSURE=legacy is a valid
-    // A/B), then the exact-geometry closure that supersedes it.
-    buildI1Table(g);
-    buildDepthTable(g);
-    if (closureModeExact()) buildClosure(g);
+    buildClosure(g);
 }
 
 // ===========================================================================

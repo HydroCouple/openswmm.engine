@@ -490,8 +490,8 @@ void PressurizedHeadSolver::solve(const PressurizedView& v, double dt) {
     // slot line keeps t_slot exactly, so a fully pressurized column re-solves
     // to the same heads; TPA-flagged rows keep their regime width.
     {
-        // Development knob for the closure A/B (removed with
-        // OPENSWMM_FV_CLOSURE): number of secant passes, default 3.
+        // Development knob for the follow-up on the nonlinear storage
+        // (see the caveat above): number of secant passes, default 3.
         static const int kSecantPasses = [] {
             const char* e = std::getenv("OPENSWMM_FV_PRESS_SECANT_PASSES");
             return e ? std::atoi(e) : 3;

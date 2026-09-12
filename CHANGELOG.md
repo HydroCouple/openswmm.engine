@@ -67,8 +67,11 @@ retroactive.
   clocks base → Phase 1 → Phase 2 on reach_uniform_500 27.6 → 11.6 → 6.0 s, Example1
   10.7 → 6.5 → 3.2 s. SWASHES `1d-fv` (33 cells) and the transitions suite are
   IDENTICAL legacy vs exact; the explicit-slot lab column (e2_2006 C1) moves by 5e-4
-  NSE. The legacy path stays selectable with `OPENSWMM_FV_CLOSURE=legacy` for one
-  release cycle of A/B and is then deleted. DYNWAVE is untouched (still bit-exact on the
+  NSE. The legacy table/Brent path (the `XsectEval` pointer, the 129-row I₁/A table,
+  the area-uniform depth table, `depthOfAreaBracketed`, Brent) is deleted in the
+  follow-up commit once every `.out` of the exact path hashed identically without it;
+  `FvGeometry` is a pointer-free POD block apart from the build-time `XSectParams` it
+  keeps for the table-defined shapes. DYNWAVE is untouched (still bit-exact on the
   legacy tables).
   - **Implicit pressurized head update: secant storage correction.** With a closure
     whose crown is consistent, the tangent linearization of the head row overshot

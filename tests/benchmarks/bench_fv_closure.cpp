@@ -35,9 +35,11 @@
  *            faceside          one side of a first-order face flux: area+I₁ at
  *                              the cell depth, then area+width+I₁ at the
  *                              reconstructed depth (2 area, 1 width, 2 I₁)
- *            invert            depthOfArea(g, a)  — the Brent path
- *            invert_bracketed  depthOfAreaBracketed(g, a) — the fallback
+ *            invert            depthOfArea(g, a) — Newton on the closure cubic
  *            roundtrip         depthOfArea(g, areaOfDepth(g, h))
+ *            eval_fused        closureEval(g.closure_tbl, h) — A, T, I₁ from
+ *                              one panel locate (what faceSide and the
+ *                              per-cell cache call)
  *
  *          Inputs are precomputed outside the timed region: a temporally
  *          coherent random walk in h over [0, 1.5·y_full] (the substep-to-
@@ -120,75 +122,6 @@ struct Case {
     FvGeometry  g;
 };
 
-/// Replica of FvKernels.hpp depthOfArea with the closure evaluations COUNTED.
-/// Kept line-for-line with the shipped kernel (same bracket, same Brent, same
-/// exit test) so the count is the shipped kernel's count; the kernel itself
-/// cannot carry a counter because it compiles for the device. If the two ever
-/// diverge, the `invert` and `invert_counted` rows disagree in ns and say so.
-double depth_of_area_counted(const FvGeometry& g, double a, long& evals) {
-    if (a <= 0.0) return 0.0;
-    if (a >= g.a_crown) return g.y_full + (a - g.a_crown) / g.t_slot;
-
-    const int n = static_cast<int>(openswmm::fv::kI1Samples);
-    const double da = g.a_crown / static_cast<double>(n - 1);
-    if (!(da > 0.0)) return k::depthOfAreaBracketed(g, a);
-
-    int j = static_cast<int>(a / da);
-    if (j < 1) j = 1;
-    if (j > n - 3) j = n - 3;
-
-    double xa = g.h_tbl[static_cast<std::size_t>(j - 1)];
-    double xb = g.h_tbl[static_cast<std::size_t>(j + 2)];
-    if (!(xb > xa)) return k::depthOfAreaBracketed(g, a);
-
-    evals += 2;
-    double fa = k::areaOfDepth(g, xa) - a;
-    double fb = k::areaOfDepth(g, xb) - a;
-    if (fa > 0.0 || fb < 0.0) return k::depthOfAreaBracketed(g, a);
-    if (fa == 0.0) return xa;
-    if (fb == 0.0) return xb;
-
-    const double tol = 1.0e-15 * g.y_full;
-    double c = xa, fc = fa, d = xb - xa, e = d;
-    for (int it = 0; it < 60; ++it) {
-        if (fb * fc > 0.0) { c = xa; fc = fa; d = xb - xa; e = d; }
-        if (std::fabs(fc) < std::fabs(fb)) {
-            xa = xb; xb = c; c = xa;
-            fa = fb; fb = fc; fc = fa;
-        }
-        const double m = 0.5 * (c - xb);
-        if (std::fabs(m) <= tol || fb == 0.0) return xb;
-
-        if (std::fabs(e) < tol || std::fabs(fa) <= std::fabs(fb)) {
-            d = m; e = m;
-        } else {
-            const double sfb = fb / fa;
-            double p, q;
-            if (xa == c) {
-                p = 2.0 * m * sfb;
-                q = 1.0 - sfb;
-            } else {
-                const double qq = fa / fc;
-                const double r  = fb / fc;
-                p = sfb * (2.0 * m * qq * (qq - r) - (xb - xa) * (r - 1.0));
-                q = (qq - 1.0) * (r - 1.0) * (sfb - 1.0);
-            }
-            if (p > 0.0) q = -q; else p = -p;
-            if (2.0 * p < ((3.0 * m * q - std::fabs(tol * q) < std::fabs(e * q))
-                               ? 3.0 * m * q - std::fabs(tol * q)
-                               : std::fabs(e * q))) {
-                e = d; d = p / q;
-            } else {
-                d = m; e = m;
-            }
-        }
-        xa = xb; fa = fb;
-        xb += (std::fabs(d) > tol) ? d : ((m > 0.0) ? tol : -tol);
-        ++evals;
-        fb = k::areaOfDepth(g, xb) - a;
-    }
-    return xb;
-}
 
 /// Analytic shape from legacy-order geom1..4 (the [XSECTIONS] columns).
 Case analytic(const char* name, XSectShape type, double p0, double p1 = 0.0,
@@ -290,45 +223,22 @@ void bench_case(const Case& c, int n_samples, Lcg& rng) {
         for (double a : as) acc += k::depthOfArea(g, a);
         g_sink = g_sink + acc;
     }));
-    report(c.name, "invert_bracketed", calls, time_sweep(calls, [&] {
-        double acc = 0.0;
-        for (double a : as) acc += k::depthOfAreaBracketed(g, a);
-        g_sink = g_sink + acc;
-    }));
     report(c.name, "roundtrip", calls, time_sweep(calls, [&] {
         double acc = 0.0;
         for (double h : hs) acc += k::depthOfArea(g, k::areaOfDepth(g, h));
         g_sink = g_sink + acc;
     }));
 
-    // The counted replica of the LEGACY Brent inverse: its ns must agree with
-    // `invert` in legacy mode (or the replica has drifted from the kernel), and
-    // its evaluation count is the number the kernel's own comment claims
-    // (5.9 circular / 3.1 rect / 6.3 trapezoid). Meaningless on the exact
-    // closure, whose inverse is Newton on the cubic — skipped there.
-    long evals = 0;
-    long sub_crown = 0;
-    if (!g.use_closure) {
-        report(c.name, "invert_counted", calls, time_sweep(calls, [&] {
-            double acc = 0.0;
-            long ev = 0;
-            for (double a : as) acc += depth_of_area_counted(g, a, ev);
-            evals = ev;
-            g_sink = g_sink + acc;
-        }));
-    } else {
-        // The fused evaluation the exact closure offers: A, T and I₁ from one
-        // panel locate — what faceSide and the per-cell cache should call.
-        report(c.name, "eval_fused", calls, time_sweep(calls, [&] {
-            double acc = 0.0;
-            for (double h : hs) {
-                const k::ClosureEval e = k::closureEval(g.closure_tbl, h);
-                acc += e.a + e.t + e.i1;
-            }
-            g_sink = g_sink + acc;
-        }));
-    }
-    for (double a : as) if (a > 0.0 && a < g.a_crown) ++sub_crown;
+    // The fused evaluation: A, T and I₁ from one panel locate — what
+    // faceSide and the per-cell cache call.
+    report(c.name, "eval_fused", calls, time_sweep(calls, [&] {
+        double acc = 0.0;
+        for (double h : hs) {
+            const k::ClosureEval e = k::closureEval(g.closure_tbl, h);
+            acc += e.a + e.t + e.i1;
+        }
+        g_sink = g_sink + acc;
+    }));
 
     // Accuracy of the inverse over the same sweep, so cost and correctness
     // are read side by side.
@@ -337,12 +247,8 @@ void bench_case(const Case& c, int n_samples, Lcg& rng) {
         const double back = k::depthOfArea(g, k::areaOfDepth(g, h));
         max_rel = std::max(max_rel, std::fabs(back - h) / g.y_full);
     }
-    std::printf("# %s closure=%s roundtrip_max_rel=%.3e evals_per_subcrown_invert=%.2f "
-                "subcrown_frac=%.3f y_full=%.6g a_crown=%.6g t_slot=%.6g\n",
-                c.name.c_str(), g.use_closure ? "exact" : "legacy", max_rel,
-                (sub_crown > 0) ? static_cast<double>(evals) / static_cast<double>(sub_crown) : 0.0,
-                static_cast<double>(sub_crown) / static_cast<double>(as.size()),
-                g.y_full, g.a_crown, g.t_slot);
+    std::printf("# %s roundtrip_max_rel=%.3e y_full=%.6g a_crown=%.6g t_slot=%.6g\n",
+                c.name.c_str(), max_rel, g.y_full, g.a_crown, g.t_slot);
 }
 
 }  // namespace
