@@ -162,6 +162,10 @@ void buildClosure(FvGeometry& g) {
 
     g.a_crown  = c.a_crown;
     g.i1_crown = c.i1_crown;
+    g.c_crown  = (band > 0.0)
+                     ? kernels::celerity(kernels::closureArea(c, g.y_crown),
+                                         kernels::closureWidth(c, g.y_crown))
+                     : 0.0;
 }
 
 } // namespace

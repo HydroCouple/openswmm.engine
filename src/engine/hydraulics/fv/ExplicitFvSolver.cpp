@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 
 #include "FvKernels.hpp"
@@ -110,6 +111,17 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
     // everywhere (bit-inert default). Cold start: all-free (worst case one
     // spurious re-pressurization step after a hotstart — TPA plan §5).
     tpa_ = (opts.pressure_closure == 1);
+    // Dev switch for the slot/free-surface interface treatment (entrance
+    // lock investigation, 2026-09-11): OPENSWMM_FV_MIXED_WAVE=0 restores the
+    // symmetric Davis estimate and the acoustic vented-node ghost.
+    {
+        const char* mw = std::getenv("OPENSWMM_FV_MIXED_WAVE");
+        mixed_wave_ = !(mw && mw[0] == '0');
+        mw_cap_ = mixed_wave_ && !(mw && mw[0] == '3');   // 3 = RH bound only
+        mw_rh_  = mixed_wave_ && !(mw && mw[0] == '2');   // 2 = ghost cap only
+        const char* d1 = std::getenv("OPENSWMM_FV_DEG1");
+        deg1_guard_slot_ = !(d1 && d1[0] == '1');
+    }
     if (tpa_) {
         state.cell_tpa.assign(nc, 0);
         tpa_scratch_.assign(nc, 0);
@@ -665,10 +677,17 @@ double ExplicitFvSolver::censusDt(bool press_edit) const {
                         perf::count(perf::n_fv_geom_area);
                         perf::count(perf::n_fv_geom_width);
                         const double ag = k::areaOfDepth(g, hg);
-                        speed = std::max(speed,
-                                         std::fabs(cell_u_[uo]) +
-                                             k::celerity(ag,
-                                                         k::widthOfDepth(g, hg)));
+                        double cg = k::celerity(ag, k::widthOfDepth(g, hg));
+                        // The flux caps a VENTED node's ghost at the free-
+                        // surface crown celerity (faceSide); the census bounds
+                        // the same signal.
+                        if (mw_cap_ && g.c_crown > 0.0 && cg > g.c_crown &&
+                            mesh_->node_sur_depth[static_cast<std::size_t>(nd)] <= 0.0 &&
+                            !(!node_pass_.empty() &&
+                              node_pass_[static_cast<std::size_t>(nd)] &&
+                              algebraicActive(nd)))
+                            cg = g.c_crown;
+                        speed = std::max(speed, std::fabs(cell_u_[uo]) + cg);
                     }
                 }
             }
@@ -999,6 +1018,10 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
     // the closure at h_raw is exactly what cacheClosure() holds for it.
     bool centred = false;
     std::size_t uc_cached = 0;
+    // Set when this side is a ghost built from the node's own head (a vented
+    // node's free surface), as opposed to a pass-through far cell or a
+    // closed-end mirror: only that ghost takes the free-surface celerity cap.
+    bool node_head_ghost = false;
 
     // The section this FACE reconstructs in — the same one for both sides, so
     // the Riemann problem is posed between states in a single geometry. It is
@@ -1055,6 +1078,7 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
             h_raw = std::max(0.0, eta - mesh_->face_zb[uf]);
             u     = u_interior;
             z_side = mesh_->face_zb[uf];
+            node_head_ghost = true;
             // PASS-THROUGH junction: the ghost presents the FAR cell's full
             // centred state — surface, depth, bed — so together with the far
             // velocity (computeFaceFlux) the two node faces reproduce the
@@ -1080,6 +1104,7 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
                         eta    = cell_eta_[uoc];
                         h_raw  = state_->cell_h[uoc];
                         z_side = mesh_->cell_zb[uoc];
+                        node_head_ghost = false;
                     }
                 }
             }
@@ -1143,6 +1168,7 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
         out.q  = a_t * u;
         out.c  = k::celerity(a_t, gf->t_slot);        // acoustic celerity
         out.i1 = k::tpaI1OfDepth(*gf, h_star_t);
+        out.press = (mixed_wave_ && mw_rh_) ? uint8_t{1} : uint8_t{0};
         return;
     }
 
@@ -1175,12 +1201,29 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
     // this is the identical computation — and where the reconstructed depth IS
     // the stored depth (the higher-bed side, z* being its own bed), it is the
     // cached one: same function, same arguments, same bits.
+    // Slot/free-surface interface treatment (OPENSWMM_FV_MIXED_WAVE, on by
+    // default): a side standing in the slot is flagged so waveSpeeds can bound
+    // the wave crossing into a free-surface neighbour by the bore speed; and a
+    // VENTED node's own-head ghost is capped at the section's free-surface
+    // crown celerity — the manhole has a free surface, so the boundary signal
+    // it sends into the pipe is a gravity wave, not the slot's acoustic one.
+    // A sealed node (SURCHARGE_DEPTH > 0) keeps the acoustic ghost.
+    auto finish = [&](k::FaceState& o) {
+        if (!mixed_wave_) return;
+        o.press = (mw_rh_ && !gf->is_open && h_star >= gf->y_full) ? uint8_t{1} : uint8_t{0};
+        if (node_head_ghost && node >= 0 &&
+            mesh_->node_sur_depth[static_cast<std::size_t>(node)] <= 0.0) {
+            o.press = 0;
+            if (mw_cap_ && gf->c_crown > 0.0 && o.c > gf->c_crown) o.c = gf->c_crown;
+        }
+    };
     if (centred && gf == g && h_star == h_raw) {
         out.a  = cell_ah_[uc_cached];
         out.u  = u;
         out.q  = out.a * u;
         out.c  = k::celerity(out.a, cell_t_[uc_cached]);
         out.i1 = cell_i1_[uc_cached];
+        finish(out);
         return;
     }
     perf::count(perf::n_fv_geom_area);
@@ -1193,6 +1236,7 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
     out.q  = e.a * u;
     out.c  = k::celerity(e.a, e.t);
     out.i1 = e.i1;
+    finish(out);
 }
 
 void ExplicitFvSolver::computeFluxes() {
@@ -2059,6 +2103,22 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
                              (mesh_->node_can_pond[un]
                                   ? 0.0 : mesh_->node_sur_depth[un]);
         if (mesh_->node_full_depth[un] > 0.0 && eta_c >= rim) return false;
+        // A cell already standing in the slot cannot take a prescribed
+        // discharge: its stage below the rim is a slot head, not a free
+        // surface with room, and forcing q_ext into it lifts that head by
+        // q_ext·dt/(t_slot·dx) per substep — measured on the 0.5 ft pipe fed
+        // 10 cfs (8× capacity): the junction chattered between dry and
+        // 40–80 ft while the clamp-and-flood path it displaced holds the rim.
+        // The fallback keeps its force-main role for a FREE-SURFACE interior
+        // (the pressurized-main plateau the solve under-delivers on) and
+        // hands a slot interior back to the clamp (dev: OPENSWMM_FV_DEG1=1
+        // restores the stage-only guard).
+        if (deg1_guard_slot_) {
+            const auto ucg = static_cast<std::size_t>(cell);
+            const FvGeometry& gg =
+                mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[ucg])];
+            if (!gg.is_open && state_->cell_h[ucg] >= gg.y_full) return false;
+        }
         const double sgn = mesh_->node_face_sign[up0];
         const k::FaceState& in = (mesh_->face_cl[uf0] >= 0) ? f_state_l_[uf0]
                                                             : f_state_r_[uf0];
@@ -3040,9 +3100,13 @@ double ExplicitFvSolver::cellStableDt(int c) const {
         if (hg <= k::kDryDepth) continue;
         perf::count(perf::n_fv_geom_area);
         perf::count(perf::n_fv_geom_width);
-        speed = std::max(speed, std::fabs(cell_u_[uc]) +
-                                    k::celerity(k::areaOfDepth(g, hg),
-                                                k::widthOfDepth(g, hg)));
+        double cg = k::celerity(k::areaOfDepth(g, hg), k::widthOfDepth(g, hg));
+        if (mw_cap_ && g.c_crown > 0.0 && cg > g.c_crown &&
+            mesh_->node_sur_depth[static_cast<std::size_t>(nd)] <= 0.0 &&
+            !(!node_pass_.empty() &&
+              node_pass_[static_cast<std::size_t>(nd)] && algebraicActive(nd)))
+            cg = g.c_crown;
+        speed = std::max(speed, std::fabs(cell_u_[uc]) + cg);
     }
 
     return (speed > 1.0e-12) ? opts_.cfl * dx / speed : 1.0e30;

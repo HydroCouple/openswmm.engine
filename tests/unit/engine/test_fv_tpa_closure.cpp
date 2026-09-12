@@ -578,11 +578,15 @@ TEST(FvTpa, DivergenceGuardFailsLoudNotSilent) {
     // column under RK2, which diverged FINITELY — but that divergence turned
     // out to be the MIN_TIMESTEP clamp (the R2 root cause: the census was
     // clamped up past CFL; with the floor fixed the deck completes and the
-    // finite-garbage class has no known natural deck). The surviving natural
-    // divergence is the a = 150 filling deck under explicit EULER — the real
-    // temporal odd–even mode (see the KnownIssue pin above) — which NaNs;
-    // the guard must catch it in the conduit, loudly, the same routing step.
-    const std::string deck = fillingSurgeDeck("150");
+    // finite-garbage class has no known natural deck). It then pinned the
+    // a = 150 filling deck under explicit EULER — the temporal odd–even mode
+    // — until the slot/free-surface wave-speed bound (closure-kernel
+    // program, 2026-09-12) made that deck complete at a = 150, 300, 600, 1000
+    // and 3000 m/s (see HighCelerityFillingCompletes). The surviving natural
+    // divergence is an absurd a = 10 000 m/s (ERROR 14, depth magnitude
+    // 5e5 ft at step 381): the guard must still catch it in the conduit,
+    // loudly, the same routing step.
+    const std::string deck = fillingSurgeDeck("10000");
     const std::string inp = outPath("tpa_guard_loud.inp");
     { std::ofstream f(inp); f << deck; }
     SWMM_Engine e = swmm_engine_create();
@@ -599,8 +603,8 @@ TEST(FvTpa, DivergenceGuardFailsLoudNotSilent) {
         rc = swmm_engine_step(e, &elapsed);
     } while (rc == 0 && elapsed > 0.0);
     EXPECT_NE(rc, 0)
-        << "Euler at a = 150 completed — the temporal mode is fixed: retire "
-           "this gate's deck choice AND the KnownIssue pin together";
+        << "Euler at a = 10 000 m/s completed — find the next natural "
+           "divergence for this gate's deck";
     if (rc != 0) {
         const std::string msg = swmm_get_last_error_msg(e);
         EXPECT_NE(msg.find("the FV solution diverged in conduit"),
@@ -631,32 +635,31 @@ TEST(FvTpa, FillingSurgeSurvivesRegimeTransitions) {
     }
 }
 
-TEST(FvTpa, KnownIssueHighCelerityFillingDiverges) {
-    // P5b PIN (issue #156, owner follow-up — e2_2025 × C3/C5): explicit FV
-    // TPA still diverges on filling/reflection decks at high acoustic
-    // celerity. Same fixture as above at a = 150 m/s (e2_2025's celerity):
-    // ERROR 14 within the first seconds. On e2_2025 itself the mechanism is
-    // a TEMPORAL odd–even pressure/vacuum oscillation inside the flagged
-    // region (adjacent-substep hmin flipping 0 ↔ −7500 ft, heads to
-    // 34,000 ft, cells ~124–150 around the C2/C3 dx transition
-    // 0.31 → 0.19 ft) at a correctly acoustic-bounded dt (0.0002 s, verified
-    // via OPENSWMM_FV_DT_TRACE). P5b verification MEASURED the TPA plan §7
-    // filter contingency — a conservative, flagged-neighborhood-local
-    // 3-point [0.05, 0.90, 0.05] smoothing of (A, Q) via pairwise
-    // dx-weighted face exchanges, once per accepted substep — and it does
-    // NOT rescue e2_2025 (diverges at ~0.0057 h with the filter ON at
-    // kW = 0.05 and at kW = 0.25; OFF diverges at 0.0058 h): spatial
-    // smoothing cannot damp a temporal mode. The remaining §7 path is the
-    // Vasconcelos & Wright (2009) hybrid flux. Until that lands this pin
-    // documents the limitation; when it flips, retire this test, unpin
-    // e2_2025 in studies/mixed_flow_closures/config/matrix.yaml, and drop
-    // the deck-level expectation there.
+TEST(FvTpa, HighCelerityFillingCompletes) {
+    // Formerly KnownIssueHighCelerityFillingDiverges — the P5b PIN (issue
+    // #156): explicit FV TPA diverged on filling/reflection decks at high
+    // acoustic celerity (this fixture at a = 150 m/s, e2_2025's celerity:
+    // ERROR 14 within the first seconds, a TEMPORAL odd–even pressure/vacuum
+    // oscillation inside the flagged region that spatial smoothing could not
+    // damp). The pin flipped on 2026-09-12 with the slot/free-surface
+    // wave-speed bound of the closure-kernel program: Davis's symmetric
+    // estimate had carried the acoustic celerity into the wave that enters
+    // the FREE side of a pressurization front, and bounding that wave by the
+    // Rankine–Hugoniot bore speed instead removes the mode — the deck
+    // completes at 0.000 % continuity at a = 150, 300, 600, 1000 and 3000.
+    // This is now the positive gate the pin's own text asked for.
     const auto r =
         runFillingSurge("tpa_filling_surge_c150", fillingSurgeDeck("150"));
-    EXPECT_FALSE(r.completed)
-        << "HIGH-CELERITY FILLING NOW COMPLETES (cont err % = " << r.cont
-        << ") — the known issue is fixed: retire this pin and unpin "
-           "e2_2025:C3/C5 in the study matrix";
+    EXPECT_TRUE(r.completed)
+        << "high-celerity filling diverged again at a = 150 m/s — the "
+           "slot/free-surface wave-speed bound regressed";
+    if (r.completed) {
+        EXPECT_LT(std::fabs(r.cont), 2.0)
+            << "routing continuity error % = " << r.cont;
+        EXPECT_GT(r.max_st, 0.094)
+            << "surge tank never rose above the pipe crown — the bore never "
+               "arrived and the fixture is not exercising the surge";
+    }
 }
 
 TEST(FvTpa, Rk2CompletesWhereEulerFillingPinDiverges) {
@@ -677,10 +680,9 @@ TEST(FvTpa, Rk2CompletesWhereEulerFillingPinDiverges) {
     //      (the KnownIssue pin above, unchanged — its measured dt of
     //      0.0002 s was the UNCLAMPED LTS tier, which is why the clamp never
     //      showed in its trace).
-    // The pin above IS the falsifier: same deck, one variable (integrator),
-    // opposite outcomes, both asserted. If the PIN fails, Euler's temporal
-    // mode got fixed — retire both together and unpin e2_2025 in the study
-    // matrix. If THIS fails, either Heun regressed or the dt floor crept
+    // The Euler pin above was retired on 2026-09-12 (the temporal mode is
+    // gone with the slot/free-surface wave-speed bound; both integrators now
+    // complete). If THIS fails, either Heun regressed or the dt floor crept
     // back up.
     const auto rk2 = runFillingSurge(
         "tpa_filling_surge_c150_rk2",

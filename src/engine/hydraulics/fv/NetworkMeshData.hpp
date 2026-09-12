@@ -94,6 +94,13 @@ struct FvGeometry {
     /// extension start from it.
     double a_crown = 0.0;
 
+    /// Free-surface celerity √(g·A/T) at y_crown — the fastest gravity wave
+    /// the section carries before the slot opens. A VENTED junction's ghost is
+    /// capped at it: the manhole has a free surface, so the boundary signal
+    /// speed is a free-surface one even when its head stands above the crown
+    /// (faceSide). 0 for open sections (no cap).
+    double c_crown = 0.0;
+
     /// I₁(y_full) — the table's last entry, cached for the same reason.
     double i1_crown = 0.0;
 

@@ -118,6 +118,35 @@ retroactive.
 
 ### Fixed
 
+- **Explicit FV: the wave entering a free surface at a Preissmann-slot interface is bounded
+  by the bore speed, not the slot's acoustic celerity.** The explicit slot path locked
+  pressurized at an entrance and flooded the junction however high its head stood (a 3 ft
+  culvert on a 5 % slope conveyed 96–136 cfs for every inflow from 100 cfs up; the
+  inlet-control fixture's 120 cfs passed only by luck of the legacy table closure). Face
+  traces showed Davis's symmetric estimate carrying the slot celerity into BOTH HLL waves
+  at a slot/free face, so the flux carried a diffusive mass term of order c_slot·ΔA (+52 cfs
+  at the node face) and a −245 ft⁴/s² momentum sink that pinned the entrance flux to the
+  cell's own momentum. Now: when exactly one side stands in the slot (`FaceState::press`),
+  the wave entering the free side is bounded by the Rankine–Hugoniot jump ΔQ/ΔA between
+  that side's own u ± c and the Davis bound; a VENTED node's ghost carries the section's
+  free-surface crown celerity (`FvGeometry::c_crown`; the dt census and LTS bound use the
+  same cap; sealed nodes keep the acoustic ghost); and the degree-1 prescribed-discharge
+  fallback skips an interior cell already in the slot (forcing the inflow into a full pipe
+  lifted its slot head by q·Δt/(t_slot·Δx) per substep — a 0.5 ft pipe fed 10 cfs chattered
+  its junction between dry and 40–80 ft; the fallback was also the culvert's
+  pressurized-reach deficit: 150 and 200 cfs now convey 150 / 200 at 2.85 / 10.90 ft against
+  DYNWAVE's 3.12 / 10.98). Measured (`plans/FV1D_PERF_BASELINE_2026-09-11.md`, Item 2):
+  the culvert passes 60–200 cfs like DYNWAVE at 53 instead of 173 substeps per step;
+  transitions `fv`/`fv-lts` identical; lab e2_2006 C1 within 0.0024 NSE, C2 st 0.56 → 0.84,
+  e4_aureli C1 p300 −9.7 → −2.3; the TPA high-celerity filling deck completes at
+  a = 150…3000 m/s where it diverged at every one (the P5b pin
+  `KnownIssueHighCelerityFillingDiverges` becomes the positive gate
+  `HighCelerityFillingCompletes`; `DivergenceGuardFailsLoudNotSilent` moves to a = 10 000,
+  which still diverges); `FvUnsteadyFriction.ValveClosureDampsOnImplicitPath`, the
+  implicit-path residual left red by the Phase 2 secant correction, passes again. Decks
+  that never pressurize are byte-identical. Dev switches `OPENSWMM_FV_MIXED_WAVE` (0 off,
+  2 cap only, 3 bound only) and `OPENSWMM_FV_DEG1=1` restore the previous estimates for
+  one A/B cycle.
 - **FILLED_CIRCULAR conduit offsets cross the C API as authored values.** Once
   `resolve_cross_references` raised a partly filled circular conduit's stored offsets by the sediment
   depth (legacy `link.c:1072-1077`), `swmm_link_get_offset_up/dn` reported the raised value, the setters

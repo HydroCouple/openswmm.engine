@@ -198,6 +198,10 @@ struct FaceState {
     double u  = 0.0;  ///< velocity (ft/s)
     double c  = 0.0;  ///< celerity (ft/s)
     double i1 = 0.0;  ///< hydrostatic first moment at the reconstructed depth
+    /// The side stands in the Preissmann slot (or is TPA-flagged): its `c` is
+    /// the acoustic slot celerity. Set by the solver; waveSpeeds uses it to
+    /// bound the wave that crosses a slot/free-surface interface.
+    uint8_t press = 0;
 };
 
 /// Result of a face flux evaluation.
@@ -219,6 +223,27 @@ OPENSWMM_KERNEL_FN void waveSpeeds(const FaceState& L, const FaceState& R,
     if (wetL && wetR) {
         sl = std::min(L.u - L.c, R.u - R.c);
         sr = std::max(L.u + L.c, R.u + R.c);
+        // Slot/free-surface interface (one side in the slot, the other not).
+        // Davis's symmetric estimate carries the slot's acoustic celerity into
+        // BOTH waves, but no signal enters the free-surface side at the slot
+        // speed: the wave that crosses into it is the filling/emptying bore,
+        // whose speed is the Rankine–Hugoniot jump (ΔQ/ΔA), bounded below by
+        // that side's own u ± c and above by the Davis bound. With the slot
+        // celerity on both waves the HLL diffusion term at a pressurized
+        // entrance is O(c_slot·ΔA) — measured 52 cfs of spurious mass flux and
+        // a −245 ft⁴/s² momentum sink on a 3 ft culvert whose junction then
+        // flooded at 108 of 120 cfs however high its head rose.
+        if (L.press != R.press) {
+            if (L.press) {
+                const double da = L.a - R.a;
+                const double w  = (da > 0.0) ? (L.q - R.q) / da : sr;
+                sr = std::max(R.u + R.c, std::min(sr, w));
+            } else {
+                const double da = R.a - L.a;
+                const double w  = (da > 0.0) ? (R.q - L.q) / da : sl;
+                sl = std::min(L.u - L.c, std::max(sl, w));
+            }
+        }
     } else if (wetR) {                      // dry left
         sl = R.u - 2.0 * R.c;
         sr = R.u + R.c;

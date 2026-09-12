@@ -625,6 +625,10 @@ private:
 
     // -- TPA pressure closure (issue #156 Phase 4) ---------------------------
     bool tpa_ = false;                    ///< FV_PRESSURE_CLOSURE == TPA
+    bool mixed_wave_ = true;              ///< slot/free interface wave bound (dev switch)
+    bool mw_cap_ = true;                  ///< vented-ghost crown celerity cap (dev: MW=2 cap only)
+    bool mw_rh_  = true;                  ///< bore-speed bound at slot/free faces (dev: MW=3 RH only)
+    bool deg1_guard_slot_ = true;         ///< degree-1 prescribed discharge skips a slot interior (dev: DEG1=1 off)
     std::vector<uint8_t> tpa_scratch_;    ///< previous-flag snapshot (sweep)
     std::vector<uint8_t> save_tpa_;       ///< step-rejection snapshot
 
