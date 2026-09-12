@@ -143,14 +143,29 @@ double modHorton_getInfil(HortonState& state, double precip, double depth, doubl
 /**
  * @brief Compute Green-Ampt infiltration rate.
  *
- * @param state   [in/out] Green-Ampt state.
- * @param precip  Rainfall rate (ft/sec).
- * @param depth   Ponded depth (ft).
- * @param dt      Timestep (seconds).
+ * Op-for-op transliteration of legacy infil.c grnampt_getInfil /
+ * grnampt_getUnsatInfil / grnampt_getSatInfil / grnampt_getF2. The two
+ * factors legacy keeps in file-scope globals (InfilFactor from the
+ * [ADJUSTMENTS] conductivity multiplier or a subcatchment pattern, and
+ * Evap.recoveryFactor from the evaporation recovery pattern) are passed in
+ * and applied exactly where legacy applies them: ks = Ks*InfilFactor,
+ * lu = Lu*sqrt(InfilFactor), Fumax = IMDmax*Lu*sqrt(InfilFactor),
+ * kr = lu/90000*recoveryFactor, T = 5400/lu/recoveryFactor. The state's
+ * Ks/Lu are never scaled in place.
+ *
+ * @param state            [in/out] Green-Ampt state.
+ * @param precip           Rainfall (plus runon) rate (ft/sec).
+ * @param depth            Ponded depth (ft).
+ * @param dt               Timestep (seconds).
+ * @param model_type       GREEN_AMPT resets F at the inter-event timer;
+ *                         MOD_GREEN_AMPT does not.
+ * @param infil_factor     Legacy InfilFactor (1.0 = none).
+ * @param recovery_factor  Legacy Evap.recoveryFactor (1.0 = none).
  * @returns Infiltration rate (ft/sec).
  */
 double grnampt_getInfil(GreenAmptState& state, double precip, double depth, double dt,
-                        InfilModel model_type = InfilModel::GREEN_AMPT);
+                        InfilModel model_type = InfilModel::GREEN_AMPT,
+                        double infil_factor = 1.0, double recovery_factor = 1.0);
 
 /**
  * @brief Compute SCS Curve Number infiltration rate.

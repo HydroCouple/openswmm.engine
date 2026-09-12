@@ -397,25 +397,16 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                     }
                     case InfilModel::GREEN_AMPT:
                     case InfilModel::MOD_GREEN_AMPT: {
-                        auto& gs = grnampt_states_[ui];
-                        double save_Ks    = gs.Ks;
-                        double save_Lu    = gs.Lu;
-                        double save_Fumax = gs.Fumax;
-                        // Gap #5: Legacy infil_setInfilFactor() applies sqrt(InfilFactor) to Lu:
-                        //   lu = 4 * sqrt(Ks * InfilFactor * ucf_rain) / ucf_depth
-                        //      = original_Lu * sqrt(InfilFactor)
-                        // Gap #5: Fumax = IMDmax * lu * sqrt(InfilFactor) = original_Fumax * InfilFactor
-                        // Gap #6: Recovery factor baked into Lu so that inside grnampt_getInfil():
-                        //   kr = lu/90000 = original_Lu * sqrt(if) * rf / 90000 = legacy kr ✓
-                        //   T  = 5400/lu  = 5400 / (original_Lu * sqrt(if) * rf)  = legacy T ✓
-                        double sqrt_infil = std::sqrt(local_infil);
-                        gs.Ks    = save_Ks * local_infil;
-                        gs.Lu    = save_Lu * sqrt_infil * recovery_factor;
-                        gs.Fumax = save_Fumax * local_infil;
-                        infil = infil::grnampt_getInfil(gs, precip + runon, depth, dt, im);
-                        gs.Ks    = save_Ks;
-                        gs.Lu    = save_Lu;
-                        gs.Fumax = save_Fumax;
+                        // Legacy applies InfilFactor and Evap.recoveryFactor
+                        // inside grnampt_getInfil, per call, from the
+                        // unscaled state (ks = Ks*IF, lu = Lu*sqrt(IF),
+                        // Fumax = IMDmax*Lu*sqrt(IF), kr = lu/90000*RF,
+                        // T = 5400/lu/RF). Baking them into Ks/Lu/Fumax here
+                        // changed both the operation order and Fumax (which
+                        // scaled by IF instead of sqrt(IF)).
+                        infil = infil::grnampt_getInfil(grnampt_states_[ui],
+                                                        precip + runon, depth, dt, im,
+                                                        local_infil, recovery_factor);
                         break;
                     }
                     case InfilModel::CURVE_NUM: {

@@ -129,12 +129,36 @@ TEST(StorageExfilGeometry, FixedStageGreenAmptGeometryBenchmark) {
     solver.state().btm_ga[0].saturated = true;
     solver.state().bank_ga[0].saturated = true;
 
-    double cumulative_loss = 0.0;
+    // Legacy grnampt_getF2 cannot start its Newton solve from F = 0 (the
+    // derivative term 1 - c1/(f2 + c1) vanishes there) and falls back to the
+    // Ks-only floor F1 + Ks*dt for that step — a state legacy itself never
+    // reaches, since it enters the saturated branch with F >= Fs > 0. Seed
+    // both components with the exact F at the benchmark's first row (the
+    // implicit relation inverted by bisection) and check from the second.
+    auto exact_F = [](double c1, double ks, double t) {
+        double lo = 0.0, hi = 1.0;                 // g(hi) > 0 for these c1
+        for (int it = 0; it < 200; ++it) {
+            double mid = 0.5 * (lo + hi);
+            double g = mid - c1 * std::log(1.0 + mid / c1) - ks * t;
+            if (g < 0.0) lo = mid; else hi = mid;
+        }
+        return 0.5 * (lo + hi);
+    };
+    {
+        auto& btm  = solver.state().btm_ga[0];
+        auto& bank = solver.state().bank_ga[0];
+        const double c1_btm  = (btm.S  + 2.0) * btm.IMD;    // bottom under 2 ft
+        const double c1_bank = (bank.S + 1.0) * bank.IMD;   // bank under d/2
+        btm.F  = exact_F(c1_btm,  btm.Ks,  rows[1].t_s);  btm.Fu  = btm.F;
+        bank.F = exact_F(c1_bank, bank.Ks, rows[1].t_s);  bank.Fu = bank.F;
+    }
+
+    double cumulative_loss = rows[1].exfil_cumul_ft3;
     double max_rate_err = 0.0;
     double max_cumulative_err = 0.0;
-    double prev_t = rows[0].t_s;
+    double prev_t = rows[1].t_s;
 
-    for (size_t i = 1; i < rows.size(); ++i) {
+    for (size_t i = 2; i < rows.size(); ++i) {
         double dt = rows[i].t_s - prev_t;
         solver.computeAll(ctx, dt);
 

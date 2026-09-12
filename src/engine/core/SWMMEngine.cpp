@@ -2053,12 +2053,17 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         // and reads them in the next runoff_getTimeStep call — one-step lag).
         // Keeping wet_step while has_runoff_ holds integrates the recession limb
         // at the fine step legacy uses.
+        // Legacy runoff.c:270-271 sets both flags in the same subcatchment
+        // loop: HasRunoff from the runoff rate, HasSnow from newSnowDepth.
+        // has_snow_ was declared but never assigned, so a snow-covered study
+        // area with no rain took the DRY step (23 h on the snowmelt decks)
+        // and the melt, which legacy evaluates every WET step, never ran.
         has_runoff_ = false;
+        has_snow_   = false;
         for (int i = 0; i < ctx_.n_subcatches(); ++i) {
-            if (ctx_.subcatches.runoff[static_cast<std::size_t>(i)] > 0.0) {
-                has_runoff_ = true;
-                break;
-            }
+            auto usi = static_cast<std::size_t>(i);
+            if (ctx_.subcatches.runoff[usi] > 0.0) has_runoff_ = true;
+            if (ctx_.subcatches.snow_depth[usi] > 0.0) has_snow_ = true;
         }
 
         // A4b. Runoff mass-balance accumulation is deferred to A6c (after the

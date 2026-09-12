@@ -484,11 +484,16 @@ TEST_F(Infil2DUnitsTest, ModifiedVariantsDifferFromTheirBaseVariants) {
         << "MOD_HORTON produced the identical series to HORTON over 40 steps "
            "— the modified kernel is not being dispatched";
 
-    // Green-Ampt: the modified variant does not reset F between events. The
-    // reset is gated on the inter-event timer T = 5400 / Lu, so the dry window
-    // has to OUTLAST it or the two variants are identical by construction and
-    // the gate proves nothing. For Ks = 0.5 in/hr, Lu = 4*sqrt(0.5)/12 ft and
-    // T is about 22900 s, so 60 dry steps of 600 s (36000 s) clears it.
+    // Green-Ampt: legacy's ONLY MOD_GREEN_AMPT distinction is in the
+    // light-rain branch (supply <= Ks, infil.c grnampt_getUnsatInfil): once
+    // the inter-event timer has expired, the standard variant resets F and
+    // re-derives IMD from the upper-zone moisture at every such step, the
+    // modified variant leaves both alone. A saturated surface behaves the
+    // same under both, and legacy keeps a saturated surface saturated through
+    // dry weather, so a heavy / dry / heavy sequence cannot tell them apart.
+    // Light rain from the dry start (the timer starts expired) followed by
+    // heavy rain can: the variants meet the heavy rain with different IMD
+    // and F, and their rates diverge.
     SurfaceStateData sg  = makeState(mesh_, 0.0, 0.0);
     SurfaceStateData sgm = makeState(mesh_, 0.0, 0.0);
     Infil2D g  = resolvedWith(mesh_, usOptions(),
@@ -496,27 +501,24 @@ TEST_F(Infil2DUnitsTest, ModifiedVariantsDifferFromTheirBaseVariants) {
     Infil2D gm = resolvedWith(mesh_, usOptions(),
                               rowOf(InfilModel::MOD_GREEN_AMPT, 3.5, 0.5, 0.30));
     bool ga_diverged = false;
-    int  wet2_steps  = 0;
-    for (int n = 0; n < 140; ++n) {
-        const bool wet = (n < 20) || (n >= 80);   // rain, long dry spell, rain
-        if (n >= 80) ++wet2_steps;
+    for (int n = 0; n < 40; ++n) {
+        const bool heavy = (n >= 20);   // 0.3 in/hr (< Ks) then 2 in/hr ponded
         for (int i = 0; i < mesh_.n_triangles(); ++i) {
-            sg.depth[i]  = wet ? 0.05 : 0.0;
-            sgm.depth[i] = wet ? 0.05 : 0.0;
-            sg.rainfall[i]  = wet ? inhrToMs(2.0) : 0.0;
-            sgm.rainfall[i] = wet ? inhrToMs(2.0) : 0.0;
+            sg.depth[i]  = heavy ? 0.05 : 0.0;
+            sgm.depth[i] = heavy ? 0.05 : 0.0;
+            sg.rainfall[i]  = heavy ? inhrToMs(2.0) : inhrToMs(0.3);
+            sgm.rainfall[i] = heavy ? inhrToMs(2.0) : inhrToMs(0.3);
         }
         g.updateRates(mesh_, sg, 600.0);
         gm.updateRates(mesh_, sgm, 600.0);
         if (std::abs(sg.infil_rate[0] - sgm.infil_rate[0]) > 1e-12)
             ga_diverged = true;
     }
-    ASSERT_GT(wet2_steps, 0) << "the second wet window never ran";
     EXPECT_TRUE(ga_diverged)
         << "MOD_GREEN_AMPT produced the identical series to GREEN_AMPT across "
-           "a wet / long-dry / wet sequence — grnampt_getInfil is being called "
-           "with the wrong model enum (§5.5.1: the variant is selected by an "
-           "InfilModel argument, not a bool)";
+           "a light-rain / heavy-rain sequence — grnampt_getInfil is being "
+           "called with the wrong model enum (§5.5.1: the variant is selected "
+           "by an InfilModel argument, not a bool)";
 }
 
 // ============================================================================
