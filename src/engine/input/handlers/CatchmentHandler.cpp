@@ -63,6 +63,7 @@
 
 #include "../InputParseUtils.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <string>
 
@@ -157,7 +158,11 @@ void handle_subcatchments(SimulationContext& ctx, const std::vector<std::string>
         }
 
         ctx.subcatches.area[idx]       = to_double(tok[3]);
-        ctx.subcatches.frac_imperv[idx]= to_double(tok[4]) / 100.0;  // % → fraction
+        // Legacy subcatch_readParams: fracImperv = MIN(x[4], 100) / 100 — a
+        // percentage above 100 (w-wo-rb-2subcatchments writes 5000) is a
+        // fully impervious subcatchment, not a 50x area.
+        ctx.subcatches.frac_imperv[idx]=
+            std::min(to_double(tok[4]), 100.0) / 100.0;  // % → fraction
         ctx.subcatches.width[idx]      = to_double(tok[5]);
         ctx.subcatches.slope[idx]      = to_double(tok[6]) / 100.0;  // % → fraction
 
@@ -261,9 +266,11 @@ void handle_infiltration(SimulationContext& ctx, const std::vector<std::string>&
         {
             const std::string last = Tokenizer::to_upper(tok[ntoks - 1]);
             if      (last == "HORTON")         { row_model = 0; --ntoks; }
-            else if (last == "MOD_HORTON")     { row_model = 1; --ntoks; }
+            else if (last == "MOD_HORTON" ||
+                     last == "MODIFIED_HORTON") { row_model = 1; --ntoks; }
             else if (last == "GREEN_AMPT")     { row_model = 2; --ntoks; }
-            else if (last == "MOD_GREEN_AMPT") { row_model = 3; --ntoks; }
+            else if (last == "MOD_GREEN_AMPT" ||
+                     last == "MODIFIED_GREEN_AMPT") { row_model = 3; --ntoks; }
             else if (last == "CURVE_NUMBER")   { row_model = 4; --ntoks; }
         }
 

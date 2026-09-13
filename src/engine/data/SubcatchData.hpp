@@ -309,6 +309,14 @@ struct SubcatchData {
     /** @brief Previous-step runon inflow (for interpolation). */
     std::vector<double> old_runon_inflow;
 
+    /** @brief Legacy Subcatch.runon: the run-on as a depth rate (ft/s).
+     *  @details Accumulated per contributor in legacy subcatch_addRunonFlow's
+     *           order and form — each flow divided by the non-LID area (or the
+     *           full area when there is none) BEFORE the add — so the sum
+     *           rounds as legacy's does. runon_inflow is the same water in CFS
+     *           for the ledgers. */
+    std::vector<double> runon_rate;
+
     /** @brief Gap #28: accumulated outfall-routed volume (ft³) between runoff steps.
      *  @details Matches legacy Outfall[i].vRouted. Drained to runon_inflow at
      *           each assembleRunon() call, then reset to 0. */
@@ -677,6 +685,7 @@ struct SubcatchData {
         old_lid_drain_flow.assign(un, 0.0);
         runon_inflow.assign(un, 0.0);
         old_runon_inflow.assign(un, 0.0);
+        runon_rate.assign(un, 0.0);
         outfall_runon_vol.assign(un, 0.0);
         gw_sw_head.assign(un, 0.0);
         gw_node_avail_flow.assign(un, 0.0);
@@ -756,7 +765,7 @@ struct SubcatchData {
         g(snow_depth, 0.0); g(lid_drain_flow, 0.0);
         g(old_runoff, 0.0); g(old_gw_flow, 0.0);
         g(old_snow_depth, 0.0); g(old_lid_drain_flow, 0.0);
-        g(runon_inflow, 0.0); g(old_runon_inflow, 0.0);
+        g(runon_inflow, 0.0); g(old_runon_inflow, 0.0); g(runon_rate, 0.0);
         g(gw_sw_head, 0.0); g(gw_node_avail_flow, 0.0);
         g(gw_max_infil_vol, std::numeric_limits<double>::max());
         g(outfall_runon_vol, 0.0);
@@ -824,7 +833,7 @@ struct SubcatchData {
         r(rainfall); r(evap_loss); r(infil_loss); r(ponded_depth);
         r(gw_flow); r(snow_depth); r(lid_drain_flow); r(old_runoff);
         r(old_gw_flow); r(old_snow_depth); r(old_lid_drain_flow); r(runon_inflow);
-        r(old_runon_inflow); r(gw_sw_head); r(gw_node_avail_flow); r(gw_max_infil_vol);
+        r(old_runon_inflow); r(runon_rate); r(gw_sw_head); r(gw_node_avail_flow); r(gw_max_infil_vol);
         r(outfall_runon_vol); r(rpt_flag); r(stat_precip_vol); r(stat_evap_vol);
         r(stat_infil_vol); r(stat_imperv_vol); r(stat_perv_vol); r(stat_runoff_vol);
         r(stat_max_runoff); r(stat_gw_infil_vol); r(stat_gw_upper_evap_vol); r(stat_gw_lower_evap_vol);
@@ -863,7 +872,7 @@ struct SubcatchData {
         e(runoff); e(rainfall); e(evap_loss); e(infil_loss); e(ponded_depth);
         e(gw_flow); e(snow_depth); e(lid_drain_flow);
         e(old_runoff); e(old_gw_flow); e(old_snow_depth); e(old_lid_drain_flow);
-        e(runon_inflow); e(old_runon_inflow); e(outfall_runon_vol);
+        e(runon_inflow); e(old_runon_inflow); e(runon_rate); e(outfall_runon_vol);
         e(gw_sw_head); e(gw_node_avail_flow); e(gw_max_infil_vol);
         e(comments); e(tags); e(rpt_flag);
 
@@ -984,6 +993,7 @@ struct SubcatchData {
         old_lid_drain_flow.shrink_to_fit();
         runon_inflow.shrink_to_fit();
         old_runon_inflow.shrink_to_fit();
+        runon_rate.shrink_to_fit();
         outfall_runon_vol.shrink_to_fit();
         gw_sw_head.shrink_to_fit();
         gw_node_avail_flow.shrink_to_fit();
@@ -1058,6 +1068,7 @@ struct SubcatchData {
         std::fill(old_lid_drain_flow.begin(), old_lid_drain_flow.end(), 0.0);
         std::fill(runon_inflow.begin(), runon_inflow.end(), 0.0);
         std::fill(old_runon_inflow.begin(), old_runon_inflow.end(), 0.0);
+        std::fill(runon_rate.begin(), runon_rate.end(), 0.0);
         std::fill(gw_sw_head.begin(),   gw_sw_head.end(),   0.0);
         std::fill(gw_node_avail_flow.begin(), gw_node_avail_flow.end(), 0.0);
         std::fill(washoff_load.begin(), washoff_load.end(), 0.0);

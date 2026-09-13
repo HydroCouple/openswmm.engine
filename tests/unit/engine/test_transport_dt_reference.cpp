@@ -474,7 +474,11 @@ TEST(TransportDtReferenceTest, LidColumnTemperatureConvergesUnderRefinement) {
     ExpectConverged(a.lid_storage_temp, b.lid_storage_temp,
                     c.lid_storage_temp, sourceSpread(d, true), 0.0095,
                     "LID storage temperature (H5b falsifier ii)");
+    // Soil band re-pinned 2026-09-13 (legacy lidproc kernel port): the
+    // bio-cell's soil moisture now follows legacy's flux limiters and its
+    // own Green-Ampt surface infiltration, and the soil leg measures 0.0235
+    // at a contraction ratio of 1.82 (was 0.0196 at 1.93). Same headroom.
     ExpectConverged(a.lid_soil_temp, b.lid_soil_temp, c.lid_soil_temp,
-                    sourceSpread(d, true), 0.023,
+                    sourceSpread(d, true), 0.028,
                     "LID soil temperature (H5b falsifier ii)");
 }

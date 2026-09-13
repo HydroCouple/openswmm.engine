@@ -1477,20 +1477,15 @@ int writeInpFile(const SimulationContext&  ctx_internal,
                 }
             }
 
-            if (opts.snow_dtlong != 0.0) {
-                // Legacy 9-token form carries the longitude/solar-time
-                // correction (minutes):
-                //   SNOWMELT divt ati nrg elev lat dtlong minMelt maxMelt
-                std::fprintf(f,"SNOWMELT     %.2f %.4f %.4f %.4f %.4f %.4f %.6f %.6f\n",
-                             opts.snow_divt, opts.snow_ati_wt, opts.snow_nrg_ratio,
-                             opts.snow_elev, opts.snow_lat, opts.snow_dtlong,
-                             opts.snow_min_melt, opts.snow_max_melt);
-            } else {
-                std::fprintf(f,"SNOWMELT     %.2f %.4f %.4f %.4f %.6f %.6f %.4f\n",
-                             opts.snow_divt, opts.snow_ati_wt, opts.snow_nrg_ratio,
-                             opts.snow_lat, opts.snow_min_melt, opts.snow_max_melt,
-                             opts.snow_elev);
-            }
+            // Legacy form: SNOWMELT Stemp ATIwt RNM Elev Lat DTLong (minutes).
+            // The v6-only minMelt/maxMelt ride as tokens 7-8 only when set
+            // (legacy ignores extra tokens; the solver does not use them).
+            std::fprintf(f,"SNOWMELT     %.2f %.4f %.4f %.4f %.4f %.4f",
+                         opts.snow_divt, opts.snow_ati_wt, opts.snow_nrg_ratio,
+                         opts.snow_elev, opts.snow_lat, opts.snow_dtlong);
+            if (opts.snow_min_melt != 0.0 || opts.snow_max_melt != 0.0)
+                std::fprintf(f," %.6f %.6f", opts.snow_min_melt, opts.snow_max_melt);
+            std::fprintf(f,"\n");
 
             std::fprintf(f,"ADC          IMPERVIOUS");
             for (int i = 0; i < 10; ++i)

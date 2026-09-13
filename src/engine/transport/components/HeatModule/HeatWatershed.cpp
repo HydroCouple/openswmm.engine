@@ -310,12 +310,8 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
                 (out_den > kTinyVol) ? out_num / out_den : t_rain;
     }
 
-    // Per-step rate accumulator, like node_temp_vol_in: zero once consumed
-    // so the next assembly starts clean.
-    std::fill(hs.subcatch_runon_temp_vol_in.begin(),
-              hs.subcatch_runon_temp_vol_in.end(), 0.0);
-    std::fill(hs.subcatch_runon_temp_rate.begin(),
-              hs.subcatch_runon_temp_rate.end(), 0.0);
+    // The run-on accumulators are zeroed by SWMMEngine::assembleRunon at the
+    // start of the next runoff step, beside the flow they describe.
 }
 
 }  // namespace openswmm::transport

@@ -176,10 +176,8 @@ void routeSubcatchmentAge(SimulationContext& ctx,
                 (out_den > kTinyVol) ? out_num / out_den : a_rain;
     }
 
-    // The run-on accumulator is a per-step rate, like node_age_vol_in:
-    // zero it once consumed so the next assembly starts clean.
-    std::fill(ws.subcatch_runon_age_vol_in.begin(),
-              ws.subcatch_runon_age_vol_in.end(), 0.0);
+    // The run-on accumulator is zeroed by SWMMEngine::assembleRunon at the
+    // start of the next runoff step, beside the flow it describes.
 }
 
 }  // namespace openswmm::transport

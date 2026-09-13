@@ -176,7 +176,8 @@ double grnampt_getInfil(GreenAmptState& state, double precip, double depth, doub
  * @param dt      Timestep (seconds).
  * @returns Infiltration rate (ft/sec).
  */
-double curvenum_getInfil(CurveNumState& state, double precip, double depth, double dt);
+double curvenum_getInfil(CurveNumState& state, double precip, double depth, double dt,
+                         double recovery_factor = 1.0);
 
 /**
  * @brief Compute constant-rate infiltration, bounded by available water.

@@ -463,6 +463,7 @@ private:
     // (routing.c:703) and the report-instant runoff weight (output.c) must be
     // formed from MILLISECOND quantities to round identically to legacy.
     double old_runoff_ms_ = 0.0;    ///< legacy OldRunoffTime (msec)
+    double prev_runoff_step_sec_ = 0.0;  ///< span of the runoff step just completed (legacy oldRunoffStep)
     double new_runoff_ms_ = 0.0;    ///< legacy NewRunoffTime (msec)
     double new_rule_time_ms_ = 0.0; ///< legacy NewRuleTime (msec, routing.c:58)
 
@@ -479,6 +480,7 @@ private:
     // RDII, iface into Node.newLatFlow. Pre-summing per node and adding in a
     // different source order rounds differently (1-ULP lat-flow drift).
     std::vector<double> wet_q_interp_;  ///< per-subcatch interpolated runoff (cfs; NOT runon — it is already inside runoff[])
+    std::vector<double> lid_drain_q_interp_; ///< per-node interpolated LID drain inflow this routing step (cfs; legacy lid_addDrainInflow)
     std::vector<double> gw_q_interp_;   ///< per-subcatch interpolated GW flow (cfs)
     std::vector<int>    gw_q_node_;     ///< receiving node for gw_q_interp_ (-1 = skip)
 
@@ -653,6 +655,7 @@ private:
      * @param has_snow     True if any subcatchment has snow depth > 0.
      * @returns Runoff timestep in seconds.
      */
+    void setNextEvapDate(double the_date) noexcept;   ///< legacy climate.c setNextEvapDate
     double computeRunoffTimestep(double abs_time, bool is_raining,
                                  bool has_runoff, bool has_snow) noexcept;
 
@@ -686,9 +689,11 @@ private:
      *
      * @param dt_routing  Routing timestep (seconds).
      */
-    /** @brief Assemble subcatch-to-subcatch and outfall runon into subcatches.runon_inflow[].
-     *  @param dt_runoff  Runoff timestep (sec) — used to convert outfall_runon_vol to CFS. */
-    void assembleRunon(double dt_runoff) noexcept;
+    /** @brief Assemble the run-on for the runoff step about to be taken —
+     *  outfall return (over the previous step's span), upstream runoff and
+     *  LID drains — into subcatches.runon_rate[] (ft/s, legacy Subcatch.runon)
+     *  and runon_inflow[] (CFS). Legacy runoff.c:247-253 order. */
+    void assembleRunon() noexcept;
 
     /** @brief Pre-compute GW surface water head and available node flow from routing state. */
     void assembleGWCoupling(double dt_runoff) noexcept;

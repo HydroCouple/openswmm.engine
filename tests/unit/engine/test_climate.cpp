@@ -125,14 +125,17 @@ TEST(DailyClimate, TemperatureMethodUsesHargreaves) {
 }
 
 TEST(DailyClimate, MonthlyAdjustmentApplied) {
+    // Legacy setEvap: Evap.rate += Adjust.evap[mon] — the [ADJUSTMENTS]
+    // EVAP row is a rate ADDED to the source (already in ft/s here), not a
+    // factor.
     ClimateState state;
     state.evap_method = EvapMethod::CONSTANT;
     state.evap_rate = 1e-6;
-    state.adjust_evap[3] = 0.5;  // April: halve evaporation
+    state.adjust_evap[3] = 0.5e-6;  // April: +0.5e-6 ft/s
 
     updateDailyClimate(state, 100, 3);
 
-    EXPECT_NEAR(state.evap_rate, 0.5e-6, 1e-12);
+    EXPECT_NEAR(state.evap_rate, 1.5e-6, 1e-12);
 }
 
 TEST(DailyClimate, SaturationVaporPressureComputed) {
@@ -502,31 +505,33 @@ TEST(ClimateFileReader, DetectsGHCNDFormat) {
 // Adjustment factor application tests
 // ============================================================================
 
-TEST(DailyClimate, EvapAdjustmentMultiplies) {
+TEST(DailyClimate, EvapAdjustmentAdds) {
+    // Legacy climate.c setEvap: Evap.rate += Adjust.evap[mon-1].
     ClimateState state;
     state.evap_method = EvapMethod::MONTHLY;
     state.monthly_evap[5] = 0.3;     // June: 0.3 in/day
-    state.adjust_evap[5]  = 0.75;    // Reduce to 75%
+    state.adjust_evap[5]  = -2.0e-7; // ft/s, subtracted from the rate
 
     updateDailyClimate(state, 170, 5);
     double adjusted = state.evap_rate;
 
-    state.adjust_evap[5] = 1.0;
+    state.adjust_evap[5] = 0.0;
     updateDailyClimate(state, 170, 5);
     double unadjusted = state.evap_rate;
 
-    EXPECT_NEAR(adjusted / unadjusted, 0.75, 1e-10)
-        << "Evap adjustment should multiply the rate by the factor";
+    EXPECT_NEAR(adjusted - unadjusted, -2.0e-7, 1e-16)
+        << "Evap adjustment should add to the rate";
 }
 
-TEST(DailyClimate, EvapAdjustmentZeroKillsRate) {
+TEST(DailyClimate, EvapAdjustmentZeroLeavesRate) {
     ClimateState state;
     state.evap_method = EvapMethod::MONTHLY;
     state.monthly_evap[0] = 0.1;
-    state.adjust_evap[0]  = 0.0;
+    state.adjust_evap[0]  = 0.0;     // legacy default: no adjustment
 
     updateDailyClimate(state, 15, 0);
-    EXPECT_DOUBLE_EQ(state.evap_rate, 0.0);
+    EXPECT_GT(state.evap_rate, 0.0);
+    EXPECT_NEAR(state.evap_rate, 0.1 / state.evaprate_ucf, 1e-15);
 }
 
 TEST(DailyClimate, GammaMatchesLegacyFormula) {

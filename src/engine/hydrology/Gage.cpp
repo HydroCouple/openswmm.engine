@@ -79,22 +79,19 @@ PrecipSplit splitPrecip(const SimulationContext& ctx, std::size_t sub) {
     // downstream concern. With snowmelt ignored, ALL precip is treated as rain
     // regardless of temperature.
     const bool is_snowing = !ctx.options.ignore_snow_melt &&
-                            (ctx.climate_state.temperature <= ctx.options.snow_divt);
+                            (ctx.climate_state.temperature <= ctx.climate_state.snow_divt);
 
-    if (is_snowing) {
-        // snowfall = gage_intensity * SCF * subcatch snow scale
-        out.snowfall = intensity
-                     * ctx.gages.snow_factor[ug]
-                     * ctx.subcatches.snow_scale_factor[sub];
-    } else {
-        // rainfall = gage_intensity * subcatch rain scale
-        out.rainfall = intensity * ctx.subcatches.rain_scale_factor[sub];
-    }
-
-    // Convert to internal units (ft/sec), matching legacy's / UCF(RAINFALL).
+    // Legacy order: gage_getPrecip divides by UCF(RAINFALL) first
+    // (gage.c:524-526), then getNetPrecip applies the subcatchment's scale
+    // factor (subcatch.c:789-790).
     const double ucf_rain = ucf::UCF(ucf::RAINFALL, ctx.options);
-    out.rainfall /= ucf_rain;
-    out.snowfall /= ucf_rain;
+    if (is_snowing) {
+        out.snowfall = intensity * ctx.gages.snow_factor[ug] / ucf_rain;
+        out.snowfall *= ctx.subcatches.snow_scale_factor[sub];
+    } else {
+        out.rainfall = intensity / ucf_rain;
+        out.rainfall *= ctx.subcatches.rain_scale_factor[sub];
+    }
     return out;
 }
 

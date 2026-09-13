@@ -508,6 +508,13 @@ struct HeatState {
     /// know the interval the consumer will divide by.
     std::vector<double> subcatch_outfall_temp_vol;
 
+    /// LID underdrain water sent to a subcatchment: cfs x temperature,
+    /// accumulated when the units run and handed to the run-on assembly at
+    /// the start of the NEXT runoff step beside the drain's cfs
+    /// (subcatches.lid_drain_runon_cfs) — the run-on assembly is where every
+    /// contributor's flow and temperature are booked together.
+    std::vector<double> subcatch_lid_drain_temp_cfs;
+
     static constexpr int kNSubArea = static_cast<int>(HeatSubArea::COUNT_);
 
     void resize(int n_nodes, int n_links, double initial_temp) {
@@ -534,6 +541,7 @@ struct HeatState {
         subcatch_runon_temp_vol_in.assign(n, 0.0);
         subcatch_runon_temp_rate.assign(n, 0.0);
         subcatch_outfall_temp_vol.assign(n, 0.0);
+        subcatch_lid_drain_temp_cfs.assign(n, 0.0);
     }
 
     bool watershedSized(int n_subcatch) const noexcept {
