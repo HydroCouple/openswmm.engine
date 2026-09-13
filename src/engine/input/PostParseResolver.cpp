@@ -280,7 +280,12 @@ static void load_external_timeseries_files(SimulationContext& ctx, const std::st
         // remainder, whereas over-reserving cannot be given back.
         {
             std::error_code ec;
-            const auto bytes = std::filesystem::file_size(file_path, ec);
+            // utf8_path, not the implicit std::string -> path conversion: the
+            // open above already went through fopen_utf8, so a bare string
+            // here failed on a non-ASCII path and silently fell back to the
+            // 1024-row guess for a file we know the size of (issue #7).
+            const auto bytes =
+                std::filesystem::file_size(openswmm::io::utf8_path(file_path), ec);
             std::size_t rows = ec ? std::size_t{1024}
                                   : static_cast<std::size_t>(bytes) / 24u + 16u;
             rows = std::min<std::size_t>(rows, 2000000u);

@@ -34,6 +34,7 @@
 #include <string>
 #include <vector>
 
+#include "../../../core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "../../../core/SimulationContext.hpp"
 #include "../../../plugins/ProcessComponentRegistry.hpp"
 
@@ -181,13 +182,18 @@ void applyArdSections(SimulationContext& ctx,
                     // directory (component-file locality, like the config
                     // itself resolves against the .inp).
                     namespace fsys = std::filesystem;
-                    fsys::path p(toks[1]);
+                    // utf8_path/path_utf8, not fsys::path(std::string)/.string():
+                    // the token and the config's own path are UTF-8, and the
+                    // narrow forms decode/encode in the ANSI code page (#7).
+                    fsys::path p = openswmm::io::utf8_path(toks[1]);
                     if (p.is_relative()) {
                         const fsys::path base =
-                            fsys::path(config.source_path).parent_path();
+                            openswmm::io::utf8_path(config.source_path)
+                                .parent_path();
                         if (!base.empty()) p = base / p;
                     }
-                    ctx.ard_config.detailed_output_path = p.string();
+                    ctx.ard_config.detailed_output_path =
+                        openswmm::io::path_utf8(p);
                 } else {
                     errors.push_back(
                         "[TRANSPORT_OPTIONS] unknown key '" + toks[0] +
