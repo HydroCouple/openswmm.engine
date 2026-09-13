@@ -193,7 +193,16 @@ if(OPENSWMM_BUILD_UNIT_TESTS)
     # guards its own registration with `if(NOT TARGET ...)`.
     if(NOT TARGET bench_fv_closure)
         add_executable(bench_fv_closure ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/bench_fv_closure.cpp)
-        target_link_libraries(bench_fv_closure PRIVATE openswmm_engine)
+        # Same link rule as the unit tests, for the same reason: this TU
+        # includes src/engine/core/SWMMEngine.hpp and calls xsect::isOpen,
+        # xsect::setParams, link::translateShape, link::buildXSectParams and
+        # fv::buildGeometry, none of which are dllexported — the DLL is built
+        # with WINDOWS_EXPORT_ALL_SYMBOLS OFF, so on MSVC those are 8
+        # unresolved externals at link. parity_probe above can link
+        # openswmm_engine because it only touches the exported C API. Inside
+        # OPENSWMM_BUILD_UNIT_TESTS, so openswmm_engine_internal exists.
+        target_link_libraries(bench_fv_closure PRIVATE
+            $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>)
         target_include_directories(bench_fv_closure PRIVATE ${PROJECT_SOURCE_DIR}/include)
         if(OPENSWMM_FAST_XSECT_LOOKUP)
             target_compile_definitions(bench_fv_closure PRIVATE SWMM_XSECT_FAST_LOOKUP)
