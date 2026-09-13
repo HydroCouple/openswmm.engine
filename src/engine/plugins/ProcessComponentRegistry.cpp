@@ -122,11 +122,14 @@ std::string read_component_config(const std::string& path,
     out.sections.clear();
 
     namespace fs = std::filesystem;
-    fs::path p(path);
+    // utf8_path, not fs::path(std::string): the latter decodes in the native
+    // NARROW encoding on Windows (the ANSI code page), which is the issue #7
+    // bug one level up from the open call.
+    fs::path p = openswmm::io::utf8_path(path);
     if (p.is_relative() && !base_dir.empty()) p = fs::path(base_dir) / p;
     out.source_path = p.string();
 
-    std::ifstream in(openswmm::io::utf8_path(p));
+    std::ifstream in(p);
     if (!in.is_open())
         return "Process component config file not found or unreadable: '" +
                out.source_path + "'.";

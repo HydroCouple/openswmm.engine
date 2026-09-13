@@ -1545,7 +1545,7 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     {
         bool has_adj = false;
         for (int i = 0; i < 12; ++i) {
-            if (ctx.adjust_temp[i] != 0.0 || ctx.adjust_evap[i] != 1.0 ||
+            if (ctx.adjust_temp[i] != 0.0 || ctx.adjust_evap[i] != 0.0 ||
                 ctx.adjust_rain[i] != 1.0 || ctx.adjust_hydcon[i] != 1.0)
             { has_adj = true; break; }
         }
@@ -3095,13 +3095,13 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     bool replacing_different_r=false;
     {std::error_code rec;
     if(fsys::exists(dst_w,rec)&&!rec){
-    std::ifstream prev(openswmm::io::utf8_path(dst_w), std::ios::binary);
+    std::ifstream prev(dst_w, std::ios::binary);
     if(prev.is_open()){
     const std::string pstr((std::istreambuf_iterator<char>(prev)),
     std::istreambuf_iterator<char>());
     replacing_different_r=(pstr!=text);
     }}}
-    std::ofstream cf(openswmm::io::utf8_path(dst_w), std::ios::binary|std::ios::trunc);
+    std::ofstream cf(dst_w, std::ios::binary|std::ios::trunc);
     if(cf.is_open()){cf<<text;component_wrote=cf.good();cf.close();}
     if(component_wrote&&replacing_different_r&&warnings)warnings->push_back(
     "Saving this model replaced an existing, different '"+pc.config_path+
@@ -3129,7 +3129,7 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // reported nothing.
     bool replacing_different=false;
     if(fsys::exists(dst,ec)){
-    std::ifstream a(openswmm::io::utf8_path(src), std::ios::binary),b(dst,std::ios::binary);
+    std::ifstream a(src, std::ios::binary),b(dst,std::ios::binary);
     const std::string sa((std::istreambuf_iterator<char>(a)),
     std::istreambuf_iterator<char>());
     const std::string sb((std::istreambuf_iterator<char>(b)),
