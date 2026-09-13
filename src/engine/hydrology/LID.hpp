@@ -42,8 +42,11 @@
 #ifndef OPENSWMM_LID_HPP
 #define OPENSWMM_LID_HPP
 
+#include "Infiltration.hpp"
+#include <utility>
 #include <vector>
 #include <cstddef>
+#include <cstdint>
 
 namespace openswmm {
 
@@ -153,6 +156,8 @@ struct LIDGroupSoA {
     std::vector<double> surf_alpha;        ///< Surface Manning alpha = sqrt(slope)/n
     std::vector<double> surf_side_slope;   ///< Swale side slope (run/rise)
     std::vector<double> full_width;        ///< Full width for Manning's flow (ft)
+    std::vector<double> unit_area;         ///< ONE unit's area (ft2) — legacy lidUnit->area
+    std::vector<double> unit_width;        ///< ONE unit's width (ft) — legacy lidUnit->fullWidth
     std::vector<double> dry_time;          ///< Seconds since last rainfall
 
     // State variables (updated each step)
@@ -160,6 +165,20 @@ struct LIDGroupSoA {
     std::vector<double> soil_moist;    ///< Current soil moisture (0-porosity)
     std::vector<double> stor_depth;    ///< Current storage depth
     std::vector<double> pave_depth;    ///< Current pavement depth
+
+    // Legacy lidproc.c per-unit state the kernel needs beyond the layer
+    // depths (lid.c TLidUnit): the unit's own Green-Ampt infiltration
+    // state for the soil layer (soilInfil), the drain flow the previous
+    // step delivered (oldDrainFlow, the underdrain's hOpen/hClose
+    // hysteresis memory), and the process's canOverflow flag
+    // (validateLidProc: false for a roof disconnection and for a
+    // bio-cell / rain garden / trench / pavement / green roof whose surface
+    // has a Manning alpha).
+    std::vector<GreenAmptState> soil_infil;
+    std::vector<double> old_drain_flow;
+    std::vector<uint8_t> is_wet;           ///< legacy lidproc_saveResults isDry == FALSE this step (HasWetLids)
+    std::vector<uint8_t> can_overflow;
+    std::vector<double> drainmat_alpha;    ///< legacy drainMat.alpha = PHI / roughness * sqrt(surfSlope)
 
     // Outputs (per unit)
     std::vector<double> surface_runoff;
@@ -262,6 +281,29 @@ public:
     void execute(SimulationContext& ctx, double dt,
                  double rainfall, double evap_rate);
 
+    /// The runoff clock's OLD time (seconds), legacy OldRunoffTime — the
+    /// pavement clogging regeneration test reads it (lidproc.c
+    /// getPavementPermRate). Set by the engine before each execute().
+    void setRunoffTime(double old_runoff_sec) { old_runoff_sec_ = old_runoff_sec; }
+
+    /// Per-subcatchment native-soil infiltration inputs for this runoff step
+    /// (legacy findNativeInfil: NativeInfil and MaxNativeInfil, ft/s). Set by
+    /// the engine before each execute(); empty means 0 and unlimited.
+    void setNativeInfil(std::vector<double> native, std::vector<double> max_native) {
+        native_infil_ = std::move(native); max_native_infil_ = std::move(max_native);
+    }
+
+    /// Per-subcatchment infiltration factor (the [ADJUSTMENTS] / pattern
+    /// multiplier the runoff solver applied this step) and the evaporation
+    /// recovery factor, for the units' own Green-Ampt states.
+    void setInfilFactors(std::vector<double> infil_factor, double recovery_factor) {
+        infil_factor_ = std::move(infil_factor); recovery_factor_ = recovery_factor;
+    }
+
+    /// Legacy HasWetLids: any unit was not dry in the last execute()
+    /// (runoff.c keeps the WET step while it holds).
+    bool anyWet() const;
+
     /// Batch bio-cell flux rates — VECTORISABLE
     static void batchBioCellFlux(LIDGroupSoA& g, double rainfall,
                                   const double* evap_rate, double dt);
@@ -297,6 +339,11 @@ public:
 
 private:
     std::vector<LIDGroupSoA> groups_;
+    double old_runoff_sec_ = 0.0;
+    double recovery_factor_ = 1.0;
+    std::vector<double> native_infil_;
+    std::vector<double> max_native_infil_;
+    std::vector<double> infil_factor_;
 };
 
 } // namespace lid

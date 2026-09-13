@@ -751,7 +751,7 @@ struct SimulationContext {
      * @see Legacy: Adjust struct (temp[], evap[], rain[], hydcon[])
      */
     double adjust_temp[12]   = {0,0,0,0,0,0,0,0,0,0,0,0};
-    double adjust_evap[12]   = {1,1,1,1,1,1,1,1,1,1,1,1};
+    double adjust_evap[12]   = {0,0,0,0,0,0,0,0,0,0,0,0};   ///< [ADJUSTMENTS] EVAP: ADDED to the evaporation rate (in/day or mm/day), legacy Adjust.evap
     double adjust_rain[12]   = {1,1,1,1,1,1,1,1,1,1,1,1};
     double adjust_hydcon[12] = {1,1,1,1,1,1,1,1,1,1,1,1};
 
@@ -1771,7 +1771,7 @@ struct SimulationContext {
         user_flags.clear();
         events.clear();
         std::fill(std::begin(adjust_temp), std::end(adjust_temp), 0.0);
-        std::fill(std::begin(adjust_evap), std::end(adjust_evap), 1.0);
+        std::fill(std::begin(adjust_evap), std::end(adjust_evap), 0.0);
         std::fill(std::begin(adjust_rain), std::end(adjust_rain), 1.0);
         std::fill(std::begin(adjust_hydcon), std::end(adjust_hydcon), 1.0);
         subcatch_n_perv_pattern.clear();

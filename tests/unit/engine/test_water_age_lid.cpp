@@ -119,11 +119,16 @@ void write_deck(const char* path, const std::string& lid_block,
       << "FLOW_UNITS CFS\nINFILTRATION HORTON\nFLOW_ROUTING DYNWAVE\n"
       << "WATER_AGE ON\n"
       << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
-      << "END_DATE 01/01/2026\nEND_TIME 03:00:00\n"
+      // 6 h of steady rain: the closed-form gates below compare a layer's
+      // age against its V/Q, which is its mean age only at steady state.
+      // With the legacy lidproc kernel the bio-cell surface (its own
+      // Green-Ampt soil infiltration) is still filling at 3 h and the
+      // chained estimate overshot by 20 %; at 6 h every layer has settled.
+      << "END_DATE 01/01/2026\nEND_TIME 06:00:00\n"
       << "REPORT_STEP 00:05:00\nWET_STEP 00:01:00\nDRY_STEP 00:05:00\n"
       << "ROUTING_STEP 10\n\n"
       << "[RAINGAGES]\nRG INTENSITY 0:05 1.0 TIMESERIES STORM\n\n"
-      << "[TIMESERIES]\n" << rain_series(180, 5) << "\n"
+      << "[TIMESERIES]\n" << rain_series(360, 5) << "\n"
       << "[SUBCATCHMENTS]\nS1 RG J1 5 0 500 0.5 0\n\n"
       << "[SUBAREAS]\nS1 0.01 0.1 0.0 0.0 100 OUTLET\n\n"
       << "[INFILTRATION]\nS1 0.0 0.0 4.0 7.0 0\n\n"

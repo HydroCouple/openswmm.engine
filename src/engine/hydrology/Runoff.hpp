@@ -124,6 +124,15 @@ public:
                  double infil_factor = 1.0, double recovery_factor = 1.0,
                  int month = -1);
 
+    /// Legacy findNativeInfil for a subcatchment with no pervious non-LID
+    /// area: the native soil's rate for its own rain + runon (advances the
+    /// subcatchment's infiltration state, as legacy does).
+    double nativeInfilFullLid(SimulationContext& ctx, int i, double dt,
+                              double recovery_factor);
+
+    /// The InfilFactor the last execute() applied to subcatchment i.
+    double infilFactorUsed(int i) const { return infil_factor_used_[static_cast<std::size_t>(i)]; }
+
     const RunoffSoA& soa() const { return soa_; }
 
     // -----------------------------------------------------------------------
@@ -161,6 +170,12 @@ private:
 
     // Infiltration state (one per subcatchment)
     std::vector<InfilModel>     infil_models_;   ///< Per-subcatchment model type (BUG FIX: was a single shared field)
+    std::vector<double>         infil_factor_used_; ///< The InfilFactor applied to each subcatchment this step (pattern or global)
+
+    /// Legacy infil_getInfil: the model dispatch with the factors applied.
+    double infilGetInfil(SimulationContext& ctx, int i, double precip, double runon,
+                         double depth, double dt, double local_infil,
+                         double recovery_factor);
     std::vector<HortonState>    horton_states_;
     std::vector<GreenAmptState> grnampt_states_;
     std::vector<CurveNumState>  curvenum_states_;

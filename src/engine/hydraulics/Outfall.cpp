@@ -120,6 +120,30 @@ static double getYnorm(const XSectParams& xs, double beta, double q_max,
     return y;
 }
 
+// Legacy Link.offset1 / offset2 for any link type: a conduit's two invert
+// offsets; a weir's / outlet's crest and an orifice's offset, which legacy
+// stores in BOTH offset fields (link.c:369-391) while this engine keeps the
+// weir/outlet crest in its side table and the orifice offset in offset1;
+// a pump has none.
+static double legacyOffset(const SimulationContext& ctx, std::size_t uk, bool downstream) {
+    switch (ctx.links.type[uk]) {
+        case LinkType::CONDUIT:
+            return downstream ? ctx.links.offset2[uk] : ctx.links.offset1[uk];
+        case LinkType::ORIFICE:
+            return ctx.links.offset1[uk];
+        case LinkType::WEIR: {
+            const int wr = ctx.link_subtypes.weir_row(static_cast<int>(uk));
+            return (wr >= 0) ? ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)] : 0.0;
+        }
+        case LinkType::OUTLET: {
+            const int olr = ctx.link_subtypes.outlet_row(static_cast<int>(uk));
+            return (olr >= 0) ? ctx.link_subtypes.outlets.crest_height[static_cast<std::size_t>(olr)] : 0.0;
+        }
+        default:
+            return 0.0;
+    }
+}
+
 void buildOutfallLinkMap(SimulationContext& ctx) {
     auto& nodes = ctx.nodes;
     auto& outs  = ctx.node_subtypes.outfalls;   // relational side-table (authoritative)
@@ -129,28 +153,30 @@ void buildOutfallLinkMap(SimulationContext& ctx) {
     outs.link_idx.assign(static_cast<std::size_t>(outs.count()), -1);
     outs.link_offset.assign(static_cast<std::size_t>(outs.count()), 0.0);
 
-    // Single pass over links; first matching conduit wins (matches the
-    // first-break legacy behaviour of the inner scan).
+    // Legacy link_setOutfallDepth (link.c:731) is called for EVERY link, of
+    // any type, in link order, and each call sets the depth of ONE end: the
+    // downstream node if it is an outfall, else the upstream node if it is.
+    // So a link with an outfall at both ends sets only its downstream one —
+    // lid-single-outfall-upstream's conduit runs FIXED outfall 1 (stage 1)
+    // to FIXED outfall 3, and legacy leaves outfall 1 at depth 0 — an
+    // outfall no link names is never set at all, and when several links
+    // name the same outfall the LAST one's call stands. The former map took
+    // the first CONDUIT at either end independently.
     for (int k = 0; k < n_links; ++k) {
         auto uk = static_cast<std::size_t>(k);
-        if (ctx.links.type[uk] != LinkType::CONDUIT) continue;
-
         int n1 = ctx.links.node1[uk];
         int n2 = ctx.links.node2[uk];
-
+        int n = -1;
+        double z = 0.0;
         if (n2 >= 0 && nodes.type[static_cast<std::size_t>(n2)] == NodeType::OUTFALL) {
-            const int r = ctx.node_subtypes.outfall_row(n2);
-            if (r >= 0 && outs.link_idx[static_cast<std::size_t>(r)] < 0) {
-                outs.link_idx[static_cast<std::size_t>(r)]    = k;
-                outs.link_offset[static_cast<std::size_t>(r)] = ctx.links.offset2[uk];
-            }
-        }
-        if (n1 >= 0 && nodes.type[static_cast<std::size_t>(n1)] == NodeType::OUTFALL) {
-            const int r = ctx.node_subtypes.outfall_row(n1);
-            if (r >= 0 && outs.link_idx[static_cast<std::size_t>(r)] < 0) {
-                outs.link_idx[static_cast<std::size_t>(r)]    = k;
-                outs.link_offset[static_cast<std::size_t>(r)] = ctx.links.offset1[uk];
-            }
+            n = n2; z = legacyOffset(ctx, uk, true);
+        } else if (n1 >= 0 && nodes.type[static_cast<std::size_t>(n1)] == NodeType::OUTFALL) {
+            n = n1; z = legacyOffset(ctx, uk, false);
+        } else continue;
+        const int r = ctx.node_subtypes.outfall_row(n);
+        if (r >= 0) {
+            outs.link_idx[static_cast<std::size_t>(r)]    = k;
+            outs.link_offset[static_cast<std::size_t>(r)] = z;
         }
     }
 }
@@ -204,27 +230,29 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
 
         double depth = 0.0;
 
-        // Cached outfall → conduit mapping (populated once at init).
-        // Falls back to a scan only if the cache is empty (e.g. in unit
-        // tests that skip Router::init).
+        // Cached outfall → link mapping (buildOutfallLinkMap, legacy
+        // link_setOutfallDepth's per-link choice of end). An outfall no link
+        // names is never set by legacy: leave its depth alone.
         const OutfallStatic ost = outfallStatic(nodes, ctx.node_subtypes, uj);
         int link_idx = ost.link_idx;
         double z = ost.link_offset;
-        if (link_idx < 0) {
+        if (link_idx < 0 && ctx.node_subtypes.outfall_row(j) < 0) {
+            // No side-table (unit tests that skip hydraulics init): the same
+            // per-link choice, scanned here.
             for (int k = 0; k < ctx.n_links(); ++k) {
                 auto uk = static_cast<std::size_t>(k);
-                if (ctx.links.type[uk] != LinkType::CONDUIT) continue;
-                if (ctx.links.node2[uk] == j) {
-                    link_idx = k; z = ctx.links.offset2[uk]; break;
-                } else if (ctx.links.node1[uk] == j) {
-                    link_idx = k; z = ctx.links.offset1[uk]; break;
-                }
+                const int n2 = ctx.links.node2[uk], n1 = ctx.links.node1[uk];
+                if (n2 == j) { link_idx = k; z = legacyOffset(ctx, uk, true); }
+                else if (n2 >= 0 && nodes.type[static_cast<std::size_t>(n2)] == NodeType::OUTFALL) continue;
+                else if (n1 == j) { link_idx = k; z = legacyOffset(ctx, uk, false); }
             }
         }
+        if (link_idx < 0) return;
 
-        // Compute normal and critical depths for the connecting conduit
+        // Normal and critical depths for the current flow — conduits only
+        // (legacy: yNorm = yCrit = 0 for any other link type).
         double yNorm = 0.0, yCrit = 0.0;
-        if (link_idx >= 0) {
+        if (ctx.links.type[static_cast<std::size_t>(link_idx)] == LinkType::CONDUIT) {
             auto uk = static_cast<std::size_t>(link_idx);
             const auto& CD = ctx.link_subtypes.conduits;
             const int cr = ctx.link_subtypes.conduit_row(link_idx);
@@ -415,8 +443,12 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
     // results stay bit-for-bit identical. Falls back to a full node scan when
     // the side-tables are not built (e.g. unit tests that skip hydraulics init).
     // See docs/relational/RELATIONAL_NODE_REFACTOR_PLAN.md (Phase 2).
-    const auto& outs = ctx.node_subtypes.outfalls;
+    auto& outs = ctx.node_subtypes.outfalls;
     if (static_cast<int>(ctx.node_subtypes.subtype_row.size()) == ctx.n_nodes()) {
+        // The map is built at Router::init; a caller that skipped it (unit
+        // tests driving the solver directly) gets it built here.
+        if (static_cast<int>(outs.link_idx.size()) != outs.count())
+            buildOutfallLinkMap(ctx);
         for (int r = 0; r < outs.count(); ++r)
             process_outfall(outs.node_idx[static_cast<std::size_t>(r)]);
     } else {

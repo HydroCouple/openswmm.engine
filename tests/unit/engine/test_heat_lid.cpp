@@ -631,17 +631,20 @@ TEST(HeatLidTest, ATargetlessUnderdrainReachesTheOutletNodePaired) {
     const double q_dr = gsoa.drain_flow[0] * gsoa.area[0];   // cfs
     ASSERT_GT(q_dr, 0.0) << "the underdrain never flowed";
 
-    // (1) WATER: the drain rides the node's external-inflow channel — the
-    //     one legacy uses for drain-to-node — and this deck has no other
-    //     external inflow at all, so the routing ledger's external term is
-    //     the drain's delivered volume. (ext_inflow itself is a per-step
-    //     accumulator, zeroed once routing consumes it.)
+    // (1) WATER: the drain reaches the node through its own channel and is
+    //     booked as WET-WEATHER inflow, the ledger legacy lid_addDrainInflow
+    //     uses (massbal_addInflowFlow(WET_WEATHER_INFLOW, q)); this deck has
+    //     no subcatchment runoff reaching a node otherwise (the LID covers
+    //     it), so the wet-weather term is the drain's delivered volume.
+    //     (lid_drain_inflow itself is a per-step accumulator.)
     EXPECT_NEAR(ctx.nodes.lid_drain_inflow[0], q_dr, 1.0e-9 * q_dr)
         << "the drain's water channel at J1 does not carry the drain rate";
-    EXPECT_GT(ctx.mass_balance.routing_external, 0.0)
-        << "no external inflow reached the network on a deck whose only "
-           "external source is the underdrain — the drain is not reaching "
-           "its outlet node";
+    EXPECT_GT(ctx.mass_balance.routing_wet_weather, 0.0)
+        << "no wet-weather inflow reached the network on a deck whose only "
+           "source is the underdrain — the drain is not reaching its outlet "
+           "node";
+    EXPECT_DOUBLE_EQ(ctx.mass_balance.routing_external, 0.0)
+        << "legacy books an underdrain as wet-weather inflow, not external";
 
     // (2) TEMPERATURE: paired at the storage layer's temperature, as q·T.
     const double t_stor = st.drain_value[
@@ -735,7 +738,12 @@ TEST(HeatLidTest, ADrainedLayerStillConductsAndIsNotResetByThePolicy) {
         o.end_min = end_min;
         return o;
     };
-    SWMM_Engine e = run(build(180));
+    // 12 h, not 3: with the legacy lidproc kernel the soil percolates down
+    // to field capacity over about ten hours (getSoilPercRate's exponential
+    // tail), and the storage holds that trickle at a tiny equilibrium depth
+    // (1.7e-4 ft at 3 h, 8.7e-5 ft at 6 h, dry by 12 h) — the dry-but-
+    // present state SETUP 2 asserts only exists once the soil has settled.
+    SWMM_Engine e = run(build(720));
     ASSERT_NE(e, nullptr);
     const auto& ctx  = as_cpp_engine(e).context();
     const auto& st   = ctx.lid_layer_state;

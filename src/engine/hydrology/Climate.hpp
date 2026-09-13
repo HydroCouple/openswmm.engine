@@ -107,6 +107,7 @@ struct ClimateState {
 
     // Site elevation for psychrometric constant (matching legacy Temp.elev)
     double elev         = 0.0;   ///< Site elevation above sea level (ft)
+    double snow_divt    = 34.0;  ///< Rain/snow dividing temperature (degF), legacy Snow.snotmp
 
     // Monthly evaporation table (for MONTHLY method)
     double monthly_evap[12] = {};
@@ -117,7 +118,16 @@ struct ClimateState {
     double evaprate_ucf = 1036800.0;
 
     // Monthly adjustment factors
-    double adjust_evap[12]   = {1,1,1,1,1,1,1,1,1,1,1,1};
+    double adjust_evap[12]   = {0,0,0,0,0,0,0,0,0,0,0,0};   ///< ADDED to the rate (ft/s), legacy Adjust.evap /= UCF(EVAPRATE)
+    // Legacy climate.c NextEvapDate / NextEvapRate: the date the evaporation
+    // source next changes (every type — a year ahead for CONSTANT, the first
+    // of next month for MONTHLY, the next series entry for TIMESERIES, the
+    // next day for a climate file) and the rate that entry carries. A
+    // time-series evaporation is STEP-WISE: the rate holds until the date
+    // is reached, and the runoff step never crosses it (runoff_getTimeStep).
+    double next_evap_date = 0.0;
+    double next_evap_rate = 0.0;   ///< user units
+    int    evap_ts_pos    = -1;    ///< index of the last series entry read (legacy table_getNextEntry cursor)
     double adjust_temp[12]   = {0,0,0,0,0,0,0,0,0,0,0,0};
     double adjust_rain[12]   = {1,1,1,1,1,1,1,1,1,1,1,1};
     double adjust_hydcon[12] = {1,1,1,1,1,1,1,1,1,1,1,1}; ///< Infiltration conductivity multipliers

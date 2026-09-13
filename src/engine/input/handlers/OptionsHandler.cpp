@@ -144,9 +144,13 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
                 opt.infiltration = InfiltrationModel::HORTON;
             else if (iv == "MOD_HORTON" || iv == "MODIFIED_HORTON")
                 opt.infiltration = InfiltrationModel::MOD_HORTON;
-            else if (iv == "GREEN_AMPT"     || iv == "MODIFIED_GREEN_AMPT")
+            else if (iv == "GREEN_AMPT")
                 opt.infiltration = InfiltrationModel::GREEN_AMPT;
-            else if (iv == "MOD_GREEN_AMPT")
+            // Legacy InfilModelWords spells it MODIFIED_GREEN_AMPT (text.h
+            // w_MOD_GREEN_AMPT); MOD_GREEN_AMPT is this engine's own alias.
+            // The deck keyword was mapped to plain GREEN_AMPT — 11 corpus
+            // decks ran the wrong model (F reset between events).
+            else if (iv == "MOD_GREEN_AMPT" || iv == "MODIFIED_GREEN_AMPT")
                 opt.infiltration = InfiltrationModel::MOD_GREEN_AMPT;
             else if (iv == "CURVE_NUMBER")
                 opt.infiltration = InfiltrationModel::CURVE_NUMBER;

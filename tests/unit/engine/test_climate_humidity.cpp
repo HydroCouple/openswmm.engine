@@ -275,10 +275,11 @@ TEST(ClimateHumidity, DewPointConvertsToRelativeHumidityUS) {
 }
 
 TEST(ClimateHumidity, DewPointConvertsToRelativeHumiditySI) {
-    // SI deck: dew point authored in degC. Air temperature from the series
-    // is 50 (held in degF internally, like every other climate temperature).
+    // SI deck: dew point authored in degC, and so is the temperature series
+    // (legacy setTemp converts an SI TSERIES_TEMP value to degF: 10 degC
+    // -> 50 degF internally, like every other climate temperature).
     const std::string inp = "_rh_run_td_si.inp";
-    write_file(inp, deck("HUMIDITY DEWPOINT 4.0", "CMS"));
+    write_file(inp, deck("HUMIDITY DEWPOINT 4.0", "CMS", "10.0"));
     SWMM_Engine e = run_and_hold(inp);
     ASSERT_NE(e, nullptr);
     const double expected = 100.0 * es_kpa(4.0) / es_kpa(10.0);

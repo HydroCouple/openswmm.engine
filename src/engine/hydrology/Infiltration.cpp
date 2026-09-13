@@ -430,9 +430,13 @@ void curvenum_init(CurveNumState& state, double CN, double regen_days) {
     state.Tmax = (state.regen > 0.0) ? 0.06 / state.regen : 1.0e10;
 }
 
-double curvenum_getInfil(CurveNumState& state, double precip, double depth, double dt) {
-    // Matches legacy infil.c::curvenum_getInfil() exactly
-    constexpr double MIN_TOTAL_DEPTH = 0.0001; // ft
+double curvenum_getInfil(CurveNumState& state, double precip, double depth, double dt,
+                         double recovery_factor) {
+    // Matches legacy infil.c::curvenum_getInfil() exactly. MIN_TOTAL_DEPTH is
+    // legacy consts.h's 0.05 in (a former 0.0001 ft here kept the ponded
+    // water of a drying pervious area infiltrating long after legacy had
+    // stopped — 77-h-h-elements SB1).
+    constexpr double MIN_TOTAL_DEPTH = 0.004167; // ft
     double fa = precip + depth / dt;  // max available rate
     double f1 = 0.0;
 
@@ -487,9 +491,10 @@ double curvenum_getInfil(CurveNumState& state, double precip, double depth, doub
     }
     // --- Otherwise regenerate capacity ---
     else {
-        // Legacy line 1022: S += regen * Smax * tstep * recoveryFactor
-        // recoveryFactor is applied at call-site
-        state.S += state.regen * state.Smax * dt;
+        // Legacy: S += regen * Smax * tstep * Evap.recoveryFactor, in that
+        // order (the factor was folded into `regen` by the caller, a
+        // different rounding).
+        state.S += state.regen * state.Smax * dt * recovery_factor;
         state.S = std::min(state.S, state.Smax);
     }
 

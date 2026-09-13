@@ -980,11 +980,16 @@ int SWMMEngine::initialize() noexcept {
     // than via outfall::setAllOutfallDepths because that routine's
     // outfall→conduit cache is not populated until init_modules (and it gives
     // FREE/NORMAL outfalls zero depth at zero initial flow anyway).
+    // Legacy flowrout_init calls link_setOutfallDepth per LINK, so only an
+    // outfall some link names in that per-link choice of end gets a depth
+    // (buildOutfallLinkMap); the others stay at 0.
+    outfall::buildOutfallLinkMap(ctx_);
     for (int oi = 0; oi < ctx_.n_nodes(); ++oi) {
         auto uo = static_cast<std::size_t>(oi);
         if (ctx_.nodes.type[uo] != NodeType::OUTFALL) continue;
         const int r = ctx_.node_subtypes.outfall_row(oi);
         if (r >= 0 &&
+            ctx_.node_subtypes.outfalls.link_idx[static_cast<std::size_t>(r)] >= 0 &&
             ctx_.node_subtypes.outfalls.bc_type[static_cast<std::size_t>(r)] == OutfallType::FIXED) {
             double stage = ctx_.node_subtypes.outfalls.param[static_cast<std::size_t>(r)];  // internal ft
             ctx_.nodes.depth[uo] =
@@ -1628,11 +1633,36 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                 ctx_.subcatches.lid_drain_flow[ui];
             ctx_.subcatches.lid_drain_flow[ui] = 0.0;
         }
+        // legacy lid_setOldGroupState: each unit's oldDrainFlow = newDrainFlow
+        // — the underdrain hysteresis memory the kernel reads this step and
+        // the "old" end of the routing-step drain interpolation.
+        for (int t = 0; t < lid_.numGroups(); ++t) {
+            auto& g = lid_.group(t);
+            for (int u = 0; u < g.count; ++u) {
+                auto uu = static_cast<std::size_t>(u);
+                g.old_drain_flow[uu] = g.drain_flow[uu];
+            }
+        }
 
-        // Advance runoff clock
+        // Advance runoff clock. legacy runoff.c:177 forms the PREVIOUS step's
+        // span first; runoff_getOutfallRunon divides the routed outfall
+        // volume by it (not by the step about to be taken).
+        prev_runoff_step_sec_ = (new_runoff_ms_ - old_runoff_ms_) / 1000.0;
         old_runoff_time_ = new_runoff_time_;
         old_runoff_ms_   = new_runoff_ms_;   // legacy runoff.c:229
-        double abs_time = datetime::addSeconds(ctx_.options.start_date, old_runoff_time_);
+        // Run-on for THIS step (legacy runoff.c:247-253: outfall runon, then
+        // upstream runoff and LID drains, right after the old-state roll).
+        // It used to be assembled at the END of the previous step, so the
+        // outfall volume routed during the routing steps since then reached
+        // the subcatchment one runoff step late.
+        assembleRunon();
+        // legacy runoff.c:180 currentDate = getDateTime(NewRunoffTime) =
+        // StartDateTime + (elapsedMsec + 1)/1000 s (swmm5.c getDateTime):
+        // the step's start on the ms clock plus one millisecond. The
+        // interpolated climate lookups (temperature series) see that
+        // millisecond.
+        double abs_time = datetime::addSeconds(ctx_.options.start_date,
+                                               (old_runoff_ms_ + 1.0) / 1000.0);
 
         // Gap #26: clear LID drain quality node accumulators each runoff step.
         // They are repopulated in A6b and consumed each routing step by addWetWeatherLoads().
@@ -1679,6 +1709,12 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             // Temperature from timeseries
             auto& tbl = ctx_.tables.tables[static_cast<std::size_t>(ctx_.climate_state.temp_ts_index)];
             ctx_.climate_state.temperature_src = table_lookup_cursor(tbl, abs_time);
+            // legacy setTemp: an SI deck's series is degC, converted to the
+            // degF the engine runs on before the (already scaled) monthly
+            // adjustment is added.
+            if (unit_sys == 1)
+                ctx_.climate_state.temperature_src =
+                    (9. / 5.) * ctx_.climate_state.temperature_src + 32.0;
             ctx_.climate_state.temperature_src += ctx_.climate_state.adjust_temp[mon];
         } else if (ctx_.options.temp_source == 2 && climate_file_.isOpen()) {
             // Temperature from climate file (Gap #9: sub-daily sinusoidal interp)
@@ -1737,13 +1773,18 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             snow_.setMeltCoeffs(doy);
         }
 
-        // A2b. Evaporation from timeseries or climate file
+        // A2b. Evaporation from timeseries or climate file (legacy setEvap).
+        //      TIMESERIES is step-wise: the rate changes only when the date
+        //      reaches NextEvapDate (climate.c setEvap / setNextEvapDate) —
+        //      it was interpolated between entries before, which put a
+        //      ramp where legacy has a step (w-wo-pp: 0.417 in/day reported
+        //      against legacy's 0.5 an hour before the series drops to 0).
         if (ctx_.climate_state.evap_method == climate::EvapMethod::TIMESERIES &&
             ctx_.climate_state.evap_ts_index >= 0) {
-            auto& tbl = ctx_.tables.tables[static_cast<std::size_t>(ctx_.climate_state.evap_ts_index)];
-            double evap_user = table_lookup_cursor(tbl, abs_time);
-            ctx_.climate_state.evap_rate = evap_user / ucf::Ucf[ucf::EVAPRATE][unit_sys];
-            ctx_.climate_state.evap_rate *= ctx_.climate_state.adjust_evap[mon];
+            if (abs_time >= ctx_.climate_state.next_evap_date)
+                ctx_.climate_state.evap_rate =
+                    ctx_.climate_state.next_evap_rate / ucf::Ucf[ucf::EVAPRATE][unit_sys];
+            ctx_.climate_state.evap_rate += ctx_.climate_state.adjust_evap[mon];
         }
         else if (ctx_.climate_state.evap_method == climate::EvapMethod::PAN &&
                  climate_file_.isOpen()) {
@@ -1753,9 +1794,13 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                 // rec.evap is in user units (in/day US, mm/day SI)
                 ctx_.climate_state.evap_rate = rec.evap / ucf::Ucf[ucf::EVAPRATE][unit_sys];
                 ctx_.climate_state.evap_rate *= ctx_.options.pan_coeff[mon];
-                ctx_.climate_state.evap_rate *= ctx_.climate_state.adjust_evap[mon];
+                ctx_.climate_state.evap_rate += ctx_.climate_state.adjust_evap[mon];
             }
         }
+        // legacy climate_setState ends by advancing NextEvapDate past the
+        // current date (every evaporation type); runoff_getTimeStep then
+        // clamps the runoff step so it never crosses it.
+        setNextEvapDate(abs_time);
 
         // A2b'. System-wide evaporation forcing — applied after all evap
         // sources and monthly adjustments so the prescription is final.
@@ -1766,7 +1811,10 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
 
         // A2c. Wind speed lookup
         if (ctx_.options.wind_type == 0) {
-            ctx_.climate_state.wind_speed_src = ctx_.options.wind_speed[mon];
+            // legacy setWind: Wind.ws = Wind.aws[mon-1] / UCF(WINDSPEED)
+            // (km/hr -> mph on an SI deck).
+            ctx_.climate_state.wind_speed_src = ctx_.options.wind_speed[mon]
+                / ucf::UCF(ucf::WINDSPEED, ctx_.options);
         } else if (ctx_.options.wind_type == 1 && climate_file_.isOpen()) {
             // Wind from climate file
             climate::DailyClimateRecord rec;
@@ -1941,11 +1989,16 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                 // Returns ft/sec.
                 gage::PrecipSplit p = gage::splitPrecip(ctx_, ui);
                 // Forcing channels resolve on top. effective_rainfall() takes
-                // user units, so convert out and back; the snowfall channel
-                // already stores ft/sec.
-                double rain_inhr = p.rainfall * ucf::Ucf[ucf::RAINFALL][0];
-                rain_inhr = ctx_.forcing.effective_rainfall(ui, rain_inhr);
-                snow_rain_[ui] = rain_inhr / ucf::Ucf[ucf::RAINFALL][0];
+                // user units, so convert out and back — only when a forcing
+                // is set, the round trip not being a floating-point identity;
+                // the snowfall channel already stores ft/sec.
+                snow_rain_[ui] = p.rainfall;
+                if (ui < ctx_.forcing.subcatch_rainfall_mode.size() &&
+                    ctx_.forcing.subcatch_rainfall_mode[ui] != ForcingMode::NONE) {
+                    double rain_inhr = p.rainfall * ucf::Ucf[ucf::RAINFALL][0];
+                    rain_inhr = ctx_.forcing.effective_rainfall(ui, rain_inhr);
+                    snow_rain_[ui] = rain_inhr / ucf::Ucf[ucf::RAINFALL][0];
+                }
                 snow_snow_[ui] = ctx_.forcing.effective_snowfall(ui, p.snowfall);
             }
 
@@ -1985,7 +2038,9 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
 
                 double fPlow   = soa.fArea[plow_idx];
                 double fImperv = soa.fArea[imperv_idx];
-                double fTotalI = fPlow + fImperv;
+                // legacy snow.c:570-575 divides the blend by the
+                // subcatchment's fracImperv (fPlow + fImperv up to an ulp).
+                double fTotalI = ctx_.subcatches.frac_imperv[ui];
 
                 double net_plow   = soa.imelt[plow_idx]   + rainfall_ft * (1.0 - soa.asc[plow_idx]);
                 double net_imperv = soa.imelt[imperv_idx] + rainfall_ft * (1.0 - soa.asc[imperv_idx]);
@@ -2179,19 +2234,27 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                 // the outlet runoff it is removing from.
                 if (captured_cfs > 0.0)
                     ctx_.subcatches.runoff[usc] -= captured_cfs;
-                // Legacy lid.c:1714-1718: when the LID occupies the full
-                // subcatchment (non-LID area snapped to zero), upstream and
-                // outfall runon flows onto the LID units — the runoff solver
-                // has no subarea left to receive it (issue #131).
-                if (rsoa.area[usc] <= 0.0 &&
-                    usc < ctx_.subcatches.total_lid_area_ft2.size() &&
-                    ctx_.subcatches.total_lid_area_ft2[usc] > 0.0) {
-                    double runon_q = ctx_.subcatches.runon_inflow[usc];  // CFS
-                    if (runon_q > 0.0)
-                        q_from_sc += runon_q /
-                            ctx_.subcatches.total_lid_area_ft2[usc];
+                // Legacy lid.c:1713-1717 (5.3.0): `if (subcatch->area >=
+                // subcatch->lidArea) lidInflow += subcatch->runon;` — the
+                // test is always true for validated input (lidArea never
+                // exceeds area), so the subcatchment's run-on depth rate
+                // (over its non-LID area, or the full area when there is
+                // none) is added onto EVERY unit's inflow, partial coverage
+                // included. 5.2.4 tested `==` (full coverage only); the
+                // pinned oracle is 5.3.0.
+                q_from_sc += ctx_.subcatches.runon_rate[usc];
+                // legacy lid_getRunoff: a COVERED rain barrel takes no rain
+                // — the rain on the subcatchment's LID footprint goes back to
+                // the pervious area instead (lid.c: qReturn += rainfall *
+                // lidArea); every other unit adds the rain onto its inflow.
+                if (g.type == lid::LIDType::RAIN_BARREL && g.stor_covered[uu]) {
+                    g.inflow[uu] = q_from_sc;
+                    if (usc < ctx_.subcatches.total_lid_area_ft2.size())
+                        ctx_.subcatches.lid_return_to_perv_cfs[usc] +=
+                            rain * ctx_.subcatches.total_lid_area_ft2[usc];
+                } else {
+                    g.inflow[uu] = rain + q_from_sc;
                 }
-                g.inflow[uu] = rain + q_from_sc;
                 // Rain-barrel dry-time reset signal (legacy lid.c:1920 uses
                 // Subcatch.rainfall, independent of what the unit captures).
                 g.subcatch_rain[uu] = rain;
@@ -2199,29 +2262,57 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                 // rates. This is the only place they exist together, which
                 // is why the age is assembled here rather than in the
                 // transport module.
+                // The run-on share this unit takes (its area x the depth
+                // rate), so the age/temperature paths carry the same water
+                // the inflow above does.
+                const double q_runon_unit =
+                    ctx_.subcatches.runon_rate[usc] * lid_area;
                 transport::setLidInflowAge(
                     ctx_, t, u, sc, rain,
                     q_imperv * g.from_imperv[uu], q_perv * g.from_perv[uu],
-                    (rsoa.area[usc] <= 0.0 &&
-                     usc < ctx_.subcatches.total_lid_area_ft2.size() &&
-                     ctx_.subcatches.total_lid_area_ft2[usc] > 0.0)
-                        ? ctx_.subcatches.runon_inflow[usc]
-                        : 0.0,
-                    lid_area);
+                    q_runon_unit, lid_area);
                 // H5b: the temperature of that same inflow, weighted by the
                 // same four rates.
                 transport::setLidInflowTemperature(
                     ctx_, t, u, sc, rain,
                     q_imperv * g.from_imperv[uu], q_perv * g.from_perv[uu],
-                    (rsoa.area[usc] <= 0.0 &&
-                     usc < ctx_.subcatches.total_lid_area_ft2.size() &&
-                     ctx_.subcatches.total_lid_area_ft2[usc] > 0.0)
-                        ? ctx_.subcatches.runon_inflow[usc]
-                        : 0.0,
-                    lid_area);
+                    q_runon_unit, lid_area);
             }
         }
 
+        // legacy findNativeInfil: the native soil's infiltration rate a unit
+        // without its own soil layer sees (Vinfil over the non-LID area, or
+        // the subcatchment's own model when there is no pervious non-LID
+        // area) and the aquifer's ceiling on it; the subcatchment's
+        // infiltration factor for the units' Green-Ampt states; the runoff
+        // clock for pavement regeneration.
+        {
+            const int ns_l = ctx_.n_subcatches();
+            std::vector<double> native(static_cast<std::size_t>(ns_l), 0.0);
+            std::vector<double> max_native(static_cast<std::size_t>(ns_l), 1.0e10);
+            std::vector<double> factors(static_cast<std::size_t>(ns_l), 1.0);
+            const auto& rs = runoff_.soa();
+            for (int i = 0; i < ns_l; ++i) {
+                auto ui = static_cast<std::size_t>(i);
+                const double lid_area = (ui < ctx_.subcatches.total_lid_area_ft2.size())
+                    ? ctx_.subcatches.total_lid_area_ft2[ui] : 0.0;
+                if (lid_area <= 0.0) continue;
+                const double non_lid = rs.area[ui];       // max(0, area - lidArea), ft2
+                if (non_lid > 0.0 && ctx_.subcatches.frac_imperv[ui] < 1.0)
+                    native[ui] = rs.infil_vol[ui] / non_lid / dt_runoff;
+                else
+                    native[ui] = runoff_.nativeInfilFullLid(ctx_, i, dt_runoff,
+                                     ctx_.climate_state.recovery_factor);
+                if (!ctx_.options.ignore_groundwater &&
+                    ctx_.subcatches.gw_aquifer[ui] >= 0 &&
+                    ctx_.subcatches.gw_max_infil_vol[ui] < 1.0e30)
+                    max_native[ui] = ctx_.subcatches.gw_max_infil_vol[ui] / dt_runoff;
+                factors[ui] = runoff_.infilFactorUsed(i);
+            }
+            lid_.setNativeInfil(std::move(native), std::move(max_native));
+            lid_.setInfilFactors(std::move(factors), ctx_.climate_state.recovery_factor);
+            lid_.setRunoffTime(old_runoff_time_);
+        }
         lid_.execute(ctx_, dt_runoff, 0.0, ctx_.climate_state.evap_rate);
 
         // A4: LID layer ages, immediately after the depths this step
@@ -2249,14 +2340,39 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                 // Surface runoff from LID (ft/sec * ft² = CFS):
                 //  to_perv==0 → goes to subcatch outlet (add to subcatch runoff CFS)
                 //  to_perv==1 → returned to pervious area next step (Gap #23)
-                if (!g.to_perv[uu]) {
+                // legacy evalLidUnit: the return to the pervious area needs
+                // ToPerv AND a pervious non-LID area to return to (area >
+                // lidArea); the surface runoff is then always returned, the
+                // drain only when its target is the subcatchment's own outlet
+                // (validateLidGroup resolves a missing target to that outlet).
+                // A returned drain is not this step's drain flow: newDrainFlow
+                // (the hysteresis memory and the reported drain) is the value
+                // after the return.
+                const double lid_area_sc = (usc < ctx_.subcatches.total_lid_area_ft2.size())
+                    ? ctx_.subcatches.total_lid_area_ft2[usc] : 0.0;
+                const double sub_area_ft2 = ctx_.subcatches.area[usc]
+                    / ucf::UCF(ucf::LANDAREA, ctx_.options);
+                const bool can_return = g.to_perv[uu] && sub_area_ft2 > lid_area_sc;
+                if (!can_return) {
                     ctx_.subcatches.runoff[usc] += g.surface_runoff[uu] * lid_area;  // CFS
                 } else {
                     // Store as pervious return flow; consumed by RunoffSolver next step.
                     // Matches legacy lid_getFlowToPerv() one-step-lag mechanism.
                     ctx_.subcatches.lid_return_to_perv_cfs[usc] +=
                         g.surface_runoff[uu] * lid_area;  // CFS
+                    const int dn0  = g.drain_node[uu];
+                    const int dsc0 = g.drain_subcatch[uu];
+                    const bool to_outlet =
+                        (dn0 < 0 && dsc0 < 0) ||
+                        (dn0 == ctx_.subcatches.outlet_node[usc] &&
+                         dsc0 == ctx_.subcatches.outlet_subcatch[usc]);
+                    if (to_outlet) {
+                        ctx_.subcatches.lid_return_to_perv_cfs[usc] +=
+                            g.drain_flow[uu] * lid_area;
+                        lid_.group(t).drain_flow[uu] = 0.0;
+                    }
                 }
+                lid_.group(t).drain_open[uu] = (g.drain_flow[uu] > 0.0) ? 1 : 0;
                 // Drain flow (ft/sec * ft² = CFS):
                 //  drain_node >= 0        → external node inflow (lid_addDrainInflow)
                 //  drain_subcatch != self → runon to that subcatch (lid_addDrainRunon)
@@ -2331,15 +2447,15 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                             // the merged H5b block referenced `target_sc`,
                             // which does not exist in this branch — the runon
                             // receiver here is g.drain_subcatch[uu] (utsc).
-                            if (fl >= 0 && fl < lst.n_units)
-                                transport::addRunonTemperatureAt(
-                                    ctx_, dsc, q_dr,
+                            auto& hdr = ctx_.heat_state.subcatch_lid_drain_temp_cfs;
+                            if (fl >= 0 && fl < lst.n_units && utsc < hdr.size())
+                                hdr[utsc] += q_dr *
                                     lst.drain_value[
                                         static_cast<std::size_t>(fl) *
                                             static_cast<std::size_t>(
                                                 lst.n_species) +
                                         static_cast<std::size_t>(
-                                            LidSpecies::TEMPERATURE)]);
+                                            LidSpecies::TEMPERATURE)];
                         }
                     }
                 }
@@ -2546,8 +2662,6 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             }
         }
 
-        // A8. Subcatchment-to-subcatchment + outfall runon → runon_inflow[]
-        assembleRunon(dt_runoff);
     }
 
     // --- Phase 2: Interpolate runoff & GW to decomposed node inflow arrays ---
@@ -2583,6 +2697,29 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
     wet_q_interp_.assign(un_sub, 0.0);
     gw_q_interp_.assign(un_sub, 0.0);
     gw_q_node_.assign(un_sub, -1);
+    // legacy addLidDrainInflows → lid_addDrainInflow: each unit's drain flow
+    // to a node is (1-f)*oldDrainFlow + f*newDrainFlow (cfs, both already
+    // scaled by the unit footprint), on the same runoff-clock weight as the
+    // wet-weather inflow, added per unit. Before this the runoff step's
+    // un-interpolated drain was added at every routing step in between.
+    lid_drain_q_interp_.assign(static_cast<std::size_t>(ctx_.n_nodes()), 0.0);
+    for (int t = 0; t < lid_.numGroups(); ++t) {
+        const auto& g = lid_.group(t);
+        for (int u = 0; u < g.count; ++u) {
+            auto uu = static_cast<std::size_t>(u);
+            const int sc = g.subcatch_idx[uu];
+            if (sc < 0 || sc >= ctx_.n_subcatches()) continue;
+            const auto usc = static_cast<std::size_t>(sc);
+            int dn = g.drain_node[uu];
+            const int dsc = g.drain_subcatch[uu];
+            if (dn < 0 && (dsc < 0 || dsc == sc)) dn = ctx_.subcatches.outlet_node[usc];
+            if (dn < 0 || dn >= ctx_.n_nodes()) continue;
+            const double q_old = g.old_drain_flow[uu] * g.area[uu];
+            const double q_new = g.drain_flow[uu] * g.area[uu];
+            lid_drain_q_interp_[static_cast<std::size_t>(dn)] +=
+                (1.0 - f) * q_old + f * q_new;
+        }
+    }
 
     for (int i = 0; i < ctx_.n_subcatches(); ++i) {
         auto ui = static_cast<std::size_t>(i);
@@ -2657,6 +2794,55 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
  * @param has_snow     True if any subcatchment has snow depth > 0.
  * @returns Runoff timestep in seconds.
  */
+// legacy climate.c setNextEvapDate(theDate): when the current NextEvapDate has
+// been reached, find when the evaporation source next changes.
+void SWMMEngine::setNextEvapDate(double the_date) noexcept {
+    auto& cs = ctx_.climate_state;
+    if (cs.next_evap_date > the_date) return;
+    switch (cs.evap_method) {
+        case climate::EvapMethod::CONSTANT:
+            cs.next_evap_date = the_date + 365.;
+            break;
+        case climate::EvapMethod::MONTHLY: {
+            int yr, mon, day;
+            datetime::decodeDate(the_date, yr, mon, day);
+            if (mon == 12) { mon = 1; yr++; }
+            else mon++;
+            cs.next_evap_date = datetime::encodeDate(yr, mon, 1);
+            break;
+        }
+        case climate::EvapMethod::TIMESERIES: {
+            cs.next_evap_date = the_date + 365.;
+            if (cs.evap_ts_index >= 0) {
+                const auto& tbl = ctx_.tables.tables[static_cast<std::size_t>(cs.evap_ts_index)];
+                const int n = static_cast<int>(tbl.x.size());
+                const double end_date = datetime::addSeconds(
+                    ctx_.options.start_date, ctx_.options.totalDurationMs() / 1000.0);
+                int pos = cs.evap_ts_pos;
+                while (pos + 1 < n) {
+                    ++pos;
+                    const double d = tbl.x[static_cast<std::size_t>(pos)];
+                    const double e = tbl.y[static_cast<std::size_t>(pos)];
+                    if (d > end_date) break;
+                    if (d >= the_date) {
+                        cs.next_evap_date = d;
+                        cs.next_evap_rate = e;
+                        break;
+                    }
+                }
+                cs.evap_ts_pos = pos;
+            }
+            break;
+        }
+        case climate::EvapMethod::PAN:
+            cs.next_evap_date = std::floor(the_date) + 1.0;
+            break;
+        default:
+            cs.next_evap_date = the_date + 365.;
+            break;
+    }
+}
+
 double SWMMEngine::computeRunoffTimestep(double abs_time, bool is_raining,
                                          bool has_runoff, bool has_snow) noexcept {
     // Matches legacy runoff_getTimeStep() exactly:
@@ -2666,6 +2852,12 @@ double SWMMEngine::computeRunoffTimestep(double abs_time, bool is_raining,
     //   4. Choose wet_step or dry_step based on conditions
     //   5. Return min(wet/dry step, maxStep)
     long max_step = static_cast<long>(ctx_.options.dry_step);
+
+    // legacy runoff_getTimeStep: never step past the next evaporation change
+    {
+        const long to_evap = datetime::timeDiff(ctx_.climate_state.next_evap_date, abs_time);
+        if (to_evap > 0 && to_evap < max_step) max_step = to_evap;
+    }
 
     // Shorten to next rain gage boundary
     // (matching legacy gage_getNextRainDate)
@@ -2722,7 +2914,10 @@ double SWMMEngine::computeRunoffTimestep(double abs_time, bool is_raining,
 
     // Choose wet or dry step based on conditions
     long time_step;
-    if (is_raining || has_snow || has_runoff)
+    // legacy runoff_getTimeStep: the WET step also while any LID unit is wet
+    // (HasWetLids, set by lidproc_saveResults when a unit's inflow, outflow,
+    // drain, exfiltration or evaporation exceeded MINFLOW).
+    if (is_raining || has_snow || has_runoff || lid_.anyWet())
         time_step = static_cast<long>(ctx_.options.wet_step);
     else
         time_step = static_cast<long>(ctx_.options.dry_step);
@@ -4674,6 +4869,10 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
             auto uj = static_cast<std::size_t>(j);
             if (ctx_.nodes.runoff_inflow[uj] > 0.0)
                 runoff_q += ctx_.nodes.runoff_inflow[uj];
+            // LID drains to nodes are WET_WEATHER inflow in legacy
+            // (lid_addDrainInflow → massbal_addInflowFlow(WET_WEATHER_INFLOW)).
+            if (uj < lid_drain_q_interp_.size() && lid_drain_q_interp_[uj] > 0.0)
+                runoff_q += lid_drain_q_interp_[uj];
             if (const double q_user = effectiveUserLatFlow(ctx_, uj);
                 q_user > 0.0)
                 user_q_total += q_user;
@@ -7212,14 +7411,22 @@ void SWMMEngine::initHydrology() noexcept {
                 if (!surfaces[k]) continue;
                 const auto& p = *surfaces[k];
                 // p[0]=Cmin, p[1]=Cmax, p[2]=Tbase, p[3]=FWF, p[4]=SD0, p[5]=FW0, p[6]=SNN0
-                soa.dhmin[idx]  = p[0] / ucf::Ucf[ucf::RAINFALL][unit_sys_snow];
-                soa.dhmax[idx]  = p[1] / ucf::Ucf[ucf::RAINFALL][unit_sys_snow];
+                // legacy setMeltParams (snow.c): the melt coefficients are
+                // per DEGREE, so an SI deck's mm/hr-degC also carries
+                // UCF(TEMPERATURE) = 1.8; the initial free water is capped
+                // at FWF x SD0; ATI starts at the base temperature.
+                soa.dhmin[idx]  = p[0] * ucf::Ucf[ucf::TEMPERATURE][unit_sys_snow]
+                                       / ucf::Ucf[ucf::RAINFALL][unit_sys_snow];
+                soa.dhmax[idx]  = p[1] * ucf::Ucf[ucf::TEMPERATURE][unit_sys_snow]
+                                       / ucf::Ucf[ucf::RAINFALL][unit_sys_snow];
                 soa.tbase[idx]  = p[2];
                 if (unit_sys_snow == 1) // SI: convert °C to °F
-                    soa.tbase[idx] = soa.tbase[idx] * 9.0 / 5.0 + 32.0;
+                    soa.tbase[idx] = (9. / 5.) * soa.tbase[idx] + 32.0;
                 soa.fwfrac[idx] = p[3];
                 soa.wsnow[idx]  = p[4] / ucf::Ucf[ucf::RAINDEPTH][unit_sys_snow];
-                soa.fw[idx]     = p[5] / ucf::Ucf[ucf::RAINDEPTH][unit_sys_snow];
+                soa.fw[idx]     = std::min(p[5], p[3] * p[4])
+                                  / ucf::Ucf[ucf::RAINDEPTH][unit_sys_snow];
+                soa.ati[idx]    = soa.tbase[idx];
                 // F6: the 7th field is SNN0 on the PLOWABLE row and SD100 —
                 // the depth at which areal coverage reaches 100 % — on the
                 // other two. Legacy splits it exactly this way
@@ -7341,8 +7548,15 @@ void SWMMEngine::initHydrology() noexcept {
         // Transfer latitude for Hargreaves ET calculation
         ctx_.climate_state.latitude = ctx_.options.snow_lat;
 
-        // Transfer site elevation for psychrometric constant (Gap #8)
-        ctx_.climate_state.elev = ctx_.options.snow_elev;
+        // Transfer site elevation for psychrometric constant (Gap #8) —
+        // legacy Temp.elev = x[3] / UCF(LENGTH) — and the rain/snow dividing
+        // temperature, in degF internally (legacy converts degC at parse).
+        ctx_.climate_state.elev = ctx_.options.snow_elev
+                                  / ucf::UCF(ucf::LENGTH, ctx_.options);
+        ctx_.climate_state.snow_divt =
+            (ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units)) == 1)
+                ? 9. / 5. * ctx_.options.snow_divt + 32.0
+                : ctx_.options.snow_divt;
 
         // Transfer longitude/solar-time correction. The [TEMPERATURE] SNOWMELT
         // field and the C API store minutes; ClimateState::dtlong is in hours
@@ -7352,8 +7566,13 @@ void SWMMEngine::initHydrology() noexcept {
 
         // Transfer monthly adjustment arrays
         for (int i = 0; i < 12; ++i) {
-            ctx_.climate_state.adjust_temp[i] = ctx_.adjust_temp[i];
-            ctx_.climate_state.adjust_evap[i] = ctx_.adjust_evap[i];
+            // legacy climate_validate: an SI deck's degC adjustment is a
+            // degF DIFFERENCE, x 9/5.
+            ctx_.climate_state.adjust_temp[i] = ctx_.adjust_temp[i] *
+                ((ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units)) == 1)
+                     ? 9.0 / 5.0 : 1.0);
+            ctx_.climate_state.adjust_evap[i] =
+                ctx_.adjust_evap[i] / ucf::UCF(ucf::EVAPRATE, ctx_.options);  // legacy climate_validate
             ctx_.climate_state.adjust_rain[i] = ctx_.adjust_rain[i];
             ctx_.climate_state.adjust_hydcon[i] = ctx_.adjust_hydcon[i];
         }
@@ -7381,6 +7600,28 @@ void SWMMEngine::initHydrology() noexcept {
         }
         if (evap_type == 2 && !ctx_.options.evap_ts_name.empty()) {
             ctx_.climate_state.evap_ts_index = ctx_.find_timeseries(ctx_.options.evap_ts_name);
+        }
+        // legacy climate_initState: NextEvapDate / NextEvapRate. A time-series
+        // evaporation starts on its first entry (or, if that lies before the
+        // start date, on the first entry at or after it) and holds each
+        // entry's rate until the next entry's date — it is never interpolated.
+        {
+            auto& cs = ctx_.climate_state;
+            cs.next_evap_date = ctx_.options.start_date;
+            cs.next_evap_rate = 0.0;
+            cs.evap_ts_pos    = -1;
+            if (cs.evap_method == climate::EvapMethod::TIMESERIES && cs.evap_ts_index >= 0) {
+                const auto& tbl = ctx_.tables.tables[static_cast<std::size_t>(cs.evap_ts_index)];
+                if (!tbl.x.empty()) {
+                    cs.evap_ts_pos    = 0;
+                    cs.next_evap_date = tbl.x[0];
+                    cs.next_evap_rate = tbl.y[0];
+                }
+                if (cs.next_evap_date < ctx_.options.start_date)
+                    setNextEvapDate(ctx_.options.start_date);
+                cs.evap_rate = cs.next_evap_rate / ucf::UCF(ucf::EVAPRATE, ctx_.options);
+                setNextEvapDate(cs.next_evap_date);
+            }
         }
         if (ctx_.options.humidity_type == 2 && !ctx_.options.humidity_ts_name.empty()) {
             ctx_.climate_state.humidity_ts_index =
@@ -7846,6 +8087,23 @@ void SWMMEngine::initQuality() noexcept {
             }
         }
     }
+
+    // MSX element state is INITIAL state, so it belongs here with the rest of
+    // the initial quality — not on the first step. Every caller of
+    // ensureMsxState was a stepping path (ArdEngine::execute, routeLegacyMsx,
+    // reactElements, the LARD solver), so between initialize() and the first
+    // step reactions.msx_node_conc was empty: [INITIAL_QUALITY] species rows
+    // had parsed and were readable through swmm_init_quality_get, but had not
+    // reached the element state the solvers and the C API read.
+    //
+    // Placement is load-bearing. initialize() applies USE HOTSTART before
+    // init_modules() (see the ordering comment there), so a hotstart run has
+    // already sized and seeded these arrays by now and ensureMsxState's
+    // size check makes this a no-op — which is the contract HotStartManager
+    // documents ("ensureMsxState skips its GLOBAL fill once sized"). Calling
+    // it any earlier would seed from GLOBAL and let the hotstart overwrite,
+    // calling it later leaves the gap this closes.
+    if (ctx_.reactions.n_species() > 0) transport::ensureMsxState(ctx_);
 }
 
 // ============================================================================
@@ -8026,13 +8284,84 @@ void SWMMEngine::assembleGWCoupling(double dt_runoff) noexcept {
 // assembleRunon — subcatch-to-subcatch + outfall runon into runon_inflow[]
 // ============================================================================
 
-void SWMMEngine::assembleRunon(double dt_runoff) noexcept {
+void SWMMEngine::assembleRunon() noexcept {
     std::fill(ctx_.subcatches.runon_inflow.begin(),
               ctx_.subcatches.runon_inflow.end(), 0.0);
+    std::fill(ctx_.subcatches.runon_rate.begin(),
+              ctx_.subcatches.runon_rate.end(), 0.0);
+    // The age and temperature of that run-on are assembled here too, so
+    // their accumulators start clean here (not in the transport step that
+    // consumes them — the flow and its temperature must be booked, and
+    // readable, together for the whole runoff step).
+    {
+        auto& ws = ctx_.water_age_state;
+        std::fill(ws.subcatch_runon_age_vol_in.begin(),
+                  ws.subcatch_runon_age_vol_in.end(), 0.0);
+        auto& hs = ctx_.heat_state;
+        std::fill(hs.subcatch_runon_temp_vol_in.begin(),
+                  hs.subcatch_runon_temp_vol_in.end(), 0.0);
+        std::fill(hs.subcatch_runon_temp_rate.begin(),
+                  hs.subcatch_runon_temp_rate.end(), 0.0);
+    }
+    const int nsc = ctx_.n_subcatches();
+    const double land2ft2 = 1.0 / ucf::UCF(ucf::LANDAREA, ctx_.options);
+    const auto& rsoa = runoff_.soa();
 
-    // Subcatch-to-subcatch: upstream runoff → downstream runon (CFS)
-    for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+    // legacy subcatch_addRunonFlow: each contribution is divided by the
+    // NON-LID area (the full area when there is none) and added to the
+    // depth rate; the CFS twin feeds the ledgers, age and temperature.
+    auto add_runon = [&](int k, double q) {
+        auto uk = static_cast<std::size_t>(k);
+        const double full_ft2 = ctx_.subcatches.area[uk] * land2ft2;
+        if (full_ft2 <= 0.0) return;
+        const double nonlid = rsoa.area[uk];
+        ctx_.subcatches.runon_rate[uk] +=
+            (nonlid > 0.0) ? q / nonlid : q / full_ft2;
+        ctx_.subcatches.runon_inflow[uk] += q;
+    };
+
+    // Gap #28: outfall runon FIRST (legacy runoff.c:247 runoff_getOutfallRunon
+    // precedes subcatch_getRunon) — the routed volume over the PREVIOUS
+    // runoff step's span (oldRunoffStep), held over while there is none yet.
+    const double dt_prev = prev_runoff_step_sec_;
+    if (dt_prev > 0.0) {
+        for (int i = 0; i < nsc; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            double vol = ctx_.subcatches.outfall_runon_vol[ui];
+            if (vol > 0.0) {
+                add_runon(i, vol / dt_prev);
+                auto& wo = ctx_.water_age_state.subcatch_outfall_age_vol;
+                if (ctx_.options.water_age && ui < wo.size() &&
+                    ui < ctx_.water_age_state.subcatch_runon_age_vol_in.size()) {
+                    ctx_.water_age_state.subcatch_runon_age_vol_in[ui] +=
+                        wo[ui] / dt_prev;
+                    wo[ui] = 0.0;
+                }
+                // H5a: the temperature of that returning water. Goes through
+                // addRunonTemperatureAt so the numerator and the rate move
+                // together — see HeatData.hpp on why they are a pair.
+                auto& ho = ctx_.heat_state.subcatch_outfall_temp_vol;
+                if (ctx_.options.heat_transport && ui < ho.size()) {
+                    transport::addRunonTemperatureAt(
+                        ctx_, i, vol / dt_prev, ho[ui] / vol);
+                    ho[ui] = 0.0;
+                }
+                // Water re-entering the runoff system from an outfall is new
+                // inflow to its mass balance (legacy runoff.c:520
+                // RUNOFF_RUNON) — without this, LID or subarea uptake of the
+                // routed volume reads as a continuity error (issue #131).
+                ctx_.mass_balance.runoff_runon += vol;
+                ctx_.subcatches.outfall_runon_vol[ui] = 0.0;
+            }
+        }
+    }
+
+    // Subcatch-to-subcatch: upstream runoff → downstream runon (CFS), in
+    // subcatchment order (legacy subcatch_getRunon per j; a subcatchment
+    // without area is skipped, runoff.c:252).
+    for (int i = 0; i < nsc; ++i) {
         auto ui = static_cast<std::size_t>(i);
+        if (ctx_.subcatches.area[ui] == 0.0) continue;
         int out_sc = ctx_.subcatches.outlet_subcatch[ui];
         // `out_sc != i` is legacy's guard (subcatch.c:546-548,
         // `k >= 0 && k != subcatchIndex`) and its absence here was the whole
@@ -8052,9 +8381,8 @@ void SWMMEngine::assembleRunon(double dt_runoff) noexcept {
         // This guard covers the age and temperature run-on seams below too:
         // both live inside this branch, so a self-route was also feeding its
         // own age and its own heat back to itself.
-        if (out_sc >= 0 && out_sc < ctx_.n_subcatches() && out_sc != i) {
-            auto usc = static_cast<std::size_t>(out_sc);
-            ctx_.subcatches.runon_inflow[usc] += ctx_.subcatches.runoff[ui];
+        if (out_sc >= 0 && out_sc < nsc && out_sc != i) {
+            add_runon(out_sc, ctx_.subcatches.runoff[ui]);
             // A3: run-on carries the donor's runoff age. Without this the
             // FLOW path adds q_runon while the age path adds nothing, and a
             // two-subcatchment cascade — the plan's own A3 criterion —
@@ -8070,11 +8398,11 @@ void SWMMEngine::assembleRunon(double dt_runoff) noexcept {
     // Gap #25: LID drain runon — drain accumulated CFS into runon_inflow and reset.
     // Matches legacy lid_addDrainRunon(): LID drain flow reaching a subcatch is
     // treated as runon inflow to that subcatch for the next runoff step.
-    for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+    for (int i = 0; i < nsc; ++i) {
         auto ui = static_cast<std::size_t>(i);
         double q = ctx_.subcatches.lid_drain_runon_cfs[ui];
         if (q > 0.0) {
-            ctx_.subcatches.runon_inflow[ui] += q;
+            add_runon(i, q);
             ctx_.subcatches.lid_drain_runon_cfs[ui] = 0.0;
             auto& wsr = ctx_.water_age_state.subcatch_lid_drain_age_cfs;
             if (ctx_.options.water_age && ui < wsr.size() &&
@@ -8082,39 +8410,11 @@ void SWMMEngine::assembleRunon(double dt_runoff) noexcept {
                 ctx_.water_age_state.subcatch_runon_age_vol_in[ui] += wsr[ui];
                 wsr[ui] = 0.0;
             }
-        }
-    }
-
-    // Gap #28: outfall runon — drain accumulated volume into runon_inflow (CFS)
-    // and reset the accumulator (matching legacy Outfall[i].vRouted / tStep).
-    if (dt_runoff > 0.0) {
-        for (int i = 0; i < ctx_.n_subcatches(); ++i) {
-            auto ui = static_cast<std::size_t>(i);
-            double vol = ctx_.subcatches.outfall_runon_vol[ui];
-            if (vol > 0.0) {
-                ctx_.subcatches.runon_inflow[ui] += vol / dt_runoff;
-                auto& wo = ctx_.water_age_state.subcatch_outfall_age_vol;
-                if (ctx_.options.water_age && ui < wo.size() &&
-                    ui < ctx_.water_age_state.subcatch_runon_age_vol_in.size()) {
-                    ctx_.water_age_state.subcatch_runon_age_vol_in[ui] +=
-                        wo[ui] / dt_runoff;
-                    wo[ui] = 0.0;
-                }
-                // H5a: the temperature of that returning water. Goes through
-                // addRunonTemperatureAt so the numerator and the rate move
-                // together — see HeatData.hpp on why they are a pair.
-                auto& ho = ctx_.heat_state.subcatch_outfall_temp_vol;
-                if (ctx_.options.heat_transport && ui < ho.size()) {
-                    transport::addRunonTemperatureAt(
-                        ctx_, i, vol / dt_runoff, ho[ui] / vol);
-                    ho[ui] = 0.0;
-                }
-                // Water re-entering the runoff system from an outfall is new
-                // inflow to its mass balance (legacy runoff.c:520
-                // RUNOFF_RUNON) — without this, LID or subarea uptake of the
-                // routed volume reads as a continuity error (issue #131).
-                ctx_.mass_balance.runoff_runon += vol;
-                ctx_.subcatches.outfall_runon_vol[ui] = 0.0;
+            // H5b: the drain's temperature, booked with its flow.
+            auto& hdr = ctx_.heat_state.subcatch_lid_drain_temp_cfs;
+            if (ctx_.options.heat_transport && ui < hdr.size()) {
+                transport::addRunonTemperatureAt(ctx_, i, q, hdr[ui] / q);
+                hdr[ui] = 0.0;
             }
         }
     }
@@ -8222,10 +8522,6 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
         // the lateral inflow by 1 ULP at multi-source nodes.
         ctx_.nodes.lat_flow[uj] = ctx_.nodes.ext_inflow[uj]
                                 + ctx_.nodes.dwf_inflow[uj];
-        // LID drain-to-node water (legacy lid_addDrainInflow →
-        // Node.newLatFlow, booked as EXTERNAL_INFLOW). Added after the
-        // legacy pair so legacy-comparable runs (0.0 here) keep their ULPs.
-        ctx_.nodes.lat_flow[uj] += ctx_.nodes.lid_drain_inflow[uj];
 
         sum_dw   += ctx_.nodes.dwf_inflow[uj];
         sum_gw   += ctx_.nodes.gw_inflow[uj];
@@ -8233,8 +8529,7 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
         // Interface file inflows count as external inflow for continuity
         // (legacy addIfaceInflows → massbal_addInflowFlow(EXTERNAL_INFLOW, q))
         sum_ext  += ctx_.nodes.ext_inflow[uj]
-                  + ctx_.nodes.iface_inflow[uj]
-                  + ctx_.nodes.lid_drain_inflow[uj];
+                  + ctx_.nodes.iface_inflow[uj];
 
         // 2D → 1D coupling (positive coupling_inflow) folds into the
         // routing_external category for continuity reporting; the negative
@@ -8276,9 +8571,12 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
         }
     }
 
-    // RDII, then iface, then engine-only extensions — legacy source order.
+    // LID drains (legacy addLidDrainInflows, after groundwater), then RDII,
+    // then iface, then engine-only extensions — legacy source order.
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
+        if (uj < lid_drain_q_interp_.size() && lid_drain_q_interp_[uj] != 0.0)
+            ctx_.nodes.lat_flow[uj] += lid_drain_q_interp_[uj];
         ctx_.nodes.lat_flow[uj] += ctx_.nodes.rdii_inflow[uj];
         ctx_.nodes.lat_flow[uj] += ctx_.nodes.iface_inflow[uj];
 
