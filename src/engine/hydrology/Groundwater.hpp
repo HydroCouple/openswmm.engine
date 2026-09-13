@@ -133,6 +133,7 @@ struct GWSoA {
     std::vector<double> lower_evap_depth;
     std::vector<double> lower_loss_coeff;   ///< Deep percolation coeff
     std::vector<double> total_depth;        ///< Aquifer thickness (ft)
+    std::vector<double> bottom_elev;        ///< Effective aquifer bottom elevation (ft): the [GROUNDWATER] row's Ebot, else the aquifer's
 
     // Lateral flow coefficients
     std::vector<double> a1, b1;       ///< GW outflow

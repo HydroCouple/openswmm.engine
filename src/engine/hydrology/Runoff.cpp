@@ -87,6 +87,8 @@ void RunoffSoA::resize(int n) {
     runoff.assign(un, 0.0);
     evap_loss.assign(un, 0.0);
     infil_loss.assign(un, 0.0);
+    perv_evap_vol.assign(un, 0.0);
+    infil_vol.assign(un, 0.0);
     imperv_runoff_cfs.assign(un, 0.0);
     perv_runoff_cfs.assign(un, 0.0);
 }
@@ -338,6 +340,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
 
         // Mass balance accumulators (matching legacy Vevap, Vinfil, Voutflow)
         double Vevap    = 0.0;  // Total evaporation volume (ft³)
+        double Vpevap   = 0.0;  // Pervious-subarea evaporation volume (ft³), legacy Vpevap
         double Vinfil   = 0.0;  // Total infiltration volume (ft³)
         double Voutflow = 0.0;  // Total runoff volume (ft³)
 
@@ -444,6 +447,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
 
             // Step 3.5: Update mass balance volumes (legacy lines 934-937)
             Vevap  += surfEvap * subarea_area * dt;
+            if (isPervious) Vpevap += surfEvap * subarea_area * dt;   // legacy subcatch.c:984
             Vinfil += infil * subarea_area * dt;
 
             // Step 3.6: Loss check shortcut (legacy lines 945-948)
@@ -596,6 +600,11 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         ctx.subcatches.runoff[ui]     = newRunoff;
         ctx.subcatches.evap_loss[ui]  = evapLoss;
         ctx.subcatches.infil_loss[ui] = infilLoss;
+        // The volumes themselves, for the groundwater step: legacy hands
+        // gwater_getGroundwater Vpevap and Vinfil (+ the LID shares) and
+        // divides by the FULL area then by tStep there.
+        soa_.perv_evap_vol[ui] = Vpevap;
+        soa_.infil_vol[ui]     = Vinfil;
 
         // Accumulate per-subcatchment statistics (matching legacy stats_updateSubcatchStats)
         ctx.subcatches.stat_evap_vol[ui]  += Vevap;

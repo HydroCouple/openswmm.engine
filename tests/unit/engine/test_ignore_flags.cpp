@@ -101,7 +101,7 @@ std::string rain_model(const std::string& ignore_lines,
          "RG1  INTENSITY 0:05 1.0 TIMESERIES TS1\n"
          "\n[SUBCATCHMENTS]\n"
          ";;Name RainGage Outlet Area %Imperv Width Slope Curblen SnowPack\n"
-         "S1  RG1  J1  10.0  100  500  0.5  0  \n"
+         "S1  RG1  J1  10.0  50   500  0.5  0  \n"
          "\n[SUBAREAS]\n"
          ";;Subcatch Nimp Nperv Simp Sperv PctZero RouteTo\n"
          "S1  0.01  0.1  0.05  0.05  25  OUTLET\n"
@@ -157,9 +157,15 @@ std::string groundwater_sections() {
         "\n[AQUIFERS]\n"
         ";;Name Por WP FC Ksat Kslope Tslope ETu ETs Seep Ebot Egw Umc\n"
         "AQ1  0.5  0.15  0.30  5.0  10  15  0.35  14  0.0  0.0  8.0  0.30\n"
+        // Legacy semantics: Egwt `*` means the receiving node's invert is the
+        // lateral-flow threshold (J1 sits at 100 ft, far above the aquifer),
+        // and Wgr is the initial water-table ELEVATION. For the aquifer to
+        // discharge, the threshold is given explicitly (2 ft) below the
+        // initial water table (8 ft), and the subcatchment must have a
+        // pervious share (gwater_getGroundwater returns at FracPerv <= 0).
         "\n[GROUNDWATER]\n"
         ";;Subcatch Aquifer Node Esurf A1 B1 A2 B2 A3 Dsw Egwt Ebot Wgr Umc\n"
-        "S1  AQ1  J1  10.0  0.1  1.5  0  0  0  0  *  0  0  *\n";
+        "S1  AQ1  J1  10.0  0.1  1.5  0  0  0  0  2.0  0  8.0  *\n";
 }
 
 // Snowpack whose surfaces hold snow (very small melt coefficients), plus a
@@ -355,8 +361,8 @@ TEST_F(IgnoreFlagsTest, IgnoreSnowmelt_ChangesRunoff) {
         // Re-point S1 to snowpack SP1: emit a model whose SUBCATCHMENTS line
         // carries SP1 in the SnowPack column.
         std::string inp = rain_model(ignore_lines, extra);
-        const std::string from = "S1  RG1  J1  10.0  100  500  0.5  0  \n";
-        const std::string to   = "S1  RG1  J1  10.0  100  500  0.5  0  SP1\n";
+        const std::string from = "S1  RG1  J1  10.0  50   500  0.5  0  \n";
+        const std::string to   = "S1  RG1  J1  10.0  50   500  0.5  0  SP1\n";
         auto pos = inp.find(from);
         if (pos != std::string::npos) inp.replace(pos, from.size(), to);
         return inp;

@@ -59,6 +59,7 @@ void GWSoA::resize(int n) {
     lower_evap_depth.assign(un, 0.0);
     lower_loss_coeff.assign(un, 0.0);
     total_depth.assign(un, 0.0);
+    bottom_elev.assign(un, 0.0);
 
     a1.assign(un, 0.0); b1.assign(un, 0.0);
     a2.assign(un, 0.0); b2.assign(un, 0.0);
@@ -269,6 +270,11 @@ void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap,
             soa_.deep_loss[ui] = 0.0;
             continue;
         }
+        // Legacy gwater_getGroundwater: `if (FracPerv <= 0.0) return;` — a
+        // fully impervious subcatchment's aquifer is never updated at all
+        // (no fluxes, no flow, no statistics); its flow stays at its last
+        // value, which is 0.
+        if (frac_perv[i] <= 0.0) continue;
 
         // --- Build per-subcatchment context (matching legacy shared vars) ---
         GWContext c;
@@ -336,7 +342,7 @@ void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap,
         double node_flow = 0.0;
         if (gw_node >= 0 && gw_node < ctx.n_nodes()) {
             auto un = static_cast<std::size_t>(gw_node);
-            double area_ft2 = ctx.subcatches.area[ui] * ucf::ACRES_TO_FT2;
+            double area_ft2 = ctx.subcatches.area[ui] / ucf::UCF(ucf::LANDAREA, ctx.options);   // legacy Subcatch.area (ft2)
             if (area_ft2 > 0.0)
                 node_flow = (ctx.nodes.inflow[un] + ctx.nodes.volume[un] / dt) / area_ft2;
         }
@@ -392,7 +398,7 @@ void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap,
         auto ui = static_cast<std::size_t>(i);
         if (soa_.total_depth[ui] <= 0.0) continue;
 
-        double area = ctx.subcatches.area[ui] * ucf::ACRES_TO_FT2;
+        double area = ctx.subcatches.area[ui] / ucf::UCF(ucf::LANDAREA, ctx.options);   // legacy Subcatch.area (ft2)
         double ft2sec = area * dt;
 
         mb.gw_infil        += infil_rate[i] * ft2sec;

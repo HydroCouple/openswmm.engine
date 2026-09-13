@@ -2127,13 +2127,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         //     balance terms (accumulated inside groundwater_.execute) self-zero
         //     (legacy massbal.c:286). The auto-coupling in resolve_cross_references
         //     already forces this flag on when the model has no aquifers.
-        if (!ctx_.options.ignore_groundwater) {
-            // A5a. Assemble GW coupling (pre-compute sw_head from routing state)
-            assembleGWCoupling(dt_runoff);
-
-            // A5b. Groundwater solver (reads subcatches.gw_sw_head, not nodes directly)
-            stepGroundwater(dt_runoff);
-        }
+        // A5. Groundwater runs AFTER the LID units (A6b'), as legacy orders it.
 
         // A6. LID performance
         // A6a. Compute per-unit LID inflow from non-LID subarea runoff + rainfall.
@@ -2452,6 +2446,19 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                     }
                 }
             }
+        }
+
+        // A6b'. Groundwater — AFTER the LID units, as legacy subcatch_getRunoff
+        // orders it (lid_getRunoff then gwater_getGroundwater, subcatch.c:
+        // 730-738): the aquifer receives the LID units' infiltration and
+        // pervious evaporation of this step, and the LID units' native-
+        // infiltration ceiling (maxInfilVol) is the PREVIOUS step's, exactly
+        // as findNativeInfil reads it.
+        if (!ctx_.options.ignore_groundwater) {
+            // A5a. Assemble GW coupling (pre-compute sw_head from routing state)
+            assembleGWCoupling(dt_runoff);
+            // A5b. Groundwater solver (reads subcatches.gw_sw_head, not nodes directly)
+            stepGroundwater(dt_runoff);
         }
 
         // A6c. Accumulate runoff mass-balance totals now that the LID routing
@@ -3472,23 +3479,76 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
  */
 void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
     int ns = ctx_.n_subcatches();
+    // Legacy keeps Subcatch.area in ft2 as area / UCF(LANDAREA) (ac or ha
+    // over 2.2956e-5 / 0.92903e-5): 43561.6 ft2 per acre, not 43560, and
+    // 107 639 ft2 per hectare — the exact-acre constant was 3.7e-5 off on
+    // US decks and a factor 2.47 off on SI decks.
+    const double ucf_landarea = ucf::UCF(ucf::LANDAREA, ctx_.options);
 
     // GW surface water head and available node flow are pre-computed by
     // assembleGWCoupling() before this function is called.
 
-    // Build per-subcatchment FracPerv and pervious evap rate
-    // Legacy: FracPerv = subcatch_getFracPerv(j)
-    //         MaxEvap = Evap.rate * FracPerv
-    //         AvailEvap = max(MaxEvap - evap, 0)
+    // Per-subcatchment inputs, formed as legacy subcatch_getRunoff hands
+    // them to gwater_getGroundwater (subcatch.c:738) and as it then scales
+    // them (gwater.c): the pervious-subarea evaporation VOLUME Vpevap and
+    // the infiltration VOLUME Vinfil + VlidInfil, each divided by the FULL
+    // subcatchment area and then by tStep — in that order — and FracPerv =
+    // subcatch_getFracPerv, which folds the pervious LID footprint in.
+    //
+    // subcatches.evap_loss / infil_loss are the wrong quantities here: the
+    // evap loss is the whole subcatchment's (impervious subareas included,
+    // so the available aquifer evaporation was under-stated on every deck
+    // with impervious cover), and both are rates over the NON-LID area
+    // formed as V / dt / A — a different rounding from legacy's V / A / dt
+    // that drifted example5-3aquifers at the 1e-7 level from period 23.
+    //
+    // The LID shares (legacy evalLidUnit: VlidInfil from every unit,
+    // Vpevap from the pervious ones — isLidPervious: no storage layer, or a
+    // storage layer that exfiltrates) come from the LID solver, which now
+    // runs before this step as it does in legacy.
     gw_frac_perv_.assign(static_cast<std::size_t>(ns), 0.0);
     gw_perv_evap_.assign(static_cast<std::size_t>(ns), 0.0);
-    for (int i = 0; i < ns; ++i) {
-        auto ui = static_cast<std::size_t>(i);
-        double total_area = ctx_.subcatches.area[ui] * ucf::ACRES_TO_FT2;
-        if (total_area <= 0.0) continue;
-        double frac_perv = 1.0 - ctx_.subcatches.frac_imperv[ui];
-        gw_frac_perv_[ui] = std::max(frac_perv, 0.0);
-        gw_perv_evap_[ui] = ctx_.subcatches.evap_loss[ui];
+    gw_infil_rate_.assign(static_cast<std::size_t>(ns), 0.0);
+    {
+        const auto& rsoa = runoff_.soa();
+        std::vector<double> lid_perv_area(static_cast<std::size_t>(ns), 0.0);
+        std::vector<double> lid_infil_vol(static_cast<std::size_t>(ns), 0.0);
+        std::vector<double> lid_perv_evap_vol(static_cast<std::size_t>(ns), 0.0);
+        for (int t = 0; t < lid_.numGroups(); ++t) {
+            const auto& g = lid_.group(t);
+            for (int u = 0; u < g.count; ++u) {
+                auto uu = static_cast<std::size_t>(u);
+                int sc = g.subcatch_idx[uu];
+                if (sc < 0 || sc >= ns) continue;
+                auto usc = static_cast<std::size_t>(sc);
+                const bool pervious = (g.stor_thick[uu] == 0.0 || g.stor_ksat[uu] > 0.0);
+                lid_infil_vol[usc] += g.infil_loss[uu] * g.area[uu];
+                if (pervious) {
+                    lid_perv_area[usc]     += g.area[uu];
+                    lid_perv_evap_vol[usc] += g.evap_loss[uu] * g.area[uu];
+                }
+            }
+        }
+        for (int i = 0; i < ns; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            double total_area = ctx_.subcatches.area[ui] / ucf_landarea;   // legacy Subcatch.area (ft2)
+            if (total_area <= 0.0) continue;
+            double frac_perv = 1.0 - ctx_.subcatches.frac_imperv[ui];
+            const double lid_area = (ui < ctx_.subcatches.total_lid_area_ft2.size())
+                ? ctx_.subcatches.total_lid_area_ft2[ui] : 0.0;
+            if (lid_area > 0.0) {
+                frac_perv = (frac_perv * (total_area - lid_area) + lid_perv_area[ui])
+                            / total_area;
+                frac_perv = std::min(frac_perv, 1.0);
+            }
+            gw_frac_perv_[ui] = frac_perv;
+            const double v_pevap = (ui < rsoa.perv_evap_vol.size() ? rsoa.perv_evap_vol[ui] : 0.0)
+                                   + lid_perv_evap_vol[ui];
+            const double v_infil = (ui < rsoa.infil_vol.size() ? rsoa.infil_vol[ui] : 0.0)
+                                   + lid_infil_vol[ui];
+            gw_perv_evap_[ui]  = v_pevap / total_area / dt_runoff;
+            gw_infil_rate_[ui] = v_infil / total_area / dt_runoff;
+        }
     }
 
     // U3 (track I-b): 2D per-cell infiltration whose destination is
@@ -3497,20 +3557,20 @@ void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
     // solver's `infil_rate` is ft/s over the FULL subcatchment area, so the
     // volume converts with the area and this runoff step. Cells outside every
     // polygon contributed nothing (they stayed LOST, warned at initialize).
-    const double* gw_infil_ptr = ctx_.subcatches.infil_loss.data();
+    const double* gw_infil_ptr = gw_infil_rate_.data();
 #ifdef OPENSWMM_HAS_2D
     if (surface_router_.isActive() && dt_runoff > 0.0) {
         surface_router_.drainSubcatchRecharge(gw_2d_recharge_vol_);
         if (!gw_2d_recharge_vol_.empty()) {
-            gw_infil_with_2d_.assign(ctx_.subcatches.infil_loss.begin(),
-                                     ctx_.subcatches.infil_loss.end());
+            gw_infil_with_2d_.assign(gw_infil_rate_.begin(),
+                                     gw_infil_rate_.end());
             constexpr double kM3ToFt3 = 1.0 / (0.3048 * 0.3048 * 0.3048);
             for (int i = 0; i < ns && i < static_cast<int>(gw_2d_recharge_vol_.size());
                  ++i) {
                 const auto ui = static_cast<std::size_t>(i);
                 const double vol_m3 = gw_2d_recharge_vol_[ui];
                 if (vol_m3 <= 0.0) continue;
-                const double area_ft2 = ctx_.subcatches.area[ui] * ucf::ACRES_TO_FT2;
+                const double area_ft2 = ctx_.subcatches.area[ui] / ucf_landarea;
                 if (area_ft2 <= 0.0) continue;
                 gw_infil_with_2d_[ui] +=
                     (vol_m3 * kM3ToFt3) / (area_ft2 * dt_runoff);
@@ -3536,7 +3596,7 @@ void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
     for (int i = 0; i < ns; ++i) {
         auto ui = static_cast<std::size_t>(i);
         double gw_rate = groundwater_.state().gw_flow[ui]; // ft/sec
-        double area_ft2 = ctx_.subcatches.area[ui] * ucf::ACRES_TO_FT2;
+        double area_ft2 = ctx_.subcatches.area[ui] / ucf::UCF(ucf::LANDAREA, ctx_.options);
         ctx_.subcatches.gw_flow[ui] = gw_rate * area_ft2; // CFS
 
         // Gap #40: propagate max infiltration volume to SubcatchData for next
@@ -3553,8 +3613,8 @@ void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
     for (int i = 0; i < ns; ++i) {
         auto ui = static_cast<std::size_t>(i);
         if (ctx_.subcatches.gw_aquifer[ui] < 0) continue;
-        double area_ft2 = ctx_.subcatches.area[ui] * ucf::ACRES_TO_FT2;
-        ctx_.subcatches.stat_gw_infil_vol[ui]      += ctx_.subcatches.infil_loss[ui] * area_ft2 * dt_runoff;
+        double area_ft2 = ctx_.subcatches.area[ui] / ucf::UCF(ucf::LANDAREA, ctx_.options);
+        ctx_.subcatches.stat_gw_infil_vol[ui]      += gw_infil_rate_[ui] * area_ft2 * dt_runoff;
         ctx_.subcatches.stat_gw_upper_evap_vol[ui] += gws.upper_evap[ui]  * area_ft2 * dt_runoff;
         ctx_.subcatches.stat_gw_lower_evap_vol[ui] += gws.lower_evap[ui]  * area_ft2 * dt_runoff;
         ctx_.subcatches.stat_gw_deep_perc_vol[ui]  += gws.deep_loss[ui]   * area_ft2 * dt_runoff;
@@ -5180,9 +5240,9 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                     auto us = static_cast<std::size_t>(s);
                     int aq = ctx_.subcatches.gw_aquifer[us];
                     if (aq >= 0) {
-                        auto uaq = static_cast<std::size_t>(aq);
-                        double bot = ctx_.aquifers.bottom_elev[uaq];
-                        snap.subcatch.gw_elev[us] = bot + gw.lower_depth[us];
+                        // legacy subcatch_getResults: (lowerDepth + bottomElev)
+                        // with both in ft (the row's Ebot when given).
+                        snap.subcatch.gw_elev[us] = gw.bottom_elev[us] + gw.lower_depth[us];
                         snap.subcatch.soil_moist[us] = gw.theta[us];
                     }
                 }
@@ -7388,9 +7448,29 @@ void SWMMEngine::initHydrology() noexcept {
                                       / ucf::Ucf[ucf::LENGTH][unit_sys];
             gw.lower_loss_coeff[ui] = ctx_.aquifers.lower_loss[uaq]
                                       / ucf::Ucf[ucf::RAINFALL][unit_sys];
-            gw.total_depth[ui]      = (ctx_.subcatches.gw_surf_elev[ui]
-                                       - ctx_.aquifers.bottom_elev[uaq])
-                                      / ucf::Ucf[ucf::LENGTH][unit_sys];
+            // The [GROUNDWATER] row's optional Ebot / Wgw / Umc override the
+            // aquifer's bottom elevation, initial water table and initial
+            // moisture (legacy gwater_validate fills MISSING from the
+            // aquifer); Egwt overrides the node invert as the lateral-flow
+            // threshold (legacy Hstar = nodeElev - bottomElev, else
+            // Node.invertElev - bottomElev). Every elevation is converted to
+            // ft as legacy does at read (x / UCF(LENGTH)) and the depths are
+            // then differences of converted elevations. Before this the
+            // threshold was the raw Egwt (0 for `*`, so a water table 10 ft
+            // over a 10 ft-high invert drove 1680 cfs into the node on the
+            // Dupuit deck), the initial lower depth was the water-table
+            // ELEVATION rather than its height above the bottom, and the
+            // three overrides were ignored.
+            const double ucf_len = ucf::Ucf[ucf::LENGTH][unit_sys];
+            const double bot_elev = (ctx_.subcatches.gw_bot_elev[ui] != constants::MISSING)
+                ? ctx_.subcatches.gw_bot_elev[ui] / ucf_len
+                : ctx_.aquifers.bottom_elev[uaq] / ucf_len;
+            const double wt_elev  = (ctx_.subcatches.gw_wt_elev[ui] != constants::MISSING)
+                ? ctx_.subcatches.gw_wt_elev[ui] / ucf_len
+                : ctx_.aquifers.water_table_elev[uaq] / ucf_len;
+            const double surf_elev = ctx_.subcatches.gw_surf_elev[ui] / ucf_len;
+            gw.total_depth[ui]      = surf_elev - bot_elev;
+            gw.bottom_elev[ui]      = bot_elev;
 
             // Copy GW lateral flow coefficients
             gw.a1[ui]     = ctx_.subcatches.gw_a1[ui];
@@ -7398,13 +7478,28 @@ void SWMMEngine::initHydrology() noexcept {
             gw.a2[ui]     = ctx_.subcatches.gw_a2[ui];
             gw.b2[ui]     = ctx_.subcatches.gw_b2[ui];
             gw.a3[ui]     = ctx_.subcatches.gw_a3[ui];
-            gw.h_star[ui] = ctx_.subcatches.gw_hstar[ui]
-                            / ucf::Ucf[ucf::LENGTH][unit_sys];
+            {
+                double node_elev;
+                if (ctx_.subcatches.gw_hstar[ui] != constants::MISSING) {
+                    node_elev = ctx_.subcatches.gw_hstar[ui] / ucf_len;
+                } else {
+                    int gwn = ctx_.subcatches.gw_node[ui];
+                    if (gwn < 0) gwn = ctx_.subcatches.outlet_node[ui];
+                    node_elev = (gwn >= 0 && gwn < ctx_.n_nodes())
+                        ? ctx_.nodes.invert_elev[static_cast<std::size_t>(gwn)] : 0.0;
+                }
+                gw.h_star[ui] = node_elev - bot_elev;
+            }
 
-            // Initial conditions from aquifer
-            gw.theta[ui]      = ctx_.aquifers.upper_moist[uaq];
-            gw.lower_depth[ui] = ctx_.aquifers.water_table_elev[uaq]
-                                 / ucf::Ucf[ucf::LENGTH][unit_sys];
+            // Initial conditions (legacy gwater_initState)
+            double theta0 = (ctx_.subcatches.gw_upper_moist[ui] != constants::MISSING)
+                ? ctx_.subcatches.gw_upper_moist[ui]
+                : ctx_.aquifers.upper_moist[uaq];
+            if (theta0 >= gw.porosity[ui]) theta0 = gw.porosity[ui] - constants::XTOL;
+            gw.theta[ui] = theta0;
+            double lower0 = wt_elev - bot_elev;
+            if (lower0 >= gw.total_depth[ui]) lower0 = gw.total_depth[ui] - constants::XTOL;
+            gw.lower_depth[ui] = lower0;
         }
 
         // Parse [GWF] custom expressions (stored in ext_options during input parsing).
@@ -7893,10 +7988,14 @@ void SWMMEngine::assembleGWCoupling(double dt_runoff) noexcept {
         if (gw_node < 0) gw_node = ctx_.subcatches.outlet_node[ui];
         if (gw_node >= 0 && gw_node < ctx_.n_nodes()) {
             auto un = static_cast<std::size_t>(gw_node);
-            double bottom_elev = ctx_.aquifers.bottom_elev[static_cast<std::size_t>(aq_idx)];
+            // The subcatchment's effective aquifer bottom in ft (the row's
+            // Ebot when given, else the aquifer's), as resolved at init.
+            double bottom_elev = groundwater_.state().bottom_elev[ui];
             // Gap #41: fixedDepth option — use a fixed SW head instead of live node depth.
-            // gw_tw stores the fixedDepth parameter (tok[9] in [GROUNDWATER] section).
-            double fixed_depth = ctx_.subcatches.gw_tw[ui];
+            // gw_tw stores the fixedDepth parameter (tok[9] in [GROUNDWATER] section)
+            // in the deck's length units, legacy's x[6] / UCF(LENGTH).
+            double fixed_depth = ctx_.subcatches.gw_tw[ui]
+                / ucf::UCF(ucf::LENGTH, ctx_.options);
             if (fixed_depth > 0.0) {
                 // Hsw = fixedDepth + nodeInvertElev - bottomElev  (matching legacy gwater.c)
                 ctx_.subcatches.gw_sw_head[ui] =
@@ -7907,7 +8006,7 @@ void SWMMEngine::assembleGWCoupling(double dt_runoff) noexcept {
             }
 
             // Available node flow for GW negative flow limit
-            double area_ft2 = ctx_.subcatches.area[ui] * ucf::ACRES_TO_FT2;
+            double area_ft2 = ctx_.subcatches.area[ui] / ucf::UCF(ucf::LANDAREA, ctx_.options);
             if (area_ft2 > 0.0 && dt_runoff > 0.0) {
                 ctx_.subcatches.gw_node_avail_flow[ui] =
                     (ctx_.nodes.inflow[un] + ctx_.nodes.volume[un] / dt_runoff) / area_ft2;
@@ -8364,7 +8463,7 @@ void SWMMEngine::initMassBalance() noexcept {
             if (gw.total_depth[ui] <= 0.0) continue;
             double upper_d = gw.total_depth[ui] - gw.lower_depth[ui];
             double vol = gw.theta[ui] * upper_d + gw.porosity[ui] * gw.lower_depth[ui];
-            double area = ctx_.subcatches.area[ui] * ucf::ACRES_TO_FT2;
+            double area = ctx_.subcatches.area[ui] / ucf::UCF(ucf::LANDAREA, ctx_.options);
             ctx_.mass_balance.gw_init_storage += vol * area;
         }
     }

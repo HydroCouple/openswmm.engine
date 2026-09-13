@@ -97,6 +97,8 @@ struct RunoffSoA {
     std::vector<double> runoff;             ///< Total runoff rate (cfs)
     std::vector<double> evap_loss;          ///< Evaporation loss (ft3)
     std::vector<double> infil_loss;         ///< Infiltration loss (ft3)
+    std::vector<double> perv_evap_vol;      ///< Pervious-subarea evaporation this step (ft3) — legacy Vpevap
+    std::vector<double> infil_vol;          ///< Non-LID infiltration this step (ft3) — legacy Vinfil
 
     // Per-subcatchment: per-subarea runoff CFS from non-LID area (Gap #23)
     // Used by SWMMEngine to compute LID unit inflow from impervious/pervious fractions.
