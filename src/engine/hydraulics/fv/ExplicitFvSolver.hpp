@@ -96,6 +96,21 @@ public:
     /// reconstructed from the net afterwards.
     const std::vector<double>& node_inflow_volume() const noexcept { return node_in_; }
     const std::vector<double>& node_outflow_volume() const noexcept { return node_out_; }
+    /// Book a diverted lateral (credited straight into the incident cells,
+    /// bypassing the node's faces) as node OUTFLOW for the substep — it
+    /// entered the node's ledger as lateral inflow and left it, but never
+    /// crossed a face, so the face ledger holds no outflow for it. Per
+    /// substep, on both stepping paths, so a junction that alternates between
+    /// the pass-through and the solved path within a routing step is booked
+    /// exactly (the report's per-node continuity read 80–100 % at every
+    /// lateral-fed pass-through junction without it, 2026-09-13).
+    void bookDivertedLateral(std::size_t un, double dt,
+                             const FvStepForcing& forcing) noexcept {
+        if (node_lat_div_.empty() || !node_lat_div_[un] || !forcing.node_lateral)
+            return;
+        const double lat = forcing.node_lateral[un];
+        if (lat > 0.0) node_out_[un] += lat * dt;
+    }
 
     /// Per-conduit flag: did HEC-5 inlet control cap this culvert's inflow at
     /// any point in the last advance()? Reported as the "Inlet Ctrl" column.
@@ -638,8 +653,7 @@ private:
     // -- TPA pressure closure (issue #156 Phase 4) ---------------------------
     bool tpa_ = false;                    ///< FV_PRESSURE_CLOSURE == TPA
     bool mixed_wave_ = true;              ///< slot/free interface wave bound (dev switch)
-    bool mw_cap_ = true;                  ///< vented-ghost crown celerity cap (dev: MW=2 cap only)
-    bool mw_rh_  = true;                  ///< bore-speed bound at slot/free faces (dev: MW=3 RH only)
+    bool mw_rh_  = true;                  ///< bore-speed bound at interior slot/free faces
     bool deg1_guard_slot_ = true;         ///< degree-1 prescribed discharge skips a slot interior (dev: DEG1=1 off)
     bool census_pass_far_ = true;         ///< census bounds a pass-through ghost by the FAR cell it fluxes (dev: CENSUS_PASS=0 off)
     bool lts_fit_ = false;                ///< 4c experiment: a shorter macro cycle when the full one does not fit (OPENSWMM_FV_LTS_FIT=1)

@@ -129,8 +129,7 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
     {
         const char* mw = std::getenv("OPENSWMM_FV_MIXED_WAVE");
         mixed_wave_ = !(mw && mw[0] == '0');
-        mw_cap_ = mixed_wave_ && !(mw && mw[0] == '3');   // 3 = RH bound only
-        mw_rh_  = mixed_wave_ && !(mw && mw[0] == '2');   // 2 = ghost cap only
+        mw_rh_  = mixed_wave_;
         const char* d1 = std::getenv("OPENSWMM_FV_DEG1");
         deg1_guard_slot_ = !(d1 && d1[0] == '1');
         const char* cp = std::getenv("OPENSWMM_FV_CENSUS_PASS");
@@ -542,10 +541,21 @@ void ExplicitFvSolver::rebuildActiveLists() {
     // primed to inject that head on reactivation. Today only q's float
     // non-zeroness protects the quiescent sealed column (the P5 at-rest
     // pressurized class); this makes the protection structural.
+    // A cell that receives a diverted junction lateral (cell_qlat_, filled by
+    // refreshStructFlows) is active whatever its depth: updateCells is the
+    // only place the injection lands, and it skips inactive cells. Without
+    // this a lateral into a DRY reach vanished — the node had marked it
+    // delivered (node_lat_div_), the ledger booked it as inflow, and no cell
+    // ever took it. Measured on a 7 km tunnel filling from dry (Klaver
+    // Example_02, 2026-09-13): 100 % of the first 70 min of lateral inflow at
+    // a degree-2 junction lost, 4.7 % of the run's total, until the wetting
+    // front from upstream activated the cells.
+    const bool have_qlat = !cell_qlat_.empty();
     for (int c = 0; c < nc; ++c) {
         const auto uc = static_cast<std::size_t>(c);
         cell_active_[uc] = (state_->cell_h[uc] > k::kDryDepth ||
                             state_->cell_q[uc] != 0.0 ||
+                            (have_qlat && cell_qlat_[uc] != 0.0) ||
                             tpaCell(uc)) ? char{1} : char{0};
     }
     for (int f = 0; f < nf; ++f) {
@@ -732,17 +742,10 @@ double ExplicitFvSolver::censusDt(bool press_edit) const {
                         perf::count(perf::n_fv_geom_area);
                         perf::count(perf::n_fv_geom_width);
                         const double ag = k::areaOfDepth(g, hg);
-                        double cg = k::celerity(ag, k::widthOfDepth(g, hg));
-                        // The flux caps a VENTED node's ghost at the free-
-                        // surface crown celerity (faceSide); the census bounds
-                        // the same signal.
-                        if (mw_cap_ && g.c_crown > 0.0 && cg > g.c_crown &&
-                            mesh_->node_sur_depth[static_cast<std::size_t>(nd)] <= 0.0 &&
-                            !(!node_pass_.empty() &&
-                              node_pass_[static_cast<std::size_t>(nd)] &&
-                              algebraicActive(nd)))
-                            cg = g.c_crown;
-                        speed = std::max(speed, std::fabs(cell_u_[uo]) + cg);
+                        speed = std::max(speed,
+                                         std::fabs(cell_u_[uo]) +
+                                             k::celerity(ag,
+                                                         k::widthOfDepth(g, hg)));
                     }
                 }
             }
@@ -1258,19 +1261,27 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
     // cached one: same function, same arguments, same bits.
     // Slot/free-surface interface treatment (OPENSWMM_FV_MIXED_WAVE, on by
     // default): a side standing in the slot is flagged so waveSpeeds can bound
-    // the wave crossing into a free-surface neighbour by the bore speed; and a
-    // VENTED node's own-head ghost is capped at the section's free-surface
-    // crown celerity — the manhole has a free surface, so the boundary signal
-    // it sends into the pipe is a gravity wave, not the slot's acoustic one.
-    // A sealed node (SURCHARGE_DEPTH > 0) keeps the acoustic ghost.
+    // the wave crossing into a free-surface neighbour by the bore speed. A
+    // vented junction's own-head ghost never takes part (press 2): marked
+    // free, a face whose cell side stands in the slot too (a whole tunnel
+    // pressurized 50 m above the junction crowns) became a "slot/free" pair
+    // and the bound cut the acoustic waves at every lateral junction — the
+    // node solve then found no head below its ceiling, clamped at the rim
+    // and booked 63 000 m³ of "flooding" at junctions whose published depth
+    // never exceeded half their rim (Klaver Example_02, 2026-09-13). The
+    // entrance lock the bound exists for lives at the INTERIOR slot/free
+    // faces (measured: the bound alone releases it, a ghost celerity cap
+    // alone does not). That cap — the vented ghost held to the free-surface
+    // crown celerity — was removed the same day: with the ghost in the slot
+    // and the cell beside it momentarily free it fed a 20× overloaded 0.5 ft
+    // pipe through a near-upwind flux at 4.4 cfs, a 2× over-conveying limit
+    // cycle. A sealed node's ghost carries the slot celerity like any side.
     auto finish = [&](k::FaceState& o) {
         if (!mixed_wave_) return;
         o.press = (mw_rh_ && !gf->is_open && h_star >= gf->y_full) ? uint8_t{1} : uint8_t{0};
         if (node_head_ghost && node >= 0 &&
-            mesh_->node_sur_depth[static_cast<std::size_t>(node)] <= 0.0) {
-            o.press = 0;
-            if (mw_cap_ && gf->c_crown > 0.0 && o.c > gf->c_crown) o.c = gf->c_crown;
-        }
+            mesh_->node_sur_depth[static_cast<std::size_t>(node)] <= 0.0)
+            o.press = mw_rh_ ? uint8_t{2} : uint8_t{0};
     };
     if (centred && gf == g && h_star == h_raw) {
         out.a  = cell_ah_[uc_cached];
@@ -2576,6 +2587,11 @@ void ExplicitFvSolver::refreshStructFlows(const FvStepForcing& forcing) {
                 if (c >= 0) {
                     cell_qlat_[static_cast<std::size_t>(c)] += 0.5 * lat;
                     credited = true;
+                    // A dry receiving cell is inactive under compaction; the
+                    // rebuild (see rebuildActiveLists) activates it.
+                    if (!cell_active_.empty() &&
+                        !cell_active_[static_cast<std::size_t>(c)])
+                        lists_valid_ = false;
                 }
             }
             // Flag only once a cell actually took the water: nodeLateral()
@@ -2598,6 +2614,10 @@ void ExplicitFvSolver::refreshStructFlows(const FvStepForcing& forcing) {
                 cell_qlat_[static_cast<std::size_t>(cl)] += 0.5 * lat;
                 cell_qlat_[static_cast<std::size_t>(cr)] += 0.5 * lat;
                 node_lat_div_[un] = 1;
+                if (!cell_active_.empty() &&
+                    (!cell_active_[static_cast<std::size_t>(cl)] ||
+                     !cell_active_[static_cast<std::size_t>(cr)]))
+                    lists_valid_ = false;
             }
         }
         node_pass_[un] = (clean && (lat == 0.0 || node_lat_div_[un])) ? 1 : 0;
@@ -2720,6 +2740,7 @@ void ExplicitFvSolver::updateNodes(double dt, const FvStepForcing& forcing) {
             if (q > 0.0) node_in_[un]  += q * dt;
             else         node_out_[un] -= q * dt;
         }
+        bookDivertedLateral(un, dt, forcing);
 
         if (forcing.node_fixed_head && std::isfinite(forcing.node_fixed_head[un])) {
             // Stage boundary (outfalls, tide/time-series). The head is imposed;
@@ -3304,13 +3325,9 @@ double ExplicitFvSolver::cellStableDt(int c) const {
         if (hg <= k::kDryDepth) continue;
         perf::count(perf::n_fv_geom_area);
         perf::count(perf::n_fv_geom_width);
-        double cg = k::celerity(k::areaOfDepth(g, hg), k::widthOfDepth(g, hg));
-        if (mw_cap_ && g.c_crown > 0.0 && cg > g.c_crown &&
-            mesh_->node_sur_depth[static_cast<std::size_t>(nd)] <= 0.0 &&
-            !(!node_pass_.empty() &&
-              node_pass_[static_cast<std::size_t>(nd)] && algebraicActive(nd)))
-            cg = g.c_crown;
-        speed = std::max(speed, std::fabs(cell_u_[uc]) + cg);
+        speed = std::max(speed, std::fabs(cell_u_[uc]) +
+                                    k::celerity(k::areaOfDepth(g, hg),
+                                                k::widthOfDepth(g, hg)));
     }
 
     return (speed > 1.0e-12) ? opts_.cfl * dx / speed : 1.0e30;
@@ -3937,6 +3954,7 @@ void ExplicitFvSolver::fireNodes(const std::vector<int>& nodes, double dt0,
 
         const double drained = acc_nvol_[un];
         acc_nvol_[un] = 0.0;
+        bookDivertedLateral(un, dt, forcing);
 
         if (forcing.node_fixed_head && std::isfinite(forcing.node_fixed_head[un])) {
             state_->node_head[un] = forcing.node_fixed_head[un];

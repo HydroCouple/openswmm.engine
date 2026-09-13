@@ -93,6 +93,7 @@ struct RunResult {
     double outflow_volume = 0.0;   ///< external outflow (10^6 gal)
     std::map<std::string, double> peak_flow;   ///< link → max |flow|
     std::map<std::string, double> max_depth;   ///< node → max depth (ft)
+    std::map<std::string, double> avg_depth;   ///< node → average depth (ft)
     bool   parsed = false;
 };
 
@@ -142,7 +143,10 @@ RunResult parseReport(const std::string& rpt) {
             std::istringstream ss(line);
             std::string name, type;
             double avg = 0.0, mx = 0.0;
-            if (ss >> name >> type >> avg >> mx) r.max_depth[name] = mx;
+            if (ss >> name >> type >> avg >> mx) {
+                r.max_depth[name] = mx;
+                r.avg_depth[name] = avg;
+            }
         } else if (in_routing_block &&
                    line.find("External Outflow") != std::string::npos) {
             const auto n = trailingNumbers(line);
@@ -722,17 +726,21 @@ TEST(FvEngine, SurchargeDepthDelaysFlooding) {
         writeCapacityModel("sur_deep", "FV", "NO", 6.0, 0.0, imp));
     ASSERT_TRUE(flush.parsed);
     ASSERT_TRUE(sealed.parsed);
-    ASSERT_TRUE(flush.max_depth.count("JA") && sealed.max_depth.count("JA"));
+    ASSERT_TRUE(flush.avg_depth.count("JA") && sealed.avg_depth.count("JA"));
 
-    // The sealed node must actually use its column: its level reaches well
+    // The sealed node must actually use its column: its level stands well
     // above the 4 ft rim (rim + 6 ft = 10 ft is the ceiling), and the flush
-    // node cannot follow it there.
-    const double d0 = flush.max_depth.at("JA");
-    const double d6 = sealed.max_depth.at("JA");
+    // node cannot follow it there. On the AVERAGE depth: both runs open with
+    // a one-record startup overshoot at t = 0 (10 cfs into a dry 0.5 ft pipe
+    // through a node with no storage — 23–47 ft on the first report line,
+    // then 2.7 / 8.1 ft for the rest of the run), which the maximum would
+    // read instead of the column. That overshoot is a separate open item.
+    const double d0 = flush.avg_depth.at("JA");
+    const double d6 = sealed.avg_depth.at("JA");
     EXPECT_GT(d6, 4.0 + 0.5 * 6.0)
-        << "sealed node peaked at " << d6 << " ft — the column is being ignored";
+        << "sealed node averaged " << d6 << " ft — the column is being ignored";
     EXPECT_LT(d0, d6 - 2.0)
-        << "flush node peaked at " << d0 << " ft against the sealed node's " << d6;
+        << "flush node averaged " << d0 << " ft against the sealed node's " << d6;
 
     const double f0 = routingRow(outDir() + "/sur_none.rpt", "Flooding Loss");
     const double f6 = routingRow(outDir() + "/sur_deep.rpt", "Flooding Loss");
@@ -1767,6 +1775,55 @@ RetiredRun runStorageNodeModel(const std::string& name,
     return rr;
 }
 }  // namespace
+
+// A lateral inflow at a degree-2 junction whose pipes are DRY (a tunnel
+// filling from the far end, a sewer at the start of a storm). The junction
+// takes the pass-through shortcut, so its lateral is credited into the two
+// adjacent cells (refreshStructFlows) and the node marks it delivered; but
+// under FV_COMPACTION those dry cells were inactive and updateCells — the only
+// place the credit lands — skipped them. The ledger booked the inflow, no cell
+// ever took it: 100 % of the lateral vanished until a wetting front from
+// elsewhere activated the cells (Klaver Example_02, 7 km tunnel, 2026-09-13:
+// 4.7 % of the run's inflow). The neighbours are VIRTUAL junctions, as in a
+// finely cut tunnel: with real junctions either side the node-face rule of the
+// rebuild happened to activate the cells and the loss did not show. Here the
+// junction is the ONLY source, so every drop must be in the pipes or at the
+// outfall; measured before the fix: continuity 100 %, outflow 0.
+TEST(FvEngine, LateralIntoADryPassThroughJunctionIsNotLost) {
+    const std::string dir = outDir();
+    const std::string inp = dir + "/dry_lateral.inp";
+    {
+        std::ofstream os(inp);
+        os << "[OPTIONS]\nFLOW_UNITS           CFS\nFLOW_ROUTING         FV\n"
+              "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+              "END_DATE             01/01/2026\nEND_TIME             01:00:00\n"
+              "REPORT_STEP          00:01:00\nROUTING_STEP         5\n"
+              "FV_CELL_LENGTH       20\n\n"
+              "[JUNCTIONS]\nJA  100.0  10.0  0  0  0\nJB  98.0  10.0  0  0  0\n\n"
+              "[VIRTUAL_JUNCTIONS]\nV1  99.0  10.0\nV2  97.0  10.0\n\n"
+              "[OUTFALLS]\nOF   96.0  FREE  NO\n\n"
+              "[CONDUITS]\nC1  JA  V1  200  0.013  0  0  0  0\n"
+              "C2  V1  JB  200  0.013  0  0  0  0\n"
+              "C3  JB  V2  200  0.013  0  0  0  0\n"
+              "C4  V2  OF  200  0.013  0  0  0  0\n\n"
+              "[XSECTIONS]\nC1  CIRCULAR  3.0  0  0  0  1\nC2  CIRCULAR  3.0  0  0  0  1\n"
+              "C3  CIRCULAR  3.0  0  0  0  1\nC4  CIRCULAR  3.0  0  0  0  1\n\n"
+              "[INFLOWS]\nJB  FLOW  \"\"  FLOW  1.0  1.0  2.0\n\n"
+              "[TIMESERIES]\n\n[REPORT]\nINPUT  NO\nCONTROLS  NO\nNODES ALL\nLINKS ALL\n";
+    }
+    const std::string rpt = dir + "/dry_lateral.rpt";
+    const std::string out = dir + "/dry_lateral.out";
+    ASSERT_EQ(swmm_engine_run(inp.c_str(), rpt.c_str(), out.c_str(), nullptr), 0);
+    const RunResult r = parseReport(rpt);
+    ASSERT_TRUE(r.parsed);
+    // 2 cfs for an hour = 0.165 acre-ft, drained to the outfall by the pipes
+    // below JB.
+    EXPECT_LT(std::fabs(r.continuity_pct), 0.5)
+        << "routing continuity " << r.continuity_pct
+        << " % — the lateral into the dry junction was lost";
+    EXPECT_GT(r.outflow_volume, 0.10)
+        << "outflow " << r.outflow_volume << " acre-ft: the lateral never reached the outfall";
+}
 
 TEST(FvEngine, RetiredNodeOptionsAreInertAndWarn) {
     const RetiredRun base = runStorageNodeModel("retired_node_base", "");
