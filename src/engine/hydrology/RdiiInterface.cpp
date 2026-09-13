@@ -32,9 +32,11 @@
 #include "RdiiInterface.hpp"
 #include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "../core/SimulationContext.hpp"
+#include "../core/Constants.hpp"
 #include "../core/DateTime.hpp"
 #include "../core/UnitConversion.hpp"
 
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 
@@ -229,8 +231,10 @@ void RdiiInterfaceFile::applyFlows(SimulationContext& ctx,
     for (std::size_t i = 0; i < node_idx_.size(); ++i) {
         const int j = node_idx_[i];
         if (j < 0 || j >= ctx.n_nodes()) continue;
-        ctx.nodes.rdii_inflow[static_cast<std::size_t>(j)] +=
-            static_cast<double>(flows_[i]);
+        const double q = static_cast<double>(flows_[i]);
+        // legacy addRdiiInflows: `if (fabs(q) < FLOW_TOL) continue;`
+        if (std::fabs(q) < constants::FLOW_TOL) continue;
+        ctx.nodes.rdii_inflow[static_cast<std::size_t>(j)] += q;
     }
 }
 

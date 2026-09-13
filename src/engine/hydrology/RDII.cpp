@@ -26,6 +26,7 @@
 
 #include "RDII.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/Constants.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../core/DateTime.hpp"
 #include "../core/ErrorCodes.hpp"
@@ -668,7 +669,8 @@ void RDIISolver::applyRdiiInflows(SimulationContext& ctx,
     const float* flows = grid_flows_.data() + row * ncol;
     for (std::size_t col = 0; col < ncol; ++col) {
         double q = static_cast<double>(flows[col]);
-        if (q == 0.0) continue;
+        // legacy addRdiiInflows: `if (fabs(q) < FLOW_TOL) continue;`
+        if (std::fabs(q) < constants::FLOW_TOL) continue;
         auto un = static_cast<std::size_t>(grid_node_[col]);
         if (un < ctx.nodes.rdii_inflow.size())
             ctx.nodes.rdii_inflow[un] += q;
