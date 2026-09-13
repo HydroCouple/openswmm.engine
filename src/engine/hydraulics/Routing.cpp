@@ -1599,6 +1599,10 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
             ctx.nodes.outflow[un] = impl->node_outflow_volume()[un] / dt +
                                     ((lat < 0.0) ? -lat : 0.0) +
                                     ctx.nodes.losses[un];
+            // A lateral the solver credits straight into the incident cells
+            // (pass-through junction) is booked into node_out_ by the solver
+            // per substep (bookDivertedLateral), so the split above already
+            // carries it.
         }
     }
 
@@ -1727,6 +1731,11 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
         const double lat = ctx.nodes.lat_flow[un];
         ctx.nodes.inflow[un]  = q_in  + ((lat > 0.0) ? lat : 0.0);
         ctx.nodes.outflow[un] = q_out + ((lat < 0.0) ? -lat : 0.0);
+        // The virtual junction's lateral went straight into the two spliced
+        // cells (half each); the through-flow above does not carry it, so it
+        // is node outflow for the node's own ledger (same as the pass-through
+        // case in publishFv).
+        if (lat > 0.0) ctx.nodes.outflow[un] += lat;
     }
 }
 

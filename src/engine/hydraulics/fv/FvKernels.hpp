@@ -198,9 +198,10 @@ struct FaceState {
     double u  = 0.0;  ///< velocity (ft/s)
     double c  = 0.0;  ///< celerity (ft/s)
     double i1 = 0.0;  ///< hydrostatic first moment at the reconstructed depth
-    /// The side stands in the Preissmann slot (or is TPA-flagged): its `c` is
-    /// the acoustic slot celerity. Set by the solver; waveSpeeds uses it to
-    /// bound the wave that crosses a slot/free-surface interface.
+    /// 1: the side stands in the Preissmann slot (or is TPA-flagged) and its
+    /// `c` is the acoustic slot celerity; 0: free surface; 2: a vented
+    /// junction's own-head ghost, which never takes part in the slot/free
+    /// bore bound (see waveSpeeds). Set by the solver.
     uint8_t press = 0;
 };
 
@@ -233,7 +234,15 @@ OPENSWMM_KERNEL_FN void waveSpeeds(const FaceState& L, const FaceState& R,
         // entrance is O(c_slot·ΔA) — measured 52 cfs of spurious mass flux and
         // a −245 ft⁴/s² momentum sink on a 3 ft culvert whose junction then
         // flooded at 108 of 120 cfs however high its head rose.
-        if (L.press != R.press) {
+        // A vented junction's ghost (press == 2) is excluded: bounding the
+        // wave into a pressurized cell beside it cut the acoustic exchange at
+        // every lateral junction of a pressurized tunnel (the node solve then
+        // clamped at its rim and booked 63 000 m³ of flooding — Klaver
+        // Example_02, 2026-09-13), and bounding the wave into a free cell
+        // beside it drove a 2× over-conveying limit cycle at an overloaded
+        // entrance. The bound acts at the INTERIOR slot/free faces, which is
+        // where the entrance lock lived.
+        if (L.press != R.press && L.press < 2 && R.press < 2) {
             if (L.press) {
                 const double da = L.a - R.a;
                 const double w  = (da > 0.0) ? (L.q - R.q) / da : sr;

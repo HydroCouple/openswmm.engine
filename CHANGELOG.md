@@ -154,6 +154,45 @@ retroactive.
 
 ### Fixed
 
+- **Explicit FV: a lateral inflow into a dry pass-through junction is no longer lost.** A
+  clean degree-2 junction's lateral is credited straight into its two adjacent cells, and
+  the node marks it delivered — but under `FV_COMPACTION` (the default) dry cells are
+  inactive and the cell update, the only place the credit lands, skips them. The ledger
+  booked the inflow, no cell ever took it: on a 7 km tunnel filling from dry
+  (Klaver Example_02, 4.877 m circular in 5 m cells, seven lateral junctions) 100 % of the
+  first 70 minutes of lateral inflow at a junction vanished, 4.7 % of the run's total, until
+  the wetting front from upstream activated the cells; on East Boston the same mechanism
+  was the residual 0.8 % continuity error. A cell that receives a diverted lateral is now
+  active regardless of depth, and a credit into an inactive cell invalidates the active
+  lists. Klaver 4.691 % → −0.000 %, East Boston 0.797 % → −0.000 %, TwinOaks 4 h 0.000 %.
+  Gate `LateralIntoADryPassThroughJunctionIsNotLost` (a junction flanked by virtual
+  junctions, dry pipes: 100 % continuity error and zero outflow before the fix).
+- **Explicit FV: a junction's own-head ghost no longer takes part in the slot/free bore
+  bound, and the vented-ghost crown-celerity cap is removed.** Marked free, the ghost of a
+  junction whose cell side stands in the slot too (a whole tunnel pressurized 50 m above
+  its junction crowns) made a "slot/free" pair of an acoustic face, the bound cut the
+  acoustic waves at every lateral junction, the algebraic solve found no head below its
+  ceiling, clamped at the rim and booked 63 100 m³ of "flooding" at junctions whose
+  published depth never exceeded half their rim (Klaver Example_02); marked by state, the
+  bound on a momentarily free cell beside it drove a 2× over-conveying limit cycle at a 20×
+  overloaded 0.5 ft entrance. The entrance lock the bound exists for lives at the INTERIOR
+  slot/free faces (measured: the bound alone releases it; the ghost celerity cap alone does
+  not, and with the ghost in the slot beside a momentarily free cell the cap fed the same
+  limit cycle), so the ghost is excluded (`FaceState::press == 2`) and the cap and
+  `FvGeometry::c_crown` are gone. Klaver: flooding 6.31 hectare-m → 0, the downstream weir
+  overflows 6.67 hectare-m as it should; the culvert fixture is unchanged; transitions
+  identical; lab e2_2006 C1/C2 within 0.003 NSE. `SurchargeDepthDelaysFlooding` asserts the
+  column on the AVERAGE depth: both runs open with a one-record startup overshoot (23–47 ft
+  on the first report line of a 10 cfs pour into a dry 0.5 ft pipe through a node with no
+  storage), a separate open item.
+- **FV report: the per-node "Highest Continuity Errors" no longer reads a diverted lateral
+  as retained.** A lateral credited straight into the incident cells never crossed a node
+  face, so the face ledger held no outflow for it and the node's own continuity showed
+  80–100 % at every lateral-fed pass-through junction (East Boston, TwinOaks, Klaver) while
+  the system balanced to 0.000 %. The solver books it as node outflow per substep on both
+  stepping paths (`bookDivertedLateral`), and a virtual junction's lateral likewise in the
+  publish. Report only: every `.out` is byte-identical. Nodes that see a few cubic metres
+  over a run still show large relative numbers, as in legacy.
 - **Explicit FV: the wave entering a free surface at a Preissmann-slot interface is bounded
   by the bore speed, not the slot's acoustic celerity.** The explicit slot path locked
   pressurized at an entrance and flooded the junction however high its head stood (a 3 ft
@@ -164,9 +203,8 @@ retroactive.
   at the node face) and a −245 ft⁴/s² momentum sink that pinned the entrance flux to the
   cell's own momentum. Now: when exactly one side stands in the slot (`FaceState::press`),
   the wave entering the free side is bounded by the Rankine–Hugoniot jump ΔQ/ΔA between
-  that side's own u ± c and the Davis bound; a VENTED node's ghost carries the section's
-  free-surface crown celerity (`FvGeometry::c_crown`; the dt census and LTS bound use the
-  same cap; sealed nodes keep the acoustic ghost); and the degree-1 prescribed-discharge
+  that side's own u ± c and the Davis bound (a junction's own-head ghost never takes part
+  in the bound — see the 2026-09-13 entry below); and the degree-1 prescribed-discharge
   fallback skips an interior cell already in the slot (forcing the inflow into a full pipe
   lifted its slot head by q·Δt/(t_slot·Δx) per substep — a 0.5 ft pipe fed 10 cfs chattered
   its junction between dry and 40–80 ft; the fallback was also the culvert's
@@ -180,9 +218,8 @@ retroactive.
   `HighCelerityFillingCompletes`; `DivergenceGuardFailsLoudNotSilent` moves to a = 10 000,
   which still diverges); `FvUnsteadyFriction.ValveClosureDampsOnImplicitPath`, the
   implicit-path residual left red by the Phase 2 secant correction, passes again. Decks
-  that never pressurize are byte-identical. Dev switches `OPENSWMM_FV_MIXED_WAVE` (0 off,
-  2 cap only, 3 bound only) and `OPENSWMM_FV_DEG1=1` restore the previous estimates for
-  one A/B cycle.
+  that never pressurize are byte-identical. Dev switches `OPENSWMM_FV_MIXED_WAVE=0` and
+  `OPENSWMM_FV_DEG1=1` restore the previous estimates for one A/B cycle.
 - **FILLED_CIRCULAR conduit offsets cross the C API as authored values.** Once
   `resolve_cross_references` raised a partly filled circular conduit's stored offsets by the sediment
   depth (legacy `link.c:1072-1077`), `swmm_link_get_offset_up/dn` reported the raised value, the setters
