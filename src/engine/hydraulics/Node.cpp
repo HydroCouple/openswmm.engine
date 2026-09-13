@@ -384,6 +384,26 @@ double getOverflow(double new_volume, double full_volume, double dt) {
     return 0.0;
 }
 
+double storeVolume(const NodeData& nodes, int idx, double depth, double volume) {
+    auto ui = static_cast<std::size_t>(idx);
+    const double v = std::max(volume, 0.0);
+    // Storage: the curve volume. Outfall: a boundary, it stores nothing of
+    // its own (the routers never book it a volume), so the store is whatever
+    // was booked — 0 — rather than a MIN_SURFAREA bucket.
+    if (nodes.type[ui] == NodeType::STORAGE ||
+        nodes.type[ui] == NodeType::OUTFALL) return v;
+    const double fd = nodes.full_depth[ui];
+    if (!(fd > 0.0)) return v;
+    double store = nodes.full_volume[ui] * (std::min(depth, fd) / fd);
+    if (depth > fd) store += v;           // ponded water above the rim
+    return store;
+}
+
+double storeVolume(const NodeData& nodes, int idx) {
+    auto ui = static_cast<std::size_t>(idx);
+    return storeVolume(nodes, idx, nodes.depth[ui], nodes.volume[ui]);
+}
+
 // ============================================================================
 // Batch: computeHeads
 // ============================================================================

@@ -535,8 +535,13 @@ void Router::initNodeFlows(SimulationContext& ctx, double dt, double evap_rate) 
 
         // Set overflow from excess stored volume
         // (matching legacy node.c node_initFlows lines 324-326)
-        if (nodes.volume[ui] > nodes.full_volume[ui] && dt > 0.0) {
-            nodes.overflow[ui] = (nodes.volume[ui] - nodes.full_volume[ui]) / dt;
+        // Legacy node_initInflow: overflow = any excess stored volume. The
+        // dynamic wave books node volume in the legacy convention, whose
+        // full volume is NodeData::rpt_full_volume.
+        const double full_vol = (ctx.options.routing_model == RoutingModel::DYNWAVE)
+            ? nodes.rpt_full_volume[ui] : nodes.full_volume[ui];
+        if (nodes.volume[ui] > full_vol && dt > 0.0) {
+            nodes.overflow[ui] = (nodes.volume[ui] - full_vol) / dt;
         } else {
             nodes.overflow[ui] = 0.0;
         }

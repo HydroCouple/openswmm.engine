@@ -128,7 +128,7 @@ void applyHeatFluxes(SimulationContext& ctx, double dt) {
     for (int i = 0; i < nn; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         if (ui >= hs.node_temp.size()) break;
-        const double vol_ft3 = ctx.nodes.volume[ui];
+        const double vol_ft3 = node::storeVolume(ctx.nodes, i);
         if (!(vol_ft3 > 0.0)) continue;
 
         const double area_ft2 = node::getSurfArea(

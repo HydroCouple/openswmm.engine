@@ -782,11 +782,17 @@ int SWMMEngine::initialize() noexcept {
         }
     }
 
-    // Legacy-convention reported full volume (see report_full_volume_ doc): 0 for
-    // plain junctions/outfalls/dividers, pump wet-well xMax set in the loop below.
-    // Used ONLY to map the reported .out NODE_VOLUME to legacy; the internal
-    // volume-state (ctx_.nodes.volume / full_volume) is untouched.
-    report_full_volume_.assign(static_cast<std::size_t>(ctx_.n_nodes()), 0.0);
+    // Legacy-convention full volume (NodeData::rpt_full_volume, legacy
+    // Node.fullVolume): 0 for plain junctions/outfalls/dividers, the curve
+    // volume for storage, pump wet-well xMax set in the loop below. The
+    // dynamic wave books node volume in this convention; full_volume keeps
+    // MIN_SURFAREA*fullDepth for the FV mesh's node area.
+    for (int i = 0; i < ctx_.n_nodes(); ++i) {
+        auto ui = static_cast<std::size_t>(i);
+        ctx_.nodes.rpt_full_volume[ui] =
+            (ctx_.nodes.type[ui] == NodeType::STORAGE) ? ctx_.nodes.full_volume[ui]
+                                                       : 0.0;
+    }
 
     // Type-1 (volume-controlled) pumps: the inlet junction acts as a wet well
     // whose full volume is the pump curve's maximum volume. Legacy pump_validate
@@ -820,8 +826,8 @@ int SWMMEngine::initialize() noexcept {
             ctx_.nodes.full_volume[un1] =
                 std::max(ctx_.nodes.full_volume[un1], xmax_internal);
             // Legacy reports the pump wet-well's volume from this xMax.
-            report_full_volume_[un1] =
-                std::max(report_full_volume_[un1], xmax_internal);
+            ctx_.nodes.rpt_full_volume[un1] =
+                std::max(ctx_.nodes.rpt_full_volume[un1], xmax_internal);
             // The initial volume/old_volume loop above ran BEFORE this xMax
             // override, so it sized the wet well with the MIN_SURFAREA fallback
             // (full_volume was still 0). Legacy sets fullVolume in pump_validate
@@ -837,6 +843,23 @@ int SWMMEngine::initialize() noexcept {
                 ctx_.nodes.volume[un1] = v0;
                 ctx_.nodes.old_volume[un1] = v0;
             }
+        }
+    }
+
+    // The dynamic wave books non-storage node volume in the legacy
+    // convention (NodeData::rpt_full_volume), so seed its initial volume the
+    // way legacy node_initState does: fullVolume * (initDepth / fullDepth) —
+    // 0 for a plain junction, the wet-well share for a Type-1 pump inlet.
+    if (ctx_.options.routing_model == RoutingModel::DYNWAVE) {
+        for (int i = 0; i < ctx_.n_nodes(); ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            if (ctx_.nodes.type[ui] == NodeType::STORAGE) continue;
+            const double fd = ctx_.nodes.full_depth[ui];
+            const double d0 = ctx_.nodes.init_depth[ui];
+            const double v0 = (fd > 0.0 && d0 > 0.0)
+                ? ctx_.nodes.rpt_full_volume[ui] * (d0 / fd) : 0.0;
+            ctx_.nodes.volume[ui]     = v0;
+            ctx_.nodes.old_volume[ui] = v0;
         }
     }
 
@@ -922,7 +945,16 @@ int SWMMEngine::initialize() noexcept {
             ctx_.nodes.depth[ui]     = y;
             ctx_.nodes.old_depth[ui] = y;
             ctx_.nodes.head[ui]      = ctx_.nodes.invert_elev[ui] + y;
-            double vol = node::getVolume(ctx_.nodes, i, y, &ctx_.tables, us);
+            // Legacy node_getVolume(i, newDepth): fullVolume * (depth /
+            // fullDepth), 0 for a junction — the dynamic wave books volume
+            // in that convention (rpt_full_volume); FV keeps its own.
+            double vol;
+            if (ctx_.options.routing_model == RoutingModel::DYNWAVE) {
+                const double fd = ctx_.nodes.full_depth[ui];
+                vol = (fd > 0.0) ? ctx_.nodes.rpt_full_volume[ui] * (y / fd) : 0.0;
+            } else {
+                vol = node::getVolume(ctx_.nodes, i, y, &ctx_.tables, us);
+            }
             ctx_.nodes.volume[ui]     = vol;
             ctx_.nodes.old_volume[ui] = vol;
         }
@@ -4506,9 +4538,17 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
         }
         else {
             // Interior node (also DW terminal nodes): overflow counted as
-            // flooding only if newVolume <= fullVolume (matching legacy).
+            // flooding only if newVolume <= fullVolume (matching legacy). The
+            // dynamic wave books volume in the legacy convention, whose full
+            // volume is rpt_full_volume (0 for a junction, so a ponded one is
+            // never booked as flooding); FV and the tree routers book it
+            // against full_volume (is_dw above covers FV as well).
+            const double full_vol =
+                (ctx_.options.routing_model == RoutingModel::DYNWAVE)
+                    ? ctx_.nodes.rpt_full_volume[uj]
+                    : ctx_.nodes.full_volume[uj];
             if (ctx_.nodes.overflow[uj] > 0.0 &&
-                ctx_.nodes.volume[uj] <= ctx_.nodes.full_volume[uj]) {
+                ctx_.nodes.volume[uj] <= full_vol) {
                 ctx_.mass_balance.routing_flooding += ctx_.nodes.overflow[uj] * dt_routing;
                 ctx_.mass_balance.step_flooding    += ctx_.nodes.overflow[uj];
             }
@@ -8228,7 +8268,7 @@ double SWMMEngine::reportedNodeVolume(int i, double depth,
         return volume;
 
     // Legacy convention: a plain junction contributes ZERO to reported
-    // storage, because report_full_volume_ is 0 for it. FV junctions are now
+    // storage, because rpt_full_volume is 0 for it. FV junctions are now
     // algebraic INTERFACES that hold no water of their own — the water at a
     // junction's head stands in the incident cells, already counted through
     // link volumes — so FV shares the convention. (The earlier bucket model
@@ -8238,7 +8278,7 @@ double SWMMEngine::reportedNodeVolume(int i, double depth,
     // junction count — measured −0.005 % per junction on a 120-junction
     // chain, one MIN_SURFAREA·depth per node.)
 
-    return report_full_volume_[ui] * (depth / fd);
+    return ctx_.nodes.rpt_full_volume[ui] * (depth / fd);
 }
 
 void SWMMEngine::initMassBalance() noexcept {

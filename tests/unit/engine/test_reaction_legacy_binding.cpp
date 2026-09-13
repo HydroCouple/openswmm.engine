@@ -96,7 +96,14 @@ void write_deck(const char* path, const std::string& pc_lines,
       << "END_DATE 01/01/2026\nEND_TIME 00:02:00\n"
       << "ROUTING_STEP 5\nREPORT_STEP 00:01:00\n"
       << extra_options << "\n"
-      << "[JUNCTIONS]\nJ0 10.0 10 0.5 0 0\n\n"
+      // J0 is a STORAGE unit, not a junction: legacy routes a node's
+      // quality through findStorageQual (mix + decay) only for STORAGE or
+      // a node holding volume, and a junction holds none below its rim
+      // (Node.fullVolume = 0), so legacy findNodeQual keeps a junction's
+      // concentration unchanged — the legacy engine reports 10.0 at a
+      // no-inflow junction for the whole run. The 1000 ft2 constant area
+      // keeps the node wet over the 2-minute horizon as the old junction did.
+      << "[STORAGE]\nJ0 10.0 10 0.5 FUNCTIONAL 0 0 1000 0 0\n\n"
       << "[OUTFALLS]\nOUT 7.0 FREE  NO\n\n"
       << "[CONDUITS]\nC1 J0 OUT 400 0.013 0 0 0\n\n"
       << "[XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\n";
