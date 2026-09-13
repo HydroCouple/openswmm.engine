@@ -120,14 +120,23 @@ TEST(Utf8Paths, ModelUnderNonAsciiPathOpensAndRuns) {
 
 // utf8_path must not corrupt a path that is plain ASCII, and must round-trip
 // the bytes it was given.
+//
+// The comparison is done on std::string, not std::u8string: gtest DECLARES
+// PrintTo for u8string but does not define it in the bundled version, so
+// EXPECT_EQ on a u8string fails to LINK ("undefined reference to
+// testing::internal::PrintTo(std::basic_string<char8_t> const&...)") rather
+// than failing to compile. Copying the same bytes into a std::string keeps
+// the assertion byte-exact and printable.
+namespace {
+std::string asBytes(const std::u8string& s) {
+    return std::string(reinterpret_cast<const char*>(s.data()), s.size());
+}
+}  // namespace
+
 TEST(Utf8Paths, Utf8PathRoundTripsBytes) {
     const std::string ascii = "utf8_paths_out/plain_ascii.inp";
-    EXPECT_EQ(openswmm::io::utf8_path(ascii).u8string(),
-              std::u8string(reinterpret_cast<const char8_t*>(ascii.data()),
-                            ascii.size()));
+    EXPECT_EQ(asBytes(openswmm::io::utf8_path(ascii).u8string()), ascii);
 
     const std::string cjk = std::string(kDirName) + "/" + kFileStem + ".inp";
-    EXPECT_EQ(openswmm::io::utf8_path(cjk).u8string(),
-              std::u8string(reinterpret_cast<const char8_t*>(cjk.data()),
-                            cjk.size()));
+    EXPECT_EQ(asBytes(openswmm::io::utf8_path(cjk).u8string()), cjk);
 }
