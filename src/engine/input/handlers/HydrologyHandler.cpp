@@ -85,6 +85,7 @@
 #include "HydrologyHandler.hpp"
 
 #include "../Tokenizer.hpp"
+#include "../../core/Constants.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../data/SubcatchData.hpp"
 #include "../../data/HydrologyData.hpp"
@@ -153,7 +154,10 @@ static void ensure_subcatch_gw_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.subcatches.gw_b2,        0.0);
     grow(ctx.subcatches.gw_a3,        0.0);
     grow(ctx.subcatches.gw_tw,        0.0);
-    grow(ctx.subcatches.gw_hstar,     0.0);
+    grow(ctx.subcatches.gw_hstar,     constants::MISSING);
+    grow(ctx.subcatches.gw_bot_elev,  constants::MISSING);
+    grow(ctx.subcatches.gw_wt_elev,   constants::MISSING);
+    grow(ctx.subcatches.gw_upper_moist, constants::MISSING);
 }
 
 // ============================================================================
@@ -429,7 +433,18 @@ void handle_groundwater(SimulationContext& ctx, const std::vector<std::string>& 
         ctx.subcatches.gw_b2[idx]        = to_double(tok[7]);
         ctx.subcatches.gw_a3[idx]        = to_double(tok[8]);
         ctx.subcatches.gw_tw[idx]        = to_double(tok[9]);
-        ctx.subcatches.gw_hstar[idx]     = to_double(tok[10]);
+        // Optional Egwt Ebot Wgw Umc (legacy x[7..10]): absent or `*` is
+        // MISSING — the receiving node's invert for Egwt, the aquifer's
+        // values for the other three (legacy gwater_validate). Stored in the
+        // deck's units like the fields above; the engine converts at init.
+        auto opt = [&](std::size_t k) {
+            return (tok.size() > k && tok[k] != "*") ? to_double(tok[k])
+                                                     : constants::MISSING;
+        };
+        ctx.subcatches.gw_hstar[idx]       = opt(10);
+        ctx.subcatches.gw_bot_elev[idx]    = opt(11);
+        ctx.subcatches.gw_wt_elev[idx]     = opt(12);
+        ctx.subcatches.gw_upper_moist[idx] = opt(13);
     }
 }
 

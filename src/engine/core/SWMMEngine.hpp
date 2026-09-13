@@ -406,6 +406,7 @@ private:
     /// solver's `infil_rate` argument expects.
     std::vector<double>          gw_2d_recharge_vol_;
     std::vector<double>          gw_infil_with_2d_;
+    std::vector<double>          gw_infil_rate_;      ///< (Vinfil + VlidInfil) / area / dt, legacy's `infil` (ft/s)
     std::vector<double>          snow_rain_;    ///< Per-subcatch rainfall into snow step (ft/sec)
     std::vector<double>          snow_snow_;    ///< Per-subcatch snowfall into snow step (ft/sec)
     hydstruct::StructureSolver  hydstruct_;    ///< Pumps, orifices, weirs, outlets

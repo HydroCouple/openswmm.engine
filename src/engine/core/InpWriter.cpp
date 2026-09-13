@@ -1792,13 +1792,27 @@ int writeInpFile(const SimulationContext&  ctx_internal,
                                 "\": receiving node unresolved; row omitted");
         continue;
     }
-    std::fprintf(f,"%-16s %-16s %-16s %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g\n",
+    std::fprintf(f,"%-16s %-16s %-16s %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g %-10.10g",
         ctx.subcatch_names.name_of(s).c_str(),
         ctx.aquifers.names[static_cast<size_t>(aq)].c_str(),
         nN(ctx,ctx.subcatches.gw_node[u]),
         ctx.subcatches.gw_surf_elev[u],ctx.subcatches.gw_a1[u],ctx.subcatches.gw_b1[u],
         ctx.subcatches.gw_a2[u],ctx.subcatches.gw_b2[u],ctx.subcatches.gw_a3[u],
-        ctx.subcatches.gw_tw[u],ctx.subcatches.gw_hstar[u]);
+        ctx.subcatches.gw_tw[u]);
+    // Optional Egwt Ebot Wgw Umc: legacy reads `*` (or absence) as MISSING —
+    // the node invert / the aquifer's values — so a missing field is written
+    // as `*`, and only as far as the last field actually given.
+    {
+        const double opt[4] = {ctx.subcatches.gw_hstar[u], ctx.subcatches.gw_bot_elev[u],
+                               ctx.subcatches.gw_wt_elev[u], ctx.subcatches.gw_upper_moist[u]};
+        int last = -1;
+        for (int k = 0; k < 4; ++k) if (opt[k] != constants::MISSING) last = k;
+        for (int k = 0; k <= last; ++k) {
+            if (opt[k] != constants::MISSING) std::fprintf(f, " %-10.10g", opt[k]);
+            else                              std::fprintf(f, " %-10s", "*");
+        }
+        std::fprintf(f, "\n");
+    }
     }}}
 
     // [GWF]
