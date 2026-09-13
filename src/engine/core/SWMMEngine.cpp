@@ -28,6 +28,7 @@
 
 #include "SWMMEngine.hpp"
 #include "DateTime.hpp"
+#include "FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "SimulationContext.hpp"
 #include "PerfTimers.hpp"
 #include "UnitConversion.hpp"
@@ -259,7 +260,8 @@ int SWMMEngine::open(const char* inp_path,
         if (!mf.empty()) {
             std::string base_dir;
             if (inp_path && inp_path[0] != '\0')
-                base_dir = std::filesystem::path(inp_path).parent_path().string();
+                base_dir = openswmm::io::path_utf8(
+                    openswmm::io::utf8_path(inp_path).parent_path());
             std::string err = twoD::load2DMeshExternalFile(
                 surface_router_.mesh(), surface_router_.options(),
                 surface_router_.pendingBCRows(),
@@ -350,7 +352,8 @@ int SWMMEngine::open(const char* inp_path,
     {
         std::string base_dir;
         if (inp_path && inp_path[0] != '\0')
-            base_dir = std::filesystem::path(inp_path).parent_path().string();
+            base_dir = openswmm::io::path_utf8(
+                openswmm::io::utf8_path(inp_path).parent_path());
 
         std::vector<std::string> errs;
         if (!ctx_.process_component_specs.empty())
@@ -630,9 +633,13 @@ int SWMMEngine::open(const char* inp_path,
         const std::string& of = surface_router_.options().output_file;
         if (!of.empty()) {
             std::string resolved = of;
-            std::filesystem::path p(of);
+            // utf8_path/path_utf8, not fs::path(std::string)/.string(): the
+            // [2D_OPTIONS] token and inp_path are UTF-8, and the narrow forms
+            // decode/encode in the ANSI code page instead (issue #7).
+            std::filesystem::path p = openswmm::io::utf8_path(of);
             if (p.is_relative() && inp_path && inp_path[0] != '\0') {
-                resolved = (std::filesystem::path(inp_path).parent_path() / p).string();
+                resolved = openswmm::io::path_utf8(
+                    openswmm::io::utf8_path(inp_path).parent_path() / p);
             }
             auto* op = new twoD::Default2DOutputPlugin(resolved);
             op->initialize({}, nullptr);

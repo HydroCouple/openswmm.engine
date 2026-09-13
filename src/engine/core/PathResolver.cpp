@@ -24,6 +24,7 @@
  */
 
 #include "PathResolver.hpp"
+#include "FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 
 #include <algorithm>
 #include <cctype>
@@ -213,20 +214,20 @@ std::string resolveRelative(const std::string& stored_token,
     // forward-slash and Windows accepts them in filesystem ops. On POSIX this
     // is identical to the prior output.
     if (isAbsolutePath(stored_token)) {
-        fs::path p(toForwardSlashes(stored_token));
-        return p.generic_string();
+        fs::path p = openswmm::io::utf8_path(toForwardSlashes(stored_token));
+        return openswmm::io::path_utf8(p, /*generic=*/true);
     }
 
     // No anchor → return as-is (caller owns the relative-token semantics).
     if (anchor_dir.empty()) {
-        fs::path p(toForwardSlashes(stored_token));
-        return p.lexically_normal().generic_string();
+        fs::path p = openswmm::io::utf8_path(toForwardSlashes(stored_token));
+        return openswmm::io::path_utf8(p.lexically_normal(), /*generic=*/true);
     }
 
     // Join anchor + token, lexically normalise (collapses "..").
-    fs::path joined = fs::path(toForwardSlashes(anchor_dir))
-                    / fs::path(toForwardSlashes(stored_token));
-    return joined.lexically_normal().generic_string();
+    fs::path joined = openswmm::io::utf8_path(toForwardSlashes(anchor_dir))
+                    / openswmm::io::utf8_path(toForwardSlashes(stored_token));
+    return openswmm::io::path_utf8(joined.lexically_normal(), /*generic=*/true);
 }
 
 // ============================================================================
@@ -277,7 +278,8 @@ RelativeResult makeRelative(const std::string& target_absolute,
     // Only when both roots are empty (POSIX vs POSIX) do we treat them as the
     // same volume and fall through to the relative computation below.
     if (!eq_ci(tgt_root, anc_root)) {
-        r.path = fs::path(tgt_fs).generic_string();
+        r.path = openswmm::io::path_utf8(
+            openswmm::io::utf8_path(tgt_fs), /*generic=*/true);
         r.classification = PathClass::AbsoluteCrossVolume;
         r.warning = "target on a different volume ('" + tgt_root
                   + "' vs '" + anc_root + "') — cannot express relatively";
@@ -298,25 +300,31 @@ RelativeResult makeRelative(const std::string& target_absolute,
     if (tgt_body.empty() || tgt_body.front() != '/') tgt_body.insert(0, "/");
     if (anc_body.empty() || anc_body.front() != '/') anc_body.insert(0, "/");
 
-    fs::path tgt(tgt_body);
-    fs::path anc(anc_body);
+    // utf8_path/path_utf8 throughout: this whole function is UTF-8 string in,
+    // UTF-8 string out, and fs::path is only a lexical normaliser here. The
+    // narrow round trip (path(std::string) -> generic_string()) is lossy on
+    // Windows for any byte sequence the ANSI code page cannot represent (#7).
+    fs::path tgt = openswmm::io::utf8_path(tgt_body);
+    fs::path anc = openswmm::io::utf8_path(anc_body);
     fs::path prox = tgt.lexically_proximate(anc);
 
     if (prox.empty() || prox.is_absolute()) {
-        r.path = fs::path(tgt_fs).generic_string();
+        r.path = openswmm::io::path_utf8(
+            openswmm::io::utf8_path(tgt_fs), /*generic=*/true);
         r.classification = PathClass::AbsoluteSameVolume;
         r.warning = "lexical relative form unavailable";
         return r;
     }
 
-    std::string out = prox.generic_string();   // forward slashes
+    std::string out = openswmm::io::path_utf8(prox, /*generic=*/true);  // forward slashes
     out = collapseSlashesAndDots(out);
     // lexically_proximate may return "" for an exact match; surface as "."
     if (out.empty()) out = ".";
 
     const int up = countUpLevels(out);
     if (up > max_up_levels) {
-        r.path = fs::path(tgt_fs).generic_string();
+        r.path = openswmm::io::path_utf8(
+            openswmm::io::utf8_path(tgt_fs), /*generic=*/true);
         r.classification = PathClass::AbsoluteSameVolume;
         r.warning = "relative form exceeds " + std::to_string(max_up_levels)
                   + " '..' levels (would be " + std::to_string(up) + ")";

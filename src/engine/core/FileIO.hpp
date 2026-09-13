@@ -55,6 +55,33 @@ inline std::filesystem::path utf8_path(const std::string& utf8) {
 }
 
 /**
+ * @brief Render a path back to UTF-8 bytes — the inverse of `utf8_path()`.
+ *
+ * `path::string()` / `path::generic_string()` are the wrong tool for this on
+ * Windows: they re-encode to the native NARROW form (the ANSI code page), so a
+ * value that only passed THROUGH a `path` on its way from one UTF-8 string to
+ * another comes out mangled, which is issue #7 with an extra step. Any code
+ * that constructs a path with `utf8_path()` and then wants a `std::string`
+ * again has to come back through here.
+ *
+ * @param p         The path.
+ * @param generic   Use '/' separators (`generic_u8string`) rather than the
+ *                  native ones — needed where the result is an .inp token or
+ *                  is concatenated with '/' by hand.
+ */
+inline std::string path_utf8(const std::filesystem::path& p,
+                             bool generic = false) {
+#ifdef _WIN32
+    const std::u8string s = generic ? p.generic_u8string() : p.u8string();
+    return std::string(reinterpret_cast<const char*>(s.data()), s.size());
+#else
+    // Mirror of utf8_path's POSIX branch: bytes through unchanged, never via
+    // u8string, because a POSIX path need not be valid UTF-8.
+    return generic ? p.generic_string() : p.string();
+#endif
+}
+
+/**
  * @brief `std::fopen` for a path that is ALREADY a `std::filesystem::path`.
  *
  * Prefer this over `fopen_utf8(p.string(), …)` at such call sites: on Windows

@@ -788,8 +788,11 @@ static void write2DSections(FILE* f, const SimulationContext& ctx,
         // never clobbered with emptiness.
         if (has_mesh) {
             namespace fs = std::filesystem;
-            fs::path sp(tok);
-            if (sp.is_relative() && !dst_dir.empty()) sp = fs::path(dst_dir) / sp;
+            // utf8_path, not fs::path(std::string): the emitted token and the
+            // destination directory are UTF-8 (issue #7).
+            fs::path sp = openswmm::io::utf8_path(tok);
+            if (sp.is_relative() && !dst_dir.empty())
+                sp = openswmm::io::utf8_path(dst_dir) / sp;
             std::error_code ec;
             if (sp.has_parent_path()) fs::create_directories(sp.parent_path(), ec);
             if (FILE* sf = openswmm::io::fopen_path(sp, "w")) {
@@ -800,7 +803,8 @@ static void write2DSections(FILE* f, const SimulationContext& ctx,
             } else if (warnings) {
                 warnings->push_back(
                     "[2D_MESH_FILE]: could not write mesh sidecar '"
-                    + sp.string() + "' — mesh state was NOT saved");
+                    + openswmm::io::path_utf8(sp)
+                    + "' — mesh state was NOT saved");
             }
         }
         return;
@@ -3083,10 +3087,11 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     const std::string text=entry->save(ctx,pc);
     if(!text.empty()){
     std::error_code wec;
-    fsys::path rel_w(pc.config_path);
+    // utf8_path, not fsys::path(std::string) — UTF-8 in, ANSI decode out (#7).
+    fsys::path rel_w=openswmm::io::utf8_path(pc.config_path);
     fsys::path dst_w=rel_w.is_absolute()
-    ?fsys::path(emit_path_token(pc.config_path,dst_dir,force_abs_paths,nullptr))
-    :(dst_dir.empty()?rel_w:fsys::path(dst_dir)/rel_w);
+    ?openswmm::io::utf8_path(emit_path_token(pc.config_path,dst_dir,force_abs_paths,nullptr))
+    :(dst_dir.empty()?rel_w:openswmm::io::utf8_path(dst_dir)/rel_w);
     if(dst_w.has_parent_path())fsys::create_directories(dst_w.parent_path(),wec);
     // IO3c: the rendered write inherits the copy path's contract — a save
     // that replaces a DIFFERENT pre-existing file at the destination says
@@ -3113,11 +3118,12 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     }}}
 
     if(!component_wrote&&!pc.resolved_config_path.empty()){
-    fsys::path src(pc.resolved_config_path);
-    fsys::path rel(pc.config_path);
+    // utf8_path, not fsys::path(std::string) — UTF-8 in, ANSI decode out (#7).
+    fsys::path src=openswmm::io::utf8_path(pc.resolved_config_path);
+    fsys::path rel=openswmm::io::utf8_path(pc.config_path);
     if(rel.is_relative()&&!dst_dir.empty()){
     std::error_code ec;
-    fsys::path dst=fsys::path(dst_dir)/rel;
+    fsys::path dst=openswmm::io::utf8_path(dst_dir)/rel;
     if(fsys::exists(src,ec)&&
     !fsys::equivalent(src,dst,ec)){
     // Overwriting is REQUIRED for the feature to be correct: re-saving a

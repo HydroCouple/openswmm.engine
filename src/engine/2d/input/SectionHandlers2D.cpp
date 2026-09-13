@@ -1338,9 +1338,11 @@ std::string load2DMeshExternalFile(MeshData& mesh,
     namespace fs = std::filesystem;
 
     // Resolve path
-    fs::path p(mesh_file);
+    // utf8_path, not fs::path(std::string): both of these come from the model
+    // as UTF-8 and the latter decodes in the ANSI code page (issue #7).
+    fs::path p = openswmm::io::utf8_path(mesh_file);
     if (p.is_relative() && !inp_base_dir.empty())
-        p = fs::path(inp_base_dir) / p;
+        p = openswmm::io::utf8_path(inp_base_dir) / p;
 
     // Build a minimal registry (no 2D_MESH_FILE — prevents recursion)
     openswmm::input::SectionRegistry mini;
@@ -1424,12 +1426,15 @@ std::string load2DMeshExternalFile(MeshData& mesh,
 
     // The external .2dm may carry its own `;; UNITS:` header. Scan first
     // so SurfaceRouter2D::initialize sees the right flag before it runs.
-    prescan2DUnitsHeader(p.string(), opts);
+    // path_utf8, not p.string(): both callees take a UTF-8 std::string and
+    // re-apply utf8_path themselves, and string() would re-encode to ANSI.
+    const std::string p_utf8 = openswmm::io::path_utf8(p);
+    prescan2DUnitsHeader(p_utf8, opts);
 
     openswmm::input::InputReader reader(mini);
     openswmm::SimulationContext  dummy;
-    if (!reader.read(p.string(), dummy)) {
-        return "2D_MESH_FILE: error reading '" + p.string() + "': " + dummy.error_message;
+    if (!reader.read(p_utf8, dummy)) {
+        return "2D_MESH_FILE: error reading '" + p_utf8 + "': " + dummy.error_message;
     }
 
     if (infil != nullptr) {

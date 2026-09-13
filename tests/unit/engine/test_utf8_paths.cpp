@@ -140,3 +140,33 @@ TEST(Utf8Paths, Utf8PathRoundTripsBytes) {
     const std::string cjk = std::string(kDirName) + "/" + kFileStem + ".inp";
     EXPECT_EQ(asBytes(openswmm::io::utf8_path(cjk).u8string()), cjk);
 }
+
+// path_utf8 is the inverse, and the pair has to compose to the identity.
+//
+// This is the half that path::string() gets wrong: several engine paths only
+// pass THROUGH an fs::path on their way from one UTF-8 std::string to another
+// (PathResolver::resolveRelative/makeRelative, scratchDirFor, the 2D output
+// path in SWMMEngine::open), and on Windows string() re-encodes to the ANSI
+// code page, so the value came back mangled even though nothing was opened.
+TEST(Utf8Paths, PathUtf8IsTheInverseOfUtf8Path) {
+    namespace io = openswmm::io;
+    const std::string cjk = std::string(kDirName) + "/" + kFileStem + ".inp";
+
+    EXPECT_EQ(io::path_utf8(io::utf8_path(cjk), /*generic=*/true), cjk);
+    EXPECT_EQ(io::path_utf8(io::utf8_path("plain/ascii.inp"), true),
+              "plain/ascii.inp");
+
+    // The component-wise shapes the call sites actually use: scratchDirFor
+    // takes .stem() and .parent_path() back out as UTF-8 strings.
+    const fs::path p = io::utf8_path(cjk);
+    EXPECT_EQ(io::path_utf8(p.stem()), std::string(kFileStem));
+    EXPECT_EQ(io::path_utf8(p.parent_path(), /*generic=*/true),
+              std::string(kDirName));
+
+    // Joining a non-ASCII directory onto a non-ASCII relative token — the
+    // [2D_MESH_FILE] / component-config save shape in InpWriter.
+    const std::string joined =
+        io::path_utf8(io::utf8_path(kDirName) / io::utf8_path("子目录/mesh.2dm"),
+                      /*generic=*/true);
+    EXPECT_EQ(joined, std::string(kDirName) + "/子目录/mesh.2dm");
+}

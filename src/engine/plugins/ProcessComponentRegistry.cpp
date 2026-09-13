@@ -126,8 +126,11 @@ std::string read_component_config(const std::string& path,
     // NARROW encoding on Windows (the ANSI code page), which is the issue #7
     // bug one level up from the open call.
     fs::path p = openswmm::io::utf8_path(path);
-    if (p.is_relative() && !base_dir.empty()) p = fs::path(base_dir) / p;
-    out.source_path = p.string();
+    if (p.is_relative() && !base_dir.empty())
+        p = openswmm::io::utf8_path(base_dir) / p;
+    // path_utf8, not p.string(): source_path flows on to InpWriter as
+    // pc.resolved_config_path, which re-reads it as UTF-8.
+    out.source_path = openswmm::io::path_utf8(p);
 
     std::ifstream in(p);
     if (!in.is_open())
