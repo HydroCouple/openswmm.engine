@@ -114,7 +114,8 @@ typedef enum {
     swmm_REPORTSTEP   = 5,
     swmm_TOTALSTEPS   = 6,
     swmm_NOREPORT     = 7,
-    swmm_FLOWUNITS    = 8
+    swmm_FLOWUNITS    = 8,
+    swmm_ENDDATE      = 9   // SWMMVis: simulation end date (OADate), read-only
 } swmm_SystemProperty;
 
 typedef enum {
@@ -139,6 +140,20 @@ int    DLLEXPORT swmm_getMassBalErr(float *runoffErr, float *flowErr, float *qua
 int    DLLEXPORT swmm_getVersion(void);
 int    DLLEXPORT swmm_getError(char *errMsg, int msgLen);
 int    DLLEXPORT swmm_getWarnings(void);
+
+// --- SWMMVis additions (backported from the openswmm.engine legacy 5.3.0
+//     engine). API-only: no effect on simulation numerics.
+
+// Process-global warning callback. When set, every warning the engine writes
+// to the report file is also delivered here as it happens. May be called
+// before swmm_open(). Pass NULL to clear.
+typedef void (*swmm_WarningCallback)(const char *message, void *userData);
+int    DLLEXPORT swmm_setWarningCallback(swmm_WarningCallback cb, void *userData);
+
+// Running continuity errors (percent) while a simulation is in progress
+// (between swmm_start and swmm_end); both are 0 otherwise. Pure: reads the
+// live accumulators without touching any mass-balance state.
+int    DLLEXPORT swmm_getRunningMassBalErr(float *runoffErr, float *flowErr);
 
 int    DLLEXPORT swmm_getCount(int objType);
 void   DLLEXPORT swmm_getName(int objType, int index, char *name, int size);

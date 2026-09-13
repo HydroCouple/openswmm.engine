@@ -144,6 +144,8 @@ static double RoutingDuration;      // duration of a set of routing steps (msecs
 //  swmm_getVersion
 //  swmm_getError
 //  swmm_getWarnings
+//  swmm_setWarningCallback     (SWMMVis backport)
+//  swmm_getRunningMassBalErr   (SWMMVis backport)
 //  swmm_getCount
 //  swmm_getIDname
 //  swmm_getIndex
@@ -757,6 +759,41 @@ int DLLEXPORT swmm_getWarnings()
 
 //=============================================================================
 
+int DLLEXPORT swmm_setWarningCallback(swmm_WarningCallback cb, void *userData)
+//
+//  Input:   cb = function to receive each warning as it is written, or NULL
+//           userData = opaque pointer passed back to cb
+//  Output:  returns 0
+//  Purpose: registers a process-global warning callback (SWMMVis backport).
+//           May be called before swmm_open().
+{
+    WarningCallback = cb;
+    WarningCallbackData = userData;
+    return 0;
+}
+
+//=============================================================================
+
+int DLLEXPORT swmm_getRunningMassBalErr(float *runoffErr, float *flowErr)
+//
+//  Input:   none
+//  Output:  runoffErr = current runoff continuity error (%)
+//           flowErr   = current flow routing continuity error (%)
+//           both 0 unless a simulation is in progress; returns 0
+//  Purpose: reports the continuity errors as they stand mid-run, for a host
+//           polling progress between swmm_start and swmm_end. Pure — reads
+//           the live accumulators without touching the final-error state.
+//           (SWMMVis backport.)
+{
+    double r = 0.0, f = 0.0;
+    if ( IsOpenFlag && IsStartedFlag ) massbal_getRunningErrors(&r, &f);
+    *runoffErr = (float)r;
+    *flowErr = (float)f;
+    return 0;
+}
+
+//=============================================================================
+
 int  DLLEXPORT swmm_getError(char *errMsg, int msgLen)
 //
 //  Input:   errMsg = character array to hold error message text
@@ -1149,6 +1186,8 @@ double getSystemValue(int property)
           return RptFlags.disabled;
         case swmm_FLOWUNITS:
           return FlowUnits;
+        case swmm_ENDDATE:
+          return EndDateTime;
         default:
           return 0;
     }

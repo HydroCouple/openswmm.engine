@@ -460,7 +460,17 @@ int project_readOption(char* s1, char* s2)
 
     // --- determine which option is being read
     k = findmatch(s1, OptionWords);
-    if ( k < 0 ) return error_setInpError(ERR_KEYWORD, s1);
+    if ( k < 0 )
+    {
+        // --- unknown option key: warn and ignore
+        //     (SWMMVis backport; stock 5.2.4 fails with ERROR 205)
+        char warnMsg[MAXLINE+1];
+        snprintf(warnMsg, MAXLINE,
+            "\n  WARNING: Unknown option keyword '%s' in [OPTIONS] section - option will be ignored.", s1);
+        report_writeLine(warnMsg);
+        report_invokeWarningCallback(warnMsg);
+        return 0;
+    }
     switch ( k )
     {
       // --- choice of flow units

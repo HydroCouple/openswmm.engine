@@ -95,7 +95,8 @@ void    report_writeTimeStepStats(TTimeStepStats* timeStepStats);
 void    report_writeErrorMsg(int code, char* msg);
 void    report_writeErrorCode(void);
 void    report_writeInputErrorMsg(int k, int sect, char* line, long lineCount);
-void    report_writeWarningMsg(char* msg, char* id); 
+void    report_writeWarningMsg(char* msg, char* id);
+void    report_invokeWarningCallback(const char* msg);
 void    report_writeTseriesErrorMsg(int code, TTable *tseries);
 
 void    inputrpt_writeInput(void);
@@ -273,6 +274,7 @@ void    massbal_addToFinalStorage(int pollut, double mass);
 double  massbal_getStepFlowError(void);
 double  massbal_getRunoffError(void);
 double  massbal_getFlowError(void);
+void    massbal_getRunningErrors(double* runoffErr, double* flowErr);
 
 //-----------------------------------------------------------------------------
 //   Simulation Statistics Methods

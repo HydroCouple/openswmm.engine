@@ -99,6 +99,7 @@ endif()
 add_subdirectory(src/outfile)
 add_subdirectory(src/solver)
 add_subdirectory(src/run)
+add_subdirectory(src/worker)
 
 if(BUILD_TESTS)
     enable_testing()

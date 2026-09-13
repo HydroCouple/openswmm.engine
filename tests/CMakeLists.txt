@@ -34,3 +34,25 @@ add_test(NAME test_output
 # `unit` label mirrors openswmm.engine so `ctest -L unit` selects the same
 # class of tests in both engine trees.
 set_tests_properties(test_output PROPERTIES LABELS "unit")
+
+
+# SWMMVis worker smoke (label `smoke`): the worker runs tests/data/
+# worker_smoke.inp — a stock deck carrying one v6-only section and one
+# v6-only option — to completion, streaming both skip+warn backport warnings
+# and the final continuity line. tickIntervalMs=0 so the running-continuity
+# getter is exercised on every step. Outputs land in tests/data/smoke_out/
+# (reviewable, gitignored).
+add_test(NAME worker_smoke_524
+    COMMAND "$<TARGET_FILE:openswmm_legacy_worker_524>"
+            "${CMAKE_CURRENT_SOURCE_DIR}/data/worker_smoke.inp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/data/smoke_out/worker_smoke.rpt"
+            "${CMAKE_CURRENT_SOURCE_DIR}/data/smoke_out/worker_smoke.out"
+            0
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+    )
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/data/smoke_out")
+set_tests_properties(worker_smoke_524 PROPERTIES
+    LABELS "smoke"
+    PASS_REGULAR_EXPRESSION "\"type\":\"continuity\""
+    FAIL_REGULAR_EXPRESSION "\"type\":\"error\""
+    )

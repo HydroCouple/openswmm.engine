@@ -10,3 +10,9 @@ nrtests/
 upload/
 
 *_export.h
+
+# tools/verify_524_parity.sh: stock-tag worktree + per-run .out/.rpt output
+.parity/
+verification/
+# ctest worker_smoke_524 output
+tests/data/smoke_out/

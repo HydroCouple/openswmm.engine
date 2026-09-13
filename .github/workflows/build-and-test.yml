@@ -225,6 +225,32 @@ jobs:
           "$EXE" || true
           echo "runswmm invoked: $EXE"
 
+      # The SWMMVis worker must (a) run a deck carrying a v6-only section and
+      # a v6-only option to completion, streaming both skip+warn warnings and
+      # the continuity line, and (b) leave the numbers untouched: with
+      # tickIntervalMs=0 the running-continuity getter fires on every step,
+      # and the .out must still be byte-identical to runswmm's, the .rpt
+      # identical modulo banner/timestamp lines.
+      - name: Worker smoke (SWMMVis protocol + numerics vs CLI)
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLI=$(find build-${{ matrix.vcpkg_triplet }} -type f \( -name 'runswmm' -o -name 'runswmm.exe' \) | head -1)
+          WORKER=$(find build-${{ matrix.vcpkg_triplet }} -type f \( -name 'openswmm-legacy-worker-5.2.4' -o -name 'openswmm-legacy-worker-5.2.4.exe' \) | head -1)
+          [ -n "$WORKER" ] || { echo "::error::openswmm-legacy-worker-5.2.4 not found in the build tree"; exit 1; }
+          mkdir -p smoke
+          DECK="$PWD/tests/data/worker_smoke.inp"
+          "$WORKER" "$DECK" smoke/w.rpt smoke/w.out 0 > smoke/w.stdout
+          for needle in '"type":"dates"' '"type":"progress"' '"type":"continuity"' 'Unknown section' 'Unknown option'; do
+            grep -q "$needle" smoke/w.stdout || { echo "::error::worker stdout lacks $needle"; cat smoke/w.stdout; exit 1; }
+          done
+          if grep -q '"type":"error"' smoke/w.stdout; then echo "::error::worker emitted an error line"; cat smoke/w.stdout; exit 1; fi
+          "$CLI" "$DECK" smoke/c.rpt smoke/c.out > /dev/null
+          cmp smoke/w.out smoke/c.out || { echo "::error::worker .out differs from runswmm .out"; exit 1; }
+          strip() { grep -viE '^\s*(SWMM|Version|EPA|STORM|WATER|Analysis begun|Analysis ended|Total elapsed time)' "$1"; }
+          diff <(strip smoke/c.rpt) <(strip smoke/w.rpt) || { echo "::error::worker .rpt differs from runswmm .rpt beyond banner lines (running getter side effect?)"; exit 1; }
+          echo "worker smoke OK: $(grep -c '"type":"progress"' smoke/w.stdout) progress ticks, numerics identical to CLI"
+
       - name: Upload build artifact
         if: always()
         uses: actions/upload-artifact@v5

@@ -27,7 +27,9 @@
 #   tools/verify_524_parity.sh [--models <dir>] [--preset <name>] [--jobs <n>]
 #
 # Defaults:
-#   --models   ../openswmm.engine.benchmarks/EPA   (falls back to ../openswmm.engine/examples)
+#   --models   ../openswmm.engine.benchmarks/corpus/epa  (the tagged corpus:
+#              one <case>/model.inp per deck; a flat dir of <name>.inp also
+#              works; falls back to ../openswmm.engine/examples)
 #   --preset   auto-detected from uname (Linux | Darwin)
 #
 # Outputs (reviewable, never temp — see CLAUDE.md §4.1):
@@ -66,7 +68,8 @@ fi
 
 if [[ -z "$MODELS_DIR" ]]; then
     for candidate in \
-        "$REPO_ROOT/../openswmm.engine.benchmarks/EPA" \
+        "$REPO_ROOT/../openswmm.engine.benchmarks/corpus/epa" \
+        "$REPO_ROOT/../../openswmm.engine.benchmarks/corpus/epa" \
         "$REPO_ROOT/../openswmm.engine/examples"
     do
         if [[ -d "$candidate" ]]; then MODELS_DIR="$candidate"; break; fi
@@ -169,12 +172,18 @@ REPORT="$OUT_ROOT/report.txt"
 pass=0; fail=0; skip=0
 
 while IFS= read -r inp; do
+    inp="$(cd "$(dirname "$inp")" && pwd)/$(basename "$inp")"   # absolute: we cd below
+    # Corpus layout is <case>/model.inp — name the run after the case, not
+    # "model", or every deck would overwrite the same output files.
     name="$(basename "${inp%.*}")"
+    if [[ "$name" == "model" ]]; then name="$(basename "$(dirname "$inp")")"; fi
     s_rpt="$OUT_ROOT/stock/$name.rpt";  s_out="$OUT_ROOT/stock/$name.out"
     b_rpt="$OUT_ROOT/branch/$name.rpt"; b_out="$OUT_ROOT/branch/$name.out"
 
-    "$STOCK_EXE"  "$inp" "$s_rpt" "$s_out" >/dev/null 2>&1 || true
-    "$BRANCH_EXE" "$inp" "$b_rpt" "$b_out" >/dev/null 2>&1 || true
+    # Run from the deck's own directory so relative sidecar files (rain,
+    # hotstart, interface files) resolve the way the engine expects.
+    ( cd "$(dirname "$inp")" && "$STOCK_EXE"  "$inp" "$s_rpt" "$s_out" ) >/dev/null 2>&1 || true
+    ( cd "$(dirname "$inp")" && "$BRANCH_EXE" "$inp" "$b_rpt" "$b_out" ) >/dev/null 2>&1 || true
 
     if [[ ! -s "$s_out" || ! -s "$b_out" ]]; then
         echo "SKIP  $name  (one or both engines produced no .out)" | tee -a "$REPORT"

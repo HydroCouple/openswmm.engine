@@ -903,6 +903,100 @@ double massbal_getFlowError()
 
 //=============================================================================
 
+void massbal_getRunningErrors(double* runoffErr, double* flowErr)
+//
+//  Input:   none
+//  Output:  runoffErr = runoff continuity error (%)
+//           flowErr   = flow routing continuity error (%)
+//  Purpose: computes the continuity errors as they stand mid-run, for a host
+//           polling progress (swmm_getRunningMassBalErr). SWMMVis backport.
+//
+//  PURE, by design: same arithmetic as massbal_getRunoffError() and
+//  massbal_getFlowError() but into locals only. Those two are end-of-run
+//  functions — massbal_getFlowError() calls massbal_getStorage(TRUE), which
+//  adds every node's current volume into NodeOutflow[] (the per-node
+//  continuity column of the report). Calling them once per progress tick
+//  corrupts that column; this function touches no RunoffTotals, FlowTotals,
+//  RunoffError, FlowError or NodeOutflow state.
+//
+{
+    int    j;
+    double finalStorage;
+    double finalSnowCover;
+    double totalInflow;
+    double totalOutflow;
+
+    // --- runoff: final storage on all subcatchments
+    finalStorage   = 0.0;
+    finalSnowCover = 0.0;
+    for (j = 0; j < Nobjects[SUBCATCH]; j++)
+    {
+        finalStorage   += subcatch_getStorage(j);
+        finalSnowCover += snow_getSnowCover(j);
+    }
+    totalInflow  = RunoffTotals.rainfall +
+                   RunoffTotals.runon +
+                   RunoffTotals.initStorage +
+                   RunoffTotals.initSnowCover;
+    totalOutflow = RunoffTotals.evap +
+                   RunoffTotals.infil +
+                   RunoffTotals.runoff +
+                   RunoffTotals.drains +
+                   Snow.removed +
+                   finalStorage +
+                   finalSnowCover;
+    *runoffErr = 0.0;
+    if ( fabs(totalInflow - totalOutflow) < 1.0 )
+    {
+        *runoffErr = TINY;
+    }
+    else if ( totalInflow > 0.0 )
+    {
+        *runoffErr = 100.0 * (1.0 - totalOutflow / totalInflow);
+    }
+    else if ( totalOutflow > 0.0 )
+    {
+        *runoffErr = 100.0 * (totalInflow / totalOutflow - 1.0);
+    }
+
+    // --- flow routing: final volume of nodes and links, WITHOUT the
+    //     NodeOutflow[] side effect of massbal_getStorage(TRUE)
+    finalStorage = 0.0;
+    for (j = 0; j < Nobjects[NODE]; j++)
+        finalStorage += Node[j].newVolume;
+    if ( RouteModel != SF )
+    {
+        for (j = 0; j < Nobjects[LINK]; j++)
+            finalStorage += Link[j].newVolume;
+    }
+    totalInflow  = FlowTotals.initStorage + FlowTotals.wwInflow + FlowTotals.iiInflow;
+    totalOutflow = finalStorage + FlowTotals.flooding + FlowTotals.evapLoss +
+                   FlowTotals.seepLoss + FlowTotals.reacted;
+    if ( FlowTotals.dwInflow >= 0.0 ) totalInflow += FlowTotals.dwInflow;
+    else                              totalOutflow -= FlowTotals.dwInflow;
+    if ( FlowTotals.gwInflow >= 0.0 ) totalInflow += FlowTotals.gwInflow;
+    else                              totalOutflow -= FlowTotals.gwInflow;
+    if ( FlowTotals.exInflow >= 0.0 ) totalInflow += FlowTotals.exInflow;
+    else                              totalOutflow -= FlowTotals.exInflow;
+    if ( FlowTotals.outflow >= 0.0 )  totalOutflow += FlowTotals.outflow;
+    else                              totalInflow -= FlowTotals.outflow;
+    *flowErr = 0.0;
+    if ( fabs(totalInflow - totalOutflow) < 1.0 )
+    {
+        *flowErr = TINY;
+    }
+    else if ( fabs(totalInflow) > 0.0 )
+    {
+        *flowErr = 100.0 * (1.0 - totalOutflow / totalInflow);
+    }
+    else if ( fabs(totalOutflow) > 0.0 )
+    {
+        *flowErr = 100.0 * (totalInflow / totalOutflow - 1.0);
+    }
+}
+
+//=============================================================================
+
 double massbal_getQualError()
 //
 //  Input:   none

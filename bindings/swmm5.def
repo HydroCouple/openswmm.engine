@@ -9,6 +9,7 @@ EXPORTS
     swmm_getIndex                 = _swmm_getIndex@8
     swmm_getMassBalErr            = _swmm_getMassBalErr@12
     swmm_getName                  = _swmm_getName@16
+    swmm_getRunningMassBalErr     = _swmm_getRunningMassBalErr@8
     swmm_getSavedValue            = _swmm_getSavedValue@12
     swmm_getValue                 = _swmm_getValue@8
     swmm_getVersion               = _swmm_getVersion@0
@@ -17,6 +18,7 @@ EXPORTS
     swmm_report                   = _swmm_report@0
     swmm_run                      = _swmm_run@12
     swmm_setValue                 = _swmm_setValue@16
+    swmm_setWarningCallback       = _swmm_setWarningCallback@8
     swmm_start                    = _swmm_start@4
     swmm_step                     = _swmm_step@4
     swmm_stride                   = _swmm_stride@8

@@ -168,5 +168,12 @@ EXTERN TStreet*   Street;                   // Array of defined Street cross-sec
 EXTERN TShape*    Shape;                    // Array of custom conduit shapes
 EXTERN TEvent*    Event;                    // Array of routing events
 
+// Process-global warning callback. When set (via swmm_setWarningCallback), the
+// engine forwards each warning it writes to the report file, as it happens.
+// Lives outside the per-project state so it survives project_open/close and
+// can be installed before swmm_open(). (SWMMVis backport.)
+EXTERN void (*WarningCallback)(const char *message, void *userData);
+EXTERN void*  WarningCallbackData;          // Opaque user data for the callback
+
 
 #endif //GLOBALS_H
