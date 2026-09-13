@@ -1578,27 +1578,31 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
     // 15-18% higher peak rates (same volume, sharper peaks).
     // ================================================================
 
-    double routing_time = ctx_.current_time;  // seconds from simulation start
-
     // --- Phase 1: Advance runoff clock if needed ---
     // Legacy: while (NewRunoffTime < nextRoutingTime) runoff_execute();
     // Runoff must catch up past the END of this routing step so that
     // infil/evap/runoff reflect the interval STARTING at the report
-    // boundary. Legacy achieves this accidentally via variable timestep
-    // Legacy uses strict < (runoff.c line 164: while(NewRunoffTime < nextRoutingTime))
+    // boundary. Legacy uses strict < (swmm5.c execRouting).
     //
-    // Clamp next_routing_time to the simulation end, matching legacy
-    // swmm5.c::execRouting() line 900-905. Without this clamp, floating-point
-    // drift in `routing_time + dt_routing` can leave next_routing_time slightly
-    // above total_sec while new_runoff_time_ has already been clamped to
-    // total_sec inside this loop body — causing the while-loop to fire
-    // indefinitely with dt_runoff = 0.
+    // Clamp the step end to the simulation end, matching legacy
+    // swmm5.c::execRouting(). Without this clamp, floating-point drift can
+    // leave the step end slightly above the total duration while
+    // new_runoff_time_ has already been clamped to it inside this loop body
+    // — causing the while-loop to fire indefinitely with dt_runoff = 0.
     // PARITY: use the legacy-exact TotalDuration (swmm5.c:3198-3200) — the
     // combined-serial product (end-start)*86400 rounds differently and
     // perturbs the final clipped runoff step (see totalDurationMs()).
     const double total_sec_clamp = ctx_.options.totalDurationMs() / 1000.0;
-    double next_routing_time = std::min(routing_time + dt_routing, total_sec_clamp);
-    while (new_runoff_time_ < next_routing_time) {
+    // The trigger itself is legacy's, on the ms clocks (swmm5.c execRouting:
+    // nextRoutingTime = NewRoutingTime + 1000*routingStep, clamped to
+    // RoutingDuration; while (NewRunoffTime < nextRoutingTime)). The
+    // seconds clocks carry their own accumulated rounding, and a routing
+    // step ending exactly on a runoff boundary came out an ulp past it —
+    // one extra runoff step, a step early, on rtk-long-r3-only at day 114.
+    const double next_routing_ms =
+        std::min(ctx_.elapsed_ms + 1000.0 * dt_routing,
+                 ctx_.options.totalDurationMs());
+    while (new_runoff_ms_ < next_routing_ms) {
         // Save old runoff/runon/conc + GW/snow/LID-drain state for interpolation
         // at the RUNOFF step cadence (matching legacy subcatch_setOldState +
         // lid_setOldGroupState, which legacy calls inside runoff_execute — NOT
@@ -3654,29 +3658,42 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     //     sums them all into nodes.lat_flow[] for the routing solver.
     ctx_.nodes.clearInflowSources();
 
-    // Legacy getDateTime() adds +1ms offset to avoid boundary rounding issues
-    // with pattern lookups at exact hour/day boundaries.
+    // Legacy dates every inflow of this step with getDateTime(NewRoutingTime)
+    // taken at routing_execute entry (swmm5.c getDateTime: StartDateTime +
+    // (elapsedMsec + 1) / 1000 seconds) — the START of the step, plus 1 ms
+    // so a step landing exactly on a pattern / time-series / RDII boundary
+    // reads the interval that begins there. Formed from the ms clock, not
+    // from current_time + 0.001: the ms count is an exact integer, so
+    // (ms + 1) / 1000 is legacy's number, while the seconds clock carries
+    // its own accumulated rounding and 0.001 is not representable.
+    const double routing_secs = (ctx_.elapsed_ms + 1.0) / 1000.0;
     double routing_date = datetime::addSeconds(ctx_.options.start_date,
-                                               ctx_.current_time + 0.001);
+                                               routing_secs);
     inflow_.computeAll(ctx_, routing_date, dt_routing);
 
     // B2a. RDII inflows — apply pre-computed values from wet weather step,
     //      or, under [FILES] USE RDII, the interface file's flows (legacy
     //      addRdiiInflows() always reads from the RDII file; USE just
     //      changes whose file it is).
+    //      Dated like every other legacy inflow: addRdiiInflows(currentDate)
+    //      takes currentDate = getDateTime(NewRoutingTime) at routing_execute
+    //      entry, i.e. the START of this step PLUS legacy's 1 ms (swmm5.c
+    //      getDateTime adds (elapsedMsec + 1)). The raw start time picked the
+    //      previous RDII block whenever a variable step happened to end 1 ms
+    //      before a block boundary (rtk-long, day 142: legacy applied the
+    //      08:05 record at a step starting 08:04:59.999, v6 the 08:00 one,
+    //      and the two runs never re-converged).
     if (!ctx_.options.ignore_rdii) {
         if (rdii_iface_file_.isOpen() && !rdii_iface_file_.isWriting()) {
-            rdii_iface_file_.applyFlows(ctx_, ctx_.current_date);
+            rdii_iface_file_.applyFlows(ctx_, routing_date);
         } else {
-            // ctx_.current_time is the START of this routing step, matching
-            // legacy addRdiiInflows(currentDate) taken at routing_execute
-            // entry before the clock advances.
-            rdii_.applyRdiiInflows(ctx_, ctx_.current_time);
+            rdii_.applyRdiiInflows(ctx_, routing_secs);
         }
     }
 
-    // B2b. Interface file inflows (from upstream model coupling)
-    iface_.readInflows(ctx_, ctx_.current_date);
+    // B2b. Interface file inflows (from upstream model coupling) — legacy
+    //      addIfaceInflows(currentDate), the same +1 ms date.
+    iface_.readInflows(ctx_, routing_date);
 
     // B2c. Assemble all decomposed sources into nodes.lat_flow[]
     assembleLateralInflows(dt_routing);

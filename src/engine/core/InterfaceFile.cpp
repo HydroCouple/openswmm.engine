@@ -40,6 +40,7 @@
 
 #include "InterfaceFile.hpp"
 #include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
+#include "Constants.hpp"
 #include "SimulationContext.hpp"
 #include "DateTime.hpp"
 #include "UnitConversion.hpp"
@@ -328,6 +329,9 @@ void InterfaceManager::readInflows(SimulationContext& ctx, double current_time) 
         if (node < 0 || node >= ctx.n_nodes()) continue;
 
         double flow = getFlow(i, iface_frac_);
+        // legacy addIfaceInflows: `if (fabs(q) < FLOW_TOL) continue;` — the
+        // flow AND its pollutant loads are skipped below the floor.
+        if (std::fabs(flow) < constants::FLOW_TOL) continue;
         ctx.nodes.iface_inflow[static_cast<std::size_t>(node)] += flow;
 
         // Add interpolated quality mass rates (w = q * c), matching legacy
