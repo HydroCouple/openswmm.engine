@@ -527,6 +527,20 @@ struct NodeData {
      */
     std::vector<double>     full_volume;
 
+    /**
+     * @brief Full volume in the LEGACY convention (legacy Node.fullVolume as
+     *        node_validate leaves it): 0 for junctions, outfalls and dividers,
+     *        the pump curve's maximum volume for a Type-1 pump's wet well
+     *        (link.c:1529), the curve volume for storage.
+     *
+     * The dynamic wave books node volume in this convention, so a ponded
+     * junction holds only the water above its rim and a plain junction none;
+     * that is what the .out NODE_VOLUME, the routing mass balance, control
+     * rules and quality mixing see. full_volume keeps MIN_SURFAREA*fullDepth
+     * for junctions because the FV mesh derives its node area from it.
+     */
+    std::vector<double>     rpt_full_volume;
+
     // -----------------------------------------------------------------------
     // Previous-step state (for output interpolation / CFL checks)
     // -----------------------------------------------------------------------
@@ -776,6 +790,7 @@ struct NodeData {
         degree.assign(un, 0);
         old_net_inflow.assign(un, 0.0);
         full_volume.assign(un, 0.0);
+        rpt_full_volume.assign(un, 0.0);
         old_depth.assign(un, 0.0);
         old_volume.assign(un, 0.0);
         old_lat_flow.assign(un, 0.0);
@@ -841,7 +856,7 @@ struct NodeData {
         lid_drain_inflow.resize(un, 0.0);
         g(inflow, 0.0); g(outflow, 0.0); g(overflow, 0.0);
         g(losses, 0.0); g(crown_elev, 0.0); g(degree, 0);
-        g(old_net_inflow, 0.0); g(full_volume, 0.0);
+        g(old_net_inflow, 0.0); g(full_volume, 0.0); g(rpt_full_volume, 0.0);
         g(old_depth, 0.0); g(old_volume, 0.0); g(old_lat_flow, 0.0);
         g(old_inflow, 0.0);
         comments.resize(un, std::string{});
@@ -897,7 +912,7 @@ struct NodeData {
         r(coupling_age_vol_queue); r(coupling_temp_vol_queue);
         r(coupling_age_vol_inflow); r(coupling_temp_vol_inflow);
         r(losses); r(crown_elev); r(degree); r(old_net_inflow);
-        r(full_volume); r(old_depth); r(old_volume); r(old_lat_flow);
+        r(full_volume); r(rpt_full_volume); r(old_depth); r(old_volume); r(old_lat_flow);
         r(old_inflow); r(rpt_flag); r(stat_vol_flooded); r(stat_time_flooded);
         r(stat_max_depth); r(stat_max_overflow); r(stat_max_overflow_date); r(stat_sum_depth);
         r(stat_sum_volume); r(stat_max_depth_date); r(stat_max_rpt_depth); r(stat_max_inflow_date);
@@ -936,7 +951,7 @@ struct NodeData {
         e(coupling_age_vol_inflow); e(coupling_temp_vol_inflow);
         e(qual_vol_in); e(lid_drain_qual_vol); e(lid_drain_inflow);
         e(inflow); e(outflow); e(overflow); e(losses);
-        e(crown_elev); e(degree); e(old_net_inflow); e(full_volume);
+        e(crown_elev); e(degree); e(old_net_inflow); e(full_volume); e(rpt_full_volume);
         e(old_depth); e(old_volume); e(old_lat_flow); e(old_inflow);
         e(comments); e(tags); e(rpt_flag);
 
@@ -1065,6 +1080,7 @@ struct NodeData {
         degree.shrink_to_fit();
         old_net_inflow.shrink_to_fit();
         full_volume.shrink_to_fit();
+        rpt_full_volume.shrink_to_fit();
         old_depth.shrink_to_fit();
         old_volume.shrink_to_fit();
         old_lat_flow.shrink_to_fit();

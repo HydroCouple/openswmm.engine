@@ -1286,6 +1286,7 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
             t.ponded_area = nd.ponded_area[ui];
             t.sur_depth   = nd.sur_depth[ui];
             t.full_volume = nd.full_volume[ui];
+            t.rpt_full_volume = nd.rpt_full_volume[ui];
             t.degree      = nd.degree[ui];
             t.is_storage  = (nd.type[ui] == NodeType::STORAGE) ? 1 : 0;
             t.is_outfall  = (nd.type[ui] == NodeType::OUTFALL) ? 1 : 0;
@@ -3985,24 +3986,38 @@ void DWSolver::commitNodeDepthState(SimulationContext& ctx, int node_idx,
     // --- Flooding logic (matching legacy getFloodedDepth) ---
     // Reset first so a re-commit (accepted Anderson mix after the raw Picard
     // commit) cannot inherit stale overflow from the earlier candidate.
+    //
+    // Volume is booked in the LEGACY convention (NodeTile::rpt_full_volume,
+    // legacy Node.fullVolume): a junction's full volume is 0 unless it is a
+    // Type-1 pump wet well, so a ponded junction carries only the water above
+    // its rim — legacy max(oldVolume + dV, fullVolume) with fullVolume = 0 —
+    // and a plain junction none. Booking MIN_SURFAREA*fullDepth here (the FV
+    // mesh convention in full_volume) put every ponded junction's reported
+    // volume, the routing mass balance's flooding gate and the control-rule /
+    // quality node volume off by that amount (sampleram JCT-38: +50.26 ft3,
+    // 4 ft * 12.566 ft2, from the first ponded step on).
     nodes.overflow[ui] = 0.0;
     if (y_new > y_max) {
         if (!can_pond) {
             // Non-ponded flooding: cap at max, excess is overflow
             nodes.overflow[ui] = dV / dt;
-            nodes.volume[ui] = t.full_volume;
+            nodes.volume[ui] = t.rpt_full_volume;
             y_new = y_max;
         } else {
             // Ponded: volume can exceed full volume
             nodes.volume[ui] = std::max(nodes.old_volume[ui] + dV,
-                                        t.full_volume);
+                                        t.rpt_full_volume);
             nodes.overflow[ui] = (nodes.volume[ui] -
-                std::max(nodes.old_volume[ui], t.full_volume)) / dt;
+                std::max(nodes.old_volume[ui], t.rpt_full_volume)) / dt;
         }
         if (nodes.overflow[ui] < FUDGE) nodes.overflow[ui] = 0.0;
-    } else {
+    } else if (t.is_storage) {
         nodes.volume[ui] = node::getVolume(nodes, node_idx, y_new, &ctx.tables,
                                            unit_sys_, &ctx.node_subtypes);
+    } else {
+        // Legacy node_getVolume default branch: fullVolume * (depth / fullDepth)
+        nodes.volume[ui] = (t.full_depth > 0.0)
+            ? t.rpt_full_volume * (y_new / t.full_depth) : 0.0;
     }
 
     // An inlet junction floods (above) but is still a zero-storage node: the

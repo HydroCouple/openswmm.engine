@@ -418,7 +418,14 @@ void StructureSolver::computePumpFlowK(SimulationContext& ctx, double dt,
                 // volume doesn't go negative. Legacy uses oldVolume (the
                 // start-of-step volume), not the current-iter volume, to
                 // avoid cascading clamps across Picard iterations.
-                if (nodes.full_volume[un1] > 0.0) {
+                // Legacy node_getMaxOutflow tests Node.fullVolume, which is 0
+                // for a junction wet well unless a Type-1 pump gave it the
+                // curve's max volume; the dynamic wave books volume in that
+                // convention (NodeData::rpt_full_volume), FV in full_volume.
+                const double full_vol =
+                    (ctx.options.routing_model == RoutingModel::DYNWAVE)
+                        ? nodes.rpt_full_volume[un1] : nodes.full_volume[un1];
+                if (full_vol > 0.0) {
                     double max_q = nodes.inflow[un1] + nodes.old_volume[un1] / dt;
                     if (q > max_q) q = max_q;
                 }

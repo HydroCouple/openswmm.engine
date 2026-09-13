@@ -306,7 +306,12 @@ public:
         // ---- 2. MIX in topo order, passthrough zero-volume links ----------
         for (const int n : topo_) {
             const auto un = static_cast<std::size_t>(n);
-            const double v_old = nodes.old_volume[un];
+            // The node's mixed STORE (node::storeVolume): the routers book
+            // nodes.volume in legacy's convention, 0 for a junction below
+            // its rim, but the store this solver mixes into is the water
+            // the continuity equation attributes to the node.
+            const double v_old = node::storeVolume(nodes, n, nodes.old_depth[un],
+                                                   nodes.old_volume[un]);
             const double v_in = node_vol_in_[un];
             // OUTFALL_BACKFLOW_QUALITY ZERO: an outfall taking no volume
             // inflow this substep is a fresh boundary — its held state
@@ -556,7 +561,7 @@ public:
                 const auto idx = static_cast<std::size_t>(n) *
                                      static_cast<std::size_t>(np) +
                                  static_cast<std::size_t>(p);
-                const double v = nodes.volume[static_cast<std::size_t>(n)];
+                const double v = node::storeVolume(nodes, n);
                 removed += nodes.conc[idx] * (1.0 - f) * v;
                 nodes.conc[idx] *= f;
             }
@@ -756,7 +761,7 @@ private:
             for (int n = 0; n < nn; ++n) {
                 const auto un = static_cast<std::size_t>(n);
                 if (un >= hs.node_temp.size()) break;
-                const double vol = ctx.nodes.volume[un];
+                const double vol = node::storeVolume(ctx.nodes, n);
                 if (!(vol > 0.0)) continue;
                 const double a = node::getSurfArea(
                     ctx.nodes, n, ctx.nodes.depth[un], &ctx.tables,

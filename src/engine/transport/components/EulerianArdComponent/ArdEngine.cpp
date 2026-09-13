@@ -299,7 +299,10 @@ bool ArdEngine::init(SimulationContext& ctx) {
     }
     for (int nd = 0; nd < nn && nd < ctx.n_nodes(); ++nd) {
         const auto und = static_cast<std::size_t>(nd);
-        node_vol_[und] = ctx.nodes.volume[und];
+        // The store is the water the continuity equation attributes to the
+        // node (node::storeVolume), not nodes.volume: the routers book that
+        // in legacy's convention, which is 0 for a junction below its rim.
+        node_vol_[und] = node::storeVolume(ctx.nodes, nd);
         for (int s = 0; s < np; ++s)
             node_mass_[und * uns + static_cast<std::size_t>(s)] =
                 ctx.nodes.conc[und * unp + static_cast<std::size_t>(s)] *
@@ -1178,7 +1181,7 @@ void ArdEngine::step(SimulationContext& ctx, double dt) {
     for (int nd = 0; nd < nn; ++nd) {
         const auto und = static_cast<std::size_t>(nd);
         const double v_old = node_vol_[und];
-        const double v_new = std::max(ctx.nodes.volume[und], 0.0);
+        const double v_new = node::storeVolume(ctx.nodes, nd);   // see initialize
 
         // Water that leaves the SYSTEM — outfall discharge, flooding — rides no
         // mesh face, so the store never saw it go. Preserving mass across the

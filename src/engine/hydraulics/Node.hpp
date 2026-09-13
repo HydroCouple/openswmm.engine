@@ -120,6 +120,34 @@ double getMaxOutflow(const NodeData& nodes, int idx, double q, double dt);
 double getOverflow(double new_volume, double full_volume, double dt);
 
 /**
+ * @brief Water held at a node as a completely mixed transport STORE (ft3).
+ *
+ * @details The routers book nodes.volume in legacy's Node.newVolume
+ *          convention: a junction, outfall or divider holds nothing below
+ *          its rim (legacy fullVolume is 0 there, node.c node_getVolume) and
+ *          only the ponded water above it. A transport module that models a
+ *          node as a mixed store needs the water the dynamic wave's
+ *          continuity equation attributes to the node — its MIN_SURFAREA-
+ *          floored surface area times depth, which is full_volume scaled by
+ *          depth / full_depth (full_volume carries that area for a junction)
+ *          — plus the ponded water. A storage node's store is its curve
+ *          volume, i.e. nodes.volume itself, and an outfall — a boundary
+ *          the routers never book a volume for — stores nothing.
+ *
+ * @param nodes  SoA node data.
+ * @param idx    Node index.
+ * @returns Store volume (ft3, >= 0).
+ */
+double storeVolume(const NodeData& nodes, int idx);
+
+/**
+ * @brief storeVolume() for an explicit depth / booked-volume pair, so a
+ *        caller can evaluate the previous step's store from old_depth and
+ *        old_volume.
+ */
+double storeVolume(const NodeData& nodes, int idx, double depth, double volume);
+
+/**
  * @brief Compute depth from volume for a single node (inverse of getVolume).
  *
  * @details For JUNCTION: d = V / MIN_SURFAREA.

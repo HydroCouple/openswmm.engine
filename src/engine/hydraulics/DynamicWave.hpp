@@ -514,6 +514,7 @@ private:
         double  ponded_area;
         double  sur_depth;
         double  full_volume;
+        double  rpt_full_volume; ///< legacy Node.fullVolume convention (NodeData::rpt_full_volume)
         int32_t degree;
         uint8_t is_storage;
         uint8_t is_outfall;

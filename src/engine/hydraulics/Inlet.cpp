@@ -1246,7 +1246,11 @@ void InletSolver::adjustFloodingTotals(SimulationContext& ctx, double dt) const 
         // debiting nodes.volume[capture], i.e. node state rather than the
         // ledger, and is deliberately out of scope here.
         if (nodes.overflow[uc] <= 0.0) continue;
-        if (nodes.volume[uc] > nodes.full_volume[uc]) continue;
+        // The dynamic wave books node volume in the legacy convention, whose
+        // full volume is NodeData::rpt_full_volume (same gate as the ledger).
+        const double full_vol = (ctx.options.routing_model == RoutingModel::DYNWAVE)
+            ? nodes.rpt_full_volume[uc] : nodes.full_volume[uc];
+        if (nodes.volume[uc] > full_vol) continue;
 
         double qbf = nodes.overflow[uc] * soa_.backflow_ratio[ui];
         if (std::fabs(qbf) < INLET_FUDGE) qbf = 0.0;   // as computeAll rounds it

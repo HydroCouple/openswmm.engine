@@ -579,14 +579,6 @@ private:
     /** @brief Rebuild xsp_cache_ if links/xsect state changed (cheap check). */
     void ensureXspCache() noexcept;
 
-    /// Legacy-convention full volume per node for .out NODE_VOLUME reporting:
-    /// 0 for plain junctions/outfalls/dividers (legacy node_getVolume returns 0
-    /// when fullVolume==0), pump wet-well xMax for Type-1 pump inlets. STORAGE
-    /// reports its curve volume directly. This DECOUPLES the reported node volume
-    /// from the internal volume-state (which keeps MIN_SURFAREA*depth for the
-    /// volume-based solver + surcharge detection). See postOutputSnapshot().
-    std::vector<double> report_full_volume_;
-
     /// Legacy KW/SF Node.degree — OUTFLOW-link count per node with the
     /// outfall quirk (legacy toposort.c:70-91: a link whose upstream node is
     /// an outfall counts toward its DOWNSTREAM node). ctx_.nodes.degree
@@ -597,7 +589,7 @@ private:
 
     /// Legacy-convention reported node volume (mirrors legacy node_getVolume):
     /// STORAGE → curve volume (ctx_.nodes.volume); junction/outfall/divider →
-    /// report_full_volume_·(depth/fullDepth) = 0 for plain junctions. Used for
+    /// nodes.rpt_full_volume·(depth/fullDepth) = 0 for plain junctions. Used for
     /// the .out NODE_VOLUME and the routing mass-balance storage sums so both
     /// match legacy, while the internal volume-state (MIN_SURFAREA) is preserved.
     double reportedNodeVolume(int i) const noexcept;
