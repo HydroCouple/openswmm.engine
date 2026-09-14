@@ -31,9 +31,11 @@
 #ifndef OPENSWMM_ENGINE_CORE_FILEIO_HPP
 #define OPENSWMM_ENGINE_CORE_FILEIO_HPP
 
+#include <concepts>
 #include <cstdio>
 #include <filesystem>
 #include <string>
+#include <type_traits>
 
 namespace openswmm::io {
 
@@ -53,6 +55,31 @@ inline std::filesystem::path utf8_path(const std::string& utf8) {
     return std::filesystem::path(utf8);
 #endif
 }
+
+/**
+ * @brief Passing an `fs::path` to `utf8_path()` is always a mistake — refuse it
+ *        at compile time, on EVERY platform.
+ *
+ * The value is already a path; re-encoding it is at best a no-op and at worst
+ * the very corruption this header exists to prevent. The reason this needs a
+ * deleted overload rather than a code review is that the mistake COMPILES ON
+ * POSIX: `fs::path::string_type` is `std::string` there, so `path` converts
+ * implicitly to the `const std::string&` parameter. On Windows `string_type`
+ * is `std::wstring`, no such conversion exists, and it is a hard error — so a
+ * Linux/macOS build and a local `-fsyntax-only` check both pass and only the
+ * MSVC job fails. That cost two Windows CI cycles (b3b1590d → b814bcf8, then
+ * again at 92e63366) before this guard existed.
+ *
+ * Constrained to match ONLY an actual path: a bare overload taking
+ * `const fs::path&` would make `utf8_path("literal")` and `utf8_path(char_ptr)`
+ * ambiguous, since converting `const char*` to `std::string` and to `path` are
+ * equally good user-defined conversions. A template that matches `path`
+ * exactly wins against the conversion to `std::string` and loses for
+ * everything else, which is precisely the rule we want.
+ */
+template <class P>
+    requires std::same_as<std::remove_cvref_t<P>, std::filesystem::path>
+std::filesystem::path utf8_path(P&&) = delete;
 
 /**
  * @brief Render a path back to UTF-8 bytes — the inverse of `utf8_path()`.
@@ -80,6 +107,19 @@ inline std::string path_utf8(const std::filesystem::path& p,
     return generic ? p.generic_string() : p.string();
 #endif
 }
+
+/**
+ * @brief The mirror guard: `path_utf8()` takes a path, never a string.
+ *
+ * A `std::string` or `const char*` argument would silently construct the
+ * `fs::path` parameter from the NATIVE NARROW encoding — the ANSI code page on
+ * Windows — which is issue #7 itself, arrived at through the very helper meant
+ * to prevent it, and again visible only on MSVC. Convert explicitly with
+ * `utf8_path()` first if that is genuinely what was meant.
+ */
+template <class S>
+    requires (!std::same_as<std::remove_cvref_t<S>, std::filesystem::path>)
+std::string path_utf8(S&&, bool = false) = delete;
 
 /**
  * @brief `std::fopen` for a path that is ALREADY a `std::filesystem::path`.
