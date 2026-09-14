@@ -1133,6 +1133,16 @@ struct SimulationContext {
         double step_gw_inflow    = 0.0;
         double step_rdii_inflow  = 0.0;
         double step_ext_inflow   = 0.0;
+        /// legacy massbal_getStepFlowError() of the PREVIOUS routing step —
+        /// 1 - outflow/inflow of that step's StepFlowTotals, formed at the
+        /// end of updateRoutingMassBalance — which isInSteadyState compares
+        /// with SysFlowTol at the start of the next step.
+        double last_step_flow_error = 0.0;
+        /// legacy addExternalInflows (routing.c): a node's NEGATIVE external
+        /// flow (a withdrawal) is booked as system OUTFLOW, not as a negative
+        /// external inflow; summed here per step, ahead of the outfall and
+        /// flooding terms as legacy's StepFlowTotals.outflow is.
+        double step_ext_withdrawal = 0.0;
 
         // Quality mass balance (per-pollutant, in mass units)
         std::vector<double> qual_init_buildup;   ///< Initial buildup mass
@@ -1792,6 +1802,8 @@ struct SimulationContext {
     void save_state() noexcept {
         nodes.save_state();
         links.save_state();
+        // (SWMMEngine::step rolls the two halves separately — see
+        // save_lat_qual_state / save_hyd_state.)
         // NOTE: subcatches.save_state() is intentionally NOT called here.
         // Subcatchment old-state (old_runoff/old_runon/conc_old) is the
         // runoff-step snapshot used to linearly interpolate lateral inflow
@@ -1801,6 +1813,20 @@ struct SimulationContext {
         // the current value so old==new and the lateral inflow jumped to the
         // full new runoff instantly instead of ramping. It is now saved in the
         // runoff-advance loop in SWMMEngine::stepRunoff().
+    }
+
+    /// The every-step half of legacy routing_execute: initSystemInflows'
+    /// oldLatFlow roll and node/link _setOldQualState.
+    void save_lat_qual_state() noexcept {
+        nodes.save_lat_qual_state();
+        links.save_qual_state();
+    }
+
+    /// The routed-step half: legacy routeFlow's node/link _setOldHydState,
+    /// skipped with the routing on a SKIP_STEADY_STATE step.
+    void save_hyd_state() noexcept {
+        nodes.save_hyd_state();
+        links.save_hyd_state();
     }
 
     /**

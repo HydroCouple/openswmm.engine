@@ -975,27 +975,17 @@ int SWMMEngine::initialize() noexcept {
     // created during the first routing step and showing up as a continuity
     // error (e.g. extran2's fixed 94.4 ft outfall backs ~1.57 ac-ft into the
     // downstream trapezoidal channels).
-    // Set FIXED-outfall node depths from their stage (= stage − invert), so the
-    // downstream conduit backwater can be computed below. Done inline rather
-    // than via outfall::setAllOutfallDepths because that routine's
-    // outfall→conduit cache is not populated until init_modules (and it gives
-    // FREE/NORMAL outfalls zero depth at zero initial flow anyway).
-    // Legacy flowrout_init calls link_setOutfallDepth per LINK, so only an
-    // outfall some link names in that per-link choice of end gets a depth
-    // (buildOutfallLinkMap); the others stay at 0.
+    // Every outfall type, as legacy link_setOutfallDepth at flowrout_init
+    // does (NewRoutingTime = 0): FIXED at its stage, TIDAL at the curve's
+    // first x, TIMESERIES at the start date, FREE / NORMAL from the q0
+    // flow's normal / critical depth. Only the FIXED ones were seeded, so a
+    // TIDAL outfall's conduit started at FUDGE depth instead of half the
+    // tide's depth, and its aOld carried that into dq3 on the first step
+    // (routing-outfall-tidal, routing-outfall-timeseries). Legacy calls it
+    // per LINK, so only an outfall some link names in that per-link choice
+    // of end gets a depth (buildOutfallLinkMap); the others stay at 0.
     outfall::buildOutfallLinkMap(ctx_);
-    for (int oi = 0; oi < ctx_.n_nodes(); ++oi) {
-        auto uo = static_cast<std::size_t>(oi);
-        if (ctx_.nodes.type[uo] != NodeType::OUTFALL) continue;
-        const int r = ctx_.node_subtypes.outfall_row(oi);
-        if (r >= 0 &&
-            ctx_.node_subtypes.outfalls.link_idx[static_cast<std::size_t>(r)] >= 0 &&
-            ctx_.node_subtypes.outfalls.bc_type[static_cast<std::size_t>(r)] == OutfallType::FIXED) {
-            double stage = ctx_.node_subtypes.outfalls.param[static_cast<std::size_t>(r)];  // internal ft
-            ctx_.nodes.depth[uo] =
-                std::max(0.0, stage - ctx_.nodes.invert_elev[uo]);
-        }
-    }
+    outfall::setAllOutfallDepths(ctx_, 0.0);
     for (int j = 0; j < ctx_.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);
         if (ctx_.links.type[uj] != LinkType::CONDUIT) continue;
@@ -1435,8 +1425,37 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         }
         dt_next = dt;
     } else {
+        // legacy routing_getRoutingStep (routing.c): BETWEEN routing events
+        // (the BetweenEvents flag the previous routing_execute set) the
+        // step jumps to MIN(NewRunoffTime, ReportTime) when that instant is
+        // ahead and before the next event's start, else takes the fixed
+        // step when it stays before the event — the CFL step is never
+        // formed (its 1 ms first value put session64-custom-shapes, whose
+        // event window lies outside the run, on a 1 ms / 20.001 s grid
+        // where legacy steps 20 s, and the reports blended the never-routed
+        // old/new pairs at f = 0.99995 instead of 1).
+        double dt_between = 0.0;
+        if (!ctx_.events.empty() && between_events_ &&
+            next_event_ < static_cast<int>(ctx_.events.size())) {
+            const double fixed = ctx_.options.routing_step;
+            const double ev_start = ctx_.events[static_cast<std::size_t>(next_event_)].start;
+            const double next_ms = std::min(new_runoff_ms_, ctx_.next_report_ms);
+            const double date1 = datetime::addSeconds(ctx_.options.start_date,
+                                                      (ctx_.elapsed_ms + 1.0) / 1000.0);
+            const double date2 = datetime::addSeconds(ctx_.options.start_date,
+                                                      (next_ms + 1.0) / 1000.0);
+            if (date2 > date1 && date2 < ev_start) {
+                dt_between = (next_ms - ctx_.elapsed_ms) / 1000.0;
+            } else {
+                const double d1 = datetime::addSeconds(ctx_.options.start_date,
+                                                       (ctx_.elapsed_ms + 1000.0 * fixed + 1.0) / 1000.0);
+                if (d1 < ev_start) dt_between = fixed;
+            }
+        }
         double dt_cfl = ctx_.options.routing_step;
-        if (ctx_.options.variable_step > 0.0) {
+        if (dt_between > 0.0) {
+            dt_cfl = dt_between;
+        } else if (ctx_.options.variable_step > 0.0) {
             dt_cfl = router_.getAdaptiveStep(ctx_, ctx_.options.routing_step,
                                               ctx_.options.variable_step);
             // Track max Courant number: ratio of fixed step to CFL-limited step
@@ -1460,6 +1479,16 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         // through its internal CFL subcycling, and exchange stability is owned
         // by per-substep evaluation + limiter + the node conductance.
         dt_next = hydraulics::TimestepController::compute_next(ctx_, dt_cfl);
+        // The between-events jump is not bounded by the routing step
+        // (compute_next's min); only the duration and rule-grid clamps apply.
+        if (dt_between > ctx_.options.routing_step) {
+            dt_next = dt_between;
+            const double total_msec = ctx_.options.totalDurationMs();
+            if (ctx_.elapsed_ms + 1000.0 * dt_next > total_msec)
+                dt_next = std::max((total_msec - ctx_.elapsed_ms) / 1000.0, 0.001);
+            if (ctx_.dt_controls_remaining > 0.0 && ctx_.dt_controls_remaining < dt_next)
+                dt_next = ctx_.dt_controls_remaining;
+        }
     }
 
     // Fire step-begin callback
@@ -1473,8 +1502,13 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         );
     }
 
-    // Snapshot state before solving
-    ctx_.save_state();
+    // Snapshot the every-step old state (legacy initSystemInflows'
+    // oldLatFlow and the quality old state). The HYDRAULIC old state rolls
+    // in stepRouting once the step is known to be routed (legacy routeFlow's
+    // node/link _setOldHydState): a SKIP_STEADY_STATE step keeps the last
+    // routed step's old/new pair, which its reports interpolate and its
+    // steady test (oldFlowInflow vs inflow) compares.
+    ctx_.save_lat_qual_state();
 
     // Reset mass balance accumulators (matching legacy massbal_initTimeStepTotals)
     resetStepMassBalance();
@@ -3833,7 +3867,8 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
 
     // B0a. Check if between routing events — skip routing if so
     //       (matching legacy isBetweenEvents() in routing.c)
-    if (isBetweenEvents(ctx_.current_date)) {
+    between_events_ = isBetweenEvents(ctx_.current_date);
+    if (between_events_) {
         // Advance next_event_ index past expired events
         while (next_event_ < static_cast<int>(ctx_.events.size()) &&
                ctx_.current_date > ctx_.events[static_cast<size_t>(next_event_)].end) {
@@ -3949,6 +3984,8 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     if (isInSteadyState(action_count)) {
         return;
     }
+    // legacy routeFlow: the hydraulic old state rolls only on a routed step.
+    ctx_.save_hyd_state();
 
     // B3. Hydraulic routing (batch xsect geometry → batch momentum)
     //     Includes: conduit flow, pump/orifice/weir/outlet flow,
@@ -4188,20 +4225,12 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     //      write a sink into lat_flow that the next step's assembly overwrites
     //      before the router ever sees it (plan G6).
 
-    // B3b. Culvert inlet control (FHWA HEC-5 equations)
-    //      Uses pre-built culvert_links_ (populated in initHydraulics)
-    //
-    //      NOT for FV: it applies the same closure as a cap on the flux
-    //      crossing the culvert's upstream face, inside the solver. Rewriting
-    //      links.flow here afterwards would contradict the node ledger
-    //      publishFv already booked from those fluxes.
-    if (!culvert_links_.empty() &&
-        ctx_.options.routing_model != RoutingModel::FV) {
-        culvert::batchComputeInletControl(
-            culvert_links_.data(),
-            static_cast<int>(culvert_links_.size()),
-            ctx_);
-    }
+    // B3b. Culvert inlet control is applied where legacy applies it: inside
+    //      the dynamic-wave momentum solve, once per iteration
+    //      (dwflow.c:328 culvert_getInflow -> DWSolver::applyFlowLimits),
+    //      and by the FV solver as a cap on its upstream-face flux. Legacy
+    //      never limits a kinematic-wave culvert, and a second application
+    //      after the solve rewrote the converged flow (routing-culvert-codes).
 
     // B4. Non-conduit link flows are now computed inside the DW Picard loop
     //     via the non_conduit_fn callback passed to router_.step().
@@ -4657,7 +4686,13 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
     // B7. Mass balance update (P8-G12: routing totals)
     //     Accumulate ALL flow paths matching legacy massbal_updateRoutingTotals
     ctx_.mass_balance.step_flooding  = 0.0;
-    ctx_.mass_balance.step_outflow   = 0.0;
+    // legacy StepFlowTotals.outflow: the withdrawals (negative external
+    // inflows, addExternalInflows) come first, the outfall / flooding terms
+    // of removeOutflows follow in node order below.
+    ctx_.mass_balance.step_outflow   = ctx_.mass_balance.step_ext_withdrawal;
+    double step_loss_rate = 0.0;   // legacy StepFlowTotals.evapLoss + seepLoss
+    double step_ww_rate   = 0.0;   // legacy StepFlowTotals.wwInflow
+    ctx_.mass_balance.routing_outflow += ctx_.mass_balance.step_ext_withdrawal * dt_routing;
 
     // Accumulate DWF, GW, RDII, and external inflow volumes from step accumulators
     // (step accumulators are set during Inflow::computeAll / RDIISolver::computeAll
@@ -4686,65 +4721,33 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
     const bool is_dw = (ctx_.options.routing_model == RoutingModel::DYNWAVE ||
                         ctx_.options.routing_model == RoutingModel::FV);
 
-    // Legacy KW/SF Node.degree (outflow-link count, toposort.c:70-91) for the
-    // terminal-node test below — ctx_.nodes.degree is the DW hybrid and reads
-    // nonzero for a fed terminal junction, mis-filing its throughflow as
-    // interior flooding. Static topology: computed once, sized to the model.
-    if (!is_dw &&
-        outflow_degree_.size() != static_cast<std::size_t>(ctx_.n_nodes())) {
-        const int nn = ctx_.n_nodes();
-        outflow_degree_.assign(static_cast<std::size_t>(nn), 0);
-        for (int j = 0; j < ctx_.n_links(); ++j) {
-            auto uj = static_cast<std::size_t>(j);
-            int n = (ctx_.links.direction[uj] < 0) ? ctx_.links.node2[uj]
-                                                   : ctx_.links.node1[uj];
-            if (n < 0 || n >= nn) continue;
-            if (ctx_.nodes.type[static_cast<std::size_t>(n)] == NodeType::OUTFALL) {
-                n = (ctx_.links.direction[uj] < 0) ? ctx_.links.node1[uj]
-                                                   : ctx_.links.node2[uj];
-                if (n < 0 || n >= nn) continue;
-            }
-            outflow_degree_[static_cast<std::size_t>(n)]++;
-        }
-    }
 
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
         const NodeType nt = ctx_.nodes.type[uj];
 
         if (nt == NodeType::OUTFALL) {
-            // Legacy node_getSystemOutflow (node.c:428-447) + removeOutflows
-            // (routing.c:921-931): an outfall's system flow is its pipe inflow
-            // when discharging. When the outfall instead sends water BACK into
-            // the network (outflow > 0, inflow == 0 — e.g. a 2D tailwater or a
-            // FIXED/TIDAL/TIMESERIES stage above the upstream HGL), the system
-            // flow is NEGATIVE and legacy books it as an EXTERNAL system INFLOW
-            // of magnitude outflow (massbal_addInflowFlow(EXTERNAL_INFLOW, -q)).
-            // Mirroring that closes routing continuity for any backflowing
-            // outfall (a pre-existing gap for tidal/fixed outfalls, and required
-            // for the 2D-coupled withdrawal path in transferOutfallDischarges).
-            double q_in  = ctx_.nodes.inflow[uj];
-            double q_out = ctx_.nodes.outflow[uj];
-            if (q_out > 0.0 && q_in <= 0.0) {
-                // Backflow into the network — system external inflow. step_*
-                // is added here (after the step_ext_inflow consumption at the
-                // top of this function) for the per-step snapshot only,
-                // mirroring the coupling-spill booking below.
-                ctx_.mass_balance.routing_external += q_out * dt_routing;
-                ctx_.mass_balance.step_ext_inflow  += q_out;
-                // Legacy node_getSystemOutflow (node.c:441-444): a backflowing
-                // outfall reports its discharge magnitude as node inflow
-                // (Node.inflow = fabs(outflow)). Without this the reported
-                // node.INFLOW is 0 at every backflowing-outfall step while
-                // legacy reports |outflow| — the outfall node.INFLOW parity gap.
-                ctx_.nodes.inflow[uj] = q_out;
-            } else {
-                // Normal discharge — system outflow = inflow.
-                ctx_.mass_balance.routing_outflow += q_in * dt_routing;
-                ctx_.mass_balance.step_outflow    += q_in;
+            // legacy removeOutflows + node_getSystemOutflow (routing.c:
+            // 906-935, node.c:414-447), in that order:
+            //   1. the outfall's inflow (before anything below rewrites it)
+            //      accumulates as routed volume for a RouteTo subcatchment;
+            //   2. system flow q: outflow == 0 -> q = inflow (a discharging
+            //      outfall); else, inflow == 0 -> q = -outflow and
+            //      Node.inflow = |q| (an outfall FEEDING the network — a
+            //      FIXED/TIDAL/TIMESERIES stage above the HGL, or here a
+            //      FREE outfall whose weir runs backwards); else NOTHING;
+            //   3. q > 0 books outflow, q <= 0 books EXTERNAL inflow -q.
+            // The earlier "backflow if outflow>0 && inflow<=0, else discharge"
+            // booked an outfall carrying BOTH — the state a skipped
+            // SKIP_STEADY_STATE step inherits from rule 2's inflow write —
+            // as outflow: weir-overtopping's Spill added its 1186 cfs
+            // reverse flow to OUTFALL_FLOWS on every skipped step.
+            const double q_in  = ctx_.nodes.inflow[uj];
+            const double q_out = ctx_.nodes.outflow[uj];
 
-                // Gap #28: accumulate outfall discharge as routed volume for next
-                // runoff step (matching legacy Outfall[i].vRouted accumulation).
+            // Gap #28: routed volume for the next runoff step (legacy
+            // Outfall[k].vRouted, from Node.inflow > 0).
+            {
                 const int ofr = ctx_.node_subtypes.outfall_row(static_cast<int>(uj));
                 int sc = (ofr >= 0)
                     ? ctx_.node_subtypes.outfalls.route_to[static_cast<std::size_t>(ofr)] : -1;
@@ -4767,6 +4770,38 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                                    ctx_.heat_state.node_temp[uj];
                 }
             }
+
+            double q_sys = 0.0;
+            if (ctx_.options.routing_model == RoutingModel::FV) {
+                // FV books an outfall's boundary discharge in BOTH halves of
+                // its ledger (publishFv: face flux in, boundary flux out), so
+                // legacy's "both nonzero -> nothing" would drop it; FV keeps
+                // the direct rule: feeding the network when it only sends,
+                // discharging its inflow otherwise.
+                if (q_out > 0.0 && q_in <= 0.0) {
+                    q_sys = -q_out;
+                    ctx_.nodes.inflow[uj] = q_out;
+                } else {
+                    q_sys = q_in;
+                }
+            } else if (q_out == 0.0) {
+                q_sys = q_in;
+            } else if (q_in == 0.0) {
+                q_sys = -q_out;
+                // Legacy node_getSystemOutflow (node.c:441-444): a backflowing
+                // outfall reports its discharge magnitude as node inflow.
+                ctx_.nodes.inflow[uj] = std::fabs(q_sys);
+            }
+            if (q_sys > 0.0) {
+                ctx_.mass_balance.routing_outflow += q_sys * dt_routing;
+                ctx_.mass_balance.step_outflow    += q_sys;
+            } else {
+                // massbal_addInflowFlow(EXTERNAL_INFLOW, -q): step_* is added
+                // here (after the step_ext_inflow consumption at the top of
+                // this function) for the per-step snapshot only.
+                ctx_.mass_balance.routing_external += -q_sys * dt_routing;
+                ctx_.mass_balance.step_ext_inflow  += -q_sys;
+            }
             // Legacy node_getSystemOutflow zeroes an outfall's overflow and
             // volume every step (node.c:445-447) so an outfall never reports
             // flooding or stored volume. Applied for the tree-layout routers
@@ -4779,7 +4814,7 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                 ctx_.nodes.volume[uj]   = 0.0;
             }
         }
-        else if (!is_dw && outflow_degree_[uj] == 0 && nt != NodeType::STORAGE) {
+        else if (!is_dw && ctx_.nodes.degree[uj] == 0 && nt != NodeType::STORAGE) {
             // Non-DW terminal node (no OUTFLOW links — legacy KW degree):
             // its inflow is system outflow, and legacy node_getSystemOutflow
             // (node.c:453-459) zeroes its overflow and volume so it reports
@@ -4811,6 +4846,7 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
 
         // Node evaporation and seepage losses
         ctx_.mass_balance.routing_evap_loss += ctx_.nodes.losses[uj] * dt_routing;
+        step_loss_rate += ctx_.nodes.losses[uj];
     }
 
     // A street inlet's capture node hands its overflow back to the corridor as
@@ -4832,6 +4868,8 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                 ((cr >= 0) ? CD.evap_loss_rate[ucr] : 0.0) * barrels * dt_routing;
             ctx_.mass_balance.routing_seep_loss +=
                 ((cr >= 0) ? CD.seep_loss_rate[ucr] : 0.0) * barrels * dt_routing;
+            step_loss_rate += ((cr >= 0) ? CD.evap_loss_rate[ucr] : 0.0) * barrels
+                            + ((cr >= 0) ? CD.seep_loss_rate[ucr] : 0.0) * barrels;
         }
     }
 
@@ -4858,6 +4896,7 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
         if (runoff_q > 0.0) {
             ctx_.mass_balance.routing_wet_weather += runoff_q * dt_routing;
         }
+        step_ww_rate = runoff_q;
         if (user_q_total > 0.0) {
             ctx_.mass_balance.routing_forcing_inflow += user_q_total * dt_routing;
         }
@@ -4918,6 +4957,20 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                 }
             }
         }
+    }
+
+    // legacy massbal_getStepFlowError on THIS step's StepFlowTotals, read
+    // by isInSteadyState at the start of the next step (routing.c:234,
+    // before massbal_initTimeStepTotals clears them).
+    {
+        const auto& mb = ctx_.mass_balance;
+        const double total_in  = mb.step_dw_inflow + step_ww_rate + mb.step_gw_inflow +
+                                 mb.step_rdii_inflow + mb.step_ext_inflow;
+        const double total_out = mb.step_flooding + mb.step_outflow + step_loss_rate;
+        double err = 0.0;
+        if (std::fabs(total_in) > 0.0)       err = 1.0 - total_out / total_in;
+        else if (std::fabs(total_out) > 0.0) err = total_in / total_out - 1.0;
+        ctx_.mass_balance.last_step_flow_error = err;
     }
 }
 
@@ -7242,16 +7295,6 @@ void SWMMEngine::initHydraulics() noexcept {
     // 10d. Inlet solver: initialize street inlet data
     inlet_.init(ctx_);
 
-    // 10d-1. Pre-build culvert link index list (avoids per-timestep heap alloc)
-    culvert_links_.clear();
-    for (int j = 0; j < ctx_.n_links(); ++j) {
-        auto uj = static_cast<std::size_t>(j);
-        if (ctx_.links.type[uj] == LinkType::CONDUIT) {
-            const int cr = ctx_.link_subtypes.conduit_row(j);
-            if (cr >= 0 && ctx_.link_subtypes.conduits.culvert_code[static_cast<std::size_t>(cr)] > 0)
-                culvert_links_.push_back(j);
-        }
-    }
 
     // 10d. Interface file manager: initialize (files opened later in start())
     iface_.init(ctx_);
@@ -7269,6 +7312,7 @@ void SWMMEngine::initHydraulics() noexcept {
                 ctx_.events[i].end = ctx_.events[i + 1].start;
         }
         next_event_ = 0;
+        between_events_ = true;   // legacy routing_open: BetweenEvents = (NumEvents > 0)
     }
 
     // 10e. Control rule parsing from [CONTROLS] section text.
@@ -8158,38 +8202,47 @@ void SWMMEngine::initGeometry() noexcept {
             ctx_.nodes.crown_elev[un1] = z1;
         if (z2 > ctx_.nodes.crown_elev[un2])
             ctx_.nodes.crown_elev[un2] = z2;
-        // Track node degree (connectivity count) — conduits only, unchanged.
-        if (ctx_.links.type[uj] != LinkType::CONDUIT) continue;
-        ctx_.nodes.degree[un1]++;
-        ctx_.nodes.degree[un2]++;
     }
 
-    // 12b. PARITY: negate the degree of nodes with NO inflow links so that
-    // `degree < 0` marks an "upstream terminal" node — matching legacy
-    // flowrout.c::validateGeneralLayout. The EXTRAN surcharge depth update
-    // (setNodeDepth) multiplies dy by corr = 0.6 for these nodes
-    // (`if (Node[i].degree < 0) corr = 0.6`); without it a surcharging headwater
-    // junction (e.g. extran1 node 80408, fed only by a 45-cfs external inflow
-    // through a single OUTFLOW conduit) raised its head 1/0.6 = 1.67x too fast.
-    // An "inflow link" is one whose DOWNSTREAM node — node2, or node1 when node1
-    // is an OUTFALL — is this node. Done here, after BOTH degree passes, so the
-    // sign is not clobbered by a subsequent ++.
+    // 12b. legacy Node.degree, in full (toposort_sortLinks + flowrout.c
+    // validateGeneralLayout): the OUTFLOW-link count — each link at its
+    // upstream node, the downstream one when the upstream node is an
+    // outfall, a reversed conduit (direction < 0) taken from its other end —
+    // negated under the dynamic wave for a node with no INFLOW links (the
+    // downstream end being node2, or node1 when node1 is an outfall). Every
+    // reader wants those semantics: `degree < 0` is the headwater whose
+    // EXTRAN surcharge update uses corr = 0.6, `== 0` the terminal node of
+    // node_getSystemOutflow / iface outlets / inflowHasChanged, `<= 0` the
+    // stats skip. The former value (every link counted at both ends, plus
+    // the conduits again, negated) read -4 for session79-squaremodel's
+    // dead-end J-641 — two reversed conduits in, nothing out, legacy 0 —
+    // and its surcharge step took corr 0.6 where legacy takes 1.0, so the
+    // Picard loop converged after 2 iterations where legacy ran 15.
     {
         const int nn = ctx_.n_nodes();
+        std::fill(ctx_.nodes.degree.begin(), ctx_.nodes.degree.end(), 0);
         std::vector<int> inflow_links(static_cast<std::size_t>(nn), 0);
         for (int j = 0; j < ctx_.n_links(); ++j) {
             auto uj = static_cast<std::size_t>(j);
-            int n1 = ctx_.links.node1[uj];
-            int n2 = ctx_.links.node2[uj];
-            int dn = n2;
-            if (n1 >= 0 && n1 < nn &&
-                ctx_.nodes.type[static_cast<std::size_t>(n1)] == NodeType::OUTFALL)
-                dn = n1;
-            if (dn >= 0 && dn < nn) inflow_links[static_cast<std::size_t>(dn)]++;
+            const int n1 = ctx_.links.node1[uj];
+            const int n2 = ctx_.links.node2[uj];
+            if (n1 < 0 || n1 >= nn || n2 < 0 || n2 >= nn) continue;
+            // outflow count (toposort.c:75-91)
+            int n = (ctx_.links.direction[uj] < 0) ? n2 : n1;
+            if (ctx_.nodes.type[static_cast<std::size_t>(n)] == NodeType::OUTFALL)
+                n = (ctx_.links.direction[uj] < 0) ? n1 : n2;
+            ctx_.nodes.degree[static_cast<std::size_t>(n)]++;
+            // inflow count (flowrout.c validateGeneralLayout)
+            int dn = n1;
+            if (ctx_.nodes.type[static_cast<std::size_t>(dn)] != NodeType::OUTFALL) dn = n2;
+            inflow_links[static_cast<std::size_t>(dn)]++;
         }
-        for (int i = 0; i < nn; ++i) {
-            auto ui = static_cast<std::size_t>(i);
-            if (inflow_links[ui] == 0) ctx_.nodes.degree[ui] = -ctx_.nodes.degree[ui];
+        if (ctx_.options.routing_model == RoutingModel::DYNWAVE ||
+            ctx_.options.routing_model == RoutingModel::FV) {
+            for (int i = 0; i < nn; ++i) {
+                auto ui = static_cast<std::size_t>(i);
+                if (inflow_links[ui] == 0) ctx_.nodes.degree[ui] = -ctx_.nodes.degree[ui];
+            }
         }
     }
 
@@ -8221,6 +8274,7 @@ void SWMMEngine::resetStepMassBalance() noexcept {
     ctx_.mass_balance.step_gw_inflow    = 0.0;
     ctx_.mass_balance.step_rdii_inflow  = 0.0;
     ctx_.mass_balance.step_ext_inflow   = 0.0;
+    ctx_.mass_balance.step_ext_withdrawal = 0.0;
 }
 
 // ============================================================================
@@ -8422,6 +8476,7 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
     double sum_gw   = 0.0;
     double sum_rdii = 0.0;
     double sum_ext  = 0.0;
+    double sum_wd   = 0.0;   // withdrawals: negative external inflows (legacy: outflow)
 
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
@@ -8515,10 +8570,21 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
         sum_dw   += ctx_.nodes.dwf_inflow[uj];
         sum_gw   += ctx_.nodes.gw_inflow[uj];
         sum_rdii += ctx_.nodes.rdii_inflow[uj];
+        // legacy addExternalInflows (routing.c): the node's external flow
+        // joins newLatFlow either way, but a NEGATIVE one (a withdrawal) is
+        // booked as system OUTFLOW (massbal_addOutflowFlow(-q)), not as a
+        // negative external inflow — the epanet-swmm-hazen-williams decks
+        // draw 950 GPM out of a network fed back through a FIXED outfall,
+        // and reported DIRECT_INFLOW 0.9 where legacy reports 950.9 and
+        // OUTFALL_FLOWS 0.9 where legacy reports 950.9.
         // Interface file inflows count as external inflow for continuity
         // (legacy addIfaceInflows → massbal_addInflowFlow(EXTERNAL_INFLOW, q))
-        sum_ext  += ctx_.nodes.ext_inflow[uj]
-                  + ctx_.nodes.iface_inflow[uj];
+        {
+            const double q_ext = ctx_.nodes.ext_inflow[uj];
+            if (q_ext >= 0.0) sum_ext += q_ext;
+            else              sum_wd  += -q_ext;
+        }
+        sum_ext  += ctx_.nodes.iface_inflow[uj];
 
         // 2D → 1D coupling (positive coupling_inflow) folds into the
         // routing_external category for continuity reporting; the negative
@@ -8591,6 +8657,7 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
     ctx_.mass_balance.step_gw_inflow   = sum_gw;
     ctx_.mass_balance.step_rdii_inflow = sum_rdii;
     ctx_.mass_balance.step_ext_inflow  = sum_ext;
+    ctx_.mass_balance.step_ext_withdrawal = sum_wd;
 
     // Street inlet capture / backflow: a transfer between the bypass and
     // capture nodes, applied after every other lateral source is summed and
@@ -8629,24 +8696,41 @@ bool SWMMEngine::isBetweenEvents(double current_date) const {
 
 bool SWMMEngine::isInSteadyState(int action_count) const {
     if (!ctx_.options.skip_steady_state) return false;
+    // legacy isInSteadyState (routing.c): never on the first step, never
+    // after a control action, not when the PREVIOUS step's flow error
+    // (massbal_getStepFlowError, its StepFlowTotals) exceeds SysFlowTol —
+    // the cumulative routing_error() it used to test is a different
+    // quantity — and not when an inflow has changed (inflowHasChanged).
+    if (ctx_.old_elapsed_ms == 0.0 && ctx_.elapsed_ms == 0.0) return false;
     if (ctx_.current_time == 0.0) return false;
     if (action_count > 0) return false;
+    if (std::fabs(ctx_.mass_balance.last_step_flow_error) > ctx_.options.sys_flow_tol)
+        return false;
 
-    // Check flow error exceeds tolerance
-    double flow_error = std::abs(ctx_.mass_balance.routing_error());
-    if (flow_error > ctx_.options.sys_flow_tol) return false;
-
-    // Check if any lateral inflow has changed significantly
+    // legacy inflowHasChanged: the lateral inflow at every node, and at an
+    // outfall or a node with no outflow links the flow inflow as well —
+    // oldFlowInflow, rolled only by routeFlow, against the inflow the last
+    // routed step left. Without the second test a steady period began a
+    // step early while the outfall's inflow was still changing
+    // (routing-skip-steady).
     constexpr double TINY = 1e-6;
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
         double qOld = ctx_.nodes.old_lat_flow[uj];
         double qNew = ctx_.nodes.lat_flow[uj];
         double diff;
-        if (std::abs(qOld) > TINY)      diff = (qNew / qOld) - 1.0;
-        else if (std::abs(qNew) > TINY)  diff = 1.0;
+        if (std::fabs(qOld) > TINY)      diff = (qNew / qOld) - 1.0;
+        else if (std::fabs(qNew) > TINY)  diff = 1.0;
         else                              diff = 0.0;
-        if (std::abs(diff) > ctx_.options.lat_flow_tol) return false;
+        if (std::fabs(diff) > ctx_.options.lat_flow_tol) return false;
+        if (ctx_.nodes.type[uj] == NodeType::OUTFALL || ctx_.nodes.degree[uj] == 0) {
+            qOld = ctx_.nodes.old_inflow[uj];
+            qNew = ctx_.nodes.inflow[uj];
+            if (std::fabs(qOld) > TINY)      diff = (qNew / qOld) - 1.0;
+            else if (std::fabs(qNew) > TINY)  diff = 1.0;
+            else                              diff = 0.0;
+            if (std::fabs(diff) > ctx_.options.lat_flow_tol) return false;
+        }
     }
     return true;
 }

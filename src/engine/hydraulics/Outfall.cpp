@@ -212,10 +212,19 @@ inline OutfallStatic outfallStatic(const NodeData& nodes, const NodeSubtypes& su
 }
 }  // namespace
 
-void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
+void setAllOutfallDepths(SimulationContext& ctx, double dt_routing) {
     auto& nodes = ctx.nodes;
     int unit_sys = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
     double ucf_len = ucf::Ucf[ucf::LENGTH][unit_sys];
+
+    // legacy NewRoutingTime after routing_execute's advance (routing.c:
+    // NewRoutingTime + 1000.0 * routingStep, the same expression
+    // TimestepController::advance forms afterwards) — the stage boundaries
+    // are evaluated at the END of the step. routing-outfall-tidal read the
+    // calendar hour of the step's START, rounded to whole seconds.
+    const double new_routing_ms = ctx.elapsed_ms + 1000.0 * dt_routing;
+    constexpr double kMsecPerDay = 86400000.0;   // legacy MSECperDAY
+    const double elapsed_days = new_routing_ms / kMsecPerDay;
 
     // Legacy: iterates over LINKS and calls link_setOutfallDepth(j) for each.
     // Each link finds if either end is an outfall and computes yNorm + yCrit.
@@ -314,10 +323,14 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
                 int curve_idx = static_cast<int>(ost.param);
                 double stage = nodes.invert_elev[uj];
                 if (curve_idx >= 0 && curve_idx < static_cast<int>(ctx.tables.tables.size())) {
-                    int h_tmp, m_tmp, s_tmp;
-                    datetime::decodeTime(current_time, h_tmp, m_tmp, s_tmp);
-                    double hour = static_cast<double>(h_tmp) + m_tmp / 60.0 + s_tmp / 3600.0;
-                    stage = table_lookup_cursor(ctx.tables.tables[static_cast<std::size_t>(curve_idx)], hour) / ucf_len;
+                    // legacy: table_getFirstEntry(&Curve[k], &x, &y);
+                    //         currentDate = NewRoutingTime / MSECperDAY;
+                    //         x += (currentDate - floor(currentDate)) * 24.0;
+                    //         stage = table_lookup(&Curve[k], x) / UCF(LENGTH);
+                    auto& curve = ctx.tables.tables[static_cast<std::size_t>(curve_idx)];
+                    double x = curve.x.empty() ? 0.0 : curve.x[0];
+                    x += (elapsed_days - std::floor(elapsed_days)) * 24.0;
+                    stage = table_lookup_cursor(curve, x) / ucf_len;
                 }
                 yCrit = std::min(yCrit, yNorm);
                 if (yCrit + z + nodes.invert_elev[uj] < stage)
@@ -335,7 +348,10 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
                 int ts_idx = static_cast<int>(ost.param);
                 double stage = nodes.invert_elev[uj];
                 if (ts_idx >= 0 && ts_idx < static_cast<int>(ctx.tables.tables.size())) {
-                    stage = table_lookup_cursor(ctx.tables.tables[static_cast<std::size_t>(ts_idx)], current_time) / ucf_len;
+                    // legacy: currentDate = StartDateTime + NewRoutingTime / MSECperDAY;
+                    //         stage = table_tseriesLookup(&Tseries[k], currentDate, TRUE) / UCF(LENGTH)
+                    const double date = ctx.options.start_date + elapsed_days;
+                    stage = table_lookup_cursor(ctx.tables.tables[static_cast<std::size_t>(ts_idx)], date) / ucf_len;
                 }
                 yCrit = std::min(yCrit, yNorm);
                 if (yCrit + z + nodes.invert_elev[uj] < stage)
@@ -428,7 +444,10 @@ void setAllOutfallDepths(SimulationContext& ctx, double current_time) {
         // is the sole consumer.
         //
         // See docs/1D_2D_COUPLING_GATE_REVIEW.md §6 (C6).
-        if (ctx.forcing.node_head_boundary_mode[uj] == ForcingMode::OVERRIDE) {
+        // (The forcing arrays are sized in init_modules; the init-time seeding
+        // call from SWMMEngine::initialize runs before that, with them empty.)
+        if (uj < ctx.forcing.node_head_boundary_mode.size() &&
+            ctx.forcing.node_head_boundary_mode[uj] == ForcingMode::OVERRIDE) {
             double prescribed_stage = ctx.forcing.node_head_boundary_value[uj];
             depth = std::max(prescribed_stage - z_inv, 0.0);
         }

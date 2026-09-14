@@ -192,11 +192,11 @@ private:
 
     /// Solve dd/dt = inflow - alpha*(d-Ds)^(5/3) using RK45.
     /// Matches legacy updatePondedDepth() + odesolve_integrate().
+    /// `t_runoff` returns legacy's tRunoff: the part of `dt` over which the
+    /// depth stood above the depression storage (`*dt = tx`).
     static void updatePondedDepth(double& depth, double inflow, double alpha,
-                                  double dStore, double dt);
+                                  double dStore, double dt, double& t_runoff);
 
-    /// Compute runoff rate from final depth (after ODE integration).
-    static double getRunoffRate(double depth, double dStore, double alpha);
 };
 
 } // namespace runoff

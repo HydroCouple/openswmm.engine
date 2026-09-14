@@ -125,7 +125,8 @@ void RunoffSoA::computeAlpha() {
 // ============================================================================
 
 void RunoffSolver::updatePondedDepth(double& depth, double inflow,
-                                      double alpha, double dStore, double dt) {
+                                      double alpha, double dStore, double dt,
+                                      double& t_runoff) {
     double tx = dt;
 
     // --- Check if not enough inflow to fill depression storage ---
@@ -166,20 +167,9 @@ void RunoffSolver::updatePondedDepth(double& depth, double inflow,
     // --- Clamp to non-negative ---
     // Matches legacy subcatch.c line 1077
     depth = std::max(depth, 0.0);
-}
 
-double RunoffSolver::getRunoffRate(double depth, double dStore, double alpha) {
-    double excess = depth - dStore;
-    // PARITY subcatch.c findSubareaRunoff (line 1016): legacy computes runoff
-    // only when xDepth > ZERO (consts.h ZERO = 1e-10 ft), NOT > 0 — a
-    // recession tail with excess in (0, 1e-10] must report EXACTLY zero
-    // runoff (e.g. Bellinge subcatch 230 at step 36533).
-    if (excess > 1.0e-10) {
-        if (alpha > 0.0)
-            return alpha * std::pow(excess, MEXP);
-        // N=0 case is handled in processSubarea via instant drain
-    }
-    return 0.0;
+    // --- legacy `*dt = tx`: the time the depth spent above storage
+    t_runoff = tx;
 }
 
 // ============================================================================
@@ -405,15 +395,6 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         double precip  = precip_[ui];     // ft/sec (rainfall + snowmelt)
         double evapRate = evap_rate_[ui]; // ft/sec (global evap rate)
 
-        // Gap #27: subcatchment cascading / runon from upstream subcatchments.
-        // Legacy subcatch_addRunonFlow() distributes each contributor (CFS)
-        // as a depth rate (ft/sec) over the non-LID area; runon_rate is that
-        // sum, formed in legacy's order (SWMMEngine::assembleRunon).
-        if (total_area > 0.0) {
-            double runon = ctx.subcatches.runon_rate[ui];
-            if (runon > 0.0) precip += runon;
-        }
-
         double alpha_i = soa_.alpha_imperv[ui];
         double alpha_p = soa_.alpha_perv[ui];
 
@@ -427,7 +408,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         // Args: depth, alpha, dStore, subareaFrac, isPervious, runon
         auto processSubarea = [&](double& depth, double alpha, double dStore,
                                   double frac, bool isPervious,
-                                  double runon_in = 0.0) -> double {
+                                  double runon_in, double subarea_n) -> double {
             if (frac <= 0.0) return 0.0;
             double subarea_area = total_area * frac;
 
@@ -493,27 +474,33 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             // If evaporation + infiltration >= total available moisture,
             // all water is consumed — no runoff, depth goes to zero.
             double runoff_rate = 0.0;
+            double t_runoff = dt;   // legacy tRunoff
             if (surfEvap + infil >= surfMoisture) {
                 depth = 0.0;
             } else {
                 // Step 3.7: Subtract losses from inflow before ODE (legacy line 954)
                 double net_inflow = inflow - surfEvap - infil;
+                // Step 3.8: Integrate ponded depth (legacy updatePondedDepth:
+                // with alpha 0 the depth simply accumulates), and keep the
+                // time it spent above storage for the no-routing case.
+                updatePondedDepth(depth, net_inflow, alpha, dStore, dt, t_runoff);
+            }
 
-                // Step 3.8: N=0 instant drain — drain all excess above depression storage
-                // (matching legacy: when N=0, alpha=0, excess drains instantly)
-                if (alpha == 0.0) {
-                    depth += net_inflow * dt;
-                    if (depth > dStore) {
-                        runoff_rate = (depth - dStore) / dt;
+            // Step 3.9: legacy findSubareaRunoff, keyed on Manning's N — NOT
+            // on alpha: a subarea with N > 0 on a ZERO-slope subcatchment has
+            // alpha 0 and legacy's runoff is Alpha*pow(...) = 0, the water
+            // ponds; only N == 0 drains the excess instantly, over tRunoff.
+            // Keyed on alpha, the flat S27 of 185-h-h-elements-si-units
+            // (%Slope 0) drained instantly where legacy reports no runoff.
+            {
+                const double xDepth = depth - dStore;
+                if (xDepth > 1.0e-10) {          // legacy ZERO
+                    if (subarea_n > 0.0) {
+                        runoff_rate = alpha * std::pow(xDepth, MEXP);
+                    } else {
+                        runoff_rate = xDepth / t_runoff;
                         depth = dStore;
                     }
-                    depth = std::max(depth, 0.0);
-                } else {
-                    // Step 3.8b: Integrate ponded depth via ODE (legacy line 955)
-                    updatePondedDepth(depth, net_inflow, alpha, dStore, dt);
-
-                    // Step 3.9: Compute runoff from final depth (legacy line 959)
-                    runoff_rate = getRunoffRate(depth, dStore, alpha);
                 }
             }
 
@@ -537,16 +524,45 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             return runoff_rate;
         };
 
-        // --- Inter-subarea routing: compute runon from previous step ---
-        // (matching legacy subcatch_getRunon)
+        // --- Subarea inflows (legacy subcatch_getRunon), in its order ---
+        // Every subarea's inflow starts with the subcatchment's run-on from
+        // upstream subcatchments / outfalls / LID drains (subcatch_addRunonFlow
+        // adds the same depth rate to all three; runon_rate is that sum,
+        // formed in legacy's order by SWMMEngine::assembleRunon), then the
+        // inter-subarea transfer of the PREVIOUS step's runoff, then the LID
+        // return flow onto the pervious subarea. The run-on is NOT rainfall:
+        // it reaches the infiltration kernel as `runon` (Horton / Green-Ampt
+        // add it to the rate, the curve number adds it to the ponded depth —
+        // infil_getInfil), and the snow-modified per-subarea precipitation
+        // below replaces only the precipitation. Folded into `precip` it
+        // was infiltrated as rain on a curve-number deck whose subcatchments
+        // drain onto each other (185-h-h-elements-si-units S20 -> S21) and
+        // vanished on a snow deck.
         // route_mode: 0=TO_OUTLET, 1=TO_IMPERV (perv→imperv), 2=TO_PERV (imperv→perv)
         int route_mode = ctx.subcatches.subarea_routing[ui];
         double pct = ctx.subcatches.pct_routed[ui];
-        double runon_imperv = 0.0;  // additional inflow to imperv subareas (ft/sec)
-        double runon_perv   = 0.0;  // additional inflow to pervious subarea (ft/sec)
+        const double f_outlet = 1.0 - pct;   // legacy subArea.fOutlet
+        const double runon_sub = (total_area > 0.0) ? ctx.subcatches.runon_rate[ui] : 0.0;
+        double runon_imperv0 = runon_sub;
+        double runon_imperv1 = runon_sub;
+        double runon_perv    = runon_sub;
 
-        // Gap #23: LID return flow to pervious area (to_perv==1 from previous step).
-        // Matches legacy lid_getFlowToPerv() called in subcatch_getRunon() — one-step lag.
+        if (route_mode == 2 && fp > 0.0) {
+            // legacy Case 1, imperv --> perv: area-weighted outflow of both
+            // impervious subareas, (1 - fOutlet) of it, over the pervious area
+            double q1 = soa_.old_runoff_imperv0[ui] * f0;
+            double q2 = soa_.old_runoff_imperv1[ui] * f1;
+            double q  = q1 + q2;
+            runon_perv += q * (1.0 - f_outlet) / fp;
+        }
+        else if (route_mode == 1 && f1 > 0.0) {
+            // legacy Case 2, perv --> imperv (needs an IMPERV1 area)
+            double q = soa_.old_runoff_perv[ui];
+            runon_imperv1 += q * (1.0 - f_outlet) * fp / f1;
+        }
+
+        // Gap #23: LID return flow to pervious area (legacy lid_getFlowToPerv
+        // in subcatch_getRunon — one-step lag), after the transfer above.
         {
             double q_ret = ctx.subcatches.lid_return_to_perv_cfs[ui];
             if (q_ret > 0.0 && total_area > 0.0 && fp > 0.0) {
@@ -554,19 +570,6 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                 runon_perv += q_ret / perv_area;  // ft/sec over pervious area
             }
             ctx.subcatches.lid_return_to_perv_cfs[ui] = 0.0;  // consume
-        }
-
-        if (route_mode == 2 && fp > 0.0) {
-            // IMPERV → PERV: route fraction of imperv runoff to pervious
-            double q1 = soa_.old_runoff_imperv0[ui] * f0;  // area-wtd rate
-            double q2 = soa_.old_runoff_imperv1[ui] * f1;
-            double q  = q1 + q2;
-            runon_perv = q * pct / fp;  // distribute over pervious area fraction
-        }
-        else if (route_mode == 1 && f1 > 0.0) {
-            // PERV → IMPERV: route fraction of perv runoff to impervious
-            double q = soa_.old_runoff_perv[ui] * fp;  // area-wtd rate
-            runon_imperv = q * pct / f1;  // distribute over IMPERV1 area fraction
         }
 
         // Gap #20: When snow is active, use snow-modified net precip per subarea
@@ -587,17 +590,16 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         }
 
         // Process all 3 subareas (matching legacy loop: IMPERV0, IMPERV1, PERV)
-        // IMPERV0 never receives runon (zero depression storage area)
         precip = precip_imperv;
         double runoff0  = processSubarea(soa_.depth_imperv0[ui], alpha_i, 0.0,
-                                         f0, false, 0.0);
-        // IMPERV1 receives runon from pervious when route_mode==TO_IMPERV
+                                         f0, false, runon_imperv0, soa_.n_imperv[ui]);
         double runoff1  = processSubarea(soa_.depth_imperv1[ui], alpha_i,
-                                         soa_.ds_imperv[ui], f1, false, runon_imperv);
-        // PERV receives runon from impervious when route_mode==TO_PERV
+                                         soa_.ds_imperv[ui], f1, false, runon_imperv1,
+                                         soa_.n_imperv[ui]);
         precip = precip_perv;
         double runoff_p = processSubarea(soa_.depth_perv[ui], alpha_p,
-                                         soa_.ds_perv[ui], fp, true, runon_perv);
+                                         soa_.ds_perv[ui], fp, true, runon_perv,
+                                         soa_.n_perv[ui]);
         precip = precip_[ui];   // restore for subsequent use
 
 

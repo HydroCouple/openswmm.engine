@@ -304,9 +304,14 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
             // 362 of the 1,396 corpus decks (26%) carry MAX_TRIALS 0.
             const double ucf_len = ucf::Ucf[ucf::LENGTH][
                 ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units))];
+            // dynwave_validate: only a ZERO tolerance takes the default; any
+            // written value is in the deck's length unit and is converted.
+            // The former `== 0.005 -> default` shortcut left an SI deck's
+            // HEAD_TOLERANCE 0.005 (metres, 0.0164 ft) at 0.005 ft, so its
+            // Picard loop converged and bypassed differently from step 1
+            // (si-very-simple-cfs-flow-import-icm-swmm).
             dw_solver_.head_tol =
-                (ctx.options.head_tol == 0.0
-                 || ctx.options.head_tol == constants::DEFAULT_HEAD_TOL)
+                (ctx.options.head_tol == 0.0)
                     ? constants::DEFAULT_HEAD_TOL
                     : ctx.options.head_tol / ucf_len;
             dw_solver_.max_trials = (ctx.options.max_trials > 0)
@@ -377,8 +382,13 @@ int Router::step(SimulationContext& ctx, double dt,
     if (model_ != RouteModel::DYNWAVE)
         computeConduitLosses(ctx, dt, evap_rate);
 
-    // 3. Set outfall boundary depths (P8-G03)
-    outfall::setAllOutfallDepths(ctx, ctx.current_date);
+    // 3. Set outfall boundary depths (P8-G03) — at the START of the step:
+    // legacy's dynamic wave enters iteration 0 with the depth its previous
+    // step's last link_setOutfallDepth left (that step's end-of-step stage
+    // = this step's start), and re-evaluates at the end of THIS step only
+    // from iteration 1 on (dynwave.c:600, inside the iteration loop —
+    // DynamicWave.cpp's Step 4b). KW/SF set it once at init (flowrout.c:390).
+    outfall::setAllOutfallDepths(ctx, 0.0);
 
     // 4. Dispatch to solver
     int iters = 0;
@@ -1356,8 +1366,9 @@ void Router::refreshFvBoundaryFlows(SimulationContext& ctx, double t_elapsed,
 
     // Stage boundaries first — a FREE or NORMAL outfall's depth is a function
     // of the conduit that feeds it, so it moves within the step exactly as the
-    // structures do.
-    outfall::setAllOutfallDepths(ctx, ctx.current_date);
+    // structures do. A TIDAL / TIMESERIES stage is read at the substep's own
+    // instant (start of step + t_elapsed).
+    outfall::setAllOutfallDepths(ctx, t_elapsed);
     for (int n = 0; n < nn; ++n) {
         const auto un = static_cast<std::size_t>(n);
         if (ctx.nodes.type[un] != NodeType::OUTFALL) continue;

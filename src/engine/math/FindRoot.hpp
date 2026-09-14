@@ -66,7 +66,8 @@ int newton(double x1, double x2, double* rts, double xacc, const NewtonFunc& fun
  * @param x2    Right bracket.
  * @param xacc  Convergence tolerance.
  * @param func  Callback: func(x) returns f(x).
- * @returns Root value, or -1.0e10 if failed.
+ * @returns Root value; -1.0e20 when the bracket does not straddle a root
+ *          (legacy findroot_Ridder).
  */
 using RidderFunc = std::function<double(double x)>;
 

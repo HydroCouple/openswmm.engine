@@ -510,7 +510,13 @@ struct NodeData {
     std::vector<double>     crown_elev;
 
     /**
-     * @brief Node degree — number of connecting links (+ve downstream, -ve upstream terminal).
+     * @brief legacy Node.degree: the OUTFLOW-link count (toposort_sortLinks,
+     *        a reversed conduit counted from its other end, an outfall's
+     *        link at its downstream node), negated under the dynamic wave
+     *        for a node with no inflow links (validateGeneralLayout):
+     *        < 0 headwater (EXTRAN surcharge corr 0.6), == 0 terminal.
+     *        Set in SWMMEngine::initialize (the resolver's connectivity
+     *        count is provisional).
      * @see Legacy: Node[i].degree
      */
     std::vector<int>        degree;
@@ -1118,15 +1124,28 @@ struct NodeData {
      * @brief Snapshot current state into old-step arrays before solving.
      */
     void save_state() noexcept {
+        save_hyd_state();
+        save_lat_qual_state();
+    }
+
+    /// Legacy node_setOldHydState (node.c:294-299): oldDepth, oldVolume,
+    /// oldFlowInflow, oldNetInflow — rolled by routeFlow, i.e. ONLY on a
+    /// step that is actually routed (a SKIP_STEADY_STATE step keeps the last
+    /// routed step's old/new pair for its reports and its steady test).
+    void save_hyd_state() noexcept {
         std::copy(depth.begin(),    depth.end(),    old_depth.begin());
         std::copy(volume.begin(),   volume.end(),   old_volume.begin());
-        std::copy(lat_flow.begin(), lat_flow.end(), old_lat_flow.begin());
-        // Legacy node_setOldHydState (node.c:294): oldFlowInflow = inflow
         std::copy(inflow.begin(),   inflow.end(),   old_inflow.begin());
         // Save net inflow for trapezoidal averaging in next step
         for (std::size_t i = 0; i < inflow.size(); ++i) {
             old_net_inflow[i] = inflow[i] - outflow[i];
         }
+    }
+
+    /// Legacy initSystemInflows (oldLatFlow = newLatFlow) and
+    /// node_setOldQualState — rolled every routing step, routed or not.
+    void save_lat_qual_state() noexcept {
+        std::copy(lat_flow.begin(), lat_flow.end(), old_lat_flow.begin());
         std::copy(conc.begin(), conc.end(), conc_old.begin());
     }
 

@@ -632,7 +632,8 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
                          opt.variable_step > 0.0 ? "YES" : "NO");
             std::fprintf(f, "\n  Maximum Trials ........... %d", opt.max_trials);
             std::fprintf(f, "\n  Number of Threads ........ %d", opt.num_threads);
-            std::fprintf(f, "\n  Head Tolerance ........... %f ft", opt.head_tol);
+            std::fprintf(f, "\n  Head Tolerance ........... %f ft",
+                         opt.head_tol == 0.0 ? 0.005 : opt.head_tol);
         }
     }
 

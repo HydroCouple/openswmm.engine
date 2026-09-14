@@ -1392,7 +1392,7 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
                 // critical/normal depth by one iteration (e.g. extran1's free
                 // outfall 10208 read 0 while legacy had a non-zero yCrit),
                 // seeding a per-iteration divergence.
-                openswmm::outfall::setAllOutfallDepths(ctx, ctx.current_date);
+                openswmm::outfall::setAllOutfallDepths(ctx, dt);
 
                 // Step 5: flag nodes where AA must be skipped (non-smooth
                 // operator). Only needed when Anderson acceleration is active.
@@ -2348,6 +2348,17 @@ void DWSolver::momentumKernels(SimulationContext& ctx, double dt, int step) {
             double wm = tile_w_max_[uci];
             XsectShape shape = tile_shape_[uci];
 
+            // legacy getArea / getHydRad (dwflow.c): AT or above full depth
+            // the area is aFull (+ the slot's share, below) and the
+            // hydraulic radius is rFull — the geometry kernels do not all
+            // reproduce the setup's rFull at exactly y == yFull: the
+            // FILLED_CIRCULAR scalar fallback forms a/p through the circular
+            // tables and lands an ulp off (user1-filled-circular, a 1-ulp
+            // flow difference on step 559 that grew to 0.3 %).
+            if (depth1_[uj] >= yf)   { area1_[uj]    = af; hrad1_[uj]    = rf; }
+            if (depth2_[uj] >= yf)   { area2_[uj]    = af; }
+            if (depth_mid_[uj] >= yf){ area_mid_[uj] = af; hrad_mid_[uj] = rf; }
+
             // PARITY dwflow.c getArea()/getHydRad(): above full depth the
             // area is aFull + (y - yFull)·wSlot UNCONDITIONALLY — wSlot is 0
             // for an open shape under SLOT (its depth is not capped, so its
@@ -2492,12 +2503,20 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
     CD.normal_flow_limited[uci] = uint8_t{0};
     if (q > 0.0) {
         if (tile_culvert_code_[uci] > 0 && !isFull) {
+            // legacy culvert_getInflow(j, q, h1): the head above the
+            // culvert's upstream invert, the conduit's own section (the
+            // Form-1 codes solve for critical depth on it), and — when the
+            // inlet controls — legacy's dQdH replaces the link's dqdh.
+            const double y_in = h1 - (tile_inv1_elev_[uci] + tile_z1_off_[uci]);
             double dqdh_culv = 0.0;
-            double q_inlet = culvert::getInflow(
-                q, h1, yf, tile_a_full_[uci],
-                tile_slope_[uci], tile_culvert_code_[uci], dqdh_culv);
-            if (q_inlet < q) {
+            bool inlet = false;
+            const XSectParams xs_c = buildXSP(ctx, uj);
+            const double q_inlet = culvert::getInflow(
+                q, y_in, xs_c, tile_slope_[uci], tile_culvert_code_[uci],
+                dqdh_culv, inlet);
+            if (inlet) {
                 q = q_inlet;
+                dqdh_[uj] = dqdh_culv;
                 CD.inlet_control[uci] = uint8_t{1};
             }
         } else {

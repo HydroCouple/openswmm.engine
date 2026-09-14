@@ -517,8 +517,11 @@ struct SimulationOptions {
     double min_surf_area = 0.0;  // 0 = use MIN_SURFAREA constant
 
     /** @brief Convergence head tolerance in project length units.
-     *  @details Legacy default: 0.0 (sentinel → runtime default 0.005 ft). */
-    double head_tol = 0.005;
+     *  @details Legacy default: 0.0 (sentinel → runtime default 0.005 ft,
+     *  dynwave_validate). A written value is in the project's length unit
+     *  and is divided by UCF(LENGTH) at routing init — a 0.005 on an SI
+     *  deck is 0.005 m (0.0164 ft), not the default. */
+    double head_tol = 0.0;
 
     /** @brief System flow tolerance (fraction, e.g., 0.05 = 5%).
      *  @details Legacy default: 0.05. Input is in percent, divided by 100. */
