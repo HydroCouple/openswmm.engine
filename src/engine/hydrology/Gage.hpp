@@ -121,6 +121,18 @@ double convertRainfall(double raw_value, GageState& state);
  */
 const Table* gageRainSeries(const SimulationContext& ctx, int gage_idx);
 
+/// Legacy Gage.isUsed: some subcatchment reads the gage (subcatch.c:429) or a
+/// [HYDROGRAPHS] group names it (rdii.c:248). Legacy validates, advances and
+/// step-limits on used gages only.
+bool gageIsUsed(const SimulationContext& ctx, int gage_idx);
+
+/// Legacy gage_getNextRainDate on the gage's state machine as the last
+/// updateAllGages left it: the date the current rain interval starts or ends
+/// or the next non-zero record begins — legacy NO_DATE (a large negative
+/// value) when there is none, and `t` itself for an unused gage — for the
+/// runoff-step limit (runoff_getTimeStep takes only a positive difference).
+double gageNextRainDate(const SimulationContext& ctx, int gage_idx, double t);
+
 /**
  * @brief The units factor the engine applies to a gage's raw values.
  *

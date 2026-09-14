@@ -2156,12 +2156,23 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         // has_snow_ was declared but never assigned, so a snow-covered study
         // area with no rain took the DRY step (23 h on the snowmelt decks)
         // and the melt, which legacy evaluates every WET step, never ran.
+        // HasRunoff tests subcatch_getRunoff's RETURN value — the three
+        // subareas' runoff over the full area, before the inter-subarea
+        // transfer and the LID exchange — not newRunoff (the outlet flow):
+        // an impervious subarea routed to the pervious one keeps the WET
+        // step alive while it trickles (117-h-h-elements-si-units). A
+        // zero-area subcatchment is skipped there (runoff.c:266).
         has_runoff_ = false;
         has_snow_   = false;
-        for (int i = 0; i < ctx_.n_subcatches(); ++i) {
-            auto usi = static_cast<std::size_t>(i);
-            if (ctx_.subcatches.runoff[usi] > 0.0) has_runoff_ = true;
-            if (ctx_.subcatches.snow_depth[usi] > 0.0) has_snow_ = true;
+        {
+            const auto& rsoa = runoff_.soa();
+            for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+                auto usi = static_cast<std::size_t>(i);
+                if (ctx_.subcatches.area[usi] == 0.0) continue;
+                if (usi < rsoa.subarea_runoff_rate.size() &&
+                    rsoa.subarea_runoff_rate[usi] > 0.0) has_runoff_ = true;
+                if (ctx_.subcatches.snow_depth[usi] > 0.0) has_snow_ = true;
+            }
         }
 
         // A4b. Runoff mass-balance accumulation is deferred to A6c (after the
@@ -2862,51 +2873,16 @@ double SWMMEngine::computeRunoffTimestep(double abs_time, bool is_raining,
     // Shorten to next rain gage boundary
     // (matching legacy gage_getNextRainDate)
     for (int g = 0; g < ctx_.n_gages(); ++g) {
-        auto ug = static_cast<std::size_t>(g);
-
-        // Select the gage's rain series the same way updateAllGages() does:
-        // a FILE_RAIN gage reads from its own resolved rain_series (built by
-        // load_external_rain_files and NOT present in the shared tables pool),
-        // while a TIMESERIES gage reads from tables[ts_index].  Using only
-        // ts_index here skipped every file gage (ts_index == -1), so the runoff
-        // step was never shortened to a file gage's rain-interval boundary —
-        // dry_step then overshot rain-burst onsets and dropped rainfall.
-        // Matches legacy gage_getNextRainDate(), which snaps for all gages.
-        Table* rtbl = nullptr;
-        int ts_idx = ctx_.gages.ts_index[ug];
-        if (ctx_.gages.source[ug] == RainSource::FILE_RAIN) {
-            if (ug < ctx_.gages.rain_series.size() &&
-                !ctx_.gages.rain_series[ug].empty())
-                rtbl = &ctx_.gages.rain_series[ug];
-        } else if (ts_idx >= 0 && ts_idx < static_cast<int>(ctx_.tables.tables.size())) {
-            rtbl = &ctx_.tables.tables[static_cast<std::size_t>(ts_idx)];
-        }
-        if (!rtbl) continue;
-        auto& tbl = *rtbl;
-        int idx = tbl.cursor.index;
-        int n = static_cast<int>(tbl.x.size());
-        if (idx < 0 || idx >= n) continue;
-
-        // gage_getNextRainDate logic:
-        // - If before startDate: return startDate
-        // - If before endDate: return endDate
-        // - Otherwise: return nextDate
-        double interval_sec = ctx_.gages.interval_sec[ug];
-        double entry_start = tbl.x[static_cast<std::size_t>(idx)];
-        double entry_end = datetime::addSeconds(entry_start, interval_sec);
-        double t_shifted = abs_time + datetime::OneSecond;
-
-        double next_rain_date;
-        if (t_shifted < entry_start) {
-            next_rain_date = entry_start;
-        } else if (t_shifted < entry_end) {
-            next_rain_date = entry_end;
-        } else if (idx + 1 < n) {
-            next_rain_date = tbl.x[static_cast<std::size_t>(idx + 1)];
-        } else {
-            continue; // No more data
-        }
-
+        // legacy gage_getNextRainDate on the gage's state machine as this
+        // step's updateAllGages left it (Gage.cpp): the current interval's
+        // start or end, else the next NON-ZERO record — getNextRainfall
+        // skips explicit zeros, so a dry spell written as zeros no longer
+        // holds the runoff step at the recording interval (runoff11-regen-
+        // sw5, hec-hms-hyetographs); the first record seeds the state
+        // whatever its value (runoff25a-sw5's lone zero record limits the
+        // first step to its interval); an unused gage returns the date
+        // itself; NO_DATE gives a negative difference and no limit.
+        const double next_rain_date = gage::gageNextRainDate(ctx_, g, abs_time);
         long secs_to_change = datetime::timeDiff(next_rain_date, abs_time);
         if (secs_to_change > 0 && secs_to_change < max_step)
             max_step = secs_to_change;
@@ -6669,8 +6645,13 @@ void SWMMEngine::validate_project() noexcept {
     // WARNING 01: wet-weather routing step reduced to a rain gage's recording
     // interval (legacy gage_validate / gage.c). Progressively clamp WetStep to
     // the smallest gage interval it exceeds, warning per gage.
+    // Only a USED gage (legacy gage_validate returns at once for one no
+    // subcatchment or UH group reads): hec-hms-hyetographs carries 44 gages
+    // down to a 4 s interval, one of which its single subcatchment uses,
+    // and legacy keeps WetStep at 60 s and the routing step at 30 s there.
     const int ng = ctx_.n_gages();
     for (int g = 0; g < ng; ++g) {
+        if (!gage::gageIsUsed(ctx_, g)) continue;
         const double interval =
             static_cast<double>(ctx_.gages.interval_sec[static_cast<std::size_t>(g)]);
         if (interval > 0.0 && opt.wet_step > interval) {
@@ -7490,6 +7471,14 @@ void SWMMEngine::initHydrology() noexcept {
             }
         }
     }
+    // legacy snow_initSnowpack (snow.c:202): newSnowDepth starts at the
+    // initial pack's depth, so the first runoff step's old-state roll
+    // carries it into oldSnowDepth. It started at 0 here, and a run whose
+    // first runoff step is the DRY step (no rain, HasSnow not yet set —
+    // runoff25a-sw5, 23 h) reported the initial cover ramping up from 0
+    // for the whole step.
+    for (int i = 0; i < ctx_.n_subcatches(); ++i)
+        ctx_.subcatches.snow_depth[static_cast<std::size_t>(i)] = subcatchSnowDepth(i);
 
     // Date sanity (legacy project_validate, project.c:161-169): the run must
     // end after it starts, and the report window must begin before the end.
