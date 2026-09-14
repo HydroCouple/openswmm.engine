@@ -2785,6 +2785,20 @@ void resolve_cross_references(SimulationContext& ctx) {
                 ctx.links.xsect_a_bot[uj] = xs.a_bot;
                 ctx.links.xsect_s_bot[uj] = xs.s_bot;
                 ctx.links.xsect_r_bot[uj] = xs.r_bot;
+                // legacy conduit_validate (link.c:1037): a Darcy-Weisbach
+                // force main's Geom2 is a roughness HEIGHT in inches (mm on
+                // an SI deck) and is brought to feet here — the equivalent
+                // Manning n and every per-step friction factor read it as
+                // feet. It stayed in inches, so the D-W force-main decks
+                // (extran1-forcemain-dw, routing-force-main-dw,
+                // force-main-reynolds, user1/user4-force-main-dw) ran with a
+                // 12x roughness height. The H-W C-factor is unitless.
+                if (shape == XsectShape::FORCE_MAIN &&
+                    ctx.options.force_main_eqn ==
+                        static_cast<int>(forcemain::FrictionModel::DARCY_WEISBACH)) {
+                    ctx.links.xsect_r_bot[uj] /=
+                        ucf::Ucf[ucf::RAINDEPTH][static_cast<std::size_t>(us)];
+                }
             } else {
                 // Invalid geometry — preserve the previous generic fallback.
                 a_full = w_max * y_full;
@@ -2883,9 +2897,15 @@ void resolve_cross_references(SimulationContext& ctx) {
         // (link.c:1291-1298) RETURNS the positive MinSlope for SF/KW routing
         // before the adverse-sign flip — a sub-MinSlope adverse conduit is
         // sanitized to a positive slope under those models.
+        // MIN_SLOPE is written in PERCENT (legacy project.c:737 `MinSlope
+        // /= 100.0` at read; the option keeps the percent here so the
+        // writers echo it): a deck's `MIN_SLOPE 0.1` is a slope of 0.001.
+        // Applied as 0.1 it clamped force-main-reynolds' 0.03 conduits to
+        // 0.1 and put the normal-flow limit (beta) 10x high.
+        const double min_slope = ctx.options.min_slope / 100.0;
         bool min_slope_kw_sf = false;
-        if (ctx.options.min_slope > 0.0 && slope < ctx.options.min_slope) {
-            slope = ctx.options.min_slope;
+        if (min_slope > 0.0 && slope < min_slope) {
+            slope = min_slope;
             ctx.warnings.push_back(
                 format_warning(WARN_MIN_SLOPE, ctx.link_names.name_of(j)));
             min_slope_kw_sf =

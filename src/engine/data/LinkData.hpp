@@ -912,9 +912,20 @@ struct LinkData {
     }
 
     void save_state() noexcept {
+        save_hyd_state();
+        save_qual_state();
+    }
+
+    /// Legacy link_setOldHydState — rolled by routeFlow only (not on a
+    /// SKIP_STEADY_STATE step).
+    void save_hyd_state() noexcept {
         std::copy(flow.begin(),   flow.end(),   old_flow.begin());
         std::copy(depth.begin(),  depth.end(),  old_depth.begin());
         std::copy(volume.begin(), volume.end(), old_volume.begin());
+    }
+
+    /// Legacy link_setOldQualState — every routing step.
+    void save_qual_state() noexcept {
         std::copy(conc.begin(),   conc.end(),   conc_old.begin());
     }
 

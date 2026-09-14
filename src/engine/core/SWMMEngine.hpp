@@ -397,7 +397,6 @@ private:
     rdii::RDIISolver             rdii_;         ///< RDII (unit hydrograph convolution)
     exfil::ExfilSolver           exfil_;        ///< Storage node exfiltration
     inlet::InletSolver           inlet_;        ///< Street inlet capture
-    std::vector<int>             culvert_links_;///< Pre-built culvert link indices (avoid per-timestep alloc)
     std::vector<double>          gw_frac_perv_; ///< Per-subcatch pervious fraction for GW evap
     std::vector<double>          gw_perv_evap_; ///< Per-subcatch pervious evap rate (ft/sec)
     /// U3 (track I-b, 2026-09-07): the 2D surface's per-subcatchment
@@ -428,6 +427,7 @@ private:
 
     // Event and steady-state tracking
     int next_event_ = 0;                        ///< Index of next event in ctx_.events
+    bool between_events_ = false;               ///< legacy BetweenEvents, as the last stepRouting evaluated it
     bool isBetweenEvents(double current_date) const; ///< Check if between routing events
     bool isInSteadyState(int action_count) const;    ///< Check if system is in steady state
     std::vector<gage::GageState> gage_states_;  ///< Per-gage state (SoA)
@@ -582,13 +582,6 @@ private:
     /** @brief Rebuild xsp_cache_ if links/xsect state changed (cheap check). */
     void ensureXspCache() noexcept;
 
-    /// Legacy KW/SF Node.degree — OUTFLOW-link count per node with the
-    /// outfall quirk (legacy toposort.c:70-91: a link whose upstream node is
-    /// an outfall counts toward its DOWNSTREAM node). ctx_.nodes.degree
-    /// carries the DW-oriented hybrid (both-ends + conduit pass + sign), so
-    /// the non-DW terminal-node tests must not read it. Lazily sized in
-    /// updateRoutingMassBalance; topology is static during a run.
-    std::vector<int> outflow_degree_;
 
     /// Legacy-convention reported node volume (mirrors legacy node_getVolume):
     /// STORAGE → curve volume (ctx_.nodes.volume); junction/outfall/divider →
