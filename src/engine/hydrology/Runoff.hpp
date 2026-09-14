@@ -99,6 +99,11 @@ struct RunoffSoA {
     std::vector<double> infil_loss;         ///< Infiltration loss (ft3)
     std::vector<double> perv_evap_vol;      ///< Pervious-subarea evaporation this step (ft3) — legacy Vpevap
     std::vector<double> infil_vol;          ///< Non-LID infiltration this step (ft3) — legacy Vinfil
+    /// legacy subcatch_getRunoff's return value: the three subareas' runoff
+    /// summed over their areas and divided by the FULL area (ft/s), before
+    /// the inter-subarea routing and the LID exchange — what runoff_execute
+    /// tests for HasRunoff and hands surfqual_getWashoff.
+    std::vector<double> subarea_runoff_rate;
 
     // Per-subcatchment: per-subarea runoff CFS from non-LID area (Gap #23)
     // Used by SWMMEngine to compute LID unit inflow from impervious/pervious fractions.

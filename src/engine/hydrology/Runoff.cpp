@@ -89,6 +89,7 @@ void RunoffSoA::resize(int n) {
     infil_loss.assign(un, 0.0);
     perv_evap_vol.assign(un, 0.0);
     infil_vol.assign(un, 0.0);
+    subarea_runoff_rate.assign(un, 0.0);
     imperv_runoff_cfs.assign(un, 0.0);
     perv_runoff_cfs.assign(un, 0.0);
 }
@@ -341,6 +342,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
     precip_.resize(un);
     evap_rate_.resize(un);
     infil_rate_.resize(un);
+    const double ucf_landarea = ucf::UCF(ucf::LANDAREA, ctx.options);
 
     // ----- Step 1: Rainfall → net precip (ft/sec) -----
     // Matches legacy getNetPrecip(): all subareas get same precipitation rate.
@@ -477,7 +479,14 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
 
             // Step 3.5: Update mass balance volumes (legacy lines 934-937)
             Vevap  += surfEvap * subarea_area * dt;
-            if (isPervious) Vpevap += surfEvap * subarea_area * dt;   // legacy subcatch.c:984
+            // legacy subcatch.c:984 `if (i == PERV) Vpevap += Vevap;` — the
+            // WHOLE subcatchment's surface evaporation so far (the pervious
+            // subarea is processed last, after both impervious ones), not
+            // the pervious share. gwater_getGroundwater subtracts it from
+            // MaxEvap = Evap.rate * FracPerv, so an impervious cover
+            // evaporating at the full rate leaves the aquifer no evaporation
+            // (runoff41-sw5: legacy's soil moisture holds at field capacity).
+            if (isPervious) Vpevap += Vevap;
             Vinfil += infil * subarea_area * dt;
 
             // Step 3.6: Loss check shortcut (legacy lines 945-948)
@@ -596,6 +605,27 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         soa_.old_runoff_imperv0[ui] = runoff0;
         soa_.old_runoff_imperv1[ui] = runoff1;
         soa_.old_runoff_perv[ui]    = runoff_p;
+
+        // legacy subcatch_getRunoff's return value (subcatch.c:714-724,
+        // 773): `runoff += subArea[i].runoff * area_i` over the three
+        // subareas when nonLidArea > 0, then `/ Subcatch.area` — the whole
+        // surface's runoff BEFORE the imperv->perv / perv->imperv transfer
+        // and the LID exchange. runoff_execute keeps the WET step while it
+        // is positive: a zero-storage impervious subarea routed to the
+        // pervious one trickles for hours after the rain, and the outlet
+        // runoff (newRunoff) is 0 the whole time (117-h-h-elements-si-units
+        // took the 1 h DRY step there, so its curve-number ponding was
+        // tested against MIN_TOTAL_DEPTH an hour late).
+        {
+            double sum = 0.0;
+            if (total_area > 0.0) {
+                sum += runoff0  * (total_area * f0);
+                sum += runoff1  * (total_area * f1);
+                sum += runoff_p * (total_area * fp);
+            }
+            const double full_area = ctx.subcatches.area[ui] / ucf_landarea;
+            soa_.subarea_runoff_rate[ui] = (full_area > 0.0) ? sum / full_area : 0.0;
+        }
 
         // Gap #23: Store per-subarea runoff CFS for LID inflow computation.
         // Matches legacy qImperv/qPerv used in lid_getRunoff() lid.c line ~1669.

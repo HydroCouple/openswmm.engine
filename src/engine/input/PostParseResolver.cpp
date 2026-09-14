@@ -1618,30 +1618,6 @@ void resolve_cross_references(SimulationContext& ctx) {
     }
 
     // -------------------------------------------------------------------------
-    // Gap #53: Co-gage detection
-    // -------------------------------------------------------------------------
-    // When two or more gages share the same TIMESERIES source and ts_index, the
-    // secondary gages should copy rainfall from the primary (lowest-index gage)
-    // rather than querying the timeseries independently.  Matches legacy coGage.
-    // Single pass: remember the first gage seen on each timeseries and point
-    // every later one at it. The inner scan this replaces was O(n_gages^2) and
-    // broke at its first hit, i.e. the LOWEST-indexed earlier gage — which is
-    // exactly the value first_on_ts holds, so the assignment is unchanged.
-    {
-        std::unordered_map<int, int> first_on_ts;   // ts index -> first gage
-        first_on_ts.reserve(static_cast<std::size_t>(n_gages));
-        for (int gj = 0; gj < n_gages; ++gj) {
-            auto ugj = static_cast<std::size_t>(gj);
-            ctx.gages.co_gage_index[ugj] = -1;
-            if (ctx.gages.source[ugj] != RainSource::TIMESERIES) continue;
-            const int ts_j = ctx.gages.ts_index[ugj];
-            if (ts_j < 0) continue;
-            const auto ins = first_on_ts.emplace(ts_j, gj);
-            if (!ins.second) ctx.gages.co_gage_index[ugj] = ins.first->second;
-        }
-    }
-
-    // -------------------------------------------------------------------------
     // Subcatchment outlet re-resolution
     // -------------------------------------------------------------------------
     // If SUBCATCHMENTS parsed before JUNCTIONS/OUTFALLS, outlet_node will be -1.
@@ -1749,6 +1725,43 @@ void resolve_cross_references(SimulationContext& ctx) {
         } else {
             ctx.subcatches.gage[us] = -1;
             ctx.errors.push_back(format_error(ERR_NAME, name));
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Gap #53: Co-gage detection (legacy gage_validate)
+    // -------------------------------------------------------------------------
+    // A gage sharing a TIMESERIES with an earlier gage copies that gage's
+    // rainfall instead of reading the series itself — but only among USED
+    // gages (one some subcatchment or [HYDROGRAPHS] group reads): legacy
+    // gage_validate returns at once for an unused gage and skips unused
+    // candidates for the primary. An unused primary never advances its
+    // state (gage_setState returns for it), so a used gage pointed at one
+    // would read a frozen rainfall (132-nodes-96-subs: RAINGAGE-3, unused,
+    // shares EXTREME with RAINGAGE-5, which every subcatchment reads).
+    // Placed after the subcatchment gage re-resolution above so the usage
+    // test sees resolved indices.
+    {
+        std::vector<uint8_t> used(static_cast<std::size_t>(n_gages), 0);
+        for (int s2 = 0; s2 < n_subcatch; ++s2) {
+            const int gi = ctx.subcatches.gage[static_cast<std::size_t>(s2)];
+            if (gi >= 0 && gi < n_gages) used[static_cast<std::size_t>(gi)] = 1;
+        }
+        for (const auto& gname : ctx.unit_hyds.gage_names) {
+            const int gi = ctx.gage_names.find(gname);
+            if (gi >= 0 && gi < n_gages) used[static_cast<std::size_t>(gi)] = 1;
+        }
+        std::unordered_map<int, int> first_on_ts;   // ts index -> first USED gage
+        first_on_ts.reserve(static_cast<std::size_t>(n_gages));
+        for (int gj = 0; gj < n_gages; ++gj) {
+            auto ugj = static_cast<std::size_t>(gj);
+            ctx.gages.co_gage_index[ugj] = -1;
+            if (!used[ugj]) continue;
+            if (ctx.gages.source[ugj] != RainSource::TIMESERIES) continue;
+            const int ts_j = ctx.gages.ts_index[ugj];
+            if (ts_j < 0) continue;
+            const auto ins = first_on_ts.emplace(ts_j, gj);
+            if (!ins.second) ctx.gages.co_gage_index[ugj] = ins.first->second;
         }
     }
 

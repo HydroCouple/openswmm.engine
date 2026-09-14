@@ -99,6 +99,11 @@ static void ensure_gage_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.gages.api_rainfall,  -1.0);  // -1 = no API override
     grow(ctx.gages.next_rain_date,0.0);
     grow(ctx.gages.is_raining,    false);
+    grow(ctx.gages.st_cur,  -2);
+    grow(ctx.gages.st_next, -1);
+    grow(ctx.gages.st_rain, 0.0);
+    grow(ctx.gages.st_init, static_cast<uint8_t>(0));
+    grow(ctx.gages.st_used, static_cast<uint8_t>(0));
 
     // Past-rain tracking (used by updateAllGages for controls past-rain)
     grow(ctx.gages.past_rain_accum,   0.0);
