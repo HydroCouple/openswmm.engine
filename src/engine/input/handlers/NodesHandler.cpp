@@ -363,15 +363,33 @@ void handle_storage(SimulationContext& ctx, const std::vector<std::string>& line
             S.curve[srow] = -1;
         }
 
-        // Optional: SurDepth, Fevap, Seep — TABULAR consumes one token for the curve
-        // name, every other shape consumes three numeric params.
+        // Optional: SurDepth, Fevap, then the exfiltration parameters —
+        // TABULAR consumes one token for the curve name, every other shape
+        // three numeric params (legacy storage_readParams n = 6 / 8).
+        // legacy exfil_readStorageParams: ONE remaining token is a bare Ksat
+        // (suction and IMD 0 → a constant Ks rate), otherwise three tokens
+        // Psi Ksat IMD (Green-Ampt); Ksat 0 = no exfiltration. The third
+        // token used to land in the dead `seep_rate` slot and the
+        // Green-Ampt columns were never read, so every .inp storage
+        // exfiltration (36 corpus decks) was silently ignored.
         const int param_offset = (sshape == StorageShape::TABULAR) ? 6 : 8;
         if (static_cast<int>(tok.size()) > param_offset)
             ctx.nodes.sur_depth[idx] = to_double(tok[param_offset]);
         if (static_cast<int>(tok.size()) > param_offset + 1)
             S.evap_frac[srow] = to_double(tok[param_offset + 1]);
-        if (static_cast<int>(tok.size()) > param_offset + 2)
-            S.seep_rate[srow] = to_double(tok[param_offset + 2]);
+        {
+            const int n = param_offset + 2;
+            const int ntoks = static_cast<int>(tok.size());
+            if (ntoks == n + 1) {
+                S.exfil_suction[srow] = 0.0;
+                S.exfil_ksat[srow]    = to_double(tok[n]);
+                S.exfil_imd[srow]     = 0.0;
+            } else if (ntoks >= n + 3) {
+                S.exfil_suction[srow] = to_double(tok[n]);
+                S.exfil_ksat[srow]    = to_double(tok[n + 1]);
+                S.exfil_imd[srow]     = to_double(tok[n + 2]);
+            }
+        }
         if (!pl.comment.empty())
             ctx.nodes.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }

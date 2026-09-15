@@ -144,6 +144,16 @@ void finishRouting(SimulationContext& ctx,
                    const std::vector<double>& link_y2,
                    double dt);
 
+/**
+ * @brief legacy conduit_getLossRate's cap under SF / KW: the conduit's
+ *        evaporation + seepage rate (computed for the step by
+ *        Router::computeConduitLosses, per barrel) cannot exceed the CURRENT
+ *        solve's per-barrel inflow @p q; both components are scaled by
+ *        q / total and the capped rates are stored back for the mass
+ *        balance. Returns the (capped) total.
+ */
+double capConduitLoss(SimulationContext& ctx, std::size_t ucr, double q);
+
 // ============================================================================
 // Constants (matching legacy)
 // ============================================================================

@@ -963,8 +963,11 @@ static void convert_inputs_to_internal(SimulationContext& ctx,
         ctx.links.offset1[uj]      /= len;
         ctx.links.offset2[uj]      /= len;
         const int wr = ctx.link_subtypes.weir_row(j);
-        if (wr >= 0) ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)] /= len;
-        else {
+        if (wr >= 0) {
+            ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)] /= len;
+            // legacy link_setParams: Weir.roadWidth = x[7] / UCF(LENGTH)
+            ctx.link_subtypes.weirs.road_width[static_cast<std::size_t>(wr)] /= len;
+        } else {
             const int olr = ctx.link_subtypes.outlet_row(j);
             if (olr >= 0) ctx.link_subtypes.outlets.crest_height[static_cast<std::size_t>(olr)] /= len;
         }
@@ -1089,8 +1092,10 @@ void convert_internal_to_display(SimulationContext& ctx) {
         ctx.links.offset1[uj]      *= len;
         ctx.links.offset2[uj]      *= len;
         const int wr = ctx.link_subtypes.weir_row(j);
-        if (wr >= 0) ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)] *= len;
-        else {
+        if (wr >= 0) {
+            ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)] *= len;
+            ctx.link_subtypes.weirs.road_width[static_cast<std::size_t>(wr)] *= len;
+        } else {
             const int olr = ctx.link_subtypes.outlet_row(j);
             if (olr >= 0) ctx.link_subtypes.outlets.crest_height[static_cast<std::size_t>(olr)] *= len;
         }
@@ -1856,6 +1861,22 @@ void resolve_cross_references(SimulationContext& ctx) {
             ctx.errors.push_back(format_error(ERR_NAME, ctx.links.pump_curve_name[uj]));
     }
 
+    // Weir discharge-coefficient curve (legacy Weir.cdCurve, the [WEIRS]
+    // line's 13th column) — same name slot, resolved into WeirData.cd_curve.
+    for (int j = 0; j < n_links; ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        if (ctx.links.type[uj] != LinkType::WEIR) continue;
+        const int wr = ctx.link_subtypes.weir_row(j);
+        if (wr < 0) continue;
+        const auto uwr = static_cast<std::size_t>(wr);
+        if (ctx.link_subtypes.weirs.cd_curve[uwr] >= 0) continue; // already resolved
+        if (ctx.links.pump_curve_name[uj].empty() ||
+            ctx.links.pump_curve_name[uj] == "*") continue;
+        ctx.link_subtypes.weirs.cd_curve[uwr] = ctx.find_curve(ctx.links.pump_curve_name[uj]);
+        if (ctx.link_subtypes.weirs.cd_curve[uwr] < 0)
+            ctx.errors.push_back(format_error(ERR_NAME, ctx.links.pump_curve_name[uj]));
+    }
+
     // Convert pump startup/shutoff depths from display units → internal (ft)
     {
         int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
@@ -2423,6 +2444,14 @@ void resolve_cross_references(SimulationContext& ctx) {
 
         double inv1 = ctx.nodes.invert_elev[static_cast<std::size_t>(n1)];
         double inv2 = ctx.nodes.invert_elev[static_cast<std::size_t>(n2)];
+        // legacy Link.offset2 of a regulator: link_setParams copies offset1
+        // into it and link_convertOffsets keeps them equal, but the raise
+        // below touches offset1 ONLY — link_setOutfallDepth reads offset2
+        // (the un-raised crest) as `z` for a downstream outfall. Kept here
+        // for outfall::legacyOffset. dividers-in-dynamic-wave's outlet
+        // Under5 (crest 0, raised 0.25 m to its FREE outfall's invert) gave
+        // the outfall a 0.25 m depth and ran 2 L/s backwards for the run.
+        ctx.links.offset2[uj] = *off;
         if (inv1 + *off < inv2) {
             if (ctx.options.routing_model == RoutingModel::DYNWAVE ||
                 ctx.options.routing_model == RoutingModel::FV) {
@@ -3050,9 +3079,30 @@ void resolve_cross_references(SimulationContext& ctx) {
         }
 
         double y_full = ctx.links.xsect_y_full[uj];
+        // legacy xsect.yFull of a DUMMY section (outlet, DUMMY conduit) is
+        // TINY, not 0 (xsect_setParams(DUMMY)); a pump's is 0.
+        if (ctx.links.type[uj] == LinkType::OUTLET ||
+            (ctx.links.type[uj] == LinkType::CONDUIT &&
+             ctx.links.xsect_shape[uj] == XsectShape::DUMMY))
+            y_full = constants::TINY;
+
+        // legacy Link.offset1: a conduit's / orifice's offset1, a weir's or
+        // outlet's crest (side tables here; already WARNING-10 raised, as
+        // legacy's is at this point of link_validate). links.offset1 is 0
+        // for a weir / outlet, so 2-weirs-4subs' junction 24-IN kept its
+        // 5 ft rim where legacy raised it to the road weir's 7.21 ft crown
+        // and it ponded 2.2 ft too early.
+        double off1 = ctx.links.offset1[uj];
+        if (ctx.links.type[uj] == LinkType::WEIR) {
+            const int wr = ctx.link_subtypes.weir_row(j);
+            if (wr >= 0) off1 = ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)];
+        } else if (ctx.links.type[uj] == LinkType::OUTLET) {
+            const int olr = ctx.link_subtypes.outlet_row(j);
+            if (olr >= 0) off1 = ctx.link_subtypes.outlets.crest_height[static_cast<std::size_t>(olr)];
+        }
 
         // Upstream node: every non-pump, non-bottom-orifice link contributes.
-        extend_to_crown(ctx.links.node1[uj], ctx.links.offset1[uj] + y_full);
+        extend_to_crown(ctx.links.node1[uj], off1 + y_full);
 
         // Downstream node: conduits only.
         if (ctx.links.type[uj] == LinkType::CONDUIT)

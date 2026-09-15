@@ -100,6 +100,14 @@ static std::string norm(std::string_view sv) {
     return Tokenizer::to_upper(sv);
 }
 
+// legacy findmatch / match (input.c): a keyword matches when it is a
+// case-insensitive PREFIX of the token — `STEADYFLOW` is STEADY, `DYNWAVE2`
+// DYNWAVE. `tok` is already upper-cased by norm().
+static bool legacyPrefix(const std::string& tok, const char* keyword) {
+    const std::size_t n = std::strlen(keyword);
+    return tok.size() >= n && tok.compare(0, n, keyword) == 0;
+}
+
 // ============================================================================
 // handle_options() — registered as built-in handler for "OPTIONS"
 // ============================================================================
@@ -158,19 +166,29 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
 
         } else if (key == "FLOW_ROUTING") {
             const std::string rv = norm(val);
-            if      (rv == "STEADY")   opt.routing_model = RoutingModel::STEADY;
-            else if (rv == "KINWAVE"   || rv == "KINEMATIC_WAVE")
+            // legacy project_readOption ROUTE_MODEL: findmatch over
+            // RouteModelWords {NONE, STEADY, KINWAVE, XKINWAVE, DYNWAVE}, then
+            // OldRouteModelWords {NONE, NF, KW, EKW, DW}, each a prefix test
+            // in that order (routing-steadyflow writes `STEADYFLOW`, which
+            // ran as the dynamic wave here). XKINWAVE / EKW are the kinematic
+            // wave; NONE ignores routing.
+            if      (legacyPrefix(rv, "NONE"))     opt.ignore_routing = true;
+            else if (legacyPrefix(rv, "STEADY"))   opt.routing_model = RoutingModel::STEADY;
+            else if (legacyPrefix(rv, "KINWAVE"))  opt.routing_model = RoutingModel::KINWAVE;
+            else if (legacyPrefix(rv, "XKINWAVE")) opt.routing_model = RoutingModel::KINWAVE;
+            else if (legacyPrefix(rv, "DYNWAVE"))  opt.routing_model = RoutingModel::DYNWAVE;
+            else if (legacyPrefix(rv, "NF"))       opt.routing_model = RoutingModel::STEADY;
+            else if (legacyPrefix(rv, "KW"))       opt.routing_model = RoutingModel::KINWAVE;
+            else if (legacyPrefix(rv, "EKW"))      opt.routing_model = RoutingModel::KINWAVE;
+            else if (legacyPrefix(rv, "DW"))       opt.routing_model = RoutingModel::DYNWAVE;
+            // This engine's own spellings.
+            else if (rv == "KINEMATIC_WAVE")
                 opt.routing_model = RoutingModel::KINWAVE;
-            else if (rv == "DYNWAVE"   || rv == "DYNAMIC_WAVE")
+            else if (rv == "DYNAMIC_WAVE")
                 opt.routing_model = RoutingModel::DYNWAVE;
             else if (rv == "FV" || rv == "FINITE_VOLUME")
                 opt.routing_model = RoutingModel::FV;
-            // Legacy FLOW_ROUTING NONE maps to the NO_ROUTING method and forces
-            // IgnoreRouting = TRUE (project.c:504). The refactored RoutingModel
-            // enum has no NONE value, so realize the same effect by setting the
-            // ignore_routing flag directly (routing_model is unused when routing
-            // is ignored).
-            else if (rv == "NONE" || rv == "NO_ROUTING") opt.ignore_routing = true;
+            else if (rv == "NO_ROUTING") opt.ignore_routing = true;
             else opt.ext_options[key] = val;
 
         } else if (key == "QUALITY_SOLVER") {

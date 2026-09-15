@@ -132,12 +132,14 @@ struct OrificeGroup {
 struct WeirGroup {
     int count = 0;
     std::vector<int>    link_idx;
-    std::vector<int>    weir_type;     ///< TRANSVERSE/SIDE/VNOTCH/TRAPEZOIDAL
+    std::vector<int>    weir_type;     ///< TRANSVERSE/SIDE/VNOTCH/TRAPEZOIDAL/ROADWAY (0..4)
     std::vector<double> c_disch1;      ///< Main discharge coefficient
     std::vector<double> c_disch2;      ///< End section coefficient (trapezoidal)
     std::vector<double> end_con;       ///< End contraction factor
     std::vector<double> slope;         ///< V-notch slope or trap slope
-    std::vector<int>    cd_curve;      ///< Optional Cd(head) curve index
+    std::vector<int>    cd_curve;      ///< Optional Cd(head) curve index (legacy Weir.cdCurve), -1 none
+    std::vector<double> road_width;    ///< ROADWAY weir road width (ft, legacy Weir.roadWidth)
+    std::vector<int>    road_surface;  ///< ROADWAY weir surface: 0 none, 1 PAVED, 2 GRAVEL
     // No cached flap-gate flag — see the note on OrificeGroup.
     /// Most-recently-computed surface area (ft²), populated by
     /// computeWeirFlows and scattered to node surface-area accumulators

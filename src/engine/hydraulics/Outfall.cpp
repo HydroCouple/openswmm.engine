@@ -126,6 +126,12 @@ static double getYnorm(const XSectParams& xs, double beta, double q_max,
 // weir/outlet crest in its side table and the orifice offset in offset1;
 // a pump has none.
 static double legacyOffset(const SimulationContext& ctx, std::size_t uk, bool downstream) {
+    // A regulator's downstream offset is legacy's un-raised crest (the
+    // resolver's WARNING-10 pass keeps it in offset2 before raising offset1
+    // / the side-table crest to the downstream invert).
+    if (downstream && ctx.links.type[uk] != LinkType::CONDUIT &&
+        ctx.links.type[uk] != LinkType::PUMP)
+        return ctx.links.offset2[uk];
     switch (ctx.links.type[uk]) {
         case LinkType::CONDUIT:
             return downstream ? ctx.links.offset2[uk] : ctx.links.offset1[uk];

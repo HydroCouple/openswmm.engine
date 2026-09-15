@@ -3881,13 +3881,32 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     // Legacy: massbal_updateRoutingTotals(routingStep/2) at start of routing
     // (mass balance accumulators updated with half the step's contribution)
 
+    // Legacy dates this whole step — the control rules, every inflow —
+    // with getDateTime(NewRoutingTime) taken at routing_execute entry
+    // (swmm5.c getDateTime: StartDateTime + (elapsedMsec + 1) / 1000
+    // seconds), the START of the step plus 1 ms, so a step landing exactly
+    // on a pattern / time-series / RDII boundary reads the interval that
+    // begins there. Formed from the ms clock, not from current_time +
+    // 0.001: the ms count is an exact integer, so (ms + 1) / 1000 is
+    // legacy's number, while the seconds clock carries its own accumulated
+    // rounding and 0.001 is not representable.
+    const double routing_secs = (ctx_.elapsed_ms + 1.0) / 1000.0;
+    const double routing_date = datetime::addSeconds(ctx_.options.start_date,
+                                                     routing_secs);
+
     // B1a. Evaluate pump startup/shutoff depth hysteresis ONCE per timestep
     //      (matching legacy routing.c: link_setTargetSetting runs BEFORE controls_evaluate)
     hydstruct_.updatePumpTargetSettings(ctx_);
 
     // B1b. Evaluate control rules (P8-G18: orifice gradual open/close)
     //      Control rules can override pump target_setting set above.
-    controls_.evaluate(ctx_, ctx_.current_time, dt_routing);
+    //      legacy evaluateControlRules: at currentDate (above), only when
+    //      RuleStep == 0 or the ms clock sits on the rule grid
+    //      (|NewRoutingTime - NewRuleTime| < 1).
+    const bool rule_time_reached =
+        ctx_.options.rule_step <= 0.0 ||
+        std::fabs(ctx_.elapsed_ms - new_rule_time_ms_) < 1.0;
+    controls_.evaluate(ctx_, routing_date, dt_routing, rule_time_reached);
     // Apply setting transitions: move setting toward target_setting
     for (int j = 0; j < ctx_.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);
@@ -3899,7 +3918,7 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
             // routing.c:295-299. LINK_TIMEOPEN / LINK_TIMECLOSED rule
             // premises read this via ctx.links.time_last_set. (P1-C09)
             if (target * current == 0.0)
-                ctx_.links.time_last_set[uj] = ctx_.current_date;
+                ctx_.links.time_last_set[uj] = routing_date;  // legacy: = currentDate
 
             // Gradual transition (P8-G18): use orifice open/close rate
             // Legacy: link_setSetting() applies orate for time-based ramp
@@ -3931,17 +3950,6 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     //     sums them all into nodes.lat_flow[] for the routing solver.
     ctx_.nodes.clearInflowSources();
 
-    // Legacy dates every inflow of this step with getDateTime(NewRoutingTime)
-    // taken at routing_execute entry (swmm5.c getDateTime: StartDateTime +
-    // (elapsedMsec + 1) / 1000 seconds) — the START of the step, plus 1 ms
-    // so a step landing exactly on a pattern / time-series / RDII boundary
-    // reads the interval that begins there. Formed from the ms clock, not
-    // from current_time + 0.001: the ms count is an exact integer, so
-    // (ms + 1) / 1000 is legacy's number, while the seconds clock carries
-    // its own accumulated rounding and 0.001 is not representable.
-    const double routing_secs = (ctx_.elapsed_ms + 1.0) / 1000.0;
-    double routing_date = datetime::addSeconds(ctx_.options.start_date,
-                                               routing_secs);
     inflow_.computeAll(ctx_, routing_date, dt_routing);
 
     // B2a. RDII inflows — apply pre-computed values from wet weather step,
@@ -4829,14 +4837,16 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
         else {
             // Interior node (also DW terminal nodes): overflow counted as
             // flooding only if newVolume <= fullVolume (matching legacy). The
-            // dynamic wave books volume in the legacy convention, whose full
-            // volume is rpt_full_volume (0 for a junction, so a ponded one is
-            // never booked as flooding); FV and the tree routers book it
-            // against full_volume (is_dw above covers FV as well).
+            // dynamic wave AND the tree routers book volume in the legacy
+            // convention, whose full volume is rpt_full_volume (0 for a
+            // junction, so a ponded one is never booked as flooding —
+            // 304-nodes-234-subs under KW booked a ponded junction's
+            // overflow as FLOOD_LOSSES against the MIN_SURFAREA full volume);
+            // FV books it against full_volume.
             const double full_vol =
-                (ctx_.options.routing_model == RoutingModel::DYNWAVE)
-                    ? ctx_.nodes.rpt_full_volume[uj]
-                    : ctx_.nodes.full_volume[uj];
+                (ctx_.options.routing_model == RoutingModel::FV)
+                    ? ctx_.nodes.full_volume[uj]
+                    : ctx_.nodes.rpt_full_volume[uj];
             if (ctx_.nodes.overflow[uj] > 0.0 &&
                 ctx_.nodes.volume[uj] <= full_vol) {
                 ctx_.mass_balance.routing_flooding += ctx_.nodes.overflow[uj] * dt_routing;
@@ -6722,6 +6732,13 @@ void SWMMEngine::validate_project() noexcept {
     }
 
     // WARNING 07: routing step reduced to the wet-weather step (legacy project.c).
+    // legacy link_validate has already consumed the AUTHORED step by then
+    // (project_validate validates the links first): keep it for the
+    // link constants formed at hydraulics init (Router::init lengthening,
+    // StructureSolver::init equivalent lengths). surchargedweirs (LPS,
+    // ROUTING_STEP 60 s, WET_STEP 10 s) gave its side orifice a 206 ft
+    // equivalent length where legacy's is 1233 ft.
+    opt.routing_step_authored = opt.routing_step;
     if (opt.routing_step > opt.wet_step) {
         opt.routing_step = opt.wet_step;
         ctx_.warnings.push_back(format_warning(WARN_ROUTING_STEP_REDUCED, ""));
@@ -8168,36 +8185,48 @@ void SWMMEngine::initGeometry() noexcept {
         // link, so a weir or orifice hanging off a junction raises its crown
         // (and thus its EXTRAN surcharge threshold), e.g. Bellinge G75F65Y.
         // Legacy link_readParams mirrors offset2 = offset1 for orifices,
-        // weirs and outlets (link.c:368-391); weir/outlet crest heights live
-        // in the subtype tables here, so reconstruct them per type. Pumps
-        // keep offset 0 and yFull 0 (link.c:334-335, pump_validate), making
-        // their contribution the node invert — a no-op under MAX.
+        // weirs and outlets (link.c:368-391) and link_validate's WARNING-10
+        // raise then lifts offset1 ALONE to the downstream invert; weir /
+        // outlet crest heights (raised) live in the subtype tables here and
+        // the resolver keeps the un-raised crest in links.offset2 for every
+        // regulator. Pumps keep offset 0 and yFull 0 (link.c:334-335,
+        // pump_validate), making their contribution the node invert — a
+        // no-op under MAX. Using the raised crest at the downstream end
+        // lifted extran1-dual-drainage's JCT-12 crown above its 0.6 ft
+        // channel crown, so the node never surcharged where legacy did.
         double off1 = ctx_.links.offset1[uj];
         double off2 = ctx_.links.offset2[uj];
         switch (ctx_.links.type[uj]) {
             case LinkType::ORIFICE:
-                off2 = off1;                              // link.c:368-369
-                break;
+                break;                                    // offset1 raised, offset2 as parsed
             case LinkType::WEIR: {
                 const int wr = ctx_.link_subtypes.weir_row(j);
                 off1 = (wr >= 0) ? ctx_.link_subtypes.weirs
                            .crest_height[static_cast<std::size_t>(wr)] : 0.0;
-                off2 = off1;                              // link.c:377-378
                 break;
             }
             case LinkType::OUTLET: {
                 const int olr = ctx_.link_subtypes.outlet_row(j);
                 off1 = (olr >= 0) ? ctx_.link_subtypes.outlets
                            .crest_height[static_cast<std::size_t>(olr)] : 0.0;
-                off2 = off1;                              // link.c:390-391
                 break;
             }
             default: break;  // CONDUIT: parsed offsets; PUMP: zeros
         }
-        double z1 = ctx_.nodes.invert_elev[un1] + off1
-                     + ctx_.links.xsect_y_full[uj];
-        double z2 = ctx_.nodes.invert_elev[un2] + off2
-                     + ctx_.links.xsect_y_full[uj];
+        // legacy xsect.yFull of a DUMMY section (an outlet's, a DUMMY
+        // conduit's — xsect_setParams(DUMMY) sets every dimension to TINY)
+        // is 1e-6, not 0: a junction whose only link is an outlet gets a
+        // crown 1e-6 above its invert and is EXTRAN-"surcharged" from the
+        // first drop, with sumdqdh 0 — its depth freezes and its inflow is
+        // lost (high-low-flow's 81009E, 5.8 % continuity error in legacy).
+        // A pump's yFull is 0 (pump_validate).
+        double yf = ctx_.links.xsect_y_full[uj];
+        if (ctx_.links.type[uj] == LinkType::OUTLET ||
+            (ctx_.links.type[uj] == LinkType::CONDUIT &&
+             ctx_.links.xsect_shape[uj] == XsectShape::DUMMY))
+            yf = constants::TINY;
+        double z1 = ctx_.nodes.invert_elev[un1] + off1 + yf;
+        double z2 = ctx_.nodes.invert_elev[un2] + off2 + yf;
         if (z1 > ctx_.nodes.crown_elev[un1])
             ctx_.nodes.crown_elev[un1] = z1;
         if (z2 > ctx_.nodes.crown_elev[un2])
@@ -8745,6 +8774,17 @@ double SWMMEngine::reportedNodeVolume(int i, double depth,
     auto ui = static_cast<std::size_t>(i);
     if (ctx_.nodes.type[ui] == NodeType::STORAGE)
         return volume;                         // storage curve volume (= legacy)
+    // Kinematic wave / steady flow: legacy setNewNodeState carries a
+    // junction's newVolume as the accumulated net inflow (oldVolume +
+    // net*dt, kept above fullVolume when it ponds, capped at fullVolume
+    // otherwise) and node_getResults reports that number as it is — the
+    // depth is a separate quantity, raised from the conduit ends. The
+    // depth relation below is the dynamic wave's convention. new-mikeurbancn
+    // (KW, ALLOW_PONDING) reported 0 for junction 6032's 7 019 ft3 pond
+    // because the raise caps the depth AT the rim.
+    if (ctx_.options.routing_model == RoutingModel::KINWAVE ||
+        ctx_.options.routing_model == RoutingModel::STEADY)
+        return volume;
     double fd = ctx_.nodes.full_depth[ui];
     if (!(fd > 0.0)) return 0.0;
 

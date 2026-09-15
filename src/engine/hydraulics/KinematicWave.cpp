@@ -40,6 +40,7 @@
 #include "HydStructures.hpp"
 #include "Node.hpp"
 #include "Divider.hpp"
+#include "../math/FindRoot.hpp"
 
 #include <cmath>
 #include <algorithm>
@@ -47,7 +48,6 @@
 namespace openswmm {
 namespace kinwave {
 
-static constexpr int    MAX_ITERS = 40;
 static constexpr double TINY      = 1.0e-6;
 
 // Storage successive-approximation constants (legacy flowrout.c:56-58).
@@ -159,7 +159,12 @@ void updateStorageState(SimulationContext& ctx,
     };
 
     double d1 = nodes.depth[ui];
-    for (int iter = 0; iter < STOR_MAXITER; ++iter) {
+    // legacy: `iter = 1; while (iter < MAXITER && !stopped)` — at most
+    // MAXITER - 1 = 9 passes. A storage whose pump switches at the trial
+    // depth oscillates between two states, and the pass count decides
+    // which one the step keeps (304-nodes-234-subs' wet well 1: a tenth pass
+    // handed PumpSR the ON state legacy leaves OFF).
+    for (int iter = 1; iter < STOR_MAXITER; ++iter) {
         double v2 = v_fixed - 0.5 * storageOutflow() * dt;
         v2 = std::max(v2, 0.0);
 
@@ -267,100 +272,73 @@ int KWSolver::solveConduit(int idx, const XSectParams& xs,
     double C1 = dxdt * WT / WX;
     double C2 = (1.0 - WT) * (a_in_norm - prev_a1);
     C2 -= WT * prev_a2;
-    C2 *= dxdt / WX;
-    C2 += (1.0 - WX) / WX * dq - q_in_norm;
-    C2 += q3 / WX;
+    // legacy's statements, left to right: (C2 * dxdt) / WX, then
+    // (C2 + k*dq) - qin — not C2 * (dxdt / WX) or C2 + (k*dq - qin), each
+    // an ulp off on the first wet steps (runoff2-sw5).
+    C2 = C2 * dxdt / WX;
+    C2 = C2 + (1.0 - WX) / WX * dq - q_in_norm;
+    C2 = C2 + q3 / WX;
 
-    // Gap #59: bound the Newton iteration using the same Amax bracket that
-    // legacy kinwave.c uses (findroot_Newton with aLo/aHi bounds).
-    //
-    // The section factor S(a) peaks at a = Amax (< a_full for non-circular
-    // shapes). Above Amax, S decreases back toward s_full, so the continuity
-    // function f(a) = beta1*S(a) + C1*a + C2 can have two roots.
-    // Legacy pre-screens for this:
-    //   aHi = 1.0 (full area),   fHi = 1 + C1 + C2
-    //   aLo = getAmax(xs),       fLo = beta1*s_max + C1*aLo + C2
-    // If fLo and fHi share the same sign, reset the bracket:
-    //   [0, aLo] → handles near-zero-flow and high-flow cases
-    // If both bounds produce negative f → full flow (no sub-critical root).
-    // If both bounds produce positive f → zero flow.
+    // legacy solveContinuity (kinwave.c), op for op: bracket f(a) =
+    // Beta1*S(a) + C1*a + C2 between the area of maximum section factor
+    // and full area, fall back to [0, aLo] when both ends share a sign,
+    // hand the previous outlet area (or the bracket's midpoint when it lies
+    // outside) to findroot_Newton with the ends switched when f(aLo) >
+    // f(aHi); both ends negative = full flow, both positive = no flow. The
+    // former home-grown Newton loop (own start guess, per-step bracket
+    // clamps, its own stop test) took a different path on the first wet
+    // step of every kinematic-wave conduit (runoff2-sw5's 101: 3.77e-5 vs
+    // legacy 3.40e-5 cfs).
     double aHi = 1.0;
-    double fHi = 1.0 + C1 + C2;     // f(a=1.0): beta1*s_full = 1 by construction
-    double aLo = xsect::getAmax(xs); // normalized area at max section factor
-    double fLo = beta1 * xs.s_max + C1 * aLo + C2;
-
-    if (aLo >= aHi) { aLo = 0.0; fLo = C2; }  // shouldn't happen; guard anyway
+    double fHi = 1.0 + C1 + C2;
+    // xsect_getAmax: Amax[type]*aFull, or aBot for IRREGULAR / CUSTOM
+    // (the kernel's getAmax is the ratio Amax[type]).
+    double aLo = (xs.type == static_cast<int>(XSectShape::IRREGULAR) ||
+                  xs.type == static_cast<int>(XSectShape::CUSTOM))
+                 ? xs.a_bot / a_full : xsect::getAmax(xs);
+    double fLo;
+    if (aLo < aHi) fLo = (beta1 * xs.s_max) + (C1 * aLo) + C2;
+    else           fLo = fHi;
 
     if (fHi * fLo > 0.0) {
-        // Same sign — root is not between [aLo, aHi]; reset bracket to [0, aLo]
         aHi = aLo;
         fHi = fLo;
         aLo = 0.0;
         fLo = C2;
     }
 
-    // Both bounds negative → flow always exceeds maximum; use full flow
-    if (fLo < 0.0 && fHi < 0.0) {
-        a_in_[ui]  = a_in_norm * a_full;
-        a_out_[ui] = a_full;   // full-pipe area
-        q_out_[ui] = q_full;   // cap at full flow
-        // Legacy kinwave.c caps the ACCEPTED inflow at qFull after the solve
-        // (`if (qin > 1.0) qin = 1.0`; the returned *qinflow is the capped
-        // q1). The un-accepted excess stays at the upstream node, which is
-        // what floods a capacity-limited KW junction to its full depth
-        // (extran1-kw-divider node 82309). The C2 coefficient above keeps
-        // the RAW qin, exactly as legacy does.
-        if (q_in_[ui] > q_full) q_in_[ui] = q_full;
-        q1_[ui] = q_in_[ui];  a1_[ui] = a_in_[ui];
-        q2_[ui] = q_out_[ui]; a2_[ui] = a_out_[ui];
-        return -2;
+    double a = prev_a2;
+    int result;
+    if (fHi * fLo <= 0.0) {
+        if (a < aLo || a > aHi) a = 0.5 * (aLo + aHi);
+        if (fLo > fHi) {
+            const double aTmp = aLo;
+            aLo = aHi;
+            aHi = aTmp;
+        }
+        result = findroot::newton(aLo, aHi, &a, EPSIL,
+            [&](double an, double* f, double* df) {
+                *f  = (beta1 * xsect::getSofA(xs, an * a_full)) + (C1 * an) + C2;
+                *df = (beta1 * a_full * xsect::getdSdA(xs, an * a_full)) + C1;
+            });
+        if (result <= 0) result = -1;
+    } else if (fLo < 0.0) {
+        // both bounds negative → full flow
+        a = (q_in_norm > 1.0) ? a_in_norm : 1.0;
+        result = -2;
+    } else if (fLo > 0.0) {
+        // both bounds positive → no flow
+        a = 0.0;
+        result = -3;
+    } else {
+        result = -1;
     }
+    // legacy reports ERR_KINWAVE and returns when the root finder fails;
+    // the engine keeps the finder's last iterate (the bracket holds it).
+    if (result <= 0) result = 1;
 
-    // Both bounds positive → no flow
-    if (fLo > 0.0 && fHi > 0.0) {
-        a_in_[ui]  = a_in_norm * a_full;
-        a_out_[ui] = 0.0;
-        q_out_[ui] = 0.0;
-        if (q_in_[ui] > q_full) q_in_[ui] = q_full;  // legacy post-solve cap
-        q1_[ui] = q_in_[ui];  a1_[ui] = a_in_[ui];
-        q2_[ui] = 0.0;        a2_[ui] = 0.0;
-        return -3;
-    }
-
-    // Ensure fLo < fHi for monotone bracketing
-    if (fLo > fHi) {
-        std::swap(aLo, aHi);
-        std::swap(fLo, fHi);
-    }
-
-    // Newton-Raphson: solve f(a) = beta1*S(a*Afull) + C1*a + C2 = 0
-    // Initial guess: previous outlet area (warm start), clamped to [aLo, aHi].
-    double a = (prev_a2 > TINY) ? prev_a2 : a_in_norm;
-    a = std::max(std::min(a, aHi), aLo);
-
-    int iters = 0;
-    for (; iters < MAX_ITERS; ++iters) {
-        double a_abs = a * a_full;
-        double s = xsect::getSofA(xs, a_abs);
-        double f = beta1 * s + C1 * a + C2;
-
-        double dsda = xsect::getdSdA(xs, a_abs);
-        double df = beta1 * a_full * dsda + C1;
-
-        if (std::fabs(df) < TINY) break;
-
-        double da = -f / df;
-        a += da;
-        // Clamp to bracket so Newton doesn't wander past Amax or below zero
-        a = std::max(std::min(a, aHi), aLo);
-        if (std::fabs(da) < EPSIL) break;
-    }
-    a = std::max(a, 0.0);
-
-    // Outflow from outlet area
-    double s_out = xsect::getSofA(xs, a * a_full);
-    double q_out_norm = beta1 * s_out;
-    q_out_norm = std::max(q_out_norm, 0.0);
+    // Outflow from outlet area (legacy: qout = Beta1 * S(aout*Afull))
+    double q_out_norm = beta1 * xsect::getSofA(xs, a * a_full);
 
     // De-normalise and store
     a_in_[ui]  = a_in_norm * a_full;
@@ -377,7 +355,7 @@ int KWSolver::solveConduit(int idx, const XSectParams& xs,
     q2_[ui] = q_out_[ui];
     a2_[ui] = a_out_[ui];
 
-    return iters;
+    return result;
 }
 
 // ============================================================================
@@ -469,6 +447,11 @@ int KWSolver::execute(SimulationContext& ctx, double dt,
             links.flow[uj] = q;
             if (n1 >= 0) nodes.outflow[static_cast<std::size_t>(n1)] += q;
             if (n2 >= 0) nodes.inflow[static_cast<std::size_t>(n2)] += q;
+            // legacy kinwave_execute leaves a dummy's a1/a2 at 0, so
+            // setNewLinkState reports depth 0 and volume 0 (extran1-dummy's
+            // 8040 kept the FUDGE depth its initialisation left).
+            links.depth[uj]  = 0.0;
+            links.volume[uj] = 0.0;
             continue;
         }
         auto& CD = ctx.link_subtypes.conduits;
@@ -498,8 +481,9 @@ int KWSolver::execute(SimulationContext& ctx, double dt,
         double length = CD.mod_length[ucr];
         if (length <= 0.0) length = CD.length[ucr];
 
-        // Compute evaporation + seepage loss rate
-        double loss_rate = CD.evap_loss_rate[ucr] + CD.seep_loss_rate[ucr];
+        // Evaporation + seepage loss rate, capped on this solve's per-barrel
+        // inflow (legacy link_getLossRate(j, KW, qin*Qfull, tStep)).
+        double loss_rate = capConduitLoss(ctx, ucr, std::fabs(qin_per_barrel));
 
         // Set inflow for this conduit
         q_in_[uj] = qin_per_barrel;
@@ -666,12 +650,36 @@ void finishRouting(SimulationContext& ctx,
     };
     for (int j = 0; j < n_links; ++j) {
         auto uj = static_cast<std::size_t>(j);
-        if (links.type[uj] != LinkType::CONDUIT) continue;
+        if (links.type[uj] != LinkType::CONDUIT) {
+            // setNewLinkState starts every link at newDepth = newVolume = 0
+            // and fills them for conduits only: a non-conduit's depth that
+            // its head-discharge routine wrote during the step is not what
+            // the step reports (control-rules-test's orifice 3 under
+            // STEADY reported a growing depth where legacy reports 0).
+            links.depth[uj]  = 0.0;
+            links.volume[uj] = 0.0;
+            continue;
+        }
         const double y1 = (uj < link_y1.size()) ? link_y1[uj] : 0.0;
         const double y2 = (uj < link_y2.size()) ? link_y2[uj] : 0.0;
         raise(links.node1[uj], y1 + links.offset1[uj]);
         raise(links.node2[uj], y2 + links.offset2[uj]);
     }
+}
+
+double capConduitLoss(SimulationContext& ctx, std::size_t ucr, double q) {
+    auto& CD = ctx.link_subtypes.conduits;
+    double evap  = CD.evap_loss_rate[ucr];
+    double seep  = CD.seep_loss_rate[ucr];
+    double total = evap + seep;
+    if (total > q) {
+        evap  = evap * q / total;
+        seep  = seep * q / total;
+        total = q;
+        CD.evap_loss_rate[ucr] = evap;
+        CD.seep_loss_rate[ucr] = seep;
+    }
+    return total;
 }
 
 } // namespace kinwave

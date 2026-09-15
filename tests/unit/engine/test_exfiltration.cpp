@@ -110,7 +110,8 @@ TEST(StorageExfilGeometry, FunctionalLinearInitUsesBottomAndBankPartition) {
 // Fixed-stage analytical storage exfiltration benchmark.
 //
 // Storage shape: A(d) = 50 + 100 d, evaluated at fixed depth d=2 ft.
-// Bottom area = 50 ft^2, bank area = 250 ft^2, bank depth = 1 ft.
+// Bottom area = 50 ft^2, bank area = A(2) - 50 = 200 ft^2 (legacy exfil.c:
+// MIN(area, bankMaxArea) - btmArea), bank depth = 1 ft.
 // Both Green-Ampt states are forced onto the saturated branch so the exact
 // cumulative infiltration for each component is given by the implicit
 // Green-Ampt relation t(F) = [F - c1 ln(1 + F/c1)] / Ks.
@@ -163,8 +164,8 @@ TEST(StorageExfilGeometry, FixedStageGreenAmptGeometryBenchmark) {
         solver.computeAll(ctx, dt);
 
         // Guard: computeAll must not update depth (fixed-stage benchmark relies
-        // on depth remaining 2.0 ft so that bank_area = 250 ft² throughout).
-        // Total exfil over 600 s is ~72 ft³; the 1e9 ft³ volume makes drift
+        // on depth remaining 2.0 ft so that bank_area = 200 ft² throughout).
+        // Total exfil over 600 s is ~61 ft³; the 1e9 ft³ volume makes drift
         // negligible, but this assertion catches any accidental depth update.
         EXPECT_NEAR(ctx.nodes.depth[0], 2.0, 1e-6)
             << "Storage depth drifted from 2.0 ft at step " << i;

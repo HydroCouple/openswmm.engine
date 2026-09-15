@@ -2133,8 +2133,13 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     const int srow = ctx.node_subtypes.storage_row(j); const auto& S = ctx.node_subtypes.storages;
     const int scurve = (srow>=0)?S.curve[static_cast<size_t>(srow)]:-1;
     const StorageShape sshape = (srow>=0)?S.shape[static_cast<size_t>(srow)]:StorageShape::FUNCTIONAL;
+    // Shape, then legacy 5.2's trailing columns in storage_readParams' order:
+    // SurDepth, Fevap, and the exfiltration triple Psi Ksat IMD when Ksat is
+    // set (exfil_readStorageParams). The former `0 0 <surdepth>` /
+    // `0 <surdepth>` tails re-read the surcharge depth as Fevap or as a bare
+    // Ksat.
     if(scurve>=0)
-        std::fprintf(f,"%-16s %12.4f %12.4f %12.4f TABULAR    %s 0 0 %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],tN(ctx,scurve),ctx.nodes.sur_depth[u]);
+        std::fprintf(f,"%-16s %12.4f %12.4f %12.4f TABULAR    %s",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],tN(ctx,scurve));
     else if(storage_shape_is_geometric(sshape)){
         // Geometric shapes re-emit the RAW L/W/Z the user gave us, not the derived
         // a/b/c — that is the whole point of keeping p1..p3 in the SoA. Writing the
@@ -2142,13 +2147,21 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         const double q1=S.p1[static_cast<size_t>(srow)];
         const double q2=S.p2[static_cast<size_t>(srow)];
         const double q3=S.p3[static_cast<size_t>(srow)];
-        std::fprintf(f,"%-16s %12.4f %12.4f %12.4f %-10s %g %g %g 0 %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],storage_shape_keyword(sshape),q1,q2,q3,ctx.nodes.sur_depth[u]);
+        std::fprintf(f,"%-16s %12.4f %12.4f %12.4f %-10s %g %g %g",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],storage_shape_keyword(sshape),q1,q2,q3);
     }
     else {
         const double sa=(srow>=0)?S.a[static_cast<size_t>(srow)]:0.0;
         const double sb=(srow>=0)?S.b[static_cast<size_t>(srow)]:0.0;
         const double sc=(srow>=0)?S.c[static_cast<size_t>(srow)]:0.0;
-        std::fprintf(f,"%-16s %12.4f %12.4f %12.4f FUNCTIONAL %g %g %g 0 %12.4f\n",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],sa,sb,sc,ctx.nodes.sur_depth[u]);
+        std::fprintf(f,"%-16s %12.4f %12.4f %12.4f FUNCTIONAL %g %g %g",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],sa,sb,sc);
+    }
+    {
+        const double fevap=(srow>=0)?S.evap_frac[static_cast<size_t>(srow)]:0.0;
+        const double ksat=(srow>=0)?S.exfil_ksat[static_cast<size_t>(srow)]:0.0;
+        std::fprintf(f," %12.4f %g",ctx.nodes.sur_depth[u],fevap);
+        if(ksat!=0.0)
+            std::fprintf(f," %g %g %g",S.exfil_suction[static_cast<size_t>(srow)],ksat,S.exfil_imd[static_cast<size_t>(srow)]);
+        std::fprintf(f,"\n");
     }
     }}
 
@@ -2207,9 +2220,9 @@ int writeInpFile(const SimulationContext&  ctx_internal,
 
     // [WEIRS]
     if(hasLT(ctx,LinkType::WEIR)){sec(f,"WEIRS");
-    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-10s %-8s %-10s %-10s %-10s\n","Name","FromNode","ToNode","Type","CrestHt","Cd","Gated","EndCon","EndCoeff","Surcharge");
-    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-10s %-8s %-10s %-10s %-10s\n","----------------","----------------","----------------","------------","----------","----------","--------","----------","----------","----------");
-    static const char* WEIR_TYPE[]={"TRANSVERSE","SIDEFLOW","V-NOTCH","TRAPEZOIDAL"};
+    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-10s %-8s %-10s %-10s %-10s %-10s %-10s %s\n","Name","FromNode","ToNode","Type","CrestHt","Cd","Gated","EndCon","EndCoeff","Surcharge","RoadWidth","RoadSurf","Coeff.Curve");
+    std::fprintf(f,";;%-16s %-16s %-16s %-12s %-10s %-10s %-8s %-10s %-10s %-10s %-10s %-10s %s\n","----------------","----------------","----------------","------------","----------","----------","--------","----------","----------","----------","----------","----------","----------------");
+    static const char* WEIR_TYPE[]={"TRANSVERSE","SIDEFLOW","V-NOTCH","TRAPEZOIDAL","ROADWAY"};
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);if(ctx.links.type[u]!=LinkType::WEIR)continue;
     write_obj_comment(f, ctx.links.comments, u);
     const int wr=ctx.link_subtypes.weir_row(j); const auto& WD=ctx.link_subtypes.weirs;
@@ -2218,10 +2231,10 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // surcharge flag defaults it back to YES on re-read, changing drowned-weir
     // flow (weir↔orifice switch) and hence overflow/flooding.
     const int wt=(wr>=0)?static_cast<int>(WD.weir_type[static_cast<size_t>(wr)]):0;
-    const char* wtStr=(wt>=0&&wt<4)?WEIR_TYPE[wt]:"TRANSVERSE";
+    const char* wtStr=(wt>=0&&wt<5)?WEIR_TYPE[wt]:"TRANSVERSE";
     const char* wgate=ctx.links.has_flap_gate[u]?"YES":"NO";
     const char* wsurch=(wr>=0&&WD.can_surcharge[static_cast<size_t>(wr)])?"YES":"NO";
-    std::fprintf(f,"%-16s %-16s %-16s %-12s %10.4f %10.4f %-8s %10.4f %10.4f %s\n",
+    std::fprintf(f,"%-16s %-16s %-16s %-12s %10.4f %10.4f %-8s %10.4f %10.4f %-10s",
         ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),
         wtStr,
         (wr>=0)?WD.crest_height[static_cast<size_t>(wr)]:0.0,
@@ -2230,6 +2243,17 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         (wr>=0)?WD.end_contractions[static_cast<size_t>(wr)]:0.0,
         (wr>=0)?WD.cd2[static_cast<size_t>(wr)]:0.0,
         wsurch);
+    // ROADWAY road width / surface (legacy columns 11-12, read for that type
+    // only) and the optional Cd(head) curve (column 13, any type).
+    const int cdc=(wr>=0)?WD.cd_curve[static_cast<size_t>(wr)]:-1;
+    if(wt==4||cdc>=0){
+        const int rs=(wr>=0)?WD.road_surface[static_cast<size_t>(wr)]:0;
+        std::fprintf(f," %10.4f %-10s",(wr>=0)?WD.road_width[static_cast<size_t>(wr)]:0.0,
+            rs==1?"PAVED":rs==2?"GRAVEL":"*");
+        if(cdc>=0&&static_cast<size_t>(cdc)<ctx.tables.tables.size())
+            std::fprintf(f," %s",ctx.tables.tables[static_cast<size_t>(cdc)].id.c_str());
+    }
+    std::fprintf(f,"\n");
     }}
 
     // [OUTLETS]
