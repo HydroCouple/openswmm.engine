@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Link access (Pythonic v1 surface)
 =================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 The :class:`Links` collection and :class:`Link` wrapper expose the
 network's conveyance elements — conduits, pumps, orifices, weirs, and
@@ -126,6 +142,34 @@ cdef class LinkStatsView:
         _check_fresh(self._link)
         cdef double v = 0.0
         _check(swmm_link_get_stat_surcharge_time(_h(self._link._solver), self._link._index, &v))
+        return v
+
+    @property
+    def peak_slot_share(self) -> float:
+        """Peak instantaneous ``slot_volume / volume`` over the run (0..1).
+
+        Finite-volume routing only: reads ``0.0`` under the dynamic-wave
+        router, which is indistinguishable from "no slot flow occurred".
+        """
+        _check_fresh(self._link)
+        cdef double v = 0.0
+        _check(swmm_link_get_stat_peak_slot_share(
+            _h(self._link._solver), self._link._index, &v))
+        return v
+
+    @property
+    def slot_share(self) -> float:
+        """Run-level slot share ``(∫ slot_volume dt) / (∫ volume dt)`` (0..1).
+
+        A ratio of time integrals — never an average of instantaneous
+        ratios. Finite-volume routing only: reads ``0.0`` under the
+        dynamic-wave router, which is indistinguishable from "no slot flow
+        occurred".
+        """
+        _check_fresh(self._link)
+        cdef double v = 0.0
+        _check(swmm_link_get_stat_slot_share(
+            _h(self._link._solver), self._link._index, &v))
         return v
 
     @property
@@ -683,6 +727,19 @@ cdef class Link:
         _check_fresh(self)
         cdef double v = 0.0
         _check(swmm_link_get_volume(_h(self._solver), self._index, &v))
+        return v
+
+    @property
+    def slot_volume(self) -> float:
+        """Water held in the Preissmann slot, in project volume units.
+
+        The part of :attr:`volume` standing above the pipe crown. Finite-volume
+        routing only: reads ``0.0`` under the dynamic-wave router, which is
+        indistinguishable from "no slot storage".
+        """
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_link_get_slot_volume(_h(self._solver), self._index, &v))
         return v
 
     @property

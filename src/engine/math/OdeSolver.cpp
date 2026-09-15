@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file OdeSolver.cpp
  * @brief RK45 Cash-Karp ODE integrator — numerically identical to legacy.
@@ -5,12 +21,14 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "OdeSolver.hpp"
 #include <cmath>
+#include <cstdlib>
 #include <algorithm>
+#include <type_traits>
 #include <vector>
 
 namespace openswmm {
@@ -38,7 +56,14 @@ static constexpr double dc6 = c6 - 0.25;
 //
 // Legacy uses file-scope globals: y[], yscal[], dydx[], yerr[], ytemp[], ak[].
 // We use a thread-local struct to remain reentrant while avoiding per-call
-// heap allocation. open/close match legacy odesolve_open/close.
+// heap allocation. ensureWorkspace() plays the role of legacy odesolve_open();
+// the destructor plays the role of odesolve_close() (legacy runoff.c:135).
+//
+// The destructor must stay declared even though the members are raw pointers:
+// it is what makes the type non-trivially destructible, and only that gets a
+// thread-exit handler registered. Without it, thread exit reclaims the TLS
+// block holding these pointers and strands the buffers they point at, leaking
+// one workspace per thread that ever integrated.
 // ============================================================================
 
 struct OdeWorkspace {
@@ -49,7 +74,25 @@ struct OdeWorkspace {
     double* yerr  = nullptr;
     double* ytemp = nullptr;
     double* ak    = nullptr;   // flat n*5 (ak2..ak6) matching legacy
+
+    ~OdeWorkspace() {
+        std::free(y);     std::free(yscal); std::free(dydx);
+        std::free(yerr);  std::free(ytemp); std::free(ak);
+        // Reset to the constructed state, as legacy odesolve_close() does.
+        // nmax = 0 matters: ensureWorkspace() early-returns while nmax >= n, so
+        // leaving it set would hand freed pointers to any integrate() that ran
+        // after teardown (thread_local destruction order is not guaranteed).
+        y = yscal = dydx = yerr = ytemp = ak = nullptr;
+        nmax = 0;
+    }
 };
+
+// Pins the property the destructor exists for. If it is ever removed or
+// =default'd, the leak returns silently on every platform whose leak checker
+// is unavailable (Darwin arm64 among them) -- fail the build instead.
+static_assert(!std::is_trivially_destructible<OdeWorkspace>::value,
+              "OdeWorkspace needs a non-trivial destructor so thread exit frees "
+              "its buffers; see tests/manual/ode_workspace_leak");
 
 static thread_local OdeWorkspace ws_;
 

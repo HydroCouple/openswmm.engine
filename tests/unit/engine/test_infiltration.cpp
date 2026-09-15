@@ -126,11 +126,30 @@ TEST(GreenAmptInfil, DryPeriodRecoversMoisture) {
     GreenAmptState s;
     grnampt_init(s, 4.0, 1.0, 0.3, default_opts());
     s.saturated = true;
-    s.F = 0.1;
+    s.F  = 0.1;
+    s.Fu = 0.1;
 
+    // Legacy grnampt_getSatInfil returns 0 for a dry step WITHOUT touching
+    // the state: a saturated surface stays saturated, F is retained, and no
+    // recovery runs until a wet step finds the supply below the potential
+    // rate and clears Sat (infil.c grnampt_getSatInfil).
     double f = grnampt_getInfil(s, 0.0, 0.0, 300.0);
     EXPECT_EQ(f, 0.0);
+    EXPECT_TRUE(s.saturated);
+    EXPECT_EQ(s.F, 0.1);
+
+    // A light-rain step (supply well under the potential rate) unsaturates
+    // the surface ...
+    double light = 0.1 / 12.0 / 3600.0;   // 0.1 in/hr, a tenth of Ks
+    grnampt_getInfil(s, light, 0.0, 300.0);
     EXPECT_FALSE(s.saturated);
+    double F_wet = s.F;
+
+    // ... and only then does a dry step recover upper-zone moisture: F and
+    // Fu drop by kr*Fumax*dt (grnampt_getUnsatInfil, dry branch).
+    f = grnampt_getInfil(s, 0.0, 0.0, 300.0);
+    EXPECT_EQ(f, 0.0);
+    EXPECT_LT(s.F, F_wet);
 }
 
 // ============================================================================
@@ -343,6 +362,14 @@ TEST(ModGreenAmpt, StandardGAResetsF) {
 
     double F_after_wet = state.F;
     EXPECT_GT(F_after_wet, 0.0);
+
+    // Legacy leaves a SATURATED surface untouched through dry weather
+    // (grnampt_getSatInfil returns 0 without recovery), so the event has to
+    // end with a light-rain step whose supply is below the potential rate:
+    // that clears Sat, and the dry period that follows recovers moisture
+    // and, once the inter-event timer expires, resets F every step.
+    grnampt_getInfil(state, 1e-6, 0.0, 60.0, InfilModel::GREEN_AMPT);
+    EXPECT_FALSE(state.saturated);
 
     // Dry period long enough for T to expire
     for (int t = 0; t < 200; ++t)
@@ -672,13 +699,22 @@ TEST(GreenAmptInfil, SaturatedTrajectoryMatchesBenchmark) {
     state.IMD       = 0.25;
     state.IMDmax    = 0.25;
     state.T         = 1.0e10;   // timer never expires during wet run
-    state.saturated = true;     // force saturated branch from t=0
+    state.saturated = true;     // force saturated branch
+
+    // Legacy grnampt_getF2 cannot start its Newton solve from F = 0 (the
+    // derivative term 1 - c1/(f2 + c1) vanishes there) and falls back to the
+    // Ks-only floor F1 + Ks*dt for that step — a state legacy itself never
+    // reaches, since it enters the saturated branch with F >= Fs > 0. So the
+    // trajectory is seeded at the benchmark's first row and checked from the
+    // second; every later row is a Newton solve from a positive F.
+    state.F  = rows[1].F_ft;
+    state.Fu = rows[1].F_ft;
 
     const double precip = 1.0;  // ft/s >> dF/dt; ia clamp never activates
-    double t = rows[0].t_s;     // t=0
+    double t = rows[1].t_s;
     double max_err = 0.0;
 
-    for (size_t i = 1; i < rows.size(); ++i) {
+    for (size_t i = 2; i < rows.size(); ++i) {
         double dt = rows[i].t_s - t;
         grnampt_getInfil(state, precip, 0.0, dt, InfilModel::GREEN_AMPT);
         t = rows[i].t_s;

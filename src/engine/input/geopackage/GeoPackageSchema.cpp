@@ -95,6 +95,18 @@ CREATE TABLE IF NOT EXISTS nodes (
     surcharge_depth REAL,
     ponded_area     REAL,
     tag             TEXT,
+    -- Virtual junctions are JUNCTION-typed (node_type stays "JUNCTION"), so
+    -- the flag needs its own column or a round-trip demotes them to plain
+    -- junctions. rim_depth is the rendering-only ground depth that goes with
+    -- it (the optional [VIRTUAL_JUNCTIONS] MaxDepth); both are NULL in files
+    -- written before they existed and the reader treats that as 0.
+    is_virtual      INTEGER,
+    rim_depth       REAL,
+    -- Inlet junctions are virtual junctions that also carry a street inlet.
+    -- The flag round-trips here; the inlet USAGE row it needs ([INLETS] design
+    -- + capture node) has no GeoPackage table, so a .gpkg round-trip preserves
+    -- the flag but not the inlet assignment.
+    is_inlet        INTEGER,
     UNIQUE(simulation_id, node_id)
 );
 
@@ -240,7 +252,7 @@ CREATE TABLE IF NOT EXISTS orifices (
     link_id         TEXT NOT NULL,
     orientation     TEXT,                -- SIDE | BOTTOM
     discharge_coeff REAL,
-    orate           REAL,                -- open/close rate (s)
+    orate           REAL,                -- open/close rate (HOURS, as parsed)
     PRIMARY KEY (simulation_id, link_id),
     FOREIGN KEY (simulation_id, link_id)
         REFERENCES links(simulation_id, link_id)
@@ -721,6 +733,66 @@ CREATE INDEX IF NOT EXISTS idx_transects_lookup ON transects(simulation_id, tran
 )SQL";
 static_assert(sizeof(PART_A4_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
 
+// Part A5: street sections, inlet designs and inlet placements. Values are
+// stored as the engine holds them after open (user units as read, cross slope
+// in percent) — the convention the [STREETS]/[INLETS] handlers and InpWriter
+// share. Usage rows cover both grammars: [INLET_USAGE] (host_kind 0, host_id =
+// conduit) and [INLET_JUNCTIONS] (host_kind 1, host_id = the inlet junction),
+// so a model with an inlet junction re-reads with its usage and passes rule 633.
+static const char PART_A5_DDL[] = R"SQL(
+CREATE TABLE IF NOT EXISTS streets (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    street_id       TEXT NOT NULL,
+    t_crown         REAL NOT NULL,
+    h_curb          REAL NOT NULL,
+    sx              REAL NOT NULL,      -- cross slope, percent
+    n_road          REAL NOT NULL,
+    gutter_depres   REAL,
+    gutter_width    REAL,
+    sides           INTEGER,
+    back_width      REAL,
+    back_slope      REAL,
+    back_n          REAL
+);
+CREATE INDEX IF NOT EXISTS idx_streets_lookup ON streets(simulation_id, street_id);
+
+CREATE TABLE IF NOT EXISTS inlets (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    inlet_id        TEXT NOT NULL,
+    inlet_type      TEXT NOT NULL,      -- GRATE/CURB/COMBO/SLOTTED/DROP_GRATE/DROP_CURB/CUSTOM
+    length          REAL,               -- grate or slotted length
+    width           REAL,
+    grate_type      TEXT,
+    open_area       REAL,               -- GENERIC grates
+    splash_veloc    REAL,
+    curb_length     REAL,
+    curb_height     REAL,
+    curb_throat     INTEGER,            -- 0 HORIZONTAL, 1 INCLINED, 2 VERTICAL
+    curve_id        TEXT,               -- CUSTOM capture curve NAME
+    comment         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_inlets_lookup ON inlets(simulation_id, inlet_id);
+
+CREATE TABLE IF NOT EXISTS inlet_usage (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    host_kind       INTEGER NOT NULL,   -- 0 conduit ([INLET_USAGE]), 1 inlet junction ([INLET_JUNCTIONS])
+    host_id         TEXT NOT NULL,      -- conduit or node NAME
+    inlet_id        TEXT NOT NULL,
+    capture_node    TEXT NOT NULL,
+    num_inlets      INTEGER,
+    pct_clogged     REAL,
+    flow_limit      REAL,
+    local_depress   REAL,
+    local_width     REAL,
+    placement       INTEGER             -- 0 AUTOMATIC, 1 ON_GRADE, 2 ON_SAG
+);
+CREATE INDEX IF NOT EXISTS idx_inlet_usage_lookup ON inlet_usage(simulation_id, host_kind, host_id);
+)SQL";
+static_assert(sizeof(PART_A5_DDL) <= 16380, "MSVC C2026: split this DDL chunk");
+
 // ============================================================================
 // Part B: Simulation Results & Reports
 // ============================================================================
@@ -1167,6 +1239,41 @@ CREATE INDEX IF NOT EXISTS idx_mesh2d_tri_v1 ON mesh_2d_triangles(simulation_id,
 CREATE INDEX IF NOT EXISTS idx_mesh2d_tri_v2 ON mesh_2d_triangles(simulation_id, v2);
 
 -- ----------------------------------------------------------------------------
+-- 2D mesh quadrilaterals (mixed tri-quad meshes, 2D_TRI_QUAD_MESH_PLAN
+-- 2026-09-06). quad_idx is the 0-based index WITHIN the quads; the engine
+-- cell index is n_triangles + quad_idx (cells are triangles first, then
+-- quads). Absent in older files (all-triangle).
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS mesh_2d_quads (
+    fid             INTEGER PRIMARY KEY AUTOINCREMENT,
+    simulation_id   TEXT NOT NULL,
+    quad_idx        INTEGER NOT NULL,
+    geom            BLOB,
+    v0              INTEGER NOT NULL,
+    v1              INTEGER NOT NULL,
+    v2              INTEGER NOT NULL,
+    v3              INTEGER NOT NULL,
+    mannings_n      REAL NOT NULL DEFAULT 0.035,
+    init_depth      REAL NOT NULL DEFAULT 0,
+    tag             TEXT,
+    bed_elev        REAL,
+    coupled_node    TEXT,
+    UNIQUE(simulation_id, quad_idx),
+    FOREIGN KEY (simulation_id, v0)
+        REFERENCES mesh_2d_vertices(simulation_id, vertex_idx)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (simulation_id, v1)
+        REFERENCES mesh_2d_vertices(simulation_id, vertex_idx)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (simulation_id, v2)
+        REFERENCES mesh_2d_vertices(simulation_id, vertex_idx)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (simulation_id, v3)
+        REFERENCES mesh_2d_vertices(simulation_id, vertex_idx)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- ----------------------------------------------------------------------------
 -- Per-edge boundary conditions; canonical (tri_idx, edge) form matching
 -- [2D_BOUNDARY_CONDITIONS]. Rows exist only for non-default edges (absent
 -- row == WALL). bc_type uses the .inp grammar tokens (WALL | NORMAL_FLOW |
@@ -1270,6 +1377,7 @@ void create_schema(sqlite3* db) {
     exec(db, PART_A2_DDL);
     exec(db, PART_A3_DDL);
     exec(db, PART_A4_DDL);
+    exec(db, PART_A5_DDL);
     exec(db, PART_B_DDL);
     exec(db, PART_C_DDL);
     exec(db, PART_D_DDL);

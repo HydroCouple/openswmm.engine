@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file ErrorCodes.cpp
  * @brief Error/warning description table and formatting — legacy-compatible.
@@ -12,7 +28,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "ErrorCodes.hpp"
@@ -167,9 +183,16 @@ static const std::unordered_map<int, const char*>& error_table() {
         {611, "Virtual Junction %s connects conduits with different cross sections."},
         {613, "Virtual Junction %s has a conduit with a nonzero offset."},
         {615, "Virtual Junction %s conduit inverts do not agree at the node."},
-        {617, "Virtual Junction %s cannot receive lateral inflow."},
+        {617, "Virtual Junction %s cannot be coupled to a 2D surface mesh."},
         {619, "Virtual Junction %s requires DYNWAVE or FV flow routing."},
         {621, "too many items for Virtual Junction %s."},
+        {623, "Inlet Junction %s must connect two STREET conduits."},
+        {625, "Inlet Junction %s references an unknown inlet design."},
+        {627, "Inlet Junction %s has an invalid capture node."},
+        {629, "Inlet Junction %s has a conduit that also carries an [INLET_USAGE] entry."},
+        {631, "too many items for Inlet Junction %s."},
+        {633, "Inlet Junction %s has no inlet design assigned."},
+        {635, "Inlet %s cannot be used with the cross section of its host."},
     };
     return table;
 }
@@ -204,6 +227,11 @@ static const std::unordered_map<int, const char*>& warning_table() {
         {105, "%s is accepted but has no effect yet under FLOW_ROUTING FV."},
         {106, "%s is a dynamic wave option and does not apply under "
               "FLOW_ROUTING FV."},
+        {107, "unreadable row(s) were skipped in the rainfall CSV for Rain "
+              "Gage %s."},
+        {108, "the Preissmann slot width cap (5% of the section top width) "
+              "overrides the requested FV_SLOT_CELERITY for %s; celerities "
+              "below the cap-implied value have no effect there."},
     };
     return table;
 }

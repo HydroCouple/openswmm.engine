@@ -14,6 +14,7 @@
 #include <openswmm/engine/openswmm_forcing.h>
 #include "../../core/SWMMEngine.hpp"
 #include "../mesh/MeshBuilder.hpp"
+#include "../data/Report2DVars.hpp"
 
 #include <cmath>
 #include <cstring>
@@ -40,9 +41,35 @@
     if ((idx) < 0 || (idx) >= router2d.mesh().n_triangles()) \
         return SWMM_ERR_BADINDEX
 
+/// Local edge index must be < the cell's vertex count (3 or 4).
+#define CHECK_EDGE_IDX(cell, edge, router2d) \
+    do { \
+        if ((edge) < 0 || (edge) >= (router2d).mesh().cell_vertex_count(cell)) \
+            return SWMM_ERR_BADINDEX; \
+    } while (0)
+
 #define CHECK_VERT_IDX(idx, router2d) \
     if ((idx) < 0 || (idx) >= router2d.mesh().n_vertices()) \
         return SWMM_ERR_BADINDEX
+
+namespace {
+
+/// Report a coupling's node index the same way whether the coupling was
+/// authored or set through the API.
+///
+/// The API setters resolve the node name eagerly, but a coupling parsed from
+/// `[2D_VERTEX_NODE_MAP]` / `[2D_TRIANGLE_NODE_MAP]` carries only the NAME
+/// until SurfaceRouter2D::initialize() resolves it — section order means the
+/// node table may not exist yet at parse time. Readers therefore fall back to
+/// a name lookup so both paths agree in the OPENED state; the stored index is
+/// left untouched, and -1 still means genuinely unresolvable.
+int coupledNodeIndex(openswmm::SWMMEngine* eng, int stored,
+                     const std::string& node_name) {
+    if (stored >= 0 || node_name.empty()) return stored;
+    return eng->context().node_names.find(node_name);
+}
+
+}  // namespace
 
 extern "C" {
 
@@ -121,6 +148,20 @@ int swmm_2d_set_vertex_z(SWMM_Engine engine, int idx, double z) {
     return SWMM_OK;
 }
 
+int swmm_2d_set_vertex_z_bulk(SWMM_Engine engine, const double* z, int count) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    if (!z) return SWMM_ERR_BADPARAM;
+
+    auto& m = router2d.mesh();
+    if (count != m.n_vertices()) return SWMM_ERR_BADPARAM;
+
+    std::memcpy(m.vz.data(), z, static_cast<std::size_t>(count) * sizeof(double));
+    // One pass over the triangles instead of one pass PER VERTEX.
+    openswmm::twoD::recomputeAllZDependents(m);
+    return SWMM_OK;
+}
+
 int swmm_2d_triangle_get_vertices(SWMM_Engine engine, int idx,
                                     int* v0, int* v1, int* v2) {
     GET_ENGINE(engine);
@@ -129,7 +170,67 @@ int swmm_2d_triangle_get_vertices(SWMM_Engine engine, int idx,
     if (!v0 || !v1 || !v2) return SWMM_ERR_BADPARAM;
 
     auto& m = router2d.mesh();
-    *v0 = m.tri_v0[idx]; *v1 = m.tri_v1[idx]; *v2 = m.tri_v2[idx];
+    // A quad has four vertices — refuse rather than truncate; callers use
+    // swmm_2d_cell_get_vertices for mixed meshes.
+    if (m.cell_vertex_count(idx) != 3) return SWMM_ERR_BADPARAM;
+    *v0 = m.cell_vertex(idx, 0); *v1 = m.cell_vertex(idx, 1); *v2 = m.cell_vertex(idx, 2);
+    return SWMM_OK;
+}
+
+int swmm_2d_cell_count(SWMM_Engine engine, int* count) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    if (!count) return SWMM_ERR_BADPARAM;
+    *count = router2d.mesh().n_triangles();
+    return SWMM_OK;
+}
+
+int swmm_2d_quad_count(SWMM_Engine engine, int* count) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    if (!count) return SWMM_ERR_BADPARAM;
+    *count = router2d.mesh().n_quads();
+    return SWMM_OK;
+}
+
+int swmm_2d_edge_stride(SWMM_Engine engine, int* stride) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    if (!stride) return SWMM_ERR_BADPARAM;
+    *stride = router2d.mesh().edge_stride();
+    return SWMM_OK;
+}
+
+int swmm_2d_cell_vertex_count(SWMM_Engine engine, int idx, int* nv) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    CHECK_TRI_IDX(idx, router2d);
+    if (!nv) return SWMM_ERR_BADPARAM;
+    *nv = router2d.mesh().cell_vertex_count(idx);
+    return SWMM_OK;
+}
+
+int swmm_2d_cell_get_vertices(SWMM_Engine engine, int idx, int* v, int* nv) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    CHECK_TRI_IDX(idx, router2d);
+    if (!v || !nv) return SWMM_ERR_BADPARAM;
+    auto& m = router2d.mesh();
+    *nv = m.cell_vertex_count(idx);
+    for (int k = 0; k < openswmm::twoD::kMaxCellVerts; ++k)
+        v[k] = (k < *nv) ? m.cell_vertex(idx, k) : -1;
+    return SWMM_OK;
+}
+
+int swmm_2d_cell_get_neighbours(SWMM_Engine engine, int idx, int* n, int* nv) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    CHECK_TRI_IDX(idx, router2d);
+    if (!n || !nv) return SWMM_ERR_BADPARAM;
+    auto& m = router2d.mesh();
+    *nv = m.cell_vertex_count(idx);
+    for (int k = 0; k < openswmm::twoD::kMaxCellVerts; ++k)
+        n[k] = (k < *nv) ? m.cell_neighbour(idx, k) : -2;
     return SWMM_OK;
 }
 
@@ -277,7 +378,8 @@ int swmm_2d_triangle_get_neighbours(SWMM_Engine engine, int idx,
     if (!n0 || !n1 || !n2) return SWMM_ERR_BADPARAM;
 
     auto& m = router2d.mesh();
-    *n0 = m.tri_nbr0[idx]; *n1 = m.tri_nbr1[idx]; *n2 = m.tri_nbr2[idx];
+    if (m.cell_vertex_count(idx) != 3) return SWMM_ERR_BADPARAM;
+    *n0 = m.cell_neighbour(idx, 0); *n1 = m.cell_neighbour(idx, 1); *n2 = m.cell_neighbour(idx, 2);
     return SWMM_OK;
 }
 
@@ -287,13 +389,14 @@ int swmm_2d_triangle_get_neighbours(SWMM_Engine engine, int idx,
 
 int swmm_2d_vertex_coupling_count(SWMM_Engine engine, int* count) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     if (!count) return SWMM_ERR_BADPARAM;
 
     int n = 0;
     auto& m = router2d.mesh();
     for (int i = 0; i < m.n_vertices(); ++i) {
-        if (m.vert_coupled_node[i] >= 0) ++n;
+        if (coupledNodeIndex(eng, m.vert_coupled_node[i],
+                             m.vert_coupled_node_name[i]) >= 0) ++n;
     }
     *count = n;
     return SWMM_OK;
@@ -301,13 +404,14 @@ int swmm_2d_vertex_coupling_count(SWMM_Engine engine, int* count) {
 
 int swmm_2d_triangle_coupling_count(SWMM_Engine engine, int* count) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     if (!count) return SWMM_ERR_BADPARAM;
 
     int n = 0;
     auto& m = router2d.mesh();
     for (int i = 0; i < m.n_triangles(); ++i) {
-        if (m.tri_coupled_node[i] >= 0) ++n;
+        if (coupledNodeIndex(eng, m.tri_coupled_node[i],
+                             m.tri_coupled_node_name[i]) >= 0) ++n;
     }
     *count = n;
     return SWMM_OK;
@@ -316,22 +420,26 @@ int swmm_2d_triangle_coupling_count(SWMM_Engine engine, int* count) {
 int swmm_2d_vertex_get_coupled_node(SWMM_Engine engine, int vertex_idx,
                                       int* node_idx) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_VERT_IDX(vertex_idx, router2d);
     if (!node_idx) return SWMM_ERR_BADPARAM;
 
-    *node_idx = router2d.mesh().vert_coupled_node[vertex_idx];
+    const auto& m = router2d.mesh();
+    *node_idx = coupledNodeIndex(eng, m.vert_coupled_node[vertex_idx],
+                                 m.vert_coupled_node_name[vertex_idx]);
     return SWMM_OK;
 }
 
 int swmm_2d_triangle_get_coupled_node(SWMM_Engine engine, int tri_idx,
                                         int* node_idx) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
     if (!node_idx) return SWMM_ERR_BADPARAM;
 
-    *node_idx = router2d.mesh().tri_coupled_node[tri_idx];
+    const auto& m = router2d.mesh();
+    *node_idx = coupledNodeIndex(eng, m.tri_coupled_node[tri_idx],
+                                 m.tri_coupled_node_name[tri_idx]);
     return SWMM_OK;
 }
 
@@ -420,7 +528,7 @@ int swmm_2d_get_triangle_coupling_row(SWMM_Engine engine, int row_idx,
 
     const auto& r = rows[static_cast<std::size_t>(row_idx)];
     *tri_idx  = r.tri;
-    *node_idx = r.node;
+    *node_idx = coupledNodeIndex(eng, r.node, r.node_name);
     *cd       = r.cd;
     *area     = r.area;
     return SWMM_OK;
@@ -534,6 +642,36 @@ int swmm_2d_get_depths_bulk(SWMM_Engine engine, double* depths) {
     return SWMM_OK;
 }
 
+int swmm_2d_get_rainfall_bulk(SWMM_Engine engine, double* rainfall) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    if (!rainfall) return SWMM_ERR_BADPARAM;
+
+    auto& s = router2d.state();
+    std::memcpy(rainfall, s.rainfall.data(), s.rainfall.size() * sizeof(double));
+    return SWMM_OK;
+}
+
+int swmm_2d_get_rain_volume_bulk(SWMM_Engine engine, double* volumes) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    if (!volumes) return SWMM_ERR_BADPARAM;
+
+    const auto& rc = router2d.rainCumulative();
+    std::memcpy(volumes, rc.data(), rc.size() * sizeof(double));
+    return SWMM_OK;
+}
+
+int swmm_2d_get_coupling_volume_bulk(SWMM_Engine engine, double* volumes) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    if (!volumes) return SWMM_ERR_BADPARAM;
+
+    const auto& cc = router2d.couplingCumulative();
+    std::memcpy(volumes, cc.data(), cc.size() * sizeof(double));
+    return SWMM_OK;
+}
+
 int swmm_2d_get_heads_bulk(SWMM_Engine engine, double* heads) {
     GET_ENGINE(engine);
     CHECK_2D_ACTIVE(eng);
@@ -567,19 +705,17 @@ bool partnerSlot(const openswmm::twoD::MeshData& mesh,
                  int tri, int edge,
                  int& nbr_tri, int& nbr_edge)
 {
-    const int nbr =
-        (edge == 0) ? mesh.tri_nbr0[tri] :
-        (edge == 1) ? mesh.tri_nbr1[tri] :
-                      mesh.tri_nbr2[tri];
+    const int nbr = mesh.cell_neighbour(tri, edge);
     if (nbr < 0) return false;
 
     // Find which of nbr's local edges points back at `tri` — that's the
     // partner slot.  At most one match by construction of the neighbour
     // table.
-    if      (mesh.tri_nbr0[nbr] == tri) nbr_edge = 0;
-    else if (mesh.tri_nbr1[nbr] == tri) nbr_edge = 1;
-    else if (mesh.tri_nbr2[nbr] == tri) nbr_edge = 2;
-    else return false;  // neighbour table inconsistent — shouldn't happen
+    const int nvn = mesh.cell_vertex_count(nbr);
+    nbr_edge = -1;
+    for (int k = 0; k < nvn; ++k)
+        if (mesh.cell_neighbour(nbr, k) == tri) { nbr_edge = k; break; }
+    if (nbr_edge < 0) return false;  // neighbour table inconsistent — shouldn't happen
     nbr_tri = nbr;
     return true;
 }
@@ -591,10 +727,10 @@ int swmm_2d_get_edge_conveyance(SWMM_Engine engine, int tri, int edge,
     GET_ENGINE(engine);
     CHECK_2D_ACTIVE(eng);
     CHECK_TRI_IDX(tri, router2d);
-    if (edge < 0 || edge > 2)   return SWMM_ERR_BADINDEX;
+    CHECK_EDGE_IDX(tri, edge, router2d);
     if (!conveyance)            return SWMM_ERR_BADPARAM;
 
-    *conveyance = router2d.mesh().edge_conveyance[tri * 3 + edge];
+    *conveyance = router2d.mesh().edge_conveyance[openswmm::twoD::MeshData::slot(tri, edge)];
     return SWMM_OK;
 }
 
@@ -604,16 +740,16 @@ int swmm_2d_set_edge_conveyance(SWMM_Engine engine, int tri, int edge,
     GET_ENGINE(engine);
     CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri, router2d);
-    if (edge < 0 || edge > 2)                          return SWMM_ERR_BADINDEX;
+    CHECK_EDGE_IDX(tri, edge, router2d);
     if (!(conveyance >= 0.0 && conveyance <= 1.0))     return SWMM_ERR_BADPARAM;
 
     auto& mesh = router2d.mesh();
-    mesh.edge_conveyance[tri * 3 + edge] = conveyance;
+    mesh.edge_conveyance[openswmm::twoD::MeshData::slot(tri, edge)] = conveyance;
 
     // Q3 silent partner mirroring — interior edges only.
     int nbr_tri = -1, nbr_edge = -1;
     if (partnerSlot(mesh, tri, edge, nbr_tri, nbr_edge)) {
-        mesh.edge_conveyance[nbr_tri * 3 + nbr_edge] = conveyance;
+        mesh.edge_conveyance[openswmm::twoD::MeshData::slot(nbr_tri, nbr_edge)] = conveyance;
     }
     return SWMM_OK;
 }
@@ -625,8 +761,14 @@ int swmm_2d_get_edge_conveyance_bulk(SWMM_Engine engine, double* conveyance)
     if (!conveyance) return SWMM_ERR_BADPARAM;
 
     auto& m = router2d.mesh();
-    std::memcpy(conveyance, m.edge_conveyance.data(),
-                m.edge_conveyance.size() * sizeof(double));
+    // Public layout is [cell * edge_stride + edge] (stride 3 for all-triangle
+    // meshes, 4 once a quad exists); pack from the internal padded slots.
+    const int stride = m.edge_stride();
+    for (int c = 0; c < m.n_triangles(); ++c)
+        for (int k = 0; k < stride; ++k)
+            conveyance[static_cast<std::size_t>(c) * stride + k] =
+                m.edge_conveyance[static_cast<std::size_t>(
+                    openswmm::twoD::MeshData::slot(c, k))];
     return SWMM_OK;
 }
 
@@ -650,8 +792,12 @@ int swmm_2d_get_edge_flux_bulk(SWMM_Engine engine, double* flux) {
     // edge_flux INFLOW-positive, so flip the sign on the way out. The internal
     // state is untouched (the volume update relies on the inflow-positive array).
     const auto& ef = s.edge_flux;
-    for (std::size_t i = 0; i < ef.size(); ++i)
-        flux[i] = -ef[i];
+    const auto& m  = router2d.mesh();
+    const int stride = m.edge_stride();
+    for (int c = 0; c < m.n_triangles(); ++c)
+        for (int k = 0; k < stride; ++k)
+            flux[static_cast<std::size_t>(c) * stride + k] =
+                -ef[static_cast<std::size_t>(openswmm::twoD::MeshData::slot(c, k))];
     return SWMM_OK;
 }
 
@@ -662,10 +808,15 @@ int swmm_2d_edge_get_geometry_bulk(SWMM_Engine engine,
     if (!length || !nx || !ny) return SWMM_ERR_BADPARAM;
 
     auto& m = router2d.mesh();
-    const size_t n3 = m.edge_length.size();
-    std::memcpy(length, m.edge_length.data(), n3 * sizeof(double));
-    std::memcpy(nx,     m.edge_nx.data(),     n3 * sizeof(double));
-    std::memcpy(ny,     m.edge_ny.data(),     n3 * sizeof(double));
+    const int stride = m.edge_stride();
+    for (int c = 0; c < m.n_triangles(); ++c)
+        for (int k = 0; k < stride; ++k) {
+            const auto dst = static_cast<std::size_t>(c) * stride + k;
+            const auto src = static_cast<std::size_t>(openswmm::twoD::MeshData::slot(c, k));
+            length[dst] = m.edge_length[src];
+            nx[dst]     = m.edge_nx[src];
+            ny[dst]     = m.edge_ny[src];
+        }
     return SWMM_OK;
 }
 
@@ -679,6 +830,7 @@ int swmm_2d_vertex_get_head(SWMM_Engine engine, int idx, double* head) {
     CHECK_VERT_IDX(idx, router2d);
     if (!head) return SWMM_ERR_BADPARAM;
 
+    router2d.refreshRenderFieldsIfStale();
     *head = router2d.state().vert_head[idx];
     return SWMM_OK;
 }
@@ -688,6 +840,7 @@ int swmm_2d_vertex_get_heads_bulk(SWMM_Engine engine, double* heads) {
     CHECK_2D_ACTIVE(eng);
     if (!heads) return SWMM_ERR_BADPARAM;
 
+    router2d.refreshRenderFieldsIfStale();
     auto& s = router2d.state();
     std::memcpy(heads, s.vert_head.data(), s.vert_head.size() * sizeof(double));
     return SWMM_OK;
@@ -698,6 +851,7 @@ int swmm_2d_vertex_get_render_depths_bulk(SWMM_Engine engine, double* depths) {
     CHECK_2D_ACTIVE(eng);
     if (!depths) return SWMM_ERR_BADPARAM;
 
+    router2d.refreshRenderFieldsIfStale();
     auto& s = router2d.state();
     std::memcpy(depths, s.vert_depth_signed.data(),
                 s.vert_depth_signed.size() * sizeof(double));
@@ -751,6 +905,31 @@ int swmm_2d_get_solver_last_step(SWMM_Engine engine, double* h_last) {
     if (!h_last) return SWMM_ERR_BADPARAM;
 
     *h_last = router2d.lastSolverStepSize();
+    return SWMM_OK;
+}
+
+int swmm_2d_get_run_stats(SWMM_Engine engine, SWMM_2DRunStats* stats) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    if (!stats) return SWMM_ERR_BADPARAM;
+
+    *stats = SWMM_2DRunStats{};
+    std::snprintf(stats->backend, sizeof stats->backend, "%s",
+                  router2d.backendName().c_str());
+    const auto& o = router2d.options();
+    using openswmm::twoD::Momentum2D;
+    stats->momentum  = (o.momentum == Momentum2D::FULL_SWE)       ? 1
+                     : (o.momentum == Momentum2D::DIFFUSIVE_WAVE) ? 2 : 0;
+    stats->lts_tiers = o.lts_tiers;
+    const auto s = router2d.runStats();
+    stats->steps            = s.nsteps;
+    stats->face_evals       = s.nrhs;
+    stats->last_step        = s.last_h;
+    stats->active_frac_min  = s.active_frac_min;
+    stats->active_frac_mean = s.active_frac_mean;
+    stats->active_frac_max  = s.active_frac_max;
+    stats->n_tiers          = s.n_tiers;
+    for (int k = 0; k < 8; ++k) stats->tier_cells[k] = s.tier_cells[k];
     return SWMM_OK;
 }
 
@@ -843,6 +1022,7 @@ int swmm_2d_force_rainfall(SWMM_Engine engine, int idx,
     s.rainfall_force_val[idx] = value;
     s.rainfall_persist[idx]   = static_cast<int8_t>(persist);
     s.forcing_dirty = true;
+    s.forcing_ever_set = true;
     return SWMM_OK;
 }
 
@@ -861,6 +1041,7 @@ int swmm_2d_force_rainfall_uniform(SWMM_Engine engine,
         s.rainfall_persist[i]   = static_cast<int8_t>(persist);
     }
     s.forcing_dirty = true;
+    s.forcing_ever_set = true;
     return SWMM_OK;
 }
 
@@ -877,6 +1058,7 @@ int swmm_2d_force_evap(SWMM_Engine engine, int idx,
     s.evap_force_val[idx] = value;
     s.evap_persist[idx]   = static_cast<int8_t>(persist);
     s.forcing_dirty = true;
+    s.forcing_ever_set = true;
     return SWMM_OK;
 }
 
@@ -895,6 +1077,7 @@ int swmm_2d_force_evap_uniform(SWMM_Engine engine,
         s.evap_persist[i]   = static_cast<int8_t>(persist);
     }
     s.forcing_dirty = true;
+    s.forcing_ever_set = true;
     return SWMM_OK;
 }
 
@@ -911,6 +1094,7 @@ int swmm_2d_force_coupling_flux(SWMM_Engine engine, int idx,
     s.coupling_force_val[idx] = value;
     s.coupling_persist[idx]   = static_cast<int8_t>(persist);
     s.forcing_dirty = true;
+    s.forcing_ever_set = true;
     return SWMM_OK;
 }
 
@@ -932,6 +1116,7 @@ int swmm_2d_force_clear_all(SWMM_Engine engine) {
         s.coupling_persist[i] = 0;
     }
     s.forcing_dirty = true;
+    s.forcing_ever_set = true;
     return SWMM_OK;
 }
 
@@ -969,11 +1154,7 @@ int swmm_2d_set_dry_depth(SWMM_Engine engine, double dry_depth) {
 namespace {
 
 inline int tri_nbr(const openswmm::twoD::MeshData& mesh, int t, int e) {
-    switch (e) {
-        case 0:  return mesh.tri_nbr0[t];
-        case 1:  return mesh.tri_nbr1[t];
-        default: return mesh.tri_nbr2[t];
-    }
+    return (e >= 0 && e < mesh.cell_vertex_count(t)) ? mesh.cell_neighbour(t, e) : -2;
 }
 
 } // namespace
@@ -986,22 +1167,37 @@ int swmm_2d_boundary_edge_count(SWMM_Engine engine, int* count) {
     const auto& mesh = router2d.mesh();
     int n = 0;
     for (int t = 0; t < mesh.n_triangles(); ++t) {
-        if (mesh.tri_nbr0[t] < 0) ++n;
-        if (mesh.tri_nbr1[t] < 0) ++n;
-        if (mesh.tri_nbr2[t] < 0) ++n;
+        const int nvc = mesh.cell_vertex_count(t);
+        for (int k = 0; k < nvc; ++k)
+            if (mesh.cell_neighbour(t, k) < 0) ++n;
     }
     *count = n;
     return SWMM_OK;
 }
 
+// The four BC-value getters below read parsed MESH data, not solver state,
+// so they use CHECK_2D_MESH and work in the OPENED state the GUI holds —
+// the setters' mirror image (SVBC round A8). Only the cum_flux getter reads
+// a runtime accumulator and keeps CHECK_2D_ACTIVE.
+// BoundaryData's live arrays are sized by drainPendingRows() (via
+// swmm_2d_prepare_for_edit or initialize) — before that, in the freshly
+// OPENED state, they are EMPTY even for a deck with authored BC rows, and
+// unchecked indexing segfaulted (found by this round's pre-push gate). The
+// getters refuse cleanly until the drain instead.
+#define CHECK_BC_SIZED(vec, idx) \
+    if ((idx) < 0 || static_cast<std::size_t>(idx) >= (vec).size()) \
+        return SWMM_ERR_BADPARAM
+
 int swmm_2d_get_edge_bc_type(SWMM_Engine engine, int tri_idx, int edge,
                               int* bc_type) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
-    if (edge < 0 || edge > 2 || !bc_type) return SWMM_ERR_BADPARAM;
+    if (!bc_type) return SWMM_ERR_BADPARAM;
+    CHECK_EDGE_IDX(tri_idx, edge, router2d);
+    CHECK_BC_SIZED(router2d.boundary().edge_bc_type, openswmm::twoD::MeshData::slot(tri_idx, edge));
 
-    *bc_type = router2d.boundary().edge_bc_type[tri_idx * 3 + edge];
+    *bc_type = router2d.boundary().edge_bc_type[openswmm::twoD::MeshData::slot(tri_idx, edge)];
     return SWMM_OK;
 }
 
@@ -1010,7 +1206,7 @@ int swmm_2d_set_edge_bc_type(SWMM_Engine engine, int tri_idx, int edge,
     GET_ENGINE(engine);
     CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
-    if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
+    CHECK_EDGE_IDX(tri_idx, edge, router2d);
     if (bc_type != SWMM_2D_BC_WALL &&
         bc_type != SWMM_2D_BC_NORMAL_FLOW &&
         bc_type != SWMM_2D_BC_SPECIFIED_STAGE &&
@@ -1019,19 +1215,22 @@ int swmm_2d_set_edge_bc_type(SWMM_Engine engine, int tri_idx, int edge,
         return SWMM_ERR_BADPARAM;
     }
 
-    router2d.boundary().edge_bc_type[tri_idx * 3 + edge] =
+    router2d.boundary().edge_bc_type[openswmm::twoD::MeshData::slot(tri_idx, edge)] =
         static_cast<int8_t>(bc_type);
+    router2d.invalidateBoundaryIndex();
     return SWMM_OK;
 }
 
 int swmm_2d_get_edge_bc_head(SWMM_Engine engine, int tri_idx, int edge,
                               double* head) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
-    if (edge < 0 || edge > 2 || !head) return SWMM_ERR_BADPARAM;
+    if (!head) return SWMM_ERR_BADPARAM;
+    CHECK_EDGE_IDX(tri_idx, edge, router2d);
+    CHECK_BC_SIZED(router2d.boundary().edge_bc_head, openswmm::twoD::MeshData::slot(tri_idx, edge));
 
-    *head = router2d.boundary().edge_bc_head[tri_idx * 3 + edge];
+    *head = router2d.boundary().edge_bc_head[openswmm::twoD::MeshData::slot(tri_idx, edge)];
     return SWMM_OK;
 }
 
@@ -1040,20 +1239,22 @@ int swmm_2d_set_edge_bc_head(SWMM_Engine engine, int tri_idx, int edge,
     GET_ENGINE(engine);
     CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
-    if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
+    CHECK_EDGE_IDX(tri_idx, edge, router2d);
 
-    router2d.boundary().edge_bc_head[tri_idx * 3 + edge] = head;
+    router2d.boundary().edge_bc_head[openswmm::twoD::MeshData::slot(tri_idx, edge)] = head;
     return SWMM_OK;
 }
 
 int swmm_2d_get_edge_bc_slope(SWMM_Engine engine, int tri_idx, int edge,
                                double* slope) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
-    if (edge < 0 || edge > 2 || !slope) return SWMM_ERR_BADPARAM;
+    if (!slope) return SWMM_ERR_BADPARAM;
+    CHECK_EDGE_IDX(tri_idx, edge, router2d);
+    CHECK_BC_SIZED(router2d.boundary().edge_bed_slope, openswmm::twoD::MeshData::slot(tri_idx, edge));
 
-    *slope = router2d.boundary().edge_bed_slope[tri_idx * 3 + edge];
+    *slope = router2d.boundary().edge_bed_slope[openswmm::twoD::MeshData::slot(tri_idx, edge)];
     return SWMM_OK;
 }
 
@@ -1062,10 +1263,10 @@ int swmm_2d_set_edge_bc_slope(SWMM_Engine engine, int tri_idx, int edge,
     GET_ENGINE(engine);
     CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
-    if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
+    CHECK_EDGE_IDX(tri_idx, edge, router2d);
     if (slope < 0.0) return SWMM_ERR_BADPARAM;
 
-    router2d.boundary().edge_bed_slope[tri_idx * 3 + edge] = slope;
+    router2d.boundary().edge_bed_slope[openswmm::twoD::MeshData::slot(tri_idx, edge)] = slope;
     return SWMM_OK;
 }
 
@@ -1074,9 +1275,10 @@ int swmm_2d_get_edge_bc_cum_flux(SWMM_Engine engine, int tri_idx, int edge,
     GET_ENGINE(engine);
     CHECK_2D_ACTIVE(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
-    if (edge < 0 || edge > 2 || !cum_flux) return SWMM_ERR_BADPARAM;
+    if (!cum_flux) return SWMM_ERR_BADPARAM;
+    CHECK_EDGE_IDX(tri_idx, edge, router2d);
 
-    *cum_flux = router2d.boundary().edge_bc_cum_flux[tri_idx * 3 + edge];
+    *cum_flux = router2d.boundary().edge_bc_cum_flux[openswmm::twoD::MeshData::slot(tri_idx, edge)];
     return SWMM_OK;
 }
 
@@ -1092,9 +1294,9 @@ int swmm_2d_set_edge_bc_tseries_name(SWMM_Engine engine, int tri_idx, int edge,
     GET_ENGINE(engine);
     CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
-    if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
+    CHECK_EDGE_IDX(tri_idx, edge, router2d);
 
-    const int idx = tri_idx * 3 + edge;
+    const int idx = openswmm::twoD::MeshData::slot(tri_idx, edge);
     auto& b = router2d.boundary();
     if (!name || name[0] == '\0') {
         b.edge_bc_tseries_name[idx].clear();
@@ -1109,12 +1311,66 @@ int swmm_2d_set_edge_bc_tseries_name(SWMM_Engine engine, int tri_idx, int edge,
 int swmm_2d_get_edge_bc_flow(SWMM_Engine engine, int tri_idx, int edge,
                                double* flow) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
-    if (edge < 0 || edge > 2 || !flow) return SWMM_ERR_BADPARAM;
+    if (!flow) return SWMM_ERR_BADPARAM;
+    CHECK_EDGE_IDX(tri_idx, edge, router2d);
+    CHECK_BC_SIZED(router2d.boundary().edge_bc_flow, openswmm::twoD::MeshData::slot(tri_idx, edge));
 
-    *flow = router2d.boundary().edge_bc_flow[tri_idx * 3 + edge];
+    *flow = router2d.boundary().edge_bc_flow[openswmm::twoD::MeshData::slot(tri_idx, edge)];
     return SWMM_OK;
+}
+
+// SVBC A8 — name getters, the setter trio's mirror image, so a caller can
+// VERIFY what the engine holds after an edit push (the GUI previously had
+// write-only access to BC names). Same buf/buflen truncating-copy
+// convention as swmm_2d_get_vertex_tag.
+static int copyBcName(const std::string& s, char* buf, int buflen) {
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    const int copy_len = std::min(static_cast<int>(s.size()), buflen - 1);
+    if (copy_len > 0)
+        std::memcpy(buf, s.c_str(), static_cast<std::size_t>(copy_len));
+    buf[copy_len] = '\0';
+    return SWMM_OK;
+}
+
+int swmm_2d_get_edge_bc_tseries_name(SWMM_Engine engine, int tri_idx, int edge,
+                                       char* buf, int buflen) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    CHECK_EDGE_IDX(tri_idx, edge, router2d);
+    CHECK_BC_SIZED(router2d.boundary().edge_bc_tseries_name,
+                   openswmm::twoD::MeshData::slot(tri_idx, edge));
+    return copyBcName(
+        router2d.boundary().edge_bc_tseries_name[openswmm::twoD::MeshData::slot(tri_idx, edge)],
+        buf, buflen);
+}
+
+int swmm_2d_get_edge_bc_flow_tseries_name(SWMM_Engine engine, int tri_idx,
+                                            int edge, char* buf, int buflen) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    CHECK_EDGE_IDX(tri_idx, edge, router2d);
+    CHECK_BC_SIZED(router2d.boundary().edge_bc_flow_tseries_name,
+                   openswmm::twoD::MeshData::slot(tri_idx, edge));
+    return copyBcName(
+        router2d.boundary().edge_bc_flow_tseries_name[openswmm::twoD::MeshData::slot(tri_idx, edge)],
+        buf, buflen);
+}
+
+int swmm_2d_get_edge_bc_rating_curve_name(SWMM_Engine engine, int tri_idx,
+                                            int edge, char* buf, int buflen) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    CHECK_EDGE_IDX(tri_idx, edge, router2d);
+    CHECK_BC_SIZED(router2d.boundary().edge_bc_rating_curve_name,
+                   openswmm::twoD::MeshData::slot(tri_idx, edge));
+    return copyBcName(
+        router2d.boundary().edge_bc_rating_curve_name[openswmm::twoD::MeshData::slot(tri_idx, edge)],
+        buf, buflen);
 }
 
 int swmm_2d_set_edge_bc_flow(SWMM_Engine engine, int tri_idx, int edge,
@@ -1122,9 +1378,9 @@ int swmm_2d_set_edge_bc_flow(SWMM_Engine engine, int tri_idx, int edge,
     GET_ENGINE(engine);
     CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
-    if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
+    CHECK_EDGE_IDX(tri_idx, edge, router2d);
 
-    router2d.boundary().edge_bc_flow[tri_idx * 3 + edge] = flow;
+    router2d.boundary().edge_bc_flow[openswmm::twoD::MeshData::slot(tri_idx, edge)] = flow;
     return SWMM_OK;
 }
 
@@ -1133,9 +1389,9 @@ int swmm_2d_set_edge_bc_flow_tseries_name(SWMM_Engine engine, int tri_idx, int e
     GET_ENGINE(engine);
     CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
-    if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
+    CHECK_EDGE_IDX(tri_idx, edge, router2d);
 
-    const int idx = tri_idx * 3 + edge;
+    const int idx = openswmm::twoD::MeshData::slot(tri_idx, edge);
     auto& b = router2d.boundary();
     if (!name || name[0] == '\0') {
         b.edge_bc_flow_tseries_name[idx].clear();
@@ -1152,9 +1408,9 @@ int swmm_2d_set_edge_bc_rating_curve_name(SWMM_Engine engine, int tri_idx, int e
     GET_ENGINE(engine);
     CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
-    if (edge < 0 || edge > 2) return SWMM_ERR_BADPARAM;
+    CHECK_EDGE_IDX(tri_idx, edge, router2d);
 
-    const int idx = tri_idx * 3 + edge;
+    const int idx = openswmm::twoD::MeshData::slot(tri_idx, edge);
     auto& b = router2d.boundary();
     if (!name || name[0] == '\0') {
         b.edge_bc_rating_curve_name[idx].clear();
@@ -1164,6 +1420,33 @@ int swmm_2d_set_edge_bc_rating_curve_name(SWMM_Engine engine, int tri_idx, int e
         b.edge_bc_rating_curve[idx]      = -2;
     }
     return SWMM_OK;
+}
+
+// ============================================================================
+// Results-file variable selection helpers (engine-independent)
+// ============================================================================
+
+int swmm_2d_output_variable_count(void) {
+    return static_cast<int>(openswmm::twoD::report2d::tokens().size());
+}
+
+const char* swmm_2d_output_variable_name(int i) {
+    const auto& t = openswmm::twoD::report2d::tokens();
+    if (i < 0 || i >= static_cast<int>(t.size())) return "";
+    return t[static_cast<std::size_t>(i)].c_str();
+}
+
+unsigned swmm_2d_output_variable_mask(const char* text) {
+    if (!text) return 0u;
+    unsigned mask = 0u;
+    if (!openswmm::twoD::report2d::parseMask(text, mask).empty()) return 0u;
+    return mask;
+}
+
+const char* swmm_2d_output_variable_text(unsigned mask) {
+    static thread_local std::string buf;
+    buf = openswmm::twoD::report2d::formatMask(mask);
+    return buf.c_str();
 }
 
 } // extern "C"

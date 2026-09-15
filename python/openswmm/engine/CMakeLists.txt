@@ -29,6 +29,11 @@ set(_engine_modules
     _controls
     _infrastructure
     _quality
+    _initial_quality
+    _reactions
+    _heat
+    _water_age
+    _process_components
     _statistics
     _output_reader
     _spatial

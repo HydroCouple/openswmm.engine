@@ -5,6 +5,7 @@
  */
 
 #include "GeoPackageWriter.hpp"
+#include "../../core/Constants.hpp"
 #include "ExternalContentWriter.hpp"
 #include "GeoPackageSchema.hpp"
 #include "GpkgUtils.hpp"
@@ -29,6 +30,7 @@
 #include "2d/data/BoundaryData.hpp"
 #include "2d/data/PendingRows2D.hpp"
 #include "2d/data/Serialize2D.hpp"
+#include "2d/data/Report2DVars.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -227,6 +229,11 @@ static void write_options(sqlite3* db, const SimulationContext& ctx,
     insert("NODE_CONTINUITY", std::to_string(static_cast<int>(opts.node_continuity)));
     insert("ANDERSON_ACCEL", std::to_string(opts.anderson_accel ? 1 : 0));
     insert("SURCHARGE_METHOD", std::to_string(opts.surcharge_method));
+    insert("UNSTEADY_FRICTION", std::to_string(opts.unsteady_friction));  // issue #156
+    insert_d("UF_K3", opts.uf_k3);
+    insert("FV_PRESSURE_CLOSURE", std::to_string(opts.fv.pressure_closure));  // issue #156
+    insert("REPORT_SIGNED_HEADS", std::to_string(opts.report_signed_heads));  // issue #156
+    insert_d("TPA_CELERITY", opts.tpa_celerity);  // issue #156
     if (opts.surcharge_method == 2) {
         insert_d("DPS_CELERITY", opts.dps_target_celerity);
         insert_d("DPS_ALPHA", opts.dps_alpha);
@@ -304,8 +311,9 @@ static void write_nodes(sqlite3* db, const SimulationContext& ctx,
     // node_id); the base row is inserted first each iteration so the FK resolves.
     auto stmt = prepare(db,
         "INSERT INTO nodes (simulation_id, node_id, node_type, geom, "
-        "invert_elev, max_depth, init_depth, surcharge_depth, ponded_area, tag) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?)");
+        "invert_elev, max_depth, init_depth, surcharge_depth, ponded_area, tag, "
+        "is_virtual, rim_depth, is_inlet) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)");
     auto st_stmt = prepare(db,
         "INSERT INTO storages (simulation_id, node_id, curve_name, shape, a, b, c, "
         "p1, p2, p3, seep_rate, evap_frac, exfil_suction, exfil_ksat, exfil_imd) "
@@ -352,6 +360,15 @@ static void write_nodes(sqlite3* db, const SimulationContext& ctx,
             bind_text(stmt.get(), 10, ctx.nodes.tags[utag]);
         else
             bind_null(stmt.get(), 10);
+
+        // Virtual-junction flag + its rendering-only rim depth. node_type says
+        // JUNCTION for both kinds, so without these two the round-trip loses
+        // the virtual junction entirely.
+        bind_int(stmt.get(), 11,
+                 (utag < ctx.nodes.is_virtual.size() && ctx.nodes.is_virtual[utag]) ? 1 : 0);
+        bind_double(stmt.get(), 12, safe_dbl(ctx.nodes.rim_depth, i));
+        bind_int(stmt.get(), 13,
+                 (utag < ctx.nodes.is_inlet.size() && ctx.nodes.is_inlet[utag]) ? 1 : 0);
 
         sqlite3_step(stmt.get());
 
@@ -482,8 +499,18 @@ static void write_links(sqlite3* db, const SimulationContext& ctx,
 
         bind_text(stmt.get(), 5, from_name);
         bind_text(stmt.get(), 6, to_name);
-        bind_double(stmt.get(), 7, safe_dbl(ctx.links.offset1, i));
-        bind_double(stmt.get(), 8, safe_dbl(ctx.links.offset2, i));
+        // Persist the AUTHORED offsets: resolve_cross_references raises both
+        // offsets of a FILLED_CIRCULAR conduit by the sediment depth yBot
+        // (legacy link.c:1072-1077); undo it here (internal ft, as written).
+        double off1 = safe_dbl(ctx.links.offset1, i);
+        double off2 = safe_dbl(ctx.links.offset2, i);
+        if (ctx.links.type[i] == LinkType::CONDUIT &&
+            ctx.links.xsect_shape[i] == XsectShape::FILLED_CIRCULAR) {
+            off1 -= safe_dbl(ctx.links.xsect_y_bot, i);
+            off2 -= safe_dbl(ctx.links.xsect_y_bot, i);
+        }
+        bind_double(stmt.get(), 7, off1);
+        bind_double(stmt.get(), 8, off2);
 
         bind_double(stmt.get(), 9,  safe_dbl(ctx.links.q0, i));
         bind_double(stmt.get(), 10, safe_dbl(ctx.links.q_limit, i));
@@ -1019,7 +1046,10 @@ static void write_pollutants(sqlite3* db, const SimulationContext& ctx,
         bind_int(stmt.get(), 3, static_cast<int>(safe_get(ctx.pollutants.units, (size_t)i, MassUnits::MG_PER_L)));
         bind_double(stmt.get(), 4, safe_dbl(ctx.pollutants.c_rain, i));
         bind_double(stmt.get(), 5, safe_dbl(ctx.pollutants.c_gw, i));
-        bind_double(stmt.get(), 6, safe_dbl(ctx.pollutants.k_decay, i));
+        // Kdecay column carries file units (1/day), like the INP column
+        // (KD1); internal storage is 1/sec.
+        bind_double(stmt.get(), 6,
+                    safe_dbl(ctx.pollutants.k_decay, i) * constants::SEC_PER_DAY);
         bind_int(stmt.get(), 7, safe_get(ctx.pollutants.snow_only, (size_t)i, false) ? 1 : 0);
         int co = safe_int(ctx.pollutants.co_pollut, i);
         if (co >= 0 && co < ctx.pollutant_names.size())
@@ -1489,6 +1519,106 @@ static void write_transects(sqlite3* db, const SimulationContext& ctx,
     }
 }
 
+// Street sections, inlet designs and inlet placements ([STREETS], [INLETS],
+// [INLET_USAGE] + [INLET_JUNCTIONS]). Written as the engine holds them (user
+// units as read, cross slope in percent), like the transects above.
+static void write_streets(sqlite3* db, const SimulationContext& ctx,
+                          const std::string& sim_id) {
+    const auto& S = ctx.streets;
+    if (S.count() == 0) return;
+    auto stmt = prepare(db,
+        "INSERT INTO streets (simulation_id, street_id, t_crown, h_curb, sx, n_road, "
+        "gutter_depres, gutter_width, sides, back_width, back_slope, back_n) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)");
+    for (int i = 0; i < S.count(); ++i) {
+        const auto u = static_cast<std::size_t>(i);
+        sqlite3_reset(stmt.get());
+        sqlite3_clear_bindings(stmt.get());
+        bind_text(stmt.get(), 1, sim_id);
+        bind_text(stmt.get(), 2, S.names[u]);
+        bind_double(stmt.get(), 3, S.t_crown[u]);
+        bind_double(stmt.get(), 4, S.h_curb[u]);
+        bind_double(stmt.get(), 5, S.sx[u]);
+        bind_double(stmt.get(), 6, S.n_road[u]);
+        bind_double(stmt.get(), 7, S.gutter_depres[u]);
+        bind_double(stmt.get(), 8, S.gutter_width[u]);
+        bind_int(stmt.get(), 9, S.sides[u]);
+        bind_double(stmt.get(), 10, S.back_width[u]);
+        bind_double(stmt.get(), 11, S.back_slope[u]);
+        bind_double(stmt.get(), 12, S.back_n[u]);
+        sqlite3_step(stmt.get());
+    }
+}
+
+static void write_inlets(sqlite3* db, const SimulationContext& ctx,
+                         const std::string& sim_id) {
+    const auto& I = ctx.inlets;
+    if (I.count() == 0) return;
+    auto stmt = prepare(db,
+        "INSERT INTO inlets (simulation_id, inlet_id, inlet_type, length, width, grate_type, "
+        "open_area, splash_veloc, curb_length, curb_height, curb_throat, curve_id, comment) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)");
+    for (int i = 0; i < I.count(); ++i) {
+        const auto u = static_cast<std::size_t>(i);
+        sqlite3_reset(stmt.get());
+        sqlite3_clear_bindings(stmt.get());
+        bind_text(stmt.get(), 1, sim_id);
+        bind_text(stmt.get(), 2, I.names[u]);
+        bind_text(stmt.get(), 3, I.inlet_type[u]);
+        bind_double(stmt.get(), 4, I.length[u]);
+        bind_double(stmt.get(), 5, I.width[u]);
+        if (!I.grate_type[u].empty()) bind_text(stmt.get(), 6, I.grate_type[u]);
+        else                          bind_null(stmt.get(), 6);
+        bind_double(stmt.get(), 7, I.open_area[u]);
+        bind_double(stmt.get(), 8, I.splash_veloc[u]);
+        bind_double(stmt.get(), 9, I.curb_length[u]);
+        bind_double(stmt.get(), 10, I.curb_height[u]);
+        bind_int(stmt.get(), 11, I.curb_throat[u]);
+        if (!I.curve_id[u].empty()) bind_text(stmt.get(), 12, I.curve_id[u]);
+        else                        bind_null(stmt.get(), 12);
+        if (u < I.comments.size() && !I.comments[u].empty()) bind_text(stmt.get(), 13, I.comments[u]);
+        else                                                 bind_null(stmt.get(), 13);
+        sqlite3_step(stmt.get());
+    }
+}
+
+static void write_inlet_usage(sqlite3* db, const SimulationContext& ctx,
+                              const std::string& sim_id) {
+    const auto& U = ctx.inlet_usages;
+    if (U.count() == 0) return;
+    auto stmt = prepare(db,
+        "INSERT INTO inlet_usage (simulation_id, host_kind, host_id, inlet_id, capture_node, "
+        "num_inlets, pct_clogged, flow_limit, local_depress, local_width, placement) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)");
+    for (int r = 0; r < U.count(); ++r) {
+        const auto ur = static_cast<std::size_t>(r);
+        const int di = U.design_index[ur];
+        const int ni = U.node_index[ur];
+        const int host_node = U.node_host[ur];
+        const int host_link = U.link_index[ur];
+        // A row whose references never resolved would be dropped on re-read
+        // anyway (as the .inp writer does): skip it rather than write '?'.
+        if (di < 0 || di >= ctx.inlets.count() || ni < 0 || ni >= ctx.n_nodes()) continue;
+        if (host_node < 0 && (host_link < 0 || host_link >= ctx.n_links())) continue;
+        if (host_node >= ctx.n_nodes()) continue;
+        sqlite3_reset(stmt.get());
+        sqlite3_clear_bindings(stmt.get());
+        bind_text(stmt.get(), 1, sim_id);
+        bind_int(stmt.get(), 2, host_node >= 0 ? 1 : 0);
+        bind_text(stmt.get(), 3, host_node >= 0 ? ctx.node_names.name_of(host_node)
+                                                : ctx.link_names.name_of(host_link));
+        bind_text(stmt.get(), 4, ctx.inlets.names[static_cast<std::size_t>(di)]);
+        bind_text(stmt.get(), 5, ctx.node_names.name_of(ni));
+        bind_int(stmt.get(), 6, U.num_inlets[ur]);
+        bind_double(stmt.get(), 7, (1.0 - U.clog_factor[ur]) * 100.0);
+        bind_double(stmt.get(), 8, U.flow_limit[ur]);
+        bind_double(stmt.get(), 9, U.local_depress[ur]);
+        bind_double(stmt.get(), 10, U.local_width[ur]);
+        bind_int(stmt.get(), 11, U.placement[ur]);
+        sqlite3_step(stmt.get());
+    }
+}
+
 static void write_controls(sqlite3* db, const SimulationContext& ctx,
                            const std::string& sim_id) {
     const auto& C = ctx.control_rules;
@@ -1624,6 +1754,27 @@ static void write_options_2d(sqlite3* db, const SimulationContext& ctx,
     insert("2D_ADVECTION",         o.advection ? "YES" : "NO");
     insert("2D_COUPLING_AREA",     o.coupling_area_auto ? "AUTO" : "DEFAULT");
     insert("2D_REPORT_2D",         o.report_2d ? "YES" : "NO");
+    // Results-file size controls (same tokens as the .inp grammar).
+    insert("2D_OUTPUT_PRECISION",
+           o.output_precision == twoD::OutputPrecision2D::FLOAT64 ? "FLOAT64" : "FLOAT32");
+    insert("2D_OUTPUT_COMPRESSION", std::to_string(o.output_compression));
+    insert("2D_REPORT_2D_VARIABLES", twoD::report2d::formatMask(o.report_2d_vars));
+    insert("2D_REPORT_2D_SPECIES",   twoD::report2d::formatSpecies(o.report_2d_species));
+    insert("2D_REPORT_2D_STEP",      fmt_g17(o.report_2d_step));
+    // E2 process enables (defaults written too — the reader tolerates absence).
+    insert("2D_INFILTRATION",        o.infiltration < 0 ? "AUTO" : (o.infiltration ? "YES" : "NO"));
+    insert("2D_INFIL_DEFAULT_METHOD", o.infil_default_method.empty() ? "NONE" : o.infil_default_method);
+    insert("2D_INFIL_DESTINATION",   o.infil_destination.empty() ? "LOST" : o.infil_destination);
+    insert("2D_EVAPORATION",         o.evaporation == 0 ? "NO" : (o.evaporation == 2 ? "CLIMATE" : "YES"));
+    insert("2D_TRANSPORT_POLLUTANTS",  o.transport_pollutants  ? "YES" : "NO");
+    insert("2D_TRANSPORT_MSX",         o.transport_msx         ? "YES" : "NO");
+    insert("2D_TRANSPORT_AGE",         o.transport_age         ? "YES" : "NO");
+    insert("2D_TRANSPORT_TEMPERATURE", o.transport_temperature ? "YES" : "NO");
+    // U5 — the groundwater process enable. Tri-state like 2D_INFILTRATION;
+    // GW_ET is not stored here, it belongs to the [2D_AQUIFER_OPTIONS] round
+    // trip (writing it in both places would double-author one setting).
+    insert("2D_GROUNDWATER",
+           o.groundwater < 0 ? "AUTO" : (o.groundwater ? "YES" : "NO"));
     // HDF5 results path — 2D outputs always go to HDF5, never gpkg tables.
     // Restored to SolverOptions2D::output_file on read so SWMMEngine::open
     // re-creates the Default2DOutputPlugin.
@@ -1705,6 +1856,9 @@ static void write_mesh_2d(sqlite3* db, const SimulationContext& ctx,
     };
 
     // ---- triangles -------------------------------------------------------
+    // Cells are triangles first, then quads; tri_idx / quad_idx are the
+    // 0-based positions within each shape, and the triangle's tri_idx is
+    // also its cell index.
     {
         auto stmt = prepare(db,
             "INSERT INTO mesh_2d_triangles "
@@ -1713,9 +1867,11 @@ static void write_mesh_2d(sqlite3* db, const SimulationContext& ctx,
             "VALUES (?,?,?,?,?,?,?,?,?,?,?)");
         std::vector<double> xs(3), ys(3);
         for (int t = 0; t < nt; ++t) {
+            if (mesh.cell_vertex_count(t) != 3) continue;
             sqlite3_reset(stmt.get());
             sqlite3_clear_bindings(stmt.get());
-            const int v[3] = { mesh.tri_v0[t], mesh.tri_v1[t], mesh.tri_v2[t] };
+            const int v[3] = { mesh.cell_vertex(t, 0), mesh.cell_vertex(t, 1),
+                               mesh.cell_vertex(t, 2) };
             bind_text(stmt.get(), 1, sim_id);
             bind_int(stmt.get(), 2, t);
             if (v[0] >= 0 && v[0] < nv && v[1] >= 0 && v[1] < nv &&
@@ -1744,6 +1900,51 @@ static void write_mesh_2d(sqlite3* db, const SimulationContext& ctx,
             else             bind_null(stmt.get(), 10);
             bind_double(stmt.get(), 11, mesh.tri_init_depth[t]);
             step_or_throw(db, stmt.get(), "mesh_2d_triangles insert failed");
+        }
+    }
+
+    // ---- quads -----------------------------------------------------------
+    if (mesh.n_quads() > 0) {
+        auto stmt = prepare(db,
+            "INSERT INTO mesh_2d_quads "
+            "(simulation_id, quad_idx, geom, v0, v1, v2, v3, mannings_n, tag, "
+            "bed_elev, coupled_node, init_depth) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)");
+        std::vector<double> xs(4), ys(4);
+        int q = 0;
+        for (int t = 0; t < nt; ++t) {
+            if (mesh.cell_vertex_count(t) != 4) continue;
+            sqlite3_reset(stmt.get());
+            sqlite3_clear_bindings(stmt.get());
+            const int v[4] = { mesh.cell_vertex(t, 0), mesh.cell_vertex(t, 1),
+                               mesh.cell_vertex(t, 2), mesh.cell_vertex(t, 3) };
+            bind_text(stmt.get(), 1, sim_id);
+            bind_int(stmt.get(), 2, q++);
+            bool ok = true;
+            for (int k = 0; k < 4; ++k) ok = ok && v[k] >= 0 && v[k] < nv;
+            if (ok) {
+                for (int k = 0; k < 4; ++k) {
+                    xs[static_cast<size_t>(k)] = mesh.vx[v[k]] * f;
+                    ys[static_cast<size_t>(k)] = mesh.vy[v[k]] * f;
+                }
+                auto geom = encode_polygon(xs, ys, srs_id);
+                bind_blob(stmt.get(), 3, geom.data(), static_cast<int>(geom.size()));
+                bind_double(stmt.get(), 10,
+                    (mesh.vz[v[0]] + mesh.vz[v[1]] + mesh.vz[v[2]] + mesh.vz[v[3]]) / 4.0 * f);
+            } else {
+                bind_null(stmt.get(), 3);
+                bind_null(stmt.get(), 10);
+            }
+            for (int k = 0; k < 4; ++k) bind_int(stmt.get(), 4 + k, v[k]);
+            bind_double(stmt.get(), 8, mesh.mannings_n[t]);
+            if (!mesh.tri_tag[t].empty()) bind_text(stmt.get(), 9, mesh.tri_tag[t]);
+            else                          bind_null(stmt.get(), 9);
+            const std::string cn = node_name_for(mesh.tri_coupled_node_name[t],
+                                                 mesh.tri_coupled_node[t]);
+            if (!cn.empty()) bind_text(stmt.get(), 11, cn);
+            else             bind_null(stmt.get(), 11);
+            bind_double(stmt.get(), 12, mesh.tri_init_depth[t]);
+            step_or_throw(db, stmt.get(), "mesh_2d_quads insert failed");
         }
     }
 
@@ -1794,7 +1995,8 @@ static void write_mesh_2d(sqlite3* db, const SimulationContext& ctx,
     {
         const auto rows = twoD::collectBCRows(
             ctx.twod_io.pending_bc, ctx.twod_io.boundary,
-            opts && opts->pending_rows_drained);
+            opts && opts->pending_rows_drained,
+            opts ? opts->bc_flow_to_si_applied : 1.0);
         if (!rows.empty()) {
             auto stmt = prepare(db,
                 "INSERT OR REPLACE INTO mesh_2d_boundary_conditions "
@@ -1803,7 +2005,7 @@ static void write_mesh_2d(sqlite3* db, const SimulationContext& ctx,
             for (const auto& r : rows) {
                 // Defensive: rows the initialize() drain would silently skip
                 // must not abort the save via an FK violation.
-                if (r.tri < 0 || r.tri >= nt || r.edge < 0 || r.edge > 2) continue;
+                if (r.tri < 0 || r.tri >= nt || r.edge < 0 || r.edge >= mesh.cell_vertex_count(r.tri)) continue;
                 sqlite3_reset(stmt.get());
                 sqlite3_clear_bindings(stmt.get());
                 bind_text(stmt.get(), 1, sim_id);
@@ -1941,6 +2143,9 @@ void write_model(sqlite3* db, const SimulationContext& ctx,
     write_inflows(db, ctx, simulation_id);
     write_dwf(db, ctx, simulation_id);
     write_transects(db, ctx, simulation_id);
+    write_streets(db, ctx, simulation_id);
+    write_inlets(db, ctx, simulation_id);
+    write_inlet_usage(db, ctx, simulation_id);
     write_controls(db, ctx, simulation_id);
 
     // Part E — 2D mesh model definition + solver options. No-ops when the

@@ -630,7 +630,14 @@ double landuse_getWashoffQual(int i, int p, double buildup, double runoff,
     if ( func == NO_WASHOFF || runoff == 0.0 ) return 0.0;
     
     // --- if buildup function exists but no current buildup, return 0
-    if ( Landuse[i].buildupFunc[p].funcType != NO_BUILDUP && buildup >= 0.0 )
+    //     RESTORED to stock EPA 5.2.4 (2026-08-23, Finding 11): our vendored
+    //     copy carried `>= 0.0` since 03ed283a, under which a land use with
+    //     any buildup function washed off NOTHING, ever -- buildup is never
+    //     negative, so the guard always fired. This file is the parity
+    //     REFERENCE; a corrupted control corrupts every quality comparison
+    //     made against it. Measured inert on the known-mass EMC deck (no
+    //     buildup function there), so it did not cause Finding 6.
+    if ( Landuse[i].buildupFunc[p].funcType != NO_BUILDUP && buildup == 0.0 )
         return 0.0;
 
     // --- Exponential Washoff function

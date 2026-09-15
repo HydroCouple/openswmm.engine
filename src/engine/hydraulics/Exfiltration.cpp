@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file Exfiltration.cpp
  * @brief Storage exfiltration — numerically identical to legacy exfil.c.
@@ -5,7 +21,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "Exfiltration.hpp"
@@ -191,29 +207,46 @@ void ExfilSolver::computeAll(SimulationContext& ctx, double dt) {
 
         double total_loss = 0.0;
 
+        // legacy exfil_getLoss (exfil.c): the Green-Ampt object is always
+        // evaluated as MOD_GREEN_AMPT (no inter-event reset of F), with the
+        // global InfilFactor (the monthly conductivity adjustment) and the
+        // evaporation recovery factor; a zero IMDmax means a constant
+        // rate Ks * hydconFactor. Evaluated as plain GREEN_AMPT at factor
+        // 1, the pond of infiltration-detetention-pond lost ~0 where legacy
+        // drains 0.8 cfs.
+        const double infil_factor    = ctx.climate_state.infil_factor;
+        const double recovery_factor = ctx.climate_state.recovery_factor;
+        auto ga_rate = [&](infil::GreenAmptState& ga, double d) {
+            if (ga.IMDmax == 0.0) return ga.Ks * infil_factor;
+            return infil::grnampt_getInfil(ga, 0.0, d, dt, InfilModel::MOD_GREEN_AMPT,
+                                           infil_factor, recovery_factor);
+        };
+
         // Bottom exfiltration
-        double btm_rate = infil::grnampt_getInfil(soa_.btm_ga[uk], 0.0, depth, dt);
-        total_loss += btm_rate * soa_.btm_area[uk];
+        total_loss += ga_rate(soa_.btm_ga[uk], depth) * soa_.btm_area[uk];
 
-        // Bank exfiltration (only above bank_min_depth)
-        if (depth > soa_.bank_min_depth[uk] && soa_.bank_max_area[uk] > 0.0) {
-            double bank_depth;
-            if (depth > soa_.bank_max_depth[uk]) {
-                bank_depth = depth - soa_.bank_max_depth[uk]
-                           + (soa_.bank_max_depth[uk] - soa_.bank_min_depth[uk]) / 2.0;
-            } else {
-                bank_depth = (depth - soa_.bank_min_depth[uk]) / 2.0;
-            }
-
-            // Cap bank area at bank_max_area (matching legacy exfil.c line 191:
-            // area = MIN(area, exfil->bankMaxArea))
+        // Bank exfiltration (only above bank_min_depth): the bank area is
+        // the surface area (capped at the largest area the curve reaches)
+        // LESS the bottom area (exfil.c:191 `MIN(area, bankMaxArea) -
+        // btmArea`), and only when positive.
+        if (depth > soa_.bank_min_depth[uk]) {
             double area = openswmm::node::getSurfArea(ctx.nodes, soa_.node_idx[uk], depth,
                                             &ctx.tables,
                                             openswmm::ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)),
                                             &ctx.node_subtypes);
-            double bank_area = std::min(area, soa_.bank_max_area[uk]);
-            double bank_rate = infil::grnampt_getInfil(soa_.bank_ga[uk], 0.0, bank_depth, dt);
-            total_loss += bank_rate * bank_area;
+            area = std::min(area, soa_.bank_max_area[uk]) - soa_.btm_area[uk];
+            if (area > 0.0) {
+                double bank_depth = depth;
+                if (soa_.bank_ga[uk].IMDmax != 0.0) {
+                    if (depth > soa_.bank_max_depth[uk]) {
+                        bank_depth = depth - soa_.bank_max_depth[uk]
+                                   + (soa_.bank_max_depth[uk] - soa_.bank_min_depth[uk]) / 2.0;
+                    } else {
+                        bank_depth = (depth - soa_.bank_min_depth[uk]) / 2.0;
+                    }
+                }
+                total_loss += area * ga_rate(soa_.bank_ga[uk], bank_depth);
+            }
         }
 
         // Limit to available volume

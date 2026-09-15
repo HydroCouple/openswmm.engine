@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file openswmm_engine_impl.cpp
  * @brief C API implementation — engine lifecycle, callbacks, errors, timing.
@@ -7,10 +23,14 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "openswmm_api_common.hpp"
+#include "ThreadInfo.hpp"
+#include "../transport/TransportPolicy.hpp"   // E2: swmm_get_transport_matrix
+
+#include <cstring>
 
 extern "C" {
 
@@ -235,6 +255,87 @@ SWMM_ENGINE_API const char* swmm_get_warning_at(SWMM_Engine engine, int index) {
     return warns[static_cast<std::size_t>(index)].c_str();
 }
 
+// ============================================================================
+// Thread capability query
+// ============================================================================
+
+SWMM_ENGINE_API int swmm_get_thread_info(SWMM_ThreadInfo* out) {
+    if (!out) return SWMM_ERR_BADPARAM;
+    namespace ti = openswmm::threadinfo;
+    out->logical_cpus       = ti::logicalCpus();
+    out->omp_max_threads    = ti::ompMaxThreads();
+    out->omp_available      = ti::ompAvailable();
+    out->perf_cores         = ti::perfCores();
+    out->kokkos_omp_threads = ti::kokkosOmpThreads();
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_get_effective_threads(SWMM_Engine engine, int threads_option,
+                                               int* global_threads, int* dw_threads,
+                                               int* twod_threads) {
+    if (!engine) return SWMM_ERR_BADPARAM;
+    namespace ti = openswmm::threadinfo;
+    const auto& ctx = to_engine(engine)->context();
+
+    if (global_threads)
+        *global_threads = ti::resolveRequested(threads_option, "OpenMP team", nullptr);
+
+    if (dw_threads) {
+        *dw_threads = 0;
+        if (ctx.options.routing_model == openswmm::RoutingModel::DYNWAVE) {
+            int n_conduits = 0;
+            for (const auto t : ctx.links.type)
+                if (t == openswmm::LinkType::CONDUIT) ++n_conduits;
+            *dw_threads = ti::dwThreads(threads_option, n_conduits, nullptr);
+        }
+    }
+
+    if (twod_threads) {
+        *twod_threads = 0;
+#ifdef OPENSWMM_HAS_2D
+        const int n_tri = to_engine(engine)->surfaceRouter2D().mesh().n_triangles();
+        if (n_tri > 0 && !ctx.options.ignore_2d)
+            *twod_threads = ti::twoDThreads(threads_option, n_tri, nullptr);
+#endif
+    }
+    return SWMM_OK;
+}
+
+// ---------------------------------------------------------------------------
+// E2 — transport matrix
+// ---------------------------------------------------------------------------
+
+SWMM_ENGINE_API int swmm_get_transport_matrix(SWMM_Engine engine,
+                                              SWMM_TransportMatrix* out) {
+    if (!engine || !out) return SWMM_ERR_BADPARAM;
+    namespace tp = openswmm::transport;
+    const tp::Matrix m = tp::resolve(to_engine(engine)->context());
+    std::memset(out, 0, sizeof(*out));
+    for (int d = 0; d < SWMM_TRANSPORT_DOMAIN_COUNT; ++d) {
+        for (int c = 0; c < SWMM_TRANSPORT_CLASS_COUNT; ++c) {
+            const tp::Cell& src = m.cells[d][c];
+            SWMM_TransportCell& dst = out->cell[d][c];
+            dst.state = static_cast<int>(src.state);
+            dst.count = src.count;
+            std::strncpy(dst.reason, src.reason.c_str(), sizeof(dst.reason) - 1);
+            dst.reason[sizeof(dst.reason) - 1] = '\0';
+        }
+    }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API const char* swmm_transport_domain_name(int domain) {
+    if (domain < 0 || domain >= SWMM_TRANSPORT_DOMAIN_COUNT) return "";
+    return openswmm::transport::domainName(
+        static_cast<openswmm::transport::Domain>(domain));
+}
+
+SWMM_ENGINE_API const char* swmm_transport_class_name(int species_class) {
+    if (species_class < 0 || species_class >= SWMM_TRANSPORT_CLASS_COUNT) return "";
+    return openswmm::transport::speciesClassName(
+        static_cast<openswmm::transport::SpeciesClass>(species_class));
+}
+
 SWMM_ENGINE_API const char* swmm_error_message(int code) {
     switch (code) {
         case SWMM_OK:            return "Success";
@@ -258,9 +359,17 @@ SWMM_ENGINE_API const char* swmm_error_message(int code) {
         case 611: return "Virtual junction connects conduits with different cross sections";
         case 613: return "Virtual junction has a conduit with a nonzero offset";
         case 615: return "Virtual junction conduit inverts do not agree at the node";
-        case 617: return "Virtual junction cannot receive lateral inflow";
-        case 619: return "Virtual junctions require DYNWAVE flow routing";
+        case 617: return "Virtual junction cannot be coupled to a 2D surface mesh";
+        case 619: return "Virtual junctions require DYNWAVE or FV flow routing";
         case 621: return "Too many items for virtual junction";
+        // Inlet-junction rule codes (ErrorCodes.hpp ERR_IJ_* / ERR_INLET_*)
+        case 623: return "Inlet junction must connect two STREET conduits (RECT_OPEN or TRAPEZOIDAL for drop inlets)";
+        case 625: return "Inlet junction references an unknown inlet design";
+        case 627: return "Inlet junction has an invalid capture node (missing, itself, or virtual)";
+        case 629: return "Inlet junction conduit also carries an inlet usage entry";
+        case 631: return "Too many items for inlet junction";
+        case 633: return "Inlet junction has no inlet design assigned";
+        case 635: return "Inlet cannot be used with the cross section of its host";
         default:                 return "Unknown error";
     }
 }

@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file openswmm_subcatchments_impl.cpp
  * @brief C API implementation — subcatchment identity, creation, properties, state, bulk.
@@ -7,10 +23,13 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "openswmm_api_common.hpp"
+#include "StringCase.hpp"
+#include "../hydrology/Groundwater.hpp"
+#include "../math/MathExpr.hpp"
 #include "../../../include/openswmm/engine/openswmm_subcatchments.h"
 
 #include <algorithm>
@@ -672,6 +691,105 @@ SWMM_ENGINE_API int swmm_subcatch_get_gw_params(SWMM_Engine engine, int idx,
 }
 
 // ============================================================================
+// Custom groundwater flow expressions ([GWF])
+// ============================================================================
+// Single source of truth stays where handle_gwf() / InpWriter / start() already
+// look: options.ext_options["GWF:<subcatch>:LATERAL|DEEP"], keyed by the
+// registry (canonical) spelling of the subcatchment name.
+
+// C++ linkage for the helpers: this file body sits inside extern "C", and a
+// C-linkage function returning std::string draws -Wreturn-type-c-linkage.
+extern "C++" {
+namespace {
+
+std::string gwf_key(const openswmm::SimulationContext& ctx, int idx, int type) {
+    const char* ty = (type == SWMM_GWF_LATERAL) ? "LATERAL" : "DEEP";
+    return "GWF:" + ctx.subcatch_names.name_of(idx) + ":" + ty;
+}
+
+int gwf_copy_out(const std::string& s, char* buf, int buflen) {
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    const std::size_t n = std::min(s.size(), static_cast<std::size_t>(buflen - 1));
+    std::memcpy(buf, s.data(), n);
+    buf[n] = '\0';
+    return SWMM_OK;
+}
+
+} // namespace
+} // extern "C++"
+
+SWMM_ENGINE_API int swmm_subcatch_get_gwf_expression(SWMM_Engine engine, int index, int type,
+                                                     char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    if (type != SWMM_GWF_LATERAL && type != SWMM_GWF_DEEP) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(index >= 0 && index < ctx.n_subcatches());
+    auto it = ctx.options.ext_options.find(gwf_key(ctx, index, type));
+    return gwf_copy_out(it == ctx.options.ext_options.end() ? std::string{} : it->second,
+                    buf, buflen);
+}
+
+SWMM_ENGINE_API int swmm_subcatch_set_gwf_expression(SWMM_Engine engine, int index, int type,
+                                                     const char* expr) {
+    CHECK_HANDLE(engine);
+    if (type != SWMM_GWF_LATERAL && type != SWMM_GWF_DEEP) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    // Compiled at start() like the aquifer evap pattern — pre-start-only.
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(index >= 0 && index < ctx.n_subcatches());
+    const std::string key = gwf_key(ctx, index, type);
+    if (!expr || !*expr) ctx.options.ext_options.erase(key);
+    else                 ctx.options.ext_options[key] = expr;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gwf_validate_expression(SWMM_Engine engine, const char* expr,
+                                                 char* errbuf, int buflen, int* col_out) {
+    CHECK_HANDLE(engine);
+    if (errbuf && buflen > 0) errbuf[0] = '\0';
+    if (col_out) *col_out = -1;
+    if (!expr) return SWMM_ERR_BADPARAM;
+
+    std::string msg;
+    int col = -1;
+    if (openswmm::groundwater::gwf_validate(expr, msg, col) == 0) return SWMM_OK;
+
+    if (errbuf && buflen > 0) gwf_copy_out(msg, errbuf, buflen);
+    if (col_out) *col_out = col;
+    return SWMM_ERR_BADPARAM;
+}
+
+SWMM_ENGINE_API int swmm_gwf_variable_count(SWMM_Engine engine) {
+    if (!engine) return -1;
+    return openswmm::groundwater::GWV_MAX;
+}
+
+SWMM_ENGINE_API int swmm_gwf_variable_name(SWMM_Engine engine, int i, char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    CHECK_INDEX(i >= 0 && i < openswmm::groundwater::GWV_MAX);
+    return gwf_copy_out(openswmm::groundwater::GW_VAR_NAMES[i], buf, buflen);
+}
+
+SWMM_ENGINE_API int swmm_gwf_variable_description(SWMM_Engine engine, int i, char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    CHECK_INDEX(i >= 0 && i < openswmm::groundwater::GWV_MAX);
+    return gwf_copy_out(openswmm::groundwater::GW_VAR_DESCRIPTIONS[i], buf, buflen);
+}
+
+SWMM_ENGINE_API int swmm_gwf_function_count(SWMM_Engine engine) {
+    if (!engine) return -1;
+    return static_cast<int>(openswmm::mathexpr::function_names().size());
+}
+
+SWMM_ENGINE_API int swmm_gwf_function_name(SWMM_Engine engine, int i, char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    const auto& names = openswmm::mathexpr::function_names();
+    CHECK_INDEX(i >= 0 && static_cast<std::size_t>(i) < names.size());
+    return gwf_copy_out(names[static_cast<std::size_t>(i)], buf, buflen);
+}
+
+// ============================================================================
 // State injection (data assimilation)
 // ============================================================================
 
@@ -1046,6 +1164,26 @@ SWMM_ENGINE_API int swmm_aquifer_add(SWMM_Engine engine, const char* id) {
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_aquifer_rename(SWMM_Engine engine, int idx, const char* new_id) {
+    CHECK_HANDLE(engine);
+    if (!new_id || new_id[0] == '\0') return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.aquifers.count());
+
+    // The name lives in TWO stores: aquifers.names backs swmm_aquifer_id, the
+    // NameIndex backs swmm_aquifer_index. Updating one without the other makes
+    // the two disagree. NameIndex::rename does the collision check (and allows
+    // a pure case-respelling of this same entry), so run it first and only
+    // touch the vector once it has accepted.
+    if (!ctx.aquifer_names.rename(idx, new_id)) return SWMM_ERR_BADPARAM;
+    ctx.aquifers.names[static_cast<std::size_t>(idx)] = new_id;
+
+    // No fixup needed elsewhere: [GROUNDWATER] resolves to an aquifer INDEX at
+    // parse time (subcatches.gw_aquifer) and keeps no name string.
+    return SWMM_OK;
+}
+
 namespace {
 // Map a SWMM_AquiferParam code to the backing store vector (input-file units).
 std::vector<double>* aquifer_param_vec(openswmm::SimulationContext& ctx, int param) {
@@ -1199,6 +1337,32 @@ SWMM_ENGINE_API int swmm_snowpack_add(SWMM_Engine engine, const char* id) {
     sp.removal_subcatch.push_back("");
 
     ctx.snowpack_names.add(id);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_snowpack_rename(SWMM_Engine engine, int idx, const char* new_id) {
+    CHECK_HANDLE(engine);
+    if (!new_id || new_id[0] == '\0') return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.snowpacks.count());
+    const auto ui = static_cast<std::size_t>(idx);
+
+    // Two stores hold the name and both are read: snowpacks.names backs
+    // swmm_snowpack_id and the [SNOWPACKS] writer, while the NameIndex backs
+    // swmm_snowpack_index and the [SUBCATCHMENTS] snow-pack column. Let
+    // NameIndex::rename arbitrate the collision, then mirror into the vector.
+    const std::string prev = ctx.snowpacks.names[ui];
+    if (!ctx.snowpack_names.rename(idx, new_id)) return SWMM_ERR_BADPARAM;
+    ctx.snowpacks.names[ui] = new_id;
+
+    // subcatches.snowpack_name is the parse-time deferred-resolution string.
+    // PostParseResolver has already turned it into subcatches.snowpack, and no
+    // writer reads it, but keeping it coherent means a re-resolve cannot bind
+    // the subcatchment to a name that no longer exists.
+    for (auto& ref : ctx.subcatches.snowpack_name) {
+        if (openswmm::ieq(ref, prev)) ref = new_id;
+    }
     return SWMM_OK;
 }
 

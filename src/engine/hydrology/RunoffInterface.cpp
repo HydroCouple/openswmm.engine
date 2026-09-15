@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file RunoffInterface.cpp
  * @brief Runoff interface file — binary save/load of pre-computed runoff.
@@ -9,10 +25,11 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "RunoffInterface.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include <cstring>
@@ -32,7 +49,7 @@ constexpr double MIN_RUNOFF = 2.31481e-8;
 
 int RunoffInterfaceFile::openForWrite(const std::string& path, int n_subcatch,
                                       int n_pollut, int flow_units) {
-    fp_ = std::fopen(path.c_str(), "wb");
+    fp_ = openswmm::io::fopen_utf8(path, "wb");
     if (!fp_) return -1;
 
     writing_ = true;
@@ -70,7 +87,7 @@ int RunoffInterfaceFile::openForWrite(const std::string& path, int n_subcatch,
 
 int RunoffInterfaceFile::openForRead(const std::string& path, int n_subcatch,
                                      int n_pollut, int flow_units) {
-    fp_ = std::fopen(path.c_str(), "rb");
+    fp_ = openswmm::io::fopen_utf8(path, "rb");
     if (!fp_) return -1;
 
     writing_ = false;

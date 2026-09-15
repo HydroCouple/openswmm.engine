@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file SimulationContext.hpp
  * @brief The central, reentrant simulation context for the new engine.
@@ -54,28 +70,37 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_SIMULATION_CONTEXT_HPP
 #define OPENSWMM_ENGINE_SIMULATION_CONTEXT_HPP
 
 #include <cmath>
+#include <ctime>
 #include <functional>
 #include "FilePathPair.hpp"
+#include "../data/ArdConfigData.hpp"
+#include "../data/BedZoneData.hpp"
 #include "../data/GageData.hpp"
+#include "../data/HeatData.hpp"
+#include "../data/WaterAgeData.hpp"
+#include "../data/LidLayerSpeciesData.hpp"
 #include "../data/LinkData.hpp"
 #include "../data/NameIndex.hpp"
 #include "../data/NodeData.hpp"
 #include "../data/NodeSubtypes.hpp"
 #include "../data/LinkSubtypes.hpp"
 #include "../data/PollutantData.hpp"
+#include "../data/ReactionData.hpp"
+#include "../data/SpeciesRegistry.hpp"
 #include "../data/SubcatchData.hpp"
 #include "../data/TableData.hpp"
 #include "SimulationOptions.hpp"
 #include "SpatialFrame.hpp"
 #include "UserFlags.hpp"
 #include "../data/QualityData.hpp"
+#include "../data/InitialQualityData.hpp"
 #include "../data/InflowData.hpp"
 #include "../data/InfraData.hpp"
 #include "../hydraulics/Transect.hpp"
@@ -107,6 +132,35 @@ namespace openswmm {
 struct PluginSpec {
     std::string              path;       ///< Shared library path
     std::vector<std::string> init_args;  ///< Extra tokens from the [PLUGINS] row
+};
+
+// ============================================================================
+// [PROCESS_COMPONENTS] section spec — process-component registrations
+// ============================================================================
+
+/**
+ * @brief One row of [PROCESS_COMPONENTS] (Unified Transport suite, D-UT8).
+ *
+ * @details `id` is a registered component id
+ *          (e.g. `org.hydrocouple.openswmm.reactions`) or — reserved for the
+ *          HC2 phase — a shared-library path exporting
+ *          `hydrocouple_component_info()`. `config_path` is the component's
+ *          external configuration file (the `config="…"` argument), resolved
+ *          relative to the parent .inp per the [2D_MESH_FILE] rules. `args`
+ *          holds any further key="value" pairs verbatim.
+ *
+ * @see plans/transport/TRANSPORT_IO_PLUGIN_CONFIG_PLAN.md §2
+ */
+struct ProcessComponentSpec {
+    std::string id;           ///< Component id (or library path — HC2)
+    std::string config_path;  ///< config="…" argument (may be empty)
+    std::vector<std::pair<std::string, std::string>> args;  ///< other key/value args
+
+    /// Effective path the config was READ from (set by
+    /// resolve_process_components; empty until then). IO3 uses it to copy
+    /// the config file alongside a save-as so relative references never
+    /// dangle in the destination directory.
+    std::string resolved_config_path;
 };
 
 // ============================================================================
@@ -274,8 +328,14 @@ namespace twoD {
 struct MeshData;
 struct SolverOptions2D;
 struct BoundaryData;
+class  Infil2D;
 struct PendingBoundaryRow;
 struct PendingEdgeConveyanceRow;
+struct PendingInitialQualityRow;
+struct PendingBoundaryQualityRow;
+struct GwTransportData;   // U4 (2026-09-07)
+struct SubsurfaceConfig;  // G1: the [2D_AQUIFER*] rows
+struct SubsurfaceState;   // G1: the running two-zone kernel state
 } // namespace twoD
 
 // ============================================================================
@@ -298,6 +358,19 @@ struct SimulationContext {
 
     /** @brief Current lifecycle state of the engine. */
     EngineState state = EngineState::CREATED;
+
+    /**
+     * @brief Wall-clock time stamped at the start of SWMMEngine::open().
+     *
+     * @details Reported as "Analysis begun on:" and used as the origin for
+     *          "Total elapsed time:" in the .rpt. Stamped before input
+     *          parsing so that parse + cross-reference resolution +
+     *          validation + module initialization are all included in the
+     *          reported elapsed time. This matches legacy, which takes its
+     *          timestamp in report_writeLogo() before project_readInput()
+     *          (see legacy/engine/report.c). Zero until open() runs.
+     */
+    std::time_t wall_start = 0;
 
     // =========================================================================
     // Project title / notes
@@ -466,6 +539,90 @@ struct SimulationContext {
     PollutantData pollutants;
 
     /**
+     * @brief Species registry — the single source of truth for transported
+     *        constituents (master plan §4.1, phase T0a). Pollutants occupy
+     *        the first slots (index-aligned with the legacy pollutant
+     *        index); MSX species append via the reactions component (R1);
+     *        reserved age/temperature species append with phases A1/H1.
+     *        Rebuilt at each open().
+     */
+    SpeciesRegistry species_registry;
+
+    /**
+     * @brief Multispecies reaction system (EPANET-MSX conventions), parsed
+     *        from the reactions component's config file or embedded
+     *        [REACTION_*] sections (phase R1). Compiled bytecode arrives
+     *        with phase R2.
+     */
+    ReactionData reactions;
+
+    /**
+     * @brief Eulerian ARD transport component configuration, parsed from the
+     *        `model.ard` config file registered via [PROCESS_COMPONENTS]
+     *        (phase E3: the dispersion subset — global mode + per-conduit
+     *        overrides). @see data/ArdConfigData.hpp.
+     */
+    ArdConfigData ard_config;
+
+    /**
+     * @brief Water-age tracking (phase A1a): per-source initial ages parsed
+     *        from the waterage component (`model.age`) + the runtime age
+     *        state the engines and loaders share. @see data/WaterAgeData.hpp.
+     */
+    WaterAgeConfigData water_age_config;
+    WaterAgeState      water_age_state;
+
+    /**
+     * @brief A4: per-(LID unit, layer, species) transported state.
+     * @see data/LidLayerSpeciesData.hpp — generic over species so H5's
+     *      temperature is a row rather than a second array.
+     */
+    LidLayerSpeciesState lid_layer_state;
+
+    /**
+     * @brief Heat transport (phase H1): per-source inlet temperatures parsed
+     *        from the heat component (`model.heat`) + the runtime
+     *        temperature state the engines and loaders share.
+     *        @see data/HeatData.hpp.
+     */
+    HeatConfigData heat_config;
+    HeatState      heat_state;
+
+    /**
+     * @brief The bed / hyporheic transient-storage zone (phase H6b).
+     *
+     * @details One entry per LINK, carrying a temperature and a per-species
+     *          concentration. It sits beside `heat_state` rather than inside
+     *          it because it holds solute state too — the reference's HTS
+     *          zone is a transient-storage zone for tracers as much as a
+     *          thermal mass. Empty and untouched unless `[HEAT_FLUXES]
+     *          SEDIMENT_EXCHANGE` is on. @see data/BedZoneData.hpp.
+     */
+    BedZoneState bed_state;
+
+    /**
+     * @brief Species names as REPORTED (phase A2b): the pollutant names,
+     *        then `__WATER_AGE__` when `[OPTIONS] WATER_AGE` is on.
+     *
+     * @details The `.out` format has exactly one per-species column block,
+     *          so age reports as a trailing pseudo-pollutant column. This
+     *          vector is the single naming truth the output writers and the
+     *          snapshot's `pollut_names` pointer share — built once at open
+     *          so the pointer stays valid for the run. `n_reported_species()`
+     *          is its length and is what the writers must stride by; plain
+     *          `n_pollutants()` remains the TRANSPORT stride for
+     *          `nodes.conc` etc. Keeping the two counts distinct and named
+     *          is deliberate: conflating them is the stride-slip family
+     *          (roadmap lessons 14/15).
+     */
+    std::vector<std::string> reported_species_names;
+
+    /// Length of reported_species_names (pollutants + age when enabled).
+    int n_reported_species() const noexcept {
+        return static_cast<int>(reported_species_names.size());
+    }
+
+    /**
      * @brief All time series and rating curves.
      * @see Legacy: Tseries[], Curve[] in globals.h + TTable in objects.h
      */
@@ -520,6 +677,15 @@ struct SimulationContext {
     BuildupData      buildup;
     WashoffData      washoff;
     TreatmentData    treatment;
+
+    /**
+     * @brief Per-element initial quality rows from [INITIAL_QUALITY].
+     * @details Pollutant + reserved-species (__WATER_AGE__/__TEMPERATURE__)
+     *          per-node/per-link initial values overriding the global
+     *          [POLLUTANTS] Cinit / sidecar INITIAL_STATE seeds. Names are
+     *          resolved and constituents classified in PostParseResolver.
+     */
+    InitialQualityData initial_quality;
 
     // =========================================================================
     // Inflow data (external, DWF, RDII, patterns)
@@ -585,7 +751,7 @@ struct SimulationContext {
      * @see Legacy: Adjust struct (temp[], evap[], rain[], hydcon[])
      */
     double adjust_temp[12]   = {0,0,0,0,0,0,0,0,0,0,0,0};
-    double adjust_evap[12]   = {1,1,1,1,1,1,1,1,1,1,1,1};
+    double adjust_evap[12]   = {0,0,0,0,0,0,0,0,0,0,0,0};   ///< [ADJUSTMENTS] EVAP: ADDED to the evaporation rate (in/day or mm/day), legacy Adjust.evap
     double adjust_rain[12]   = {1,1,1,1,1,1,1,1,1,1,1,1};
     double adjust_hydcon[12] = {1,1,1,1,1,1,1,1,1,1,1,1};
 
@@ -614,6 +780,24 @@ struct SimulationContext {
     LidControlStore  lid_controls;
     NameIndex        lid_names;
     LidUsageStore    lid_usage;
+
+    // =========================================================================
+    // Transient deferred-resolution capture lists (input loading only)
+    // =========================================================================
+    // Sections whose referenced objects may be defined later in the .inp store
+    // the raw name here so PostParseResolver can re-resolve after every section
+    // has been parsed. Cleared by the resolver; empty outside input loading, so
+    // they can never desync with the editing APIs.
+
+    /// [GROUNDWATER] receiving-node names (subcatch index -> node name).
+    /// [GROUNDWATER] normally precedes [JUNCTIONS] in EPA SWMM output.
+    std::vector<std::pair<int, std::string>> pending_gw_nodes;
+
+    /// Link end-node names (link index -> {from-node name, to-node name}).
+    /// Legacy parsing is order-independent, so [CONDUITS] may precede the node
+    /// sections; without this the link loads silently orphaned (node1/node2 -1).
+    std::vector<std::pair<int, std::pair<std::string, std::string>>>
+        pending_link_nodes;
 
     // =========================================================================
     // Spatial data
@@ -671,6 +855,25 @@ struct SimulationContext {
     std::vector<PluginSpec> plugin_specs;
 
     /**
+     * @brief Process-component registrations parsed from [PROCESS_COMPONENTS].
+     * @details Resolved against the ProcessComponentRegistry during open()
+     *          (after the input read, mirroring the external 2D mesh file);
+     *          each resolved component's config file is parsed and delivered
+     *          to its apply hook. Unified Transport suite D-UT8.
+     */
+    std::vector<ProcessComponentSpec> process_component_specs;
+
+    /**
+     * @brief Embedded component sections found in the legacy .inp
+     *        ([REACTION_*] today; other component families as they land) —
+     *        the D-UT8 embedded-fallback path. (tag, lines) pairs in file
+     *        order; consumed after component resolution with a style
+     *        warning, or reported ignored when the external file wins.
+     */
+    std::vector<std::pair<std::string, std::vector<std::string>>>
+        embedded_component_sections;
+
+    /**
      * @brief Secondary file references parsed from [FILES].
      * @details Mirrors legacy SWMM5's TFile struct array — rainfall,
      *          runoff, RDII, inflows, outflows, hotstart save/use.
@@ -716,6 +919,35 @@ struct SimulationContext {
         twoD::BoundaryData*                          boundary   = nullptr;
         std::vector<twoD::PendingBoundaryRow>*       pending_bc = nullptr;
         std::vector<twoD::PendingEdgeConveyanceRow>* pending_ec = nullptr;
+        /// S2/S3: authored [2D_INITIAL_QUALITY] / [2D_BOUNDARY_QUALITY] rows,
+        /// retained after initialize() so the InpWriter can round-trip them.
+        std::vector<twoD::PendingInitialQualityRow>*  pending_iq = nullptr;
+        std::vector<twoD::PendingBoundaryQualityRow>* pending_bq = nullptr;
+        /// Per-cell infiltration (track I, plan §5.5). Owned by
+        /// SurfaceRouter2D; the [2D_INFILTRATION*] section handlers populate
+        /// its defaults()/overrides()/options() and the InpWriter reads them
+        /// back. Null when the engine was built without 2D support.
+        twoD::Infil2D*                               infil      = nullptr;
+        /// U4 (2026-09-07): the `[GW_*]` subsurface-transport authoring rows.
+        /// Owned by SurfaceRouter2D like `infil`; null without 2D support.
+        /// Authoring-only until the integrated groundwater kernel lands —
+        /// see GwTransportData.hpp.
+        twoD::GwTransportData*                       gw         = nullptr;
+        /// G1: the `[2D_AQUIFER*]` rows, in the user's OWN units. Owned by
+        /// SurfaceRouter2D; the section handlers fill it and the InpWriter
+        /// echoes it back verbatim. The SI values live only in the kernel's
+        /// state — see SubsurfaceSections.hpp's GwUnitFactors note.
+        twoD::SubsurfaceConfig*                      aquifer    = nullptr;
+        /// The `[2D_AQUIFER_NODE]` node NAMES, parallel to
+        /// `aquifer->node_beds`, kept so the writer can round-trip names it
+        /// resolved to indices.
+        std::vector<std::string>*                    aquifer_nodes = nullptr;
+        /// G1: the RUNNING kernel state (SI), or null when no `[2D_AQUIFER]`
+        /// resolved. Published so the hotstart can carry a water table
+        /// across a restart without HotStartManager needing to know about
+        /// the 2D module's solver — an aquifer restarted dry has lost the
+        /// months of memory that were the reason to model it.
+        twoD::SubsurfaceState*                       aquifer_state = nullptr;
     } twod_io;
 
     /**
@@ -818,12 +1050,28 @@ struct SimulationContext {
     struct MassBalance {
         // Runoff totals
         double runoff_rainfall   = 0.0;  ///< Total rainfall volume (ft3)
+        double runoff_runon      = 0.0;  ///< Outfall-routed runon volume (ft3), legacy RUNOFF_RUNON
         double runoff_evap       = 0.0;  ///< Total evaporation volume (ft3)
         double runoff_infil      = 0.0;  ///< Total infiltration volume (ft3)
         double runoff_runoff     = 0.0;  ///< Total surface runoff volume (ft3)
+        double runoff_lid_drain  = 0.0;  ///< LID drain-to-node outflow (ft3), legacy RUNOFF_DRAINS / VlidDrain
         double runoff_snowremov  = 0.0;  ///< Total snow removal volume (ft3)
         double runoff_init_store = 0.0;  ///< Initial surface storage (ft3)
         double runoff_final_store= 0.0;  ///< Final surface storage (ft3)
+        /// Snow water equivalent PLUS free water held in every pack at the
+        /// start of the run (ft3). Legacy `RunoffTotals.initSnowCover`,
+        /// summed from `snow_getSnowCover` (`snow.c:587`).
+        double runoff_init_snow  = 0.0;
+        /// The same quantity at the end of the run (ft3). Legacy
+        /// `RunoffTotals.finalSnowCover`.
+        ///
+        /// **These two, and `runoff_snowremov`, were the whole of F8.** The
+        /// ledger had no snow terms at all, so on any deck with a
+        /// `[SNOWPACKS]` section the starting pack was unaccounted INPUT and
+        /// the surviving pack unaccounted OUTPUT, and the printed continuity
+        /// percentage was not a meaningful number. Measured on the snow
+        /// parity deck: **-8.193 % before, +1.419 % after.**
+        double runoff_final_snow = 0.0;
 
         // Routing totals
         double routing_dry_weather   = 0.0;
@@ -832,6 +1080,22 @@ struct SimulationContext {
         double routing_rdii          = 0.0;
         double routing_external      = 0.0;
         double routing_flooding      = 0.0;
+        /// C2 (2026-09-07): cumulative water the 1D→2D coupling spill removed
+        /// from coupled nodes (ft³). It used to be folded into
+        /// `routing_flooding`, which reported a coupling TRANSFER under
+        /// "Flooding Loss" — the water did not flood, it went to the 2D
+        /// surface, where `MassBalance2D::coupling_1d_to_2d_in` books it
+        /// arriving. Both ledgers are individually right; only the 1D report
+        /// row was misleading, and a modeller reading it saw flooding they
+        /// did not have.
+        ///
+        /// It remains an OUTFLOW of the 1D system, so `routing_error()`
+        /// counts it exactly as before — this change moves a number between
+        /// report rows, it does not move water.
+        ///
+        /// `[2D_OPTIONS] COUPLING_IN_FLOODING YES` restores the old grouping
+        /// for run-to-run comparison against previous versions.
+        double routing_coupling_out  = 0.0;
         double routing_outflow       = 0.0;
         double routing_evap_loss     = 0.0;
         double routing_seep_loss     = 0.0;
@@ -853,6 +1117,14 @@ struct SimulationContext {
         double gw_lateral_flow  = 0.0; ///< Cumulative lateral GW flow (ft)
         double gw_init_storage  = 0.0; ///< Initial GW storage (ft)
         double gw_final_storage = 0.0; ///< Final GW storage (ft)
+        /// U3 (track I-b, 2026-09-07): the part of the groundwater's
+        /// infiltration input that arrived from the 2D surface
+        /// ([2D_OPTIONS] INFIL_DESTINATION SUBCATCH_AQUIFER), ft³ — the same
+        /// unit as `gw_infil` (rate × area × dt). Already inside it: the
+        /// recharge is added to each subcatchment's infiltration rate before
+        /// GWSolver::execute books it, so this is a diagnostic split, not a
+        /// second inflow.
+        double gw_infil_2d_recharge = 0.0;
 
         // Per-step accumulators (reset each step for reporting)
         double step_flooding     = 0.0;
@@ -861,6 +1133,16 @@ struct SimulationContext {
         double step_gw_inflow    = 0.0;
         double step_rdii_inflow  = 0.0;
         double step_ext_inflow   = 0.0;
+        /// legacy massbal_getStepFlowError() of the PREVIOUS routing step —
+        /// 1 - outflow/inflow of that step's StepFlowTotals, formed at the
+        /// end of updateRoutingMassBalance — which isInSteadyState compares
+        /// with SysFlowTol at the start of the next step.
+        double last_step_flow_error = 0.0;
+        /// legacy addExternalInflows (routing.c): a node's NEGATIVE external
+        /// flow (a withdrawal) is booked as system OUTFLOW, not as a negative
+        /// external inflow; summed here per step, ahead of the outfall and
+        /// flooding terms as legacy's StepFlowTotals.outflow is.
+        double step_ext_withdrawal = 0.0;
 
         // Quality mass balance (per-pollutant, in mass units)
         std::vector<double> qual_init_buildup;   ///< Initial buildup mass
@@ -976,8 +1258,16 @@ struct SimulationContext {
 
         /// Runoff continuity error (fraction).
         double runoff_error() const {
-            double total_in = runoff_rainfall + runoff_init_store;
-            double total_out = runoff_evap + runoff_infil + runoff_runoff + runoff_final_store;
+            // Snow is a STORE on both sides, and snow ploughed out of the
+            // system is a loss — matching legacy massbal.c:685-692. A pack
+            // present at the start is water the model was given; a pack still
+            // standing at the end is water it still holds.
+            double total_in = runoff_rainfall + runoff_runon + runoff_init_store +
+                              runoff_init_snow;
+            double total_out = runoff_evap + runoff_infil + runoff_runoff +
+                               runoff_lid_drain +
+                               runoff_final_store + runoff_snowremov +
+                               runoff_final_snow;
             return (total_in > 0.0) ? (total_in - total_out) / total_in : 0.0;
         }
 
@@ -986,7 +1276,8 @@ struct SimulationContext {
             double total_in = routing_dry_weather + routing_wet_weather +
                               routing_gw_inflow + routing_rdii + routing_external +
                               routing_init_storage;
-            double total_out = routing_flooding + routing_outflow +
+            double total_out = routing_flooding + routing_coupling_out +
+                               routing_outflow +
                                routing_evap_loss + routing_seep_loss +
                                routing_final_storage;
             return (total_in > 0.0) ? (total_in - total_out) / total_in : 0.0;
@@ -1000,6 +1291,31 @@ struct SimulationContext {
             return (total_in > 0.0) ? (total_in - total_out) / total_in : 0.0;
         }
     } mass_balance;
+
+    /**
+     * @brief D-NS1 negative-source clamp bookkeeping (subplan §3.1, X6).
+     *
+     * @details A negative source (mass extraction) is clamped per step to
+     *          the mass its element holds; each clamp is counted here, its
+     *          shortfall un-booked from the extraction's ledger row (the
+     *          ledger carries what was ACTUALLY removed), and the first
+     *          clamp warns. Age extraction (age·volume) is counted but not
+     *          ledgered — age has no continuity row until A2c.
+     */
+    struct NegativeSourceStats {
+        long   clamp_events     = 0;   ///< pollutant clamps, all engines
+        double shortfall_mass   = 0.0; ///< unmet extraction, internal units
+        long   age_clamp_events = 0;   ///< age-row clamps
+        int    first_node       = -1;  ///< element of the first clamp
+        /// First clamp seen — captures `first_node` once. NOT a warning flag:
+        /// the per-clamp runtime warning was removed 2026-08-29 because it
+        /// fired on every correct extraction deck (a deck extracting 40 % of
+        /// its inflow logged 108 clamps while the chain wetted). The
+        /// end-of-run summary is the diagnostic.
+        bool   first_clamp_recorded = false;
+        bool   api_warned       = false; ///< first negative API mass flux
+        void reset() { *this = NegativeSourceStats{}; }
+    } negsrc;
 
     /**
      * @brief System mass-balance totals for the optional 2D surface domain.
@@ -1022,6 +1338,26 @@ struct SimulationContext {
         double boundary_in           = 0.0;  ///< Cumulative boundary inflow (m³)
         double boundary_out          = 0.0;  ///< Cumulative boundary outflow (m³)
         double evap_out              = 0.0;  ///< Cumulative evaporation loss (m³)
+        /// Cumulative 2D per-cell infiltration loss (m³). Track I, plan §5.5.4.
+        /// Destination is LOST in this release (D-I4), so this is a true exit
+        /// from the modelled system and enters the continuity balance as a loss
+        /// term alongside evap_out.
+        double infil_out             = 0.0;
+        /// U3 (track I-b, 2026-09-07): the part of `infil_out` routed into a
+        /// legacy subcatchment aquifer ([2D_OPTIONS] INFIL_DESTINATION
+        /// SUBCATCH_AQUIFER), m³. It is a TRANSFER, not an exit: the same
+        /// volume enters the 1D groundwater ledger as recharge, so a
+        /// whole-model balance nets it out. `infil_out` still carries it,
+        /// so the 2D-only continuity check is unchanged.
+        double infil_to_aquifer      = 0.0;
+        /// G1 (2026-09-07): cumulative water the two-zone `[2D_AQUIFER]`
+        /// returned to the surface — Dunne saturation excess and top-layer
+        /// rejection — m³. An INFLOW to the surface domain, and the mirror of
+        /// the `infil_out` share the aquifer received. Without it the returned
+        /// water reads as storage created from nothing and the 2D continuity
+        /// error grows by exactly the volume that came back up. Zero unless a
+        /// `[2D_AQUIFER]` resolved.
+        double aquifer_in            = 0.0;
         bool   active                = false;///< True if the 2D module ran
 
         // Cumulative marcher statistics (published by SurfaceRouter2D at
@@ -1042,9 +1378,9 @@ struct SimulationContext {
         /// 2D surface continuity error (fraction).
         double error() const {
             double total_in  = rainfall_in + coupling_1d_to_2d_in + outfall_in
-                               + boundary_in + init_storage;
+                               + boundary_in + aquifer_in + init_storage;
             double total_out = coupling_2d_to_1d_out + outfall_out + boundary_out
-                               + evap_out + final_storage;
+                               + evap_out + infil_out + final_storage;
             return (total_in > 0.0) ? (total_in - total_out) / total_in : 0.0;
         }
     } mass_balance_2d;
@@ -1148,6 +1484,47 @@ struct SimulationContext {
         double computed_avg_iterations() const {
             return (n_steps > 0) ? sum_iterations / static_cast<double>(n_steps) : 0.0;
         }
+
+        // ---------------------------------------------------------------
+        // FV 1D solver statistics (published by SWMMEngine::end() from
+        // INetworkSolver::run_stats, printed as the "FV Solver Statistics"
+        // report block). The 1D counterpart of mass_balance_2d.solver_*.
+        //
+        // -1 = not populated: the run was not FLOW_ROUTING FV, or a backend
+        // that carries no counters was selected. The report block is skipped
+        // on the sentinel rather than printing a row of zeros, which would
+        // read as "the solver did nothing" instead of "nobody counted".
+        // ---------------------------------------------------------------
+        // Slot-storage share (FV slot program R0). Peak instantaneous
+        // system share slot/stored and the time that share exceeded 1 %;
+        // the run-level integrated share is Σ links.stat_slot_vol_dt /
+        // Σ links.stat_vol_dt, summed at report time. 0 under DW.
+        double slot_peak_share   = 0.0;
+        double slot_time_above_s = 0.0;
+
+        long   fv_nsteps        = -1;   ///< explicit substeps over the run
+        long   fv_nflux         = 0;    ///< face flux evaluations
+        double fv_avg_h         = 0.0;  ///< mean substep (s)
+        double fv_last_h        = 0.0;  ///< last substep (s)
+        double fv_min_h         = 0.0;  ///< smallest substep taken (s)
+        double fv_active_min    = -1.0; ///< min active-face fraction
+        double fv_active_mean   = -1.0; ///< mean active-face fraction
+        double fv_active_max    = -1.0; ///< max active-face fraction
+        long   fv_tier_cells[8] = {0};  ///< rebuild-sampled cells per LTS tier
+        int    fv_n_tiers       = 0;    ///< populated tier count
+
+        // dt-argmin attribution (slot program R0): who owned the binding
+        // CFL element, counted per census / re-tier.
+        long   fv_dt_argmin_pressurized = 0;
+        long   fv_dt_argmin_band        = 0;
+        long   fv_dt_argmin_free        = 0;
+        long   fv_dt_argmin_node        = 0;
+
+        // LTS macro cycles that ran / were rejected. Distinguishes "tiering
+        // never engaged" from "tiering did not help" (the tier histogram
+        // alone cannot).
+        long   fv_macro_cycles   = 0;
+        long   fv_macro_rejected = 0;
     } routing_stats;
 
     // =========================================================================
@@ -1176,20 +1553,89 @@ struct SimulationContext {
     } vj_diag;
 
     // =========================================================================
+    // Street inlet performance diagnostics
+    // =========================================================================
+
+    /**
+     * @brief Per-inlet-usage performance block for the .rpt street tables.
+     *
+     * @details Row i corresponds to `inlet_usages` row i. Populated by
+     *          `inlet::InletSolver::gatherStats()` before the summary is
+     *          written; these are the legacy `TInletStats` counters
+     *          (inlet.c:78-87) that the Street Flow Summary reports and that
+     *          `InletUsageStore` (a persistent .inp store) deliberately does
+     *          not carry.
+     */
+    struct InletDiag {
+        std::vector<int>     host_node;         ///< inlet-junction node (−1 = conduit host)
+        std::vector<int>     up_link;           ///< approach conduit (−1 = none)
+        std::vector<uint8_t> is_sag;            ///< resolved placement: 1 = ON_SAG
+        std::vector<int>     num_inlets;
+        std::vector<int>     flow_periods;      ///< # periods with approach flow
+        std::vector<int>     capture_periods;   ///< # periods with captured flow
+        std::vector<int>     backflow_periods;  ///< # periods with backflow
+        std::vector<double>  peak_flow;         ///< peak approach flow (cfs)
+        std::vector<double>  peak_flow_capture; ///< capture efficiency at peak flow (%)
+        std::vector<double>  avg_flow_capture;  ///< Σ capture efficiency over capture periods
+        std::vector<double>  bypass_freq;       ///< # capture periods that also bypassed
+
+        int count() const { return static_cast<int>(host_node.size()); }
+
+        void resize(int n) {
+            auto un = static_cast<std::size_t>(n);
+            host_node.assign(un, -1);
+            up_link.assign(un, -1);
+            is_sag.assign(un, static_cast<uint8_t>(0));
+            num_inlets.assign(un, 1);
+            flow_periods.assign(un, 0);
+            capture_periods.assign(un, 0);
+            backflow_periods.assign(un, 0);
+            peak_flow.assign(un, 0.0);
+            peak_flow_capture.assign(un, 0.0);
+            avg_flow_capture.assign(un, 0.0);
+            bypass_freq.assign(un, 0.0);
+        }
+
+        void clear() {
+            host_node.clear(); up_link.clear(); is_sag.clear(); num_inlets.clear();
+            flow_periods.clear(); capture_periods.clear(); backflow_periods.clear();
+            peak_flow.clear(); peak_flow_capture.clear(); avg_flow_capture.clear();
+            bypass_freq.clear();
+        }
+    } inlet_diag;
+
+    // =========================================================================
     // Control action log — Gap #67
     // Populated by ControlEngine::applyPendingActions() when rpt_controls is on.
     // =========================================================================
 
-    /// One entry per control rule action that changed a link setting.
+    /// One entry per control rule action that changed a link setting. POD:
+    /// the rule NAME is interned in control_rule_names (index rule_idx), so a
+    /// deck that toggles a pump every routing step does not heap-allocate a
+    /// string per action — this log is only drained at report time.
     struct ControlLogEntry {
-        int         link_idx;    ///< Index of the link whose setting changed
-        std::string rule_name;   ///< Name of the rule that triggered the change
-        double      new_setting; ///< The new target setting value (0-1)
-        double      date;        ///< OADate when the change occurred
+        int    link_idx;    ///< Index of the link whose setting changed
+        int    rule_idx;    ///< Index into control_rule_names; -1 = unknown ("Rule?")
+        double new_setting; ///< The new target setting value (0-1)
+        double date;        ///< OADate when the change occurred
     };
 
-    /// Chronological log of all control actions taken during the simulation.
+    /// Chronological log of the control actions taken during the simulation,
+    /// capped at kMaxControlLog entries (see logControlAction).
     std::vector<ControlLogEntry> control_log;
+    /// Rule names by rule index, interned by ControlEngine as actions are logged.
+    std::vector<std::string> control_rule_names;
+    /// Actions NOT logged because the cap was reached; the report says so once.
+    std::size_t control_log_dropped = 0;
+    static constexpr std::size_t kMaxControlLog = 1'000'000;
+
+    /// Append to control_log unless the cap is reached, in which case count
+    /// the overflow instead: bounds memory on multi-week oscillating decks
+    /// (24 B per entry → 24 MB at the cap).
+    void logControlAction(const ControlLogEntry& e) {
+        if (control_log.size() >= kMaxControlLog) { ++control_log_dropped; return; }
+        control_log.push_back(e);
+    }
 
     // =========================================================================
     // Input file path (for model write / hot start)
@@ -1270,6 +1716,8 @@ struct SimulationContext {
     void reset() {
         state = EngineState::CREATED;
         control_log.clear();
+        control_rule_names.clear();
+        control_log_dropped = 0;
         current_time = 0.0;
         current_date = 0.0;
         dt_controls_remaining = 0.0;
@@ -1283,6 +1731,8 @@ struct SimulationContext {
         errors.clear();
         title_notes.clear();
         deferred_section_rows.clear();
+        pending_gw_nodes.clear();
+        pending_link_nodes.clear();
 
         // Clear SoA stores
         nodes      = NodeData{};
@@ -1302,8 +1752,24 @@ struct SimulationContext {
         // Clear inflow-related stores that aren't reset by their owning solvers
         rdii_decay = RDIIDecayData{};
 
+        // E3: transport.ard component config — its apply hook resets it, but
+        // a reopen WITHOUT the component would otherwise inherit the previous
+        // model's dispersion.
+        ard_config = ArdConfigData{};
+
+        // A1a: same stale-on-reopen hygiene for water age.
+        water_age_config = WaterAgeConfigData{};
+        water_age_state.clear();
+
+        // H1: and for heat.
+        heat_config = HeatConfigData{};
+        heat_state.clear();
+        lid_layer_state.clear();
+        bed_state.clear();      // H6b
+
         // Virtual-junction diagnostics
         vj_diag.clear();
+        inlet_diag.clear();
 
         // Clear daily climate state (re-initialized by SWMMEngine on next run)
         climate_state = climate::ClimateState{};
@@ -1315,7 +1781,7 @@ struct SimulationContext {
         user_flags.clear();
         events.clear();
         std::fill(std::begin(adjust_temp), std::end(adjust_temp), 0.0);
-        std::fill(std::begin(adjust_evap), std::end(adjust_evap), 1.0);
+        std::fill(std::begin(adjust_evap), std::end(adjust_evap), 0.0);
         std::fill(std::begin(adjust_rain), std::end(adjust_rain), 1.0);
         std::fill(std::begin(adjust_hydcon), std::end(adjust_hydcon), 1.0);
         subcatch_n_perv_pattern.clear();
@@ -1336,6 +1802,8 @@ struct SimulationContext {
     void save_state() noexcept {
         nodes.save_state();
         links.save_state();
+        // (SWMMEngine::step rolls the two halves separately — see
+        // save_lat_qual_state / save_hyd_state.)
         // NOTE: subcatches.save_state() is intentionally NOT called here.
         // Subcatchment old-state (old_runoff/old_runon/conc_old) is the
         // runoff-step snapshot used to linearly interpolate lateral inflow
@@ -1345,6 +1813,20 @@ struct SimulationContext {
         // the current value so old==new and the lateral inflow jumped to the
         // full new runoff instantly instead of ramping. It is now saved in the
         // runoff-advance loop in SWMMEngine::stepRunoff().
+    }
+
+    /// The every-step half of legacy routing_execute: initSystemInflows'
+    /// oldLatFlow roll and node/link _setOldQualState.
+    void save_lat_qual_state() noexcept {
+        nodes.save_lat_qual_state();
+        links.save_qual_state();
+    }
+
+    /// The routed-step half: legacy routeFlow's node/link _setOldHydState,
+    /// skipped with the routing on a SKIP_STEADY_STATE step.
+    void save_hyd_state() noexcept {
+        nodes.save_hyd_state();
+        links.save_hyd_state();
     }
 
     /**
@@ -1459,20 +1941,18 @@ struct SimulationContext {
     // which kind it wants.
     // =========================================================================
 
-    /** @brief Find a timeseries table by name; -1 if none. */
+    /**
+     * @brief Find a timeseries table by name; -1 if none.
+     * @details O(1) via TableData::by_name. Returns the lowest matching index,
+     *          exactly as the previous linear scan did.
+     */
     int find_timeseries(std::string_view name) const noexcept {
-        for (int i = 0; i < n_tables(); ++i)
-            if (tables[i].type == TableType::TIMESERIES && ieq(tables[i].id, name))
-                return i;
-        return -1;
+        return tables.find_by_kind(name, /*want_timeseries=*/true);
     }
 
     /** @brief Find a curve table (any CURVE_* type) by name; -1 if none. */
     int find_curve(std::string_view name) const noexcept {
-        for (int i = 0; i < n_tables(); ++i)
-            if (tables[i].type != TableType::TIMESERIES && ieq(tables[i].id, name))
-                return i;
-        return -1;
+        return tables.find_by_kind(name, /*want_timeseries=*/false);
     }
 
     /**

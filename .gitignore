@@ -4,7 +4,15 @@
 # Working notes not intended for version control
 doc/FlashX_SWMM_crosswalk.md
 doc/Verification_Implementation_Plan.md
-/plans/
+# plans/transport is TRACKED (user decision 2026-09-01, closing the debt
+# UNIFIED_PLAN_STATUS §8 carried twice: the entire plan corpus -- roadmap,
+# handoffs, ~217 numbered lessons -- existed in one working tree on one
+# machine, unprotected by the very version control it documents). Everything
+# else under /plans/ stays out. The _scratch subtree stays out too: it is
+# working notes, not record.
+/plans/*
+!/plans/transport/
+/plans/transport/_scratch/
 /tools/
 docs/2D_MULTISCALE_FORMULATION_REVIEW.md
 # Ignore examples/ contents (not the dir itself, so the fixture below can be
@@ -13,6 +21,12 @@ docs/2D_MULTISCALE_FORMULATION_REVIEW.md
 # Keep the canonical 2D fixture — tests/unit/engine/CMakeLists.txt and
 # python/tests/engine/{test_2d_evap,test_surface2d_view}.py load it from here.
 !/examples/2d_complete_example.inp
+# Keep the street-inlet / inlet-junction example (deck + README only; the
+# .rpt/.out a run writes next to them stay out).
+!/examples/inlets/
+/examples/inlets/*
+!/examples/inlets/street_inlet_junction.inp
+!/examples/inlets/README.md
 
 # Eclipse Stuff
 .metadata/
@@ -66,7 +80,11 @@ python/tests/engine/output/
 python/tests/legacy/output/*
 !python/tests/legacy/output/b8_aq_probe.inp
 python/tests/output_pet_parity/
-tests/verification/
+# Scratch verification runs (d2_retirement/ is ~88 .rpt/.out/.log artifacts).
+# Trailing /* rather than /, so gw2d_gates below can be re-included: git
+# cannot re-include anything under an excluded *directory*.
+tests/verification/*
+!tests/verification/gw2d_gates/
 tests/regression_testing/p1c_parity/*
 !tests/regression_testing/p1c_parity/compare.py
 tests/regression_testing/p5_parity/
@@ -98,3 +116,15 @@ tests/unit/legacy/engine/data/hotstart/site_drainage_model_save_hotstart.rpt
 # SQLite side-car files left when a GeoPackage fixture is opened WAL-mode.
 *.gpkg-shm
 *.gpkg-wal
+
+# Model-load benchmark corpus. Generated on demand by
+# tests/benchmarks/scripts/gen_load_bench.py (326 MB at the plan's sizes) —
+# the generator is committed, its output is not. Results docs written here ARE
+# committed, hence the negations.
+tests/benchmarks/generated/*.inp
+tests/benchmarks/generated/*.rpt
+tests/benchmarks/generated/*.out
+tests/benchmarks/generated/*.json
+
+# Working copies written by test_engine_output_reader_live (reviewable, not tracked)
+tests/unit/engine/data/live_out/

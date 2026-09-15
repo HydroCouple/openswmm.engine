@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file test_kokkos_rhs_parity.cpp
  * @brief Phase 1 parity check: Kokkos RHS vs. serial CPU RHS.
@@ -26,7 +42,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "../../src/engine/2d/data/MeshData.hpp"
@@ -88,9 +104,9 @@ void buildMesh(MeshData& m, SurfaceStateData& s) {
                            { 1,  3, -1},
                            { 2, -1, -1}};
     for (int i = 0; i < nt; ++i) {
-        m.tri_nbr0[i] = nbr[i][0];
-        m.tri_nbr1[i] = nbr[i][1];
-        m.tri_nbr2[i] = nbr[i][2];
+        m.cell_neighbour(i, 0) = nbr[i][0];
+        m.cell_neighbour(i, 1) = nbr[i][1];
+        m.cell_neighbour(i, 2) = nbr[i][2];
         for (int e = 0; e < 3; ++e) {
             const int idx = i * 3 + e;
             m.edge_length[idx]     = 1.0 + 0.25 * e;

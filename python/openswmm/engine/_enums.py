@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Enumerations
 ============
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 Integer-backed enums mirroring the C API enum definitions in
 ``openswmm_engine.h``. These are pure Python (no Cython required)
@@ -552,6 +568,18 @@ class AquiferParam(IntEnum):
     UPPER_MOISTURE = 11
 
 
+class GwfType(IntEnum):
+    """Which of a subcatchment's two C{[GWF]} custom groundwater flow
+    expressions (C{Subcatchments.get_gwf_expression} / C{set_gwf_expression}).
+
+    @cvar LATERAL: Added to the standard A1/A2/A3 lateral groundwater flow.
+    @cvar DEEP: Replaces the standard deep-percolation term.
+    """
+
+    LATERAL = 0
+    DEEP = 1
+
+
 # =============================================================================
 # Output variables
 # =============================================================================
@@ -890,6 +918,47 @@ class SurfaceBoundaryType(IntEnum):
     RATING_CURVE = 4
 
 
+class SurfaceInfilMethod(IntEnum):
+    """Per-cell 2D infiltration method (C{[2D_INFILTRATION*]}).
+
+    Mirrors the C{SWMM_INFIL2D_*} codes in C{openswmm_infil2d.h} and
+    C{openswmm::InfilModel}. Distinct from the 1D L{InfilModel} only in that
+    it also carries C{CONSTANT}, which has no legacy C{[INFILTRATION]} token.
+
+    @cvar HORTON: Original Horton model.
+    @cvar MOD_HORTON: Modified Horton model (linear decay).
+    @cvar GREEN_AMPT: Green-Ampt model.
+    @cvar MOD_GREEN_AMPT: Modified Green-Ampt model (M{F} not reset).
+    @cvar CURVE_NUMBER: SCS Curve Number model.
+    @cvar CONSTANT: Constant rate, capacity-bounded. 2D only.
+    """
+
+    HORTON = 0
+    MOD_HORTON = 1
+    GREEN_AMPT = 2
+    MOD_GREEN_AMPT = 3
+    CURVE_NUMBER = 4
+    CONSTANT = 5
+
+
+class SurfaceInfilDest(IntEnum):
+    """Destination of water infiltrated out of a 2D mesh cell.
+
+    Mirrors the C{SWMM_INFIL2D_DEST_*} codes in C{openswmm_infil2d.h} and
+    C{openswmm::twoD::Infil2DDest}. Only L{LOST} is routed in this release
+    (plan decision D-I4); the other two parse so the grammar is stable and
+    are rejected at validation.
+
+    @cvar LOST: Leaves the domain; booked to the C{infil_out} ledger row.
+    @cvar SUBCATCH_AQUIFER: Reserved — legacy subcatchment aquifer.
+    @cvar AQUIFER_2D: Reserved — the two-zone 2D groundwater kernel.
+    """
+
+    LOST = 0
+    SUBCATCH_AQUIFER = 1
+    AQUIFER_2D = 2
+
+
 # =============================================================================
 # Object references (model editing)
 # =============================================================================
@@ -999,3 +1068,307 @@ class UserFlagType(IntEnum):
     INTEGER = 1
     REAL = 2
     STRING = 3
+
+
+# =============================================================================
+# Transport processes — heat, water age, reactions
+# =============================================================================
+
+class HeatFluxModule(IntEnum):
+    """Independently toggleable heat-flux modules (C{[HEAT_FLUXES]}).
+
+    Mirrors C{SWMM_HeatFluxModule} in C{openswmm_heat.h}.
+
+    @cvar SURFACE_EXCHANGE: Latent + sensible surface exchange.
+    @cvar RADIATIVE_EXCHANGE: Shortwave + longwave radiation.
+    @cvar LAYER_CONDUCTION: LID vertical conduction.
+    """
+
+    SURFACE_EXCHANGE = 0
+    RADIATIVE_EXCHANGE = 1
+    LAYER_CONDUCTION = 2
+
+
+class HeatShortwaveMode(IntEnum):
+    """Where incoming shortwave radiation comes from.
+
+    Mirrors C{SWMM_HeatShortwaveMode}. The three are mutually exclusive in
+    effect — exactly one is read — but switching modes does B{not} erase the
+    other modes' stored settings.
+
+    @cvar CONSTANT: Fixed W/m2, from C{HeatRadiativeParam.SHORTWAVE}.
+    @cvar TIMESERIES: A measured record bound by name.
+    @cvar COMPUTED: Solar position + Bird clear-sky model. Requires both
+        latitude and longitude to have been set explicitly.
+    """
+
+    CONSTANT = 0
+    TIMESERIES = 1
+    COMPUTED = 2
+
+
+class HeatRadiativeParam(IntEnum):
+    """C{[RADIATIVE_FLUXES]} scalar parameters.
+
+    Mirrors C{SWMM_HeatRadiativeParam}.
+
+    @cvar SHORTWAVE: Incoming shortwave, W/m2. Writable only in
+        C{HeatShortwaveMode.CONSTANT}.
+    @cvar ALBEDO: Water reflectance Rs, [0, 1].
+    @cvar SHADE_FACTOR: Shading fraction fs, [0, 1].
+    @cvar SKY_VIEW: Sky-view fraction fsky, [0, 1].
+    @cvar EMISS_WATER: Water emissivity, [0, 1].
+    @cvar EMISS_LANDCOVER: Land-cover emissivity, [0, 1].
+    @cvar ATM_EMISS_COEFF: Brunt atmospheric-emissivity coefficient, [0, 1].
+    @cvar LW_REFLECTION: Longwave reflection RL, [0, 1].
+    """
+
+    SHORTWAVE = 0
+    ALBEDO = 1
+    SHADE_FACTOR = 2
+    SKY_VIEW = 3
+    EMISS_WATER = 4
+    EMISS_LANDCOVER = 5
+    ATM_EMISS_COEFF = 6
+    LW_REFLECTION = 7
+
+
+class HeatSolarParam(IntEnum):
+    """C{[SOLAR_RADIATION]} parameters, consulted under
+    C{HeatShortwaveMode.COMPUTED} only.
+
+    Mirrors C{SWMM_HeatSolarParam}.
+
+    @cvar LATITUDE: Degrees, +N, [-90, 90].
+    @cvar LONGITUDE: Degrees, +E, [-180, 180].
+    @cvar TIMEZONE: Hours from UTC, +E.
+    @cvar ELEVATION: Metres, [-500, 9000]; below sea level is legal.
+    @cvar TURBIDITY_380: Bird aerosol optical depth at 380 nm.
+    @cvar TURBIDITY_500: Bird aerosol optical depth at 500 nm.
+    @cvar PRECIP_WATER: Precipitable water, cm.
+    @cvar OZONE: Ozone column, cm.
+    @cvar GROUND_ALBEDO: B{Land} albedo [0, 1] — not the water's
+        C{HeatRadiativeParam.ALBEDO}.
+    """
+
+    LATITUDE = 0
+    LONGITUDE = 1
+    TIMEZONE = 2
+    ELEVATION = 3
+    TURBIDITY_380 = 4
+    TURBIDITY_500 = 5
+    PRECIP_WATER = 6
+    OZONE = 7
+    GROUND_ALBEDO = 8
+
+
+class HeatCloudParam(IntEnum):
+    """C{[CLOUD_COVER]} parameters.
+
+    Mirrors C{SWMM_HeatCloudParam}.
+
+    @cvar FRACTION: Cloud fraction C, [0, 1] — a fraction, not a percent.
+    @cvar SW_ATTEN_K: Kasten-Czeplak shortwave attenuation k.
+    @cvar SW_ATTEN_N: Kasten-Czeplak shortwave attenuation n.
+    @cvar LW_CLOUD_K: Bolz longwave cloud coefficient k_lw.
+    """
+
+    FRACTION = 0
+    SW_ATTEN_K = 1
+    SW_ATTEN_N = 2
+    LW_CLOUD_K = 3
+
+
+class HeatSourceKind(IntEnum):
+    """C{[HEAT_SOURCES]} water sources.
+
+    Mirrors C{SWMM_HeatSourceKind} (and C{openswmm::HeatSource}). Only
+    C{DWF} and C{EXTERNAL_INFLOW} accept node-scope overrides — the H1 scope
+    rule, refused rather than silently deferred.
+
+    @cvar RAINFALL: Washoff runoff.
+    @cvar DWF: Dry-weather flow.
+    @cvar GW: Groundwater.
+    @cvar RDII: Rainfall-derived infiltration and inflow.
+    @cvar EXTERNAL_INFLOW: C{[INFLOWS]}.
+    @cvar IFACE: Interface file.
+    @cvar INITIAL_STATE: Water present at t = 0.
+    """
+
+    RAINFALL = 0
+    DWF = 1
+    GW = 2
+    RDII = 3
+    EXTERNAL_INFLOW = 4
+    IFACE = 5
+    INITIAL_STATE = 6
+
+
+class WaterAgeSource(IntEnum):
+    """C{[WATER_AGE_SOURCES]} pathways.
+
+    Mirrors C{SWMM_WaterAgeSource}. The C enum's trailing C{COUNT = 7}
+    sentinel is deliberately not reproduced — C{len(WaterAgeSource)} is the
+    count. Only C{DWF} and C{EXTERNAL_INFLOW} accept node-scope overrides
+    (the A1a scope rule).
+
+    @cvar RAINFALL: Rainfall-derived water.
+    @cvar DWF: Dry-weather flow.
+    @cvar GW: Groundwater.
+    @cvar RDII: Rainfall-derived infiltration and inflow.
+    @cvar EXTERNAL_INFLOW: C{[INFLOWS]}.
+    @cvar IFACE: Interface file.
+    @cvar INITIAL_STATE: Water present at t = 0.
+    """
+
+    RAINFALL = 0
+    DWF = 1
+    GW = 2
+    RDII = 3
+    EXTERNAL_INFLOW = 4
+    IFACE = 5
+    INITIAL_STATE = 6
+
+
+class ReactionScope(IntEnum):
+    """Identifier-resolution vocabulary for reaction-expression validation.
+
+    Mirrors the C{SWMM_RXN_SCOPE_*} macros in C{openswmm_reactions.h}.
+
+    @cvar TERM: Intermediate-term scope. References to B{all} terms resolve;
+        the forward-only ordering rule is enforced at file-apply time, where
+        ordinal position exists.
+    @cvar PIPE: Conduit (flowing) reaction scope.
+    @cvar TANK: Storage-unit (mixed) reaction scope.
+    """
+
+    TERM = 0
+    PIPE = 1
+    TANK = 2
+
+
+class ReactionExprForm(IntEnum):
+    """Form of a species' reaction expression.
+
+    Mirrors the C{SWMM_RXN_FORM_*} macros (and C{ReactionExprForm}).
+
+    @cvar NONE: No expression in this scope; also the value that B{clears}
+        one through C{Reactions.set_expression}.
+    @cvar RATE: Rate expression, C{dC/dt = f(...)}.
+    @cvar EQUIL: Equilibrium expression, C{0 = f(...)}.
+    @cvar FORMULA: Explicit formula, C{C = f(...)}.
+    """
+
+    NONE = 0
+    RATE = 1
+    EQUIL = 2
+    FORMULA = 3
+
+
+class InletType(IntEnum):
+    """Street-inlet design type (C{[INLETS]} token 2).
+
+    Mirrors C{SWMM_InletType}. C{COMBO} has no keyword in the .inp grammar:
+    legacy encodes a combination inlet as a C{GRATE} line and a C{CURB} line
+    sharing one name, which the parser merges into a single COMBO design.
+
+    @cvar GRATE: Grate inlet in the gutter.
+    @cvar CURB: Curb-opening inlet.
+    @cvar COMBO: Grate plus curb opening (written back as two lines).
+    @cvar SLOTTED: Slotted drain.
+    @cvar DROP_GRATE: Grate inlet in a drainage channel (RECT_OPEN/TRAPEZOIDAL).
+    @cvar DROP_CURB: Curb opening in a drainage channel; always solved on-sag.
+    @cvar CUSTOM: Capture from a user DIVERSION or RATING curve.
+    """
+
+    GRATE = 0
+    CURB = 1
+    COMBO = 2
+    SLOTTED = 3
+    DROP_GRATE = 4
+    DROP_CURB = 5
+    CUSTOM = 6
+
+
+class GrateType(IntEnum):
+    """Grate bar pattern (HEC-22 Table 4-6). Mirrors C{SWMM_GrateType}.
+
+    @cvar P_BAR_50: Parallel bars at 50 mm spacing.
+    @cvar P_BAR_50x100: Parallel bars at 50 mm with 100 mm cross bars.
+    @cvar P_BAR_30: Parallel bars at 30 mm spacing.
+    @cvar CURVED_VANE: Curved vane grate.
+    @cvar TILT_BAR_45: 45-degree tilt bar grate.
+    @cvar TILT_BAR_30: 30-degree tilt bar grate.
+    @cvar RETICULINE: Reticuline (honeycomb) grate.
+    @cvar GENERIC: User-supplied open-area fraction and splash-over velocity.
+    """
+
+    P_BAR_50 = 0
+    P_BAR_50x100 = 1
+    P_BAR_30 = 2
+    CURVED_VANE = 3
+    TILT_BAR_45 = 4
+    TILT_BAR_30 = 5
+    RETICULINE = 6
+    GENERIC = 7
+
+
+class ThroatType(IntEnum):
+    """Curb-opening throat orientation. Mirrors C{SWMM_ThroatType}.
+
+    Sets the orifice head of a curb-opening inlet operating on sag. The
+    C{[INLETS]} C{DROP_CURB} form has no throat token; VERTICAL is used.
+
+    @cvar HORIZONTAL: Horizontal throat.
+    @cvar INCLINED: Inclined throat.
+    @cvar VERTICAL: Vertical throat (the .inp default).
+    """
+
+    HORIZONTAL = 0
+    INCLINED = 1
+    VERTICAL = 2
+
+
+class InletCurveKind(IntEnum):
+    """Capture-curve kind of a C{CUSTOM} inlet design.
+
+    Mirrors C{SWMM_InletCurveKind}. The C{[INLETS]} grammar carries no kind
+    token — the named curve's own C{[CURVES]} type is the authority, so the
+    engine re-derives this when the model is validated.
+
+    @cvar NONE: Not resolved yet (the curve has not been seen).
+    @cvar DIVERSION: Captured flow as a function of approach flow.
+    @cvar RATING: Captured flow as a function of water depth.
+    """
+
+    NONE = 0
+    DIVERSION = 1
+    RATING = 2
+
+
+class InletPlacement(IntEnum):
+    """Inlet placement mode (C{[INLET_USAGE]} token 9).
+
+    Mirrors C{SWMM_InletPlacement}.
+
+    @cvar AUTOMATIC: On-sag at a network sink, on-grade otherwise. For an
+        inlet junction the test is slope-based (both attached street conduits
+        fall toward the node).
+    @cvar ON_GRADE: Continuous-slope capture (HEC-22 4-16..4-25).
+    @cvar ON_SAG: Sag-point capture: weir/orifice on ponded depth.
+    """
+
+    AUTOMATIC = 0
+    ON_GRADE = 1
+    ON_SAG = 2
+
+
+class InletHostKind(IntEnum):
+    """What an inlet-usage row is attached to. Mirrors C{SWMM_InletHostKind}.
+
+    @cvar LINK: A conduit — the row came from / is written to C{[INLET_USAGE]}.
+    @cvar NODE: An inlet junction — C{[INLET_JUNCTIONS]}.
+    """
+
+    LINK = 0
+    NODE = 1

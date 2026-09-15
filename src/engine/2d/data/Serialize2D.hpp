@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file Serialize2D.hpp
  * @brief Header-only helpers shared by 2D model serialization consumers
@@ -20,7 +36,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_SERIALIZE_2D_HPP
@@ -46,6 +62,13 @@ namespace openswmm::twoD {
  * @param boundary Drained per-edge BC storage (may be null/unsized).
  * @param drained  SolverOptions2D::pending_rows_drained — true once
  *                 initialize() moved the pending rows into @p boundary.
+ * @param flow_to_si_applied  SolverOptions2D::bc_flow_to_si_applied — the
+ *                 display-flow → m³/s factor initialize() scaled the constant
+ *                 SPECIFIED_FLOW values by (1.0 when it has not run). The file
+ *                 contract is display flow units per metre, so constant flows
+ *                 read from @p boundary are divided by it. Constant STAGE heads
+ *                 need no such treatment: they follow the mesh scaling, and the
+ *                 `;; UNITS: SI (m)` header the writer emits covers them.
  * @return Authored rows; empty when every edge is a default WALL.
  *
  * @note Source selection: BEFORE the drain the pending rows are the only
@@ -59,7 +82,11 @@ namespace openswmm::twoD {
 inline std::vector<PendingBoundaryRow> collectBCRows(
     const std::vector<PendingBoundaryRow>* pending,
     const BoundaryData* boundary,
-    bool drained) {
+    bool drained,
+    double flow_to_si_applied = 1.0) {
+
+    const double flow_to_display =
+        (flow_to_si_applied > 0.0) ? 1.0 / flow_to_si_applied : 1.0;
 
     if (!drained) {
         if (pending && !pending->empty()) return *pending;
@@ -77,8 +104,8 @@ inline std::vector<PendingBoundaryRow> collectBCRows(
         if (type == BoundaryType::WALL) continue;
 
         PendingBoundaryRow r;
-        r.tri     = idx / 3;
-        r.edge    = idx % 3;
+        r.tri     = MeshData::slot_cell(idx);
+        r.edge    = MeshData::slot_local(idx);
         r.bc_type = static_cast<int>(type);
 
         switch (type) {
@@ -95,7 +122,7 @@ inline std::vector<PendingBoundaryRow> collectBCRows(
             if (!boundary->edge_bc_flow_tseries_name[idx].empty())
                 r.name = boundary->edge_bc_flow_tseries_name[idx];
             else
-                r.param1 = boundary->edge_bc_flow[idx];
+                r.param1 = boundary->edge_bc_flow[idx] * flow_to_display;
             break;
         case BoundaryType::RATING_CURVE:
             r.name = boundary->edge_bc_rating_curve_name[idx];
@@ -112,11 +139,11 @@ inline std::vector<PendingBoundaryRow> collectBCRows(
         std::unordered_map<int, const std::string*> groups;
         groups.reserve(pending->size());
         for (const auto& p : *pending) {
-            if (!p.group.empty()) groups[p.tri * 3 + p.edge] = &p.group;
+            if (!p.group.empty()) groups[MeshData::slot(p.tri, p.edge)] = &p.group;
         }
         if (!groups.empty()) {
             for (auto& r : rows) {
-                auto it = groups.find(r.tri * 3 + r.edge);
+                auto it = groups.find(MeshData::slot(r.tri, r.edge));
                 if (it != groups.end()) r.group = *it->second;
             }
         }
@@ -155,17 +182,19 @@ inline std::vector<PendingEdgeConveyanceRow> collectConveyanceRows(
 
     const int nt = mesh->n_triangles();
     if (nt < 1 ||
-        mesh->edge_conveyance.size() < static_cast<std::size_t>(nt) * 3)
+        mesh->edge_conveyance.size() < static_cast<std::size_t>(mesh->n_edge_slots()))
         return rows;
 
     std::unordered_set<std::int64_t> seen;
     for (int t = 0; t < nt; ++t) {
-        const int v[3] = { mesh->tri_v0[t], mesh->tri_v1[t], mesh->tri_v2[t] };
-        for (int e = 0; e < 3; ++e) {
-            const double k = mesh->edge_conveyance[t * 3 + e];
+        const int nvc = mesh->cell_vertex_count(t);
+        for (int e = 0; e < nvc; ++e) {
+            const double k = mesh->edge_conveyance[MeshData::slot(t, e)];
             if (k == 1.0) continue;
-            const int va = std::min(v[(e + 1) % 3], v[(e + 2) % 3]);
-            const int vb = std::max(v[(e + 1) % 3], v[(e + 2) % 3]);
+            int ea, eb;
+            mesh->cell_edge_vertices(t, e, ea, eb);
+            const int va = std::min(ea, eb);
+            const int vb = std::max(ea, eb);
             const std::int64_t key =
                 (static_cast<std::int64_t>(va) << 32)
                 | (static_cast<std::int64_t>(vb) & 0xFFFFFFFFLL);

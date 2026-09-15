@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file HotStartManager.hpp
  * @brief Hot start file manager — in-memory representation + I/O.
@@ -57,7 +73,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_HOT_START_MANAGER_HPP
@@ -84,6 +100,8 @@ struct HotStartNodeRecord {
     double      depth  = 0.0;
     double      head   = 0.0;
     double      volume = 0.0;
+    /// A2a (V3): water age (seconds); -1 = not tracked / pre-V3 file.
+    double      age    = -1.0;
 };
 
 /** @brief Link hydraulic state at hot-start save time. */
@@ -92,6 +110,8 @@ struct HotStartLinkRecord {
     double      flow   = 0.0;
     double      depth  = 0.0;
     double      volume = 0.0;
+    /// A2a (V3): water age (seconds); -1 = not tracked / pre-V3 file.
+    double      age    = -1.0;
 };
 
 /** @brief Subcatchment state at hot-start save time. */
@@ -140,6 +160,37 @@ struct HotStartFile {
     std::vector<HotStartNodeRecord>   nodes;
     std::vector<HotStartLinkRecord>   links;
     std::vector<HotStartSubcatchRecord> subcatches;
+
+    /// U2 (2026-09-07, D-IQ5) — V4 species block: per-element concentrations
+    /// for every [POLLUTANTS] entry and every reactions-component species,
+    /// keyed by NAME so a file applies to a model whose species order
+    /// differs. `node_species` / `link_species` are [element * n + s] with
+    /// the same element order as `nodes` / `links`. Age keeps its per-record
+    /// field (V3); temperature is not carried (its seed paths are per
+    /// engine — a follow-up).
+    std::vector<std::string> species;
+    std::vector<double>      node_species;
+    std::vector<double>      link_species;
+
+    /// G1 (2026-09-07) — V5 block: the two-zone groundwater state.
+    ///
+    /// A run restarted without this reruns the entire wetting history from a
+    /// dry table, which for an aquifer is not an approximation — the whole
+    /// point of the kernel is that it has memory measured in seasons. Cells
+    /// are carried by INDEX, not name, because a mesh has no cell ids; a file
+    /// whose `gw_n_cells` does not match the model is reported and skipped
+    /// rather than applied to the wrong cells.
+    ///
+    /// `gw_theta_sigma` is layer-major `[layer * n_cells + cell]`, the SoA's
+    /// own order, and is empty when no cell uses closure B. The ledger terms
+    /// ride along so a restarted run's continuity check continues the
+    /// original's instead of starting from zero against a non-zero storage.
+    uint32_t            gw_n_cells  = 0;
+    uint32_t            gw_m_layers = 0;
+    std::vector<double> gw_hg;           ///< saturated thickness (m)
+    std::vector<double> gw_hu;           ///< unsaturated storage (m of water)
+    std::vector<double> gw_theta_sigma;  ///< closure-B layers, layer-major
+    std::vector<double> gw_ledger;       ///< the 9 cumulative terms (m3)
 
     std::string               path;      ///< File path (for flush-on-close)
     bool                      dirty = false; ///< True if set_*() was called

@@ -3,7 +3,7 @@
 #
 # Project:     openswmm.engine
 # Description: Open Storm Water Management Model Engine
-# Version:     6.0.0-alpha.3 (refactored engine) / 5.3.0-beta.3 (legacy engine wrapper)
+# Version:     6.0.0-alpha.4 (refactored engine) / 5.3.0-beta.3 (legacy engine wrapper)
 #
 # This is the root CMake file for the openswmm.engine project which contains:
 #   - openswmm_legacy_engine : Original EPA SWMM 5.x C solver (preserved unmodified)
@@ -34,7 +34,7 @@ project(
 )
 
 # Pre-release label for the refactored engine (e.g. "alpha.1", "beta.1", "rc.1"). Leave empty for a final release.
-set(OPENSWMM_PRERELEASE "alpha.3" CACHE STRING "Pre-release tag for the refactored engine (e.g. alpha.1, beta.1, rc.1). Empty for a final release.")
+set(OPENSWMM_PRERELEASE "alpha.4" CACHE STRING "Pre-release tag for the refactored engine (e.g. alpha.1, beta.1, rc.1). Empty for a final release.")
 
 # Legacy SWMM engine version (EPA SWMM 5.x lineage, independent of the OpenSWMM
 # Engine version). Single source of truth: src/legacy/engine/CMakeLists.txt
@@ -227,10 +227,27 @@ function(openswmm_bundle_runtime_deps TARGET_NAME SUBDIR)
     # unresolved-deps warnings on Windows and never get included in the
     # cpack zip. Linux/macOS usually resolve them via rpath, but the extra
     # dir is harmless on those platforms.
+    #
+    # vcpkg's DEBUG binaries live in <triplet>/debug/bin, not <triplet>/bin, so
+    # both trees are captured and the install script picks the order by config
+    # (issue #9). Searching only the release tree left Debug installs broken in
+    # two different ways:
+    #
+    #   - HDF5's debug DLLs carry a _D suffix (hdf5_D.dll, hdf5_hl_D.dll). The
+    #     name in the import table has no match under bin/, so it surfaced as
+    #     "unresolved runtime dep: hdf5_D.dll" and the installed exe died at
+    #     startup with STATUS_DLL_NOT_FOUND (0xC0000135).
+    #   - sqlite3's debug DLL keeps the release NAME, so it resolved happily —
+    #     against the RELEASE copy, quietly mixing a release sqlite3 into a
+    #     Debug package. That one never warned, which is why it looked fine.
+    #
     set(OPENSWMM_BUNDLE_EXTRA_DIRS "")
+    set(OPENSWMM_BUNDLE_EXTRA_DIRS_DEBUG "")
     if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
         list(APPEND OPENSWMM_BUNDLE_EXTRA_DIRS
             "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+        list(APPEND OPENSWMM_BUNDLE_EXTRA_DIRS_DEBUG
+            "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin")
     elseif(DEFINED ENV{VCPKG_ROOT})
         # Fallback: use the env-var-rooted classic-mode layout.
         set(_triplet "${VCPKG_TARGET_TRIPLET}")
@@ -240,6 +257,8 @@ function(openswmm_bundle_runtime_deps TARGET_NAME SUBDIR)
         if(_triplet)
             list(APPEND OPENSWMM_BUNDLE_EXTRA_DIRS
                 "$ENV{VCPKG_ROOT}/installed/${_triplet}/bin")
+            list(APPEND OPENSWMM_BUNDLE_EXTRA_DIRS_DEBUG
+                "$ENV{VCPKG_ROOT}/installed/${_triplet}/debug/bin")
         endif()
     endif()
 

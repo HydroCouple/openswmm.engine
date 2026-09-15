@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file openswmm_edit.h
  * @brief OpenSWMM Engine — Model editing C API (deletion and type conversion).
@@ -26,7 +42,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_EDIT_H
@@ -234,6 +250,53 @@ SWMM_ENGINE_API int swmm_subcatch_delete(
  */
 SWMM_ENGINE_API int swmm_gage_delete(
     SWMM_Engine engine, int idx, SWMM_ImpactReport* cascade_out);
+
+/**
+ * @brief Delete many nodes in one call — equivalent to sequential
+ *        @ref swmm_node_delete calls in DESCENDING index order, with ONE
+ *        name-index rebuild for the whole batch.
+ *
+ * @details The per-object path rebuilds the entire name→index hash after
+ *          EVERY delete, which dominates bulk deletions on large models
+ *          (K deletes = K full rehashes over every remaining name).  The
+ *          batch runs the identical per-object cascade logic — semantics,
+ *          cascade behaviour and final state match the sequential
+ *          descending equivalent exactly — but rehashes once.
+ *
+ *          `indices` are pre-batch indices; duplicates are tolerated
+ *          (deduplicated internally).  Every index is validated BEFORE any
+ *          mutation: an out-of-range entry fails the whole call with
+ *          SWMM_ERR_BADINDEX and no changes.  Cascade entries in
+ *          `cascade_out` carry the indices the sequential-descending
+ *          equivalent would report.
+ *
+ * @param engine       Engine handle.
+ * @param indices      Array of `n` zero-based node indices (pre-batch).
+ * @param n            Number of entries in `indices`; 0 is a no-op.
+ * @param cascade_out  If non-NULL, receives the aggregate cascade report.
+ *                     Caller must free with @ref swmm_impact_report_free.
+ * @returns SWMM_OK, SWMM_ERR_LIFECYCLE if not BUILDING/OPENED,
+ *          SWMM_ERR_BADHANDLE, SWMM_ERR_BADPARAM if `indices` is NULL with
+ *          n > 0, or SWMM_ERR_BADINDEX.
+ */
+SWMM_ENGINE_API int swmm_node_delete_many(
+    SWMM_Engine engine, const int* indices, int n,
+    SWMM_ImpactReport* cascade_out);
+
+/** @copydoc swmm_node_delete_many */
+SWMM_ENGINE_API int swmm_link_delete_many(
+    SWMM_Engine engine, const int* indices, int n,
+    SWMM_ImpactReport* cascade_out);
+
+/** @copydoc swmm_node_delete_many */
+SWMM_ENGINE_API int swmm_subcatch_delete_many(
+    SWMM_Engine engine, const int* indices, int n,
+    SWMM_ImpactReport* cascade_out);
+
+/** @copydoc swmm_node_delete_many */
+SWMM_ENGINE_API int swmm_gage_delete_many(
+    SWMM_Engine engine, const int* indices, int n,
+    SWMM_ImpactReport* cascade_out);
 
 /**
  * @brief Delete a time series or curve and nullify all referencing objects.
@@ -460,6 +523,36 @@ SWMM_ENGINE_API int swmm_conduit_split(
  *          through pair.
  */
 SWMM_ENGINE_API int swmm_virtual_junction_fuse(
+    SWMM_Engine engine, int node_idx, int* surviving_link_idx);
+
+/**
+ * @brief Split a STREET conduit at `t` and make the inserted node an inlet
+ *        junction with the given design and capture node (2026-09-05).
+ *
+ * @details Equivalent to swmm_conduit_split(make_virtual=1) followed by
+ *          swmm_node_set_inlet(1) and swmm_inlet_usage_set(host=node), but
+ *          atomic: on any failure after the split the split is undone
+ *          (fused back) and the error returned. The usage row is created
+ *          with num_inlets=1, 0 % clogged, no flow limit, no local
+ *          depression, AUTOMATIC placement; adjust with swmm_inlet_usage_set.
+ *
+ * @param inlet_id      Existing inlet design name.
+ * @param capture_node  Existing node name (not virtual, not the new node).
+ * @returns SWMM_OK; generic codes; ERR_VJ_ / ERR_IJ_ rule codes; 625 for an
+ *          unknown design; 627 for a bad capture node.
+ */
+SWMM_ENGINE_API int swmm_conduit_split_inlet(
+    SWMM_Engine engine, int link_idx, double t,
+    const char* new_node_name, const char* new_link_name,
+    const char* inlet_id, const char* capture_node,
+    int* new_node_idx, int* new_link_idx);
+
+/**
+ * @brief Inverse of swmm_conduit_split_inlet: removes the inlet junction's
+ *        usage row, then re-fuses the conduit pair exactly as
+ *        swmm_virtual_junction_fuse does.
+ */
+SWMM_ENGINE_API int swmm_inlet_junction_fuse(
     SWMM_Engine engine, int node_idx, int* surviving_link_idx);
 
 #ifdef __cplusplus

@@ -5,6 +5,9 @@ import unittest
 from openswmm.engine import (
     ErrorCode, EngineState, NodeType, LinkType,
     XSectShape, FlowUnits, RouteModel, WarnCode, ObjectType,
+    HeatFluxModule, HeatShortwaveMode, HeatRadiativeParam, HeatSolarParam,
+    HeatCloudParam, HeatSourceKind, WaterAgeSource,
+    ReactionScope, ReactionExprForm,
 )
 
 
@@ -200,25 +203,190 @@ class TestObjectType(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# HeatFluxModule
+# ---------------------------------------------------------------------------
+class TestHeatFluxModule(unittest.TestCase):
+    """Verify HeatFluxModule values (mirrors ``SWMM_HeatFluxModule``)."""
+
+    def test_known_values(self):
+        expected = {
+            "SURFACE_EXCHANGE": 0, "RADIATIVE_EXCHANGE": 1,
+            "LAYER_CONDUCTION": 2,
+        }
+        for name, val in expected.items():
+            self.assertEqual(HeatFluxModule[name].value, val)
+
+    def test_member_count(self):
+        self.assertEqual(len(HeatFluxModule), 3)
+
+
+# ---------------------------------------------------------------------------
+# HeatShortwaveMode
+# ---------------------------------------------------------------------------
+class TestHeatShortwaveMode(unittest.TestCase):
+    """Verify HeatShortwaveMode values (mirrors ``SWMM_HeatShortwaveMode``)."""
+
+    def test_known_values(self):
+        expected = {"CONSTANT": 0, "TIMESERIES": 1, "COMPUTED": 2}
+        for name, val in expected.items():
+            self.assertEqual(HeatShortwaveMode[name].value, val)
+
+    def test_member_count(self):
+        self.assertEqual(len(HeatShortwaveMode), 3)
+
+
+# ---------------------------------------------------------------------------
+# HeatRadiativeParam
+# ---------------------------------------------------------------------------
+class TestHeatRadiativeParam(unittest.TestCase):
+    """Verify HeatRadiativeParam values (mirrors ``SWMM_HeatRadiativeParam``)."""
+
+    def test_known_values(self):
+        expected = {
+            "SHORTWAVE": 0, "ALBEDO": 1, "SHADE_FACTOR": 2, "SKY_VIEW": 3,
+            "EMISS_WATER": 4, "EMISS_LANDCOVER": 5, "ATM_EMISS_COEFF": 6,
+            "LW_REFLECTION": 7,
+        }
+        for name, val in expected.items():
+            self.assertEqual(HeatRadiativeParam[name].value, val)
+
+    def test_member_count(self):
+        self.assertEqual(len(HeatRadiativeParam), 8)
+
+
+# ---------------------------------------------------------------------------
+# HeatSolarParam
+# ---------------------------------------------------------------------------
+class TestHeatSolarParam(unittest.TestCase):
+    """Verify HeatSolarParam values (mirrors ``SWMM_HeatSolarParam``)."""
+
+    def test_known_values(self):
+        expected = {
+            "LATITUDE": 0, "LONGITUDE": 1, "TIMEZONE": 2, "ELEVATION": 3,
+            "TURBIDITY_380": 4, "TURBIDITY_500": 5, "PRECIP_WATER": 6,
+            "OZONE": 7, "GROUND_ALBEDO": 8,
+        }
+        for name, val in expected.items():
+            self.assertEqual(HeatSolarParam[name].value, val)
+
+    def test_member_count(self):
+        self.assertEqual(len(HeatSolarParam), 9)
+
+
+# ---------------------------------------------------------------------------
+# HeatCloudParam
+# ---------------------------------------------------------------------------
+class TestHeatCloudParam(unittest.TestCase):
+    """Verify HeatCloudParam values (mirrors ``SWMM_HeatCloudParam``)."""
+
+    def test_known_values(self):
+        expected = {
+            "FRACTION": 0, "SW_ATTEN_K": 1, "SW_ATTEN_N": 2,
+            "LW_CLOUD_K": 3,
+        }
+        for name, val in expected.items():
+            self.assertEqual(HeatCloudParam[name].value, val)
+
+    def test_member_count(self):
+        self.assertEqual(len(HeatCloudParam), 4)
+
+
+# ---------------------------------------------------------------------------
+# HeatSourceKind
+# ---------------------------------------------------------------------------
+class TestHeatSourceKind(unittest.TestCase):
+    """Verify HeatSourceKind values (mirrors ``SWMM_HeatSourceKind``)."""
+
+    def test_known_values(self):
+        expected = {
+            "RAINFALL": 0, "DWF": 1, "GW": 2, "RDII": 3,
+            "EXTERNAL_INFLOW": 4, "IFACE": 5, "INITIAL_STATE": 6,
+        }
+        for name, val in expected.items():
+            self.assertEqual(HeatSourceKind[name].value, val)
+
+    def test_member_count(self):
+        self.assertEqual(len(HeatSourceKind), 7)
+
+
+# ---------------------------------------------------------------------------
+# WaterAgeSource
+# ---------------------------------------------------------------------------
+class TestWaterAgeSource(unittest.TestCase):
+    """Verify WaterAgeSource values (mirrors ``SWMM_WaterAgeSource``)."""
+
+    def test_known_values(self):
+        expected = {
+            "RAINFALL": 0, "DWF": 1, "GW": 2, "RDII": 3,
+            "EXTERNAL_INFLOW": 4, "IFACE": 5, "INITIAL_STATE": 6,
+        }
+        for name, val in expected.items():
+            self.assertEqual(WaterAgeSource[name].value, val)
+
+    def test_member_count(self):
+        # SEVEN, not eight: the C enum's trailing ``SWMM_AGE_SRC_COUNT = 7``
+        # sentinel is deliberately NOT reproduced as a Python member —
+        # ``len(WaterAgeSource)`` is the count, so a sentinel member would
+        # both double-count and show up in iteration as a fake pathway.
+        self.assertEqual(len(WaterAgeSource), 7)
+
+    def test_count_sentinel_is_not_a_member(self):
+        self.assertNotIn("COUNT", WaterAgeSource.__members__)
+
+
+# ---------------------------------------------------------------------------
+# ReactionScope
+# ---------------------------------------------------------------------------
+class TestReactionScope(unittest.TestCase):
+    """Verify ReactionScope values (mirrors the ``SWMM_RXN_SCOPE_*`` macros)."""
+
+    def test_known_values(self):
+        expected = {"TERM": 0, "PIPE": 1, "TANK": 2}
+        for name, val in expected.items():
+            self.assertEqual(ReactionScope[name].value, val)
+
+    def test_member_count(self):
+        self.assertEqual(len(ReactionScope), 3)
+
+
+# ---------------------------------------------------------------------------
+# ReactionExprForm
+# ---------------------------------------------------------------------------
+class TestReactionExprForm(unittest.TestCase):
+    """Verify ReactionExprForm values (mirrors the ``SWMM_RXN_FORM_*`` macros)."""
+
+    def test_known_values(self):
+        expected = {"NONE": 0, "RATE": 1, "EQUIL": 2, "FORMULA": 3}
+        for name, val in expected.items():
+            self.assertEqual(ReactionExprForm[name].value, val)
+
+    def test_member_count(self):
+        self.assertEqual(len(ReactionExprForm), 4)
+
+
+# ---------------------------------------------------------------------------
 # Cross-cutting
 # ---------------------------------------------------------------------------
+_ALL_ENUMS = (
+    ErrorCode, EngineState, NodeType, LinkType,
+    XSectShape, FlowUnits, RouteModel, WarnCode, ObjectType,
+    HeatFluxModule, HeatShortwaveMode, HeatRadiativeParam, HeatSolarParam,
+    HeatCloudParam, HeatSourceKind, WaterAgeSource,
+    ReactionScope, ReactionExprForm,
+)
+
+
 class TestEnumsCrossCutting(unittest.TestCase):
     """General properties all enums should satisfy."""
 
     def test_all_members_are_int(self):
-        for enum_cls in (
-            ErrorCode, EngineState, NodeType, LinkType,
-            XSectShape, FlowUnits, RouteModel, WarnCode, ObjectType,
-        ):
+        for enum_cls in _ALL_ENUMS:
             with self.subTest(enum_cls=enum_cls):
                 for member in enum_cls:
                     self.assertIsInstance(member.value, int)
 
     def test_values_are_unique(self):
-        for enum_cls in (
-            ErrorCode, EngineState, NodeType, LinkType,
-            XSectShape, FlowUnits, RouteModel, WarnCode, ObjectType,
-        ):
+        for enum_cls in _ALL_ENUMS:
             with self.subTest(enum_cls=enum_cls):
                 vals = [e.value for e in enum_cls]
                 self.assertEqual(len(vals), len(set(vals)),

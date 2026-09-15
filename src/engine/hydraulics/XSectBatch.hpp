@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file XSectBatch.hpp
  * @brief Cross-section geometry — unified batch + per-element API.
@@ -28,7 +44,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_XSECT_BATCH_HPP
@@ -46,6 +62,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cmath>
+
+#include "XSectLookup.hpp"
 
 namespace openswmm {
 
@@ -117,6 +135,11 @@ struct XSectParams {
     const double* hrad_tbl  = nullptr;   ///< Normalized hyd-radius vs y/y_full
     const double* width_tbl = nullptr;   ///< Normalized width     vs y/y_full
     int    transect_tbl_size = 0;        ///< Entry count of the tables above
+
+    /// Bucket map over `area_tbl` for the getYofA inversion (plan A1). Points
+    /// into the owning TransectData, so it has the same lifetime as area_tbl
+    /// and is null whenever that is.
+    const xsect::LocateLut* area_lut = nullptr;
 };
 
 // ============================================================================
@@ -140,7 +163,8 @@ int    setParams(XSectParams& xs, int type, const double p[], double ucf);
 
 // Lookup table helpers (exposed for batch kernels and testing)
 double lookup(double x, const double* table, int n_items);
-double invLookup(double y, const double* table, int n_items);
+double invLookup(double y, const double* table, int n_items,
+                 const LocateLut* lut = nullptr);
 int    locate(double y, const double* table, int n);
 double getYcircular(double alpha);
 double getScircular(double alpha);
@@ -495,13 +519,42 @@ void area_tabulated(
     int count
 );
 
+/// Per-link tabulated lookup — one shared quantity per call (IRREGULAR/CUSTOM/
+/// STREET, where every link carries its own transect table).
+void perlink_tabulated(
+    const double* OPENSWMM_RESTRICT depth,
+    const double* OPENSWMM_RESTRICT nrm,
+    const double* OPENSWMM_RESTRICT scale,
+    const double* const* tables,
+    int            table_size,
+    double*       OPENSWMM_RESTRICT result,
+    int count
+);
+
+/// Fused per-link tabulated pair (area + hyd-radius) sharing one table index —
+/// bit-identical to two perlink_tabulated passes (plan A2).
+void perlink_tabulated_pair(
+    const double* OPENSWMM_RESTRICT depth,
+    const double* OPENSWMM_RESTRICT nrm,
+    const double* OPENSWMM_RESTRICT scale_a,
+    const double* OPENSWMM_RESTRICT scale_b,
+    const double* const* tables_a,
+    const double* const* tables_b,
+    int            table_size,
+    double*       OPENSWMM_RESTRICT out_a,
+    double*       OPENSWMM_RESTRICT out_b,
+    int count
+);
+
 /// Batch area for shapes using invLookup (gothic, catenary, semielliptical, semicircular).
+/// @param lut  Bucket map for `table` (plan A1), or null to bisect.
 void area_inv_tabulated(
     const double* OPENSWMM_RESTRICT depth,
     const double* OPENSWMM_RESTRICT y_full,
     const double* OPENSWMM_RESTRICT a_full,
     const double* table,
     int            table_size,
+    const xsect::LocateLut* lut,
     double*       OPENSWMM_RESTRICT area,
     int count
 );

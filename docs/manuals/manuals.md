@@ -14,7 +14,7 @@ See @ref authors for the full list of authors and contributors.
     * Hydraulics Reference Manual (@ref hydraulics_reference_manual)
     * Quality Reference Manual (@ref quality_reference_manual)
 * C API Reference
-    * The OpenSWMM Engine v6 C API is organized by domain into 19 public headers.
+    * The OpenSWMM Engine v6 C API is organized by domain into 31 public headers.
       See the [Modules](modules.html) page for the full API reference generated from
       the `include/openswmm/engine/` headers.
     * Start with @ref openswmm_engine.h for the engine lifecycle, then explore

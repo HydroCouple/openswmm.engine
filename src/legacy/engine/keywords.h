@@ -59,6 +59,7 @@ extern char* RuleKeyWords[];
 extern char* SectWords[];
 extern char* SnowmeltWords[];
 extern char* SurchargeWords[];
+extern char* BackflowQualWords[];
 extern char* TempKeyWords[];
 extern char* TransectKeyWords[];
 extern char* TreatTypeWords[];

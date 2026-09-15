@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file openswmm_model.h
  * @brief OpenSWMM Engine — Model building and options C API.
@@ -17,7 +33,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_MODEL_H
@@ -91,6 +107,36 @@ SWMM_ENGINE_API int swmm_finalize_model(SWMM_Engine engine);
  * @returns SWMM_OK on success; SWMM_ERR_* on failure.
  */
 SWMM_ENGINE_API int swmm_model_write(SWMM_Engine engine, const char* new_inp_path);
+
+/** Write profile for swmm_model_write_compat(). */
+typedef enum SWMM_InpProfile {
+    SWMM_INP_PROFILE_FULL  = 0,  /**< native OpenSWMM format (= swmm_model_write) */
+    SWMM_INP_PROFILE_SWMM5 = 1   /**< readable by a SWMM 5.x engine */
+} SWMM_InpProfile;
+
+/**
+ * @brief Write the current model state as an .inp for a given engine profile.
+ *
+ * @details `SWMM_INP_PROFILE_SWMM5` produces a file a SWMM 5.x engine reads:
+ *          v6-only sections ([VIRTUAL_JUNCTIONS], [INLET_JUNCTIONS], [2D_*],
+ *          [PLUGINS], [PROCESS_COMPONENTS], [USER_FLAGS], [USER_FLAG_VALUES],
+ *          [RDII_DECAY]) and option keys are omitted, `FLOW_ROUTING FV` is
+ *          written as `DYNWAVE`, `SURCHARGE_METHOD DYNAMIC_SLOT`/`TPA` as
+ *          `SLOT`, a virtual junction becomes an ordinary junction, and an
+ *          inlet junction becomes an ordinary junction plus an [INLET_USAGE]
+ *          row on its approach conduit (same design, same capture node).
+ *          Each substitution is appended to the engine's warning list
+ *          (swmm_get_warning_count / swmm_get_warning_at). The file is a run
+ *          artifact: the model held by the engine is not changed.
+ *
+ * @param engine       Engine handle (SWMM_STATE_OPENED or later).
+ * @param new_inp_path Path where the file should be written.
+ * @param profile      SWMM_InpProfile value.
+ * @returns SWMM_OK on success; SWMM_ERR_BADPARAM for an unknown profile or
+ *          NULL path; SWMM_ERR_* on a write failure.
+ */
+SWMM_ENGINE_API int swmm_model_write_compat(SWMM_Engine engine, const char* new_inp_path,
+                                            int profile);
 
 /**
  * @brief Write the current model state via a named writer plugin.
@@ -309,8 +355,17 @@ typedef enum SWMM_FilePathRole {
                                        *  `owner` is decimal index "0".."N-1" */
     SWMM_FILE_RAINGAGE_DATA     = 9,  /**< ctx.gages.file_path[i],
                                        *  `owner` is the gage id     */
-    SWMM_FILE_TIMESERIES_DATA   = 10  /**< ctx.tables.tables[i].file_path,
+    SWMM_FILE_TIMESERIES_DATA   = 10, /**< ctx.tables.tables[i].file_path,
                                        *  `owner` is the series id   */
+
+    /* Scalar slots — `owner` ignored. Unavailable (SWMM_ERR_BADPARAM) in
+     * builds without 2D support. */
+    SWMM_FILE_MESH_2D           = 11, /**< [2D_MESH_FILE] external .2dm   */
+    SWMM_FILE_OUTPUT_2D         = 12, /**< [2D_OPTIONS] OUTPUT_FILE .h5   */
+
+    /* Vector slot — `owner` selects the entry. */
+    SWMM_FILE_LID_REPORT        = 13  /**< ctx.lid_usage.rpt_file[i],
+                                       *  `owner` is decimal index "0".."N-1" */
 } SWMM_FilePathRole;
 
 /**

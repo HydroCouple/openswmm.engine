@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file LID.hpp
  * @brief Low Impact Development (LID) control modules.
@@ -20,14 +36,17 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_LID_HPP
 #define OPENSWMM_LID_HPP
 
+#include "Infiltration.hpp"
+#include <utility>
 #include <vector>
 #include <cstddef>
+#include <cstdint>
 
 namespace openswmm {
 
@@ -85,6 +104,7 @@ struct LIDGroupSoA {
     std::vector<int>    drain_subcatch;///< Resolved drain-to subcatch index (-1=none)
     std::vector<double> inflow;        ///< Per-unit inflow rate (ft/sec) — set before execute()
     std::vector<double> evap_rate_unit;///< Per-unit effective PET rate (ft/sec) — filled by execute()
+    std::vector<double> subcatch_rain; ///< Parent subcatchment rainfall (ft/sec) — for the rain-barrel dry-time reset (legacy lid.c:1920)
 
     // Surface layer
     std::vector<double> surf_store;    ///< Surface storage depth (ft)
@@ -136,6 +156,8 @@ struct LIDGroupSoA {
     std::vector<double> surf_alpha;        ///< Surface Manning alpha = sqrt(slope)/n
     std::vector<double> surf_side_slope;   ///< Swale side slope (run/rise)
     std::vector<double> full_width;        ///< Full width for Manning's flow (ft)
+    std::vector<double> unit_area;         ///< ONE unit's area (ft2) — legacy lidUnit->area
+    std::vector<double> unit_width;        ///< ONE unit's width (ft) — legacy lidUnit->fullWidth
     std::vector<double> dry_time;          ///< Seconds since last rainfall
 
     // State variables (updated each step)
@@ -144,15 +166,47 @@ struct LIDGroupSoA {
     std::vector<double> stor_depth;    ///< Current storage depth
     std::vector<double> pave_depth;    ///< Current pavement depth
 
+    // Legacy lidproc.c per-unit state the kernel needs beyond the layer
+    // depths (lid.c TLidUnit): the unit's own Green-Ampt infiltration
+    // state for the soil layer (soilInfil), the drain flow the previous
+    // step delivered (oldDrainFlow, the underdrain's hOpen/hClose
+    // hysteresis memory), and the process's canOverflow flag
+    // (validateLidProc: false for a roof disconnection and for a
+    // bio-cell / rain garden / trench / pavement / green roof whose surface
+    // has a Manning alpha).
+    std::vector<GreenAmptState> soil_infil;
+    std::vector<double> old_drain_flow;
+    std::vector<uint8_t> is_wet;           ///< legacy lidproc_saveResults isDry == FALSE this step (HasWetLids)
+    std::vector<uint8_t> can_overflow;
+    std::vector<double> drainmat_alpha;    ///< legacy drainMat.alpha = PHI / roughness * sqrt(surfSlope)
+
     // Outputs (per unit)
     std::vector<double> surface_runoff;
     std::vector<double> drain_flow;
-    std::vector<double> evap_loss;
-    std::vector<double> infil_loss;
+    std::vector<double> evap_loss;   ///< Evaporation loss this step (ft of depth)
+    std::vector<double> infil_loss;  ///< Native infiltration loss this step (ft)
 
     // Pollutant drain removal fractions: drain_rmvl[unit * n_pollutants + pollutant]
     std::vector<double> drain_rmvl;  ///< Removal fraction per unit per pollutant
     int n_pollutants = 0;            ///< Number of pollutants (for indexing drain_rmvl)
+
+    // ---- A4: per-layer INFLOW rates (ft/sec of water per unit area) ----
+    // Each layer receives from exactly one place: the layer above it in the
+    // present stack, or externally for the topmost present layer. Every
+    // batch*Flux routine already computes these as locals (soil_infil,
+    // soil_perc, pavePerc, storageInflow, ...); they are published here
+    // because a complete-mix age needs the INFLOW and nothing else — the
+    // outflow leaves at the layer's own age.
+    //
+    // These are NOT the `f_old_*` below. Those are the Modified Puls
+    // time-weighting term: `f_old_surf` is the NET dx/dt of the surface
+    // layer, and the other three are never written at all. A net rate of
+    // change is exactly the quantity that made phase A3 report elapsed time
+    // instead of age.
+    std::vector<double> in_surf;      ///< External inflow onto the surface
+    std::vector<double> in_pave;      ///< Surface → pavement
+    std::vector<double> in_soil;      ///< Layer above → soil
+    std::vector<double> in_stor;      ///< Layer above → storage
 
     // Previous flux rates (for Modified Puls time weighting)
     std::vector<double> f_old_surf;   ///< Previous surface flux rate
@@ -186,16 +240,26 @@ public:
     const LIDGroupSoA& group(int type_index) const { return groups_[static_cast<size_t>(type_index)]; }
     int numGroups() const { return static_cast<int>(groups_.size()); }
 
-    /// Total water currently stored across all LID units (ft³): per-unit
-    /// stored depth (wb_final_vol, ft) × unit area (ft²). Feeds the
-    /// subcatchment runoff-continuity storage term (issue #102 C).
+    /// Total water volume currently stored in all LID units (ft³), for the
+    /// runoff mass balance (legacy lid_getStoredVolume()). This is the one
+    /// SWMMEngine calls (runoff_init_store / runoff_final_store).
+    double storedVolume() const;
+
+    /// Water-balance-ledger volume queries (#102 C), summing the per-unit
+    /// `wb_*` accumulators over the unit footprints.
+    ///
+    /// MERGE REPAIR (a38f0c0b, 2026-08-29): these four were DEFINED in
+    /// LID.cpp on the incoming `swmm6_rel` side with no declaration on
+    /// EITHER side of the merge — that branch does not compile as it stands,
+    /// and neither did the merge result. The definitions are kept and
+    /// declared here rather than deleted, because deleting is the one choice
+    /// that cannot be undone by whoever wires them up. **Nothing calls them
+    /// yet**: `storedVolume()` above, not `totalStoredVolume()`, is what the
+    /// runoff mass balance uses, and the two measure different things
+    /// (void-weighted layer depths vs the wb_ ledger's final volume).
     double totalStoredVolume() const;
-    /// Total initial LID storage (ft³): wb_init_vol (ft) × area (ft²).
     double totalInitVolume() const;
-    /// Cumulative LID exfiltration to native soil (ft³): wb_infil × area.
-    /// Added to the runoff-continuity infiltration term (legacy VlidInfil).
     double totalInfilVolume() const;
-    /// Cumulative LID evaporation (ft³): wb_evap × area (legacy VlidEvap).
     double totalEvapVolume() const;
 
     /**
@@ -216,6 +280,29 @@ public:
      */
     void execute(SimulationContext& ctx, double dt,
                  double rainfall, double evap_rate);
+
+    /// The runoff clock's OLD time (seconds), legacy OldRunoffTime — the
+    /// pavement clogging regeneration test reads it (lidproc.c
+    /// getPavementPermRate). Set by the engine before each execute().
+    void setRunoffTime(double old_runoff_sec) { old_runoff_sec_ = old_runoff_sec; }
+
+    /// Per-subcatchment native-soil infiltration inputs for this runoff step
+    /// (legacy findNativeInfil: NativeInfil and MaxNativeInfil, ft/s). Set by
+    /// the engine before each execute(); empty means 0 and unlimited.
+    void setNativeInfil(std::vector<double> native, std::vector<double> max_native) {
+        native_infil_ = std::move(native); max_native_infil_ = std::move(max_native);
+    }
+
+    /// Per-subcatchment infiltration factor (the [ADJUSTMENTS] / pattern
+    /// multiplier the runoff solver applied this step) and the evaporation
+    /// recovery factor, for the units' own Green-Ampt states.
+    void setInfilFactors(std::vector<double> infil_factor, double recovery_factor) {
+        infil_factor_ = std::move(infil_factor); recovery_factor_ = recovery_factor;
+    }
+
+    /// Legacy HasWetLids: any unit was not dry in the last execute()
+    /// (runoff.c keeps the WET step while it holds).
+    bool anyWet() const;
 
     /// Batch bio-cell flux rates — VECTORISABLE
     static void batchBioCellFlux(LIDGroupSoA& g, double rainfall,
@@ -252,6 +339,11 @@ public:
 
 private:
     std::vector<LIDGroupSoA> groups_;
+    double old_runoff_sec_ = 0.0;
+    double recovery_factor_ = 1.0;
+    std::vector<double> native_infil_;
+    std::vector<double> max_native_infil_;
+    std::vector<double> infil_factor_;
 };
 
 } // namespace lid

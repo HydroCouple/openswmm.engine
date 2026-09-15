@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file LinkSubtypes.hpp
  * @brief Relational (normalized) Structure-of-Arrays side-tables for link subtypes.
@@ -33,7 +49,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_LINK_SUBTYPES_HPP
@@ -215,7 +231,10 @@ struct OrificeData {
     std::vector<int>    link_idx;
     std::vector<double> orifice_type;    ///< 0 = BOTTOM, 1 = SIDE (legacy param1)
     std::vector<double> cd;              ///< Discharge coefficient
-    std::vector<double> orate;           ///< Open/close time (s)
+    std::vector<double> orate;           ///< Open/close time in HOURS, as parsed
+                                         ///< from [ORIFICES]; x3600 at use
+                                         ///< (SWMMEngine.cpp:2927), matching
+                                         ///< legacy link.c:372.
 
     int count() const noexcept { return static_cast<int>(link_idx.size()); }
 
@@ -250,12 +269,15 @@ struct OrificeData {
 
 struct WeirData {
     std::vector<int>    link_idx;
-    std::vector<double> weir_type;       ///< TRANSVERSE/SIDEFLOW/V-NOTCH/TRAPEZOIDAL (legacy param1)
+    std::vector<double> weir_type;       ///< TRANSVERSE/SIDEFLOW/V-NOTCH/TRAPEZOIDAL/ROADWAY = 0..4 (legacy param1)
     std::vector<double> cd;              ///< Discharge coefficient
     std::vector<double> end_contractions;///< End contractions (legacy param2)
     std::vector<double> crest_height;
     std::vector<double> cd2;             ///< End-section discharge coeff (legacy cDisch2)
     std::vector<uint8_t> can_surcharge;  ///< Surcharge YES/NO (legacy Weir.canSurcharge, default YES)
+    std::vector<double> road_width;      ///< ROADWAY weir: road width across the flow (legacy Weir.roadWidth; authored length units until the resolver, then ft)
+    std::vector<int8_t> road_surface;    ///< ROADWAY weir: 0 none, 1 PAVED, 2 GRAVEL (legacy Weir.roadSurface)
+    std::vector<int>    cd_curve;        ///< Discharge-coefficient curve index in ctx.tables, -1 none (legacy Weir.cdCurve)
 
     int count() const noexcept { return static_cast<int>(link_idx.size()); }
 
@@ -263,12 +285,14 @@ struct WeirData {
         link_idx.clear(); weir_type.clear(); cd.clear();
         end_contractions.clear(); crest_height.clear();
         cd2.clear(); can_surcharge.clear();
+        road_width.clear(); road_surface.clear(); cd_curve.clear();
     }
     void reserve(int n) {
         const auto un = static_cast<std::size_t>(n);
         link_idx.reserve(un); weir_type.reserve(un); cd.reserve(un);
         end_contractions.reserve(un); crest_height.reserve(un);
         cd2.reserve(un); can_surcharge.reserve(un);
+        road_width.reserve(un); road_surface.reserve(un); cd_curve.reserve(un);
     }
     int add_default(int i) {
         const auto p = static_cast<std::ptrdiff_t>(
@@ -280,6 +304,9 @@ struct WeirData {
         crest_height.insert(crest_height.begin() + p, 0.0);
         cd2.insert(cd2.begin() + p, 0.0);
         can_surcharge.insert(can_surcharge.begin() + p, uint8_t{1});
+        road_width.insert(road_width.begin() + p, 0.0);
+        road_surface.insert(road_surface.begin() + p, int8_t{0});
+        cd_curve.insert(cd_curve.begin() + p, -1);
         return static_cast<int>(p);
     }
     void erase_at(int r) {
@@ -291,6 +318,9 @@ struct WeirData {
         crest_height.erase(crest_height.begin() + p);
         cd2.erase(cd2.begin() + p);
         can_surcharge.erase(can_surcharge.begin() + p);
+        road_width.erase(road_width.begin() + p);
+        road_surface.erase(road_surface.begin() + p);
+        cd_curve.erase(cd_curve.begin() + p);
     }
 };
 

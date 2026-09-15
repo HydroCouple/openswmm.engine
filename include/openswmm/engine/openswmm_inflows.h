@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file openswmm_inflows.h
  * @brief OpenSWMM Engine — Inflows (External, DWF, RDII) C API.
@@ -10,7 +26,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_INFLOWS_H
@@ -35,7 +51,12 @@ extern "C" {
  *
  * @param engine     Engine handle.
  * @param node_idx   Zero-based index of the receiving node.
- * @param constituent Constituent name ("FLOW" for flow, or a pollutant name).
+ * @param constituent Constituent name ("FLOW" for flow, a pollutant name,
+ *                   or the reserved species "__WATER_AGE__" — such a row
+ *                   prescribes the AGE, in HOURS, carried by the node's
+ *                   external inflow water, and wins over the
+ *                   [WATER_AGE_SOURCES] EXTERNAL_INFLOW entry (Z1,
+ *                   amendment D-Y4). It adds no water and no mass.
  * @param ts_name    Time series name (NULL or "" for constant baseline only).
  * @param type       Inflow type: "FLOW", "CONCEN", or "MASS".
  * @param m_factor   Multiplier applied to the time series values.

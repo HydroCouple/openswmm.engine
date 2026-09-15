@@ -346,10 +346,13 @@ int  setManning(double n[])
     {
         if ( n[i] < 0.0 ) return ERR_NUMBER;
     }
-    if ( n[3] == 0.0 ) return ERR_TRANSECT_MANNING;
+    // --- a zero component means "unchanged from the preceding NC record",
+    //     so only positive values update the active roughness; the missing
+    //     channel roughness error is raised after inheritance is applied
     if ( n[1] > 0.0 ) Nleft = n[1];
     if ( n[2] > 0.0 ) Nright = n[2];
     if ( n[3] > 0.0 ) Nchannel = n[3];
+    if ( Nchannel <= 0.0 ) return ERR_TRANSECT_MANNING;
     if ( Nleft == 0.0  ) Nleft = Nchannel;
     if ( Nright == 0.0 ) Nright = Nchannel;
     return 0;

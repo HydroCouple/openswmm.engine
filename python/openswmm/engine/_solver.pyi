@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Engine Lifecycle (Pythonic v1 surface)
 ======================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 Type stubs for :mod:`openswmm.engine._solver`.
 """
@@ -25,15 +41,20 @@ if TYPE_CHECKING:
     from ._edit import ModelEditor
     from ._forcing import Forcing
     from ._gages import Gages
+    from ._heat import Heat
     from ._hotstart import SaveSchedule
     from ._infrastructure import Infrastructure
     from ._inflows import Inflows
+    from ._initial_quality import InitialQuality
     from ._links import Links
     from ._massbalance import MassBalance
     from ._nodes import Nodes
     from ._pollutants import Pollutants
+    from ._process_components import ProcessComponents
     from ._quality import Quality
+    from ._reactions import Reactions
     from ._spatial import Spatial
+    from ._water_age import WaterAge
     from ._statistics import Statistics
     from ._subcatchments import Aquifers, Snowpacks, Subcatchments
     from ._tables import Patterns, Tables
@@ -363,6 +384,16 @@ class Solver:
     def spatial(self) -> "Spatial": ...
     @property
     def quality(self) -> "Quality": ...
+    @property
+    def initial_quality(self) -> "InitialQuality": ...
+    @property
+    def reactions(self) -> "Reactions": ...
+    @property
+    def heat(self) -> "Heat": ...
+    @property
+    def water_age(self) -> "WaterAge": ...
+    @property
+    def process_components(self) -> "ProcessComponents": ...
     @property
     def statistics(self) -> "Statistics": ...
     @property

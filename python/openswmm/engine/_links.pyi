@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Link access (Pythonic v1 surface)
 =================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 Type stubs for :mod:`openswmm.engine._links`.
 """
@@ -31,6 +47,8 @@ class LinkStatsView:
     max_filling: float
     vol_flow: float
     surcharge_time: float
+    peak_slot_share: float
+    slot_share: float
     pump_cycles: int
     pump_on_time: float
     pump_volume: float
@@ -107,6 +125,7 @@ class Link:
     velocity: float
     capacity: float
     volume: float
+    slot_volume: float
     hyd_power: float
 
     # Control

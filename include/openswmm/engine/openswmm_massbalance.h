@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file openswmm_massbalance.h
  * @brief OpenSWMM Engine — Mass Balance / Continuity C API.
@@ -10,7 +26,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_MASSBALANCE_H
@@ -48,7 +64,9 @@ typedef enum SWMM_RunoffTotal {
     SWMM_RUNOFF_RUNOFF     = 3, /**< Cumulative surface runoff volume. */
     SWMM_RUNOFF_SNOWREMOV  = 4, /**< Cumulative snow removal volume. */
     SWMM_RUNOFF_INITSTORE  = 5, /**< Initial surface storage volume. */
-    SWMM_RUNOFF_FINALSTORE = 6  /**< Final surface storage volume. */
+    SWMM_RUNOFF_FINALSTORE = 6, /**< Final surface storage volume. */
+    SWMM_RUNOFF_INITSNOW   = 7, /**< Initial snow cover volume (SWE + free water). */
+    SWMM_RUNOFF_FINALSNOW  = 8  /**< Final snow cover volume (SWE + free water). */
 } SWMM_RunoffTotal;
 
 /** @brief Routing mass balance component codes. */
@@ -73,6 +91,24 @@ typedef enum SWMM_RoutingTotal {
                                        *   counts INP `[INFLOWS]`-derived,
                                        *   interface-file, and 2D-coupling
                                        *   inflow (issue #113). */
+    ,
+    SWMM_ROUTING_COUPLING_OUT = 12   /**< C2 (2026-09-07): cumulative volume
+                                       *   the 1D→2D coupling spill removed
+                                       *   from coupled nodes.
+                                       *
+                                       *   Previously folded into
+                                       *   `SWMM_ROUTING_FLOODING`, which
+                                       *   reported a coupling TRANSFER as
+                                       *   flooding. It is still an OUTFLOW of
+                                       *   the 1D system and still enters the
+                                       *   routing continuity error, so a host
+                                       *   summing the outflow categories must
+                                       *   now add this one too.
+                                       *
+                                       *   Zero (and the volume stays in
+                                       *   `SWMM_ROUTING_FLOODING`) under
+                                       *   `[2D_OPTIONS] COUPLING_IN_FLOODING
+                                       *   YES`. */
 } SWMM_RoutingTotal;
 
 /**

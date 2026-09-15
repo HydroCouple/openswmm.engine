@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file SimulationSnapshot.hpp
  * @brief Read-only snapshot of simulation state passed to plugins.
@@ -20,7 +36,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_SIMULATION_SNAPSHOT_HPP
@@ -150,6 +166,21 @@ struct SimulationSnapshot {
     double sys_storage        = 0.0;  ///< Total storage volume
     double sys_pet            = 0.0;  ///< Potential evapotranspiration
 
+    /**
+     * @brief Whether the model has any subcatchments.
+     * @details Legacy assigns SYS_TEMPERATURE and SYS_PET — and applies the SI
+     *          temperature conversion — at the end of
+     *          output_saveSubcatchResults, which is called only behind
+     *          `if (Nobjects[SUBCATCH] > 0)` (output.c:489-490). With no
+     *          subcatchments both stay at the zero-initialised value of
+     *          SysResults and are never converted, so a raw 0 is reported
+     *          whatever the unit system. Carried on the snapshot because the
+     *          display-unit conversion is where that has to be honoured: the
+     *          degF->degC conversion is AFFINE, so converting a zero yields
+     *          -17.78 degC rather than zero.
+     */
+    bool has_subcatchments = true;
+
     // -----------------------------------------------------------------------
     // Pollutant concentrations (optional; populated only if quality routing active)
     // -----------------------------------------------------------------------
@@ -208,9 +239,13 @@ struct SimulationSnapshot {
     // 2D surface routing state (optional; populated only when the engine was
     // built with OPENSWMM_BUILD_2D and the input file contains a 2D mesh)
     //
-    // Layout: per-triangle vectors are sized `surface_tri_count`; per-vertex
-    // vectors are sized `surface_vert_count`. `surface_edge_flux` is flat
-    // [tri * 3 + edge] of size `surface_tri_count * 3`.
+    // Layout: per-cell vectors are sized `surface_tri_count` (a "tri" is any
+    // cell — triangle or quadrilateral, triangles first); per-vertex vectors
+    // are sized `surface_vert_count`. `surface_edge_flux` is flat
+    // [cell * surface_edge_stride + edge] of size
+    // `surface_tri_count * surface_edge_stride`, where the stride is 3 for an
+    // all-triangle mesh (byte-compatible with pre-quad consumers) and 4 once
+    // any quad exists; padding slots of a triangle row are 0.
     //
     // Fields are deep-copied from `SurfaceRouter2D::state()` on the main
     // simulation thread; consumers (Default2DOutputPlugin and any third-party
@@ -222,8 +257,13 @@ struct SimulationSnapshot {
     // `surface_tri_count == 0` to skip 2D-specific work in that case.
     // -----------------------------------------------------------------------
 
-    int surface_tri_count  = 0;             ///< Number of triangles (faces)
+    int surface_tri_count  = 0;             ///< Number of cells (faces): triangles + quads
     int surface_vert_count = 0;             ///< Number of vertices (nodes)
+    int surface_quad_count = 0;             ///< Number of quadrilateral cells (0 = all triangles)
+    int surface_edge_stride = 3;            ///< Edge slots per cell row in surface_edge_flux (3 | 4)
+    /// Vertices per cell (3 or 4), sized surface_tri_count. Empty when the
+    /// mesh is all triangles (consumers may treat empty as "all 3").
+    std::vector<uint8_t> surface_cell_nv;
 
     std::vector<double> surface_depth;          ///< Overland flow depth ψ_o (m), per face
     std::vector<double> surface_head;           ///< Total head h_o = z_s + ψ_o (m), per face
@@ -234,6 +274,25 @@ struct SimulationSnapshot {
     std::vector<double> surface_rainfall;       ///< Rainfall intensity (m/s), per face
     std::vector<double> surface_coupling_flux;  ///< Coupling flux to SWMM node (m/s, + = into 2D), per face
     std::vector<double> surface_net_source;     ///< Net source/sink (m/s), per face
+    std::vector<double> surface_infil_rate;     ///< Held infiltration loss rate (m/s, ≥ 0), per face — all zero when no [2D_INFILTRATION*] model resolved
+    std::vector<double> surface_infil_cum;      ///< Cumulative infiltrated depth (m), per face
+    std::vector<double> surface_rain_cum;       ///< Cumulative rainfall volume (m³), per face
+    /**
+     * @brief 2D surface species concentration (overland transport S1/S2).
+     * @details Layout: [species * surface_tri_count + face], species-major to
+     *          match the engine's own cell store. `surface_species_count`
+     *          rows in the 1D row order (pollutants, MSX, age,
+     *          temperature — see `surface_species_names`).
+     *          A dry cell reports 0 (its mass is held, not divided).
+     *          Empty when the model carries no 2D transport.
+     */
+    std::vector<double> surface_species_conc;
+    int surface_species_count = 0;
+    /// S4: the 2D row names in row order (pollutant ids, MSX ids,
+    /// `__WATER_AGE__`, `__TEMPERATURE__`) — `surface_species_count` entries.
+    /// Null before S4 / when 2D transport is off; consumers fall back to
+    /// `pollut_names`.
+    const std::vector<std::string>* surface_species_names = nullptr;
     std::vector<double> surface_edge_flux;      ///< Normal flux through each edge, flat [tri*3+edge]
     std::vector<double> surface_vert_head;      ///< Reconstructed head at vertices (m) — SOLVER field (dry-cell head = bed)
     std::vector<double> surface_vert_depth;     ///< SIGNED vertex depth η_v − z_v (m) — wet-masked, wetted-contact-gated render reconstruction; > 0 where water reaches the vertex, 0 = no-data sentinel (older engines also emitted negatives on the dry side of partially wet cells — readers stay negative-tolerant)

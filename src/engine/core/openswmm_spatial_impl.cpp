@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file openswmm_spatial_impl.cpp
  * @brief C API implementation — spatial frame: CRS, coordinates, vertices, polygons.
@@ -7,7 +23,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "openswmm_api_common.hpp"
@@ -23,7 +39,14 @@ SWMM_ENGINE_API int swmm_spatial_set_crs(SWMM_Engine engine, const char* crs) {
     CHECK_HANDLE(engine);
     if (!crs) return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
+    // The CRS is held in two places: the spatial frame (this API, the
+    // GeoPackage reader/writer, hot-start headers) and the [OPTIONS] table
+    // (swmm_get_crs, swmm_options_set("CRS"), and the .inp writer). The .inp
+    // reader fills both; this setter used to fill only the frame, so a caller
+    // that reprojected coordinates and then saved the model wrote the NEW
+    // coordinates under the OLD `CRS` line. Keep both in step.
     ctx.spatial.crs = crs;
+    ctx.options.crs = crs;
     return SWMM_OK;
 }
 

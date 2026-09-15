@@ -239,3 +239,75 @@ TEST(LenientOpen, AccessorsAreNullHandleSafe) {
     EXPECT_STREQ(swmm_get_warning_at(nullptr, 0), "");
     swmm_engine_set_lenient_open(nullptr, 1);  // must not crash
 }
+
+// ===========================================================================
+// Post-open failure teardown — a run that fails AFTER open() must still
+// surface its root cause. Two contracts:
+//   (a) end()/report() called on the unconditional teardown path must NOT
+//       clobber swmm_get_last_error_msg with wrong-state complaints.
+//   (b) close() must flush the cause into the .rpt, which previously carried
+//       only the "[Report interrupted]" footer with no reason.
+// ===========================================================================
+
+namespace {
+
+std::string read_file(const std::string& path) {
+    std::ifstream f(path);
+    std::stringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
+
+}  // namespace
+
+// USE HOTSTART names a missing file: open() succeeds, initialize() fails.
+// This site records its message ONLY via set_error (never in ctx.errors), so
+// it exercises the close()-time append too.
+TEST(PostOpenFailure, InitializeFailureSurvivesTeardown) {
+    std::remove("warnerr_bad_hotstart.rpt");
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, "warnerr_bad_hotstart.inp",
+                               "warnerr_bad_hotstart.rpt", nullptr, nullptr),
+              SWMM_OK);
+    const int irc = swmm_engine_initialize(e);
+    ASSERT_NE(irc, SWMM_OK);
+    const std::string cause = swmm_get_last_error_msg(e);
+    EXPECT_TRUE(contains(cause, "USE HOTSTART")) << cause;
+
+    swmm_engine_end(e);
+    swmm_engine_report(e);
+    EXPECT_EQ(swmm_get_last_error(e), irc);
+    EXPECT_EQ(std::string(swmm_get_last_error_msg(e)), cause);
+
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+
+    const std::string rpt_text = read_file("warnerr_bad_hotstart.rpt");
+    EXPECT_TRUE(contains(rpt_text, cause)) << rpt_text;
+}
+
+// USE INFLOWS names a missing routing interface file: open() and initialize()
+// succeed, start() fails. The cause must survive teardown and reach the .rpt.
+TEST(PostOpenFailure, StartFailureSurvivesTeardown) {
+    std::remove("warnerr_bad_iface.rpt");
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, "warnerr_bad_iface.inp",
+                               "warnerr_bad_iface.rpt", nullptr, nullptr),
+              SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    const int src = swmm_engine_start(e, 0);
+    ASSERT_NE(src, SWMM_OK);
+    const std::string cause = swmm_get_last_error_msg(e);
+    EXPECT_TRUE(contains(cause, "routing interface")) << cause;
+
+    swmm_engine_end(e);
+    swmm_engine_report(e);
+    EXPECT_EQ(swmm_get_last_error(e), src);
+    EXPECT_EQ(std::string(swmm_get_last_error_msg(e)), cause);
+
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+
+    const std::string rpt_text = read_file("warnerr_bad_iface.rpt");
+    EXPECT_TRUE(contains(rpt_text, cause)) << rpt_text;
+}

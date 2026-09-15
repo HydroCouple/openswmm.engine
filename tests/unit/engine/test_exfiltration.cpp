@@ -110,7 +110,8 @@ TEST(StorageExfilGeometry, FunctionalLinearInitUsesBottomAndBankPartition) {
 // Fixed-stage analytical storage exfiltration benchmark.
 //
 // Storage shape: A(d) = 50 + 100 d, evaluated at fixed depth d=2 ft.
-// Bottom area = 50 ft^2, bank area = 250 ft^2, bank depth = 1 ft.
+// Bottom area = 50 ft^2, bank area = A(2) - 50 = 200 ft^2 (legacy exfil.c:
+// MIN(area, bankMaxArea) - btmArea), bank depth = 1 ft.
 // Both Green-Ampt states are forced onto the saturated branch so the exact
 // cumulative infiltration for each component is given by the implicit
 // Green-Ampt relation t(F) = [F - c1 ln(1 + F/c1)] / Ks.
@@ -129,18 +130,42 @@ TEST(StorageExfilGeometry, FixedStageGreenAmptGeometryBenchmark) {
     solver.state().btm_ga[0].saturated = true;
     solver.state().bank_ga[0].saturated = true;
 
-    double cumulative_loss = 0.0;
+    // Legacy grnampt_getF2 cannot start its Newton solve from F = 0 (the
+    // derivative term 1 - c1/(f2 + c1) vanishes there) and falls back to the
+    // Ks-only floor F1 + Ks*dt for that step — a state legacy itself never
+    // reaches, since it enters the saturated branch with F >= Fs > 0. Seed
+    // both components with the exact F at the benchmark's first row (the
+    // implicit relation inverted by bisection) and check from the second.
+    auto exact_F = [](double c1, double ks, double t) {
+        double lo = 0.0, hi = 1.0;                 // g(hi) > 0 for these c1
+        for (int it = 0; it < 200; ++it) {
+            double mid = 0.5 * (lo + hi);
+            double g = mid - c1 * std::log(1.0 + mid / c1) - ks * t;
+            if (g < 0.0) lo = mid; else hi = mid;
+        }
+        return 0.5 * (lo + hi);
+    };
+    {
+        auto& btm  = solver.state().btm_ga[0];
+        auto& bank = solver.state().bank_ga[0];
+        const double c1_btm  = (btm.S  + 2.0) * btm.IMD;    // bottom under 2 ft
+        const double c1_bank = (bank.S + 1.0) * bank.IMD;   // bank under d/2
+        btm.F  = exact_F(c1_btm,  btm.Ks,  rows[1].t_s);  btm.Fu  = btm.F;
+        bank.F = exact_F(c1_bank, bank.Ks, rows[1].t_s);  bank.Fu = bank.F;
+    }
+
+    double cumulative_loss = rows[1].exfil_cumul_ft3;
     double max_rate_err = 0.0;
     double max_cumulative_err = 0.0;
-    double prev_t = rows[0].t_s;
+    double prev_t = rows[1].t_s;
 
-    for (size_t i = 1; i < rows.size(); ++i) {
+    for (size_t i = 2; i < rows.size(); ++i) {
         double dt = rows[i].t_s - prev_t;
         solver.computeAll(ctx, dt);
 
         // Guard: computeAll must not update depth (fixed-stage benchmark relies
-        // on depth remaining 2.0 ft so that bank_area = 250 ft² throughout).
-        // Total exfil over 600 s is ~72 ft³; the 1e9 ft³ volume makes drift
+        // on depth remaining 2.0 ft so that bank_area = 200 ft² throughout).
+        // Total exfil over 600 s is ~61 ft³; the 1e9 ft³ volume makes drift
         // negligible, but this assertion catches any accidental depth update.
         EXPECT_NEAR(ctx.nodes.depth[0], 2.0, 1e-6)
             << "Storage depth drifted from 2.0 ft at step " << i;

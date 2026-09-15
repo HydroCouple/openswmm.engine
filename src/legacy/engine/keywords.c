@@ -94,7 +94,7 @@ char* OptionWords[]        = { w_FLOW_UNITS,        w_INFIL_MODEL,
                                w_SYS_FLOW_TOL,      w_LAT_FLOW_TOL,
                                w_IGNORE_RDII,       w_MIN_ROUTE_STEP,
                                w_NUM_THREADS,       w_SURCHARGE_METHOD,
-                               NULL };
+                               w_OUTFALL_BF_QUAL,   NULL };
 char* OrificeTypeWords[]   = { w_SIDE, w_BOTTOM, NULL};
 char* OutfallTypeWords[]   = { w_FREE, w_NORMAL, w_FIXED, w_TIDAL,
                                w_TIMESERIES, NULL};
@@ -146,6 +146,7 @@ char* SectWords[]          = { ws_TITLE,          ws_OPTION,
                                ws_INLET,          NULL};
 char* SnowmeltWords[]      = { w_PLOWABLE, w_IMPERV, w_PERV, w_REMOVAL, NULL};
 char* SurchargeWords[]     = { w_EXTRAN, w_SLOT, NULL};
+char* BackflowQualWords[]  = { w_LAST, w_ZERO, NULL};
 char* TempKeyWords[]       = { w_TIMESERIES, w_FILE, w_WINDSPEED, w_SNOWMELT,
                                w_ADC, NULL};
 char* TransectKeyWords[]   = { w_NC, w_X1, w_GR, NULL};

@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file Runoff.hpp
  * @brief Subcatchment runoff generation — batch-oriented nonlinear reservoir.
@@ -16,7 +32,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_RUNOFF_HPP
@@ -81,6 +97,13 @@ struct RunoffSoA {
     std::vector<double> runoff;             ///< Total runoff rate (cfs)
     std::vector<double> evap_loss;          ///< Evaporation loss (ft3)
     std::vector<double> infil_loss;         ///< Infiltration loss (ft3)
+    std::vector<double> perv_evap_vol;      ///< Pervious-subarea evaporation this step (ft3) — legacy Vpevap
+    std::vector<double> infil_vol;          ///< Non-LID infiltration this step (ft3) — legacy Vinfil
+    /// legacy subcatch_getRunoff's return value: the three subareas' runoff
+    /// summed over their areas and divided by the FULL area (ft/s), before
+    /// the inter-subarea routing and the LID exchange — what runoff_execute
+    /// tests for HasRunoff and hands surfqual_getWashoff.
+    std::vector<double> subarea_runoff_rate;
 
     // Per-subcatchment: per-subarea runoff CFS from non-LID area (Gap #23)
     // Used by SWMMEngine to compute LID unit inflow from impervious/pervious fractions.
@@ -105,6 +128,15 @@ public:
     void execute(SimulationContext& ctx, double dt, double evap_rate = 0.0,
                  double infil_factor = 1.0, double recovery_factor = 1.0,
                  int month = -1);
+
+    /// Legacy findNativeInfil for a subcatchment with no pervious non-LID
+    /// area: the native soil's rate for its own rain + runon (advances the
+    /// subcatchment's infiltration state, as legacy does).
+    double nativeInfilFullLid(SimulationContext& ctx, int i, double dt,
+                              double recovery_factor);
+
+    /// The InfilFactor the last execute() applied to subcatchment i.
+    double infilFactorUsed(int i) const { return infil_factor_used_[static_cast<std::size_t>(i)]; }
 
     const RunoffSoA& soa() const { return soa_; }
 
@@ -143,6 +175,12 @@ private:
 
     // Infiltration state (one per subcatchment)
     std::vector<InfilModel>     infil_models_;   ///< Per-subcatchment model type (BUG FIX: was a single shared field)
+    std::vector<double>         infil_factor_used_; ///< The InfilFactor applied to each subcatchment this step (pattern or global)
+
+    /// Legacy infil_getInfil: the model dispatch with the factors applied.
+    double infilGetInfil(SimulationContext& ctx, int i, double precip, double runon,
+                         double depth, double dt, double local_infil,
+                         double recovery_factor);
     std::vector<HortonState>    horton_states_;
     std::vector<GreenAmptState> grnampt_states_;
     std::vector<CurveNumState>  curvenum_states_;
@@ -154,11 +192,11 @@ private:
 
     /// Solve dd/dt = inflow - alpha*(d-Ds)^(5/3) using RK45.
     /// Matches legacy updatePondedDepth() + odesolve_integrate().
+    /// `t_runoff` returns legacy's tRunoff: the part of `dt` over which the
+    /// depth stood above the depression storage (`*dt = tx`).
     static void updatePondedDepth(double& depth, double inflow, double alpha,
-                                  double dStore, double dt);
+                                  double dStore, double dt, double& t_runoff);
 
-    /// Compute runoff rate from final depth (after ODE integration).
-    static double getRunoffRate(double depth, double dStore, double alpha);
 };
 
 } // namespace runoff

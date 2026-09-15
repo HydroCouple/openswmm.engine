@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Engine lifecycle (Pythonic v1 surface)
 ======================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 The :class:`Solver` class is the entry point for running, inspecting, and
 editing a SWMM model from Python.
@@ -198,6 +214,11 @@ cdef class Solver:
         self._infrastructure = None
         self._spatial = None
         self._quality = None
+        self._initial_quality = None
+        self._reactions = None
+        self._heat = None
+        self._water_age = None
+        self._process_components = None
         self._statistics = None
         self._mass_balance = None
         self._editor = None
@@ -897,6 +918,41 @@ cdef class Solver:
         return self._quality
 
     @property
+    def initial_quality(self):
+        if self._initial_quality is None:
+            from ._initial_quality import InitialQuality
+            self._initial_quality = InitialQuality(self)
+        return self._initial_quality
+
+    @property
+    def reactions(self):
+        if self._reactions is None:
+            from ._reactions import Reactions
+            self._reactions = Reactions(self)
+        return self._reactions
+
+    @property
+    def heat(self):
+        if self._heat is None:
+            from ._heat import Heat
+            self._heat = Heat(self)
+        return self._heat
+
+    @property
+    def water_age(self):
+        if self._water_age is None:
+            from ._water_age import WaterAge
+            self._water_age = WaterAge(self)
+        return self._water_age
+
+    @property
+    def process_components(self):
+        if self._process_components is None:
+            from ._process_components import ProcessComponents
+            self._process_components = ProcessComponents(self)
+        return self._process_components
+
+    @property
     def statistics(self):
         if self._statistics is None:
             from ._statistics import Statistics
@@ -1175,7 +1231,16 @@ class SimulationOptions(MutableMapping):
         "FV_SLOT_CELERITY", "FV_DISPERSION", "FV_STRUCTURE_COUPLING",
         "FV_COMPACTION", "FV_BACKEND", "FV_MIN_PARALLEL_CELLS",
         "FV_LTS", "FV_LTS_MAX_TIERS", "FV_CFL_CENSUS_INTERVAL",
-        "FV_NODE_COUPLING", "FV_NODE_DT", "FV_NODE_PICARD",
+        # Unsteady friction (issue #156): consumed by the FV (Phase 2) and
+        # dynamic wave (Phase 3) solvers.
+        "UNSTEADY_FRICTION", "UF_K3",
+        # TPA pressure closure (issue #156 Phase 4): FV solver.
+        "FV_PRESSURE_CLOSURE",
+        # Signed piezometric heads in the .out HEAD field (issue #156 O-6).
+        "REPORT_SIGNED_HEADS",
+        # DW surcharge method + TPA celerity (issue #156 Phase 5; adding
+        # SURCHARGE_METHOD also closes the long-standing known-keys gap).
+        "SURCHARGE_METHOD", "TPA_CELERITY",
     )
 
     def __getitem__(self, key: str) -> str:

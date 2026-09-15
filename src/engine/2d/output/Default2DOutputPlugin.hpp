@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file Default2DOutputPlugin.hpp
  * @brief Built-in HDF5 output plugin for 2D surface routing results.
@@ -13,7 +29,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #pragma once
@@ -23,11 +39,13 @@
 #include "../../../../include/openswmm/plugin_sdk/IOutputPlugin.hpp"
 
 #include <string>
+#include <vector>
 #include <hdf5.h>
 
 namespace openswmm::twoD {
 
-struct MeshData;  // forward declaration
+struct MeshData;          // forward declaration
+struct SolverOptions2D;   // forward declaration
 
 /**
  * @brief Default 2D output plugin: writes CF/UGRID-compliant HDF5 file.
@@ -39,6 +57,41 @@ struct MeshData;  // forward declaration
  *
  * ### Root attributes
  *   - Conventions = "CF-1.11 UGRID-1.0"
+ *
+ * ### Coordinate reference (written once in prepareMeshAndDatasets())
+ *   - /crs                           scalar georeferencing variable, pointed at
+ *                                    by the `openswmm_crs` attribute on /Mesh2
+ *                                    and the node/face coordinate variables.
+ *
+ *   All x/y coordinates in this file are stored in **SI metres**, because the
+ *   2D solver runs internally in SI. The model itself may be authored in a
+ *   different linear unit (US FLOW_UNITS projects are in feet, and their CRS
+ *   is typically a foot-based projected CRS such as EPSG:2249). The `/crs`
+ *   variable makes that relationship explicit rather than leaving a consumer
+ *   to assume the coordinates are already in the model CRS's unit:
+ *
+ *   - @model_crs             the model's CRS as authored in `[OPTIONS] CRS`
+ *                            (e.g. "EPSG:2249", a PROJ string, or WKT). This
+ *                            is the CRS of the MODEL coordinates, not of the
+ *                            metric values stored here.
+ *   - @metres_per_model_unit stored = model x this; model = stored / this.
+ *                            Precisely: the factor SurfaceRouter2D::initialize
+ *                            actually applied — 0.3048 for US FLOW_UNITS, and
+ *                            1.0 for SI projects AND for any mesh that
+ *                            declared `;; UNITS: SI (m)` (the engine skips its
+ *                            scaling there, so the stored metres already ARE
+ *                            the authored values).
+ *   - @units                 "m" — the unit of the stored coordinates.
+ *
+ *   Deliberately NOT a CF grid mapping — not `grid_mapping_name`, not
+ *   `spatial_ref`/`crs_wkt`, and the pointer attribute is `openswmm_crs`
+ *   rather than CF's `grid_mapping`. A generic CF/GDAL reader honouring those
+ *   would place the metric values in the foot-based CRS and reproduce the very
+ *   offset this variable exists to describe; and a `grid_mapping` pointing at
+ *   a variable with no `grid_mapping_name` is itself non-conformant, so strict
+ *   readers could warn or drop the coordinate variables. The OpenSWMM-
+ *   namespaced pair `model_crs` + `metres_per_model_unit` cannot be
+ *   half-consumed: neither means anything without the other. See issue #155.
  *
  * ### Static mesh topology (written once in prepare())
  *   - /Mesh2                         topology variable (cf_role = "mesh_topology")
@@ -61,6 +114,9 @@ struct MeshData;  // forward declaration
  *   - /Mesh2_face_rainfall           [nTime, nFace] rainfall (m/s)
  *   - /Mesh2_face_coupling_flux      [nTime, nFace] node coupling (m/s)
  *   - /Mesh2_face_net_source         [nTime, nFace] net source/sink (m/s)
+ *   - /Mesh2_face_infil_rate         [nTime, nFace] held infiltration rate (m/s)
+ *   - /Mesh2_face_infil_cum          [nTime, nFace] cumulative infiltrated depth (m)
+ *   - /Mesh2_face_rain_cum           [nTime, nFace] cumulative rainfall volume (m³)
  *   - /Mesh2_face_vx                 [nTime, nFace] cell velocity X (m/s)
  *   - /Mesh2_face_vy                 [nTime, nFace] cell velocity Y (m/s)
  *   - /Mesh2_face_continuity_err     [nTime, nFace] per-cell continuity residual (m³/s)
@@ -122,10 +178,57 @@ public:
      */
     void prepareMeshAndDatasets(const MeshData& mesh);
 
+    /**
+     * @brief Declare the factor already applied to the stored coordinates.
+     *
+     * @details The model CRS reaches the plugin through prepare()'s
+     *          SimulationContext, but the mesh scale factor does not —
+     *          SurfaceRouter2D owns it. SWMMEngine calls this between
+     *          prepare() and prepareMeshAndDatasets(). Left uncalled, `/crs`
+     *          reports 1.0, i.e. it claims nothing it cannot substantiate.
+     *
+     * @param metres_per_model_unit Metres per model-CRS linear unit — the
+     *                              factor already applied to the stored
+     *                              coordinates (0.3048 for US, 1.0 for SI).
+     */
+    void setMeshCoordinateScale(double metres_per_model_unit);
+
+    /**
+     * @brief Apply the results-file size controls from [2D_OPTIONS]
+     *        (OUTPUT_PRECISION, OUTPUT_COMPRESSION, REPORT_2D_VARIABLES,
+     *        REPORT_2D_SPECIES, REPORT_2D_STEP). Called by SWMMEngine before
+     *        prepareMeshAndDatasets(); datasets not selected are never
+     *        created, so readers must treat every time-varying dataset as
+     *        optional.
+     * @param report_step_sec  [OPTIONS] REPORT_STEP, the cadence update() is
+     *                         called at; REPORT_2D_STEP is validated against it.
+     * @return Empty on success, else a validation message (REPORT_2D_STEP not
+     *         a positive multiple of REPORT_STEP).
+     */
+    std::string configureOutput(const SolverOptions2D& opts, double report_step_sec);
+
+    /// Bitmask of report2d::Var groups in effect (for tests / the C API).
+    unsigned reportVariables() const noexcept { return report_vars_; }
+
 private:
+    // ---- results-file size controls (configureOutput) ----
+    hid_t    storage_type_ = H5T_NATIVE_DOUBLE;  ///< H5T_IEEE_F32LE when FLOAT32
+    int      compression_  = 4;                  ///< zlib level; 0 = none
+    unsigned report_vars_  = 0x7FFu;             ///< report2d::ALL_MASK until configured
+    std::vector<std::string> species_filter_;    ///< empty = every row
+    std::vector<int>         species_rows_;      ///< row indices written (resolved on first update)
+    double   report_2d_step_days_ = 0.0;         ///< 0 = every update() call
+    double   next_due_days_       = -1.0;        ///< next write instant (days)
+    bool     want(unsigned bit) const noexcept { return (report_vars_ & bit) != 0; }
+    /// Write \p n_sel selected species rows of a [n_species × n_faces] block.
+    void writeSpeciesRows(const double* all, hsize_t n_species_in);
+
     std::string  h5_path_;
     PluginState  state_ = PluginState::UNLOADED;
     std::string  last_error_;
+
+    std::string  model_crs_;                ///< `[OPTIONS] CRS`, verbatim
+    double       metres_per_model_unit_ = 1.0;  ///< stored = model x this
 
     hid_t file_id_   = H5I_INVALID_HID;  ///< HDF5 file handle
 
@@ -140,6 +243,14 @@ private:
     hid_t ds_face_rainfall_        = H5I_INVALID_HID;
     hid_t ds_face_coupling_flux_   = H5I_INVALID_HID;
     hid_t ds_face_net_source_      = H5I_INVALID_HID;
+    hid_t ds_face_infil_rate_      = H5I_INVALID_HID;
+    hid_t ds_face_infil_cum_       = H5I_INVALID_HID;
+    hid_t ds_face_rain_cum_        = H5I_INVALID_HID;
+    /// Overland transport S1: [nTime, nSpecies, nFace] species concentration.
+    /// Created lazily on the first update() carrying species; absent when the
+    /// model has no 2D transport.
+    hid_t   ds_face_species_conc_  = H5I_INVALID_HID;
+    hsize_t n_species_             = 0;
     hid_t ds_face_vx_              = H5I_INVALID_HID;
     hid_t ds_face_vy_              = H5I_INVALID_HID;
     hid_t ds_face_continuity_err_  = H5I_INVALID_HID;
@@ -154,13 +265,21 @@ private:
 
     hsize_t n_faces_  = 0;
     hsize_t n_nodes_  = 0;
+    hsize_t edge_stride_ = 3;  ///< Public edge-slot stride (3 all-tri, 4 mixed)
     hsize_t n_steps_  = 0;  ///< Current time step count (grows with each update)
 
     // Helpers
     void writeMeshTopology(const SimulationContext& ctx);
+    /// Write the scalar `/crs` georeferencing variable (see class docs).
+    void writeCrsVariable();
+    /// @param type  Storage type; -1 (the default) follows OUTPUT_PRECISION.
+    ///              The time axis passes H5T_NATIVE_DOUBLE explicitly: a day
+    ///              number in float32 loses ~0.1 ms on an hour, which the
+    ///              readers' time lookup cannot absorb.
     hid_t createUnlimitedDataset(const char* name, int rank,
                                   const hsize_t* dims,
-                                  const hsize_t* chunk_dims);
+                                  const hsize_t* chunk_dims,
+                                  hid_t type = -1);
     void writeStringAttr(hid_t loc, const char* name, const char* value);
     void writeDoubleAttr(hid_t loc, const char* name, double value);
     void extendAndWrite2D(hid_t ds, const double* data, hsize_t n_cols);

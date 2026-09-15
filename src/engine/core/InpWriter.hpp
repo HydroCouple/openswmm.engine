@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file InpWriter.hpp
  * @brief Write a SimulationContext to a SWMM .inp file.
@@ -10,7 +26,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_INP_WRITER_HPP
@@ -59,6 +75,31 @@ namespace inp_writer {
 int writeInpFile(const SimulationContext& ctx,
                  const std::string&       path,
                  std::vector<std::string>* warnings = nullptr);
+
+/**
+ * @brief Write profile: which engine the file is written for.
+ *
+ * @details `Full` is the native format. `Swmm5` writes a file a SWMM 5.x
+ *          engine can read (MULTI_ENGINE plan V2 Phase 4): the v6-only
+ *          sections are omitted ([2D_*], [PLUGINS], [PROCESS_COMPONENTS],
+ *          [USER_FLAGS], [USER_FLAG_VALUES], [RDII_DECAY]), v6-only option
+ *          keys are omitted and incompatible values mapped (FLOW_ROUTING FV →
+ *          DYNWAVE, SURCHARGE_METHOD DYNAMIC_SLOT/TPA → SLOT), a virtual
+ *          junction becomes an ordinary junction, and an inlet junction
+ *          becomes an ordinary junction plus an [INLET_USAGE] row on its
+ *          approach conduit with the same capture node (the legacy-equivalent
+ *          model). Every substitution is reported through `warnings`; the
+ *          file starts with a comment naming the profile.
+ */
+struct InpWriteOptions {
+    enum class Profile { Full, Swmm5 };
+    Profile profile = Profile::Full;
+};
+
+int writeInpFile(const SimulationContext&  ctx,
+                 const std::string&        path,
+                 std::vector<std::string>* warnings,
+                 const InpWriteOptions&    opts);
 
 } // namespace inp_writer
 } // namespace openswmm

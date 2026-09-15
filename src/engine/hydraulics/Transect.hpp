@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file Transect.hpp
  * @brief Irregular transect cross-section geometry (HEC-2 style).
@@ -12,7 +28,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_TRANSECT_HPP
@@ -21,7 +37,11 @@
 #include <vector>
 #include <string>
 
+#include "XSectLookup.hpp"
+
 namespace openswmm {
+
+struct TransectStore;  // engine/data/InfraData.hpp
 
 namespace transect {
 
@@ -55,6 +75,11 @@ struct TransectData {
     double area_tbl[N_TRANSECT_TBL]  = {};
     double hrad_tbl[N_TRANSECT_TBL]  = {};
     double width_tbl[N_TRANSECT_TBL] = {};
+
+    /// Bucket map over `area_tbl`, used by getYofA's invLookup (plan
+    /// XSECT_LOOKUP_ACCEL A1). Rebuilt by the two table builders below; stays
+    /// disabled (and callers bisect as before) if either bails out early.
+    xsect::LocateLut area_lut;
 };
 
 /**
@@ -84,6 +109,28 @@ void buildTables(TransectData& td);
  */
 void buildCustomTables(TransectData& td, double y_full,
                        const double* curve_x, const double* curve_y, int n_pts);
+
+/**
+ * @brief Build one transect's geometry tables from the raw [TRANSECTS] store.
+ *
+ * @details Copies the store entry into @p td, applies the legacy parse-time
+ *          transforms (Station = x·Xfactor/UCF; Elev = (y + Yfactor)/UCF with
+ *          Yfactor = y_factor/UCF; banks = (x/UCF)·Xfactor — see
+ *          transect.c::setParams/addStation) to the COPY only, then calls
+ *          buildTables(). The store itself stays raw/display so [TRANSECTS]
+ *          round-trips losslessly. Shared by PostParseResolver (per-store
+ *          resolve pass) and swmm_link_set_xsect (IRREGULAR assignment of a
+ *          transect added after open) — the two must stay bit-identical.
+ *
+ * @param ts          Raw transect store.
+ * @param index       Store row to build.
+ * @param ucf_length  UCF(LENGTH) for the model's unit system.
+ * @param td          [out] Built tables.
+ * @return false when the entry has no valid channel Manning's n (caller
+ *         reports the error); true on success.
+ */
+bool buildFromStore(const TransectStore& ts, int index, double ucf_length,
+                    TransectData& td);
 
 } // namespace transect
 } // namespace openswmm

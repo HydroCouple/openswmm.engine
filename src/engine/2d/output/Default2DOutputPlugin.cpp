@@ -11,7 +11,12 @@
 #include "Default2DOutputPlugin.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../2d/SurfaceRouter2D.hpp"
+#include "../data/SolverOptions2D.hpp"
+#include "../data/Report2DVars.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <cstring>
 
@@ -23,8 +28,13 @@ namespace openswmm::twoD {
 
 void Default2DOutputPlugin::writeStringAttr(hid_t loc, const char* name,
                                              const char* value) {
+    // H5Tset_size rejects 0, and nothing here checks return codes — an empty
+    // value would silently write no attribute at all. Store a single NUL
+    // instead, which reads back as the empty string.
+    const size_t len = (value && *value) ? std::strlen(value) : 1;
+
     hid_t atype = H5Tcopy(H5T_C_S1);
-    H5Tset_size(atype, std::strlen(value));
+    H5Tset_size(atype, len);
     H5Tset_strpad(atype, H5T_STR_NULLTERM);
 
     hid_t aspace = H5Screate(H5S_SCALAR);
@@ -37,19 +47,28 @@ void Default2DOutputPlugin::writeStringAttr(hid_t loc, const char* name,
 
 hid_t Default2DOutputPlugin::createUnlimitedDataset(const char* name, int rank,
                                                       const hsize_t* dims,
-                                                      const hsize_t* chunk_dims) {
+                                                      const hsize_t* chunk_dims,
+                                                      hid_t type) {
     // Create dataspace with unlimited first dimension
     std::vector<hsize_t> maxdims(dims, dims + rank);
     maxdims[0] = H5S_UNLIMITED;
     hid_t space = H5Screate_simple(rank, dims, maxdims.data());
 
-    // Enable chunking (required for unlimited dimensions)
+    // Enable chunking (required for unlimited dimensions). The byte-shuffle
+    // filter precedes deflate: on smooth float fields it typically improves
+    // the zlib ratio 20-40% at negligible CPU. Level 0 = no filters.
     hid_t plist = H5Pcreate(H5P_DATASET_CREATE);
     H5Pset_chunk(plist, rank, chunk_dims);
-    H5Pset_deflate(plist, 4);  // zlib compression level 4
+    if (compression_ > 0) {
+        H5Pset_shuffle(plist);
+        H5Pset_deflate(plist, static_cast<unsigned>(compression_));
+    }
 
-    hid_t ds = H5Dcreate2(file_id_, name, H5T_NATIVE_DOUBLE, space,
-                           H5P_DEFAULT, plist, H5P_DEFAULT);
+    // Storage type follows OUTPUT_PRECISION unless the caller forces one; the
+    // memory type on every write stays H5T_NATIVE_DOUBLE and HDF5 converts, so
+    // no buffer copies.
+    hid_t ds = H5Dcreate2(file_id_, name, type >= 0 ? type : storage_type_,
+                           space, H5P_DEFAULT, plist, H5P_DEFAULT);
     H5Pclose(plist);
     H5Sclose(space);
     return ds;
@@ -106,7 +125,7 @@ hid_t Default2DOutputPlugin::createFaceEnvelopeDataset(const char* name,
     // Fixed [nFace] dataset — no time dimension, no chunking. Overwritten in
     // place each update(); since envelopes are monotone the last write is final.
     hid_t space = H5Screate_simple(1, &n_faces_, nullptr);
-    hid_t ds = H5Dcreate2(file_id_, name, H5T_NATIVE_DOUBLE, space,
+    hid_t ds = H5Dcreate2(file_id_, name, storage_type_, space,
                            H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
     writeStringAttr(ds, "long_name", long_name);
     writeStringAttr(ds, "units", units);
@@ -191,8 +210,86 @@ int Default2DOutputPlugin::prepare(const SimulationContext& ctx) {
     writeStringAttr(file_id_, "institution", "OpenSWMM / HydroCouple");
     writeStringAttr(file_id_, "source", "OpenSWMM Engine 6.0");
 
+    // Model CRS for the `/crs` variable written in prepareMeshAndDatasets().
+    // ctx.spatial.crs and ctx.options.crs are both set by OptionsHandler from
+    // `[OPTIONS] CRS`; prefer the spatial frame, which is what the spatial API
+    // mutates at runtime. Empty is legitimate — models need not declare a CRS.
+    model_crs_ = !ctx.spatial.crs.empty() ? ctx.spatial.crs : ctx.options.crs;
+
     state_ = PluginState::PREPARED;
     return 0;
+}
+
+void Default2DOutputPlugin::setMeshCoordinateScale(double metres_per_model_unit) {
+    if (metres_per_model_unit > 0.0)
+        metres_per_model_unit_ = metres_per_model_unit;
+}
+
+std::string Default2DOutputPlugin::configureOutput(const SolverOptions2D& opts,
+                                                   double report_step_sec) {
+    storage_type_ = (opts.output_precision == OutputPrecision2D::FLOAT64)
+                        ? H5T_NATIVE_DOUBLE : H5T_IEEE_F32LE;
+    compression_  = std::max(0, std::min(9, opts.output_compression));
+    report_vars_  = (opts.report_2d_vars & report2d::ALL_MASK) | report2d::DEPTH;
+    species_filter_ = opts.report_2d_species;
+    species_rows_.clear();
+
+    report_2d_step_days_ = 0.0;
+    next_due_days_       = -1.0;
+    if (opts.report_2d_step > 0.0) {
+        if (report_step_sec > 0.0) {
+            const double ratio = opts.report_2d_step / report_step_sec;
+            const double rounded = std::round(ratio);
+            if (rounded < 1.0 || std::fabs(ratio - rounded) > 1e-6) {
+                char buf[192];
+                std::snprintf(buf, sizeof buf,
+                    "[2D_OPTIONS] REPORT_2D_STEP (%.0f s) must be a positive "
+                    "multiple of REPORT_STEP (%.0f s).",
+                    opts.report_2d_step, report_step_sec);
+                return buf;
+            }
+        }
+        report_2d_step_days_ = opts.report_2d_step / 86400.0;
+    }
+    return {};
+}
+
+void Default2DOutputPlugin::writeCrsVariable() {
+    if (file_id_ == H5I_INVALID_HID) return;
+
+    hid_t space = H5Screate(H5S_SCALAR);
+    hid_t ds = H5Dcreate2(file_id_, "crs", H5T_NATIVE_INT, space,
+                           H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    if (ds < 0) {
+        H5Sclose(space);
+        return;
+    }
+
+    writeStringAttr(ds, "long_name",
+                    "coordinate reference of the MODEL, plus the factor "
+                    "relating it to the metric Mesh2 coordinates stored here");
+    // Unit of the coordinates AS STORED here. The 2D solver runs in SI, so
+    // node/face x/y are metres whatever the model's own unit is.
+    writeStringAttr(ds, "units", "m");
+    // stored = model x factor; model = stored / factor.
+    writeDoubleAttr(ds, "metres_per_model_unit", metres_per_model_unit_);
+    writeStringAttr(ds, "comment",
+                    "Mesh2 x/y are stored in SI metres. Divide by "
+                    "metres_per_model_unit to obtain coordinates in the linear "
+                    "unit of model_crs; only then reproject from model_crs.");
+
+    if (!model_crs_.empty()) {
+        // CRS of the MODEL coordinates, not of the metric values stored here.
+        // Named model_crs rather than spatial_ref/crs_wkt on purpose: a
+        // generic reader honouring those would place metres in a foot-based
+        // CRS and reproduce the offset this variable exists to describe (#155).
+        writeStringAttr(ds, "model_crs", model_crs_.c_str());
+    }
+
+    int dummy = 0;
+    H5Dwrite(ds, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &dummy);
+    H5Dclose(ds);
+    H5Sclose(space);
 }
 
 // ============================================================================
@@ -200,10 +297,14 @@ int Default2DOutputPlugin::prepare(const SimulationContext& ctx) {
 // ============================================================================
 
 void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
-                      hsize_t& n_faces, hsize_t& n_nodes,
+                      hsize_t& n_faces, hsize_t& n_nodes, hsize_t& edge_stride,
                       auto& writeStringAttrFn) {
     n_faces = static_cast<hsize_t>(mesh.n_triangles());
     n_nodes = static_cast<hsize_t>(mesh.n_vertices());
+    // UGRID mixed topology: [nFace, max_nv] with _FillValue in the padding.
+    // All-triangle meshes keep the historical {n, 3} layout byte-for-byte.
+    edge_stride = static_cast<hsize_t>(mesh.edge_stride());
+    const int stride = static_cast<int>(edge_stride);
 
     // --- Mesh2 topology variable (UGRID convention) ---
     {
@@ -216,6 +317,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         writeStringAttrFn(ds, "node_coordinates", "Mesh2_node_x Mesh2_node_y");
         writeStringAttrFn(ds, "face_node_connectivity", "Mesh2_face_nodes");
         writeStringAttrFn(ds, "face_coordinates", "Mesh2_face_x Mesh2_face_y");
+        writeStringAttrFn(ds, "openswmm_crs", "crs");
 
         // Write a dummy value
         int dummy = 0;
@@ -235,6 +337,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         H5Dwrite(ds_x, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.vx.data());
         writeStringAttrFn(ds_x, "standard_name", "projection_x_coordinate");
         writeStringAttrFn(ds_x, "units", "m");
+        writeStringAttrFn(ds_x, "openswmm_crs", "crs");
         H5Dclose(ds_x);
 
         // Mesh2_node_y
@@ -243,6 +346,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         H5Dwrite(ds_y, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.vy.data());
         writeStringAttrFn(ds_y, "standard_name", "projection_y_coordinate");
         writeStringAttrFn(ds_y, "units", "m");
+        writeStringAttrFn(ds_y, "openswmm_crs", "crs");
         H5Dclose(ds_y);
 
         // Mesh2_node_z (elevation)
@@ -257,24 +361,60 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         H5Sclose(space);
     }
 
-    // --- Face-node connectivity [nFace, 3] ---
+    // --- Face-node connectivity [nFace, 3 | 4] ---
     {
-        hsize_t dims[2] = { n_faces, 3 };
+        hsize_t dims[2] = { n_faces, edge_stride };
         hid_t space = H5Screate_simple(2, dims, nullptr);
+        const int fill = -1;
+        hid_t dcpl = H5P_DEFAULT;
+        if (stride > 3) {
+            dcpl = H5Pcreate(H5P_DATASET_CREATE);
+            H5Pset_fill_value(dcpl, H5T_NATIVE_INT, &fill);
+        }
         hid_t ds = H5Dcreate2(file_id, "Mesh2_face_nodes", H5T_NATIVE_INT,
-                                space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+                                space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
+        if (dcpl != H5P_DEFAULT) H5Pclose(dcpl);
 
-        // Interleave v0, v1, v2 into [nFace, 3] row-major
-        std::vector<int> conn(n_faces * 3);
+        // Interleave the cell vertices into [nFace, stride] row-major;
+        // padding slots of a triangle row carry −1 (the UGRID fill value).
+        std::vector<int> conn(n_faces * edge_stride);
         for (hsize_t i = 0; i < n_faces; ++i) {
-            conn[i * 3 + 0] = mesh.tri_v0[i];
-            conn[i * 3 + 1] = mesh.tri_v1[i];
-            conn[i * 3 + 2] = mesh.tri_v2[i];
+            const int c  = static_cast<int>(i);
+            const int nv = mesh.cell_vertex_count(c);
+            for (int k = 0; k < stride; ++k)
+                conn[i * edge_stride + static_cast<hsize_t>(k)] =
+                    (k < nv) ? mesh.cell_vertex(c, k) : -1;
         }
         H5Dwrite(ds, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, conn.data());
 
         writeStringAttrFn(ds, "cf_role", "face_node_connectivity");
         writeStringAttrFn(ds, "start_index", "0");
+        if (stride > 3) {
+            // UGRID: the fill value is what marks a mixed-shape row's padding.
+            hid_t aspace = H5Screate(H5S_SCALAR);
+            hid_t attr   = H5Acreate2(ds, "_FillValue", H5T_NATIVE_INT, aspace,
+                                      H5P_DEFAULT, H5P_DEFAULT);
+            H5Awrite(attr, H5T_NATIVE_INT, &fill);
+            H5Aclose(attr);
+            H5Sclose(aspace);
+        }
+        H5Dclose(ds);
+        H5Sclose(space);
+    }
+
+    // --- Vertices per face [nFace] — only for mixed meshes (int8) ---
+    if (stride > 3) {
+        hsize_t dim = n_faces;
+        hid_t space = H5Screate_simple(1, &dim, nullptr);
+        hid_t ds = H5Dcreate2(file_id, "Mesh2_face_nv", H5T_NATIVE_INT8,
+                                space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        std::vector<int8_t> nv(n_faces);
+        for (hsize_t i = 0; i < n_faces; ++i)
+            nv[i] = static_cast<int8_t>(mesh.cell_vertex_count(static_cast<int>(i)));
+        H5Dwrite(ds, H5T_NATIVE_INT8, H5S_ALL, H5S_ALL, H5P_DEFAULT, nv.data());
+        writeStringAttrFn(ds, "long_name", "vertices per face (3 = triangle, 4 = quadrilateral)");
+        writeStringAttrFn(ds, "mesh", "Mesh2");
+        writeStringAttrFn(ds, "location", "face");
         H5Dclose(ds);
         H5Sclose(space);
     }
@@ -288,12 +428,14 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
                                    space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         H5Dwrite(ds_cx, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.tri_cx.data());
         writeStringAttrFn(ds_cx, "units", "m");
+        writeStringAttrFn(ds_cx, "openswmm_crs", "crs");
         H5Dclose(ds_cx);
 
         hid_t ds_cy = H5Dcreate2(file_id, "Mesh2_face_y", H5T_NATIVE_DOUBLE,
                                    space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         H5Dwrite(ds_cy, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.tri_cy.data());
         writeStringAttrFn(ds_cy, "units", "m");
+        writeStringAttrFn(ds_cy, "openswmm_crs", "crs");
         H5Dclose(ds_cy);
 
         hid_t ds_cz = H5Dcreate2(file_id, "Mesh2_face_z", H5T_NATIVE_DOUBLE,
@@ -330,13 +472,27 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
     // can reconstruct cell-centred velocity via RT0 without re-deriving edge
     // length / outward normals from the vertex coordinates.
     {
-        hsize_t dims[2] = { n_faces, 3 };
+        hsize_t dims[2] = { n_faces, edge_stride };
         hid_t space = H5Screate_simple(2, dims, nullptr);
+
+        // Pack the internal kMaxCellVerts-stride slots to the public stride.
+        auto packed = [&](const std::vector<double>& src) {
+            std::vector<double> out(n_faces * edge_stride, 0.0);
+            for (hsize_t i = 0; i < n_faces; ++i)
+                for (int k = 0; k < stride; ++k)
+                    out[i * edge_stride + static_cast<hsize_t>(k)] =
+                        src[static_cast<std::size_t>(
+                            MeshData::slot(static_cast<int>(i), k))];
+            return out;
+        };
+        const std::vector<double> len_p = packed(mesh.edge_length);
+        const std::vector<double> nx_p  = packed(mesh.edge_nx);
+        const std::vector<double> ny_p  = packed(mesh.edge_ny);
 
         hid_t ds_len = H5Dcreate2(file_id, "Mesh2_edge_length", H5T_NATIVE_DOUBLE,
                                     space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         H5Dwrite(ds_len, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
-                 mesh.edge_length.data());
+                 len_p.data());
         writeStringAttrFn(ds_len, "long_name", "edge length");
         writeStringAttrFn(ds_len, "units", "m");
         writeStringAttrFn(ds_len, "mesh", "Mesh2");
@@ -346,7 +502,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         hid_t ds_nx = H5Dcreate2(file_id, "Mesh2_edge_nx", H5T_NATIVE_DOUBLE,
                                    space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         H5Dwrite(ds_nx, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
-                 mesh.edge_nx.data());
+                 nx_p.data());
         writeStringAttrFn(ds_nx, "long_name", "edge outward unit normal x component");
         writeStringAttrFn(ds_nx, "units", "1");
         writeStringAttrFn(ds_nx, "mesh", "Mesh2");
@@ -356,7 +512,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         hid_t ds_ny = H5Dcreate2(file_id, "Mesh2_edge_ny", H5T_NATIVE_DOUBLE,
                                    space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
         H5Dwrite(ds_ny, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
-                 mesh.edge_ny.data());
+                 ny_p.data());
         writeStringAttrFn(ds_ny, "long_name", "edge outward unit normal y component");
         writeStringAttrFn(ds_ny, "units", "1");
         writeStringAttrFn(ds_ny, "mesh", "Mesh2");
@@ -368,25 +524,43 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
 }
 
 void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
+    // Written first so the `openswmm_crs = "crs"` attributes the mesh
+    // variables carry resolve against a variable that already exists.
+    writeCrsVariable();
+
+    // Results-file size controls, recorded so readers and the parity tooling
+    // can tell how the time-varying datasets were stored.
+    writeStringAttr(file_id_, "precision",
+                    storage_type_ == H5T_NATIVE_DOUBLE ? "float64" : "float32");
+    {
+        char cbuf[16];
+        std::snprintf(cbuf, sizeof cbuf, "%d", compression_);
+        writeStringAttr(file_id_, "compression", cbuf);
+        writeStringAttr(file_id_, "report_2d_variables",
+                        report2d::formatMask(report_vars_).c_str());
+    }
+
     auto writeAttr = [this](hid_t loc, const char* name, const char* val) {
         writeStringAttr(loc, name, val);
     };
-    writeMeshToHDF5(file_id_, mesh, n_faces_, n_nodes_, writeAttr);
+    writeMeshToHDF5(file_id_, mesh, n_faces_, n_nodes_, edge_stride_, writeAttr);
 
     // --- Create time-varying datasets with unlimited time dimension ---
     // Chunk size: 1 time step x all faces (or nodes)
     hsize_t face_chunk[2] = { 1, n_faces_ };
     hsize_t node_chunk[2] = { 1, n_nodes_ };
-    hsize_t edge_chunk[3] = { 1, n_faces_, 3 };
+    hsize_t edge_chunk[3] = { 1, n_faces_, edge_stride_ };
     hsize_t time_chunk[1] = { 64 };
 
     hsize_t zero2[2] = { 0, n_faces_ };
     hsize_t zero2n[2] = { 0, n_nodes_ };
-    hsize_t zero3[3] = { 0, n_faces_, 3 };
+    hsize_t zero3[3] = { 0, n_faces_, edge_stride_ };
     hsize_t zero1[1] = { 0 };
 
-    // Time coordinate
-    ds_time_ = createUnlimitedDataset("time", 1, zero1, time_chunk);
+    // Time coordinate — always float64: OUTPUT_PRECISION thins the state
+    // fields, not the axis every reader keys its lookup on.
+    ds_time_ = createUnlimitedDataset("time", 1, zero1, time_chunk,
+                                      H5T_NATIVE_DOUBLE);
     writeStringAttr(ds_time_, "standard_name", "time");
     writeStringAttr(ds_time_, "units", "days since simulation start");
     writeStringAttr(ds_time_, "calendar", "standard");
@@ -404,68 +578,102 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
         return ds;
     };
 
+    // Every dataset below is created ONLY when its REPORT_2D_VARIABLES group is
+    // selected (default: everything a user renders or plots; solver
+    // diagnostics off). Handles stay H5I_INVALID_HID otherwise and update()
+    // skips them. DEPTH is always on (the time axis every reader keys on).
     ds_face_depth_         = createFaceDS("Mesh2_face_depth",
                                            "overland flow depth", "m", "water_surface_height_above_reference_datum");
     ds_face_head_          = createFaceDS("Mesh2_face_head",
                                            "total hydraulic head", "m", "hydraulic_head");
-    ds_face_grad_hx_       = createFaceDS("Mesh2_face_grad_hx",
-                                           "head gradient dh/dx (unlimited)", "1");
-    ds_face_grad_hy_       = createFaceDS("Mesh2_face_grad_hy",
-                                           "head gradient dh/dy (unlimited)", "1");
-    ds_face_grad_hx_lim_   = createFaceDS("Mesh2_face_grad_hx_lim",
-                                           "head gradient dh/dx (slope limited)", "1");
-    ds_face_grad_hy_lim_   = createFaceDS("Mesh2_face_grad_hy_lim",
-                                           "head gradient dh/dy (slope limited)", "1");
-    ds_face_rainfall_      = createFaceDS("Mesh2_face_rainfall",
-                                           "rainfall intensity", "m s-1", "rainfall_rate");
-    ds_face_coupling_flux_ = createFaceDS("Mesh2_face_coupling_flux",
-                                           "coupling flux with SWMM node", "m s-1");
-    ds_face_net_source_    = createFaceDS("Mesh2_face_net_source",
-                                           "net volumetric source/sink", "m s-1");
-    ds_face_vx_            = createFaceDS("Mesh2_face_vx",
-                                          "cell-centred velocity X (RT0)", "m s-1");
-    ds_face_vy_            = createFaceDS("Mesh2_face_vy",
-                                          "cell-centred velocity Y (RT0)", "m s-1");
-    ds_face_continuity_err_ = createFaceDS("Mesh2_face_continuity_err",
-                                            "per-cell continuity residual", "m3 s-1");
+    if (want(report2d::GRADIENTS)) {
+        ds_face_grad_hx_       = createFaceDS("Mesh2_face_grad_hx",
+                                               "head gradient dh/dx (unlimited)", "1");
+        ds_face_grad_hy_       = createFaceDS("Mesh2_face_grad_hy",
+                                               "head gradient dh/dy (unlimited)", "1");
+        ds_face_grad_hx_lim_   = createFaceDS("Mesh2_face_grad_hx_lim",
+                                               "head gradient dh/dx (slope limited)", "1");
+        ds_face_grad_hy_lim_   = createFaceDS("Mesh2_face_grad_hy_lim",
+                                               "head gradient dh/dy (slope limited)", "1");
+    }
+    if (want(report2d::RAINFALL)) {
+        ds_face_rainfall_      = createFaceDS("Mesh2_face_rainfall",
+                                               "rainfall intensity", "m s-1", "rainfall_rate");
+        // Cumulative rainfall VOLUME per cell (m³) — sums to mass_balance_2d
+        // rainfall_in by construction (SurfaceRouter2D::rainCumulative).
+        ds_face_rain_cum_      = createFaceDS("Mesh2_face_rain_cum",
+                                               "cumulative rainfall volume", "m3");
+    }
+    if (want(report2d::COUPLING)) {
+        ds_face_coupling_flux_ = createFaceDS("Mesh2_face_coupling_flux",
+                                               "coupling flux with SWMM node", "m s-1");
+        ds_face_net_source_    = createFaceDS("Mesh2_face_net_source",
+                                               "net volumetric source/sink", "m s-1");
+    }
+    if (want(report2d::INFILTRATION)) {
+        // Per-cell infiltration (plan §5.5.6): the held INFIL_STEP rate and
+        // the cumulative infiltrated depth (all-zero when no
+        // [2D_INFILTRATION*] rows resolved).
+        ds_face_infil_rate_    = createFaceDS("Mesh2_face_infil_rate",
+                                               "infiltration loss rate", "m s-1");
+        ds_face_infil_cum_     = createFaceDS("Mesh2_face_infil_cum",
+                                               "cumulative infiltrated depth", "m");
+    }
+    if (want(report2d::VELOCITY)) {
+        ds_face_vx_            = createFaceDS("Mesh2_face_vx",
+                                              "cell-centred velocity X (RT0)", "m s-1");
+        ds_face_vy_            = createFaceDS("Mesh2_face_vy",
+                                              "cell-centred velocity Y (RT0)", "m s-1");
+    }
+    if (want(report2d::CONTINUITY))
+        ds_face_continuity_err_ = createFaceDS("Mesh2_face_continuity_err",
+                                                "per-cell continuity residual", "m3 s-1");
 
-    // Edge flux [nTime, nFace, 3]
-    ds_edge_flux_ = createUnlimitedDataset("Mesh2_edge_flux", 3, zero3, edge_chunk);
-    writeStringAttr(ds_edge_flux_, "long_name", "normal flux through cell edges");
-    // Volumetric edge flux F_e = -q·n_e·L_e (see SurfaceFluxCalculator
-    // computeEdgeFluxes, which derives the m3/s dimensioning). Matches the
-    // m3 s-1 units of the continuity-residual datasets that sum these fluxes.
-    writeStringAttr(ds_edge_flux_, "units", "m3 s-1");
-    writeStringAttr(ds_edge_flux_, "mesh", "Mesh2");
-    writeStringAttr(ds_edge_flux_, "location", "edge");
+    if (want(report2d::EDGE_FLUX)) {
+        // Edge flux [nTime, nFace, stride]
+        ds_edge_flux_ = createUnlimitedDataset("Mesh2_edge_flux", 3, zero3, edge_chunk);
+        writeStringAttr(ds_edge_flux_, "long_name", "normal flux through cell edges");
+        // Volumetric edge flux F_e = -q·n_e·L_e (see SurfaceFluxCalculator
+        // computeEdgeFluxes, which derives the m3/s dimensioning). Matches the
+        // m3 s-1 units of the continuity-residual datasets that sum these fluxes.
+        writeStringAttr(ds_edge_flux_, "units", "m3 s-1");
+        writeStringAttr(ds_edge_flux_, "mesh", "Mesh2");
+        writeStringAttr(ds_edge_flux_, "location", "edge");
+    }
 
-    // Node head [nTime, nNode]
-    ds_node_head_ = createUnlimitedDataset("Mesh2_node_head", 2, zero2n, node_chunk);
-    writeStringAttr(ds_node_head_, "long_name", "reconstructed vertex head");
-    writeStringAttr(ds_node_head_, "units", "m");
-    writeStringAttr(ds_node_head_, "mesh", "Mesh2");
-    writeStringAttr(ds_node_head_, "location", "node");
+    if (want(report2d::NODE_HEAD)) {
+        // Node head [nTime, nNode]
+        ds_node_head_ = createUnlimitedDataset("Mesh2_node_head", 2, zero2n, node_chunk);
+        writeStringAttr(ds_node_head_, "long_name", "reconstructed vertex head");
+        writeStringAttr(ds_node_head_, "units", "m");
+        writeStringAttr(ds_node_head_, "mesh", "Mesh2");
+        writeStringAttr(ds_node_head_, "location", "node");
 
-    // Node SIGNED depth [nTime, nNode] — wet-masked render reconstruction
-    // (eta_v - z_v; wetted-contact gated, so current engines emit > 0 or the
-    // 0 no-data sentinel; files from older engines may carry negatives). This
-    // is the field renderers/profilers should interpolate; Mesh2_node_head is
-    // the solver field (dry-cell head = bed elevation) kept for back-compat.
-    ds_node_depth_ = createUnlimitedDataset("Mesh2_node_depth", 2, zero2n, node_chunk);
-    writeStringAttr(ds_node_depth_, "long_name",
-                    "signed vertex water depth (wet-masked render reconstruction)");
-    writeStringAttr(ds_node_depth_, "units", "m");
-    writeStringAttr(ds_node_depth_, "mesh", "Mesh2");
-    writeStringAttr(ds_node_depth_, "location", "node");
+        // Node SIGNED depth [nTime, nNode] — wet-masked render reconstruction
+        // (eta_v - z_v; wetted-contact gated, so current engines emit > 0 or
+        // the 0 no-data sentinel; files from older engines may carry
+        // negatives). This is the field renderers/profilers should
+        // interpolate; Mesh2_node_head is the solver field (dry-cell head =
+        // bed elevation) kept for back-compat.
+        ds_node_depth_ = createUnlimitedDataset("Mesh2_node_depth", 2, zero2n, node_chunk);
+        writeStringAttr(ds_node_depth_, "long_name",
+                        "signed vertex water depth (wet-masked render reconstruction)");
+        writeStringAttr(ds_node_depth_, "units", "m");
+        writeStringAttr(ds_node_depth_, "mesh", "Mesh2");
+        writeStringAttr(ds_node_depth_, "location", "node");
+    }
 
     // --- Cumulative rendering envelopes (fixed [nFace], overwritten in place) ---
-    ds_face_max_depth_ = createFaceEnvelopeDataset(
-        "Mesh2_face_max_depth", "maximum overland flow depth", "m");
-    ds_face_max_velocity_ = createFaceEnvelopeDataset(
-        "Mesh2_face_max_velocity", "maximum cell velocity magnitude", "m s-1");
-    ds_face_max_continuity_err_ = createFaceEnvelopeDataset(
-        "Mesh2_face_max_continuity_err",
-        "maximum absolute per-cell continuity residual", "m3 s-1");
+    if (want(report2d::ENVELOPES)) {
+        ds_face_max_depth_ = createFaceEnvelopeDataset(
+            "Mesh2_face_max_depth", "maximum overland flow depth", "m");
+        ds_face_max_velocity_ = createFaceEnvelopeDataset(
+            "Mesh2_face_max_velocity", "maximum cell velocity magnitude", "m s-1");
+        if (want(report2d::CONTINUITY))
+            ds_face_max_continuity_err_ = createFaceEnvelopeDataset(
+                "Mesh2_face_max_continuity_err",
+                "maximum absolute per-cell continuity residual", "m3 s-1");
+    }
 }
 
 // ============================================================================
@@ -474,6 +682,16 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
 
 int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
     if (file_id_ < 0 || snap.surface_tri_count == 0) return 0;
+
+    // REPORT_2D_STEP cadence: update() arrives every [OPTIONS] REPORT_STEP;
+    // write only when the 2D instant is due (first call always writes).
+    if (report_2d_step_days_ > 0.0) {
+        if (next_due_days_ < 0.0) next_due_days_ = snap.sim_time;
+        if (snap.sim_time + 1e-9 < next_due_days_) return 0;
+        // Advance in whole 2D steps so a late call cannot double-write.
+        while (next_due_days_ <= snap.sim_time + 1e-9)
+            next_due_days_ += report_2d_step_days_;
+    }
 
     // Write time value
     {
@@ -488,26 +706,112 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
         H5Sclose(fspace);
     }
 
-    // Write per-face fields
-    extendAndWrite2D(ds_face_depth_,         snap.surface_depth.data(),          n_faces_);
-    extendAndWrite2D(ds_face_head_,          snap.surface_head.data(),           n_faces_);
-    extendAndWrite2D(ds_face_grad_hx_,       snap.surface_grad_hx.data(),       n_faces_);
-    extendAndWrite2D(ds_face_grad_hy_,       snap.surface_grad_hy.data(),       n_faces_);
-    extendAndWrite2D(ds_face_grad_hx_lim_,   snap.surface_grad_hx_lim.data(),   n_faces_);
-    extendAndWrite2D(ds_face_grad_hy_lim_,   snap.surface_grad_hy_lim.data(),   n_faces_);
-    extendAndWrite2D(ds_face_rainfall_,      snap.surface_rainfall.data(),      n_faces_);
-    extendAndWrite2D(ds_face_coupling_flux_, snap.surface_coupling_flux.data(), n_faces_);
-    extendAndWrite2D(ds_face_net_source_,    snap.surface_net_source.data(),    n_faces_);
-    extendAndWrite2D(ds_face_vx_,            snap.surface_face_vx.data(),       n_faces_);
-    extendAndWrite2D(ds_face_vy_,            snap.surface_face_vy.data(),       n_faces_);
-    extendAndWrite2D(ds_face_continuity_err_, snap.surface_continuity_err.data(), n_faces_);
+    // Per-face fields — each guarded by its dataset handle, which is
+    // H5I_INVALID_HID for groups REPORT_2D_VARIABLES left out.
+    auto face = [&](hid_t ds, const std::vector<double>& v) {
+        if (ds != H5I_INVALID_HID && v.size() == static_cast<std::size_t>(n_faces_))
+            extendAndWrite2D(ds, v.data(), n_faces_);
+    };
+    face(ds_face_depth_,          snap.surface_depth);
+    face(ds_face_head_,           snap.surface_head);
+    face(ds_face_grad_hx_,        snap.surface_grad_hx);
+    face(ds_face_grad_hy_,        snap.surface_grad_hy);
+    face(ds_face_grad_hx_lim_,    snap.surface_grad_hx_lim);
+    face(ds_face_grad_hy_lim_,    snap.surface_grad_hy_lim);
+    face(ds_face_rainfall_,       snap.surface_rainfall);
+    face(ds_face_coupling_flux_,  snap.surface_coupling_flux);
+    face(ds_face_net_source_,     snap.surface_net_source);
+    face(ds_face_infil_rate_,     snap.surface_infil_rate);
+    face(ds_face_infil_cum_,      snap.surface_infil_cum);
+    face(ds_face_rain_cum_,       snap.surface_rain_cum);
+    face(ds_face_vx_,             snap.surface_face_vx);
+    face(ds_face_vy_,             snap.surface_face_vy);
+    face(ds_face_continuity_err_, snap.surface_continuity_err);
 
-    // Write per-edge fields [nFace, 3]
-    extendAndWrite3D(ds_edge_flux_, snap.surface_edge_flux.data(), n_faces_, 3);
+    // Per-edge fields [nFace, edge_stride] (the snapshot is already packed to
+    // the public stride by SWMMEngine::fillSurfaceSnapshot).
+    if (ds_edge_flux_ != H5I_INVALID_HID &&
+        snap.surface_edge_flux.size() == static_cast<std::size_t>(n_faces_ * edge_stride_))
+        extendAndWrite3D(ds_edge_flux_, snap.surface_edge_flux.data(), n_faces_,
+                         edge_stride_);
 
-    // Write per-node fields
-    extendAndWrite2D(ds_node_head_, snap.surface_vert_head.data(), n_nodes_);
-    if (static_cast<hsize_t>(snap.surface_vert_depth.size()) == n_nodes_)
+    // Overland transport S1: species concentration [nTime, nSpecies, nFace].
+    // Created LAZILY on the first step that carries species, and only then:
+    // a model with no 2D transport gets no variable, which is the correct
+    // statement. REPORT_2D_SPECIES narrows the rows written; the
+    // species_names attribute always lists exactly the rows in the file.
+    if (want(report2d::SPECIES) && snap.surface_species_count > 0 &&
+        snap.surface_species_conc.size() ==
+            static_cast<std::size_t>(snap.surface_species_count) * n_faces_) {
+        if (ds_face_species_conc_ == H5I_INVALID_HID) {
+            // Resolve the row selection once, by name against the surface's
+            // own row names (S4) or the pollutant list (pre-S4 fallback).
+            const std::vector<std::string>* names_src =
+                snap.surface_species_names ? snap.surface_species_names
+                                           : snap.pollut_names;
+            species_rows_.clear();
+            const int n_in = snap.surface_species_count;
+            if (species_filter_.empty() || !names_src) {
+                for (int i = 0; i < n_in; ++i) species_rows_.push_back(i);
+            } else {
+                for (int i = 0; i < n_in && i < static_cast<int>(names_src->size()); ++i) {
+                    const std::string& nm = (*names_src)[static_cast<std::size_t>(i)];
+                    for (const auto& want_nm : species_filter_) {
+                        if (report2d::iequalsTok(want_nm, nm.c_str())) {
+                            species_rows_.push_back(i);
+                            break;
+                        }
+                    }
+                }
+            }
+            if (species_rows_.empty()) {
+                // Nothing selected matches — write nothing rather than an
+                // empty block; the mask says SPECIES, the filter said none.
+                n_species_ = 0;
+            } else {
+                n_species_ = static_cast<hsize_t>(species_rows_.size());
+                hsize_t zero3s[3]  = {0, n_species_, n_faces_};
+                hsize_t chunk3[3]  = {1, n_species_, std::min<hsize_t>(n_faces_, 4096)};
+                ds_face_species_conc_ = createUnlimitedDataset(
+                    "Mesh2_face_species_conc", 3, zero3s, chunk3);
+                writeStringAttr(ds_face_species_conc_, "long_name",
+                                "surface species concentration");
+                // Species units are per species and live on the pollutant
+                // table; the dataset carries the layout and a name list so a
+                // reader can join. "1" here means "see species_names".
+                writeStringAttr(ds_face_species_conc_, "units", "1");
+                writeStringAttr(ds_face_species_conc_, "mesh", "Mesh2");
+                writeStringAttr(ds_face_species_conc_, "location", "face");
+                writeStringAttr(ds_face_species_conc_, "layout",
+                                "[time, species, face]; species order = "
+                                "the species_names list (a REPORT_2D_SPECIES "
+                                "subset of pollutants, MSX, __WATER_AGE__, "
+                                "__TEMPERATURE__); dry cell reports 0");
+                if (names_src) {
+                    std::string names;
+                    for (std::size_t k = 0; k < species_rows_.size(); ++k) {
+                        const auto r = static_cast<std::size_t>(species_rows_[k]);
+                        if (r >= names_src->size()) break;
+                        if (k) names += ",";
+                        names += (*names_src)[r];
+                    }
+                    if (!names.empty())
+                        writeStringAttr(ds_face_species_conc_, "species_names",
+                                        names.c_str());
+                }
+            }
+        }
+        if (ds_face_species_conc_ != H5I_INVALID_HID && n_species_ > 0)
+            writeSpeciesRows(snap.surface_species_conc.data(),
+                             static_cast<hsize_t>(snap.surface_species_count));
+    }
+
+    // Per-node fields
+    if (ds_node_head_ != H5I_INVALID_HID &&
+        snap.surface_vert_head.size() == static_cast<std::size_t>(n_nodes_))
+        extendAndWrite2D(ds_node_head_, snap.surface_vert_head.data(), n_nodes_);
+    if (ds_node_depth_ != H5I_INVALID_HID &&
+        static_cast<hsize_t>(snap.surface_vert_depth.size()) == n_nodes_)
         extendAndWrite2D(ds_node_depth_, snap.surface_vert_depth.data(), n_nodes_);
 
     // Overwrite cumulative envelopes in place (monotone; last write is final).
@@ -521,6 +825,27 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
 
     ++n_steps_;
     return 0;
+}
+
+void Default2DOutputPlugin::writeSpeciesRows(const double* all, hsize_t n_species_in) {
+    // Fast path: every row selected in order — write the block directly.
+    bool identity = (n_species_ == n_species_in);
+    if (identity)
+        for (std::size_t k = 0; k < species_rows_.size(); ++k)
+            if (species_rows_[k] != static_cast<int>(k)) { identity = false; break; }
+    if (identity) {
+        extendAndWrite3D(ds_face_species_conc_, all, n_species_, n_faces_);
+        return;
+    }
+    // Gather the selected rows into a compact [n_sel × n_faces] block.
+    std::vector<double> sel(static_cast<std::size_t>(n_species_ * n_faces_));
+    for (std::size_t k = 0; k < species_rows_.size(); ++k) {
+        const auto r = static_cast<std::size_t>(species_rows_[k]);
+        if (r >= static_cast<std::size_t>(n_species_in)) continue;
+        std::copy(all + r * n_faces_, all + (r + 1) * n_faces_,
+                  sel.begin() + static_cast<std::ptrdiff_t>(k * n_faces_));
+    }
+    extendAndWrite3D(ds_face_species_conc_, sel.data(), n_species_, n_faces_);
 }
 
 // ============================================================================
@@ -552,6 +877,11 @@ int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
             writeScalar(grp, "outfall_out",           mb.outfall_out);
             writeScalar(grp, "boundary_in",           mb.boundary_in);
             writeScalar(grp, "boundary_out",          mb.boundary_out);
+            // Both loss channels (plan §5.5.4): evap_out was previously
+            // omitted here, so writing infil_out alone would leave the
+            // sidecar's budget silently non-closing.
+            writeScalar(grp, "evap_out",              mb.evap_out);
+            writeScalar(grp, "infil_out",             mb.infil_out);
             writeDoubleAttr(grp, "continuity_error",  mb.error());
             H5Gclose(grp);
         }
@@ -571,6 +901,10 @@ int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
     closeDS(ds_face_rainfall_);
     closeDS(ds_face_coupling_flux_);
     closeDS(ds_face_net_source_);
+    closeDS(ds_face_infil_rate_);
+    closeDS(ds_face_infil_cum_);
+    closeDS(ds_face_rain_cum_);
+    closeDS(ds_face_species_conc_);
     closeDS(ds_face_vx_);
     closeDS(ds_face_vy_);
     closeDS(ds_face_continuity_err_);

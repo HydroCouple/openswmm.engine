@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file Infiltration.hpp
  * @brief Infiltration models — Horton, Green-Ampt, SCS Curve Number.
@@ -12,7 +28,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_INFILTRATION_HPP
@@ -31,7 +47,9 @@ enum class InfilModel : int {
     MOD_HORTON     = 1,   ///< Modified Horton: linear decay fp = f0 - kd * Fe
     GREEN_AMPT     = 2,
     MOD_GREEN_AMPT = 3,   ///< Modified Green-Ampt: does not reset F between events
-    CURVE_NUM      = 4
+    CURVE_NUM      = 4,
+    CONSTANT       = 5    ///< Constant rate, capacity-bounded. 2D-only (no legacy
+                          ///< [INFILTRATION] token); see plan §5.5.1.
 };
 
 // ============================================================================
@@ -88,6 +106,13 @@ struct CurveNumState {
 
 namespace infil {
 
+// The state structs above are declared at `openswmm` scope. Re-export them
+// here so callers may also spell them `infil::HortonState` (the 2D adapter
+// contract, src/engine/2d/infil/Infil2D.hpp, uses that qualification).
+using ::openswmm::HortonState;
+using ::openswmm::GreenAmptState;
+using ::openswmm::CurveNumState;
+
 /**
  * @brief Compute Horton infiltration rate for one timestep.
  *
@@ -118,14 +143,29 @@ double modHorton_getInfil(HortonState& state, double precip, double depth, doubl
 /**
  * @brief Compute Green-Ampt infiltration rate.
  *
- * @param state   [in/out] Green-Ampt state.
- * @param precip  Rainfall rate (ft/sec).
- * @param depth   Ponded depth (ft).
- * @param dt      Timestep (seconds).
+ * Op-for-op transliteration of legacy infil.c grnampt_getInfil /
+ * grnampt_getUnsatInfil / grnampt_getSatInfil / grnampt_getF2. The two
+ * factors legacy keeps in file-scope globals (InfilFactor from the
+ * [ADJUSTMENTS] conductivity multiplier or a subcatchment pattern, and
+ * Evap.recoveryFactor from the evaporation recovery pattern) are passed in
+ * and applied exactly where legacy applies them: ks = Ks*InfilFactor,
+ * lu = Lu*sqrt(InfilFactor), Fumax = IMDmax*Lu*sqrt(InfilFactor),
+ * kr = lu/90000*recoveryFactor, T = 5400/lu/recoveryFactor. The state's
+ * Ks/Lu are never scaled in place.
+ *
+ * @param state            [in/out] Green-Ampt state.
+ * @param precip           Rainfall (plus runon) rate (ft/sec).
+ * @param depth            Ponded depth (ft).
+ * @param dt               Timestep (seconds).
+ * @param model_type       GREEN_AMPT resets F at the inter-event timer;
+ *                         MOD_GREEN_AMPT does not.
+ * @param infil_factor     Legacy InfilFactor (1.0 = none).
+ * @param recovery_factor  Legacy Evap.recoveryFactor (1.0 = none).
  * @returns Infiltration rate (ft/sec).
  */
 double grnampt_getInfil(GreenAmptState& state, double precip, double depth, double dt,
-                        InfilModel model_type = InfilModel::GREEN_AMPT);
+                        InfilModel model_type = InfilModel::GREEN_AMPT,
+                        double infil_factor = 1.0, double recovery_factor = 1.0);
 
 /**
  * @brief Compute SCS Curve Number infiltration rate.
@@ -136,7 +176,23 @@ double grnampt_getInfil(GreenAmptState& state, double precip, double depth, doub
  * @param dt      Timestep (seconds).
  * @returns Infiltration rate (ft/sec).
  */
-double curvenum_getInfil(CurveNumState& state, double precip, double depth, double dt);
+double curvenum_getInfil(CurveNumState& state, double precip, double depth, double dt,
+                         double recovery_factor = 1.0);
+
+/**
+ * @brief Compute constant-rate infiltration, bounded by available water.
+ *
+ * @details Stateless: f = min(rate, precip + depth/dt), floored at zero. Has
+ *          no legacy infil.c counterpart — added for the 2D per-cell
+ *          infiltration track (plan §5.5.1, InfilModel::CONSTANT).
+ *
+ * @param rate_ftsec  Constant infiltration rate (ft/sec).
+ * @param precip      Rainfall rate (ft/sec).
+ * @param depth       Ponded depth (ft).
+ * @param dt          Timestep (seconds).
+ * @returns Infiltration rate (ft/sec).
+ */
+double constant_getInfil(double rate_ftsec, double precip, double depth, double dt);
 
 /**
  * @brief Initialise Horton parameters from user input.

@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file IOThread.cpp
  * @brief IOThread — producer/consumer output writer implementation.
@@ -7,13 +23,52 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "IOThread.hpp"
 #include "../plugins/PluginFactory.hpp"
 
 namespace openswmm {
+
+#ifdef __EMSCRIPTEN__
+// ============================================================================
+// WebAssembly: single-threaded build (no -pthread). Run every write task
+// synchronously on the caller's thread; the public contract is unchanged.
+// ============================================================================
+
+IOThread::IOThread(PluginFactory& factory, std::size_t capacity)
+    : factory_(factory)
+    , capacity_(capacity)
+{}
+
+IOThread::~IOThread() {
+    stop();
+}
+
+void IOThread::start() {
+    stop_flag_.store(false, std::memory_order_relaxed);
+    running_.store(true, std::memory_order_relaxed);
+}
+
+void IOThread::post(SimulationSnapshot snap) {
+    if (stop_flag_.load(std::memory_order_relaxed)) return;
+    WriteTask task(std::move(snap), next_sequence_++);
+    const int rc = factory_.update_all(task.snapshot);
+    if (rc != 0) {
+        last_error_.store(rc, std::memory_order_relaxed);
+    }
+    tasks_completed_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void IOThread::stop() {
+    stop_flag_.store(true, std::memory_order_relaxed);
+    running_.store(false, std::memory_order_relaxed);
+}
+
+void IOThread::run() {}
+
+#else
 
 // ============================================================================
 // Constructor / Destructor
@@ -113,5 +168,7 @@ void IOThread::run() {
 
     running_.store(false, std::memory_order_relaxed);
 }
+
+#endif /* __EMSCRIPTEN__ */
 
 } /* namespace openswmm */

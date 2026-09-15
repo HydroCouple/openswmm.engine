@@ -1,5 +1,8 @@
 name: Unit Testing Python
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main, develop]
@@ -10,7 +13,13 @@ env:
   VCPKG_ROOT: ${{ github.workspace }}/vcpkg
   VCPKG_EXE: ${{ github.workspace }}/vcpkg/vcpkg
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
-  VCPKG_MANIFEST_FEATURES: "tests"
+  # `gpu` (Kokkos) is required, not optional: the base wheel builds the
+  # Kokkos-OpenMP surface plugin (python/CMakeLists.txt sets
+  # OPENSWMM_BUILD_GPU_PLUGIN=ON and VCPKG_MANIFEST_FEATURES=2d;gpu), and its
+  # find_package(Kokkos REQUIRED) fails configure outright if Kokkos is absent.
+  # Stated here as well so this workflow's feature set cannot drift out of step
+  # with the wheel's and fail late, in the middle of a matrix.
+  VCPKG_MANIFEST_FEATURES: "tests;2d;gpu"
   OMP_NUM_THREADS: 1
 
 jobs:
@@ -29,7 +38,6 @@ jobs:
     name: "Python (${{ matrix.os }})"
     permissions:
       contents: read
-      actions: write
     strategy:
       fail-fast: false
       matrix:
@@ -59,7 +67,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: microsoft/vcpkg
-          ref: 2025.02.14
+          ref: 2026.07.29
           path: vcpkg
 
       - name: Bootstrap vcpkg (macOS)

@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file ForceMain.cpp
  * @brief Force main friction — numerically identical to legacy forcmain.c.
@@ -5,7 +21,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "ForceMain.hpp"
@@ -44,20 +60,26 @@ double getFricSlope_DW(double velocity, double hyd_rad, double roughness) {
 
 double getFricFactor(double r_bot, double hrad, double re) {
     if (hrad <= 0.0) return 0.0;
-    double diameter = 4.0 * hrad;
-    if (re <= 0.0) {
-        // Fully turbulent approximation (Colebrook at Re→∞)
-        re = 1.0e12;
-    }
+    // Legacy forcmain.c forcemain_getFricFactor, bit-exact (Swamee-Jain
+    // approximation to Colebrook-White). The three arms — laminar, the
+    // transitional 2000<Re<4000 blend, and turbulent — plus the Re<10 floor
+    // and the conditional 5.74 term must all be present: the D-W force-main
+    // arm feeds this per step, and omitting the transitional branch/floor
+    // (force-main-reynolds exercises exactly those regimes) or regrouping
+    // the turbulent expression diverges the friction slope. Grouping matches
+    // legacy: e/3.7/(4·hrad) and 0.25/f/f, left to right.
     double f;
+    if (re < 10.0) re = 10.0;
     if (re <= 2000.0) {
         f = 64.0 / re;
+    } else if (re < 4000.0) {
+        f = getFricFactor(r_bot, hrad, 4000.0);
+        f = 0.032 + (f - 0.032) * (re - 2000.0) / 2000.0;
     } else {
-        double e_over_d = r_bot / diameter;
-        double arg = e_over_d / 3.7 + 5.74 / std::pow(re, 0.9);
-        if (arg <= 0.0) return 0.0;
-        double logarg = std::log10(arg);
-        f = 0.25 / (logarg * logarg);
+        f = r_bot / 3.7 / (4.0 * hrad);
+        if (re < 1.0e10) f += 5.74 / std::pow(re, 0.9);
+        f = std::log10(f);
+        f = 0.25 / f / f;
     }
     return f;
 }

@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file Tokenizer.hpp
  * @brief Multi-delimiter tokenizer for SWMM input files.
@@ -24,7 +40,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TOKENIZER_HPP
@@ -105,6 +121,21 @@ public:
      * @returns        Vector of string_view tokens.
      */
     static std::vector<std::string_view> tokenize_views(std::string_view line);
+
+    /**
+     * @brief tokenize_views into a caller-owned buffer.
+     *
+     * @details Hoist the buffer out of a per-row loop and this allocates
+     *          nothing at all after the first row — clear() keeps capacity.
+     *          That matters in the geometry sections, which are the row-count
+     *          leaders in a large model ([VERTICES] alone is three rows per
+     *          link).
+     *
+     *          Like tokenize_views(), quoted tokens are NOT supported; callers
+     *          that may see them must fall back to tokenize().
+     */
+    static void tokenize_views_into(std::string_view line,
+                                    std::vector<std::string_view>& out);
 
     // -----------------------------------------------------------------------
     // Utilities

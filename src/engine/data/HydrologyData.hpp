@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file HydrologyData.hpp
  * @brief SoA stores for snowpacks, aquifers, LID controls, and LID usage.
@@ -8,7 +24,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_HYDROLOGY_DATA_HPP
@@ -17,6 +33,8 @@
 #include <vector>
 #include <string>
 #include <array>
+
+#include "../core/FilePathPair.hpp"
 
 namespace openswmm {
 
@@ -148,7 +166,10 @@ struct LidUsageStore {
     std::vector<double>      init_sat;         ///< Initial saturation (0–1)
     std::vector<double>      from_imperv;      ///< % of impervious area routed to LID
     std::vector<int>         to_perv;          ///< 1 = route outflow to pervious area
-    std::vector<std::string> rpt_file;         ///< Report file name (optional)
+    /// Per-unit LID report file (optional). A FilePathPair so the writer can
+    /// re-anchor it against the destination directory on Save-As, like every
+    /// other external-file slot.
+    std::vector<FilePathPair> rpt_file;
     std::vector<std::string> drain_to;         ///< Drain-to subcatchment name (optional)
     std::vector<double>      from_perv;        ///< % of pervious area routed to LID
 

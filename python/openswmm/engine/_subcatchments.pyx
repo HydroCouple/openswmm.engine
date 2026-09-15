@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Subcatchment access (Pythonic v1 surface)
 =========================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 The :class:`Subcatchments` collection and :class:`Subcatchment` wrapper
 follow the same shape as :mod:`openswmm.engine._nodes`. Each wrapper
@@ -1068,6 +1084,85 @@ cdef class Subcatchments:
         _check(err)
         return buf
 
+    # ---- [GWF] custom groundwater flow expressions ------------------
+
+    def get_gwf_expression(self, key, gwf_type) -> str:
+        """Return a subcatchment's C{[GWF]} expression (empty if none is set).
+
+        @param key: Subcatchment index or string id.
+        @param gwf_type: L{GwfType} (C{LATERAL} or C{DEEP}) or its int code.
+        @rtype: str
+        """
+        cdef int idx = _resolve_subcatch(self._solver, key)
+        cdef char buf[1024]
+        _check(swmm_subcatch_get_gwf_expression(
+            _h(self._solver), idx, int(gwf_type), buf, sizeof(buf)))
+        return buf.decode('utf-8')
+
+    def set_gwf_expression(self, key, gwf_type, expression) -> None:
+        """Set or clear a subcatchment's C{[GWF]} expression.
+
+        The text is stored as given and is NOT validated here — use
+        :meth:`validate_gwf_expression` first; an invalid expression fails
+        C{initialize()} with ERROR 233. Pre-start-only; a mid-run change
+        raises L{LifecycleError}.
+
+        @param key: Subcatchment index or string id.
+        @param gwf_type: L{GwfType} (C{LATERAL} or C{DEEP}) or its int code.
+        @param expression: Expression text, or C{None}/``""`` to clear.
+        """
+        cdef int idx = _resolve_subcatch(self._solver, key)
+        cdef bytes b = (expression or "").encode('utf-8')
+        _check(swmm_subcatch_set_gwf_expression(
+            _h(self._solver), idx, int(gwf_type), b))
+
+    def validate_gwf_expression(self, str expression):
+        """Validate a C{[GWF]} expression WITHOUT modifying the engine.
+
+        Returns ``(ok, message, col)`` — ``ok`` True when the expression is
+        valid; on failure ``message`` is the diagnostic and ``col`` the
+        0-based character offset of the error (-1 when not attributable).
+        An empty expression is reported invalid; callers treat empty as
+        "clear" themselves.
+        """
+        cdef bytes b = expression.encode('utf-8')
+        cdef char errbuf[512]
+        cdef int col = -1
+        errbuf[0] = 0
+        cdef int rc = swmm_gwf_validate_expression(
+            _h(self._solver), b, errbuf, 512, &col)
+        if rc == 0:
+            return (True, "", -1)
+        return (False, errbuf.decode('utf-8'), col)
+
+    def gwf_variables(self):
+        """Variables a C{[GWF]} expression may reference, as a list of
+        ``(name, description)`` tuples (names upper-case, e.g. ``"HGW"``).
+        """
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = swmm_gwf_variable_count(h)
+        cdef char name[64]
+        cdef char desc[256]
+        out = []
+        for i in range(n):
+            _check(swmm_gwf_variable_name(h, i, name, sizeof(name)))
+            _check(swmm_gwf_variable_description(h, i, desc, sizeof(desc)))
+            out.append((name.decode('utf-8'), desc.decode('utf-8')))
+        return out
+
+    def gwf_functions(self):
+        """Built-in functions a C{[GWF]} expression may call, as a list of
+        lower-case names (``min``/``max`` take two arguments, the rest one).
+        """
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = swmm_gwf_function_count(h)
+        cdef char name[64]
+        out = []
+        for i in range(n):
+            _check(swmm_gwf_function_name(h, i, name, sizeof(name)))
+            out.append(name.decode('utf-8'))
+        return out
+
     @property
     def ids(self):
         return np.asarray(self._ids_list(), dtype=object)
@@ -1128,6 +1223,9 @@ cdef class _NamedObjects:
     cdef int _add(self, bytes b) except -1:
         raise NotImplementedError
 
+    cdef int _rename(self, int idx, bytes b) except -1:
+        raise NotImplementedError
+
     def __len__(self) -> int:
         return self._count()
 
@@ -1176,6 +1274,17 @@ cdef class _NamedObjects:
         self._solver._bump_generation()
         return self._count() - 1
 
+    def rename(self, key, str new_id) -> None:
+        """Rename an object, updating stored references to it.
+
+        @param key: Integer index or string id.
+        @param new_id: New identifier.
+        """
+        cdef int idx = key if isinstance(key, int) else self.get_index(key)
+        cdef bytes b = new_id.encode('utf-8')
+        self._rename(idx, b)
+        self._solver._bump_generation()
+
 
 cdef class Aquifers(_NamedObjects):
     """C{solver.aquifers} — name-keyed collection of C{[AQUIFERS]} entries."""
@@ -1191,6 +1300,10 @@ cdef class Aquifers(_NamedObjects):
 
     cdef int _add(self, bytes b) except -1:
         _check(swmm_aquifer_add(_h(self._solver), b))
+        return 0
+
+    cdef int _rename(self, int idx, bytes b) except -1:
+        _check(swmm_aquifer_rename(_h(self._solver), idx, b))
         return 0
 
     def get_param(self, aquifer, param) -> float:
@@ -1267,6 +1380,10 @@ cdef class Snowpacks(_NamedObjects):
 
     cdef int _add(self, bytes b) except -1:
         _check(swmm_snowpack_add(_h(self._solver), b))
+        return 0
+
+    cdef int _rename(self, int idx, bytes b) except -1:
+        _check(swmm_snowpack_rename(_h(self._solver), idx, b))
         return 0
 
     # ---- Surface parameters (pre-start-only) -----------------------

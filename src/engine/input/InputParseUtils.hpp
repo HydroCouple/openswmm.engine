@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file InputParseUtils.hpp
  * @brief Shared parsing utilities for input section handlers.
@@ -10,7 +26,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_INPUT_PARSE_UTILS_HPP
@@ -127,10 +143,23 @@ inline double parse_time_seconds(std::string_view sv) {
  * @details For use with datetime::encodeTime. Returns fractional day [0, 1).
  */
 inline double parse_time_day_fraction(std::string_view sv) {
-    unsigned h = 0, m = 0, s = 0;
     const char* p = sv.data();
     const char* end = sv.data() + sv.size();
 
+    // A time token is EITHER decimal hours (a bare number such as "0.167" or
+    // "10") OR a clock string "HH:MM[:SS]" — matching legacy datetime_strToTime
+    // ("accepts time as hr:min:sec or as decimal hours"). Try a full decimal
+    // parse first: if the WHOLE token is a number it is decimal hours (/24);
+    // otherwise fall back to integer HH:MM:SS. This helper (and parse_datetime
+    // through it) previously handled only HH:MM:SS, so a bare "0.167" on a dated
+    // [TIMESERIES] row was truncated to 0 — corrupting the series and colliding
+    // with the prior day's "24" row (dx == 0 -> spurious ERR 173).
+    double dec_hours = 0.0;
+    auto [dp, dec] = openswmm::from_chars_double(p, end, dec_hours);
+    if (dec == std::errc{} && dp == end)
+        return dec_hours / 24.0;
+
+    unsigned h = 0, m = 0, s = 0;
     auto read_uint = [&](unsigned& out) -> bool {
         auto [np, ec] = std::from_chars(p, end, out);
         if (ec != std::errc{}) return false;
