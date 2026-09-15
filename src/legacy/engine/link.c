@@ -1956,17 +1956,18 @@ double orifice_getInflow(int j)
                 snprintf(fname, sizeof(fname), "%s.orif%ld", tr, ofTarget);
                 of = fopen(fname, "w");
                 if ( of ) fprintf(of,
-                    "h1,h2,hcrest,hcrown,f,head,cWeir,cOrif,hCrit,dqdh,q\n");
+                    "h1,h2,hcrest,hcrown,f,head,cWeir,cOrif,hCrit,dqdh,q,surfArea,length,newDepth\n");
             }
         }
         if ( of && j == ofTarget &&
              (ofStep <= 0 || SwmmTraceRstepSn + 1 >= ofStep) && ofRows < 128 )
         {
             ++ofRows;
-            fprintf(of, "%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a\n",
+            fprintf(of, "%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a\n",
                     h1, h2, hcrest, hcrown, f, head,
                     Orifice[k].cWeir, Orifice[k].cOrif, Orifice[k].hCrit,
-                    Link[j].dqdh, q);
+                    Link[j].dqdh, q,
+                    Orifice[k].surfArea, Orifice[k].length, Link[j].newDepth);
             if ( ofRows >= 128 ) { fclose(of); of = NULL; }
         }
     }

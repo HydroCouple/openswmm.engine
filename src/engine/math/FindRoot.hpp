@@ -44,9 +44,12 @@ constexpr int MAXIT = 60;  ///< Maximum iterations
 /**
  * @brief Newton-Raphson with bisection fallback.
  *
- * @details Finds x in [x1, x2] such that f(x) = 0. Requires f(x1) and f(x2)
- *          to have opposite signs. Uses Newton steps when reliable, falls back
- *          to bisection when Newton would exit the bracket or converge slowly.
+ * @details Finds x in [x1, x2] such that f(x) = 0 — legacy findroot_Newton,
+ *          op for op. The CALLER brackets the root with f(x1) < 0 < f(x2)
+ *          (switch x1 and x2 when f(x1) > f(x2)); nothing is pre-evaluated
+ *          here, so the callback runs in legacy's sequence. Uses Newton
+ *          steps when reliable, falls back to bisection when Newton would
+ *          exit the bracket or converge slowly.
  *
  * @param x1    Left bracket.
  * @param x2    Right bracket.

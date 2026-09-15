@@ -1737,8 +1737,9 @@ TEST(KWAmaxBounds, OverflowReturnsFullPipe) {
     int ret = solver.solveConduit(0, xs, q_full, xs.a_full, xs.s_full,
                                    beta, length, dt, 0.0);
 
-    // Return code -2 means "full flow" branch taken
-    EXPECT_EQ(ret, -2) << "Over-full inflow must return -2 (full-flow branch)";
+    // Legacy kinwave_execute folds the full-flow (-2) / no-flow (-3) branch
+    // codes into 1 before returning (kinwave.c `if (result <= 0) result = 1`).
+    EXPECT_EQ(ret, 1) << "Over-full inflow must take the full-flow branch (returns 1)";
     // Outlet area must not exceed a_full
     EXPECT_LE(solver.a_out_[0], xs.a_full * (1.0 + 1e-9))
         << "a_out must not exceed a_full under over-capacity inflow";

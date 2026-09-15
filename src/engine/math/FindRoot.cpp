@@ -31,46 +31,51 @@ namespace openswmm {
 namespace findroot {
 
 int newton(double x1, double x2, double* rts, double xacc, const NewtonFunc& func) {
-    double xlo, xhi, f, df, dx, dxold, temp;
-
-    // Orient bracket so f(xlo) < 0
-    double fl, fh, dfl, dfh;
-    func(x1, &fl, &dfl);
-    func(x2, &fh, &dfh);
-
-    if (fl < 0.0) { xlo = x1; xhi = x2; }
-    else          { xhi = x1; xlo = x2; }
-
-    double x = *rts;
+    // legacy findroot_Newton, op for op: the caller brackets the root with
+    // f(x1) < 0 < f(x2) (switching x1/x2 when f(x1) > f(x2), as kinwave.c
+    // solveContinuity does) — no orienting pre-evaluations here, so the
+    // function is called exactly in legacy's sequence and count; the
+    // return is the number of evaluations, 0 past MAXIT.
+    int n = 0;
+    double f, df, dx, dxold, temp;
+    double x   = *rts;
+    double xlo = x1;
+    double xhi = x2;
     dxold = std::fabs(x2 - x1);
     dx = dxold;
     func(x, &f, &df);
+    n++;
 
     for (int j = 1; j <= MAXIT; ++j) {
-        // Use bisection if Newton out of bracket or converging slowly
-        if (((x - xhi) * df - f) * ((x - xlo) * df - f) >= 0.0 ||
-            std::fabs(2.0 * f) > std::fabs(dxold * df)) {
+        // Bisect if Newton out of range or not decreasing fast enough.
+        if ((((x - xhi) * df - f) * ((x - xlo) * df - f) >= 0.0
+             || (std::fabs(2.0 * f) > std::fabs(dxold * df)))) {
             dxold = dx;
             dx = 0.5 * (xhi - xlo);
             x = xlo + dx;
-            if (xlo == x) { *rts = x; return j; }
-        } else {
+            if (xlo == x) break;
+        }
+        // Newton step acceptable. Take it.
+        else {
             dxold = dx;
             dx = f / df;
             temp = x;
             x -= dx;
-            if (temp == x) { *rts = x; return j; }
+            if (temp == x) break;
         }
 
-        if (std::fabs(dx) < xacc) { *rts = x; return j; }
+        // Convergence criterion.
+        if (std::fabs(dx) < xacc) break;
 
+        // Evaluate function. Maintain bracket on the root.
         func(x, &f, &df);
+        n++;
         if (f < 0.0) xlo = x;
         else         xhi = x;
     }
-
     *rts = x;
-    return 0;  // exceeded MAXIT
+    if (n <= MAXIT) return n;
+    else return 0;
 }
 
 double ridder(double x1, double x2, double xacc, const RidderFunc& func) {

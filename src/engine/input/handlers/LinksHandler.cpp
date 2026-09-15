@@ -204,13 +204,15 @@ void handle_weirs(SimulationContext& ctx, const std::vector<std::string>& lines)
         const int wr = ctx.link_subtypes.set_link_type(ctx.links, idx, LinkType::WEIR);
         const auto uwr = static_cast<std::size_t>(wr);
         set_link_nodes(ctx, idx, tok[1], tok[2]);
-        // tok[3]: weir type (TRANSVERSE=0, SIDEFLOW=1, V-NOTCH=2, TRAPEZOIDAL=3)
+        // tok[3]: weir type (TRANSVERSE=0, SIDEFLOW=1, V-NOTCH=2, TRAPEZOIDAL=3,
+        // ROADWAY=4 — legacy WeirTypeWords order)
+        double wt = 0.0;
         if (tok.size() > 3) {
             std::string wtype = Tokenizer::to_upper(tok[3]);
-            double wt = 0.0;
             if (wtype == "SIDEFLOW") wt = 1.0;
             else if (wtype == "V-NOTCH") wt = 2.0;
             else if (wtype == "TRAPEZOIDAL") wt = 3.0;
+            else if (wtype == "ROADWAY") wt = 4.0;
             ctx.link_subtypes.weirs.weir_type[uwr] = wt;
         }
         // tok[4]: crest height (above invert)
@@ -228,6 +230,26 @@ void handle_weirs(SimulationContext& ctx, const std::vector<std::string>& lines)
         if (tok.size() > 9 && tok[9] != "*")
             ctx.link_subtypes.weirs.can_surcharge[uwr] =
                 (Tokenizer::to_upper(tok[9]) == "YES") ? uint8_t{1} : uint8_t{0};
+        // tok[10] road width, tok[11] road surface (legacy weir_readParams
+        // x[7], x[8]: read for a ROADWAY weir only; an unknown surface word
+        // leaves 0 = no surface → the user's Cd is used as is)
+        if (wt == 4.0) {
+            if (tok.size() > 10)
+                ctx.link_subtypes.weirs.road_width[uwr] = to_double(tok[10]);
+            if (tok.size() > 11) {
+                const std::string surf = Tokenizer::to_upper(tok[11]);
+                ctx.link_subtypes.weirs.road_surface[uwr] =
+                    surf == "PAVED" ? int8_t{1} : surf == "GRAVEL" ? int8_t{2} : int8_t{0};
+            }
+        }
+        // tok[12]: discharge-coefficient curve (legacy x[9], any weir type);
+        // the name is kept on the link's curve-name slot and resolved to a
+        // table index once every [CURVES] entry is read.
+        if (tok.size() > 12 && tok[12] != "*") {
+            const auto uidx = static_cast<std::size_t>(idx);
+            if (uidx < ctx.links.pump_curve_name.size())
+                ctx.links.pump_curve_name[uidx] = tok[12];
+        }
         if (!pl.comment.empty())
             ctx.links.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }

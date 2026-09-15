@@ -192,6 +192,23 @@ struct SimulationOptions {
     /** @brief Hydraulic routing timestep in seconds. Legacy default: 20. */
     double routing_step = 20.0;
 
+    /**
+     * @brief The ROUTING_STEP as authored, before WARNING 07 reduces
+     *        routing_step to the wet-weather step (SWMMEngine::validate_project).
+     * @details legacy project_validate runs link_validate BEFORE that
+     *          reduction, so every RouteStep-derived link constant — the
+     *          Courant lengthening's MIN(RouteStep, LengtheningStep), an
+     *          orifice's / weir's equivalent length 2·RouteStep·sqrt(g·yFull)
+     *          — is formed from the written value. 0 = not recorded (use
+     *          routing_step). Runtime-only; not written by the .inp writer.
+     */
+    double routing_step_authored = 0.0;
+
+    /// The routing step legacy's link_validate saw (see routing_step_authored).
+    double linkValidateRoutingStep() const noexcept {
+        return routing_step_authored > 0.0 ? routing_step_authored : routing_step;
+    }
+
     /** @brief Minimum routing timestep in seconds (CFL floor). */
     double min_routing_step = 0.5;
 

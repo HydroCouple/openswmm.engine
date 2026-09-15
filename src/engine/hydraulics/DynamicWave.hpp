@@ -583,6 +583,12 @@ private:
     void processDryLink(SimulationContext& ctx, double dt, std::size_t uj);
     void processManningLink(SimulationContext& ctx, double dt, int step,
                             std::size_t uj, MomentumCategory cat);
+    /// SWMM_TRACE_LINK term trace shared by the Manning and force-main kernels.
+    void traceLinkTerms(const SimulationContext& ctx, std::size_t uj,
+                        double qLast, double v, double sig, double rho,
+                        double aWtd, double rWtd, double dq1, double dq2,
+                        double dq3, double dq4, double dq5, double dq6,
+                        double qOld, double q, double aMidConv);
     void processForceMainLink(SimulationContext& ctx, double dt, int step,
                               std::size_t uj, MomentumCategory cat);
     void applyFlowLimits(SimulationContext& ctx, double dt, int step,

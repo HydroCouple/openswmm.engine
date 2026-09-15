@@ -34,6 +34,7 @@
 #include "../core/UnitConversion.hpp"
 #include "Outfall.hpp"
 #include "Divider.hpp"
+#include "ForceMain.hpp"
 #include "Node.hpp"
 #include "Link.hpp"
 #include "TopoSort.hpp"
@@ -151,15 +152,22 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
 
     // Compute modified conduit lengths for CFL stability
     // (matching legacy link.c conduit_getLengthFactor / conduit_validate:
-    //  lengthening is only applied when LENGTHENING_STEP > 0 in OPTIONS)
+    //  lengthening is only applied when LENGTHENING_STEP > 0 in OPTIONS
+    //  AND the routing is dynamic wave — `RouteModel == DW &&
+    //  LengtheningStep > 0.0` (link.c:1109); under kinematic wave or steady
+    //  flow modLength stays the conduit's length, and link_getLength reads
+    //  that for the continuity solve and the volume. FV shares the dynamic
+    //  wave's mesh floor.) small-linear-si-unit-model (LPS, KW,
+    //  LENGTHENING_STEP 5) routed its 7.9 m outfall pipe as 19.8 m.
     {
         using constants::PHI;
         using constants::GRAVITY;
-        double route_step = ctx.options.routing_step;
+        double route_step = ctx.options.linkValidateRoutingStep();  // legacy: the authored RouteStep
         double lengthening_step = ctx.options.lengthening_step;
+        const bool dw_like = (model == RouteModel::DYNWAVE || model == RouteModel::FV);
 
         auto& CD = ctx.link_subtypes.conduits;  // Phase 6 Stage B: mod_length authority
-        if (lengthening_step <= 0.0) {
+        if (lengthening_step <= 0.0 || !dw_like) {
             // Legacy: skip Courant lengthening when LENGTHENING_STEP not set
             for (int r = 0; r < CD.count(); ++r) {
                 const auto ur = static_cast<std::size_t>(r);
@@ -247,6 +255,20 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
             CD.rough_factor[ucr] = GRAVITY * ((roughness / PHI) * (roughness / PHI));
             CD.q_full[ucr]       = ctx.links.xsect_s_full[uj] * beta;
             CD.q_max[ucr]        = ctx.links.xsect_s_max[uj] * beta;
+
+            // PARITY link.c:1127-1131: a lengthened FORCE MAIN's pressurized
+            // friction factor (xsect.sBot = forcemain_getRoughFactor(j,
+            // lengthFactor)) compensates the artificial lengthening —
+            // H-W: G / (1.318·C·lf^0.54)^1.852, D-W: 1/(8·lf). The resolver
+            // formed it before the lengthening (factor 1); the 7 ft force
+            // mains of 375-h-h-elements (LENGTHENING_STEP 10) carried 14x
+            // legacy's friction on their first full-pipe step.
+            if (ctx.links.xsect_shape[uj] == XsectShape::FORCE_MAIN &&
+                (model == RouteModel::DYNWAVE || model == RouteModel::FV)) {
+                auto fm = static_cast<forcemain::FrictionModel>(ctx.options.force_main_eqn);
+                ctx.links.xsect_s_bot[uj] =
+                    forcemain::getRoughFactor(fm, ctx.links.xsect_r_bot[uj], factor);
+            }
         }
     }
 
@@ -545,11 +567,18 @@ void Router::initNodeFlows(SimulationContext& ctx, double dt, double evap_rate) 
 
         // Set overflow from excess stored volume
         // (matching legacy node.c node_initFlows lines 324-326)
-        // Legacy node_initInflow: overflow = any excess stored volume. The
-        // dynamic wave books node volume in the legacy convention, whose
-        // full volume is NodeData::rpt_full_volume.
-        const double full_vol = (ctx.options.routing_model == RoutingModel::DYNWAVE)
-            ? nodes.rpt_full_volume[ui] : nodes.full_volume[ui];
+        // Legacy node_initInflow: overflow = any excess stored volume over
+        // legacy's Node.fullVolume — NodeData::rpt_full_volume (0 for a
+        // junction, the curve's full volume for storage, a Type-1 pump wet
+        // well's curve maximum). The dynamic wave and the tree routers both
+        // book node volume in that convention (kinwave::finishRouting's
+        // setNewNodeState port); FV keeps its own full_volume. Under KW a
+        // ponded junction's whole pond is the overflow that getLinkInflow
+        // re-injects (Node.inflow + Node.overflow) — new-mikeurbancn's 6033
+        // fed its pipe 0.2816 cfs against legacy's 0.2831 with the engine's
+        // MIN_SURFAREA-based full volume subtracted.
+        const double full_vol = (ctx.options.routing_model == RoutingModel::FV)
+            ? nodes.full_volume[ui] : nodes.rpt_full_volume[ui];
         if (nodes.volume[ui] > full_vol && dt > 0.0) {
             nodes.overflow[ui] = (nodes.volume[ui] - full_vol) / dt;
         } else {
@@ -686,16 +715,19 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
             }
 
             // Limit the total to what is actually there. A volume-tracking
-            // solver caps on the water it holds; KINWAVE/STEADY have no conduit
-            // volume state of their own and cap on the flow instead. FV holds
-            // volume, so capping it on |flow| meant standing water in a conduit
-            // with no flow never evaporated at all.
+            // solver caps on the water it holds (legacy conduit_getLossRate
+            // under DW: newVolume / tstep); FV holds volume too, so capping
+            // it on |flow| meant standing water in a conduit with no flow
+            // never evaporated at all. KINWAVE / STEADY cap on the CURRENT
+            // solve's inflow (legacy passes qin*Qfull per barrel into
+            // link_getLossRate, `q = ABS(q)`), which the solvers apply
+            // themselves and write back — the previous step's outflow used
+            // here was 0 on the first wet step, so the rate was capped to 0
+            // where legacy lost evaporation from the start (runoff29-sw5).
             double total = evap_loss + seep_loss;
-            if (total > 0.0) {
-                double q_avail = (model_ == RouteModel::DYNWAVE ||
-                                  model_ == RouteModel::FV)
-                    ? links.volume[uj] / dt
-                    : std::fabs(links.flow[uj]);
+            if (total > 0.0 &&
+                (model_ == RouteModel::DYNWAVE || model_ == RouteModel::FV)) {
+                double q_avail = links.volume[uj] / dt;
                 if (total > q_avail && q_avail >= 0.0) {
                     double ratio = q_avail / total;
                     evap_loss *= ratio;
@@ -795,9 +827,11 @@ int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
         double barrels = static_cast<double>(std::max(CD.barrels[ucr], 1));
         double q       = qin / barrels;
 
-        // Subtract pre-computed conduit loss rate (evap + seep per barrel).
-        // Matches legacy link_getLossRate call in steadyflow_execute().
-        double loss_rate = CD.evap_loss_rate[ucr] + CD.seep_loss_rate[ucr];
+        // Subtract the conduit loss rate (evap + seep per barrel), capped on
+        // this solve's per-barrel inflow as legacy conduit_getLossRate does
+        // for SF (`q = ABS(q)`; both components scaled by q / total and
+        // stored for the mass balance).
+        double loss_rate = kinwave::capConduitLoss(ctx, ucr, std::fabs(q));
         q -= loss_rate;
         if (q < 0.0) q = 0.0;
 

@@ -57,7 +57,6 @@ void ControlEngine::init(const std::vector<Rule>& rules) {
     // timeLastSet storage moved to ctx.links.time_last_set, owned by
     // SWMMEngine::stepRouting (P1-C09).
     link_time_last_set_.clear();
-    next_rule_eval_time_ = -1.0;
 }
 
 // ============================================================================
@@ -193,22 +192,29 @@ void ControlEngine::batchEvaluateGroup(PremiseSoA& g,
 // Main evaluate — short-circuit AND, priority dedup, modulated actions
 // ============================================================================
 
-int ControlEngine::evaluate(SimulationContext& ctx, double current_time, double dt) {
-    // ---- RULE_STEP gating (P1-C10) ----
-    // Legacy routing.c:286-290 only invokes controls_evaluate when the
-    // routing clock reaches the next configured rule-evaluation time.
-    // rule_step == 0 means "every routing step" (legacy default).
-    if (ctx.options.rule_step > 0.0) {
-        if (next_rule_eval_time_ < 0.0)
-            next_rule_eval_time_ = ctx.current_date;
-        if (ctx.current_date + 0.5 * dt / constants::SEC_PER_DAY
-            < next_rule_eval_time_) {
-            last_action_count_ = 0;
-            return 0;
-        }
-        next_rule_eval_time_ =
-            ctx.current_date + ctx.options.rule_step / constants::SEC_PER_DAY;
+int ControlEngine::evaluate(SimulationContext& ctx, double current_date, double dt,
+                            bool rule_time_reached) {
+    // ---- RULE_STEP gating ----
+    // legacy evaluateControlRules (routing.c) calls controls_evaluate only
+    // when `RuleStep == 0 || fabs(NewRoutingTime - NewRuleTime) < 1.0`;
+    // the caller owns that ms clock and passes the verdict.
+    if (!rule_time_reached) {
+        last_action_count_ = 0;
+        return 0;
     }
+
+    // legacy controls_evaluate: CurrentDate = floor(currentTime),
+    // CurrentTime = currentTime - floor(currentTime), ElapsedTime =
+    // routing.c's currentDate - StartDateTime. The date is the step's
+    // start plus 1 ms, so "SIMULATION TIME > 0" is already true on the
+    // first step and "> 0:00:10" on the step that starts at 10 s
+    // (type5-pump-test's pumps ran their first step at setting 1.0
+    // where legacy ran 1.2).
+    eval_date_    = current_date;
+    cur_date_     = std::floor(current_date);
+    cur_time_     = current_date - cur_date_;
+    elapsed_days_ = current_date - ctx.options.start_date;
+    const double current_time = current_date;  // threaded to the value getters
 
     // dt is passed in seconds (matches the rest of stepRouting).  Convert
     // to days so compareTimes() tolerances are in the same unit as the
@@ -346,7 +352,7 @@ int ControlEngine::applyPendingActions(SimulationContext& ctx, double current_ti
                 entry.link_idx    = kv.first;
                 entry.rule_idx    = known ? ri : -1;
                 entry.new_setting = kv.second.value;
-                entry.date        = ctx.current_date;
+                entry.date        = eval_date_;
                 ctx.logControlAction(entry);
             }
             changes++;
@@ -372,10 +378,11 @@ void ControlEngine::updateActionValue(Action& a, SimulationContext& ctx,
             }
             break;
         case ActionType::TIMESERIES:
-            // Look up from timeseries using current absolute date.
-            // Matches legacy: a->value = table_tseriesLookup(&Tseries[a->tseries], currentTime, TRUE)
+            // Look up from timeseries at legacy's currentTime (the
+            // evaluation date): a->value =
+            // table_tseriesLookup(&Tseries[a->tseries], currentTime, TRUE)
             if (a.tseries_idx >= 0 && a.tseries_idx < static_cast<int>(ctx.tables.count())) {
-                a.value = table_lookup_cursor(ctx.tables[a.tseries_idx], ctx.current_date);
+                a.value = table_lookup_cursor(ctx.tables[a.tseries_idx], eval_date_);
             }
             break;
         case ActionType::PID:
@@ -547,7 +554,7 @@ double ControlEngine::getVariableValue(const SimulationContext& ctx,
             if (idx < 0 || idx >= ctx.n_links()) return MISSING;
             if (ctx.links.setting[ui] <= 0.0) return MISSING;
             if (ui < ctx.links.time_last_set.size())
-                return ctx.current_date - ctx.links.time_last_set[ui];
+                return cur_date_ + cur_time_ - ctx.links.time_last_set[ui];
             return 0.0;
         case ConditionVar::LINK_TIMECLOSED:
             // Returns MISSING if link is open (setting > 0).
@@ -555,7 +562,7 @@ double ControlEngine::getVariableValue(const SimulationContext& ctx,
             if (idx < 0 || idx >= ctx.n_links()) return MISSING;
             if (ctx.links.setting[ui] > 0.0) return MISSING;
             if (ui < ctx.links.time_last_set.size())
-                return ctx.current_date - ctx.links.time_last_set[ui];
+                return cur_date_ + cur_time_ - ctx.links.time_last_set[ui];
             return 0.0;
 
         case ConditionVar::GAGE_RAIN:
@@ -570,31 +577,26 @@ double ControlEngine::getVariableValue(const SimulationContext& ctx,
             return total;
         }
 
-        case ConditionVar::SIM_TIME:
-            // ctx.current_time is stored in SECONDS (see TimestepController.cpp:88).
-            // Legacy uses ElapsedTime in days; convert here so SIM_TIME LHS
-            // matches the RHS parsed by parseTimeToken (decimal days).
-            // (Extension to P0-C01 — same root cause: unit mismatch.)
-            return current_time / constants::SEC_PER_DAY;
-        case ConditionVar::SIM_DATE:      return ctx.current_date;
-        case ConditionVar::CLOCK_TIME:
-            // Legacy controls.c:1851-1852 returns CurrentTime = fractional
-            // part of the day (decimal days, 0..1).  RHS is parsed in days
-            // too via datetime_strToTime, so both sides agree.  (P0-C02)
-            return ctx.current_date - std::floor(ctx.current_date);
+        // legacy getVariableValue: r_TIME = ElapsedTime (days), r_DATE =
+        // CurrentDate (the WHOLE day, so a date premise compares dates
+        // only), r_CLOCKTIME = CurrentTime (the fraction), the calendar
+        // attributes from CurrentDate. All formed by evaluate() from the
+        // step's start-plus-1-ms date.
+        case ConditionVar::SIM_TIME:      (void)current_time; return elapsed_days_;
+        case ConditionVar::SIM_DATE:      return cur_date_;
+        case ConditionVar::CLOCK_TIME:    return cur_time_;
         case ConditionVar::SIM_DAY: {
             // Matches legacy datetime.c:469-478:
             //   ((floor(date) + DateDelta) % 7) + 1
             // The DateDelta shift is essential — without it the result is
             // wrong by 6 days. (P0-C06)
-            int t = static_cast<int>(std::floor(ctx.current_date))
-                  + openswmm::datetime::DateDelta;
+            int t = static_cast<int>(cur_date_) + openswmm::datetime::DateDelta;
             return static_cast<double>((t % 7) + 1);
         }
         case ConditionVar::SIM_MONTH:
-            return static_cast<double>(datetime::monthOfYear(ctx.current_date));
+            return static_cast<double>(datetime::monthOfYear(cur_date_));
         case ConditionVar::SIM_DAYOFYEAR:
-            return static_cast<double>(datetime::dayOfYear(ctx.current_date));
+            return static_cast<double>(datetime::dayOfYear(cur_date_));
     }
     return MISSING;
 }
@@ -607,8 +609,11 @@ double ControlEngine::computePIDSetting(PIDState& pid, double control_value,
                                          double current_setting, bool is_pump, double dt) {
     if (dt <= 0.0) return current_setting;
 
-    // Convert dt from seconds to minutes (matching legacy: dt *= 1440 from days)
-    double dt_min = dt / 60.0;
+    // legacy getPIDSetting receives tStep = routingStep / SECperDAY (days)
+    // and forms minutes as dt *= 1440.0 — the same two roundings here, not
+    // dt / 60 (an ulp apart for a 20 s step, and the PID integrates it:
+    // extran3-bottom-orifice-pid drifted from period 41).
+    double dt_min = (dt / constants::SEC_PER_DAY) * 1440.0;
     constexpr double TINY = 1.0e-6;
     constexpr double tolerance = 0.0001;
 

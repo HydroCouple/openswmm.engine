@@ -636,11 +636,15 @@ inline double table_getSlope(const Table& tbl, double x_query) noexcept {
         return (dx > 0.0) ? (tbl.y[1] - tbl.y[0]) / dx : 0.0;
     }
 
-    // Use last interval for x above range
-    if (x_query >= tbl.x[n - 1]) {
-        double dx = tbl.x[n - 1] - tbl.x[n - 2];
-        return (dx > 0.0) ? (tbl.y[n - 1] - tbl.y[n - 2]) / dx : 0.0;
-    }
+    // Above the last entry the slope is 0: legacy table_getSlope's scan
+    // runs off the end with x1 = x2 = the last entry (dx == 0 → 0.0). A
+    // head-based pump driven past its curve therefore contributes NO dqdh
+    // to its end nodes' surcharge denominator (session81-small-pump-fm-
+    // model's 5002 at 142 ft of head: the last segment's -15.6 GPM/ft
+    // here kept node 16's Picard update damped where legacy let it run).
+    // Exactly AT the last entry legacy breaks on `x <= x2` with the last
+    // segment bracketed, so that case falls through to the loop.
+    if (x_query > tbl.x[n - 1]) return 0.0;
 
     for (int i = 1; i < n; ++i) {
         if (tbl.x[i] >= x_query) {

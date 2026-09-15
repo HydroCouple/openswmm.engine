@@ -2942,8 +2942,22 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
     // Jacobian (sumdqdh denominator), so the grouping/divide must match exactly.
     dqdh_[uj] = 1.0 / denom * GRAVITY * dt * aWtd / length * barrels_d;
 
-    // A3 parity term tracing for one link (SWMM_TRACE_LINK=<index>, first 64
-    // invocations; format-matched to the legacy trace in dwflow.c).
+    traceLinkTerms(ctx, uj, qLast, v, sig, rho, aWtd, rWtd, dq1, dq2, dq3, dq4,
+                   dq5, dq6, qOld, q, aMidConv);
+
+    // Shared post-processing
+    applyFlowLimits(ctx, dt, step, uj, q, qLast, barrels_d, isFull);
+}
+
+// A3 parity term tracing for one link (SWMM_TRACE_LINK=<index>, first 64
+// invocations; format-matched to the legacy trace in dwflow.c). Shared by
+// the Manning and force-main kernels.
+void DWSolver::traceLinkTerms(const SimulationContext& ctx, std::size_t uj,
+                              double qLast, double v, double sig, double rho,
+                              double aWtd, double rWtd, double dq1, double dq2,
+                              double dq3, double dq4, double dq5, double dq6,
+                              double qOld, double q, double aMidConv) {
+    const auto& links = ctx.links;
     {
         static FILE* lf = nullptr;
         static long  lf_target = -2;
@@ -2965,7 +2979,7 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
                 std::snprintf(fname, sizeof(fname), "%s.link%ld", tr, lf_target);
                 lf = std::fopen(fname, "w");
                 if (lf) std::fprintf(lf,
-                    "n,qLast,v,sigma,rho,aWtd,rWtd,dq1,dq2,dq3,dq4,dq5,dq6,qOld,q,sa1,sa2,fc,y1,yMid,a1,aMid,r1,rMid,aMidConv,dqdh\n");
+                    "n,qLast,v,sigma,rho,aWtd,rWtd,dq1,dq2,dq3,dq4,dq5,dq6,qOld,q,sa1,sa2,fc,y1,yMid,a1,aMid,r1,rMid,aMidConv,dqdh,h1,h2,n1,n2,yn1,yn2\n");
             }
         }
         if (lf && static_cast<long>(uj) == lf_target) {
@@ -2979,21 +2993,21 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
                 : (lf_count > lf_skip);
             if (in_window && lf_rows < 128) {
                 ++lf_rows;
-                std::fprintf(lf, "%d,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%d,%a,%a,%a,%a,%a,%a,%a,%a\n",
+                std::fprintf(lf, "%d,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%d,%a,%a,%a,%a,%a,%a,%a,%a,%a,%a,%d,%d,%a,%a\n",
                              lf_count, qLast, v, sig, rho, aWtd, rWtd,
                              dq1, dq2, dq3, dq4, dq5, dq6, qOld, q,
                              surf_area1_[uj], surf_area2_[uj],
                              static_cast<int>(links.flow_class[uj]),
                              depth1_[uj], depth_mid_[uj], area1_[uj],
                              area_mid_[uj], hrad1_[uj], hrad_mid_[uj],
-                             aMidConv, dqdh_[uj]);
+                             aMidConv, dqdh_[uj], h1_[uj], h2_[uj],
+                             links.node1[uj], links.node2[uj],
+                             ctx.nodes.depth[static_cast<std::size_t>(links.node1[uj])],
+                             ctx.nodes.depth[static_cast<std::size_t>(links.node2[uj])]);
                 if (lf_rows >= 128) { std::fclose(lf); lf = nullptr; }
             }
         }
     }
-
-    // Shared post-processing
-    applyFlowLimits(ctx, dt, step, uj, q, qLast, barrels_d, isFull);
 }
 
 // ============================================================================
@@ -3135,6 +3149,11 @@ void DWSolver::processForceMainLink(SimulationContext& ctx, double dt, int step,
     // PARITY dwflow.c:240 (same grouping as the Manning kernel):
     // ((1/denom)*GRAVITY)*dt, divide by length — NOT dt_g / inv_len.
     dqdh_[uj] = 1.0 / denom * GRAVITY * dt * aWtd / fm_length * barrels_d;
+
+    // The same A3 term trace as the Manning kernel (SWMM_TRACE_LINK), so a
+    // traced force main is not silent.
+    traceLinkTerms(ctx, uj, qLast, v, 0.0, 1.0, aWtd, rWtd, dq1, dq2, 0.0, 0.0,
+                   dq5, dq6, qOld, q, aMidConv);
 
     // Shared post-processing
     applyFlowLimits(ctx, dt, step, uj, q, qLast, barrels_d, isFull);
