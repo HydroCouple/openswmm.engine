@@ -91,10 +91,16 @@ TEST(Hargreaves, EquatorConsistentYear) {
 // Daily climate state update
 // ============================================================================
 
-TEST(DailyClimate, ConstantMethodKeepsRate) {
+TEST(DailyClimate, ConstantMethodRederivesRate) {
+    // Legacy setEvap (climate.c:1239): CONSTANT_EVAP re-derives
+    // `Evap.rate = Evap.monthlyEvap[0] / UCF(EVAPRATE)` on EVERY call, so the
+    // monthly adjustment added afterwards applies to the constant instead of
+    // accumulating onto the previous step's rate.
     ClimateState state;
-    state.evap_method = EvapMethod::CONSTANT;
-    state.evap_rate = 1e-6;
+    state.evap_method   = EvapMethod::CONSTANT;
+    state.evaprate_ucf  = 1.0;      // fixture works directly in ft/s
+    state.monthly_evap[0] = 1e-6;   // the authored CONSTANT value
+    state.evap_rate     = 9e-6;     // stale value from a previous step
 
     updateDailyClimate(state, 180, 6);
     EXPECT_NEAR(state.evap_rate, 1e-6, 1e-12);
@@ -130,7 +136,8 @@ TEST(DailyClimate, MonthlyAdjustmentApplied) {
     // factor.
     ClimateState state;
     state.evap_method = EvapMethod::CONSTANT;
-    state.evap_rate = 1e-6;
+    state.evaprate_ucf = 1.0;
+    state.monthly_evap[0] = 1e-6;   // CONSTANT source value (re-derived per call)
     state.adjust_evap[3] = 0.5e-6;  // April: +0.5e-6 ft/s
 
     updateDailyClimate(state, 100, 3);

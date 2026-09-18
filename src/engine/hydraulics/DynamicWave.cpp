@@ -2210,7 +2210,7 @@ void DWSolver::recomputeConduitLossOne(SimulationContext& ctx, double dt,
         const FlowClass fc = links.flow_class[u];
         if (fc == FlowClass::DRY || fc == FlowClass::UP_DRY ||
             fc == FlowClass::DN_DRY || area_mid_[u] <= FUDGE ||
-            tile_is_closed_[uci]) {
+            tile_is_closed_[uci] || links.setting[u] == 0.0) {
             CD.evap_loss_rate[uci] = 0.0;
             CD.seep_loss_rate[uci] = 0.0;
             return;
@@ -2392,8 +2392,14 @@ void DWSolver::momentumKernels(SimulationContext& ctx, double dt, int step) {
         bool isFull = (depth1_[uj] >= yf_c && depth2_[uj] >= yf_c);
 
         MomentumCategory cat;
+        // dwflow.c:111 `if (Link.setting == 0) isClosed = TRUE`: a conduit a
+        // control rule has CLOSED (setting 0, e.g. `CONDUIT X STATUS =
+        // CLOSED`) takes the zero-flow branch every iteration. The tile flag
+        // is the C-API's static closure; the rule's setting changes at run
+        // time (miami-usgs-rdii's valve conduit kept flowing while closed).
         if (fc == FlowClass::DRY || fc == FlowClass::UP_DRY ||
-            fc == FlowClass::DN_DRY || aMid <= FUDGE || tile_is_closed_[uci]) {
+            fc == FlowClass::DN_DRY || aMid <= FUDGE || tile_is_closed_[uci] ||
+            links.setting[uj] == 0.0) {
             cat = MomentumCategory::SKIP_DRY;
         } else if (tile_is_force_main_[uci] && isFull) {
             // Legacy selects by the global FORCE_MAIN_EQUATION option

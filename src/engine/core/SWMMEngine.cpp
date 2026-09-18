@@ -1662,6 +1662,10 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         for (int i = 0; i < ctx_.n_subcatches(); ++i) {
             auto ui = static_cast<std::size_t>(i);
             ctx_.subcatches.old_gw_flow[ui] = ctx_.subcatches.gw_flow[ui];
+            // legacy gw->oldFlow = gw->newFlow: the RATE, not the cfs product.
+            if (ui < old_gw_rate_.size())
+                old_gw_rate_[ui] = (ui < groundwater_.state().gw_flow.size())
+                                 ? groundwater_.state().gw_flow[ui] : 0.0;
             ctx_.subcatches.old_snow_depth[ui] = ctx_.subcatches.snow_depth[ui];
             ctx_.subcatches.old_lid_drain_flow[ui] =
                 ctx_.subcatches.lid_drain_flow[ui];
@@ -2741,6 +2745,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
     const auto un_sub = static_cast<std::size_t>(ctx_.n_subcatches());
     wet_q_interp_.assign(un_sub, 0.0);
     gw_q_interp_.assign(un_sub, 0.0);
+    if (old_gw_rate_.size() != un_sub) old_gw_rate_.resize(un_sub, 0.0);
     gw_q_node_.assign(un_sub, -1);
     // legacy addLidDrainInflows → lid_addDrainInflow: each unit's drain flow
     // to a node is (1-f)*oldDrainFlow + f*newDrainFlow (cfs, both already
@@ -2809,8 +2814,18 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         int gw_node = ctx_.subcatches.gw_node[ui];
         if (gw_node < 0) gw_node = ctx_.subcatches.outlet_node[ui];
         if (gw_node >= 0 && gw_node < ctx_.n_nodes()) {
-            double gw_q = (1.0 - f) * ctx_.subcatches.old_gw_flow[ui]
-                        +        f  * ctx_.subcatches.gw_flow[ui];
+            // PARITY routing.c:766 `q = ((1-f)*gw->oldFlow + f*gw->newFlow)
+            // * Subcatch[i].area`: legacy interpolates the per-unit-area RATE
+            // and multiplies by the area LAST. v6 interpolated the cfs
+            // products — a 1-ULP different number that seeded usgs-runoff's
+            // divergence at routing step 2 and grew from there.
+            const double area_ft2 = ctx_.subcatches.area[ui]
+                                  / ucf::UCF(ucf::LANDAREA, ctx_.options);
+            const double gw_rate_new = (ui < groundwater_.state().gw_flow.size())
+                                     ? groundwater_.state().gw_flow[ui] : 0.0;
+            const double gw_rate_old = (ui < old_gw_rate_.size())
+                                     ? old_gw_rate_[ui] : 0.0;
+            double gw_q = ((1.0 - f) * gw_rate_old + f * gw_rate_new) * area_ft2;
             // PARITY routing.c addGroundwaterInflows:
             // `if (fabs(q) < FLOW_TOL) continue;` — FLOW_TOL is 1e-5 cfs
             // (consts.h), not the 1e-6 this used to carry.
@@ -5467,9 +5482,18 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                     // Legacy interpolates GW flow on the same runoff-clock
                     // weight (subcatch.c:909-910); the raw copy above only
                     // sized the array.
-                    snap.subcatch.gw_flow[ui] =
-                        f1 * ctx_.subcatches.old_gw_flow[ui]
-                        + f * ctx_.subcatches.gw_flow[ui];
+                    // subcatch.c:912 interpolates the RATE, then multiplies
+                    // by the subcatchment area (same op order as the routing
+                    // inflow above).
+                    {
+                        const double a_ft2 = ctx_.subcatches.area[ui]
+                                           / ucf::UCF(ucf::LANDAREA, ctx_.options);
+                        const double r_new = (ui < groundwater_.state().gw_flow.size())
+                                           ? groundwater_.state().gw_flow[ui] : 0.0;
+                        const double r_old = (ui < old_gw_rate_.size())
+                                           ? old_gw_rate_[ui] : 0.0;
+                        snap.subcatch.gw_flow[ui] = (f1 * r_old + f * r_new) * a_ft2;
+                    }
                 }
             }
 
@@ -7579,6 +7603,10 @@ void SWMMEngine::initHydrology() noexcept {
             // SI (CMS) model with `CONSTANT 3.0` means 3 mm/day, and using the
             // US factor (1036800 vs 26334720) over-evaporates by ~25×.
             ctx_.climate_state.evap_method = climate::EvapMethod::CONSTANT;
+            ctx_.climate_state.evaprate_ucf = ucf::UCF(ucf::EVAPRATE, ctx_.options);
+            // legacy keeps the constant in monthlyEvap[0]; setEvap re-derives
+            // Evap.rate from it every runoff step before the adjustment.
+            ctx_.climate_state.monthly_evap[0] = ctx_.options.evap_values[0];
             ctx_.climate_state.evap_rate = ctx_.options.evap_values[0]
                                / ucf::UCF(ucf::EVAPRATE, ctx_.options);
         } else if (evap_type == 1) {
