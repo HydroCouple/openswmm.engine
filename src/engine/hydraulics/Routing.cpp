@@ -534,8 +534,15 @@ void Router::initNodeFlows(SimulationContext& ctx, double dt, double evap_rate) 
                     ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)),
                     &ctx.node_subtypes);
 
-                // Evaporation rate over surface area (cfs)
-                double evap_cfs = 0.0;
+                // Evaporation rate over surface area (cfs). Legacy
+                // storage_getLosses (node.c:1069) multiplies by the area ONLY
+                // when the stored volume exceeds FUDGE and otherwise leaves
+                // `evapRate` as the bare ft/s rate — which it then returns as
+                // a cfs loss. v6 zeroed that case; an almost-empty storage
+                // therefore lost nothing where legacy books ~4e-8 cfs, and the
+                // 1-ULP gap in the node's outflow grew into a deck-wide
+                // divergence (usgs-runoff's P005). Quirk reproduced verbatim.
+                double evap_cfs = stor_evap_rate;
                 if (nodes.volume[ui] > constants::FUDGE)
                     evap_cfs = area * stor_evap_rate;
 

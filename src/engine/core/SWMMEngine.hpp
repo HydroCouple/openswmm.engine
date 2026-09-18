@@ -483,6 +483,11 @@ private:
     std::vector<double> lid_drain_q_interp_; ///< per-node interpolated LID drain inflow this routing step (cfs; legacy lid_addDrainInflow)
     std::vector<double> gw_q_interp_;   ///< per-subcatch interpolated GW flow (cfs)
     std::vector<int>    gw_q_node_;     ///< receiving node for gw_q_interp_ (-1 = skip)
+    /// Previous runoff step's GW flow RATE per subcatch (ft/s per unit area,
+    /// legacy TGroundwater::oldFlow). Legacy interpolates the RATE and
+    /// multiplies by the area afterwards (routing.c:766, subcatch.c:912);
+    /// interpolating the cfs product instead is a 1-ULP different number.
+    std::vector<double> old_gw_rate_;
 
     // Persistent runoff-state flags read by computeRunoffTimestep() on the NEXT
     // runoff step (one-step lag), matching legacy globals HasRunoff/HasSnow in

@@ -110,7 +110,10 @@ void updateDailyClimate(ClimateState& state, int day_of_year, int month) {
 
     switch (state.evap_method) {
         case EvapMethod::CONSTANT:
-            // evap_rate already set
+            // legacy setEvap: Evap.rate = monthlyEvap[0] / UCF(EVAPRATE) on
+            // EVERY call, so the monthly adjustment added below is applied
+            // to the constant, not accumulated step after step.
+            state.evap_rate = state.monthly_evap[0] / state.evaprate_ucf;
             break;
 
         case EvapMethod::MONTHLY:

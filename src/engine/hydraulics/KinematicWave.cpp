@@ -96,6 +96,11 @@ double getLinkInflow(SimulationContext& ctx,
     const LinkType lt = links.type[uj];
     double q = 0.0;
 
+    // PARITY link.c:553 link_getInflow: a link whose setting is 0 (closed
+    // by a control rule) admits NO inflow, before any type dispatch — the
+    // conduit still routes (kinwave_execute runs with qin = 0) and drains.
+    if (links.setting[uj] == 0.0) return 0.0;
+
     if (lt == LinkType::CONDUIT) {
         // PARITY link.c conduit_getInflow → node_getOutflow: a conduit
         // draining a STORAGE unit carries normal-depth flow at the pond's

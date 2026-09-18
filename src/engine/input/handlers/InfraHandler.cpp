@@ -37,6 +37,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cstring>
 
 namespace openswmm::input {
 
@@ -369,29 +370,38 @@ void handle_adjustments(SimulationContext& ctx, const std::vector<std::string>& 
         auto tok = Tokenizer::tokenize(line);
         if (tok.size() < 2) continue;
 
-        std::string keyword = Tokenizer::to_upper(tok[0]);
+        const std::string keyword = Tokenizer::to_upper(tok[0]);
+        // legacy climate_readAdjustments uses match(): the keyword is a
+        // case-insensitive PREFIX of the token, so the long spellings
+        // `TEMPERATURE`, `EVAPORATION`, `RAINFALL`, `CONDUCTIVITY` (what
+        // several corpus decks write) bind too. An exact compare dropped
+        // them silently (usgs-runoff's +0.01 mm/day July evaporation).
+        auto kw = [&](const char* k) {
+            const std::size_t n = std::strlen(k);
+            return keyword.size() >= n && keyword.compare(0, n, k) == 0;
+        };
 
         // Monthly arrays: TEMP, EVAP, RAIN, CONDUCT (need 13 tokens total)
-        if (keyword == "TEMP" && tok.size() >= 13) {
+        if (kw("TEMP") && tok.size() >= 13) {
             for (int i = 0; i < 12; ++i)
                 ctx.adjust_temp[i] = to_double(tok[static_cast<std::size_t>(i + 1)]);
         }
-        else if (keyword == "EVAP" && tok.size() >= 13) {
+        else if (kw("EVAP") && tok.size() >= 13) {
             for (int i = 0; i < 12; ++i)
                 ctx.adjust_evap[i] = to_double(tok[static_cast<std::size_t>(i + 1)]);
         }
-        else if (keyword == "RAIN" && tok.size() >= 13) {
+        else if (kw("RAIN") && tok.size() >= 13) {
             for (int i = 0; i < 12; ++i)
                 ctx.adjust_rain[i] = to_double(tok[static_cast<std::size_t>(i + 1)]);
         }
-        else if (keyword == "CONDUCT" && tok.size() >= 13) {
+        else if (kw("CONDUCT") && tok.size() >= 13) {
             for (int i = 0; i < 12; ++i) {
                 double v = to_double(tok[static_cast<std::size_t>(i + 1)]);
                 ctx.adjust_hydcon[i] = (v <= 0.0) ? 1.0 : v;
             }
         }
         // Subcatchment pattern assignments: N-PERV, DSTORE, INFIL
-        else if (keyword == "N-PERV" && tok.size() >= 3) {
+        else if (kw("N-PERV") && tok.size() >= 3) {
             const int si = ctx.subcatch_names.find(tok[1]);
             const int pi = ctx.find_table_any(tok[2]);
             if (si >= 0 && pi >= 0) {
@@ -401,7 +411,7 @@ void handle_adjustments(SimulationContext& ctx, const std::vector<std::string>& 
                 ctx.subcatch_n_perv_pattern[usi] = pi;
             }
         }
-        else if (keyword == "DSTORE" && tok.size() >= 3) {
+        else if (kw("DSTORE") && tok.size() >= 3) {
             const int si = ctx.subcatch_names.find(tok[1]);
             const int pi = ctx.find_table_any(tok[2]);
             if (si >= 0 && pi >= 0) {
@@ -411,7 +421,7 @@ void handle_adjustments(SimulationContext& ctx, const std::vector<std::string>& 
                 ctx.subcatch_d_store_pattern[usi] = pi;
             }
         }
-        else if (keyword == "INFIL" && tok.size() >= 3) {
+        else if (kw("INFIL") && tok.size() >= 3) {
             const int si = ctx.subcatch_names.find(tok[1]);
             const int pi = ctx.find_table_any(tok[2]);
             if (si >= 0 && pi >= 0) {
