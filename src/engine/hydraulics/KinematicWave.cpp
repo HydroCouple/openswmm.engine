@@ -59,7 +59,7 @@ static constexpr double STOR_STOPTOL = 0.005;
 // Tree-layout routing helpers (legacy flowrout.c) — shared with STEADY
 // ============================================================================
 
-static XSectParams buildXSP_KW(const LinkData& links, std::size_t uk);
+static XSectParams buildXSP_KW(const SimulationContext& ctx, std::size_t uk);
 
 /// PARITY node.c:1008 storage_getOutflow — flow from a storage unit into a
 /// CONDUIT is the conduit's NORMAL-DEPTH flow at the pond's current depth,
@@ -77,7 +77,7 @@ static double storageConduitOutflow(SimulationContext& ctx, int i, int j) {
     const auto ucr = static_cast<std::size_t>(ctx.link_subtypes.conduit_row(j));
     if (y >= ctx.links.xsect_y_full[uj]) return CD.q_full[ucr];
 
-    const XSectParams xs = buildXSP_KW(ctx.links, uj);
+    const XSectParams xs = buildXSP_KW(ctx, uj);
     const double a = xsect::getAofY(xs, y);
     return CD.beta[ucr] * xsect::getSofA(xs, a);
 }
@@ -264,7 +264,9 @@ int KWSolver::solveConduit(int idx, const XSectParams& xs,
         a_in_[ui]  = a_in_norm * a_full;
         a_out_[ui] = 0.0;
         q_out_[ui] = 0.0;
-        if (q_in_[ui] > q_full) q_in_[ui] = q_full;
+        // Same normalise → denormalise round trip as the main path below.
+        if (q_in_norm > 1.0) q_in_norm = 1.0;
+        q_in_[ui] = q_in_norm * q_full;
         q1_[ui] = q_in_[ui]; a1_[ui] = a_in_[ui];
         q2_[ui] = 0.0;       a2_[ui] = 0.0;
         return 1;
@@ -351,8 +353,14 @@ int KWSolver::solveConduit(int idx, const XSectParams& xs,
     q_out_[ui] = q_out_norm * q_full;
 
     // Legacy post-solve inflow cap (kinwave.c: `if (qin > 1.0) qin = 1.0`) —
-    // the accepted inflow returned to the node never exceeds qFull.
-    if (q_in_[ui] > q_full) q_in_[ui] = q_full;
+    // the accepted inflow returned to the node never exceeds qFull. Legacy
+    // caps the NORMALISED inflow and then writes `Conduit[k].q1 = qin * Qfull`,
+    // so the value handed back to the node has been through a divide by Qfull
+    // and a multiply by it again — a round trip that is NOT the identity in
+    // IEEE-754. Keeping the raw dimensional inflow instead left the upstream
+    // node's outflow 1 ULP light (1710-2014-20year-r3's J1 at step 6).
+    if (q_in_norm > 1.0) q_in_norm = 1.0;
+    q_in_[ui] = q_in_norm * q_full;
 
     // Update state for next timestep
     q1_[ui] = q_in_[ui];
@@ -368,7 +376,8 @@ int KWSolver::solveConduit(int idx, const XSectParams& xs,
 // ============================================================================
 
 /// Build XSectParams from link SoA data (matching DynamicWave.cpp::buildXSP).
-static XSectParams buildXSP_KW(const LinkData& links, std::size_t uk) {
+static XSectParams buildXSP_KW(const SimulationContext& ctx, std::size_t uk) {
+    const LinkData& links = ctx.links;
     XSectParams xs{};
     auto ls = links.xsect_shape[uk];
     xs.type = link::translateShape(ls);
@@ -382,6 +391,25 @@ static XSectParams buildXSP_KW(const LinkData& links, std::size_t uk) {
     xs.a_bot  = links.xsect_a_bot[uk];
     xs.s_bot  = links.xsect_s_bot[uk];
     xs.r_bot  = links.xsect_r_bot[uk];
+    // Tabulated shapes (IRREGULAR / CUSTOM / STREET) carry their A/R/W vs depth
+    // in per-link transect tables; without them every scalar getter returns 0.
+    // Under KW that made getAofS's Newton walk its whole bracket and report the
+    // conduit's FULL inlet area for a trickle of inflow (1710-2014-20year-r3's
+    // transect channels), so the upstream node depth came out full instead of
+    // ~2 mm. Same block as DynamicWave.cpp::buildXSP.
+    if (ls == XsectShape::IRREGULAR || ls == XsectShape::CUSTOM ||
+        ls == XsectShape::STREET_XSECT) {
+        const int ci = links.xsect_curve[uk];
+        if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.transect_tables.size()) {
+            const auto& td = ctx.transect_tables[static_cast<std::size_t>(ci)];
+            xs.transect          = ci;
+            xs.area_tbl          = td.area_tbl;
+            xs.hrad_tbl          = td.hrad_tbl;
+            xs.width_tbl         = td.width_tbl;
+            xs.area_lut          = &td.area_lut;
+            xs.transect_tbl_size = transect::N_TRANSECT_TBL;
+        }
+    }
     return xs;
 }
 
@@ -477,7 +505,7 @@ int KWSolver::execute(SimulationContext& ctx, double dt,
         double qin_per_barrel = qin / barrels;
 
         // Build XSectParams for this conduit
-        XSectParams xs = buildXSP_KW(links, uj);
+        XSectParams xs = buildXSP_KW(ctx, uj);
 
         double q_full = CD.q_full[ucr];
         double a_full = links.xsect_a_full[uj];

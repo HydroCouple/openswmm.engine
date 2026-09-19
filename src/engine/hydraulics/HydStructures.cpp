@@ -463,7 +463,8 @@ void StructureSolver::computePumpFlowK(SimulationContext& ctx, double dt,
 // Helper: build XSectParams from link SoA data
 // ============================================================================
 
-static XSectParams buildXSP(const LinkData& links, std::size_t uk) {
+static XSectParams buildXSP(const SimulationContext& ctx, std::size_t uk) {
+    const LinkData& links = ctx.links;
     XSectParams xs{};
     auto ls = links.xsect_shape[uk];
     xs.type = link::translateShape(ls);
@@ -477,6 +478,25 @@ static XSectParams buildXSP(const LinkData& links, std::size_t uk) {
     xs.a_bot  = links.xsect_a_bot[uk];
     xs.s_bot  = links.xsect_s_bot[uk];
     xs.r_bot  = links.xsect_r_bot[uk];
+    // Tabulated shapes (IRREGULAR / CUSTOM / STREET) carry their A/R/W vs depth
+    // in per-link transect tables; without them every scalar getter returns 0.
+    // Under KW that made getAofS's Newton walk its whole bracket and report the
+    // conduit's FULL inlet area for a trickle of inflow (1710-2014-20year-r3's
+    // transect channels), so the upstream node depth came out full instead of
+    // ~2 mm. Same block as DynamicWave.cpp::buildXSP.
+    if (ls == XsectShape::IRREGULAR || ls == XsectShape::CUSTOM ||
+        ls == XsectShape::STREET_XSECT) {
+        const int ci = links.xsect_curve[uk];
+        if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.transect_tables.size()) {
+            const auto& td = ctx.transect_tables[static_cast<std::size_t>(ci)];
+            xs.transect          = ci;
+            xs.area_tbl          = td.area_tbl;
+            xs.hrad_tbl          = td.hrad_tbl;
+            xs.width_tbl         = td.width_tbl;
+            xs.area_lut          = &td.area_lut;
+            xs.transect_tbl_size = transect::N_TRANSECT_TBL;
+        }
+    }
     return xs;
 }
 
@@ -563,7 +583,7 @@ void StructureSolver::computeOrificeFlowK(SimulationContext& ctx,
         }
 
         // Use xsect::getAofY for proper cross-section area at partial opening
-        XSectParams xs = buildXSP(links, uj);
+        XSectParams xs = buildXSP(ctx, uj);
         double a_eff = xsect::getAofY(xs, h_open);
         double f_area = a_eff * std::sqrt(2.0 * GRAVITY);
         double cOrif = cd_val * f_area;

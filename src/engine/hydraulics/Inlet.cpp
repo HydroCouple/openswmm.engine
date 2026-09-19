@@ -510,10 +510,12 @@ double getOnSagInletCapture(const Design& d, const Geom& g, double depth) {
 }
 
 double getOnSagCapturedFlow(const Design& d, const UsageParams& u,
-                            const Geom& g, double depth) {
-    // inlet.c:1574
+                            const Geom& g, double depth, int nsides_prev) {
+    // inlet.c:1574. `totalInlets` is formed from the module-level Nsides as it
+    // stood on ENTRY — legacy computes it before getConduitGeometry() sets
+    // Nsides for this inlet, so it carries the previous inlet's street.
     if (u.num_inlets == 0) return 0.0;
-    const int totalInlets = g.nsides * u.num_inlets;
+    const int totalInlets = nsides_prev * u.num_inlets;
 
     double qMax = INLET_BIG;
     if (u.flow_limit > 0.0) qMax = u.flow_limit;
@@ -648,6 +650,7 @@ void InletSolver::init(SimulationContext& ctx) {
     const int nl = ctx.n_links();
     node_inlet_flow_.assign(static_cast<std::size_t>(nn), 0.0);
     node_inflow_.assign(static_cast<std::size_t>(nn), 0.0);
+    is_capture_node_.assign(static_cast<std::size_t>(nn), uint8_t{0});
 
     // Stores keep user (display) units; convert once here (same treatment the
     // street transect builder gives StreetStore, PostParseResolver.cpp:2287).
@@ -681,6 +684,9 @@ void InletSolver::init(SimulationContext& ctx) {
         soa_.link_idx[ui]      = li;
         soa_.host_node[ui]     = nh;
         soa_.node_idx[ui]      = usages.node_index[ui];
+        // legacy inlet.c:512 `Node[inlet->nodeIndex].inlet = CAPTURE`
+        if (soa_.node_idx[ui] >= 0 && soa_.node_idx[ui] < nn)
+            is_capture_node_[static_cast<std::size_t>(soa_.node_idx[ui])] = 1;
         soa_.num_inlets[ui]    = usages.num_inlets[ui];
         soa_.clog_factor[ui]   = usages.clog_factor[ui];
         soa_.flow_limit[ui]    = usages.flow_limit[ui] * inv_flow;
@@ -866,6 +872,15 @@ void InletSolver::init(SimulationContext& ctx) {
         soa_.is_sag[ui] = sag;
     }
 
+    // Seed legacy's carried-over Nsides. inlet_validate (inlet.c:517-519) calls
+    // getConduitGeometry once per VALID inlet while computing its Izzard flow
+    // factor, walking the same reversed list, so when routing starts Nsides
+    // holds the sides of the LAST inlet that loop touched — the FIRST
+    // [INLET_USAGE] row. Without this an on-sag inlet captures nothing on its
+    // first evaluation (totalInlets = 0 * numInlets).
+    for (int ii = soa_.count - 1; ii >= 0; --ii)
+        nsides_prev_ = soa_.n_sides[static_cast<std::size_t>(ii)];
+
     computeBackflowRatios();
 }
 
@@ -914,7 +929,12 @@ void InletSolver::computeAll(SimulationContext& ctx, double dt) {
     }
 
     // ---- first pass: capture + backflow -----------------------------------
-    for (int ii = 0; ii < ni; ++ii) {
+    // REVERSE file order: legacy PREPENDS each [INLET_USAGE] row to its list
+    // (`inlet->nextInlet = FirstInlet; FirstInlet = inlet;`, inlet.c:441) and
+    // walks that list in both passes. The order is observable — it decides
+    // whose street the stale `Nsides` carries into the next on-sag inlet, and
+    // the order in which captures accumulate into a shared node.
+    for (int ii = ni - 1; ii >= 0; --ii) {
         const auto ui = static_cast<std::size_t>(ii);
         soa_.flow_capture[ui] = 0.0;
         soa_.q_approach[ui]   = 0.0;
@@ -968,11 +988,14 @@ void InletSolver::computeAll(SimulationContext& ctx, double dt) {
                         soa_.curve_kind[ui], q, depth, ucf_flow, ucf_len);
         } else if (soa_.is_sag[ui] == 0) {
             qc = getOnGradeCapturedFlow(d, u, g, q, depth);
+            // getConduitGeometry runs past both early returns (inlet.c:1290).
+            if (u.num_inlets != 0 && q >= MIN_RUNOFF_FLOW) nsides_prev_ = g.nsides;
         } else {
             // On-sag capture is depth-driven; the approach flow only caps it
             // (second pass). Under non-DW routing legacy feeds the node's
             // accumulated inflow instead of the link flow.
-            qc = getOnSagCapturedFlow(d, u, g, depth);
+            qc = getOnSagCapturedFlow(d, u, g, depth, nsides_prev_);
+            if (u.num_inlets != 0) nsides_prev_ = g.nsides;
         }
         if (std::fabs(qc) < INLET_FUDGE) qc = 0.0;
         soa_.flow_capture[ui] = qc;
@@ -986,7 +1009,7 @@ void InletSolver::computeAll(SimulationContext& ctx, double dt) {
     }
 
     // ---- second pass: throttle, couple, accumulate -------------------------
-    for (int ii = 0; ii < ni; ++ii) {
+    for (int ii = ni - 1; ii >= 0; --ii) {
         const auto ui = static_cast<std::size_t>(ii);
         const int host    = soa_.bypass_node[ui];
         const int capture = soa_.node_idx[ui];
@@ -1072,68 +1095,62 @@ void InletSolver::updateStats(int ii, double q) {
 // ============================================================================
 //
 // PARITY NOTE (plan D-E6): legacy assigns the capture-node index to the
-// file-scope Manning roughness `n` and then indexes its per-node accumulator
-// with a `nodeIndex` that is never advanced (inlet.c:1836/1853), so every
-// inlet's contribution lands in slot 0 and the ratios are wrong whenever the
-// model has more than one capture node. Fixed here; recorded as a documented
-// divergence. Inlet junctions are counted alongside conduit-hosted usages.
+// file-scope Manning roughness `n` (`n = inlet->nodeIndex;`) and then indexes
+// its per-node accumulator with the local `nodeIndex`, which is initialised to
+// 0 and never advanced (inlet.c:1836/1853). Every inlet in the model therefore
+// lands in slot 0 and every ratio is read back out of that one slot: the
+// backflow of ANY capture node is split across ALL of the model's inlets by
+// open area, not among the inlets that actually drain into it.
+//
+// That is a bug, but it is the oracle's behaviour and it is observable —
+// example7-inlets' four one-inlet capture nodes get ratio 0.2 (their share of
+// the whole model's grate area), not the 1.0 a per-node grouping gives, which
+// changes every backflow and split the deck from routing step 287. Reproduced
+// deliberately; the grouping v6 used to do is the documented divergence.
 
 void InletSolver::computeBackflowRatios() {
     const int ni = soa_.count;
     if (ni == 0) return;
 
-    struct NodeInfo {
-        int    n_links     = 0;   ///< total inlet usages discharging to this node
-        int    n_std_links = 0;   ///< those with a standard (area > 0) inlet
-        int    n_custom    = 0;   ///< Σ num_inlets over the custom ones
-        double total_area  = 0.0;
-    };
-    std::vector<std::pair<int, NodeInfo>> node_map;
+    // One aggregate bucket — legacy's inletNodes[0] (see the note above).
+    int    n_links     = 0;   // total inlet usages in the model
+    int    n_std_links = 0;   // those with a standard (area > 0) inlet
+    int    n_custom    = 0;   // sum of num_inlets over the custom ones
+    double total_area  = 0.0;
 
-    auto find_node = [&](int node) -> NodeInfo& {
-        for (auto& kv : node_map)
-            if (kv.first == node) return kv.second;
-        node_map.push_back({node, NodeInfo{}});
-        return node_map.back().second;
-    };
-
-    for (int ii = 0; ii < ni; ++ii) {
+    // Legacy walks its inlet list, which is the [INLET_USAGE] rows in REVERSE
+    // (inlet.c:441 prepends); the area sum is a float accumulation, so the
+    // order is part of the answer.
+    for (int ii = ni - 1; ii >= 0; --ii) {
         const int m = soa_.node_idx[static_cast<std::size_t>(ii)];
         if (m < 0) continue;
-        NodeInfo& info = find_node(m);
-        info.n_links++;
+        n_links++;
         const double area = getInletArea(designOf(ii), usageOf(ii));
         if (area > 0.0) {
-            info.n_std_links++;
-            info.total_area += area;
+            n_std_links++;
+            total_area += area;
         } else {
-            info.n_custom += soa_.num_inlets[static_cast<std::size_t>(ii)];
+            n_custom += soa_.num_inlets[static_cast<std::size_t>(ii)];
         }
     }
+    if (n_links == 0) return;
 
-    for (int ii = 0; ii < ni; ++ii) {
+    // f = share of usages carrying a standard inlet (legacy inlet.c:1851-1853)
+    const double f = static_cast<double>(n_std_links) / static_cast<double>(n_links);
+
+    for (int ii = ni - 1; ii >= 0; --ii) {
         const auto ui = static_cast<std::size_t>(ii);
         soa_.backflow_ratio[ui] = 0.0;
-        const int m = soa_.node_idx[ui];
-        if (m < 0) continue;
-
-        NodeInfo* info = nullptr;
-        for (auto& kv : node_map)
-            if (kv.first == m) { info = &kv.second; break; }
-        if (!info || info->n_links == 0) continue;
-
-        // f = ratio of usages with standard inlets to all usages on this node
-        const double f = static_cast<double>(info->n_std_links)
-                       / static_cast<double>(info->n_links);
+        if (soa_.node_idx[ui] < 0) continue;
 
         const double area = getInletArea(designOf(ii), usageOf(ii));
         if (area > 0.0) {
-            if (info->total_area > 0.0)
-                soa_.backflow_ratio[ui] = area / info->total_area * f;
-        } else if (info->n_custom > 0) {
+            if (total_area > 0.0)
+                soa_.backflow_ratio[ui] = area / total_area * f;
+        } else if (n_custom > 0) {
             soa_.backflow_ratio[ui] =
                 static_cast<double>(soa_.num_inlets[ui])
-                / static_cast<double>(info->n_custom) * (1.0 - f);
+                / static_cast<double>(n_custom) * (1.0 - f);
         }
     }
 }
@@ -1223,41 +1240,21 @@ void InletSolver::adjustFloodingTotals(SimulationContext& ctx, double dt) const 
     // overflow, while the flooding just booked is this step's. Legacy reads the
     // node for the same reason (routing.c:259-260 — removeSystemOutflows then
     // inlet_adjustQualOutflows, both on current state).
-    for (int ii = 0; ii < ni; ++ii) {
-        const auto ui = static_cast<std::size_t>(ii);
-        const int host    = soa_.bypass_node[ui];
-        const int capture = soa_.node_idx[ui];
-        // Same validity guard as computeAll: an inlet it skips returns nothing.
-        if (host < 0 || host >= nn) continue;
-        if (capture < 0 || capture >= nn) continue;
-        const auto uc = static_cast<std::size_t>(capture);
-
-        // Credit only what updateRoutingMassBalance actually booked (the
-        // `overflow > 0 && volume <= full_volume` gate above), so the ledger is
-        // symmetric and Flooding Loss can never be driven negative. Legacy
-        // subtracts unconditionally; the two agree for every non-ponded capture
-        // node.
-        //
-        // KNOWN GAP (ponded capture node, present in legacy too): with
-        // ALLOW_PONDING and a ponded area the overflow is the rate of
-        // accumulation above the rim, so no flooding is booked and nothing is
-        // credited here — but computeAll still returns that rate to the street
-        // next step while the water also stays in the pond. Closing it means
-        // debiting nodes.volume[capture], i.e. node state rather than the
-        // ledger, and is deliberately out of scope here.
-        if (nodes.overflow[uc] <= 0.0) continue;
-        // The dynamic wave books node volume in the legacy convention, whose
-        // full volume is NodeData::rpt_full_volume (same gate as the ledger).
-        const double full_vol = (ctx.options.routing_model == RoutingModel::DYNWAVE)
-            ? nodes.rpt_full_volume[uc] : nodes.full_volume[uc];
-        if (nodes.volume[uc] > full_vol) continue;
-
-        double qbf = nodes.overflow[uc] * soa_.backflow_ratio[ui];
-        if (std::fabs(qbf) < INLET_FUDGE) qbf = 0.0;   // as computeAll rounds it
-        if (qbf <= 0.0) continue;
-
-        mb.routing_flooding -= qbf * dt;
-        mb.step_flooding    -= qbf;
+    // Legacy loops over NODES, not inlets: every node marked CAPTURE gives back
+    // its WHOLE overflow, once, with no volume gate (inlet.c:727-735 —
+    // `q = Node[j].overflow; if (q > 0) StepFlowTotals.flooding -= q;`). It is
+    // therefore free to drive the step's flooding slightly negative when the
+    // ledger booked none (example7-inlets' legacy series sits at -8.9e-16), and
+    // crediting per-inlet shares instead leaves most of the overflow booked as
+    // flooding now that the backflow ratios follow legacy's single-bucket split
+    // and no longer sum to 1 over a capture node's inlets.
+    for (int j = 0; j < nn; ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        if (uj >= is_capture_node_.size() || !is_capture_node_[uj]) continue;
+        const double q = nodes.overflow[uj];
+        if (q <= 0.0) continue;
+        mb.routing_flooding -= q * dt;
+        mb.step_flooding    -= q;
     }
 
     // The quality side of legacy inlet_adjustQualOutflows (inlet.c:737-743,

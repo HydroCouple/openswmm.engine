@@ -207,9 +207,12 @@ double getOnSagSlottedFlow(const Design& d, double depth);
 /// Capture of a single on-sag inlet (inlet.c:1610).
 double getOnSagInletCapture(const Design& d, const Geom& g, double depth);
 
-/// Total capture of an on-sag usage: single inlet × `nsides · num_inlets` (inlet.c:1574).
+/// Total capture of an on-sag usage: single inlet × `nsides_prev · num_inlets`
+/// (inlet.c:1574). `nsides_prev` is legacy's module-level Nsides as it stood on
+/// entry — the PREVIOUSLY processed inlet's street — because legacy forms
+/// totalInlets before getConduitGeometry refreshes it.
 double getOnSagCapturedFlow(const Design& d, const UsageParams& u,
-                            const Geom& g, double depth);
+                            const Geom& g, double depth, int nsides_prev);
 
 /**
  * @brief Capture of a CUSTOM inlet from its diversion / rating curve (inlet.c:1902).
@@ -360,6 +363,20 @@ private:
     /// allocates nothing (it is called from a noexcept assembly step).
     std::vector<double> node_inlet_flow_;
     std::vector<double> node_inflow_;
+
+    /// Legacy inlet.c's file-scope `Nsides`, which OUTLIVES each inlet and each
+    /// routing step (a static, zero at the first evaluation). getOnSagCaptured-
+    /// Flow reads it for `totalInlets = Nsides * numInlets` BEFORE
+    /// getConduitGeometry refreshes it, so an on-sag inlet is scaled by the
+    /// street sides of the PREVIOUSLY processed inlet — a HalfStreet sag inlet
+    /// captures double when the inlet before it sat on a FullStreet
+    /// (example7-inlets' Street5). Reproduced deliberately; see computeAll.
+    int nsides_prev_ = 0;
+
+    /// Per-node flag for legacy's `Node[].inlet == CAPTURE` (inlet.c:512),
+    /// set in init() for every valid usage's capture node. Sized to the node
+    /// count; empty when the model has no inlets.
+    std::vector<uint8_t> is_capture_node_;
 
     /// Assemble the kernel geometry block for row `ii` (legacy getConduitGeometry).
     Geom geomOf(const SimulationContext& ctx, int ii,

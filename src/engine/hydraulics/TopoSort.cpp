@@ -26,13 +26,15 @@
 
 #include "TopoSort.hpp"
 #include <vector>
+#include <algorithm>
 
 namespace openswmm {
 namespace toposort {
 
 int sortLinks(const int* node1, const int* node2,
               int n_links, int n_nodes,
-              std::vector<int>& sorted_links) {
+              std::vector<int>& sorted_links,
+              const int* divert_link) {
     sorted_links.clear();
     sorted_links.reserve(static_cast<std::size_t>(n_links));
 
@@ -60,6 +62,23 @@ int sortLinks(const int* node1, const int* node2,
         int n1 = node1[j];
         if (n1 >= 0 && n1 < n_nodes) {
             adj_list[static_cast<std::size_t>(cursor[static_cast<std::size_t>(n1)]++)] = j;
+        }
+    }
+
+    // legacy adjustAdjList (toposort.c:191-217): at a DIVIDER with exactly two
+    // outgoing links, put the NON-diversion link first. divider_getOutflow
+    // hands the diversion link `qIn - Node.outflow` — the remainder after the
+    // other link has taken its share — so evaluating the diversion link first
+    // sends the node's entire inflow down both (1710-2014-20year-r3's J23
+    // doubled its outflow at routing step 127).
+    if (divert_link != nullptr) {
+        for (int i = 0; i < n_nodes; ++i) {
+            const auto ui = static_cast<std::size_t>(i);
+            if (divert_link[ui] < 0) continue;
+            if (degree[ui] != 2) continue;
+            const auto m = static_cast<std::size_t>(start_pos[ui]);
+            if (adj_list[m] == divert_link[ui])
+                std::swap(adj_list[m], adj_list[m + 1]);
         }
     }
 

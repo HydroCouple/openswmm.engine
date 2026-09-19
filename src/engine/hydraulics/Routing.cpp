@@ -53,7 +53,8 @@ namespace openswmm {
 // because the function is tiny and tightly coupled to the SoA layout.
 // ============================================================================
 
-static XSectParams buildXSP(const LinkData& links, std::size_t uk) {
+static XSectParams buildXSP(const SimulationContext& ctx, std::size_t uk) {
+    const LinkData& links = ctx.links;
     XSectParams xs{};
     auto ls = links.xsect_shape[uk];
     xs.type   = link::translateShape(ls);
@@ -67,7 +68,41 @@ static XSectParams buildXSP(const LinkData& links, std::size_t uk) {
     xs.a_bot  = links.xsect_a_bot[uk];
     xs.s_bot  = links.xsect_s_bot[uk];
     xs.r_bot  = links.xsect_r_bot[uk];
+    // Tabulated shapes (IRREGULAR / CUSTOM / STREET) carry their A/R/W vs depth
+    // in per-link transect tables; without them every scalar getter returns 0.
+    // Under KW that made getAofS's Newton walk its whole bracket and report the
+    // conduit's FULL inlet area for a trickle of inflow (1710-2014-20year-r3's
+    // transect channels), so the upstream node depth came out full instead of
+    // ~2 mm. Same block as DynamicWave.cpp::buildXSP.
+    if (ls == XsectShape::IRREGULAR || ls == XsectShape::CUSTOM ||
+        ls == XsectShape::STREET_XSECT) {
+        const int ci = links.xsect_curve[uk];
+        if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.transect_tables.size()) {
+            const auto& td = ctx.transect_tables[static_cast<std::size_t>(ci)];
+            xs.transect          = ci;
+            xs.area_tbl          = td.area_tbl;
+            xs.hrad_tbl          = td.hrad_tbl;
+            xs.width_tbl         = td.width_tbl;
+            xs.area_lut          = &td.area_lut;
+            xs.transect_tbl_size = transect::N_TRANSECT_TBL;
+        }
+    }
     return xs;
+}
+
+
+// Per-node diversion-link index for toposort::sortLinks (legacy adjustAdjList):
+// the link a 2-outlet DIVIDER diverts into, -1 for every other node.
+static std::vector<int> buildDivertLinks(const SimulationContext& ctx) {
+    std::vector<int> divert(static_cast<std::size_t>(ctx.n_nodes()), -1);
+    const auto& divs = ctx.node_subtypes.dividers;
+    for (int i = 0; i < ctx.n_nodes(); ++i) {
+        if (ctx.nodes.type[static_cast<std::size_t>(i)] != NodeType::DIVIDER) continue;
+        const int r = ctx.node_subtypes.divider_row(i);
+        if (r < 0) continue;
+        divert[static_cast<std::size_t>(i)] = divs.link[static_cast<std::size_t>(r)];
+    }
+    return divert;
 }
 
 // ============================================================================
@@ -289,9 +324,11 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
             kw_solver_.init(n_links, groups_);
             // Build topological link order for upstream → downstream processing
             std::vector<int> sorted;
+            const std::vector<int> divert = buildDivertLinks(ctx);
             int n_sorted = toposort::sortLinks(ctx.links.node1.data(),
                                                ctx.links.node2.data(),
-                                               n_links, n_nodes, sorted);
+                                               n_links, n_nodes, sorted,
+                                               divert.data());
             // Gap #44: detect routing loop (cycle) — matching legacy ERR_LOOP check
             if (n_sorted < n_links) cycle_detected_ = true;
             kw_solver_.setLinkOrder(sorted);
@@ -358,9 +395,11 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
         }
         case RouteModel::STEADY: {
             // Build topological link order (same as KW — upstream → downstream)
+            const std::vector<int> divert = buildDivertLinks(ctx);
             int n_sorted = toposort::sortLinks(ctx.links.node1.data(),
                                                ctx.links.node2.data(),
-                                               n_links, n_nodes, steady_sorted_links_);
+                                               n_links, n_nodes,
+                                               steady_sorted_links_, divert.data());
             // Gap #44: detect routing loop (cycle)
             if (n_sorted < n_links) cycle_detected_ = true;
             break;
@@ -843,7 +882,7 @@ int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
         if (q < 0.0) q = 0.0;
 
         // Build cross-section params once (used for getAofS and getYofA below).
-        XSectParams xs = buildXSP(links, uj);
+        XSectParams xs = buildXSP(ctx, uj);
 
         // Manning normal-depth area.
         double q_full = CD.q_full[ucr];
