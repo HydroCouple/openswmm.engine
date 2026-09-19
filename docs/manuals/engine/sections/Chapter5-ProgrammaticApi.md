@@ -145,7 +145,7 @@ swmm_engine_close(engine);
 swmm_engine_destroy(engine);
 ```
 
-The final `NULL` argument to `swmm_engine_open()` selects the built-in `.inp` reader; passing the path of an input-plugin shared library reads the model through that plugin instead (see Section 13.8). The single-call helpers `swmm_engine_run()` and `swmm_engine_run_with_callback()` chain the entire lifecycle for batch runs.
+The final `NULL` argument to `swmm_engine_open()` selects the built-in `.inp` reader; passing the path of an input-plugin shared library reads the model through that plugin instead (see @ref engine_manual_ch5_api). The single-call helpers `swmm_engine_run()` and `swmm_engine_run_with_callback()` chain the entire lifecycle for batch runs.
 
 ## 13.3 Callbacks
 
@@ -175,7 +175,7 @@ swmm_hotstart_apply(engine, hs);
 swmm_hotstart_close(hs);
 ```
 
-`swmm_hotstart_apply()` must be called after `swmm_engine_initialize()` but before `swmm_engine_start()`. Objects present in the file but missing from the model (or vice versa) generate warnings rather than errors; they can be enumerated with `swmm_hotstart_warning_count()` / `swmm_hotstart_warning()`. Saving dispatches through any registered state-IO plugins, so alternative hot-start file formats can be provided by plugins (see Section 13.8).
+`swmm_hotstart_apply()` must be called after `swmm_engine_initialize()` but before `swmm_engine_start()`. Objects present in the file but missing from the model (or vice versa) generate warnings rather than errors; they can be enumerated with `swmm_hotstart_warning_count()` / `swmm_hotstart_warning()`. Saving dispatches through any registered state-IO plugins, so alternative hot-start file formats can be provided by plugins (see @ref engine_manual_ch5_api).
 
 ## 13.5 Python Bindings {#user_manual_chapter_13_python}
 

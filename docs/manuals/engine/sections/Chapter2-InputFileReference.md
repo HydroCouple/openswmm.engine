@@ -86,11 +86,11 @@ The input file for command line SWMM has the same format as the project file use
 
 Section keywords can appear in mixed lower and upper case. The sections can appear in any arbitrary order in the input file, and not all sections must be present. Each section can contain one or more lines of data. Blank lines may appear anywhere in the file. A semicolon (;) can be used to indicate that what follows on the line is a comment, not data. Data items can appear in any column of a line. Observe how in Figure D-1 these features were used to create a tabular appearance for the data, complete with column headings.
 
-An option is available in the [OPTIONS] section to choose flow units from among cubic feet per second (CFS), gallons per minute (GPM), million gallons per day (MGD), cubic meters per second (CMS), liters per second, (LPS), or million liters per day (MLD). If cubic feet or gallons are chosen for flow units, then US units must be used for all other quantities. If cubic meters or liters are chosen, then metric units must be used for all other quantities. Exceptions are pollutant concentration and Manning’s roughness coefficient (n) which are always expressed in metric units. The default flow units are CFS. Appendix A.1 provides a complete listing of measurement units.
+An option is available in the [OPTIONS] section to choose flow units from among cubic feet per second (CFS), gallons per minute (GPM), million gallons per day (MGD), cubic meters per second (CMS), liters per second, (LPS), or million liters per day (MLD). If cubic feet or gallons are chosen for flow units, then US units must be used for all other quantities. If cubic meters or liters are chosen, then metric units must be used for all other quantities. Exceptions are pollutant concentration and Manning’s roughness coefficient (n) which are always expressed in metric units. The default flow units are CFS. @ref manual_reference_tables provides a complete listing of measurement units.
 
 A detailed description of the data in each section of the input file will now be given. Each section description begins on a new page. When listing the format of a line of data, mandatory keywords are shown in boldface while optional items appear in parentheses. A list of keywords separated by a slash (YES/NO) means that only one of the words should appear in the data line.
  
-### Section: [TITLE]
+### Section: [TITLE] {#engine_manual_sect_TITLE}
 
 Purpose:
 Attaches a descriptive title to the project being analyzed.
@@ -99,7 +99,7 @@ Format:
 Any number of lines may be entered. The first line will be used as a page header in the output report.
 
  
-### Section: [OPTIONS]
+### Section: [OPTIONS] {#engine_manual_sect_OPTIONS}
 
 Purpose:
 Provides values for various analysis options.
@@ -181,7 +181,7 @@ VARIABLE_STEP is a safety factor applied to a variable time step computed for ea
 MINIMUM_STEP is the smallest time step allowed when variable time steps are used for dynamic wave flow routing. The default value is 0.5 seconds. 
 INERTIAL_DAMPING    indicates how the inertial terms in the Saint Venant momentum equation will be handled under dynamic wave flow routing. Choosing NONE maintains these terms at their full value under all conditions. Selecting PARTIAL (the default) will reduce the terms as flow comes closer to being critical (and ignores them when flow is supercritical). Choosing FULL will drop the terms altogether.
 NORMAL_FLOW_LIMITED specifies which condition is checked to determine if flow in a conduit is supercritical and should thus be limited to the normal flow. Use SLOPE to check if the water surface slope is greater than the conduit slope, FROUDE to check if the Froude number is greater than 1.0, or BOTH to check both conditions. The default is BOTH.
-SURCHARGE_METHOD selects which method will be used to handle surcharge conditions. The EXTRAN option uses a variation of the Surcharge Algorithm from previous versions of SWMM to update nodal heads when all connecting links become full. The SLOT option uses a Preissmann Slot to add a small amount of virtual top surface width to full flowing pipes so that SWMM's normal procedure for updating nodal heads can continue to be used. The default is EXTRAN. OpenSWMM adds two further methods: DYNAMIC_SLOT, a dynamic Preissmann slot whose pressure-wave celerity is set directly by the modeler (see the Hydraulics Reference Manual, Section 3.3.9, and its DPS_CELERITY, DPS_ALPHA and DPS_DECAY_TIME keywords), and TPA, an experimental two-component pressure approach that lets a sealed full pipe carry sub-atmospheric pressure (Hydraulics Reference Manual, Section 3.3.11).
+SURCHARGE_METHOD selects which method will be used to handle surcharge conditions. The EXTRAN option uses a variation of the Surcharge Algorithm from previous versions of SWMM to update nodal heads when all connecting links become full. The SLOT option uses a Preissmann Slot to add a small amount of virtual top surface width to full flowing pipes so that SWMM's normal procedure for updating nodal heads can continue to be used. The default is EXTRAN. OpenSWMM adds two further methods: DYNAMIC_SLOT, a dynamic Preissmann slot whose pressure-wave celerity is set directly by the modeler (see the Hydraulics Reference Manual, @ref engine_manual_ch1_conceptual_model, and its DPS_CELERITY, DPS_ALPHA and DPS_DECAY_TIME keywords), and TPA, an experimental two-component pressure approach that lets a sealed full pipe carry sub-atmospheric pressure (Hydraulics Reference Manual, @ref engine_manual_ch1_conceptual_model).
 MIN_SURFAREA is a minimum surface area used at nodes when computing changes in water depth under dynamic wave routing. If 0 is entered, then the default value of 12.566 ft2 (1.167 m2) (i.e., the area of a 4-ft diameter manhole) is used.
 MIN_SLOPE is the minimum value allowed for a conduit’s slope (%). If zero (the default) then no minimum is imposed (although SWMM uses a lower limit on elevation drop of 0.001 ft (0.00035 m) when computing a conduit slope).
 MAX_TRIALS is the maximum number of trials allowed during a time step to reach convergence when updating hydraulic heads at the conveyance system’s nodes. The default value is 8.
@@ -192,16 +192,16 @@ THREADS is the number of parallel computing threads to use for dynamic wave flow
 
 CRS specifies a Coordinate Reference System for the model geometry, given as an EPSG code (e.g. `EPSG:4326`) or a PROJ string. This value is stored in `SimulationOptions::crs` and is available through the C API via `swmm_spatial_get_crs()`. When a CRS is set, all coordinate and polygon data in the `[COORDINATES]`, `[VERTICES]`, and `[POLYGONS]` sections are assumed to be in that reference system.
 
-TPA_CELERITY is the acoustic wave celerity, in project length units per second, used by `SURCHARGE_METHOD TPA` to size its constant-width slot. The default is 100. See the Hydraulics Reference Manual, Section 3.3.11.
+TPA_CELERITY is the acoustic wave celerity, in project length units per second, used by `SURCHARGE_METHOD TPA` to size its constant-width slot. The default is 100. See the Hydraulics Reference Manual, @ref engine_manual_ch1_conceptual_model.
 
-FV_PRESSURE_CLOSURE selects the pressurization closure of the finite-volume solver (`FLOW_ROUTING FV`): SLOT (the default, the standard Preissmann slot) or TPA (experimental — the two-component pressure approach, which can represent sub-atmospheric pressure in sealed full pipes). Under TPA the existing FV_SLOT_CELERITY value doubles as the acoustic celerity. See the Hydraulics Reference Manual, Section 8.4.5.
+FV_PRESSURE_CLOSURE selects the pressurization closure of the finite-volume solver (`FLOW_ROUTING FV`): SLOT (the default, the standard Preissmann slot) or TPA (experimental — the two-component pressure approach, which can represent sub-atmospheric pressure in sealed full pipes). Under TPA the existing FV_SLOT_CELERITY value doubles as the acoustic celerity. See the Hydraulics Reference Manual, @ref engine_manual_sect_OPTIONS.
 
 UNSTEADY_FRICTION enables an unsteady (Vítkovský-type) friction term in both the dynamic wave and finite-volume solvers: NONE (the default, bit-identical to earlier releases) or VITKOVSKY. UF_K3 is its Brunone-type coefficient k3, used only when the method is not NONE; the default is 0.015 and the calibrated range reported in the literature is 0.005–0.020. See the Hydraulics Reference Manual, Sections 3.3.12 and 8.5.4.
 
 REPORT_SIGNED_HEADS controls how nodal heads are written to the binary output file: NO (the default) keeps the legacy convention, bit-identical to earlier releases, in which the head is rebuilt from a depth floored at zero; YES writes the true signed piezometric head in the HEAD field — required to observe sub-atmospheric heads produced by the TPA closures — while the DEPTH field stays floored either way. Applies to both solvers.
 
 Any option keyword not recognized by the parser is stored in an extension-options map as a key–value string pair (the key is upper-cased). A non-fatal warning is issued for each unrecognised key. Extension options can be queried at runtime with `swmm_options_get_ext()` and set with `swmm_options_set_ext()`. This allows plugins and coupled models to receive configuration through the `[OPTIONS]` section. 
-### Section: [REPORT]
+### Section: [REPORT] {#engine_manual_sect_REPORT}
 
 Purpose:
 Describes the contents of the report file that is produced.
@@ -228,7 +228,7 @@ NODES gives a list of nodes whose results are to be reported. The default is NON
 LINKS gives a list of links whose results are to be reported. The default is NONE.
 LID specifies that the LID control Name in subcatchment Subcatch should have a detailed performance report for it written to file Fname.
 The SUBCATCHMENTS, NODES, LINKS, and LID lines can be repeated multiple times. 
-### Section: [FILES]
+### Section: [FILES] {#engine_manual_sect_FILES}
 
 Purpose:
 Identifies optional interface files used or saved by a run.
@@ -245,11 +245,11 @@ Parameters:
 Fname     is the name of an interface file.
 
 Remarks:
-Refer to Section 11.7 for a description of interface files. Rainfall, Runoff, and RDII files can either be used or saved in a run, but not both. A run can both use and save a Hot Start file (with different names).
+Refer to @ref engine_manual_ch3_files for a description of interface files. Rainfall, Runoff, and RDII files can either be used or saved in a run, but not both. A run can both use and save a Hot Start file (with different names).
 Enclose the external file name in double quotes if it contains spaces and include its full path if it resides in a different directory than the SWMM input file. 
 
  
-### Section: [RAINGAGES]
+### Section: [RAINGAGES] {#engine_manual_sect_RAINGAGES}
 
 Purpose:
 Identifies each rain gage that provides rainfall data for the study area.
@@ -264,7 +264,7 @@ Form     form of recorded rainfall, either INTENSITY, VOLUME or CUMULATIVE.
 Intvl    time interval between gage readings in decimal hours or hours:minutes format (e.g., 0:15 for 15-minute readings).
 SCF     snow catch deficiency correction factor (use 1.0 for no adjustment).
 Tseries    name of a time series in the [TIMESERIES] section with rainfall data.
-Fname    name of an external file with rainfall data. Rainfall files are discussed in Section 11.3.
+Fname    name of an external file with rainfall data. Rainfall files are discussed in @ref engine_manual_ch3_files.
 Sta    name of the recording station in a user-prepared formatted rain file.
 Units    rain depth units for the data in a user-prepared formatted rain file, either IN (inches) or MM (millimeters).
 
@@ -275,7 +275,7 @@ The station name and depth units entries are only required when using a user-pre
 **New in OpenSWMM v6:** A multi-column rain file can be referenced by appending a colon and column name to the file path, e.g. `FILE "rain.csv:EAST_GAGE"`. The engine opens the file, locates the column whose header matches the given name (case-insensitive), and reads the rainfall values from that column; an empty column name selects the first data column. Comma- and tab-delimited files with a header row are supported, as is the PCSWMM `.tsf` format (tab-delimited, `IDs:` header row, 12-hour AM/PM date-times) — the format is detected automatically from the file's contents. This allows a single file to supply data for multiple rain gages (and named time series — see the [TIMESERIES] section); each such file is read from disk only once per model open, regardless of how many gages or series reference it.
 
  
-### Section: [EVAPORATION]
+### Section: [EVAPORATION] {#engine_manual_sect_EVAPORATION}
 
 Purpose:
 Specifies how daily potential evaporation rates vary with time for the study area.
@@ -308,7 +308,7 @@ RECOVERY identifies an optional monthly time pattern of multipliers used to modi
 DRY_ONLY determines if evaporation only occurs during periods with no precipitation. The default is NO.
 The evaporation rates provided in this section are potential rates. The actual amount of water evaporated will depend on the amount available as a simulation progresses.
  
-### Section: [TEMPERATURE]
+### Section: [TEMPERATURE] {#engine_manual_sect_TEMPERATURE}
 
 Purpose:    
 Specifies daily air temperatures, monthly wind speed, and various snowmelt parameters for the study area. Required only when snowmelt is being modeled or when evaporation rates are computed from daily temperatures or are read from an external climate file.
@@ -341,14 +341,14 @@ f.0    fraction of area covered by snow when ratio of snow depth to depth at 100
 f.9    fraction of area covered by snow when ratio of snow depth to depth at 100% cover is 0.9.
 
 Remarks:
-Use the TIMESERIES line to read air temperature from a time series or the FILE line to read it from an external Climate file. Climate files are discussed in Section 11.4. If neither format is used, then air temperature remains constant at 70 degrees F.
+Use the TIMESERIES line to read air temperature from a time series or the FILE line to read it from an external Climate file. Climate files are discussed in @ref engine_manual_ch3_files. If neither format is used, then air temperature remains constant at 70 degrees F.
 Enclose the Climate file name in double quotes if it contains spaces and include its full path if it resides in a different directory than the SWMM input file.
 Temperatures supplied from NOAA's latest Climate Data Online GHCN files should have their units (C or F) specified. Older versions of these files listed temperatures in tenths of a degree C (C10). An asterisk can be entered for the Start date if it defaults to the beginning of the file.
 Wind speed can be specified either by monthly average values or by the same Climate file used for air temperature. If neither option appears, then wind speed is assumed to be 0.
 Separate Areal Depletion Curves (ADC) can be defined for impervious and pervious subareas. The ADC parameters will default to 1.0 (meaning no depletion) if no data are supplied for a particular type of subarea.
 
  
-### Section: [ADJUSTMENTS]
+### Section: [ADJUSTMENTS] {#engine_manual_sect_ADJUSTMENTS}
 
 Purpose:
 Specifies optional monthly adjustments to be made to temperature, evaporation rate, rainfall intensity and hydraulic conductivity in each time period of a simulation.
@@ -370,7 +370,7 @@ The same adjustment is applied for each time period within a given month and is 
 
 
  
-### Section: [SUBCATCHMENTS]
+### Section: [SUBCATCHMENTS] {#engine_manual_sect_SUBCATCHMENTS}
 
 Purpose:
 Identifies each subcatchment within the study area. Subcatchments are land area units which generate runoff from rainfall.
@@ -390,7 +390,7 @@ Clength    total curb length (any length units) used to describe pollutant build
 Spack    optional name of a snow pack object (from the [SNOWPACKS] section) that characterizes snow accumulation and melting over the subcatchment.
 
  
-### Section: [SUBAREAS]
+### Section: [SUBAREAS] {#engine_manual_sect_SUBAREAS}
 
 Purpose:
 Supplies information about pervious and impervious areas for each subcatchment. Each subcatchment can consist of a pervious subarea, an impervious subarea with depression storage, and an impervious subarea without depression storage.
@@ -408,7 +408,7 @@ Sperv    depression storage for the pervious subarea (inches or mm).
 RouteTo    IMPERVIOUS if pervious area runoff runs onto impervious area,  PERVIOUS if impervious runoff runs onto pervious area, or OUTLET if both areas drain to the subcatchment's outlet (default = OUTLET).
 %Routed    percent of runoff routed from one type of area to another (default = 100).
  
-### Section: [INFILTRATION]
+### Section: [INFILTRATION] {#engine_manual_sect_INFILTRATION}
 
 Purpose:
 Supplies infiltration parameters for each subcatchment. Rainfall lost to infiltration only occurs over the pervious subarea of a subcatchment.
@@ -434,7 +434,7 @@ For Curve-Number Infiltration:
 p1    SCS Curve Number.
 p2    no longer used.
 p3    time it takes for a fully saturated soil to dry (days). 
-### Section: [LID_CONTROLS]
+### Section: [LID_CONTROLS] {#engine_manual_sect_LID_CONTROLS}
 
 Purpose:
 Defines scale-independent LID controls that can be deployed within subcatchments.
@@ -545,7 +545,7 @@ Swale  VS
 Swale  SURFACE  24  0  0.2  3  5
 
  
-### Section: [LID_USAGE]
+### Section: [LID_USAGE] {#engine_manual_sect_LID_USAGE}
 
 Purpose:
 Deploys LID controls within specific subcatchment areas.
@@ -584,7 +584,7 @@ S1  RB14  34  12  0  0  17  1
 S2  Swale  1  10000  50  0  0  0  “swale.rpt”
 
  
-### Section: [AQUIFERS]
+### Section: [AQUIFERS] {#engine_manual_sect_AQUIFERS}
 
 Purpose:
 Supplies parameters for each unconfined groundwater aquifer in the study area. Aquifers consist of two zones – a lower saturated zone and an upper unsaturated zone with a moving boundary between the two.
@@ -610,7 +610,7 @@ Epat    name of optional monthly time pattern used to adjust the upper zone evap
 Remarks:
 Local values for Ebot, Egw, and Umc can be assigned to specific subcatchments in the [GROUNDWATER] section.
  
-### Section: [GROUNDWATER]
+### Section: [GROUNDWATER] {#engine_manual_sect_GROUNDWATER}
 
 Purpose:
 Supplies parameters that determine the rate of groundwater flow between the aquifer underneath a subcatchment and a node of the conveyance system.
@@ -647,7 +647,7 @@ Hgw   =     height of saturated zone above the bottom of the aquifer (ft or m),
 Hsw   =    height of surface water at the receiving node above the aquifer bottom (ft or m),
 Hcb   =    height of the channel bottom above the aquifer bottom (ft or m).
  
-### Section: [GWF]
+### Section: [GWF] {#engine_manual_sect_GWF}
 
 Purpose:
 Defines custom groundwater flow equations for specific subcatchments.
@@ -684,7 +684,7 @@ Subcatch1 LATERAL 0.001*Hgw + 0.05*(Hgw–5)*STEP(Hgw–5)
 
 ;Constant seepage rate to deep aquifer
 Subactch1  DEEP  0.002 
-### Section: [SNOWPACKS]
+### Section: [SNOWPACKS] {#engine_manual_sect_SNOWPACKS}
 
 Purpose:
 Specifies parameters that govern how snowfall accumulates and melts on the plowable, impervious and pervious surfaces of subcatchments.
@@ -721,7 +721,7 @@ The REMOVAL line describes how snow removed from the plowable area is transferre
 
 
  
-### Section: [JUNCTIONS]
+### Section: [JUNCTIONS] {#engine_manual_sect_JUNCTIONS}
 
 Purpose:
 Identifies each junction node of the drainage system.  Junctions are points in space where channels and pipes connect together. For sewer systems they can be either connection fittings or manholes.
@@ -744,7 +744,7 @@ Surface ponding can only occur when Apond is non-zero and the ALLOW_PONDING anal
 
 
  
-### Section: [OUTFALLS]
+### Section: [OUTFALLS] {#engine_manual_sect_OUTFALLS}
 
 Purpose:
 Identifies each outfall node (i.e., final downstream boundary) of the drainage system and the corresponding water stage elevation.  Only one link can be incident on an outfall node. 
@@ -770,7 +770,7 @@ RouteTo    optional name of a subcatchment that receives the outfall's discharge
 
 
  
-### Section: [DIVIDERS]
+### Section: [DIVIDERS] {#engine_manual_sect_DIVIDERS}
 
 Purpose:
 Identifies each flow divider node of the drainage system. Flow dividers are junctions with exactly two outflow conduits where the total outflow is divided between the two in a prescribed manner.
@@ -804,7 +804,7 @@ Divider nodes are only active under the Steady Flow or Kinematic Wave analysis o
 
 
  
-### Section: [STORAGE]
+### Section: [STORAGE] {#engine_manual_sect_STORAGE}
 
 Purpose:
 Identifies each storage node of the drainage system. Storage nodes can have any shape as specified by a surface area versus water depth relation.
@@ -848,7 +848,7 @@ PYRAMIDAL
 
 The parameters Psi, Ksat, and IMD need only be supplied if seepage loss through the soil at the bottom and sloped sides of the storage unit should be considered. They are the same Green-Ampt infiltration parameters described in the [INFILTRATION] section. If Ksat is zero then no seepage occurs while if IMD is zero then seepage occurs at a constant rate equal to Ksat. Otherwise seepage rate will vary with storage depth.
  
-### Section: [CONDUITS]
+### Section: [CONDUITS] {#engine_manual_sect_CONDUITS}
 
 Purpose:
 Identifies each conduit link of the drainage system. Conduits are pipes or channels that convey water from one node to another.
@@ -873,7 +873,7 @@ The figure below illustrates the meaning of the Z1 and Z2 parameters.
 These offsets are expressed as a relative distance above the node invert if the LINK_OFFSETS option is set to DEPTH (the default) or as an absolute elevation if it is set to ELEVATION. 
 
 
-### Section: [PUMPS]
+### Section: [PUMPS] {#engine_manual_sect_PUMPS}
 
 Purpose:
 Identifies each pump link of the drainage system.
@@ -891,11 +891,11 @@ Startup        depth at the inlet node when the pump turns on (ft or m) (default
 Shutoff        depth at inlet node when the pump shuts off (ft or m) (default is 0).
 
 Remarks:
-See Section 3.2 for a description of the different types of pumps available.
+See @ref engine_manual_ch1_conceptual_model for a description of the different types of pumps available.
 
 
  
-### Section: [ORIFICES]
+### Section: [ORIFICES] {#engine_manual_sect_ORIFICES}
 
 Purpose:
 Identifies each orifice link of the drainage system. An orifice link serves to limit the flow exiting a node and is often used to model flow diversions and storage node outlets.
@@ -925,7 +925,7 @@ The geometry of an orifice’s opening must be described in the [XSECTIONS] sect
 
 
  
-### Section: [WEIRS]
+### Section: [WEIRS] {#engine_manual_sect_WEIRS}
 
 Purpose:
 Identifies each weir link of the drainage system. Weirs are used to model flow diversions and storage node outlets.
@@ -963,7 +963,7 @@ The ROADWAY weir is a broad crested rectangular weir used model roadway crossing
 
 
  
-### Section: [OUTLETS]
+### Section: [OUTLETS] {#engine_manual_sect_OUTLETS}
 
 Purpose:
 Identifies each outlet flow control device of the drainage system. These are devices used to model outflows from storage units or flow diversions that have a user-defined relation between flow rate and water depth.
@@ -988,7 +988,7 @@ C1, C2    coefficient and exponent, respectively, of a power function that relat
 (i.e.,  Q=C1H^C2 where H  is either depth or head).
 Gated    YES if a flap gate prevents reverse flow, NO if not (default is NO).
 
-### Section: [XSECTIONS]
+### Section: [XSECTIONS] {#engine_manual_sect_XSECTIONS}
 
 Purpose:
 Provides cross-section geometric data for conduit and regulator links of the drainage system.
@@ -1049,7 +1049,7 @@ An IRREGULAR cross-section is used to model an open channel whose geometry is de
 A STREET cross-section is used to model street conduits and inlet flow capture (see the [INLETS] and [INLETS_USAGE] sections).
 The Culvert code number is used only for closed conduits acting as culverts that should be analyzed for inlet control conditions using the FHWA HDS-5 methodology.
  
-### Section: [TRANSECTS]
+### Section: [TRANSECTS] {#engine_manual_sect_TRANSECTS}
 
 Purpose:
 Describes the cross-section geometry of natural channels or conduits with irregular shapes following the HEC-2 data format.
@@ -1084,7 +1084,7 @@ There should be one X1 line for each transect. Any number of GR lines may follow
 The station that defines the left overbank boundary on the X1 line must correspond to one of the station entries on the GR lines that follow. The same holds true for the right overbank boundary. If there is no match, a warning will be issued and the program will assume that no overbank area exists.
 The meander modifier is applied to all conduits that use this particular transect for their cross section. It assumes that the length supplied for these conduits is that of the longer main channel. SWMM will use the shorter overbank length in its calculations while increasing the main channel roughness to account for its longer length.
  
-### Section: [STREETS]
+### Section: [STREETS] {#engine_manual_sect_STREETS}
 
 Purpose:
 Describes the cross-section geometry of conduits that represent streets.
@@ -1109,7 +1109,7 @@ Remarks:
  
 
 If the street has no depressed gutter (a = 0) then the gutter width entry is ignored. If the street has no backing then the three backing parameters can be omitted.
-### Section: [INLETS]
+### Section: [INLETS] {#engine_manual_sect_INLETS}
 
 Purpose:
 Defines inlet structure designs used to capture street and channel flow that are sent to below ground sewers.
@@ -1133,7 +1133,7 @@ Dcurve     name of a Diversion-type curve (captured flow v. approach flow) for a
 Rcurve     name of a Rating-type curve (captured flow v. water depth) for a CUSTOM inlet.
 
 Remarks:
-See Section 3.3.7 for a description of the different types of inlets that SWMM can model. 
+See @ref engine_manual_ch1_conceptual_model for a description of the different types of inlets that SWMM can model. 
 Use one line for each inlet design except for a combination inlet where one GRATE line describes its grated inlet and a second CURB line (with the same inlet name) describes its curb opening inlet.
 
 GRATE, CURB, and SLOTTED inlets are used with STREET conduits, DROP_GRATE and DROP_CURB inlets with open channels, and a CUSTOM inlet with any conduit.
@@ -1161,7 +1161,7 @@ InletType2  CURB   4  0.5  HORIZONTAL
 ; A custom inlet using Curve1 as its capture curve
 InletType3  CUSTOM  Curve1
  
-### Section: [INLET_USAGE]
+### Section: [INLET_USAGE] {#engine_manual_sect_INLET_USAGE}
 
 Purpose:
 Assigns inlet structures to specific street and open channel conduits.
@@ -1186,7 +1186,7 @@ Only the first three parameters are required. The default number of inlets is 1 
 A Qmax value of 0 indicates that the inlet has no flow restriction.
 The local gutter depression applies only over the length of the inlet unlike the continuous depression for a STREET cross section which exists over the full curb length.
 The default inlet placement is AUTOMATIC, meaning that the program uses the network topography to determine whether an inlet operates on-grade or on-sag. On-grade means the inlet is located on a continuous grade. On-sag means the inlet is located at a sag or sump point where all adjacent conduits slope towards the inlet leaving no place for water to flow except into the inlet.
-### Section: [LOSSES]
+### Section: [LOSSES] {#engine_manual_sect_LOSSES}
 
 Purpose:
 Specifies minor head loss coefficients, flap gates, and seepage rates for conduits.
@@ -1209,7 +1209,7 @@ Only enter data for conduits that actually have minor losses, flap valves, or se
 
 
  
-### Section: [CONTROLS]
+### Section: [CONTROLS] {#engine_manual_sect_CONTROLS}
 
 Purpose:
 Determines how pumps and regulators will be adjusted based on simulation time or conditions at specific nodes and links.
@@ -1239,7 +1239,7 @@ value            a priority value (e.g., a number from 1 to 5).
 Remarks:
 Please refer to Section C.3 for a complete description of the control rule format plus examples of different types of rule statements.
  
-### Section: [POLLUTANTS]
+### Section: [POLLUTANTS] {#engine_manual_sect_POLLUTANTS}
 
 Purpose:
 Identifies the pollutants being analyzed.
@@ -1264,7 +1264,7 @@ FLOW  is a reserved word and cannot be used to name a pollutant.
 Parameters Sflag through Cinit can be omitted if they assume their default values. If there is no co-pollutant but non-default values for Cdwf or Cinit, then enter an asterisk (*) for the co-pollutant name.
 When pollutant X has a co-pollutant Y, it means that fraction CoFract of pollutant Y’s runoff concentration is added to pollutant X’s runoff concentration when wash off from a subcatchment is computed.
 The dry weather flow concentration can be overridden for any specific node of the conveyance system by editing the node’s Inflows property (see the [INFLOWS] section). 
-### Section: [LANDUSES]
+### Section: [LANDUSES] {#engine_manual_sect_LANDUSES}
 
 Purpose:
 Identifies the various categories of land uses within the drainage area. Each subcatchment area can be assigned a different mix of land uses. Each land use can be subjected to a different street sweeping schedule. Land uses are only used in conjunction with pollutant buildup and wash off.
@@ -1278,7 +1278,7 @@ SweepInterval    days between street sweeping.
 Availability    fraction of pollutant buildup available for removal by street sweeping.
 LastSweep        days since last sweeping at the start of the simulation.
  
-### Section: [COVERAGES]
+### Section: [COVERAGES] {#engine_manual_sect_COVERAGES}
 
 Purpose:
 Specifies the percentage of a subcatchment’s area that is covered by each category of land use.
@@ -1299,7 +1299,7 @@ If no land uses are associated with a subcatchment then no pollutants will appea
 
 
  
-### Section: [LOADINGS]
+### Section: [LOADINGS] {#engine_manual_sect_LOADINGS}
 
 Purpose:
 Specifies the pollutant buildup that exists on each subcatchment at the start of a simulation.
@@ -1318,7 +1318,7 @@ If an initial buildup is not specified for a pollutant, then its initial buildup
 
 
  
-### Section: [BUILDUP]
+### Section: [BUILDUP] {#engine_manual_sect_BUILDUP}
 
 Purpose:
 Specifies the rate at which pollutants build up over different land uses between rain events.
@@ -1346,7 +1346,7 @@ EXT    External    See below
 
 For the EXT buildup function, C1 is the maximum possible buildup (mass per area or curb length), C2 is a scaling factor, and C3 is the name of a Time Series that contains buildup rates (as mass per area or curb length per day) as a function of time.
  
-### Section: [WASHOFF]
+### Section: [WASHOFF] {#engine_manual_sect_WASHOFF}
 
 Purpose:
 Specifies the rate at which pollutants are washed off from different land uses during rain events.
@@ -1377,7 +1377,7 @@ The buildup parameter in the Exponential function is the current total buildup o
 
 
  
-### Section: [TREATMENT]
+### Section: [TREATMENT] {#engine_manual_sect_TREATMENT}
 
 Purpose:
 Specifies the degree of treatment received by pollutants at specific nodes of the drainage system.
@@ -1428,7 +1428,7 @@ Node23  Lead  R = 0.2 * R_TSS
 
 
  
-### Section: [INFLOWS]
+### Section: [INFLOWS] {#engine_manual_sect_INFLOWS}
 
 Purpose:
 Specifies external hydrographs and pollutographs that enter the drainage system at specific nodes.
@@ -1467,7 +1467,7 @@ NODE65  BOD  N65BOD  MASS  126
 ; FLOW_176 scaled at 0.5 plus a baseline flow of 12.7
 ; adjusted by pattern FlowPat
 N176  FLOW  FLOW_176  FLOW  1.0  0.5  12.7  FlowPat 
-### Section: [DWF]
+### Section: [DWF] {#engine_manual_sect_DWF}
 
 Purpose:
 Specifies dry weather flow and its quality entering the drainage system at specific nodes.
@@ -1489,7 +1489,7 @@ The patterns can be any combination of monthly, daily, hourly and weekend hourly
 
 
  
-### Section: [RDII]
+### Section: [RDII] {#engine_manual_sect_RDII}
 
 Purpose:
 Specifies the parameters that describe rainfall-dependent infiltration and inflow (RDII) entering the drainage system at specific nodes.
@@ -1504,7 +1504,7 @@ SewerArea    area of the sewershed that contributes RDII to the node (acres or h
 
 
  
-### Section: [HYDROGRAPHS]
+### Section: [HYDROGRAPHS] {#engine_manual_sect_HYDROGRAPHS}
 
 Purpose:
 Specifies the shapes of the triangular unit hydrographs that determine the amount of rainfall-dependent infiltration and inflow (RDII) entering the drainage system.
@@ -1543,7 +1543,7 @@ UH101  ALL LONG   0.033 10.0 2.0
 UH101  JUL SHORT  0.033 0.5  2.0
 UH101  JUL MEDIUM 0.011 2.0  2.0
  
-### Section: [CURVES]
+### Section: [CURVES] {#engine_manual_sect_CURVES}
 
 Purpose:
 Describes a relationship between two variables in tabular format. 
@@ -1578,7 +1578,7 @@ CONTROL    control setting for a pump or flow regulator versus a controller vari
 WEIR    discharge coefficient for flow in CFS (CMS) versus head in ft (m)
 
 Remarks:
-See Section 3.2 for illustrations of the different types of pump curves.
+See @ref engine_manual_ch1_conceptual_model for illustrations of the different types of pump curves.
 
 Examples:
 ; Storage curve (x = depth, y = surface area)
@@ -1597,7 +1597,7 @@ PC2  6  0
 
 
  
-### Section: [TIMESERIES]
+### Section: [TIMESERIES] {#engine_manual_sect_TIMESERIES}
 
 Purpose:
 Describes how a quantity varies over time.
@@ -1650,7 +1650,7 @@ HY1  32:10 0  34.0 57  35.33 85  48.67 24  50 0
 
       
  
-### Section: [PATTERNS]
+### Section: [PATTERNS] {#engine_manual_sect_PATTERNS}
 
 Purpose:
 Specifies time patterns of dry weather flow or quality in the form of adjustment factors applied as multipliers to baseline values.
@@ -1684,6 +1684,218 @@ H1         1.1 1.2 1.3 1.5 1.1 1.0
 H1         0.9 0.8 0.7 0.6 0.5 0.5
 H1         0.5 0.5 0.5 0.5 0.5 0.5  
 
+ 
+### Section: [VIRTUAL_JUNCTIONS] {#engine_manual_sect_VIRTUAL_JUNCTIONS}
+
+Purpose:
+Declares junction nodes that exist only to join two conduits, with no physical structure of their own.
+
+Format:
+    Name
+
+Parameters:
+Name    name of a junction declared in the [JUNCTIONS] section.
+
+Remarks:
+One token per line. Invert elevation and maximum depth are not read here — they are derived from the two attached conduits after parsing, so a virtual junction never imposes a node geometry of its own on the solution. Supplying any extra token is a parse error (ERROR 609).
+
+This section has no counterpart in SWMM 5.
+
+ 
+### Section: [INLET_JUNCTIONS] {#engine_manual_sect_INLET_JUNCTIONS}
+
+Purpose:
+Declares a virtual junction that also carries a street inlet, combining the [VIRTUAL_JUNCTIONS] and [INLET_USAGE] roles in one row.
+
+Format:
+    Name  Elev  MaxDepth  Inlet  CaptureNode  (Number  %Clogged  Qmax  aLocal  wLocal  Placement)
+
+Parameters:
+Name    name of the node.
+Elev    invert elevation (ft or m).
+MaxDepth    maximum depth, i.e. the street's flood depth (ft or m).
+Inlet    name of an inlet design in the [INLETS] section.
+CaptureNode    name of the node that receives the captured flow.
+Number    number of inlets placed (default 1).
+%Clogged    degree of clogging as a percent (default 0).
+Qmax    maximum flow the inlet can capture (flow units; 0 or blank = no limit).
+aLocal    height of a local gutter depression (in or mm).
+wLocal    width of a local gutter depression (ft or m).
+Placement    ON_GRADE, ON_SAG or AUTOMATIC (default AUTOMATIC).
+
+Remarks:
+The node is marked both virtual and inlet-bearing. More than eleven tokens is a parse error (ERROR 623).
+
+This section has no counterpart in SWMM 5.
+
+ 
+### Section: [INITIAL_QUALITY] {#engine_manual_sect_INITIAL_QUALITY}
+
+Purpose:
+Sets the initial concentration of a constituent in a node or a link at the start of the simulation.
+
+Format:
+    NODE  Name  Constituent  Value
+    LINK  Name  Constituent  Value
+    FILE  Fname
+
+Parameters:
+Name    name of the node or link.
+Constituent    name of a pollutant, or a constituent of a process component.
+Value    initial concentration (concentration units).
+Fname    name of a CSV file holding the same four fields per line.
+
+Remarks:
+The scope keyword must be NODE or LINK; anything else is a parse error. A row with fewer than four tokens is a parse error.
+
+The FILE form names a sidecar whose lines are `scope,element,constituent,value`, with an optional header row. It is resolved relative to the input file's directory and read when the model is opened, so it may be written by a pre-processor that does not have to rewrite the `.inp`.
+
+ 
+### Section: [RDII_DECAY] {#engine_manual_sect_RDII_DECAY}
+
+Purpose:
+Applies a seasonal decay to an RDII unit hydrograph group, so that the same hydrograph produces less inflow as antecedent conditions dry out.
+
+Format:
+    UHgroup  Response  Kdep  K0  KT  Tref  ThetaRec  Tfreeze
+
+Parameters:
+UHgroup    name of a unit hydrograph group in the [HYDROGRAPHS] section.
+Response    SHORT, MEDIUM or LONG — which of the group's three response terms this row applies to.
+Kdep    depletion rate coefficient (1/day).
+K0    base recovery rate coefficient (1/day).
+KT    temperature coefficient of the recovery rate (1/day per degree).
+Tref    reference temperature for KT (deg F or deg C).
+ThetaRec    recovery threshold as a fraction.
+Tfreeze    temperature below which recovery stops (deg F or deg C).
+
+Remarks:
+A row with fewer than eight tokens is ignored, as is a row whose Response keyword is not one of the three accepted values or whose Kdep, K0 or KT is negative.
+
+This section has no counterpart in SWMM 5.
+
+ 
+### Section: [EVENTS] {#engine_manual_sect_EVENTS}
+
+Purpose:
+Restricts reporting to one or more time windows, so that a long continuous run writes output only for the periods of interest.
+
+Format:
+    StartDate  StartTime  EndDate  EndTime
+
+Parameters:
+StartDate    date on which the event begins (MM/DD/YYYY).
+StartTime    time of day at which it begins (HH:MM:SS).
+EndDate    date on which it ends.
+EndTime    time of day at which it ends.
+
+Remarks:
+A row with fewer than four tokens is ignored, as is any row whose start is not earlier than its end. Events do not change the simulation period in the [OPTIONS] section; the model still runs continuously.
+
+ 
+### Section: [TAGS] {#engine_manual_sect_TAGS}
+
+Purpose:
+Attaches a free-text category label to an object, for grouping and filtering.
+
+Format:
+    ObjectType  Name  Tag
+
+Parameters:
+ObjectType    NODE, LINK or SUBCATCH.
+Name    name of the object.
+Tag    the label. Use double quotes if it contains spaces.
+
+Remarks:
+A row with fewer than three tokens is ignored, as is a row naming an object that does not exist. Tags are stored against the object's position rather than its name, so renaming the object keeps its tag.
+
+ 
+### Section: [PROFILE] {#engine_manual_sect_PROFILE}
+
+Purpose:
+Names a sequence of links that form a profile path, for a graphical client to plot.
+
+Format:
+    Name  Link1  Link2  ...
+
+Remarks:
+The engine parses and discards this section; it exists so that a profile defined in a client survives a round trip through the engine's writer. It has no effect on the simulation.
+
+ 
+### Section: [USER_FLAGS] {#engine_manual_sect_USER_FLAGS}
+
+Purpose:
+Declares a user-defined attribute that can then be given per-object values in the [USER_FLAG_VALUES] section.
+
+Format:
+    Name  Type  (Description)
+
+Parameters:
+Name    name of the flag. Stored upper-case, so flag names are case-insensitive.
+Type    BOOLEAN, INTEGER, REAL or STRING.
+Description    optional free text; quote it if it contains spaces.
+
+Remarks:
+A row with fewer than two tokens is ignored. An unrecognised Type is treated as STRING and raises WARNING 102.
+
+This section has no counterpart in SWMM 5.
+
+ 
+### Section: [USER_FLAG_VALUES] {#engine_manual_sect_USER_FLAG_VALUES}
+
+Purpose:
+Assigns a value for a user-defined flag to one object.
+
+Format:
+    ObjectType  Name  FlagName  Value
+
+Parameters:
+ObjectType    NODE, LINK or SUBCATCH.
+Name    name of the object; case is preserved.
+FlagName    name of a flag declared in [USER_FLAGS]; matched case-insensitively.
+Value    the value, parsed according to the flag's declared type.
+
+Remarks:
+A row with fewer than four tokens is ignored. Assigning a value for a flag that was never declared is accepted, treated as STRING, and raises WARNING 103 — so ordering the two sections the wrong way round degrades the type rather than failing the run.
+
+This section has no counterpart in SWMM 5.
+
+ 
+### Section: [PLUGINS] {#engine_manual_sect_PLUGINS}
+
+Purpose:
+Loads a plugin shared library at start-up.
+
+Format:
+    Path  (Arg1  Arg2  ...)
+
+Parameters:
+Path    path to the plugin library. Relative paths resolve against the plugin search path.
+Arg     optional initialisation arguments passed to the plugin verbatim.
+
+Remarks:
+See @ref engine_manual_ch5_api for what a plugin can do and where libraries are discovered.
+
+This section has no counterpart in SWMM 5.
+
+ 
+### Section: [PROCESS_COMPONENTS] {#engine_manual_sect_PROCESS_COMPONENTS}
+
+Purpose:
+Attaches a process component — an advection-reaction-dispersion solver, a reaction system, water age or heat transport — to the simulation.
+
+Format:
+    Id  key="value"  key="value"  ...
+
+Parameters:
+Id    identifier of the component.
+key="value"    configuration arguments. The reserved key CONFIG names a configuration file for the component; every other key is passed through to it.
+
+Remarks:
+An argument that is not a `key="value"` pair is a parse error naming the component and the offending token.
+
+This section has no counterpart in SWMM 5.
+
 ## D.3 Map Data Section
 
 SWMM’s graphical user interface (GUI) can display a schematic map of the drainage area being analyzed. This map displays subcatchments as polygons, nodes as circles, links as polylines, and rain gages as bitmap symbols. In addition it can display text labels and a backdrop image, such as a street map. The GUI has tools for drawing, editing, moving, and displaying these map elements.
@@ -1707,7 +1919,7 @@ Figure D-2 displays a sample map and Figure D-3 the data that describes it. Note
 A detailed description of each map data section will now be given. Remember that map data are only used as a visualization aid for SWMM’s GUI and they play no role in any of the runoff or routing computations. Map data are not needed for running the command line version of SWMM.
 ---
 
-### Section: [MAP]
+### Section: [MAP] {#engine_manual_sect_MAP}
 
 Purpose:
     Provides dimensions and distance units for the map.
@@ -1723,7 +1935,7 @@ X2    upper-right X coordinate of full map extent
 Y2    upper-right Y coordinate of full map extent
 ---
 
-### Section: [COORDINATES]
+### Section: [COORDINATES] {#engine_manual_sect_COORDINATES}
 
 Purpose:
     Assigns X,Y coordinates to drainage system nodes.
@@ -1741,7 +1953,7 @@ Ycoord    vertical coordinate relative to origin in lower left of map.
 
 
 
-### Section: [VERTICES]
+### Section: [VERTICES] {#engine_manual_sect_VERTICES}
 
 Purpose:
     Assigns X,Y coordinates to interior vertex points of curved drainage system links.
@@ -1760,7 +1972,7 @@ Include a separate line for each interior vertex of the link, ordered from the i
 Straight-line links have no interior vertices and therefore are not listed in this section.
 ---
 
-### Section: [POLYGONS]
+### Section: [POLYGONS] {#engine_manual_sect_POLYGONS}
 
 Purpose:
 Assigns X,Y coordinates to  vertex points of polygons that define a subcatchment boundary.
@@ -1779,7 +1991,7 @@ Include a separate line for each vertex of the subcatchment polygon, ordered in 
 
 
 
-### Section: [SYMBOLS]
+### Section: [SYMBOLS] {#engine_manual_sect_SYMBOLS}
 
 Purpose:
     Assigns X,Y coordinates to rain gage symbols.
@@ -1793,7 +2005,7 @@ Xcoord    horizontal coordinate relative to origin in lower left of map.
 Ycoord    vertical coordinate relative to origin in lower left of map.
 ---
 
-### Section: [LABELS]
+### Section: [LABELS] {#engine_manual_sect_LABELS}
 
 Purpose:
     Assigns X,Y coordinates to user-defined map labels.
@@ -1816,7 +2028,7 @@ Use of the anchor node feature will prevent the label from moving outside the vi
 
 If no font information is provided then a default font is used to draw the label.
 ---
-### Section: [BACKDROP]
+### Section: [BACKDROP] {#engine_manual_sect_BACKDROP}
 
 Purpose:
     Specifies file name and coordinates of map’s backdrop image.
@@ -1832,28 +2044,25 @@ Y1    lower-left  Y coordinate of backdrop image
 X2    upper-right X coordinate of backdrop image
 Y2    upper-right Y coordinate of backdrop image
 
+ 
+## D.4 Sections Not Yet Documented
 
+The parser registers the following sections through the custom-section
+mechanism rather than the built-in table, and this chapter does not yet
+describe their fields. They are listed here so that the gap is visible rather
+than implied, and so that a reader who meets one in an `.inp` file knows it is
+real input and not a typo.
 
+The 2D surface-flow sections (21) are written and read by the graphical
+application's mesh tools; their layout is specified in `plans/2D_INPUT_FORMAT_SPEC.md`
+and `plans/2d_external_mesh_file.md`, and the mesh file itself is described in
+@ref engine_manual_ch3_files.
 
+| Family | Sections |
+|---|---|
+| 2D surface flow | `[2D_AQUIFER]` · `[2D_AQUIFER_NODE]` · `[2D_AQUIFER_OPTIONS]` · `[2D_BOUNDARY_CONDITIONS]` · `[2D_BOUNDARY_QUALITY]` · `[2D_COVERAGES]` · `[2D_CURB_LENGTH]` · `[2D_EDGE_CONVEYANCE]` · `[2D_INFILTRATION]` · `[2D_INFILTRATION_DEFAULTS]` · `[2D_INFILTRATION_OPTIONS]` · `[2D_INITIAL_QUALITY]` · `[2D_INITIAL_VELOCITY]` · `[2D_LOADINGS]` · `[2D_MESH_FILE]` · `[2D_OPTIONS]` · `[2D_QUADS]` · `[2D_TRIANGLES]` · `[2D_TRIANGLE_NODE_MAP]` · `[2D_VERTEX_NODE_MAP]` · `[2D_VERTICES]` |
+| Groundwater transport | `[GW_BOUNDARY_QUALITY]` · `[GW_INITIAL_QUALITY]` · `[GW_SORPTION]` · `[GW_SOURCES]` · `[GW_TRANSPORT_OPTIONS]` · `[GW_TRANSPORT_PARAMS]` |
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+This list is mirrored in `KNOWN_SECTION_GAPS.txt` beside this file and checked
+by `scripts/lint_manual_docs.py`, which fails if a newly registered section is
+neither documented above nor listed there — so the backlog cannot grow silently.
