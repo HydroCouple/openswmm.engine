@@ -64,6 +64,19 @@ enum class RouteModel : int {
     FV        = 3    ///< Explicit conservative finite volume (Godunov)
 };
 
+/**
+ * @brief Apply legacy conduit_validate's Courant lengthening and the
+ *        conveyance re-derivation (beta, roughFactor, qFull, qMax) it implies.
+ *
+ * @details Legacy performs both during project validation — before
+ *          link_initState computes a q0 conduit's normal depth and before
+ *          flowrout_init seeds node depths from it — so the initial state must
+ *          see the lengthened beta. Idempotent: every input is a stored,
+ *          unmodified quantity, so SWMMEngine may call it ahead of the
+ *          initial-state loops and Router::init again afterwards.
+ */
+void applyConduitLengthening(SimulationContext& ctx, RouteModel model);
+
 // ============================================================================
 // Routing orchestrator
 // ============================================================================

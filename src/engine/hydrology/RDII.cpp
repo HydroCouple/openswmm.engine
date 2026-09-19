@@ -204,8 +204,21 @@ void RDIISolver::init(SimulationContext& ctx) {
         }
         auto& uh = uh_params[static_cast<size_t>(idx)];
 
-        double tPeak_sec = entry.t * 3600.0;
-        double tBase_sec = entry.t * (1.0 + entry.k) * 3600.0;
+        // PARITY rdii.c:424-426 — legacy forms the base time in HOURS and
+        // stores both times TRUNCATED to whole seconds:
+        //   tBase = t * (1.0 + k);                    // hours
+        //   UnitHyd.tPeak = (long)(t * 3600.);        // seconds
+        //   UnitHyd.tBase = (long)(tBase * 3600.);    // seconds
+        // The truncation is not cosmetic: T 0.3 h, K 2.0 gives
+        // 0.3*(1+2) = 0.8999999999999999 h, so tBase lands at 3239 s, not
+        // 3240, and qPeak = 2/tBase*3600 is 3.1e-4 HIGH for the whole run.
+        // Keeping the exact product made every short-response RTK hydrograph
+        // in 405-h-h-elements 2.9e-4 low from its first nonzero ordinate.
+        double tBase_hrs = entry.t * (1.0 + entry.k);
+        double tPeak_sec = static_cast<double>(
+            static_cast<long>(entry.t * 3600.0));
+        double tBase_sec = static_cast<double>(
+            static_cast<long>(tBase_hrs * 3600.0));
 
         int m_start = (entry.month < 0) ? 0  : entry.month;
         int m_end   = (entry.month < 0) ? 11 : entry.month;

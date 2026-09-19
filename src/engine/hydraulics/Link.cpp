@@ -124,8 +124,14 @@ void computeConveyance(double roughness, double slope, double s_full,
 // Per-element: getDepthFromFlow
 // ============================================================================
 
-double getDepthFromFlow(const XSectParams& xs, double beta, double q) {
-    if (beta <= 0.0 || q <= 0.0) return 0.0;
+double getDepthFromFlow(const XSectParams& xs, double beta, double q,
+                        double q_max) {
+    if (beta <= 0.0) return 0.0;
+    // legacy link_getYnorm (link.c:800): cap the flow at the conduit's qMax
+    // BEFORE forming the section factor — the tabular shapes derive their
+    // inverse-lookup argument from the uncapped psi inside getAofS.
+    if (q_max >= 0.0 && q > q_max) q = q_max;
+    if (q <= 0.0) return 0.0;
 
     double s = q / beta;               // section factor needed
     double a = xsect::getAofS(xs, s);  // area from section factor

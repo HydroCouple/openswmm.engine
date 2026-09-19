@@ -106,84 +106,25 @@ static std::vector<int> buildDivertLinks(const SimulationContext& ctx) {
 }
 
 // ============================================================================
-// Init
+// applyConduitLengthening — legacy conduit_validate's Courant lengthening and
+// the conveyance (beta / roughFactor / qFull / qMax) re-derivation that goes
+// with it.
+//
+// Legacy does BOTH inside conduit_validate, i.e. during project validation —
+// before link_initState computes each q0 conduit's normal depth and before
+// flowrout_init seeds the node depths from it. Living only in Router::init
+// (which runs after those initial-state loops) left every lengthened conduit's
+// q0 normal depth computed from the UNLENGTHENED beta. The lengthening cancels
+// algebraically — beta = PHI*sqrt(S/f)/(n/sqrt(f)) = PHI*sqrt(S)/n — but not
+// in IEEE-754: the two extra roundings move beta one ULP, which moved the
+// seeded node depths and split 405-h-h-elements at the very first routing step.
+// SWMMEngine calls this before the initial-state loops; Router::init calls it
+// again. It is idempotent: every input (length, slope, the effective n) is a
+// stored, unmodified quantity.
 // ============================================================================
 
-void Router::init(SimulationContext& ctx, RouteModel model) {
-    model_ = model;
-
-    int n_links = ctx.n_links();
-    int n_nodes = ctx.n_nodes();
-
-    // Build XSectParams array from ctx.links SoA fields
-    // NOTE: LinkData::XsectShape and XSectBatch::XSectShape have different
-    //       orderings. LinkData follows legacy enums.h (CIRCULAR=0), while
-    //       XSectBatch prepends DUMMY=0 and reorders some shapes.
-    //       Use explicit mapping to avoid misalignment.
-    auto translateShape = [](XsectShape link_shape) -> int {
-        switch (link_shape) {
-            case XsectShape::CIRCULAR:        return static_cast<int>(XSectShape::CIRCULAR);
-            case XsectShape::FILLED_CIRCULAR: return static_cast<int>(XSectShape::FILLED_CIRCULAR);
-            case XsectShape::RECT_CLOSED:     return static_cast<int>(XSectShape::RECT_CLOSED);
-            case XsectShape::RECT_OPEN:       return static_cast<int>(XSectShape::RECT_OPEN);
-            case XsectShape::TRAPEZOIDAL:     return static_cast<int>(XSectShape::TRAPEZOIDAL);
-            case XsectShape::TRIANGULAR:      return static_cast<int>(XSectShape::TRIANGULAR);
-            case XsectShape::PARABOLIC:       return static_cast<int>(XSectShape::PARABOLIC);
-            case XsectShape::POWER:           return static_cast<int>(XSectShape::POWERFUNC);
-            case XsectShape::MODBASKETHANDLE: return static_cast<int>(XSectShape::MOD_BASKET);
-            case XsectShape::EGGSHAPED:       return static_cast<int>(XSectShape::EGGSHAPED);
-            case XsectShape::HORSESHOE:       return static_cast<int>(XSectShape::HORSESHOE);
-            case XsectShape::GOTHIC:          return static_cast<int>(XSectShape::GOTHIC);
-            case XsectShape::CATENARY:        return static_cast<int>(XSectShape::CATENARY);
-            case XsectShape::SEMIELLIPTICAL:  return static_cast<int>(XSectShape::SEMIELLIPTICAL);
-            case XsectShape::BASKETHANDLE:    return static_cast<int>(XSectShape::BASKETHANDLE);
-            case XsectShape::SEMICIRCULAR:    return static_cast<int>(XSectShape::SEMICIRCULAR);
-            case XsectShape::RECT_TRIANG:     return static_cast<int>(XSectShape::RECT_TRIANG);
-            case XsectShape::RECT_ROUND:      return static_cast<int>(XSectShape::RECT_ROUND);
-            case XsectShape::HORIZ_ELLIPSE:   return static_cast<int>(XSectShape::HORIZ_ELLIPSE);
-            case XsectShape::VERT_ELLIPSE:    return static_cast<int>(XSectShape::VERT_ELLIPSE);
-            case XsectShape::ARCH:            return static_cast<int>(XSectShape::ARCH);
-            case XsectShape::IRREGULAR:       return static_cast<int>(XSectShape::IRREGULAR);
-            case XsectShape::CUSTOM:          return static_cast<int>(XSectShape::CUSTOM);
-            case XsectShape::FORCE_MAIN:      return static_cast<int>(XSectShape::FORCE_MAIN);
-            case XsectShape::STREET_XSECT:    return static_cast<int>(XSectShape::STREET_XSECT);
-            case XsectShape::DUMMY:           return static_cast<int>(XSectShape::DUMMY);
-            default:                          return static_cast<int>(XSectShape::DUMMY);
-        }
-    };
-
-    std::vector<XSectParams> xsect_params(static_cast<std::size_t>(n_links));
-    for (int j = 0; j < n_links; ++j) {
-        auto uj = static_cast<std::size_t>(j);
-        if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
-
-        auto& xs = xsect_params[uj];
-        xs.type   = translateShape(ctx.links.xsect_shape[uj]);
-        // Cache translated shape code to avoid per-timestep switch dispatch
-        ctx.links.xsect_batch_shape[uj] = xs.type;
-        xs.y_full = ctx.links.xsect_y_full[uj];
-        xs.a_full = ctx.links.xsect_a_full[uj];
-        xs.w_max  = ctx.links.xsect_w_max[uj];
-        xs.r_full = ctx.links.xsect_r_full[uj];
-        xs.s_full = ctx.links.xsect_s_full[uj];
-
-        // Shape-specific parameters for batch kernels
-        xs.y_bot  = ctx.links.xsect_y_bot[uj];   // bottom width (TRAP), bottom depth (FILLED_CIRC)
-        xs.a_bot  = ctx.links.xsect_a_bot[uj];   // bottom area
-        xs.s_bot  = ctx.links.xsect_s_bot[uj];   // side slope (TRAP), C-factor (FORCE_MAIN)
-        xs.r_bot  = ctx.links.xsect_r_bot[uj];   // side slope2, wetted perimeter
-
-        // Compute full-depth properties if not already set
-        if (xs.a_full == 0.0 && xs.y_full > 0.0) {
-            double p[4] = {xs.y_full, xs.w_max, 0, 0};
-            xsect::setParams(xs, xs.type, p, 1.0);
-            // Write back computed values to link SoA
-            ctx.links.xsect_a_full[uj] = xs.a_full;
-            ctx.links.xsect_r_full[uj] = xs.r_full;
-            ctx.links.xsect_s_full[uj] = xs.s_full;
-            ctx.links.xsect_w_max[uj]  = xs.w_max;
-        }
-    }
+void applyConduitLengthening(SimulationContext& ctx, RouteModel model) {
+    const int n_links = ctx.n_links();
 
     // Compute modified conduit lengths for CFL stability
     // (matching legacy link.c conduit_getLengthFactor / conduit_validate:
@@ -306,6 +247,90 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
             }
         }
     }
+}
+
+// ============================================================================
+// Init
+// ============================================================================
+
+void Router::init(SimulationContext& ctx, RouteModel model) {
+    model_ = model;
+
+    int n_links = ctx.n_links();
+    int n_nodes = ctx.n_nodes();
+
+    // Build XSectParams array from ctx.links SoA fields
+    // NOTE: LinkData::XsectShape and XSectBatch::XSectShape have different
+    //       orderings. LinkData follows legacy enums.h (CIRCULAR=0), while
+    //       XSectBatch prepends DUMMY=0 and reorders some shapes.
+    //       Use explicit mapping to avoid misalignment.
+    auto translateShape = [](XsectShape link_shape) -> int {
+        switch (link_shape) {
+            case XsectShape::CIRCULAR:        return static_cast<int>(XSectShape::CIRCULAR);
+            case XsectShape::FILLED_CIRCULAR: return static_cast<int>(XSectShape::FILLED_CIRCULAR);
+            case XsectShape::RECT_CLOSED:     return static_cast<int>(XSectShape::RECT_CLOSED);
+            case XsectShape::RECT_OPEN:       return static_cast<int>(XSectShape::RECT_OPEN);
+            case XsectShape::TRAPEZOIDAL:     return static_cast<int>(XSectShape::TRAPEZOIDAL);
+            case XsectShape::TRIANGULAR:      return static_cast<int>(XSectShape::TRIANGULAR);
+            case XsectShape::PARABOLIC:       return static_cast<int>(XSectShape::PARABOLIC);
+            case XsectShape::POWER:           return static_cast<int>(XSectShape::POWERFUNC);
+            case XsectShape::MODBASKETHANDLE: return static_cast<int>(XSectShape::MOD_BASKET);
+            case XsectShape::EGGSHAPED:       return static_cast<int>(XSectShape::EGGSHAPED);
+            case XsectShape::HORSESHOE:       return static_cast<int>(XSectShape::HORSESHOE);
+            case XsectShape::GOTHIC:          return static_cast<int>(XSectShape::GOTHIC);
+            case XsectShape::CATENARY:        return static_cast<int>(XSectShape::CATENARY);
+            case XsectShape::SEMIELLIPTICAL:  return static_cast<int>(XSectShape::SEMIELLIPTICAL);
+            case XsectShape::BASKETHANDLE:    return static_cast<int>(XSectShape::BASKETHANDLE);
+            case XsectShape::SEMICIRCULAR:    return static_cast<int>(XSectShape::SEMICIRCULAR);
+            case XsectShape::RECT_TRIANG:     return static_cast<int>(XSectShape::RECT_TRIANG);
+            case XsectShape::RECT_ROUND:      return static_cast<int>(XSectShape::RECT_ROUND);
+            case XsectShape::HORIZ_ELLIPSE:   return static_cast<int>(XSectShape::HORIZ_ELLIPSE);
+            case XsectShape::VERT_ELLIPSE:    return static_cast<int>(XSectShape::VERT_ELLIPSE);
+            case XsectShape::ARCH:            return static_cast<int>(XSectShape::ARCH);
+            case XsectShape::IRREGULAR:       return static_cast<int>(XSectShape::IRREGULAR);
+            case XsectShape::CUSTOM:          return static_cast<int>(XSectShape::CUSTOM);
+            case XsectShape::FORCE_MAIN:      return static_cast<int>(XSectShape::FORCE_MAIN);
+            case XsectShape::STREET_XSECT:    return static_cast<int>(XSectShape::STREET_XSECT);
+            case XsectShape::DUMMY:           return static_cast<int>(XSectShape::DUMMY);
+            default:                          return static_cast<int>(XSectShape::DUMMY);
+        }
+    };
+
+    std::vector<XSectParams> xsect_params(static_cast<std::size_t>(n_links));
+    for (int j = 0; j < n_links; ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
+
+        auto& xs = xsect_params[uj];
+        xs.type   = translateShape(ctx.links.xsect_shape[uj]);
+        // Cache translated shape code to avoid per-timestep switch dispatch
+        ctx.links.xsect_batch_shape[uj] = xs.type;
+        xs.y_full = ctx.links.xsect_y_full[uj];
+        xs.a_full = ctx.links.xsect_a_full[uj];
+        xs.w_max  = ctx.links.xsect_w_max[uj];
+        xs.r_full = ctx.links.xsect_r_full[uj];
+        xs.s_full = ctx.links.xsect_s_full[uj];
+
+        // Shape-specific parameters for batch kernels
+        xs.y_bot  = ctx.links.xsect_y_bot[uj];   // bottom width (TRAP), bottom depth (FILLED_CIRC)
+        xs.a_bot  = ctx.links.xsect_a_bot[uj];   // bottom area
+        xs.s_bot  = ctx.links.xsect_s_bot[uj];   // side slope (TRAP), C-factor (FORCE_MAIN)
+        xs.r_bot  = ctx.links.xsect_r_bot[uj];   // side slope2, wetted perimeter
+
+        // Compute full-depth properties if not already set
+        if (xs.a_full == 0.0 && xs.y_full > 0.0) {
+            double p[4] = {xs.y_full, xs.w_max, 0, 0};
+            xsect::setParams(xs, xs.type, p, 1.0);
+            // Write back computed values to link SoA
+            ctx.links.xsect_a_full[uj] = xs.a_full;
+            ctx.links.xsect_r_full[uj] = xs.r_full;
+            ctx.links.xsect_s_full[uj] = xs.s_full;
+            ctx.links.xsect_w_max[uj]  = xs.w_max;
+        }
+    }
+
+    applyConduitLengthening(ctx, model);
+
 
     // Build shape-grouped batch index
     groups_.build(xsect_params.data(), n_links);
