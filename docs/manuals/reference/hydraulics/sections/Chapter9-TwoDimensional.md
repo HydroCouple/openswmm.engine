@@ -1388,7 +1388,7 @@ selects it; the default reproduces §9.2–§9.5 bit for bit.
 |---|---|---|---|---|
 | `LOCAL_INERTIAL` (default) | V per cell, q per face | de Almeida & Bates (9-7)…(9-10) | Fr ≲ 0.5; ponds, streets, floodplains | 1× |
 | `FULL_SWE` | V, hu, hv per cell | hydrostatic reconstruction (Audusse et al. 2004) → rotated HLLC Riemann flux (Toro 2001) → per-face bed-slope correction ½g(h*² − h²)n̂; semi-implicit Manning friction per cell | all Froude numbers: transcritical control, hydraulic jumps, dam breaks, drawdown over crests | ≈2–3× (Courant ≤ ½ on 2A/P; the β share becomes a backstop) |
-| `DIFFUSIVE_WAVE` | V per cell | Manning quasi-steady q = −h^{5/3}S/(n√max(|S|,S_ε)) (Hunter et al. 2005) | slow floodplain inundation; steady uniform flow (exact) | Δx²-bound steps, carried by the LTS tiers |
+| `DIFFUSIVE_WAVE` | V per cell | Manning quasi-steady \f$q = -h^{5/3} S \big/ \big(n \sqrt{\max(\lvert S \rvert, S_\varepsilon)}\big)\f$ (Hunter et al. 2005) | slow floodplain inundation; steady uniform flow (exact) | Δx²-bound steps, carried by the LTS tiers |
 
 `FULL_SWE` keeps every property of §9.5: the lake at rest is exact
 (the Audusse correction cancels the ½g h*² pressure flux face by face,
