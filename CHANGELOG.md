@@ -170,6 +170,32 @@ retroactive.
 
 ### Added
 
+- **Two-zone groundwater results in the 2D results file (G-O).** A model
+  with a resolved `[2D_AQUIFER]` now writes its aquifer to the `.h5` under
+  the new `REPORT_2D_VARIABLES` group `GROUNDWATER` (in DEFAULT): ten
+  per-cell `[time, face]` fields — `Mesh2_face_gw_table_elev`, `_hg`
+  (saturated thickness), `_hu` (closure A unsaturated storage), `_recharge`,
+  `_lateral`, `_node_exchange`, `_deep`, `_et`, `_dunne`, `_infil_in` (the
+  rates are each cell's last firing, held, as the C API reads them) — the
+  static `Mesh2_face_gw_bed_elev` and `Mesh2_face_gw_closure` (0 closed
+  form, 1 enslaved, 2 sigma — the mask for the σ block), the domain ledger
+  series `groundwater_ledger [time, 11]` (the `SWMM_GW2D_LED_*` order plus
+  the continuity residual), and `groundwater_node_exchange_cum [time, bed]`
+  with a `node_names` attribute (cumulative aquifer ↔ node exchange per
+  `[2D_AQUIFER_NODE]` bed, + out of the aquifer — the series behind the
+  GUI's GwExchange plot). `GW_DETAILED` (not in DEFAULT) adds the σ columns
+  `Mesh2_face_gw_theta_sigma [time, layer, face]`, the one m × nFace
+  variable. At finalize the file gains a `/groundwater_2d` group of ledger
+  scalars with a `continuity_error` attribute beside `/mass_balance_2d`,
+  and the `.rpt` gains a "2D Aquifer Continuity" block after the 2D surface
+  block. The storage views the C API used (`liveStorage`, `ledgeredStorage`,
+  the residual) moved onto `SubsurfaceState` so the file, the report and
+  `swmm_gw2d_get_continuity_error` share one definition. Gate:
+  `test_engine_2d_output_options` `DeckGroundwaterFieldsEndToEnd` — every
+  dataset present with the right shape on a two-triangle and a mixed
+  tri + quad deck, water table ≡ bed + hg per record, the ledger's last row
+  closes to 1e-6 of storage, a deck without an aquifer writes none of it.
+  Program plan row G-O; unblocks stream U (GG5) and the σ-column inspector.
 - **2D cell coverages, buildup, washoff and street sweeping (S7).** The
   subcatchment land-use convention on the mesh: `[2D_COVERAGES]` (`*` | `TAG
   name` | `CELL n` → a land-use percent set; a row replaces its scope's set,
@@ -265,7 +291,11 @@ retroactive.
   `RAINFALL_MODE SYSTEM` / `NATURAL_NEIGHBOUR`, so a mesh-only deck saw its
   first non-zero intensity for the whole run. `gageIsUsed` now counts the
   mesh as a reader (S7 found it: the sweeping gate's dry tail never came).
-  Decks with a subcatchment on the gage were unaffected.
+  Decks with a subcatchment on the gage are unaffected; the 25-deck parity
+  corpus is byte-identical; **47 rain-on-grid benchmark decks in the 2D
+  census change deliberately** (e.g. `2d_matrix/bench79202_t1.inp` rainfall
+  inflow 39601 → 6606 — it rained ~6× too long) — timing / bit-identity
+  baselines resting on them need regenerating.
 - **2D transport rows on a mesh with no interior edge were silently inert.**
   The marcher gated every species sink and source on its face accumulators
   being non-empty, which is also true of a one-cell mesh with live rows

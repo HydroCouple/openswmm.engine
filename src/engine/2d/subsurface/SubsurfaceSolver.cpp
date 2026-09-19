@@ -264,6 +264,7 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh,
     // authored for a node outside the mesh is a warning, not an error — the
     // 1D node keeps working, it simply has no aquifer under it.
     state_.nacc.assign(node_beds_.size(), 0.0);
+    bed_exchange_cum_.assign(node_beds_.size(), 0.0);   // G-O
     node_exchange_vol_.assign(static_cast<std::size_t>(std::max(0, n_nodes)),
                               0.0);
     {
@@ -544,6 +545,7 @@ void SubsurfaceSolver::sampleNodeExchange(const NodeData* nodes, double dt) {
 
         const double vol = Q * dt;
         state_.nacc[b] += vol;                       // gathered at the GW firing
+        bed_exchange_cum_[b] += vol;                 // G-O: the per-bed series
         if (ni < node_exchange_vol_.size())
             node_exchange_vol_[ni] += vol;           // flushed by the router
     }

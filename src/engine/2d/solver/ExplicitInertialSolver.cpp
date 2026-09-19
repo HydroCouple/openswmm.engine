@@ -157,7 +157,8 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     }
     // S1: species accumulators, sized only when transport is live so a
     // hydrodynamics-only model allocates nothing here.
-    if (state.transport.active()) {
+    species_on_ = state.transport.active();   // S7: see the member note
+    if (species_on_) {
         const auto ns = static_cast<std::size_t>(state.transport.n_species);
         sacc_L_.assign(ns * ne, 0.0);
         sacc_R_.assign(ns * ne, 0.0);
@@ -321,6 +322,10 @@ void ExplicitInertialSolver::sinkMassAtCellConc(int i, double dv_m3,
     if (!(dv_m3 > 0.0)) return;
     auto& tr = state_->transport;
     if (!tr.active()) return;
+    // S7 (D-A22): water leaving through an open edge or a drain to a node
+    // is runoff the cell produced; infiltration is not (it does not wash off).
+    if (!tr.cell_runoff_vol.empty() && &ledger != &tr.lost_infiltration)
+        tr.cell_runoff_vol[static_cast<std::size_t>(i)] += dv_m3;
     // Concentration is read BEFORE the volume was reduced (callers pass the
     // pre-sink volume through state_->volume unchanged until after this
     // call), so the mass removed is exactly dv * c_old — the mass the water
@@ -354,27 +359,38 @@ void ExplicitInertialSolver::addRainMass(int i, double rain_m3) noexcept {
     }
 }
 
-void ExplicitInertialSolver::sinkTemperatureWithEvap(int i, double evap_m3) noexcept {
+void ExplicitInertialSolver::sinkIntensiveRowsWithEvap(int i, double evap_m3) noexcept {
     // Evaporation removes WATER and no solute (S1: concentrations rise), but
-    // it removes water AT the water's temperature: the temperature row is a
-    // temperature-volume, so leaving it untouched while the volume falls would
-    // heat the cell by evaporating it. Sink the row at the cell's own
-    // temperature; no ledger — the enthalpy left with the vapour and the 1D
-    // engines book nothing for it either (H1's convention).
+    // it removes water AT the water's temperature AND at the water's age: the
+    // temperature row is a temperature-volume and the age row an age-volume,
+    // so leaving either untouched while the volume falls would heat the cell
+    // — or age it — by evaporating it. Sink both rows at the cell's own mean;
+    // no ledger — the enthalpy left with the vapour and the 1D engines book
+    // nothing for it either (H1's convention), and the mean age of what
+    // remains is unchanged (the 1D water-age convention, WaterAgeLegacy
+    // "no evap factor"; program plan D-A20, S4b).
     if (!(evap_m3 > 0.0)) return;
     auto& tr = state_->transport;
-    if (!tr.active() || tr.temp_row < 0) return;
+    if (!tr.active()) return;
     const double v = state_->volume[i];
     if (!(v > 0.0)) return;
-    double& m = tr.cell_mass[tr.idx(tr.temp_row, i)];
     const double dv = (evap_m3 < v) ? evap_m3 : v;
-    m -= dv * (m / v);
+    const int rows[2] = { tr.temp_row, tr.age_row };
+    for (const int r : rows) {
+        if (r < 0) continue;
+        double& m = tr.cell_mass[tr.idx(r, i)];
+        m -= dv * (m / v);
+    }
 }
 
 void ExplicitInertialSolver::addCouplingSourceMass(int i, double area_dt) noexcept {
     if (!(state_->coupling_flux[i] > 0.0) || !(area_dt > 0.0)) return;
     auto& tr = state_->transport;
-    if (!tr.active() || tr.coupling_src.empty()) return;
+    if (!tr.active()) return;
+    // S7 (D-A22): discharged / prescribed inflow is not runoff the cell made.
+    if (!tr.cell_runoff_vol.empty())
+        tr.cell_runoff_vol[static_cast<std::size_t>(i)] -= state_->coupling_flux[i] * area_dt;
+    if (tr.coupling_src.empty()) return;
     for (int s = 0; s < tr.n_species; ++s) {
         const double g = tr.coupling_src[tr.idx(s, i)] * area_dt;
         if (g == 0.0) continue;
@@ -419,7 +435,7 @@ void ExplicitInertialSolver::settleAccumulators() {
         // S1: settle the species side in the SAME sweep. A cell re-tiered
         // or deactivated with a pending species accumulator would strand
         // mass exactly as the header warns for volume.
-        if (!sacc_L_.empty()) {
+        if (species_on_) {
             auto& tr = state_->transport;
             const auto ns  = static_cast<std::size_t>(tr.n_species);
             const auto nef = static_cast<std::size_t>(ed.ne);
@@ -498,10 +514,10 @@ void ExplicitInertialSolver::lazySourcesOnly(double t) {
         const double src =
             state_->rainfall[i] + state_->coupling_flux[i] - evap - infil;
         if (src == 0.0) continue;
-        if (!sacc_L_.empty()) {   // S1: see syncAndRebuild's lazy pass
+        if (species_on_) {   // S1: see syncAndRebuild's lazy pass
             auto& tr = state_->transport;
             const double area = mesh_->tri_area[i];
-            sinkTemperatureWithEvap(i, evap * dt_lazy * area);          // S4
+            sinkIntensiveRowsWithEvap(i, evap * dt_lazy * area);        // S4/S4b
             sinkMassAtCellConc(i, infil * dt_lazy * area, tr.lost_infiltration);
             if (state_->coupling_flux[i] < 0.0)
                 sinkMassAtCellConc(i, -state_->coupling_flux[i] * dt_lazy *
@@ -552,10 +568,10 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
             if (src == 0.0) continue;
             // S1: the lazy tier moves water without faces; the sinks still
             // carry the cell's species out (same rule as fireCells).
-            if (!sacc_L_.empty()) {
+            if (species_on_) {
                 auto& tr = state_->transport;
                 const double area = mesh_->tri_area[i];
-                sinkTemperatureWithEvap(i, evap * dt_lazy * area);      // S4
+                sinkIntensiveRowsWithEvap(i, evap * dt_lazy * area);    // S4/S4b
                 sinkMassAtCellConc(i, infil * dt_lazy * area,
                                    tr.lost_infiltration);
                 if (state_->coupling_flux[i] < 0.0)
@@ -894,7 +910,7 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces,
     // All-triangle meshes skip the per-face cell_nv load entirely (resolved
     // once in initialize(): the scan is O(n_cells)).
     const bool   has_quads = has_quads_;
-    const bool   species   = !sacc_L_.empty();
+    const bool   species   = species_on_;
     // VFR_FACE: block/convey at the shared edge's TRUE crest via the B&S
     // Eq. 14 wetted-edge depth; MEAN keeps the centroid zface bit-identical.
     const bool vfr_face =
@@ -990,7 +1006,7 @@ void ExplicitInertialSolver::fireFacesSwe(const std::vector<int>& faces,
     static const bool muscl_off = std::getenv("OPENSWMM_2D_MUSCL_OFF") != nullptr;
     if (second_order_) computeLimitedGradientsSwe();
     const bool so = second_order_ && !muscl_off;
-    const bool species = !sacc_L_.empty();
+    const bool species = species_on_;
     const bool has_quads = has_quads_;
 
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
@@ -1095,7 +1111,7 @@ void ExplicitInertialSolver::fireFacesDiffusive(const std::vector<int>& faces,
     const double beta4 = opts_->exchange_beta / 4.0;
     const bool vfr_face =
         (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
-    const bool species   = !sacc_L_.empty();
+    const bool species   = species_on_;
     const bool has_quads = has_quads_;
 
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
@@ -1140,7 +1156,7 @@ void ExplicitInertialSolver::bookFaceSpecies(int e, int a, int b, double dM,
                                              bool global_step) noexcept {
     // Hydrodynamics-only models (no species) have nothing to book: return
     // before the divisions below — this runs once per face evaluation.
-    if (sacc_L_.empty()) return;
+    if (!species_on_) return;
     const auto& ed = edges_;
     const double beta3 = opts_->exchange_beta / 3.0;
     const double beta4 = opts_->exchange_beta / 4.0;
@@ -1151,8 +1167,16 @@ void ExplicitInertialSolver::bookFaceSpecies(int e, int a, int b, double dM,
     // the species flux cannot disagree with the volume flux about
     // cadence, direction or magnitude, which is the whole of the
     // conservation argument.
-    if (!sacc_L_.empty() && dM != 0.0) {
+    if (species_on_ && dM != 0.0) {
         const int   donor = (dM > 0.0) ? a : b;
+        // S7 (D-A22): the cells' NET runoff — the volume leaves the donor
+        // and arrives at the receiver, at the face's own cadence, so a cell
+        // that only passes water through produces none.
+        if (!state_->transport.cell_runoff_vol.empty()) {
+            auto& rv = state_->transport.cell_runoff_vol;
+            rv[static_cast<std::size_t>(donor)] += std::fabs(dM);
+            rv[static_cast<std::size_t>((dM > 0.0) ? b : a)] -= std::fabs(dM);
+        }
         const auto  ns    = static_cast<std::size_t>(
             state_->transport.n_species);
         const auto  ue    = static_cast<std::size_t>(e);
@@ -1180,7 +1204,7 @@ void ExplicitInertialSolver::bookFaceSpecies(int e, int a, int b, double dM,
     // pairwise max principle follow; a bind is COUNTED, because a face
     // that binds is telling the modeller the dispersion is
     // under-resolved at this dt.
-    if (!sacc_L_.empty() && opts_->dispersion > 0.0) {
+    if (species_on_ && opts_->dispersion > 0.0) {
         const double va = state_->volume[a], vb = state_->volume[b];
         if (va > 0.0 && vb > 0.0) {
             const double cond =
@@ -1262,7 +1286,7 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
     // re-reading members through `this` on every cell.
     constexpr bool swe = kSwe;
     const bool   perot   = !qcx_.empty() && !swe;
-    const bool   species = !sacc_L_.empty();
+    const bool   species = species_on_;
     const bool   front   = front_rebuild_;
     const double dry     = opts_->dry_depth;
 
@@ -1338,7 +1362,7 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
         if (species) {
             auto& tr = state_->transport;
             const double area = mesh_->tri_area[i];
-            sinkTemperatureWithEvap(i, evap * dt_c * area);              // S4
+            sinkIntensiveRowsWithEvap(i, evap * dt_c * area);            // S4/S4b
             sinkMassAtCellConc(i, infil * dt_c * area, tr.lost_infiltration);
             if (state_->coupling_flux[i] < 0.0)
                 sinkMassAtCellConc(i, -state_->coupling_flux[i] * dt_c * area,
@@ -1349,6 +1373,9 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
             const double rain_m3 = state_->rainfall[i] * dt_c * area;
             const auto ns  = static_cast<std::size_t>(tr.n_species);
             const auto nef = static_cast<std::size_t>(ed.ne);
+            // S7 (D-A22): as addCouplingSourceMass — inflow, not runoff.
+            if (!tr.cell_runoff_vol.empty() && state_->coupling_flux[i] > 0.0)
+                tr.cell_runoff_vol[i] -= state_->coupling_flux[i] * dt_c * area;
             for (std::size_t s = 0; s < ns; ++s) {
                 double dm = 0.0;
                 if (rain_m3 > 0.0 && s < tr.rain_conc.size() &&
@@ -1577,13 +1604,15 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
             // an inflow boundary brings water at zero concentration until S2
             // gives edges a species column. Applied volume, not requested,
             // so the species booking matches the water booking exactly.
-            if (!sacc_L_.empty()) {
+            if (species_on_) {
                 auto& tr = state_->transport;
                 if (v_new < v_old) {
                     sinkMassAtCellConc(i, v_old - v_new, tr.lost_boundary);
                 } else {
                     // S2: INFLOW carries the edge's [2D_BOUNDARY_QUALITY]
                     // concentration (0 when none was given — clean water).
+                    if (!tr.cell_runoff_vol.empty())          // S7: inflow
+                        tr.cell_runoff_vol[i] -= v_new - v_old;
                     const auto ns = static_cast<std::size_t>(tr.n_species);
                     if (k * ns + ns <= tr.bc_conc.size()) {
                         const double dv = v_new - v_old;
@@ -1682,13 +1711,13 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
             // and is booked per coupling point so S3's tuple can hand it to
             // the node's qual_mass_in; a 1D→2D spill arrives at zero
             // concentration until S3 carries the node's published value.
-            if (!sacc_L_.empty() && Q > 0.0) {
+            if (species_on_ && Q > 0.0) {
                 auto& tr = state_->transport;
                 const auto ns = static_cast<std::size_t>(tr.n_species);
                 double* pt = (k * ns < tr.exch_mass.size())
                                  ? &tr.exch_mass[k * ns] : nullptr;
                 sinkMassAtCellConc(ci, Q * dt_c, tr.lost_coupling, pt);
-            } else if (!sacc_L_.empty() && Q < 0.0) {
+            } else if (species_on_ && Q < 0.0) {
                 // S3 (D-2DT4): the spill arrives at the NODE's published
                 // concentration (`nodes.conc`, which all three 1D engines
                 // write), frozen for the batch like the node head. Nothing is
@@ -1707,6 +1736,8 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
                 if (conc_p && (ni + 1) * ns <= conc_p->size()) {
                     const auto& conc = *conc_p;
                     const double v_in = -Q * dt_c;
+                    if (!tr.cell_runoff_vol.empty())          // S7: inflow
+                        tr.cell_runoff_vol[ci] -= v_in;
                     for (std::size_t s = 0; s < ns; ++s) {
                         const double c = conc[ni * ns + s];
                         if (c == 0.0) continue;

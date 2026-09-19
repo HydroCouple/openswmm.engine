@@ -32,6 +32,7 @@
 #include "SimulationContext.hpp"
 #include "PerfTimers.hpp"
 #include "UnitConversion.hpp"
+#include "../quality/MsxSurfaceQuality.hpp"   // BW-MSX: species buildup / washoff
 #include "../hydrology/Gage.hpp"
 #include "../hydraulics/Link.hpp"
 #include "../hydraulics/XSectBatch.hpp"
@@ -139,6 +140,7 @@ void SWMMEngine::wire2DModelIO() noexcept {
     ctx_.twod_io.pending_bq = &surface_router_.pendingBoundaryQualityRows();
     ctx_.twod_io.infil      = &surface_router_.infil();
     ctx_.twod_io.gw         = &surface_router_.gwTransport();   // U4
+    ctx_.twod_io.surface_quality = &surface_router_.surfaceQuality();   // S7
     ctx_.twod_io.aquifer       = &surface_router_.aquiferConfig();     // G1
     ctx_.twod_io.aquifer_nodes = &surface_router_.aquiferNodeNames();  // G1
     ctx_.twod_io.aquifer_state = &surface_router_.subsurface().state();  // G1
@@ -228,6 +230,10 @@ int SWMMEngine::open(const char* inp_path,
         // the integrated groundwater kernel lands (one warning, below).
         twoD::registerGwTransportSections(surface_router_.gwTransport(),
                                           dip->registry());
+        // S7 (2026-09-19): [2D_COVERAGES] / [2D_LOADINGS] / [2D_CURB_LENGTH]
+        // — cell buildup / washoff / sweeping by the land-use convention.
+        twoD::registerSurfaceQualitySections(surface_router_.surfaceQuality(),
+                                             dip->registry());
         // G1: the [2D_AQUIFER*] sections — the two-zone groundwater kernel's
         // own parameters. Unlike the [GW_*] transport rows above, these are
         // NOT inert: a resolved row runs the kernel.
@@ -543,6 +549,10 @@ int SWMMEngine::open(const char* inp_path,
         perf::ScopedTimer _pt(perf::sec_open_resolve);
         input::resolve_cross_references(ctx_);
     }
+    // BW-MSX: bind the [BUILDUP]/[WASHOFF]/[LOADINGS] rows that name a
+    // reactions-component species — the component is applied above, the
+    // name tables are final here. Unresolvable names warn, never fail.
+    for (auto& w : msxsurf::resolve(ctx_)) ctx_.warnings.push_back(std::move(w));
 
 #ifdef OPENSWMM_HAS_2D
     // U4: validate the [GW_*] authoring rows now that the mesh, the species
@@ -2224,6 +2234,20 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         //      `if (IgnoreQuality) continue;`).
         if (!ctx_.options.ignore_quality) {
             stepSurfaceQuality(dt_runoff);
+            // BW-MSX: the same buildup / washoff arithmetic over the reactions
+            // component's species (separate store, same cadence).
+            msxsurf::step(ctx_, dt_runoff,
+                          datetime::addSeconds(ctx_.options.start_date, old_runoff_time_));
+#ifdef OPENSWMM_HAS_2D
+            // S7: the same relations on the 2D cells' land-use coverages —
+            // buildup, washoff into the cell rows, sweeping — at the runoff
+            // cadence, on the runoff calendar (dry days, sweep season).
+            if (surface_router_.surfaceQuality().active())
+                surface_router_.surfaceQuality().step(
+                    ctx_, surface_router_.mesh(), surface_router_.state(), dt_runoff,
+                    datetime::addSeconds(ctx_.options.start_date, old_runoff_time_),
+                    is_raining);
+#endif
         }
 
         // A5. Groundwater — IGNORE_GROUNDWATER skips the coupling + solver
@@ -2639,7 +2663,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             int np  = ctx_.n_pollutants();
             int nlu = ctx_.n_landuses();
             // IGNORE_QUALITY: skip street-sweeping buildup removal (runoff.c:274).
-            if (np > 0 && nlu > 0 && !is_raining
+            if ((np > 0 || msxsurf::active(ctx_)) && nlu > 0 && !is_raining
                 && !ctx_.options.ignore_quality) {
                 int sweep_doy = datetime::dayOfYear(abs_time);
                 int ss = ctx_.options.sweep_start;
@@ -2685,6 +2709,8 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                             ctx_.subcatches.sweep_last_swept[sw_idx] = 0.0;
 
                             double removal_frac = ctx_.landuses.sweep_removal[ulu] / 100.0;
+                            // BW-MSX: same event, same fractions, MSX store.
+                            msxsurf::sweep(ctx_, i, lu, frac, removal_frac);
                             for (int p = 0; p < np; ++p) {
                                 auto k = static_cast<std::size_t>(lu * np + p);
                                 double effic = landuse_solver_.washoff_params[k].sweep_effic / 100.0;
@@ -3961,6 +3987,10 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     ctx_.nodes.clearInflowSources();
 
     inflow_.computeAll(ctx_, routing_date, dt_routing);
+    // BW-MSX: this step's species washoff joins the external species loads
+    // (msx_ext_mass_in, re-zeroed by computeAll) that the ARD engine, the
+    // legacy MSX dispatch and LARD consume later in the step.
+    if (!ctx_.options.ignore_quality) msxsurf::deliver(ctx_, dt_routing);
 
     // B2a. RDII inflows — apply pre-computed values from wet weather step,
     //      or, under [FILES] USE RDII, the interface file's flows (legacy
@@ -6063,15 +6093,59 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
             const auto nt = static_cast<std::size_t>(tr.n_cells);
             snap.surface_species_conc.assign(
                 static_cast<std::size_t>(tr.n_species) * nt, 0.0);
-            for (int sp = 0; sp < tr.n_species; ++sp)
+            for (int sp = 0; sp < tr.n_species; ++sp) {
+                // S4b: the age row is an age-volume in SECONDS; every other
+                // age column the engine reports is in HOURS (the .out node /
+                // link / subcatchment columns above), so the 2D file is too.
+                const double scale = (sp == tr.age_row) ? 1.0 / 3600.0 : 1.0;
                 for (int c = 0; c < tr.n_cells; ++c) {
                     const double v_dry = dry_depth * mesh.tri_area[c];
                     snap.surface_species_conc[static_cast<std::size_t>(sp) * nt +
                                               static_cast<std::size_t>(c)] =
-                        tr.concentration(sp, c, st.volume[c], v_dry);
+                        scale * tr.concentration(sp, c, st.volume[c], v_dry);
                 }
+            }
+            // S4b: per-row unit labels so the file is self-describing —
+            // pollutant units from [POLLUTANTS], MSX units from the reactions
+            // component, hours for age, degC for temperature.
+            surface_species_units_.assign(static_cast<std::size_t>(tr.n_species),
+                                          std::string{});
+            for (int sp = 0; sp < tr.n_species; ++sp) {
+                std::string& u = surface_species_units_[static_cast<std::size_t>(sp)];
+                if (sp == tr.age_row)            u = "hours";
+                else if (sp == tr.temp_row)      u = "degC";
+                else if (sp < tr.n_pollut) {
+                    const auto up = static_cast<std::size_t>(sp);
+                    u = "MG/L";
+                    if (up < ctx_.pollutants.units.size()) {
+                        if (ctx_.pollutants.units[up] == MassUnits::UG_PER_L)     u = "UG/L";
+                        if (ctx_.pollutants.units[up] == MassUnits::COUNTS_PER_L) u = "#/L";
+                    }
+                } else {
+                    const auto um = static_cast<std::size_t>(sp - tr.n_pollut);
+                    u = (um < ctx_.reactions.species_units.size())
+                            ? ctx_.reactions.species_units[um] : std::string{"1"};
+                }
+            }
+            snap.surface_species_units = &surface_species_units_;
         } else {
             snap.surface_species_conc.clear();
+            snap.surface_species_units = nullptr;
+        }
+        // S7: the cells' buildup store, per surface species, user mass per
+        // unit land area — the same number the .rpt and the C API report.
+        const auto& sq = surface_router_.surfaceQuality();
+        if (sq.active()) {
+            const auto nt = static_cast<std::size_t>(sq.nCells());
+            snap.surface_buildup_count = sq.nSpecies();
+            snap.surface_buildup.assign(static_cast<std::size_t>(sq.nSpecies()) * nt, 0.0);
+            for (int s = 0; s < sq.nSpecies(); ++s)
+                for (int c = 0; c < sq.nCells(); ++c)
+                    snap.surface_buildup[static_cast<std::size_t>(s) * nt +
+                                         static_cast<std::size_t>(c)] = sq.buildupPerArea(c, s);
+        } else {
+            snap.surface_buildup_count = 0;
+            snap.surface_buildup.clear();
         }
     }
     const auto& infil_cum = surface_router_.infilCumulative();
@@ -6110,6 +6184,47 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
     snap.surface_stat_max_depth    = st.stat_max_depth;
     snap.surface_stat_max_velocity = st.stat_max_velocity;
     snap.surface_stat_max_cont_err = st.stat_max_cont_err;
+    // G-O: the two-zone aquifer's per-cell state and ledgers, SI, straight
+    // from the kernel's state (the same arrays swmm_gw2d_get_cell_bulk reads).
+    {
+        const auto& gw = surface_router_.subsurface();
+        snap.gw2d_active = gw.active();
+        if (gw.active()) {
+            const auto& g = gw.state();
+            const auto n = static_cast<std::size_t>(g.n_cells);
+            snap.gw2d_table_elev.assign(n, 0.0);
+            for (std::size_t c = 0; c < n; ++c)
+                snap.gw2d_table_elev[c] = g.z_bed[c] + g.hg[c];
+            snap.gw2d_hg            = g.hg;
+            snap.gw2d_hu            = g.hu;
+            snap.gw2d_recharge      = g.q0_last;
+            snap.gw2d_lateral       = g.qlat_last;
+            snap.gw2d_node_exchange = g.qnode_last;
+            snap.gw2d_deep          = g.qdeep_last;
+            snap.gw2d_et            = g.qet_last;
+            snap.gw2d_dunne         = g.dunne_last;
+            snap.gw2d_infil_in      = g.qplus_last;
+            snap.gw2d_bed_elev      = g.z_bed;
+            snap.gw2d_closure.assign(n, 0);
+            for (std::size_t c = 0; c < n; ++c)
+                snap.gw2d_closure[c] = static_cast<int>(g.closure[c]);
+            snap.gw2d_m_layers      = g.m_layers;
+            snap.gw2d_theta_sigma   = g.theta_sigma;
+            snap.gw2d_ledger = {g.led_recharge, g.led_lateral, g.led_deep, g.led_node,
+                                g.led_dunne, g.led_caprise, g.led_et, g.led_infil_in,
+                                g.led_init_storage, g.liveStorage(), g.continuityResidual()};
+            snap.gw2d_bed_exchange_cum = gw.bedExchangeCumulative();
+            snap.gw2d_node_names = surface_router_.aquiferNodeNames().empty()
+                                       ? nullptr : &surface_router_.aquiferNodeNames();
+        } else {
+            snap.gw2d_table_elev.clear(); snap.gw2d_hg.clear(); snap.gw2d_hu.clear();
+            snap.gw2d_recharge.clear(); snap.gw2d_lateral.clear(); snap.gw2d_node_exchange.clear();
+            snap.gw2d_deep.clear(); snap.gw2d_et.clear(); snap.gw2d_dunne.clear();
+            snap.gw2d_infil_in.clear(); snap.gw2d_bed_elev.clear(); snap.gw2d_closure.clear();
+            snap.gw2d_theta_sigma.clear(); snap.gw2d_m_layers = 0; snap.gw2d_ledger.clear();
+            snap.gw2d_bed_exchange_cum.clear(); snap.gw2d_node_names = nullptr;
+        }
+    }
 #else
     (void)snap;
 #endif
@@ -8177,6 +8292,10 @@ void SWMMEngine::initQuality() noexcept {
     // it any earlier would seed from GLOBAL and let the hotstart overwrite,
     // calling it later leaves the gap this closes.
     if (ctx_.reactions.n_species() > 0) transport::ensureMsxState(ctx_);
+    // BW-MSX: initial buildup of the reactions component's species —
+    // [LOADINGS] row or the buildup function at DRY_DAYS (legacy
+    // landuse_getInitBuildup), like the pollutant block above.
+    if (!ctx_.options.ignore_quality) msxsurf::initState(ctx_);
 }
 
 // ============================================================================

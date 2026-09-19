@@ -293,6 +293,58 @@ struct SimulationSnapshot {
     /// Null before S4 / when 2D transport is off; consumers fall back to
     /// `pollut_names`.
     const std::vector<std::string>* surface_species_names = nullptr;
+    /// S4b: per-row unit labels in the same order as `surface_species_names`
+    /// (pollutant units "MG/L" | "UG/L" | "#/L", the MSX species' declared
+    /// units, "hours" for `__WATER_AGE__`, "degC" for `__TEMPERATURE__`).
+    /// Null when 2D transport is off.
+    const std::vector<std::string>* surface_species_units = nullptr;
+    /**
+     * @brief S7: buildup on the cells' land-use surfaces, per surface species
+     *        (the pollutant and MSX rows only — the first
+     *        `surface_buildup_count` rows of `surface_species_names`), user
+     *        mass per acre (US) or hectare (SI), summed over the cell's land
+     *        uses. Layout `[species * surface_tri_count + face]`. Empty when
+     *        no `[2D_COVERAGES]` row resolved.
+     */
+    std::vector<double> surface_buildup;
+    int surface_buildup_count = 0;
+    /**
+     * @brief G-O: the two-zone `[2D_AQUIFER]` kernel's per-cell state, SI,
+     *        one value per face (`surface_tri_count`), empty when no aquifer
+     *        resolved. Rates are the cell's LAST firing (held between
+     *        firings, like the surface's held infiltration rate).
+     */
+    bool                gw2d_active = false;
+    std::vector<double> gw2d_table_elev;    ///< water-table elevation (m) = bed + hg
+    std::vector<double> gw2d_hg;            ///< saturated thickness (m)
+    std::vector<double> gw2d_hu;            ///< closure A bulk unsaturated storage (m of water); 0 under closure B
+    std::vector<double> gw2d_recharge;      ///< q0 (m/s), + down, − capillary rise
+    std::vector<double> gw2d_lateral;       ///< net lateral Darcy into the cell (m³/s)
+    std::vector<double> gw2d_node_exchange; ///< exchange with a 1D node (m³/s), + out of the aquifer
+    std::vector<double> gw2d_deep;          ///< deep loss (m/s)
+    std::vector<double> gw2d_et;            ///< subsurface ET (m/s, ≥ 0 out)
+    std::vector<double> gw2d_dunne;         ///< saturation excess returned to the surface (m³/s)
+    std::vector<double> gw2d_infil_in;      ///< infiltration delivered from the surface (m/s)
+    /// Static per-cell descriptors (filled every snapshot; the writer stores
+    /// them once): aquifer bottom elevation (m) and the resolved closure
+    /// (SWMM_GW2D_CLOSURE_*: 0 closed form, 1 enslaved, 2 sigma).
+    std::vector<double> gw2d_bed_elev;
+    std::vector<int>    gw2d_closure;
+    /// Closure B water content per σ layer, `[layer * surface_tri_count + face]`,
+    /// layer 0 at the ground surface; `gw2d_m_layers` layers. A cell not under
+    /// closure B carries 0 in every layer (mask with `gw2d_closure`).
+    std::vector<double> gw2d_theta_sigma;
+    int                 gw2d_m_layers = 0;
+    /// Domain ledger (m³, cumulative): recharge, lateral, deep, node, dunne,
+    /// caprise, et, infil_in, init_storage, storage (live, incl. accumulators),
+    /// continuity residual (ledgered) — the SWMM_GW2D_LED_* order plus the
+    /// residual last.
+    std::vector<double> gw2d_ledger;
+    /// Cumulative exchange per `[2D_AQUIFER_NODE]` bed (m³, + out of the
+    /// aquifer into the pipe), in the authored bed order; `gw2d_node_names`
+    /// is the parallel name list (null when there are no beds).
+    std::vector<double>             gw2d_bed_exchange_cum;
+    const std::vector<std::string>* gw2d_node_names = nullptr;
     std::vector<double> surface_edge_flux;      ///< Normal flux through each edge, flat [tri*3+edge]
     std::vector<double> surface_vert_head;      ///< Reconstructed head at vertices (m) — SOLVER field (dry-cell head = bed)
     std::vector<double> surface_vert_depth;     ///< SIGNED vertex depth η_v − z_v (m) — wet-masked, wetted-contact-gated render reconstruction; > 0 where water reaches the vertex, 0 = no-data sentinel (older engines also emitted negatives on the dry side of partially wet cells — readers stay negative-tolerant)

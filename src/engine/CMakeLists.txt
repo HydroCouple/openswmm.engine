@@ -464,6 +464,7 @@ if(OPENSWMM_BUILD_2D)
         RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
         2d/data/*.cpp
         2d/gw/*.cpp
+        2d/quality/*.cpp   # S7
         2d/infil/*.cpp
         2d/subsurface/*.cpp
         2d/mesh/*.cpp

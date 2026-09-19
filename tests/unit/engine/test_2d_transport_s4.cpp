@@ -209,6 +209,56 @@ TEST(SurfaceTransportS4, EvaporationConcentratesSolutesButNotTemperature) {
 }
 
 // ---------------------------------------------------------------------------
+// 1b (S4b). Evaporation and the AGE row: water leaves at the parcel's current
+//     age, so the mean age of what remains is unchanged — the 1D convention
+//     (WaterAgeLegacy "no evap factor", program plan D-A20). Before S4b the
+//     age row was left like a solute and the pond aged by evaporating.
+//     Solver-level (no router), so no aging term: age must be CONSTANT to
+//     round-off while the volume falls by E·T, and the solute still
+//     concentrates (S1 is untouched).
+// ---------------------------------------------------------------------------
+TEST(SurfaceTransportS4, EvaporationLeavesTheMeanAgeUnchanged) {
+    auto mesh = makeStrip(10, 4, 1.0);
+    SolverOptions2D opts;
+    opts.lts_tiers = 1;
+    const double c0 = 3.0, age0 = 7200.0, t0 = 17.5, h0 = 0.5, E = 2.0e-5, T = 600.0;
+    SurfaceStateData s;
+    s.resize(mesh.n_triangles(), mesh.n_vertices());
+    s.transport.resize(3, mesh.n_triangles(), 0);
+    s.transport.n_pollut = 1;
+    s.transport.age_row  = 1;
+    s.transport.temp_row = 2;
+    s.transport.row_names = {"Cu", "__WATER_AGE__", "__TEMPERATURE__"};
+    for (int i = 0; i < mesh.n_triangles(); ++i) {
+        s.volume[i] = h0 * mesh.tri_area[i];
+        inertial::cellEtaDepth(mesh, opts, i, s.volume[i], s.head[i], s.depth[i]);
+        s.transport.cell_mass[s.transport.idx(0, i)] = c0   * s.volume[i];
+        s.transport.cell_mass[s.transport.idx(1, i)] = age0 * s.volume[i];
+        s.transport.cell_mass[s.transport.idx(2, i)] = t0   * s.volume[i];
+    }
+    std::fill(s.evap_rate.begin(), s.evap_rate.end(), E);
+
+    ExplicitInertialSolver solver;
+    solver.initialize(mesh, s, opts);
+    run(solver, T);
+
+    const double c_exp = c0 * h0 / (h0 - E * T);
+    for (int i = 0; i < mesh.n_triangles(); ++i) {
+        ASSERT_GT(s.volume[i], 0.0);
+        EXPECT_NEAR(s.volume[i], (h0 - E * T) * mesh.tri_area[i],
+                    1.0e-9 * h0 * mesh.tri_area[i]) << "volume at cell " << i;
+        const double c   = s.transport.cell_mass[s.transport.idx(0, i)] / s.volume[i];
+        const double age = s.transport.cell_mass[s.transport.idx(1, i)] / s.volume[i];
+        const double t   = s.transport.cell_mass[s.transport.idx(2, i)] / s.volume[i];
+        EXPECT_NEAR(c, c_exp, 1.0e-9 * c_exp) << "solute at cell " << i;
+        EXPECT_NEAR(age, age0, 1.0e-9 * age0)
+            << "age at cell " << i
+            << " — evaporation must leave at the water's own age";
+        EXPECT_NEAR(t, t0, 1.0e-9 * t0) << "temperature at cell " << i;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 2. Signed row: a pond at −5 °C stays −5 °C under evaporation and under a
 //    dispersive step between −5 and +5 conserves T·V and obeys the max
 //    principle in BOTH directions (no "mass ≥ 0" guard bites a negative).
@@ -276,15 +326,44 @@ TEST(SurfaceTransportS4, RowsFollowThe1DLayoutAndAStillPanAgesExactly) {
     EXPECT_TRUE(r.eng->context().nodes.coupling_tuple_temp);
 
     const double elapsed = 20.0 * 60.0;
+    // S4b: `[2D_INITIAL_QUALITY] __WATER_AGE__ 100` is 100 HOURS (the 1D
+    // authoring convention); the row itself is an age-volume in seconds.
+    const double age0_s = 100.0 * 3600.0;
     for (int c = 0; c < tr.n_cells; ++c) {
         ASSERT_GT(st.volume[c], 0.0);
         const double age = tr.cell_mass[tr.idx(1, c)] / st.volume[c];
         const double tmp = tr.cell_mass[tr.idx(2, c)] / st.volume[c];
-        EXPECT_NEAR(age, 100.0 + elapsed, 1.0e-9 * (100.0 + elapsed))
+        EXPECT_NEAR(age, age0_s + elapsed, 1.0e-9 * (age0_s + elapsed))
             << "cell " << c << " did not age by exactly the elapsed time";
         EXPECT_NEAR(tmp, 12.5, 1.0e-9 * 12.5) << "cell " << c;
     }
     close(r);
+}
+
+// ---------------------------------------------------------------------------
+// 3b (S4b). The GPU/Kokkos plugin carries no transport rows: a deck with any
+//     transported row must be served by the CPU marcher and SAY SO in the
+//     solver notice, whether or not a plugin is installed on this machine.
+//     A deck without transport keeps the plain notice.
+// ---------------------------------------------------------------------------
+TEST(SurfaceTransportS4, TransportRowsRefuseTheKokkosPluginLoudly) {
+    CoupledRun r = runDeck("_s4_kokkos_tr", deck(
+        "WATER_AGE            YES\n",
+        "[2D_INITIAL_QUALITY]\n* __WATER_AGE__ 1\n\n", "O1", -10.0, 0.5), false);
+    ASSERT_TRUE(r.ok);
+    bool said = false;
+    for (const auto& w : r.eng->surfaceRouter2D().threadWarnings())
+        if (w.find("carries no transport rows") != std::string::npos) said = true;
+    EXPECT_TRUE(said) << "transport on: the notice must name the plugin refusal";
+    close(r);
+
+    CoupledRun q = runDeck("_s4_kokkos_notr", deck(
+        "IGNORE_QUALITY       YES\n", "", "O1", -10.0, 0.5), false);
+    ASSERT_TRUE(q.ok);
+    for (const auto& w : q.eng->surfaceRouter2D().threadWarnings())
+        EXPECT_EQ(w.find("carries no transport rows"), std::string::npos)
+            << "no transport: the refusal must not be claimed";
+    close(q);
 }
 
 // ---------------------------------------------------------------------------

@@ -202,6 +202,15 @@ public:
     }
     /// Zero the per-node ledger at the start of a routing batch.
     void resetNodeExchangeVolumes() noexcept;
+    /// G-O: the `[2D_AQUIFER_NODE]` beds as resolved (cell index filled),
+    /// in the authored order — parallel to SurfaceRouter2D::aquiferNodeNames().
+    const std::vector<GwNodeBed>& nodeBeds() const noexcept { return node_beds_; }
+    /// G-O: cumulative exchange per bed (m³, + out of the aquifer into the
+    /// pipe) since the start — the results-file series behind the GUI's
+    /// GwExchange plot. Never reset.
+    const std::vector<double>& bedExchangeCumulative() const noexcept {
+        return bed_exchange_cum_;
+    }
 
     /// Storage now, for the continuity ledger.
     double storage() const noexcept { return state_.storage(); }
@@ -222,6 +231,7 @@ private:
     SubsurfaceState  state_;
     GwOptions        options_;
     std::vector<GwNodeBed> node_beds_;
+    std::vector<double>    bed_exchange_cum_;   ///< G-O: per bed (m³), cumulative
 
     const MeshData*      mesh_  = nullptr;
     const InertialEdges* edges_ = nullptr;

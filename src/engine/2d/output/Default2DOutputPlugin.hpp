@@ -251,6 +251,29 @@ private:
     /// model has no 2D transport.
     hid_t   ds_face_species_conc_  = H5I_INVALID_HID;
     hsize_t n_species_             = 0;
+    /// S7: [nTime, nSurfaceSpecies, nFace] cell buildup per unit land area
+    /// (the pollutant and MSX rows). Created lazily; absent when no
+    /// [2D_COVERAGES] row resolved or BUILDUP is off.
+    hid_t   ds_face_buildup_       = H5I_INVALID_HID;
+    hsize_t n_buildup_             = 0;
+    /// G-O: the two-zone aquifer's results — ten per-cell [nTime, nFace]
+    /// fields, the domain ledger [nTime, 11], the per-bed cumulative node
+    /// exchange [nTime, nBeds] and (GW_DETAILED) the σ columns
+    /// [nTime, mLayers, nFace]. Created lazily on the first update() with a
+    /// live kernel; absent otherwise. `Mesh2_face_gw_bed_elev` and
+    /// `Mesh2_face_gw_closure` are static [nFace] and written once.
+    static constexpr int kGwFaceFields = 10;
+    hid_t   ds_gw_face_[kGwFaceFields] = {H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID,
+                                          H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID,
+                                          H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID,
+                                          H5I_INVALID_HID};
+    hid_t   ds_gw_ledger_          = H5I_INVALID_HID;
+    hid_t   ds_gw_bed_exchange_    = H5I_INVALID_HID;
+    hid_t   ds_gw_theta_           = H5I_INVALID_HID;
+    hsize_t n_gw_beds_             = 0;
+    hsize_t n_gw_layers_           = 0;
+    bool    gw_created_            = false;
+    void createGroundwaterDatasets(const SimulationSnapshot& snap);
     hid_t ds_face_vx_              = H5I_INVALID_HID;
     hid_t ds_face_vy_              = H5I_INVALID_HID;
     hid_t ds_face_continuity_err_  = H5I_INVALID_HID;

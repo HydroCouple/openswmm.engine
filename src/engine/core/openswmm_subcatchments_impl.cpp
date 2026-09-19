@@ -527,6 +527,19 @@ SWMM_ENGINE_API int swmm_subcatch_set_initial_loading(SWMM_Engine engine, int sc
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(sc_idx >= 0 && sc_idx < ctx.n_subcatches());
+    if (pollut_idx >= ctx.n_pollutants()) {          // BW-MSX species index
+        auto& ms = ctx.reactions.surface;
+        const int m = pollut_idx - ctx.n_pollutants();
+        CHECK_INDEX(m >= 0 && m < ctx.reactions.n_species());
+        if (ms.n_landuses != ctx.n_landuses() || ms.n_species != ctx.reactions.n_species())
+            ms.resize_params(ctx.n_landuses(), ctx.reactions.n_species());
+        const auto want = static_cast<std::size_t>(ctx.n_subcatches()) *
+                          static_cast<std::size_t>(ms.n_species);
+        if (ms.init_loading.size() != want) ms.init_loading.assign(want, 0.0);
+        ms.init_loading[ms.sidx(sc_idx, m)] = buildup;
+        ms.resolved = true;
+        return SWMM_OK;
+    }
     CHECK_INDEX(pollut_idx >= 0 && pollut_idx < ctx.n_pollutants());
 
     // Ensure the quality arrays are sized ([LOADINGS] parks the initial
@@ -548,6 +561,17 @@ SWMM_ENGINE_API int swmm_subcatch_get_initial_loading(SWMM_Engine engine, int sc
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(sc_idx >= 0 && sc_idx < ctx.n_subcatches());
+    if (pollut_idx >= ctx.n_pollutants()) {          // BW-MSX species index
+        const auto& ms = ctx.reactions.surface;
+        const int m = pollut_idx - ctx.n_pollutants();
+        CHECK_INDEX(m >= 0 && m < ctx.reactions.n_species());
+        const auto want = static_cast<std::size_t>(ctx.n_subcatches()) *
+                          static_cast<std::size_t>(ms.n_species);
+        if (buildup) *buildup = (ms.n_species == ctx.reactions.n_species() &&
+                                 ms.init_loading.size() == want)
+                                    ? ms.init_loading[ms.sidx(sc_idx, m)] : 0.0;
+        return SWMM_OK;
+    }
     CHECK_INDEX(pollut_idx >= 0 && pollut_idx < ctx.n_pollutants());
 
     if (ctx.subcatches.conc.empty() ||

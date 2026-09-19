@@ -211,6 +211,15 @@ void handle_coverages(SimulationContext& ctx, const std::vector<std::string>& li
     if (ctx.subcatches.coverage.size() < total) {
         ctx.subcatches.coverage.assign(total, 0.0);
     }
+    // BW-MSX round (2026-09-19), pre-existing defect: the per-(subcatchment,
+    // land use) last-swept counters were sized only by the C API
+    // (resize_coverage) and the GeoPackage reader — never by this handler —
+    // so street sweeping silently never fired on an .inp deck (the A7 loop
+    // skips any index past the empty array). Size them with the coverage
+    // matrix, as resize_coverage does.
+    if (ctx.subcatches.sweep_last_swept.size() < total) {
+        ctx.subcatches.sweep_last_swept.assign(total, 0.0);
+    }
     ctx.subcatches.coverage_n_landuses = n_landuses;
 
     for (const auto& line : lines) {
@@ -235,10 +244,11 @@ void handle_coverages(SimulationContext& ctx, const std::vector<std::string>& li
 void handle_buildup(SimulationContext& ctx, const std::vector<std::string>& lines) {
     const int n_landuses   = ctx.landuse_names.size();
     const int n_pollutants = ctx.pollutant_names.size();
-    if (n_landuses <= 0 || n_pollutants <= 0) return;
+    if (n_landuses <= 0) return;
 
     // Ensure buildup arrays are sized
-    if (ctx.buildup.n_landuses != n_landuses || ctx.buildup.n_pollutants != n_pollutants) {
+    if (n_pollutants > 0 &&
+        (ctx.buildup.n_landuses != n_landuses || ctx.buildup.n_pollutants != n_pollutants)) {
         ctx.buildup.resize(n_landuses, n_pollutants);
     }
 
@@ -251,7 +261,25 @@ void handle_buildup(SimulationContext& ctx, const std::vector<std::string>& line
         if (lu_idx < 0) continue;
 
         const int p_idx = ctx.pollutant_names.find(tok[1]);
-        if (p_idx < 0) continue;
+        if (p_idx < 0) {
+            // BW-MSX: not a pollutant — park the row by name for the
+            // reactions component's species, resolved after the component
+            // is applied (msxsurf::resolve). Same deferral as [INITIAL_QUALITY].
+            MsxSurfaceRows::Buildup r;
+            r.landuse = tok[0]; r.species = tok[1];
+            const std::string ts = Tokenizer::to_upper(tok[2]);
+            r.func_type = (ts == "POW") ? 1 : (ts == "EXP") ? 2 : (ts == "SAT") ? 3 : (ts == "EXT") ? 4 : 0;
+            r.c1 = to_double(tok[3]);
+            r.c2 = to_double(tok[4]);
+            if (tok.size() > 5) {
+                if (r.func_type == 4) r.ts_name = tok[5];
+                else                  r.c3 = to_double(tok[5]);
+            }
+            if (tok.size() > 6) r.normalizer = (Tokenizer::to_upper(tok[6]) == "CURB") ? 1 : 0;
+            ctx.reactions.surface.rows.buildup.push_back(std::move(r));
+            continue;
+        }
+        if (n_pollutants <= 0) continue;
 
         const auto flat = static_cast<std::size_t>(lu_idx * n_pollutants + p_idx);
 
@@ -292,10 +320,11 @@ void handle_buildup(SimulationContext& ctx, const std::vector<std::string>& line
 void handle_washoff(SimulationContext& ctx, const std::vector<std::string>& lines) {
     const int n_landuses   = ctx.landuse_names.size();
     const int n_pollutants = ctx.pollutant_names.size();
-    if (n_landuses <= 0 || n_pollutants <= 0) return;
+    if (n_landuses <= 0) return;
 
     // Ensure washoff arrays are sized
-    if (ctx.washoff.n_landuses != n_landuses || ctx.washoff.n_pollutants != n_pollutants) {
+    if (n_pollutants > 0 &&
+        (ctx.washoff.n_landuses != n_landuses || ctx.washoff.n_pollutants != n_pollutants)) {
         ctx.washoff.resize(n_landuses, n_pollutants);
     }
 
@@ -308,7 +337,20 @@ void handle_washoff(SimulationContext& ctx, const std::vector<std::string>& line
         if (lu_idx < 0) continue;
 
         const int p_idx = ctx.pollutant_names.find(tok[1]);
-        if (p_idx < 0) continue;
+        if (p_idx < 0) {
+            // BW-MSX: park by name (see handle_buildup).
+            MsxSurfaceRows::Washoff r;
+            r.landuse = tok[0]; r.species = tok[1];
+            const std::string ts = Tokenizer::to_upper(tok[2]);
+            r.func_type = (ts == "EXP") ? 1 : (ts == "RC") ? 2 : (ts == "EMC") ? 3 : 0;
+            r.coeff = to_double(tok[3]);
+            r.expon = to_double(tok[4]);
+            if (tok.size() > 5) r.sweep_effic = to_double(tok[5]);
+            if (tok.size() > 6) r.bmp_effic   = to_double(tok[6]);
+            ctx.reactions.surface.rows.washoff.push_back(std::move(r));
+            continue;
+        }
+        if (n_pollutants <= 0) continue;
 
         const auto flat = static_cast<std::size_t>(lu_idx * n_pollutants + p_idx);
 
@@ -370,6 +412,17 @@ void handle_treatment(SimulationContext& ctx, const std::vector<std::string>& li
 
 void handle_loadings(SimulationContext& ctx, const std::vector<std::string>& lines) {
     const int n_pollutants = ctx.pollutant_names.size();
+    // BW-MSX: rows naming a non-pollutant are parked by name for the
+    // reactions component's species (msxsurf::resolve); a deck with no
+    // [POLLUTANTS] at all may still carry MSX loadings.
+    for (const auto& line : lines) {
+        auto tok = Tokenizer::tokenize(line);
+        if (tok.size() < 3) continue;
+        if (ctx.pollutant_names.find(tok[1]) >= 0) continue;
+        MsxSurfaceRows::Loading r;
+        r.subcatch = tok[0]; r.species = tok[1]; r.value = to_double(tok[2]);
+        ctx.reactions.surface.rows.loadings.push_back(std::move(r));
+    }
     if (n_pollutants <= 0) return;
 
     // Size the quality arrays now (iteration 4): they used to be sized only

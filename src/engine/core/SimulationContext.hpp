@@ -333,7 +333,8 @@ struct PendingBoundaryRow;
 struct PendingEdgeConveyanceRow;
 struct PendingInitialQualityRow;
 struct PendingBoundaryQualityRow;
-struct GwTransportData;   // U4 (2026-09-07)
+struct GwTransportData;
+class SurfaceQuality2D;   // S7 (2026-09-19)
 struct SubsurfaceConfig;  // G1: the [2D_AQUIFER*] rows
 struct SubsurfaceState;   // G1: the running two-zone kernel state
 } // namespace twoD
@@ -933,6 +934,10 @@ struct SimulationContext {
         /// Authoring-only until the integrated groundwater kernel lands —
         /// see GwTransportData.hpp.
         twoD::GwTransportData*                       gw         = nullptr;
+        /// S7 (2026-09-19): the `[2D_COVERAGES]` / `[2D_LOADINGS]` /
+        /// `[2D_CURB_LENGTH]` rows and the cell buildup store. Owned by
+        /// SurfaceRouter2D like `gw`; null without 2D support.
+        twoD::SurfaceQuality2D*                      surface_quality = nullptr;
         /// G1: the `[2D_AQUIFER*]` rows, in the user's OWN units. Owned by
         /// SurfaceRouter2D; the section handlers fill it and the InpWriter
         /// echoes it back verbatim. The SI values live only in the kernel's

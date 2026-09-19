@@ -207,6 +207,21 @@ struct SubsurfaceState {
     void resize(int n, int m);
     /// Total water in both zones (m³) — the continuity check's storage term.
     double storage() const noexcept;
+    /// G-O: everything the aquifer HOLDS now, including water parked in a
+    /// side accumulator (in flight between cells, received from the surface
+    /// and not yet absorbed, pushed out and not yet taken) — what
+    /// SWMM_GW2D_LED_STORAGE reports. `nacc` is deliberately not subtracted:
+    /// that water is still inside `hg` until a cell applies it.
+    double liveStorage() const noexcept;
+    /// G-O: the storage the LEDGER can account for — holdings less the two
+    /// surface accumulators, which are always one firing out of phase with
+    /// `led_infil_in` / `led_dunne` (see continuityResidual).
+    double ledgeredStorage() const noexcept;
+    /// G-O: `ledgeredStorage − led_init_storage − (in − out)` with
+    /// in = infil_in + lateral, out = deep + node + et + dunne; recharge and
+    /// capillary rise are internal to a cell and do not appear. Zero to
+    /// machine precision for a conserving kernel (swmm_gw2d_get_continuity_error).
+    double continuityResidual() const noexcept;
 };
 
 /**
