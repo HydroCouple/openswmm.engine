@@ -786,6 +786,7 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
 void DWSolver::refreshConduitTile(const SimulationContext& ctx) {
     auto nc = static_cast<std::size_t>(n_conduits_);
     tile_uj_.resize(nc);
+    tile_crow_.resize(nc);
     tile_n1_.resize(nc);
     tile_n2_.resize(nc);
     tile_inv1_elev_.resize(nc);
@@ -841,6 +842,7 @@ void DWSolver::refreshConduitTile(const SimulationContext& ctx) {
         auto un2 = static_cast<std::size_t>(n2);
 
         tile_uj_[uci]            = j;
+        tile_crow_[uci]          = static_cast<int>(ucr);
         tile_n1_[uci]            = n1;
         tile_n2_[uci]            = n2;
         tile_inv1_elev_[uci]     = nodes.invert_elev[un1];
@@ -1979,10 +1981,13 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
                 double w1 = width1_[uj];
                 double wM = width_mid_[uj];
                 double w2 = width2_[uj];
-                if (width_mid_[uj] > FUDGE) {
-                    surfArea1 = (w1 + wM) * length / 4.0;
-                    surfArea2 = (wM + w2) * length / 4.0 * fasnh;
-                }
+                // No width floor: legacy assigns the area unconditionally
+                // (dwflow.c:550-554). Gating on width_mid_ > FUDGE dropped the
+                // whole contribution of a barely-wet conduit, so its end nodes
+                // fell back to MIN_SURFAREA and their depth update overshot —
+                // 1950-h-h-elements' S147-283 at routing step 197.
+                surfArea1 = (w1 + wM) * length / 4.0;
+                surfArea2 = (wM + w2) * length / 4.0 * fasnh;
                 break;
             }
             case FlowClass::UP_CRITICAL: {
@@ -2197,6 +2202,15 @@ void DWSolver::recomputeConduitLossOne(SimulationContext& ctx, double dt,
         const auto uci = static_cast<std::size_t>(ci);
         const int uj = conduit_idx_[uci];
         const auto u = static_cast<std::size_t>(uj);
+        // ConduitData is indexed by conduit ROW, which is NOT the tile index:
+        // conduit_idx_ skips DUMMY-shaped conduits, so on any deck holding one
+        // the two diverge from that conduit on. Reading `CD.length[uci]` /
+        // `CD.seep_rate[uci]` took ANOTHER conduit's geometry (greenville's
+        // 407OF evaporated over 215 ft instead of its own 415), and writing
+        // the loss rates at `[uci]` put them in a row that SWMMEngine's mass
+        // balance, QualityRouting and the KW solver then read as some other
+        // conduit's.
+        const auto ucr = static_cast<std::size_t>(tile_crow_[uci]);
 
         // PARITY dwflow.c:118-119 + :189-203: findConduitFlow ZEROES
         // Conduit.evapLossRate/seepLossRate on entry and only recomputes them
@@ -2211,8 +2225,8 @@ void DWSolver::recomputeConduitLossOne(SimulationContext& ctx, double dt,
         if (fc == FlowClass::DRY || fc == FlowClass::UP_DRY ||
             fc == FlowClass::DN_DRY || area_mid_[u] <= FUDGE ||
             tile_is_closed_[uci] || links.setting[u] == 0.0) {
-            CD.evap_loss_rate[uci] = 0.0;
-            CD.seep_loss_rate[uci] = 0.0;
+            CD.evap_loss_rate[ucr] = 0.0;
+            CD.seep_loss_rate[ucr] = 0.0;
             return;
         }
 
@@ -2223,12 +2237,12 @@ void DWSolver::recomputeConduitLossOne(SimulationContext& ctx, double dt,
 
         if (depth > FUDGE) {
             // Raw user length (legacy conduit_getLength), not modLength.
-            double length = CD.length[uci];
-            if (length <= 0.0) length = CD.mod_length[uci];
+            double length = CD.length[ucr];
+            if (length <= 0.0) length = CD.mod_length[ucr];
             const int shape = links.xsect_batch_shape[u];
 
             const bool wantEvap = xsect::isOpen(shape) && evap > 0.0;
-            const bool wantSeep = CD.seep_rate[uci] > 0.0;
+            const bool wantSeep = CD.seep_rate[ucr] > 0.0;
             if (wantEvap || wantSeep) {
                 const XSectParams xs = buildXSP(ctx, u);  // faithful incl. transect
                 if (wantEvap) {
@@ -2244,7 +2258,7 @@ void DWSolver::recomputeConduitLossOne(SimulationContext& ctx, double dt,
                         (shape == static_cast<int>(XSectShape::RECT_CLOSED))
                             ? xs.w_max
                             : xsect::getWofY(xs, d_seep);
-                    seep_loss = CD.seep_rate[uci] * width * length;
+                    seep_loss = CD.seep_rate[ucr] * width * length;
                     // Monthly conductivity adjustment (legacy link.c:1378:
                     // seepLossRate *= Adjust.hydconFactor). infil_factor
                     // mirrors adjust_hydcon[mon] each step (A2d) and is 1.0
@@ -2265,8 +2279,8 @@ void DWSolver::recomputeConduitLossOne(SimulationContext& ctx, double dt,
             }
         }
 
-        CD.evap_loss_rate[uci] = evap_loss;
-        CD.seep_loss_rate[uci] = seep_loss;
+        CD.evap_loss_rate[ucr] = evap_loss;
+        CD.seep_loss_rate[ucr] = seep_loss;
     }
 }
 
@@ -2493,7 +2507,7 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
                                double barrels_d, bool isFull) {
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
-    auto& CD = ctx.link_subtypes.conduits;  // Phase 6 Stage B: inlet_control / normal_flow_limited (row==uci)
+    auto& CD = ctx.link_subtypes.conduits;  // inlet_control / normal_flow_limited, indexed by conduit ROW
     const int normal_flow_ltd = ctx.options.normal_flow_ltd;
     // Phase A extension: read invariants from the conduit-dense tile.
     auto uci = static_cast<std::size_t>(tile_uj_to_ci_[uj]);
@@ -2505,8 +2519,9 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
     auto un2 = static_cast<std::size_t>(n2);
 
     // Inlet control and normal flow limiting
-    CD.inlet_control[uci] = uint8_t{0};
-    CD.normal_flow_limited[uci] = uint8_t{0};
+    const auto ucr = static_cast<std::size_t>(tile_crow_[uci]);
+    CD.inlet_control[ucr] = uint8_t{0};
+    CD.normal_flow_limited[ucr] = uint8_t{0};
     if (q > 0.0) {
         if (tile_culvert_code_[uci] > 0 && !isFull) {
             // legacy culvert_getInflow(j, q, h1): the head above the
@@ -2523,7 +2538,7 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
             if (inlet) {
                 q = q_inlet;
                 dqdh_[uj] = dqdh_culv;
-                CD.inlet_control[uci] = uint8_t{1};
+                CD.inlet_control[ucr] = uint8_t{1};
             }
         } else {
             FlowClass fc2 = links.flow_class[uj];
@@ -2576,7 +2591,7 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
 #endif
                     if (qNorm < q) {
                         q = qNorm;
-                        CD.normal_flow_limited[uci] = uint8_t{1};
+                        CD.normal_flow_limited[ucr] = uint8_t{1};
                     }
                 }
             }
@@ -2858,7 +2873,8 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
     double dq6 = 0.0;
     {
         double conduit_length = tile_links_length_[uci];
-        double loss_rate = CD.evap_loss_rate[uci] + CD.seep_loss_rate[uci];  // row==uci
+        const auto ucr6 = static_cast<std::size_t>(tile_crow_[uci]);
+        double loss_rate = CD.evap_loss_rate[ucr6] + CD.seep_loss_rate[ucr6];
         if (loss_rate > 0.0 && conduit_length > 0.0)
             dq6 = loss_rate * 2.5 * dt * v / conduit_length;
     }
@@ -3123,7 +3139,8 @@ void DWSolver::processForceMainLink(SimulationContext& ctx, double dt, int step,
     double dq6 = 0.0;
     {
         double conduit_length = tile_links_length_[uci];
-        double loss_rate = CD.evap_loss_rate[uci] + CD.seep_loss_rate[uci];  // row==uci
+        const auto ucr6 = static_cast<std::size_t>(tile_crow_[uci]);
+        double loss_rate = CD.evap_loss_rate[ucr6] + CD.seep_loss_rate[ucr6];
         if (loss_rate > 0.0 && conduit_length > 0.0)
             dq6 = loss_rate * 2.5 * dt * v / conduit_length;
     }
@@ -3215,9 +3232,10 @@ void DWSolver::updateNodeFlows(SimulationContext& ctx) {
 
         // Add conduit evap/seepage loss to node outflows (matching legacy lines 542-558)
         if (links.type[uj] == LinkType::CONDUIT) {
-            const auto uci_l = static_cast<std::size_t>(tile_uj_to_ci_[uj]);  // row==ci
-            double conduit_loss = (ctx.link_subtypes.conduits.evap_loss_rate[uci_l]
-                                   + ctx.link_subtypes.conduits.seep_loss_rate[uci_l])
+            const auto uci_l = static_cast<std::size_t>(tile_uj_to_ci_[uj]);
+            const auto ucr_l = static_cast<std::size_t>(tile_crow_[uci_l]);
+            double conduit_loss = (ctx.link_subtypes.conduits.evap_loss_rate[ucr_l]
+                                   + ctx.link_subtypes.conduits.seep_loss_rate[ucr_l])
                                   * tile_barrels_d_[uci_l];
             if (conduit_loss > 0.0) {
                 // Split loss between nodes unless one is an outfall
@@ -3299,8 +3317,9 @@ void DWSolver::gatherConduitNodeFlows(SimulationContext& ctx) {
             // 542-558): halved when neither end is an outfall; outfall ends
             // receive no share. Recomputing the halved value per node is
             // bit-identical to the serial once-per-link computation.
-            double conduit_loss = (CD.evap_loss_rate[uci]
-                                   + CD.seep_loss_rate[uci])
+            const auto ucr_g = static_cast<std::size_t>(tile_crow_[uci]);
+            double conduit_loss = (CD.evap_loss_rate[ucr_g]
+                                   + CD.seep_loss_rate[ucr_g])
                                   * tile_barrels_d_[uci];
             if (conduit_loss > 0.0) {
                 if (!self_outfall && !csr_other_outfall_[uk])

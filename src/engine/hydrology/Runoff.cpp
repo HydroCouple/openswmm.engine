@@ -478,8 +478,17 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             if (surfEvap + infil >= surfMoisture) {
                 depth = 0.0;
             } else {
-                // Step 3.7: Subtract losses from inflow before ODE (legacy line 954)
-                double net_inflow = inflow - surfEvap - infil;
+                // Step 3.7: Subtract losses from inflow before ODE. Legacy is
+                // `subarea->inflow -= surfEvap + infil` (subcatch.c:1002) — the
+                // two losses are summed FIRST and the sum subtracted once.
+                // Written as `inflow - surfEvap - infil` the subtraction
+                // rounds twice and lands one ULP away whenever the pervious
+                // infiltration is small next to the evaporation; that ULP
+                // seeds the whole network (user3's CCECROY at runoff step
+                // 11641 of 43200, then every link flow from report period 107
+                // on). Impervious subareas have infil == 0.0 and are
+                // unaffected either way.
+                double net_inflow = inflow - (surfEvap + infil);
                 // Step 3.8: Integrate ponded depth (legacy updatePondedDepth:
                 // with alpha 0 the depth simply accumulates), and keep the
                 // time it spent above storage for the no-routing case.
@@ -596,9 +605,41 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         double runoff1  = processSubarea(soa_.depth_imperv1[ui], alpha_i,
                                          soa_.ds_imperv[ui], f1, false, runon_imperv1,
                                          soa_.n_imperv[ui]);
+        // legacy adjustSubareaParams (subcatch.c:1168-1200): the PERVIOUS
+        // subarea's depression storage and runoff coefficient carry this
+        // month's [ADJUSTMENTS] DSTORE / N-PERV pattern, re-applied to the
+        // STORED values every runoff step. Alpha is DIVIDED by the roughness
+        // factor — not re-derived from n*f, which rounds differently — and a
+        // factor <= 0 zeroes it outright. v6 instead scaled ctx.subcatches
+        // .n_perv / .ds_perv once per step, which the runoff kernel never
+        // read back (its alphas and storages are snapshotted in init()), so
+        // both adjustments were inert.
+        double alpha_p_adj  = alpha_p;
+        double ds_perv_adj  = soa_.ds_perv[ui];
+        if (month >= 0) {
+            const auto umon = static_cast<std::size_t>(month);
+            auto monthly = [&](const std::vector<int>& pat, double& out) -> bool {
+                if (ui >= pat.size()) return false;
+                const int pi = pat[ui];
+                if (pi < 0) return false;
+                const auto upi = static_cast<std::size_t>(pi);
+                if (upi >= ctx.patterns.types.size() || ctx.patterns.types[upi] != 0)
+                    return false;
+                const auto& facs = ctx.patterns.factors[upi];
+                if (umon >= facs.size()) return false;
+                out = facs[umon];
+                return true;
+            };
+            double f = 0.0;
+            if (monthly(ctx.subcatch_d_store_pattern, f) && f >= 0.0)
+                ds_perv_adj *= f;
+            if (monthly(ctx.subcatch_n_perv_pattern, f))
+                alpha_p_adj = (f <= 0.0) ? 0.0 : alpha_p_adj / f;
+        }
+
         precip = precip_perv;
-        double runoff_p = processSubarea(soa_.depth_perv[ui], alpha_p,
-                                         soa_.ds_perv[ui], fp, true, runon_perv,
+        double runoff_p = processSubarea(soa_.depth_perv[ui], alpha_p_adj,
+                                         ds_perv_adj, fp, true, runon_perv,
                                          soa_.n_perv[ui]);
         precip = precip_[ui];   // restore for subsequent use
 

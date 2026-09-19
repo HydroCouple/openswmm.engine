@@ -322,6 +322,11 @@ private:
     // timestep, or per outfall update.
     // ------------------------------------------------------------------------
     std::vector<int>    tile_uj_;            ///< == conduit_idx_, co-located with rest
+    /// ConduitData row of tile entry ci. NOT the tile index: conduit_idx_
+    /// skips DUMMY-shaped conduits, so every ConduitData array (length,
+    /// seep_rate, evap_loss_rate, inlet_control, …) must be indexed by this,
+    /// never by ci — the two only coincide on a deck with no DUMMY conduit.
+    std::vector<int>    tile_crow_;
     std::vector<int>    tile_n1_;            ///< links.node1[uj] for ci
     std::vector<int>    tile_n2_;            ///< links.node2[uj]
     std::vector<double> tile_inv1_elev_;     ///< nodes.invert_elev[node1]

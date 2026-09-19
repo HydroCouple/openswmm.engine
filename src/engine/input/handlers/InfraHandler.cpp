@@ -400,10 +400,16 @@ void handle_adjustments(SimulationContext& ctx, const std::vector<std::string>& 
                 ctx.adjust_hydcon[i] = (v <= 0.0) ? 1.0 : v;
             }
         }
-        // Subcatchment pattern assignments: N-PERV, DSTORE, INFIL
+        // Subcatchment pattern assignments: N-PERV, DSTORE, INFIL.
+        // The third token names a TIME PATTERN (legacy climate_readAdjustments
+        // resolves it with project_findObject(TIMEPATTERN, tok[2])), NOT a
+        // time series or curve: ctx.find_table_any searches only those two, so
+        // every per-subcatchment adjustment row bound -1 and was dropped in
+        // silence — session13-user5-sub-patterns ran its three adjusted
+        // subcatchments at HALF legacy's August infiltration.
         else if (kw("N-PERV") && tok.size() >= 3) {
             const int si = ctx.subcatch_names.find(tok[1]);
-            const int pi = ctx.find_table_any(tok[2]);
+            const int pi = ctx.patterns.find(tok[2]);
             if (si >= 0 && pi >= 0) {
                 const auto usi = static_cast<std::size_t>(si);
                 if (usi >= ctx.subcatch_n_perv_pattern.size())
@@ -413,7 +419,7 @@ void handle_adjustments(SimulationContext& ctx, const std::vector<std::string>& 
         }
         else if (kw("DSTORE") && tok.size() >= 3) {
             const int si = ctx.subcatch_names.find(tok[1]);
-            const int pi = ctx.find_table_any(tok[2]);
+            const int pi = ctx.patterns.find(tok[2]);
             if (si >= 0 && pi >= 0) {
                 const auto usi = static_cast<std::size_t>(si);
                 if (usi >= ctx.subcatch_d_store_pattern.size())
@@ -423,7 +429,7 @@ void handle_adjustments(SimulationContext& ctx, const std::vector<std::string>& 
         }
         else if (kw("INFIL") && tok.size() >= 3) {
             const int si = ctx.subcatch_names.find(tok[1]);
-            const int pi = ctx.find_table_any(tok[2]);
+            const int pi = ctx.patterns.find(tok[2]);
             if (si >= 0 && pi >= 0) {
                 const auto usi = static_cast<std::size_t>(si);
                 if (usi >= ctx.subcatch_infil_pattern.size())

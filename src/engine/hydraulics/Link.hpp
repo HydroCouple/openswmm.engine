@@ -102,9 +102,17 @@ void computeConveyance(double roughness, double slope, double s_full,
  * @param xs    Cross-section parameters.
  * @param beta  Manning conveyance factor.
  * @param q     Flow rate (ft3/s).
+ * @param q_max Conduit's flow at the maximum section factor; q is capped at it
+ *              first, as legacy link_getYnorm does (link.c:800). getAofS caps
+ *              the section factor at sMax anyway, but the tabular shapes take
+ *              their inverse-lookup argument from the UNcapped psi = s/sFull,
+ *              so an over-capacity q0 on an egg / horseshoe / gothic / catenary
+ *              / semi-elliptical / basket-handle / semi-circular conduit reads
+ *              the table past its end. Negative disables the cap.
  * @returns Normal depth (ft).
  */
-double getDepthFromFlow(const XSectParams& xs, double beta, double q);
+double getDepthFromFlow(const XSectParams& xs, double beta, double q,
+                        double q_max = -1.0);
 
 /**
  * @brief Compute the capacity fraction (depth / full depth for conduits,

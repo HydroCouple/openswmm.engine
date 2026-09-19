@@ -886,6 +886,23 @@ int SWMMEngine::initialize() noexcept {
             link::translateShape(ctx_.links.xsect_shape[uj]);
     }
 
+    // Lengthen the conduits and re-derive their conveyance BEFORE the initial
+    // state is built. Legacy does both in conduit_validate (link.c:1107-1140),
+    // i.e. before link_initState solves each q0 conduit's normal depth — and a
+    // lengthened conduit's beta carries the rounding of an algebraic identity,
+    // PHI*sqrt(S/f)/(n/sqrt(f)), that is one ULP away from the unlengthened
+    // PHI*sqrt(S)/n. Running it only in Router::init (inside init_modules,
+    // after these loops) seeded 405-h-h-elements' junction 83 one ULP off and
+    // split the network at its very first routing step. Router::init still
+    // calls it; the routine is idempotent.
+    {
+        RouteModel rm0 = RouteModel::DYNWAVE;
+        if (ctx_.options.routing_model == RoutingModel::KINWAVE) rm0 = RouteModel::KINWAVE;
+        else if (ctx_.options.routing_model == RoutingModel::STEADY) rm0 = RouteModel::STEADY;
+        else if (ctx_.options.routing_model == RoutingModel::FV) rm0 = RouteModel::FV;
+        applyConduitLengthening(ctx_, rm0);
+    }
+
     // Matches legacy link_initState / conduit_initState in link.c:
     //   Link[j].oldFlow = Link[j].newFlow = q0
     //   conduit: newDepth = oldDepth = link_getYnorm(j, q0/barrels)
@@ -901,7 +918,8 @@ int SWMMEngine::initialize() noexcept {
             int barrels = (cr >= 0) ? CD.barrels[static_cast<std::size_t>(cr)] : 1;
             double q_per_barrel = std::fabs(q0) / std::max(barrels, 1);
             double beta = (cr >= 0) ? CD.beta[static_cast<std::size_t>(cr)] : 0.0;
-            double y = link::getDepthFromFlow(xs, beta, q_per_barrel);
+            double q_max = (cr >= 0) ? CD.q_max[static_cast<std::size_t>(cr)] : -1.0;
+            double y = link::getDepthFromFlow(xs, beta, q_per_barrel, q_max);
             ctx_.links.depth[uj]     = y;
             ctx_.links.old_depth[uj] = y;
             // Initial conduit storage volume = area(y) * length * barrels,
@@ -2134,36 +2152,13 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             }
         }
 
-        // A3b. Apply N-PERV/DSTORE pattern adjustments (before runoff)
-        if (ctx_.has_subcatch_adj_patterns) {
-            for (int i = 0; i < ctx_.n_subcatches(); ++i) {
-                auto ui = static_cast<std::size_t>(i);
-                // N-PERV pattern
-                if (ui < ctx_.subcatch_n_perv_pattern.size()) {
-                    int pi = ctx_.subcatch_n_perv_pattern[ui];
-                    if (pi >= 0 && static_cast<std::size_t>(pi) < ctx_.patterns.factors.size()) {
-                        const auto& facs = ctx_.patterns.factors[static_cast<std::size_t>(pi)];
-                        auto umon = static_cast<std::size_t>(mon);
-                        double f = (umon < facs.size()) ? facs[umon] : 1.0;
-                        ctx_.subcatches.n_perv[ui] = ctx_.base_n_perv[ui] * f;
-                    }
-                }
-                // DSTORE pattern
-                if (ui < ctx_.subcatch_d_store_pattern.size()) {
-                    int pi = ctx_.subcatch_d_store_pattern[ui];
-                    if (pi >= 0 && static_cast<std::size_t>(pi) < ctx_.patterns.factors.size()) {
-                        const auto& facs = ctx_.patterns.factors[static_cast<std::size_t>(pi)];
-                        auto umon = static_cast<std::size_t>(mon);
-                        double f = (umon < facs.size()) ? facs[umon] : 1.0;
-                        ctx_.subcatches.ds_perv[ui] = ctx_.base_ds_perv[ui] * f;
-                    }
-                }
-                // INFIL pattern: scales infil_factor for this subcatchment
-                // (applied globally via ctx_.climate_state.infil_factor already;
-                //  per-subcatchment INFIL pattern would require per-subcatch
-                //  infil_factor which is a deeper refactor — noted for future)
-            }
-        }
+        // A3b. The N-PERV / DSTORE / INFIL monthly patterns are applied where
+        // legacy applies them — inside the runoff kernel, per subarea, per
+        // runoff step (adjustSubareaParams / infil_setInfilFactor). Scaling
+        // ctx_.subcatches.n_perv / .ds_perv here did nothing for the solve
+        // (RunoffSoA snapshots both in init() and never re-reads them) and
+        // wrote the adjusted values back over the authored ones, which the
+        // .inp writer and the C API then reported as the user's input.
 
         // A4. Runoff (computes subcatches.runoff[i] = newRunoff rate)
         //     Runoff solver is self-contained; output is subcatches.runoff[i].
