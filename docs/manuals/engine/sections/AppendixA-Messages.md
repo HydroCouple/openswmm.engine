@@ -2,6 +2,7 @@
 
 @tableofcontents
 
+## A.1 Run-Time and Object Errors (101-19x)
 ERROR 101:     memory allocation error.
 There is not enough physical memory in the computer to analyze the study area.
 
@@ -150,6 +151,7 @@ ERROR 195:     reporting time step is less than routing time step.
 Self-explanatory.
  
 
+## A.2 Input File Errors (200-29x)
 ERROR 200:     one or more errors in input file.
 This message appears when one or more input file parsing errors (the 200-series errors) occur.
 
@@ -205,6 +207,7 @@ A math expression used for a treatment function, a groundwater flow function or 
 ERROR 235:     invalid infiltration parameters.
 Examples are a Horton maximum infiltration rate lower than the minimum rate or a Green-Ampt initial moisture deficit greater than 1.
 
+## A.3 File Errors (301-35x)
 ERROR 301:     files share same names.
 The input, report, and binary output files specified on the command line cannot have the same names.
 
@@ -311,6 +314,97 @@ The external file used to provide data for the named time series has one or more
 
 Warning Codes
 
+## A.4 API Errors (500-509)
+These are raised by the programmatic interface (see @ref engine_manual_ch5_api) rather than by a model defect. A client sees the number in brackets ahead of any engine message.
+
+ERROR 500:     system exception thrown.
+An unexpected exception escaped the engine. This is a defect; please report it with the input file that produced it.
+
+ERROR 501:     project not opened.
+An API call that needs a model was made before `swmm_engine_open` succeeded.
+
+ERROR 502:     simulation not started.
+An API call that reads simulation state was made before the simulation was started.
+
+ERROR 503:     simulation not ended.
+An API call that is only valid after the run was made while the simulation was still in progress.
+
+ERROR 504:     invalid object type.
+An object-type code passed to the API is not one the engine recognises.
+
+ERROR 505:     invalid object index.
+An object index passed to the API is negative or beyond the number of objects of that type.
+
+ERROR 506:     invalid object name.
+No object of the requested type has the name supplied.
+
+ERROR 507:     invalid property type.
+The property code is not valid for the object type it was requested on.
+
+ERROR 508:     invalid property value.
+The value supplied is outside the range the property accepts.
+
+ERROR 509:     invalid time period.
+The reporting period or time index requested lies outside the simulation.
+
+## A.5 Extended Validation Errors (601-635)
+These codes cover objects and checks introduced in SWMM 6 and have no counterpart in SWMM 5.
+
+ERROR 601:     Time Series xxx has no data.
+The named time series was declared but contains no value rows, and something referenced it.
+
+ERROR 603:     Time Series xxx contains NaN or Inf values.
+A value in the series is not a finite number. This usually means a malformed external file or a spreadsheet exporting an error cell.
+
+ERROR 605:     column count mismatch in data for xxx.
+A row of an external multi-column series file has a different number of columns than its header declares.
+
+ERROR 607:     Rain Gage xxx references unknown time series.
+The gage names a time series that does not appear in the [TIMESERIES] section.
+
+ERROR 609:     Virtual Junction xxx must connect exactly two conduits.
+A virtual junction exists only to join one conduit to the next, so exactly two must meet there.
+
+ERROR 611:     Virtual Junction xxx connects conduits with different cross sections.
+The two conduits must share a cross-section; otherwise the junction is a real transition and needs to be a junction node.
+
+ERROR 613:     Virtual Junction xxx has a conduit with a nonzero offset.
+Offsets imply a physical structure at the node, which a virtual junction does not have.
+
+ERROR 615:     Virtual Junction xxx conduit inverts do not agree at the node.
+The two conduits must meet at the same invert elevation.
+
+ERROR 617:     Virtual Junction xxx cannot be coupled to a 2D surface mesh.
+A virtual junction has no surface opening, so it cannot exchange flow with the 2D mesh. A point lateral inflow is still allowed.
+
+ERROR 619:     Virtual Junction xxx requires DYNWAVE or FV flow routing.
+Steady and kinematic wave routing have no node-level momentum coupling, so a virtual junction has no meaning under them.
+
+ERROR 621:     too many items for Virtual Junction xxx.
+The [VIRTUAL_JUNCTIONS] section takes only the node name. Geometry is derived from the attached conduits.
+
+ERROR 623:     Inlet Junction xxx must connect two STREET conduits.
+Curb and gutter inlets require street cross-sections. Drop inlets may instead use open rectangular or trapezoidal conduits.
+
+ERROR 625:     Inlet Junction xxx references an unknown inlet design.
+The named design does not appear in the [INLETS] section.
+
+ERROR 627:     Inlet Junction xxx has an invalid capture node.
+The capture node is missing, is the inlet junction itself, or is another virtual junction. It must be a real node that can receive the captured flow.
+
+ERROR 629:     Inlet Junction xxx conduit also carries an [INLET_USAGE] entry.
+The inlet is defined twice, once on the junction and once on the conduit. Remove one.
+
+ERROR 631:     too many items for Inlet Junction xxx.
+The [INLET_JUNCTIONS] section accepts at most eleven fields.
+
+ERROR 633:     Inlet Junction xxx has no inlet design assigned.
+An inlet junction without a design captures nothing and should be an ordinary virtual junction.
+
+ERROR 635:     Inlet xxx cannot be used with the cross section of yyy.
+The inlet type is not compatible with the conduit's shape; see ERROR 623 for which shapes each type allows.
+
+## A.6 Warning Messages
 WARNING 01:     wet weather time step reduced to recording interval for Rain Gage xxx.
 The wet weather time step was automatically reduced so that no period with rainfall would be skipped during a simulation.
 
@@ -353,5 +447,29 @@ The premise of a control is comparing two different types of attributes to one a
 WARNING 12:     inlet removed due to unsupported shape for Conduit xxx. 
 Curb and gutter inlets can only be placed in conduits with a Street shaped cross-section while drop inlets can only be placed in open rectangular and trapezoidal conduits.
 
+WARNING 13:     parameters for same month provided more than once for Unit Hydrograph xxx.
+Two or more rows of the [HYDROGRAPHS] section give parameters for the same month of the same unit hydrograph. The last row read wins; the earlier ones are discarded.
 
+WARNING 101:     Time Series xxx has duplicate x values.
+The series repeats a time or an abscissa. Interpolation uses the first of each duplicate, which is rarely what was meant.
 
+WARNING 102:     boundary regions overlap for xxx.
+Two boundary-condition regions cover the same mesh edges. The later assignment wins on the overlap.
+
+WARNING 103:     [FILES] xxx is not supported and was ignored.
+The named interface-file slot is not implemented by this build. The run continues without it, so results will differ from one where the file was read.
+
+WARNING 104:     [2D_OPTIONS] xxx retired with CVODE/ARKODE and was ignored.
+The option belonged to a solver that has been removed. Delete it from the input file.
+
+WARNING 105:     xxx has no effect under FLOW_ROUTING FV.
+The option is meaningful only for another routing method and is being ignored.
+
+WARNING 106:     xxx is a dynamic wave option and does not apply under FLOW_ROUTING FV.
+The option configures dynamic-wave routing; the finite-volume solver has its own controls.
+
+WARNING 107:     unreadable row(s) skipped in rainfall CSV for Rain Gage xxx.
+One or more rows of an external rainfall CSV could not be parsed and were skipped. The gage still runs on the rows that were readable, so check the total depth before trusting the result.
+
+WARNING 108:     slot width cap overrides FV_SLOT_CELERITY for xxx.
+The Preissmann slot width computed from FV_SLOT_CELERITY exceeded the cap of 5 % of the conduit's top width and was clamped to it.

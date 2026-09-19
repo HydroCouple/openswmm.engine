@@ -1,0 +1,17 @@
+# source_filename	new_filename	page_id	figure_no	caption
+# Every row's new_filename must be cited by the page named in page_id.
+# Checked by scripts/lint_manual_docs.py (figure-manifest check).
+Urban Wet Weather Flows Diagram.png	figure1_1_urban_sewershed.png	engine_manual	1-1	Urban wet weather flows
+Diagram showing various physical objects.png	fig3-01-physical-objects.png	engine_manual_ch1_conceptual_model	3-1	Physical objects used to model a drainage system
+Concrete Box Culvert.png	fig3-02-box-culvert.png	engine_manual_ch1_conceptual_model	3-2	Concrete box culvert
+Storm Drain Inlet Grate.png	fig3-03-storm-drain-inlet.png	engine_manual_ch1_conceptual_model	3-3	Storm drain inlet
+Areal Depletion Curve.png	fig3-04-areal-depletion.png	engine_manual_ch1_conceptual_model	3-4	Areal depletion curve for a natural area
+RDII Unit Hydrograph.png	fig3-05-rdii-unit-hydrograph.png	engine_manual_ch1_conceptual_model	3-5	An RDII unit hydrograph
+Natural Channel Transect.png	fig3-06-natural-transect.png	engine_manual_ch1_conceptual_model	3-6	Example of a natural channel transect
+Street Cross Section.png	fig3-07-street-cross-section.png	engine_manual_ch1_conceptual_model	3-7	Definitional sketch of a street cross-section
+Dual Drainage System.png	fig3-08-dual-drainage.png	engine_manual_ch1_conceptual_model	3-8	Representation of a dual drainage system
+HEC22 Inlets.png	fig3-09-hec22-inlets.png	engine_manual_ch1_conceptual_model	3-9	HEC-22 inlets supported by SWMM
+LID Parameter Adjustment.png	fig3-10-lid-adjustment.png	engine_manual_ch1_conceptual_model	3-10	Adjustment of subcatchment parameters after LID placement
+Conceptual View of Surface Runoff.png	fig3-11-surface-runoff.png	engine_manual_ch1_conceptual_model	3-11	Conceptual view of surface runoff
+Two-Zone Groundwater Model.png	fig3-12-two-zone-groundwater.png	engine_manual_ch1_conceptual_model	3-12	Two-zone groundwater model
+Bio-retention Cell.png	fig3-13-bioretention-cell.png	engine_manual_ch1_conceptual_model	3-13	Conceptual diagram of a bio-retention cell LID

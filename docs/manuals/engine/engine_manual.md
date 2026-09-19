@@ -28,6 +28,10 @@ OpenSWMM is the next generation of the EPA Storm Water Management Model, maintai
 
 SWMM is used throughout the world for planning, analysis, and design related to stormwater runoff, combined and sanitary sewers, and other drainage systems. It can be used to evaluate gray infrastructure stormwater control strategies, such as pipes and storm drains, and is a useful tool for creating cost-effective green/gray hybrid stormwater control solutions.
 
+![Figure 1-1 Urban wet weather flows](figures/figure1_1_urban_sewershed.png)
+
+*Figure 1-1 Urban wet weather flows*
+
 ## ACKNOWLEDGEMENTS {#engine_manual_acknowledgements}
 
 OpenSWMM builds on the original EPA Storm Water Management Model (SWMM), developed by the U.S. Environmental Protection Agency, Office of Research and Development. The original user's manual and SWMM 5 software were created by **Lewis A. Rossman**, Environmental Scientist Emeritus at the U.S. EPA. His extraordinary contribution to the field of stormwater modeling is gratefully acknowledged.
