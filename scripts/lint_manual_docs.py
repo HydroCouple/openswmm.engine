@@ -16,14 +16,15 @@ Exit code 1 if any errors. Run from anywhere.
 """
 import re
 import sys
+import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path
 
 DOCS = Path(__file__).resolve().parent.parent / "docs"
-MANUAL_DIRS = [DOCS / "manuals", DOCS / "authors.md", DOCS / "Updates.md"]
+MANUAL_DIRS = [DOCS / "manuals", DOCS / "authors.md"]
 IMAGE_PATHS = [
     DOCS / "images",
-    DOCS / "manuals" / "user" / "figures",
+    DOCS / "manuals" / "engine" / "figures",
     DOCS / "manuals" / "reference" / "hydrology" / "media" / "media",
     DOCS / "manuals" / "reference" / "hydraulics" / "media" / "media",
     DOCS / "manuals" / "reference" / "quality" / "media" / "media",
@@ -43,6 +44,25 @@ def md_files():
     return sorted(out)
 
 
+def external_pages():
+    """Page ids imported from the Doxyfile's TAGFILES.
+
+    `@ref manual_*` into the SWMMVis manual resolves through
+    docs/tags/swmmvis-manual.tag at build time, so those targets are valid even
+    though no local file declares them. Without this the lint reports every
+    cross-repo reference as unresolved.
+    """
+    ids = set()
+    for tag in sorted((DOCS / "tags").glob("*.tag")):
+        try:
+            root = ET.parse(tag).getroot()
+        except ET.ParseError as exc:
+            print(f"ERROR {tag.name}: not parseable as a Doxygen tagfile ({exc})")
+            continue
+        ids.update(c.findtext("name") for c in root if c.get("kind") == "page")
+    return {i for i in ids if i}
+
+
 def main():
     files = md_files()
     pages, anchors = {}, set()
@@ -57,7 +77,7 @@ def main():
         anchors.update(re.findall(r"\{#([A-Za-z_0-9]+)\}", t))
         anchors.update(re.findall(r"[\\@]anchor +(\S+)", t))
 
-    known = set(pages) | anchors
+    known = set(pages) | anchors | external_pages()
     errors = 0
     image_names = set()
     for d in IMAGE_PATHS:
