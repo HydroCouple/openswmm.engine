@@ -9,6 +9,7 @@
 #ifdef OPENSWMM_HAS_2D
 
 #include "Default2DOutputPlugin.hpp"
+#include "../subsurface/SubsurfaceData.hpp"   // G-O: the aquifer ledger at finalize
 #include "../../core/SimulationContext.hpp"
 #include "../../2d/SurfaceRouter2D.hpp"
 #include "../data/SolverOptions2D.hpp"
@@ -776,9 +777,9 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
                     "Mesh2_face_species_conc", 3, zero3s, chunk3);
                 writeStringAttr(ds_face_species_conc_, "long_name",
                                 "surface species concentration");
-                // Species units are per species and live on the pollutant
-                // table; the dataset carries the layout and a name list so a
-                // reader can join. "1" here means "see species_names".
+                // Species units are per species; the dataset carries the
+                // layout, a name list and (S4b) a parallel unit list so a
+                // reader can join. "1" here means "see species_units".
                 writeStringAttr(ds_face_species_conc_, "units", "1");
                 writeStringAttr(ds_face_species_conc_, "mesh", "Mesh2");
                 writeStringAttr(ds_face_species_conc_, "location", "face");
@@ -799,11 +800,85 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
                         writeStringAttr(ds_face_species_conc_, "species_names",
                                         names.c_str());
                 }
+                // S4b: species_units — one label per selected row, same
+                // order as species_names; __WATER_AGE__ is reported in hours.
+                if (snap.surface_species_units) {
+                    std::string units;
+                    for (std::size_t k = 0; k < species_rows_.size(); ++k) {
+                        const auto r = static_cast<std::size_t>(species_rows_[k]);
+                        if (r >= snap.surface_species_units->size()) break;
+                        if (k) units += ",";
+                        units += (*snap.surface_species_units)[r];
+                    }
+                    if (!units.empty())
+                        writeStringAttr(ds_face_species_conc_, "species_units",
+                                        units.c_str());
+                }
             }
         }
         if (ds_face_species_conc_ != H5I_INVALID_HID && n_species_ > 0)
             writeSpeciesRows(snap.surface_species_conc.data(),
                              static_cast<hsize_t>(snap.surface_species_count));
+    }
+
+    // S7: cell buildup per unit land area, one row per surface species (the
+    // pollutant and MSX rows, unfiltered — the store is what the user
+    // authored, and it is small). Absent when no [2D_COVERAGES] resolved.
+    if (want(report2d::BUILDUP) && snap.surface_buildup_count > 0 &&
+        snap.surface_buildup.size() ==
+            static_cast<std::size_t>(snap.surface_buildup_count) * n_faces_) {
+        if (ds_face_buildup_ == H5I_INVALID_HID) {
+            n_buildup_ = static_cast<hsize_t>(snap.surface_buildup_count);
+            hsize_t zero3b[3]  = {0, n_buildup_, n_faces_};
+            hsize_t chunk3b[3] = {1, n_buildup_, std::min<hsize_t>(n_faces_, 4096)};
+            ds_face_buildup_ = createUnlimitedDataset("Mesh2_face_buildup", 3, zero3b, chunk3b);
+            writeStringAttr(ds_face_buildup_, "long_name",
+                            "surface pollutant buildup per unit land area");
+            // The 1D washoff summary's unit: lbs/acre (US) or kg/ha (SI);
+            // a reactions species declared in UG scales through its own
+            // unit factor — see species_units for the concentration side.
+            writeStringAttr(ds_face_buildup_, "units",
+                            (snap.flow_units_code >= 3) ? "kg ha-1" : "lb acre-1");
+            writeStringAttr(ds_face_buildup_, "mesh", "Mesh2");
+            writeStringAttr(ds_face_buildup_, "location", "face");
+            writeStringAttr(ds_face_buildup_, "layout",
+                            "[time, species, face]; species order = the first "
+                            "rows of species_names (pollutants, then MSX)");
+            if (snap.surface_species_names) {
+                std::string names;
+                for (hsize_t k = 0; k < n_buildup_ &&
+                                    k < snap.surface_species_names->size(); ++k) {
+                    if (k) names += ",";
+                    names += (*snap.surface_species_names)[static_cast<std::size_t>(k)];
+                }
+                if (!names.empty())
+                    writeStringAttr(ds_face_buildup_, "species_names", names.c_str());
+            }
+        }
+        if (ds_face_buildup_ != H5I_INVALID_HID &&
+            n_buildup_ == static_cast<hsize_t>(snap.surface_buildup_count))
+            extendAndWrite3D(ds_face_buildup_, snap.surface_buildup.data(),
+                             n_buildup_, n_faces_);
+    }
+
+    // G-O: the two-zone aquifer. Lazy like the species block: a model with no
+    // [2D_AQUIFER] gets no groundwater variable at all.
+    if (want(report2d::GROUNDWATER) && snap.gw2d_active &&
+        snap.gw2d_hg.size() == static_cast<std::size_t>(n_faces_)) {
+        if (!gw_created_) createGroundwaterDatasets(snap);
+        const std::vector<double>* fields[kGwFaceFields] = {
+            &snap.gw2d_table_elev, &snap.gw2d_hg, &snap.gw2d_hu, &snap.gw2d_recharge,
+            &snap.gw2d_lateral, &snap.gw2d_node_exchange, &snap.gw2d_deep, &snap.gw2d_et,
+            &snap.gw2d_dunne, &snap.gw2d_infil_in};
+        for (int k = 0; k < kGwFaceFields; ++k) face(ds_gw_face_[k], *fields[k]);
+        if (ds_gw_ledger_ != H5I_INVALID_HID && snap.gw2d_ledger.size() == 11)
+            extendAndWrite2D(ds_gw_ledger_, snap.gw2d_ledger.data(), 11);
+        if (ds_gw_bed_exchange_ != H5I_INVALID_HID &&
+            snap.gw2d_bed_exchange_cum.size() == static_cast<std::size_t>(n_gw_beds_))
+            extendAndWrite2D(ds_gw_bed_exchange_, snap.gw2d_bed_exchange_cum.data(), n_gw_beds_);
+        if (ds_gw_theta_ != H5I_INVALID_HID &&
+            snap.gw2d_theta_sigma.size() == static_cast<std::size_t>(n_gw_layers_ * n_faces_))
+            extendAndWrite3D(ds_gw_theta_, snap.gw2d_theta_sigma.data(), n_gw_layers_, n_faces_);
     }
 
     // Per-node fields
@@ -825,6 +900,112 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
 
     ++n_steps_;
     return 0;
+}
+
+// G-O: the aquifer's datasets, created on the first update() with a live kernel.
+void Default2DOutputPlugin::createGroundwaterDatasets(const SimulationSnapshot& snap) {
+    gw_created_ = true;
+    hsize_t zero2[2]      = {0, n_faces_};
+    hsize_t face_chunk[2] = {1, std::min<hsize_t>(n_faces_, 4096)};
+    struct F { const char* name; const char* long_name; const char* units; };
+    // Same order as the `fields[]` table in update().
+    static const F kFields[kGwFaceFields] = {
+        {"Mesh2_face_gw_table_elev",    "water-table elevation (aquifer bottom + saturated thickness)", "m"},
+        {"Mesh2_face_gw_hg",            "saturated thickness", "m"},
+        {"Mesh2_face_gw_hu",            "closure A unsaturated storage (equivalent depth of water; 0 under closure B)", "m"},
+        {"Mesh2_face_gw_recharge",      "recharge from the unsaturated to the saturated zone, positive down, negative = capillary rise (last firing, held)", "m s-1"},
+        {"Mesh2_face_gw_lateral",       "net lateral Darcy flow into the cell (last firing, held)", "m3 s-1"},
+        {"Mesh2_face_gw_node_exchange", "exchange with the 1D node bed, positive out of the aquifer into the pipe (last firing, held)", "m3 s-1"},
+        {"Mesh2_face_gw_deep",          "deep percolation loss (last firing, held)", "m s-1"},
+        {"Mesh2_face_gw_et",            "subsurface evapotranspiration (last firing, held)", "m s-1"},
+        {"Mesh2_face_gw_dunne",         "saturation excess returned to the surface (last firing, held)", "m3 s-1"},
+        {"Mesh2_face_gw_infil_in",      "infiltration delivered from the surface (last firing, held)", "m s-1"},
+    };
+    for (int k = 0; k < kGwFaceFields; ++k) {
+        hid_t ds = createUnlimitedDataset(kFields[k].name, 2, zero2, face_chunk);
+        writeStringAttr(ds, "long_name", kFields[k].long_name);
+        writeStringAttr(ds, "units", kFields[k].units);
+        writeStringAttr(ds, "mesh", "Mesh2");
+        writeStringAttr(ds, "location", "face");
+        ds_gw_face_[k] = ds;
+    }
+    // Static descriptors, written once: the aquifer bottom and the resolved
+    // closure per cell (0 closed form, 1 enslaved, 2 sigma) — the mask a
+    // reader needs for Mesh2_face_gw_theta_sigma and _hu.
+    if (snap.gw2d_bed_elev.size() == static_cast<std::size_t>(n_faces_)) {
+        hid_t space = H5Screate_simple(1, &n_faces_, nullptr);
+        hid_t ds = H5Dcreate2(file_id_, "Mesh2_face_gw_bed_elev", H5T_NATIVE_DOUBLE, space,
+                               H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, snap.gw2d_bed_elev.data());
+        writeStringAttr(ds, "long_name", "aquifer bottom elevation (cell bed minus soil column thickness)");
+        writeStringAttr(ds, "units", "m");
+        writeStringAttr(ds, "mesh", "Mesh2");
+        writeStringAttr(ds, "location", "face");
+        H5Dclose(ds);
+        H5Sclose(space);
+    }
+    if (snap.gw2d_closure.size() == static_cast<std::size_t>(n_faces_)) {
+        hid_t space = H5Screate_simple(1, &n_faces_, nullptr);
+        hid_t ds = H5Dcreate2(file_id_, "Mesh2_face_gw_closure", H5T_NATIVE_INT, space,
+                               H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        H5Dwrite(ds, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, snap.gw2d_closure.data());
+        writeStringAttr(ds, "long_name", "resolved unsaturated-zone closure per cell");
+        writeStringAttr(ds, "flag_values", "0 1 2");
+        writeStringAttr(ds, "flag_meanings", "closed_form enslaved sigma");
+        writeStringAttr(ds, "mesh", "Mesh2");
+        writeStringAttr(ds, "location", "face");
+        H5Dclose(ds);
+        H5Sclose(space);
+    }
+    // Domain ledger series [nTime, 11], cumulative m³ — the SWMM_GW2D_LED_*
+    // order plus the continuity residual last, so a plot of the residual
+    // over time is one column read.
+    {
+        hsize_t zero[2] = {0, 11}, chunk[2] = {64, 11};
+        ds_gw_ledger_ = createUnlimitedDataset("groundwater_ledger", 2, zero, chunk,
+                                               H5T_NATIVE_DOUBLE);
+        writeStringAttr(ds_gw_ledger_, "long_name", "two-zone aquifer domain ledger, cumulative");
+        writeStringAttr(ds_gw_ledger_, "units", "m3");
+        writeStringAttr(ds_gw_ledger_, "terms",
+                        "recharge,lateral,deep,node,dunne,caprise,et,infil_in,"
+                        "init_storage,storage,continuity_residual");
+        writeStringAttr(ds_gw_ledger_, "layout",
+                        "[time, term]; storage includes water in flight in the side "
+                        "accumulators; continuity_residual = ledgered storage − init − (in − out)");
+    }
+    // Per-bed cumulative node exchange [nTime, nBeds], + out of the aquifer.
+    n_gw_beds_ = static_cast<hsize_t>(snap.gw2d_bed_exchange_cum.size());
+    if (n_gw_beds_ > 0) {
+        hsize_t zero[2] = {0, n_gw_beds_}, chunk[2] = {64, n_gw_beds_};
+        ds_gw_bed_exchange_ = createUnlimitedDataset("groundwater_node_exchange_cum", 2, zero, chunk,
+                                                     H5T_NATIVE_DOUBLE);
+        writeStringAttr(ds_gw_bed_exchange_, "long_name",
+                        "cumulative aquifer <-> 1D node exchange per [2D_AQUIFER_NODE] bed, positive out of the aquifer");
+        writeStringAttr(ds_gw_bed_exchange_, "units", "m3");
+        if (snap.gw2d_node_names) {
+            std::string names;
+            for (hsize_t k = 0; k < n_gw_beds_ && k < snap.gw2d_node_names->size(); ++k) {
+                if (k) names += ",";
+                names += (*snap.gw2d_node_names)[static_cast<std::size_t>(k)];
+            }
+            if (!names.empty()) writeStringAttr(ds_gw_bed_exchange_, "node_names", names.c_str());
+        }
+    }
+    // GW_DETAILED: the σ columns — m × nFace per step, the one large variable.
+    n_gw_layers_ = static_cast<hsize_t>(std::max(0, snap.gw2d_m_layers));
+    if (want(report2d::GW_DETAILED) && n_gw_layers_ > 0 &&
+        snap.gw2d_theta_sigma.size() == static_cast<std::size_t>(n_gw_layers_ * n_faces_)) {
+        hsize_t zero3[3]  = {0, n_gw_layers_, n_faces_};
+        hsize_t chunk3[3] = {1, n_gw_layers_, std::min<hsize_t>(n_faces_, 4096)};
+        ds_gw_theta_ = createUnlimitedDataset("Mesh2_face_gw_theta_sigma", 3, zero3, chunk3);
+        writeStringAttr(ds_gw_theta_, "long_name", "closure B water content per sigma layer");
+        writeStringAttr(ds_gw_theta_, "units", "1");
+        writeStringAttr(ds_gw_theta_, "mesh", "Mesh2");
+        writeStringAttr(ds_gw_theta_, "location", "face");
+        writeStringAttr(ds_gw_theta_, "layout",
+                        "[time, layer, face]; layer 0 at the ground surface; a cell whose "
+                        "Mesh2_face_gw_closure is not 2 carries 0 in every layer");
+    }
 }
 
 void Default2DOutputPlugin::writeSpeciesRows(const double* all, hsize_t n_species_in) {
@@ -886,6 +1067,37 @@ int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
             H5Gclose(grp);
         }
     }
+    // G-O: the aquifer's own ledger, once, beside the surface's — the same
+    // terms the .rpt "2D Aquifer Continuity" block prints.
+    if (file_id_ != H5I_INVALID_HID && ctx.twod_io.aquifer_state &&
+        ctx.twod_io.aquifer_state->active) {
+        const auto& g = *ctx.twod_io.aquifer_state;
+        hid_t grp = H5Gcreate2(file_id_, "/groundwater_2d",
+                                H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        if (grp >= 0) {
+            auto writeScalar = [this](hid_t loc, const char* name, double v) {
+                hid_t space = H5Screate(H5S_SCALAR);
+                hid_t ds = H5Dcreate2(loc, name, H5T_NATIVE_DOUBLE, space,
+                                       H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+                H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, &v);
+                writeStringAttr(ds, "units", "m3");
+                H5Dclose(ds);
+                H5Sclose(space);
+            };
+            writeScalar(grp, "init_storage",  g.led_init_storage);
+            writeScalar(grp, "final_storage", g.liveStorage());
+            writeScalar(grp, "infil_in",      g.led_infil_in);
+            writeScalar(grp, "lateral_in",    g.led_lateral);
+            writeScalar(grp, "recharge",      g.led_recharge);
+            writeScalar(grp, "capillary_rise", g.led_caprise);
+            writeScalar(grp, "deep_out",      g.led_deep);
+            writeScalar(grp, "node_out",      g.led_node);
+            writeScalar(grp, "et_out",        g.led_et);
+            writeScalar(grp, "dunne_out",     g.led_dunne);
+            writeDoubleAttr(grp, "continuity_error", g.continuityResidual());
+            H5Gclose(grp);
+        }
+    }
 
     // Close all datasets
     auto closeDS = [](hid_t& ds) {
@@ -905,6 +1117,11 @@ int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
     closeDS(ds_face_infil_cum_);
     closeDS(ds_face_rain_cum_);
     closeDS(ds_face_species_conc_);
+    closeDS(ds_face_buildup_);
+    for (int k = 0; k < kGwFaceFields; ++k) closeDS(ds_gw_face_[k]);   // G-O
+    closeDS(ds_gw_ledger_);
+    closeDS(ds_gw_bed_exchange_);
+    closeDS(ds_gw_theta_);
     closeDS(ds_face_vx_);
     closeDS(ds_face_vy_);
     closeDS(ds_face_continuity_err_);

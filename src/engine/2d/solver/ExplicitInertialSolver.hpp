@@ -232,6 +232,11 @@ private:
     // `state_->transport.active()`.
     std::vector<double>  sacc_L_;
     std::vector<double>  sacc_R_;
+    /// S7: "transport rows are live" — set with the accumulators above. The
+    /// sites used to test `!sacc_L_.empty()`, which is ALSO empty on a mesh
+    /// with no interior edge (one cell), where every species sink and source
+    /// then silently skipped while the rows were active.
+    bool                 species_on_ = false;
     /// Exporter concentration for a species at a cell, read against the
     /// cell's CURRENT published volume — the same volume the positivity share
     /// budgets against, so cumulative species takes are bounded by the same
@@ -249,9 +254,10 @@ private:
     /// S3: outfall discharge onto cell `i` over `area_dt = area·dt` brings
     /// species at `transport.coupling_src` (mass-rate density); gained ledger.
     void addCouplingSourceMass(int i, double area_dt) noexcept;
-    /// S4: evaporation of `evap_m3` from cell `i` leaves at the cell's own
-    /// temperature (temperature row only; solutes concentrate, S1).
-    void sinkTemperatureWithEvap(int i, double evap_m3) noexcept;
+    /// S4/S4b: evaporation of `evap_m3` from cell `i` leaves at the cell's
+    /// own temperature AND its own mean age (the two intensive rows —
+    /// temperature-volume and age-volume); solutes concentrate (S1).
+    void sinkIntensiveRowsWithEvap(int i, double evap_m3) noexcept;
     /// False when every booked ΔM is known to have been consumed already —
     /// true after a GLOBAL substep, where every active face fired and then
     /// every active cell gathered both of its sides (faces touching an

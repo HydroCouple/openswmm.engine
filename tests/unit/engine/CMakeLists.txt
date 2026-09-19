@@ -127,6 +127,9 @@ add_gtest_unit(test_engine_reaction_integrators   test_reaction_integrators.cpp)
 add_gtest_unit(test_engine_reaction_legacy_binding test_reaction_legacy_binding.cpp)
 add_gtest_unit(test_engine_ard_dispersion         test_ard_dispersion.cpp)
 add_gtest_unit(test_engine_reaction_ard_binding   test_reaction_ard_binding.cpp)
+# BW-MSX (2026-09-19): reactions-component species build up / wash off by the
+# pollutant relations (OVERLAND plan §8.9).
+add_gtest_unit(test_engine_msx_buildup_washoff    test_msx_buildup_washoff.cpp)
 add_gtest_unit(test_engine_ard_transport_bcs      test_ard_transport_bcs.cpp)
 add_gtest_unit(test_engine_ard_e5b                test_ard_e5b.cpp)
 add_gtest_unit(test_engine_ard_node_store         test_ard_node_store.cpp)
@@ -585,6 +588,9 @@ if(OPENSWMM_BUILD_2D)
     # at the node temperature, kdecay applies and is ledgered, rows are
     # passengers on the hydraulics.
     add_gtest_unit(test_engine_2d_transport_s4 test_2d_transport_s4.cpp)
+    # S7 (2026-09-19): cell coverages / buildup / washoff / sweeping on the 2D
+    # surface (OVERLAND plan §8).
+    add_gtest_unit(test_engine_2d_surface_quality test_2d_surface_quality.cpp)
     # Windowless co-advance coupling gates: cross-domain conservation through
     # the live in-marcher exchange + batch queue delivery, COUPLING_AREA AUTO
     # rederivation, conductance sign + FD parity.

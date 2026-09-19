@@ -28,6 +28,8 @@
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../core/DateTime.hpp"
+#include "../2d/data/MeshData.hpp"          // S7: gageIsUsed — the mesh reads gages
+#include "../2d/data/SolverOptions2D.hpp"
 #include <cmath>
 #include <algorithm>
 #include <cstdio>
@@ -182,6 +184,15 @@ bool gageIsUsed(const SimulationContext& ctx, int gage_idx) {
         if (ctx.subcatches.gage[static_cast<std::size_t>(i)] == gage_idx) return true;
     for (const auto& gname : ctx.unit_hyds.gage_names)
         if (ctx.gage_names.find(gname) == gage_idx) return true;
+    // S7 (2026-09-19): the 2D mesh reads EVERY gage under RAINFALL_MODE
+    // SYSTEM / NATURAL_NEIGHBOUR (SurfaceRouter2D::updateRainfall). A gage no
+    // subcatchment names kept its seeded first record for the whole run
+    // (legacy's "unused gage" rule), so a rain-on-grid deck with no
+    // subcatchment rained at its first non-zero intensity forever.
+    if (ctx.twod_io.mesh && ctx.twod_io.options &&
+        ctx.twod_io.mesh->n_triangles() > 0 &&
+        ctx.twod_io.options->rainfall_mode != twoD::RainfallMode::NONE)
+        return true;
     return false;
 }
 

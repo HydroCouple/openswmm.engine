@@ -286,14 +286,16 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
     // R6 (2D_TRI_QUAD_MESH_PLAN / 2D_FULL_SWE plan): the Kokkos plugin
     // implements the triangle-only LOCAL_INERTIAL scheme. A mixed tri-quad
     // mesh or a non-LI momentum closure is refused LOUDLY and served by the
-    // CPU marcher — never a silent physics substitution.
+    // CPU marcher — never a silent physics substitution. S4b: a model with
+    // transport rows (species / age / temperature) is refused the same way.
     if (!plugin_capable) {
         // Say so under AUTO as well: a model that silently loses the plugin
         // (a DIFFUSIVE_WAVE deck on a 100k-cell mesh, say) looks like a
         // performance regression to the modeller.
         std::fprintf(stderr,
-            "[openswmm 2D] backend '%s': the GPU/Kokkos plugin supports only "
-            "all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL; "
+            "[openswmm 2D] backend '%s': the GPU/Kokkos plugin serves only "
+            "all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with "
+            "no transport rows (species / age / temperature); "
             "using the CPU marcher for this model.\n",
             mode.empty() ? "auto" : mode.c_str());
         return serial_marcher("cpu (explicit marcher; plugin not applicable)");

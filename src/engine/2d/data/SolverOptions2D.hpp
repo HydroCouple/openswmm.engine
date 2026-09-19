@@ -190,10 +190,13 @@ enum Var : unsigned {
     GRADIENTS    = 1u << 8,  ///< Mesh2_face_grad_hx/hy and the _lim pair (solver diagnostics)
     CONTINUITY   = 1u << 9,  ///< Mesh2_face_continuity_err (solver diagnostic)
     ENVELOPES    = 1u << 10, ///< Mesh2_face_max_depth / _max_velocity / _max_continuity_err
-    ALL_MASK     = (1u << 11) - 1u,
+    BUILDUP      = 1u << 11, ///< S7: Mesh2_face_buildup (when [2D_COVERAGES] rows resolved)
+    GROUNDWATER  = 1u << 12, ///< G-O: Mesh2_face_gw_* per-cell fields, groundwater_ledger, groundwater_node_exchange_cum (when a [2D_AQUIFER] resolved)
+    GW_DETAILED  = 1u << 13, ///< G-O: Mesh2_face_gw_theta_sigma [time, layer, face] — m × nFace per step
+    ALL_MASK     = (1u << 14) - 1u,
     /// DEFAULT: everything a user renders or plots; solver diagnostics off.
     DEFAULT_MASK = DEPTH | VELOCITY | EDGE_FLUX | NODE_HEAD | SPECIES |
-                   RAINFALL | INFILTRATION | ENVELOPES,
+                   RAINFALL | INFILTRATION | ENVELOPES | BUILDUP | GROUNDWATER,
     /// MINIMAL: depth map + render reconstruction + envelopes only.
     MINIMAL_MASK = DEPTH | NODE_HEAD | ENVELOPES,
 };

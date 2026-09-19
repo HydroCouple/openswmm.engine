@@ -41,9 +41,11 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "ReactionTokens.hpp"
+#include "MsxSurfaceData.hpp"
 
 namespace openswmm {
 
@@ -156,6 +158,13 @@ struct ReactionData {
     // 1a' (EULERIAN_ARD) and the LARD node stage.
     std::vector<double> msx_ext_mass_in;
 
+    /// BW-MSX (2026-09-19): surface buildup / washoff / sweeping of MSX
+    /// species — rows parked by name at parse, resolved after this component
+    /// is applied, stepped beside the pollutant surface-quality step, and
+    /// delivered into `msx_ext_mass_in` each routing step. See
+    /// `quality/MsxSurfaceQuality.hpp`.
+    MsxSurfaceData surface;
+
     bool configured = false;                 ///< a reactions component applied
 
     int n_species() const noexcept {
@@ -177,7 +186,15 @@ struct ReactionData {
         return -1;
     }
 
-    void clear() { *this = ReactionData{}; }
+    /// Reset the component's own state. The `surface` block is authored by
+    /// the .inp ([BUILDUP]/[WASHOFF]/[LOADINGS] rows parked by name before
+    /// the component is applied), so it survives a (re)apply and is bound
+    /// afterwards by msxsurf::resolve().
+    void clear() {
+        MsxSurfaceData keep = std::move(surface);
+        *this = ReactionData{};
+        surface = std::move(keep);
+    }
 };
 
 }  // namespace openswmm

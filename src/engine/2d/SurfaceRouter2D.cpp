@@ -808,7 +808,11 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                         "' — declare it in [POLLUTANTS] / the reactions "
                         "component, or name __WATER_AGE__ / __TEMPERATURE__ "
                         "with that option on.");
-                tr.bc_quality_rows.push_back({MeshData::slot(r.tri, r.edge), sp, r.conc});
+                // S4b: the age row is authored in HOURS like the 1D
+                // [INITIAL_QUALITY] / water-age sources and carried in
+                // seconds internally (D-A21).
+                const double conc = (sp == tr.age_row) ? r.conc * 3600.0 : r.conc;
+                tr.bc_quality_rows.push_back({MeshData::slot(r.tri, r.edge), sp, conc});
             }
         } else if (!pending_bq_rows_.empty()) {
             throw std::runtime_error(
@@ -823,12 +827,36 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         state_.node_row_conc = &node_row_conc_;
     }
 
+    // S7: cell coverages → buildup / washoff / sweeping. Resolved here, once
+    // the rows (species layout) and the mesh (tags, areas) are final; an
+    // "ERROR" diagnostic is fatal exactly like a bad [2D_INITIAL_QUALITY]
+    // row, the rest are warnings (inert under RAINFALL_MODE NONE, the
+    // double-counting notice). The marcher accumulates each cell's outflow
+    // only while `cell_runoff_vol` is sized.
+    if (surface_quality_.authored()) {
+        auto diags = surface_quality_.resolve(ctx, mesh_, state_.transport, options_);
+        for (auto& d : diags) {
+            if (d.rfind("ERROR", 0) == 0) throw std::runtime_error(d.substr(6));
+            ctx.warnings.push_back(std::move(d));
+        }
+        if (surface_quality_.active()) {
+            state_.transport.cell_runoff_vol.assign(
+                static_cast<std::size_t>(mesh_.n_triangles()), 0.0);
+            state_.transport.gained_washoff.assign(
+                static_cast<std::size_t>(state_.transport.n_species), 0.0);
+        }
+    }
+
     if (!solver_) {
         // The Kokkos plugin covers all-triangle LOCAL_INERTIAL models only
         // (SurfaceSolverFactory R6 gate); everything else runs on the CPU.
+        // S4b: the plugin also carries no transport rows (species, age,
+        // temperature) — a deck with TRANSPORT_* on runs the CPU marcher,
+        // loudly, rather than silently losing every row.
         const bool plugin_ok =
             mesh_.n_quads() == 0 &&
-            options_.momentum == Momentum2D::LOCAL_INERTIAL;
+            options_.momentum == Momentum2D::LOCAL_INERTIAL &&
+            !state_.transport.active();
         solver_ = makeSurfaceSolver(options_, &backend_name_,
                                     mesh_.n_triangles(), plugin_ok);
         // Say which solver this run is on. Rides the advisory-warning path
@@ -845,8 +873,12 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             "(%d quads)%s",
             backend_name_.c_str(), closure, options_.lts_tiers,
             mesh_.n_triangles(), mesh_.n_quads(),
-            plugin_ok ? "" : " — the GPU/Kokkos plugin serves all-triangle "
-                             "LOCAL_INERTIAL models only");
+            plugin_ok ? "" :
+            state_.transport.active()
+                ? " — the GPU/Kokkos plugin carries no transport rows "
+                  "(species / age / temperature); CPU marcher used"
+                : " — the GPU/Kokkos plugin serves all-triangle "
+                  "LOCAL_INERTIAL models only");
         thread_warnings_.emplace_back(buf);
     }
     solver_->initialize(mesh_, state_, options_);
@@ -1077,6 +1109,9 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             return tr.rowIndex(name);   // S4: any carried row; -1 if absent
         };
         auto seed = [&](int sp, int c, double conc) {
+            // S4b: `__WATER_AGE__` is authored in hours (the 1D convention,
+            // InitialQualitySeeds::initialAgeSecondsFor) and stored in seconds.
+            if (sp == tr.age_row) conc *= 3600.0;
             tr.cell_mass[tr.idx(sp, c)] = conc * state_.volume[c];
         };
         for (int pass = 0; pass < 3; ++pass) {   // 0:'*', 1:TAG, 2:CELL
@@ -1117,6 +1152,10 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             }
         }
     }
+    // S7: initial buildup on the cells ([2D_LOADINGS] or DRY_DAYS), after
+    // the coverages resolved above and before the first runoff step.
+    if (surface_quality_.active() && !ctx.options.ignore_quality)
+        surface_quality_.initState(ctx, mesh_);
     infil_elapsed_ = 0.0;
     if (infil_.active()) {
         // Publish an initial held rate so the very first substep infiltrates

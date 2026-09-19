@@ -29,6 +29,8 @@ inline const std::vector<std::string>& tokens() {
     static const std::vector<std::string> kTokens = {
         "DEPTH", "VELOCITY", "EDGE_FLUX", "NODE_HEAD", "SPECIES", "RAINFALL",
         "INFILTRATION", "COUPLING", "GRADIENTS", "CONTINUITY", "ENVELOPES",
+        "BUILDUP",   // S7
+        "GROUNDWATER", "GW_DETAILED",   // G-O
     };
     return kTokens;
 }

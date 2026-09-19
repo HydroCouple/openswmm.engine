@@ -99,6 +99,29 @@ double SubsurfaceState::storage() const noexcept {
     return s;
 }
 
+// G-O: the three storage views the C API, the results file and the report share.
+double SubsurfaceState::liveStorage() const noexcept {
+    double s = storage();
+    for (double v : eacc_L) s += v;
+    for (double v : eacc_R) s += v;
+    for (double v : xacc_from_surface) s += v;
+    for (double v : xacc_to_surface)   s += v;
+    return s;
+}
+
+double SubsurfaceState::ledgeredStorage() const noexcept {
+    double s = storage();
+    for (double v : eacc_L) s += v;
+    for (double v : eacc_R) s += v;
+    return s;
+}
+
+double SubsurfaceState::continuityResidual() const noexcept {
+    const double in  = led_infil_in + led_lateral;
+    const double out = led_deep + led_node + led_et + led_dunne;
+    return ledgeredStorage() - led_init_storage - (in - out);
+}
+
 namespace {
 
 std::string upperTrim(const std::string& t) {

@@ -42,6 +42,9 @@
 #include "../hydraulics/Link.hpp"       // link::buildXSectParams — street spread at max depth
 #include "../hydraulics/XSectBatch.hpp" // xsect::getWofY
 #include "../transport/TransportPolicy.hpp"   // E2: Domain x Species matrix block
+#include "../2d/quality/SurfaceQuality2D.hpp"   // S7: 2D Surface Washoff Summary
+#include "../2d/data/MeshData.hpp"
+#include "../2d/subsurface/SubsurfaceData.hpp"   // G-O: 2D Aquifer Continuity
 
 #include <version.h>
 
@@ -990,6 +993,32 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f",
                      mb2.error() * 100.0);
 
+        // G-O: the two-zone [2D_AQUIFER] ledger, the same terms the .h5
+        // /groundwater_2d group and groundwater_ledger series carry. Recharge
+        // and capillary rise are internal (unsaturated <-> saturated zone of
+        // the same cell) and are listed for information, not in the balance.
+        if (ctx.twod_io.aquifer_state && ctx.twod_io.aquifer_state->active) {
+            const auto& g = *ctx.twod_io.aquifer_state;
+            WRITE(f, "");
+            WRITE(f, "");
+            std::fprintf(f, "\n  **************************        Volume        Volume");
+            std::fprintf(f, "\n  2D Aquifer Continuity          cubic meters      10^6 ltr");
+            std::fprintf(f, "\n  **************************     ---------     ---------");
+            row2("Initial Stored Volume ....", g.led_init_storage);
+            row2("Infiltration Inflow ......", g.led_infil_in);
+            row2("Lateral Net Inflow .......", g.led_lateral);
+            row2("Deep Percolation .........", g.led_deep);
+            row2("Node Exchange Outflow ....", g.led_node);
+            row2("Subsurface ET ............", g.led_et);
+            row2("Saturation Excess Return .", g.led_dunne);
+            row2("Final Stored Volume ......", g.liveStorage());
+            row2("  (Recharge, internal) ...", g.led_recharge);
+            row2("  (Capillary Rise, int.) .", g.led_caprise);
+            const double denom = g.led_init_storage + g.led_infil_in + std::max(0.0, g.led_lateral);
+            std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f",
+                         (denom > 0.0) ? g.continuityResidual() / denom * 100.0 : 0.0);
+        }
+
         // 2D Solver Statistics — cumulative marcher throughput. Printed only
         // when populated (>=0).
         if (mb2.solver_nsteps >= 0) {
@@ -1750,6 +1779,99 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
         WRITE(f, "");
         WRITE(f, "");
+    }
+
+    // =====================================================================
+    // BW-MSX (2026-09-19): the reactions component's species that build up
+    // and wash off — same layout as the pollutant block, user mass per
+    // species (MG/UG species print lbs/kg; other units print "mass").
+    // =====================================================================
+    {
+        const auto& ms = ctx.reactions.surface;
+        if (ms.active() && ctx.n_subcatches() > 0 && opt.rpt_subcatchments != 0
+            && !opt.ignore_quality) {
+            const int ns = ctx.n_subcatches();
+            const int nm = ms.n_species;
+            WRITE(f, "********************************");
+            WRITE(f, "Subcatchment MSX Washoff Summary");
+            WRITE(f, "********************************");
+            std::fprintf(f, "\n");
+            std::fprintf(f, " \n  ----------------------------------");
+            for (int m = 1; m < nm; ++m) std::fprintf(f, "--------------");
+            std::fprintf(f, " \n                                ");
+            for (int m = 0; m < nm; ++m)
+                std::fprintf(f, "%14s", ctx.reactions.species_name[static_cast<std::size_t>(m)].c_str());
+            std::fprintf(f, " \n  Subcatchment                  ");
+            for (int m = 0; m < nm; ++m) {
+                const double mcf = ms.mcf[static_cast<std::size_t>(m)];
+                std::fprintf(f, "%14s", (mcf == 1.0) ? "mass" : (si_report ? "kg" : "lbs"));
+            }
+            std::fprintf(f, " \n  ----------------------------------");
+            for (int m = 1; m < nm; ++m) std::fprintf(f, "--------------");
+            std::vector<double> sys(static_cast<std::size_t>(nm), 0.0);
+            for (int j = 0; j < ns; ++j) {
+                std::fprintf(f, "\n  %-30s", ctx.subcatch_names.name_of(j).c_str());
+                for (int m = 0; m < nm; ++m) {
+                    const double v = ms.led_subcatch_load[ms.sidx(j, m)];
+                    sys[static_cast<std::size_t>(m)] += v;
+                    std::fprintf(f, "%14.3f", v);
+                }
+            }
+            std::fprintf(f, " \n  ----------------------------------");
+            for (int m = 1; m < nm; ++m) std::fprintf(f, "--------------");
+            std::fprintf(f, "\n  System                        ");
+            for (int m = 0; m < nm; ++m) std::fprintf(f, "%14.3f", sys[static_cast<std::size_t>(m)]);
+            WRITE(f, "");
+            std::fprintf(f, "  Surface ledger (species: initial buildup, net buildup, washed to network, swept, BMP removed):\n");
+            for (int m = 0; m < nm; ++m) {
+                const auto um = static_cast<std::size_t>(m);
+                std::fprintf(f, "    %-16s %14.3f %14.3f %14.3f %14.3f %14.3f\n",
+                             ctx.reactions.species_name[um].c_str(),
+                             ms.led_init_buildup[um], ms.led_buildup[um],
+                             ms.led_runoff_load[um], ms.led_sweeping[um], ms.led_bmp_removal[um]);
+            }
+            WRITE(f, "");
+            WRITE(f, "");
+        }
+    }
+
+    // S7: 2D Surface Washoff Summary — the cells' land-use surfaces, per
+    // surface species (pollutants, then MSX). The same ledger rows as the
+    // subcatchment blocks above, in the same user mass, plus the store left
+    // on the mesh; "washed" is what entered the cell rows (it reaches the
+    // network through the coupling tuple, so it is not a node load here).
+    {
+        const auto* sq = ctx.twod_io.surface_quality;
+        if (sq && sq->active() && !opt.ignore_quality) {
+            const int nsp = sq->nSpecies();
+            WRITE(f, "**************************");
+            WRITE(f, "2D Surface Washoff Summary");
+            WRITE(f, "**************************");
+            std::fprintf(f, "\n");
+            std::fprintf(f, "  Cells: %d  Land uses: %d  (buildup per %s)\n",
+                         sq->nCells(), sq->nLandUses(), si_report ? "hectare" : "acre");
+            std::fprintf(f, "  %-16s %14s %14s %14s %14s %14s %14s\n", "Species",
+                         "Init Buildup", "Net Buildup", "Washed Off", "Swept", "BMP Removed", "On Mesh");
+            for (int sidx = 0; sidx < nsp; ++sidx) {
+                const auto us = static_cast<std::size_t>(sidx);
+                double store = 0.0;
+                if (ctx.twod_io.mesh) {
+                    const auto& mesh = *ctx.twod_io.mesh;
+                    const double to_la = si_report ? 1.0e-4 : 1.0 / 4046.8564224;   // m² → ha | acre
+                    for (int c = 0; c < sq->nCells(); ++c)
+                        store += sq->buildupPerArea(c, sidx) *
+                                 mesh.tri_area[static_cast<std::size_t>(c)] * to_la;
+                }
+                std::fprintf(f, "  %-16s %14.3f %14.3f %14.3f %14.3f %14.3f %14.3f\n",
+                             sq->speciesName(sidx).c_str(),
+                             sq->ledInitBuildup()[us], sq->ledBuildup()[us], sq->ledWashoff()[us],
+                             sq->ledSweeping()[us], sq->ledBmp()[us], store);
+            }
+            std::fprintf(f, "  (%s; a reactions species declared in UG or as a count keeps its own unit)\n",
+                         si_report ? "kg" : "lbs");
+            WRITE(f, "");
+            WRITE(f, "");
+        }
     }
 
     // =====================================================================

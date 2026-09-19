@@ -1564,6 +1564,26 @@ CascadeResult delete_landuse(SimulationContext& ctx, int landuse_idx) {
         erase_matrix_row(W.bmp_effic,   W.n_landuses, np, landuse_idx);
         --W.n_landuses;
     }
+    // BW-MSX: the reactions-component species' surface parameters share the
+    // land-use dimension ([lu * n_species + m]); re-pack them the same way.
+    {
+        auto& M = ctx.reactions.surface;
+        if (M.n_landuses > landuse_idx && M.n_species > 0) {
+            const int nm = M.n_species;
+            erase_matrix_row(M.bu_type,        M.n_landuses, nm, landuse_idx);
+            erase_matrix_row(M.bu_c1,          M.n_landuses, nm, landuse_idx);
+            erase_matrix_row(M.bu_c2,          M.n_landuses, nm, landuse_idx);
+            erase_matrix_row(M.bu_c3,          M.n_landuses, nm, landuse_idx);
+            erase_matrix_row(M.bu_normalizer,  M.n_landuses, nm, landuse_idx);
+            erase_matrix_row(M.bu_max_days,    M.n_landuses, nm, landuse_idx);
+            erase_matrix_row(M.wo_type,        M.n_landuses, nm, landuse_idx);
+            erase_matrix_row(M.wo_coeff,       M.n_landuses, nm, landuse_idx);
+            erase_matrix_row(M.wo_expon,       M.n_landuses, nm, landuse_idx);
+            erase_matrix_row(M.wo_sweep_effic, M.n_landuses, nm, landuse_idx);
+            erase_matrix_row(M.wo_bmp_effic,   M.n_landuses, nm, landuse_idx);
+            --M.n_landuses;
+        }
+    }
 
     // --- Step 2: erase this landuse's column from subcatch coverage/sweep ---
     {

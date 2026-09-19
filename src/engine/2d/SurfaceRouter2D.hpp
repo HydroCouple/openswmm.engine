@@ -44,7 +44,8 @@
 #include "data/BoundaryData.hpp"
 #include "data/PendingRows2D.hpp"
 #include "coupling/NodeCoupling.hpp"
-#include "gw/GwTransportData.hpp"   // U4
+#include "gw/GwTransportData.hpp"
+#include "quality/SurfaceQuality2D.hpp"   // S7
 #include "subsurface/SubsurfaceSolver.hpp"   // G1: the two-zone GW kernel
 #include "infil/Infil2D.hpp"
 #include "mesh/RainfallInterpolator.hpp"
@@ -257,6 +258,9 @@ public:
     /// SimulationContext::twod_io.gw. Authoring-only in this release.
     GwTransportData&       gwTransport()       noexcept { return gw_; }
     const GwTransportData& gwTransport() const noexcept { return gw_; }
+    /// S7: cell coverages / buildup / washoff / sweeping (authoring + state).
+    SurfaceQuality2D&       surfaceQuality()       noexcept { return surface_quality_; }
+    const SurfaceQuality2D& surfaceQuality() const noexcept { return surface_quality_; }
 
     /// G1: the authored `[2D_AQUIFER*]` rows, in the user's own units.
     /// Reached by the section handlers and the InpWriter through
@@ -454,6 +458,7 @@ private:
 
     /// U4: subsurface-transport authoring rows (inert until the kernel).
     GwTransportData gw_;
+    SurfaceQuality2D surface_quality_;   ///< S7
 
     /// G1: the `[2D_AQUIFER*]` authoring rows (project units, never
     /// converted in place) and the two-zone kernel that reads them into SI

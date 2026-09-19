@@ -360,6 +360,9 @@ public:
      */
     void set_lenient_open(bool on) noexcept { lenient_open_ = on; }
 
+    /// BW-MSX gate access: the pollutant surface-quality store (read-only).
+    const landuse::SurfaceQualitySoA& surfaceQuality() const noexcept { return surface_quality_; }
+
 #ifdef OPENSWMM_HAS_2D
     /** @brief Access the 2D surface router (for C API delegation). */
     twoD::SurfaceRouter2D&       surfaceRouter2D()       noexcept { return surface_router_; }
@@ -434,6 +437,10 @@ private:
 
 #ifdef OPENSWMM_HAS_2D
     twoD::SurfaceRouter2D        surface_router_; ///< Optional 2D surface routing solver
+    /// S4b: per-row unit labels for the 2D species snapshot (pollutant units,
+    /// MSX units, "hours", "degC"), rebuilt by fillSurfaceSnapshot() and
+    /// pointed to by SimulationSnapshot::surface_species_units.
+    mutable std::vector<std::string> surface_species_units_;
     /// Non-owning pointer to the 2D HDF5 output plugin (lifetime owned by
     /// PluginFactory's output_plugins_). Set in open() when [2D_OPTIONS]
     /// OUTPUT_FILE is configured; used in start() to call prepareMeshAndDatasets

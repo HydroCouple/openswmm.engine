@@ -65,6 +65,7 @@
 #include "../2d/data/SolverOptions2D.hpp"
 #include "../2d/data/Report2DVars.hpp"
 #include "../2d/gw/GwTransportData.hpp"   // U4
+#include "../2d/quality/SurfaceQuality2D.hpp"   // S7
 #include "../2d/subsurface/SubsurfaceSections.hpp"   // G1
 #include "../2d/data/BoundaryData.hpp"
 #include "../2d/data/PendingRows2D.hpp"
@@ -481,6 +482,36 @@ static void emit2DInfilSections(FILE* f, const SimulationContext& ctx) {
 // scope token it was authored with; nothing is expanded, resolved or
 // defaulted away. The FILE sidecar is referenced, not inlined (its rows
 // carry layer == -2).
+// ---- S7 (2026-09-19) — [2D_COVERAGES] / [2D_LOADINGS] / [2D_CURB_LENGTH] ----
+// Echoed with the scope token they were authored with (GLOBAL < TAG < CELL
+// is the reader's ladder, not a writer expansion).
+static void emitSurfaceQualitySections(FILE* f, const SimulationContext& ctx) {
+    const twoD::SurfaceQuality2D* sq = ctx.twod_io.surface_quality;
+    if (!sq || !sq->authored()) return;
+    if (!sq->coverage_rows.empty()) {
+        sec(f, "2D_COVERAGES");
+        std::fprintf(f, ";;%-14s %-16s %-8s ...\n", "Scope", "LandUse", "Percent");
+        for (const auto& r : sq->coverage_rows) {
+            std::fprintf(f, "%-16s", twoD::formatSqScope(r.key).c_str());
+            for (const auto& u : r.uses) std::fprintf(f, " %-16s %8.3f", u.first.c_str(), u.second);
+            std::fprintf(f, "\n");
+        }
+    }
+    if (!sq->loading_rows.empty()) {
+        sec(f, "2D_LOADINGS");
+        std::fprintf(f, ";;%-14s %-16s %-10s\n", "Scope", "Species", "Buildup");
+        for (const auto& r : sq->loading_rows)
+            std::fprintf(f, "%-16s %-16s %10.4f\n", twoD::formatSqScope(r.key).c_str(),
+                         r.species.c_str(), r.value);
+    }
+    if (!sq->curb_rows.empty()) {
+        sec(f, "2D_CURB_LENGTH");
+        std::fprintf(f, ";;%-14s %-10s\n", "Scope", "Length");
+        for (const auto& r : sq->curb_rows)
+            std::fprintf(f, "%-16s %10.4f\n", twoD::formatSqScope(r.key).c_str(), r.length);
+    }
+}
+
 static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
     const twoD::GwTransportData* gw = ctx.twod_io.gw;
     if (!gw || gw->empty()) return;
@@ -1066,6 +1097,7 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
     // section order here guarantees, since the mesh sections precede this
     // call in write2DSections.
     emitGwTransportSections(f, ctx);
+    emitSurfaceQualitySections(f, ctx);   // S7
 
     // G1: the [2D_AQUIFER*] rows, echoed in the units they were authored in.
     // The writer is a verbatim echo because the config is never converted in
@@ -2588,8 +2620,12 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         ctx.landuse_names.name_of(lu).c_str(),pct);
     }}}}
 
-    // [BUILDUP]
-    if(ctx.buildup.n_landuses>0&&ctx.buildup.n_pollutants>0){sec(f,"BUILDUP");
+    // [BUILDUP] — pollutant rows, then (BW-MSX) the reactions component's
+    // species from ctx.reactions.surface (resolved params, by name).
+    const auto& msxs=ctx.reactions.surface;
+    auto msxHasBu=[&]{for(std::size_t k=0;k<msxs.bu_type.size();++k)if(msxs.bu_type[k]!=0)return true;return false;}();
+    auto msxHasWo=[&]{for(std::size_t k=0;k<msxs.wo_type.size();++k)if(msxs.wo_type[k]!=0)return true;return false;}();
+    if((ctx.buildup.n_landuses>0&&ctx.buildup.n_pollutants>0)||msxHasBu){sec(f,"BUILDUP");
     std::fprintf(f,";;%-16s %-16s %-10s %-10s %-10s %-10s %-8s\n","LandUse","Pollutant","FuncType","Coeff1","Coeff2","Coeff3","PerUnit");
     std::fprintf(f,";;%-16s %-16s %-10s %-10s %-10s %-10s %-8s\n","----------------","----------------","----------","----------","----------","----------","--------");
     static const char* buNames[]={"NONE","POW","EXP","SAT","EXT"};
@@ -2603,10 +2639,31 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         (ft>=0&&ft<=4)?buNames[ft]:"NONE",
         ctx.buildup.coeff1[idx],ctx.buildup.coeff2[idx],ctx.buildup.coeff3[idx],
         ctx.buildup.normalizer[idx]==0?"AREA":"CURB");
+    }}
+    for(int lu=0;lu<msxs.n_landuses;++lu){
+    for(int m=0;m<msxs.n_species;++m){
+    auto idx=msxs.pidx(lu,m);
+    int ft=msxs.bu_type[idx];
+    if(ft==0)continue;
+    const std::string& sp=(static_cast<std::size_t>(m)<ctx.reactions.species_name.size())?ctx.reactions.species_name[static_cast<std::size_t>(m)]:std::string{};
+    if(ft==4){
+        const int ts=static_cast<int>(msxs.bu_c3[idx]);
+        const std::string tsn=(ts>=0&&ts<static_cast<int>(ctx.tables.tables.size()))?ctx.tables.tables[static_cast<std::size_t>(ts)].id:std::string{"*"};
+        std::fprintf(f,"%-16s %-16s %-10s %10.4f %10.4f %-10s %-8s\n",
+            ctx.landuse_names.name_of(lu).c_str(),sp.c_str(),"EXT",
+            msxs.bu_c1[idx],msxs.bu_c2[idx],tsn.c_str(),
+            msxs.bu_normalizer[idx]==0?"AREA":"CURB");
+    }else{
+        std::fprintf(f,"%-16s %-16s %-10s %10.4f %10.4f %10.4f %-8s\n",
+            ctx.landuse_names.name_of(lu).c_str(),sp.c_str(),
+            (ft>=0&&ft<=4)?buNames[ft]:"NONE",
+            msxs.bu_c1[idx],msxs.bu_c2[idx],msxs.bu_c3[idx],
+            msxs.bu_normalizer[idx]==0?"AREA":"CURB");
+    }
     }}}
 
-    // [WASHOFF]
-    if(ctx.washoff.n_landuses>0&&ctx.washoff.n_pollutants>0){sec(f,"WASHOFF");
+    // [WASHOFF] — pollutant rows, then (BW-MSX) species rows.
+    if((ctx.washoff.n_landuses>0&&ctx.washoff.n_pollutants>0)||msxHasWo){sec(f,"WASHOFF");
     std::fprintf(f,";;%-16s %-16s %-10s %-10s %-10s %-10s %-10s\n","LandUse","Pollutant","FuncType","Coeff","Expon","SweepEff","BmpEff");
     std::fprintf(f,";;%-16s %-16s %-10s %-10s %-10s %-10s %-10s\n","----------------","----------------","----------","----------","----------","----------","----------");
     static const char* woNames[]={"NONE","EXP","RC","EMC"};
@@ -2620,20 +2677,36 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         (ft>=0&&ft<=3)?woNames[ft]:"NONE",
         ctx.washoff.coeff[idx],ctx.washoff.expon[idx],
         ctx.washoff.sweep_effic[idx],ctx.washoff.bmp_effic[idx]);
+    }}
+    for(int lu=0;lu<msxs.n_landuses;++lu){
+    for(int m=0;m<msxs.n_species;++m){
+    auto idx=msxs.pidx(lu,m);
+    int ft=msxs.wo_type[idx];
+    if(ft==0)continue;
+    const std::string& sp=(static_cast<std::size_t>(m)<ctx.reactions.species_name.size())?ctx.reactions.species_name[static_cast<std::size_t>(m)]:std::string{};
+    std::fprintf(f,"%-16s %-16s %-10s %10.4f %10.4f %10.2f %10.2f\n",
+        ctx.landuse_names.name_of(lu).c_str(),sp.c_str(),
+        (ft>=0&&ft<=3)?woNames[ft]:"NONE",
+        msxs.wo_coeff[idx],msxs.wo_expon[idx],
+        msxs.wo_sweep_effic[idx],msxs.wo_bmp_effic[idx]);
     }}}
 
     // [LOADINGS] — initial pollutant buildup per subcatchment (stored in
     // ctx.subcatches.conc by handle_loadings; see also the object-deletion
     // re-pack tests). Zero rows are skipped: absent rows parse back to 0.
-    if(ctx.subcatches.conc_n_pollutants>0&&ctx.n_subcatches()>0&&ctx.n_pollutants()>0){
+    {
     const int np=ctx.subcatches.conc_n_pollutants;
+    const bool polluts=(np>0&&ctx.n_subcatches()>0&&ctx.n_pollutants()>0);
     bool any=false;
-    for(std::size_t i=0;i<ctx.subcatches.conc.size()&&!any;++i)
+    if(polluts)for(std::size_t i=0;i<ctx.subcatches.conc.size()&&!any;++i)
         if(ctx.subcatches.conc[i]!=0.0)any=true;
-    if(any){sec(f,"LOADINGS");
+    bool anyMsx=false;   // BW-MSX: species initial loadings
+    for(std::size_t i=0;i<msxs.init_loading.size()&&!anyMsx;++i)
+        if(msxs.init_loading[i]!=0.0)anyMsx=true;
+    if(any||anyMsx){sec(f,"LOADINGS");
     std::fprintf(f,";;%-16s %-16s %-10s\n","Subcatchment","Pollutant","Buildup");
     std::fprintf(f,";;%-16s %-16s %-10s\n","----------------","----------------","----------");
-    for(int s=0;s<ctx.n_subcatches();++s){
+    if(any)for(int s=0;s<ctx.n_subcatches();++s){
     for(int p=0;p<np&&p<ctx.n_pollutants();++p){
     auto idx=static_cast<size_t>(s)*static_cast<size_t>(np)+static_cast<size_t>(p);
     if(idx>=ctx.subcatches.conc.size())break;
@@ -2641,6 +2714,15 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     if(w==0.0)continue;
     std::fprintf(f,"%-16s %-16s %10.4f\n",
         ctx.subcatch_names.name_of(s).c_str(),pN(ctx,p),w);
+    }}
+    if(anyMsx)for(int s=0;s<ctx.n_subcatches();++s){
+    for(int m=0;m<msxs.n_species;++m){
+    if(msxs.sidx(s,m)>=msxs.init_loading.size())break;
+    const double w=msxs.init_loading[msxs.sidx(s,m)];
+    if(w==0.0)continue;
+    const std::string& sp=(static_cast<std::size_t>(m)<ctx.reactions.species_name.size())?ctx.reactions.species_name[static_cast<std::size_t>(m)]:std::string{};
+    std::fprintf(f,"%-16s %-16s %10.4f\n",
+        ctx.subcatch_names.name_of(s).c_str(),sp.c_str(),w);
     }}}}
 
     // [TREATMENT]

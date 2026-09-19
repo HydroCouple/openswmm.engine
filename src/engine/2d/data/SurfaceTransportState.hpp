@@ -149,6 +149,21 @@ struct SurfaceTransportState {
     /// S3: what came in through the 1D→2D coupling (junction spill at the
     /// node's published concentration, outfall discharge at the outfall's).
     std::vector<double> gained_coupling;
+    /// S7: [s] species mass washed off the cells' land-use surfaces into the
+    /// rows (cell buildup → water), m³·conc. Sized by the router when
+    /// `[2D_COVERAGES]` resolves; empty otherwise.
+    std::vector<double> gained_washoff;
+    /// S7: [c] the cell's NET runoff volume (m³, signed) since the last
+    /// runoff step: + what left across its faces, open boundary edges and
+    /// drains to nodes, − what arrived across faces, from node spills,
+    /// outfall discharge, prescribed inflow and inflow boundaries. Rainfall
+    /// and groundwater return are generation, not inflow, so they are not
+    /// subtracted: the positive part is the runoff the cell itself produced
+    /// (rain excess plus storage release, the subcatchment step's `q·A`) —
+    /// D-A22 as revised 2026-09-19. Accumulated by the marcher only while
+    /// non-empty (sized by the router with the coverages); read, clamped at
+    /// zero and zeroed by SurfaceQuality2D::step.
+    std::vector<double> cell_runoff_vol;
 
     // ---- S3 outfall-discharge species source ------------------------------
     /// [s * n_cells + c] species mass-rate DENSITY (conc · m/s) riding the
@@ -221,7 +236,8 @@ struct SurfaceTransportState {
                lost_coupling[us] -
                (us < gained_rainfall.size() ? gained_rainfall[us] : 0.0) -
                (us < gained_boundary.size() ? gained_boundary[us] : 0.0) -
-               (us < gained_coupling.size() ? gained_coupling[us] : 0.0);
+               (us < gained_coupling.size() ? gained_coupling[us] : 0.0) -
+               (us < gained_washoff.size()  ? gained_washoff[us]  : 0.0);
     }
 };
 

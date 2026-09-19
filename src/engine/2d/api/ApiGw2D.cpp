@@ -419,35 +419,11 @@ SWMM_ENGINE_API int swmm_gw2d_get_column(SWMM_Engine engine, int cell,
 
 namespace {
 
-/// Everything the aquifer HOLDS right now, including water parked in a side
-/// accumulator: in flight between two cells, received from the surface and not
-/// yet absorbed, or pushed out and not yet taken. All of it is real water in
-/// the aquifer's custody, and this is what SWMM_GW2D_LED_STORAGE reports.
-///
-/// `nacc` is deliberately NOT subtracted. It holds node exchange that
-/// `sampleNodeExchange` has committed but no cell has applied yet, so that
-/// water is still inside `state.hg` — subtracting it would report it leaving
-/// twice.
-double liveStorage(const SubsurfaceSolver& gw) {
-    const auto& st = gw.state();
-    double s = st.storage();
-    for (double v : st.eacc_L) s += v;
-    for (double v : st.eacc_R) s += v;
-    for (double v : st.xacc_from_surface) s += v;
-    for (double v : st.xacc_to_surface)   s += v;
-    return s;
-}
-
-/// The storage the LEDGER can account for — holdings less the two surface
-/// accumulators. See swmm_gw2d_get_continuity_error for why the difference
-/// matters.
-double ledgeredStorage(const SubsurfaceSolver& gw) {
-    const auto& st = gw.state();
-    double s = st.storage();
-    for (double v : st.eacc_L) s += v;
-    for (double v : st.eacc_R) s += v;
-    return s;
-}
+// G-O: the storage views live on SubsurfaceState (the results file and the
+// report read the same numbers); the reasoning is on the methods there and
+// on swmm_gw2d_get_continuity_error below.
+double liveStorage(const SubsurfaceSolver& gw)     { return gw.state().liveStorage(); }
+double ledgeredStorage(const SubsurfaceSolver& gw) { return gw.state().ledgeredStorage(); }
 
 }  // namespace
 
@@ -501,9 +477,8 @@ SWMM_ENGINE_API int swmm_gw2d_get_continuity_error(SWMM_Engine engine,
     // as written. Using holdings here instead reports a leak of P_in + P_out,
     // which on a steadily infiltrating deck is a permanent non-zero residual
     // for a kernel that is conserving to machine precision.
-    const double in  = st.led_infil_in + st.led_lateral;
-    const double out = st.led_deep + st.led_node + st.led_et + st.led_dunne;
-    *value = ledgeredStorage(gw) - st.led_init_storage - (in - out);
+    (void)st;
+    *value = gw.state().continuityResidual();   // G-O: one definition, shared
     return SWMM_OK;
 }
 
