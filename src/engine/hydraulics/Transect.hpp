@@ -91,8 +91,16 @@ struct TransectData {
  *
  * @param td  [in/out] TransectData with stations/elevations filled.
  *            On output, tables and full-depth properties are set.
+ * @param add_end_walls  Close the section with vertical walls up to the
+ *            highest station before tabulating, as legacy transect_validate
+ *            does for a [TRANSECTS] section. A STREET section is already
+ *            closed by its own points (transect_createStreetTransect calls
+ *            createTables directly), and adding walls there shifts every
+ *            station index — which moves the `k == Nstations - 1` split in
+ *            getFlow and so changes the composite-roughness flow the hyd.
+ *            radius table is solved from. Pass false for streets.
  */
-void buildTables(TransectData& td);
+void buildTables(TransectData& td, bool add_end_walls = true);
 
 /**
  * @brief Build tabulated geometry from a CUSTOM shape curve.

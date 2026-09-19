@@ -44,6 +44,7 @@
 #include "../SectionParser.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../core/ErrorCodes.hpp"
+#include "../../core/Constants.hpp"
 #include "../../data/LinkData.hpp"
 #include "../../data/InfraData.hpp"
 
@@ -71,6 +72,22 @@ static void set_link_nodes(SimulationContext& ctx, int idx,
     ctx.pending_link_nodes.emplace_back(idx, std::make_pair(n1, n2));
 }
 
+namespace {
+
+// legacy link.c: under LINK_OFFSETS ELEVATION a '*' offset token means "this
+// end sits at the node invert" and is stored as MISSING (conduit_readParams
+// :966/969, orifice :1672, weir :2079, outlet :2591); getOffsetHeight then
+// turns MISSING into a zero offset. Reading it as 0.0 instead makes the offset
+// an ELEVATION of zero — on driveway's ditch (invert -0.75) that lifted the
+// conduit 0.75 ft off the node and cut its flow depth from 1.75 ft to 1.0.
+double offsetToken(const SimulationContext& ctx, const std::string& tok) {
+    if (ctx.options.link_offsets == 1 && !tok.empty() && tok[0] == '*')
+        return constants::MISSING;
+    return to_double(tok);
+}
+
+}  // namespace
+
 // ============================================================================
 // handle_conduits()
 // ============================================================================
@@ -96,8 +113,8 @@ void handle_conduits(SimulationContext& ctx, const std::vector<std::string>& lin
         set_link_nodes(ctx, idx, tok[1], tok[2]);
         ctx.link_subtypes.conduits.length[ucr]    = to_double(tok[3]);
         ctx.link_subtypes.conduits.roughness[ucr] = to_double(tok[4]);
-        ctx.links.offset1[idx]   = to_double(tok[5]);
-        ctx.links.offset2[idx]   = to_double(tok[6]);
+        ctx.links.offset1[idx]   = offsetToken(ctx, tok[5]);
+        ctx.links.offset2[idx]   = offsetToken(ctx, tok[6]);
         if (tok.size() > 7) ctx.links.q0[idx]      = to_double(tok[7]);
         if (tok.size() > 8) ctx.links.q_limit[idx] = to_double(tok[8]);
         if (!pl.comment.empty())
@@ -174,7 +191,7 @@ void handle_orifices(SimulationContext& ctx, const std::vector<std::string>& lin
             ctx.link_subtypes.orifices.orifice_type[uorr] =
                 (Tokenizer::to_upper(tok[3]) == "SIDE") ? 1.0 : 0.0;
         // tok[4]: offset (height above invert)
-        if (tok.size() > 4) ctx.links.offset1[idx]      = to_double(tok[4]);
+        if (tok.size() > 4) ctx.links.offset1[idx]      = offsetToken(ctx, tok[4]);
         // tok[5]: discharge coefficient
         if (tok.size() > 5) ctx.link_subtypes.orifices.cd[uorr] = to_double(tok[5]);
         // tok[6]: flap gate (YES/NO)
@@ -216,7 +233,7 @@ void handle_weirs(SimulationContext& ctx, const std::vector<std::string>& lines)
             ctx.link_subtypes.weirs.weir_type[uwr] = wt;
         }
         // tok[4]: crest height (above invert)
-        if (tok.size() > 4) ctx.link_subtypes.weirs.crest_height[uwr] = to_double(tok[4]);
+        if (tok.size() > 4) ctx.link_subtypes.weirs.crest_height[uwr] = offsetToken(ctx, tok[4]);
         // tok[5]: discharge coefficient
         if (tok.size() > 5) ctx.link_subtypes.weirs.cd[uwr] = to_double(tok[5]);
         // tok[6]: flap gate (YES/NO)
@@ -274,7 +291,7 @@ void handle_outlets(SimulationContext& ctx, const std::vector<std::string>& line
         const auto uolr = static_cast<std::size_t>(olr);
         set_link_nodes(ctx, idx, tok[1], tok[2]);
         if (tok.size() > 3)
-            ctx.link_subtypes.outlets.crest_height[uolr] = to_double(tok[3]);
+            ctx.link_subtypes.outlets.crest_height[uolr] = offsetToken(ctx, tok[3]);
         // tok[4]: type string (TABULAR/HEAD, TABULAR/DEPTH, FUNCTIONAL/HEAD, FUNCTIONAL/DEPTH)
         // tok[5]: curve name (TABULAR) or C1 coefficient (FUNCTIONAL)
         // tok[6]: C2 exponent (FUNCTIONAL only)

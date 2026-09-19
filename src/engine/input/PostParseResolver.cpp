@@ -69,6 +69,26 @@
 
 namespace openswmm::input {
 
+namespace {
+
+// legacy link.c getOffsetHeight (link.c:493-506): converts an ELEVATION offset
+// to a height above the node invert. A MISSING offset — what a '*' token
+// stores — means "sit on the node invert"; a small negative drop is silently
+// clamped, and only a drop deeper than MIN_DELTA_Z earns WARNING 03.
+double legacyOffsetHeight(double offset, double invert_elev,
+                          SimulationContext& ctx, const std::string& link_name) {
+    if (offset <= constants::MISSING) return 0.0;
+    offset -= invert_elev;
+    if (offset >= 0.0) return offset;
+    if (offset >= -constants::MIN_DELTA_Z) return 0.0;
+    ctx.warnings.push_back(format_warning(WARN_NEGATIVE_OFFSET, link_name));
+    return 0.0;
+}
+
+}  // namespace
+
+
+
 using openswmm::format_error;
 using openswmm::format_warning;
 using openswmm::ERR_TRANSECT_MANNING;
@@ -2334,7 +2354,7 @@ void resolve_cross_references(SimulationContext& ctx) {
     // -------------------------------------------------------------------------
     // Link cross-section derived properties
     // -------------------------------------------------------------------------
-    // -------------------------------------------------------------------------
+        // -------------------------------------------------------------------------
     // Non-conduit link offset conversion (ELEVATION → DEPTH)
     // -------------------------------------------------------------------------
     // The conduit pass below skips non-conduit links (length==0). We need a
@@ -2350,10 +2370,10 @@ void resolve_cross_references(SimulationContext& ctx) {
             if (lt == LinkType::ORIFICE) {
                 // [ORIFICES] offset1 = absolute invert elevation → convert to depth above n1
                 if (n1 >= 0 && n1 < n_nodes) {
-                    double raw1 = ctx.links.offset1[uj] - ctx.nodes.invert_elev[static_cast<std::size_t>(n1)];
-                    if (raw1 < 0.0)
-                        ctx.warnings.push_back(format_warning(WARN_NEGATIVE_OFFSET, ctx.link_names.name_of(j)));
-                    ctx.links.offset1[uj] = std::max(0.0, raw1);
+                    ctx.links.offset1[uj] = legacyOffsetHeight(
+                        ctx.links.offset1[uj],
+                        ctx.nodes.invert_elev[static_cast<std::size_t>(n1)],
+                        ctx, ctx.link_names.name_of(j));
                 }
             } else if (lt == LinkType::WEIR || lt == LinkType::OUTLET) {
                 // [WEIRS]/[OUTLETS]: crest_height = absolute crest elevation →
@@ -2365,8 +2385,10 @@ void resolve_cross_references(SimulationContext& ctx) {
                     : (olr >= 0 ? &ctx.link_subtypes.outlets.crest_height[static_cast<std::size_t>(olr)]
                                 : nullptr);
                 if (crest && n1 >= 0 && n1 < n_nodes) {
-                    double rawCrest = *crest - ctx.nodes.invert_elev[static_cast<std::size_t>(n1)];
-                    *crest = std::max(0.0, rawCrest);
+                    const double rawCrest = *crest;
+                    *crest = legacyOffsetHeight(
+                        rawCrest, ctx.nodes.invert_elev[static_cast<std::size_t>(n1)],
+                        ctx, ctx.link_names.name_of(j));
                 }
             }
         }
@@ -2887,14 +2909,11 @@ void resolve_cross_references(SimulationContext& ctx) {
 
         // Convert elevation offsets if ELEV_OFFSET mode
         if (ctx.options.link_offsets == 1) { // ELEV_OFFSET
-            double raw1 = ctx.links.offset1[uj] - ctx.nodes.invert_elev[n1];
-            double raw2 = ctx.links.offset2[uj] - ctx.nodes.invert_elev[n2];
-            if (raw1 < 0.0)
-                ctx.warnings.push_back(format_warning(WARN_NEGATIVE_OFFSET, ctx.link_names.name_of(j)));
-            if (raw2 < 0.0)
-                ctx.warnings.push_back(format_warning(WARN_NEGATIVE_OFFSET, ctx.link_names.name_of(j)));
-            ctx.links.offset1[uj] = std::max(0.0, raw1);
-            ctx.links.offset2[uj] = std::max(0.0, raw2);
+            const std::string& lname = ctx.link_names.name_of(j);
+            ctx.links.offset1[uj] = legacyOffsetHeight(
+                ctx.links.offset1[uj], ctx.nodes.invert_elev[n1], ctx, lname);
+            ctx.links.offset2[uj] = legacyOffsetHeight(
+                ctx.links.offset2[uj], ctx.nodes.invert_elev[n2], ctx, lname);
         }
 
         // FILLED_CIRCULAR sediment bump — after the negative-offset clamp and
