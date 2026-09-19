@@ -22,10 +22,11 @@
 
 | | Site | Contents |
 |---|---|---|
-| **C / C++ Engine** | **[hydrocouple.org/openswmm.engine](https://hydrocouple.org/openswmm.engine)** | Full C API reference, hydrology / hydraulics / water-quality reference manuals, user manual, architecture notes. |
+| **C / C++ Engine** | **[hydrocouple.org/openswmm.engine](https://hydrocouple.org/openswmm.engine)** | Full C API reference, hydrology / hydraulics / water-quality reference manuals, engine manual (input format, files, reports, C API), architecture notes. |
 | **Python Bindings** | **[hydrocouple.org/openswmm.engine/python](https://hydrocouple.org/openswmm.engine/python)** | Quickstart, per-domain user guide, Cython API reference, SWMM 5 → v6 migration. |
+| **SWMMVis (GUI)** | **[hydrocouple.org/openswmm.gui](https://www.hydrocouple.org/openswmm.gui/)** | The graphical application: map canvas, layers and CRS, every editor, running simulations, plots and animation, 2D meshing, tutorials, reference tables and error codes. |
 
-Both sites cross-link from their top navigation.
+The sites cross-link from their top navigation.
 
 ---
 

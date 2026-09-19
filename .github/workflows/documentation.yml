@@ -96,6 +96,15 @@ jobs:
           sudo mv doxygen-${DOXYGEN_VERSION}/bin/doxygen /usr/local/bin/doxygen
           doxygen --version
 
+      - name: Check the GUI tagfile for drift (advisory)
+        # docs/tags/swmmvis-manual.tag is committed so the build never depends
+        # on the GUI Pages site being reachable. This only reports staleness —
+        # it must not fail the build, and it skips silently when offline.
+        continue-on-error: true
+        run: |
+          python3 scripts/refresh_gui_tagfile.py --check \
+            || echo "::warning::docs/tags/swmmvis-manual.tag is stale; run scripts/refresh_gui_tagfile.py"
+
       - name: Build Doxygen HTML docs
         # docs/CNAME pins the Pages custom domain. It must sit at the ROOT of
         # the published site, which is the Doxygen output — the Python docs

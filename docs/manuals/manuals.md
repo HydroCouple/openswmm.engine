@@ -7,7 +7,11 @@ The following manuals document the use, application, and technical reference for
 
 See @ref authors for the full list of authors and contributors.
 
-* User Manual (@ref user_manual)
+* Engine Manual (@ref engine_manual) — the objects a model is built from, the input
+  file format, the files the engine reads and writes, its reports, the C and Python
+  interfaces, and every error and warning message.
+* GUI Manual — the graphical application, SWMMVis, is documented separately at
+  <https://www.hydrocouple.org/openswmm.gui/>
 * Application Manual (@ref application_manual)
 * Reference Manuals
     * Hydrology Reference Manual (@ref hydrology_reference_manual)

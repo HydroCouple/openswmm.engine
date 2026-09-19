@@ -25,7 +25,8 @@ See @ref authors for the complete list of authors and contributors.
 
 ## Introduction
 
-The OpenSWMM Application Manual provides a series of worked-out examples that illustrate how to apply OpenSWMM to model common stormwater and drainage system scenarios. This manual complements the @ref user_manual, which explains how to use the program, and the reference manuals (@ref hydrology_reference_manual, @ref hydraulics_reference_manual, @ref quality_reference_manual), which describe the underlying theory and numerical methods.
+The OpenSWMM Application Manual provides a series of worked-out examples that illustrate how to apply OpenSWMM to model common stormwater and drainage system scenarios. This manual complements the @ref engine_manual, which documents the input file format,
+the engine's files and reports and its programmatic interfaces, and the reference manuals (@ref hydrology_reference_manual, @ref hydraulics_reference_manual, @ref quality_reference_manual), which describe the underlying theory and numerical methods.
 
 The examples progress from simple to more complex applications:
 

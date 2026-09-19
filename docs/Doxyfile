@@ -1002,11 +1002,10 @@ INPUT                  = ../README.md \
                          ../src/output \
                          ../include \
                          ./images/*.png \
-                         ./manuals/user/figures/*.png \
-                         ./Updates.md \
+                         ./manuals/engine/figures/*.png \
                          ./authors.md \
                          ./manuals/manuals.md \
-                         ./manuals/user \
+                         ./manuals/engine \
                          ./manuals/reference \
                          ./manuals/application
 
@@ -1122,7 +1121,7 @@ EXCLUDE_SYMLINKS       = NO
 # exclude all test directories for example use the pattern */test/*
 
 EXCLUDE_PATTERNS       = */SWMM* \
-                         manuals/user/figures/* \
+                         manuals/engine/figures/* \
                          manuals/reference/*/media/* \
                          manuals/reference/*/figures/* \
                          manuals/application/figures/* \
@@ -1161,7 +1160,7 @@ EXAMPLE_RECURSIVE      = NO
 # \image command).
 
 IMAGE_PATH             = ./images \
-                         ./manuals/user/figures \
+                         ./manuals/engine/figures \
                          ./manuals/reference/hydrology/media/media \
                          ./manuals/reference/hydraulics/media/media \
                          ./manuals/reference/quality/media/media
@@ -2584,7 +2583,7 @@ SKIP_FUNCTION_MACROS   = YES
 # the path). If a tag file is not located in the directory in which Doxygen is
 # run, you must also specify the path to the tagfile here.
 
-TAGFILES               =
+TAGFILES               = tags/swmmvis-manual.tag=https://www.hydrocouple.org/openswmm.gui/
 
 # When a file name is specified after GENERATE_TAGFILE, Doxygen will create a
 # tag file that is based on the input files it reads. See section "Linking to
@@ -2611,7 +2610,7 @@ EXTERNAL_GROUPS        = YES
 # be listed.
 # The default value is: YES.
 
-EXTERNAL_PAGES         = YES
+EXTERNAL_PAGES         = NO
 
 #---------------------------------------------------------------------------
 # Configuration options related to diagram generator tools

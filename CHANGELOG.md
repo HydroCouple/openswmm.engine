@@ -23,6 +23,45 @@ retroactive.
 
 ## [Unreleased]
 
+### Documentation
+
+- **The user manual is retired and replaced by an Engine Manual** at
+  `docs/manuals/engine/`, split from it by audience. The graphical application is
+  documented in its own repository, so the chapters that described the retired Delphi
+  interface — Quick Start Tutorial, Main Window, Working with Objects, Working with the
+  Map, Printing and Copying, Add-In Tools, and Appendix C's 26 property editors, about
+  2,900 lines — are gone. The engine material was kept and renumbered: the conceptual
+  model (Ch. 1), the input file reference (Ch. 2, formerly Appendix D), files and
+  command-line operation (Ch. 3, formerly Ch. 11), the status report and summary tables
+  (Ch. 4, formerly Ch. 9), the C API, Python bindings and plugins (Ch. 5, formerly
+  Ch. 13), and the error and warning messages (Appendix A, formerly Appendix E).
+  `git mv` was used throughout, so file history follows. The parent page carries a
+  *Where the old chapters went* table for anyone holding a citation to the old numbering.
+- **Appendix A (Useful Tables) and Appendix B (Visual Object Properties) moved to the
+  SWMMVis manual** — they are values typed into an editor and per-editor property
+  dictionaries, not engine behaviour. The engine now links to them.
+- **The engine site links into the GUI site with real Doxygen cross-references.**
+  `docs/tags/swmmvis-manual.tag` is a committed, pages-only tagfile (42 pages, 8 KB,
+  filtered from the GUI's published 6 MB tag) wired through `TAGFILES`, so
+  `@ref manual_*` and `@ref tutorial_*` resolve to correct deep URLs under
+  `CREATE_SUBDIRS`. It is committed rather than fetched at build time so the docs build
+  never depends on the other site being reachable; `scripts/refresh_gui_tagfile.py`
+  refreshes it and CI reports drift without failing. Only the `manual_`/`tutorial_`
+  namespace is imported — both repos declare a page called `authors`, and importing it
+  would have silently redirected every engine `@ref authors` to the GUI site.
+  `EXTERNAL_PAGES` is now `NO`, so the GUI's pages do not appear in the engine's index.
+- **307 orphaned images removed** from the retired manual's `images/` directory. They
+  were referenced by nothing and were in neither `INPUT` nor `IMAGE_PATH`, so they had
+  never rendered. The ~38 reusable diagrams among them (conduit cross-section shapes,
+  HEC-22 grate and curb types, conceptual hydrology and LID figures, pump-curve types)
+  are listed in `tests/output/docs_migration_2026-09-19/figure_salvage_list.md` with the
+  commit to recover them from, to be restored by the change that rewrites the conceptual
+  model chapter and actually cites them.
+- **Stale references cleaned up while rewiring**: `docs/Doxyfile` listed `./Updates.md`,
+  which does not exist; the nav bar's GitHub tab pointed at the archived
+  `HydroCouple/OpenSWMMCore`. `scripts/split_user_manual.py`, the one-time generator for
+  the retired tree, is deleted along with its input and output.
+
 ### Performance
 
 - **Explicit FV solver: five bit-identical fixed-cost removals** (Phase 1 of
@@ -131,6 +170,71 @@ retroactive.
 
 ### Added
 
+- **2D cell coverages, buildup, washoff and street sweeping (S7).** The
+  subcatchment land-use convention on the mesh: `[2D_COVERAGES]` (`*` | `TAG
+  name` | `CELL n` → a land-use percent set; a row replaces its scope's set,
+  GLOBAL < TAG < CELL), `[2D_LOADINGS]` (initial buildup per acre | hectare,
+  a pollutant or a reactions-component species) and `[2D_CURB_LENGTH]`
+  (needed by PER_CURB land uses). Every cell then runs the subcatchment
+  surface-quality step's own arithmetic — POW / EXP / SAT / EXT buildup
+  through the inverse-days form, EXP / RC / EMC washoff with legacy's unit
+  pre-multiplies, the available-buildup cap, BMP removal, per-(cell, land
+  use) sweeping on the shared calendar — at the runoff-step cadence
+  (`2d/quality/SurfaceQuality2D`). The runoff rate a cell feeds the washoff
+  laws is its **net** outflow per unit area over the step (what left across
+  faces, boundaries and drains minus what arrived across faces, spills,
+  discharge and inflow boundaries; rain and groundwater return are
+  generation), accumulated by the marcher at the sites the species ledgers
+  already book — the cell analogue of the subcatchment's `outflow / area`,
+  and independent of how finely a plane is meshed. Washoff mass enters the
+  cell's species row (ledger `gained_washoff`) and reaches the 1D node
+  through the existing coupling tuple; no new coupling row. Outputs:
+  `REPORT_2D_VARIABLES` token `BUILDUP` (in DEFAULT) → `Mesh2_face_buildup
+  [time, species, face]` (lbs/acre | kg/ha, `species_names`), a `.rpt`
+  "2D Surface Washoff Summary" block, the `.inp` writer echoes the rows.
+  C API (`openswmm_sq2d.h`): `swmm_2d_coverage_*`, `swmm_2d_loading_*`,
+  `swmm_2d_curb_length_*` (row edits share the file's parsers; names are
+  validated at once; refused once initialized) and
+  `swmm_2d_get_buildup_bulk`. Ownership: rows are inert with one warning
+  under `RAINFALL_MODE NONE`; covered cells inside a subcatchment that has
+  `[COVERAGES]` raise one double-counting notice and the run proceeds.
+  Gates: `test_engine_2d_surface_quality` (buildup parity with a subcatchment
+  **bit-for-bit**, for a pollutant and an MSX species; EMC washoff = C ×
+  runoff and Σ net cell outflow = drained volume to 1e-10 on a two-triangle
+  and a one-quad pan; ledger closure with sweeping and BMP; ownership
+  warnings; round trip and grammar refusals; inert rows bit-identical; C-API
+  grammar) and the `.h5` / C-API end-to-end gate in
+  `test_engine_2d_output_options`. Not in v1: co-pollutant fractions on
+  cells, `Mesh2_face_washoff`, hotstart carry of the store, Python / MCP
+  mirrors, GeoPackage rows. Design: `OVERLAND_TRANSPORT_HEAT_MSX_PLAN` §8
+  (D-A22 revised 2026-09-19 to the net-outflow definition).
+- **MSX species build up and wash off (BW-MSX).** `[BUILDUP]`, `[WASHOFF]` and
+  `[LOADINGS]` rows may name a reactions-component species (declared in the
+  component's `.rxn`), not only a `[POLLUTANTS]` entry. Such rows are parked by
+  name at parse and bound after the component is applied (the `[INITIAL_QUALITY]`
+  / `[INFLOWS]` deferral); they run the pollutant surface-quality step's own
+  arithmetic — POW / EXP / SAT / EXT buildup through the inverse-days form,
+  EXP / RC / EMC washoff with legacy's unit pre-multiplies, the available-
+  buildup cap, BMP removal and street sweeping on the shared (subcatchment,
+  land use) schedule — over a separate MSX-keyed store (`ReactionData::surface`,
+  `quality/MsxSurfaceQuality.cpp`), and deliver the washoff into
+  `msx_ext_mass_in`, the rate the ARD engine, the legacy MSX dispatch and LARD
+  already consume for species loads. Mass units per species follow the species'
+  declared units (`MG` → lbs/kg via UCF(MASS), `UG` → ÷1000, other → 1). The
+  `.inp` writer emits the rows; `swmm_buildup_get/set`, `swmm_washoff_get/set`
+  and `swmm_subcatch_get/set_initial_loading` address species at index
+  `n_pollutants + m` (Python: `set/get_buildup`, `set/get_washoff` and the
+  subcatchment `LoadingsView` accept a species name or that index); the `.rpt`
+  gains a "Subcatchment MSX Washoff Summary"
+  block with the surface ledger; deleting a land use re-packs the species
+  matrices. A row naming neither a pollutant nor a species warns (one line per
+  row) and is ignored. Not in v1: co-pollutant fractions for species and
+  kinetics inside the dry store (D-A28 / D-A29). Gate:
+  `test_engine_msx_buildup_washoff` — an MSX species with a pollutant's
+  parameters produces the pollutant's surface loads and final buildup
+  **bit-for-bit**, the ledger closes to 1e-10, pollutant trajectories are
+  bit-identical with the species rows present, round trip through writer and
+  C API, MSX-only decks. Design: `OVERLAND_TRANSPORT_HEAT_MSX_PLAN` §8.9.
 - **`test_engine_fv_section_geometry`**: the exact section geometry against an
   independent integration of the outline, the closure against the geometry (area, top
   width, hydraulic radius), T ≡ dA/dh, I₁ ≡ ∫A, monotonicity, a 60 000-point
@@ -154,6 +258,51 @@ retroactive.
 
 ### Fixed
 
+- **A rain-on-grid deck with no subcatchment rained at its first record
+  forever.** The legacy rain-gage state machine (2026-09-13) keeps a gage no
+  subcatchment or unit hydrograph reads at its seeded first record — legacy's
+  "unused gage" rule — but the 2D mesh reads every gage under
+  `RAINFALL_MODE SYSTEM` / `NATURAL_NEIGHBOUR`, so a mesh-only deck saw its
+  first non-zero intensity for the whole run. `gageIsUsed` now counts the
+  mesh as a reader (S7 found it: the sweeping gate's dry tail never came).
+  Decks with a subcatchment on the gage were unaffected.
+- **2D transport rows on a mesh with no interior edge were silently inert.**
+  The marcher gated every species sink and source on its face accumulators
+  being non-empty, which is also true of a one-cell mesh with live rows
+  (`species_on_` now carries the intent; meshes with an interior edge are
+  bit-identical).
+- **Street sweeping never fired on an `.inp` deck.** The per-(subcatchment,
+  land use) last-swept counters (`subcatches.sweep_last_swept`) were sized only
+  by the C API (`resize_coverage`) and the GeoPackage reader — never by the
+  `[COVERAGES]` handler — so the A7 sweeping loop skipped every index past the
+  empty array and "Sweeping Removal" read 0.000 on every deck read from a file.
+  `handle_coverages` now sizes the counters with the coverage matrix. Found by
+  the BW-MSX ledger gate; a deck with a nonzero `[LANDUSES]` sweep interval
+  now sweeps (legacy parity). The bit-identity corpus has no such deck and is
+  25/25 byte-identical before and after. Two related parity gaps
+  remain and are recorded, not fixed: the `[LANDUSES]` LastSweep column is
+  parsed but never seeds the counter (legacy `lastSwept = start − sweepDays0`),
+  and a `[LOADINGS]` initial buildup is parked in `subcatches.conc` and never
+  applied to the pollutant buildup store (the new MSX store does apply its
+  loadings).
+- **2D surface water age (S4b closeout).** (1) Evaporation now leaves at the
+  water's own mean age as well as its own temperature: the `__WATER_AGE__` row
+  is sunk proportionally with the evaporated volume (`sinkIntensiveRowsWithEvap`),
+  so a still pond no longer *ages* by evaporating — the 1D convention
+  ("evaporation leaves the mean age unchanged", `WaterAgeLegacy`) now holds on
+  the mesh. (2) `__WATER_AGE__` is authored in **hours** in `[2D_INITIAL_QUALITY]`
+  and `[2D_BOUNDARY_QUALITY]`, as in the 1D `[INITIAL_QUALITY]`, and the
+  `.h5` `Mesh2_face_species_conc` age row is reported in **hours** like every
+  1D age column (it was seconds with `units = "1"`). (3) The dataset carries a
+  new `species_units` attribute parallel to `species_names` (`MG/L` | `UG/L` |
+  `#/L`, the MSX species' declared units, `hours`, `degC`); the engine
+  snapshot gains `surface_species_units`. (4) A deck with any transported row
+  (`TRANSPORT_*`, age, temperature) is always served by the CPU marcher and the
+  solver notice says why — the GPU/Kokkos plugin carries no transport rows and
+  used to be selectable with them silently absent. Gates:
+  `test_engine_2d_transport_s4` (evaporation keeps mean age; plugin refusal),
+  `test_engine_2d_output_options` (`species_units`; end-to-end hours).
+  Program plan D-A20 / D-A21.
 - **Explicit FV: a lateral inflow into a dry pass-through junction is no longer lost.** A
   clean degree-2 junction's lateral is credited straight into its two adjacent cells, and
   the node marks it delivered — but under `FV_COMPACTION` (the default) dry cells are
