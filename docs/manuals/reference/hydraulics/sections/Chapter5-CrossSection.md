@@ -816,7 +816,7 @@ A two sided street cross-section adds a mirror image of the one-sided
 street to the right of the street crown with the same roadway, gutter,
 curb, and backing dimensions.
 
-![Street.png](hydraulics/media/media/hydraulics-image32.png)
+![Figure 5-10 A one-sided street cross-section](figures/png/hydraulics_ch5_street_section.png)
 
 **Figure 5-10 A one-sided street cross-section (not to scale)**
 
@@ -856,10 +856,10 @@ as shown in Table 5-14.
 
 | Shape | | Coefficients | Dimensions |
 |---|---|---|---|
-| Elliptical Cylinder | ![cylindrical.png](hydraulics/media/media/hydraulics-image33.png) | \f[a_{0} = \left( \frac{\pi}{4} \right)LW\f]<br>\f[a_{1} = a_{2} = 0\f] | *L* = major axis length<br>*W* = minor axis width |
-| Elliptical Paraboloid | ![paraboloid.png](hydraulics/media/media/hydraulics-image34.png) | \f[a_{0} = a_{2} = 0\f]<br>\f[a_{1} = (\frac{\pi}{4})\frac{LW}{H}\f] | *L* = major axis length<br>*W* = minor axis width<br>*H* = paraboloid height |
-| Elliptical Cone | ![ConicStorageShape.bmp](hydraulics/media/media/hydraulics-image35.png) | \f[a_{0} = \left( \frac{\pi}{4} \right)LW\f]<br>\f[a_{1} = \pi WZ\f]<br>\f[a_{2} = \pi(\frac{W}{L})Z^{2}\f] | *L* = bottom major axis length<br>*W* = bottom minor axis width<br>*Z* = side slope (run/rise) along major axis |
-| Rectangular Pyramid | ![PrismaticStorageShape.bmp](hydraulics/media/media/hydraulics-image36.png) | \f[a_{0} = LW\f]<br>\f[a_{1} = 2(L + W)Z\f]<br>\f[a_{2} = 4Z^{2}\f] | L = bottom length<br>W = bottom width<br>Z = wall slope (run/rise) (same for each face) |
+| Elliptical Cylinder | ![Elliptical cylinder](figures/png/hydraulics_ch5_storage_cylinder.png) | \f[a_{0} = \left( \frac{\pi}{4} \right)LW\f]<br>\f[a_{1} = a_{2} = 0\f] | *L* = major axis length<br>*W* = minor axis width |
+| Elliptical Paraboloid | ![Elliptical paraboloid](figures/png/hydraulics_ch5_storage_paraboloid.png) | \f[a_{0} = a_{2} = 0\f]<br>\f[a_{1} = (\frac{\pi}{4})\frac{LW}{H}\f] | *L* = major axis length<br>*W* = minor axis width<br>*H* = paraboloid height |
+| Elliptical Cone | ![Elliptical cone](figures/png/hydraulics_ch5_storage_cone.png) | \f[a_{0} = \left( \frac{\pi}{4} \right)LW\f]<br>\f[a_{1} = \pi WZ\f]<br>\f[a_{2} = \pi(\frac{W}{L})Z^{2}\f] | *L* = bottom major axis length<br>*W* = bottom minor axis width<br>*Z* = side slope (run/rise) along major axis |
+| Rectangular Pyramid | ![Rectangular pyramid](figures/png/hydraulics_ch5_storage_pyramid.png) | \f[a_{0} = LW\f]<br>\f[a_{1} = 2(L + W)Z\f]<br>\f[a_{2} = 4Z^{2}\f] | L = bottom length<br>W = bottom width<br>Z = wall slope (run/rise) (same for each face) |
 
 Dynamic wave analysis needs to know how volume *V* varies with depth
 *Y*. Integrating Equation 5-23 over depth yields:

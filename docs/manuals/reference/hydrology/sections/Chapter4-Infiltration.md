@@ -134,7 +134,7 @@ where:
   : Thus for the case illustrated in Figure 4-2 runoff would be
   intermittent.
 
-![Horton infiltration curve](hydrology/media/media/figure4-2.png)
+![Horton infiltration curve](figures/png/hydrology_ch4_horton_curve.png)
 
 **Figure 4-2 The Horton infiltration curve**
 
@@ -159,7 +159,7 @@ before, there will in fact be times when infiltration *f* is less than
 
 \f[F(t) = \int_{0}^{t}{\min\left\lbrack f_{p},\ i \right\rbrack d\tau}\f] (4-4) 
 
-![Cumulative infiltration F as the area under the Horton curve](hydrology/media/media/figure4-3.png)
+![Cumulative infiltration F as the area under the Horton curve](figures/png/hydrology_ch4_horton_cumulative.png)
 
 **Figure 4-3 Cumulative infiltration F as the area under the Horton curve**
 
@@ -210,7 +210,7 @@ one can compute *t*<sub>w</sub> as:
 
 \f[t_{w} = t_{pr} - \frac{1}{k_{r}}\ln\left( \frac{f_{0} - f_{\infty}}{f_{0} - f_{r}} \right)\f] (4-8) 
 
-![Regeneration (recovery) of infiltration capacity during dry time steps](hydrology/media/media/figure4-4.png)
+![Regeneration (recovery) of infiltration capacity during dry time steps](figures/png/hydrology_ch4_horton_recovery.png)
 
 **Figure 4-4 Regeneration (recovery) of infiltration capacity during dry time steps**
 
@@ -746,7 +746,7 @@ F~s~* (Equation 4-29). The remainder of the curve corresponds to the
 potential rate computed with Equation 4-27. Note that the infiltration
 rate approaches *K*<sub>S</sub> (0.25 in/hr) asymptotically.
 
-![Illustration of infiltration capacity as function of cumulative infiltration for the Green-Ampt method](hydrology/media/media/figure4-6.png)
+![Illustration of infiltration capacity as function of cumulative infiltration for the Green-Ampt method](figures/png/hydrology_ch4_green_ampt_curve.png)
 
 **Figure 4-6 Illustration of infiltration capacity as function of cumulative infiltration for the Green-Ampt method**
 
@@ -849,7 +849,7 @@ functional dependence of the three internally computed recovery
 parameters *L*<sub>u</sub>, *k*<sub>r</sub>, and *T*<sub>r</sub> on the saturated hydraulic
 conductivity *K*<sub>S</sub>.
 
-![Green-Ampt recovery parameters as functions of hydraulic conductivity](hydrology/media/media/figure4-7.png)
+![Green-Ampt recovery parameters as functions of hydraulic conductivity](figures/png/hydrology_ch4_green_ampt_recovery_params.png)
 
 **Figure 4-7 Green-Ampt recovery parameters as functions of hydraulic conductivity**
 

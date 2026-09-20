@@ -96,6 +96,14 @@ range of its neighbours but smears a sharp front over many cells;
 into a staircase. `VANLEER` is between them and is what a model should use
 unless a specific reason argues otherwise.
 
+Figure 7-1 shows the face stencil and what each choice does to a step
+front after sixty cells of travel: the ordering of the table, made
+visible.
+
+![Figure 7-1](figures/png/quality_ch7_ard_stencil.png)
+
+*Figure 7-1 Flux-limited advection in the Eulerian engine: the face stencil and a step front under UPWIND and the three MUSCL limiters*
+
 The advective step is subcycled to satisfy a Courant condition
 
 \f[C = \frac{u\,\Delta t_{sub}}{\Delta x} \le C_{max}\f]
@@ -192,6 +200,12 @@ Each transport step proceeds in five phases:
 
 Cycles in the node ordering are broken in index order, and the residue is
 carried in the ledger to the next step rather than dropped.
+
+Figure 7-2 follows one conduit's slab through the five phases.
+
+![Figure 7-2](figures/png/quality_ch7_lard_parcels.png)
+
+*Figure 7-2 The five phases of a Lagrangian transport step: drain, mix, release, decay and publish on one conduit's parcel slab*
 
 **The parcel budget is what makes this tractable.** Left alone, a conduit
 under steady flow gains one parcel per step forever. Two mechanisms bound it:

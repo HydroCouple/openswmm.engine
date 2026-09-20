@@ -378,7 +378,7 @@ Snowmelt parameters are climatic variables that apply across the entire study ar
 Areal depletion refers to the tendency of accumulated snow to melt non-uniformly over the surface of a subcatchment. As the melting process proceeds, the area covered by snow gets reduced. This behavior is described by an Areal Depletion Curve that plots the fraction of total area that remains snow covered against the ratio of the actual snow depth to the depth at which there is 100% snow cover. A typical ADC for a natural area is shown in Figure 1-6. Two such curves can be supplied to SWMM, one for impervious areas and another for pervious areas.
 
  
-![Figure 1-6 Areal depletion curve for a natural area](figures/fig3-04-areal-depletion.png)
+![Figure 1-6 Areal depletion curve for a natural area](figures/png/hydrology_ch6_areal_depletion_curve.png)
 
 *Figure 1-6 Areal depletion curve for a natural area*
 
@@ -431,7 +431,7 @@ A unit hydrograph can also have a set of Initial Abstraction (IA) parameters ass
 - an initial depth of stored IA (inches or mm).
 
  
-![Figure 1-7 An RDII unit hydrograph](figures/fig3-05-rdii-unit-hydrograph.png)
+![Figure 1-7 An RDII unit hydrograph](figures/png/eng_rdii_unit_hydrograph.png)
 
 *Figure 1-7 An RDII unit hydrograph*
 
@@ -457,7 +457,7 @@ Each transect must be given a unique name. Conduits refer to that name to repres
 Streets are a specialized form of transect that describes the typical cross-section geometry of a street or roadway. The Figure 1-9 shows a half-street layout along with the dimensions a user needs to provide.
 
  
-![Figure 1-9 Definitional sketch of a street cross-section](figures/fig3-07-street-cross-section.png)
+![Figure 1-9 Definitional sketch of a street cross-section](figures/png/hydraulics_ch5_street_section.png)
 
 *Figure 1-9 Definitional sketch of a street cross-section*
 
@@ -747,7 +747,7 @@ The conceptual view of surface runoff used by SWMM is illustrated in Figure 1-13
 
 
  
-![Figure 1-13 Conceptual view of surface runoff](figures/fig3-11-surface-runoff.png)
+![Figure 1-13 Conceptual view of surface runoff](figures/png/hydrology_ch3_nonlinear_reservoir.png)
 
 *Figure 1-13 Conceptual view of surface runoff*
 
@@ -777,7 +777,7 @@ SWMM also allows the infiltration recovery rate to be adjusted by a fixed amount
 Figure 1-14 is a definitional sketch of the two-zone groundwater model that is used in SWMM. The upper zone is unsaturated with a variable moisture content of . The lower zone is fully saturated and therefore its moisture content is fixed at the soil porosity . The fluxes shown in the figure, expressed as volume per unit area per unit time, consist of the following:
 
  
-![Figure 1-14 Two-zone groundwater model](figures/fig3-12-two-zone-groundwater.png)
+![Figure 1-14 Two-zone groundwater model](figures/png/hydrology_ch5_two_zone.png)
 
 *Figure 1-14 Two-zone groundwater model*
 
@@ -858,7 +858,7 @@ The pollutant concentration in both a conduit and a storage node will be reduced
 LID controls are represented by a combination of vertical layers whose properties are defined on a per-unit-area basis. This allows LIDs of the same design but differing area coverage to easily be placed within different subcatchments of a study area. During a simulation SWMM performs a moisture balance that keeps track of how much water moves between and is stored within each LID layer. As an example, the layers used to model a bio-retention cell and the flow pathways between them are shown in Figure 1-15. The various possible layers consist of the following:
 
  
-![Figure 1-15 Conceptual diagram of a bio-retention cell LID](figures/fig3-13-bioretention-cell.png)
+![Figure 1-15 Conceptual diagram of a bio-retention cell LID](figures/png/eng_lid_bioretention_layers.png)
 
 *Figure 1-15 Conceptual diagram of a bio-retention cell LID*
 

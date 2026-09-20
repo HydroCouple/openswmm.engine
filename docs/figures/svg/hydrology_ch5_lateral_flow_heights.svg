@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="510.650075pt" height="221.141325pt" viewBox="0 0 510.650075 221.141325" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:format>image/svg+xml</dc:format>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 221.141325 
+L 510.650075 221.141325 
+L 510.650075 -0 
+L 0 -0 
+z
+" style="fill: #fcfcfb"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 18.428444 112.874218 
+L 188.891549 112.874218 
+L 188.891549 52.981776 
+L 18.428444 52.981776 
+z
+" clip-path="url(#p519f9020ad)" style="fill: #e7d9bf; stroke: #0b0b0b; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 18.428444 200.409326 
+L 188.891549 200.409326 
+L 188.891549 112.874218 
+L 18.428444 112.874218 
+z
+" clip-path="url(#p519f9020ad)" style="fill: #b9cfe6; stroke: #0b0b0b; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 18.428444 214.230659 
+L 304.069322 214.230659 
+L 304.069322 200.409326 
+L 18.428444 200.409326 
+z
+" clip-path="url(#p519f9020ad)" style="fill: url(#heffcc6a004); stroke: #0b0b0b; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_5">
+    <path d="M 188.891549 52.981776 
+L 221.141325 158.945328 
+L 276.426657 158.945328 
+L 304.069322 52.981776 
+z
+" clip-path="url(#p519f9020ad)" style="fill: #f4f3ef; stroke: #0b0b0b; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_6">
+    <path d="M 212.157459 128.999106 
+L 221.141325 158.945328 
+L 276.426657 158.945328 
+L 284.212674 128.999106 
+z
+" clip-path="url(#p519f9020ad)" style="fill: #2a78d6; opacity: 0.25"/>
+   </g>
+   <g id="line2d_1">
+    <path d="M 212.157459 128.999106 
+L 284.212674 128.999106 
+" clip-path="url(#p519f9020ad)" style="fill: none; stroke: #2a78d6; stroke-width: 1.2; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_2">
+    <path d="M 18.428444 112.874218 
+L 188.891549 112.874218 
+" clip-path="url(#p519f9020ad)" style="fill: none; stroke-dasharray: 6,2.4; stroke-dashoffset: 0; stroke: #2a78d6; stroke-width: 1.2"/>
+   </g>
+   <g id="line2d_3">
+    <path d="M 202.712882 158.945328 
+L 331.711988 158.945328 
+" clip-path="url(#p519f9020ad)" style="fill: none; stroke-dasharray: 2.7,1.8; stroke-dashoffset: 0; stroke: #898781; stroke-width: 0.9"/>
+   </g>
+   <g id="line2d_4">
+    <path d="M 4.607111 200.409326 
+L 331.711988 200.409326 
+" clip-path="url(#p519f9020ad)" style="fill: none; stroke: #898781; stroke-width: 0.6; stroke-linecap: square"/>
+   </g>
+   <g id="text_1">
+    <text style="font-size: 7.5px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #2a78d6" x="186.587993" y="110.109952" transform="rotate(-0 186.587993 110.109952)">water table</text>
+   </g>
+   <g id="text_2">
+    <text style="font-size: 7.8px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="246.480435" y="45.831086" transform="rotate(-0 246.480435 45.831086)">receiving node or channel</text>
+   </g>
+   <g id="patch_7">
+    <path d="M 177.071908 142.820439 
+Q 201.561578 142.820439 224.262393 142.820439 
+" style="fill: none; stroke: #2a78d6; stroke-width: 1.6; stroke-linecap: round"/>
+    <path d="M 219.462393 140.420439 
+L 224.262393 142.820439 
+L 219.462393 145.220439 
+z
+" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.6; stroke-linecap: round"/>
+   </g>
+   <g id="text_3">
+    <text style="font-style: italic; font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #2a78d6" x="195.802215" y="137.752617" transform="rotate(-0 195.802215 137.752617)">Q_GW</text>
+   </g>
+   <g id="patch_8">
+    <path d="M 87.535108 197.402247 
+Q 87.535108 156.642397 87.535108 115.882548 
+" style="fill: none; stroke: #0b0b0b; stroke-width: 0.9; stroke-linecap: round"/>
+    <path d="M 89.335108 193.802247 
+L 87.535108 197.402247 
+L 85.735108 193.802247 
+" style="fill: none; stroke: #0b0b0b; stroke-width: 0.9; stroke-linecap: round"/>
+    <path d="M 85.735108 119.482548 
+L 87.535108 115.882548 
+L 89.335108 119.482548 
+" style="fill: none; stroke: #0b0b0b; stroke-width: 0.9; stroke-linecap: round"/>
+   </g>
+   <g id="text_4">
+    <text style="font-size: 8px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="90.299374" y="158.738022" transform="rotate(-0 90.299374 158.738022)">H_GW  groundwater head</text>
+   </g>
+   <g id="patch_9">
+    <path d="M 320.194211 197.402528 
+Q 320.194211 164.705848 320.194211 132.009168 
+" style="fill: none; stroke: #0b0b0b; stroke-width: 0.9; stroke-linecap: round"/>
+    <path d="M 321.994211 193.802528 
+L 320.194211 197.402528 
+L 318.394211 193.802528 
+" style="fill: none; stroke: #0b0b0b; stroke-width: 0.9; stroke-linecap: round"/>
+    <path d="M 318.394211 135.609168 
+L 320.194211 132.009168 
+L 321.994211 135.609168 
+" style="fill: none; stroke: #0b0b0b; stroke-width: 0.9; stroke-linecap: round"/>
+   </g>
+   <g id="text_5">
+    <text style="font-size: 8px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="322.958477" y="166.800466" transform="rotate(-0 322.958477 166.800466)">H_SW  surface water height</text>
+   </g>
+   <g id="text_6">
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #898781" x="334.015543" y="142.663604" transform="rotate(-0 334.015543 142.663604)">H*  threshold (dashed; default: the node invert)</text>
+   </g>
+   <g id="text_7">
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #898781" x="334.015543" y="197.948935" transform="rotate(-0 334.015543 197.948935)">aquifer bottom: the datum of every height</text>
+   </g>
+   <g id="text_8">
+    <text style="font-weight: 700; font-size: 9.2px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="18.428444" y="9.214222" transform="rotate(-0 18.428444 9.214222)">Heights in the lateral groundwater flow equation</text>
+   </g>
+   <g id="text_9">
+    <text style="font-size: 8.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="18.428444" y="27.642666" transform="rotate(-0 18.428444 27.642666)">Q_GW = A1 (H_GW − H*)^B1 − A2 (H_SW − H*)^B2 + A3 · H_GW · H_SW</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p519f9020ad">
+   <rect x="0" y="-0" width="474.532427" height="221.141325"/>
+  </clipPath>
+ </defs>
+ <defs>
+  <pattern id="heffcc6a004" patternUnits="userSpaceOnUse" x="0" y="0" width="72" height="72">
+   <rect x="0" y="0" width="73" height="73" fill="#cfc9bd"/>
+   <path d="M -36 36 
+L 36 -36 
+M -30 42 
+L 42 -30 
+M -24 48 
+L 48 -24 
+M -18 54 
+L 54 -18 
+M -12 60 
+L 60 -12 
+M -6 66 
+L 66 -6 
+M 0 72 
+L 72 0 
+M 6 78 
+L 78 6 
+M 12 84 
+L 84 12 
+M 18 90 
+L 90 18 
+M 24 96 
+L 96 24 
+M 30 102 
+L 102 30 
+M 36 108 
+L 108 36 
+" style="fill: #0b0b0b; stroke: #0b0b0b; stroke-width: 1.0; stroke-linecap: butt; stroke-linejoin: miter"/>
+  </pattern>
+ </defs>
+</svg>

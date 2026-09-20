@@ -74,6 +74,8 @@ Figure 1-2. SWMM's Process Models
 
 Figure 1-3. Simulation Process Overview
 
+Figure 1-7. The water quality of this manual: buildup, washoff, transport and reactions across the compartments
+
 Figure 2-1. Pollutant Sources in Urban Areas
 
 Figure 2-2. Pollutant Buildup on Land Surfaces
@@ -89,6 +91,12 @@ Figure 5-1. Treatment Processes
 Figure 6-1. LID Control Types
 
 Figure 6-2. LID Control Performance
+
+Figure 7-1. Flux-limited advection in the Eulerian engine: the face stencil and a step front under UPWIND and the three MUSCL limiters
+
+Figure 7-2. The five phases of a Lagrangian transport step: drain, mix, release, decay and publish on one conduit's parcel slab
+
+Figure 9-1. The heat budget of a water body: the six surface terms of the net flux by module, and the bed zone's conduction and hyporheic exchange
 
 ## List of Tables
 

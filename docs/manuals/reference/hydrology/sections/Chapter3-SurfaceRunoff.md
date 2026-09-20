@@ -29,7 +29,7 @@ subcatchment as a nonlinear reservoir, as sketched in Figure 3-2.
 
 ![](hydrology/media/media/Figure3-1.png "Figure 3-1")
 
-![Figure 3-2](hydrology/media/media/Figure3-2.png)
+![Figure 3-2](figures/png/hydrology_ch3_nonlinear_reservoir.png)
 
 **Figure 3-1 Idealized representation of a subcatchment.**
 

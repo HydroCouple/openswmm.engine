@@ -70,7 +70,7 @@ two-zone configuration is similar to that used by Dawdy and O'Donnell
 pass between a subcatchment and a point in the conveyance system in an
 attenuated and delayed fashion.
 
-![Figure 5-1: Two-zone groundwater model showing upper unsaturated zone and lower saturated zone with water flow paths](hydrology/media/media/figure5-1.png)
+![Figure 5-1: Two-zone groundwater model showing upper unsaturated zone and lower saturated zone with water flow paths](figures/png/hydrology_ch5_two_zone.png)
 
 **Figure 5-1 Definitional sketch of the two-zone groundwater model.**
 
@@ -458,7 +458,7 @@ in Figure 5-2. Also note that the conveyance system node receiving
 groundwater flow need not be the same node that receives runoff from the
 subcatchment that lies above the groundwater zones.
 
-![Figure 5-2: Cross-sectional diagram showing groundwater zones and height parameters for lateral flow calculation](hydrology/media/media/figure5-2.png)
+![Figure 5-2: Cross-sectional diagram showing groundwater zones and height parameters for lateral flow calculation](figures/png/hydrology_ch5_lateral_flow_heights.png)
 
 **Figure 5-2 Heights used to compute lateral groundwater flow rate.**
 
