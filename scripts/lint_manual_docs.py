@@ -220,6 +220,151 @@ def check_section_coverage():
     return errors
 
 
+def _function_body(text, start_re):
+    """Source text from the first match of start_re to the next lone `}` at column 0."""
+    m = re.search(start_re, text, re.M)
+    if not m:
+        return None
+    end = re.search(r"^}\s*$", text[m.end():], re.M)
+    return text[m.start(): m.end() + (end.end() if end else 0)]
+
+
+def _documented_keys(chapter_text, section):
+    """Keywords a `### Section: [X]` entry documents: first-column backticked
+    keys of its tables plus the leading token of each line in its fenced
+    Format blocks."""
+    m = re.search(r"^### Section: \[" + re.escape(section.strip("[]")) + r"\].*?(?=^### Section: |\Z)",
+                  chapter_text, re.M | re.S)
+    if not m:
+        return None
+    region = m.group(0)
+    keys = set(re.findall(r"^\|\s*`?([A-Z][A-Z0-9_]*)`?\s*\|", region, re.M))
+    # Format blocks: fenced, or the legacy plain column-0 `KEYWORD   value` layout
+    for block in re.findall(r"```.*?```", region, re.S):
+        keys |= set(re.findall(r"^([A-Z][A-Z0-9_]{2,})\s", block, re.M))
+    keys |= set(re.findall(r"^([A-Z][A-Z0-9_]{2,})\s{2,}\S", region, re.M))
+    return keys
+
+
+# (source under src/, regex locating the function, regex for the key literal inside it, section)
+OPTIONS_COVERAGE = [
+    ("engine/input/handlers/OptionsHandler.cpp", r"^void handle_options\(",
+     r'key\s*==\s*"([A-Z][A-Z0-9_]*)"', "[OPTIONS]"),
+    ("engine/2d/input/SectionHandlers2D.cpp", r"^bool is2DOptionKey\(",
+     r'"([A-Z][A-Z0-9_]*)"', "[2D_OPTIONS]"),
+    ("engine/2d/input/SectionHandlers2D.cpp", r"^bool is2DRetiredOptionKey\(",
+     r'"([A-Z][A-Z0-9_]*)"', "[2D_OPTIONS]"),
+    # the file parser itself: it accepts DISPERSION, which the API allow-list omits
+    ("engine/2d/input/SectionHandlers2D.cpp", r"parse2DOptionsLine\(",
+     r'iequals\(key,\s*"([A-Z][A-Z0-9_]*)"\)', "[2D_OPTIONS]"),
+]
+
+
+def check_options_coverage():
+    """The [OPTIONS] and [2D_OPTIONS] entries document every keyword the parser accepts.
+
+    Parsed keys are the string literals compared inside handle_options() and
+    the two 2D allow-lists; documented keys are the backticked first column
+    of the entry's tables and the leading token of its Format block. Fails in
+    both directions, so an invented keyword and a forgotten one are the same
+    error. Retired keys are parsed too and belong in the entry's Retired table.
+    """
+    chapter = DOCS / "manuals" / "engine" / "sections" / "Chapter2-InputFileReference.md"
+    if not chapter.exists() or not SRC.is_dir():
+        return 0
+    text = chapter.read_text(errors="replace")
+    parsed = defaultdict(set)
+    for rel, start_re, key_re, section in OPTIONS_COVERAGE:
+        src = SRC / rel
+        if not src.exists():
+            print(f"ERROR options coverage: {rel} not found")
+            return 1
+        body = _function_body(src.read_text(errors="replace"), start_re)
+        if body is None:
+            print(f"ERROR options coverage: {start_re!r} not found in {rel}")
+            return 1
+        parsed[section] |= set(re.findall(key_re, body))
+    errors = 0
+    for section, keys in parsed.items():
+        if not keys:
+            print(f"ERROR options coverage: parsed no keys for {section} — the parser's shape changed")
+            errors += 1
+            continue
+        documented = _documented_keys(text, section)
+        if documented is None:
+            print(f"ERROR options coverage: Chapter 2 has no `### Section: {section}` entry")
+            errors += 1
+            continue
+        for k in sorted(keys - documented):
+            print(f"ERROR options coverage: {section} keyword {k} is parsed but not documented")
+            errors += 1
+        for k in sorted(documented - keys):
+            print(f"ERROR options coverage: {section} documents {k}, which the parser does not accept")
+            errors += 1
+    return errors
+
+
+# (source under src/, regex locating the function or None for whole file, regex for the section literal)
+COMPONENT_SOURCES = [
+    ("engine/transport/components/ReactionModule/ReactionsComponent.cpp",
+     r"reactionSectionTags\(\)\s*\{", r'"(REACTION_[A-Z_]+)"'),
+    ("engine/transport/components/HeatModule/HeatComponent.cpp", None, r'sec\.first\s*[!=]=\s*"([A-Z_]+)"'),
+    ("engine/transport/components/WaterAgeModule/WaterAgeComponent.cpp", None, r'sec\.first\s*[!=]=\s*"([A-Z_]+)"'),
+    ("engine/transport/components/EulerianArdComponent/ArdConfig.cpp", None, r'tag\s*==\s*"([A-Z_]+)"'),
+]
+COMPONENT_MENTION = re.compile(r"\[((?:REACTION|HEAT|TRANSPORT|WATER_AGE)_[A-Z_]+"
+                               r"|RADIATIVE_FLUXES|SOLAR_RADIATION|CLOUD_COVER|SEDIMENT_EXCHANGE)\]")
+
+
+def check_component_sections():
+    """Chapter 2 §2.5 documents every configuration section a process component parses.
+
+    These sections never pass through the SectionRegistry (they come from
+    the file named in [PROCESS_COMPONENTS]), so check_section_coverage()
+    cannot see them. Parsed names are the literals each component compares
+    against; documented names use the distinct heading
+    `### Component section: [X]`. A second assertion: any bracketed
+    component-section name mentioned anywhere in the manuals must exist —
+    which is how a stale `[REACTION_INITIAL]` gets caught.
+    """
+    chapter = DOCS / "manuals" / "engine" / "sections" / "Chapter2-InputFileReference.md"
+    if not chapter.exists() or not SRC.is_dir():
+        return 0
+    parsed = set()
+    for rel, start_re, lit_re in COMPONENT_SOURCES:
+        src = SRC / rel
+        if not src.exists():
+            print(f"ERROR component sections: {rel} not found")
+            return 1
+        text = src.read_text(errors="replace")
+        body = _function_body(text, start_re) if start_re else text
+        if body is None:
+            print(f"ERROR component sections: {start_re!r} not found in {rel}")
+            return 1
+        parsed |= set(re.findall(lit_re, body))
+    if not parsed:
+        print("ERROR component sections: parsed no section literals — the components' shape changed")
+        return 1
+    documented = set(re.findall(r"^### Component section: \[([A-Z0-9_]+)\]",
+                                chapter.read_text(errors="replace"), re.M))
+    errors = 0
+    for s in sorted(parsed - documented):
+        print(f"ERROR component sections: [{s}] is parsed by a component but has no "
+              f"`### Component section:` entry in Chapter 2")
+        errors += 1
+    for s in sorted(documented - parsed):
+        print(f"ERROR component sections: Chapter 2 documents [{s}], which no component parses")
+        errors += 1
+    for f in md_files():
+        for n, ln in enumerate(f.read_text(errors="replace").split("\n"), 1):
+            for m in COMPONENT_MENTION.finditer(ln):
+                if m.group(1) not in parsed:
+                    print(f"ERROR {f.relative_to(DOCS)}:{n}: [{m.group(1)}] is not a section any "
+                          f"component parses")
+                    errors += 1
+    return errors
+
+
 def load_status_module():
     """docs/figures/status.py — the badge vocabulary and colours. None if absent."""
     path = DOCS / "figures" / "status.py"
@@ -521,6 +666,8 @@ def main(argv=None):
                 errors += 1
 
     errors += check_section_coverage()
+    errors += check_options_coverage()
+    errors += check_component_sections()
     errors += check_gui_prose()
     errors += check_figure_manifest()
     errors += check_message_catalogue()

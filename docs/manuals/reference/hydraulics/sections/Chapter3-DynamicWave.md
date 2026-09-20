@@ -1225,8 +1225,10 @@ two-component pressure approach of Vasconcelos, Wright and Roe (2006)
 to the node-link scheme. (Its natural home is the finite-volume solver,
 where the full shock-capturing formulation is available as
 `FV_PRESSURE_CLOSURE TPA` —
-@ref hydraulics_ref_ch8_finite_volume "Chapter 8".) Like `DYNAMIC_SLOT`
-it is flagged experimental.
+@ref hydraulics_ref_ch8_finite_volume "Chapter 8".) It is
+\status{Experimental}: default-off, validated on the Vasconcelos et al.
+(2006) laboratory cases, with the high-celerity filling divergence of
+§8.4.5 still open.
 
 **Requirements.** The method needs a **closed conduit with a defined
 full depth**: an open cross-section, or one whose \f$Y_{full}\f$ is

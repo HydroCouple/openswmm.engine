@@ -4,7 +4,7 @@
 
 OpenSWMM Engine v6 provides a comprehensive C API for building, running, and querying SWMM models entirely through code, without requiring an input file. This is useful for embedding SWMM in larger simulation frameworks, coupling with other models, or building custom user interfaces.
 
-## 13.1 Architecture Overview
+## 5.1 Architecture Overview
 
 The new engine uses an opaque handle (`SWMM_Engine`) that encapsulates all simulation state. This reentrant design allows multiple independent simulations to run within the same process. The engine progresses through a well-defined lifecycle:
 
@@ -54,10 +54,10 @@ All API functions return an integer error code (`SWMM_OK` on success) and are or
 | `openswmm_hotstart.h` | Hot start file operations |
 | `openswmm_2d.h` | 2-D overland flow mesh (when built with `OPENSWMM_HAS_2D`) |
 
-## 13.2 Basic Workflow
+## 5.2 Basic Workflow
 
 Every engine instance moves through the deterministic lifecycle of
-Figure 13-1. The file-based path enters at `swmm_engine_open()`; the
+Figure 5-1. The file-based path enters at `swmm_engine_open()`; the
 programmatic path enters at `swmm_engine_new()` (BUILDING) and joins it
 at `swmm_finalize_model()`.
 
@@ -79,7 +79,7 @@ stateDiagram-v2
     CLOSED --> [*] : swmm_engine_delete
 </pre>
 
-*Figure 13-1 Engine lifecycle states (SWMM_EngineState in @ref openswmm_engine.h)*
+*Figure 5-1 Engine lifecycle states (SWMM_EngineState in @ref openswmm_engine.h)*
 
 The typical workflow for building and running a model programmatically (no input file):
 
@@ -148,7 +148,7 @@ swmm_engine_destroy(engine);
 
 The final `NULL` argument to `swmm_engine_open()` selects the built-in `.inp` reader; passing the path of an input-plugin shared library reads the model through that plugin instead (see @ref engine_manual_ch5_api). The single-call helpers `swmm_engine_run()` and `swmm_engine_run_with_callback()` chain the entire lifecycle for batch runs.
 
-## 13.3 Callbacks
+## 5.3 Callbacks
 
 The callback system allows applications to receive notifications during simulation execution:
 
@@ -159,7 +159,7 @@ The callback system allows applications to receive notifications during simulati
 
 Register callbacks before calling `swmm_engine_initialize()`. See @ref openswmm_callbacks.h for details and examples.
 
-## 13.4 Hot Start Files
+## 5.4 Hot Start Files
 
 The hot start API enables saving and restoring simulation state for warm-start scenarios:
 
@@ -178,7 +178,7 @@ swmm_hotstart_close(hs);
 
 `swmm_hotstart_apply()` must be called after `swmm_engine_initialize()` but before `swmm_engine_start()`. Objects present in the file but missing from the model (or vice versa) generate warnings rather than errors; they can be enumerated with `swmm_hotstart_warning_count()` / `swmm_hotstart_warning()`. Saving dispatches through any registered state-IO plugins, so alternative hot-start file formats can be provided by plugins (see @ref engine_manual_ch5_api).
 
-## 13.5 Python Bindings {#user_manual_chapter_13_python}
+## 5.5 Python Bindings {#engine_manual_ch5_python}
 
 OpenSWMM 6.0 ships a first-class Python package (`openswmm`) that provides
 Pythonic, type-annotated access to the full engine feature set.  Install from
@@ -327,7 +327,7 @@ enumerations, and error types, is published in the
 See the `python/` directory in the source tree for the Cython source (`.pyx`),
 type stubs (`.pyi`), and test suite.
 
-## 13.6 Building with the API
+## 5.6 Building with the API
 
 To use the OpenSWMM Engine C API in your own project, link against `openswmm_engine` using CMake:
 
@@ -338,7 +338,7 @@ target_link_libraries(my_app PRIVATE OpenSWMMCore::openswmm_engine)
 
 All public headers are installed under `include/openswmm/engine/`.
 
-## 13.7 User-Defined Flags {#user_manual_chapter_13_user_flags}
+## 5.7 User-Defined Flags {#engine_manual_ch5_user_flags}
 
 OpenSWMM Engine v6 introduces **user-defined flags** (inspired by InfoWorks ICM custom attributes) that allow metadata to be attached to any model object—nodes, links, or subcatchments. Flags are defined with a name, data type, and optional description and then assigned values per object.
 
@@ -382,7 +382,7 @@ int swmm_userflag_set_real(SWMM_Engine engine, const char* name, double  value);
 
 See `openswmm_model.h` for the complete set of flag functions.
 
-## 13.8 Plugin Interface for Output and Reporting {#user_manual_chapter_13_plugins}
+## 5.8 Plugin Interface for Output and Reporting {#engine_manual_ch5_plugins}
 
 The **plugin SDK** enables third-party shared libraries to replace or supplement the engine's built-in file I/O — the model reader/writer, the binary output (`.out`) file, the text-based status report, and the hot-start (state) file. Four abstract C++ interfaces are provided:
 
@@ -432,7 +432,7 @@ Plugins are loaded from the `[PLUGINS]` input-file section:
 
 Each line begins with the plugin to load — a shared-library path, a plugin id, or an `id:version` pair (ids are resolved against the auto-discovery registry) — followed by initialisation arguments that are forwarded verbatim to the plugin's `initialize()` method.
 
-Figure 13-2 traces the full resolution path from engine open to an
+Figure 5-2 traces the full resolution path from engine open to an
 initialized plugin.
 
 <!-- workflow: plugin_resolution -->
@@ -453,7 +453,7 @@ flowchart TD
     K --> L[Plugin receives host callbacks during the run]
 </pre>
 
-*Figure 13-2 Plugin discovery, resolution and loading workflow (rendered diagram)*
+*Figure 5-2 Plugin discovery, resolution and loading workflow (rendered diagram)*
 
 The `[PLUGINS]` section can also be inspected and edited through the C API without re-parsing the input file: `swmm_plugins_count()`, `swmm_plugin_get()`, `swmm_plugin_set()`, and `swmm_plugin_remove()` (declared in @ref openswmm_model.h) read and mutate the in-memory plugin list, which is re-serialised on the next model write.
 
@@ -484,7 +484,7 @@ At every output time step the engine passes a read-only **SimulationSnapshot** t
 
 See the headers in `include/openswmm/plugin_sdk/` for full details. The engine-side loader, lifecycle dispatcher, and the built-in default plugins live in `src/engine/plugins/` (`PluginFactory.cpp`, `DefaultInputPlugin.cpp`, `DefaultOutputPlugin.cpp`, `DefaultReportPlugin.cpp`, `DefaultStateIOPlugin.cpp`).
 
-## 13.9 Multi-Column Series-File Inputs (CSV/TSV/TSF) {#user_manual_chapter_13_csv}
+## 5.9 Multi-Column Series-File Inputs (CSV/TSV/TSF) {#engine_manual_ch5_csv}
 
 A new rain-file format, **USER_CSV**, allows rain gage data to be read from multi-column series files. A single file can serve multiple rain gages by specifying a column name after the file path:
 
@@ -522,7 +522,7 @@ The `RainFileFormat` enumeration now includes:
 | 5 | `STAN_PRCP` | Standard SWMM rain file |
 | 6 | `USER_CSV` | User-supplied multi-column CSV (**new in v6**) |
 
-## 13.10 Extension Options (Optional Tags) {#user_manual_chapter_13_ext_options}
+## 5.10 Extension Options (Optional Tags) {#engine_manual_ch5_ext_options}
 
 The `[OPTIONS]` section now tolerates **extension option keys** that are not part of the standard SWMM vocabulary. Any key the parser does not recognise is stored in an extension-options map as a string key-value pair rather than producing a fatal error (a non-fatal warning is issued). This mechanism allows plugins and coupled models to pass configuration through the familiar `[OPTIONS]` section.
 
