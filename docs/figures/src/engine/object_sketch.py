@@ -92,7 +92,7 @@ def _draw():
 
     # subcatchments with a rain gage
     s1 = _subcatchment(ax, [(4, 42), (18, 46), (24, 38), (16, 30), (6, 33)], "Subcatchment S1", P, style)
-    s2 = _subcatchment(ax, [(24, 50), (40, 52), (44, 44), (34, 38), (26, 41)], "Subcatchment S2", P, style)
+    s2 = _subcatchment(ax, [(24, 48), (40, 50), (44, 42), (34, 36), (26, 39)], "Subcatchment S2", P, style)
     ax.plot([12], [50], marker="*", ms=12, mfc="#ffd23f", mec=style.INK, mew=0.7, zorder=5)
     P.label(ax, 14, 50, "Rain gage", size=7, va="center", z=4)
 
@@ -115,7 +115,7 @@ def _draw():
     _link(ax, (94, 12), OUT, "conduit", style)
     _link(ax, (62, 40), IJ, "street", style)
     _link(ax, IJ, J4, "conduit", style, lw=1.2)
-    ax.plot([34, 36], [38, 26], color="#6f8a4f", lw=1.0, ls=(0, (2, 2)), zorder=2)   # S2 outlet
+    ax.plot([34, 36], [36, 26], color="#6f8a4f", lw=1.0, ls=(0, (2, 2)), zorder=2)   # S2 outlet
     ax.plot([16, 24], [30, 30], color="#6f8a4f", lw=1.0, ls=(0, (2, 2)), zorder=2)   # S1 outlet
 
     for pt, kind in ((J1, "junction"), (J2, "junction"), (J3, "junction"), (J4, "junction"),

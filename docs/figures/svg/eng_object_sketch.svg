@@ -33,11 +33,11 @@ z
 " clip-path="url(#pd71dd8e389)" style="fill: url(#h5d6e990bb9); opacity: 0.9; stroke: #6f8a4f; stroke-linejoin: miter"/>
    </g>
    <g id="patch_3">
-    <path d="M 172.8 43.2 
-L 288 28.8 
-L 316.8 86.4 
-L 244.8 129.6 
-L 187.2 108 
+    <path d="M 172.8 57.6 
+L 288 43.2 
+L 316.8 100.8 
+L 244.8 144 
+L 187.2 122.4 
 z
 " clip-path="url(#pd71dd8e389)" style="fill: url(#h5d6e990bb9); opacity: 0.9; stroke: #6f8a4f; stroke-linejoin: miter"/>
    </g>
@@ -312,7 +312,7 @@ L 460.8 244.8
 " clip-path="url(#pd71dd8e389)" style="fill: none; stroke: #5aa552; stroke-width: 1.2; stroke-linecap: round"/>
    </g>
    <g id="line2d_13">
-    <path d="M 244.8 129.6 
+    <path d="M 244.8 144 
 L 259.2 216 
 " clip-path="url(#pd71dd8e389)" style="fill: none; stroke-dasharray: 2,2; stroke-dashoffset: 0; stroke: #6f8a4f"/>
    </g>
@@ -342,10 +342,10 @@ z
     </g>
    </g>
    <g id="line2d_17">
-    <path d="M 241.92 79.2 
+    <path d="M 241.92 93.6 
 " clip-path="url(#pd71dd8e389)" style="fill: none; stroke: #6f8a4f; stroke-width: 1.5; stroke-linecap: square"/>
     <g clip-path="url(#pd71dd8e389)">
-     <use xlink:href="#m0c48dd3292" x="241.92" y="79.2" style="fill: #6f8a4f; stroke: #6f8a4f; stroke-linejoin: miter"/>
+     <use xlink:href="#m0c48dd3292" x="241.92" y="93.6" style="fill: #6f8a4f; stroke: #6f8a4f; stroke-linejoin: miter"/>
     </g>
    </g>
    <g id="line2d_18">
@@ -363,7 +363,7 @@ L 388.8 273.6
     <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #4f6338" x="97.92" y="144.998906" transform="rotate(-0 97.92 144.998906)">Subcatchment S1</text>
    </g>
    <g id="text_4">
-    <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #4f6338" x="241.92" y="93.158906" transform="rotate(-0 241.92 93.158906)">Subcatchment S2</text>
+    <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #4f6338" x="241.92" y="107.558906" transform="rotate(-0 241.92 107.558906)">Subcatchment S2</text>
    </g>
    <g id="text_5">
     <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="100.8" y="45.131563" transform="rotate(-0 100.8 45.131563)">Rain gage</text>
