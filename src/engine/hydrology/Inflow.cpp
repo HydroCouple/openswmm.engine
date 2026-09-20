@@ -42,6 +42,26 @@ namespace inflow {
 
 using constants::DATE_DELTA;
 
+namespace {
+
+/// Legacy `match(str, w_FLOW)` (keywords.c): the keyword has to be a
+/// case-insensitive PREFIX of the token, not the whole of it, after leading
+/// blanks are skipped. So FLOW, Flow, FLOWRATE and FLOW_EXPANSION all name the
+/// node's hydrograph in [INFLOWS] and [DWF].
+bool matches_flow_keyword(const std::string& s) {
+    static constexpr char kFlow[] = "FLOW";
+    std::size_t i = s.find_first_not_of(' ');
+    if (i == std::string::npos) return false;
+    for (std::size_t j = 0; j < 4; ++j, ++i) {
+        if (i >= s.size()) return false;
+        if (std::toupper(static_cast<unsigned char>(s[i])) != kFlow[j])
+            return false;
+    }
+    return true;
+}
+
+}  // namespace
+
 void ExtInflowSoA::resize(int n) {
     count = n;
     auto un = static_cast<std::size_t>(n);
@@ -161,8 +181,10 @@ void InflowSolver::init(SimulationContext& ctx) {
                 if (w == msg) return;
             ctx.warnings.push_back(msg);
         };
-        const std::string cons_u = upper(cons);
-        if (cons_u == "FLOW") {
+        // Legacy inflow_readExtInflow (inflow.c:252-258) looks the token up in
+        // the POLLUTANT table first and only then tests match(tok[1], w_FLOW),
+        // which is a PREFIX test — see matches_flow_keyword above.
+        if (ctx.pollutant_names.find(cons) < 0 && matches_flow_keyword(cons)) {
             ext_inflows_.kind[ui]       = static_cast<int>(ExtInflowKind::FLOW);
             ext_inflows_.pollut_idx[ui] = -1;
             int fu = static_cast<int>(ctx.options.flow_units);
@@ -281,7 +303,14 @@ void InflowSolver::init(SimulationContext& ctx) {
         // (matching legacy inflow_readDwfInflow: x /= UCF(FLOW))
         double avg_val = ctx.dwf_inflows.avg_value[ui];
         const auto& constituent = ctx.dwf_inflows.constituent[ui];
-        if (constituent == "FLOW" || constituent == "flow" || constituent == "Flow") {
+        // Legacy inflow_readDwfInflow (inflow.c:252-257) searches the POLLUTANT
+        // table first and only then tests match(tok[1], w_FLOW) — a PREFIX
+        // test. v6 compared against an exact "FLOW"/"flow"/"Flow", so
+        // 3010-h-h-elements' eight `FLOW_EXPANSION` rows bound no pollutant
+        // and delivered no water: STOR-42 ran the whole simulation 0.05 cfs
+        // dry, and the network diverged before the first reported period.
+        const int dwf_pollut = ctx.pollutant_names.find(constituent);
+        if (dwf_pollut < 0 && matches_flow_keyword(constituent)) {
             int fu = static_cast<int>(ctx.options.flow_units);
             avg_val /= ucf::Qcf[fu];
             dwf_inflows_.is_flow[ui] = 1;
@@ -289,7 +318,7 @@ void InflowSolver::init(SimulationContext& ctx) {
             // Pollutant DWF row: a concentration tied to the node's DWF flow
             // (legacy TDwfInflow.param = pollutant index). Unmatched names
             // stay -1 and the row is inert, like a legacy parse would reject.
-            dwf_inflows_.pollut_idx[ui] = ctx.pollutant_names.find(constituent);
+            dwf_inflows_.pollut_idx[ui] = dwf_pollut;
             // U2: a reactions-species DWF concentration (same footing as a
             // pollutant row; the load goes to msx_ext_mass_in).
             if (dwf_inflows_.pollut_idx[ui] < 0 && ctx.reactions.configured)
@@ -327,6 +356,76 @@ void InflowSolver::init(SimulationContext& ctx) {
         dwf_inflows_.pat_daily[ui]   = tmp_pats[DAILY_PATTERN];
         dwf_inflows_.pat_hourly[ui]  = tmp_pats[HOURLY_PATTERN];
         dwf_inflows_.pat_weekend[ui] = tmp_pats[WEEKEND_PATTERN];
+    }
+
+    // ---- A repeated (node, constituent) row REPLACES the earlier one ----
+    //
+    // Legacy holds at most ONE inflow object per node and constituent:
+    // inflow_setExtInflow (inflow.c:129-150) and inflow_readDwfInflow
+    // (inflow.c:274-295) walk the node's list for a matching `param` and
+    // OVERWRITE every field of the object they find, appending only when
+    // there is none. A second row for the same pair therefore SUPERSEDES the
+    // first — timeseries, baseline, scale and patterns all come from the last
+    // row read. v6 kept each parsed row and summed them at runtime, so
+    // ocp-neid123's two S006-058 FLOW rows (a 5.42 cfs baseline, then a
+    // timeseries with no baseline) both fired and the node ran 5.42 cfs wet
+    // for the whole simulation. 17 corpus decks repeat a pair.
+    //
+    // `param` is legacy's key: −1 for FLOW, else the pollutant index. The
+    // v6-only constituents (a reactions species, the reserved age species)
+    // get disjoint key spaces so they cannot alias a pollutant index, and a
+    // row that resolved to nothing (legacy would have rejected the deck; v6
+    // warns and ignores it) is left out of the keying entirely — it is
+    // already inert, and its param of −1 would otherwise collide with the
+    // node's FLOW row and silence that. Superseded rows are marked with
+    // node_idx = −1, which every consumer below already skips.
+    {
+        constexpr long long kNone    = std::numeric_limits<long long>::min();
+        constexpr long long kMsxBase = 1LL << 32;
+        constexpr long long kAgeKey  = 1LL << 33;
+        auto ext_param = [](int kind, int idx) -> long long {
+            switch (static_cast<ExtInflowKind>(kind)) {
+                case ExtInflowKind::FLOW:       return -1;
+                case ExtInflowKind::AGE:        return kAgeKey;
+                case ExtInflowKind::MSX_CONCEN:
+                case ExtInflowKind::MSX_MASS:   return (idx >= 0) ? kMsxBase + idx : kNone;
+                default:                        return (idx >= 0) ? idx : kNone;
+            }
+        };
+        std::unordered_map<long long, int> last;
+        auto supersede = [&last](std::vector<int>& node_idx, int row,
+                                 long long param) {
+            if (param == kNone) return;
+            // param ∈ [−1, 2^33]; +3 keeps it positive so the node bits above
+            // bit 34 stay clean.
+            const long long key =
+                (static_cast<long long>(node_idx[static_cast<std::size_t>(row)])
+                 << 34) + param + 3;
+            auto it = last.find(key);
+            if (it != last.end())
+                node_idx[static_cast<std::size_t>(it->second)] = -1;
+            last[key] = row;
+        };
+
+        for (int i = 0; i < ne; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            if (ext_inflows_.node_idx[ui] < 0) continue;
+            supersede(ext_inflows_.node_idx, i,
+                      ext_param(ext_inflows_.kind[ui],
+                                ext_inflows_.pollut_idx[ui]));
+        }
+
+        last.clear();
+        for (int i = 0; i < nd; ++i) {
+            auto ui = static_cast<std::size_t>(i);
+            if (dwf_inflows_.node_idx[ui] < 0) continue;
+            const long long param =
+                dwf_inflows_.is_flow[ui]        ? -1
+              : dwf_inflows_.msx_idx[ui] >= 0   ? kMsxBase + dwf_inflows_.msx_idx[ui]
+              : dwf_inflows_.pollut_idx[ui] >= 0 ? dwf_inflows_.pollut_idx[ui]
+                                                : kNone;
+            supersede(dwf_inflows_.node_idx, i, param);
+        }
     }
 }
 

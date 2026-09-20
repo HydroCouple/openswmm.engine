@@ -146,6 +146,7 @@ SWMM_ENGINE_API int swmm_subcatch_set_zero_imperv_pct(SWMM_Engine engine, int id
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    ctx.subcatches.pct_zero[static_cast<std::size_t>(idx)] = pct;
     ctx.subcatches.frac_imperv_no_store[static_cast<std::size_t>(idx)] = pct / 100.0;
     return SWMM_OK;
 }

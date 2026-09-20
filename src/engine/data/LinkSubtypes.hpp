@@ -80,7 +80,13 @@ struct ConduitData {
     std::vector<int>    link_idx;       ///< Base LinkData index (join key)
 
     std::vector<double> roughness;
-    std::vector<double> length;
+    std::vector<double> length;       ///< Authored [CONDUITS] length (ft)
+    /// The length the routing uses — legacy conduit_getLength. Equal to
+    /// `length` for every section but IRREGULAR, where the authored value
+    /// is the main channel's and the routing length is the flood plain's,
+    /// `length / Transect.lengthFactor`. Derived; refreshed by
+    /// routing::applyConduitLengthening, never serialized.
+    std::vector<double> true_length;
     std::vector<double> slope;
     std::vector<double> mod_length;
     std::vector<int>    barrels;
@@ -104,7 +110,8 @@ struct ConduitData {
     int count() const noexcept { return static_cast<int>(link_idx.size()); }
 
     void clear() noexcept {
-        link_idx.clear(); roughness.clear(); length.clear(); slope.clear();
+        link_idx.clear(); roughness.clear(); length.clear();
+        true_length.clear(); slope.clear();
         mod_length.clear(); barrels.clear(); beta.clear(); rough_factor.clear();
         q_full.clear(); q_max.clear(); loss_inlet.clear(); loss_outlet.clear();
         loss_avg.clear(); seep_rate.clear(); culvert_code.clear();
@@ -114,7 +121,8 @@ struct ConduitData {
 
     void reserve(int n) {
         const auto un = static_cast<std::size_t>(n);
-        link_idx.reserve(un); roughness.reserve(un); length.reserve(un); slope.reserve(un);
+        link_idx.reserve(un); roughness.reserve(un); length.reserve(un);
+        true_length.reserve(un); slope.reserve(un);
         mod_length.reserve(un); barrels.reserve(un); beta.reserve(un); rough_factor.reserve(un);
         q_full.reserve(un); q_max.reserve(un); loss_inlet.reserve(un); loss_outlet.reserve(un);
         loss_avg.reserve(un); seep_rate.reserve(un); culvert_code.reserve(un);
@@ -130,6 +138,7 @@ struct ConduitData {
         link_idx.insert(link_idx.begin() + p, i);
         roughness.insert(roughness.begin() + p, 0.01);
         length.insert(length.begin() + p, 0.0);
+        true_length.insert(true_length.begin() + p, 0.0);
         slope.insert(slope.begin() + p, 0.0);
         mod_length.insert(mod_length.begin() + p, 0.0);
         barrels.insert(barrels.begin() + p, 1);
@@ -155,6 +164,7 @@ struct ConduitData {
         link_idx.erase(link_idx.begin() + p);
         roughness.erase(roughness.begin() + p);
         length.erase(length.begin() + p);
+        true_length.erase(true_length.begin() + p);
         slope.erase(slope.begin() + p);
         mod_length.erase(mod_length.begin() + p);
         barrels.erase(barrels.begin() + p);

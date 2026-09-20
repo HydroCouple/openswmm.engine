@@ -67,7 +67,8 @@ void RunoffSoA::resize(int n) {
     width.assign(un, 0.0);
     slope.assign(un, 0.0);
     imperv_pct.assign(un, 0.0);
-    imperv0_pct.assign(un, 0.0);
+    frac_imperv0.assign(un, 0.0);
+    frac_imperv1.assign(un, 0.0);
 
     alpha_imperv.assign(un, 0.0);
     alpha_perv.assign(un, 0.0);
@@ -193,7 +194,12 @@ void RunoffSolver::init(SimulationContext& ctx) {
         soa_.width[ui]      = ctx.subcatches.width[ui];
         soa_.slope[ui]      = ctx.subcatches.slope[ui];
         soa_.imperv_pct[ui] = ctx.subcatches.frac_imperv[ui];
-        soa_.imperv0_pct[ui]= ctx.subcatches.frac_imperv_no_store[ui];
+        // PARITY subcatch.c:268-270 — multiply by the AUTHORED percent,
+        // divide by 100 afterwards. See RunoffSoA::frac_imperv0.
+        const double fi_ = ctx.subcatches.frac_imperv[ui];
+        const double pz_ = ctx.subcatches.pct_zero[ui];
+        soa_.frac_imperv0[ui] = fi_ * pz_ / 100.0;
+        soa_.frac_imperv1[ui] = fi_ * (1.0 - pz_ / 100.0);
         soa_.n_imperv[ui]   = ctx.subcatches.n_imperv[ui];
         soa_.n_perv[ui]     = ctx.subcatches.n_perv[ui];
         soa_.ds_imperv[ui]  = ctx.subcatches.ds_imperv[ui] / ucf_depth;
@@ -388,8 +394,8 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         auto ui = static_cast<std::size_t>(i);
         double fi = soa_.imperv_pct[ui];
         double fp = 1.0 - fi;
-        double f0 = fi * soa_.imperv0_pct[ui];
-        double f1 = fi * (1.0 - soa_.imperv0_pct[ui]);
+        double f0 = soa_.frac_imperv0[ui];
+        double f1 = soa_.frac_imperv1[ui];
         double total_area = soa_.area[ui];  // ft²
 
         double precip  = precip_[ui];     // ft/sec (rainfall + snowmelt)

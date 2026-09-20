@@ -68,7 +68,18 @@ struct RunoffSoA {
     std::vector<double> width;         ///< Subcatchment width (ft)
     std::vector<double> slope;         ///< Average slope (ft/ft)
     std::vector<double> imperv_pct;    ///< Impervious fraction (0-1)
-    std::vector<double> imperv0_pct;   ///< Fraction of imperv with zero dStore (0-1)
+    /// The three subarea area fractions, formed exactly as legacy forms them
+    /// (subcatch.c:268-270) from the AUTHORED [SUBAREAS] PctZero percent:
+    ///   frac_imperv0 = fracImperv * PctZero / 100
+    ///   frac_imperv1 = fracImperv * (1 - PctZero / 100)
+    /// Legacy multiplies by the percent and divides afterwards; dividing
+    /// first and multiplying by the stored 0-1 fraction is a different
+    /// double for about a tenth of all percentages, and the difference lands
+    /// straight in the subarea's area. Every consumer — the runoff kernel,
+    /// the stored-volume accounting, the water-age and heat watershed
+    /// modules — reads these so there is one definition of the split.
+    std::vector<double> frac_imperv0;  ///< IMPERV0 (no depression storage)
+    std::vector<double> frac_imperv1;  ///< IMPERV1 (with depression storage)
 
     // Per-subarea SoA: alpha = runoff coefficient
     std::vector<double> alpha_imperv;  ///< Alpha for impervious subareas

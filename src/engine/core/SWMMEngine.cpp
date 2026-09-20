@@ -916,11 +916,19 @@ int SWMMEngine::initialize() noexcept {
     // Matches legacy link_initState / conduit_initState in link.c:
     //   Link[j].oldFlow = Link[j].newFlow = q0
     //   conduit: newDepth = oldDepth = link_getYnorm(j, q0/barrels)
+    // legacy link_initState (link.c:529) seeds timeLastSet with StartDate —
+    // the start DATE, midnight of the first day, not the start date-time.
+    // v6 left it at 0.0 (the SWMM epoch), so a TIMEOPEN / TIMECLOSED premise
+    // read ~32000 days at the first rule evaluation and fired immediately:
+    // `timeoff`'s RULE PIDFORORIFICE closed conduit 1570E on the first step
+    // instead of an hour in.
+    const double start_date0 = std::floor(ctx_.options.start_date);
     for (int j = 0; j < ctx_.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);
         double q0 = ctx_.links.q0[uj];
         ctx_.links.flow[uj]     = q0;
         ctx_.links.old_flow[uj] = q0;
+        ctx_.links.time_last_set[uj] = start_date0;
         if (ctx_.links.type[uj] == LinkType::CONDUIT && q0 != 0.0) {
             const int cr = ctx_.link_subtypes.conduit_row(j);
             const auto& CD = ctx_.link_subtypes.conduits;
@@ -937,7 +945,10 @@ int SWMMEngine::initialize() noexcept {
             // * barrels). Without this the routing mass-balance "Initial Stored
             // Volume" omitted conduits that start with flow (e.g. extran8a
             // q0=20), producing a large false continuity error (-22%).
-            double len = (cr >= 0) ? CD.length[static_cast<std::size_t>(cr)] : 0.0;
+            // legacy flowrout.c:507 books a conduit's initial volume over
+            // link_getLength(i) — the ROUTING length (an IRREGULAR section's
+            // flood-plain length, not its authored main-channel length).
+            double len = (cr >= 0) ? CD.true_length[static_cast<std::size_t>(cr)] : 0.0;
             double vol = xsect::getAofY(xs, y) * len * barrels;
             ctx_.links.volume[uj]     = vol;
             ctx_.links.old_volume[uj] = vol;
@@ -1034,7 +1045,7 @@ int SWMMEngine::initialize() noexcept {
         const int cr = ctx_.link_subtypes.conduit_row(j);
         const auto& CD = ctx_.link_subtypes.conduits;
         int barrels = std::max((cr >= 0) ? CD.barrels[static_cast<std::size_t>(cr)] : 1, 1);
-        double len = (cr >= 0) ? CD.length[static_cast<std::size_t>(cr)] : 0.0;
+        double len = (cr >= 0) ? CD.true_length[static_cast<std::size_t>(cr)] : 0.0;
         double vol = xsect::getAofY(xs, y) * len * barrels;
         ctx_.links.volume[uj]     = vol;
         ctx_.links.old_volume[uj] = vol;
@@ -1094,7 +1105,7 @@ int SWMMEngine::initialize() noexcept {
                 const int cr = ctx_.link_subtypes.conduit_row(j);
                 const auto& CD = ctx_.link_subtypes.conduits;
                 int barrels = std::max((cr >= 0) ? CD.barrels[static_cast<std::size_t>(cr)] : 1, 1);
-                double len = (cr >= 0) ? CD.length[static_cast<std::size_t>(cr)] : 0.0;
+                double len = (cr >= 0) ? CD.true_length[static_cast<std::size_t>(cr)] : 0.0;
                 double vol = xsect::getAofY(xs, y) * len * barrels;
                 ctx_.links.volume[uj]     = vol;
                 ctx_.links.old_volume[uj] = vol;
@@ -5048,8 +5059,8 @@ void SWMMEngine::computeFinalStorage() noexcept {
             auto ui = static_cast<std::size_t>(i);
             double fi = soa.imperv_pct[ui];
             double fp = 1.0 - fi;
-            double f0 = fi * soa.imperv0_pct[ui];
-            double f1 = fi * (1.0 - soa.imperv0_pct[ui]);
+            double f0 = soa.frac_imperv0[ui];
+            double f1 = soa.frac_imperv1[ui];
             double area = soa.area[ui]; // ft²
             ctx_.mass_balance.runoff_final_store +=
                 (soa.depth_imperv0[ui] * f0
