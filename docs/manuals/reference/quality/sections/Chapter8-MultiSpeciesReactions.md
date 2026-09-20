@@ -42,7 +42,7 @@ Its sections are:
 | `[REACTION_COEFFICIENTS]` | Named constants and parameters |
 | `[REACTION_TERMS]` | Named intermediate expressions |
 | `[REACTION_PIPES]`, `[REACTION_TANKS]` | Per-scope expressions |
-| `[REACTION_INITIAL]` | Initial concentrations |
+| `[REACTION_QUALITY]` | Initial concentrations |
 
 Sections may also be embedded directly in the `.inp`. This is supported as a
 convenience, but the external file is the intended layout: embedded sections
@@ -65,9 +65,9 @@ BULK   THM   UG   0.01   0.0001      ; trihalomethane by-product
 WALL   BIO   UG   0.01   0.0001      ; attached biomass
 
 [REACTION_COEFFICIENTS]
-PARAM   Kb     0.30      ; bulk decay, 1/day
-PARAM   Kw     1.00      ; wall demand
-PARAM   Yield  0.20      ; THM formed per unit CL2 consumed
+PARAMETER   Kb     0.30      ; bulk decay, 1/day
+PARAMETER   Kw     1.00      ; wall demand
+PARAMETER   Yield  0.20      ; THM formed per unit CL2 consumed
 
 [REACTION_TERMS]
 Kf     1.5826e-4 * RE^0.88 / D       ; mass-transfer coefficient
@@ -81,7 +81,7 @@ FORMULA BIO   Kw*CL2/(Kw+Kf)
 RATE   CL2   -Kb*CL2
 RATE   THM    Yield*Kb*CL2
 
-[REACTION_INITIAL]
+[REACTION_QUALITY]
 GLOBAL   CL2   0.8
 LINK     C1    CL2   1.2
 ```

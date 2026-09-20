@@ -191,7 +191,7 @@ A routing interface file stores a time series of flows and pollutant concentrati
 
 
 
-## Figure 11 1  Combining routing interface files
+<!-- FIGURE: eng_ch3_routing_interface_files — combining routing interface files -->
 
 A single SWMM run can utilize an outflows routing file to save results generated at a system's outfalls, an inflows routing file to supply hydrograph and pollutograph inflows at selected nodes, or both. 
 
