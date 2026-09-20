@@ -293,7 +293,8 @@ TAB_SIZE               = 4
 ALIASES                = "license=\par License\n" \
                          "description=\par Discription\n" \
                          "mod=\par Modified\n" \
-                         "moditem{3}=\b \date\1 \author\2 \3\n"
+                         "moditem{3}=\b \date\1 \author\2 \3\n" \
+                         "status{1}=\htmlonly<span class=\"status-badge\" data-status=\"\1\">\1</span>\endhtmlonly"
 
 # Set the OPTIMIZE_OUTPUT_FOR_C tag to YES if your project consists of C sources
 # only. Doxygen will then generate output that is more tailored for C. For
@@ -1473,7 +1474,8 @@ HTML_STYLESHEET        =
 # documentation.
 # This tag requires that the tag GENERATE_HTML is set to YES.
 
-HTML_EXTRA_STYLESHEET  = ./custom/css/doxygen-awesome.css
+HTML_EXTRA_STYLESHEET  = ./custom/css/doxygen-awesome.css \
+                         ./custom/css/manual.css
 
 # The HTML_EXTRA_FILES tag can be used to specify one or more extra images or
 # other source files which should be copied to the HTML output directory. Note
