@@ -563,7 +563,7 @@ carries its own port of the approach as `SURCHARGE_METHOD TPA`
 
 ## 8.5 Numerical scheme
 
-### 8.5.1 Face reconstruction
+### 8.5.1 Face reconstruction {#hydraulics_ref_ch8_face_reconstruction}
 
 Cell states are reconstructed at each interface using the hydrostatic
 reconstruction of Audusse et al. (2004):
@@ -593,7 +593,7 @@ slope breaks, adverse slopes and while pressurized. This is the
 "C-property", and it holds regardless of any quadrature error in the
 \f$I_1\f$ table, since only single-valuedness is required.
 
-### 8.5.3 Interface flux
+### 8.5.3 Interface flux {#hydraulics_ref_ch8_interface_flux}
 
 The system \f$\mathbf{U} = [A,\ Q]^{T}\f$ is \f$2 \times 2\f$ with two
 genuinely nonlinear fields and no middle wave, so the interface flux is
@@ -666,7 +666,7 @@ baseline). It has no effect on the hydraulics.
 @ref openswmm::fv::ExplicitFvSolver::computeFaceFlux in
 `src/engine/hydraulics/fv/ExplicitFvSolver.cpp`.
 
-### 8.5.4 Friction, local losses and positivity
+### 8.5.4 Friction, local losses and positivity {#hydraulics_ref_ch8_friction_positivity}
 
 Manning friction is integrated semi-implicitly, so it imposes no time
 step restriction of its own:
@@ -786,7 +786,7 @@ property either.
 `src/engine/hydraulics/HydClosureKernels.hpp`; the outflow scan is
 @ref openswmm::fv::ExplicitFvSolver::limitPositivity.
 
-### 8.5.5 Time stepping
+### 8.5.5 Time stepping {#hydraulics_ref_ch8_time_stepping}
 
 The solver substeps internally to fill each routing step. The routing
 step therefore serves as a reporting and forcing cadence rather than a
@@ -831,7 +831,7 @@ stability arguments hold. `RK2` and local time stepping are mutually
 exclusive — tiering gives different volumes different steps, so the two
 stages would be averaging states that never shared one.
 
-### 8.5.6 Local time stepping
+### 8.5.6 Local time stepping {#hydraulics_ref_ch8_lts}
 
 Condition (8-14) is *local*, but a single global substep applies the
 smallest value found anywhere to every cell in the model. In a sewer
@@ -949,6 +949,17 @@ flowchart TD
     M -- no --> B
     M -- yes --> N[Report, couple nodes, advance]
 </pre>
+<div class="workflow-links" data-workflow="fv_substep">
+<span data-node="B">@ref hydraulics_ref_ch8_time_stepping "8.5.5 Time stepping: the CFL census"</span>
+<span data-node="C">@ref hydraulics_ref_ch8_time_stepping "8.5.5 Time stepping: the base step"</span>
+<span data-node="D">@ref hydraulics_ref_ch8_lts "8.5.6 Local time stepping"</span>
+<span data-node="F">@ref hydraulics_ref_ch8_lts "8.5.6 Local time stepping: tiers"</span>
+<span data-node="G">@ref hydraulics_ref_ch8_lts "8.5.6 Local time stepping: the macro cycle"</span>
+<span data-node="H">@ref hydraulics_ref_ch8_lts "8.5.6 Local time stepping: windows and accumulators"</span>
+<span data-node="I">@ref hydraulics_ref_ch8_friction_positivity "8.5.4 Friction, local losses and positivity"</span>
+<span data-node="J">@ref hydraulics_ref_ch8_time_stepping "8.5.5 Time stepping: the post-step census"</span>
+<span data-node="N">@ref hydraulics_ref_ch8_network_coupling "8.6 Network coupling"</span>
+</div>
 
 *Figure 8-5 Substep workflow of the explicit finite-volume solver,
 including the post-step census retry and local time stepping (rendered
@@ -991,7 +1002,7 @@ path — which is what makes `FV_ORDER 2` safe to leave on: on an
 unresolved long conduit it reproduces the first-order answer rather than
 producing a wrong one.
 
-### 8.5.8 Wetting and drying
+### 8.5.8 Wetting and drying {#hydraulics_ref_ch8_wetting_drying}
 
 Wet/dry handling is distributed through the scheme rather than
 implemented as a separate front-tracking step. Every rule below acts on
@@ -1099,6 +1110,17 @@ flowchart TD
     M --> O[Positivity scan over all volumes: scale outgoing fluxes of over-drafted volumes]
     O --> P[Identical scaled flux updates both incident volumes]
 </pre>
+<div class="workflow-links" data-workflow="fv_face_flux">
+<span data-node="B">@ref hydraulics_ref_ch8_face_reconstruction "8.5.1 Face reconstruction"</span>
+<span data-node="C">@ref hydraulics_ref_ch8_face_reconstruction "8.5.1 Face reconstruction: hydrostatic states"</span>
+<span data-node="D">@ref hydraulics_ref_ch8_wetting_drying "8.5.8 Wetting and drying"</span>
+<span data-node="G">@ref hydraulics_ref_ch8_interface_flux "8.5.3 Interface flux: dry-bed signal speeds"</span>
+<span data-node="H">@ref hydraulics_ref_ch8_interface_flux "8.5.3 Interface flux: Davis signal speeds"</span>
+<span data-node="I">@ref hydraulics_ref_ch8_interface_flux "8.5.3 Interface flux: HLL and the contact speed"</span>
+<span data-node="K">@ref hydraulics_ref_ch8_structures "8.6.3 Outfalls, structures and lateral inflow: flap gates"</span>
+<span data-node="N">@ref hydraulics_ref_ch8_culvert_inlet "8.6.4 Culvert inlet control"</span>
+<span data-node="O">@ref hydraulics_ref_ch8_friction_positivity "8.5.4 Positivity"</span>
+</div>
 
 *Figure 8-6 Wet/dry and exception handling in one face flux evaluation
 (rendered diagram)*
@@ -1219,7 +1241,7 @@ is @ref openswmm::fv::ExplicitFvSolver::takeSubstep and
 in `src/engine/hydraulics/fv/FvKernels.hpp` behind the
 `OPENSWMM_KERNEL_FN` marker.
 
-## 8.6 Network coupling
+## 8.6 Network coupling {#hydraulics_ref_ch8_network_coupling}
 
 ### 8.6.1 Regular junctions and storage units
 
@@ -1429,7 +1451,7 @@ spliced face and enters their mass equations as a zero-momentum source
 total inflow. A device backend that receives the per-node lateral must
 apply the same split; integrating it on the node would discard it.
 
-### 8.6.3 Outfalls, structures and lateral inflow
+### 8.6.3 Outfalls, structures and lateral inflow {#hydraulics_ref_ch8_structures}
 
 Outfalls are stage boundaries: the head computed by the existing
 free/normal/fixed/tidal/time-series logic is imposed, and the ghost
@@ -1467,7 +1489,7 @@ routing method; at a virtual junction the inflow is split between the
 two spliced cells (§8.6.2). Distributed conduit losses — evaporation
 and seepage — enter the cell mass equation as \f$q_L\f$ in (8-1).
 
-### 8.6.4 Culvert inlet control
+### 8.6.4 Culvert inlet control {#hydraulics_ref_ch8_culvert_inlet}
 
 A conduit carrying a culvert code in `[XSECTIONS]` marks its upstream
 boundary face at mesh construction, and the FHWA inlet-control curve

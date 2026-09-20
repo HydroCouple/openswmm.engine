@@ -148,7 +148,7 @@ swmm_engine_destroy(engine);
 
 The final `NULL` argument to `swmm_engine_open()` selects the built-in `.inp` reader; passing the path of an input-plugin shared library reads the model through that plugin instead (see @ref engine_manual_ch5_api). The single-call helpers `swmm_engine_run()` and `swmm_engine_run_with_callback()` chain the entire lifecycle for batch runs.
 
-## 5.3 Callbacks
+## 5.3 Callbacks {#engine_manual_ch5_callbacks}
 
 The callback system allows applications to receive notifications during simulation execution:
 
@@ -452,6 +452,12 @@ flowchart TD
     J --> K[Forward remaining arguments to initialize]
     K --> L[Plugin receives host callbacks during the run]
 </pre>
+<div class="workflow-links" data-workflow="plugin_resolution">
+<span data-node="B">@ref engine_manual_ch5_plugins "5.8 Plugin interface: discovery"</span>
+<span data-node="D">@ref engine_manual_sect_PLUGINS "[PLUGINS] section"</span>
+<span data-node="J">@ref engine_manual_ch5_plugins "5.8 Plugin interface: instantiation"</span>
+<span data-node="L">@ref engine_manual_ch5_callbacks "5.3 Callbacks"</span>
+</div>
 
 *Figure 5-2 Plugin discovery, resolution and loading workflow (rendered diagram)*
 

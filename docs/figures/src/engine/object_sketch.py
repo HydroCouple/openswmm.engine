@@ -15,6 +15,27 @@ REQUIRES = ()
 
 CANVAS = (10.0, 5.6)
 
+# clickable regions (x0, y0, x1, y1) in canvas units -> the Engine Manual's grammar section
+S = "engine_manual_sect_"
+HOTSPOTS = [
+    (9, 48.3, 24, 51.7, S + "RAINGAGES", "Rain gage"),
+    (4, 28.5, 24, 46.5, S + "SUBCATCHMENTS", "Subcatchment S1"),
+    (24, 34.5, 44, 50.5, S + "SUBCATCHMENTS", "Subcatchment S2"),
+    (15, 27.5, 30, 33.5, S + "JUNCTIONS", "Junction"),
+    (30, 22.0, 40, 25.5, S + "CONDUITS", "Conduit"),
+    (39, 23.0, 50, 29.0, S + "VIRTUAL_JUNCTIONS", "Virtual junction"),
+    (55, 31.5, 82, 36.5, S + "INLET_JUNCTIONS", "Inlet junction"),
+    (59, 36.5, 67, 43.5, S + "STREETS", "Street conduit"),
+    (72, 21.5, 80, 27.5, S + "DIVIDERS", "Divider"),
+    (81, 20.0, 90, 27.5, S + "WEIRS", "Weir"),
+    (69, 15.5, 80, 20.5, S + "ORIFICES", "Orifice"),
+    (76, 8.5, 84, 14.5, S + "STORAGE", "Storage unit"),
+    (84, 8.5, 92, 14.5, S + "PUMPS", "Pump"),
+    (92, 17.5, 100, 22.5, S + "OUTFALLS", "Outfall"),
+    (45, 3.5, 67, 18.5, S + "2D_TRIANGLES", "2D mesh"),
+    (47, 18.5, 56, 23.5, S + "2D_VERTEX_NODE_MAP", "1D–2D exchange"),
+]
+
 
 def _subcatchment(ax, pts, label, P, style):
     poly = np.array(pts)
@@ -148,8 +169,11 @@ def _draw():
     P.label(ax, 2, 52.6, "hydrology: rain gages and subcatchments, with aquifers and snow packs beneath them · "
                          "hydraulics: nodes, links and a 2D mesh · quality: pollutants and land uses on the subcatchments",
             size=6.4, color=style.MUTED, va="top")
-    return fig
+    return fig, ax
 
 
 def build(sink):
-    sink.save(_draw(), "eng_object_sketch")
+    fig, ax = _draw()
+    for x0, y0, x1, y1, ref, label in HOTSPOTS:
+        sink.hotspot("eng_object_sketch", ax, x0, y0, x1, y1, ref, label)
+    sink.save(fig, "eng_object_sketch")

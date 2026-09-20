@@ -120,6 +120,25 @@ SWMM. Their properties and functions will be described in more detail
 throughout the course of this manual.
 
 ![Figure 1-2 Objects of an OpenSWMM model](figures/png/eng_object_sketch.png)
+
+<div class="fig-hotspots" data-fig="eng_object_sketch">
+<span class="hs" data-box="0.0900,0.0768,0.2400,0.1375">@ref engine_manual_sect_RAINGAGES "Rain gage"</span>
+<span class="hs" data-box="0.0400,0.1696,0.2400,0.4911">@ref engine_manual_sect_SUBCATCHMENTS "Subcatchment S1"</span>
+<span class="hs" data-box="0.2400,0.0982,0.4400,0.3839">@ref engine_manual_sect_SUBCATCHMENTS "Subcatchment S2"</span>
+<span class="hs" data-box="0.1500,0.4018,0.3000,0.5089">@ref engine_manual_sect_JUNCTIONS "Junction"</span>
+<span class="hs" data-box="0.3000,0.5446,0.4000,0.6071">@ref engine_manual_sect_CONDUITS "Conduit"</span>
+<span class="hs" data-box="0.3900,0.4821,0.5000,0.5893">@ref engine_manual_sect_VIRTUAL_JUNCTIONS "Virtual junction"</span>
+<span class="hs" data-box="0.5500,0.3482,0.8200,0.4375">@ref engine_manual_sect_INLET_JUNCTIONS "Inlet junction"</span>
+<span class="hs" data-box="0.5900,0.2232,0.6700,0.3482">@ref engine_manual_sect_STREETS "Street conduit"</span>
+<span class="hs" data-box="0.7200,0.5089,0.8000,0.6161">@ref engine_manual_sect_DIVIDERS "Divider"</span>
+<span class="hs" data-box="0.8100,0.5089,0.9000,0.6429">@ref engine_manual_sect_WEIRS "Weir"</span>
+<span class="hs" data-box="0.6900,0.6339,0.8000,0.7232">@ref engine_manual_sect_ORIFICES "Orifice"</span>
+<span class="hs" data-box="0.7600,0.7411,0.8400,0.8482">@ref engine_manual_sect_STORAGE "Storage unit"</span>
+<span class="hs" data-box="0.8400,0.7411,0.9200,0.8482">@ref engine_manual_sect_PUMPS "Pump"</span>
+<span class="hs" data-box="0.9200,0.5982,1.0000,0.6875">@ref engine_manual_sect_OUTFALLS "Outfall"</span>
+<span class="hs" data-box="0.4500,0.6696,0.6700,0.9375">@ref engine_manual_sect_2D_TRIANGLES "2D mesh"</span>
+<span class="hs" data-box="0.4700,0.5804,0.5600,0.6696">@ref engine_manual_sect_2D_VERTEX_NODE_MAP "1D–2D exchange"</span>
+</div>
 <p><span id="_Toc401645528"
 class="anchor"></span><strong>Figure 1-2 Objects of an OpenSWMM model</strong></p>
 
@@ -160,6 +179,67 @@ described previously and how they are tied to one another. The
 hydrological processes depicted in this diagram include:
 
 ![Figure 1-3 Processes modelled by OpenSWMM](figures/png/eng_process_flow.png)
+
+<div class="fig-hotspots" data-fig="eng_process_flow">
+<span class="hs" data-box="0.0200,0.1111,0.2400,0.1389">@ref hydrology_ref_ch2_meteorology "Precipitation"</span>
+<span class="hs" data-box="0.0260,0.1389,0.0915,0.1612">@ref engine_manual_sect_RAINGAGES "rain · snow"</span>
+<span class="hs" data-box="0.0960,0.1389,0.1717,0.1612">@ref hydrology_ref_ch2_meteorology "scale factors"</span>
+<span class="hs" data-box="0.0200,0.2153,0.2400,0.2431">@ref hydrology_ref_ch6_snowmelt "Snowmelt"</span>
+<span class="hs" data-box="0.0260,0.2431,0.1787,0.2653">@ref hydrology_ref_ch6_snowmelt "degree-day · areal depletion"</span>
+<span class="hs" data-box="0.0200,0.3194,0.2400,0.3472">@ref hydrology_ref_ch3_surface_runoff "Initial abstraction · evaporation"</span>
+<span class="hs" data-box="0.0260,0.3472,0.1274,0.3695">@ref engine_manual_sect_SUBAREAS "depression storage"</span>
+<span class="hs" data-box="0.0200,0.4236,0.2400,0.4514">@ref hydrology_ref_ch3_surface_runoff "Surface runoff"</span>
+<span class="hs" data-box="0.0260,0.4514,0.1325,0.4737">@ref hydrology_ref_ch3_surface_runoff "nonlinear reservoir"</span>
+<span class="hs" data-box="0.0260,0.4799,0.1582,0.5022">@ref hydrology_ref_ch4_infiltration "Horton · Green-Ampt · CN"</span>
+<span class="hs" data-box="0.0200,0.5486,0.2400,0.5764">@ref quality_ref_ch6_lid_controls "LID controls"</span>
+<span class="hs" data-box="0.0260,0.5764,0.1017,0.5987">@ref quality_ref_ch6_lid_controls "layered units"</span>
+<span class="hs" data-box="0.1062,0.5764,0.1820,0.5987">@ref quality_ref_ch6_lid_controls "storage nodes"</span>
+<span class="hs" data-box="0.0200,0.6528,0.2400,0.6806">@ref quality_ref_ch4_surface_washoff "Washoff"</span>
+<span class="hs" data-box="0.0260,0.6806,0.1685,0.7028">@ref quality_ref_ch3_pollutant_buildup "EMC · exponential · rating"</span>
+<span class="hs" data-box="0.2800,0.2639,0.5200,0.2917">@ref hydrology_ref_ch5_groundwater "Groundwater"</span>
+<span class="hs" data-box="0.2860,0.2917,0.4644,0.3139">@ref hydrology_ref_ch5_groundwater "two-zone aquifer per subcatchment"</span>
+<span class="hs" data-box="0.2860,0.3202,0.4439,0.3425">@ref hydrology_ref_ch5_groundwater "two-layer aquifer on the mesh"</span>
+<span class="hs" data-box="0.2860,0.3487,0.4028,0.3710">@ref hydrology_ref_ch5_groundwater "groundwater transport"</span>
+<span class="hs" data-box="0.2800,0.6528,0.4800,0.6806">@ref quality_ref_ch3_pollutant_buildup "Pollutant buildup"</span>
+<span class="hs" data-box="0.2860,0.6806,0.3977,0.7028">@ref quality_ref_ch3_pollutant_buildup "land uses · sweeping"</span>
+<span class="hs" data-box="0.5600,0.1111,0.7800,0.1389">@ref hydraulics_ref_ch9_two_dimensional "Rain on the mesh"</span>
+<span class="hs" data-box="0.5660,0.1389,0.6623,0.1612">@ref hydraulics_ref_ch9_two_dimensional "natural neighbour"</span>
+<span class="hs" data-box="0.5600,0.2153,0.7800,0.2431">@ref hydraulics_ref_ch9_two_dimensional "2D overland flow"</span>
+<span class="hs" data-box="0.5660,0.2431,0.6469,0.2653">@ref hydraulics_ref_ch9_two_dimensional "local inertial"</span>
+<span class="hs" data-box="0.6514,0.2431,0.7528,0.2653">@ref hydraulics_ref_ch9_two_dimensional "full shallow water"</span>
+<span class="hs" data-box="0.5660,0.2716,0.6469,0.2939">@ref hydraulics_ref_ch9_two_dimensional "diffusive wave"</span>
+<span class="hs" data-box="0.5600,0.3472,0.7800,0.3750">@ref hydraulics_ref_ch9_two_dimensional "Per-cell infiltration · evaporation"</span>
+<span class="hs" data-box="0.5660,0.3750,0.7598,0.3973">@ref engine_manual_sect_2D_INFILTRATION_OPTIONS "→ lost · subcatchment · mesh aquifer"</span>
+<span class="hs" data-box="0.5600,0.4583,0.7800,0.4861">@ref quality_ref_ch4_surface_washoff "2D surface quality"</span>
+<span class="hs" data-box="0.5660,0.4861,0.7239,0.5084">@ref quality_ref_ch4_surface_washoff "coverages · buildup · washoff"</span>
+<span class="hs" data-box="0.8100,0.1111,0.9800,0.1389">@ref engine_manual_sect_INFLOWS "External inflows"</span>
+<span class="hs" data-box="0.8160,0.1389,0.9071,0.1612">@ref engine_manual_sect_DWF "dry weather flow"</span>
+<span class="hs" data-box="0.9116,0.1389,0.9668,0.1612">@ref hydrology_ref_ch7_rdii "RDII: RTK"</span>
+<span class="hs" data-box="0.8160,0.1674,0.8969,0.1897">@ref hydrology_ref_ch7_rdii "RDII: IA decay"</span>
+<span class="hs" data-box="0.8160,0.1959,0.9379,0.2182">@ref engine_manual_sect_INFLOWS "user · interface files"</span>
+<span class="hs" data-box="0.8600,0.2778,0.9800,0.3056">@ref hydraulics_ref_ch7_advanced_features "Street inlets"</span>
+<span class="hs" data-box="0.8660,0.3056,0.9828,0.3278">@ref hydraulics_ref_ch7_advanced_features "HEC-22 link attribute"</span>
+<span class="hs" data-box="0.8660,0.3341,0.9469,0.3564">@ref hydraulics_ref_ch7_advanced_features "inlet junction"</span>
+<span class="hs" data-box="0.0200,0.7639,0.9800,0.7917">@ref hydraulics_ref_ch2_hydraulic_model "Channel, pipe and storage routing"</span>
+<span class="hs" data-box="0.0260,0.7917,0.0658,0.8139">@ref hydraulics_ref_ch2_hydraulic_model "steady"</span>
+<span class="hs" data-box="0.0703,0.7917,0.1512,0.8139">@ref hydraulics_ref_ch4_kinematic_wave "kinematic wave"</span>
+<span class="hs" data-box="0.1557,0.7917,0.2263,0.8139">@ref hydraulics_ref_ch3_dynamic_wave "dynamic wave"</span>
+<span class="hs" data-box="0.2308,0.7917,0.3065,0.8139">@ref hydraulics_ref_ch8_finite_volume "finite volume"</span>
+<span class="hs" data-box="0.3110,0.7917,0.4637,0.8139">@ref hydraulics_ref_ch3_dynamic_wave "EXTRAN · slot · dynamic slot"</span>
+<span class="hs" data-box="0.4682,0.7917,0.4926,0.8139">@ref hydraulics_ref_ch3_dynamic_wave "TPA"</span>
+<span class="hs" data-box="0.4971,0.7917,0.6345,0.8139">@ref hydraulics_ref_ch3_dynamic_wave "virtual · inlet junctions"</span>
+<span class="hs" data-box="0.0200,0.8611,0.9800,0.8889">@ref quality_ref_ch5_transport_treatment "Transport and reactions"</span>
+<span class="hs" data-box="0.0260,0.8889,0.0555,0.9112">@ref quality_ref_ch5_transport_treatment "CSTR"</span>
+<span class="hs" data-box="0.0600,0.8889,0.0844,0.9112">@ref quality_ref_ch7_ard_transport "ARD"</span>
+<span class="hs" data-box="0.0889,0.8889,0.1185,0.9112">@ref quality_ref_ch7_ard_transport "LARD"</span>
+<span class="hs" data-box="0.1230,0.8889,0.2192,0.9112">@ref quality_ref_ch5_transport_treatment "first-order decay"</span>
+<span class="hs" data-box="0.2237,0.8889,0.2481,0.9112">@ref quality_ref_ch8_msx_reactions "MSX"</span>
+<span class="hs" data-box="0.2526,0.8889,0.3078,0.9112">@ref quality_ref_ch9_age_heat "water age"</span>
+<span class="hs" data-box="0.3123,0.8889,0.3419,0.9112">@ref quality_ref_ch9_age_heat "heat"</span>
+<span class="hs" data-box="0.3464,0.8889,0.3964,0.9112">@ref quality_ref_ch5_transport_treatment "sediment"</span>
+<span class="hs" data-box="0.4009,0.8889,0.5177,0.9112">@ref engine_manual_sect_TREATMENT "treatment · diversion"</span>
+<span class="hs" data-box="0.0200,0.9472,0.9800,0.9861">@ref engine_manual_sect_OUTFALLS "Outfalls"</span>
+</div>
 <p><span id="_Toc401645529"
 class="anchor"></span><strong>Figure 1-3 Processes modelled by OpenSWMM</strong></p>
 
@@ -451,3 +531,125 @@ Retired); the subsurface compartments are shown faded.
 ![Figure 1-7 The water quality of this manual: buildup, washoff, transport and reactions across the compartments](figures/png/quality_conceptual_map.png)
 
 <strong>Figure 1-7 The water quality of this manual: buildup, washoff, transport and reactions across the compartments</strong>
+
+<div class="fig-hotspots" data-fig="quality_conceptual_map">
+<span class="hs" data-box="0.0300,0.0798,0.4505,0.1011">@ref hydrology_ref_ch2_meteorology "Precipitation"</span>
+<span class="hs" data-box="0.0360,0.1011,0.0963,0.1181">@ref engine_manual_sect_RAINGAGES "rain gages"</span>
+<span class="hs" data-box="0.1008,0.1011,0.2279,0.1181">@ref hydrology_ref_ch6_snowmelt "rain · snow split (SCF)"</span>
+<span class="hs" data-box="0.2324,0.1011,0.3081,0.1181">@ref hydrology_ref_ch2_meteorology "scale factors"</span>
+<span class="hs" data-box="0.4595,0.0798,0.8800,0.1011">@ref hydrology_ref_ch2_meteorology "Climate"</span>
+<span class="hs" data-box="0.4655,0.1011,0.5310,0.1181">@ref engine_manual_sect_TEMPERATURE "temperature"</span>
+<span class="hs" data-box="0.5355,0.1011,0.8525,0.1181">@ref engine_manual_sect_EVAPORATION "evaporation: constant · monthly · series · Hargreaves · file"</span>
+<span class="hs" data-box="0.4655,0.1229,0.4950,0.1400">@ref engine_manual_sect_TEMPERATURE "wind"</span>
+<span class="hs" data-box="0.4995,0.1229,0.6112,0.1400">@ref hydrology_ref_ch2_meteorology "humidity · dew point"</span>
+<span class="hs" data-box="0.6157,0.1229,0.7274,0.1400">@ref hydrology_ref_ch2_meteorology "prescribed PET (API)"</span>
+<span class="hs" data-box="0.0300,0.2160,0.2455,0.2372">@ref hydrology_ref_ch6_snowmelt "Snowmelt"</span>
+<span class="hs" data-box="0.0360,0.2372,0.2606,0.2543">@ref hydrology_ref_ch6_snowmelt "degree-day · heat budget · areal depletion"</span>
+<span class="hs" data-box="0.2545,0.2160,0.4700,0.2372">@ref hydrology_ref_ch3_surface_runoff "Runoff"</span>
+<span class="hs" data-box="0.2605,0.2372,0.3670,0.2543">@ref hydrology_ref_ch3_surface_runoff "nonlinear reservoir"</span>
+<span class="hs" data-box="0.2605,0.2591,0.3619,0.2762">@ref engine_manual_sect_SUBAREAS "depression storage"</span>
+<span class="hs" data-box="0.2605,0.2809,0.4286,0.2980">@ref engine_manual_sect_SUBAREAS "routing to another subcatchment"</span>
+<span class="hs" data-box="0.0300,0.2703,0.2455,0.2915">@ref hydrology_ref_ch4_infiltration "Infiltration"</span>
+<span class="hs" data-box="0.0360,0.2915,0.0758,0.3086">@ref hydrology_ref_ch4_infiltration "Horton"</span>
+<span class="hs" data-box="0.0803,0.2915,0.1663,0.3086">@ref hydrology_ref_ch4_infiltration "modified Horton"</span>
+<span class="hs" data-box="0.1708,0.2915,0.2311,0.3086">@ref hydrology_ref_ch4_infiltration "Green-Ampt"</span>
+<span class="hs" data-box="0.0360,0.3134,0.1425,0.3305">@ref hydrology_ref_ch4_infiltration "modified Green-Ampt"</span>
+<span class="hs" data-box="0.1470,0.3134,0.2176,0.3305">@ref hydrology_ref_ch4_infiltration "curve number"</span>
+<span class="hs" data-box="0.2545,0.3140,0.4700,0.3352">@ref quality_ref_ch6_lid_controls "LID controls"</span>
+<span class="hs" data-box="0.2605,0.3352,0.3876,0.3523">@ref quality_ref_ch6_lid_controls "layered units (8 types)"</span>
+<span class="hs" data-box="0.2605,0.3571,0.3722,0.3742">@ref quality_ref_ch6_lid_controls "LID as storage nodes"</span>
+<span class="hs" data-box="0.3767,0.3571,0.4627,0.3742">@ref quality_ref_ch6_lid_controls "detailed output"</span>
+<span class="hs" data-box="0.0300,0.3464,0.2455,0.3677">@ref quality_ref_ch3_pollutant_buildup "Surface quality"</span>
+<span class="hs" data-box="0.0360,0.3677,0.1939,0.3848">@ref quality_ref_ch3_pollutant_buildup "buildup · washoff by land use"</span>
+<span class="hs" data-box="0.0360,0.3895,0.1220,0.4066">@ref engine_manual_sect_LANDUSES "street sweeping"</span>
+<span class="hs" data-box="0.1265,0.3895,0.1920,0.4066">@ref quality_ref_ch8_msx_reactions "MSX species"</span>
+<span class="hs" data-box="0.5300,0.2160,0.7005,0.2372">@ref hydraulics_ref_ch9_two_dimensional "Rain on the mesh"</span>
+<span class="hs" data-box="0.5360,0.2372,0.6323,0.2543">@ref hydraulics_ref_ch9_two_dimensional "natural neighbour"</span>
+<span class="hs" data-box="0.6368,0.2372,0.6766,0.2543">@ref engine_manual_sect_2D_OPTIONS "system"</span>
+<span class="hs" data-box="0.7095,0.2160,0.8800,0.2372">@ref hydraulics_ref_ch9_two_dimensional "Per-cell infiltration"</span>
+<span class="hs" data-box="0.7155,0.2372,0.9042,0.2543">@ref hydraulics_ref_ch9_two_dimensional "Horton · Green-Ampt · CN · constant"</span>
+<span class="hs" data-box="0.7155,0.2591,0.9504,0.2762">@ref engine_manual_sect_2D_INFILTRATION_OPTIONS "→ lost · subcatchment aquifer · mesh aquifer"</span>
+<span class="hs" data-box="0.5300,0.2703,0.7005,0.2915">@ref hydraulics_ref_ch9_two_dimensional "Overland flow"</span>
+<span class="hs" data-box="0.5360,0.2915,0.6169,0.3086">@ref hydraulics_ref_ch9_two_dimensional "local inertial"</span>
+<span class="hs" data-box="0.5360,0.3134,0.6374,0.3305">@ref hydraulics_ref_ch9_two_dimensional "full shallow water"</span>
+<span class="hs" data-box="0.5360,0.3352,0.6169,0.3523">@ref hydraulics_ref_ch9_two_dimensional "diffusive wave"</span>
+<span class="hs" data-box="0.6214,0.3352,0.6920,0.3523">@ref hydraulics_ref_ch9_two_dimensional "IMEX / CVODE"</span>
+<span class="hs" data-box="0.7095,0.2921,0.8800,0.3134">@ref hydraulics_ref_ch9_two_dimensional "Mesh and closure"</span>
+<span class="hs" data-box="0.7155,0.3134,0.7707,0.3305">@ref hydraulics_ref_ch9_two_dimensional "triangles"</span>
+<span class="hs" data-box="0.7752,0.3134,0.8099,0.3305">@ref hydraulics_ref_ch9_two_dimensional "quads"</span>
+<span class="hs" data-box="0.7155,0.3352,0.7758,0.3523">@ref hydraulics_ref_ch9_two_dimensional "flat cells"</span>
+<span class="hs" data-box="0.7803,0.3352,0.8458,0.3523">@ref hydraulics_ref_ch9_two_dimensional "VFR closure"</span>
+<span class="hs" data-box="0.5300,0.3683,0.7005,0.3895">@ref quality_ref_ch4_surface_washoff "Surface quality · transport"</span>
+<span class="hs" data-box="0.5360,0.3895,0.6939,0.4066">@ref quality_ref_ch4_surface_washoff "coverages · buildup · washoff"</span>
+<span class="hs" data-box="0.5360,0.4114,0.6425,0.4285">@ref quality_ref_ch7_ard_transport "species on the mesh"</span>
+<span class="hs" data-box="0.7095,0.3683,0.8800,0.3895">@ref hydraulics_ref_ch9_two_dimensional "Backends"</span>
+<span class="hs" data-box="0.7155,0.3895,0.7399,0.4066">@ref hydraulics_ref_ch9_two_dimensional "CPU"</span>
+<span class="hs" data-box="0.7444,0.3895,0.7842,0.4066">@ref hydraulics_ref_ch9_two_dimensional "OpenMP"</span>
+<span class="hs" data-box="0.7155,0.4114,0.8118,0.4285">@ref hydraulics_ref_ch9_two_dimensional "CUDA · HIP · SYCL"</span>
+<span class="hs" data-box="0.8163,0.4114,0.8509,0.4285">@ref hydraulics_ref_ch9_two_dimensional "Metal"</span>
+<span class="hs" data-box="0.0300,0.5032,0.2455,0.5245">@ref hydrology_ref_ch5_groundwater "Two-zone aquifer"</span>
+<span class="hs" data-box="0.0360,0.5245,0.1887,0.5415">@ref hydrology_ref_ch5_groundwater "unsaturated + saturated zone"</span>
+<span class="hs" data-box="0.0360,0.5463,0.2247,0.5634">@ref engine_manual_sect_AQUIFERS "percolation · deep percolation · ET"</span>
+<span class="hs" data-box="0.0360,0.5682,0.1939,0.5852">@ref engine_manual_sect_GWF "lateral interflow, user [GWF]"</span>
+<span class="hs" data-box="0.2545,0.5032,0.4700,0.5245">@ref hydrology_ref_ch5_groundwater "Groundwater transport"</span>
+<span class="hs" data-box="0.2605,0.5245,0.4081,0.5415">@ref hydrology_ref_ch5_groundwater "advection–dispersion · heat"</span>
+<span class="hs" data-box="0.5300,0.5032,0.8800,0.5245">@ref hydrology_ref_ch5_groundwater "Two-layer aquifer"</span>
+<span class="hs" data-box="0.5360,0.5245,0.5809,0.5415">@ref hydrology_ref_ch5_groundwater "Gardner"</span>
+<span class="hs" data-box="0.5854,0.5245,0.6201,0.5415">@ref hydrology_ref_ch5_groundwater "Russo"</span>
+<span class="hs" data-box="0.6246,0.5245,0.6952,0.5415">@ref hydrology_ref_ch5_groundwater "Brooks–Corey"</span>
+<span class="hs" data-box="0.6997,0.5245,0.7754,0.5415">@ref hydrology_ref_ch5_groundwater "van Genuchten"</span>
+<span class="hs" data-box="0.5360,0.5463,0.7144,0.5634">@ref hydrology_ref_ch5_groundwater "closed form · enslaved · σ column"</span>
+<span class="hs" data-box="0.7189,0.5463,0.8152,0.5634">@ref engine_manual_sect_2D_AQUIFER_OPTIONS "Dunne return flow"</span>
+<span class="hs" data-box="0.5360,0.5682,0.6323,0.5852">@ref engine_manual_sect_2D_AQUIFER_NODE "node–bed exchange"</span>
+<span class="hs" data-box="0.6368,0.5682,0.7895,0.5852">@ref engine_manual_sect_2D_AQUIFER_OPTIONS "capillary rise · boundary ET"</span>
+<span class="hs" data-box="0.5360,0.5900,0.6528,0.6071">@ref hydrology_ref_ch5_groundwater "per-subcatchment mode"</span>
+<span class="hs" data-box="0.0300,0.6787,0.3073,0.7000">@ref engine_manual_sect_JUNCTIONS "Nodes"</span>
+<span class="hs" data-box="0.0360,0.7000,0.2401,0.7171">@ref engine_manual_sect_JUNCTIONS "junction · storage · divider · outfall"</span>
+<span class="hs" data-box="0.0360,0.7219,0.1271,0.7389">@ref hydraulics_ref_ch3_dynamic_wave "virtual junction"</span>
+<span class="hs" data-box="0.1316,0.7219,0.2125,0.7389">@ref hydraulics_ref_ch7_advanced_features "inlet junction"</span>
+<span class="hs" data-box="0.3163,0.6787,0.5937,0.7000">@ref engine_manual_sect_CONDUITS "Links"</span>
+<span class="hs" data-box="0.3223,0.7000,0.4391,0.7171">@ref hydraulics_ref_ch5_cross_section "conduits, 26 sections"</span>
+<span class="hs" data-box="0.4436,0.7000,0.5245,0.7171">@ref hydraulics_ref_ch5_cross_section "street · dummy"</span>
+<span class="hs" data-box="0.3223,0.7219,0.4289,0.7389">@ref hydraulics_ref_ch5_cross_section "Chebyshev irregular"</span>
+<span class="hs" data-box="0.3223,0.7437,0.5623,0.7608">@ref engine_manual_sect_PUMPS "pumps · orifices · weirs · outlets · culverts"</span>
+<span class="hs" data-box="0.3223,0.7656,0.4032,0.7826">@ref hydraulics_ref_ch5_cross_section "storage shapes"</span>
+<span class="hs" data-box="0.4077,0.7656,0.4834,0.7826">@ref hydraulics_ref_ch7_advanced_features "HEC-22 inlets"</span>
+<span class="hs" data-box="0.6027,0.6787,0.8800,0.7000">@ref hydraulics_ref_ch2_hydraulic_model "Flow routing"</span>
+<span class="hs" data-box="0.6087,0.7000,0.6485,0.7171">@ref hydraulics_ref_ch2_hydraulic_model "steady"</span>
+<span class="hs" data-box="0.6530,0.7000,0.7338,0.7171">@ref hydraulics_ref_ch4_kinematic_wave "kinematic wave"</span>
+<span class="hs" data-box="0.7383,0.7000,0.8089,0.7171">@ref hydraulics_ref_ch3_dynamic_wave "dynamic wave"</span>
+<span class="hs" data-box="0.6087,0.7219,0.6844,0.7389">@ref hydraulics_ref_ch8_finite_volume "finite volume"</span>
+<span class="hs" data-box="0.6889,0.7219,0.7954,0.7389">@ref hydraulics_ref_ch8_finite_volume "local time stepping"</span>
+<span class="hs" data-box="0.6087,0.7437,0.6895,0.7608">@ref hydraulics_ref_ch8_finite_volume "1D GPU backend"</span>
+<span class="hs" data-box="0.0300,0.7549,0.3073,0.7762">@ref hydraulics_ref_ch3_dynamic_wave "Pressurisation"</span>
+<span class="hs" data-box="0.0360,0.7762,0.0758,0.7932">@ref hydraulics_ref_ch3_dynamic_wave "EXTRAN"</span>
+<span class="hs" data-box="0.0803,0.7762,0.1098,0.7932">@ref hydraulics_ref_ch3_dynamic_wave "slot"</span>
+<span class="hs" data-box="0.1143,0.7762,0.1849,0.7932">@ref hydraulics_ref_ch3_dynamic_wave "dynamic slot"</span>
+<span class="hs" data-box="0.1894,0.7762,0.2138,0.7932">@ref hydraulics_ref_ch3_dynamic_wave "TPA"</span>
+<span class="hs" data-box="0.2183,0.7762,0.2684,0.7932">@ref hydraulics_ref_ch8_finite_volume "FV: slot"</span>
+<span class="hs" data-box="0.0360,0.7980,0.0809,0.8151">@ref hydraulics_ref_ch8_finite_volume "FV: TPA"</span>
+<span class="hs" data-box="0.0854,0.7980,0.1817,0.8151">@ref hydraulics_ref_ch8_finite_volume "FV: implicit head"</span>
+<span class="hs" data-box="0.1862,0.7980,0.2825,0.8151">@ref hydraulics_ref_ch3_dynamic_wave "unsteady friction"</span>
+<span class="hs" data-box="0.3163,0.7986,0.5937,0.8199">@ref hydraulics_ref_ch3_dynamic_wave "Node solution"</span>
+<span class="hs" data-box="0.3223,0.8199,0.4289,0.8369">@ref hydraulics_ref_ch3_dynamic_wave "explicit continuity"</span>
+<span class="hs" data-box="0.4334,0.8199,0.5656,0.8369">@ref hydraulics_ref_ch3_dynamic_wave "semi-implicit continuity"</span>
+<span class="hs" data-box="0.3223,0.8417,0.4391,0.8588">@ref hydraulics_ref_ch3_dynamic_wave "Anderson acceleration"</span>
+<span class="hs" data-box="0.4436,0.8417,0.5245,0.8588">@ref hydraulics_ref_ch8_finite_volume "FV_NODE_* keys"</span>
+<span class="hs" data-box="0.6027,0.7767,0.8800,0.7980">@ref quality_ref_ch5_transport_treatment "Transport"</span>
+<span class="hs" data-box="0.6087,0.7980,0.6382,0.8151">@ref quality_ref_ch5_transport_treatment "CSTR"</span>
+<span class="hs" data-box="0.6427,0.7980,0.7133,0.8151">@ref quality_ref_ch7_ard_transport "Eulerian ARD"</span>
+<span class="hs" data-box="0.7178,0.7980,0.8038,0.8151">@ref quality_ref_ch7_ard_transport "Lagrangian LARD"</span>
+<span class="hs" data-box="0.6087,0.8199,0.7306,0.8369">@ref quality_ref_ch7_ard_transport "random-walk dispersion"</span>
+<span class="hs" data-box="0.7351,0.8199,0.8314,0.8369">@ref quality_ref_ch5_transport_treatment "first-order decay"</span>
+<span class="hs" data-box="0.6087,0.8417,0.6844,0.8588">@ref quality_ref_ch8_msx_reactions "MSX reactions"</span>
+<span class="hs" data-box="0.6889,0.8417,0.7441,0.8588">@ref quality_ref_ch9_age_heat "water age"</span>
+<span class="hs" data-box="0.7486,0.8417,0.7781,0.8588">@ref quality_ref_ch9_age_heat "heat"</span>
+<span class="hs" data-box="0.7826,0.8417,0.8327,0.8588">@ref quality_ref_ch5_transport_treatment "sediment"</span>
+<span class="hs" data-box="0.6087,0.8636,0.7152,0.8806">@ref engine_manual_sect_TREATMENT "treatment functions"</span>
+<span class="hs" data-box="0.0300,0.8310,0.3073,0.8523">@ref engine_manual_sect_INFLOWS "Inflows"</span>
+<span class="hs" data-box="0.0360,0.8523,0.1271,0.8694">@ref engine_manual_sect_DWF "dry weather flow"</span>
+<span class="hs" data-box="0.1316,0.8523,0.1868,0.8694">@ref hydrology_ref_ch7_rdii "RDII: RTK"</span>
+<span class="hs" data-box="0.1913,0.8523,0.2722,0.8694">@ref hydrology_ref_ch7_rdii "RDII: IA decay"</span>
+<span class="hs" data-box="0.0360,0.8742,0.1579,0.8912">@ref engine_manual_sect_INFLOWS "user · interface files"</span>
+<span class="hs" data-box="0.1624,0.8742,0.2382,0.8912">@ref engine_manual_sect_CONTROLS "control rules"</span>
+</div>
