@@ -160,57 +160,17 @@ def check_message_catalogue():
 
 
 def check_figure_manifest():
-    """Every figure is listed, present, and actually cited by its page.
+    """Every image any manual embeds has a manifest row, and vice versa.
 
-    The retired manual accumulated 307 images that no page referenced. The
-    third assertion is what stops that recurring: a figure nobody wires in
-    fails here instead of sitting unnoticed.
+    The audit itself lives in scripts/build_manual_figures.py (one
+    implementation for the lint and for the figure pipeline's `check`); it
+    covers the retired manual's failure mode — 307 images no page referenced —
+    and the reference manuals' basename collisions that let Doxygen serve one
+    manual's figure on another manual's page.
     """
-    figs = DOCS / "manuals" / "engine" / "figures"
-    manifest = figs / "MANIFEST.tsv"
-    if not figs.is_dir():
-        return 0
-    if not manifest.exists():
-        print("ERROR figures: MANIFEST.tsv is missing")
-        return 1
-
-    rows = []
-    for ln in manifest.read_text(encoding="utf-8").splitlines():
-        if not ln.strip() or ln.startswith("#"):
-            continue
-        f = ln.split("\t")
-        if len(f) < 5:
-            print(f"ERROR figures: malformed manifest row: {ln[:60]}")
-            return 1
-        rows.append({"new": f[1].strip(), "page": f[2].strip()})
-
-    pages = {}
-    for md in (DOCS / "manuals" / "engine").rglob("*.md"):
-        for line in md.read_text(errors="replace").splitlines():
-            m = re.match(r"^@page\s+(\S+)", line)
-            if m:
-                pages[m.group(1)] = md
-
-    errors = 0
-    listed = {r["new"] for r in rows}
-    on_disk = {q.name for q in figs.iterdir() if q.suffix.lower() in (".png", ".jpg", ".gif")}
-    for extra in sorted(on_disk - listed):
-        print(f"ERROR figures: {extra} is on disk but not in MANIFEST.tsv")
-        errors += 1
-    for r in rows:
-        if r["new"] not in on_disk:
-            print(f"ERROR figures: {r['new']} is in MANIFEST.tsv but not on disk")
-            errors += 1
-            continue
-        page = pages.get(r["page"])
-        if page is None:
-            print(f"ERROR figures: {r['new']} names page {r['page']}, which does not exist")
-            errors += 1
-            continue
-        if r["new"] not in page.read_text(errors="replace"):
-            print(f"ERROR figures: {r['new']} is never cited by {r['page']}")
-            errors += 1
-    return errors
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from build_manual_figures import check_manifest
+    return check_manifest(DOCS)
 
 
 def check_section_coverage():

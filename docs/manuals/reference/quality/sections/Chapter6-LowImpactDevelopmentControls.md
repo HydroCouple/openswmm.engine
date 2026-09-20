@@ -25,15 +25,15 @@ SWMM 5 can explicitly model the following types of LID practices:
 
 | LID Control Type | Description | Image |
 |---|---|---|
-| **Bio-retention Cells** | Depressions that contain vegetation grown in an engineered soil mixture placed above a gravel storage bed. They provide storage, infiltration and evaporation of both direct rainfall and runoff captured from surrounding areas. Street planters and bio-swales are common examples of bio-retention cells. | ![StreetPlanter](quality/media/media/image22.png) |
-| **Rain Gardens** | A type of bio-retention cell consisting of just the engineered soil layer with no gravel bed below it. | ![RainGarden](quality/media/media/image23.png) |
-| **Green Roofs** | Another variation of a bio-retention cell that have a soil layer above a thin layer of synthetic drainage mat material or coarse aggregate that conveys excess water draining through the soil layer off of the roof. | ![GreenRoof](quality/media/media/image24.png) |
-| **Infiltration Trenches** | Narrow ditches filled with gravel that intercept runoff from upslope impervious areas. They provide storage volume and additional time for captured runoff to infiltrate into the native soil below. | ![InfilTrench](quality/media/media/image25.png) |
+| **Bio-retention Cells** | Depressions that contain vegetation grown in an engineered soil mixture placed above a gravel storage bed. They provide storage, infiltration and evaporation of both direct rainfall and runoff captured from surrounding areas. Street planters and bio-swales are common examples of bio-retention cells. | ![StreetPlanter](quality/media/media/quality-image22.png) |
+| **Rain Gardens** | A type of bio-retention cell consisting of just the engineered soil layer with no gravel bed below it. | ![RainGarden](quality/media/media/quality-image23.png) |
+| **Green Roofs** | Another variation of a bio-retention cell that have a soil layer above a thin layer of synthetic drainage mat material or coarse aggregate that conveys excess water draining through the soil layer off of the roof. | ![GreenRoof](quality/media/media/quality-image24.png) |
+| **Infiltration Trenches** | Narrow ditches filled with gravel that intercept runoff from upslope impervious areas. They provide storage volume and additional time for captured runoff to infiltrate into the native soil below. | ![InfilTrench](quality/media/media/quality-image25.png) |
 | **Continuous Permeable Pavement** | Street or parking areas paved with a porous concrete or asphalt mix that sits above a gravel storage layer. Rainfall passes through the pavement into the storage layer where it can infiltrate into the site's native soil. | ![PermPavement2.png](quality/media/media/image26.png)|
-| **Block Paver** | Systems consist of impervious paver blocks placed on a sand or pea gravel bed with a gravel storage layer below. Rainfall is captured in the open spaces between the blocks and conveyed to the storage zone where it can infiltrate into the site's native soil. | ![BlockPavers.png](quality/media/media/image27.png) |
-| **Rain Barrels** (or **Cisterns**) | Containers that collect roof runoff during storm events and can either release or re-use the rainwater during dry periods. | ![cistern](quality/media/media/image28.png) |
-| **Rooftop Disconnection** | Has roof downspouts discharge to pervious landscaped areas and lawns instead of directly into storm drains. It can also model roofs with directly connected drains that overflow onto pervious areas. | ![](quality/media/media/image29.png) |
-| **Vegetative Swales** | Channels or depressed areas with sloping sides covered with grass and other vegetation. They slow down the conveyance of collected runoff and allow it more time to infiltrate into the native soil. | ![VegSwale](quality/media/media/image30.png)|
+| **Block Paver** | Systems consist of impervious paver blocks placed on a sand or pea gravel bed with a gravel storage layer below. Rainfall is captured in the open spaces between the blocks and conveyed to the storage zone where it can infiltrate into the site's native soil. | ![BlockPavers.png](quality/media/media/quality-image27.png) |
+| **Rain Barrels** (or **Cisterns**) | Containers that collect roof runoff during storm events and can either release or re-use the rainwater during dry periods. | ![cistern](quality/media/media/quality-image28.png) |
+| **Rooftop Disconnection** | Has roof downspouts discharge to pervious landscaped areas and lawns instead of directly into storm drains. It can also model roofs with directly connected drains that overflow onto pervious areas. | ![](quality/media/media/quality-image29.png) |
+| **Vegetative Swales** | Channels or depressed areas with sloping sides covered with grass and other vegetation. They slow down the conveyance of collected runoff and allow it more time to infiltrate into the native soil. | ![VegSwale](quality/media/media/quality-image30.png)|
                              
 
 Bio-retention cells, infiltration trenches, and permeable pavement
@@ -110,7 +110,7 @@ the soil zone above it and loses water by infiltration into the
 underlying natural soil and by outflow through a perforated pipe
 underdrain system if present.
 
-   ![planter.bmp](quality/media/media/image31.png)    ![](quality/media/media/image32.png)
+   ![planter.bmp](quality/media/media/quality-image31.png)    ![](quality/media/media/quality-image32.png)
                                          
                   **(A)**                                              **(B)**
 
@@ -529,7 +529,7 @@ roof's drain system (see Figure 6-2). When the depth of ponded water
 *d<sub>1</sub>* is at or below the depression storage depth *D<sub>1</sub>* then no
 surface outflow occurs.
 
-![](quality/media/media/image33.png)
+![](quality/media/media/quality-image33.png)
 
 **Figure 6‑2 Flow path across the surface of a green roof**
 
@@ -625,7 +625,7 @@ surface area taken up by the impermeable paver blocks and where the
 porosity and permeability refer to the fine gravel used to fill the
 seams between blocks. For continuous systems *F<sub>4</sub>* would be 0.
 
-![](quality/media/media/image34.png "image34")
+![](quality/media/media/quality-image34.png "image34")
 <p><span id="_Toc454288779"
 class="anchor"></span><strong>Figure 6‑3 Representation of a permeable
 pavement system</strong></p>
@@ -829,7 +829,7 @@ dual drainage systems (both street flow and sewer flow), is to allow the
 overflow to contribute to the major (street) system and the roof drain
 flow to the minor (sewer) system.
 
-![](quality/media/media/image35.png "image35")
+![](quality/media/media/quality-image35.png "image35")
 <p><span id="_Toc454288780"
 class="anchor"></span><strong>Figure 6‑4 Representation of rooftop
 disconnection</strong></p>
@@ -885,7 +885,7 @@ user-supplied surface area occupied by the swale across its full height
 constant surface area throughout all layers, this equation accounts for
 a varying surface area as the depth of water in the swale changes.
 
-![](quality/media/media/image36.png "image36")
+![](quality/media/media/quality-image36.png "image36")
 <p><span id="_Toc454288781"
 class="anchor"></span><strong>Figure 6‑5 Representation of a vegetative
 swale</strong></p>
@@ -1150,7 +1150,7 @@ occupies its entire subcatchment. The inflow to LID1 comes from an
 upstream subcatchment and its surface overflow is routed to LID2. Its
 underdrain flow is sent to the same outlet location used by LID2.
 
-![LidOptions.png](quality/media/media/image37.png)
+![LidOptions.png](quality/media/media/quality-image37.png)
 
 **Figure 6‑6 Different options for placing LID controls**
 
@@ -1848,15 +1848,15 @@ surface inflow, soil layer percolation, and storage layer exfiltration.
 Figure 6-9 shows how the moisture level within each layer, as a
 percentage of its full storage capacity, varies with time.
 
-![](quality/media/media/image38.png)
+![](quality/media/media/quality-image38.png)
 
 **Figure 6‑7 Storm event used for the LID example**
 
-![](quality/media/media/image39.png)
+![](quality/media/media/quality-image39.png)
 
 **Figure 6‑8 Flux rates through the bio-retention cell with no underdrain**
 
-![](quality/media/media/image40.png)
+![](quality/media/media/quality-image40.png)
 
 **Figure 6‑9 Moisture levels in the bio-retention cell with no underdrain**
 
@@ -1932,11 +1932,11 @@ the total storm volume. If this flow is sent to a storm sewer which is
 typically the case, then the bio-retention cell can no longer be said to
 have fully captured and eliminated runoff from this 1-inch storm.
 
-![](quality/media/media/image41.png)
+![](quality/media/media/quality-image41.png)
 
 **Figure 6‑10 Moisture levels in the bio-retention cell with underdrain**
 
-![](quality/media/media/image42.png)
+![](quality/media/media/quality-image42.png)
 
 **Figure 6‑11 Flux rates through the bio-retention cell with underdrain**
 

@@ -27,7 +27,7 @@ water in each link and the volume of water within each storage node. The
 methods used to obtain this hydraulic solution are described in Volume
 II of this manual.
 
-![](quality/media/media/image2.png "Objects2")
+![](quality/media/media/quality-image2.png "Objects2")
 <p><span id="_Toc454288773"
 class="anchor"></span><strong>Figure 5‑1 Representation of the
 conveyance network in SWMM</strong></p>
@@ -190,7 +190,7 @@ above 100 mg/L, which are not physically possible. These results support
 using the simple mixing equation 5-6 in place of the analytical solution
 for SWMM 5 as it provides accurate and robust water quality solutions.
 
-![](quality/media/media/image20.png "image20")
+![](quality/media/media/quality-image20.png "image20")
 <p><span id="_Toc454288775"
 class="anchor"></span><strong>Figure 5‑3 Comparison of completely mixed
 reactor equations for a step inflow</strong></p>
@@ -651,7 +651,7 @@ at 100 mg/L and begins to settle out once the inflow ceases. As the pond
 depth decreases while it empties more solids settle out reducing the TSS
 level until the residual concentration of 20 mg/L is reached.
 
-![TreatmentExample.png](quality/media/media/image21.png)
+![TreatmentExample.png](quality/media/media/quality-image21.png)
 
 **Figure 5‑4 Gravity settling treatment of TSS within a detention pond**
 

@@ -789,7 +789,7 @@ between the maximum of the previous day and the minimum of the present,
 2) between the minimum and maximum of the present, and 3) between the
 maximum of the present and minimum of the following day.
 
-![](hydrology/media/media/image4.png "ii_01")
+![](hydrology/media/media/hydrology-image4.png "ii_01")
 <p><span id="_Toc426447667"
 class="anchor"></span><strong>Figure 2-1 Sinusoidal interpolation of
 hourly temperatures.</strong></p>

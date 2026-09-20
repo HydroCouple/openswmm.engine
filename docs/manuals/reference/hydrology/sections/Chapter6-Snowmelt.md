@@ -141,7 +141,7 @@ changes with time during the simulation. Melt, after routing through the
 remaining snow pack, is combined with rainfall to form the spatially
 weighted "effective rainfall" for overland flow routing.
 
-![](hydrology/media/media/image37.png "image37")
+![](hydrology/media/media/hydrology-image37.png "image37")
 <p><span id="_Toc426447698"
 class="anchor"></span><strong>Figure 6-1 Typical gage catch deficiency
 correction (Anderson, 2006, p. 8).</strong></p>
@@ -475,7 +475,7 @@ where
 No special allowance is made for leap year. However, the correct date
 (and day number) is maintained.
 
-![Cmelt](hydrology/media/media/image38.png){width="5.427083333333333in"
+![Cmelt](hydrology/media/media/hydrology-image38.png){width="5.427083333333333in"
 height="2.8125in"}
 
 **Figure 6-3 Seasonal variation of melt coefficients.**
@@ -590,7 +590,7 @@ is shown in Figure 6-4. For values of the ratio *AWESI = WSNOW / SI*
 greater than *1.0*, *ASC = 1.0*, that is, the area is *100* percent snow
 covered.
 
-![](hydrology/media/media/image40.png "ii_06")
+![](hydrology/media/media/hydrology-image40.png "ii_06")
 <p><span id="_Toc426447701"
 class="anchor"></span><strong>Figure 6-4 Typical areal depletion curve
 for natural area (Anderson, 1973, p. 3-15) and temporary curve for new
@@ -662,7 +662,7 @@ situation when there is new snow needs to be discussed, starting from
 both zero and non-zero initial cover. The SWMM procedure again follows
 Anderson's NWS method (1973).
 
-![](hydrology/media/media/image41.png "ii_07")
+![](hydrology/media/media/hydrology-image41.png "ii_07")
 <p><span id="_Toc426447702"
 class="anchor"></span><strong>Figure 6-5 Effect of snow cover on areal
 depletion curves.</strong></p>
@@ -733,7 +733,7 @@ of water, for use in these computations. When
 *[Figure image not available in this format]*, the snow pack is fully ripe. The
 procedure is sketched in Figure 6-6.
 
-![](hydrology/media/media/image43.png "ii_08")
+![](hydrology/media/media/hydrology-image43.png "ii_08")
 <p><span id="_Toc426447703"
 class="anchor"></span><strong>Figure 6-6 Schematic of liquid water
 routing through snow pack.</strong></p>

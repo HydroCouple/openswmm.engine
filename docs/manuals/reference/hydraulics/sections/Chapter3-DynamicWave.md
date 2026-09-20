@@ -134,7 +134,7 @@ Non-storage junction nodes are assumed to be points with zero volume and
 surface area while storage nodes (such as ponds and tanks) contain both
 volume and surface area.
 
-![Node-Link.bmp](hydraulics/media/media/image11.png)
+![Node-Link.bmp](hydraulics/media/media/hydraulics-image11.png)
 
 **Figure 3-1 Node-link representation of a conveyance network in SWMM (from Roesner et al, 1992).**
 
@@ -421,9 +421,9 @@ manhole) which can be overridden by the user. This is strictly a
 computational device and does not add volume to a junction node (where
 *A<sub>SN</sub> = 0*) nor change it into a storage node.
 
-![Pipe.bmp](hydraulics/media/media/image12.png)
+![Pipe.bmp](hydraulics/media/media/hydraulics-image12.png)
 
-![SurfaceArea2.bmp](hydraulics/media/media/image13.png)
+![SurfaceArea2.bmp](hydraulics/media/media/hydraulics-image13.png)
 
 **Figure 3‑2 Special flow conditions for dynamic wave analysis**
 
@@ -510,7 +510,7 @@ itself would no longer be surcharged.
 
 **Figure 3-3 Illustration of a surcharged node**
 
-![Surcharge4.bmp](hydraulics/media/media/image14.png)
+![Surcharge4.bmp](hydraulics/media/media/hydraulics-image14.png)
 
 When a node becomes surcharged there is no more volume available in the
 conduits forming the node's assembly to absorb the difference between
@@ -687,7 +687,7 @@ updated head is restricted to be just a small value above *H*<sub>max</sub> (or
 below it in the opposite case) to avoid wide swings in head during the
 transition.
 
-![Surcharge5.bmp](hydraulics/media/media/image15.png)
+![Surcharge5.bmp](hydraulics/media/media/hydraulics-image15.png)
 
 **Figure 3-4 Ponding of excess water above a junction**
 
@@ -1540,7 +1540,7 @@ of 0.015 (see Figure 3-5). When divided into 10 equal length sections of
 \f$\frac{200}{\sqrt{32.2 \times 2} = 25}\f$ seconds. When analyzed as just a
 single 2,000 ft long section it increases to 250 seconds.
 
-![Example1a.png](hydraulics/media/media/image16.png)
+![Example1a.png](hydraulics/media/media/hydraulics-image16.png)
 
 **Figure 3-5 Profile view of example rectangular conduit (not to scale)**
 
@@ -1550,7 +1550,7 @@ dotted curve in the figure). Both results are completely stable. The
 option with the higher spatial resolution produces a more skewed
 hydrograph with a slightly lower peak.
 
-![](hydraulics/media/media/image17.png "image17")
+![](hydraulics/media/media/hydraulics-image17.png "image17")
 
 **Figure 3-6 Outflow hydrographs for example conduit -I**
 
@@ -1562,7 +1562,7 @@ variable time step a stable result is produced. In this case SWMM's
 Status Report shows that the variable time step ranged from 24 to 120
 seconds with the average being 42.
 
-![](hydraulics/media/media/image18.png "image18")
+![](hydraulics/media/media/hydraulics-image18.png "image18")
 
 **Figure 3-7 Outflow hydrographs for example conduit – II**
 

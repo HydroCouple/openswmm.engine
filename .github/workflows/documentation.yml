@@ -134,6 +134,23 @@ jobs:
           sudo mv doxygen-${DOXYGEN_VERSION}/bin/doxygen /usr/local/bin/doxygen
           doxygen --version
 
+      - name: Set up Python 3.12 (figure pipeline)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install figure-pipeline dependencies
+        run: pip install "matplotlib>=3.8" numpy
+
+      - name: Prove the synthetic figure generators run
+        # The committed PNGs are what gets published and were audited by the
+        # lint job (every embed has a manifest row, every row's file exists,
+        # bounds, no basename collisions). This renders the synthetic tier into
+        # a scratch directory to prove each generator still executes — never a
+        # pixel comparison. Generators that need the compiled openswmm package
+        # are skipped and listed.
+        run: python3 scripts/build_manual_figures.py build --tier synthetic --out /tmp/figcheck --skip-missing-deps
+
       - name: Check the GUI tagfile for drift (advisory)
         # docs/tags/swmmvis-manual.tag is committed so the build never depends
         # on the GUI Pages site being reachable. This only reports staleness —

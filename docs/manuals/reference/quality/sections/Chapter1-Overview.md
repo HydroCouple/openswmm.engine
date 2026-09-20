@@ -70,7 +70,7 @@ system. SWMM conceptualizes this system as a series of water and
 material flows between several major environmental compartments. These
 compartments include:
 
-![](quality/media/media/image1.jpeg "image1")
+![](quality/media/media/quality-image1.jpeg "image1")
 <p><span id="_Toc401645527"
 class="anchor"></span><strong>Figure 1‑1 Elements of a typical urban
 drainage system</strong></p>
@@ -119,7 +119,7 @@ SWMM model. Table 1-2 provides a summary of the various objects used in
 SWMM. Their properties and functions will be described in more detail
 throughout the course of this manual.
 
-![](quality/media/media/image2.png "Objects2")
+![](quality/media/media/quality-image2.png "Objects2")
 <p><span id="_Toc401645528"
 class="anchor"></span><strong>Figure 1‑2 SWMM's conceptual model of a
 stormwater drainage system</strong></p>
@@ -160,7 +160,7 @@ Figure 1-3 depicts the processes that SWMM models using the objects
 described previously and how they are tied to one another. The
 hydrological processes depicted in this diagram include:
 
-![](quality/media/media/image3.png "image3")
+![](quality/media/media/quality-image3.png "image3")
 <p><span id="_Toc401645529"
 class="anchor"></span><strong>Figure 1‑3 Processes modeled by
 SWMM</strong></p>
@@ -258,7 +258,7 @@ where
 
 Figure 1-4 depicts the simulation process in block diagram fashion.
 
-![](quality/media/media/image4.png "image4")
+![](quality/media/media/quality-image4.png "image4")
 <p><span id="_Toc401645530"
 class="anchor"></span><strong>Figure 1‑4 Block diagram of SWMM's state
 transition process</strong></p>
@@ -358,7 +358,7 @@ Users' Manual (US EPA, 2010). Next the values of all state variables are
 initialized, as is the current simulation time (T), runoff time
 (T<sub>roff</sub>), and reporting time (T<sub>rpt</sub>).
 
-![](quality/media/media/image5.png "image5")
+![](quality/media/media/quality-image5.png "image5")
 <p><span id="_Toc401645531"
 class="anchor"></span><strong>Figure 1‑5 Flow chart of SWMM's simulation
 procedure</strong></p>
@@ -403,7 +403,7 @@ reporting purposes. In other words, if a reporting time falls within a
 runoff time step the reported rainfall intensity is the value associated
 with the start of the runoff time step.
 
-![](quality/media/media/figure1-6.png)
+![](quality/media/media/quality-figure1-6.png)
 
 **Figure 1‑6 Interpolation of reported values from computed values**
 

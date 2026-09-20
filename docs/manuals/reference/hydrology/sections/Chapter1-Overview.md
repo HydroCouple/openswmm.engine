@@ -72,7 +72,7 @@ system. SWMM conceptualizes this system as a series of water and
 material flows between several major environmental compartments. These
 compartments include:
 
-![](hydrology/media/media/image1.jpeg "image1")
+![](hydrology/media/media/hydrology-image1.jpeg "image1")
 <strong>Figure 1-1 Elements of a typical urban drainage system</strong>
 
 
@@ -122,7 +122,7 @@ SWMM model. Table 1-2 provides a summary of the various objects used in
 SWMM. Their properties and functions will be described in more detail
 throughout the course of this manual.
 
-![](hydrology/media/media/image2.png "image2")
+![](hydrology/media/media/hydrology-image2.png "image2")
 <strong>Figure 1-2 SWMM's conceptual model of a stormwater drainage system</strong>
 
 **Table 1-2 SWMM's modeling objects**
@@ -384,7 +384,7 @@ aforementioned input file and for viewing the computed output.
 
 ## 1.5 Interpolation and Units
 
-![](hydrology/media/media/figure1-6.png "Interpolation of reported values from computed values")
+![](hydrology/media/media/hydrology-figure1-6.png "Interpolation of reported values from computed values")
 <strong>Figure 1-6 Interpolation of reported values from computed values</strong>
 
 SWMM uses linear interpolation to obtain values for quantities at times

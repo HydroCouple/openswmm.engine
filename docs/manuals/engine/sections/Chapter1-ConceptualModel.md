@@ -205,7 +205,7 @@ A conduit can also be designated to act as a culvert (see Figure 3-2) if a Culve
 Street and channel conduits with storm drain inlet structures (see Figure 3-3) use the methods described in the Federal Highway Administration's publication Urban Drainage Design Manual - HEC-22 (Publication No. FHWA-NHI-10-009, August 2013) to determine the amount of flow they capture.
 
  
-![Figure 3-2 Concrete box culvert](figures/fig3-02-box-culvert.png)
+![Figure 3-2 Concrete box culvert](figures/fig3-02-box-culvert.jpg)
 
 *Figure 3-2 Concrete box culvert*
  
@@ -438,7 +438,7 @@ Transects refer to the geometric data that describe how bottom elevation varies 
 Each transect must be given a unique name. Conduits refer to that name to represent their shape. A special Transect Editor is available for editing the station-elevation data of a transect. SWMM internally converts these data into tables of area, top width, and hydraulic radius versus channel depth. In addition, as shown in Figure 3-6, each transect can have a left and right overbank section whose Manning's roughness coefficient can be different from that of the main channel. This feature can provide more realistic estimates of channel conveyance under high flow conditions.
 
  
-![Figure 3-6 Example of a natural channel transect](figures/fig3-06-natural-transect.png)
+![Figure 3-6 Example of a natural channel transect](figures/fig3-06-natural-transect.jpg)
 
 *Figure 3-6 Example of a natural channel transect*
 
