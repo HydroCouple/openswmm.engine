@@ -77,8 +77,8 @@ void routeSubcatchmentAge(SimulationContext& ctx,
         const double area = soa.area[ui];
         const double fi   = soa.imperv_pct[ui];
         const double fp   = 1.0 - fi;
-        const double f0   = fi * soa.imperv0_pct[ui];
-        const double f1   = fi * (1.0 - soa.imperv0_pct[ui]);
+        const double f0   = soa.frac_imperv0[ui];
+        const double f1   = soa.frac_imperv1[ui];
 
         // Area-weighted subarea volumes, the same expression the runoff
         // mass balance uses (SWMMEngine.cpp:3664-3666).

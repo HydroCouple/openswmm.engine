@@ -824,6 +824,9 @@ static void read_subcatchments(sqlite3* db, SimulationContext& ctx, const std::s
         ctx.subcatches.ds_imperv[idx] = column_double(stmt.get(), 12);
         ctx.subcatches.ds_perv[idx] = column_double(stmt.get(), 13);
         ctx.subcatches.frac_imperv_no_store[idx] = column_double(stmt.get(), 14);
+        // The table stores only the fraction; recover the percent legacy
+        // multiplies by (see SubcatchData::pct_zero).
+        ctx.subcatches.pct_zero[idx] = ctx.subcatches.frac_imperv_no_store[idx] * 100.0;
         ctx.subcatches.subarea_routing[idx] = column_int(stmt.get(), 15);
         ctx.subcatches.pct_routed[idx] = column_double(stmt.get(), 16);
         ctx.subcatches.infil_model[idx] = column_int(stmt.get(), 17);

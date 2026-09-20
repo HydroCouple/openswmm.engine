@@ -126,6 +126,34 @@ static std::vector<int> buildDivertLinks(const SimulationContext& ctx) {
 void applyConduitLengthening(SimulationContext& ctx, RouteModel model) {
     const int n_links = ctx.n_links();
 
+    // Refresh the routing length (legacy conduit_getLength) before anything
+    // reads it. It differs from the authored [CONDUITS] length only for an
+    // IRREGULAR section, whose authored number is the MAIN CHANNEL's while
+    // the routing length is the flood plain's — see conduit_true_length.
+    // Filled here rather than at parse so an .inp load, a GeoPackage load
+    // and a C-API edit all reach a run with it current.
+    {
+        auto& CD = ctx.link_subtypes.conduits;
+        for (int j = 0; j < n_links; ++j) {
+            if (ctx.links.type[static_cast<std::size_t>(j)] != LinkType::CONDUIT)
+                continue;
+            const int cr = ctx.link_subtypes.conduit_row(j);
+            if (cr < 0) continue;
+            CD.true_length[static_cast<std::size_t>(cr)] =
+                openswmm::input::conduit_true_length(ctx, j);
+        }
+    }
+
+    // The Courant lengthening factor per conduit row (legacy's local
+    // `lengthFactor`), carried from the lengthening pass to the conveyance
+    // re-derivation below. It cannot be recovered as modLength / length:
+    // legacy forms modLength from the ROUTING length (link.c:1118
+    // `modLength = lengthFactor * conduit_getLength(j)`) and leaves it at
+    // the AUTHORED length when the factor is 1, so on an IRREGULAR conduit
+    // the two lengths are not the same number.
+    std::vector<double> courant_factor(
+        static_cast<std::size_t>(ctx.link_subtypes.conduits.count()), 1.0);
+
     // Compute modified conduit lengths for CFL stability
     // (matching legacy link.c conduit_getLengthFactor / conduit_validate:
     //  lengthening is only applied when LENGTHENING_STEP > 0 in OPTIONS
@@ -158,9 +186,12 @@ void applyConduitLengthening(SimulationContext& ctx, RouteModel model) {
                 const int cr = ctx.link_subtypes.conduit_row(j);  // ≥0 (conduit)
                 const auto ucr = static_cast<std::size_t>(cr);
 
-                double L = CD.length[ucr];
+                // legacy conduit_getLengthFactor divides the Courant length
+                // by conduit_getLength(j), and conduit_validate then forms
+                // modLength from the same routing length.
+                double L = CD.true_length[ucr];
                 if (L <= 0.0) {
-                    CD.mod_length[ucr] = L;
+                    CD.mod_length[ucr] = CD.length[ucr];
                     continue;
                 }
 
@@ -190,9 +221,14 @@ void applyConduitLengthening(SimulationContext& ctx, RouteModel model) {
                     double vFull = PHI / n_rough * sFull * std::sqrt(slope_abs) / aFull;
                     double ratio = (std::sqrt(GRAVITY * yFull) + vFull) * tStep / L;
                     double factor = (ratio > 1.0) ? ratio : 1.0;
-                    CD.mod_length[ucr] = factor * L;
+                    courant_factor[ucr] = factor;
+                    // legacy conduit_validate only assigns modLength when the
+                    // factor differs from 1 — an unlengthened conduit keeps the
+                    // AUTHORED length link_setParams gave it (link.c:348).
+                    CD.mod_length[ucr] =
+                        (factor != 1.0) ? factor * L : CD.length[ucr];
                 } else {
-                    CD.mod_length[ucr] = L;
+                    CD.mod_length[ucr] = CD.length[ucr];
                 }
             }
         }
@@ -211,11 +247,11 @@ void applyConduitLengthening(SimulationContext& ctx, RouteModel model) {
             const int cr = ctx.link_subtypes.conduit_row(j);
             const auto ucr = static_cast<std::size_t>(cr);
 
-            double L = CD.length[ucr];
-            double modL = CD.mod_length[ucr];
-            if (L <= 0.0 || modL <= L) continue;  // not lengthened
+            // legacy conduit_validate keys this on its `lengthFactor` local,
+            // not on a length ratio (see courant_factor above).
+            double factor = courant_factor[ucr];
+            if (factor == 1.0) continue;  // not lengthened
 
-            double factor = modL / L;
             double slope_abs = std::fabs(CD.slope[ucr]) / factor;
             // PARITY link.c:1113-1116: the lengthening divides the EFFECTIVE
             // n (see conduit_manning_n) by sqrt(factor). Dividing the stored
@@ -678,14 +714,14 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
         double seep_loss = 0.0;
 
         if (depth > constants::FUDGE) {
-            // Use RAW user-input length (matching legacy
-            // `link.c::conduit_getLossRate` line 1358:
-            //   length = conduit_getLength(j);
-            // which returns `Conduit[k].length` (raw) for non-IRREGULAR
-            // conduits — NOT `Conduit[k].modLength` (lengthened).
-            // The lengthened length appears only in the momentum equation
-            // (`dwflow.c:133`), not in loss-volume accounting.
-            double length = CD.length[ucr];
+            // Use the ROUTING length (legacy `conduit_getLossRate`
+            // line 1358: `length = conduit_getLength(j)`) — the authored
+            // [CONDUITS] length for every section but IRREGULAR, and NOT
+            // `Conduit[k].modLength` (lengthened). The lengthened length
+            // appears only in the momentum equation (`dwflow.c:133`), not
+            // in loss-volume accounting.
+            double length = CD.true_length[ucr];
+            if (length <= 0.0) length = CD.length[ucr];
             if (length <= 0.0) length = CD.mod_length[ucr];
             int batch_shape = links.xsect_batch_shape[uj];
 
@@ -943,7 +979,9 @@ int Router::executeSteadyFlow(SimulationContext& ctx, double dt) {
         // Update link depth and volume.
         // In steady state a1 == a2, so depth and volume are uniform.
         double y = xsect::getYofA(xs, a);
-        double length = CD.mod_length[ucr];
+        // legacy flowrout.c:698 books the steady-flow volume over
+        // link_getLength(j) — the routing length, not modLength.
+        double length = CD.true_length[ucr];
         if (length <= 0.0) length = CD.length[ucr];
 
         links.depth[uj]  = y;

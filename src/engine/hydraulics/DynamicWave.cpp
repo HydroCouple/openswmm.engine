@@ -855,7 +855,8 @@ void DWSolver::refreshConduitTile(const SimulationContext& ctx) {
         tile_w_max_[uci]         = links.xsect_w_max[uj];
         tile_length_[uci]        = cached_length_[uj];
         tile_inv_length_[uci]    = inv_length_[uj];
-        tile_links_length_[uci]  = CD.length[ucr];
+        tile_links_length_[uci]  = (CD.true_length[ucr] > 0.0)
+                                 ? CD.true_length[ucr] : CD.length[ucr];
         tile_beta_[uci]          = CD.beta[ucr];
         tile_q_max_[uci]         = CD.q_max[ucr];
         tile_rough_factor_[uci]  = CD.rough_factor[ucr];
@@ -2236,8 +2237,9 @@ void DWSolver::recomputeConduitLossOne(SimulationContext& ctx, double dt,
         double seep_loss = 0.0;
 
         if (depth > FUDGE) {
-            // Raw user length (legacy conduit_getLength), not modLength.
-            double length = CD.length[ucr];
+            // Routing length (legacy conduit_getLength), not modLength.
+            double length = CD.true_length[ucr];
+            if (length <= 0.0) length = CD.length[ucr];
             if (length <= 0.0) length = CD.mod_length[ucr];
             const int shape = links.xsect_batch_shape[u];
 
@@ -4244,7 +4246,10 @@ double DWSolver::getLinkStep(const SimulationContext& ctx, int link_idx) const {
     double a = area_mid_[uj];
     if (a <= FUDGE) return 1.0e10;
 
-    double L = CD.length[ucr];
+    // legacy dynwave.c:900 scales by modLength / link_getLength(i) — the
+    // denominator is the ROUTING length.
+    double L = CD.true_length[ucr];
+    if (L <= 0.0) L = CD.length[ucr];
     double modL = CD.mod_length[ucr];
     const double Lscale = (L > 0.0 && modL > 0.0) ? (modL / L) : 1.0;
 

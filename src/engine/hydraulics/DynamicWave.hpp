@@ -339,7 +339,7 @@ private:
     std::vector<double> tile_w_max_;         ///< links.xsect_w_max
     std::vector<double> tile_length_;        ///< cached_length_ = max(mod_length, length); used for arithmetic stability
     std::vector<double> tile_inv_length_;    ///< inv_length_
-    std::vector<double> tile_links_length_;  ///< raw ConduitData.length — used for volume calculations only
+    std::vector<double> tile_links_length_;  ///< routing length (legacy link_getLength) — volume and the dq6 divisor
     std::vector<double> tile_beta_;          ///< ConduitData.beta
     std::vector<double> tile_q_max_;         ///< ConduitData.q_max
     std::vector<double> tile_rough_factor_;  ///< ConduitData.rough_factor

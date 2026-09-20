@@ -168,6 +168,21 @@ struct SubcatchData {
     std::vector<double> frac_imperv_no_store;
 
     /**
+     * @brief The AUTHORED [SUBAREAS] PctZero column, in percent.
+     * @details Kept alongside the 0-1 fraction because legacy forms the
+     *          impervious-without-storage subarea fraction as
+     *          `fracImperv * x[4] / 100.0` (subcatch.c:268) — it multiplies
+     *          by the PERCENT and divides after. `fracImperv * (x[4]/100)`
+     *          is a different double for about a tenth of all percentages,
+     *          and the difference lands straight in the subarea's area, so
+     *          the runoff kernel needs the number legacy multiplied by.
+     *          A model loaded from GeoPackage, which stores only the
+     *          fraction, recovers it as `fraction * 100`.
+     * @see Legacy: the x[4] of subcatch_readSubareaParams
+     */
+    std::vector<double> pct_zero;
+
+    /**
      * @brief Manning's n for impervious area.
      * @see Legacy: Subcatch[i].subArea[IMPERV0].N
      */
@@ -657,6 +672,7 @@ struct SubcatchData {
         snow_scale_factor.assign(un, 1.0);
         frac_imperv.assign(un, 0.0);
         frac_imperv_no_store.assign(un, 0.0);
+        pct_zero.assign(un, 0.0);
         n_imperv.assign(un, 0.013);
         n_perv.assign(un, 0.1);
         ds_imperv.assign(un, 0.0);
@@ -752,7 +768,7 @@ struct SubcatchData {
         gage_name.resize(un); g(gage, -1);
         g(area, 0.0); g(width, 0.0); g(slope, 0.0); g(curb_length, 0.0);
         g(rain_scale_factor, 1.0); g(snow_scale_factor, 1.0);
-        g(frac_imperv, 0.0); g(frac_imperv_no_store, 0.0);
+        g(frac_imperv, 0.0); g(frac_imperv_no_store, 0.0); g(pct_zero, 0.0);
         g(n_imperv, 0.013); g(n_perv, 0.1);
         g(ds_imperv, 0.0); g(ds_perv, 0.0);
         g(subarea_routing, 0); g(pct_routed, 0.0);
@@ -826,7 +842,8 @@ struct SubcatchData {
         auto r = [&](auto& vec) { vec.reserve(un); };
         r(outlet_node); r(outlet_subcatch); r(gage); r(area);
         r(width); r(slope); r(curb_length); r(rain_scale_factor);
-        r(snow_scale_factor); r(frac_imperv); r(frac_imperv_no_store); r(n_imperv);
+        r(snow_scale_factor); r(frac_imperv); r(frac_imperv_no_store);
+        r(pct_zero); r(n_imperv);
         r(n_perv); r(ds_imperv); r(ds_perv); r(subarea_routing);
         r(pct_routed); r(infil_model); r(infil_p1); r(infil_p2);
         r(infil_p3); r(infil_p4); r(infil_p5); r(runoff);
@@ -864,7 +881,7 @@ struct SubcatchData {
         e(outlet_node); e(outlet_subcatch); e(outlet_name); e(gage);
         e(area); e(width); e(slope); e(curb_length);
         e(rain_scale_factor); e(snow_scale_factor);
-        e(frac_imperv); e(frac_imperv_no_store); e(n_imperv); e(n_perv);
+        e(frac_imperv); e(frac_imperv_no_store); e(pct_zero); e(n_imperv); e(n_perv);
         e(ds_imperv); e(ds_perv); e(subarea_routing); e(pct_routed);
 
         e(infil_model); e(infil_p1); e(infil_p2); e(infil_p3); e(infil_p4); e(infil_p5);
@@ -965,6 +982,7 @@ struct SubcatchData {
         snow_scale_factor.shrink_to_fit();
         frac_imperv.shrink_to_fit();
         frac_imperv_no_store.shrink_to_fit();
+        pct_zero.shrink_to_fit();
         n_imperv.shrink_to_fit();
         n_perv.shrink_to_fit();
         ds_imperv.shrink_to_fit();

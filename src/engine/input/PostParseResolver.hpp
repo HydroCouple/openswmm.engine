@@ -191,6 +191,24 @@ void recompute_conduit_flow_properties(SimulationContext& ctx, int j);
  */
 double conduit_manning_n(const SimulationContext& ctx, int j);
 
+/**
+ * @brief The length a conduit actually routes with — legacy
+ *        @c conduit_getLength (link.c:1198-1216).
+ *
+ * @details For every section but IRREGULAR this is the authored [CONDUITS]
+ *          length. For an IRREGULAR one the authored number is the MAIN
+ *          CHANNEL's length (what a FEMA study reports) while the routing
+ *          length is the whole flood plain's, @c length / @c
+ *          Transect.lengthFactor. The slope, the Courant lengthening ratio,
+ *          the conduit's stored volume, the dq6 friction divisor, the
+ *          evaporation / seepage loss rate and the variable-step scale all
+ *          use it; the .inp writer, the report's length column and
+ *          modLength's parse-time default keep the authored value.
+ *
+ * @return The routing length (ft), or 0 for a non-conduit / missing row.
+ */
+double conduit_true_length(const SimulationContext& ctx, int j);
+
 } /* namespace openswmm::input */
 
 #endif /* OPENSWMM_ENGINE_POST_PARSE_RESOLVER_HPP */

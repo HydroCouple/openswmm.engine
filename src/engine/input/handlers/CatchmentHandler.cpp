@@ -220,6 +220,10 @@ void handle_subareas(SimulationContext& ctx, const std::vector<std::string>& lin
         ctx.subcatches.ds_perv[idx]   = to_double(tok[4]);
 
         // PctZero → fraction of impervious with no depression storage
+        // Both forms are kept: the 0-1 fraction every consumer reads, and
+        // the authored percent the runoff kernel needs to reproduce legacy's
+        // `fracImperv * x[4] / 100.0` bit for bit (see pct_zero).
+        ctx.subcatches.pct_zero[idx] = to_double(tok[5]);
         ctx.subcatches.frac_imperv_no_store[idx] = to_double(tok[5]) / 100.0;
 
         // RouteTo: OUTLET (0), IMPERV (1), or PERV (2). Legacy subcatch.c uses

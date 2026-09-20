@@ -764,6 +764,25 @@ double conduit_manning_n(const SimulationContext& ctx, int j) {
     return n_val;
 }
 
+double conduit_true_length(const SimulationContext& ctx, int j) {
+    if (j < 0 || j >= ctx.n_links()) return 0.0;
+    const auto uj = static_cast<std::size_t>(j);
+    if (ctx.links.type[uj] != LinkType::CONDUIT) return 0.0;
+    const int cr = ctx.link_subtypes.conduit_row(j);
+    if (cr < 0) return 0.0;
+    const double len =
+        ctx.link_subtypes.conduits.length[static_cast<std::size_t>(cr)];
+    if (ctx.links.xsect_shape[uj] != XsectShape::IRREGULAR) return len;
+    const int ti = ctx.links.xsect_curve[uj];
+    if (ti < 0 ||
+        static_cast<std::size_t>(ti) >= ctx.transects.length_factor.size())
+        return len;
+    const double lf =
+        ctx.transects.length_factor[static_cast<std::size_t>(ti)];
+    // legacy defaults a 0 on the X1 line to 1.0 (transect.c:377).
+    return (lf > 0.0) ? len / lf : len;
+}
+
 void recompute_conduit_flow_properties(SimulationContext& ctx, int j) {
     using constants::GRAVITY;
     using constants::PHI;
@@ -2904,7 +2923,16 @@ void resolve_cross_references(SimulationContext& ctx) {
 
         const int cr = ctx.link_subtypes.conduit_row(j);  // ≥0 (CONDUIT)
         const auto ucr = static_cast<std::size_t>(cr);
+        // legacy conduit_getSlope (link.c:1269) measures the drop over
+        // conduit_getLength(j) — the flood-plain length for an IRREGULAR
+        // section, which is 1/lengthFactor times the authored main-channel
+        // number. 337-nodes' transects carry Lfactor 0.93, so every one of
+        // its natural channels ran a 7 % steep slope and conveyed 3.6 % too
+        // much. The zero-length guard stays on the AUTHORED length, which is
+        // what legacy's ERR_LENGTH check reads.
         double length = (cr >= 0) ? ctx.link_subtypes.conduits.length[ucr] : 0.0;
+        if (length <= 0.0) { bump_filled(); continue; }
+        length = conduit_true_length(ctx, j);
         if (length <= 0.0) { bump_filled(); continue; }
 
         // Convert elevation offsets if ELEV_OFFSET mode

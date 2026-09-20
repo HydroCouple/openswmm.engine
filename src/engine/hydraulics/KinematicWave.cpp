@@ -511,7 +511,11 @@ int KWSolver::execute(SimulationContext& ctx, double dt,
         double a_full = links.xsect_a_full[uj];
         double s_full = links.xsect_s_full[uj];
         double beta   = CD.beta[ucr];
-        double length = CD.mod_length[ucr];
+        // legacy kinwave.c:126 / flowrout.c:507 take link_getLength(j) —
+        // the routing length. Under KW modLength never differs from the
+        // authored length (lengthening is dynamic-wave only), but an
+        // IRREGULAR conduit's routing length does.
+        double length = CD.true_length[ucr];
         if (length <= 0.0) length = CD.length[ucr];
 
         // Evaporation + seepage loss rate, capped on this solve's per-barrel
