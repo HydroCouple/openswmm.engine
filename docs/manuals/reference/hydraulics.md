@@ -135,13 +135,21 @@ Figure 7-5 SWMM node-link representation of a culvert with a roadway weir
 
 Figure 7-6 Discharge coefficients for roadway weirs (from FHWA, 2012)
 
-Figure 8-1 Substep workflow of the explicit finite-volume solver
+Figure 8-1 Node–link routing against the finite-volume view: one momentum balance per conduit versus a conduit cut into cells with the water surface resolved inside it
 
-Figure 8-2 Wet/dry and exception handling in one face flux evaluation
+Figure 8-2 The tapered static slot for a 3 ft circular pipe: top width and celerity across the crown at four slot celerities
 
-Figure 8-3 Hydrostatic reconstruction at a wet/dry front
+Figure 8-3 The Riemann fan at a face: HLL signal speeds for a wet–wet face and the rarefaction-tail estimate at a dry bed
 
-Figure 8-4 Node ghost-state construction at a coupling face
+Figure 8-4 Local time stepping: power-of-two tiers, the macro cycle and flux accumulation across a tier interface
+
+Figure 8-5 Substep workflow of the explicit finite-volume solver
+
+Figure 8-6 Wet/dry and exception handling in one face flux evaluation
+
+Figure 8-7 Hydrostatic reconstruction at a wet/dry front
+
+Figure 8-8 Node ghost-state construction at a coupling face
 
 Figure 9-1 The one-dimensional network and the two-dimensional surface: exchange pathways
 

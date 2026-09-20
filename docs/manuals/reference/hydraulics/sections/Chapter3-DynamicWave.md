@@ -1116,8 +1116,7 @@ that the same subdivision with regular junctions would introduce.
 Control rules may reference a virtual junction's depth, which is well
 defined; its volume is identically zero.
 
-<!-- PLACEHOLDER IMAGE (replace with final drawing): profile view of a grade break modeled two ways: left, a regular junction with its MIN_SURFAREA storage and stagnation volume annotated; right, a virtual junction shown as an interior point of the fused reach with continuous invert, zero storage, and momentum flux carried across the break. Regenerate or replace docs/manuals/reference/hydraulics/media/media/figure3-10-placeholder.png (source: scripts/generate_placeholder_figures.py). -->
-![Figure 3-10](figure3-10-placeholder.png)
+![Figure 3-10](figures/png/hydraulics_ch3_virtual_junction.png)
 
 *Figure 3-10 Virtual junction representation of a conduit grade break*
 

@@ -590,7 +590,7 @@ is shown in Figure 6-4. For values of the ratio *AWESI = WSNOW / SI*
 greater than *1.0*, *ASC = 1.0*, that is, the area is *100* percent snow
 covered.
 
-![](hydrology/media/media/hydrology-image40.png "ii_06")
+![Figure 6-4 Typical areal depletion curve for natural area and temporary curve for new snow](figures/png/hydrology_ch6_areal_depletion_curve.png)
 <p><span id="_Toc426447701"
 class="anchor"></span><strong>Figure 6-4 Typical areal depletion curve
 for natural area (Anderson, 1973, p. 3-15) and temporary curve for new

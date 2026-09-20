@@ -82,6 +82,15 @@ placement of terms is what gives the scheme its conservation property.
 
 ## 8.3 The computational mesh
 
+Figure 8-1 contrasts the node–link picture of @ref hydraulics_ref_ch3_dynamic_wave "Chapter 3" — one
+momentum balance per conduit, depth known only at the nodes — with the
+spatially explicit picture of this chapter, in which the conduit itself
+is discretised and profiles, bores and jumps are resolved inside it.
+
+![Figure 8-1](figures/png/hydraulics_ch8_cell_layout.png)
+
+*Figure 8-1 Node–link routing against the finite-volume view: one momentum balance per conduit versus a conduit cut into cells with the water surface resolved inside it*
+
 The mesh is internal numerical discretization. It creates no named
 objects, appears in no report, and is invisible to the model's
 topology. Each conduit is divided into
@@ -180,6 +189,16 @@ the crown would produce spurious reflections there and corrupt the
 Riemann solver's wave-speed estimates; the taper is what prevents both.
 The area is the exact integral of (8-6), so \f$A\f$ and \f$T\f$ remain a
 consistent pair through the transition.
+
+Figure 8-2 draws the closure for a 3 ft circular pipe from the engine's
+own geometry: the mouth opens across \f$[y_c,\,y_{full}]\f$ and the
+celerity climbs smoothly to \f$c_{slot}\f$ instead of diverging where the
+section's width collapses at the crown. The 30 ft/s request lies below
+the cap-implied celerity of §8.4.1 and is inert.
+
+![Figure 8-2](figures/png/hydraulics_ch8_slot_closure.png)
+
+*Figure 8-2 The tapered static slot for a 3 ft circular pipe: top width and celerity across the crown at four slot celerities*
 
 Open sections carry no crown and no taper: above `y_full` the section
 simply continues with vertical walls of width \f$w_{max}\f$, which is one
@@ -603,6 +622,13 @@ the flux is identically zero. No entropy fix is applied: the Davis
 estimates already bound the full wave fan, so a sonic rarefaction
 cannot collapse onto a single-state flux.
 
+Figure 8-3 sketches the fan the estimates bound, for a wet–wet face and
+for a dry right cell.
+
+![Figure 8-3](figures/png/hydraulics_ch8_hll_fan.png)
+
+*Figure 8-3 The Riemann fan at a face: HLL signal speeds for a wet–wet face and the rarefaction-tail estimate at a dry bed*
+
 The hydrodynamic flux is deliberately HLL rather than an Euler-style
 HLLC star-state construction. For the 2 × 2 system the two constructions
 should coincide, and applying the three-wave star states to the
@@ -829,6 +855,13 @@ sides. One **macro cycle** is \f$2^{K-1}\f$ base substeps, where \f$K\f$ is the
 tier count; a tier-\f$k\f$ volume fires every \f$2^{k}\f$ of them, so every
 volume advances the same total span.
 
+Figure 8-4 lays out the tiers, the macro cycle and the flux bookkeeping
+at a tier interface.
+
+![Figure 8-4](figures/png/hydraulics_ch8_lts_ladder.png)
+
+*Figure 8-4 Local time stepping: power-of-two tiers, the macro cycle and flux accumulation across a tier interface*
+
 Three properties make this a scheduling change rather than a different
 scheme:
 
@@ -893,7 +926,7 @@ separate and the bookkeeping is a small net cost, which is why the tier
 assignment is cached across cycles and refreshed only when the census
 shows the model's stiffness has moved.
 
-Figure 8-1 assembles the pieces of Sections 8.5.5 and 8.5.6 into the
+Figure 8-5 assembles the pieces of Sections 8.5.5 and 8.5.6 into the
 substep workflow the solver executes for every routing step.
 
 <!-- workflow: fv_substep -->
@@ -917,7 +950,7 @@ flowchart TD
     M -- yes --> N[Report, couple nodes, advance]
 </pre>
 
-*Figure 8-1 Substep workflow of the explicit finite-volume solver,
+*Figure 8-5 Substep workflow of the explicit finite-volume solver,
 including the post-step census retry and local time stepping (rendered
 diagram)*
 
@@ -994,7 +1027,7 @@ celerity and \f$I_1\f$ — and the wave-speed estimates switch to the
 dry-bed forms (8-23). Two dry sides return an exactly zero flux. An
 emerged bank, a bed step whose top stands above the neighbouring water
 surface, is therefore a wall by construction: \f$z^{*}\f$ exceeds \f$\eta\f$ on
-both sides and both reconstructed depths vanish. Figure 8-3 sketches
+both sides and both reconstructed depths vanish. Figure 8-7 sketches
 both configurations.
 
 **Front propagation and positivity.** A wetting front advances at most
@@ -1041,7 +1074,7 @@ front half a cell downstream. The volume actually seeded is published
 back to the link before the mass balance opens, so the run's
 initial-storage ledger matches the state the solver integrates.
 
-Figure 8-2 assembles the face-level logic — wet/dry states, gates,
+Figure 8-6 assembles the face-level logic — wet/dry states, gates,
 culvert caps and the positivity scan — into one workflow.
 
 <!-- workflow: fv_face_flux -->
@@ -1067,22 +1100,13 @@ flowchart TD
     O --> P[Identical scaled flux updates both incident volumes]
 </pre>
 
-*Figure 8-2 Wet/dry and exception handling in one face flux evaluation
+*Figure 8-6 Wet/dry and exception handling in one face flux evaluation
 (rendered diagram)*
 
-<!-- PLACEHOLDER IMAGE (replace with final drawing): two-panel profile
-of the hydrostatic reconstruction at a bed step. Panel (a), wetting
-front: left cell wet with surface eta_L, right cell dry with a higher
-bed; the interface bed z* = max(z_L, z_R) marked, reconstructed depths
-h*_L = max(0, eta_L - z*) > 0 and h*_R = 0 annotated, arrow showing the
-front advancing right. Panel (b), emerged bank: eta_L below z*, both
-reconstructed depths zero, face annotated as acting as a wall. Regenerate
-or replace docs/manuals/reference/hydraulics/media/media/figure8-3-placeholder.png
-(source: scripts/generate_placeholder_figures.py). -->
-![Figure 8-3](figure8-3-placeholder.png)
+![Figure 8-7](figures/png/hydraulics_ch8_hydrostatic_reconstruction.png)
 
-*Figure 8-3 Hydrostatic reconstruction at a wet/dry front: an advancing
-front (left) and an emerged bank acting as a wall (right) (placeholder)*
+*Figure 8-7 Hydrostatic reconstruction at a wet/dry front: an advancing
+front (left) and an emerged bank acting as a wall (right)*
 
 **Implementation.** The constants are `kDryDepth`, `kDryArea` and
 `kEtaDeadband` in `src/engine/hydraulics/fv/FvKernels.hpp`; the dry-bed
@@ -1142,7 +1166,7 @@ One global (untiered) substep executes the following sequence:
 5. Reconstruct second-order slopes of \f$(\eta, v)\f$ under `FV_ORDER 2`.
 6. Evaluate the face fluxes over the active list — hydrostatic
    reconstruction, HLL flux, flap gates, culvert caps, Audusse
-   corrections (Figure 8-2). This loop is the parallel region: it runs
+   corrections (Figure 8-6). This loop is the parallel region: it runs
    under OpenMP when at least 4096 faces are active.
 7. Apply the semi-implicit node relaxation (§8.6.5), which rewrites the
    boundary-face mass fluxes. It precedes the limiter so the limiter
@@ -1235,26 +1259,16 @@ below. With \f$z_f\f$ the conduit invert at the coupled face,
 | \f[h_{g} = \max\left( 0,\ H - z_{f} \right), \qquad v_{g} = v_{int}, \qquad Q_{g} = A\left( h_{g} \right)\,v_{g}\f] | | (8-28) | |
 
 where \f$v_{int}\f$ is the interior end cell's velocity expressed in the
-face frame — a transmissive momentum condition, sketched in Figure 8-4.
+face frame — a transmissive momentum condition, sketched in Figure 8-8.
 A node standing below the face invert presents a dry ghost, so a
 perched pipe outlet drains as a free overfall. A closed conduit end
 with no node (a dead end) instead mirrors the interior state with
 reversed velocity, which returns exactly zero mass flux and leaves the
 interior its own hydrostatic pressure.
 
-<!-- PLACEHOLDER IMAGE (replace with final drawing): profile of a
-manhole coupled to a conduit end cell through a boundary face: the
-manhole shaft with water surface at head H, the conduit with its end
-cell, the face invert z_f (node invert plus link offset) marked, the
-ghost depth h_g = H - z_f drawn on the node side of the face, and the
-interior cell's velocity arrow carried onto the ghost (v_g = v_int).
-Regenerate or replace
-docs/manuals/reference/hydraulics/media/media/figure8-4-placeholder.png
-(source: scripts/generate_placeholder_figures.py). -->
-![Figure 8-4](figure8-4-placeholder.png)
+![Figure 8-8](figures/png/hydraulics_ch8_node_ghost_state.png)
 
-*Figure 8-4 Node ghost-state construction at a coupling face
-(placeholder)*
+*Figure 8-8 Node ghost-state construction at a coupling face*
 
 **A plain junction has no storage.** It is an interface, not a state:
 the water standing "in the manhole" is held by the incident end cells,

@@ -857,16 +857,7 @@ Figure 9-3 sketches the geometry the rules act on: the three wetting
 cases of the planar-bed cell (§9.4.1) and the wetted-edge face gate
 (§9.5.2).
 
-<!-- Intended final drawing for Figure 9-3: a perspective or plan-view
-     schematic of one triangular cell with a sloping (planar) bed at
-     three stages — waterline below z2 (wetted subtriangle at the low
-     vertex), waterline between z2 and z3 (dry corner at the high
-     vertex), and fully submerged — each annotated with z1, z2, z3, η
-     and the wetted region; plus an edge-profile inset showing the
-     shared-edge endpoint beds z_lo, z_hi and the three branches of the
-     face-depth relation (blocked, partially submerged, fully
-     submerged). -->
-![Figure 9-3](figure9-2-placeholder.png)
+![Figure 9-3](figures/png/hydraulics_ch9_vfr_wetting_cases.png)
 
 *Figure 9-3 Wetting cases of a planar-bed triangular cell and the
 wetted-edge face gate (placeholder — to be replaced by a final

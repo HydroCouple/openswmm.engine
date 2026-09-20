@@ -169,6 +169,13 @@ The two modules are independent. A model may enable surface exchange without
 radiation (evaporative cooling only), radiation without surface exchange
 (a covered channel), or both.
 
+Figure 9-1 collects the terms of (the balance above) with the bed-zone
+exchange of §9.3.11, grouped by the module that enables each.
+
+![Figure 9-1](figures/png/quality_ch9_heat_budget.png)
+
+*Figure 9-1 The heat budget of a water body: the six surface terms of the net flux by module, and the bed zone's conduction and hyporheic exchange*
+
 ### 9.3.4 Latent heat — evaporation and condensation
 
 Latent exchange follows the mass-transfer formulation given for surface-water

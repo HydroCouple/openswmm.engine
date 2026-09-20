@@ -55,11 +55,11 @@ volumes.
 
 | **Type** | **Description** | **Image** |
 |---|---|---|
-| **Type1** | Consists of a series of constant flow rates that apply over a corresponding series of volume intervals at the pump's inlet node. | ![pump1.bmp](hydraulics/media/media/hydraulics-image40.png) |
-| **Type2** | Similar to a Type1 pump except that the fixed flow rate levels vary over a set of depth intervals at the pump's inlet node. | ![pump2.bmp](hydraulics/media/media/hydraulics-image41.png) |
-| **Type3** | A centrifugal pump characteristic curve at some nominal impeller speed represented in a piecewise linear fashion. Flow is a function of the head difference between the inlet and outlet nodes. | ![pump3.bmp](hydraulics/media/media/hydraulics-image42.png) |
-| **Type4** | A variable speed in-line pump where flow varies continuously with inlet node depth. | ![pump4.bmp](hydraulics/media/media/hydraulics-image43.png) |
-| **Type5** | A variable speed version of the Type3 pump where the head v. flow curve shifts position depending on the pump's speed setting. | ![Pump5.bmp](hydraulics/media/media/image44.png) |
+| **Type1** | Consists of a series of constant flow rates that apply over a corresponding series of volume intervals at the pump's inlet node. | ![Type 1 pump curve](figures/png/hydraulics_ch6_pump_type1.png) |
+| **Type2** | Similar to a Type1 pump except that the fixed flow rate levels vary over a set of depth intervals at the pump's inlet node. | ![Type 2 pump curve](figures/png/hydraulics_ch6_pump_type2.png) |
+| **Type3** | A centrifugal pump characteristic curve at some nominal impeller speed represented in a piecewise linear fashion. Flow is a function of the head difference between the inlet and outlet nodes. | ![Type 3 pump curve](figures/png/hydraulics_ch6_pump_type3.png) |
+| **Type4** | A variable speed in-line pump where flow varies continuously with inlet node depth. | ![Type 4 pump curve](figures/png/hydraulics_ch6_pump_type4.png) |
+| **Type5** | A variable speed version of the Type3 pump where the head v. flow curve shifts position depending on the pump's speed setting. | ![Type 5 pump curve](figures/png/hydraulics_ch6_pump_type5.png) |
 
 For Type1 and Type 2 curves, the curve is searched in step-wise fashion
 for the first point whose volume or depth exceeds the volume or depth at
