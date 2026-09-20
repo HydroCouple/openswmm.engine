@@ -1046,6 +1046,51 @@ table is known, or if typical depths are given for a soil on its Soil
 Survey Interpretation data, then Equation 4-39 may be solved for
 *θ*<sub>dmax</sub>.
 
+### 4.4.5 The Modified Green-Ampt Variant
+
+`[OPTIONS] INFILTRATION MODIFIED_GREEN_AMPT` (the legacy spelling; the engine
+also accepts `MOD_GREEN_AMPT`) selects a variant of §4.4 that differs from the
+original in exactly one branch of the unsaturated-surface calculation. Both
+share the saturation volume \f$F_s\f$ of (4-29), the saturated-phase solution
+(4-31)–(4-32) and the recovery routine of §4.4.2.
+
+Besides the cumulative infiltration \f$F\f$ and the upper-zone storage
+\f$F_u\f$, the engine keeps a timer \f$T\f$ — the time to drain the upper zone
+— set to \f$5400/L_u\f$ seconds whenever the intensity exceeds \f$K_s\f$ and
+counting down every step; when it has expired the soil is treated as having
+had a complete inter-event break. In the branch where rain falls but does not
+exceed \f$K_s\f$ (all of it infiltrates and the surface stays unsaturated):
+
+- **`GREEN_AMPT`** adds the step's infiltration to \f$F\f$ and \f$F_u\f$ and,
+  if \f$T\f$ has expired, recomputes the deficit from the upper-zone storage,
+  \f$\theta_d = (F_{u,max} - F_u)/L_u\f$, and **resets \f$F\f$ to zero** —
+  the wetting front's memory is discarded.
+- **`MODIFIED_GREEN_AMPT`** adds the step's infiltration to \f$F\f$ and
+  \f$F_u\f$ and nothing else; \f$F\f$ keeps accumulating.
+
+The no-rain recovery branch is shared: \f$F_u\f$ drains at \f$k_r F_{u,max}\f$
+with \f$k_r = L_u/90000\f$, the deficit is recomputed and \f$F\f$ reset once
+the timer has expired, and both reset the deficit to its maximum when
+\f$F_u\f$ reaches zero.
+
+**When to prefer it.** The difference shows on storms with a long,
+low-intensity leading period — hours of drizzle below \f$K_s\f$ before the
+main burst. Under the original the timer expires during the drizzle and
+\f$F\f$ is zeroed step after step, so the burst must infiltrate the full
+\f$F_s\f$ again before ponding: runoff starts late and infiltration is
+overstated. Under the modified variant the drizzle counts toward \f$F_s\f$ and
+runoff starts when the soil is actually full; for short intense events the two
+are identical. Prefer it for continuous simulation and for design storms with
+a leading tail — the reason SWMM 5.1 introduced it.
+
+**A note on the keyword.** Until 2026 the deck keyword `MODIFIED_GREEN_AMPT`
+was mapped to the original model, so eleven parity-corpus decks ran with
+\f$F\f$ reset between low-intensity steps. Both spellings now select the
+modified variant, carried into the kernel as the model enumerator (Chapter 8's
+per-cell infiltration selects it the same way).
+
+<!-- source: src/engine/hydrology/Infiltration.cpp:308-390 (grnampt_getUnsatInfil: recovery :317-336, rain ≤ Ks :339-349 with the GREEN_AMPT-only reset :345-348, timer :353), :393-407 (grnampt_getInfil dispatch); src/engine/input/handlers/OptionsHandler.cpp:155-165 (the aliases and the corpus note :157-160); src/engine/2d/infil/Infil2D.cpp:353-358 (the enum reaches the 2D kernel) -->
+
 ## 4.5 Curve Number Method
 
 The Curve Number infiltration method is new to SWMM 5. It is based on

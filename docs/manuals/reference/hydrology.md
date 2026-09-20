@@ -291,5 +291,8 @@ WE water equivalent
 - @subpage hydrology_ref_ch5_groundwater — Chapter 5: Groundwater
 - @subpage hydrology_ref_ch6_snowmelt — Chapter 6: Snowmelt
 - @subpage hydrology_ref_ch7_rdii — Chapter 7: Rainfall Dependent Inflow and Infiltration
+- @subpage hydrology_ref_ch8_mesh_surface — Chapter 8: Distributed Surface Processes on the 2D Mesh
+- @subpage hydrology_ref_ch9_mesh_groundwater — Chapter 9: Spatially Explicit Groundwater on the 2D Mesh
+- @subpage hydrology_ref_ch10_planned — Chapter 10: Planned Formulations
 - @subpage hydrology_ref_glossary — Glossary
 - @subpage hydrology_ref_references — References

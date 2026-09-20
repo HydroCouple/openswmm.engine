@@ -129,5 +129,7 @@ Table 6-1. LID Control Parameters
 - @subpage quality_ref_ch7_ard_transport — Chapter 7: Advection–Reaction–Dispersion Transport
 - @subpage quality_ref_ch8_msx_reactions — Chapter 8: Multi-Species Reactions
 - @subpage quality_ref_ch9_age_heat — Chapter 9: Water Age and Heat Transport
+- @subpage quality_ref_ch10_mesh_quality — Chapter 10: Surface Quality and Transport on the 2D Mesh
+- @subpage quality_ref_ch11_planned — Chapter 11: Planned Formulations
 - @subpage quality_ref_glossary — Glossary
 - @subpage quality_ref_references — References
