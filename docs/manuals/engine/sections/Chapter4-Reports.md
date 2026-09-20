@@ -16,6 +16,9 @@ A Status Report is available for viewing after each simulation. It contains:
 - runoff quantity and quality
 - groundwater flow
 - conveyance system flow and water quality
+- the two-dimensional surface and the two-dimensional aquifer, when the project carries a mesh (the *2D Surface Routing Continuity* and *2D Aquifer Continuity* blocks)
+- solver statistics for the finite-volume and two-dimensional solvers: substeps, flux evaluations, local-time-stepping cycles fired and rejected, and the active fraction of faces or cells (the *FV Solver Statistics* and *2D Solver Statistics* blocks)
+- when transport species are enabled, which species classes are carried on each domain; and, when the project carries `[GW_*]` sections, the warning that they are authored but inert this release
 - the names of the nodes with the highest individual flow continuity errors
 - the names of the conduits that most often determined the size of the time step used for flow routing (only when the Variable Time Step option is used)
 - the names of the links with the highest Flow Instability Index values
@@ -153,6 +156,19 @@ Percent of time that the pump operates above its pump curve
 - The summary results displayed in these tables are based on results found at every computational time step and not just on the results from each reporting time step.
 
 
+
+### Tables Added by OpenSWMM
+
+| Table | Written when | Contents |
+|---|---|---|
+| Slot Storage Summary | `SURCHARGE_METHOD SLOT` or `DYNAMIC_SLOT`, or `FLOW_ROUTING FV` | Run-averaged and peak share of stored volume held in the Preissmann slot (%), hours with a share above 1 %, and the peak and run share per link (hydraulics §3.3.9, §8.7.1). |
+| Virtual Junction Summary | the project has `[VIRTUAL_JUNCTIONS]` | For each virtual junction its upstream and downstream conduit and the maximum and mean momentum residual across the splice (hydraulics §3.3.10, §8.6.2). |
+| FV Solver Statistics | `FLOW_ROUTING FV` | Explicit substeps, face flux evaluations, average, minimum and last substep, local-time-stepping macro cycles fired and rejected, and the active-face fraction (hydraulics §8.7). |
+| 2D Surface Routing Continuity | the project carries a mesh | Initial stored volume, rainfall inflow, 1D→2D spill inflow, outfall and boundary inflow, 2D→1D drain outflow, outfall withdrawal, boundary outflow, evaporation and infiltration losses with the share delivered to (and in flight to) the aquifer, final stored volume, continuity error. |
+| 2D Aquifer Continuity | the mesh carries an aquifer | Initial stored volume, infiltration inflow, lateral net inflow, deep percolation, node exchange outflow, subsurface ET, saturation-excess return, final stored volume, recharge and capillary rise as internal transfers, continuity error. |
+| 2D Solver Statistics | the project carries a mesh | Internal steps, face-kernel evaluations, average and last internal step, active-cell fraction (hydraulics §9.9). |
+| Subcatchment MSX Washoff Summary | MSX species carry buildup and washoff | Mass washed off per subcatchment and species. |
+| 2D Surface Washoff Summary | the mesh carries `[2D_COVERAGES]` | Per species: initial buildup, net buildup, washed off, swept, removed by BMPs and remaining on the mesh; the cell and land-use counts and the buildup basis (per hectare or acre). |
 
 ## 4.3 Time-Series Output Variables
 

@@ -227,3 +227,73 @@ N1   2002 04  01  00 20  00  0.000000
 N2   2002 04  01  00 20  00  0.002549
 N1   2002 04  01  00 25  00  0.000000
 N2   2002 04  01  00 25  00  0.002549
+
+## 2D Mesh Files
+
+A two-dimensional surface is described by the `[2D_*]` sections of
+@ref engine_manual_ch2_input_file §2.4. Because a mesh can run to hundreds of
+thousands of cells, those sections may live in a separate file that the
+project references with a single row:
+
+```
+[2D_MESH_FILE]
+FILE  meshes/city_basin.2dm
+```
+
+The path is absolute or relative to the directory of the project file. The
+mesh file uses the same bracketed-section dialect as the project file, and the
+sections it carries are read as if they appeared in the project itself, so the
+same mesh can be shared by several projects. Grammar and rules are in
+@ref engine_manual_sect_2D_MESH_FILE.
+
+## 2D Results Files
+
+When a project carries a mesh, the two-dimensional results are written to a
+separate HDF5 file named by `[2D_OPTIONS] OUTPUT_FILE` rather than to the
+binary output file. The file follows the CF-1.11 and UGRID-1.0 conventions
+(its `Conventions` attribute says so), so it opens in any UGRID-aware reader
+and in `h5py`:
+
+- **Mesh topology**, written once: `Mesh2_node_x`, `Mesh2_node_y`,
+  `Mesh2_node_z`, the face–node connectivity `Mesh2_face_nodes` with the
+  vertex count per face `Mesh2_face_nv` (3 or 4), the face centroids
+  `Mesh2_face_x`, `Mesh2_face_y`, `Mesh2_face_z`, the per-face roughness
+  `Mesh2_face_mannings_n` and area `Mesh2_face_area`, and the edge geometry
+  `Mesh2_edge_length`, `Mesh2_edge_nx`, `Mesh2_edge_ny`.
+- **Time**, an unlimited `time` dataset, advanced every `REPORT_2D_STEP`
+  (or every report step when that key is absent).
+- **Per-face series**, one frame per time: `Mesh2_face_depth` and
+  `Mesh2_face_head` always; `Mesh2_face_vx`, `Mesh2_face_vy`,
+  `Mesh2_face_rainfall`, `Mesh2_face_rain_cum`, `Mesh2_face_infil_rate`,
+  `Mesh2_face_infil_cum`, `Mesh2_face_coupling_flux`, `Mesh2_face_net_source`,
+  the gradient fields `Mesh2_face_grad_hx`, `Mesh2_face_grad_hy` and their
+  limited counterparts, `Mesh2_face_continuity_err`, and the species field
+  `Mesh2_face_species_conc` (faces × species) — each present only when its
+  group is selected by `REPORT_2D_VARIABLES`.
+- **Groundwater**, when the mesh carries an aquifer and the `GROUNDWATER`
+  group is selected: `Mesh2_face_gw_table_elev`, `Mesh2_face_gw_hg`
+  (saturated thickness), `Mesh2_face_gw_hu` (unsaturated storage),
+  `Mesh2_face_gw_recharge`, `Mesh2_face_gw_lateral`,
+  `Mesh2_face_gw_node_exchange`, `Mesh2_face_gw_deep`, `Mesh2_face_gw_et`,
+  `Mesh2_face_gw_dunne` and `Mesh2_face_gw_infil_in`, with the static
+  `Mesh2_face_gw_bed_elev` and `Mesh2_face_gw_closure`; the `GW_DETAILED`
+  group adds the σ-column moisture profile `Mesh2_face_gw_theta_sigma`
+  (faces × layers). Each dataset carries its meaning and unit as attributes.
+
+`OUTPUT_PRECISION FLOAT32` halves the file at the cost of single-precision
+series; `OUTPUT_COMPRESSION 1`–`9` enables gzip chunk compression. The file is
+written with a single writer and is not flushed until the run ends, so it
+cannot be read while the simulation is still running. The keys are documented
+in @ref engine_manual_sect_2D_OPTIONS; the meaning of each series is in
+@ref hydraulics_ref_ch9_two_dimensional §9.9.
+
+## Process Component Configuration Files
+
+Reaction systems, the Eulerian transport engine, heat transport and water-age
+tracking are configured in their own files, named in the project's
+`[PROCESS_COMPONENTS]` section and conventionally suffixed `.rxn`, `.ard`,
+`.heat` and `.age`. Each file uses the bracketed-section dialect of the
+project file; the sections each component accepts are documented in
+@ref engine_manual_ch2_input_file §2.5. On save, every component writes its
+configuration back to its file, and a save-as carries the files alongside
+the written project.
