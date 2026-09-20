@@ -61,6 +61,8 @@
 #include <openswmm/engine/openswmm_gw2d.h>
 
 #include "core/SWMMEngine.hpp"
+#include "2d/SurfaceRouter2D.hpp"          // G1-c item 2 gate reads the state
+#include "2d/subsurface/SubsurfaceSolver.hpp"
 
 namespace fs = std::filesystem;
 
@@ -473,6 +475,68 @@ TEST(Aquifer2D, ReturnedSaturationExcessIsAnInflowToTheSurfaceLedger) {
     EXPECT_LT(std::fabs(mb.error()), 0.01)
         << "2D continuity error " << mb.error()
         << " with aquifer_in = " << mb.aquifer_in;
+    // G1-c (2026-09-19): the AQUIFER's own residual closes too. This deck's
+    // thin unsaturated zone resolves to the ENSLAVED closure, whose unbounded
+    // Newton used to zero the table and lose 10 m³ of the 10 m³ delivered
+    // (−32 % here) — the Dunne it returned was 0.001 m³ of the ~8 m³ owed.
+    double resid = 0.0, storage = 0.0;
+    ASSERT_EQ(swmm_gw2d_get_continuity_error(r.e, &resid), SWMM_OK);
+    ASSERT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_STORAGE, &storage), SWMM_OK);
+    EXPECT_LT(std::fabs(resid), 1.0e-6 * storage + 1.0e-9)
+        << "aquifer residual " << resid << "\n" << ledgerDump(r.e);
+    EXPECT_GT(dunne, 1.0) << "a full column under 10 m3 of infiltration must return most of it";
+    finish(r);
+}
+
+// ---------------------------------------------------------------------------
+// G1-c item 2 — exfiltration into a DRY cell. Nothing on the surface moves:
+// no rain, no ponded water, no coupling. Cell 1's column is full (table at
+// the ground), cell 2's sits 1 cm below its ground; lateral Darcy flow lifts
+// cell 2's table to the surface and the Dunne excess is owed to a surface
+// cell that nothing else would ever activate. The marcher's rebuild must pin
+// it active from `pendingSurfaceCells()` (the seed that does not come from
+// the surface's own state), the cell must actually receive the water, and
+// nothing may be left parked in `xacc_to_surface` at the end.
+// ---------------------------------------------------------------------------
+TEST(Aquifer2D, ExfiltrationReachesADryCellThroughThePendingSeed) {
+    // The helper's mesh is flat, and on a flat mesh two tables equalise
+    // BELOW both grounds; cell 1 must sit higher for its table to stand
+    // above cell 2's ground. Vertex 1 is raised so cell 1's centroid is at
+    // −9.667 m: its full column's table (−9.667) is 0.33 m above cell 2's
+    // ground (−10.0), and lateral flow can only leave by exfiltrating there.
+    std::string body = deck("[2D_AQUIFER]\n"
+                            "CELL 1  36000.0  2.0  0.45  0.10  2.0  HG0 2.0\n"
+                            "CELL 2  36000.0  0.5  0.45  0.10  2.0  HG0 0.49\n\n",
+                            "", /*init_depth=*/0.0, /*infil_mm_hr=*/0.0);
+    const std::string flat = "0.0 0.0 -10.0\n10.0 0.0 -10.0\n";
+    const auto at = body.find(flat);
+    ASSERT_NE(at, std::string::npos);
+    body.replace(at, flat.size(), "0.0 0.0 -10.0\n10.0 0.0 -9.0\n");
+    DeckRun r = openDeck("dry_exfil", body);
+    ASSERT_TRUE(r.opened);
+    ASSERT_TRUE(run(r));
+
+    const auto& ctx = r.eng->context();
+    const auto& mb  = ctx.mass_balance_2d;
+    double dunne = 0.0;
+    ASSERT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_DUNNE, &dunne), SWMM_OK);
+    ASSERT_GT(dunne, 0.0) << "cell 2's table never reached the ground; the gate proves nothing"
+                          << ledgerDump(r.e);
+    // The surface took everything the aquifer handed over — nothing parked.
+    const auto& st = r.eng->surfaceRouter2D().state();
+    const auto& gws = r.eng->surfaceRouter2D().subsurface().state();
+    double parked = 0.0;
+    for (const double v : gws.xacc_to_surface) parked += v;
+    EXPECT_NEAR(parked, 0.0, 1.0e-9 * dunne)
+        << "exfiltrated water is still waiting for a surface cell to fire";
+    EXPECT_NEAR(mb.aquifer_in, dunne, 1.0e-9 * dunne);
+    // …and it is on cell 2 (the dry one), not lost: the surface storage grew
+    // by the Dunne volume (no rain, no evaporation, no other source).
+    const double surf = st.volume[0] + st.volume[1];
+    EXPECT_GT(st.volume[1], 0.0) << "the dry cell above the saturated column stayed dry";
+    EXPECT_NEAR(surf, dunne, 1.0e-6 * dunne + 1.0e-12)
+        << "surface storage " << surf << " vs Dunne " << dunne;
+    EXPECT_LT(std::fabs(mb.error()), 1.0e-6) << "2D continuity error " << mb.error();
     finish(r);
 }
 

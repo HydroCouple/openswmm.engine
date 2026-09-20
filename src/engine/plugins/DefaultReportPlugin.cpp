@@ -988,6 +988,13 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         row2("Boundary Outflow .........", mb2.boundary_out);
         row2("Evaporation Loss .........", mb2.evap_out);
         row2("Infiltration Loss ........", mb2.infil_out);
+        // G1-c item 1: the SUBCATCH_AQUIFER share — delivered to the legacy
+        // aquifer (the same number the Groundwater Continuity block prints as
+        // "of which from 2D", in ft³) and the tail still in flight at the end.
+        if (mb2.infil_to_aquifer > 0.0 || mb2.infil_aquifer_pending > 0.0) {
+            row2("  to Aquifer (delivered) .", mb2.infil_to_aquifer);
+            row2("  to Aquifer (in flight) .", mb2.infil_aquifer_pending);
+        }
         row2("Final Stored Volume ......", mb2.final_storage);
 
         std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f",

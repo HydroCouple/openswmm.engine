@@ -284,6 +284,50 @@ retroactive.
 
 ### Fixed
 
+- **Two-zone aquifer: the ENSLAVED closure could zero the water table in one
+  firing (G1-c).** Its saturated-zone balance was solved by an unguarded
+  Newton from a linearised guess; with the table within centimetres of the
+  ground the surface water content is ≈ θ_s, the storage coefficient sits on
+  its floor, the guess lands above the ground and the clamped column makes
+  the derivative the floor too — one step of O(−1e5 m), the table zeroed, the
+  column re-evaluated at full length. Measured: the Dunne gate deck lost 10
+  of the 10 m³ delivered (aquifer residual −32 %) and returned 0.001 m³ of
+  the ~8 m³ owed; a two-cell exfiltration deck created 23.5 m³. The balance
+  `W(h) = θ_s·h + hᵤ*(z_s − h)` is monotone, so it is now solved on
+  `[0, z_s]` by a safeguarded Newton with bisection fallback, and what the
+  interval cannot hold is booked exactly — above the ground as Dunne excess,
+  below the bottom as the sinks' refund. The kernel gates (`gw2d_gates`, all
+  closures) are unchanged to 1e-12; the Dunne deck now returns 9.95 m³ with a
+  zero residual. Every deck whose `[2D_AQUIFER]` resolves to ENSLAVED (AUTO
+  picks it for thin unsaturated zones) changes deliberately.
+- **A dry surface froze the aquifer.** The marcher strode the whole window
+  when no surface cell was active, skipping the groundwater's lateral Darcy,
+  deep loss, ET and node exchange with it — a dry summer left the water
+  table exactly where the storm had put it. The macro cycle now runs while
+  an aquifer is live even when the surface is quiescent, and a dry cell the
+  aquifer exfiltrates into is pinned active by the rebuild's pending-cell
+  seed (the seed existed; nothing reached it). Gate:
+  `Aquifer2D.ExfiltrationReachesADryCellThroughThePendingSeed` — no rain, no
+  ponded water, lateral flow lifts a dry cell's table to the ground, the cell
+  receives exactly the Dunne volume, nothing stays parked, both continuity
+  errors zero.
+- **The aquifer's own stability step now bounds the ladder's base step.**
+  `dt0` came from the active surface cells alone, so a groundwater cell with
+  a finer bound than every wet cell (or the whole domain with a dry surface,
+  where `dt0` fell back to `MAX_TIMESTEP`) fired beyond it on rung 0. The
+  rebuild folds `min(Δt_g, Δt_u)` over the aquifer into `dt0` (the fine side
+  of G1-c item 3; the coarse side — D-N1's runtime tier count — is still
+  open).
+- **2D→aquifer recharge was booked one runoff step early (G1-c item 1).**
+  The 2D ledger's "to aquifer" transfer was booked when the marcher applied
+  the infiltration, the 1D groundwater ledger when the runoff step delivered
+  it, so the two disagreed by the routing steps between one drain and the
+  next — 3.6 % on the 30-minute U3 gate. The transfer is now booked at
+  delivery in the same loop as `gw_infil_2d_recharge`; the volume applied
+  but not yet delivered is `mass_balance_2d.infil_aquifer_pending`, and the
+  2D continuity block prints both ("to Aquifer (delivered) / (in flight)").
+  The U3 gate asserts the two ledgers equal to 1e-9 and delivered + pending
+  equals the applied loss.
 - **A rain-on-grid deck with no subcatchment rained at its first record
   forever.** The legacy rain-gage state machine (2026-09-13) keeps a gage no
   subcatchment or unit hydrograph reads at its seeded first record — legacy's

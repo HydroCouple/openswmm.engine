@@ -183,19 +183,27 @@ TEST(Infil2DSubcatchAquifer, RechargeReachesTheContainingSubcatchmentsAquifer) {
                     0.05 * lost_infil2d)
             << "routing the destination must not change how much infiltrates";
         EXPECT_GT(ctx.mass_balance_2d.infil_to_aquifer, 0.0);
-        EXPECT_NEAR(ctx.mass_balance_2d.infil_to_aquifer,
+        // G1-c item 1: the transfer is booked at DELIVERY, so what the
+        // aquifer received plus what is still in flight at the end is the
+        // whole applied loss — every cell is inside S1 — to round-off, and
+        // the in-flight tail is at most one runoff step of recharge.
+        EXPECT_NEAR(ctx.mass_balance_2d.infil_to_aquifer + ctx.mass_balance_2d.infil_aquifer_pending,
                     ctx.mass_balance_2d.infil_out,
-                    0.02 * ctx.mass_balance_2d.infil_out)
+                    1e-9 * ctx.mass_balance_2d.infil_out)
             << "every cell is inside S1, so all of it is a transfer";
+        EXPECT_GT(ctx.mass_balance_2d.infil_aquifer_pending, 0.0)
+            << "the routing steps after the last runoff drain leave a tail";
+        EXPECT_LT(ctx.mass_balance_2d.infil_aquifer_pending,
+                  0.05 * ctx.mass_balance_2d.infil_out);
         // The groundwater side received it.
         EXPECT_GT(ctx.mass_balance.gw_infil_2d_recharge, 0.0);
         EXPECT_GT(ctx.mass_balance.gw_infil, lost_gw_infil)
             << "the aquifer's infiltration input did not grow";
-        // ft³ ↔ m³ on the same volume.
+        // ft³ ↔ m³ on the SAME volumes (the two ledgers sum the same drains).
         constexpr double kM3ToFt3 = 1.0 / (0.3048 * 0.3048 * 0.3048);
         EXPECT_NEAR(ctx.mass_balance.gw_infil_2d_recharge,
                     ctx.mass_balance_2d.infil_to_aquifer * kM3ToFt3,
-                    0.02 * ctx.mass_balance.gw_infil_2d_recharge);
+                    1e-9 * ctx.mass_balance.gw_infil_2d_recharge);
         EXPECT_FALSE(warnedAbout(r, "outside every subcatchment"));
         finish(r);
     }

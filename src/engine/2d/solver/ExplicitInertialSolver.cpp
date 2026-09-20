@@ -725,6 +725,16 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
         rebuild_dt_partial_[static_cast<std::size_t>(tid)] = local;
     }
     for (double v : rebuild_dt_partial_) dt0_ = std::min(dt0_, v);
+    // G1-c item 2 (2026-09-19): the aquifer's own stability bound joins the
+    // base step. Before this the ladder's dt0 came from the ACTIVE surface
+    // cells alone: a groundwater cell whose Δt_g / Δt_u was finer than every
+    // wet cell's (or a whole domain with a dry surface, where dt0 fell back
+    // to MAX_TIMESTEP) landed on rung 0 and fired beyond its own bound. The
+    // scan is the one refreshDtCell() already does for assignTiers() below.
+    if (gw_) {
+        gw_->refreshDtCell(*mesh_, edges_);
+        dt0_ = std::min(dt0_, std::min(gw_->minDtCell(), opts_->max_timestep));
+    }
     if (dt0_ >= 1.0e30) dt0_ = opts_->max_timestep;   // fully quiescent
 
     for (auto& v : cells_by_tier_) v.clear();
@@ -803,8 +813,7 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     // silently different number. (D-N1's runtime tier count would let the
     // ladder grow to `gw_->requiredTiers(dt0_)`; it is deliberately not taken
     // here — see the handoff.)
-    if (gw_) {
-        gw_->refreshDtCell(*mesh_, edges_);
+    if (gw_) {   // refreshDtCell() ran above, before dt0_ was fixed
         gw_->assignTiers(dt0_, static_cast<int>(cells_by_tier_.size()));
     }
 
@@ -2151,7 +2160,14 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
         const int nsub_full = 1 << (K - 1);
         const double remaining = t_target - t;
 
-        if (active_cells_.empty()) {
+        // G1-c item 2 (2026-09-19): a quiescent SURFACE no longer strides
+        // the window when an aquifer is live — the groundwater's lateral
+        // Darcy flow, deep loss, ET and node exchange fire on the ladder
+        // whether or not any surface cell is wet, and a dry cell the aquifer
+        // exfiltrates into is seeded active by syncAndRebuild's pending pass.
+        // Before this the whole macro cycle was skipped, so a dry summer
+        // froze the water table in place.
+        if (active_cells_.empty() && !(gw_ && gw_->active())) {
             // Quiescent: stride the window; the lazy tier keeps accumulating.
             t = t_target;
             last_dt_ = remaining;
