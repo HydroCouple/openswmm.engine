@@ -59,6 +59,7 @@
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_gw2d.h>
+#include <openswmm/engine/openswmm_model.h>
 
 #include "core/SWMMEngine.hpp"
 #include "2d/SurfaceRouter2D.hpp"          // G1-c item 2 gate reads the state
@@ -200,6 +201,12 @@ std::string ledgerDump(SWMM_Engine e) {
             s << "    " << t.name << " = " << v << "\n";
     }
     return s.str();
+}
+
+bool warnedAbout(const DeckRun& r, const char* needle) {   // G-X2
+    for (const auto& w : r.eng->context().warnings)
+        if (w.find(needle) != std::string::npos) return true;
+    return false;
 }
 
 std::string readAll(const fs::path& p) {
@@ -538,6 +545,261 @@ TEST(Aquifer2D, ExfiltrationReachesADryCellThroughThePendingSeed) {
         << "surface storage " << surf << " vs Dunne " << dunne;
     EXPECT_LT(std::fabs(mb.error()), 1.0e-6) << "2D continuity error " << mb.error();
     finish(r);
+}
+
+// ---------------------------------------------------------------------------
+// G-X1 gate (b) — flooded manhole recharge. J1 is held surcharged by a
+// constant inflow it cannot pass; its bed sits on cell 1 whose column starts
+// 0.1 m short of the ground. The node recharges the aquifer at the
+// conductance rate, the column fills, and the exchange goes to ZERO as
+// h_g → z_s — the saturation guard — without the recharge ever flipping
+// sign (no ping-pong) and without a drop of Dunne excess (water the column
+// accepted and returned in the same firing). Before G-X1 the recharge
+// direction was uncapped: the full column kept taking water and handing it
+// back as Dunne every firing.
+// ---------------------------------------------------------------------------
+TEST(Aquifer2D, FloodedManholeRechargesUntilTheColumnIsFullThenStops) {
+    std::string body = deck("[2D_AQUIFER]\n"
+                            "*  36.0  4.0  0.45  0.10  2.0  HG0 3.9\n\n"
+                            "[2D_AQUIFER_NODE]\nJ1  1\n\n",
+                            "", /*init_depth=*/0.0, /*infil_mm_hr=*/0.0);
+    // a surcharging inflow: 0.5 m³/s into a 0.5 m pipe
+    const std::string rep = "[REPORT]\nINPUT NO\n";
+    const auto at = body.find(rep);
+    ASSERT_NE(at, std::string::npos);
+    body.insert(at, "[INFLOWS]\nJ1  FLOW  IN1  FLOW  1.0  1.0\n\n"
+                    "[TIMESERIES]\nIN1  0:00  0.5\nIN1  1:00  0.5\n\n");
+    DeckRun r = openDeck("manhole", body);
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(r.e, 1), SWMM_OK);
+    r.started = true;
+    const auto& gw = r.eng->surfaceRouter2D().subsurface();
+    double elapsed = 0.0, prev_cum = 0.0;
+    bool reversed = false;
+    while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+        const double cum = gw.bedExchangeCumulative().empty() ? 0.0 : gw.bedExchangeCumulative()[0];
+        if (cum > prev_cum + 1.0e-12) reversed = true;   // + would be aquifer → node
+        prev_cum = cum;
+    }
+    const auto& g = gw.state();
+    double dunne = 0.0, node_out = 0.0, resid = 0.0, storage = 0.0;
+    ASSERT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_DUNNE, &dunne), SWMM_OK);
+    ASSERT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_NODE, &node_out), SWMM_OK);
+    ASSERT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_STORAGE, &storage), SWMM_OK);
+    ASSERT_EQ(swmm_gw2d_get_continuity_error(r.e, &resid), SWMM_OK);
+    EXPECT_LT(node_out, -1.0e-3) << "the surcharged node recharged nothing" << ledgerDump(r.e);
+    // the recharge is exactly what the aquifer stored (nothing left by any
+    // other channel: no deep loss, no ET, no Dunne)
+    double init = 0.0;
+    ASSERT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_INIT_STORAGE, &init), SWMM_OK);
+    EXPECT_NEAR(storage - init, -node_out, 1.0e-9 * std::fabs(node_out) + 1.0e-9)
+        << "stored " << storage - init << " vs recharged " << -node_out;
+    EXPECT_FALSE(reversed) << "the exchange flipped from recharge to drain under a surcharged node";
+    EXPECT_NEAR(g.hg[0], g.zs[0], 1.0e-3 * g.zs[0]) << "the column under the node did not fill";
+    EXPECT_NEAR(g.qnode_last[0], 0.0, 1.0e-12) << "a full column is still taking water";
+    EXPECT_NEAR(dunne, 0.0, 1.0e-9) << "recharge into a saturated column came back as Dunne — ping-pong";
+    EXPECT_LT(std::fabs(resid), 1.0e-6 * storage + 1.0e-9) << ledgerDump(r.e);
+    // The 1D side booked the same water leaving the node (delivered one
+    // routing batch behind the sampling): "2D Coupling Outflow" carries it.
+    constexpr double kM3ToFt3 = 1.0 / (0.3048 * 0.3048 * 0.3048);
+    const double out_1d_m3 = r.eng->context().mass_balance.routing_coupling_out / kM3ToFt3;
+    EXPECT_NEAR(out_1d_m3, -node_out, 0.02 * -node_out + 1.0e-6)
+        << "1D coupling outflow " << out_1d_m3 << " vs aquifer node ledger " << -node_out;
+    finish(r);
+}
+
+// ---------------------------------------------------------------------------
+// G-X1 gate (c) — a spring on dry ground reaches the network. The dry
+// exfiltration deck of G1-c with J1's rim just under cell 2's ground and an
+// orifice coupling at cell 2's own vertex: the water the aquifer pushes up
+// onto the dry cell drains into J1. Three ledgers close on the same volume:
+// aquifer Dunne == surface aquifer_in; surface 2D→1D drain == what the 1D
+// routing received; and the surface balance closes with both terms in.
+// ---------------------------------------------------------------------------
+TEST(Aquifer2D, SpringOnDryGroundReachesTheNetworkThroughTheOrificeCoupling) {
+    std::string body = deck("[2D_AQUIFER]\n"
+                            "CELL 1  36000.0  2.0  0.45  0.10  2.0  HG0 2.0\n"
+                            "CELL 2  36000.0  0.5  0.45  0.10  2.0  HG0 0.49\n\n",
+                            "", /*init_depth=*/0.0, /*infil_mm_hr=*/0.0);
+    auto sub = [&](const std::string& a, const std::string& b) {
+        const auto at = body.find(a); ASSERT_NE(at, std::string::npos) << a; body.replace(at, a.size(), b);
+    };
+    sub("0.0 0.0 -10.0\n10.0 0.0 -10.0\n", "0.0 0.0 -10.0\n10.0 0.0 -9.0\n");   // cell 1 raised
+    sub("[JUNCTIONS]\nJ1 0.0 3.0 0 0 0\n", "[JUNCTIONS]\nJ1 -12.0 1.9 0 0 0\n"); // rim at -10.1
+    sub("[OUTFALLS]\nO1 -1.0 FREE NO\n",   "[OUTFALLS]\nO1 -13.0 FREE NO\n");
+    sub("[REPORT]\nINPUT NO\n", "[2D_VERTEX_NODE_MAP]\n3 J1 0.7 1.0\n\n[REPORT]\nINPUT NO\n");
+    DeckRun r = openDeck("spring", body);
+    ASSERT_TRUE(r.opened);
+    ASSERT_TRUE(run(r));
+    const auto& ctx = r.eng->context();
+    const auto& mb  = ctx.mass_balance_2d;
+    const auto& st  = r.eng->surfaceRouter2D().state();
+    double dunne = 0.0;
+    ASSERT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_DUNNE, &dunne), SWMM_OK);
+    ASSERT_GT(dunne, 0.0) << ledgerDump(r.e);
+    // ledger 1 ↔ 2: aquifer → surface
+    EXPECT_NEAR(mb.aquifer_in, dunne, 1.0e-9 * dunne);
+    // the spring drained into J1
+    EXPECT_GT(mb.coupling_2d_to_1d_out, 0.5 * dunne)
+        << "the exfiltrated water did not reach the node: " << mb.coupling_2d_to_1d_out;
+    // ledger 2 ↔ 3: what the surface says it drained is what the 1D received
+    // (delivered through the batch queue — the tail still queued at the end
+    // is bounded by one batch)
+    constexpr double kM3ToFt3 = 1.0 / (0.3048 * 0.3048 * 0.3048);
+    const double received_1d = ctx.mass_balance.routing_external / kM3ToFt3;
+    EXPECT_NEAR(received_1d, mb.coupling_2d_to_1d_out, 0.02 * mb.coupling_2d_to_1d_out + 1.0e-6)
+        << "1D external inflow " << received_1d << " vs 2D drain " << mb.coupling_2d_to_1d_out;
+    // the surface balance closes with both terms: init 0 + aquifer_in − drain == storage
+    double surf = 0.0; for (double v : st.volume) surf += v;
+    EXPECT_NEAR(surf, mb.aquifer_in - mb.coupling_2d_to_1d_out, 1.0e-9 * dunne + 1.0e-12);
+    EXPECT_LT(std::fabs(mb.error()), 1.0e-6);
+    finish(r);
+}
+
+// ---------------------------------------------------------------------------
+// G-X2 — auto-enrolment. The helper's decks carry no [COORDINATES], so nothing
+// enrols and every earlier gate is untouched. Give J1 coordinates inside cell
+// 1 (the triangle 0-1-2 of the 10 × 10 m pan, centroid (6.67, 3.33)) and,
+// with no [2D_AQUIFER_NODE] row at all, the node gets a located bed, is
+// flagged automatic, exchanges (the surcharged-manhole scenario) and is NOT
+// written back; NODE_ENROLMENT ROWS restores the row-only behaviour; an
+// EXCHANGE NO row keeps the node out and round-trips.
+// ---------------------------------------------------------------------------
+namespace {
+std::string manholeDeck(const std::string& aquifer_options,
+                        const std::string& node_rows) {
+    std::string body = deck("[2D_AQUIFER_OPTIONS]\nCLOSURE CLOSED_FORM\n" + aquifer_options +
+                            "\n[2D_AQUIFER]\n*  36.0  4.0  0.45  0.10  2.0  HG0 1.0\n\n" +
+                            (node_rows.empty() ? std::string{}
+                                               : "[2D_AQUIFER_NODE]\n" + node_rows + "\n"),
+                            "", /*init_depth=*/0.0, /*infil_mm_hr=*/0.0);
+    const std::string rep = "[REPORT]\nINPUT NO\n";
+    const auto at = body.find(rep);
+    body.insert(at, "[INFLOWS]\nJ1  FLOW  IN1  FLOW  1.0  1.0\n\n"
+                    "[TIMESERIES]\nIN1  0:00  0.5\nIN1  1:00  0.5\n\n"
+                    "[COORDINATES]\nJ1  6.0  3.0\nO1  40.0  40.0\n\n");
+    return body;
+}
+}  // namespace
+
+TEST(Aquifer2D, NodesInsideTheMeshEnrolByTheirCoordinates) {
+    DeckRun r = openDeck("enrol_auto", manholeDeck("", ""));
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+    int n = -1;
+    ASSERT_EQ(swmm_gw2d_node_count(r.e, &n), SWMM_OK);
+    EXPECT_EQ(n, 1) << "J1 sits in cell 1, O1 outside the mesh";
+    char name[32] = {0}; int cell = -1, locate = 0, exchange = 0, automatic = 0;
+    ASSERT_EQ(swmm_gw2d_node_get(r.e, 0, name, 32, &cell, nullptr, nullptr, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_gw2d_node_get_flags(r.e, 0, &locate, &exchange, &automatic), SWMM_OK);
+    EXPECT_STREQ(name, "J1"); EXPECT_EQ(cell, 0);
+    EXPECT_EQ(locate, 1); EXPECT_EQ(exchange, 1); EXPECT_EQ(automatic, 1);
+    EXPECT_TRUE(warnedAbout(r, "enrolled in the node <-> aquifer exchange"));
+    // it exchanges: the surcharged junction recharges the closure-A column
+    ASSERT_EQ(swmm_engine_start(r.e, 1), SWMM_OK);
+    r.started = true;
+    double elapsed = 0.0;
+    while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    double node_out = 0.0, resid = 0.0, storage = 0.0;
+    ASSERT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_NODE, &node_out), SWMM_OK);
+    ASSERT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_STORAGE, &storage), SWMM_OK);
+    ASSERT_EQ(swmm_gw2d_get_continuity_error(r.e, &resid), SWMM_OK);
+    EXPECT_LT(node_out, -0.5) << "the auto-enrolled node recharged nothing" << ledgerDump(r.e);
+    EXPECT_LT(std::fabs(resid), 1.0e-6 * storage + 1.0e-9);
+    // …and the writer does not echo the located bed.
+    const fs::path saved = kOutDir / "enrol_auto_saved.inp";
+    ASSERT_EQ(swmm_model_write(r.e, saved.string().c_str()), SWMM_OK);
+    EXPECT_EQ(readAll(saved).find("[2D_AQUIFER_NODE]"), std::string::npos);
+    finish(r);
+}
+
+TEST(Aquifer2D, NodeEnrolmentRowsKeepsOnlyAuthoredBeds) {
+    DeckRun r = openDeck("enrol_rows", manholeDeck("NODE_ENROLMENT ROWS\n", ""));
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+    int n = -1;
+    ASSERT_EQ(swmm_gw2d_node_count(r.e, &n), SWMM_OK);
+    EXPECT_EQ(n, 0);
+    EXPECT_FALSE(warnedAbout(r, "enrolled in the node <-> aquifer exchange"));
+    char buf[16] = {0};
+    ASSERT_EQ(swmm_gw2d_option_get(r.e, "NODE_ENROLMENT", buf, 16), SWMM_OK);
+    EXPECT_STREQ(buf, "ROWS");
+    finish(r);
+}
+
+TEST(Aquifer2D, ExchangeNoOptsANodeOutAndRoundTrips) {
+    DeckRun r = openDeck("enrol_optout", manholeDeck("", "J1  AUTO  EXCHANGE NO\n"));
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+    int n = -1;
+    ASSERT_EQ(swmm_gw2d_node_count(r.e, &n), SWMM_OK);
+    EXPECT_EQ(n, 1) << "the opt-out row is the only bed row";
+    int locate = 0, exchange = 1, automatic = 1;
+    ASSERT_EQ(swmm_gw2d_node_get_flags(r.e, 0, &locate, &exchange, &automatic), SWMM_OK);
+    EXPECT_EQ(locate, 1); EXPECT_EQ(exchange, 0); EXPECT_EQ(automatic, 0);
+    EXPECT_FALSE(warnedAbout(r, "enrolled in the node <-> aquifer exchange"));
+    ASSERT_EQ(swmm_engine_start(r.e, 1), SWMM_OK);
+    r.started = true;
+    double elapsed = 0.0;
+    while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    double node_out = 1.0;
+    ASSERT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_NODE, &node_out), SWMM_OK);
+    EXPECT_EQ(node_out, 0.0) << "an opted-out node exchanged";
+    const fs::path saved = kOutDir / "enrol_optout_saved.inp";
+    ASSERT_EQ(swmm_model_write(r.e, saved.string().c_str()), SWMM_OK);
+    const std::string text = readAll(saved);
+    EXPECT_NE(text.find("[2D_AQUIFER_NODE]"), std::string::npos);
+    EXPECT_NE(text.find("AUTO"), std::string::npos);
+    EXPECT_NE(text.find("EXCHANGE NO"), std::string::npos);
+    finish(r);
+}
+
+// ---------------------------------------------------------------------------
+// G-X2 — the one-owner rule. A storage unit with Green-Ampt exfiltration
+// (Ksat 50 mm/h) inside a cell: enrolled, its exfiltration is silenced and
+// the aquifer receives through the conductance channel instead; opted out,
+// the legacy exfiltration runs and the aquifer sees nothing.
+// ---------------------------------------------------------------------------
+TEST(Aquifer2D, StorageExfiltrationIsReplacedByTheBedWhenEnrolled) {
+    auto storageDeck = [&](const std::string& node_rows) {
+        std::string body = manholeDeck("", node_rows);
+        auto sub = [&](const std::string& a, const std::string& b) {
+            const auto at = body.find(a); if (at != std::string::npos) body.replace(at, a.size(), b);
+        };
+        // ST1 replaces J1: a 50 m² pond, 2 m deep, exfiltrating at 50 mm/h
+        sub("[JUNCTIONS]\nJ1 0.0 3.0 0 0 0\n",
+            "[JUNCTIONS]\n\n[STORAGE]\nST1 0.0 2.0 1.0 FUNCTIONAL 0 0 50 0 0 3.0 50.0 0.3\n");
+        sub("C1 J1 O1", "C1 ST1 O1");
+        sub("J1  FLOW  IN1", "ST1  FLOW  IN1");
+        sub("J1  6.0  3.0", "ST1  6.0  3.0");
+        return body;
+    };
+    // storage exfiltration rides `nodes.losses`, booked to routing_evap_loss
+    // (Fevap is 0 on the deck, so the row is exfiltration alone)
+    double exfil_enrolled = -1.0, node_enrolled = 0.0, exfil_optout = -1.0, node_optout = 0.0;
+    {
+        DeckRun r = openDeck("storage_bed", storageDeck(""));
+        ASSERT_TRUE(r.opened);
+        ASSERT_TRUE(run(r));
+        EXPECT_TRUE(warnedAbout(r, "exfiltration is replaced by the node <-> aquifer exchange"));
+        exfil_enrolled = r.eng->context().mass_balance.routing_evap_loss;
+        ASSERT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_NODE, &node_enrolled), SWMM_OK);
+        finish(r);
+    }
+    {
+        DeckRun r = openDeck("storage_optout", storageDeck("ST1  AUTO  EXCHANGE NO\n"));
+        ASSERT_TRUE(r.opened);
+        ASSERT_TRUE(run(r));
+        EXPECT_FALSE(warnedAbout(r, "exfiltration is replaced"));
+        exfil_optout = r.eng->context().mass_balance.routing_evap_loss;
+        ASSERT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_NODE, &node_optout), SWMM_OK);
+        finish(r);
+    }
+    EXPECT_EQ(exfil_enrolled, 0.0) << "the enrolled pond still exfiltrated on its own";
+    EXPECT_LT(node_enrolled, -0.5)  << "the enrolled pond did not recharge through the bed";
+    EXPECT_GT(exfil_optout, 0.0)    << "the opted-out pond lost its legacy exfiltration";
+    EXPECT_EQ(node_optout, 0.0);
 }
 
 // ---------------------------------------------------------------------------

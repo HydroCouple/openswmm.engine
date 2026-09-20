@@ -118,6 +118,7 @@ SWMM_ENGINE_API int swmm_gw2d_option_get(SWMM_Engine engine, const char* key,
     else if (ieq(key, "MODE"))            v = o.per_subcatch ? "PER_SUBCATCH" : "MESH";
     else if (ieq(key, "DUNNE"))           v = yn(o.dunne);
     else if (ieq(key, "GW_ET"))           v = o.gw_et;
+    else if (ieq(key, "NODE_ENROLMENT"))  v = o.node_auto ? "AUTO" : "ROWS";   // G-X2
     else return SWMM_ERR_BADPARAM;
     copy_to(v, buf, buflen);
     return SWMM_OK;
@@ -279,11 +280,12 @@ SWMM_ENGINE_API int swmm_gw2d_node_add(SWMM_Engine engine, const char* node,
                                        double area) {
     AQ_CFG(engine);
     AQ_EDITABLE(eng);
-    if (!node || node[0] == '\0' || cell < 0) return SWMM_ERR_BADPARAM;
+    if (!node || node[0] == '\0' || cell < -1) return SWMM_ERR_BADPARAM;
     if (kc < 0.0 || dc < 0.0 || area < 0.0) return SWMM_ERR_BADPARAM;
     if (kc > 0.0 && dc <= 0.0) return SWMM_ERR_BADPARAM;   // a bed needs a thickness
     GwNodeBed b;
-    b.cell = cell;
+    b.cell   = cell;
+    b.locate = (cell < 0);      // G-X2: −1 = CELL AUTO, located at initialize
     b.Kc   = kc;
     b.dC   = dc;
     b.area = area;
@@ -310,6 +312,30 @@ SWMM_ENGINE_API int swmm_gw2d_node_get(SWMM_Engine engine, int index,
                     ? names[static_cast<std::size_t>(index)] : std::string{},
                 node, nodelen);
     }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gw2d_node_get_flags(SWMM_Engine engine, int index,
+                                             int* locate, int* exchange,
+                                             int* automatic) {
+    AQ_CFG(engine);   // G-X2
+    if (index < 0 || index >= static_cast<int>(cfg.node_beds.size()))
+        return SWMM_ERR_BADPARAM;
+    const auto& b = cfg.node_beds[static_cast<std::size_t>(index)];
+    if (locate)    *locate    = b.locate ? 1 : 0;
+    if (exchange)  *exchange  = b.exchange ? 1 : 0;
+    if (automatic) *automatic = b.automatic ? 1 : 0;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gw2d_node_set_exchange(SWMM_Engine engine, int index,
+                                                int exchange) {
+    AQ_CFG(engine);   // G-X2
+    AQ_EDITABLE(eng);
+    if (index < 0 || index >= static_cast<int>(cfg.node_beds.size()))
+        return SWMM_ERR_BADPARAM;
+    cfg.node_beds[static_cast<std::size_t>(index)].exchange = (exchange != 0);
+    cfg.options.authored = true;
     return SWMM_OK;
 }
 

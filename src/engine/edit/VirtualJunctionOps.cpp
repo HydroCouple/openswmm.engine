@@ -321,6 +321,9 @@ SplitResult vj_split_conduit(SimulationContext& ctx, int link_idx, double t,
     nodes.full_depth[uni]  = links.xsect_y_full[uj];
     ctx.spatial.node_x[uni] = sx;
     ctx.spatial.node_y[uni] = sy;
+    if (ctx.spatial.node_has_xy.size() < ctx.spatial.node_x.size())
+        ctx.spatial.node_has_xy.resize(ctx.spatial.node_x.size(), 0);
+    ctx.spatial.node_has_xy[uni] = 1;   // G-X2
 
     // --- New downstream conduit ---
     const int nj = ctx.link_names.add(new_link_name);

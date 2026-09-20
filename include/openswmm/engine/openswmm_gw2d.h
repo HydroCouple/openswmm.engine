@@ -112,7 +112,8 @@ extern "C" {
  * ========================================================================= */
 
 /** Read one option as text. Keys: SOIL_CHAR, CLOSURE, M_LAYERS,
- *  CAPILLARY_DIFF, C_GW, C_COL, FORCE_CLOSED_FORM, MODE, DUNNE, GW_ET. */
+ *  CAPILLARY_DIFF, C_GW, C_COL, FORCE_CLOSED_FORM, MODE, DUNNE, GW_ET,
+ *  NODE_ENROLMENT (AUTO | ROWS — G-X2). */
 SWMM_ENGINE_API int swmm_gw2d_option_get(SWMM_Engine engine, const char* key,
                                          char* buf, int buflen);
 
@@ -186,6 +187,20 @@ SWMM_ENGINE_API int swmm_gw2d_node_get(SWMM_Engine engine, int index,
                                        double* kc, double* dc, double* area);
 
 SWMM_ENGINE_API int swmm_gw2d_node_remove(SWMM_Engine engine, int index);
+
+/** G-X2 (2026-09-19): a bed's enrolment state. `locate` — the cell is found
+ *  from the node's [COORDINATES] at initialize (`CELL AUTO`; pass cell −1 to
+ *  swmm_gw2d_node_add); `exchange` — 0 when the row opts the node OUT
+ *  (`EXCHANGE NO`); `automatic` — enrolled by NODE_ENROLMENT AUTO rather than
+ *  authored (present after initialize only; not written back). Any pointer
+ *  may be NULL. */
+SWMM_ENGINE_API int swmm_gw2d_node_get_flags(SWMM_Engine engine, int index,
+                                             int* locate, int* exchange,
+                                             int* automatic);
+
+/** G-X2: set a row's EXCHANGE flag (0 = the node exchanges with nothing). */
+SWMM_ENGINE_API int swmm_gw2d_node_set_exchange(SWMM_Engine engine, int index,
+                                                int exchange);
 
 /* =========================================================================
  * Running state — SI throughout

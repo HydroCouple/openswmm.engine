@@ -55,6 +55,7 @@ static void erase_node_spatial(SimulationContext& ctx, int idx) {
     auto e = [&](auto& v) { if (ui < v.size()) v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx)); };
     e(ctx.spatial.node_x);
     e(ctx.spatial.node_y);
+    e(ctx.spatial.node_has_xy);   // G-X2
 }
 
 static void erase_link_spatial(SimulationContext& ctx, int idx) {

@@ -383,6 +383,9 @@ static void read_nodes(sqlite3* db, SimulationContext& ctx, const std::string& s
                 auto pt = decode_point(column_blob(stmt.get(), 2));
                 ctx.spatial.node_x[idx] = pt.x;
                 ctx.spatial.node_y[idx] = pt.y;
+                if (ctx.spatial.node_has_xy.size() < ctx.spatial.node_x.size())
+                    ctx.spatial.node_has_xy.resize(ctx.spatial.node_x.size(), 0);
+                ctx.spatial.node_has_xy[static_cast<std::size_t>(idx)] = 1;   // G-X2
             }
             ctx.nodes.invert_elev[idx] = column_double(stmt.get(), 3);
             ctx.nodes.full_depth[idx]  = column_double(stmt.get(), 4);

@@ -424,6 +424,9 @@ void handle_coordinates(SimulationContext& ctx, const std::vector<std::string>& 
 
         ctx.spatial.node_x[idx] = to_double(tok[1]);
         ctx.spatial.node_y[idx] = to_double(tok[2]);
+        if (ctx.spatial.node_has_xy.size() < ctx.spatial.node_x.size())
+            ctx.spatial.node_has_xy.resize(ctx.spatial.node_x.size(), 0);
+        ctx.spatial.node_has_xy[static_cast<std::size_t>(idx)] = 1;   // G-X2
     }
 }
 

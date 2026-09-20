@@ -72,6 +72,9 @@ SWMM_ENGINE_API int swmm_spatial_set_node_coord(SWMM_Engine engine, int idx, dou
     const auto ui = static_cast<std::size_t>(idx);
     ctx.spatial.node_x[ui] = x;
     ctx.spatial.node_y[ui] = y;
+    if (ctx.spatial.node_has_xy.size() < ctx.spatial.node_x.size())
+        ctx.spatial.node_has_xy.resize(ctx.spatial.node_x.size(), 0);
+    ctx.spatial.node_has_xy[ui] = 1;   // G-X2
     return SWMM_OK;
 }
 

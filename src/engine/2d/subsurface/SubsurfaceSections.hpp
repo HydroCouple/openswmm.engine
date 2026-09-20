@@ -116,12 +116,17 @@ void registerSubsurfaceSections(SubsurfaceConfig& cfg,
 /// The factors for this project's unit system.
 GwUnitFactors gwUnitFactors(const SimulationContext& ctx) noexcept;
 
-/// Resolve node names to indices and each bed's cell to a mesh cell.
+/// Resolve node names to indices and each bed's cell to a mesh cell; locate
+/// `CELL AUTO` rows and (G-X2, `NODE_ENROLMENT AUTO`) enrol every node whose
+/// [COORDINATES] fall in a cell, appending to @p cfg.node_beds and @p names.
+/// @p node_xy_to_mesh converts node coordinates (project map units) into the
+/// mesh's coordinates (SI metres once the router has scaled it).
 /// Returns diagnostics; empty on success.
 std::vector<std::string> resolveSubsurface(SimulationContext& ctx,
                                            const MeshData& mesh,
                                            SubsurfaceConfig& cfg,
-                                           const std::vector<std::string>& names);
+                                           std::vector<std::string>& names,
+                                           double node_xy_to_mesh);
 
 /// Write the three sections back in the project's own units — that is, the
 /// authored values verbatim — omitting anything at its default so a
