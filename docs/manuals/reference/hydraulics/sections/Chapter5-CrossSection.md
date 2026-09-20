@@ -117,7 +117,7 @@ user supplies values for 1/γ, the full depth *Y*<sub>full</sub> and the top wid
 when full *b* (see Figure 5-1). Note that the parabolic shape is a
 special case of this power function shape where 1/γ equals 2.
 
-![](hydraulics/media/media/hydraulics-image22.png "image22")
+![Figure 5-1 Power law cross section shape](figures/png/hydraulics_ch5_power_law.png)
 
 **Figure 5-1 Power law cross section shape**
 
@@ -250,7 +250,7 @@ accuracy, analytical functions are used to compute *Y,* *Ψ,* and *Ψ'*
 for areas below 4% of *A*<sub>full</sub>. They are described in the side bar
 entitled "*Analytical Functions for Circular Cross Sections*".
 
-![](hydraulics/media/media/figure-theta.png "figure-theta")
+![Definition sketch of the circular section: central angle θ](figures/png/hydraulics_ch5_circular_theta.png)
 
 > **Analytical Functions for Circular Cross Sections**
 > 
@@ -287,7 +287,7 @@ entitled "*Analytical Functions for Circular Cross Sections*".
 
 ### 5.1.4 Ellipsoid and Arch Shapes
 
-![](hydraulics/media/media/hydraulics-image25.png "image25")
+![Figure 5-4 Elliptical and arch pipe cross sectional shapes](figures/png/hydraulics_ch5_shapes_elliptical_arch.png)
 
 **Figure 5-4 Ellipsoid and arch pipe cross sectional shapes**
 
@@ -352,7 +352,7 @@ table using the following expression with *N* = 26:
 
 ### 5.1.5 Older Masonry Sewer Shapes
 
-![OldShapes.png](hydraulics/media/media/hydraulics-image27.png)
+![Figure 5-5 Masonry sewer shapes](figures/png/hydraulics_ch5_shapes_masonry.png)
 
 **Figure 5-5 Masonry sewer shapes**
 
@@ -410,12 +410,9 @@ circular, rectangular, and triangular sections. The formulas for
 computing their geometrical properties are presented in the following
 paragraphs.
 
-![](hydraulics/media/media/hydraulics-image28.png "image28")
+![Figure 5-6 Composite cross section shapes](figures/png/hydraulics_ch5_shapes_composite.png)
 
-Figure 5-6 shows four cross section shapes that are combinations of
-circular, rectangular, and triangular sections. The formulas for
-computing their geometrical properties are presented in the following
-paragraphs.
+**Figure 5-6 Composite cross section shapes**
 
 <u>Sediment Filled Circular Shape</u>
 
