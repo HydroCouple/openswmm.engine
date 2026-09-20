@@ -122,8 +122,8 @@ SWMM model. Table 1-2 provides a summary of the various objects used in
 SWMM. Their properties and functions will be described in more detail
 throughout the course of this manual.
 
-![](hydrology/media/media/hydrology-image2.png "image2")
-<strong>Figure 1-2 SWMM's conceptual model of a stormwater drainage system</strong>
+![Figure 1-2 Objects of an OpenSWMM model](figures/png/eng_object_sketch.png)
+<strong>Figure 1-2 Objects of an OpenSWMM model</strong>
 
 **Table 1-2 SWMM's modeling objects**
 
@@ -157,8 +157,8 @@ throughout the course of this manual.
 
 ## 1.3 SWMM's Process Models
 
-![](hydrology/media/media/figure1-3.png "Processes modeled by SWMM")
-<strong>Figure 1-3 Processes modeled by SWMM</strong>
+![Figure 1-3 Processes modelled by OpenSWMM](figures/png/eng_process_flow.png)
+<strong>Figure 1-3 Processes modelled by OpenSWMM</strong>
 
 Figure 1-3 depicts the processes that SWMM models using the objects
 described previously and how they are tied to one another. The
@@ -438,6 +438,15 @@ back to the user's choice of unit system.
 | Width | feet | meters |
 | Wind Speed | miles/hour | kilometers/hour |
 
+## 1.6 The Formulations This Manual Covers
 
+Figure 1-7 places the hydrology of this manual on OpenSWMM's process map: the
+atmosphere, the two representations of the land surface — lumped
+subcatchments and the distributed 2D mesh — and the two representations of
+the subsurface. Each alternative carries its status (Implemented,
+Experimental, Planned or Retired); the conveyance compartment, documented in
+@ref hydraulics_reference_manual, is shown faded.
 
+![Figure 1-7 The hydrology of this manual: atmosphere, land surface and subsurface representations](figures/png/hydrology_conceptual_map.png)
 
+<strong>Figure 1-7 The hydrology of this manual: atmosphere, land surface and subsurface representations</strong>

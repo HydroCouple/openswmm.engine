@@ -53,6 +53,8 @@ Figure 1-5 Flow chart of SWMM's simulation procedure
 
 Figure 1-6 Interpolation of reported values from computed values
 
+Figure 1-7 The hydraulics of this manual: the 1D network, the 2D surface and their coupling
+
 Figure 2-1 Node-link representation of a sewer system
 
 Figure 2-2 Comparison of dynamic wave and kinematic wave solutions
@@ -141,9 +143,11 @@ Figure 8-3 Hydrostatic reconstruction at a wet/dry front
 
 Figure 8-4 Node ghost-state construction at a coupling face
 
-Figure 9-1 One 1D–2D co-advance batch and the explicit marcher's substep loop within it
+Figure 9-1 The one-dimensional network and the two-dimensional surface: exchange pathways
 
-Figure 9-2 Wetting cases of a planar-bed triangular cell and the wetted-edge face gate
+Figure 9-2 One 1D–2D co-advance batch and the explicit marcher's substep loop within it
+
+Figure 9-3 Wetting cases of a planar-bed triangular cell and the wetted-edge face gate
 
 ## List of Tables
 

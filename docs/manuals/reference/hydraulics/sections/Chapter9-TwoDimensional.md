@@ -33,6 +33,16 @@ pools in a sag, and drains into whichever inlet it reaches. Which node
 receives the water is an outcome of the calculation rather than an
 input to it.
 
+Figure 9-1 places the two domains side by side: the node–link network of
+Chapters 3, 4 and 8 with its routing and pressurisation alternatives, the
+overland surface of this chapter with its three momentum closures, and the
+exchange pathways that join them — vertex and cell coupling, street inlet
+capture, and the node–bed exchange of a mesh aquifer.
+
+![Figure 9-1 The one-dimensional network and the two-dimensional surface: exchange pathways](figures/png/hydraulics_conceptual_1d2d.png)
+
+*Figure 9-1 The one-dimensional network and the two-dimensional surface: exchange pathways*
+
 **Flow paths the network does not contain.** Overland routes — a road
 acting as a channel, flow over an embankment, a flow path between two
 otherwise unconnected catchments — exist in the terrain and nowhere in
@@ -309,7 +319,7 @@ and inverse are exact inverses for the same \f$\varepsilon\f$ and
 head-seeded and volume-seeded states round-trip. A dry cell's head
 under VFR is seeded at \f$\eta(0) = \eta_s - \bar{h}_s/\varepsilon \in (z_1, \eta_s)\f$, the value the closure itself returns at \f$V = 0\f$, so
 that seeding the head back through the forward relation reproduces
-exactly zero volume. Figure 9-2 (§9.5.9) sketches the wetting cases.
+exactly zero volume. Figure 9-3 (§9.5.9) sketches the wetting cases.
 
 Implementation: the closure lives in `src/engine/2d/mesh/VfrClosure.hpp`
 — @ref openswmm::twoD::vfrSort3, @ref openswmm::twoD::vfrWetFraction,
@@ -699,7 +709,7 @@ The boundary and coupling loops are serial; they are perimeter- and
 point-count-sized. The quantity \f$\sum_i V_i + \sum_f (\text{acc}_{L,f} + \text{acc}_{R,f})\f$ is invariant under the face phase and is asserted
 directly when `OPENSWMM_2D_MARCHER_CHECK` is set.
 
-Figure 9-1 assembles the co-advance batch of §9.7.3 and the marcher's
+Figure 9-2 assembles the co-advance batch of §9.7.3 and the marcher's
 substep loop into one workflow.
 
 <!-- workflow: coupling_batch -->
@@ -727,7 +737,7 @@ flowchart TD
     Q --> A
 </pre>
 
-*Figure 9-1 One 1D–2D co-advance batch and the explicit marcher's
+*Figure 9-2 One 1D–2D co-advance batch and the explicit marcher's
 substep loop within it (rendered diagram)*
 
 Implementation:
@@ -843,11 +853,11 @@ cell integrates in a single lazy pass over the whole interval since
 the last synchronization; the result is floored at zero volume, so a
 forced evaporation override on a dry cell is harmless.
 
-Figure 9-2 sketches the geometry the rules act on: the three wetting
+Figure 9-3 sketches the geometry the rules act on: the three wetting
 cases of the planar-bed cell (§9.4.1) and the wetted-edge face gate
 (§9.5.2).
 
-<!-- Intended final drawing for Figure 9-2: a perspective or plan-view
+<!-- Intended final drawing for Figure 9-3: a perspective or plan-view
      schematic of one triangular cell with a sloping (planar) bed at
      three stages — waterline below z2 (wetted subtriangle at the low
      vertex), waterline between z2 and z3 (dry corner at the high
@@ -856,9 +866,9 @@ cases of the planar-bed cell (§9.4.1) and the wetted-edge face gate
      shared-edge endpoint beds z_lo, z_hi and the three branches of the
      face-depth relation (blocked, partially submerged, fully
      submerged). -->
-![Figure 9-2](figure9-2-placeholder.png)
+![Figure 9-3](figure9-2-placeholder.png)
 
-*Figure 9-2 Wetting cases of a planar-bed triangular cell and the
+*Figure 9-3 Wetting cases of a planar-bed triangular cell and the
 wetted-edge face gate (placeholder — to be replaced by a final
 drawing)*
 
