@@ -894,6 +894,7 @@ explicit, user-controlled quantity.
 The pressurization life cycle of a conduit end under the dynamic slot
 is summarized in Figure 3-9.
 
+<!-- workflow: dps_state_machine -->
 <pre class="mermaid">
 stateDiagram-v2
     direction LR
@@ -1714,6 +1715,7 @@ that of Section 3.2.
 
 Figure 3-11 summarizes one accelerated iteration.
 
+<!-- workflow: anderson_iteration -->
 <pre class="mermaid">
 flowchart TD
     A[Start iteration k] --> B[Compute plain iterate G of H_k for every node]

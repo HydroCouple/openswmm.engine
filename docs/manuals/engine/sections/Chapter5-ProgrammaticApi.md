@@ -61,6 +61,7 @@ Figure 13-1. The file-based path enters at `swmm_engine_open()`; the
 programmatic path enters at `swmm_engine_new()` (BUILDING) and joins it
 at `swmm_finalize_model()`.
 
+<!-- workflow: engine_lifecycle -->
 <pre class="mermaid">
 stateDiagram-v2
     direction LR
@@ -434,6 +435,7 @@ Each line begins with the plugin to load — a shared-library path, a plugin id,
 Figure 13-2 traces the full resolution path from engine open to an
 initialized plugin.
 
+<!-- workflow: plugin_resolution -->
 <pre class="mermaid">
 flowchart TD
     A[swmm_engine_open] --> B[PluginFactory scans engine lib dir plus plugins and components subdirectories]

@@ -9,29 +9,58 @@ Checks:
     \\anchor in the manual tree (code-entity refs are skipped: they contain
     '::' or match a known source symbol pattern)
   * markdown tables whose rows have inconsistent column counts
-  * unbalanced $$ display-math delimiters
+  * raw $ math, unbalanced \\f[ \\f] and odd \\f$ counts
+  * <figure>/<figcaption>, unknown HTML tags, indented dash rules
   * image references whose basename exists in no IMAGE_PATH directory
+  * [SECTION] coverage of Chapter 2 against the parser's registrations
+  * the error/warning catalogue against ErrorCodes.hpp
+  * the engine figure manifest (listed, present, cited)
+  * retired-interface prose in the engine manual
+  * \\status{...} badges: alias present, vocabulary from docs/figures/status.py,
+    every Status-column table cell is exactly one badge, CSS colours in sync
+  * Mermaid blocks: labelled `<!-- workflow: id -->`, closed, unique ids, no
+    piped node labels and no Doxygen command characters
+  * Application Manual deck citations and \\snippet markers resolve
 
-Exit code 1 if any errors. Run from anywhere.
+Exit code 1 if any errors. Run from anywhere. `--docs-root` points the lint
+at a copy of docs/ (the negative-test runner mutates copies, never the tree);
+`--src-root` stays on the real source tree unless overridden.
 """
+import argparse
+import importlib.util
 import re
 import sys
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path
 
-DOCS = Path(__file__).resolve().parent.parent / "docs"
-MANUAL_DIRS = [DOCS / "manuals", DOCS / "authors.md"]
-IMAGE_PATHS = [
-    DOCS / "images",
-    DOCS / "manuals" / "engine" / "figures",
-    DOCS / "manuals" / "reference" / "hydrology" / "media" / "media",
-    DOCS / "manuals" / "reference" / "hydraulics" / "media" / "media",
-    DOCS / "manuals" / "reference" / "quality" / "media" / "media",
-]
+ROOT = Path(__file__).resolve().parent.parent
+DOCS = ROOT / "docs"
+SRC = ROOT / "src"
+MANUAL_DIRS = []
+IMAGE_PATHS = []
 EXCLUDE_RE = re.compile(r"/SWMM[^/]*\.md$|/media/")
 
 CODE_REF = re.compile(r"::|\.h$|^[a-z]+_[a-zA-Z]+$")  # C API / namespaced / header files
+
+
+def configure(docs_root, src_root):
+    """Bind the module paths. Called once from main(); tests call it directly."""
+    global DOCS, SRC, MANUAL_DIRS, IMAGE_PATHS
+    DOCS = Path(docs_root).resolve()
+    SRC = Path(src_root).resolve()
+    MANUAL_DIRS = [DOCS / "manuals", DOCS / "authors.md"]
+    IMAGE_PATHS = [
+        DOCS / "images",
+        DOCS / "figures" / "png",
+        DOCS / "manuals" / "engine" / "figures",
+        DOCS / "manuals" / "reference" / "hydrology" / "media" / "media",
+        DOCS / "manuals" / "reference" / "hydraulics" / "media" / "media",
+        DOCS / "manuals" / "reference" / "quality" / "media" / "media",
+    ]
+
+
+configure(DOCS, SRC)
 
 
 def md_files():
@@ -101,7 +130,7 @@ def check_message_catalogue():
     WARNING 10 into 10a/10b (two distinct conditions share one code), so the
     warning numbers are matched on their leading digits.
     """
-    hdr = DOCS.parent / "src" / "engine" / "core" / "ErrorCodes.hpp"
+    hdr = SRC / "engine" / "core" / "ErrorCodes.hpp"
     apx = DOCS / "manuals" / "engine" / "sections" / "AppendixA-Messages.md"
     if not hdr.exists() or not apx.exists():
         return 0
@@ -192,7 +221,7 @@ def check_section_coverage():
     regression worth catching — rather than demanding the backlog be written
     before anything else can land. Shrink the allowlist, never grow it.
     """
-    src = DOCS.parent / "src" / "engine"
+    src = SRC / "engine"
     chapter = DOCS / "manuals" / "engine" / "sections" / "Chapter2-InputFileReference.md"
     gaps_file = chapter.parent / "KNOWN_SECTION_GAPS.txt"
     if not src.is_dir() or not chapter.exists():
@@ -231,7 +260,207 @@ def check_section_coverage():
     return errors
 
 
-def main():
+def load_status_module():
+    """docs/figures/status.py — the badge vocabulary and colours. None if absent."""
+    path = DOCS / "figures" / "status.py"
+    if not path.exists():
+        return None
+    spec = importlib.util.spec_from_file_location("manual_status", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+BADGE_RE = re.compile(r"[\\@]status\{([^}]*)\}")
+
+
+def table_rows(lines, i):
+    """If lines[i] starts a markdown table, return (header_cells, [(lineno, cells)...])."""
+    if not (re.match(r"^\s*\|.*\|\s*$", lines[i]) and i + 1 < len(lines)
+            and re.match(r"^\s*\|[\s:|-]+\|\s*$", lines[i + 1])):
+        return None
+    header = [c.strip() for c in lines[i].strip().strip("|").split("|")]
+    body = []
+    j = i + 2
+    while j < len(lines) and re.match(r"^\s*\|.*\|\s*$", lines[j]):
+        body.append((j + 1, [c.strip() for c in lines[j].strip().strip("|").split("|")]))
+        j += 1
+    return header, body
+
+
+def check_status_badges(status_report=False):
+    """\\status{...} is the one way a manual states a formulation's status.
+
+    Three things must agree: the Doxyfile alias (else the badge renders as
+    literal text), the vocabulary in docs/figures/status.py (the same dict the
+    figure generators colour their chips from), and the CSS colours. Any table
+    whose header has a cell reading exactly `Status` is an alternatives table:
+    every body row must carry exactly one badge in that column.
+    """
+    errors = 0
+    doxyfile = DOCS / "Doxyfile"
+    if not doxyfile.exists() or '"status{1}=' not in doxyfile.read_text(errors="replace"):
+        print("ERROR status: docs/Doxyfile has no status{1} alias — badges would render as text")
+        errors += 1
+    mod = load_status_module()
+    if mod is None:
+        print("ERROR status: docs/figures/status.py is missing")
+        return errors + 1
+    for e in mod.self_check():
+        print(f"ERROR {e}")
+        errors += 1
+    vocab = mod.labels()
+    css = DOCS / "custom" / "css" / "manual.css"
+    css_text = css.read_text(errors="replace") if css.exists() else ""
+    for lab, hexval in mod.STATUS.values():
+        if hexval not in css_text:
+            print(f"ERROR status: {css.name} lacks the {lab} colour {hexval} from status.py")
+            errors += 1
+
+    badge_cell = re.compile(r"^[\\@]status\{(" + "|".join(sorted(vocab)) + r")\}$")
+    report = []
+    for f in md_files():
+        rel = f.relative_to(DOCS)
+        lines = f.read_text(errors="replace").split("\n")
+        for n, ln in enumerate(lines, 1):
+            for m in BADGE_RE.finditer(ln):
+                if m.group(1) not in vocab:
+                    print(f"ERROR {rel}:{n}: \\status{{{m.group(1)}}} is not one of "
+                          f"{', '.join(sorted(vocab))}")
+                    errors += 1
+                else:
+                    report.append((str(rel), n, m.group(1)))
+        i = 0
+        while i < len(lines):
+            t = table_rows(lines, i)
+            if t is None:
+                i += 1
+                continue
+            header, body = t
+            if "Status" in header:
+                col = header.index("Status")
+                for n, cells in body:
+                    cell = cells[col] if col < len(cells) else ""
+                    if not badge_cell.match(cell):
+                        print(f"ERROR {rel}:{n}: Status column must hold exactly one "
+                              f"\\status{{...}} badge, found {cell[:40]!r}")
+                        errors += 1
+            i += 2 + len(body)
+    if status_report:
+        print("\nSTATUS REPORT (file:line badge)")
+        for rel, n, lab in report:
+            print(f"  {rel}:{n} {lab}")
+        print(f"  {len(report)} badges")
+    return errors
+
+
+MERMAID_ID_RE = re.compile(r"^<!-- workflow: ([a-z0-9_]+) -->$")
+MERMAID_LABEL_RE = re.compile(r"\[([^\]]*)\]|\{([^}]*)\}")
+
+
+def check_mermaid_workflows():
+    """Every `<pre class="mermaid">` block is labelled, closed and safe.
+
+    Doxygen expands `@` and `\\` commands inside the block; a pipe inside a
+    node label is Mermaid's edge-label syntax and breaks the diagram. The
+    `<!-- workflow: id -->` line before the block names the diagram so a
+    figure manifest and the prose can refer to it.
+    """
+    errors = 0
+    seen = {}
+    for f in md_files():
+        rel = f.relative_to(DOCS)
+        lines = f.read_text(errors="replace").split("\n")
+        for i, ln in enumerate(lines):
+            if ln.strip() != '<pre class="mermaid">':
+                continue
+            k = i - 1
+            while k >= 0 and not lines[k].strip():
+                k -= 1
+            m = MERMAID_ID_RE.match(lines[k].strip()) if k >= 0 else None
+            if not m:
+                print(f"ERROR {rel}:{i+1}: mermaid block lacks a `<!-- workflow: id -->` "
+                      f"line immediately above it")
+                errors += 1
+            else:
+                wid = m.group(1)
+                if wid in seen:
+                    print(f"ERROR {rel}:{i+1}: workflow id {wid!r} already used in {seen[wid]}")
+                    errors += 1
+                seen[wid] = f"{rel}:{i+1}"
+            j = i + 1
+            while j < len(lines) and lines[j].strip() != "</pre>":
+                if lines[j].strip().startswith("<pre"):
+                    break
+                j += 1
+            if j >= len(lines) or lines[j].strip() != "</pre>":
+                print(f"ERROR {rel}:{i+1}: mermaid block is not closed by </pre>")
+                errors += 1
+                continue
+            for n in range(i + 1, j):
+                body = lines[n]
+                if "@" in body or "\\" in body:
+                    print(f"ERROR {rel}:{n+1}: mermaid line contains @ or \\ "
+                          f"(Doxygen command characters)")
+                    errors += 1
+                for lm in MERMAID_LABEL_RE.finditer(body):
+                    label = lm.group(1) if lm.group(1) is not None else lm.group(2)
+                    if "|" in label:
+                        print(f"ERROR {rel}:{n+1}: mermaid node label contains '|' "
+                              f"(edge-label syntax): {label[:40]!r}")
+                        errors += 1
+    return errors
+
+
+DECK_RE = re.compile(r"docs/figures/decks/([A-Za-z0-9_./-]+\.(?:inp|rxn|ard|age|heat|py|csv))")
+SNIPPET_RE = re.compile(r"[\\@]snippet\s+(\S+)\s+(\S+)")
+
+
+def check_application_decks():
+    """Every deck the Application Manual cites exists, and every \\snippet resolves.
+
+    Decks live under docs/figures/decks/ (the Doxyfile's EXAMPLE_PATH). A
+    \\snippet marker must appear exactly twice in its file — Doxygen reports a
+    missing pair only as a warning, which nothing fails on.
+    """
+    app = DOCS / "manuals" / "application"
+    decks = DOCS / "figures" / "decks"
+    if not app.is_dir():
+        return 0
+    errors = 0
+    for f in sorted(app.rglob("*.md")):
+        rel = f.relative_to(DOCS)
+        text = f.read_text(errors="replace")
+        for n, ln in enumerate(text.split("\n"), 1):
+            for m in DECK_RE.finditer(ln):
+                if not (decks / m.group(1)).exists():
+                    print(f"ERROR {rel}:{n}: cites docs/figures/decks/{m.group(1)}, "
+                          f"which does not exist")
+                    errors += 1
+            for m in SNIPPET_RE.finditer(ln):
+                path, marker = decks / m.group(1), m.group(2)
+                if not path.exists():
+                    print(f"ERROR {rel}:{n}: \\snippet {m.group(1)} is not under docs/figures/decks/")
+                    errors += 1
+                    continue
+                hits = len(re.findall(r"^\s*;?//!\s*\[" + re.escape(marker) + r"\]\s*$",
+                                      path.read_text(errors="replace"), re.M))
+                if hits != 2:
+                    print(f"ERROR {rel}:{n}: \\snippet marker [{marker}] appears {hits} "
+                          f"times in {m.group(1)} (must be exactly 2)")
+                    errors += 1
+    return errors
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--docs-root", default=str(DOCS), help="docs/ directory to lint")
+    ap.add_argument("--src-root", default=str(SRC), help="src/ directory for coverage checks")
+    ap.add_argument("--status-report", action="store_true",
+                    help="also print every \\status badge in the manuals")
+    args = ap.parse_args(argv)
+    configure(args.docs_root, args.src_root)
+
     files = md_files()
     pages, anchors = {}, set()
     texts = {}
@@ -335,6 +564,9 @@ def main():
     errors += check_gui_prose()
     errors += check_figure_manifest()
     errors += check_message_catalogue()
+    errors += check_status_badges(status_report=args.status_report)
+    errors += check_mermaid_workflows()
+    errors += check_application_decks()
 
     print(f"\n{len(files)} files, {len(pages)} pages, {len(anchors)} anchors, {errors} errors")
     return 1 if errors else 0

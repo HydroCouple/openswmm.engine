@@ -896,6 +896,7 @@ shows the model's stiffness has moved.
 Figure 8-1 assembles the pieces of Sections 8.5.5 and 8.5.6 into the
 substep workflow the solver executes for every routing step.
 
+<!-- workflow: fv_substep -->
 <pre class="mermaid">
 flowchart TD
     A[Routing step begins - forcing and boundary states set] --> B[CFL census over all faces, including boundary ghost states]
@@ -1043,6 +1044,7 @@ initial-storage ledger matches the state the solver integrates.
 Figure 8-2 assembles the face-level logic — wet/dry states, gates,
 culvert caps and the positivity scan — into one workflow.
 
+<!-- workflow: fv_face_flux -->
 <pre class="mermaid">
 flowchart TD
     A[Face taken from the active list] --> B[Resolve side beds and z* = max of zL and zR]

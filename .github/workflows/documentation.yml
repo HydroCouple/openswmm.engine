@@ -8,11 +8,16 @@ on:
 #    branches: [main, develop]
     branches: [main, develop, swmm6_rel]
     tags: ["v*.*.*"]
-    paths: ['docs/**', 'python/docs/**', 'python/openswmm/**', 'include/**', '**/*.md']
+    # src/engine is in the filter because the manual lint checks the manuals
+    # against the parser (registered [SECTION]s, error codes): registering a
+    # section without documenting it must trip the gate.
+    paths: ['docs/**', 'python/docs/**', 'python/openswmm/**', 'include/**', '**/*.md',
+            'src/engine/**', 'scripts/lint_manual_docs*.py']
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, swmm6_rel]
     # branches: [main]
-    paths: ['docs/**', 'python/docs/**', 'python/openswmm/**', 'include/**', '**/*.md']
+    paths: ['docs/**', 'python/docs/**', 'python/openswmm/**', 'include/**', '**/*.md',
+            'src/engine/**', 'scripts/lint_manual_docs*.py']
   workflow_dispatch:
 
 # Allow only one concurrent deployment.  Do NOT cancel in-progress runs so
@@ -22,9 +27,42 @@ concurrency:
   cancel-in-progress: false
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Job 1 – Build Python (Sphinx) documentation
+# Job 0 – Lint the manual sources
+#   Referential integrity, tables, math delimiters, images, [SECTION] and
+#   error-code coverage, status badges, Mermaid blocks. Runs the negative
+#   suite too, so a check that silently stopped failing is caught here.
+#   Doxygen runs with WARN_AS_ERROR = NO (header warnings would drown it), so
+#   this job is what actually fails the build on a broken manual.
 # ─────────────────────────────────────────────────────────────────────────────
 jobs:
+  lint_manual_docs:
+    name: Lint Manual Sources
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Lint the manuals
+        run: python3 scripts/lint_manual_docs.py
+
+      - name: Prove every lint check can fail
+        run: python3 scripts/lint_manual_docs_negative.py
+
+      - name: Upload negative-test artifacts
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: docs-lint-negative
+          path: tests/output/docs_lint_negative_*/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job 1 – Build Python (Sphinx) documentation
+# ─────────────────────────────────────────────────────────────────────────────
   build_python_docs:
     name: Build Python Bindings Docs (Sphinx)
     runs-on: ubuntu-latest
@@ -70,7 +108,7 @@ jobs:
 # ─────────────────────────────────────────────────────────────────────────────
   build_doxygen_docs:
     name: Build C/C++ Engine Docs (Doxygen)
-    needs: build_python_docs
+    needs: [lint_manual_docs, build_python_docs]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -111,8 +149,29 @@ jobs:
         # land under /python and would put it one level too deep.
         working-directory: docs
         run: |
-          doxygen Doxyfile
+          doxygen Doxyfile 2>&1 | tee doxygen.log
           cp CNAME html/
+
+      - name: Fail on manual-scoped Doxygen problems
+        # WARN_AS_ERROR stays NO (the C++ headers carry ~1,200 warnings), so
+        # the gate is scoped: a missing image/input path, a page label declared
+        # twice (which silently re-points every @ref at the wrong page), a
+        # dangling @ref into any manual or the GUI tagfile, and a \snippet
+        # whose marker pair is broken. Each pattern has been seen to fire.
+        working-directory: docs
+        run: |
+          set -euo pipefail
+          fail=0
+          for pat in 'does not exist or is not a file' \
+                     'multiple use of page label' \
+                     "unable to resolve reference to '(application_manual|engine_manual|hydraulics_ref|hydrology_ref|quality_ref|manual_|tutorial_)" \
+                     'should appear twice|included file .* is not found'; do
+            if grep -E "$pat" doxygen.log; then
+              echo "::error::doxygen.log matches '$pat'"
+              fail=1
+            fi
+          done
+          exit $fail
 
       - name: Upload Doxygen docs artifact
         uses: actions/upload-artifact@v5
