@@ -156,6 +156,7 @@ WE water equivalent
 - **Figure 1-4** Block diagram of SWMM's state transition process.
 - **Figure 1-5** Flow chart of SWMM's simulation procedure.
 - **Figure 1-6** Interpolation of reported values from computed values.
+- **Figure 1-7** The hydrology of this manual: atmosphere, land surface and subsurface representations.
 
 - **Figure 2-1** Sinusoidal interpolation of hourly temperatures.
 

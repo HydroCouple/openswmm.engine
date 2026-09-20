@@ -119,10 +119,9 @@ SWMM model. Table 1-2 provides a summary of the various objects used in
 SWMM. Their properties and functions will be described in more detail
 throughout the course of this manual.
 
-![](hydraulics/media/media/hydraulics-image2.png "Objects2")
+![Figure 1-2 Objects of an OpenSWMM model](figures/png/eng_object_sketch.png)
 <p><span id="_Toc401645528"
-class="anchor"></span><strong>Figure 1‑2 SWMM's conceptual model of a
-stormwater drainage system</strong></p>
+class="anchor"></span><strong>Figure 1-2 Objects of an OpenSWMM model</strong></p>
 
 **Table 1-2 SWMM's modeling objects**
 
@@ -155,10 +154,9 @@ Figure 1-3 depicts the processes that SWMM models using the objects
 described previously and how they are tied to one another. The
 hydrological processes depicted in this diagram include:
 
-![](hydraulics/media/media/hydraulics-image3.png "image3")
+![Figure 1-3 Processes modelled by OpenSWMM](figures/png/eng_process_flow.png)
 <p><span id="_Toc401645529"
-class="anchor"></span><strong>Figure 1‑3 Processes modeled by
-SWMM</strong></p>
+class="anchor"></span><strong>Figure 1-3 Processes modelled by OpenSWMM</strong></p>
 
 - time-varying precipitation
 
@@ -430,5 +428,15 @@ the unit of length and seconds as the unit of time.
 | Width | feet | meters |
 | Wind Speed | miles/hour | kilometers/hour |
 
+## 1.6 The Formulations This Manual Covers
 
+Figure 1-7 places the hydraulics of this manual on OpenSWMM's process map: the
+one-dimensional node–link network with its routing methods, pressurisation
+closures and node solution, the two-dimensional overland surface, and the
+exchange pathways between them. Each alternative carries its status
+(Implemented, Experimental, Planned or Retired); the compartments documented
+in @ref hydrology_reference_manual are shown faded.
 
+![Figure 1-7 The hydraulics of this manual: the 1D network, the 2D surface and their coupling](figures/png/hydraulics_conceptual_map.png)
+
+<strong>Figure 1-7 The hydraulics of this manual: the 1D network, the 2D surface and their coupling</strong>

@@ -445,15 +445,34 @@ class FigureSink:
         self.png_dir.mkdir(parents=True, exist_ok=True)
         self.svg_dir.mkdir(parents=True, exist_ok=True)
         png, svg = self.png_dir / f"{fig_id}.png", self.svg_dir / f"{fig_id}.svg"
-        fig.savefig(png, dpi=DPI, bbox_inches="tight", metadata={"Software": None})
+        # pad_inches=0: the canvases carry their own margins, and the default
+        # 0.1 in pad would push a 10 in figure past the 1600 px bound
+        fig.savefig(png, dpi=DPI, bbox_inches="tight", pad_inches=0, metadata={"Software": None})
+        self._shrink_png(png)
         with_salt = {"svg.hashsalt": fig_id}
         import matplotlib
         with matplotlib.rc_context(with_salt):
-            fig.savefig(svg, format="svg", bbox_inches="tight",
+            fig.savefig(svg, format="svg", bbox_inches="tight", pad_inches=0,
                         metadata={"Date": None, "Creator": None})
         plt.close(fig)
         self.produced.add(fig_id)
         print(f"  wrote {png.name} ({png.stat().st_size // 1024} KB) + {svg.name}")
+
+    @staticmethod
+    def _shrink_png(png: Path):
+        """Lossless re-encode; if still over the byte bound, quantise to a 256-colour palette.
+
+        Diagrams are flat colour and text, so a palette costs nothing visible
+        and halves the file. A figure that stays over the bound after that is
+        drawn too large: the build's bounds check reports it.
+        """
+        from PIL import Image
+        with Image.open(png) as im:
+            im.load()
+            im.save(png, optimize=True)
+            if png.stat().st_size > MAX_BYTES:
+                im.convert("RGB").quantize(colors=256, method=Image.Quantize.MEDIANCUT).save(png, optimize=True)
+                print(f"  note: {png.name} quantised to 256 colours to stay under {MAX_BYTES // 1024} KB")
 
     def run(self, deck: str, options: dict | None = None, key: str | None = None) -> RunResult:
         """Run docs/figures/decks/<deck> through the engine, cached under docs/figures/cache."""

@@ -14,18 +14,28 @@ SWMM conceptualizes a drainage system as a series of water and material flows be
 - The Groundwater compartment receives infiltration from the Land Surface compartment and transfers a portion of this inflow to the Transport compartment. This compartment is modeled using Aquifer objects.
 - The Transport compartment contains a network of conveyance elements (channels, pipes, pumps, and regulators) and storage/treatment units that transport water to outfalls or to treatment facilities. Inflows to this compartment can come from surface runoff, groundwater interflow, sanitary dry weather flow, or from user-defined hydrographs. The components of the Transport compartment are modeled with Node and Link objects
 
-Not all compartments need appear in a particular SWMM model. For example, one could model just the transport compartment, using pre-defined hydrographs as inputs. 
+Not all compartments need appear in a particular SWMM model. For example, one could model just the transport compartment, using pre-defined hydrographs as inputs.
+
+Figure 1-1 maps the compartments, the processes inside each of them and the
+alternative formulations OpenSWMM offers for those processes. Every
+alternative carries its status — Implemented, Experimental, Planned or
+Retired — in the same vocabulary the tables of this manual use.
+
+![Figure 1-1 Compartments, processes and the formulations that represent them](figures/png/eng_conceptual_map.png)
+
+*Figure 1-1 Compartments, processes and the formulations that represent them*
+
 
 
 
 ## Visual Objects
 
-Figure 3-1 depicts how a collection of SWMM’s visual objects might be arranged together to represent a stormwater drainage system. These objects can be displayed on a map in the SWMM workspace. The following sections describe each of these objects.
+Figure 1-2 depicts how a collection of OpenSWMM’s visual objects might be arranged together to represent a stormwater drainage system. These objects can be displayed on a map in the SWMM workspace. The following sections describe each of these objects.
 
  
-![Figure 3-1 Physical objects used to model a drainage system](figures/fig3-01-physical-objects.png)
+![Figure 1-2 Objects of an OpenSWMM model](figures/png/eng_object_sketch.png)
 
-*Figure 3-1 Physical objects used to model a drainage system*
+*Figure 1-2 Objects of an OpenSWMM model*
 
 ### Rain Gages
 
@@ -131,7 +141,7 @@ The principal input parameters for storage units include:
 
 ### Conduits
 
-Conduits are pipes or channels that move water from one node to another in the conveyance system. Their cross-sectional shapes can be selected from a variety of standard open and closed geometries as listed in Table 3-1.
+Conduits are pipes or channels that move water from one node to another in the conveyance system. Their cross-sectional shapes can be selected from a variety of standard open and closed geometries as listed in Table 1-1.
 
 Most open channels can be represented with a rectangular, trapezoidal, or user-defined irregular cross-section shape. For irregular sections a Transect object is used to define how depth varies with distance across the cross-section (see @ref engine_manual_ch1_conceptual_model below). Most new drainage and sewer pipes are circular while culverts typically have elliptical, rectangular or arch shapes. Elliptical and Arch pipes come in standard sizes that are listed in @ref manual_reference_tables and A.13. The Filled Circular shape allows the bottom of a circular pipe to be filled with sediment and thus limit its flow capacity. The Custom Closed Shape allows any closed geometrical shape that is symmetrical about the center line to be defined by supplying a Shape Curve for the cross section (see @ref engine_manual_ch1_conceptual_model below).
 
@@ -144,7 +154,7 @@ Q = \frac{1.49}{n} A R^{2/3} S^{1/2}
 where n is the Manning roughness coefficient. The slope S is interpreted as either the conduit slope or the friction slope (i.e., head loss per unit length), depending on the flow routing method used. 
 
 
-Table 3-1 Available cross section shapes for conduits
+Table 1-1 Available cross section shapes for conduits
 Name    Parameters    Shape    Name    Parameters    Shape
 Circular    Full Height         Circular Force Main    Full Height,
 Roughness     
@@ -200,18 +210,18 @@ where g is the acceleration of gravity and f is the Darcy-Weisbach friction fact
 
 A constant rate of exfiltration of water along the length of the conduit can be modeled by supplying a Seepage Rate value (in/hr or mm/hr). This only accounts for seepage losses, not infiltration of rainfall dependent groundwater. The latter can be modeled using SWMM’s RDII feature (see @ref engine_manual_ch1_conceptual_model).
 
-A conduit can also be designated to act as a culvert (see Figure 3-2) if a Culvert Inlet Geometry code number is assigned to it. These code numbers are listed in @ref manual_reference_tables. Culvert conduits are checked continuously during dynamic wave flow routing to see if they operate under Inlet Control as defined in the Federal Highway Administration’s publication Hydraulic Design of Highway Culverts Third Edition (Publication No. FHWA-HIF-12-026, April 2012). Under inlet control a culvert obeys a particular flow versus inlet depth rating curve whose shape depends on the culvert’s shape, size, slope, and inlet geometry.
+A conduit can also be designated to act as a culvert (see Figure 1-4) if a Culvert Inlet Geometry code number is assigned to it. These code numbers are listed in @ref manual_reference_tables. Culvert conduits are checked continuously during dynamic wave flow routing to see if they operate under Inlet Control as defined in the Federal Highway Administration’s publication Hydraulic Design of Highway Culverts Third Edition (Publication No. FHWA-HIF-12-026, April 2012). Under inlet control a culvert obeys a particular flow versus inlet depth rating curve whose shape depends on the culvert’s shape, size, slope, and inlet geometry.
 
-Street and channel conduits with storm drain inlet structures (see Figure 3-3) use the methods described in the Federal Highway Administration's publication Urban Drainage Design Manual - HEC-22 (Publication No. FHWA-NHI-10-009, August 2013) to determine the amount of flow they capture.
+Street and channel conduits with storm drain inlet structures (see Figure 1-5) use the methods described in the Federal Highway Administration's publication Urban Drainage Design Manual - HEC-22 (Publication No. FHWA-NHI-10-009, August 2013) to determine the amount of flow they capture.
 
  
-![Figure 3-2 Concrete box culvert](figures/fig3-02-box-culvert.jpg)
+![Figure 1-4 Concrete box culvert](figures/fig3-02-box-culvert.jpg)
 
-*Figure 3-2 Concrete box culvert*
+*Figure 1-4 Concrete box culvert*
  
-![Figure 3-3 Storm drain inlet](figures/fig3-03-storm-drain-inlet.png)
+![Figure 1-5 Storm drain inlet](figures/fig3-03-storm-drain-inlet.png)
 
-*Figure 3-3 Storm drain inlet*
+*Figure 1-5 Storm drain inlet*
 
 The principal input parameters for conduits are:
 - names of the inlet and outlet nodes
@@ -283,9 +293,9 @@ The principal input parameters for an orifice include:
 
 Weirs, like orifices, are used to model outlet and diversion structures in a drainage system. Weirs are typically located across a channel, along its side, or at the top of a storage unit. They are internally represented in SWMM as a link connecting two nodes, where the weir itself is placed at the upstream node. A flap gate can be included to prevent backflow.
 
-Five varieties of weirs are available, each incorporating a different formula for computing flow across the weir as listed in Table 3-2.
+Five varieties of weirs are available, each incorporating a different formula for computing flow across the weir as listed in Table 1-2.
 
-Table 3 2 Available types of weirs
+Table 1-2 Available types of weirs
 Weir Type    Cross Section Shape    Flow Formula
 Transverse     Rectangular    C_W Lh^(3/2)
 Side flow     Rectangular    C_W Lh^(5/3)
@@ -296,7 +306,7 @@ Cw = weir discharge coefficient, L = weir length, S = side slope of
 V-notch or trapezoidal weir, h = head difference across the weir,
 Cws = discharge coefficient through sides of trapezoidal weir.
 
-The Roadway weir is a broad crested rectangular weir used model roadway crossings usually in conjunction with culvert-type conduits (see Figure 3-2). It uses curves from the Federal Highway Administration publication Hydraulic Design of Highway Culverts Third Edition (Publication No. FHWA-HIF-12-026, April 2012) to determine CW as a function of h and roadway width.
+The Roadway weir is a broad crested rectangular weir used model roadway crossings usually in conjunction with culvert-type conduits (see Figure 1-4). It uses curves from the Federal Highway Administration publication Hydraulic Design of Highway Culverts Third Edition (Publication No. FHWA-HIF-12-026, April 2012) to determine CW as a function of h and roadway width.
 
 Weirs can be used as storage unit outlets under all types of flow routing. If not attached to a storage unit, they can only be used in drainage networks that are analyzed with Dynamic Wave flow routing.
 
@@ -365,12 +375,12 @@ Snowmelt parameters are climatic variables that apply across the entire study ar
 
 ### Areal Depletion
 
-Areal depletion refers to the tendency of accumulated snow to melt non-uniformly over the surface of a subcatchment. As the melting process proceeds, the area covered by snow gets reduced. This behavior is described by an Areal Depletion Curve that plots the fraction of total area that remains snow covered against the ratio of the actual snow depth to the depth at which there is 100% snow cover. A typical ADC for a natural area is shown in Figure 3-4. Two such curves can be supplied to SWMM, one for impervious areas and another for pervious areas.
+Areal depletion refers to the tendency of accumulated snow to melt non-uniformly over the surface of a subcatchment. As the melting process proceeds, the area covered by snow gets reduced. This behavior is described by an Areal Depletion Curve that plots the fraction of total area that remains snow covered against the ratio of the actual snow depth to the depth at which there is 100% snow cover. A typical ADC for a natural area is shown in Figure 1-6. Two such curves can be supplied to SWMM, one for impervious areas and another for pervious areas.
 
  
-![Figure 3-4 Areal depletion curve for a natural area](figures/fig3-04-areal-depletion.png)
+![Figure 1-6 Areal depletion curve for a natural area](figures/fig3-04-areal-depletion.png)
 
-*Figure 3-4 Areal depletion curve for a natural area*
+*Figure 1-6 Areal depletion curve for a natural area*
 
 ### Climate Adjustments
 
@@ -410,7 +420,7 @@ Aquifers are connected to subcatchments and to drainage system nodes through a s
 
 Unit Hydrographs (UHs) estimate rainfall-dependent infiltration and inflow (RDII) into a sewer system. A UH set contains up to three such hydrographs, one for a short-term response, one for an intermediate-term response, and one for a long-term response. A UH group can have up to 12 UH sets, one for each month of the year. Each UH group is considered as a separate object by SWMM, and is assigned its own unique name along with the name of the rain gage that supplies rainfall data to it.
 
-Each unit hydrograph, as shown in Figure 3-5, is defined by three parameters:
+Each unit hydrograph, as shown in Figure 1-7, is defined by three parameters:
 - R: the fraction of rainfall volume that enters the sewer system
 - T: the time from the onset of rainfall to the peak of the UH in hours
 - K: the ratio of time to recession of the UH to the time to peak
@@ -421,9 +431,9 @@ A unit hydrograph can also have a set of Initial Abstraction (IA) parameters ass
 - an initial depth of stored IA (inches or mm).
 
  
-![Figure 3-5 An RDII unit hydrograph](figures/fig3-05-rdii-unit-hydrograph.png)
+![Figure 1-7 An RDII unit hydrograph](figures/fig3-05-rdii-unit-hydrograph.png)
 
-*Figure 3-5 An RDII unit hydrograph*
+*Figure 1-7 An RDII unit hydrograph*
 
 To generate RDII into a drainage system node, the node must identify (through its Inflows property) the UH group and the area of the surrounding sewershed that contributes RDII flow.
 
@@ -433,42 +443,42 @@ To generate RDII into a drainage system node, the node must identify (through it
 
 ### Transects
 
-Transects refer to the geometric data that describe how bottom elevation varies with horizontal distance over the cross-section of a natural channel or irregular-shaped conduit. Figure 3-6 displays an example transect for a natural channel.
+Transects refer to the geometric data that describe how bottom elevation varies with horizontal distance over the cross-section of a natural channel or irregular-shaped conduit. Figure 1-8 displays an example transect for a natural channel.
 
-Each transect must be given a unique name. Conduits refer to that name to represent their shape. A special Transect Editor is available for editing the station-elevation data of a transect. SWMM internally converts these data into tables of area, top width, and hydraulic radius versus channel depth. In addition, as shown in Figure 3-6, each transect can have a left and right overbank section whose Manning's roughness coefficient can be different from that of the main channel. This feature can provide more realistic estimates of channel conveyance under high flow conditions.
+Each transect must be given a unique name. Conduits refer to that name to represent their shape. A special Transect Editor is available for editing the station-elevation data of a transect. SWMM internally converts these data into tables of area, top width, and hydraulic radius versus channel depth. In addition, as shown in Figure 1-8, each transect can have a left and right overbank section whose Manning's roughness coefficient can be different from that of the main channel. This feature can provide more realistic estimates of channel conveyance under high flow conditions.
 
  
-![Figure 3-6 Example of a natural channel transect](figures/fig3-06-natural-transect.jpg)
+![Figure 1-8 Example of a natural channel transect](figures/fig3-06-natural-transect.jpg)
 
-*Figure 3-6 Example of a natural channel transect*
+*Figure 1-8 Example of a natural channel transect*
 
 ### Streets
 
-Streets are a specialized form of transect that describes the typical cross-section geometry of a street or roadway. The Figure 3-7 shows a half-street layout along with the dimensions a user needs to provide.
+Streets are a specialized form of transect that describes the typical cross-section geometry of a street or roadway. The Figure 1-9 shows a half-street layout along with the dimensions a user needs to provide.
 
  
-![Figure 3-7 Definitional sketch of a street cross-section](figures/fig3-07-street-cross-section.png)
+![Figure 1-9 Definitional sketch of a street cross-section](figures/fig3-07-street-cross-section.png)
 
-*Figure 3-7 Definitional sketch of a street cross-section*
+*Figure 1-9 Definitional sketch of a street cross-section*
 
 Each street section object is assigned an ID name that a conduit can refer to for describing its cross-section geometry. A Street Section Editor is available for providing a street section's dimensions and whether it is one-sided or two-sided.
 Inlets
 
 Street inlets are curb and gutter openings that convey runoff from streets into below-ground sewers. Drop inlets serve a similar purpose for open rectangular and trapezoidal channels. SWMM can compute the amount of flow captured by inlets and sent to designated sewer nodes using the U.S. Federal Highway Administration’s HEC-22 methodology . The type, sizing, and spacing of street inlets will determine if the spread and depth of water on roadways can be maintained at acceptable levels. 
 
-To analyze street drainage with SWMM a site is represented as a dual drainage system consisting of both street conduits along the ground surface and sewer conduits below ground (see Figure 3-8).  An inlet structure will divert some portion of the street flow it carries into a designated node of the sewer system with the rest bypassed to downstream street conduits. When an inlet’s sewer node reaches its full depth any excess sewer flow that causes it to flood is routed back into the street's downstream node rather than having it leave the system as it normally would.
+To analyze street drainage with SWMM a site is represented as a dual drainage system consisting of both street conduits along the ground surface and sewer conduits below ground (see Figure 1-10).  An inlet structure will divert some portion of the street flow it carries into a designated node of the sewer system with the rest bypassed to downstream street conduits. When an inlet’s sewer node reaches its full depth any excess sewer flow that causes it to flood is routed back into the street's downstream node rather than having it leave the system as it normally would.
  
-![Figure 3-8 Representation of a dual drainage system](figures/fig3-08-dual-drainage.png)
+![Figure 1-10 Representation of a dual drainage system](figures/fig3-08-dual-drainage.png)
 
-*Figure 3-8 Representation of a dual drainage system*
+*Figure 1-10 Representation of a dual drainage system*
 
-As shown in Figure 3-8, inlets can be located either on a continuous sloping section of roadway (on-grade, sometimes referred to as a flow-by condition) or at a low point where flow tends to pool (on-sag, sometimes referred to as a sump condition).
+As shown in Figure 1-10, inlets can be located either on a continuous sloping section of roadway (on-grade, sometimes referred to as a flow-by condition) or at a low point where flow tends to pool (on-sag, sometimes referred to as a sump condition).
 
-SWMM’s HEC-22 inlet capture equations support the inlet types shown in Figure 3-9. Drop inlets can only be used with open rectangular or trapezoidal channels while the other curb and gutter inlets can only be placed in conduits with Street cross-sections. An additional Custom type of inlet can be used in both streets and channels. Its capture efficiency is described by either a user-supplied Diversion curve (captured flow versus approach flow) or Rating curve (captured flow versus flow depth).
+SWMM’s HEC-22 inlet capture equations support the inlet types shown in Figure 1-11. Drop inlets can only be used with open rectangular or trapezoidal channels while the other curb and gutter inlets can only be placed in conduits with Street cross-sections. An additional Custom type of inlet can be used in both streets and channels. Its capture efficiency is described by either a user-supplied Diversion curve (captured flow versus approach flow) or Rating curve (captured flow versus flow depth).
  
-![Figure 3-9 HEC-22 inlets supported by SWMM](figures/fig3-09-hec22-inlets.png)
+![Figure 1-11 HEC-22 inlets supported by SWMM](figures/fig3-09-hec22-inlets.png)
 
-*Figure 3-9 HEC-22 inlets supported by SWMM*
+*Figure 1-11 HEC-22 inlets supported by SWMM*
 
 To add an analysis of street inlets to a SWMM project:
 - Create one network layout for streets and another for sewers.
@@ -696,12 +706,12 @@ There are two different approaches for placing LID controls within a subcatchmen
 - place one or more controls in an existing subcatchment that will displace an equal amount of non-LID area from the subcatchment
 - create a new subcatchment devoted entirely to just a single LID practice.
 
-The first approach allows a mix of LIDs to be placed into a subcatchment, each treating a different portion of the runoff generated from the non-LID fraction of the subcatchment. Note that under this option the subcatchment's LIDs act in parallel -- it is not possible to make them act in series (i.e., have the outflow from one LID control become the inflow to another LID). Also, after LID placement the subcatchment's Percent Impervious and Width properties may require adjustment to compensate for the amount of original subcatchment area that has now been replaced by LIDs (see Figure 3-10 below). For example, suppose that a subcatchment which is 40% impervious has 75% of that area converted to a permeable pavement LID. After the LID is added the subcatchment's percent imperviousness should be changed to the percent of impervious area remaining divided by the percent of non-LID area remaining. This works out to (1 - 0.75)*40 / (100 - 0.75*40) or 14.3 %.
+The first approach allows a mix of LIDs to be placed into a subcatchment, each treating a different portion of the runoff generated from the non-LID fraction of the subcatchment. Note that under this option the subcatchment's LIDs act in parallel -- it is not possible to make them act in series (i.e., have the outflow from one LID control become the inflow to another LID). Also, after LID placement the subcatchment's Percent Impervious and Width properties may require adjustment to compensate for the amount of original subcatchment area that has now been replaced by LIDs (see Figure 1-12 below). For example, suppose that a subcatchment which is 40% impervious has 75% of that area converted to a permeable pavement LID. After the LID is added the subcatchment's percent imperviousness should be changed to the percent of impervious area remaining divided by the percent of non-LID area remaining. This works out to (1 - 0.75)*40 / (100 - 0.75*40) or 14.3 %.
 
  
-![Figure 3-10 Adjustment of subcatchment parameters after LID placement](figures/fig3-10-lid-adjustment.png)
+![Figure 1-12 Adjustment of subcatchment parameters after LID placement](figures/fig3-10-lid-adjustment.png)
 
-*Figure 3-10 Adjustment of subcatchment parameters after LID placement*
+*Figure 1-12 Adjustment of subcatchment parameters after LID placement*
 
 Under this first approach the runoff available for capture by the subcatchment's LIDs is the runoff generated from its impervious area. If the option to re-route some fraction of this runoff to the pervious area is exercised, then only the remaining impervious runoff (if any) will be available for LID treatment. Also note that green roofs and roof disconnection only treat the precipitation that falls directly on them and do not capture runoff from other impervious areas in their subcatchment.
 
@@ -711,24 +721,35 @@ The second approach allows LID controls to be strung along in series and also al
 ## Computational Methods
 
 SWMM is a physically based, discrete-time simulation model. It employs principles of conservation of mass, energy, and momentum wherever appropriate. This section briefly describes the methods SWMM uses to model stormwater runoff quantity and quality through the following physical processes:
-- Surface Runoff
-- Groundwater
-- Surface Ponding        Infiltration
-- Snowmelt
-- Water Quality Routing        Groundwater
-- Flow Routing
-- Low Impact Development
-More detailed descriptions of SWMM’s computational procedures can be found in a series of three reference manuals      available on EPA’s SWMM web site. 
+- surface runoff
+- infiltration
+- groundwater
+- snowmelt
+- surface ponding
+- flow routing
+- water quality routing
+- low impact development
+
+The theory and numerical methods behind each are in the three OpenSWMM
+reference manuals: @ref hydrology_reference_manual,
+@ref hydraulics_reference_manual and @ref quality_reference_manual. Figure
+1-3 shows how the processes connect, from precipitation on the subcatchments
+and on the 2D mesh through the subsurface to routing, transport and the
+outfalls.
+
+![Figure 1-3 Processes modelled by OpenSWMM](figures/png/eng_process_flow.png)
+
+*Figure 1-3 Processes modelled by OpenSWMM*
 
 ### Surface Runoff
 
-The conceptual view of surface runoff used by SWMM is illustrated in Figure 3-11 below. Each subcatchment surface is treated as a nonlinear reservoir. Inflow comes from precipitation and any designated upstream subcatchments. There are several outflows, including infiltration, evaporation, and surface runoff. The capacity of this "reservoir" is the maximum depression storage, which is the maximum surface storage provided by ponding, surface wetting, and interception. Surface runoff per unit area occurs only when the depth of water in the "reservoir" exceeds the maximum depression storage, ds, in which case the outflow is given by Manning's equation. Depth of water over the subcatchment (d) is continuously updated with time by solving numerically a water balance equation over the subcatchment.
+The conceptual view of surface runoff used by SWMM is illustrated in Figure 1-13 below. Each subcatchment surface is treated as a nonlinear reservoir. Inflow comes from precipitation and any designated upstream subcatchments. There are several outflows, including infiltration, evaporation, and surface runoff. The capacity of this "reservoir" is the maximum depression storage, which is the maximum surface storage provided by ponding, surface wetting, and interception. Surface runoff per unit area occurs only when the depth of water in the "reservoir" exceeds the maximum depression storage, ds, in which case the outflow is given by Manning's equation. Depth of water over the subcatchment (d) is continuously updated with time by solving numerically a water balance equation over the subcatchment.
 
 
  
-![Figure 3-11 Conceptual view of surface runoff](figures/fig3-11-surface-runoff.png)
+![Figure 1-13 Conceptual view of surface runoff](figures/fig3-11-surface-runoff.png)
 
-*Figure 3-11 Conceptual view of surface runoff*
+*Figure 1-13 Conceptual view of surface runoff*
 
 ### Infiltration
 
@@ -753,12 +774,12 @@ SWMM also allows the infiltration recovery rate to be adjusted by a fixed amount
 
 ### Groundwater
 
-Figure 3-12 is a definitional sketch of the two-zone groundwater model that is used in SWMM. The upper zone is unsaturated with a variable moisture content of . The lower zone is fully saturated and therefore its moisture content is fixed at the soil porosity . The fluxes shown in the figure, expressed as volume per unit area per unit time, consist of the following:
+Figure 1-14 is a definitional sketch of the two-zone groundwater model that is used in SWMM. The upper zone is unsaturated with a variable moisture content of . The lower zone is fully saturated and therefore its moisture content is fixed at the soil porosity . The fluxes shown in the figure, expressed as volume per unit area per unit time, consist of the following:
 
  
-![Figure 3-12 Two-zone groundwater model](figures/fig3-12-two-zone-groundwater.png)
+![Figure 1-14 Two-zone groundwater model](figures/fig3-12-two-zone-groundwater.png)
 
-*Figure 3-12 Two-zone groundwater model*
+*Figure 1-14 Two-zone groundwater model*
 
 fI    infiltration from the surface 
 fE     evapotranspiration from the upper zone which is a fixed fraction of the un-used surface evaporation
@@ -834,12 +855,12 @@ The pollutant concentration in both a conduit and a storage node will be reduced
 
 ### LID Representation
 
-LID controls are represented by a combination of vertical layers whose properties are defined on a per-unit-area basis. This allows LIDs of the same design but differing area coverage to easily be placed within different subcatchments of a study area. During a simulation SWMM performs a moisture balance that keeps track of how much water moves between and is stored within each LID layer. As an example, the layers used to model a bio-retention cell and the flow pathways between them are shown in Figure 3-13. The various possible layers consist of the following:
+LID controls are represented by a combination of vertical layers whose properties are defined on a per-unit-area basis. This allows LIDs of the same design but differing area coverage to easily be placed within different subcatchments of a study area. During a simulation SWMM performs a moisture balance that keeps track of how much water moves between and is stored within each LID layer. As an example, the layers used to model a bio-retention cell and the flow pathways between them are shown in Figure 1-15. The various possible layers consist of the following:
 
  
-![Figure 3-13 Conceptual diagram of a bio-retention cell LID](figures/fig3-13-bioretention-cell.png)
+![Figure 1-15 Conceptual diagram of a bio-retention cell LID](figures/fig3-13-bioretention-cell.png)
 
-*Figure 3-13 Conceptual diagram of a bio-retention cell LID*
+*Figure 1-15 Conceptual diagram of a bio-retention cell LID*
 
 - The Surface Layer corresponds to the ground (or pavement) surface that receives direct rainfall and runon from upstream land areas, stores excess inflow in depression storage, and generates surface outflow that either enters the drainage system or flows onto downstream land areas.
 - The Pavement Layer is the layer of porous concrete or asphalt used in continuous permeable pavement systems, or is the paver blocks and filler material used in modular systems.
@@ -847,9 +868,9 @@ LID controls are represented by a combination of vertical layers whose propertie
 - The Storage Layer is a bed of crushed rock or gravel that provides storage in bio-retention cells, porous pavement, and infiltration trench systems. For a rain barrel it is simply the barrel itself.
 - The Drain System conveys water out of the gravel storage layer of bio-retention cells, permeable pavement systems, and infiltration trenches (typically with slotted pipes) into a common outlet pipe or chamber. For rain barrels it is simply the drain valve at the bottom of the barrel while for rooftop disconnection it is the roof gutter and downspout system.
 - The Drainage Mat Layer is a mat or plate placed between the soil media and the roof in a green roof whose purpose is to convey any water that drains through the soil layer off of the roof.
-Table 3-3 indicates which combination of layers applies to each type of LID (x means required, o means optional). 
+Table 1-3 indicates which combination of layers applies to each type of LID (x means required, o means optional). 
 
-Table 3 3 Layers used to model different types of LID units
+Table 1-3 Layers used to model different types of LID units
 LID Type    Surface    Pavement    Soil    Storage    Drain    Drainage Mat
 Bio-Retention Cell    x        x    o    o    
 Rain Garden    x        x            
