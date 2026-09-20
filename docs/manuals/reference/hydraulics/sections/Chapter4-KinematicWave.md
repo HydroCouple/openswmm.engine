@@ -101,7 +101,7 @@ in Figure 4-2. A weighted Wendroff implicit finite difference scheme
 
 \f[\frac{(1 - \theta)\left( A_{1}^{t + \Delta t} - A_{1}^{t} \right) + \theta\left( A_{2}^{t + \Delta t} - A_{2}^{t} \right)}{\Delta t} + \frac{(1 - \phi)\left( Q_{2}^{t} - Q_{1}^{t} \right) + \phi\left( Q_{2}^{t + \Delta t} - Q_{1}^{t + \Delta t} \right)}{L} = 0\f]   (4-7)
 
-![](hydraulics/media/media/image20.png "image20")
+![](hydraulics/media/media/hydraulics-image20.png "image20")
 
 **Figure 4-2 Space-time grid for kinematic wave analysis**
 
@@ -441,7 +441,7 @@ should be considered the more accurate one, with its greater reduction
 in peak flow due to the storage effect provided by the additional
 inertia and pressure terms included in the dynamic wave formulation.
 
-![](hydraulics/media/media/image21.png "image21")
+![](hydraulics/media/media/hydraulics-image21.png "image21")
 
 **Figure 4-3 Outflow hydrograph for example conduit**
 

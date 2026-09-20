@@ -173,7 +173,7 @@ event, with a separate *Q<sub>t</sub>* computed for each of the three unit
 hydrographs. These are then added together to produce the total flow per
 unit area for time period *t*.
 
-![RDII%20Hydrographs](hydrology/media/media/image49.png)
+![RDII%20Hydrographs](hydrology/media/media/hydrology-image49.png)
 
 **Figure 7-4 Use of three unit hydrographs to represent RDII (Vallabhaneni et al., 2007).**
 
@@ -277,18 +277,18 @@ activities:
     resultant hydrograph best matches the RDII flow extracted from the
     flow record (see Figure 7-7).
 
-![](hydrology/media/media/image50.png "RDII_Sewersheds")
+![](hydrology/media/media/hydrology-image50.png "RDII_Sewersheds")
 <p><span id="_Toc426447712"
 class="anchor"></span><strong>Figure 7-5 Sewershed delineation
 (Vallabhaneni et al., 2007).</strong></p>
 
-![](hydrology/media/media/image51.png "RDII_Flow_History")
+![](hydrology/media/media/hydrology-image51.png "RDII_Flow_History")
 <p><span id="_Toc426447713"
 class="anchor"></span><strong>Figure 7-6 Extracting RDII flow from a
 continuous flow monitor (Vallabhaneni et al.,
 2007).</strong></p>
 
-![RDII_UH_Estimate](hydrology/media/media/image52.png)
+![RDII_UH_Estimate](hydrology/media/media/hydrology-image52.png)
 
 **Figure 7-7 Fitting unit hydrographs to an RDII flow record (Vallabhaneni et al., 2007).**
 

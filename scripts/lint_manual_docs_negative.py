@@ -48,7 +48,7 @@ CASES = [
      "raw $ math"),
     ("image_missing",
      "manuals/engine/engine_manual.md",
-     "figures/figure1_1_urban_sewershed.png", "figures/nope.png",
+     "figures/figure1_1_urban_sewershed.jpg", "figures/nope.png",
      "image not found"),
     ("section_undocumented",
      "manuals/engine/sections/Chapter2-InputFileReference.md",
@@ -60,8 +60,38 @@ CASES = [
      "ERROR 101 is in ErrorCodes.hpp but not in Appendix A"),
     ("figure_uncited",
      "manuals/engine/sections/Chapter1-ConceptualModel.md",
-     "figures/fig3-02-box-culvert.png", "figures/fig3-02-box-culvert-renamed.png",
-     "is never cited by"),
+     "figures/fig3-03-storm-drain-inlet.png", "figures/fig3-03-storm-drain-inlet-renamed.png",
+     "never embedded by engine_manual_ch1_conceptual_model"),
+    ("manifest_row_deleted",
+     "figures/MANIFEST.tsv",
+     "eng_fig3_03_storm_drain_inlet\t", "# eng_fig3_03_storm_drain_inlet\t",
+     "has no MANIFEST.tsv row"),
+    ("manifest_wrong_page",
+     "figures/MANIFEST.tsv",
+     "\tengine_manual_ch1_conceptual_model\t3-3\t", "\tengine_manual_ch4_reports\t3-3\t",
+     "which is not in its page_id"),
+    ("manifest_figure_no_drift",
+     "figures/MANIFEST.tsv",
+     "\tengine_manual_ch1_conceptual_model\t3-3\t", "\tengine_manual_ch1_conceptual_model\t3-9\t",
+     "no 'Figure 3-9' caption within 5 lines"),
+    ("manifest_bad_tier",
+     "figures/MANIFEST.tsv",
+     "eng_fig3_03_storm_drain_inlet\tlegacy\t", "eng_fig3_03_storm_drain_inlet\tantique\t",
+     "tier 'antique' is not one of"),
+    ("manifest_generated_without_generator",
+     "figures/MANIFEST.tsv",
+     "eng_fig3_03_storm_drain_inlet\tlegacy\t", "eng_fig3_03_storm_drain_inlet\tsynthetic\t",
+     "generated rows must embed figures/png/eng_fig3_03_storm_drain_inlet.png"),
+    ("manifest_orphan",
+     "COPY", "manuals/engine/figures/fig3-03-storm-drain-inlet.png", "images/stray.png",
+     "images/stray.png is on disk but has no MANIFEST.tsv row (orphan)"),
+    ("manifest_ambiguous_basename",
+     "COPY", "manuals/engine/figures/fig3-03-storm-drain-inlet.png",
+     "images/fig3-03-storm-drain-inlet.png",
+     "basename fig3-03-storm-drain-inlet.png exists in 2 IMAGE_PATH dirs"),
+    ("manifest_unrenderable",
+     "COPY", "manuals/engine/figures/fig3-03-storm-drain-inlet.png", "images/legacy.emf",
+     ".emf is not renderable by browsers"),
     ("bad_status_word",
      "manuals/reference/hydraulics/sections/Chapter9-TwoDimensional.md",
      "\\status{Implemented} |", "\\status{Shipped} |",
@@ -148,16 +178,25 @@ def main():
     for name, rel, old, new, expect in CASES:
         dst = out / name / "docs"
         copy_docs(dst)
-        target = dst / rel
-        text = target.read_text(errors="replace")
-        if old not in text:
-            summary.append(f"FAIL  {name}  mutation anchor not found in {rel}: {old[:50]!r}")
-            failures += 1
-            continue
-        target.write_text(text.replace(old, new, 1))
+        if rel == "COPY":
+            # (name, "COPY", source, destination, expect): plant a second copy of
+            # an image — the mutation for orphan / collision / format checks.
+            src, dest = dst / old, dst / new
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dest)
+            what = f"copy {old} -> {new}"
+        else:
+            target = dst / rel
+            text = target.read_text(errors="replace")
+            if old not in text:
+                summary.append(f"FAIL  {name}  mutation anchor not found in {rel}: {old[:50]!r}")
+                failures += 1
+                continue
+            target.write_text(text.replace(old, new, 1))
+            what = f"mutate {rel}: {old[:60]!r} -> {new[:60]!r}"
         rc, log = run_lint(dst)
-        (out / f"{name}.log").write_text(f"$ lint --docs-root {dst}\n# mutate {rel}: "
-                                         f"{old[:60]!r} -> {new[:60]!r}\n# expect: {expect}\n\n{log}")
+        (out / f"{name}.log").write_text(f"$ lint --docs-root {dst}\n# {what}\n"
+                                         f"# expect: {expect}\n\n{log}")
         ok = rc == 1 and expect in log
         summary.append(f"{'PASS' if ok else 'FAIL'}  {name}  (exit {rc}, "
                        f"{'found' if expect in log else 'MISSING'}: {expect})")

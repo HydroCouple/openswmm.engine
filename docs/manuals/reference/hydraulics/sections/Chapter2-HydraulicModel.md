@@ -14,7 +14,7 @@ system of sewer lines and their appurtenances are abstracted into a
 network of nodes and links of different types (pipe and pump links;
 junction, storage and outfall nodes for this particular example).
 
-![SewerSystem2.png](hydraulics/media/media/image7.png)
+![SewerSystem2.png](hydraulics/media/media/image7.jpg)
 
 **Figure 2-1 Node-link representation of a sewer system**
 **(Background from http://www.sewerhistory.org/photosgraphics/japan/)**
@@ -151,11 +151,11 @@ The required input parameters for a conduit link are:
 
 - cross-section shape and dimensions.
 
-![Link_offset.bmp](hydraulics/media/media/image8.png)
+![Link_offset.bmp](hydraulics/media/media/hydraulics-image8.png)
 
 SWMM allows conduits to be offset some distance above the invert of their connecting end nodes as shown in the figure on the right. The offset can be specified as either a distance above the invert (i.e., the distance between points 1 and 2 in the figure) or as the elevation of the conduit's invert (i.e., the elevation of point 1). Internally the offset is maintained as an elevation.
 
-![slope.png](hydraulics/media/media/image9.png)
+![slope.png](hydraulics/media/media/hydraulics-image9.png)
 
 SWMM also makes use of a conduit's slope in its hydraulic calculations. Slope is not provided directly as an input variable but is instead computed from the elevation of a conduit's end node inverts and its offsets. Let *L* be the length of the conduit, *∆y* be the difference in elevation and *∆x* the horizontal distance between the invert at each end of the conduit. Then from the diagram on the right:
 
@@ -362,7 +362,7 @@ hydrograph shape. This behavior is depicted in Figure 2-2 from Miller
 | Reverse flow | yes | no |
 | Tidal effects | yes | no |
 
-![KWvsDW.png](hydraulics/media/media/image10.png)
+![KWvsDW.png](hydraulics/media/media/hydraulics-image10.png)
 
 **Figure 2-2 Comparison of dynamic wave and kinematic wave solutions (from Miller, 1984)**
 

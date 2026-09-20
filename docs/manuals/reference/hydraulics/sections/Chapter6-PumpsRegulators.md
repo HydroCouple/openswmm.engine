@@ -55,10 +55,10 @@ volumes.
 
 | **Type** | **Description** | **Image** |
 |---|---|---|
-| **Type1** | Consists of a series of constant flow rates that apply over a corresponding series of volume intervals at the pump's inlet node. | ![pump1.bmp](hydraulics/media/media/image40.png) |
-| **Type2** | Similar to a Type1 pump except that the fixed flow rate levels vary over a set of depth intervals at the pump's inlet node. | ![pump2.bmp](hydraulics/media/media/image41.png) |
-| **Type3** | A centrifugal pump characteristic curve at some nominal impeller speed represented in a piecewise linear fashion. Flow is a function of the head difference between the inlet and outlet nodes. | ![pump3.bmp](hydraulics/media/media/image42.png) |
-| **Type4** | A variable speed in-line pump where flow varies continuously with inlet node depth. | ![pump4.bmp](hydraulics/media/media/image43.png) |
+| **Type1** | Consists of a series of constant flow rates that apply over a corresponding series of volume intervals at the pump's inlet node. | ![pump1.bmp](hydraulics/media/media/hydraulics-image40.png) |
+| **Type2** | Similar to a Type1 pump except that the fixed flow rate levels vary over a set of depth intervals at the pump's inlet node. | ![pump2.bmp](hydraulics/media/media/hydraulics-image41.png) |
+| **Type3** | A centrifugal pump characteristic curve at some nominal impeller speed represented in a piecewise linear fashion. Flow is a function of the head difference between the inlet and outlet nodes. | ![pump3.bmp](hydraulics/media/media/hydraulics-image42.png) |
+| **Type4** | A variable speed in-line pump where flow varies continuously with inlet node depth. | ![pump4.bmp](hydraulics/media/media/hydraulics-image43.png) |
 | **Type5** | A variable speed version of the Type3 pump where the head v. flow curve shifts position depending on the pump's speed setting. | ![Pump5.bmp](hydraulics/media/media/image44.png) |
 
 For Type1 and Type 2 curves, the curve is searched in step-wise fashion
@@ -516,7 +516,7 @@ The properties of a weir link include:
 Figure 6-4 shows the different shapes of transverse weirs modeled by
 SWMM. The only shape allowed for a side weir is rectangular.
 
-![](hydraulics/media/media/image49.png "image49")
+![](hydraulics/media/media/hydraulics-image49.png "image49")
 <p><span id="_Toc484694738"
 class="anchor"></span><strong>Figure 6‑4 Transverse weir
 shapes</strong></p>
@@ -661,7 +661,7 @@ ft<sup>1/2</sup>/sec ) with head over the weir *H*<sub>W</sub> (in feet) present
 Brater and King (1976). The range of coefficients is rather small, from
 2.5 up to 2.8.
 
-> ![CWT.png](hydraulics/media/media/image50.png)
+> ![CWT.png](hydraulics/media/media/hydraulics-image50.png)
 
 **Figure 6‑5 Coefficient for triangular weirs (from Brater and King, 1976)**
 
@@ -734,7 +734,7 @@ weirs separate submergence factors are computed for the rectangular flow
 portion (*Q*<sub>R</sub> in Equation 6-20b with *n* = 3/2) and for the triangular
 flow portion (*Q*<sub>T</sub> in Equation 6-20c with *n* = 5/2).
 
-![](hydraulics/media/media/image51.png "image51")
+![](hydraulics/media/media/hydraulics-image51.png "image51")
 <p><span id="_Toc484694740"
 class="anchor"></span><strong>Figure 6‑6 Definitions of submerged and
 surcharged weir flow</strong></p>
@@ -937,7 +937,7 @@ and *b* are user-supplied constants. The tabular rating curve consists
 of pairs of head (*H*<sub>e</sub>) and flow (*Q*) values for points that the user
 chooses to represent the shape of the outlet's rating curve.
 
-![](hydraulics/media/media/image52.png "image52")
+![](hydraulics/media/media/hydraulics-image52.png "image52")
 <p><span id="_Toc484694741"
 class="anchor"></span><strong>Figure 6‑7 Rating curve for a vortex
 device compared to an orifice</strong></p>

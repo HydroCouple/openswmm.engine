@@ -82,7 +82,7 @@ In short, the NRCS provides an invaluable resource for information on
 soils and drainage of soils. The agency's data are ever more valuable as
 they increasingly reside on-line on the Web.
 
-![NRCS Table](hydrology/media/media/image15.png)
+![NRCS Table](hydrology/media/media/hydrology-image15.png)
 
 **Figure 4-1 Physical properties for Woodburn silt loam, Benton County, Oregon.**
 
@@ -1395,7 +1395,7 @@ different infiltration patterns over time. These patterns are influenced
 not only by the parameters that were chosen for each method, but also by
 the temporal pattern of rainfall intensity that occurs during an event.
 
-![](hydrology/media/media/image24.png "image24")
+![](hydrology/media/media/hydrology-image24.png "image24")
 <p><span id="_Toc426447688"
 class="anchor"></span><strong>Figure 4-8 Infiltration rates produced by
 different methods for a 2-inch rainfall event.</strong></p>
