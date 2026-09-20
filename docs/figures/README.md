@@ -72,6 +72,59 @@ CI never compares pixels — it audits the manifest and proves the synthetic
 generators execute. PNGs are exported at DPI 160 and must stay within
 1600 px width and 400 KB; keep figure widths ≤ 10 in.
 
+## Interactive diagrams: hotspots and workflow links
+
+`docs/custom/js/manual-interactive.js` (shipped by the Doxyfile, loaded by
+`custom/html/header.html`) wraps two kinds of diagram in a pan/zoom
+viewport at page load — drag to pan, click the diagram then scroll (or hold
+Ctrl/⌘) to zoom, pinch on touch, double-click to reset, toolbar buttons —
+and makes their parts clickable. Both degrade to the static image or
+diagram without JavaScript.
+
+**Figure hotspots.** A generator registers clickable regions in data
+coordinates:
+
+```python
+sink.hotspot("eng_process_flow", ax, x0, y0, x1, y1, "hydraulics_ref_ch8_finite_volume", "finite volume")
+```
+
+`save()` converts each box to fractions of the saved PNG (top-left
+origin) and `build` writes, after the figure's caption on every page the
+manifest row lists, a block the script reads:
+
+```
+<div class="fig-hotspots" data-fig="eng_process_flow">
+<span class="hs" data-box="0.0210,0.1234,0.4567,0.2345">@ref hydraulics_ref_ch8_finite_volume "finite volume"</span>
+</div>
+```
+
+The `@ref` is resolved by Doxygen (and validated by the lint), so a target
+that disappears fails the build rather than the click. Targets for the
+conceptual map, the process-flow chart and the object sketch come from
+`refs.py` (feature id or box title → page id or anchor); `primitives.pill_row`
+returns each pill's box through its `out=` list. `check` C13 asserts every
+block names a figure the page embeds and holds only well-formed spans;
+the blocks are hidden by `manual.css`. Never hand-edit a block — rebuild
+the figure.
+
+**Workflow links.** A Mermaid flowchart's nodes open a section when the
+block is followed *directly* by
+
+```
+</pre>
+<div class="workflow-links" data-workflow="fv_substep">
+<span data-node="D">@ref hydraulics_ref_ch8_lts "8.5.6 Local time stepping"</span>
+</div>
+```
+
+The script injects a Mermaid `click` directive per node before rendering
+(the `<!-- workflow: id -->` comment does not survive Doxygen, so adjacency
+is the pairing). The lint's `check_mermaid_workflows` requires the id to
+match, every node to exist in the diagram, and a flowchart (Mermaid has no
+`click` on state diagrams). Point nodes at explicit heading anchors
+(`### 8.5.6 Local time stepping {#hydraulics_ref_ch8_lts}`), never at the
+auto-generated `autotoc_md` ids.
+
 ## Why legacy files are prefixed with their manual
 
 Doxygen copies every image into one output directory by basename. The three

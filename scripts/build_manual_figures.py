@@ -47,6 +47,18 @@ What `check` asserts (every one has a recorded negative test):
   C12 no two image directories hold the same basename — Doxygen copies images by
       basename into one output directory, so a collision silently serves one
       manual's figure on another manual's page
+  C13 every `<div class="fig-hotspots" data-fig="X">` block names a figure the
+      page embeds, is closed, and holds only well-formed
+      `<span class="hs" data-box="x0,y0,x1,y1">@ref target "label"</span>` lines
+      (fractions of the image, top-left origin, x0 < x1, y0 < y1)
+  C14 the interactive-diagram assets are wired: docs/custom/js/manual-interactive.js
+      exists, the Doxyfile ships it (HTML_EXTRA_FILES) and header.html loads it
+
+Hotspots: a generator calls sink.hotspot(fig_id, ax, x0, y0, x1, y1, ref, label)
+in data coordinates; save() converts the boxes to fractions of the saved PNG and
+`build` rewrites the page's fig-hotspots block (inserted after the caption) so
+the clickable regions never drift from the drawing. Under --out the blocks are
+reported but no page is touched.
 """
 from __future__ import annotations
 
@@ -80,6 +92,11 @@ MAX_BYTES = 400 * 1024
 EXCLUDE_RE = re.compile(r"/SWMM[^/]*\.md$|/media/")
 EMBED_RE = re.compile(r"!\[[^\]]*\]\(([^) ]+)|<img[^>]+src=\"([^\"]+)\"")
 DPI = 160
+HOTSPOT_DIV_RE = re.compile(r'^<div class="fig-hotspots" data-fig="([A-Za-z0-9_]+)">\s*$')
+HOTSPOT_SPAN_RE = re.compile(
+    r'^<span class="hs" data-box="(\d\.\d{4}),(\d\.\d{4}),(\d\.\d{4}),(\d\.\d{4})">'
+    r'@ref [A-Za-z0-9_]+ "[^"]+"</span>\s*$')
+CAPTION_RE = re.compile(r"^(\*|<strong>|<em>)?Figure\s+[0-9A-Z]+-[0-9]+")
 
 
 # ── manifest ────────────────────────────────────────────────────────────────
@@ -278,6 +295,7 @@ def check_manifest(docs=DOCS, verbose=False) -> int:
     # C1 / C3 / C9 — embeds vs rows
     cited = defaultdict(set)
     embed_lines = defaultdict(list)
+    embedded_ids = defaultdict(set)
     for md in manual_md_files(docs):
         pid = page_id_of(md)
         rel = md.relative_to(docs).as_posix()
@@ -295,6 +313,35 @@ def check_manifest(docs=DOCS, verbose=False) -> int:
                 err(f"{rel}:{n}: {row.fig_id} is embedded by {pid}, which is not in its page_id")
             cited[resolved].add(pid)
             embed_lines[(resolved, pid)].append((rel, n, lines[n:n + 5]))
+            embedded_ids[rel].add(row.fig_id)
+        # C13 — hotspot blocks
+        i = 0
+        while i < len(lines):
+            m = HOTSPOT_DIV_RE.match(lines[i])
+            if lines[i].startswith('<div class="fig-hotspots"') and not m:
+                err(f"{rel}:{i + 1}: malformed fig-hotspots block opener")
+            if not m:
+                i += 1
+                continue
+            fid = m.group(1)
+            if fid not in embedded_ids[rel]:
+                err(f"{rel}:{i + 1}: fig-hotspots block for {fid}, but the page embeds no such figure")
+            j, n_spans = i + 1, 0
+            while j < len(lines) and lines[j].strip() != "</div>":
+                sm = HOTSPOT_SPAN_RE.match(lines[j])
+                if not sm:
+                    err(f"{rel}:{j + 1}: fig-hotspots line is not a well-formed hotspot span")
+                else:
+                    x0, y0, x1, y1 = (float(v) for v in sm.groups())
+                    if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1):
+                        err(f"{rel}:{j + 1}: hotspot box {x0},{y0},{x1},{y1} is not inside the image")
+                    n_spans += 1
+                j += 1
+            if j >= len(lines):
+                err(f"{rel}:{i + 1}: fig-hotspots block for {fid} is not closed by </div>")
+            elif n_spans == 0:
+                err(f"{rel}:{i + 1}: fig-hotspots block for {fid} holds no hotspot")
+            i = j + 1
     for r in rows:
         for p in r.pages:
             if p not in cited.get(r.file, ()):
@@ -363,6 +410,20 @@ def check_manifest(docs=DOCS, verbose=False) -> int:
     else:
         for e in st.self_check():
             err(e)
+
+    # C14 — the interactive-diagram assets are wired
+    js = docs / "custom" / "js" / "manual-interactive.js"
+    if not js.is_file():
+        err("docs/custom/js/manual-interactive.js is missing")
+    doxy = (docs / "Doxyfile").read_text(errors="replace") if (docs / "Doxyfile").exists() else ""
+    if "custom/js/manual-interactive.js" not in doxy:
+        err("docs/Doxyfile HTML_EXTRA_FILES does not ship custom/js/manual-interactive.js")
+    header = docs / "custom" / "html" / "header.html"
+    if not (header.is_file() and "manual-interactive.js" in header.read_text(errors="replace")):
+        err("docs/custom/html/header.html does not load manual-interactive.js")
+    css = docs / "custom" / "css" / "manual.css"
+    if not (css.is_file() and "fig-hotspots" in css.read_text(errors="replace")):
+        err("docs/custom/css/manual.css lacks the fig-hotspots rules")
 
     if verbose or not errors:
         n_gen = sum(1 for r in rows if r.tier in GENERATED)
@@ -437,6 +498,40 @@ class FigureSink:
         self.cli = cli
         self.produced = set()
         self.status = load_status(fig_dir.parent)
+        self._pending_hotspots = defaultdict(list)
+        self.hotspots = {}
+
+    def hotspot(self, fig_id: str, ax, x0, y0, x1, y1, ref: str, label: str):
+        """Register a clickable region of `fig_id`, in `ax` data coordinates.
+
+        `ref` is a Doxygen page id or anchor; `label` the link text. The
+        region is converted to fractions of the saved PNG by save().
+        """
+        if not ref or not label:
+            return
+        self._pending_hotspots[fig_id].append((ax, float(x0), float(y0), float(x1), float(y1), ref, label))
+
+    def _resolve_hotspots(self, fig, fig_id):
+        pending = self._pending_hotspots.pop(fig_id, [])
+        if not pending:
+            return
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        tb = fig.get_tightbbox(renderer)            # inches, the same box bbox_inches="tight" saves
+        dpi = fig.dpi
+        boxes = []
+        for ax, x0, y0, x1, y1, ref, label in pending:
+            (px0, py0), (px1, py1) = ax.transData.transform([(x0, y0), (x1, y1)])
+            fx0 = (min(px0, px1) / dpi - tb.x0) / tb.width
+            fx1 = (max(px0, px1) / dpi - tb.x0) / tb.width
+            fy0 = (tb.y1 - max(py0, py1) / dpi) / tb.height
+            fy1 = (tb.y1 - min(py0, py1) / dpi) / tb.height
+            clip = lambda v: min(1.0, max(0.0, v))  # noqa: E731
+            fx0, fx1, fy0, fy1 = clip(fx0), clip(fx1), clip(fy0), clip(fy1)
+            if fx1 - fx0 < 1e-3 or fy1 - fy0 < 1e-3:
+                continue
+            boxes.append((round(fx0, 4), round(fy0, 4), round(fx1, 4), round(fy1, 4), ref, label))
+        self.hotspots[fig_id] = boxes
 
     def save(self, fig, fig_id: str):
         if fig_id not in self.expected:
@@ -445,6 +540,7 @@ class FigureSink:
         self.png_dir.mkdir(parents=True, exist_ok=True)
         self.svg_dir.mkdir(parents=True, exist_ok=True)
         png, svg = self.png_dir / f"{fig_id}.png", self.svg_dir / f"{fig_id}.svg"
+        self._resolve_hotspots(fig, fig_id)
         # pad_inches=0: the canvases carry their own margins, and the default
         # 0.1 in pad would push a 10 in figure past the 1600 px bound
         fig.savefig(png, dpi=DPI, bbox_inches="tight", pad_inches=0, metadata={"Software": None})
@@ -511,6 +607,71 @@ def load_generator(path: Path):
     return mod
 
 
+def hotspot_block(fig_id: str, boxes) -> list:
+    lines = [f'<div class="fig-hotspots" data-fig="{fig_id}">']
+    for x0, y0, x1, y1, ref, label in boxes:
+        label = label.replace('"', "'")
+        lines.append(f'<span class="hs" data-box="{x0:.4f},{y0:.4f},{x1:.4f},{y1:.4f}">@ref {ref} "{label}"</span>')
+    lines.append("</div>")
+    return lines
+
+
+def upsert_hotspot_blocks(docs: Path, row, boxes) -> list:
+    """Write (or rewrite) the fig-hotspots block after the figure's caption on every page the row lists.
+
+    Returns the pages changed. A page that embeds the figure without a caption
+    line within five lines gets the block right after the embed.
+    """
+    pages = page_index(docs)
+    changed = []
+    block = hotspot_block(row.fig_id, boxes)
+    for pid in row.pages:
+        md = pages.get(pid)
+        if md is None:
+            continue
+        text = md.read_text(errors="replace")
+        lines = text.split("\n")
+        out, i, done = [], 0, False
+        while i < len(lines):
+            ln = lines[i]
+            out.append(ln)
+            m = EMBED_RE.search(ln)
+            if not done and m and Path(m.group(1) or m.group(2)).name == f"{row.fig_id}.png":
+                # find the caption line within the next five lines
+                j = i + 1
+                cap = None
+                for k in range(i + 1, min(i + 6, len(lines))):
+                    if CAPTION_RE.match(lines[k].strip()):
+                        cap = k
+                        break
+                end = cap if cap is not None else i
+                out.extend(lines[i + 1:end + 1])
+                j = end + 1
+                # an existing block (after optional blank lines) is replaced
+                k = j
+                while k < len(lines) and not lines[k].strip():
+                    k += 1
+                if k < len(lines) and HOTSPOT_DIV_RE.match(lines[k]) and HOTSPOT_DIV_RE.match(lines[k]).group(1) == row.fig_id:
+                    e = k
+                    while e < len(lines) and lines[e].strip() != "</div>":
+                        e += 1
+                    out.extend(lines[j:k])
+                    out.extend(block)
+                    i = e + 1
+                else:
+                    out.append("")
+                    out.extend(block)
+                    i = j
+                done = True
+                continue
+            i += 1
+        new = "\n".join(out)
+        if done and new != text:
+            md.write_text(new)
+            changed.append(md.relative_to(docs).as_posix())
+    return changed
+
+
 def cmd_build(args) -> int:
     docs = DOCS
     fig = docs / "figures"
@@ -567,6 +728,13 @@ def cmd_build(args) -> int:
         if sink.produced != want:
             print(f"ERROR figures: {gen} produced {sorted(sink.produced)} but the manifest lists {sorted(want)}")
             failures += 1
+        for fid, boxes in sorted(sink.hotspots.items()):
+            row = next(r for r in grp if r.fig_id == fid)
+            if out_dir is not None:
+                print(f"  {fid}: {len(boxes)} hotspots (not written under --out)")
+                continue
+            changed = upsert_hotspot_blocks(docs, row, boxes)
+            print(f"  {fid}: {len(boxes)} hotspots" + (f" -> {', '.join(changed)}" if changed else " (pages unchanged)"))
         for fid in sink.produced:
             png = sink.png_dir / f"{fid}.png"
             dims = png_size(png)

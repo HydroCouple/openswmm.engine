@@ -73,17 +73,27 @@ ACROSS = [("abstract", "gw", None, "water"),
 
 
 def _draw():
+    """Returns (fig, ax, hotspots); hotspots are (x0, y0, x1, y1, ref, label) in data units."""
     import primitives as P
+    import refs
     import style
 
     fig, ax = P.canvas(*CANVAS)
     geom = {}
+    hotspots = []
     for bid, (title, x, ytop, w, alts) in BOXES.items():
         P.label(ax, x + 0.6, ytop - 0.35, title, size=7.8, weight="bold", z=4)
-        used = P.pill_row(ax, x + 0.6, ytop - 2.0, w - 1.2, alts, size=6.6, z=4)
+        pills = []
+        used = P.pill_row(ax, x + 0.6, ytop - 2.0, w - 1.2, alts, size=6.6, z=4, out=pills)
         h = 2.0 + used + 0.7
         P.rounded(ax, x, ytop - h, w, h, fc=P.BOX_FILL, ec=P.BOX_EDGE, lw=0.9, r=0.6, z=1)
         geom[bid] = (x, ytop - h, w, h)
+        if title in refs.TITLE_REFS:
+            hotspots.append((x, ytop - 2.0, x + w, ytop, refs.TITLE_REFS[title], title))
+        for text, fid, px, py, pw, ph in pills:
+            ref = refs.ref_for(fid, text, title)
+            if ref:
+                hotspots.append((px, py, px + pw, py + ph, ref, text))
 
     def box(bid):
         return geom[bid]
@@ -120,11 +130,15 @@ def _draw():
     P.rounded(ax, 2, 1.0, 96, 2.8, fc=P.COMP_FILL["out"], ec=P.COMP_EDGE, lw=0.9, r=0.8, z=1)
     P.arrow(ax, (50, ty), (50, 3.8), kind="water", lw=1.1)
     P.label(ax, 50, 2.4, "OUTFALLS · receiving water", size=7.8, weight="bold", ha="center", va="center", z=4)
+    hotspots.append((2, 1.0, 98, 3.8, refs.TITLE_REFS["OUTFALLS · receiving water"], "Outfalls"))
     P.legend(ax, 2, 71.4, size=6.4, title="Status of each alternative:")
     P.label(ax, 98, 69.0, "arrows: water (blue) · constituent mass (violet) · 1D–2D exchange (orange)",
             size=6.4, color=style.MUTED, ha="right", va="bottom")
-    return fig
+    return fig, ax, hotspots
 
 
 def build(sink):
-    sink.save(_draw(), "eng_process_flow")
+    fig, ax, hotspots = _draw()
+    for x0, y0, x1, y1, ref, label in hotspots:
+        sink.hotspot("eng_process_flow", ax, x0, y0, x1, y1, ref, label)
+    sink.save(fig, "eng_process_flow")

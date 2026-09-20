@@ -1620,7 +1620,7 @@ continuity setting for models containing virtual junctions
 (`src/engine/core/SimulationOptions.hpp`) and parsed in
 `src/engine/input/handlers/OptionsHandler.cpp`.
 
-## 3.6 Anderson Acceleration of the Iterative Solution
+## 3.6 Anderson Acceleration of the Iterative Solution {#hydraulics_ref_ch3_anderson}
 
 The successive-approximation procedure of Section 3.2 is a fixed-point
 (Picard) iteration: each pass applies the same head-update operator to
@@ -1733,6 +1733,11 @@ flowchart TD
     J -- no --> B
     J -- yes --> K[Node converged]
 </pre>
+<div class="workflow-links" data-workflow="anderson_iteration">
+<span data-node="D">@ref hydraulics_ref_ch3_anderson "3.6 Anderson acceleration: the residual gate and eligibility"</span>
+<span data-node="F">@ref hydraulics_ref_ch3_anderson "3.6 Anderson acceleration: the mixing coefficient"</span>
+<span data-node="K">@ref hydraulics_ref_ch3_anderson "3.6 Anderson acceleration: convergence"</span>
+</div>
 
 *Figure 3-11 Workflow of one Anderson-accelerated iteration of the
 successive-approximation loop (rendered diagram)*

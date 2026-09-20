@@ -461,6 +461,49 @@ def check_status_badges(status_report=False):
 
 MERMAID_ID_RE = re.compile(r"^<!-- workflow: ([a-z0-9_]+) -->$")
 MERMAID_LABEL_RE = re.compile(r"\[([^\]]*)\]|\{([^}]*)\}")
+WORKFLOW_LINKS_RE = re.compile(r'^<div class="workflow-links" data-workflow="([a-z0-9_]+)">\s*$')
+WORKFLOW_NODE_RE = re.compile(r'^<span data-node="([A-Za-z0-9_]+)">@ref [A-Za-z0-9_]+ "[^"]+"</span>\s*$')
+
+
+def _check_workflow_links(rel, lines, k, wid, body, consumed):
+    """A `<div class="workflow-links">` block right after a mermaid block: well formed, same id,
+    every node a node of that flowchart. Returns the error count."""
+    errors = 0
+    consumed.add((rel, k))
+    m = WORKFLOW_LINKS_RE.match(lines[k])
+    if not m:
+        print(f"ERROR {rel}:{k+1}: malformed workflow-links opener (expected "
+              f'<div class="workflow-links" data-workflow="id">)')
+        return 1
+    if wid and m.group(1) != wid:
+        print(f"ERROR {rel}:{k+1}: workflow-links names workflow {m.group(1)!r} but follows the block {wid!r}")
+        errors += 1
+    first = next((ln.strip() for ln in body.split("\n") if ln.strip()), "")
+    if not (first.startswith("graph") or first.startswith("flowchart")):
+        print(f"ERROR {rel}:{k+1}: workflow-links on a non-flowchart diagram ({first[:20]!r}); "
+              f"Mermaid supports click on flowcharts only")
+        errors += 1
+    e, n_nodes = k + 1, 0
+    while e < len(lines) and lines[e].strip() != "</div>":
+        nm = WORKFLOW_NODE_RE.match(lines[e])
+        if not nm:
+            print(f"ERROR {rel}:{e+1}: workflow-links line is not "
+                  f'<span data-node="X">@ref target "label"</span>')
+            errors += 1
+        else:
+            node = nm.group(1)
+            if not re.search(rf"(?<![A-Za-z0-9_]){re.escape(node)}(?![A-Za-z0-9_])", body):
+                print(f"ERROR {rel}:{e+1}: workflow-links node {node!r} is not a node of workflow {wid}")
+                errors += 1
+            n_nodes += 1
+        e += 1
+    if e >= len(lines):
+        print(f"ERROR {rel}:{k+1}: workflow-links block is not closed by </div>")
+        errors += 1
+    elif n_nodes == 0:
+        print(f"ERROR {rel}:{k+1}: workflow-links block holds no link")
+        errors += 1
+    return errors
 
 
 def check_mermaid_workflows():
@@ -473,10 +516,14 @@ def check_mermaid_workflows():
     """
     errors = 0
     seen = {}
+    consumed = set()
+    link_divs = []
     for f in md_files():
         rel = f.relative_to(DOCS)
         lines = f.read_text(errors="replace").split("\n")
         for i, ln in enumerate(lines):
+            if ln.startswith('<div class="workflow-links"'):
+                link_divs.append((rel, i))
             if ln.strip() != '<pre class="mermaid">':
                 continue
             k = i - 1
@@ -514,6 +561,17 @@ def check_mermaid_workflows():
                         print(f"ERROR {rel}:{n+1}: mermaid node label contains '|' "
                               f"(edge-label syntax): {label[:40]!r}")
                         errors += 1
+            # an optional click-target block must follow the diagram directly
+            k = j + 1
+            while k < len(lines) and not lines[k].strip():
+                k += 1
+            if k < len(lines) and lines[k].startswith('<div class="workflow-links"'):
+                errors += _check_workflow_links(rel, lines, k, m.group(1) if m else None,
+                                                "\n".join(lines[i + 1:j]), consumed)
+    for rel, k in link_divs:
+        if (rel, k) not in consumed:
+            print(f"ERROR {rel}:{k+1}: workflow-links block does not directly follow a mermaid block")
+            errors += 1
     return errors
 
 

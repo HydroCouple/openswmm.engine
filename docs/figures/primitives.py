@@ -77,11 +77,13 @@ def pill(ax, x, y, text, status_key, *, size=7.0, alpha=1.0, z=4):
     return w, h
 
 
-def pill_row(ax, x, y, width, alts, *, size=7.0, gap=0.45, alpha=1.0, z=4):
+def pill_row(ax, x, y, width, alts, *, size=7.0, gap=0.45, alpha=1.0, z=4, out=None):
     """Lay pills out left-to-right, wrapping within `width`; y is the TOP.
 
     `alts` is a list of (text, feature_id); a feature_id of None draws a
     neutral pill (a value, not an alternative). Returns the height consumed.
+    When `out` is a list, every pill's (text, feature_id, x, y, w, h) box in
+    data units is appended to it, so a generator can register hotspots.
     """
     cx, cy = x, y
     row_h = size / 72.0 * U * 1.75
@@ -92,6 +94,8 @@ def pill_row(ax, x, y, width, alts, *, size=7.0, gap=0.45, alpha=1.0, z=4):
         if cx > x and cx + w > x + width:
             cx, cy = x, cy - row_h - gap
             used += row_h + gap
+        if out is not None:
+            out.append((text, fid, cx, cy - row_h, w, row_h))
         if fid is None:
             rounded(ax, cx, cy - row_h, w, row_h, fc="#f4f3ef", ec="#e1e0d9", lw=0.7,
                     alpha=alpha, r=row_h / 2, z=z)

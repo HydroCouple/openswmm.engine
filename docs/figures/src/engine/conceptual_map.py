@@ -155,11 +155,14 @@ def _edge_point(cid, rel_x, side):
 
 
 def _draw(variant: str):
+    """Returns (fig, ax, hotspots); hotspots are (x0, y0, x1, y1, ref, label) in data units."""
     import primitives as P
+    import refs
     import style
     keep = VARIANTS[variant]["keep"]
     fig, ax = P.canvas(*CANVAS)
     alpha_of = lambda cid: 1.0 if cid in keep else GHOST  # noqa: E731
+    hotspots = []
 
     # compartments
     for cid, (title, x, ytop, w, h, fill) in COMPARTMENTS.items():
@@ -189,10 +192,17 @@ def _draw(variant: str):
             top = cols_y[c]
             title_h = 2.0
             P.label(ax, cx + 0.6, top - 0.35, title, size=7.6, weight="bold", alpha=a, z=4)
-            used = P.pill_row(ax, cx + 0.6, top - title_h, col_w - 1.2, alts, size=6.6, alpha=a, z=4)
+            pills = []
+            used = P.pill_row(ax, cx + 0.6, top - title_h, col_w - 1.2, alts, size=6.6, alpha=a, z=4, out=pills)
             box_h = title_h + used + 0.7
             P.rounded(ax, cx, top - box_h, col_w, box_h, fc=P.BOX_FILL, ec=P.BOX_EDGE, lw=0.8, r=0.5,
                       alpha=a, z=1)
+            if title in refs.TITLE_REFS:
+                hotspots.append((cx, top - title_h, cx + col_w, top, refs.TITLE_REFS[title], title))
+            for text, fid, px, py, pw, ph in pills:
+                ref = refs.ref_for(fid, text, title)
+                if ref:
+                    hotspots.append((px, py, px + pw, py + ph, ref, text))
             cols_y[c] = top - box_h - 0.8
 
     # fluxes
@@ -228,11 +238,13 @@ def _draw(variant: str):
     P.legend(ax, 64, 93.9, size=6.6, title="Status of each alternative:")
     P.label(ax, 89, 0.6, "arrows: water (blue) · 1D–2D exchange (orange)", size=6.4, color=style.MUTED,
             ha="right", va="bottom")
-    return fig
+    return fig, ax, hotspots
 
 
 def build(sink):
     for variant in VARIANTS:
         if variant in sink.expected:
-            fig = _draw(variant)
+            fig, ax, hotspots = _draw(variant)
+            for x0, y0, x1, y1, ref, label in hotspots:
+                sink.hotspot(variant, ax, x0, y0, x1, y1, ref, label)
             sink.save(fig, variant)

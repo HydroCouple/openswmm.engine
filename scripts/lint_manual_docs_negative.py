@@ -153,6 +153,29 @@ CASES = [
      "manuals/application/application.md",
      "## Introduction", "## Introduction\n\nDeck: `docs/figures/decks/nope/nope.inp`\n",
      "cites docs/figures/decks/nope/nope.inp, which does not exist"),
+    ("workflow_link_unknown_node",
+     "manuals/reference/hydraulics/sections/Chapter8-FiniteVolume.md",
+     '<span data-node="D">@ref hydraulics_ref_ch8_lts "8.5.6 Local time stepping"</span>',
+     '<span data-node="ZZ">@ref hydraulics_ref_ch8_lts "8.5.6 Local time stepping"</span>',
+     "workflow-links node 'ZZ' is not a node of workflow fv_substep"),
+    ("workflow_link_wrong_id",
+     "manuals/reference/hydraulics/sections/Chapter8-FiniteVolume.md",
+     'data-workflow="fv_substep"', 'data-workflow="fv_substep_x"',
+     "workflow-links names workflow 'fv_substep_x' but follows the block 'fv_substep'"),
+    ("workflow_link_detached",
+     "manuals/reference/hydraulics/sections/Chapter8-FiniteVolume.md",
+     "*Figure 8-5 Substep workflow",
+     '<div class="workflow-links" data-workflow="fv_substep">\n</div>\n\n*Figure 8-5 Substep workflow',
+     "workflow-links block does not directly follow a mermaid block"),
+    ("hotspot_wrong_fig",
+     "manuals/engine/sections/Chapter1-ConceptualModel.md",
+     '<div class="fig-hotspots" data-fig="eng_object_sketch">',
+     '<div class="fig-hotspots" data-fig="quality_ch9_heat_budget">',
+     "fig-hotspots block for quality_ch9_heat_budget, but the page embeds no such figure"),
+    ("hotspot_bad_box",
+     "manuals/engine/sections/Chapter1-ConceptualModel.md",
+     'data-box="0.0900,0.0768,0.2400,0.1375"', 'data-box="0.2400,0.0768,0.0900,0.1375"',
+     "is not inside the image"),
 ]
 
 
@@ -168,8 +191,12 @@ def copy_docs(dst):
                 pass
         return shutil.copy2(src, dest)
 
-    shutil.copytree(DOCS, dst, copy_function=copy_fn,
-                    ignore=shutil.ignore_patterns("html", ".DS_Store", "__pycache__"))
+    def ignore(src, names):
+        # only the generated site at docs/html is skipped; docs/custom/html holds the header template
+        skip = {".DS_Store", "__pycache__"} | ({"html"} if Path(src) == DOCS else set())
+        return [n for n in names if n in skip]
+
+    shutil.copytree(DOCS, dst, copy_function=copy_fn, ignore=ignore)
 
 
 def run_lint(docs_root):
