@@ -153,6 +153,12 @@ struct SpatialFrame {
     /** @brief Node Y coordinates (northing or latitude). */
     std::vector<double> node_y;
 
+    /** @brief G-X2 (2026-09-19): 1 when the node's coordinates were authored
+     *  ([COORDINATES], the GeoPackage geometry, the spatial C API or a
+     *  virtual-junction split). A node whose entry is 0 sits at the (0, 0)
+     *  fill and must not be located on a mesh by it. Sized with node_x. */
+    std::vector<uint8_t> node_has_xy;
+
     // -----------------------------------------------------------------------
     // Link coordinates (one point per link — nominal centroid or from-node)
     // -----------------------------------------------------------------------

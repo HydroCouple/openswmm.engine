@@ -81,6 +81,16 @@ struct GwNodeBed {
     double Kc   = 0.0;  ///< semi-confining bed conductivity (m/s); 0 = direct
     double dC   = 0.0;  ///< bed thickness (m)
     double area = 0.0;  ///< exchange area (m²); 0 ⇒ derived from the cell area
+    /// G-X2 (2026-09-19): `CELL AUTO` (or an auto-enrolled node) — the cell
+    /// is the one the node's [COORDINATES] fall in, located at resolve.
+    bool   locate    = false;
+    /// G-X2: `EXCHANGE NO` — the row exists to opt the node OUT of the
+    /// channel (auto-enrolment would otherwise give it a bed); the bed is
+    /// dropped at resolve and the node exchanges with nothing.
+    bool   exchange  = true;
+    /// G-X2: enrolled by location, not authored — the writer does not echo
+    /// it (`NODE_ENROLMENT AUTO` recreates it).
+    bool   automatic = false;
 };
 
 /// `[2D_AQUIFER_OPTIONS]`. Defaults are the plan's starred values.
@@ -102,6 +112,12 @@ struct GwOptions {
     bool      dunne = true;
     /// GW_ET: NONE | CAPILLARY_RISE | BOUNDARY_ET | BOTH.
     std::string gw_et = "NONE";
+    /// G-X2: `NODE_ENROLMENT AUTO | ROWS`. AUTO (default, program plan
+    /// §B.4b): every node whose [COORDINATES] fall in a mesh cell gets a bed
+    /// (direct Darcy, the cell's area) unless a `[2D_AQUIFER_NODE]` row
+    /// names it — rows override, `EXCHANGE NO` opts out. ROWS: only the
+    /// authored rows exchange (the pre-G-X2 behaviour).
+    bool      node_auto = true;
     /// True once any [2D_AQUIFER*] row was authored.
     bool      authored = false;
 };

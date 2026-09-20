@@ -282,8 +282,64 @@ retroactive.
   `fv_perf_phase0.sh` runs the whole Phase 0 as one detached job and
   `fv_perf_compare.py` is the mechanical Tier A hash gate between two runs.
 
+### Added
+
+- **Every node inside the mesh exchanges with the two-zone aquifer (G-X2).**
+  `[2D_AQUIFER_OPTIONS] NODE_ENROLMENT AUTO` (the default) gives every node
+  whose `[COORDINATES]` fall in a mesh cell a direct-Darcy bed over the
+  cell's area — junctions, storage units and outfalls alike — so a
+  `[2D_AQUIFER_NODE]` row is only needed to override a bed's parameters or
+  to opt a node out: the row grammar gains `CELL AUTO` (locate the cell from
+  the coordinates; `swmm_gw2d_node_add` with cell −1) and `EXCHANGE NO`
+  (the node exchanges with nothing). `NODE_ENROLMENT ROWS` restores the
+  row-only behaviour. Auto-enrolled beds are not written back (the option
+  recreates them), authored rows round-trip with their new keywords, and
+  the run reports how many nodes enrolled. A node without authored
+  coordinates is never located (new `spatial.node_has_xy`). **One-owner
+  rule:** a storage unit with a bed exchanges through the conductance
+  channel and its own Green-Ampt exfiltration is switched off, named once
+  in the warnings; `EXCHANGE NO` keeps the legacy exfiltration. C API:
+  `swmm_gw2d_node_get_flags`, `swmm_gw2d_node_set_exchange`, option key
+  `NODE_ENROLMENT`. Gates: a junction with coordinates in a cell enrols,
+  exchanges and is not echoed; ROWS enrols nothing; `EXCHANGE NO` keeps a
+  node out and round-trips; an enrolled pond exfiltrates 0 on its own and
+  recharges through the bed, an opted-out pond exfiltrates as before.
+  Program plan §B.4b, G-X2.
+- **Two-way node ⇄ aquifer exchange, the recharge direction capped (G-X1).**
+  `[2D_AQUIFER_NODE]` beds already drained the aquifer into a node at the
+  MODFLOW-River conductance rate with the drain capped at the cell's
+  drainable water; the reverse direction — a node standing above the water
+  table recharging the column — was uncapped. It is now limited by (i) a
+  saturation guard: a column whose table is at the ground takes nothing
+  (water it accepted would come back as saturation excess in the same
+  firing and ping-pong through the one-batch delivery lag); (ii) the
+  saturated zone's headroom, in the same per-step share as the drain side;
+  (iii) what the node can give — its stored volume as a per-batch budget
+  plus its through-flow (a junction stores nothing below its rim but can
+  lose water at the rate it is fed). Two things kept beds from exchanging
+  at all and are fixed with it: a bed under a node with no
+  `[2D_VERTEX_NODE_MAP]` entry never saw the 1D heads (the orifice coupling
+  alone published them), and the marcher's tail path — every routing step
+  that does not fit a full macro cycle, i.e. any variable 1D step — fired
+  the surface lists only, so the aquifer's lateral flow and node exchange
+  skipped those steps entirely. Gates: `FloodedManholeRechargesUntilThe
+  ColumnIsFullThenStops` (a surcharged junction recharges, the column
+  fills, the exchange goes to zero without ever reversing sign, no Dunne,
+  the recharge equals the storage gain to 1e-9, the 1D side books the same
+  water leaving) and `SpringOnDryGroundReachesTheNetworkThroughTheOrifice
+  Coupling` (exfiltration onto a dry cell drains into a junction; aquifer,
+  surface and 1D ledgers agree on the volume). Program plan §B.4b, gates
+  (b) and (c).
+
 ### Fixed
 
+- **ENSLAVED closure: the bracketed solve now converges on the volume.** The
+  G1-c bracket used a floored derivative, which across the capillary fringe
+  (θ(L) = θ_s, W flat in h) made Newton creep and leave the balance unmet by
+  up to 1e-5 m³ per firing — a −1.9e-4 m³ drift over a half-hour of two
+  full cells exchanging laterally. Newton now uses the true derivative and
+  drops to bisection where it vanishes, converging on the residual volume
+  (kernel gate 4 ENSLAVED: 2.3e-12 → 5e-14).
 - **Two-zone aquifer: the ENSLAVED closure could zero the water table in one
   firing (G1-c).** Its saturated-zone balance was solved by an unguarded
   Newton from a linearised guess; with the table within centimetres of the

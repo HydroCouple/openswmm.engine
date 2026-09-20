@@ -1888,6 +1888,7 @@ struct SimulationContext {
         // Resize spatial coordinate arrays
         spatial.node_x.assign(static_cast<std::size_t>(node_names.size()), 0.0);
         spatial.node_y.assign(static_cast<std::size_t>(node_names.size()), 0.0);
+        spatial.node_has_xy.assign(static_cast<std::size_t>(node_names.size()), 0);   // G-X2
         spatial.link_x.assign(static_cast<std::size_t>(link_names.size()), 0.0);
         spatial.link_y.assign(static_cast<std::size_t>(link_names.size()), 0.0);
         spatial.subcatch_x.assign(static_cast<std::size_t>(subcatch_names.size()), 0.0);

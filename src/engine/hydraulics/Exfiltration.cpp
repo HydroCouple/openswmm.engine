@@ -201,6 +201,14 @@ void ExfilSolver::computeAll(SimulationContext& ctx, double dt) {
         int ni = soa_.node_idx[uk];
         if (ni < 0) continue;
         auto uni = static_cast<size_t>(ni);
+        // G-X2 one-owner rule: a storage node with a two-zone aquifer bed
+        // exchanges through the conductance channel instead.
+        if (uni < nodes.aquifer2d_bed.size() && nodes.aquifer2d_bed[uni]) {
+            const int sr0 = ctx.node_subtypes.storage_row(ni);
+            if (sr0 >= 0)
+                ctx.node_subtypes.storages.exfil_loss[static_cast<std::size_t>(sr0)] = 0.0;
+            continue;
+        }
 
         double depth = nodes.depth[uni];
         if (depth <= 0.0) continue;

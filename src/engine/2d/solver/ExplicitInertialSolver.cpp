@@ -2214,10 +2214,23 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
             const int nt = std::max(
                 1, static_cast<int>(std::ceil(remaining / dt0_)));
             const double dt_tail = remaining / nt;
+            const int Kgw = static_cast<int>(cells_by_tier_.size());
             for (int s = 0; s < nt; ++s) {
                 if (second_order_) { runRk2Step(dt_tail); continue; }
                 fireFaces(active_faces_, dt_tail, /*global_step=*/true);
+                // G-X1 (2026-09-19): the tail fires the aquifer too. It
+                // used to fire the surface lists only, so on a deck whose
+                // routing step never fits a full macro cycle (a variable
+                // 1D step, or a step just under dt0) the groundwater never
+                // advanced at all — no lateral flow, no node exchange.
+                // Every GW tier fires once at the tail step, the same
+                // collapse the surface lists get.
+                if (gw_) for (int k = 0; k < Kgw; ++k) gw_->fireGwFaces(k, dt_tail);
                 fireCells(active_cells_, dt_tail, /*tier0=*/true);
+                if (gw_) {
+                    for (int k = 0; k < Kgw; ++k) gw_->fireGwCells(k, dt_tail, *state_);
+                    if (state_->nodes_1d) gw_->sampleNodeExchange(state_->nodes_1d, dt_tail);
+                }
                 ++substeps_run_;
                 ++last_steps_;
             }

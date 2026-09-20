@@ -82,6 +82,9 @@ constexpr double kSyFloor  = 1.0e-3;
 /// Availability share a single face may take of its donor cell per step —
 /// the surface solver's `exchange_beta` idiom, applied to Darcy.
 constexpr double kFaceShare = 0.5;
+/// G-X1: a column within this fraction of z_s of the ground is "saturated"
+/// for the node → aquifer guard.
+constexpr double kSatGuard  = 1.0e-4;
 
 double harmonic(double a, double b) noexcept {
     if (a <= 0.0 || b <= 0.0) return 0.0;
@@ -267,10 +270,12 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh,
     bed_exchange_cum_.assign(node_beds_.size(), 0.0);   // G-O
     node_exchange_vol_.assign(static_cast<std::size_t>(std::max(0, n_nodes)),
                               0.0);
+    node_drawn_gw_ = node_exchange_vol_;                // G-X1
     {
         // `node_beds_` is the solver's own copy, so converting it in place
         // leaves the authored config — and therefore the writer — untouched.
         for (auto& b : node_beds_) {
+            if (!b.exchange) { b.cell = -1; continue; }   // G-X2: opted out
             if (b.cell < 0 || b.cell >= n) {
                 b.cell = -1;
                 warnings.emplace_back(
@@ -508,6 +513,7 @@ double SubsurfaceSolver::gatherLateral(int i) noexcept {
 
 void SubsurfaceSolver::resetNodeExchangeVolumes() noexcept {
     std::fill(node_exchange_vol_.begin(), node_exchange_vol_.end(), 0.0);
+    std::fill(node_drawn_gw_.begin(), node_drawn_gw_.end(), 0.0);   // G-X1
 }
 
 void SubsurfaceSolver::sampleNodeExchange(const NodeData* nodes, double dt) {
@@ -534,12 +540,46 @@ void SubsurfaceSolver::sampleNodeExchange(const NodeData* nodes, double dt) {
                   std::max(0.5 * state_.zs[ci], kTiny);
 
         double Q = cond * (h_gw - h_pipe);   // m³/s, + out of the aquifer
+        const double Sy = std::max(
+            state_.theta_s[ci] - state_.theta_r[ci], kSyFloor);
         if (Q > 0.0) {
             // Cap an aquifer→pipe drain at the cell's drainable water.
-            const double Sy = std::max(
-                state_.theta_s[ci] - state_.theta_r[ci], kSyFloor);
             const double avail = state_.hg[ci] * Sy * state_.area[ci];
             Q = std::min(Q, kFaceShare * avail / std::max(dt, kTiny));
+        } else if (Q < 0.0) {
+            // G-X1 (2026-09-19): node → aquifer, the direction that was
+            // uncapped. (i) Saturation guard: a column whose table is at the
+            // ground takes nothing — water it accepted here would come
+            // straight back as Dunne excess in the same firing, and the
+            // one-step lag between the frozen node head and the delivery
+            // would ping-pong it (program plan §B.4b). (ii) Headroom: the
+            // saturated zone can hold (z_s − h_g)·Sy·A, taken in the same
+            // per-step share as the drain side so a step cannot fill it
+            // more than once. (iii) The node's own water: what it holds
+            // (frozen for the batch, so the batch as a whole may not draw
+            // more than that — `node_drawn_gw_`, the surface's `node_drawn_`
+            // rule) plus what flows through it — a junction stores nothing
+            // below its rim (legacy: junction volume is ponding only) but
+            // can lose water at the rate it is fed.
+            const double L = state_.zs[ci] - state_.hg[ci];
+            if (L <= kSatGuard * state_.zs[ci]) {
+                Q = 0.0;
+            } else {
+                const double headroom = L * Sy * state_.area[ci];
+                double cap = kFaceShare * headroom / std::max(dt, kTiny);
+                const double v12 = opts_ ? opts_->vol_1d_to_2d : 1.0;
+                const double held = (ni < nodes->volume.size())
+                    ? std::max(0.0, nodes->volume[ni]) * v12 : 0.0;
+                const double drawn = (ni < node_drawn_gw_.size())
+                    ? node_drawn_gw_[ni] : 0.0;
+                const double through = (ni < nodes->inflow.size())
+                    ? std::max(0.0, nodes->inflow[ni]) * v12 : 0.0;
+                cap = std::min(cap, std::max(0.0, held - drawn) /
+                                        std::max(dt, kTiny) + through);
+                Q = std::max(Q, -cap);
+                if (ni < node_drawn_gw_.size())
+                    node_drawn_gw_[ni] += std::min(-Q * dt, std::max(0.0, held - drawn));
+            }
         }
         if (Q == 0.0) continue;
 
@@ -753,16 +793,24 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf) {
             hg1 = 0.0;
             ens_short = (W_lo - target) * A;
         } else {
-            double lo = 0.0, hi = zs;
+            // G-X1 (2026-09-19): W is monotone but can be FLAT across the capillary fringe
+            // (θ(L) = θ_s for L below the air-entry head): there the true
+            // derivative is zero and Newton has nothing to say, so the step
+            // falls back to bisection — never a floored derivative, which
+            // made Newton creep and leave the balance unmet by up to
+            // 1e-5 m³ per firing. Convergence is on the RESIDUAL (the
+            // volume), not on the step in h.
+            double lo = 0.0, hi = zs;          // W(lo) < target < W(hi)
             double h = std::clamp(hg1, lo, hi);
-            for (int it = 0; it < 60; ++it) {
-                const double F  = W(h) - target;
+            const double f_tol = 1.0e-15 * std::max(1.0, std::fabs(target));
+            for (int it = 0; it < 200; ++it) {
+                const double F = W(h) - target;
+                if (std::fabs(F) <= f_tol) break;
                 if (F > 0.0) hi = h; else lo = h;
-                const double dF = std::max(ts - soil::waterContent(p, std::clamp(zs - h, 0.0, zs)),
-                                           kSyFloor);
-                double hn = h - F / dF;
+                if (hi - lo <= 1.0e-15 * zs) break;
+                const double dF = ts - soil::waterContent(p, std::clamp(zs - h, 0.0, zs));
+                double hn = (dF > kTiny) ? h - F / dF : 0.5 * (lo + hi);
                 if (!(hn > lo && hn < hi)) hn = 0.5 * (lo + hi);   // safeguard
-                if (std::fabs(hn - h) < 1.0e-14 * std::max(1.0, zs)) { h = hn; break; }
                 h = hn;
             }
             hg1 = h;

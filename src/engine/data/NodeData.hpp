@@ -314,6 +314,12 @@ struct NodeData {
      *          In-memory only (not serialized to hotstart). See plan / review §11.
      */
     std::vector<double>     coupling_volume;
+    /// G-X2 (2026-09-19): 1 when the node has a two-zone aquifer bed under
+    /// it (a `[2D_AQUIFER_NODE]` row or auto-enrolment). A storage node so
+    /// flagged exchanges through the conductance channel and its own
+    /// exfiltration is skipped (one owner). Empty until the 2D router
+    /// resolved an aquifer.
+    std::vector<uint8_t>    aquifer2d_bed;
 
     /**
      * @brief Delivery queue for the 1D↔2D junction exchange (1D units, ft³).

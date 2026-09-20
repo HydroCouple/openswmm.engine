@@ -151,6 +151,11 @@ std::string parseAquiferOptionsLine(const std::vector<std::string>& tokens,
         if (iequals(v, "PER_SUBCATCH"))      { opts.per_subcatch = true;  return {}; }
         return "MODE must be MESH or PER_SUBCATCH: " + v;
     }
+    if (iequals(k, "NODE_ENROLMENT")) {                 // G-X2
+        if (iequals(v, "AUTO")) { opts.node_auto = true;  return {}; }
+        if (iequals(v, "ROWS")) { opts.node_auto = false; return {}; }
+        return "NODE_ENROLMENT must be AUTO or ROWS: " + v;
+    }
     if (iequals(k, "GW_ET")) {
         if (iequals(v, "NONE") || iequals(v, "CAPILLARY_RISE") ||
             iequals(v, "BOUNDARY_ET") || iequals(v, "BOTH")) {
@@ -247,12 +252,17 @@ std::string parseAquiferLine(const std::vector<std::string>& tokens,
 std::string parseAquiferNodeLine(const std::vector<std::string>& tokens,
                                  std::vector<GwNodeBed>& beds,
                                  std::vector<std::string>& names) {
-    if (tokens.size() < 2) return "expected NODE CELL [KC k DC d] [AREA a]";
+    if (tokens.size() < 2)
+        return "expected NODE CELL|AUTO [KC k DC d] [AREA a] [EXCHANGE YES|NO]";
     GwNodeBed b;
     int cell = 0;
-    if (!inum(tokens[1], cell) || cell < 1)
-        return "CELL must be a 1-based index: " + tokens[1];
-    b.cell = cell - 1;
+    if (iequals(tokens[1], "AUTO")) {
+        b.locate = true;                      // G-X2: located at resolve
+    } else {
+        if (!inum(tokens[1], cell) || cell < 1)
+            return "CELL must be a 1-based index or AUTO: " + tokens[1];
+        b.cell = cell - 1;
+    }
 
     std::size_t at = 2;
     while (at < tokens.size()) {
@@ -263,6 +273,9 @@ std::string parseAquiferNodeLine(const std::vector<std::string>& tokens,
         if      (iequals(k, "KC"))   { if (!num(v, b.Kc))   return "invalid KC: " + v; }
         else if (iequals(k, "DC"))   { if (!num(v, b.dC))   return "invalid DC: " + v; }
         else if (iequals(k, "AREA")) { if (!num(v, b.area)) return "invalid AREA: " + v; }
+        else if (iequals(k, "EXCHANGE")) {              // G-X2 opt-out
+            if (!boolTok(v, b.exchange)) return "EXCHANGE must be YES/NO: " + v;
+        }
         else return "unknown keyword: " + k;
     }
     if (b.Kc < 0.0 || b.dC < 0.0 || b.area < 0.0)
@@ -320,9 +333,72 @@ GwUnitFactors gwUnitFactors(const SimulationContext& ctx) noexcept {
     return f;
 }
 
+namespace {
+
+/// G-X2: which cell (−1 = none) contains the point (x, y) in the mesh's own
+/// coordinates. A uniform bin grid over the cell bounding boxes keeps a
+/// whole network's nodes O(n) rather than O(n_nodes × n_cells).
+class CellLocator {
+public:
+    explicit CellLocator(const MeshData& m) : m_(m) {
+        const int n = m.n_cells();
+        if (n == 0 || m.vx.empty()) return;
+        xmin_ = ymin_ =  1.0e300; xmax_ = ymax_ = -1.0e300;
+        for (std::size_t v = 0; v < m.vx.size(); ++v) {
+            xmin_ = std::min(xmin_, m.vx[v]); xmax_ = std::max(xmax_, m.vx[v]);
+            ymin_ = std::min(ymin_, m.vy[v]); ymax_ = std::max(ymax_, m.vy[v]);
+        }
+        nb_ = std::max(1, static_cast<int>(std::sqrt(static_cast<double>(n))));
+        dx_ = std::max((xmax_ - xmin_) / nb_, 1.0e-9);
+        dy_ = std::max((ymax_ - ymin_) / nb_, 1.0e-9);
+        bins_.assign(static_cast<std::size_t>(nb_) * nb_, {});
+        for (int c = 0; c < n; ++c) {
+            double bx0 = 1.0e300, by0 = 1.0e300, bx1 = -1.0e300, by1 = -1.0e300;
+            for (int k = 0; k < m.cell_nv[static_cast<std::size_t>(c)]; ++k) {
+                const auto v = static_cast<std::size_t>(m.cell_vertex(c, k));
+                bx0 = std::min(bx0, m.vx[v]); bx1 = std::max(bx1, m.vx[v]);
+                by0 = std::min(by0, m.vy[v]); by1 = std::max(by1, m.vy[v]);
+            }
+            for (int j = bin(by0, ymin_, dy_); j <= bin(by1, ymin_, dy_); ++j)
+                for (int i = bin(bx0, xmin_, dx_); i <= bin(bx1, xmin_, dx_); ++i)
+                    bins_[static_cast<std::size_t>(j) * nb_ + i].push_back(c);
+        }
+    }
+    int locate(double x, double y) const {
+        if (bins_.empty() || x < xmin_ || x > xmax_ || y < ymin_ || y > ymax_) return -1;
+        const auto& cand = bins_[static_cast<std::size_t>(bin(y, ymin_, dy_)) * nb_ +
+                                 bin(x, xmin_, dx_)];
+        for (const int c : cand) if (inside(c, x, y)) return c;
+        return -1;
+    }
+private:
+    int bin(double v, double v0, double d) const {
+        return std::clamp(static_cast<int>((v - v0) / d), 0, nb_ - 1);
+    }
+    bool inside(int c, double x, double y) const {   // ray casting, any polygon
+        const int nv = m_.cell_nv[static_cast<std::size_t>(c)];
+        bool in = false;
+        for (int i = 0, j = nv - 1; i < nv; j = i++) {
+            const auto vi = static_cast<std::size_t>(m_.cell_vertex(c, i));
+            const auto vj = static_cast<std::size_t>(m_.cell_vertex(c, j));
+            const double xi = m_.vx[vi], yi = m_.vy[vi], xj = m_.vx[vj], yj = m_.vy[vj];
+            if (((yi > y) != (yj > y)) &&
+                (x < (xj - xi) * (y - yi) / (yj - yi) + xi))
+                in = !in;
+        }
+        return in;
+    }
+    const MeshData& m_;
+    double xmin_ = 0, xmax_ = 0, ymin_ = 0, ymax_ = 0, dx_ = 1, dy_ = 1;
+    int nb_ = 0;
+    std::vector<std::vector<int>> bins_;
+};
+
+}  // namespace
+
 std::vector<std::string> resolveSubsurface(
     SimulationContext& ctx, const MeshData& mesh, SubsurfaceConfig& cfg,
-    const std::vector<std::string>& names) {
+    std::vector<std::string>& names, double node_xy_to_mesh) {
     std::vector<std::string> errs;
     if (cfg.empty()) return errs;
 
@@ -334,16 +410,60 @@ std::vector<std::string> resolveSubsurface(
                            " cells).");
     }
 
+    // G-X2: the locator serves `CELL AUTO` rows and auto-enrolment alike.
+    const CellLocator locator(mesh);
+    auto locateNode = [&](int ni) -> int {
+        const auto u = static_cast<std::size_t>(ni);
+        if (u >= ctx.spatial.node_x.size() || u >= ctx.spatial.node_y.size()) return -1;
+        if (u >= ctx.spatial.node_has_xy.size() || !ctx.spatial.node_has_xy[u]) return -1;
+        return locator.locate(ctx.spatial.node_x[u] * node_xy_to_mesh,
+                              ctx.spatial.node_y[u] * node_xy_to_mesh);
+    };
+
     for (std::size_t i = 0; i < cfg.node_beds.size(); ++i) {
         auto& b = cfg.node_beds[i];
         const std::string& nm = (i < names.size()) ? names[i] : std::string{};
         b.node = ctx.node_names.find(nm);
-        if (b.node < 0)
+        if (b.node < 0) {
             errs.push_back("[2D_AQUIFER_NODE] unknown node '" + nm + "'.");
-        if (b.cell < 0 || b.cell >= n)
+            continue;
+        }
+        if (b.locate) {
+            b.cell = locateNode(b.node);
+            if (b.cell < 0 && b.exchange)
+                errs.push_back("[2D_AQUIFER_NODE] node '" + nm + "' CELL AUTO: the node's "
+                               "[COORDINATES] fall in no mesh cell.");
+        } else if (b.exchange && (b.cell < 0 || b.cell >= n)) {
             errs.push_back("[2D_AQUIFER_NODE] node '" + nm + "' CELL " +
                            std::to_string(b.cell + 1) +
                            " is not on the mesh.");
+        }
+    }
+
+    // G-X2: auto-enrolment — every node whose coordinates fall in a cell
+    // and that no row names gets a direct-Darcy bed over the cell's area.
+    // Rows override (their bed, or their EXCHANGE NO). Nodes without
+    // coordinates are simply not in any cell.
+    if (cfg.options.node_auto && errs.empty()) {
+        std::vector<char> named(static_cast<std::size_t>(ctx.n_nodes()), 0);
+        for (const auto& b : cfg.node_beds)
+            if (b.node >= 0 && b.node < ctx.n_nodes()) named[static_cast<std::size_t>(b.node)] = 1;
+        int enrolled = 0;
+        for (int ni = 0; ni < ctx.n_nodes(); ++ni) {
+            if (named[static_cast<std::size_t>(ni)]) continue;
+            const int c = locateNode(ni);
+            if (c < 0) continue;
+            GwNodeBed b;
+            b.node = ni; b.cell = c; b.locate = true; b.automatic = true;
+            cfg.node_beds.push_back(b);
+            names.push_back(ctx.node_names.name_of(ni));
+            ++enrolled;
+        }
+        if (enrolled > 0)
+            ctx.warnings.push_back("2D aquifer: " + std::to_string(enrolled) +
+                                   " node(s) inside the mesh enrolled in the node <-> aquifer "
+                                   "exchange by their coordinates (NODE_ENROLMENT AUTO; a "
+                                   "[2D_AQUIFER_NODE] row with EXCHANGE NO opts a node out).");
     }
 
     // One bed per node: two beds on one node would double the exchange and
@@ -357,6 +477,10 @@ std::vector<std::string> resolveSubsurface(
                            " has more than one bed row.");
         else seen.push_back(b.node);
     }
+    // G-X2: an EXCHANGE NO row has done its job (it kept auto-enrolment
+    // away) — drop it from the beds the kernel sees. The authored row stays
+    // in the config for the writer, so the flag is carried on the bed and
+    // the solver skips it (SubsurfaceSolver::initialize).
     return errs;
 }
 
@@ -395,6 +519,8 @@ void writeSubsurfaceSections(const SubsurfaceConfig& cfg,
         if (cfg.options.dunne != d.dunne)
             kv("DUNNE", cfg.options.dunne ? "YES" : "NO");
         if (cfg.options.gw_et != d.gw_et) kv("GW_ET", cfg.options.gw_et);
+        if (cfg.options.node_auto != d.node_auto)
+            kv("NODE_ENROLMENT", cfg.options.node_auto ? "AUTO" : "ROWS");   // G-X2
         if (!body.empty()) {
             out += "\n[2D_AQUIFER_OPTIONS]\n";
             out += body;
@@ -435,20 +561,28 @@ void writeSubsurfaceSections(const SubsurfaceConfig& cfg,
         }
     }
 
-    if (!cfg.node_beds.empty()) {
+    // G-X2: auto-enrolled beds are not echoed — NODE_ENROLMENT AUTO recreates
+    // them from the coordinates, and echoing would turn a located bed into an
+    // authored CELL row that no longer follows the node if it moves.
+    bool any_authored = false;
+    for (const auto& b : cfg.node_beds) if (!b.automatic) { any_authored = true; break; }
+    if (any_authored) {
         out += "\n[2D_AQUIFER_NODE]\n";
         out += ";;Node             Cell       Options\n";
         for (std::size_t i = 0; i < cfg.node_beds.size(); ++i) {
             const auto& b = cfg.node_beds[i];
+            if (b.automatic) continue;
             std::string line = (i < node_names.size()) ? node_names[i]
                                                        : std::string("?");
             line.append(std::max<std::size_t>(1, 19 - line.size()), ' ');
-            const std::string c = std::to_string(b.cell + 1);
+            const std::string c = b.locate ? std::string("AUTO")
+                                           : std::to_string(b.cell + 1);
             line += c;
             line.append(std::max<std::size_t>(1, 11 - c.size()), ' ');
             if (b.Kc   > 0.0) { line += "KC ";   line += fmt(b.Kc);   line += ' '; }
             if (b.dC   > 0.0) { line += "DC ";   line += fmt(b.dC);   line += ' '; }
             if (b.area > 0.0) { line += "AREA "; line += fmt(b.area); line += ' '; }
+            if (!b.exchange)  { line += "EXCHANGE NO "; }
             while (!line.empty() && line.back() == ' ') line.pop_back();
             out += line;
             out += '\n';

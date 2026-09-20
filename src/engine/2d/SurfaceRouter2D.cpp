@@ -905,8 +905,11 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                 "[2D_AQUIFER] the two-zone groundwater kernel runs on the CPU "
                 "explicit marcher only; this run selected the '" +
                 backend_name_ + "' backend.");
+        // G-X2: node [COORDINATES] are project map units (feet on a US
+        // project); the mesh is SI here, so the locator takes the same
+        // factor the vertices were scaled by.
         const auto aq_errs = resolveSubsurface(ctx, mesh_, aquifer_cfg_,
-                                               aquifer_node_names_);
+                                               aquifer_node_names_, mesh_to_si);
         if (!aq_errs.empty()) throw std::runtime_error(aq_errs.front());
         const std::string aq_err = subsurface_.initialize(
             mesh_, marcher->inertialEdges(), options_, gwUnitFactors(ctx),
@@ -914,6 +917,40 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             ctx.warnings);
         if (!aq_err.empty()) throw std::runtime_error(aq_err);
         marcher->setSubsurface(&subsurface_);
+        // G-X1 (2026-09-19): the aquifer's node beds sample the 1D heads
+        // through `state_.nodes_1d`, which only the orifice coupling used to
+        // publish — a bed under a node with no [2D_VERTEX_NODE_MAP] entry
+        // never exchanged at all. The volumes still travel through
+        // `nodes.coupling_volume`, which assembleLateralInflows drains for
+        // every node, so nothing else is needed for an un-coupled node.
+        if (subsurface_.active() && !subsurface_.nodeBeds().empty())
+            state_.nodes_1d = &ctx.nodes;
+        // G-X2 one-owner rule: a storage node with a bed exchanges through
+        // the conductance channel, so its own Green-Ampt exfiltration is
+        // switched off (ExfilSolver reads the flag); running both would
+        // lose the same water twice. Named once so the modeller sees it.
+        if (subsurface_.active()) {
+            ctx.nodes.aquifer2d_bed.assign(ctx.nodes.invert_elev.size(), 0);
+            std::string superseded;
+            for (const auto& b : subsurface_.nodeBeds()) {
+                if (b.cell < 0 || b.node < 0 ||
+                    static_cast<std::size_t>(b.node) >= ctx.nodes.aquifer2d_bed.size())
+                    continue;
+                ctx.nodes.aquifer2d_bed[static_cast<std::size_t>(b.node)] = 1;
+                const int sr = ctx.node_subtypes.storage_row(b.node);
+                if (sr >= 0 &&
+                    static_cast<std::size_t>(sr) < ctx.node_subtypes.storages.exfil_ksat.size() &&
+                    ctx.node_subtypes.storages.exfil_ksat[static_cast<std::size_t>(sr)] > 0.0) {
+                    if (!superseded.empty()) superseded += ", ";
+                    superseded += ctx.node_names.name_of(b.node);
+                }
+            }
+            if (!superseded.empty())
+                ctx.warnings.push_back(
+                    "2D aquifer: storage node(s) " + superseded +
+                    " have a bed on the mesh; their [STORAGE] exfiltration is "
+                    "replaced by the node <-> aquifer exchange (one owner).");
+        }
     }
 #endif
 

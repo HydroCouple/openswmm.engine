@@ -241,6 +241,11 @@ private:
     GwOptions        options_;
     std::vector<GwNodeBed> node_beds_;
     std::vector<double>    bed_exchange_cum_;   ///< G-O: per bed (m³), cumulative
+    /// G-X1: water taken FROM each 1D node by the recharge direction within
+    /// the current routing batch (m³, 2D units), reset with
+    /// `node_exchange_vol_` — the frozen node volume is a batch budget, not a
+    /// per-substep one, exactly as the surface's `node_drawn_` ledger.
+    std::vector<double>    node_drawn_gw_;
 
     const MeshData*      mesh_  = nullptr;
     const InertialEdges* edges_ = nullptr;
