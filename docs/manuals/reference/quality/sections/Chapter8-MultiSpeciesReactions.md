@@ -35,14 +35,27 @@ org.hydrocouple.openswmm.reactions  config="model.rxn"
 The configuration file uses the same bracketed-section dialect as the `.inp`.
 Its sections are:
 
-| Section | Purpose |
-|---|---|
-| `[REACTION_OPTIONS]` | Solver, coupling, tolerances, timestep, units |
-| `[REACTION_SPECIES]` | Species declarations: bulk or wall, units, tolerances |
-| `[REACTION_COEFFICIENTS]` | Named constants and parameters |
-| `[REACTION_TERMS]` | Named intermediate expressions |
-| `[REACTION_PIPES]`, `[REACTION_TANKS]` | Per-scope expressions |
-| `[REACTION_QUALITY]` | Initial concentrations |
+| Section | Purpose | Grammar | Status |
+|---|---|---|---|
+| `[REACTION_OPTIONS]` | Solver, coupling, rate and area units, timestep, tolerances, fallback temperature | @ref engine_manual_sect_REACTION_OPTIONS | \status{Implemented} |
+| `[REACTION_SPECIES]` | Species declarations: `BULK` or `WALL`, units, per-species tolerances | @ref engine_manual_sect_REACTION_SPECIES | \status{Implemented} |
+| `[REACTION_COEFFICIENTS]` | Named constants and parameters | @ref engine_manual_sect_REACTION_COEFFICIENTS | \status{Implemented} |
+| `[REACTION_TERMS]` | Named intermediate expressions | @ref engine_manual_sect_REACTION_TERMS | \status{Implemented} |
+| `[REACTION_PIPES]` | Per-species `RATE`, `EQUIL` or `FORMULA` expressions in conduit scope | @ref engine_manual_sect_REACTION_PIPES | \status{Implemented} |
+| `[REACTION_TANKS]` | The same forms in node scope | @ref engine_manual_sect_REACTION_TANKS | \status{Implemented} |
+| `[REACTION_QUALITY]` | Initial concentrations: `GLOBAL`, `NODE` or `LINK` | @ref engine_manual_sect_REACTION_QUALITY | \status{Implemented} |
+| `[REACTION_SOURCES]` | Species sources at nodes | @ref engine_manual_sect_REACTION_SOURCES | \status{Planned} |
+| `[REACTION_PARAMETERS]` | Per-element overrides of `PARAMETER` coefficients | @ref engine_manual_sect_REACTION_PARAMETERS | \status{Planned} |
+| `[REACTION_PATTERNS]` | Time patterns for sources | @ref engine_manual_sect_REACTION_PATTERNS | \status{Planned} |
+| `[REACTION_REPORT]` | Report selection | @ref engine_manual_sect_REACTION_REPORT | \status{Planned} |
+| `[REACTION_SUBCATCHMENTS]` | Subcatchment-scope expressions | @ref engine_manual_sect_REACTION_SUBCATCHMENTS | \status{Planned} |
+
+The five sections marked planned are recognised by name and **refused** with
+the phase that delivers them; a configuration carrying one is rejected as a
+whole (Chapter 11 §11.5). An unknown `[REACTION_*]` name is rejected on the
+same terms.
+
+<!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:394-403, 405-453, 455-479 -->
 
 Sections may also be embedded directly in the `.inp`. This is supported as a
 convenience, but the external file is the intended layout: embedded sections
@@ -92,6 +105,92 @@ mass-transfer closure has a single definition rather than two copies that can
 drift. And the pipe and tank expressions for `CL2` differ deliberately: a
 storage unit has no wall in the sense a pipe does, so the wall-demand term is
 absent from the tank form.
+
+### 8.2.1 Species and coefficient declarations
+
+A species is declared once, as `BULK` or `WALL`, with a units token and
+optional absolute and relative tolerances. Species names are **globally
+unique**: a name that collides with a `[POLLUTANTS]` id, a reserved name or
+another species is refused, because every downstream surface —
+`[INITIAL_QUALITY]`, `[INFLOWS]`, the results file, the buildup and washoff
+tables — addresses a species by name alone. The units token is free text in
+the MSX manner (`MG`, `UG`, `MMOL`, a count), and it is load-bearing in one
+place beyond labelling: the buildup and washoff machinery of Chapters 3, 4
+and 10 converts a species' concentration-mass to user mass from it — `MG`
+takes the project mass conversion, `UG` a thousandth of it, anything else is
+carried unconverted. The per-species tolerances, when given, replace the
+global `ATOL` and `RTOL` of `[REACTION_OPTIONS]` for that species alone.
+
+`WALL` species are surface-attached: their concentration is per unit wall
+area, they are not advected, and they enter bulk expressions through the
+area-to-volume ratio. Declaring one has two consequences worth knowing before
+choosing it: the Eulerian engine falls back to the tanks-in-series binding
+for the reaction stage, and the 2D mesh carries no reaction species at all
+(Chapter 10 §10.1).
+
+A coefficient is declared as `CONSTANT` or `PARAMETER` with a value. In the
+MSX convention a `PARAMETER` may later be overridden per pipe or tank; that
+override section (`[REACTION_PARAMETERS]`) is planned, so in this release
+both kinds are single model-wide values and the distinction is a declaration
+of intent. A coefficient may not share a name with a species or another
+coefficient. `[REACTION_TERMS]` names an intermediate expression evaluated
+before the species expressions that reference it; a term may not share a
+name with a species, a coefficient or another term, and it may use species,
+coefficients, other terms and the hydraulic variables of §8.3. Declaration
+order in the file does not matter — species are resolved first, then
+coefficients and terms, then expressions — but every reference must resolve
+or the whole configuration is rejected.
+
+<!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:137-239, 416-430; src/engine/quality/MsxSurfaceQuality.cpp:64-71; src/engine/transport/TransportPolicy.cpp:98-102, 187-193 -->
+
+### 8.2.2 Rate and equilibrium terms
+
+Each species may carry **one** expression per scope: `RATE`, `EQUIL` or
+`FORMULA` in `[REACTION_PIPES]` for conduits and `[REACTION_TANKS]` for
+nodes, with the meanings of §8.3. A species with no expression in a scope is
+inert there — it is transported and mixed but not reacted — which is the
+normal state of a conservative tracer or of a by-product that forms only in
+pipes. A second expression for the same species in the same scope is
+refused. The pipe scope is also what the Eulerian engine's cells, the
+Lagrangian parcels and the cells of the 2D mesh evaluate; the tank scope is
+evaluated on node stores against the node's hydraulic residence time.
+
+An expression on a **pollutant** — a `[POLLUTANTS]` id rather than a
+declared species — is refused with the note that pollutant kinetics arrive
+with a later phase. Pollutants may be referenced read-only inside a species
+expression, and their own first-order `Kdecay` is applied by the decay stage
+under every engine, in a separate stage from the reaction integrator (§8.5).
+
+Expressions are compiled at open, transactionally: a configuration that
+leaves any expression uncompilable is rejected and rolled back, so the model
+never holds a reaction system that cannot run.
+
+<!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:241-295, 431-448; docs/manuals/reference/quality/sections/Chapter8-MultiSpeciesReactions.md:96-139, 175-200 -->
+
+### 8.2.3 Initial quality and sources
+
+`[REACTION_QUALITY]` seeds the species rows. A `GLOBAL` row sets a species'
+initial concentration everywhere; a `NODE name` or `LINK name` row overrides
+it on one element. Values are non-negative; a duplicate row for the same
+species on the same element is refused rather than letting the later one
+win. A species with no row starts at zero. The element names are resolved
+against the model after the whole `.inp` has been read, so the component
+file may be listed before or after the elements it names. Reaction-species
+rows written in the `.inp`'s own `[INITIAL_QUALITY]` are mirrored into the
+same store, so either spelling seeds the same state.
+
+Mass enters through the loader seam every engine shares. `[INFLOWS]` rows
+may name a reaction species, exactly as they name a pollutant, and are
+delivered as external species loads; under the Eulerian ARD component,
+`[TRANSPORT_BOUNDARIES]` sets the concentration carried by water entering at
+a node and `[TRANSPORT_SOURCES]` a distributed mass rate along a conduit,
+negative for extraction (Chapter 7 §7.5). On the land surface a reaction
+species may build up and wash off through `[BUILDUP]`, `[WASHOFF]`,
+`[LOADINGS]` and, on the 2D mesh, `[2D_LOADINGS]` (Chapters 3, 4 and 10).
+`[REACTION_SOURCES]` and `[REACTION_PATTERNS]`, the MSX spellings of node
+sources, are planned (Chapter 11 §11.5).
+
+<!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:297-390, 449-453; src/engine/quality/lard/LagrangianSolver.hpp:359-366; src/engine/quality/MsxSurfaceQuality.hpp:17-50; docs/manuals/reference/quality/sections/Chapter7-AdvectionReactionDispersion.md:226-273 -->
 
 ## 8.3 Expression Forms
 

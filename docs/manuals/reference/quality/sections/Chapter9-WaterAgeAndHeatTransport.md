@@ -59,6 +59,13 @@ Water entering with age zero is fresh; water entering with a nonzero age is
 treated as having already spent that long in transit elsewhere, which is how
 a boundary at the edge of a modelled area represents the network beyond it.
 
+With `[OPTIONS] OUTFALL_BACKFLOW_QUALITY ZERO` (§7.5), water that re-enters
+through an outfall during reverse flow arrives at age zero — the outfall is
+a fresh boundary — whereas the default `LAST` lets the held boundary water
+keep aging one-for-one and re-import that age on every reversal.
+
+<!-- source: src/engine/transport/components/WaterAgeModule/WaterAgeLegacy.cpp:133-141; src/engine/input/handlers/OptionsHandler.cpp:211-219 -->
+
 **Example.** A collection system fed by an upstream trunk that is not
 modelled, whose travel time is known to be about four hours:
 
@@ -146,6 +153,28 @@ confusion when reading intermediate values: the climate state stores air
 temperature in **°F** and wind in **mph** for historical reasons, while every
 heat formulation is written in SI. The conversion happens in exactly one
 place so the two cannot drift apart.
+
+### 9.3.2a The Physical Constants
+
+Five `[OPTIONS]` keys (@ref engine_manual_sect_OPTIONS) set the constants
+every flux module shares. They are model-wide by design — a water density
+that varied by reach would be two descriptions of one fluid — and their
+defaults are the CSH reference's Table 4.1 values.
+
+| Key | Symbol | Default | Where it enters |
+|---|---|---|---|
+| `WATER_DENSITY` | \f$\rho_w\f$ | 1000 kg/m³ | The latent flux \f$J_e = \rho_w L_v E\f$ (§9.3.4); the heat capacity \f$\rho_w c_p V\f$ the relaxation of §9.3.9 divides by; the water-side capacity and the hyporheic advective conductance of the bed zone (§9.3.11); LID layer conduction (§9.3.10) |
+| `WATER_SPECIFIC_HEAT_CAPACITY` | \f$c_p\f$ | 4184 J/kg/°C | With \f$\rho_w\f$ in every capacity and conductance above |
+| `WIND_FUNC_COEFF_A` | \f$a\f$ | 1.505e-8 | The wind function \f$f(w) = a + b\,w\f$ in the evaporation rate \f$E = f(w)\,(e_s(T_w) - e_a)\f$ (§9.3.4); Dunne and Leopold (1978) |
+| `WIND_FUNC_COEFF_B` | \f$b\f$ | 1.6e-8 | As above; \f$w\f$ is wind speed in m/s, floored at zero |
+| `PRESSURE_RATIO` | \f$P_a / P\f$ | 1.0 | The Bowen ratio \f$B = \gamma\,(P_a/P)\,(T_w - T_a)/(e_w - e_a)\f$ of §9.3.5, an elevation correction; 1 at sea level |
+
+`WATER_DENSITY` and the specific heat were deliberately absent from the first
+heat phase: with no flux modules enabled they cancel identically and no gate
+could observe them. They became load-bearing with surface exchange, where
+they set the weight of a surface flux against advected heat.
+
+<!-- source: src/engine/core/SimulationOptions.hpp:379-399; src/engine/input/handlers/OptionsHandler.cpp:225-232; src/engine/transport/components/HeatFluxModules/SurfaceExchange.cpp:100-160; src/engine/transport/components/HeatFluxModules/HeatFluxes.cpp:102-104; src/engine/transport/components/HeatFluxModules/BedExchange.cpp:271-278; src/engine/transport/components/HeatModule/HeatLid.cpp:131-132, 210-211; src/engine/transport/components/HeatModule/HeatWatershed.cpp:131-132 -->
 
 ### 9.3.3 The surface energy balance
 
@@ -525,22 +554,111 @@ SOLUTE_DIFFUSIVITY     GLOBAL 1.0e-9
 
 ### 9.3.12 Parameter reference
 
-`[RADIATIVE_FLUXES]` parameters and their defaults:
+The six sections of the heat component, with every key, its symbol, its
+default and its scope. Rows are `<key> <scope> [name] <value>`; the scope
+token is **required** on every row of every section. `GLOBAL` is always
+accepted; where a key takes `TAG name`, `LINK name` or `NODE name`, the
+per-element value overrides the global for that element (Chapter 11 §11.4).
+
+**`[HEAT_SOURCES]`** (@ref engine_manual_sect_HEAT_SOURCES) — inlet
+temperature per water source, °C, in \f$[-50, 100]\f$; default 20 °C for a
+source with no row.
+
+| Source | Scope | Default | Meaning |
+|---|---|---|---|
+| `RAINFALL` | `GLOBAL` | 20.0 | Rain on subcatchments and on the 2D mesh |
+| `DWF` | `GLOBAL`, `NODE` | 20.0 | Dry-weather flow |
+| `GW` | `GLOBAL` | 20.0 | Groundwater inflow from the legacy aquifers |
+| `RDII` | `GLOBAL` | 20.0 | Rainfall-derived inflow and infiltration |
+| `EXTERNAL_INFLOW` | `GLOBAL`, `NODE` | 20.0 | `[INFLOWS]` |
+| `IFACE` | `GLOBAL` | 20.0 | Interface-file inflow |
+| `INITIAL_STATE` | `GLOBAL` | 20.0 | Water in the network, and on the mesh, at \f$t = 0\f$ |
+
+`TIMESERIES` temperatures, `SUBCATCH` scope and `EDGE_BC` scope are refused
+with the phase that delivers them.
+
+**`[HEAT_FLUXES]`** (@ref engine_manual_sect_HEAT_FLUXES) — module toggles,
+one row per module, `ON` or `OFF` (`YES` and `NO` accepted); no scope token.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `SURFACE_EXCHANGE` | `OFF` | Latent and sensible exchange (§9.3.4, §9.3.5) |
+| `RADIATIVE_EXCHANGE` | `OFF` | The four radiative terms (§9.3.6) |
+| `LAYER_CONDUCTION` | `OFF` | LID layer conduction (§9.3.10) |
+| `SEDIMENT_EXCHANGE` | `OFF` | The bed zone (§9.3.11) |
+| `DRY_ELEMENT_TEMPERATURE` | `HOLD` | `HOLD`, `AIR` or `DEFAULT`: what a dry element reports — the last wet value, the air temperature, or 20 °C |
+
+**`[RADIATIVE_FLUXES]`** (@ref engine_manual_sect_RADIATIVE_FLUXES)
+
+| Key | Symbol | Default | Scope | Meaning |
+|---|---|---|---|---|
+| `SHORTWAVE` | \f$J_{in}\f$ | 0.0 | `GLOBAL` only | Incoming solar, W/m², as a constant; or `TIMESERIES name`; or `COMPUTED` (§9.3.7). The three spellings are mutually exclusive |
+| `ALBEDO` | \f$R_s\f$ | 0.0 | `GLOBAL`, `TAG`, `LINK`, `NODE` | Shortwave reflectance of the water surface, in \f$[0,1]\f$ |
+| `SHADE_FACTOR` | \f$f_s\f$ | 0.0 | `GLOBAL`, `TAG`, `LINK`, `NODE` | Fraction of insolation blocked; 0 = unshaded |
+| `SKY_VIEW` | \f$f_{sky}\f$ | 1.0 | `GLOBAL`, `TAG`, `LINK`, `NODE` | Fraction of the hemisphere that is sky |
+| `EMISS_WATER` | \f$\varepsilon_w\f$ | 0.97 | `GLOBAL`, `TAG`, `LINK`, `NODE` | Longwave emissivity of water |
+| `EMISS_LANDCOVER` | \f$\varepsilon_{lc}\f$ | 0.97 | `GLOBAL`, `TAG`, `LINK`, `NODE` | Longwave emissivity of the surroundings |
+| `LANDCOVER_TEMPERATURE` | \f$T_{lc}\f$ | air temperature | `GLOBAL`, `TAG`, `LINK`, `NODE` | Temperature of the surroundings radiating to the water, °C; unset means "use the air temperature" |
+| `ATM_EMISS_COEFF` | \f$A_a\f$ | 0.5 | `GLOBAL` only | Brunt clear-sky coefficient, in \f$[0,1]\f$ |
+| `ATM_LW_REFLECTION` | \f$R_L\f$ | 0.03 | `GLOBAL` only | Longwave reflectance of the surface, in \f$[0,1]\f$ |
+
+Fractions are refused outside \f$[0,1]\f$ rather than clamped — a 97 typed
+for an emissivity of 0.97 would otherwise scale every longwave term by a
+hundred.
+
+**`[SOLAR_RADIATION]`** (@ref engine_manual_sect_SOLAR_RADIATION) — site
+geometry and the Bird–Hulstrom atmosphere, read only under
+`SHORTWAVE GLOBAL COMPUTED`; every row is `GLOBAL`.
 
 | Key | Symbol | Default | Meaning |
 |---|---|---|---|
-| `SHORTWAVE` | \f$J_{in}\f$ | 0.0 | Incoming solar, W/m² (constant mode) |
-| `ALBEDO` | \f$R_s\f$ | 0.0 | Shortwave reflectance of the water surface |
-| `SHADE_FACTOR` | \f$f_s\f$ | 0.0 | Fraction of insolation blocked; 0 = unshaded |
-| `SKY_VIEW` | \f$f_{sky}\f$ | 1.0 | Fraction of the hemisphere that is sky |
-| `EMISS_WATER` | \f$\varepsilon_w\f$ | 0.97 | Longwave emissivity of water |
-| `EMISS_LANDCOVER` | \f$\varepsilon_{lc}\f$ | 0.97 | Longwave emissivity of surroundings |
-| `ATM_EMISS_COEFF` | \f$A_a\f$ | 0.5 | Brunt clear-sky coefficient |
-| `ATM_LW_REFLECTION` | \f$R_L\f$ | 0.03 | Longwave reflectance of the surface |
+| `LATITUDE` | \f$\phi\f$ | required | Degrees, +N, in \f$[-90, 90]\f$; an error if absent under `COMPUTED`. Not taken from the `[TEMPERATURE]` snowmelt line |
+| `LONGITUDE` | \f$\lambda\f$ | required | Degrees, +E, in \f$[-180, 180]\f$; an error if absent under `COMPUTED` |
+| `TIMEZONE` | — | 0 | Hours from UTC, in \f$[-14, 14]\f$; absent means the deck clock is UTC, and the engine **warns**, because a wrong offset shifts the whole diurnal curve |
+| `ELEVATION` | \f$z\f$ | 0.0 | Site elevation, m, in \f$[-500, 9000]\f$ |
+| `TURBIDITY_380` | \f$\tau_{380}\f$ | 0.30 | Aerosol optical depth at 380 nm |
+| `TURBIDITY_500` | \f$\tau_{500}\f$ | 0.20 | Aerosol optical depth at 500 nm |
+| `PRECIP_WATER` | \f$w_p\f$ | 1.42 | Precipitable water vapour, cm |
+| `OZONE` | \f$O_3\f$ | 0.34 | Ozone column, cm at NTP |
+| `GROUND_ALBEDO` | \f$\rho_g\f$ | 0.20 | Surface albedo for the sky–ground reflection term, in \f$[0,1]\f$ |
 
-A fully shaded, closed-canopy reach is \f$f_s \to 1\f$ with
-\f$f_{sky} \to 0\f$: no direct insolation reaches the water, and the longwave
-balance is dominated by the canopy term rather than the sky term.
+A `[SOLAR_RADIATION]` section in a model whose `SHORTWAVE` is not `COMPUTED`
+is harmless and warned about: the coordinates are read by nothing.
+
+**`[CLOUD_COVER]`** (@ref engine_manual_sect_CLOUD_COVER) — every row is
+`GLOBAL`.
+
+| Key | Symbol | Default | Meaning |
+|---|---|---|---|
+| `FRACTION` | \f$C\f$ | 0.0 | Cloud fraction in \f$[0,1]\f$, or `TIMESERIES name`; the series path clamps at run time, the constant is refused outside the range |
+| `SW_ATTEN_K` | \f$k\f$ | 0.75 | Kasten–Czeplak shortwave attenuation coefficient |
+| `SW_ATTEN_N` | \f$n\f$ | 3.4 | Kasten–Czeplak exponent |
+| `LW_CLOUD_K` | \f$k_{lw}\f$ | 0.17 | Bolz longwave cloud coefficient |
+
+Coefficients without a `FRACTION` row leave the cloud fraction at zero, where
+both corrections are the identity; the engine says so. A `[CLOUD_COVER]`
+applied on top of a measured `SHORTWAVE TIMESERIES` attenuates the clouds
+twice and is warned about.
+
+**`[SEDIMENT_EXCHANGE]`** (@ref engine_manual_sect_SEDIMENT_EXCHANGE) — the
+bed zone of §9.3.11, whose table already lists these keys. Scopes: `GLOBAL`,
+`TAG` and `LINK` for every attribute but `INITIAL_TEMPERATURE`, which is
+`GLOBAL` only; `NODE` is refused because the bed exists beneath conduits
+only.
+
+| Key | Symbol | Default | Meaning |
+|---|---|---|---|
+| `THERMAL_DIFFUSIVITY` | \f$\alpha_{sed}\f$ | 1.0e-6 | Bed thermal diffusivity, m²/s; must be positive |
+| `SOLUTE_DIFFUSIVITY` | \f$D_{sed}\f$ | 1.0e-9 | Bed effective solute diffusivity, m²/s; zero selects advection-only exchange |
+| `BED_THICKNESS` | \f$Y_{bed}\f$ | 0.20 | Bed layer thickness, m; positive |
+| `GROUND_DEPTH` | \f$Y_{gr}\f$ | 2.0 | Depth to the deep-ground boundary, m; positive |
+| `GROUND_TEMPERATURE` | \f$T_{gr}\f$ | 12.0 | Deep-ground temperature, °C, or `GLOBAL TIMESERIES name`; the engine warns when it is left at the default |
+| `HYPORHEIC_VELOCITY` | \f$v_{hyp}\f$ | 0.0 | Exchange velocity across the bed interface, m/s; non-negative, zero is conduction only |
+| `SEDIMENT_DENSITY` | \f$\rho_s\f$ | 1670 | Bed bulk density, kg/m³; positive |
+| `SEDIMENT_SPECIFIC_HEAT` | \f$c_s\f$ | 1807 | Bed specific heat, J/kg/K; positive |
+| `INITIAL_TEMPERATURE` | \f$T_{bed,0}\f$ | \f$T_{gr}\f$ | Initial bed temperature, °C; the ground temperature when unset |
+
+<!-- source: src/engine/transport/components/HeatModule/HeatComponent.cpp:100-123, 152-171, 192-224, 313-472, 476-561, 570-712, 714-816, 818-876, 885-990, 1004-1064; src/engine/data/HeatData.hpp:174-202, 223-231, 243-276, 380-384; src/engine/data/BedZoneData.hpp:88-145; src/engine/transport/components/HeatFluxModules/RadiativeExchange.cpp:135-136; src/engine/transport/components/HeatFluxModules/BedExchange.cpp:301 -->
 
 ### 9.3.13 A worked configuration
 
@@ -564,21 +682,29 @@ SURFACE_EXCHANGE    ON
 RADIATIVE_EXCHANGE  ON
 
 [RADIATIVE_FLUXES]
-SHORTWAVE     GLOBAL COMPUTED
-ALBEDO        0.06
-SHADE_FACTOR  0.65
-SKY_VIEW      0.35
-EMISS_WATER   0.97
+SHORTWAVE     GLOBAL   COMPUTED
+ALBEDO        GLOBAL   0.06
+SHADE_FACTOR  GLOBAL   0.65
+SKY_VIEW      GLOBAL   0.35
+EMISS_WATER   GLOBAL   0.97
 
 [SOLAR_RADIATION]
-LATITUDE   41.88
-LONGITUDE -87.63
-TIMEZONE   -6
-ELEVATION  181.0
+LATITUDE      GLOBAL   41.88
+LONGITUDE     GLOBAL  -87.63
+TIMEZONE      GLOBAL   -6
+ELEVATION     GLOBAL   181.0
 
 [CLOUD_COVER]
-FRACTION   0.4
+FRACTION      GLOBAL   0.4
 ```
+
+The `[HEAT_FLUXES]` rows are the one exception: they are `<module> ON|OFF`
+with no scope token, and the listing already has them right. With the
+per-element scopes of Chapter 11 §11.4 the same reach could shade one
+conduit differently — `SHADE_FACTOR LINK C12 0.95` — while the rest of the
+network keeps the global value.
+
+<!-- source: src/engine/transport/components/HeatModule/HeatComponent.cpp:192-224, 313-318, 476-484, 714-722, 818-826 -->
 
 Note that `SHADE_FACTOR 0.65` and `SKY_VIEW 0.35` are consistent with one
 another — riparian canopy blocking roughly two-thirds of the sky both shades

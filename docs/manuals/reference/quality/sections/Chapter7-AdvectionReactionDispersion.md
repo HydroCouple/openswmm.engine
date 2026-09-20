@@ -286,6 +286,34 @@ source injects (or, negative, extracts) mass along a conduit independent of
 its flow. Per-conduit dispersion overrides live in the same file and win over
 the global model on the conduits they name.
 
+One `[OPTIONS]` key governs what an outfall hands back to the network when
+flow reverses — a tidal boundary, or a downstream surcharge pushing water up
+the last conduit. `OUTFALL_BACKFLOW_QUALITY` takes `LAST` or `ZERO`
+(@ref engine_manual_sect_OPTIONS). Under `LAST`, the default and the legacy
+behaviour, an outfall that receives no inflow in a step simply holds its last
+mixed state, and reverse flow re-enters the network carrying that held
+concentration — water that left dirty comes back dirty. Under `ZERO` the
+outfall is a **fresh boundary**: whenever it supplies water its held state
+reads zero for every pollutant, every reaction species and `__WATER_AGE__`,
+so backflow re-enters clean and at age zero, as if the receiving water body
+were of unbounded volume and unpolluted. The rule is applied at the same
+site in every engine — the node mix of the tanks-in-series engine, the
+node-store donor of the Eulerian engine, and the mix and release phases of
+the Lagrangian engine — so switching `QUALITY_SOLVER` does not change what a
+reversal imports. The outfall's store keeps the mass that arrived; the key
+only guarantees that mass never re-enters. Choose `ZERO` when the outfall is
+a large receiving body; keep `LAST` when it stands for a pipe that continues
+beyond the model and the returning water is the water that left.
+
+The temperature row is outside this contract in the present release: the
+tanks-in-series heat binding holds the last temperature on reversal
+regardless of the key, while the Eulerian and Lagrangian engines zero the
+row with the others. A model that depends on the temperature of returning
+water should state its outfall temperature explicitly rather than rely on
+either reading.
+
+<!-- source: src/engine/input/handlers/OptionsHandler.cpp:211-219; src/engine/quality/QualityRouting.cpp:808-826; src/engine/transport/components/WaterAgeModule/WaterAgeLegacy.cpp:128-141; src/engine/transport/components/ReactionModule/MsxLegacyTransport.cpp:119-129; src/engine/transport/components/EulerianArdComponent/ArdEngine.cpp:953-968; src/engine/quality/lard/LagrangianSolver.hpp:316-323, 403-408; src/engine/transport/components/HeatModule/HeatLegacy.cpp (no backflow rule, verified by search) -->
+
 ## 7.6 Mass Balance
 
 All three engines report through the same continuity table described in
@@ -313,7 +341,13 @@ slabs, `LagrangianSolver.hpp` for the five-phase step, and
 in `src/engine/core/SWMMEngine.cpp`, and the shared clamp bookkeeping for
 negative sources is in `src/engine/quality/NegativeSources.hpp`.
 
-Input keys are documented in the User Manual's `[TRANSPORT_OPTIONS]`,
-`[TRANSPORT_BOUNDARIES]` and `[TRANSPORT_SOURCES]` sections, and the same
-configuration is readable and editable through the C API declared in
-@ref openswmm_transport.h.
+Input grammar is in the engine manual: @ref engine_manual_sect_TRANSPORT_OPTIONS,
+@ref engine_manual_sect_CONDUIT_DISPERSION,
+@ref engine_manual_sect_TRANSPORT_BOUNDARIES and
+@ref engine_manual_sect_TRANSPORT_SOURCES for the component file, and
+@ref engine_manual_sect_OPTIONS for the `[OPTIONS]` keys this chapter uses —
+`QUALITY_SOLVER`, `QUALITY_STEP`, `MAX_SEGMENTS_PER_LINK`, `RWPT_SEED` and
+`OUTFALL_BACKFLOW_QUALITY`. The same configuration is readable and editable
+through the C API declared in @ref openswmm_transport.h.
+
+<!-- source: docs/manuals/reference/quality/sections/Chapter7-AdvectionReactionDispersion.md:302-305; docs/manuals/engine/sections/Chapter2-InputFileReference.md (anchors verified by grep 2026-09-19) -->

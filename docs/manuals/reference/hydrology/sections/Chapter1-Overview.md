@@ -197,20 +197,20 @@ throughout the course of this manual.
 <span class="hs" data-box="0.0260,0.6806,0.1685,0.7028">@ref quality_ref_ch3_pollutant_buildup "EMC · exponential · rating"</span>
 <span class="hs" data-box="0.2800,0.2639,0.5200,0.2917">@ref hydrology_ref_ch5_groundwater "Groundwater"</span>
 <span class="hs" data-box="0.2860,0.2917,0.4644,0.3139">@ref hydrology_ref_ch5_groundwater "two-zone aquifer per subcatchment"</span>
-<span class="hs" data-box="0.2860,0.3202,0.4439,0.3425">@ref hydrology_ref_ch5_groundwater "two-layer aquifer on the mesh"</span>
-<span class="hs" data-box="0.2860,0.3487,0.4028,0.3710">@ref hydrology_ref_ch5_groundwater "groundwater transport"</span>
+<span class="hs" data-box="0.2860,0.3202,0.4439,0.3425">@ref hydrology_ref_ch9_mesh_groundwater "two-layer aquifer on the mesh"</span>
+<span class="hs" data-box="0.2860,0.3487,0.4028,0.3710">@ref hydrology_ref_ch9_mesh_groundwater "groundwater transport"</span>
 <span class="hs" data-box="0.2800,0.6528,0.4800,0.6806">@ref quality_ref_ch3_pollutant_buildup "Pollutant buildup"</span>
 <span class="hs" data-box="0.2860,0.6806,0.3977,0.7028">@ref quality_ref_ch3_pollutant_buildup "land uses · sweeping"</span>
-<span class="hs" data-box="0.5600,0.1111,0.7800,0.1389">@ref hydraulics_ref_ch9_two_dimensional "Rain on the mesh"</span>
-<span class="hs" data-box="0.5660,0.1389,0.6623,0.1612">@ref hydraulics_ref_ch9_two_dimensional "natural neighbour"</span>
+<span class="hs" data-box="0.5600,0.1111,0.7800,0.1389">@ref hydrology_ref_ch8_mesh_surface "Rain on the mesh"</span>
+<span class="hs" data-box="0.5660,0.1389,0.6623,0.1612">@ref hydrology_ref_ch8_mesh_surface "natural neighbour"</span>
 <span class="hs" data-box="0.5600,0.2153,0.7800,0.2431">@ref hydraulics_ref_ch9_two_dimensional "2D overland flow"</span>
 <span class="hs" data-box="0.5660,0.2431,0.6469,0.2653">@ref hydraulics_ref_ch9_two_dimensional "local inertial"</span>
 <span class="hs" data-box="0.6514,0.2431,0.7528,0.2653">@ref hydraulics_ref_ch9_two_dimensional "full shallow water"</span>
 <span class="hs" data-box="0.5660,0.2716,0.6469,0.2939">@ref hydraulics_ref_ch9_two_dimensional "diffusive wave"</span>
-<span class="hs" data-box="0.5600,0.3472,0.7800,0.3750">@ref hydraulics_ref_ch9_two_dimensional "Per-cell infiltration · evaporation"</span>
+<span class="hs" data-box="0.5600,0.3472,0.7800,0.3750">@ref hydrology_ref_ch8_mesh_surface "Per-cell infiltration · evaporation"</span>
 <span class="hs" data-box="0.5660,0.3750,0.7598,0.3973">@ref engine_manual_sect_2D_INFILTRATION_OPTIONS "→ lost · subcatchment · mesh aquifer"</span>
-<span class="hs" data-box="0.5600,0.4583,0.7800,0.4861">@ref quality_ref_ch4_surface_washoff "2D surface quality"</span>
-<span class="hs" data-box="0.5660,0.4861,0.7239,0.5084">@ref quality_ref_ch4_surface_washoff "coverages · buildup · washoff"</span>
+<span class="hs" data-box="0.5600,0.4583,0.7800,0.4861">@ref quality_ref_ch10_mesh_quality "2D surface quality"</span>
+<span class="hs" data-box="0.5660,0.4861,0.7239,0.5084">@ref quality_ref_ch10_mesh_quality "coverages · buildup · washoff"</span>
 <span class="hs" data-box="0.8100,0.1111,0.9800,0.1389">@ref engine_manual_sect_INFLOWS "External inflows"</span>
 <span class="hs" data-box="0.8160,0.1389,0.9071,0.1612">@ref engine_manual_sect_DWF "dry weather flow"</span>
 <span class="hs" data-box="0.9116,0.1389,0.9668,0.1612">@ref hydrology_ref_ch7_rdii "RDII: RTK"</span>
@@ -235,7 +235,7 @@ throughout the course of this manual.
 <span class="hs" data-box="0.2237,0.8889,0.2481,0.9112">@ref quality_ref_ch8_msx_reactions "MSX"</span>
 <span class="hs" data-box="0.2526,0.8889,0.3078,0.9112">@ref quality_ref_ch9_age_heat "water age"</span>
 <span class="hs" data-box="0.3123,0.8889,0.3419,0.9112">@ref quality_ref_ch9_age_heat "heat"</span>
-<span class="hs" data-box="0.3464,0.8889,0.3964,0.9112">@ref quality_ref_ch5_transport_treatment "sediment"</span>
+<span class="hs" data-box="0.3464,0.8889,0.3964,0.9112">@ref quality_ref_ch11_planned "sediment"</span>
 <span class="hs" data-box="0.4009,0.8889,0.5177,0.9112">@ref engine_manual_sect_TREATMENT "treatment · diversion"</span>
 <span class="hs" data-box="0.0200,0.9472,0.9800,0.9861">@ref engine_manual_sect_OUTFALLS "Outfalls"</span>
 </div>
@@ -561,47 +561,47 @@ Experimental, Planned or Retired); the conveyance compartment, documented in
 <span class="hs" data-box="0.0300,0.3464,0.2455,0.3677">@ref quality_ref_ch3_pollutant_buildup "Surface quality"</span>
 <span class="hs" data-box="0.0360,0.3677,0.1939,0.3848">@ref quality_ref_ch3_pollutant_buildup "buildup · washoff by land use"</span>
 <span class="hs" data-box="0.0360,0.3895,0.1220,0.4066">@ref engine_manual_sect_LANDUSES "street sweeping"</span>
-<span class="hs" data-box="0.1265,0.3895,0.1920,0.4066">@ref quality_ref_ch8_msx_reactions "MSX species"</span>
-<span class="hs" data-box="0.5300,0.2160,0.7005,0.2372">@ref hydraulics_ref_ch9_two_dimensional "Rain on the mesh"</span>
-<span class="hs" data-box="0.5360,0.2372,0.6323,0.2543">@ref hydraulics_ref_ch9_two_dimensional "natural neighbour"</span>
+<span class="hs" data-box="0.1265,0.3895,0.1920,0.4066">@ref quality_ref_ch10_mesh_quality "MSX species"</span>
+<span class="hs" data-box="0.5300,0.2160,0.7005,0.2372">@ref hydrology_ref_ch8_mesh_surface "Rain on the mesh"</span>
+<span class="hs" data-box="0.5360,0.2372,0.6323,0.2543">@ref hydrology_ref_ch8_mesh_surface "natural neighbour"</span>
 <span class="hs" data-box="0.6368,0.2372,0.6766,0.2543">@ref engine_manual_sect_2D_OPTIONS "system"</span>
-<span class="hs" data-box="0.7095,0.2160,0.8800,0.2372">@ref hydraulics_ref_ch9_two_dimensional "Per-cell infiltration"</span>
-<span class="hs" data-box="0.7155,0.2372,0.9042,0.2543">@ref hydraulics_ref_ch9_two_dimensional "Horton · Green-Ampt · CN · constant"</span>
+<span class="hs" data-box="0.7095,0.2160,0.8800,0.2372">@ref hydrology_ref_ch8_mesh_surface "Per-cell infiltration"</span>
+<span class="hs" data-box="0.7155,0.2372,0.9042,0.2543">@ref hydrology_ref_ch8_mesh_surface "Horton · Green-Ampt · CN · constant"</span>
 <span class="hs" data-box="0.7155,0.2591,0.9504,0.2762">@ref engine_manual_sect_2D_INFILTRATION_OPTIONS "→ lost · subcatchment aquifer · mesh aquifer"</span>
 <span class="hs" data-box="0.5300,0.2703,0.7005,0.2915">@ref hydraulics_ref_ch9_two_dimensional "Overland flow"</span>
 <span class="hs" data-box="0.5360,0.2915,0.6169,0.3086">@ref hydraulics_ref_ch9_two_dimensional "local inertial"</span>
 <span class="hs" data-box="0.5360,0.3134,0.6374,0.3305">@ref hydraulics_ref_ch9_two_dimensional "full shallow water"</span>
 <span class="hs" data-box="0.5360,0.3352,0.6169,0.3523">@ref hydraulics_ref_ch9_two_dimensional "diffusive wave"</span>
-<span class="hs" data-box="0.6214,0.3352,0.6920,0.3523">@ref hydraulics_ref_ch9_two_dimensional "IMEX / CVODE"</span>
+<span class="hs" data-box="0.6214,0.3352,0.6920,0.3523">@ref hydraulics_ref_ch10_planned "IMEX / CVODE"</span>
 <span class="hs" data-box="0.7095,0.2921,0.8800,0.3134">@ref hydraulics_ref_ch9_two_dimensional "Mesh and closure"</span>
 <span class="hs" data-box="0.7155,0.3134,0.7707,0.3305">@ref hydraulics_ref_ch9_two_dimensional "triangles"</span>
 <span class="hs" data-box="0.7752,0.3134,0.8099,0.3305">@ref hydraulics_ref_ch9_two_dimensional "quads"</span>
 <span class="hs" data-box="0.7155,0.3352,0.7758,0.3523">@ref hydraulics_ref_ch9_two_dimensional "flat cells"</span>
 <span class="hs" data-box="0.7803,0.3352,0.8458,0.3523">@ref hydraulics_ref_ch9_two_dimensional "VFR closure"</span>
-<span class="hs" data-box="0.5300,0.3683,0.7005,0.3895">@ref quality_ref_ch4_surface_washoff "Surface quality · transport"</span>
-<span class="hs" data-box="0.5360,0.3895,0.6939,0.4066">@ref quality_ref_ch4_surface_washoff "coverages · buildup · washoff"</span>
-<span class="hs" data-box="0.5360,0.4114,0.6425,0.4285">@ref quality_ref_ch7_ard_transport "species on the mesh"</span>
+<span class="hs" data-box="0.5300,0.3683,0.7005,0.3895">@ref quality_ref_ch10_mesh_quality "Surface quality · transport"</span>
+<span class="hs" data-box="0.5360,0.3895,0.6939,0.4066">@ref quality_ref_ch10_mesh_quality "coverages · buildup · washoff"</span>
+<span class="hs" data-box="0.5360,0.4114,0.6425,0.4285">@ref quality_ref_ch10_mesh_quality "species on the mesh"</span>
 <span class="hs" data-box="0.7095,0.3683,0.8800,0.3895">@ref hydraulics_ref_ch9_two_dimensional "Backends"</span>
 <span class="hs" data-box="0.7155,0.3895,0.7399,0.4066">@ref hydraulics_ref_ch9_two_dimensional "CPU"</span>
 <span class="hs" data-box="0.7444,0.3895,0.7842,0.4066">@ref hydraulics_ref_ch9_two_dimensional "OpenMP"</span>
 <span class="hs" data-box="0.7155,0.4114,0.8118,0.4285">@ref hydraulics_ref_ch9_two_dimensional "CUDA · HIP · SYCL"</span>
-<span class="hs" data-box="0.8163,0.4114,0.8509,0.4285">@ref hydraulics_ref_ch9_two_dimensional "Metal"</span>
+<span class="hs" data-box="0.8163,0.4114,0.8509,0.4285">@ref hydraulics_ref_ch10_planned "Metal"</span>
 <span class="hs" data-box="0.0300,0.5032,0.2455,0.5245">@ref hydrology_ref_ch5_groundwater "Two-zone aquifer"</span>
 <span class="hs" data-box="0.0360,0.5245,0.1887,0.5415">@ref hydrology_ref_ch5_groundwater "unsaturated + saturated zone"</span>
 <span class="hs" data-box="0.0360,0.5463,0.2247,0.5634">@ref engine_manual_sect_AQUIFERS "percolation · deep percolation · ET"</span>
 <span class="hs" data-box="0.0360,0.5682,0.1939,0.5852">@ref engine_manual_sect_GWF "lateral interflow, user [GWF]"</span>
-<span class="hs" data-box="0.2545,0.5032,0.4700,0.5245">@ref hydrology_ref_ch5_groundwater "Groundwater transport"</span>
-<span class="hs" data-box="0.2605,0.5245,0.4081,0.5415">@ref hydrology_ref_ch5_groundwater "advection–dispersion · heat"</span>
-<span class="hs" data-box="0.5300,0.5032,0.8800,0.5245">@ref hydrology_ref_ch5_groundwater "Two-layer aquifer"</span>
-<span class="hs" data-box="0.5360,0.5245,0.5809,0.5415">@ref hydrology_ref_ch5_groundwater "Gardner"</span>
-<span class="hs" data-box="0.5854,0.5245,0.6201,0.5415">@ref hydrology_ref_ch5_groundwater "Russo"</span>
-<span class="hs" data-box="0.6246,0.5245,0.6952,0.5415">@ref hydrology_ref_ch5_groundwater "Brooks–Corey"</span>
-<span class="hs" data-box="0.6997,0.5245,0.7754,0.5415">@ref hydrology_ref_ch5_groundwater "van Genuchten"</span>
-<span class="hs" data-box="0.5360,0.5463,0.7144,0.5634">@ref hydrology_ref_ch5_groundwater "closed form · enslaved · σ column"</span>
-<span class="hs" data-box="0.7189,0.5463,0.8152,0.5634">@ref engine_manual_sect_2D_AQUIFER_OPTIONS "Dunne return flow"</span>
-<span class="hs" data-box="0.5360,0.5682,0.6323,0.5852">@ref engine_manual_sect_2D_AQUIFER_NODE "node–bed exchange"</span>
-<span class="hs" data-box="0.6368,0.5682,0.7895,0.5852">@ref engine_manual_sect_2D_AQUIFER_OPTIONS "capillary rise · boundary ET"</span>
-<span class="hs" data-box="0.5360,0.5900,0.6528,0.6071">@ref hydrology_ref_ch5_groundwater "per-subcatchment mode"</span>
+<span class="hs" data-box="0.2545,0.5032,0.4700,0.5245">@ref hydrology_ref_ch9_mesh_groundwater "Groundwater transport"</span>
+<span class="hs" data-box="0.2605,0.5245,0.4081,0.5415">@ref hydrology_ref_ch9_mesh_groundwater "advection–dispersion · heat"</span>
+<span class="hs" data-box="0.5300,0.5032,0.8800,0.5245">@ref hydrology_ref_ch9_mesh_groundwater "Two-layer aquifer"</span>
+<span class="hs" data-box="0.5360,0.5245,0.5809,0.5415">@ref hydrology_ref_ch9_mesh_groundwater "Gardner"</span>
+<span class="hs" data-box="0.5854,0.5245,0.6201,0.5415">@ref hydrology_ref_ch9_mesh_groundwater "Russo"</span>
+<span class="hs" data-box="0.6246,0.5245,0.6952,0.5415">@ref hydrology_ref_ch9_mesh_groundwater "Brooks–Corey"</span>
+<span class="hs" data-box="0.6997,0.5245,0.7754,0.5415">@ref hydrology_ref_ch9_mesh_groundwater "van Genuchten"</span>
+<span class="hs" data-box="0.5360,0.5463,0.7144,0.5634">@ref hydrology_ref_ch9_mesh_groundwater "closed form · enslaved · σ column"</span>
+<span class="hs" data-box="0.7189,0.5463,0.8152,0.5634">@ref hydrology_ref_ch9_mesh_groundwater "Dunne return flow"</span>
+<span class="hs" data-box="0.5360,0.5682,0.6323,0.5852">@ref hydrology_ref_ch9_mesh_groundwater "node–bed exchange"</span>
+<span class="hs" data-box="0.6368,0.5682,0.7895,0.5852">@ref hydrology_ref_ch9_mesh_groundwater "capillary rise · boundary ET"</span>
+<span class="hs" data-box="0.5360,0.5900,0.6528,0.6071">@ref hydrology_ref_ch9_mesh_groundwater "per-subcatchment mode"</span>
 <span class="hs" data-box="0.0300,0.6787,0.3073,0.7000">@ref engine_manual_sect_JUNCTIONS "Nodes"</span>
 <span class="hs" data-box="0.0360,0.7000,0.2401,0.7171">@ref engine_manual_sect_JUNCTIONS "junction · storage · divider · outfall"</span>
 <span class="hs" data-box="0.0360,0.7219,0.1271,0.7389">@ref hydraulics_ref_ch3_dynamic_wave "virtual junction"</span>
@@ -609,7 +609,7 @@ Experimental, Planned or Retired); the conveyance compartment, documented in
 <span class="hs" data-box="0.3163,0.6787,0.5937,0.7000">@ref engine_manual_sect_CONDUITS "Links"</span>
 <span class="hs" data-box="0.3223,0.7000,0.4391,0.7171">@ref hydraulics_ref_ch5_cross_section "conduits, 26 sections"</span>
 <span class="hs" data-box="0.4436,0.7000,0.5245,0.7171">@ref hydraulics_ref_ch5_cross_section "street · dummy"</span>
-<span class="hs" data-box="0.3223,0.7219,0.4289,0.7389">@ref hydraulics_ref_ch5_cross_section "Chebyshev irregular"</span>
+<span class="hs" data-box="0.3223,0.7219,0.4289,0.7389">@ref hydraulics_ref_ch10_planned "Chebyshev irregular"</span>
 <span class="hs" data-box="0.3223,0.7437,0.5623,0.7608">@ref engine_manual_sect_PUMPS "pumps · orifices · weirs · outlets · culverts"</span>
 <span class="hs" data-box="0.3223,0.7656,0.4032,0.7826">@ref hydraulics_ref_ch5_cross_section "storage shapes"</span>
 <span class="hs" data-box="0.4077,0.7656,0.4834,0.7826">@ref hydraulics_ref_ch7_advanced_features "HEC-22 inlets"</span>
@@ -618,8 +618,8 @@ Experimental, Planned or Retired); the conveyance compartment, documented in
 <span class="hs" data-box="0.6530,0.7000,0.7338,0.7171">@ref hydraulics_ref_ch4_kinematic_wave "kinematic wave"</span>
 <span class="hs" data-box="0.7383,0.7000,0.8089,0.7171">@ref hydraulics_ref_ch3_dynamic_wave "dynamic wave"</span>
 <span class="hs" data-box="0.6087,0.7219,0.6844,0.7389">@ref hydraulics_ref_ch8_finite_volume "finite volume"</span>
-<span class="hs" data-box="0.6889,0.7219,0.7954,0.7389">@ref hydraulics_ref_ch8_finite_volume "local time stepping"</span>
-<span class="hs" data-box="0.6087,0.7437,0.6895,0.7608">@ref hydraulics_ref_ch8_finite_volume "1D GPU backend"</span>
+<span class="hs" data-box="0.6889,0.7219,0.7954,0.7389">@ref hydraulics_ref_ch8_lts "local time stepping"</span>
+<span class="hs" data-box="0.6087,0.7437,0.6895,0.7608">@ref hydraulics_ref_ch10_planned "1D GPU backend"</span>
 <span class="hs" data-box="0.0300,0.7549,0.3073,0.7762">@ref hydraulics_ref_ch3_dynamic_wave "Pressurisation"</span>
 <span class="hs" data-box="0.0360,0.7762,0.0758,0.7932">@ref hydraulics_ref_ch3_dynamic_wave "EXTRAN"</span>
 <span class="hs" data-box="0.0803,0.7762,0.1098,0.7932">@ref hydraulics_ref_ch3_dynamic_wave "slot"</span>
@@ -632,8 +632,8 @@ Experimental, Planned or Retired); the conveyance compartment, documented in
 <span class="hs" data-box="0.3163,0.7986,0.5937,0.8199">@ref hydraulics_ref_ch3_dynamic_wave "Node solution"</span>
 <span class="hs" data-box="0.3223,0.8199,0.4289,0.8369">@ref hydraulics_ref_ch3_dynamic_wave "explicit continuity"</span>
 <span class="hs" data-box="0.4334,0.8199,0.5656,0.8369">@ref hydraulics_ref_ch3_dynamic_wave "semi-implicit continuity"</span>
-<span class="hs" data-box="0.3223,0.8417,0.4391,0.8588">@ref hydraulics_ref_ch3_dynamic_wave "Anderson acceleration"</span>
-<span class="hs" data-box="0.4436,0.8417,0.5245,0.8588">@ref hydraulics_ref_ch8_finite_volume "FV_NODE_* keys"</span>
+<span class="hs" data-box="0.3223,0.8417,0.4391,0.8588">@ref hydraulics_ref_ch3_anderson "Anderson acceleration"</span>
+<span class="hs" data-box="0.4436,0.8417,0.5245,0.8588">@ref hydraulics_ref_ch10_planned "FV_NODE_* keys"</span>
 <span class="hs" data-box="0.6027,0.7767,0.8800,0.7980">@ref quality_ref_ch5_transport_treatment "Transport"</span>
 <span class="hs" data-box="0.6087,0.7980,0.6382,0.8151">@ref quality_ref_ch5_transport_treatment "CSTR"</span>
 <span class="hs" data-box="0.6427,0.7980,0.7133,0.8151">@ref quality_ref_ch7_ard_transport "Eulerian ARD"</span>
@@ -643,7 +643,7 @@ Experimental, Planned or Retired); the conveyance compartment, documented in
 <span class="hs" data-box="0.6087,0.8417,0.6844,0.8588">@ref quality_ref_ch8_msx_reactions "MSX reactions"</span>
 <span class="hs" data-box="0.6889,0.8417,0.7441,0.8588">@ref quality_ref_ch9_age_heat "water age"</span>
 <span class="hs" data-box="0.7486,0.8417,0.7781,0.8588">@ref quality_ref_ch9_age_heat "heat"</span>
-<span class="hs" data-box="0.7826,0.8417,0.8327,0.8588">@ref quality_ref_ch5_transport_treatment "sediment"</span>
+<span class="hs" data-box="0.7826,0.8417,0.8327,0.8588">@ref quality_ref_ch11_planned "sediment"</span>
 <span class="hs" data-box="0.6087,0.8636,0.7152,0.8806">@ref engine_manual_sect_TREATMENT "treatment functions"</span>
 <span class="hs" data-box="0.0300,0.8310,0.3073,0.8523">@ref engine_manual_sect_INFLOWS "Inflows"</span>
 <span class="hs" data-box="0.0360,0.8523,0.1271,0.8694">@ref engine_manual_sect_DWF "dry weather flow"</span>

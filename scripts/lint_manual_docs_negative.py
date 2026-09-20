@@ -199,14 +199,25 @@ def copy_docs(dst):
     shutil.copytree(DOCS, dst, copy_function=copy_fn, ignore=ignore)
 
 
+SRC_ROOT = ROOT / "src"
+
+
 def run_lint(docs_root):
     p = subprocess.run([sys.executable, str(LINT), "--docs-root", str(docs_root),
-                        "--src-root", str(ROOT / "src")],
+                        "--src-root", str(SRC_ROOT)],
                        capture_output=True, text=True)
     return p.returncode, p.stdout + p.stderr
 
 
 def main():
+    # --src-root pins the sources the coverage checks read. The default is this
+    # working tree; pass a checkout of HEAD (git archive HEAD src | tar -x) when a
+    # peer session has uncommitted parser edits, so the control run is not red for
+    # a section that is not yet in the branch.
+    global SRC_ROOT
+    argv = sys.argv[1:]
+    if argv[:1] == ["--src-root"] and len(argv) > 1:
+        SRC_ROOT = Path(argv[1]).resolve()
     out = ROOT / "tests" / "output" / f"docs_lint_negative_{dt.date.today().isoformat()}"
     if out.exists():
         shutil.rmtree(out)

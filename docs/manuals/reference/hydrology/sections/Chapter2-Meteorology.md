@@ -246,6 +246,47 @@ The factors are stored in @ref openswmm::GageData (`scale_factor`,
 src/engine/input/handlers/CatchmentHandler.cpp, and exposed for runtime
 modification in src/engine/core/openswmm_subcatchments_impl.cpp.
 
+### 2.1.6 The Rain–Snow Split and the Snow Catch Factor
+
+Equations (2-13) and (2-14) give the rain and snow a subcatchment receives;
+this section states the decision that selects between them and the order of
+the factors, both once sources of drift between the engine's two runoff paths.
+For subcatchment \f$j\f$ served by gage \f$g\f$, at each runoff step:
+
+1. **The ignore-snowmelt guard.** If `[OPTIONS] IGNORE_SNOWMELT` is set, all
+   precipitation is rain regardless of temperature. The guard is part of the
+   split itself, not a downstream concern.
+2. **The temperature test.** Otherwise the precipitation is snow when the
+   current air temperature is at or below the rain–snow dividing temperature
+   of the `[TEMPERATURE] SNOWMELT` line (Chapter 6), and rain when it is
+   above:
+
+\f[\text{snow} \iff \neg\,\text{IGNORE\_SNOWMELT} \ \wedge\ T_a \le T_{div}\f]  (2-14a)
+
+3. **The gage snow catch factor** \f$SCF_g\f$ is applied on the snow branch
+   only; the gage-level scale factor of (2-12) is already inside \f$I_g\f$.
+4. **Conversion to internal units** (ft/s) by the rainfall unit factor.
+5. **The subcatchment scale factor** of the selected branch is applied last,
+   after the conversion, matching the legacy order (`gage_getPrecip` divides
+   by the unit factor before `getNetPrecip` applies the subcatchment factor):
+
+\f[
+P_{rain,j} = \frac{I_g}{u}\ \varphi_{R,j}\ [\text{rain}], \qquad
+P_{snow,j} = \frac{I_g\ SCF_g}{u}\ \varphi_{S,j}\ [\text{snow}]
+\f]  (2-14b)
+
+where \f$u\f$ is the unit conversion and exactly one of the two is non-zero.
+
+The split runs for **every** subcatchment, not only those with a snow pack:
+legacy calls `gage_getPrecip` unconditionally, and a pack-less subcatchment
+receives rain plus snow as its net precipitation; since the snow branch
+carries \f$SCF_g\f$, skipping the split for them diverged from legacy whenever
+the catch factor was not 1.0. Rainfall prescribed through the runtime API is
+applied *after* the split (override replaces, addition augments) and is not
+scaled by any factor. A subcatchment with no gage receives nothing.
+
+<!-- source: src/engine/hydrology/Gage.hpp:176-199 (splitPrecip contract and order); src/engine/hydrology/Gage.cpp:69-98 (splitPrecip: guard and temperature test :83-84, unit factor then subcatchment factor :86-96); src/engine/hydrology/Runoff.cpp:343-359 (the split for every subcatchment; forcing after); src/engine/core/SWMMEngine.cpp:7763-7766 (the dividing temperature in internal units) -->
+
 ## 2.2 Precipitation Data Sources
 
 ### 2.2.1 User-Supplied Data
@@ -771,6 +812,41 @@ simulation reaches a date that falls outside the last date in the file,
 then he program will keep using the temperature values that were last
 read from the file. The same convention applies whenever there is a gap
 of missing days or missing data in the file.
+
+### 2.3.1 Relative Humidity and Dew Point
+
+Relative humidity is read from the `[TEMPERATURE]` section
+(@ref engine_manual_sect_TEMPERATURE "[TEMPERATURE]") in three forms, each
+optionally preceded by `DEWPOINT`:
+
+```
+HUMIDITY            65                      ; one value, all twelve months
+HUMIDITY  MONTHLY   72 70 66 60 58 55 52 54 60 66 70 73
+HUMIDITY  TIMESERIES  RH_2024
+HUMIDITY  DEWPOINT  MONTHLY  30 31 36 42 50 58 62 61 55 45 38 32
+```
+
+A bare value fills all twelve months; `MONTHLY` gives one value per month;
+`TIMESERIES` names a series looked up at each step. Without a `HUMIDITY` line
+the humidity is 50 % in every month — the default the running state carried,
+unwritten, before this key existed. With `DEWPOINT` the values are dew-point
+temperatures in the project's temperature units (°F US, °C SI) and are
+converted to relative humidity at every step from the air temperature
+\f$T_a\f$ of §2.3:
+
+\f[RH = 100\ \frac{e_s(T_d)}{e_s(T_a)}\f]  (2-14c)
+
+with \f$e_s\f$ the saturation vapour pressure and the result clamped to
+0–100 %. A dew point above the air temperature therefore reads as 100 %.
+
+Relative humidity is consumed by the heat-transport component's surface and
+radiative exchange modules — the evaporation rate, latent flux and Bowen ratio
+of the surface-exchange evaluator and the atmospheric longwave of the
+radiative one — where it sets the air's vapour pressure. It is updated with
+air temperature and wind speed at the start of each runoff step, before the
+watershed heat balance runs. Nothing in this chapter's hydrology reads it.
+
+<!-- source: src/engine/input/handlers/HydrologyHandler.cpp:249-282 (HUMIDITY grammar and parsing); src/engine/core/SimulationOptions.hpp:352-377 (defaults, humidity_type, humidity_var, humidity_ts_name); src/engine/core/SWMMEngine.cpp:1908-1932 (per-step lookup and dew-point conversion), :7833-7836 (time-series resolution at open); src/engine/transport/components/HeatModule/HeatWatershed.cpp:120-128 (ordering relative to the runoff step); src/engine/transport/components/HeatFluxModules/SurfaceExchange.cpp:108-130 (evaporationRate, latentFlux, bowenRatio), :146-153; src/engine/transport/components/HeatFluxModules/RadiativeExchange.cpp:96-100 (atmosphericLongwave) -->
 
 ## 2.4 Continuous Temperature Records
 
