@@ -1128,7 +1128,9 @@ struct SimulationContext {
         /// unit as `gw_infil` (rate × area × dt). Already inside it: the
         /// recharge is added to each subcatchment's infiltration rate before
         /// GWSolver::execute books it, so this is a diagnostic split, not a
-        /// second inflow.
+        /// second inflow. Booked at delivery, in the same loop as
+        /// `mass_balance_2d.infil_to_aquifer` (G1-c item 1), so the two are
+        /// the same volumes in two units.
         double gw_infil_2d_recharge = 0.0;
 
         // Per-step accumulators (reset each step for reporting)
@@ -1355,6 +1357,13 @@ struct SimulationContext {
         /// whole-model balance nets it out. `infil_out` still carries it,
         /// so the 2D-only continuity check is unchanged.
         double infil_to_aquifer      = 0.0;
+        /// G1-c item 1 (2026-09-19): the SUBCATCH_AQUIFER share the marcher
+        /// has applied but the runoff step has not yet delivered to the
+        /// aquifer (m³) — the volume between one runoff drain and the next,
+        /// non-zero at the end of a run. `infil_to_aquifer` is booked at
+        /// delivery, so `infil_to_aquifer + infil_aquifer_pending` is the
+        /// aquifer-bound share of `infil_out` at any instant.
+        double infil_aquifer_pending = 0.0;
         /// G1 (2026-09-07): cumulative water the two-zone `[2D_AQUIFER]`
         /// returned to the surface — Dunne saturation excess and top-layer
         /// rejection — m³. An INFLOW to the surface domain, and the mirror of

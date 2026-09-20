@@ -133,6 +133,15 @@ public:
     /// `state_.dt_cell`. Called once per rebuild; cheap enough to be
     /// unconditional (the plan's "they rarely bind").
     void refreshDtCell(const MeshData& mesh, const InertialEdges& edges);
+    /// G1-c (2026-09-19): the smallest per-cell stability step after
+    /// `refreshDtCell` (s), or +inf when nothing bounds it — the marcher folds
+    /// it into the ladder's base step so a groundwater cell whose own bound is
+    /// finer than every active surface cell's does not fire beyond it.
+    double minDtCell() const noexcept {
+        double m = 1.0e30;
+        for (const double v : state_.dt_cell) if (v < m) m = v;
+        return m;
+    }
 
     /// Assign tiers from `dt_cell` against the marcher's `dt0` and tier
     /// count, and rebuild the per-tier cell/face lists. **G-A:** no surface

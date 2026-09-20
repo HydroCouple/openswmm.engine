@@ -3823,6 +3823,10 @@ void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
                 gw_infil_with_2d_[ui] +=
                     (vol_m3 * kM3ToFt3) / (area_ft2 * dt_runoff);
                 ctx_.mass_balance.gw_infil_2d_recharge += vol_m3 * kM3ToFt3;
+                // G1-c item 1: the 2D ledger's transfer row is booked HERE,
+                // at delivery, from the same volume (SurfaceRouter2D keeps
+                // only what is still in flight).
+                ctx_.mass_balance_2d.infil_to_aquifer += vol_m3;
             }
             gw_infil_ptr = gw_infil_with_2d_.data();
         }

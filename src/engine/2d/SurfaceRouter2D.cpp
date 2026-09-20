@@ -1995,7 +1995,6 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     const bool track_cum =
         do_infil && infil_cum_applied_.size() == static_cast<std::size_t>(nt);
     double rain_vol = 0.0, evap_vol = 0.0, infil_vol = 0.0, storage = 0.0;
-    double aq_vol = 0.0;   // U3: the SUBCATCH_AQUIFER share of infil_vol
     const bool route_aq =
         do_infil && cell_subcatch_.size() == static_cast<std::size_t>(nt) &&
         !subcatch_recharge_.empty();
@@ -2022,7 +2021,6 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
                 const auto us = static_cast<std::size_t>(cell_subcatch_[ui]);
                 if (us < subcatch_recharge_.size()) {
                     subcatch_recharge_[us] += applied * area;
-                    aq_vol += applied * area;
                 }
             }
         }
@@ -2073,10 +2071,19 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     // unramped capacity the kernel offered, which exceeds the applied loss
     // whenever a cell is drying.
     if (do_infil) mb.infil_out += infil_vol;
-    // U3 (track I-b): the aquifer-bound share is a transfer to the 1D
-    // groundwater, booked separately so the report can name it. It stays
-    // inside infil_out so the 2D-only continuity check is unchanged.
-    if (route_aq) mb.infil_to_aquifer += aq_vol;
+    // U3 (track I-b) / G1-c item 1 (2026-09-19): the aquifer-bound share is a
+    // transfer to the 1D groundwater. It is booked to `infil_to_aquifer` when
+    // the runoff step DELIVERS it (SWMMEngine, beside gw_infil_2d_recharge),
+    // not here when the marcher applied it: the two ledgers then sum the same
+    // volumes and cannot disagree by the routing steps that sit between one
+    // runoff drain and the next — the one-step lag the U3 gate measured as a
+    // 3.6 % shortfall on a 30-minute run. What is booked here is the volume
+    // still in flight (applied, not yet delivered), an assignment.
+    if (route_aq) {
+        double pending = 0.0;
+        for (const double v : subcatch_recharge_) pending += v;
+        mb.infil_aquifer_pending = pending;
+    }
 
     // G1: and the reverse direction. The two-zone kernel books saturation
     // excess into xacc_to_surface and the marcher's cell loop drains it into

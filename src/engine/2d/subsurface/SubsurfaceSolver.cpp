@@ -726,32 +726,46 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf) {
     const double dV_sat = (q0 - q_deep) * A * dt + lat_vol - node_vol;
     double hg1 = hg0 + dV_sat / (Sy * A);
 
+    // G1-c (2026-09-19): the ENSLAVED solve is BRACKETED. The Newton it
+    // replaced started from the linearised guess and took unguarded steps;
+    // with the table a centimetre under the ground the surface content is
+    // ≈ θ_s, `Sy` sits on its floor, the guess lands above z_s, the clamped
+    // L = 0 makes F' the floor too, and the step is O(−1e5 m): the table
+    // was zeroed and the column re-evaluated at full length in one firing
+    // (measured: 23.5 m³ created on a two-cell exfiltration deck, −32 % on
+    // the Dunne gate deck). The balance W(h) = θ_s·h + hᵤ*(z_s − h) is
+    // monotone in h, so it is solved on [0, z_s] with a safeguarded Newton
+    // (bisection fallback), and what the interval cannot hold is booked
+    // exactly: above z_s as Dunne excess, below 0 as the sinks' refund —
+    // the same two channels the clamp below serves for the other closures.
+    double ens_dunne = -1.0, ens_short = -1.0;   // < 0: not decided here
     if (cl == GwClosure::ENSLAVED) {
-        // The line above is that balance LINEARISED at `Sy(L0)`. For the
-        // other two closures that is the discretisation and the unsaturated
-        // update below matches it exactly, so it conserves. ENSLAVED is
-        // different: its column is not integrated, it is EVALUATED at the new
-        // L, so the linearised step and the exact storage disagree by
-        // O(Δh_g²·θ'(L)) — small per step, one-signed under a steadily rising
-        // table, and therefore a drift rather than noise (gate 4 measured
-        // 4e-7 m3 over an hour).
-        //
-        // The balance is algebraic, so solve it algebraically:
-        //     F(h) = θ_s·(h − h_g0) + hᵤ*(z_s − h) − hᵤ*(L0) − ΔV/A = 0
-        //     F'(h) = θ_s − θ(z_s − h)                 [the same Sy, at the new L]
-        // Newton from the linearised guess converges in one or two passes;
-        // three is belt and braces and still cheaper than the soil law it
-        // calls.
-        const double target = dV_sat / A;
         const double hu0    = soil::equilibriumStorage(p, L0);
-        for (int it = 0; it < 3; ++it) {
-            const double Lh = std::clamp(zs - hg1, 0.0, zs);
-            const double F  = ts * (hg1 - hg0) +
-                              soil::equilibriumStorage(p, Lh) - hu0 - target;
-            const double dF = std::max(ts - soil::waterContent(p, Lh), kSyFloor);
-            const double step = F / dF;
-            hg1 -= step;
-            if (std::fabs(step) < 1.0e-14 * std::max(1.0, zs)) break;
+        const double target = ts * hg0 + hu0 + dV_sat / A;   // W(h1) wanted
+        auto W = [&](double h) {
+            return ts * h + soil::equilibriumStorage(p, std::clamp(zs - h, 0.0, zs));
+        };
+        const double W_hi = W(zs), W_lo = W(0.0);
+        if (target >= W_hi) {
+            hg1 = zs;
+            ens_dunne = (target - W_hi) * A;
+        } else if (target <= W_lo) {
+            hg1 = 0.0;
+            ens_short = (W_lo - target) * A;
+        } else {
+            double lo = 0.0, hi = zs;
+            double h = std::clamp(hg1, lo, hi);
+            for (int it = 0; it < 60; ++it) {
+                const double F  = W(h) - target;
+                if (F > 0.0) hi = h; else lo = h;
+                const double dF = std::max(ts - soil::waterContent(p, std::clamp(zs - h, 0.0, zs)),
+                                           kSyFloor);
+                double hn = h - F / dF;
+                if (!(hn > lo && hn < hi)) hn = 0.5 * (lo + hi);   // safeguard
+                if (std::fabs(hn - h) < 1.0e-14 * std::max(1.0, zs)) { h = hn; break; }
+                h = hn;
+            }
+            hg1 = h;
         }
     }
 
@@ -759,11 +773,13 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf) {
     // more than the aquifer holds; give back what was not there rather than
     // silently creating it.
     double dunne_vol = 0.0;
-    if (hg1 > zs) {
+    if (ens_dunne >= 0.0) {
+        dunne_vol = ens_dunne;                       // ENSLAVED: exact, above
+    } else if (hg1 > zs) {
         dunne_vol = (hg1 - zs) * Sy * A;
         hg1 = zs;
-    } else if (hg1 < 0.0) {
-        const double short_vol = -hg1 * Sy * A;
+    } else if (hg1 < 0.0 || ens_short >= 0.0) {
+        const double short_vol = (ens_short >= 0.0) ? ens_short : -hg1 * Sy * A;
         hg1 = 0.0;
         // Refund proportionally to the sinks that overdrew: deep loss first
         // (it is the least physical), then the node.
