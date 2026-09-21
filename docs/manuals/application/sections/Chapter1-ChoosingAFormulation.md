@@ -259,8 +259,8 @@ generalisation rather than a published result.
 | Two-component pressure, finite volume | `FV_PRESSURE_CLOSURE TPA` | \status{Experimental} | @ref hydraulics_ref_ch8_finite_volume | @ref application_manual_ch3_subatmospheric "Chapter 3: a sub-atmospheric transient" |
 | Unsteady friction | `UNSTEADY_FRICTION VITKOVSKY` | \status{Implemented} | @ref hydraulics_ref_ch3_dynamic_wave | @ref application_manual_ch3_subatmospheric "Chapter 3: a sub-atmospheric transient" |
 | Virtual junctions | `[VIRTUAL_JUNCTIONS]` | \status{Implemented} | @ref hydraulics_ref_ch3_dynamic_wave | *Chapter 4, virtual junctions on a surveyed trunk* (in preparation) |
-| Inlet junctions | `[INLET_JUNCTIONS]` | \status{Implemented} | @ref hydraulics_ref_ch7_advanced_features | *Chapter 5, street inlets and inlet junctions* (in preparation) |
-| HEC-22 street inlets | `[STREETS]`, `[INLETS]`, `[INLET_USAGE]` | \status{Implemented} | @ref hydraulics_ref_ch7_advanced_features | *Chapter 5, street inlets and inlet junctions* (in preparation) |
+| Inlet junctions | `[INLET_JUNCTIONS]` | \status{Implemented} | @ref hydraulics_ref_ch7_advanced_features | @ref application_manual_ch5_street_inlets "Chapter 5: street inlets and inlet junctions" |
+| HEC-22 street inlets | `[STREETS]`, `[INLETS]`, `[INLET_USAGE]` | \status{Implemented} | @ref hydraulics_ref_ch7_advanced_features | @ref application_manual_ch5_street_inlets "Chapter 5: street inlets and inlet junctions" |
 | 2D local inertial | `MOMENTUM_EQUATION LOCAL_INERTIAL` | \status{Implemented} | @ref hydraulics_ref_ch9_two_dimensional | *Chapter 6, building a coupled 1D-2D model* (in preparation) |
 | 2D full shallow water | `MOMENTUM_EQUATION FULL_SWE` | \status{Implemented} | @ref hydraulics_ref_ch9_two_dimensional | *Chapter 6, building a coupled 1D-2D model* (in preparation) |
 | 2D diffusive wave | `MOMENTUM_EQUATION DIFFUSIVE_WAVE` | \status{Implemented} | @ref hydraulics_ref_ch9_two_dimensional | *Chapter 6, building a coupled 1D-2D model* (in preparation) |
