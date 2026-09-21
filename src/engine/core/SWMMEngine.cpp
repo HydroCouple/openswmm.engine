@@ -3385,6 +3385,10 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                 }
                 constexpr double kLperFt3 = 28.317;
                 double total_washoff_load = 0.0; // concen. mass units / sec
+                // legacy landuse_getAvgBmpEffic(j, p): the coverage-weighted
+                // BMP removal fraction, which findPondedLoads applies to the
+                // ponded outflow load.
+                double avg_bmp_effic = 0.0;
 
                 // Iterate over land uses weighted by coverage
                 // Buildup is now stored PER LAND USE: bu_idx(i, lu, p)
@@ -3393,6 +3397,11 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                                    + static_cast<std::size_t>(lu);
                     double frac = (cov_idx < ctx_.subcatches.coverage.size())
                                   ? ctx_.subcatches.coverage[cov_idx] / 100.0 : 0.0;
+                    avg_bmp_effic +=
+                        frac * landuse_solver_
+                                   .washoff_params[static_cast<std::size_t>(
+                                       lu * np + p)]
+                                   .bmp_effic / 100.0;
                     if (frac <= 0.0) continue;
 
                     auto k = static_cast<std::size_t>(lu * np + p);
@@ -3611,18 +3620,36 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                 // Matches legacy findPondedLoads() in surfqual.c.
                 // Mixes wet deposition with existing ponded mass; distributes
                 // to infiltration and runoff outflow proportionally.
-                if (sq_idx < ctx_.subcatches.ponded_qual.size()) {
+                const double lid_ft2_pq =
+                    (ui < ctx_.subcatches.total_lid_area_ft2.size())
+                        ? ctx_.subcatches.total_lid_area_ft2[ui] : 0.0;
+                const double area_ft2_full_pq =
+                    area_ac / ucf::UCF(ucf::LANDAREA, ctx_.options);
+                // legacy findPondedLoads opens `if (area == lidArea) return;`
+                // — a subcatchment that is entirely LID has no ponded surface
+                // to mix into.
+                const double non_lid_ft2_pq = area_ft2_full_pq - lid_ft2_pq;
+                if (sq_idx < ctx_.subcatches.ponded_qual.size() &&
+                    non_lid_ft2_pq > 0.0) {
                     constexpr double L_PER_FT3 = 28.317;  // liters per ft3
                     auto up = static_cast<std::size_t>(p);
-                    double area_ft2_pq = area_ac
-                                       / ucf::UCF(ucf::LANDAREA, ctx_.options);
+                    // Every volume here is over the NON-LID area: legacy forms
+                    // vRain, the ponded store and the closing pondedQual on
+                    // `nonLidArea`, not the full area.
+                    const double area_ft2_pq = non_lid_ft2_pq;
 
-                    // Rainfall at this subcatch (ft/sec)
-                    double rrate = ctx_.gages.rainfall.empty() ? 0.0
-                        : (ctx_.subcatches.gage[ui] >= 0 &&
-                           ctx_.subcatches.gage[ui] < static_cast<int>(ctx_.gages.rainfall.size()))
-                          ? ctx_.gages.rainfall[static_cast<size_t>(ctx_.subcatches.gage[ui])]
-                          : 0.0;
+                    // Rainfall at this subcatch, INTERNAL ft/sec. This read
+                    // the GAGE's rate, which is carried in the project's
+                    // rainfall units (in/hr or mm/hr) — legacy's
+                    // `Subcatch[j].rainfall` is ft/sec. On a US deck that is
+                    // a factor of 12*3600 = 43200, and it went straight into
+                    // the wet-deposition volume: runoff44-sw5 booked 843,742
+                    // lb of deposited COD against legacy's 19.531, and
+                    // reported a 99.998 % runoff-quality continuity error.
+                    // `subcatches.rainfall` is the same number legacy uses,
+                    // already scaled by the gage and subcatchment factors.
+                    double rrate = (ui < ctx_.subcatches.rainfall.size())
+                        ? ctx_.subcatches.rainfall[ui] : 0.0;
 
                     // Volumes over dt (ft3)
                     double v_rain_pq    = rrate * area_ft2_pq * dt_runoff;
@@ -3630,8 +3657,12 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                     double v_infil_pq   = ctx_.subcatches.infil_loss[ui] * area_ft2_pq * dt_runoff;
                     double v_outflow_pq = q * dt_runoff;
 
-                    // Vinflow: rain + runon + existing ponded water volume
-                    double v_ponded_pq  = ctx_.subcatches.ponded_depth[ui] * area_ft2_pq;
+                    // Vinflow: rain + runon + the water ALREADY ponded at the
+                    // START of the step (legacy subcatch.c:694 forms this
+                    // before the subareas are stepped, which is why the
+                    // opening depth is kept aside rather than read back here).
+                    double v_ponded_pq  =
+                        ctx_.subcatches.old_ponded_depth[ui] * area_ft2_pq;
                     double v_inflow_pq  = v_rain_pq + v_runon_pq + v_ponded_pq;
 
                     // Wet deposition mass: c_rain[mg/L] * LperFT3[L/ft3] * v_rain[ft3]
@@ -3677,12 +3708,36 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                         double w_outflow_pq = std::min(c_ponded_pq * v_outflow_pq, w_total_pq);
                         w_total_pq -= w_outflow_pq;
 
+                        // legacy reduces the ponded outflow load by the land
+                        // uses' area-weighted BMP efficiency, exactly as the
+                        // washoff loads above are reduced. Only the washoff
+                        // half was booked here, so a BMP removed nothing from
+                        // the rain- and run-on-borne share.
+                        double bmp_pq = avg_bmp_effic * w_outflow_pq;
+                        if (bmp_pq > 0.0) {
+                            if (up < ctx_.mass_balance.qual_bmp_removal.size())
+                                ctx_.mass_balance.qual_bmp_removal[up] +=
+                                    bmp_pq * mcf_p;
+                            w_outflow_pq -= bmp_pq;
+                        }
+
                         // Add ponded outflow to total washoff load (mass/sec)
                         if (w_outflow_pq > 0.0 && dt_runoff > 0.0)
                             total_washoff_load += w_outflow_pq / dt_runoff;
 
-                        // Update remaining ponded mass for next timestep
-                        ctx_.subcatches.ponded_qual[sq_idx] = std::max(w_total_pq, 0.0);
+                        // legacy closes by RE-DERIVING the ponded store from
+                        // the mixed concentration and the depth the step
+                        // actually ended at — `cPonded * subcatch_getDepth(j)
+                        // * nonLidArea` — not by carrying whatever mass was
+                        // left over. The two differ whenever the surface
+                        // gained or lost water, and the leftover form drained
+                        // the pool to nothing: a subcatchment shed its
+                        // rainfall-borne load the instant the rain stopped
+                        // instead of releasing it down the recession.
+                        ctx_.subcatches.ponded_qual[sq_idx] = std::max(
+                            c_ponded_pq * ctx_.subcatches.ponded_depth[ui] *
+                                area_ft2_pq,
+                            0.0);
                     }
                 }
 

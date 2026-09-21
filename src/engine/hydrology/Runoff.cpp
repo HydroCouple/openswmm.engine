@@ -712,6 +712,22 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         // context so the pollutant and reactions-species kernels share one
         // number; see SubcatchData::subarea_runoff_rate.
         ctx.subcatches.subarea_runoff_rate[ui] = soa_.subarea_runoff_rate[ui];
+        // legacy subcatch_getDepth: the area-weighted mean depth of ponded
+        // water over the NON-LID subareas, the store findPondedLoads mixes
+        // wet deposition and run-on into. `ctx.subcatches.ponded_depth` was
+        // declared and read in three places but WRITTEN BY NOBODY, so the
+        // ponded pool was permanently empty: the whole findPondedLoads
+        // mirror was inert, and a subcatchment shed its rainfall-borne load
+        // the instant the rain stopped instead of draining it down the
+        // recession. The subarea fractions are the same triple the runoff
+        // mass balance and the age/heat watershed mirrors weight with.
+        {
+            const double fi = soa_.imperv_pct[ui];
+            ctx.subcatches.ponded_depth[ui] =
+                soa_.depth_imperv0[ui] * soa_.frac_imperv0[ui] +
+                soa_.depth_imperv1[ui] * soa_.frac_imperv1[ui] +
+                soa_.depth_perv[ui]    * (1.0 - fi);
+        }
         ctx.subcatches.evap_loss[ui]  = evapLoss;
         ctx.subcatches.infil_loss[ui] = infilLoss;
         // The volumes themselves, for the groundwater step: legacy hands
