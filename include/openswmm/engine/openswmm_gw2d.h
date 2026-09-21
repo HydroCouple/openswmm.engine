@@ -93,6 +93,7 @@ extern "C" {
 #define SWMM_GW2D_VAR_DT_CELL   10  /**< min(dt_g, dt_u) (s) */
 #define SWMM_GW2D_VAR_TIER      11  /**< assigned LTS tier */
 #define SWMM_GW2D_VAR_CLOSURE   12  /**< resolved closure (AUTO already gone) */
+#define SWMM_GW2D_VAR_QLINK     13  /**< G-X3: conduit seepage delivered in (m3/s) */
 
 /* ---- Ledger selectors (m3, cumulative) ---------------------------------- */
 
@@ -106,6 +107,48 @@ extern "C" {
 #define SWMM_GW2D_LED_INFIL_IN      7
 #define SWMM_GW2D_LED_INIT_STORAGE  8
 #define SWMM_GW2D_LED_STORAGE       9   /**< storage NOW, incl. accumulators */
+#define SWMM_GW2D_LED_LINK          10  /**< G-X3: conduit seepage delivered in */
+
+/* ---- T7.5: the transported tuple (read-only results) --------------------- */
+
+/** Zone selector for the species accessors. */
+#define SWMM_GW2D_ZONE_SAT    0   /**< the saturated zone */
+#define SWMM_GW2D_ZONE_UNSAT  1   /**< the unsaturated column store */
+
+/** Species ledger terms — the `groundwater_species_ledger` order. */
+#define SWMM_GW2D_SPL_INIT        0
+#define SWMM_GW2D_SPL_STORAGE     1   /**< ledgered storage NOW */
+#define SWMM_GW2D_SPL_INFIL_IN    2
+#define SWMM_GW2D_SPL_NODE_IN     3
+#define SWMM_GW2D_SPL_LINK_IN     4
+#define SWMM_GW2D_SPL_LATERAL_NET 5
+#define SWMM_GW2D_SPL_DEEP_OUT    6
+#define SWMM_GW2D_SPL_NODE_OUT    7
+#define SWMM_GW2D_SPL_LINK_OUT    8
+#define SWMM_GW2D_SPL_DUNNE_OUT   9
+#define SWMM_GW2D_SPL_ET_OUT      10
+#define SWMM_GW2D_SPL_REACTED     11
+#define SWMM_GW2D_SPL_RESIDUAL    12  /**< storage + out - in - init */
+
+/** How many species rows the aquifer transports (0 when it carries none). */
+SWMM_ENGINE_API int swmm_gw2d_species_count(SWMM_Engine engine, int* count);
+
+/** One species row's name (TransportPolicy order: pollutants, MSX,
+ *  `__WATER_AGE__`, `__TEMPERATURE__`). */
+SWMM_ENGINE_API int swmm_gw2d_species_name(SWMM_Engine engine, int species,
+                                           char* buf, int buflen);
+
+/** Per-cell CONCENTRATION of one species in one zone, in the species' own
+ *  units (mass / m3 of that zone's water). A zone with no water reports 0.
+ *  Writes at most @p len values and sets @p written. */
+SWMM_ENGINE_API int swmm_gw2d_get_cell_conc(SWMM_Engine engine, int zone,
+                                            int species, double* out, int len,
+                                            int* written);
+
+/** One term of one species' cumulative ledger — see SWMM_GW2D_SPL_*. */
+SWMM_ENGINE_API int swmm_gw2d_get_species_ledger(SWMM_Engine engine,
+                                                 int species, int term,
+                                                 double* value);
 
 /* =========================================================================
  * [2D_AQUIFER_OPTIONS]
@@ -113,7 +156,7 @@ extern "C" {
 
 /** Read one option as text. Keys: SOIL_CHAR, CLOSURE, M_LAYERS,
  *  CAPILLARY_DIFF, C_GW, C_COL, FORCE_CLOSED_FORM, MODE, DUNNE, GW_ET,
- *  NODE_ENROLMENT (AUTO | ROWS — G-X2). */
+ *  NODE_ENROLMENT (AUTO | ROWS — G-X2), LINK_SEEPAGE (AUTO | NONE — G-X3). */
 SWMM_ENGINE_API int swmm_gw2d_option_get(SWMM_Engine engine, const char* key,
                                          char* buf, int buflen);
 

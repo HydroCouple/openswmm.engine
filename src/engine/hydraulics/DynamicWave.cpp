@@ -60,6 +60,7 @@
 #include "Link.hpp"
 #include "ForceMain.hpp"
 #include "Culvert.hpp"
+#include "AquiferLinkExchange.hpp"   // G-X4
 #include "../core/Constants.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
@@ -2243,8 +2244,14 @@ void DWSolver::recomputeConduitLossOne(SimulationContext& ctx, double dt,
             if (length <= 0.0) length = CD.mod_length[ucr];
             const int shape = links.xsect_batch_shape[u];
 
+            // G-X4: an aquifer-coupled conduit runs the signed law even
+            // with no [LOSSES] seepage rate — `[2D_AQUIFER_LINKS] KC` is
+            // what lets a pipe that never leaked GAIN below the table.
+            const bool gw_two_way = !CD.gw_coupled.empty() &&
+                                    CD.gw_coupled[ucr] != 0;
+            const double k_seep = gw_two_way ? CD.gw_kc[ucr] : CD.seep_rate[ucr];
             const bool wantEvap = xsect::isOpen(shape) && evap > 0.0;
-            const bool wantSeep = CD.seep_rate[ucr] > 0.0;
+            const bool wantSeep = k_seep > 0.0;
             if (wantEvap || wantSeep) {
                 const XSectParams xs = buildXSP(ctx, u);  // faithful incl. transect
                 if (wantEvap) {
@@ -2260,26 +2267,46 @@ void DWSolver::recomputeConduitLossOne(SimulationContext& ctx, double dt,
                         (shape == static_cast<int>(XSectShape::RECT_CLOSED))
                             ? xs.w_max
                             : xsect::getWofY(xs, d_seep);
-                    seep_loss = CD.seep_rate[ucr] * width * length;
+                    seep_loss = k_seep * width * length;
                     // Monthly conductivity adjustment (legacy link.c:1378:
                     // seepLossRate *= Adjust.hydconFactor). infil_factor
                     // mirrors adjust_hydcon[mon] each step (A2d) and is 1.0
                     // exactly on unadjusted decks.
                     seep_loss *= ctx.climate_state.infil_factor;
+                    // G-X4: the signed conductance about the invert. The
+                    // factor is 1.0 — this line a no-op — for a full pipe
+                    // over a table at or below its invert, which is the
+                    // regime legacy's unit gradient assumes.
+                    if (gw_two_way) {
+                        seep_loss *= hydraulics::aquiferSeepFactor(
+                            depth, CD.gw_head_rel[ucr], CD.gw_dc[ucr]);
+                        seep_loss = hydraulics::capAquiferGain(
+                            seep_loss, CD.gw_gain_max[ucr]);
+                    }
                 }
             }
 
             // DW volume cap (legacy link.c:1389): q = newVolume/tstep; if the
             // total loss exceeds it, scale each component (comp*q/total order).
-            double total = evap_loss + seep_loss;
+            // G-X4: a GAINING conduit (seep_loss < 0) adds water rather than
+            // taking it, so it is not part of what the conduit can afford —
+            // the cap sees the losing components only, and the gain passes
+            // through untouched (it is bounded by the aquifer instead).
+            double total = evap_loss + std::max(seep_loss, 0.0);
             if (total > 0.0) {
                 const double q = links.volume[u] / dt;
                 if (total > q) {
                     evap_loss = evap_loss * q / total;
-                    seep_loss = seep_loss * q / total;
+                    if (seep_loss > 0.0) seep_loss = seep_loss * q / total;
                 }
             }
         }
+
+        // G-X4: a host's exchange (swmm_forcing_link_seepage) has the last
+        // word — it is applied after the volume cap, because the host is
+        // asserting a flux the conduit is required to carry, not competing
+        // for the water the conduit happens to hold.
+        hydraulics::applySeepageForcing(ctx, u, seep_loss);
 
         CD.evap_loss_rate[ucr] = evap_loss;
         CD.seep_loss_rate[ucr] = seep_loss;
@@ -3239,7 +3266,22 @@ void DWSolver::updateNodeFlows(SimulationContext& ctx) {
             double conduit_loss = (ctx.link_subtypes.conduits.evap_loss_rate[ucr_l]
                                    + ctx.link_subtypes.conduits.seep_loss_rate[ucr_l])
                                   * tile_barrels_d_[uci_l];
-            if (conduit_loss > 0.0) {
+            // G-X4: a net-GAINING conduit arrives here as a negative loss.
+            // It is an INFLOW to the end nodes — booked on `inflow`, not as
+            // a negative `outflow`, because the depth solver takes
+            // inflow − outflow (identical either way) while flooding and the
+            // node statistics read the two separately, and aquifer water
+            // entering a pipe is an inflow in both.
+            if (conduit_loss < 0.0) {
+                double gain = -conduit_loss;
+                if (nodes.type[un1] != NodeType::OUTFALL &&
+                    nodes.type[un2] != NodeType::OUTFALL)
+                    gain /= 2.0;
+                if (nodes.type[un1] != NodeType::OUTFALL)
+                    nodes.inflow[un1] += gain;
+                if (nodes.type[un2] != NodeType::OUTFALL)
+                    nodes.inflow[un2] += gain;
+            } else if (conduit_loss > 0.0) {
                 // Split loss between nodes unless one is an outfall
                 if (nodes.type[un1] != NodeType::OUTFALL &&
                     nodes.type[un2] != NodeType::OUTFALL)
@@ -3323,7 +3365,13 @@ void DWSolver::gatherConduitNodeFlows(SimulationContext& ctx) {
             double conduit_loss = (CD.evap_loss_rate[ucr_g]
                                    + CD.seep_loss_rate[ucr_g])
                                   * tile_barrels_d_[uci];
-            if (conduit_loss > 0.0) {
+            if (conduit_loss < 0.0) {                       // G-X4: gaining
+                double gain = -conduit_loss;
+                if (!self_outfall && !csr_other_outfall_[uk])
+                    gain /= 2.0;
+                if (!self_outfall)
+                    inflow += gain;
+            } else if (conduit_loss > 0.0) {
                 if (!self_outfall && !csr_other_outfall_[uk])
                     conduit_loss /= 2.0;
                 if (!self_outfall)

@@ -149,6 +149,9 @@ struct SurfaceTransportState {
     /// S3: what came in through the 1D→2D coupling (junction spill at the
     /// node's published concentration, outfall discharge at the outfall's).
     std::vector<double> gained_coupling;
+    /// T7.1: mass the two-zone aquifer handed back up with its saturation
+    /// excess. The twin of `lost_infiltration`, which is what went down.
+    std::vector<double> gained_exfiltration;
     /// S7: [s] species mass washed off the cells' land-use surfaces into the
     /// rows (cell buildup → water), m³·conc. Sized by the router when
     /// `[2D_COVERAGES]` resolves; empty otherwise.
@@ -201,6 +204,7 @@ struct SurfaceTransportState {
         gained_rainfall.assign(ns, 0.0);
         gained_boundary.assign(ns, 0.0);
         gained_coupling.assign(ns, 0.0);
+        gained_exfiltration.assign(ns, 0.0);   // T7.1
         coupling_src.clear();       // S3: router sizes when outfalls exist
     }
 
@@ -237,7 +241,8 @@ struct SurfaceTransportState {
                (us < gained_rainfall.size() ? gained_rainfall[us] : 0.0) -
                (us < gained_boundary.size() ? gained_boundary[us] : 0.0) -
                (us < gained_coupling.size() ? gained_coupling[us] : 0.0) -
-               (us < gained_washoff.size()  ? gained_washoff[us]  : 0.0);
+               (us < gained_washoff.size()  ? gained_washoff[us]  : 0.0) -
+               (us < gained_exfiltration.size() ? gained_exfiltration[us] : 0.0);
     }
 };
 

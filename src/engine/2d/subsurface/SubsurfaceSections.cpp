@@ -156,6 +156,12 @@ std::string parseAquiferOptionsLine(const std::vector<std::string>& tokens,
         if (iequals(v, "ROWS")) { opts.node_auto = false; return {}; }
         return "NODE_ENROLMENT must be AUTO or ROWS: " + v;
     }
+    if (iequals(k, "LINK_SEEPAGE")) {                   // G-X3 / G-X4
+        if (iequals(v, "AUTO"))    { opts.link_seepage = GwLinkMode::AUTO;    return {}; }
+        if (iequals(v, "NONE"))    { opts.link_seepage = GwLinkMode::NONE;    return {}; }
+        if (iequals(v, "TWO_WAY")) { opts.link_seepage = GwLinkMode::TWO_WAY; return {}; }
+        return "LINK_SEEPAGE must be AUTO, NONE or TWO_WAY: " + v;
+    }
     if (iequals(k, "GW_ET")) {
         if (iequals(v, "NONE") || iequals(v, "CAPILLARY_RISE") ||
             iequals(v, "BOUNDARY_ET") || iequals(v, "BOTH")) {
@@ -288,12 +294,39 @@ std::string parseAquiferNodeLine(const std::vector<std::string>& tokens,
     return {};
 }
 
+// G-X4: one `[2D_AQUIFER_LINKS]` line — `LINK [KC k] [DC d] [EXCHANGE YES|NO]`.
+std::string parseAquiferLinkLine(const std::vector<std::string>& tokens,
+                                 std::vector<GwLinkRow>& rows,
+                                 std::vector<std::string>& names) {
+    if (tokens.empty())
+        return "expected LINK [KC k] [DC d] [EXCHANGE YES|NO]";
+    GwLinkRow r;
+    std::size_t at = 1;
+    while (at < tokens.size()) {
+        const std::string& k = tokens[at];
+        if (at + 1 >= tokens.size()) return "keyword " + k + " needs a value";
+        const std::string& v = tokens[at + 1];
+        at += 2;
+        if      (iequals(k, "KC")) { if (!num(v, r.Kc)) return "invalid KC: " + v; }
+        else if (iequals(k, "DC")) { if (!num(v, r.dC)) return "invalid DC: " + v; }
+        else if (iequals(k, "EXCHANGE")) {
+            if (!boolTok(v, r.exchange)) return "EXCHANGE must be YES/NO: " + v;
+        }
+        else return "unknown keyword: " + k;
+    }
+    if (r.Kc < 0.0 || r.dC < 0.0) return "KC and DC must be >= 0";
+    rows.push_back(r);
+    names.push_back(tokens[0]);
+    return {};
+}
+
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
 
 void registerSubsurfaceSections(SubsurfaceConfig& cfg,
                                 std::vector<std::string>& node_names,
+                                std::vector<std::string>& link_names,
                                 input::SectionRegistry& registry) {
     registry.register_custom("2D_AQUIFER_OPTIONS",
         makeHandler("2D_AQUIFER_OPTIONS",
@@ -309,6 +342,11 @@ void registerSubsurfaceSections(SubsurfaceConfig& cfg,
         makeHandler("2D_AQUIFER_NODE",
             [&cfg, &node_names](const std::vector<std::string>& t) {
                 return parseAquiferNodeLine(t, cfg.node_beds, node_names);
+            }, cfg.options));
+    registry.register_custom("2D_AQUIFER_LINKS",              // G-X4
+        makeHandler("2D_AQUIFER_LINKS",
+            [&cfg, &link_names](const std::vector<std::string>& t) {
+                return parseAquiferLinkLine(t, cfg.link_rows, link_names);
             }, cfg.options));
 }
 
@@ -370,6 +408,52 @@ public:
                                  bin(x, xmin_, dx_)];
         for (const int c : cand) if (inside(c, x, y)) return c;
         return -1;
+    }
+    /// G-X3: every cell whose bounding box may meet the box [x0,x1]×[y0,y1]
+    /// (the union of the bins the box covers, de-duplicated), for a segment
+    /// clip. Empty when the box misses the mesh entirely.
+    std::vector<int> candidates(double x0, double y0, double x1, double y1) const {
+        std::vector<int> out;
+        if (bins_.empty()) return out;
+        if (std::max(x0, x1) < xmin_ || std::min(x0, x1) > xmax_ ||
+            std::max(y0, y1) < ymin_ || std::min(y0, y1) > ymax_) return out;
+        const int i0 = bin(std::min(x0, x1), xmin_, dx_), i1 = bin(std::max(x0, x1), xmin_, dx_);
+        const int j0 = bin(std::min(y0, y1), ymin_, dy_), j1 = bin(std::max(y0, y1), ymin_, dy_);
+        for (int j = j0; j <= j1; ++j)
+            for (int i = i0; i <= i1; ++i)
+                for (const int c : bins_[static_cast<std::size_t>(j) * nb_ + i])
+                    out.push_back(c);
+        std::sort(out.begin(), out.end());
+        out.erase(std::unique(out.begin(), out.end()), out.end());
+        return out;
+    }
+    /// G-X3: the length of the segment (x0,y0)→(x1,y1) inside cell `c`.
+    /// Cells are CCW and convex (MeshBuilder validates both), so this is
+    /// the Cyrus–Beck clip: the parameter interval [t_lo, t_hi] that lies on
+    /// the inner side of every edge's half-plane. Exact for a straight
+    /// segment — no sampling, no step error.
+    double lengthInside(int c, double x0, double y0, double x1, double y1) const {
+        const int nv = m_.cell_nv[static_cast<std::size_t>(c)];
+        const double dx = x1 - x0, dy = y1 - y0;
+        double t_lo = 0.0, t_hi = 1.0;
+        for (int i = 0, j = nv - 1; i < nv; j = i++) {
+            const auto vi = static_cast<std::size_t>(m_.cell_vertex(c, j));
+            const auto vj = static_cast<std::size_t>(m_.cell_vertex(c, i));
+            const double ex = m_.vx[vj] - m_.vx[vi], ey = m_.vy[vj] - m_.vy[vi];
+            // signed distance ∝ cross(edge, P − v_i): ≥ 0 inside for CCW
+            const double d0 = ex * (y0 - m_.vy[vi]) - ey * (x0 - m_.vx[vi]);
+            const double d1 = ex * (y1 - m_.vy[vi]) - ey * (x1 - m_.vx[vi]);
+            const double dd = d1 - d0;                // d(t) = d0 + dd·t
+            if (std::fabs(dd) < 1.0e-300) {
+                if (d0 < 0.0) return 0.0;             // parallel, outside
+                continue;                             // parallel, inside/on the edge
+            }
+            const double t = -d0 / dd;
+            if (dd < 0.0) t_hi = std::min(t_hi, t);   // leaving the half-plane
+            else          t_lo = std::max(t_lo, t);   // entering it
+            if (t_lo >= t_hi) return 0.0;
+        }
+        return (t_hi - t_lo) * std::hypot(dx, dy);
     }
 private:
     int bin(double v, double v0, double d) const {
@@ -484,12 +568,135 @@ std::vector<std::string> resolveSubsurface(
     return errs;
 }
 
+// G-X3 (2026-09-19): which cells each seeping conduit crosses, and by how
+// much of its length. The polyline (node1 → [VERTICES] → node2, project map
+// units) is clipped segment by segment against the convex cells the locator
+// offers for its bounding box; the per-cell length over the whole polyline
+// length is the share — exact, so an evenly split conduit gives 0.5/0.5 to
+// the last bit. A segment lying ON a shared edge is inside both cells; the
+// shares are then scaled so a conduit never delivers more than its length
+// (each side gets half). Only conduits with a [LOSSES] seepage rate at
+// initialize take part (the others have nothing to deliver).
+std::vector<GwLinkShare> resolveLinkSeepage(SimulationContext& ctx,
+                                            const MeshData& mesh,
+                                            SubsurfaceConfig& cfg,
+                                            std::vector<std::string>& link_names,
+                                            double node_xy_to_mesh,
+                                            int& n_conduits) {
+    std::vector<GwLinkShare> out;
+    n_conduits = 0;
+    const int n = mesh.n_cells();
+    if (n == 0 || mesh.vx.empty()) return out;
+    const CellLocator locator(mesh);
+
+    // G-X4: resolve the `[2D_AQUIFER_LINKS]` names once. A row on a link the
+    // model does not have, or on something that is not a conduit, is an
+    // authoring error — it would otherwise be silently ignored and the
+    // modeller would never learn why the reach did not gain.
+    for (std::size_t i = 0; i < cfg.link_rows.size(); ++i) {
+        auto& r = cfg.link_rows[i];
+        const std::string& nm = (i < link_names.size()) ? link_names[i]
+                                                        : std::string{};
+        r.link = ctx.link_names.find(nm);
+        if (r.link < 0) {
+            ctx.warnings.push_back("[2D_AQUIFER_LINKS] unknown link '" + nm +
+                                   "' — the row was ignored.");
+        } else if (ctx.links.type[static_cast<std::size_t>(r.link)] !=
+                   LinkType::CONDUIT) {
+            ctx.warnings.push_back("[2D_AQUIFER_LINKS] link '" + nm +
+                                   "' is not a conduit — only conduits exchange "
+                                   "with the aquifer along their length; the row "
+                                   "was ignored.");
+            r.link = -1;
+        }
+    }
+    auto rowFor = [&cfg](int link) -> const GwLinkRow* {
+        for (const auto& r : cfg.link_rows) if (r.link == link) return &r;
+        return nullptr;
+    };
+    const bool two_way = cfg.options.link_seepage == GwLinkMode::TWO_WAY;
+
+    auto xy = [&](int ni, double& x, double& y) -> bool {
+        const auto u = static_cast<std::size_t>(ni);
+        if (ni < 0 || u >= ctx.spatial.node_x.size() || u >= ctx.spatial.node_y.size()) return false;
+        if (u >= ctx.spatial.node_has_xy.size() || !ctx.spatial.node_has_xy[u]) return false;
+        x = ctx.spatial.node_x[u] * node_xy_to_mesh;
+        y = ctx.spatial.node_y[u] * node_xy_to_mesh;
+        return true;
+    };
+
+    const auto& CD = ctx.link_subtypes.conduits;
+    for (int j = 0; j < ctx.n_links(); ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
+        const int cr = ctx.link_subtypes.conduit_row(j);
+        if (cr < 0) continue;
+        // G-X4: TWO_WAY, a row may give a conduit that never leaked its own
+        // conductivity (`KC`) — a pipe under the table gains without ever
+        // having had a [LOSSES] seepage rate — and `EXCHANGE NO` keeps a
+        // conduit out of the channel entirely.
+        const GwLinkRow* row = rowFor(j);
+        if (row != nullptr && !row->exchange) continue;
+        const double k_authored =
+            (two_way && row != nullptr && row->Kc > 0.0)
+                ? row->Kc : CD.seep_rate[static_cast<std::size_t>(cr)];
+        if (k_authored <= 0.0) continue;
+
+        std::vector<double> px, py;
+        double x = 0.0, y = 0.0;
+        if (!xy(ctx.links.node1[uj], x, y)) continue;
+        px.push_back(x); py.push_back(y);
+        if (uj < ctx.spatial.link_vertices_x.size() &&
+            uj < ctx.spatial.link_vertices_y.size()) {
+            const auto& vx = ctx.spatial.link_vertices_x[uj];
+            const auto& vy = ctx.spatial.link_vertices_y[uj];
+            for (std::size_t k = 0; k < vx.size() && k < vy.size(); ++k) {
+                px.push_back(vx[k] * node_xy_to_mesh);
+                py.push_back(vy[k] * node_xy_to_mesh);
+            }
+        }
+        if (!xy(ctx.links.node2[uj], x, y)) continue;
+        px.push_back(x); py.push_back(y);
+
+        double L = 0.0;
+        for (std::size_t k = 1; k < px.size(); ++k)
+            L += std::hypot(px[k] - px[k - 1], py[k] - py[k - 1]);
+        if (L <= 0.0) continue;
+
+        std::vector<std::pair<int, double>> len_in;   // cell, length
+        double sum = 0.0;
+        for (std::size_t k = 1; k < px.size(); ++k) {
+            const double x0 = px[k - 1], y0 = py[k - 1], x1 = px[k], y1 = py[k];
+            if (std::hypot(x1 - x0, y1 - y0) <= 0.0) continue;
+            for (const int c : locator.candidates(x0, y0, x1, y1)) {
+                const double len = locator.lengthInside(c, x0, y0, x1, y1);
+                if (len <= 0.0) continue;
+                sum += len;
+                auto it = std::find_if(len_in.begin(), len_in.end(),
+                                       [c](const std::pair<int, double>& e) { return e.first == c; });
+                if (it == len_in.end()) len_in.emplace_back(c, len);
+                else it->second += len;
+            }
+        }
+        if (len_in.empty()) continue;
+        ++n_conduits;
+        const double denom = std::max(L, sum);   // on-edge double coverage → halves
+        for (const auto& e : len_in) {
+            GwLinkShare sh;
+            sh.link = j; sh.cell = e.first; sh.weight = e.second / denom;
+            out.push_back(sh);
+        }
+    }
+    return out;
+}
+
 // ---------------------------------------------------------------------------
 // Writer
 // ---------------------------------------------------------------------------
 
 void writeSubsurfaceSections(const SubsurfaceConfig& cfg,
                              const std::vector<std::string>& node_names,
+                             const std::vector<std::string>& link_names,
                              std::string& out) {
     if (cfg.empty()) return;
     const GwOptions d{};   // defaults, for the omit-if-unchanged rule
@@ -521,6 +728,11 @@ void writeSubsurfaceSections(const SubsurfaceConfig& cfg,
         if (cfg.options.gw_et != d.gw_et) kv("GW_ET", cfg.options.gw_et);
         if (cfg.options.node_auto != d.node_auto)
             kv("NODE_ENROLMENT", cfg.options.node_auto ? "AUTO" : "ROWS");   // G-X2
+        if (cfg.options.link_seepage != d.link_seepage)                    // G-X3/G-X4
+            kv("LINK_SEEPAGE",
+               cfg.options.link_seepage == GwLinkMode::NONE    ? "NONE"
+             : cfg.options.link_seepage == GwLinkMode::TWO_WAY ? "TWO_WAY"
+                                                               : "AUTO");
         if (!body.empty()) {
             out += "\n[2D_AQUIFER_OPTIONS]\n";
             out += body;
@@ -583,6 +795,25 @@ void writeSubsurfaceSections(const SubsurfaceConfig& cfg,
             if (b.dC   > 0.0) { line += "DC ";   line += fmt(b.dC);   line += ' '; }
             if (b.area > 0.0) { line += "AREA "; line += fmt(b.area); line += ' '; }
             if (!b.exchange)  { line += "EXCHANGE NO "; }
+            while (!line.empty() && line.back() == ' ') line.pop_back();
+            out += line;
+            out += '\n';
+        }
+    }
+
+    // G-X4: the per-conduit overrides. Echoed verbatim — the rows carry the
+    // authored numbers, never a converted copy (the GwUnitFactors note).
+    if (!cfg.link_rows.empty()) {
+        out += "\n[2D_AQUIFER_LINKS]\n";
+        out += ";;Link              Options\n";
+        for (std::size_t i = 0; i < cfg.link_rows.size(); ++i) {
+            const auto& r = cfg.link_rows[i];
+            std::string line = (i < link_names.size()) ? link_names[i]
+                                                       : std::string("?");
+            line.append(std::max<std::size_t>(1, 19 - line.size()), ' ');
+            if (r.Kc > 0.0) { line += "KC "; line += fmt(r.Kc); line += ' '; }
+            if (r.dC > 0.0) { line += "DC "; line += fmt(r.dC); line += ' '; }
+            if (!r.exchange) { line += "EXCHANGE NO "; }
             while (!line.empty() && line.back() == ' ') line.pop_back();
             out += line;
             out += '\n';

@@ -45,6 +45,7 @@
 #include "../2d/quality/SurfaceQuality2D.hpp"   // S7: 2D Surface Washoff Summary
 #include "../2d/data/MeshData.hpp"
 #include "../2d/subsurface/SubsurfaceData.hpp"   // G-O: 2D Aquifer Continuity
+#include "../2d/subsurface/SubsurfaceTransportState.hpp"  // T7.5: its quality twin
 
 #include <version.h>
 
@@ -932,6 +933,12 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         row("Dry Weather Inflow .......", mb.routing_dry_weather);
         row("Wet Weather Inflow .......", mb.routing_wet_weather);
         row("Groundwater Inflow .......", mb.routing_gw_inflow);
+        // G-X4: a gaining reach — the two-zone aquifer feeding a conduit that
+        // runs below the water table. Printed only when non-zero, so every
+        // deck without the signed conduit exchange keeps its report
+        // line-for-line.
+        if (mb.routing_link_gw_inflow != 0.0)
+            row("Conduit GW Inflow ........", mb.routing_link_gw_inflow);
         row("RDII Inflow ..............", mb.routing_rdii);
         row("External Inflow ..........", mb.routing_external);
         row("External Outflow .........", mb.routing_outflow);
@@ -1013,6 +1020,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             std::fprintf(f, "\n  **************************     ---------     ---------");
             row2("Initial Stored Volume ....", g.led_init_storage);
             row2("Infiltration Inflow ......", g.led_infil_in);
+            row2("Conduit Seepage Inflow ...", g.led_link);   // G-X3
             row2("Lateral Net Inflow .......", g.led_lateral);
             row2("Deep Percolation .........", g.led_deep);
             row2("Node Exchange Outflow ....", g.led_node);
@@ -1021,9 +1029,56 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             row2("Final Stored Volume ......", g.liveStorage());
             row2("  (Recharge, internal) ...", g.led_recharge);
             row2("  (Capillary Rise, int.) .", g.led_caprise);
-            const double denom = g.led_init_storage + g.led_infil_in + std::max(0.0, g.led_lateral);
+            const double denom = g.led_init_storage + g.led_infil_in + g.led_link +   // G-X3
+                                 std::max(0.0, g.led_lateral);
             std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f",
                          (denom > 0.0) ? g.continuityResidual() / denom * 100.0 : 0.0);
+        }
+
+        // T7.5: the aquifer's SPECIES continuity, one block per transported
+        // row — the quality twin of the water block above, and the only
+        // place a modeller sees where a plume went. Printed only when the
+        // kernel actually carried a tuple, so a water-only aquifer deck's
+        // report is unchanged line-for-line.
+        if (ctx.twod_io.aquifer_transport != nullptr &&
+            ctx.twod_io.aquifer_transport->active()) {
+            const auto& t = *ctx.twod_io.aquifer_transport;
+            for (int sp = 0; sp < t.n_species; ++sp) {
+                const auto u = static_cast<std::size_t>(sp);
+                const std::string& nm =
+                    (u < t.row_names.size()) ? t.row_names[u] : std::string("?");
+                WRITE(f, "");
+                WRITE(f, "");
+                std::fprintf(f, "\n  **************************%14s", nm.c_str());
+                std::fprintf(f, "\n  2D Aquifer Quality Continuity%11s", "mass");
+                std::fprintf(f, "\n  **************************    ----------");
+                auto qrow = [&](const char* label, double v) {
+                    std::fprintf(f, "\n  %s%14.4f", label, v);
+                };
+                qrow("Initial Stored Mass ......", t.init_mass[u]);
+                qrow("Infiltration Inflow ......", t.gained_infil[u]);
+                if (t.gained_node[u] != 0.0)
+                    qrow("Node Exchange Inflow .....", t.gained_node[u]);
+                if (t.gained_link[u] != 0.0)
+                    qrow("Conduit Seepage Inflow ...", t.gained_link[u]);
+                qrow("Lateral Net Inflow .......", t.net_lateral[u]);
+                qrow("Deep Percolation .........", t.lost_deep[u]);
+                qrow("Node Exchange Outflow ....", t.lost_node[u]);
+                if (t.lost_link[u] != 0.0)
+                    qrow("Conduit Seepage Outflow ..", t.lost_link[u]);
+                qrow("Saturation Excess Return .", t.lost_dunne[u]);
+                qrow("Evapotranspiration .......", t.lost_et[u]);
+                if (t.lost_reaction[u] != 0.0)
+                    qrow("Reacted / Decayed ........", t.lost_reaction[u]);
+                qrow("Final Stored Mass ........", t.ledgeredStorage(sp));
+                // The denominator is what came in, so a species that only
+                // ever sat there reports 0 % rather than dividing by zero.
+                const double denom = std::fabs(t.init_mass[u]) +
+                                     std::fabs(t.gained_infil[u]) +
+                                     std::fabs(t.net_lateral[u]);
+                std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f",
+                             (denom > 0.0) ? t.residual(sp) / denom * 100.0 : 0.0);
+            }
         }
 
         // 2D Solver Statistics — cumulative marcher throughput. Printed only
@@ -1104,7 +1159,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             // it from the SUM of the two is correct in both groupings and
             // needs no branch — the category it is not in contributes zero.
             const double in_adj  = mb1.routing_dry_weather + mb1.routing_wet_weather
-                                 + mb1.routing_gw_inflow + mb1.routing_rdii
+                                 + mb1.routing_gw_inflow
+                                 + mb1.routing_link_gw_inflow   // G-X4
+                                 + mb1.routing_rdii
                                  + (mb1.routing_external - drain_1d)
                                  + mb1.routing_init_storage;
             const double out_adj = (mb1.routing_flooding

@@ -93,6 +93,32 @@ struct GwNodeBed {
     bool   automatic = false;
 };
 
+/// G-X4 (2026-09-20): `LINK_SEEPAGE` mode. AUTO is G-X3's one-way delivery
+/// (the conduit's existing `[LOSSES]` seepage volume is routed to the cells
+/// it crosses); TWO_WAY replaces the legacy loss law with the signed
+/// MODFLOW-River conductance, so a conduit below the water table GAINS.
+enum class GwLinkMode : int8_t { NONE = 0, AUTO = 1, TWO_WAY = 2 };
+
+/// G-X4: one authored `[2D_AQUIFER_LINKS]` row — the per-conduit override of
+/// the signed exchange. `link` is a NAME until `resolveLinkSeepage` maps it.
+struct GwLinkRow {
+    int    link = -1;
+    double Kc   = 0.0;   ///< bed conductivity, [LOSSES]-seepage units; 0 ⇒ the conduit's own seep rate
+    double dC   = 0.0;   ///< bed thickness (project length); 0 ⇒ the conduit's full depth
+    bool   exchange = true;   ///< EXCHANGE NO — this conduit stays a legacy loss
+};
+
+/// G-X3 (2026-09-19): one conduit's share of one mesh cell — the fraction
+/// of the conduit's polyline length ([COORDINATES] + [VERTICES]) that lies
+/// in the cell. The router books `weight × (the conduit's seepage volume
+/// this routing step)` into the cell; a conduit's shares sum to ≤ 1 (the
+/// part of its length outside the mesh seeps to nowhere, as before).
+struct GwLinkShare {
+    int    link   = -1;   ///< 1D link index (a conduit)
+    int    cell   = -1;   ///< mesh cell
+    double weight = 0.0;  ///< length fraction in (0, 1]
+};
+
 /// `[2D_AQUIFER_OPTIONS]`. Defaults are the plan's starred values.
 struct GwOptions {
     SoilChar  soil_char = SoilChar::RUSSO;
@@ -118,6 +144,14 @@ struct GwOptions {
     /// names it — rows override, `EXCHANGE NO` opts out. ROWS: only the
     /// authored rows exchange (the pre-G-X2 behaviour).
     bool      node_auto = true;
+    /// G-X3/G-X4: `LINK_SEEPAGE AUTO | NONE | TWO_WAY`. AUTO (default,
+    /// program plan §B.4b): every conduit with a [LOSSES] seepage rate whose
+    /// polyline crosses the mesh delivers its seepage volume into the cells
+    /// it crosses, length-weighted (one-way; the 1D still books the loss).
+    /// NONE: seepage is a system loss, as before. TWO_WAY (G-X4): the signed
+    /// conductance law replaces the fixed loss, and a conduit under the
+    /// water table gains.
+    GwLinkMode link_seepage = GwLinkMode::AUTO;
     /// True once any [2D_AQUIFER*] row was authored.
     bool      authored = false;
 };
@@ -187,6 +221,7 @@ struct SubsurfaceState {
     std::vector<double>  qet_last;    ///< subsurface ET (m/s, ≥ 0 out)
     std::vector<double>  dunne_last;  ///< saturation-excess to the surface (m³/s)
     std::vector<double>  qplus_last;  ///< infiltration delivered in (m/s)
+    std::vector<double>  qlink_last;  ///< G-X3: conduit seepage delivered in (m³/s)
 
     // ---- LTS ------------------------------------------------------------
     std::vector<double>  dt_cell;     ///< min(Δt_g, Δt_u) per cell (s)
@@ -205,6 +240,11 @@ struct SubsurfaceState {
     /// Node-exchange accumulator, per coupled node (m³), booked at tier-0
     /// node-head sampling and gathered at the GW cell's firing.
     std::vector<double>  nacc;
+    /// G-X3: conduit-seepage accumulator per cell (m³, + into the aquifer),
+    /// booked by the router at the ROUTING cadence from the conduits' seepage
+    /// rates and gathered at the GW cell's firing — the `xacc_from_surface`
+    /// pattern, one phase behind `led_link` for the same reason.
+    std::vector<double>  lacc;
 
     // ---- ledger (m³, cumulative) ----------------------------------------
     double led_recharge = 0.0;   ///< unsat → sat (negative = capillary rise)
@@ -215,6 +255,7 @@ struct SubsurfaceState {
     double led_caprise  = 0.0;   ///< capillary rise (the negative recharge share)
     double led_et       = 0.0;   ///< subsurface ET out
     double led_infil_in = 0.0;   ///< q⁺ delivered from the surface
+    double led_link     = 0.0;   ///< G-X3: conduit seepage delivered in
     double led_init_storage  = 0.0;
     double led_final_storage = 0.0;
 
@@ -234,7 +275,7 @@ struct SubsurfaceState {
     /// `led_infil_in` / `led_dunne` (see continuityResidual).
     double ledgeredStorage() const noexcept;
     /// G-O: `ledgeredStorage − led_init_storage − (in − out)` with
-    /// in = infil_in + lateral, out = deep + node + et + dunne; recharge and
+    /// in = infil_in + lateral + link (G-X3), out = deep + node + et + dunne; recharge and
     /// capillary rise are internal to a cell and do not appear. Zero to
     /// machine precision for a conserving kernel (swmm_gw2d_get_continuity_error).
     double continuityResidual() const noexcept;
@@ -266,9 +307,11 @@ struct SubsurfaceConfig {
     GwOptions                 options;
     std::vector<GwAquiferRow> rows;
     std::vector<GwNodeBed>    node_beds;
+    std::vector<GwLinkRow>    link_rows;   ///< G-X4: [2D_AQUIFER_LINKS]
 
     bool empty() const noexcept {
-        return !options.authored && rows.empty() && node_beds.empty();
+        return !options.authored && rows.empty() && node_beds.empty() &&
+               link_rows.empty();
     }
     void clear() { *this = SubsurfaceConfig{}; }
 };

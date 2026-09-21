@@ -306,8 +306,12 @@ TEST(TransportPolicyRows, DefaultLayoutIsUnchangedAndPollutantOptOutKeepsAgeAndH
                   SWMM_TRANSPORT_UNAVAILABLE);
         EXPECT_EQ(cell(m, SWMM_TRANSPORT_DOMAIN_GROUNDWATER, SWMM_TRANSPORT_CLASS_POLLUTANTS).state,
                   SWMM_TRANSPORT_UNAVAILABLE);
+        // T7.1: either section can give this deck a groundwater row now —
+        // the legacy subcatchment [AQUIFERS] (which still transports
+        // nothing) or the two-zone [2D_AQUIFER] (which does), so the
+        // "there is none" reason names both.
         EXPECT_STREQ(cell(m, SWMM_TRANSPORT_DOMAIN_GROUNDWATER, SWMM_TRANSPORT_CLASS_POLLUTANTS).reason,
-                     "no [AQUIFERS]");
+                     "no [AQUIFERS] or [2D_AQUIFER]");
         EXPECT_EQ(cell(m, SWMM_TRANSPORT_DOMAIN_RUNOFF, SWMM_TRANSPORT_CLASS_POLLUTANTS).state,
                   SWMM_TRANSPORT_UNAVAILABLE) << "no subcatchments in this deck";
         EXPECT_STREQ(swmm_transport_domain_name(SWMM_TRANSPORT_DOMAIN_SURFACE_2D), "2D surface");

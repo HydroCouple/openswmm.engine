@@ -869,10 +869,29 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
         const std::vector<double>* fields[kGwFaceFields] = {
             &snap.gw2d_table_elev, &snap.gw2d_hg, &snap.gw2d_hu, &snap.gw2d_recharge,
             &snap.gw2d_lateral, &snap.gw2d_node_exchange, &snap.gw2d_deep, &snap.gw2d_et,
-            &snap.gw2d_dunne, &snap.gw2d_infil_in};
+            &snap.gw2d_dunne, &snap.gw2d_infil_in, &snap.gw2d_link_seepage};   // G-X3
         for (int k = 0; k < kGwFaceFields; ++k) face(ds_gw_face_[k], *fields[k]);
-        if (ds_gw_ledger_ != H5I_INVALID_HID && snap.gw2d_ledger.size() == 11)
-            extendAndWrite2D(ds_gw_ledger_, snap.gw2d_ledger.data(), 11);
+        if (ds_gw_ledger_ != H5I_INVALID_HID && snap.gw2d_ledger.size() == kGwLedgerTerms)
+            extendAndWrite2D(ds_gw_ledger_, snap.gw2d_ledger.data(), kGwLedgerTerms);
+        // T7.5
+        if (n_gw_species_ > 0) {
+            const auto want = static_cast<std::size_t>(n_gw_species_) *
+                              static_cast<std::size_t>(n_faces_);
+            if (ds_gw_sat_conc_ != H5I_INVALID_HID &&
+                snap.gw2d_sat_conc.size() == want)
+                extendAndWrite3D(ds_gw_sat_conc_, snap.gw2d_sat_conc.data(),
+                                 n_gw_species_, n_faces_);
+            if (ds_gw_unsat_conc_ != H5I_INVALID_HID &&
+                snap.gw2d_unsat_conc.size() == want)
+                extendAndWrite3D(ds_gw_unsat_conc_, snap.gw2d_unsat_conc.data(),
+                                 n_gw_species_, n_faces_);
+            if (ds_gw_species_ledger_ != H5I_INVALID_HID &&
+                snap.gw2d_species_ledger.size() ==
+                    static_cast<std::size_t>(n_gw_species_) * kGwSpeciesLedgerTerms)
+                extendAndWrite3D(ds_gw_species_ledger_,
+                                 snap.gw2d_species_ledger.data(),
+                                 n_gw_species_, kGwSpeciesLedgerTerms);
+        }
         if (ds_gw_bed_exchange_ != H5I_INVALID_HID &&
             snap.gw2d_bed_exchange_cum.size() == static_cast<std::size_t>(n_gw_beds_))
             extendAndWrite2D(ds_gw_bed_exchange_, snap.gw2d_bed_exchange_cum.data(), n_gw_beds_);
@@ -920,6 +939,7 @@ void Default2DOutputPlugin::createGroundwaterDatasets(const SimulationSnapshot& 
         {"Mesh2_face_gw_et",            "subsurface evapotranspiration (last firing, held)", "m s-1"},
         {"Mesh2_face_gw_dunne",         "saturation excess returned to the surface (last firing, held)", "m3 s-1"},
         {"Mesh2_face_gw_infil_in",      "infiltration delivered from the surface (last firing, held)", "m s-1"},
+        {"Mesh2_face_gw_link_seepage",  "conduit seepage delivered into the cell, length-weighted over the conduits crossing it (last firing, held)", "m3 s-1"},   // G-X3
     };
     for (int k = 0; k < kGwFaceFields; ++k) {
         hid_t ds = createUnlimitedDataset(kFields[k].name, 2, zero2, face_chunk);
@@ -957,18 +977,72 @@ void Default2DOutputPlugin::createGroundwaterDatasets(const SimulationSnapshot& 
         H5Dclose(ds);
         H5Sclose(space);
     }
-    // Domain ledger series [nTime, 11], cumulative m³ — the SWMM_GW2D_LED_*
+    // T7.5: the transported tuple. `[time, species, face]` concentrations
+    // for each zone, and a per-species ledger — the species twin of the
+    // water's `groundwater_ledger`, written to the same cadence.
+    n_gw_species_ = static_cast<hsize_t>(std::max(0, snap.gw2d_species_count));
+    if (n_gw_species_ > 0) {
+        hsize_t zero3[3] = {0, n_gw_species_, n_faces_};
+        hsize_t chunk3[3] = {1, n_gw_species_, std::min<hsize_t>(n_faces_, 4096)};
+        struct S { const char* name; const char* what; hid_t* ds; };
+        const S kZones[2] = {
+            {"Mesh2_face_gw_sat_conc",   "saturated zone",   &ds_gw_sat_conc_},
+            {"Mesh2_face_gw_unsat_conc", "unsaturated column", &ds_gw_unsat_conc_},
+        };
+        for (const auto& z : kZones) {
+            *z.ds = createUnlimitedDataset(z.name, 3, zero3, chunk3);
+            const std::string ln =
+                std::string("groundwater species concentration in the ") + z.what;
+            writeStringAttr(*z.ds, "long_name", ln.c_str());
+            writeStringAttr(*z.ds, "units", "1");   // per species; see species_names
+            writeStringAttr(*z.ds, "mesh", "Mesh2");
+            writeStringAttr(*z.ds, "location", "face");
+            writeStringAttr(*z.ds, "layout",
+                            "[time, species, face]; species order = the "
+                            "species_names list (pollutants, MSX, "
+                            "__WATER_AGE__, __TEMPERATURE__); a zone with no "
+                            "water reports 0");
+            if (snap.gw2d_species_names) {
+                std::string names;
+                for (hsize_t k = 0; k < n_gw_species_ &&
+                                    k < snap.gw2d_species_names->size(); ++k) {
+                    if (k) names += ",";
+                    names += (*snap.gw2d_species_names)[static_cast<std::size_t>(k)];
+                }
+                if (!names.empty())
+                    writeStringAttr(*z.ds, "species_names", names.c_str());
+            }
+        }
+        hsize_t zerol[3] = {0, n_gw_species_, kGwSpeciesLedgerTerms};
+        hsize_t chunkl[3] = {64, n_gw_species_, kGwSpeciesLedgerTerms};
+        ds_gw_species_ledger_ = createUnlimitedDataset(
+            "groundwater_species_ledger", 3, zerol, chunkl, H5T_NATIVE_DOUBLE);
+        writeStringAttr(ds_gw_species_ledger_, "long_name",
+                        "two-zone aquifer species ledger, cumulative");
+        writeStringAttr(ds_gw_species_ledger_, "units", "1");
+        writeStringAttr(ds_gw_species_ledger_, "terms",
+                        "init,storage,infil_in,node_in,link_in,lateral_net,"
+                        "deep_out,node_out,link_out,dunne_out,et_out,"
+                        "reaction_out,residual");
+        writeStringAttr(ds_gw_species_ledger_, "layout",
+                        "[time, species, term]; mass units are the species' "
+                        "own (concentration x m3); residual = storage + out "
+                        "- in - init and is zero for a conserving kernel");
+    }
+
+    // Domain ledger series [nTime, 12], cumulative m³ — the SWMM_GW2D_LED_*
     // order plus the continuity residual last, so a plot of the residual
-    // over time is one column read.
+    // over time is one column read. (G-X3 appended `link` at LED index 10;
+    // the residual moved to 11 — read the `terms` attribute, not a constant.)
     {
-        hsize_t zero[2] = {0, 11}, chunk[2] = {64, 11};
+        hsize_t zero[2] = {0, kGwLedgerTerms}, chunk[2] = {64, kGwLedgerTerms};
         ds_gw_ledger_ = createUnlimitedDataset("groundwater_ledger", 2, zero, chunk,
                                                H5T_NATIVE_DOUBLE);
         writeStringAttr(ds_gw_ledger_, "long_name", "two-zone aquifer domain ledger, cumulative");
         writeStringAttr(ds_gw_ledger_, "units", "m3");
         writeStringAttr(ds_gw_ledger_, "terms",
                         "recharge,lateral,deep,node,dunne,caprise,et,infil_in,"
-                        "init_storage,storage,continuity_residual");
+                        "init_storage,storage,link,continuity_residual");
         writeStringAttr(ds_gw_ledger_, "layout",
                         "[time, term]; storage includes water in flight in the side "
                         "accumulators; continuity_residual = ledgered storage − init − (in − out)");
@@ -1087,6 +1161,7 @@ int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
             writeScalar(grp, "init_storage",  g.led_init_storage);
             writeScalar(grp, "final_storage", g.liveStorage());
             writeScalar(grp, "infil_in",      g.led_infil_in);
+            writeScalar(grp, "link_in",       g.led_link);   // G-X3: conduit seepage
             writeScalar(grp, "lateral_in",    g.led_lateral);
             writeScalar(grp, "recharge",      g.led_recharge);
             writeScalar(grp, "capillary_rise", g.led_caprise);
@@ -1119,6 +1194,8 @@ int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
     closeDS(ds_face_species_conc_);
     closeDS(ds_face_buildup_);
     for (int k = 0; k < kGwFaceFields; ++k) closeDS(ds_gw_face_[k]);   // G-O
+    closeDS(ds_gw_sat_conc_); closeDS(ds_gw_unsat_conc_);              // T7.5
+    closeDS(ds_gw_species_ledger_);
     closeDS(ds_gw_ledger_);
     closeDS(ds_gw_bed_exchange_);
     closeDS(ds_gw_theta_);

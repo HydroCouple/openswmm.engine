@@ -262,12 +262,20 @@ private:
     /// [nTime, mLayers, nFace]. Created lazily on the first update() with a
     /// live kernel; absent otherwise. `Mesh2_face_gw_bed_elev` and
     /// `Mesh2_face_gw_closure` are static [nFace] and written once.
-    static constexpr int kGwFaceFields = 10;
+    static constexpr int kGwFaceFields = 11;   // G-X3: + Mesh2_face_gw_link_seepage
+    static constexpr hsize_t kGwLedgerTerms = 12;   // G-X3: + link (LED 10), residual last
     hid_t   ds_gw_face_[kGwFaceFields] = {H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID,
                                           H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID,
                                           H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID,
-                                          H5I_INVALID_HID};
+                                          H5I_INVALID_HID, H5I_INVALID_HID};
     hid_t   ds_gw_ledger_          = H5I_INVALID_HID;
+    /// T7.5: the aquifer's species fields, created with the rest of the
+    /// groundwater group when the kernel carries a tuple.
+    static constexpr hsize_t kGwSpeciesLedgerTerms = 13;
+    hid_t   ds_gw_sat_conc_        = H5I_INVALID_HID;
+    hid_t   ds_gw_unsat_conc_      = H5I_INVALID_HID;
+    hid_t   ds_gw_species_ledger_  = H5I_INVALID_HID;
+    hsize_t n_gw_species_          = 0;
     hid_t   ds_gw_bed_exchange_    = H5I_INVALID_HID;
     hid_t   ds_gw_theta_           = H5I_INVALID_HID;
     hsize_t n_gw_beds_             = 0;

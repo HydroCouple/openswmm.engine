@@ -92,6 +92,14 @@ typedef enum SWMM_RoutingTotal {
                                        *   interface-file, and 2D-coupling
                                        *   inflow (issue #113). */
     ,
+    SWMM_ROUTING_LINK_GW_INFLOW = 13 /**< G-X4 (2026-09-20): cumulative volume
+                                       *   the two-zone [2D_AQUIFER] handed to
+                                       *   conduits below the water table
+                                       *   (gaining reaches). The negative half
+                                       *   of the signed conduit seepage; the
+                                       *   losing half stays
+                                       *   SWMM_ROUTING_SEEP_LOSS. */
+    ,
     SWMM_ROUTING_COUPLING_OUT = 12   /**< C2 (2026-09-07): cumulative volume
                                        *   the 1D→2D coupling spill removed
                                        *   from coupled nodes.

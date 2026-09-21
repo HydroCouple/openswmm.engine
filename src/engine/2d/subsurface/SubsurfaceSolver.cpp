@@ -64,6 +64,7 @@
 #include "../data/SolverOptions2D.hpp"
 #include "../data/SurfaceStateData.hpp"
 #include "../solver/InertialEdges.hpp"
+#include "../gw/GwTransportData.hpp"   // T7.1
 #include "../../data/NodeData.hpp"
 
 #include <algorithm>
@@ -268,6 +269,7 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh,
     // 1D node keeps working, it simply has no aquifer under it.
     state_.nacc.assign(node_beds_.size(), 0.0);
     bed_exchange_cum_.assign(node_beds_.size(), 0.0);   // G-O
+    bed_last_out_.assign(node_beds_.size(), 0.0);       // T7.4
     node_exchange_vol_.assign(static_cast<std::size_t>(std::max(0, n_nodes)),
                               0.0);
     node_drawn_gw_ = node_exchange_vol_;                // G-X1
@@ -486,8 +488,128 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
         const double vol = Q * dt;
         state_.eacc_L[eu] -= vol;   // leaves cL
         state_.eacc_R[eu] += vol;   // enters cR
+
+        // T7.1: the tuple rides the same water, at the DONOR's saturated
+        // concentration — the upwind rule the transmissivity above already
+        // chose, so mass and water never disagree about which cell exported.
+        // T7.2 adds the dispersive term below, on the same face, into the
+        // same accumulators, at the same cadence.
+        if (tr_.active() && vol != 0.0) {
+            const double vd = satVolume(static_cast<int>(don));
+            if (vd > 0.0) {
+                const auto ne = static_cast<std::size_t>(E.ne);
+                for (int s = 0; s < tr_.n_species; ++s) {
+                    const double m_don = tr_.sat_mass[tr_.idx(s, static_cast<int>(don))];
+                    if (m_don == 0.0) continue;
+                    // T7.2: only the DISSOLVED share travels — what is
+                    // sorbed on the grains stays with the cell. That single
+                    // multiplier is the whole of retardation here, which is
+                    // why no channel carries an R of its own.
+                    const double mob =
+                        tr_.dissolvedFraction(s, static_cast<int>(don),
+                                              state_.theta_s[don]);
+                    double dm = std::abs(vol) * (m_don / vd) * mob;
+                    // Never export more than the donor holds (the water's
+                    // own positivity share bounds the volume the same way);
+                    // the signed temperature row has no floor.
+                    if (!tr_.signedRow(s) && dm > std::abs(m_don))
+                        dm = std::abs(m_don);
+                    const double sgn = (vol > 0.0) ? 1.0 : -1.0;
+                    const auto k = static_cast<std::size_t>(s) * ne + eu;
+                    tr_.sacc_L[k] -= sgn * dm;
+                    tr_.sacc_R[k] += sgn * dm;
+                }
+            }
+        }
+
+        // T7.2: hydrodynamic dispersion, D = α_L·|v| + D_m with the pore
+        // velocity v = Q/(θ_s·h_g·B). Booked on the SAME face into the SAME
+        // accumulators as the advective term above, so it inherits the
+        // marcher's tier consistency rather than needing its own argument —
+        // the surface's §S2 rule, and the reason the limiter below mirrors
+        // the surface's limiter down to the 1/nf composition bound.
+        if (tr_.active() && tr_.dispersion_on) {
+            const double Ta = state_.hg[l], Tb = state_.hg[r];
+            const double va = satVolume(static_cast<int>(l));
+            const double vb = satVolume(static_cast<int>(r));
+            if (Ta > kTiny && Tb > kTiny && va > 0.0 && vb > 0.0) {
+                const double hbar = 0.5 * (Ta + Tb);
+                const double B    = E.xi[eu];              // face width (m)
+                const double thet = 0.5 * (state_.theta_s[l] + state_.theta_s[r]);
+                // Pore velocity across this face, from the advective Q the
+                // block above already computed.
+                const double area_f = std::max(thet * hbar * B, kTiny);
+                const double vpore  = std::abs(Q) / area_f;
+                const double alpha  = 0.5 * (tr_.alpha_L[l] + tr_.alpha_L[r]);
+                const double Dm     = 0.5 * (tr_.D_m[l] + tr_.D_m[r]);
+                const double D      = alpha * vpore + Dm;
+                if (D > 0.0) {
+                    // Exchanged volume-equivalent: D·(θ·h̄·B)·dt/d.
+                    const double cond = D * area_f * E.inv_dx[eu] * dt;
+                    const auto ne = static_cast<std::size_t>(E.ne);
+                    const int nf_r = std::max(1, cell_nface_[r]);
+                    const int nf_l = std::max(1, cell_nface_[l]);
+                    for (int s = 0; s < tr_.n_species; ++s) {
+                        const double ma = tr_.sat_mass[tr_.idx(s, static_cast<int>(l))];
+                        const double mb = tr_.sat_mass[tr_.idx(s, static_cast<int>(r))];
+                        const double ca = ma / va *
+                            tr_.dissolvedFraction(s, static_cast<int>(l), state_.theta_s[l]);
+                        const double cb = mb / vb *
+                            tr_.dissolvedFraction(s, static_cast<int>(r), state_.theta_s[r]);
+                        double dMd = cond * (ca - cb);      // + = l → r
+                        if (dMd == 0.0) continue;
+                        // The pairwise equalisation bound, divided by the
+                        // RECEIVER's face count: pairwise bounds do not
+                        // compose, and a cell fed by several faces each
+                        // closing its whole gap can end richer than every
+                        // donor. The surface proved this the hard way
+                        // (its own comment records 15.31 against a max of
+                        // 10); the same 1/nf argument holds here.
+                        const std::size_t recv = (dMd > 0.0) ? r : l;
+                        const double eq = (ca - cb) * va * vb / (va + vb) /
+                                          static_cast<double>((dMd > 0.0) ? nf_r : nf_l);
+                        double cap = std::abs(eq);
+                        // …and a positivity share of the giver's mass. The
+                        // SIGNED temperature row has no positivity to
+                        // guard and would bind every exchange across a
+                        // warm/cold front, so for it the equalisation
+                        // bound alone is the cap.
+                        if (!tr_.signedRow(s)) {
+                            const double give = std::abs((dMd > 0.0) ? ma : mb) * kFaceShare;
+                            cap = std::min(cap, give);
+                        }
+                        if (std::abs(dMd) > cap) {
+                            dMd = (dMd > 0.0) ? cap : -cap;
+                            ++tr_.dispersion_limiter_binds;
+                        }
+                        const auto k = static_cast<std::size_t>(s) * ne + eu;
+                        tr_.sacc_L[k] -= dMd;
+                        tr_.sacc_R[k] += dMd;
+                    }
+                }
+            }
+        }
     }
     accumulators_pending_ = true;
+}
+
+double SubsurfaceSolver::gatherLateralMass(int i, int s) noexcept {
+    if (tr_.sacc_L.empty() || edges_ == nullptr) return 0.0;
+    const InertialEdges& E = *edges_;
+    const auto u = static_cast<std::size_t>(i);
+    if (u + 1 >= E.cell_ptr.size()) return 0.0;
+    const auto ne = static_cast<std::size_t>(E.ne);
+    double m = 0.0;
+    const int b0 = E.cell_ptr[u];
+    const int b1 = E.cell_ptr[u + 1];
+    for (int k = b0; k < b1; ++k) {
+        const auto ku = static_cast<std::size_t>(k);
+        const auto eu = static_cast<std::size_t>(E.cell_edge[ku]);
+        const auto j  = static_cast<std::size_t>(s) * ne + eu;
+        if (E.cell_sign[ku] > 0) { m += tr_.sacc_L[j]; tr_.sacc_L[j] = 0.0; }
+        else                     { m += tr_.sacc_R[j]; tr_.sacc_R[j] = 0.0; }
+    }
+    return m;
 }
 
 double SubsurfaceSolver::gatherLateral(int i) noexcept {
@@ -584,12 +706,57 @@ void SubsurfaceSolver::sampleNodeExchange(const NodeData* nodes, double dt) {
         if (Q == 0.0) continue;
 
         const double vol = Q * dt;
+        // T7.4: a node pushing water DOWN its bed (Q < 0) sends its own
+        // quality with it. The row layout is shared with the 1D (both come
+        // from TransportPolicy), so row s means the same species on both
+        // sides and no mapping is needed — only the unit factor the volume
+        // already takes. The aquifer→node direction is booked at the CELL's
+        // firing instead, where the cell's concentration is known.
+        if (tr_.active() && vol < 0.0 && node_row_conc_ != nullptr &&
+            node_row_ns_ == tr_.n_species) {
+            const double vol_1d_to_2d = opts_ ? opts_->vol_1d_to_2d : 1.0;
+            const double v_1d = -vol / std::max(vol_1d_to_2d, kTiny);  // 1D volume units
+            const auto nb = node_beds_.size();
+            for (int sp = 0; sp < tr_.n_species; ++sp) {
+                const double c = node_row_conc_[ni * static_cast<std::size_t>(node_row_ns_) +
+                                                static_cast<std::size_t>(sp)];
+                if (c == 0.0) continue;
+                tr_.nacc_mass[static_cast<std::size_t>(sp) * nb + b] += v_1d * c;
+            }
+        }
+        if (b < bed_last_out_.size())                 // T7.4: the split's weights
+            bed_last_out_[b] += std::max(vol, 0.0);
         state_.nacc[b] += vol;                       // gathered at the GW firing
         bed_exchange_cum_[b] += vol;                 // G-O: the per-bed series
         if (ni < node_exchange_vol_.size())
             node_exchange_vol_[ni] += vol;           // flushed by the router
     }
     accumulators_pending_ = true;
+}
+
+void SubsurfaceSolver::clearBedDrawn() noexcept {
+    std::fill(bed_last_out_.begin(), bed_last_out_.end(), 0.0);
+}
+
+double SubsurfaceSolver::gatherNodeMass(int i, int s) noexcept {
+    if (tr_.nacc_mass.empty()) return 0.0;
+    const auto nb = node_beds_.size();
+    double m = 0.0;
+    for (std::size_t b = 0; b < nb; ++b) {
+        if (node_beds_[b].cell != i) continue;
+        const auto k = static_cast<std::size_t>(s) * nb + b;
+        m += tr_.nacc_mass[k];
+        tr_.nacc_mass[k] = 0.0;
+    }
+    return m;
+}
+
+void SubsurfaceSolver::bookLinkSeepageMass(int cell, int species,
+                                           double mass) noexcept {
+    if (!tr_.active() || mass == 0.0) return;
+    if (cell < 0 || cell >= tr_.n_cells) return;
+    if (species < 0 || species >= tr_.n_species) return;
+    tr_.lacc_mass[tr_.idx(species, cell)] += mass;
 }
 
 double SubsurfaceSolver::gatherNode(int i) noexcept {
@@ -603,6 +770,151 @@ double SubsurfaceSolver::gatherNode(int i) noexcept {
 }
 
 // ---------------------------------------------------------------------------
+// T7.1 — the transported tuple
+// ---------------------------------------------------------------------------
+
+void SubsurfaceSolver::initTransport(const RowLayoutLite& rows,
+                                     const GwTransportData* gw,
+                                     const std::vector<double>& pollut_decay,
+                                     std::vector<std::string>& warnings) {
+    tr_.clear();
+    if (!state_.active || rows.n_species <= 0) return;
+    const int ne = options_.per_subcatch ? 0
+                                         : (edges_ ? edges_->ne : 0);
+    tr_.resize(rows.n_species, state_.n_cells, ne);
+    // T7.4: the two 1D seams' accumulators, sized against the bed and node
+    // counts the water side already uses.
+    tr_.nacc_mass.assign(static_cast<std::size_t>(rows.n_species) *
+                             node_beds_.size(), 0.0);
+    tr_.node_out_mass.assign(static_cast<std::size_t>(rows.n_species) *
+                                 node_exchange_vol_.size(), 0.0);
+    tr_.n_pollut  = rows.n_pollut;
+    tr_.n_msx     = rows.n_msx;
+    tr_.age_row   = rows.age_row;
+    tr_.temp_row  = rows.temp_row;
+    tr_.row_names = rows.names;
+
+    // Seed both stores from `[GW_INITIAL_QUALITY]`. A row is a
+    // CONCENTRATION; the mass it seeds is that concentration times the
+    // zone's water volume, so a cell whose table starts at zero starts with
+    // no saturated mass however the row is written.
+    if (gw != nullptr) {
+        for (const auto& r : gw->initial_quality) {
+            const int s = tr_.rowIndex(r.species);
+            if (s < 0) continue;   // resolveGwTransport already warned
+            for (int i = 0; i < state_.n_cells; ++i) {
+                if (r.scope == GwScope::CELL && r.cell != i) continue;
+                if (r.scope == GwScope::TAG &&
+                    (mesh_ == nullptr ||
+                     i >= static_cast<int>(mesh_->tri_tag.size()) ||
+                     mesh_->tri_tag[static_cast<std::size_t>(i)] != r.tag))
+                    continue;
+                const double v = (r.zone == GwZone::SAT) ? satVolume(i)
+                                                         : unsatVolume(i);
+                if (!(v > 0.0)) continue;
+                auto& store = (r.zone == GwZone::SAT) ? tr_.sat_mass
+                                                      : tr_.unsat_mass;
+                store[tr_.idx(s, i)] = r.value * v;
+            }
+        }
+        // LAYER rows address a closure-B σ layer, which T7.1 does not carry
+        // (the unsaturated store is bulk — see SubsurfaceTransportState's
+        // header). Say so once rather than seeding them into the wrong
+        // place or dropping them silently.
+        bool any_layer = false;
+        for (const auto& r : gw->initial_quality)
+            if (r.zone == GwZone::LAYER) { any_layer = true; break; }
+        if (any_layer)
+            warnings.emplace_back(
+                "[GW_INITIAL_QUALITY] LAYER rows were not applied: the "
+                "unsaturated store is bulk in this release (per-layer "
+                "transport is a later phase). Use ZONE UNSAT to seed the "
+                "whole column.");
+    }
+    // T7.2: resolve `[GW_TRANSPORT_PARAMS]` and `[GW_SORPTION]` onto cells,
+    // `* < TAG < CELL` by pass — the same precedence the `[2D_AQUIFER]`
+    // rows use, so one deck's two aquifer sections behave the same way.
+    if (gw != nullptr) {
+        tr_.dispersion_on = gw->options.dispersion;
+        for (int i = 0; i < state_.n_cells; ++i) {
+            const auto u = static_cast<std::size_t>(i);
+            tr_.rho_b[u] = 2650.0 * (1.0 - state_.theta_s[u]);
+        }
+        for (int pass = 0; pass < 3; ++pass) {
+            for (const auto& r : gw->params) {
+                if (static_cast<int>(r.scope) != pass) continue;
+                for (int i = 0; i < state_.n_cells; ++i) {
+                    if (!scopeCoversCell(i, r.scope, r.tag, r.cell)) continue;
+                    const auto u = static_cast<std::size_t>(i);
+                    tr_.alpha_L[u] = r.alpha_L;
+                    tr_.alpha_T[u] = r.alpha_T;
+                    tr_.D_m[u]     = r.D_m;
+                    // Bulk density from the grain density and the porosity
+                    // the aquifer row already resolved: ρ_b = ρ_s(1 − θ_s).
+                    tr_.rho_b[u]   = r.rho_s * (1.0 - state_.theta_s[u]);
+                }
+            }
+            for (const auto& r : gw->sorption) {
+                if (static_cast<int>(r.scope) != pass) continue;
+                const int s = tr_.rowIndex(r.species);
+                if (s < 0) continue;
+                for (int i = 0; i < state_.n_cells; ++i) {
+                    if (!scopeCoversCell(i, r.scope, r.tag, r.cell)) continue;
+                    // The row is L/kg; the kernel works in m³/kg.
+                    tr_.kd[tr_.idx(s, i)] = r.kd * 1.0e-3;
+                    // A negative decay means "use the [POLLUTANTS] Kdecay",
+                    // which the engine already holds in 1/s; an authored one
+                    // is 1/day.
+                    tr_.decay[tr_.idx(s, i)] =
+                        (r.decay >= 0.0) ? r.decay / 86400.0
+                                         : pollutantDecay(s, pollut_decay);
+                }
+            }
+        }
+    }
+
+    for (int s = 0; s < tr_.n_species; ++s)
+        tr_.init_mass[static_cast<std::size_t>(s)] = tr_.storage(s);
+}
+
+bool SubsurfaceSolver::scopeCoversCell(int i, GwScope scope,
+                                       const std::string& tag,
+                                       int cell) const noexcept {
+    switch (scope) {
+        case GwScope::CELL: return cell == i;
+        case GwScope::TAG:
+            return mesh_ != nullptr &&
+                   i < static_cast<int>(mesh_->tri_tag.size()) &&
+                   mesh_->tri_tag[static_cast<std::size_t>(i)] == tag;
+        default: return true;   // GLOBAL
+    }
+}
+
+double SubsurfaceSolver::pollutantDecay(
+    int s, const std::vector<double>& pollut_decay) const noexcept {
+    const auto u = static_cast<std::size_t>(s);
+    return (u < pollut_decay.size()) ? pollut_decay[u] : 0.0;
+}
+
+void SubsurfaceSolver::bookInfiltrationMass(int cell, int species,
+                                            double mass) noexcept {
+    if (!tr_.active() || mass == 0.0) return;
+    if (cell < 0 || cell >= tr_.n_cells) return;
+    if (species < 0 || species >= tr_.n_species) return;
+    tr_.xacc_from_surface[tr_.idx(species, cell)] += mass;
+}
+
+double SubsurfaceSolver::takeToSurfaceMass(int cell, int species) noexcept {
+    if (!tr_.active()) return 0.0;
+    if (cell < 0 || cell >= tr_.n_cells) return 0.0;
+    if (species < 0 || species >= tr_.n_species) return 0.0;
+    double& m = tr_.xacc_to_surface[tr_.idx(species, cell)];
+    const double v = m;
+    m = 0.0;
+    return v;
+}
+
+// ---------------------------------------------------------------------------
 // surface ↔ subsurface (step 11b)
 // ---------------------------------------------------------------------------
 
@@ -610,6 +922,15 @@ void SubsurfaceSolver::bookInfiltrationFromSurface(int cell,
                                                    double vol_m3) noexcept {
     if (!state_.active || cell < 0 || cell >= state_.n_cells) return;
     state_.xacc_from_surface[static_cast<std::size_t>(cell)] += vol_m3;
+    accumulators_pending_ = true;
+}
+
+// G-X3 (2026-09-19): conduit seepage lands in the saturated zone of the
+// cells the conduit crosses. Booked per routing step, gathered per firing —
+// the same cross-cadence accumulator the surface infiltration uses.
+void SubsurfaceSolver::bookLinkSeepage(int cell, double vol_m3) noexcept {
+    if (!state_.active || cell < 0 || cell >= state_.n_cells) return;
+    state_.lacc[static_cast<std::size_t>(cell)] += vol_m3;
     accumulators_pending_ = true;
 }
 
@@ -658,6 +979,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf) {
     const auto cl = static_cast<GwClosure>(state_.closure[u]);
 
     const double hg0 = state_.hg[u];
+    const double hu_pre = state_.hu[u];   // T7.1: the column store this firing starts from
     const double L0  = std::max(zs - hg0, 0.0);
 
     // --- gather the accumulated cross-cadence volumes ---------------------
@@ -665,6 +987,13 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf) {
     const double node_vol = gatherNode(i);                    // m³, + OUT
     double infil_vol = state_.xacc_from_surface[u];           // m³, + in
     state_.xacc_from_surface[u] = 0.0;
+    // G-X3: conduit seepage delivered to this cell since its last firing —
+    // a saturated-zone inflow, so it rides the table update with the
+    // lateral and node volumes and shares their storage coefficient.
+    const double link_vol = state_.lacc[u];                   // m³, + in
+    state_.lacc[u] = 0.0;
+    state_.qlink_last[u] = link_vol / dt;
+    state_.led_link += link_vol;
 
     const double q_in = infil_vol / (A * dt);                 // m/s at the top
     state_.qplus_last[u] = q_in;
@@ -733,6 +1062,18 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf) {
         theta_bot = std::clamp(state_.hu[u] / std::max(L0, kTiny),
                                state_.theta_r[u], ts);
         Sy = std::max(ts - theta_bot, kSyFloor);
+        // G-X4 (2026-09-20): …and when the FLOOR binds, the pairing above is
+        // the floored number, not the raw content. A column already at θ_s
+        // just under the table (θ_s − θ_bot → 0) otherwise loses
+        // `Sy_floor·|Δh|` from the saturated zone and hands `θ_bot·|Δh|` to
+        // the unsaturated one — the two no longer sum to θ_s and the cell
+        // CREATES `(θ_bot − (θ_s − Sy_floor))·|Δh|·A` every firing. Invisible
+        // until something withdrew hard from a near-saturated column: a
+        // conduit under a high water table did, at 0.08 m³ over half an hour
+        // on the G-X4 gate deck. Deriving the slab from the Sy actually used
+        // makes the identity hold unconditionally, and is a no-op whenever
+        // the floor does not bind (every deck that was already right).
+        theta_bot = ts - Sy;
     }
     if (!et_caprise && q0 < 0.0) q0 = 0.0;   // GW_ET NONE: no capillary rise
 
@@ -763,7 +1104,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf) {
 
     // Every saturated source shares one storage coefficient — that is the
     // §sy table's whole content.
-    const double dV_sat = (q0 - q_deep) * A * dt + lat_vol - node_vol;
+    const double dV_sat = (q0 - q_deep) * A * dt + lat_vol - node_vol + link_vol;   // G-X3: + link_vol
     double hg1 = hg0 + dV_sat / (Sy * A);
 
     // G1-c (2026-09-19): the ENSLAVED solve is BRACKETED. The Newton it
@@ -943,7 +1284,224 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf) {
     }
     state_.dunne_last[u] = to_surface / dt;
 
+    // --- T7.1: the tuple rides the volumes this firing just decided -------
+    // Every number below is the one the water used, read AFTER the refund
+    // paths may have rewritten a rate (`qnode_last`, `qdeep_last`, `qet_last`),
+    // so mass can never travel on a volume the water gave back.
+    if (tr_.active()) {
+        CellFlux f;
+        f.v_sat0   = hg0 * ts * A;
+        f.v_uns0   = hu_pre * A;
+        f.lateral  = lat_vol;
+        f.node_out = state_.qnode_last[u] * dt;
+        f.infil_in = infil_vol;
+        f.link     = link_vol;
+        f.recharge = q0 * A * dt;
+        f.et       = state_.qet_last[u] * A * dt;
+        f.deep     = state_.qdeep_last[u] * A * dt;
+        f.dt       = dt;   // T7.2
+        f.dunne    = options_.dunne ? dunne_vol : 0.0;
+        f.reject   = reject_vol;
+        // What the column's own balance could not have been produced by a
+        // flux IS the moving boundary's swap. Reading it off the final
+        // store rather than re-deriving `θ_bot·ΔL` keeps it exact under
+        // every closure — including the σ column, whose handover lives
+        // inside its ALE sweep.
+        f.handover = (state_.hu[u] * A - f.v_uns0) - f.infil_in + f.et +
+                     f.recharge + f.reject;
+        fireCellSpecies(i, f);
+    }
+
     state_.hg[u] = hg1;
+}
+
+// ---------------------------------------------------------------------------
+// T7.1 — one cell's species pass
+// ---------------------------------------------------------------------------
+
+void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) noexcept {
+    const auto k0 = static_cast<std::size_t>(i);
+    (void)k0;
+    // Arrivals land before anything is taken, so a cell that receives and
+    // gives in the same firing gives at the MIXED concentration — the
+    // surface marcher's rule (its face gather lands before the sinks read
+    // the cell). The denominators are the post-arrival water volumes; every
+    // sink in this firing reads the same pair, because the water update
+    // decided all of them simultaneously.
+    const double v_sat = f.v_sat0 + f.lateral + std::max(f.link, 0.0);
+    const double v_uns = f.v_uns0 + f.infil_in;
+    const auto   uc = static_cast<std::size_t>(i);
+    // T7.2: the water contents retardation is computed against. The
+    // saturated zone is at θ_s by definition; the column's mean content is
+    // its store over its thickness, floored so a vanishing column does not
+    // divide.
+    const double ts_cell  = state_.theta_s[uc];
+    const double L_cell   = std::max(state_.zs[uc] - state_.hg[uc], kTiny);
+    const double theta_uns = std::clamp(state_.hu[uc] / L_cell,
+                                        state_.theta_r[uc], ts_cell);
+
+    for (int s = 0; s < tr_.n_species; ++s) {
+        const auto k  = tr_.idx(s, i);
+        const auto us = static_cast<std::size_t>(s);
+        double& msat = tr_.sat_mass[k];
+        double& muns = tr_.unsat_mass[k];
+
+        // Take `vol` worth of water out of `m`, which is riding `v_store`.
+        // The clamp is the surface's: never remove more than is there, and
+        // no floor at all on the signed temperature row, where °C·m³ below
+        // zero is a state rather than an error.
+        // T7.2: `mob` is the dissolved share — sorbed mass does not travel,
+        // in any channel. Passing it through the ONE place a sink reads a
+        // concentration is what keeps retardation from having to be
+        // remembered at each of the eight channels below.
+        const double mob_sat = tr_.dissolvedFraction(s, i, ts_cell);
+        const double mob_uns = tr_.dissolvedFraction(s, i, theta_uns);
+        auto take = [&](double& m, double vol, double v_store,
+                        double mob) -> double {
+            if (!(vol > 0.0) || !(v_store > 0.0) || m == 0.0) return 0.0;
+            double dm = vol * (m / v_store) * mob;
+            if (!tr_.signedRow(s) && dm > m) dm = m;
+            m -= dm;
+            return dm;
+        };
+
+        // (1) lateral Darcy — internal between cells, so the sum over the
+        //     mesh is zero on a closed domain and the ledger says exactly
+        //     that (the water's `led_lateral` behaves identically).
+        const double lat_m = gatherLateralMass(i, s);
+        msat += lat_m;
+        tr_.net_lateral[us] += lat_m;
+
+        // (2) infiltration the surface handed down, with the mass the water
+        //     was carrying when it left the surface cell.
+        const double in_m = tr_.xacc_from_surface[k];
+        if (in_m != 0.0) {
+            tr_.xacc_from_surface[k] = 0.0;
+            muns += in_m;
+            tr_.gained_infil[us] += in_m;
+        }
+
+        // (3) conduit seepage (G-X3/G-X4). T7.4 opened this seam: a LEAKING
+        //     pipe now fills the cell with water carrying the conduit's own
+        //     concentration, booked by the router at the same cadence and
+        //     with the same length weights the volume took. The 1D already
+        //     DEBITS that mass as its exfiltration loss
+        //     (`qual_routing_seep`), so this side only receives it —
+        //     booking a second removal there would be the classic
+        //     double-count. A GAINING pipe draws water out, and that water
+        //     leaves at the cell's own concentration.
+        const double link_in_m = tr_.lacc_mass[k];
+        if (link_in_m != 0.0) {
+            tr_.lacc_mass[k] = 0.0;
+            msat += link_in_m;
+            tr_.gained_link[us] += link_in_m;
+        }
+        if (f.link < 0.0)
+            tr_.lost_link[us] += take(msat, -f.link, v_sat, mob_sat);
+
+        // (4) recharge across the table, or capillary rise — internal to
+        //     this cell, so it is informational only.
+        if (f.recharge > 0.0) {
+            const double dm = take(muns, f.recharge, v_uns, mob_uns);
+            msat += dm;
+            tr_.internal_recharge[us] += dm;
+        } else if (f.recharge < 0.0) {
+            const double dm = take(msat, -f.recharge, v_sat, mob_sat);
+            muns += dm;
+            tr_.internal_recharge[us] -= dm;
+        }
+
+        // (4b) …and the moving table's own swap, which carries water across
+        //      the same boundary with no flux behind it. Without this the
+        //      TOTAL still conserves — the gate would pass — while the two
+        //      zones quietly end up holding each other's solute.
+        if (f.handover > 0.0) {
+            // The moving boundary carries the water's whole content across,
+            // sorbed included: the grains themselves change zone when the
+            // table passes them. `mob = 1`.
+            const double dm = take(msat, f.handover, v_sat, 1.0);
+            muns += dm;
+            tr_.internal_recharge[us] -= dm;
+        } else if (f.handover < 0.0) {
+            const double dm = take(muns, -f.handover, v_uns, 1.0);
+            msat += dm;
+            tr_.internal_recharge[us] += dm;
+        }
+
+        // (5) the saturated zone's sinks, and the node seam (T7.4). A node
+        //     RECHARGING the aquifer sent its own quality down the bed;
+        //     `sampleNodeExchange` sampled it at the node's concentration
+        //     when it sampled the head, and this is where the cell takes
+        //     it. The reverse — the aquifer draining INTO the node — leaves
+        //     at the cell's concentration and is booked per NODE here, for
+        //     the router to hand to that node's coupling queues.
+        const double node_in_m = gatherNodeMass(i, s);
+        if (node_in_m != 0.0) {
+            msat += node_in_m;
+            tr_.gained_node[us] += node_in_m;
+        }
+        if (f.node_out > 0.0) {
+            const double dm = take(msat, f.node_out, v_sat, mob_sat);
+            tr_.lost_node[us] += dm;
+            if (dm != 0.0 && !tr_.node_out_mass.empty()) {
+                // Split across the beds this cell serves, in proportion to
+                // what each one drew — a cell can carry more than one.
+                const auto nn = tr_.node_out_mass.size() /
+                                static_cast<std::size_t>(tr_.n_species);
+                double drew = 0.0;
+                for (std::size_t b = 0; b < node_beds_.size(); ++b)
+                    if (node_beds_[b].cell == i)
+                        drew += std::max(bed_last_out_[b], 0.0);
+                if (drew > 0.0) {
+                    for (std::size_t b = 0; b < node_beds_.size(); ++b) {
+                        if (node_beds_[b].cell != i) continue;
+                        const double share = std::max(bed_last_out_[b], 0.0) / drew;
+                        const auto ni = static_cast<std::size_t>(node_beds_[b].node);
+                        if (ni < nn)
+                            tr_.node_out_mass[static_cast<std::size_t>(s) * nn + ni] +=
+                                dm * share;
+                    }
+                }
+            }
+        }
+        tr_.lost_deep[us] += take(msat, f.deep, v_sat, mob_sat);
+
+        // (6) ET carries the INTENSIVE rows only: the solutes stay and the
+        //     column up-concentrates (GW plan §3.5), while temperature and
+        //     age leave with the water at the column's own mean — the
+        //     program plan's D-A20 convention, the same one the surface
+        //     marcher applies to evaporation, so a parcel's age is not
+        //     changed by the act of evaporating part of it.
+        if (f.et > 0.0 && (s == tr_.age_row || s == tr_.temp_row))
+            tr_.lost_et[us] += take(muns, f.et, v_uns, 1.0);
+
+        // (7) saturation excess back to the surface: the table's own water
+        //     from the saturated zone, the column's rejection from the
+        //     unsaturated one. Both are owed to the surface twin, which
+        //     drains them with `takeToSurfaceMass`.
+        double up = 0.0;
+        if (f.dunne  > 0.0) up += take(msat, f.dunne,  v_sat, mob_sat);
+        if (f.reject > 0.0) up += take(muns, f.reject, v_uns, mob_uns);
+        if (up != 0.0) {
+            tr_.xacc_to_surface[k] += up;
+            tr_.lost_dunne[us] += up;
+        }
+
+        // (8) T7.2: first-order decay, on the TOTAL mass of both zones —
+        //     dissolved and sorbed alike, the usual assumption for a
+        //     partitioning solute whose reaction does not care which phase
+        //     it is in. Applied last, on what the channels left behind, and
+        //     never to age or temperature: `__WATER_AGE__` grows with time
+        //     by construction and a temperature does not decay.
+        const double kdec = tr_.decay.empty() ? 0.0 : tr_.decay[k];
+        if (kdec > 0.0 && f.dt > 0.0 && s != tr_.age_row && s != tr_.temp_row) {
+            const double keep = std::exp(-kdec * f.dt);
+            const double gone = (msat + muns) * (1.0 - keep);
+            msat *= keep;
+            muns *= keep;
+            tr_.lost_reaction[us] += gone;
+        }
+    }
 }
 
 void SubsurfaceSolver::fireGwCells(int tier, double dt, SurfaceStateData& surf) {

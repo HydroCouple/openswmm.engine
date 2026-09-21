@@ -346,6 +346,31 @@ void ExplicitInertialSolver::sinkMassAtCellConc(int i, double dv_m3,
     }
 }
 
+void ExplicitInertialSolver::gwInfiltrationSeam(int i, double infil_m3) noexcept {
+    auto& tr = state_->transport;
+    if (!tr.active()) return;
+    // No aquifer, or an aquifer that transports nothing: infiltration is a
+    // LOSS, exactly as it was before T7.1, and the ledger keeps saying so.
+    const bool to_gw = gw_ != nullptr && gw_->transport().active();
+    if (!to_gw) {
+        sinkMassAtCellConc(i, infil_m3, tr.lost_infiltration);
+        return;
+    }
+    // Otherwise it is a TRANSFER: the surface still books what it lost, and
+    // the aquifer gains the same number, read as the ledger's own delta so
+    // the two can never disagree.
+    const int ns = std::min(tr.n_species, gw_->transport().n_species);
+    std::vector<double>& led = tr.lost_infiltration;
+    static thread_local std::vector<double> before;
+    before.assign(led.begin(), led.begin() + ns);
+    sinkMassAtCellConc(i, infil_m3, led);
+    for (int s = 0; s < ns; ++s) {
+        const double dm = led[static_cast<std::size_t>(s)] -
+                          before[static_cast<std::size_t>(s)];
+        if (dm != 0.0) gw_->bookInfiltrationMass(i, s, dm);
+    }
+}
+
 void ExplicitInertialSolver::addRainMass(int i, double rain_m3) noexcept {
     if (!(rain_m3 > 0.0)) return;
     auto& tr = state_->transport;
@@ -501,6 +526,17 @@ void ExplicitInertialSolver::lazySourcesOnly(double t) {
         // Book before the early-out: rain exactly cancelling the sink leaves
         // src == 0, but water still infiltrated and the ledger counts the rain.
         state_->infil_applied[i] += infil * dt_lazy;
+        // T7.1 (2026-09-20): …and hand it to the aquifer, which this pass
+        // never did. `syncAndRebuild`'s lazy pass books it (G1-c item 1);
+        // THIS one — the cheaper alternative taken on every non-rebuild
+        // cycle — infiltrated the water, counted it as an exit on the
+        // surface, and dropped it. The deck's continuity still closed,
+        // because a loss is a loss; the aquifer simply never received
+        // 1.4 % of its recharge on the gate deck. Found by T7.1's seam
+        // gate: the species could not balance while the water did not.
+        if (gw_ && infil > 0.0)
+            gw_->bookInfiltrationFromSurface(i, infil * dt_lazy *
+                                                    mesh_->tri_area[i]);
         // Signed per-cell coupling volume, booked at the SAME dt the sink
         // below integrates. Also before the early-out: a spill exactly
         // cancelled by evaporation leaves src == 0 while water still crossed
@@ -518,7 +554,7 @@ void ExplicitInertialSolver::lazySourcesOnly(double t) {
             auto& tr = state_->transport;
             const double area = mesh_->tri_area[i];
             sinkIntensiveRowsWithEvap(i, evap * dt_lazy * area);        // S4/S4b
-            sinkMassAtCellConc(i, infil * dt_lazy * area, tr.lost_infiltration);
+            gwInfiltrationSeam(i, infil * dt_lazy * area);              // T7.1
             if (state_->coupling_flux[i] < 0.0)
                 sinkMassAtCellConc(i, -state_->coupling_flux[i] * dt_lazy *
                                           area, tr.lost_coupling);
@@ -572,8 +608,11 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
                 auto& tr = state_->transport;
                 const double area = mesh_->tri_area[i];
                 sinkIntensiveRowsWithEvap(i, evap * dt_lazy * area);    // S4/S4b
-                sinkMassAtCellConc(i, infil * dt_lazy * area,
-                                   tr.lost_infiltration);
+                // T7.1: the lazy tier hands its infiltration mass down the
+                // same way the active one does — a cell that only ever
+                // fires lazily would otherwise send the aquifer water with
+                // no species in it.
+                gwInfiltrationSeam(i, infil * dt_lazy * area);
                 if (state_->coupling_flux[i] < 0.0)
                     sinkMassAtCellConc(i, -state_->coupling_flux[i] * dt_lazy *
                                               area, tr.lost_coupling);
@@ -1351,10 +1390,23 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
         double gw_return = 0.0;
         if (gw_) {
             const double A = mesh_->tri_area[i];
+            const double infil_m3 = infil * dt_c * A;
             if (infil > 0.0)
-                gw_->bookInfiltrationFromSurface(i, infil * dt_c * A);
+                gw_->bookInfiltrationFromSurface(i, infil_m3);
             const double back = gw_->takeToSurface(i);   // m³
             if (back != 0.0) gw_return = back / (A * dt_c);
+            // …and the saturation excess brings its own mass back up.
+            if (species && gw_->transport().active()) {
+                auto& tr = state_->transport;
+                const int ns = std::min(tr.n_species, gw_->transport().n_species);
+                for (int s = 0; s < ns; ++s) {
+                    const double dm = gw_->takeToSurfaceMass(i, s);
+                    if (dm == 0.0) continue;
+                    tr.cell_mass[tr.idx(s, i)] += dm;
+                    if (static_cast<std::size_t>(s) < tr.gained_exfiltration.size())
+                        tr.gained_exfiltration[static_cast<std::size_t>(s)] += dm;
+                }
+            }
         }
         const double src = state_->rainfall[i] + state_->coupling_flux[i] +
                            gw_return - evap - infil;
@@ -1372,7 +1424,14 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
             auto& tr = state_->transport;
             const double area = mesh_->tri_area[i];
             sinkIntensiveRowsWithEvap(i, evap * dt_c * area);            // S4/S4b
-            sinkMassAtCellConc(i, infil * dt_c * area, tr.lost_infiltration);
+            // T7.1: hand the aquifer EXACTLY the mass this sink removed —
+            // the ledger delta, not a second evaluation of `dv × c`. The
+            // sink clamps, it runs after the saturation excess above has
+            // already raised this cell's concentration, and it is the one
+            // place that knows what actually left; recomputing the product
+            // beside it was off by 3 % on the first cut, which is precisely
+            // the kind of seam that leaks water years later.
+            gwInfiltrationSeam(i, infil * dt_c * area);
             if (state_->coupling_flux[i] < 0.0)
                 sinkMassAtCellConc(i, -state_->coupling_flux[i] * dt_c * area,
                                    tr.lost_coupling);

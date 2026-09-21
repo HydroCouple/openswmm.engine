@@ -631,11 +631,14 @@ std::vector<std::string> resolveGwTransport(SimulationContext& ctx,
 
 std::string gwTransportInertWarning(const GwTransportData& gw) {
     if (gw.empty()) return {};
+    // T7.1 (2026-09-20): the two-zone kernel now transports, so this warning
+    // is no longer about the release — it is about THIS deck. It fires only
+    // when the [GW_*] rows have no kernel to configure, which the caller
+    // decides (it knows whether a [2D_AQUIFER] resolved).
     return "[GW_*] subsurface transport is AUTHORED but INERT this run: the "
-           "integrated 2D groundwater component "
-           "(org.hydrocouple.openswmm.integrated2d) provides the two-zone "
-           "kernel these sections configure and is not available in this "
-           "release. The rows are validated, kept and written back unchanged.";
+           "rows configure the two-zone [2D_AQUIFER] kernel, and no "
+           "[2D_AQUIFER] resolved on this model. The rows are validated, "
+           "kept and written back unchanged.";
 }
 
 }  // namespace openswmm::twoD

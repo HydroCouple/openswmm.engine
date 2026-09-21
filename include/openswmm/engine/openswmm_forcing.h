@@ -119,7 +119,8 @@ typedef enum SWMM_ForcingType {
     SWMM_FORCE_ELEM_AIR_TEMPERATURE = 13,
     SWMM_FORCE_ELEM_HUMIDITY        = 14,
     SWMM_FORCE_ELEM_WIND_SPEED      = 15,
-    SWMM_FORCE_ELEM_SHORTWAVE       = 16
+    SWMM_FORCE_ELEM_SHORTWAVE       = 16,
+    SWMM_FORCE_LINK_SEEPAGE         = 17  /**< G-X4: conduit ⇄ groundwater exchange. */
 } SWMM_ForcingType;
 
 /** @brief Which element a per-element climate forcing targets (PE4). */
@@ -235,6 +236,40 @@ SWMM_ENGINE_API int swmm_forcing_link_flow(
  * @ingroup engine_forcing
  */
 SWMM_ENGINE_API int swmm_forcing_link_setting(
+    SWMM_Engine engine, int idx, double value, int mode, int persist);
+
+/**
+ * @brief Force a conduit's groundwater exchange rate (G-X4, 2026-09-20).
+ *
+ * @details The HydroCouple inlet for an external groundwater model: the
+ *          value REPLACES (OVERRIDE) or adds to (ADD) the conduit's seepage
+ *          rate for the step, in the engine's own flow units, positive OUT
+ *          of the conduit. A negative value is a gaining reach — water the
+ *          host's aquifer hands to the pipe — and lands in the mass balance
+ *          as SWMM_ROUTING_LINK_GW_INFLOW, exactly like the internal signed
+ *          law's gain.
+ *
+ *          When the built-in `[2D_AQUIFER]` is also coupled to this conduit
+ *          (`LINK_SEEPAGE AUTO` or `TWO_WAY`), the forced rate is what the
+ *          2D aquifer is debited or credited as well — the host is then
+ *          steering the internal aquifer, not replacing it. To drive a
+ *          conduit from an external aquifer instead, leave the internal one
+ *          out of the reach (`LINK_SEEPAGE NONE`, or `EXCHANGE NO` on a
+ *          `[2D_AQUIFER_LINKS]` row).
+ *
+ *          Non-conduit links have no seepage and ignore this.
+ *
+ * @param engine   Engine handle.
+ * @param idx      Link index (a conduit).
+ * @param value    Exchange rate, + out of the conduit, in the same units
+ *                 @ref swmm_forcing_link_flow takes — the engine's internal
+ *                 flow unit, which is CFS whatever FLOW_UNITS says.
+ * @param mode     SWMM_FORCING_OVERRIDE or SWMM_FORCING_ADD.
+ * @param persist  SWMM_FORCING_RESET or SWMM_FORCING_PERSIST.
+ * @returns SWMM_OK or error code.
+ * @ingroup engine_forcing
+ */
+SWMM_ENGINE_API int swmm_forcing_link_seepage(
     SWMM_Engine engine, int idx, double value, int mode, int persist);
 
 /**

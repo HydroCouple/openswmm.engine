@@ -190,7 +190,29 @@ struct HotStartFile {
     std::vector<double> gw_hg;           ///< saturated thickness (m)
     std::vector<double> gw_hu;           ///< unsaturated storage (m of water)
     std::vector<double> gw_theta_sigma;  ///< closure-B layers, layer-major
-    std::vector<double> gw_ledger;       ///< the 9 cumulative terms (m3)
+    std::vector<double> gw_ledger;       ///< the cumulative terms (m3): 9, +link since G-X3
+
+    /// T7.5 (2026-09-21) — V6 block: the aquifer's TRANSPORTED tuple.
+    ///
+    /// Without it a restarted run keeps the water table's memory (V5) and
+    /// throws away what is dissolved in it, which for a plume is the whole
+    /// state. Species are carried by NAME, not by row index: a row layout
+    /// depends on `[POLLUTANTS]`, the MSX species list and the AGE /
+    /// TEMPERATURE switches, any of which can differ between the run that
+    /// wrote the file and the run that reads it. A species the reader does
+    /// not have is dropped with a warning; one it has and the file does not
+    /// simply starts from its `[GW_INITIAL_QUALITY]` seed.
+    ///
+    /// Both stores are species-major `[s * n_cells + cell]`, the kernel's
+    /// own order. `gw_species_ledger` is `[s * kGwSpeciesLedgerTerms + t]`.
+    std::vector<std::string> gw_species;        ///< row names, in file order
+    std::vector<double>      gw_sat_mass;       ///< saturated-zone mass
+    std::vector<double>      gw_unsat_mass;     ///< column-store mass
+    std::vector<double>      gw_species_ledger; ///< per species, cumulative
+    /// init, infil_in, node_in, link_in, lateral_net, deep, node_out,
+    /// link_out, dunne, et, reaction — the `residual` is derived, never
+    /// stored, so a file can never disagree with itself about it.
+    static constexpr int kGwSpeciesLedgerTerms = 11;
 
     std::string               path;      ///< File path (for flush-on-close)
     bool                      dirty = false; ///< True if set_*() was called
