@@ -1183,8 +1183,8 @@ static void write_subcatch_loadings(sqlite3* db, const SimulationContext& ctx,
         for (int p = 0; p < np && p < ctx.n_pollutants(); ++p) {
             auto idx = static_cast<size_t>(s) * static_cast<size_t>(np)
                        + static_cast<size_t>(p);
-            if (idx >= ctx.subcatches.conc.size()) break;
-            const double w = ctx.subcatches.conc[idx];
+            if (idx >= ctx.subcatches.init_loading.size()) break;
+            const double w = ctx.subcatches.init_loading[idx];
             if (w == 0.0) continue;
             sqlite3_reset(stmt.get());
             sqlite3_clear_bindings(stmt.get());

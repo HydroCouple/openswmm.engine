@@ -1163,8 +1163,8 @@ static void read_subcatch_loadings(sqlite3* db, SimulationContext& ctx, const st
         if (s < 0 || p < 0) continue;
         auto idx = static_cast<size_t>(s) * static_cast<size_t>(np)
                    + static_cast<size_t>(p);
-        if (idx < ctx.subcatches.conc.size())
-            ctx.subcatches.conc[idx] = column_double(stmt.get(), 2);
+        if (idx < ctx.subcatches.init_loading.size())
+            ctx.subcatches.init_loading[idx] = column_double(stmt.get(), 2);
     }
 }
 
