@@ -493,6 +493,27 @@ retroactive.
 
 ### Fixed
 
+- **A CUMULATIVE rain gage rained for one step per table entry instead of for
+  its recording interval (issue #158).** A `CUMULATIVE` gage records a running
+  depth total: the intensity for a record is the rise since the previous
+  record spread over the gage's RECORDING INTERVAL, and legacy applies it for
+  the whole of that interval. Through `6.0.0-alpha.3` the gage was read as a
+  step-function lookup on its series rather than legacy's state machine, so
+  the intensity was applied for a single runoff step at each table entry.
+  Both reported symptoms follow from that one cause. Subcatchment runoff
+  showed a separate rise-and-recess at every entry instead of one continuous
+  hydrograph; and Total Precipitation came in short by the interval/step
+  ratio — 0.750 in against legacy's 9.000 in on the reporter's deck (an
+  hourly counter rising 1 in/hr against a `1:00` interval and a `00:05:00`
+  wet step), which is the reported "factor of 12", 3600 s / 300 s. The ratio
+  is the interval over the step, not a constant: a 15-minute cumulative
+  series on a `0:15` gage was short by 3. Fixed by the legacy state machine
+  (704ca917, 2026-09-13); ten cumulative decks — ramp, counter reset, zero
+  rise, interval shorter than the series spacing, non-zero first record, SI,
+  scale factor, co-gage, sub-hourly and late start — are now byte-identical
+  to legacy. Pinned by `test_engine_gage_cumulative`, which fails 8/8 against
+  an `alpha.3` build and passes 8/8 on this one.
+
 - **Infiltration from an inactive 2D cell never reached the aquifer.** The
   marcher's cheap between-rebuild pass (`lazySourcesOnly`, taken on every
   cycle that does not rebuild) sank infiltration off the surface and booked

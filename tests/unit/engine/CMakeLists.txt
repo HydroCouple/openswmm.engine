@@ -255,6 +255,13 @@ add_gtest_unit(test_engine_subcatch_scale_factors test_subcatch_scale_factors.cp
 add_gtest_unit(test_engine_gage_attributes  test_gage_attributes.cpp)
 add_gtest_unit(test_engine_gage_file_roundtrip test_gage_file_roundtrip.cpp)
 
+# Issue #158 — CUMULATIVE rain-gage format. The intensity is the rise since the
+# previous record over the RECORDING INTERVAL, applied for that whole interval;
+# alpha.3 applied it for a single runoff step at each table entry, which spiked
+# the hydrograph and booked interval/step less rain (3600/300 = the reported
+# "factor of 12"). Guards both symptoms analytically and against legacy.
+add_gtest_unit(test_engine_gage_cumulative  test_gage_cumulative.cpp)
+
 # USER_CSV rain-file loading (documented in the manual, previously never read —
 # such a gage contributed zero rainfall silently) plus the guard that the
 # resolved-series API cannot drift from what updateAllGages applies.
