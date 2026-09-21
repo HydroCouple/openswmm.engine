@@ -571,13 +571,17 @@ class FigureSink:
                 print(f"  note: {png.name} quantised to 256 colours to stay under {MAX_BYTES // 1024} KB")
 
     def run(self, deck: str, options: dict | None = None, key: str | None = None,
-            sidecars: dict | None = None) -> RunResult:
+            sidecars: dict | None = None, text: str | None = None) -> RunResult:
         """Run docs/figures/decks/<deck> through the engine, cached under docs/figures/cache.
 
         `options` upserts `[OPTIONS]` keys. `sidecars` maps a file name beside the
         deck to replacement text, for the keys that live in a process component's
         own configuration file rather than in the deck — a variant over
-        `[TRANSPORT_OPTIONS] TARGET_DX`, say. Both take part in the cache check.
+        `[TRANSPORT_OPTIONS] TARGET_DX`, say. `text` replaces the deck text
+        outright, for a key in some other section of the deck itself, such as
+        `[2D_OPTIONS] MOMENTUM_EQUATION`; the generator is then responsible for
+        deriving it from the committed deck rather than inventing a model. All
+        three take part in the cache check.
         """
         src = self.fig_dir / "decks" / deck
         if not src.is_file():
@@ -586,7 +590,7 @@ class FigureSink:
         work = self.fig_dir / "cache" / Path(deck).stem / key
         work.mkdir(parents=True, exist_ok=True)
         inp, rpt, out = work / "model.inp", work / "model.rpt", work / "model.out"
-        text = src.read_text(errors="replace")
+        text = src.read_text(errors="replace") if text is None else text
         if options:
             text = upsert_options(text, {k.upper(): v for k, v in options.items()})
         for sidecar in src.parent.iterdir():

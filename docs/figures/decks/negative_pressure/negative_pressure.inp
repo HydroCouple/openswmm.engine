@@ -36,6 +36,8 @@ NORMAL_FLOW_LIMITED  NEITHER
 FV_CELL_LENGTH       0.036
 FV_MIN_CELLS         4
 FV_SLOT_CELERITY     300
+FV_PRESSURE_CLOSURE  TPA          ;; docs copy: the static slot cannot represent this deck's
+                                  ;; sub-atmospheric full-pipe flow and diverges (ERROR 14)
 REPORT_SIGNED_HEADS  YES
 
 [STORAGE]
