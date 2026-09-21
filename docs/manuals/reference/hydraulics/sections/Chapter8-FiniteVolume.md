@@ -543,12 +543,20 @@ and returns exits cleanly, with no `ERROR` line and plausible early
 metrics. No single (closure, integrator) pairing measured to date is
 stable across all four validation decks; the integrator is a
 per-problem choice, and a completed run's status line is not evidence
-of a healthy trace — inspect the reported extrema. The documented
-contingency for the Euler filling front remains the hybrid flux of
-Vasconcelos, Wright and Roe (2009). The Euler divergence is pinned
-in-tree (`FvTpa.KnownIssueHighCelerityFillingDiverges`), and the same
-case at the paper's original \f$a\f$ = 25 m/s parameterization runs
-clean under every integrator.
+of a healthy trace — inspect the reported extrema.
+
+**The Euler filling divergence itself has been removed.** It was pinned
+in-tree for months as a known issue; on 2026-09-12 the slot/free-surface
+wave-speed bound of §8.5.3 closed it. Davis's symmetric estimate had
+carried the acoustic celerity into the wave entering the *free-surface*
+side of a pressurization front; bounding that wave by the
+Rankine–Hugoniot bore speed instead removes the temporal mode outright.
+The fixture now completes at 0.000 % continuity at \f$a\f$ = 150, 300,
+600, 1000 and 3000 m/s, and the gate is the positive test
+`FvTpa.HighCelerityFillingCompletes`. The hybrid flux of Vasconcelos,
+Wright and Roe (2009), recorded as the contingency for this front, is
+therefore no longer required for it (@ref hydraulics_ref_ch10_planned
+"Chapter 10" §10.7).
 
 **Implementation.** The pressurized-branch kernels are
 `tpaDepthOfArea`, `tpaAreaOfDepth` and `tpaI1OfDepth` in
