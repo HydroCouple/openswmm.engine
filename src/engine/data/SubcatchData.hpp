@@ -291,6 +291,17 @@ struct SubcatchData {
     std::vector<double> old_ponded_depth;
 
     /**
+     * @brief This runoff step's PRE-LID outflow volume, ft³ (legacy vOut1).
+     * @details `vOut1 = Voutflow + vLidRain + vLidRunon`, the denominator the
+     *          washoff concentration is formed over. The surface-quality step
+     *          runs before the LID units, so it is the only place this volume
+     *          still exists; the mass bookings that need it happen after the
+     *          units have run and `runoff` has become the POST-LID value.
+     * @see Legacy: surfqual.c:308
+     */
+    std::vector<double> washoff_vout1;
+
+    /**
      * @brief Groundwater outflow rate (project flow units).
      * @see Legacy: Subcatch[i].groundwater->newFlow
      */
@@ -731,6 +742,7 @@ struct SubcatchData {
         infil_loss.assign(un, 0.0);
         ponded_depth.assign(un, 0.0);
         old_ponded_depth.assign(un, 0.0);
+        washoff_vout1.assign(un, 0.0);
         gw_flow.assign(un, 0.0);
         snow_depth.assign(un, 0.0);
         lid_drain_flow.assign(un, 0.0);
@@ -817,7 +829,8 @@ struct SubcatchData {
         g(infil_p4, 0.0); g(infil_p5, 0.0);
         g(runoff, 0.0); g(rainfall, 0.0);
         g(evap_loss, 0.0); g(infil_loss, 0.0);
-        g(ponded_depth, 0.0); g(old_ponded_depth, 0.0); g(gw_flow, 0.0);
+        g(ponded_depth, 0.0); g(old_ponded_depth, 0.0);
+        g(washoff_vout1, 0.0); g(gw_flow, 0.0);
         g(snow_depth, 0.0); g(lid_drain_flow, 0.0);
         g(old_runoff, 0.0); g(old_gw_flow, 0.0);
         g(old_snow_depth, 0.0); g(old_lid_drain_flow, 0.0);
