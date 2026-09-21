@@ -73,6 +73,7 @@
 
 #include "SigmaColumn.hpp"
 #include "SubsurfaceData.hpp"
+#include "SubsurfaceTransportState.hpp"   // T7.1
 
 #include <string>
 #include <vector>
@@ -87,6 +88,21 @@ struct MeshData;
 struct InertialEdges;
 struct SurfaceStateData;
 struct SolverOptions2D;
+struct GwTransportData;
+/// T7.2: declared in GwTransportData.hpp; the solver only needs the tag.
+enum class GwScope : int8_t;
+
+/// T7.1: the row layout `initTransport` needs, without the solver having to
+/// include `TransportPolicy` (and with it the whole SimulationContext) — the
+/// router resolves the policy and hands the answer over.
+struct RowLayoutLite {
+    int n_species = 0;
+    int n_pollut  = 0;
+    int n_msx     = 0;
+    int age_row   = -1;
+    int temp_row  = -1;
+    std::vector<std::string> names;
+};
 
 using openswmm::NodeData;
 
@@ -125,6 +141,41 @@ public:
     bool active() const noexcept { return state_.active; }
     SubsurfaceState&       state()       noexcept { return state_; }
     const SubsurfaceState& state() const noexcept { return state_; }
+
+    // ---- T7.1: species / age / enthalpy -----------------------------------
+
+    /// The transported tuple, sized from `TransportPolicy` at `initTransport`
+    /// and inert (`active() == false`) until then.
+    SubsurfaceTransportState&       transport()       noexcept { return tr_; }
+    const SubsurfaceTransportState& transport() const noexcept { return tr_; }
+    /// Size the rows and seed both stores from `[GW_INITIAL_QUALITY]`.
+    /// Separate from `initialize` because the row layout needs the resolved
+    /// `[GW_*]` sections, which the router owns. @p names is the row layout's
+    /// name list (TransportPolicy order).
+    /// @param pollut_decay the engine's `[POLLUTANTS]` Kdecay column (1/s),
+    ///        row-aligned with the layout — what a `[GW_SORPTION]` row with
+    ///        no DECAY of its own falls back to.
+    void initTransport(const RowLayoutLite& rows, const GwTransportData* gw,
+                       const std::vector<double>& pollut_decay,
+                       std::vector<std::string>& warnings);
+    /// Water volume of one cell's saturated zone (m³) — the denominator for
+    /// a saturated concentration.
+    double satVolume(int cell) const noexcept {
+        const auto u = static_cast<std::size_t>(cell);
+        return state_.hg[u] * state_.theta_s[u] * state_.area[u];
+    }
+    /// …and of its unsaturated column store (m³), whatever closure holds it.
+    double unsatVolume(int cell) const noexcept {
+        const auto u = static_cast<std::size_t>(cell);
+        return state_.hu[u] * state_.area[u];
+    }
+    /// The surface hands mass down with its infiltration (T7.1 seam): the
+    /// mass the water it booked through `bookInfiltrationFromSurface` was
+    /// carrying, gathered when the GW cell fires.
+    void bookInfiltrationMass(int cell, int species, double mass) noexcept;
+    /// …and takes back what saturation excess and rejection carried up.
+    /// Drained by the surface cell in the same call that takes the water.
+    double takeToSurfaceMass(int cell, int species) noexcept;
     const GwOptions&       options() const noexcept { return options_; }
 
     // ---- LTS hooks -------------------------------------------------------
@@ -181,6 +232,10 @@ public:
     /// The surface books infiltration it delivered to cell `i` (m³) at its
     /// own (finer) cadence; the GW cell gathers it when it fires.
     void bookInfiltrationFromSurface(int cell, double vol_m3) noexcept;
+    /// G-X3 (2026-09-19): the router books a conduit's seepage volume (m³,
+    /// SI, its length-weighted share for this cell) at the routing cadence;
+    /// the GW cell gathers it at its firing as a saturated-zone inflow.
+    void bookLinkSeepage(int cell, double vol_m3) noexcept;
     /// Volume (m³) the subsurface owes the surface twin — Dunne and
     /// exfiltration — drained by the surface at its firing.
     double takeToSurface(int cell) noexcept;
@@ -195,6 +250,26 @@ public:
     /// Drop drained cells from `pendingSurfaceCells()`. Serial; call from
     /// the marcher's rebuild, not from a firing.
     void compactPending() noexcept;
+
+    /// T7.4: the node's own species row, `[node * n_species + s]`, published
+    /// by the router each batch — what a RECHARGING node's water carries
+    /// down its bed. Null (or a zero row count) means the seam moves water
+    /// only, which is what every pre-T7.4 deck did.
+    void setNodeRowConc(const double* rows, int n_species) noexcept {
+        node_row_conc_ = rows;
+        node_row_ns_   = n_species;
+    }
+    /// T7.4: mass the aquifer owes each 1D node this batch
+    /// (`[s * n_nodes + node]`, + out of the aquifer), flushed by the router
+    /// into the node's coupling queues alongside the volume.
+    const std::vector<double>& nodeExchangeMass() const noexcept {
+        return tr_.node_out_mass;
+    }
+    /// T7.4: mass a leaking conduit delivered into one cell, at the
+    /// conduit's own concentration — the species twin of `bookLinkSeepage`.
+    void bookLinkSeepageMass(int cell, int species, double mass) noexcept;
+    /// T7.4: zero the per-bed withdrawal weights, with the volume ledger.
+    void clearBedDrawn() noexcept;
 
     /// Node ↔ aquifer exchange, evaluated at tier-0 cadence against the
     /// batch-frozen 1D heads and booked into `nacc` (G-B row 3). The GW cell
@@ -231,21 +306,67 @@ private:
     soil::Params paramsOf(int i) const noexcept;
     /// One cell's firing — the §gw_split sequence.
     void fireCell(int i, double dt, SurfaceStateData& surf);
+
+    /// T7.1: every water volume one cell's firing moved, so the species pass
+    /// can ride exactly the same numbers. Volumes are m³ and signed as the
+    /// kernel books them: `+ node_out` LEAVES the aquifer, `link` is signed
+    /// (G-X4: `+` a leaking conduit filling the cell, `−` a gaining one
+    /// drawing from it), `+ recharge` is unsaturated → saturated.
+    struct CellFlux {
+        double v_sat0 = 0.0, v_uns0 = 0.0;   ///< water volumes BEFORE the firing
+        double lateral = 0.0;                ///< gathered, + into the cell
+        double node_out = 0.0;
+        double infil_in = 0.0;
+        double link = 0.0;
+        double recharge = 0.0;
+        /// The MOVING TABLE's own swap between the two stores (m³, `+` into
+        /// the unsaturated one, i.e. a falling table handing its drained
+        /// slab up). Water crosses the boundary here without any flux
+        /// driving it, so the mass has to cross with it or the two zones
+        /// end the step holding each other's solute. Derived from the
+        /// column's own balance, which makes it exact for every closure
+        /// rather than only for closure A's explicit `θ_bot·ΔL`.
+        double handover = 0.0;
+        double et = 0.0;                     ///< out of the column
+        double deep = 0.0;
+        double dt = 0.0;                     ///< T7.2: the firing's own step (s), for decay
+        double dunne = 0.0;                  ///< saturation excess, out of the saturated zone
+        double reject = 0.0;                 ///< column rejection, out of the unsaturated zone
+    };
+    /// Move the tuple along @p f. Called at the END of `fireCell`, when every
+    /// volume is final.
+    void fireCellSpecies(int i, const CellFlux& f) noexcept;
     /// Gather this cell's lateral side accumulators (m³) and zero them.
     double gatherLateral(int i) noexcept;
+    /// T7.1: the same gather for one species' mass.
+    double gatherLateralMass(int i, int s) noexcept;
+    /// T7.2: does a `* / TAG / CELL` scoped row cover this cell?
+    bool scopeCoversCell(int i, GwScope scope, const std::string& tag,
+                         int cell) const noexcept;
+    /// T7.4: gather one species' share of this cell's node-seam arrivals.
+    double gatherNodeMass(int i, int s) noexcept;
+    /// T7.2: the `[POLLUTANTS]` decay constant for a transport row (1/s).
+    double pollutantDecay(int s, const std::vector<double>& pollut_decay) const noexcept;
     /// Gather this cell's booked node exchange (m³, + out of the aquifer).
     double gatherNode(int i) noexcept;
     void markPendingSurface(int i) noexcept;
 
     SubsurfaceState  state_;
+    SubsurfaceTransportState tr_;   ///< T7.1
     GwOptions        options_;
     std::vector<GwNodeBed> node_beds_;
     std::vector<double>    bed_exchange_cum_;   ///< G-O: per bed (m³), cumulative
+    /// T7.4: volume each bed drew OUT of the aquifer since the last flush —
+    /// the weights that split a cell's outgoing mass across its beds.
+    std::vector<double>    bed_last_out_;
     /// G-X1: water taken FROM each 1D node by the recharge direction within
     /// the current routing batch (m³, 2D units), reset with
     /// `node_exchange_vol_` — the frozen node volume is a batch budget, not a
     /// per-substep one, exactly as the surface's `node_drawn_` ledger.
     std::vector<double>    node_drawn_gw_;
+    /// T7.4: the router's published node species rows (not owned).
+    const double* node_row_conc_ = nullptr;
+    int           node_row_ns_   = 0;
 
     const MeshData*      mesh_  = nullptr;
     const InertialEdges* edges_ = nullptr;

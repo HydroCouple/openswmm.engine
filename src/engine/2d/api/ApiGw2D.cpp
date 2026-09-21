@@ -48,6 +48,7 @@ namespace {
 
 using openswmm::twoD::GwAquiferRow;
 using openswmm::twoD::GwClosure;
+using openswmm::twoD::GwLinkMode;   // G-X4
 using openswmm::twoD::GwNodeBed;
 using openswmm::twoD::SoilChar;
 using openswmm::twoD::SubsurfaceConfig;
@@ -119,6 +120,9 @@ SWMM_ENGINE_API int swmm_gw2d_option_get(SWMM_Engine engine, const char* key,
     else if (ieq(key, "DUNNE"))           v = yn(o.dunne);
     else if (ieq(key, "GW_ET"))           v = o.gw_et;
     else if (ieq(key, "NODE_ENROLMENT"))  v = o.node_auto ? "AUTO" : "ROWS";   // G-X2
+    else if (ieq(key, "LINK_SEEPAGE"))                                          // G-X3/G-X4
+        v = (o.link_seepage == GwLinkMode::NONE)    ? "NONE"
+          : (o.link_seepage == GwLinkMode::TWO_WAY) ? "TWO_WAY" : "AUTO";
     else return SWMM_ERR_BADPARAM;
     copy_to(v, buf, buflen);
     return SWMM_OK;
@@ -390,6 +394,7 @@ double cellVar(const openswmm::twoD::SubsurfaceState& st, std::size_t u,
         case SWMM_GW2D_VAR_DT_CELL:  return st.dt_cell[u];
         case SWMM_GW2D_VAR_TIER:     return static_cast<double>(st.tier[u]);
         case SWMM_GW2D_VAR_CLOSURE:  return static_cast<double>(st.closure[u]);
+        case SWMM_GW2D_VAR_QLINK:    return st.qlink_last[u];   // G-X3
         default: ok = false; return 0.0;
     }
 }
@@ -469,6 +474,80 @@ SWMM_ENGINE_API int swmm_gw2d_get_ledger(SWMM_Engine engine, int term,
         case SWMM_GW2D_LED_INFIL_IN:     *value = st.led_infil_in; break;
         case SWMM_GW2D_LED_INIT_STORAGE: *value = st.led_init_storage; break;
         case SWMM_GW2D_LED_STORAGE:      *value = liveStorage(gw); break;
+        case SWMM_GW2D_LED_LINK:         *value = st.led_link; break;   // G-X3
+        default: return SWMM_ERR_BADPARAM;
+    }
+    return SWMM_OK;
+}
+
+// ---------------------------------------------------------------------------
+// T7.5 — the transported tuple, read-only
+// ---------------------------------------------------------------------------
+
+SWMM_ENGINE_API int swmm_gw2d_species_count(SWMM_Engine engine, int* count) {
+    AQ_SOLVER(engine);
+    if (!count) return SWMM_ERR_BADPARAM;
+    const auto& tr = gw.transport();
+    *count = tr.active() ? tr.n_species : 0;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gw2d_species_name(SWMM_Engine engine, int species,
+                                           char* buf, int buflen) {
+    AQ_SOLVER(engine);
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    const auto& tr = gw.transport();
+    if (species < 0 || species >= tr.n_species) return SWMM_ERR_BADINDEX;
+    copy_to(tr.row_names[static_cast<std::size_t>(species)], buf, buflen);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gw2d_get_cell_conc(SWMM_Engine engine, int zone,
+                                            int species, double* out, int len,
+                                            int* written) {
+    AQ_SOLVER(engine);
+    if (!out || len <= 0) return SWMM_ERR_BADPARAM;
+    if (zone != SWMM_GW2D_ZONE_SAT && zone != SWMM_GW2D_ZONE_UNSAT)
+        return SWMM_ERR_BADPARAM;
+    const auto& tr = gw.transport();
+    if (!tr.active() || species < 0 || species >= tr.n_species)
+        return SWMM_ERR_BADINDEX;
+    const int n = std::min(len, tr.n_cells);
+    for (int c = 0; c < n; ++c) {
+        const double v = (zone == SWMM_GW2D_ZONE_SAT) ? gw.satVolume(c)
+                                                      : gw.unsatVolume(c);
+        const auto k = tr.idx(species, c);
+        const double m = (zone == SWMM_GW2D_ZONE_SAT) ? tr.sat_mass[k]
+                                                      : tr.unsat_mass[k];
+        out[c] = (v > 0.0) ? m / v : 0.0;
+    }
+    if (written) *written = n;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gw2d_get_species_ledger(SWMM_Engine engine,
+                                                 int species, int term,
+                                                 double* value) {
+    AQ_SOLVER(engine);
+    if (!value) return SWMM_ERR_BADPARAM;
+    const auto& tr = gw.transport();
+    if (!tr.active() || species < 0 || species >= tr.n_species)
+        return SWMM_ERR_BADINDEX;
+    const auto u = static_cast<std::size_t>(species);
+    switch (term) {
+        case SWMM_GW2D_SPL_INIT:        *value = tr.init_mass[u]; break;
+        case SWMM_GW2D_SPL_STORAGE:     *value = tr.ledgeredStorage(species); break;
+        case SWMM_GW2D_SPL_INFIL_IN:    *value = tr.gained_infil[u]; break;
+        case SWMM_GW2D_SPL_NODE_IN:     *value = tr.gained_node[u]; break;
+        case SWMM_GW2D_SPL_LINK_IN:     *value = tr.gained_link[u]; break;
+        case SWMM_GW2D_SPL_LATERAL_NET: *value = tr.net_lateral[u]; break;
+        case SWMM_GW2D_SPL_DEEP_OUT:    *value = tr.lost_deep[u]; break;
+        case SWMM_GW2D_SPL_NODE_OUT:    *value = tr.lost_node[u]; break;
+        case SWMM_GW2D_SPL_LINK_OUT:    *value = tr.lost_link[u]; break;
+        case SWMM_GW2D_SPL_DUNNE_OUT:   *value = tr.lost_dunne[u]; break;
+        case SWMM_GW2D_SPL_ET_OUT:      *value = tr.lost_et[u]; break;
+        case SWMM_GW2D_SPL_REACTED:     *value = tr.lost_reaction[u]; break;
+        case SWMM_GW2D_SPL_RESIDUAL:    *value = tr.residual(species); break;
         default: return SWMM_ERR_BADPARAM;
     }
     return SWMM_OK;

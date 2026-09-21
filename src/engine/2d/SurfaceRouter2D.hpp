@@ -273,6 +273,14 @@ public:
     const std::vector<std::string>& aquiferNodeNames() const noexcept {
         return aquifer_node_names_;
     }
+    /// G-X4: the `[2D_AQUIFER_LINKS]` row names, parallel to
+    /// `aquiferConfig().link_rows` — the writer's round-trip key.
+    std::vector<std::string>& aquiferLinkNames() noexcept {
+        return aquifer_link_names_;
+    }
+    const std::vector<std::string>& aquiferLinkNames() const noexcept {
+        return aquifer_link_names_;
+    }
     /// The running kernel. `active()` is false until `[2D_AQUIFER]` resolves.
     SubsurfaceSolver&       subsurface()       noexcept { return subsurface_; }
     const SubsurfaceSolver& subsurface() const noexcept { return subsurface_; }
@@ -466,7 +474,14 @@ private:
     /// `[2D_AQUIFER]` row resolves.
     SubsurfaceConfig         aquifer_cfg_;
     std::vector<std::string> aquifer_node_names_;
+    std::vector<std::string> aquifer_link_names_;   ///< G-X4
     SubsurfaceSolver         subsurface_;
+    /// G-X3: the (conduit, cell, length share) table `LINK_SEEPAGE AUTO`
+    /// resolved at initialize; empty when nothing seeps over the mesh.
+    std::vector<GwLinkShare> aquifer_link_shares_;
+    /// G-X4: the conduits in `aquifer_link_shares_`, each once, ascending —
+    /// the publisher's loop, so it does not re-scan the share table.
+    std::vector<int>         aquifer_link_ids_;
 
     /// Per-cell cumulative rainfall volume (m³) — see rainCumulative().
     /// Filled in accumulateMassBalance() alongside MassBalance2D::rainfall_in.
@@ -528,6 +543,18 @@ private:
     /// mass balance + output refresh. Replaces the whole window state machine
     /// on the marcher path.
     void coAdvanceStep(SimulationContext& ctx, double dt, double t);
+    /// G-X4: freeze the aquifer's side of the conduit exchange (table
+    /// elevation relative to the conduit invert, conductivity, path length
+    /// and the gain budget) into the conduit rows the two loss laws read.
+    void publishLinkCoupling(SimulationContext& ctx);
+    /// T7.4: one species' concentration in a conduit, in 1D units — what a
+    /// leaking pipe's water carries into the aquifer.
+    double linkRowConc(const SimulationContext& ctx, int link, int s,
+                       const SubsurfaceTransportState& tr) const;
+    /// T7.4: hand the aquifer's node-seam mass to the 1D in both
+    /// directions — out through the node's coupling queues, in as the
+    /// exfiltration loss the 1D quality balance never booked.
+    void flushAquiferNodeSpecies(SimulationContext& ctx);
     /// True when the batch about to run (span @p dt) is the one that closes
     /// the current output-refresh window — decided BEFORE the advance so the
     /// continuity snapshot is only taken on batches that will use it.

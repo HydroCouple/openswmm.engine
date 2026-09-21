@@ -28,6 +28,8 @@
 #include "../core/SimulationContext.hpp"
 #include "../2d/data/MeshData.hpp"
 #include "../2d/data/SolverOptions2D.hpp"
+#include "../2d/gw/GwTransportData.hpp"          // T7.1
+#include "../2d/subsurface/SubsurfaceData.hpp"   // T7.1
 
 #include <cstdio>
 
@@ -105,6 +107,29 @@ ClassEnables surface2DEnables(const SimulationContext& ctx) noexcept {
     return e;
 }
 
+ClassEnables groundwaterEnables(const SimulationContext& ctx) noexcept {
+    ClassEnables e;
+    // The kernel is the gate: no resolved [2D_AQUIFER], no subsurface
+    // transport, whatever the [GW_*] rows say.
+    const auto* aq = ctx.twod_io.aquifer_state;
+    if (aq == nullptr || !aq->active || aq->n_cells <= 0) return e;
+    const auto* g = ctx.twod_io.gw;
+    const bool q  = !ctx.options.ignore_quality;
+    const bool tp = !g || g->options.transport_pollutants;
+    const bool tm = !g || g->options.transport_msx;
+    const bool ta = !g || g->options.transport_age;
+    const bool tt = !g || g->options.transport_temperature;
+    e.n_pollut     = (q && tp) ? ctx.n_pollutants() : 0;
+    e.msx_has_wall = reactionsHaveWall(ctx);
+    // WALL species are a pipe-surface concept; the aquifer refuses them for
+    // the same reason the 2D surface does.
+    e.n_msx        = (q && tm && reactionsActive(ctx) && !e.msx_has_wall)
+                         ? ctx.reactions.n_species() : 0;
+    e.age          = ta && ctx.options.water_age;
+    e.temperature  = tt && ctx.options.heat_transport;
+    return e;
+}
+
 RowLayout canonicalRows(const SimulationContext& ctx, const ClassEnables& e) {
     RowLayout L;
     L.n_pollut = e.n_pollut;
@@ -161,20 +186,52 @@ Matrix resolve(const SimulationContext& ctx) {
         else               enabled(tmp, 1);
     }
 
-    // ---- Groundwater (legacy aquifers) -------------------------------------
+    // ---- Groundwater --------------------------------------------------------
+    // T7.1: the two-zone [2D_AQUIFER] kernel transports. A deck with only the
+    // legacy subcatchment [AQUIFERS] keeps the old row verbatim — that
+    // aquifer still has no transported quality of its own.
     {
-        const bool has_aq = ctx.aquifer_names.size() > 0;
-        const char* no_aq = "no [AQUIFERS]";
-        unavailable(m.at(Domain::GROUNDWATER, SpeciesClass::POLLUTANTS),
-                    has_aq ? "no transported quality — the aquifer supplies the "
-                             "[POLLUTANTS] GW concentration at the node seam (legacy)"
-                           : no_aq);
-        unavailable(m.at(Domain::GROUNDWATER, SpeciesClass::MSX),
-                    has_aq ? "no transported quality in groundwater" : no_aq);
-        unavailable(m.at(Domain::GROUNDWATER, SpeciesClass::AGE),
-                    has_aq ? "source volume only (new water enters at age 0)" : no_aq);
-        unavailable(m.at(Domain::GROUNDWATER, SpeciesClass::TEMPERATURE),
-                    has_aq ? "source volume only (GROUNDWATER source temperature)" : no_aq);
+        const auto* aq = ctx.twod_io.aquifer_state;
+        const bool two_zone = aq != nullptr && aq->active && aq->n_cells > 0;
+        if (two_zone) {
+            const ClassEnables e = groundwaterEnables(ctx);
+            const auto* g = ctx.twod_io.gw;
+            Cell& pol = m.at(Domain::GROUNDWATER, SpeciesClass::POLLUTANTS);
+            if (np == 0)                                    unavailable(pol, "no [POLLUTANTS]");
+            else if (ignoreQ)                               disabled(pol, "IGNORE_QUALITY");
+            else if (g && !g->options.transport_pollutants) disabled(pol, "TRANSPORT_POLLUTANTS NO");
+            else                                            enabled(pol, e.n_pollut);
+
+            Cell& msx = m.at(Domain::GROUNDWATER, SpeciesClass::MSX);
+            if (!reactionsActive(ctx))                unavailable(msx, "no reactions component");
+            else if (e.msx_has_wall)                  unavailable(msx, "WALL species have no subsurface transport");
+            else if (ignoreQ)                         disabled(msx, "IGNORE_QUALITY");
+            else if (g && !g->options.transport_msx)  disabled(msx, "TRANSPORT_MSX NO");
+            else                                      enabled(msx, e.n_msx);
+
+            Cell& age = m.at(Domain::GROUNDWATER, SpeciesClass::AGE);
+            if (!ctx.options.water_age)               unavailable(age, "WATER_AGE OFF");
+            else if (g && !g->options.transport_age)  disabled(age, "TRANSPORT_AGE NO");
+            else                                      enabled(age, 1);
+
+            Cell& tmp = m.at(Domain::GROUNDWATER, SpeciesClass::TEMPERATURE);
+            if (!ctx.options.heat_transport)                  unavailable(tmp, "HEAT_TRANSPORT OFF");
+            else if (g && !g->options.transport_temperature)  disabled(tmp, "TRANSPORT_TEMPERATURE NO");
+            else                                              enabled(tmp, 1);
+        } else {
+            const bool has_aq = ctx.aquifer_names.size() > 0;
+            const char* no_aq = "no [AQUIFERS] or [2D_AQUIFER]";
+            unavailable(m.at(Domain::GROUNDWATER, SpeciesClass::POLLUTANTS),
+                        has_aq ? "no transported quality — the aquifer supplies the "
+                                 "[POLLUTANTS] GW concentration at the node seam (legacy)"
+                               : no_aq);
+            unavailable(m.at(Domain::GROUNDWATER, SpeciesClass::MSX),
+                        has_aq ? "no transported quality in groundwater" : no_aq);
+            unavailable(m.at(Domain::GROUNDWATER, SpeciesClass::AGE),
+                        has_aq ? "source volume only (new water enters at age 0)" : no_aq);
+            unavailable(m.at(Domain::GROUNDWATER, SpeciesClass::TEMPERATURE),
+                        has_aq ? "source volume only (GROUNDWATER source temperature)" : no_aq);
+        }
     }
 
     // ---- 1D network --------------------------------------------------------

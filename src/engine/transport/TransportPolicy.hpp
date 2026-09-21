@@ -116,6 +116,13 @@ ClassEnables network1DEnables(const SimulationContext& ctx) noexcept;
 /// "IGNORE_QUALITY turns off the pollutant and MSX rows only").
 ClassEnables surface2DEnables(const SimulationContext& ctx) noexcept;
 
+/// T7.1: two-zone groundwater enables — the 2D surface rule plus the
+/// `[GW_TRANSPORT_OPTIONS] TRANSPORT_*` keys. Like the surface, age and
+/// temperature are not gated by IGNORE_QUALITY. Every row is 0 unless a
+/// `[2D_AQUIFER]` actually resolved: the sections are authorable on a deck
+/// with no kernel, and they transport nothing there.
+ClassEnables groundwaterEnables(const SimulationContext& ctx) noexcept;
+
 /// The canonical row layout (pollutants, MSX, age, temperature) for a set of
 /// enables — the SpeciesRegistry order ARD and 2D use.
 struct RowLayout {

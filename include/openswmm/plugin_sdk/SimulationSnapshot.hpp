@@ -325,6 +325,18 @@ struct SimulationSnapshot {
     std::vector<double> gw2d_et;            ///< subsurface ET (m/s, ≥ 0 out)
     std::vector<double> gw2d_dunne;         ///< saturation excess returned to the surface (m³/s)
     std::vector<double> gw2d_infil_in;      ///< infiltration delivered from the surface (m/s)
+    std::vector<double> gw2d_link_seepage;  ///< G-X3: conduit seepage delivered in (m³/s)
+    /// T7.5: the aquifer's transported tuple, `[s * n_cells + c]`, as
+    /// CONCENTRATIONS (mass / water volume of the zone) — the quantity a
+    /// reader plots, derived here so no consumer has to know how the kernel
+    /// stores it. A zone with no water reports 0 rather than dividing.
+    std::vector<double> gw2d_sat_conc;
+    std::vector<double> gw2d_unsat_conc;
+    /// `[s * kTerms + t]` cumulative species ledger; the term order is the
+    /// `terms` attribute the writer emits.
+    std::vector<double> gw2d_species_ledger;
+    int                 gw2d_species_count = 0;
+    const std::vector<std::string>* gw2d_species_names = nullptr;
     /// Static per-cell descriptors (filled every snapshot; the writer stores
     /// them once): aquifer bottom elevation (m) and the resolved closure
     /// (SWMM_GW2D_CLOSURE_*: 0 closed form, 1 enslaved, 2 sigma).
@@ -337,8 +349,8 @@ struct SimulationSnapshot {
     int                 gw2d_m_layers = 0;
     /// Domain ledger (m³, cumulative): recharge, lateral, deep, node, dunne,
     /// caprise, et, infil_in, init_storage, storage (live, incl. accumulators),
-    /// continuity residual (ledgered) — the SWMM_GW2D_LED_* order plus the
-    /// residual last.
+    /// link (G-X3, conduit seepage in), continuity residual (ledgered) — the
+    /// SWMM_GW2D_LED_* order plus the residual last.
     std::vector<double> gw2d_ledger;
     /// Cumulative exchange per `[2D_AQUIFER_NODE]` bed (m³, + out of the
     /// aquifer into the pipe), in the authored bed order; `gw2d_node_names`

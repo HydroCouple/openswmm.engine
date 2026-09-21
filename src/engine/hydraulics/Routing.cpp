@@ -33,6 +33,7 @@
 #include "../core/ErrorCodes.hpp"
 #include "../core/UnitConversion.hpp"
 #include "Outfall.hpp"
+#include "AquiferLinkExchange.hpp"   // G-X4
 #include "Divider.hpp"
 #include "ForceMain.hpp"
 #include "Node.hpp"
@@ -741,8 +742,14 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
             // The transect top-width below uses the linear approximation; the
             // faithful getWofY was tried and does NOT resolve the parity gap
             // (the gap is the timing, not the width). See PARITY_FINDINGS.
+            // G-X4: with the aquifer coupled the seepage is signed and
+            // `[2D_AQUIFER_LINKS] KC` can give a conduit with no [LOSSES]
+            // rate an exchange, so the gate is the effective conductivity.
+            const bool gw_two_way = !CD.gw_coupled.empty() &&
+                                    CD.gw_coupled[ucr] != 0;
+            const double k_seep = gw_two_way ? CD.gw_kc[ucr] : CD.seep_rate[ucr];
             const bool wantEvap = xsect::isOpen(batch_shape) && evap_rate > 0.0;
-            const bool wantSeep = CD.seep_rate[ucr] > 0.0;
+            const bool wantSeep = k_seep > 0.0;
             if (wantEvap || wantSeep) {
                 // Faithful params (matching DynamicWave.cpp::buildXSP): the
                 // previous minimal {type, y_full, a_full, w_max} left y_bot/
@@ -812,12 +819,18 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
                             d_seep = xs.yw_max;
                         width = xsect::getWofY(xs, d_seep);
                     }
-                    seep_loss = CD.seep_rate[ucr] * width * length;
+                    seep_loss = k_seep * width * length;
                     // Monthly conductivity adjustment (legacy link.c:1378:
                     // seepLossRate *= Adjust.hydconFactor). infil_factor
                     // mirrors adjust_hydcon[mon] each step (A2d) and is 1.0
                     // exactly on unadjusted decks.
                     seep_loss *= ctx.climate_state.infil_factor;
+                    if (gw_two_way) {   // G-X4: signed conductance + gain cap
+                        seep_loss *= hydraulics::aquiferSeepFactor(
+                            depth, CD.gw_head_rel[ucr], CD.gw_dc[ucr]);
+                        seep_loss = hydraulics::capAquiferGain(
+                            seep_loss, CD.gw_gain_max[ucr]);
+                    }
                 }
             }
 
@@ -831,17 +844,23 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
             // themselves and write back — the previous step's outflow used
             // here was 0 on the first wet step, so the rate was capped to 0
             // where legacy lost evaporation from the start (runoff29-sw5).
-            double total = evap_loss + seep_loss;
+            // G-X4: a gaining conduit brings water IN, so it is not part of
+            // what the conduit can afford to lose; the cap sees the losing
+            // components only and the gain passes through (the aquifer's own
+            // budget bounds it).
+            double total = evap_loss + std::max(seep_loss, 0.0);
             if (total > 0.0 &&
                 (model_ == RouteModel::DYNWAVE || model_ == RouteModel::FV)) {
                 double q_avail = links.volume[uj] / dt;
                 if (total > q_avail && q_avail >= 0.0) {
                     double ratio = q_avail / total;
                     evap_loss *= ratio;
-                    seep_loss *= ratio;
+                    if (seep_loss > 0.0) seep_loss *= ratio;
                 }
             }
         }
+
+        hydraulics::applySeepageForcing(ctx, uj, seep_loss);   // G-X4
 
         CD.evap_loss_rate[ucr] = evap_loss;
         CD.seep_loss_rate[ucr] = seep_loss;

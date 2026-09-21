@@ -65,11 +65,13 @@ void SubsurfaceState::resize(int n, int m) {
     qet_last.assign(nn, 0.0);
     dunne_last.assign(nn, 0.0);
     qplus_last.assign(nn, 0.0);
+    qlink_last.assign(nn, 0.0);   // G-X3
 
     dt_cell.assign(nn, 0.0);
     tier.assign(nn, 0);
     xacc_from_surface.assign(nn, 0.0);
     xacc_to_surface.assign(nn, 0.0);
+    lacc.assign(nn, 0.0);         // G-X3
     // eacc_L/R and nacc are sized by the solver against the edge and node
     // counts, which this struct deliberately does not know.
 }
@@ -106,6 +108,7 @@ double SubsurfaceState::liveStorage() const noexcept {
     for (double v : eacc_R) s += v;
     for (double v : xacc_from_surface) s += v;
     for (double v : xacc_to_surface)   s += v;
+    for (double v : lacc)              s += v;   // G-X3: seepage in flight
     return s;
 }
 
@@ -117,7 +120,7 @@ double SubsurfaceState::ledgeredStorage() const noexcept {
 }
 
 double SubsurfaceState::continuityResidual() const noexcept {
-    const double in  = led_infil_in + led_lateral;
+    const double in  = led_infil_in + led_lateral + led_link;   // G-X3
     const double out = led_deep + led_node + led_et + led_dunne;
     return ledgeredStorage() - led_init_storage - (in - out);
 }

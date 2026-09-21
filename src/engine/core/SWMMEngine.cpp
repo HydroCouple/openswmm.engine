@@ -143,7 +143,10 @@ void SWMMEngine::wire2DModelIO() noexcept {
     ctx_.twod_io.surface_quality = &surface_router_.surfaceQuality();   // S7
     ctx_.twod_io.aquifer       = &surface_router_.aquiferConfig();     // G1
     ctx_.twod_io.aquifer_nodes = &surface_router_.aquiferNodeNames();  // G1
+    ctx_.twod_io.aquifer_links = &surface_router_.aquiferLinkNames();  // G-X4
     ctx_.twod_io.aquifer_state = &surface_router_.subsurface().state();  // G1
+    ctx_.twod_io.aquifer_transport =
+        &surface_router_.subsurface().transport();                       // T7.5
 }
 #endif
 
@@ -239,6 +242,7 @@ int SWMMEngine::open(const char* inp_path,
         // NOT inert: a resolved row runs the kernel.
         twoD::registerSubsurfaceSections(surface_router_.aquiferConfig(),
                                          surface_router_.aquiferNodeNames(),
+                                         surface_router_.aquiferLinkNames(),   // G-X4
                                          dip->registry());
     }
 
@@ -564,9 +568,17 @@ int SWMMEngine::open(const char* inp_path,
         auto gw_errs = twoD::resolveGwTransport(ctx_, surface_router_.mesh(),
                                                 surface_router_.gwTransport());
         for (auto& e : gw_errs) ctx_.errors.push_back(std::move(e));
-        const std::string inert =
-            twoD::gwTransportInertWarning(surface_router_.gwTransport());
-        if (!inert.empty()) push_report_warning(inert, 0);
+        // T7.1: the rows are inert only where there is no kernel to
+        // configure. With a resolved [2D_AQUIFER] they now drive the
+        // transported tuple, and the warning would be false. The kernel
+        // resolves in surface_router_.initialize(), which runs AFTER this
+        // point, so the question asked here is the authored one: are there
+        // [2D_AQUIFER] rows for these [GW_*] rows to configure at all.
+        if (surface_router_.aquiferConfig().empty()) {
+            const std::string inert =
+                twoD::gwTransportInertWarning(surface_router_.gwTransport());
+            if (!inert.empty()) push_report_warning(inert, 0);
+        }
         // U5 (rewired 2026-09-07): GROUNDWATER is a real process enable now
         // that the G1 two-zone kernel runs it. YES on a deck with no
         // [2D_AQUIFER*] rows is a deck that expects groundwater and has
@@ -5038,10 +5050,19 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
             int barrels = std::max((cr >= 0) ? CD.barrels[ucr] : 1, 1);
             ctx_.mass_balance.routing_evap_loss +=
                 ((cr >= 0) ? CD.evap_loss_rate[ucr] : 0.0) * barrels * dt_routing;
+            // G-X4: the seepage rate is SIGNED once a conduit is coupled to
+            // the two-zone aquifer. The two halves are booked to opposite
+            // sides of the balance — a loss to `routing_seep_loss`, a gain to
+            // `routing_link_gw_inflow` — so neither term can be quietly
+            // cancelled by the other and the .rpt shows what actually
+            // happened on a reach that switched direction mid-storm.
+            const double seep_rate_s = (cr >= 0) ? CD.seep_loss_rate[ucr] : 0.0;
             ctx_.mass_balance.routing_seep_loss +=
-                ((cr >= 0) ? CD.seep_loss_rate[ucr] : 0.0) * barrels * dt_routing;
+                std::max(seep_rate_s, 0.0) * barrels * dt_routing;
+            ctx_.mass_balance.routing_link_gw_inflow +=
+                std::max(-seep_rate_s, 0.0) * barrels * dt_routing;
             step_loss_rate += ((cr >= 0) ? CD.evap_loss_rate[ucr] : 0.0) * barrels
-                            + ((cr >= 0) ? CD.seep_loss_rate[ucr] : 0.0) * barrels;
+                            + seep_rate_s * barrels;
         }
     }
 
@@ -6341,6 +6362,52 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
             snap.gw2d_et            = g.qet_last;
             snap.gw2d_dunne         = g.dunne_last;
             snap.gw2d_infil_in      = g.qplus_last;
+            snap.gw2d_link_seepage  = g.qlink_last;   // G-X3
+            // T7.5: concentrations, derived from the stores and the zone
+            // water volumes the kernel already knows.
+            {
+                const auto& tr = gw.transport();
+                snap.gw2d_species_count = tr.active() ? tr.n_species : 0;
+                snap.gw2d_species_names = tr.active() ? &tr.row_names : nullptr;
+                if (tr.active()) {
+                    const auto nn = static_cast<std::size_t>(tr.n_species) *
+                                    static_cast<std::size_t>(n);
+                    snap.gw2d_sat_conc.assign(nn, 0.0);
+                    snap.gw2d_unsat_conc.assign(nn, 0.0);
+                    for (int c = 0; c < n; ++c) {
+                        const double vs = gw.satVolume(c);
+                        const double vu = gw.unsatVolume(c);
+                        for (int sp = 0; sp < tr.n_species; ++sp) {
+                            const auto k = tr.idx(sp, c);
+                            if (vs > 0.0) snap.gw2d_sat_conc[k]   = tr.sat_mass[k] / vs;
+                            if (vu > 0.0) snap.gw2d_unsat_conc[k] = tr.unsat_mass[k] / vu;
+                        }
+                    }
+                    snap.gw2d_species_ledger.assign(
+                        static_cast<std::size_t>(tr.n_species) * 13, 0.0);
+                    for (int sp = 0; sp < tr.n_species; ++sp) {
+                        const auto u = static_cast<std::size_t>(sp);
+                        double* d = &snap.gw2d_species_ledger[u * 13];
+                        d[0]  = tr.init_mass[u];
+                        d[1]  = tr.ledgeredStorage(sp);
+                        d[2]  = tr.gained_infil[u];
+                        d[3]  = tr.gained_node[u];
+                        d[4]  = tr.gained_link[u];
+                        d[5]  = tr.net_lateral[u];
+                        d[6]  = tr.lost_deep[u];
+                        d[7]  = tr.lost_node[u];
+                        d[8]  = tr.lost_link[u];
+                        d[9]  = tr.lost_dunne[u];
+                        d[10] = tr.lost_et[u];
+                        d[11] = tr.lost_reaction[u];
+                        d[12] = tr.residual(sp);
+                    }
+                } else {
+                    snap.gw2d_sat_conc.clear();
+                    snap.gw2d_unsat_conc.clear();
+                    snap.gw2d_species_ledger.clear();
+                }
+            }
             snap.gw2d_bed_elev      = g.z_bed;
             snap.gw2d_closure.assign(n, 0);
             for (std::size_t c = 0; c < n; ++c)
@@ -6349,7 +6416,9 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
             snap.gw2d_theta_sigma   = g.theta_sigma;
             snap.gw2d_ledger = {g.led_recharge, g.led_lateral, g.led_deep, g.led_node,
                                 g.led_dunne, g.led_caprise, g.led_et, g.led_infil_in,
-                                g.led_init_storage, g.liveStorage(), g.continuityResidual()};
+                                g.led_init_storage, g.liveStorage(),
+                                g.led_link,   // G-X3
+                                g.continuityResidual()};
             snap.gw2d_bed_exchange_cum = gw.bedExchangeCumulative();
             snap.gw2d_node_names = surface_router_.aquiferNodeNames().empty()
                                        ? nullptr : &surface_router_.aquiferNodeNames();
@@ -6357,7 +6426,11 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
             snap.gw2d_table_elev.clear(); snap.gw2d_hg.clear(); snap.gw2d_hu.clear();
             snap.gw2d_recharge.clear(); snap.gw2d_lateral.clear(); snap.gw2d_node_exchange.clear();
             snap.gw2d_deep.clear(); snap.gw2d_et.clear(); snap.gw2d_dunne.clear();
-            snap.gw2d_infil_in.clear(); snap.gw2d_bed_elev.clear(); snap.gw2d_closure.clear();
+            snap.gw2d_infil_in.clear(); snap.gw2d_link_seepage.clear();   // G-X3
+            snap.gw2d_sat_conc.clear(); snap.gw2d_unsat_conc.clear();     // T7.5
+            snap.gw2d_species_ledger.clear(); snap.gw2d_species_count = 0;
+            snap.gw2d_species_names = nullptr;
+            snap.gw2d_bed_elev.clear(); snap.gw2d_closure.clear();
             snap.gw2d_theta_sigma.clear(); snap.gw2d_m_layers = 0; snap.gw2d_ledger.clear();
             snap.gw2d_bed_exchange_cum.clear(); snap.gw2d_node_names = nullptr;
         }

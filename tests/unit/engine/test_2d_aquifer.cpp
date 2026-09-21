@@ -58,6 +58,7 @@
 #include <vector>
 
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_forcing.h>   // G-X4
 #include <openswmm/engine/openswmm_gw2d.h>
 #include <openswmm/engine/openswmm_model.h>
 
@@ -819,5 +820,391 @@ TEST(Aquifer2D, DefaultOptionsAreNotWrittenBack) {
     EXPECT_EQ(text.find("[2D_AQUIFER_OPTIONS]"), std::string::npos)
         << "every authored option equalled its default; writing the section "
            "back would grow the deck on every save";
+    finish(r);
+}
+
+// ---------------------------------------------------------------------------
+// G-X3 gates (2026-09-19) — conduit seepage reaches the aquifer cells the
+// conduit crosses. The two-cell pan is split by its diagonal (cell 0 lower-
+// right, cell 1 upper-left); C1 runs along y = 5 between the coordinates
+// the test gives J1 and O1, seeping at 100 mm/hr under a 0.5 m³/s inflow
+// that keeps it full. J1 is kept OUT of the node exchange (NODE_ENROLMENT
+// ROWS) so the seepage is the aquifer's only inflow.
+// ---------------------------------------------------------------------------
+namespace {
+std::string seepDeck(const std::string& aquifer_options, double x1, double x2) {
+    std::string body = deck("[2D_AQUIFER_OPTIONS]\nCLOSURE CLOSED_FORM\nNODE_ENROLMENT ROWS\n" +
+                            aquifer_options +
+                            "\n[2D_AQUIFER]\n*  36.0  4.0  0.45  0.10  2.0  HG0 1.0\n\n",
+                            "", /*init_depth=*/0.0, /*infil_mm_hr=*/0.0);
+    const std::string rep = "[REPORT]\nINPUT NO\n";
+    const auto at = body.find(rep);
+    std::ostringstream extra;
+    extra << "[LOSSES]\n;;Link Kentry Kexit Kavg Flap Seepage(mm/hr)\nC1  0  0  0  NO  100\n\n"
+             "[INFLOWS]\nJ1  FLOW  IN1  FLOW  1.0  1.0\n\n"
+             "[TIMESERIES]\nIN1  0:00  0.5\nIN1  1:00  0.5\n\n"
+             "[COORDINATES]\nJ1  " << x1 << "  5.0\nO1  " << x2 << "  5.0\n\n";
+    body.insert(at, extra.str());
+    return body;
+}
+
+struct SeepResult {
+    double seep_1d = 0.0;      // routing_seep_loss, converted to m³
+    double led_link = 0.0, pending = 0.0, storage = 0.0, init = 0.0, dunne = 0.0, resid = 0.0;
+    double hg0 = 0.0, hg1 = 0.0, qlink0 = 0.0, qlink1 = 0.0;
+    bool warned = false;
+};
+
+SeepResult runSeep(const std::string& tag, const std::string& body) {
+    SeepResult out;
+    DeckRun r = openDeck(tag, body);
+    EXPECT_TRUE(r.opened);
+    if (!r.opened) return out;
+    EXPECT_TRUE(run(r));
+    out.warned = warnedAbout(r, "seepage is delivered into the aquifer cells");
+    const auto& g = r.eng->surfaceRouter2D().subsurface().state();
+    // the 1D books in its internal volume unit (ft³); the router hands the
+    // aquifer SI through the same factor the node exchange uses
+    out.seep_1d = r.eng->context().mass_balance.routing_seep_loss *
+                  r.eng->surfaceRouter2D().options().vol_1d_to_2d;
+    EXPECT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_LINK, &out.led_link), SWMM_OK);
+    EXPECT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_STORAGE, &out.storage), SWMM_OK);
+    EXPECT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_INIT_STORAGE, &out.init), SWMM_OK);
+    EXPECT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_DUNNE, &out.dunne), SWMM_OK);
+    EXPECT_EQ(swmm_gw2d_get_continuity_error(r.e, &out.resid), SWMM_OK);
+    for (double v : g.lacc) out.pending += v;
+    if (g.n_cells >= 2) {
+        out.hg0 = g.hg[0]; out.hg1 = g.hg[1];
+        out.qlink0 = g.qlink_last[0]; out.qlink1 = g.qlink_last[1];
+    }
+    finish(r);
+    return out;
+}
+}  // namespace
+
+TEST(Aquifer2D, ConduitSeepageReachesTheAquiferCellsItCrosses) {
+    // (d) x = 1 → 9 at y = 5: 4 m in the upper-left cell, 4 m in the
+    // lower-right one — every metre of C1 is over the mesh.
+    const SeepResult a = runSeep("seep_auto", seepDeck("", 1.0, 9.0));
+    EXPECT_TRUE(a.warned) << "the enrolment was not announced";
+    EXPECT_GT(a.seep_1d, 1.0e-3) << "the conduit did not seep";
+    EXPECT_GT(a.led_link, 0.0);
+    // everything the 1D lost is in the aquifer's books: delivered, or booked
+    // and not yet gathered (one firing in flight)
+    EXPECT_NEAR(a.led_link + a.pending, a.seep_1d, 1.0e-9 * a.seep_1d)
+        << "1D seepage " << a.seep_1d << " vs aquifer " << a.led_link << " + " << a.pending;
+    // …and it is stored, not lost or returned (no deep loss, no ET, no
+    // node, room under the ground)
+    EXPECT_EQ(a.dunne, 0.0);
+    EXPECT_NEAR(a.storage - a.init, a.led_link + a.pending, 1.0e-9 * a.seep_1d + 1.0e-12)
+        << "stored " << a.storage - a.init;
+    EXPECT_LT(std::fabs(a.resid), 1.0e-9 * a.storage + 1.0e-12) << "residual " << a.resid;
+    // the split follows the length: half each, so the two equal columns
+    // rose together (no lateral gradient between them)
+    EXPECT_GT(a.hg0, 1.0);
+    EXPECT_NEAR(a.hg0, a.hg1, 1.0e-12) << "unequal shares of an evenly split conduit";
+    EXPECT_GT(a.qlink0, 0.0);
+    EXPECT_NEAR(a.qlink0, a.qlink1, 1.0e-12 * a.qlink0);
+
+    // LINK_SEEPAGE NONE: the aquifer receives nothing, and the 1D is
+    // bit-identical — the routing never knew (one-way, pure delivery).
+    const SeepResult n = runSeep("seep_none", seepDeck("LINK_SEEPAGE NONE", 1.0, 9.0));
+    EXPECT_FALSE(n.warned);
+    EXPECT_EQ(n.led_link, 0.0);
+    EXPECT_EQ(n.pending, 0.0);
+    EXPECT_EQ(n.seep_1d, a.seep_1d) << "LINK_SEEPAGE changed the 1D seepage";
+    EXPECT_NEAR(n.storage, n.init, 1.0e-12);
+}
+
+TEST(Aquifer2D, ConduitSeepageIsSharedByTheLengthOverTheMesh) {
+    // (e) x = 5 → 15: the first 5 m lie in the lower-right cell, the rest
+    // is off the mesh — half the seepage arrives, all of it in cell 0.
+    const SeepResult h = runSeep("seep_half", seepDeck("", 5.0, 15.0));
+    EXPECT_TRUE(h.warned);
+    EXPECT_GT(h.seep_1d, 1.0e-3);
+    EXPECT_NEAR(h.led_link + h.pending, 0.5 * h.seep_1d, 1.0e-9 * h.seep_1d)
+        << "1D seepage " << h.seep_1d << " vs aquifer " << h.led_link << " + " << h.pending;
+    EXPECT_GT(h.qlink0, 0.0) << "cell 0 is under the conduit";
+    EXPECT_EQ(h.qlink1, 0.0) << "cell 1 is not";
+    EXPECT_GT(h.hg0, h.hg1) << "the table under the conduit did not rise first";
+    EXPECT_LT(std::fabs(h.resid), 1.0e-9 * h.storage + 1.0e-12) << "residual " << h.resid;
+
+    // entirely off the mesh: nothing enrols, nothing arrives, the 1D still
+    // seeps (to nowhere, as before G-X3)
+    const SeepResult o = runSeep("seep_outside", seepDeck("", 20.0, 30.0));
+    EXPECT_FALSE(o.warned);
+    EXPECT_GT(o.seep_1d, 1.0e-3);
+    EXPECT_EQ(o.led_link, 0.0);
+    EXPECT_EQ(o.pending, 0.0);
+}
+
+TEST(Aquifer2D, LinkSeepageOptionRoundTripsAndDefaultsToAuto) {   // G-X3
+    DeckRun r = openDeck("seep_rt", seepDeck("LINK_SEEPAGE NONE", 1.0, 9.0));
+    ASSERT_TRUE(r.opened);
+    char buf[16] = {0};
+    ASSERT_EQ(swmm_gw2d_option_get(r.e, "LINK_SEEPAGE", buf, sizeof buf), SWMM_OK);
+    EXPECT_STREQ(buf, "NONE");
+    const fs::path saved = kOutDir / "seep_rt_saved.inp";
+    ASSERT_EQ(swmm_model_write(r.e, saved.string().c_str()), SWMM_OK);
+    {
+        const std::string text = readAll(saved);
+        const auto k = text.find("LINK_SEEPAGE");
+        ASSERT_NE(k, std::string::npos);
+        EXPECT_NE(text.find("NONE", k), std::string::npos);
+    }
+    ASSERT_EQ(swmm_gw2d_option_set(r.e, "LINK_SEEPAGE", "AUTO"), SWMM_OK);
+    ASSERT_EQ(swmm_gw2d_option_get(r.e, "LINK_SEEPAGE", buf, sizeof buf), SWMM_OK);
+    EXPECT_STREQ(buf, "AUTO");
+    EXPECT_NE(swmm_gw2d_option_set(r.e, "LINK_SEEPAGE", "MAYBE"), SWMM_OK);
+    finish(r);
+}
+
+// ---------------------------------------------------------------------------
+// G-X4 gates (2026-09-20) — the SIGNED conduit ⇄ aquifer conductance.
+// `LINK_SEEPAGE TWO_WAY` replaces the fixed [LOSSES] loss with
+// `K·W·L·min((h_link − max(h_gw, z_inv))/d_c, 1)`: the legacy rate exactly
+// when the pipe is full over a table at or below its invert, throttled as
+// the table rises, and NEGATIVE — a gaining reach, water the aquifer hands
+// to the pipe — once the table passes the water surface. The deck is the
+// seepage deck of G-X3 with the table moved: `HG0` decides the direction.
+// ---------------------------------------------------------------------------
+namespace {
+/// A deck whose CONDUIT RUNS INSIDE THE AQUIFER — which the two-cell pan of
+/// the decks above does not (its mesh sits 10 m below the network, so no
+/// table it can hold ever reaches the pipe). Here the cells' ground is at
+/// 0 m, `ZS 8` puts the aquifer bottom at −8 m, and C1 runs from J1 (invert
+/// −5.00) to O1 (invert −5.05) at y = 5, wholly over the mesh — mid invert
+/// −5.025 m, crown −4.55 m. `HG0` alone decides the direction:
+///
+///   HG0 6.0 → table at −2.0 m, 3.0 m ABOVE the invert → the pipe gains
+///   HG0 2.0 → table at −6.0 m, 1.0 m BELOW it        → disconnected, and a
+///             FULL pipe then loses exactly the legacy rate.
+///
+/// Both tables leave metres of genuinely unsaturated column above them. That
+/// is not decoration: closure A's specific yield is `θ_s − hu/L`, so a table
+/// parked just under the ground (the G-X1 manhole deck's regime) has almost
+/// no yield and moves metres for a litre — conserving, but useless as a
+/// gauge of anything.
+///
+/// @param drowned FIXED outfall stage above the crown, so the reach is
+///        pressurized and `depth == d_c` for the whole run — the regime in
+///        which the signed law must reproduce the legacy rate to the bit.
+std::string twoWayDeck(double hg0, const std::string& link_rows = "",
+                       const std::string& extra_options = "",
+                       bool drowned = false) {
+    std::ostringstream m;
+    m << "[OPTIONS]\n"
+         "FLOW_UNITS           CMS\nFLOW_ROUTING         DYNWAVE\n"
+         "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+         "END_DATE             01/01/2026\nEND_TIME             00:30:00\n"
+         "REPORT_STEP          00:01:00\nWET_STEP             00:01:00\n"
+         "DRY_STEP             00:01:00\nROUTING_STEP         5\n"
+         "ALLOW_PONDING        NO\n\n"
+         "[JUNCTIONS]\nJ1 -5.00 6.0 0 0 0\n\n"
+         "[OUTFALLS]\nO1 -5.05 "
+      << (drowned ? "FIXED -4.0 NO" : "FREE NO")
+      << "\n\n"
+         "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n"
+         "[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n\n"
+         "[LOSSES]\n;;Link Kentry Kexit Kavg Flap Seepage(mm/hr)\nC1  0  0  0  NO  100\n\n"
+         "[INFLOWS]\nJ1  FLOW  IN1  FLOW  1.0  1.0\n\n"
+         "[TIMESERIES]\nIN1  0:00  0.5\nIN1  1:00  0.5\n\n"
+         "[COORDINATES]\nJ1  1.0  5.0\nO1  9.0  5.0\n\n"
+         "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
+         "DRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\n\n"
+         "[2D_VERTICES]\n"
+         "0.0 0.0 0.0\n10.0 0.0 0.0\n10.0 10.0 0.0\n0.0 10.0 0.0\n\n"
+         "[2D_TRIANGLES]\n;;V1 V2 V3 N INIT_DEPTH\n"
+         "0 1 2 0.03 0.0\n0 2 3 0.03 0.0\n\n"
+         "[2D_AQUIFER_OPTIONS]\nCLOSURE CLOSED_FORM\nNODE_ENROLMENT ROWS\n"
+      << extra_options << "\n"
+         "[2D_AQUIFER]\n*  36.0  8.0  0.45  0.10  2.0  HG0 " << hg0 << "\n\n";
+    if (!link_rows.empty()) m << "[2D_AQUIFER_LINKS]\n" << link_rows << "\n";
+    m << "[REPORT]\nINPUT NO\n";
+    return m.str();
+}
+
+struct TwoWayResult {
+    double seep_loss = 0.0, gw_inflow = 0.0;   // 1D ledger (m³)
+    double led_link = 0.0, pending = 0.0, storage = 0.0, init = 0.0, resid = 0.0;
+    double hg0 = 0.0, rate_last = 0.0;
+    bool warned = false;
+};
+
+TwoWayResult runTwoWay(const std::string& tag, const std::string& body) {
+    TwoWayResult out;
+    DeckRun r = openDeck(tag, body);
+    EXPECT_TRUE(r.opened);
+    if (!r.opened) return out;
+    EXPECT_TRUE(run(r));
+    out.warned = warnedAbout(r, "a reach under the water table GAINS");
+    const auto& ctx = r.eng->context();
+    const auto& g = r.eng->surfaceRouter2D().subsurface().state();
+    const double v12 = r.eng->surfaceRouter2D().options().vol_1d_to_2d;
+    out.seep_loss = ctx.mass_balance.routing_seep_loss * v12;
+    out.gw_inflow = ctx.mass_balance.routing_link_gw_inflow * v12;
+    const int cr = ctx.link_subtypes.conduit_row(0);
+    if (cr >= 0)
+        out.rate_last = ctx.link_subtypes.conduits.seep_loss_rate[static_cast<std::size_t>(cr)];
+    EXPECT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_LINK, &out.led_link), SWMM_OK);
+    EXPECT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_STORAGE, &out.storage), SWMM_OK);
+    EXPECT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_INIT_STORAGE, &out.init), SWMM_OK);
+    EXPECT_EQ(swmm_gw2d_get_continuity_error(r.e, &out.resid), SWMM_OK);
+    for (double v : g.lacc) out.pending += v;
+    if (g.n_cells > 0) out.hg0 = g.hg[0];
+    finish(r);
+    return out;
+}
+}  // namespace
+
+TEST(Aquifer2D, ConduitUnderTheWaterTableGainsFromTheAquifer) {   // gate (f)
+    // HG0 3.9 puts the table 0.1 m under the ground (−10 + 3.9 = −6.1 m),
+    // far above the conduit (invert −0.5 m mean). Every term reverses.
+    const TwoWayResult up = runTwoWay("gain_two_way",
+                                      twoWayDeck(6.0, "", "LINK_SEEPAGE TWO_WAY\n"));
+    EXPECT_TRUE(up.warned) << "the signed law was not announced";
+    EXPECT_GT(up.gw_inflow, 1.0e-3) << "the drowned conduit gained nothing";
+    EXPECT_EQ(up.seep_loss, 0.0) << "a gaining reach also booked a loss";
+    EXPECT_LT(up.rate_last, 0.0) << "the seepage rate never went negative";
+    // the aquifer paid for it, to the drop: led_link is the NET (negative)
+    EXPECT_NEAR(up.led_link + up.pending, -up.gw_inflow, 1.0e-9 * up.gw_inflow)
+        << "1D gained " << up.gw_inflow << " but the aquifer lost "
+        << -(up.led_link + up.pending);
+    EXPECT_NEAR(up.storage - up.init, up.led_link + up.pending,
+                1.0e-9 * up.gw_inflow + 1.0e-12);
+    EXPECT_LT(std::fabs(up.resid), 1.0e-9 * up.storage + 1.0e-12) << "residual " << up.resid;
+    EXPECT_LT(up.hg0, 6.0) << "the table did not draw down under the gaining reach";
+
+    // The same deck with the table at the bottom (HG0 0.0, well below the
+    // conduit invert) is the DISCONNECTED limit: the pipe loses, and — the
+    // property the whole law is built around — a full pipe loses exactly
+    // what LINK_SEEPAGE AUTO's legacy rate does.
+    const TwoWayResult down = runTwoWay(
+        "gain_two_way_low", twoWayDeck(2.0, "", "LINK_SEEPAGE TWO_WAY\n", /*drowned=*/true));
+    const TwoWayResult legacy = runTwoWay(
+        "gain_auto_low", twoWayDeck(2.0, "", "", /*drowned=*/true));
+    EXPECT_GT(down.seep_loss, 1.0e-3);
+    EXPECT_EQ(down.gw_inflow, 0.0);
+    // The RATE is the invariant, not the cumulative volume: the run starts
+    // with an empty pipe, where `depth < d_c` and the signed law correctly
+    // throttles while the legacy law — which assumes a unit gradient
+    // whatever the depth — does not. Once the pipe is full the two are the
+    // same number.
+    EXPECT_NEAR(down.rate_last, legacy.rate_last, 1.0e-12 * legacy.rate_last)
+        << "TWO_WAY changed the loss of a FULL pipe over a disconnected table";
+    EXPECT_LE(down.seep_loss, legacy.seep_loss * (1.0 + 1.0e-9))
+        << "the signed law lost MORE than the unit-gradient law it caps at";
+}
+
+TEST(Aquifer2D, LinkSeepageAutoIsUnchangedByTheSignedLaw) {   // gate (g)
+    // AUTO is G-X3: one-way, the legacy rate, whatever the table does. The
+    // high-table deck that gains under TWO_WAY must still LOSE under AUTO.
+    const TwoWayResult a = runTwoWay("gain_auto_high", twoWayDeck(6.0));
+    EXPECT_FALSE(a.warned);
+    EXPECT_GT(a.seep_loss, 1.0e-3) << "AUTO stopped losing";
+    EXPECT_EQ(a.gw_inflow, 0.0) << "AUTO gained — the signed law leaked into it";
+    EXPECT_GT(a.led_link + a.pending, 0.0);
+}
+
+TEST(Aquifer2D, AquiferLinksRowOverridesAndOptsOut) {   // gate (h)
+    // EXCHANGE NO: the conduit is not in the share table at all, so it keeps
+    // its legacy loss and the aquifer receives nothing.
+    const TwoWayResult off = runTwoWay("gain_row_off",
+                                       twoWayDeck(6.0, "C1  EXCHANGE NO\n",
+                                                  "LINK_SEEPAGE TWO_WAY\n"));
+    EXPECT_FALSE(off.warned) << "an opted-out conduit was still enrolled";
+    EXPECT_EQ(off.led_link, 0.0);
+    EXPECT_EQ(off.pending, 0.0);
+    EXPECT_EQ(off.gw_inflow, 0.0);
+    EXPECT_GT(off.seep_loss, 1.0e-3) << "the 1D stopped seeping as well";
+
+    // KC scales the conductance: ten times the conductivity, ten times the
+    // gain (the law is linear in K and nothing else changed — the table
+    // draws down more, so the check is a band, not an equality).
+    const TwoWayResult k1 = runTwoWay("gain_row_k1",
+                                      twoWayDeck(6.0, "C1  KC 100\n",
+                                                 "LINK_SEEPAGE TWO_WAY\n"));
+    const TwoWayResult k10 = runTwoWay("gain_row_k10",
+                                       twoWayDeck(6.0, "C1  KC 1000\n",
+                                                  "LINK_SEEPAGE TWO_WAY\n"));
+    EXPECT_GT(k1.gw_inflow, 1.0e-3);
+    // The law is linear in K, so ten times the conductivity would be ten
+    // times the gain — at a FIXED head. It is not fixed: 17 m³ out of two
+    // 50 m² cells draws the table down ~0.5 m, which cuts the driving head,
+    // so the ratio lands between the linear bound and 1. Both ends matter —
+    // above 10 would mean the law is not linear in K, at 1 it would mean KC
+    // is not reaching the law at all (the bug this gate first caught: KC
+    // was multiplied by the unit factor instead of divided, and every
+    // conductance came out 10^9 times too large).
+    EXPECT_GT(k10.gw_inflow, 3.0 * k1.gw_inflow)
+        << "KC 1000 gained " << k10.gw_inflow << " vs KC 100 " << k1.gw_inflow;
+    EXPECT_LT(k10.gw_inflow, 10.0 * k1.gw_inflow)
+        << "the gain outran the conductance it is linear in";
+    // …and the aquifer still pays exactly, at either conductance.
+    EXPECT_NEAR(k10.led_link + k10.pending, -k10.gw_inflow, 1.0e-9 * k10.gw_inflow);
+    EXPECT_LT(std::fabs(k10.resid), 1.0e-9 * k10.storage + 1.0e-12);
+}
+
+TEST(Aquifer2D, TwoWayRoundTripsAndTheRowsEcho) {   // G-X4 authoring
+    DeckRun r = openDeck("two_way_rt",
+                         twoWayDeck(6.0, "C1  KC 50 DC 2.5\n", "LINK_SEEPAGE TWO_WAY\n"));
+    ASSERT_TRUE(r.opened);
+    char buf[16] = {0};
+    ASSERT_EQ(swmm_gw2d_option_get(r.e, "LINK_SEEPAGE", buf, sizeof buf), SWMM_OK);
+    EXPECT_STREQ(buf, "TWO_WAY");
+    const fs::path saved = kOutDir / "two_way_rt_saved.inp";
+    ASSERT_EQ(swmm_model_write(r.e, saved.string().c_str()), SWMM_OK);
+    const std::string text = readAll(saved);
+    EXPECT_NE(text.find("[2D_AQUIFER_LINKS]"), std::string::npos);
+    const auto at = text.find("[2D_AQUIFER_LINKS]");
+    EXPECT_NE(text.find("KC", at), std::string::npos);
+    EXPECT_NE(text.find("DC", at), std::string::npos);
+    EXPECT_NE(swmm_gw2d_option_set(r.e, "LINK_SEEPAGE", "SOMETIMES"), SWMM_OK);
+    finish(r);
+}
+
+// ---------------------------------------------------------------------------
+// G-X4 — `swmm_forcing_link_seepage`: the HydroCouple inlet. A host's
+// groundwater component computes the exchange and the conduit routes it,
+// over the top of whatever the deck's own law produced. Driven here with
+// the internal aquifer coupled, so the gate also pins the accounting: the
+// forced rate is what the 2D aquifer is debited, and a negative one lands
+// in the 1D as a gain, not as a negative loss.
+// ---------------------------------------------------------------------------
+TEST(Aquifer2D, HostForcedConduitExchangeIsRoutedAndBooked) {
+    DeckRun r = openDeck("force_seep", twoWayDeck(2.0, "", "LINK_SEEPAGE TWO_WAY\n"));
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(r.e, 1), SWMM_OK);
+    r.started = true;
+    // −0.35 out of the pipe = a gain, held for the run. The forcing API
+    // takes the engine's INTERNAL flow unit (ft³/s) whatever FLOW_UNITS
+    // says — the convention swmm_forcing_link_flow already set — so the
+    // expectation below converts with the router's own factor rather than
+    // assuming the deck's CMS.
+    const double forced_cfs = -0.35;
+    ASSERT_EQ(swmm_forcing_link_seepage(r.e, 0, forced_cfs,
+                                        SWMM_FORCING_OVERRIDE, SWMM_FORCING_PERSIST),
+              SWMM_OK);
+    double elapsed = 0.0, seconds = 0.0;
+    while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0)
+        seconds = elapsed * 86400.0;
+    const auto& ctx = r.eng->context();
+    const double v12 = r.eng->surfaceRouter2D().options().vol_1d_to_2d;
+    const double gw_in = ctx.mass_balance.routing_link_gw_inflow * v12;
+    const double seep  = ctx.mass_balance.routing_seep_loss * v12;
+    double led_link = 0.0, pending = 0.0, resid = 0.0;
+    ASSERT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_LINK, &led_link), SWMM_OK);
+    ASSERT_EQ(swmm_gw2d_get_continuity_error(r.e, &resid), SWMM_OK);
+    for (double v : r.eng->surfaceRouter2D().subsurface().state().lacc) pending += v;
+    // the whole run at the forced rate — the deck's own law, which was
+    // LOSING here (table 1 m under the invert), never got a say
+    EXPECT_EQ(seep, 0.0) << "the forced gain still booked a loss";
+    const double expect_m3 = -forced_cfs * seconds * v12;
+    EXPECT_NEAR(gw_in, expect_m3, 0.02 * expect_m3)
+        << "routed " << gw_in << " m3 over " << seconds << " s, wanted " << expect_m3;
+    // …and the aquifer paid for exactly what the pipe received
+    EXPECT_NEAR(led_link + pending, -gw_in, 1.0e-9 * gw_in);
+    EXPECT_LT(std::fabs(resid), 1.0e-6) << "residual " << resid;
     finish(r);
 }

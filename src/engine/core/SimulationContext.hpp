@@ -337,6 +337,7 @@ struct GwTransportData;
 class SurfaceQuality2D;   // S7 (2026-09-19)
 struct SubsurfaceConfig;  // G1: the [2D_AQUIFER*] rows
 struct SubsurfaceState;   // G1: the running two-zone kernel state
+struct SubsurfaceTransportState;   // T7.5: and what is dissolved in it
 } // namespace twoD
 
 // ============================================================================
@@ -947,12 +948,18 @@ struct SimulationContext {
         /// `aquifer->node_beds`, kept so the writer can round-trip names it
         /// resolved to indices.
         std::vector<std::string>*                    aquifer_nodes = nullptr;
+        /// G-X4: the `[2D_AQUIFER_LINKS]` row names, parallel to
+        /// `aquifer->link_rows` — the writer's round-trip key.
+        std::vector<std::string>*                    aquifer_links = nullptr;
         /// G1: the RUNNING kernel state (SI), or null when no `[2D_AQUIFER]`
         /// resolved. Published so the hotstart can carry a water table
         /// across a restart without HotStartManager needing to know about
         /// the 2D module's solver — an aquifer restarted dry has lost the
         /// months of memory that were the reason to model it.
         twoD::SubsurfaceState*                       aquifer_state = nullptr;
+        /// T7.5: the aquifer's transported tuple, for the hotstart block,
+        /// the results writer and the `.rpt` quality continuity.
+        twoD::SubsurfaceTransportState*              aquifer_transport = nullptr;
     } twod_io;
 
     /**
@@ -1082,6 +1089,13 @@ struct SimulationContext {
         double routing_dry_weather   = 0.0;
         double routing_wet_weather   = 0.0;
         double routing_gw_inflow     = 0.0;
+        /// G-X4 (2026-09-20): water the two-zone `[2D_AQUIFER]` handed to
+        /// conduits running below the water table (ft³, ≥ 0) — a gaining
+        /// reach, the inflow term legacy SWMM has no conduit source for.
+        /// It is the negative half of `seep_loss_rate`; the positive half
+        /// stays `routing_seep_loss`, so the two never net each other out
+        /// and a deck can report both in the same run.
+        double routing_link_gw_inflow = 0.0;
         double routing_rdii          = 0.0;
         double routing_external      = 0.0;
         double routing_flooding      = 0.0;
@@ -1291,7 +1305,8 @@ struct SimulationContext {
         /// Routing continuity error (fraction).
         double routing_error() const {
             double total_in = routing_dry_weather + routing_wet_weather +
-                              routing_gw_inflow + routing_rdii + routing_external +
+                              routing_gw_inflow + routing_link_gw_inflow +   // G-X4
+                              routing_rdii + routing_external +
                               routing_init_storage;
             double total_out = routing_flooding + routing_coupling_out +
                                routing_outflow +

@@ -107,6 +107,16 @@ struct ForcingData {
     std::vector<double>         link_setting_value;     ///< 0.0–1.0 for pump/orifice/weir
     std::vector<ForcingPersist> link_setting_persist;
 
+    /// G-X4 (2026-09-20): a host's conduit ⇄ groundwater exchange rate
+    /// (internal flow units, `+` OUT of the conduit — the `seep_loss_rate`
+    /// sign). This is the HydroCouple `link_exchange_flow` inlet: an
+    /// external groundwater model computes the exchange and the conduit
+    /// routes it, in place of (OVERRIDE) or on top of (ADD) whatever the
+    /// [LOSSES] rate or the internal signed law produced.
+    std::vector<ForcingMode>    link_seepage_mode;
+    std::vector<double>         link_seepage_value;
+    std::vector<ForcingPersist> link_seepage_persist;
+
     std::vector<ForcingMode>    link_quality_mode;      ///< flattened link × pollutant
     std::vector<double>         link_quality_value;     ///< OVERRIDE: concentration; ADD: mass rate (mass/sec)
     std::vector<ForcingPersist> link_quality_persist;
@@ -286,6 +296,10 @@ struct ForcingData {
         link_setting_value.assign(ul, 0.0);
         link_setting_persist.assign(ul, ForcingPersist::RESET);
 
+        link_seepage_mode.assign(ul, ForcingMode::NONE);          // G-X4
+        link_seepage_value.assign(ul, 0.0);
+        link_seepage_persist.assign(ul, ForcingPersist::RESET);
+
         auto ulp = static_cast<std::size_t>(n_links) *
                    static_cast<std::size_t>(n_pollutants);
         link_quality_mode.assign(ulp, ForcingMode::NONE);
@@ -323,6 +337,7 @@ struct ForcingData {
         set_none(node_age_mode);
         set_none(link_flow_mode);
         set_none(link_setting_mode);
+        set_none(link_seepage_mode);   // G-X4
         set_none(link_quality_mode);
         set_none(subcatch_rainfall_mode);
         set_none(subcatch_evap_mode);
@@ -354,6 +369,7 @@ struct ForcingData {
         clear_resets(node_age_mode,              node_age_persist);
         clear_resets(link_flow_mode,             link_flow_persist);
         clear_resets(link_setting_mode,          link_setting_persist);
+        clear_resets(link_seepage_mode,          link_seepage_persist);   // G-X4
         clear_resets(link_quality_mode,          link_quality_persist);
         clear_resets(subcatch_rainfall_mode,     subcatch_rainfall_persist);
         clear_resets(subcatch_evap_mode,         subcatch_evap_persist);

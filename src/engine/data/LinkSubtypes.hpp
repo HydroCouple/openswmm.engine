@@ -107,6 +107,18 @@ struct ConduitData {
     std::vector<uint8_t> inlet_control;       ///< per-step culvert inlet-control flag
     std::vector<int8_t>  full_state;          ///< per-step up/down full bitmask
 
+    // G-X4 (2026-09-20): the two-zone aquifer's frozen coupling for this
+    // routing step, published by SurfaceRouter2D before routing and read by
+    // the two loss laws (DynamicWave and routing::computeConduitLosses).
+    // `gw_coupled == 0` on every conduit of every deck without a
+    // `[2D_AQUIFER]` + `LINK_SEEPAGE TWO_WAY`, and the laws then take their
+    // legacy branch unchanged.
+    std::vector<uint8_t> gw_coupled;   ///< 1 = signed conductance law applies
+    std::vector<double>  gw_head_rel;  ///< water-table elevation MINUS the conduit's mid invert (project length)
+    std::vector<double>  gw_kc;        ///< bed conductivity (project rate units); seeded from seep_rate
+    std::vector<double>  gw_dc;        ///< bed thickness / characteristic path (project length); seeded from the full depth
+    std::vector<double>  gw_gain_max;  ///< cap on the gaining direction, ONE barrel (project flow units)
+
     int count() const noexcept { return static_cast<int>(link_idx.size()); }
 
     void clear() noexcept {
@@ -117,6 +129,8 @@ struct ConduitData {
         loss_avg.clear(); seep_rate.clear(); culvert_code.clear();
         evap_loss_rate.clear(); seep_loss_rate.clear(); normal_flow_limited.clear();
         inlet_control.clear(); full_state.clear();
+        gw_coupled.clear(); gw_head_rel.clear(); gw_kc.clear();   // G-X4
+        gw_dc.clear(); gw_gain_max.clear();
     }
 
     void reserve(int n) {
@@ -128,6 +142,8 @@ struct ConduitData {
         loss_avg.reserve(un); seep_rate.reserve(un); culvert_code.reserve(un);
         evap_loss_rate.reserve(un); seep_loss_rate.reserve(un); normal_flow_limited.reserve(un);
         inlet_control.reserve(un); full_state.reserve(un);
+        gw_coupled.reserve(un); gw_head_rel.reserve(un); gw_kc.reserve(un);   // G-X4
+        gw_dc.reserve(un); gw_gain_max.reserve(un);
     }
 
     /// Insert a default conduit row for base link @p i, keeping link_idx
@@ -156,6 +172,11 @@ struct ConduitData {
         normal_flow_limited.insert(normal_flow_limited.begin() + p, uint8_t{0});
         inlet_control.insert(inlet_control.begin() + p, uint8_t{0});
         full_state.insert(full_state.begin() + p, int8_t{0});
+        gw_coupled.insert(gw_coupled.begin() + p, uint8_t{0});      // G-X4
+        gw_head_rel.insert(gw_head_rel.begin() + p, 0.0);
+        gw_kc.insert(gw_kc.begin() + p, 0.0);
+        gw_dc.insert(gw_dc.begin() + p, 0.0);
+        gw_gain_max.insert(gw_gain_max.begin() + p, 0.0);
         return static_cast<int>(p);
     }
 

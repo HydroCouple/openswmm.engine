@@ -47,7 +47,8 @@
 #include "../hydrology/Runoff.hpp"
 #include "../hydrology/Groundwater.hpp"
 #ifdef OPENSWMM_HAS_2D
-#include "../2d/subsurface/SubsurfaceData.hpp"   // G1: the V5 aquifer block
+#include "../2d/subsurface/SubsurfaceData.hpp"
+#include "../2d/subsurface/SubsurfaceTransportState.hpp"   // T7.5   // G1: the V5 aquifer block
 #endif
 
 #include <algorithm>
@@ -246,6 +247,31 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
             if (!write_pod(buf, v)) return false;
     }
 
+    // T7.5 (V6): the aquifer's transported tuple. Written only when the
+    // kernel actually carried species, so an aquifer deck with no quality
+    // still produces a V5 file and every V5 reader keeps working.
+    if (hs.header.version >= 6u) {
+        const auto ns = static_cast<uint32_t>(hs.gw_species.size());
+        if (!write_pod(buf, ns)) return false;
+        for (const auto& name : hs.gw_species)
+            if (!write_string(buf, name)) return false;
+        const std::size_t want =
+            static_cast<std::size_t>(ns) * static_cast<std::size_t>(hs.gw_n_cells);
+        for (std::size_t i = 0; i < want; ++i)
+            if (!write_pod(buf, i < hs.gw_sat_mass.size() ? hs.gw_sat_mass[i] : 0.0))
+                return false;
+        for (std::size_t i = 0; i < want; ++i)
+            if (!write_pod(buf, i < hs.gw_unsat_mass.size() ? hs.gw_unsat_mass[i] : 0.0))
+                return false;
+        const std::size_t want_l =
+            static_cast<std::size_t>(ns) *
+            static_cast<std::size_t>(HotStartFile::kGwSpeciesLedgerTerms);
+        for (std::size_t i = 0; i < want_l; ++i)
+            if (!write_pod(buf, i < hs.gw_species_ledger.size()
+                                    ? hs.gw_species_ledger[i] : 0.0))
+                return false;
+    }
+
     // Compute CRC32 over the body
     const std::string body = buf.str();
     const uint32_t crc = crc32(
@@ -316,7 +342,7 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
 
     // Header
     if (!read_pod(is, hs.header.version))    return false;
-    if (hs.header.version < 1u || hs.header.version > 5u) {
+    if (hs.header.version < 1u || hs.header.version > 6u) {
         tl_last_io_error = "Unsupported hot start version " +
                            std::to_string(hs.header.version) + " in '" + path + "'";
         return false;
@@ -414,6 +440,27 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
         if (!read_pod(is, nl)) return false;
         hs.gw_ledger.resize(nl);
         for (auto& v : hs.gw_ledger) if (!read_pod(is, v)) return false;
+    }
+
+    hs.gw_species.clear();
+    hs.gw_sat_mass.clear();
+    hs.gw_unsat_mass.clear();
+    hs.gw_species_ledger.clear();
+    if (hs.header.version >= 6u) {            // T7.5
+        uint32_t ns = 0;
+        if (!read_pod(is, ns)) return false;
+        hs.gw_species.resize(ns);
+        for (auto& n : hs.gw_species) if (!read_string(is, n)) return false;
+        const std::size_t want =
+            static_cast<std::size_t>(ns) * static_cast<std::size_t>(hs.gw_n_cells);
+        hs.gw_sat_mass.resize(want);
+        hs.gw_unsat_mass.resize(want);
+        for (auto& v : hs.gw_sat_mass)   if (!read_pod(is, v)) return false;
+        for (auto& v : hs.gw_unsat_mass) if (!read_pod(is, v)) return false;
+        hs.gw_species_ledger.resize(
+            static_cast<std::size_t>(ns) *
+            static_cast<std::size_t>(HotStartFile::kGwSpeciesLedgerTerms));
+        for (auto& v : hs.gw_species_ledger) if (!read_pod(is, v)) return false;
     }
 
     hs.path = path;
@@ -630,11 +677,100 @@ bool captureAquiferBlock(const SimulationContext& ctx, HotStartFile& hs) {
     }
     hs.gw_ledger = {st->led_recharge, st->led_lateral, st->led_deep,
                     st->led_node,     st->led_dunne,   st->led_caprise,
-                    st->led_et,       st->led_infil_in, st->led_init_storage};
+                    st->led_et,       st->led_infil_in, st->led_init_storage,
+                    st->led_link};   // G-X3: 10th term; the block is length-prefixed
     return true;
 #else
     (void)ctx; (void)hs;
     return false;
+#endif
+}
+
+/// T7.5: the aquifer's transported tuple. Returns false when the kernel
+/// carried no species, which keeps the file at V5.
+bool captureAquiferSpeciesBlock(const SimulationContext& ctx, HotStartFile& hs) {
+#ifdef OPENSWMM_HAS_2D
+    const twoD::SubsurfaceTransportState* tr = ctx.twod_io.aquifer_transport;
+    if (tr == nullptr || !tr->active() || hs.gw_n_cells == 0) return false;
+    if (static_cast<uint32_t>(tr->n_cells) != hs.gw_n_cells) return false;
+    hs.gw_species     = tr->row_names;
+    hs.gw_sat_mass    = tr->sat_mass;
+    hs.gw_unsat_mass  = tr->unsat_mass;
+    hs.gw_species_ledger.assign(
+        static_cast<std::size_t>(tr->n_species) *
+            static_cast<std::size_t>(HotStartFile::kGwSpeciesLedgerTerms), 0.0);
+    for (int s = 0; s < tr->n_species; ++s) {
+        const auto u = static_cast<std::size_t>(s);
+        double* d = &hs.gw_species_ledger[u * HotStartFile::kGwSpeciesLedgerTerms];
+        d[0]  = tr->init_mass[u];
+        d[1]  = tr->gained_infil[u];
+        d[2]  = tr->gained_node[u];
+        d[3]  = tr->gained_link[u];
+        d[4]  = tr->net_lateral[u];
+        d[5]  = tr->lost_deep[u];
+        d[6]  = tr->lost_node[u];
+        d[7]  = tr->lost_link[u];
+        d[8]  = tr->lost_dunne[u];
+        d[9]  = tr->lost_et[u];
+        d[10] = tr->lost_reaction[u];
+    }
+    return true;
+#else
+    (void)ctx; (void)hs;
+    return false;
+#endif
+}
+
+/// …and back, matching species by NAME (§ the V6 block's note). A species
+/// the file has and this model does not is dropped with a warning; one this
+/// model has and the file does not keeps its `[GW_INITIAL_QUALITY]` seed.
+void restoreAquiferSpeciesBlock(const HotStartFile& hs, SimulationContext& ctx,
+                                const std::function<void(const std::string&)>& warn) {
+#ifdef OPENSWMM_HAS_2D
+    twoD::SubsurfaceTransportState* tr = ctx.twod_io.aquifer_transport;
+    if (tr == nullptr || !tr->active() || hs.gw_species.empty()) return;
+    if (static_cast<uint32_t>(tr->n_cells) != hs.gw_n_cells) return;   // V5 already warned
+    const auto nc = static_cast<std::size_t>(tr->n_cells);
+    std::string dropped;
+    for (std::size_t fs = 0; fs < hs.gw_species.size(); ++fs) {
+        const int row = tr->rowIndex(hs.gw_species[fs]);
+        if (row < 0) {
+            if (!dropped.empty()) dropped += ", ";
+            dropped += hs.gw_species[fs];
+            continue;
+        }
+        const auto src = fs * nc;
+        const auto dst = static_cast<std::size_t>(row) * nc;
+        for (std::size_t c = 0; c < nc; ++c) {
+            if (src + c < hs.gw_sat_mass.size())
+                tr->sat_mass[dst + c] = hs.gw_sat_mass[src + c];
+            if (src + c < hs.gw_unsat_mass.size())
+                tr->unsat_mass[dst + c] = hs.gw_unsat_mass[src + c];
+        }
+        const auto lsrc = fs * static_cast<std::size_t>(HotStartFile::kGwSpeciesLedgerTerms);
+        if (lsrc + 10 < hs.gw_species_ledger.size()) {
+            const double* d = &hs.gw_species_ledger[lsrc];
+            const auto u = static_cast<std::size_t>(row);
+            tr->init_mass[u]     = d[0];
+            tr->gained_infil[u]  = d[1];
+            tr->gained_node[u]   = d[2];
+            tr->gained_link[u]   = d[3];
+            tr->net_lateral[u]   = d[4];
+            tr->lost_deep[u]     = d[5];
+            tr->lost_node[u]     = d[6];
+            tr->lost_link[u]     = d[7];
+            tr->lost_dunne[u]    = d[8];
+            tr->lost_et[u]       = d[9];
+            tr->lost_reaction[u] = d[10];
+        }
+    }
+    if (!dropped.empty())
+        warn("Hot start: the file carries aquifer species (" + dropped +
+             ") this model does not have — their stored mass was dropped. "
+             "Species are matched by name, so a [POLLUTANTS] change between "
+             "runs drops exactly what it removed and keeps the rest.");
+#else
+    (void)hs; (void)ctx; (void)warn;
 #endif
 }
 
@@ -680,6 +816,7 @@ void restoreAquiferBlock(const HotStartFile& hs, SimulationContext& ctx,
         st->led_et           = hs.gw_ledger[6];
         st->led_infil_in     = hs.gw_ledger[7];
         st->led_init_storage = hs.gw_ledger[8];
+        if (hs.gw_ledger.size() >= 10) st->led_link = hs.gw_ledger[9];   // G-X3
     }
 #else
     (void)hs; (void)ctx; (void)warn;
@@ -707,7 +844,10 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
     if (captureSpeciesBlock(ctx, *hs)) hs->header.version = 4u;
     // V5 (G1) implies V4: the aquifer block sits after the species block, so
     // a reader that stops at V4 still reads a coherent file.
-    if (captureAquiferBlock(ctx, *hs)) hs->header.version = 5u;
+    if (captureAquiferBlock(ctx, *hs)) {
+        hs->header.version = 5u;
+        if (captureAquiferSpeciesBlock(ctx, *hs)) hs->header.version = 6u;   // T7.5
+    }
     hs->header.timestamp  = static_cast<int64_t>(std::time(nullptr));
     hs->header.sim_time   = ctx.current_time;
     hs->header.start_date = ctx.options.start_date;
@@ -790,7 +930,10 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
     if (captureSpeciesBlock(ctx, *hs)) hs->header.version = 4u;
     // V5 (G1) implies V4: the aquifer block sits after the species block, so
     // a reader that stops at V4 still reads a coherent file.
-    if (captureAquiferBlock(ctx, *hs)) hs->header.version = 5u;
+    if (captureAquiferBlock(ctx, *hs)) {
+        hs->header.version = 5u;
+        if (captureAquiferSpeciesBlock(ctx, *hs)) hs->header.version = 6u;   // T7.5
+    }
     hs->header.timestamp  = static_cast<int64_t>(std::time(nullptr));
     hs->header.sim_time   = ctx.current_time;
     hs->header.start_date = ctx.options.start_date;
@@ -975,6 +1118,13 @@ int HotStartManager::apply(HotStartFile& hs,
     // V5 (G1): the two-zone groundwater state, by cell index.
     if (hs.header.version >= 5u)
         restoreAquiferBlock(hs, ctx, [&](const std::string& m) {
+            hs.warnings.push_back(m);
+            if (warn_cb) warn_cb(m);
+        });
+    // V6 (T7.5): and what is dissolved in it, by species name. After the
+    // water, because it reads `gw_n_cells` the V5 block validated.
+    if (hs.header.version >= 6u)
+        restoreAquiferSpeciesBlock(hs, ctx, [&](const std::string& m) {
             hs.warnings.push_back(m);
             if (warn_cb) warn_cb(m);
         });

@@ -951,6 +951,66 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                     " have a bed on the mesh; their [STORAGE] exfiltration is "
                     "replaced by the node <-> aquifer exchange (one owner).");
         }
+        // T7.1 (2026-09-20): the aquifer's own transported tuple. Rows come
+        // from TransportPolicy — the same authority the surface used above,
+        // so a species is the same row index in both domains and the seam
+        // between them is one concentration, not a mapping. Sized after the
+        // kernel initialized, because its enables ask whether the kernel is
+        // live at all.
+        if (subsurface_.active()) {
+            const transport::ClassEnables gen = transport::groundwaterEnables(ctx);
+            const transport::RowLayout GL = transport::canonicalRows(ctx, gen);
+            RowLayoutLite rows;
+            rows.n_species = GL.ns;
+            rows.n_pollut  = GL.n_pollut;
+            rows.n_msx     = GL.n_msx;
+            rows.age_row   = GL.age_row;
+            rows.temp_row  = GL.temp_row;
+            rows.names     = GL.names;
+            // T7.2: the `[POLLUTANTS]` decay column, row-aligned with the
+            // layout above — a `[GW_SORPTION]` row with no DECAY of its own
+            // falls back to it, so a species decays at the same rate in the
+            // aquifer as it does in the pipes unless the modeller says
+            // otherwise.
+            std::vector<double> pollut_decay(
+                static_cast<std::size_t>(std::max(0, GL.ns)), 0.0);
+            for (int p = 0; p < GL.n_pollut &&
+                            static_cast<std::size_t>(p) < ctx.pollutants.k_decay.size(); ++p)
+                pollut_decay[static_cast<std::size_t>(p)] =
+                    ctx.pollutants.k_decay[static_cast<std::size_t>(p)];
+            subsurface_.initTransport(rows, &gw_, pollut_decay, ctx.warnings);
+        }
+
+        // G-X3 (2026-09-19): conduit seepage → the cells the conduit crosses.
+        // Resolved once; booked every routing step (advancePostRouting).
+        aquifer_link_shares_.clear();
+        aquifer_link_ids_.clear();
+        const auto link_mode = subsurface_.options().link_seepage;
+        if (subsurface_.active() && link_mode != GwLinkMode::NONE) {
+            int n_conduits = 0;
+            aquifer_link_shares_ = resolveLinkSeepage(ctx, mesh_, aquifer_cfg_,
+                                                      aquifer_link_names_,
+                                                      mesh_to_si, n_conduits);
+            for (const auto& sh : aquifer_link_shares_)
+                if (aquifer_link_ids_.empty() || aquifer_link_ids_.back() != sh.link)
+                    aquifer_link_ids_.push_back(sh.link);
+            if (n_conduits > 0)
+                ctx.warnings.push_back(
+                    link_mode == GwLinkMode::TWO_WAY
+                        // G-X4: new physics, named as such.
+                        ? "2D aquifer: " + std::to_string(n_conduits) +
+                          " conduit(s) exchange with the aquifer along their length "
+                          "through the signed conductance law; a reach under the water "
+                          "table GAINS (LINK_SEEPAGE TWO_WAY; AUTO keeps the exchange "
+                          "one-way, NONE keeps seepage a system loss)."
+                        : "2D aquifer: " + std::to_string(n_conduits) +
+                          " conduit(s) with a [LOSSES] seepage rate cross the mesh; their "
+                          "seepage is delivered into the aquifer cells they cross, by length "
+                          "(LINK_SEEPAGE AUTO; LINK_SEEPAGE NONE keeps it a system loss).");
+            // G-X4: seed the frozen coupling so the very first routing step
+            // — which runs before any publish — already sees the law.
+            if (link_mode == GwLinkMode::TWO_WAY) publishLinkCoupling(ctx);
+        }
     }
 #endif
 
@@ -1347,6 +1407,13 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
     // junction spill inside the marcher reads the same array. Refreshed once
     // per batch here — the 1D side does not move during the advance.
     publishNodeRows(ctx);
+    // T7.4: the aquifer samples a RECHARGING node's quality from the same
+    // published row the surface spill uses — one authority, so the two 2D
+    // seams can never disagree about what a node is carrying.
+    if (subsurface_.active() && subsurface_.transport().active())
+        subsurface_.setNodeRowConc(node_row_conc_.empty() ? nullptr
+                                                          : node_row_conc_.data(),
+                                   state_.transport.n_species);
     injectAccumulatedExchange(coupling_points_, mesh_, state_,
                               window_outfall_accum_, dt, +1.0,
                               state_.transport.coupling_src.empty()
@@ -1580,6 +1647,15 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
             if (ni < ctx.nodes.coupling_volume.size())
                 ctx.nodes.coupling_volume[ni] += nv[ni] * options_.flow_2d_to_1d;
         }
+        // T7.4: the tuple rides the same channel as the volume. Aquifer →
+        // node mass goes into the node's coupling QUEUES, which
+        // assembleLateralInflows drains to the quality solver's inlets over
+        // the batch span — the surface's own path, so a node cannot tell
+        // (or need to tell) which 2D domain a parcel came from. The
+        // reverse direction, a node recharging the aquifer, is a LOSS the
+        // 1D quality continuity never had a row for; it is booked here so
+        // the balance closes.
+        flushAquiferNodeSpecies(ctx);
         subsurface_.resetNodeExchangeVolumes();
     }
 
@@ -1653,6 +1729,196 @@ void SurfaceRouter2D::computeCouplingConductances(
 }
 
 
+// G-X4 (2026-09-20): freeze the aquifer's side of the conduit exchange for
+// the routing step about to run. The two loss laws then need nothing but the
+// conduit row: a table elevation relative to the conduit's own mid invert, a
+// conductivity, a path length and a gain budget. Everything unit- and
+// datum-dependent is settled here, once per step per conduit, instead of in
+// the Picard loop.
+namespace {
+/// G-X4: the share of a cell's drainable water a conduit may take in one
+/// routing step — the node exchange's `kFaceShare` (G-X1), for the same
+/// reason: a sink allowed the whole cell in one step oscillates.
+constexpr double kLinkFaceShare = 0.5;
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// T7.4 — the 1D ⇄ aquifer quality seam
+// ---------------------------------------------------------------------------
+
+double SurfaceRouter2D::linkRowConc(const SimulationContext& ctx, int link,
+                                    int s,
+                                    const SubsurfaceTransportState& tr) const {
+    const auto ul = static_cast<std::size_t>(link);
+    if (s == tr.age_row) {
+        return (ul < ctx.water_age_state.link_age.size())
+                   ? ctx.water_age_state.link_age[ul] : 0.0;
+    }
+    if (s == tr.temp_row) {
+        return (ul < ctx.heat_state.link_temp.size())
+                   ? ctx.heat_state.link_temp[ul] : 0.0;
+    }
+    // Pollutants only. MSX rows have no 1D link concentration the seam can
+    // read — the same gap the surface's own node seam records, and the
+    // reason an MSX row's mass stays where it is rather than crossing.
+    if (s < tr.n_pollut) {
+        const int np = ctx.n_pollutants();
+        const auto k = ul * static_cast<std::size_t>(np) +
+                       static_cast<std::size_t>(s);
+        if (np > 0 && k < ctx.links.conc.size()) return ctx.links.conc[k];
+    }
+    return 0.0;
+}
+
+void SurfaceRouter2D::flushAquiferNodeSpecies(SimulationContext& ctx) {
+    auto& gtr = subsurface_.transport();
+    if (!gtr.active() || gtr.node_out_mass.empty()) return;
+    const auto& nv = subsurface_.nodeExchangeVolumes();
+    const int   np = ctx.n_pollutants();
+    const auto  nn = gtr.node_out_mass.size() /
+                     static_cast<std::size_t>(gtr.n_species);
+
+    for (std::size_t ni = 0; ni < nn; ++ni) {
+        for (int sp = 0; sp < gtr.n_species; ++sp) {
+            const double m2d = gtr.node_out_mass[static_cast<std::size_t>(sp) * nn + ni];
+            if (m2d == 0.0) continue;
+            // Same unit factor the volume takes, so mass/volume stays the
+            // cell's concentration through the conversion.
+            const double m = m2d * options_.flow_2d_to_1d;
+            if (sp < gtr.n_pollut && np > 0) {
+                const auto k = ni * static_cast<std::size_t>(np) +
+                               static_cast<std::size_t>(sp);
+                if (k < ctx.nodes.coupling_qual_queue.size())
+                    ctx.nodes.coupling_qual_queue[k] += m;
+                if (static_cast<std::size_t>(sp) < ctx.mass_balance.qual_routing_gw_in.size())
+                    ctx.mass_balance.qual_routing_gw_in[static_cast<std::size_t>(sp)] += m;
+            } else if (sp == gtr.age_row) {
+                if (ni < ctx.nodes.coupling_age_vol_queue.size())
+                    ctx.nodes.coupling_age_vol_queue[ni] += m;
+            } else if (sp == gtr.temp_row) {
+                if (ni < ctx.nodes.coupling_temp_vol_queue.size())
+                    ctx.nodes.coupling_temp_vol_queue[ni] += m;
+            }
+            // An MSX row has no 1D node inlet for any loader yet — the same
+            // recorded gap the surface seam has. Its mass stays booked out
+            // of the aquifer (`lost_node`) rather than vanishing silently.
+        }
+    }
+
+    // The other direction: a node that RECHARGED the aquifer gave up mass
+    // the 1D quality balance had no row for. The water left through
+    // `coupling_volume` and the node's concentration is unchanged, so the
+    // mass left implicitly with the volume — book it as the exfiltration
+    // loss it is, or the 1D continuity error grows by exactly this.
+    if (np > 0 && gtr.n_pollut > 0) {
+        for (std::size_t ni = 0; ni < nv.size() && ni < nn; ++ni) {
+            if (nv[ni] >= 0.0) continue;                   // + is out of the aquifer
+            const double v_1d = -nv[ni] * options_.flow_2d_to_1d;
+            for (int sp = 0; sp < gtr.n_pollut; ++sp) {
+                const auto k = ni * static_cast<std::size_t>(np) +
+                               static_cast<std::size_t>(sp);
+                if (k >= ctx.nodes.conc.size()) continue;
+                const double m = v_1d * ctx.nodes.conc[k];
+                if (m != 0.0 &&
+                    static_cast<std::size_t>(sp) < ctx.mass_balance.qual_routing_seep.size())
+                    ctx.mass_balance.qual_routing_seep[static_cast<std::size_t>(sp)] += m;
+            }
+        }
+    }
+
+    std::fill(gtr.node_out_mass.begin(), gtr.node_out_mass.end(), 0.0);
+    subsurface_.clearBedDrawn();
+}
+
+void SurfaceRouter2D::publishLinkCoupling(SimulationContext& ctx) {
+    if (aquifer_link_shares_.empty() || !subsurface_.active()) return;
+    auto& CD = ctx.link_subtypes.conduits;
+    if (CD.gw_coupled.empty()) return;
+    const auto& gw = subsurface_.state();
+    // [LOSSES] seepage is authored in in/hr (US) or mm/hr (SI) and carried
+    // internally in ft/s — `internal = project / Ucf[RAINFALL]`
+    // (UnitConversion.hpp); `[2D_AQUIFER_LINKS] KC` is authored in the same
+    // column's units, so it takes the same factor. NOTE the whole 1D side is
+    // internally US (ft, ft/s, ft³/s) whatever FLOW_UNITS says, which is why
+    // `len_1d_to_2d` and `vol_1d_to_2d` appear on every quantity crossing
+    // into the metric 2D module.
+    const int usz = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    const double k_ucf = ucf::Ucf[ucf::RAINFALL][usz];
+    const double l12 = options_.len_1d_to_2d;        // project length → m
+    if (!(l12 > 0.0)) return;
+
+    for (const int j : aquifer_link_ids_) {
+        const auto uj = static_cast<std::size_t>(j);
+        const int cr = ctx.link_subtypes.conduit_row(j);
+        if (cr < 0) continue;
+        const auto ucr = static_cast<std::size_t>(cr);
+
+        // The conduit's mid invert, the datum the signed law measures from
+        // (project length): the mean of its two offset ends, exactly the
+        // elevation `h_link = z_inv + depth` is built on.
+        const auto n1 = static_cast<std::size_t>(ctx.links.node1[uj]);
+        const auto n2 = static_cast<std::size_t>(ctx.links.node2[uj]);
+        if (n1 >= ctx.nodes.invert_elev.size() || n2 >= ctx.nodes.invert_elev.size())
+            continue;
+        const double z_inv = 0.5 * ((ctx.nodes.invert_elev[n1] + ctx.links.offset1[uj]) +
+                                    (ctx.nodes.invert_elev[n2] + ctx.links.offset2[uj]));
+
+        // Length-weighted table elevation over the cells it crosses, and the
+        // gain budget: the share of each cell's drainable water this step
+        // that the conduit may take, converted to the smallest whole-conduit
+        // rate no cell can over-draw. `kLinkFaceShare` is the node
+        // exchange's `kFaceShare` — half a cell's water in one step, the
+        // same anti-oscillation rule (G-X1).
+        double h_gw_m = 0.0, w_sum = 0.0, gain_max_2d = 1.0e30;
+        for (const auto& sh : aquifer_link_shares_) {
+            if (sh.link != j) continue;
+            const auto c = static_cast<std::size_t>(sh.cell);
+            h_gw_m += sh.weight * (gw.z_bed[c] + gw.hg[c]);
+            w_sum  += sh.weight;
+            const double Sy = std::max(gw.theta_s[c] - gw.theta_r[c], 1.0e-3);
+            const double avail = gw.hg[c] * Sy * gw.area[c];       // m³
+            // What is LEFT of this cell's share: `lacc` holds every volume
+            // booked since its last firing (negative while the conduit
+            // draws), and the cell may fire many routing steps from now.
+            // Sizing each step against the frozen `hg` alone let a conduit
+            // take half the cell EVERY step and drive it past empty (the
+            // aquifer then had no channel to refund through, and created
+            // the water instead) — the node exchange's per-batch budget,
+            // here expressed with the accumulator itself (G-X1 rule 2).
+            const double left = kLinkFaceShare * avail + gw.lacc[c];
+            if (sh.weight > 0.0)
+                gain_max_2d = std::min(gain_max_2d,
+                                       std::max(left, 0.0) / sh.weight);
+        }
+        if (w_sum <= 0.0) continue;
+        h_gw_m /= w_sum;                       // the covered length's mean
+
+        const double dt_step = std::max(ctx.options.routing_step, 1.0e-6);
+        const auto* row = [&]() -> const GwLinkRow* {
+            for (const auto& r : aquifer_cfg_.link_rows)
+                if (r.link == j) return &r;
+            return nullptr;
+        }();
+
+        CD.gw_coupled[ucr]  = 1;
+        CD.gw_head_rel[ucr] = h_gw_m / l12 - z_inv;
+        CD.gw_kc[ucr] = (row != nullptr && row->Kc > 0.0) ? row->Kc / k_ucf
+                                                          : CD.seep_rate[ucr];
+        // The characteristic path: the authored bed thickness, or the
+        // conduit's own full depth — which is what makes a FULL pipe over a
+        // table at its invert seep exactly the legacy rate.
+        double d_c = (row != nullptr && row->dC > 0.0) ? row->dC
+                                                       : ctx.links.xsect_y_full[uj];
+        if (!(d_c > 0.0)) d_c = 1.0;
+        CD.gw_dc[ucr] = d_c;
+        // …per barrel, in the 1D's own volume units.
+        const int barrels = std::max(CD.barrels[ucr], 1);
+        CD.gw_gain_max[ucr] =
+            gain_max_2d / (dt_step * options_.vol_1d_to_2d * barrels);
+    }
+}
+
+
 void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_dt,
                                           double t) {
     if (!active_) return;
@@ -1667,6 +1933,50 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
     // queue spread (uniform rate over the batch span).
     pending_dt_ += routing_dt;
     last_t_ = t;
+    // G-X3 (2026-09-19): this routing step's conduit seepage, exactly as
+    // updateRoutingMassBalance books it into `routing_seep_loss` (the same
+    // rate × barrels × dt, read after the same DW step), delivered to the
+    // aquifer cells the conduit crosses by its length shares. One-way: the
+    // 1D keeps booking the loss; the aquifer's `led_link` is where it lands.
+    if (!aquifer_link_shares_.empty() && subsurface_.active()) {
+        const auto& CD = ctx.link_subtypes.conduits;
+        // G-X4: TWO_WAY makes the rate SIGNED, so a gaining reach books a
+        // withdrawal (a negative volume) into the same accumulator. The
+        // aquifer can afford it: `gw_gain_max`, frozen before the step, is
+        // what the 1D was allowed to ask for.
+        const bool two_way =
+            subsurface_.options().link_seepage == GwLinkMode::TWO_WAY;
+        for (const auto& sh : aquifer_link_shares_) {
+            const int cr = ctx.link_subtypes.conduit_row(sh.link);
+            if (cr < 0) continue;
+            const auto ucr = static_cast<std::size_t>(cr);
+            const double rate = CD.seep_loss_rate[ucr];
+            if (rate == 0.0 || (!two_way && rate < 0.0)) continue;
+            const int barrels = std::max(CD.barrels[ucr], 1);
+            const double vol_2d =
+                rate * barrels * routing_dt * options_.vol_1d_to_2d * sh.weight;
+            subsurface_.bookLinkSeepage(sh.cell, vol_2d);
+            // T7.4: …and its quality, for a LEAKING conduit only. The 1D
+            // quality solver already debits this mass as the conduit's
+            // exfiltration loss (`qual_routing_seep`), so handing it over
+            // here completes a transfer that was previously a
+            // disappearance. A GAINING conduit is the other direction and
+            // has no 1D receiver yet (see the T7.4 handoff): its water
+            // arrives in the pipe without the aquifer's quality.
+            if (rate > 0.0 && subsurface_.transport().active()) {
+                const auto& gtr = subsurface_.transport();
+                const double v_1d = rate * barrels * routing_dt * sh.weight;
+                for (int sp = 0; sp < gtr.n_species; ++sp) {
+                    const double c = linkRowConc(ctx, sh.link, sp, gtr);
+                    if (c != 0.0)
+                        subsurface_.bookLinkSeepageMass(sh.cell, sp, v_1d * c);
+                }
+            }
+        }
+        // …and freeze the aquifer's side for the NEXT routing step, now that
+        // this step's exchange has been handed over.
+        if (two_way) publishLinkCoupling(ctx);
+    }
     // OPENSWMM_2D_SYNC_SPAN (seconds): experimental override of the sync-batch
     // span for the decoupling-viability study — bypasses the [2D_OPTIONS]
     // COUPLING_SYNC policy and the 60 s ceiling. Unset/0 = normal policy.

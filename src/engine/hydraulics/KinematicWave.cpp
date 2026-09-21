@@ -708,15 +708,18 @@ double capConduitLoss(SimulationContext& ctx, std::size_t ucr, double q) {
     auto& CD = ctx.link_subtypes.conduits;
     double evap  = CD.evap_loss_rate[ucr];
     double seep  = CD.seep_loss_rate[ucr];
-    double total = evap + seep;
-    if (total > q) {
-        evap  = evap * q / total;
-        seep  = seep * q / total;
-        total = q;
+    // G-X4: a gaining conduit (seep < 0) adds water; it does not compete for
+    // the inflow the cap rations, so only the losing part is scaled. The
+    // returned total stays the NET rate the solver subtracts.
+    double losing = evap + std::max(seep, 0.0);
+    if (losing > q) {
+        const double ratio = q / losing;
+        evap = evap * ratio;
+        if (seep > 0.0) seep = seep * ratio;
         CD.evap_loss_rate[ucr] = evap;
         CD.seep_loss_rate[ucr] = seep;
     }
-    return total;
+    return evap + seep;
 }
 
 } // namespace kinwave

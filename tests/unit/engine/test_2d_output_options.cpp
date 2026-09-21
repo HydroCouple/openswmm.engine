@@ -650,7 +650,8 @@ TEST(Output2DWriter, DeckGroundwaterFieldsEndToEnd) {
         for (const char* name : {"Mesh2_face_gw_table_elev", "Mesh2_face_gw_hg", "Mesh2_face_gw_hu",
                                  "Mesh2_face_gw_recharge", "Mesh2_face_gw_lateral",
                                  "Mesh2_face_gw_node_exchange", "Mesh2_face_gw_deep",
-                                 "Mesh2_face_gw_et", "Mesh2_face_gw_dunne", "Mesh2_face_gw_infil_in"}) {
+                                 "Mesh2_face_gw_et", "Mesh2_face_gw_dunne", "Mesh2_face_gw_infil_in",
+                                 "Mesh2_face_gw_link_seepage"}) {   // G-X3
             ASSERT_TRUE(f.has(name)) << stem << ": " << name;
             const auto d = f.dims(name);
             ASSERT_EQ(d.size(), 2u) << name;
@@ -662,6 +663,14 @@ TEST(Output2DWriter, DeckGroundwaterFieldsEndToEnd) {
         ASSERT_TRUE(f.has("groundwater_ledger"));
         ASSERT_TRUE(f.has("groundwater_node_exchange_cum"));
         ASSERT_TRUE(f.has("Mesh2_face_gw_theta_sigma")) << "GW_DETAILED was requested";
+        // T7.5: the aquifer's species fields ride the GROUNDWATER mask. This
+        // deck carries no [GW_*] transport rows and no pollutants, so the
+        // kernel transports nothing and the datasets are ABSENT — the same
+        // "a model with no transport gets no variable" rule the surface's
+        // species field follows.
+        EXPECT_FALSE(f.has("Mesh2_face_gw_sat_conc"))
+            << "species datasets appeared on a deck with no transported rows";
+        EXPECT_FALSE(f.has("groundwater_species_ledger"));
         EXPECT_EQ(f.dsAttr("groundwater_node_exchange_cum", "node_names"), "J1");
         EXPECT_EQ(f.dsAttr("Mesh2_face_gw_hg", "units"), "m");
         // water table = bed + hg, per record, per cell
@@ -684,9 +693,13 @@ TEST(Output2DWriter, DeckGroundwaterFieldsEndToEnd) {
         const auto led = f.readAll("groundwater_ledger");
         const auto dl  = f.dims("groundwater_ledger");
         ASSERT_EQ(dl.size(), 2u);
-        ASSERT_EQ(dl[1], 11u);
-        const size_t last = (dl[0] - 1) * 11;
-        const double storage = led[last + 9], init = led[last + 8], resid = led[last + 10];
+        ASSERT_EQ(dl[1], 12u);   // G-X3: + link at LED 10, residual last (11)
+        EXPECT_EQ(f.dsAttr("groundwater_ledger", "terms"),
+                  "recharge,lateral,deep,node,dunne,caprise,et,infil_in,"
+                  "init_storage,storage,link,continuity_residual");
+        const size_t last = (dl[0] - 1) * 12;
+        const double storage = led[last + 9], init = led[last + 8], resid = led[last + 11];
+        EXPECT_EQ(led[last + 10], 0.0) << "no conduit seeps on this deck";
         EXPECT_GT(storage, 0.0);
         EXPECT_GT(led[last + 7], 0.0) << "the aquifer received infiltration";
         EXPECT_LT(std::fabs(resid), 1e-6 * storage + 1e-9) << stem << ": residual " << resid;

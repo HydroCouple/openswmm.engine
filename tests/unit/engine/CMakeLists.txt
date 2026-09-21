@@ -663,6 +663,26 @@ if(OPENSWMM_BUILD_2D)
     add_gtest_unit(test_engine_2d_aquifer test_2d_aquifer.cpp)
     target_compile_definitions(test_engine_2d_aquifer PRIVATE
         OPENSWMM_AQUIFER_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+    # T7.1 (2026-09-20) — the transported tuple INSIDE the two-zone kernel:
+    # the gate-6 conservation stub on tri / quad / mixed meshes, the surface
+    # seam in both directions, ET up-concentration, and the groundwater row
+    # of the transport matrix. Decks under tests/output/gw_transport_kernel.
+    add_gtest_unit(test_engine_gw_transport_kernel test_gw_transport_kernel.cpp)
+    target_compile_definitions(test_engine_gw_transport_kernel PRIVATE
+        OPENSWMM_GW_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+    # T7.5 reads the .h5 the run wrote, so it links HDF5 the same way the
+    # 2D surface suite does.
+    if(TARGET hdf5::hdf5-shared)
+        target_link_libraries(test_engine_gw_transport_kernel PRIVATE hdf5::hdf5-shared)
+    elseif(TARGET hdf5::hdf5-static)
+        target_link_libraries(test_engine_gw_transport_kernel PRIVATE hdf5::hdf5-static)
+    else()
+        if(NOT HDF5_FOUND)
+            find_package(HDF5 REQUIRED COMPONENTS C)
+        endif()
+        target_link_libraries(test_engine_gw_transport_kernel PRIVATE ${HDF5_C_LIBRARIES})
+        target_include_directories(test_engine_gw_transport_kernel PRIVATE ${HDF5_INCLUDE_DIRS})
+    endif()
 endif()
 
 # U2 (2026-09-07) — MSX parity at the authoring seams: [INITIAL_QUALITY]

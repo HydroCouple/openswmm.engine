@@ -108,9 +108,16 @@ std::string parseAquiferNodeLine(const std::vector<std::string>& tokens,
                                  std::vector<GwNodeBed>& beds,
                                  std::vector<std::string>& names);
 
-/// Register the three handlers against @p registry, writing into @p cfg.
+/// One `[2D_AQUIFER_LINKS]` line (G-X4). `link` stays a NAME in @p names
+/// until `resolveLinkSeepage` maps it. Empty return = OK.
+std::string parseAquiferLinkLine(const std::vector<std::string>& tokens,
+                                 std::vector<GwLinkRow>& rows,
+                                 std::vector<std::string>& names);
+
+/// Register the four handlers against @p registry, writing into @p cfg.
 void registerSubsurfaceSections(SubsurfaceConfig& cfg,
                                 std::vector<std::string>& node_names,
+                                std::vector<std::string>& link_names,
                                 input::SectionRegistry& registry);
 
 /// The factors for this project's unit system.
@@ -128,11 +135,23 @@ std::vector<std::string> resolveSubsurface(SimulationContext& ctx,
                                            std::vector<std::string>& names,
                                            double node_xy_to_mesh);
 
+/// G-X3 (2026-09-19): the length-weighted (conduit, cell) shares for every
+/// conduit with a [LOSSES] seepage rate whose polyline crosses the mesh
+/// (`LINK_SEEPAGE AUTO`). @p n_conduits receives how many conduits got at
+/// least one share. Same coordinate factor as resolveSubsurface.
+std::vector<GwLinkShare> resolveLinkSeepage(SimulationContext& ctx,
+                                            const MeshData& mesh,
+                                            SubsurfaceConfig& cfg,
+                                            std::vector<std::string>& link_names,
+                                            double node_xy_to_mesh,
+                                            int& n_conduits);
+
 /// Write the three sections back in the project's own units — that is, the
 /// authored values verbatim — omitting anything at its default so a
 /// round-trip with no edits adds nothing.
 void writeSubsurfaceSections(const SubsurfaceConfig& cfg,
                              const std::vector<std::string>& node_names,
+                             const std::vector<std::string>& link_names,
                              std::string& out);
 
 }  // namespace openswmm::twoD

@@ -175,6 +175,22 @@ SWMM_ENGINE_API int swmm_forcing_link_setting(
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_forcing_link_seepage(
+    SWMM_Engine engine, int idx, double value, int mode, int persist)
+{
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_RUNNING(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+    if (!valid_mode(mode) || !valid_persist(persist)) return SWMM_ERR_BADPARAM;
+
+    auto ui = static_cast<std::size_t>(idx);
+    ctx.forcing.link_seepage_mode[ui]    = static_cast<openswmm::ForcingMode>(mode);
+    ctx.forcing.link_seepage_value[ui]   = value;
+    ctx.forcing.link_seepage_persist[ui] = static_cast<openswmm::ForcingPersist>(persist);
+    return SWMM_OK;
+}
+
 // ============================================================================
 // Subcatchment forcing
 // ============================================================================
@@ -485,6 +501,10 @@ SWMM_ENGINE_API int swmm_forcing_clear(SWMM_Engine engine, int type, int idx) {
         case SWMM_FORCE_LINK_SETTING:
             CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
             ctx.forcing.link_setting_mode[static_cast<std::size_t>(idx)] = openswmm::ForcingMode::NONE;
+            break;
+        case SWMM_FORCE_LINK_SEEPAGE:          // G-X4
+            CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
+            ctx.forcing.link_seepage_mode[static_cast<std::size_t>(idx)] = openswmm::ForcingMode::NONE;
             break;
         case SWMM_FORCE_SUBCATCH_RAINFALL:
             CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
