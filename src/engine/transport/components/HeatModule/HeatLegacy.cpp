@@ -166,8 +166,11 @@ void routeLegacyHeat(SimulationContext& ctx, double dt) {
         if (!quality::nodeIsReactor(ctx, i)) {
             // findNodeQual: no storage volume, so the temperature is the
             // inflow's; with no inflow the node holds what it had.
+            // The gate is legacy's `qNode > ZERO` on the RATE, the same one
+            // the reactor half below uses — not "v_in is non-zero", which
+            // divides residual heat by residual volume.
             hs.node_temp[ui] =
-                (v_in > 0.0) ? (sc.temp_in[ui] * dt) / v_in : t_old;
+                (q_in > LEGACY_ZERO) ? (sc.temp_in[ui] * dt) / v_in : t_old;
             continue;
         }
 
