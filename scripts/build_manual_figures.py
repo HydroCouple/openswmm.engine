@@ -570,8 +570,15 @@ class FigureSink:
                 im.convert("RGB").quantize(colors=256, method=Image.Quantize.MEDIANCUT).save(png, optimize=True)
                 print(f"  note: {png.name} quantised to 256 colours to stay under {MAX_BYTES // 1024} KB")
 
-    def run(self, deck: str, options: dict | None = None, key: str | None = None) -> RunResult:
-        """Run docs/figures/decks/<deck> through the engine, cached under docs/figures/cache."""
+    def run(self, deck: str, options: dict | None = None, key: str | None = None,
+            sidecars: dict | None = None) -> RunResult:
+        """Run docs/figures/decks/<deck> through the engine, cached under docs/figures/cache.
+
+        `options` upserts `[OPTIONS]` keys. `sidecars` maps a file name beside the
+        deck to replacement text, for the keys that live in a process component's
+        own configuration file rather than in the deck — a variant over
+        `[TRANSPORT_OPTIONS] TARGET_DX`, say. Both take part in the cache check.
+        """
         src = self.fig_dir / "decks" / deck
         if not src.is_file():
             raise FileNotFoundError(f"deck {deck} is not under docs/figures/decks/")
@@ -585,7 +592,14 @@ class FigureSink:
         for sidecar in src.parent.iterdir():
             if sidecar.is_file() and sidecar != src and not (work / sidecar.name).exists():
                 shutil.copy2(sidecar, work / sidecar.name)
-        if inp.exists() and inp.read_text(errors="replace") == text and rpt.exists() and out.exists():
+        stale = False
+        for name, body in (sidecars or {}).items():
+            target = work / name
+            if not target.exists() or target.read_text(errors="replace") != body:
+                target.write_text(body)
+                stale = True
+        if (not stale and inp.exists() and inp.read_text(errors="replace") == text
+                and rpt.exists() and out.exists()):
             return RunResult(inp, rpt, out, next(work.glob("*.h5"), None), 0.0)
         inp.write_text(text)
         cli = find_cli(self.cli)
