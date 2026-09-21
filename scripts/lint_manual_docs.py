@@ -173,6 +173,34 @@ def check_figure_manifest():
     return check_manifest(DOCS)
 
 
+def check_front_matter():
+    """Each reference manual's List of Figures and List of Tables matches its captions.
+
+    The lists are generated from the caption lines by
+    scripts/gen_manual_frontmatter.py; this runs its --check. The manuals'
+    invented entries (the quality manual listed "SWMM's Object Model" for a
+    figure captioned "Elements of a typical urban drainage system") are what
+    the generator exists to prevent.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import io
+    import contextlib
+    import gen_manual_frontmatter as gm
+    if gm.DOCS != DOCS:                      # --docs-root: point the generator at the copy
+        gm.DOCS = DOCS
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = gm.main(["--check"])
+    out = buf.getvalue().strip().split("\n")
+    if rc == 0:
+        print(out[-1])
+        return 0
+    for ln in out:
+        if ln.startswith("ERROR") or ln.startswith("front matter:"):
+            print(ln)
+    return sum(1 for ln in out if ln.startswith("ERROR"))
+
+
 def check_section_coverage():
     """Chapter 2 must document every [SECTION] the parser registers.
 
@@ -728,6 +756,7 @@ def main(argv=None):
     errors += check_component_sections()
     errors += check_gui_prose()
     errors += check_figure_manifest()
+    errors += check_front_matter()
     errors += check_message_catalogue()
     errors += check_status_badges(status_report=args.status_report)
     errors += check_mermaid_workflows()

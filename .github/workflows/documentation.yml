@@ -12,12 +12,14 @@ on:
     # against the parser (registered [SECTION]s, error codes): registering a
     # section without documenting it must trip the gate.
     paths: ['docs/**', 'python/docs/**', 'python/openswmm/**', 'include/**', '**/*.md',
-            'src/engine/**', 'scripts/lint_manual_docs*.py']
+            'src/engine/**', 'scripts/lint_manual_docs*.py',
+            'scripts/gen_manual_frontmatter.py', 'scripts/build_manual_figures.py']
   pull_request:
     branches: [main, develop, swmm6_rel]
     # branches: [main]
     paths: ['docs/**', 'python/docs/**', 'python/openswmm/**', 'include/**', '**/*.md',
-            'src/engine/**', 'scripts/lint_manual_docs*.py']
+            'src/engine/**', 'scripts/lint_manual_docs*.py',
+            'scripts/gen_manual_frontmatter.py', 'scripts/build_manual_figures.py']
   workflow_dispatch:
 
 # Allow only one concurrent deployment.  Do NOT cancel in-progress runs so
