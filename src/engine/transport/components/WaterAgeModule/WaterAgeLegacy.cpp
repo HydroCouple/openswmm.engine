@@ -146,7 +146,10 @@ void routeLegacyAge(SimulationContext& ctx, double dt) {
 
         if (!quality::nodeIsReactor(ctx, i)) {
             // findNodeQual: no storage volume, so the age is the inflow's.
-            if (v_in > 0.0) {
+            // The gate is legacy's `qNode > ZERO` on the RATE, the same one
+            // the reactor half below uses — not "v_in is non-zero", which
+            // divides residual mass by residual volume.
+            if (q_in > LEGACY_ZERO) {
                 double mass_in = sc.age_in[ui] * dt;
                 if (mass_in < 0.0 && a_old * v_old + mass_in < 0.0) {
                     quality::bookNegativeAgeClamp(ctx, i);

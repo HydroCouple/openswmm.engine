@@ -940,10 +940,22 @@ void QualitySolver::mixAtNodes(SimulationContext& ctx, double dt) {
         if (!nodeIsReactor(ctx, i)) {
             // ---- findNodeQual: no storage volume, so the concentration is
             //      just the inflow's, and nothing reacts or concentrates.
+            //
+            // legacy tests the inflow RATE against ZERO (1e-10 cfs), not the
+            // volume against nothing: `if (qNode > ZERO)`, qualrout.c:301.
+            // v6 divided whenever v_in was merely non-zero, so a node taking
+            // 1.6e-18 cfs of numerical residue divided a residual mass by a
+            // residual volume and published the ratio. On duobiocell — a deck
+            // that never generates one drop of runoff — that read 227 mg/L at
+            // a dry, empty junction where legacy reads zero. The reactor half
+            // of this kernel has tested the rate against the same constant
+            // since the node-CSTR round (see nodeIsDry); only this half was
+            // left behind.
+            const double q_node = (dt > 0.0) ? v_in / dt : 0.0;
             for (int p = 0; p < np; ++p) {
                 auto idx = ui * static_cast<size_t>(np) + static_cast<size_t>(p);
                 if (idx >= nodes.conc.size()) continue;
-                if (v_in > 0.0) {
+                if (q_node > LEGACY_ZERO) {
                     double mass_in = (idx < nodes.qual_mass_in.size())
                                    ? nodes.qual_mass_in[idx] * dt : 0.0;
                     // D-NS1 (X6): a negative load is extraction, clamped to

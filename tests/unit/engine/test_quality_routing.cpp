@@ -487,6 +487,53 @@ TEST_F(QualityRoutingTest, ExecuteEmptyNodeVolumeUsesCin) {
     EXPECT_NEAR(ctx.nodes.conc[1 * NP + 1], 40.0, 1e-10);
 }
 
+// A volume-less node taking an inflow BELOW legacy's ZERO (1e-10 cfs) must
+// not divide by it. Legacy's findNodeQual opens `if (qNode > ZERO)`
+// (qualrout.c:301); v6 asked only whether the inflow VOLUME was non-zero, so
+// a node receiving numerical residue divided residual mass by residual volume
+// and published the ratio as a concentration. On duobiocell — a deck that
+// never generates one drop of runoff — that read 227 mg/L at a dry, empty
+// junction. The rate here is 1e-14 cfs: far above zero, far below ZERO.
+TEST_F(QualityRoutingTest, ResidualInflowBelowLegacyZeroIsNotDividedBy) {
+    const double dt = 10.0;
+
+    // Node1 takes L0's flow and is NOT a reactor: no storage type, no old
+    // volume. It is also dry, so the no-inflow branch cannot hold anything.
+    ctx.nodes.old_volume[1] = 0.0;
+    ctx.nodes.volume[1] = 0.0;
+    ctx.nodes.depth[1] = 0.0;
+    ctx.nodes.conc_old[1 * NP + 0] = 0.0;
+    ctx.nodes.conc_old[1 * NP + 1] = 0.0;
+
+    // Node0 and Node2 stay out of the way; nothing washes off.
+    ctx.nodes.old_volume[0] = 0.0;  ctx.nodes.volume[0] = 0.0;
+    ctx.nodes.old_volume[2] = 0.0;  ctx.nodes.volume[2] = 0.0;
+    ctx.links.flow[1] = 0.0;
+    ctx.pollutants.k_decay[0] = 0.0;
+    ctx.pollutants.k_decay[1] = 0.0;
+    ctx.subcatches.runoff[0] = 0.0;
+    ctx.subcatches.old_runoff[0] = 0.0;
+
+    // A residual inflow: 1e-14 cfs carrying a concentration of 1e5. The
+    // RATIO is what the old spelling published, however small the flow.
+    ctx.links.flow[0] = 1.0e-14;
+    ctx.links.conc_old[0 * NP + 0] = 1.0e5;
+
+    solver.execute(ctx, dt);
+
+    EXPECT_DOUBLE_EQ(ctx.nodes.conc[1 * NP + 0], 0.0)
+        << "an inflow below legacy's ZERO must be refused, not divided by";
+
+    // The same node, a decade ABOVE ZERO, still divides: this is a
+    // threshold, not a blanket refusal.
+    ctx.links.flow[0] = 1.0e-9;
+    ctx.links.conc_old[0 * NP + 0] = 42.0;
+
+    solver.execute(ctx, dt);
+
+    EXPECT_NEAR(ctx.nodes.conc[1 * NP + 0], 42.0, 1e-9);
+}
+
 TEST_F(QualityRoutingTest, ConcentrationNeverNegative) {
     double dt = 10.0;
 

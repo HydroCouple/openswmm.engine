@@ -141,8 +141,11 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
             if (!reactor) {
                 // findNodeQual: no storage volume, so the concentration is
                 // the inflow's.
+                // The gate is legacy's `qNode > ZERO` on the RATE, the same
+                // one the reactor half below uses — not "v_in is non-zero",
+                // which divides residual mass by residual volume.
                 double c;
-                if (v_in > 0.0)            c = mass / v_in;
+                if (q_in > LEGACY_ZERO)    c = mass / v_in;
                 else if (zero_bf)          c = 0.0;
                 else if (ctx.nodes.depth[ui] > ZERO_DEPTH) c = c_old;
                 else                       c = 0.0;
