@@ -1,0 +1,87 @@
+[TITLE]
+E3 - Vasconcelos et al. (2006) negative piezometric pressure (siphon) experiment. Issue #156.
+Same pipeline as E2 with the center raised 0.15 m: first half +2.0% (upstream to center),
+second half -2.0%. Both ends at elev 0. System filled to 0.30 m at the fill box, at rest
+(fully pressurized: center crown 0.244 < 0.30). Sudden siphon withdrawal 0.45 L/s at the
+fill box from t=0. Negative gauge pressure develops at the center as the fill-box level
+drops. Comparison valid to t~40 s (air-cavity intrusion afterwards - two-phase, out of scope);
+END_TIME is set AT that boundary: past it the TPA column separates and the regime chatter
+of a physics the model does not contain (two-phase air transport) ends the run (P5).
+Measured: velocity + pressure at x=9.9 m, pressure at x=14.1 m. Paper: a=300 m/s (measured).
+STATIONS ARE SEALED JUNCTIONS (SUR_DEPTH 30, P5 revision): a plain junction would be an
+atmosphere contact and would (correctly, but wrongly for this deck) vent a TPA latch, but a
+SEALED junction (SUR_DEPTH > 0) holds it -- same classification as a virtual junction in
+both routers. Virtual junctions cannot carry an initial depth, and under FV that left the
+two VJ-to-VJ conduits (C2, C3) seeded EMPTY on a deck whose whole premise is a primed
+column: the slot columns spent the first seconds refilling garbage and the TPA columns
+diverged outright (P5 measurement). InitDepth on each sealed junction seeds every conduit
+full, which is the state the paper starts from.
+EXPECTED PHYSICAL CONTRAST: slot-closure columns (C1/C2/C7) revert to free surface when head
+drops below crown; TPA columns hold full-pipe sub-atmospheric flow (plan gate A-G4 analog).
+
+[OPTIONS]
+FLOW_UNITS           LPS
+FLOW_ROUTING         FV
+LINK_OFFSETS         DEPTH
+START_DATE           01/01/2026
+START_TIME           00:00:00
+END_DATE             01/01/2026
+END_TIME             00:00:40
+REPORT_STEP          0.02
+ROUTING_STEP         0.01
+MIN_SURFAREA         0.05
+SURCHARGE_METHOD     EXTRAN
+INERTIAL_DAMPING     NONE
+NORMAL_FLOW_LIMITED  NEITHER
+FV_CELL_LENGTH       0.036
+FV_MIN_CELLS         4
+FV_SLOT_CELERITY     300
+REPORT_SIGNED_HEADS  YES
+
+[STORAGE]
+;;Name  Elev  MaxDepth InitDepth Shape      A1/Curve A2  A0      SurDepth Fevap
+FB      0.0   0.31     0.30      FUNCTIONAL 0        0   0.0625  0        0
+ST      0.0   1.50     0.30      FUNCTIONAL 0        0   0.02835 0        0
+
+[JUNCTIONS]
+;;Name  Elev    MaxDepth InitDepth SurDepth
+VJC     0.1433  1.0      0.1567    30
+VJ99    0.0886  1.0      0.2114    30
+VJ141   0.0046  1.0      0.2954    30
+
+; Rim-overflow path: the surge tank is open-topped (rim at 1.50 m). The weir crest
+; sits AT the rim (= ST MaxDepth), so it is transparent to the solution (levels only
+; drop in this withdrawal experiment); it exists because the engine (legacy ERROR 145
+; parity) requires >= 1 outfall node.
+[OUTFALLS]
+;;Name  Elev   Type   StageData  Gated
+DN      0.0    FREE              NO
+
+[WEIRS]
+;;Name  From  To   Type        CrestHt  Cd    Gated  EC
+OVF     ST    DN   TRANSVERSE  1.50     1.84  NO     0
+
+[CONDUITS]
+;;Name  From   To     Length  N      Zin  Zout  Q0
+C1      FB     VJC    7.165   0.012  0    0     0
+C2      VJC    VJ99   2.735   0.012  0    0     0
+C3      VJ99   VJ141  4.20    0.012  0    0     0
+C4      VJ141  ST     0.23    0.012  0    0     0
+
+[XSECTIONS]
+;;Link  Shape     Geom1  Geom2 Geom3 Geom4 Barrels
+C1      CIRCULAR  0.094  0     0     0     1
+C2      CIRCULAR  0.094  0     0     0     1
+C3      CIRCULAR  0.094  0     0     0     1
+C4      CIRCULAR  0.094  0     0     0     1
+OVF     RECT_OPEN 0.10   0.19  0     0
+
+[INFLOWS]
+;;Node  Constituent  Tseries  Type  Mfactor  Sfactor  Baseline
+FB      FLOW         ""       FLOW  1.0      1.0      -0.45
+
+[REPORT]
+CONTINUITY YES
+FLOWSTATS YES
+NODES ALL
+LINKS ALL
