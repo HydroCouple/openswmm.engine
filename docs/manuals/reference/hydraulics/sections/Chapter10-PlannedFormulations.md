@@ -23,7 +23,7 @@ the manual, and the code is the source of truth where they disagree.
 | 10.4 | Dynamic wave on GPU | `plans/1d/1D_DYNWAVE_GPU_KOKKOS_STRATEGY.md` | \status{Retired} |
 | 10.5 | The 2D solver on Metal | `plans/2d/2D_GPU_METAL_STRATEGY.md` | \status{Planned} |
 | 10.6 | A bed-step treatment at finite-volume junction faces | none — `ROADMAP.md` §1.1 only | \status{Planned} |
-| 10.7 | The Vasconcelos and Wright (2009) hybrid flux for the TPA filling front | `plans/FV_SLOT_TPA_REVIEW_2026-08-31.md`, `plans/ISSUE_MIXED_FLOW_TPA_UF.md` | \status{Planned} |
+| 10.7 | The Vasconcelos and Wright (2009) hybrid flux for the TPA filling front — no longer required: the divergence it answered was removed on 2026-09-12 | `plans/FV_SLOT_TPA_REVIEW_2026-08-31.md`, `plans/ISSUE_MIXED_FLOW_TPA_UF.md` | \status{Retired} |
 | 10.8 | LID units as storage nodes, the hydraulic side | `plans/LID_StorageNode_Redesign.md`; `ROADMAP.md` §6 | \status{Planned} |
 | 10.9 | Retired formulations | `plans/IMEX_LOCAL_INERTIAL_IMPLEMENTATION_PLAN.md`; `ROADMAP.md` §7; `src/engine/input/handlers/OptionsHandler.cpp` | \status{Retired} |
 

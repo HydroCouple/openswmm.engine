@@ -97,7 +97,9 @@ FEATURES = {
     "xsect.chebyshev_irregular": "planned",
     "storage.shapes": "implemented",
     "fv.bed_step_junction_faces": "planned",
-    "fv.tpa_high_celerity_fix": "planned",
+    # the divergence this fix was recorded against was removed on 2026-09-12 by the
+    # slot/free-surface wave-speed bound; the hybrid flux is no longer required for it
+    "fv.tpa_high_celerity_fix": "retired",
     # conveyance, 2D
     "overland2d.local_inertial": "implemented",
     "overland2d.full_swe": "implemented",
