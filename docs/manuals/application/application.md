@@ -84,5 +84,6 @@ covers the formulations instead.
 - @subpage application_manual_ch1_choosing — Chapter 1: Choosing a Formulation
 - @subpage application_manual_ch2_filling_pipe — Chapter 2: A Filling Pipe under the Dynamic Wave and Finite-Volume Routers
 - @subpage application_manual_ch3_subatmospheric — Chapter 3: A Sub-Atmospheric Transient
+- @subpage application_manual_ch5_street_inlets — Chapter 5: Street Inlets and the Inlet Junction
 - @subpage application_manual_ch12_python_plugins — Chapter 12: Running Models from Python and Plugins
 - @subpage application_manual_ch13_planned — Chapter 13: What Is Coming
