@@ -20,12 +20,16 @@
  *
  * @details Formula provenance, line by line, is the pollutant path in
  *          QualityRouting.cpp: accumulateLinkLoads (rate convention
- *          q·value), mixAtNodes ((c_old·v_old + mass_in)/(v_old + v_in)
- *          with the c_max clamp), updateLinkQuality (STEADY / no-flow /
- *          zero-volume / volume-balance branches with the DW q_in
- *          correction). Deliberate differences, both documented in the
- *          header: no evaporation factor (plan §8 — evaporation leaves
- *          the mean age unchanged) and no decay (age has none).
+ *          q·value), mixAtNodes (the findStorageQual / findNodeQual
+ *          dispatch, the volume-balance mix with the c_max clamp and the
+ *          dry-node rule), updateLinkQuality (the non-conduit shortcut,
+ *          findSFLinkQual's node1, the DW volume-change inflow and the
+ *          dry-link rule). Those rules are ASKED for through the shared
+ *          predicates in QualityRouting.hpp rather than re-derived here —
+ *          four hand-copies had already drifted apart. Deliberate
+ *          differences, both documented in the header: no evaporation
+ *          factor (plan §8 — evaporation leaves the mean age unchanged)
+ *          and no decay (age has none).
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
@@ -40,13 +44,18 @@
 
 #include "../../../core/SimulationContext.hpp"
 #include "../../../quality/NegativeSources.hpp"
+#include "../../../quality/QualityRouting.hpp"
 #include "../../InitialQualitySeeds.hpp"
 
 namespace openswmm::transport {
 
 namespace {
-/// Matches the quality path's ZERO_VOLUME semantics (QualityRouting.cpp).
-constexpr double kZeroVolume = 1.0e-10;
+/// The quality path's own thresholds — one litre and one millimetre, the
+/// numbers legacy qualrout.c routes on. This mirror previously carried a
+/// local 1e-10 under a comment claiming it matched the quality path; it did
+/// not, and the two families dispatched differently as a result.
+using quality::ZERO_DEPTH;
+using quality::LEGACY_ZERO;
 
 /// Routing-thread scratch (the BindingScratch pattern): aged old-state
 /// snapshots and the per-node age-mass accumulator.
@@ -124,22 +133,41 @@ void routeLegacyAge(SimulationContext& ctx, double dt) {
     }
 
     // ---- 3. Node mixing (mixAtNodes mirror; NO evap factor — plan §8:
-    //         evaporation leaves the mean age unchanged). -----------------
+    //         evaporation leaves the mean age unchanged, and no reaction:
+    //         age has no decay constant). Dispatch, dry-node rule and the
+    //         inflow test are the quality path's, asked rather than
+    //         re-derived. ----------------------------------------------
     for (int i = 0; i < nn; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         const double v_old = ctx.nodes.old_volume[ui];
         const double v_in  = ctx.nodes.qual_vol_in[ui];
+        const double q_in  = (dt > 0.0) ? v_in / dt : 0.0;
         const double a_old = sc.node_old[ui];
-        if (v_in <= 0.0) {
-            // OUTFALL_BACKFLOW_QUALITY ZERO: a supplying outfall delivers
-            // fresh (age-zero) boundary water — without this, the held
-            // boundary water ages 1:1 forever and every reversal imports it.
-            ws.node_age[ui] = (ctx.options.outfall_backflow_zero &&
-                               ctx.nodes.type[ui] == NodeType::OUTFALL)
-                                  ? 0.0
-                                  : a_old;
+
+        if (!quality::nodeIsReactor(ctx, i)) {
+            // findNodeQual: no storage volume, so the age is the inflow's.
+            if (v_in > 0.0) {
+                double mass_in = sc.age_in[ui] * dt;
+                if (mass_in < 0.0 && a_old * v_old + mass_in < 0.0) {
+                    quality::bookNegativeAgeClamp(ctx, i);
+                    mass_in = -(a_old * v_old);
+                }
+                ws.node_age[ui] = std::max(mass_in / v_in, 0.0);
+            } else if (ctx.options.outfall_backflow_zero &&
+                       ctx.nodes.type[ui] == NodeType::OUTFALL) {
+                // OUTFALL_BACKFLOW_QUALITY ZERO: a supplying outfall delivers
+                // fresh (age-zero) boundary water — without this, the held
+                // boundary water ages 1:1 forever and every reversal imports
+                // it.
+                ws.node_age[ui] = 0.0;
+            } else {
+                ws.node_age[ui] =
+                    (ctx.nodes.depth[ui] > ZERO_DEPTH) ? a_old : 0.0;
+            }
             continue;
         }
+
+        // findStorageQual: a mixed reactor.
         double mass_in = sc.age_in[ui] * dt;
         // D-NS1 (X6): a negative age source extracts age·volume, clamped
         // to what the store holds — counted and warned, not ledgered
@@ -149,12 +177,19 @@ void routeLegacyAge(SimulationContext& ctx, double dt) {
             quality::bookNegativeAgeClamp(ctx, i);
             mass_in = -(a_old * v_old);
         }
-        const double a_in    = mass_in / v_in;
-        const double a_max   = std::max(a_old, a_in);
-        double a_new = (v_old > kZeroVolume)
-                           ? (a_old * v_old + mass_in) / (v_old + v_in)
-                           : a_in;
-        a_new = std::min(a_new, a_max);
+        double a_new;
+        if (q_in <= LEGACY_ZERO) {
+            a_new = a_old;
+        } else {
+            const double a_in  = mass_in / v_in;
+            const double a_max = std::max(a_old, a_in);
+            a_new = (a_old * v_old + mass_in) / (v_old + v_in);
+            a_new = std::min(a_new, a_max);
+        }
+        // A reactor that ends the step empty with nothing coming in holds no
+        // water, so it holds no aged water either — the age analogue of
+        // legacy zeroing the concentration.
+        if (quality::nodeIsDry(ctx, i, q_in)) a_new = 0.0;
         ws.node_age[ui] = std::max(a_new, 0.0);
     }
 
@@ -163,33 +198,46 @@ void routeLegacyAge(SimulationContext& ctx, double dt) {
         (ctx.options.routing_model == RoutingModel::STEADY);
     for (int j = 0; j < nl; ++j) {
         const auto uj = static_cast<std::size_t>(j);
-        const double q = std::fabs(ctx.links.flow[uj]);
-        const int upstream = (ctx.links.flow[uj] >= 0.0)
-                                 ? ctx.links.node1[uj]
-                                 : ctx.links.node2[uj];
+        // Steady flow draws on node1 unconditionally — legacy
+        // findSFLinkQual never consults the downstream end, even on reverse
+        // flow.
+        const int upstream =
+            is_steady ? ctx.links.node1[uj]
+                      : ((ctx.links.flow[uj] >= 0.0) ? ctx.links.node1[uj]
+                                                     : ctx.links.node2[uj]);
         if (upstream < 0 || upstream >= nn) continue;
         const auto un = static_cast<std::size_t>(upstream);
+        const double a_up  = ws.node_age[un];
+
+        // A pump, orifice, weir, outlet or DUMMY conduit holds no water, so
+        // it carries the upstream age outright.
+        if (quality::linkTakesUpstreamValue(ctx, j)) {
+            ws.link_age[uj] = std::max(a_up, 0.0);
+            continue;
+        }
 
         const double v_old = ctx.links.old_volume[uj];
-        const double v_new = ctx.links.volume[uj];
         const double a_old = sc.link_old[uj];
-        const double a_up  = ws.node_age[un];
 
         double a_new;
         if (is_steady) {
             a_new = a_up;
-        } else if (q <= 0.0) {
-            a_new = a_old;
-        } else if (v_new <= kZeroVolume) {
-            a_new = a_up;
         } else {
-            double q_in = q;
-            if (v_new > v_old) q_in += (v_new - v_old) / dt;
-            q_in = std::max(q_in, 0.0);
-            const double denom = v_old + q_in * dt;
-            a_new = (denom > kZeroVolume)
-                        ? (a_old * v_old + a_up * q_in * dt) / denom
-                        : a_up;
+            const double q_in = quality::conduitMixingInflow(ctx, j, dt);
+            if (q_in <= LEGACY_ZERO) {
+                a_new = a_old;
+            } else {
+                const double v_in  = q_in * dt;
+                const double a_max = std::max(a_old, a_up);
+                a_new = (a_old * v_old + a_up * v_in) / (v_old + v_in);
+                a_new = std::min(a_new, a_max);
+            }
+            // An essentially empty conduit holds no water and so no aged
+            // water — the age analogue of legacy zeroing the concentration.
+            // This engine handed such a link the UPSTREAM age instead, so a
+            // filling conduit reported its inflow's age from the first period
+            // rather than mixing up to it.
+            if (quality::linkIsDry(ctx, j)) a_new = 0.0;
         }
         ws.link_age[uj] = std::max(a_new, 0.0);
     }

@@ -31,12 +31,16 @@
 
 #include "ReactionLegacyBinding.hpp"
 #include "../../../core/SimulationContext.hpp"
+#include "../../../quality/QualityRouting.hpp"
 
 namespace openswmm::transport {
 
 namespace {
-/// Matches the quality path's ZERO_VOLUME semantics (QualityRouting.cpp).
-constexpr double kZeroVolume = 1.0e-10;
+/// The quality path's own thresholds — one litre and one millimetre, the
+/// numbers legacy qualrout.c routes on. This mirror previously carried a
+/// local 1e-10, so it dispatched differently from the family it mirrors.
+using quality::ZERO_DEPTH;
+using quality::LEGACY_ZERO;
 
 /// Routing-thread scratch (the BindingScratch pattern). Strided per species:
 /// the node/link snapshots and the per-node mass-rate accumulator.
@@ -120,23 +124,42 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
         const auto ui = static_cast<std::size_t>(i);
         const double v_old = ctx.nodes.old_volume[ui];
         const double v_in  = ctx.nodes.qual_vol_in[ui];
+        const double q_in  = (dt > 0.0) ? v_in / dt : 0.0;
         const bool zero_bf = ctx.options.outfall_backflow_zero &&
                              ctx.nodes.type[ui] == NodeType::OUTFALL &&
                              v_in <= 0.0;
+        // The quality path's dispatch and dry-node rule, asked rather than
+        // re-derived — a species IS a concentration, so both carry over
+        // exactly as they do for a pollutant.
+        const bool reactor = quality::nodeIsReactor(ctx, i);
+        const bool dry     = quality::nodeIsDry(ctx, i, q_in);
         for (std::size_t s = 0; s < uns; ++s) {
             const double c_old = sc.node_old[ui * uns + s];
-            if (v_in <= 0.0) {
-                rx.msx_node_conc[ui * uns + s] = zero_bf ? 0.0 : c_old;
-                continue;
-            }
             const double ext_rate = has_ext ? rx.msx_ext_mass_in[ui * uns + s] : 0.0;
             const double mass = (sc.mass_in[ui * uns + s] + ext_rate) * dt;
-            const double c_in = mass / v_in;
-            const double c_max = std::max(c_old, c_in);
-            double c_new = (v_old > kZeroVolume)
-                               ? (c_old * v_old + mass) / (v_old + v_in)
-                               : c_in;
-            c_new = std::min(c_new, c_max);
+
+            if (!reactor) {
+                // findNodeQual: no storage volume, so the concentration is
+                // the inflow's.
+                double c;
+                if (v_in > 0.0)            c = mass / v_in;
+                else if (zero_bf)          c = 0.0;
+                else if (ctx.nodes.depth[ui] > ZERO_DEPTH) c = c_old;
+                else                       c = 0.0;
+                rx.msx_node_conc[ui * uns + s] = std::max(c, 0.0);
+                continue;
+            }
+
+            double c_new;
+            if (q_in <= LEGACY_ZERO) {
+                c_new = zero_bf ? 0.0 : c_old;
+            } else {
+                const double c_in  = mass / v_in;
+                const double c_max = std::max(c_old, c_in);
+                c_new = (c_old * v_old + mass) / (v_old + v_in);
+                c_new = std::min(c_new, c_max);
+            }
+            if (dry) c_new = 0.0;
             rx.msx_node_conc[ui * uns + s] = std::max(c_new, 0.0);
         }
     }
@@ -146,34 +169,37 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
         (ctx.options.routing_model == RoutingModel::STEADY);
     for (int j = 0; j < nl; ++j) {
         const auto uj = static_cast<std::size_t>(j);
-        const double q = std::fabs(ctx.links.flow[uj]);
-        const int up = (ctx.links.flow[uj] >= 0.0) ? ctx.links.node1[uj]
-                                                   : ctx.links.node2[uj];
+        // Steady flow draws on node1 unconditionally (findSFLinkQual).
+        const int up = is_steady
+                           ? ctx.links.node1[uj]
+                           : ((ctx.links.flow[uj] >= 0.0) ? ctx.links.node1[uj]
+                                                          : ctx.links.node2[uj]);
         if (up < 0 || up >= nn) continue;
         const auto uup = static_cast<std::size_t>(up);
 
+        // A non-conduit or DUMMY link holds no water: upstream outright.
+        const bool passthrough = quality::linkTakesUpstreamValue(ctx, j);
         const double v_old = ctx.links.old_volume[uj];
-        const double v_new = ctx.links.volume[uj];
+        const double q_in  = passthrough
+                                 ? 0.0
+                                 : quality::conduitMixingInflow(ctx, j, dt);
+        const bool dry = !is_steady && !passthrough && quality::linkIsDry(ctx, j);
 
         for (std::size_t s = 0; s < uns; ++s) {
             const double c_old = sc.link_old[uj * uns + s];
             const double c_up  = rx.msx_node_conc[uup * uns + s];
             double c_new;
-            if (is_steady) {
+            if (passthrough || is_steady) {
                 c_new = c_up;
-            } else if (q <= 0.0) {
+            } else if (q_in <= LEGACY_ZERO) {
                 c_new = c_old;
-            } else if (v_new <= kZeroVolume) {
-                c_new = c_up;
             } else {
-                double q_in = q;
-                if (v_new > v_old) q_in += (v_new - v_old) / dt;
-                q_in = std::max(q_in, 0.0);
-                const double denom = v_old + q_in * dt;
-                c_new = (denom > kZeroVolume)
-                            ? (c_old * v_old + c_up * q_in * dt) / denom
-                            : c_up;
+                const double v_in  = q_in * dt;
+                const double c_max = std::max(c_old, c_up);
+                c_new = (c_old * v_old + c_up * v_in) / (v_old + v_in);
+                c_new = std::min(c_new, c_max);
             }
+            if (dry) c_new = 0.0;
             rx.msx_link_conc[uj * uns + s] = std::max(c_new, 0.0);
         }
     }

@@ -70,6 +70,19 @@ SimulationContext makeContext(int np) {
     // Subcatchment outlet → Node0
     ctx.subcatches.outlet_node[0] = 0;
 
+    // Give every node a nominal depth. Legacy's dry-node rule tests EITHER
+    // measure of emptiness — under a litre of volume or under a millimetre of
+    // depth — and depth and volume are functions of one another in the
+    // engine, so a fixture that assigns a volume and leaves depth at zero
+    // describes a state that cannot occur and reads as dry. Tests that mean
+    // "empty" set the volume to zero, which still trips the rule through its
+    // volume half.
+    for (int i = 0; i < ctx.n_nodes(); ++i)
+        ctx.nodes.depth[static_cast<std::size_t>(i)] = 1.0;
+    // Same for links, whose dry rule reads the same pair.
+    for (int j = 0; j < ctx.n_links(); ++j)
+        ctx.links.depth[static_cast<std::size_t>(j)] = 1.0;
+
     return ctx;
 }
 
