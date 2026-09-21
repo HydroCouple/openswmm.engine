@@ -5180,6 +5180,12 @@ void SWMMEngine::computeFinalStorage() noexcept {
                 if (idx < ctx_.links.conc.size())
                     m += ctx_.links.conc[idx] * ctx_.links.volume[uj];
             }
+            // Legacy adds the stored mass ON TOP of what
+            // massbal_addToFinalStorage booked as links went dry during the
+            // run (massbal.c:885); without that term the litre-or-less each
+            // drying conduit gives up surfaces as continuity error.
+            if (up < ctx_.mass_balance.qual_routing_final_dry.size())
+                m += ctx_.mass_balance.qual_routing_final_dry[up];
             ctx_.mass_balance.qual_routing_final[up] = m;
         }
     }
@@ -6436,7 +6442,8 @@ int SWMMEngine::end() noexcept {
             if (gw.total_depth[ui] <= 0.0) continue;
             double upper_d = gw.total_depth[ui] - gw.lower_depth[ui];
             double vol = gw.theta[ui] * upper_d + gw.porosity[ui] * gw.lower_depth[ui];
-            double area = ctx_.subcatches.area[ui] * 43560.0;
+            double area = ctx_.subcatches.area[ui]
+                        / ucf::UCF(ucf::LANDAREA, ctx_.options);
             ctx_.mass_balance.gw_final_storage += vol * area;
         }
     }

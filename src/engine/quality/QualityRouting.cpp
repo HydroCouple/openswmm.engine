@@ -57,6 +57,10 @@ namespace quality {
 
 // ZERO_VOLUME defined in QualityRouting.hpp
 
+/// Legacy's effective-zero flow (`ZERO` in src/legacy/engine/consts.h). The
+/// mixing kernel tests the inflow against this, not against 0.0.
+constexpr double LEGACY_ZERO = 1.0e-10;
+
 namespace {
 
 /// The external-load loaders below do two jobs: they accumulate per-pollutant
@@ -952,8 +956,24 @@ void QualitySolver::updateLinkQuality(SimulationContext& ctx, double dt) {
     auto& links = ctx.links;
     auto& nodes = ctx.nodes;
     auto& poll  = ctx.pollutants;
+    auto& mb    = ctx.mass_balance;
 
     const bool is_steady = (ctx.options.routing_model == RoutingModel::STEADY);
+    // Legacy gates the volume-change inflow correction on `RouteModel == DW`
+    // alone (qualrout.c findLinkQual): dynamic wave produces a SINGLE flow
+    // rate per conduit, so the storage the conduit gained over the step is
+    // inflow the single rate does not carry. Kinematic wave carries separate
+    // upstream and downstream flows and needs no such correction — applying
+    // it there (as this function used to, for every non-steady model)
+    // double-counts the fill. FV is v6's other single-rate dynamic model, so
+    // it takes the DW branch.
+    const bool is_single_rate =
+        (ctx.options.routing_model == RoutingModel::DYNWAVE ||
+         ctx.options.routing_model == RoutingModel::FV);
+    // R4: reactions-active decays links exactly in reactLegacyLinks AFTER
+    // this mixing pass; the in-mix linear decay must not double-apply.
+    const bool reactions_active = transport::legacyReactionsActive(ctx);
+    const auto& CD = ctx.link_subtypes.conduits;
 
     // Batch over all links — parallelisable (each link writes to its own slot)
     // Legacy parity: src/legacy/engine/qualrout.c runs this loop serially.
@@ -962,107 +982,152 @@ void QualitySolver::updateLinkQuality(SimulationContext& ctx, double dt) {
 #endif
     for (int j = 0; j < ctx.n_links(); ++j) {
         auto uj = static_cast<size_t>(j);
-        double q = std::fabs(links.flow[uj]);
 
         int upstream = (links.flow[uj] >= 0.0) ? links.node1[uj] : links.node2[uj];
         if (upstream < 0 || upstream >= ctx.n_nodes()) continue;
         auto un = static_cast<size_t>(upstream);
 
-        double v_old = links.old_volume[uj];
-        double v_new = links.volume[uj];
-
-        // Matching legacy qualrout.c findLinkQual():
-        //   New concentration = volume-balance complete-mixing with upstream
-        //   inflow, corrected for volume change, plus first-order in-link decay.
-        //
-        //   c_new = (c_old * v_old + c_up * q_in * dt - k * c_old * v_old * dt)
-        //           / max(v_new, ZERO_VOLUME)
-        //
-        // When there is no flow, the link retains its old concentration
-        // (with decay applied below).
-
-        // Evaporation concentration factor (Gap #2 / legacy findLinkQual):
-        //   fEvap = 1 + vEvap / v_old  where vEvap = evapLossRate * nBarrels * dt
-        //   Concentrates pollutants when conduit water evaporates.
-        double fEvap = 1.0;
-        if (v_old > ZERO_VOLUME) {
-            int cr = ctx.link_subtypes.conduit_row(j);
-            int nb = (cr >= 0) ? ctx.link_subtypes.conduits.barrels[static_cast<size_t>(cr)] : 1;
-            double evap_rate = (cr >= 0) ? ctx.link_subtypes.conduits.evap_loss_rate[static_cast<size_t>(cr)] : 0.0;
-            double v_evap = evap_rate * static_cast<double>(nb) * dt;
-            if (v_evap > 0.0) fEvap = 1.0 + v_evap / v_old;
+        // --- legacy findLinkQual opens with the non-conduit shortcut: a
+        //     pump, orifice, weir or outlet — and a conduit whose
+        //     cross-section is DUMMY — holds no water, so its quality IS the
+        //     upstream node's, with no mixing, no evaporation factor and no
+        //     reaction. This engine used to run the CSTR on them, which held
+        //     the last mix whenever such a link carried no flow.
+        if (links.type[uj] != LinkType::CONDUIT ||
+            links.xsect_shape[uj] == XsectShape::DUMMY) {
+            for (int p = 0; p < np; ++p) {
+                auto li = uj * static_cast<size_t>(np) + static_cast<size_t>(p);
+                auto ni = un * static_cast<size_t>(np) + static_cast<size_t>(p);
+                if (li >= links.conc.size() || ni >= nodes.conc.size()) break;
+                links.conc[li] = nodes.conc[ni];
+            }
+            continue;
         }
+
+        // Legacy's test above is on the link's TYPE and cross-section alone —
+        // every CONDUIT owns a Conduit[] row. A row that does not resolve is
+        // a malformed context, not a different kind of link, so the barrel
+        // count and loss rates fall back to their defaults exactly as this
+        // function has always done rather than diverting the link.
+        const int cr = ctx.link_subtypes.conduit_row(j);
+        const auto ucr = static_cast<size_t>(cr < 0 ? 0 : cr);
+        const double barrels =
+            (cr >= 0) ? static_cast<double>(CD.barrels[ucr]) : 1.0;
+        // Legacy reads |Conduit.q1| * barrels. Under DW and SF the solver
+        // writes one flow to both conduit ends, so |Link.newFlow| is that
+        // same number; under KW q1 is the UPSTREAM end while Link.newFlow is
+        // the downstream one, and this engine keeps no q1 mirror — a
+        // remaining KW-only gap, noted rather than papered over.
+        double q_in         = std::fabs(links.flow[uj]);
+        const double q_seep = (cr >= 0) ? CD.seep_loss_rate[ucr] * barrels : 0.0;
+        const double v_evap = (cr >= 0) ? CD.evap_loss_rate[ucr] * barrels * dt
+                                        : 0.0;
+
+        const double v_old    = links.old_volume[uj];
+        const double v_new    = links.volume[uj];
+        const double v_losses = q_seep * dt + v_evap;
+
+        // Evaporation concentration factor: fEvap = 1 + vEvap/v1.
+        double f_evap = 1.0;
+        if (v_evap > 0.0 && v_old > ZERO_VOLUME) f_evap += v_evap / v_old;
+
+        if (!is_steady && is_single_rate) {
+            q_in += (v_new + v_losses - v_old) / dt;
+            q_in = std::max(q_in, 0.0);
+        }
+
+        // --- legacy zeroes a link that ends the step essentially empty and
+        //     books what it held to final storage. The test is on EITHER
+        //     measure of emptiness — under a litre of water, or under a
+        //     millimetre of depth — and the depth half has no analogue here
+        //     at all. This engine did the opposite: it handed a zero-volume
+        //     link the upstream node's concentration outright, so a filling
+        //     conduit published its inflow concentration from the first
+        //     period instead of mixing up to it.
+        const bool dry = !is_steady &&
+                         (v_new < ZERO_VOLUME || links.depth[uj] <= ZERO_DEPTH);
 
         for (int p = 0; p < np; ++p) {
             auto li = uj * static_cast<size_t>(np) + static_cast<size_t>(p);
             auto ni = un  * static_cast<size_t>(np) + static_cast<size_t>(p);
             if (li >= links.conc.size() || ni >= nodes.conc.size()) continue;
+            const auto up = static_cast<size_t>(p);
 
-            double c_old = links.conc_old[li];
-            double c_up  = nodes.conc[ni];    // upstream node after node mixing
-
-            double k = (static_cast<size_t>(p) < poll.k_decay.size())
-                ? poll.k_decay[static_cast<size_t>(p)] : 0.0;
-            // R4: reactions-active runs decay links exactly in
-            // reactLegacyLinks AFTER this mixing pass; the in-mix linear
-            // decay must not double-apply.
-            if (transport::legacyReactionsActive(ctx)) k = 0.0;
+            double k = (up < poll.k_decay.size()) ? poll.k_decay[up] : 0.0;
+            if (reactions_active) k = 0.0;
 
             double c_new;
-            double reacted = 0.0;  // KD1: decayed mass to book
+            double reacted = 0.0;   // KD1: decayed mass to book
+            double seeped  = 0.0;   // mass carried off by seepage
 
             if (is_steady) {
-                // Gap #38: Steady Flow quality routing (legacy findSFLinkQual).
-                // Link conc = upstream node conc, scaled by fEvap then exact
-                // exponential decay over the full routing timestep.
-                // No volume-balance mixing — steady flow has invariant volumes.
-                double c1 = c_up * fEvap;
-                c_new = (k > 0.0) ? c1 * std::exp(-k * dt) : c1;
-                // legacy findSFLinkQual: lossRate = (c1 - c2) * flow
-                if (k > 0.0) reacted = (c1 - c_new) * q * dt;
-            } else if (q <= 0.0) {
-                // No flow: retain old concentration with in-place decay
-                // Apply fEvap first (legacy order: fEvap then decay)
-                double c1 = c_old * fEvap;
-                c_new = c1 * std::max(1.0 - k * dt, 0.0);
-                reacted = (c1 - c_new) * v_old;  // getReactedQual basis
-            } else if (v_new <= ZERO_VOLUME) {
-                // Zero-volume link — matching legacy qualrout.c findLinkQual:
-                // when vNew == 0 the link carries upstream mass instantaneously,
-                // so assign upstream node concentration directly.
-                c_new = c_up;
+                // Steady Flow quality routing (legacy findSFLinkQual). The
+                // conduit's quality is the quality of node1 — the DOWNSTREAM
+                // node is never consulted, even on reverse flow — scaled by
+                // fEvap and then decayed EXPONENTIALLY over the whole step.
+                const int n1 = links.node1[uj];
+                if (n1 < 0 || n1 >= ctx.n_nodes()) continue;
+                const auto n1i =
+                    static_cast<size_t>(n1) * static_cast<size_t>(np) + up;
+                if (n1i >= nodes.conc.size()) continue;
+
+                double c1 = nodes.conc[n1i];
+                seeped = q_seep * c1 * dt;
+                c1 *= f_evap;
+                c_new = c1;
+                if (k > 0.0) {
+                    c_new = std::max(0.0, c1 * std::exp(-k * dt));
+                    // legacy findSFLinkQual: lossRate = (c1 - c2) * newFlow
+                    reacted = (c1 - c_new) * links.flow[uj] * dt;
+                }
             } else {
-                // Legacy order (findLinkQual): fEvap → decay → mix with upstream
-                //   c1 = c_old * fEvap
-                //   c2 = c1 * (1 - k*dt)                 [getReactedQual]
-                //   c_new = (c2 * v_old + c_up * q_in * dt) / (v_old + q_in * dt)
-                //
-                // Volume-change correction for DW (matching legacy line ~337):
-                //   qIn += (v2 + vLosses - v1) / tStep
-                double q_in = q;
-                if (v_new > v_old) q_in += (v_new - v_old) / dt;
-                q_in = std::max(q_in, 0.0);
+                double c1 = links.conc_old[li];
+                seeped = q_seep * c1 * dt;
+                c1 *= f_evap;
 
-                double c1 = c_old * fEvap;           // evap-concentrated
-                double c2 = c1 * std::max(1.0 - k * dt, 0.0);  // decayed
-                reacted = (c1 - c2) * v_old;  // KD1: getReactedQual books this
-                double w_in = c_up * q_in;           // mass inflow rate
+                // getReactedQual: c2 = max(0, c1 * (1 - k*dt)); the factor is
+                // clamped rather than the product so the booked removal below
+                // equals the actual loss even when 1 - k*dt goes negative
+                // (KD1).
+                double c2 = c1 * std::max(1.0 - k * dt, 0.0);
+                reacted = (c1 - c2) * v_old;
 
-                // getMixedQual: (c2 * v_old + w_in * dt) / (v_old + q_in * dt)
-                double denom = v_old + q_in * dt;
-                c_new = (denom > ZERO_VOLUME)
-                    ? (c2 * v_old + w_in * dt) / denom : c_up;
+                // getMixedQual(c2, v_old, wIn, q_in, dt), spelled in legacy's
+                // own operand order — cIn is formed as wIn*dt/vIn, not as the
+                // upstream concentration, and the mix is capped at
+                // max(c2, cIn). Both are algebraic no-ops in exact
+                // arithmetic and neither is one in floating point.
+                if (q_in <= LEGACY_ZERO) {
+                    c_new = c2;
+                } else {
+                    const double w_in = nodes.conc[ni] * q_in;
+                    const double v_in = q_in * dt;
+                    const double c_in = w_in * dt / v_in;
+                    const double c_max = std::max(c2, c_in);
+                    c_new = (c2 * v_old + w_in * dt) / (v_old + v_in);
+                    c_new = std::min(c_new, c_max);
+                    c_new = std::max(c_new, 0.0);
+                }
+
+                if (dry) {
+                    if (up < mb.qual_routing_final_dry.size())
+                        mb.qual_routing_final_dry[up] += c_new * v_new;
+                    c_new = 0.0;
+                }
             }
 
             c_new = std::max(c_new, 0.0);
             links.conc[li] = c_new;
+
             // KD1: book in-link decay (legacy qualrout books both its
             // link forms; this loop is serial — see the pragma note).
-            if (reacted > 0.0 &&
-                static_cast<size_t>(p) <
-                    ctx.mass_balance.qual_routing_reacted.size())
-                ctx.mass_balance.qual_routing_reacted[
-                    static_cast<size_t>(p)] += reacted;
+            if (reacted > 0.0 && up < mb.qual_routing_reacted.size())
+                mb.qual_routing_reacted[up] += reacted;
+            // legacy massbal_addSeepageLoss(p, qSeep * c1), a rate the step
+            // totals scale by tStep. Until now this ledger row was never
+            // written and the .rpt reported zero exfiltrated mass.
+            if (seeped != 0.0 && up < mb.qual_routing_seep.size())
+                mb.qual_routing_seep[up] += seeped;
         }
     }
 }
