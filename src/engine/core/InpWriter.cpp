@@ -2698,8 +2698,8 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     const int np=ctx.subcatches.conc_n_pollutants;
     const bool polluts=(np>0&&ctx.n_subcatches()>0&&ctx.n_pollutants()>0);
     bool any=false;
-    if(polluts)for(std::size_t i=0;i<ctx.subcatches.conc.size()&&!any;++i)
-        if(ctx.subcatches.conc[i]!=0.0)any=true;
+    if(polluts)for(std::size_t i=0;i<ctx.subcatches.init_loading.size()&&!any;++i)
+        if(ctx.subcatches.init_loading[i]!=0.0)any=true;
     bool anyMsx=false;   // BW-MSX: species initial loadings
     for(std::size_t i=0;i<msxs.init_loading.size()&&!anyMsx;++i)
         if(msxs.init_loading[i]!=0.0)anyMsx=true;
@@ -2709,8 +2709,8 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     if(any)for(int s=0;s<ctx.n_subcatches();++s){
     for(int p=0;p<np&&p<ctx.n_pollutants();++p){
     auto idx=static_cast<size_t>(s)*static_cast<size_t>(np)+static_cast<size_t>(p);
-    if(idx>=ctx.subcatches.conc.size())break;
-    const double w=ctx.subcatches.conc[idx];
+    if(idx>=ctx.subcatches.init_loading.size())break;
+    const double w=ctx.subcatches.init_loading[idx];
     if(w==0.0)continue;
     std::fprintf(f,"%-16s %-16s %10.4f\n",
         ctx.subcatch_names.name_of(s).c_str(),pN(ctx,p),w);

@@ -319,8 +319,12 @@ protected:
             ctx.subcatches.sweep_last_swept[0 * 2 + 0] = 1.0;
 
             ctx.subcatches.resize_quality(1);
-            ctx.subcatches.conc[0 * 1 + 0] = 1.5;        // S1/TSS loading
-            ctx.subcatches.conc[1 * 1 + 0] = 2.25;       // S2/TSS loading
+            // [LOADINGS] is an initial surface BUILDUP per unit area, and
+            // it lives in its own array — it used to be parked in `conc`,
+            // the reported washoff concentration, where nothing could read
+            // it back as a loading.
+            ctx.subcatches.init_loading[0 * 1 + 0] = 1.5;   // S1/TSS loading
+            ctx.subcatches.init_loading[1 * 1 + 0] = 2.25;  // S2/TSS loading
         }
 
         // --- PATTERNS ---
@@ -1306,8 +1310,8 @@ TEST_F(GeoPackageTest, QualityTablesRoundTrip) {
     EXPECT_DOUBLE_EQ(ctx_in.subcatches.sweep_last_swept[s1 * nLu + res], 1.0);
 
     ASSERT_EQ(ctx_in.subcatches.conc_n_pollutants, 1);
-    EXPECT_DOUBLE_EQ(ctx_in.subcatches.conc[s1 * np + 0], 1.5);
-    EXPECT_DOUBLE_EQ(ctx_in.subcatches.conc[s2 * np + 0], 2.25);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.init_loading[s1 * np + 0], 1.5);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.init_loading[s2 * np + 0], 2.25);
 }
 
 TEST_F(GeoPackageTest, PatternsRoundTrip) {

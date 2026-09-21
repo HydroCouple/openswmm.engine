@@ -544,7 +544,7 @@ SWMM_ENGINE_API int swmm_subcatch_set_initial_loading(SWMM_Engine engine, int sc
     CHECK_INDEX(pollut_idx >= 0 && pollut_idx < ctx.n_pollutants());
 
     // Ensure the quality arrays are sized ([LOADINGS] parks the initial
-    // buildup in subcatches.conc — same storage handle_loadings uses).
+    // buildup in subcatches.init_loading — same storage handle_loadings uses).
     if (ctx.subcatches.conc_n_pollutants != ctx.n_pollutants() ||
         static_cast<int>(ctx.subcatches.conc.size()) !=
             ctx.n_subcatches() * ctx.n_pollutants()) {
@@ -554,7 +554,7 @@ SWMM_ENGINE_API int swmm_subcatch_set_initial_loading(SWMM_Engine engine, int sc
     auto k = static_cast<std::size_t>(sc_idx) *
              static_cast<std::size_t>(ctx.n_pollutants()) +
              static_cast<std::size_t>(pollut_idx);
-    ctx.subcatches.conc[k] = buildup;
+    ctx.subcatches.init_loading[k] = buildup;
     return SWMM_OK;
 }
 
@@ -575,7 +575,7 @@ SWMM_ENGINE_API int swmm_subcatch_get_initial_loading(SWMM_Engine engine, int sc
     }
     CHECK_INDEX(pollut_idx >= 0 && pollut_idx < ctx.n_pollutants());
 
-    if (ctx.subcatches.conc.empty() ||
+    if (ctx.subcatches.init_loading.empty() ||
         ctx.subcatches.conc_n_pollutants != ctx.n_pollutants()) {
         if (buildup) *buildup = 0.0;
         return SWMM_OK;
@@ -584,7 +584,7 @@ SWMM_ENGINE_API int swmm_subcatch_get_initial_loading(SWMM_Engine engine, int sc
     auto k = static_cast<std::size_t>(sc_idx) *
              static_cast<std::size_t>(ctx.n_pollutants()) +
              static_cast<std::size_t>(pollut_idx);
-    if (buildup) *buildup = ctx.subcatches.conc[k];
+    if (buildup) *buildup = ctx.subcatches.init_loading[k];
     return SWMM_OK;
 }
 

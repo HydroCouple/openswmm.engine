@@ -707,6 +707,11 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
 
         // Write back to SimulationContext
         ctx.subcatches.runoff[ui]     = newRunoff;
+        // legacy subcatch_getRunoff's RETURN (`runoff / area`, ft/sec) — the
+        // rate the surface-quality paths wash off with. Mirrored onto the
+        // context so the pollutant and reactions-species kernels share one
+        // number; see SubcatchData::subarea_runoff_rate.
+        ctx.subcatches.subarea_runoff_rate[ui] = soa_.subarea_runoff_rate[ui];
         ctx.subcatches.evap_loss[ui]  = evapLoss;
         ctx.subcatches.infil_loss[ui] = infilLoss;
         // The volumes themselves, for the groundwater step: legacy hands

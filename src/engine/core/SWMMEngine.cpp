@@ -3312,13 +3312,50 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
     if (ctx_.n_pollutants() > 0 && ctx_.n_landuses() > 0) {
         int np = ctx_.n_pollutants();
         int nlu = ctx_.n_landuses();
-        constexpr double MIN_RUNOFF_RATE = 1.0e-9; // ft/sec threshold
+        // legacy consts.h MIN_RUNOFF: 2.31481e-8 ft/sec = 0.001 in/hr.
+        constexpr double MIN_RUNOFF_FTS = 2.31481e-8;
         double dt_days = dt_runoff / ucf::SEC_PER_DAY;
 
+        const double ucf_landarea_sq = ucf::UCF(ucf::LANDAREA, ctx_.options);
         for (int i = 0; i < ctx_.n_subcatches(); ++i) {
             auto ui = static_cast<std::size_t>(i);
+            // `q` is legacy's Voutflow / tStep — the PRE-LID runoff volume
+            // rate. stepSurfaceQuality runs before the LID block subtracts
+            // the captured share (A4c precedes A6), exactly as legacy's
+            // surfqual_getWashoff reads the Voutflow accumulated by
+            // subcatch_getRunoff.
             double q = ctx_.subcatches.runoff[ui];  // cfs
             double area_ac = ctx_.subcatches.area[ui]; // acres
+            const double area_ft2_sc = area_ac / ucf_landarea_sq;
+
+            // legacy's `runoff` argument to findWashoffLoads /
+            // landuse_getWashoffQual: the area-averaged subarea runoff RATE
+            // in ft/sec (subcatch_getRunoff's return, `runoff / area`), which
+            // carries NO fOutlet and no LID adjustment. Using Voutflow/area
+            // instead understates it on any deck with inter-subarea routing.
+            const double runoff_fts = (ui < ctx_.subcatches.subarea_runoff_rate.size())
+                                    ? ctx_.subcatches.subarea_runoff_rate[ui] : 0.0;
+
+            // legacy surfqual_getWashoff (surfqual.c:305-316): the washoff
+            // CONCENTRATION denominator is the pre-LID inflow volume
+            //     vOut1 = Voutflow + vLidRain + vLidRunon
+            // — rain landing on the LID footprint, and the subcatchment's
+            // run-on when the units cover it entirely, are water that dilutes
+            // the washoff without carrying any of it. v6 divided by the
+            // runoff alone, so a fully LID-covered subcatchment reported its
+            // undiluted EMC: variations-on-emc's wRG_O_100 read a flat
+            // 100 mg/L where legacy ramps 60 -> 84 -> 92 -> 95 as surface
+            // runoff grows against the rain on the rain garden.
+            double q_out1 = q;
+            {
+                const double lid_ft2_sc = (ui < ctx_.subcatches.total_lid_area_ft2.size())
+                                        ? ctx_.subcatches.total_lid_area_ft2[ui] : 0.0;
+                if (lid_ft2_sc > 0.0) {
+                    q_out1 += ctx_.subcatches.rainfall[ui] * lid_ft2_sc;
+                    if (area_ft2_sc == lid_ft2_sc)
+                        q_out1 += ctx_.subcatches.runon_rate[ui] * area_ft2_sc;
+                }
+            }
 
             for (int p = 0; p < np; ++p) {
                 auto sq_idx = ui * static_cast<std::size_t>(np)
@@ -3444,7 +3481,11 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                     }
 
                     // --- Washoff computation (matching legacy surfqual_getWashoff)
-                    if (wp.type != landuse::WashoffType::NONE && q > MIN_RUNOFF_RATE) {
+                    // legacy findWashoffLoads returns early below MIN_RUNOFF
+                    // (consts.h 2.31481e-8 ft/sec = 0.001 in/hr), tested on
+                    // the ft/sec rate — not on a cfs flow against 1e-9.
+                    if (wp.type != landuse::WashoffType::NONE &&
+                        runoff_fts >= MIN_RUNOFF_FTS) {
                         double buildup = surface_quality_.buildup[bu];
 
                         // Unit conversions matching legacy landuse_getWashoffLoad:
@@ -3452,10 +3493,19 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                         //     q_expon = (q_cfs / area_ft2) * UCF(RAINFALL)
                         //   RATING and EMC use volumetric flow in display units:
                         //     q_flow = q_cfs * UCF(FLOW)
-                        double area_ft2 = area_ac * 43560.0;
-                        double q_expon  = (area_ft2 > 0.0)
-                            ? (q / area_ft2) * ucf::UCF(ucf::RAINFALL, ctx_.options)
-                            : 0.0;
+                        // legacy keeps Subcatch.area in ft2 as
+                        // area / UCF(LANDAREA) — 43561.6 ft2 per ACRE and
+                        // 107639 per HECTARE. The exact-acre 43560 is
+                        // 3.7e-5 off on a US deck and a factor 2.471 off
+                        // on an SI one;
+                        // on swmm5buildupwashoff (CMS) that made the EXPON
+                        // washoff's unit runoff 2.471x too high, so the
+                        // 40 kg of SF1 on the ground left in three report
+                        // periods instead of ten.
+                        double area_ft2 = area_ac / ucf::UCF(ucf::LANDAREA, ctx_.options);
+                        (void)area_ft2;
+                        double q_expon = runoff_fts
+                                       * ucf::UCF(ucf::RAINFALL, ctx_.options);
                         double q_flow   = q * ucf::UCF(ucf::FLOW, ctx_.options);
 
                         // `load` is in CONCENTRATION MASS UNITS per second
@@ -3564,7 +3614,8 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                 if (sq_idx < ctx_.subcatches.ponded_qual.size()) {
                     constexpr double L_PER_FT3 = 28.317;  // liters per ft3
                     auto up = static_cast<std::size_t>(p);
-                    double area_ft2_pq = area_ac * 43560.0;
+                    double area_ft2_pq = area_ac
+                                       / ucf::UCF(ucf::LANDAREA, ctx_.options);
 
                     // Rainfall at this subcatch (ft/sec)
                     double rrate = ctx_.gages.rainfall.empty() ? 0.0
@@ -3659,7 +3710,8 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                         if (w_lid_rain > 0.0)
                             total_washoff_load += w_lid_rain / dt_runoff;
                         // Runon quality (only when LIDs cover full subcatchment)
-                        double full_ft2 = ctx_.subcatches.area[ui] * 43560.0;
+                        double full_ft2 = ctx_.subcatches.area[ui]
+                                        / ucf::UCF(ucf::LANDAREA, ctx_.options);
                         if (std::fabs(lid_ft2 - full_ft2) < 1.0) {
                             double q_runon37 = ctx_.subcatches.runon_inflow[ui];  // CFS
                             double c_old37 = (sq_idx < ctx_.subcatches.conc_old.size())
@@ -3684,8 +3736,8 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                 // for EXPON and RATING it is a real correction — their
                 // concentrations were in incompatible units before this.
                 double conc = 0.0;
-                if (q > MIN_RUNOFF_RATE && total_washoff_load > 0.0)
-                    conc = total_washoff_load / q / kLperFt3;
+                if (q_out1 > 0.0 && total_washoff_load > 0.0)
+                    conc = total_washoff_load / q_out1 / kLperFt3;
 
                 ctx_.subcatches.conc[sq_idx] = conc;
 
@@ -5985,9 +6037,18 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                         snap.subcatch_quality[s * nr_s + temp_i] =
                             ctx_.heat_state.subcatch_runoff_temp[s];
 
+                    // The gate is legacy's OWN reported runoff — the one
+                    // interpolated onto the report instant, with the LID
+                    // drain added and the MIN_RUNOFF * area cutoff applied
+                    // (subcatch.c:894-905, then :927-931 `if (runoff ==
+                    // 0.0) z = 0.0`). Testing the raw NEW state instead let
+                    // a subcatchment whose reported runoff had been zeroed
+                    // publish a washoff concentration anyway: every EMC
+                    // deck reported its full concentration at period 0,
+                    // where legacy reports 0 because no water has left yet.
                     const bool has_runoff =
-                        (s < ctx_.subcatches.runoff.size() &&
-                         ctx_.subcatches.runoff[s] != 0.0);
+                        (s < snap.subcatch.runoff.size() &&
+                         snap.subcatch.runoff[s] != 0.0);
                     if (!has_runoff) continue;
                     for (std::size_t p = 0; p < np_s; ++p) {
                         const std::size_t src = s * np_s + p;
@@ -8242,11 +8303,28 @@ void SWMMEngine::initQuality() noexcept {
         // Initialize quality mass balance vectors
         ctx_.mass_balance.resize_quality(np);
 
-        // Compute initial buildup from antecedent dry days
-        // (matching legacy landuse_getInitBuildup)
-        // Buildup is stored PER LAND USE: buildup[bu_idx(sc,lu,p)] = mass/normalizer
-        double dry_days = ctx_.options.dry_days;
-        if (dry_days > 0.0 && ctx_.n_landuses() > 0) {
+        // Initial surface buildup — legacy landuse_getInitBuildup
+        // (landuse.c:347-400), which runs for EVERY land use of EVERY
+        // subcatchment whatever DRY_DAYS is, and takes one of two branches
+        // per pollutant:
+        //
+        //   a [LOADINGS] initial loading, if one was supplied, seeds
+        //   `initBuildup[p] * fArea` — a mass per unit AREA, applied whether
+        //   or not the land use has a buildup function at all;
+        //
+        //   otherwise the land use's own buildup function is run over the
+        //   antecedent dry period.
+        //
+        // v6 ran only the second branch, and only when DRY_DAYS was
+        // positive, so every [LOADINGS] row was inert. swmm5buildupwashoff
+        // starts legacy with 40 kg of SF1 on the ground and started v6 with
+        // nothing — its first-flush washoff read 1.9 mg/L against legacy's
+        // 3600.
+        //
+        // Buildup is stored PER LAND USE and PER NORMALIZER UNIT:
+        // buildup[bu_idx(sc,lu,p)] * norm is the absolute mass.
+        const double dry_days = ctx_.options.dry_days;
+        if (ctx_.n_landuses() > 0) {
             for (int i = 0; i < ctx_.n_subcatches(); ++i) {
                 auto ui = static_cast<std::size_t>(i);
                 for (int lu = 0; lu < nlu; ++lu) {
@@ -8256,34 +8334,52 @@ void SWMMEngine::initQuality() noexcept {
                                   ? ctx_.subcatches.coverage[cov_idx] / 100.0 : 0.0;
                     if (frac <= 0.0) continue;
 
+                    // legacy fArea = fraction * area, in the user's land-area
+                    // units (landuse.c:377) — the [LOADINGS] multiplier.
+                    const double f_area = frac * ctx_.subcatches.area[ui];
+
                     for (int p = 0; p < np; ++p) {
                         auto k = static_cast<std::size_t>(lu * np + p);
                         const auto& bp = landuse_solver_.buildup_params[k];
-                        if (bp.type == landuse::BuildupType::NONE) continue;
 
-                        double mass = 0.0;
-                        double c0 = bp.coeff[0], c1 = bp.coeff[1], c2 = bp.coeff[2];
-                        switch (bp.type) {
-                            case landuse::BuildupType::POWER:
-                                mass = std::min(c1 * std::pow(dry_days, c2), c0);
-                                break;
-                            case landuse::BuildupType::EXPON:
-                                mass = c0 * (1.0 - std::exp(-c1 * dry_days));
-                                break;
-                            case landuse::BuildupType::SATUR:
-                                mass = (c2 + dry_days > 0.0) ? c0 * dry_days / (c2 + dry_days) : 0.0;
-                                break;
-                            default: break;
+                        const double norm = (bp.normalizer == 0)
+                            ? f_area : frac * ctx_.subcatches.curb_length[ui];
+
+                        const auto li = ui * static_cast<std::size_t>(np)
+                                      + static_cast<std::size_t>(p);
+                        const double init_load =
+                            (li < ctx_.subcatches.init_loading.size())
+                                ? ctx_.subcatches.init_loading[li] : 0.0;
+
+                        double mass = 0.0;   // per normalizer unit
+                        if (init_load > 0.0) {
+                            // Legacy multiplies the loading by fArea whatever
+                            // the buildup function's own normalizer is, so
+                            // convert into the per-normalizer store. For the
+                            // PER_AREA default norm IS f_area and the ratio
+                            // is exactly 1.
+                            if (norm > 0.0) mass = init_load * f_area / norm;
+                        } else if (bp.type != landuse::BuildupType::NONE &&
+                                   dry_days > 0.0) {
+                            double c0 = bp.coeff[0], c1 = bp.coeff[1], c2 = bp.coeff[2];
+                            switch (bp.type) {
+                                case landuse::BuildupType::POWER:
+                                    mass = std::min(c1 * std::pow(dry_days, c2), c0);
+                                    break;
+                                case landuse::BuildupType::EXPON:
+                                    mass = c0 * (1.0 - std::exp(-c1 * dry_days));
+                                    break;
+                                case landuse::BuildupType::SATUR:
+                                    mass = (c2 + dry_days > 0.0) ? c0 * dry_days / (c2 + dry_days) : 0.0;
+                                    break;
+                                default: break;
+                            }
+                        } else {
+                            continue;
                         }
 
-                        // Store per-landuse buildup (per normalizer unit)
                         auto bu = surface_quality_.bu_idx(i, lu, p);
                         surface_quality_.buildup[bu] = mass;
-
-                        // Normalize to absolute mass for mass balance
-                        double norm = (bp.normalizer == 0)
-                            ? frac * ctx_.subcatches.area[ui]
-                            : frac * ctx_.subcatches.curb_length[ui];
                         ctx_.mass_balance.qual_init_buildup[static_cast<std::size_t>(p)] += mass * norm;
                     }
                 }

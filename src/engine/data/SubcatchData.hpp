@@ -386,6 +386,32 @@ struct SubcatchData {
      *  @see Legacy: Subcatch[i].pondedQual[] */
     std::vector<double> ponded_qual;
 
+    /**
+     * @brief Area-averaged subarea runoff RATE, ft/sec — legacy's
+     *        `subcatch_getRunoff` return value (`runoff / area`).
+     * @details The quantity legacy hands findWashoffLoads and
+     *          landuse_getWashoffQual. It is NOT `runoff` (cfs): it carries
+     *          no fOutlet and no LID adjustment, and it never round-trips
+     *          through a volume, so the two surface-quality paths (pollutant
+     *          and reactions species) that both need it read one number
+     *          rather than each re-deriving it a ULP apart.
+     */
+    std::vector<double> subarea_runoff_rate;
+
+    /**
+     * @brief The [LOADINGS] initial surface buildup, mass per unit AREA.
+     * @details Size = n_subcatches * n_pollutants. This is NOT a
+     *          concentration: legacy seeds each land use with
+     *          `initBuildup[p] * fArea` in landuse_getInitBuildup
+     *          (landuse.c:388-395), whatever DRY_DAYS is and whether or not
+     *          the land use has a buildup function. It used to be parked in
+     *          `conc`, which is the reported washoff concentration — so it
+     *          was both unreachable by the initial-buildup seeding and able
+     *          to leak into the first reported concentration.
+     * @see Legacy: Subcatch[i].initBuildup[]
+     */
+    std::vector<double> init_loading;
+
     /** @brief Number of pollutants in the quality arrays. */
     int                 conc_n_pollutants = 0;
 
@@ -673,6 +699,7 @@ struct SubcatchData {
         frac_imperv.assign(un, 0.0);
         frac_imperv_no_store.assign(un, 0.0);
         pct_zero.assign(un, 0.0);
+        subarea_runoff_rate.assign(un, 0.0);
         n_imperv.assign(un, 0.013);
         n_perv.assign(un, 0.1);
         ds_imperv.assign(un, 0.0);
@@ -769,6 +796,7 @@ struct SubcatchData {
         g(area, 0.0); g(width, 0.0); g(slope, 0.0); g(curb_length, 0.0);
         g(rain_scale_factor, 1.0); g(snow_scale_factor, 1.0);
         g(frac_imperv, 0.0); g(frac_imperv_no_store, 0.0); g(pct_zero, 0.0);
+        g(subarea_runoff_rate, 0.0);
         g(n_imperv, 0.013); g(n_perv, 0.1);
         g(ds_imperv, 0.0); g(ds_perv, 0.0);
         g(subarea_routing, 0); g(pct_routed, 0.0);
@@ -843,7 +871,7 @@ struct SubcatchData {
         r(outlet_node); r(outlet_subcatch); r(gage); r(area);
         r(width); r(slope); r(curb_length); r(rain_scale_factor);
         r(snow_scale_factor); r(frac_imperv); r(frac_imperv_no_store);
-        r(pct_zero); r(n_imperv);
+        r(pct_zero); r(subarea_runoff_rate); r(n_imperv);
         r(n_perv); r(ds_imperv); r(ds_perv); r(subarea_routing);
         r(pct_routed); r(infil_model); r(infil_p1); r(infil_p2);
         r(infil_p3); r(infil_p4); r(infil_p5); r(runoff);
@@ -881,7 +909,8 @@ struct SubcatchData {
         e(outlet_node); e(outlet_subcatch); e(outlet_name); e(gage);
         e(area); e(width); e(slope); e(curb_length);
         e(rain_scale_factor); e(snow_scale_factor);
-        e(frac_imperv); e(frac_imperv_no_store); e(pct_zero); e(n_imperv); e(n_perv);
+        e(frac_imperv); e(frac_imperv_no_store); e(pct_zero);
+        e(subarea_runoff_rate); e(n_imperv); e(n_perv);
         e(ds_imperv); e(ds_perv); e(subarea_routing); e(pct_routed);
 
         e(infil_model); e(infil_p1); e(infil_p2); e(infil_p3); e(infil_p4); e(infil_p5);
@@ -917,7 +946,8 @@ struct SubcatchData {
                     v.erase(v.begin() + static_cast<std::ptrdiff_t>(base),
                             v.begin() + static_cast<std::ptrdiff_t>(base + np));
             };
-            erase2d(conc); erase2d(conc_old); erase2d(ponded_qual); erase2d(washoff_load);
+            erase2d(conc); erase2d(conc_old); erase2d(init_loading);
+            erase2d(ponded_qual); erase2d(washoff_load);
         }
 
         // Flat 2D total load: [sc * np + p]
@@ -953,6 +983,7 @@ struct SubcatchData {
                          static_cast<std::size_t>(n_pollutants);
             conc.assign(total, 0.0);
             conc_old.assign(total, 0.0);
+            init_loading.assign(total, 0.0);
             ponded_qual.assign(total, 0.0);
             washoff_load.assign(total, 0.0);
         }
@@ -983,6 +1014,7 @@ struct SubcatchData {
         frac_imperv.shrink_to_fit();
         frac_imperv_no_store.shrink_to_fit();
         pct_zero.shrink_to_fit();
+        subarea_runoff_rate.shrink_to_fit();
         n_imperv.shrink_to_fit();
         n_perv.shrink_to_fit();
         ds_imperv.shrink_to_fit();

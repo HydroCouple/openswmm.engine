@@ -298,6 +298,13 @@ void step(SimulationContext& ctx, double dt_runoff, double abs_time) {
         const auto ui = static_cast<std::size_t>(i);
         const double q       = ctx.subcatches.runoff[ui];    // cfs
         const double area_ac = ctx.subcatches.area[ui];      // acres (LANDAREA units)
+        // legacy's washoff `runoff` argument: the area-averaged subarea rate
+        // in ft/sec (subcatch_getRunoff's return). Shared with the pollutant
+        // kernel so the two stay bit-identical — deriving it here as
+        // q / area_ft2 lands a ULP away, because q has round-tripped through
+        // a volume (Voutflow * dt / dt).
+        const double runoff_fts = (ui < ctx.subcatches.subarea_runoff_rate.size())
+                                ? ctx.subcatches.subarea_runoff_rate[ui] : 0.0;
         for (int m = 0; m < nm; ++m) {
             const double mcf_m = s.mcf[static_cast<std::size_t>(m)];
             double total_load = 0.0;   // concentration-mass units / s
@@ -351,10 +358,21 @@ void step(SimulationContext& ctx, double dt_runoff, double abs_time) {
 
                 // --- Washoff (stepSurfaceQuality) -----------------------------
                 const int wt = s.wo_type[k];
-                if (wt != 0 && q > kMinRunoffRate) {
+                // legacy findWashoffLoads returns below MIN_RUNOFF
+                // (2.31481e-8 ft/sec), on the ft/sec rate.
+                if (wt != 0 && runoff_fts >= 2.31481e-8) {
                     const double buildup  = s.buildup[bu];
-                    const double area_ft2 = area_ac * 43560.0;
-                    const double q_expon  = (area_ft2 > 0.0) ? (q / area_ft2) * ucf_rain : 0.0;
+                    // legacy keeps Subcatch.area in ft2 as area / UCF(LANDAREA)
+                    // — 43561.6 ft2 per ACRE, 107639 per HECTARE. The
+                    // exact-acre constant is 3.7e-5 off on a US deck and a
+                    // factor 2.471 off on an SI one. The pollutant path
+                    // (SWMMEngine::stepSurfaceQuality) carries the same
+                    // correction; SameParametersSameSurfaceLoads asserts the
+                    // two stay bit-identical, so they move together.
+                    const double area_ft2 =
+                        area_ac / ucf::UCF(ucf::LANDAREA, ctx.options);
+                    (void)area_ft2;
+                    const double q_expon  = runoff_fts * ucf_rain;
                     const double q_flow   = q * ucf_flow;
                     double load = 0.0;
                     switch (wt) {

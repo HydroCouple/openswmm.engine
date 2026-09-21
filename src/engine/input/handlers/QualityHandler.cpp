@@ -447,8 +447,10 @@ void handle_loadings(SimulationContext& ctx, const std::vector<std::string>& lin
         if (p_idx < 0) continue;
 
         const auto flat = static_cast<std::size_t>(sub_idx * n_pollutants + p_idx);
-        if (flat < ctx.subcatches.conc.size()) {
-            ctx.subcatches.conc[flat] = to_double(tok[2]);
+        // The row is an initial surface BUILDUP per unit area, not a runoff
+        // concentration — see SubcatchData::init_loading.
+        if (flat < ctx.subcatches.init_loading.size()) {
+            ctx.subcatches.init_loading[flat] = to_double(tok[2]);
         }
     }
 }
