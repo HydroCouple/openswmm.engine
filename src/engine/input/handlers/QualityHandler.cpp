@@ -82,9 +82,41 @@
 #include "../../core/Constants.hpp"
 
 #include <charconv>
+#include <initializer_list>
 #include <string>
 
 namespace openswmm::input {
+
+namespace {
+
+/// Legacy `findmatch(tok, Words)` (input.c:791) over a keyword list, where
+/// `match(str, substr)` (input.c:805) returns true when the KEYWORD is a
+/// PREFIX of the token — not when the two are equal.
+///
+/// That distinction is load-bearing here. Legacy's BuildupTypeWords are the
+/// three-letter stems POW / EXP / SAT / EXT and its WashoffTypeWords are
+/// EXP / RC / EMC, while decks — including everything the SWMM GUI writes —
+/// spell the functions out as POWER, EXPON, SATUR, EXTERNAL. Comparing for
+/// equality left `func_type` at NONE for every one of them, so the land use
+/// silently had NO buildup function: nothing accumulated over the antecedent
+/// dry period and there was nothing for the washoff to wash off.
+///
+/// Returns the keyword's index, or -1 for no match.
+int findmatch_prefix(const std::string& token,
+                     std::initializer_list<const char*> words) {
+    int i = 0;
+    for (const char* w : words) {
+        // The tokenizer has already stripped the leading blanks legacy's
+        // match() skips, so this is a plain prefix test.
+        const std::size_t n = std::char_traits<char>::length(w);
+        if (n > 0 && token.size() >= n && token.compare(0, n, w) == 0)
+            return i;
+        ++i;
+    }
+    return -1;
+}
+
+}  // namespace
 
 // ============================================================================
 // handle_pollutants()
@@ -268,7 +300,8 @@ void handle_buildup(SimulationContext& ctx, const std::vector<std::string>& line
             MsxSurfaceRows::Buildup r;
             r.landuse = tok[0]; r.species = tok[1];
             const std::string ts = Tokenizer::to_upper(tok[2]);
-            r.func_type = (ts == "POW") ? 1 : (ts == "EXP") ? 2 : (ts == "SAT") ? 3 : (ts == "EXT") ? 4 : 0;
+            const int mbt = findmatch_prefix(ts, {"NONE", "POW", "EXP", "SAT", "EXT"});
+            r.func_type = (mbt >= 0) ? mbt : 0;
             r.c1 = to_double(tok[3]);
             r.c2 = to_double(tok[4]);
             if (tok.size() > 5) {
@@ -283,13 +316,13 @@ void handle_buildup(SimulationContext& ctx, const std::vector<std::string>& line
 
         const auto flat = static_cast<std::size_t>(lu_idx * n_pollutants + p_idx);
 
-        // Type: NONE=0, POW=1, EXP=2, SAT=3, EXT=4
+        // Type: NONE=0, POW=1, EXP=2, SAT=3, EXT=4 — legacy BuildupTypeWords,
+        // matched by PREFIX so the decks' POWER / EXPON / SATUR / EXTERNAL
+        // reach their stems (see findmatch_prefix).
         const std::string type_str = Tokenizer::to_upper(tok[2]);
-        if      (type_str == "POW") ctx.buildup.func_type[flat] = 1;
-        else if (type_str == "EXP") ctx.buildup.func_type[flat] = 2;
-        else if (type_str == "SAT") ctx.buildup.func_type[flat] = 3;
-        else if (type_str == "EXT") ctx.buildup.func_type[flat] = 4;
-        else                        ctx.buildup.func_type[flat] = 0;
+        const int bt = findmatch_prefix(type_str,
+                                        {"NONE", "POW", "EXP", "SAT", "EXT"});
+        ctx.buildup.func_type[flat] = (bt >= 0) ? bt : 0;
 
         ctx.buildup.coeff1[flat] = to_double(tok[3]);
         ctx.buildup.coeff2[flat] = to_double(tok[4]);
@@ -342,7 +375,8 @@ void handle_washoff(SimulationContext& ctx, const std::vector<std::string>& line
             MsxSurfaceRows::Washoff r;
             r.landuse = tok[0]; r.species = tok[1];
             const std::string ts = Tokenizer::to_upper(tok[2]);
-            r.func_type = (ts == "EXP") ? 1 : (ts == "RC") ? 2 : (ts == "EMC") ? 3 : 0;
+            const int mwt = findmatch_prefix(ts, {"NONE", "EXP", "RC", "EMC"});
+            r.func_type = (mwt >= 0) ? mwt : 0;
             r.coeff = to_double(tok[3]);
             r.expon = to_double(tok[4]);
             if (tok.size() > 5) r.sweep_effic = to_double(tok[5]);
@@ -354,12 +388,12 @@ void handle_washoff(SimulationContext& ctx, const std::vector<std::string>& line
 
         const auto flat = static_cast<std::size_t>(lu_idx * n_pollutants + p_idx);
 
-        // Type: NONE=0, EXP=1, RC=2, EMC=3
+        // Type: NONE=0, EXP=1, RC=2, EMC=3 — legacy WashoffTypeWords, matched
+        // by PREFIX so a deck spelling EXPON reaches EXP (see
+        // findmatch_prefix).
         const std::string type_str = Tokenizer::to_upper(tok[2]);
-        if      (type_str == "EXP") ctx.washoff.func_type[flat] = 1;
-        else if (type_str == "RC")  ctx.washoff.func_type[flat] = 2;
-        else if (type_str == "EMC") ctx.washoff.func_type[flat] = 3;
-        else                        ctx.washoff.func_type[flat] = 0;
+        const int wt = findmatch_prefix(type_str, {"NONE", "EXP", "RC", "EMC"});
+        ctx.washoff.func_type[flat] = (wt >= 0) ? wt : 0;
 
         ctx.washoff.coeff[flat] = to_double(tok[3]);
         ctx.washoff.expon[flat] = to_double(tok[4]);
