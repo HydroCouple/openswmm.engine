@@ -1710,6 +1710,13 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         // lid_drain_flow is zeroed after the roll (legacy lid.c:1341-1342) and
         // re-accumulated by the A6b drain-routing loop later this substep.
         ctx_.subcatches.save_state();
+        // The MSX species mirror of conc_old. save_state() only knows the
+        // pollutant arrays, so the species washoff concentration is rolled
+        // here, on the same runoff cadence, for the same reason: the delivery
+        // seam interpolates between the two runoff steps and needs both ends.
+        if (ctx_.reactions.surface.active())
+            ctx_.reactions.surface.washoff_conc_old =
+                ctx_.reactions.surface.washoff_conc;
         for (int i = 0; i < ctx_.n_subcatches(); ++i) {
             auto ui = static_cast<std::size_t>(i);
             ctx_.subcatches.old_gw_flow[ui] = ctx_.subcatches.gw_flow[ui];
@@ -2775,6 +2782,10 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
     double f = (span > 0.0) ? (ctx_.elapsed_ms - old_runoff_ms_) / span : 1.0;
     if (f < 0.0) f = 0.0;
     if (f > 1.0) f = 1.0;
+    // Publish it: the quality loaders weight the washoff load with the SAME
+    // number legacy weights the runoff flow with, one line apart in
+    // addWetWeatherInflows. They had been assuming a midpoint.
+    ctx_.runoff_interp_f = f;
 
     // Zero decomposed node inflow arrays before accumulating from subcatchments.
     // Multiple subcatchments may drain to the same node, so we must use += below,
@@ -3532,8 +3543,19 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                     // legacy findWashoffLoads returns early below MIN_RUNOFF
                     // (consts.h 2.31481e-8 ft/sec = 0.001 in/hr), tested on
                     // the ft/sec rate — not on a cfs flow against 1e-9.
+                    // legacy landuse_getWashoffLoad closes with
+                    //   washoffLoad = washoffQual * vOutflow * landuseArea/area
+                    // — the load is PROPORTIONAL to vOutflow, the runoff
+                    // volume that actually leaves the subcatchment. A
+                    // subcatchment covered entirely by LID has Voutflow = 0
+                    // and therefore washes off NOTHING, whatever is on the
+                    // ground. `q` here is that same number (legacy's
+                    // Voutflow/tStep), and requiring it keeps the all-LID case
+                    // at zero; where runoff does leave, the magnitude already
+                    // matches legacy exactly (runoff44-sw5's Surface Runoff
+                    // ledger term is exact), so this only closes the zero end.
                     if (wp.type != landuse::WashoffType::NONE &&
-                        runoff_fts >= MIN_RUNOFF_FTS) {
+                        runoff_fts >= MIN_RUNOFF_FTS && q > 0.0) {
                         double buildup = surface_quality_.buildup[bu];
 
                         // Unit conversions matching legacy landuse_getWashoffLoad:

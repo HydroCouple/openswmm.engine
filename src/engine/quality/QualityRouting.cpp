@@ -531,10 +531,21 @@ void QualitySolver::addWetWeatherLoads(SimulationContext& ctx, double dt) {
         if (out_node < 0 || out_node >= ctx.n_nodes()) continue;
         auto ud = static_cast<std::size_t>(out_node);
 
-        // Time-weighted runoff: blend old and new (trapezoidal rule preserved)
+        // legacy addWetWeatherInflows (routing.c:713-719) weights both the
+        // runoff flow and the washoff load beside it by where THIS routing
+        // instant falls between the two runoff times:
+        //     f = (routingTime - OldRunoffTime)/(NewRunoffTime - OldRunoffTime)
+        // This used a fixed midpoint, 0.5*(old + new), for both. With a 60 s
+        // routing step inside a 15-minute runoff step legacy sweeps f from 0
+        // to 1 across fifteen steps while this delivered the average every
+        // time, so a storm's load arrived on the wrong schedule — and the
+        // FLOW side of the same seam (assembleLateralInflows) had been using
+        // legacy's f all along, so the two halves disagreed with each other.
+        const double f  = ctx.runoff_interp_f;
+        const double f1 = 1.0 - f;
         double q_new = ctx.subcatches.runoff[ui];
         double q_old = ctx.subcatches.old_runoff[ui];
-        double q = 0.5 * (q_old + q_new);
+        double q = f1 * q_old + f * q_new;
         if (q <= 0.0) continue;
 
         ctx.nodes.qual_vol_in[ud] += q * dt;
@@ -585,8 +596,11 @@ void QualitySolver::addWetWeatherLoads(SimulationContext& ctx, double dt) {
             double c_new = (sc_idx < ctx.subcatches.conc.size()) ? ctx.subcatches.conc[sc_idx] : 0.0;
             double c_old = (sc_idx < ctx.subcatches.conc_old.size()) ? ctx.subcatches.conc_old[sc_idx] : 0.0;
 
-            // Mass flow rate = weighted (q*c) — trapezoidal rule preserved
-            double mass_rate = 0.5 * (q_old * c_old + q_new * c_new);
+            // legacy surfqual_getWtdWashoff: the interpolated PRODUCT
+            // runoff*conc, not the product of the two interpolations — so the
+            // effective concentration the node sees is not the interpolated
+            // concentration. Same f as the flow above.
+            double mass_rate = f1 * (q_old * c_old) + f * (q_new * c_new);
 
             if (mass_rate > 0.0 && nd_idx < ctx.nodes.qual_mass_in.size()) {
                 ctx.nodes.qual_mass_in[nd_idx] += mass_rate;

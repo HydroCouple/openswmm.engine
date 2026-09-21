@@ -480,6 +480,19 @@ struct SimulationContext {
     double next_report_ms = 0.0;
 
     /**
+     * @brief Where this routing instant falls between the two runoff times.
+     * @details Legacy's `f = (routingTime - OldRunoffTime) /
+     *          (NewRunoffTime - OldRunoffTime)`, clamped to [0,1]
+     *          (routing.c:707). It weights EVERY subcatchment quantity handed
+     *          to a node this step — the runoff flow in
+     *          addWetWeatherInflows, and the washoff load right beside it in
+     *          surfqual_getWtdWashoff. SWMMEngine::assembleLateralInflows
+     *          forms it and publishes it here so the quality loaders use the
+     *          same number rather than assuming a midpoint.
+     */
+    double runoff_interp_f = 1.0;
+
+    /**
      * @brief Time remaining until the next control rule event (seconds).
      *
      * @details 0.0 means no control step scheduled; updated by the control
