@@ -84,6 +84,7 @@ covers the formulations instead.
 - @subpage application_manual_ch1_choosing — Chapter 1: Choosing a Formulation
 - @subpage application_manual_ch2_filling_pipe — Chapter 2: A Filling Pipe under the Dynamic Wave and Finite-Volume Routers
 - @subpage application_manual_ch3_subatmospheric — Chapter 3: A Sub-Atmospheric Transient
+- @subpage application_manual_ch4_virtual_junctions — Chapter 4: Virtual Junctions on a Surveyed Trunk
 - @subpage application_manual_ch5_street_inlets — Chapter 5: Street Inlets and the Inlet Junction
 - @subpage application_manual_ch6_coupled_1d2d — Chapter 6: Building a Coupled One- and Two-Dimensional Model
 - @subpage application_manual_ch7_mesh_hydrology — Chapter 7: Rain, Infiltration and Groundwater on the Mesh
