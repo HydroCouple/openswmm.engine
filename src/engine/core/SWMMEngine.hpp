@@ -678,6 +678,10 @@ private:
      */
     void stepSurfaceQuality(double dt_runoff) noexcept;
 
+    /// Book the washoff mass against the POST-LID volumes (legacy
+    /// surfqual_getWashoff's three bookings), after the units have run.
+    void bookWashoffLoads(double dt_runoff) noexcept;
+
     /**
      * @brief Execute groundwater computation for one substep.
      *

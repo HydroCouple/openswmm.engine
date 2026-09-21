@@ -2662,6 +2662,53 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                                 if (nd_idx < ctx_.nodes.lid_drain_qual_load.size())
                                     ctx_.nodes.lid_drain_qual_load[nd_idx] +=
                                         drain_cfs * c_src * (1.0 - rmvl);
+
+                                // legacy lid_addDrainLoads (lid.c:1505-1516).
+                                // v6 routed the drain's load to the node but
+                                // never booked its LEDGER half, which only
+                                // showed once bookWashoffLoads narrowed the
+                                // Surface Runoff row to the surface volume:
+                                // the drain share would otherwise vanish from
+                                // the ledger entirely. A unit whose drain is
+                                // returned to the pervious area sheds no
+                                // external load at all (legacy's `!toPerv`).
+                                if (!g.to_perv[uu]) {
+                                    const double mass_ucf_d =
+                                        ucf::UCF(ucf::MASS, ctx_.options);
+                                    double mcf_d = mass_ucf_d;
+                                    auto upd = static_cast<std::size_t>(p);
+                                    if (upd < ctx_.pollutants.units.size()) {
+                                        switch (ctx_.pollutants.units[upd]) {
+                                            case MassUnits::UG_PER_L:
+                                                mcf_d = mass_ucf_d / 1000.0; break;
+                                            case MassUnits::COUNTS_PER_L:
+                                                mcf_d = 1.0; break;
+                                            default: break;
+                                        }
+                                    }
+                                    // c_src is mg/L, so LperFT3 brings
+                                    // cfs·mg/L·s to concentration mass.
+                                    const double w = drain_cfs * c_src *
+                                                     dt_runoff * 28.317 * mcf_d;
+                                    if (w > 0.0) {
+                                        if (upd < ctx_.mass_balance
+                                                      .qual_bmp_removal.size())
+                                            ctx_.mass_balance
+                                                .qual_bmp_removal[upd] += rmvl * w;
+                                        // "isRunoffLoad": the drain reaches
+                                        // the system only when it has a node,
+                                        // or returns to its own subcatchment.
+                                        const bool is_runoff_load =
+                                            (g.drain_node[uu] >= 0 ||
+                                             g.drain_subcatch[uu] == sc);
+                                        if (is_runoff_load &&
+                                            upd < ctx_.mass_balance
+                                                      .qual_runoff_load.size())
+                                            ctx_.mass_balance
+                                                .qual_runoff_load[upd] +=
+                                                w * (1.0 - rmvl);
+                                    }
+                                }
                             }
                         }
                     }
@@ -2685,6 +2732,10 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         // A6c. Accumulate runoff mass-balance totals now that the LID routing
         // has finalised subcatches.runoff (moved from A4b — see note there).
         accumulateRunoffMassBalance(dt_runoff);
+
+        // A6c'. The QUALITY half of the same deferral: legacy books the
+        // washoff mass against the POST-LID volumes, which only exist here.
+        if (!ctx_.options.ignore_quality) bookWashoffLoads(dt_runoff);
 
         // A7. Street sweeping buildup removal (Gap #34)
         // Matches legacy surfqual_sweepBuildup(): per-(subcatch, landuse)
@@ -3379,6 +3430,11 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                         q_out1 += ctx_.subcatches.runon_rate[ui] * area_ft2_sc;
                 }
             }
+            // Keep vOut1 for bookWashoffLoads. By the time the mass bookings
+            // can be made the LID units have run and `runoff` is the POST-LID
+            // value, so this is the last moment the pre-LID volume exists.
+            if (ui < ctx_.subcatches.washoff_vout1.size())
+                ctx_.subcatches.washoff_vout1[ui] = q_out1 * dt_runoff;
 
             for (int p = 0; p < np; ++p) {
                 auto sq_idx = ui * static_cast<std::size_t>(np)
@@ -3857,37 +3913,136 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
 
                 ctx_.subcatches.conc[sq_idx] = conc;
 
-                // Update quality mass balance and per-subcatch total load.
-                // ONE conversion, applied to BOTH bookings, so the Washoff
-                // Summary and the continuity ledger can never again disagree
-                // by a unit factor: `mass` is user mass (lbs/kg), matching
-                // legacy's massLoad at surfqual.c:357/366. On the known-mass
-                // deck (EMC 100 mg/L, V = 18157.174 ft³) this is
-                // 100 × 18157.174 × 28.317 × 2.203e-6 ≈ 113.3 lbs against
-                // legacy's 113.082 — where the old code booked 1 815 717.383.
-                if (total_washoff_load > 0.0) {
-                    double mass = total_washoff_load * dt_runoff * mcf_p;
-                    // The LEDGER term is booked only when this subcatchment's
-                    // load actually reaches the conveyance system — legacy's
-                    // third `!= subcatchIndex` site (surfqual.c:363,
-                    // `outNode >= 0 || outSubcatch == subcatchIndex`). A
-                    // subcatchment shedding onto a peer has not delivered its
-                    // load to the system; the receiver books it on discharge,
-                    // and adding it here counts the same mass twice. The
-                    // volumetric sibling of this is `421e95c2`.
-                    const bool load_reaches_system =
-                        (ctx_.subcatches.outlet_node[ui] >= 0 ||
-                         ctx_.subcatches.outlet_subcatch[ui] == i);
-                    if (load_reaches_system)
-                        ctx_.mass_balance.qual_runoff_load[
-                            static_cast<std::size_t>(p)] += mass;
-                    // The PER-SUBCATCHMENT total is unconditional, as legacy's
-                    // is (surfqual.c:356, above its own guard): it is what this
-                    // subcatchment washed off, not what the system received.
-                    ctx_.subcatches.total_load[sq_idx] += mass;
-                }
+                // The mass bookings that used to close this loop now live in
+                // bookWashoffLoads, called after the LID units have run: they
+                // need the POST-LID volumes, which do not exist yet here.
+                // Only the concentration is formed at this point, because
+                // legacy forms it over the PRE-LID vOut1 (surfqual.c:330).
             } // end pollutant loop
         } // end subcatch loop
+    }
+}
+
+// ============================================================================
+// bookWashoffLoads() — the washoff MASS bookings, deferred past the LID units
+// ============================================================================
+
+/**
+ * @brief Book this runoff step's washoff mass, now that the LID units have
+ *        run and it is known how much of the inflow actually left.
+ *
+ * @details legacy surfqual_getWashoff (surfqual.c:322-371) forms ONE washoff
+ *          concentration, over the PRE-LID inflow volume vOut1 — which is why
+ *          stepSurfaceQuality still forms `conc` where it does — and then
+ *          books it against THREE different volumes:
+ *
+ *          - `vLost = vOut1 - vOut2` never reaches the network at all. Its
+ *            share up to VlidInfil is Infiltration Loss; the remainder is BMP
+ *            Removal (surfqual.c:338-353).
+ *          - the subcatchment's own reported total takes `vOut2`, the surface
+ *            runoff plus the LID drains (surfqual.c:356).
+ *          - the Surface Runoff ledger row takes `vSurfOut` ONLY. The drain
+ *            half is booked beside the drains themselves, because a drain can
+ *            reach a different outlet than its parent (surfqual.c:363-367,
+ *            lid.c:1513-1515).
+ *
+ *          v6 booked `cOut * vOut1` for both the total and the ledger, so
+ *          every deck whose units capture a large share of their inflow
+ *          reported mass the system never received. `duobiocell` and
+ *          `more-process-100-bio-cell` book all 40 kg of their [LOADINGS] as
+ *          Surface Runoff where legacy books it as BMP Removal. The
+ *          concentration was already right; only the bookings were wrong, and
+ *          they cannot be made until A6 has run the units.
+ */
+void SWMMEngine::bookWashoffLoads(double dt_runoff) noexcept {
+    const int np = ctx_.n_pollutants();
+    const int ns = ctx_.n_subcatches();
+    if (np <= 0 || ns <= 0 || ctx_.n_landuses() <= 0 ||
+        ctx_.options.ignore_quality) return;
+
+    constexpr double kLperFt3 = 28.317;
+    const double mass_ucf = ucf::UCF(ucf::MASS, ctx_.options);
+
+    // legacy VlidInfil — infiltration into the native soil beneath the units,
+    // the same sum stepGroundwater forms for the aquifer's recharge.
+    // g.infil_loss is a DEPTH over this step, so × area is already ft³.
+    std::vector<double> lid_infil_vol(static_cast<std::size_t>(ns), 0.0);
+    for (int t = 0; t < lid_.numGroups(); ++t) {
+        const auto& g = lid_.group(t);
+        for (int u = 0; u < g.count; ++u) {
+            auto uu = static_cast<std::size_t>(u);
+            int sc = g.subcatch_idx[uu];
+            if (sc < 0 || sc >= ns) continue;
+            lid_infil_vol[static_cast<std::size_t>(sc)] +=
+                g.infil_loss[uu] * g.area[uu];
+        }
+    }
+
+    for (int i = 0; i < ns; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        if (ctx_.subcatches.area[ui] <= 0.0) continue;
+
+        const double v_out1 = (ui < ctx_.subcatches.washoff_vout1.size())
+                            ? ctx_.subcatches.washoff_vout1[ui] : 0.0;
+        // POST-LID: `runoff` carries the units' effect by now (A6b), and the
+        // drains were accumulated beside it as a CFS this same step.
+        const double v_surf_out = ctx_.subcatches.runoff[ui] * dt_runoff;
+        const double v_drain = (ui < ctx_.subcatches.lid_drain_flow.size())
+                             ? ctx_.subcatches.lid_drain_flow[ui] * dt_runoff
+                             : 0.0;
+        const double v_out2 = v_surf_out + v_drain;
+
+        const double lid_ft2 = (ui < ctx_.subcatches.total_lid_area_ft2.size())
+                             ? ctx_.subcatches.total_lid_area_ft2[ui] : 0.0;
+        const bool has_lid = lid_ft2 > 0.0;
+        const double v_lost = has_lid ? std::max(v_out1 - v_out2, 0.0) : 0.0;
+        const double v_infil = std::min(lid_infil_vol[ui], v_lost);
+
+        // legacy's third `outNode >= 0 || outSubcatch == subcatchIndex` site
+        // (surfqual.c:363): a subcatchment shedding onto a peer has not
+        // delivered its load to the system; the receiver books it on
+        // discharge, and booking it here counts the same mass twice.
+        const bool load_reaches_system =
+            (ctx_.subcatches.outlet_node[ui] >= 0 ||
+             ctx_.subcatches.outlet_subcatch[ui] == i);
+
+        for (int p = 0; p < np; ++p) {
+            const auto sq_idx = ui * static_cast<std::size_t>(np)
+                              + static_cast<std::size_t>(p);
+            const auto up = static_cast<std::size_t>(p);
+            if (sq_idx >= ctx_.subcatches.conc.size()) continue;
+            // stepSurfaceQuality stored legacy's `newQual[p] = cOut/LperFT3`,
+            // so cOut reads straight back out — no second array to carry.
+            const double c_out = ctx_.subcatches.conc[sq_idx] * kLperFt3;
+            if (c_out <= 0.0) continue;
+
+            // mcf mirrors legacy landuse.c:167-169, as stepSurfaceQuality does.
+            double mcf_p = mass_ucf;
+            if (up < ctx_.pollutants.units.size()) {
+                switch (ctx_.pollutants.units[up]) {
+                    case MassUnits::UG_PER_L:     mcf_p = mass_ucf / 1000.0; break;
+                    case MassUnits::COUNTS_PER_L: mcf_p = 1.0; break;
+                    default: break;
+                }
+            }
+
+            if (has_lid) {
+                const double m_infil = c_out * v_infil * mcf_p;
+                if (m_infil > 0.0 && up < ctx_.mass_balance.qual_infil_loss.size())
+                    ctx_.mass_balance.qual_infil_loss[up] += m_infil;
+                const double m_bmp = c_out * (v_lost - v_infil) * mcf_p;
+                if (m_bmp > 0.0 && up < ctx_.mass_balance.qual_bmp_removal.size())
+                    ctx_.mass_balance.qual_bmp_removal[up] += m_bmp;
+            }
+
+            // The PER-SUBCATCHMENT total is unconditional, as legacy's is
+            // (surfqual.c:356, above its own guard): what this subcatchment
+            // washed off, not what the system received.
+            ctx_.subcatches.total_load[sq_idx] += c_out * v_out2 * mcf_p;
+
+            if (load_reaches_system && up < ctx_.mass_balance.qual_runoff_load.size())
+                ctx_.mass_balance.qual_runoff_load[up] += c_out * v_surf_out * mcf_p;
+        }
     }
 }
 
