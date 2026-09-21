@@ -49,6 +49,51 @@ namespace quality {
 
 constexpr double ZERO_VOLUME = 0.0353147;  ///< 1 liter in ft3
 constexpr double ZERO_DEPTH  = 0.003281;   ///< 1 mm in ft
+/// Legacy's effective-zero flow (`ZERO` in src/legacy/engine/consts.h). The
+/// mixing kernels test the inflow RATE against this, not against 0.0.
+/// Published here because the water-age, heat and MSX transport mirrors run
+/// the same kernels and must not drift from them.
+constexpr double LEGACY_ZERO = 1.0e-10;
+
+// ============================================================================
+// Shared shape of the legacy mixing kernels
+//
+// The pollutant kernels in QualityRouting.cpp and the water-age, heat and MSX
+// mirrors in transport/components all route on the SAME rules — that identity
+// is the mirrors' design contract, and the reason WATER_AGE or HEAT_TRANSPORT
+// can be switched on without moving a pollutant trajectory. Four hand-copies
+// of those rules had already drifted apart (each mirror still carried the
+// pre-correction spelling, and their "matches the quality path" zero-volume
+// constant was 1e-10 against the quality path's one litre), so the rules live
+// here once and every kernel asks rather than re-derives.
+// ============================================================================
+
+/// Legacy findLinkQual's opening test: a non-conduit link — pump, orifice,
+/// weir, outlet — or a conduit with a DUMMY cross-section holds no water, so
+/// it takes its upstream node's value outright, with no mixing, no
+/// evaporation factor and no reaction.
+bool linkTakesUpstreamValue(const SimulationContext& ctx, int link);
+
+/// The mixing inflow rate a conduit sees over one step (legacy findLinkQual):
+/// |Link.newFlow|, plus — under a single-rate dynamic model only — the volume
+/// the conduit gained together with what it lost to seepage and evaporation,
+/// the sum clamped at zero.
+double conduitMixingInflow(const SimulationContext& ctx, int link, double dt);
+
+/// Legacy findLinkQual's closing test: the link ends the step essentially
+/// empty — under a litre of water OR under a millimetre of depth.
+bool linkIsDry(const SimulationContext& ctx, int link);
+
+/// Legacy qualrout_execute's node dispatch: true when the node routes as a
+/// mixed reactor (findStorageQual), false when it is pure flow-through
+/// (findNodeQual). Note the asymmetry — the STORAGE half tests the node's
+/// TYPE, so a storage unit never drops to flow-through however empty it gets.
+bool nodeIsReactor(const SimulationContext& ctx, int node);
+
+/// Legacy findStorageQual's closing test: the node ends the step essentially
+/// empty AND is taking nothing in. Both halves matter — a dry node still
+/// receiving flow keeps its mix.
+bool nodeIsDry(const SimulationContext& ctx, int node, double q_in);
 
 /**
  * @brief One node's [TREATMENT] application, against the CALLER's inflow

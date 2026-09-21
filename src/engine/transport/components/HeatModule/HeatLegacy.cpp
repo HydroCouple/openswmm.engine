@@ -20,12 +20,18 @@
  *
  * @details Formula provenance is the pollutant path in QualityRouting.cpp,
  *          by way of the A1b age mirror: accumulateLinkLoads (rate
- *          convention q·value), mixAtNodes ((v_old·T_old + mass_in) /
- *          (v_old + v_in)), updateLinkQuality (STEADY / no-flow /
- *          zero-volume / volume-balance branches with the DW q_in
- *          correction). Differences from the age mirror are enumerated in
- *          the header; the load-bearing one is that nothing here is
- *          floored at zero.
+ *          convention q·value), mixAtNodes (the findStorageQual /
+ *          findNodeQual dispatch and the volume-balance mix),
+ *          updateLinkQuality (the non-conduit shortcut, findSFLinkQual's
+ *          node1 and the DW volume-change inflow), all asked for through
+ *          the shared predicates in QualityRouting.hpp.
+ *
+ *          Differences from the age mirror are enumerated in the header.
+ *          Two are load-bearing: nothing here is floored at zero, and the
+ *          DRY-NODE AND DRY-LINK RULES DO NOT CARRY OVER — legacy zeroes a
+ *          concentration because an empty store holds no mass, but 0 °C is
+ *          an ordinary temperature rather than an absence, so zeroing it
+ *          would freeze every element that happened to drain.
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
@@ -39,14 +45,18 @@
 #include <vector>
 
 #include "../../../core/SimulationContext.hpp"
+#include "../../../quality/QualityRouting.hpp"
 #include "../../InitialQualitySeeds.hpp"
 #include "../HeatFluxModules/HeatFluxes.hpp"
 
 namespace openswmm::transport {
 
 namespace {
-/// Matches the quality path's ZERO_VOLUME semantics (QualityRouting.cpp).
-constexpr double kZeroVolume = 1.0e-10;
+/// The quality path's own thresholds — one litre and one millimetre, the
+/// numbers legacy qualrout.c routes on. This mirror previously carried a
+/// local 1e-10, so it dispatched differently from the family it mirrors.
+using quality::ZERO_DEPTH;
+using quality::LEGACY_ZERO;
 
 /// Routing-thread scratch (the BindingScratch pattern): old-state
 /// snapshots and the per-node temperature-volume accumulator.
@@ -138,21 +148,36 @@ void routeLegacyHeat(SimulationContext& ctx, double dt) {
 
     // ---- 3. Node mixing (mixAtNodes mirror). The clamp is TWO-SIDED: a
     //         volume-weighted mean lies between its inputs, and unlike age
-    //         the incoming value can be COLDER than what is held. -------
+    //         the incoming value can be COLDER than what is held.
+    //
+    //         Dispatch and the inflow test are the quality path's. The
+    //         DRY-NODE RULE IS NOT: legacy zeroes a concentration because an
+    //         empty store holds no mass, but 0 °C is an ordinary temperature
+    //         rather than an absence, and zeroing it would freeze every node
+    //         that happened to drain. A dry node keeps the temperature it
+    //         held, which is also what it does with no inflow. ----------
     for (int i = 0; i < nn; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         const double v_old = ctx.nodes.old_volume[ui];
         const double v_in  = ctx.nodes.qual_vol_in[ui];
+        const double q_in  = (dt > 0.0) ? v_in / dt : 0.0;
         const double t_old = sc.node_old[ui];
-        if (v_in <= 0.0) {
+
+        if (!quality::nodeIsReactor(ctx, i)) {
+            // findNodeQual: no storage volume, so the temperature is the
+            // inflow's; with no inflow the node holds what it had.
+            hs.node_temp[ui] =
+                (v_in > 0.0) ? (sc.temp_in[ui] * dt) / v_in : t_old;
+            continue;
+        }
+
+        if (q_in <= LEGACY_ZERO) {
             hs.node_temp[ui] = t_old;
             continue;
         }
         const double mass_in = sc.temp_in[ui] * dt;
         const double t_in    = mass_in / v_in;
-        double t_new = (v_old > kZeroVolume)
-                           ? (t_old * v_old + mass_in) / (v_old + v_in)
-                           : t_in;
+        double t_new = (t_old * v_old + mass_in) / (v_old + v_in);
         // No max(·, 0): sub-zero water temperatures are ordinary, and a
         // zero floor would silently warm every cold-weather model.
         t_new = std::clamp(t_new, std::min(t_old, t_in),
@@ -160,40 +185,47 @@ void routeLegacyHeat(SimulationContext& ctx, double dt) {
         hs.node_temp[ui] = t_new;
     }
 
-    // ---- 4. Link update (updateLinkQuality mirror; no decay, no evap). --
+    // ---- 4. Link update (updateLinkQuality mirror; no decay, no evap).
+    //         As at the nodes, the dry-link rule does not carry over: an
+    //         essentially empty conduit takes the upstream temperature,
+    //         where a pollutant would read zero. ------------------------
     const bool is_steady =
         (ctx.options.routing_model == RoutingModel::STEADY);
     for (int j = 0; j < nl; ++j) {
         const auto uj = static_cast<std::size_t>(j);
-        const double q = std::fabs(ctx.links.flow[uj]);
-        const int upstream = (ctx.links.flow[uj] >= 0.0)
-                                 ? ctx.links.node1[uj]
-                                 : ctx.links.node2[uj];
+        // Steady flow draws on node1 unconditionally (findSFLinkQual).
+        const int upstream =
+            is_steady ? ctx.links.node1[uj]
+                      : ((ctx.links.flow[uj] >= 0.0) ? ctx.links.node1[uj]
+                                                     : ctx.links.node2[uj]);
         if (upstream < 0 || upstream >= nn) continue;
         const auto un = static_cast<std::size_t>(upstream);
+        const double t_up = hs.node_temp[un];
+
+        // A non-conduit or DUMMY link holds no water: upstream outright.
+        if (quality::linkTakesUpstreamValue(ctx, j)) {
+            hs.link_temp[uj] = t_up;
+            continue;
+        }
 
         const double v_old = ctx.links.old_volume[uj];
-        const double v_new = ctx.links.volume[uj];
         const double t_old = sc.link_old[uj];
-        const double t_up  = hs.node_temp[un];
 
         double t_new;
         if (is_steady) {
             t_new = t_up;
-        } else if (q <= 0.0) {
-            t_new = t_old;
-        } else if (v_new <= kZeroVolume) {
+        } else if (quality::linkIsDry(ctx, j)) {
             t_new = t_up;
         } else {
-            double q_in = q;
-            if (v_new > v_old) q_in += (v_new - v_old) / dt;
-            q_in = std::max(q_in, 0.0);
-            const double denom = v_old + q_in * dt;
-            t_new = (denom > kZeroVolume)
-                        ? (t_old * v_old + t_up * q_in * dt) / denom
-                        : t_up;
-            t_new = std::clamp(t_new, std::min(t_old, t_up),
-                               std::max(t_old, t_up));
+            const double q_in = quality::conduitMixingInflow(ctx, j, dt);
+            if (q_in <= LEGACY_ZERO) {
+                t_new = t_old;
+            } else {
+                const double v_in = q_in * dt;
+                t_new = (t_old * v_old + t_up * v_in) / (v_old + v_in);
+                t_new = std::clamp(t_new, std::min(t_old, t_up),
+                                   std::max(t_old, t_up));
+            }
         }
         hs.link_temp[uj] = t_new;
     }
