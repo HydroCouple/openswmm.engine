@@ -3867,20 +3867,35 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                     double lid_ft2 = ctx_.subcatches.total_lid_area_ft2[ui];
                     if (lid_ft2 > 0.0 && dt_runoff > 0.0) {
                         constexpr double L_PER_FT3_37 = 28.317;
-                        // Rainfall rate for this subcatch (ft/sec)
-                        int gi37 = ctx_.subcatches.gage[ui];
-                        double rrate37 = (gi37 >= 0 &&
-                                          gi37 < static_cast<int>(ctx_.gages.rainfall.size()))
-                                          ? ctx_.gages.rainfall[static_cast<std::size_t>(gi37)]
-                                          : 0.0;
+                        // legacy `vLidRain = Subcatch[j].rainfall * lidArea *
+                        // tStep`, and Subcatch[j].rainfall is INTERNAL ft/sec.
+                        // This read ctx_.gages.rainfall, which carries the
+                        // project's DISPLAY rate — in/hr on a US deck, mm/hr
+                        // on an SI one — straight into a volume, exactly the
+                        // defect the ponded stage carried until b0924c78. The
+                        // inflated volume never reached the vOut1 denominator
+                        // (which already used subcatches.rainfall), so it
+                        // landed undivided on the numerator: greenroofs'
+                        // subcatchment 3 washed off 64,673,001 against
+                        // legacy's 1,264.
+                        double rrate37 = (ui < ctx_.subcatches.rainfall.size())
+                                          ? ctx_.subcatches.rainfall[ui] : 0.0;
                         auto up37 = static_cast<std::size_t>(p);
                         double c_rain37 = (up37 < ctx_.pollutants.c_rain.size())
                                           ? ctx_.pollutants.c_rain[up37] : 0.0;
                         // Wet deposition on LID area (mass/sec)
                         double v_lid_rain = rrate37 * lid_ft2 * dt_runoff;  // ft³
                         double w_lid_rain = c_rain37 * L_PER_FT3_37 * v_lid_rain;  // mg
-                        if (w_lid_rain > 0.0)
+                        if (w_lid_rain > 0.0) {
                             total_washoff_load += w_lid_rain / dt_runoff;
+                            // legacy books the LID footprint's share of the
+                            // wet deposition too (surfqual.c:496). Only the
+                            // ponded stage booked it here, so the ledger was
+                            // short by exactly the LID area's rain.
+                            if (up37 < ctx_.mass_balance.qual_wet_deposition.size())
+                                ctx_.mass_balance.qual_wet_deposition[up37] +=
+                                    w_lid_rain * mcf_p;
+                        }
                         // Runon quality (only when LIDs cover full subcatchment)
                         double full_ft2 = ctx_.subcatches.area[ui]
                                         / ucf::UCF(ucf::LANDAREA, ctx_.options);
