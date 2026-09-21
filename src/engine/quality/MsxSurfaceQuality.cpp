@@ -320,7 +320,13 @@ void step(SimulationContext& ctx, double dt_runoff, double abs_time) {
                                         ? frac * area_ac : frac * ctx.subcatches.curb_length[ui];
 
                 // --- Buildup accumulation (stepSurfaceQuality) ---------------
-                if (bt != 0) {
+                // Legacy accumulates buildup ONLY while the subcatchment is
+                // effectively dry (runoff.c:280 guards surfqual_getBuildup
+                // with `runoff < MIN_RUNOFF`), the exact complement of the
+                // washoff gate below. The pollutant kernel carries the same
+                // condition and SameParametersSameSurfaceLoads asserts the
+                // two stay bit-identical, so they move together.
+                if (bt != 0 && runoff_fts < 2.31481e-8) {
                     double mass = s.buildup[bu];
                     if (bt == 4) {                                   // EXTERNAL
                         const double max_bu = s.bu_c1[k], sf = s.bu_c2[k];
@@ -348,7 +354,10 @@ void step(SimulationContext& ctx, double dt_runoff, double abs_time) {
                             }
                         }
                         days += dt_days;
-                        const double new_mass = buildupAt(bt, c0, c1, c2, days);
+                        // legacy surfqual.c:149 `MAX(newBuildup, oldBuildup)`
+                        // — buildup never decreases across a step.
+                        const double new_mass =
+                            std::max(buildupAt(bt, c0, c1, c2, days), mass);
                         const double change = new_mass - mass;
                         s.buildup[bu] = new_mass;
                         if (change > 0.0)

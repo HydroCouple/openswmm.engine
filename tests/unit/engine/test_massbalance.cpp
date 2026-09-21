@@ -419,6 +419,11 @@ const char* kCascadeOptions =
     "ROUTING_STEP         60\n"
     "REPORT_STEP          00:15:00\n"
     "ALLOW_PONDING        NO\n"
+    // Antecedent dry days, so the land use has buildup on the ground when
+    // the rain starts. Legacy accumulates buildup ONLY while a subcatchment
+    // is dry (runoff.c:280), and this deck rains from t=0, so without a dry
+    // period there is nothing to wash off and the fixture measures nothing.
+    "DRY_DAYS             5\n"
     "\n"
     "[EVAPORATION]\n"
     "CONSTANT             0.0\n"
