@@ -1,0 +1,106 @@
+;;============================================================================
+;; OpenSWMM — RDII with a physics-based recovery, over two storms
+;;
+;; One sanitary sewer node fed by an RTK unit hydrograph group. The group's
+;; three response terms each carry a [RDII_DECAY] row, so the second storm
+;; produces less inflow than the first: the antecedent store has not fully
+;; recovered, and how fast it recovers depends on temperature.
+;;
+;; Run it twice — as committed, and with the [TEMPERATURE] series lowered —
+;; and the recovery between the storms changes. That is the whole point of
+;; the section: an RTK group alone gives the same answer to both storms.
+;;
+;; Used by the Application Manual's long-term-hydrology chapter.
+;;============================================================================
+
+[TITLE]
+RDII with seasonal decay, two storms thirty days apart
+
+;//! [options]
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         KINWAVE
+INFILTRATION         MODIFIED_GREEN_AMPT
+START_DATE           01/01/2026
+START_TIME           00:00:00
+END_DATE             01/31/2026
+END_TIME             00:00:00
+REPORT_STEP          01:00:00
+WET_STEP             00:15:00
+DRY_STEP             01:00:00
+ROUTING_STEP         60
+;//! [options]
+
+[EVAPORATION]
+CONSTANT             0.05
+DRY_ONLY             NO
+
+;//! [temperature]
+[TEMPERATURE]
+TIMESERIES           AIR_TEMP
+;//! [temperature]
+
+[RAINGAGES]
+;;Name  Format     Interval  SCF  Source
+RG1     INTENSITY  1:00      1.0  TIMESERIES  STORMS
+
+[TIMESERIES]
+;;Name   Date        Time   Value
+;; two 6-hour storms, thirty days apart
+STORMS   01/01/2026  06:00  0.00
+STORMS   01/01/2026  07:00  0.35
+STORMS   01/01/2026  09:00  0.55
+STORMS   01/01/2026  11:00  0.20
+STORMS   01/01/2026  13:00  0.00
+STORMS   01/20/2026  07:00  0.35
+STORMS   01/20/2026  09:00  0.55
+STORMS   01/20/2026  11:00  0.20
+STORMS   01/20/2026  13:00  0.00
+;; a cold month warming through it
+AIR_TEMP 01/01/2026  00:00  34.0
+AIR_TEMP 01/10/2026  00:00  38.0
+AIR_TEMP 01/20/2026  00:00  45.0
+AIR_TEMP 01/31/2026  00:00  52.0
+
+;//! [rtk]
+[HYDROGRAPHS]
+;;Group     Gage/Month  Response  R      T     K    Dmax  Drec  D0
+SanSewer    RG1
+SanSewer    All         SHORT     0.055  1.0   2.0  8.0   0.0   2.0
+SanSewer    All         MEDIUM    0.032  3.5   2.0  8.0   0.0   2.0
+SanSewer    All         LONG      0.018  14.0  2.0  8.0   0.0   2.0
+
+[RDII]
+;;Node   UHgroup    SewerArea (ac)
+J_RDII   SanSewer   1000.0
+;//! [rtk]
+
+;//! [decay]
+[RDII_DECAY]
+;;UHgroup   Response  Kdep   K0     KT     Tref  ThetaRec  Tfreeze
+SanSewer    SHORT     0.15   0.010  0.070  10.0  0.055     0.0
+SanSewer    MEDIUM    0.10   0.008  0.037  10.0  0.055     0.0
+SanSewer    LONG      0.05   0.005  0.013  10.0  0.040     0.0
+;//! [decay]
+
+[JUNCTIONS]
+;;Name    Elev  MaxDepth  InitDepth  SurDepth  Aponded
+J_RDII    10.0  6.0       0          0         0
+
+[OUTFALLS]
+;;Name  Elev  Type  Gated
+OUT1    8.0   FREE  NO
+
+[CONDUITS]
+;;Name  From    To    Length  Roughness  InOffset  OutOffset  InitFlow
+C1      J_RDII  OUT1  400.0   0.013      0         0          0
+
+[XSECTIONS]
+;;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels
+C1      CIRCULAR  3.0    0      0      0      1
+
+[REPORT]
+INPUT                NO
+CONTINUITY           YES
+NODES                ALL
+LINKS                ALL
