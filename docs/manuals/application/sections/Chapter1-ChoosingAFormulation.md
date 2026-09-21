@@ -249,7 +249,7 @@ generalisation rather than a published result.
 | Kinematic wave | `FLOW_ROUTING KINWAVE` | \status{Implemented} | @ref hydraulics_ref_ch4_kinematic_wave | — |
 | Dynamic wave | `FLOW_ROUTING DYNWAVE` | \status{Implemented} | @ref hydraulics_ref_ch3_dynamic_wave | @ref application_manual_ch2_filling_pipe "Chapter 2: a filling pipe under both routers" |
 | Explicit finite volume | `FLOW_ROUTING FV` | \status{Implemented} | @ref hydraulics_ref_ch8_finite_volume | @ref application_manual_ch2_filling_pipe "Chapter 2: a filling pipe under both routers" |
-| Local time stepping | `FV_LTS` | \status{Implemented} | @ref hydraulics_ref_ch8_finite_volume | *Chapter 4, virtual junctions on a surveyed trunk* (in preparation) |
+| Local time stepping | `FV_LTS` | \status{Implemented} | @ref hydraulics_ref_ch8_finite_volume | @ref application_manual_ch4_virtual_junctions "Chapter 4: virtual junctions on a surveyed trunk" |
 | Semi-implicit node continuity | `NODE_CONTINUITY SEMI_IMPLICIT` | \status{Implemented} | @ref hydraulics_ref_ch3_dynamic_wave | — |
 | Anderson acceleration | `ANDERSON_ACCEL` | \status{Implemented} | @ref hydraulics_ref_ch3_anderson | — |
 | EXTRAN surcharge | `SURCHARGE_METHOD EXTRAN` | \status{Implemented} | @ref hydraulics_ref_ch3_dynamic_wave | @ref application_manual_ch2_filling_pipe "Chapter 2: a filling pipe under both routers" |
@@ -258,7 +258,7 @@ generalisation rather than a published result.
 | Two-component pressure, dynamic wave | `SURCHARGE_METHOD TPA` | \status{Experimental} | @ref hydraulics_ref_ch3_dynamic_wave | @ref application_manual_ch3_subatmospheric "Chapter 3: a sub-atmospheric transient" |
 | Two-component pressure, finite volume | `FV_PRESSURE_CLOSURE TPA` | \status{Experimental} | @ref hydraulics_ref_ch8_finite_volume | @ref application_manual_ch3_subatmospheric "Chapter 3: a sub-atmospheric transient" |
 | Unsteady friction | `UNSTEADY_FRICTION VITKOVSKY` | \status{Implemented} | @ref hydraulics_ref_ch3_dynamic_wave | @ref application_manual_ch3_subatmospheric "Chapter 3: a sub-atmospheric transient" |
-| Virtual junctions | `[VIRTUAL_JUNCTIONS]` | \status{Implemented} | @ref hydraulics_ref_ch3_dynamic_wave | *Chapter 4, virtual junctions on a surveyed trunk* (in preparation) |
+| Virtual junctions | `[VIRTUAL_JUNCTIONS]` | \status{Implemented} | @ref hydraulics_ref_ch3_dynamic_wave | @ref application_manual_ch4_virtual_junctions "Chapter 4: virtual junctions on a surveyed trunk" |
 | Inlet junctions | `[INLET_JUNCTIONS]` | \status{Implemented} | @ref hydraulics_ref_ch7_advanced_features | @ref application_manual_ch5_street_inlets "Chapter 5: street inlets and inlet junctions" |
 | HEC-22 street inlets | `[STREETS]`, `[INLETS]`, `[INLET_USAGE]` | \status{Implemented} | @ref hydraulics_ref_ch7_advanced_features | @ref application_manual_ch5_street_inlets "Chapter 5: street inlets and inlet junctions" |
 | 2D local inertial | `MOMENTUM_EQUATION LOCAL_INERTIAL` | \status{Implemented} | @ref hydraulics_ref_ch9_two_dimensional | @ref application_manual_ch6_coupled_1d2d "Chapter 6: building a coupled 1D-2D model" |
