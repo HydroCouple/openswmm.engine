@@ -23,7 +23,10 @@ infiltration and evaporation — and how they are accounted for. The mesh's own
 subsurface, which can receive the infiltrated water, is
 @ref hydrology_ref_ch9_mesh_groundwater "Chapter 9".
 
-<!-- FIGURE: hydrology_ch8_cell_budget — one mesh cell drawn in section: rainfall in from above, evaporation out, infiltration out through the bed, coupling exchange with a node, and lateral face fluxes to neighbours; the same terms the 2D Surface Routing Continuity block prints -->
+<!-- figure spec: one mesh cell drawn in section: rainfall in from above, evaporation out, infiltration out through the bed, coupling exchange with a node, and lateral face fluxes to neighbours; the same terms the 2D Surface Routing Continuity block prints -->
+![Figure 8-1](figures/png/hydrology_ch8_cell_budget.png)
+
+*Figure 8-1 The water balance of one mesh cell: rainfall, evaporation, infiltration, network exchange and the lateral face fluxes*
 
 **When rain on the mesh replaces subcatchment runoff.** Water reaches the mesh
 by four routes — rainfall on the cells, spill from surcharged nodes, outfall
@@ -106,7 +109,10 @@ Laplace weights reproduce a linear field exactly inside the hull and need no
 polygon-area integration, which distinguishes them from Sibson's weights. A
 centroid coincident with a gage takes that gage alone.
 
-<!-- FIGURE: hydrology_ch8_nn_weights — three gage sites, their Delaunay triangle and Voronoi cells; a cell centroid inserted inside the hull with its fan triangles and the three Voronoi facets whose lengths set the Laplace weights; a second centroid outside the hull labelled IDW -->
+<!-- figure spec: three gage sites, their Delaunay triangle and Voronoi cells; a cell centroid inserted inside the hull with its fan triangles and the three Voronoi facets whose lengths set the Laplace weights; a second centroid outside the hull labelled IDW -->
+![Figure 8-2](figures/png/hydrology_ch8_nn_weights.png)
+
+*Figure 8-2 Natural-neighbour rainfall weights inside the gage hull, and inverse-distance weighting outside it*
 
 **Outside the hull — inverse-distance weights.** A centroid outside every
 Delaunay triangle, or one whose fan construction degenerates (a collinear fan
@@ -272,7 +278,10 @@ removed, in active and lazy tiers alike and before any early exit (rain exactly
 cancelling the sink still infiltrated); that accumulator, not a re-derivation
 from the end-of-step depth, is what the ledger and the cumulative output read.
 
-<!-- FIGURE: hydrology_ch8_infiltration_strip — a strip of mesh cells over three soil tags with one cell override; the resolved per-cell method labelled on each cell, the held rate as a step function in time against the INFIL_STEP cadence, and the smoothstep ramp below DRY_DEPTH -->
+<!-- figure spec: a strip of mesh cells over three soil tags with one cell override; the resolved per-cell method labelled on each cell, the held rate as a step function in time against the INFIL_STEP cadence, and the smoothstep ramp below DRY_DEPTH -->
+![Figure 8-3](figures/png/hydrology_ch8_infiltration_strip.png)
+
+*Figure 8-3 Per-cell infiltration: how a cell resolves its method and parameters, and the rate held across an infiltration step*
 
 <!-- source: src/engine/2d/infil/Infil2D.hpp:26-51 (D-I1..D-I6, units), :101-132 (row layout), :191-234 (resolve, updateRates contracts), :249-260 (cumulative vs applied); src/engine/2d/infil/Infil2D.cpp:72-133 (validateRow), :141-200 (tokens, parameter counts), :206-329 (resolve: cadence :219-221, precedence :223-273, kernel init :277-318, CONSTANT as Horton :290-298, CN drying time :306-311), :331-377 (updateRates: unit boundary :342-343, :373-375; CN run-on note :360-363); src/engine/2d/solver/SurfaceFluxCalculator.hpp:83-88 (evapSink), :91-116 (infilSink and D-I2); src/engine/2d/solver/ExplicitInertialSolver.cpp:495-534 (lazySourcesOnly), :546-580 (syncAndRebuild lazy pass), :1342-1360 (fireCellsImpl sources); src/engine/2d/SurfaceRouter2D.cpp:980-1015 (INFIL_DEFAULT_METHOD checks), :1130-1140 (INFILTRATION YES/NO warnings), :1208-1219 (initial updateRates), :1411-1424 (INFIL_STEP cadence); src/engine/2d/input/SectionHandlers2D.cpp:311-345 (INFILTRATION, INFIL_STEP, INFIL_DEFAULT_METHOD, INFIL_DESTINATION keys), :982-1020 (row tail grammar), :1054-1115 (section line parsers); src/engine/2d/data/SolverOptions2D.hpp:279-300 -->
 

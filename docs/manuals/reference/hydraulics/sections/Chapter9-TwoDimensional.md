@@ -514,7 +514,10 @@ C-API edge arrays use stride 4; an all-triangle mesh keeps the
 serve all-triangle meshes only; a mixed mesh is announced and run on the
 CPU marcher (§9.11.1).
 
-<!-- FIGURE: hydraulics_ch9_mesh_stencil — a quad beside a triangle sharing one face: local edge numbering k = 0..3 with endpoints v[(k+1)%nv], v[(k+2)%nv]; the padded slot layout 4t + k with the unused fourth slot of the triangle greyed; the centroid-to-edge normal distance d_e of (9-33) drawn for both cells -->
+<!-- figure spec: a quad beside a triangle sharing one face: local edge numbering k = 0..3 with endpoints v[(k+1)%nv], v[(k+2)%nv]; the padded slot layout 4t + k with the unused fourth slot of the triangle greyed; the centroid-to-edge normal distance d_e of (9-33) drawn for both cells -->
+![Figure 9-4](figures/png/hydraulics_ch9_mesh_stencil.png)
+
+*Figure 9-4 A quadrilateral and a triangle sharing a face: local edge numbering, the padded slot layout and the centroid-to-edge distance*
 
 <!-- source: plans/2D_TRI_QUAD_MESH_PLAN_2026-09-06.md §2.1,§2.3,§2.4,§2.5; plans/2D_INPUT_FORMAT_SPEC.md:140-152; src/engine/2d/mesh/MeshBuilder.cpp:21-27,82-115,117-176,179-233; src/engine/2d/solver/InertialEdges.cpp:112-147; src/engine/2d/solver/ExplicitInertialSolver.cpp:916-921,1552-1560; src/engine/2d/input/SectionHandlers2D.cpp:870-877; src/engine/2d/solver/SurfaceSolverFactory.cpp:286-301; docs/manuals/reference/hydraulics/sections/Chapter9-TwoDimensional.md:1421-1441 (former §9.11b) -->
 
@@ -1117,7 +1120,10 @@ to its earlier results, and off under `DIFFUSIVE_WAVE`, whose
 cycle so the cheap cadence suffices. `YES` and `NO` force it either way
 for any closure.
 
-<!-- FIGURE: hydraulics_ch9_active_set — plan view of a wetting front on a dry mesh: the flux-active cells, the one-ring halo of the default cadence, the five-ring halo and marked frontier ring under FRONT_REBUILD, and the breach cell whose depth crossing h_on triggers the early rebuild -->
+<!-- figure spec: plan view of a wetting front on a dry mesh: the flux-active cells, the one-ring halo of the default cadence, the five-ring halo and marked frontier ring under FRONT_REBUILD, and the breach cell whose depth crossing h_on triggers the early rebuild -->
+![Figure 9-5](figures/png/hydraulics_ch9_active_set.png)
+
+*Figure 9-5 The flux-active set at a wetting front: the default one-ring halo, the front-rebuild halo and the breach that forces an early rebuild*
 
 <!-- source: src/engine/2d/solver/ExplicitInertialSolver.cpp:59-63,126-134,595-603,627-676,759-783,1443-1446; src/engine/2d/data/SolverOptions2D.hpp:214-221; src/engine/2d/input/SectionHandlers2D.cpp:195-199; docs/manuals/reference/hydraulics/sections/Chapter9-TwoDimensional.md:606-636 (retained text) -->
 
@@ -1976,7 +1982,10 @@ leaving the node upward, which a spill is whatever row the continuity
 table puts it in. The 2D → 1D drain is external inflow under either
 setting.
 
-<!-- FIGURE: hydraulics_ch9_coupling_modes — the 1D routing continuity table under COUPLING_IN_FLOODING NO (spill in the "2D Coupling Outflow" row) and YES (spill inside "Flooding Loss"), the same totals and the same continuity error in both; the 2D block of §9.9 unchanged beneath -->
+<!-- figure spec: the 1D routing continuity table under COUPLING_IN_FLOODING NO (spill in the "2D Coupling Outflow" row) and YES (spill inside "Flooding Loss"), the same totals and the same continuity error in both; the 2D block of §9.9 unchanged beneath -->
+![Figure 9-6](figures/png/hydraulics_ch9_coupling_modes.png)
+
+*Figure 9-6 Where a node spill is booked under COUPLING_IN_FLOODING: the same totals and the same continuity error, in two different rows*
 
 <!-- source: src/engine/2d/input/SectionHandlers2D.cpp:247-253; src/engine/2d/data/SolverOptions2D.hpp:420-429; src/engine/core/SWMMEngine.cpp:4975-4992 -->
 
