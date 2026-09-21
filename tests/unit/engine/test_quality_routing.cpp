@@ -124,17 +124,25 @@ TEST_F(QualityRoutingTest, WetWeatherLoadsAccumulateMassAndVolume) {
     std::fill(ctx.nodes.qual_mass_in.begin(), ctx.nodes.qual_mass_in.end(), 0.0);
     std::fill(ctx.nodes.qual_vol_in.begin(), ctx.nodes.qual_vol_in.end(), 0.0);
 
+    // Legacy weights both the runoff flow and the washoff load beside it by
+    // where the routing instant falls between the two runoff times
+    // (routing.c:707). State it here rather than assuming a midpoint, and
+    // pick an ASYMMETRIC weight so a swapped f / (1-f) cannot pass.
+    ctx.runoff_interp_f = 0.25;
+
     solver.addWetWeatherLoads(ctx, dt);
 
-    // q = 0.5 * (4.0 + 2.0) = 3.0 cfs
-    double q = 3.0;
+    // q = 0.75*4.0 + 0.25*2.0 = 3.5 cfs
+    double q = 3.5;
     EXPECT_DOUBLE_EQ(ctx.nodes.qual_vol_in[0], q * dt);
 
-    // mass_rate_p0 = 0.5 * (4.0*8.0 + 2.0*10.0) = 0.5*(32+20) = 26.0
-    EXPECT_DOUBLE_EQ(ctx.nodes.qual_mass_in[0 * NP + 0], 26.0);
+    // The load is the interpolated PRODUCT runoff*conc, not the product of
+    // the two interpolations (legacy surfqual_getWtdWashoff):
+    // mass_rate_p0 = 0.75*(4.0*8.0) + 0.25*(2.0*10.0) = 24 + 5 = 29.0
+    EXPECT_DOUBLE_EQ(ctx.nodes.qual_mass_in[0 * NP + 0], 29.0);
 
-    // mass_rate_p1 = 0.5 * (4.0*16.0 + 2.0*20.0) = 0.5*(64+40) = 52.0
-    EXPECT_DOUBLE_EQ(ctx.nodes.qual_mass_in[0 * NP + 1], 52.0);
+    // mass_rate_p1 = 0.75*(4.0*16.0) + 0.25*(2.0*20.0) = 48 + 10 = 58.0
+    EXPECT_DOUBLE_EQ(ctx.nodes.qual_mass_in[0 * NP + 1], 58.0);
 
     // Other nodes should be untouched
     EXPECT_DOUBLE_EQ(ctx.nodes.qual_vol_in[1], 0.0);

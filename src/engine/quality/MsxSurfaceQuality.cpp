@@ -369,7 +369,13 @@ void step(SimulationContext& ctx, double dt_runoff, double abs_time) {
                 const int wt = s.wo_type[k];
                 // legacy findWashoffLoads returns below MIN_RUNOFF
                 // (2.31481e-8 ft/sec), on the ft/sec rate.
-                if (wt != 0 && runoff_fts >= 2.31481e-8) {
+                // legacy landuse_getWashoffLoad makes the load PROPORTIONAL to
+                // vOutflow, so a subcatchment that sheds nothing washes off
+                // nothing whatever is on the ground. `q` is that number
+                // (Voutflow/tStep); the pollutant kernel carries the same
+                // condition and SameParametersSameSurfaceLoads holds the two
+                // together.
+                if (wt != 0 && runoff_fts >= 2.31481e-8 && q > 0.0) {
                     const double buildup  = s.buildup[bu];
                     // legacy keeps Subcatch.area in ft2 as area / UCF(LANDAREA)
                     // — 43561.6 ft2 per ACRE, 107639 per HECTARE. The
@@ -462,13 +468,29 @@ void deliver(SimulationContext& ctx, double /*dt_routing*/) {
         const auto ui = static_cast<std::size_t>(i);
         const int out_node = ctx.subcatches.outlet_node[ui];
         if (out_node < 0 || out_node >= ctx.n_nodes()) continue;
-        // addWetWeatherLoads: trapezoid on old / new runoff
-        const double q = 0.5 * (ctx.subcatches.old_runoff[ui] + ctx.subcatches.runoff[ui]);
+        // addWetWeatherLoads, species side. Legacy weights the runoff flow and
+        // the load beside it by where THIS routing instant falls between the
+        // two runoff times; the fixed midpoint that used to stand here
+        // delivered the storm's average every routing step instead of its
+        // schedule. The pollutant kernel carries the same two lines and
+        // LoadReachesTheNetworkUnderBothSolvers holds the two together.
+        const double f  = ctx.runoff_interp_f;
+        const double f1 = 1.0 - f;
+        const double q_old = ctx.subcatches.old_runoff[ui];
+        const double q_new = ctx.subcatches.runoff[ui];
+        const double q = f1 * q_old + f * q_new;
         if (q <= 0.0) continue;
+        const bool has_old = s.washoff_conc_old.size() == s.washoff_conc.size();
         const auto base = static_cast<std::size_t>(out_node) * static_cast<std::size_t>(nm);
         for (int m = 0; m < nm; ++m) {
-            const double c = s.washoff_conc[s.sidx(i, m)];
-            if (c > 0.0) rx.msx_ext_mass_in[base + static_cast<std::size_t>(m)] += q * c;
+            const auto si = s.sidx(i, m);
+            const double c_new = s.washoff_conc[si];
+            const double c_old = has_old ? s.washoff_conc_old[si] : c_new;
+            // the interpolated PRODUCT runoff*conc, not the product of the two
+            // interpolations (legacy surfqual_getWtdWashoff).
+            const double mass_rate = f1 * (q_old * c_old) + f * (q_new * c_new);
+            if (mass_rate > 0.0)
+                rx.msx_ext_mass_in[base + static_cast<std::size_t>(m)] += mass_rate;
         }
     }
 }

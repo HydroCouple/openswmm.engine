@@ -113,6 +113,11 @@ struct MsxSurfaceData {
     // ---- state ----------------------------------------------------------
     std::vector<double> buildup;         ///< bu_idx(sc, lu, m), per normalizer unit
     std::vector<double> washoff_conc;    ///< [sc * n_species + m], conc units (mg/L-like)
+    /// Previous runoff step's `washoff_conc`, the "old" end of the routing-step
+    /// interpolation the delivery seam does. The pollutant mirror of this is
+    /// `SubcatchData::conc_old`, rolled by `SubcatchData::save_state()`; this
+    /// one is rolled beside it, on the same runoff cadence.
+    std::vector<double> washoff_conc_old;
 
     // ---- ledgers per species [m], user mass ---------------------------
     std::vector<double> led_init_buildup;
@@ -153,6 +158,7 @@ struct MsxSurfaceData {
         const auto nm = static_cast<std::size_t>(n_species);
         buildup.assign(static_cast<std::size_t>(nsc) * static_cast<std::size_t>(n_landuses) * nm, 0.0);
         washoff_conc.assign(static_cast<std::size_t>(nsc) * nm, 0.0);
+        washoff_conc_old.assign(static_cast<std::size_t>(nsc) * nm, 0.0);
         if (init_loading.size() != static_cast<std::size_t>(nsc) * nm)
             init_loading.assign(static_cast<std::size_t>(nsc) * nm, 0.0);
         led_init_buildup.assign(nm, 0.0); led_buildup.assign(nm, 0.0);
