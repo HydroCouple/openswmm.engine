@@ -280,6 +280,17 @@ struct SubcatchData {
     std::vector<double> ponded_depth;
 
     /**
+     * @brief Ponded depth at the START of the runoff step (project length).
+     * @details Legacy forms `Vinflow = vRunon + subcatch_getDepth(j) *
+     *          nonLidArea` at the top of subcatch_getRunoff, BEFORE the
+     *          subareas are stepped, and only later re-derives the ponded
+     *          store from the new depth. findPondedLoads runs after the
+     *          step, so it needs the opening depth kept aside.
+     * @see Legacy: the Vinflow term in subcatch.c:694
+     */
+    std::vector<double> old_ponded_depth;
+
+    /**
      * @brief Groundwater outflow rate (project flow units).
      * @see Legacy: Subcatch[i].groundwater->newFlow
      */
@@ -719,6 +730,7 @@ struct SubcatchData {
         evap_loss.assign(un, 0.0);
         infil_loss.assign(un, 0.0);
         ponded_depth.assign(un, 0.0);
+        old_ponded_depth.assign(un, 0.0);
         gw_flow.assign(un, 0.0);
         snow_depth.assign(un, 0.0);
         lid_drain_flow.assign(un, 0.0);
@@ -805,7 +817,7 @@ struct SubcatchData {
         g(infil_p4, 0.0); g(infil_p5, 0.0);
         g(runoff, 0.0); g(rainfall, 0.0);
         g(evap_loss, 0.0); g(infil_loss, 0.0);
-        g(ponded_depth, 0.0); g(gw_flow, 0.0);
+        g(ponded_depth, 0.0); g(old_ponded_depth, 0.0); g(gw_flow, 0.0);
         g(snow_depth, 0.0); g(lid_drain_flow, 0.0);
         g(old_runoff, 0.0); g(old_gw_flow, 0.0);
         g(old_snow_depth, 0.0); g(old_lid_drain_flow, 0.0);
@@ -1096,6 +1108,8 @@ struct SubcatchData {
         std::copy(runoff.begin(),        runoff.end(),        old_runoff.begin());
         std::copy(runon_inflow.begin(),  runon_inflow.end(),  old_runon_inflow.begin());
         std::copy(conc.begin(),          conc.end(),          conc_old.begin());
+        std::copy(ponded_depth.begin(), ponded_depth.end(),
+                  old_ponded_depth.begin());
     }
 
     void reset_state() noexcept {
