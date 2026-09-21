@@ -6,7 +6,18 @@
 | Copied from | `studies/mixed_flow_closures/decks/e3_negative_pressure.inp` (untracked study folder), 2026-09-20 |
 | Study plan | `plans/MIXED_FLOW_CLOSURES_TPA_UF_PLAN_2026-08-29.md`, experiment e3; engine issue #156 |
 | Used by | the Application Manual's sub-atmospheric chapter; figures `workflow_ch3_negative_pressure_head_14p1`, `workflow_ch3_velocity_9p9` |
-| Changed on copy | nothing: byte-identical to the study deck |
+| Changed on copy | one line added: `FV_PRESSURE_CLOSURE TPA` (see below) |
+
+## The one change from the study deck
+
+The study deck leaves `FV_PRESSURE_CLOSURE` at its default, the static
+slot, because the study's runner sets the closure per matrix column. Run
+as committed that deck diverges with ERROR 14 in the first substeps —
+which is the very result the chapter reports — and the manual's deck gate
+requires every committed deck to run clean. The docs copy therefore names
+the closure this physics needs, `TPA`, and the chapter's figures set the
+closure explicitly for each of their four runs, including the slot run
+that fails.
 
 ## The experiment
 

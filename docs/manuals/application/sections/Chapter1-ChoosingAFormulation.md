@@ -134,8 +134,8 @@ graph TD
 
 *Figure 1-3 Deciding whether to add the two-dimensional surface, and how to drive it*
 
-*Chapter 6, building a coupled 1D-2D model* (in preparation) builds a coupled model
-from an existing network; *Chapter 7, rain, infiltration and groundwater on the mesh* (in preparation) drives one with rain rather than spill. The GUI tutorials
+@ref application_manual_ch6_coupled_1d2d "Chapter 6: building a coupled 1D-2D model" builds a coupled model
+from an existing network; @ref application_manual_ch7_mesh_hydrology "Chapter 7: rain, infiltration and groundwater on the mesh" drives one with rain rather than spill. The GUI tutorials
 @ref tutorial_2d_inundation and @ref tutorial_1d2d_coupling walk the same
 ground with a mouse.
 
@@ -239,7 +239,7 @@ graph TD
 The mesh aquifer's non-Gardner soil laws are \status{Experimental}: their
 equilibrium is right and their relaxation rate is the engine's own
 generalisation rather than a published result.
-*Chapter 7, rain, infiltration and groundwater on the mesh* (in preparation) runs one.
+@ref application_manual_ch7_mesh_hydrology "Chapter 7: rain, infiltration and groundwater on the mesh" runs one.
 
 ## 1.7 The formulations, their keys and where they are documented
 
@@ -261,14 +261,14 @@ generalisation rather than a published result.
 | Virtual junctions | `[VIRTUAL_JUNCTIONS]` | \status{Implemented} | @ref hydraulics_ref_ch3_dynamic_wave | *Chapter 4, virtual junctions on a surveyed trunk* (in preparation) |
 | Inlet junctions | `[INLET_JUNCTIONS]` | \status{Implemented} | @ref hydraulics_ref_ch7_advanced_features | @ref application_manual_ch5_street_inlets "Chapter 5: street inlets and inlet junctions" |
 | HEC-22 street inlets | `[STREETS]`, `[INLETS]`, `[INLET_USAGE]` | \status{Implemented} | @ref hydraulics_ref_ch7_advanced_features | @ref application_manual_ch5_street_inlets "Chapter 5: street inlets and inlet junctions" |
-| 2D local inertial | `MOMENTUM_EQUATION LOCAL_INERTIAL` | \status{Implemented} | @ref hydraulics_ref_ch9_two_dimensional | *Chapter 6, building a coupled 1D-2D model* (in preparation) |
-| 2D full shallow water | `MOMENTUM_EQUATION FULL_SWE` | \status{Implemented} | @ref hydraulics_ref_ch9_two_dimensional | *Chapter 6, building a coupled 1D-2D model* (in preparation) |
-| 2D diffusive wave | `MOMENTUM_EQUATION DIFFUSIVE_WAVE` | \status{Implemented} | @ref hydraulics_ref_ch9_two_dimensional | *Chapter 6, building a coupled 1D-2D model* (in preparation) |
-| Rain on the mesh | `RAINFALL_MODE` | \status{Implemented} | @ref hydrology_ref_ch8_mesh_surface | *Chapter 7, rain, infiltration and groundwater on the mesh* (in preparation) |
-| Per-cell infiltration | `[2D_INFILTRATION]` | \status{Implemented} | @ref hydrology_ref_ch8_mesh_surface | *Chapter 7, rain, infiltration and groundwater on the mesh* (in preparation) |
+| 2D local inertial | `MOMENTUM_EQUATION LOCAL_INERTIAL` | \status{Implemented} | @ref hydraulics_ref_ch9_two_dimensional | @ref application_manual_ch6_coupled_1d2d "Chapter 6: building a coupled 1D-2D model" |
+| 2D full shallow water | `MOMENTUM_EQUATION FULL_SWE` | \status{Implemented} | @ref hydraulics_ref_ch9_two_dimensional | @ref application_manual_ch6_coupled_1d2d "Chapter 6: building a coupled 1D-2D model" |
+| 2D diffusive wave | `MOMENTUM_EQUATION DIFFUSIVE_WAVE` | \status{Implemented} | @ref hydraulics_ref_ch9_two_dimensional | @ref application_manual_ch6_coupled_1d2d "Chapter 6: building a coupled 1D-2D model" |
+| Rain on the mesh | `RAINFALL_MODE` | \status{Implemented} | @ref hydrology_ref_ch8_mesh_surface | @ref application_manual_ch7_mesh_hydrology "Chapter 7: rain, infiltration and groundwater on the mesh" |
+| Per-cell infiltration | `[2D_INFILTRATION]` | \status{Implemented} | @ref hydrology_ref_ch8_mesh_surface | @ref application_manual_ch7_mesh_hydrology "Chapter 7: rain, infiltration and groundwater on the mesh" |
 | Two-zone aquifer | `[AQUIFERS]`, `[GROUNDWATER]` | \status{Implemented} | @ref hydrology_ref_ch5_groundwater | *Chapter 11, long-term hydrology* (in preparation) |
-| Mesh two-layer aquifer | `[2D_AQUIFER]` | \status{Implemented} | @ref hydrology_ref_ch9_mesh_groundwater | *Chapter 7, rain, infiltration and groundwater on the mesh* (in preparation) |
-| Non-Gardner soil laws | `SOIL_CHAR` | \status{Experimental} | @ref hydrology_ref_ch9_mesh_groundwater | *Chapter 7, rain, infiltration and groundwater on the mesh* (in preparation) |
+| Mesh two-layer aquifer | `[2D_AQUIFER]` | \status{Implemented} | @ref hydrology_ref_ch9_mesh_groundwater | @ref application_manual_ch7_mesh_hydrology "Chapter 7: rain, infiltration and groundwater on the mesh" |
+| Non-Gardner soil laws | `SOIL_CHAR` | \status{Experimental} | @ref hydrology_ref_ch9_mesh_groundwater | @ref application_manual_ch7_mesh_hydrology "Chapter 7: rain, infiltration and groundwater on the mesh" |
 | Modified Green-Ampt | `INFILTRATION MODIFIED_GREEN_AMPT` | \status{Implemented} | @ref hydrology_ref_ch4_infiltration | *Chapter 11, long-term hydrology* (in preparation) |
 | RDII with decay | `[RDII_DECAY]` | \status{Implemented} | @ref hydrology_ref_ch7_rdii | *Chapter 11, long-term hydrology* (in preparation) |
 | Legacy quality routing | `QUALITY_SOLVER LEGACY` | \status{Implemented} | @ref quality_ref_ch5_transport_treatment | @ref application_manual_ch8_transport_engines "Chapter 8: the three transport engines" |

@@ -85,6 +85,8 @@ covers the formulations instead.
 - @subpage application_manual_ch2_filling_pipe — Chapter 2: A Filling Pipe under the Dynamic Wave and Finite-Volume Routers
 - @subpage application_manual_ch3_subatmospheric — Chapter 3: A Sub-Atmospheric Transient
 - @subpage application_manual_ch5_street_inlets — Chapter 5: Street Inlets and the Inlet Junction
+- @subpage application_manual_ch6_coupled_1d2d — Chapter 6: Building a Coupled One- and Two-Dimensional Model
+- @subpage application_manual_ch7_mesh_hydrology — Chapter 7: Rain, Infiltration and Groundwater on the Mesh
 - @subpage application_manual_ch8_transport_engines — Chapter 8: The Three Transport Engines
 - @subpage application_manual_ch9_msx — Chapter 9: Multi-Species Reactions
 - @subpage application_manual_ch10_age_heat — Chapter 10: Water Age and Heat
