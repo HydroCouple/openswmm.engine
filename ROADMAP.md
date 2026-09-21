@@ -37,7 +37,7 @@ test suites, but ship in pre-release builds until 6.0.0 is final.
 - Second-order MUSCL reconstruction (`FV_ORDER 2`) and SSP-RK2 time integration (`FV_TIME_INTEGRATION RK2`), both preserving the still-water property to machine precision.
 - Local time stepping (`FV_LTS`, on by default): each control volume takes a power-of-two tier from its own Courant limit, tiers are graded so no face spans more than one level, and conservation across a tier interface is exact by construction. Where tiering finds nothing to separate, the solver falls through to global stepping bit-for-bit.
 - Semi-implicit node coupling (`FV_NODE_COUPLING`, default `SEMI_IMPLICIT`), which linearizes each coupling face's flux in the node head and so removes the junction storage floor — not the pipe — from the explicit stability limit.
-- Backward compatible: seventeen `FV_*` `[OPTIONS]` keys, readable and writable through `swmm_options_get`/`set`, the Python bindings (`RouteModel.FV`) and the MCP server, and inert rather than rejected under the other routing models, so switching `FLOW_ROUTING` never invalidates a file. Virtual junctions become ordinary interior faces and reproduce the unsplit conduit cell for cell.
+- Backward compatible: twenty live `FV_*` `[OPTIONS]` keys and five retired ones (`FV_NODE_COUPLING`, `FV_NODE_DT`, `FV_NODE_PICARD`, `FV_NODE_CELL_COUPLING`, `FV_JUNCTION_MODEL`; the first three warn, the last two were already no-ops), readable and writable through `swmm_options_get`/`set`, the Python bindings (`RouteModel.FV`) and the MCP server, and inert rather than rejected under the other routing models, so switching `FLOW_ROUTING` never invalidates a file. Virtual junctions become ordinary interior faces and reproduce the unsplit conduit cell for cell.
 
 **Validation to date:** 29 analytic gates (closure, scheme, network) plus 7 local-time-stepping gates and 5 engine-level gates. Ritter and Stoker match the closed-form solutions including shock speed; lake at rest holds to 1e-9 ft across a slope break and while pressurized; mass is conserved to 1e-12 over 10⁵ substeps. On the EPA reference drainage model the routing continuity error is **0.000 % at every mesh resolution**, against 0.026 % for dynamic wave routing on the same file. Finite-volume routing is deliberately outside the legacy bit-parity contract — it is a different discretization, gated on analytic and engineering tolerances instead.
 
@@ -46,7 +46,7 @@ test suites, but ship in pre-release builds until 6.0.0 is final.
 - **Parallel and GPU backends.** `FV_BACKEND` and the plugin loader are in place, but no plugin yet exports the 1D network-solver entry point, so execution is CPU-serial today.
 - **Peak attenuation at the default mesh.** One cell per conduit attenuates the reference model's peaks by 37 % on average (7 % at Δx = 20 ft). The cause is geometric rather than diffusive — a cell-centred scheme places a single cell's bed at the conduit mid-point, presenting an artificial bed step at every manhole — so higher-order reconstruction does not rescue it. Setting `FV_CELL_LENGTH` is the present workaround; a bed-step treatment at junction faces is the fix.
 - **Broader regression** against published benchmark cases beyond the analytic suite, and quantification of the short-steep-pipe cell-length floor.
-- **Sub-atmospheric transients.** The two-component pressure approach (TPA) is IMPLEMENTED in both solvers (#156): `FV_PRESSURE_CLOSURE TPA` in the finite-volume solver (Hydraulics Reference Manual §8.4.5) and `SURCHARGE_METHOD TPA` in the dynamic wave solver (§3.3.11), both default-off and bit-inert when off, validated on the Vasconcelos et al. (2006) laboratory cases with sub-atmospheric heads observable via `REPORT_SIGNED_HEADS`. Remaining work: the pinned high-celerity filling divergence (explicit FV TPA at a = 150 m/s diverges at the reflected surge — the paper's own post-shock frontier; a local conservative filter was measured ineffective and the Vasconcelos & Wright (2009) hybrid flux is the designated fix path; gate `FvTpa.KnownIssueHighCelerityFillingDiverges`).
+- **Sub-atmospheric transients.** The two-component pressure approach (TPA) is IMPLEMENTED in both solvers (#156): `FV_PRESSURE_CLOSURE TPA` in the finite-volume solver (Hydraulics Reference Manual §8.4.5) and `SURCHARGE_METHOD TPA` in the dynamic wave solver (§3.3.11), both default-off and bit-inert when off, validated on the Vasconcelos et al. (2006) laboratory cases with sub-atmospheric heads observable via `REPORT_SIGNED_HEADS`. The high-celerity filling divergence that was pinned here (explicit FV TPA at a = 150 m/s diverging at the reflected surge) **was closed on 2026-09-12** by the slot/free-surface wave-speed bound: Davis's symmetric estimate had carried the acoustic celerity into the wave entering the free-surface side of a pressurization front, and bounding that wave by the Rankine-Hugoniot bore speed removes the mode. The fixture completes at 0.000 % continuity from 150 to 3000 m/s and the gate is now the positive test `FvTpa.HighCelerityFillingCompletes`; the Vasconcelos & Wright (2009) hybrid flux is no longer required for this front.
 
 (`FLOW_ROUTING FV` and the FV keys, including the #156 additions, are exposed in the OpenSWMM GUI's Routing & Hydraulics options as of openswmm.gui #10; the former desktop-exposure gap is closed.)
 
@@ -66,16 +66,17 @@ test suites, but ship in pre-release builds until 6.0.0 is final.
 - Performance and robustness hardening on large regional meshes based on beta testing feedback.
 - 2D water quality transport (Section 2.2) on the same mesh.
 
-### 1.3 Spatially Explicit Inlets — Mode-Switching Junction Nodes 🔬
+### 1.3 Spatially Explicit Inlets — Mode-Switching Junction Nodes ✅
 
 **Motivation:** Since SWMM 5.2, inlets are attributes of street and channel conduits (`[INLET_USAGE]`): capture flow is computed from approach hydraulics and applied as a flow modification inside the link, with ponding tracked at a separate reference node. The inlet has no independent hydraulic presence, so inlet-controlled surface/sewer exchange cannot respond to the hydraulic state of the node it drains to.
 
-**Status:** Design recorded. No implementation yet.
+**Status:** Implemented as `[INLET_JUNCTIONS]` in the 6.0.0 development line, alongside the conduit-attribute form, which remains supported. An inlet junction is a virtual junction that also carries an inlet: it has its own head, floods above the curb, passes bypass on to the next street conduit, and takes a surcharging sewer's backflow onto the street. Documented in Hydraulics Reference Manual §7 and worked in Application Manual Chapter 5.
 
-**Planned scope:**
-- Promote inlets to first-class junction nodes that switch mode based on approach hydraulics: capturing street flow when gutter spread exceeds a threshold, and reverting to passive junctions otherwise.
+**Delivered:**
+- Inlets promoted to first-class junction nodes that switch mode based on approach hydraulics: capturing street flow when gutter spread exceeds a threshold, and reverting to passive junctions otherwise.
 - HEC-22 grate and curb-opening capture retained as the capture closure, evaluated at the node rather than as a link post-processing step.
-- Ponding, bypass, and re-entry resolved at the inlet node itself, enabling two-way street ↔ sewer exchange under surcharge.
+- Ponding, bypass, and re-entry resolved at the inlet node itself, with two-way street ↔ sewer exchange under surcharge.
+- A conduit attached to an inlet junction may not also carry an `[INLET_USAGE]` row; the engine refuses the double capture rather than applying it twice.
 
 ---
 
@@ -91,9 +92,9 @@ Two routes are being developed, and they are complementary rather than competing
 
 *Remaining for Route A:* the transport layer is not yet connected to the project's `[POLLUTANTS]`, land-use buildup/washoff, inflows or treatment — it is exercised through the solver's own gates. Wiring it up, deciding how `QUALITY_SOLVER` selects between the legacy Eulerian solver, Route B and finite-volume transport, and reporting cell-resolved concentrations are the open items. Note that local time stepping is disabled while species are transported, because the flux-corrected transport limiter needs one synchronous sweep.
 
-**Route B — Lagrangian parcel tracking (design study recorded, not implemented).** Parcels of water and their constituent loads are advected along the flow field, with dispersion applied as a superimposed Fickian random-walk step. The approach is free of numerical diffusion, carries no Courant constraint on advection, conserves mass at the parcel level, and — unlike Route A — is independent of the hydraulic discretization, so it works under dynamic wave and kinematic wave routing as well. It is the natural host for the multispecies reaction system of Section 2.4, since reactions are evaluated along parcel trajectories.
+**Route B — Lagrangian parcel tracking (implemented, `QUALITY_SOLVER LAGRANGIAN`).** Parcels of water and their constituent loads are advected along the flow field, with dispersion applied as a superimposed Fickian random-walk step. The approach is free of numerical diffusion, carries no Courant constraint on advection, conserves mass at the parcel level, and — unlike Route A — is independent of the hydraulic discretization, so it works under dynamic wave and kinematic wave routing as well. It is the natural host for the multispecies reaction system of Section 2.4, since reactions are evaluated along parcel trajectories.
 
-*Planned scope for Route B:*
+*Delivered for Route B:*
 - Lagrangian parcel-tracking advection for 1D pipe and conduit flow across all SWMM link and node types, driven by velocity fields from the flow routing solver.
 - Random-walk dispersion on parcel trajectories using user-specified or empirically estimated longitudinal dispersion coefficients.
 - Parcel injection, merging, and splitting logic to maintain solution resolution while controlling computational cost.
@@ -101,11 +102,11 @@ Two routes are being developed, and they are complementary rather than competing
 - Water age as a built-in reserved species.
 - Numerical alignment with the legacy Eulerian solver in the degenerate case (single bulk species, first-order decay, no dispersion, complete-mixing storage) as a parity gate, plus comparison to analytical solutions for simple pipe transport problems.
 
-### 2.2 Advection-Dispersion Model — Overland Flow 📋
+### 2.2 Advection-Dispersion Model — Overland Flow ✅
 
 **Motivation:** Surface runoff carries dissolved and particulate constituents across the land surface. A 2D or quasi-2D ADE formulation for overland flow will extend water quality modeling to the catchment scale.
 
-**Status:** No implementation yet. The 2D marcher solves water only; this work is sequenced behind Route A of Section 2.1, whose contact-upwinded, flux-corrected species update is the same construction applied to an unstructured 2D mesh.
+**Status:** Implemented. The 2D marcher carries species mass per cell, species-major, with the same construction as Route A of Section 2.1 applied to the unstructured mesh, plus coverages, buildup, washoff and sweeping on the cells and an isotropic `DISPERSION` coefficient. Which classes are carried is resolved by the transport policy matrix printed in the report. Documented as Chapter 10 of the Water Quality Reference Manual.
 
 **Planned scope:**
 - 2D depth-averaged ADE for overland flow domains.
@@ -121,11 +122,11 @@ Two routes are being developed, and they are complementary rather than competing
 - Dispersion tensor formulation accounting for mechanical dispersion and molecular diffusion.
 - Coupling to the surface and pipe water quality modules at shared boundaries.
 
-### 2.4 Multispecies Reaction Support — All Flow Domains 🔬
+### 2.4 Multispecies Reaction Support — All Flow Domains ✅
 
 **Motivation:** Real-world water quality problems involve interacting chemical and biological species (e.g., nitrogen cycling, dissolved oxygen–BOD interactions, pathogen decay). A general multispecies reaction framework will allow users to define arbitrary reaction networks without modifying source code.
 
-**Status:** Design recorded — an EPANET-MSX-equivalent reaction system (user-defined rate ODEs and equilibrium DAEs, bulk and wall species, selectable integrators with adaptive error control) specified as part of the Route B strategy in Section 2.1. No implementation yet. Whichever transport route ships first, the reaction system is intended to be written once and shared, not duplicated per transport scheme.
+**Status:** Implemented as the reactions process component: user-defined rate and equilibrium expressions, bulk and wall species, named coefficients and terms, selectable integrators, and pipe, tank and initial-quality scopes, configured from a `.rxn` file named in `[PROCESS_COMPONENTS]`. Five sections of the configuration (`[REACTION_SOURCES]`, `[REACTION_PARAMETERS]`, `[REACTION_PATTERNS]`, `[REACTION_REPORT]`, `[REACTION_SUBCATCHMENTS]`) are recognised and refused rather than ignored, and species concentrations are not yet written to the output file — `[REACTION_REPORT]` is what would select them. Documented as Chapter 8 of the Water Quality Reference Manual. Whichever transport route ships first, the reaction system is intended to be written once and shared, not duplicated per transport scheme.
 
 **Planned scope:**
 - A general reaction network specification (user-defined stoichiometry, rate laws, and kinetic parameters) applicable to pipe, overland, and groundwater transport.
@@ -150,12 +151,14 @@ Two routes are being developed, and they are complementary rather than competing
 
 ---
 
-## 4. Heat Transport 📋
+## 4. Heat Transport ✅
 
 **Motivation:** Thermal loading from urban surfaces, impervious cover, and stormwater infrastructure is a significant stressor on receiving water bodies. A heat transport module will enable simulation of stormwater temperature dynamics from catchment to receiving water.
 
-**Planned scope:**
-- Surface energy balance model for catchment-scale water temperature estimation, accounting for solar radiation, long-wave exchange, evaporation, and conduction.
+**Status:** Implemented as the heat process component, `HEAT_TRANSPORT ON` with a `.heat` configuration file: temperature is a reserved transported species carried by the selected transport engine, with surface exchange (latent and sensible), radiative exchange (net shortwave, back longwave, atmospheric and land-cover longwave), LID layer conduction and a bed zone with conduction and hyporheic exchange. Documented as Chapter 9 of the Water Quality Reference Manual. Per-element heat attributes remain outstanding.
+
+**Delivered:**
+- Surface energy balance for water temperature, accounting for solar radiation, long-wave exchange, evaporation, and conduction.
 - 1D longitudinal heat transport in pipes and channels, coupled to the ADE solver (Section 2.1).
 - Coupling to the groundwater module for subsurface heat exchange and baseflow temperature.
 - Thermal stratification in detention basins (simplified layer model).
@@ -175,11 +178,11 @@ Two routes are being developed, and they are complementary rather than competing
 - The coupling interface for the groundwater ADE transport module (Section 2.3).
 - Continued legacy-parity verification alongside the rest of the hydrology suite.
 
-### 5.2 Spatially Explicit Groundwater — FV Mesh Integration 🔬
+### 5.2 Spatially Explicit Groundwater — FV Mesh Integration ✅
 
 **Motivation:** The two-zone aquifer of Section 5.1 is integrated per subcatchment: lateral exchange is the empirical SWMM cubic polynomial, there is no inter-subcatchment communication, and the aquifer's only feedback to the rest of the engine is an end-of-step infiltration cap. Four physically real processes are therefore not representable: saturation-excess (Dunne) overland flow when the water table reaches the surface, return flow re-emerging downslope after lateral subsurface transport, head-driven pipe and node ↔ aquifer exchange (the physical mechanism behind RDII, groundwater inflow, and sewer exfiltration), and true capillary rise feeding evaporation.
 
-**Status:** Design recorded, following the semidiscrete finite volume multiprocess watershed formulation of Qu & Duffy (2007). No implementation yet.
+**Status:** Implemented, following the semidiscrete finite volume multiprocess watershed formulation of Qu & Duffy (2007): a two-layer aquifer per mesh cell with four selectable soil-characteristic laws, three unsaturated-zone closures resolved from `AUTO`, lateral Darcy exchange, deep loss, MODFLOW-River node exchange, Dunne saturation excess and Feddes-stressed evapotranspiration. Opt-in through `[2D_AQUIFER]` rows. The Russo, Brooks-Corey and van Genuchten recharge closures are **experimental**: their equilibrium is right and their relaxation rate is this engine's generalisation rather than a published result, pending the closure-ladder and HYDRUS-1D benchmarks. Documented as Chapter 9 of the Hydrology Reference Manual.
 
 **Planned scope:**
 - A vertically integrated, complementary two-layer subsurface kernel on the 2D FV mesh — unsaturated moisture depth and saturated thickness per cell, joined at a moving water table.
@@ -210,12 +213,11 @@ The following items have been raised in community discussions, or explored and s
 
 | Item                                           | Reason for Deferral                                                        |
 |------------------------------------------------|----------------------------------------------------------------------------|
-| 2D overland flow (full shallow water equations) | Local inertial finite volume model implemented (Section 1.2); full dynamic-wave SWE not currently scheduled |
 | Implicit 2D time integration (CVODE/ARKODE)     | Explored and retired — the explicit marcher outperformed it on the benchmark models and removed two heavy dependencies |
 | Real-time data assimilation & sensor fusion     | Requires external telemetry infrastructure not yet in scope                |
 | Machine learning surrogate models               | Research area; may be introduced as an optional experimental module        |
 
-**No longer deferred.** *GPU-accelerated solvers* have moved into development: the
+**No longer deferred.** *2D overland flow with the full shallow-water equations* shipped: `MOMENTUM_EQUATION FULL_SWE` selects an Audusse-reconstructed, rotated-HLLC face flux on the same marcher, alongside `LOCAL_INERTIAL` (the default) and `DIFFUSIVE_WAVE` (Hydraulics Reference Manual §9.2). *GPU-accelerated solvers* have moved into development: the
 2D marcher's kernels run through Kokkos-based plugin backends (OpenMP, CUDA, HIP,
 SYCL) selected at runtime above a cell-count gate, shipped as optional plugin
 binaries so the base build carries no GPU dependency. The 1D finite volume solver
@@ -242,7 +244,15 @@ means merged and gated but not yet carried by a tag.
 | Per-cell 2D parameter surfaces and 2D initial conditions                               | unreleased      |
 | Explicit finite volume 1D routing, `FLOW_ROUTING FV` (Section 1.1)                     | unreleased      |
 | Cell-resolved Eulerian scalar transport on the finite volume mesh (Section 2.1, Route A) | unreleased      |
+| Lagrangian parcel transport, `QUALITY_SOLVER LAGRANGIAN` (Section 2.1, Route B)       | unreleased      |
+| Species transport, coverages, buildup and washoff on the 2D mesh (Section 2.2)        | unreleased      |
+| Multispecies reactions as a process component (Section 2.4)                           | unreleased      |
+| Heat transport as a process component, with water age (Section 4)                     | unreleased      |
+| Spatially explicit two-layer groundwater on the mesh (Section 5.2)                    | unreleased      |
+| Inlet junctions, `[INLET_JUNCTIONS]` (Section 1.3)                                    | unreleased      |
+| Full shallow-water and diffusive-wave momentum closures for the 2D marcher (Section 1.2) | unreleased      |
+| Virtual junctions, and the two-component pressure approach in both solvers (Section 1.1) | unreleased      |
 
 ---
 
-*Last updated: August 2026 — Caleb Buahin, Technical Manager*
+*Last updated: September 2026 — Caleb Buahin, Technical Manager*
