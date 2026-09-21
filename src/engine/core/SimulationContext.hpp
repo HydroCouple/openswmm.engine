@@ -1172,6 +1172,12 @@ struct SimulationContext {
         std::vector<double> qual_routing_ex_in;  ///< External (interface file) quality mass inflow
         std::vector<double> qual_routing_seep;   ///< Quality mass lost to seepage
         std::vector<double> qual_routing_evap;   ///< Quality mass lost to evaporation
+        /// Mass booked to final storage as a link went dry, accumulated over
+        /// the run (legacy massbal_addToFinalStorage). Legacy adds the
+        /// end-of-run stored mass ON TOP of this running total
+        /// (massbal.c:885), so it is kept apart from qual_routing_final,
+        /// which SWMMEngine recomputes from state every routing step.
+        std::vector<double> qual_routing_final_dry;
 
         void resize_quality(int n_pollutants) {
             auto np = static_cast<std::size_t>(n_pollutants);
@@ -1195,6 +1201,7 @@ struct SimulationContext {
             qual_routing_ex_in.assign(np, 0.0);
             qual_routing_seep.assign(np, 0.0);
             qual_routing_evap.assign(np, 0.0);
+            qual_routing_final_dry.assign(np, 0.0);
             routing_forcing_qual_inflow.assign(np, 0.0);
         }
 
@@ -1220,6 +1227,7 @@ struct SimulationContext {
             auto qrex = std::move(qual_routing_ex_in);
             auto qrseep = std::move(qual_routing_seep);
             auto qrevap = std::move(qual_routing_evap);
+            auto qrfd = std::move(qual_routing_final_dry);
             auto qrfqi = std::move(routing_forcing_qual_inflow);
             *this = MassBalance{};
             qual_init_buildup = std::move(qi);
@@ -1242,6 +1250,7 @@ struct SimulationContext {
             qual_routing_ex_in = std::move(qrex);
             qual_routing_seep = std::move(qrseep);
             qual_routing_evap = std::move(qrevap);
+            qual_routing_final_dry = std::move(qrfd);
             routing_forcing_qual_inflow = std::move(qrfqi);
             // Zero out the quality vectors (except init_buildup which is
             // computed once during initQuality and must survive reset)
@@ -1258,6 +1267,7 @@ struct SimulationContext {
                             &qual_routing_ex_in,
                             &qual_routing_seep,
                             &qual_routing_evap,
+                            &qual_routing_final_dry,
                             &routing_forcing_qual_inflow}) {
                 std::fill(v->begin(), v->end(), 0.0);
             }

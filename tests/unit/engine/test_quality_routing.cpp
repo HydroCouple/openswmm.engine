@@ -7,7 +7,8 @@
  *   - accumulateLinkLoads: link mass transport → downstream node
  *   - mixAtNodes: complete mixing (CSTR) at each node
  *   - applyDecay: first-order decay in nodes and links
- *   - updateLinkQuality: copy upstream node conc → link
+ *   - updateLinkQuality: mixed reactor in the conduit, upstream node conc
+ *                        for a non-conduit, zero for a dry link
  *   - execute: full pipeline integration test
  *
  * @see src/engine/quality/QualityRouting.cpp
@@ -278,7 +279,15 @@ TEST_F(QualityRoutingTest, ExecuteUpdateLinkQualFromUpstream) {
     ctx.nodes.old_volume[2] = 100.0;
     ctx.nodes.volume[2] = 100.0;
 
-    // Old link concentrations (will be overwritten by upstream node)
+    // Link0 holds water. A conduit that ends the step dry reads ZERO, not
+    // the upstream concentration (legacy findLinkQual's final branch — see
+    // DryConduitReadsZero); this test is about WHICH node the mix draws
+    // from, so the conduit has to be wet for the question to arise.
+    ctx.links.volume[0] = 100.0;
+    ctx.links.old_volume[0] = 100.0;
+    ctx.links.depth[0] = 1.0;
+
+    // Old link concentrations — mixed with, not overwritten by, the upstream
     ctx.links.conc_old[0 * NP + 0] = 99.0;
     ctx.links.conc_old[0 * NP + 1] = 99.0;
 
@@ -290,10 +299,16 @@ TEST_F(QualityRoutingTest, ExecuteUpdateLinkQualFromUpstream) {
 
     solver.execute(ctx, dt);
 
-    // After execute, Link0 should copy upstream (Node0) concentration
-    // Node0 has no inflow so conc[N0] = conc_old[N0] = 7.0 / 14.0
-    EXPECT_NEAR(ctx.links.conc[0 * NP + 0], 7.0, 1e-10);
-    EXPECT_NEAR(ctx.links.conc[0 * NP + 1], 14.0, 1e-10);
+    // Node0 has no inflow so conc[N0] = conc_old[N0] = 7.0 / 14.0, and the
+    // conduit is a mixed reactor drawing on it: legacy getMixedQual gives
+    //   (c_old * v_old + c_up * q_in * dt) / (v_old + q_in * dt)
+    // with q_in = 2.0 (the volume is unchanged, so the DW correction is 0):
+    //   P0: (99*100 + 7*2*10)  / 120 = 83.666...
+    //   P1: (99*100 + 14*2*10) / 120 = 84.833...
+    EXPECT_NEAR(ctx.links.conc[0 * NP + 0], (99.0 * 100.0 + 7.0 * 20.0) / 120.0,
+                1e-10);
+    EXPECT_NEAR(ctx.links.conc[0 * NP + 1], (99.0 * 100.0 + 14.0 * 20.0) / 120.0,
+                1e-10);
 }
 
 TEST_F(QualityRoutingTest, ExecuteReverseFlowUsesCorrectUpstream) {
@@ -314,6 +329,11 @@ TEST_F(QualityRoutingTest, ExecuteReverseFlowUsesCorrectUpstream) {
     ctx.nodes.conc_old[0 * NP + 0] = 1.0;  // Node0, P0
     ctx.nodes.conc_old[1 * NP + 0] = 9.0;  // Node1, P0
 
+    // Wet conduit — a dry one reads zero whatever its upstream holds
+    ctx.links.volume[0] = 100.0;
+    ctx.links.old_volume[0] = 100.0;
+    ctx.links.depth[0] = 1.0;
+
     ctx.links.conc_old[0 * NP + 0] = 9.0;  // Link0 old conc
     ctx.links.conc_old[0 * NP + 1] = 0.0;
 
@@ -326,9 +346,71 @@ TEST_F(QualityRoutingTest, ExecuteReverseFlowUsesCorrectUpstream) {
 
     // Upstream of Link0 when flow < 0 is node2 (N1)
     // After mixing: N1 has no inflow (Link0 reversed goes to N0 as downstream)
-    // so N1 conc stays at 9.0
-    // Link0 should copy from N1
+    // so N1 conc stays at 9.0. The conduit already holds 9.0, so the mix
+    // returns 9.0 whatever the weights — which is what makes this a clean
+    // test of the upstream CHOICE: drawing on N0 (1.0) instead would show.
     EXPECT_NEAR(ctx.links.conc[0 * NP + 0], 9.0, 1e-10);
+}
+
+// Legacy findLinkQual's closing branch: a conduit that ends the step with
+// less than a litre of water, OR under a millimetre of depth, reads zero and
+// hands what it held to final storage. This engine used to give such a link
+// the upstream node's concentration outright, so a filling conduit published
+// its inflow concentration from the first period instead of mixing up to it.
+TEST_F(QualityRoutingTest, DryConduitReadsZero) {
+    double dt = 10.0;
+
+    ctx.links.flow[0] = 2.0;
+    ctx.links.flow[1] = 0.0;
+    ctx.nodes.conc[0 * NP + 0] = 100.0;
+    ctx.links.conc_old[0 * NP + 0] = 50.0;
+
+    // Under a millimetre of depth, but holding more than a litre
+    ctx.links.volume[0] = 10.0;
+    ctx.links.old_volume[0] = 10.0;
+    ctx.links.depth[0] = openswmm::quality::ZERO_DEPTH / 2.0;
+
+    ctx.pollutants.k_decay[0] = 0.0;
+    ctx.pollutants.k_decay[1] = 0.0;
+
+    solver.updateLinkQuality(ctx, dt);
+    EXPECT_DOUBLE_EQ(ctx.links.conc[0 * NP + 0], 0.0);
+
+    // Now wet enough in depth but under a litre in volume
+    ctx.links.depth[0] = 1.0;
+    ctx.links.volume[0] = openswmm::quality::ZERO_VOLUME / 2.0;
+    ctx.links.conc[0 * NP + 0] = 50.0;
+
+    solver.updateLinkQuality(ctx, dt);
+    EXPECT_DOUBLE_EQ(ctx.links.conc[0 * NP + 0], 0.0);
+}
+
+// Legacy findLinkQual opens by handing a non-conduit link — and a conduit
+// with a DUMMY cross-section — the upstream node's quality and returning:
+// no mixing, no evaporation factor, no reaction, because none of them hold
+// water. The dry-link rule above does NOT apply to them.
+TEST_F(QualityRoutingTest, NonConduitTakesUpstreamQuality) {
+    double dt = 10.0;
+
+    ctx.nodes.conc[0 * NP + 0] = 42.0;
+    ctx.nodes.conc[0 * NP + 1] = 24.0;
+    ctx.links.conc_old[0 * NP + 0] = 999.0;
+    ctx.links.conc_old[0 * NP + 1] = 999.0;
+    ctx.links.flow[0] = 0.0;           // no flow: the CSTR would hold 999
+    ctx.links.volume[0] = 0.0;         // no volume: the dry rule would zero it
+    ctx.links.depth[0] = 0.0;
+    ctx.pollutants.k_decay[0] = 0.5;   // and decay would bite, if it applied
+
+    ctx.links.type[0] = openswmm::LinkType::PUMP;
+    solver.updateLinkQuality(ctx, dt);
+    EXPECT_DOUBLE_EQ(ctx.links.conc[0 * NP + 0], 42.0);
+    EXPECT_DOUBLE_EQ(ctx.links.conc[0 * NP + 1], 24.0);
+
+    ctx.links.type[0] = openswmm::LinkType::CONDUIT;
+    ctx.links.xsect_shape[0] = openswmm::XsectShape::DUMMY;
+    ctx.links.conc[0 * NP + 0] = 0.0;
+    solver.updateLinkQuality(ctx, dt);
+    EXPECT_DOUBLE_EQ(ctx.links.conc[0 * NP + 0], 42.0);
 }
 
 TEST_F(QualityRoutingTest, ExecuteZeroPollutantsIsNoOp) {
