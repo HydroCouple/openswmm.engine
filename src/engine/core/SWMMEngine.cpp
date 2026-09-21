@@ -3425,8 +3425,30 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                     double norm = (bp.normalizer == 0)
                         ? frac * area_ac : frac * ctx_.subcatches.curb_length[ui];
 
-                    // --- Buildup accumulation (matching legacy surfqual_getBuildup)
-                    if (bp.type != landuse::BuildupType::NONE) {
+                    // --- Buildup accumulation (matching legacy
+                    //     surfqual_getBuildup). Legacy calls it from
+                    //     runoff.c:280 under `if (runoff < MIN_RUNOFF)`:
+                    //     pollutant accumulates only while the subcatchment is
+                    //     effectively DRY, and stops for as long as it is
+                    //     running off. This engine accumulated on every runoff
+                    //     step, through the storm as well as between storms, so
+                    //     it kept laying down mass that the washoff was
+                    //     simultaneously removing — runoff44-sw5 built up
+                    //     64.383 lb of COD over the run against legacy's
+                    //     18.148. The test is the complement of the washoff
+                    //     gate below, on the same ft/sec rate.
+                    //
+                    //     The snow-only skip is legacy's too (surfqual.c:141):
+                    //     a SnowOnly pollutant does not accumulate on bare
+                    //     ground, only under a pack deeper than 0.001 in.
+                    const bool subcatch_is_dry = (runoff_fts < MIN_RUNOFF_FTS);
+                    const bool snow_only_blocked =
+                        (static_cast<std::size_t>(p) < ctx_.pollutants.snow_only.size() &&
+                         ctx_.pollutants.snow_only[static_cast<std::size_t>(p)] &&
+                         (ui >= ctx_.subcatches.snow_depth.size() ||
+                          ctx_.subcatches.snow_depth[ui] < 0.001 / 12.0));
+                    if (bp.type != landuse::BuildupType::NONE &&
+                        subcatch_is_dry && !snow_only_blocked) {
                         double mass = surface_quality_.buildup[bu];  // per-normalizer-unit
 
                         // Gap #35: EXTERNAL buildup uses a time series for rate.
@@ -3491,6 +3513,11 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                                 default: break;
                             }
                         }
+                        // legacy surfqual.c:149 `newBuildup = MAX(newBuildup,
+                        // oldBuildup)` — buildup never DECREASES across a
+                        // step, whatever the inverse/forward round trip
+                        // returns.
+                        new_mass = std::max(new_mass, mass);
                         double buildup_change = new_mass - mass;
                         surface_quality_.buildup[bu] = new_mass;
 
