@@ -71,7 +71,7 @@ covers the formulations instead.
 | Former chapter | Now |
 |---|---|
 | Ex. 1 – Site Drainage | @ref tutorial_site_drainage |
-| Ex. 2 – Surface Water Quality | *Chapter 8, the three transport engines* (in preparation), and @ref quality_ref_ch3_pollutant_buildup for the theory |
+| Ex. 2 – Surface Water Quality | @ref application_manual_ch8_transport_engines "Chapter 8: the three transport engines", and @ref quality_ref_ch3_pollutant_buildup for the theory |
 | Ex. 3 – Runoff Water Quality | @ref quality_ref_ch4_surface_washoff |
 | Ex. 4 – Low Impact Development | @ref engine_manual_sect_LID_USAGE for the grammar and @ref quality_ref_ch6_lid_controls for the theory |
 | Ex. 5 – Continuous Simulation | *Chapter 11, long-term hydrology* (in preparation) |
@@ -85,5 +85,8 @@ covers the formulations instead.
 - @subpage application_manual_ch2_filling_pipe — Chapter 2: A Filling Pipe under the Dynamic Wave and Finite-Volume Routers
 - @subpage application_manual_ch3_subatmospheric — Chapter 3: A Sub-Atmospheric Transient
 - @subpage application_manual_ch5_street_inlets — Chapter 5: Street Inlets and the Inlet Junction
+- @subpage application_manual_ch8_transport_engines — Chapter 8: The Three Transport Engines
+- @subpage application_manual_ch9_msx — Chapter 9: Multi-Species Reactions
+- @subpage application_manual_ch10_age_heat — Chapter 10: Water Age and Heat
 - @subpage application_manual_ch12_python_plugins — Chapter 12: Running Models from Python and Plugins
 - @subpage application_manual_ch13_planned — Chapter 13: What Is Coming

@@ -169,7 +169,7 @@ graph TD
 
 Refining the Eulerian mesh is quadratic: halving `TARGET_DX` doubles both
 the cell count and the substep count.
-*Chapter 8, the three transport engines* (in preparation) puts a tracer
+@ref application_manual_ch8_transport_engines "Chapter 8: the three transport engines" puts a tracer
 pulse through all three.
 
 ## 1.5 Age, heat and multi-species reactions
@@ -200,8 +200,8 @@ graph TD
 
 *Figure 1-5 Water age, heat and reacting species*
 
-*Chapter 9, multi-species reactions* (in preparation) and
-*Chapter 10, water age and heat* (in preparation) configure all three on
+@ref application_manual_ch9_msx "Chapter 9: multi-species reactions" and
+@ref application_manual_ch10_age_heat "Chapter 10: water age and heat" configure all three on
 one deck.
 
 ## 1.6 Which groundwater representation
@@ -271,12 +271,12 @@ generalisation rather than a published result.
 | Non-Gardner soil laws | `SOIL_CHAR` | \status{Experimental} | @ref hydrology_ref_ch9_mesh_groundwater | *Chapter 7, rain, infiltration and groundwater on the mesh* (in preparation) |
 | Modified Green-Ampt | `INFILTRATION MODIFIED_GREEN_AMPT` | \status{Implemented} | @ref hydrology_ref_ch4_infiltration | *Chapter 11, long-term hydrology* (in preparation) |
 | RDII with decay | `[RDII_DECAY]` | \status{Implemented} | @ref hydrology_ref_ch7_rdii | *Chapter 11, long-term hydrology* (in preparation) |
-| Legacy quality routing | `QUALITY_SOLVER LEGACY` | \status{Implemented} | @ref quality_ref_ch5_transport_treatment | *Chapter 8, the three transport engines* (in preparation) |
-| Eulerian transport | `QUALITY_SOLVER EULERIAN_ARD` | \status{Implemented} | @ref quality_ref_ch7_ard_transport | *Chapter 8, the three transport engines* (in preparation) |
-| Lagrangian transport | `QUALITY_SOLVER LAGRANGIAN` | \status{Implemented} | @ref quality_ref_ch7_ard_transport | *Chapter 8, the three transport engines* (in preparation) |
-| Multi-species reactions | `[PROCESS_COMPONENTS]` reactions | \status{Implemented} | @ref quality_ref_ch8_msx_reactions | *Chapter 9, multi-species reactions* (in preparation) |
-| Water age | `WATER_AGE ON` | \status{Implemented} | @ref quality_ref_ch9_age_heat | *Chapter 10, water age and heat* (in preparation) |
-| Heat transport | `HEAT_TRANSPORT ON` | \status{Implemented} | @ref quality_ref_ch9_age_heat | *Chapter 10, water age and heat* (in preparation) |
+| Legacy quality routing | `QUALITY_SOLVER LEGACY` | \status{Implemented} | @ref quality_ref_ch5_transport_treatment | @ref application_manual_ch8_transport_engines "Chapter 8: the three transport engines" |
+| Eulerian transport | `QUALITY_SOLVER EULERIAN_ARD` | \status{Implemented} | @ref quality_ref_ch7_ard_transport | @ref application_manual_ch8_transport_engines "Chapter 8: the three transport engines" |
+| Lagrangian transport | `QUALITY_SOLVER LAGRANGIAN` | \status{Implemented} | @ref quality_ref_ch7_ard_transport | @ref application_manual_ch8_transport_engines "Chapter 8: the three transport engines" |
+| Multi-species reactions | `[PROCESS_COMPONENTS]` reactions | \status{Implemented} | @ref quality_ref_ch8_msx_reactions | @ref application_manual_ch9_msx "Chapter 9: multi-species reactions" |
+| Water age | `WATER_AGE ON` | \status{Implemented} | @ref quality_ref_ch9_age_heat | @ref application_manual_ch10_age_heat "Chapter 10: water age and heat" |
+| Heat transport | `HEAT_TRANSPORT ON` | \status{Implemented} | @ref quality_ref_ch9_age_heat | @ref application_manual_ch10_age_heat "Chapter 10: water age and heat" |
 | 2D surface quality | `[2D_COVERAGES]`, `[2D_LOADINGS]` | \status{Implemented} | @ref quality_ref_ch10_mesh_quality | — |
 | Groundwater transport | `[GW_*]` sections | \status{Planned} | @ref hydrology_ref_ch10_planned | — |
 | Sediment transport | — | \status{Planned} | @ref quality_ref_ch11_planned | — |

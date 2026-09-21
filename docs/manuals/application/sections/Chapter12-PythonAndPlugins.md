@@ -110,7 +110,7 @@ The rule of thumb:
 - A **process component** adds physics — reactions, heat, water age,
   transport — and is configured from a file the deck names in
   `[PROCESS_COMPONENTS]` (@ref engine_manual_sect_PROCESS_COMPONENTS).
-  *Chapter 9, multi-species reactions* (in preparation) configures one.
+  @ref application_manual_ch9_msx "Chapter 9: multi-species reactions" configures one.
 - An **output or report plugin** changes what a run writes without changing
   what it computes.
 - A **solver plugin** replaces a kernel. The 2D backends are selected this
