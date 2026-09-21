@@ -1,0 +1,266 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="625.804047pt" height="299.879705pt" viewBox="0 0 625.804047 299.879705" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:format>image/svg+xml</dc:format>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 299.879705 
+L 625.804047 299.879705 
+L 625.804047 0 
+L 0 0 
+z
+" style="fill: #fcfcfb"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 42.236578 101.367788 
+L 380.129203 101.367788 
+L 380.129203 42.236578 
+L 42.236578 42.236578 
+z
+" clip-path="url(#pdf64680799)" style="fill: #e7d9bf; stroke: #0b0b0b; stroke-width: 1.2; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 42.236578 228.077522 
+L 380.129203 228.077522 
+L 380.129203 101.367788 
+L 42.236578 101.367788 
+z
+" clip-path="url(#pdf64680799)" style="fill: #2a78d6; opacity: 0.34; stroke: #0b0b0b; stroke-width: 1.2; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 192.598796 139.380708 
+L 221.31967 139.380708 
+L 221.31967 27.453776 
+L 192.598796 27.453776 
+z
+" clip-path="url(#pdf64680799)" style="fill: #d9e6f5; stroke: #0b0b0b; stroke-width: 1.1; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_5">
+    <path d="M 168.946313 179.505457 
+L 244.972153 179.505457 
+L 244.972153 139.380708 
+L 168.946313 139.380708 
+z
+" clip-path="url(#pdf64680799)" style="fill: #d9e6f5; stroke: #0b0b0b; stroke-width: 1.2; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_6">
+    <path d="M 206.959233 35.901091 
+C 209.199487 35.901091 211.348288 35.011029 212.932387 33.42693 
+C 214.516486 31.842831 215.406549 29.69403 215.406549 27.453776 
+C 215.406549 25.213522 214.516486 23.064721 212.932387 21.480622 
+C 211.348288 19.896523 209.199487 19.00646 206.959233 19.00646 
+C 204.718979 19.00646 202.570178 19.896523 200.986079 21.480622 
+C 199.40198 23.064721 198.511917 25.213522 198.511917 27.453776 
+C 198.511917 29.69403 199.40198 31.842831 200.986079 33.42693 
+C 202.570178 35.011029 204.718979 35.901091 206.959233 35.901091 
+z
+" clip-path="url(#pdf64680799)" style="fill: #bfbfbf; stroke: #0b0b0b; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_7">
+    <path d="M 168.946313 179.505457 
+L 244.972153 179.505457 
+L 244.972153 157.542437 
+L 168.946313 157.542437 
+z
+" clip-path="url(#pdf64680799)" style="fill: #2a78d6; opacity: 0.45"/>
+   </g>
+   <g id="patch_8">
+    <path d="M 192.598796 139.380708 
+L 221.31967 139.380708 
+L 221.31967 139.380708 
+L 192.598796 139.380708 
+L 192.598796 139.380708 
+z
+" clip-path="url(#pdf64680799)" style="fill: none"/>
+   </g>
+   <g id="patch_9">
+    <path d="M 152.051681 197.24482 
+L 261.866785 197.24482 
+L 261.866785 179.505457 
+L 152.051681 179.505457 
+z
+" clip-path="url(#pdf64680799)" style="fill: url(#hb7a6bc45db); stroke: #0b0b0b; stroke-linejoin: miter"/>
+   </g>
+   <g id="line2d_1">
+    <path d="M 42.236578 101.367788 
+L 380.129203 101.367788 
+" clip-path="url(#pdf64680799)" style="fill: none; stroke: #2a78d6; stroke-width: 1.8; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_2">
+    <path d="M 105.591445 157.542437 
+L 308.327021 157.542437 
+" clip-path="url(#pdf64680799)" style="fill: none; stroke-dasharray: 6,3; stroke-dashoffset: 0; stroke: #1baf7a; stroke-width: 1.5"/>
+   </g>
+   <g id="line2d_3">
+    <path d="M 149.939852 179.505457 
+L 166.834484 179.505457 
+" clip-path="url(#pdf64680799)" style="fill: none; stroke: #0b0b0b; stroke-width: 0.9; stroke-linecap: square"/>
+   </g>
+   <g id="text_1">
+    <text style="font-size: 7.8px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="48.572065" y="37.168189" transform="rotate(-0 48.572065 37.168189)">mesh cell — ground surface z_c</text>
+   </g>
+   <g id="text_2">
+    <text style="font-size: 7.8px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #2a78d6" x="373.793717" y="96.299398" transform="rotate(-0 373.793717 96.299398)">water table  H_gw = z_bed + h_g</text>
+   </g>
+   <g id="text_3">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="48.572065" y="223.009133" transform="rotate(-0 48.572065 223.009133)">aquifer bottom  z_bed</text>
+   </g>
+   <g id="text_4">
+    <text style="font-size: 8px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="206.959233" y="170.731447" transform="rotate(-0 206.959233 170.731447)">d</text>
+   </g>
+   <g id="text_5">
+    <text style="font-size: 7.8px; font-family: 'DejaVu Sans'; fill: #1baf7a" transform="translate(312.550678 142.745391)">pipe head</text>
+    <text style="font-size: 7.8px; font-family: 'DejaVu Sans'; fill: #1baf7a" transform="translate(312.550678 151.479685)">H_pipe = z_inv + d</text>
+   </g>
+   <g id="text_6">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="164.722655" y="192.038122" transform="rotate(-0 164.722655 192.038122)">z_inv</text>
+   </g>
+   <g id="patch_10">
+    <path d="M 146.983292 182.508232 
+Q 146.983292 188.372189 146.983292 194.236146 
+" style="fill: none; stroke: #0b0b0b; stroke-width: 0.9; stroke-linecap: round"/>
+    <path d="M 145.183292 186.108232 
+L 146.983292 182.508232 
+L 148.783292 186.108232 
+" style="fill: none; stroke: #0b0b0b; stroke-width: 0.9; stroke-linecap: round"/>
+    <path d="M 148.783292 190.636146 
+L 146.983292 194.236146 
+L 145.183292 190.636146 
+" style="fill: none; stroke: #0b0b0b; stroke-width: 0.9; stroke-linecap: round"/>
+   </g>
+   <g id="text_7">
+    <text style="font-size: 8px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="141.492537" y="190.471389" transform="rotate(-0 141.492537 190.471389)">d_C</text>
+   </g>
+   <g id="text_8">
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="268.202271" y="190.31417" transform="rotate(-0 268.202271 190.31417)">semi-confining bed:  K_c, contact area A_b</text>
+   </g>
+   <g id="patch_11">
+    <path d="M 124.597906 154.425512 
+Q 124.597906 129.455921 124.597906 104.48633 
+" style="fill: none; stroke: #2a78d6; stroke-linecap: round"/>
+    <path d="M 126.397906 150.825512 
+L 124.597906 154.425512 
+L 122.797906 150.825512 
+" style="fill: none; stroke: #2a78d6; stroke-linecap: round"/>
+    <path d="M 122.797906 108.08633 
+L 124.597906 104.48633 
+L 126.397906 108.08633 
+" style="fill: none; stroke: #2a78d6; stroke-linecap: round"/>
+   </g>
+   <g id="text_9">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; fill: #2a78d6" transform="translate(62.666498 127.191381)">H_gw − H_pipe</text>
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; fill: #2a78d6" transform="translate(42.997935 135.913093)">drives the exchange</text>
+   </g>
+   <g id="patch_12">
+    <path d="M 130.821511 168.946313 
+Q 147.827881 168.946313 162.82179 168.946313 
+" style="fill: none; stroke: #2a78d6; stroke-width: 1.8; stroke-linecap: round"/>
+    <path d="M 157.62179 166.346313 
+L 162.82179 168.946313 
+L 157.62179 171.546313 
+z
+" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.8; stroke-linecap: round"/>
+   </g>
+   <g id="text_10">
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; fill: #2a78d6" transform="translate(60.341624 166.84506)">Q &gt; 0  infiltration</text>
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; fill: #2a78d6" transform="translate(77.570906 175.131441)">into the pipe</text>
+   </g>
+   <g id="patch_13">
+    <path d="M 249.08393 168.946313 
+Q 266.0903 168.946313 281.084209 168.946313 
+" style="fill: none; stroke: #eb6834; stroke-width: 1.8; stroke-linecap: round"/>
+    <path d="M 275.884209 166.346313 
+L 281.084209 168.946313 
+L 275.884209 171.546313 
+z
+" style="fill: #eb6834; stroke: #eb6834; stroke-width: 1.8; stroke-linecap: round"/>
+   </g>
+   <g id="text_11">
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; fill: #eb6834" transform="translate(289.32056 166.84506)">Q &lt; 0  exfiltration</text>
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; fill: #eb6834" transform="translate(289.32056 175.131441)">into the aquifer</text>
+   </g>
+   <g id="text_12">
+    <text style="font-size: 8.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="42.236578" y="251.30764" transform="rotate(-0 42.236578 251.30764)">Q_node = C (H_gw − H_pipe),      C = K_c A_b / d_C  with a bed,      C = K_s A_b / (½ z_s)  without one</text>
+   </g>
+   <g id="text_13">
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; fill: #898781" transform="translate(42.236578 262.246882)">Caps — a drain takes at most half the cell's drainable water per step, ½ h_g S_y A / Δt.  A recharge is refused when the table is within 10⁻⁴ z_s of the ground,</text>
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; fill: #898781" transform="translate(42.236578 272.425929)">takes at most half the headroom (z_s − h_g) S_y A, and cannot exceed what the node holds for the batch plus what flows through it.</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="pdf64680799">
+   <rect x="0" y="-0" width="515.286254" height="299.879705"/>
+  </clipPath>
+ </defs>
+ <defs>
+  <pattern id="hb7a6bc45db" patternUnits="userSpaceOnUse" x="0" y="0" width="72" height="72">
+   <rect x="0" y="0" width="73" height="73" fill="#cbbfa6"/>
+   <path d="M -36 36 
+L 36 -36 
+M -30 42 
+L 42 -30 
+M -24 48 
+L 48 -24 
+M -18 54 
+L 54 -18 
+M -12 60 
+L 60 -12 
+M -6 66 
+L 66 -6 
+M 0 72 
+L 72 0 
+M 6 78 
+L 78 6 
+M 12 84 
+L 84 12 
+M 18 90 
+L 90 18 
+M 24 96 
+L 96 24 
+M 30 102 
+L 102 30 
+M 36 108 
+L 108 36 
+M -36 36 
+L 36 108 
+M -30 30 
+L 42 102 
+M -24 24 
+L 48 96 
+M -18 18 
+L 54 90 
+M -12 12 
+L 60 84 
+M -6 6 
+L 66 78 
+M 0 0 
+L 72 72 
+M 6 -6 
+L 78 66 
+M 12 -12 
+L 84 60 
+M 18 -18 
+L 90 54 
+M 24 -24 
+L 96 48 
+M 30 -30 
+L 102 42 
+M 36 -36 
+L 108 36 
+" style="fill: #0b0b0b; stroke: #0b0b0b; stroke-width: 1.0; stroke-linecap: butt; stroke-linejoin: miter"/>
+  </pattern>
+ </defs>
+</svg>

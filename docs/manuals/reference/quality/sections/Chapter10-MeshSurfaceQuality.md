@@ -46,7 +46,10 @@ integrated by the CPU marcher; the Kokkos backends carry none, so a project
 with any class enabled on the mesh runs on the CPU whatever the backend
 setting.
 
-<!-- FIGURE: quality_ch10_transport_policy — the Domain × Species-class matrix as a 4×4 grid; the 2D-surface row annotated with its gate ladder (mesh → project option → IGNORE_2D → IGNORE_QUALITY → WALL → TRANSPORT_* key), and the reserved rows in canonical order: pollutants, MSX, __WATER_AGE__, __TEMPERATURE__ -->
+<!-- figure spec: the Domain × Species-class matrix as a 4×4 grid; the 2D-surface row annotated with its gate ladder (mesh → project option → IGNORE_2D → IGNORE_QUALITY → WALL → TRANSPORT_* key), and the reserved rows in canonical order: pollutants, MSX, __WATER_AGE__, __TEMPERATURE__ -->
+![Figure 10-1](figures/png/quality_ch10_transport_policy.png)
+
+*Figure 10-1 The transport policy matrix: which species class moves in which domain, and the gate ladder the 2D surface passes*
 
 <!-- source: src/engine/transport/TransportPolicy.cpp:89-122, 206-238, 273-320; src/engine/transport/TransportPolicy.hpp:1-35; src/engine/2d/input/SectionHandlers2D.cpp:120-125, 355-364; src/engine/2d/data/SolverOptions2D.hpp:311-314, 412; src/engine/plugins/DefaultReportPlugin.cpp:562-572; src/engine/2d/SurfaceRouter2D.cpp:739-761, 850-855; src/engine/input/handlers/OptionsHandler.cpp:346-349 -->
 
@@ -259,7 +262,10 @@ would load the same storm twice. At open, every covered cell whose centroid
 lies inside a subcatchment polygon that itself has `[COVERAGES]` is reported
 in **one** warning naming the subcatchments, and the run proceeds.
 
-<!-- FIGURE: quality_ch10_cell_buildup_washoff — one mesh cell with two land-use slices (60 % / 25 % / 15 % bare); buildup stores drawn per slice; arrows for runoff-step accrual, a sweeping event, and washoff into the cell's species row, with the row then advecting to a coupled node -->
+<!-- figure spec: one mesh cell with two land-use slices (60 % / 25 % / 15 % bare); buildup stores drawn per slice; arrows for runoff-step accrual, a sweeping event, and washoff into the cell's species row, with the row then advecting to a coupled node -->
+![Figure 10-2](figures/png/quality_ch10_cell_buildup_washoff.png)
+
+*Figure 10-2 Buildup and washoff on one mesh cell: land-use slices, accrual, sweeping and the mass handed to the network*
 
 <!-- source: src/engine/2d/quality/SurfaceQuality2D.hpp:17-64, 100-115; src/engine/2d/quality/SurfaceQuality2D.cpp:93-137, 166-189, 238-327, 384-427; plans/transport/OVERLAND_TRANSPORT_HEAT_MSX_PLAN_2026-09-01.md:329-356, 388-393 -->
 

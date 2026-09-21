@@ -52,7 +52,10 @@ populated). Today it means "the mesh kernel without lateral flow" (§9.11).
 Everything in the kernel is SI; the authored `[2D_AQUIFER]` rows stay in the
 project's units and are converted once, into the per-cell state (§9.12).
 
-<!-- FIGURE: hydrology_ch9_two_layer_column — one mesh cell in section: ground at z_c, aquifer bottom at z_bed = z_c − z_s, the water table at z_bed + h_g, the unsaturated column L = z_s − h_g drawn once as a bulk store h_u (closure A) and once as m sigma layers (closure B); arrows for q_plus at the top, q_0 across the table, deep loss at the bottom, lateral Darcy through the sides, node exchange to a pipe, Dunne return upward -->
+<!-- figure spec: one mesh cell in section: ground at z_c, aquifer bottom at z_bed = z_c − z_s, the water table at z_bed + h_g, the unsaturated column L = z_s − h_g drawn once as a bulk store h_u (closure A) and once as m sigma layers (closure B); arrows for q_plus at the top, q_0 across the table, deep loss at the bottom, lateral Darcy through the sides, node exchange to a pipe, Dunne return upward -->
+![Figure 9-1](figures/png/hydrology_ch9_two_layer_column.png)
+
+*Figure 9-1 One aquifer column and its fluxes, with the unsaturated zone held as a bulk store (closure A) and as sigma layers (closure B)*
 
 Per cell \f$i\f$ of planimetric area \f$A_i\f$ and bed elevation \f$z_{c,i}\f$:
 
@@ -104,7 +107,10 @@ costs the same as Gardner and is the default; Brooks–Corey's air-entry branch
 is the one non-smooth law; van Genuchten opens the Rosetta and UNSODA
 databases. \f$S_e\f$ is kept in \f$[10^{-8}, 1]\f$.
 
-<!-- FIGURE: hydrology_ch9_soil_characteristics — two panels over suction psi: S_e(psi) and K_r(psi) for the four laws at their defaults (alpha 2 per m, psi_b 0.2 m, lambda 0.4, n 1.6, L_M 0.5), Brooks–Corey showing its air-entry kink -->
+<!-- figure spec: two panels over suction psi: S_e(psi) and K_r(psi) for the four laws at their defaults (alpha 2 per m, psi_b 0.2 m, lambda 0.4, n 1.6, L_M 0.5), Brooks–Corey showing its air-entry kink -->
+![Figure 9-2](figures/png/hydrology_ch9_soil_characteristics.png)
+
+*Figure 9-2 Retention and relative conductivity of the four soil-characteristic laws at their default parameters*
 
 **Hydrostatic-equilibrium storage.** The water a column of thickness \f$L\f$
 holds when hydrostatic above the table is
@@ -354,7 +360,10 @@ bed's conductivity and thickness (`KC`, `DC`); \f$A_b\f$ is `AREA`, or the
 cell's area when omitted. Table above pipe head is groundwater inflow, pipe
 head above table is exfiltration: one equation, no fitted coefficients.
 
-<!-- FIGURE: hydrology_ch9_node_bed_exchange — a manhole in section within a mesh cell: pipe head z_inv + d, water table z_bed + h_g, the semi-confining bed of thickness d_C and conductivity K_c between them, arrows for both exchange directions with the caps annotated -->
+<!-- figure spec: a manhole in section within a mesh cell: pipe head z_inv + d, water table z_bed + h_g, the semi-confining bed of thickness d_C and conductivity K_c between them, arrows for both exchange directions with the caps annotated -->
+![Figure 9-3](figures/png/hydrology_ch9_node_bed_exchange.png)
+
+*Figure 9-3 Node-aquifer exchange through a semi-confining bed, in both directions, with the caps that bound it*
 
 **Caps.** A drain (\f$Q > 0\f$) may take at most half the cell's drainable
 water per step, \f$\tfrac12 h_g S_y A / \Delta t\f$. A recharge
