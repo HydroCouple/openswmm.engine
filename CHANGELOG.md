@@ -25,6 +25,53 @@ retroactive.
 
 ### Documentation
 
+- **Every implemented formulation is now documented, and every planned one is
+  marked as planned.** A review of the five manuals against the engine found the
+  `[OPTIONS]` table missing about 48 parsed keys, 27 input sections and 22 process
+  component sections with no grammar anywhere, no chapter for any process on the 2D
+  mesh, nothing on the two-layer mesh aquifer or on surface quality, an application
+  manual of seven empty stubs, no conceptual diagram as an image, and a roadmap
+  still calling five shipped features unimplemented. The programme that followed:
+
+  - **New reference chapters.** Hydrology 8 (distributed surface processes on the
+    mesh) and 9 (spatially explicit groundwater); Water Quality 10 (surface quality
+    and transport on the mesh); planned-formulation chapters for all three reference
+    manuals. Hydraulics 9 absorbed the two September bolt-on sections: the three
+    momentum closures become §9.2.1–9.2.3, quadrilateral cells §9.3.1, the two-plane
+    VFR closure §9.4.2, the full shallow-water face flux §9.5.10 and the
+    diffusive-wave law §9.5.11.
+  - **The Application Manual is now a formulation-choice manual**: thirteen chapters,
+    six interactive decision workflows, and ten in-tree decks under
+    `docs/figures/decks/`. Each worked chapter runs one deck under the alternatives
+    and reports what changed, against laboratory measurements where they exist.
+  - **A scripted figure pipeline.** `docs/figures/` carries one manifest, the
+    generators, and the committed PNG and SVG outputs; `scripts/build_manual_figures.py`
+    builds, audits and runs the decks. 83 figures are generated from source — the
+    conceptual process-and-formulation map in five per-manual variants, the engine's
+    own cross-section geometry, and every simulated figure from a run the deck gate
+    also executes.
+  - **Interactive diagrams.** Mermaid workflows and the process maps pan, zoom, and
+    open the chapter behind whatever you click, through
+    `docs/custom/js/manual-interactive.js` and `@ref` targets that Doxygen and the
+    lint both validate.
+  - **Status badges.** `\status{Implemented|Experimental|Planned|Retired}` reads its
+    vocabulary and colours from `docs/figures/status.py`, so the text, the badges and
+    the diagrams cannot disagree.
+  - **Gates.** The manual lint runs in CI with a 38-case negative suite that proves
+    every check can fail; the figure check audits the manifest against the manuals;
+    `scripts/gen_manual_frontmatter.py` generates the figure and table lists from the
+    captions, which found the water-quality manual listing eleven figures against
+    thirty-eight and inventing their captions.
+- **The three EPA reference-manual monoliths are deleted.** They were excluded from
+  the build and cited by nothing; their content lives in the per-chapter files.
+  Recover any of them with `git show <commit>^:"docs/manuals/reference/hydrology/SWMM 5 Reference Manual I (20150917).md"`.
+- **`ROADMAP.md` reconciled against the engine.** Inlet junctions, Lagrangian
+  transport, transport on the mesh, multi-species reactions, heat and the mesh
+  aquifer move to Completed; the full shallow-water equations leave the deferred
+  list; the TPA high-celerity filling divergence is recorded as closed on 2026-09-12
+  rather than pending, and the finite-volume key count is corrected to twenty live
+  and five retired.
+
 - **The user manual is retired and replaced by an Engine Manual** at
   `docs/manuals/engine/`, split from it by audience. The graphical application is
   documented in its own repository, so the chapters that described the retired Delphi
@@ -284,6 +331,119 @@ retroactive.
 
 ### Added
 
+- **Dispersion, retardation and decay in the aquifer (T7.2).** The
+  transported tuple of T7.1 now spreads, sorbs and reacts.
+  **Dispersion** rides the lateral Darcy faces — `D = α_L·v_pore + D_m` from
+  `[GW_TRANSPORT_PARAMS]`, booked into the same side accumulators as
+  advection at the same cadence, so it inherits the marcher's cross-tier
+  consistency rather than needing its own argument. Its exchange is limited
+  exactly as the surface's is: at most the pairwise equalisation divided by
+  the receiver's face count (pairwise bounds do not compose — a cell fed by
+  three faces each closing its whole gap can end richer than every donor),
+  and at most a half-share of the giver's mass, with the signed temperature
+  row exempt from the mass share because it has no positivity to guard.
+  Binds are counted, not silenced. **Retardation** is linear-equilibrium
+  partitioning: a store holds the cell's TOTAL mass and every flux
+  multiplies by the dissolved fraction `1/R`, `R = 1 + ρ_b·K_d/θ` from
+  `[GW_SORPTION] Kd` and the grain density, so sorbed mass simply stays
+  where it is and no channel carries a retardation factor of its own. The
+  moving water table is the one exception — when it passes a grain, the
+  grain changes zone with it. **Decay** is first-order on the total mass of
+  both zones, per species, from `[GW_SORPTION] Decay` (1/day) falling back
+  to the `[POLLUTANTS]` Kdecay column, ledgered as `lost_reaction` so the
+  conservation statement still closes. `[GW_TRANSPORT_PARAMS]` and
+  `[GW_SORPTION]` resolve onto cells with the `* < TAG < CELL` precedence
+  the `[2D_AQUIFER]` rows use, and `[GW_TRANSPORT_OPTIONS] DISPERSION NO`
+  turns the first term off. Gates: dispersion narrows a seeded 25-against-5
+  gradient and neither cell leaves the range its sources set; sorption cuts
+  what leaves the aquifer and keeps the rest; decay removes the analytic
+  `1 − e^{−kt}` fraction and the residual still closes to 1e-10. The
+  `SUBSURFACE` reactions-component adapter (`reactArdStage`, the hydvar
+  bindings and the EULERIAN_ARD element-state question) is **not** in this
+  round. GW transport plan §3.5, gates 1/2/5, T7.2.
+- **The two-zone aquifer transports (T7.1).** With a `[2D_AQUIFER]`
+  resolved, the `[GW_*]` sections stop being authoring-only: the kernel now
+  carries a species / age / temperature tuple in two bulk stores
+  (`sat_mass`, `unsat_mass`), and every channel the water moves through
+  moves the tuple with it — lateral Darcy at the upwind donor's
+  concentration, recharge and capillary rise across the table, the moving
+  table's own handover between the zones, deep percolation, the node bed,
+  conduit seepage, saturation excess and column rejection back to the
+  surface, and ET, which carries water, age and temperature but no solute
+  (the column up-concentrates, program plan D-A20). Rows come from
+  `TransportPolicy` — the same authority the 1D and the 2D surface use, so a
+  species is the same row index in every domain — and the transport matrix's
+  groundwater row is real: `.rpt` and `swmm_get_transport_matrix` report
+  on(n) / off:KEY per class instead of a blanket "no transported quality".
+  `[GW_INITIAL_QUALITY]` seeds both zones (`ZONE SAT | UNSAT`; `LAYER` rows
+  are named as not applied while the unsaturated store is bulk). **The
+  surface seam is now a transfer, not a loss**: the mass infiltration takes
+  off a 2D cell arrives in the aquifer under it, and what saturation excess
+  pushes up arrives back on the surface (`gained_exfiltration`), each side
+  booking exactly what the other did. The "authored but INERT" warning now
+  fires only on a deck with no `[2D_AQUIFER]` for the rows to configure.
+  Gates: the GW plan's gate-6 conservation stub closes to 1e-10 on
+  all-triangle, all-quad and mixed meshes; the seam balances in both
+  directions net of what is in flight; ET leaves the solutes behind; the
+  matrix and the warning agree with each other. Heat still rides as a water
+  temperature-volume (the soil matrix's own capacity, conduction and the
+  thermal boundaries are T7.3), and dispersion, retardation and per-layer
+  resolution are T7.2. GW transport plan §3.4/§3.5, T7.1.
+- **Conduits under the water table GAIN: the signed conduit ⇄ aquifer
+  conductance (G-X4).** `[2D_AQUIFER_OPTIONS] LINK_SEEPAGE TWO_WAY` replaces
+  a conduit's fixed `[LOSSES]` seepage loss with a MODFLOW-River exchange
+  about its own invert — `K·W·L·min((h_link − max(h_gw, z_inv))/d_c, 1)`,
+  `+` out of the pipe — so the loss is throttled as the table rises and
+  reverses once the table passes the water surface. This is the
+  groundwater-inflow term SWMM has never had for a conduit (only
+  subcatchment `[GROUNDWATER]` rows could feed a node). Three properties
+  hold by construction: a FULL pipe over a table at or below its invert
+  seeps exactly the legacy rate (`d_c` defaults to the conduit's full
+  depth), the exchange is continuous through the water table, and the gain
+  is bounded by the aquifer's own per-firing share of the cells the conduit
+  crosses — never by the pipe — so the 1D can never take water the 2D does
+  not have. `[2D_AQUIFER_LINKS] <link> [KC k] [DC d] [EXCHANGE NO]`
+  overrides the conductivity and path length per conduit, gives a conduit
+  with no `[LOSSES]` rate an exchange, or keeps one out; rows round-trip
+  and a row naming an unknown link or a non-conduit is warned about, not
+  ignored silently. `LINK_SEEPAGE AUTO` (still the default) and `NONE` are
+  unchanged, and a deck without `TWO_WAY` takes the legacy branch at every
+  loss site. Ledger: the gaining half of the signed rate is booked to the
+  new `routing_link_gw_inflow` (`.rpt` "Conduit GW Inflow", printed only
+  when non-zero; `SWMM_ROUTING_LINK_GW_INFLOW`), never netted against
+  "Exfiltration Loss", and the aquifer is debited the same volume through
+  `led_link`. New `swmm_forcing_link_seepage` lets a host (HydroCouple's
+  `link_exchange_flow`) drive the exchange directly, OVERRIDE or ADD.
+  Gates: a drowned reach gains, the aquifer pays to 1e-9 and its table
+  draws down; a full pipe over a disconnected table reproduces the legacy
+  rate to 1e-12 while `AUTO` on the same deck still loses; `EXCHANGE NO`
+  keeps a conduit legacy; `KC` scales the gain linearly (damped by
+  drawdown); a forced rate is routed and booked on both sides. Program
+  plan §B.4b, D-A18 v2, G-X4.
+- **Conduit seepage reaches the aquifer cells the conduit crosses (G-X3).**
+  A conduit with a `[LOSSES]` seepage rate used to lose that water to
+  nowhere; with a two-zone `[2D_AQUIFER]` under it, every routing step's
+  seepage volume — the same `rate × barrels × dt` the 1D books as
+  "Exfiltration Loss" — is now delivered into the saturated zone of the
+  cells its polyline (`[COORDINATES]` + `[VERTICES]`) crosses, split by the
+  exact length in each cell (a Cyrus–Beck clip against the convex cells; a
+  conduit half off the mesh delivers half). One-way and conservative: the
+  1D still books the loss, the aquifer's new `led_link` term is where it
+  lands (continuity `in` gains it), and the table rises through the same
+  storage coefficient as the node and lateral volumes, Dunne excess if the
+  column is full. `[2D_AQUIFER_OPTIONS] LINK_SEEPAGE AUTO` (default) |
+  `NONE` (the legacy loss); the run reports how many conduits enrolled.
+  Surfaces: `.rpt` "Conduit Seepage Inflow" in the 2D Aquifer Continuity
+  block; `.h5` `Mesh2_face_gw_link_seepage` (m³/s per cell, held) and a
+  12-column `groundwater_ledger` (`link` at index 10, the residual last —
+  read the `terms` attribute) plus `link_in` under `/groundwater_2d`; C API
+  `SWMM_GW2D_LED_LINK`, `SWMM_GW2D_VAR_QLINK`, option key `LINK_SEEPAGE`;
+  hotstart carries `led_link` as a 10th (length-prefixed) ledger term.
+  Gates: an evenly split conduit's seepage equals the aquifer's `led_link`
+  plus what is in flight to 1e-9 and raises the two columns identically to
+  1e-12; `NONE` leaves the 1D bit-identical; a conduit half over the mesh
+  delivers half, all into the cell under it; one entirely off the mesh
+  enrols nothing. Program plan §B.4b, G-X3.
 - **Every node inside the mesh exchanges with the two-zone aquifer (G-X2).**
   `[2D_AQUIFER_OPTIONS] NODE_ENROLMENT AUTO` (the default) gives every node
   whose `[COORDINATES]` fall in a mesh cell a direct-Darcy bed over the
@@ -332,6 +492,30 @@ retroactive.
   (b) and (c).
 
 ### Fixed
+
+- **Infiltration from an inactive 2D cell never reached the aquifer.** The
+  marcher's cheap between-rebuild pass (`lazySourcesOnly`, taken on every
+  cycle that does not rebuild) sank infiltration off the surface and booked
+  it as a loss, but — unlike `syncAndRebuild`'s lazy pass, which G1-c item 1
+  fixed — never handed the volume to the two-zone aquifer under it. Deck
+  continuity still closed, because a loss is a loss; the aquifer simply
+  never received that share of its recharge (1.4 % on T7.1's gate deck, and
+  more on a rain-on-grid deck where most cells stay inactive). Found by
+  T7.1's seam gate: the species could not balance while the water did not.
+
+- **A near-saturated closure-A column created water when anything withdrew
+  from it (found by G-X4's gate).** The two-zone kernel's closure A pairs the
+  saturated update's specific yield `Sy = θ_s − θ_bot` with a handover slab
+  of content `θ_bot`, so a moving table carries exactly `Sy·|Δh|`. When the
+  column is already at `θ_s` just under the table the difference collapses
+  and `Sy` hits its `1e-3` floor — but the handover kept using the raw
+  `θ_bot`, so the two no longer summed to `θ_s` and the cell gained
+  `(θ_bot − (θ_s − Sy_floor))·|Δh|·A` every firing. Invisible until a sink
+  pulled hard on a nearly-saturated column, which a conduit under a high
+  water table does: 0.08 m³ over half an hour on the G-X4 gate deck, an
+  0.7 % continuity error. The slab content is now derived from the `Sy`
+  actually used, which makes the identity hold unconditionally and is a
+  no-op on every deck where the floor does not bind.
 
 - **ENSLAVED closure: the bracketed solve now converges on the volume.** The
   G1-c bracket used a floored derivative, which across the capillary fringe
