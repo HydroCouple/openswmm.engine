@@ -74,7 +74,7 @@ covers the formulations instead.
 | Ex. 2 – Surface Water Quality | @ref application_manual_ch8_transport_engines "Chapter 8: the three transport engines", and @ref quality_ref_ch3_pollutant_buildup for the theory |
 | Ex. 3 – Runoff Water Quality | @ref quality_ref_ch4_surface_washoff |
 | Ex. 4 – Low Impact Development | @ref engine_manual_sect_LID_USAGE for the grammar and @ref quality_ref_ch6_lid_controls for the theory |
-| Ex. 5 – Continuous Simulation | *Chapter 11, long-term hydrology* (in preparation) |
+| Ex. 5 – Continuous Simulation | @ref application_manual_ch11_hydrology "Chapter 11: long-term hydrology" |
 | Ex. 6 – Detention Pond Design | not yet rewritten; the EPA SWMM 5 Applications Manual remains the reference |
 | Ex. 7 – Combined Sewer Overflow | not yet rewritten; the EPA SWMM 5 Applications Manual remains the reference |
 | Ex. 8 – Real-Time Control | not yet rewritten; the EPA SWMM 5 Applications Manual remains the reference |
@@ -91,5 +91,6 @@ covers the formulations instead.
 - @subpage application_manual_ch8_transport_engines — Chapter 8: The Three Transport Engines
 - @subpage application_manual_ch9_msx — Chapter 9: Multi-Species Reactions
 - @subpage application_manual_ch10_age_heat — Chapter 10: Water Age and Heat
+- @subpage application_manual_ch11_hydrology — Chapter 11: Long-Term Hydrology
 - @subpage application_manual_ch12_python_plugins — Chapter 12: Running Models from Python and Plugins
 - @subpage application_manual_ch13_planned — Chapter 13: What Is Coming

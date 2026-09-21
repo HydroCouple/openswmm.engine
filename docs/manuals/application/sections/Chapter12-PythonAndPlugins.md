@@ -35,13 +35,14 @@ canonical shape is the context manager, which guarantees the close:
 from openswmm.engine import Solver
 
 with Solver("model.inp", "model.rpt", "model.out") as solver:
-    while solver.step() > 0:
+    for elapsed in solver.steps():       # a timedelta since the start
         pass
     print(solver.routing_error())
 ```
 
-`step()` returns the remaining time and advances one routing step, so a
-controller reads state, decides, writes back and steps again. The routing
+`steps()` advances one routing step per iteration and yields the elapsed
+time as a `timedelta`, so a controller reads state, decides, writes back
+and continues. `step()` is the same thing one step at a time. The routing
 error is a **fraction**, not a percentage — a gate that asserts it is below
 0.5 is asserting 50 %, not half a percent.
 

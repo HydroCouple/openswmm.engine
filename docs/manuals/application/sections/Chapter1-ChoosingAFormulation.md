@@ -266,11 +266,11 @@ generalisation rather than a published result.
 | 2D diffusive wave | `MOMENTUM_EQUATION DIFFUSIVE_WAVE` | \status{Implemented} | @ref hydraulics_ref_ch9_two_dimensional | @ref application_manual_ch6_coupled_1d2d "Chapter 6: building a coupled 1D-2D model" |
 | Rain on the mesh | `RAINFALL_MODE` | \status{Implemented} | @ref hydrology_ref_ch8_mesh_surface | @ref application_manual_ch7_mesh_hydrology "Chapter 7: rain, infiltration and groundwater on the mesh" |
 | Per-cell infiltration | `[2D_INFILTRATION]` | \status{Implemented} | @ref hydrology_ref_ch8_mesh_surface | @ref application_manual_ch7_mesh_hydrology "Chapter 7: rain, infiltration and groundwater on the mesh" |
-| Two-zone aquifer | `[AQUIFERS]`, `[GROUNDWATER]` | \status{Implemented} | @ref hydrology_ref_ch5_groundwater | *Chapter 11, long-term hydrology* (in preparation) |
+| Two-zone aquifer | `[AQUIFERS]`, `[GROUNDWATER]` | \status{Implemented} | @ref hydrology_ref_ch5_groundwater | @ref application_manual_ch11_hydrology "Chapter 11: long-term hydrology" |
 | Mesh two-layer aquifer | `[2D_AQUIFER]` | \status{Implemented} | @ref hydrology_ref_ch9_mesh_groundwater | @ref application_manual_ch7_mesh_hydrology "Chapter 7: rain, infiltration and groundwater on the mesh" |
 | Non-Gardner soil laws | `SOIL_CHAR` | \status{Experimental} | @ref hydrology_ref_ch9_mesh_groundwater | @ref application_manual_ch7_mesh_hydrology "Chapter 7: rain, infiltration and groundwater on the mesh" |
-| Modified Green-Ampt | `INFILTRATION MODIFIED_GREEN_AMPT` | \status{Implemented} | @ref hydrology_ref_ch4_infiltration | *Chapter 11, long-term hydrology* (in preparation) |
-| RDII with decay | `[RDII_DECAY]` | \status{Implemented} | @ref hydrology_ref_ch7_rdii | *Chapter 11, long-term hydrology* (in preparation) |
+| Modified Green-Ampt | `INFILTRATION MODIFIED_GREEN_AMPT` | \status{Implemented} | @ref hydrology_ref_ch4_infiltration | @ref application_manual_ch11_hydrology "Chapter 11: long-term hydrology" |
+| RDII with decay | `[RDII_DECAY]` | \status{Implemented} | @ref hydrology_ref_ch7_rdii | @ref application_manual_ch11_hydrology "Chapter 11: long-term hydrology" |
 | Legacy quality routing | `QUALITY_SOLVER LEGACY` | \status{Implemented} | @ref quality_ref_ch5_transport_treatment | @ref application_manual_ch8_transport_engines "Chapter 8: the three transport engines" |
 | Eulerian transport | `QUALITY_SOLVER EULERIAN_ARD` | \status{Implemented} | @ref quality_ref_ch7_ard_transport | @ref application_manual_ch8_transport_engines "Chapter 8: the three transport engines" |
 | Lagrangian transport | `QUALITY_SOLVER LAGRANGIAN` | \status{Implemented} | @ref quality_ref_ch7_ard_transport | @ref application_manual_ch8_transport_engines "Chapter 8: the three transport engines" |
