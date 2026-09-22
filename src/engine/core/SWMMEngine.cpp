@@ -6143,9 +6143,22 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 float a_rain = 0.0f, a_snow = 0.0f, a_evap = 0.0f;
                 float a_infil = 0.0f, a_runoff = 0.0f;
                 const auto& gw = groundwater_.state();
+                // legacy's area operand here is a ROUND TRIP, not the authored
+                // number: [SUBCATCHMENTS] stores `area = x[3] / UCF(LANDAREA)`
+                // (subcatch.c:197) and output_saveSubcatchResults multiplies it
+                // straight back, `area = Subcatch[j].area * UCF(LANDAREA)`
+                // (output.c:608). Division then multiplication in double is not
+                // the identity, and this engine keeps the authored value, so
+                // the two operands differed in the last place — enough to tip
+                // the float32 rounding of `reported * area` by one ulp and put
+                // the area-weighted system rows one ulp out. usgs-5-pollutants
+                // read 0.63000005 of system rainfall where legacy reads 0.63,
+                // on a deck where every subcatchment sees the same gage.
+                const double ucf_land = ucf::UCF(ucf::LANDAREA, ctx_.options);
                 for (int i = 0; i < ctx_.n_subcatches(); ++i) {
                     auto ui = static_cast<std::size_t>(i);
-                    const double area = ctx_.subcatches.area[ui];
+                    const double area =
+                        (ctx_.subcatches.area[ui] / ucf_land) * ucf_land;
                     total_area += static_cast<float>(area);
                     a_rain += static_cast<float>(
                         static_cast<float>(snap.subcatch.rainfall[ui]) * area);
