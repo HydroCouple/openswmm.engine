@@ -7571,12 +7571,45 @@ void SWMMEngine::initHydraulics() noexcept {
             if (n1 >= 0 && n1 < n_nl) n_out[static_cast<std::size_t>(n1)]++;
             if (n2 >= 0 && n2 < n_nl) n_in[static_cast<std::size_t>(n2)]++;
         }
-        // Count outfall nodes (legacy does not error on multiple inlets or outlet links for outfalls)
+        // An outfall QUALIFIES as an outlet only if at most one link touches
+        // it; otherwise legacy rejects the model (flowrout.c:322-329):
+        //
+        //     if (Node[i].degree + (int)Node[i].inflow > 1)
+        //          report_writeErrorMsg(ERR_OUTFALL, Node[i].ID);
+        //     else outletCount++;
+        //
+        // where `inflow` is a link count credited to the OUTFALL end when a
+        // link has one (flowrout.c:293-295) and `degree` is the outflow count,
+        // credited to the OTHER node when the upstream end is an outfall
+        // (toposort.c:80-90) — so for an outfall the test reduces to "more
+        // than one connected link, in either direction".
+        //
+        // The comment that stood here said legacy does not error on this. It
+        // does, as ERROR 141, and v6 carried the code in its table with no
+        // writer: eleven corpus decks ran to completion in v6 against a legacy
+        // that produced no results at all — advancedflowsplit and exam70-sw5
+        // among them. Accepting a model the reference REJECTS is the one
+        // failure mode a parity corpus cannot show as a diff, because there is
+        // nothing on the other side to diff against.
+        //
+        // Gated on DYNWAVE alone, which is legacy's own gate: flowrout.c:83
+        // runs validateGeneralLayout only for DW, and KINWAVE/STEADY go
+        // through validateTreeLayout, which never requires an outfall at all.
+        // FV is deliberately NOT included even though the no-outlets test
+        // below treats it as DW-class — legacy has no FV to be a reference
+        // for, so rejecting an FV deck here would be a behaviour change with
+        // no oracle behind it.
         int n_outlets = 0;
         for (int i = 0; i < n_nl; ++i) {
             auto ui = static_cast<std::size_t>(i);
-            if (ctx_.nodes.type[ui] == NodeType::OUTFALL)
+            if (ctx_.nodes.type[ui] != NodeType::OUTFALL) continue;
+            if (rm == RouteModel::DYNWAVE && n_in[ui] + n_out[ui] > 1) {
+                ctx_.errors.push_back(
+                    format_error(ERR_OUTFALL, ctx_.node_names.names()[ui]));
+                set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
+            } else {
                 ++n_outlets;
+            }
         }
         // Gap #83b: drainage system must have at least one outlet.
         // Legacy raises ERR_NO_OUTLETS from validateGeneralLayout(), which
@@ -7614,6 +7647,43 @@ void SWMMEngine::initHydraulics() noexcept {
                 if (cr >= 0 && ctx_.link_subtypes.conduits.slope[static_cast<std::size_t>(cr)] < 0.0) {
                     ctx_.errors.push_back(format_error(ERR_SLOPE, ctx_.link_names.names()[uj]));
                     set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
+                }
+            }
+            // The rest of legacy validateTreeLayout's NODE half
+            // (flowrout.c:219-249). Kinematic wave and steady flow route down
+            // a TREE: every node has at most one way out, a divider exactly
+            // two, and an outfall none at all. Storage is exempt because its
+            // volume decouples the outflows. Only the conduit-slope half of
+            // this function had been carried over, so v6 routed networks that
+            // are not trees under a solver that assumes one —
+            // 10311-h-elements is the corpus case, where legacy stops with
+            // ERROR 133 and v6 produced a full run.
+            for (int i = 0; i < n_nl; ++i) {
+                auto ui = static_cast<std::size_t>(i);
+                const int deg = n_out[ui];   // legacy's DIRECTED out-degree
+                switch (ctx_.nodes.type[ui]) {
+                    case NodeType::DIVIDER:
+                        if (deg > 2) {
+                            ctx_.errors.push_back(format_error(
+                                ERR_DIVIDER, ctx_.node_names.names()[ui]));
+                            set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
+                        }
+                        break;
+                    case NodeType::OUTFALL:
+                        if (deg > 0) {
+                            ctx_.errors.push_back(format_error(
+                                ERR_OUTFALL, ctx_.node_names.names()[ui]));
+                            set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
+                        }
+                        break;
+                    case NodeType::STORAGE:
+                        break;
+                    default:
+                        if (deg > 1) {
+                            ctx_.errors.push_back(format_error(
+                                ERR_MULTI_OUTLET, ctx_.node_names.names()[ui]));
+                            set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
+                        }
                 }
             }
         }

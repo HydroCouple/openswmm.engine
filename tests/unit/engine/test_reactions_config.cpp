@@ -422,13 +422,18 @@ TEST_F(ReactionsConfigTest, NodeLinkQualityRowsConsumed) {
               << s.opt
               << "[JUNCTIONS]\n;;Name Elev MaxDepth InitDepth SurDepth Aponded\n"
               << "J0     10.0 10 0.5 0 0\n\n"
-              << "[OUTFALLS]\n;;Name Elev Type StageData Gated\nOUT 7.0 FREE  NO\n\n"
+              // One outfall per conduit: C1 and C2 both ended at OUT, which
+              // legacy refuses (ERROR 141 — an outfall takes at most one
+              // connecting link), so the deck could never have run in real
+              // SWMM.
+              << "[OUTFALLS]\n;;Name Elev Type StageData Gated\n"
+              << "OUT  7.0 FREE  NO\nOUT2 7.0 FREE  NO\n\n"
               << "[STORAGE]\n"
               << ";;Name Elev MaxDepth InitDepth Shape     Coeff Expon Const\n"
               << "ST1    8.5  10       0.5       FUNCTIONAL 0    0     1000\n\n"
               << "[CONDUITS]\n;;Name From To Length N Zin Zout Q0\n"
-              << "C1 J0  OUT 400 0.013 0 0 0\n"
-              << "C2 ST1 OUT 400 0.013 0 0 0\n\n"
+              << "C1 J0  OUT  400 0.013 0 0 0\n"
+              << "C2 ST1 OUT2 400 0.013 0 0 0\n\n"
               << "[XSECTIONS]\n;;Link Shape G1 G2 G3 G4\n"
               << "C1 CIRCULAR 1.5 0 0 0\nC2 CIRCULAR 1.5 0 0 0\n\n"
               << "[POLLUTANTS]\n"

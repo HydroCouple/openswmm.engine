@@ -81,10 +81,15 @@ std::string deck(const std::string& heat_cfg, const std::string& tags,
            "org.hydrocouple.openswmm.heat config=\"" + heat_cfg + "\"\n\n"
            "[JUNCTIONS]\nJ0 12.0 10 0.5 0 0\nJA 9.0 10 0.5 0 0\n"
            "JB 9.0 10 0.5 0 0\n\n"
-           "[OUTFALLS]\nOUT 6.0 FREE NO\n\n"
+           // One outfall PER BRANCH. Both branches used to end at a single
+           // outfall, which legacy refuses outright (ERROR 141: an outfall
+           // takes at most one connecting link) — the deck could never have
+           // run in real SWMM. Splitting it keeps the two channels
+           // independent, which is the whole point of the comparison below.
+           "[OUTFALLS]\nOUTA 6.0 FREE NO\nOUTB 6.0 FREE NO\n\n"
            "[CONDUITS]\n"
            "CA J0 JA 500 0.013 0 0 0\nCB J0 JB 500 0.013 0 0 0\n"
-           "CAO JA OUT 50 0.013 0 0 0\nCBO JB OUT 50 0.013 0 0 0\n\n"
+           "CAO JA OUTA 50 0.013 0 0 0\nCBO JB OUTB 50 0.013 0 0 0\n\n"
            "[XSECTIONS]\n"
            "CA RECT_OPEN 3.0 4.0 0 0\nCB RECT_OPEN 3.0 4.0 0 0\n"
            "CAO RECT_OPEN 3.0 4.0 0 0\nCBO RECT_OPEN 3.0 4.0 0 0\n\n"
