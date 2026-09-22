@@ -203,19 +203,27 @@ static const std::unordered_map<int, const char*>& error_table() {
 
 static const std::unordered_map<int, const char*>& warning_table() {
     static const std::unordered_map<int, const char*> table = {
-        {1,  "wet weather time step reduced to recording interval for Rain Gage %s."},
-        {2,  "maximum depth increased for Node %s."},
-        {3,  "negative offset ignored for Link %s."},
-        {4,  "minimum elevation drop used for Conduit %s."},
-        {5,  "minimum slope used for Conduit %s."},
-        {6,  "dry weather time step increased to the wet weather time step."},
-        {7,  "routing time step reduced to the wet weather time step."},
-        {8,  "elevation drop exceeds length for Conduit %s."},
-        {9,  "time series interval greater than recording interval for Rain Gage %s."},
-        {10, "crest elevation is below downstream invert for regulator Link %s."},
-        {11, "non-matching attributes in Control Rule %s."},
-        {12, "inlet removed due to unsupported shape for Conduit %s."},
-        {13, "parameters for same month provided more than once for Unit Hydrograph %s."},
+        // Codes 1-13 are legacy's own, and legacy's report_writeWarningMsg
+        // prints `"%s %s"` — the text from text.h then the object ID, with
+        // NO closing period (report.c:writeWarningMsg, text.h:47-64). v6
+        // ended each of these with '.', so every deck that raises one
+        // differed from the oracle on punctuation alone: `WARNING 04:
+        // minimum elevation drop used for Conduit 31.` against legacy's
+        // `... Conduit 31`. Kept verbatim against text.h; the 6.0-only
+        // warnings below have no legacy counterpart and keep their own style.
+        {1,  "wet weather time step reduced to recording interval for Rain Gage %s"},
+        {2,  "maximum depth increased for Node %s"},
+        {3,  "negative offset ignored for Link %s"},
+        {4,  "minimum elevation drop used for Conduit %s"},
+        {5,  "minimum slope used for Conduit %s"},
+        {6,  "dry weather time step increased to the wet weather time step"},
+        {7,  "routing time step reduced to the wet weather time step"},
+        {8,  "elevation drop exceeds length for Conduit %s"},
+        {9,  "time series interval greater than recording interval for Rain Gage %s"},
+        {10, "crest elevation is below downstream invert for regulator Link %s"},
+        {11, "non-matching attributes in Control Rule %s"},
+        {12, "inlet removed due to unsupported shape for Conduit %s"},
+        {13, "parameters for same month provided more than once for Unit Hydrograph %s"},
 
         // New 6.0
         {101, "Time Series %s has duplicate x values."},
