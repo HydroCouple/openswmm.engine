@@ -6308,6 +6308,11 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 // the water being shed rather than the placeholder 0 this
                 // comment used to promise.
                 snap.subcatch_quality.assign(nS_s * nr_s, 0.0);
+                const double ro_span_q = new_runoff_ms_ - old_runoff_ms_;
+                const double f_ro_q = (ro_span_q > 0.0)
+                    ? (ctx_.next_report_ms - old_runoff_ms_) / ro_span_q
+                    : 1.0;
+                const double f1_ro_q = 1.0 - f_ro_q;
                 for (std::size_t s = 0; s < nS_s; ++s) {
                     // H5a temperature — written BEFORE the runoff gate, and
                     // unmasked, exactly as the node and link loops above do.
@@ -6356,8 +6361,8 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                         if (src < ctx_.subcatches.conc.size() &&
                             src < ctx_.subcatches.conc_old.size())
                             snap.subcatch_quality[s * nr_s + p] =
-                                f1_rt * ctx_.subcatches.conc_old[src] +
-                                f_rt * ctx_.subcatches.conc[src];
+                                f1_ro_q * ctx_.subcatches.conc_old[src] +
+                                f_ro_q * ctx_.subcatches.conc[src];
                     }
                     // A3 retires the placeholder that reported 0 here: the
                     // subcatchment now publishes the age of the water it is
