@@ -3629,10 +3629,12 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                         // 40 kg of SF1 on the ground left in three report
                         // periods instead of ten.
                         double area_ft2 = area_ac / ucf::UCF(ucf::LANDAREA, ctx_.options);
-                        (void)area_ft2;
                         double q_expon = runoff_fts
                                        * ucf::UCF(ucf::RAINFALL, ctx_.options);
                         double q_flow   = q * ucf::UCF(ucf::FLOW, ctx_.options);
+                        // legacy's land-use area, `landFactor[i].fraction *
+                        // Subcatch[j].area` (landuse.c:346).
+                        const double landuse_ft2 = frac * area_ft2;
 
                         // `load` is in CONCENTRATION MASS UNITS per second
                         // (mg/s for a mg/L pollutant). Each branch mirrors
@@ -3659,14 +3661,50 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                             case landuse::WashoffType::EMC:
                                 load = wp.coeff * kLperFt3 * q * frac;
                                 break;
+                            // EXPON and RATING both close through legacy's
+                            // landuse_getWashoffLoad (landuse.c:351):
+                            //   washoffLoad = washoffQual * vOutflow
+                            //                 * landuseArea / area * mcf
+                            // where washoffQual is a CONCENTRATION formed by
+                            // dividing the rate by `runoff * landuseArea`.
+                            // With vOutflow = q * dt, the step's mass carries
+                            // the factor q / (runoff_fts * area) — the share
+                            // of the subareas' runoff that actually reaches
+                            // the OUTLET, legacy's fOutlet. v6 dropped it, so
+                            // any deck whose [SUBAREAS] routes one subarea
+                            // into another washed off as if every drop left
+                            // directly. On greenroofs — where subcatchment 9
+                            // sends 97 % of its impervious runoff to the
+                            // pervious subarea — that published 1983 mg/L of
+                            // TKN on the first wet period against legacy's 92,
+                            // stripped the buildup store, and then ran BELOW
+                            // legacy for the rest of the storm; the crossover
+                            // at period 17 is the depletion catching up.
                             case landuse::WashoffType::EXPON:
-                                if (buildup > 0.0 && mcf_p > 0.0)
-                                    load = (wp.coeff / 3600.0)
-                                         * std::pow(q_expon, wp.expon)
-                                         * (buildup * norm) / mcf_p;
+                                if (buildup > 0.0 && mcf_p > 0.0 &&
+                                    landuse_ft2 > 0.0) {
+                                    double wq = (wp.coeff / 3600.0)
+                                              * std::pow(q_expon, wp.expon)
+                                              * (buildup * norm) / mcf_p;
+                                    wq /= runoff_fts * landuse_ft2;
+                                    load = ((wq * q) * landuse_ft2) / area_ft2;
+                                }
                                 break;
                             case landuse::WashoffType::RATING:
-                                load = wp.coeff * std::pow(q_flow, wp.expon) * frac;
+                                if (area_ft2 > 0.0) {
+                                    // legacy pre-multiplies the RATING coeff
+                                    // by UCF(FLOW)^expon at parse
+                                    // (landuse.c:333); our parser keeps the
+                                    // user value, so it is applied here.
+                                    double wq = wp.coeff
+                                              * std::pow(ucf::UCF(ucf::FLOW,
+                                                                  ctx_.options),
+                                                         wp.expon)
+                                              * std::pow(runoff_fts * landuse_ft2,
+                                                         wp.expon - 1.0);
+                                    load = ((wq * q) * landuse_ft2) / area_ft2;
+                                }
+                                (void)q_flow;
                                 break;
                             default: break;
                         }
@@ -6308,6 +6346,22 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 // the water being shed rather than the placeholder 0 this
                 // comment used to promise.
                 snap.subcatch_quality.assign(nS_s * nr_s, 0.0);
+                // The washoff blend below rides the RUNOFF clock, not the
+                // routing clock. legacy keeps two separate report weights —
+                // output_saveSubcatchResults forms
+                //   f = (reportTime - OldRunoffTime)/(NewRunoffTime - OldRunoffTime)
+                // (output.c:593) and hands it to subcatch_getResults, while
+                // output_saveNodeResults forms its own from the ROUTING
+                // times. This block used the routing weight (f_rt), which
+                // inside a 15-minute runoff step sits near 1 on every routing
+                // step, so the reported concentration was essentially the new
+                // value every period instead of sweeping old -> new across
+                // the runoff step. greenroofs' subcatchment 9 published 1983
+                // mg/L of TSS on the first wet period where legacy publishes
+                // 92, then decayed ~3.5x per period against legacy's ~0.85 —
+                // a front-loaded first flush that never happened. The mass
+                // was never affected, which is why the deck's washoff total
+                // matched legacy exactly while its time series did not.
                 const double ro_span_q = new_runoff_ms_ - old_runoff_ms_;
                 const double f_ro_q = (ro_span_q > 0.0)
                     ? (ctx_.next_report_ms - old_runoff_ms_) / ro_span_q
