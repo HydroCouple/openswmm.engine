@@ -92,6 +92,32 @@ TEST(OptionsParserTest, MinimumStep) {
 }
 
 // ============================================================================
+// Date separators — legacy datetime_strToDate accepts '-' as well as '/'
+// (`if (strchr(s,'-') || strchr(s,'/'))`, then `%d%c%d%c%d`), so a deck
+// writing 1-1-2000 means the same instant as one writing 01/01/2000. The
+// parser took '/' only and returned 0.0 for anything else, which is not a
+// failure the caller can see: 1900-nodes got a start and an end of zero, ran a
+// zero-length simulation, and wrote an .out with no periods while reporting
+// success.
+// ============================================================================
+
+TEST(OptionsParserTest, DateAcceptsHyphenSeparator) {
+    SimulationContext a, b;
+    parse(a, {"START_DATE  01/01/2000", "END_DATE  01/02/2000"});
+    parse(b, {"START_DATE  1-1-2000",   "END_DATE  1-2-2000"});
+    EXPECT_DOUBLE_EQ(b.options.start_date, a.options.start_date);
+    EXPECT_DOUBLE_EQ(b.options.end_date, a.options.end_date);
+    // and the run has a real duration, which is what the deck actually lost
+    EXPECT_GT(b.options.end_date, b.options.start_date);
+}
+
+TEST(OptionsParserTest, DateRejectsAMissingSeparator) {
+    SimulationContext ctx;
+    parse(ctx, {"START_DATE  01012000"});
+    EXPECT_DOUBLE_EQ(ctx.options.start_date, 0.0);
+}
+
+// ============================================================================
 // CRS option (R06)
 // ============================================================================
 
