@@ -34,6 +34,10 @@
 // instead of being picked up accidentally through the discover() scan's
 // dlsym(openswmm_plugin_info) on the engine's own binary. See §R.3 in
 // docs/GUI_IMPLEMENTATION_PLAN.md for the rationale.
+#ifdef OPENSWMM_HAS_HDF5_MODEL
+#  include "../io/hdf5/Hdf5PluginInfo.hpp"
+#endif
+
 #ifdef OPENSWMM_HAS_GEOPACKAGE
 #  include "../input/geopackage/GeoPackagePluginInfo.hpp"
 #endif
@@ -641,6 +645,13 @@ void PluginFactory::register_builtin_infos() {
     // Plugins tab.
 #ifdef OPENSWMM_HAS_GEOPACKAGE
     register_one(&openswmm::gpkg::GeoPackagePluginInfo::instance());
+#endif
+
+    // The HDF5 model writer registers the same way and for the same reason:
+    // statically linked, so it must be announced explicitly rather than
+    // discovered by dlsym. See src/engine/io/hdf5/STRATEGY.md.
+#ifdef OPENSWMM_HAS_HDF5_MODEL
+    register_one(&openswmm::h5io::Hdf5PluginInfo::instance());
 #endif
 }
 

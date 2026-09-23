@@ -41,8 +41,11 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_SOURCES
     plugins/*.cpp
     math/*.cpp
     transport/*.cpp
+    io/*.cpp
 )
 list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "input/geopackage/.*")
+# io/hdf5 is gated on OPENSWMM_WITH_HDF5 and re-added below when it is on.
+list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "io/hdf5/.*")
 
 file(GLOB_RECURSE OPENSWMM_ENGINE_HEADERS
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
@@ -533,6 +536,64 @@ if(OPENSWMM_BUILD_2D)
     endif()
 else()
     message(STATUS "OpenSWMM Engine: 2D surface routing disabled (set -DOPENSWMM_BUILD_2D=ON to enable)")
+endif()
+
+# ---- Optional HDF5 model I/O ----
+#
+# Compiled straight into the engine rather than as a separate static library
+# (the GeoPackage pattern): it is a few translation units, it needs no
+# dependency of its own beyond HDF5, and HDF5 is already PRIVATE-linked here
+# when the 2D module is on. Its own option exists so a 2D-less build can still
+# write .h5 models. See src/engine/io/hdf5/STRATEGY.md §8.
+if(OPENSWMM_WITH_HDF5)
+    file(GLOB OPENSWMM_HDF5_SOURCES
+        RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
+        io/hdf5/*.cpp
+    )
+    target_sources(openswmm_engine PRIVATE ${OPENSWMM_HDF5_SOURCES})
+
+    # The 2D block above already resolved HDF5 when it is enabled; only look
+    # again when it is not, so the two paths cannot disagree about which HDF5
+    # the engine links.
+    if(NOT OPENSWMM_BUILD_2D)
+        find_package(hdf5 CONFIG QUIET)
+        if(hdf5_FOUND)
+            if(TARGET hdf5::hdf5-shared)
+                set(_OPENSWMM_HDF5_TARGET hdf5::hdf5-shared)
+            elseif(TARGET hdf5::hdf5-static)
+                set(_OPENSWMM_HDF5_TARGET hdf5::hdf5-static)
+            else()
+                message(FATAL_ERROR "hdf5 CONFIG package found but neither hdf5::hdf5-shared nor hdf5::hdf5-static is defined")
+            endif()
+        else()
+            find_package(HDF5 REQUIRED COMPONENTS C)
+        endif()
+    endif()
+
+    if(hdf5_FOUND)
+        target_link_libraries(openswmm_engine PRIVATE ${_OPENSWMM_HDF5_TARGET})
+    else()
+        target_link_libraries(openswmm_engine PRIVATE ${HDF5_C_LIBRARIES})
+        target_include_directories(openswmm_engine PRIVATE ${HDF5_INCLUDE_DIRS})
+    endif()
+
+    # PUBLIC so PluginFactory's own TU sees it and registers the singleton.
+    target_compile_definitions(openswmm_engine PUBLIC OPENSWMM_HAS_HDF5_MODEL=1)
+
+    if(TARGET openswmm_engine_internal)
+        target_sources(openswmm_engine_internal PRIVATE ${OPENSWMM_HDF5_SOURCES})
+        if(hdf5_FOUND)
+            target_link_libraries(openswmm_engine_internal PRIVATE ${_OPENSWMM_HDF5_TARGET})
+        else()
+            target_link_libraries(openswmm_engine_internal PRIVATE ${HDF5_C_LIBRARIES})
+            target_include_directories(openswmm_engine_internal PRIVATE ${HDF5_INCLUDE_DIRS})
+        endif()
+        target_compile_definitions(openswmm_engine_internal PUBLIC OPENSWMM_HAS_HDF5_MODEL=1)
+    endif()
+
+    message(STATUS "OpenSWMM Engine: HDF5 model I/O enabled")
+else()
+    message(STATUS "OpenSWMM Engine: HDF5 model I/O disabled (set -DOPENSWMM_WITH_HDF5=ON to enable)")
 endif()
 
 # ---- Optional GeoPackage I/O library ----

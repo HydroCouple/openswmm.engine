@@ -801,6 +801,49 @@ add_test(
 )
 set_tests_properties(test_engine_xsect_parity PROPERTIES LABELS "unit")
 
+# HDF5 model writer (only when the format is built). Links the HDF5 headers
+# directly: the engine keeps them PRIVATE, because a consumer with its own
+# HDF5 otherwise dies in H5_term_library on foreign global state.
+if(OPENSWMM_WITH_HDF5)
+    add_executable(test_engine_hdf5_model test_hdf5_model.cpp)
+    target_link_libraries(test_engine_hdf5_model
+        PRIVATE
+            GTest::gtest GTest::gtest_main GTest::gmock
+            $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+    )
+    # HEADERS ONLY, never the library. HDF5 is PRIVATE-linked into the engine
+    # with hidden symbols; a test that linked its own copy would run two HDF5
+    # instances with separate global state, and an id opened by one is
+    # meaningless to the other — which presents exactly as a corrupt file.
+    # Every H5* call therefore lives behind the h5io helpers in the engine.
+    if(hdf5_FOUND)
+        get_target_property(_h5_inc ${_OPENSWMM_HDF5_TARGET} INTERFACE_INCLUDE_DIRECTORIES)
+        if(_h5_inc)
+            target_include_directories(test_engine_hdf5_model PRIVATE ${_h5_inc})
+        endif()
+    else()
+        target_include_directories(test_engine_hdf5_model PRIVATE ${HDF5_INCLUDE_DIRS})
+    endif()
+    target_include_directories(test_engine_hdf5_model
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src/engine
+    )
+    set_target_properties(test_engine_hdf5_model PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+        RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+        INSTALL_RPATH "${LIB_ROOT}"
+    )
+    openswmm_stage_test_runtime_deps(test_engine_hdf5_model)
+    add_test(
+        NAME    test_engine_hdf5_model
+        COMMAND $<TARGET_FILE:test_engine_hdf5_model>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+    )
+    set_tests_properties(test_engine_hdf5_model PROPERTIES LABELS "unit")
+endif()
+
 # GeoPackage tests (only if the library is built)
 if(OPENSWMM_WITH_GEOPACKAGE)
     add_executable(test_engine_geopackage test_geopackage.cpp)
