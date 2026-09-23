@@ -179,6 +179,19 @@ int validate(const std::string& expr_str, std::string& msg, int& col);
  * @param d      Depth.
  * @returns Computed value (concentration or removal fraction).
  */
+/**
+ * @brief Parse a treatment expression, resolving pollutant references against
+ *        a name table.
+ *
+ * @details The deck-compile path holds the pollutant NAMES, not a free
+ *          function, so this is the overload it needs. Without it no
+ *          deck-authored pollutant reference resolves at all — neither a bare
+ *          name (legacy's `project_findObject(POLLUT, s)` branch,
+ *          treatmnt.c:313) nor the R_xxx co-treatment form.
+ */
+int parse(const std::string& expr_str, TreatExpr& result,
+          const std::vector<std::string>& pollut_names);
+
 double evaluate(const TreatExpr& expr, double c, double dt,
                 double hrt, double q, double v, double d, double area = 0.0);
 
@@ -201,7 +214,7 @@ double evaluate(const TreatExpr& expr, double c, double dt,
 double evaluate(const TreatExpr& expr, double c, double dt,
                 double hrt, double q, double v, double d,
                 const double* cin, const double* removal, int n_pollut,
-                double area = 0.0);
+                double area = 0.0, const double* cpollut = nullptr);
 
 /**
  * @brief Apply treatment at a node for one pollutant.

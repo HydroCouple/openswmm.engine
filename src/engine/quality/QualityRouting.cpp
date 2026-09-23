@@ -1358,17 +1358,48 @@ void applyNodeTreatment(SimulationContext& ctx, int j, double dt,
         for (int p = 0; p < np; ++p)
             treat.removal[static_cast<std::size_t>(p)] = -1.0;
 
+        // 4b. What a BARE pollutant name reads. legacy getVariableValue
+        // (treatmnt.c:344-351) gives Cin[p] when THAT pollutant's treatment
+        // at this node is a removal equation, and the node's current
+        // concentration otherwise — so the choice depends on the OTHER
+        // pollutant's equation type, not this one's. Resolved here, where the
+        // per-pollutant compiled expressions are in hand, and handed to the
+        // evaluator as a plain array.
+        std::vector<double> cpollut(static_cast<std::size_t>(np), 0.0);
+        for (int p = 0; p < np; ++p) {
+            const auto up2 = static_cast<std::size_t>(p);
+            const auto ci = uj * static_cast<std::size_t>(np) + up2;
+            const bool p_is_removal =
+                ci < treat.compiled.size() && treat.compiled[ci].is_removal;
+            cpollut[up2] = p_is_removal
+                ? treat.cin[up2]
+                : ((ci < nodes.conc.size()) ? nodes.conc[ci] : 0.0);
+        }
+
         // 5. Evaluate treatment for each pollutant (with co-treatment + cycle detection)
         //    Uses the legacy getRemoval() pattern:
         //    - removal[p] == -1: not computed → evaluate now
         //    - removal[p] in [0,1]: already computed → use cached
         //    - removal[p] == 10: currently computing → cycle detected, return 0
+        // legacy latches a NODE-WIDE error the first time a removal turns out
+        // to depend on itself (treatmnt.c:402-406: `if (R[p] > 1.0 || ErrCode)
+        // { ErrCode = 1; return 0.0; }`). The latch is tested BEFORE the cached
+        // value, so once one removal cycles every other pollutant at this node
+        // reads 0 too — even one already computed. v6 returned 0 for the cycle
+        // itself but kept evaluating the rest, so err-cyclic-treatment treated
+        // pollutants legacy leaves alone.
+        // (`ErrCode = 1` never equals ERR_CYCLIC_TREATMENT = 161, so legacy
+        // does not report the error and does not skip the apply pass — it just
+        // proceeds with the zeroed removals.)
+        bool cyclic_err = false;
         auto getRemoval = [&](int p, auto& self) -> double {
             auto up = static_cast<std::size_t>(p);
+            if (treat.removal[up] > 1.0 || cyclic_err) {
+                cyclic_err = true;
+                return 0.0;  // cycle — and every later pollutant follows it
+            }
             if (treat.removal[up] >= 0.0 && treat.removal[up] <= 1.0)
                 return treat.removal[up];  // already computed
-            if (treat.removal[up] > 1.0)
-                return 0.0;  // cycle detected
 
             auto idx = uj * static_cast<std::size_t>(np) + up;
             if (idx >= treat.compiled.size() || treat.compiled[idx].tokens.empty()) {
@@ -1384,24 +1415,42 @@ void applyNodeTreatment(SimulationContext& ctx, int j, double dt,
             double c_node = (ci_idx < nodes.conc.size()) ? nodes.conc[ci_idx] : 0.0;
             double c_in = expr.is_removal ? treat.cin[up] : c_node;
 
-            if (c_in <= 0.0 && c_node <= 0.0) {
+            // legacy: `c0 = Node[J].newQual[p]; if (c0 == 0.0) { R[p] = 0; }`
+            // (treatmnt.c:397, 416-420) — the NODE concentration alone decides,
+            // not the inflow.
+            if (c_node <= 0.0) {
                 treat.removal[up] = 0.0;
                 return 0.0;
             }
 
-            // Before evaluation, ensure any R_POLLUT dependencies are resolved
+            // Resolve every R_POLLUT dependency through getRemoval, including
+            // one that is ALREADY being computed — that is the case legacy
+            // relies on to break a cycle, and it is also what sets the latch
+            // (treatmnt.c:384 routes R_xxx straight back into getRemoval).
+            // The old guard skipped exactly that case.
             for (const auto& tok : expr.tokens) {
                 if (tok.var == treatment::TreatVar::R_POLLUT &&
                     tok.pollut_ref >= 0 && tok.pollut_ref < np) {
-                    auto uq = static_cast<std::size_t>(tok.pollut_ref);
-                    if (treat.removal[uq] < 0.0)
-                        self(tok.pollut_ref, self);
+                    self(tok.pollut_ref, self);
                 }
             }
 
+            // What R_xxx READS. legacy hands back getRemoval's return value,
+            // which is 0 for a pollutant still being computed; this engine
+            // passed the raw array, whose in-progress entries hold the 10.0
+            // marker. `R_TN = 0.1*R_TN` therefore evaluated to 0.1*10 = 1.0 —
+            // a 100 % removal — where legacy computes 0.1*0 = 0 and removes
+            // nothing. err-cyclic-treatment drove TN to zero against legacy's
+            // 2.96 on exactly this.
+            std::vector<double> r_view(treat.removal.begin(),
+                                       treat.removal.end());
+            for (auto& x : r_view)
+                if (x < 0.0 || x > 1.0) x = 0.0;
+
             double result = treatment::evaluate(
                 expr, c_in, dt, hrt_hours, q, v, d,
-                treat.cin.data(), treat.removal.data(), np, area);
+                treat.cin.data(), r_view.data(), np, area,
+                cpollut.data());
             result = std::max(result, 0.0);
 
             if (expr.is_removal) {
@@ -1413,8 +1462,24 @@ void applyNodeTreatment(SimulationContext& ctx, int j, double dt,
             return treat.removal[up];
         };
 
-        for (int p = 0; p < np; ++p)
-            getRemoval(p, getRemoval);
+        // legacy's driving loop (treatmnt.c:214-226) decides two cases WITHOUT
+        // evaluating anything: a pollutant with no equation, and a REMOVAL-type
+        // equation at a node taking no inflow, are both fixed at R = 0. Only
+        // what is left goes to getRemoval.
+        for (int p = 0; p < np; ++p) {
+            const auto up2 = static_cast<std::size_t>(p);
+            const auto ci2 = uj * static_cast<std::size_t>(np) + up2;
+            const bool no_eqn = ci2 >= treat.compiled.size() ||
+                                treat.compiled[ci2].tokens.empty();
+            if (no_eqn) {
+                treat.removal[up2] = 0.0;
+            } else if (treat.compiled[ci2].is_removal &&
+                       std::fabs(q_raw) <= LEGACY_ZERO) {
+                treat.removal[up2] = 0.0;
+            } else {
+                getRemoval(p, getRemoval);
+            }
+        }
 
         // 6. Apply removals to nodal concentrations + mass balance (Gap #17)
         // Legacy mass loss formula (treatmnt.c lines 262-263):
