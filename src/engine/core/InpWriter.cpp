@@ -188,6 +188,13 @@ static const char* tN(const SimulationContext& c, int i) {
 static const char* pN(const SimulationContext& c, int i) {
     return (i>=0 && i<c.n_pollutants()) ? c.pollutant_names.name_of(i).c_str() : "*";
 }
+// [PATTERNS] live in their own store, NOT in ctx.tables — resolving a pattern
+// index through tN() returns whatever curve or time series happens to occupy
+// that slot, which legacy then rejects as an undefined object (ERROR 209).
+static const char* patN(const SimulationContext& c, int i) {
+    return (i>=0 && i<c.patterns.count())
+        ? c.patterns.names[static_cast<std::size_t>(i)].c_str() : "*";
+}
 
 // ---------------------------------------------------------------------------
 // Index-or-name accessors.
@@ -1629,21 +1636,21 @@ int writeInpFile(const SimulationContext&  ctx_internal,
                 if (pi >= 0)
                     std::fprintf(f,"N-PERV       %-16s %s\n",
                                  ctx.subcatch_names.name_of(static_cast<int>(i)).c_str(),
-                                 tN(ctx, pi));
+                                 patN(ctx, pi));
             }
             for (size_t i = 0; i < ctx.subcatch_d_store_pattern.size(); ++i) {
                 int pi = ctx.subcatch_d_store_pattern[i];
                 if (pi >= 0)
                     std::fprintf(f,"DSTORE       %-16s %s\n",
                                  ctx.subcatch_names.name_of(static_cast<int>(i)).c_str(),
-                                 tN(ctx, pi));
+                                 patN(ctx, pi));
             }
             for (size_t i = 0; i < ctx.subcatch_infil_pattern.size(); ++i) {
                 int pi = ctx.subcatch_infil_pattern[i];
                 if (pi >= 0)
                     std::fprintf(f,"INFIL        %-16s %s\n",
                                  ctx.subcatch_names.name_of(static_cast<int>(i)).c_str(),
-                                 tN(ctx, pi));
+                                 patN(ctx, pi));
             }
         }
     }
@@ -1678,11 +1685,21 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     int iv=ctx.gages.interval_sec[u];int h=iv/3600,m=(iv%3600)/60;int ts=ctx.gages.ts_index[u];
     // Emit the actual rain-data format (0=INTENSITY,1=VOLUME,2=CUMULATIVE) — a
     // prior hardcoded "INTENSITY" silently rewrote VOLUME/CUMULATIVE gages.
+    // The recording interval is H:MM only while it IS a whole number of
+    // minutes. Legacy reads this column with getDouble FIRST and only then
+    // falls back to a clock (gage.c readGageSeriesFormat), so decimal hours
+    // are always legal — and they are the only form that can carry a
+    // sub-minute interval. A 4-second gage (0.001111 h, which real HEC-HMS
+    // decks carry) was being written as "0:00", which legacy rejects with
+    // ERROR 213 and refuses the whole deck.
+    char gsb[32];
+    if(iv>0&&iv%60==0) std::snprintf(gsb,sizeof(gsb),"%d:%02d",h,m);
+    else               std::snprintf(gsb,sizeof(gsb),"%.10g",iv/3600.0);
     const char* fmt = ctx.gages.rain_type[u]==1 ? "VOLUME"
                     : ctx.gages.rain_type[u]==2 ? "CUMULATIVE" : "INTENSITY";
     const double sf = ctx.gages.scale_factor[u];
     if(ts>=0){
-        std::fprintf(f,"%-16s %-12s %d:%02d     %.2f     TIMESERIES %s",ctx.gage_names.name_of(j).c_str(),fmt,h,m,ctx.gages.snow_factor[u],tN(ctx,ts));
+        std::fprintf(f,"%-16s %-12s %-8s     %.2f     TIMESERIES %s",ctx.gage_names.name_of(j).c_str(),fmt,gsb,ctx.gages.snow_factor[u],tN(ctx,ts));
         if(sf!=1.0)std::fprintf(f," %.4g",sf);
         std::fprintf(f,"\n");
     }
@@ -1696,8 +1713,8 @@ int writeInpFile(const SimulationContext&  ctx_internal,
             // "path:" that reads as malformed to EPA SWMM / PCSWMM.
             const std::string& col = ctx.gages.col_name[u];
             const std::string src = col.empty() ? tok : tok + ":" + col;
-            std::fprintf(f,"%-16s %-12s %d:%02d     %.2f     FILE \"%s\"",
-                          ctx.gage_names.name_of(j).c_str(),fmt,h,m,
+            std::fprintf(f,"%-16s %-12s %-8s     %.2f     FILE \"%s\"",
+                          ctx.gage_names.name_of(j).c_str(),fmt,gsb,
                           ctx.gages.snow_factor[u],
                           src.c_str());
             if(sf!=1.0)std::fprintf(f," %.4g",sf);
@@ -1711,8 +1728,8 @@ int writeInpFile(const SimulationContext&  ctx_internal,
                 warnings->push_back("[RAINGAGES] gage \""+ctx.gage_names.name_of(j)+
                                     "\": no station ID set; wrote '*' — the legacy "
                                     "engine will match no rows in \""+tok+"\"");
-            std::fprintf(f,"%-16s %-12s %d:%02d     %.2f     FILE \"%s\" %s %s",
-                          ctx.gage_names.name_of(j).c_str(),fmt,h,m,
+            std::fprintf(f,"%-16s %-12s %-8s     %.2f     FILE \"%s\" %s %s",
+                          ctx.gage_names.name_of(j).c_str(),fmt,gsb,
                           ctx.gages.snow_factor[u],
                           tok.c_str(),
                           sta.empty() ? "*" : sta.c_str(),
@@ -1731,8 +1748,8 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         if(tsn.empty() && warnings)
             warnings->push_back("[RAINGAGES] gage \""+ctx.gage_names.name_of(j)+
                                 "\": no rainfall source set; wrote 'TIMESERIES *'");
-        std::fprintf(f,"%-16s %-12s %d:%02d     %.2f     TIMESERIES %s",
-                      ctx.gage_names.name_of(j).c_str(),fmt,h,m,
+        std::fprintf(f,"%-16s %-12s %-8s     %.2f     TIMESERIES %s",
+                      ctx.gage_names.name_of(j).c_str(),fmt,gsb,
                       ctx.gages.snow_factor[u],
                       tsn.empty() ? "*" : tsn.c_str());
         if(sf!=1.0)std::fprintf(f," %.4g",sf);
@@ -1809,7 +1826,11 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     for(int j=0;j<ctx.n_subcatches();++j){auto u=static_cast<size_t>(j);
     int im=ctx.subcatches.infil_model[u];
     const char* mn=(im>=0&&im<=4)?infilNames[im]:"HORTON";
-    std::fprintf(f,"%-16s %10.4f %10.4f %10.4f %10.4f %10.4f %s\n",
+    // Full precision, like the other solver-facing fields. %10.4f is an
+    // ABSOLUTE 4-decimal format, so a Green-Ampt Ksat of 1e-6 in/hr — which
+    // real low-conductivity decks carry — was written as 0.0000, and legacy
+    // rejects a non-positive Ksat outright with ERROR 235 (grnampt_setParams).
+    std::fprintf(f,"%-16s %10.15g %10.15g %10.15g %10.15g %10.15g %s\n",
         ctx.subcatch_names.name_of(j).c_str(),
         ctx.subcatches.infil_p1[u],ctx.subcatches.infil_p2[u],
         ctx.subcatches.infil_p3[u],ctx.subcatches.infil_p4[u],
@@ -1875,13 +1896,19 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     {
         const double opt[4] = {ctx.subcatches.gw_hstar[u], ctx.subcatches.gw_bot_elev[u],
                                ctx.subcatches.gw_wt_elev[u], ctx.subcatches.gw_upper_moist[u]};
-        int last = -1;
+        int last = 0;
         for (int k = 0; k < 4; ++k) if (opt[k] != constants::MISSING) last = k;
         for (int k = 0; k <= last; ++k) {
             if (opt[k] != constants::MISSING) std::fprintf(f, " %-10.10g", opt[k]);
             else                              std::fprintf(f, " %-10s", "*");
         }
         std::fprintf(f, "\n");
+    //
+    // At least ONE of them is always emitted, because legacy rejects the row
+    // with ERR_ITEMS at `ntoks < 11` (gwater.c gwater_readGroundwaterParams)
+    // even though only ten tokens are mandatory — the eleventh may be `*`, but
+    // it must be there. Stopping at ten when every optional was unset produced
+    // a file legacy refused outright.
     }
     }}}
 
@@ -2007,7 +2034,14 @@ int writeInpFile(const SimulationContext&  ctx_internal,
                     ? emit_path_token(ctx.lid_usage.rpt_file[uj], dst_dir,
                                       force_abs_paths, warnings)
                     : std::string{};
-            std::fprintf(f," %s", rpt_tok.empty() ? "*" : rpt_tok.c_str());
+            // Quote the report path, as every other FILE token here does
+            // (see the [TIMESERIES] and [RAINGAGES] FILE emissions). Legacy
+            // strips the quotes, and without them a path containing a space
+            // tokenises into several columns and shifts DrainTo and FromPerv
+            // along with it. `*` is the "no report" sentinel, never a path,
+            // so it stays bare.
+            if (rpt_tok.empty()) std::fprintf(f," *");
+            else                 std::fprintf(f," \"%s\"", rpt_tok.c_str());
             if (uj < ctx.lid_usage.drain_to.size() && !ctx.lid_usage.drain_to[uj].empty())
                 std::fprintf(f," %s", ctx.lid_usage.drain_to[uj].c_str());
             else

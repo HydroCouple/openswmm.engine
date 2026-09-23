@@ -1346,3 +1346,78 @@ TEST(InpWriterRoundTrip, OutfallGatePlusRouteToIsReportedAsInexpressible) {
     EXPECT_EQ(warned, 1) << "no warning for the inexpressible combination";
     EXPECT_EQ(spurious, 0) << "warned about an outfall with only a flap gate";
 }
+
+// ===========================================================================
+// Grammar edges the legacy reader enforces (audit §9.1)
+//
+// Each of these produced a file legacy REFUSED, found by running the legacy
+// engine over the round-tripped corpus rather than by reading code. The
+// fixture's header records why every value in it was chosen.
+// ===========================================================================
+
+// A recording interval is H:MM only while it IS a whole number of minutes.
+// Legacy reads the column with getDouble FIRST and only then tries a clock
+// (gage.c readGageSeriesFormat), so decimal hours are legal — and are the only
+// form that can carry a sub-minute interval. A 4-second gage was written as
+// "0:00", which legacy answers with ERROR 213, refusing the whole deck.
+TEST(InpWriterRoundTrip, SubMinuteGageIntervalIsWrittenAsDecimalHours) {
+    const auto g = gen1("legacy_grammar_edges.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    const auto fast = row(g.text, "RAINGAGES", "RG_FAST");
+    ASSERT_GE(fast.size(), 3u);
+    EXPECT_EQ(fast.at(2).find(':'), std::string::npos)
+        << "a 4-second interval cannot be expressed as H:MM (" << fast.at(2) << ")";
+    EXPECT_NEAR(std::stod(fast.at(2)) * 3600.0, 4.0, 1e-6);
+
+    // A whole-minute interval keeps the readable clock form.
+    const auto slow = row(g.text, "RAINGAGES", "RG_SLOW");
+    ASSERT_GE(slow.size(), 3u);
+    EXPECT_EQ(slow.at(2), "0:15");
+}
+
+// Legacy rejects a [GROUNDWATER] row with ERR_ITEMS below ELEVEN tokens
+// (gwater.c), even though only ten are mandatory — the eleventh may be '*',
+// but it must be present. The writer emitted the optional depth columns only
+// as far as the last one actually set, so a row with none stopped at ten.
+TEST(InpWriterRoundTrip, GroundwaterRowKeepsLegacysEleventhToken) {
+    const auto g = gen1("legacy_grammar_edges.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    const auto gw = row(g.text, "GROUNDWATER", "GW_SUB");
+    ASSERT_GE(gw.size(), 11u)
+        << "legacy refuses a groundwater row with fewer than 11 tokens";
+    EXPECT_EQ(gw.at(10), "*") << "an unset optional depth is written as '*'";
+}
+
+// Green-Ampt requires Ksat > 0 (grnampt_setParams) and answers ERROR 235
+// otherwise. %10.4f is an ABSOLUTE 4-decimal format, so a low-conductivity
+// soil at 1e-6 in/hr was written as 0.0000 — the same truncation class that
+// cost subcatchment areas and storage coefficients their significance.
+TEST(InpWriterRoundTrip, TinyInfiltrationParametersSurvive) {
+    const auto g = gen1("legacy_grammar_edges.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    const auto inf = row(g.text, "INFILTRATION", "S_GA");
+    ASSERT_GE(inf.size(), 4u);
+    EXPECT_GT(std::stod(inf.at(2)), 0.0) << "Ksat truncated to zero";
+    EXPECT_NEAR(std::stod(inf.at(2)), 1e-6, 1e-18);
+}
+
+// [ADJUSTMENTS] N-PERV/DSTORE/INFIL rows name a PATTERN. Patterns live in
+// their own store, not in ctx.tables, so resolving the index through the table
+// list returned whatever curve or series sat at that slot and legacy answered
+// ERROR 209 on an undefined object.
+TEST(InpWriterRoundTrip, AdjustmentRowsNameTheirPatternNotATable) {
+    const auto g = gen1("legacy_grammar_edges.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    std::vector<std::string> nperv;
+    for (const auto& r : section(g.text, "ADJUSTMENTS")) {
+        auto c = cols(r);
+        if (!c.empty() && c[0] == "N-PERV") { nperv = c; break; }
+    }
+    ASSERT_GE(nperv.size(), 3u) << "the N-PERV adjustment row was dropped";
+    EXPECT_EQ(nperv.at(1), "S_GA");
+    EXPECT_EQ(nperv.at(2), "NPERVPAT") << "pattern resolved through the wrong store";
+}
