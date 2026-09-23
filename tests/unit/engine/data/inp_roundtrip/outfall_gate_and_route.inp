@@ -1,0 +1,69 @@
+[TITLE]
+An outfall carrying BOTH a flap gate and a Route To subcatchment.
+
+Legacy reads those two trailing columns with exact token-count equality —
+`ntoks == n` assigns the flap gate, `ntoks == n+1` assigns RouteTo
+(node.c outfall_readParams) — so the combination cannot be expressed in the
+SWMM 5.x grammar at all: a legacy engine reading a file with both silently
+takes RouteTo and defaults the gate to NO.
+
+O_BOTH has both and must raise a writer warning. O_GATE has only the gate and
+must not.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2024
+END_DATE             01/01/2024
+REPORT_STEP          00:15:00
+ROUTING_STEP         00:00:30
+
+[RAINGAGES]
+RG1  INTENSITY  0:05  1.0  TIMESERIES TS1
+
+[TIMESERIES]
+TS1  0:00  0.0
+TS1  1:00  0.5
+
+[SUBCATCHMENTS]
+;;Name  RainGage  Outlet  Area  %Imperv  Width  %Slope  CurbLen
+S_RECV  RG1       J1      1.0   25.0     100.0  0.5     0
+
+[SUBAREAS]
+S_RECV  0.013  0.1  0.05  0.05  25  OUTLET
+
+[INFILTRATION]
+S_RECV  3.0  0.5  4.0  7  0
+
+[JUNCTIONS]
+;;Name  Elev   MaxDepth
+J1      100.0  10.0
+J2      99.0   10.0
+
+[OUTFALLS]
+;;Name  Elev  Type  Stage  Gated  RouteTo
+O_BOTH  90.0  FREE         YES    S_RECV
+O_GATE  90.0  FREE         YES
+
+[CONDUITS]
+;;Name  From  To      Length  Rough  InOff  OutOff
+C1      J1    J2      100.0   0.013  0      0
+C2      J2    O_BOTH  100.0   0.013  0      0
+C3      J2    O_GATE  100.0   0.013  0      0
+
+[XSECTIONS]
+C1  CIRCULAR  1.5  0  0  0  1
+C2  CIRCULAR  1.5  0  0  0  1
+C3  CIRCULAR  1.5  0  0  0  1
+
+[COORDINATES]
+J1      0    0
+J2      100  0
+O_BOTH  200  0
+O_GATE  200  100
+
+[Polygons]
+S_RECV  0  0
+S_RECV  0  50
+S_RECV  50 50

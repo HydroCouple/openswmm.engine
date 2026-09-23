@@ -1205,3 +1205,144 @@ TEST(InpWriterRoundTrip, FilledCircularOffsetsStayAuthoredOnADanglingConduit) {
     EXPECT_NEAR(std::stod(c2.at(5)), 0.4, 1e-9) << "dangling conduit InOffset lost the bump";
     EXPECT_NEAR(std::stod(c2.at(6)), 0.6, 1e-9) << "dangling conduit OutOffset lost the bump";
 }
+
+// ===========================================================================
+// File-IO parity audit (plans/FILE_IO_PARITY_AUDIT_2026-09-22.md)
+//
+// Every case below asserts against GENERATION ZERO — the authored fixture —
+// not against a later generation. The suite's existing convergence test
+// (gen2 == gen3) cannot see this defect class at all: a value that decays to a
+// fixed point converges perfectly while being wrong. [LOSSES] seepage written
+// in internal units printed 0.000000 after one save and was stable at zero
+// forever after.
+//
+// The fixture's own header records why each value was chosen.
+// ===========================================================================
+
+// F1. MINIMUM_STEP is legacy's MIN_ROUTE_STEP, a bare getDouble with no clock
+// fallback (project.c:701-704) — unlike ROUTE_STEP, which accepts both forms.
+// Running it through fmt_step emitted "0:00:00" for every whole-second value,
+// and legacy answered ERROR 211 and refused the ENTIRE deck.
+TEST(InpWriterRoundTrip, MinimumStepIsWrittenAsDecimalSecondsNotAClock) {
+    const auto g = gen1("column_and_precision.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    const auto r = row(g.text, "OPTIONS", "MINIMUM_STEP");
+    ASSERT_EQ(r.size(), 2u) << "[OPTIONS] MINIMUM_STEP row missing";
+    EXPECT_EQ(r.at(1).find(':'), std::string::npos)
+        << "MINIMUM_STEP written as a clock (" << r.at(1)
+        << ") — legacy rejects the whole deck with ERROR 211";
+    // The fixture's value is a WHOLE number of seconds deliberately: fmt_step
+    // only emitted the fatal clock form for those, so a fractional value would
+    // pass this test against the unfixed writer.
+    EXPECT_NEAR(std::stod(r.at(1)), 1.0, 1e-12);
+}
+
+// F2/F3. The optional divider tail is "maxDepth initDepth surDepth aPond",
+// read from the first token AFTER the type parameters — legacy's `n`
+// (node.c divider_readParams). OVERFLOW takes NO type parameter, so its tail
+// starts one column earlier than CUTOFF's. The reader used 5 for both and
+// never read past MaxDepth, so an OVERFLOW divider reported InitDepth as its
+// MaxDepth and every divider silently lost the last three values ON LOAD.
+TEST(InpWriterRoundTrip, DividerTailColumnsSurviveForEveryDividerType) {
+    const auto g = gen1("column_and_precision.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    const auto ovr = row(g.text, "DIVIDERS", "DIV_OVR");
+    ASSERT_GE(ovr.size(), 8u) << "OVERFLOW divider lost trailing columns";
+    EXPECT_NEAR(std::stod(ovr.at(4)), 6.07, 1e-9) << "MaxDepth read from the wrong column";
+    EXPECT_NEAR(std::stod(ovr.at(5)), 1.11, 1e-9) << "InitDepth dropped";
+    EXPECT_NEAR(std::stod(ovr.at(6)), 2.22, 1e-9) << "SurDepth dropped";
+    EXPECT_NEAR(std::stod(ovr.at(7)), 200.0, 1e-9) << "Aponded dropped";
+
+    // CUTOFF carries one type parameter, so its tail is shifted by one.
+    const auto cut = row(g.text, "DIVIDERS", "DIV_CUT");
+    ASSERT_GE(cut.size(), 9u) << "CUTOFF divider lost trailing columns";
+    EXPECT_NEAR(std::stod(cut.at(4)), 3.33, 1e-9) << "qCutoff";
+    EXPECT_NEAR(std::stod(cut.at(5)), 7.07, 1e-9) << "MaxDepth";
+    EXPECT_NEAR(std::stod(cut.at(6)), 1.12, 1e-9) << "InitDepth dropped";
+    EXPECT_NEAR(std::stod(cut.at(7)), 2.23, 1e-9) << "SurDepth dropped";
+    EXPECT_NEAR(std::stod(cut.at(8)), 300.0, 1e-9) << "Aponded dropped";
+}
+
+// F4. The culvert code is legacy tok[7] and conduits only (link.c:258-264).
+// It is parsed, it drives inlet control in the dynamic wave, and the
+// GeoPackage writer persists it — but the .inp writer stopped at Barrels, so
+// Open -> Save turned every culvert into an ordinary conduit. Legacy offers no
+// way to skip Barrels, so the code is only reachable by writing both.
+TEST(InpWriterRoundTrip, CulvertCodeSurvivesAndKeepsItsBarrelsColumn) {
+    const auto g = gen1("column_and_precision.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    const auto c = row(g.text, "XSECTIONS", "C_CULVERT");
+    ASSERT_GE(c.size(), 8u) << "culvert code column missing";
+    EXPECT_EQ(c.at(6), "1") << "Barrels must precede the culvert code";
+    EXPECT_EQ(c.at(7), "4") << "culvert code lost on save";
+
+    // A conduit with no culvert stops at Barrels — 0 means "not a culvert" and
+    // writing it would be noise.
+    const auto plain = row(g.text, "XSECTIONS", "C_SEEP");
+    ASSERT_GE(plain.size(), 7u);
+    EXPECT_EQ(plain.size(), 7u) << "a non-culvert conduit gained a culvert column";
+}
+
+// F5. [LOSSES] seepage arrives in in/hr and is divided by UCF(RAINFALL) =
+// 43200 on read, in BOTH unit systems. The write-side mirror existed but the
+// caller gated the whole conversion on UCF(LENGTH) != 1.0, which is false for
+// every US deck — so US models wrote internal ft/s under an in/hr column and
+// at %10.6f the value printed 0.000000 after a single save.
+TEST(InpWriterRoundTrip, SeepageSurvivesOnAUsUnitDeck) {
+    const auto g = gen1("column_and_precision.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    const auto l = row(g.text, "LOSSES", "C_SEEP");
+    ASSERT_GE(l.size(), 6u) << "[LOSSES] row for C_SEEP missing";
+    EXPECT_NEAR(std::stod(l.at(5)), 0.25, 1e-9)
+        << "seepage was written in internal units on a CFS deck";
+}
+
+// F11. Fixed-width formats truncated fields that scale the simulation:
+// %12.4f is an ABSOLUTE 4-decimal format, so a small area lost most of its
+// significance, and a bare %g is 6 significant digits, so a storage
+// coefficient lost its fraction. Both were near-perfect predictors of a round
+// trip that changed the answer in the corpus sweep.
+TEST(InpWriterRoundTrip, SolverFacingValuesKeepFullPrecision) {
+    const auto g = gen1("column_and_precision.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    const auto s = row(g.text, "SUBCATCHMENTS", "S1");
+    ASSERT_GE(s.size(), 5u);
+    EXPECT_NEAR(std::stod(s.at(3)), 0.018939394, 1e-15)
+        << "subcatchment area truncated (%12.4f gave 0.0189)";
+
+    const auto st = row(g.text, "STORAGE", "ST1");
+    ASSERT_GE(st.size(), 6u);
+    EXPECT_NEAR(std::stod(st.at(5)), 278.539816, 1e-9)
+        << "functional storage A1 truncated (bare %g gave 278.54)";
+}
+
+// F7. An outfall with a flap gate AND a Route To subcatchment is not
+// expressible in SWMM 5.x: legacy assigns the gate only when the row has
+// exactly `n` tokens and RouteTo only at `n+1`, so writing both makes a legacy
+// reader drop the gate. Our own reader takes both columns, so the file stays
+// faithful for v6 — the writer says so rather than losing it silently. This is
+// the same treatment swmm_model_write_compat gives a dropped 5.x feature.
+TEST(InpWriterRoundTrip, OutfallGatePlusRouteToIsReportedAsInexpressible) {
+    const auto g = writeOnceLenient("outfall_gate_and_route.inp",
+                                    "_outfall_gate_and_route_rt1.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    // Both columns are still written — v6 reads them correctly.
+    const auto both = row(g.text, "OUTFALLS", "O_BOTH");
+    ASSERT_GE(both.size(), 5u);
+    EXPECT_EQ(both.at(3), "YES") << "flap gate dropped";
+    EXPECT_EQ(both.at(4), "S_RECV") << "RouteTo dropped";
+
+    int warned = 0, spurious = 0;
+    for (const auto& w : g.warnings) {
+        if (w.find("O_BOTH") != std::string::npos) ++warned;
+        if (w.find("O_GATE") != std::string::npos) ++spurious;
+    }
+    EXPECT_EQ(warned, 1) << "no warning for the inexpressible combination";
+    EXPECT_EQ(spurious, 0) << "warned about an outfall with only a flap gate";
+}

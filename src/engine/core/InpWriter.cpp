@@ -1133,8 +1133,23 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // re-applies the m→ft factor, compounding ×3.28084 per cycle.
     const int us_check = ucf::getUnitSystem(
         static_cast<int>(ctx_internal.options.flow_units));
+    const auto us_idx = static_cast<std::size_t>(us_check);
+    // Gate on EVERY factor convert_internal_to_display touches, not just
+    // LENGTH. Keying it on LENGTH alone (which is 1.0 for all US flow units)
+    // meant the function never ran for a US model, silently killing two
+    // back-conversions that are not length-dimensioned and that the READ side
+    // performs unconditionally:
+    //   * [LOSSES] seepage, /= UCF(RAINFALL) = 43200 on read — written back in
+    //     internal ft/s under an in/hr column, and at %10.6f it prints
+    //     0.000000 after one save, so the error is a FIXED POINT that a
+    //     save-convergence test can never catch.
+    //   * q0 / q_limit / divider cutoff, /= Qcf on read for GPM and MGD decks.
+    // convert_internal_to_display already self-guards per quantity, so a
+    // broader gate costs a copy on decks that need one and nothing else.
     const bool needs_display_conv =
-        ucf::Ucf[ucf::LENGTH][static_cast<std::size_t>(us_check)] != 1.0;
+        ucf::Ucf[ucf::LENGTH][us_idx]   != 1.0 ||
+        ucf::Ucf[ucf::RAINFALL][us_idx] != 1.0 ||
+        ucf::Qcf[static_cast<std::size_t>(ctx_internal.options.flow_units)] != 1.0;
 
     // Likewise, parse-time normalisations (adverse-slope conduit reversal and
     // ELEVATION→depth offset conversion) must be undone so the file carries
@@ -1156,7 +1171,11 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // sections and option keys, map incompatible option values, and write
     // virtual / inlet junctions in their legacy-equivalent form. Every
     // substitution is reported so the caller can surface it as a run warning.
-    const bool swmm5 = (opts.profile == InpWriteOptions::Profile::Swmm5);
+    // `swmm5` covers both 5.x profiles; `stock5` is the stricter one for an
+    // engine without the OpenSWMM legacy grammar extensions (see
+    // InpWriteOptions::Profile::Swmm5Stock).
+    const bool stock5 = (opts.profile == InpWriteOptions::Profile::Swmm5Stock);
+    const bool swmm5  = (opts.profile == InpWriteOptions::Profile::Swmm5) || stock5;
     auto note = [&](const std::string& s) { if (warnings) warnings->push_back(s); };
 
     FILE* f = openswmm::io::fopen_utf8(path, "w");
@@ -1336,8 +1355,12 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     std::fprintf(f,"%-20s %g\n",  "HEAD_TOLERANCE",      o.head_tol);
     std::fprintf(f,"%-20s %g\n",  "SYS_FLOW_TOL",        o.sys_flow_tol * 100.0);
     std::fprintf(f,"%-20s %g\n",  "LAT_FLOW_TOL",        o.lat_flow_tol * 100.0);
-    fmt_step(sb, o.min_routing_step);
-    std::fprintf(f,"%-20s %s\n",  "MINIMUM_STEP",        sb);
+    // MINIMUM_STEP takes DECIMAL SECONDS only — legacy's MIN_ROUTE_STEP is a
+    // bare getDouble with no clock fallback (project.c:701-704), unlike
+    // ROUTE_STEP/LENGTHENING_STEP which try both (:676-690). Running it through
+    // fmt_step emitted "0:00:00" for every whole-second value, which legacy
+    // rejects with ERROR 211 — refusing the ENTIRE deck, not just the option.
+    std::fprintf(f,"%-20s %.15g\n", "MINIMUM_STEP",       o.min_routing_step);
     std::fprintf(f,"%-20s %d\n",  "THREADS",             o.num_threads);
 
     // --- Engine-specific extensions (not in legacy GUI) ---
@@ -1735,8 +1758,23 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     const bool  has_sp = std::strcmp(spname,"*")!=0;
     const double rsf = ctx.subcatches.rain_scale_factor[u];
     const double ssf = ctx.subcatches.snow_scale_factor[u];
-    const bool need_scale = (rsf!=1.0 || ssf!=1.0);
-    std::fprintf(f,"%-16s %-16s %-16s %12.4f %10.2f %12.4f %10.4f %10.4f",ctx.subcatch_names.name_of(j).c_str(),sgN(ctx,u),oN(ctx,u),ctx.subcatches.area[u],ctx.subcatches.frac_imperv[u]*100.0,ctx.subcatches.width[u],ctx.subcatches.slope[u]*100.0,ctx.subcatches.curb_length[u]);
+    bool need_scale = (rsf!=1.0 || ssf!=1.0);
+    // A stock SWMM 5 parser has no scale-factor columns: it reads the '*'
+    // placeholder as a snowpack name (ERROR 209) and a factor as a stray
+    // token. Drop them for that profile, and say so when they carried a value.
+    if(stock5 && need_scale){
+        note("[SUBCATCHMENTS] " + ctx.subcatch_names.name_of(j) + ": rain/snow scale factors " +
+             std::to_string(rsf) + "/" + std::to_string(ssf) +
+             " dropped (stock SWMM 5 has no such columns)");
+        need_scale = false;
+    }
+    // Full precision on every solver-facing field. %12.4f is an ABSOLUTE
+    // 4-decimal format, so a small area lost most of its significance
+    // (0.018939394 ac -> 0.0189, a 0.2% error applied straight to runoff
+    // volume); of the corpus decks whose [SUBCATCHMENTS] changed on round
+    // trip, 13 of 13 went on to simulate differently. Keeps the column width
+    // so the file still reads as a table (same form as [CONDUITS] length).
+    std::fprintf(f,"%-16s %-16s %-16s %12.15g %10.15g %12.15g %10.15g %10.15g",ctx.subcatch_names.name_of(j).c_str(),sgN(ctx,u),oN(ctx,u),ctx.subcatches.area[u],ctx.subcatches.frac_imperv[u]*100.0,ctx.subcatches.width[u],ctx.subcatches.slope[u]*100.0,ctx.subcatches.curb_length[u]);
     // Token 8 must be present to reach tokens 9/10 positionally.
     if(has_sp || need_scale) std::fprintf(f," %-16s",spname);
     if(need_scale){
@@ -2086,10 +2124,22 @@ int writeInpFile(const SimulationContext&  ctx_internal,
             std::snprintf(stage,sizeof(stage),"%s",ctx.tables[t].id.c_str());
     }
 
-    std::fprintf(f,"%-16s %12.4f %-12s",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ofName(otype));
+    const bool has_route = (oroute>=0 && oroute<ctx.n_subcatches());
+    // Legacy reads the two trailing columns with EXACT token-count equality:
+    // `ntoks == n` assigns the flap gate, `ntoks == n+1` assigns RouteTo
+    // (node.c outfall_readParams). Writing both therefore makes legacy skip
+    // the gate entirely and default it to NO — the combination simply cannot
+    // be expressed in the legacy grammar. We still write both, because our own
+    // reader takes them, but say so rather than losing it silently.
+    if(oflap && has_route && warnings)
+        warnings->push_back("[OUTFALLS] node \""+ctx.node_names.name_of(j)+
+            "\": a flap gate together with a Route To subcatchment cannot be "
+            "expressed in SWMM 5.x — a legacy engine reading this file will "
+            "ignore the flap gate.");
+    std::fprintf(f,"%-16s %12.15g %-12s",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ofName(otype));
     if(stage[0]!='\0')std::fprintf(f," %-16s",stage);
     std::fprintf(f," %-8s",oflap?"YES":"NO");
-    if(oroute>=0 && oroute<ctx.n_subcatches())
+    if(has_route)
         std::fprintf(f," %-16s",ctx.subcatch_names.name_of(oroute).c_str());
     std::fprintf(f,"\n");
     }}
@@ -2172,7 +2222,7 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // `0 <surdepth>` tails re-read the surcharge depth as Fevap or as a bare
     // Ksat.
     if(scurve>=0)
-        std::fprintf(f,"%-16s %12.4f %12.4f %12.4f TABULAR    %s",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],tN(ctx,scurve));
+        std::fprintf(f,"%-16s %12.15g %12.15g %12.15g TABULAR    %s",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],tN(ctx,scurve));
     else if(storage_shape_is_geometric(sshape)){
         // Geometric shapes re-emit the RAW L/W/Z the user gave us, not the derived
         // a/b/c — that is the whole point of keeping p1..p3 in the SoA. Writing the
@@ -2180,18 +2230,22 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         const double q1=S.p1[static_cast<size_t>(srow)];
         const double q2=S.p2[static_cast<size_t>(srow)];
         const double q3=S.p3[static_cast<size_t>(srow)];
-        std::fprintf(f,"%-16s %12.4f %12.4f %12.4f %-10s %g %g %g",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],storage_shape_keyword(sshape),q1,q2,q3);
+        std::fprintf(f,"%-16s %12.15g %12.15g %12.15g %-10s %.15g %.15g %.15g",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],storage_shape_keyword(sshape),q1,q2,q3);
     }
     else {
         const double sa=(srow>=0)?S.a[static_cast<size_t>(srow)]:0.0;
         const double sb=(srow>=0)?S.b[static_cast<size_t>(srow)]:0.0;
         const double sc=(srow>=0)?S.c[static_cast<size_t>(srow)]:0.0;
-        std::fprintf(f,"%-16s %12.4f %12.4f %12.4f FUNCTIONAL %g %g %g",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],sa,sb,sc);
+        // Bare %g is 6 significant digits, so a coefficient of any size lost
+        // its fraction (278.539816 -> 278.54). A1 scales storage surface area,
+        // hence volume and routing: 13 of 14 corpus decks whose [STORAGE] rows
+        // changed on round trip went on to simulate differently.
+        std::fprintf(f,"%-16s %12.15g %12.15g %12.15g FUNCTIONAL %.15g %.15g %.15g",ctx.node_names.name_of(j).c_str(),ctx.nodes.invert_elev[u],ctx.nodes.full_depth[u],ctx.nodes.init_depth[u],sa,sb,sc);
     }
     {
         const double fevap=(srow>=0)?S.evap_frac[static_cast<size_t>(srow)]:0.0;
         const double ksat=(srow>=0)?S.exfil_ksat[static_cast<size_t>(srow)]:0.0;
-        std::fprintf(f," %12.4f %g",ctx.nodes.sur_depth[u],fevap);
+        std::fprintf(f," %12.15g %.15g",ctx.nodes.sur_depth[u],fevap);
         if(ksat!=0.0)
             std::fprintf(f," %g %g %g",S.exfil_suction[static_cast<size_t>(srow)],ksat,S.exfil_imd[static_cast<size_t>(srow)]);
         std::fprintf(f,"\n");
@@ -2209,7 +2263,9 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // fixed 4/6-decimal field: real models carry sub-metre lengths and 1/n-derived
     // roughness with many significant figures, and truncating them perturbs the
     // routing solution — noticeable on large, control-heavy (chaos-sensitive) models.
-    std::fprintf(f,"%-16s %-16s %-16s %15.15g %15.15g %12.4f %12.4f %10.4f %10.4f\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),(cr>=0)?CD.length[static_cast<size_t>(cr)]:0.0,(cr>=0)?CD.roughness[static_cast<size_t>(cr)]:0.01,ctx.links.offset1[u],ctx.links.offset2[u],ctx.links.q0[u],ctx.links.q_limit[u]);
+    // The offsets and flows on the same row were left at %12.4f/%10.4f and so
+    // kept truncating (0.000195 -> 0.0002); they feed the solver just as directly.
+    std::fprintf(f,"%-16s %-16s %-16s %15.15g %15.15g %12.15g %12.15g %10.15g %10.15g\n",ctx.link_names.name_of(j).c_str(),nN(ctx,ctx.links.node1[u]),nN(ctx,ctx.links.node2[u]),(cr>=0)?CD.length[static_cast<size_t>(cr)]:0.0,(cr>=0)?CD.roughness[static_cast<size_t>(cr)]:0.01,ctx.links.offset1[u],ctx.links.offset2[u],ctx.links.q0[u],ctx.links.q_limit[u]);
     }}
 
     // [PUMPS]
@@ -2317,8 +2373,8 @@ int writeInpFile(const SimulationContext&  ctx_internal,
 
     // [XSECTIONS]
     {sec(f,"XSECTIONS");
-    std::fprintf(f,";;%-16s %-16s %-12s %-12s %-12s %-12s %-8s\n","Link","Shape","Geom1","Geom2","Geom3","Geom4","Barrels");
-    std::fprintf(f,";;%-16s %-16s %-12s %-12s %-12s %-12s %-8s\n","----------------","----------------","------------","------------","------------","------------","--------");
+    std::fprintf(f,";;%-16s %-16s %-12s %-12s %-12s %-12s %-8s %-8s\n","Link","Shape","Geom1","Geom2","Geom3","Geom4","Barrels","Culvert");
+    std::fprintf(f,";;%-16s %-16s %-12s %-12s %-12s %-12s %-8s %-8s\n","----------------","----------------","------------","------------","------------","------------","--------","--------");
     for(int j=0;j<ctx.n_links();++j){auto u=static_cast<size_t>(j);
     // [XSECTIONS] applies to conduits, orifices and weirs only. Pumps and
     // outlets have no cross-section; emitting one (a default CIRCULAR with
@@ -2326,6 +2382,13 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     if(ctx.links.type[u]==LinkType::PUMP||ctx.links.type[u]==LinkType::OUTLET)continue;
     const int cr=ctx.link_subtypes.conduit_row(j);
     const int xbarrels=(cr>=0)?ctx.link_subtypes.conduits.barrels[static_cast<size_t>(cr)]:1;
+    // Culvert code (legacy tok[7], conduits only, link.c:258-264). It is read
+    // back, drives inlet control in the dynamic wave and is persisted by the
+    // GeoPackage writer — but was never written here, so Open -> Save silently
+    // turned every culvert into an ordinary conduit. Legacy offers no way to
+    // skip the Barrels column, so the code can only be reached by emitting
+    // both; a 0 means "not a culvert" and is simply omitted.
+    const int xculvert=(cr>=0)?ctx.link_subtypes.conduits.culvert_code[static_cast<size_t>(cr)]:0;
     // Emit the retained raw Geom1–Geom4 (preserves trapezoid bottom width /
     // side slopes the derived fields can't reproduce).  xsect_geom1 == 0 means
     // the object was built by a path that didn't populate them; fall back to
@@ -2379,11 +2442,31 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         g1=ctx.links.xsect_geom1[u]; g2=ctx.links.xsect_geom2[u];
         g3=ctx.links.xsect_geom3[u]; g4=ctx.links.xsect_geom4[u];
     } else {
+        // Fallback for an object built by a path that never populated the raw
+        // Geom1-4 (every .inp- and API-built link does, so this is rare).
+        // It reconstructs only what the derived fields actually carry, and
+        // cannot recover Geom3/Geom4 in general — a shape that needs them is
+        // reported below rather than written wrong in silence.
         g1=ctx.links.xsect_y_full[u]; g2=ctx.links.xsect_w_max[u]; g3=0.0; g4=0.0;
+        // FORCE_MAIN Geom2 is the Hazen-Williams C-factor / D-W roughness,
+        // which xsect::setParams parks in r_bot (legacy xsect.c:266) — w_max
+        // there is the DIAMETER, so the generic fallback wrote the diameter
+        // into the roughness column.
+        if(ctx.links.xsect_shape[u]==XsectShape::FORCE_MAIN)
+            g2=ctx.links.xsect_r_bot[u];
     }
+    // Legacy rejects Geom1 <= 0 for every shape but DUMMY (xsect.c:233) and
+    // answers ERROR 211, which refuses the whole deck. Writing it anyway
+    // produces a file no SWMM 5.x engine will open, so say so.
+    if(warnings&&g1<=0.0&&ctx.links.xsect_shape[u]!=XsectShape::DUMMY)
+        warnings->push_back("[XSECTIONS] link \""+ctx.link_names.name_of(j)+
+            "\": Geom1 is "+std::to_string(g1)+", which SWMM 5.x rejects "
+            "(ERROR 211) for shape "+xsName(static_cast<int>(ctx.links.xsect_shape[u])));
     // Full precision on the geometry: xsect dimensions (e.g. CUSTOM/irregular
     // heights like 0.61875) set conduit conveyance; %.4f truncation perturbs routing.
-    std::fprintf(f,"%-16s %-16s %.15g %.15g %.15g %.15g %8d\n",ctx.link_names.name_of(j).c_str(),xsName(static_cast<int>(ctx.links.xsect_shape[u])),g1,g2,g3,g4,xbarrels);
+    std::fprintf(f,"%-16s %-16s %.15g %.15g %.15g %.15g %8d",ctx.link_names.name_of(j).c_str(),xsName(static_cast<int>(ctx.links.xsect_shape[u])),g1,g2,g3,g4,xbarrels);
+    if(xculvert>0)std::fprintf(f," %8d",xculvert);
+    std::fprintf(f,"\n");
     }}
 
     // [LOSSES]
@@ -2927,7 +3010,10 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // The curve TYPE keyword goes on the FIRST row only; continuation rows are
     // "Name X Y". Legacy SWMM reads a repeated type on a later row as the
     // X-value → ERROR 211 (invalid number).
-    for(size_t k=0;k<tb.x.size();++k)std::fprintf(f,"%-16s %-12s %12.6f %12.6f\n",tN(ctx,t),(k==0?lbl:""),tb.x[k],tb.y[k]);
+    // Full precision on the ordinates: a storage or pump curve IS the node's
+    // geometry or the pump's operating point, and %12.6f silently rounded both
+    // on every save.
+    for(size_t k=0;k<tb.x.size();++k)std::fprintf(f,"%-16s %-12s %12.15g %12.15g\n",tN(ctx,t),(k==0?lbl:""),tb.x[k],tb.y[k]);
     }}}
 
     // Geospatial block — section order matches the legacy SWMM GUI ExportMap():

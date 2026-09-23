@@ -288,13 +288,24 @@ void handle_dividers(SimulationContext& ctx, const std::vector<std::string>& lin
             if (tok.size() > 6) D.cd[drow]        = to_double(tok[6]);
         }
 
-        // MaxDepth after type-specific fields
-        int md_offset = 5;
-        if (dtype == "CUTOFF" || dtype == "OVERFLOW") md_offset = 5;
-        else if (dtype == "TABULAR") md_offset = 5;
-        else if (dtype == "WEIR") md_offset = 7;
-        if (static_cast<int>(tok.size()) > md_offset)
-            ctx.nodes.full_depth[ui] = to_double(tok[md_offset]);
+        // The optional tail is "maxDepth initDepth surDepth aPond", read from
+        // the first token AFTER the type-specific parameters — legacy's `n`
+        // (node.c divider_readParams, into x[7..10]).  OVERFLOW takes NO type
+        // parameter, so its tail starts at token 4; CUTOFF (qCutoff) and
+        // TABULAR (curve name) take one, WEIR (qMin dhMax cWeir) takes three.
+        //
+        // Two defects lived here: OVERFLOW used 5, so MaxDepth was read from
+        // the InitDepth column; and initDepth/surDepth/aPond were never read
+        // at all, so every divider silently lost them on load — not just on
+        // save, since the live model carried the zeros into the simulation.
+        int tail = 5;                                   // CUTOFF, TABULAR
+        if      (dtype == "OVERFLOW") tail = 4;
+        else if (dtype == "WEIR")     tail = 7;
+        const int ntoks = static_cast<int>(tok.size());
+        if (ntoks > tail)     ctx.nodes.full_depth[ui] = to_double(tok[tail]);
+        if (ntoks > tail + 1) ctx.nodes.init_depth[ui] = to_double(tok[tail + 1]);
+        if (ntoks > tail + 2) ctx.nodes.sur_depth[ui]  = to_double(tok[tail + 2]);
+        if (ntoks > tail + 3) ctx.nodes.ponded_area[ui] = to_double(tok[tail + 3]);
         if (!pl.comment.empty())
             ctx.nodes.comments[ui] = pl.comment;
     }
