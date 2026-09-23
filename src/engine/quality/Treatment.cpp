@@ -37,6 +37,8 @@
 #include <algorithm>
 #include <cctype>
 #include <unordered_map>
+#include <functional>
+#include <vector>
 
 namespace openswmm {
 namespace treatment {
@@ -89,15 +91,27 @@ static const std::unordered_map<std::string, TokenType> func_map = {
 };
 
 // Map of variable names (uppercase) to TreatVar.
+//
+// legacy's process variables are ProcessVarWords = { HRT, DT, FLOW, DEPTH,
+// AREA } (keywords.c:103). DEPTH is added here under legacy's own spelling —
+// it is how the SWMM manual writes the variable, and an expression using it
+// did not fail loudly, it hit the tokenizer's unknown-identifier path and the
+// whole treatment was skipped in silence.
+//
+// FLOW is deliberately NOT added: swmm_treatment_validate_expression is
+// contracted to REJECT it (test_quality_roundtrip.cpp:412-416 pins the error
+// and its column), so accepting it is an API decision rather than a parity
+// fix. It is the one legacy process variable this parser still refuses.
 static const std::unordered_map<std::string, TreatVar> var_map = {
-    {"C",    TreatVar::C},
-    {"R",    TreatVar::R},
-    {"DT",   TreatVar::DT},
-    {"HRT",  TreatVar::HRT},
-    {"Q",    TreatVar::Q},
-    {"V",    TreatVar::V},
-    {"D",    TreatVar::D},
-    {"AREA", TreatVar::AREA},  // Gap #16: legacy pvAREA
+    {"C",     TreatVar::C},
+    {"R",     TreatVar::R},
+    {"DT",    TreatVar::DT},
+    {"HRT",   TreatVar::HRT},
+    {"Q",     TreatVar::Q},
+    {"V",     TreatVar::V},
+    {"DEPTH", TreatVar::D},    // legacy pvDEPTH
+    {"D",     TreatVar::D},    // v6 alias
+    {"AREA",  TreatVar::AREA}, // Gap #16: legacy pvAREA
 };
 
 // ============================================================================
@@ -108,7 +122,8 @@ static const std::unordered_map<std::string, TreatVar> var_map = {
 /// Variables and functions are recognized by name lookup.
 /// If pollut_lookup is non-null, R_xxx and C_xxx are resolved to pollutant refs.
 static std::vector<Token> tokenize(const std::string& s,
-                                    int (*pollut_lookup)(const std::string&) = nullptr) {
+                                   const std::function<int(const std::string&)>&
+                                       pollut_lookup = {}) {
     std::vector<Token> tokens;
     size_t i = 0;
     while (i < s.size()) {
@@ -179,6 +194,20 @@ static std::vector<Token> tokenize(const std::string& s,
                 } else {
                     return {};  // unknown pollutant name
                 }
+            } else if (pollut_lookup && pollut_lookup(word) >= 0) {
+                // A BARE pollutant name is that pollutant's concentration —
+                // legacy getVariableIndex checks the process variables, then
+                // `project_findObject(POLLUT, s)`, and only then the R_ form
+                // (treatmnt.c:307-318). This parser knew the R_/C_ forms and
+                // not the bare one, so `C = TSS * exp(-0.15*HRT)` — the form
+                // the SWMM manual uses — resolved to nothing, the token list
+                // came back empty, and the treatment was skipped WITHOUT any
+                // error. Twenty corpus decks write their expressions this way.
+                Token t;
+                t.type = TokenType::VARIABLE;
+                t.var  = TreatVar::C_POLLUT;
+                t.pollut_ref = pollut_lookup(word);
+                tokens.push_back(t);
             } else {
                 return {};  // unknown identifier
             }
@@ -666,8 +695,37 @@ double applyTreatment(const TreatExpr& expr, double c_in, double dt,
 // Extended parse with pollutant name resolution (co-treatment)
 // ============================================================================
 
+static int parse_impl(const std::string& expr_str, TreatExpr& result,
+                      const std::function<int(const std::string&)>& pollut_lookup);
+
+// Names-based overload. The deck-compile path has the pollutant NAME TABLE in
+// hand, not a free function, and the function-pointer overload below cannot
+// capture it — which is why both production call sites used the lookup-less
+// overload and NO deck-authored pollutant reference (bare name or R_xxx) has
+// ever resolved.
 int parse(const std::string& expr_str, TreatExpr& result,
-          int (*pollut_lookup)(const std::string& name)) {
+          const std::vector<std::string>& pollut_names) {
+    result.tokens.clear();
+    result.pollutant_idx = -1;
+    result.is_removal = false;
+    auto lookup = [&pollut_names](const std::string& name) -> int {
+        for (std::size_t i = 0; i < pollut_names.size(); ++i) {
+            if (pollut_names[i].size() != name.size()) continue;
+            bool same = true;
+            for (std::size_t k = 0; k < name.size() && same; ++k)
+                same = std::toupper(static_cast<unsigned char>(pollut_names[i][k])) ==
+                       std::toupper(static_cast<unsigned char>(name[k]));
+            if (same) return static_cast<int>(i);
+        }
+        return -1;
+    };
+    return parse_impl(expr_str, result, lookup);
+}
+
+// Shared body: everything below is independent of HOW a pollutant name is
+// looked up, so both public overloads funnel through here.
+static int parse_impl(const std::string& expr_str, TreatExpr& result,
+                      const std::function<int(const std::string&)>& pollut_lookup) {
     result.tokens.clear();
     result.pollutant_idx = -1;
     result.is_removal = false;
@@ -702,7 +760,7 @@ int parse(const std::string& expr_str, TreatExpr& result,
 double evaluate(const TreatExpr& expr, double c, double dt,
                 double hrt, double q, double v, double d,
                 const double* cin, const double* removal, int n_pollut,
-                double area) {
+                double area, const double* cpollut) {
     std::stack<double> stk;
 
     for (const auto& tok : expr.tokens) {
@@ -722,10 +780,21 @@ double evaluate(const TreatExpr& expr, double c, double dt,
                     case TreatVar::D:     stk.push(d);    break;
                     case TreatVar::AREA:  stk.push(area); break;  // Gap #16
                     case TreatVar::C_POLLUT:
-                        if (cin && tok.pollut_ref >= 0 && tok.pollut_ref < n_pollut)
-                            stk.push(cin[tok.pollut_ref]);
-                        else
+                        // legacy getVariableValue (treatmnt.c:344-351): a
+                        // pollutant reference reads Cin[p] when THAT
+                        // pollutant's treatment here is a removal equation,
+                        // and the node's current concentration otherwise.
+                        // `cpollut` is that choice already made by the caller,
+                        // which is where the per-pollutant treatment types
+                        // are known; without it we keep the old Cin-only
+                        // reading.
+                        if (tok.pollut_ref >= 0 && tok.pollut_ref < n_pollut) {
+                            if (cpollut)   stk.push(cpollut[tok.pollut_ref]);
+                            else if (cin)  stk.push(cin[tok.pollut_ref]);
+                            else           stk.push(0.0);
+                        } else {
                             stk.push(0.0);
+                        }
                         break;
                     case TreatVar::R_POLLUT:
                         if (removal && tok.pollut_ref >= 0 && tok.pollut_ref < n_pollut)
@@ -790,6 +859,15 @@ double evaluate(const TreatExpr& expr, double c, double dt,
     }
 
     return stk.empty() ? 0.0 : stk.top();
+}
+
+// Function-pointer overload, kept for callers that already have a free
+// function (the unit tests' mock lookup).
+int parse(const std::string& expr_str, TreatExpr& result,
+          int (*pollut_lookup)(const std::string& name)) {
+    if (!pollut_lookup) return parse_impl(expr_str, result, {});
+    return parse_impl(expr_str, result,
+                      std::function<int(const std::string&)>(pollut_lookup));
 }
 
 } // namespace treatment

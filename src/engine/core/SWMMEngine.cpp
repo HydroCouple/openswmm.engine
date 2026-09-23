@@ -3273,7 +3273,12 @@ int SWMMEngine::refreshTreatment(int node_idx, int pollut_idx) noexcept {
         ctx_.treatment.compiled[idx] = treatment::TreatExpr{};
     } else {
         treatment::TreatExpr te;
-        rc = treatment::parse(expr_str, te);
+        // Resolve pollutant references against the deck's own names: a bare
+        // pollutant name is legacy's second lookup (treatmnt.c:313) and R_xxx
+        // its third. The lookup-less overload used here compiled neither, so
+        // an expression naming a pollutant produced an EMPTY token list and
+        // the treatment was skipped without any error.
+        rc = treatment::parse(expr_str, te, ctx_.pollutant_names.names());
         if (rc == 0) {
             te.pollutant_idx = pollut_idx;
             ctx_.treatment.compiled[idx] = std::move(te);
@@ -8723,7 +8728,8 @@ void SWMMEngine::initQuality() noexcept {
                 const auto& expr_str = ctx_.treatment.expressions[idx];
                 if (expr_str.empty()) continue;
                 treatment::TreatExpr te;
-                if (treatment::parse(expr_str, te) == 0) {
+                if (treatment::parse(expr_str, te,
+                                     ctx_.pollutant_names.names()) == 0) {
                     te.pollutant_idx = p;
                     ctx_.treatment.compiled[idx] = std::move(te);
                     ctx_.treatment.has_treatment[static_cast<std::size_t>(n)] = true;
