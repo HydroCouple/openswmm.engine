@@ -189,7 +189,17 @@ public:
     /// the engine absorbs the treated concentrations back into its node
     /// stores (ArdEngine::absorbTreatedNodeConc). Books its own
     /// qual_routing_reacted losses.
-    void applyTreatment(SimulationContext& ctx, double dt);
+    /**
+     * @brief Apply [TREATMENT] at every node that has one.
+     *
+     * @param full_inflow  true when the caller assembled the node's COMPLETE
+     *        inflow (link mass flow plus the external loaders), which is what
+     *        legacy's Cin means. The EULERIAN_ARD entry runs only
+     *        assembleExternalLoads, so its accumulators hold the external
+     *        share alone and it passes false — see the note at the Cin site.
+     */
+    void applyTreatment(SimulationContext& ctx, double dt,
+                        bool full_inflow = true);
 
 private:
     int n_pollutants_ = 0;
