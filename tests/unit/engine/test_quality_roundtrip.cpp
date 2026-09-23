@@ -408,11 +408,21 @@ TEST_F(QualityRoundtripTest, TreatmentValidateExpression) {
               SWMM_ERR_BADPARAM);
     EXPECT_NE(std::strlen(err), 0u);
 
-    // Unknown variable with position.
+    // FLOW is one of legacy's five process variables (ProcessVarWords,
+    // keywords.c:103), so it must VALIDATE. It used to be rejected here,
+    // which made it the only legacy process variable this engine refused and
+    // meant a deck writing `C = FLOW * 2` had its treatment silently skipped
+    // rather than reported.
     EXPECT_EQ(swmm_treatment_validate_expression(
                   engine, "C = FLOW * 2", err, sizeof(err), &col),
+              SWMM_OK);
+
+    // Unknown variable with position — an identifier that is neither a
+    // process variable nor one of this deck's pollutants (TSS, Lead).
+    EXPECT_EQ(swmm_treatment_validate_expression(
+                  engine, "C = BOGUS * 2", err, sizeof(err), &col),
               SWMM_ERR_BADPARAM);
-    EXPECT_NE(std::string(err).find("FLOW"), std::string::npos);
+    EXPECT_NE(std::string(err).find("BOGUS"), std::string::npos);
     EXPECT_EQ(col, 4);
 
     // Unknown character (stricter than the lenient tokenizer).

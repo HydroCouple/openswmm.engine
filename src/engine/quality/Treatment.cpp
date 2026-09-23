@@ -98,16 +98,20 @@ static const std::unordered_map<std::string, TokenType> func_map = {
 // did not fail loudly, it hit the tokenizer's unknown-identifier path and the
 // whole treatment was skipped in silence.
 //
-// FLOW is deliberately NOT added: swmm_treatment_validate_expression is
-// contracted to REJECT it (test_quality_roundtrip.cpp:412-416 pins the error
-// and its column), so accepting it is an API decision rather than a parity
-// fix. It is the one legacy process variable this parser still refuses.
+// All five of legacy's process variables are accepted under legacy's own
+// spelling. FLOW was the last hold-out: the validator was contracted to
+// REJECT it, which made it the only legacy process variable this engine
+// refused, so a deck written the way the SWMM manual documents had its
+// treatment silently skipped. `Q` and `D` stay as this engine's own aliases —
+// legacy would reject them, but they cost nothing and existing decks may use
+// them.
 static const std::unordered_map<std::string, TreatVar> var_map = {
     {"C",     TreatVar::C},
     {"R",     TreatVar::R},
     {"DT",    TreatVar::DT},
     {"HRT",   TreatVar::HRT},
-    {"Q",     TreatVar::Q},
+    {"FLOW",  TreatVar::Q},    // legacy pvFLOW
+    {"Q",     TreatVar::Q},    // v6 alias
     {"V",     TreatVar::V},
     {"DEPTH", TreatVar::D},    // legacy pvDEPTH
     {"D",     TreatVar::D},    // v6 alias
