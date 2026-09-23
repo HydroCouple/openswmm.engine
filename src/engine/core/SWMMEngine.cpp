@@ -4740,7 +4740,8 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
                 // under ARD treatment applies AFTER the reaction stage at
                 // end of step, where legacy applies it before decay.
                 if (ctx_.treatment.hasAny()) {
-                    quality_.applyTreatment(ctx_, dt_routing);
+                    quality_.applyTreatment(ctx_, dt_routing,
+                                            /*full_inflow=*/false);
                     ard_.absorbTreatedNodeConc(ctx_);
                 }
             } else {

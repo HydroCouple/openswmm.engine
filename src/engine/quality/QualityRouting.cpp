@@ -1281,7 +1281,8 @@ void QualitySolver::updateLinkQuality(SimulationContext& ctx, double dt) {
 // Apply treatment expressions at nodes — matching legacy treatmnt_treat()
 // ============================================================================
 
-void QualitySolver::applyTreatment(SimulationContext& ctx, double dt) {
+void QualitySolver::applyTreatment(SimulationContext& ctx, double dt,
+                                   bool full_inflow) {
     int np = n_pollutants_;
     if (np <= 0) return;
     auto& treat = ctx.treatment;
@@ -1294,16 +1295,39 @@ void QualitySolver::applyTreatment(SimulationContext& ctx, double dt) {
         auto uj = static_cast<std::size_t>(j);
         if (!treat.has_treatment[uj]) continue;
 
-        // 1. Compute inflow concentration: Cin[p] = mass_in[p] / vol_in.
-        //    (The LEGACY figures; the shared per-node body below is also the
-        //    LARD MIX's seam, fed with the solver's own inflow numbers.)
+        // 1. Inflow concentration. legacy treatmnt_setInflow (treatmnt.c:186)
+        //    is `Cin[p] = wIn[p] / qIn` — a mass RATE over a flow RATE.
+        //    qual_mass_in is a rate; qual_vol_in is a VOLUME (all eleven
+        //    writers accumulate `q * dt`, and every other reader either
+        //    divides it by dt or adds it to volumes — the "ft3/sec" in
+        //    NodeData's comment is stale). Dividing the rate by the volume
+        //    therefore left every Cin a factor of dt out. The apply path
+        //    multiplies it straight back into the treated concentration and a
+        //    removal expression naming a pollutant reads it directly: the
+        //    `treatment` deck's `R = 0.01*COD*HRT^0.75` at storage node P005
+        //    published 25.9 mg/L of COD against legacy's 755.
         double vol_in = nodes.qual_vol_in[uj];  // total inflow volume (ft3) this step
         double q_raw  = (dt > 0.0) ? vol_in / dt : 0.0;  // inflow rate (ft3/s)
         for (int p = 0; p < np; ++p) {
             auto mi = uj * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
-            treat.cin[static_cast<std::size_t>(p)] =
-                (vol_in > 0.0 && mi < nodes.qual_mass_in.size())
-                ? nodes.qual_mass_in[mi] / vol_in : 0.0;
+            const bool have = mi < nodes.qual_mass_in.size();
+            if (full_inflow) {
+                treat.cin[static_cast<std::size_t>(p)] =
+                    (q_raw > 0.0 && have) ? nodes.qual_mass_in[mi] / q_raw : 0.0;
+            } else {
+                // EULERIAN_ARD reaches here having assembled the EXTERNAL
+                // loads only, so these accumulators are not the node's
+                // influent and the ratio above is not legacy's Cin. Corrected,
+                // it exceeds the node's mixed concentration often enough that
+                // the MIN(cOut, node conc) clamp turns every removal into a
+                // no-op — which ArdE5bTest.TreatmentAppliesAtArdNodeStores
+                // correctly refuses. The real fix is for ARD to supply its own
+                // Cin from its own inflow figures, the way the LARD MIX
+                // already does (LagrangianSolver.hpp:430-438); until then the
+                // pre-existing ratio is kept here so that path is unchanged.
+                treat.cin[static_cast<std::size_t>(p)] =
+                    (vol_in > 0.0 && have) ? nodes.qual_mass_in[mi] / vol_in : 0.0;
+            }
         }
         applyNodeTreatment(ctx, j, dt, q_raw, treat.cin.data());
     }
@@ -1336,7 +1360,9 @@ void applyNodeTreatment(SimulationContext& ctx, int j, double dt,
 
         double hrt_hours = nodes.hrt[uj] / 3600.0;
         double q = q_raw * ucf_flow;                        // flow in user units
-        double v = nodes.volume[uj];                         // volume (ft3)
+        // legacy passes vAvg = (oldVolume + newVolume)/2 as the V process
+        // variable (qualrout.c:121, 141) — not the end-of-step volume.
+        double v = (nodes.old_volume[uj] + nodes.volume[uj]) * 0.5;  // ft3
         double d_ft = (nodes.depth[uj] + nodes.old_depth[uj]) * 0.5;
         double d  = d_ft * ucf_length;                      // depth in user units
 
@@ -1347,10 +1373,27 @@ void applyNodeTreatment(SimulationContext& ctx, int j, double dt,
                                       ucf::getUnitSystem(unit_sys), &ctx.node_subtypes);
         double area = (a1 + a2) * 0.5 * ucf_length * ucf_length;  // user units²
 
-        // 3. Update HRT for storage nodes (matching legacy updateHRT)
-        if (nodes.type[uj] == NodeType::STORAGE && v > 0.0) {
-            double qdt = std::abs(q_raw) * dt;
-            nodes.hrt[uj] = (nodes.hrt[uj] + dt) * v / (v + qdt);
+        // 3. Update HRT for storage nodes. legacy updateHRT (qualrout.c:575)
+        // takes the node's OLD volume, not the average and not the new one,
+        // and RESETS the residence time to zero once the store empties:
+        //
+        //     if (v < ZERO) hrt = 0.0;
+        //     else hrt = (hrt + tStep) * v / (v + q*tStep);
+        //
+        // v6 skipped the update entirely on an empty store, so a stale
+        // residence time survived every dry spell and kept growing — and an
+        // expression like `R = 0.01*COD*HRT^0.75` reads it directly. On the
+        // `treatment` deck that drove node P005's COD to 25.9 mg/L against
+        // legacy's 755.
+        if (nodes.type[uj] == NodeType::STORAGE) {
+            const double v_old = nodes.old_volume[uj];
+            if (v_old < LEGACY_ZERO) {
+                nodes.hrt[uj] = 0.0;
+            } else {
+                const double qdt = std::abs(q_raw) * dt;
+                nodes.hrt[uj] = std::max(
+                    (nodes.hrt[uj] + dt) * v_old / (v_old + qdt), 0.0);
+            }
             hrt_hours = nodes.hrt[uj] / 3600.0;
         }
 
