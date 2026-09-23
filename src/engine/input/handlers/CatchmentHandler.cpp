@@ -241,11 +241,17 @@ void handle_subareas(SimulationContext& ctx, const std::vector<std::string>& lin
             else if (has_prefix("PERV"))   mode = 2;
             ctx.subcatches.subarea_routing[idx] = mode;
 
-            // PctRouted: legacy defaults to 100% when RouteTo is given, then
-            // overrides with tok[7] if present.
+            // PctRouted defaults to 100%, then tok[7] overrides. Legacy sets
+            // x[6] = 1.0 up front for EVERY RouteTo (subcatch.c), including
+            // OUTLET; gating the default on `mode != 0` left OUTLET rows at
+            // the array's initialised 0.0. That is inert in the solver —
+            // fOutlet is only overridden for TO_IMPERV/TO_PERV — but the
+            // writer then emitted an explicit "0.00" where the deck had no
+            // column at all, so a later edit of RouteTo to PERVIOUS would
+            // silently mean 0% routed where the original file meant 100%.
             if (tok.size() > 7)
                 ctx.subcatches.pct_routed[idx] = to_double(tok[7]) / 100.0;
-            else if (mode != 0)
+            else
                 ctx.subcatches.pct_routed[idx] = 1.0;
         }
     }
