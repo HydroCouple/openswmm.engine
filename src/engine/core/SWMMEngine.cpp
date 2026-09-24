@@ -3977,6 +3977,72 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                 // Only the concentration is formed at this point, because
                 // legacy forms it over the PRE-LID vOut1 (surfqual.c:330).
             } // end pollutant loop
+
+            // --- Co-pollutant washoff (legacy findWashoffLoads,
+            // surfqual.c:505-521). A pollutant may be generated as a FRACTION
+            // of another's washoff:
+            //
+            //     k = Pollut[p].coPollut;
+            //     if (k >= 0) {
+            //         w = Pollut[p].coFraction * OutflowLoad[k];
+            //         massbal_updateLoadingTotals(BUILDUP_LOAD, p, w*mcf);
+            //         OutflowLoad[p] += w;
+            //     }
+            //
+            // [POLLUTANTS] parses coPollut/coFraction into ctx_.pollutants and
+            // LanduseSolver::applyCoPollutant implements the relation and is
+            // unit-tested — but NOTHING in the engine ever called it, and this
+            // loop never mentioned a co-pollutant. Five corpus decks declare
+            // Lead as 20 % of TSS and v6 washed off exactly ZERO Lead:
+            // pond-design's ORI-19 read 0 against legacy's 5.112 from the
+            // first wet period, and the gap propagated to every node and link
+            // downstream.
+            //
+            // It must run AFTER the whole pollutant loop, over the SUMMED
+            // loads, exactly as legacy does — and as a single FORWARD pass, so
+            // that a co-pollutant of a co-pollutant sees the already-updated
+            // value where legacy would. Operating on `conc` is equivalent to
+            // operating on OutflowLoad: both divide by the same q_out1 and
+            // LperFT3, so the fraction carries through unchanged.
+            if (q_out1 > 0.0) {
+                const double mass_ucf_cp = ucf::UCF(ucf::MASS, ctx_.options);
+                for (int p = 0; p < np; ++p) {
+                    const auto up = static_cast<std::size_t>(p);
+                    if (up >= ctx_.pollutants.co_pollut.size()) continue;
+                    const int k = ctx_.pollutants.co_pollut[up];
+                    if (k < 0 || k >= np) continue;
+                    const double frac = (up < ctx_.pollutants.co_frac.size())
+                                        ? ctx_.pollutants.co_frac[up] : 0.0;
+                    if (frac <= 0.0) continue;
+
+                    const auto ip = ui * static_cast<std::size_t>(np) + up;
+                    const auto ik = ui * static_cast<std::size_t>(np)
+                                  + static_cast<std::size_t>(k);
+                    if (ip >= ctx_.subcatches.conc.size() ||
+                        ik >= ctx_.subcatches.conc.size()) continue;
+
+                    const double add = frac * ctx_.subcatches.conc[ik];
+                    if (add <= 0.0) continue;
+                    ctx_.subcatches.conc[ip] += add;
+
+                    // legacy books the co-pollutant's share as BUILDUP_LOAD so
+                    // the ledger balances — this mass was never on the ground.
+                    double mcf_cp = mass_ucf_cp;
+                    if (up < ctx_.pollutants.units.size()) {
+                        switch (ctx_.pollutants.units[up]) {
+                            case MassUnits::UG_PER_L:     mcf_cp = mass_ucf_cp / 1000.0; break;
+                            case MassUnits::COUNTS_PER_L: mcf_cp = 1.0; break;
+                            default: break;
+                        }
+                    }
+                    // conc -> load rate: x q_out1 x LperFT3 (the inverse of
+                    // the conversion the pollutant loop just applied).
+                    const double w = add * q_out1 * 28.317;
+                    if (up < ctx_.mass_balance.qual_surface_buildup.size())
+                        ctx_.mass_balance.qual_surface_buildup[up] +=
+                            w * dt_runoff * mcf_cp;
+                }
+            }
         } // end subcatch loop
     }
 }
