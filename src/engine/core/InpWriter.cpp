@@ -1683,8 +1683,6 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     for(int j=0;j<ctx.n_gages();++j){auto u=static_cast<size_t>(j);
     write_obj_comment(f, ctx.gages.comments, u);
     int iv=ctx.gages.interval_sec[u];int h=iv/3600,m=(iv%3600)/60;int ts=ctx.gages.ts_index[u];
-    // Emit the actual rain-data format (0=INTENSITY,1=VOLUME,2=CUMULATIVE) — a
-    // prior hardcoded "INTENSITY" silently rewrote VOLUME/CUMULATIVE gages.
     // The recording interval is H:MM only while it IS a whole number of
     // minutes. Legacy reads this column with getDouble FIRST and only then
     // falls back to a clock (gage.c readGageSeriesFormat), so decimal hours
@@ -1695,6 +1693,8 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     char gsb[32];
     if(iv>0&&iv%60==0) std::snprintf(gsb,sizeof(gsb),"%d:%02d",h,m);
     else               std::snprintf(gsb,sizeof(gsb),"%.10g",iv/3600.0);
+    // Emit the actual rain-data format (0=INTENSITY,1=VOLUME,2=CUMULATIVE) — a
+    // prior hardcoded "INTENSITY" silently rewrote VOLUME/CUMULATIVE gages.
     const char* fmt = ctx.gages.rain_type[u]==1 ? "VOLUME"
                     : ctx.gages.rain_type[u]==2 ? "CUMULATIVE" : "INTENSITY";
     const double sf = ctx.gages.scale_factor[u];
@@ -1893,6 +1893,12 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // Optional Egwt Ebot Wgw Umc: legacy reads `*` (or absence) as MISSING —
     // the node invert / the aquifer's values — so a missing field is written
     // as `*`, and only as far as the last field actually given.
+    //
+    // At least ONE of them is always emitted, because legacy rejects the row
+    // with ERR_ITEMS at `ntoks < 11` (gwater.c gwater_readGroundwaterParams)
+    // even though only ten tokens are mandatory — the eleventh may be `*`, but
+    // it must be there. Stopping at ten when every optional was unset produced
+    // a file legacy refused outright.
     {
         const double opt[4] = {ctx.subcatches.gw_hstar[u], ctx.subcatches.gw_bot_elev[u],
                                ctx.subcatches.gw_wt_elev[u], ctx.subcatches.gw_upper_moist[u]};
@@ -1903,12 +1909,6 @@ int writeInpFile(const SimulationContext&  ctx_internal,
             else                              std::fprintf(f, " %-10s", "*");
         }
         std::fprintf(f, "\n");
-    //
-    // At least ONE of them is always emitted, because legacy rejects the row
-    // with ERR_ITEMS at `ntoks < 11` (gwater.c gwater_readGroundwaterParams)
-    // even though only ten tokens are mandatory — the eleventh may be `*`, but
-    // it must be there. Stopping at ten when every optional was unset produced
-    // a file legacy refused outright.
     }
     }}}
 
