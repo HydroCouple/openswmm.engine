@@ -19,19 +19,36 @@
  * @brief Multi-delimiter tokenizer for SWMM input files.
  *
  * @details Replaces the legacy space-only tokenizer in src/solver/input.c.
- *          The new tokenizer handles comma, tab, and one-or-more spaces as
- *          delimiters. This allows input files to be formatted as:
+ *          Whitespace always delimits; a comma delimits only where it cannot
+ *          be part of a name. This allows input files to be formatted as:
  *          - Traditional SWMM (space-delimited)
  *          - Spreadsheet export (comma or tab-delimited CSV)
  *          - Mixed formats within the same file
+ *
+ *          The comma rule is positional, not dialect-wide, because the two
+ *          readings genuinely collide. Legacy splits on `" \t\n\r"` only, so a
+ *          comma is an ordinary name character — and real decks depend on it:
+ *          `S-2-M20-L109/link2,6-201-9(u)` is ONE subcatchment outlet. Treating
+ *          every comma as a delimiter truncated that reference, read the name
+ *          fragment after it as the subcatchment's area, and produced a
+ *          trailing token the legacy reader then rejected as an undefined
+ *          object.
+ *
+ *          So: a comma separates when it sits at a token boundary — adjacent
+ *          to whitespace or at a line edge — or when the line carries no
+ *          whitespace at all outside quotes and is therefore pure CSV. A comma
+ *          with non-whitespace on both sides, in an otherwise
+ *          whitespace-delimited line, belongs to its token. A value that
+ *          genuinely contains a comma AND sits in a CSV row must be quoted,
+ *          which is the ordinary CSV convention.
  *
  * ### Key differences from legacy SWMM tokenizer
  *
  * | Feature | Legacy (input.c) | New Tokenizer |
  * |---------|-----------------|---------------|
- * | Delimiters | Space only | Space, tab, comma |
+ * | Delimiters | Space, tab, CR/LF | Same, plus comma at a token boundary |
  * | Comment char | `;` (semicolon) | `;` or `;;` |
- * | Quoted strings | Not supported | Supported (double-quotes) |
+ * | Quoted strings | Filenames only | Supported anywhere (double-quotes) |
  * | Performance | sscanf-based | std::string_view, no allocations |
  *
  * @see Legacy reference: src/solver/input.c — getToken()
@@ -177,10 +194,43 @@ public:
     static bool parse_boolean(std::string_view sv) noexcept;
 
 private:
-    /** @brief Returns true if `c` is a token delimiter (comma, tab, space). */
-    static bool is_delimiter(char c) noexcept {
-        return c == ',' || c == '\t' || c == ' ';
-    }
+    /** @brief Space or tab — always a delimiter, as in legacy SWMM. */
+    static bool is_space(char c) noexcept { return c == ' ' || c == '\t'; }
+
+    /**
+     * @brief True when the line carries no whitespace OUTSIDE quotes.
+     *
+     * @details Such a line has no other structure to read, so its commas can
+     *          only be column separators — this is the "spreadsheet export"
+     *          case. Whitespace inside a quoted token does not count: for
+     *          `"a b",c` the quotes supply the structure and the comma still
+     *          separates.
+     */
+    static bool is_pure_csv_line(std::string_view line) noexcept;
+
+    /**
+     * @brief True when the comma at @p pos separates tokens rather than
+     *        belonging to one.
+     *
+     * @details Legacy SWMM splits on `" \t\n\r"` only (input.c SEPSTR), so a
+     *          comma is an ordinary name character there — and real decks rely
+     *          on that: `S-2-M20-L109/link2,6-201-9(u)` is ONE outlet name.
+     *          Splitting it truncated the reference, read a name fragment as
+     *          the area and invented a trailing token.
+     *
+     *          This engine also accepts comma-delimited input, so the two
+     *          readings are separated by position rather than by dialect: a
+     *          comma separates when it sits at a token boundary — against
+     *          whitespace or a line edge — or when the whole line is pure CSV.
+     *          A comma flanked by non-whitespace on both sides, in a line that
+     *          is otherwise whitespace-delimited, belongs to its token.
+     *
+     * @param line      The comment-stripped line.
+     * @param pos       Index of the comma.
+     * @param pure_csv  Result of is_pure_csv_line() for this line.
+     */
+    static bool comma_separates(std::string_view line, std::size_t pos,
+                                bool pure_csv) noexcept;
 };
 
 } /* namespace openswmm::input */
