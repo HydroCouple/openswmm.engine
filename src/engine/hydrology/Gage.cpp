@@ -430,13 +430,30 @@ double getReportRainfall(const SimulationContext& ctx, int gage_idx,
     if (!rtbl || rtbl->x.empty()) return 0.0;
     if (ug >= ctx.gages.st_cur.size() || ctx.gages.st_cur[ug] == kNoState) return 0.0;
     const double t = report_date + datetime::OneSecond;
+
+    // [ADJUSTMENTS] RAINFALL — the monthly multiplier. legacy applies it
+    // inside gage_getRainfall itself (`r1 * unitsFactor * scaleFactor *
+    // Adjust.rainFactor`, gage.c:710), so EVERY value derived from it carries
+    // it, including the Gage.rainfall and nextRainfall that
+    // gage_setReportRainfall hands back. This engine applies it to
+    // gages.rainfall at the simulation seam only (SWMMEngine A2f), and the
+    // report path reads st_rain / recordRate, which do not, so the reported
+    // rainfall came out UNADJUSTED: lid-master-sustain reported 0.0867 in/hr
+    // where legacy reports 0.084966 — exactly 1/0.98, its January factor.
+    // The co-gage branch above must NOT be adjusted here: it recurses into
+    // this function, which applies the factor once, matching legacy's use of
+    // the primary's already-adjusted reportRainfall. The API branch is
+    // likewise unadjusted, as legacy returns apiRainfall verbatim.
+    const int mon = datetime::monthOfYear(report_date) - 1;
+    const double radj = (mon >= 0 && mon < 12) ? ctx.adjust_rain[mon] : 1.0;
+
     double start, end;
     currentInterval(ctx, gage_idx, *rtbl, start, end);
-    if (t < end) return ctx.gages.st_rain[ug];
+    if (t < end) return ctx.gages.st_rain[ug] * radj;
     const int nxt = ctx.gages.st_next[ug];
     if (nxt < 0) return 0.0;                                   // nextRainfall = 0 past the end
     if (t < rtbl->x[static_cast<std::size_t>(nxt)]) return 0.0;
-    return recordRate(ctx, gage_idx, *rtbl, nxt);
+    return recordRate(ctx, gage_idx, *rtbl, nxt) * radj;
 }
 
 } // namespace gage
