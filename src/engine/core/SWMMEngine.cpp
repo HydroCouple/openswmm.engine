@@ -1579,8 +1579,18 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         stepRouting(dt_next);
         if (const int drc = checkRoutingDiverged(); drc != SWMM_OK)
             return drc;
-        updateStatistics(dt_next);
-        updateRoutingMassBalance(dt_next);
+        // Legacy keeps BOTH of these inside the !BetweenEvents branch of
+        // routing_execute (routing.c:240-268): stats_updateFlowStats /
+        // stats_updateTimeStepStats, and the removeSystemOutflows that fills
+        // StepFlowTotals. Between events its step totals therefore stay at the
+        // zero massbal_initTimeStepTotals left them, and the system rows read
+        // zero. updateRoutingMassBalance re-derives step_outflow from node
+        // state, so running it on a skipped step republished the last routed
+        // step's outflow for the rest of the window.
+        if (!between_events_) {
+            updateStatistics(dt_next);
+            updateRoutingMassBalance(dt_next);
+        }
     }
     computeFinalStorage();
     // IGNORE_QUALITY: surface buildup was never updated this run, so skip the
@@ -4363,22 +4373,6 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     // Reference: routing_execute() in legacy routing.c
     // ================================================================
 
-    // B0a. Check if between routing events — skip routing if so
-    //       (matching legacy isBetweenEvents() in routing.c)
-    between_events_ = isBetweenEvents(ctx_.current_date);
-    if (between_events_) {
-        // Advance next_event_ index past expired events
-        while (next_event_ < static_cast<int>(ctx_.events.size()) &&
-               ctx_.current_date > ctx_.events[static_cast<size_t>(next_event_)].end) {
-            next_event_++;
-        }
-        return;
-    }
-
-    // B0. Half-step mass balance update (P8-G12)
-    // Legacy: massbal_updateRoutingTotals(routingStep/2) at start of routing
-    // (mass balance accumulators updated with half the step's contribution)
-
     // Legacy dates this whole step — the control rules, every inflow —
     // with getDateTime(NewRoutingTime) taken at routing_execute entry
     // (swmm5.c getDateTime: StartDateTime + (elapsedMsec + 1) / 1000
@@ -4391,6 +4385,43 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     const double routing_secs = (ctx_.elapsed_ms + 1.0) / 1000.0;
     const double routing_date = datetime::addSeconds(ctx_.options.start_date,
                                                      routing_secs);
+
+    // B0a. Check if between routing events — skip routing if so
+    //      (legacy isBetweenEvents(), routing.c). The test takes legacy's
+    //      currentDate, the one formed just above: ctx_.current_date is the
+    //      seconds clock WITHOUT legacy's 1 ms, so a step starting exactly on
+    //      an event's end date read as "still inside the event" and routed one
+    //      step past every window legacy had already closed (events-example
+    //      diverged at period 864 = Event[0].end for precisely this reason).
+    //      The index advances by ONE event per call, which is where legacy
+    //      puts it — inside the > end branch — and not by a sweep to the first
+    //      unexpired event: legacy re-tests the next one on the next step.
+    between_events_ = isBetweenEvents(routing_date);
+    if (between_events_) {
+        // legacy initSystemInflows() runs BEFORE the event test, and both it
+        // and the node_/link_setOldQualState it calls roll the old state AND
+        // ZERO the new one (routing.c:432, node.c, link.c). v6 splits those:
+        // save_lat_qual_state() (step(), every step) does the roll, while the
+        // zero is implicit in clearInflowSources/assembleLateralInflows and in
+        // the quality router assigning conc — all of which this early return
+        // skips. Without it a skipped window keeps reporting the last routed
+        // step's lateral inflow and concentrations forever, where legacy,
+        // having zeroed them and then routed nothing, reports none.
+        std::fill(ctx_.nodes.lat_flow.begin(), ctx_.nodes.lat_flow.end(), 0.0);
+        if (!ctx_.options.ignore_quality) {
+            std::fill(ctx_.nodes.conc.begin(), ctx_.nodes.conc.end(), 0.0);
+            std::fill(ctx_.links.conc.begin(), ctx_.links.conc.end(), 0.0);
+        }
+        if (next_event_ < static_cast<int>(ctx_.events.size()) &&
+            routing_date > ctx_.events[static_cast<size_t>(next_event_)].end) {
+            next_event_++;
+        }
+        return;
+    }
+
+    // B0. Half-step mass balance update (P8-G12)
+    // Legacy: massbal_updateRoutingTotals(routingStep/2) at start of routing
+    // (mass balance accumulators updated with half the step's contribution)
 
     // B1a. Evaluate pump startup/shutoff depth hysteresis ONCE per timestep
     //      (matching legacy routing.c: link_setTargetSetting runs BEFORE controls_evaluate)
