@@ -2378,7 +2378,15 @@ void resolve_cross_references(SimulationContext& ctx) {
     // -------------------------------------------------------------------------
     // The conduit pass below skips non-conduit links (length==0). We need a
     // separate pass for pumps, orifices, weirs, outlets.
-    if (ctx.options.link_offsets == 1) { // ELEV_OFFSET
+    //
+    // A GeoPackage already holds RESOLVED offsets — it is the engine's
+    // canonical internal store, which is why convert_inputs_to_internal is
+    // skipped for it too (see the gpkg_units_internal gate below). Running the
+    // ELEVATION pass over values that are already depths subtracted the node
+    // invert a SECOND time, and the negative result clamped to zero: every
+    // link offset in an ELEVATION-mode model collapsed to its node invert on
+    // the first .gpkg round trip.
+    if (ctx.options.link_offsets == 1 && !ctx.gpkg_units_internal) { // ELEV_OFFSET
         for (int j = 0; j < n_links; ++j) {
             auto uj = static_cast<std::size_t>(j);
             auto lt = ctx.links.type[uj];
@@ -2935,8 +2943,10 @@ void resolve_cross_references(SimulationContext& ctx) {
         length = conduit_true_length(ctx, j);
         if (length <= 0.0) { bump_filled(); continue; }
 
-        // Convert elevation offsets if ELEV_OFFSET mode
-        if (ctx.options.link_offsets == 1) { // ELEV_OFFSET
+        // Convert elevation offsets if ELEV_OFFSET mode. Skipped for a
+        // GeoPackage, whose offsets are already resolved depths — see the
+        // non-conduit pass above for what the double subtraction did.
+        if (ctx.options.link_offsets == 1 && !ctx.gpkg_units_internal) { // ELEV_OFFSET
             const std::string& lname = ctx.link_names.name_of(j);
             ctx.links.offset1[uj] = legacyOffsetHeight(
                 ctx.links.offset1[uj], ctx.nodes.invert_elev[n1], ctx, lname);

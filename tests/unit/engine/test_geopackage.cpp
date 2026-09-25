@@ -13,6 +13,8 @@
 #include <gmock/gmock.h>
 
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <cstdio>
 
 #include "core/SimulationContext.hpp"
@@ -2082,4 +2084,95 @@ TEST_F(GeoPackageTest, SpeciesCollidingWithHydraulicVariableFailsPrepare) {
     ASSERT_TRUE(depth.found);
     EXPECT_EQ(depth.category, "STATE")
         << "the built-in depth variable was overwritten by the species";
+}
+
+// ===========================================================================
+// LINK_OFFSETS=ELEVATION
+//
+// Engine-level on purpose: the defect lives in resolve_cross_references, which
+// the data-level read_from_file tests above never run.
+//
+// Under ELEVATION the offsets in an .inp are ELEVATIONS, and the resolver
+// rewrites each as a depth above its node invert. A GeoPackage stores those
+// RESOLVED depths — it is the engine's canonical internal store, which is why
+// convert_inputs_to_internal is skipped for it. Running the ELEVATION pass
+// again on reopen subtracted the node invert a SECOND time and the negative
+// result clamped to zero, so every offset in the model collapsed onto its node
+// invert on the first .gpkg round trip.
+// ===========================================================================
+
+#include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_model.h>
+
+namespace {
+
+constexpr const char* kGpkgPluginId = "org.hydrocouple.openswmm.plugins.geopackage";
+
+/// The InOffset/OutOffset columns of a [CONDUITS] row in a written .inp.
+///
+/// Asserted through the FILE rather than through swmm_link_get_offset_*,
+/// because those getters hand back the AUTHORED offset — they undo the very
+/// normalisation under test, so they report the right answer either way. The
+/// file is what a user reopens and what the defect actually destroyed.
+struct Offsets { double up, dn; };
+
+Offsets conduit_offsets(const std::string& inp_path, const std::string& link) {
+    std::ifstream in(inp_path);
+    EXPECT_TRUE(in.good()) << "cannot read " << inp_path;
+    std::string line;
+    bool in_conduits = false;
+    while (std::getline(in, line)) {
+        const std::string t = line.substr(0, line.find(';'));
+        std::istringstream ls(t);
+        std::string first;
+        if (!(ls >> first)) continue;
+        if (first.front() == '[') {
+            in_conduits = (t.find("[CONDUITS]") != std::string::npos);
+            continue;
+        }
+        if (!in_conduits || first != link) continue;
+        std::string n1, n2, len, rough;
+        Offsets o{-1.0, -1.0};
+        ls >> n1 >> n2 >> len >> rough >> o.up >> o.dn;
+        return o;
+    }
+    ADD_FAILURE() << "no [CONDUITS] row for " << link << " in " << inp_path;
+    return {-1.0, -1.0};
+}
+
+}  // namespace
+
+TEST(GeoPackageElevationOffsets, ElevationOffsetsSurviveAGpkgRoundTrip) {
+    const std::string src  = "inp_roundtrip/elevation_offsets.inp";
+    const std::string gpkg = "inp_roundtrip/_elevation_offsets.gpkg";
+    const std::string back = "inp_roundtrip/_elevation_offsets_back.inp";
+    std::remove(gpkg.c_str());
+    std::remove(back.c_str());
+
+    // .inp -> .gpkg
+    SWMM_Engine a = swmm_engine_create();
+    ASSERT_NE(a, nullptr);
+    ASSERT_EQ(swmm_engine_open(a, src.c_str(), nullptr, nullptr, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_model_write_with_plugin(a, gpkg.c_str(), kGpkgPluginId), SWMM_OK);
+    swmm_engine_close(a);
+    swmm_engine_destroy(a);
+
+    // .gpkg -> .inp
+    SWMM_Engine b = swmm_engine_create();
+    ASSERT_NE(b, nullptr);
+    ASSERT_EQ(swmm_engine_open(b, gpkg.c_str(), nullptr, nullptr, kGpkgPluginId), SWMM_OK);
+    ASSERT_EQ(swmm_model_write(b, back.c_str()), SWMM_OK);
+    swmm_engine_close(b);
+    swmm_engine_destroy(b);
+
+    // The fixture authors ELEVATIONS, and the file is written back under an
+    // ELEVATION header, so the elevations must come back unchanged. The defect
+    // collapsed each one onto its node invert (102.0 -> 100.0, 99.5 -> 98.0).
+    const Offsets c1 = conduit_offsets(back, "C1");
+    EXPECT_NEAR(c1.up, 102.0, 1e-6) << "upstream offset collapsed onto J1's invert";
+    EXPECT_NEAR(c1.dn,  99.5, 1e-6) << "downstream offset collapsed onto J2's invert";
+
+    const Offsets c2 = conduit_offsets(back, "C2");
+    EXPECT_NEAR(c2.up, 98.5, 1e-6);
+    EXPECT_NEAR(c2.dn, 90.0, 1e-6);
 }
