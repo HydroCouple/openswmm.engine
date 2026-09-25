@@ -541,6 +541,316 @@ static void load_rain_file_user_csv(SimulationContext& ctx, int g,
     ctx.gages.rain_series[ug]         = std::move(series);
 }
 
+// ============================================================================
+// NWS / NCDC external rain file formats (legacy rain.c)
+// ============================================================================
+//
+// A `FILE` gage whose data file is one of the NWS / NCDC layouts, rather than
+// the "standard" `station date time value` one, used to read as a file with no
+// parseable rows at all: every sscanf in the standard reader failed, the series
+// came back empty, and an empty series answers 0.0 at every lookup. The run
+// then completed, continuity closed at 0.000 %, and the .rpt printed a Rainfall
+// File Summary — a model with no precipitation anywhere, reported as a success.
+// events-example is the corpus case (legacy 12.02 in of rain, v6 none).
+//
+// Legacy sniffs the first five lines for the layout (findFileFormat) and reads
+// the NWS family through one routine (readNWSLine). Both are mirrored here.
+// The values these formats carry are depths in HUNDREDTHS OF AN INCH, and
+// legacy writes them to its interface file WITHOUT the rain-type transform and
+// WITHOUT the units factor that the standard reader applies — those belong to
+// readStdLine alone. The recording interval comes from the FILE (the element
+// type), overriding the interval the deck declared, exactly as legacy does at
+// findFileFormat's last line.
+//
+// Not ported: the Canadian AES_HLY / CMC_FIF / CMC_HLY layouts, which legacy
+// also detects. No corpus deck uses one; a file in those formats still reads as
+// the standard layout, i.e. as no rows.
+
+enum class NwsFormat { NONE, TAPE, SPACE_DELIMITED, COMMA_DELIMITED,
+                       ONLINE_60, ONLINE_15 };
+
+struct NwsFileSpec {
+    NwsFormat fmt              = NwsFormat::NONE;
+    int       interval_sec     = 0;
+    int       time_offset      = 0;  ///< legacy TimeOffset: stamps a reading at
+                                     ///< the START of the interval it ends
+    int       hdr_lines        = 0;
+    bool      has_station_name = false;
+    int       value_offset     = 0;  ///< ONLINE_* only (column of "HPCP"/"QPCP")
+    int       data_offset      = 0;  ///< ONLINE_* only (column of the date)
+};
+
+/// legacy getNWSInterval (rain.c): decodes the element type to an interval.
+static int nws_interval(const char* elem_type) {
+    if (std::strcmp(elem_type, "HPCP") == 0) return 3600;  // hourly
+    if (std::strcmp(elem_type, "QPCP") == 0) return 900;   // 15 minute
+    if (std::strcmp(elem_type, "QGAG") == 0) return 900;   // 15 minute
+    return 0;
+}
+
+/// legacy findNWSOnlineFormat (rain.c): the "Online Retrieval" layouts, whose
+/// header names the element and whose first COOP: row fixes the date column.
+static bool nws_detect_online(std::FILE* f, NwsFileSpec& spec) {
+    char line[1024];
+    std::rewind(f);
+    if (!std::fgets(line, sizeof(line), f)) return false;
+
+    if (const char* s = std::strstr(line, "HPCP")) {
+        spec.interval_sec = 3600;
+        spec.value_offset = static_cast<int>(s - line);
+        spec.fmt          = NwsFormat::ONLINE_60;
+    } else if (const char* q = std::strstr(line, "QPCP")) {
+        spec.interval_sec = 900;
+        spec.value_offset = static_cast<int>(q - line);
+        spec.fmt          = NwsFormat::ONLINE_15;
+    } else {
+        return false;
+    }
+    spec.time_offset = spec.interval_sec;
+
+    // The date begins 11 characters before the last ':' of the first data row.
+    for (int n = 1; n <= 5; ++n) {
+        if (!std::fgets(line, sizeof(line), f)) return false;
+        if (!std::strstr(line, "COOP:")) continue;
+        const char* last = std::strrchr(line, ':');
+        if (!last) return false;
+        spec.data_offset = static_cast<int>(last - line) - 11;
+        return true;
+    }
+    return false;
+}
+
+/// legacy findFileFormat (rain.c), NWS branches only: the caller falls back to
+/// the standard reader when this returns NwsFormat::NONE.
+///
+/// The two "w/ station name" probes read from column 37. Legacy runs its sscanf
+/// there without checking that the line is that long, which walks off the end
+/// of a shorter row; the length guard here is the only deliberate departure.
+static NwsFileSpec nws_detect_format(std::FILE* f) {
+    NwsFileSpec spec;
+    char line[1024];
+    char elem[5]  = "";
+    char rec[4]   = "";
+    char coop[6]  = "";
+    long sn2 = 0;
+    int  div = 0, year = 0;
+
+    std::rewind(f);
+    for (int line_count = 1; line_count <= 5; ++line_count) {
+        if (!std::fgets(line, sizeof(line), f)) return spec;
+        const std::size_t len = std::strlen(line);
+
+        auto accept = [&](NwsFormat fmt, bool named) {
+            spec.interval_sec     = nws_interval(elem);
+            spec.time_offset      = spec.interval_sec;
+            spec.has_station_name = named;
+            if (spec.interval_sec > 0) spec.fmt = fmt;
+            return spec.interval_sec > 0;
+        };
+
+        if (std::sscanf(line, "%6ld %2d %4s", &sn2, &div, elem) == 3 &&
+            accept(NwsFormat::SPACE_DELIMITED, false)) return spec;
+
+        if (len > 37 &&
+            std::sscanf(&line[37], "%2d %4s %2s %4d", &div, elem, rec, &year) == 4 &&
+            accept(NwsFormat::SPACE_DELIMITED, true)) return spec;
+
+        if (std::sscanf(line, "%6ld,%2d,%4s", &sn2, &div, elem) == 3 &&
+            accept(NwsFormat::COMMA_DELIMITED, false)) return spec;
+
+        if (len > 37 &&
+            std::sscanf(&line[37], "%2d,%4s,%2s,%4d", &div, elem, rec, &year) == 4 &&
+            accept(NwsFormat::COMMA_DELIMITED, true)) return spec;
+
+        if (std::sscanf(line, "%3s%6ld%2d%4s", rec, &sn2, &div, elem) == 4 &&
+            accept(NwsFormat::TAPE, false)) return spec;
+
+        if (std::sscanf(line, "%5s%6ld", coop, &sn2) == 2 &&
+            std::strcmp(coop, "COOP:") == 0) {
+            if (!nws_detect_online(f, spec)) spec.fmt = NwsFormat::NONE;
+            return spec;
+        }
+
+        ++spec.hdr_lines;
+    }
+    return spec;
+}
+
+/// legacy setCondition (rain.c).
+enum class NwsCondition { NONE, ACCUMULATED, DELETED, MISSING };
+
+static NwsCondition nws_condition(char flag) {
+    switch (flag) {
+        case 'a': case 'A': return NwsCondition::ACCUMULATED;
+        case '{': case '}': return NwsCondition::DELETED;
+        case '[': case ']': return NwsCondition::MISSING;
+        default:            return NwsCondition::NONE;
+    }
+}
+
+/// legacy readNwsOnlineValue (rain.c): hundredths of an inch, or — in the newer
+/// online format — decimal inches, which are converted back to hundredths.
+static int nws_read_online_value(const char* s, long& v, char& flag) {
+    if (std::strchr(s, '.')) {
+        float x = 99.99f;
+        const int n = std::sscanf(s, "%f %c", &x, &flag);
+        v = static_cast<long>(100.0f * x + 0.5f);
+        return n;
+    }
+    return std::sscanf(s, "%ld %c", &v, &flag);
+}
+
+/// Reads an NWS-family rain file into `series` (dates, depth in INCHES), and
+/// returns the whole-file statistics the "Rainfall File Summary" reports.
+/// Mirrors legacy readNWSLine + saveRainfall + saveAccumRainfall.
+static void nws_read_file(std::FILE* f, const NwsFileSpec& spec,
+                          double win_lo, double win_hi,
+                          Table& series,
+                          double& first_date, double& last_date,
+                          long& periods_precip) {
+    char line[4096];
+    NwsCondition condition   = NwsCondition::NONE;
+    double       accum_start = 0.0;   // legacy AccumStartDate (NO_DATE == 0)
+
+    // legacy saveRainfall: a reading is stamped at the start of the interval it
+    // ends, and only a non-missing value reaches the interface file.
+    auto emit = [&](double day, int hour, int minute, float x) {
+        const double when =
+            datetime::addSeconds(day, 3600.0 * hour + 60.0 * minute
+                                      - spec.time_offset);
+        if (first_date == 0.0 || when < first_date) first_date = when;
+        if (when > last_date) last_date = when;
+        if (x > 0.0f) ++periods_precip;
+        if (when < win_lo || when > win_hi) return;
+        series.x.push_back(when);
+        series.y.push_back(static_cast<double>(x));
+    };
+
+    std::rewind(f);
+    for (int i = 1; i <= spec.hdr_lines; ++i) {
+        if (!std::fgets(line, sizeof(line), f)) return;
+    }
+
+    while (std::fgets(line, sizeof(line), f)) {
+        const int line_length = static_cast<int>(std::strlen(line)) - 1;
+        int y = 0, m = 0, d = 0, n = 0, k = 0;
+
+        switch (spec.fmt) {
+            case NwsFormat::TAPE:
+                if (line_length <= 30) continue;
+                if (std::sscanf(&line[17], "%4d%2d%4d%3d", &y, &m, &d, &n) < 4)
+                    continue;
+                k = 30;
+                break;
+            case NwsFormat::SPACE_DELIMITED: {
+                const int name_length = spec.has_station_name ? 31 : 0;
+                if (line_length <= 28 + name_length) continue;
+                k = 18 + name_length;
+                if (std::sscanf(&line[k], "%4d %2d %2d", &y, &m, &d) < 3)
+                    continue;
+                k += 10;
+                break;
+            }
+            case NwsFormat::COMMA_DELIMITED:
+                if (line_length <= 28) continue;
+                if (std::sscanf(&line[18], "%4d,%2d,%2d", &y, &m, &d) < 3)
+                    continue;
+                k = 28;
+                break;
+            case NwsFormat::ONLINE_60:
+            case NwsFormat::ONLINE_15:
+                if (line_length <= spec.data_offset + 23) continue;
+                if (std::sscanf(&line[spec.data_offset], "%4d%2d%2d",
+                                &y, &m, &d) < 3) continue;
+                k = spec.data_offset + 8;
+                break;
+            default:
+                return;
+        }
+
+        double date1 = datetime::encodeDate(y, m, d);
+
+        // --- each recorded time, value & condition code on the line
+        while (k < line_length) {
+            char flag1 = 0, flag2 = 0;
+            long v = 99999;
+            int  hour = 25, minute = 0;
+
+            switch (spec.fmt) {
+                case NwsFormat::TAPE:
+                    n = std::sscanf(&line[k], "%2d%2d%6ld%c%c",
+                                    &hour, &minute, &v, &flag1, &flag2);
+                    k += 12;
+                    break;
+                case NwsFormat::SPACE_DELIMITED:
+                    n = std::sscanf(&line[k], " %2d%2d %6ld %c %c",
+                                    &hour, &minute, &v, &flag1, &flag2);
+                    k += 16;
+                    break;
+                case NwsFormat::COMMA_DELIMITED:
+                    n = std::sscanf(&line[k], ",%2d%2d,%6ld,%c,%c",
+                                    &hour, &minute, &v, &flag1, &flag2);
+                    k += 16;
+                    break;
+                default:  // ONLINE_60 / ONLINE_15
+                    n  = std::sscanf(&line[k], " %2d:%2d", &hour, &minute);
+                    n += nws_read_online_value(&line[spec.value_offset],
+                                               v, flag1);
+                    // ending hour 0 is really hour 24 of the previous day
+                    if (hour == 0) { hour = 24; date1 -= 1.0; }
+                    k += line_length;
+                    break;
+            }
+
+            // an hour, a minute and a value are the minimum; codes may be absent
+            if (n < 3 || hour >= 25) break;
+
+            condition = nws_condition(flag1);
+            const bool is_missing = (condition == NwsCondition::DELETED ||
+                                     condition == NwsCondition::MISSING ||
+                                     flag1 == 'M' || v >= 9999);
+
+            if (flag1 == 'a') {
+                accum_start = date1 + datetime::encodeTime(hour, minute, 0);
+            } else if (flag1 == 'A') {
+                // legacy saveAccumRainfall: spread the accumulated total evenly
+                // over the recording periods it covers.
+                if (accum_start != 0.0 && v != 99999 && spec.interval_sec > 0) {
+                    const double date2 = date1
+                                       + datetime::encodeTime(hour, minute, 0);
+                    const int np = static_cast<int>(
+                        datetime::timeDiff(date2, accum_start)
+                        / spec.interval_sec) + 1;
+                    const float x = static_cast<float>(v)
+                                  / static_cast<float>(np) / 100.0f;
+                    if (x > 0.0f) {
+                        double when = datetime::addSeconds(accum_start,
+                                                           -spec.time_offset);
+                        for (int j = 0; j < np; ++j) {
+                            if (first_date == 0.0 || when < first_date)
+                                first_date = when;
+                            if (when > last_date) last_date = when;
+                            ++periods_precip;
+                            if (when >= win_lo && when <= win_hi) {
+                                series.x.push_back(when);
+                                series.y.push_back(static_cast<double>(x));
+                            }
+                            when = datetime::addSeconds(when,
+                                                        spec.interval_sec);
+                        }
+                    }
+                }
+                accum_start = 0.0;
+            } else if (!is_missing) {
+                emit(date1, hour, minute, static_cast<float>(v) / 100.0f);
+            }
+
+            if (flag1 == 'A' || flag1 == '}' || flag1 == ']')
+                condition = NwsCondition::NONE;
+        }
+    }
+}
+
 static void load_external_rain_files_impl(SimulationContext& ctx,
                                           MultiColumnFileCache& file_cache) {
     const int n_gages = ctx.gages.count();
@@ -605,6 +915,30 @@ static void load_external_rain_files_impl(SimulationContext& ctx,
                 continue;
             }
         }
+
+        // An NWS / NCDC layout is read by its own reader, which carries the
+        // recording interval the FILE declares (legacy findFileFormat's last
+        // line: Gage[i].rainInterval = Interval) and neither the rain-type
+        // transform nor the units factor below — those are readStdLine's.
+        const NwsFileSpec nws = nws_detect_format(fp);
+        if (nws.fmt != NwsFormat::NONE) {
+            Table nws_series;
+            nws_series.type = TableType::TIMESERIES;
+            nws_series.id   = ctx.gage_names.name_of(g);
+            double nws_first = 0.0, nws_last = 0.0;
+            long   nws_periods = 0;
+            nws_read_file(fp, nws, win_lo, win_hi, nws_series,
+                          nws_first, nws_last, nws_periods);
+            std::fclose(fp);
+
+            ctx.gages.interval_sec[ug]        = nws.interval_sec;
+            ctx.gages.file_first_date[ug]     = nws_first;
+            ctx.gages.file_last_date[ug]      = nws_last;
+            ctx.gages.file_periods_precip[ug] = nws_periods;
+            ctx.gages.rain_series[ug]         = std::move(nws_series);
+            continue;
+        }
+        std::rewind(fp);
 
         // PARITY: legacy pipes external rain files through a binary "rain
         // interface file" that stores depths in INCHES as 4-byte FLOATS:
