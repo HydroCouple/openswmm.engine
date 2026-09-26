@@ -2617,9 +2617,10 @@ Parameters:
 | MODE | MESH / PER_SUBCATCH | MESH | MESH runs one aquifer cell under every mesh cell. PER_SUBCATCH runs one degenerate cell per subcatchment with no lateral flow, exchanging with the outlet node. |
 | DUNNE | YES / TRUE / 1 / NO / FALSE / 0 | YES | Saturation-excess transfer from the aquifer to the surface cell above it. Exists for comparison runs; NO breaks the mass balance between the two domains. |
 | GW_ET | NONE / CAPILLARY_RISE / BOUNDARY_ET / BOTH | NONE | Subsurface evapotranspiration: capillary rise from the water table, removal at the top of the unsaturated column, both, or neither. |
+| LINK_SEEPAGE | AUTO / NONE / TWO_WAY | AUTO | AUTO delivers conduit seepage to the aquifer cells crossed by the conduit, weighted by the length in each cell. NONE leaves seepage as a system loss. TWO_WAY uses a signed conductance law, allowing a conduit below the water table to gain water. Per-conduit overrides are set in [2D_AQUIFER_LINKS]. |
 
 Remarks:
-Authoring any [2D_AQUIFER_OPTIONS], [2D_AQUIFER] or [2D_AQUIFER_NODE] row turns the kernel on unless [2D_OPTIONS] GROUNDWATER NO is set. A value of GW_ET spelled in [2D_OPTIONS] is folded into this section when the model opens. The writer emits only the keys that differ from their defaults.
+Authoring any [2D_AQUIFER_OPTIONS], [2D_AQUIFER], [2D_AQUIFER_NODE] or [2D_AQUIFER_LINKS] row turns the kernel on unless [2D_OPTIONS] GROUNDWATER NO is set. A value of GW_ET spelled in [2D_OPTIONS] is folded into this section when the model opens. The writer emits only the keys that differ from their defaults.
 
 The kernel is described in hydrology Chapter 9 (mesh groundwater).
 
@@ -2696,6 +2697,47 @@ The exchange law is described in hydrology Chapter 9 (mesh groundwater).
 This section has no counterpart in SWMM 5.
 
 <!-- source: src/engine/2d/subsurface/SubsurfaceSections.cpp:247-276 (registration 295-299; resolution 337-360); src/engine/2d/subsurface/SubsurfaceData.hpp:76-84 -->
+
+### Section: [2D_AQUIFER_LINKS] {#engine_manual_sect_2D_AQUIFER_LINKS}
+
+Purpose:
+Overrides exchange between an individual conduit and the integrated aquifer beneath the mesh.
+
+Format:
+```
+Link  (KC k)  (DC d)  (EXCHANGE YES|NO)
+```
+
+Parameters:
+
+| Parameter | Values | Default | Description |
+|---|---|---|---|
+| Link | conduit name | required | Conduit whose exchange settings are overridden. |
+| KC | finite number >= 0 (in/hr or mm/hr) | 0 | Bed hydraulic conductivity for TWO_WAY exchange. Zero or omission uses the conduit's [LOSSES] seepage rate. |
+| DC | finite number >= 0 (ft or m) | 0 | Bed thickness for TWO_WAY exchange. Zero or omission uses the conduit's full depth. |
+| EXCHANGE | YES / TRUE / 1 / NO / FALSE / 0 | YES | NO excludes this conduit from aquifer exchange; its ordinary 1D seepage remains a system loss. |
+
+Remarks:
+The keyword pairs are optional and may appear in any order. Unknown keywords, missing values, non-finite numbers and negative KC or DC values are parse errors. An unknown link or a link that is not a conduit produces a warning when exchange links are resolved, and its row is ignored. If several rows name the same conduit, the first matching row supplies its settings.
+
+Set `LINK_SEEPAGE TWO_WAY` in [2D_AQUIFER_OPTIONS] to use KC and DC. A positive KC can enable exchange for a conduit with no [LOSSES] seepage rate. With the default `LINK_SEEPAGE AUTO`, the existing seepage rate supplies one-way recharge and KC and DC do not change that rate. `LINK_SEEPAGE NONE` disables conduit-to-aquifer exchange globally.
+
+The engine locates the conduit from its endpoints in [COORDINATES] and any [VERTICES], and assigns exchange to the mesh cells crossed by that polyline. The aquifer must be active and the conduit must overlap the mesh. The writer retains the authored KC and DC values and writes non-default settings.
+
+Example:
+```
+[2D_AQUIFER_OPTIONS]
+LINK_SEEPAGE TWO_WAY
+
+[2D_AQUIFER_LINKS]
+;;Link  Options
+C1      KC 50 DC 2.5
+C2      EXCHANGE NO
+```
+
+This section has no counterpart in SWMM 5.
+
+<!-- source: src/engine/2d/subsurface/SubsurfaceSections.cpp (parseAquiferLinkLine, resolveLinkSeepage, writeSubsurfaceSections); src/engine/2d/subsurface/SubsurfaceData.hpp (GwLinkRow, GwLinkMode); src/engine/2d/SurfaceRouter2D.cpp (publishLinkCoupling) -->
 
 ### Section: [2D_INITIAL_QUALITY] {#engine_manual_sect_2D_INITIAL_QUALITY}
 
