@@ -659,6 +659,11 @@ private:
     /// by global gage index. Reused across steps to avoid per-step allocation.
     std::vector<double> rain_si_;
 
+    /// Gage rainfall (user units) the current cell field was built from. A
+    /// change forces a refresh ahead of the 30 s cadence, so the field never
+    /// lags a gage record by more than the step that crosses it.
+    std::vector<double> rain_gage_last_;
+
     /// Resolve per-step boundary driving values: evaluate SPECIFIED_STAGE /
     /// SPECIFIED_FLOW timeseries at time @p t and RATING_CURVE from the boundary
     /// cell stage into edge_bc_head / edge_bc_flow (which the flux kernels read).

@@ -1445,9 +1445,16 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
     // cadence: the forcing API just changed a prescription (or a one-shot
     // expired in clear_reset_forcings), so apply immediately — that keeps the
     // documented per-step RESET semantics under the batched co-advance.
+    // A gage whose value changed also bypasses the cadence: holding the old
+    // field for up to 30 s shifted and dropped whole 1-min records (−12 % on
+    // a 1-min on/off storm at a 7 s routing step), on wet and dry cells alike.
     co_forcing_elapsed_ += dt;
+    bool gage_changed = rain_gage_last_.size() !=
+                        static_cast<std::size_t>(ctx.n_gages());
+    for (std::size_t g = 0; !gage_changed && g < rain_gage_last_.size(); ++g)
+        gage_changed = ctx.gages.rainfall[g] != rain_gage_last_[g];
     if (co_forcing_elapsed_ >= 30.0 || co_forcing_first_ ||
-        state_.forcing_dirty) {
+        state_.forcing_dirty || gage_changed) {
         state_.forcing_dirty = false;
         updateRainfall(ctx);
         // E2 [2D_OPTIONS] EVAPORATION: YES (default) = forcing only, the
@@ -2229,6 +2236,8 @@ double SurfaceRouter2D::totalExchangeFlow() const {
 
 void SurfaceRouter2D::updateRainfall(SimulationContext& ctx) {
     const int n_gages = ctx.n_gages();
+    rain_gage_last_.assign(ctx.gages.rainfall.begin(),
+                           ctx.gages.rainfall.begin() + std::max(n_gages, 0));
 
     if (n_gages <= 0 || options_.rainfall_mode == RainfallMode::NONE) {
         std::fill(state_.rainfall.begin(), state_.rainfall.end(), 0.0);
