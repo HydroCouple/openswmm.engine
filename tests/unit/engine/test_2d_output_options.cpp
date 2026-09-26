@@ -503,6 +503,72 @@ TEST(Output2DWriter, DeckAgeColumnIsHoursEndToEnd) {
         }
 }
 
+// Rain that falls BETWEEN two 2D report instants: a 1 mm, 1-min burst inside
+// a 15-min REPORT_2D_STEP on a dry pan. Mesh2_face_rainfall is the
+// instantaneous rate at each report time, so it reads zero in every record,
+// but Mesh2_face_rain_cum must carry the burst's volume in every cell — the
+// series the GUI derives its interval mean and cumulative depth from.
+TEST(Output2DWriter, RainPulseBetweenReportsAccumulates) {
+    std::error_code ec;
+    fs::create_directories(kOutDir, ec);
+    const fs::path inp = kOutDir / "rain_pulse.inp";
+    const fs::path h5  = kOutDir / "rain_pulse.h5";
+    fs::remove(h5, ec);
+    {
+        std::ofstream f(inp);
+        f << "[OPTIONS]\n"
+             "FLOW_UNITS           CMS\nFLOW_ROUTING         DYNWAVE\n"
+             "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+             "END_DATE             01/01/2026\nEND_TIME             00:30:00\n"
+             "REPORT_STEP          00:15:00\nWET_STEP             00:01:00\n"
+             "DRY_STEP             00:01:00\nROUTING_STEP         5\n\n"
+             "[RAINGAGES]\nRG1  VOLUME 0:01 1.0 TIMESERIES TS1\n\n"
+             "[TIMESERIES]\nTS1  01/01/2026 00:05 1.0\nTS1  01/01/2026 00:06 0.0\n\n"
+             "[SYMBOLS]\nRG1 5 5\n\n"
+             "[JUNCTIONS]\nJ1 0.0 1.0 0 0 0\n\n"
+             "[OUTFALLS]\nO1 -0.5 FREE NO\n\n"
+             "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n"
+             "[XSECTIONS]\nC1 CIRCULAR 0.3 0 0 0 1\n\n"
+             "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
+             "REPORT_2D YES\nREPORT_2D_STEP 00:15:00\nRAINFALL_MODE NATURAL_NEIGHBOUR\n"
+             "OUTPUT_FILE rain_pulse.h5\nOUTPUT_PRECISION FLOAT64\n\n"
+             "[2D_VERTICES]\n 0.0 0.0 0\n10.0 0.0 0\n10.0 10.0 0\n 0.0 10.0 0\n\n"
+             "[2D_TRIANGLES]\n0 1 2 0.03 0.0\n0 2 3 0.03 0.0\n\n"
+             "[REPORT]\nINPUT NO\n";
+    }
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    const fs::path rpt = kOutDir / "rain_pulse.rpt", out = kOutDir / "rain_pulse.out";
+    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(),
+                               out.string().c_str(), nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+    double elapsed = 0.0;
+    while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
+    swmm_engine_end(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+
+    H5File f(h5);
+    ASSERT_GE(f.id, 0) << "no .h5 written";
+    ASSERT_TRUE(f.has("Mesh2_face_rainfall"));
+    ASSERT_TRUE(f.has("Mesh2_face_rain_cum"));
+    const auto d = f.dims("Mesh2_face_rain_cum");   // [time, face]
+    ASSERT_EQ(d.size(), 2u);
+    ASSERT_GE(d[0], 2u);
+    ASSERT_EQ(d[1], 2u);
+    const auto rate = f.readAll("Mesh2_face_rainfall");
+    const auto cum  = f.readAll("Mesh2_face_rain_cum");
+    const auto area = f.readAll("Mesh2_face_area");
+    for (double r : rate) EXPECT_EQ(r, 0.0);
+    // 1 mm on 50 m²; each record edge may land one 5 s routing step off.
+    for (size_t k = 0; k < d[0]; ++k)
+        for (size_t c = 0; c < d[1]; ++c) {
+            SCOPED_TRACE("record " + std::to_string(k) + " cell " + std::to_string(c));
+            EXPECT_NEAR(cum[k * d[1] + c], 1.0e-3 * area[c], 1.0e-3 * area[c] * 5.0 / 60.0);
+        }
+}
+
 // S7, end to end: a covered pan under a 1 in/hr hour of rain writes
 // Mesh2_face_buildup [time, species, face] in lbs/acre — the same number the
 // C API's swmm_2d_get_buildup_bulk reads back at the end — and the store
