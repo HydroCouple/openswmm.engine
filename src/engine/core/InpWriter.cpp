@@ -690,7 +690,8 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx,
     // ---- [2D_OPTIONS] -----------------------------------------------------
     // Exact key set accepted by parse2DOptionsLine — nothing else (unknown
     // keys are parse errors on reload).
-    static const char* sRainMode[]  = {"NATURAL_NEIGHBOUR", "SYSTEM", "NONE"};
+    static const char* sRainMode[]  = {"NATURAL_NEIGHBOUR", "SYSTEM", "NONE",
+                                       "NEAREST_NEIGHBOUR"};   // RainfallMode order
     sec(f, "2D_OPTIONS");
     std::fprintf(f, ";;%-20s %s\n", "Parameter", "Value");
     std::fprintf(f, "%-22s %.12g\n", "MAX_TIMESTEP",      o.max_timestep);
@@ -701,7 +702,7 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx,
     std::fprintf(f, "%-22s %.12g\n", "COUPLING_SYNC",     o.coupling_sync);
     std::fprintf(f, "%-22s %s\n",    "RAINFALL_MODE",
                  sRainMode[static_cast<int>(o.rainfall_mode) >= 0 &&
-                           static_cast<int>(o.rainfall_mode) <= 2
+                           static_cast<int>(o.rainfall_mode) <= 3
                                ? static_cast<int>(o.rainfall_mode) : 0]);
     std::fprintf(f, "%-22s %s\n",    "REPORT_2D", o.report_2d ? "YES" : "NO");
     std::fprintf(f, "%-22s %s\n",    "CELL_CLOSURE",

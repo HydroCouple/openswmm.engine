@@ -622,6 +622,36 @@ int swmm_2d_get_rainfall(SWMM_Engine engine, int idx, double* rainfall) {
     return SWMM_OK;
 }
 
+int swmm_2d_get_rainfall_weights(SWMM_Engine engine, int idx, int* method,
+                                 int* gage_indices, double* weights, int capacity,
+                                 int* count) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(idx, router2d);
+    if (!method || !count || capacity < 0 ||
+        (capacity > 0 && (!gage_indices || !weights)))
+        return SWMM_ERR_BADPARAM;
+
+    const auto mode = router2d.options().rainfall_mode;
+    const auto& interp = router2d.rainfallInterpolator();
+    if ((mode != openswmm::twoD::RainfallMode::NATURAL_NEIGHBOUR &&
+         mode != openswmm::twoD::RainfallMode::NEAREST_NEIGHBOUR) || !interp.ready()) {
+        *method = -1;
+        *count  = 0;
+        return SWMM_OK;
+    }
+    std::vector<int> g;
+    std::vector<double> w;
+    interp.cellWeights(idx, g, w);
+    *method = static_cast<int>(interp.cellMethod(idx));
+    *count  = static_cast<int>(g.size());
+    for (int k = 0; k < std::min(capacity, *count); ++k) {
+        gage_indices[k] = g[static_cast<std::size_t>(k)];
+        weights[k]      = w[static_cast<std::size_t>(k)];
+    }
+    return SWMM_OK;
+}
+
 int swmm_2d_get_net_source(SWMM_Engine engine, int idx, double* net_source) {
     GET_ENGINE(engine);
     CHECK_2D_ACTIVE(eng);

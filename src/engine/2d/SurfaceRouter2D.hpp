@@ -354,6 +354,9 @@ public:
         return rain_cum_;
     }
 
+    /// Static rainfall weights built at initialize() (diagnostic inspection).
+    const RainfallInterpolator& rainfallInterpolator() const noexcept { return interp_; }
+
     /**
      * @brief Per-row buffer for `[2D_BOUNDARY_CONDITIONS]` parse output.
      *

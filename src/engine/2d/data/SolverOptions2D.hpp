@@ -107,14 +107,15 @@ enum class FaceDepth2D : int8_t {
  * map location (no [SYMBOLS] coordinate), since interpolation is then undefined.
  *
  * Parsed from [2D_OPTIONS] RAINFALL_MODE; env OPENSWMM_2D_RAINFALL_MODE
- * (natural|system) overrides at initialize().
+ * (natural|nearest|system|none) overrides at initialize().
  */
 enum class RainfallMode : int8_t {
     NATURAL_NEIGHBOUR = 0,  ///< Default: spatial interpolation across all gages.
     SYSTEM            = 1,  ///< Uniform = mean of all gages.
-    NONE              = 2   ///< No rain on the mesh. Use when subcatchments
+    NONE              = 2,  ///< No rain on the mesh. Use when subcatchments
                             ///< already capture the rainfall (runoff → nodes) —
                             ///< rain-on-mesh would double-count the same storm.
+    NEAREST_NEIGHBOUR = 3   ///< Closest located gage; ties use first gage order.
 };
 
 /**
@@ -338,7 +339,7 @@ struct SolverOptions2D {
     // Rainfall→mesh mapping. Default NATURAL_NEIGHBOUR (spatial interpolation
     // across all located gages); SYSTEM applies the uniform all-gage mean.
     // Parsed from [2D_OPTIONS] RAINFALL_MODE; env OPENSWMM_2D_RAINFALL_MODE
-    // (natural|system) overrides.
+    // (natural|nearest|system|none) overrides.
     RainfallMode       rainfall_mode   = RainfallMode::NATURAL_NEIGHBOUR;
 
     // Volume → free-surface cell closure. Default FLAT (legacy η = tri_cz + V/A):

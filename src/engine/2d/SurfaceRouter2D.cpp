@@ -331,6 +331,8 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             options_.rainfall_mode = RainfallMode::SYSTEM;
         else if (std::strcmp(rm, "natural") == 0)
             options_.rainfall_mode = RainfallMode::NATURAL_NEIGHBOUR;
+        else if (std::strcmp(rm, "nearest") == 0)
+            options_.rainfall_mode = RainfallMode::NEAREST_NEIGHBOUR;
         else if (std::strcmp(rm, "none") == 0)
             options_.rainfall_mode = RainfallMode::NONE;
     }
@@ -350,7 +352,24 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // the SI mesh frame the centroids now live in. Rebuilds cleanly, so a
     // repeated initialize() is idempotent.
     interp_.build(mesh_.tri_cx, mesh_.tri_cy, ctx.spatial.gage_x, ctx.spatial.gage_y,
-                  ctx.n_gages(), mesh_to_si);
+                  ctx.n_gages(), mesh_to_si,
+                  options_.rainfall_mode == RainfallMode::NEAREST_NEIGHBOUR
+                      ? RainfallInterpolator::Method::NearestNeighbour
+                      : RainfallInterpolator::Method::NaturalNeighbour);
+    if (options_.rainfall_mode == RainfallMode::NATURAL_NEIGHBOUR ||
+        options_.rainfall_mode == RainfallMode::NEAREST_NEIGHBOUR) {
+        const auto& d = interp_.diagnostics();
+        if (d.unlocated || d.invalid || d.duplicates)
+            ctx.warnings.push_back("2D rainfall gages: " + std::to_string(d.unlocated) +
+                " without a location (0,0), " + std::to_string(d.invalid) +
+                " invalid coordinates, " + std::to_string(d.duplicates) +
+                " duplicate locations (first gage retained).");
+        if (!interp_.ready())
+            ctx.warnings.push_back("2D rainfall: no located gages; using the uniform system mean.");
+        if (d.idwCells)
+            ctx.warnings.push_back("2D rainfall: inverse-distance fallback used for " +
+                std::to_string(d.idwCells) + " cells outside the gage hull or with degenerate weights.");
+    }
 
     // Resolve deferred coupling node names → indices
     for (int v = 0; v < mesh_.n_vertices(); ++v) {
@@ -2227,7 +2246,8 @@ void SurfaceRouter2D::updateRainfall(SimulationContext& ctx) {
     for (int g = 0; g < n_gages; ++g)
         rain_si_[static_cast<std::size_t>(g)] = ctx.gages.rainfall[g] * to_ms;
 
-    if (options_.rainfall_mode == RainfallMode::NATURAL_NEIGHBOUR && interp_.ready()) {
+    if ((options_.rainfall_mode == RainfallMode::NATURAL_NEIGHBOUR ||
+         options_.rainfall_mode == RainfallMode::NEAREST_NEIGHBOUR) && interp_.ready()) {
         // Natural-neighbour (Laplace) interpolation inside the gage hull, IDW
         // outside — applied as the precomputed per-cell sparse weighted sum.
         interp_.apply(rain_si_, state_.rainfall);

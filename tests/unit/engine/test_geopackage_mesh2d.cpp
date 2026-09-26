@@ -200,6 +200,7 @@ TEST_F(GeoPackageMesh2DTest, OptionsRoundTrip2D) {
     opts_.flux_dh_eps       = 7.0e-12;  // ditto — g17 formatting must preserve it
     opts_.coupling_cd       = 0.71;
     opts_.report_2d         = false;
+    opts_.rainfall_mode     = twoD::RainfallMode::NEAREST_NEIGHBOUR;
     // Closure keys.
     opts_.cell_closure        = twoD::CellClosure2D::VFR;
     opts_.face_reconstruction = twoD::FaceDepth2D::VFR_FACE;
@@ -233,6 +234,7 @@ TEST_F(GeoPackageMesh2DTest, OptionsRoundTrip2D) {
     EXPECT_DOUBLE_EQ(opts_in_.flux_dh_eps,     7.0e-12);
     EXPECT_DOUBLE_EQ(opts_in_.coupling_cd,     0.71);
     EXPECT_FALSE(opts_in_.report_2d);
+    EXPECT_EQ(opts_in_.rainfall_mode, twoD::RainfallMode::NEAREST_NEIGHBOUR);
     EXPECT_EQ(opts_in_.cell_closure,        twoD::CellClosure2D::VFR);
     EXPECT_EQ(opts_in_.face_reconstruction, twoD::FaceDepth2D::VFR_FACE);
     EXPECT_DOUBLE_EQ(opts_in_.vfr_min_wet_frac, 0.025);

@@ -2184,7 +2184,7 @@ Rainfall, evaporation and infiltration
 
 | Keyword | Values | Default | Description |
 |---|---|---|---|
-| RAINFALL_MODE | NATURAL_NEIGHBOUR (NATURAL_NEIGHBOR) / SYSTEM / NONE | NATURAL_NEIGHBOUR | How rain gage rainfall is mapped onto the cells: natural-neighbour interpolation of the located gages (inverse-distance outside their hull), the uniform mean of all gages, or no rain on the mesh. Use NONE when subcatchments already capture the storm. The OPENSWMM_2D_RAINFALL_MODE environment variable overrides the key. |
+| RAINFALL_MODE | NATURAL_NEIGHBOUR (NATURAL_NEIGHBOR) / NEAREST_NEIGHBOUR (NEAREST_NEIGHBOR) / SYSTEM / NONE | NATURAL_NEIGHBOUR | How rain gage rainfall is mapped onto the cells: natural-neighbour interpolation of the located gages (inverse-distance outside their hull), the closest located gage (first-listed wins a tie), the uniform mean of all gages, or no rain on the mesh. Use NONE when subcatchments already capture the storm. The OPENSWMM_2D_RAINFALL_MODE environment variable overrides the key. |
 | EVAPORATION | NO / OFF / YES / ON / FORCING / CLIMATE | YES | NO zeroes the mesh evaporation sink. YES applies only per-cell forcing supplied through the API. CLIMATE evaporates every unforced cell at the project [EVAPORATION] rate; forcing still overrides it. |
 | INFILTRATION | YES / ON / NO / OFF / AUTO | AUTO | Process enable for mesh infiltration. AUTO runs it when any [2D_INFILTRATION_DEFAULTS] or [2D_INFILTRATION] row resolves; NO keeps the rows but deactivates them for the run; YES warns when no row resolves. |
 | INFIL_STEP | HH:MM:SS, HH:MM or seconds | 0 (unset) | Infiltration update cadence. Unset falls back to [2D_INFILTRATION_OPTIONS] INFIL_STEP, then to the project WET_STEP. When both are present this key wins. |
