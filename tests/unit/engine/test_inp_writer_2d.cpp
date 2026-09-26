@@ -19,6 +19,8 @@
 #include <gtest/gtest.h>
 
 #include <cstdio>
+#include <cstdlib>
+#include "core/FileIO.hpp"
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -120,7 +122,10 @@ protected:
     SWMM_Engine eng_b_ = nullptr;
 
     void SetUp() override {
-        dir_ = fs::temp_directory_path() / "openswmm_inpwriter2d_test";
+        const char* retained = std::getenv("OPENSWMM_WRITER_TEST_OUTPUT");
+        dir_ = retained ? openswmm::io::utf8_path(std::string(retained)) /
+                             testing::UnitTest::GetInstance()->current_test_info()->name()
+                        : fs::temp_directory_path() / "openswmm_inpwriter2d_test";
         fs::create_directories(dir_);
     }
 
@@ -128,7 +133,7 @@ protected:
         if (eng_a_) { swmm_engine_close(eng_a_); swmm_engine_destroy(eng_a_); }
         if (eng_b_) { swmm_engine_close(eng_b_); swmm_engine_destroy(eng_b_); }
         std::error_code ec;
-        fs::remove_all(dir_, ec);
+        if (!std::getenv("OPENSWMM_WRITER_TEST_OUTPUT")) fs::remove_all(dir_, ec);
     }
 
     SWMM_Engine open_engine(const fs::path& inp) {
