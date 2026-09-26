@@ -45,13 +45,9 @@ protected:
 
         // Seed two nodes + a pump so NODE / PUMP references resolve.
         // Node type 0 = Junction (matches openswmm_nodes.h default ctor path);
-        // link type for "pump" varies across the API surface — using 4
-        // (Pump) per the SWMM convention. If this needs to change to match
-        // the engine's link-type enum, the validator behaviour is the same
-        // either way — the test asserts accept/reject, not the type code.
         ASSERT_EQ(swmm_node_add(engine, "J1", 0), SWMM_OK);
         ASSERT_EQ(swmm_node_add(engine, "J2", 0), SWMM_OK);
-        ASSERT_EQ(swmm_link_add(engine, "P1", 4), SWMM_OK);
+        ASSERT_EQ(swmm_link_add(engine, "P1", SWMM_LINK_PUMP), SWMM_OK);
     }
 
     void TearDown() override { swmm_engine_destroy(engine); }

@@ -81,6 +81,30 @@ protected:
 // The user-visible regression: "IF SIMULATION TIME > 4.5" must mean
 // "after 4.5 hours of simulation". Before the fix the literal was
 // stored as a raw double so the rule never fired in any normal sim.
+TEST_F(ControlsParityTest, ActionsRequireTheDeclaredLinkSubtype) {
+    const std::pair<const char*, openswmm::LinkType> types[] = {
+        {"CONDUIT", openswmm::LinkType::CONDUIT},
+        {"PUMP", openswmm::LinkType::PUMP},
+        {"ORIFICE", openswmm::LinkType::ORIFICE},
+        {"WEIR", openswmm::LinkType::WEIR},
+        {"OUTLET", openswmm::LinkType::OUTLET},
+    };
+    for (const auto& [actual_name, actual_type] : types) {
+        ctx.link_subtypes.set_link_type(ctx.links, 1, actual_type);
+        for (const auto& [declared_name, declared_type] : types) {
+            SCOPED_TRACE(std::string(actual_name) + " as " + declared_name);
+            ControlEngine eng;
+            const std::string rule = "RULE T1\nIF SIMULATION TIME > 0\nTHEN " +
+                std::string(declared_name) + " C1 SETTING = 0.5\n";
+            EXPECT_EQ(eng.parseRuleText(rule, ctx),
+                      actual_type == declared_type ? 1 : -1);
+        }
+        ControlEngine eng;
+        EXPECT_EQ(eng.parseRuleText(
+            "RULE T1\nIF SIMULATION TIME > 0\nTHEN LINK C1 SETTING = 0.5\n", ctx), 1);
+    }
+}
+
 TEST_F(ControlsParityTest, SimulationTimeHoursParsedAsDays) {
     ControlEngine eng;
     const char* rule =

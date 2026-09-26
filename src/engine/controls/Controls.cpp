@@ -1285,6 +1285,16 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
             if (link_idx < 0)
                 return fail("no link named '" + toks[static_cast<size_t>(k)] +
                             "' exists in the model");
+            // Legacy addAction (controls.c:1435-1461) validates the declared
+            // subtype as well as the name. LINK remains the generic spelling.
+            const auto link_type = ctx.links.type[static_cast<size_t>(link_idx)];
+            if ((obj_type == "CONDUIT" && link_type != LinkType::CONDUIT) ||
+                (obj_type == "PUMP" && link_type != LinkType::PUMP) ||
+                (obj_type == "ORIFICE" && link_type != LinkType::ORIFICE) ||
+                (obj_type == "WEIR" && link_type != LinkType::WEIR) ||
+                (obj_type == "OUTLET" && link_type != LinkType::OUTLET))
+                return fail("link '" + toks[static_cast<size_t>(k)] +
+                            "' is not a " + obj_type);
             k++;
 
             // Parse attribute — legacy addAction (controls.c) accepts only

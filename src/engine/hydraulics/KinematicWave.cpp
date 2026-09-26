@@ -536,6 +536,9 @@ int KWSolver::execute(SimulationContext& ctx, double dt,
         double qout = q_out_[uj] * barrels;
         qin = q_in_[uj] * barrels;  // may have been capped at qFull
         links.flow[uj] = qout;
+        // Legacy qualrout.c:318 mixes with Conduit.q1, not Link.newFlow
+        // (q2). Preserve the accepted upstream rate for all transport passes.
+        links.kw_inflow[uj] = qin;
 
         // Update node flows
         if (n1 >= 0) {

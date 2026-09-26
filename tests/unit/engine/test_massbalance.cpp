@@ -979,3 +979,52 @@ TEST(QualityLedgerSeamTest, SummaryAndLedgerAgreeAndCarryTheKnownMass) {
            "booking — the ledger then reports mass leaving a system that "
            "received none.";
 }
+
+namespace {
+void runQualityOutflowCase(SWMM_Engine engine, bool terminal) {
+    const std::string name = terminal ? "quality_terminal" : "quality_flood";
+    const std::string inp = forcedOutPath(name + ".inp");
+    std::ofstream f(inp);
+    f << "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING "
+      << (terminal ? "KINWAVE" : "DYNWAVE")
+      << "\nSTART_DATE 01/01/2026\nEND_DATE 01/01/2026\nEND_TIME 02:00:00\n"
+      << "ROUTING_STEP 5\nVARIABLE_STEP 0\nREPORT_STEP 00:05:00\n"
+      << "[JUNCTIONS]\nJ1 10 1 0 0 0\n"
+      << (terminal ? "J2 0 1 0 0 0\n" : "[OUTFALLS]\nJ2 0 FREE\n")
+      << "[CONDUITS]\nC1 J1 J2 1000 0.013 0 0\n"
+      << "[XSECTIONS]\nC1 CIRCULAR " << (terminal ? 2 : 1) << " 0 0 0\n"
+      << "[POLLUTANTS]\nTSS MG/L 0 0 0 0\n"
+      << "[DWF]\nJ1 FLOW " << (terminal ? 1 : 20) << "\nJ1 TSS 10\n";
+    f.close();
+    ASSERT_EQ(swmm_engine_open(engine, inp.c_str(),
+                              forcedOutPath(name + ".rpt").c_str(),
+                              forcedOutPath(name + ".out").c_str(), nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(engine), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(engine, 0), SWMM_OK);
+    double elapsed = 0.0;
+    int steps = 0;
+    do {
+        ASSERT_EQ(swmm_engine_step(engine, &elapsed), SWMM_OK);
+        ASSERT_LT(++steps, 10000);
+    } while (elapsed > 0.0);
+    ASSERT_EQ(swmm_engine_end(engine), SWMM_OK);
+}
+} // namespace
+
+TEST_F(MassBalanceApiTest, KinematicTerminalJunctionExportsPollutantMass) {
+    runQualityOutflowCase(engine_, true);
+    ASSERT_FALSE(::testing::Test::HasFatalFailure());
+    ASSERT_GT(mb().qual_routing_outflow[0], 0.0);
+    double error = 0.0;
+    ASSERT_EQ(swmm_get_quality_continuity_error(engine_, 0, &error), SWMM_OK);
+    EXPECT_LT(std::fabs(error), 0.02)
+        << "terminal-junction export must close the quality ledger";
+}
+
+TEST_F(MassBalanceApiTest, FloodedWaterCarriesItsMixedPollutantConcentration) {
+    runQualityOutflowCase(engine_, false);
+    ASSERT_FALSE(::testing::Test::HasFatalFailure());
+    ASSERT_GT(mb().routing_flooding, 0.0);
+    EXPECT_NEAR(mb().qual_routing_flood[0], 10.0 * mb().routing_flooding,
+                1e-8 * mb().routing_flooding);
+}

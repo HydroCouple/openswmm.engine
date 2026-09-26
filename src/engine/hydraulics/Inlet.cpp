@@ -1255,13 +1255,14 @@ void InletSolver::adjustFloodingTotals(SimulationContext& ctx, double dt) const 
         if (q <= 0.0) continue;
         mb.routing_flooding -= q * dt;
         mb.step_flooding    -= q;
+        // Legacy inlet_adjustQualOutflows (inlet.c:737-743): captured
+        // overflow returns its pollutant mass to the street as well.
+        const int np = ctx.n_pollutants();
+        for (int p = 0; p < np; ++p) {
+            const auto up = static_cast<std::size_t>(p);
+            mb.qual_routing_flood[up] -= q * nodes.conc[uj * np + up] * dt;
+        }
     }
-
-    // The quality side of legacy inlet_adjustQualOutflows (inlet.c:737-743,
-    // StepQualTotals[p].flooding -= w) has no counterpart here: nothing in the
-    // engine writes mass_balance.qual_routing_flood at all, so there is no
-    // booked mass to credit and subtracting would only drive it negative. That
-    // accumulator being write-free is a separate, pre-existing gap.
 }
 
 // ============================================================================

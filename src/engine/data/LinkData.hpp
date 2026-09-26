@@ -343,6 +343,10 @@ struct LinkData {
      */
     std::vector<double>     flow;
 
+    /// Kinematic-wave accepted upstream flow, all barrels (cfs). Published
+    /// by each hydraulic solve before transport; not persisted in hotstarts.
+    std::vector<double>     kw_inflow;
+
     /**
      * @brief Current water depth at midpoint (project length units).
      * @see Legacy: Link[i].newDepth
@@ -616,6 +620,7 @@ struct LinkData {
         pump_curve_name.resize(un);
 
         flow.assign(un, 0.0);
+        kw_inflow.assign(un, 0.0);
         depth.assign(un, 0.0);
         volume.assign(un, 0.0);
         slot_volume.assign(un, 0.0);
@@ -680,6 +685,7 @@ struct LinkData {
         g(has_flap_gate, uint8_t{0}); g(dqdh, 0.0);
         pump_curve_name.resize(un);
         g(flow, 0.0); g(depth, 0.0); g(volume, 0.0); g(slot_volume, 0.0);
+        g(kw_inflow, 0.0);
         g(stat_slot_vol_dt, 0.0); g(stat_vol_dt, 0.0);
         g(stat_peak_slot_share, 0.0); g(stat_time_slot_above, 0.0);
         g(froude, 0.0); g(flow_class, FlowClass::DRY); g(is_closed, uint8_t{0});
@@ -736,6 +742,7 @@ struct LinkData {
         r(xsect_a_bot); r(xsect_s_bot); r(xsect_r_bot); r(xsect_yw_max);
         r(xsect_batch_shape); r(setting); r(target_setting); r(time_last_set);
         r(direction); r(has_flap_gate); r(dqdh); r(flow);
+        r(kw_inflow);
         r(depth); r(volume); r(froude); r(flow_class);
         r(is_closed); r(old_flow); r(old_depth); r(old_volume);
         r(rpt_flag); r(stat_vol_flow); r(stat_max_flow); r(stat_max_veloc);
@@ -771,6 +778,7 @@ struct LinkData {
         e(has_flap_gate); e(dqdh);
 
         e(flow); e(depth); e(volume); e(froude); e(flow_class); e(is_closed);
+        e(kw_inflow);
         e(old_flow); e(old_depth); e(old_volume);
         e(comments); e(tags); e(rpt_flag);
 
@@ -874,6 +882,7 @@ struct LinkData {
         pump_curve_name.shrink_to_fit();
 
         flow.shrink_to_fit();
+        kw_inflow.shrink_to_fit();
         depth.shrink_to_fit();
         volume.shrink_to_fit();
         froude.shrink_to_fit();
@@ -931,6 +940,7 @@ struct LinkData {
 
     void reset_state() noexcept {
         std::fill(flow.begin(),  flow.end(),  0.0);
+        std::fill(kw_inflow.begin(), kw_inflow.end(), 0.0);
         std::fill(depth.begin(), depth.end(), 0.0);
         std::fill(volume.begin(), volume.end(), 0.0);
         std::fill(froude.begin(), froude.end(), 0.0);
