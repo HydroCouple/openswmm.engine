@@ -92,7 +92,7 @@ int writeInpFile(const SimulationContext& ctx,
  *          file starts with a comment naming the profile.
  */
 struct InpWriteOptions {
-    enum class Profile { Full, Swmm5 };
+    enum class Profile { Full, Swmm5, Swmm5Stock };
     Profile profile = Profile::Full;
 };
 
