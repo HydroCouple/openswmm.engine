@@ -70,6 +70,12 @@ namespace inp_writer {
  * @param path      Output file path.
  * @param warnings  Optional sink for non-fatal portability warnings
  *                  (cross-volume slots, etc.). Pass nullptr to discard.
+ * @details Main INP and engine-owned mesh output use adjacent temporary files,
+ *          checked write/flush/sync/close, and individual atomic replacement.
+ *          Errors are returned and described in warnings when supplied.
+ *          This is not a multi-file transaction: a later main-file failure
+ *          does not roll back an already-published mesh or copied component
+ *          configuration. Output redirection/recovery remain caller concerns.
  * @returns 0 on success, -1 on file error.
  */
 int writeInpFile(const SimulationContext& ctx,

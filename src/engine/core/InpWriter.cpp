@@ -50,6 +50,7 @@
  */
 
 #include "InpWriter.hpp"
+#include "AtomicOutputFile.hpp"
 #include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "Constants.hpp"
 #include "PathResolver.hpp"
@@ -673,18 +674,18 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
     }
 }
 
-static void write2DSections(FILE* f, const SimulationContext& ctx,
+static bool write2DSections(FILE* f, const SimulationContext& ctx,
                             const std::string& dst_dir,
                             bool force_abs_paths,
                             std::vector<std::string>* warnings) {
     const auto& tio = ctx.twod_io;
-    if (!tio.mesh || !tio.options) return;
+    if (!tio.mesh || !tio.options) return true;
     const auto& mesh = *tio.mesh;
     const auto& o    = *tio.options;
 
     const bool has_mesh = mesh.n_vertices() > 0 && mesh.n_triangles() > 0;
     const bool external = !o.mesh_file.empty();
-    if (!has_mesh && !external) return;
+    if (!has_mesh && !external) return true;
 
     // ---- [2D_OPTIONS] -----------------------------------------------------
     // Exact key set accepted by parse2DOptionsLine — nothing else (unknown
@@ -833,22 +834,26 @@ static void write2DSections(FILE* f, const SimulationContext& ctx,
                 sp = openswmm::io::utf8_path(dst_dir) / sp;
             std::error_code ec;
             if (sp.has_parent_path()) fs::create_directories(sp.parent_path(), ec);
-            if (FILE* sf = openswmm::io::fopen_path(sp, "w")) {
+            if (ec) {
+                if (warnings) warnings->push_back("Cannot create mesh output directory '"
+                    + openswmm::io::path_utf8(sp.parent_path()) + "': " + ec.message());
+                return false;
+            }
+            openswmm::io::AtomicOutputFile sidecar(sp);
+            if (FILE* sf = sidecar.stream()) {
                 std::fprintf(sf, ";; OpenSWMM 2D mesh — written by the engine "
                                  "alongside the .inp save.\n");
                 emit2DMeshSections(sf, ctx);
-                std::fclose(sf);
-            } else if (warnings) {
-                warnings->push_back(
-                    "[2D_MESH_FILE]: could not write mesh sidecar '"
-                    + openswmm::io::path_utf8(sp)
-                    + "' — mesh state was NOT saved");
+                if (sidecar.commit()) return true;
             }
+            if (warnings) warnings->push_back(sidecar.error());
+            return false;
         }
-        return;
+        return true;
     }
 
     emit2DMeshSections(f, ctx);
+    return true;
 }
 
 // Emit [2D_VERTICES] / [2D_TRIANGLES] / node maps / [2D_BOUNDARY_CONDITIONS]
@@ -1185,8 +1190,9 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     const bool swmm5  = (opts.profile == InpWriteOptions::Profile::Swmm5) || stock5;
     auto note = [&](const std::string& s) { if (warnings) warnings->push_back(s); };
 
-    FILE* f = openswmm::io::fopen_utf8(path, "w");
-    if (!f) return -1;
+    openswmm::io::AtomicOutputFile output(openswmm::io::utf8_path(path));
+    FILE* f = output.stream();
+    if (!f) { note(output.error()); return -1; }
     if (swmm5)
         std::fprintf(f, ";; Written by OpenSWMM for a SWMM 5.x engine: v6-only sections and "
                         "options omitted; virtual and inlet junctions written as junctions.\n");
@@ -3398,9 +3404,17 @@ int writeInpFile(const SimulationContext&  ctx_internal,
 
     // [2D_*] — 2D surface-routing model definition (no-op for 1D models
     // and for engine builds without the 2D module).
-    if(!swmm5) write2DSections(f, ctx, dst_dir, force_abs_paths, warnings);
-
-    std::fclose(f);
+    // Do not publish a sidecar after an already-detected main stream failure.
+    // The outputs still need coordinated publication/rollback at project level.
+    if (std::ferror(f) || std::fflush(f) != 0) {
+        const auto ec = errno ? std::error_code(errno, std::generic_category())
+                              : std::make_error_code(std::errc::io_error);
+        note("Cannot serialize model output '" + path + "': " + ec.message());
+        return -1;
+    }
+    if (!swmm5 && !write2DSections(f, ctx, dst_dir, force_abs_paths, warnings))
+        return -1;
+    if (!output.commit()) { note(output.error()); return -1; }
     return 0;
 }
 
