@@ -70,10 +70,11 @@ bool linkTakesUpstreamValue(const SimulationContext& ctx, int link) {
 double conduitMixingInflow(const SimulationContext& ctx, int link, double dt) {
     const auto uj = static_cast<std::size_t>(link);
     // Legacy reads |Conduit.q1| * barrels. Under DW and SF the solver writes
-    // one flow to both conduit ends, so |Link.newFlow| is that same number;
-    // under KW q1 is the UPSTREAM end while Link.newFlow is the downstream
-    // one, and this engine keeps no q1 mirror — a remaining KW-only gap.
-    double q_in = std::fabs(ctx.links.flow[uj]);
+    // one flow to both conduit ends, so |Link.newFlow| is that same number.
+    // KW publishes its accepted upstream flow separately from Link.newFlow.
+    const auto model = ctx.options.routing_model;
+    double q_in = std::fabs(model == RoutingModel::KINWAVE
+                               ? ctx.links.kw_inflow[uj] : ctx.links.flow[uj]);
 
     // Legacy gates this correction on `RouteModel == DW` alone: dynamic wave
     // produces a SINGLE flow rate per conduit, so the storage the conduit
@@ -81,7 +82,6 @@ double conduitMixingInflow(const SimulationContext& ctx, int link, double dt) {
     // carries separate upstream and downstream flows and needs none — adding
     // it there double-counts the fill. FV is this engine's other single-rate
     // dynamic model, so it takes the DW branch.
-    const auto model = ctx.options.routing_model;
     if (model != RoutingModel::DYNWAVE && model != RoutingModel::FV)
         return std::max(q_in, 0.0);
     if (dt <= 0.0) return std::max(q_in, 0.0);
@@ -1163,11 +1163,6 @@ void QualitySolver::updateLinkQuality(SimulationContext& ctx, double dt) {
         const auto ucr = static_cast<size_t>(cr < 0 ? 0 : cr);
         const double barrels =
             (cr >= 0) ? static_cast<double>(CD.barrels[ucr]) : 1.0;
-        // Legacy reads |Conduit.q1| * barrels. Under DW and SF the solver
-        // writes one flow to both conduit ends, so |Link.newFlow| is that
-        // same number; under KW q1 is the UPSTREAM end while Link.newFlow is
-        // the downstream one, and this engine keeps no q1 mirror — a
-        // remaining KW-only gap, noted rather than papered over.
         const double q_seep = (cr >= 0) ? CD.seep_loss_rate[ucr] * barrels : 0.0;
         const double v_evap = (cr >= 0) ? CD.evap_loss_rate[ucr] * barrels * dt
                                         : 0.0;

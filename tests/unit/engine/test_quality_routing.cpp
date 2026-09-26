@@ -332,6 +332,37 @@ TEST_F(QualityRoutingTest, ExecuteUpdateLinkQualFromUpstream) {
                 1e-10);
 }
 
+TEST_F(QualityRoutingTest, KinematicWaveFillingConduitMixesWithAcceptedInflow) {
+    ctx.options.routing_model = openswmm::RoutingModel::KINWAVE;
+    ctx.links.kw_inflow[0] = 4.0;
+    ctx.links.flow[0] = 1.0;
+    ctx.links.old_volume[0] = 100.0;
+    ctx.links.volume[0] = 130.0;
+    ctx.nodes.old_volume[0] = ctx.nodes.volume[0] = 100.0;
+    ctx.nodes.conc_old[0] = 10.0;
+
+    solver.execute(ctx, 10.0);
+
+    // 400 concentration-volume units enter 100 ft3 of clean stored water.
+    // Using the downstream rate instead would mix only 100 into 110 ft3.
+    EXPECT_DOUBLE_EQ(ctx.links.conc[0], 400.0 / 140.0);
+}
+
+TEST(QualityKinematicState, InflowFollowsLinkLifecycle) {
+    openswmm::LinkData links;
+    links.resize(2);
+    links.kw_inflow[1] = 4.0;
+    links.reserve_to(8);
+    links.grow_to(3);
+    EXPECT_EQ(links.kw_inflow, (std::vector<double>{0.0, 4.0, 0.0}));
+    links.erase_at(0);
+    EXPECT_EQ(links.kw_inflow, (std::vector<double>{4.0, 0.0}));
+    links.reset_state();
+    EXPECT_EQ(links.kw_inflow, (std::vector<double>{0.0, 0.0}));
+    links.resize(1);
+    EXPECT_EQ(links.kw_inflow, (std::vector<double>{0.0}));
+}
+
 TEST_F(QualityRoutingTest, ExecuteReverseFlowUsesCorrectUpstream) {
     double dt = 10.0;
 

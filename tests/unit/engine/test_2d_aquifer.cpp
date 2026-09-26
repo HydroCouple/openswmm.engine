@@ -776,15 +776,16 @@ TEST(Aquifer2D, StorageExfiltrationIsReplacedByTheBedWhenEnrolled) {
         sub("J1  6.0  3.0", "ST1  6.0  3.0");
         return body;
     };
-    // storage exfiltration rides `nodes.losses`, booked to routing_evap_loss
-    // (Fevap is 0 on the deck, so the row is exfiltration alone)
+    // Fevap is zero: storage exfiltration must enter the seepage ledger,
+    // with no evaporation booked for either enrollment setting.
     double exfil_enrolled = -1.0, node_enrolled = 0.0, exfil_optout = -1.0, node_optout = 0.0;
     {
         DeckRun r = openDeck("storage_bed", storageDeck(""));
         ASSERT_TRUE(r.opened);
         ASSERT_TRUE(run(r));
         EXPECT_TRUE(warnedAbout(r, "exfiltration is replaced by the node <-> aquifer exchange"));
-        exfil_enrolled = r.eng->context().mass_balance.routing_evap_loss;
+        exfil_enrolled = r.eng->context().mass_balance.routing_seep_loss;
+        EXPECT_DOUBLE_EQ(r.eng->context().mass_balance.routing_evap_loss, 0.0);
         ASSERT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_NODE, &node_enrolled), SWMM_OK);
         finish(r);
     }
@@ -793,7 +794,8 @@ TEST(Aquifer2D, StorageExfiltrationIsReplacedByTheBedWhenEnrolled) {
         ASSERT_TRUE(r.opened);
         ASSERT_TRUE(run(r));
         EXPECT_FALSE(warnedAbout(r, "exfiltration is replaced"));
-        exfil_optout = r.eng->context().mass_balance.routing_evap_loss;
+        exfil_optout = r.eng->context().mass_balance.routing_seep_loss;
+        EXPECT_DOUBLE_EQ(r.eng->context().mass_balance.routing_evap_loss, 0.0);
         ASSERT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_NODE, &node_optout), SWMM_OK);
         finish(r);
     }

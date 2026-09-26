@@ -75,7 +75,8 @@ constexpr double LEGACY_ZERO = 1.0e-10;
 bool linkTakesUpstreamValue(const SimulationContext& ctx, int link);
 
 /// The mixing inflow rate a conduit sees over one step (legacy findLinkQual):
-/// |Link.newFlow|, plus — under a single-rate dynamic model only — the volume
+/// KW's accepted upstream flow, or |Link.newFlow| for single-rate models,
+/// plus — under a single-rate dynamic model only — the volume
 /// the conduit gained together with what it lost to seepage and evaporation,
 /// the sum clamped at zero.
 double conduitMixingInflow(const SimulationContext& ctx, int link, double dt);

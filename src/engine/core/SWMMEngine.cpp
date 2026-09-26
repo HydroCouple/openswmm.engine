@@ -3732,7 +3732,11 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                         double avail = (mcf_p > 0.0)
                             ? (buildup * norm) / mcf_p : 0.0;
                         double max_load = (dt_runoff > 0.0) ? avail / dt_runoff : 0.0;
-                        if (load > max_load && wp.type != landuse::WashoffType::EMC)
+                        // legacy landuse_getWashoffLoad caps every washoff
+                        // type only when a buildup function is modelled.
+                        // RATING without buildup supplies its own mass, just
+                        // as EMC does; capping it to an empty store erases it.
+                        if (load > max_load && bp.type != landuse::BuildupType::NONE)
                             load = max_load;
 
                         // Reduce per-landuse buildup by washoff amount —
@@ -5262,11 +5266,13 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
     // degree==0 non-STORAGE nodes are interior under FV exactly as under DW.
     const bool is_dw = (ctx_.options.routing_model == RoutingModel::DYNWAVE ||
                         ctx_.options.routing_model == RoutingModel::FV);
-
+    const int np = ctx_.n_pollutants();
 
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
         const NodeType nt = ctx_.nodes.type[uj];
+        double quality_outflow = 0.0;
+        bool quality_flooding = false;
 
         if (nt == NodeType::OUTFALL) {
             // legacy removeOutflows + node_getSystemOutflow (routing.c:
@@ -5335,6 +5341,7 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                 ctx_.nodes.inflow[uj] = std::fabs(q_sys);
             }
             if (q_sys > 0.0) {
+                quality_outflow = q_sys;
                 ctx_.mass_balance.routing_outflow += q_sys * dt_routing;
                 ctx_.mass_balance.step_outflow    += q_sys;
             } else {
@@ -5362,6 +5369,7 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
             // (node.c:453-459) zeroes its overflow and volume so it reports
             // neither flooding nor storage.
             if (ctx_.nodes.outflow[uj] == 0.0) {
+                quality_outflow = ctx_.nodes.inflow[uj];
                 ctx_.mass_balance.routing_outflow += ctx_.nodes.inflow[uj] * dt_routing;
                 ctx_.mass_balance.step_outflow    += ctx_.nodes.inflow[uj];
             }
@@ -5383,13 +5391,44 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                     : ctx_.nodes.rpt_full_volume[uj];
             if (ctx_.nodes.overflow[uj] > 0.0 &&
                 ctx_.nodes.volume[uj] <= full_vol) {
+                quality_outflow = ctx_.nodes.overflow[uj];
+                quality_flooding = true;
                 ctx_.mass_balance.routing_flooding += ctx_.nodes.overflow[uj] * dt_routing;
                 ctx_.mass_balance.step_flooding    += ctx_.nodes.overflow[uj];
             }
         }
 
-        // Node evaporation and seepage losses
-        ctx_.mass_balance.routing_evap_loss += ctx_.nodes.losses[uj] * dt_routing;
+        // Legacy removeOutflows (routing.c:1016-1042) books quality through
+        // the SAME system-outflow classification as water, including a
+        // non-DW terminal junction and unponded flooding. An OUTFALL-only
+        // pass discarded all exported mass from ejemplo-epa's terminal 50.
+        if (quality_outflow > 0.0) {
+            auto& total = quality_flooding ? ctx_.mass_balance.qual_routing_flood
+                                          : ctx_.mass_balance.qual_routing_outflow;
+            for (int p = 0; p < np; ++p) {
+                const auto up = static_cast<std::size_t>(p);
+                total[up] += quality_outflow * ctx_.nodes.conc[uj * np + up] * dt_routing;
+            }
+        }
+        // Negative lateral flow withdraws the current mixed concentration.
+        // Its water has already been booked by the inflow assembly.
+        if (ctx_.nodes.lat_flow[uj] < 0.0) {
+            for (int p = 0; p < np; ++p) {
+                const auto up = static_cast<std::size_t>(p);
+                ctx_.mass_balance.qual_routing_outflow[up] +=
+                    -ctx_.nodes.lat_flow[uj] * ctx_.nodes.conc[uj * np + up] * dt_routing;
+            }
+        }
+
+        // Storage losses are separate volumes (legacy removeStorageLosses,
+        // routing.c:927-951). nodes.losses combines their rates and would
+        // mislabel all storage exfiltration as evaporation in the report.
+        const int sr = ctx_.node_subtypes.storage_row(j);
+        if (sr >= 0) {
+            const auto us = static_cast<std::size_t>(sr);
+            ctx_.mass_balance.routing_evap_loss += ctx_.node_subtypes.storages.evap_loss[us];
+            ctx_.mass_balance.routing_seep_loss += ctx_.node_subtypes.storages.exfil_loss[us];
+        }
         step_loss_rate += ctx_.nodes.losses[uj];
     }
 
@@ -5478,37 +5517,6 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
             else
                 ctx_.mass_balance.routing_coupling_out += coupling_out_q * dt_routing;
             ctx_.mass_balance.step_flooding += coupling_out_q;
-        }
-    }
-
-    // Quality routing mass balance (matching legacy massbal_updateRoutingTotals)
-    int np = ctx_.n_pollutants();
-    if (np > 0) {
-        for (int j = 0; j < ctx_.n_nodes(); ++j) {
-            auto uj = static_cast<std::size_t>(j);
-
-            // Wet weather quality inflow is NOT booked here. This used to add
-            // lat_flow * node concentration for every node with lateral flow,
-            // which is wrong twice over: the node's resulting concentration is
-            // not the source's, and lat_flow lumps runoff together with DWF,
-            // GW, RDII and direct [INFLOWS] — so each of those was counted a
-            // second time as "wet weather". It read 0.000 only for as long as
-            // direct pollutant inflows delivered no mass at all. Each source
-            // now books its own load in its own QualitySolver adder, matching
-            // legacy massbal_addInflowQual() call sites.
-
-            // Quality outflow at outfalls: inflow × concentration
-            if (ctx_.nodes.type[uj] == NodeType::OUTFALL && ctx_.nodes.inflow[uj] > 0.0) {
-                for (int p = 0; p < np; ++p) {
-                    auto qi = uj * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
-                    if (qi < ctx_.nodes.conc.size()) {
-                        double load = ctx_.nodes.inflow[uj] *
-                                      ctx_.nodes.conc[qi] * dt_routing;
-                        if (load > 0.0)
-                            ctx_.mass_balance.qual_routing_outflow[static_cast<std::size_t>(p)] += load;
-                    }
-                }
-            }
         }
     }
 

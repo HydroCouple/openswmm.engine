@@ -157,6 +157,62 @@ protected:
 // [COVERAGES] + [LOADINGS] survive write → reopen
 // ============================================================================
 
+TEST_F(QualityRoundtripTest, WashoffCapDependsOnBuildupRatherThanWashoffType) {
+    open_model("washoff_buildup_cap", R"inp(
+[OPTIONS]
+FLOW_UNITS CFS
+FLOW_ROUTING KINWAVE
+INFILTRATION HORTON
+START_DATE 01/01/2026
+END_DATE 01/01/2026
+END_TIME 01:00:00
+WET_STEP 00:01:00
+ROUTING_STEP 30
+[RAINGAGES]
+RG INTENSITY 0:05 1 TIMESERIES Rain
+[TIMESERIES]
+Rain 01/01/2026 00:00 1
+Rain 01/01/2026 02:00 1
+[SUBCATCHMENTS]
+S RG O 1 100 500 1 0
+[SUBAREAS]
+S 0.01 0.1 0 0 100 OUTLET
+[INFILTRATION]
+S 3 0.5 4 7 0
+[OUTFALLS]
+O 0 FREE
+[POLLUTANTS]
+FreeRC MG/L 0 0 0 0
+BoundRC MG/L 0 0 0 0
+BoundEMC MG/L 0 0 0 0
+[LANDUSES]
+Land 0 0 0
+[COVERAGES]
+S Land 100
+[BUILDUP]
+Land BoundRC POW 0 0 1 AREA
+Land BoundEMC POW 0 0 1 AREA
+[WASHOFF]
+Land FreeRC RC 1 1 0 0
+Land BoundRC RC 1 1 0 0
+Land BoundEMC EMC 10 1 0 0
+)inp");
+    ASSERT_EQ(swmm_engine_initialize(engine), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(engine, 0), SWMM_OK);
+    double elapsed = 0.0, peak = 0.0;
+    do {
+        ASSERT_EQ(swmm_engine_step(engine, &elapsed), SWMM_OK);
+        for (int p = 0; p < 3; ++p) {
+            double conc = -1.0;
+            ASSERT_EQ(swmm_subcatch_get_quality(engine, 0, p, &conc), SWMM_OK);
+            if (p == 0) peak = std::max(peak, conc);
+            else EXPECT_DOUBLE_EQ(conc, 0.0);
+        }
+    } while (elapsed > 0.0);
+    EXPECT_GT(peak, 0.0) << "rating-curve washoff without buildup was erased";
+    ASSERT_EQ(swmm_engine_end(engine), SWMM_OK);
+}
+
 TEST_F(QualityRoundtripTest, CoveragesAndLoadingsSurviveInpRoundtrip) {
     open_model("cov_load");
 
