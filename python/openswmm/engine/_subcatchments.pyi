@@ -80,6 +80,10 @@ class CoverageView(MutableMapping[str, float]):
 
 class Subcatchment:
     """Single-subcatchment wrapper. See :class:`Subcatchments`."""
+    rain_scale_factor: float
+    snow_scale_factor: float
+    loadings: MutableMapping[str, float]
+    def coverages(self) -> list[float]: ...
 
     # Identity
     id: str

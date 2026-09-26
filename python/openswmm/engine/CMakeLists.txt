@@ -33,6 +33,7 @@ set(_engine_modules
     _reactions
     _heat
     _water_age
+    _transport
     _process_components
     _statistics
     _output_reader
@@ -53,6 +54,13 @@ endforeach()
 
 # Optional 2-D module (off by default).
 if(OPENSWMM_BUILD_2D)
+    add_cython_extension(NAME _surface_quality TARGET engine__surface_quality SOURCE _surface_quality.pyx
+        INSTALL_DIR openswmm/engine LIBS openswmm::engine)
+    add_cython_extension(NAME _gw_transport TARGET engine__gw_transport SOURCE _gw_transport.pyx
+        INSTALL_DIR openswmm/engine LIBS openswmm::engine)
+    add_cython_extension(
+        NAME _groundwater TARGET engine__groundwater SOURCE _groundwater.pyx
+        INSTALL_DIR openswmm/engine LIBS openswmm::engine)
     add_cython_extension(
         NAME        _2d
         TARGET      engine__2d

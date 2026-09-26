@@ -85,12 +85,33 @@ class ProcessComponent(NamedTuple):
     resolved: str
 
 
+class KnownProcessComponent(NamedTuple):
+    """Registry entry, independent of configured model registrations."""
+    id: str
+    description: str
+    implemented: bool
+
+
 class ProcessComponents:
     """``solver.process_components`` — the ``[PROCESS_COMPONENTS]`` table.
 
     A sequence of :class:`ProcessComponent` rows, addressable by index or by
     id. Rows are flat snapshots, not live views.
     """
+
+    @staticmethod
+    def known():
+        """Built-in component vocabulary, including unimplemented placeholders."""
+        cdef int index, implemented = 0
+        cdef char identifier[512]
+        cdef char description[4096]
+        rows = []
+        for index in range(swmm_process_component_known_count()):
+            _check(swmm_process_component_known_get(index, identifier, 512,
+                                                    description, 4096, &implemented))
+            rows.append(KnownProcessComponent(identifier.decode('utf-8'),
+                                              description.decode('utf-8'), bool(implemented)))
+        return tuple(rows)
 
     def __init__(self, solver):
         self._solver = solver
@@ -241,3 +262,8 @@ class ProcessComponents:
             return f"<ProcessComponents n={len(self)}>"
         except Exception:
             return "<ProcessComponents (engine closed)>"
+
+
+cdef extern from "openswmm/engine/openswmm_process_components.h":
+    int swmm_process_component_known_count()
+    int swmm_process_component_known_get(int, char*, int, char*, int, int*)

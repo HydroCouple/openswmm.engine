@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Type stubs for :mod:`openswmm.engine._process_components`."""
 
 from collections.abc import Iterator
@@ -17,6 +18,9 @@ class ProcessComponent(NamedTuple):
 
 
 class ProcessComponents:
+    @staticmethod
+    def known() -> tuple[KnownProcessComponent, ...]: ...
+
     def __init__(self, solver: Solver) -> None: ...
     def __len__(self) -> int: ...
     def __iter__(self) -> Iterator[ProcessComponent]: ...
@@ -27,3 +31,8 @@ class ProcessComponents:
         self, component_id: str, config_path: str = ...,
     ) -> ProcessComponent: ...
     def remove(self, key: _Key) -> None: ...
+
+class KnownProcessComponent(NamedTuple):
+    id: str
+    description: str
+    implemented: bool

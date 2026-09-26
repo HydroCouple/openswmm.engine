@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from typing import NamedTuple, Optional, Union
 
 from ._solver import Solver
+from os import PathLike
 
 
 _Key = Union[int, str]
@@ -17,6 +18,12 @@ class InitialQualityEntry(NamedTuple):
 
 
 class InitialQuality:
+    @property
+    def file_path(self) -> str: ...
+    @file_path.setter
+    def file_path(self, path: str | PathLike[str] | None) -> None: ...
+    def is_file(self, row_index: int) -> bool: ...
+
     def __init__(self, solver: Solver) -> None: ...
 
     WATER_AGE: str

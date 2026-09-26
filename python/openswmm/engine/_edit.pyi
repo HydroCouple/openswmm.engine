@@ -26,6 +26,7 @@ Type stubs for :mod:`openswmm.engine._edit`.
 """
 
 from __future__ import annotations
+from typing import Iterable
 
 from datetime import datetime
 
@@ -157,6 +158,11 @@ class ModelEditor:
         # Convert C2 conduit -> weir
         result = ed.convert_link("C2", LinkType.WEIR)
     """
+    def delete_nodes(self, keys: Iterable[int | str]) -> list[ImpactEntry]: ...
+    def delete_links(self, keys: Iterable[int | str]) -> list[ImpactEntry]: ...
+    def delete_subcatchments(self, keys: Iterable[int | str]) -> list[ImpactEntry]: ...
+    def delete_gages(self, keys: Iterable[int | str]) -> list[ImpactEntry]: ...
+
 
     def __init__(self, engine: object) -> None: ...
 

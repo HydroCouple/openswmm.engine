@@ -136,3 +136,12 @@ See also
 * :doc:`model_builder` — building a model that registers components from
   scratch.
 * :doc:`error_handling` — what a duplicate id or a bad index raises.
+
+Built-in registry
+=================
+
+``solver.process_components.known()`` returns immutable registry entries with
+``id``, ``description`` and ``implemented`` fields. The registry describes the
+build's vocabulary; it differs from the components configured on a model.
+Entries with ``implemented=False`` are placeholders and cannot supply a process
+implementation merely by being registered in the model.

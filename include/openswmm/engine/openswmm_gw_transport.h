@@ -20,13 +20,11 @@
  * @brief U4 (2026-09-07) — C API for the `[GW_*]` subsurface-transport
  *        authoring sections.
  *
- * @details **Authoring only in this release.** The integrated two-zone
- *          groundwater kernel that consumes these rows does not exist yet;
- *          a run emits one warning and the rows change nothing. Everything
- *          here nevertheless round-trips: a host can build a complete
- *          subsurface-transport model, save it, reopen it and get the same
- *          file back, and nothing about that file changes when the kernel
- *          lands.
+ * @details These sections round-trip authored subsurface transport inputs.
+ *          The integrated two-zone groundwater kernel consumes them at
+ *          initialization. Runtime availability depends on the model and
+ *          enabled transport classes; query swmm_get_transport_matrix() for
+ *          capabilities and openswmm_gw2d.h for runtime state and ledgers.
  *
  *          **Cell-generic.** Every index is a CELL (`0 .. swmm_2d_cell_count-1`
  *          through this API; 1-based in the `.inp`), and an edge is the LOCAL

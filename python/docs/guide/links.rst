@@ -375,3 +375,12 @@ See also
 * :doc:`controls` — runtime control of link ``control_setting`` and
   ``target_setting``.
 * :doc:`error_handling` — every exception type referenced on this page.
+
+Authored conduit orientation
+=============================
+
+Editing hosts can call ``solver.links.restore_authored_orientation()`` after
+opening to undo adverse-slope conduit reversal. The return value is the number
+of conduits restored; a repeated call returns zero. Reacquire retained object
+views after a change. Simulation-only hosts do not need this operation, and
+the INP writer already restores authored orientation during serialization.

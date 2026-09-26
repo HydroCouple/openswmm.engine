@@ -18,7 +18,7 @@ try:
 except ImportError as _exc:  # pragma: no cover - environment dependent
     raise unittest.SkipTest(f"requires compiled engine: {_exc}")
 
-from openswmm.engine import Solver, Surface2D  # noqa: E402
+from openswmm.engine import Solver, Surface2D, BadParamError, BadIndexError  # noqa: E402
 
 from tests._paths import artifact_dir  # noqa: E402
 
@@ -127,12 +127,12 @@ class TestVertexCouplingParams(_Surface2dCase):
 
     def test_non_positive_values_rejected(self):
         surface = self.twod_solver().surface2d
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(BadParamError):
             surface.set_vertex_coupling_cd(4, 0.0)
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(BadParamError):
             surface.set_vertex_coupling_area(4, -1.0)
 
     def test_bad_vertex_index_rejected(self):
         surface = self.twod_solver().surface2d
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(BadIndexError):
             surface.get_vertex_coupling_cd(surface.n_vertices)

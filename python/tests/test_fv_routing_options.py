@@ -149,7 +149,7 @@ class FvRoutingOptions(unittest.TestCase):
                 "FV_ORDER", "FV_LIMITER", "FV_SCALAR_SCHEME",
                 "FV_TIME_INTEGRATION", "FV_SLOT_CELERITY", "FV_DISPERSION",
                 "FV_STRUCTURE_COUPLING", "FV_COMPACTION", "FV_BACKEND",
-                "FV_MIN_PARALLEL_CELLS",
+                "FV_MIN_PARALLEL_CELLS", "FV_PRESSURE_CLOSURE",
                 "FV_LTS", "FV_LTS_MAX_TIERS", "FV_CFL_CENSUS_INTERVAL",
             },
         )

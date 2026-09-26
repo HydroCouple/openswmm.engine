@@ -63,21 +63,16 @@ _CYTHON_DIR = _PYTHON_DIR / "openswmm" / "engine"
 # Keep this in sync with the ``intentional`` rows in
 # ``plans/parity/overrides.tsv``.
 # ---------------------------------------------------------------------------
-KNOWN_UNBOUND: frozenset[str] = frozenset({
-    # Error introspection — Python raises a typed ``EngineError`` instead of
-    # polling C-level last-error state, so these are never called directly.
-    # (The lenient-open accumulator API — swmm_get_error_count/at and
-    # swmm_get_warning_count/at — *is* bound, via ``Solver.open_errors`` /
-    # ``Solver.open_warnings``; only the single-shot last-error accessors and
-    # the static code→string lookup remain served by the exception layer.)
-    "swmm_error_message",
-    "swmm_get_last_error",
-    "swmm_get_last_error_msg",
-    # Current simulation time — declared in _common.pxd but intentionally not
-    # called; ``Solver.current_datetime`` derives it as start_datetime +
-    # elapsed (the C func returns elapsed seconds, not an OADate).
-    "swmm_get_current_time",
-})
+import importlib.util
+_spec = importlib.util.spec_from_file_location(
+    "_api_drift_audit", _PYTHON_DIR / "scripts/api_drift_audit.py")
+_audit = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_audit)
+KNOWN_UNBOUND = _audit.KNOWN_UNBOUND
+collect_c_functions = _audit.collect_c_functions
+collect_pyx_tokens = _audit.collect_pyx_tokens
+collect_pxd_functions = _audit.collect_pxd_functions
+executable_cython = _audit.executable_cython
 
 
 # Regex to extract C API symbol names from header declarations.  A declaration
@@ -98,69 +93,33 @@ _CDEF_EXTERN = re.compile(r"cdef\s+extern\b")
 
 
 def _collect_c_symbols() -> set[str]:
-    """Return every C API symbol declared with ``SWMM_ENGINE_API``."""
-    assert _HEADER_GLOB.is_dir(), (
-        f"Header directory not found: {_HEADER_GLOB}.  Has the project "
-        f"layout changed?")
-    symbols: set[str] = set()
-    for header in sorted(_HEADER_GLOB.glob("*.h")):
-        if header.name.endswith("_export.h"):
-            continue
-        lines = header.read_text(encoding="utf-8").splitlines()
-        i = 0
-        while i < len(lines):
-            if lines[i].lstrip().startswith(_EXPORT_PREFIX):
-                buf = [lines[i]]
-                while ";" not in lines[i] and i + 1 < len(lines):
-                    i += 1
-                    buf.append(lines[i])
-                joined = re.sub(r"\s+", " ", " ".join(buf))
-                m = _C_FUNC_TOKEN.search(joined)
-                if m:
-                    symbols.add(m.group(1))
-            i += 1
-    return symbols
+    return set(collect_c_functions())
 
 
 def _collect_pyx_uses() -> set[str]:
-    """Return every ``swmm_*`` symbol *used* from ``.pyx`` sources.
-
-    "Used" = referenced outside of ``cdef extern`` declaration blocks and
-    outside of ``#`` comments — i.e. an actual call site or function-pointer
-    reference in the Python-facing layer.
-    """
-    assert _CYTHON_DIR.is_dir(), (
-        f"Cython source directory not found: {_CYTHON_DIR}.")
-    uses: set[str] = set()
-    for path in sorted(_CYTHON_DIR.glob("*.pyx")):
-        in_extern = False
-        extern_indent = 0
-        for raw in path.read_text(encoding="utf-8").splitlines():
-            code = raw.split("#", 1)[0]           # drop line comments
-            stripped = code.strip()
-            if _CDEF_EXTERN.match(stripped):
-                in_extern = True
-                extern_indent = len(code) - len(code.lstrip())
-                continue
-            if in_extern:
-                # extern block ends at the next non-blank line whose indent
-                # returns to <= the block-header indent.
-                if stripped and (len(code) - len(code.lstrip())) <= extern_indent:
-                    in_extern = False
-                else:
-                    continue
-            for m in _SWMM_TOKEN.finditer(code):
-                uses.add(m.group(1))
-    return uses
+    return collect_pyx_tokens()
 
 
 def _collect_pxd_decls() -> set[str]:
-    """Return every ``swmm_*`` symbol declared in ``.pxd`` extern blocks."""
-    decls: set[str] = set()
-    for path in sorted(_CYTHON_DIR.glob("*.pxd")):
-        for m in _SWMM_TOKEN.finditer(path.read_text(encoding="utf-8")):
-            decls.add(m.group(1))
-    return decls
+    return collect_pxd_functions()
+
+
+def test_collector_distinguishes_declarations_comments_and_helpers():
+    source = '\n'.join([
+        '"""swmm_doc_only()"""',
+        '# swmm_comment_only()',
+        'cdef extern from "swmm_header.h":',
+        '    int swmm_decl_only(int x)',
+        '',
+        'cdef inline int helper():',
+        '    return swmm_real_call(1)',
+        'callback = swmm_function_pointer',
+        'text = "swmm_string_only()"',
+    ])
+    uses = set(_SWMM_TOKEN.findall(executable_cython(source)))
+    assert uses == {"swmm_real_call", "swmm_function_pointer"}
+    decls = set(_SWMM_TOKEN.findall(executable_cython(source, declarations=True)))
+    assert decls == {"swmm_decl_only"}
 
 
 # ---------------------------------------------------------------------------

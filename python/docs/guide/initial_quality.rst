@@ -24,7 +24,9 @@ Quickstart
 
     from openswmm.engine import Solver, InitialQuality
 
-    with Solver("model.inp") as s:
+    s = Solver("model.inp")
+    try:
+        s.open()
         s.initial_quality.set("TSS", 12.5, node="J1")
         s.initial_quality.set("TSS", 3.0, link="C1")
 
@@ -36,6 +38,9 @@ Quickstart
             print(row.is_link, row.elem_index, row.constituent, row.value)
 
         s.initial_quality.remove(0)     # later rows shift down
+    finally:
+        s.close()
+        s.destroy()
 
 .. warning::
 
@@ -131,3 +136,15 @@ See also
   against.
 * :doc:`heat` — the source-temperature table behind ``__TEMPERATURE__``.
 * :doc:`error_handling` — what a refused row raises.
+
+Sidecar provenance
+==================
+
+``initial_quality.file_path`` preserves the authored CSV reference. Assign a
+path to record it, or ``None``/an empty string to clear it. Assignment does not
+read the file: the engine loads it on the next open. ``is_file(row_index)``
+identifies loaded sidecar rows and accepts negative sequence indices. Inline
+rows and sidecar rows retain their native save/provenance behavior.
+
+Keys must be unique across inline and sidecar rows; duplicate element/species
+rows cause a parse error when opening the model.

@@ -306,6 +306,17 @@ class _HeatCloud:
     removes the section entirely and restores clear sky.
     """
 
+    @property
+    def timeseries(self):
+        """Bound timeseries name, or an empty string when none is bound."""
+        cdef bytearray buffer = bytearray(256)
+        while True:
+            _check(swmm_heat_get_cloud_timeseries(_h(self._solver), buffer, len(buffer)))
+            value = bytes(buffer).split(b'\0', 1)[0]
+            if len(value) < len(buffer) - 1:
+                return value.decode('utf-8')
+            buffer = bytearray(len(buffer) * 2)
+
     def __init__(self, solver):
         self._solver = solver
 
@@ -635,6 +646,17 @@ class Heat:
     refused write leaves the previous value in place.
     """
 
+    @property
+    def shortwave_timeseries(self):
+        """Bound timeseries name, or an empty string when none is bound."""
+        cdef bytearray buffer = bytearray(256)
+        while True:
+            _check(swmm_heat_get_shortwave_timeseries(_h(self._solver), buffer, len(buffer)))
+            value = bytes(buffer).split(b'\0', 1)[0]
+            if len(value) < len(buffer) - 1:
+                return value.decode('utf-8')
+            buffer = bytearray(len(buffer) * 2)
+
     def __init__(self, solver):
         self._solver = solver
         self._modules = None
@@ -798,3 +820,8 @@ class Heat:
                     f"overrides={len(self.node_overrides)}>")
         except Exception:
             return "<Heat (engine closed)>"
+
+
+cdef extern from "openswmm/engine/openswmm_heat.h":
+    int swmm_heat_get_shortwave_timeseries(SWMM_Engine, char*, int)
+    int swmm_heat_get_cloud_timeseries(SWMM_Engine, char*, int)

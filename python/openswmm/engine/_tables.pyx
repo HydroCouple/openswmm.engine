@@ -169,6 +169,25 @@ cdef class TimeSeries(_PointTable):
     ``datetime64[s]``."""
 
     @property
+    def relative_info(self):
+        """(number of leading relative rows, OADate anchor in days).
+
+        Stored x values are absolute. Subtract the anchor to recover authored
+        elapsed days. This metadata controls time-only INP serialization.
+        """
+        cdef int count = 0
+        cdef double anchor = 0
+        _check(swmm_timeseries_get_relative_info(_h(self._solver), self._index, &count, &anchor))
+        return (count, anchor)
+
+    def set_relative_info(self, int count, double anchor):
+        """Mark leading rows as relative without changing stored x values.
+
+        Call after rebuilding points. Count zero marks all rows explicitly dated.
+        """
+        _check(swmm_timeseries_set_relative_info(_h(self._solver), self._index, count, anchor))
+
+    @property
     def points(self):
         """Structured numpy array with columns ``time: datetime64[s]`` and
         ``value: float64``."""
@@ -517,3 +536,8 @@ cdef class Patterns:
             return f"<Patterns n={len(self)}>"
         except Exception:
             return "<Patterns (engine closed)>"
+
+
+cdef extern from "openswmm/engine/openswmm_tables.h":
+    int swmm_timeseries_get_relative_info(SWMM_Engine, int, int*, double*)
+    int swmm_timeseries_set_relative_info(SWMM_Engine, int, int, double)

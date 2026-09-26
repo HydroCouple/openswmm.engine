@@ -5,18 +5,24 @@ permissions:
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, swmm6_rel]
     paths:
       - 'python/openswmm/**/*.py'
       - 'python/openswmm/**/*.pyi'
+      - 'python/openswmm/**/*.pyx'
+      - 'python/openswmm/**/*.pxd'
+      - 'include/openswmm/engine/**'
       - 'python/tests/typing/**'
       - 'python/pyproject.toml'
       - '.github/workflows/typing.yml'
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, swmm6_rel]
     paths:
       - 'python/openswmm/**/*.py'
       - 'python/openswmm/**/*.pyi'
+      - 'python/openswmm/**/*.pyx'
+      - 'python/openswmm/**/*.pxd'
+      - 'include/openswmm/engine/**'
       - 'python/tests/typing/**'
       - 'python/pyproject.toml'
       - '.github/workflows/typing.yml'

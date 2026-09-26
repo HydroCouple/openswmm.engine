@@ -5,6 +5,7 @@
 #include "core/SimulationContext.hpp"
 #include "2d/data/MeshData.hpp"
 #include "2d/data/SolverOptions2D.hpp"
+#include "plugins/ProcessComponentRegistry.hpp"
 #include <cstdlib>
 #include <fstream>
 #ifndef _WIN32
@@ -71,7 +72,7 @@ protected:
         return openswmm::inp_writer::writeInpFile(ctx, path_utf8(model), warnings);
     }
     void TearDown() override {
-        for (const auto& p : fs::directory_iterator(dir))
+        for (const auto& p : fs::recursive_directory_iterator(dir))
             EXPECT_NE(p.path().filename().string().find(".openswmm-save-"), 0u) << p.path();
     }
 };
@@ -163,3 +164,185 @@ TEST_F(InpWriterAtomic, SidecarShortWriteKeepsBothFilesAndRetrySucceeds) {
 }
 #endif
 } // namespace
+
+
+class InpWriterComponent : public InpWriterAtomic {
+protected:
+    fs::path sourceConfig, targetConfig;
+    void component(bool rendered, bool absolute = false) {
+        fs::create_directories(dir / "source");
+        fs::create_directories(dir / "saved");
+        sourceConfig = fs::absolute(dir / "source" / "component.cfg");
+        targetConfig = fs::absolute(dir / "saved" / "component.cfg");
+        model = fs::absolute(dir / "saved" / "model.inp");
+        put(model, "original model\n");
+        put(sourceConfig, "original config\n");
+        put(targetConfig, "previous destination\n");
+        openswmm::ProcessComponentSpec spec;
+        spec.id = "org.test.checked-component-save";
+        spec.config_path = absolute ? path_utf8(targetConfig) : "component.cfg";
+        spec.resolved_config_path = path_utf8(sourceConfig);
+        ctx.process_component_specs.push_back(spec);
+        openswmm::components::ProcessComponentRegistry::instance().register_component(
+            spec.id, "checked component writer test", nullptr,
+            rendered ? openswmm::components::ComponentConfigSave(
+                [](const openswmm::SimulationContext& c, const openswmm::ProcessComponentSpec&) {
+                    // A compact title requests a large component without making the INP large.
+                    return c.title_notes.front() == "large config"
+                        ? std::string(100000, 'x') : std::string("rendered config\n");
+                }) : nullptr);
+    }
+};
+
+TEST_F(InpWriterComponent, RenderedFailurePreservesModelAndRetry) {
+    component(true);
+    fs::permissions(targetConfig, fs::perms::owner_read);
+    std::vector<std::string> warnings;
+    EXPECT_NE(write(&warnings), 0);
+    EXPECT_EQ(read(model), "original model\n");
+    EXPECT_EQ(read(targetConfig), "previous destination\n");
+    ASSERT_FALSE(warnings.empty());
+    EXPECT_NE(warnings.back().find("component.cfg"), std::string::npos);
+    fs::permissions(targetConfig, fs::perms::owner_read | fs::perms::owner_write);
+    ASSERT_EQ(write(), 0);
+    EXPECT_EQ(read(targetConfig), "rendered config\n");
+    EXPECT_EQ(read(sourceConfig), "original config\n");
+}
+
+TEST_F(InpWriterComponent, CopyFailurePreservesModelAndRetry) {
+    component(false);
+    fs::remove(targetConfig); fs::create_directory(targetConfig);
+    EXPECT_NE(write(), 0);
+    EXPECT_EQ(read(model), "original model\n");
+    fs::remove(targetConfig);
+    ASSERT_EQ(write(), 0);
+    EXPECT_EQ(read(targetConfig), "original config\n");
+}
+
+TEST_F(InpWriterComponent, MissingCopySourceIsFailure) {
+    component(false); fs::remove(sourceConfig);
+    EXPECT_NE(write(), 0);
+    EXPECT_EQ(read(model), "original model\n");
+    EXPECT_EQ(read(targetConfig), "previous destination\n");
+}
+
+TEST_F(InpWriterComponent, AbsoluteRenderedReferenceWritesReferencedFile) {
+    component(true, true);
+    ASSERT_EQ(write(), 0);
+    EXPECT_EQ(read(targetConfig), "rendered config\n");
+    EXPECT_NE(read(model).find("config=\"component.cfg\""), std::string::npos);
+}
+
+TEST_F(InpWriterComponent, CopySameSourceIsUnchanged) {
+    component(false);
+    ctx.process_component_specs.front().resolved_config_path = path_utf8(targetConfig);
+    ASSERT_EQ(write(), 0);
+    EXPECT_EQ(read(targetConfig), "previous destination\n");
+}
+
+#ifndef _WIN32
+TEST_F(InpWriterComponent, RenderedShortWritePreservesConfigAndModel) {
+    component(true); ctx.title_notes.front() = "large config";
+    ASSERT_TRUE(limited(32768, [&] {
+        return write() != 0 && read(targetConfig) == "previous destination\n"
+            && read(model) == "original model\n";
+    }));
+    ASSERT_EQ(write(), 0); EXPECT_EQ(read(targetConfig).size(), 100000u);
+}
+TEST_F(InpWriterComponent, CopyShortWritePreservesConfigAndModel) {
+    component(false); put(sourceConfig, std::string(100000, 'x'));
+    ASSERT_TRUE(limited(32768, [&] {
+        return write() != 0 && read(targetConfig) == "previous destination\n"
+            && read(model) == "original model\n";
+    }));
+    ASSERT_EQ(write(), 0); EXPECT_EQ(read(targetConfig), read(sourceConfig));
+}
+#endif
+
+TEST_F(InpWriterComponent, RepeatedRenderedSaveReportsReplacementOnlyOnce) {
+    component(true);
+    std::vector<std::string> warnings;
+    ASSERT_EQ(write(&warnings), 0);
+    ASSERT_FALSE(warnings.empty());
+    EXPECT_NE(warnings.back().find("replaced an existing, different"), std::string::npos);
+    warnings.clear();
+    ASSERT_EQ(write(&warnings), 0);
+    EXPECT_TRUE(warnings.empty());
+}
+
+
+TEST_F(InpWriterComponent, StagingMapsEveryOutputAndKeepsFinalReferences) {
+    component(true); attachMesh();
+    fs::create_directories(dir / "staging");
+    std::vector<std::pair<std::string, int>> outputs;
+    openswmm::inp_writer::InpWriteOptions opts;
+    opts.map_output = [&](const std::string& finalPath, auto kind) {
+        outputs.emplace_back(finalPath, static_cast<int>(kind));
+        return path_utf8(dir / "staging" / (std::to_string(static_cast<int>(kind)) + ".stage"));
+    };
+    ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, path_utf8(model), nullptr, opts), 0);
+    ASSERT_EQ(outputs.size(), 3u);
+    EXPECT_EQ(read(model), "original model\n");
+    EXPECT_EQ(read(targetConfig), "previous destination\n");
+    EXPECT_EQ(read(meshFile), "original mesh\n");
+    EXPECT_EQ(read(dir / "staging/2.stage"), "rendered config\n");
+    const auto staged = read(dir / "staging/0.stage");
+    EXPECT_NE(staged.find("config=\"component.cfg\""), std::string::npos);
+    EXPECT_NE(staged.find("FILE ../mesh.2dm"), std::string::npos);
+    EXPECT_EQ(staged.find(".stage"), std::string::npos);
+    EXPECT_NE(read(dir / "staging/1.stage").find("[2D_VERTICES]"), std::string::npos);
+}
+
+TEST_F(InpWriterComponent, StagingRefusalLeavesAllFinalOutputsUnchanged) {
+    component(true); attachMesh();
+    openswmm::inp_writer::InpWriteOptions opts;
+    opts.map_output = [&](const std::string&, auto kind) {
+        return kind == openswmm::inp_writer::InpWriteOptions::OutputKind::Mesh
+            ? std::string() : path_utf8(dir / (std::to_string(static_cast<int>(kind)) + ".stage"));
+    };
+    std::vector<std::string> warnings;
+    EXPECT_NE(openswmm::inp_writer::writeInpFile(ctx, path_utf8(model), &warnings, opts), 0);
+    EXPECT_EQ(read(model), "original model\n");
+    EXPECT_EQ(read(targetConfig), "previous destination\n");
+    EXPECT_EQ(read(meshFile), "original mesh\n");
+    ASSERT_FALSE(warnings.empty());
+}
+
+TEST_F(InpWriterComponent, StagingCopiesConfigWithoutCreatingFinalDirectories) {
+    component(false);
+    ctx.process_component_specs.front().config_path = "nested/component.cfg";
+    openswmm::inp_writer::InpWriteOptions opts;
+    opts.map_output = [&](const std::string&, auto kind) {
+        return path_utf8(dir / (std::to_string(static_cast<int>(kind)) + ".stage"));
+    };
+    ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, path_utf8(model), nullptr, opts), 0);
+    EXPECT_FALSE(fs::exists(model.parent_path() / "nested"));
+    EXPECT_EQ(read(dir / "2.stage"), "original config\n");
+    EXPECT_EQ(read(model), "original model\n");
+}
+
+TEST_F(InpWriterComponent, StagingRejectsFinalDestinationAlias) {
+    component(true);
+    const auto alias = dir / "alias.inp";
+    fs::create_hard_link(model, alias);
+    openswmm::inp_writer::InpWriteOptions opts;
+    opts.map_output = [&](const std::string&, auto) { return path_utf8(alias); };
+    EXPECT_NE(openswmm::inp_writer::writeInpFile(ctx, path_utf8(model), nullptr, opts), 0);
+    EXPECT_EQ(read(model), "original model\n");
+    EXPECT_EQ(read(targetConfig), "previous destination\n");
+}
+#ifndef _WIN32
+TEST_F(InpWriterComponent, StagedShortWritePreservesAllFinalOutputs) {
+    component(true); attachMesh(); ctx.title_notes.front() = "large config";
+    openswmm::inp_writer::InpWriteOptions opts;
+    opts.map_output = [&](const std::string&, auto kind) {
+        return path_utf8(dir / (std::to_string(static_cast<int>(kind)) + ".stage"));
+    };
+    ASSERT_TRUE(limited(32768, [&] {
+        return openswmm::inp_writer::writeInpFile(ctx, path_utf8(model), nullptr, opts) != 0
+            && read(model) == "original model\n"
+            && read(targetConfig) == "previous destination\n"
+            && read(meshFile) == "original mesh\n";
+    }));
+}
+#endif

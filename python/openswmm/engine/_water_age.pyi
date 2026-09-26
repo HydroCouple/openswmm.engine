@@ -40,7 +40,8 @@ class _WaterAgeOverrides:
 class WaterAge:
     def __init__(self, solver: Solver) -> None: ...
 
-    enabled: bool
+    @property
+    def enabled(self) -> bool: ...
     globals: _WaterAgeGlobals
     node_overrides: _WaterAgeOverrides
 

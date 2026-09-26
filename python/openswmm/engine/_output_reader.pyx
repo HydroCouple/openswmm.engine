@@ -75,6 +75,7 @@ cdef class OutputReader:
     :raises FileError: If the file cannot be opened.
     """
 
+    cdef object _lock
     cdef SWMM_Output _handle
     cdef object _node_ids       # cached list[str]
     cdef object _link_ids
@@ -82,9 +83,11 @@ cdef class OutputReader:
     cdef object _pollutant_ids
     cdef object _period_times   # cached np.ndarray[datetime64[s]]
 
-    def __init__(self, path):
+    def __init__(self, path, *, bint live=False):
+        from threading import RLock
+        self._lock = RLock()
         cdef bytes b = os.fspath(path).encode('utf-8')
-        self._handle = swmm_output_open(b)
+        self._handle = swmm_output_open_live(b) if live else swmm_output_open(b)
         if self._handle == NULL:
             from ._exceptions import FileError
             from ._enums import ErrorCode
@@ -100,8 +103,42 @@ cdef class OutputReader:
     # Lifecycle
     # ------------------------------------------------------------------
 
+    cdef void _check_access(self) except *:
+        if not self._lock.acquire(blocking=False):
+            from ._exceptions import LifecycleError
+            from ._enums import ErrorCode
+            raise LifecycleError(ErrorCode.LIFECYCLE, "OutputReader is in use by another thread")
+        self._lock.release()
+
+    cdef SWMM_Output _h(self) except NULL:
+        self._check_access()
+        if self._handle == NULL:
+            from ._exceptions import BadHandleError
+            from ._enums import ErrorCode
+            raise BadHandleError(ErrorCode.BADHANDLE, "OutputReader is closed")
+        return self._handle
+
+    @property
+    def is_live(self):
+        """Whether the reader is waiting for the writer's closing records."""
+        return bool(swmm_output_is_live(self._h()))
+
+    def refresh(self):
+        """Refresh completed periods and invalidate cached timestamps.
+
+        Once closing records appear this becomes an ordinary reader.
+        Returns the available period count. Does not modify the file.
+        """
+        cdef int periods = 0
+        cdef int rc = swmm_output_refresh(self._h(), &periods)
+        if rc:
+            raise RuntimeError("Unable to refresh output file")
+        self._period_times = None
+        return periods
+
     def close(self) -> None:
         """Close the binary output file and release its handle."""
+        self._check_access()
         if self._handle != NULL:
             swmm_output_close(self._handle)
             self._handle = NULL
@@ -124,24 +161,24 @@ cdef class OutputReader:
 
     @property
     def version(self) -> int:
-        return swmm_output_get_version(self._handle)
+        return swmm_output_get_version(self._h())
 
     @property
     def flow_units(self):
-        return FlowUnits(swmm_output_get_flow_units(self._handle))
+        return FlowUnits(swmm_output_get_flow_units(self._h()))
 
     @property
     def period_count(self) -> int:
-        return swmm_output_get_period_count(self._handle)
+        return swmm_output_get_period_count(self._h())
 
     @property
     def report_step(self) -> timedelta:
-        return timedelta(seconds=swmm_output_get_report_step(self._handle))
+        return timedelta(seconds=swmm_output_get_report_step(self._h()))
 
     @property
     def start_datetime(self) -> datetime:
         cdef double v = 0.0
-        cdef int rc = swmm_output_get_start_date(self._handle, &v)
+        cdef int rc = swmm_output_get_start_date(self._h(), &v)
         if rc != 0:
             from ._exceptions import raise_for_code
             raise_for_code(rc)
@@ -149,24 +186,24 @@ cdef class OutputReader:
 
     @property
     def pollutant_count(self) -> int:
-        return swmm_output_get_pollut_count(self._handle)
+        return swmm_output_get_pollut_count(self._h())
 
     @property
     def node_count(self) -> int:
-        return swmm_output_get_node_count(self._handle)
+        return swmm_output_get_node_count(self._h())
 
     @property
     def link_count(self) -> int:
-        return swmm_output_get_link_count(self._handle)
+        return swmm_output_get_link_count(self._h())
 
     @property
     def subcatchment_count(self) -> int:
-        return swmm_output_get_subcatch_count(self._handle)
+        return swmm_output_get_subcatch_count(self._h())
 
     @property
     def error_code(self) -> int:
         """SWMM error code stored in the file footer (0 = clean run)."""
-        return swmm_output_get_error_code(self._handle)
+        return swmm_output_get_error_code(self._h())
 
     # ------------------------------------------------------------------
     # Object id arrays
@@ -174,18 +211,21 @@ cdef class OutputReader:
 
     @property
     def node_ids(self) -> List[str]:
+        self._h()
         if self._node_ids is None:
             self._node_ids = self._read_node_ids()
         return list(self._node_ids)
 
     @property
     def link_ids(self) -> List[str]:
+        self._h()
         if self._link_ids is None:
             self._link_ids = self._read_link_ids()
         return list(self._link_ids)
 
     @property
     def subcatchment_ids(self) -> List[str]:
+        self._h()
         if self._subcatch_ids is None:
             self._subcatch_ids = self._read_subcatch_ids()
         return list(self._subcatch_ids)
@@ -199,43 +239,44 @@ cdef class OutputReader:
         so the water-age column (``__WATER_AGE__``, reported in HOURS) reuses
         a concentration code. Key on the name, not on the unit code.
         """
+        self._h()
         if self._pollutant_ids is None:
             self._pollutant_ids = self._read_pollutant_ids()
         return list(self._pollutant_ids)
 
     cdef list _read_node_ids(self):
-        cdef int n = swmm_output_get_node_count(self._handle)
+        cdef int n = swmm_output_get_node_count(self._h())
         cdef const char* raw
         out = []
         for i in range(n):
-            raw = swmm_output_get_node_id(self._handle, i)
+            raw = swmm_output_get_node_id(self._h(), i)
             out.append(raw.decode('utf-8') if raw != NULL else "")
         return out
 
     cdef list _read_link_ids(self):
-        cdef int n = swmm_output_get_link_count(self._handle)
+        cdef int n = swmm_output_get_link_count(self._h())
         cdef const char* raw
         out = []
         for i in range(n):
-            raw = swmm_output_get_link_id(self._handle, i)
+            raw = swmm_output_get_link_id(self._h(), i)
             out.append(raw.decode('utf-8') if raw != NULL else "")
         return out
 
     cdef list _read_subcatch_ids(self):
-        cdef int n = swmm_output_get_subcatch_count(self._handle)
+        cdef int n = swmm_output_get_subcatch_count(self._h())
         cdef const char* raw
         out = []
         for i in range(n):
-            raw = swmm_output_get_subcatch_id(self._handle, i)
+            raw = swmm_output_get_subcatch_id(self._h(), i)
             out.append(raw.decode('utf-8') if raw != NULL else "")
         return out
 
     cdef list _read_pollutant_ids(self):
-        cdef int n = swmm_output_get_pollut_count(self._handle)
+        cdef int n = swmm_output_get_pollut_count(self._h())
         cdef const char* raw
         out = []
         for i in range(n):
-            raw = swmm_output_get_pollut_id(self._handle, i)
+            raw = swmm_output_get_pollut_id(self._h(), i)
             out.append(raw.decode('utf-8') if raw != NULL else "")
         return out
 
@@ -251,12 +292,12 @@ cdef class OutputReader:
         """
         if self._period_times is not None:
             return self._period_times
-        cdef int n = swmm_output_get_period_count(self._handle)
+        cdef int n = swmm_output_get_period_count(self._h())
         cdef double t = 0.0
         cdef int rc
         py_dts = np.empty(n, dtype='datetime64[s]')
         for i in range(n):
-            rc = swmm_output_get_period_time(self._handle, i, &t)
+            rc = swmm_output_get_period_time(self._h(), i, &t)
             if rc != 0:
                 from ._exceptions import raise_for_code
                 raise_for_code(rc)
@@ -284,11 +325,11 @@ cdef class OutputReader:
             raise TypeError(f"{kind} key must be int or str, got bool")
         if isinstance(key, int):
             if kind == "node":
-                count = swmm_output_get_node_count(self._handle)
+                count = swmm_output_get_node_count(self._h())
             elif kind == "link":
-                count = swmm_output_get_link_count(self._handle)
+                count = swmm_output_get_link_count(self._h())
             else:
-                count = swmm_output_get_subcatch_count(self._handle)
+                count = swmm_output_get_subcatch_count(self._h())
             if not 0 <= key < count:
                 raise IndexError(f"{kind} index {key} out of range [0, {count})")
             return key
@@ -304,10 +345,10 @@ cdef class OutputReader:
     def node_result(self, int period, var) -> np.ndarray:
         """All nodes' value of ``var`` at ``period``."""
         cdef int v = int(var)
-        cdef int n = swmm_output_get_node_count(self._handle)
+        cdef int n = swmm_output_get_node_count(self._h())
         cdef np.ndarray[float, ndim=1] buf = np.empty(n, dtype=np.float32)
         cdef int rc = swmm_output_get_node_result(
-            self._handle, period, v, <float*>buf.data)
+            self._h(), period, v, <float*>buf.data)
         if rc != 0:
             from ._exceptions import raise_for_code
             raise_for_code(rc)
@@ -316,10 +357,10 @@ cdef class OutputReader:
     def link_result(self, int period, var) -> np.ndarray:
         """Return an array of *var* values for every link at output *period*."""
         cdef int v = int(var)
-        cdef int n = swmm_output_get_link_count(self._handle)
+        cdef int n = swmm_output_get_link_count(self._h())
         cdef np.ndarray[float, ndim=1] buf = np.empty(n, dtype=np.float32)
         cdef int rc = swmm_output_get_link_result(
-            self._handle, period, v, <float*>buf.data)
+            self._h(), period, v, <float*>buf.data)
         if rc != 0:
             from ._exceptions import raise_for_code
             raise_for_code(rc)
@@ -328,10 +369,10 @@ cdef class OutputReader:
     def subcatchment_result(self, int period, var) -> np.ndarray:
         """Return an array of *var* values for every subcatchment at output *period*."""
         cdef int v = int(var)
-        cdef int n = swmm_output_get_subcatch_count(self._handle)
+        cdef int n = swmm_output_get_subcatch_count(self._h())
         cdef np.ndarray[float, ndim=1] buf = np.empty(n, dtype=np.float32)
         cdef int rc = swmm_output_get_subcatch_result(
-            self._handle, period, v, <float*>buf.data)
+            self._h(), period, v, <float*>buf.data)
         if rc != 0:
             from ._exceptions import raise_for_code
             raise_for_code(rc)
@@ -342,7 +383,7 @@ cdef class OutputReader:
         cdef int v = int(var)
         cdef float value = 0.0
         cdef int rc = swmm_output_get_system_result(
-            self._handle, period, v, &value)
+            self._h(), period, v, &value)
         if rc != 0:
             from ._exceptions import raise_for_code
             raise_for_code(rc)
@@ -366,16 +407,17 @@ cdef class OutputReader:
         """Return the time series of *var* for *node* over the reporting window."""
         cdef int idx = self._resolve(node, "node")
         cdef int v = int(var)
-        cdef int period_count = swmm_output_get_period_count(self._handle)
+        cdef int period_count = swmm_output_get_period_count(self._h())
         cdef int s, e
         s, e = self._series_range(period_count, start, end)
         cdef int n = e - s + 1
         cdef np.ndarray[float, ndim=1] buf = np.empty(n, dtype=np.float32)
-        cdef SWMM_Output h = self._handle
+        cdef SWMM_Output h = self._h()
         cdef float* p = <float*>buf.data
         cdef int rc
-        with nogil:
-            rc = swmm_output_get_node_series(h, idx, v, s, e, p)
+        with self._lock:
+            with nogil:
+                rc = swmm_output_get_node_series(h, idx, v, s, e, p)
         if rc != 0:
             from ._exceptions import raise_for_code
             raise_for_code(rc)
@@ -385,16 +427,17 @@ cdef class OutputReader:
         """Return the time series of *var* for *link* over the reporting window."""
         cdef int idx = self._resolve(link, "link")
         cdef int v = int(var)
-        cdef int period_count = swmm_output_get_period_count(self._handle)
+        cdef int period_count = swmm_output_get_period_count(self._h())
         cdef int s, e
         s, e = self._series_range(period_count, start, end)
         cdef int n = e - s + 1
         cdef np.ndarray[float, ndim=1] buf = np.empty(n, dtype=np.float32)
-        cdef SWMM_Output h = self._handle
+        cdef SWMM_Output h = self._h()
         cdef float* p = <float*>buf.data
         cdef int rc
-        with nogil:
-            rc = swmm_output_get_link_series(h, idx, v, s, e, p)
+        with self._lock:
+            with nogil:
+                rc = swmm_output_get_link_series(h, idx, v, s, e, p)
         if rc != 0:
             from ._exceptions import raise_for_code
             raise_for_code(rc)
@@ -404,16 +447,17 @@ cdef class OutputReader:
         """Return the time series of *var* for *sub* over the reporting window."""
         cdef int idx = self._resolve(sub, "subcatchment")
         cdef int v = int(var)
-        cdef int period_count = swmm_output_get_period_count(self._handle)
+        cdef int period_count = swmm_output_get_period_count(self._h())
         cdef int s, e
         s, e = self._series_range(period_count, start, end)
         cdef int n = e - s + 1
         cdef np.ndarray[float, ndim=1] buf = np.empty(n, dtype=np.float32)
-        cdef SWMM_Output h = self._handle
+        cdef SWMM_Output h = self._h()
         cdef float* p = <float*>buf.data
         cdef int rc
-        with nogil:
-            rc = swmm_output_get_subcatch_series(h, idx, v, s, e, p)
+        with self._lock:
+            with nogil:
+                rc = swmm_output_get_subcatch_series(h, idx, v, s, e, p)
         if rc != 0:
             from ._exceptions import raise_for_code
             raise_for_code(rc)
@@ -422,16 +466,17 @@ cdef class OutputReader:
     def system_series(self, var, *, start=None, end=None) -> np.ndarray:
         """Return the system-wide time series of *var* over the reporting window."""
         cdef int v = int(var)
-        cdef int period_count = swmm_output_get_period_count(self._handle)
+        cdef int period_count = swmm_output_get_period_count(self._h())
         cdef int s, e
         s, e = self._series_range(period_count, start, end)
         cdef int n = e - s + 1
         cdef np.ndarray[float, ndim=1] buf = np.empty(n, dtype=np.float32)
-        cdef SWMM_Output h = self._handle
+        cdef SWMM_Output h = self._h()
         cdef float* p = <float*>buf.data
         cdef int rc
-        with nogil:
-            rc = swmm_output_get_system_series(h, v, s, e, p)
+        with self._lock:
+            with nogil:
+                rc = swmm_output_get_system_series(h, v, s, e, p)
         if rc != 0:
             from ._exceptions import raise_for_code
             raise_for_code(rc)
@@ -448,7 +493,7 @@ cdef class OutputReader:
         cdef int budget = max(32, int(OutNodeVar.POLLUT_BASE) + self.pollutant_count)
         cdef np.ndarray[float, ndim=1] buf = np.empty(budget, dtype=np.float32)
         cdef int rc = swmm_output_get_node_attribute(
-            self._handle, idx, period, <float*>buf.data, &n_attrs)
+            self._h(), idx, period, <float*>buf.data, &n_attrs)
         if rc != 0:
             from ._exceptions import raise_for_code
             raise_for_code(rc)
@@ -461,7 +506,7 @@ cdef class OutputReader:
         cdef int budget = max(32, int(OutLinkVar.POLLUT_BASE) + self.pollutant_count)
         cdef np.ndarray[float, ndim=1] buf = np.empty(budget, dtype=np.float32)
         cdef int rc = swmm_output_get_link_attribute(
-            self._handle, idx, period, <float*>buf.data, &n_attrs)
+            self._h(), idx, period, <float*>buf.data, &n_attrs)
         if rc != 0:
             from ._exceptions import raise_for_code
             raise_for_code(rc)
@@ -474,7 +519,7 @@ cdef class OutputReader:
         cdef int budget = max(32, int(OutSubcatchVar.POLLUT_BASE) + self.pollutant_count)
         cdef np.ndarray[float, ndim=1] buf = np.empty(budget, dtype=np.float32)
         cdef int rc = swmm_output_get_subcatch_attribute(
-            self._handle, idx, period, <float*>buf.data, &n_attrs)
+            self._h(), idx, period, <float*>buf.data, &n_attrs)
         if rc != 0:
             from ._exceptions import raise_for_code
             raise_for_code(rc)
@@ -578,3 +623,8 @@ cdef class _OutputNodeStats:
 
     def __repr__(self) -> str:
         return f"<_OutputNodeStats index={self._index}>"
+
+cdef extern from "openswmm/engine/openswmm_output.h":
+    SWMM_Output swmm_output_open_live(const char*)
+    int swmm_output_refresh(SWMM_Output, int*)
+    int swmm_output_is_live(SWMM_Output)

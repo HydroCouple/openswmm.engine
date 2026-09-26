@@ -45,7 +45,9 @@ editable lifecycle states — ``BUILDING`` and ``OPENED``. Editing later raises
 
     from openswmm.engine import Solver, InitialQuality
 
-    with Solver("model.inp") as s:
+    s = Solver("model.inp")
+    try:
+        s.open()
         s.initial_quality.set("TSS", 25.0, node="J1")
         s.initial_quality.set("TSS", 12.0, link="C1")
         s.initial_quality.set(InitialQuality.WATER_AGE, -3.0, node="J1")
@@ -53,6 +55,9 @@ editable lifecycle states — ``BUILDING`` and ``OPENED``. Editing later raises
         for row in s.initial_quality:
             print(row.is_link, row.elem_index, row.constituent, row.value)
         s.initial_quality.remove(0)     # later rows shift down by one
+    finally:
+        s.close()
+        s.destroy()
 """
 
 # cython: language_level=3
@@ -104,6 +109,31 @@ class InitialQuality:
     #: Reserved constituent name for temperature. Its value is in degC and may
     #: be negative.
     TEMPERATURE = "__TEMPERATURE__"
+
+    @property
+    def file_path(self):
+        """Authored sidecar path; empty when unset. Loaded on the next open."""
+        cdef bytearray buffer = bytearray(256)
+        while True:
+            _check(swmm_init_quality_file_get(_h(self._solver), buffer, len(buffer)))
+            value = bytes(buffer).split(b'\0', 1)[0]
+            if len(value) < len(buffer) - 1:
+                return value.decode('utf-8')
+            buffer = bytearray(len(buffer) * 2)
+
+    @file_path.setter
+    def file_path(self, path):
+        import os
+        cdef bytes value = os.fsencode(path) if path is not None else b''
+        _check(swmm_init_quality_file_set(_h(self._solver), value))
+
+    def is_file(self, int row_index):
+        """Whether a row came from the sidecar; accepts negative indices."""
+        cdef int count = len(self)
+        cdef int index = row_index + count if row_index < 0 else row_index
+        if index < 0 or index >= count:
+            raise IndexError(row_index)
+        return bool(swmm_init_quality_is_file(_h(self._solver), index))
 
     def __init__(self, solver):
         self._solver = solver
@@ -216,3 +246,9 @@ class InitialQuality:
             return f"<InitialQuality n={len(self)}>"
         except Exception:
             return "<InitialQuality (engine closed)>"
+
+
+cdef extern from "openswmm/engine/openswmm_initial_quality.h":
+    int swmm_init_quality_file_get(SWMM_Engine, char*, int)
+    int swmm_init_quality_file_set(SWMM_Engine, const char*)
+    int swmm_init_quality_is_file(SWMM_Engine, int)

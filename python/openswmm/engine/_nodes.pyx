@@ -909,8 +909,9 @@ cdef class Nodes:
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef double* p = <double*>buf.data
         cdef int err
-        with nogil:
-            err = swmm_node_get_depths_bulk(h, p, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_node_get_depths_bulk(h, p, n)
         _check(err)
         return buf
 
@@ -924,8 +925,9 @@ cdef class Nodes:
                 f"depths array length {arr.shape[0]} != node count {n}")
         cdef const double* p = <const double*>arr.data
         cdef int err
-        with nogil:
-            err = swmm_node_set_depths_bulk(h, p, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_node_set_depths_bulk(h, p, n)
         _check(err)
 
     @property
@@ -934,8 +936,9 @@ cdef class Nodes:
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_node_get_heads_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_node_get_heads_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -945,8 +948,9 @@ cdef class Nodes:
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_node_get_inflows_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_node_get_inflows_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -956,8 +960,9 @@ cdef class Nodes:
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_node_get_overflows_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_node_get_overflows_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -967,8 +972,9 @@ cdef class Nodes:
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_node_get_volumes_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_node_get_volumes_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -978,8 +984,9 @@ cdef class Nodes:
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_node_get_outflows_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_node_get_outflows_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -989,8 +996,9 @@ cdef class Nodes:
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_node_get_losses_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_node_get_losses_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1000,8 +1008,9 @@ cdef class Nodes:
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_node_get_lateral_inflows_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_node_get_lateral_inflows_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1017,8 +1026,9 @@ cdef class Nodes:
                 f"lateral_inflows array length {arr.shape[0]} != node count {n}")
         cdef const double* p = <const double*>arr.data
         cdef int err
-        with nogil:
-            err = swmm_node_set_lat_inflows_bulk(h, p, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_node_set_lat_inflows_bulk(h, p, n)
         _check(err)
 
     def qualities(self, pollutant):
@@ -1028,8 +1038,9 @@ cdef class Nodes:
         cdef int p_idx = _resolve_pollutant(self._solver, pollutant)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_node_get_quality_bulk(h, p_idx, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_node_get_quality_bulk(h, p_idx, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1044,8 +1055,9 @@ cdef class Nodes:
         cdef np.ndarray[char, ndim=1, mode="c"] buf = np.zeros(
             n * stride, dtype=np.int8)
         cdef int err
-        with nogil:
-            err = swmm_node_get_ids_bulk(h, <char*>buf.data, stride, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_node_get_ids_bulk(h, <char*>buf.data, stride, n)
         _check(err)
         raw = bytes(buf)
         out = []

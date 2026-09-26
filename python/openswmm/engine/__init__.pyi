@@ -214,3 +214,21 @@ from ._enums import (
 HAS_GEOPACKAGE: bool
 
 __all__: list[str]
+
+# Native climate, transport, writer and unit-system selectors.
+from ._enums import (
+    EvapType as EvapType, TempSource as TempSource, WindType as WindType, HumidityType as HumidityType, HumidityVar as HumidityVar, HeatElemKind as HeatElemKind, InpProfile as InpProfile, TransportDispersionMode as TransportDispersionMode, UnitSystem as UnitSystem
+)
+
+from ._transport import (Transport as Transport, ThreadInfo as ThreadInfo, EffectiveThreads as EffectiveThreads, TransportCell as TransportCell, TransportRow as TransportRow, ConduitDispersion as ConduitDispersion, transport_domain_name as transport_domain_name, transport_class_name as transport_class_name)
+from ._enums import (TransportDomain as TransportDomain, TransportClass as TransportClass, TransportState as TransportState)
+
+from ._process_components import KnownProcessComponent as KnownProcessComponent
+
+from ._enums import (CellScope as CellScope, GroundwaterSoil as GroundwaterSoil, GroundwaterClosure as GroundwaterClosure, GroundwaterVariable as GroundwaterVariable, GroundwaterLedger as GroundwaterLedger, GroundwaterZone as GroundwaterZone, GroundwaterSpeciesLedger as GroundwaterSpeciesLedger)
+from ._groundwater import Groundwater as Groundwater, AquiferRow as AquiferRow, AquiferNode as AquiferNode
+
+from ._enums import GroundwaterTransportZone as GroundwaterTransportZone
+from ._gw_transport import (GroundwaterTransport as GroundwaterTransport, GroundwaterParameters as GroundwaterParameters, GroundwaterSorption as GroundwaterSorption, GroundwaterInitialQuality as GroundwaterInitialQuality, GroundwaterBoundary as GroundwaterBoundary, GroundwaterSource as GroundwaterSource, GroundwaterSourceTerm as GroundwaterSourceTerm)
+
+from ._surface_quality import (SurfaceQuality as SurfaceQuality, SurfaceCoverage as SurfaceCoverage, SurfaceLoading as SurfaceLoading, SurfaceCurbLength as SurfaceCurbLength)

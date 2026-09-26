@@ -151,6 +151,8 @@ cdef void _warning_trampoline(SWMM_Engine engine, int code, const char* msg,
 # Solver
 # =============================================================================
 
+from ._access import NativeAccess, Callback, register_owner
+
 cdef class Solver:
     """SWMM engine lifecycle and entry point to every domain accessor.
 
@@ -186,6 +188,7 @@ cdef class Solver:
                  out=None,
                  *,
                  plugin_lib: Optional[Union[str, "os.PathLike"]] = None):
+        self._access = NativeAccess()
         self._inp = _path_to_str(inp)
         self._rpt = _path_to_str(rpt)
         self._out = _path_to_str(out)
@@ -245,6 +248,7 @@ cdef class Solver:
     def create(self) -> None:
         """Allocate the engine handle. Usually called implicitly by
         :meth:`open` or the context manager."""
+        self._access.require_idle()
         if self._handle != NULL:
             return
         self._handle = swmm_engine_create()
@@ -268,7 +272,7 @@ cdef class Solver:
         """
         if self._handle == NULL:
             self.create()
-        swmm_engine_set_lenient_open(self._handle, 1 if on else 0)
+        swmm_engine_set_lenient_open(<SWMM_Engine><size_t>self.handle, 1 if on else 0)
 
     def open(self,
              plugin_lib: Optional[Union[str, "os.PathLike"]] = None) -> None:
@@ -278,6 +282,7 @@ cdef class Solver:
             :meth:`__init__`. Pass ``None`` to use the constructor value.
         :raises EngineError: On C API failure (specific subclass per code).
         """
+        self._access.require_idle()
         if self._handle == NULL:
             self.create()
         cdef bytes b_inp = self._inp.encode('utf-8')
@@ -291,11 +296,20 @@ cdef class Solver:
         if resolved_plugin:
             b_plugin = resolved_plugin.encode('utf-8')
             c_plugin = b_plugin
-        _check(swmm_engine_open(self._handle, b_inp, b_rpt, b_out, c_plugin))
+        with self._operation():
+            rc = swmm_engine_open(<SWMM_Engine><size_t>self.handle, b_inp, b_rpt, b_out, c_plugin)
+        self._generation += 1
+        self._surface2d = None
+        self._access.raise_callback_error()
+        _check(rc)
 
     def initialize(self) -> None:
         """Initialize the simulation; transition to ``INITIALIZED``."""
-        _check(swmm_engine_initialize(self._handle))
+        self._access.require_idle()
+        with self._operation():
+            rc = swmm_engine_initialize(<SWMM_Engine><size_t>self.handle)
+        self._access.raise_callback_error()
+        _check(rc)
 
     def start(self, bint save_results=True) -> None:
         """Start the simulation; transition to ``STARTED``.
@@ -303,7 +317,11 @@ cdef class Solver:
         :param save_results: If ``True``, write binary output to the
             ``.out`` file. When ``False`` the file is not produced.
         """
-        _check(swmm_engine_start(self._handle, 1 if save_results else 0))
+        self._access.require_idle()
+        with self._operation():
+            rc = swmm_engine_start(<SWMM_Engine><size_t>self.handle, 1 if save_results else 0)
+        self._access.raise_callback_error()
+        _check(rc)
 
     def step(self) -> timedelta:
         """Advance one routing step.
@@ -313,13 +331,16 @@ cdef class Solver:
             has ended — callers should break out of their loop.
         :raises EngineError: On any non-zero C API return.
         """
+        self._access.require_idle()
         cdef double elapsed = 0.0
-        cdef SWMM_Engine h = self._handle
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self.handle
         cdef int rc
-        with nogil:
-            rc = swmm_engine_step(h, &elapsed)
-        _check(rc)
+        with self._operation(<size_t>h):
+            with nogil:
+                rc = swmm_engine_step(h, &elapsed)
         self._elapsed = elapsed
+        self._access.raise_callback_error()
+        _check(rc)
         return _days_to_td(elapsed)
 
     def stride(self, int n_steps) -> timedelta:
@@ -329,34 +350,54 @@ cdef class Solver:
             :class:`timedelta`. ``timedelta(0)`` once the simulation has
             ended.
         """
+        self._access.require_idle()
         cdef double elapsed = 0.0
-        cdef SWMM_Engine h = self._handle
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self.handle
         cdef int rc
-        with nogil:
-            rc = swmm_engine_stride(h, n_steps, &elapsed)
-        _check(rc)
+        with self._operation(<size_t>h):
+            with nogil:
+                rc = swmm_engine_stride(h, n_steps, &elapsed)
         self._elapsed = elapsed
+        self._access.raise_callback_error()
+        _check(rc)
         return _days_to_td(elapsed)
 
     def end(self) -> None:
         """End the simulation; transition to ``ENDED``."""
-        _check(swmm_engine_end(self._handle))
+        self._access.require_idle()
+        with self._operation():
+            rc = swmm_engine_end(<SWMM_Engine><size_t>self.handle)
+        self._access.raise_callback_error()
+        _check(rc)
 
     def report(self) -> None:
         """Write the summary report to the ``.rpt`` file."""
-        _check(swmm_engine_report(self._handle))
+        self._access.require_idle()
+        with self._operation():
+            rc = swmm_engine_report(<SWMM_Engine><size_t>self.handle)
+        self._access.raise_callback_error()
+        _check(rc)
 
     def close(self) -> None:
         """Close all files; transition to ``CLOSED``. Idempotent."""
+        self._access.require_idle()
         if self._handle == NULL:
             return
-        _check(swmm_engine_close(self._handle))
+        with self._operation():
+            rc = swmm_engine_close(<SWMM_Engine><size_t>self.handle)
+        self._access.raise_callback_error()
+        _check(rc)
+        self._generation += 1
+        self._surface2d = None
 
     def destroy(self) -> None:
         """Destroy the engine handle. Idempotent."""
+        self._access.require_idle()
         if self._handle != NULL:
-            swmm_engine_destroy(self._handle)
+            swmm_engine_destroy(<SWMM_Engine><size_t>self.handle)
             self._handle = NULL
+            self._generation += 1
+            self._surface2d = None
 
     # ------------------------------------------------------------------
     # Iteration helpers
@@ -379,17 +420,11 @@ cdef class Solver:
 
         :raises EngineError: Propagated from :meth:`step`.
         """
-        cdef double elapsed = 0.0
-        cdef SWMM_Engine h = self._handle
-        cdef int rc
         while True:
-            with nogil:
-                rc = swmm_engine_step(h, &elapsed)
-            _check(rc)
-            self._elapsed = elapsed
-            if elapsed <= 0.0:
+            elapsed = self.step()
+            if not elapsed:
                 return
-            yield _days_to_td(elapsed)
+            yield elapsed
 
     def until(self, target) -> timedelta:
         """Stride forward until the engine reaches ``target``.
@@ -429,19 +464,10 @@ cdef class Solver:
         if target_days <= self._elapsed:
             return _days_to_td(self._elapsed)
 
-        cdef double elapsed = self._elapsed
-        cdef SWMM_Engine h = self._handle
-        cdef int rc
-        while elapsed > 0.0 or self._elapsed == 0.0:
-            with nogil:
-                rc = swmm_engine_step(h, &elapsed)
-            _check(rc)
-            self._elapsed = elapsed
-            if elapsed <= 0.0:                        # simulation ended
-                break
-            if elapsed >= target_days:                # reached the target
-                break
-        return _days_to_td(self._elapsed)
+        while True:
+            elapsed = self.step()
+            if not elapsed or self._elapsed >= target_days:
+                return elapsed
 
     # ------------------------------------------------------------------
     # Convenience: run-to-completion
@@ -491,7 +517,7 @@ cdef class Solver:
     def state(self) -> EngineState:
         """Current lifecycle state as an :class:`EngineState` enum."""
         cdef int s = 0
-        _check(swmm_engine_get_state(self._handle, &s))
+        _check(swmm_engine_get_state(<SWMM_Engine><size_t>self.handle, &s))
         return EngineState(s)
 
     @property
@@ -501,7 +527,8 @@ cdef class Solver:
         Provided for advanced interop (e.g. passing the handle to other
         Cython modules). The Python-level surface should never need it.
         """
-        return <size_t>self._handle
+        self._access.check()
+        return register_owner(self, <size_t>self._handle)
 
     @property
     def open_errors(self) -> list:
@@ -513,12 +540,12 @@ cdef class Solver:
 
         :rtype: list[str]
         """
-        cdef int n = swmm_get_error_count(self._handle)
+        cdef int n = swmm_get_error_count(<SWMM_Engine><size_t>self.handle)
         cdef int i
         cdef const char* msg
         cdef list out = []
         for i in range(n):
-            msg = swmm_get_error_at(self._handle, i)
+            msg = swmm_get_error_at(<SWMM_Engine><size_t>self.handle, i)
             out.append(msg.decode('utf-8') if msg != NULL else "")
         return out
 
@@ -530,12 +557,12 @@ cdef class Solver:
 
         :rtype: list[str]
         """
-        cdef int n = swmm_get_warning_count(self._handle)
+        cdef int n = swmm_get_warning_count(<SWMM_Engine><size_t>self.handle)
         cdef int i
         cdef const char* msg
         cdef list out = []
         for i in range(n):
-            msg = swmm_get_warning_at(self._handle, i)
+            msg = swmm_get_warning_at(<SWMM_Engine><size_t>self.handle, i)
             out.append(msg.decode('utf-8') if msg != NULL else "")
         return out
 
@@ -545,6 +572,10 @@ cdef class Solver:
         delete / rename). Wrapper objects in P2+ use this to detect
         staleness."""
         return int(self._generation)
+
+    def _operation(self, expected=0):
+        """Internal nonblocking guard for native calls that release the GIL."""
+        return self._access.operation(self, expected)
 
     def _bump_generation(self) -> None:
         """Increment the staleness counter. Called by collection-level
@@ -557,7 +588,7 @@ cdef class Solver:
     def routing_step(self) -> timedelta:
         """Routing timestep as a :class:`timedelta`."""
         cdef double v = 0.0
-        _check(swmm_get_routing_step(self._handle, &v))
+        _check(swmm_get_routing_step(<SWMM_Engine><size_t>self.handle, &v))
         return timedelta(seconds=v)
 
     # ------------------------------------------------------------------
@@ -568,34 +599,34 @@ cdef class Solver:
     def start_datetime(self) -> datetime:
         """Simulation start :class:`datetime.datetime`."""
         cdef double v = 0.0
-        _check(swmm_options_get_start_date(self._handle, &v))
+        _check(swmm_options_get_start_date(<SWMM_Engine><size_t>self.handle, &v))
         return oadate_to_datetime(v)
 
     @start_datetime.setter
     def start_datetime(self, value: datetime) -> None:
-        _check(swmm_options_set_start_date(self._handle, datetime_to_oadate(value)))
+        _check(swmm_options_set_start_date(<SWMM_Engine><size_t>self.handle, datetime_to_oadate(value)))
 
     @property
     def end_datetime(self) -> datetime:
         """Simulation end :class:`datetime.datetime`."""
         cdef double v = 0.0
-        _check(swmm_options_get_end_date(self._handle, &v))
+        _check(swmm_options_get_end_date(<SWMM_Engine><size_t>self.handle, &v))
         return oadate_to_datetime(v)
 
     @end_datetime.setter
     def end_datetime(self, value: datetime) -> None:
-        _check(swmm_options_set_end_date(self._handle, datetime_to_oadate(value)))
+        _check(swmm_options_set_end_date(<SWMM_Engine><size_t>self.handle, datetime_to_oadate(value)))
 
     @property
     def report_start_datetime(self) -> datetime:
         """Report start :class:`datetime.datetime`."""
         cdef double v = 0.0
-        _check(swmm_options_get_report_start(self._handle, &v))
+        _check(swmm_options_get_report_start(<SWMM_Engine><size_t>self.handle, &v))
         return oadate_to_datetime(v)
 
     @report_start_datetime.setter
     def report_start_datetime(self, value: datetime) -> None:
-        _check(swmm_options_set_report_start(self._handle, datetime_to_oadate(value)))
+        _check(swmm_options_set_report_start(<SWMM_Engine><size_t>self.handle, datetime_to_oadate(value)))
 
     @property
     def current_datetime(self) -> datetime:
@@ -620,7 +651,7 @@ cdef class Solver:
         :attr:`start_datetime` option.
         """
         cdef double v = 0.0
-        _check(swmm_get_start_time(self._handle, &v))
+        _check(swmm_get_start_time(<SWMM_Engine><size_t>self.handle, &v))
         return oadate_to_datetime(v)
 
     @property
@@ -631,7 +662,7 @@ cdef class Solver:
         ``swmm_get_end_time``).
         """
         cdef double v = 0.0
-        _check(swmm_get_end_time(self._handle, &v))
+        _check(swmm_get_end_time(<SWMM_Engine><size_t>self.handle, &v))
         return oadate_to_datetime(v)
 
     @property
@@ -641,7 +672,7 @@ cdef class Solver:
         @rtype: int
         """
         cdef int v = 0
-        _check(swmm_get_event_count(self._handle, &v))
+        _check(swmm_get_event_count(<SWMM_Engine><size_t>self.handle, &v))
         return v
 
     # ------------------------------------------------------------------
@@ -652,7 +683,7 @@ cdef class Solver:
     def crs(self) -> str:
         """Coordinate reference system string from ``[OPTIONS]``."""
         cdef char buf[256]
-        _check(swmm_get_crs(self._handle, buf, 256))
+        _check(swmm_get_crs(<SWMM_Engine><size_t>self.handle, buf, 256))
         return buf.decode('utf-8')
 
     # ------------------------------------------------------------------
@@ -662,29 +693,69 @@ cdef class Solver:
     @property
     def steady_state_skip(self) -> bool:
         cdef int v = 0
-        _check(swmm_get_steady_state_skip(self._handle, &v))
+        _check(swmm_get_steady_state_skip(<SWMM_Engine><size_t>self.handle, &v))
         return v != 0
 
     @steady_state_skip.setter
     def steady_state_skip(self, value: bool) -> None:
-        _check(swmm_set_steady_state_skip(self._handle, 1 if value else 0))
+        _check(swmm_set_steady_state_skip(<SWMM_Engine><size_t>self.handle, 1 if value else 0))
 
     @property
     def is_between_events(self) -> bool:
         """``True`` when the current routing time falls outside any
         ``[EVENTS]`` window (i.e. routing is being skipped)."""
         cdef int v = 0
-        _check(swmm_is_between_events(self._handle, &v))
+        _check(swmm_is_between_events(<SWMM_Engine><size_t>self.handle, &v))
         return v != 0
 
     # ------------------------------------------------------------------
     # Model write
     # ------------------------------------------------------------------
 
+    def write_staged(self, final_path, mapper):
+        """Serialize each physical output to mapper(final_path, kind).
+
+        kind is 0=model, 1=mesh, 2=component configuration. The mapper returns
+        a distinct staging path or None to refuse. References use final paths.
+        The caller owns validation, publication and cleanup, including failure.
+        Engine access inside the mapper is forbidden; exceptions are re-raised.
+        """
+        from ._access import StageMapper
+        from os import fspath
+        state = StageMapper(self._access, mapper)
+        cdef bytes path = fspath(final_path).encode('utf-8')
+        cdef int rc
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self.handle
+        with self._operation():
+            rc = swmm_model_write_staged(h, path, _stage_mapper, <void*>state)
+        if state.error is not None:
+            raise state.error
+        self._access.raise_callback_error()
+        _check(rc)
+
+    def write_compat(self, path, profile):
+        """Write FULL, OpenSWMM legacy, or stock EPA SWMM 5 input.
+
+        Conversion warnings appear in ``open_warnings``. The live model is not
+        changed. Compatibility profiles may omit unsupported model features.
+        """
+        from ._enums import InpProfile
+        self._access.require_idle()
+        cdef bytes destination = _path_to_str(path).encode('utf-8')
+        cdef int selected = int(InpProfile(profile))
+        with self._operation():
+            result = swmm_model_write_compat(self._handle, destination, selected)
+        self._access.raise_callback_error()
+        _check(result)
+
     def write(self, path) -> None:
         """Write the current model to a SWMM ``.inp`` file."""
         cdef bytes b = _path_to_str(path).encode('utf-8')
-        _check(swmm_model_write(self._handle, b))
+        self._access.require_idle()
+        with self._operation():
+            result = swmm_model_write(self._handle, b)
+        self._access.raise_callback_error()
+        _check(result)
 
     def write_with_plugin(self, path, str output_plugin_id="") -> None:
         """Write the current model using an output plugin.
@@ -699,7 +770,11 @@ cdef class Solver:
         """
         cdef bytes bp = _path_to_str(path).encode('utf-8')
         cdef bytes bid = output_plugin_id.encode('utf-8')
-        _check(swmm_model_write_with_plugin(self._handle, bp, bid))
+        self._access.require_idle()
+        with self._operation():
+            result = swmm_model_write_with_plugin(self._handle, bp, bid)
+        self._access.raise_callback_error()
+        _check(result)
 
     def write_geopackage(self, path, crs=None) -> None:
         """Write the model to an OGC GeoPackage (``.gpkg``).
@@ -753,7 +828,7 @@ cdef class Solver:
         @raise EngineError: On C API failure.
         """
         cdef int v = 0
-        _check(swmm_get_flow_units(self._handle, &v))
+        _check(swmm_get_flow_units(<SWMM_Engine><size_t>self.handle, &v))
         return FlowUnits(v)
 
     @property
@@ -770,7 +845,7 @@ cdef class Solver:
         @raise EngineError: On C API failure.
         """
         cdef int v = 0
-        _check(swmm_get_unit_system(self._handle, &v))
+        _check(swmm_get_unit_system(<SWMM_Engine><size_t>self.handle, &v))
         return "SI" if v == 1 else "US"
 
     @property
@@ -985,6 +1060,29 @@ cdef class Solver:
         return self._hotstart
 
     @property
+    def transport(self):
+        """ARD transport configuration and authored boundary/source rows."""
+        from ._transport import Transport
+        return Transport(self)
+
+    @property
+    def thread_info(self):
+        """Process-wide hardware and OpenMP limits."""
+        from ._transport import thread_info
+        return thread_info()
+
+    def effective_threads(self, requested=0):
+        """Thread team sizes for this model; zero requests automatic selection."""
+        from ._transport import effective_threads
+        return effective_threads(self, requested)
+
+    @property
+    def transport_matrix(self):
+        """Capability matrix keyed by domain and species class, with reasons."""
+        from ._transport import transport_matrix
+        return transport_matrix(self)
+
+    @property
     def surface2d(self):
         """``solver.surface2d`` — the :class:`Surface2D` overland-flow view.
 
@@ -998,9 +1096,9 @@ cdef class Solver:
         @raise ImportError: When the extension was built without 2D
             support.
         """
-        if self._surface2d is None:
+        if self._surface2d is None or not self._surface2d._is_current():
             from ._2d import Surface2D
-            self._surface2d = Surface2D(self.handle)
+            self._surface2d = Surface2D(self)
         return self._surface2d
 
     # ------------------------------------------------------------------
@@ -1010,21 +1108,23 @@ cdef class Solver:
     def open_runoff_interface_write(self, path) -> None:
         """Open the runoff interface file in SAVE mode."""
         cdef bytes b = _path_to_str(path).encode('utf-8')
-        cdef SWMM_Engine h = self._handle
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self.handle
         cdef const char* p = b
         cdef int err
-        with nogil:
-            err = swmm_runoff_iface_open_write(h, p)
+        with self._operation(<size_t>h):
+            with nogil:
+                err = swmm_runoff_iface_open_write(h, p)
         _check(err)
 
     def open_runoff_interface_read(self, path) -> None:
         """Open the runoff interface file in USE mode."""
         cdef bytes b = _path_to_str(path).encode('utf-8')
-        cdef SWMM_Engine h = self._handle
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self.handle
         cdef const char* p = b
         cdef int err
-        with nogil:
-            err = swmm_runoff_iface_open_read(h, p)
+        with self._operation(<size_t>h):
+            with nogil:
+                err = swmm_runoff_iface_open_read(h, p)
         _check(err)
 
     def save_runoff_step(self, dt) -> None:
@@ -1038,10 +1138,11 @@ cdef class Solver:
             dt_s = dt.total_seconds()
         else:
             dt_s = float(dt)
-        cdef SWMM_Engine h = self._handle
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self.handle
         cdef int err
-        with nogil:
-            err = swmm_runoff_iface_save_step(h, dt_s)
+        with self._operation(<size_t>h):
+            with nogil:
+                err = swmm_runoff_iface_save_step(h, dt_s)
         _check(err)
 
     def read_runoff_step(self) -> bool:
@@ -1049,20 +1150,22 @@ cdef class Solver:
 
         :returns: ``True`` when a record was read, ``False`` on EOF.
         """
-        cdef SWMM_Engine h = self._handle
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self.handle
         cdef int has = 0
         cdef int err
-        with nogil:
-            err = swmm_runoff_iface_read_step(h, &has)
+        with self._operation(<size_t>h):
+            with nogil:
+                err = swmm_runoff_iface_read_step(h, &has)
         _check(err)
         return bool(has)
 
     def close_runoff_interface(self) -> None:
         """Close the runoff interface file. Idempotent."""
-        cdef SWMM_Engine h = self._handle
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self.handle
         cdef int err
-        with nogil:
-            err = swmm_runoff_iface_close(h)
+        with self._operation(<size_t>h):
+            with nogil:
+                err = swmm_runoff_iface_close(h)
         _check(err)
 
     # ------------------------------------------------------------------
@@ -1076,24 +1179,26 @@ cdef class Solver:
         ``sim_time`` is the current SWMM DateTime double and ``dt`` is
         seconds. Pass ``None`` to unregister.
         """
+        self._access.require_idle()
         if callback is None:
             self._step_begin_cb = None
-            _check(swmm_set_step_begin_callback(self._handle, NULL, NULL))
+            _check(swmm_set_step_begin_callback(<SWMM_Engine><size_t>self.handle, NULL, NULL))
         else:
-            self._step_begin_cb = callback
+            self._step_begin_cb = Callback(self._access, callback)
             _check(swmm_set_step_begin_callback(
-                self._handle, _step_begin_trampoline,
+                <SWMM_Engine><size_t>self.handle, _step_begin_trampoline,
                 <void*>self._step_begin_cb))
 
     def set_step_end_callback(self, callback) -> None:
         """Register a callback invoked at the end of each timestep."""
+        self._access.require_idle()
         if callback is None:
             self._step_end_cb = None
-            _check(swmm_set_step_end_callback(self._handle, NULL, NULL))
+            _check(swmm_set_step_end_callback(<SWMM_Engine><size_t>self.handle, NULL, NULL))
         else:
-            self._step_end_cb = callback
+            self._step_end_cb = Callback(self._access, callback)
             _check(swmm_set_step_end_callback(
-                self._handle, _step_end_trampoline,
+                <SWMM_Engine><size_t>self.handle, _step_end_trampoline,
                 <void*>self._step_end_cb))
 
     def set_warning_callback(self, callback) -> None:
@@ -1102,13 +1207,14 @@ cdef class Solver:
         The callable receives ``(code: int, message: str)``. Pass ``None``
         to unregister.
         """
+        self._access.require_idle()
         if callback is None:
             self._warning_cb = None
-            _check(swmm_set_warning_callback(self._handle, NULL, NULL))
+            _check(swmm_set_warning_callback(<SWMM_Engine><size_t>self.handle, NULL, NULL))
         else:
-            self._warning_cb = callback
+            self._warning_cb = Callback(self._access, callback)
             _check(swmm_set_warning_callback(
-                self._handle, _warning_trampoline,
+                <SWMM_Engine><size_t>self.handle, _warning_trampoline,
                 <void*>self._warning_cb))
 
     def set_progress_callback(self, callback) -> None:
@@ -1121,13 +1227,14 @@ cdef class Solver:
         @param callback: A callable ``(elapsed_frac: float) -> None``, or
             ``None`` to clear.
         """
+        self._access.require_idle()
         if callback is None:
             self._progress_cb = None
-            _check(swmm_set_progress_callback(self._handle, NULL, NULL))
+            _check(swmm_set_progress_callback(<SWMM_Engine><size_t>self.handle, NULL, NULL))
         else:
-            self._progress_cb = callback
+            self._progress_cb = Callback(self._access, callback)
             _check(swmm_set_progress_callback(
-                self._handle, _progress_trampoline,
+                <SWMM_Engine><size_t>self.handle, _progress_trampoline,
                 <void*>self._progress_cb))
 
     # ------------------------------------------------------------------
@@ -1141,20 +1248,19 @@ cdef class Solver:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        # Lifecycle teardown swallows per-step errors so destroy always runs.
-        try:
-            self.end()
-        except EngineError:
-            pass
-        try:
-            self.report()
-        except EngineError:
-            pass
-        try:
-            self.close()
-        except EngineError:
-            pass
+        # Finish every teardown stage even if a user callback fails in one.
+        callback_error = None
+        for cleanup in (self.end, self.report, self.close):
+            try:
+                cleanup()
+            except EngineError:
+                pass
+            except BaseException as error:
+                if callback_error is None:
+                    callback_error = error
         self.destroy()
+        if exc_type is None and callback_error is not None:
+            raise callback_error
         return False
 
     def __repr__(self) -> str:
@@ -1771,3 +1877,22 @@ def run_with_callback(inp, rpt=None, out=None,
         return
     _check(swmm_engine_run_with_callback(
         b_inp, b_rpt, b_out, c_plugin, _progress_trampoline, <void*>callback))
+
+
+cdef extern from "openswmm/engine/openswmm_model.h":
+    int swmm_model_write_compat(SWMM_Engine, const char*, int)
+
+
+cdef const char* _stage_mapper(void* data, const char* path, int kind) noexcept with gil:
+    # Storage lives in state until the next callback, as required by the API.
+    try:
+        state = <object>data
+        state.map(path.decode('utf-8'), kind)
+        return <const char*>state.storage if state.error is None else NULL
+    except BaseException as error:
+        (<object>data).error = error
+        return NULL
+
+cdef extern from "openswmm/engine/openswmm_model.h":
+    ctypedef const char* (*SWMM_StageOutputCallback)(void*, const char*, int) noexcept
+    int swmm_model_write_staged(SWMM_Engine, const char*, SWMM_StageOutputCallback, void*)
