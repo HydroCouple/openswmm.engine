@@ -1995,7 +1995,8 @@ Rainfall reaches the mesh from the project's rain gages, mapped by
 `RAINFALL_MODE`: `NATURAL_NEIGHBOUR` (the default) interpolates the
 located gages onto every cell centroid with natural-neighbour (Laplace)
 weights inside the gages' convex hull and inverse-distance weights
-outside it; `SYSTEM` applies the arithmetic mean of all gages uniformly
+outside it; `NEAREST_NEIGHBOUR` gives every cell the reading of its
+closest located gage; `SYSTEM` applies the arithmetic mean of all gages uniformly
 and is the automatic fallback when no gage has a map location; `NONE`
 applies no rain to the mesh. The interpolation — its weights, its
 Delaunay construction, its degenerate cases and the way the weights are

@@ -481,6 +481,25 @@ SWMM_ENGINE_API int swmm_2d_get_coupling_flux(SWMM_Engine engine, int idx,
 SWMM_ENGINE_API int swmm_2d_get_rainfall(SWMM_Engine engine, int idx,
                                            double* rainfall);
 
+/** @brief Inspect how RAINFALL_MODE maps the gages onto one triangle.
+ *
+ *  Diagnoses a cell that receives no rain: a zero from a dry contributing
+ *  gage is a valid reading, not a missing weight.
+ *
+ *  @param method       Receives 0 natural neighbour, 1 inverse-distance
+ *                      fallback, 2 single nearest gage, or -1 when no per-cell
+ *                      weights apply (SYSTEM / NONE, or no located gage).
+ *  @param gage_indices Receives up to @p capacity contributing gage indices
+ *                      (may be NULL when @p capacity is 0).
+ *  @param weights      Receives the matching normalized weights (sum to 1).
+ *  @param count        Receives the total number of contributing gages, which
+ *                      may exceed @p capacity.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_rainfall_weights(SWMM_Engine engine, int idx,
+                                                   int* method, int* gage_indices,
+                                                   double* weights, int capacity,
+                                                   int* count);
+
 /** @brief Get net source/sink rate at a triangle (m/s).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_net_source(SWMM_Engine engine, int idx,

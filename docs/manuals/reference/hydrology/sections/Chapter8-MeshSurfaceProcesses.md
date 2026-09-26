@@ -64,14 +64,18 @@ first record for the whole run.
 | Mode | Cell value |
 |---|---|
 | `NATURAL_NEIGHBOUR` (default) | Spatial interpolation of the located gages onto each cell centroid: Laplace natural-neighbour weights inside the convex hull of the gages, inverse-distance weights outside it |
+| `NEAREST_NEIGHBOUR` (alias `NEAREST_NEIGHBOR`) | The reading of the single closest located gage, inside or outside the hull; an exact distance tie goes to the gage listed first. A dry closest gage keeps the cell dry |
 | `SYSTEM` | One uniform value, the arithmetic mean of every gage's current intensity |
 | `NONE` | No rain on the mesh |
 
 A gage is **located** when it has a `[SYMBOLS]` coordinate; a coordinate of
 exactly (0, 0) marks it un-located and excludes it. Only the first of two
 coincident gages is kept, since the triangulation would otherwise degenerate.
-With no located gage at all, `NATURAL_NEIGHBOUR` falls back to the `SYSTEM`
-mean. The environment variable `OPENSWMM_2D_RAINFALL_MODE` (`natural`,
+With no located gage at all, `NATURAL_NEIGHBOUR` and `NEAREST_NEIGHBOUR` fall
+back to the `SYSTEM` mean. Initialisation reports, as warnings, the number of
+un-located, non-finite and duplicate gages it skipped, the `SYSTEM` fallback,
+and the number of cells that received inverse-distance weights. The
+environment variable `OPENSWMM_2D_RAINFALL_MODE` (`natural`, `nearest`,
 `system`, `none`) overrides the deck key at initialisation.
 
 ### 8.2.2 The weights
@@ -419,6 +423,7 @@ on drying cells. The C API's `*_get_cum_bulk` reports the former.
 | Family | Alternative | Behaviour | Status |
 |---|---|---|---|
 | Rain mode | `NATURAL_NEIGHBOUR` | Laplace weights inside the gage hull, IDW outside; static weights | \status{Implemented} |
+| Rain mode | `NEAREST_NEIGHBOUR` | Closest located gage, weight 1; first-listed gage wins a tie; static weights | \status{Implemented} |
 | Rain mode | `SYSTEM` | Uniform mean of all gages; automatic fallback with no located gage | \status{Implemented} |
 | Rain mode | `NONE` | No rain on the mesh; the subcatchments own the surface | \status{Implemented} |
 | Infiltration | `HORTON` | Chapter 4 §4.2 kernel, per cell | \status{Implemented} |

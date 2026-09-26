@@ -155,6 +155,8 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
     } else if (iequals(key, "RAINFALL_MODE")) {
         if (iequals(val, "NATURAL_NEIGHBOUR") || iequals(val, "NATURAL_NEIGHBOR"))
             opts.rainfall_mode = RainfallMode::NATURAL_NEIGHBOUR;
+        else if (iequals(val, "NEAREST_NEIGHBOUR") || iequals(val, "NEAREST_NEIGHBOR"))
+            opts.rainfall_mode = RainfallMode::NEAREST_NEIGHBOUR;
         else if (iequals(val, "SYSTEM"))
             opts.rainfall_mode = RainfallMode::SYSTEM;
         else if (iequals(val, "NONE"))
@@ -463,6 +465,7 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
     if (iequals(key, "RAINFALL_MODE")) {
         switch (opts.rainfall_mode) {
             case RainfallMode::NATURAL_NEIGHBOUR: return "NATURAL_NEIGHBOUR";
+            case RainfallMode::NEAREST_NEIGHBOUR: return "NEAREST_NEIGHBOUR";
             case RainfallMode::SYSTEM:            return "SYSTEM";
             case RainfallMode::NONE:              return "NONE";
         }

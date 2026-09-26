@@ -182,6 +182,8 @@ static void apply_option_2d(SimulationContext& ctx, const std::string& key,
     }
     else if (key == "2D_RAINFALL_MODE") {
         if      (val == "NATURAL_NEIGHBOUR") o->rainfall_mode = twoD::RainfallMode::NATURAL_NEIGHBOUR;
+        else if (val == "NEAREST_NEIGHBOUR" || val == "NEAREST_NEIGHBOR")
+            o->rainfall_mode = twoD::RainfallMode::NEAREST_NEIGHBOUR;
         else if (val == "SYSTEM")            o->rainfall_mode = twoD::RainfallMode::SYSTEM;
         else if (val == "NONE")              o->rainfall_mode = twoD::RainfallMode::NONE;
     }

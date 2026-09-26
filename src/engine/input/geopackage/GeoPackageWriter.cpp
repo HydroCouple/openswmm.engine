@@ -1697,6 +1697,7 @@ const char* bc_type_token(const twoD::PendingBoundaryRow& r) {
 const char* rainfall_mode_token(twoD::RainfallMode m) {
     switch (m) {
         case twoD::RainfallMode::NATURAL_NEIGHBOUR: return "NATURAL_NEIGHBOUR";
+        case twoD::RainfallMode::NEAREST_NEIGHBOUR: return "NEAREST_NEIGHBOUR";
         case twoD::RainfallMode::SYSTEM:            return "SYSTEM";
         case twoD::RainfallMode::NONE:              return "NONE";
     }
