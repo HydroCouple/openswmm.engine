@@ -23,6 +23,23 @@ retroactive.
 
 ## [Unreleased]
 
+### Python bindings
+
+- Add groundwater hydrology and transport views, surface-quality tables,
+  transport configuration/capability records, 2D rainfall diagnostics, batch
+  deletion, live output refresh, compatibility/staged serialization and the
+  remaining metadata and forcing accessors.
+- Report snapshots now read live routing diagnostics and convert fractional
+  continuity errors into their documented percentage fields.
+- Retain owners in 2D/editor views, reject stale or concurrent access, propagate
+  callback failures safely, and synchronize public enums, type stubs and report
+  totals. Ship the `py.typed` marker and distinguish omitted optional extensions
+  from broken native dependencies.
+- Add native API/enum drift gates to CI and release qualification. Wheel tests
+  include modern, legacy, top-level and integration tests. Expand Sphinx guides
+  with authoring/runtime units, lifecycle, persistence and callback contracts.
+
+
 ### Documentation
 
 - **Every implemented formulation is now documented, and every planned one is

@@ -34,6 +34,7 @@ Running a simulation
 
    solver
    error_handling
+   native_safety
    datetime
 
 Domain access
@@ -91,6 +92,10 @@ process-component registration.
    water_age
    reactions
    process_components
+   transport
+   groundwater
+   surface_quality
+   binding_updates
 
 Outputs
 =======
@@ -125,7 +130,7 @@ configure complex hydraulic infrastructure; spatial / CRS handling.
 ===================================
 
 Overlay a triangular mesh on the 1-D network and route the surface with a
-CVODE solver; persist results and observed data to a GeoPackage.
+explicit finite-volume solver; persist results and observed data to a GeoPackage.
 
 .. toctree::
    :maxdepth: 1

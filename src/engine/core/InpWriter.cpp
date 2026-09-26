@@ -674,10 +674,36 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
     }
 }
 
+// Reference tokens always use final paths. Only physical writes are redirected.
+static std::string mappedOutputPath(const std::string& finalPath,
+                                    InpWriteOptions::OutputKind kind,
+                                    const InpWriteOptions& opts,
+                                    std::vector<std::string>* warnings) {
+    if (!opts.map_output) return finalPath;
+    const std::string staged = opts.map_output(finalPath, kind);
+    std::error_code ec;
+    bool aliases = staged == finalPath;
+    if (!staged.empty() && !aliases) {
+        aliases = std::filesystem::equivalent(io::utf8_path(staged), io::utf8_path(finalPath), ec);
+        const auto a = std::filesystem::weakly_canonical(io::utf8_path(staged), ec);
+        if (!ec) {
+            const auto b = std::filesystem::weakly_canonical(io::utf8_path(finalPath), ec);
+            if (!ec && a == b) aliases = true;
+        }
+    }
+    if (staged.empty() || aliases) {
+        if (warnings) warnings->push_back("Cannot stage output '" + finalPath
+            + "': callback refused output or returned its final destination");
+        return {};
+    }
+    return staged;
+}
+
 static bool write2DSections(FILE* f, const SimulationContext& ctx,
                             const std::string& dst_dir,
                             bool force_abs_paths,
-                            std::vector<std::string>* warnings) {
+                            std::vector<std::string>* warnings,
+                            const InpWriteOptions& opts) {
     const auto& tio = ctx.twod_io;
     if (!tio.mesh || !tio.options) return true;
     const auto& mesh = *tio.mesh;
@@ -833,6 +859,10 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx,
             fs::path sp = openswmm::io::utf8_path(tok);
             if (sp.is_relative() && !dst_dir.empty())
                 sp = openswmm::io::utf8_path(dst_dir) / sp;
+            const std::string physical = mappedOutputPath(io::path_utf8(sp),
+                InpWriteOptions::OutputKind::Mesh, opts, warnings);
+            if (physical.empty()) return false;
+            sp = io::utf8_path(physical);
             std::error_code ec;
             if (sp.has_parent_path()) fs::create_directories(sp.parent_path(), ec);
             if (ec) {
@@ -1128,6 +1158,96 @@ static void emit2DMeshSections(FILE* f, const SimulationContext& ctx) {
 #endif
 }
 
+// Component render hooks produce text; this writer owns checked file publication.
+// Copy fallback is used only when a component declines rendering, never after a
+// failed rendered write (which would replace edited data with the old config).
+static bool writeComponentConfig(const SimulationContext& ctx,
+                                 const ProcessComponentSpec& pc,
+                                 const std::string& token,
+                                 const std::string& dst_dir,
+                                 std::vector<std::string>* warnings,
+                                 const InpWriteOptions& opts) {
+    namespace fs = std::filesystem;
+    fs::path destination = io::utf8_path(token);
+    if (destination.is_relative() && !dst_dir.empty())
+        destination = io::utf8_path(dst_dir) / destination;
+    auto fail = [&](const std::string& reason) {
+        if (warnings) warnings->push_back("Cannot save component '" + pc.id
+            + "' configuration '" + io::path_utf8(destination) + "': " + reason);
+        return false;
+    };
+    std::string text;
+    const auto* entry = components::ProcessComponentRegistry::instance().find(pc.id);
+    if (entry && entry->save) text = entry->save(ctx, pc);
+    const bool rendered = !text.empty();
+    std::ifstream source;
+    fs::path source_path;
+    std::error_code ec;
+    if (!rendered) {
+        // Absolute input references stay in place. Relative configurations
+        // travel with Save As, using the source resolved at model open.
+        if (pc.resolved_config_path.empty() || io::utf8_path(pc.config_path).is_absolute())
+            return true;
+        source_path = io::utf8_path(pc.resolved_config_path);
+        if (!fs::is_regular_file(source_path, ec))
+            return fail("source '" + pc.resolved_config_path + "' is missing or not a regular file");
+        source.open(source_path, std::ios::binary);
+        if (!source.is_open()) return fail("cannot read source '" + pc.resolved_config_path + "'");
+        ec.clear();
+        if (fs::equivalent(source_path, destination, ec) && !ec) return true;
+    }
+    const std::string physical = mappedOutputPath(io::path_utf8(destination),
+        InpWriteOptions::OutputKind::Component, opts, warnings);
+    if (physical.empty()) return false;
+    const fs::path staging = io::utf8_path(physical);
+    ec.clear();
+    if (staging.has_parent_path()) fs::create_directories(staging.parent_path(), ec);
+    if (ec) return fail("cannot create output directory: " + ec.message());
+    io::AtomicOutputFile output(staging);
+    FILE* f = output.stream();
+    if (!f) return fail(output.error());
+    // Preserve the existing notice when a successful save replaces different
+    // destination content. Failure diagnostics below take precedence.
+    bool replacing_different = false;
+    std::ifstream previous;
+    // Staging redirects the writer's output validation. The final destination
+    // can still be non-regular; it is not a readable comparison source.
+    if (fs::is_regular_file(destination, ec)) previous.open(destination, std::ios::binary);
+    if (previous.is_open()) {
+        if (rendered) {
+            const std::string old((std::istreambuf_iterator<char>(previous)), {});
+            replacing_different = old != text;
+        } else {
+            std::ifstream comparison(source_path, std::ios::binary);
+            replacing_different = !std::equal(std::istreambuf_iterator<char>(previous),
+                std::istreambuf_iterator<char>(), std::istreambuf_iterator<char>(comparison),
+                std::istreambuf_iterator<char>());
+        }
+        previous.close();
+    }
+    if (rendered) {
+        if (std::fwrite(text.data(), 1, text.size(), f) != text.size())
+            return fail("incomplete configuration write");
+    } else {
+        char buffer[65536];
+        while (source) {
+            source.read(buffer, sizeof buffer);
+            const auto count = static_cast<std::size_t>(source.gcount());
+            if (count && std::fwrite(buffer, 1, count, f) != count)
+                return fail("incomplete configuration copy");
+        }
+        if (source.bad() || !source.eof())
+            return fail("cannot finish reading source '" + pc.resolved_config_path + "'");
+        source.close();
+    }
+    if (!output.commit()) return fail(output.error());
+    if (replacing_different && warnings)
+        warnings->push_back("Saving this model replaced an existing, different '"
+            + pc.config_path + "' in the destination folder with this model's "
+            + (rendered ? "rendered configuration." : "configuration copy."));
+    return true;
+}
+
 int writeInpFile(const SimulationContext& ctx,
                  const std::string&       path,
                  std::vector<std::string>* warnings) {
@@ -1191,7 +1311,9 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     const bool swmm5  = (opts.profile == InpWriteOptions::Profile::Swmm5) || stock5;
     auto note = [&](const std::string& s) { if (warnings) warnings->push_back(s); };
 
-    openswmm::io::AtomicOutputFile output(openswmm::io::utf8_path(path));
+    const std::string physical = mappedOutputPath(path, InpWriteOptions::OutputKind::Model, opts, warnings);
+    if (physical.empty()) return -1;
+    openswmm::io::AtomicOutputFile output(openswmm::io::utf8_path(physical));
     FILE* f = output.stream();
     if (!f) { note(output.error()); return -1; }
     if (swmm5)
@@ -3277,6 +3399,12 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     for(const auto&a:ps.init_args)std::fprintf(f," %s",a.c_str());std::fprintf(f,"\n");
     }}
 
+    // Do not publish component files after a detected main-output failure.
+    if (std::ferror(f) || std::fflush(f) != 0) {
+        note("Cannot serialize model output '" + path + "' before component configurations");
+        return -1;
+    }
+
     // [PROCESS_COMPONENTS] — Unified Transport suite D-UT8 (round-trip; the
     // component config FILES are each component's own to write, never ours).
     // The config= reference is an external-file slot like any other, so it
@@ -3289,98 +3417,7 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     emit_path_token(pc.config_path,dst_dir,force_abs_paths,warnings);
     std::fprintf(f," config=\"%s\"",cfg.c_str());
 
-    // IO3 carry-alongside: a RELATIVE config= reference resolves against
-    // the .inp's own directory, so saving the deck somewhere else would
-    // leave it dangling. Copy the file the model was actually read from
-    // (resolved_config_path, set at open) next to the written .inp when
-    // the destination differs. Absolute references were rebased by
-    // emit_path_token above and need no copy. Failures WARN, never fail
-    // the save — the deck text itself is intact.
-    namespace fsys=std::filesystem;
-
-    // IO3a: ask the COMPONENT to write its own file first. The writer's rule
-    // above ("each component's own to write, never ours") was the intent all
-    // along; until this hook existed nothing acted on it, so a model.heat or
-    // model.rxn edited through the C API or the GUI was copied back in its
-    // ORIGINAL form and the edit vanished — silently, and unlike the embedded
-    // case, unwarned.
-    //
-    // An EMPTY render means the component declines (nothing configured, or it
-    // has not implemented saving), and the carry-alongside copy below runs
-    // instead. That fallback is what lets components adopt saving one at a
-    // time without any intermediate state losing data.
-    bool component_wrote=false;
-    if(!pc.config_path.empty()){
-    const auto*entry=components::ProcessComponentRegistry::instance().find(pc.id);
-    if(entry&&entry->save){
-    const std::string text=entry->save(ctx,pc);
-    if(!text.empty()){
-    std::error_code wec;
-    // utf8_path, not fsys::path(std::string) — UTF-8 in, ANSI decode out (#7).
-    fsys::path rel_w=openswmm::io::utf8_path(pc.config_path);
-    fsys::path dst_w=rel_w.is_absolute()
-    ?openswmm::io::utf8_path(emit_path_token(pc.config_path,dst_dir,force_abs_paths,nullptr))
-    :(dst_dir.empty()?rel_w:openswmm::io::utf8_path(dst_dir)/rel_w);
-    if(dst_w.has_parent_path())fsys::create_directories(dst_w.parent_path(),wec);
-    // IO3c: the rendered write inherits the copy path's contract — a save
-    // that replaces a DIFFERENT pre-existing file at the destination says
-    // so (overwriting is required; silence is not). An identical file (the
-    // ordinary re-save) stays quiet.
-    bool replacing_different_r=false;
-    {std::error_code rec;
-    if(fsys::exists(dst_w,rec)&&!rec){
-    std::ifstream prev(dst_w, std::ios::binary);
-    if(prev.is_open()){
-    const std::string pstr((std::istreambuf_iterator<char>(prev)),
-    std::istreambuf_iterator<char>());
-    replacing_different_r=(pstr!=text);
-    }}}
-    std::ofstream cf(dst_w, std::ios::binary|std::ios::trunc);
-    if(cf.is_open()){cf<<text;component_wrote=cf.good();cf.close();}
-    if(component_wrote&&replacing_different_r&&warnings)warnings->push_back(
-    "Saving this model replaced an existing, different '"+pc.config_path+
-    "' in the destination folder with this model's rendered configuration.");
-    if(!component_wrote&&warnings)warnings->push_back(
-    "Could not write component config '"+pc.config_path+"' for '"+pc.id+
-    "' — the model's in-memory configuration for that component was NOT "
-    "saved. The previous file, if any, is unchanged.");
-    }}}
-
-    if(!component_wrote&&!pc.resolved_config_path.empty()){
-    // utf8_path, not fsys::path(std::string) — UTF-8 in, ANSI decode out (#7).
-    fsys::path src=openswmm::io::utf8_path(pc.resolved_config_path);
-    fsys::path rel=openswmm::io::utf8_path(pc.config_path);
-    if(rel.is_relative()&&!dst_dir.empty()){
-    std::error_code ec;
-    fsys::path dst=openswmm::io::utf8_path(dst_dir)/rel;
-    if(fsys::exists(src,ec)&&
-    !fsys::equivalent(src,dst,ec)){
-    // Overwriting is REQUIRED for the feature to be correct: re-saving a
-    // model into a folder that already holds last save's copy must refresh
-    // it, or the deck ships with a stale config. But an existing file with
-    // DIFFERENT content may belong to another model in that folder, and
-    // destroying it silently is not something a save should do. Measured
-    // before this guard: a save-as replaced an unrelated model.rxn and
-    // reported nothing.
-    bool replacing_different=false;
-    if(fsys::exists(dst,ec)){
-    std::ifstream a(src, std::ios::binary),b(dst,std::ios::binary);
-    const std::string sa((std::istreambuf_iterator<char>(a)),
-    std::istreambuf_iterator<char>());
-    const std::string sb((std::istreambuf_iterator<char>(b)),
-    std::istreambuf_iterator<char>());
-    replacing_different=(sa!=sb);
-    }
-    if(dst.has_parent_path())fsys::create_directories(dst.parent_path(),ec);
-    fsys::copy_file(src,dst,fsys::copy_options::overwrite_existing,ec);
-    if(ec&&warnings)warnings->push_back(
-    "Could not copy component config '"+pc.resolved_config_path+
-    "' alongside the saved model ("+ec.message()+") — the written "
-    "config=\""+pc.config_path+"\" reference may dangle.");
-    else if(replacing_different&&warnings)warnings->push_back(
-    "Saving this model replaced an existing, different '"+pc.config_path+
-    "' in the destination folder with the copy this model uses.");
-    }}}
+    if (!writeComponentConfig(ctx, pc, cfg, dst_dir, warnings, opts)) return -1;
     }
     for(const auto&a:pc.args)std::fprintf(f," %s=\"%s\"",a.first.c_str(),a.second.c_str());
     std::fprintf(f,"\n");
@@ -3413,7 +3450,7 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         note("Cannot serialize model output '" + path + "': " + ec.message());
         return -1;
     }
-    if (!swmm5 && !write2DSections(f, ctx, dst_dir, force_abs_paths, warnings))
+    if (!swmm5 && !write2DSections(f, ctx, dst_dir, force_abs_paths, warnings, opts))
         return -1;
     if (!output.commit()) { note(output.error()); return -1; }
     return 0;

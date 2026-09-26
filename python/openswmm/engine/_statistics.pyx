@@ -71,8 +71,9 @@ class Statistics:
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_stat_node_max_depth_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_stat_node_max_depth_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -82,8 +83,9 @@ class Statistics:
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_stat_node_max_overflow_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_stat_node_max_overflow_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -93,8 +95,9 @@ class Statistics:
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_stat_node_vol_flooded_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_stat_node_vol_flooded_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -105,8 +108,9 @@ class Statistics:
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_stat_node_time_flooded_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_stat_node_time_flooded_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -120,8 +124,9 @@ class Statistics:
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_stat_link_max_flow_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_stat_link_max_flow_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -131,8 +136,9 @@ class Statistics:
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_stat_link_max_velocity_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_stat_link_max_velocity_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -142,8 +148,9 @@ class Statistics:
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_stat_link_max_filling_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_stat_link_max_filling_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -153,8 +160,9 @@ class Statistics:
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_stat_link_vol_flow_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_stat_link_vol_flow_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -164,8 +172,9 @@ class Statistics:
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_stat_link_surcharge_time_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_stat_link_surcharge_time_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -179,8 +188,9 @@ class Statistics:
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_stat_subcatch_runoff_vol_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_stat_subcatch_runoff_vol_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -190,8 +200,9 @@ class Statistics:
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_stat_subcatch_max_runoff_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_stat_subcatch_max_runoff_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 

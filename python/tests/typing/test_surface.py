@@ -572,3 +572,30 @@ def check_exception_subclasses() -> None:
     assert issubclass(CRSError, ValueError)
     assert issubclass(DependencyError, RuntimeError)
     assert issubclass(StaleObjectError, LifecycleError)
+
+
+def check_new_domain_contracts(solver: Solver) -> None:
+    from dataclasses import replace
+    from openswmm.engine import (
+        CellScope, GroundwaterParameters, GroundwaterInitialQuality,
+        GroundwaterVariable, GroundwaterZone, GroundwaterSpeciesLedger,
+        GroundwaterSource, GroundwaterSourceTerm, TransportDomain,
+        TransportClass, TransportState, InpProfile, HeatElemKind, ForcingType,
+    )
+    gw = solver.surface2d.groundwater
+    gw.transport.set_parameters(replace(GroundwaterParameters(), rho_s=2700))
+    gw.transport.set_initial_quality(GroundwaterInitialQuality(species='TSS', value=5))
+    gw.transport.set_source(GroundwaterSource(name='well', flow=1e-5))
+    gw.transport.set_source_species(0, GroundwaterSourceTerm(species='TSS', value=3))
+    row_name: str = gw.transport.sources[0].name
+    row_density: float = gw.transport.parameters[0].rho_s
+    level: float = gw.cell(0, GroundwaterVariable.HG)
+    concentration = gw.concentrations(GroundwaterZone.SAT, 0)
+    residual: float = gw.species_ledger(0, GroundwaterSpeciesLedger.RESIDUAL)
+    solver.surface2d.quality.set_coverage(CellScope.GLOBAL, {'URBAN': 100})
+    solver.surface2d.quality.set_loading(CellScope.CELL, 'TSS', 10, cell=0)
+    state: TransportState = solver.transport_matrix[TransportDomain.GROUNDWATER][TransportClass.POLLUTANTS].state
+    solver.forcing.element_climate(HeatElemKind.NODE, 'J1', ForcingType.ELEM_AIR_TEMPERATURE, 21)
+    solver.write_compat('compatible.inp', InpProfile.FULL)
+    solver.write_staged('final.inp', lambda path, kind: 'stage.inp')
+    _ = row_name, row_density, level, concentration, residual, state

@@ -77,11 +77,12 @@ cdef class HotStart:
     def save_from(Solver solver, path) -> None:
         """Save ``solver`` state to ``path``. Raises on failure."""
         cdef bytes b = os.fspath(path).encode('utf-8')
-        cdef SWMM_Engine h = solver._handle
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>solver.handle
         cdef const char* p = b
         cdef int rc
-        with nogil:
-            rc = swmm_hotstart_save(h, p)
+        with solver._operation(<size_t>h):
+            with nogil:
+                rc = swmm_hotstart_save(h, p)
         _check(rc)
 
     @classmethod
@@ -123,10 +124,10 @@ cdef class HotStart:
     def apply(self, Solver solver) -> None:
         """Apply this hot start to ``solver``. The solver must be
         INITIALIZED (post-:meth:`Solver.initialize`, pre-:meth:`Solver.start`)."""
-        cdef SWMM_Engine h = solver._handle
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>solver.handle
         cdef SWMM_HotStart hs = self._handle
         cdef int rc
-        with nogil:
+        with solver._operation(<size_t>h):
             rc = swmm_hotstart_apply(h, hs)
         _check(rc)
 

@@ -49,6 +49,9 @@ class _HeatSolar:
 
 
 class _HeatCloud:
+    @property
+    def timeseries(self) -> str: ...
+
     def __init__(self, solver: Solver) -> None: ...
     def __len__(self) -> int: ...
     def __iter__(self) -> Iterator[HeatCloudParam]: ...
@@ -84,9 +87,13 @@ class _HeatNodeOverrides:
 
 
 class Heat:
+    @property
+    def shortwave_timeseries(self) -> str: ...
+
     def __init__(self, solver: Solver) -> None: ...
 
-    enabled: bool
+    @property
+    def enabled(self) -> bool: ...
     modules: _HeatModules
     radiative: _HeatRadiative
     shortwave_mode: HeatShortwaveMode

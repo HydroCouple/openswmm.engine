@@ -226,7 +226,7 @@ musllinux-x86_64-image  = "musllinux_1_2"
 musllinux-aarch64-image = "musllinux_1_2"
 
 test-requires = ["pytest", "numpy"]
-test-command  = "pytest {package}/tests/engine -v --import-mode=importlib --ignore={package}/tests/engine/test_integration.py"
+test-command  = "pytest {package}/tests -v --import-mode=importlib --ignore={package}/tests/typing"
 
 [tool.cibuildwheel.linux]
 # Bootstrap vcpkg inside the manylinux container. The host's $VCPKG_ROOT is

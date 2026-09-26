@@ -124,11 +124,9 @@ Quick start
     with Solver("model.inp", "model.rpt", "model.out") as s:
         nodes = Nodes(s)
         links = Links(s)
-        while s.state == EngineState.RUNNING:
-            if s.step() != 0:
-                break
-            depths = nodes.get_depths_bulk()  # numpy array
-            flows  = links.get_flows_bulk()   # numpy array
+        for elapsed in s.steps():
+            depths = nodes.depths
+            flows = links.flows
 
 Programmatic model building
 ----------------------------
@@ -150,9 +148,7 @@ Programmatic model building
 
     solver = m.to_solver()
     solver.start()
-    while solver.state == EngineState.RUNNING:
-        if solver.step() != 0:
-            break
+    for elapsed in solver.steps():
         pass
     solver.end()
     solver.destroy()
@@ -277,13 +273,17 @@ try:
     from ._2d import (Surface2D, Infiltration2DView, Infil2DDefaults,
                       Infil2DRow, Infil2DCell)
     HAS_2D = True
-except ImportError:
+except ModuleNotFoundError as error:
+    if error.name != __name__ + "._2d":
+        raise
     HAS_2D = False
 
 try:
     from ._geopackage import GeoPackage
     HAS_GEOPACKAGE = True
-except ImportError:
+except ModuleNotFoundError as error:
+    if error.name != __name__ + "._geopackage":
+        raise
     HAS_GEOPACKAGE = False
 
 # =============================================================================
@@ -402,3 +402,38 @@ __all__ = [
     # --- Enumerations: mass-balance totals ---
     "RunoffTotal", "RoutingTotal",
 ]
+
+# Native climate, transport, writer and unit-system selectors.
+from ._enums import (
+    EvapType as EvapType, TempSource as TempSource, WindType as WindType, HumidityType as HumidityType, HumidityVar as HumidityVar, HeatElemKind as HeatElemKind, InpProfile as InpProfile, TransportDispersionMode as TransportDispersionMode, UnitSystem as UnitSystem
+)
+__all__ += ['EvapType', 'TempSource', 'WindType', 'HumidityType', 'HumidityVar', 'HeatElemKind', 'InpProfile', 'TransportDispersionMode', 'UnitSystem']
+
+from ._transport import (Transport as Transport, ThreadInfo as ThreadInfo, EffectiveThreads as EffectiveThreads, TransportCell as TransportCell, TransportRow as TransportRow, ConduitDispersion as ConduitDispersion, transport_domain_name as transport_domain_name, transport_class_name as transport_class_name)
+from ._enums import (TransportDomain as TransportDomain, TransportClass as TransportClass, TransportState as TransportState)
+__all__ += ['Transport', 'ThreadInfo', 'EffectiveThreads', 'TransportCell', 'TransportRow', 'ConduitDispersion', 'transport_domain_name', 'transport_class_name', 'TransportDomain', 'TransportClass', 'TransportState']
+
+if not HAS_2D:
+    __all__ = [name for name in __all__ if name not in {
+        "Surface2D", "Infiltration2DView", "Infil2DDefaults", "Infil2DRow", "Infil2DCell"}]
+if HAS_GEOPACKAGE:
+    __all__.append("GeoPackage")
+
+from ._process_components import KnownProcessComponent as KnownProcessComponent
+__all__.append("KnownProcessComponent")
+
+from ._enums import (CellScope as CellScope, GroundwaterSoil as GroundwaterSoil, GroundwaterClosure as GroundwaterClosure, GroundwaterVariable as GroundwaterVariable, GroundwaterLedger as GroundwaterLedger, GroundwaterZone as GroundwaterZone, GroundwaterSpeciesLedger as GroundwaterSpeciesLedger)
+__all__ += ['CellScope', 'GroundwaterSoil', 'GroundwaterClosure', 'GroundwaterVariable', 'GroundwaterLedger', 'GroundwaterZone', 'GroundwaterSpeciesLedger']
+if HAS_2D:
+    from ._groundwater import Groundwater, AquiferRow, AquiferNode
+    __all__ += ["Groundwater", "AquiferRow", "AquiferNode"]
+
+from ._enums import GroundwaterTransportZone as GroundwaterTransportZone
+__all__.append("GroundwaterTransportZone")
+if HAS_2D:
+    from ._gw_transport import (GroundwaterTransport, GroundwaterParameters, GroundwaterSorption, GroundwaterInitialQuality, GroundwaterBoundary, GroundwaterSource, GroundwaterSourceTerm)
+    __all__ += ['GroundwaterTransport', 'GroundwaterParameters', 'GroundwaterSorption', 'GroundwaterInitialQuality', 'GroundwaterBoundary', 'GroundwaterSource', 'GroundwaterSourceTerm']
+
+if HAS_2D:
+    from ._surface_quality import (SurfaceQuality, SurfaceCoverage, SurfaceLoading, SurfaceCurbLength)
+    __all__ += ['SurfaceQuality', 'SurfaceCoverage', 'SurfaceLoading', 'SurfaceCurbLength']

@@ -11,6 +11,7 @@ _Key = Union[int, str]
 
 
 class Landuse:
+    def rename(self, new_id: str) -> None: ...
     id: str
     index: int
     sweep_interval: float
@@ -31,6 +32,7 @@ class Landuses:
 
 
 class Quality:
+    def validate_treatment_expression(self, expression: str) -> tuple[bool, str, int]: ...
     def __init__(self, solver: Solver) -> None: ...
 
     landuses: Landuses

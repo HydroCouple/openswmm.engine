@@ -125,3 +125,33 @@ The rule of thumb:
 - @ref manual_running — running from the GUI
 - @ref manual_plugins — managing plugins from the GUI
 - @ref application_manual_ch13_planned "Chapter 13" — what is coming
+
+
+## Authoring and observing the extended Python API
+
+Open a solver explicitly before authoring: the solver context manager starts
+simulation, so editing-only tables must be changed before entering the runtime
+state. `solver.transport` exposes dispersion configuration and authored rows;
+`solver.transport_matrix` reports which process classes are available in each
+domain, with reasons when unavailable.
+
+`solver.surface2d.groundwater` supplies aquifer rows, node exchange, SI state
+arrays and water/species ledgers. Its `.transport` view edits groundwater
+parameters, sorption, initial quality, boundary quality and source terms.
+`solver.surface2d.quality` edits land-use coverage, initial buildup and curb
+length. Table snapshots are immutable; arrays are owned copies. Aquifer
+hydrology authoring uses project units while runtime hydrology uses SI. See the
+[groundwater guide](python/guide/groundwater.html) and
+[surface-quality guide](python/guide/surface_quality.html) for each field's units.
+
+`ModelEditor.delete_nodes`, `.delete_links`, `.delete_subcatchments` and
+`.delete_gages` validate all pre-edit indices before a batch deletion and return
+cascade impacts. Reacquire element views after structural edits. Views retain
+their solver and raise Python exceptions after it closes or is destroyed.
+
+`OutputReader(path, live=True)` can read complete periods during a run;
+`refresh()` updates the period count and timestamp cache. Staged serialization
+uses `solver.write_staged(final_path, mapper)`; publication and rollback remain
+the caller's responsibility. See the
+[editing and live-output guide](python/guide/binding_updates.html) and
+[native-call safety guide](python/guide/native_safety.html) for the contracts.

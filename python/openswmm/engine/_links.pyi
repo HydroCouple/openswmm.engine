@@ -158,6 +158,8 @@ class Link:
 
 class Links:
     """Indexable, iterable collection of :class:`Link` wrappers."""
+    def restore_authored_orientation(self) -> int: ...
+
 
     def __init__(self, solver: Solver) -> None: ...
 

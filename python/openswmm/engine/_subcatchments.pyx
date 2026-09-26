@@ -1023,8 +1023,9 @@ cdef class Subcatchments:
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_subcatch_get_runoff_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_subcatch_get_runoff_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1034,8 +1035,9 @@ cdef class Subcatchments:
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_subcatch_get_rainfall_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_subcatch_get_rainfall_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1045,8 +1047,9 @@ cdef class Subcatchments:
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_subcatch_get_evap_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_subcatch_get_evap_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1056,8 +1059,9 @@ cdef class Subcatchments:
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_subcatch_get_infil_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_subcatch_get_infil_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1067,8 +1071,9 @@ cdef class Subcatchments:
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_subcatch_get_snow_depth_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_subcatch_get_snow_depth_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1079,8 +1084,9 @@ cdef class Subcatchments:
         cdef int p = _resolve_pollutant(self._solver, pollutant)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_subcatch_get_quality_bulk(h, p, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_subcatch_get_quality_bulk(h, p, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1173,8 +1179,9 @@ cdef class Subcatchments:
         cdef np.ndarray[char, ndim=1, mode="c"] buf = np.zeros(
             n * stride, dtype=np.int8)
         cdef int err
-        with nogil:
-            err = swmm_subcatch_get_ids_bulk(h, <char*>buf.data, stride, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_subcatch_get_ids_bulk(h, <char*>buf.data, stride, n)
         _check(err)
         raw = bytes(buf)
         out = []

@@ -441,8 +441,9 @@ cdef class Gages:
         cdef int n = swmm_gage_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_gage_get_rainfall_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_gage_get_rainfall_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 

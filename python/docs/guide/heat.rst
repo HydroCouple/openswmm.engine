@@ -223,3 +223,12 @@ See also
   consumes.
 * :doc:`process_components` — where ``model.heat``'s config path lives.
 * :doc:`error_handling` — what a refused write raises.
+
+Timeseries names
+================
+
+``heat.shortwave_timeseries`` and ``heat.cloud.timeseries`` return the assigned
+series name, or an empty string when no series is bound. Use the corresponding
+``set_shortwave_timeseries(name)`` and ``cloud.set_timeseries(name)`` methods
+to assign an existing series. Shortwave values are W/m²; cloud values are
+fractions in [0, 1].

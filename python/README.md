@@ -27,6 +27,22 @@ Both sites cross-link from their top navigation.
 
 ---
 
+## Python API coverage and testing
+
+The modern bindings include groundwater authoring/results and transport,
+surface-quality tables, transport capability diagnostics, batch editing and
+live output reading. Guides document their units, lifecycle and immutable
+snapshot behavior under `python/docs/guide/`. The strict API coverage check is
+`python python/scripts/api_drift_audit.py --strict` from the repository root.
+
+For local validation use the `openswmm` Conda environment. After building and
+installing to a staging prefix, run
+`conda run -n openswmm python python/scripts/test_staged_package.py STAGE python/tests --ignore=python/tests/typing`.
+This verifies the selected native binaries and avoids an editable install
+silently redirecting tests to an older extension. CI runs the complete modern,
+legacy and top-level suites against built wheels, plus independent source and
+typing gates. Source reachability is not a claim of numerical validation.
+
 ## Overview
 
 OpenSWMM Engine is a community-driven, open-source continuation of the EPA Storm Water Management Model — a dynamic hydrology, hydraulic, and water-quality simulator for urban runoff. The project preserves the SWMM legacy under QA/QC and builds the community needed for long-term maintenance, working with ASCE/EWRI and the Water Environment Federation.

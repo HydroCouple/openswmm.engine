@@ -1007,6 +1007,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f",
                      mb2.error() * 100.0);
 
+#ifdef OPENSWMM_HAS_2D
         // G-O: the two-zone [2D_AQUIFER] ledger, the same terms the .h5
         // /groundwater_2d group and groundwater_ledger series carry. Recharge
         // and capillary rise are internal (unsaturated <-> saturated zone of
@@ -1080,6 +1081,8 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                              (denom > 0.0) ? t.residual(sp) / denom * 100.0 : 0.0);
             }
         }
+
+#endif
 
         // 2D Solver Statistics — cumulative marcher throughput. Printed only
         // when populated (>=0).
@@ -1899,6 +1902,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         }
     }
 
+#ifdef OPENSWMM_HAS_2D
     // S7: 2D Surface Washoff Summary — the cells' land-use surfaces, per
     // surface species (pollutants, then MSX). The same ledger rows as the
     // subcatchment blocks above, in the same user mass, plus the store left
@@ -1937,6 +1941,8 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             WRITE(f, "");
         }
     }
+
+#endif
 
     // =====================================================================
     // Groundwater Summary — matches legacy writeGroundwater()

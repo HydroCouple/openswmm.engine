@@ -5,9 +5,9 @@ permissions:
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, swmm6_rel]
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, swmm6_rel]
 
 env:
   VCPKG_ROOT: ${{ github.workspace }}/vcpkg
@@ -23,6 +23,9 @@ env:
   OMP_NUM_THREADS: 1
 
 jobs:
+  python-contracts:
+    uses: ./.github/workflows/python_contracts.yml
+
   # ──────────────────────────────────────────────────────────────────────
   #  Python bindings — cibuildwheel matrix (one runner per OS/arch).
   #
@@ -35,6 +38,7 @@ jobs:
   #  See docs/CIBUILDWHEEL_REVERT_PLAN.md.
   # ──────────────────────────────────────────────────────────────────────
   python:
+    needs: python-contracts
     name: "Python (${{ matrix.os }})"
     permissions:
       contents: read

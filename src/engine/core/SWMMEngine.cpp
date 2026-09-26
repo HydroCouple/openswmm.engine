@@ -5510,8 +5510,13 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
         // about "water leaving the node upward" — and a spill is that,
         // whatever row the continuity table puts it in.
         if (coupling_out_q > 0.0) {
+#ifdef OPENSWMM_HAS_2D
             const bool as_flooding =
                 ctx_.twod_io.options && ctx_.twod_io.options->coupling_in_flooding;
+#else
+            // No surface coupling exists in a build without the 2D feature.
+            const bool as_flooding = false;
+#endif
             if (as_flooding)
                 ctx_.mass_balance.routing_flooding     += coupling_out_q * dt_routing;
             else

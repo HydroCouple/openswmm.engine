@@ -222,6 +222,9 @@ def run_with_callback(
 # ---------------------------------------------------------------------------
 
 
+from ._transport import Transport, ThreadInfo, EffectiveThreads, TransportCell
+from ._enums import TransportDomain, TransportClass, InpProfile
+
 class Solver:
     """SWMM engine lifecycle manager.
 
@@ -237,6 +240,17 @@ class Solver:
                 if elapsed >= timedelta(hours=24):
                     break
     """
+    def write_staged(self, final_path: _PathLike, mapper: Callable[[str, int], _PathLike | None]) -> None: ...
+    def write_compat(self, path: _PathLike, profile: InpProfile) -> None: ...
+
+    @property
+    def thread_info(self) -> ThreadInfo: ...
+    def effective_threads(self, requested: int = ...) -> EffectiveThreads: ...
+    @property
+    def transport_matrix(self) -> dict[TransportDomain, dict[TransportClass, TransportCell]]: ...
+    @property
+    def transport(self) -> Transport: ...
+
 
     def __init__(
         self,

@@ -24,6 +24,8 @@
 from ._common cimport SWMM_Engine
 
 cdef class Solver:
+    cdef object __weakref__
+    cdef object _access
     cdef SWMM_Engine _handle
     cdef str _inp, _rpt, _out
     cdef object _plugin_lib  # str or None
