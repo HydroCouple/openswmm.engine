@@ -7,8 +7,11 @@
  */
 
 #include "SectionHandlers2D.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 
 #include "../data/BoundaryData.hpp"
+#include "../data/Report2DVars.hpp"
+#include "../../input/InputParseUtils.hpp"
 #include "../../input/InputReader.hpp"
 #include "../../input/Tokenizer.hpp"
 #include "../../core/ErrorCodes.hpp"
@@ -16,6 +19,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -27,8 +31,10 @@ namespace openswmm::twoD {
 
 namespace {
 
-// Case-insensitive string comparison
-bool iequals(const std::string& a, const std::string& b) {
+// Case-insensitive string comparison. Takes views so callers on the
+// allocation-free scan paths (prescan2DUnitsHeader) need no temporaries;
+// std::string arguments still convert implicitly.
+bool iequals(std::string_view a, std::string_view b) {
     if (a.size() != b.size()) return false;
     for (std::size_t i = 0; i < a.size(); ++i) {
         if (std::toupper(static_cast<unsigned char>(a[i]))
@@ -74,8 +80,8 @@ int findTriangleByTag(const MeshData& mesh, const std::string& tag) {
 const std::string RETIRED_SUFFIX =
     " was retired with the CVODE/ARKODE 2D solvers: the explicit "
     "local-inertial marcher is the only 2D integrator. Remove the line; "
-    "marcher settings are THETA, CFL_NUMBER, LTS_TIERS, H_MOVE, FROUDE_MAX, "
-    "ADVECTION, MAX_TIMESTEP, COUPLING_AREA.";
+    "marcher settings are MOMENTUM_EQUATION, THETA, CFL_NUMBER, LTS_TIERS, "
+    "H_MOVE, FROUDE_MAX, RECONSTRUCTION_ORDER, MAX_TIMESTEP, COUPLING_AREA.";
 
 /// Retired [2D_OPTIONS] material: warn-and-ignore when a warnings sink is
 /// available (the file-load path — legacy models must still open), hard
@@ -111,6 +117,12 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
     } else if (iequals(key, "COUPLING_CD")) {
         opts.coupling_cd = tryParseDouble(val, ok);
         if (!ok) return "Invalid COUPLING_CD value";
+    } else if (iequals(key, "DISPERSION")) {
+        // S2: isotropic species dispersion, m2/s. Refused negative, not
+        // clamped (the 1D [TRANSPORT_OPTIONS] DISPERSION convention).
+        opts.dispersion = tryParseDouble(val, ok);
+        if (!ok || !std::isfinite(opts.dispersion) || opts.dispersion < 0.0)
+            return "Invalid DISPERSION value (m2/s, must be finite and >= 0)";
     } else if (iequals(key, "COUPLING_SYNC")) {
         opts.coupling_sync = tryParseDouble(val, ok);
         if (!ok || opts.coupling_sync < 0.0)
@@ -143,6 +155,8 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
     } else if (iequals(key, "RAINFALL_MODE")) {
         if (iequals(val, "NATURAL_NEIGHBOUR") || iequals(val, "NATURAL_NEIGHBOR"))
             opts.rainfall_mode = RainfallMode::NATURAL_NEIGHBOUR;
+        else if (iequals(val, "NEAREST_NEIGHBOUR") || iequals(val, "NEAREST_NEIGHBOR"))
+            opts.rainfall_mode = RainfallMode::NEAREST_NEIGHBOUR;
         else if (iequals(val, "SYSTEM"))
             opts.rainfall_mode = RainfallMode::SYSTEM;
         else if (iequals(val, "NONE"))
@@ -168,6 +182,28 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
         // and hard-error on the programmatic set path.
         if (!iequals(val, "EXPLICIT"))
             return retiredOption("INTEGRATOR " + val, warnings);
+    } else if (iequals(key, "MOMENTUM_EQUATION")) {
+        if      (iequals(val, "LOCAL_INERTIAL") || iequals(val, "LI"))
+            opts.momentum = Momentum2D::LOCAL_INERTIAL;
+        else if (iequals(val, "FULL_SWE") || iequals(val, "SWE") ||
+                 iequals(val, "FULL"))
+            opts.momentum = Momentum2D::FULL_SWE;
+        else if (iequals(val, "DIFFUSIVE_WAVE") || iequals(val, "DW") ||
+                 iequals(val, "DIFFUSIVE"))
+            opts.momentum = Momentum2D::DIFFUSIVE_WAVE;
+        else
+            return "Unknown MOMENTUM_EQUATION: " + val +
+                   " (expected LOCAL_INERTIAL|FULL_SWE|DIFFUSIVE_WAVE)";
+    } else if (iequals(key, "FRONT_REBUILD")) {
+        if      (iequals(val, "AUTO")) opts.front_rebuild = -1;
+        else if (iequals(val, "YES") || iequals(val, "ON"))  opts.front_rebuild = 1;
+        else if (iequals(val, "NO")  || iequals(val, "OFF")) opts.front_rebuild = 0;
+        else return "Unknown FRONT_REBUILD: " + val + " (expected AUTO|YES|NO)";
+    } else if (iequals(key, "RECONSTRUCTION_ORDER")) {
+        const int k = tryParseInt(val, ok);
+        if (!ok || (k != 1 && k != 2))
+            return "Invalid RECONSTRUCTION_ORDER value (expected 1|2)";
+        opts.reconstruction_order = k;
     } else if (iequals(key, "THETA")) {
         const double th = tryParseDouble(val, ok);
         if (!ok || th <= 0.0 || th > 1.0)
@@ -194,6 +230,15 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
             return "Invalid FROUDE_MAX value (expected > 0)";
         opts.froude_max = f;
     } else if (iequals(key, "ADVECTION")) {
+        // DEPRECATED (2026-09-06): the LI + staggered-advection experiment is
+        // superseded by MOMENTUM_EQUATION FULL_SWE. Still honoured so an old
+        // deck keeps its physics, but a file load names the replacement.
+        if (warnings && (iequals(val, "YES") || iequals(val, "ON") ||
+                         iequals(val, "TRUE")))
+            warnings->push_back(
+                "[2D_OPTIONS] ADVECTION YES is deprecated — use "
+                "MOMENTUM_EQUATION FULL_SWE for a conservative convective "
+                "term with shock capturing.");
         if (iequals(val, "YES") || iequals(val, "ON") || iequals(val, "TRUE"))
             opts.advection = true;
         else if (iequals(val, "NO") || iequals(val, "OFF") ||
@@ -201,6 +246,13 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
             opts.advection = false;
         else
             return "Unknown ADVECTION: " + val + " (expected YES|NO)";
+    } else if (iequals(key, "COUPLING_IN_FLOODING")) {
+        if (iequals(val, "YES") || iequals(val, "TRUE"))
+            opts.coupling_in_flooding = true;
+        else if (iequals(val, "NO") || iequals(val, "FALSE"))
+            opts.coupling_in_flooding = false;
+        else
+            return "Unknown COUPLING_IN_FLOODING: " + val + " (expected YES|NO)";
     } else if (iequals(key, "COUPLING_AREA")) {
         if (iequals(val, "AUTO"))
             opts.coupling_area_auto = true;
@@ -208,6 +260,125 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
             opts.coupling_area_auto = false;
         else
             return "Unknown COUPLING_AREA: " + val + " (expected AUTO|DEFAULT)";
+    } else if (iequals(key, "BACKEND")) {
+        // Same token set as [OPTIONS] FV_BACKEND; unknown tokens are rejected
+        // so a typo surfaces as a failed set instead of a silent AUTO.
+        if      (iequals(val, "AUTO")) opts.backend = Backend2D::AUTO;
+        else if (iequals(val, "CPU"))  opts.backend = Backend2D::CPU;
+        else if (iequals(val, "OMP"))  opts.backend = Backend2D::OMP;
+        else if (iequals(val, "CUDA")) opts.backend = Backend2D::CUDA;
+        else if (iequals(val, "HIP"))  opts.backend = Backend2D::HIP;
+        else if (iequals(val, "SYCL")) opts.backend = Backend2D::SYCL;
+        else
+            return "Unknown BACKEND: " + val +
+                   " (expected AUTO|CPU|OMP|CUDA|HIP|SYCL)";
+    } else if (iequals(key, "OUTPUT_PRECISION")) {
+        if      (iequals(val, "FLOAT32") || iequals(val, "F32") || iequals(val, "SINGLE"))
+            opts.output_precision = OutputPrecision2D::FLOAT32;
+        else if (iequals(val, "FLOAT64") || iequals(val, "F64") || iequals(val, "DOUBLE"))
+            opts.output_precision = OutputPrecision2D::FLOAT64;
+        else
+            return "Unknown OUTPUT_PRECISION: " + val + " (expected FLOAT32|FLOAT64)";
+    } else if (iequals(key, "OUTPUT_COMPRESSION")) {
+        const int lvl = tryParseInt(val, ok);
+        if (!ok || lvl < 0 || lvl > 9)
+            return "Invalid OUTPUT_COMPRESSION value (expected 0..9)";
+        opts.output_compression = lvl;
+    } else if (iequals(key, "REPORT_2D_VARIABLES")) {
+        // The value may span several tokens on a file line
+        // ("REPORT_2D_VARIABLES DEPTH VELOCITY") or arrive as one
+        // space/comma-separated string from the C API; join then split.
+        std::string joined;
+        for (std::size_t i = 1; i < tokens.size(); ++i) {
+            if (i > 1) joined += ' ';
+            joined += tokens[i];
+        }
+        unsigned mask = 0;
+        const std::string err = parseReport2DVars(joined, mask);
+        if (!err.empty()) return err;
+        opts.report_2d_vars = mask;
+    } else if (iequals(key, "REPORT_2D_SPECIES")) {
+        std::string joined;
+        for (std::size_t i = 1; i < tokens.size(); ++i) {
+            if (i > 1) joined += ' ';
+            joined += tokens[i];
+        }
+        opts.report_2d_species = report2d::parseSpecies(joined);   // ALL → empty
+    } else if (iequals(key, "REPORT_2D_STEP")) {
+        // HH:MM:SS, HH:MM or plain seconds — the [OPTIONS] *_STEP spelling.
+        const double sec = openswmm::input::parse_time_seconds(val);
+        if (!(sec >= 0.0) || !std::isfinite(sec))
+            return "Invalid REPORT_2D_STEP value (expected HH:MM:SS or seconds >= 0)";
+        opts.report_2d_step = sec;
+    } else if (iequals(key, "INFILTRATION")) {
+        // E2 process enable. AUTO restores the pre-E2 rule (on iff rows).
+        if      (iequals(val, "YES") || iequals(val, "ON"))  opts.infiltration = 1;
+        else if (iequals(val, "NO")  || iequals(val, "OFF")) opts.infiltration = 0;
+        else if (iequals(val, "AUTO"))                       opts.infiltration = -1;
+        else return "Unknown INFILTRATION: " + val + " (expected YES|NO|AUTO)";
+    } else if (iequals(key, "INFIL_STEP")) {
+        // Alias of [2D_INFILTRATION_OPTIONS] INFIL_STEP; same duration grammar
+        // as WET_STEP / DRY_STEP. 0 = unset.
+        const double secs = openswmm::input::parse_time_seconds(val);
+        if (!(secs >= 0.0) || !std::isfinite(secs))
+            return "Invalid INFIL_STEP value (expected hh:mm:ss or seconds >= 0)";
+        opts.infil_step = secs;
+    } else if (iequals(key, "INFIL_DEFAULT_METHOD")) {
+        static const char* kMethods[] = {
+            "NONE", "HORTON", "MOD_HORTON", "GREEN_AMPT", "MOD_GREEN_AMPT",
+            "CURVE_NUMBER", "CONSTANT",
+        };
+        bool known = false;
+        for (const char* m : kMethods) {
+            if (iequals(val, m)) { opts.infil_default_method = m; known = true; break; }
+        }
+        // Legacy [INFILTRATION] spellings of the same methods.
+        if (!known && iequals(val, "MODIFIED_HORTON"))     { opts.infil_default_method = "MOD_HORTON";     known = true; }
+        if (!known && iequals(val, "MODIFIED_GREEN_AMPT")) { opts.infil_default_method = "MOD_GREEN_AMPT"; known = true; }
+        if (!known && iequals(val, "CURVE_NUM"))           { opts.infil_default_method = "CURVE_NUMBER";   known = true; }
+        if (!known)
+            return "Unknown INFIL_DEFAULT_METHOD: " + val +
+                   " (expected NONE|HORTON|MOD_HORTON|GREEN_AMPT|MOD_GREEN_AMPT|"
+                   "CURVE_NUMBER|CONSTANT)";
+    } else if (iequals(key, "INFIL_DESTINATION")) {
+        if      (iequals(val, "LOST"))             opts.infil_destination = "LOST";
+        else if (iequals(val, "SUBCATCH_AQUIFER")) opts.infil_destination = "SUBCATCH_AQUIFER";
+        else if (iequals(val, "AQUIFER_2D"))       opts.infil_destination = "AQUIFER_2D";
+        else return "Unknown INFIL_DESTINATION: " + val +
+                    " (expected LOST|SUBCATCH_AQUIFER|AQUIFER_2D)";
+    } else if (iequals(key, "EVAPORATION")) {
+        if      (iequals(val, "YES") || iequals(val, "ON") || iequals(val, "FORCING"))
+            opts.evaporation = 1;
+        else if (iequals(val, "NO")  || iequals(val, "OFF"))
+            opts.evaporation = 0;
+        else if (iequals(val, "CLIMATE"))
+            opts.evaporation = 2;
+        else return "Unknown EVAPORATION: " + val + " (expected NO|YES|CLIMATE)";
+    } else if (iequals(key, "TRANSPORT_POLLUTANTS") || iequals(key, "TRANSPORT_MSX") ||
+               iequals(key, "TRANSPORT_AGE") || iequals(key, "TRANSPORT_TEMPERATURE")) {
+        bool on = false;
+        if      (iequals(val, "YES") || iequals(val, "ON"))  on = true;
+        else if (iequals(val, "NO")  || iequals(val, "OFF")) on = false;
+        else return "Unknown " + key + ": " + val + " (expected YES|NO)";
+        if      (iequals(key, "TRANSPORT_POLLUTANTS"))  opts.transport_pollutants  = on;
+        else if (iequals(key, "TRANSPORT_MSX"))         opts.transport_msx         = on;
+        else if (iequals(key, "TRANSPORT_AGE"))         opts.transport_age         = on;
+        else                                            opts.transport_temperature = on;
+    } else if (iequals(key, "GROUNDWATER")) {
+        // Process enable for the integrated 2D subsurface (G1 kernel).
+        // AUTO restores the pre-key rule (on iff [2D_AQUIFER*] rows).
+        if      (iequals(val, "ON")  || iequals(val, "YES")) opts.groundwater = 1;
+        else if (iequals(val, "OFF") || iequals(val, "NO"))  opts.groundwater = 0;
+        else if (iequals(val, "AUTO"))                       opts.groundwater = -1;
+        else return "Unknown GROUNDWATER: " + val + " (expected YES|NO|AUTO)";
+    } else if (iequals(key, "GW_ET")) {
+        static const char* kEt[] = {"NONE", "CAPILLARY_RISE", "BOUNDARY_ET", "BOTH"};
+        bool known = false;
+        for (const char* e : kEt)
+            if (iequals(val, e)) { opts.gw_et = e; known = true; break; }
+        if (!known)
+            return "Unknown GW_ET: " + val +
+                   " (expected NONE|CAPILLARY_RISE|BOUNDARY_ET|BOTH)";
     } else if (is2DRetiredOptionKey(key)) {
         // These keys configured the deleted CVODE/ARKODE stack. On file load
         // they are ignored with a WARNING 104 (legacy models must still
@@ -241,14 +412,32 @@ bool is2DOptionKey(const std::string& key) {
         "LIMITER_EPSILON", "FLUX_DH_EPS", "RAINFALL_MODE", "REPORT_2D",
         "CELL_CLOSURE", "FACE_RECONSTRUCTION", "VFR_MIN_WET_FRAC",
         "OUTPUT_FILE",
-        "INTEGRATOR", "THETA", "CFL_NUMBER", "H_MOVE",
+        "INTEGRATOR", "MOMENTUM_EQUATION", "RECONSTRUCTION_ORDER", "FRONT_REBUILD",
+        "THETA", "CFL_NUMBER", "H_MOVE",
         "LTS_TIERS", "FROUDE_MAX", "ADVECTION", "COUPLING_AREA",
+        "COUPLING_IN_FLOODING",
+        "BACKEND",
+        "OUTPUT_PRECISION", "OUTPUT_COMPRESSION", "REPORT_2D_VARIABLES",
+        "REPORT_2D_SPECIES", "REPORT_2D_STEP",
+        "INFILTRATION", "INFIL_STEP", "INFIL_DEFAULT_METHOD", "INFIL_DESTINATION",
+        "EVAPORATION", "TRANSPORT_POLLUTANTS", "TRANSPORT_MSX", "TRANSPORT_AGE",
+        "TRANSPORT_TEMPERATURE",
+        "GROUNDWATER", "GW_ET",
     };
     for (const char* k : kKeys) {
         if (iequals(key, k)) return true;
     }
     return false;
 }
+
+
+const std::vector<std::string>& report2DVarTokens() { return report2d::tokens(); }
+
+std::string parseReport2DVars(const std::string& text, unsigned& mask) {
+    return report2d::parseMask(text, mask);
+}
+
+std::string formatReport2DVars(unsigned mask) { return report2d::formatMask(mask); }
 
 
 std::string format2DOptionValue(const SolverOptions2D& opts,
@@ -276,12 +465,25 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
     if (iequals(key, "RAINFALL_MODE")) {
         switch (opts.rainfall_mode) {
             case RainfallMode::NATURAL_NEIGHBOUR: return "NATURAL_NEIGHBOUR";
+            case RainfallMode::NEAREST_NEIGHBOUR: return "NEAREST_NEIGHBOUR";
             case RainfallMode::SYSTEM:            return "SYSTEM";
             case RainfallMode::NONE:              return "NONE";
         }
         return "NATURAL_NEIGHBOUR";
     }
     if (iequals(key, "INTEGRATOR"))    return "EXPLICIT";
+    if (iequals(key, "MOMENTUM_EQUATION")) {
+        switch (opts.momentum) {
+            case Momentum2D::FULL_SWE:       return "FULL_SWE";
+            case Momentum2D::DIFFUSIVE_WAVE: return "DIFFUSIVE_WAVE";
+            case Momentum2D::LOCAL_INERTIAL: break;
+        }
+        return "LOCAL_INERTIAL";
+    }
+    if (iequals(key, "RECONSTRUCTION_ORDER"))
+        return std::to_string(opts.reconstruction_order);
+    if (iequals(key, "FRONT_REBUILD"))
+        return opts.front_rebuild < 0 ? "AUTO" : (opts.front_rebuild ? "YES" : "NO");
     if (iequals(key, "THETA"))         return fmt_g(opts.theta);
     if (iequals(key, "CFL_NUMBER"))    return fmt_g(opts.cfl_number);
     if (iequals(key, "H_MOVE"))        return fmt_g(opts.h_move);
@@ -289,7 +491,86 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
     if (iequals(key, "FROUDE_MAX"))    return fmt_g(opts.froude_max);
     if (iequals(key, "ADVECTION"))     return opts.advection ? "YES" : "NO";
     if (iequals(key, "COUPLING_AREA")) return opts.coupling_area_auto ? "AUTO" : "DEFAULT";
+    if (iequals(key, "COUPLING_IN_FLOODING"))
+        return opts.coupling_in_flooding ? "YES" : "NO";
+    if (iequals(key, "BACKEND")) {
+        switch (opts.backend) {
+            case Backend2D::CPU:  return "CPU";
+            case Backend2D::OMP:  return "OMP";
+            case Backend2D::CUDA: return "CUDA";
+            case Backend2D::HIP:  return "HIP";
+            case Backend2D::SYCL: return "SYCL";
+            case Backend2D::AUTO: break;
+        }
+        return "AUTO";
+    }
+    if (iequals(key, "OUTPUT_PRECISION"))
+        return opts.output_precision == OutputPrecision2D::FLOAT64 ? "FLOAT64" : "FLOAT32";
+    if (iequals(key, "OUTPUT_COMPRESSION")) return std::to_string(opts.output_compression);
+    if (iequals(key, "REPORT_2D_VARIABLES")) return formatReport2DVars(opts.report_2d_vars);
+    if (iequals(key, "REPORT_2D_SPECIES")) return report2d::formatSpecies(opts.report_2d_species);
+    if (iequals(key, "REPORT_2D_STEP"))    return report2d::formatStep(opts.report_2d_step);
+    // E2 process enables. INFILTRATION AUTO is reported as AUTO (a host
+    // derives the effective state from swmm_infil2d_defaults_count and the
+    // per-cell rows); INFIL_STEP / INFIL_DEFAULT_METHOD report the stored
+    // key only — format2DOptionValueEx resolves the unset cases against the
+    // Infil2D rows when a caller has them.
+    if (iequals(key, "INFILTRATION"))
+        return opts.infiltration < 0 ? "AUTO" : (opts.infiltration ? "YES" : "NO");
+    if (iequals(key, "INFIL_STEP"))           return report2d::formatStep(opts.infil_step);
+    if (iequals(key, "INFIL_DEFAULT_METHOD"))
+        return opts.infil_default_method.empty() ? "NONE" : opts.infil_default_method;
+    if (iequals(key, "INFIL_DESTINATION"))
+        return opts.infil_destination.empty() ? "LOST" : opts.infil_destination;
+    if (iequals(key, "EVAPORATION"))
+        return opts.evaporation == 0 ? "NO" : (opts.evaporation == 2 ? "CLIMATE" : "YES");
+    if (iequals(key, "TRANSPORT_POLLUTANTS"))  return opts.transport_pollutants  ? "YES" : "NO";
+    if (iequals(key, "TRANSPORT_MSX"))         return opts.transport_msx         ? "YES" : "NO";
+    if (iequals(key, "TRANSPORT_AGE"))         return opts.transport_age         ? "YES" : "NO";
+    if (iequals(key, "TRANSPORT_TEMPERATURE")) return opts.transport_temperature ? "YES" : "NO";
+    // Like INFILTRATION, GROUNDWATER reports what was STORED; the Ex form
+    // resolves AUTO against the [2D_AQUIFER*] rows, and reads GW_ET from the
+    // [2D_AQUIFER_OPTIONS] struct that owns it.
+    if (iequals(key, "GROUNDWATER"))
+        return opts.groundwater < 0 ? "AUTO" : (opts.groundwater ? "YES" : "NO");
+    if (iequals(key, "GW_ET"))       return opts.gw_et.empty() ? "NONE" : opts.gw_et;
     return {};
+}
+
+
+std::string format2DOptionValueEx(const SolverOptions2D& opts,
+                                  const Infil2D* infil,
+                                  const std::string& key) {
+    return format2DOptionValueEx(opts, infil, nullptr, key);
+}
+
+std::string format2DOptionValueEx(const SolverOptions2D& opts,
+                                  const Infil2D* infil,
+                                  const SubsurfaceConfig* aquifer,
+                                  const std::string& key) {
+    if (infil) {
+        if (iequals(key, "INFIL_STEP") && opts.infil_step <= 0.0)
+            return report2d::formatStep(infil->options().infil_step);
+        if (iequals(key, "INFIL_DEFAULT_METHOD") && opts.infil_default_method.empty()) {
+            for (const auto& d : infil->defaults())
+                if (d.tag == "*") return infil2DMethodToken(d.row);
+            return "NONE";
+        }
+    }
+    if (aquifer) {
+        // GW_ET lives in [2D_AQUIFER_OPTIONS]; the [2D_OPTIONS] spelling is an
+        // alias that open() folds away, so the staging field is normally empty
+        // and the authoritative value is the only one to report.
+        if (iequals(key, "GW_ET") && opts.gw_et.empty())
+            return aquifer->options.gw_et.empty() ? "NONE"
+                                                  : aquifer->options.gw_et;
+        // GROUNDWATER is deliberately NOT resolved here: like INFILTRATION it
+        // reports AUTO | YES | NO exactly AS STORED, so a host round-trips
+        // what the deck said rather than writing back a resolved YES/NO over
+        // a deck that never spelled the key. Hosts derive the effective state
+        // from the row count.
+    }
+    return format2DOptionValue(opts, key);
 }
 
 
@@ -359,10 +640,60 @@ std::string parse2DTriangleLine(const std::vector<std::string>& tokens,
     }
 
     int idx = mesh.n_triangles();
+    // Cell index contract: triangles first, then quads (2D_TRI_QUAD_MESH_PLAN
+    // §2.4). A triangle row arriving after a quad row would renumber every
+    // cell-addressed section behind it.
+    if (idx > 0 && mesh.cell_vertex_count(idx - 1) == 4)
+        return "[2D_TRIANGLES] rows must precede all [2D_QUADS] rows "
+               "(cells are numbered triangles first, then quads)";
     mesh.resize_triangles(idx + 1);
-    mesh.tri_v0[idx] = v0;
-    mesh.tri_v1[idx] = v1;
-    mesh.tri_v2[idx] = v2;
+    mesh.set_triangle(idx, v0, v1, v2);
+    mesh.mannings_n[idx] = n;
+    mesh.tri_init_depth[idx] = init_depth;
+    mesh.tri_tag[idx] = tag;
+
+    return {};
+}
+
+
+// [2D_QUADS] — convex quadrilateral cells, appended AFTER every triangle:
+//   V1 V2 V3 V4 MANNINGS_N [INIT_DEPTH] [TAG]
+// The four vertices are listed in cyclic order (either orientation; the
+// builder orients edge normals outward from the centroid). Cell index of the
+// j-th quad row is n_triangles + j — the unified index every cell-addressed
+// section (`TRI` columns) uses. Local edge k = (V[(k+1)%4], V[(k+2)%4]).
+std::string parse2DQuadLine(const std::vector<std::string>& tokens,
+                            MeshData& mesh) {
+    if (tokens.size() < 5)
+        return "Expected V1 V2 V3 V4 MANNINGS_N [INIT_DEPTH] [TAG]";
+
+    bool ok = false;
+    int v[4];
+    for (int k = 0; k < 4; ++k) {
+        v[k] = tryParseInt(tokens[static_cast<std::size_t>(k)], ok);
+        if (!ok) return "Invalid V" + std::to_string(k + 1) + " index";
+    }
+
+    double n = tryParseDouble(tokens[4], ok);
+    if (!ok) return "Invalid MANNINGS_N value";
+
+    double init_depth = 0.0;
+    std::string tag;
+    if (tokens.size() >= 6) {
+        bool num = false;
+        double d = tryParseDouble(tokens[5], num);
+        if (num) {
+            if (d < 0.0) return "Invalid INIT_DEPTH (must be >= 0)";
+            init_depth = d;
+            if (tokens.size() >= 7) tag = tokens[6];
+        } else {
+            tag = tokens[5];
+        }
+    }
+
+    int idx = mesh.n_triangles();
+    mesh.resize_triangles(idx + 1);
+    mesh.set_quad(idx, v[0], v[1], v[2], v[3]);
     mesh.mannings_n[idx] = n;
     mesh.tri_init_depth[idx] = init_depth;
     mesh.tri_tag[idx] = tag;
@@ -545,8 +876,9 @@ std::string parse2DBoundaryConditionsLine(
     if (!ok || row.tri < 0)
         return "[2D_BOUNDARY_CONDITIONS] invalid TRI index";
     row.edge = tryParseInt(tokens[1], ok);
-    if (!ok || row.edge < 0 || row.edge > 2)
-        return "[2D_BOUNDARY_CONDITIONS] invalid EDGE (must be 0..2)";
+    if (!ok || row.edge < 0 || row.edge >= kMaxCellVerts)
+        return "[2D_BOUNDARY_CONDITIONS] invalid EDGE (must be 0..2 for a "
+               "triangle, 0..3 for a quad)";
 
     const std::string &type_tok = tokens[2];
     if      (iequals(type_tok, "WALL"))            row.bc_type = static_cast<int>(BoundaryType::WALL);
@@ -633,6 +965,241 @@ std::string parse2DEdgeConveyanceLine(
 
 
 // ============================================================================
+// §5.5 track I — [2D_INFILTRATION_OPTIONS] / [2D_INFILTRATION_DEFAULTS] /
+// [2D_INFILTRATION] line parsers
+// ============================================================================
+
+namespace {
+
+// Shared tail of a [2D_INFILTRATION_DEFAULTS] / [2D_INFILTRATION] row:
+//
+//     METHOD  [P1 .. P5]  [DEST]
+//
+// starting at tokens[first]. Parameter columns are POSITIONAL and carry
+// PROJECT UNITS — they are stored verbatim; Infil2D::resolve() does the
+// conversion. "-" means "unset" and leaves the slot at its default 0.
+// Trailing columns a method does not use may be omitted (the writer trims
+// them with infil2DParamCount), so a row's length varies by method. DEST is
+// recognised as the final token when it is neither numeric nor "-"; absent,
+// the Infil2DRow default (LOST) stands.
+std::string parseInfil2DRowTail(const std::vector<std::string>& tokens,
+                                std::size_t first,
+                                const char* section,
+                                Infil2DRow& row)
+{
+    if (tokens.size() <= first)
+        return std::string(section) + " missing METHOD";
+
+    if (!parseInfil2DMethod(tokens[first], row.method, row.has_method))
+        return std::string(section) + " unknown METHOD: " + tokens[first];
+
+    std::size_t end = tokens.size();
+    if (end > first + 1) {
+        const std::string& last = tokens[end - 1];
+        bool numeric = false;
+        (void)tryParseDouble(last, numeric);
+        if (!numeric && last != "-") {
+            if (!parseInfil2DDest(last, row.dest))
+                return std::string(section) + " unknown DEST: " + last;
+            row.dest_explicit = true;   // E2: keeps its own DEST over INFIL_DESTINATION
+            --end;
+        }
+    }
+
+    for (std::size_t k = first + 1; k < end; ++k) {
+        const std::size_t idx = k - (first + 1);
+        if (idx >= static_cast<std::size_t>(kInfil2DMaxParams))
+            return std::string(section) + " too many parameter columns (max "
+                   + std::to_string(kInfil2DMaxParams) + ")";
+        if (tokens[k] == "-") continue;  // unset
+        bool ok = false;
+        row.p[idx] = tryParseDouble(tokens[k], ok);
+        if (!ok)
+            return std::string(section) + " invalid parameter: " + tokens[k];
+    }
+
+    return {};
+}
+
+// makeSectionHandler's sibling for the [2D_INFILTRATION*] family. Those
+// sections write into the Infil2D owned by SurfaceRouter2D, which — unlike the
+// mesh, options and pending-row buffers — is reached through
+// ctx.twod_io.infil rather than a captured reference. Null (engine built
+// without 2D, or a detached context) means the section is skipped, matching
+// how every other twod_io consumer runtime-guards.
+using InfilLineParser =
+    std::function<std::string(const std::vector<std::string>&, Infil2D&)>;
+
+input::SectionHandler makeInfilSectionHandler(InfilLineParser line_parser) {
+    return [lp = std::move(line_parser)](
+        openswmm::SimulationContext& ctx,
+        const std::vector<std::string>& lines)
+    {
+        Infil2D* infil = ctx.twod_io.infil;
+        if (!infil) return;
+        for (const auto& raw : lines) {
+            auto tokens = openswmm::input::Tokenizer::tokenize(raw);
+            if (tokens.empty()) continue;
+            std::string err = lp(tokens, *infil);
+            if (!err.empty()) {
+                ctx.error_code    = 5;  // SWMM_ERR_PARSE (see makeSectionHandler)
+                ctx.error_message = "[2D] " + err + " — line: " + raw;
+                return;
+            }
+        }
+    };
+}
+
+} // anonymous namespace
+
+
+std::string parse2DInfiltrationOptionsLine(
+    const std::vector<std::string>& tokens, Infil2D& infil)
+{
+    if (tokens.empty()) return {};
+    if (tokens.size() < 2)
+        return "[2D_INFILTRATION_OPTIONS] needs PARAMETER VALUE";
+
+    if (!iequals(tokens[0], "INFIL_STEP"))
+        return "Unknown 2D_INFILTRATION_OPTIONS parameter: " + tokens[0];
+
+    // Same duration grammar as WET_STEP / DRY_STEP in [OPTIONS].
+    const double secs = openswmm::input::parse_time_seconds(tokens[1]);
+    if (secs < 0.0)
+        return "[2D_INFILTRATION_OPTIONS] invalid INFIL_STEP (expected "
+               "hh:mm:ss >= 0): " + tokens[1];
+
+    infil.options().infil_step = secs;
+    return {};
+}
+
+
+std::string parse2DInfiltrationDefaultsLine(
+    const std::vector<std::string>& tokens, Infil2D& infil)
+{
+    if (tokens.empty()) return {};
+    if (tokens.size() < 2)
+        return "[2D_INFILTRATION_DEFAULTS] needs TAG METHOD [P1..P5] [DEST]";
+
+    Infil2DDefault entry;
+    entry.tag = tokens[0];
+
+    const std::string err = parseInfil2DRowTail(
+        tokens, 1, "[2D_INFILTRATION_DEFAULTS]", entry.row);
+    if (!err.empty()) return err;
+
+    infil.defaults().push_back(std::move(entry));
+    return {};
+}
+
+
+std::string parse2DInfiltrationLine(
+    const std::vector<std::string>& tokens, Infil2D& infil)
+{
+    if (tokens.empty()) return {};
+    if (tokens.size() < 2)
+        return "[2D_INFILTRATION] needs CELL METHOD [P1..P5] [DEST]";
+
+    // CELL is 1-BASED in the file, 0-based in Infil2DOverride::tri. Only the
+    // lower bound is checked here — the mesh may not be loaded yet, so the
+    // upper bound is Infil2D::resolve()'s job.
+    bool ok = false;
+    const int cell = tryParseInt(tokens[0], ok);
+    if (!ok || cell < 1)
+        return "[2D_INFILTRATION] invalid CELL index (1-based): " + tokens[0];
+
+    Infil2DOverride entry;
+    entry.tri = cell - 1;
+
+    const std::string err = parseInfil2DRowTail(
+        tokens, 1, "[2D_INFILTRATION]", entry.row);
+    if (!err.empty()) return err;
+
+    infil.overrides().push_back(std::move(entry));
+    return {};
+}
+
+
+// ============================================================================
+// [2D_INITIAL_QUALITY] — overland transport S1/S2
+// ============================================================================
+
+std::string parse2DInitialQualityLine(
+    const std::vector<std::string>& tokens,
+    std::vector<SurfaceRouter2D::PendingInitialQualityRow>& rows)
+{
+    if (tokens.empty()) return {};
+    // CELL <n> <species> <conc>  |  TAG <name> <species> <conc>  |  * <species> <conc>
+    SurfaceRouter2D::PendingInitialQualityRow r;
+    std::size_t at = 0;
+    if (tokens[0] == "*") {
+        if (tokens.size() != 3)
+            return "[2D_INITIAL_QUALITY] '*' row needs SPECIES CONC";
+        r.all = true;
+        at = 1;
+    } else if (iequals(tokens[0], "CELL")) {
+        if (tokens.size() != 4)
+            return "[2D_INITIAL_QUALITY] CELL row needs CELL <n> SPECIES CONC";
+        bool ok = false;
+        const int cell = tryParseInt(tokens[1], ok);
+        if (!ok || cell < 1)
+            return "[2D_INITIAL_QUALITY] invalid CELL index (1-based): " +
+                   tokens[1];
+        r.tri = cell - 1;   // upper bound is the router's, once the mesh exists
+        at = 2;
+    } else if (iequals(tokens[0], "TAG")) {
+        if (tokens.size() != 4)
+            return "[2D_INITIAL_QUALITY] TAG row needs TAG <name> SPECIES CONC";
+        r.tag = tokens[1];
+        at = 2;
+    } else {
+        return "[2D_INITIAL_QUALITY] row must start with CELL, TAG or '*': " +
+               tokens[0];
+    }
+    r.species = tokens[at];
+    bool okc = false;
+    r.conc = tryParseDouble(tokens[at + 1], okc);
+    // Refused, not clamped: a negative initial concentration is not a
+    // modelling case, and a non-finite one is a typo that would otherwise
+    // become NaN mass across the mesh.
+    if (!okc || !std::isfinite(r.conc) || r.conc < 0.0)
+        return "[2D_INITIAL_QUALITY] CONC must be a finite non-negative "
+               "number, got '" + tokens[at + 1] + "'";
+    rows.push_back(std::move(r));
+    return {};
+}
+
+// ============================================================================
+// [2D_BOUNDARY_QUALITY] — overland transport S2
+// ============================================================================
+
+std::string parse2DBoundaryQualityLine(
+    const std::vector<std::string>& tokens,
+    std::vector<SurfaceRouter2D::PendingBoundaryQualityRow>& rows)
+{
+    if (tokens.empty()) return {};
+    if (tokens.size() != 4)
+        return "[2D_BOUNDARY_QUALITY] needs TRI EDGE SPECIES CONC";
+    bool ok = false;
+    SurfaceRouter2D::PendingBoundaryQualityRow r;
+    r.tri = tryParseInt(tokens[0], ok);
+    if (!ok || r.tri < 0)
+        return "[2D_BOUNDARY_QUALITY] invalid TRI index: " + tokens[0];
+    r.edge = tryParseInt(tokens[1], ok);
+    if (!ok || r.edge < 0 || r.edge >= kMaxCellVerts)
+        return "[2D_BOUNDARY_QUALITY] invalid EDGE (must be 0..2 for a "
+               "triangle, 0..3 for a quad): " + tokens[1];
+    r.species = tokens[2];
+    bool okc = false;
+    r.conc = tryParseDouble(tokens[3], okc);
+    if (!okc || !std::isfinite(r.conc) || r.conc < 0.0)
+        return "[2D_BOUNDARY_QUALITY] CONC must be a finite non-negative "
+               "number, got '" + tokens[3] + "'";
+    rows.push_back(std::move(r));
+    return {};
+}
+
+// ============================================================================
 // register2DSections
 // ============================================================================
 
@@ -640,8 +1207,22 @@ void register2DSections(MeshData& mesh,
                         SolverOptions2D& options,
                         std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
                         std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
+                        std::vector<SurfaceRouter2D::PendingInitialQualityRow>& pending_iq_rows,
+                        std::vector<SurfaceRouter2D::PendingBoundaryQualityRow>& pending_bq_rows,
                         input::SectionRegistry& registry)
 {
+    // S1/S2: initial surface species concentration. Main .inp only in this
+    // round — the .2dm sidecar's mini-registry does not carry it (recorded).
+    registry.register_custom("2D_INITIAL_QUALITY",
+        makeSectionHandler([&pending_iq_rows](const std::vector<std::string>& tokens) {
+            return parse2DInitialQualityLine(tokens, pending_iq_rows);
+        }));
+    // S2: inflow concentration on a non-WALL boundary edge. Main .inp only.
+    registry.register_custom("2D_BOUNDARY_QUALITY",
+        makeSectionHandler([&pending_bq_rows](const std::vector<std::string>& tokens) {
+            return parse2DBoundaryQualityLine(tokens, pending_bq_rows);
+        }));
+
     // Full-form handler (not makeSectionHandler): parse2DOptionsLine needs
     // ctx.warnings so retired CVODE-era keys warn-and-ignore on file load.
     registry.register_custom("2D_OPTIONS",
@@ -669,6 +1250,11 @@ void register2DSections(MeshData& mesh,
     registry.register_custom("2D_TRIANGLES",
         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
             return parse2DTriangleLine(tokens, mesh);
+        }));
+
+    registry.register_custom("2D_QUADS",
+        makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DQuadLine(tokens, mesh);
         }));
 
     registry.register_custom("2D_INITIAL_VELOCITY",
@@ -701,6 +1287,18 @@ void register2DSections(MeshData& mesh,
             return parse2DEdgeConveyanceLine(tokens, pending_ec_rows);
         }));
 
+    // §5.5 track I — per-cell infiltration. Rows land in the Infil2D reached
+    // through ctx.twod_io.infil and are resolved against the mesh (tag/cell
+    // precedence) in SurfaceRouter2D::initialize().
+    registry.register_custom("2D_INFILTRATION_OPTIONS",
+        makeInfilSectionHandler(parse2DInfiltrationOptionsLine));
+
+    registry.register_custom("2D_INFILTRATION_DEFAULTS",
+        makeInfilSectionHandler(parse2DInfiltrationDefaultsLine));
+
+    registry.register_custom("2D_INFILTRATION",
+        makeInfilSectionHandler(parse2DInfiltrationLine));
+
     // [2D_MESH_FILE] — capture only the first FILE token; mesh is loaded
     // after the main .inp is fully parsed (see SWMMEngine::open).
     registry.register_custom("2D_MESH_FILE",
@@ -710,7 +1308,14 @@ void register2DSections(MeshData& mesh,
             for (const auto& raw : lines) {
                 auto tokens = openswmm::input::Tokenizer::tokenize(raw);
                 if (tokens.size() >= 2 && iequals(tokens[0], "FILE")) {
-                    options.mesh_file = tokens[1];
+                    // Path may contain spaces; the tokenizer split an unquoted
+                    // path, so rejoin the tokens after FILE (a quoted path is a
+                    // single token already). Fixes meshes like "My Model.2dm".
+                    std::string path = tokens[1];
+                    for (std::size_t k = 2; k < tokens.size(); ++k) { path += ' '; path += tokens[k]; }
+                    if (path.size() >= 2 && path.front() == '"' && path.back() == '"')
+                        path = path.substr(1, path.size() - 2);
+                    options.mesh_file = path;
                     return; // only first FILE line
                 }
             }
@@ -726,16 +1331,21 @@ std::string load2DMeshExternalFile(MeshData& mesh,
                                    SolverOptions2D& opts,
                                    std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
                                    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
+                                   Infil2D* infil,
                                    const std::string& mesh_file,
                                    const std::string& inp_base_dir,
-                                   std::vector<std::string>* warnings)
+                                   std::vector<std::string>* warnings,
+                                   std::vector<SurfaceRouter2D::PendingInitialQualityRow>* pending_iq_rows,
+                                   std::vector<SurfaceRouter2D::PendingBoundaryQualityRow>* pending_bq_rows)
 {
     namespace fs = std::filesystem;
 
     // Resolve path
-    fs::path p(mesh_file);
+    // utf8_path, not fs::path(std::string): both of these come from the model
+    // as UTF-8 and the latter decodes in the ANSI code page (issue #7).
+    fs::path p = openswmm::io::utf8_path(mesh_file);
     if (p.is_relative() && !inp_base_dir.empty())
-        p = fs::path(inp_base_dir) / p;
+        p = openswmm::io::utf8_path(inp_base_dir) / p;
 
     // Build a minimal registry (no 2D_MESH_FILE — prevents recursion)
     openswmm::input::SectionRegistry mini;
@@ -750,6 +1360,10 @@ std::string load2DMeshExternalFile(MeshData& mesh,
     mini.register_custom("2D_TRIANGLES",
         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
             return parse2DTriangleLine(tokens, mesh);
+        }));
+    mini.register_custom("2D_QUADS",
+        makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
+            return parse2DQuadLine(tokens, mesh);
         }));
     mini.register_custom("2D_INITIAL_VELOCITY",
         makeSectionHandler([&mesh](const std::vector<std::string>& tokens) {
@@ -770,20 +1384,69 @@ std::string load2DMeshExternalFile(MeshData& mesh,
             return parse2DBoundaryConditionsLine(tokens, pending_bc_rows);
         }));
 
+    // S2/S3 — external .2dm may carry the surface quality sections too (they
+    // travel with the mesh they address). Registered only when the caller
+    // passes the pending stores, so older callers are unchanged.
+    if (pending_iq_rows)
+        mini.register_custom("2D_INITIAL_QUALITY",
+            makeSectionHandler([pending_iq_rows](const std::vector<std::string>& tokens) {
+                return parse2DInitialQualityLine(tokens, *pending_iq_rows);
+            }));
+    if (pending_bq_rows)
+        mini.register_custom("2D_BOUNDARY_QUALITY",
+            makeSectionHandler([pending_bq_rows](const std::vector<std::string>& tokens) {
+                return parse2DBoundaryQualityLine(tokens, *pending_bq_rows);
+            }));
+
     // §11A — external .2dm may carry its own [2D_EDGE_CONVEYANCE].
     mini.register_custom("2D_EDGE_CONVEYANCE",
         makeSectionHandler([&pending_ec_rows](const std::vector<std::string>& tokens) {
             return parse2DEdgeConveyanceLine(tokens, pending_ec_rows);
         }));
 
+    // §5.5.5 — [2D_INFILTRATION*] are per-cell mesh attributes, so they follow
+    // the mesh into the .2dm. The registry the main .inp uses reaches its
+    // target through ctx.twod_io.infil, which the detached context below does
+    // not carry, so the sidecar rows are parsed into a scratch object bound
+    // here by reference and transplanted after the read. Per SECTION
+    // precedence: a section the sidecar carries REPLACES the inline one
+    // (external overrides inline, the [2D_MESH_FILE] rule) rather than
+    // appending to it, so no row can be counted twice; sections the sidecar
+    // omits keep whatever the .inp supplied.
+    Infil2D sidecar_infil;
+    mini.register_custom("2D_INFILTRATION_OPTIONS",
+        makeSectionHandler([&sidecar_infil](const std::vector<std::string>& tokens) {
+            return parse2DInfiltrationOptionsLine(tokens, sidecar_infil);
+        }));
+    mini.register_custom("2D_INFILTRATION_DEFAULTS",
+        makeSectionHandler([&sidecar_infil](const std::vector<std::string>& tokens) {
+            return parse2DInfiltrationDefaultsLine(tokens, sidecar_infil);
+        }));
+    mini.register_custom("2D_INFILTRATION",
+        makeSectionHandler([&sidecar_infil](const std::vector<std::string>& tokens) {
+            return parse2DInfiltrationLine(tokens, sidecar_infil);
+        }));
+
     // The external .2dm may carry its own `;; UNITS:` header. Scan first
     // so SurfaceRouter2D::initialize sees the right flag before it runs.
-    prescan2DUnitsHeader(p.string(), opts);
+    // path_utf8, not p.string(): both callees take a UTF-8 std::string and
+    // re-apply utf8_path themselves, and string() would re-encode to ANSI.
+    const std::string p_utf8 = openswmm::io::path_utf8(p);
+    prescan2DUnitsHeader(p_utf8, opts);
 
     openswmm::input::InputReader reader(mini);
     openswmm::SimulationContext  dummy;
-    if (!reader.read(p.string(), dummy)) {
-        return "2D_MESH_FILE: error reading '" + p.string() + "': " + dummy.error_message;
+    if (!reader.read(p_utf8, dummy)) {
+        return "2D_MESH_FILE: error reading '" + p_utf8 + "': " + dummy.error_message;
+    }
+
+    if (infil != nullptr) {
+        if (!sidecar_infil.defaults().empty())
+            infil->defaults() = std::move(sidecar_infil.defaults());
+        if (!sidecar_infil.overrides().empty())
+            infil->overrides() = std::move(sidecar_infil.overrides());
+        if (sidecar_infil.options().infil_step > 0.0)
+            infil->options() = sidecar_infil.options();
     }
     return {};
 }
@@ -794,22 +1457,34 @@ std::string load2DMeshExternalFile(MeshData& mesh,
 
 void prescan2DUnitsHeader(const std::string& inp_path, SolverOptions2D& opts)
 {
-    std::ifstream in(inp_path);
+    std::ifstream in(openswmm::io::utf8_path(inp_path));
     if (!in) return;  // file missing — caller will surface the error
 
-    auto trim = [](std::string s) {
+    // Views, not strings. This pass reads the ENTIRE .inp — see the note below
+    // on why it cannot stop early — so on a large model it visits millions of
+    // lines. The previous by-value `trim(std::string)` allocated twice per
+    // line (the parameter copy and the substr result) for a scan that almost
+    // always finds nothing.
+    const auto trim = [](std::string_view s) noexcept {
         const auto issp = [](unsigned char c) { return std::isspace(c) != 0; };
-        while (!s.empty() && issp(static_cast<unsigned char>(s.back())))   s.pop_back();
-        std::size_t i = 0;
-        while (i < s.size() && issp(static_cast<unsigned char>(s[i]))) ++i;
-        return s.substr(i);
+        while (!s.empty() && issp(static_cast<unsigned char>(s.back())))
+            s.remove_suffix(1);
+        while (!s.empty() && issp(static_cast<unsigned char>(s.front())))
+            s.remove_prefix(1);
+        return s;
     };
 
+    // NB: this deliberately scans to EOF rather than stopping at the first
+    // "[SECTION]" header. The header is not always in the pre-section prefix —
+    // InpWriter emits `;; UNITS: SI (m)` underneath [2D_VERTICES] (InpWriter.cpp
+    // writeMesh2D), so every .inp the engine itself writes carries it mid-file.
+    // Stopping early would silently drop SI mesh scaling on round-trip.
+    // Last match wins, matching the previous behaviour.
     std::string line;
     while (std::getline(in, line)) {
-        const std::string t = trim(line);
+        const std::string_view t = trim(line);
         if (t.size() < 2 || t[0] != ';' || t[1] != ';') continue;
-        std::string rest = trim(t.substr(2));
+        std::string_view rest = trim(t.substr(2));
         // Match "UNITS:" prefix case-insensitively.
         constexpr std::string_view kKey = "UNITS:";
         if (rest.size() < kKey.size()) continue;
@@ -820,7 +1495,7 @@ void prescan2DUnitsHeader(const std::string& inp_path, SolverOptions2D& opts)
             }
         }
         if (!match) continue;
-        const std::string value = trim(rest.substr(kKey.size()));
+        const std::string_view value = trim(rest.substr(kKey.size()));
         // Recognised metric markers.  Anything else (including absent /
         // unknown / explicit "ft") leaves the flag at its current value.
         const bool si =

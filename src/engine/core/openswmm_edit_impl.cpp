@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file openswmm_edit_impl.cpp
  * @brief C API implementation — object deletion and type conversion.
@@ -7,7 +23,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "openswmm_api_common.hpp"
@@ -19,6 +35,7 @@
 
 #include <cstring>
 #include <cstdlib>
+#include <vector>
 
 // ============================================================================
 // Internal helpers — convert C++ results to C structs
@@ -340,6 +357,52 @@ SWMM_ENGINE_API int swmm_gage_delete(SWMM_Engine engine, int idx,
     return SWMM_OK;
 }
 
+// ---------------------------------------------------------------------------
+// Batch deletes (perf plan Phase A1) — equivalent to sequential descending
+// per-object deletes with ONE name-index rebuild per batch.  Every index is
+// validated BEFORE any mutation so the call is all-or-nothing.
+// ---------------------------------------------------------------------------
+
+#define SWMM_DELETE_MANY_BODY(COUNT_EXPR, MANY_FN)                             \
+    CHECK_HANDLE(engine);                                                      \
+    auto& ctx = to_engine(engine)->context();                                  \
+    CHECK_EDITABLE(ctx);                                                       \
+    if (n <= 0) { cascade_to_c(openswmm::edit::CascadeResult{}, cascade_out);  \
+                  return SWMM_OK; }                                            \
+    if (!indices) return SWMM_ERR_BADPARAM;                                    \
+    for (int k = 0; k < n; ++k)                                                \
+        CHECK_INDEX(indices[k] >= 0 && indices[k] < (COUNT_EXPR));             \
+    auto res = openswmm::edit::MANY_FN(ctx,                                    \
+                                       std::vector<int>(indices, indices + n));\
+    cascade_to_c(res, cascade_out);                                            \
+    return SWMM_OK
+
+SWMM_ENGINE_API int swmm_node_delete_many(SWMM_Engine engine,
+                                          const int* indices, int n,
+                                          SWMM_ImpactReport* cascade_out) {
+    SWMM_DELETE_MANY_BODY(ctx.n_nodes(), delete_nodes_many);
+}
+
+SWMM_ENGINE_API int swmm_link_delete_many(SWMM_Engine engine,
+                                          const int* indices, int n,
+                                          SWMM_ImpactReport* cascade_out) {
+    SWMM_DELETE_MANY_BODY(ctx.n_links(), delete_links_many);
+}
+
+SWMM_ENGINE_API int swmm_subcatch_delete_many(SWMM_Engine engine,
+                                              const int* indices, int n,
+                                              SWMM_ImpactReport* cascade_out) {
+    SWMM_DELETE_MANY_BODY(ctx.n_subcatches(), delete_subcatches_many);
+}
+
+SWMM_ENGINE_API int swmm_gage_delete_many(SWMM_Engine engine,
+                                          const int* indices, int n,
+                                          SWMM_ImpactReport* cascade_out) {
+    SWMM_DELETE_MANY_BODY(ctx.n_gages(), delete_gages_many);
+}
+
+#undef SWMM_DELETE_MANY_BODY
+
 SWMM_ENGINE_API int swmm_table_delete(SWMM_Engine engine, int idx,
                                        SWMM_ImpactReport* cascade_out) {
     CHECK_HANDLE(engine);
@@ -534,6 +597,55 @@ SWMM_ENGINE_API int swmm_virtual_junction_fuse(SWMM_Engine engine, int node_idx,
     int surviving = -1;
     const int code = openswmm::edit::vj_fuse(ctx, node_idx, &surviving);
     if (code == -1) return SWMM_ERR_BADPARAM;   // not a virtual junction
+    if (code != 0)  return code;                // ERR_VJ_LINK_COUNT
+    if (surviving_link_idx) *surviving_link_idx = surviving;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_conduit_split_inlet(SWMM_Engine engine, int link_idx, double t,
+                                             const char* new_node_name,
+                                             const char* new_link_name,
+                                             const char* inlet_id,
+                                             const char* capture_node,
+                                             int* new_node_idx, int* new_link_idx) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(link_idx >= 0 && link_idx < ctx.n_links());
+    if (!new_node_name || !new_link_name || !inlet_id || !capture_node)
+        return SWMM_ERR_BADPARAM;
+
+    // Inlet designs have no NameIndex — swmm_inlet_index scans with ieq.
+    int design = -1;
+    for (int i = 0; i < ctx.inlets.count(); ++i)
+        if (openswmm::ieq(ctx.inlets.names[static_cast<std::size_t>(i)], inlet_id)) {
+            design = i;
+            break;
+        }
+    const int capture = ctx.node_names.find(capture_node);
+
+    const auto res = openswmm::edit::ij_split_conduit(
+        ctx, link_idx, t, new_node_name, new_link_name, design, capture);
+    if (res.err != 0) {
+        // -1 is the split's own rejection (bad t / duplicate or empty name /
+        // non-conduit); everything else is a distinct rule code.
+        return (res.err == -1) ? SWMM_ERR_BADPARAM : res.err;
+    }
+    if (new_node_idx) *new_node_idx = res.new_node_idx;
+    if (new_link_idx) *new_link_idx = res.new_link_idx;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_inlet_junction_fuse(SWMM_Engine engine, int node_idx,
+                                             int* surviving_link_idx) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(node_idx >= 0 && node_idx < ctx.n_nodes());
+
+    int surviving = -1;
+    const int code = openswmm::edit::ij_fuse(ctx, node_idx, &surviving);
+    if (code == -1) return SWMM_ERR_BADPARAM;   // not an inlet junction
     if (code != 0)  return code;                // ERR_VJ_LINK_COUNT
     if (surviving_link_idx) *surviving_link_idx = surviving;
     return SWMM_OK;

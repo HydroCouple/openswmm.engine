@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file Climate.hpp
  * @brief Climate processing — evaporation, temperature, wind.
@@ -14,7 +30,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_CLIMATE_HPP
@@ -91,6 +107,7 @@ struct ClimateState {
 
     // Site elevation for psychrometric constant (matching legacy Temp.elev)
     double elev         = 0.0;   ///< Site elevation above sea level (ft)
+    double snow_divt    = 34.0;  ///< Rain/snow dividing temperature (degF), legacy Snow.snotmp
 
     // Monthly evaporation table (for MONTHLY method)
     double monthly_evap[12] = {};
@@ -101,7 +118,16 @@ struct ClimateState {
     double evaprate_ucf = 1036800.0;
 
     // Monthly adjustment factors
-    double adjust_evap[12]   = {1,1,1,1,1,1,1,1,1,1,1,1};
+    double adjust_evap[12]   = {0,0,0,0,0,0,0,0,0,0,0,0};   ///< ADDED to the rate (ft/s), legacy Adjust.evap /= UCF(EVAPRATE)
+    // Legacy climate.c NextEvapDate / NextEvapRate: the date the evaporation
+    // source next changes (every type — a year ahead for CONSTANT, the first
+    // of next month for MONTHLY, the next series entry for TIMESERIES, the
+    // next day for a climate file) and the rate that entry carries. A
+    // time-series evaporation is STEP-WISE: the rate holds until the date
+    // is reached, and the runoff step never crosses it (runoff_getTimeStep).
+    double next_evap_date = 0.0;
+    double next_evap_rate = 0.0;   ///< user units
+    int    evap_ts_pos    = -1;    ///< index of the last series entry read (legacy table_getNextEntry cursor)
     double adjust_temp[12]   = {0,0,0,0,0,0,0,0,0,0,0,0};
     double adjust_rain[12]   = {1,1,1,1,1,1,1,1,1,1,1,1};
     double adjust_hydcon[12] = {1,1,1,1,1,1,1,1,1,1,1,1}; ///< Infiltration conductivity multipliers
@@ -122,6 +148,7 @@ struct ClimateState {
     // Resolved timeseries/pattern indices (set at init, -1 = none)
     int temp_ts_index     = -1;   ///< Temperature timeseries table index
     int evap_ts_index     = -1;   ///< Evaporation timeseries table index
+    int humidity_ts_index = -1;   ///< Humidity / dew-point timeseries table index
     int recovery_pat_index = -1;  ///< Recovery pattern index in ctx.patterns
 
     // Sub-daily sinusoidal temperature interpolation (Gap #9)

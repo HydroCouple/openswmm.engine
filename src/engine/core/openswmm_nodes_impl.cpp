@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file openswmm_nodes_impl.cpp
  * @brief C API implementation — node identity, creation, properties, state, bulk.
@@ -7,7 +23,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "openswmm_api_common.hpp"
@@ -173,6 +189,18 @@ SWMM_ENGINE_API int swmm_node_set_initial_depth(SWMM_Engine engine, int idx, dou
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_node_set_rim_depth(SWMM_Engine engine, int idx, double depth) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    // Rendering-only (see header): stored like any other length, read by no
+    // solver path. Negative input means "unset".
+    const double d = (depth > 0.0) ? to_internal(ctx, openswmm::ucf::LENGTH, depth) : 0.0; // units
+    ctx.nodes.rim_depth[static_cast<std::size_t>(idx)] = d;
+    return SWMM_OK;
+}
+
 // ============================================================================
 // Geometry getters
 // ============================================================================
@@ -216,6 +244,39 @@ SWMM_ENGINE_API int swmm_node_virtual_eligible(SWMM_Engine engine, int idx, int*
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_node_is_inlet(SWMM_Engine engine, int idx, int* is_inlet) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (is_inlet) {
+        const auto ui = static_cast<std::size_t>(idx);
+        *is_inlet = (ui < ctx.nodes.is_inlet.size() &&
+                     ctx.nodes.is_inlet[ui]) ? 1 : 0;
+    }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_inlet_eligible(SWMM_Engine engine, int idx,
+                                             int for_drop_inlet, int* rule_code) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (rule_code)
+        *rule_code = openswmm::edit::ij_rule_violation(ctx, idx, for_drop_inlet != 0);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_set_inlet(SWMM_Engine engine, int idx, int make_inlet) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    const int code = openswmm::edit::ij_set_inlet(ctx, idx, make_inlet != 0);
+    if (code == 0)  return SWMM_OK;
+    if (code == -1) return SWMM_ERR_BADPARAM;   // non-junction node
+    return code;   // distinct ERR_VJ_* / ERR_IJ_* rule code (openswmm_nodes.h)
+}
+
 SWMM_ENGINE_API int swmm_node_get_invert_elev(SWMM_Engine engine, int idx, double* elev) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
@@ -229,6 +290,14 @@ SWMM_ENGINE_API int swmm_node_get_max_depth(SWMM_Engine engine, int idx, double*
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     if (depth) *depth = to_display(ctx, openswmm::ucf::LENGTH, ctx.nodes.full_depth[static_cast<std::size_t>(idx)]); // units
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_get_rim_depth(SWMM_Engine engine, int idx, double* depth) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (depth) *depth = to_display(ctx, openswmm::ucf::LENGTH, ctx.nodes.rim_depth[static_cast<std::size_t>(idx)]); // units
     return SWMM_OK;
 }
 
@@ -304,10 +373,6 @@ SWMM_ENGINE_API int swmm_node_set_lateral_inflow(SWMM_Engine engine, int idx, do
     CHECK_RUNNING(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     auto uidx = static_cast<std::size_t>(idx);
-    // Virtual junctions cannot receive lateral inflow (zero-storage contract).
-    if (uidx < ctx.nodes.is_virtual.size() && ctx.nodes.is_virtual[uidx] &&
-        flow != 0.0)
-        return SWMM_ERR_BADPARAM;
     if (uidx >= ctx.nodes.user_lat_flow.size()) {
         // Lazily resize if not yet allocated (e.g. hot-started context)
         ctx.nodes.user_lat_flow.resize(ctx.nodes.lat_flow.size(), 0.0);
@@ -430,14 +495,6 @@ SWMM_ENGINE_API int swmm_node_set_lat_inflows_bulk(SWMM_Engine engine, const dou
     CHECK_RUNNING(ctx);
     if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
     const int n = std::min(count, ctx.n_nodes());
-    // Virtual junctions cannot receive lateral inflow: a nonzero entry for a
-    // virtual node rejects the whole call so the caller can fix its buffer.
-    for (int i = 0; i < n; ++i) {
-        const auto ui = static_cast<std::size_t>(i);
-        if (ui < ctx.nodes.is_virtual.size() && ctx.nodes.is_virtual[ui] &&
-            buf[i] != 0.0)
-            return SWMM_ERR_BADPARAM;
-    }
     for (int i = 0; i < n; ++i)
         ctx.nodes.lat_flow[static_cast<std::size_t>(i)] = to_internal(ctx, openswmm::ucf::FLOW, buf[i]); // units
     return SWMM_OK;

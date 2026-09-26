@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file DefaultReportPlugin.cpp
  * @brief DefaultReportPlugin — legacy SWMM-compatible .rpt report writer.
@@ -11,10 +27,11 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "DefaultReportPlugin.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 
 #include "../../../include/openswmm/plugin_sdk/PluginState.hpp"
 #include "../../../include/openswmm/plugin_sdk/SimulationSnapshot.hpp"
@@ -22,13 +39,23 @@
 #include "../core/UnitConversion.hpp"
 #include "../core/DateTime.hpp"
 #include "../hydraulics/Node.hpp"   // node::getVolume — storage volume from its depth-relation
+#include "../hydraulics/Link.hpp"       // link::buildXSectParams — street spread at max depth
+#include "../hydraulics/XSectBatch.hpp" // xsect::getWofY
+#include "../transport/TransportPolicy.hpp"   // E2: Domain x Species matrix block
+#include "../2d/quality/SurfaceQuality2D.hpp"   // S7: 2D Surface Washoff Summary
+#include "../2d/data/MeshData.hpp"
+#include "../2d/subsurface/SubsurfaceData.hpp"   // G-O: 2D Aquifer Continuity
+#include "../2d/subsurface/SubsurfaceTransportState.hpp"  // T7.5: its quality twin
 
 #include <version.h>
 
 #include <algorithm>
+#include <cctype>
+#include <cstdint>
 #include <cstdio>
 #include <ctime>
 #include <cmath>
+#include <vector>
 #include <cstring>
 
 namespace openswmm {
@@ -41,7 +68,7 @@ static const char* InfilModelWords[] = {
     "HORTON", "MODIFIED_HORTON", "GREEN_AMPT",
     "MODIFIED_GREEN_AMPT", "CURVE_NUMBER"
 };
-static const char* SurchargeWords[] = { "EXTRAN", "SLOT", "DYNAMIC_SLOT" };
+static const char* SurchargeWords[] = { "EXTRAN", "SLOT", "DYNAMIC_SLOT", "TPA" };
 static const char* NodeTypeWords[] = { "JUNCTION", "OUTFALL", "DIVIDER", "STORAGE" };
 static const char* LinkTypeWords[] = { "CONDUIT", "PUMP", "ORIFICE", "WEIR", "OUTLET" };
 static const char* RainTypeWords[] = { "INTENSITY", "VOLUME", "CUMULATIVE" };
@@ -153,13 +180,11 @@ int DefaultReportPlugin::validate(const SimulationContext& /*ctx*/) {
 }
 
 int DefaultReportPlugin::prepare(const SimulationContext& ctx) {
-    std::time(&wall_start_);
-
     // Open the report file early and write preamble (title, input summaries,
     // analysis options) so they are available immediately — even if the
     // simulation crashes before write_summary() is called.
     if (!rpt_path_.empty() && !ctx.options.rpt_disabled) {
-        file_ = std::fopen(rpt_path_.c_str(), "w");
+        file_ = openswmm::io::fopen_utf8(rpt_path_, "w");
         if (file_) {
             write_preamble(file_, ctx);
             std::fflush(file_);
@@ -207,7 +232,7 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
     if (!f) {
         // Fallback: prepare() was not called or file open failed.
         // Write the entire report monolithically.
-        f = std::fopen(rpt_path_.c_str(), "w");
+        f = openswmm::io::fopen_utf8(rpt_path_, "w");
         if (!f) return -1;
         write_preamble(f, ctx);
 
@@ -222,7 +247,7 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
     write_results(f, ctx);
 
     // Write analysis timing and close
-    write_timing(f);
+    write_timing(f, ctx);
 
     std::fclose(f);
     file_ = nullptr;
@@ -375,6 +400,20 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
         std::fprintf(f,
             "\n  -------------------------------------------------------------------------------");
 
+        // Which nodes carry an inflow, resolved in one pass over the inflow
+        // rows instead of a scan of both row sets per node. The old form was
+        // O(n_nodes x n_inflow_rows) — around 10^10 comparisons on a model
+        // with 100k nodes and 100k inflows, all of it inside the report.
+        std::vector<std::uint8_t> has_inflow(
+            static_cast<std::size_t>(ctx.n_nodes()), 0u);
+        auto mark = [&](const std::vector<int>& node_idx) {
+            for (const int n : node_idx)
+                if (n >= 0 && n < ctx.n_nodes())
+                    has_inflow[static_cast<std::size_t>(n)] = 1u;
+        };
+        mark(ctx.ext_inflows.node_idx);
+        mark(ctx.dwf_inflows.node_idx);
+
         for (int i = 0; i < ctx.n_nodes(); ++i) {
             auto ui = static_cast<std::size_t>(i);
             int nt = static_cast<int>(ctx.nodes.type[ui]);
@@ -384,13 +423,7 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
                 ctx.nodes.invert_elev[ui],
                 ctx.nodes.full_depth[ui],
                 ctx.nodes.ponded_area[ui]);
-            // Check for external inflow
-            bool has_ext = false;
-            for (std::size_t k = 0; k < ctx.ext_inflows.node_idx.size(); ++k)
-                if (ctx.ext_inflows.node_idx[k] == i) { has_ext = true; break; }
-            for (std::size_t k = 0; !has_ext && k < ctx.dwf_inflows.node_idx.size(); ++k)
-                if (ctx.dwf_inflows.node_idx[k] == i) { has_ext = true; break; }
-            if (has_ext) std::fprintf(f, "    Yes");
+            if (has_inflow[ui] != 0u) std::fprintf(f, "    Yes");
         }
         WRITE(f, "");
         WRITE(f, "");
@@ -421,11 +454,21 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
             if (lt == static_cast<int>(LinkType::CONDUIT)) {
                 const int cr = ctx.link_subtypes.conduit_row(i);
                 const auto& CD = ctx.link_subtypes.conduits;
+                // Legacy prints Conduit.roughness, which conduit_validate has
+                // replaced by the transect's channel n for an IRREGULAR
+                // conduit (link.c:1024); the stored value here stays authored.
+                double n_rep = (cr >= 0) ? CD.roughness[static_cast<size_t>(cr)] : 0.01;
+                if (cr >= 0 && ctx.links.xsect_shape[static_cast<size_t>(i)] == XsectShape::IRREGULAR) {
+                    const int ti = ctx.links.xsect_curve[static_cast<size_t>(i)];
+                    if (ti >= 0 && static_cast<size_t>(ti) < ctx.transects.n_channel.size() &&
+                        ctx.transects.n_channel[static_cast<size_t>(ti)] > 0.0)
+                        n_rep = ctx.transects.n_channel[static_cast<size_t>(ti)];
+                }
                 std::fprintf(f, "%-12s%10.1f%10.4f%10.4f",
                     "CONDUIT",
                     (cr >= 0) ? CD.length[static_cast<size_t>(cr)] : 0.0,
                     ((cr >= 0) ? CD.slope[static_cast<size_t>(cr)] : 0.0) * 100.0,
-                    (cr >= 0) ? CD.roughness[static_cast<size_t>(cr)] : 0.01);
+                    n_rep);
             } else {
                 std::fprintf(f, "%-12s", lt_str(lt));
             }
@@ -517,6 +560,17 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
     std::fprintf(f, "\n    Water Quality .......... %s",
                  (ctx.n_pollutants() > 0 && !opt.ignore_quality) ? "YES" : "NO");
 
+    // E2 — the Domain x Species transport matrix (TransportPolicy), printed
+    // only when the project declares some species class at all, so a
+    // hydraulics-only report is unchanged. Answers "why is there no 2D
+    // quality" in the report itself.
+    if (ctx.n_pollutants() > 0 || ctx.options.water_age ||
+        ctx.options.heat_transport ||
+        (ctx.reactions.configured && ctx.reactions.compiled)) {
+        const auto matrix = openswmm::transport::resolve(ctx);
+        std::fprintf(f, "\n%s", openswmm::transport::formatReportBlock(matrix).c_str());
+    }
+
     if (ctx.n_subcatches() > 0) {
         int im = static_cast<int>(opt.infiltration);
         if (im < 0 || im > 4) im = 0;
@@ -531,9 +585,20 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
                                         : "STEADY";
         std::fprintf(f, "\n  Flow Routing Method ...... %s", rm_name);
 
+        // TPA pressure closure (issue #156 Phase 4): FV, non-default only.
+        if (rm == 3 && opt.fv.pressure_closure == 1) {
+            std::fprintf(f, "\n  Pressure Closure ......... TPA");
+        }
+
+        // Unsteady friction (issue #156): applies to DW and FV alike.
+        if ((rm == 2 || rm == 3) && opt.unsteady_friction != 0) {
+            std::fprintf(f, "\n  Unsteady Friction ........ VITKOVSKY (k3 = %g)",
+                         opt.uf_k3);
+        }
+
         if (rm == 2) { // DYNWAVE
             int sm = opt.surcharge_method;
-            const char* sm_name = (sm >= 0 && sm <= 2) ? SurchargeWords[sm] : "EXTRAN";
+            const char* sm_name = (sm >= 0 && sm <= 3) ? SurchargeWords[sm] : "EXTRAN";
             std::fprintf(f, "\n  Surcharge Method ......... %s", sm_name);
             const char* nc_name = (opt.node_continuity == NodeContinuity::SEMI_IMPLICIT)
                                   ? "SEMI_IMPLICIT" : "EXPLICIT";
@@ -571,7 +636,8 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
                          opt.variable_step > 0.0 ? "YES" : "NO");
             std::fprintf(f, "\n  Maximum Trials ........... %d", opt.max_trials);
             std::fprintf(f, "\n  Number of Threads ........ %d", opt.num_threads);
-            std::fprintf(f, "\n  Head Tolerance ........... %f ft", opt.head_tol);
+            std::fprintf(f, "\n  Head Tolerance ........... %f ft",
+                         opt.head_tol == 0.0 ? 0.005 : opt.head_tol);
         }
     }
 
@@ -665,10 +731,42 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             std::fprintf(f, "\n  %s%14.3f%14.3f", label, af, depth_in);
         };
 
+        // F8 — the three snow rows the ledger never had. Guarded on the
+        // project having snowpacks at all, matching legacy's
+        // `Nobjects[SNOWMELT] > 0` (report.c:519, 560) rather than on the
+        // values being nonzero: a deck WITH packs that shows 0.000 here is
+        // saying something, and a deck without them should not carry the
+        // rows at all. Row ORDER matches legacy exactly, because these
+        // tables are read side by side against EPA SWMM output.
+        //
+        // The existing "Initial Storage" label is LEFT ALONE even though
+        // legacy calls the same row "Initial LID Storage". Renaming it is not
+        // part of this defect, and the 14-deck corpus compares report bytes —
+        // a label change would move decks that have nothing to do with snow
+        // and buy nothing. Recorded here so the difference is a decision
+        // rather than an oversight.
+        const bool has_snow = ctx.snowpack_names.size() > 0;
+
+        if (mb.runoff_init_store > 0.0)
+            row("Initial Storage ..........", mb.runoff_init_store);
+        if (has_snow)
+            row("Initial Snow Cover .......", mb.runoff_init_snow);
         row("Total Precipitation ......", mb.runoff_rainfall);
+        if (mb.runoff_runon > 0.0)
+            row("Outfall Runon ............", mb.runoff_runon);
         row("Evaporation Loss .........", mb.runoff_evap);
         row("Infiltration Loss ........", mb.runoff_infil);
         row("Surface Runoff ...........", mb.runoff_runoff);
+        // Legacy prints this row whenever the model has LID area
+        // (report.c:551); the plugin sees only the ledger, so it prints
+        // whenever the term is live — a deck with LIDs but zero drain
+        // outflow omits a 0.000 row legacy would show.
+        if (mb.runoff_lid_drain != 0.0)
+            row("LID Drainage .............", mb.runoff_lid_drain);
+        if (has_snow) {
+            row("Snow Removed .............", mb.runoff_snowremov);
+            row("Final Snow Cover .........", mb.runoff_final_snow);
+        }
         row("Final Storage ............", mb.runoff_final_store);
 
         std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", mb.runoff_error() * 100.0);
@@ -726,8 +824,21 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
             double total_in  = init_bu + surf_bu + wet_dep;
             double total_out = sweep + bmp + infil + runoff + final_bu;
-            double err_pct = (total_in > 0.0) ?
-                (total_in - total_out) / total_in * 100.0 : 0.0;
+            // Legacy's THREE branches (massbal.c:900-911). The third is the
+            // one this site lacked, and this is the site the user reads: the
+            // 2026-08-23 API fix landed in swmm_get_quality_continuity_error
+            // and left the printed row on the two-branch form, so a deck
+            // that discharged mass it never received still printed 0.000 --
+            // which is the exact symptom Finding 10 was raised on.
+            double err_pct;
+            if (std::fabs(total_in - total_out) < 0.001)
+                err_pct = 0.0;
+            else if (total_in > 0.0)
+                err_pct = (total_in - total_out) / total_in * 100.0;
+            else if (total_out > 0.0)
+                err_pct = (total_in - total_out) / total_out * 100.0;
+            else
+                err_pct = 0.0;
             std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", err_pct);
 
             WRITE(f, "");
@@ -770,6 +881,12 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
         gwRow("Initial Storage ..........", mb.gw_init_storage);
         gwRow("Infiltration .............", mb.gw_infil);
+        // U3 (track I-b): the 2D surface's share of that infiltration, named
+        // so a user can see the cross-domain transfer. Printed only when a
+        // deck actually routes it (INFIL_DESTINATION SUBCATCH_AQUIFER); it
+        // is INSIDE the Infiltration row above, not a second inflow.
+        if (mb.gw_infil_2d_recharge != 0.0)
+            gwRow("  of which from 2D .......", mb.gw_infil_2d_recharge);
         gwRow("Upper Zone ET ............", mb.gw_upper_evap);
         gwRow("Lower Zone ET ............", mb.gw_lower_evap);
         gwRow("Deep Percolation .........", mb.gw_lower_perc);
@@ -816,14 +933,36 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         row("Dry Weather Inflow .......", mb.routing_dry_weather);
         row("Wet Weather Inflow .......", mb.routing_wet_weather);
         row("Groundwater Inflow .......", mb.routing_gw_inflow);
+        // G-X4: a gaining reach — the two-zone aquifer feeding a conduit that
+        // runs below the water table. Printed only when non-zero, so every
+        // deck without the signed conduit exchange keeps its report
+        // line-for-line.
+        if (mb.routing_link_gw_inflow != 0.0)
+            row("Conduit GW Inflow ........", mb.routing_link_gw_inflow);
         row("RDII Inflow ..............", mb.routing_rdii);
         row("External Inflow ..........", mb.routing_external);
         row("External Outflow .........", mb.routing_outflow);
         row("Flooding Loss ............", mb.routing_flooding);
+        // C2: the 1D→2D coupling spill, split out of Flooding Loss. Printed
+        // only when non-zero so an uncoupled model's report is unchanged
+        // line-for-line. (COUPLING_IN_FLOODING YES puts it back in the row
+        // above and leaves this one at zero, hence hidden.)
+        if (mb.routing_coupling_out != 0.0)
+            row("2D Coupling Outflow ......", mb.routing_coupling_out);
         row("Evaporation Loss .........", mb.routing_evap_loss);
         row("Exfiltration Loss ........", mb.routing_seep_loss);
         row("Initial Stored Volume ....", mb.routing_init_storage);
         row("Final Stored Volume ......", mb.routing_final_storage);
+
+        // FV only (slot_volume stays 0.0 under DW): the share of Final
+        // Stored Volume standing in the Preissmann slot. Informational —
+        // already inside Final Stored Volume, never added again.
+        {
+            double slot_ft3 = 0.0;
+            for (double sv : ctx.links.slot_volume) slot_ft3 += sv;
+            if (slot_ft3 > 0.0)
+                row("Final Slot Storage .......", slot_ft3);
+        }
 
         std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", mb.routing_error() * 100.0);
     }
@@ -855,10 +994,95 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         row2("Outfall Withdrawal .......", mb2.outfall_out);
         row2("Boundary Outflow .........", mb2.boundary_out);
         row2("Evaporation Loss .........", mb2.evap_out);
+        row2("Infiltration Loss ........", mb2.infil_out);
+        // G1-c item 1: the SUBCATCH_AQUIFER share — delivered to the legacy
+        // aquifer (the same number the Groundwater Continuity block prints as
+        // "of which from 2D", in ft³) and the tail still in flight at the end.
+        if (mb2.infil_to_aquifer > 0.0 || mb2.infil_aquifer_pending > 0.0) {
+            row2("  to Aquifer (delivered) .", mb2.infil_to_aquifer);
+            row2("  to Aquifer (in flight) .", mb2.infil_aquifer_pending);
+        }
         row2("Final Stored Volume ......", mb2.final_storage);
 
         std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f",
                      mb2.error() * 100.0);
+
+#ifdef OPENSWMM_HAS_2D
+        // G-O: the two-zone [2D_AQUIFER] ledger, the same terms the .h5
+        // /groundwater_2d group and groundwater_ledger series carry. Recharge
+        // and capillary rise are internal (unsaturated <-> saturated zone of
+        // the same cell) and are listed for information, not in the balance.
+        if (ctx.twod_io.aquifer_state && ctx.twod_io.aquifer_state->active) {
+            const auto& g = *ctx.twod_io.aquifer_state;
+            WRITE(f, "");
+            WRITE(f, "");
+            std::fprintf(f, "\n  **************************        Volume        Volume");
+            std::fprintf(f, "\n  2D Aquifer Continuity          cubic meters      10^6 ltr");
+            std::fprintf(f, "\n  **************************     ---------     ---------");
+            row2("Initial Stored Volume ....", g.led_init_storage);
+            row2("Infiltration Inflow ......", g.led_infil_in);
+            row2("Conduit Seepage Inflow ...", g.led_link);   // G-X3
+            row2("Lateral Net Inflow .......", g.led_lateral);
+            row2("Deep Percolation .........", g.led_deep);
+            row2("Node Exchange Outflow ....", g.led_node);
+            row2("Subsurface ET ............", g.led_et);
+            row2("Saturation Excess Return .", g.led_dunne);
+            row2("Final Stored Volume ......", g.liveStorage());
+            row2("  (Recharge, internal) ...", g.led_recharge);
+            row2("  (Capillary Rise, int.) .", g.led_caprise);
+            const double denom = g.led_init_storage + g.led_infil_in + g.led_link +   // G-X3
+                                 std::max(0.0, g.led_lateral);
+            std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f",
+                         (denom > 0.0) ? g.continuityResidual() / denom * 100.0 : 0.0);
+        }
+
+        // T7.5: the aquifer's SPECIES continuity, one block per transported
+        // row — the quality twin of the water block above, and the only
+        // place a modeller sees where a plume went. Printed only when the
+        // kernel actually carried a tuple, so a water-only aquifer deck's
+        // report is unchanged line-for-line.
+        if (ctx.twod_io.aquifer_transport != nullptr &&
+            ctx.twod_io.aquifer_transport->active()) {
+            const auto& t = *ctx.twod_io.aquifer_transport;
+            for (int sp = 0; sp < t.n_species; ++sp) {
+                const auto u = static_cast<std::size_t>(sp);
+                const std::string& nm =
+                    (u < t.row_names.size()) ? t.row_names[u] : std::string("?");
+                WRITE(f, "");
+                WRITE(f, "");
+                std::fprintf(f, "\n  **************************%14s", nm.c_str());
+                std::fprintf(f, "\n  2D Aquifer Quality Continuity%11s", "mass");
+                std::fprintf(f, "\n  **************************    ----------");
+                auto qrow = [&](const char* label, double v) {
+                    std::fprintf(f, "\n  %s%14.4f", label, v);
+                };
+                qrow("Initial Stored Mass ......", t.init_mass[u]);
+                qrow("Infiltration Inflow ......", t.gained_infil[u]);
+                if (t.gained_node[u] != 0.0)
+                    qrow("Node Exchange Inflow .....", t.gained_node[u]);
+                if (t.gained_link[u] != 0.0)
+                    qrow("Conduit Seepage Inflow ...", t.gained_link[u]);
+                qrow("Lateral Net Inflow .......", t.net_lateral[u]);
+                qrow("Deep Percolation .........", t.lost_deep[u]);
+                qrow("Node Exchange Outflow ....", t.lost_node[u]);
+                if (t.lost_link[u] != 0.0)
+                    qrow("Conduit Seepage Outflow ..", t.lost_link[u]);
+                qrow("Saturation Excess Return .", t.lost_dunne[u]);
+                qrow("Evapotranspiration .......", t.lost_et[u]);
+                if (t.lost_reaction[u] != 0.0)
+                    qrow("Reacted / Decayed ........", t.lost_reaction[u]);
+                qrow("Final Stored Mass ........", t.ledgeredStorage(sp));
+                // The denominator is what came in, so a species that only
+                // ever sat there reports 0 % rather than dividing by zero.
+                const double denom = std::fabs(t.init_mass[u]) +
+                                     std::fabs(t.gained_infil[u]) +
+                                     std::fabs(t.net_lateral[u]);
+                std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f",
+                             (denom > 0.0) ? t.residual(sp) / denom * 100.0 : 0.0);
+            }
+        }
+
+#endif
 
         // 2D Solver Statistics — cumulative marcher throughput. Printed only
         // when populated (>=0).
@@ -930,12 +1154,21 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             rowx("Net 1D -> 2D .............", spill_1d - drain_1d);
 
             // Flow-routing continuity with the exchange internal: remove the
-            // drain from external inflow and the spill from flooding loss.
+            // drain from external inflow and the spill from whichever outflow
+            // category carries it.
+            //
+            // C2: the spill now lives in routing_coupling_out by default, and
+            // only in routing_flooding under COUPLING_IN_FLOODING. Subtracting
+            // it from the SUM of the two is correct in both groupings and
+            // needs no branch — the category it is not in contributes zero.
             const double in_adj  = mb1.routing_dry_weather + mb1.routing_wet_weather
-                                 + mb1.routing_gw_inflow + mb1.routing_rdii
+                                 + mb1.routing_gw_inflow
+                                 + mb1.routing_link_gw_inflow   // G-X4
+                                 + mb1.routing_rdii
                                  + (mb1.routing_external - drain_1d)
                                  + mb1.routing_init_storage;
-            const double out_adj = (mb1.routing_flooding - spill_1d)
+            const double out_adj = (mb1.routing_flooding
+                                    + mb1.routing_coupling_out - spill_1d)
                                  + mb1.routing_outflow + mb1.routing_evap_loss
                                  + mb1.routing_seep_loss + mb1.routing_final_storage;
             const double err_adj = (in_adj > 0.0)
@@ -996,7 +1229,6 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             double reacted = (up < mb.qual_routing_reacted.size())   ? mb.qual_routing_reacted[up]  : 0.0;
             double init    = (up < mb.qual_routing_init.size())      ? mb.qual_routing_init[up]     : 0.0;
             double final_  = (up < mb.qual_routing_final.size())     ? mb.qual_routing_final[up]    : 0.0;
-
             qrow("Dry Weather Inflow .......", dwf);
             qrow("Wet Weather Inflow .......", wet);
             qrow("Groundwater Inflow .......", gw);
@@ -1199,6 +1431,146 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         }
     }
 
+    // =====================================================================
+    // FV Solver Statistics — cumulative explicit-integrator throughput, the
+    // 1D counterpart of the "2D Solver Statistics" block above. The Routing
+    // Time Step Summary reports the ROUTING step; this reports the substeps
+    // the FV solver filled it with, which is the number that actually sets
+    // the run time.
+    //
+    // Already inside the rpt_flowstats guard opened well above (the braces
+    // that close just before this comment are the anonymous scope holding the
+    // Routing Time Step Summary's `rs`, not the conditional) — so the FV block
+    // follows FLOWSTATS, whereas the 2D block above follows CONTINUITY. The
+    // two solver blocks answer to different report flags; that is inherited,
+    // not chosen here.
+    //
+    // Skipped on the -1 sentinel, which means "not an FV run".
+    // =====================================================================
+    if (ctx.routing_stats.fv_nsteps >= 0) {
+        const auto& rs = ctx.routing_stats;
+        WRITE(f, "");
+        WRITE(f, "");
+        WRITE(f, "*********************");
+        WRITE(f, "FV Solver Statistics");
+        WRITE(f, "*********************");
+        auto srow = [&](const char* label, long v) {
+            std::fprintf(f, "\n  %s%14ld", label, v);
+        };
+        srow("Explicit Substeps ........", rs.fv_nsteps);
+        srow("Face Flux Evaluations ....", rs.fv_nflux);
+        std::fprintf(f, "\n  Avg Substep (s) ..........%14.6f", rs.fv_avg_h);
+        std::fprintf(f, "\n  Min Substep (s) ..........%14.6f", rs.fv_min_h);
+        std::fprintf(f, "\n  Last Substep (s) .........%14.6f", rs.fv_last_h);
+        // Whether local time stepping ever ran a macro cycle. The tier
+        // occupancy rows below are filled by the tier ASSIGNMENT, which runs
+        // whether or not a cycle fits the routing step, so on their own they
+        // cannot distinguish "tiering did not help" from "tiering never
+        // engaged" — these two rows can.
+        srow("LTS Macro Cycles Fired ...", rs.fv_macro_cycles);
+        srow("LTS Macro Cycles Rejected ", rs.fv_macro_rejected);
+
+        // Compaction telemetry: the share of faces on the active list at each
+        // rebuild. A mean near 1.0 means compaction is finding nothing to skip.
+        if (rs.fv_active_mean >= 0.0) {
+            std::fprintf(f,
+                "\n  Active Faces min/mean/max %8.1f /%5.1f /%5.1f  (%%)",
+                100.0 * rs.fv_active_min,
+                100.0 * rs.fv_active_mean,
+                100.0 * rs.fv_active_max);
+        }
+
+        // dt-argmin attribution (slot program R0): which regime owned the
+        // binding CFL element, as a share of census/re-tier events. The
+        // number that says whether the step is set by the slot.
+        {
+            const long tot = rs.fv_dt_argmin_pressurized + rs.fv_dt_argmin_band +
+                             rs.fv_dt_argmin_free + rs.fv_dt_argmin_node;
+            if (tot > 0) {
+                auto pct = [&](long v) {
+                    return 100.0 * static_cast<double>(v) /
+                           static_cast<double>(tot);
+                };
+                std::fprintf(f, "\n  dt Argmin Pressurized (%%) %14.1f",
+                             pct(rs.fv_dt_argmin_pressurized));
+                std::fprintf(f, "\n  dt Argmin Taper Band (%%) .%14.1f",
+                             pct(rs.fv_dt_argmin_band));
+                std::fprintf(f, "\n  dt Argmin Free (%%) .......%14.1f",
+                             pct(rs.fv_dt_argmin_free));
+                std::fprintf(f, "\n  dt Argmin Node Bound (%%) .%14.1f",
+                             pct(rs.fv_dt_argmin_node));
+            }
+        }
+
+        // LTS tier occupancy. A run that quietly collapsed to one tier reads
+        // as n_tiers == 1 here rather than as a silently ordinary run — which
+        // is the difference between "tiering did not help" and "tiering never
+        // engaged", and they call for opposite responses.
+        if (rs.fv_n_tiers > 0) {
+            long total = 0;
+            for (int k = 0; k < rs.fv_n_tiers && k < 8; ++k)
+                total += rs.fv_tier_cells[k];
+            if (total > 0) {
+                for (int k = 0; k < rs.fv_n_tiers && k < 8; ++k)
+                    std::fprintf(f,
+                        "\n  LTS Tier %d Occupancy (%%) .%14.1f", k,
+                        100.0 * static_cast<double>(rs.fv_tier_cells[k])
+                              / static_cast<double>(total));
+            }
+        }
+    }
+
+    // =====================================================================
+    // Slot Storage Summary (FV slot program R0) — how much of the run's
+    // conduit storage stood in the Preissmann slot. The run share is the
+    // ratio of time integrals; links are listed when their peak share
+    // crossed the 1 % budget. Silent when the slot never held water.
+    // =====================================================================
+    {
+        double sum_slot_dt = 0.0, sum_vol_dt = 0.0;
+        for (std::size_t j = 0; j < ctx.links.stat_slot_vol_dt.size(); ++j) {
+            sum_slot_dt += ctx.links.stat_slot_vol_dt[j];
+            sum_vol_dt  += ctx.links.stat_vol_dt[j];
+        }
+        if (sum_slot_dt > 0.0) {
+            WRITE(f, "");
+            WRITE(f, "");
+            WRITE(f, "*********************");
+            WRITE(f, "Slot Storage Summary");
+            WRITE(f, "*********************");
+            std::fprintf(f, "\n  Run Slot Share (%%) .......%14.2f",
+                         100.0 * sum_slot_dt / std::max(sum_vol_dt, 1e-30));
+            std::fprintf(f, "\n  Peak Slot Share (%%) ......%14.2f",
+                         100.0 * ctx.routing_stats.slot_peak_share);
+            std::fprintf(f, "\n  Hours Share Above 1%% .....%14.2f",
+                         ctx.routing_stats.slot_time_above_s / 3600.0);
+
+            // Per-link rows for offenders (peak share >= 1%).
+            bool header = false;
+            for (int j = 0; j < ctx.n_links(); ++j) {
+                const auto uj = static_cast<std::size_t>(j);
+                if (ctx.links.stat_peak_slot_share[uj] < 0.01) continue;
+                if (!header) {
+                    std::fprintf(f,
+                        "\n\n  Link                    Peak Share    Run Share"
+                        "   Hrs >1%%"
+                        "\n  ----------------------------------------------------------");
+                    header = true;
+                }
+                const double run_share =
+                    (ctx.links.stat_vol_dt[uj] > 0.0)
+                        ? ctx.links.stat_slot_vol_dt[uj] /
+                              ctx.links.stat_vol_dt[uj]
+                        : 0.0;
+                std::fprintf(f, "\n  %-20s %9.2f%%   %9.2f%% %9.2f",
+                             ctx.link_names.name_of(j).c_str(),
+                             100.0 * ctx.links.stat_peak_slot_share[uj],
+                             100.0 * run_share,
+                             ctx.links.stat_time_slot_above[uj] / 3600.0);
+            }
+        }
+    }
+
     WRITE(f, "");
     WRITE(f, "");
 
@@ -1216,6 +1588,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             "\n  Name                 Conduit          Conduit               Maximum          Mean");
         std::fprintf(f,
             "\n  ------------------------------------------------------------------------------------");
+        bool any_fed = false;
         for (std::size_t r = 0; r < ctx.vj_diag.node_idx.size(); ++r) {
             const int ni = ctx.vj_diag.node_idx[r];
             const int ju = ctx.vj_diag.up_link[r];
@@ -1223,12 +1596,33 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             const long long n = ctx.vj_diag.resid_n[r];
             const double mean = (n > 0)
                 ? ctx.vj_diag.resid_sum[r] / static_cast<double>(n) : 0.0;
-            std::fprintf(f, "\n  %-20s %-16s %-16s %13.6f %13.6f",
-                ctx.node_names.name_of(ni).c_str(),
-                (ju >= 0) ? ctx.link_names.name_of(ju).c_str() : "*",
-                (jd >= 0) ? ctx.link_names.name_of(jd).c_str() : "*",
-                ctx.vj_diag.resid_max[r], mean);
+            // A virtual junction fed by a lateral inflow (plans/
+            // VJ_LATERAL_INFLOW_PLAN_2026-09-04.md) legitimately shows a
+            // nonzero residual — the added mass carries no momentum — so
+            // the row says so. Unfed rows keep the original format.
+            const auto uni = static_cast<std::size_t>(ni);
+            const double max_lat = (ni >= 0 && uni < ctx.nodes.stat_max_lat_inflow.size())
+                ? ctx.nodes.stat_max_lat_inflow[uni] : 0.0;
+            // Signed statistic (an inlet junction's capture sink is negative).
+            if (std::fabs(max_lat) > 0.0) {
+                std::fprintf(f, "\n  %-20s %-16s %-16s %13.6f %13.6f   lateral %.3f %s",
+                    ctx.node_names.name_of(ni).c_str(),
+                    (ju >= 0) ? ctx.link_names.name_of(ju).c_str() : "*",
+                    (jd >= 0) ? ctx.link_names.name_of(jd).c_str() : "*",
+                    ctx.vj_diag.resid_max[r], mean,
+                    max_lat * Qcf, FlowUnitWords[fu]);
+                any_fed = true;
+            } else {
+                std::fprintf(f, "\n  %-20s %-16s %-16s %13.6f %13.6f",
+                    ctx.node_names.name_of(ni).c_str(),
+                    (ju >= 0) ? ctx.link_names.name_of(ju).c_str() : "*",
+                    (jd >= 0) ? ctx.link_names.name_of(jd).c_str() : "*",
+                    ctx.vj_diag.resid_max[r], mean);
+            }
         }
+        if (any_fed)
+            std::fprintf(f, "\n  (lateral: maximum lateral inflow at the node; "
+                            "its residual includes the added zero-momentum mass)");
         WRITE(f, "");
         WRITE(f, "");
     }
@@ -1309,13 +1703,23 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 char datebuf[16], timebuf[16];
                 std::snprintf(datebuf, sizeof(datebuf), "%02d/%02d/%04d", mo, dy, yr);
                 std::snprintf(timebuf, sizeof(timebuf), "%02d:%02d:%02d", hr, mn, sc);
+                const char* rule_name =
+                    (entry.rule_idx >= 0
+                     && entry.rule_idx < static_cast<int>(ctx.control_rule_names.size()))
+                        ? ctx.control_rule_names[static_cast<std::size_t>(entry.rule_idx)].c_str()
+                        : "Rule?";
                 std::fprintf(f,
                     "\n  %11s: %8s Link %s setting changed to %6.2f by Control %s",
                     datebuf, timebuf,
                     ctx.link_names.name_of(entry.link_idx).c_str(),
                     entry.new_setting,
-                    entry.rule_name.c_str());
+                    rule_name);
             }
+            if (ctx.control_log_dropped > 0)
+                std::fprintf(f,
+                    "\n  (%zu further control actions not listed: the log is "
+                    "capped at %zu entries)",
+                    ctx.control_log_dropped, SimulationContext::kMaxControlLog);
         }
 
         WRITE(f, "");
@@ -1383,13 +1787,19 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
     // =====================================================================
     // Subcatchment Washoff Summary — Gap #64, matches legacy writeSubcatchLoads()
-    // total_load is in mg (washoff_load [mg/s] × dt [s]); convert to lbs: /453592
+    // total_load is in USER MASS (lbs/kg) since the 2026-08-23 units fix:
+    // the washoff loop applies mcf at the booking seam, exactly as legacy
+    // does at surfqual.c:357 — so this summary prints the value RAW, and it
+    // agrees with the Runoff Quality Continuity ledger row by construction.
+    // The /453592 that used to sit here was half of the defect: with the
+    // booking in mg/L·ft³ the summary printed 1/28.3 of the true pounds
+    // while the ledger row printed 16057× them (known-mass audit,
+    // QUALITY_LEDGER_UNITS_AUDIT §7).
     // =====================================================================
     if (ctx.n_subcatches() > 0 && ctx.n_pollutants() > 0 && opt.rpt_subcatchments != 0
         && !opt.ignore_quality) {
         int ns = ctx.n_subcatches();
         int np = ctx.n_pollutants();
-        static constexpr double MG_TO_LBS = 1.0 / 453592.0;
 
         WRITE(f, "****************************");
         WRITE(f, "Subcatchment Washoff Summary");
@@ -1420,9 +1830,8 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             for (int p = 0; p < np; ++p) {
                 auto up = static_cast<std::size_t>(p);
                 auto idx = uj * static_cast<std::size_t>(np) + up;
-                double load_mg = (idx < ctx.subcatches.total_load.size())
+                double load_lbs = (idx < ctx.subcatches.total_load.size())
                     ? ctx.subcatches.total_load[idx] : 0.0;
-                double load_lbs = load_mg * MG_TO_LBS;
                 sys_loads[up] += load_lbs;
                 std::fprintf(f, "%14.3f", load_lbs);
             }
@@ -1438,6 +1847,102 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         WRITE(f, "");
         WRITE(f, "");
     }
+
+    // =====================================================================
+    // BW-MSX (2026-09-19): the reactions component's species that build up
+    // and wash off — same layout as the pollutant block, user mass per
+    // species (MG/UG species print lbs/kg; other units print "mass").
+    // =====================================================================
+    {
+        const auto& ms = ctx.reactions.surface;
+        if (ms.active() && ctx.n_subcatches() > 0 && opt.rpt_subcatchments != 0
+            && !opt.ignore_quality) {
+            const int ns = ctx.n_subcatches();
+            const int nm = ms.n_species;
+            WRITE(f, "********************************");
+            WRITE(f, "Subcatchment MSX Washoff Summary");
+            WRITE(f, "********************************");
+            std::fprintf(f, "\n");
+            std::fprintf(f, " \n  ----------------------------------");
+            for (int m = 1; m < nm; ++m) std::fprintf(f, "--------------");
+            std::fprintf(f, " \n                                ");
+            for (int m = 0; m < nm; ++m)
+                std::fprintf(f, "%14s", ctx.reactions.species_name[static_cast<std::size_t>(m)].c_str());
+            std::fprintf(f, " \n  Subcatchment                  ");
+            for (int m = 0; m < nm; ++m) {
+                const double mcf = ms.mcf[static_cast<std::size_t>(m)];
+                std::fprintf(f, "%14s", (mcf == 1.0) ? "mass" : (si_report ? "kg" : "lbs"));
+            }
+            std::fprintf(f, " \n  ----------------------------------");
+            for (int m = 1; m < nm; ++m) std::fprintf(f, "--------------");
+            std::vector<double> sys(static_cast<std::size_t>(nm), 0.0);
+            for (int j = 0; j < ns; ++j) {
+                std::fprintf(f, "\n  %-30s", ctx.subcatch_names.name_of(j).c_str());
+                for (int m = 0; m < nm; ++m) {
+                    const double v = ms.led_subcatch_load[ms.sidx(j, m)];
+                    sys[static_cast<std::size_t>(m)] += v;
+                    std::fprintf(f, "%14.3f", v);
+                }
+            }
+            std::fprintf(f, " \n  ----------------------------------");
+            for (int m = 1; m < nm; ++m) std::fprintf(f, "--------------");
+            std::fprintf(f, "\n  System                        ");
+            for (int m = 0; m < nm; ++m) std::fprintf(f, "%14.3f", sys[static_cast<std::size_t>(m)]);
+            WRITE(f, "");
+            std::fprintf(f, "  Surface ledger (species: initial buildup, net buildup, washed to network, swept, BMP removed):\n");
+            for (int m = 0; m < nm; ++m) {
+                const auto um = static_cast<std::size_t>(m);
+                std::fprintf(f, "    %-16s %14.3f %14.3f %14.3f %14.3f %14.3f\n",
+                             ctx.reactions.species_name[um].c_str(),
+                             ms.led_init_buildup[um], ms.led_buildup[um],
+                             ms.led_runoff_load[um], ms.led_sweeping[um], ms.led_bmp_removal[um]);
+            }
+            WRITE(f, "");
+            WRITE(f, "");
+        }
+    }
+
+#ifdef OPENSWMM_HAS_2D
+    // S7: 2D Surface Washoff Summary — the cells' land-use surfaces, per
+    // surface species (pollutants, then MSX). The same ledger rows as the
+    // subcatchment blocks above, in the same user mass, plus the store left
+    // on the mesh; "washed" is what entered the cell rows (it reaches the
+    // network through the coupling tuple, so it is not a node load here).
+    {
+        const auto* sq = ctx.twod_io.surface_quality;
+        if (sq && sq->active() && !opt.ignore_quality) {
+            const int nsp = sq->nSpecies();
+            WRITE(f, "**************************");
+            WRITE(f, "2D Surface Washoff Summary");
+            WRITE(f, "**************************");
+            std::fprintf(f, "\n");
+            std::fprintf(f, "  Cells: %d  Land uses: %d  (buildup per %s)\n",
+                         sq->nCells(), sq->nLandUses(), si_report ? "hectare" : "acre");
+            std::fprintf(f, "  %-16s %14s %14s %14s %14s %14s %14s\n", "Species",
+                         "Init Buildup", "Net Buildup", "Washed Off", "Swept", "BMP Removed", "On Mesh");
+            for (int sidx = 0; sidx < nsp; ++sidx) {
+                const auto us = static_cast<std::size_t>(sidx);
+                double store = 0.0;
+                if (ctx.twod_io.mesh) {
+                    const auto& mesh = *ctx.twod_io.mesh;
+                    const double to_la = si_report ? 1.0e-4 : 1.0 / 4046.8564224;   // m² → ha | acre
+                    for (int c = 0; c < sq->nCells(); ++c)
+                        store += sq->buildupPerArea(c, sidx) *
+                                 mesh.tri_area[static_cast<std::size_t>(c)] * to_la;
+                }
+                std::fprintf(f, "  %-16s %14.3f %14.3f %14.3f %14.3f %14.3f %14.3f\n",
+                             sq->speciesName(sidx).c_str(),
+                             sq->ledInitBuildup()[us], sq->ledBuildup()[us], sq->ledWashoff()[us],
+                             sq->ledSweeping()[us], sq->ledBmp()[us], store);
+            }
+            std::fprintf(f, "  (%s; a reactions species declared in UG or as a count keeps its own unit)\n",
+                         si_report ? "kg" : "lbs");
+            WRITE(f, "");
+            WRITE(f, "");
+        }
+    }
+
+#endif
 
     // =====================================================================
     // Groundwater Summary — matches legacy writeGroundwater()
@@ -1813,8 +2318,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 elapsedToParts(ctx.nodes.stat_max_depth_date[uj],
                                ctx.options.start_date, days, hrs, mins);
 
-                // Max outflow: use stat_max_total_inflow as proxy (outflow stats not separate)
-                double max_outflow = ctx.nodes.stat_max_total_inflow[uj] * Qcf;
+                double max_outflow = ctx.nodes.stat_storage_max_outflow[uj] * Qcf;
 
                 std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(j).c_str());
                 std::fprintf(f, "%10.3f  %5.1f  %5.1f  %5.1f  %10.3f  %5.1f",
@@ -2139,13 +2643,91 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     }
 
     // =====================================================================
-    // Street Inlet Flow Summary — Gap #68
-    // Volumes in ft³; convert to 1000 gal: × 7.48052 / 1000
+    // Street tables — Street Flow Summary (Gap #9) and the Street Inlet Flow
+    // Summary (Gap #68). Both are gated the same way the inlet table already
+    // was: link reporting on, and something street-related in the model.
+    //
+    // Street index of a STREET conduit: xsect_curve is the built transect
+    // table, whose name is the street it was built from
+    // (PostParseResolver.cpp:2298-2310).
     // =====================================================================
+    auto street_of_link = [&ctx](int j) -> int {
+        const auto uj = static_cast<std::size_t>(j);
+        if (ctx.links.xsect_shape[uj] != XsectShape::STREET_XSECT) return -1;
+        const int tt = ctx.links.xsect_curve[uj];
+        if (tt < 0 || tt >= static_cast<int>(ctx.transect_tables.size())) return -1;
+        const std::string& sname = ctx.transect_tables[static_cast<std::size_t>(tt)].name;
+        for (int s = 0; s < ctx.streets.count(); ++s) {
+            const std::string& a = ctx.streets.names[static_cast<std::size_t>(s)];
+            if (a.size() != sname.size()) continue;
+            bool same = true;
+            for (std::size_t c = 0; c < a.size(); ++c)
+                if (std::tolower(static_cast<unsigned char>(a[c])) !=
+                    std::tolower(static_cast<unsigned char>(sname[c]))) { same = false; break; }
+            if (same) return s;
+        }
+        return -1;
+    };
+
+    // ---------------------------------------------------------------------
+    // Street Flow Summary — legacy writeStreetStats (inlet.c:1055-1094):
+    // peak flow, SWMM's spread (flow width at max depth / sides, clipped to
+    // the street's curb-to-crown width) and max depth per STREET conduit.
+    // ---------------------------------------------------------------------
+    if (ctx.streets.count() > 0 && opt.rpt_links != 0) {
+        bool header = false;
+        const double inv_len = 1.0 / len_ucf;   // display → ft (street store is user units)
+        for (int j = 0; j < ctx.n_links(); ++j) {
+            const int si = street_of_link(j);
+            if (si < 0) continue;
+            const auto uj = static_cast<std::size_t>(j);
+            const auto su = static_cast<std::size_t>(si);
+
+            if (!header) {
+                WRITE(f, "*******************");
+                WRITE(f, "Street Flow Summary");
+                WRITE(f, "*******************");
+                std::fprintf(f,
+"\n\n  -------------------------------------------------------"
+"\n                          Peak   Maximum   Maximum"
+"\n                          Flow    Spread     Depth"
+"\n  Street Conduit           %-3s     %-5s     %-5s"
+"\n  -------------------------------------------------------",
+                    FlowUnitWords[fu], si_report ? "m" : "ft",
+                    si_report ? "m" : "ft");
+                header = true;
+            }
+
+            const double max_flow  = ctx.links.stat_max_flow[uj];
+            const double max_depth = ctx.links.stat_max_filling[uj]
+                                   * ctx.links.xsect_y_full[uj];
+
+            // SWMM's spread (flow width) at max depth — not HEC-22's, which is
+            // based on max flow and cannot see backwater (inlet.c:1077-1089).
+            const XSectParams xs =
+                link::buildXSectParams(ctx.links, uj, &ctx.transect_tables);
+            const int sides = std::max(ctx.streets.sides[su], 1);
+            double max_spread = xsect::getWofY(xs, max_depth) / sides;
+            max_spread = std::min(max_spread, ctx.streets.t_crown[su] * inv_len);
+
+            std::fprintf(f, "\n  %-16s %9.3f %9.3f %9.3f",
+                ctx.link_names.name_of(j).c_str(),
+                max_flow * Qcf, max_spread * len_ucf, max_depth * len_ucf);
+        }
+        if (header) { WRITE(f, ""); WRITE(f, ""); }
+    }
+
+    // ---------------------------------------------------------------------
+    // Street Inlet Flow Summary — Gap #68 volumes plus the legacy per-inlet
+    // performance columns (inlet.c:1096-1124). Inlet junctions are listed
+    // under their node name with a "(node)" marker.
+    // Volumes in ft³; convert to 1000 gal: × 7.48052 / 1000
+    // ---------------------------------------------------------------------
     if (ctx.inlet_usages.count() > 0 && opt.rpt_links != 0) {
         int ni = ctx.inlet_usages.count();
         // Only write if stats arrays are populated
         bool has_stats = (static_cast<int>(ctx.inlet_usages.stat_capture_vol.size()) >= ni);
+        const bool has_diag = (ctx.inlet_diag.count() >= ni);
 
         WRITE(f, "**************************");
         WRITE(f, "Street Inlet Flow Summary");
@@ -2157,34 +2739,81 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         } else {
             static constexpr double FT3_TO_KGAL = 7.48052 / 1000.0;
             std::fprintf(f,
-"\n\n  -----------------------------------------------------------------------------------------"
-"\n                                          Peak        Pcnt        Pcnt       Vol.       Vol."
-"\n  Conduit               Inlet           Flow        Captured    Bypassed   Captured   Bypassed"
-"\n                                        %-3s         Percent     Percent    1000 Gal   1000 Gal"
-"\n  -----------------------------------------------------------------------------------------",
-                FlowUnitWords[fu]);
+"\n\n  ------------------------------------------------------------------------------------------------------------------------------------------"
+"\n                                                              Peak      Peak       Avg.    Bypass      Back      Peak      Peak      Vol.      Vol."
+"\n                                                              Flow   Capture    Capture      Flow      Flow   Capture    Bypass  Captured  Bypassed"
+"\n  Inlet Location        Inlet Design       Placement  Count     %-3s      Pcnt       Pcnt      Pcnt      Pcnt   / Inlet      %-3s  1000 Gal  1000 Gal"
+"\n  ------------------------------------------------------------------------------------------------------------------------------------------",
+                FlowUnitWords[fu], FlowUnitWords[fu]);
 
             for (int i = 0; i < ni; ++i) {
                 auto ui = static_cast<std::size_t>(i);
                 int li  = ctx.inlet_usages.link_index[i];
+                int nh  = ctx.inlet_usages.node_host[ui];
                 int di  = ctx.inlet_usages.design_index[i];
 
-                const char* link_name  = (li >= 0) ? ctx.link_names.name_of(li).c_str() : "?";
+                std::string host_name = "?";
+                if (nh >= 0) host_name = ctx.node_names.name_of(nh) + " (node)";
+                else if (li >= 0) host_name = ctx.link_names.name_of(li);
+
                 const char* inlet_name = (di >= 0 && di < ctx.inlets.count())
                                          ? ctx.inlets.names[di].c_str() : "?";
 
                 double cap_vol  = ctx.inlet_usages.stat_capture_vol[ui];
                 double byp_vol  = ctx.inlet_usages.stat_bypass_vol[ui];
-                double peak     = ctx.inlet_usages.stat_peak_flow[ui] * Qcf;
-                double total    = cap_vol + byp_vol;
-                double cap_pct  = (total > 0.0) ? cap_vol / total * 100.0 : 0.0;
-                double byp_pct  = (total > 0.0) ? byp_vol / total * 100.0 : 0.0;
+                // "Peak Flow" is the peak APPROACH flow the inlet saw, like
+                // legacy's street maxFlow column (inlet.c:1092); the peak
+                // captured flow is the stat_peak_flow fallback only when the
+                // solver never ran (no diagnostics block).
+                double peak     = (has_diag ? ctx.inlet_diag.peak_flow[ui]
+                                            : ctx.inlet_usages.stat_peak_flow[ui]) * Qcf;
                 double cap_kgal = cap_vol * FT3_TO_KGAL;
                 double byp_kgal = byp_vol * FT3_TO_KGAL;
 
-                std::fprintf(f, "\n  %-20s  %-14s  %9.3f  %9.2f  %9.2f  %9.3f  %9.3f",
-                    link_name, inlet_name,
-                    peak, cap_pct, byp_pct, cap_kgal, byp_kgal);
+                // Legacy performance block. fp/cp are the legacy period counts
+                // divided by 100 so the sums below read out as percentages
+                // (inlet.c:1106-1122).
+                const char* placement = "ON-GRADE";
+                int    n_inlets = 1;
+                double pfc = 0.0, afc = 0.0, bpf = 0.0, bff = 0.0;
+                double peak_cap_per_inlet = 0.0, peak_bypass = 0.0;
+                if (has_diag) {
+                    const auto& dg = ctx.inlet_diag;
+                    placement = (dg.is_sag[ui] != 0) ? "ON-SAG  " : "ON-GRADE";
+                    n_inlets  = std::max(dg.num_inlets[ui], 1);
+                    const double fp = dg.flow_periods[ui] / 100.0;
+                    if (fp > 0.0) {
+                        const double cp = dg.capture_periods[ui] / 100.0;
+                        pfc = dg.peak_flow_capture[ui];
+                        if (cp > 0.0) {
+                            afc = dg.avg_flow_capture[ui] / cp;
+                            bpf = dg.bypass_freq[ui] / cp;
+                        }
+                        bff = dg.backflow_periods[ui] / fp;
+
+                        // Peak capture per inlet / peak bypass are scaled off
+                        // the approach conduit's peak flow (the host link, or
+                        // the inlet junction's approach conduit).
+                        const int hl = (li >= 0) ? li : dg.up_link[ui];
+                        if (hl >= 0 && hl < ctx.n_links()) {
+                            const auto uh = static_cast<std::size_t>(hl);
+                            const double max_flow = ctx.links.stat_max_flow[uh];
+                            const int si = street_of_link(hl);
+                            const int sides = (si >= 0)
+                                ? std::max(ctx.streets.sides[static_cast<std::size_t>(si)], 1)
+                                : 1;
+                            peak_cap_per_inlet = (max_flow / sides) * Qcf * 0.01
+                                                 * pfc / n_inlets;
+                            peak_bypass = max_flow * Qcf * 0.01 * (100.0 - pfc);
+                        }
+                    }
+                }
+
+                std::fprintf(f,
+                    "\n  %-20s  %-16s   %-9s  %5d  %8.3f  %8.2f  %9.2f  %8.2f  %8.2f  %8.3f  %8.3f  %8.3f  %8.3f",
+                    host_name.c_str(), inlet_name, placement, n_inlets,
+                    peak, pfc, afc, bpf, bff,
+                    peak_cap_per_inlet, peak_bypass, cap_kgal, byp_kgal);
             }
         }
         WRITE(f, "");
@@ -2258,25 +2887,36 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 // write_timing — analysis timing section
 // ---------------------------------------------------------------------------
 
-void DefaultReportPlugin::write_timing(std::FILE* f) {
+void DefaultReportPlugin::write_timing(std::FILE* f, const SimulationContext& ctx) {
     // =====================================================================
-    // Analysis Timing — matches legacy report_writeRunTime()
+    // Analysis Timing — matches legacy report_writeSysTime()
+    //
+    // The start of the window is ctx.wall_start, stamped by
+    // SWMMEngine::open() before input parsing, mirroring legacy where
+    // report_writeLogo() takes SysTime ahead of project_readInput(). Elapsed
+    // time therefore covers parse + validation + initialization + routing,
+    // not just routing.
     // =====================================================================
     {
         char begin_str[64] = "";
         char end_str[64] = "";
 
-        if (wall_start_ != 0) {
-            const char* ct = std::ctime(&wall_start_);
+        std::time_t wall_end;
+        std::time(&wall_end);
+
+        // A zero wall_start means open() never ran (e.g. the plugin was
+        // driven directly). Fall back to the end time so the section reports
+        // "< 1 sec" rather than seconds-since-the-epoch.
+        std::time_t wall_start = (ctx.wall_start != 0) ? ctx.wall_start : wall_end;
+
+        {
+            const char* ct = std::ctime(&wall_start);
             if (ct) {
                 std::strncpy(begin_str, ct, sizeof(begin_str) - 1);
                 char* nl = std::strchr(begin_str, '\n');
                 if (nl) *nl = '\0';
             }
         }
-
-        std::time_t wall_end;
-        std::time(&wall_end);
         {
             const char* ct = std::ctime(&wall_end);
             if (ct) {
@@ -2290,12 +2930,17 @@ void DefaultReportPlugin::write_timing(std::FILE* f) {
         std::fprintf(f, "\n  Analysis ended on:  %s", end_str);
         std::fprintf(f, "\n  Total elapsed time: ");
 
-        double elapsed_secs = std::difftime(wall_end, wall_start_);
+        double elapsed_secs = std::difftime(wall_end, wall_start);
         if (elapsed_secs < 1.0) {
             std::fprintf(f, "< 1 sec");
         } else {
-            int es = static_cast<int>(elapsed_secs);
-            std::fprintf(f, "%02d:%02d:%02d", es / 3600, (es % 3600) / 60, es % 60);
+            // Legacy rolls whole days into a "d." prefix ahead of hh:mm:ss.
+            long es = static_cast<long>(elapsed_secs);
+            long days = es / 86400L;
+            long rem  = es % 86400L;
+            if (days > 0) std::fprintf(f, "%ld.", days);
+            std::fprintf(f, "%02ld:%02ld:%02ld",
+                         rem / 3600L, (rem % 3600L) / 60L, rem % 60L);
         }
         std::fprintf(f, "\n");
     }

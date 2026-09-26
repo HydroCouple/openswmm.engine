@@ -70,7 +70,7 @@ two-zone configuration is similar to that used by Dawdy and O'Donnell
 pass between a subcatchment and a point in the conveyance system in an
 attenuated and delayed fashion.
 
-![Figure 5-1: Two-zone groundwater model showing upper unsaturated zone and lower saturated zone with water flow paths](hydrology/media/media/figure5-1.png)
+![Figure 5-1: Two-zone groundwater model showing upper unsaturated zone and lower saturated zone with water flow paths](figures/png/hydrology_ch5_two_zone.png)
 
 **Figure 5-1 Definitional sketch of the two-zone groundwater model.**
 
@@ -458,7 +458,7 @@ in Figure 5-2. Also note that the conveyance system node receiving
 groundwater flow need not be the same node that receives runoff from the
 subcatchment that lies above the groundwater zones.
 
-![Figure 5-2: Cross-sectional diagram showing groundwater zones and height parameters for lateral flow calculation](hydrology/media/media/figure5-2.png)
+![Figure 5-2: Cross-sectional diagram showing groundwater zones and height parameters for lateral flow calculation](figures/png/hydrology_ch5_lateral_flow_heights.png)
 
 **Figure 5-2 Heights used to compute lateral groundwater flow rate.**
 
@@ -664,7 +664,7 @@ Jensen et al., 1990; SCS, 1991). The field capacity must be greater than
 the wilting point and less than the porosity. The general relationship
 among soil moisture parameters is shown in Figure 5-3.
 
-![Soil Moisture](hydrology/media/media/image29.png)
+![Soil Moisture](hydrology/media/media/hydrology-image29.png)
 
 **Figure 5-3 Relation between soil moisture limits and soil texture class (Schroeder et al., 1994).**
 
@@ -844,7 +844,7 @@ field capacity, and porosity, respectively.
 
 ²S = weight fraction of sand, C = weight fraction of clay, OM = percent organic matter.
 
-![Soil Water Calc](hydrology/media/media/image30.png)
+![Soil Water Calc](hydrology/media/media/hydrology-image30.png)
 
 **Figure 5-4 SPAW\'s soil water characteristics calculator.**
 
@@ -884,11 +884,11 @@ Soils data of this type are becoming more readily available; for
 example, soil science departments at universities often publish such
 information (e.g., Carlisle et al., 1981).
 
-![TouchetSiltLoam.png](hydrology/media/media/image31.png)
+![TouchetSiltLoam.png](hydrology/media/media/hydrology-image31.png)
 
-![ColumbiaSandyLoam.png](hydrology/media/media/image32.png)
+![ColumbiaSandyLoam.png](hydrology/media/media/hydrology-image32.png)
 
-![](hydrology/media/media/image33.png "image33")
+![](hydrology/media/media/hydrology-image33.png "image33")
 <p><span id="_Toc426447693"
 class="anchor"></span><strong>Figure 5-5 Measured hydraulic conductivity
 for three soils.</strong></p>
@@ -932,7 +932,7 @@ a series of different moisture levels *θ*. The line of best fit that
 passes through the origin has a slope of 28.864 which would be the
 estimate of HCO for this soil.
 
-![](hydrology/media/media/image34.png "image34")
+![](hydrology/media/media/hydrology-image34.png "image34")
 <p><span id="_Toc426447694"
 class="anchor"></span><strong>Figure 5-6 Fitting SWMM's hydraulic
 conductivity equation to a power law equation.</strong></p>
@@ -1088,7 +1088,7 @@ however, assume this average is equivalent to the average of *h<sub>1</sub>* and
 so that \f$h_{1} = 2d_{L} - h_{2}\f$. Substituting this and \f$h_{2} = h_{SW}\f$
 into Equation 5-30 and simplifying terms results in:
 
-![](hydrology/media/media/image35.png "x_08")
+![](hydrology/media/media/hydrology-image35.png "x_08")
 <p><span id="_Toc426447695"
 class="anchor"></span><strong>Figure 5-7 Definition sketch for
 Dupuit-Forcheimer seepage to an adjacent
@@ -1116,7 +1116,7 @@ less than or equal to *b<sub>0</sub>* in Figure 5-8 and is a function of *b<sub>
 drain diameter, and drain spacing *L*; the complicated relationship is
 given by Bear (1972, p. 412) and graphed by Bouwer (1978, p. 296).
 
-![](hydrology/media/media/image36.png "x_09")
+![](hydrology/media/media/hydrology-image36.png "x_09")
 <p><span id="_Toc426447696"
 class="anchor"></span><strong>Figure 5-8 Definition sketch for
 Hooghoudt's method for flow to circular

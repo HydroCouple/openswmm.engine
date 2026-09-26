@@ -1254,7 +1254,7 @@ distance *W* from the curb or as depicted in Figure 7-11, the ratio of
 *Q*<sub>W</sub> to *Q*. For grates this distance is the width of the grate. For
 curb openings it is the width of the depressed gutter (if present).
 
-![CompositeStreetSection2.png](hydraulics/media/media/image71.png)
+![CompositeStreetSection2.png](figures/png/hydraulics_ch7_street_spread.png)
 
 **Figure 7-11 Street cross-section divided into gutter and roadway flow**
 

@@ -112,6 +112,11 @@ endfunction()
 if(OPENSWMM_BUILD_UNIT_TESTS)
     add_subdirectory(unit)
 
+    # G1 — the two-zone groundwater numerical gates. Deliberately NOT under
+    # unit/: it needs no gtest and no model, so it can be built and run first
+    # when the kernel is under suspicion.
+    add_subdirectory(verification/gw2d_gates)
+
     # Legacy solver tests
     add_test(NAME test_legacy_solver_api
         COMMAND $<TARGET_FILE:test_solver_api>
@@ -131,6 +136,20 @@ if(OPENSWMM_BUILD_UNIT_TESTS)
     add_test(NAME test_legacy_solver_storage_shapes
         COMMAND $<TARGET_FILE:test_solver_storage_shapes>
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/engine/data)
+    # These two are built by add_solver_test() like the rest, but that helper
+    # only creates the executable -- ctest registration is this hand-kept list,
+    # so a target added there and not here BUILDS AND NEVER RUNS.
+    add_test(NAME test_legacy_solver_transect_nc
+        COMMAND $<TARGET_FILE:test_solver_transect_nc>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/engine/data)
+    add_test(NAME test_legacy_solver_backflow_quality
+        COMMAND $<TARGET_FILE:test_solver_backflow_quality>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/engine/data)
+    # NOT the data directory: this one reads "./data/gage_scalefactor.inp",
+    # so its working directory is the PARENT of the others'.
+    add_test(NAME test_legacy_gage_scalefactor
+        COMMAND $<TARGET_FILE:test_gage_scalefactor>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/engine)
     add_test(NAME test_legacy_output
         COMMAND $<TARGET_FILE:test_output>
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/output/data)
@@ -143,9 +162,78 @@ if(OPENSWMM_BUILD_UNIT_TESTS)
         test_legacy_solver_shapes
         test_legacy_solver_expanded_api
         test_legacy_solver_storage_shapes
+        test_legacy_solver_transect_nc
+        test_legacy_gage_scalefactor
         test_legacy_output
         PROPERTIES LABELS "unit"
     )
+
+    # ---- Load-optimization gates -------------------------------------------
+    # Sources live under benchmarks/ but the gates belong here: neither needs
+    # Google Benchmark, and tests/benchmarks/ is only added when
+    # OPENSWMM_BUILD_BENCHMARKS is ON — a configuration that has
+    # enable_testing() off, so add_test() there would silently register
+    # nothing. See plans/MODEL_LOAD_INIT_OPTIMIZATION_PLAN_2026-08-12.md §0.4.
+
+    # parity_probe emits the .rpt / .out / written-back .inp that the parity
+    # gate diffs; the shipped CLI has no write-back flag.
+    add_executable(parity_probe ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/parity_probe.cpp)
+    target_link_libraries(parity_probe PRIVATE openswmm_engine)
+    target_include_directories(parity_probe PRIVATE ${PROJECT_SOURCE_DIR}/include)
+    set_target_properties(parity_probe PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON)
+    openswmm_stage_test_runtime_deps(parity_probe)
+
+    # bench_fv_closure: per-op cost of the explicit-FV cross-section closure
+    # (plans/FV1D_CLOSURE_KERNEL_PERF_PLAN_2026-09-11.md, Phase 0). Same
+    # reasoning as parity_probe: it needs no Google Benchmark, and the
+    # numbers must come from the SAME build the FV gates run in, so it is
+    # built here rather than only in the benchmarks-only tree. tests/benchmarks
+    # guards its own registration with `if(NOT TARGET ...)`.
+    if(NOT TARGET bench_fv_closure)
+        add_executable(bench_fv_closure ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/bench_fv_closure.cpp)
+        # Same link rule as the unit tests, for the same reason: this TU
+        # includes src/engine/core/SWMMEngine.hpp and calls xsect::isOpen,
+        # xsect::setParams, link::translateShape, link::buildXSectParams and
+        # fv::buildGeometry, none of which are dllexported — the DLL is built
+        # with WINDOWS_EXPORT_ALL_SYMBOLS OFF, so on MSVC those are 8
+        # unresolved externals at link. parity_probe above can link
+        # openswmm_engine because it only touches the exported C API. Inside
+        # OPENSWMM_BUILD_UNIT_TESTS, so openswmm_engine_internal exists.
+        target_link_libraries(bench_fv_closure PRIVATE
+            $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>)
+        target_include_directories(bench_fv_closure PRIVATE ${PROJECT_SOURCE_DIR}/include)
+        if(OPENSWMM_FAST_XSECT_LOOKUP)
+            target_compile_definitions(bench_fv_closure PRIVATE SWMM_XSECT_FAST_LOOKUP)
+        endif()
+        set_target_properties(bench_fv_closure PROPERTIES
+            CXX_STANDARD 20
+            CXX_STANDARD_REQUIRED ON)
+        openswmm_stage_test_runtime_deps(bench_fv_closure)
+    endif()
+
+    # Determinism gate: two runs of the same build must produce identical
+    # artifacts. Without this, a `check` failure after an optimization could
+    # not be distinguished from run-to-run noise.
+    if(UNIX)
+        add_test(NAME load_parity_selfcheck
+            COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/scripts/load_parity.sh
+                    selfcheck $<TARGET_FILE:parity_probe>)
+        set_tests_properties(load_parity_selfcheck PROPERTIES LABELS "unit")
+    endif()
+
+    # Generator gate: proves gen_load_bench.py still emits every corpus model.
+    # Uses the tiny --smoke sizes so it costs seconds, not gigabytes.
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME bench_corpus_generator_smoke
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/scripts/gen_load_bench.py
+                    --smoke --force
+                    --out-dir ${CMAKE_CURRENT_BINARY_DIR}/corpus_smoke)
+        set_tests_properties(bench_corpus_generator_smoke PROPERTIES LABELS "unit")
+    endif()
 endif()
 
 # ---- Regression tests ----

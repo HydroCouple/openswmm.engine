@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file openswmm_climate.h
  * @brief OpenSWMM Engine — Climatology configuration C API.
@@ -35,7 +51,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_CLIMATE_H
@@ -80,6 +96,24 @@ typedef enum SWMM_WindType {
     SWMM_WIND_MONTHLY = 0, /**< Twelve monthly average wind speeds. */
     SWMM_WIND_FILE    = 1  /**< Wind speed from the climate file.   */
 } SWMM_WindType;
+
+/**
+ * @brief Humidity data source (matches [TEMPERATURE] HUMIDITY).
+ */
+typedef enum SWMM_HumidityType {
+    SWMM_HUMIDITY_CONSTANT   = 0, /**< Single constant value.              */
+    SWMM_HUMIDITY_MONTHLY    = 1, /**< Twelve monthly values.              */
+    SWMM_HUMIDITY_TIMESERIES = 2  /**< Value from an in-model time series. */
+} SWMM_HumidityType;
+
+/**
+ * @brief Quantity the HUMIDITY values express.
+ */
+typedef enum SWMM_HumidityVar {
+    SWMM_HUMIDITY_RELATIVE = 0, /**< Relative humidity, %.                              */
+    SWMM_HUMIDITY_DEWPOINT = 1  /**< Dew-point temperature (deg F US / deg C SI);
+                                     converted to RH each step from air temperature. */
+} SWMM_HumidityVar;
 
 /* =========================================================================
  * Temperature  ([TEMPERATURE])
@@ -173,6 +207,34 @@ SWMM_ENGINE_API int swmm_climate_set_wind_type(SWMM_Engine engine, int type);
 SWMM_ENGINE_API int swmm_climate_get_wind_monthly(SWMM_Engine engine, double* buf, int count);
 /** @brief Set the 12 monthly average wind speeds; @p count must equal SWMM_CLIMATE_MONTHS. */
 SWMM_ENGINE_API int swmm_climate_set_wind_monthly(SWMM_Engine engine, const double* values, int count);
+
+/* =========================================================================
+ * Humidity  ([TEMPERATURE] HUMIDITY) — heat-model met input
+ * ========================================================================= */
+
+/** @brief Get the humidity data source (see @ref SWMM_HumidityType). */
+SWMM_ENGINE_API int swmm_climate_get_humidity_type(SWMM_Engine engine, int* type);
+/** @brief Set the humidity data source (0..2, see @ref SWMM_HumidityType).
+ *  @returns SWMM_ERR_BADPARAM if out of range. */
+SWMM_ENGINE_API int swmm_climate_set_humidity_type(SWMM_Engine engine, int type);
+
+/** @brief Get the humidity quantity (see @ref SWMM_HumidityVar). */
+SWMM_ENGINE_API int swmm_climate_get_humidity_variable(SWMM_Engine engine, int* var);
+/** @brief Set the humidity quantity (0..1, see @ref SWMM_HumidityVar).
+ *  @returns SWMM_ERR_BADPARAM if out of range. */
+SWMM_ENGINE_API int swmm_climate_set_humidity_variable(SWMM_Engine engine, int var);
+
+/** @brief Get the 12 monthly humidity values (RH % or dew point, per the variable).
+ *  With the CONSTANT source all twelve hold the constant.
+ *  @param count Must equal SWMM_CLIMATE_MONTHS. */
+SWMM_ENGINE_API int swmm_climate_get_humidity_monthly(SWMM_Engine engine, double* buf, int count);
+/** @brief Set the 12 monthly humidity values; @p count must equal SWMM_CLIMATE_MONTHS. */
+SWMM_ENGINE_API int swmm_climate_set_humidity_monthly(SWMM_Engine engine, const double* values, int count);
+
+/** @brief Get the humidity time-series id (empty if none). */
+SWMM_ENGINE_API int swmm_climate_get_humidity_timeseries(SWMM_Engine engine, char* buf, int buflen);
+/** @brief Assign the humidity time-series id and set the source to TIMESERIES. */
+SWMM_ENGINE_API int swmm_climate_set_humidity_timeseries(SWMM_Engine engine, const char* ts_id);
 
 /* =========================================================================
  * Snowmelt globals  ([TEMPERATURE] SNOWMELT)

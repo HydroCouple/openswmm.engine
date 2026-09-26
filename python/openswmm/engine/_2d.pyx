@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 2D Surface Routing
 ==================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 Cython wrapper for the 2D surface routing C API.
 
@@ -18,43 +34,136 @@ cimport numpy as np
 import numpy as np
 from libc.stdint cimport uintptr_t
 
+from collections import namedtuple
+from collections.abc import MutableMapping
+
 from ._2d cimport *
-from ._enums import SurfaceForcingMode, ForcingPersist, SurfaceBoundaryType
+from ._enums import (SurfaceForcingMode, ForcingPersist, SurfaceBoundaryType,
+                     SurfaceInfilMethod, SurfaceInfilDest)
 
 
-cdef inline void _check(int rc) except *:
-    """Raise L{RuntimeError} if a C API call returns non-zero.
-
-    @param rc: Return code from a C{swmm_2d_*} call.
-    @type rc: int
-    @raise RuntimeError: If C{rc != 0}.
-    """
-    if rc != 0:
-        raise RuntimeError(f"SWMM 2D API error code {rc}")
+from ._common cimport _check
+from ._access import resolve_owner
+from ._exceptions import StaleObjectError
 
 
 cdef class Surface2D:
     """Read/write interface to the optional 2D surface routing module.
 
     The module solves the depth-averaged shallow-water equations on an
-    unstructured triangular mesh and is integrated in time with the
+    unstructured mixed-cell mesh and is integrated in time with the
     explicit local-inertial finite-volume marcher. Two-way coupling with
     the 1D drainage network is supported per-vertex and per-triangle.
 
-    @ivar _engine: Internal pointer to the underlying C{SWMM_Engine}
-        handle (managed by the Cython extension).
+    Views retain their engine owner and raise C{StaleObjectError} after
+    close, destroy, or structural edits. Use C{solver.surface2d}.
     """
 
-    cdef void* _engine
+    cdef object _owner
+    cdef long long _generation
+    cdef object _infiltration
 
-    def __cinit__(self, uintptr_t engine_ptr):
-        """Construct a L{Surface2D} accessor from a raw engine handle.
+    def __cinit__(self, owner):
+        self._owner = resolve_owner(owner)
+        self._generation = self._owner.generation
+        self._infiltration = None
 
-        @param engine_ptr: The raw engine handle (C{SWMM_Engine} cast to
-            C{uintptr_t}).
-        @type engine_ptr: int
+    @property
+    def quality(self):
+        """Surface land-use coverages, initial loadings, curb lengths and buildup."""
+        self._h()
+        from ._surface_quality import SurfaceQuality
+        return SurfaceQuality(self._owner)
+
+    def get_rainfall_bulk(self):
+        """Current rainfall rate per cell, m/s. Returns an owned float64 array."""
+        cdef int n = 0
+        _check(swmm_2d_cell_count(self._h(), &n))
+        cdef double[::1] values = np.zeros(max(n, 1), dtype=np.float64)
+        cdef void* h = self._h()
+        cdef int rc
+        with self._owner._operation(<size_t>h):
+            with nogil:
+                rc = swmm_2d_get_rainfall_bulk(h, &values[0])
+        _check(rc)
+        return np.asarray(values)[:n]
+
+    def get_rain_volume_bulk(self):
+        """Cumulative rain volume per cell, m³. Returns an owned float64 array."""
+        cdef int n = 0
+        _check(swmm_2d_cell_count(self._h(), &n))
+        cdef double[::1] values = np.zeros(max(n, 1), dtype=np.float64)
+        cdef void* h = self._h()
+        cdef int rc
+        with self._owner._operation(<size_t>h):
+            with nogil:
+                rc = swmm_2d_get_rain_volume_bulk(h, &values[0])
+        _check(rc)
+        return np.asarray(values)[:n]
+
+    def get_coupling_volume_bulk(self):
+        """Cumulative signed coupling volume, m³; positive from 1D to 2D. Returns an owned float64 array."""
+        cdef int n = 0
+        _check(swmm_2d_cell_count(self._h(), &n))
+        cdef double[::1] values = np.zeros(max(n, 1), dtype=np.float64)
+        cdef void* h = self._h()
+        cdef int rc
+        with self._owner._operation(<size_t>h):
+            with nogil:
+                rc = swmm_2d_get_coupling_volume_bulk(h, &values[0])
+        _check(rc)
+        return np.asarray(values)[:n]
+
+    def rainfall_weights(self, int cell):
+        """Return (method, gage indices, weights) as owned snapshots.
+
+        Method: 0 natural neighbour, 1 IDW, 2 nearest, -1 not applicable.
         """
-        self._engine = <void*>engine_ptr
+        cdef int method = -1
+        cdef int count = 0
+        cdef void* h = self._h()
+        _check(swmm_2d_get_rainfall_weights(h, cell, &method, NULL, NULL, 0, &count))
+        cdef int[::1] indices = np.zeros(max(count, 1), dtype=np.intc)
+        cdef double[::1] weights = np.zeros(max(count, 1), dtype=np.float64)
+        if count:
+            _check(swmm_2d_get_rainfall_weights(h, cell, &method, &indices[0], &weights[0], count, &count))
+        return method, np.asarray(indices)[:count], np.asarray(weights)[:count]
+
+    @staticmethod
+    def output_variables():
+        """Supported 2D output variable names in native order."""
+        return tuple(swmm_2d_output_variable_name(i).decode('utf-8')
+                     for i in range(swmm_2d_output_variable_count()))
+
+    @staticmethod
+    def output_variable_mask(str text):
+        """Parse DEFAULT/MINIMAL/ALL or a native variable list into a mask."""
+        cdef bytes encoded = text.encode('utf-8')
+        cdef unsigned mask = swmm_2d_output_variable_mask(encoded)
+        if not mask:
+            raise ValueError("Invalid or empty 2D output variable selection")
+        return mask
+
+    @staticmethod
+    def output_variable_text(unsigned mask):
+        """Return canonical variable text for a mask."""
+        cdef const char* text = swmm_2d_output_variable_text(mask)
+        return text.decode('utf-8') if text != NULL else ''
+
+    @property
+    def groundwater(self):
+        """Two-zone aquifer authoring and runtime snapshots."""
+        self._h()
+        from ._groundwater import Groundwater
+        return Groundwater(self._owner)
+
+    def _is_current(self):
+        return self._generation == self._owner.generation
+
+    cdef void* _h(self) except NULL:
+        if not self._is_current():
+            raise StaleObjectError("2D view was invalidated; reacquire solver.surface2d")
+        return <void*><uintptr_t>self._owner.handle
 
     # ====================================================================
     # Mesh definition - status
@@ -66,10 +175,10 @@ cdef class Surface2D:
 
         @return: Activation flag.
         @rtype: bool
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef int active = 0
-        _check(swmm_2d_is_active(self._engine, &active))
+        _check(swmm_2d_is_active(self._h(), &active))
         return bool(active)
 
     # ====================================================================
@@ -87,9 +196,9 @@ cdef class Surface2D:
         so the changes take effect and are written on save. No-op when the
         engine is already initialized/drained.
 
-        @raise RuntimeError: If no 2D mesh is present.
+        @raise EngineError: If no 2D mesh is present.
         """
-        _check(swmm_2d_prepare_for_edit(self._engine))
+        _check(swmm_2d_prepare_for_edit(self._h()))
 
     @property
     def n_vertices(self) -> int:
@@ -97,23 +206,67 @@ cdef class Surface2D:
 
         @return: Vertex count.
         @rtype: int
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef int count = 0
-        _check(swmm_2d_vertex_count(self._engine, &count))
+        _check(swmm_2d_vertex_count(self._h(), &count))
         return count
 
     @property
     def n_triangles(self) -> int:
-        """Number of mesh triangles.
+        """Number of mesh cells (triangles + quads; historical name).
 
-        @return: Triangle count.
+        @return: Cell count.
         @rtype: int
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef int count = 0
-        _check(swmm_2d_triangle_count(self._engine, &count))
+        _check(swmm_2d_triangle_count(self._h(), &count))
         return count
+
+    @property
+    def n_cells(self) -> int:
+        """Number of mesh cells (triangles + quads)."""
+        cdef int count = 0
+        _check(swmm_2d_cell_count(self._h(), &count))
+        return count
+
+    @property
+    def n_quads(self) -> int:
+        """Number of quadrilateral cells (0 for an all-triangle mesh)."""
+        cdef int count = 0
+        _check(swmm_2d_quad_count(self._h(), &count))
+        return count
+
+    @property
+    def edge_stride(self) -> int:
+        """Edge slots per cell row in the bulk edge arrays: 3 for an
+        all-triangle mesh (historical C{[tri*3 + localEdge]} layout), 4 once
+        the mesh holds any quad (C{[cell*4 + localEdge]})."""
+        cdef int stride = 3
+        _check(swmm_2d_edge_stride(self._h(), &stride))
+        return stride
+
+    def get_cell_vertex_count(self, int idx) -> int:
+        """Vertices (== edges) of a cell: 3 or 4."""
+        cdef int nv = 0
+        _check(swmm_2d_cell_vertex_count(self._h(), idx, &nv))
+        return nv
+
+    def get_cell_vertices(self, int idx):
+        """Vertex indices of any cell as a tuple of length 3 or 4.
+        Local edge k has endpoints v[(k+1)%nv], v[(k+2)%nv]."""
+        cdef int v[4]
+        cdef int nv = 0
+        _check(swmm_2d_cell_get_vertices(self._h(), idx, v, &nv))
+        return tuple(v[k] for k in range(nv))
+
+    def get_cell_neighbours(self, int idx):
+        """Neighbour cell across each local edge (-1 = boundary), length 3 or 4."""
+        cdef int n[4]
+        cdef int nv = 0
+        _check(swmm_2d_cell_get_neighbours(self._h(), idx, n, &nv))
+        return tuple(n[k] for k in range(nv))
 
     def get_vertex_coords(self):
         """Return (x, y, z) NumPy arrays for all vertices.
@@ -121,19 +274,20 @@ cdef class Surface2D:
         @return: Tuple C{(x, y, z)}, each of shape C{(n_vertices,)} with
             dtype C{float64}.
         @rtype: tuple
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef int n = self.n_vertices
         cdef np.ndarray[double, ndim=1] x = np.empty(n, dtype=np.float64)
         cdef np.ndarray[double, ndim=1] y = np.empty(n, dtype=np.float64)
         cdef np.ndarray[double, ndim=1] z = np.empty(n, dtype=np.float64)
-        cdef void* eng = self._engine
+        cdef void* eng = self._h()
         cdef double* px = <double*>x.data
         cdef double* py = <double*>y.data
         cdef double* pz = <double*>z.data
         cdef int err
-        with nogil:
-            err = swmm_2d_vertex_get_xyz_bulk(eng, px, py, pz)
+        with self._owner._operation(<uintptr_t>eng):
+            with nogil:
+                err = swmm_2d_vertex_get_xyz_bulk(eng, px, py, pz)
         _check(err)
         return x, y, z
 
@@ -150,9 +304,42 @@ cdef class Surface2D:
         @type idx: int
         @param z: New ground elevation (project vertical units).
         @type z: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
-        _check(swmm_2d_set_vertex_z(self._engine, idx, z))
+        _check(swmm_2d_set_vertex_z(self._h(), idx, z))
+
+    def set_vertex_z_bulk(self, z) -> None:
+        """Set EVERY vertex ground elevation in one call.
+
+        Equivalent to calling :meth:`set_vertex_z` for each vertex in turn —
+        the dependent geometry (centroid Z, per-edge midpoint Z) ends up
+        bitwise identical — but the whole mesh is rescanned once instead of
+        once per vertex, so this is C{O(n_vertices + n_triangles)} rather than
+        C{O(n_vertices * n_triangles)}. Editors rewriting a whole mesh should
+        prefer it. XY-derived fields are unaffected, and solver state (head,
+        depth) is not rewritten when the engine is running.
+
+        @param z: Sequence or NumPy array of C{n_vertices} ground elevations
+            (project vertical units), indexed by vertex.
+        @type z: collections.abc.Sequence or np.ndarray
+        @raise ValueError: If C{len(z)} does not equal L{n_vertices}.
+        @raise EngineError: If the C API call fails.
+        """
+        cdef np.ndarray[double, ndim=1] arr = np.ascontiguousarray(
+            z, dtype=np.float64).reshape(-1)
+        cdef int n = <int>arr.shape[0]
+        cdef int expected = self.n_vertices
+        if n != expected:
+            raise ValueError(
+                f"set_vertex_z_bulk expects one Z per vertex: got {n}, "
+                f"mesh has {expected}")
+        cdef void* eng = self._h()
+        cdef const double* p = <const double*>arr.data
+        cdef int err
+        with self._owner._operation(<uintptr_t>eng):
+            with nogil:
+                err = swmm_2d_set_vertex_z_bulk(eng, p, n)
+        _check(err)
 
     def get_vertex_xyz(self, int idx):
         """Return the C{(x, y, z)} coordinates of one mesh vertex.
@@ -164,10 +351,10 @@ cdef class Surface2D:
         @type idx: int
         @return: C{(x, y, z)}.
         @rtype: tuple[float, float, float]
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef double x = 0.0, y = 0.0, z = 0.0
-        _check(swmm_2d_vertex_get_xyz(self._engine, idx, &x, &y, &z))
+        _check(swmm_2d_vertex_get_xyz(self._h(), idx, &x, &y, &z))
         return (x, y, z)
 
     def get_vertex_head(self, int idx) -> float:
@@ -180,10 +367,10 @@ cdef class Surface2D:
         @type idx: int
         @return: Head at the vertex.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef double head = 0.0
-        _check(swmm_2d_vertex_get_head(self._engine, idx, &head))
+        _check(swmm_2d_vertex_get_head(self._h(), idx, &head))
         return head
 
     def get_vertex_tag(self, int idx) -> str:
@@ -196,10 +383,10 @@ cdef class Surface2D:
         @type idx: int
         @return: The tag string; empty when the vertex has no tag.
         @rtype: str
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef char buf[256]
-        _check(swmm_2d_get_vertex_tag(self._engine, idx, buf, 256))
+        _check(swmm_2d_get_vertex_tag(self._h(), idx, buf, 256))
         return buf.decode('utf-8')
 
     def set_vertex_tag(self, int idx, str tag) -> None:
@@ -209,10 +396,10 @@ cdef class Surface2D:
         @type idx: int
         @param tag: New tag; an empty string clears it.
         @type tag: str
-        @raise RuntimeError: If the C API rejects the assignment.
+        @raise EngineError: If the C API rejects the assignment.
         """
         cdef bytes b = (tag or "").encode('utf-8')
-        _check(swmm_2d_set_vertex_tag(self._engine, idx, b))
+        _check(swmm_2d_set_vertex_tag(self._h(), idx, b))
 
     def get_triangle_vertices(self, int idx):
         """Return the (v0, v1, v2) vertex indices for a triangle.
@@ -221,10 +408,10 @@ cdef class Surface2D:
         @type idx: int
         @return: Tuple of three vertex indices.
         @rtype: tuple
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef int v0, v1, v2
-        _check(swmm_2d_triangle_get_vertices(self._engine, idx, &v0, &v1, &v2))
+        _check(swmm_2d_triangle_get_vertices(self._h(), idx, &v0, &v1, &v2))
         return v0, v1, v2
 
     def get_triangle_area(self, int idx) -> float:
@@ -234,10 +421,10 @@ cdef class Surface2D:
         @type idx: int
         @return: Triangle area in project units squared.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef double area
-        _check(swmm_2d_triangle_get_area(self._engine, idx, &area))
+        _check(swmm_2d_triangle_get_area(self._h(), idx, &area))
         return area
 
     def get_triangle_centroid(self, int idx):
@@ -247,10 +434,10 @@ cdef class Surface2D:
         @type idx: int
         @return: Tuple C{(cx, cy, cz)} centroid coordinates.
         @rtype: tuple
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef double cx, cy, cz
-        _check(swmm_2d_triangle_get_centroid(self._engine, idx, &cx, &cy, &cz))
+        _check(swmm_2d_triangle_get_centroid(self._h(), idx, &cx, &cy, &cz))
         return cx, cy, cz
 
     def get_triangle_mannings(self, int idx) -> float:
@@ -260,10 +447,10 @@ cdef class Surface2D:
         @type idx: int
         @return: Manning's M{n} roughness.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef double n
-        _check(swmm_2d_triangle_get_mannings(self._engine, idx, &n))
+        _check(swmm_2d_triangle_get_mannings(self._h(), idx, &n))
         return n
 
     def set_triangle_mannings(self, int idx, double n) -> None:
@@ -275,9 +462,9 @@ cdef class Surface2D:
         @type idx: int
         @param n: New Manning's roughness; must be strictly positive.
         @type n: float
-        @raise RuntimeError: If the C API rejects the value (e.g. C{n <= 0}).
+        @raise EngineError: If the C API rejects the value (e.g. C{n <= 0}).
         """
-        _check(swmm_2d_set_triangle_mannings(self._engine, idx, n))
+        _check(swmm_2d_set_triangle_mannings(self._h(), idx, n))
 
     def get_triangle_init_depth(self, int idx) -> float:
         """Return the initial water depth of a triangle.
@@ -290,10 +477,10 @@ cdef class Surface2D:
         @type idx: int
         @return: Initial depth; C{0.0} means the triangle starts dry.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef double d
-        _check(swmm_2d_triangle_get_init_depth(self._engine, idx, &d))
+        _check(swmm_2d_triangle_get_init_depth(self._h(), idx, &d))
         return d
 
     def set_triangle_init_depth(self, int idx, double depth) -> None:
@@ -306,9 +493,9 @@ cdef class Surface2D:
         @type idx: int
         @param depth: Initial depth in mesh length units; must be M{>= 0}.
         @type depth: float
-        @raise RuntimeError: If the C API rejects the value (e.g. negative).
+        @raise EngineError: If the C API rejects the value (e.g. negative).
         """
-        _check(swmm_2d_set_triangle_init_depth(self._engine, idx, depth))
+        _check(swmm_2d_set_triangle_init_depth(self._h(), idx, depth))
 
     def get_triangle_init_velocity(self, int idx):
         """Return the C{(u, v)} initial velocity of a triangle.
@@ -317,10 +504,10 @@ cdef class Surface2D:
         @type idx: int
         @return: Tuple C{(u, v)} in m/s; C{(0.0, 0.0)} when at rest.
         @rtype: tuple
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef double u, v
-        _check(swmm_2d_triangle_get_init_velocity(self._engine, idx, &u, &v))
+        _check(swmm_2d_triangle_get_init_velocity(self._h(), idx, &u, &v))
         return u, v
 
     def set_triangle_init_velocity(self, int idx, double u, double v) -> None:
@@ -337,9 +524,9 @@ cdef class Surface2D:
         @type u: float
         @param v: Y-component of velocity in m/s; must be finite.
         @type v: float
-        @raise RuntimeError: If the C API rejects a non-finite value.
+        @raise EngineError: If the C API rejects a non-finite value.
         """
-        _check(swmm_2d_set_triangle_init_velocity(self._engine, idx, u, v))
+        _check(swmm_2d_set_triangle_init_velocity(self._h(), idx, u, v))
 
     def get_triangle_tag(self, int idx) -> str:
         """Return the descriptive tag of a triangle (C{[2D_TRIANGLES]} TAG).
@@ -348,10 +535,10 @@ cdef class Surface2D:
         @type idx: int
         @return: The tag string; empty when the triangle has no tag.
         @rtype: str
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef char buf[256]
-        _check(swmm_2d_get_triangle_tag(self._engine, idx, buf, 256))
+        _check(swmm_2d_get_triangle_tag(self._h(), idx, buf, 256))
         return buf.decode('utf-8')
 
     def set_triangle_tag(self, int idx, str tag) -> None:
@@ -361,10 +548,10 @@ cdef class Surface2D:
         @type idx: int
         @param tag: New tag; an empty string clears it.
         @type tag: str
-        @raise RuntimeError: If the C API rejects the assignment.
+        @raise EngineError: If the C API rejects the assignment.
         """
         cdef bytes b = (tag or "").encode('utf-8')
-        _check(swmm_2d_set_triangle_tag(self._engine, idx, b))
+        _check(swmm_2d_set_triangle_tag(self._h(), idx, b))
 
     def get_triangle_neighbours(self, int idx):
         """Return the (n0, n1, n2) neighbour triangle indices.
@@ -374,10 +561,10 @@ cdef class Surface2D:
         @return: Tuple of three neighbour triangle indices; C{-1}
             indicates a boundary edge.
         @rtype: tuple
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef int n0, n1, n2
-        _check(swmm_2d_triangle_get_neighbours(self._engine, idx, &n0, &n1, &n2))
+        _check(swmm_2d_triangle_get_neighbours(self._h(), idx, &n0, &n1, &n2))
         return n0, n1, n2
 
     # ====================================================================
@@ -390,10 +577,10 @@ cdef class Surface2D:
 
         @return: Coupling count.
         @rtype: int
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef int count = 0
-        _check(swmm_2d_vertex_coupling_count(self._engine, &count))
+        _check(swmm_2d_vertex_coupling_count(self._h(), &count))
         return count
 
     @property
@@ -402,10 +589,10 @@ cdef class Surface2D:
 
         @return: Coupling count.
         @rtype: int
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef int count = 0
-        _check(swmm_2d_triangle_coupling_count(self._engine, &count))
+        _check(swmm_2d_triangle_coupling_count(self._h(), &count))
         return count
 
     def get_vertex_coupled_node(self, int vertex_idx) -> int:
@@ -415,10 +602,10 @@ cdef class Surface2D:
         @type vertex_idx: int
         @return: Node index, or C{-1} if no coupling exists.
         @rtype: int
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef int node_idx
-        _check(swmm_2d_vertex_get_coupled_node(self._engine, vertex_idx,
+        _check(swmm_2d_vertex_get_coupled_node(self._h(), vertex_idx,
                                                  &node_idx))
         return node_idx
 
@@ -433,11 +620,11 @@ cdef class Surface2D:
         @type vertex_idx: int
         @param node_name: Target 1D node id, or C{""} to clear.
         @type node_name: str
-        @raise RuntimeError: If the C API rejects the assignment (e.g. the
+        @raise EngineError: If the C API rejects the assignment (e.g. the
             node name does not resolve).
         """
         cdef bytes b = (node_name or "").encode('utf-8')
-        _check(swmm_2d_set_vertex_coupled_node(self._engine, vertex_idx, b))
+        _check(swmm_2d_set_vertex_coupled_node(self._h(), vertex_idx, b))
 
     def get_vertex_coupling_cd(self, int vertex_idx) -> float:
         """Return the coupling discharge coefficient of a vertex.
@@ -449,10 +636,10 @@ cdef class Surface2D:
         @type vertex_idx: int
         @return: Discharge coefficient.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef double cd = 0.0
-        _check(swmm_2d_get_vertex_coupling_cd(self._engine, vertex_idx, &cd))
+        _check(swmm_2d_get_vertex_coupling_cd(self._h(), vertex_idx, &cd))
         return cd
 
     def set_vertex_coupling_cd(self, int vertex_idx, double cd) -> None:
@@ -465,10 +652,10 @@ cdef class Surface2D:
         @type vertex_idx: int
         @param cd: Discharge coefficient; must be > 0.
         @type cd: float
-        @raise RuntimeError: If the C API rejects the value (e.g. a
+        @raise EngineError: If the C API rejects the value (e.g. a
             non-positive coefficient).
         """
-        _check(swmm_2d_set_vertex_coupling_cd(self._engine, vertex_idx, cd))
+        _check(swmm_2d_set_vertex_coupling_cd(self._h(), vertex_idx, cd))
 
     def get_vertex_coupling_area(self, int vertex_idx) -> float:
         """Return the coupling exchange area of a vertex.
@@ -480,10 +667,10 @@ cdef class Surface2D:
         @type vertex_idx: int
         @return: Exchange area in m^2.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef double area = 0.0
-        _check(swmm_2d_get_vertex_coupling_area(self._engine, vertex_idx,
+        _check(swmm_2d_get_vertex_coupling_area(self._h(), vertex_idx,
                                                   &area))
         return area
 
@@ -497,10 +684,10 @@ cdef class Surface2D:
         @type vertex_idx: int
         @param area: Exchange area in m^2; must be > 0.
         @type area: float
-        @raise RuntimeError: If the C API rejects the value (e.g. a
+        @raise EngineError: If the C API rejects the value (e.g. a
             non-positive area).
         """
-        _check(swmm_2d_set_vertex_coupling_area(self._engine, vertex_idx,
+        _check(swmm_2d_set_vertex_coupling_area(self._h(), vertex_idx,
                                                   area))
 
     def get_triangle_coupled_node(self, int tri_idx) -> int:
@@ -510,10 +697,10 @@ cdef class Surface2D:
         @type tri_idx: int
         @return: Node index, or C{-1} if no coupling exists.
         @rtype: int
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef int node_idx
-        _check(swmm_2d_triangle_get_coupled_node(self._engine, tri_idx,
+        _check(swmm_2d_triangle_get_coupled_node(self._h(), tri_idx,
                                                     &node_idx))
         return node_idx
 
@@ -536,11 +723,11 @@ cdef class Surface2D:
         @type cd: float
         @param area: Effective exchange area in m^2; must be > 0.
         @type area: float
-        @raise RuntimeError: If the C API rejects the row (bad triangle
+        @raise EngineError: If the C API rejects the row (bad triangle
             index, empty name, or non-positive cd/area).
         """
         cdef bytes b = (node_name or "").encode('utf-8')
-        _check(swmm_2d_add_triangle_coupling(self._engine, tri_idx, b,
+        _check(swmm_2d_add_triangle_coupling(self._h(), tri_idx, b,
                                               cd, area))
 
     def clear_triangle_couplings(self) -> None:
@@ -549,9 +736,9 @@ cdef class Surface2D:
         Also clears the legacy per-triangle mirror (coupled node, CD and
         AREA back to defaults). Vertex couplings are untouched.
 
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
-        _check(swmm_2d_clear_triangle_couplings(self._engine))
+        _check(swmm_2d_clear_triangle_couplings(self._h()))
 
     @property
     def triangle_coupling_rows(self) -> int:
@@ -562,10 +749,10 @@ cdef class Surface2D:
 
         @return: Row count.
         @rtype: int
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef int count = 0
-        _check(swmm_2d_triangle_coupling_rows(self._engine, &count))
+        _check(swmm_2d_triangle_coupling_rows(self._h(), &count))
         return count
 
     def get_triangle_coupling_row(self, int row_idx):
@@ -576,13 +763,13 @@ cdef class Surface2D:
         @return: Tuple C{(tri_idx, node_idx, cd, area)} where C{node_idx}
             is C{-1} if the node name is unresolved.
         @rtype: tuple[int, int, float, float]
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef int tri_idx = 0
         cdef int node_idx = 0
         cdef double cd = 0.0
         cdef double area = 0.0
-        _check(swmm_2d_get_triangle_coupling_row(self._engine, row_idx,
+        _check(swmm_2d_get_triangle_coupling_row(self._h(), row_idx,
                                                   &tri_idx, &node_idx,
                                                   &cd, &area))
         return (tri_idx, node_idx, cd, area)
@@ -596,15 +783,16 @@ cdef class Surface2D:
 
         @return: Array of shape C{(n_triangles,)} with dtype C{float64}.
         @rtype: np.ndarray
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef int n = self.n_triangles
         cdef np.ndarray[double, ndim=1] arr = np.empty(n, dtype=np.float64)
-        cdef void* eng = self._engine
+        cdef void* eng = self._h()
         cdef double* p = <double*>arr.data
         cdef int err
-        with nogil:
-            err = swmm_2d_get_depths_bulk(eng, p)
+        with self._owner._operation(<uintptr_t>eng):
+            with nogil:
+                err = swmm_2d_get_depths_bulk(eng, p)
         _check(err)
         return arr
 
@@ -614,15 +802,16 @@ cdef class Surface2D:
 
         @return: Array of shape C{(n_triangles,)} with dtype C{float64}.
         @rtype: np.ndarray
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef int n = self.n_triangles
         cdef np.ndarray[double, ndim=1] arr = np.empty(n, dtype=np.float64)
-        cdef void* eng = self._engine
+        cdef void* eng = self._h()
         cdef double* p = <double*>arr.data
         cdef int err
-        with nogil:
-            err = swmm_2d_get_heads_bulk(eng, p)
+        with self._owner._operation(<uintptr_t>eng):
+            with nogil:
+                err = swmm_2d_get_heads_bulk(eng, p)
         _check(err)
         return arr
 
@@ -633,15 +822,16 @@ cdef class Surface2D:
         @return: Array of shape C{(n_triangles,)} with dtype C{float64}.
             Positive values denote flux into the 2D surface.
         @rtype: np.ndarray
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef int n = self.n_triangles
         cdef np.ndarray[double, ndim=1] arr = np.empty(n, dtype=np.float64)
-        cdef void* eng = self._engine
+        cdef void* eng = self._h()
         cdef double* p = <double*>arr.data
         cdef int err
-        with nogil:
-            err = swmm_2d_get_coupling_fluxes_bulk(eng, p)
+        with self._owner._operation(<uintptr_t>eng):
+            with nogil:
+                err = swmm_2d_get_coupling_fluxes_bulk(eng, p)
         _check(err)
         return arr
 
@@ -649,21 +839,22 @@ cdef class Surface2D:
         """Return normal edge fluxes for all triangle edges as a NumPy array.
         The GIL is released during the C call.
 
-        The array is indexed as C{[tri*3 + localEdge]} where C{localEdge}
-        is the edge opposite vertex C{localEdge} (0, 1, or 2). Positive
+        The array is indexed as C{[cell*edge_stride + localEdge]} (stride 3 for
+        an all-triangle mesh, 4 when quads exist; see L{edge_stride}). Positive
         flux flows outward through the edge's outward normal.
 
-        @return: Array of shape C{(n_triangles*3,)} with dtype C{float64}.
+        @return: Array of shape C{(n_triangles*edge_stride,)} with dtype C{float64}.
         @rtype: np.ndarray
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
-        cdef int n = self.n_triangles * 3
+        cdef int n = self.n_triangles * self.edge_stride
         cdef np.ndarray[double, ndim=1] arr = np.empty(n, dtype=np.float64)
-        cdef void* eng = self._engine
+        cdef void* eng = self._h()
         cdef double* p = <double*>arr.data
         cdef int err
-        with nogil:
-            err = swmm_2d_get_edge_flux_bulk(eng, p)
+        with self._owner._operation(<uintptr_t>eng):
+            with nogil:
+                err = swmm_2d_get_edge_flux_bulk(eng, p)
         _check(err)
         return arr
 
@@ -678,19 +869,20 @@ cdef class Surface2D:
         @return: Tuple C{(length, nx, ny)}, each of shape
             C{(n_triangles*3,)} with dtype C{float64}.
         @rtype: tuple
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
-        cdef int n = self.n_triangles * 3
+        cdef int n = self.n_triangles * self.edge_stride
         cdef np.ndarray[double, ndim=1] length = np.empty(n, dtype=np.float64)
         cdef np.ndarray[double, ndim=1] nx = np.empty(n, dtype=np.float64)
         cdef np.ndarray[double, ndim=1] ny = np.empty(n, dtype=np.float64)
-        cdef void* eng = self._engine
+        cdef void* eng = self._h()
         cdef double* pL = <double*>length.data
         cdef double* pX = <double*>nx.data
         cdef double* pY = <double*>ny.data
         cdef int err
-        with nogil:
-            err = swmm_2d_edge_get_geometry_bulk(eng, pL, pX, pY)
+        with self._owner._operation(<uintptr_t>eng):
+            with nogil:
+                err = swmm_2d_edge_get_geometry_bulk(eng, pL, pX, pY)
         _check(err)
         return length, nx, ny
 
@@ -705,10 +897,10 @@ cdef class Surface2D:
         @type idx: int
         @return: Water depth.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef double val
-        _check(swmm_2d_get_depth(self._engine, idx, &val))
+        _check(swmm_2d_get_depth(self._h(), idx, &val))
         return val
 
     def get_head(self, int idx) -> float:
@@ -718,10 +910,10 @@ cdef class Surface2D:
         @type idx: int
         @return: Total head.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef double val
-        _check(swmm_2d_get_head(self._engine, idx, &val))
+        _check(swmm_2d_get_head(self._h(), idx, &val))
         return val
 
     def get_rainfall(self, int idx) -> float:
@@ -731,10 +923,10 @@ cdef class Surface2D:
         @type idx: int
         @return: Rainfall rate.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef double val
-        _check(swmm_2d_get_rainfall(self._engine, idx, &val))
+        _check(swmm_2d_get_rainfall(self._h(), idx, &val))
         return val
 
     def get_net_source(self, int idx) -> float:
@@ -744,10 +936,10 @@ cdef class Surface2D:
         @type idx: int
         @return: Net source term.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef double val
-        _check(swmm_2d_get_net_source(self._engine, idx, &val))
+        _check(swmm_2d_get_net_source(self._h(), idx, &val))
         return val
 
     def get_coupling_flux(self, int idx) -> float:
@@ -757,10 +949,10 @@ cdef class Surface2D:
         @type idx: int
         @return: Coupling flux value (positive = into 2D surface).
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef double val
-        _check(swmm_2d_get_coupling_flux(self._engine, idx, &val))
+        _check(swmm_2d_get_coupling_flux(self._h(), idx, &val))
         return val
 
     # ====================================================================
@@ -772,15 +964,16 @@ cdef class Surface2D:
 
         @return: Array of shape C{(n_vertices,)} with dtype C{float64}.
         @rtype: np.ndarray
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef int n = self.n_vertices
         cdef np.ndarray[double, ndim=1] arr = np.empty(n, dtype=np.float64)
-        cdef void* eng = self._engine
+        cdef void* eng = self._h()
         cdef double* p = <double*>arr.data
         cdef int err
-        with nogil:
-            err = swmm_2d_vertex_get_heads_bulk(eng, p)
+        with self._owner._operation(<uintptr_t>eng):
+            with nogil:
+                err = swmm_2d_vertex_get_heads_bulk(eng, p)
         _check(err)
         return arr
 
@@ -797,15 +990,16 @@ cdef class Surface2D:
 
         @return: Array of shape C{(n_vertices,)} with dtype C{float64}.
         @rtype: np.ndarray
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef int n = self.n_vertices
         cdef np.ndarray[double, ndim=1] arr = np.empty(n, dtype=np.float64)
-        cdef void* eng = self._engine
+        cdef void* eng = self._h()
         cdef double* p = <double*>arr.data
         cdef int err
-        with nogil:
-            err = swmm_2d_vertex_get_render_depths_bulk(eng, p)
+        with self._owner._operation(<uintptr_t>eng):
+            with nogil:
+                err = swmm_2d_vertex_get_render_depths_bulk(eng, p)
         _check(err)
         return arr
 
@@ -819,10 +1013,10 @@ cdef class Surface2D:
 
         @return: Maximum depth.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef double val
-        _check(swmm_2d_get_max_depth(self._engine, &val))
+        _check(swmm_2d_get_max_depth(self._h(), &val))
         return val
 
     @property
@@ -831,10 +1025,10 @@ cdef class Surface2D:
 
         @return: Total volume.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef double val
-        _check(swmm_2d_get_total_volume(self._engine, &val))
+        _check(swmm_2d_get_total_volume(self._h(), &val))
         return val
 
     @property
@@ -844,10 +1038,10 @@ cdef class Surface2D:
         @return: Exchange flow rate in C{m^3/s} (positive = into 1D
             network).
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef double val
-        _check(swmm_2d_get_total_exchange_flow(self._engine, &val))
+        _check(swmm_2d_get_total_exchange_flow(self._h(), &val))
         return val
 
     @property
@@ -858,10 +1052,10 @@ cdef class Surface2D:
 
         @return: Step count.
         @rtype: int
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef long val
-        _check(swmm_2d_get_solver_steps(self._engine, &val))
+        _check(swmm_2d_get_solver_steps(self._h(), &val))
         return val
 
     @property
@@ -873,22 +1067,52 @@ cdef class Surface2D:
 
         @return: Step size.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef double val
-        _check(swmm_2d_get_solver_last_step(self._engine, &val))
+        _check(swmm_2d_get_solver_last_step(self._h(), &val))
         return val
+
+    @property
+    def run_stats(self) -> dict:
+        """Cumulative marcher statistics and the backend of this 2D run.
+
+        Readable during the run (after C{start}). Keys: C{backend} (solver
+        label chosen at initialize), C{momentum} (C{LOCAL_INERTIAL} /
+        C{FULL_SWE} / C{DIFFUSIVE_WAVE}), C{lts_tiers} (configured),
+        C{steps}, C{face_evals}, C{last_step}, C{active_frac}
+        (min, mean, max; -1 = not populated) and C{tier_cells} (cumulative
+        rebuild-sampled cells per LTS tier, C{n_tiers} entries).
+
+        @return: Statistics dictionary.
+        @rtype: dict
+        @raise EngineError: If the C API call fails.
+        """
+        cdef SWMM_2DRunStats st
+        _check(swmm_2d_get_run_stats(self._h(), &st))
+        names = ("LOCAL_INERTIAL", "FULL_SWE", "DIFFUSIVE_WAVE")
+        return {
+            "backend": (<bytes>st.backend).decode("utf-8", "replace"),
+            "momentum": names[st.momentum] if 0 <= st.momentum < 3 else st.momentum,
+            "lts_tiers": st.lts_tiers,
+            "steps": st.steps,
+            "face_evals": st.face_evals,
+            "last_step": st.last_step,
+            "active_frac": (st.active_frac_min, st.active_frac_mean,
+                            st.active_frac_max),
+            "tier_cells": [st.tier_cells[k] for k in range(st.n_tiers)],
+        }
 
     def get_stat_max_depths(self):
         """Return cumulative maximum-depth envelope for all triangles.
 
         @return: Array of shape C{(n_triangles,)} with dtype C{float64}, in m.
         @rtype: np.ndarray
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef int n = self.n_triangles
         cdef np.ndarray[double, ndim=1] arr = np.empty(n, dtype=np.float64)
-        _check(swmm_2d_get_stat_max_depths(self._engine, &arr[0]))
+        _check(swmm_2d_get_stat_max_depths(self._h(), &arr[0]))
         return arr
 
     def get_stat_max_velocities(self):
@@ -896,11 +1120,11 @@ cdef class Surface2D:
 
         @return: Array of shape C{(n_triangles,)} with dtype C{float64}, in m/s.
         @rtype: np.ndarray
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef int n = self.n_triangles
         cdef np.ndarray[double, ndim=1] arr = np.empty(n, dtype=np.float64)
-        _check(swmm_2d_get_stat_max_velocities(self._engine, &arr[0]))
+        _check(swmm_2d_get_stat_max_velocities(self._h(), &arr[0]))
         return arr
 
     def get_stat_max_continuity_err(self):
@@ -909,11 +1133,11 @@ cdef class Surface2D:
         @return: Array of shape C{(n_triangles,)} with dtype C{float64}, in
             C{m^3/s}.
         @rtype: np.ndarray
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef int n = self.n_triangles
         cdef np.ndarray[double, ndim=1] arr = np.empty(n, dtype=np.float64)
-        _check(swmm_2d_get_stat_max_continuity_err(self._engine, &arr[0]))
+        _check(swmm_2d_get_stat_max_continuity_err(self._h(), &arr[0]))
         return arr
 
     @property
@@ -923,10 +1147,10 @@ cdef class Surface2D:
         @return: M{(total_in - total_out) / total_in}, the domain mass-balance
             error as a fraction.
         @rtype: float
-        @raise RuntimeError: If the 2D module did not run.
+        @raise EngineError: If the 2D module did not run.
         """
         cdef double val
-        _check(swmm_2d_get_continuity_error(self._engine, &val))
+        _check(swmm_2d_get_continuity_error(self._h(), &val))
         return val
 
     def get_mass_balance(self):
@@ -937,7 +1161,7 @@ cdef class Surface2D:
             C{outfall_in}, C{outfall_out}, C{boundary_in}, C{boundary_out},
             C{evap_out} (all C{m^3}) and C{continuity_error} (fraction).
         @rtype: dict[str, float]
-        @raise RuntimeError: If the 2D module did not run.
+        @raise EngineError: If the 2D module did not run.
         """
         cdef double init_storage = 0.0
         cdef double final_storage = 0.0
@@ -950,13 +1174,13 @@ cdef class Surface2D:
         cdef double boundary_out = 0.0
         cdef double evap_out = 0.0
         cdef double err = 0.0
-        _check(swmm_2d_get_mass_balance(self._engine,
+        _check(swmm_2d_get_mass_balance(self._h(),
                                         &init_storage, &final_storage,
                                         &rainfall_in, &coupling_in,
                                         &coupling_out, &outfall_in,
                                         &outfall_out, &boundary_in,
                                         &boundary_out, &evap_out))
-        _check(swmm_2d_get_continuity_error(self._engine, &err))
+        _check(swmm_2d_get_continuity_error(self._h(), &err))
         return {
             "init_storage": init_storage,
             "final_storage": final_storage,
@@ -990,9 +1214,9 @@ cdef class Surface2D:
         @param persist: C{PERSIST} holds the forcing until cleared; C{RESET}
             applies it for a single step.
         @type persist: L{ForcingPersist}
-        @raise RuntimeError: If the C API rejects the forcing.
+        @raise EngineError: If the C API rejects the forcing.
         """
-        _check(swmm_2d_force_rainfall(self._engine, idx, value,
+        _check(swmm_2d_force_rainfall(self._h(), idx, value,
                                       int(mode), int(persist)))
 
     def force_rainfall_uniform(self, double value, *,
@@ -1007,9 +1231,9 @@ cdef class Surface2D:
         @param persist: C{PERSIST} to hold until cleared; C{RESET} for a
             single step.
         @type persist: L{ForcingPersist}
-        @raise RuntimeError: If the C API rejects the forcing.
+        @raise EngineError: If the C API rejects the forcing.
         """
-        _check(swmm_2d_force_rainfall_uniform(self._engine, value,
+        _check(swmm_2d_force_rainfall_uniform(self._h(), value,
                                               int(mode), int(persist)))
 
     def force_evap(self, int idx, double value, *,
@@ -1031,9 +1255,9 @@ cdef class Surface2D:
         @param persist: C{PERSIST} holds the forcing until cleared; C{RESET}
             applies it for a single step.
         @type persist: L{ForcingPersist}
-        @raise RuntimeError: If the C API rejects the forcing.
+        @raise EngineError: If the C API rejects the forcing.
         """
-        _check(swmm_2d_force_evap(self._engine, idx, value,
+        _check(swmm_2d_force_evap(self._h(), idx, value,
                                   int(mode), int(persist)))
 
     def force_evap_uniform(self, double value, *,
@@ -1048,9 +1272,9 @@ cdef class Surface2D:
         @param persist: C{PERSIST} to hold until cleared; C{RESET} for a
             single step.
         @type persist: L{ForcingPersist}
-        @raise RuntimeError: If the C API rejects the forcing.
+        @raise EngineError: If the C API rejects the forcing.
         """
-        _check(swmm_2d_force_evap_uniform(self._engine, value,
+        _check(swmm_2d_force_evap_uniform(self._h(), value,
                                           int(mode), int(persist)))
 
     def force_coupling_flux(self, int idx, double value, *,
@@ -1067,17 +1291,17 @@ cdef class Surface2D:
         @param persist: C{PERSIST} to hold until cleared; C{RESET} for a
             single step.
         @type persist: L{ForcingPersist}
-        @raise RuntimeError: If the C API rejects the forcing.
+        @raise EngineError: If the C API rejects the forcing.
         """
-        _check(swmm_2d_force_coupling_flux(self._engine, idx, value,
+        _check(swmm_2d_force_coupling_flux(self._h(), idx, value,
                                            int(mode), int(persist)))
 
     def force_clear_all(self):
         """Clear all 2D forcings.
 
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
-        _check(swmm_2d_force_clear_all(self._engine))
+        _check(swmm_2d_force_clear_all(self._h()))
 
     # ====================================================================
     # Mesh definition - solver options
@@ -1089,10 +1313,10 @@ cdef class Surface2D:
 
         @return: Threshold depth.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef double val
-        _check(swmm_2d_get_dry_depth(self._engine, &val))
+        _check(swmm_2d_get_dry_depth(self._h(), &val))
         return val
 
     @dry_depth.setter
@@ -1101,9 +1325,9 @@ cdef class Surface2D:
 
         @param value: New threshold depth (m).
         @type value: float
-        @raise RuntimeError: If the C API rejects the value.
+        @raise EngineError: If the C API rejects the value.
         """
-        _check(swmm_2d_set_dry_depth(self._engine, value))
+        _check(swmm_2d_set_dry_depth(self._h(), value))
 
     # ====================================================================
     # Boundary conditions - boundary edges
@@ -1115,10 +1339,10 @@ cdef class Surface2D:
 
         @return: Boundary edge count.
         @rtype: int
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef int count = 0
-        _check(swmm_2d_boundary_edge_count(self._engine, &count))
+        _check(swmm_2d_boundary_edge_count(self._h(), &count))
         return count
 
     def get_edge_bc_type(self, int tri_idx, int edge):
@@ -1130,10 +1354,10 @@ cdef class Surface2D:
         @type edge: int
         @return: Boundary condition type.
         @rtype: L{SurfaceBoundaryType}
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef int bc_type = 0
-        _check(swmm_2d_get_edge_bc_type(self._engine, tri_idx, edge, &bc_type))
+        _check(swmm_2d_get_edge_bc_type(self._h(), tri_idx, edge, &bc_type))
         return SurfaceBoundaryType(bc_type)
 
     def set_edge_bc_type(self, int tri_idx, int edge, bc_type):
@@ -1145,9 +1369,9 @@ cdef class Surface2D:
         @type edge: int
         @param bc_type: Boundary condition type.
         @type bc_type: L{SurfaceBoundaryType}
-        @raise RuntimeError: If the C API rejects the assignment.
+        @raise EngineError: If the C API rejects the assignment.
         """
-        _check(swmm_2d_set_edge_bc_type(self._engine, tri_idx, edge,
+        _check(swmm_2d_set_edge_bc_type(self._h(), tri_idx, edge,
                                         int(bc_type)))
 
     def get_edge_bc_head(self, int tri_idx, int edge) -> float:
@@ -1159,10 +1383,10 @@ cdef class Surface2D:
         @type edge: int
         @return: Boundary head value.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef double head = 0.0
-        _check(swmm_2d_get_edge_bc_head(self._engine, tri_idx, edge, &head))
+        _check(swmm_2d_get_edge_bc_head(self._h(), tri_idx, edge, &head))
         return head
 
     def set_edge_bc_head(self, int tri_idx, int edge, double head):
@@ -1174,9 +1398,9 @@ cdef class Surface2D:
         @type edge: int
         @param head: Boundary head value.
         @type head: float
-        @raise RuntimeError: If the C API rejects the assignment.
+        @raise EngineError: If the C API rejects the assignment.
         """
-        _check(swmm_2d_set_edge_bc_head(self._engine, tri_idx, edge, head))
+        _check(swmm_2d_set_edge_bc_head(self._h(), tri_idx, edge, head))
 
     def get_edge_bc_slope(self, int tri_idx, int edge) -> float:
         """Return the boundary slope for a triangle edge.
@@ -1187,10 +1411,10 @@ cdef class Surface2D:
         @type edge: int
         @return: Boundary slope.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef double slope = 0.0
-        _check(swmm_2d_get_edge_bc_slope(self._engine, tri_idx, edge, &slope))
+        _check(swmm_2d_get_edge_bc_slope(self._h(), tri_idx, edge, &slope))
         return slope
 
     def set_edge_bc_slope(self, int tri_idx, int edge, double slope):
@@ -1202,9 +1426,9 @@ cdef class Surface2D:
         @type edge: int
         @param slope: Boundary slope.
         @type slope: float
-        @raise RuntimeError: If the C API rejects the assignment.
+        @raise EngineError: If the C API rejects the assignment.
         """
-        _check(swmm_2d_set_edge_bc_slope(self._engine, tri_idx, edge, slope))
+        _check(swmm_2d_set_edge_bc_slope(self._h(), tri_idx, edge, slope))
 
     def get_edge_bc_cum_flux(self, int tri_idx, int edge) -> float:
         """Return the cumulative boundary flux for a triangle edge.
@@ -1215,10 +1439,10 @@ cdef class Surface2D:
         @type edge: int
         @return: Cumulative boundary flux through the edge.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef double cum_flux = 0.0
-        _check(swmm_2d_get_edge_bc_cum_flux(self._engine, tri_idx, edge, &cum_flux))
+        _check(swmm_2d_get_edge_bc_cum_flux(self._h(), tri_idx, edge, &cum_flux))
         return cum_flux
 
     def get_edge_bc_flow(self, int tri_idx, int edge) -> float:
@@ -1230,10 +1454,10 @@ cdef class Surface2D:
         @type edge: int
         @return: Prescribed flow per metre of edge (C{m^3/s/m}).
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef double flow = 0.0
-        _check(swmm_2d_get_edge_bc_flow(self._engine, tri_idx, edge, &flow))
+        _check(swmm_2d_get_edge_bc_flow(self._h(), tri_idx, edge, &flow))
         return flow
 
     def set_edge_bc_flow(self, int tri_idx, int edge, double flow):
@@ -1245,9 +1469,9 @@ cdef class Surface2D:
         @type edge: int
         @param flow: Prescribed flow per metre of edge (C{m^3/s/m}).
         @type flow: float
-        @raise RuntimeError: If the C API rejects the assignment.
+        @raise EngineError: If the C API rejects the assignment.
         """
-        _check(swmm_2d_set_edge_bc_flow(self._engine, tri_idx, edge, flow))
+        _check(swmm_2d_set_edge_bc_flow(self._h(), tri_idx, edge, flow))
 
     def set_edge_bc_tseries_name(self, int tri_idx, int edge, str name):
         """Set the timeseries name driving a SPECIFIED_STAGE edge.
@@ -1262,10 +1486,31 @@ cdef class Surface2D:
         @type edge: int
         @param name: Timeseries name, or C{""} to clear.
         @type name: str
-        @raise RuntimeError: If the C API rejects the assignment.
+        @raise EngineError: If the C API rejects the assignment.
         """
         cdef bytes b = name.encode("utf-8")
-        _check(swmm_2d_set_edge_bc_tseries_name(self._engine, tri_idx, edge, b))
+        _check(swmm_2d_set_edge_bc_tseries_name(self._h(), tri_idx, edge, b))
+
+    def get_edge_bc_tseries_name(self, int tri_idx, int edge) -> str:
+        """Return the timeseries name driving a SPECIFIED_STAGE edge.
+
+        The mirror of L{set_edge_bc_tseries_name}, so an edit can be read
+        back and verified. Names longer than the internal buffer are
+        truncated.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @return: Timeseries name; C{""} when the slot is clear (the edge uses
+            the constant C{edge_bc_head}).
+        @rtype: str
+        @raise EngineError: If the C API call fails.
+        """
+        cdef char buf[256]
+        _check(swmm_2d_get_edge_bc_tseries_name(
+            self._h(), tri_idx, edge, buf, 256))
+        return buf.decode('utf-8')
 
     def set_edge_bc_flow_tseries_name(self, int tri_idx, int edge, str name):
         """Set the timeseries name driving a SPECIFIED_FLOW edge.
@@ -1279,10 +1524,29 @@ cdef class Surface2D:
         @type edge: int
         @param name: Timeseries name, or C{""} to clear.
         @type name: str
-        @raise RuntimeError: If the C API rejects the assignment.
+        @raise EngineError: If the C API rejects the assignment.
         """
         cdef bytes b = name.encode("utf-8")
-        _check(swmm_2d_set_edge_bc_flow_tseries_name(self._engine, tri_idx, edge, b))
+        _check(swmm_2d_set_edge_bc_flow_tseries_name(self._h(), tri_idx, edge, b))
+
+    def get_edge_bc_flow_tseries_name(self, int tri_idx, int edge) -> str:
+        """Return the timeseries name driving a SPECIFIED_FLOW edge.
+
+        Same contract as L{get_edge_bc_tseries_name}.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @return: Timeseries name; C{""} when the slot is clear (no series
+            bound).
+        @rtype: str
+        @raise EngineError: If the C API call fails.
+        """
+        cdef char buf[256]
+        _check(swmm_2d_get_edge_bc_flow_tseries_name(
+            self._h(), tri_idx, edge, buf, 256))
+        return buf.decode('utf-8')
 
     def set_edge_bc_rating_curve_name(self, int tri_idx, int edge, str name):
         """Set the rating-curve name driving a RATING_CURVE edge.
@@ -1297,10 +1561,29 @@ cdef class Surface2D:
         @type edge: int
         @param name: Rating-curve name, or C{""} to clear.
         @type name: str
-        @raise RuntimeError: If the C API rejects the assignment.
+        @raise EngineError: If the C API rejects the assignment.
         """
         cdef bytes b = name.encode("utf-8")
-        _check(swmm_2d_set_edge_bc_rating_curve_name(self._engine, tri_idx, edge, b))
+        _check(swmm_2d_set_edge_bc_rating_curve_name(self._h(), tri_idx, edge, b))
+
+    def get_edge_bc_rating_curve_name(self, int tri_idx, int edge) -> str:
+        """Return the rating-curve name driving a RATING_CURVE edge.
+
+        Same contract as L{get_edge_bc_tseries_name}.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @return: Rating-curve name; C{""} when the slot is clear (no curve
+            bound).
+        @rtype: str
+        @raise EngineError: If the C API call fails.
+        """
+        cdef char buf[256]
+        _check(swmm_2d_get_edge_bc_rating_curve_name(
+            self._h(), tri_idx, edge, buf, 256))
+        return buf.decode('utf-8')
 
     # ------------------------------------------------------------------
     # Edge conveyance factor (§11A of docs/2dModelStrategy.md)
@@ -1315,10 +1598,10 @@ cdef class Surface2D:
         @type edge: int
         @return: Conveyance factor (1.0 = unrestricted, 0.0 = wall).
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         cdef double c = 1.0
-        _check(swmm_2d_get_edge_conveyance(self._engine, tri, edge, &c))
+        _check(swmm_2d_get_edge_conveyance(self._h(), tri, edge, &c))
         return c
 
     def set_edge_conveyance(self, int tri, int edge, double conveyance):
@@ -1333,26 +1616,448 @@ cdef class Surface2D:
         @type edge: int
         @param conveyance: New value in C{[0, 1]}.
         @type conveyance: float
-        @raise RuntimeError: If the C API rejects the assignment.
+        @raise EngineError: If the C API rejects the assignment.
         """
-        _check(swmm_2d_set_edge_conveyance(self._engine, tri, edge, conveyance))
+        _check(swmm_2d_set_edge_conveyance(self._h(), tri, edge, conveyance))
 
     def get_edge_conveyance_bulk(self):
         """Return a NumPy array of all per-edge conveyance factors.
 
-        Length is C{triangle_count * 3}, indexed C{[tri*3 + edge]}.
+        Length is C{triangle_count * edge_stride}, indexed C{[cell*stride + edge]}.
         """
         import numpy as np
         cdef int nt = 0
-        _check(swmm_2d_triangle_count(self._engine, &nt))
-        cdef double[::1] out = np.empty(nt * 3, dtype=np.float64)
+        _check(swmm_2d_triangle_count(self._h(), &nt))
+        cdef int stride = 3
+        _check(swmm_2d_edge_stride(self._h(), &stride))
+        cdef double[::1] out = np.empty(nt * stride, dtype=np.float64)
+        if nt == 0:
+            return np.asarray(out)
+        cdef void* eng = self._h()
         cdef double* p = &out[0]
         cdef int err
-        with nogil:
-            err = swmm_2d_get_edge_conveyance_bulk(self._engine, p)
+        with self._owner._operation(<uintptr_t>eng):
+            with nogil:
+                err = swmm_2d_get_edge_conveyance_bulk(eng, p)
         _check(err)
         return np.asarray(out)
 
     def reset_edge_conveyance(self):
         """Reset every edge's conveyance factor to 1.0 (unrestricted)."""
-        _check(swmm_2d_reset_edge_conveyance(self._engine))
+        _check(swmm_2d_reset_edge_conveyance(self._h()))
+
+    # ------------------------------------------------------------------
+    # Per-cell infiltration (plan §5.5, track I)
+    # ------------------------------------------------------------------
+
+    @property
+    def infiltration(self):
+        """``surface2d.infiltration`` — the L{Infiltration2DView} sub-view.
+
+        Per-cell infiltration for the C{GROUNDWATER OFF} path: options,
+        the tag-default mapping, per-cell overrides, and the held-rate /
+        cumulative-depth readers.
+
+        @return: The cached L{Infiltration2DView} for this mesh.
+        @rtype: Infiltration2DView
+        """
+        self._h()
+        if self._infiltration is None:
+            self._infiltration = Infiltration2DView(self._owner)
+        return self._infiltration
+
+
+# ========================================================================
+# Per-cell infiltration (plan §5.5.6, track I step I6)
+# ========================================================================
+
+Infil2DRow = namedtuple(
+    "Infil2DRow", "method params dest",
+    defaults=((0.0, 0.0, 0.0, 0.0, 0.0), SurfaceInfilDest.LOST),
+)
+Infil2DRow.__doc__ = """One infiltration specification.
+
+``method`` is a L{SurfaceInfilMethod}, or ``None`` for "no infiltration
+model" (the C{NONE} token). ``params`` is a tuple of up to five
+POSITIONAL values in B{PROJECT UNITS} — the same numbers a user types
+into a legacy C{[INFILTRATION]} row (in/hr and in on a US-C{FLOW_UNITS}
+project, mm/hr and mm on SI):
+
+    ==================  =========  ====  ============  ============  ====
+    method              params[0]  [1]   [2]           [3]           [4]
+    ==================  =========  ====  ============  ============  ====
+    HORTON              f0         fmin  decay (1/hr)  dry_time (d)  Fmax
+    MOD_HORTON          f0         fmin  decay (1/hr)  dry_time (d)  Fmax
+    GREEN_AMPT          suction    Ks    IMD           --            --
+    MOD_GREEN_AMPT      suction    Ks    IMD           --            --
+    CURVE_NUMBER        CN         --    dry_time (d)  --            --
+    CONSTANT            rate       --    --            --            --
+    ==================  =========  ====  ============  ============  ====
+
+``dest`` is a L{SurfaceInfilDest}; only C{LOST} is routed in this release.
+"""
+
+Infil2DCell = namedtuple("Infil2DCell", "row is_override")
+Infil2DCell.__doc__ = """The infiltration specification in force at one cell.
+
+Unpacks as ``row, is_override = surface2d.infiltration.cell(tri)``.
+``is_override`` is C{True} when the row came from the per-cell
+C{[2D_INFILTRATION]} layer rather than a tag / C{'*'} default.
+"""
+
+
+cdef void _infil_row_to_c(object row, SWMM_Infil2DRow* out) except *:
+    """Fill a C{SWMM_Infil2DRow} from an L{Infil2DRow} (or a NONE row).
+
+    @param row: The row to convert; C{None} or a row whose C{method} is
+        C{None} produces the C{NONE} specification.
+    @raise ValueError: If more than five parameters are supplied.
+    """
+    cdef int k
+    out.has_method = 0
+    out.method = 0
+    for k in range(5):
+        out.p[k] = 0.0
+    out.dest = <int>SurfaceInfilDest.LOST
+
+    if row is None or row.method is None:
+        return
+
+    params = tuple(row.params) if row.params is not None else ()
+    if len(params) > 5:
+        raise ValueError(
+            f"at most 5 infiltration parameters, got {len(params)}")
+
+    out.has_method = 1
+    out.method = <int>int(SurfaceInfilMethod(row.method))
+    for k in range(len(params)):
+        out.p[k] = float(params[k])
+    out.dest = <int>int(SurfaceInfilDest(row.dest))
+
+
+cdef object _infil_row_from_c(SWMM_Infil2DRow* c):
+    """Build an L{Infil2DRow} from a C{SWMM_Infil2DRow}."""
+    cdef object params = (c.p[0], c.p[1], c.p[2], c.p[3], c.p[4])
+    if not c.has_method:
+        return Infil2DRow(None, params, SurfaceInfilDest.LOST)
+    return Infil2DRow(SurfaceInfilMethod(c.method), params,
+                      SurfaceInfilDest(c.dest))
+
+
+class Infil2DDefaults(MutableMapping):
+    """``surface2d.infiltration.defaults`` — tag → L{Infil2DRow} mapping.
+
+    Mirrors C{[2D_INFILTRATION_DEFAULTS]}. The key C{"*"} is the mesh-wide
+    fallback; every other key matches the C{TAG} column of
+    C{[2D_TRIANGLES]}. Resolution order is
+    C{per-cell override > tag row > '*' row > none}.
+
+    .. code-block:: python
+
+        infil = solver.surface2d.infiltration
+        infil.defaults["*"] = Infil2DRow(None)                  # no default
+        infil.defaults["LAWN"] = Infil2DRow(
+            SurfaceInfilMethod.HORTON, (3.0, 0.5, 4.14, 7.0, 0.0))
+        del infil.defaults["WOODS"]
+
+    Assignment is only accepted before the solver initializes — see
+    L{Infiltration2DView} for the staleness rule.
+    """
+
+    def __init__(self, owner):
+        self._owner = resolve_owner(owner)
+        self._generation = self._owner.generation
+
+    def _address(self):
+        if self._generation != self._owner.generation:
+            raise StaleObjectError("Infiltration defaults were invalidated")
+        return self._owner.handle
+
+    def __len__(self):
+        cdef void* eng = <void*><uintptr_t>self._address()
+        cdef int n = 0
+        _check(swmm_infil2d_defaults_count(eng, &n))
+        return n
+
+    def _tags(self):
+        """Return the authored tags in file order (C{'*'} may be anywhere)."""
+        cdef void* eng = <void*><uintptr_t>self._address()
+        cdef int n = 0
+        cdef char buf[256]
+        cdef int i
+        _check(swmm_infil2d_defaults_count(eng, &n))
+        out = []
+        for i in range(n):
+            _check(swmm_infil2d_get_default_tag(eng, i, buf, 256))
+            out.append(buf.decode("utf-8"))
+        return out
+
+    def __iter__(self):
+        # Materialised deliberately: a generator would put the C{char[256]}
+        # scratch buffer in a closure, which Cython cannot do.
+        return iter(self._tags())
+
+    def __getitem__(self, key):
+        cdef void* eng = <void*><uintptr_t>self._address()
+        cdef SWMM_Infil2DRow row
+        cdef int i
+        tags = self._tags()
+        for i in range(len(tags)):
+            if tags[i] != key:
+                continue
+            _check(swmm_infil2d_get_default(eng, i, &row))
+            return _infil_row_from_c(&row)
+        raise KeyError(key)
+
+    def __setitem__(self, key, value):
+        cdef void* eng = <void*><uintptr_t>self._address()
+        cdef bytes tag = str(key).encode("utf-8")
+        cdef SWMM_Infil2DRow row
+        _infil_row_to_c(value, &row)
+        _check(swmm_infil2d_set_default(eng, tag, &row))
+
+    def __delitem__(self, key):
+        cdef void* eng = <void*><uintptr_t>self._address()
+        cdef bytes tag
+        if key not in self:
+            raise KeyError(key)
+        tag = str(key).encode("utf-8")
+        _check(swmm_infil2d_remove_default(eng, tag))
+
+    def __repr__(self):
+        try:
+            return f"<Infil2DDefaults {sorted(self)}>"
+        except Exception:
+            return "<Infil2DDefaults (unavailable)>"
+
+
+cdef class Infiltration2DView:
+    """``surface2d.infiltration`` — per-cell infiltration on the 2D mesh.
+
+    The C{GROUNDWATER OFF} loss model (plan §5.5): a held per-cell rate,
+    recomputed on the C{INFIL_STEP} cadence and consumed by the explicit
+    marcher. Wraps C{openswmm_infil2d.h}.
+
+    .. code-block:: python
+
+        infil = solver.surface2d.infiltration
+        infil.infil_step = 300.0                       # seconds
+        infil.defaults["LAWN"] = Infil2DRow(
+            SurfaceInfilMethod.HORTON, (3.0, 0.5, 4.14, 7.0, 0.0))
+        infil.set_cells([12, 13, 14], Infil2DRow(
+            SurfaceInfilMethod.CURVE_NUMBER, (85.0, 0.0, 7.0)))
+
+        row, is_override = infil.cell(12)
+        f = infil.rate()          # m/s, per triangle
+        F = infil.cumulative()    # m,   per triangle
+        infil.total_volume        # m^3, the infil_out ledger row
+
+    B{Units.} Row parameters are in B{project units} (see L{Infil2DRow});
+    every readback channel is SI, like the rest of the 2D API.
+
+    B{Staleness.} Parameters are baked into per-cell kernel state once,
+    when the 2D surface initializes, and there is no per-cell re-init path.
+    Every writer here therefore raises C{LifecycleError} (engine
+    C{SWMM_ERR_LIFECYCLE}) once the solver has been initialized; edit in the
+    opened state, then initialize.
+
+    @ivar _engine: Internal pointer to the underlying C{SWMM_Engine} handle.
+    """
+
+    cdef object _owner
+    cdef long long _generation
+    cdef object _defaults
+
+    def __cinit__(self, owner):
+        self._owner = resolve_owner(owner)
+        self._generation = self._owner.generation
+        self._defaults = None
+
+    cdef void* _h(self) except NULL:
+        if self._generation != self._owner.generation:
+            raise StaleObjectError("Infiltration view was invalidated")
+        return <void*><uintptr_t>self._owner.handle
+
+    # -- options -------------------------------------------------------
+
+    @property
+    def infil_step(self) -> float:
+        """Evaluation cadence in B{seconds} (C{[2D_INFILTRATION_OPTIONS]}).
+
+        C{<= 0} means "use the project C{WET_STEP}", which the 2D surface
+        resolves when it initializes. The value reported is the authored
+        one, not the resolved one.
+
+        @rtype: float
+        @raise EngineError: If the C API call fails.
+        """
+        cdef SWMM_Infil2DOptions opts
+        _check(swmm_infil2d_get_options(self._h(), &opts))
+        return opts.infil_step
+
+    @infil_step.setter
+    def infil_step(self, double seconds) -> None:
+        cdef SWMM_Infil2DOptions opts
+        opts.infil_step = seconds
+        _check(swmm_infil2d_set_options(self._h(), &opts))
+
+    # -- tag defaults --------------------------------------------------
+
+    @property
+    def defaults(self):
+        """The C{[2D_INFILTRATION_DEFAULTS]} tag → L{Infil2DRow} mapping.
+
+        @rtype: Infil2DDefaults
+        """
+        self._h()
+        if self._defaults is None:
+            self._defaults = Infil2DDefaults(self._owner)
+        return self._defaults
+
+    # -- per-cell overrides --------------------------------------------
+
+    def cell(self, int tri):
+        """Return the infiltration specification in force at one triangle.
+
+        After the solver initializes this is the B{resolved} row, with
+        C{is_override} reporting the resolved provenance. Before it
+        initializes only the per-cell override layer is visible, so a cell
+        carrying no override reports a C{NONE} row even when a tag or
+        C{'*'} default would later apply.
+
+        @param tri: Triangle index (0-based).
+        @type tri: int
+        @return: C{(row, is_override)}.
+        @rtype: Infil2DCell
+        @raise EngineError: If the C API call fails.
+        """
+        cdef SWMM_Infil2DRow row
+        cdef int is_override = 0
+        _check(swmm_infil2d_get_cell(self._h(), tri, &row, &is_override))
+        return Infil2DCell(_infil_row_from_c(&row), bool(is_override))
+
+    def set_cell(self, int tri, row) -> None:
+        """Set (or clear) the per-cell override of one triangle.
+
+        C{row=None} CLEARS the override so the cell falls back to its tag
+        row / the C{'*'} row. That differs from an L{Infil2DRow} whose
+        C{method} is C{None}, which stores an explicit C{NONE} override and
+        so suppresses the defaults for that cell.
+
+        @param tri: Triangle index (0-based).
+        @type tri: int
+        @param row: Row to store (parameters in B{project units}), or
+            C{None} to clear the override.
+        @type row: Infil2DRow or None
+        @raise EngineError: If the C API rejects the assignment (including
+            after the solver has been initialized).
+        """
+        cdef SWMM_Infil2DRow crow
+        if row is None:
+            _check(swmm_infil2d_set_cell(self._h(), tri, NULL))
+            return
+        _infil_row_to_c(row, &crow)
+        _check(swmm_infil2d_set_cell(self._h(), tri, &crow))
+
+    def set_cells(self, tris, row) -> None:
+        """Assign one specification to many triangles in a single call.
+
+        The select-many-cells-then-assign entry point: one validation pass,
+        then one apply. B{All-or-nothing} — if any index is out of range
+        nothing at all is written. An empty C{tris} is a no-op.
+
+        @param tris: Iterable of 0-based triangle indices.
+        @type tris: sequence[int]
+        @param row: Row to store on every listed triangle (parameters in
+            B{project units}), or C{None} to clear their overrides.
+        @type row: Infil2DRow or None
+        @raise EngineError: If the C API rejects the assignment.
+        """
+        cdef SWMM_Infil2DRow crow
+        cdef np.ndarray[int, ndim=1] arr = np.ascontiguousarray(
+            tris, dtype=np.intc).reshape(-1)
+        cdef int n = <int>arr.shape[0]
+        if n == 0:
+            return
+        if row is None:
+            _check(swmm_infil2d_set_cells(self._h(), <int*>arr.data, n, NULL))
+            return
+        _infil_row_to_c(row, &crow)
+        _check(swmm_infil2d_set_cells(self._h(), <int*>arr.data, n, &crow))
+
+    # -- state readback (SI) -------------------------------------------
+
+    def rate(self):
+        """Return the held per-cell infiltration rate as a NumPy array.
+
+        Units are B{m/s}, C{>= 0}, one entry per triangle. The rate is
+        recomputed on the C{INFIL_STEP} cadence and held constant between
+        updates. A mesh with no resolved model returns all zeros.
+
+        @rtype: np.ndarray
+        @raise EngineError: If the C API call fails.
+        """
+        cdef int nt = 0
+        _check(swmm_2d_triangle_count(self._h(), &nt))
+        cdef double[::1] out = np.zeros(max(nt, 1), dtype=np.float64)
+        cdef double* p = &out[0]
+        cdef void* eng = self._h()
+        cdef int err
+        with self._owner._operation(<uintptr_t>eng):
+            with nogil:
+                err = swmm_infil2d_get_rate_bulk(eng, p, nt if nt > 0 else 1)
+        _check(err)
+        return np.asarray(out)[:nt]
+
+    def cumulative(self):
+        """Return the cumulative infiltrated depth per cell as a NumPy array.
+
+        Units are B{m}, one entry per triangle — the C{infil_cum} sidecar
+        variable. A mesh with no resolved model returns all zeros.
+
+        @rtype: np.ndarray
+        @raise EngineError: If the C API call fails.
+        """
+        cdef int nt = 0
+        _check(swmm_2d_triangle_count(self._h(), &nt))
+        cdef double[::1] out = np.zeros(max(nt, 1), dtype=np.float64)
+        cdef double* p = &out[0]
+        cdef void* eng = self._h()
+        cdef int err
+        with self._owner._operation(<uintptr_t>eng):
+            with nogil:
+                err = swmm_infil2d_get_cum_bulk(eng, p, nt if nt > 0 else 1)
+        _check(err)
+        return np.asarray(out)[:nt]
+
+    @property
+    def total_volume(self) -> float:
+        """Cumulative 2D infiltration loss in B{m³} (the C{infil_out} row).
+
+        The whole-domain companion to L{cumulative}. Requires the 2D mass
+        balance to be live (the same contract as
+        C{Surface2D.get_mass_balance}).
+
+        @rtype: float
+        @raise EngineError: If the 2D mass balance is not active.
+        """
+        cdef double v = 0.0
+        _check(swmm_infil2d_get_total_volume(self._h(), &v))
+        return v
+
+    def __repr__(self) -> str:
+        try:
+            return (f"<Infiltration2DView infil_step={self.infil_step} "
+                    f"defaults={len(self.defaults)}>")
+        except Exception:
+            return "<Infiltration2DView (unavailable)>"
+
+cdef extern from "openswmm/engine/openswmm_2d.h":
+    int swmm_2d_get_rainfall_bulk(void*, double*) noexcept nogil
+    int swmm_2d_get_rain_volume_bulk(void*, double*) noexcept nogil
+    int swmm_2d_get_coupling_volume_bulk(void*, double*) noexcept nogil
+    int swmm_2d_get_rainfall_weights(void*, int, int*, int*, double*, int, int*)
+    int swmm_2d_output_variable_count()
+    const char* swmm_2d_output_variable_name(int)
+    unsigned swmm_2d_output_variable_mask(const char*)
+    const char* swmm_2d_output_variable_text(unsigned)

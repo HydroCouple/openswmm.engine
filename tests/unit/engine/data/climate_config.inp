@@ -29,6 +29,7 @@ DRY_ONLY         NO
 ;;Data Element   Values
 TIMESERIES       TempTS
 WINDSPEED        MONTHLY  1 2 3 4 5 6 7 8 9 10 11 12
+HUMIDITY         MONTHLY  40 42 44 46 48 50 52 54 56 58 60 62
 ;;               divt ati  nrg  elev  lat  dtlong(min) minMelt maxMelt  (legacy 9-token form)
 SNOWMELT         32.5 0.45 0.55 100.0 40.5 300         0.01    0.02
 ADC IMPERVIOUS   1.0 0.9 0.8 0.7 0.6 0.5 0.4 0.3 0.2 0.1

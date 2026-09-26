@@ -1,0 +1,23 @@
+;; Heat component configuration for heat_parity.inp.
+;; Resolved RELATIVE TO THE .inp (SWMMEngine.cpp: base_dir =
+;; parent_path(inp_path)), not to the working directory -- which is why this
+;; sits beside the deck and why run_corpus.sh's per-deck cwd cannot break it.
+
+[HEAT_SOURCES]
+;; RAINFALL and INITIAL_STATE are deliberately different numbers.  If they
+;; matched, "carried from the source" and "invented locally" would produce
+;; the same value and the deck could not tell them apart (lesson 26).
+RAINFALL      GLOBAL  8.0
+INITIAL_STATE GLOBAL  14.0
+
+[HEAT_FLUXES]
+;; Both families ON.  D-H5e merged the node/link bindings so that every
+;; enabled family is summed before ONE semi-implicit relaxation; with a
+;; single family enabled that merge is unobservable, because there is
+;; nothing to sum.  Two families is the minimum that can see it.
+SURFACE_EXCHANGE      ON
+RADIATIVE_EXCHANGE    ON
+;; D-H5c: HOLD keeps a dry element's last temperature rather than resetting
+;; it.  AIR and DEFAULT are the other two answers and are NOT exercised by
+;; any corpus deck -- recorded in the round's handoff as owed.
+DRY_ELEMENT_TEMPERATURE HOLD

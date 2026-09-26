@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file SubcatchData.hpp
  * @brief Structure-of-Arrays (SoA) storage for subcatchments.
@@ -12,7 +28,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_SUBCATCH_DATA_HPP
@@ -152,6 +168,21 @@ struct SubcatchData {
     std::vector<double> frac_imperv_no_store;
 
     /**
+     * @brief The AUTHORED [SUBAREAS] PctZero column, in percent.
+     * @details Kept alongside the 0-1 fraction because legacy forms the
+     *          impervious-without-storage subarea fraction as
+     *          `fracImperv * x[4] / 100.0` (subcatch.c:268) — it multiplies
+     *          by the PERCENT and divides after. `fracImperv * (x[4]/100)`
+     *          is a different double for about a tenth of all percentages,
+     *          and the difference lands straight in the subarea's area, so
+     *          the runoff kernel needs the number legacy multiplied by.
+     *          A model loaded from GeoPackage, which stores only the
+     *          fraction, recovers it as `fraction * 100`.
+     * @see Legacy: the x[4] of subcatch_readSubareaParams
+     */
+    std::vector<double> pct_zero;
+
+    /**
      * @brief Manning's n for impervious area.
      * @see Legacy: Subcatch[i].subArea[IMPERV0].N
      */
@@ -249,10 +280,44 @@ struct SubcatchData {
     std::vector<double> ponded_depth;
 
     /**
+     * @brief Ponded depth at the START of the runoff step (project length).
+     * @details Legacy forms `Vinflow = vRunon + subcatch_getDepth(j) *
+     *          nonLidArea` at the top of subcatch_getRunoff, BEFORE the
+     *          subareas are stepped, and only later re-derives the ponded
+     *          store from the new depth. findPondedLoads runs after the
+     *          step, so it needs the opening depth kept aside.
+     * @see Legacy: the Vinflow term in subcatch.c:694
+     */
+    std::vector<double> old_ponded_depth;
+
+    /**
+     * @brief This runoff step's PRE-LID outflow volume, ft³ (legacy vOut1).
+     * @details `vOut1 = Voutflow + vLidRain + vLidRunon`, the denominator the
+     *          washoff concentration is formed over. The surface-quality step
+     *          runs before the LID units, so it is the only place this volume
+     *          still exists; the mass bookings that need it happen after the
+     *          units have run and `runoff` has become the POST-LID value.
+     * @see Legacy: surfqual.c:308
+     */
+    std::vector<double> washoff_vout1;
+
+    /**
      * @brief Groundwater outflow rate (project flow units).
      * @see Legacy: Subcatch[i].groundwater->newFlow
      */
     std::vector<double> gw_flow;
+
+    /**
+     * @brief Area-weighted snow pack SWE depth (ft), end of runoff step.
+     * @see Legacy: Subcatch[i].newSnowDepth (subcatch.c:816, snow.c:202)
+     */
+    std::vector<double> snow_depth;
+
+    /**
+     * @brief Total LID drain outflow (cfs) over the current runoff step.
+     * @see Legacy: LidGroups[i]->newDrainFlow (lid.c:1729)
+     */
+    std::vector<double> lid_drain_flow;
 
     // -----------------------------------------------------------------------
     // Previous-step state
@@ -264,6 +329,12 @@ struct SubcatchData {
     /** @brief GW flow at the previous runoff evaluation (for interpolation). */
     std::vector<double> old_gw_flow;
 
+    /** @brief Snow depth at the previous runoff evaluation (for interpolation). */
+    std::vector<double> old_snow_depth;
+
+    /** @brief LID drain outflow at the previous runoff evaluation (for interpolation). */
+    std::vector<double> old_lid_drain_flow;
+
     // -----------------------------------------------------------------------
     // Runon coupling — subcatch-to-subcatch routing
     // -----------------------------------------------------------------------
@@ -274,6 +345,14 @@ struct SubcatchData {
 
     /** @brief Previous-step runon inflow (for interpolation). */
     std::vector<double> old_runon_inflow;
+
+    /** @brief Legacy Subcatch.runon: the run-on as a depth rate (ft/s).
+     *  @details Accumulated per contributor in legacy subcatch_addRunonFlow's
+     *           order and form — each flow divided by the non-LID area (or the
+     *           full area when there is none) BEFORE the add — so the sum
+     *           rounds as legacy's does. runon_inflow is the same water in CFS
+     *           for the ledgers. */
+    std::vector<double> runon_rate;
 
     /** @brief Gap #28: accumulated outfall-routed volume (ft³) between runoff steps.
      *  @details Matches legacy Outfall[i].vRouted. Drained to runon_inflow at
@@ -328,6 +407,32 @@ struct SubcatchData {
      *           pondedQual_new = cPonded * ponded_depth * non_lid_area
      *  @see Legacy: Subcatch[i].pondedQual[] */
     std::vector<double> ponded_qual;
+
+    /**
+     * @brief Area-averaged subarea runoff RATE, ft/sec — legacy's
+     *        `subcatch_getRunoff` return value (`runoff / area`).
+     * @details The quantity legacy hands findWashoffLoads and
+     *          landuse_getWashoffQual. It is NOT `runoff` (cfs): it carries
+     *          no fOutlet and no LID adjustment, and it never round-trips
+     *          through a volume, so the two surface-quality paths (pollutant
+     *          and reactions species) that both need it read one number
+     *          rather than each re-deriving it a ULP apart.
+     */
+    std::vector<double> subarea_runoff_rate;
+
+    /**
+     * @brief The [LOADINGS] initial surface buildup, mass per unit AREA.
+     * @details Size = n_subcatches * n_pollutants. This is NOT a
+     *          concentration: legacy seeds each land use with
+     *          `initBuildup[p] * fArea` in landuse_getInitBuildup
+     *          (landuse.c:388-395), whatever DRY_DAYS is and whether or not
+     *          the land use has a buildup function. It used to be parked in
+     *          `conc`, which is the reported washoff concentration — so it
+     *          was both unreachable by the initial-buildup seeding and able
+     *          to leak into the first reported concentration.
+     * @see Legacy: Subcatch[i].initBuildup[]
+     */
+    std::vector<double> init_loading;
 
     /** @brief Number of pollutants in the quality arrays. */
     int                 conc_n_pollutants = 0;
@@ -426,11 +531,25 @@ struct SubcatchData {
     /** @brief Groundwater flow coefficient A3. */
     std::vector<double> gw_a3;
 
-    /** @brief Threshold groundwater table elevation. */
+    /** @brief [GROUNDWATER] Dsw: fixed surface-water depth (project length units, 0 = live node depth). */
     std::vector<double> gw_tw;
 
-    /** @brief Water table elevation at which lateral GW flow ceases. */
+    /**
+     * @brief [GROUNDWATER] Egwt: threshold groundwater table elevation
+     *        (project length units) below which no lateral flow occurs.
+     *        constants::MISSING when the row gave `*` or omitted it, in which
+     *        case legacy uses the receiving node's invert (gwater.c Hstar).
+     */
     std::vector<double> gw_hstar;
+
+    /** @brief [GROUNDWATER] Ebot: aquifer bottom elevation override; MISSING = the aquifer's. */
+    std::vector<double> gw_bot_elev;
+
+    /** @brief [GROUNDWATER] Wgw: initial water-table elevation override; MISSING = the aquifer's. */
+    std::vector<double> gw_wt_elev;
+
+    /** @brief [GROUNDWATER] Umc: initial upper-zone moisture override; MISSING = the aquifer's. */
+    std::vector<double> gw_upper_moist;
 
     // -----------------------------------------------------------------------
     // Snowpack assignment (index into SnowpackStore, -1 = none)
@@ -456,6 +575,48 @@ struct SubcatchData {
      * @see Legacy: netPrecip[SNOW_PERV] in snow.c
      */
     std::vector<double> snow_net_perv;
+
+    /**
+     * @brief The MELT-ONLY part of `snow_net_imperv` (ft/sec).
+     *
+     * @details Same plowable/non-plowable area blend as `snow_net_imperv`,
+     *          over `imelt` alone — so `snow_net_imperv − snow_melt_imperv`
+     *          is the rain that fell on the snow-free fraction and reached
+     *          the ground directly.
+     *
+     *          Published for S2: arriving water under a pack is **two
+     *          different waters**. Meltwater is at 0 °C essentially by
+     *          definition — that is what melting means — and carries the
+     *          pack's age; rain-through carries the configured RAINFALL
+     *          values. Their SUM is all `snow_net_*` records, and a sum
+     *          cannot say what the water is worth. Following A4's precedent:
+     *          the split exists as a local in the solver, so publish it
+     *          rather than reconstruct it downstream.
+     *
+     *          -1.0 means no snowpack active, matching `snow_net_*`.
+     */
+    std::vector<double> snow_melt_imperv;
+
+    /// The melt-only part of `snow_net_perv` (ft/sec). See above.
+    std::vector<double> snow_melt_perv;
+
+    /**
+     * @brief S2b — WATER AGE of the meltwater in `snow_melt_imperv` (sec).
+     *
+     * @details The pack's own residence time, area-blended over plowable and
+     *          non-plowable impervious with the **identical** weights
+     *          `snow_melt_imperv` uses. Reusing the blend is not tidiness:
+     *          the rate and the age it describes have to come from the same
+     *          weighting or a caller mixing by one and ageing by the other
+     *          gets a mixture that never existed.
+     *
+     *          -1.0 means no snowpack active, matching `snow_net_*` and
+     *          `snow_melt_*`. Only meaningful where `snow_melt_imperv > 0`.
+     */
+    std::vector<double> snow_melt_age_imperv;
+
+    /// S2b — water age of the meltwater in `snow_melt_perv` (sec). See above.
+    std::vector<double> snow_melt_age_perv;
 
     /**
      * @brief Total LID area for this subcatchment (ft²).
@@ -559,6 +720,8 @@ struct SubcatchData {
         snow_scale_factor.assign(un, 1.0);
         frac_imperv.assign(un, 0.0);
         frac_imperv_no_store.assign(un, 0.0);
+        pct_zero.assign(un, 0.0);
+        subarea_runoff_rate.assign(un, 0.0);
         n_imperv.assign(un, 0.013);
         n_perv.assign(un, 0.1);
         ds_imperv.assign(un, 0.0);
@@ -578,11 +741,18 @@ struct SubcatchData {
         evap_loss.assign(un, 0.0);
         infil_loss.assign(un, 0.0);
         ponded_depth.assign(un, 0.0);
+        old_ponded_depth.assign(un, 0.0);
+        washoff_vout1.assign(un, 0.0);
         gw_flow.assign(un, 0.0);
+        snow_depth.assign(un, 0.0);
+        lid_drain_flow.assign(un, 0.0);
         old_runoff.assign(un, 0.0);
         old_gw_flow.assign(un, 0.0);
+        old_snow_depth.assign(un, 0.0);
+        old_lid_drain_flow.assign(un, 0.0);
         runon_inflow.assign(un, 0.0);
         old_runon_inflow.assign(un, 0.0);
+        runon_rate.assign(un, 0.0);
         outfall_runon_vol.assign(un, 0.0);
         gw_sw_head.assign(un, 0.0);
         gw_node_avail_flow.assign(un, 0.0);
@@ -621,10 +791,17 @@ struct SubcatchData {
         gw_b2.assign(un, 0.0);
         gw_a3.assign(un, 0.0);
         gw_tw.assign(un, 0.0);
-        gw_hstar.assign(un, 0.0);
+        gw_hstar.assign(un, -1.0e10);        // constants::MISSING
+        gw_bot_elev.assign(un, -1.0e10);
+        gw_wt_elev.assign(un, -1.0e10);
+        gw_upper_moist.assign(un, -1.0e10);
         snowpack.assign(un, -1);
         snow_net_imperv.assign(un, -1.0);
         snow_net_perv.assign(un, -1.0);
+        snow_melt_imperv.assign(un, -1.0);
+        snow_melt_perv.assign(un, -1.0);
+        snow_melt_age_imperv.assign(un, -1.0);
+        snow_melt_age_perv.assign(un, -1.0);
         total_lid_area_ft2.assign(un, 0.0);
         lid_return_to_perv_cfs.assign(un, 0.0);
         lid_drain_runon_cfs.assign(un, 0.0);
@@ -642,7 +819,8 @@ struct SubcatchData {
         gage_name.resize(un); g(gage, -1);
         g(area, 0.0); g(width, 0.0); g(slope, 0.0); g(curb_length, 0.0);
         g(rain_scale_factor, 1.0); g(snow_scale_factor, 1.0);
-        g(frac_imperv, 0.0); g(frac_imperv_no_store, 0.0);
+        g(frac_imperv, 0.0); g(frac_imperv_no_store, 0.0); g(pct_zero, 0.0);
+        g(subarea_runoff_rate, 0.0);
         g(n_imperv, 0.013); g(n_perv, 0.1);
         g(ds_imperv, 0.0); g(ds_perv, 0.0);
         g(subarea_routing, 0); g(pct_routed, 0.0);
@@ -651,9 +829,12 @@ struct SubcatchData {
         g(infil_p4, 0.0); g(infil_p5, 0.0);
         g(runoff, 0.0); g(rainfall, 0.0);
         g(evap_loss, 0.0); g(infil_loss, 0.0);
-        g(ponded_depth, 0.0); g(gw_flow, 0.0);
+        g(ponded_depth, 0.0); g(old_ponded_depth, 0.0);
+        g(washoff_vout1, 0.0); g(gw_flow, 0.0);
+        g(snow_depth, 0.0); g(lid_drain_flow, 0.0);
         g(old_runoff, 0.0); g(old_gw_flow, 0.0);
-        g(runon_inflow, 0.0); g(old_runon_inflow, 0.0);
+        g(old_snow_depth, 0.0); g(old_lid_drain_flow, 0.0);
+        g(runon_inflow, 0.0); g(old_runon_inflow, 0.0); g(runon_rate, 0.0);
         g(gw_sw_head, 0.0); g(gw_node_avail_flow, 0.0);
         g(gw_max_infil_vol, std::numeric_limits<double>::max());
         g(outfall_runon_vol, 0.0);
@@ -673,15 +854,69 @@ struct SubcatchData {
         stat_gw_steps.resize(un, 0L);
         g(gw_aquifer, -1); g(gw_node, -1); g(gw_surf_elev, 0.0);
         g(gw_a1, 0.0); g(gw_b1, 0.0); g(gw_a2, 0.0); g(gw_b2, 0.0);
-        g(gw_a3, 0.0); g(gw_tw, 0.0); g(gw_hstar, 0.0);
+        g(gw_a3, 0.0); g(gw_tw, 0.0); g(gw_hstar, -1.0e10);
+        g(gw_bot_elev, -1.0e10); g(gw_wt_elev, -1.0e10); g(gw_upper_moist, -1.0e10);
         g(snowpack, -1);
         g(snow_net_imperv, -1.0);
         g(snow_net_perv,   -1.0);
+        g(snow_melt_imperv, -1.0);
+        g(snow_melt_perv,   -1.0);
+        g(snow_melt_age_imperv, -1.0);
+        g(snow_melt_age_perv,   -1.0);
         g(total_lid_area_ft2, 0.0);
         g(lid_return_to_perv_cfs, 0.0);
         g(lid_drain_runon_cfs, 0.0);
         // Note: conc, conc_old, ponded_qual, washoff_load handled by resize_quality()
         // Note: coverage, total_load handled separately
+    }
+
+    /**
+     * @brief Reserve capacity for `n` subcatchments without changing count().
+     *
+     * @details Parsing grows these arrays one row at a time via grow_to(),
+     *          so each of the ~76 parallel vectors reallocates and copies
+     *          O(log n) times over a section — the dominant memory traffic in
+     *          handler dispatch on a large model.
+     *
+     *          This reserves capacity only. It deliberately does NOT resize:
+     *          count() is the vector size, and PostParseResolver compares it
+     *          against the final name count and calls resize() when they
+     *          differ — a call with destructive assign semantics. Growing the
+     *          SIZE speculatively here would trip that path and wipe parsed
+     *          data. Capacity is invisible to all of it.
+     *
+     *          Over-reserving is harmless, so callers pass the section's row
+     *          count as an upper bound.
+     */
+    void reserve_to(int n) {
+        if (n <= 0) return;
+        const auto un = static_cast<std::size_t>(n);
+        if (outlet_node.capacity() >= un) return;
+        auto r = [&](auto& vec) { vec.reserve(un); };
+        r(outlet_node); r(outlet_subcatch); r(gage); r(area);
+        r(width); r(slope); r(curb_length); r(rain_scale_factor);
+        r(snow_scale_factor); r(frac_imperv); r(frac_imperv_no_store);
+        r(pct_zero); r(subarea_runoff_rate); r(n_imperv);
+        r(n_perv); r(ds_imperv); r(ds_perv); r(subarea_routing);
+        r(pct_routed); r(infil_model); r(infil_p1); r(infil_p2);
+        r(infil_p3); r(infil_p4); r(infil_p5); r(runoff);
+        r(rainfall); r(evap_loss); r(infil_loss); r(ponded_depth);
+        r(gw_flow); r(snow_depth); r(lid_drain_flow); r(old_runoff);
+        r(old_gw_flow); r(old_snow_depth); r(old_lid_drain_flow); r(runon_inflow);
+        r(old_runon_inflow); r(runon_rate); r(gw_sw_head); r(gw_node_avail_flow); r(gw_max_infil_vol);
+        r(outfall_runon_vol); r(rpt_flag); r(stat_precip_vol); r(stat_evap_vol);
+        r(stat_infil_vol); r(stat_imperv_vol); r(stat_perv_vol); r(stat_runoff_vol);
+        r(stat_max_runoff); r(stat_gw_infil_vol); r(stat_gw_upper_evap_vol); r(stat_gw_lower_evap_vol);
+        r(stat_gw_deep_perc_vol); r(stat_gw_flow_vol); r(stat_gw_max_flow); r(stat_gw_sum_theta);
+        r(stat_gw_sum_depth); r(stat_gw_final_theta); r(stat_gw_final_depth); r(gw_aquifer);
+        r(gw_node); r(gw_surf_elev); r(gw_a1); r(gw_b1);
+        r(gw_a2); r(gw_b2); r(gw_a3); r(gw_tw);
+        r(gw_hstar); r(gw_bot_elev); r(gw_wt_elev); r(gw_upper_moist);
+        r(snowpack); r(snow_net_imperv); r(snow_net_perv);
+        r(snow_melt_imperv); r(snow_melt_perv);
+        r(snow_melt_age_imperv); r(snow_melt_age_perv);
+        r(total_lid_area_ft2); r(lid_return_to_perv_cfs); r(lid_drain_runon_cfs); r(outlet_name);
+        r(gage_name); r(comments); r(tags); r(stat_gw_steps);
     }
 
     /**
@@ -699,14 +934,16 @@ struct SubcatchData {
         e(outlet_node); e(outlet_subcatch); e(outlet_name); e(gage);
         e(area); e(width); e(slope); e(curb_length);
         e(rain_scale_factor); e(snow_scale_factor);
-        e(frac_imperv); e(frac_imperv_no_store); e(n_imperv); e(n_perv);
+        e(frac_imperv); e(frac_imperv_no_store); e(pct_zero);
+        e(subarea_runoff_rate); e(n_imperv); e(n_perv);
         e(ds_imperv); e(ds_perv); e(subarea_routing); e(pct_routed);
 
         e(infil_model); e(infil_p1); e(infil_p2); e(infil_p3); e(infil_p4); e(infil_p5);
 
         e(runoff); e(rainfall); e(evap_loss); e(infil_loss); e(ponded_depth);
-        e(gw_flow); e(old_runoff); e(old_gw_flow);
-        e(runon_inflow); e(old_runon_inflow); e(outfall_runon_vol);
+        e(gw_flow); e(snow_depth); e(lid_drain_flow);
+        e(old_runoff); e(old_gw_flow); e(old_snow_depth); e(old_lid_drain_flow);
+        e(runon_inflow); e(old_runon_inflow); e(runon_rate); e(outfall_runon_vol);
         e(gw_sw_head); e(gw_node_avail_flow); e(gw_max_infil_vol);
         e(comments); e(tags); e(rpt_flag);
 
@@ -719,7 +956,10 @@ struct SubcatchData {
 
         e(gw_aquifer); e(gw_node); e(gw_surf_elev);
         e(gw_a1); e(gw_b1); e(gw_a2); e(gw_b2); e(gw_a3); e(gw_tw); e(gw_hstar);
+        e(gw_bot_elev); e(gw_wt_elev); e(gw_upper_moist);
         e(snowpack); e(snow_net_imperv); e(snow_net_perv);
+        e(snow_melt_imperv); e(snow_melt_perv);
+        e(snow_melt_age_imperv); e(snow_melt_age_perv);
         e(total_lid_area_ft2); e(lid_return_to_perv_cfs); e(lid_drain_runon_cfs);
 
         // Flat 2D quality arrays: [sc * np + p]
@@ -731,7 +971,8 @@ struct SubcatchData {
                     v.erase(v.begin() + static_cast<std::ptrdiff_t>(base),
                             v.begin() + static_cast<std::ptrdiff_t>(base + np));
             };
-            erase2d(conc); erase2d(conc_old); erase2d(ponded_qual); erase2d(washoff_load);
+            erase2d(conc); erase2d(conc_old); erase2d(init_loading);
+            erase2d(ponded_qual); erase2d(washoff_load);
         }
 
         // Flat 2D total load: [sc * np + p]
@@ -767,6 +1008,7 @@ struct SubcatchData {
                          static_cast<std::size_t>(n_pollutants);
             conc.assign(total, 0.0);
             conc_old.assign(total, 0.0);
+            init_loading.assign(total, 0.0);
             ponded_qual.assign(total, 0.0);
             washoff_load.assign(total, 0.0);
         }
@@ -796,6 +1038,8 @@ struct SubcatchData {
         snow_scale_factor.shrink_to_fit();
         frac_imperv.shrink_to_fit();
         frac_imperv_no_store.shrink_to_fit();
+        pct_zero.shrink_to_fit();
+        subarea_runoff_rate.shrink_to_fit();
         n_imperv.shrink_to_fit();
         n_perv.shrink_to_fit();
         ds_imperv.shrink_to_fit();
@@ -816,10 +1060,15 @@ struct SubcatchData {
         infil_loss.shrink_to_fit();
         ponded_depth.shrink_to_fit();
         gw_flow.shrink_to_fit();
+        snow_depth.shrink_to_fit();
+        lid_drain_flow.shrink_to_fit();
         old_runoff.shrink_to_fit();
         old_gw_flow.shrink_to_fit();
+        old_snow_depth.shrink_to_fit();
+        old_lid_drain_flow.shrink_to_fit();
         runon_inflow.shrink_to_fit();
         old_runon_inflow.shrink_to_fit();
+        runon_rate.shrink_to_fit();
         outfall_runon_vol.shrink_to_fit();
         gw_sw_head.shrink_to_fit();
         gw_node_avail_flow.shrink_to_fit();
@@ -848,9 +1097,16 @@ struct SubcatchData {
         gw_a3.shrink_to_fit();
         gw_tw.shrink_to_fit();
         gw_hstar.shrink_to_fit();
+        gw_bot_elev.shrink_to_fit();
+        gw_wt_elev.shrink_to_fit();
+        gw_upper_moist.shrink_to_fit();
         snowpack.shrink_to_fit();
         snow_net_imperv.shrink_to_fit();
         snow_net_perv.shrink_to_fit();
+        snow_melt_imperv.shrink_to_fit();
+        snow_melt_perv.shrink_to_fit();
+        snow_melt_age_imperv.shrink_to_fit();
+        snow_melt_age_perv.shrink_to_fit();
 
         conc.shrink_to_fit();
         conc_old.shrink_to_fit();
@@ -865,6 +1121,8 @@ struct SubcatchData {
         std::copy(runoff.begin(),        runoff.end(),        old_runoff.begin());
         std::copy(runon_inflow.begin(),  runon_inflow.end(),  old_runon_inflow.begin());
         std::copy(conc.begin(),          conc.end(),          conc_old.begin());
+        std::copy(ponded_depth.begin(), ponded_depth.end(),
+                  old_ponded_depth.begin());
     }
 
     void reset_state() noexcept {
@@ -872,13 +1130,22 @@ struct SubcatchData {
         std::fill(rainfall.begin(),     rainfall.end(),     0.0);
         std::fill(snow_net_imperv.begin(), snow_net_imperv.end(), -1.0);
         std::fill(snow_net_perv.begin(),   snow_net_perv.end(),   -1.0);
+        std::fill(snow_melt_imperv.begin(), snow_melt_imperv.end(), -1.0);
+        std::fill(snow_melt_perv.begin(),   snow_melt_perv.end(),   -1.0);
+        std::fill(snow_melt_age_imperv.begin(), snow_melt_age_imperv.end(), -1.0);
+        std::fill(snow_melt_age_perv.begin(),   snow_melt_age_perv.end(),   -1.0);
         std::fill(evap_loss.begin(),    evap_loss.end(),    0.0);
         std::fill(infil_loss.begin(),   infil_loss.end(),   0.0);
         std::fill(ponded_depth.begin(), ponded_depth.end(), 0.0);
         std::fill(old_runoff.begin(),   old_runoff.end(),   0.0);
         std::fill(old_gw_flow.begin(),  old_gw_flow.end(),  0.0);
+        std::fill(snow_depth.begin(),   snow_depth.end(),   0.0);
+        std::fill(old_snow_depth.begin(), old_snow_depth.end(), 0.0);
+        std::fill(lid_drain_flow.begin(), lid_drain_flow.end(), 0.0);
+        std::fill(old_lid_drain_flow.begin(), old_lid_drain_flow.end(), 0.0);
         std::fill(runon_inflow.begin(), runon_inflow.end(), 0.0);
         std::fill(old_runon_inflow.begin(), old_runon_inflow.end(), 0.0);
+        std::fill(runon_rate.begin(), runon_rate.end(), 0.0);
         std::fill(gw_sw_head.begin(),   gw_sw_head.end(),   0.0);
         std::fill(gw_node_avail_flow.begin(), gw_node_avail_flow.end(), 0.0);
         std::fill(washoff_load.begin(), washoff_load.end(), 0.0);

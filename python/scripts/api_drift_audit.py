@@ -24,6 +24,8 @@ after wrapping work to confirm the gap set has shrunk to the intentional set.
 from __future__ import annotations
 
 import argparse
+import io
+import tokenize
 import json
 import re
 import sys
@@ -63,7 +65,7 @@ def collect_c_functions() -> dict[str, str]:
     for h in sorted(HEADERS.glob("openswmm_*.h")):
         if h.name in HEADER_EXCLUDE:
             continue
-        text = _read(h)
+        text = re.sub(r"/\*.*?\*/|//[^\n]*", "", _read(h), flags=re.S)
         for m in _FUNC_RE.finditer(text):
             funcs.setdefault(m.group(1), h.name)
     return funcs
@@ -79,25 +81,57 @@ def collect_c_enums() -> dict[str, str]:
     return enums
 
 
-def collect_pxd_functions() -> set[str]:
-    """Functions declared in a .pxd OR via a `cdef extern` block inside a .pyx.
+# These have Python-native replacements rather than missing wrappers.
+KNOWN_UNBOUND = frozenset({
+    "swmm_get_last_error",      # typed EngineError exceptions
+    "swmm_get_last_error_msg",  # typed EngineError exceptions
+    "swmm_get_current_time",    # Solver.current_datetime
+})
 
-    Cython lets you put `cdef extern from "header.h"` declarations directly in a
-    .pyx (the geopackage and 2D modules do this), so a function declared there
-    is wrapped even though it never appears in a .pxd.
+
+def executable_cython(text: str, *, declarations: bool = False) -> str:
+    """Keep code or extern declarations, excluding comments/string literals.
+
+    Shared .pxd helpers contain executable code and must count as uses.
+    Tokenization preserves indentation, including multiline docstrings.
     """
-    names: set[str] = set()
-    for src in list(ENGINE.glob("*.pxd")) + list(ENGINE.glob("*.pyx")):
-        for m in _PXD_FUNC_RE.finditer(_read(src)):
-            names.add(m.group(1))
+    lines = text.splitlines(keepends=True)
+    for token in tokenize.generate_tokens(io.StringIO(text).readline):
+        if token.type not in (tokenize.COMMENT, tokenize.STRING):
+            continue
+        (first, left), (last, right) = token.start, token.end
+        for row in range(first - 1, last):
+            lo = left if row == first - 1 else 0
+            hi = right if row == last - 1 else len(lines[row].rstrip("\r\n"))
+            lines[row] = lines[row][:lo] + " " * (hi - lo) + lines[row][hi:]
+    out, in_extern, level = [], False, 0
+    for line in lines:
+        stripped = line.strip()
+        indent = len(line) - len(line.lstrip())
+        if re.match(r"cdef\s+extern\b", stripped):
+            in_extern, level = True, indent
+            continue
+        if in_extern and stripped and indent <= level:
+            in_extern = False
+        if in_extern == declarations:
+            out.append(line)
+    return "".join(out)
+
+
+def collect_pxd_functions() -> set[str]:
+    """Declarations in .pxd files and inline .pyx extern blocks."""
+    names = set()
+    for src in [*ENGINE.glob("*.pxd"), *ENGINE.glob("*.pyx")]:
+        names.update(_PXD_FUNC_RE.findall(executable_cython(_read(src), declarations=True)))
     return names
 
 
 def collect_pyx_tokens() -> set[str]:
-    blob = "\n".join(_read(p) for p in ENGINE.glob("*.pyx"))
-    return set(_PXD_FUNC_RE.findall(blob)) | set(
-        re.findall(r"\b(swmm_[A-Za-z0-9_]+)\b", blob)
-    )
+    """Executable references, including helper functions in shared .pxd files."""
+    names = set()
+    for src in [*ENGINE.glob("*.pyx"), *ENGINE.glob("*.pxd")]:
+        names.update(re.findall(r"\b(swmm_[A-Za-z0-9_]+)\b", executable_cython(_read(src))))
+    return names
 
 
 def collect_py_enums() -> set[str]:
@@ -132,6 +166,7 @@ def main() -> int:
         if tail not in py_enums
     }
 
+    unbound = sorted(set(c_funcs) - pyx - KNOWN_UNBOUND)
     report = {
         "totals": {
             "c_functions": len(c_funcs),
@@ -139,6 +174,8 @@ def main() -> int:
             "c_enums": len(c_enums),
             "py_enums": len(py_enums),
         },
+        "unbound_without_exemption": unbound,
+        "intentional_exclusions": sorted(KNOWN_UNBOUND),
         "functions_missing_from_pxd": dict(sorted(missing_decl.items())),
         "declared_but_unsurfaced_in_pyx": declared_unsurfaced,
         "enums_missing_from_python": dict(sorted(missing_enums.items())),
@@ -190,11 +227,11 @@ def main() -> int:
             print(f"  {name}   ({hdr})")
         print()
         print(f"== Declared in .pxd but NOT referenced in any .pyx ({len(declared_unsurfaced)}) ==")
-        print("   (weak signal -- may be reached via bulk/helper paths)")
+        print("   (excludes comments, strings and extern declarations; includes .pxd helpers)")
         for fn in declared_unsurfaced:
             print(f"      {fn}")
 
-    gaps = bool(missing_decl or missing_enums)
+    gaps = bool(unbound or missing_enums)
     if args.strict and gaps:
         return 1
     return 0

@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file RainfallInterpolator.cpp
  * @brief Implementation of natural-neighbour / IDW rainfall interpolation.
@@ -7,7 +23,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "RainfallInterpolator.hpp"
@@ -17,6 +33,8 @@
 #include <cmath>
 #include <unordered_map>
 #include <utility>
+#include <stdexcept>
+#include <limits>
 
 namespace openswmm::twoD {
 namespace {
@@ -36,14 +54,14 @@ inline double dist2(const Pt& p, const Pt& q) {
 /// Circumcenter of triangle (a,b,c). Caller must guard against collinear input
 /// (orient2d ≈ 0), where the denominator d vanishes.
 inline Pt circumcenter(const Pt& a, const Pt& b, const Pt& c) {
-    const double d  = 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
-    const double a2 = a.x * a.x + a.y * a.y;
-    const double b2 = b.x * b.x + b.y * b.y;
-    const double c2 = c.x * c.x + c.y * c.y;
-    Pt o;
-    o.x = (a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / d;
-    o.y = (a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d;
-    return o;
+    // Translate before squaring: large projected coordinates must not
+    // cancel in the circumcenter numerator.
+    const double bx = b.x - a.x, by = b.y - a.y;
+    const double cx = c.x - a.x, cy = c.y - a.y;
+    const double d = 2.0 * (bx * cy - by * cx);
+    const double b2 = bx * bx + by * by, c2 = cx * cx + cy * cy;
+    return {a.x + (b2 * cy - c2 * by) / d,
+            a.y + (bx * c2 - cx * b2) / d};
 }
 
 /// True if p lies strictly inside the circumcircle of CCW triangle (a,b,c).
@@ -140,11 +158,13 @@ Weights idwAll(const Pt& p, const std::vector<Pt>& site, const std::vector<int>&
     const int m = static_cast<int>(site.size());
     for (int j = 0; j < m; ++j)
         if (dist2(p, site[j]) < 1.0e-18) return {{gid[j], 1.0}};
+    double minD2 = std::numeric_limits<double>::infinity();
+    for (const auto& s : site) minD2 = std::min(minD2, dist2(p, s));
     Weights w;
     w.reserve(m);
     double sum = 0.0;
     for (int j = 0; j < m; ++j) {
-        const double wj = 1.0 / dist2(p, site[j]);   // 1/d² = power-2 IDW
+        const double wj = minD2 / dist2(p, site[j]); // rescaled 1/d²; avoids overflow
         w.push_back({gid[j], wj});
         sum += wj;
     }
@@ -214,7 +234,7 @@ Weights laplaceWeights(const Pt& p, const std::vector<Pt>& site,
         w.push_back({gid[s], wj});
         sum += wj;
     }
-    if (sum <= 0.0) return {};
+    if (!(sum > 0.0) || !std::isfinite(sum)) return {};
     for (auto& e : w) e.second /= sum;
     return w;
 }
@@ -225,12 +245,19 @@ void RainfallInterpolator::build(const std::vector<double>& cx,
                                  const std::vector<double>& cy,
                                  const std::vector<double>& gage_x,
                                  const std::vector<double>& gage_y,
-                                 int n_gages, double gage_scale) {
+                                 int n_gages, double gage_scale, Method method) {
     ready_ = false;
+    diagnostics_ = {};
+    if (cx.size() != cy.size() || !std::isfinite(gage_scale) || gage_scale <= 0.0)
+        throw std::invalid_argument("2D rainfall: invalid coordinate dimensions or scale");
+    for (std::size_t i = 0; i < cx.size(); ++i)
+        if (!std::isfinite(cx[i]) || !std::isfinite(cy[i]))
+            throw std::invalid_argument("2D rainfall: nonfinite cell centroid " + std::to_string(i));
     nt_ = static_cast<int>(cx.size());
     w_ptr_.assign(static_cast<std::size_t>(nt_) + 1, 0);
     w_gage_.clear();
     w_val_.clear();
+    cell_method_.assign(static_cast<std::size_t>(nt_), CellMethod::Nearest);
 
     // Collect located gages (skip the un-located (0,0) sentinel and any gage
     // that duplicates an already-collected position — a duplicate would make
@@ -243,12 +270,13 @@ void RainfallInterpolator::build(const std::vector<double>& cx,
     for (int g = 0; g < n_gages; ++g) {
         const double gx = (g < gx_n) ? gage_x[g] : 0.0;
         const double gy = (g < gy_n) ? gage_y[g] : 0.0;
-        if (gx == 0.0 && gy == 0.0) continue;   // un-located
+        if (gx == 0.0 && gy == 0.0) { ++diagnostics_.unlocated; continue; }
         const Pt s{gx * gage_scale, gy * gage_scale};
+        if (!std::isfinite(s.x) || !std::isfinite(s.y)) { ++diagnostics_.invalid; continue; }
         bool dup = false;
         for (const auto& e : site)
             if (dist2(e, s) < 1.0e-12) { dup = true; break; }
-        if (dup) continue;
+        if (dup) { ++diagnostics_.duplicates; continue; }
         site.push_back(s);
         gid.push_back(g);
     }
@@ -256,25 +284,48 @@ void RainfallInterpolator::build(const std::vector<double>& cx,
     const int m = static_cast<int>(site.size());
     if (m == 0 || nt_ == 0) return;   // ready_ stays false → caller uses SYSTEM mean
 
-    // Per-cell weight lists, then flatten to CSR.
-    std::vector<Weights> rows(static_cast<std::size_t>(nt_));
+    // Work in one dimensionless local frame for both sites and cells.
+    // Rainfall weights should be independent of CRS origin and length scale.
+    const Pt origin = site.front();
+    double scale = 0.0;
+    for (const auto& s : site)
+        scale = std::max(scale, std::max(std::fabs(s.x - origin.x), std::fabs(s.y - origin.y)));
+    if (!(scale > 0.0)) scale = 1.0;
+    for (auto& s : site) { s.x = (s.x - origin.x) / scale; s.y = (s.y - origin.y) / scale; }
 
-    if (m == 1) {
-        for (int i = 0; i < nt_; ++i) rows[i] = {{gid[0], 1.0}};
-    } else if (m == 2) {
-        for (int i = 0; i < nt_; ++i) rows[i] = idwAll(Pt{cx[i], cy[i]}, site, gid);
-    } else {
-        const std::vector<Tri> tris = delaunay(site);
-        if (tris.empty()) {
-            for (int i = 0; i < nt_; ++i) rows[i] = idwAll(Pt{cx[i], cy[i]}, site, gid);
+    std::vector<Weights> rows(static_cast<std::size_t>(nt_));
+    const auto tris = method == Method::NaturalNeighbour ? delaunay(site) : std::vector<Tri>{};
+    for (int i = 0; i < nt_; ++i) {
+        const Pt p{(cx[i] - origin.x) / scale, (cy[i] - origin.y) / scale};
+        Weights w;
+        if (m == 1) w = {{gid[0], 1.0}};
+        else if (method == Method::NearestNeighbour) {
+            int nearest = 0;
+            double best = dist2(p, site[0]);
+            for (int g = 1; g < m; ++g) {
+                const double d = dist2(p, site[g]);
+                if (d < best) { best = d; nearest = g; }
+            }
+            w = {{gid[nearest], 1.0}};
         } else {
-            for (int i = 0; i < nt_; ++i) {
-                const Pt p{cx[i], cy[i]};
-                Weights w = laplaceWeights(p, site, gid, tris);
-                if (w.empty()) w = idwAll(p, site, gid);   // outside hull / degenerate
-                rows[i] = std::move(w);
+            cell_method_[static_cast<std::size_t>(i)] = CellMethod::NaturalNeighbour;
+            if (!tris.empty()) w = laplaceWeights(p, site, gid, tris);
+            if (w.empty()) {
+                w = idwAll(p, site, gid);
+                ++diagnostics_.idwCells;
+                cell_method_[static_cast<std::size_t>(i)] = CellMethod::InverseDistance;
             }
         }
+        double sum = 0.0;
+        for (const auto& e : w) {
+            if (!std::isfinite(e.second) || e.second < 0.0)
+                throw std::runtime_error("2D rainfall: invalid weight at cell " + std::to_string(i));
+            sum += e.second;
+        }
+        if (!(sum > 0.0) || !std::isfinite(sum))
+            throw std::runtime_error("2D rainfall: no valid weights at cell " + std::to_string(i));
+        for (auto& e : w) e.second /= sum;
+        rows[i] = std::move(w);
     }
 
     int total = 0;
@@ -304,6 +355,14 @@ void RainfallInterpolator::apply(const std::vector<double>& rain,
                  * rain[static_cast<std::size_t>(w_gage_[static_cast<std::size_t>(k)])];
         out[static_cast<std::size_t>(i)] = acc;
     }
+}
+
+void RainfallInterpolator::cellWeights(int i, std::vector<int>& gages,
+                                       std::vector<double>& weights) const {
+    const int beg = w_ptr_[static_cast<std::size_t>(i)];
+    const int end = w_ptr_[static_cast<std::size_t>(i) + 1];
+    gages.assign(w_gage_.begin() + beg, w_gage_.begin() + end);
+    weights.assign(w_val_.begin() + beg, w_val_.begin() + end);
 }
 
 } // namespace openswmm::twoD

@@ -515,6 +515,10 @@ void output_saveResults(double reportTime)
                              SysResults[SYS_EXFLOW];
     fwrite(SysResults, sizeof(REAL4), MAX_SYS_RESULTS, Fout.file);
 
+    // --- flush the completed period so a live reader (GUI tailing the
+    //     binary file while the worker runs) can count it from the file size
+    fflush(Fout.file);
+
     // --- save outfall flows to interface file if called for
     if ( Foutflows.mode == SAVE_FILE && !IgnoreRouting ) 
         iface_saveOutletResults(reportDate, Foutflows.file);

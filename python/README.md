@@ -10,7 +10,7 @@
 [![Unit Testing Python](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing_python.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing_python.yml)
 [![Documentation](https://github.com/HydroCouple/openswmm.engine/actions/workflows/documentation.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/documentation.yml)
 [![Issues](https://img.shields.io/github/issues/HydroCouple/openswmm.engine)](https://github.com/HydroCouple/openswmm.engine/issues)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/openswmm.svg)](https://pypi.org/project/openswmm)
 [![Downloads](https://pepy.tech/badge/openswmm)](https://pepy.tech/project/openswmm)
 [![Python](https://img.shields.io/pypi/pyversions/openswmm.svg)](https://pypi.org/project/openswmm)
@@ -20,12 +20,28 @@
 
 | | Site | Contents |
 |---|---|---|
-| **C / C++ Engine** | **[hydrocouple.org/openswmm.engine](https://hydrocouple.org/openswmm.engine)** | Full C API reference, hydrology / hydraulics / water-quality reference manuals, user manual, architecture notes. |
+| **C / C++ Engine** | **[hydrocouple.org/openswmm.engine](https://hydrocouple.org/openswmm.engine)** | Full C API reference, hydrology / hydraulics / water-quality reference manuals, engine manual (input format, files, reports, C API), architecture notes. |
 | **Python Bindings** | **[hydrocouple.org/openswmm.engine/python](https://hydrocouple.org/openswmm.engine/python)** | Quickstart, per-domain user guide, Cython API reference, SWMM 5 → v6 migration. |
 
 Both sites cross-link from their top navigation.
 
 ---
+
+## Python API coverage and testing
+
+The modern bindings include groundwater authoring/results and transport,
+surface-quality tables, transport capability diagnostics, batch editing and
+live output reading. Guides document their units, lifecycle and immutable
+snapshot behavior under `python/docs/guide/`. The strict API coverage check is
+`python python/scripts/api_drift_audit.py --strict` from the repository root.
+
+For local validation use the `openswmm` Conda environment. After building and
+installing to a staging prefix, run
+`conda run -n openswmm python python/scripts/test_staged_package.py STAGE python/tests --ignore=python/tests/typing`.
+This verifies the selected native binaries and avoids an editable install
+silently redirecting tests to an older extension. CI runs the complete modern,
+legacy and top-level suites against built wheels, plus independent source and
+typing gates. Source reachability is not a claim of numerical validation.
 
 ## Overview
 
@@ -211,7 +227,7 @@ Signing is automated through [CLA Assistant](https://cla-assistant.io) — when 
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Original EPA SWMM material is in the public domain under 17 USC § 105.
+Apache License, Version 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Original EPA SWMM material is in the public domain under 17 USC § 105 and is not subject to the Apache license grant.
 
 ## Acknowledgements
 

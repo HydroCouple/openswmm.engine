@@ -78,7 +78,8 @@ EXTERN int
                   RouteModel,               // Flow routing method
                   ForceMainEqn,             // Flow equation for force mains
                   LinkOffsets,              // Link offset convention
-                  SurchargeMethod,          // EXTRAN or SLOT method 
+                  SurchargeMethod,          // EXTRAN or SLOT method
+                  ZeroOutfallBackflowQual,  // Outfall backflow enters clean
                   AllowPonding,             // Allow water to pond at nodes
                   InertDamping,             // Degree of inertial damping
                   NormalFlowLtd,            // Normal flow limited

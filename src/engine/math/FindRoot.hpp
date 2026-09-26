@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file FindRoot.hpp
  * @brief Newton-Raphson and Ridder root finders.
@@ -12,7 +28,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_FIND_ROOT_HPP
@@ -28,9 +44,12 @@ constexpr int MAXIT = 60;  ///< Maximum iterations
 /**
  * @brief Newton-Raphson with bisection fallback.
  *
- * @details Finds x in [x1, x2] such that f(x) = 0. Requires f(x1) and f(x2)
- *          to have opposite signs. Uses Newton steps when reliable, falls back
- *          to bisection when Newton would exit the bracket or converge slowly.
+ * @details Finds x in [x1, x2] such that f(x) = 0 — legacy findroot_Newton,
+ *          op for op. The CALLER brackets the root with f(x1) < 0 < f(x2)
+ *          (switch x1 and x2 when f(x1) > f(x2)); nothing is pre-evaluated
+ *          here, so the callback runs in legacy's sequence. Uses Newton
+ *          steps when reliable, falls back to bisection when Newton would
+ *          exit the bracket or converge slowly.
  *
  * @param x1    Left bracket.
  * @param x2    Right bracket.
@@ -50,7 +69,8 @@ int newton(double x1, double x2, double* rts, double xacc, const NewtonFunc& fun
  * @param x2    Right bracket.
  * @param xacc  Convergence tolerance.
  * @param func  Callback: func(x) returns f(x).
- * @returns Root value, or -1.0e10 if failed.
+ * @returns Root value; -1.0e20 when the bracket does not straddle a root
+ *          (legacy findroot_Ridder).
  */
 using RidderFunc = std::function<double(double x)>;
 

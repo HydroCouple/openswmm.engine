@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file Outfall.hpp
  * @brief Outfall boundary depth computation — free/normal/fixed/tidal/timeseries.
@@ -10,7 +26,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_OUTFALL_HPP
@@ -29,13 +45,22 @@ namespace outfall {
  *   - FREE: critical depth from downstream conduit
  *   - NORMAL: normal depth from downstream conduit
  *   - FIXED: specified water surface elevation
- *   - TIDAL: elevation from tidal curve at current time
- *   - TIMESERIES: elevation from timeseries at current time
+ *   - TIDAL: elevation from the tidal curve at the END of the routing step,
+ *     legacy node.c outfall_setOutletDepth: x = the curve's first x +
+ *     the fractional ELAPSED day (NewRoutingTime / MSECperDAY) * 24 — the
+ *     time of day counted from the simulation start, not the calendar hour
+ *   - TIMESERIES: elevation from the time series at StartDateTime +
+ *     NewRoutingTime / MSECperDAY (plain division, not getDateTime),
+ *     interpolated
  *
- * @param ctx           Simulation context.
- * @param current_time  Current simulation time (decimal days).
+ * Legacy routing_execute advances NewRoutingTime before routeFlow, so the
+ * stage boundaries belong to the end of the step while the inflows and the
+ * control rules belong to its start (ctx.current_date, still the start here).
+ *
+ * @param ctx         Simulation context (ctx.elapsed_ms = the step's start).
+ * @param dt_routing  The routing step being taken (s).
  */
-void setAllOutfallDepths(SimulationContext& ctx, double current_time);
+void setAllOutfallDepths(SimulationContext& ctx, double dt_routing);
 
 /**
  * @brief Precompute outfall → connecting-conduit index map.

@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file test_2d_rainfall_interp.cpp
  * @brief Unit tests for 2D rainfall interpolation (RainfallInterpolator) and the
@@ -18,7 +34,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -161,4 +177,171 @@ TEST(RainfallMode, ParseFormatRoundTrip) {
     EXPECT_EQ(o.rainfall_mode, RainfallMode::NATURAL_NEIGHBOUR);
 
     EXPECT_FALSE(parse2DOptionsLine({"RAINFALL_MODE", "bogus"}, o).empty());
+}
+
+TEST(RainfallInterp, ProjectedCoordinatesPreserveLinearField) {
+    for (const double offset : {500000.0, 5000000.0, 100000000.0}) {
+        auto gx = kGX, gy = kGY;
+        std::vector<double> rain;
+        for (int g = 0; g < 5; ++g) {
+            rain.push_back(2 * gx[g] + 3 * gy[g] + 1);
+            gx[g] += offset; gy[g] += offset;
+        }
+        for (int x = 2; x < 13; ++x)
+            for (int y = 2; y < 13; ++y)
+                EXPECT_NEAR(interpAt(offset+x, offset+y, gx, gy, rain),
+                            2*x+3*y+1, 1e-9) << offset << " / " << x << "," << y;
+    }
+}
+
+TEST(RainfallInterp, NearestIncludesOutsideHullAndKeepsDryGage) {
+    RainfallInterpolator interp;
+    interp.build({2, 7, 11, 100}, {3, 3, 3, 100}, {2, 12}, {3, 3}, 2, 1,
+                 RainfallInterpolator::Method::NearestNeighbour);
+    std::vector<double> out;
+    interp.apply({0, 20}, out);
+    ASSERT_EQ(out.size(), 4u);
+    EXPECT_DOUBLE_EQ(out[0], 0);   // valid dry reading, not a missing value
+    EXPECT_DOUBLE_EQ(out[1], 0);   // distance tie: first gage
+    EXPECT_DOUBLE_EQ(out[2], 20);
+    EXPECT_DOUBLE_EQ(out[3], 20);
+    EXPECT_EQ(interp.diagnostics().idwCells, 0);
+}
+
+TEST(RainfallInterp, PerCellMethodAndContributorsAreInspectable) {
+    // Cell 0 inside the hull of the five kGX/kGY gages, cell 1 far outside it.
+    RainfallInterpolator interp;
+    interp.build({7, 100}, {6.5, 100}, kGX, kGY, 5, 1);
+    ASSERT_TRUE(interp.ready());
+    EXPECT_EQ(interp.cellMethod(0), RainfallInterpolator::CellMethod::NaturalNeighbour);
+    EXPECT_EQ(interp.cellMethod(1), RainfallInterpolator::CellMethod::InverseDistance);
+    EXPECT_EQ(interp.diagnostics().idwCells, 1);
+    std::vector<int> g;
+    std::vector<double> w;
+    interp.cellWeights(1, g, w);
+    ASSERT_EQ(g.size(), 5u);             // IDW reaches every located gage
+    double sum = 0;
+    for (double x : w) sum += x;
+    EXPECT_NEAR(sum, 1.0, 1e-12);
+
+    interp.build({7, 100}, {6.5, 100}, kGX, kGY, 5, 1,
+                 RainfallInterpolator::Method::NearestNeighbour);
+    EXPECT_EQ(interp.cellMethod(1), RainfallInterpolator::CellMethod::Nearest);
+    interp.cellWeights(1, g, w);
+    ASSERT_EQ(g.size(), 1u);
+    EXPECT_EQ(g[0], 2);                  // (13,13) is the closest gage to (100,100)
+    EXPECT_DOUBLE_EQ(w[0], 1.0);
+}
+
+TEST(RainfallInterp, InvalidAndDuplicateGagesAreReported) {
+    RainfallInterpolator interp;
+    const double nan = std::nan("");
+    interp.build({5}, {5}, {0, nan, 5, 5}, {0, 8, 5, 5}, 4, 1);
+    ASSERT_TRUE(interp.ready());
+    std::vector<double> out;
+    interp.apply({99, 99, 7, 0}, out);
+    EXPECT_DOUBLE_EQ(out[0], 7);
+    EXPECT_EQ(interp.diagnostics().unlocated, 1);
+    EXPECT_EQ(interp.diagnostics().invalid, 1);
+    EXPECT_EQ(interp.diagnostics().duplicates, 1);
+    EXPECT_THROW(interp.build({nan}, {0}, {5}, {5}, 1, 1), std::invalid_argument);
+}
+
+TEST(RainfallInterp, ConstantRainSurvivesCollinearSitesAndHullBoundary) {
+    for (const auto& gy : std::vector<std::vector<double>>{{2,2,2}, {2,2,12}}) {
+        RainfallInterpolator interp;
+        interp.build({2,7,12,7,-100}, {2,2,2,8,100}, {2,12,7}, gy, 3, 1);
+        std::vector<double> out;
+        interp.apply({7.5,7.5,7.5},out);
+        for (double r : out) EXPECT_NEAR(r,7.5,1e-12);
+    }
+}
+
+TEST(RainfallMode, NearestParseFormatRoundTrip) {
+    SolverOptions2D o;
+    for (const auto* token : {"NEAREST_NEIGHBOUR", "nearest_neighbor"}) {
+        ASSERT_TRUE(parse2DOptionsLine({"RAINFALL_MODE", token}, o).empty());
+        EXPECT_EQ(o.rainfall_mode, RainfallMode::NEAREST_NEIGHBOUR);
+        EXPECT_EQ(format2DOptionValue(o, "RAINFALL_MODE"), "NEAREST_NEIGHBOUR");
+    }
+}
+
+// Exercise the full gage state machine -> router path in both unit families.
+// No subcatchment references the gage: it must still advance for mesh rainfall.
+#include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_2d.h>
+#include <openswmm/engine/openswmm_model.h>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <iomanip>
+#include <iterator>
+
+TEST(RainfallMode, MeshOnlyGageUnitsFormatsAndStormEnd) {
+    // Kept beside the test's working directory so the decks can be reviewed.
+    const auto folder = std::filesystem::current_path() / "test_2d_rainfall_interp_out";
+    std::filesystem::create_directories(folder);
+    for (const auto* mode : {"NATURAL_NEIGHBOUR", "NEAREST_NEIGHBOUR"}) {
+        for (const auto* units : {"CFS", "CMS"}) {
+            for (const auto* format : {"INTENSITY", "VOLUME", "CUMULATIVE"}) {
+                SCOPED_TRACE(std::string(mode)+" / "+units+" / "+format);
+                const double intensity = std::string(units) == "CMS" ? 25.4 : 1.0;
+                const double raw = std::string(format) == "INTENSITY" ? intensity : intensity/60;
+                std::ostringstream inp;
+                inp << std::setprecision(17)
+                    << "[OPTIONS]\nFLOW_UNITS " << units << "\nFLOW_ROUTING DYNWAVE\n"
+                    << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:03:00\n"
+                    << "REPORT_STEP 00:00:10\nWET_STEP 00:00:01\nDRY_STEP 00:00:01\nROUTING_STEP 1\n"
+                    << "[RAINGAGES]\nRG " << format << " 0:01 1 TIMESERIES TS\n"
+                    << "[TIMESERIES]\nTS 01/01/2026 00:00 " << raw
+                    << "\nTS 01/01/2026 00:01 0\nTS 01/01/2026 00:02 0\n"
+                    << "[SYMBOLS]\nRG 5 5\n[JUNCTIONS]\nJ 0 1 0 0 0\n"
+                    << "[OUTFALLS]\nO -0.5 FREE NO\n[CONDUITS]\nC J O 30 0.013 0 0 0\n"
+                    << "[XSECTIONS]\nC CIRCULAR 0.3 0 0 0 1\n"
+                    << "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 1\nREPORT_2D NO\nRAINFALL_MODE " << mode
+                    << "\n[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n0 10 0\n"
+                    << "[2D_TRIANGLES]\n0 1 2 0.03 0 pan\n0 2 3 0.03 0 pan\n[REPORT]\nINPUT NO\n";
+                const auto path = (folder/"rain.inp").string(), rpt = (folder/"rain.rpt").string();
+                { std::ofstream f(path); f << inp.str(); }
+                struct Engine {
+                    SWMM_Engine e = swmm_engine_create();
+                    ~Engine() { swmm_engine_end(e); swmm_engine_close(e); swmm_engine_destroy(e); }
+                } engine;
+                ASSERT_NE(engine.e, nullptr);
+                ASSERT_EQ(swmm_engine_open(engine.e,path.c_str(),rpt.c_str(),nullptr,nullptr),0);
+                // The .inp writer must keep the mode, not fall back to the default.
+                const auto written = (folder/"rain_written.inp").string();
+                ASSERT_EQ(swmm_model_write(engine.e, written.c_str()), 0);
+                {
+                    std::ifstream f(written);
+                    const std::string text((std::istreambuf_iterator<char>(f)), {});
+                    EXPECT_NE(text.find(mode), std::string::npos);
+                }
+                ASSERT_EQ(swmm_engine_initialize(engine.e),0);
+                // One located gage: every cell takes it at weight 1.
+                int method = -9, count = -1, gage = -1;
+                double weight = 0;
+                ASSERT_EQ(swmm_2d_get_rainfall_weights(engine.e, 1, &method, &gage, &weight, 1, &count), 0);
+                EXPECT_EQ(method, 2);
+                EXPECT_EQ(count, 1);
+                EXPECT_EQ(gage, 0);
+                EXPECT_DOUBLE_EQ(weight, 1.0);
+                ASSERT_EQ(swmm_engine_start(engine.e,0),0);
+                int wet = 0, dry = 0;
+                for (int i = 0; i < 1000; ++i) {
+                    double days = 0;
+                    ASSERT_EQ(swmm_engine_step(engine.e,&days),0);
+                    if (days <= 0) break;
+                    const double sec = days * 86400;
+                    for (int cell = 0; cell < 2; ++cell) {
+                        double rain = -1;
+                        ASSERT_EQ(swmm_2d_get_rainfall(engine.e,cell,&rain),0);
+                        if (sec > 5 && sec < 50) { EXPECT_NEAR(rain,0.0254/3600,1e-15); ++wet; }
+                        if (sec > 80 && sec < 150) { EXPECT_DOUBLE_EQ(rain,0); ++dry; }
+                    }
+                }
+                EXPECT_GT(wet,0); EXPECT_GT(dry,0);
+            }
+        }
+    }
 }

@@ -1,5 +1,8 @@
 name: Regression Testing
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
@@ -57,7 +60,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: microsoft/vcpkg
-          ref: 2025.02.14
+          ref: 2026.07.29
           path: vcpkg
 
       - name: Install OpenMP (macOS)
@@ -107,6 +110,25 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install pytest numpy
+
+      - name: Set up MSVC environment (Windows)
+        # The Windows preset uses the Ninja Multi-Config generator, which needs
+        # cl.exe (and ninja) on PATH — nothing else puts them there. vcpkg's
+        # own port builds locate VS by themselves, so the gap only surfaces at
+        # the outer configure ("CMAKE_C_COMPILER not set").
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Re-pin VCPKG_ROOT (Windows)
+        # vcvars64 (VS 2022 17.6+) exports VCPKG_ROOT pointing at Visual
+        # Studio's bundled vcpkg, and msvc-dev-cmd forwards it to every later
+        # step, overriding the job-level env — so configure would silently
+        # build against VS's port snapshot instead of the pinned checkout.
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: echo "VCPKG_ROOT=${{ github.workspace }}\vcpkg" >> $env:GITHUB_ENV
 
       - name: Configure (Release with tests)
         # The *-tests-release preset sets VCPKG_MANIFEST_FEATURES=tests;geopackage
@@ -162,6 +184,27 @@ jobs:
         env:
           OPENSWMM_BUILD_DIR: ${{ github.workspace }}/build-${{ matrix.vcpkg_triplet }}
         run: python -m pytest -v --tb=short
+
+      - name: Manual worked-example decks run to completion
+        # The manuals' simulated-tier figures and the Application Manual's
+        # worked examples cite decks under docs/figures/decks/. Every one must
+        # run clean (exit 0, no ERROR in the .rpt) under a per-deck budget, or
+        # the prose is describing a model that no longer works. Linux only:
+        # one platform proves the decks; the figures themselves are committed.
+        if: runner.os == 'Linux'
+        env:
+          OPENSWMM_BUILD_DIR: ${{ github.workspace }}/build-${{ matrix.vcpkg_triplet }}
+        run: >
+          python3 scripts/build_manual_figures.py run-decks
+          --out tests/output/manual_decks_ci --max-seconds 600
+
+      - name: Upload manual deck run summary
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v5
+        with:
+          name: manual-decks-${{ matrix.vcpkg_triplet }}
+          path: tests/output/manual_decks_ci/summary.tsv
+          if-no-files-found: ignore
 
       - name: Install Release tree
         run: >

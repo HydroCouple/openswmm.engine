@@ -164,6 +164,39 @@ TEST(GageFileRoundTrip, UserCsvColumnFormRoundTrip) {
 }
 
 // ---------------------------------------------------------------------------
+// USER_CSV with an EMPTY column — bare path, never a dangling colon
+// ---------------------------------------------------------------------------
+
+TEST(GageFileRoundTrip, UserCsvEmptyColumnWritesBarePath) {
+    // The state B2 legalized and the GUI can reach: set a column, then clear
+    // the cell. The gage stays USER_CSV with an empty col_name, which means
+    // "first data column". Emitting FILE "gage.csv:" for that reads as
+    // malformed to EPA SWMM / PCSWMM.
+    SimulationContext ctx;
+    parseGages(ctx, "G6 VOLUME 1:00 1.00 FILE \"gage.csv:P1\"");
+    ASSERT_EQ(ctx.n_gages(), 1);
+    ctx.gages.col_name[0].clear();
+    ASSERT_EQ(ctx.gages.file_format[0], RainFileFormat::USER_CSV);
+
+    const std::string content = writeInp(ctx, "user_csv_empty_col.inp");
+    const std::string line = firstGageLine(content);
+    ASSERT_FALSE(line.empty());
+    EXPECT_NE(line.find("FILE \"gage.csv\""), std::string::npos)
+        << "written line: " << line;
+    EXPECT_EQ(line.find("gage.csv:"), std::string::npos)
+        << "no dangling column separator: " << line;
+
+    // The path itself round-trips. Recovering USER_CSV from this token needs
+    // the file's CONTENT, so it happens at load time, not here — see
+    // GageRainSeries.BarePathUserCsvGageLoadsFirstColumn.
+    SimulationContext ctx2;
+    parseGages(ctx2, line);
+    ASSERT_EQ(ctx2.n_gages(), 1);
+    EXPECT_EQ(ctx2.gages.file_path[0].str(), "gage.csv");
+    EXPECT_TRUE(ctx2.gages.col_name[0].empty());
+}
+
+// ---------------------------------------------------------------------------
 // Empty station — '*' placeholder keeps the line legacy-parseable
 // ---------------------------------------------------------------------------
 

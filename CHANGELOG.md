@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Version boundaries in this file: `6.0.0-alpha.2` covers work merged after the
 `v6.0.0-alpha.1` tag up to and including 2026-07-12; `6.0.0-alpha.3` covers
-everything from the `6.0.0-alpha.3` version bump (2026-07-12) onward. No
+everything from the `6.0.0-alpha.3` version bump (2026-07-12) up to the
+`v6.0.0-alpha.3` tag (2026-08-11); `6.0.0-alpha.4` covers everything from that
+tag to the `6.0.0-alpha.4` version bump (2026-09-08). No
 `v6.0.0-alpha.2` tag was ever cut — that version string lived only in
 `CMakeLists.txt` (`OPENSWMM_PRERELEASE`), `vcpkg.json` and
 `python/pyproject.toml` — so the `[6.0.0-alpha.2]` heading below is
@@ -21,7 +23,1426 @@ retroactive.
 
 ## [Unreleased]
 
+### Python bindings
+
+- Add groundwater hydrology and transport views, surface-quality tables,
+  transport configuration/capability records, 2D rainfall diagnostics, batch
+  deletion, live output refresh, compatibility/staged serialization and the
+  remaining metadata and forcing accessors.
+- Report snapshots now read live routing diagnostics and convert fractional
+  continuity errors into their documented percentage fields.
+- Retain owners in 2D/editor views, reject stale or concurrent access, propagate
+  callback failures safely, and synchronize public enums, type stubs and report
+  totals. Ship the `py.typed` marker and distinguish omitted optional extensions
+  from broken native dependencies.
+- Add native API/enum drift gates to CI and release qualification. Wheel tests
+  include modern, legacy, top-level and integration tests. Expand Sphinx guides
+  with authoring/runtime units, lifecycle, persistence and callback contracts.
+
+
+### Documentation
+
+- **Every implemented formulation is now documented, and every planned one is
+  marked as planned.** A review of the five manuals against the engine found the
+  `[OPTIONS]` table missing about 48 parsed keys, 27 input sections and 22 process
+  component sections with no grammar anywhere, no chapter for any process on the 2D
+  mesh, nothing on the two-layer mesh aquifer or on surface quality, an application
+  manual of seven empty stubs, no conceptual diagram as an image, and a roadmap
+  still calling five shipped features unimplemented. The programme that followed:
+
+  - **New reference chapters.** Hydrology 8 (distributed surface processes on the
+    mesh) and 9 (spatially explicit groundwater); Water Quality 10 (surface quality
+    and transport on the mesh); planned-formulation chapters for all three reference
+    manuals. Hydraulics 9 absorbed the two September bolt-on sections: the three
+    momentum closures become §9.2.1–9.2.3, quadrilateral cells §9.3.1, the two-plane
+    VFR closure §9.4.2, the full shallow-water face flux §9.5.10 and the
+    diffusive-wave law §9.5.11.
+  - **The Application Manual is now a formulation-choice manual**: thirteen chapters,
+    six interactive decision workflows, and ten in-tree decks under
+    `docs/figures/decks/`. Each worked chapter runs one deck under the alternatives
+    and reports what changed, against laboratory measurements where they exist.
+  - **A scripted figure pipeline.** `docs/figures/` carries one manifest, the
+    generators, and the committed PNG and SVG outputs; `scripts/build_manual_figures.py`
+    builds, audits and runs the decks. 83 figures are generated from source — the
+    conceptual process-and-formulation map in five per-manual variants, the engine's
+    own cross-section geometry, and every simulated figure from a run the deck gate
+    also executes.
+  - **Interactive diagrams.** Mermaid workflows and the process maps pan, zoom, and
+    open the chapter behind whatever you click, through
+    `docs/custom/js/manual-interactive.js` and `@ref` targets that Doxygen and the
+    lint both validate.
+  - **Status badges.** `\status{Implemented|Experimental|Planned|Retired}` reads its
+    vocabulary and colours from `docs/figures/status.py`, so the text, the badges and
+    the diagrams cannot disagree.
+  - **Gates.** The manual lint runs in CI with a 38-case negative suite that proves
+    every check can fail; the figure check audits the manifest against the manuals;
+    `scripts/gen_manual_frontmatter.py` generates the figure and table lists from the
+    captions, which found the water-quality manual listing eleven figures against
+    thirty-eight and inventing their captions.
+- **The three EPA reference-manual monoliths are deleted.** They were excluded from
+  the build and cited by nothing; their content lives in the per-chapter files.
+  Recover any of them with `git show <commit>^:"docs/manuals/reference/hydrology/SWMM 5 Reference Manual I (20150917).md"`.
+- **`ROADMAP.md` reconciled against the engine.** Inlet junctions, Lagrangian
+  transport, transport on the mesh, multi-species reactions, heat and the mesh
+  aquifer move to Completed; the full shallow-water equations leave the deferred
+  list; the TPA high-celerity filling divergence is recorded as closed on 2026-09-12
+  rather than pending, and the finite-volume key count is corrected to twenty live
+  and five retired.
+
+- **The user manual is retired and replaced by an Engine Manual** at
+  `docs/manuals/engine/`, split from it by audience. The graphical application is
+  documented in its own repository, so the chapters that described the retired Delphi
+  interface — Quick Start Tutorial, Main Window, Working with Objects, Working with the
+  Map, Printing and Copying, Add-In Tools, and Appendix C's 26 property editors, about
+  2,900 lines — are gone. The engine material was kept and renumbered: the conceptual
+  model (Ch. 1), the input file reference (Ch. 2, formerly Appendix D), files and
+  command-line operation (Ch. 3, formerly Ch. 11), the status report and summary tables
+  (Ch. 4, formerly Ch. 9), the C API, Python bindings and plugins (Ch. 5, formerly
+  Ch. 13), and the error and warning messages (Appendix A, formerly Appendix E).
+  `git mv` was used throughout, so file history follows. The parent page carries a
+  *Where the old chapters went* table for anyone holding a citation to the old numbering.
+- **Appendix A (Useful Tables) and Appendix B (Visual Object Properties) moved to the
+  SWMMVis manual** — they are values typed into an editor and per-editor property
+  dictionaries, not engine behaviour. The engine now links to them.
+- **The engine site links into the GUI site with real Doxygen cross-references.**
+  `docs/tags/swmmvis-manual.tag` is a committed, pages-only tagfile (42 pages, 8 KB,
+  filtered from the GUI's published 6 MB tag) wired through `TAGFILES`, so
+  `@ref manual_*` and `@ref tutorial_*` resolve to correct deep URLs under
+  `CREATE_SUBDIRS`. It is committed rather than fetched at build time so the docs build
+  never depends on the other site being reachable; `scripts/refresh_gui_tagfile.py`
+  refreshes it and CI reports drift without failing. Only the `manual_`/`tutorial_`
+  namespace is imported — both repos declare a page called `authors`, and importing it
+  would have silently redirected every engine `@ref authors` to the GUI site.
+  `EXTERNAL_PAGES` is now `NO`, so the GUI's pages do not appear in the engine's index.
+- **307 orphaned images removed** from the retired manual's `images/` directory. They
+  were referenced by nothing and were in neither `INPUT` nor `IMAGE_PATH`, so they had
+  never rendered. The ~38 reusable diagrams among them (conduit cross-section shapes,
+  HEC-22 grate and curb types, conceptual hydrology and LID figures, pump-curve types)
+  are listed in `tests/output/docs_migration_2026-09-19/figure_salvage_list.md` with the
+  commit to recover them from, to be restored by the change that rewrites the conceptual
+  model chapter and actually cites them.
+- **Stale references cleaned up while rewiring**: `docs/Doxyfile` listed `./Updates.md`,
+  which does not exist; the nav bar's GitHub tab pointed at the archived
+  `HydroCouple/OpenSWMMCore`. `scripts/split_user_manual.py`, the one-time generator for
+  the retired tree, is deleted along with its input and output.
+
+### Performance
+
+- **Explicit FV solver: five bit-identical fixed-cost removals** (Phase 1 of
+  `plans/FV1D_CLOSURE_KERNEL_PERF_PLAN_2026-09-11.md`). Measured on the new Phase 0
+  counters against a frozen base binary: `.out` byte-identical on all 28 synthetic
+  baseline rows and the 25-deck parity manifest (11 FV decks); every FV unit gate and the
+  full unit suite green.
+  - `advance()` no longer begins with a full-mesh depth inversion when the state is the
+    solver's own (`state_clean_`): nothing outside the solver writes `cell_a` between two
+    routing steps, so the refresh recomputed what was already there — 27-32 % of a reach
+    deck's step at one substep per routing step.
+  - `settleAccumulators()` returns at once when no LTS macro cycle has booked flux
+    (`acc_dirty_`): on every baseline deck LTS never fired a cycle, yet each re-tier drained
+    all-zero accumulators and ran two full-mesh refreshes. The LTS block's own census is
+    reused as the global path's when it falls through without re-tiering — one face sweep
+    per substep instead of two.
+  - A per-cell closure cache (`cell_ah_`/`cell_t_`/`cell_i1_`, filled wherever `cell_h` is
+    written) serves `faceSide`, the step census and the LTS stability bounds, which
+    re-evaluated the same section at the same stored depth several times per substep and
+    once per node-solve trial. `faceSide` also stops computing a ghost side's first moment,
+    which `computeFaceFlux` discards, and `relaxOneNode` no longer evaluates each face's
+    geometry twice.
+  - Work removed (Phase 0 → Phase 1, same substeps): depth inversions −57 % on Example1
+    and −75 % on a 500-conduit reach at the default mesh (LTS on/off rows now equal), area
+    calls −40…50 %, first-moment calls −50…60 %. Wall clock is recorded in
+    `plans/FV1D_PERF_BASELINE_2026-09-11.md` once measured on a quiet host.
+
+- **Explicit FV solver: the dt census bounds a pass-through junction's ghost by the cell
+  it actually fluxes; mass-only node residual; species-only face stores** (Phase 1e, 1c,
+  1g of the same plan). `faceSide` presents the far cell's centred state as a pass-through
+  junction's ghost, but both the face census and the per-cell LTS bound rebuilt a ghost from
+  `node_head − z_face`, which after a drop offset stands above the downstream crown and
+  carries the slot celerity the flux never sees. Both bounds now use the far cell's cached
+  state: East Boston 77 goes from 28.0 to 4.55 substeps per routing step and 123.8 to 60.5 s
+  at one thread (continuity 0.797 % unchanged, node-head rms difference 0.0008 ft on a
+  22 ft signal, overflow series identical; transitions and the lab columns identical) —
+  cumulative since the Phase 0 base 206 → 60.5 s, now faster than DYNWAVE's 64.4 s. The
+  algebraic node solve's trial fluxes are mass-only (`riemannMassFlux`, bit-identical to
+  `riemannFlux().mass`) with one full flux at the accepted head; the contact speed and the
+  full flux record are stored only when species are carried. Both bit-identical on the
+  31-deck manifest. Dev switches: `OPENSWMM_FV_CENSUS_PASS=0` (old bound), `OPENSWMM_FV_CFL`
+  (overrides FV_CFL for the Phase 4a sweep), `OPENSWMM_FV_LTS_FIT=1` (Phase 4c: a macro
+  cycle cut to fit the remaining routing-step window instead of global stepping; off by
+  default, measured in the baseline document). Phase 4b (laterals credited into a clean
+  pass-through junction's end cells) was already in the tree.
+
+- **Explicit FV solver: section blocks shared across conduits, junction solves in
+  parallel** (Phase 1f and 3d of the same plan). The mesh carried one geometry block per
+  conduit (~4.4 kB with the closure table): TwinOaks v2 has 5086 conduits and eleven
+  distinct sections, East Boston 183 and forty. `mesh.geom` now holds one block per
+  distinct (section, barrels, open); friction, losses, slope and the culvert curve move to
+  `mesh.conduit_*` arrays; results are byte-identical (31-deck manifest). The algebraic
+  junction solves run in parallel on both the global path and the LTS tier firing — only
+  junctions that run the bracketed root solve are distributed, pass-through and storage
+  nodes stay serial, and the serial path is an explicit branch (a disabled pragma still
+  enters the runtime; on the 5-day East Boston deck the loop runs 13 M times and the
+  clause form cost 30 % at one thread). Bit-identical at any thread count. Measured on a
+  quiet host: TwinOaks 129.5 → 116.7 s at 1 thread and 103.0 s at 2 (183 → 125 s at 8);
+  East Boston 120.0 → 112.3 s at 1 thread and 104.7 s at 2. On this P+E-core host 8
+  threads is slower than 1 on both decks (East Boston is authored `THREADS 8`); the
+  OpenMP loop gates take `OPENSWMM_FV_OMP_MIN_{CELLS,FACES,NODES}` overrides for sweeps.
+  Cumulative since the Phase 0 base: East Boston 206 → 105 s, TwinOaks 153 → 103 s.
+
+- **Explicit FV solver: cross sections from exact geometry, one POD closure kernel**
+  (Phase 2 of the same plan). FV no longer reads the legacy 51-row section tables
+  through the 25-way shape switch: `SectionGeometry.hpp` evaluates each section in
+  closed form at build time (circle segment, rectangle, trapezoid, triangle, parabola,
+  power; the arch/egg/horseshoe/… families and SWMM's elliptical pipes stay defined by
+  their tables), and `FvClosureKernels.hpp` samples it into a fixed-size, pointer-free
+  `FvClosure` — a monotone cubic-Hermite table (128 panels, Fritsch–Carlson limited) on
+  which the top width IS the derivative of the area and the first moment IS its
+  integral; RECT_OPEN / TRAPEZOIDAL / TRIANGULAR take an exact polynomial class with a
+  closed-form inverse. `depthOfArea` is a Newton iteration on the panel cubic instead
+  of Brent on tables that were never a derivative pair. Every hot-path function is an
+  `OPENSWMM_KERNEL_FN` over the POD struct (device-capturable, asserted by test).
+  Measured legacy → exact on one binary (`plans/FV1D_PERF_BASELINE_2026-09-11.md`
+  §Phase 2): circular inversion 3.3×, rect_open 7.9×, trapezoid 14.7×; same-moment wall
+  clocks base → Phase 1 → Phase 2 on reach_uniform_500 27.6 → 11.6 → 6.0 s, Example1
+  10.7 → 6.5 → 3.2 s. SWASHES `1d-fv` (33 cells) and the transitions suite are
+  IDENTICAL legacy vs exact; the explicit-slot lab column (e2_2006 C1) moves by 5e-4
+  NSE. The legacy table/Brent path (the `XsectEval` pointer, the 129-row I₁/A table,
+  the area-uniform depth table, `depthOfAreaBracketed`, Brent) is deleted in the
+  follow-up commit once every `.out` of the exact path hashed identically without it;
+  `FvGeometry` is a pointer-free POD block apart from the build-time `XSectParams` it
+  keeps for the table-defined shapes. DYNWAVE is untouched (still bit-exact on the
+  legacy tables).
+  - **Implicit pressurized head update: secant storage correction.** With a closure
+    whose crown is consistent, the tangent linearization of the head row overshot
+    rising cells into the Preissmann slot (head spikes on the e2 rapid-fill implicit
+    column, divergence on e3 at c = 300 m/s). `PressurizedHeadSolver::solve` now
+    re-solves with the secant compliance of each cell's own closure (three Picard
+    passes, dev knob `OPENSWMM_FV_PRESS_SECANT_PASSES`). This changes results only under
+    `FV_PRESSURIZED_IMPLICIT YES`; default decks are byte-identical before/after. Known
+    residual (follow-up item): the map is not contracting on very stiff slots, so
+    `FvUnsteadyFriction.ValveClosureDampsOnImplicitPath` (c = 1000 ft/s) stays red
+    until a converged Newton on the nonlinear storage lands.
+  - **Integration gates re-based** (`test_fv_engine_integration.cpp`): the culvert
+    inlet-control and SURCHARGE_DEPTH fixtures run under the implicit head update —
+    measured on the explicit slot path the 3 ft culvert entrance locks pressurized at
+    105/110/115/130/150 cfs and passed the fixture's 120 cfs only by luck of the table
+    closure (both closures pass every inflow with the implicit update, matching
+    DYNWAVE) — and the surcharge gate asserts the level the sealed node reaches;
+    mesh-refinement consistency is measured against FV's own dx = 10 answer (0.014 →
+    0.012 → 0.004) with DYNWAVE agreement kept as a floor; the storage-loss continuity
+    gate is 0.2 % (the deck's own ledger error is 0.04 % under either closure).
+
 ### Added
+
+- **Two-zone groundwater results in the 2D results file (G-O).** A model
+  with a resolved `[2D_AQUIFER]` now writes its aquifer to the `.h5` under
+  the new `REPORT_2D_VARIABLES` group `GROUNDWATER` (in DEFAULT): ten
+  per-cell `[time, face]` fields — `Mesh2_face_gw_table_elev`, `_hg`
+  (saturated thickness), `_hu` (closure A unsaturated storage), `_recharge`,
+  `_lateral`, `_node_exchange`, `_deep`, `_et`, `_dunne`, `_infil_in` (the
+  rates are each cell's last firing, held, as the C API reads them) — the
+  static `Mesh2_face_gw_bed_elev` and `Mesh2_face_gw_closure` (0 closed
+  form, 1 enslaved, 2 sigma — the mask for the σ block), the domain ledger
+  series `groundwater_ledger [time, 11]` (the `SWMM_GW2D_LED_*` order plus
+  the continuity residual), and `groundwater_node_exchange_cum [time, bed]`
+  with a `node_names` attribute (cumulative aquifer ↔ node exchange per
+  `[2D_AQUIFER_NODE]` bed, + out of the aquifer — the series behind the
+  GUI's GwExchange plot). `GW_DETAILED` (not in DEFAULT) adds the σ columns
+  `Mesh2_face_gw_theta_sigma [time, layer, face]`, the one m × nFace
+  variable. At finalize the file gains a `/groundwater_2d` group of ledger
+  scalars with a `continuity_error` attribute beside `/mass_balance_2d`,
+  and the `.rpt` gains a "2D Aquifer Continuity" block after the 2D surface
+  block. The storage views the C API used (`liveStorage`, `ledgeredStorage`,
+  the residual) moved onto `SubsurfaceState` so the file, the report and
+  `swmm_gw2d_get_continuity_error` share one definition. Gate:
+  `test_engine_2d_output_options` `DeckGroundwaterFieldsEndToEnd` — every
+  dataset present with the right shape on a two-triangle and a mixed
+  tri + quad deck, water table ≡ bed + hg per record, the ledger's last row
+  closes to 1e-6 of storage, a deck without an aquifer writes none of it.
+  Program plan row G-O; unblocks stream U (GG5) and the σ-column inspector.
+- **2D cell coverages, buildup, washoff and street sweeping (S7).** The
+  subcatchment land-use convention on the mesh: `[2D_COVERAGES]` (`*` | `TAG
+  name` | `CELL n` → a land-use percent set; a row replaces its scope's set,
+  GLOBAL < TAG < CELL), `[2D_LOADINGS]` (initial buildup per acre | hectare,
+  a pollutant or a reactions-component species) and `[2D_CURB_LENGTH]`
+  (needed by PER_CURB land uses). Every cell then runs the subcatchment
+  surface-quality step's own arithmetic — POW / EXP / SAT / EXT buildup
+  through the inverse-days form, EXP / RC / EMC washoff with legacy's unit
+  pre-multiplies, the available-buildup cap, BMP removal, per-(cell, land
+  use) sweeping on the shared calendar — at the runoff-step cadence
+  (`2d/quality/SurfaceQuality2D`). The runoff rate a cell feeds the washoff
+  laws is its **net** outflow per unit area over the step (what left across
+  faces, boundaries and drains minus what arrived across faces, spills,
+  discharge and inflow boundaries; rain and groundwater return are
+  generation), accumulated by the marcher at the sites the species ledgers
+  already book — the cell analogue of the subcatchment's `outflow / area`,
+  and independent of how finely a plane is meshed. Washoff mass enters the
+  cell's species row (ledger `gained_washoff`) and reaches the 1D node
+  through the existing coupling tuple; no new coupling row. Outputs:
+  `REPORT_2D_VARIABLES` token `BUILDUP` (in DEFAULT) → `Mesh2_face_buildup
+  [time, species, face]` (lbs/acre | kg/ha, `species_names`), a `.rpt`
+  "2D Surface Washoff Summary" block, the `.inp` writer echoes the rows.
+  C API (`openswmm_sq2d.h`): `swmm_2d_coverage_*`, `swmm_2d_loading_*`,
+  `swmm_2d_curb_length_*` (row edits share the file's parsers; names are
+  validated at once; refused once initialized) and
+  `swmm_2d_get_buildup_bulk`. Ownership: rows are inert with one warning
+  under `RAINFALL_MODE NONE`; covered cells inside a subcatchment that has
+  `[COVERAGES]` raise one double-counting notice and the run proceeds.
+  Gates: `test_engine_2d_surface_quality` (buildup parity with a subcatchment
+  **bit-for-bit**, for a pollutant and an MSX species; EMC washoff = C ×
+  runoff and Σ net cell outflow = drained volume to 1e-10 on a two-triangle
+  and a one-quad pan; ledger closure with sweeping and BMP; ownership
+  warnings; round trip and grammar refusals; inert rows bit-identical; C-API
+  grammar) and the `.h5` / C-API end-to-end gate in
+  `test_engine_2d_output_options`. Not in v1: co-pollutant fractions on
+  cells, `Mesh2_face_washoff`, hotstart carry of the store, Python / MCP
+  mirrors, GeoPackage rows. Design: `OVERLAND_TRANSPORT_HEAT_MSX_PLAN` §8
+  (D-A22 revised 2026-09-19 to the net-outflow definition).
+- **MSX species build up and wash off (BW-MSX).** `[BUILDUP]`, `[WASHOFF]` and
+  `[LOADINGS]` rows may name a reactions-component species (declared in the
+  component's `.rxn`), not only a `[POLLUTANTS]` entry. Such rows are parked by
+  name at parse and bound after the component is applied (the `[INITIAL_QUALITY]`
+  / `[INFLOWS]` deferral); they run the pollutant surface-quality step's own
+  arithmetic — POW / EXP / SAT / EXT buildup through the inverse-days form,
+  EXP / RC / EMC washoff with legacy's unit pre-multiplies, the available-
+  buildup cap, BMP removal and street sweeping on the shared (subcatchment,
+  land use) schedule — over a separate MSX-keyed store (`ReactionData::surface`,
+  `quality/MsxSurfaceQuality.cpp`), and deliver the washoff into
+  `msx_ext_mass_in`, the rate the ARD engine, the legacy MSX dispatch and LARD
+  already consume for species loads. Mass units per species follow the species'
+  declared units (`MG` → lbs/kg via UCF(MASS), `UG` → ÷1000, other → 1). The
+  `.inp` writer emits the rows; `swmm_buildup_get/set`, `swmm_washoff_get/set`
+  and `swmm_subcatch_get/set_initial_loading` address species at index
+  `n_pollutants + m` (Python: `set/get_buildup`, `set/get_washoff` and the
+  subcatchment `LoadingsView` accept a species name or that index); the `.rpt`
+  gains a "Subcatchment MSX Washoff Summary"
+  block with the surface ledger; deleting a land use re-packs the species
+  matrices. A row naming neither a pollutant nor a species warns (one line per
+  row) and is ignored. Not in v1: co-pollutant fractions for species and
+  kinetics inside the dry store (D-A28 / D-A29). Gate:
+  `test_engine_msx_buildup_washoff` — an MSX species with a pollutant's
+  parameters produces the pollutant's surface loads and final buildup
+  **bit-for-bit**, the ledger closes to 1e-10, pollutant trajectories are
+  bit-identical with the species rows present, round trip through writer and
+  C API, MSX-only decks. Design: `OVERLAND_TRANSPORT_HEAT_MSX_PLAN` §8.9.
+- **`test_engine_fv_section_geometry`**: the exact section geometry against an
+  independent integration of the outline, the closure against the geometry (area, top
+  width, hydraulic radius), T ≡ dA/dh, I₁ ≡ ∫A, monotonicity, a 60 000-point
+  depth↔area round trip at 1e-12·y_full, the polynomial class in closed form, barrel
+  scaling, POD capture at a foreign address, and the recorded legacy-table error per
+  shape (circular: area 7.3e-4 of full, width 7.1 % of max, hydraulic radius 2.3 %).
+  `fv_perf_phase2_gates.sh` runs the Phase 2 gates as one job (bench, SWASHES,
+  transitions, lab cells, synthetic sweep; `FV_GATE_STEPS` selects steps) and
+  `fv_perf_compare_scores.py` diffs suite score files by verdict and metric.
+- **FV solver instrumentation for the closure-kernel program.** `[PERF-FV]` gains
+  closure-call counters (`n.area n.width n.i1 n.hydrad`) and LTS macro-cycle counters
+  (`n.macro n.macrorej`); the report's "FV Solver Statistics" block gains
+  `LTS Macro Cycles Fired / Rejected`, which is what distinguishes "tiering never engaged"
+  from "tiering did not help" (the tier histogram alone cannot: it is filled whether or
+  not a cycle fits the routing step). `bench_fv_closure` times every closure kernel per
+  shape on the geometries the mesh builder builds (built in the tests tree too, no Google
+  Benchmark needed); `fv_perf_baseline.py` runs real decks as authored at THREADS 1/8
+  (`--real-deck`), parses the new rows, and reports closure calls per substep;
+  `fv_perf_phase0.sh` runs the whole Phase 0 as one detached job and
+  `fv_perf_compare.py` is the mechanical Tier A hash gate between two runs.
+
+### Added
+
+- **Dispersion, retardation and decay in the aquifer (T7.2).** The
+  transported tuple of T7.1 now spreads, sorbs and reacts.
+  **Dispersion** rides the lateral Darcy faces — `D = α_L·v_pore + D_m` from
+  `[GW_TRANSPORT_PARAMS]`, booked into the same side accumulators as
+  advection at the same cadence, so it inherits the marcher's cross-tier
+  consistency rather than needing its own argument. Its exchange is limited
+  exactly as the surface's is: at most the pairwise equalisation divided by
+  the receiver's face count (pairwise bounds do not compose — a cell fed by
+  three faces each closing its whole gap can end richer than every donor),
+  and at most a half-share of the giver's mass, with the signed temperature
+  row exempt from the mass share because it has no positivity to guard.
+  Binds are counted, not silenced. **Retardation** is linear-equilibrium
+  partitioning: a store holds the cell's TOTAL mass and every flux
+  multiplies by the dissolved fraction `1/R`, `R = 1 + ρ_b·K_d/θ` from
+  `[GW_SORPTION] Kd` and the grain density, so sorbed mass simply stays
+  where it is and no channel carries a retardation factor of its own. The
+  moving water table is the one exception — when it passes a grain, the
+  grain changes zone with it. **Decay** is first-order on the total mass of
+  both zones, per species, from `[GW_SORPTION] Decay` (1/day) falling back
+  to the `[POLLUTANTS]` Kdecay column, ledgered as `lost_reaction` so the
+  conservation statement still closes. `[GW_TRANSPORT_PARAMS]` and
+  `[GW_SORPTION]` resolve onto cells with the `* < TAG < CELL` precedence
+  the `[2D_AQUIFER]` rows use, and `[GW_TRANSPORT_OPTIONS] DISPERSION NO`
+  turns the first term off. Gates: dispersion narrows a seeded 25-against-5
+  gradient and neither cell leaves the range its sources set; sorption cuts
+  what leaves the aquifer and keeps the rest; decay removes the analytic
+  `1 − e^{−kt}` fraction and the residual still closes to 1e-10. The
+  `SUBSURFACE` reactions-component adapter (`reactArdStage`, the hydvar
+  bindings and the EULERIAN_ARD element-state question) is **not** in this
+  round. GW transport plan §3.5, gates 1/2/5, T7.2.
+- **The two-zone aquifer transports (T7.1).** With a `[2D_AQUIFER]`
+  resolved, the `[GW_*]` sections stop being authoring-only: the kernel now
+  carries a species / age / temperature tuple in two bulk stores
+  (`sat_mass`, `unsat_mass`), and every channel the water moves through
+  moves the tuple with it — lateral Darcy at the upwind donor's
+  concentration, recharge and capillary rise across the table, the moving
+  table's own handover between the zones, deep percolation, the node bed,
+  conduit seepage, saturation excess and column rejection back to the
+  surface, and ET, which carries water, age and temperature but no solute
+  (the column up-concentrates, program plan D-A20). Rows come from
+  `TransportPolicy` — the same authority the 1D and the 2D surface use, so a
+  species is the same row index in every domain — and the transport matrix's
+  groundwater row is real: `.rpt` and `swmm_get_transport_matrix` report
+  on(n) / off:KEY per class instead of a blanket "no transported quality".
+  `[GW_INITIAL_QUALITY]` seeds both zones (`ZONE SAT | UNSAT`; `LAYER` rows
+  are named as not applied while the unsaturated store is bulk). **The
+  surface seam is now a transfer, not a loss**: the mass infiltration takes
+  off a 2D cell arrives in the aquifer under it, and what saturation excess
+  pushes up arrives back on the surface (`gained_exfiltration`), each side
+  booking exactly what the other did. The "authored but INERT" warning now
+  fires only on a deck with no `[2D_AQUIFER]` for the rows to configure.
+  Gates: the GW plan's gate-6 conservation stub closes to 1e-10 on
+  all-triangle, all-quad and mixed meshes; the seam balances in both
+  directions net of what is in flight; ET leaves the solutes behind; the
+  matrix and the warning agree with each other. Heat still rides as a water
+  temperature-volume (the soil matrix's own capacity, conduction and the
+  thermal boundaries are T7.3), and dispersion, retardation and per-layer
+  resolution are T7.2. GW transport plan §3.4/§3.5, T7.1.
+- **Conduits under the water table GAIN: the signed conduit ⇄ aquifer
+  conductance (G-X4).** `[2D_AQUIFER_OPTIONS] LINK_SEEPAGE TWO_WAY` replaces
+  a conduit's fixed `[LOSSES]` seepage loss with a MODFLOW-River exchange
+  about its own invert — `K·W·L·min((h_link − max(h_gw, z_inv))/d_c, 1)`,
+  `+` out of the pipe — so the loss is throttled as the table rises and
+  reverses once the table passes the water surface. This is the
+  groundwater-inflow term SWMM has never had for a conduit (only
+  subcatchment `[GROUNDWATER]` rows could feed a node). Three properties
+  hold by construction: a FULL pipe over a table at or below its invert
+  seeps exactly the legacy rate (`d_c` defaults to the conduit's full
+  depth), the exchange is continuous through the water table, and the gain
+  is bounded by the aquifer's own per-firing share of the cells the conduit
+  crosses — never by the pipe — so the 1D can never take water the 2D does
+  not have. `[2D_AQUIFER_LINKS] <link> [KC k] [DC d] [EXCHANGE NO]`
+  overrides the conductivity and path length per conduit, gives a conduit
+  with no `[LOSSES]` rate an exchange, or keeps one out; rows round-trip
+  and a row naming an unknown link or a non-conduit is warned about, not
+  ignored silently. `LINK_SEEPAGE AUTO` (still the default) and `NONE` are
+  unchanged, and a deck without `TWO_WAY` takes the legacy branch at every
+  loss site. Ledger: the gaining half of the signed rate is booked to the
+  new `routing_link_gw_inflow` (`.rpt` "Conduit GW Inflow", printed only
+  when non-zero; `SWMM_ROUTING_LINK_GW_INFLOW`), never netted against
+  "Exfiltration Loss", and the aquifer is debited the same volume through
+  `led_link`. New `swmm_forcing_link_seepage` lets a host (HydroCouple's
+  `link_exchange_flow`) drive the exchange directly, OVERRIDE or ADD.
+  Gates: a drowned reach gains, the aquifer pays to 1e-9 and its table
+  draws down; a full pipe over a disconnected table reproduces the legacy
+  rate to 1e-12 while `AUTO` on the same deck still loses; `EXCHANGE NO`
+  keeps a conduit legacy; `KC` scales the gain linearly (damped by
+  drawdown); a forced rate is routed and booked on both sides. Program
+  plan §B.4b, D-A18 v2, G-X4.
+- **Conduit seepage reaches the aquifer cells the conduit crosses (G-X3).**
+  A conduit with a `[LOSSES]` seepage rate used to lose that water to
+  nowhere; with a two-zone `[2D_AQUIFER]` under it, every routing step's
+  seepage volume — the same `rate × barrels × dt` the 1D books as
+  "Exfiltration Loss" — is now delivered into the saturated zone of the
+  cells its polyline (`[COORDINATES]` + `[VERTICES]`) crosses, split by the
+  exact length in each cell (a Cyrus–Beck clip against the convex cells; a
+  conduit half off the mesh delivers half). One-way and conservative: the
+  1D still books the loss, the aquifer's new `led_link` term is where it
+  lands (continuity `in` gains it), and the table rises through the same
+  storage coefficient as the node and lateral volumes, Dunne excess if the
+  column is full. `[2D_AQUIFER_OPTIONS] LINK_SEEPAGE AUTO` (default) |
+  `NONE` (the legacy loss); the run reports how many conduits enrolled.
+  Surfaces: `.rpt` "Conduit Seepage Inflow" in the 2D Aquifer Continuity
+  block; `.h5` `Mesh2_face_gw_link_seepage` (m³/s per cell, held) and a
+  12-column `groundwater_ledger` (`link` at index 10, the residual last —
+  read the `terms` attribute) plus `link_in` under `/groundwater_2d`; C API
+  `SWMM_GW2D_LED_LINK`, `SWMM_GW2D_VAR_QLINK`, option key `LINK_SEEPAGE`;
+  hotstart carries `led_link` as a 10th (length-prefixed) ledger term.
+  Gates: an evenly split conduit's seepage equals the aquifer's `led_link`
+  plus what is in flight to 1e-9 and raises the two columns identically to
+  1e-12; `NONE` leaves the 1D bit-identical; a conduit half over the mesh
+  delivers half, all into the cell under it; one entirely off the mesh
+  enrols nothing. Program plan §B.4b, G-X3.
+- **Every node inside the mesh exchanges with the two-zone aquifer (G-X2).**
+  `[2D_AQUIFER_OPTIONS] NODE_ENROLMENT AUTO` (the default) gives every node
+  whose `[COORDINATES]` fall in a mesh cell a direct-Darcy bed over the
+  cell's area — junctions, storage units and outfalls alike — so a
+  `[2D_AQUIFER_NODE]` row is only needed to override a bed's parameters or
+  to opt a node out: the row grammar gains `CELL AUTO` (locate the cell from
+  the coordinates; `swmm_gw2d_node_add` with cell −1) and `EXCHANGE NO`
+  (the node exchanges with nothing). `NODE_ENROLMENT ROWS` restores the
+  row-only behaviour. Auto-enrolled beds are not written back (the option
+  recreates them), authored rows round-trip with their new keywords, and
+  the run reports how many nodes enrolled. A node without authored
+  coordinates is never located (new `spatial.node_has_xy`). **One-owner
+  rule:** a storage unit with a bed exchanges through the conductance
+  channel and its own Green-Ampt exfiltration is switched off, named once
+  in the warnings; `EXCHANGE NO` keeps the legacy exfiltration. C API:
+  `swmm_gw2d_node_get_flags`, `swmm_gw2d_node_set_exchange`, option key
+  `NODE_ENROLMENT`. Gates: a junction with coordinates in a cell enrols,
+  exchanges and is not echoed; ROWS enrols nothing; `EXCHANGE NO` keeps a
+  node out and round-trips; an enrolled pond exfiltrates 0 on its own and
+  recharges through the bed, an opted-out pond exfiltrates as before.
+  Program plan §B.4b, G-X2.
+- **Two-way node ⇄ aquifer exchange, the recharge direction capped (G-X1).**
+  `[2D_AQUIFER_NODE]` beds already drained the aquifer into a node at the
+  MODFLOW-River conductance rate with the drain capped at the cell's
+  drainable water; the reverse direction — a node standing above the water
+  table recharging the column — was uncapped. It is now limited by (i) a
+  saturation guard: a column whose table is at the ground takes nothing
+  (water it accepted would come back as saturation excess in the same
+  firing and ping-pong through the one-batch delivery lag); (ii) the
+  saturated zone's headroom, in the same per-step share as the drain side;
+  (iii) what the node can give — its stored volume as a per-batch budget
+  plus its through-flow (a junction stores nothing below its rim but can
+  lose water at the rate it is fed). Two things kept beds from exchanging
+  at all and are fixed with it: a bed under a node with no
+  `[2D_VERTEX_NODE_MAP]` entry never saw the 1D heads (the orifice coupling
+  alone published them), and the marcher's tail path — every routing step
+  that does not fit a full macro cycle, i.e. any variable 1D step — fired
+  the surface lists only, so the aquifer's lateral flow and node exchange
+  skipped those steps entirely. Gates: `FloodedManholeRechargesUntilThe
+  ColumnIsFullThenStops` (a surcharged junction recharges, the column
+  fills, the exchange goes to zero without ever reversing sign, no Dunne,
+  the recharge equals the storage gain to 1e-9, the 1D side books the same
+  water leaving) and `SpringOnDryGroundReachesTheNetworkThroughTheOrifice
+  Coupling` (exfiltration onto a dry cell drains into a junction; aquifer,
+  surface and 1D ledgers agree on the volume). Program plan §B.4b, gates
+  (b) and (c).
+
+### Fixed
+
+- **A CUMULATIVE rain gage rained for one step per table entry instead of for
+  its recording interval (issue #158).** A `CUMULATIVE` gage records a running
+  depth total: the intensity for a record is the rise since the previous
+  record spread over the gage's RECORDING INTERVAL, and legacy applies it for
+  the whole of that interval. Through `6.0.0-alpha.3` the gage was read as a
+  step-function lookup on its series rather than legacy's state machine, so
+  the intensity was applied for a single runoff step at each table entry.
+  Both reported symptoms follow from that one cause. Subcatchment runoff
+  showed a separate rise-and-recess at every entry instead of one continuous
+  hydrograph; and Total Precipitation came in short by the interval/step
+  ratio — 0.750 in against legacy's 9.000 in on the reporter's deck (an
+  hourly counter rising 1 in/hr against a `1:00` interval and a `00:05:00`
+  wet step), which is the reported "factor of 12", 3600 s / 300 s. The ratio
+  is the interval over the step, not a constant: a 15-minute cumulative
+  series on a `0:15` gage was short by 3. Fixed by the legacy state machine
+  (704ca917, 2026-09-13); ten cumulative decks — ramp, counter reset, zero
+  rise, interval shorter than the series spacing, non-zero first record, SI,
+  scale factor, co-gage, sub-hourly and late start — are now byte-identical
+  to legacy. Pinned by `test_engine_gage_cumulative`, which fails 8/8 against
+  an `alpha.3` build and passes 8/8 on this one.
+
+- **Infiltration from an inactive 2D cell never reached the aquifer.** The
+  marcher's cheap between-rebuild pass (`lazySourcesOnly`, taken on every
+  cycle that does not rebuild) sank infiltration off the surface and booked
+  it as a loss, but — unlike `syncAndRebuild`'s lazy pass, which G1-c item 1
+  fixed — never handed the volume to the two-zone aquifer under it. Deck
+  continuity still closed, because a loss is a loss; the aquifer simply
+  never received that share of its recharge (1.4 % on T7.1's gate deck, and
+  more on a rain-on-grid deck where most cells stay inactive). Found by
+  T7.1's seam gate: the species could not balance while the water did not.
+
+- **A near-saturated closure-A column created water when anything withdrew
+  from it (found by G-X4's gate).** The two-zone kernel's closure A pairs the
+  saturated update's specific yield `Sy = θ_s − θ_bot` with a handover slab
+  of content `θ_bot`, so a moving table carries exactly `Sy·|Δh|`. When the
+  column is already at `θ_s` just under the table the difference collapses
+  and `Sy` hits its `1e-3` floor — but the handover kept using the raw
+  `θ_bot`, so the two no longer summed to `θ_s` and the cell gained
+  `(θ_bot − (θ_s − Sy_floor))·|Δh|·A` every firing. Invisible until a sink
+  pulled hard on a nearly-saturated column, which a conduit under a high
+  water table does: 0.08 m³ over half an hour on the G-X4 gate deck, an
+  0.7 % continuity error. The slab content is now derived from the `Sy`
+  actually used, which makes the identity hold unconditionally and is a
+  no-op on every deck where the floor does not bind.
+
+- **ENSLAVED closure: the bracketed solve now converges on the volume.** The
+  G1-c bracket used a floored derivative, which across the capillary fringe
+  (θ(L) = θ_s, W flat in h) made Newton creep and leave the balance unmet by
+  up to 1e-5 m³ per firing — a −1.9e-4 m³ drift over a half-hour of two
+  full cells exchanging laterally. Newton now uses the true derivative and
+  drops to bisection where it vanishes, converging on the residual volume
+  (kernel gate 4 ENSLAVED: 2.3e-12 → 5e-14).
+- **Two-zone aquifer: the ENSLAVED closure could zero the water table in one
+  firing (G1-c).** Its saturated-zone balance was solved by an unguarded
+  Newton from a linearised guess; with the table within centimetres of the
+  ground the surface water content is ≈ θ_s, the storage coefficient sits on
+  its floor, the guess lands above the ground and the clamped column makes
+  the derivative the floor too — one step of O(−1e5 m), the table zeroed, the
+  column re-evaluated at full length. Measured: the Dunne gate deck lost 10
+  of the 10 m³ delivered (aquifer residual −32 %) and returned 0.001 m³ of
+  the ~8 m³ owed; a two-cell exfiltration deck created 23.5 m³. The balance
+  `W(h) = θ_s·h + hᵤ*(z_s − h)` is monotone, so it is now solved on
+  `[0, z_s]` by a safeguarded Newton with bisection fallback, and what the
+  interval cannot hold is booked exactly — above the ground as Dunne excess,
+  below the bottom as the sinks' refund. The kernel gates (`gw2d_gates`, all
+  closures) are unchanged to 1e-12; the Dunne deck now returns 9.95 m³ with a
+  zero residual. Every deck whose `[2D_AQUIFER]` resolves to ENSLAVED (AUTO
+  picks it for thin unsaturated zones) changes deliberately.
+- **A dry surface froze the aquifer.** The marcher strode the whole window
+  when no surface cell was active, skipping the groundwater's lateral Darcy,
+  deep loss, ET and node exchange with it — a dry summer left the water
+  table exactly where the storm had put it. The macro cycle now runs while
+  an aquifer is live even when the surface is quiescent, and a dry cell the
+  aquifer exfiltrates into is pinned active by the rebuild's pending-cell
+  seed (the seed existed; nothing reached it). Gate:
+  `Aquifer2D.ExfiltrationReachesADryCellThroughThePendingSeed` — no rain, no
+  ponded water, lateral flow lifts a dry cell's table to the ground, the cell
+  receives exactly the Dunne volume, nothing stays parked, both continuity
+  errors zero.
+- **The aquifer's own stability step now bounds the ladder's base step.**
+  `dt0` came from the active surface cells alone, so a groundwater cell with
+  a finer bound than every wet cell (or the whole domain with a dry surface,
+  where `dt0` fell back to `MAX_TIMESTEP`) fired beyond it on rung 0. The
+  rebuild folds `min(Δt_g, Δt_u)` over the aquifer into `dt0` (the fine side
+  of G1-c item 3; the coarse side — D-N1's runtime tier count — is still
+  open).
+- **2D→aquifer recharge was booked one runoff step early (G1-c item 1).**
+  The 2D ledger's "to aquifer" transfer was booked when the marcher applied
+  the infiltration, the 1D groundwater ledger when the runoff step delivered
+  it, so the two disagreed by the routing steps between one drain and the
+  next — 3.6 % on the 30-minute U3 gate. The transfer is now booked at
+  delivery in the same loop as `gw_infil_2d_recharge`; the volume applied
+  but not yet delivered is `mass_balance_2d.infil_aquifer_pending`, and the
+  2D continuity block prints both ("to Aquifer (delivered) / (in flight)").
+  The U3 gate asserts the two ledgers equal to 1e-9 and delivered + pending
+  equals the applied loss.
+- **A rain-on-grid deck with no subcatchment rained at its first record
+  forever.** The legacy rain-gage state machine (2026-09-13) keeps a gage no
+  subcatchment or unit hydrograph reads at its seeded first record — legacy's
+  "unused gage" rule — but the 2D mesh reads every gage under
+  `RAINFALL_MODE SYSTEM` / `NATURAL_NEIGHBOUR`, so a mesh-only deck saw its
+  first non-zero intensity for the whole run. `gageIsUsed` now counts the
+  mesh as a reader (S7 found it: the sweeping gate's dry tail never came).
+  Decks with a subcatchment on the gage are unaffected; the 25-deck parity
+  corpus is byte-identical; **47 rain-on-grid benchmark decks in the 2D
+  census change deliberately** (e.g. `2d_matrix/bench79202_t1.inp` rainfall
+  inflow 39601 → 6606 — it rained ~6× too long) — timing / bit-identity
+  baselines resting on them need regenerating.
+- **2D transport rows on a mesh with no interior edge were silently inert.**
+  The marcher gated every species sink and source on its face accumulators
+  being non-empty, which is also true of a one-cell mesh with live rows
+  (`species_on_` now carries the intent; meshes with an interior edge are
+  bit-identical).
+- **Street sweeping never fired on an `.inp` deck.** The per-(subcatchment,
+  land use) last-swept counters (`subcatches.sweep_last_swept`) were sized only
+  by the C API (`resize_coverage`) and the GeoPackage reader — never by the
+  `[COVERAGES]` handler — so the A7 sweeping loop skipped every index past the
+  empty array and "Sweeping Removal" read 0.000 on every deck read from a file.
+  `handle_coverages` now sizes the counters with the coverage matrix. Found by
+  the BW-MSX ledger gate; a deck with a nonzero `[LANDUSES]` sweep interval
+  now sweeps (legacy parity). The bit-identity corpus has no such deck and is
+  25/25 byte-identical before and after. Two related parity gaps
+  remain and are recorded, not fixed: the `[LANDUSES]` LastSweep column is
+  parsed but never seeds the counter (legacy `lastSwept = start − sweepDays0`),
+  and a `[LOADINGS]` initial buildup is parked in `subcatches.conc` and never
+  applied to the pollutant buildup store (the new MSX store does apply its
+  loadings).
+- **2D surface water age (S4b closeout).** (1) Evaporation now leaves at the
+  water's own mean age as well as its own temperature: the `__WATER_AGE__` row
+  is sunk proportionally with the evaporated volume (`sinkIntensiveRowsWithEvap`),
+  so a still pond no longer *ages* by evaporating — the 1D convention
+  ("evaporation leaves the mean age unchanged", `WaterAgeLegacy`) now holds on
+  the mesh. (2) `__WATER_AGE__` is authored in **hours** in `[2D_INITIAL_QUALITY]`
+  and `[2D_BOUNDARY_QUALITY]`, as in the 1D `[INITIAL_QUALITY]`, and the
+  `.h5` `Mesh2_face_species_conc` age row is reported in **hours** like every
+  1D age column (it was seconds with `units = "1"`). (3) The dataset carries a
+  new `species_units` attribute parallel to `species_names` (`MG/L` | `UG/L` |
+  `#/L`, the MSX species' declared units, `hours`, `degC`); the engine
+  snapshot gains `surface_species_units`. (4) A deck with any transported row
+  (`TRANSPORT_*`, age, temperature) is always served by the CPU marcher and the
+  solver notice says why — the GPU/Kokkos plugin carries no transport rows and
+  used to be selectable with them silently absent. Gates:
+  `test_engine_2d_transport_s4` (evaporation keeps mean age; plugin refusal),
+  `test_engine_2d_output_options` (`species_units`; end-to-end hours).
+  Program plan D-A20 / D-A21.
+- **Explicit FV: a lateral inflow into a dry pass-through junction is no longer lost.** A
+  clean degree-2 junction's lateral is credited straight into its two adjacent cells, and
+  the node marks it delivered — but under `FV_COMPACTION` (the default) dry cells are
+  inactive and the cell update, the only place the credit lands, skips them. The ledger
+  booked the inflow, no cell ever took it: on a 7 km tunnel filling from dry
+  (Klaver Example_02, 4.877 m circular in 5 m cells, seven lateral junctions) 100 % of the
+  first 70 minutes of lateral inflow at a junction vanished, 4.7 % of the run's total, until
+  the wetting front from upstream activated the cells; on East Boston the same mechanism
+  was the residual 0.8 % continuity error. A cell that receives a diverted lateral is now
+  active regardless of depth, and a credit into an inactive cell invalidates the active
+  lists. Klaver 4.691 % → −0.000 %, East Boston 0.797 % → −0.000 %, TwinOaks 4 h 0.000 %.
+  Gate `LateralIntoADryPassThroughJunctionIsNotLost` (a junction flanked by virtual
+  junctions, dry pipes: 100 % continuity error and zero outflow before the fix).
+- **Explicit FV: a junction's own-head ghost no longer takes part in the slot/free bore
+  bound, and the vented-ghost crown-celerity cap is removed.** Marked free, the ghost of a
+  junction whose cell side stands in the slot too (a whole tunnel pressurized 50 m above
+  its junction crowns) made a "slot/free" pair of an acoustic face, the bound cut the
+  acoustic waves at every lateral junction, the algebraic solve found no head below its
+  ceiling, clamped at the rim and booked 63 100 m³ of "flooding" at junctions whose
+  published depth never exceeded half their rim (Klaver Example_02); marked by state, the
+  bound on a momentarily free cell beside it drove a 2× over-conveying limit cycle at a 20×
+  overloaded 0.5 ft entrance. The entrance lock the bound exists for lives at the INTERIOR
+  slot/free faces (measured: the bound alone releases it; the ghost celerity cap alone does
+  not, and with the ghost in the slot beside a momentarily free cell the cap fed the same
+  limit cycle), so the ghost is excluded (`FaceState::press == 2`) and the cap and
+  `FvGeometry::c_crown` are gone. Klaver: flooding 6.31 hectare-m → 0, the downstream weir
+  overflows 6.67 hectare-m as it should; the culvert fixture is unchanged; transitions
+  identical; lab e2_2006 C1/C2 within 0.003 NSE. `SurchargeDepthDelaysFlooding` asserts the
+  column on the AVERAGE depth: both runs open with a one-record startup overshoot (23–47 ft
+  on the first report line of a 10 cfs pour into a dry 0.5 ft pipe through a node with no
+  storage), a separate open item.
+- **FV report: the per-node "Highest Continuity Errors" no longer reads a diverted lateral
+  as retained.** A lateral credited straight into the incident cells never crossed a node
+  face, so the face ledger held no outflow for it and the node's own continuity showed
+  80–100 % at every lateral-fed pass-through junction (East Boston, TwinOaks, Klaver) while
+  the system balanced to 0.000 %. The solver books it as node outflow per substep on both
+  stepping paths (`bookDivertedLateral`), and a virtual junction's lateral likewise in the
+  publish. Report only: every `.out` is byte-identical. Nodes that see a few cubic metres
+  over a run still show large relative numbers, as in legacy.
+- **Explicit FV: the wave entering a free surface at a Preissmann-slot interface is bounded
+  by the bore speed, not the slot's acoustic celerity.** The explicit slot path locked
+  pressurized at an entrance and flooded the junction however high its head stood (a 3 ft
+  culvert on a 5 % slope conveyed 96–136 cfs for every inflow from 100 cfs up; the
+  inlet-control fixture's 120 cfs passed only by luck of the legacy table closure). Face
+  traces showed Davis's symmetric estimate carrying the slot celerity into BOTH HLL waves
+  at a slot/free face, so the flux carried a diffusive mass term of order c_slot·ΔA (+52 cfs
+  at the node face) and a −245 ft⁴/s² momentum sink that pinned the entrance flux to the
+  cell's own momentum. Now: when exactly one side stands in the slot (`FaceState::press`),
+  the wave entering the free side is bounded by the Rankine–Hugoniot jump ΔQ/ΔA between
+  that side's own u ± c and the Davis bound (a junction's own-head ghost never takes part
+  in the bound — see the 2026-09-13 entry below); and the degree-1 prescribed-discharge
+  fallback skips an interior cell already in the slot (forcing the inflow into a full pipe
+  lifted its slot head by q·Δt/(t_slot·Δx) per substep — a 0.5 ft pipe fed 10 cfs chattered
+  its junction between dry and 40–80 ft; the fallback was also the culvert's
+  pressurized-reach deficit: 150 and 200 cfs now convey 150 / 200 at 2.85 / 10.90 ft against
+  DYNWAVE's 3.12 / 10.98). Measured (`plans/FV1D_PERF_BASELINE_2026-09-11.md`, Item 2):
+  the culvert passes 60–200 cfs like DYNWAVE at 53 instead of 173 substeps per step;
+  transitions `fv`/`fv-lts` identical; lab e2_2006 C1 within 0.0024 NSE, C2 st 0.56 → 0.84,
+  e4_aureli C1 p300 −9.7 → −2.3; the TPA high-celerity filling deck completes at
+  a = 150…3000 m/s where it diverged at every one (the P5b pin
+  `KnownIssueHighCelerityFillingDiverges` becomes the positive gate
+  `HighCelerityFillingCompletes`; `DivergenceGuardFailsLoudNotSilent` moves to a = 10 000,
+  which still diverges); `FvUnsteadyFriction.ValveClosureDampsOnImplicitPath`, the
+  implicit-path residual left red by the Phase 2 secant correction, passes again. Decks
+  that never pressurize are byte-identical. Dev switches `OPENSWMM_FV_MIXED_WAVE=0` and
+  `OPENSWMM_FV_DEG1=1` restore the previous estimates for one A/B cycle.
+- **FILLED_CIRCULAR conduit offsets cross the C API as authored values.** Once
+  `resolve_cross_references` raised a partly filled circular conduit's stored offsets by the sediment
+  depth (legacy `link.c:1072-1077`), `swmm_link_get_offset_up/dn` reported the raised value, the setters
+  stored whatever they were handed, and `swmm_link_set_xsect` left `y_bot` stale on a live edit — while
+  the `.inp` and GeoPackage writers subtract the sediment depth unconditionally, so a GUI edit of such a
+  conduit saved offsets shifted by `yBot`. The getters and setters now remove / add the bump
+  (`link::filledCircularOffsetBump`; zero in the BUILDING state so `swmm_finalize_model` bumps exactly
+  once), `swmm_link_set_xsect` re-bases the stored offsets on every exit and derives a filled section
+  through `xsect::setParams` like the resolver does, and `swmm_conduit_split` stores an authored 0 at
+  the new junction. `test_engine_filled_circular_offset_api`.
+- **The control-action log and the 2D marcher's telemetry no longer grow without bound.** With
+  `[REPORT] CONTROLS YES` every numeric control action pushed an entry carrying a heap string for the
+  whole run; entries are POD now (rule names interned by index), capped at 1 000 000 with the overflow
+  counted at the end of the report's *Control Actions Taken* block. `ExplicitInertialSolver` kept a
+  `(t, active cells)` sample per rebuild only to fold min / mean / max at `run_stats()`; it folds as it
+  samples and keeps the vector only when `OPENSWMM_2D_MARCHER_TELEMETRY` names a CSV.
+
+### Changed
+
+- **Host-reserved threads count toward oversubscription.** `OPENSWMM_HOST_RESERVED_THREADS` (the GUI
+  exports 3: its main, render and engine-IO threads) is added to the requested team before the
+  logical-CPU comparison, so a `THREADS 8` deck run inside the GUI on a 10-CPU machine takes the
+  passive-wait path instead of spinning eight workers against the render thread; the oversubscription
+  warning names the reserved count. `kmp_set_blocktime(INT_MAX)` is skipped when the host pre-set
+  `KMP_BLOCKTIME`, which the old comment promised but the runtime call ignored. `test_thread_info`.
+
+## [6.0.0-alpha.4] — 2026-09-08
+
+### Fixed
+
+- **2D marcher performance regression after the tri-quad / FULL_SWE work** (`plans/2D_PERF_REGRESSION_DIAGNOSIS_2026-09-07.md`).
+  LOCAL_INERTIAL results are byte-identical before and after; measured on the Bellinge storm slice the
+  LI cell pass had grown ~17 % and start-up ~0.3 s. Fixes: `MeshData::n_quads()` (an O(n_cells) scan) was
+  re-run at the top of every face-tier fire — now resolved once in `initialize()`; the FULL_SWE momentum
+  code is compiled out of the LI/DW cell kernel (`fireCellsImpl<bool>`), and the quad VFR Newton is kept
+  out of line so `cellEtaDepth` inlines into the cell kernels again; species booking is skipped without
+  species; `buildCouplingPoints` uses a vertex→cell map instead of an O(n_couplings × n_cells) scan.
+  FULL_SWE / DIFFUSIVE_WAVE: the front-rebuild halo and frontier sweeps are cell-parallel instead of
+  serial edge passes (the tier pull-down stays serial — Gauss-Seidel propagates further per pass than a
+  Jacobi form, and the difference moves DIFFUSIVE_WAVE results); `FRONT_REBUILD AUTO` is on for FULL_SWE
+  only (a diffusive front never breaches the 1-ring halo within the 4-cycle cadence) — a DIFFUSIVE_WAVE
+  deck that wants the old cadence sets `FRONT_REBUILD YES` and is byte-identical again; dry-dry faces
+  leave the FULL_SWE face pass
+  early; WALL mirror fluxes come from a per-cell CSR built once instead of a neighbour scan on every wet
+  cell; the RK2 step allocates nothing and averages in parallel; the diffusive law reads a precomputed
+  `n_face`. `THREADS 0` now applies the Apple P-core clamp to the 2D marcher as it already did to dynamic
+  wave. Nothing changes for the Kokkos plugin (still all-triangle LOCAL_INERTIAL only).
+- **2D `FULL_SWE`: a prescribed-discharge boundary now delivers exactly what it prescribes.** The
+  ghost-cell Riemann boundary returned the Riemann solver's own mass flux — a wave-speed-weighted
+  blend of the interior and prescribed states — so a `SPECIFIED_FLOW` / `RATING_CURVE` inlet
+  under-delivered (measured 9 %, 7 % and 21 % short on the SWASHES subcritical, transcritical and
+  shock bumps) and, at a supercritical inlet, ran backwards. The prescribed discharge is now the
+  mass flux verbatim, as the local-inertial law has always done; the ghost state supplies only the
+  momentum flux, and its depth follows the outgoing Riemann invariant on a subcritical inflow
+  (critical depth into a dry cell, interior depth otherwise). `NORMAL_FLOW` under `FULL_SWE` applies
+  the same Manning outlet law as the other closures instead of a zero-gradient ghost, which was
+  absorbing and drained a pond through an inert (zero-slope) outlet. Boundary momentum is rescaled
+  when the availability clamp shrinks the mass, and `settleAccumulators` now settles the momentum
+  accumulators with the mass, so a cell re-tiered between firings cannot strand or replay them.
+  SWASHES depth error: bump-shock 0.070 → 0.032 (gate 0.05), bump-transcritical 0.042 → 0.033.
+  All-triangle `LOCAL_INERTIAL` results are unchanged (byte-identical on four decks).
+
+### Added
+
+- **2D: `swmm_2d_get_run_stats` C API / `Surface2D.run_stats`** — the solver backend label, momentum
+  closure, configured `LTS_TIERS`, cumulative substeps and face-kernel evaluations, active-cell fractions
+  and per-tier LTS occupancy, readable while the run is in flight. The report and the warning callback
+  carry a `2D solver: …` advisory naming the backend and closure, and the Kokkos-plugin refusal for quad
+  meshes / non-`LOCAL_INERTIAL` closures is now printed under `BACKEND AUTO` too (a `DIFFUSIVE_WAVE` deck
+  used to fall back silently and read as a slowdown). `bookFaceSpecies` returns early on species-free models.
+- **2D: momentum closures `MOMENTUM_EQUATION FULL_SWE | DIFFUSIVE_WAVE` and mixed
+  triangle/quadrilateral meshes `[2D_QUADS]`** (plans/2D_FULL_SWE_SHOCK_CAPTURING_PLAN_2026-09-05.md,
+  plans/2D_TRI_QUAD_MESH_PLAN_2026-09-06.md; handoff plans/HANDOFF_2D_TRIQUAD_FULLSWE_2026-09-06.md).
+  - `FULL_SWE`: conservative shallow-water equations with the convective term on the same explicit
+    marcher — cell (h, hu, hv), hydrostatic reconstruction, rotated HLLC Riemann flux with the
+    Audusse bed-slope correction (lake at rest exact, walls included), ghost-cell Riemann boundaries,
+    semi-implicit friction; `RECONSTRUCTION_ORDER 2` = MUSCL (Barth–Jespersen) + SSP-RK2 in global-dt
+    mode. SWASHES strips: Stoker 6.5 % → 0.7 % (0.3 % second order), Ritter 13 % → 1.7 %, subcritical
+    bump 6.8 % → 0.5 %, transcritical bump 27 % → 4.4 %, bump-with-shock 12 % → 7.3 %.
+  - `DIFFUSIVE_WAVE`: explicit Manning quasi-steady face law (Hunter et al. 2005) with the Δx²
+    step bound per cell absorbed by the LTS tiers.
+  - `FRONT_REBUILD AUTO|YES|NO`: breach-triggered active-set rebuild with a five-ring halo and
+    front-cadence tiers for dry halo cells (AUTO = on for the new closures, off for local-inertial).
+  - `[2D_QUADS]` convex quadrilateral cells (cells numbered triangles first, then quads; unified
+    edge rule `edge k = (v[(k+1)%nv], v[(k+2)%nv])`), padded stride-4 `MeshData` layout, quad
+    geometry (shoelace area, area centroid), Begnudelli & Sanders (2007) quad VFR closure
+    (`mesh/QuadVfr.hpp`, verified against a brute-force integration oracle), `β/nv` positivity
+    share, GeoPackage `mesh_2d_quads`, UGRID mixed-topology HDF5 output (`Mesh2_face_nodes [n,4]` +
+    `_FillValue` + `Mesh2_face_nv`), C API `swmm_2d_cell_count / quad_count / edge_stride /
+    cell_vertex_count / cell_get_vertices / cell_get_neighbours`, Python mirrors.
+  - All-triangle LOCAL_INERTIAL models are byte-identical (verified on four decks: `.h5` datasets,
+    `.out`, `.rpt`); the SWASHES harness gains the `2d-swe`, `2d-swe2`, `2d-dw` columns.
+  - `ADVECTION YES` is deprecated (warns on load; still honoured). The Kokkos plugin serves only
+    all-triangle LOCAL_INERTIAL models and hands everything else to the CPU marcher with a notice.
+
+- **Street inlets: legacy-parity HEC-22 capture kernel, `[INLET_JUNCTIONS]`, and an inlet
+  design/usage C API** — `[INLETS]` / `[INLET_USAGE]` were parsed, but the street geometry never
+  reached the capture calculation and capture ran after routing:
+  - `[INLET_JUNCTIONS]` and the inlet-junction node: a virtual junction (zero storage, exactly two
+    STREET conduits of the same section) that is *unsealed* — it floods above the street section
+    or its `MaxDepth` — and captures the arriving gutter flow to a capture node, with backflow when
+    that node surcharges. `Name Elev MaxDepth Inlet CaptureNode (#Inlets %Clog Qmax aLocal wLocal
+    Placement)`, written after `[VIRTUAL_JUNCTIONS]` and excluded from `[JUNCTIONS]` /
+    `[VIRTUAL_JUNCTIONS]`. Errors 623 (host conduits are not streets), 625 (unknown design),
+    627 (capture node missing, the host itself, or virtual), 629 (`[INLET_USAGE]` row on an
+    inlet-junction conduit), 631 (extra tokens), 633 (inlet junction without a usage row);
+    warning 635 (design incompatible with the host section — legacy WARNING 12, row ignored).
+  - C API: `SWMM_InletDesign` with `swmm_inlet_get_design` / `set_design` / `get_comment` /
+    `set_comment`; `SWMM_InletUsage` with `swmm_inlet_usage_count` / `find_link` / `find_node` /
+    `get` / `set` / `remove`; `swmm_node_is_inlet` / `inlet_eligible` / `set_inlet`;
+    `swmm_conduit_split_inlet` (atomic split of a street conduit inserting an inlet junction) and
+    `swmm_inlet_junction_fuse`. Python: `Inlets.get_design` / `set_design`, `InletUsages`,
+    `Node.is_inlet`, `inlet_rule_violation`, `split_conduit_inlet`, `fuse_inlet_junction`, enums
+    `InletType` / `GrateType` / `ThroatType` / `InletCurveKind` / `InletPlacement` /
+    `InletHostKind` (`python/tests/engine/test_inlet_api.py`).
+  - HEC-22 kernel ported 1:1 from legacy `inlet.c` (on-grade grate / curb / slotted / combination
+    sweeper, on-sag weir-orifice, custom curves, drop inlets), run at the end of lateral-inflow
+    assembly — before routing, as legacy does — for conduit- and node-hosted inlets alike.
+    Report: legacy "Street Flow Summary" plus a "Street Inlet Flow Summary" with the legacy
+    performance columns (node hosts as `NAME (node)`). Example
+    `examples/inlets/street_inlet_junction.inp`; parity set `tests/parity/inlets/` (EPA 5.2 inlet
+    decks through both engines: capture efficiency at peak identical on every on-grade / on-sag
+    deck and physical captured volumes identical; the attributed divergences are listed in its
+    README). (`test_engine_inlet_capture`, `test_engine_inlet_junction_io`.)
+  - `swmm_model_write_compat(engine, path, SWMM_INP_PROFILE_SWMM5)` — the SWMM 5.x write
+    profile (MULTI_ENGINE plan V2 Phase 4): v6-only sections (`[VIRTUAL_JUNCTIONS]`,
+    `[INLET_JUNCTIONS]`, `[2D_*]`, `[PLUGINS]`, `[PROCESS_COMPONENTS]`, `[USER_FLAGS]`,
+    `[USER_FLAG_VALUES]`, `[RDII_DECAY]`) and option keys are omitted, `FLOW_ROUTING FV` is
+    written as `DYNWAVE`, `SURCHARGE_METHOD DYNAMIC_SLOT` / `TPA` as `SLOT`, a virtual junction
+    becomes an ordinary junction and an inlet junction an ordinary junction plus an
+    `[INLET_USAGE]` row on its approach conduit; every substitution is reported as a warning
+    and the file opens with a comment naming the profile. GeoPackage gains `streets`,
+    `inlets` and `inlet_usage` tables so street models and both inlet grammars round-trip
+    (files written before the tables existed read as before). Inlet junctions are refused
+    under `FLOW_ROUTING FV` (error 619): the FV mesh splices virtual junctions out and would
+    drop the inlet.
+
+- **GUI-editor round-trip API for `[GWF]` expressions** — a subcatchment's custom groundwater
+  flow expressions were reachable only through the stringly-typed `swmm_options_get/set_ext`
+  key `"GWF:<subcatch>:LATERAL|DEEP"`, with no validator:
+  - `SWMM_GwfType` (`LATERAL`, `DEEP`) with `swmm_subcatch_get_gwf_expression` /
+    `_set_gwf_expression` (NULL/empty clears; stored as typed, pre-start-only).
+  - `swmm_gwf_validate_expression` — grammar-only, never mutates the engine (peer of
+    `swmm_treatment_validate_expression`): unknown characters and identifiers, unbalanced
+    parentheses, misplaced operators and wrong `min`/`max` arity are errors, with a 0-based
+    column; an empty expression is invalid.
+  - Vocabulary for completers: `swmm_gwf_variable_count/name/description` (the 11 `GW_VAR_NAMES`)
+    and `swmm_gwf_function_count/name` (the 21 `MathExpr` functions, enumerator order).
+  - Parser leniencies matched to the editor: `[GWF]` accepts the legacy `LAT` abbreviation and a
+    subcatchment name in any case (the stored key uses the `[SUBCATCHMENTS]` spelling), and a
+    malformed expression is now **ERROR 233** at open and at `initialize()` instead of being
+    silently dropped (unknown identifiers previously evaluated to 0.0).
+  - Python: `GwfType`, `Subcatchments.get/set_gwf_expression`, `validate_gwf_expression`,
+    `gwf_variables()`, `gwf_functions()` with `.pyi` stubs. (`test_engine_gwf_api`.)
+
+- **Live `.out` reading.** `swmm_output_open_live(path)` opens a binary
+  output file that is still being written (or that never got its closing
+  records): offsets come from a forward parse of the header and the period
+  count from the file size, whole records only. `swmm_output_refresh`
+  re-counts on demand and adopts the footer when it appears;
+  `swmm_output_is_live` reports the state. Both writers — the 6.x
+  `DefaultOutputPlugin` and the legacy 5.3.0 `output_saveResults` — now
+  `fflush` after every report period so a tailing reader sees each period
+  as it completes. File format unchanged; `swmm_output_open` untouched.
+  (`OutputReader::openLive/refresh`, `test_engine_output_reader_live`.)
+
+- **Per-cell cumulative rainfall volume in the 2D sidecar.** New
+  `/Mesh2_face_rain_cum` `[nTime, nFace]` dataset (m³) alongside the existing
+  `/Mesh2_face_rainfall` intensity. Booked in
+  `SurfaceRouter2D::accumulateMassBalance` from the same per-cell term that
+  feeds `mass_balance_2d/rainfall_in`, so the sum over cells equals the
+  ledger by construction (`SurfaceRouter2D::rainCumulative`,
+  `SimulationSnapshot::surface_rain_cum`). C API bulk getters
+  `swmm_2d_get_rainfall_bulk` / `swmm_2d_get_rain_volume_bulk` expose the
+  two fields to in-process consumers (GUI live plotting).
+
+- **`TEMP` in reaction expressions — temperature-dependent kinetics.**
+  Multispecies rate/equilibrium/formula expressions can reference the
+  local water temperature (°C) as the hydraulic variable `TEMP`, enabling
+  Arrhenius-style corrections such as `theta ^ (TEMP - 20)`. Under
+  `HEAT_TRANSPORT` each element evaluates at its own transported
+  temperature (per cell on the Eulerian ARD mesh, per segment under LARD,
+  per link/node under the legacy router); without heat transport the new
+  `[REACTION_OPTIONS] TEMPERATURE` constant applies (default 20 °C, any
+  finite value accepted, exposed through `swmm_reaction_option_get/set`
+  and `solver.reactions.get_option/set_option`). The GUI expression
+  completer picks the variable up automatically from the shared
+  vocabulary API.
+
+- **Components write their own config files — API and GUI edits survive a
+  save (IO3a).** `swmm_model_write` emitted the `[PROCESS_COMPONENTS]`
+  `config=` path and copied the file the model was read from; nothing
+  rewrote its content, so every edit made through a C API or the GUI — a
+  `[HEAT_SOURCES]` temperature, a reaction expression — was silently lost
+  on save while a hand-edit persisted. A new `ComponentConfigSave` hook
+  (the inverse of `ComponentConfigApply`; empty return = decline → the
+  carry-alongside copy still runs) lets components adopt saving one at a
+  time with no intermediate state losing data. Heat and reactions adopt
+  here; water age and ARD still decline (IO3c — their configs are
+  unit-bearing: age stores seconds against a file in hours, so their
+  serializers need a fixed-point round-trip gate heat never needed). `saveHeatConfig` writes
+  only what the model actually set. IO3b (same release) extended the heat
+  renderer to all five sections — `[RADIATIVE_FLUXES]` (all three SHORTWAVE
+  spellings, with the TIMESERIES index mapped back to its series name),
+  `[SOLAR_RADIATION]` and `[CLOUD_COVER]` — so heat edits survive a save on
+  EVERY model, and the IO3a decline guard is deleted in favour of
+  structural `sizeof` pins: growing any of the three config structs now
+  breaks the build beside the renderer instead of silently reopening the
+  loss. Found en route: the renderer's first spelling of the
+  longwave-reflection key (`LW_REFLECTION`) is one the parser refuses
+  (`ATM_LW_REFLECTION`) — caught by the new field-by-field round-trip gate
+  before it shipped.
+
+- **Python bindings for the five transport-process headers.** `solver.heat`,
+  `solver.reactions`, `solver.water_age`, `solver.initial_quality` and
+  `solver.process_components` bind `openswmm_heat.h`,
+  `openswmm_reactions.h`, `openswmm_water_age.h`,
+  `openswmm_initial_quality.h` and `openswmm_process_components.h` as
+  keyed, iterable Python views rather than index-and-out-pointer calls:
+  flux-module and `[RADIATIVE_FLUXES]`/`[SOLAR_RADIATION]`/`[CLOUD_COVER]`
+  mappings plus the `[HEAT_SOURCES]` table with node overrides; species,
+  coefficients, terms, per-scope expressions and the whole-file `.rxn`
+  text surface; the `[WATER_AGE_SOURCES]` globals and overrides; the
+  `[INITIAL_QUALITY]` rows; and the `[PROCESS_COMPONENTS]` registry.
+
+  The bindings refuse exactly what the C API refuses, so the constraints
+  that matter survive the language boundary rather than being re-derived
+  on the Python side: heat values are refused rather than clamped and
+  `COMPUTED` shortwave still demands an explicit latitude and longitude;
+  reaction mutation stays eagerly validated and transactional, so a stored
+  system is never uncompilable and `serialize -> apply_text -> serialize`
+  is byte-identical; water-age hours stay **signed**, because a negative
+  source age extracts age-volume by design; and `Reactions`'
+  hydraulic-variable and function tables are exposed as engine-less
+  `staticmethod`s so a completer enumerates the compiler's own vocabulary
+  instead of carrying a copy of it.
+
+  Nine enums land with them — `HeatFluxModule`, `HeatShortwaveMode`,
+  `HeatRadiativeParam`, `HeatSolarParam`, `HeatCloudParam`,
+  `HeatSourceKind`, `WaterAgeSource`, `ReactionScope` and
+  `ReactionExprForm` — each mirroring its C counterpart's numbering, and
+  each accepted anywhere the corresponding `int` or token string is.
+
+- **Preissmann slot readers and 2-D name/bulk accessors.** `Link.slot_volume`
+  reports the water standing above the pipe crown, and
+  `LinkStatsView.peak_slot_share` / `LinkStatsView.slot_share` report the
+  peak instantaneous and run-level slot fraction — the latter a ratio of
+  time integrals, never an average of instantaneous ratios. All three are
+  finite-volume-routing only and read `0.0` under dynamic wave.
+  `Surface2D` gains `set_vertex_z_bulk` (one mesh rescan instead of one
+  per vertex) and the three read-back companions the boundary-condition
+  setters had been missing: `get_edge_bc_tseries_name`,
+  `get_edge_bc_flow_tseries_name` and `get_edge_bc_rating_curve_name`,
+  each returning `""` for a clear slot so a round trip through an editor
+  no longer has to remember what it wrote.
+
+- **C/Python/MCP parity matrix at zero gaps in all three columns.** Of
+  1016 C symbols, 992 are at parity and the remaining 24 are
+  documented-intentional exclusions — the first time the matrix has been
+  clean across the C, Python and MCP columns simultaneously.
+
+- **Heat transport H6a — incoming shortwave forcing.** `[RADIATIVE_FLUXES]
+  SHORTWAVE` now takes three mutually exclusive spellings instead of one
+  constant: a fixed W/m², `TIMESERIES <name>` for a measured record, or
+  `COMPUTED` for a Spencer/NOAA solar position driving a Bird & Hulstrom
+  (1981) clear-sky model. New `[SOLAR_RADIATION]` (site coordinates,
+  timezone, elevation, Bird atmosphere) and `[CLOUD_COVER]` (fraction,
+  constant or timeseries) sections in `model.heat`, plus the new public
+  header `openswmm_heat.h` — the surface GUI task G4g was blocked on.
+  The header also carries the `[HEAT_SOURCES]` inlet-temperature table
+  (step 3): per-source GLOBAL read/write with a configured-vs-default
+  distinction, NODE-override enumeration and CRUD, and an effective-value
+  resolver that delegates to the engine's own precedence. The API refuses
+  exactly what the parser refuses — including NaN/inf, a hole the
+  pre-existing `[RADIATIVE_FLUXES]` fraction guard had and which is now
+  closed. ⚠ API edits to a component config do not yet survive
+  `swmm_model_write` (no per-component serialization until IO3) — pinned
+  by a gate rather than left to be discovered.
+
+  Cloud fraction modulates **both** directions: it attenuates shortwave
+  (Kasten–Czeplak `1 − k C^n`) and raises atmospheric emissivity in the
+  longwave (Bolz `1 + k_lw C²`). Clear sky is bit-identical to H3, not
+  merely close — the cloud factor is a literal `1.0` that
+  `atmosphericEmissivity` short-circuits, so the RHE-gated Brunt path is
+  the same object code it was validated as.
+
+  Three refusals worth knowing about, each chosen over a silent fallback:
+  configuring two SHORTWAVE spellings is an error rather than a precedence
+  ladder; `COMPUTED` without `LATITUDE`/`LONGITUDE` is an error rather than
+  a fallback onto the `[TEMPERATURE]` SNOWMELT latitude (which defaults to
+  0 and would model equatorial noon); and out-of-range values are refused
+  rather than clamped, identically in the parser and the C API.
+
+  **Solar position is Spencer/NOAA (~0.1°), not NREL SPA (±0.0003°).** The
+  plan originally specified SPA; implementing it faithfully needs ~260 rows
+  of periodic-term constants that would have been transcribed from memory
+  alongside the test vector meant to check them. `solarPosition()` is the
+  swap point for landing SPA later, against its published source. See
+  `HEAT_TRANSPORT_PLAN.md` §2.5 and D-H6a-4.
+
+### Performance
+
+- **FV published node stages no longer stand above the conduits they connect.**
+  The face-consistent stage reconstruction covered only degree-2 pass-through
+  junctions -- the set the solver splices -- so on a branching network most
+  nodes published the solver's own head. Measured on `Example1.inp` under
+  `FLOW_ROUTING FV` at `FV_MIN_CELLS 1`, where a conduit is a single cell and
+  the comparison is exact, those nodes sat up to **0.91 ft above their own
+  adjacent cell**, falling ~first-order under refinement -- a datum term, not
+  physics. It survives on nodes with no lateral inflow at all, which rules out
+  "head needed to drive the inflow out".
+
+  The reconstruction now covers storage-less clean junctions at any degree.
+  Two guards make that safe: a face perched ABOVE the node's own water surface
+  is a free overfall and does not vote (without this, a conduit entering 4 ft
+  above the invert read its offset as node depth and drove one junction's
+  reported average from 0.28 ft to 4.11 ft), and a pondable junction demoted to
+  the bucket path above its rim keeps its volume-ledger head.
+
+  Culvert-inlet and flap-gate faces are excluded: those node heads are genuine
+  headwaters. Storage units, outfalls and structure-fed nodes are unchanged.
+
+  After: max +0.0002 ft and -0.0001 ft on the two affected classes. **Routing is
+  untouched** -- continuity identical and the Link Flow Summary byte-identical.
+  Reporting only, on purpose: solver-internal heads double as ghost boundary
+  states under LTS tier holds. Probe and full measurements in
+  `tests/manual/fv_node_stage/`.
+
+- **`FV_CFL_CENSUS_INTERVAL` now does what it says; it was inert for every
+  value.** The explicit FV solver conflated two quantities in one member: the
+  step the last accepted substep took, and the Courant bound the last census
+  returned. The substep tail wrote the taken step — clamped to the time
+  remaining in the routing step, so possibly a tiny fragment — into that
+  member and then zeroed the census countdown to undo the damage, which forced
+  a full face census on every substep no matter what the option was set to.
+
+  The two are now separate. The bound survives a skipped census, which is the
+  entire point of the option, and only a genuine invalidation resets the
+  countdown: a retry (the post-step census having proved the bound
+  inadmissible), a rebuild of the active face lists, a re-tier's accumulator
+  settle, and both macro-cycle exits. A clamp to the routing-step boundary
+  proves nothing about the Courant bound and is no longer written back.
+
+  At the default of 1 this is bit-identical — verified, not asserted:
+  `Example1.inp` under `FLOW_ROUTING FV` produces a byte-identical `.out` at
+  `OMP_NUM_THREADS` 1 and 8 against the same build with the change reverted.
+
+- **Dropped the write-only `f_scale_` face array from the explicit FV solver.**
+  Written at four sites (`initialize`, `computeFaceFlux`, `limitPositivity`,
+  `fireFaces`) and read nowhere in the repository.
+
+- **Model load and initialization: up to 17× faster, and the wall-clock window
+  before the first routing step cut on every model size.** A user reported 25
+  minutes between clicking Run and the analysis starting on a large model; that
+  window is `open()` + `initialize()` + `start()`, and none of it was
+  instrumented. See `plans/MODEL_LOAD_OPTIMIZATION_RESULTS_2026-08-13.md` for
+  the full measured breakdown, including the four plan predictions that
+  measurement disproved.
+
+  Measured in Release, medians of 5, one process per model:
+
+  | Model | before | after |
+  |---|---:|---:|
+  | 100k-conduit FV model, `open+initialize` | 8047 ms | 466 ms (**17.3×**) |
+  | 500 timeseries × 10k rows, `open` | 7213 ms | 2571 ms (**2.81×**) |
+  | 10k rain gages, `open` | 335 ms | 49 ms (**6.90×**) |
+  | 50k STREET conduits, `open` | 448 ms | 159 ms (**2.83×**) |
+  | 100k nodes + inflows with `REPORT INPUT YES`, full | 2550 ms | 897 ms (**2.84×**) |
+  | 500k nodes/links with geometry, `open` | 3553 ms | 2482 ms (**1.43×**) |
+
+  Peak RSS also falls: −35% on the STREET model, −17% on the 500k model.
+
+  The individual fixes: a case-insensitive hash index over the timeseries/curve
+  store (it was a linear scan called once per data row while parsing
+  `[TIMESERIES]`/`[CURVES]`); memoized STREET/CUSTOM transect tabulation (one
+  ~1.3 KB table per street instead of one per link); a one-pass node-inflow
+  prepass in the `REPORT INPUT YES` summary (was O(nodes × inflow rows));
+  memoized finite-volume per-conduit geometry tabulation (~5,000 closure
+  evaluations per conduit, for a result that depends only on the cross-section);
+  reserved SoA capacity and token vectors during parsing; an allocation-free
+  `;; UNITS:` prescan; a 1 MB buffer on the binary `.out` stream; and
+  file-size-derived reserves for external FILE-backed timeseries in place of a
+  flat 100,000-row allocation each.
+
+  All of it is bit-identical: every change was gated on a parity check
+  comparing the `.rpt` (timing lines masked), the `.out` byte for byte, and the
+  written-back `.inp`, across six models covering STREET, IRREGULAR, FV,
+  storage and quality.
+
+### Added
+
+- **MSX species ride LARD segments and react — L3, the last unstarted
+  quality step.** A reactions component under `QUALITY_SOLVER LAGRANGIAN`
+  used to warn "the LARD reaction binding is not implemented (deferred
+  L3)" while every species sat at its initial value — and the species did
+  not ride the segments at all (the row layout was pollutants + age +
+  temperature; the LEGACY engine does not transport them either — only
+  ARD did). The segment store now carries the compiled species table
+  after the reserved rows: they mix, pass through, release, seed and
+  publish like every other row, and a new stage after DECAY integrates
+  them through the shared reaction integrator — per segment at pipe
+  scope with the segment's own pollutant rows as expression context, per
+  node store at tank scope with the node's HRT. The deferral warning is
+  gone; treatment remains the one LARD bypass. Cross-engine: the same
+  RATE-production deck reads 85.46 under LARD segments where ARD cells
+  read 87.64 — ratio 0.9751, two independent discretisations within
+  2.5 %. A model with no reactions component is byte-identical to before
+  (the corpus is the witness).
+
+- **Water age and ARD write their own config files — IO3 save is complete
+  (IO3c).** The last two decliners of the `ComponentConfigSave` hook adopt
+  it: every registered component now renders its own config on save.
+  `swmm_water_age_save`'s writer became the shared
+  `serializeWaterAgeConfig` (one spelling for `[WATER_AGE_SOURCES]`,
+  upgraded from `%g` to shortest-exact — the config stores seconds against
+  a file in hours, and a rounding formatter drifts the model every save;
+  the new gate pins exact round-trips and a byte-stable fixed point by
+  generation two). ARD renders `[TRANSPORT_OPTIONS]`,
+  `[CONDUIT_DISPERSION]` and the raw boundary/source rows;
+  `SCALAR_SCHEME`/`LIMITER` ride new provenance flags — they alias
+  `[OPTIONS]` FV keys the writer only emits under FLOW_ROUTING FV, so on
+  a DYNWAVE deck the component file is the only carrier of that state:
+  the renderer re-emits the alias (at the current live value) exactly
+  when the file originally spelled it, and never invents one. Found en
+  route: the IO3a **render** path silently replaced a different
+  pre-existing config at the save destination where the copy path
+  announces it — the render path now carries the same
+  announce-on-replace contract.
+
+### Fixed
+
+- **Street inlets** — `[INLETS]` two-line combination inlets were not merged, the curb throat
+  angle and custom capture curves were dropped, on-sag capture never ran, street geometry never
+  reached the capture calculation, and capture was applied after the routing step (so the router
+  never saw it); splitting a STREET conduit lost the lower half's street reference
+  (`vj_split_conduit` now copies the named cross-section). An `[INLET_USAGE]` row naming a capture
+  node declared later in the file (legacy parsing is order-independent) is deferred to the
+  post-parse pass instead of failing the open with ERROR 209, and the inlet summary's "Peak Flow"
+  column is the peak approach flow, as in legacy, not the peak captured flow. The Node Inflow
+  Summary's lateral-inflow statistics keep their sign as legacy `stats.c` does (an inlet's bypass
+  node shows the transfer as a negative lateral); they were accumulated as absolute values.
+
+- **DUMMY links are routed under `FLOW_ROUTING FV` instead of failing the
+  model.** A DUMMY conduit carries no cross-section, so the FV mesh builder
+  rejected it as unmeshable (`y_full <= 0`) and the run aborted — DUMMY links
+  are common in real models. They are now excluded from the mesh and routed as
+  pass-throughs, the way `isTrueConduit` (`dynwave.c:411-414`) excludes them
+  from the DW momentum solve and `findNonConduitFlow` passes the upstream
+  node's inflow straight through.
+
+  The discharge could not simply reuse the existing DUMMY branch of
+  `computeNonConduitFlowOne`: that reads `ctx.nodes.inflow`, which under FV
+  holds only laterals and structure scatter until `publishFv` writes the real
+  boundary fluxes at end of step, so a dummy fed by a conduit would have
+  carried a fraction of its true flow. `ExplicitFvSolver::refreshDummyFlows`
+  derives it instead as a drain condition on the upstream node — the net face
+  volume plus that node's lateral and structure forcing, evaluated per substep
+  against the same fluxes the node update is about to integrate. This
+  reproduces DW's continuity exactly: `Q = inflow + overflow` booked as
+  outflow leaves `dV/dt = 0`, making the node a free-drainage boundary rather
+  than a storing junction. Both ends stay pinned to LTS tier 0, so the
+  source/sink pair integrates over one span and the transfer is conservative.
+  (`NetworkMeshBuilder` `struct_is_dummy` / `node_dummy_drain`,
+  `FvStepForcing::link_q_cap` for the control setting and FLOW_LIMIT,
+  `Router::publishFv` for the step-mean discharge and the node ledger.)
+
+- **ERROR 134 — illegal DUMMY / ideal-pump connections — is enforced again.**
+  Legacy `checkDummyLinks` (`toposort.c:480-528`) and the degree test in
+  `validateGeneralLayout` (`flowrout.c:301-313`) were never ported
+  (`plans/FULL_GAP_ANALYSIS.md:618`). Both are what make a pass-through well
+  posed: its discharge is defined as everything arriving at the upstream node,
+  so it must be that node's only outlet — a second outlet has both links
+  claiming the whole inflow — and a node cannot both receive and emit one
+  without the two definitions becoming circular. A storage node's outlet may
+  not be a dummy (`link.c:1006-1014`). Enforced for DYNWAVE and FV, the two
+  models that implement the pass-through. No model in the regression corpus
+  (1,637 `.inp` files) is rejected by it.
+
+- **`.inp` writer emits authored form — offsets and conduit orientation.**
+  `resolve_cross_references` rewrites `LINK_OFFSETS ELEVATION` offsets and
+  weir/outlet crests as depths and reverses adverse-slope conduits (node1/
+  node2, offsets, losses, InitFlow sign) for DYNWAVE/FV; `InpWriter` then
+  emitted both verbatim, so Open → Save wrote depths under an `ELEVATION`
+  header (clamped to 0 with WARNING 03 on the next open) and swapped From/To
+  on every adverse conduit. New `input::convert_internal_to_authored` (with
+  `needs_authored_conversion` / `restore_authored_orientation`) undoes both
+  on the writer's local copy, and `swmm_links_restore_authored_orientation`
+  lets an editing host hold the authored orientation in its live context.
+  Pinned by four new `InpWriterRoundTrip` cases on `authored_form.inp`.
+
+- **`[POLLUTANTS]` Kdecay was applied 86,400× too fast — and the common case
+  destroyed the pollutant with a 100 % continuity error, booked nowhere
+  (KD1).** The Kdecay column is 1/day; legacy divides by `SECperDAY` at parse
+  (`landuse.c`), but this engine used the raw value against dt-in-seconds at
+  every application site. Any deck with a plausible decay coefficient
+  (0.05–1/day BOD or coliform values) silently reported ~zero for that
+  pollutant: the linearized node factor `1 − k·dt` went negative, clamped to
+  zero, and the annihilated mass never reached the ledger. The parser now
+  stores 1/sec exactly as legacy does, and every file-unit boundary converts
+  back — INP writer, GeoPackage both directions (pre-KD1 `.gpkg` files stored
+  the deck value unconverted, the same unit, so both eras read correctly),
+  and the C API, whose header documented 1/day all along. Three more defects
+  fell out of making the new gates close: the legacy-path solver never booked
+  decayed mass into `qual_routing_reacted` (nodes, all three link branches,
+  and the reactions-active twin now book it); every node decayed where legacy
+  decays only storage nodes or nodes actually holding volume, so pass-through
+  junction flux picked up decay factors legacy never applies; and
+  `mixAtNodes`' evaporation factor inferred evaporation from any volume
+  decrease — true for every draining node — creating ~`c·v_out` of mass per
+  step at a draining storage whenever concentrations weren't uniform (the
+  `c_max` cap masked it on every k = 0 deck). It now uses the storage unit's
+  actual evaporation volume, `fEvap = 1 + vEvap/v1`, per legacy
+  `findStorageQual`. After all four: the k = 1/day differential probe reads
+  Mass Reacted 0.158 lbs vs legacy's 0.159, and k = 200/day books 8.455 vs
+  legacy's 8.523 with continuity at baseline. Known residual (both engines,
+  P2.4): per-step transit mass takes the decay factor outside any
+  volume-basis booking — legacy leaks 6.5–7 % on the same storage deck.
+  Triage + evidence: `plans/transport/KDECAY_UNITS_TRIAGE_2026-08-31.md`.
+
+- **The 2D results file now says what its coordinates mean.** `Mesh2_node_x/y`
+  and `Mesh2_face_x/y` have always been written in the solver's SI metres and
+  tagged `units = "m"`, but nothing in the file recorded the model's own CRS or
+  the factor applied to get there. A consumer of a model in a foot-based
+  projected CRS (EPSG:2249 and friends) reasonably read those metres as the
+  CRS's own unit and placed the results ~0.3048x toward the CRS origin, while
+  the `.2dm`-backed mesh — which never leaves model units — rendered correctly.
+  The file gains a scalar `/crs` variable carrying `model_crs` (verbatim from
+  `[OPTIONS] CRS`) and `metres_per_model_unit` (the factor
+  `SurfaceRouter2D::initialize` actually applied), referenced by a
+  `openswmm_crs = "crs"` attribute on `/Mesh2` and the coordinate variables.
+  Deliberately not spelled as CF `spatial_ref`/`crs_wkt`: a reader honouring
+  those would place metres in a foot CRS and reproduce the very offset the
+  variable exists to describe. Existing files are unaffected and stay readable;
+  they simply declare nothing. (Issue #155.)
+
+- **A malformed option value handed to `swmm_options_set` returns
+  `SWMM_ERR_BADPARAM` instead of killing the process.** Thirty of the
+  dispatch's key branches parsed with raw `std::stod`/`std::stoi`, which
+  throw on junk — and an exception crossing the C boundary is
+  `std::terminate`. The guard alone was also not sufficient: two
+  non-throwing families slipped through it — the lenient time parse
+  fabricated `0.0` from junk (`"1e999999"` read back as 3600 s), and
+  `std::stoi` accepted a numeric prefix (`"1.5"` read as 1). All parse
+  sites in the dispatch now use strict wrappers that consume the entire
+  token or reject, covered by an exhaustive malformed-value suite over
+  every settable key. Reachable from any API client, including the MCP
+  server passing through arbitrary text. (`d80bba34`.)
+
+- **The `OPENSWMM_PERF` FV phase split double-counted, and its parts could
+  exceed the whole.** `perf::GatedTimer` accumulated wall time, so a timed
+  phase that called another timed phase booked the child twice — once in the
+  child's accumulator and once inside its own. Three nestings exist:
+  `settleAccumulators` and `restoreState` both call `refreshDepths`, and the
+  boundary-flow callback sits inside the settle window. Two of the three are
+  local-time-stepping only, which is why the symptom appeared only on LTS runs:
+  `total` came out **larger than the routing `step` it is a breakdown of**, for
+  an "unattributed" share of **−16.2 %** on Example1 and **−19.0 %** on a
+  500-conduit graded chain. That is not a quantity that can be negative, and a
+  breakdown whose parts exceed the whole cannot rank optimization targets —
+  the only reason the timers exist.
+
+  Timers now book **self** time: a thread-local tally collects the wall time of
+  timers opening and closing inside the running one, and each timer subtracts it
+  before accumulating. Unattributed time is now **+3.5 % to +6.2 %** across the
+  same four runs. No call site changed, and with `OPENSWMM_PERF` unset the
+  destructor still returns before touching anything.
+
+  The correction changes what the table recommends. `settle` read 2.255 s on the
+  graded chain — 18 % of the reported total — while its own work is 0.007 s;
+  effectively all of it was the two `refreshDepths()` calls already counted under
+  `refreshdepths`. `restore` was the same. The real target is `refreshDepths`, at
+  33 % of total on that deck, and it was not legible before. Evidence and
+  reproduction: `tests/manual/fv_phase_timers/RESULTS.md`.
+
+### Changed
+
+- **Inlet `MIN_RUNOFF_FLOW` / `FUDGE` aligned with legacy** (`0.001` cfs / `0.0001`; both were
+  `2.5e-5`) — results change for any model with conduit inlets. Error codes 623–635 are new.
+
+- **Hydraulics Reference Manual §8.6 and §8.7 rewritten to describe the solver
+  that ships.** §8.6.1 documented junctions as `MIN_SURFAREA` linear reservoirs
+  integrated in time — the BUCKET model, removed when junctions became
+  interfaces. A plain junction has **no storage**: a clean degree-2 junction
+  passes its cells' states straight through, and every other storage-less
+  junction solves its head from an instantaneous flux balance, now written out
+  as equation (8-31). §8.6.5's step 3 and the option table still documented
+  `FV_NODE_CELL_COUPLING` and `FV_JUNCTION_MODEL`, both retired and
+  accept-and-ignore since the interface treatment landed. The node time-step
+  bound (8-32) is now stated to apply to bucket nodes only, which is what
+  `nodeStableDt` implements.
+
+  Two gaps are also closed. The chapter said junction momentum is not conserved
+  without saying what that costs — roughly a millimetre of head per junction
+  from splitting one Riemann problem into two, integrating to a 0.23 m backwater
+  over a 199-junction subcritical chain, which is why the pass-through splice
+  exists. And §8.7 now documents the published node stage (8-33), reconstructed
+  from the incident wet cells rather than read off the solver's head; that rule
+  changed in the previous release and was undocumented.
+
+  A new subsection also answers a recurring question directly: the node is not
+  given half of each connected link's volume, as dynamic wave does, because
+  under finite volume the end cells already hold that water as explicit state.
+  Booking it at the node too was measured twice and rejected twice, at ~0.3 % of
+  routing continuity and −0.005 % per junction.
+
+- **Relicensed from MIT to the Apache License, Version 2.0** (#123, #122). The
+  `LICENSE` file now carries the full Apache 2.0 text, retaining the addendum
+  that acknowledges the USEPA SWMM material residing in the public domain under
+  17 USC § 105 — the Apache grant covers only the OpenSWMM authors' original
+  contributions and places no restriction on that public domain material. A new
+  `NOTICE` file records the required attribution and SWMM provenance. All
+  first-party source headers now carry the Apache 2.0 boilerplate and an
+  `SPDX-License-Identifier: Apache-2.0` tag in place of the previous MIT tags.
+  `CLA.md` (v1.1), `CONTRIBUTING.md`, `CITATION.cff`, `README.md`, the Python
+  bindings' `pyproject.toml` and the Sphinx license page were updated to match.
+  Built-in plugin metadata (`IPluginComponentInfo::license_type`) now reports
+  `"Apache-2.0"`.
+
+### Added
+
+- **Two-component pressure approach (TPA) — sub-atmospheric pressurized flow
+  in both hydraulic solvers.** (#156) The closure of Vasconcelos, Wright & Roe
+  (2006): a sealed full pipe may carry pressure below atmospheric instead of
+  spuriously reverting to free-surface geometry, governed by a physical
+  air-pathway regime flag with submergence-checked venting and a
+  column-separation floor at −30 ft of head. In the finite-volume solver,
+  `FV_PRESSURE_CLOSURE TPA` extends the existing slot line to both signs of
+  ΔA (`FV_SLOT_CELERITY` doubles as the acoustic celerity) and composes with
+  `FV_PRESSURIZED_IMPLICIT`; in the dynamic wave solver, `SURCHARGE_METHOD
+  TPA` adds a constant-width slot `w = g·A_full/a²` above the crown (new
+  `TPA_CELERITY` key, project units, default 100) with a per-conduit
+  sub-atmospheric latch below it, updated once per routing step so the Picard
+  iteration sees a fixed operator. Both default off and bit-inert when off.
+  Measured on the paper's laboratory cases: the FV closure carries 0.0398 m of
+  true vacuum below the crest invert of the negative-pressure siphon into the
+  `.out` file — still deepening when the deck reaches the 40 s validity
+  boundary it documents — where the slot closures floor at the invert; and
+  DW TPA's rapid-fill bore arrival lands within 2 % of the
+  FV timing where the Sjöberg slot is ~20 % early. Documented as Hydraulics
+  Reference Manual §8.4.5 and §3.3.11. One pinned known issue: explicit FV
+  TPA filling at a = 150 m/s diverges at the reflected surge (the paper's own
+  high-celerity post-shock frontier; gate
+  `FvTpa.KnownIssueHighCelerityFillingDiverges`).
+
+- **Unsteady friction (`UNSTEADY_FRICTION VITKOVSKY`, `UF_K3`) in both
+  hydraulic solvers.** (#156) The Pinto, Vasconcelos & Soares (2025) modified
+  Vítkovský term with regime-dependent celerity, orthogonal to the
+  pressurization closure: the local-acceleration half folds in
+  semi-implicitly (no new prognostic state — hotstart- and rollback-safe),
+  the convective half enters explicitly with a velocity dead-band and a
+  half-momentum clamp. The DW gradient uses a cross-link stencil (the
+  within-link difference is structurally zero on a full conduit), so DW
+  damping requires discretized reaches — a single-link reach gets added
+  inertia only. Default `NONE` is bit-identical to earlier releases.
+  Documented as §3.3.12 and §8.5.4 of the Hydraulics Reference Manual.
+
+- **`REPORT_SIGNED_HEADS` — true signed piezometric heads in the `.out`
+  file.** (#156) The binary output's NODE_HEAD has always been rebuilt from a
+  depth floored at zero, so sub-atmospheric heads were invisible. With
+  `REPORT_SIGNED_HEADS YES` the HEAD field carries the true signed head for
+  both solvers; DEPTH stays floored, and the default `NO` keeps legacy
+  bit-parity (measured: a never-negative DW deck differs only in
+  float32-rewrite ULPs, confined to HEAD).
+
+- **Virtual-junction initial-state seeding under dynamic wave routing.**
+  (#156) `[VIRTUAL_JUNCTIONS]` carries no initial-depth column, so VJs
+  started dry regardless of their neighbors — a deck whose real nodes define
+  an initial pool began with a hole at every splice. Each VJ head is now
+  seeded by distance-weighted interpolation between the nearest non-virtual
+  nodes along its spliced chain, requiring at least one wet endpoint (so a
+  dry deck cannot manufacture water). DYNWAVE only, and that restriction is
+  measured, not cautionary: seeding the node alone under FV contradicts the
+  uniform-depth cell seed and was measured to drive a pressurized study deck
+  from 0.000 % to −19 % continuity. Decks without VJs are bitwise untouched.
+
+- **A Lagrangian transport engine (LARD) joins the quality solvers.**
+  `QUALITY_SOLVER LAGRANGIAN` routes pollutants with a Lagrangian
+  advection–reaction–dispersion scheme in place of the legacy complete-mix
+  chain: plug-parcel advection on per-link segment stores, first-order
+  `KDECAY`, quality substepping under a `QUALITY_STEP` key, and random-walk
+  particle tracking for longitudinal dispersion (validated against the Elder
+  profile). Water age rides the same engine as a reserved species: `WATER_AGE
+  ON`, a `[WATER_AGE_SOURCES]` table for initial state and boundary ages,
+  `__WATER_AGE__` rows in `[INFLOWS]`, hotstart round-tripping of the aged
+  state (including dry elements), and age columns in the report and binary
+  output. Negative source loads now extract mass deliberately at the node
+  seam in all three quality engines — warned at parse, clamped to the mass
+  actually held, booked to the ledger, and summarised in the report — instead
+  of being silently dropped. The option and API surface lands with it:
+  transport keys in `swmm_options_set`/`_get`, and a C age-source table API
+  (`openswmm_water_age.h`). Configurations the LARD engine does not cover yet
+  (heat, MSX-style reactions, `[TREATMENT]`) announce themselves with bypass
+  warnings at open rather than failing silently. (`24602eb2`, `8c141a5e`,
+  `647a3603`, `b9852cee`, `9f155227`, `d79c8bcf`, `d7b6c079`, `948b2840`,
+  `4639be37`.)
+
+- **FV solver statistics in the report file, and `OPENSWMM_PERF` phase timers
+  for the FV step.** FV runs now emit an "FV Solver Statistics" block —
+  explicit substeps, face-flux evaluations, mean/min/last substep, active-face
+  occupancy and the LTS tier histogram. Setting `OPENSWMM_PERF=1` additionally
+  prints a `[PERF-FV]` line whose bracketed phases sum to `total`, beside the
+  whole-router `step`; the difference between them is unattributed time and is
+  meant to be read as a finding rather than smoothed away.
+
+- **`SWMM_FilePathRole` covers the remaining external-file slots.** Three new
+  roles — `SWMM_FILE_MESH_2D`, `SWMM_FILE_OUTPUT_2D` and `SWMM_FILE_LID_REPORT` —
+  let a host read the resolved and authored form of the 2D mesh reference, the 2D
+  output file, and per-unit LID report files through the same
+  `swmm_file_path_get` / `swmm_file_path_set` pair as every other slot. The 2D
+  roles return `SWMM_ERR_BADPARAM` in builds without 2D support.
+
+- **Model-load benchmark harness and parity gate.**
+  `OPENSWMM_PERF=1` now emits a `[PERF-LOAD]` line attributing the whole
+  open/initialize/start window across 20 phases (including a `read.scan` vs
+  `read.dispatch` split of parsing).
+  `tests/benchmarks/scripts/gen_load_bench.py` generates a deterministic
+  scaling corpus up to 500k elements (not committed — 500 MB — but reproducible
+  from the committed generator); `bench_model_load` times three cuts per model
+  and reports peak RSS; `parity_probe` + `tests/benchmarks/scripts/load_parity.sh`
+  compare `.rpt`/`.out`/write-back `.inp` between two builds. Two new ctest
+  gates run under `ctest -L unit`: `load_parity_selfcheck` (engine output is
+  deterministic) and `bench_corpus_generator_smoke`.
 
 - **Per-triangle 2D initial conditions in the Python bindings.**
   `Surface2D.get_triangle_init_depth` / `set_triangle_init_depth` and
@@ -208,6 +1629,84 @@ retroactive.
   bit-identity claim, until now only a comment, into a gate.
 
 ### Fixed
+
+- **Groundwater was silently lost on every save.** `[AQUIFERS]`, `[GROUNDWATER]`
+  and `[GWF]` were parsed but had no writer, so a model that used groundwater
+  came back from a round trip with none of it. All three now round-trip.
+  `[GWF]` expressions are stored in `options.ext_options` under
+  `"GWF:<subcatch>:<type>"` and were being re-emitted through the `[OPTIONS]`
+  passthrough, which uppercased the key (breaking the lookup that reads them
+  back) and kept only the first value token (truncating any real expression);
+  those keys are now excluded from the passthrough and written as a real
+  `[GWF]` section.
+
+- **A `[GROUNDWATER]` receiving node declared later in the file never
+  resolved.** `[GROUNDWATER]` normally precedes `[JUNCTIONS]`, and
+  `handle_groundwater()` resolved the node eagerly with no deferred pass, so
+  the index stayed `-1`. This was a live runtime bug as well as a write bug:
+  groundwater fell back to the subcatchment's outlet node instead of the one
+  the model specified. The name is now captured for `PostParseResolver`.
+
+- **Links declared before the node sections loaded silently orphaned.** Legacy
+  parsing is order-independent, but `[CONDUITS]`/`[PUMPS]`/`[ORIFICES]`/
+  `[WEIRS]`/`[OUTLETS]` resolved their end nodes eagerly, kept no name, and
+  were never retried — so an `.inp` whose link sections came first loaded with
+  `node1`/`node2` at `-1` and **no error at all**, and then saved with `*` in
+  the FromNode/ToNode columns. End-node names are now re-resolved after every
+  section is parsed. An end node that still will not resolve is a fatal
+  `ERROR 209`, matching legacy `link_readParams()`; such a model previously
+  loaded quietly and ran wrong.
+
+- **`[INLET_USAGE]` was parsed but never written.** Every inlet-to-link
+  assignment was lost on save, leaving the surviving `[STREETS]` and
+  `[INLETS]` definitions inert.
+
+- **Five writers emitted `*` where the name was known, three of them fatally.**
+  A subcatchment that drains to another subcatchment (or to itself) has no
+  outlet *node*, and the writer only ever consulted the node index — so the
+  Outlet column saved as `*` and the model would not reload
+  (`ERROR 209: undefined object *`). The RainGage column had the same defect
+  against a retained gage name, and a rain gage with neither a resolved series
+  index nor a file path wrote **no row at all**, which made the subcatchments
+  naming it fail to reload. Non-fatally, the Snowpack column dropped a retained
+  pack name, and `[PUMPS]` ignored `pump_curve_name` and wrote `*` — silently
+  downgrading a curved pump to IDEAL. Each of these now falls back to the
+  retained name before giving up.
+
+- **Four external-file slots were written to the `.inp` verbatim.** The writer
+  rebases every external reference against the destination directory, but the
+  external `.2dm` mesh, the 2D `OUTPUT_FILE` and per-unit LID report files never
+  went through that path. `SolverOptions2D::mesh_file`, `::output_file` and
+  `LidUsageStore::rpt_file` are now `FilePathPair`s registered with
+  `resolve_external_file_slots`, and all three emit through `emit_path_token`
+  like every other slot. `[PLUGINS]` paths remain absolute by design — they name
+  installed shared libraries, not model data.
+
+- **A `[2D_MESH_FILE]` reference dangled after Save As when the mesh had not
+  loaded.** External mode normally writes the in-memory mesh to a `.2dm` beside
+  the destination `.inp`, so the reference stays local and the mesh travels with
+  the model. When there was no mesh in memory — a missing or unreadable `.2dm`,
+  or a lenient (editor) open — nothing was written, yet the token was still
+  copied through unchanged, so it re-resolved against the *new* directory and the
+  saved model opened 1D-only with no diagnostic. That case now re-anchors against
+  the resolved source path. The loaded case is unchanged, and a new test pins
+  both halves, including that Save As never writes back over the source `.2dm`.
+
+- **`[TEMPERATURE]` climate file was opened against the process working
+  directory.** `SWMMEngine::initialize` passed `temp_file.original` — the token
+  as authored — to `ClimateFileReader::open`, so a relative reference resolved
+  against the CWD rather than the `.inp` directory. `open()` returns `false` on
+  failure and the return value was discarded, so the run continued with no
+  climate data: a clean-looking result with silently missing temperature and
+  evaporation. It now opens the resolved `.absolute` path and pushes a warning
+  when the file cannot be read or its format is not recognised.
+
+- **`swmm_options_set_ext(engine, "WRITE_ABSOLUTE_PATHS", …)` did not set the
+  option.** The key fell through to `ext_options`, where the writer never looks,
+  so the save still emitted relative paths — while re-emitting
+  `WRITE_ABSOLUTE_PATHS YES` into `[OPTIONS]`, meaning the deck reopened with the
+  opt-out armed and behaved differently from the save that produced it. The key
+  now writes `SimulationOptions::write_absolute_paths` directly.
 
 - **`MIN_SURFAREA` was a project option the junction storage convention never
   read.** Legacy keeps no junction storage at all (`node_getVolume` returns

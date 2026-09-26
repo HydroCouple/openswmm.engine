@@ -57,31 +57,34 @@ if(NOT DEFINED CACHE{VCPKG_MANIFEST_DIR})
 endif()
 
 # ============================================================================
-# Base wheel stays CPU-only / portable.
+# Base wheel builds the Kokkos-OpenMP plugin, like every other build.
 #
-# As of the GPU-default-on change, the engine vcpkg.json lists "gpu" in
-# default-features (pulling Kokkos) and OPENSWMM_BUILD_GPU_PLUGIN
-# defaults ON. That is right for source/dev/C++-release builds, but the published
-# `openswmm` wheel must remain Kokkos-free and portable: OpenMP acceleration is
-# shipped separately via the `openswmm-gpu-omp` companion wheel (see
-# packages/gpu-omp/ and the discovery shim in openswmm/__init__.py).
+# The engine's vcpkg.json lists "gpu" in default-features (pulling Kokkos) and
+# OPENSWMM_BUILD_GPU_PLUGIN defaults ON. The wheel follows that default rather
+# than opting out of it: OpenMP acceleration of the 2D surface solver is a
+# shipped default everywhere, not something a user has to go and find.
 #
-# So, unless the builder explicitly overrides them, opt the wheel out of the gpu
-# feature here — BEFORE project() loads the vcpkg toolchain, which reads these.
-# A developer who wants a GPU-enabled local build passes the trio explicitly
-# (e.g. CMAKE_ARGS="-DVCPKG_MANIFEST_NO_DEFAULT_FEATURES=ON
-#  -DVCPKG_MANIFEST_FEATURES=2d;gpu -DOPENSWMM_BUILD_GPU_PLUGIN=ON").
+# The `openswmm-gpu-omp` companion wheel (packages/gpu-omp/) still exists and
+# still builds the same plugin — it remains the way to add or refresh the
+# plugin against an already-installed base. Both copies are the same artifact
+# from the same source; the discovery shim in openswmm/__init__.py prefers the
+# in-wheel one, so exactly one is ever dlopen()ed (see the note there about
+# OpenMP runtimes).
+#
+# The features are still pinned explicitly rather than left to
+# default-features, so the wheel's dependency set is stated here and does not
+# silently follow a future edit of vcpkg.json.
 # ============================================================================
 if(NOT DEFINED CACHE{VCPKG_MANIFEST_NO_DEFAULT_FEATURES})
     set(VCPKG_MANIFEST_NO_DEFAULT_FEATURES ON CACHE BOOL
-        "Base wheel opts out of vcpkg default-features (excludes gpu/Kokkos)" FORCE)
+        "Wheel states its vcpkg features explicitly instead of following default-features" FORCE)
 endif()
 if(NOT DEFINED CACHE{VCPKG_MANIFEST_FEATURES})
-    # 2d → HDF5 for the CF-1.11/UGRID output of the explicit marcher (the only
-    #      2D integrator since the D2 retirement — no SUNDIALS, no hypre).
-    #      Keeps the wheel CPU-only/Kokkos-free.
-    set(VCPKG_MANIFEST_FEATURES "2d" CACHE STRING
-        "Explicit vcpkg features for the CPU-only base wheel (2d)" FORCE)
+    # 2d  → HDF5 for the CF-1.11/UGRID output of the explicit marcher (the only
+    #       2D integrator since the D2 retirement — no SUNDIALS, no hypre).
+    # gpu → Kokkos, for the OpenMP surface-solver plugin built below.
+    set(VCPKG_MANIFEST_FEATURES "2d;gpu" CACHE STRING
+        "Explicit vcpkg features for the base wheel (2d, gpu)" FORCE)
 endif()
 
 # Auto-load vcpkg toolchain when VCPKG_ROOT is set in the environment.
@@ -139,10 +142,25 @@ else()
     set(OPENSWMM_BUILD_REGRESSION_TESTS  OFF CACHE BOOL "" FORCE)
     set(OPENSWMM_BUILD_BENCHMARKS        OFF CACHE BOOL "" FORCE)
     set(OPENSWMM_BUILD_PYTHON            OFF CACHE BOOL "" FORCE)
-    # Base wheel is CPU-only (companion-out): never build the Kokkos GPU plugin
-    # into the engine here. Pairs with the vcpkg gpu-feature opt-out above.
+    # Build the Kokkos-OpenMP surface plugin into the wheel. Pairs with the
+    # "gpu" vcpkg feature selected above.
     if(NOT DEFINED CACHE{OPENSWMM_BUILD_GPU_PLUGIN})
-        set(OPENSWMM_BUILD_GPU_PLUGIN    OFF CACHE BOOL "" FORCE)
+        set(OPENSWMM_BUILD_GPU_PLUGIN    ON CACHE BOOL "" FORCE)
+    endif()
+    # The plugin is dlopen()ed by path, so it has to land inside the import
+    # package rather than at the engine's installed-tree default of lib/ (or
+    # bin/ on Windows) — src/engine/2d/gpu/CMakeLists.txt exposes this cache
+    # variable for exactly this purpose, and packages/gpu-omp/ overrides it the
+    # same way to its own package dir.
+    #
+    # openswmm/engine specifically: it is where openswmm_engine and its bundled
+    # runtime dependencies (libomp included) already install, so the plugin sits
+    # beside the one libomp copy the wheel carries — the arrangement the macOS
+    # @rpath rewrite in the engine's plugin CMake assumes — and the factory's
+    # engine-directory search finds it with no environment variable at all.
+    if(NOT DEFINED CACHE{OPENSWMM_GPU_PLUGIN_INSTALL_DESTINATION})
+        set(OPENSWMM_GPU_PLUGIN_INSTALL_DESTINATION "openswmm/engine"
+            CACHE STRING "" FORCE)
     endif()
 
     # Disable WINDOWS_EXPORT_ALL_SYMBOLS: the cmake -E __create_def step

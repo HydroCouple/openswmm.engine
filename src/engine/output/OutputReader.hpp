@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file OutputReader.hpp
  * @brief Internal C++ class for reading SWMM 5.x binary output files.
@@ -19,7 +35,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_OUTPUT_READER_HPP
@@ -52,6 +68,36 @@ public:
     bool open(const char* path);
 
     /**
+     * @brief Open a file that is still being written (no footer yet).
+     *
+     * @details Every offset the footer would supply is derived by parsing
+     *          the header forward, and the period count is derived from the
+     *          file size: `floor((size - output_start) / bytes_per_period)`,
+     *          so a partially flushed last record is never counted. Call
+     *          refresh() to pick up periods appended since. Works on any
+     *          file with a complete header — including one from a run that
+     *          died before writing its footer. Never writes to the file.
+     * @returns true on success (possibly with zero periods yet).
+     */
+    bool openLive(const char* path);
+
+    /**
+     * @brief Re-count periods on a live file.
+     *
+     * @details Re-reads the file size and updates period_count(). When the
+     *          footer has appeared (the run finished) it is adopted — period
+     *          count and error code become the writer's own — and the reader
+     *          leaves live mode; subsequent calls are no-ops. On a reader
+     *          opened with open() this returns period_count() unchanged.
+     * @returns the current period count, or -1 if no file is open.
+     */
+    int refresh();
+
+    /** @brief True while opened via openLive() and the footer has not yet
+     *  been seen. */
+    bool is_live() const noexcept { return live_; }
+
+    /**
      * @brief Close the file and release resources.
      */
     void close();
@@ -82,6 +128,21 @@ public:
     const char* subcatch_id(int index) const;
     const char* node_id(int index)     const;
     const char* link_id(int index)     const;
+
+    /**
+     * @brief Species (pollutant) ID at a column index, or nullptr.
+     *
+     * @details The writer has always emitted a fourth ID list after the
+     *          link IDs — the species names, one per pollutant column —
+     *          but the reader stopped after three and no public entry
+     *          point exposed them. Water age reports as a trailing
+     *          `__WATER_AGE__` column whose unit field necessarily reuses
+     *          a concentration code (the `.out` unit enum has no HOURS
+     *          slot), so the NAME is the only way a consumer can tell
+     *          hours from mg/L. That made this reader a prerequisite for
+     *          water age being usable at all, not a convenience.
+     */
+    const char* pollut_id(int index)   const;
 
     // -- Per-period results (all objects, one variable) --------------------
 
@@ -181,10 +242,14 @@ private:
     // Computed: bytes per period record
     long bytes_per_period_ = 0;
 
+    // openLive(): period count comes from the file size until the footer lands
+    bool live_ = false;
+
     // Object IDs
     std::vector<std::string> subcatch_ids_;
     std::vector<std::string> node_ids_;
     std::vector<std::string> link_ids_;
+    std::vector<std::string> pollut_ids_;
 
     // -- Helpers ----------------------------------------------------------
 

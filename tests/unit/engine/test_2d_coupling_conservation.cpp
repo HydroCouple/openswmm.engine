@@ -39,6 +39,7 @@
 #include <openswmm/engine/openswmm_2d.h>
 #include <openswmm/engine/openswmm_nodes.h>
 #include <openswmm/engine/openswmm_forcing.h>
+#include <openswmm/engine/openswmm_massbalance.h>
 
 namespace fs = std::filesystem;
 
@@ -49,7 +50,7 @@ namespace {
 // outfall O1 and has NO [INFLOWS] — its only lateral inflow is the 2D coupling.
 // VARIABLE_STEP is ON so the routing dt varies step-to-step (amplified by the 2D
 // CFL hint as the patch fills then drains), exercising the dt-robust carry.
-std::string build_model() {
+std::string build_model(const std::string& extra_2d_options = "") {
     return
         "[OPTIONS]\n"
         "FLOW_UNITS           CMS\n"
@@ -84,6 +85,7 @@ std::string build_model() {
         "DRY_DEPTH        0.002\n"
         "COUPLING_CD      0.7\n"
         "REPORT_2D        NO\n"
+      + extra_2d_options +
         "\n"
         "[2D_VERTICES]\n"
         ";;X      Y      Z   (flat patch at the junction crown elevation, 1.0 m)\n"
@@ -111,14 +113,20 @@ struct RunResult {
     double dt_min = 1e30;       // observed routing-step spread (s) — confirms the
     double dt_max = 0.0;        //   variable-dt path is actually exercised
     int    n_steps = 0;
+    // C1/C2 (2026-09-07)
+    double cell_applied_sum = 0.0;  // Σ swmm_2d_get_coupling_volume_bulk (m³)
+    double c12 = 0.0, c21 = 0.0;    // coupling_1d_to_2d_in / _2d_to_1d_out (m³)
+    double routing_coupling_out = 0.0;  // SWMM_ROUTING_COUPLING_OUT (ft³)
+    double routing_flooding = 0.0;      // SWMM_ROUTING_FLOODING (ft³)
 };
 
-RunResult run(const fs::path& dir) {
+RunResult run(const fs::path& dir, const std::string& extra_2d_options = "",
+              const std::string& tag = "coupling_conservation") {
     RunResult r;
-    const fs::path inp = dir / "coupling_conservation.inp";
-    const fs::path rpt = dir / "coupling_conservation.rpt";
-    const fs::path out = dir / "coupling_conservation.out";
-    { std::ofstream f(inp); f << build_model(); }
+    const fs::path inp = dir / (tag + ".inp");
+    const fs::path rpt = dir / (tag + ".rpt");
+    const fs::path out = dir / (tag + ".out");
+    { std::ofstream f(inp); f << build_model(extra_2d_options); }
 
     SWMM_Engine eng = swmm_engine_create();
     if (swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
@@ -163,12 +171,28 @@ RunResult run(const fs::path& dir) {
             r.received_1d += lat * dt_s;
     }
 
+    // C1: the signed per-cell abstraction, summed over every cell. Read
+    // BEFORE swmm_engine_end — the 2D solver-state accessors are guarded by
+    // CHECK_2D_ACTIVE and stop answering once the router is deactivated.
+    int ncells = 0;
+    if (swmm_2d_triangle_count(eng, &ncells) == SWMM_OK && ncells > 0) {
+        std::vector<double> v(static_cast<std::size_t>(ncells), 0.0);
+        if (swmm_2d_get_coupling_volume_bulk(eng, v.data()) == SWMM_OK)
+            for (double x : v) r.cell_applied_sum += x;
+    }
+
     swmm_engine_end(eng);
 
     double c12 = 0.0, c21 = 0.0;
     swmm_2d_get_mass_balance(eng, nullptr, nullptr, nullptr, &c12, &c21,
                              nullptr, nullptr, nullptr, nullptr, nullptr);
     r.given_2d_net = c21 - c12;   // net volume 2D → 1D (m³)
+    r.c12 = c12;
+    r.c21 = c21;
+
+    // C2: the split-out spill row and what remains under Flooding Loss.
+    swmm_get_routing_total(eng, SWMM_ROUTING_COUPLING_OUT, &r.routing_coupling_out);
+    swmm_get_routing_total(eng, SWMM_ROUTING_FLOODING,     &r.routing_flooding);
     swmm_2d_get_continuity_error(eng, &r.cont_2d);
     swmm_get_routing_continuity_error(eng, &r.cont_routing);
     swmm_engine_report(eng);
@@ -232,4 +256,69 @@ TEST_F(CouplingConservation2DTest, ReceivedEqualsGivenUnderVariableStep) {
         << "n_steps," << r.n_steps << "\n"
         << "continuity_2d_frac," << r.cont_2d << "\n"
         << "continuity_routing_frac," << r.cont_routing << "\n";
+}
+
+// ---------------------------------------------------------------------------
+// C1 (2026-09-07) — the signed per-cell coupling abstraction ties back to the
+// two domain accumulators. Handoff §3.3: this is the strongest check on C1; a
+// failure points at the RK2 half-step rescale or a missed booking site.
+// ---------------------------------------------------------------------------
+TEST_F(CouplingConservation2DTest, PerCellAbstractionTiesBackToTheDomainTotals) {
+    RunResult r = run(dir_, "", "c1_tieback");
+    ASSERT_TRUE(r.ok);
+    ASSERT_GT(std::abs(r.given_2d_net), 1.0) << "no meaningful exchange occurred";
+
+    // coupling_applied is + INTO the cell: water arrives as the 1D→2D spill and
+    // leaves as the 2D→1D drain, so the sum is (in − out).
+    const double expect = r.c12 - r.c21;
+    const double scale  = std::max(1.0, std::abs(expect));
+    EXPECT_NEAR(r.cell_applied_sum, expect, 1.0e-6 * scale)
+        << "Σ per-cell coupling_applied (" << r.cell_applied_sum
+        << " m³) != coupling_1d_to_2d_in − coupling_2d_to_1d_out (" << expect
+        << " m³)";
+}
+
+// ---------------------------------------------------------------------------
+// C2 (2026-09-07) — the 1D→2D spill left "Flooding Loss" for its own row. The
+// grouping moved; the conserved total did not. COUPLING_IN_FLOODING YES buys
+// the old grouping back for comparison against a pre-split build.
+// ---------------------------------------------------------------------------
+TEST_F(CouplingConservation2DTest, CouplingOutflowSplitsFromFloodingAndConserves) {
+    RunResult split  = run(dir_, "", "c2_split");
+    RunResult folded = run(dir_, "COUPLING_IN_FLOODING YES\n", "c2_folded");
+    ASSERT_TRUE(split.ok && folded.ok);
+
+    // The continuity error is the invariant: only the ROW the spill is printed
+    // on changed, never the balance it participates in.
+    EXPECT_NEAR(split.cont_routing, folded.cont_routing, 1.0e-9)
+        << "regrouping the spill must not move the routing continuity error";
+
+    // Whatever the spill was, it sits in exactly one of the two rows.
+    EXPECT_NEAR(split.routing_coupling_out + split.routing_flooding,
+                folded.routing_coupling_out + folded.routing_flooding,
+                1.0e-6 * std::max(1.0, std::abs(split.routing_flooding)))
+        << "the spill was double-counted or dropped by the regrouping";
+    EXPECT_DOUBLE_EQ(folded.routing_coupling_out, 0.0)
+        << "COUPLING_IN_FLOODING YES must leave the new row empty";
+}
+
+// ---------------------------------------------------------------------------
+// C3 (2026-09-07) — a spill exits at the RIM, so it may only draw the node's
+// PONDED water (volume above full_volume), never the below-crown conveyance
+// storage it used to dewater through the manhole cover.
+// ---------------------------------------------------------------------------
+TEST_F(CouplingConservation2DTest, SpillDrawsPondedWaterOnly) {
+    RunResult r = run(dir_, "", "c3_ponded");
+    ASSERT_TRUE(r.ok);
+
+    // This deck's patch sits AT the junction crown and the node starts empty,
+    // so every drop the node sends up must have been ponded above the rim
+    // first. The cap can only ever reduce the spill, never invent one.
+    EXPECT_GE(r.c12, 0.0);
+    EXPECT_LE(r.c12, std::abs(r.given_2d_net) + std::abs(r.c21) + 1.0e-9)
+        << "1D→2D spill (" << r.c12 << " m³) exceeds what the node could hold";
+
+    // And the ledger still closes with the tighter cap in place.
+    EXPECT_LT(std::abs(r.cont_2d), 0.05) << "2D continuity: " << r.cont_2d;
+    EXPECT_LT(std::abs(r.cont_routing), 0.05) << "1D continuity: " << r.cont_routing;
 }

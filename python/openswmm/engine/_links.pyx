@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Link access (Pythonic v1 surface)
 =================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 The :class:`Links` collection and :class:`Link` wrapper expose the
 network's conveyance elements — conduits, pumps, orifices, weirs, and
@@ -126,6 +142,34 @@ cdef class LinkStatsView:
         _check_fresh(self._link)
         cdef double v = 0.0
         _check(swmm_link_get_stat_surcharge_time(_h(self._link._solver), self._link._index, &v))
+        return v
+
+    @property
+    def peak_slot_share(self) -> float:
+        """Peak instantaneous ``slot_volume / volume`` over the run (0..1).
+
+        Finite-volume routing only: reads ``0.0`` under the dynamic-wave
+        router, which is indistinguishable from "no slot flow occurred".
+        """
+        _check_fresh(self._link)
+        cdef double v = 0.0
+        _check(swmm_link_get_stat_peak_slot_share(
+            _h(self._link._solver), self._link._index, &v))
+        return v
+
+    @property
+    def slot_share(self) -> float:
+        """Run-level slot share ``(∫ slot_volume dt) / (∫ volume dt)`` (0..1).
+
+        A ratio of time integrals — never an average of instantaneous
+        ratios. Finite-volume routing only: reads ``0.0`` under the
+        dynamic-wave router, which is indistinguishable from "no slot flow
+        occurred".
+        """
+        _check_fresh(self._link)
+        cdef double v = 0.0
+        _check(swmm_link_get_stat_slot_share(
+            _h(self._link._solver), self._link._index, &v))
         return v
 
     @property
@@ -686,6 +730,19 @@ cdef class Link:
         return v
 
     @property
+    def slot_volume(self) -> float:
+        """Water held in the Preissmann slot, in project volume units.
+
+        The part of :attr:`volume` standing above the pipe crown. Finite-volume
+        routing only: reads ``0.0`` under the dynamic-wave router, which is
+        indistinguishable from "no slot storage".
+        """
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_link_get_slot_volume(_h(self._solver), self._index, &v))
+        return v
+
+    @property
     def hyd_power(self) -> float:
         _check_fresh(self)
         cdef double v = 0.0
@@ -881,6 +938,18 @@ cdef class Links:
 
     cdef object _solver
 
+    def restore_authored_orientation(self):
+        """Restore reversed conduits after open; return the number restored.
+
+        Intended for editing hosts. The INP writer already restores orientation
+        when writing. Reacquire retained object views after this structural edit.
+        """
+        cdef int count = 0
+        _check(swmm_links_restore_authored_orientation(_h(self._solver), &count))
+        if count:
+            self._solver._bump_generation()
+        return count
+
     def __init__(self, solver):
         self._solver = solver
 
@@ -969,8 +1038,9 @@ cdef class Links:
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_link_get_flows_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_link_get_flows_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -983,8 +1053,9 @@ cdef class Links:
             raise ValueError(f"flows array length {arr.shape[0]} != link count {n}")
         cdef const double* p = <const double*>arr.data
         cdef int err
-        with nogil:
-            err = swmm_link_set_flows_bulk(h, p, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_link_set_flows_bulk(h, p, n)
         _check(err)
 
     @property
@@ -993,8 +1064,9 @@ cdef class Links:
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_link_get_depths_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_link_get_depths_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1004,8 +1076,9 @@ cdef class Links:
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_link_get_velocities_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_link_get_velocities_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1015,8 +1088,9 @@ cdef class Links:
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_link_get_capacities_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_link_get_capacities_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1026,8 +1100,9 @@ cdef class Links:
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_link_get_volumes_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_link_get_volumes_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1037,8 +1112,9 @@ cdef class Links:
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_link_get_control_settings_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_link_get_control_settings_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1048,8 +1124,9 @@ cdef class Links:
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_link_get_target_settings_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_link_get_target_settings_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1059,8 +1136,9 @@ cdef class Links:
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_link_get_hyd_powers_bulk(h, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_link_get_hyd_powers_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1071,8 +1149,9 @@ cdef class Links:
         cdef int p_idx = _resolve_pollutant(self._solver, pollutant)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_link_get_quality_bulk(h, p_idx, <double*>buf.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_link_get_quality_bulk(h, p_idx, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1085,9 +1164,10 @@ cdef class Links:
         cdef np.ndarray[double, ndim=1] ont = np.zeros(n, dtype=np.float64)
         cdef np.ndarray[double, ndim=1] vol = np.zeros(n, dtype=np.float64)
         cdef int err
-        with nogil:
-            err = swmm_link_get_pump_stats_bulk(
-                h, <int*>cyc.data, <double*>ont.data, <double*>vol.data, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_link_get_pump_stats_bulk(
+                    h, <int*>cyc.data, <double*>ont.data, <double*>vol.data, n)
         _check(err)
         return (cyc, ont, vol)
 
@@ -1101,8 +1181,9 @@ cdef class Links:
         cdef np.ndarray[char, ndim=1, mode="c"] buf = np.zeros(
             n * stride, dtype=np.int8)
         cdef int err
-        with nogil:
-            err = swmm_link_get_ids_bulk(h, <char*>buf.data, stride, n)
+        with self._solver._operation(<size_t>h):
+            with nogil:
+                err = swmm_link_get_ids_bulk(h, <char*>buf.data, stride, n)
         _check(err)
         raw = bytes(buf)
         out = []
@@ -1119,3 +1200,7 @@ cdef class Links:
             return f"<Links n={len(self)}>"
         except Exception:
             return "<Links (engine closed)>"
+
+
+cdef extern from "openswmm/engine/openswmm_links.h":
+    int swmm_links_restore_authored_orientation(SWMM_Engine, int*)

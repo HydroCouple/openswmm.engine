@@ -27,6 +27,10 @@ class _PointTable:
 
 
 class TimeSeries(_PointTable):
+    @property
+    def relative_info(self) -> tuple[int, float]: ...
+    def set_relative_info(self, count: int, anchor: float) -> None: ...
+
     points: NDArray[Any]  # structured: (time: datetime64[s], value: float64)
 
     def add(self, when: Union[datetime, float], value: float) -> None: ...

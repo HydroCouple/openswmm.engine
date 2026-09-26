@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file Divider.hpp
  * @brief Flow divider node logic — cutoff, overflow, tabular, weir.
@@ -16,7 +32,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_DIVIDER_HPP
@@ -39,22 +55,22 @@ enum class DividerMethod : int {
 };
 
 /**
- * @brief Compute diversion flows for all divider nodes.
+ * @brief Flow sent from a divider node into one of its outflow links.
  *
- * @details For each divider:
- *   - Reads total inflow at the divider node
- *   - Computes diversion flow based on method
- *   - Sets diversion link flow and reduces primary link flow
+ * @details Legacy-faithful divider_getOutflow (node.c:1237-1312): the
+ *          diversion link receives the diverted portion of the node's
+ *          inflow + overflow per the divider method; any other outflow
+ *          link receives the undiverted remainder. Requires links be
+ *          routed in topological order so the non-diversion link is
+ *          evaluated before the diversion link (OVERFLOW dividers read
+ *          the node's accumulated outflow).
  *
- *   Reads the relational DividerData side-table (ctx.node_subtypes.dividers),
- *   which replaces the former standalone DividerSoA. The data is identical
- *   (same dividers, same node-index order, same fields) so results are
- *   unchanged; the side-table is simply the single source of truth.
- *
- * @param ctx   Simulation context.
- * @param divs  Divider side-table (ctx.node_subtypes.dividers).
+ * @param ctx       Simulation context.
+ * @param node_idx  Divider node index.
+ * @param link_idx  Outflow link being evaluated.
+ * @returns         Flow rate into the link (internal flow units).
  */
-void computeDividerFlows(SimulationContext& ctx, const DividerData& divs);
+double getOutflow(SimulationContext& ctx, int node_idx, int link_idx);
 
 } // namespace divider
 } // namespace openswmm

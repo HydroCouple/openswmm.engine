@@ -1,0 +1,234 @@
+;;============================================================================
+;; OpenSWMM — Street Inlets and the Inlet Junction
+;;
+;; One street reach draining to a parallel sewer through two street inlets,
+;; each attached a different way:
+;;
+;;   1. A conduit-attribute inlet — the legacy form. [INLET_USAGE] puts design
+;;      Combo1 on street conduit ST_A; captured flow is booked at ST_A's
+;;      downstream node (J_MID) and delivered to manhole MH1. The uncaptured
+;;      (bypass) flow stays on the street and continues down ST_B.
+;;
+;;   2. An inlet junction — the spatially explicit form. IJ1 is a node of its
+;;      own between street conduits ST_B and ST_C: it captures the gutter flow
+;;      arriving on ST_B, delivers it to MH2, passes the bypass on through
+;;      ST_C, can flood above the curb, and takes MH2's surcharge back onto
+;;      the street as backflow. An inlet junction is a virtual junction
+;;      (zero storage, momentum transmitting) that also carries an inlet, so
+;;      it obeys every [VIRTUAL_JUNCTIONS] rule: exactly two conduits, the
+;;      same cross-section on both, zero offsets, DYNWAVE routing.
+;;
+;; [INLETS] shows all four design grammars: a GRATE line, a CURB line with a
+;; throat angle, the two-line COMBO encoding (one GRATE line and one CURB line
+;; sharing a name, merged into a single combination design), and a CUSTOM
+;; design pointing at a DIVERSION curve. Grate1 and Custom1 are library
+;; designs here — nothing places them; see README.md for how to swap one in.
+;;
+;;   J_TOP --ST_A--> J_MID --ST_B--> [IJ1] --ST_C--> OUT_ST   (street, at grade)
+;;             |            capture     |  capture
+;;             +--> MH1 --SW_1--> MH2 --+--SW_2--> OUT_SEW    (sewer, buried)
+;;
+;; A conduit attached to an inlet junction may not also carry an [INLET_USAGE]
+;; row (that would capture the same water twice, engine rule 629), which is
+;; why the conduit-attribute inlet sits on ST_A rather than on ST_B or ST_C.
+;;
+;; Run:  openswmm-cli street_inlet_junction.inp street_inlet_junction.rpt
+;; Then read the Street Flow Summary and the Street Inlet Flow Summary in the
+;; .rpt — README.md says what to look for.
+;;============================================================================
+
+[TITLE]
+Street Inlets and the Inlet Junction
+A conduit-attribute inlet and an inlet junction on one street reach.
+
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+LINK_OFFSETS         DEPTH
+MIN_SLOPE            0
+ALLOW_PONDING        NO
+SKIP_STEADY_STATE    NO
+
+START_DATE           01/01/2026
+START_TIME           00:00:00
+REPORT_START_DATE    01/01/2026
+REPORT_START_TIME    00:00:00
+END_DATE             01/01/2026
+END_TIME             03:00:00
+SWEEP_START          01/01
+SWEEP_END            12/31
+DRY_DAYS             0
+REPORT_STEP          00:01:00
+WET_STEP             00:05:00
+DRY_STEP             01:00:00
+ROUTING_STEP         00:00:05
+
+
+;;----------------------------------------------------------------------------
+;; Nodes
+;;----------------------------------------------------------------------------
+;; Street nodes carry a shallow MaxDepth: the street surface, not a manhole.
+;; IJ1 is NOT listed here — an inlet junction lives in [INLET_JUNCTIONS].
+
+[JUNCTIONS]
+;;Name             Elev         MaxDepth     InitDepth    SurDepth     Aponded
+;;---------------- ------------ ------------ ------------ ------------ ------------
+J_TOP                100.0000       1.5000       0.0000       0.0000       0.0000
+J_MID                 99.0000       1.5000       0.0000       0.0000       0.0000
+MH1                   90.0000       8.0000       0.0000       0.0000       0.0000
+MH2                   89.0000       9.0000       0.0000       0.0000       0.0000
+
+;; Tokens 1-3 are exactly [VIRTUAL_JUNCTIONS] (name, invert, MaxDepth); here
+;; MaxDepth is the flood threshold above the invert, not just a drawing hint.
+;; Tokens 4-11 are exactly the [INLET_USAGE] tail (design, capture node,
+;; #Inlets, %Clog, Qmax, aLocal, wLocal, Placement).
+
+[INLET_JUNCTIONS]
+;;Name             Elev         MaxDepth     Inlet            CaptureNode      #Inlets  %Clog    Qmax       aLocal     wLocal     Placement
+;;---------------- ------------ ------------ ---------------- ---------------- -------- -------- ---------- ---------- ---------- ----------
+IJ1                   98.0000       0.5000 Curb1            MH2                     1       10          0          0          0 ON_GRADE
+
+[OUTFALLS]
+;;Name             Elev         Type         Stage Data       Gated    Route To
+;;---------------- ------------ ------------ ---------------- -------- ----------------
+OUT_ST                97.0000 FREE                          NO
+OUT_SEW               88.0000 FREE                          NO
+
+
+;;----------------------------------------------------------------------------
+;; Links
+;;----------------------------------------------------------------------------
+;; ST_B and ST_C must share one cross-section and have zero offsets: they are
+;; the pair IJ1 sits between.
+
+[CONDUITS]
+;;Name             From             To               Length     N          Z1         Z2         Q0
+;;---------------- ---------------- ---------------- ---------- ---------- ---------- ---------- ----------
+ST_A             J_TOP            J_MID                200.00     0.0160          0          0          0
+ST_B             J_MID            IJ1                  200.00     0.0160          0          0          0
+ST_C             IJ1              OUT_ST               200.00     0.0160          0          0          0
+SW_1             MH1              MH2                  200.00     0.0130          0          0          0
+SW_2             MH2              OUT_SEW              200.00     0.0130          0          0          0
+
+[XSECTIONS]
+;;Link             Shape        Geom1        Geom2      Geom3      Geom4      Barrels
+;;---------------- ------------ ------------ ---------- ---------- ---------- ----------
+ST_A             STREET       ST_MAIN
+ST_B             STREET       ST_MAIN
+ST_C             STREET       ST_MAIN
+SW_1             CIRCULAR           2.0000          0          0          0          1
+SW_2             CIRCULAR           2.0000          0          0          0          1
+
+
+;;----------------------------------------------------------------------------
+;; Street cross-section
+;;----------------------------------------------------------------------------
+;; Tcrown  half-width of the crowned roadway (ft)
+;; Hcurb   curb height (ft)          Sx  cross slope (%)
+;; nRoad   pavement Manning's n      a   gutter depression (in)
+;; W       depressed gutter width (ft)   Sides  1 = curb on one side only
+;; Tback / Sback / nBack  the backing (parkway) strip behind the curb
+
+[STREETS]
+;;Name             Tcrown     Hcurb      Sx         nRoad      a          W          Sides    Tback      Sback      nBack
+;;---------------- ---------- ---------- ---------- ---------- ---------- ---------- -------- ---------- ---------- ----------
+ST_MAIN               20.0000     0.5000     4.0000     0.0160     2.0000     2.0000        1    10.0000     4.0000     0.0160
+
+
+;;----------------------------------------------------------------------------
+;; Inlet designs
+;;----------------------------------------------------------------------------
+;; GRATE       Name GRATE      Length Width  GrateType [OpenArea SplashVeloc]
+;; CURB        Name CURB       Length Height [ThroatType]
+;; COMBO       (no keyword) a GRATE line and a CURB line under ONE name
+;; SLOTTED     Name SLOTTED    Length Width
+;; DROP_GRATE  Name DROP_GRATE Length Width  GrateType   (drainage channels)
+;; DROP_CURB   Name DROP_CURB  Length Height             (drainage channels)
+;; CUSTOM      Name CUSTOM     CurveID   (a DIVERSION or RATING curve)
+
+[INLETS]
+;;Name             Type         Param1     Param2     Param3
+;;---------------- ------------ ---------- ---------- ----------
+Grate1           GRATE            2.0000     2.0000 P_BAR-50
+Curb1            CURB             3.0000     0.5000 HORIZONTAL
+;; Combo1: the legacy two-line combination inlet — a grate in the gutter plus
+;; a curb opening beside it. The reader merges the pair into one COMBO design
+;; and the writer emits it back as these same two lines.
+Combo1           GRATE            2.0000     2.0000 CURVED_VANE
+Combo1           CURB             3.0000     0.5000 VERTICAL
+Custom1          CUSTOM       DIV_CAP
+
+
+;;----------------------------------------------------------------------------
+;; Inlet placement — the conduit-attribute form
+;;----------------------------------------------------------------------------
+;; Captured flow leaves ST_A at its downstream node and arrives at MH1; the
+;; bypass stays on the street. Qmax = 0 means the inlet is not flow-limited;
+;; aLocal / wLocal = 0 means no local depression beyond the street's own
+;; gutter. %Clog 10 keeps 90 % of the theoretical capacity.
+
+[INLET_USAGE]
+;;Link             Inlet            Node             #Inlets  %Clog    Qmax       aLocal     wLocal     Placement
+;;---------------- ---------------- ---------------- -------- -------- ---------- ---------- ---------- ----------
+ST_A             Combo1           MH1                     2       10          0          0          0 ON_GRADE
+
+
+;;----------------------------------------------------------------------------
+;; Capture curve for the CUSTOM design (captured flow vs. approach flow)
+;;----------------------------------------------------------------------------
+;; The [INLETS] CUSTOM line carries no curve-kind token: the curve's own type
+;; is the kind. DIVERSION = captured flow as a function of approach flow;
+;; RATING = captured flow as a function of ponded depth (sag inlets).
+
+[CURVES]
+;;Name             Type         X-Value    Y-Value
+;;---------------- ------------ ---------- ----------
+DIV_CAP          DIVERSION            0.0        0.0
+DIV_CAP                               1.0        0.9
+DIV_CAP                               3.0        2.1
+DIV_CAP                               6.0        3.0
+DIV_CAP                              12.0        3.6
+
+
+;;----------------------------------------------------------------------------
+;; Forcing — a two-hour gutter hydrograph entering the top of the street
+;;----------------------------------------------------------------------------
+
+[INFLOWS]
+;;Node             Constituent      Time Series      Type     Mfactor  Sfactor  Baseline Pattern
+;;---------------- ---------------- ---------------- -------- -------- -------- -------- --------
+J_TOP            FLOW             GUTTER_TS        FLOW     1.0      1.0
+
+[TIMESERIES]
+;;Name             Date         Time         Value
+;;---------------- ------------ ------------ ----------
+GUTTER_TS                     0:00          0.0
+GUTTER_TS                     0:15          2.0
+GUTTER_TS                     0:30          8.0
+GUTTER_TS                     0:45         12.0
+GUTTER_TS                     1:00          8.0
+GUTTER_TS                     1:30          3.0
+GUTTER_TS                     2:00          0.0
+GUTTER_TS                     3:00          0.0
+
+
+[REPORT]
+INPUT                NO
+CONTROLS             NO
+SUBCATCHMENTS        ALL
+NODES                ALL
+LINKS                ALL
+
+
+[COORDINATES]
+;;Node             X-Coord            Y-Coord
+;;---------------- ------------------ ------------------
+J_TOP                          0.000              0.000
+J_MID                        200.000              0.000
+IJ1                          400.000              0.000
+OUT_ST                       600.000              0.000
+MH1                          200.000           -100.000
+MH2                          400.000           -100.000
+OUT_SEW                      600.000           -100.000

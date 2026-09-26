@@ -17,7 +17,7 @@ from __future__ import annotations
 import os
 import unittest
 
-from openswmm.engine import Solver
+from openswmm.engine import BadParamError, BadIndexError, Solver
 
 from ._paths import artifact_dir
 
@@ -129,13 +129,13 @@ class TwoDTriangleCouplingTest(unittest.TestCase):
     def test_invalid_rows_raise(self):
         s = self._open_model("invalid")
         surf = s.surface2d
-        with self.assertRaises(RuntimeError):  # bad triangle index
+        with self.assertRaises(BadIndexError):  # bad triangle index
             surf.add_triangle_coupling(99, "J1", 0.65, 1.0)
-        with self.assertRaises(RuntimeError):  # empty node name
+        with self.assertRaises(BadParamError):  # empty node name
             surf.add_triangle_coupling(0, "", 0.65, 1.0)
-        with self.assertRaises(RuntimeError):  # non-positive cd
+        with self.assertRaises(BadParamError):  # non-positive cd
             surf.add_triangle_coupling(0, "J1", 0.0, 1.0)
-        with self.assertRaises(RuntimeError):  # non-positive area
+        with self.assertRaises(BadParamError):  # non-positive area
             surf.add_triangle_coupling(0, "J1", 0.65, -1.0)
         self.assertEqual(surf.triangle_coupling_rows, 0)
 

@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Programmatic Model Building
 ============================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 The :class:`ModelBuilder` class creates a SWMM model entirely through the API
 without requiring a ``.inp`` file. Objects are added and configured while the
@@ -42,6 +58,9 @@ from datetime import datetime
 
 from ._common cimport *
 from ._solver cimport Solver
+from ._access import NativeAccess, register_owner
+from ._exceptions import BadHandleError
+from ._enums import ErrorCode
 from ._dates import datetime_to_oadate, oadate_to_datetime
 
 
@@ -69,6 +88,8 @@ cdef class ModelBuilder:
         solver = m.to_solver()
     """
 
+    cdef object __weakref__
+    cdef object _access
     cdef SWMM_Engine _handle
     # ``_generation`` mirrors :attr:`Solver._generation`: container-level
     # editors (``builder.tables.add_curve``, ``builder.transects.add``, …)
@@ -78,6 +99,7 @@ cdef class ModelBuilder:
     cdef long long _generation
 
     def __init__(self):
+        self._access = NativeAccess()
         self._handle = swmm_engine_new()
         if self._handle == NULL:
             raise MemoryError("Failed to create engine in BUILDING state")
@@ -421,11 +443,21 @@ cdef class ModelBuilder:
         @return: The underlying C engine pointer cast to an integer.
         @rtype: int
         """
-        return <size_t>self._handle
+        self._access.check()
+        return register_owner(self, <size_t>self._handle)
+
+    def _operation(self, expected=0):
+        return self._access.operation(self, expected)
 
     # =========================================================================
     # Conversion to Solver
     # =========================================================================
+
+    @property
+    def transport(self):
+        """ARD transport configuration and authored boundary/source rows."""
+        from ._transport import Transport
+        return Transport(self)
 
     def to_solver(self) -> Solver:
         """Transfer ownership of the engine handle to a L{Solver}.
@@ -436,13 +468,17 @@ cdef class ModelBuilder:
         @return: A new L{Solver} wrapping this model's engine.
         @rtype: L{Solver}
         """
-        cdef Solver s = Solver.__new__(Solver)
+        self._access.require_idle()
+        if self._handle == NULL:
+            raise BadHandleError(ErrorCode.BADHANDLE, "Builder ownership has already been transferred")
+        cdef Solver s = Solver()
         s._handle = self._handle
         s._elapsed = 0.0
         s._inp = ""
         s._rpt = ""
         s._out = ""
         self._handle = NULL
+        self._generation += 1
         return s
 
     # =========================================================================

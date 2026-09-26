@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Enumerations
 ============
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 Type stubs for L{openswmm.engine._enums}.
 
@@ -66,9 +82,21 @@ class ErrorCode(IntEnum):
 class EngineState(IntEnum):
     """Engine lifecycle states.
 
-    Mirrors ``SWMM_EngineState`` in ``openswmm_engine.h``.
+    Returned by the C{state} property of L{Solver}. Values mirror the
+    C{SWMM_EngineState} enum in C{openswmm_engine.h}.
+
+    @cvar NONE: Uninitialised / fatal-error sentinel.
+    @cvar CREATED: Context allocated, no input loaded.
+    @cvar OPENED: Input file parsed, objects allocated.
+    @cvar INITIALIZED: Initial conditions applied.
+    @cvar STARTED: Simulation prepared to step (post-start, pre-first-step).
+    @cvar RUNNING: Simulation loop in progress.
+    @cvar ENDED: Simulation loop completed.
+    @cvar CLOSED: Resources released.
+    @cvar BUILDING: Programmatic model construction in progress (no .inp).
     """
 
+    NONE = 0
     CREATED = 1
     OPENED = 2
     INITIALIZED = 3
@@ -163,12 +191,17 @@ class RouteModel(IntEnum):
 
     @cvar STEADY: Steady-state routing.
     @cvar KINWAVE: Kinematic wave routing.
-    @cvar DYNWAVE: Dynamic wave (full Saint-Venant) routing.
+    @cvar DYNWAVE: Dynamic wave (full Saint-Venant), implicit. The default.
+    @cvar FV: Explicit conservative finite volume (Godunov). Conserves volume
+        exactly and captures pressurization fronts and transcritical flow, at
+        the cost of needing a resolved mesh — set ``FV_CELL_LENGTH``. See the
+        Hydraulics Reference Manual, Chapter 8.
     """
 
     STEADY = 0
     KINWAVE = 1
     DYNWAVE = 2
+    FV = 3
 
 
 class NodeType(IntEnum):
@@ -473,6 +506,17 @@ class AquiferParam(IntEnum):
     UPPER_MOISTURE = 11
 
 
+class GwfType(IntEnum):
+    """Which of a subcatchment's two [GWF] custom groundwater flow expressions.
+
+    @cvar LATERAL: Added to the standard A1/A2/A3 lateral groundwater flow.
+    @cvar DEEP: Replaces the standard deep-percolation term.
+    """
+
+    LATERAL = 0
+    DEEP = 1
+
+
 # =============================================================================
 # Output variables
 # =============================================================================
@@ -655,6 +699,8 @@ class RunoffTotal(IntEnum):
     SNOWREMOV = 4
     INITSTORE = 5
     FINALSTORE = 6
+    INITSNOW = 7
+    FINALSNOW = 8
 
 
 class RoutingTotal(IntEnum):
@@ -671,6 +717,10 @@ class RoutingTotal(IntEnum):
     @cvar SEEP_LOSS: Seepage loss.
     @cvar INIT_STORAGE: Initial network storage.
     @cvar FINAL_STORAGE: Final network storage.
+    @cvar FORCING_INFLOW: Runtime-API forced lateral inflow (e.g.
+        flow injected via Nodes.set_lateral_inflow / transient
+        ForcingData). A subset of EXTERNAL, which also includes authored
+        inflows, interface-file inflow, and 2D coupling inflow.
     """
 
     DRY_WEATHER = 0
@@ -684,6 +734,9 @@ class RoutingTotal(IntEnum):
     SEEP_LOSS = 8
     INIT_STORAGE = 9
     FINAL_STORAGE = 10
+    FORCING_INFLOW = 11
+    LINK_GW_INFLOW = 13
+    COUPLING_OUT = 12
 
 
 # =============================================================================
@@ -700,7 +753,26 @@ class DividerType(IntEnum):
 
 
 class ForcingType(IntEnum):
-    """Forcing channel for a runtime override. Mirrors ``SWMM_ForcingType``."""
+    """Forcing channel selected when injecting a runtime override.
+
+    Mirrors C{SWMM_ForcingType} in C{openswmm_forcing.h}. Distinct from
+    L{ForcingTarget}, which only names the object *kind* passed to
+    L{Forcing.clear}.
+
+    @cvar NODE_LAT_INFLOW: Lateral inflow at a node.
+    @cvar NODE_HEAD_BOUNDARY: Head boundary condition at a node.
+    @cvar NODE_QUALITY: Pollutant concentration at a node.
+    @cvar LINK_FLOW: Imposed flow on a link.
+    @cvar LINK_SETTING: Control setting on a link.
+    @cvar SUBCATCH_RAINFALL: Rainfall on a subcatchment.
+    @cvar SUBCATCH_EVAP: Evaporation on a subcatchment.
+    @cvar GAGE_RAINFALL: Rainfall at a rain gage.
+    @cvar CLIMATE_TEMPERATURE: System-wide air temperature.
+    @cvar CLIMATE_WIND: System-wide wind speed.
+    @cvar SUBCATCH_SNOWFALL: Snowfall on a subcatchment.
+    @cvar CLIMATE_EVAP: System-wide evaporation rate.
+    @cvar LINK_QUALITY: Pollutant quality on a link.
+    """
 
     NODE_LAT_INFLOW = 0
     NODE_HEAD_BOUNDARY = 1
@@ -715,6 +787,11 @@ class ForcingType(IntEnum):
     SUBCATCH_SNOWFALL = 10
     CLIMATE_EVAP = 11
     LINK_QUALITY = 12
+    ELEM_AIR_TEMPERATURE = 13
+    ELEM_HUMIDITY = 14
+    ELEM_WIND_SPEED = 15
+    ELEM_SHORTWAVE = 16
+    LINK_SEEPAGE = 17
 
 
 class ForcingPersist(IntEnum):
@@ -742,8 +819,38 @@ class SurfaceBoundaryType(IntEnum):
     RATING_CURVE = 4
 
 
+class SurfaceInfilMethod(IntEnum):
+    """Per-cell 2D infiltration method. Mirrors ``SWMM_INFIL2D_*``."""
+
+    HORTON = 0
+    MOD_HORTON = 1
+    GREEN_AMPT = 2
+    MOD_GREEN_AMPT = 3
+    CURVE_NUMBER = 4
+    CONSTANT = 5
+
+
+class SurfaceInfilDest(IntEnum):
+    """Destination of 2D infiltrated water. Mirrors ``SWMM_INFIL2D_DEST_*``."""
+
+    LOST = 0
+    SUBCATCH_AQUIFER = 1
+    AQUIFER_2D = 2
+
+
 class RefType(IntEnum):
-    """Object kind holding a reference (editing API). Mirrors ``SWMM_RefType``."""
+    """Kind of object that holds a reference, used by the editing/impact API.
+
+    Mirrors C{SWMM_RefType} in C{openswmm_edit.h}.
+
+    @cvar NODE: A node holds the reference.
+    @cvar LINK: A link holds the reference.
+    @cvar SUBCATCH: A subcatchment holds the reference.
+    @cvar GAGE: A rain gage holds the reference.
+    @cvar TABLE: A time series or curve holds the reference.
+    @cvar TRANSECT: A transect holds the reference.
+    @cvar INLET_USAGE: An inlet-usage entry holds the reference.
+    """
 
     NODE = 0
     LINK = 1
@@ -752,6 +859,21 @@ class RefType(IntEnum):
     TABLE = 4
     TRANSECT = 5
     INLET_USAGE = 6
+    EXT_INFLOW = 7
+    DWF_INFLOW = 8
+    RDII_ASSIGN = 9
+    TREATMENT = 10
+    LID_USAGE = 11
+    SNOWPACK = 12
+    HYDROGRAPH = 13
+    POLLUTANT = 14
+    PATTERN = 15
+    AQUIFER = 16
+    LID_CONTROL = 17
+    STREET = 18
+    INLET_DESIGN = 19
+    LANDUSE = 20
+    CONTROL_RULE = 21
 
 
 class TableType(IntEnum):
@@ -772,7 +894,24 @@ class TableType(IntEnum):
 
 
 class FilePathRole(IntEnum):
-    """External-file slot selector for ``swmm_file_path_get/set``. Mirrors ``SWMM_FilePathRole``."""
+    """External-file slot selector for C{swmm_file_path_get/set}.
+
+    Mirrors C{SWMM_FilePathRole}. Scalar slots ignore the ``owner``
+    argument; vector slots use ``owner`` to select the entry (a decimal
+    index for hot-start saves, the gage id for rain-gage data, the series
+    id for time-series data).
+
+    @cvar RAINFALL: Rainfall interface file (scalar).
+    @cvar RUNOFF: Runoff interface file (scalar).
+    @cvar RDII: RDII interface file (scalar).
+    @cvar INFLOWS: Routing inflows interface file (scalar).
+    @cvar OUTFLOWS: Routing outflows interface file (scalar).
+    @cvar HOTSTART_USE: Hot-start file to read (scalar).
+    @cvar CLIMATE_TEMP: Climate/temperature file (scalar).
+    @cvar HOTSTART_SAVE: Hot-start save slot (vector; owner = index).
+    @cvar RAINGAGE_DATA: Rain-gage data file (vector; owner = gage id).
+    @cvar TIMESERIES_DATA: Time-series data file (vector; owner = series id).
+    """
 
     RAINFALL = 1
     RUNOFF = 2
@@ -784,6 +923,9 @@ class FilePathRole(IntEnum):
     HOTSTART_SAVE = 8
     RAINGAGE_DATA = 9
     TIMESERIES_DATA = 10
+    MESH_2D = 11
+    OUTPUT_2D = 12
+    LID_REPORT = 13
 
 
 class UserFlagType(IntEnum):
@@ -793,3 +935,331 @@ class UserFlagType(IntEnum):
     INTEGER = 1
     REAL = 2
     STRING = 3
+
+
+class HeatFluxModule(IntEnum):
+    """Independently toggleable heat-flux modules. Mirrors ``SWMM_HeatFluxModule``."""
+
+    SURFACE_EXCHANGE = 0
+    RADIATIVE_EXCHANGE = 1
+    LAYER_CONDUCTION = 2
+
+
+class HeatShortwaveMode(IntEnum):
+    """Source of incoming shortwave radiation. Mirrors ``SWMM_HeatShortwaveMode``."""
+
+    CONSTANT = 0
+    TIMESERIES = 1
+    COMPUTED = 2
+
+
+class HeatRadiativeParam(IntEnum):
+    """``[RADIATIVE_FLUXES]`` scalar parameters. Mirrors ``SWMM_HeatRadiativeParam``."""
+
+    SHORTWAVE = 0
+    ALBEDO = 1
+    SHADE_FACTOR = 2
+    SKY_VIEW = 3
+    EMISS_WATER = 4
+    EMISS_LANDCOVER = 5
+    ATM_EMISS_COEFF = 6
+    LW_REFLECTION = 7
+
+
+class HeatSolarParam(IntEnum):
+    """``[SOLAR_RADIATION]`` parameters. Mirrors ``SWMM_HeatSolarParam``."""
+
+    LATITUDE = 0
+    LONGITUDE = 1
+    TIMEZONE = 2
+    ELEVATION = 3
+    TURBIDITY_380 = 4
+    TURBIDITY_500 = 5
+    PRECIP_WATER = 6
+    OZONE = 7
+    GROUND_ALBEDO = 8
+
+
+class HeatCloudParam(IntEnum):
+    """``[CLOUD_COVER]`` parameters. Mirrors ``SWMM_HeatCloudParam``."""
+
+    FRACTION = 0
+    SW_ATTEN_K = 1
+    SW_ATTEN_N = 2
+    LW_CLOUD_K = 3
+
+
+class HeatSourceKind(IntEnum):
+    """``[HEAT_SOURCES]`` water sources. Mirrors ``SWMM_HeatSourceKind``."""
+
+    RAINFALL = 0
+    DWF = 1
+    GW = 2
+    RDII = 3
+    EXTERNAL_INFLOW = 4
+    IFACE = 5
+    INITIAL_STATE = 6
+
+
+class WaterAgeSource(IntEnum):
+    """``[WATER_AGE_SOURCES]`` pathways. Mirrors ``SWMM_WaterAgeSource`` (without ``COUNT``)."""
+
+    RAINFALL = 0
+    DWF = 1
+    GW = 2
+    RDII = 3
+    EXTERNAL_INFLOW = 4
+    IFACE = 5
+    INITIAL_STATE = 6
+
+
+class ReactionScope(IntEnum):
+    """Reaction-expression validation scope. Mirrors the ``SWMM_RXN_SCOPE_*`` macros."""
+
+    TERM = 0
+    PIPE = 1
+    TANK = 2
+
+
+class ReactionExprForm(IntEnum):
+    """Form of a species' reaction expression. Mirrors the ``SWMM_RXN_FORM_*`` macros."""
+
+    NONE = 0
+    RATE = 1
+    EQUIL = 2
+    FORMULA = 3
+
+
+class InletType(IntEnum):
+    """Street-inlet design type (``[INLETS]`` token 2). Mirrors ``SWMM_InletType``."""
+
+    GRATE = 0
+    CURB = 1
+    COMBO = 2
+    SLOTTED = 3
+    DROP_GRATE = 4
+    DROP_CURB = 5
+    CUSTOM = 6
+
+
+class GrateType(IntEnum):
+    """Grate bar pattern (HEC-22 Table 4-6). Mirrors ``SWMM_GrateType``."""
+
+    P_BAR_50 = 0
+    P_BAR_50x100 = 1
+    P_BAR_30 = 2
+    CURVED_VANE = 3
+    TILT_BAR_45 = 4
+    TILT_BAR_30 = 5
+    RETICULINE = 6
+    GENERIC = 7
+
+
+class ThroatType(IntEnum):
+    """Curb-opening throat orientation. Mirrors ``SWMM_ThroatType``."""
+
+    HORIZONTAL = 0
+    INCLINED = 1
+    VERTICAL = 2
+
+
+class InletCurveKind(IntEnum):
+    """Capture-curve kind of a ``CUSTOM`` inlet. Mirrors ``SWMM_InletCurveKind``."""
+
+    NONE = 0
+    DIVERSION = 1
+    RATING = 2
+
+
+class InletPlacement(IntEnum):
+    """Inlet placement mode (``[INLET_USAGE]`` token 9). Mirrors ``SWMM_InletPlacement``."""
+
+    AUTOMATIC = 0
+    ON_GRADE = 1
+    ON_SAG = 2
+
+
+class InletHostKind(IntEnum):
+    """Inlet-usage host kind. Mirrors ``SWMM_InletHostKind``."""
+
+    LINK = 0
+    NODE = 1
+
+
+class TransportClass(IntEnum):
+    """Species class axis of the engine transport capability matrix."""
+    POLLUTANTS = 0
+    MSX = 1
+    AGE = 2
+    TEMPERATURE = 3
+
+
+class WindType(IntEnum):
+    """Codes matching the native ``SWMM_WindType`` enumeration."""
+
+    MONTHLY = 0
+    FILE = 1
+
+
+class HumidityType(IntEnum):
+    """Codes matching the native ``SWMM_HumidityType`` enumeration."""
+
+    CONSTANT = 0
+    MONTHLY = 1
+    TIMESERIES = 2
+
+
+class TransportDomain(IntEnum):
+    """Domain axis of the engine transport capability matrix."""
+    RUNOFF = 0
+    GROUNDWATER = 1
+    NETWORK_1D = 2
+    SURFACE_2D = 3
+
+
+class TempSource(IntEnum):
+    """Codes matching the native ``SWMM_TempSource`` enumeration."""
+
+    NONE = 0
+    TIMESERIES = 1
+    FILE = 2
+
+
+class HeatElemKind(IntEnum):
+    """Codes matching the native ``SWMM_HeatElemKind`` enumeration."""
+
+    NODE = 0
+    LINK = 1
+
+
+class InpProfile(IntEnum):
+    """Codes matching the native ``SWMM_InpProfile`` enumeration."""
+
+    FULL = 0
+    SWMM5 = 1
+    SWMM5_STOCK = 2
+
+
+class EvapType(IntEnum):
+    """Codes matching the native ``SWMM_EvapType`` enumeration."""
+
+    CONSTANT = 0
+    MONTHLY = 1
+    TIMESERIES = 2
+    TEMPERATURE = 3
+    FILE = 4
+
+
+class UnitSystem(IntEnum):
+    """Codes matching the native ``SWMM_UnitSystem`` enumeration."""
+
+    UNITS_US = 0
+    UNITS_SI = 1
+
+
+class HumidityVar(IntEnum):
+    """Codes matching the native ``SWMM_HumidityVar`` enumeration."""
+
+    RELATIVE = 0
+    DEWPOINT = 1
+
+
+class TransportState(IntEnum):
+    """Availability of a process, with a diagnostic reason when disabled."""
+    ENABLED = 0
+    DISABLED_BY_USER = 1
+    UNAVAILABLE = 2
+
+
+class TransportDispersionMode(IntEnum):
+    """Codes matching the native ``SWMM_TransportDispersionMode`` enumeration."""
+
+    OFF = 0
+    FISCHER = 1
+    VALUE = 2
+
+
+class CellScope(IntEnum):
+    """Native SWMM_GW2D_SCOPE selectors."""
+    GLOBAL = 0
+    TAG = 1
+    CELL = 2
+
+
+class GroundwaterSoil(IntEnum):
+    """Native SWMM_GW2D_SOIL selectors."""
+    RUSSO = 0
+    GARDNER = 1
+    BROOKS_COREY = 2
+    VAN_GENUCHTEN = 3
+
+
+class GroundwaterClosure(IntEnum):
+    """Native SWMM_GW2D_CLOSURE selectors."""
+    AUTO = -1
+    CLOSED_FORM = 0
+    ENSLAVED = 1
+    SIGMA = 2
+
+
+class GroundwaterVariable(IntEnum):
+    """Native SWMM_GW2D_VAR selectors."""
+    HG = 0
+    HU = 1
+    TABLE_EL = 2
+    Q0 = 3
+    QLAT = 4
+    QNODE = 5
+    QDEEP = 6
+    QET = 7
+    DUNNE = 8
+    QPLUS = 9
+    DT_CELL = 10
+    TIER = 11
+    CLOSURE = 12
+    QLINK = 13
+
+
+class GroundwaterLedger(IntEnum):
+    """Native SWMM_GW2D_LED selectors."""
+    RECHARGE = 0
+    LATERAL = 1
+    DEEP = 2
+    NODE = 3
+    DUNNE = 4
+    CAPRISE = 5
+    ET = 6
+    INFIL_IN = 7
+    INIT_STORAGE = 8
+    STORAGE = 9
+    LINK = 10
+
+
+class GroundwaterZone(IntEnum):
+    """Native SWMM_GW2D_ZONE selectors."""
+    SAT = 0
+    UNSAT = 1
+
+
+class GroundwaterSpeciesLedger(IntEnum):
+    """Native SWMM_GW2D_SPL selectors."""
+    INIT = 0
+    STORAGE = 1
+    INFIL_IN = 2
+    NODE_IN = 3
+    LINK_IN = 4
+    LATERAL_NET = 5
+    DEEP_OUT = 6
+    NODE_OUT = 7
+    LINK_OUT = 8
+    DUNNE_OUT = 9
+    ET_OUT = 10
+    REACTED = 11
+    RESIDUAL = 12
+
+
+class GroundwaterTransportZone(IntEnum):
+    """Authoring zones; LAYER uses an explicit one-based layer index."""
+    SAT = 0
+    UNSAT = 1
+    LAYER = 2

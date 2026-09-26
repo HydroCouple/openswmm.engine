@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file TopoSort.hpp
  * @brief Topological sort of network links for KW/steady-state routing.
@@ -13,7 +29,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_TOPOSORT_HPP
@@ -38,11 +54,19 @@ namespace toposort {
  * @param n_links      Number of links.
  * @param n_nodes      Number of nodes.
  * @param sorted_links [out] Topologically sorted link indices.
+ * @param divert_link  [in] Optional, per node: the index of that node's
+ *        DIVERSION link when the node is a 2-outlet divider, else -1. Legacy
+ *        adjustAdjList (toposort.c:191-217) swaps a divider's two outgoing
+ *        links so the NON-diversion one is routed first — divider_getOutflow
+ *        gives the diversion link `qIn - Node.outflow`, i.e. only what the
+ *        other link left behind, so the wrong order sends the node's whole
+ *        inflow down BOTH links. Pass nullptr to skip the adjustment.
  * @returns Number of sorted links (< n_links indicates cycle).
  */
 int sortLinks(const int* node1, const int* node2,
               int n_links, int n_nodes,
-              std::vector<int>& sorted_links);
+              std::vector<int>& sorted_links,
+              const int* divert_link = nullptr);
 
 } // namespace toposort
 } // namespace openswmm

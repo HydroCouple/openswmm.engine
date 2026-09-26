@@ -9,6 +9,7 @@
 
 #include "VertexReconstruction.hpp"
 #include "VfrClosure.hpp"
+#include "QuadVfr.hpp"
 
 #include <vector>
 #include <cmath>
@@ -29,9 +30,9 @@ void buildVertexStencils(MeshData& mesh) {
     // Step 1: For each vertex, collect all triangles that share it
     std::vector<std::vector<int>> vert_triangles(nv);
     for (int t = 0; t < nt; ++t) {
-        vert_triangles[mesh.tri_v0[t]].push_back(t);
-        vert_triangles[mesh.tri_v1[t]].push_back(t);
-        vert_triangles[mesh.tri_v2[t]].push_back(t);
+        const int nvc = mesh.cell_vertex_count(t);
+        for (int k = 0; k < nvc; ++k)
+            vert_triangles[mesh.cell_vertex(t, k)].push_back(t);
     }
 
     // Step 2: Build CSR stencil
@@ -164,6 +165,21 @@ void reconstructVertexHeads(const MeshData& mesh, SurfaceStateData& state,
 }
 
 
+double cellFreeSurfaceElevationOf(const MeshData& mesh, int t, double mean_depth) {
+    if (mesh.cell_vertex_count(t) == 4) {
+        // Quad: exact (eps = 0) B&S 2007 two-plane relation over the
+        // precomputed sub-triangle data (mesh/QuadVfr.hpp).
+        const auto u = static_cast<std::size_t>(t);
+        const double* zs = &mesh.quad_vfr_z[u * kQuadVfrZ];
+        if (!(mean_depth > 0.0)) return (zs[0] < zs[3]) ? zs[0] : zs[3];
+        return quadEtaFromMeanDepth(zs, mesh.quad_vfr_a[u * 2],
+                                    mesh.quad_vfr_a[u * 2 + 1], mean_depth, 0.0);
+    }
+    return cellFreeSurfaceElevation(mean_depth, mesh.vz[mesh.cell_vertex(t, 0)],
+                                    mesh.vz[mesh.cell_vertex(t, 1)],
+                                    mesh.vz[mesh.cell_vertex(t, 2)]);
+}
+
 double cellFreeSurfaceElevation(double mean_depth, double za, double zb,
                                 double zc) {
     // Delegates to the shared VFR closure (VfrClosure.hpp) with eps = 0 — the
@@ -179,8 +195,27 @@ double cellFreeSurfaceElevation(double mean_depth, double za, double zb,
 
 void reconstructVertexRenderDepths(const MeshData& mesh, SurfaceStateData& state,
                                    double dry_depth,
-                                   [[maybe_unused]] int nthreads) {
+                                   [[maybe_unused]] int nthreads,
+                                   std::vector<double>& eta_scratch) {
     const int nv = mesh.n_vertices();
+    const int nt = mesh.n_triangles();
+
+    // Each cell's free surface is a property of the CELL, not of the (vertex,
+    // cell) incidence: the per-incidence form re-ran the exact planar-bed
+    // closure (sort3 + cube root / Newton) about once per incident vertex,
+    // i.e. ~3x per cell per pass, and it was the single largest consumer in
+    // the profile. Evaluate it once per wet cell here, then gather. Dry cells
+    // are left untouched (the gather re-tests the same predicate) so the
+    // closure is never evaluated where the old code would not have evaluated
+    // it either.
+    eta_scratch.resize(static_cast<std::size_t>(nt));
+#pragma omp parallel for schedule(static) num_threads(nthreads)
+    for (int t = 0; t < nt; ++t) {
+        const double h = state.depth[t];
+        if (!(h >= dry_depth)) continue;
+        eta_scratch[static_cast<std::size_t>(t)] =
+            cellFreeSurfaceElevationOf(mesh, t, h);
+    }
 
     // Per-vertex CSR gather over the stencil's cell LIST (topology only — the
     // pseudo-Laplacian weights are a solver concern). Each iteration writes
@@ -196,9 +231,7 @@ void reconstructVertexRenderDepths(const MeshData& mesh, SurfaceStateData& state
             const int    t = mesh.vert_stencil_idx[k];
             const double h = state.depth[t];
             if (!(h >= dry_depth)) continue;        // dry skip (NaN-robust)
-            const double eta = cellFreeSurfaceElevation(
-                h, mesh.vz[mesh.tri_v0[t]], mesh.vz[mesh.tri_v1[t]],
-                mesh.vz[mesh.tri_v2[t]]);
+            const double eta = eta_scratch[static_cast<std::size_t>(t)];
             if (!std::isfinite(eta)) continue;      // nodata z must not spread
             // Wetted-contact gate: a cell votes at this vertex only if its
             // water surface actually reaches the vertex's corner (η above the

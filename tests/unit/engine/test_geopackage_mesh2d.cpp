@@ -133,9 +133,8 @@ protected:
         mesh_.vtag[0] = "VT0";
 
         mesh_.resize_triangles(2);
-        mesh_.tri_v0 = {0, 0};
-        mesh_.tri_v1 = {1, 2};
-        mesh_.tri_v2 = {2, 3};
+        mesh_.set_triangle(0, 0, 1, 2);
+        mesh_.set_triangle(1, 0, 2, 3);
         mesh_.mannings_n = {0.03, 0.045};
         mesh_.tri_init_depth = {0.25, 0.0};
         mesh_.tri_tag[1] = "T1";
@@ -176,16 +175,16 @@ TEST_F(GeoPackageMesh2DTest, MeshRoundTripMinimal) {
         EXPECT_EQ(mesh_in_.vtag[i], mesh_.vtag[i])    << "vtag[" << i << "]";
     }
     for (int t = 0; t < 2; ++t) {
-        EXPECT_EQ(mesh_in_.tri_v0[t], mesh_.tri_v0[t]);
-        EXPECT_EQ(mesh_in_.tri_v1[t], mesh_.tri_v1[t]);
-        EXPECT_EQ(mesh_in_.tri_v2[t], mesh_.tri_v2[t]);
+        EXPECT_EQ(mesh_in_.cell_vertex(t, 0), mesh_.cell_vertex(t, 0));
+        EXPECT_EQ(mesh_in_.cell_vertex(t, 1), mesh_.cell_vertex(t, 1));
+        EXPECT_EQ(mesh_in_.cell_vertex(t, 2), mesh_.cell_vertex(t, 2));
         EXPECT_DOUBLE_EQ(mesh_in_.mannings_n[t], mesh_.mannings_n[t]);
         EXPECT_DOUBLE_EQ(mesh_in_.tri_init_depth[t], mesh_.tri_init_depth[t]);
         EXPECT_EQ(mesh_in_.tri_tag[t], mesh_.tri_tag[t]);
     }
     // Derived topology is NOT persisted — it stays at the resize defaults
     // until SurfaceRouter2D::initialize() rebuilds it.
-    EXPECT_EQ(mesh_in_.tri_nbr0[0], -1);
+    EXPECT_EQ(mesh_in_.cell_neighbour(0, 0), -1);
 }
 
 // ---------------------------------------------------------------------------
@@ -201,6 +200,7 @@ TEST_F(GeoPackageMesh2DTest, OptionsRoundTrip2D) {
     opts_.flux_dh_eps       = 7.0e-12;  // ditto — g17 formatting must preserve it
     opts_.coupling_cd       = 0.71;
     opts_.report_2d         = false;
+    opts_.rainfall_mode     = twoD::RainfallMode::NEAREST_NEIGHBOUR;
     // Closure keys.
     opts_.cell_closure        = twoD::CellClosure2D::VFR;
     opts_.face_reconstruction = twoD::FaceDepth2D::VFR_FACE;
@@ -234,6 +234,7 @@ TEST_F(GeoPackageMesh2DTest, OptionsRoundTrip2D) {
     EXPECT_DOUBLE_EQ(opts_in_.flux_dh_eps,     7.0e-12);
     EXPECT_DOUBLE_EQ(opts_in_.coupling_cd,     0.71);
     EXPECT_FALSE(opts_in_.report_2d);
+    EXPECT_EQ(opts_in_.rainfall_mode, twoD::RainfallMode::NEAREST_NEIGHBOUR);
     EXPECT_EQ(opts_in_.cell_closure,        twoD::CellClosure2D::VFR);
     EXPECT_EQ(opts_in_.face_reconstruction, twoD::FaceDepth2D::VFR_FACE);
     EXPECT_DOUBLE_EQ(opts_in_.vfr_min_wet_frac, 0.025);
@@ -318,8 +319,8 @@ TEST_F(GeoPackageMesh2DTest, ConveyanceFallbackFromMeshSlots) {
     // slot t1/e2 (opposite v3... local edge e connects v[(e+1)%3], v[(e+2)%3]).
     // t0 = (0,1,2): e2 connects v0,v1; e0 connects v1,v2; e1 connects v2,v0.
     // t1 = (0,2,3): e2 connects v0,v2 — the mirror of t0/e1.
-    mesh_.edge_conveyance[0 * 3 + 1] = 0.4;
-    mesh_.edge_conveyance[1 * 3 + 2] = 0.4;
+    mesh_.edge_conveyance[twoD::MeshData::slot(0, 1)] = 0.4;
+    mesh_.edge_conveyance[twoD::MeshData::slot(1, 2)] = 0.4;
 
     auto ctx = build_ctx_out();
     {

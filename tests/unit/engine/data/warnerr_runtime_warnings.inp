@@ -1,6 +1,6 @@
 [TITLE]
 Triggers legacy runtime warnings 05/06/07/08 (min slope, dry/routing step clamps,
-elevation drop exceeds length). MIN_SLOPE forces a slope clamp; DRY_STEP < WET_STEP
+elevation drop exceeds length). MIN_SLOPE (a PERCENT: 5 % > C1's 2.5 %) forces a slope clamp; DRY_STEP < WET_STEP
 and ROUTING_STEP > WET_STEP force the step clamps; the short conduit C2 forces the
 elevation-drop-exceeds-length warning.
 
@@ -9,7 +9,7 @@ FLOW_UNITS           CFS
 INFILTRATION         HORTON
 FLOW_ROUTING         DYNWAVE
 LINK_OFFSETS         DEPTH
-MIN_SLOPE            0.5
+MIN_SLOPE            5
 START_DATE           01/01/2020
 START_TIME           00:00:00
 END_DATE             01/01/2020

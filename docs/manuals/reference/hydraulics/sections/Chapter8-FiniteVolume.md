@@ -47,8 +47,9 @@ inertial damping and normal-flow limiting.
 
 Several aspects of the analysis remain unchanged: the method is still
 one-dimensional, still uses the Preissmann slot for pressurized flow
-and therefore still cannot represent sub-atmospheric pipe pressure, and
-still treats a general junction as a stagnation volume (§8.6).
+under its default closure — which cannot represent sub-atmospheric pipe
+pressure; the optional TPA closure of §8.4.5 can — and still treats a
+general junction as a stagnation volume (§8.6).
 
 ## 8.2 Governing equations
 
@@ -81,6 +82,15 @@ placement of terms is what gives the scheme its conservation property.
 
 ## 8.3 The computational mesh
 
+Figure 8-1 contrasts the node–link picture of @ref hydraulics_ref_ch3_dynamic_wave "Chapter 3" — one
+momentum balance per conduit, depth known only at the nodes — with the
+spatially explicit picture of this chapter, in which the conduit itself
+is discretised and profiles, bores and jumps are resolved inside it.
+
+![Figure 8-1](figures/png/hydraulics_ch8_cell_layout.png)
+
+*Figure 8-1 Node–link routing against the finite-volume view: one momentum balance per conduit versus a conduit cut into cells with the water surface resolved inside it*
+
 The mesh is internal numerical discretization. It creates no named
 objects, appears in no report, and is invisible to the model's
 topology. Each conduit is divided into
@@ -109,7 +119,7 @@ deviation from the dynamic wave solver against cells per conduit:
 
 Four cells is a practical compromise rather than a converged result: it
 more than halves the one-cell error for about twice the cost, while
-further refinement improves accuracy more slowly than it adds cost. §8.10 gives the same comparison against \f$\Delta x\f$ targets. Set
+further refinement improves accuracy more slowly than it adds cost. Set
 `FV_CELL_LENGTH`, or raise `FV_MIN_CELLS`, whenever peak flows or
 in-conduit profiles matter.
 
@@ -149,6 +159,19 @@ The default of 100 ft/s is the same order the dynamic wave solver's
 5 % of the section's maximum width so it can never become the dominant
 storage and understate a surge.
 
+Two practical consequences of (8-5) and the cap, measurable through the
+diagnostics of §8.7.1: the slot's share of stored volume scales as
+\f$1/c_{slot}^{2}\f$, and requests **below** the cap-implied celerity
+\f$\sqrt{g A_{full}/(0.05\,W_{max})}\f$ are inert — every such value
+produces byte-identical geometry (WARNING 108 reports the override).
+The cap-implied celerity is shape-dependent, since \f$A_{full}/W_{max}\f$
+varies by a factor of 2–3 across the closed-section catalog: for a
+circular pipe it is reached at \f$c \approx 22.5\sqrt{D}\f$ ft/s
+(≈ 39 ft/s at D = 3 ft, ≈ 67 ft/s at D = 9 ft). Because the slot also
+absorbs part of the friction grade while engaged, steady full-bore head
+loss converges on the Manning value from below as the celerity rises
+(§8.7.1) — a low celerity understates surcharge and head loss together.
+
 ### 8.4.2 The tapered slot mouth
 
 The slot does not appear abruptly at the crown. It opens smoothly over
@@ -167,6 +190,16 @@ Riemann solver's wave-speed estimates; the taper is what prevents both.
 The area is the exact integral of (8-6), so \f$A\f$ and \f$T\f$ remain a
 consistent pair through the transition.
 
+Figure 8-2 draws the closure for a 3 ft circular pipe from the engine's
+own geometry: the mouth opens across \f$[y_c,\,y_{full}]\f$ and the
+celerity climbs smoothly to \f$c_{slot}\f$ instead of diverging where the
+section's width collapses at the crown. The 30 ft/s request lies below
+the cap-implied celerity of §8.4.1 and is inert.
+
+![Figure 8-2](figures/png/hydraulics_ch8_slot_closure.png)
+
+*Figure 8-2 The tapered static slot for a 3 ft circular pipe: top width and celerity across the crown at four slot celerities*
+
 Open sections carry no crown and no taper: above `y_full` the section
 simply continues with vertical walls of width \f$w_{max}\f$, which is one
 code path with the closed case and keeps the celerity physical.
@@ -178,6 +211,15 @@ returns to the same state each time. This is why the *static* slot is
 used here rather than the Dynamic Preissmann Slot: a relaxing slot
 makes bore speed depend on relaxation history, which would destroy the
 Rankine–Hugoniot front speed the method exists to get right.
+
+That argument rules out *relaxing* closures — ones whose pressurized
+celerity evolves with pressurization history, like the dynamic slot —
+and it is worth being precise that it does **not** rule out the TPA
+closure of §8.4.5. TPA's pressurized celerity is the same constant
+\f$a\f$ as the static slot's, so the Rankine–Hugoniot speed of a filling
+bore is unaffected by its history flag; only the \f$\Delta A < 0\f$
+branch — the sub-atmospheric regime, which the static slot handles
+unphysically in any case — consults the flag at all.
 
 ### 8.4.3 Inverting the closure
 
@@ -255,9 +297,281 @@ and `h_tbl` members of @ref openswmm::fv::FvGeometry
 (`src/engine/hydraulics/fv/NetworkMeshData.hpp`, `kI1Samples` = 129),
 built in `src/engine/hydraulics/fv/NetworkMeshBuilder.cpp`.
 
+### 8.4.4 The implicit pressurized head update
+
+> **Experimental.** The option and the solver described here are fully
+> functional and gated, but the pass cannot yet compose with the
+> local-time-stepping macro cycle (§8.5.6) — tiering stands down on any
+> substep where the solve engages — and the slot program's next round
+> (R2b) is expected to revise it. The GUI surfaces it as an explicitly
+> experimental checkbox on the Routing & Hydraulics page.
+
+`FV_PRESSURIZED_IMPLICIT YES` removes the slot's wave from the explicit
+time-step law. Above the taper band the closure (8-4) is exactly linear
+in head, so the acoustic pair — slot storage \f$T_{slot}\,\partial H/\partial t\f$
+against the pressure gradient \f$gA\,\partial H/\partial x\f$ — is a
+linear diffusion system in \f$H\f$ that can be integrated implicitly
+(\f$\theta = 1\f$), unconditionally stably. Each substep, every closed-
+section cell at or above the band entry \f$y_c\f$ forms, with its
+like neighbours, a symmetric positive-definite head system
+
+| | | | |
+|---|---|---|---|
+| \f[\frac{T_i\,\Delta x_i}{\Delta t}H_i + \sum_f C_f\,(H_i - H_{nbr}) = \mathrm{RHS}_i,\qquad C_f = \frac{\alpha_f\,\Delta t\,g\,\hat A_f}{L_f},\quad \alpha_f = \frac{1}{1+\Delta t\,\gamma_f}\f] | | (8-24a) | |
+
+solved directly — the Thomas algorithm along pipe chains, Jacobi-
+preconditioned conjugate gradients where a folded junction has three or
+more branches. The solve is a **flux predictor**: the back-substituted
+face discharges overwrite the face mass fluxes, and the ordinary cell
+and node updates then integrate them unchanged, so mass conservation,
+step rejection, hot start and reporting are structurally untouched.
+Membership is a pure function of the instantaneous state — no flags, no
+memory — so the hysteresis and hot-start properties of §8.4 are
+inherited rather than re-proven. (Under the TPA closure of §8.4.5
+membership is instead the regime flag, which is fixed within a substep;
+see that section for the interaction.)
+
+Three details carry the accuracy claims. First, the conductance area
+\f$\hat A_f\f$ and the friction coefficient \f$\gamma_f\f$ use the
+**conveyance** area \f$\min(A, A(y_{full}))\f$ — the slot stores volume
+but must not conduct, the same distinction the dynamic wave solver
+draws when it strips the slot from `conveyArea`. At steady state
+(8-24a) then reduces per face to \f$\Delta H/L = -S_f\f$ exactly, which
+makes full-bore head loss equal to the friction law and **independent
+of `FV_SLOT_CELERITY`** — where the explicit scheme understates it at
+low celerity (§8.4.1). Second, pressurized algebraic junctions whose
+every face joins two pressurized states are folded into the system as
+unknown rows (a lagged junction head would recreate the very feedback
+stiffness the solve removes); a solved head that violates the node's
+rim or invert is demoted to a Dirichlet row at the clamp and the
+imbalance books through the carry ledger into the same flooding and
+ponding paths as always. Third, **transition faces** — one side
+pressurized, one free — stay entirely explicit, Godunov flux and
+Courant bound alike: filling bores keep their shock-captured physics at
+a front-resolving step, and the step census drops the celerity of a
+pressurized side only where the face is covered by the solve. A fully
+pressurized network therefore runs at the advective bound — the slot
+width becomes a pure accuracy parameter with no runtime price — while a
+network that never pressurizes is bit-identical with the option on.
+
+The pass lives in `src/engine/hydraulics/fv/PressurizedHeadSolver.{hpp,cpp}`
+and runs on the CPU solver's global path (a device backend request is
+overridden while the option is on; composing the solve with the local-
+time-stepping macro cycle is future work). Gates:
+`tests/unit/engine/test_fv_pressurized_implicit.cpp`.
+
+### 8.4.5 The two-component pressure approach (`FV_PRESSURE_CLOSURE TPA`)
+
+> **Experimental.** Fully functional and gated, selected with
+> `FV_PRESSURE_CLOSURE TPA`; the default `SLOT` preserves the closure of
+> §8.4.1–§8.4.2 bit for bit. One known limitation is pinned in-tree
+> (high-celerity filling, below).
+
+The slot closure is monotone: a head below the crown *is* a free
+surface, so a full pipe carrying pressure below atmospheric has no
+representation — a sealed reach hit by a rapid downsurge spuriously
+reverts to free-surface geometry instead of holding vacuum. The
+two-component pressure approach of Vasconcelos, Wright and Roe (2006)
+lifts exactly this restriction: pressure is decomposed into a
+hydrostatic component, present in both regimes, and a surcharge
+component \f$h_s\f$ carried only by a pressurized cell, and \f$h_s\f$ may
+be negative — the pipe stays full, at sub-atmospheric pressure, until
+air can physically reach it.
+
+**Requirements.** TPA applies to **closed conduits only**: a cell whose
+cross-section is open never latches (`updateTpaFlags` clears its flag
+unconditionally) and evaluates the free-surface closure verbatim, so
+mixed networks need no special arrangement — the option is inert
+outside closed pipe. Eligibility needs nothing beyond the closed
+section's own full-flow properties, which every closed shape already
+carries for the SLOT closure: \f$A_{crown}\f$, \f$y_{full}\f$, and the
+slot width \f$T_{slot} = gA_{full}/a^{2}\f$. Setup is `FLOW_ROUTING FV`
+with `FV_PRESSURE_CLOSURE TPA`; the acoustic celerity \f$a\f$ comes
+from `FV_SLOT_CELERITY` (§8.4.1). A node is sealed against the venting
+sweep by a positive `SURCHARGE_DEPTH` (a bolted cover); virtual
+junctions are sealed by construction (§8.6.2). Sub-atmospheric heads
+reach the `.out` file **only** under `REPORT_SIGNED_HEADS YES` —
+without it the physics is computed but invisible, the HEAD field
+flooring at the invert. The validated configuration for the
+sub-atmospheric class is the explicit scheme with forward-Euler time
+integration or the implicit acoustic solve (see the scoring below);
+`FV_TIME_INTEGRATION RK2` alters the stability landscape in both
+directions and is not a safe default with TPA (see the known
+limitation).
+
+**The closure pair.** The observation that makes TPA cheap here is that
+the existing slot line *is* the TPA pressurized branch for
+\f$\Delta A = A - A_{crown} \geq 0\f$. TPA extends the same line to both
+signs of \f$\Delta A\f$:
+
+| | | | |
+|---|---|---|---|
+| \f[h(A) = y_{full} + \frac{A - A_{crown}}{T_{slot}}, \qquad h_{s} = h - y_{full} \text{ of either sign}\f] | | (8-34) | |
+| \f[I_{1}(h) = I_{1,crown} + A_{crown}\,\left( h - y_{full} \right)\f] | | (8-35) | |
+
+Equation (8-35) is the paper's Eq. (12b): the pressurized first moment
+drops the \f$\tfrac{1}{2}T_{slot}(h - y_{full})^{2}\f$ term the SLOT
+closure keeps — that term is the slot's own numerical storage pressure,
+not part of the physical decomposition. Free-surface cells evaluate the
+table closure of §8.4.2 **unchanged, including the tapered slot mouth**;
+the two branches are continuous at \f$A = A_{crown}\f$. The pressurized
+celerity is the constant \f$a\f$, the hydraulic radius stays frozen at
+\f$r_{full}\f$, and the pressurized inverse \f$h(A)\f$ is closed-form.
+`FV_SLOT_CELERITY` doubles as the TPA acoustic celerity \f$a\f$ — it is
+the same physical dial, since \f$T_{slot} = gA_{full}/a^{2}\f$ is derived
+from it under either closure.
+
+**The regime flag is physical air-pathway history, not numerical
+relaxation.** Which branch a cell evaluates is decided by a per-cell
+flag recording whether air can reach the cell — the paper's governing
+rule. Its transitions, applied once per substep outside the flux loops:
+
+- **Entry** is unconditional at \f$A \geq A_{crown}\f$ — the cell fills
+  through the taper.
+- **Exit** requires \f$\Delta A \leq 0\f$ past a small hysteresis band
+  (\f$h_s\f$ below about \f$-10^{-4}\f$ ft, so the flag cannot chatter at
+  \f$\Delta A \approx 0\f$) **and** atmosphere contact this step, under
+  the venting rule below.
+- **Column separation** exits unconditionally when \f$h_s\f$ falls below
+  −30 ft — about one atmosphere of water column, past which the column
+  separates and a vapor cavity forms. Cavity dynamics are two-phase and
+  out of scope (the paper's own limitation); the floor bounds the
+  representable vacuum instead.
+- **Every transition refreshes the cell's derived state from the new
+  regime's closure at its current area.** The stored depth belongs to
+  the old regime: without the refresh, a cell that exits deep in vacuum
+  carries its slot-line depth — of order −200 ft at study celerities —
+  through the whole substep's reconstruction, and the resulting
+  free-surface gradients pump a reflected filling surge to NaN (the
+  measured failure class on the rapid-fill validation deck: 5–15 flag
+  flips per substep with heads reaching 2485 ft before the run died).
+  With the refresh the deck completes and bore arrival matches the SLOT
+  closure columns exactly, at 10.45 s.
+
+**Venting.** A cell has atmosphere contact when one of its faces
+touches an *unsealed* node — no `SURCHARGE_DEPTH` seal — whose water
+level at that face stands **below the pipe crown**, or a free-surface
+neighbouring cell whose surface stands below the shared crown. The
+submergence check is load-bearing: air cannot enter through an opening
+that is itself under water, and without the check every sealed reach
+unzips from its vented ends (measured — the sealed-siphon fixture
+drained and then diverged). Two alternative rules were measured and
+rejected rather than assumed away: the paper's literal unconditional
+venting of the regime-transition interface unzips a submerged
+pressurized leg through a chain of momentary exits, and an
+entry-at-\f$A_{full}\f$ island rule broke the V-shaped filling case.
+Virtual junctions need no special casing and get the correct physics by
+construction: a virtual junction is spliced out of the mesh (§8.6.2),
+so it can never seed the venting sweep — a splice has no atmosphere
+contact — while contact still propagates across it, because cell chains
+span the splice.
+
+**Interaction with `FV_PRESSURIZED_IMPLICIT` (§8.4.4).** The pressurized
+branch (8-34) is the same linear closure the implicit solve exploits, so
+the two options compose, with four TPA-specific rules. Membership in the
+implicit set *is* the regime flag — a latched cell with \f$h_s < 0\f$
+sits below the crown yet is exactly the stiff-acoustic case the solve
+exists for — and since the flag is fixed within a substep, the SPD
+structure is unchanged. A sealed node standing against a flagged
+interior cell presents a *pressurized* ghost even though its head is
+below the crown. The Dirichlet floor applied to a folded junction row
+extends below the node invert by the column-separation bound, because a
+solved sub-atmospheric head is now legal. And a flagged cell's storage
+row uses the regime's own width \f$T_{slot}\f$ at *any* head, never the
+free-surface table width — the measured failure without this rule is
+instructive: as a settle transient drives cells across the crown, the
+table width swings five orders of magnitude between the clamped
+zero-width branch and the free-surface branch, and the apex cell's head
+reached 877,208 ft within 50 substeps. With the rules in place,
+implicit × TPA closes continuity at 0.000 %. An earlier probe recorded
+the implicit path under-tracking the explicit vacuum at a crest; the
+Phase 6 scoring against the digitized laboratory record did not
+reproduce that gap — the two land within a millimetre of each other at
+the crest minimum (0.1037 m implicit against 0.1035 m explicit, NSE
+0.9960 against 0.9955 on the 14.1 m pressure trace) — so both are
+validated configurations for the sub-atmospheric class.
+
+**Hot start.** The regime flags are cleared on cold start *and* on
+restore from a hot start file. A restored run whose reach was
+pressurized re-derives the flags from the state within one step; the
+worst case is a single spurious re-pressurization step.
+
+**Reporting.** The `.out` format floors node depth at zero for legacy
+bit-parity, so sub-atmospheric heads are invisible in it by default.
+`REPORT_SIGNED_HEADS YES` publishes the true signed piezometric head in
+the `.out` HEAD field (both solvers; DEPTH stays floored; the default
+NO keeps bit parity). The measured payoff on the negative-pressure
+siphon validation case: a minimum crest head of +0.1035 m — 0.0398 m
+below the crest invert of 0.1433 m — in the output file, where every
+slot-closure column floors at the invert (−0.0003 m, the float32 noise
+of the legacy HEAD field). The case is scored over the 40 s the deck
+runs, which is where its own header puts the boundary of the physics
+the model contains; the vacuum is still deepening monotonically when
+the run ends, so this figure is a lower bound on the closure's reach,
+not a plateau. Phase 6 of the companion study scored this trace
+against the record digitized from the source figures: NSE 0.9955
+(explicit Euler) and 0.9960 (implicit) on the 14.1 m pressure station,
+at an RMSE of ~4 mm — below the source figure's own ±8 mm resolution —
+while the best slot-closure column scores 0.55 and every dynamic-wave
+column goes negative. The sub-atmospheric decline is tracked to within
+what the published figure can resolve; this is the closure's measured
+payoff, and it is only observable with `REPORT_SIGNED_HEADS YES` set.
+
+**Known limitation: high-celerity filling.** At \f$a\f$ = 150 m/s the
+rapid-fill validation case diverges at the reflected return surge — a
+*temporal* odd–even pressure/vacuum oscillation inside the flagged
+region, at a correctly acoustic-bounded step. This is the paper's own
+high-celerity post-shock frontier: their Fig. 7 discussion needs a
+[0.05, 0.90, 0.05] conservative filter already at \f$a\f$ = 100 m/s. A
+flagged-neighbourhood-local, exactly conservative filter of that form
+was implemented, measured — it does not rescue the case at either the
+paper's weight or five times it, because spatial smoothing cannot damp
+a temporal odd–even mode — and reverted. Two further measured results
+bound the frontier. First, the Euler front is knife-edge marginal, not
+threshold-limited: a \f$k_{3}\f$ of \f$10^{-6}\f$ (physically nothing)
+or a 0.002 % change in `FV_SLOT_CELERITY` flips a marginal filling
+case between completing and diverging, so apparent "stability
+thresholds" in that neighbourhood are floating-point luck. Second,
+two-stage RK2 (Heun) time integration damps the temporal mode and
+completes the pinned filling case
+(`FvTpa.Rk2CompletesWhereEulerFillingPinDiverges`), **but it is not a
+remedy**: on the negative-pressure siphon case — the physics TPA
+exists for — RK2 destroys the solution (NSE −6.6×10¹⁰ against 0.996
+under Euler or implicit), and Phase 6 found RK2 completions can hide
+silent divergence: a run that spikes to thousands of feet mid-record
+and returns exits cleanly, with no `ERROR` line and plausible early
+metrics. No single (closure, integrator) pairing measured to date is
+stable across all four validation decks; the integrator is a
+per-problem choice, and a completed run's status line is not evidence
+of a healthy trace — inspect the reported extrema.
+
+**The Euler filling divergence itself has been removed.** It was pinned
+in-tree for months as a known issue; on 2026-09-12 the slot/free-surface
+wave-speed bound of §8.5.3 closed it. Davis's symmetric estimate had
+carried the acoustic celerity into the wave entering the *free-surface*
+side of a pressurization front; bounding that wave by the
+Rankine–Hugoniot bore speed instead removes the temporal mode outright.
+The fixture now completes at 0.000 % continuity at \f$a\f$ = 150, 300,
+600, 1000 and 3000 m/s, and the gate is the positive test
+`FvTpa.HighCelerityFillingCompletes`. The hybrid flux of Vasconcelos,
+Wright and Roe (2009), recorded as the contingency for this front, is
+therefore no longer required for it (@ref hydraulics_ref_ch10_planned
+"Chapter 10" §10.7).
+
+**Implementation.** The pressurized-branch kernels are
+`tpaDepthOfArea`, `tpaAreaOfDepth` and `tpaI1OfDepth` in
+`src/engine/hydraulics/fv/FvKernels.hpp`; the flag transitions, venting
+sweep and regime refresh are
+@ref openswmm::fv::ExplicitFvSolver::updateTpaFlags; the implicit-set
+rules are `cellPressurized` and `ghostPressurized` in
+`src/engine/hydraulics/fv/PressurizedHeadSolver.hpp`. Gates:
+`tests/unit/engine/test_fv_tpa_closure.cpp`. The dynamic wave solver
+carries its own port of the approach as `SURCHARGE_METHOD TPA`
+(@ref hydraulics_ref_ch3_dynamic_wave "Chapter 3").
+
 ## 8.5 Numerical scheme
 
-### 8.5.1 Face reconstruction
+### 8.5.1 Face reconstruction {#hydraulics_ref_ch8_face_reconstruction}
 
 Cell states are reconstructed at each interface using the hydrostatic
 reconstruction of Audusse et al. (2004):
@@ -287,7 +601,7 @@ slope breaks, adverse slopes and while pressurized. This is the
 "C-property", and it holds regardless of any quadrature error in the
 \f$I_1\f$ table, since only single-valuedness is required.
 
-### 8.5.3 Interface flux
+### 8.5.3 Interface flux {#hydraulics_ref_ch8_interface_flux}
 
 The system \f$\mathbf{U} = [A,\ Q]^{T}\f$ is \f$2 \times 2\f$ with two
 genuinely nonlinear fields and no middle wave, so the interface flux is
@@ -315,6 +629,13 @@ the computed front speed correct (Toro, 2001). When both sides are dry
 the flux is identically zero. No entropy fix is applied: the Davis
 estimates already bound the full wave fan, so a sonic rarefaction
 cannot collapse onto a single-state flux.
+
+Figure 8-3 sketches the fan the estimates bound, for a wet–wet face and
+for a dry right cell.
+
+![Figure 8-3](figures/png/hydraulics_ch8_hll_fan.png)
+
+*Figure 8-3 The Riemann fan at a face: HLL signal speeds for a wet–wet face and the rarefaction-tail estimate at a dry bed*
 
 The hydrodynamic flux is deliberately HLL rather than an Euler-style
 HLLC star-state construction. For the 2 × 2 system the two constructions
@@ -353,7 +674,7 @@ baseline). It has no effect on the hydraulics.
 @ref openswmm::fv::ExplicitFvSolver::computeFaceFlux in
 `src/engine/hydraulics/fv/ExplicitFvSolver.cpp`.
 
-### 8.5.4 Friction, local losses and positivity
+### 8.5.4 Friction, local losses and positivity {#hydraulics_ref_ch8_friction_positivity}
 
 Manning friction is integrated semi-implicitly, so it imposes no time
 step restriction of its own:
@@ -393,6 +714,63 @@ equivalent friction slope and integrated in the same implicit form:
 so calibrated models carry over unchanged, and \f$K = 0\f$ leaves \f$Q\f$
 bit-unaffected.
 
+#### Unsteady friction (`UNSTEADY_FRICTION VITKOVSKY`)
+
+Steady-friction-only mixed-flow models have a documented failure mode:
+reproducing observed transient damping requires an unphysical Manning
+\f$n\f$ (Pinto, Vasconcelos and Soares (2025) needed \f$n\f$ = 0.013 for an
+acrylic pipe with unsteady friction off). Their remedy — a modified
+Vítkovský et al. (2000) instantaneous-acceleration term with a
+Brunone-type coefficient \f$k_3\f$ — is available in both solvers as an
+option orthogonal to the pressurization closure. The total friction
+slope becomes \f$S_f = S_{fs} + S_{fu}\f$ with the steady term unchanged
+and
+
+| | | | |
+|---|---|---|---|
+| \f[S_{fu} = \frac{k_{3}}{g}\left( \frac{\partial V}{\partial t} + c\,\mathrm{sgn}(V)\left\lvert \frac{\partial V}{\partial x} \right\rvert \right)\f] | | (8-36) | |
+
+The celerity \f$c\f$ is **regime-dependent** — the paper's one
+modification to Vítkovský, and exactly the celerity this solver already
+computes: \f$\sqrt{gA/T}\f$ for a free-surface cell, the constant
+acoustic \f$a\f$ for a pressurized one (under the TPA closure,
+"pressurized" is the regime flag at *any* head; under SLOT,
+\f$h \geq y_{crown}\f$).
+
+The term is split by stiffness. The local-acceleration half folds into
+the update implicitly, like (8-13) — unconditionally stable, no new
+prognostic state, so hot start and step rollback are untouched. The
+convective half enters as an explicit source using neighbour-cell
+velocities within the conduit chain (one-sided at chain ends), gathered
+from a consistent old-state snapshot. Two guards bound it, both
+measured rather than assumed: a velocity dead-band of 0.01 ft/s — below
+it the implicit fold is pure added inertia and, applied to the mm/s
+settling ripple of a storage-coupled pool, it sustained noise that
+steady friction was correctly killing (0.004 → 0.011 cfs); with the
+dead-band a discretely-at-rest deck is bit-identical — and a per-substep
+clamp of the combined change to half the incoming momentum, since the
+paper reports instability for \f$k_3 \gtrsim 0.02\f$ with no such guard.
+
+Set expectations from the mechanism: a uniform-velocity slosh shows
+**no** net damping (\f$\partial V/\partial x \approx 0\f$ leaves pure
+added inertia; measured late amplitude 0.507 against 0.487 without the
+option), while a valve-closure transient — sharp \f$\partial V/\partial t\f$
+with a wave-front \f$\partial V/\partial x\f$ — damps at
+\f$k_3\f$ = 0.02 as the paper reports.
+
+The option surface is shared with the dynamic wave solver
+(@ref hydraulics_ref_ch3_dynamic_wave "Chapter 3"):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `UNSTEADY_FRICTION` | `NONE` | `NONE` or `VITKOVSKY`. `NONE` is bit-inert in both solvers. |
+| `UF_K3` | 0.015 | Brunone-type coefficient \f$k_3\f$, used only when the method is not `NONE`. Paper-calibrated range 0.005–0.020, swept to 0.045. |
+
+**Implementation.** @ref openswmm::fv::kernels::ufUpdate in
+`src/engine/hydraulics/fv/FvKernels.hpp`, with the convective gradients
+gathered by `ExplicitFvSolver::computeUfGradients`. Gates:
+`tests/unit/engine/test_fv_unsteady_friction.cpp`.
+
 Before the update is applied, each control volume's total outgoing mass
 flux is compared with the volume it holds, and every outgoing face flux
 of an over-drafted volume is scaled by
@@ -416,7 +794,7 @@ property either.
 `src/engine/hydraulics/HydClosureKernels.hpp`; the outflow scan is
 @ref openswmm::fv::ExplicitFvSolver::limitPositivity.
 
-### 8.5.5 Time stepping
+### 8.5.5 Time stepping {#hydraulics_ref_ch8_time_stepping}
 
 The solver substeps internally to fill each routing step. The routing
 step therefore serves as a reporting and forcing cadence rather than a
@@ -461,7 +839,7 @@ stability arguments hold. `RK2` and local time stepping are mutually
 exclusive — tiering gives different volumes different steps, so the two
 stages would be averaging states that never shared one.
 
-### 8.5.6 Local time stepping
+### 8.5.6 Local time stepping {#hydraulics_ref_ch8_lts}
 
 Condition (8-14) is *local*, but a single global substep applies the
 smallest value found anywhere to every cell in the model. In a sewer
@@ -484,6 +862,13 @@ advances at \f$2^{k}\Delta t_{0}\f$. A face fires at the finer of its two
 sides. One **macro cycle** is \f$2^{K-1}\f$ base substeps, where \f$K\f$ is the
 tier count; a tier-\f$k\f$ volume fires every \f$2^{k}\f$ of them, so every
 volume advances the same total span.
+
+Figure 8-4 lays out the tiers, the macro cycle and the flux bookkeeping
+at a tier interface.
+
+![Figure 8-4](figures/png/hydraulics_ch8_lts_ladder.png)
+
+*Figure 8-4 Local time stepping: power-of-two tiers, the macro cycle and flux accumulation across a tier interface*
 
 Three properties make this a scheduling change rather than a different
 scheme:
@@ -549,9 +934,10 @@ separate and the bookkeeping is a small net cost, which is why the tier
 assignment is cached across cycles and refreshed only when the census
 shows the model's stiffness has moved.
 
-Figure 8-1 assembles the pieces of Sections 8.5.5 and 8.5.6 into the
+Figure 8-5 assembles the pieces of Sections 8.5.5 and 8.5.6 into the
 substep workflow the solver executes for every routing step.
 
+<!-- workflow: fv_substep -->
 <pre class="mermaid">
 flowchart TD
     A[Routing step begins - forcing and boundary states set] --> B[CFL census over all faces, including boundary ghost states]
@@ -571,8 +957,19 @@ flowchart TD
     M -- no --> B
     M -- yes --> N[Report, couple nodes, advance]
 </pre>
+<div class="workflow-links" data-workflow="fv_substep">
+<span data-node="B">@ref hydraulics_ref_ch8_time_stepping "8.5.5 Time stepping: the CFL census"</span>
+<span data-node="C">@ref hydraulics_ref_ch8_time_stepping "8.5.5 Time stepping: the base step"</span>
+<span data-node="D">@ref hydraulics_ref_ch8_lts "8.5.6 Local time stepping"</span>
+<span data-node="F">@ref hydraulics_ref_ch8_lts "8.5.6 Local time stepping: tiers"</span>
+<span data-node="G">@ref hydraulics_ref_ch8_lts "8.5.6 Local time stepping: the macro cycle"</span>
+<span data-node="H">@ref hydraulics_ref_ch8_lts "8.5.6 Local time stepping: windows and accumulators"</span>
+<span data-node="I">@ref hydraulics_ref_ch8_friction_positivity "8.5.4 Friction, local losses and positivity"</span>
+<span data-node="J">@ref hydraulics_ref_ch8_time_stepping "8.5.5 Time stepping: the post-step census"</span>
+<span data-node="N">@ref hydraulics_ref_ch8_network_coupling "8.6 Network coupling"</span>
+</div>
 
-*Figure 8-1 Substep workflow of the explicit finite-volume solver,
+*Figure 8-5 Substep workflow of the explicit finite-volume solver,
 including the post-step census retry and local time stepping (rendered
 diagram)*
 
@@ -613,7 +1010,7 @@ path — which is what makes `FV_ORDER 2` safe to leave on: on an
 unresolved long conduit it reproduces the first-order answer rather than
 producing a wrong one.
 
-### 8.5.8 Wetting and drying
+### 8.5.8 Wetting and drying {#hydraulics_ref_ch8_wetting_drying}
 
 Wet/dry handling is distributed through the scheme rather than
 implemented as a separate front-tracking step. Every rule below acts on
@@ -649,7 +1046,7 @@ celerity and \f$I_1\f$ — and the wave-speed estimates switch to the
 dry-bed forms (8-23). Two dry sides return an exactly zero flux. An
 emerged bank, a bed step whose top stands above the neighbouring water
 surface, is therefore a wall by construction: \f$z^{*}\f$ exceeds \f$\eta\f$ on
-both sides and both reconstructed depths vanish. Figure 8-3 sketches
+both sides and both reconstructed depths vanish. Figure 8-7 sketches
 both configurations.
 
 **Front propagation and positivity.** A wetting front advances at most
@@ -696,9 +1093,10 @@ front half a cell downstream. The volume actually seeded is published
 back to the link before the mass balance opens, so the run's
 initial-storage ledger matches the state the solver integrates.
 
-Figure 8-2 assembles the face-level logic — wet/dry states, gates,
+Figure 8-6 assembles the face-level logic — wet/dry states, gates,
 culvert caps and the positivity scan — into one workflow.
 
+<!-- workflow: fv_face_flux -->
 <pre class="mermaid">
 flowchart TD
     A[Face taken from the active list] --> B[Resolve side beds and z* = max of zL and zR]
@@ -720,23 +1118,25 @@ flowchart TD
     M --> O[Positivity scan over all volumes: scale outgoing fluxes of over-drafted volumes]
     O --> P[Identical scaled flux updates both incident volumes]
 </pre>
+<div class="workflow-links" data-workflow="fv_face_flux">
+<span data-node="B">@ref hydraulics_ref_ch8_face_reconstruction "8.5.1 Face reconstruction"</span>
+<span data-node="C">@ref hydraulics_ref_ch8_face_reconstruction "8.5.1 Face reconstruction: hydrostatic states"</span>
+<span data-node="D">@ref hydraulics_ref_ch8_wetting_drying "8.5.8 Wetting and drying"</span>
+<span data-node="G">@ref hydraulics_ref_ch8_interface_flux "8.5.3 Interface flux: dry-bed signal speeds"</span>
+<span data-node="H">@ref hydraulics_ref_ch8_interface_flux "8.5.3 Interface flux: Davis signal speeds"</span>
+<span data-node="I">@ref hydraulics_ref_ch8_interface_flux "8.5.3 Interface flux: HLL and the contact speed"</span>
+<span data-node="K">@ref hydraulics_ref_ch8_structures "8.6.3 Outfalls, structures and lateral inflow: flap gates"</span>
+<span data-node="N">@ref hydraulics_ref_ch8_culvert_inlet "8.6.4 Culvert inlet control"</span>
+<span data-node="O">@ref hydraulics_ref_ch8_friction_positivity "8.5.4 Positivity"</span>
+</div>
 
-*Figure 8-2 Wet/dry and exception handling in one face flux evaluation
+*Figure 8-6 Wet/dry and exception handling in one face flux evaluation
 (rendered diagram)*
 
-<!-- PLACEHOLDER IMAGE (replace with final drawing): two-panel profile
-of the hydrostatic reconstruction at a bed step. Panel (a), wetting
-front: left cell wet with surface eta_L, right cell dry with a higher
-bed; the interface bed z* = max(z_L, z_R) marked, reconstructed depths
-h*_L = max(0, eta_L - z*) > 0 and h*_R = 0 annotated, arrow showing the
-front advancing right. Panel (b), emerged bank: eta_L below z*, both
-reconstructed depths zero, face annotated as acting as a wall. Regenerate
-or replace docs/manuals/reference/hydraulics/media/media/figure8-3-placeholder.png
-(source: scripts/generate_placeholder_figures.py). -->
-![Figure 8-3](figure8-3-placeholder.png)
+![Figure 8-7](figures/png/hydraulics_ch8_hydrostatic_reconstruction.png)
 
-*Figure 8-3 Hydrostatic reconstruction at a wet/dry front: an advancing
-front (left) and an emerged bank acting as a wall (right) (placeholder)*
+*Figure 8-7 Hydrostatic reconstruction at a wet/dry front: an advancing
+front (left) and an emerged bank acting as a wall (right)*
 
 **Implementation.** The constants are `kDryDepth`, `kDryArea` and
 `kEtaDeadband` in `src/engine/hydraulics/fv/FvKernels.hpp`; the dry-bed
@@ -796,7 +1196,7 @@ One global (untiered) substep executes the following sequence:
 5. Reconstruct second-order slopes of \f$(\eta, v)\f$ under `FV_ORDER 2`.
 6. Evaluate the face fluxes over the active list — hydrostatic
    reconstruction, HLL flux, flap gates, culvert caps, Audusse
-   corrections (Figure 8-2). This loop is the parallel region: it runs
+   corrections (Figure 8-6). This loop is the parallel region: it runs
    under OpenMP when at least 4096 faces are active.
 7. Apply the semi-implicit node relaxation (§8.6.5), which rewrites the
    boundary-face mass fluxes. It precedes the limiter so the limiter
@@ -849,54 +1249,106 @@ is @ref openswmm::fv::ExplicitFvSolver::takeSubstep and
 in `src/engine/hydraulics/fv/FvKernels.hpp` behind the
 `OPENSWMM_KERNEL_FN` marker.
 
-## 8.6 Network coupling
+## 8.6 Network coupling {#hydraulics_ref_ch8_network_coupling}
 
 ### 8.6.1 Regular junctions and storage units
 
-Nodes are zero-dimensional volumes advanced with the same substep. The
-end cell of each conduit exchanges with its node through a ghost state
-built from the node head, and that exchange goes through the *same*
-Riemann solver as an interior face. Wave reflection off the node,
-choking, supercritical approach flow and the surcharge transition are
-therefore resolved by the same shock-capturing machinery as the
-interior, rather than by a \f$dQ/dH\f$ linearization.
+A node is where conduit control volumes meet. The end cell of each
+conduit exchanges with its node through a ghost state built from the
+node head, and that exchange goes through the *same* Riemann solver as
+an interior face. Wave reflection off the node, choking, supercritical
+approach flow and the surcharge transition are therefore resolved by the
+same shock-capturing machinery as the interior, rather than by a
+\f$dQ/dH\f$ linearization.
 
-The ghost state is built directly from the node head \f$H\f$: with \f$z_f\f$
-the conduit invert at the coupled face,
+What differs from node to node is where that head comes from. Three
+models are in use, chosen automatically from the node's own kind and
+connectivity — there is no user option:
+
+| Model | Applies to | Storage | Head |
+|---|---|---|---|
+| **Pass-through** | a *clean* junction of degree 2 with nothing injected at it | none | not a state at all: the two end cells present their centred states directly to each other |
+| **Solved algebraic** | every other storage-less junction with at least one conduit face | none | root of the instantaneous flux balance (8-31) |
+| **Bucket** | storage units, junctions with no conduit face (a pump-only wet well), and junctions demoted by ponding | \f$A_{s}\f$ or a curve | integrated volume ledger, §8.6.5 step 5 |
+
+*Clean* means every incident face is a plain conduit face — no culvert
+inlet, no flap gate. A culvert or gate law is head- and
+direction-dependent and has to act against a solved node state, so it
+revokes both the direct splice and the reported reconstruction of
+§8.7. Outfalls are a fourth case and simpler than any of these: their
+stage is imposed every routing step, including `FREE` and `NORMAL`
+outfalls, whose depth `setAllOutfallDepths` computes from the conduit
+that feeds them. An outfall never integrates a ledger.
+
+The ghost state is built directly from the node head \f$H\f$ — for every
+node that has one, which is all of them but the pass-through case
+below. With \f$z_f\f$ the conduit invert at the coupled face,
 
 | | | | |
 |---|---|---|---|
 | \f[h_{g} = \max\left( 0,\ H - z_{f} \right), \qquad v_{g} = v_{int}, \qquad Q_{g} = A\left( h_{g} \right)\,v_{g}\f] | | (8-28) | |
 
 where \f$v_{int}\f$ is the interior end cell's velocity expressed in the
-face frame — a transmissive momentum condition, sketched in Figure 8-4.
+face frame — a transmissive momentum condition, sketched in Figure 8-8.
 A node standing below the face invert presents a dry ghost, so a
 perched pipe outlet drains as a free overfall. A closed conduit end
 with no node (a dead end) instead mirrors the interior state with
 reversed velocity, which returns exactly zero mass flux and leaves the
 interior its own hydrostatic pressure.
 
-<!-- PLACEHOLDER IMAGE (replace with final drawing): profile of a
-manhole coupled to a conduit end cell through a boundary face: the
-manhole shaft with water surface at head H, the conduit with its end
-cell, the face invert z_f (node invert plus link offset) marked, the
-ghost depth h_g = H - z_f drawn on the node side of the face, and the
-interior cell's velocity arrow carried onto the ghost (v_g = v_int).
-Regenerate or replace
-docs/manuals/reference/hydraulics/media/media/figure8-4-placeholder.png
-(source: scripts/generate_placeholder_figures.py). -->
-![Figure 8-4](figure8-4-placeholder.png)
+![Figure 8-8](figures/png/hydraulics_ch8_node_ghost_state.png)
 
-*Figure 8-4 Node ghost-state construction at a coupling face
-(placeholder)*
+*Figure 8-8 Node ghost-state construction at a coupling face*
 
-Node storage uses SWMM's own convention. A junction, outfall or divider
-is a linear reservoir of area \f$V_{full}/y_{full}\f$ — that is,
-`MIN_SURFAREA` unless a pump wet well overrode it — held fixed for the
-run; a storage unit uses its own curve. Matching the engine's
-definition exactly is what makes the node ledger conservative: the
-volume the solver holds is the same function of depth the mass balance
-reports, so no water is stored where continuity cannot see it.
+**A plain junction has no storage.** It is an interface, not a state:
+the water standing "in the manhole" is held by the incident end cells,
+which are real control volumes with their own depth. This mirrors the
+dynamic wave solver, where `node_getSurfArea` is exactly zero for a
+non-storage node and all working area belongs to the conduits — here,
+to the cells. The head is then the root of the instantaneous balance
+over the incident faces,
+
+| | | | |
+|---|---|---|---|
+| \f[R(h) = \sum_{f} s_{f}F_{f}(h) + q_{lat} + q_{struct} + \frac{\text{carry}}{\Delta t} = 0\f] | | (8-31) | |
+
+with every face re-solved by the ghost-Riemann machinery (8-28) at each
+trial head, bracketed by geometric expansion and closed by a bracketed
+quasi-Newton step \f$\delta h = R/\sum\sqrt{gAT}\f$. The remainder the
+iteration does not close is *banked, not stored*: it is carried to the
+next substep, and at a pass-through node it is disposed as volume into
+the incident cells, split evenly with zero momentum, because that is
+where an interface junction's water physically stands. The node volume
+the report shows for such a node is that carry ledger and nothing else.
+
+Where a bucket ledger *is* integrated — storage units, structure-only
+junctions, ponding-demoted junctions — the storage relation is the
+engine's own: a linear reservoir of area \f$A_{s} = V_{full}/y_{full}\f$
+(`MIN_SURFAREA` unless the project overrode it) held fixed for the run,
+or the storage unit's own curve flattened to a monotone 129-sample
+depth–volume table. Two properties follow from \f$A_{s}\f$ being
+constant, and both are load-bearing: \f$V = A_{s}d\f$ is a genuine state
+relation, so re-seeding the ledger from the head between routing steps
+is exact rather than creating \f$(A_{s}^{new} - A_{s}^{old})d\f$ of water
+from nothing; and the volume the solver holds is the same function of
+depth the mass balance reports, so no water is stored where continuity
+cannot see it.
+
+**Why not give the node half of each connected link's volume?** That is
+the dynamic wave convention, and it is deliberately not used here. In
+dynamic wave a conduit carries no depth state of its own at the node, so
+\f$\sum \tfrac{1}{2}L\,T\f$ of surface area is how the node acquires any
+storage at all. Under finite volume the end cells already *are* control
+volumes holding exactly that water as explicit state, so adding a
+half-link area to the node books the same water twice. It was measured
+twice and rejected twice: tracking the live conduit top width — the
+obvious first guess — cost about 0.3 % of routing continuity on
+Example1, and the surviving `MIN_SURFAREA`-times-depth volume credit
+re-counted the cells' water at −0.005 % per junction on a 120-junction
+chain and was removed. The finite-volume analogue of the half-link
+volume is not a node term at all; it is the end cells, and the
+pass-through path already routes lateral inflow and residual carry
+*into* those cells, half to each side.
 
 **Mass is conserved exactly at a node. Momentum is intentionally not.**
 At a general junction — several pipes at arbitrary angles, differing
@@ -909,13 +1361,32 @@ solver uses, and like it, it is not an energy balance either — equating
 piezometric head discards the incoming velocity head, a dissipative
 closure appropriate to a chamber.
 
-**The node's coupling to its faces is semi-implicit.** A junction's
-storage area is the `MIN_SURFAREA` floor, which as an effective length
+That dissipation has a measurable consequence, and it is the reason the
+pass-through model exists. Presenting a solved node head to two
+collinear cells splits one interior Riemann problem into two, and the
+split costs roughly a millimetre of head per junction. On a
+199-junction subcritical chain that integrates into a 0.23 m backwater
+(SWASHES `macdonald-long-sub`, L1 depth error 0.228 → 0.0064 once the
+splice is used instead); with lateral inflow at every junction of a
+400-conduit channel it reached an 18–25 % deep bias. A clean degree-2
+junction therefore does not present a head at all — each of its two
+faces shows the *far* cell's full centred state, reproducing the single
+spliced face the pair stands in for. A lateral inflow does not revoke
+this, because a manhole pour carries no directed momentum: the inflow is
+diverted into the two incident cells, half each, as a zero-momentum area
+source. A structure flow or an unbled carry does revoke it, since both
+need a head the fluxes can respond to.
+
+**A bucket node's coupling to its faces is semi-implicit.** Its storage
+area is typically the `MIN_SURFAREA` floor, which as an effective length
 \f$A_{s}/T\f$ is a few feet against a conduit \f$\Delta x\f$ of several
-hundred. Under explicit coupling it is therefore the manhole, rather than the pipe, that
-sets the stable substep for the whole model. `FV_NODE_COUPLING
-SEMI_IMPLICIT` (the default) removes that by linearizing each coupling
-face's mass flux in the node head, using the characteristic relation
+hundred. Under explicit coupling it is therefore the manhole, rather
+than the pipe, that sets the stable substep for the whole model —
+which, before junctions became interfaces, was the whole network's
+substep. The semi-implicit coupling — always on; the explicit
+alternative was retired with `FV_NODE_COUPLING` — removes that by
+linearizing each coupling face's mass flux in the node head, using the
+characteristic relation
 \f$\left| \partial Q/\partial H \right| = gA/c = \sqrt{g\,A\,T}\f$ at the
 ghost state:
 
@@ -967,12 +1438,28 @@ posed — the model declares a virtual junction (see the
 consumed at mesh construction: the two conduits' cell chains are
 concatenated and the junction becomes an ordinary interior face.
 
+An *inlet junction* (`[INLET_JUNCTIONS]`, Chapter 3 §3.3.10) is a
+virtual junction that also owns a street inlet and exchanges captured
+flow with a capture node at every step. Splicing it out would leave that
+transfer with no node to act on, so inlet junctions are not admitted
+under finite-volume routing: the input processor refuses them with
+error 619.
+
 Nothing else is done, and nothing else is needed. Mass and momentum
 flux continuity across a virtual junction are then properties of the
 scheme rather than a special treatment, and a conduit split by a
 virtual junction reproduces the unsplit conduit cell for cell.
 
-### 8.6.3 Outfalls, structures and lateral inflow
+The one node-level quantity a virtual junction can still carry is a
+point lateral inflow (Chapter 3, §3.3.10). The node owns no face, so
+the inflow is divided equally between the two cells adjoining its
+spliced face and enters their mass equations as a zero-momentum source
+— the same treatment a clean degree-2 junction's lateral receives
+(§8.6.3) — and the node reports its through-flow plus the lateral as
+total inflow. A device backend that receives the per-node lateral must
+apply the same split; integrating it on the node would discard it.
+
+### 8.6.3 Outfalls, structures and lateral inflow {#hydraulics_ref_ch8_structures}
 
 Outfalls are stage boundaries: the head computed by the existing
 free/normal/fixed/tidal/time-series logic is imposed, and the ghost
@@ -1005,11 +1492,12 @@ wall only while the flux would run the wrong way; closing it mirrors the
 interior state across the face, which returns exactly zero mass flux and
 leaves the interior its own hydrostatic pressure.
 
-Lateral inflows enter at regular nodes exactly as assembled for any
-other routing method. Distributed conduit losses — evaporation and
-seepage — enter the cell mass equation as \f$q_L\f$ in (8-1).
+Lateral inflows enter at nodes exactly as assembled for any other
+routing method; at a virtual junction the inflow is split between the
+two spliced cells (§8.6.2). Distributed conduit losses — evaporation
+and seepage — enter the cell mass equation as \f$q_L\f$ in (8-1).
 
-### 8.6.4 Culvert inlet control
+### 8.6.4 Culvert inlet control {#hydraulics_ref_ch8_culvert_inlet}
 
 A conduit carrying a culvert code in `[XSECTIONS]` marks its upstream
 boundary face at mesh construction, and the FHWA inlet-control curve
@@ -1053,45 +1541,39 @@ flows of §8.6.3 into a per-node net source \f$q_{struct}\f$. With the
 junction area fixed for the run this re-seed is exact: it reproduces
 the volume the previous step ended with rather than perturbing it.
 
-Each substep then advances every non-virtual node as follows.
+Each substep then advances every non-virtual node as follows. Steps 2
+and 4 through 6 are the **bucket** path; a pass-through junction skips
+the node update entirely (its faces already carry the splice) and a
+solved algebraic junction replaces steps 2–6 with the root find (8-31)
+and its carry ledger.
 
 1. **Face fluxes.** Every boundary face of the node has been evaluated
    against the ghost state (8-28) by the flux pass.
-2. **Semi-implicit correction.** For nodes without a prescribed head,
-   the correction (8-18) is computed from the net residual
-   \f$\sum s_{f} F_{f} + q_{lat} + q_{struct}\f$ and written into the
-   incident face fluxes through (8-29). With `FV_NODE_PICARD` greater
-   than one the correction is iterated: each sweep re-evaluates the
-   storage slope \f$dV/dH\f$, the residual — now including the storage
-   already moved, \f$-\Delta V/\Delta t\f$ — and the resistances at the
-   provisional head, re-solves the incident faces' Riemann problems
-   there, and repeats until the head correction falls below 10⁻⁶ ft or
-   the sweep budget is exhausted; the final sweep writes the linear
-   correction into the face fluxes exactly as the single sweep does.
-   One sweep, the default, reproduces the original linearized scheme
-   bit for bit. Under local time stepping the correction is applied per
-   node at that node's own tier step, and the Riemann re-solve is
-   restricted to faces firing on the current base step — a face held by
-   another tier keeps the flux it will book over its own window.
-3. **End-cell coupling (`FV_NODE_CELL_COUPLING`).** The single-sweep
-   tangent treats the neighbouring cells as frozen reservoirs.
-   Optionally, each end cell — a finite volume of plan area
-   \f$C = \Delta x\,T\f$ that couples to nothing but this node — is
-   eliminated from the joint backward-Euler system in closed form:
-   writing \f$a_{f} = \sqrt{g A_{g} T_{g}}\f$ for the face resistance,
-
-| | | | |
-|---|---|---|---|
-| \f[\tilde{a}_{f} = a_{f}\,\frac{C_{f}}{C_{f} + \Delta t\,a_{f}}, \qquad \phi_{f} = \frac{a_{f}\,\Delta t\,G_{f}^{0}}{C_{f} + \Delta t\,a_{f}}\f] | | (8-31) | |
-
-   with \f$\tilde{a}_{f}\f$ replacing \f$a_{f}\f$ in the resistance sum and
-   \f$\sum \phi_{f}\f$ added to the residual, where \f$G_{f}^{0}\f$ is the flux
-   currently entering the cell through face \f$f\f$. The applied face
-   correction then responds to the head *difference* between the node
-   and the eliminated cell stage. As \f$\Delta t\f$ grows the correction
-   tends to the lumped node-plus-end-cells volume balance — the correct
-   large-step limit. Off by default; intended as the companion to
-   `FV_NODE_DT NONE`.
+2. **Semi-implicit correction.** For bucket nodes without a prescribed
+   head, the correction (8-18) is computed once from the net residual
+   \f$\sum s_{f} F_{f} + q_{lat} + q_{struct}\f$, with the resistances,
+   the storage area and the face fluxes all frozen at the head the
+   substep started from, and written into the incident face fluxes
+   through (8-29). That is exact for the linearized problem; the real
+   problem's nonlinearity is resolved by the node's fine tier under
+   local time stepping (below), where the correction is applied per
+   node at that node's own tier step.
+3. *(Retired.)* Three keywords are accepted and ignored so existing
+   projects still parse. `FV_NODE_CELL_COUPLING` once eliminated each
+   end cell from a joint backward-Euler system with the node, so that
+   the correction responded to the head *difference* between node and
+   cell; it was superseded by the interface treatment above — a junction
+   that holds no volume has nothing to couple *to* its end cells — as
+   was `FV_JUNCTION_MODEL`. `FV_NODE_PICARD` iterated the correction of
+   step 2, re-solving the incident faces at each provisional head; it
+   corrected the mass fluxes only, leaving the momentum fluxes
+   inconsistent with them — the same mass-only-correction defect the
+   interface solve exists to avoid — and shipped with a recorded
+   negative result (it never bought back the coarse step it was meant
+   to). `FV_NODE_COUPLING EXPLICIT` and `FV_NODE_DT NONE` are retired on
+   the same terms (§8.6.1 and the bound below); asking for any of the
+   three retired *behaviours* is answered with a warning at open, while
+   spelling out the former defaults is not.
 4. **Positivity.** The node's total outgoing flux is scaled by (8-26)
    against its stored volume.
 5. **Ledger.**
@@ -1112,34 +1594,35 @@ Each substep then advances every non-virtual node as follows.
    and the conduit exchange is whatever the Riemann solver produced
    against it.
 
-**The node's time-step bound (`FV_NODE_DT`).** A coupled node behaves
-as an extra control volume of effective length \f$A_{s}/T\f$, giving the
-bound
+**The node's time-step bound.** A bucket node behaves as an extra
+control volume of effective length \f$A_{s}/T\f$, giving the bound
 
 | | | | |
 |---|---|---|---|
 | \f[\Delta t \leq \alpha\,\frac{A_{s}/T}{\left\lvert v \right\rvert + c}\f] | | (8-32) | |
 
-evaluated over the node's wet incident end cells. Under explicit
-coupling this is a genuine stability limit and always applies. Under
-the default semi-implicit coupling the correction is unconditionally
-stable and the bound instead controls accuracy: when local time
-stepping is running, the bound is dropped from the global census and
-each node receives its own fine tier from (8-32), which supplies the
-resolution at low cost; when tiering cannot run (`RK2`, or transport),
-the bound is honoured in the global census. `FV_NODE_DT NONE` removes
-it from the base-step computation while leaving nodes tiered. Measured
-against the SWASHES analytic solutions, `NONE` is 24–134× faster and
-degrades the L1 depth error by factors of 3 to 49 on the frictional and
-transcritical cases, so the default remains `STABILITY`. Additional
-Picard sweeps do not substitute for the bound at large steps: they
-converge the node's continuity equation at the step it is handed, which
-is a separate question from that step being small enough to resolve the
-coupling.
+evaluated over the node's wet incident end cells, and always armed. It
+is skipped for the nodes that have no volume state to protect —
+algebraic junctions, whose tier is instead pinned to their incident
+cells so that their faces fire together, and outfalls, whose head is
+imposed — which is why in practice it binds storage nodes only.
+Applying it to plain junctions was how a single `MIN_SURFAREA` bucket
+used to set a millisecond step for the whole network. The semi-implicit
+correction is unconditionally stable, so the bound controls accuracy
+rather than stability: when local time stepping is running, the bound
+is dropped from the global census and each node receives its own fine
+tier from (8-32), which supplies the resolution at low cost; when
+tiering cannot run (`RK2`, or transport), the bound is honoured in the
+global census. It is not optional: measured against the SWASHES
+analytic solutions under the earlier bucket junction model, dropping it
+was 24–134× faster and degraded the L1 depth error by factors of 3 to
+49 on the frictional and transcritical cases (the `FV_NODE_DT NONE`
+switch that produced those numbers is retired; asking for it warns and
+is ignored).
 
 **Implementation.**
 @ref openswmm::fv::ExplicitFvSolver::relaxNodeFluxes and
-@ref openswmm::fv::ExplicitFvSolver::relaxOneNode implement steps 2–3;
+@ref openswmm::fv::ExplicitFvSolver::relaxOneNode implement step 2;
 @ref openswmm::fv::ExplicitFvSolver::updateNodes and
 @ref openswmm::fv::ExplicitFvSolver::fireNodes carry the ledger on the
 global and tiered paths;
@@ -1163,6 +1646,104 @@ substeps, and a sample aliases badly against them. Link depth and
 volume are instantaneous, as under dynamic wave routing. A virtual
 junction reports the state of the interior face that replaced it, and
 zero volume — it has none by construction.
+
+**Reported link depth is a water depth, truncated at the section's full
+height.** Internally the solver's mean state above the crown is
+piezometric — `depthOfArea` of the slot-inclusive mean area — but the
+published depth is `min(depthOfArea(A_mean), y_full)`, matching the
+dynamic-wave convention. The `.out` LINK_DEPTH column therefore never
+doubles as a head channel, and the Link Flow Summary's "Max/Full Depth"
+reads at most 1.00 for a closed conduit. The surcharge head remains
+fully visible where it belongs: in the **node** depths/heads (which are
+genuine piezometric state) and in the slot-storage accounting below.
+The truncation is publish-only — velocity, capacity, Froude number,
+surcharge hours, and the volume/slot ledgers are computed from the mean
+area or from saturating section geometry and are unaffected.
+
+### 8.7.1 Slot storage accounting and diagnostics
+
+The Preissmann slot's water is genuine storage in the conservation
+ledger: link volume is \f$\sum A\,\Delta x\f$ over the slot-inclusive
+conserved area, with no clamp, and it feeds *Final Stored Volume* and
+`SYS_STORAGE` at full weight. Because plain junctions report zero
+storage under FV (their water stands in the incident cells), the slot
+is the only place surcharge storage can be booked — so on a pressurized
+system a material share of reported storage can stand in the slot.
+The engine separates that share out rather than leaving it folded in:
+
+- **`links.slot_volume`** — per link,
+  \f$\sum \max(0,\,A - A_{crown})\,\Delta x\f$, always a subset of the
+  link volume, zero below the crown and zero under dynamic-wave
+  routing. C API: `swmm_link_get_slot_volume`.
+- **"Final Slot Storage"** — an informational line under *Flow Routing
+  Continuity* (printed only when nonzero): the slot's share of *Final
+  Stored Volume*. It is already inside that total, never added again.
+- **"Slot Storage Summary"** — a report block giving the run-level
+  share (the ratio of time integrals
+  \f$\int V_{slot}\,dt \,/\, \int V_{stored}\,dt\f$ — a ratio of
+  integrals, never an average of instantaneous ratios), the peak
+  instantaneous system share, the hours the share exceeded 1 %, and a
+  per-link table of every conduit whose peak share crossed 1 %.
+  C API: `swmm_link_get_stat_slot_share` (run-level) and
+  `swmm_link_get_stat_peak_slot_share` (peak, 0..1).
+- **`OPENSWMM_FV_SLOT_TRACE=1`** — one CSV row per routing step on
+  stdout (`SLOT_TRACE,t,slot_ft3,stored_ft3,share`), for plotting the
+  slot share through a transient.
+
+The **FV Solver Statistics** block attributes the time step alongside:
+four "dt Argmin" rows give the fraction of CFL censuses whose binding
+element was a pressurized cell (at or above the crown), a taper-band
+cell, a free-surface cell, or a node bound. On a pressurized system
+the pressurized rows dominating is the measured statement that
+`FV_SLOT_CELERITY` — not the free-surface dynamics — is setting the
+run's cost.
+
+Two properties of the slot worth reading off these instruments rather
+than assuming: the slot share of storage scales as \f$1/c^{2}\f$ in the
+celerity, and the steady **full-bore head loss depends on the
+celerity** — the slot absorbs part of the friction grade — converging
+on the Manning value from below as the slot narrows. A low celerity
+therefore understates both pressurization and head loss at once; the
+5 % width cap (§8.4.1) bounds the damage but does not remove it, and
+WARNING 108 reports when the cap has silently overridden the requested
+celerity (every request below the cap-implied celerity produces
+byte-identical geometry).
+
+**Node stage is reconstructed from the incident cells, not read off the
+solver's head.** For a storage-less clean junction of any degree — the
+publish rule is the *clean* test of §8.6.1 without its degree-2
+restriction, since reconstructing a reported stage needs no splice — the
+published head is
+
+| | | | |
+|---|---|---|---|
+| \f[H_{pub} = \max_{f\ \in\ \text{wet},\ z_{f} \leq H} \left[\ \min\left(z_{b,c(f)},\, z_{f}\right) + h_{c(f)}\ \right]\f] | | (8-33) | |
+
+taken over the node's wet incident faces. A dry neighbour's vote would
+be bare ground, and a face perched *above* the node's own surface is
+discharging as a free overfall — its stage describes the pipe's offset,
+not the node — so neither votes; with no wet vote at all the solver's
+head stands. This is the same reconstruction the virtual-junction rule
+uses, which is what keeps a junction and a virtual junction from
+stepping against each other in a plotted HGL.
+
+The reason is that the solver's own head for a solved algebraic junction
+carries a half-cell datum offset of order \f$S_{0}\Delta x/2\f$ against
+the face stage, which appears in a profile plot as a step at the
+manhole. It is a reporting term, not a routing one: it falls
+first-order under mesh refinement, it survives on nodes with no lateral
+inflow at all, and correcting it leaves the routed solution bit-identical.
+Measured on Example1 at `FV_MIN_CELLS 1`, where the comparison against
+the adjacent cell is exact, the largest excess over the adjacent conduit
+surface falls from 0.91 ft to below 0.001 ft. Reporting is deliberately
+the only place this correction is applied: solver-internal heads double
+as ghost boundary states under local time stepping, and changing the
+in-solver estimator turned a 0.007 cfs lake-at-rest residual into a
+70.9 cfs standing oscillation.
+
+Bucket nodes, culvert headwaters, gated nodes and nodes carrying a
+structure flow are excluded and publish the head the solver holds,
+which for them is a genuine state.
 
 ## 8.8 Scalar transport
 
@@ -1213,13 +1794,13 @@ file.
 | `FV_LIMITER` | `MINMOD` | `MINMOD`, `VANLEER` or `SUPERBEE`, with `FV_ORDER 2`. |
 | `FV_SCALAR_SCHEME` | `MUSCL` | `UPWIND`, `MUSCL` or `QUICKEST_ULTIMATE`. |
 | `FV_TIME_INTEGRATION` | `EULER` | `EULER` or `RK2` (Heun, SSP). `RK2` disables local time stepping. |
-| `FV_SLOT_CELERITY` | 100 | Pressurized wave celerity in project length units per second; sets the slot width via (8-5). |
+| `FV_SLOT_CELERITY` | 100 | Pressurized wave celerity in project length units per second; sets the slot width via (8-5) and doubles as the TPA acoustic celerity \f$a\f$ under `FV_PRESSURE_CLOSURE TPA` (§8.4.5) — the same physical dial either way. Slot storage share scales as 1/c²; values below the cap-implied celerity (≈ 22.5·√D ft/s for a circular pipe) are inert — WARNING 108 reports the override. Slot storage is itemized by the §8.7.1 diagnostics. With `FV_PRESSURIZED_IMPLICIT YES` the celerity leaves the time-step law entirely (§8.4.4) and becomes a pure accuracy dial. |
+| `FV_PRESSURE_CLOSURE` | `SLOT` | **Experimental** — `SLOT` or `TPA`. `TPA` selects the two-component pressure approach of §8.4.5: sub-atmospheric full-pipe flow behind a per-cell air-pathway regime flag. `SLOT` (the default) is bit-identical to the closure of §8.4.1–§8.4.2. Pair with `REPORT_SIGNED_HEADS YES` to see sub-atmospheric heads in the `.out` file. |
+| `FV_PRESSURIZED_IMPLICIT` | `NO` | **Experimental** — subject to slot program R2b; surfaced in the GUI as an experimental checkbox. Integrate the slot's acoustic pair implicitly on the pressurized subset (§8.4.4): full-bore head loss becomes slot-width invariant and pressurized reaches run at the advective time-step bound. CPU solver only; local time stepping stands down while the solve engages; a run that never pressurizes is bit-identical either way. Composes with `FV_PRESSURE_CLOSURE TPA` under the rules of §8.4.5. |
 | `FV_DISPERSION` | 0 | Longitudinal dispersion coefficient. 0 disables the parabolic term. Accepted but **inert** until finite-volume transport is connected (§8.8); a non-zero value warns at open. |
 | `FV_STRUCTURE_COUPLING` | `SUBSTEP` | Cadence at which structure flows and outfall stages are refreshed: every substep, or once per routing step. A device backend clamps to `ROUTING_STEP`. |
-| `FV_NODE_COUPLING` | `SEMI_IMPLICIT` | `EXPLICIT` freezes face fluxes across the node update; `SEMI_IMPLICIT` linearizes them in the node head (§8.6.1). |
-| `FV_NODE_PICARD` | 1 | Picard sweeps on the node head inside the semi-implicit coupling (§8.6.5). 1 reproduces the single linearized correction exactly. |
-| `FV_NODE_CELL_COUPLING` | `NO` | Couple the node correction to its adjacent end cells through (8-31); the accuracy-at-large-step companion to `FV_NODE_DT NONE`. |
-| `FV_NODE_DT` | `STABILITY` | Whether the node bound (8-32) enters the base time step. `NONE` removes it from the census; nodes remain tiered under local time stepping. Semi-implicit coupling only. |
+| `FV_NODE_CELL_COUPLING` | — | **Retired.** Accepted and ignored so existing projects still parse; junctions are always interfaces (§8.6.1). `FV_JUNCTION_MODEL` is retired on the same terms. |
+| `FV_NODE_COUPLING`, `FV_NODE_DT`, `FV_NODE_PICARD` | — | **Retired 2026-08-29.** Storage-node coupling is always semi-implicit (§8.6.1), the node bound (8-32) is always armed (§8.6.5), and the correction is always a single sweep — each the former default. Accepted so existing projects still parse; a value asking for the retired behaviour (`EXPLICIT`, `NONE`, sweeps above 1) warns at open and is ignored. |
 | `FV_COMPACTION` | `YES` | Skip dry, inactive parts of the network. Results-transparent. |
 | `FV_LTS` | `YES` | Local time stepping (§8.5.6). `NO` forces one global substep size. |
 | `FV_LTS_MAX_TIERS` | 6 | Cap on the tier spread; 6 allows 64×. |
@@ -1227,64 +1808,64 @@ file.
 | `FV_BACKEND` | `AUTO` | `CPU`, `AUTO`, `OMP`, `CUDA`, `HIP` or `SYCL`. |
 | `FV_MIN_PARALLEL_CELLS` | 20000 | Mesh size below which `AUTO` stays on the CPU. |
 
+Three keys without the `FV_` prefix also affect finite-volume runs and
+are shared with the dynamic wave solver: `UNSTEADY_FRICTION` and
+`UF_K3` (§8.5.4), and `REPORT_SIGNED_HEADS` (§8.4.5), which puts the
+true signed piezometric head in the `.out` HEAD field for both solvers
+(default `NO` keeps legacy bit-parity; DEPTH stays floored either way).
+
 ## 8.10 Choosing between dynamic wave and finite volume
 
-The following are measured on the EPA reference site drainage model
-(`Example1.inp`, 30 h, 5 s routing step), comparing each finite-volume
-configuration against the dynamic wave run of the same file.
+Measured on 2026-08-20 against commit `962fd48c`, on the EPA reference
+site drainage model (`Example1.inp`, 30 h, 5 s routing step) and on
+generated uniform and graded reaches. Reproduce with
+`tests/benchmarks/scripts/fv_perf_baseline.py`; the full tables, the
+per-phase split and the `.out` hashes are in
+`plans/FV1D_PERF_BASELINE_2026-08-20.md`.
 
-| | Dynamic wave | FV, 1 cell | FV, default (4 cells) | FV, \f$\Delta x\f$ = 50 ft | FV, \f$\Delta x\f$ = 20 ft |
-|---|---|---|---|---|---|
-| Routing continuity error | 0.026 % | 0.000 % | 0.000 % | 0.000 % | 0.000 % |
-| Mean absolute peak-flow deviation | — | 37.1 % | 15.3 % | 12.8 % | 7.2 % |
-| Wall-clock, relative | 1× | ~7× | ~15× | ~12× | ~34× |
+| | Dynamic wave | FV, 1 cell | FV, default (4 cells) |
+|---|---|---|---|
+| Routing continuity error | 0.026 % | 0.000 % | −0.000 % |
+| Wall-clock, relative | 1× | 5.3× | 14.9× |
+| Substeps per routing step | — | 1.03 | 2.05 |
 
 The same comparison across network size, on uniform and graded reaches
 of 50 / 500 / 2000 conduits, at the default mesh:
 
 | | 50 | 500 | 2000 |
 |---|---|---|---|
-| uniform reach, × dynamic wave | 117 | 252 | 189 |
-| graded reach, × dynamic wave | 39 | 69 | 49 |
-| routing continuity, finite volume | −0.000 % | −0.000 % | −0.000 % |
-| routing continuity, dynamic wave | −0.16 … −0.50 % | 0.09 / −0.19 % | 0.09 / −0.19 % |
-
-Two observations follow. First, the ratio does not improve with network
-size — it is flat to erratic, so the cost should not be expected to
-amortize on larger models. Second, the finite-volume solver closes on
-the dynamic wave solver where the latter struggles: the graded
-ratios are three to four times better, not because the explicit solver
-got faster (its times are unchanged between the two) but because the
-implicit solver's own step collapses there, from 5.00 s to 1.14 s. Steep,
-graded, stiff networks are where the trade is most favourable.
+| uniform reach, × dynamic wave | 11.3 | 17.3 | 17.5 |
+| graded reach, × dynamic wave | 15.6 | 33.5 | 29.2 |
+| routing continuity, finite volume | 0.000 % | −0.000 % | −0.000 % |
+| routing continuity, dynamic wave | −1.30 / −0.59 % | −0.51 / −0.80 % | −0.51 / −0.64 % |
 
 Three observations follow.
 
 **Conservation is delivered, and is independent of resolution.** The
-finite-volume solver closes continuity exactly on this model where the
-implicit solver does not. That is the property the conservation form
-guarantees.
+finite-volume solver closes continuity exactly on every deck and every
+mesh above, where the implicit solver does not — and the gap is widest
+on the plain reaches, where dynamic wave loses 0.5 % to 1.3 % of volume.
+That is the property the conservation form guarantees.
 
-**Accuracy requires a resolved mesh.** The convergence above is clean
-and monotone, which is what a consistent discretization must show — but
-an unresolved mesh is not a drop-in substitute for dynamic wave
-analysis. The mechanism is the artificial bed step of §8.3 rather than
-numerical diffusion, so second-order reconstruction does not remove it.
+**Accuracy requires a resolved mesh.** An unresolved mesh is not a
+drop-in substitute for dynamic wave analysis. The mechanism is the
+artificial bed step of §8.3 rather than numerical diffusion, so
+second-order reconstruction does not remove it.
 
-**It still costs several times more.** Even at one cell per conduit —
-the same element count the dynamic wave solver carries — the explicit
-method runs about seven times its wall-clock on this model, and the
-default mesh roughly doubles that again. The method should be selected
-for its conservation and shock-capturing properties rather than for
-speed.
+**It costs several times more, and the multiple grows with the
+network.** At one cell per conduit — the same element count dynamic
+wave carries — the explicit method runs about five times its wall clock
+on the reference model, and the default mesh roughly triples that
+again. On uniform reaches the ratio rises from 11× at 50 conduits to
+17× at 2000, so the cost should not be expected to amortize on larger
+models. Select the method for its conservation and shock-capturing
+properties, not for speed.
 
-Note also that the deviation column is a consistency check against the
-dynamic wave solver rather than a measure of error. Dynamic wave
-routing is not
-the reference truth here, and part of the 37 % at one cell is its own
-departure from the correct answer. Accuracy is instead established
-against closed-form solutions — Ritter, Stoker, and the still-water
-property.
+Note that the earlier editions of this section reported ratios of 39× to
+252× across the same reach sizes. Those numbers were measured on the
+bucket-junction solver that `265eb727` (2026-08-11) replaced with
+algebraic junctions, and they no longer describe this solver; the table
+above supersedes them.
 
 Practical guidance:
 
@@ -1303,12 +1884,19 @@ Practical guidance:
 
 ## 8.11 Limitations
 
-- **Sub-atmospheric pressure cannot be represented.** The slot closure
-  is monotone — head below the crown means a free surface — so negative
-  pipe pressures have no representation. Air-phase effects are likewise
-  out of scope. This is the same fidelity limit the dynamic wave
-  solver's slot carries.
-- **Junction momentum is not conserved** (§8.6.1), by choice.
+- **Sub-atmospheric pressure cannot be represented under the default
+  closure.** The slot closure is monotone — head below the crown means
+  a free surface — so negative pipe pressures have no representation.
+  `FV_PRESSURE_CLOSURE TPA` (§8.4.5) lifts this, down to the
+  column-separation bound of about −30 ft of head; air-phase effects
+  remain out of scope under either closure.
+- **Junction momentum is not conserved** (§8.6.1), by choice. Where the
+  connection is genuinely two collinear pipes the loss is avoided
+  outright — by a virtual junction (§8.6.2) or, for a clean degree-2
+  junction, by the pass-through splice — but at a true multi-way
+  junction the stagnation closure discards the incoming velocity head,
+  and on junction-dense subcritical reaches that dissipation integrates
+  into a systematic backwater.
 - **A conduit loop closed entirely by virtual junctions cannot be
   meshed**, because such a cycle has no boundary. Ordinary junctions
   break the cycle and are accepted.
@@ -1340,6 +1928,23 @@ Computation*, 62(206), 497–530.
 Leonard, B. P. (1979). "A stable and accurate convective modelling
 procedure based on quadratic upstream interpolation." *Computer Methods
 in Applied Mechanics and Engineering*, 19(1), 59–98.
+
+Pinto, S. I. G., Vasconcelos, J. G., and Soares, A. K. (2025).
+"Unsteady friction in mixed-flow models based on the Saint-Venant
+equations." *Journal of Hydraulic Engineering*, 152(1), 04025046.
+
+Vasconcelos, J. G., Wright, S. J., and Roe, P. L. (2006). "Improved
+simulation of flow regime transition in sewers: two-component pressure
+approach." *Journal of Hydraulic Engineering*, 132(6), 553–562.
+
+Vasconcelos, J. G., Wright, S. J., and Roe, P. L. (2009). "Numerical
+oscillations in pipe-filling bore predictions by shock-capturing
+models." *Journal of Hydraulic Engineering*, 135(4), 296–305.
+
+Vítkovský, J. P., Lambert, M. F., Simpson, A. R., and Bergant, A.
+(2000). "Advances in unsteady friction modelling in transient pipe
+flow." *Proc., 8th Int. Conf. on Pressure Surges*, BHR Group, The
+Hague, Netherlands.
 
 Leonard, B. P. (1991). "The ULTIMATE conservative difference scheme
 applied to unsteady one-dimensional advection." *Computer Methods in

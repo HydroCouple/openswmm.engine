@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file NetworkMeshData.hpp
  * @brief SoA storage for the 1D finite-volume network mesh and its state.
@@ -22,7 +38,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_FV_NETWORK_MESH_DATA_HPP
@@ -34,15 +50,9 @@
 #include "../XSectBatch.hpp"
 #include "../HydClosureKernels.hpp"
 #include "../XSectKernels.hpp"
+#include "FvClosureKernels.hpp"
 
 namespace openswmm::fv {
-
-/// Samples in the per-geometry first-moment (I₁) table over [0, y_full].
-/// I₁ is the antiderivative of A(h); above the crown the closure is exactly
-/// linear in h so the table is extended analytically rather than sampled
-/// (see FvKernels::i1OfDepth), which is what keeps deep surcharge accurate
-/// with a small table.
-inline constexpr int kI1Samples = 129;
 
 /// Samples in a STORAGE node's flattened depth→volume table.
 inline constexpr int kNodeVolSamples = 129;
@@ -60,14 +70,6 @@ inline constexpr int kNodeVolSamples = 129;
  */
 struct FvGeometry {
     XSectParams xs{};              ///< section parameters (owns transect table ptrs)
-
-    /// Where the section's own geometry is evaluated. A pointer, not a copy:
-    /// the evaluator carries the shared geometry tables, and which memory space
-    /// those live in is exactly what differs between the host solver and the
-    /// device backend. The mesh builder binds this to xsect::hostEval(); a
-    /// device backend rebinds it to its own device-resident pair, and the same
-    /// kernel bodies then run unchanged on both (plan §5.1).
-    const xsect::XsectEval* eval = nullptr;
 
     double y_full = 0.0;           ///< full depth (ft)
     double a_full = 0.0;           ///< area when full (ft²)
@@ -97,60 +99,22 @@ struct FvGeometry {
 
     uint8_t is_open = 0;           ///< open section: no crown, no slot taper
 
-    // -- Friction and losses (already lengthening-adjusted, see Router::init) --
-
-    double roughness    = 0.01;    ///< Manning n
-    double rough_factor = 0.0;     ///< g·(n/PHI)² — friction denominator factor
-    double loss_inlet   = 0.0;     ///< entrance loss coefficient K
-    double loss_outlet  = 0.0;     ///< exit loss coefficient K
-
     int    barrels = 1;            ///< parallel identical barrels
 
-    /// [XSECTIONS] culvert code (0 = not a culvert), and the conduit slope the
-    /// HEC-5 inlet-control equations need. Cold: read only at the conduit's
-    /// upstream boundary face, and only when the code is set.
-    int    culvert_code = 0;
-    double slope        = 0.0;
+    // Friction, losses, slope and the culvert curve are PER CONDUIT and live
+    // in NetworkMeshData::conduit_* (plan Phase 1f): this block is one shared
+    // entry per DISTINCT (section, barrels, open) so a 5000-pipe network with
+    // a dozen sections keeps a dozen closure tables cache-resident instead of
+    // streaming ~4 kB of geometry per cell every substep.
 
-    /// The type code's inlet-control curve, RESOLVED at mesh build. Keeping the
-    /// resolved coefficients rather than the code is what lets the solver
-    /// evaluate the closure with no engine dependency — the table lookup is
-    /// host work, the curve is all the kernel needs.
-    hydkernels::CulvertCurve culvert_curve{};
-    uint8_t culvert_mitered = 0;
-
-    /// First moment I₁(h) = ∫₀ʰ A(η)dη sampled uniformly on h ∈ [0, y_full],
-    /// followed by the companion A(h) samples on the same grid — 2·kI1Samples
-    /// entries, `[0, kI1Samples)` = I₁ and `[kI1Samples, 2·kI1Samples)` = A.
-    /// One buffer because both are read together on every evaluation.
-    ///
-    /// Built once at init by composite integration of the same A(h) the solver
-    /// evaluates. Quadrature error does not threaten well-balancedness — that
-    /// needs only a single-valued I₁(h) — but it does set the accuracy of the
-    /// pressure term, hence the fine sub-sampling in buildI1Table.
-    ///
-    /// A fixed inline array rather than a vector: the whole struct is copied
-    /// into device memory by the accelerated backend, and an owning container
-    /// cannot cross that boundary. At 129 samples this is 2 kB per DISTINCT
-    /// cross-section — a few hundred at most in a real model.
-    double i1_tbl[2 * kI1Samples] = {};
-
-    /// The INVERSE of the area column: depth sampled uniformly in AREA over
-    /// [0, a_crown], `h_tbl[j]` being the exact root of A(h) = j·a_crown/(n−1).
-    ///
-    /// The forward table is uniform in depth, which is the wrong grid to invert
-    /// on. Bracketing a query area in it costs a binary search — seven
-    /// dependent loads with unpredictable branches — and near the crown, where
-    /// A is nearly flat in h, one depth panel spans a wide range of areas, so
-    /// the bracket it yields is loose and the root-find needs several
-    /// evaluations of the closure. Profiling put `depthOfArea` and the area
-    /// lookups it drives at 87 % of solver time on a Δx = 20 ft run.
-    ///
-    /// Sampling uniformly in area instead makes the panel a single divide, and
-    /// makes the residuals at its two ends known WITHOUT evaluating the
-    /// closure — they are the sample areas themselves. Built at init from the
-    /// bracketed inverse, so it costs nothing at run time.
-    double h_tbl[kI1Samples] = {};
+    /// The closure every FvKernels section function evaluates: the exact
+    /// section (SectionGeometry.hpp) sampled at build time into a monotone
+    /// cubic table with the slot folded in, or the polynomial class for open
+    /// sections (FvClosureKernels.hpp). A fixed-size, pointer-free POD block,
+    /// so the whole geometry can be captured by a device backend as plain
+    /// bytes; `xs` above still carries host table pointers for the table-
+    /// defined shapes and is read only at build time.
+    FvClosure closure_tbl{};
 
 };
 
@@ -199,6 +163,48 @@ struct NetworkMeshData {
     std::vector<int>    face_cr;      ///< right cell (-1 ⇒ node on the right)
     std::vector<int>    face_node;    ///< coupled node (-1 for interior faces)
 
+    /// Cross-section (index into `geom`) that this face reconstructs BOTH of
+    /// its sides in. Almost always the adjacent cells' own section, which
+    /// leaves the scheme untouched.
+    ///
+    /// It differs only where two conduits of DIFFERENT section meet at a
+    /// clean degree-2 node, and there it is the section-averaged pair. Without
+    /// it, such an interface is evaluated twice in two different geometries —
+    /// each conduit's end face reconstructs the neighbour's state in its OWN
+    /// section — so the wall the width step physically presents to the flow
+    /// exerts no force. That missing wall-pressure term is the measured
+    /// pseudo-2D defect (SWASHES §3.5): depths run too deep wherever the
+    /// channel contracts and too shallow wherever it expands, antisymmetric in
+    /// dB/dx and independent of Δx. Reconstructing both sides in one shared
+    /// section makes the pair a single well-posed Riemann problem, and the
+    /// hydrostatic-reconstruction correction already applied per side,
+    /// g·(I₁(cell section, h) − I₁(face section, h*)), becomes exactly the
+    /// discrete wall-pressure (I₂) source — consistently discretized with the
+    /// flux it has to balance, which is what every additive closure got wrong.
+    std::vector<int>    face_geom;    ///< index into `geom`
+
+    /// Give every face the section of its adjacent cell, sizing `face_geom` if
+    /// a caller never populated it. This reproduces the behaviour that
+    /// preceded `face_geom` exactly, so it is always safe; NetworkMeshBuilder
+    /// calls it and then overrides the entries at width-step junctions.
+    /// Idempotent, and a no-op once `face_geom` is already the right size.
+    ///
+    /// It exists because `face_geom` is the one face array a hand-built mesh
+    /// can silently omit: the unit-test fixtures assemble NetworkMeshData
+    /// field by field without a SimulationContext, and an omission there is an
+    /// empty vector that `faceSide` would index straight into a null page.
+    void deriveFaceGeom() {
+        if (face_geom.size() == static_cast<std::size_t>(n_faces())) return;
+        face_geom.assign(static_cast<std::size_t>(n_faces()), 0);
+        for (int f = 0; f < n_faces(); ++f) {
+            const auto uf = static_cast<std::size_t>(f);
+            const int c = (face_cl[uf] >= 0) ? face_cl[uf] : face_cr[uf];
+            face_geom[uf] = (c >= 0 &&
+                             static_cast<std::size_t>(c) < cell_geom.size())
+                ? cell_geom[static_cast<std::size_t>(c)] : 0;
+        }
+    }
+
     /// Flap-gate mask on a boundary face: bit 0 blocks a POSITIVE mass flux,
     /// bit 1 blocks a NEGATIVE one, 0 leaves the face open. A gate is a check
     /// valve, so a blocked face behaves as a wall only while the flux would run
@@ -232,6 +238,22 @@ struct NetworkMeshData {
     /// equivalence test and the reporting path read it.
     std::vector<uint8_t> face_virtual;
 
+    /// Node index of the virtual junction a spliced face replaced (-1 for
+    /// every other face). face_node must stay -1 for spliced faces — they are
+    /// interior to the solver — so the reporting path carries the association
+    /// here instead of re-deriving it (matching inverts collides when two
+    /// virtual junctions share a bit-identical invert, leaving the loser
+    /// permanently unreported).
+    std::vector<int> face_vj_node;
+
+    /// Spliced face of each virtual junction (−1 for every other node): the
+    /// reverse of face_vj_node. A lateral inflow at a virtual junction is
+    /// diverted into the two cells adjoining that face
+    /// (ExplicitFvSolver::refreshStructFlows), and the reporting path reads
+    /// the same two cells' conduits for the node's through-flow — neither
+    /// should scan the face list per node per step.
+    std::vector<int> node_vj_face;
+
     // -----------------------------------------------------------------------
     // Conduit → cell map. Cells of a conduit are CONTIGUOUS by construction,
     // so a begin/count pair is a complete (and cheaper) CSR.
@@ -240,6 +262,21 @@ struct NetworkMeshData {
     std::vector<int> conduit_cell_begin; ///< first cell of conduit row r
     std::vector<int> conduit_cell_count; ///< cells in conduit row r
     std::vector<int> conduit_link;       ///< base LinkData index of conduit row r
+    std::vector<int> conduit_section;    ///< index into `geom` (shared section block)
+
+    // Per-conduit friction and losses (already lengthening-adjusted, see
+    // Router::init) and the culvert inlet-control data — everything that
+    // differs between conduits sharing one section block (plan Phase 1f).
+    std::vector<double>  conduit_roughness;      ///< Manning n
+    std::vector<double>  conduit_rough_factor;   ///< g·(n/PHI)² — friction denominator factor
+    std::vector<double>  conduit_loss_inlet;     ///< entrance loss coefficient K
+    std::vector<double>  conduit_loss_outlet;    ///< exit loss coefficient K
+    std::vector<double>  conduit_slope;          ///< bed slope the HEC-5 equations need
+    std::vector<int>     conduit_culvert_code;   ///< [XSECTIONS] culvert code (0 = none)
+    /// The type code's inlet-control curve, RESOLVED at mesh build so the
+    /// solver evaluates the closure with no engine dependency.
+    std::vector<hydkernels::CulvertCurve> conduit_culvert_curve;
+    std::vector<uint8_t> conduit_culvert_mitered;
 
     // -----------------------------------------------------------------------
     // Cell chains (CSR). A chain is a maximal run of cells joined by INTERIOR
@@ -267,11 +304,31 @@ struct NetworkMeshData {
     // Non-conduit links (pumps, orifices, weirs, outlets). Evaluated by their
     // existing structure equations outside the solver and applied here as
     // source/sink pairs on the two node volumes.
+    //
+    // DUMMY-xsect conduits belong here too. Legacy isTrueConduit
+    // (dynwave.c:411-414) is false for them: they carry no cross-section, so
+    // there is nothing to march, and DW routes them through findNonConduitFlow
+    // as a pure pass-through instead. They differ from a real structure in that
+    // their discharge is not a head relation the engine can evaluate outside
+    // the solver — it is whatever arrives at the upstream node — so the solver
+    // computes it itself (`struct_is_dummy`, see ExplicitFvSolver::
+    // refreshDummyFlows) rather than reading FvStepForcing::structure_flow.
     // -----------------------------------------------------------------------
 
     std::vector<int> struct_link;  ///< LinkData index
     std::vector<int> struct_n1;    ///< upstream node
     std::vector<int> struct_n2;    ///< downstream node
+
+    /// 1 for a DUMMY-xsect conduit, 0 for a real structure. Parallel to
+    /// `struct_link`.
+    std::vector<uint8_t> struct_is_dummy;
+
+    /// 1 when the node is the upstream end of a DUMMY link. Such a node is a
+    /// free-drainage boundary, not a storing junction: the pass-through removes
+    /// exactly what arrives, so its volume is constant and its head needs no
+    /// relaxation (the correction would be identically zero — see
+    /// ExplicitFvSolver::relaxOneNode).
+    std::vector<uint8_t> node_dummy_drain;
 
     // -----------------------------------------------------------------------
     // Node → face map (CSR). Two-pass gather with NO atomics: the node update
@@ -354,13 +411,21 @@ struct NetworkMeshData {
         cell_face0.clear(); cell_face1.clear();
         cell_side0.clear(); cell_side1.clear();
         face_cl.clear(); face_cr.clear(); face_node.clear(); face_gate.clear();
+        face_geom.clear();
         face_culvert.clear();
         face_zb.clear(); face_dx.clear(); face_virtual.clear();
+        face_vj_node.clear(); node_vj_face.clear();
         face_dir_l.clear(); face_dir_r.clear();
         conduit_cell_begin.clear(); conduit_cell_count.clear(); conduit_link.clear();
+        conduit_section.clear();
+        conduit_roughness.clear(); conduit_rough_factor.clear();
+        conduit_loss_inlet.clear(); conduit_loss_outlet.clear(); conduit_slope.clear();
+        conduit_culvert_code.clear(); conduit_culvert_curve.clear();
+        conduit_culvert_mitered.clear();
         chain_ptr.clear(); chain_cells.clear(); chain_dir.clear();
         cell_chain.clear(); cell_chain_pos.clear();
         struct_link.clear(); struct_n1.clear(); struct_n2.clear();
+        struct_is_dummy.clear(); node_dummy_drain.clear();
         node_face_ptr.clear(); node_face_idx.clear();
         node_face_sign.clear(); node_face_zb.clear();
         node_invert.clear(); node_full_depth.clear(); node_ponded_area.clear();
@@ -415,6 +480,17 @@ struct NetworkStateData {
     // is off.
     std::vector<double> cell_phi;
     int n_species = 0;
+
+    /// TPA regime flag per cell (issue #156 Phase 4): EMPTY unless
+    /// FV_PRESSURE_CLOSURE TPA; 1 = pressurized (closure evaluates on the
+    /// extended slot line, both signs of ΔA), 0 = free surface (table
+    /// closure). Lives in the STATE because the static membership predicates
+    /// (PressurizedHeadSolver::cellPressurized, the census edit) must see it.
+    /// The flag is physical air-pathway history — updated once per substep by
+    /// the solver's venting rule, saved/restored with the step-rejection
+    /// snapshot, cleared (all-free) on cold start; a restart worst-case is
+    /// one spurious re-pressurization step (TPA plan §5).
+    std::vector<uint8_t> cell_tpa;
 
     void resize(int n_cells, int n_nodes, int n_species_in) {
         const auto nc = static_cast<std::size_t>(n_cells);

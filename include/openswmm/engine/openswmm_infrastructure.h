@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file openswmm_infrastructure.h
  * @brief OpenSWMM Engine — Infrastructure (Transects, Streets, Inlets, LIDs) C API.
@@ -10,7 +26,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_INFRASTRUCTURE_H
@@ -288,6 +304,25 @@ SWMM_ENGINE_API int swmm_transect_remove(SWMM_Engine engine, int idx);
 SWMM_ENGINE_API int swmm_street_add(SWMM_Engine engine, const char* id);
 
 /**
+ * @brief Rename a street cross-section in place.
+ *
+ * @details Unlike the other named infrastructure objects, a street is
+ *          referenced BY NAME after parsing: STREET_XSECT links carry it in
+ *          their named cross-section slot, which @ref swmm_link_get_xsect
+ *          resolves and the .inp writer emits as [XSECTIONS] Geom1. This call
+ *          rewrites every such reference, so renaming cannot leave a link
+ *          pointing at a street that no longer exists.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Street index.
+ * @param new_id  New unique name (non-empty), compared case-insensitively
+ *                against the other streets. A pure case-respelling of this
+ *                same street is allowed.
+ * @returns SWMM_OK, or SWMM_ERR_BADPARAM on an empty or duplicate name.
+ */
+SWMM_ENGINE_API int swmm_street_rename(SWMM_Engine engine, int idx, const char* new_id);
+
+/**
  * @brief Set the geometric parameters for a street cross-section.
  *
  * @param engine         Engine handle.
@@ -372,6 +407,21 @@ SWMM_ENGINE_API int swmm_street_get_params(SWMM_Engine engine, int idx,
 SWMM_ENGINE_API int swmm_inlet_add(SWMM_Engine engine, const char* id, const char* type);
 
 /**
+ * @brief Rename an inlet design in place.
+ *
+ * @details [INLET_USAGE] rows hold an inlet INDEX, not a name, so usages
+ *          follow automatically.
+ *
+ * @param engine  Engine handle.
+ * @param idx     Inlet index.
+ * @param new_id  New unique name (non-empty), compared case-insensitively
+ *                against the other inlets. A pure case-respelling of this
+ *                same inlet is allowed.
+ * @returns SWMM_OK, or SWMM_ERR_BADPARAM on an empty or duplicate name.
+ */
+SWMM_ENGINE_API int swmm_inlet_rename(SWMM_Engine engine, int idx, const char* new_id);
+
+/**
  * @brief Set the geometric parameters for an inlet.
  * @param engine        Engine handle.
  * @param idx           Zero-based inlet index.
@@ -443,6 +493,174 @@ SWMM_ENGINE_API int swmm_inlet_get_params(SWMM_Engine engine, int idx,
  */
 SWMM_ENGINE_API int swmm_inlet_get_type(SWMM_Engine engine, int idx, char* buf, int buflen);
 
+/* -------------------------------------------------------------------------
+ * Full inlet-design surface (2026-09-05). swmm_inlet_set_params/get_params
+ * above remain as a GRATE/SLOTTED convenience; the struct API below covers
+ * every field of the [INLETS] grammar including curb height, throat angle,
+ * combination inlets and custom capture curves.
+ * ------------------------------------------------------------------------- */
+
+/** Inlet design type codes (match legacy InletType ordering). */
+enum SWMM_InletType {
+    SWMM_INLET_GRATE      = 0,
+    SWMM_INLET_CURB       = 1,
+    SWMM_INLET_COMBO      = 2,
+    SWMM_INLET_SLOTTED    = 3,
+    SWMM_INLET_DROP_GRATE = 4,
+    SWMM_INLET_DROP_CURB  = 5,
+    SWMM_INLET_CUSTOM     = 6
+};
+
+/** Grate bar patterns (HEC-22). */
+enum SWMM_GrateType {
+    SWMM_GRATE_P_BAR_50     = 0,
+    SWMM_GRATE_P_BAR_50x100 = 1,
+    SWMM_GRATE_P_BAR_30     = 2,
+    SWMM_GRATE_CURVED_VANE  = 3,
+    SWMM_GRATE_TILT_BAR_45  = 4,
+    SWMM_GRATE_TILT_BAR_30  = 5,
+    SWMM_GRATE_RETICULINE   = 6,
+    SWMM_GRATE_GENERIC      = 7
+};
+
+/** Curb-opening throat orientation (legacy ThroatAngleWords order). */
+enum SWMM_ThroatType {
+    SWMM_THROAT_HORIZONTAL = 0,
+    SWMM_THROAT_INCLINED   = 1,
+    SWMM_THROAT_VERTICAL   = 2
+};
+
+/** Custom-inlet curve kind. */
+enum SWMM_InletCurveKind {
+    SWMM_INLET_CURVE_NONE      = 0,
+    SWMM_INLET_CURVE_DIVERSION = 1,  /**< captured flow vs approach flow */
+    SWMM_INLET_CURVE_RATING    = 2   /**< captured flow vs water depth */
+};
+
+/** Inlet placement mode. */
+enum SWMM_InletPlacement {
+    SWMM_INLET_AUTOMATIC = 0,
+    SWMM_INLET_ON_GRADE  = 1,
+    SWMM_INLET_ON_SAG    = 2
+};
+
+/**
+ * @brief Complete description of an inlet design. All dimensions are in the
+ *        project's display units (ft or m; ft/s or m/s).
+ */
+typedef struct SWMM_InletDesign {
+    int    type;          /**< SWMM_InletType */
+    /* GRATE / DROP_GRATE / COMBO */
+    double grate_length;
+    double grate_width;
+    int    grate_type;    /**< SWMM_GrateType */
+    double open_area;     /**< GENERIC only, fraction (0,1] */
+    double splash_veloc;  /**< GENERIC only */
+    /* CURB / DROP_CURB / COMBO */
+    double curb_length;
+    double curb_height;
+    int    throat;        /**< SWMM_ThroatType (ignored for DROP_CURB) */
+    /* SLOTTED */
+    double slot_length;
+    double slot_width;
+    /* CUSTOM */
+    char   curve_id[64];
+    int    curve_kind;    /**< SWMM_InletCurveKind */
+} SWMM_InletDesign;
+
+/**
+ * @brief Read every field of an inlet design.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based inlet index.
+ * @param[out] out  Receives the design (must not be NULL).
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_inlet_get_design(SWMM_Engine engine, int idx, SWMM_InletDesign* out);
+
+/**
+ * @brief Overwrite every field of an inlet design (type may change).
+ * @details Validation: lengths/widths/heights used by `type` must be > 0;
+ *          open_area in (0,1] when grate_type is GENERIC; CUSTOM requires a
+ *          non-empty curve_id. BUILDING or OPENED state.
+ *
+ *          CUSTOM curve_kind: the [INLETS] grammar has no kind token, so the
+ *          named curve's own table type is the authority. If the curve already
+ *          exists, the kind is taken from it and a contradicting `curve_kind`
+ *          (or a curve that is neither DIVERSION nor RATING) is rejected with
+ *          SWMM_ERR_BADPARAM; if it does not exist yet, `curve_kind` is stored
+ *          as given and re-derived when the model is validated.
+ * @returns SWMM_OK, or SWMM_ERR_BADPARAM on a violated constraint.
+ */
+SWMM_ENGINE_API int swmm_inlet_set_design(SWMM_Engine engine, int idx, const SWMM_InletDesign* design);
+
+/**
+ * @brief Get/set the free-text description of an inlet design.
+ */
+SWMM_ENGINE_API int swmm_inlet_get_comment(SWMM_Engine engine, int idx, char* buf, int buflen);
+SWMM_ENGINE_API int swmm_inlet_set_comment(SWMM_Engine engine, int idx, const char* text);
+
+/* -------------------------------------------------------------------------
+ * Inlet usage rows — one per placement. Two host kinds:
+ *   host_kind = SWMM_INLET_HOST_LINK : a conduit ([INLET_USAGE] row)
+ *   host_kind = SWMM_INLET_HOST_NODE : an inlet junction ([INLET_JUNCTIONS] row)
+ * ------------------------------------------------------------------------- */
+
+enum SWMM_InletHostKind {
+    SWMM_INLET_HOST_LINK = 0,
+    SWMM_INLET_HOST_NODE = 1
+};
+
+typedef struct SWMM_InletUsage {
+    int    host_kind;        /**< SWMM_InletHostKind */
+    int    host_idx;         /**< link index or node index per host_kind */
+    int    design_idx;       /**< inlet design index */
+    int    capture_node_idx; /**< receiving (underdrain) node index */
+    int    num_inlets;       /**< inlets per side (>= 1) */
+    double pct_clogged;      /**< 0..99 */
+    double flow_limit;       /**< max capture per inlet, display flow units; 0 = none */
+    double local_depress;    /**< local gutter depression, display length units */
+    double local_width;      /**< local depression width, display length units */
+    int    placement;        /**< SWMM_InletPlacement */
+} SWMM_InletUsage;
+
+/** @returns number of usage rows (both host kinds), or -1 on error. */
+SWMM_ENGINE_API int swmm_inlet_usage_count(SWMM_Engine engine);
+
+/** @returns usage row index hosted by conduit `link_idx`, or -1 if none / error. */
+SWMM_ENGINE_API int swmm_inlet_usage_find_link(SWMM_Engine engine, int link_idx);
+
+/** @returns usage row index hosted by inlet-junction node `node_idx`, or -1 if none / error. */
+SWMM_ENGINE_API int swmm_inlet_usage_find_node(SWMM_Engine engine, int node_idx);
+
+/**
+ * @brief Read a usage row.
+ * @returns SWMM_OK, SWMM_ERR_BADINDEX, or SWMM_ERR_BADPARAM (NULL out).
+ */
+SWMM_ENGINE_API int swmm_inlet_usage_get(SWMM_Engine engine, int usage_idx, SWMM_InletUsage* out);
+
+/**
+ * @brief Create or replace the usage row for a host.
+ * @details At most one row per host: if a row already exists for
+ *          (host_kind, host_idx) it is overwritten, otherwise a row is
+ *          appended. Validation: design_idx and capture_node_idx must exist;
+ *          capture node must not be the host node, nor a virtual/inlet
+ *          junction; a link host must be a conduit; a node host must have
+ *          is_inlet set (see swmm_node_set_inlet); num_inlets >= 1;
+ *          pct_clogged in [0,99]. Shape compatibility (STREET vs drop) is
+ *          checked here and reported as ERR_INLET_USAGE_SHAPE (635).
+ *          BUILDING or OPENED state.
+ * @param[out] usage_idx  Receives the row index (may be NULL).
+ * @returns SWMM_OK, SWMM_ERR_BADINDEX / SWMM_ERR_BADPARAM, or 635.
+ */
+SWMM_ENGINE_API int swmm_inlet_usage_set(SWMM_Engine engine, const SWMM_InletUsage* usage, int* usage_idx);
+
+/**
+ * @brief Remove a usage row. Removing the row of an inlet junction leaves the
+ *        node flagged is_inlet; the model then fails validation with 633
+ *        until a design is assigned or the node is demoted.
+ */
+SWMM_ENGINE_API int swmm_inlet_usage_remove(SWMM_Engine engine, int usage_idx);
+
 /* =========================================================================
  * LID controls
  * ========================================================================= */
@@ -460,6 +678,24 @@ SWMM_ENGINE_API int swmm_inlet_get_type(SWMM_Engine engine, int idx, char* buf, 
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_lid_add(SWMM_Engine engine, const char* id, int type);
+
+/**
+ * @brief Rename an LID control in place.
+ *
+ * @details Updates both the name vector (read by swmm_lid_id() and the
+ *          [LID_CONTROLS] writer) and the name registry (read by
+ *          swmm_lid_index() and the [LID_USAGE] writer). Usage rows hold an
+ *          LID INDEX, so subcatchment deployments follow automatically.
+ *          Lifecycle: BUILDING or OPENED.
+ *
+ * @param engine  Engine handle.
+ * @param idx     LID control index.
+ * @param new_id  New unique name (non-empty). A pure case-respelling of this
+ *                same control is allowed.
+ * @returns SWMM_OK, SWMM_ERR_LIFECYCLE outside BUILDING/OPENED, or
+ *          SWMM_ERR_BADPARAM on an empty or duplicate name.
+ */
+SWMM_ENGINE_API int swmm_lid_rename(SWMM_Engine engine, int idx, const char* new_id);
 
 /**
  * @brief Set the surface layer properties for a LID control.

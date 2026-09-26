@@ -1,0 +1,55 @@
+name: Python API contracts
+
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  push:
+    branches: [main, develop, swmm6_rel]
+  pull_request:
+    branches: [main, develop, swmm6_rel]
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pytest
+      - name: Check native API reachability
+        run: python python/scripts/api_drift_audit.py --strict
+      - name: Check enums, stubs and Cython attributes
+        working-directory: python
+        run: python -m pytest tests/test_api_coverage.py tests/test_enum_drift.py tests/test_solver_pxd_attrs.py -q
+
+  minimal-build:
+    name: Python without optional features
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install 'cmake>=4.3' ninja 'Cython>=3.0.12' numpy pytest
+      - name: Configure minimal bindings
+        run: >-
+          cmake -S python -B build/python-minimal -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DOPENSWMM_BUILD_2D=OFF
+          -DOPENSWMM_BUILD_GPU_PLUGIN=OFF
+          -DOPENSWMM_WITH_GEOPACKAGE=OFF
+          -DOPENSWMM_WITH_HDF5=OFF
+          -DPython_EXECUTABLE=$(which python)
+      - run: cmake --build build/python-minimal --parallel 2
+      - run: cmake --install build/python-minimal --prefix "${{ runner.temp }}/openswmm-minimal"
+      - name: Stage Python sources
+        run: python python/scripts/stage_python_sources.py "${{ runner.temp }}/openswmm-minimal"
+      - name: Exercise omitted-feature imports and core solver
+        run: >-
+          python python/scripts/test_staged_package.py "${{ runner.temp }}/openswmm-minimal"
+          python/tests/minimal_features.py python/tests/engine/test_solver_pythonic.py
+          python/tests/engine/test_transport.py -q

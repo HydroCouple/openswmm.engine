@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file GageData.hpp
  * @brief Structure-of-Arrays (SoA) storage for rain gages.
@@ -16,7 +32,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_GAGE_DATA_HPP
@@ -55,7 +71,9 @@ enum class RainFileFormat : int8_t {
     DSI_3260 = 3,   ///< NCDC DSI 3260 15-minute
     HLY_PRCP = 4,   ///< HLY_PRCP format
     STAN_PRCP = 5,  ///< Standard SWMM rain file
-    USER_CSV = 6    ///< User-supplied multi-column CSV (new in 6.0.0, R08)
+    USER_CSV = 6    ///< User-supplied multi-column text file — CSV, TSV, or
+                    ///< PCSWMM TSF, auto-detected by content (new in 6.0.0,
+                    ///< R08; extended per MULTICOLUMN_SERIES_SINGLE_READ plan)
 };
 
 // ============================================================================
@@ -110,8 +128,9 @@ struct GageData {
     std::vector<std::string>    ts_name;
 
     /**
-     * @brief Column name in the external CSV (when source == FILE_RAIN).
-     * @details New in 6.0.0 — supports "FILE path.csv:COLUMN_NAME" syntax (R08).
+     * @brief Column name in the external multi-column file (source == FILE_RAIN).
+     * @details New in 6.0.0 — supports "FILE path.csv:COLUMN_NAME" syntax (R08)
+     *          for multi-column CSV/TSV/TSF files (format auto-detected).
      *          Empty string means use the first/only data column.
      */
     std::vector<std::string>    col_name;
@@ -225,6 +244,38 @@ struct GageData {
      */
     std::vector<bool>           is_raining;
 
+    /**
+     * @brief Legacy rain-gage state machine (gage_initState / gage_setState /
+     *        getNextRainfall), kept as record indices on the gage's series
+     *        and advanced by updateAllGages():
+     *        - st_cur: the record legacy's startDate/endDate name — -2 while
+     *          there is no state (NO_DATE: no series, empty series,
+     *          IGNORE_RAINFALL, not yet initialised), -1 for the pre-record
+     *          interval [StartDateTime, x0) legacy forms when the record
+     *          begins after the simulation start, else a record index (the
+     *          FIRST record whatever its value, afterwards only records with
+     *          a non-zero rate: getNextRainfall skips zero rates);
+     *        - st_next: the record legacy's nextDate/nextRainfall name, -1
+     *          for NO_DATE;
+     *        - st_rain: legacy Gage.rainfall as the machine last left it
+     *          (0 in a gap, the current record's rate otherwise), the value
+     *          gage_setReportRainfall reads; user rain units with the units
+     *          and scale factors, before the monthly rain adjustment.
+     *        - st_init: the machine has been seeded (lazily, on the first
+     *          update, from the simulation start date); st_used: legacy
+     *          Gage.isUsed as found then — an unused gage's machine never
+     *          advances and its rainfall keeps the seeded value (legacy
+     *          gage_setState returns at once; runoff_execute still reads
+     *          Gage.rainfall for IsRaining).
+     * @see Legacy: gage_initState, gage_setState, getNextRainfall,
+     *      gage_getNextRainDate, gage_setReportRainfall
+     */
+    std::vector<int>            st_cur;
+    std::vector<int>            st_next;
+    std::vector<double>         st_rain;
+    std::vector<uint8_t>        st_init;
+    std::vector<uint8_t>        st_used;
+
     // -----------------------------------------------------------------------
     // Past-rain history (for control rules — GAGE_RAIN_PAST)
     // -----------------------------------------------------------------------
@@ -295,6 +346,11 @@ struct GageData {
         api_rainfall.assign(un, -1.0);  // -1.0 means no API override
         next_rain_date.assign(un, 0.0);
         is_raining.assign(un, false);
+        st_cur.assign(un, -2);
+        st_next.assign(un, -1);
+        st_rain.assign(un, 0.0);
+        st_init.assign(un, 0);
+        st_used.assign(un, 0);
 
         past_rain.assign(un * MAXPASTRAIN, 0.0);
         past_rain_accum.assign(un, 0.0);
@@ -326,6 +382,8 @@ struct GageData {
         g(scale_factor, 1.0);
         g(rainfall, 0.0); g(next_rainfall, 0.0);
         g(api_rainfall, -1.0); g(next_rain_date, 0.0); g(is_raining, false);
+        g(st_cur, -2); g(st_next, -1); g(st_rain, 0.0); g(st_init, static_cast<uint8_t>(0));
+        g(st_used, static_cast<uint8_t>(0));
         // Flat 2D: [gage * MAXPASTRAIN + hour]
         past_rain.resize(un * static_cast<std::size_t>(MAXPASTRAIN), 0.0);
         g(past_rain_accum, 0.0); g(past_rain_time, 0.0); g(cumul_rain_accum, 0.0);
@@ -348,6 +406,7 @@ struct GageData {
         e(file_path); e(col_name); e(file_format); e(interval_sec); e(snow_factor);
         e(scale_factor);
         e(rainfall); e(next_rainfall); e(api_rainfall); e(next_rain_date); e(is_raining);
+        e(st_cur); e(st_next); e(st_rain); e(st_init); e(st_used);
         e(past_rain_accum); e(past_rain_time); e(cumul_rain_accum); e(co_gage_index);
         e(comments);
 
@@ -379,6 +438,11 @@ struct GageData {
         api_rainfall.shrink_to_fit();
         next_rain_date.shrink_to_fit();
         is_raining.shrink_to_fit();
+        st_cur.shrink_to_fit();
+        st_next.shrink_to_fit();
+        st_rain.shrink_to_fit();
+        st_init.shrink_to_fit();
+        st_used.shrink_to_fit();
 
         past_rain.shrink_to_fit();
         past_rain_accum.shrink_to_fit();
@@ -393,6 +457,11 @@ struct GageData {
         std::fill(next_rainfall.begin(), next_rainfall.end(), 0.0);
         std::fill(api_rainfall.begin(),  api_rainfall.end(),  -1.0); // -1 = no override
         std::fill(is_raining.begin(),    is_raining.end(),    false);
+        std::fill(st_cur.begin(),  st_cur.end(),  -2);
+        std::fill(st_next.begin(), st_next.end(), -1);
+        std::fill(st_rain.begin(), st_rain.end(), 0.0);
+        std::fill(st_init.begin(), st_init.end(), static_cast<uint8_t>(0));
+        std::fill(st_used.begin(), st_used.end(), static_cast<uint8_t>(0));
         std::fill(past_rain.begin(),     past_rain.end(),     0.0);
         std::fill(past_rain_accum.begin(), past_rain_accum.end(), 0.0);
         std::fill(past_rain_time.begin(),  past_rain_time.end(),  0.0);

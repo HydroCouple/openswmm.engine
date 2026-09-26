@@ -1,0 +1,80 @@
+[TITLE]
+InpWriter round-trip fixture: inlet usage
+Exercises defect 5. Same model as section_order.inp with INLET_USAGE placed
+AFTER the node sections, so the reader keeps the row and the writer is what is
+under test rather than handle_inlet_usage()'s missing deferred pass.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2020
+START_TIME           00:00:00
+END_DATE             01/02/2020
+END_TIME             00:00:00
+REPORT_STEP          00:15:00
+WET_STEP             00:05:00
+DRY_STEP             01:00:00
+ROUTING_STEP         0:00:30
+MIN_SLOPE            0
+
+[EVAPORATION]
+CONSTANT   0.0
+DRY_ONLY   NO
+
+;; ---------------------------------------------------------------------------
+;; Link sections come FIRST. Legacy SWMM parsing is order-independent; before
+;; the deferred link end-node pass these links loaded with node1/node2 == -1
+;; (silently orphaned) and were then written back out with '*' end nodes.
+;; ---------------------------------------------------------------------------
+
+[CONDUITS]
+;;Name  FromNode  ToNode  Length  Roughness  InOffset  OutOffset
+GUT1     J3        J4      300.0   0.016      0         0
+C2       J4        O1      300.0   0.013      0         0
+
+[WEIRS]
+;;Name  FromNode  ToNode  Type        CrestHt  Cd    Gated  EC  Cd2  Sur
+W1       J3        J4      TRANSVERSE  1.0      3.33  NO     0   0    YES
+
+[XSECTIONS]
+;;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels
+GUT1     STREET    ST_A
+C2       CIRCULAR  2.0    0      0      0      1
+W1       RECT_OPEN 1.0    2.0    0      0
+
+[STREETS]
+;;Name  Tcrown  Hcurb  Sx  nRoad  Hdep  Wg  Sides  Tback  Sback  nBack
+ST_A     20.0    0.5    4   0.016  0     0   2      20.0   0.04   0.016
+
+[INLETS]
+;;Name  Type   Length  Width  GrateType
+IN_A     GRATE  2.0     2.0    P_BAR-50
+
+[JUNCTIONS]
+;;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded
+J3       12.0  5.0       0          0         0
+J4       11.0  5.0       0          0         0
+J5       10.0  5.0       0          0         0
+
+[OUTFALLS]
+;;Name  Elev  Type  StageData  Gated
+O1       9.0   FREE  *          NO
+
+[INLET_USAGE]
+;; Parsed but previously never written — every inlet assignment was lost on save.
+;;Link  Inlet  Node  #Inlets  %Clog  Qmax  aLocal  wLocal  Placement
+GUT1     IN_A   J5    1        0      0     0       0       ON_GRADE
+
+[REPORT]
+INPUT       NO
+CONTROLS    NO
+NODES       ALL
+LINKS       ALL
+
+[COORDINATES]
+;;Node  X-Coord  Y-Coord
+J3       0.0      0.0
+J4       300.0    0.0
+J5       300.0    100.0
+O1       600.0    0.0

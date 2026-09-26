@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file MathExpr.hpp
  * @brief Mathematical expression parser and evaluator.
@@ -16,7 +32,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_MATHEXPR_HPP
@@ -97,6 +113,17 @@ struct Expression {
  * @returns 0 on success, -1 on parse error.
  */
 int parse(const std::string& expr_str, Expression& result);
+
+/**
+ * @brief Names of the built-in functions the tokenizer recognises.
+ *
+ * @details Lower-case, in FUNC_* enumerator order (abs, sgn, sqrt, log, exp,
+ *          sin, cos, tan, asin, acos, atan, step, min, max, cot, sinh, cosh,
+ *          tanh, coth, log10, acot). Single source for editors/validators so
+ *          the list is never duplicated. min and max take two arguments; all
+ *          others take one.
+ */
+const std::vector<std::string>& function_names();
 
 // ============================================================================
 // Variable binding (Tier 1 optimization)
