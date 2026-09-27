@@ -269,10 +269,12 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh,
     // 1D node keeps working, it simply has no aquifer under it.
     state_.nacc.assign(node_beds_.size(), 0.0);
     bed_exchange_cum_.assign(node_beds_.size(), 0.0);   // G-O
-    bed_last_out_.assign(node_beds_.size(), 0.0);       // T7.4
+    bed_gathered_.assign(node_beds_.size(), 0.0);       // T7.4
     node_exchange_vol_.assign(static_cast<std::size_t>(std::max(0, n_nodes)),
                               0.0);
     node_drawn_gw_ = node_exchange_vol_;                // G-X1
+    drain_cap_binds_ = 0;                               // G-W1b
+    node_refunds_    = 0;                               // G-W1b
     {
         // `node_beds_` is the solver's own copy, so converting it in place
         // leaves the authored config — and therefore the writer — untouched.
@@ -666,8 +668,51 @@ void SubsurfaceSolver::sampleNodeExchange(const NodeData* nodes, double dt) {
             state_.theta_s[ci] - state_.theta_r[ci], kSyFloor);
         if (Q > 0.0) {
             // Cap an aquifer→pipe drain at the cell's drainable water.
-            const double avail = state_.hg[ci] * Sy * state_.area[ci];
-            Q = std::min(Q, kFaceShare * avail / std::max(dt, kTiny));
+            //
+            // G-W1 (2026-09-22): against the SAME specific yield the column
+            // will spend it against. This used the textbook θ_s − θ_r while
+            // the column used the floored θ_s − θ_bot; for a table a few
+            // centimetres under the ground those are 0.35 and 0.001, so the
+            // cap sat 350× above anything reachable and never bound. The
+            // column then went short on essentially every firing and the
+            // shortfall was refunded (fireCell §2) into the AQUIFER's books
+            // alone — the router had already handed the unrefunded volume to
+            // the node. Both ledgers closed and the seam still created water:
+            // 0.625 m³ delivered against 0.067 m³ released on the gate deck,
+            // 89 % of it refunded. With the two agreeing, the refund path no
+            // longer fires for the node at all (measured: 0 refunds, and
+            // still 0 across three closures and five geometries).
+            //
+            // The FILL direction below keeps θ_s − θ_r, and that is a
+            // decision rather than an oversight — see the handoff §3. Two
+            // attempts to make it consistent too both regressed G-X1's
+            // `FloodedManholeRechargesUntilTheColumnIsFullThenStops`: the
+            // floored yield leaves a saturated column claiming 1e-3 of
+            // headroom it does not have (a 3.15e-5 m³/s trickle into a full
+            // column — the ping-pong G-X1's guard exists to stop), and the
+            // unfloored one takes the bed-only deck's continuity from
+            // −0.66 % to −1.99 %. The measured leak was on the drain side;
+            // the fill side needs its own round.
+            const double Sy_col = specificYield(
+                ci, paramsOf(bed.cell), state_.theta_s[ci],
+                std::max(state_.zs[ci] - state_.hg[ci], 0.0),
+                static_cast<GwClosure>(state_.closure[ci]), nullptr);
+            const double avail = state_.hg[ci] * Sy_col * state_.area[ci];
+            // G-W1b (2026-09-23): count the firings this cap actually
+            // CLAMPS. A gate needs to prove its own deck exercises the cap
+            // before it can claim anything from the deck's numbers, and the
+            // ratio between the two yields does not tell it that: a deck
+            // whose ratio is 56.8× was measured BIT-IDENTICAL with the
+            // defect present, because `avail` at h_g = 7.6 m is enormous
+            // under either yield and the cap never binds. What binds is
+            // `avail` being small in ABSOLUTE terms, which only the clamp
+            // itself knows. No threshold to tune, and no geometry can make
+            // this lie.
+            const double cap = kFaceShare * avail / std::max(dt, kTiny);
+            if (Q > cap) {
+                Q = cap;
+                ++drain_cap_binds_;
+            }
         } else if (Q < 0.0) {
             // G-X1 (2026-09-19): node → aquifer, the direction that was
             // uncapped. (i) Saturation guard: a column whose table is at the
@@ -724,18 +769,12 @@ void SubsurfaceSolver::sampleNodeExchange(const NodeData* nodes, double dt) {
                 tr_.nacc_mass[static_cast<std::size_t>(sp) * nb + b] += v_1d * c;
             }
         }
-        if (b < bed_last_out_.size())                 // T7.4: the split's weights
-            bed_last_out_[b] += std::max(vol, 0.0);
         state_.nacc[b] += vol;                       // gathered at the GW firing
         bed_exchange_cum_[b] += vol;                 // G-O: the per-bed series
         if (ni < node_exchange_vol_.size())
             node_exchange_vol_[ni] += vol;           // flushed by the router
     }
     accumulators_pending_ = true;
-}
-
-void SubsurfaceSolver::clearBedDrawn() noexcept {
-    std::fill(bed_last_out_.begin(), bed_last_out_.end(), 0.0);
 }
 
 double SubsurfaceSolver::gatherNodeMass(int i, int s) noexcept {
@@ -759,10 +798,85 @@ void SubsurfaceSolver::bookLinkSeepageMass(int cell, int species,
     tr_.lacc_mass[tr_.idx(species, cell)] += mass;
 }
 
+// G-W1 (2026-09-21): the single owner of specific yield.
+//
+// `Sy` is the storage coefficient every saturated source spends against, so
+// a withdrawal CAPPED against `h_g·Sy·A` and then SPENT against `Sy·A` must
+// use the same `Sy` or the cap does not bind. It did not: `sampleNodeExchange`
+// used the textbook θ_s − θ_r while the column used the floored θ_s − θ_bot,
+// which for a table a few centimetres under the ground sits on `kSyFloor` —
+// 0.35 against 0.001, a factor of 350. The cap was therefore never reached,
+// the column went short on essentially every firing, and the shortfall was
+// refunded (fireCell §2's clamp) into the aquifer's OWN books only. The 1D
+// had already been handed the unrefunded volume by the router, so the
+// aquifer's continuity closed to 0.000 % while the node received water the
+// aquifer never released: 0.625 m³ delivered against 0.067 m³ given up on
+// the G-W1 gate deck, 89 % of it refunded.
+//
+// One function, so the cap and the spend cannot disagree again. `theta_bot`
+// is reported back because the CLOSED_FORM branch pairs the handover slab
+// with the `Sy` actually used (G-X4) and SIGMA's recharge flux needs the
+// bottom layer's content.
+double SubsurfaceSolver::specificYield(std::size_t u, const soil::Params& p,
+                                       double ts, double L0, GwClosure cl,
+                                       double* theta_bot_out) const noexcept {
+    double theta_bot = state_.theta_r[u];
+    double Sy = std::max(ts - theta_bot, kSyFloor);
+    if (cl == GwClosure::SIGMA) {
+        const auto n = static_cast<std::size_t>(state_.n_cells);
+        const auto bot =
+            static_cast<std::size_t>(state_.m_layers - 1) * n + u;
+        if (bot < state_.theta_sigma.size()) {
+            theta_bot = state_.theta_sigma[bot];
+            // The plan writes θ_s here. See the file header: with the
+            // handover explicit, θ_s − θ_bot is what conserves, and it IS
+            // specific yield.
+            Sy = std::max(ts - theta_bot, kSyFloor);
+        }
+    } else if (cl == GwClosure::ENSLAVED) {
+        // hᵤ = hᵤ*(L) algebraically ⇒ the storage debit is θ(ψ=L), the
+        // equilibrium water content at the SURFACE. `q⁺` then drives the
+        // table with no unsaturated lag at all.
+        Sy = std::max(ts - soil::waterContent(p, L0), kSyFloor);
+    } else {
+        // CONSISTENCY, not taste: `Sy` and the handover slab content the
+        // column pairs with it must sum to θ_s, or the two zones disagree
+        // about how much water a moving table carries and the cell leaks at
+        // a rate proportional to |ḣ_g|. The bulk store's own mean content is
+        // the self-consistent choice — and it reduces to the textbook
+        // θ_s − θ_r once the column has drained.
+        theta_bot = std::clamp(state_.hu[u] / std::max(L0, kTiny),
+                               state_.theta_r[u], ts);
+        Sy = std::max(ts - theta_bot, kSyFloor);
+    }
+    if (theta_bot_out != nullptr) *theta_bot_out = theta_bot;
+    return Sy;
+}
+
+double SubsurfaceSolver::specificYieldOf(int cell) const noexcept {
+    const auto u = static_cast<std::size_t>(cell);
+    if (u >= state_.hg.size()) return 0.0;
+    return specificYield(u, paramsOf(cell), state_.theta_s[u],
+                         std::max(state_.zs[u] - state_.hg[u], 0.0),
+                         static_cast<GwClosure>(state_.closure[u]), nullptr);
+}
+
 double SubsurfaceSolver::gatherNode(int i) noexcept {
     double v = 0.0;
+    // T7.4 fix (2026-09-21): the per-bed split weights are the volumes THIS
+    // gather takes, recorded here. They were previously accumulated across a
+    // routing step and cleared at its flush — but a cell fires on the LTS
+    // ladder, not the routing step, so any firing whose weights had already
+    // been cleared found `drew == 0` and dropped its outgoing mass on the
+    // floor. The aquifer still booked `lost_node`, so the mass left the
+    // aquifer's books and never reached the node's: 75 % of it on the gate
+    // deck. Tying the weights to the gather makes them exact by
+    // construction, because they ARE the volumes that produced this
+    // firing's `node_out`.
+    std::fill(bed_gathered_.begin(), bed_gathered_.end(), 0.0);
     for (std::size_t b = 0; b < node_beds_.size(); ++b) {
         if (node_beds_[b].cell != i) continue;
+        if (b < bed_gathered_.size()) bed_gathered_[b] = state_.nacc[b];
         v += state_.nacc[b];
         state_.nacc[b] = 0.0;
     }
@@ -1026,16 +1140,15 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf) {
 
     // --- 1. recharge across the table -------------------------------------
     double q0 = 0.0;      // m/s, + down
-    double Sy = std::max(ts - state_.theta_r[u], kSyFloor);
     double theta_bot = state_.theta_r[u];
+    // G-W1 (2026-09-21): `Sy` comes from the one function that owns it, so
+    // that anything CAPPING a withdrawal against the cell's drainable water
+    // caps against the same number the column will then use to spend it.
+    // `sampleNodeExchange` used the textbook θ_s − θ_r while the column used
+    // the floored θ_s − θ_bot — see specificYield().
+    double Sy = specificYield(u, p, ts, L0, cl, &theta_bot);
 
     if (cl == GwClosure::SIGMA) {
-        const auto bot = static_cast<std::size_t>(state_.m_layers - 1) *
-                             static_cast<std::size_t>(n) + u;
-        theta_bot = state_.theta_sigma[bot];
-        // The plan writes θ_s here. See the file header: with the handover
-        // explicit, θ_s − θ_bot is what conserves, and it IS specific yield.
-        Sy = std::max(ts - theta_bot, kSyFloor);
         // The physical Darcy flux across the table is the bottom layer's
         // gravity drainage. It is passed INTO the sweep as `q0_phys` and
         // comes back inside `f_bot` together with the handover, which is why
@@ -1045,23 +1158,9 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf) {
                                    std::max(ts - state_.theta_r[u], kTiny),
                                1.0e-6, 1.0)));
     } else if (cl == GwClosure::ENSLAVED) {
-        // hᵤ = hᵤ*(L) algebraically ⇒ the storage debit is θ(ψ=L), the
-        // equilibrium water content at the SURFACE. `q⁺` then drives the
-        // table with no unsaturated lag at all.
-        const double theta_top = soil::waterContent(p, L0);
-        Sy = std::max(ts - theta_top, kSyFloor);
         q0 = q_in - q_et;
     } else {
         q0 = soil::rechargeQ0(p, std::max(L0, kTiny), state_.hu[u]);
-        // CONSISTENCY, not taste: `Sy` and the handover slab content this
-        // branch uses below must sum to θ_s, or the two zones disagree about
-        // how much water a moving table carries and the cell leaks at a rate
-        // proportional to |ḣ_g|. The bulk store's own mean content is the
-        // self-consistent choice — and it reduces to the textbook θ_s − θ_r
-        // once the column has drained.
-        theta_bot = std::clamp(state_.hu[u] / std::max(L0, kTiny),
-                               state_.theta_r[u], ts);
-        Sy = std::max(ts - theta_bot, kSyFloor);
         // G-X4 (2026-09-20): …and when the FLOOR binds, the pairing above is
         // the floored number, not the raw content. A column already at θ_s
         // just under the table (θ_s − θ_bot → 0) otherwise loses
@@ -1178,6 +1277,17 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf) {
         const double rest = short_vol - refund_deep;
         if (rest > 0.0 && node_vol > 0.0) {
             const double refund_node = std::min(rest, node_vol);
+            // G-W1b (2026-09-23): this is the defect's own signature. The
+            // router has ALREADY handed the unrefunded volume to the node,
+            // so every count here is water the 1D keeps and the aquifer
+            // disowns. With the drain cap measured against the yield the
+            // column spends against, it should never fire: ~120 → 0 on the
+            // gate deck (124 on Linux, 117 on macOS — the count is
+            // platform-dependent, the zero is not). A gate asserting zero
+            // fails loudly on the bug and needs no tolerance; it held at 0
+            // across three closures, five geometries and 20 min to 12 h,
+            // including a deck that clamps 8,635 times.
+            ++node_refunds_;
             state_.qnode_last[u] = (node_vol - refund_node) / dt;
         }
     }
@@ -1451,11 +1561,11 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) noexcept {
                 double drew = 0.0;
                 for (std::size_t b = 0; b < node_beds_.size(); ++b)
                     if (node_beds_[b].cell == i)
-                        drew += std::max(bed_last_out_[b], 0.0);
+                        drew += std::max(bed_gathered_[b], 0.0);
                 if (drew > 0.0) {
                     for (std::size_t b = 0; b < node_beds_.size(); ++b) {
                         if (node_beds_[b].cell != i) continue;
-                        const double share = std::max(bed_last_out_[b], 0.0) / drew;
+                        const double share = std::max(bed_gathered_[b], 0.0) / drew;
                         const auto ni = static_cast<std::size_t>(node_beds_[b].node);
                         if (ni < nn)
                             tr_.node_out_mass[static_cast<std::size_t>(s) * nn + ni] +=

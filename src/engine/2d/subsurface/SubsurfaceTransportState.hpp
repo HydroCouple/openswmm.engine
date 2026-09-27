@@ -58,6 +58,7 @@
 #ifndef OPENSWMM_ENGINE_2D_SUBSURFACE_TRANSPORT_STATE_HPP
 #define OPENSWMM_ENGINE_2D_SUBSURFACE_TRANSPORT_STATE_HPP
 
+#include <cmath>
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -284,6 +285,21 @@ struct SubsurfaceTransportState {
         // same phase rule the surface accumulators follow, and the reason
         // they are counted here while `xacc_*` are not.
         return m + inFlight1D(s);
+    }
+
+    /// T7.4 (2026-09-21): the scale a residual is judged against — what the
+    /// aquifer started with plus **every** route mass can arrive by. It lives
+    /// here, beside `residual()`, because the two must name the same channels:
+    /// T7.4 added the node and link seams as routes and the `.rpt` block's
+    /// own copy of this sum was not updated, so a deck fed only through its
+    /// beds divided a machine-precision residual by a machine-precision
+    /// denominator and printed 6 198 889.840 % beside an exact balance. One
+    /// definition, one place to add a channel to.
+    double continuityDenominator(int s) const noexcept {
+        const auto us = static_cast<std::size_t>(s);
+        return std::fabs(init_mass[us]) + std::fabs(gained_infil[us]) +
+               std::fabs(gained_node[us]) + std::fabs(gained_link[us]) +
+               std::fabs(net_lateral[us]);
     }
 
     /// T7.1's conservation statement, the twin of

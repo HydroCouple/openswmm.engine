@@ -129,12 +129,12 @@ std::string deck(Mesh m, const std::string& extra_gw = "",
     // which gives the gate a Dunne channel AND a lateral head gradient to
     // its neighbour — the two channels with their own accumulators.
     s << "\n"
-         "CELL 1  36.0  1.0  0.45  0.10  2.0  HG0 0.95\n\n"
-         "[GW_INITIAL_QUALITY]\n;;Scope Zone Species Value\n"
+         "CELL 1  36.0  1.0  0.45  0.10  2.0  HG0 0.95\n\n";
+    s << "[GW_INITIAL_QUALITY]\n;;Scope Zone Species Value\n"
          "*       SAT    TSS  5.0\n"
          "*       UNSAT  TSS  2.0\n"
-         "CELL 1  SAT    TSS  25.0\n\n"
-      << extra_gw
+         "CELL 1  SAT    TSS  25.0\n\n";
+    s << extra_gw
       << "[COORDINATES]\nJ1  5.0  5.0\nO1  40.0  40.0\n\n"
          "[REPORT]\nINPUT NO\n";
     return s.str();
@@ -312,6 +312,94 @@ TEST(GwTransportKernel, SubsurfaceEtLeavesTheSolutesBehind) {
 // ---------------------------------------------------------------------------
 // The transport matrix, and the warning that used to be unconditional.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// D-A20 — ET carries the AGE row out with the water.
+//
+// This behaviour was implemented in T7.1 and, until now, gated by nothing:
+// `SubsurfaceEtLeavesTheSolutesBehind` asserts only that the SOLUTE row loses
+// nothing. So the one thing D-A20 specified for this kernel was the one thing
+// no test covered — and reverting it to the GW transport plan's stale §3.5
+// text ("ET removes water not age-volume") would have left every gate green.
+//
+// D-A20: water leaves at the parcel's current age, so the mean age of what
+// remains is unchanged — age-volume sunk proportionally, exactly as
+// temperature is. Solutes still stay and the column up-concentrates.
+//
+// **Why this is bounded rather than an exact identity.** The exact statement
+// is per firing: `Δlost_et = q_et·dt · (unsat age-volume / unsat water)`, the
+// column's mean age at that instant. The cumulative version is an integral of
+// a quantity that is not reconstructible from end-of-run state, so an
+// `EXPECT_NEAR` against a closed form is not available without instrumenting
+// every firing. What IS rigorous: age accrues at `+V·dt`, so a column's mean
+// age can never exceed the elapsed simulated time. That bounds the ratio, and
+// the LOWER bound is the whole discriminator — the stale specification
+// requires exactly zero.
+// ---------------------------------------------------------------------------
+TEST(GwTransportKernel, EtCarriesTheAgeRowOutWithTheWaterD_A20) {
+    std::string body = deck(Mesh::Tri, "", /*hg0=*/0.5);
+    const std::string anchor =
+        "[2D_AQUIFER_OPTIONS]\nCLOSURE CLOSED_FORM\nNODE_ENROLMENT ROWS\n";
+    const auto at = body.find(anchor);
+    ASSERT_NE(at, std::string::npos);
+    body.insert(at + anchor.size(), "GW_ET BOUNDARY_ET\n");
+    body.insert(body.find("[2D_OPTIONS]"),
+                "[EVAPORATION]\nCONSTANT  5.0\nDRY_ONLY  NO\n\n");
+    // The age row has to exist for this to test anything.
+    // Both rows named explicitly: assertion (4) needs the solute row to
+    // survive, and relying on what a partially-specified
+    // [GW_TRANSPORT_OPTIONS] defaults to would make this gate depend on a
+    // policy default rather than on the behaviour under test.
+    body.insert(body.find("[2D_OPTIONS]"),
+                "[GW_TRANSPORT_OPTIONS]\n"
+                "TRANSPORT_POLLUTANTS  YES\n"
+                "TRANSPORT_AGE         YES\n\n");
+
+    Deck r = open("et_age", body);
+    ASSERT_TRUE(r.opened);
+    ASSERT_TRUE(run(r));
+    const auto& gw = r.eng->surfaceRouter2D().subsurface();
+    const auto& t  = gw.transport();
+    ASSERT_TRUE(t.active());
+    ASSERT_GE(t.age_row, 0)
+        << "no __WATER_AGE__ row, so this gate is measuring nothing";
+    const auto a = static_cast<std::size_t>(t.age_row);
+
+    const double et_vol = gw.state().led_et;          // m³ of water ET removed
+    ASSERT_GT(et_vol, 0.0) << "the deck did not evaporate from the column";
+
+    // (1) The discriminator. D-A20 says this is positive; the GW transport
+    //     plan's stale §3.5 ET row says it is exactly zero.
+    EXPECT_GT(t.lost_et[a], 0.0)
+        << "ET removed " << et_vol << " m³ of water and no age-volume with it."
+           " That is the superseded convention (GW plan §2.4 / §3.5), under"
+           " which the mean age of the remaining water rises. D-A20 amends"
+           " both sections: age leaves at the supplying layer's age."
+        << ledgerDump(t, t.age_row);
+
+    // (2) …and it cannot exceed what elapsed time allows. The deck runs
+    //     20 minutes and the aquifer's age row starts at 0 (no
+    //     [GW_INITIAL_QUALITY] __WATER_AGE__ seed), so no parcel can be older
+    //     than the run. A ratio above that means a unit error or a
+    //     double-booking, not physics.
+    constexpr double kRunSeconds = 20.0 * 60.0;
+    EXPECT_LE(t.lost_et[a], et_vol * kRunSeconds)
+        << "the age-volume ET carried out implies a mean age of "
+        << (t.lost_et[a] / et_vol) << " s in a " << kRunSeconds
+        << " s run" << ledgerDump(t, t.age_row);
+
+    // (3) …and the age row's own books still close, so (1) is a transfer and
+    //     not an invention.
+    EXPECT_LT(std::fabs(t.residual(t.age_row) - t.inFlight1D(t.age_row)),
+              1.0e-10 * std::fabs(t.ledgeredStorage(t.age_row)) + 1.0e-12)
+        << ledgerDump(t, t.age_row);
+
+    // (4) The solute row is unchanged by all of this — evapoconcentration is
+    //     the half of §3.5 that D-A20 did NOT amend.
+    EXPECT_EQ(t.lost_et[0], 0.0)
+        << "ET carried solute out of the aquifer" << ledgerDump(t, 0);
+    finish(r);
+}
+
 TEST(GwTransportKernel, MatrixReportsTheGroundwaterRowAndTheWarningIsScoped) {
     using openswmm::transport::Domain;
     using openswmm::transport::SpeciesClass;
@@ -699,4 +787,607 @@ TEST(GwTransportKernel, ResultsFileCarriesTheSpeciesFieldsAndLedger) {
     EXPECT_NEAR(led.first[ll + 2], want_infil, 1.0e-9) << "infil_in term";
     EXPECT_NEAR(led.first[ll + 12], want_resid, 1.0e-12) << "residual term";
     H5Fclose(fid);
+}
+
+// ---------------------------------------------------------------------------
+// T7.4 — the 1D ⇄ aquifer quality seam.
+//
+// T7.1 left both 1D seams carrying water with no species: a recharging node
+// and a leaking conduit filled their cells with clean water, and a draining
+// aquifer handed the node nothing. T7.4 opened them. These gates hold the
+// three claims that matter:
+//
+//   * a leaking conduit's mass ARRIVES (and is not removed twice — the 1D
+//     quality solver already debits it as exfiltration);
+//   * a recharging node's mass arrives, and the 1D books the loss it never
+//     had a row for;
+//   * a draining aquifer's mass reaches the node's coupling queue.
+//
+// The decks below drive each direction on its own so a failure names one.
+// ---------------------------------------------------------------------------
+namespace {
+
+/// The aquifer deck with a BED under J1, so the node seam is live, plus an
+/// inflow that decides the direction: a big one surcharges J1 and pushes
+/// water DOWN the bed; none lets the (high) table drain INTO the pipe.
+std::string seamDeck(double hg0, double inflow_cms, double seep_mm_hr,
+                     double node_tss) {
+    std::ostringstream extra;
+    extra << "[2D_AQUIFER_NODE]\nJ1  1\n\n";
+    std::string body = deck(Mesh::Tri, extra.str(), hg0);
+    // The bed needs NODE_ENROLMENT to let a row win; the base deck already
+    // says ROWS, which is what [2D_AQUIFER_NODE] above is.
+    const std::string rep = "[REPORT]\nINPUT NO\n";
+    const auto at = body.find(rep);
+    std::ostringstream ins;
+    if (inflow_cms != 0.0) {
+        ins << "[INFLOWS]\nJ1  FLOW  IN1  FLOW  1.0  1.0\n";
+        if (node_tss > 0.0) ins << "J1  TSS  IN2  CONCEN  1.0  1.0\n";
+        ins << "\n[TIMESERIES]\nIN1  0:00  " << inflow_cms
+            << "\nIN1  1:00  " << inflow_cms << "\n";
+        if (node_tss > 0.0)
+            ins << "IN2  0:00  " << node_tss << "\nIN2  1:00  " << node_tss << "\n";
+        ins << "\n";
+    }
+    if (seep_mm_hr > 0.0)
+        ins << "[LOSSES]\n;;Link Kentry Kexit Kavg Flap Seepage\nC1  0 0 0 NO  "
+            << seep_mm_hr << "\n\n";
+    body.insert(at, ins.str());
+    return body;
+}
+
+struct SeamResult {
+    double gained_node = 0.0, lost_node = 0.0;
+    double gained_link = 0.0, lost_link = 0.0;
+    double residual = 0.0, init = 0.0;
+    double in_flight = 0.0;      ///< G-W1: sampled from the 1D, not yet gathered
+    double queue_sum = 0.0;      ///< mass parked in the node's coupling queue
+    double gw_in_ledger = 0.0;   ///< 1D qual_routing_gw_in
+    double seep_ledger = 0.0;    ///< 1D qual_routing_seep
+    double ex_in_ledger = 0.0;   ///< 1D qual_routing_ex_in (the coupling row)
+    double v12 = 1.0;            ///< vol_1d_to_2d, for the unit check
+};
+
+SeamResult runSeam(const std::string& tag, const std::string& body) {
+    SeamResult o;
+    Deck r = open(tag, body);
+    EXPECT_TRUE(r.opened) << tag;
+    if (!r.opened) return o;
+    EXPECT_TRUE(run(r)) << tag;
+    const auto& ctx = r.eng->context();
+    const auto& t = r.eng->surfaceRouter2D().subsurface().transport();
+    if (t.active()) {
+        o.gained_node = t.gained_node[0];
+        o.lost_node   = t.lost_node[0];
+        o.gained_link = t.gained_link[0];
+        o.lost_link   = t.lost_link[0];
+        o.residual    = t.residual(0);
+        o.in_flight   = t.inFlight1D(0);
+        o.init        = t.init_mass[0];
+    }
+    o.v12 = r.eng->surfaceRouter2D().options().vol_1d_to_2d;
+    for (double v : ctx.nodes.coupling_qual_queue) o.queue_sum += v;
+    if (!ctx.mass_balance.qual_routing_gw_in.empty())
+        o.gw_in_ledger = ctx.mass_balance.qual_routing_gw_in[0];
+    if (!ctx.mass_balance.qual_routing_seep.empty())
+        o.seep_ledger = ctx.mass_balance.qual_routing_seep[0];
+    if (!ctx.mass_balance.qual_routing_ex_in.empty())
+        o.ex_in_ledger = ctx.mass_balance.qual_routing_ex_in[0];
+    finish(r);
+    return o;
+}
+
+/// G-W1 diagnostic: the WATER side of the same seam, in volume.
+struct SeamWater {
+    double led_node = 0.0;          ///< aquifer's own books, m³, + out
+    double routing_external = 0.0;  ///< 1D inflow row (ft³ / project units)
+    double routing_coupling_out = 0.0;
+    double coupling_queue = 0.0;    ///< still parked, not yet delivered
+    double coupling_volume = 0.0;
+    double nacc = 0.0;              ///< sampled but not yet gathered by a cell
+    double sy_gap = 0.0;            ///< G-W1b: textbook Sy / the one the column uses
+    long   cap_binds = 0;           ///< G-W1b: firings the drain cap clamped
+    long   refunds   = 0;           ///< G-W1b: firings a column went short on the node
+    double error_pct = 0.0;         ///< the 1D flow continuity error
+    double v12 = 1.0;
+};
+
+SeamWater runSeamWater(const std::string& tag, const std::string& body) {
+    SeamWater o;
+    Deck r = open(tag, body);
+    EXPECT_TRUE(r.opened) << tag;
+    if (!r.opened) return o;
+    EXPECT_TRUE(run(r)) << tag;
+    const auto& ctx = r.eng->context();
+    const auto& led = r.eng->surfaceRouter2D().subsurface().state();
+    o.led_node = led.led_node;
+    for (double v : led.nacc) o.nacc += v;
+    // G-W1b (2026-09-23): the counters that say whether this deck is an
+    // instrument, straight from the solver. `sy_gap` is kept for the failure
+    // message only — see the gate — and it now asks the solver for the yield
+    // the column actually uses instead of re-deriving one branch of it.
+    const auto& gw = r.eng->surfaceRouter2D().subsurface();
+    o.cap_binds = gw.drainCapBinds();
+    o.refunds   = gw.nodeRefunds();
+    for (int c = 0; c < led.n_cells; ++c) {
+        const auto u = static_cast<std::size_t>(c);
+        const double sy_col  = std::max(gw.specificYieldOf(c), 1.0e-300);
+        const double sy_text = led.theta_s[u] - led.theta_r[u];
+        o.sy_gap = std::max(o.sy_gap, sy_text / sy_col);
+    }
+    o.routing_external = ctx.mass_balance.routing_external;
+    o.routing_coupling_out = ctx.mass_balance.routing_coupling_out;
+    // G-W1c (2026-09-23): the promised-but-undelivered tail, scoped to the
+    // nodes that actually HAVE a bed — these queues are shared with the 2D
+    // surface's drain, so on a deck with both, summing every node would
+    // measure the wrong thing.
+    //
+    // **It is a no-op on the decks in this file** (one junction, so the sum
+    // selects the same single entry) and it was added on a hypothesis that
+    // turned out to be WRONG: I thought the SIGMA tail mismatch below was
+    // the surface drain contaminating the sum. It is not. With the bed
+    // switched off the surface still produces Dunne water (2.05 m³) and
+    // promises the node nothing at all, so the bed is the only producer and
+    // there is nothing an origin tag could separate. The scoping is kept
+    // because it is the right quantity to sum, not because it fixes
+    // anything. See the handoff for what the SIGMA mismatch actually is.
+    for (const auto& b : gw.nodeBeds()) {
+        const auto ni = static_cast<std::size_t>(b.node);
+        if (ni < ctx.nodes.coupling_queue.size())
+            o.coupling_queue += ctx.nodes.coupling_queue[ni];
+        if (ni < ctx.nodes.coupling_volume.size())
+            o.coupling_volume += ctx.nodes.coupling_volume[ni];
+    }
+    o.error_pct = ctx.mass_balance.routing_error() * 100.0;
+    o.v12 = r.eng->surfaceRouter2D().options().vol_1d_to_2d;
+    finish(r);
+    return o;
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// G-W1 — the two sides of the bed exchange must agree IN VOLUME.
+//
+// The validator's control run settled where T7.4's remaining residual lives:
+// `bed_only.inp` reports −0.722 % on the 1D flow continuity with the bed on
+// and 0.000 % with it off. That is a water defect, not a quality one, and
+// quality riding on water 0.7 % out is the ceiling on how well the seam can
+// ever report.
+//
+// The deck is the sharpest instrument available: a high table, NO rain, NO
+// [INFLOWS], so the *only* thing that puts water into the 1D network is the
+// aquifer draining through J1's bed. Every unit of `led_node` must therefore
+// turn up in `routing_external` (the row the coupling inflow folds into),
+// modulo whatever is still parked in the delivery queue at the end of the
+// run.
+// ---------------------------------------------------------------------------
+// The base `deck()` bakes in a raingage, and rain on the mesh spills to the
+// node through the SURFACE coupling — which folds into the same
+// `routing_external` row. That makes it useless as an instrument here (it
+// reads 22.06 against the bed's 2.35, and the difference is honest surface
+// water). This deck has no raingage at all, so the bed is the only inflow.
+std::string bedOnlyDeck(bool bed, const char* closure = "CLOSED_FORM",
+                        double zs = 1.0, double hg0 = 0.95) {
+    std::ostringstream s;
+    s << "[OPTIONS]\n"
+         "FLOW_UNITS           CMS\nFLOW_ROUTING         DYNWAVE\n"
+         "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+         "END_DATE             01/01/2026\nEND_TIME             00:20:00\n"
+         "REPORT_STEP          00:01:00\nWET_STEP             00:01:00\n"
+         "DRY_STEP             00:01:00\nROUTING_STEP         5\n"
+         "ALLOW_PONDING        NO\n\n"
+         "[JUNCTIONS]\nJ1 -2.0 4.0 0 0 0\n\n"
+         "[OUTFALLS]\nO1 -2.5 FREE NO\n\n"
+         "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n"
+         "[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n\n"
+         "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
+         "DRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\n"
+         "RAINFALL_MODE SYSTEM\n\n"
+         "[2D_VERTICES]\n0.0 0.0 0.0\n10.0 0.0 0.0\n10.0 10.0 0.0\n0.0 10.0 0.0\n\n"
+         "[2D_TRIANGLES]\n;;V1 V2 V3 N INIT_DEPTH\n"
+         "0 1 2 0.03 0.0\n0 2 3 0.03 0.0\n\n"
+         "[2D_INFILTRATION_DEFAULTS]\n*  CONSTANT  40.0  -  -  -  -\n\n"
+         "[2D_AQUIFER_OPTIONS]\nCLOSURE " << closure
+      << "\nNODE_ENROLMENT ROWS\n\n"
+         "[2D_AQUIFER]\n;;Scope KS ZS THETA_S THETA_R ALPHA\n"
+         "*  36.0  " << zs << "  0.45  0.10  2.0  HG0 " << hg0 << "\n\n";
+    // The control: the same deck with the bed switched off. The validator's
+    // pair — bed on gives −0.722 %, bed off gives 0.000 % — is what
+    // established that the residual IS the bed.
+    if (bed) s << "[2D_AQUIFER_NODE]\nJ1  1\n\n";
+    else     s << "[2D_AQUIFER_NODE]\nJ1  1  EXCHANGE NO\n\n";
+    s << "[COORDINATES]\nJ1  5.0  5.0\nO1  40.0  40.0\n\n"
+         "[REPORT]\nINPUT NO\n";
+    return s.str();
+}
+
+void checkDrainingBed(const std::string& tag, const char* closure,
+                      double zs, double hg0) {
+    SCOPED_TRACE(tag);
+    // The control first: with the bed off, nothing enters the 1D at all and
+    // its continuity must be exactly closed. If this fails, the deck is
+    // wrong and the measurement below means nothing.
+    const SeamWater off = runSeamWater(tag + "_none",
+                                       bedOnlyDeck(false, closure, zs, hg0));
+    ASSERT_LT(std::fabs(off.error_pct), 1.0e-6)
+        << "the control deck does not close (" << off.error_pct
+        << " %), so it cannot be used to attribute the residual to the bed";
+
+    const SeamWater s = runSeamWater(tag, bedOnlyDeck(true, closure, zs, hg0));
+    ASSERT_GT(s.led_node, 0.0) << "the bed did not drain, so nothing is tested";
+
+    // …and the deck must be able to SEE this defect.
+    //
+    // The first version of this guard thresholded the RATIO between the two
+    // specific yields, and it was wrong twice over: no table depth in the
+    // deck family fell below it (350 / 96.4 / 38.1 / 21.2 / 14.0 as HG0 goes
+    // 0.95 → 0.10, against a threshold of 10), and — the serious half — a
+    // deck scoring **56.8×**, nearly six times over, is completely BLIND to
+    // the defect: `ZS 8.0 / HG0 7.6` was measured bit-identical against a
+    // reverted build. The ratio is not what decides anything. `avail =
+    // h_g · Sy · A` binds when it is small in ABSOLUTE terms, and at
+    // h_g = 7.6 m the drainable water is enormous under either yield.
+    //
+    // So the instrument is the clamp itself, counted where it happens. No
+    // threshold to tune, and no geometry can make it lie.
+    ASSERT_GT(s.cap_binds, 0)
+        << "the aquifer→node drain cap never clamped on this deck, so the"
+           " assertions below would pass with the defect present. (Specific"
+           " yields here differ by " << s.sy_gap << "×, which is NOT the"
+           " test — a 56.8× deck sees nothing. What matters is that h_g·Sy·A"
+           " is small enough to bind: put the table close under the ground"
+           " AND keep the column thin.)";
+
+    // …and then the defect's own signature must be absent. Every refund is
+    // water the router already paid the node and the aquifer then disowned.
+    EXPECT_EQ(s.refunds, 0)
+        << s.refunds << " firings went short on the node's account and were"
+           " refunded into the aquifer's books alone — after the router had"
+           " already handed that volume over. This was ~120 before G-W1"
+           " (124 on Linux, 117 on macOS — the COUNT is platform-dependent,"
+           " which is why the assertion is == 0 and not a magnitude).";
+
+    // The aquifer's side of the seam is what its ledger says left plus what
+    // is still sitting in the side accumulator, sampled but not yet gathered
+    // by a cell firing. (`nacc` is the in-flight tail, not a loss: the run
+    // ends between a sample and the firing that consumes it.)
+    const double want_1d = (s.led_node + s.nacc) / s.v12;
+    const double booked  = s.routing_external + s.coupling_queue + s.coupling_volume;
+    EXPECT_NEAR(booked, want_1d, 1.0e-9 * want_1d)
+        << "the aquifer gave up " << want_1d << " (1D units) through the bed"
+           " — ledgered " << (s.led_node / s.v12) << " plus " << (s.nacc / s.v12)
+        << " in flight — but the 1D booked " << booked << ": external "
+        << s.routing_external << ", queued " << s.coupling_queue
+        << ", unqueued " << s.coupling_volume << ".\n"
+           "Too LARGE means the node received water the aquifer never"
+           " released — the refund path in fireCell §2 shrinking"
+           " `qnode_last` after the router has already handed the volume"
+           " over. Too SMALL means the aquifer released water the node never"
+           " got.";
+    // …and the two ends of the in-flight tail are the same water. The router
+    // commits a sample to the node's `coupling_volume` at sampling time,
+    // while the aquifer only ledgers it when the cell fires and gathers
+    // `nacc`. Between those two moments the volume is legitimately on both
+    // sets of books, and at the end of a run one sample is always caught
+    // there. Asserting they are EQUAL is what distinguishes that lag from a
+    // leak — a leak would make the promised tail bigger than the held one.
+    //
+    // **This holds to the last bit under CLOSED_FORM and ENSLAVED and fails
+    // by 20× under SIGMA**, which is why SIGMA is not yet a case here.
+    //
+    // G-W4 (2026-09-25) found what that is, and the assertion is RIGHT to
+    // fail: whole capped samples are promised to the node and never gathered
+    // by the aquifer. On a fully saturated SIGMA column (`hg == zs`, so
+    // θ_s − θ_bot → 0) `Sy` sits exactly on `kSyFloor` and the drain cap is
+    // pinned to a CONSTANT `kFaceShare·hg·kSyFloor·A` = 0.005 m³ per step —
+    // the promise is 0.005 at 10 s and 0.020 at 30 s, every gap an integer
+    // multiple. Round numbers out of a floating-point integration mean a
+    // limit, not an integral.
+    //
+    // Two earlier readings of mine are dead: LTS tiering (all three closures
+    // sit on tier 0 at the 5 s routing step, so flush and gather DO share a
+    // cadence) and "one sample of the live rate" (`qnode_last` moves ±15 %
+    // while the promise stays bit-identical). So this is a mis-booking, not a
+    // reporting artefact, and stating a weaker invariant here would hide it.
+    // It is the drain-side twin of the fill-side defect in G-W2 — see the
+    // handoff's `kSyFloor` table.
+    EXPECT_NEAR(s.coupling_volume * s.v12, s.nacc, 1.0e-12)
+        << "the 1D has been promised " << (s.coupling_volume * s.v12)
+        << " m³ that has not been delivered, but the aquifer is only holding "
+        << s.nacc << " m³ that it has not yet handed over";
+
+    // The 1D's own continuity error is REPORTED, not asserted against a
+    // threshold: on a deck this short the undelivered tail above is a real
+    // fraction of a tiny total (it is neither an inflow nor storage until it
+    // is delivered), and it shrinks with run length. Picking a tolerance
+    // that swallows it would be choosing a number to make a gate pass. The
+    // equality assertions above are the falsifiable statement.
+    if (std::fabs(s.error_pct) > 1.0e-9)
+        std::fprintf(stderr,
+                     "[G-W1] 1D flow continuity, %s: %.6f %% (clamped %ld"
+                     " firings; undelivered tail %.6g m3 of %.6g m3"
+                     " exchanged)\n",
+                     tag.c_str(), s.error_pct, s.cap_binds, s.nacc,
+                     s.led_node + s.nacc);
+}
+
+TEST(GwTransportKernel, DrainingBedAgreesWithTheNodeInVolume) {
+    // Closure A. This is the deck the defect was found on.
+    checkDrainingBed("gw1_bed_only", "CLOSED_FORM", 1.0, 0.95);
+}
+
+TEST(GwTransportKernel, DrainingBedAgreesWithTheNodeUnderEnslavedClosure) {
+    // G-W1c (2026-09-23): a SECOND closure, because every fixture in this
+    // file was closure A and that is exactly the blind spot the last round
+    // found one level up (a guard that re-derived only the CLOSED_FORM
+    // branch of `specificYield` and agreed for that reason alone).
+    //
+    // The geometry is the validator's: on ZS 1.0 / HG0 0.95 the drain cap
+    // never clamps under ENSLAVED, so the instrument guard would refuse to
+    // certify — correctly. A thinner column binds (228 clamps measured).
+    //
+    // SIGMA is deliberately NOT here yet: it binds (422 clamps) and the main
+    // identity passes with zero refunds, but the in-flight tail assertion
+    // fails by 20× for a reason that is NOT a leak — see the handoff. Adding
+    // it before that is understood would mean either a red gate or a
+    // loosened one.
+    checkDrainingBed("gw1_bed_enslaved", "ENSLAVED", 0.5, 0.45);
+}
+
+TEST(GwTransportKernel, LeakingConduitCarriesItsQualityIntoTheAquifer) {
+    // A seeping conduit over the mesh, no node inflow. The 1D already
+    // debits this mass as its exfiltration loss, so the aquifer receiving
+    // it completes a transfer rather than creating one.
+    const SeamResult s = runSeam("seam_link", seamDeck(0.5, 0.0, 100.0, 0.0));
+    EXPECT_GT(s.gained_link, 0.0)
+        << "a leaking conduit delivered no mass — the seam is still closed";
+    // …and it did not come out of the aquifer's own books: the residual
+    // still closes with the arrival counted as a gain.
+    // G-W1 (2026-09-22): the identity is completed, NOT loosened. `nacc_mass`
+    // is counted in `ledgeredStorage` (in-flight mass is storage the ledger
+    // has not yet named) but is only booked into `gained_node` when the cell
+    // gathers it, so between those two moments the balance is short by
+    // exactly what is in transit. A run that ends in that window carries the
+    // tail. Asserting `residual == inFlight1D` is the whole statement; the
+    // bound on it is unchanged. Before this was written the gate passed on
+    // luck: tightening the node cap (G-W1) shifted the final sample and the
+    // tail jumped to 0.0705 against a 6.1e-8 bound, with `residual` equal to
+    // `inFlight1D` to the last digit — which is how the tail was identified
+    // rather than mistaken for an 11 % mass leak.
+    EXPECT_LT(std::fabs(s.residual - s.in_flight),
+              1.0e-10 * std::fabs(s.init) + 1.0e-12)
+        << "residual " << s.residual << ", of which " << s.in_flight
+        << " is sampled-but-not-yet-gathered; the unexplained part is "
+        << (s.residual - s.in_flight);
+    // The 1D's own seepage ledger is non-zero: the mass left the pipe. That
+    // is the quantity the aquifer received; the two are booked on opposite
+    // sides of one transfer, never removed twice from the 1D.
+    EXPECT_GT(s.seep_ledger, 0.0) << "the 1D booked no exfiltration";
+}
+
+TEST(GwTransportKernel, RechargingNodeSendsItsQualityDownTheBedAndIsLedgered) {
+    // J1 surcharged by a 0.5 m³/s inflow carrying 50 mg/L, over a column
+    // with room: the node pushes water DOWN its bed.
+    const SeamResult s = runSeam("seam_node_in", seamDeck(0.5, 3.0, 0.0, 50.0));
+    EXPECT_GT(s.gained_node, 0.0)
+        << "a recharging node delivered no mass — the seam is still closed";
+    // G-W1 (2026-09-22): the identity is completed, NOT loosened. `nacc_mass`
+    // is counted in `ledgeredStorage` (in-flight mass is storage the ledger
+    // has not yet named) but is only booked into `gained_node` when the cell
+    // gathers it, so between those two moments the balance is short by
+    // exactly what is in transit. A run that ends in that window carries the
+    // tail. Asserting `residual == inFlight1D` is the whole statement; the
+    // bound on it is unchanged. Before this was written the gate passed on
+    // luck: tightening the node cap (G-W1) shifted the final sample and the
+    // tail jumped to 0.0705 against a 6.1e-8 bound, with `residual` equal to
+    // `inFlight1D` to the last digit — which is how the tail was identified
+    // rather than mistaken for an 11 % mass leak.
+    EXPECT_LT(std::fabs(s.residual - s.in_flight),
+              1.0e-10 * std::fabs(s.init) + 1.0e-12)
+        << "residual " << s.residual << ", of which " << s.in_flight
+        << " is sampled-but-not-yet-gathered; the unexplained part is "
+        << (s.residual - s.in_flight);
+    // The 1D side books the loss it never had a row for before T7.4 — the
+    // reason its quality continuity error used to grow by exactly this.
+    EXPECT_GT(s.seep_ledger, 0.0)
+        << "the node gave up mass with no ledger entry (the pre-T7.4 defect)";
+}
+
+TEST(GwTransportKernel, DrainingAquiferHandsItsMassToTheNodeQueue) {
+    // A high table and no inflow: the aquifer drains into J1 through its
+    // bed, and the mass must reach the node's coupling queue — the same
+    // channel the 2D surface's drain uses.
+    const SeamResult s = runSeam("seam_node_out", seamDeck(0.95, 0.0, 0.0, 0.0));
+    EXPECT_GT(s.lost_node, 0.0)
+        << "the aquifer drained no mass to the node" ;
+    // THE seam identity, and the one gate that catches both failure modes
+    // this seam has produced: every unit of mass the aquifer gave up is
+    // booked on the 1D side EXACTLY ONCE — delivered into an inflow row, or
+    // still sitting in the queue waiting for its delivery span.
+    //
+    //   too small  ⇒ mass is being dropped   (the LTS-cadence bug, 75–99.8 %)
+    //   too large  ⇒ mass is counted twice   (the queue + gw_in duplicate,
+    //                                          a 49.7 % continuity error)
+    //
+    // Asserting each side is merely non-zero would have caught neither.
+    EXPECT_GT(s.ex_in_ledger + s.gw_in_ledger + s.queue_sum, 0.0)
+        << "the aquifer's mass never reached the node";
+    EXPECT_GE(s.queue_sum, 0.0) << "a negative mass is parked in the queue";
+    // The identity, not a band: what the aquifer gave up is what the node
+    // received, once the aquifer's conc·m³ is expressed in the 1D's own
+    // conc·ft³. (Getting this wrong by a unit factor is how a seam looks
+    // fine and loses three quarters of its mass — which is exactly what the
+    // first cut of this gate caught.)
+    // This deck has no other external inflow and no surface coupling point,
+    // so every unit in the 1D's inflow rows came from the aquifer.
+    const double want_1d = s.lost_node / s.v12;
+    const double booked  = s.ex_in_ledger + s.gw_in_ledger + s.queue_sum;
+    EXPECT_NEAR(booked, want_1d, 1.0e-9 * want_1d)
+        << "the 1D booked " << booked << " (ex_in " << s.ex_in_ledger
+        << " + gw_in " << s.gw_in_ledger << " + queued " << s.queue_sum
+        << ") against the aquifer's " << s.lost_node << " = " << want_1d
+        << " in 1D units (v12 " << s.v12 << ")";
+    // G-W1 (2026-09-22): the identity is completed, NOT loosened. `nacc_mass`
+    // is counted in `ledgeredStorage` (in-flight mass is storage the ledger
+    // has not yet named) but is only booked into `gained_node` when the cell
+    // gathers it, so between those two moments the balance is short by
+    // exactly what is in transit. A run that ends in that window carries the
+    // tail. Asserting `residual == inFlight1D` is the whole statement; the
+    // bound on it is unchanged. Before this was written the gate passed on
+    // luck: tightening the node cap (G-W1) shifted the final sample and the
+    // tail jumped to 0.0705 against a 6.1e-8 bound, with `residual` equal to
+    // `inFlight1D` to the last digit — which is how the tail was identified
+    // rather than mistaken for an 11 % mass leak.
+    EXPECT_LT(std::fabs(s.residual - s.in_flight),
+              1.0e-10 * std::fabs(s.init) + 1.0e-12)
+        << "residual " << s.residual << ", of which " << s.in_flight
+        << " is sampled-but-not-yet-gathered; the unexplained part is "
+        << (s.residual - s.in_flight);
+}
+
+// ---------------------------------------------------------------------------
+// T7.4 — the reported continuity error must be scaled by a denominator that
+// names EVERY inflow route.
+//
+// T7.4 added two routes (the node bed and the leaking conduit) and the
+// `.rpt` block's own copy of the "what came in" sum was not updated. On a
+// network deck fed only through its beds that divided a machine-precision
+// residual by a machine-precision denominator: **6 198 889.840 %** printed
+// beside a balance exact to the last digit.
+//
+// This is tested against the FORMULA rather than through a deck, because a
+// deck cannot isolate it: saturation excess carries the seam's own mass back
+// to the surface, which re-infiltrates it, so `gained_infil` is non-zero on
+// any deck where a bed recharges hard enough to matter — two successive
+// attempts at a deck-based version of this gate passed against the bug for
+// that reason. The sum now lives beside the residual it scales, which is
+// also what stops the two drifting apart again.
+// ---------------------------------------------------------------------------
+TEST(GwTransportKernel, ContinuityDenominatorNamesEveryInflowRoute) {
+    using openswmm::twoD::SubsurfaceTransportState;
+
+    // One species, one cell: enough to ask the question.
+    const auto only = [](int route) {
+        SubsurfaceTransportState t;
+        t.resize(1, 1, 0);
+        t.row_names = {"TSS"};
+        // Mass arrives by exactly ONE route and is all still there, so the
+        // residual is zero and the denominator is the only thing that can
+        // make the reported percentage misbehave.
+        t.sat_mass[0] = 5.0;
+        switch (route) {
+            case 0: t.init_mass[0]    = 5.0; break;
+            case 1: t.gained_infil[0] = 5.0; break;
+            case 2: t.gained_node[0]  = 5.0; break;   // T7.4
+            case 3: t.gained_link[0]  = 5.0; break;   // T7.4
+            default: t.net_lateral[0] = 5.0; break;
+        }
+        return t;
+    };
+
+    const char* names[5] = {"init_mass", "gained_infil", "gained_node",
+                            "gained_link", "net_lateral"};
+    for (int route = 0; route < 5; ++route) {
+        const SubsurfaceTransportState t = only(route);
+        EXPECT_NEAR(t.continuityDenominator(0), 5.0, 1.0e-12)
+            << "mass that arrived through " << names[route]
+            << " is not counted in the continuity denominator — a deck fed"
+               " only that way divides a machine-precision residual by"
+               " nothing";
+        // …and the residual it scales is zero, so the reported percentage is
+        // zero rather than astronomical.
+        EXPECT_LT(std::fabs(t.residual(0)), 1.0e-12) << names[route];
+    }
+
+    // T7.4b: the other end of the same question. With every route naming
+    // itself, a ZERO denominator beside a NON-zero residual is no longer an
+    // uninteresting empty aquifer — it is mass that left without any route
+    // booking its arrival, which is the signature of the sixth channel
+    // nobody has wired up yet. The report must not print 0.000 % there
+    // (`n/a` instead), because 0 % is the one answer that would hide it.
+    SubsurfaceTransportState t;
+    t.resize(1, 1, 0);
+    t.row_names = {"TSS"};
+    t.lost_deep[0] = 5.0;   // mass left…
+    // …and nothing booked its arrival: all five routes stay zero.
+    EXPECT_EQ(t.continuityDenominator(0), 0.0)
+        << "a state with no inflow on any route must have no scale to divide"
+           " by — if this is non-zero the denominator has grown a term that"
+           " is not an inflow";
+    EXPECT_GT(std::fabs(t.residual(0)), 1.0e-12)
+        << "the fixture is meant to hold an UNEXPLAINED residual; if it does"
+           " not, it no longer tests the case it was written for";
+}
+
+// ---------------------------------------------------------------------------
+// T7.4b — and the report must actually SAY it cannot tell.
+//
+// This is the end-to-end half of the gate above, and its zeros are
+// STRUCTURAL rather than arithmetic: there is no raingage at all (so no
+// infiltration), the junction sits outside the mesh (so no bed), the column
+// is uniform (so no lateral gradient) and there is no `[GW_INITIAL_QUALITY]`
+// seed. Every route is zero because nothing in the deck can drive it — not
+// because two fluxes happened to cancel. That distinction is the whole
+// reason this one is allowed to be a gate: a deck whose zero depends on
+// float residue in a face summation can flip to tiny-but-nonzero under
+// nothing more than a mesh refinement, and would then pass while the
+// defect is present.
+// ---------------------------------------------------------------------------
+TEST(GwTransportKernel, ReportSaysNaWhenThereIsNoScaleToDivideBy) {
+    std::ostringstream s;
+    s << "[OPTIONS]\n"
+         "FLOW_UNITS           CMS\nFLOW_ROUTING         DYNWAVE\n"
+         "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+         "END_DATE             01/01/2026\nEND_TIME             00:20:00\n"
+         "REPORT_STEP          00:01:00\nWET_STEP             00:01:00\n"
+         "DRY_STEP             00:01:00\nROUTING_STEP         5\n"
+         "ALLOW_PONDING        NO\n\n"
+         "[POLLUTANTS]\n;;Name Units Rain GW IIflow Kdecay\n"
+         "TSS  MG/L  0.0  0.0  0.0  0.0  NO  *  0.0  0.0\n\n"
+         "[JUNCTIONS]\nJ1 -2.0 4.0 0 0 0\n\n"
+         "[OUTFALLS]\nO1 -2.5 FREE NO\n\n"
+         "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n"
+         "[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n\n"
+         "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
+         "DRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\n"
+         "RAINFALL_MODE SYSTEM\n\n"
+         "[2D_VERTICES]\n0.0 0.0 0.0\n10.0 0.0 0.0\n10.0 10.0 0.0\n0.0 10.0 0.0\n\n"
+         "[2D_TRIANGLES]\n;;V1 V2 V3 N INIT_DEPTH\n"
+         "0 1 2 0.03 0.0\n0 2 3 0.03 0.0\n\n"
+         "[2D_INFILTRATION_DEFAULTS]\n*  CONSTANT  40.0  -  -  -  -\n\n"
+         "[2D_AQUIFER_OPTIONS]\nCLOSURE CLOSED_FORM\nNODE_ENROLMENT ROWS\n\n"
+         "[2D_AQUIFER]\n;;Scope KS ZS THETA_S THETA_R ALPHA\n"
+         "*  36.0  1.0  0.45  0.10  2.0  HG0 0.5\n\n"
+         // J1 is deliberately OFF the mesh: an in-mesh junction would be
+         // auto-enrolled as a bed and would give `gained_node` a route.
+         "[COORDINATES]\nJ1  50.0  50.0\nO1  60.0  60.0\n\n"
+         "[REPORT]\nINPUT NO\n";
+
+    Deck r = open("denom_no_scale", s.str());
+    ASSERT_TRUE(r.opened);
+    ASSERT_TRUE(run(r));
+    ASSERT_EQ(swmm_engine_end(r.e), SWMM_OK);
+    r.started = false;
+    ASSERT_EQ(swmm_engine_report(r.e), SWMM_OK);
+    finish(r);
+
+    const std::string rpt = [&] {
+        std::ifstream f(kOutDir / "denom_no_scale.rpt");
+        std::ostringstream ss; ss << f.rdbuf(); return ss.str();
+    }();
+    const auto blk = rpt.find("2D Aquifer Quality Continuity");
+    ASSERT_NE(blk, std::string::npos)
+        << "the species block is missing, so this gate is measuring nothing";
+    const auto line = rpt.find("Continuity Error", blk);
+    ASSERT_NE(line, std::string::npos);
+    const std::string reported = rpt.substr(line, 60);
+    EXPECT_NE(reported.find("n/a"), std::string::npos)
+        << "with every inflow route at zero there is no scale to judge the"
+           " residual against, and the report claimed a number anyway: \""
+        << reported.substr(0, reported.find('\n')) << "\". Printing 0.000"
+           " here reads as a perfect balance when the truth is that the"
+           " question is unanswerable — and a zero scale beside a non-zero"
+           " residual is exactly how the NEXT unbooked inflow route will"
+           " announce itself.";
 }

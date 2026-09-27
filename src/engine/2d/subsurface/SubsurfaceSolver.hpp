@@ -268,8 +268,6 @@ public:
     /// T7.4: mass a leaking conduit delivered into one cell, at the
     /// conduit's own concentration — the species twin of `bookLinkSeepage`.
     void bookLinkSeepageMass(int cell, int species, double mass) noexcept;
-    /// T7.4: zero the per-bed withdrawal weights, with the volume ledger.
-    void clearBedDrawn() noexcept;
 
     /// Node ↔ aquifer exchange, evaluated at tier-0 cadence against the
     /// batch-frozen 1D heads and booked into `nacc` (G-B row 3). The GW cell
@@ -295,6 +293,31 @@ public:
     const std::vector<double>& bedExchangeCumulative() const noexcept {
         return bed_exchange_cum_;
     }
+
+    // ---- G-W1b: what a gate needs to prove its own deck is an instrument --
+    //
+    // A gate that measures a cap must first establish that the cap BOUND on
+    // the deck it is measuring, or it can pass with the defect present. The
+    // ratio between the two specific yields does not establish that — a deck
+    // scoring 56.8× was measured bit-identical with the bug — because what
+    // makes the cap bind is `h_g · Sy · A` being small in absolute terms.
+    // Only the clamp knows. These three say so directly, with no threshold
+    // to tune and no geometry that can make them lie.
+
+    /// Firings on which the aquifer→node drain cap actually clamped `Q`.
+    /// Zero means the deck cannot see anything this cap does.
+    long drainCapBinds() const noexcept { return drain_cap_binds_; }
+    /// Firings on which a column went short and the node's share of the
+    /// overdraw was refunded — into the aquifer's books alone, after the
+    /// router had already paid the node. The defect's signature: 124 before
+    /// G-W1, 0 after.
+    long nodeRefunds() const noexcept { return node_refunds_; }
+    /// The specific yield the column ACTUALLY uses for `cell`, from the one
+    /// definition. Exposed so a test never re-derives it: re-deriving only
+    /// the CLOSED_FORM branch (as the first version of the G-W1b guard did)
+    /// silently computes a number the solver never uses under SIGMA or
+    /// ENSLAVED, and agrees only for as long as every fixture is closure A.
+    double specificYieldOf(int cell) const noexcept;
 
     /// Storage now, for the continuity ledger.
     double storage() const noexcept { return state_.storage(); }
@@ -349,6 +372,15 @@ private:
     double pollutantDecay(int s, const std::vector<double>& pollut_decay) const noexcept;
     /// Gather this cell's booked node exchange (m³, + out of the aquifer).
     double gatherNode(int i) noexcept;
+
+    /// G-W1: specific yield for cell `u` under closure `cl` — the ONE
+    /// definition. Anything capping a withdrawal against the cell's drainable
+    /// water must cap against the same number the column will spend it
+    /// against, or the cap does not bind and the column goes short. Optionally
+    /// reports the bottom/mean unsaturated content the derivation used.
+    double specificYield(std::size_t u, const soil::Params& p, double ts,
+                         double L0, GwClosure cl,
+                         double* theta_bot_out) const noexcept;
     void markPendingSurface(int i) noexcept;
 
     SubsurfaceState  state_;
@@ -356,9 +388,11 @@ private:
     GwOptions        options_;
     std::vector<GwNodeBed> node_beds_;
     std::vector<double>    bed_exchange_cum_;   ///< G-O: per bed (m³), cumulative
-    /// T7.4: volume each bed drew OUT of the aquifer since the last flush —
-    /// the weights that split a cell's outgoing mass across its beds.
-    std::vector<double>    bed_last_out_;
+    /// T7.4: the per-bed volumes the CURRENT gather took — the weights that
+    /// split this firing's outgoing mass across the cell's beds. Written by
+    /// `gatherNode`, read by `fireCellSpecies` in the same firing, so it can
+    /// never be stale (the bug the first cut had).
+    std::vector<double>    bed_gathered_;
     /// G-X1: water taken FROM each 1D node by the recharge direction within
     /// the current routing batch (m³, 2D units), reset with
     /// `node_exchange_vol_` — the frozen node volume is a batch budget, not a
@@ -380,6 +414,8 @@ private:
     std::vector<uint8_t>          pending_flag_;
     std::vector<int>              cell_nface_;   ///< incident GW faces per cell
     std::vector<double>           node_exchange_vol_;  ///< per 1D node (m³)
+    long                          drain_cap_binds_ = 0;  ///< G-W1b
+    long                          node_refunds_    = 0;  ///< G-W1b
     bool accumulators_pending_ = false;
 
     /// PER_SUBCATCH: cell i ↔ subcatchment i, and the outlet node it
