@@ -8079,17 +8079,41 @@ void SWMMEngine::initHydraulics() noexcept {
 
         // Outgoing link count per node, and whether every incoming link is a
         // pass-through (legacy's `marked`: 1 = yes so far, −1 = disqualified).
+        //
+        // BOTH counts are taken on the AUTHORED orientation, recovered through
+        // `direction`. An adverse-slope conduit has already had its node1 and
+        // node2 SWAPPED under DW/FV (PostParseResolver, legacy conduit_reverse),
+        // and legacy's own loops undo that swap: the degree count takes
+        // `node1`, or `node2` when direction < 0 (toposort.c:75-91), and the
+        // incoming mark takes `node2`, or `node1` when direction < 0
+        // (toposort.c:502-512). Reading the post-swap node1 instead counts every
+        // uphill pipe as LEAVING the node it actually enters: MC_STP in
+        // noinflow-1200nodes is fed by three conduits that climb 17 ft to 32 ft,
+        // so its outflow count read 4 where legacy reads 1, and its one real
+        // outlet — a DUMMY to the outfall — was rejected as an illegal
+        // connection on a network legacy routes without complaint.
+        //
+        // The same rule, with the same outfall redirect, is computed for
+        // ctx_.nodes.degree further down this function; it is not reused here
+        // only because that runs after this check.
         std::vector<int> n_out(static_cast<std::size_t>(n_nl), 0);
         std::vector<int> all_in_pass(static_cast<std::size_t>(n_nl), 0);
         for (int j = 0; j < n_ll; ++j) {
             const auto uj = static_cast<std::size_t>(j);
             const int n1 = ctx_.links.node1[uj], n2 = ctx_.links.node2[uj];
-            if (n1 >= 0 && n1 < n_nl) n_out[static_cast<std::size_t>(n1)]++;
-            if (n2 >= 0 && n2 < n_nl) {
-                auto& m = all_in_pass[static_cast<std::size_t>(n2)];
-                if (!is_pass_through(uj))    m = -1;
-                else if (m == 0)             m = 1;
-            }
+            if (n1 < 0 || n1 >= n_nl || n2 < 0 || n2 >= n_nl) continue;
+            const bool rev = ctx_.links.direction[uj] < 0;
+
+            // Outflow count, credited to the downstream end when the upstream
+            // one is an outfall (legacy toposort.c:82-90).
+            int up = rev ? n2 : n1;
+            if (ctx_.nodes.type[static_cast<std::size_t>(up)] == NodeType::OUTFALL)
+                up = rev ? n1 : n2;
+            n_out[static_cast<std::size_t>(up)]++;
+
+            auto& m = all_in_pass[static_cast<std::size_t>(rev ? n1 : n2)];
+            if (!is_pass_through(uj))    m = -1;
+            else if (m == 0)             m = 1;
         }
 
         std::vector<uint8_t> reported(static_cast<std::size_t>(n_nl), 0);
