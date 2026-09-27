@@ -1982,6 +1982,12 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                     ctx_.gages.rainfall[static_cast<std::size_t>(g)] *= rain_factor;
             }
         }
+#ifdef OPENSWMM_HAS_2D
+        // The 2D integrates exactly the rates this runoff step applies, from
+        // its start, so mesh and subcatchments receive the same gage depth.
+        if (surface_router_.isActive())
+            surface_router_.bookGageRates(ctx_, old_runoff_ms_ / 1000.0);
+#endif
 
         // A2z. [FILES] USE RUNOFF — replace this runoff substep with the
         // next record from the runoff interface file (legacy
@@ -6633,7 +6639,11 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
     snap.surface_grad_hy        = st.grad_hy;
     snap.surface_grad_hx_lim    = st.grad_hx_lim;
     snap.surface_grad_hy_lim    = st.grad_hy_lim;
-    snap.surface_rainfall       = st.rainfall;
+    // Rainfall is reported as the .out reports subcatchment rainfall: the
+    // gage rate current at the report instant (the rate that starts there),
+    // not the rate applied over the window that ended there. The applied
+    // volume is Mesh2_face_rain_cum.
+    surface_router_.reportRainfall(ctx_, snap.sim_time, snap.surface_rainfall);
     snap.surface_coupling_flux  = st.coupling_flux;
     snap.surface_net_source     = st.net_source;
     // Per-cell infiltration (plan §5.5.6). The held rate lives on the surface

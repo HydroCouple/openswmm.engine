@@ -21,6 +21,7 @@
 #include "../core/UnitConversion.hpp"
 #include "../core/PerfTimers.hpp"
 #include "../core/ThreadInfo.hpp"
+#include "../hydrology/Gage.hpp"
 #include "../transport/components/ReactionModule/ReactionArdBinding.hpp"   // S4
 #include "../transport/TransportPolicy.hpp"                                  // E2
 #include "subsurface/SubsurfaceSections.hpp"                                 // G1
@@ -1295,6 +1296,12 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
 
     active_ = true;
     sim_time_ = 0.0;
+    gage_rate_.clear();
+    gage_cum_.clear();
+    gage_window_depth_.clear();
+    gage_window_rate_.clear();
+    rain_gage_last_.clear();
+    gage_since_ = 0.0;
     pending_dt_ = 0.0;
     report_old_depth_.assign(
         static_cast<std::size_t>(mesh_.n_triangles()), 0.0);
@@ -1445,14 +1452,31 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
     // cadence: the forcing API just changed a prescription (or a one-shot
     // expired in clear_reset_forcings), so apply immediately — that keeps the
     // documented per-step RESET semantics under the batched co-advance.
-    // A gage whose value changed also bypasses the cadence: holding the old
-    // field for up to 30 s shifted and dropped whole 1-min records (−12 % on
-    // a 1-min on/off storm at a 7 s routing step), on wet and dry cells alike.
+    // Rain is applied as the 1D applies it: each gage's piecewise-constant
+    // runoff-step rate (bookGageRates) integrated over this window, so a
+    // window that straddles a record boundary gets the exact mean rather than
+    // the end-of-window rate. A window with no rate change takes the rate
+    // itself, not a rounded integral, so the field is only rebuilt when a
+    // rate actually changes. A changed rate bypasses the cadence: holding
+    // the old field for up to 30 s shifted and dropped whole 1-min records
+    // (−12 % on a 1-min on/off storm at a 7 s routing step).
     co_forcing_elapsed_ += dt;
-    bool gage_changed = rain_gage_last_.size() !=
-                        static_cast<std::size_t>(ctx.n_gages());
-    for (std::size_t g = 0; !gage_changed && g < rain_gage_last_.size(); ++g)
-        gage_changed = ctx.gages.rainfall[g] != rain_gage_last_[g];
+    const std::size_t n_gages = static_cast<std::size_t>(std::max(ctx.n_gages(), 0));
+    if (gage_rate_.size() == n_gages && n_gages > 0) {
+        const double t0 = sim_time_, t1 = sim_time_ + dt;
+        gage_window_rate_.resize(n_gages);
+        for (std::size_t g = 0; g < n_gages; ++g) {
+            const double d1 = gage_cum_[g] + gage_rate_[g] * std::max(0.0, t1 - gage_since_);
+            gage_window_rate_[g] = (gage_since_ <= t0) ? gage_rate_[g]
+                                                       : (d1 - gage_window_depth_[g]) / dt;
+            gage_window_depth_[g] = d1;
+        }
+    }
+    const std::vector<double>& rates =
+        gage_window_rate_.size() == n_gages ? gage_window_rate_ : ctx.gages.rainfall;
+    bool gage_changed = rain_gage_last_.size() != n_gages;
+    for (std::size_t g = 0; !gage_changed && g < n_gages; ++g)
+        gage_changed = rates[g] != rain_gage_last_[g];
     if (co_forcing_elapsed_ >= 30.0 || co_forcing_first_ ||
         state_.forcing_dirty || gage_changed) {
         state_.forcing_dirty = false;
@@ -2235,37 +2259,74 @@ double SurfaceRouter2D::totalExchangeFlow() const {
 
 
 void SurfaceRouter2D::updateRainfall(SimulationContext& ctx) {
+    const auto n_gages = static_cast<std::size_t>(std::max(ctx.n_gages(), 0));
+    const std::vector<double>& rates =
+        gage_window_rate_.size() == n_gages ? gage_window_rate_ : ctx.gages.rainfall;
+    rain_gage_last_.assign(rates.begin(), rates.begin() + static_cast<std::ptrdiff_t>(n_gages));
+    gageRatesToCells(ctx, rain_gage_last_, state_.rainfall);
+}
+
+void SurfaceRouter2D::gageRatesToCells(const SimulationContext& ctx,
+                                       const std::vector<double>& rates,
+                                       std::vector<double>& out) const {
     const int n_gages = ctx.n_gages();
-    rain_gage_last_.assign(ctx.gages.rainfall.begin(),
-                           ctx.gages.rainfall.begin() + std::max(n_gages, 0));
+    out.resize(static_cast<std::size_t>(mesh_.n_triangles()));
 
     if (n_gages <= 0 || options_.rainfall_mode == RainfallMode::NONE) {
-        std::fill(state_.rainfall.begin(), state_.rainfall.end(), 0.0);
+        std::fill(out.begin(), out.end(), 0.0);
         return;
     }
 
-    // Convert every gage's current rainfall (user units, in/hr or mm/hr) to the
+    // Convert every gage's rainfall (user units, in/hr or mm/hr) to the
     // solver's SI m/s. The conversion is linear, so interpolating the converted
     // values is identical to interpolating then converting.
     const double to_ms =
         (ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)) == 0)
             ? (0.0254 / 3600.0)   // US: in/hr → m/s
             : (0.001  / 3600.0);  // SI: mm/hr → m/s
-    rain_si_.assign(static_cast<std::size_t>(n_gages), 0.0);
+    std::vector<double> rain_si(static_cast<std::size_t>(n_gages), 0.0);
     for (int g = 0; g < n_gages; ++g)
-        rain_si_[static_cast<std::size_t>(g)] = ctx.gages.rainfall[g] * to_ms;
+        rain_si[static_cast<std::size_t>(g)] = rates[static_cast<std::size_t>(g)] * to_ms;
 
     if ((options_.rainfall_mode == RainfallMode::NATURAL_NEIGHBOUR ||
          options_.rainfall_mode == RainfallMode::NEAREST_NEIGHBOUR) && interp_.ready()) {
         // Natural-neighbour (Laplace) interpolation inside the gage hull, IDW
         // outside — applied as the precomputed per-cell sparse weighted sum.
-        interp_.apply(rain_si_, state_.rainfall);
+        interp_.apply(rain_si, out);
     } else {
         // SYSTEM mode (or no located gages): uniform = mean of all gages.
         double mean = 0.0;
-        for (double r : rain_si_) mean += r;
+        for (double r : rain_si) mean += r;
         mean /= static_cast<double>(n_gages);
-        std::fill(state_.rainfall.begin(), state_.rainfall.end(), mean);
+        std::fill(out.begin(), out.end(), mean);
+    }
+}
+
+void SurfaceRouter2D::bookGageRates(const SimulationContext& ctx, double runoff_start_s) {
+    const auto n_gages = static_cast<std::size_t>(std::max(ctx.n_gages(), 0));
+    if (gage_rate_.size() != n_gages) {
+        gage_rate_.assign(n_gages, 0.0);
+        gage_cum_.assign(n_gages, 0.0);
+        gage_window_depth_.assign(n_gages, 0.0);
+        gage_since_ = 0.0;
+    }
+    for (std::size_t g = 0; g < n_gages; ++g) {
+        gage_cum_[g] += gage_rate_[g] * std::max(0.0, runoff_start_s - gage_since_);
+        gage_rate_[g] = ctx.gages.rainfall[g];
+    }
+    gage_since_ = runoff_start_s;
+}
+
+void SurfaceRouter2D::reportRainfall(const SimulationContext& ctx, double report_date,
+                                     std::vector<double>& out) const {
+    const int n_gages = ctx.n_gages();
+    std::vector<double> rates(static_cast<std::size_t>(std::max(n_gages, 0)), 0.0);
+    for (int g = 0; g < n_gages; ++g)
+        rates[static_cast<std::size_t>(g)] = gage::getReportRainfall(ctx, g, report_date);
+    gageRatesToCells(ctx, rates, out);
+    for (std::size_t i = 0; i < out.size() && i < state_.rainfall_forced.size(); ++i) {
+        if (state_.rainfall_forced[i] == 1)      out[i] = state_.rainfall_force_val[i];
+        else if (state_.rainfall_forced[i] == 2) out[i] += state_.rainfall_force_val[i];
     }
 }
 

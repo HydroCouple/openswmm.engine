@@ -154,6 +154,19 @@ public:
     /// skew between the router's and the engine's ms accumulators.
     double reportWeight(double report_ms) const noexcept;
 
+    /// Book the gage rates a runoff step starting at @p runoff_start_s
+    /// (seconds since the run start) takes, after the monthly adjustment.
+    /// The 2D integrates these piecewise-constant rates over each of its own
+    /// windows, so a cell receives exactly the gage depth the subcatchments
+    /// do over the same interval.
+    void bookGageRates(const SimulationContext& ctx, double runoff_start_s);
+
+    /// Per-cell rainfall (m/s) as the .out reports subcatchment rainfall: the
+    /// gage rate current at @p report_date (gage::getReportRainfall), mapped
+    /// through RAINFALL_MODE, with the per-cell rainfall forcings applied.
+    void reportRainfall(const SimulationContext& ctx, double report_date,
+                        std::vector<double>& out) const;
+
     /// Cell depth (m) at the start of the sync batch that crossed the
     /// current report instant (meaningful when reportWeight() < 1).
     const std::vector<double>& reportOldDepth() const noexcept {
@@ -650,19 +663,27 @@ private:
     /// the uniform SYSTEM mean, per options_.rainfall_mode).
     void updateRainfall(SimulationContext& ctx);
 
+    /// Map per-gage rates (user units, in/hr or mm/hr) onto the cells (m/s)
+    /// per options_.rainfall_mode.
+    void gageRatesToCells(const SimulationContext& ctx, const std::vector<double>& rates,
+                          std::vector<double>& out) const;
+
     /// Static per-cell rainfall-interpolation weights. Built once in
     /// initialize() (gage positions are fixed for a run); applied each step in
     /// updateRainfall() for RainfallMode::NATURAL_NEIGHBOUR.
     RainfallInterpolator interp_;
 
-    /// Per-step scratch: each gage's current rainfall converted to m/s, indexed
-    /// by global gage index. Reused across steps to avoid per-step allocation.
-    std::vector<double> rain_si_;
-
     /// Gage rainfall (user units) the current cell field was built from. A
     /// change forces a refresh ahead of the 30 s cadence, so the field never
     /// lags a gage record by more than the step that crosses it.
     std::vector<double> rain_gage_last_;
+
+    /// Gage rates booked by bookGageRates (user units), the time they took
+    /// effect (s), the depth each gage delivered before then (rate x s), the
+    /// same depth at the end of the last 2D window, and that window's mean
+    /// rate — what updateRainfall maps onto the cells.
+    std::vector<double> gage_rate_, gage_cum_, gage_window_depth_, gage_window_rate_;
+    double gage_since_ = 0.0;
 
     /// Resolve per-step boundary driving values: evaluate SPECIFIED_STAGE /
     /// SPECIFIED_FLOW timeseries at time @p t and RATING_CURVE from the boundary
