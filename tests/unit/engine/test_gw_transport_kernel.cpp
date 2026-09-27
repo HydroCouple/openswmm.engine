@@ -345,7 +345,15 @@ TEST(GwTransportKernel, EtCarriesTheAgeRowOutWithTheWaterD_A20) {
     body.insert(body.find("[2D_OPTIONS]"),
                 "[EVAPORATION]\nCONSTANT  5.0\nDRY_ONLY  NO\n\n");
     // The age row has to exist for this to test anything.
-    // Both rows named explicitly: assertion (4) needs the solute row to
+    // The age row needs TWO switches and the GW one is only a MASK:
+    // `TransportPolicy` computes `e.age = ta && ctx.options.water_age`, so
+    // `[GW_TRANSPORT_OPTIONS] TRANSPORT_AGE YES` alone leaves `age_row == -1`.
+    // The project-level `[OPTIONS] WATER_AGE ON` is what creates the row.
+    // (The first version of this gate set only the GW flag and was caught by
+    // its own `ASSERT_GE(age_row, 0)` rather than passing vacuously — which
+    // is the whole reason that assertion is there.)
+    body.insert(body.find("[POLLUTANTS]"), "[OPTIONS]\nWATER_AGE  ON\n\n");
+    // Both GW rows named explicitly: assertion (4) needs the solute row to
     // survive, and relying on what a partially-specified
     // [GW_TRANSPORT_OPTIONS] defaults to would make this gate depend on a
     // policy default rather than on the behaviour under test.
