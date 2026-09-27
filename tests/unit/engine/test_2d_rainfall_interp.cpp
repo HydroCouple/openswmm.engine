@@ -271,7 +271,6 @@ TEST(RainfallMode, NearestParseFormatRoundTrip) {
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_2d.h>
 #include <openswmm/engine/openswmm_model.h>
-#include <openswmm/engine/openswmm_gages.h>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -352,9 +351,11 @@ TEST(RainfallMode, MeshOnlyGageUnitsFormatsAndStormEnd) {
 // the stored water, the booked cumulative volume (Mesh2_face_rain_cum) and
 // the analytic depth x area must agree, and the booked volumes must sum to
 // the 2D mass balance's rainfall inflow. The gage alternates 1-min records at
-// a 7 s routing step, which the 30 s refresh cadence used to lag by up to 35 s
-// (12 % short). A lazy tier that skipped dry cells, an accumulator gated on
-// wetness, or a cell field that lags the gage fails here.
+// a 7 s routing step, so 2D windows straddle every record boundary: the 2D
+// must integrate the runoff-step rates as the 1D does (exact), not hold one
+// value per window (the old 30 s cadence was 12 % short, the end-of-window
+// value 6.5 %). A lazy tier that skipped dry cells, an accumulator gated on
+// wetness, or a cell field that lags or leads the gage fails here.
 TEST(RainfallMode, DryCellsReceiveAndAccumulateRain) {
     const auto folder = std::filesystem::current_path() / "test_2d_rainfall_interp_out";
     std::filesystem::create_directories(folder);
@@ -385,23 +386,16 @@ TEST(RainfallMode, DryCellsReceiveAndAccumulateRain) {
     int n = 0;
     ASSERT_EQ(swmm_2d_triangle_count(engine.e, &n), 0);
     ASSERT_EQ(n, 4);
-    // The gage value the engine held over each step (read after the step,
-    // as the 2D applied it) integrated over time: the depth the cells must
-    // receive. A field that lags the gage books a different sum.
-    double days = 0, prev = 0, held_depth = 0, max_depth = 0;
+    double days = 0, max_depth = 0;
     do {
         ASSERT_EQ(swmm_engine_step(engine.e, &days), 0);
-        double d = 0, g = 0;
+        double d = 0;
         ASSERT_EQ(swmm_2d_get_max_depth(engine.e, &d), 0);
-        ASSERT_EQ(swmm_gage_get_rainfall(engine.e, 0, &g), 0);
         max_depth = std::max(max_depth, d);
-        if (days > 0) { held_depth += g * 1e-3 / 3600 * (days * 86400 - prev); prev = days * 86400; }
     } while (days > 0);
     // Four wet minutes at 25.4 mm/hr; the premise is a bed that never
-    // reached H_MOVE's 4 mm activation depth. Each of the 8 record changes
-    // may land up to one 7 s step early or late.
+    // reached H_MOVE's 4 mm activation depth.
     const double depth = 25.4e-3 * 4.0 / 60.0;
-    EXPECT_NEAR(held_depth, depth, 8 * 7 * 25.4e-3 / 3600);
     EXPECT_LT(max_depth, 0.004);
     SWMM_2DRunStats stats{};
     ASSERT_EQ(swmm_2d_get_run_stats(engine.e, &stats), 0);
@@ -415,7 +409,7 @@ TEST(RainfallMode, DryCellsReceiveAndAccumulateRain) {
         SCOPED_TRACE("cell " + std::to_string(i));
         double area = 0;
         ASSERT_EQ(swmm_2d_triangle_get_area(engine.e, i, &area), 0);
-        EXPECT_NEAR(cum[i], held_depth * area, 1e-9 * held_depth * area);
+        EXPECT_NEAR(cum[i], depth * area, 1e-9 * depth * area);
         EXPECT_NEAR(depths[i] * area, cum[i], 1e-9 * cum[i]);
         sum_cum += cum[i];
     }

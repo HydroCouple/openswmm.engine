@@ -503,11 +503,12 @@ TEST(Output2DWriter, DeckAgeColumnIsHoursEndToEnd) {
         }
 }
 
-// Rain that falls BETWEEN two 2D report instants: a 1 mm, 1-min burst inside
-// a 15-min REPORT_2D_STEP on a dry pan. Mesh2_face_rainfall is the
-// instantaneous rate at each report time, so it reads zero in every record,
-// but Mesh2_face_rain_cum must carry the burst's volume in every cell — the
-// series the GUI derives its interval mean and cumulative depth from.
+// A 1 mm, 1-min burst at 00:05 on a dry pan, reported every 5 min.
+// Mesh2_face_rainfall is reported as the .out reports subcatchment rainfall:
+// the gage rate that STARTS at the report instant, so the 00:05 record shows
+// the burst (60 mm/hr) and the others zero. Mesh2_face_rain_cum carries the
+// burst's exact volume from the next record on — including rain that falls
+// wholly between report instants, which the rate never shows.
 TEST(Output2DWriter, RainPulseBetweenReportsAccumulates) {
     std::error_code ec;
     fs::create_directories(kOutDir, ec);
@@ -520,7 +521,7 @@ TEST(Output2DWriter, RainPulseBetweenReportsAccumulates) {
              "FLOW_UNITS           CMS\nFLOW_ROUTING         DYNWAVE\n"
              "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
              "END_DATE             01/01/2026\nEND_TIME             00:30:00\n"
-             "REPORT_STEP          00:15:00\nWET_STEP             00:01:00\n"
+             "REPORT_STEP          00:05:00\nWET_STEP             00:01:00\n"
              "DRY_STEP             00:01:00\nROUTING_STEP         5\n\n"
              "[RAINGAGES]\nRG1  VOLUME 0:01 1.0 TIMESERIES TS1\n\n"
              "[TIMESERIES]\nTS1  01/01/2026 00:05 1.0\nTS1  01/01/2026 00:06 0.0\n\n"
@@ -530,7 +531,7 @@ TEST(Output2DWriter, RainPulseBetweenReportsAccumulates) {
              "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n"
              "[XSECTIONS]\nC1 CIRCULAR 0.3 0 0 0 1\n\n"
              "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
-             "REPORT_2D YES\nREPORT_2D_STEP 00:15:00\nRAINFALL_MODE NATURAL_NEIGHBOUR\n"
+             "REPORT_2D YES\nREPORT_2D_STEP 00:05:00\nRAINFALL_MODE NATURAL_NEIGHBOUR\n"
              "OUTPUT_FILE rain_pulse.h5\nOUTPUT_PRECISION FLOAT64\n\n"
              "[2D_VERTICES]\n 0.0 0.0 0\n10.0 0.0 0\n10.0 10.0 0\n 0.0 10.0 0\n\n"
              "[2D_TRIANGLES]\n0 1 2 0.03 0.0\n0 2 3 0.03 0.0\n\n"
@@ -555,17 +556,24 @@ TEST(Output2DWriter, RainPulseBetweenReportsAccumulates) {
     ASSERT_TRUE(f.has("Mesh2_face_rain_cum"));
     const auto d = f.dims("Mesh2_face_rain_cum");   // [time, face]
     ASSERT_EQ(d.size(), 2u);
-    ASSERT_GE(d[0], 2u);
+    ASSERT_EQ(d[0], 6u);   // 00:05 … 00:30
     ASSERT_EQ(d[1], 2u);
     const auto rate = f.readAll("Mesh2_face_rainfall");
     const auto cum  = f.readAll("Mesh2_face_rain_cum");
     const auto area = f.readAll("Mesh2_face_area");
-    for (double r : rate) EXPECT_EQ(r, 0.0);
-    // 1 mm on 50 m²; each record edge may land one 5 s routing step off.
     for (size_t k = 0; k < d[0]; ++k)
         for (size_t c = 0; c < d[1]; ++c) {
             SCOPED_TRACE("record " + std::to_string(k) + " cell " + std::to_string(c));
-            EXPECT_NEAR(cum[k * d[1] + c], 1.0e-3 * area[c], 1.0e-3 * area[c] * 5.0 / 60.0);
+            // 1 mm in 1 min = 60 mm/hr, from 00:05; the 1D splits runoff
+            // steps at record edges, so the volume is exact.
+            EXPECT_NEAR(rate[k * d[1] + c], k == 0 ? 60.0e-3 / 3600.0 : 0.0, 1e-18);
+            // The cumulative is written at the end of the window that crosses
+            // the report instant (not blended like depth), so at 00:05 it may
+            // already hold up to one 5 s routing step of the burst.
+            if (k == 0)
+                EXPECT_NEAR(cum[c], 0.0, 1.0e-3 * area[c] * 5.0 / 60.0);
+            else
+                EXPECT_NEAR(cum[k * d[1] + c], 1.0e-3 * area[c], 1e-12);
         }
 }
 
