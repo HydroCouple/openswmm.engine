@@ -107,6 +107,27 @@ void handle_junctions(SimulationContext& ctx, const std::vector<std::string>& li
 
         ensure_node_capacity(ctx, idx);
 
+        // legacy junc_readParams (node.c): the INVERT ELEVATION may be
+        // negative, but max depth, initial depth, surcharge depth and ponded
+        // area may not — "check for non-negative values (except for invert
+        // elev.)" — and a negative one is ERROR 211 naming the offending token,
+        // tested in column order once the row is read.
+        //
+        // Accepting them is not a lenient no-op. A negative max depth drives a
+        // pathological run: 1218-nodes carries maxDepth = -612 on six junctions
+        // and v6 simulated 21 days straight past the 1,800 s harness cap, where
+        // legacy refuses the deck in 24 ms. 960-nodes is the same rule at
+        // -0.100000.
+        bool negative_param = false;
+        for (std::size_t i = 2; i < tok.size() && i <= 5; ++i) {
+            if (to_double(tok[i]) < 0.0) {
+                ctx.errors.push_back(format_error(ERR_NUMBER, tok[i]));
+                negative_param = true;
+                break;
+            }
+        }
+        if (negative_param) continue;
+
         ctx.node_subtypes.set_node_type(ctx.nodes, idx, NodeType::JUNCTION);
         ctx.nodes.invert_elev[idx] = to_double(tok[1]);                          // Elev
         if (tok.size() > 2) ctx.nodes.full_depth[idx]  = to_double(tok[2]);     // MaxDepth
