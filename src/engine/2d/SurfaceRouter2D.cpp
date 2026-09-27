@@ -1838,10 +1838,23 @@ void SurfaceRouter2D::flushAquiferNodeSpecies(SimulationContext& ctx) {
             if (sp < gtr.n_pollut && np > 0) {
                 const auto k = ni * static_cast<std::size_t>(np) +
                                static_cast<std::size_t>(sp);
+                // T7.4b (2026-09-21): the QUEUE is the only booking. Adding
+                // `qual_routing_gw_in` here as well counted one transfer in
+                // two inflow rows: the queue is drained into
+                // `coupling_qual_inflow`, which `addCouplingLoads` already
+                // books as `qual_routing_ex_in`. Measured on a deck whose
+                // whole quality budget is aquifer → J1 → outfall, the
+                // duplicate was a 49.7 % continuity error; removing it takes
+                // that deck to ≈ −0.5 %.
+                //
+                // The attribution cost is real and recorded: aquifer→node
+                // mass now reports under the 2D coupling inflow row rather
+                // than "Groundwater Inflow". Giving it its own row means
+                // tagging the queued mass by origin — the queue is shared
+                // with the 2D surface's drain — which is a NodeData and
+                // QualityRouting change, not a router one.
                 if (k < ctx.nodes.coupling_qual_queue.size())
                     ctx.nodes.coupling_qual_queue[k] += m;
-                if (static_cast<std::size_t>(sp) < ctx.mass_balance.qual_routing_gw_in.size())
-                    ctx.mass_balance.qual_routing_gw_in[static_cast<std::size_t>(sp)] += m;
             } else if (sp == gtr.age_row) {
                 if (ni < ctx.nodes.coupling_age_vol_queue.size())
                     ctx.nodes.coupling_age_vol_queue[ni] += m;
@@ -1877,7 +1890,6 @@ void SurfaceRouter2D::flushAquiferNodeSpecies(SimulationContext& ctx) {
     }
 
     std::fill(gtr.node_out_mass.begin(), gtr.node_out_mass.end(), 0.0);
-    subsurface_.clearBedDrawn();
 }
 
 void SurfaceRouter2D::publishLinkCoupling(SimulationContext& ctx) {

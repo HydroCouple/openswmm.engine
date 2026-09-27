@@ -1072,13 +1072,31 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 if (t.lost_reaction[u] != 0.0)
                     qrow("Reacted / Decayed ........", t.lost_reaction[u]);
                 qrow("Final Stored Mass ........", t.ledgeredStorage(sp));
-                // The denominator is what came in, so a species that only
-                // ever sat there reports 0 % rather than dividing by zero.
-                const double denom = std::fabs(t.init_mass[u]) +
-                                     std::fabs(t.gained_infil[u]) +
-                                     std::fabs(t.net_lateral[u]);
-                std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f",
-                             (denom > 0.0) ? t.residual(sp) / denom * 100.0 : 0.0);
+                // The denominator is the scale the residual is judged
+                // against: what the aquifer started with plus every route
+                // mass can arrive by.
+                //
+                // T7.4 (2026-09-21): the sum lives on the state, beside the
+                // residual it scales, so a new channel cannot be added to one
+                // and forgotten in the other — which is exactly what happened
+                // when T7.4 added the node and link seams and this block's
+                // own copy kept dividing by three terms.
+                //
+                // T7.4b (2026-09-21): when the scale is zero there is no
+                // percentage to print. This used to print 0.000, which claims
+                // a perfect balance where the truth is that the question is
+                // unanswerable — and with the denominator now naming every
+                // route, a zero scale beside a NON-zero residual is precisely
+                // the signature of a route nobody has booked yet. Printing
+                // 0 % there would hide the next instance of the bug this
+                // denominator was fixed for, so it prints `n/a` instead.
+                const double denom = t.continuityDenominator(sp);
+                if (denom > 0.0)
+                    std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f",
+                                 t.residual(sp) / denom * 100.0);
+                else
+                    std::fprintf(f, "\n  Continuity Error (%%) .....%14s",
+                                 "n/a");
             }
         }
 
