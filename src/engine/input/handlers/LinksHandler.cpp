@@ -52,7 +52,8 @@
 
 #include <charconv>
 #include <string>
-#include <unordered_map>
+#include <string_view>
+#include <utility>
 
 namespace openswmm::input {
 
@@ -335,8 +336,12 @@ void handle_outlets(SimulationContext& ctx, const std::vector<std::string>& line
 // handle_xsections()
 // ============================================================================
 
-// Map of shape name → XsectShape enum
-static const std::unordered_map<std::string, XsectShape> SHAPE_MAP = {
+// Shape keywords in legacy's XsectTypeWords order (keywords.c:160-184). The
+// order is part of the semantics: legacy resolves the shape with
+// findmatch(), which returns the FIRST entry that is a PREFIX of the token
+// (input.c:791-823), not an exact match, so "DUMMY_2" reads as DUMMY.
+static const std::pair<std::string_view, XsectShape> SHAPE_WORDS[] = {
+    {"DUMMY",           XsectShape::DUMMY},
     {"CIRCULAR",        XsectShape::CIRCULAR},
     {"FILLED_CIRCULAR", XsectShape::FILLED_CIRCULAR},
     {"RECT_CLOSED",     XsectShape::RECT_CLOSED},
@@ -345,7 +350,12 @@ static const std::unordered_map<std::string, XsectShape> SHAPE_MAP = {
     {"TRIANGULAR",      XsectShape::TRIANGULAR},
     {"PARABOLIC",       XsectShape::PARABOLIC},
     {"POWER",           XsectShape::POWER},
+    {"RECT_TRIANGULAR", XsectShape::RECT_TRIANG},
+    {"RECT_ROUND",      XsectShape::RECT_ROUND},
     {"MODBASKETHANDLE", XsectShape::MODBASKETHANDLE},
+    {"HORIZ_ELLIPSE",   XsectShape::HORIZ_ELLIPSE},
+    {"VERT_ELLIPSE",    XsectShape::VERT_ELLIPSE},
+    {"ARCH",            XsectShape::ARCH},
     {"EGG",             XsectShape::EGGSHAPED},
     {"HORSESHOE",       XsectShape::HORSESHOE},
     {"GOTHIC",          XsectShape::GOTHIC},
@@ -353,18 +363,22 @@ static const std::unordered_map<std::string, XsectShape> SHAPE_MAP = {
     {"SEMIELLIPTICAL",  XsectShape::SEMIELLIPTICAL},
     {"BASKETHANDLE",    XsectShape::BASKETHANDLE},
     {"SEMICIRCULAR",    XsectShape::SEMICIRCULAR},
-    {"RECT_TRIANGULAR", XsectShape::RECT_TRIANG},
-    {"RECT_TRIANG",     XsectShape::RECT_TRIANG},
-    {"RECT_ROUND",      XsectShape::RECT_ROUND},
-    {"HORIZ_ELLIPSE",   XsectShape::HORIZ_ELLIPSE},
-    {"VERT_ELLIPSE",    XsectShape::VERT_ELLIPSE},
-    {"ARCH",            XsectShape::ARCH},
     {"IRREGULAR",       XsectShape::IRREGULAR},
     {"CUSTOM",          XsectShape::CUSTOM},
     {"FORCE_MAIN",      XsectShape::FORCE_MAIN},
     {"STREET",          XsectShape::STREET_XSECT},
-    {"DUMMY",           XsectShape::DUMMY},
 };
+
+// Legacy findmatch(tok[1], XsectTypeWords): first keyword that prefixes the
+// (already upper-cased) token, or -1.
+static int find_shape_word(std::string_view s) {
+    int i = 0;
+    for (const auto& [word, shape] : SHAPE_WORDS) {
+        if (s.compare(0, word.size(), word) == 0) return i;
+        ++i;
+    }
+    return -1;
+}
 
 void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& lines) {
     for (const auto& line : lines) {
@@ -383,10 +397,19 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
         ensure_link_capacity(ctx, idx);
 
         const std::string shape_str = Tokenizer::to_upper(tok[1]);
-        auto it = SHAPE_MAP.find(shape_str);
-        if (it != SHAPE_MAP.end()) {
-            ctx.links.xsect_shape[idx] = it->second;
+        const int shape_word = find_shape_word(shape_str);
+        if (shape_word < 0) {
+            // Legacy link.c:190 rejects an unmatched shape keyword outright.
+            // v6 used to leave the link on its default shape and then parse the
+            // geometry columns into it, so a deck naming a shape SWMM does not
+            // have — "SEMI_ELLIPTICAL" for w_SEMIELLIPTICAL, or the literal
+            // "UNKNOWN" an InfoWorks export writes when it cannot map a shape —
+            // ran to completion against the wrong cross-section and reported
+            // success.
+            ctx.errors.push_back(format_error(ERR_KEYWORD, tok[1]));
+            continue;
         }
+        ctx.links.xsect_shape[idx] = SHAPE_WORDS[shape_word].second;
 
         // IRREGULAR shapes: tok[2] is transect name, not a dimension.
         // STREET shapes:    tok[2] is street name, not a dimension.
