@@ -3404,7 +3404,19 @@ void SWMMEngine::refreshAquiferParams() noexcept {
  */
 void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
     //      Matching legacy surfqual_getBuildup + surfqual_getWashoff
-    if (ctx_.n_pollutants() > 0 && ctx_.n_landuses() > 0) {
+    // legacy surfqual_getWashoff (surfqual.c:283-286) returns only on
+    //     Nobjects[POLLUT] == 0 || area <= 0.0
+    // — there is NO land-use condition, and there must not be one here. Only
+    // findWashoffLoads needs a land use; findPondedLoads does not, and that is
+    // where WET DEPOSITION lives: rainfall carrying Pollut[p].pptConcen onto
+    // the surface (surfqual.c:428), which a deck can have with no [LANDUSES]
+    // at all. Requiring a land use skipped the whole step for those decks, so
+    // they ran with zero pollutant from any source and reported a 0.000 %
+    // runoff-quality continuity error over it — lid1d books 263,134 kg of COD
+    // deposition in legacy and 0.000 here. The land-use loop below is already
+    // correct at nlu == 0: it simply does not execute, exactly as legacy's
+    // findWashoffLoads contributes nothing without coverages.
+    if (ctx_.n_pollutants() > 0) {
         int np = ctx_.n_pollutants();
         int nlu = ctx_.n_landuses();
         // legacy consts.h MIN_RUNOFF: 2.31481e-8 ft/sec = 0.001 in/hr.
@@ -4101,8 +4113,13 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
 void SWMMEngine::bookWashoffLoads(double dt_runoff) noexcept {
     const int np = ctx_.n_pollutants();
     const int ns = ctx_.n_subcatches();
-    if (np <= 0 || ns <= 0 || ctx_.n_landuses() <= 0 ||
-        ctx_.options.ignore_quality) return;
+    // No land-use condition, for the same reason stepSurfaceQuality has none:
+    // the load this books is whatever reached the runoff, and on a deck with
+    // no [LANDUSES] that is the wet deposition the ponded stage mixed in.
+    // Returning early left the mass created and never booked — lid1d closed at
+    // a 94.898 % runoff-quality continuity error with Surface Runoff 0.000
+    // against legacy's 110,015.701.
+    if (np <= 0 || ns <= 0 || ctx_.options.ignore_quality) return;
 
     constexpr double kLperFt3 = 28.317;
     const double mass_ucf = ucf::UCF(ucf::MASS, ctx_.options);
