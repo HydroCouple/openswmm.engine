@@ -38,6 +38,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <array>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -418,4 +419,102 @@ TEST(RainfallMode, DryCellsReceiveAndAccumulateRain) {
                                        nullptr, nullptr, nullptr, nullptr, nullptr), 0);
     EXPECT_NEAR(rain_in, sum_cum, 1e-12 * sum_cum);
     swmm_engine_end(engine.e);
+}
+
+// Gages OUTSIDE the mesh domain still drive the mesh. A 20 x 10 m mesh with
+// three gages hundreds of metres away, (a) surrounding it — every cell inside
+// the gage hull, natural-neighbour weights — and (b) all to one side — every
+// cell outside the hull, inverse-distance fallback — in both RAINFALL_MODEs.
+// Every cell must get a normalized weight row over those outside gages, and
+// the rain delivered after a step must equal the weighted gage rates. A
+// domain clip, or a cell left without weights, fails here.
+TEST(RainfallMode, GagesOutsideMeshDomainDriveEveryCell) {
+    const auto folder = std::filesystem::current_path() / "test_2d_rainfall_interp_out";
+    std::filesystem::create_directories(folder);
+    struct Layout { const char* name; double xy[3][2]; int expect_method; };
+    const Layout layouts[] = {
+        {"surrounding", {{-500, -500}, {520, -500}, {10, 600}}, 0},    // natural neighbour
+        {"one_side",    {{1000, 0}, {1000, 100}, {1100, 50}}, 1},      // IDW fallback
+    };
+    const double rates[3] = {10.0, 20.0, 30.0};   // mm/hr
+    for (const auto* mode : {"NATURAL_NEIGHBOUR", "NEAREST_NEIGHBOUR"}) {
+        for (const auto& lay : layouts) {
+            SCOPED_TRACE(std::string(mode) + " / " + lay.name);
+            std::ostringstream inp;
+            inp << std::setprecision(17)
+                << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\n"
+                << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:03:00\n"
+                << "REPORT_STEP 00:01:00\nWET_STEP 00:00:01\nDRY_STEP 00:00:01\nROUTING_STEP 1\n"
+                << "[RAINGAGES]\n";
+            for (int g = 0; g < 3; ++g)
+                inp << "RG" << g << " INTENSITY 0:01 1 TIMESERIES TS" << g << "\n";
+            inp << "[TIMESERIES]\n";
+            for (int g = 0; g < 3; ++g)
+                inp << "TS" << g << " 01/01/2026 00:00 " << rates[g]
+                    << "\nTS" << g << " 01/01/2026 00:02 0\n";
+            inp << "[SYMBOLS]\n";
+            for (int g = 0; g < 3; ++g)
+                inp << "RG" << g << " " << lay.xy[g][0] << " " << lay.xy[g][1] << "\n";
+            inp << "[JUNCTIONS]\nJ 0 1 0 0 0\n[OUTFALLS]\nO -0.5 FREE NO\n"
+                << "[CONDUITS]\nC J O 30 0.013 0 0 0\n[XSECTIONS]\nC CIRCULAR 0.3 0 0 0 1\n"
+                << "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 1\nREPORT_2D NO\n"
+                << "RAINFALL_MODE " << mode << "\n"
+                << "[2D_VERTICES]\n0 0 0\n10 0 0\n20 0 0\n0 10 0\n10 10 0\n20 10 0\n"
+                << "[2D_TRIANGLES]\n0 1 4 0.03 0 pan\n0 4 3 0.03 0 pan\n1 2 5 0.03 0 pan\n1 5 4 0.03 0 pan\n"
+                << "[REPORT]\nINPUT NO\n";
+            const auto path = (folder / "outside_gages.inp").string();
+            const auto rpt = (folder / "outside_gages.rpt").string();
+            { std::ofstream f(path); f << inp.str(); }
+            struct Engine {
+                SWMM_Engine e = swmm_engine_create();
+                ~Engine() { swmm_engine_end(e); swmm_engine_close(e); swmm_engine_destroy(e); }
+            } engine;
+            ASSERT_EQ(swmm_engine_open(engine.e, path.c_str(), rpt.c_str(), nullptr, nullptr), 0);
+            ASSERT_EQ(swmm_engine_initialize(engine.e), 0);
+            int n = 0;
+            ASSERT_EQ(swmm_2d_triangle_count(engine.e, &n), 0);
+            ASSERT_EQ(n, 4);
+            const bool nearest = std::string(mode) == "NEAREST_NEIGHBOUR";
+            std::vector<std::array<double, 3>> w(n, {0, 0, 0});
+            for (int i = 0; i < n; ++i) {
+                int method = -9, count = 0, gi[3] = {-1, -1, -1};
+                double gw[3] = {0, 0, 0};
+                ASSERT_EQ(swmm_2d_get_rainfall_weights(engine.e, i, &method, gi, gw, 3, &count), 0);
+                EXPECT_EQ(method, nearest ? 2 : lay.expect_method) << "cell " << i;
+                ASSERT_GE(count, 1);
+                ASSERT_LE(count, 3);
+                double sum = 0;
+                for (int k = 0; k < count; ++k) {
+                    ASSERT_GE(gi[k], 0);
+                    ASSERT_LT(gi[k], 3);
+                    EXPECT_GE(gw[k], 0.0);
+                    w[i][gi[k]] += gw[k];
+                    sum += gw[k];
+                }
+                EXPECT_NEAR(sum, 1.0, 1e-12) << "cell " << i;
+                if (nearest) {
+                    double cx = 0, cy = 0, cz = 0;
+                    ASSERT_EQ(swmm_2d_triangle_get_centroid(engine.e, i, &cx, &cy, &cz), 0);
+                    int best = 0;
+                    for (int g = 1; g < 3; ++g)
+                        if (std::hypot(cx - lay.xy[g][0], cy - lay.xy[g][1]) <
+                            std::hypot(cx - lay.xy[best][0], cy - lay.xy[best][1])) best = g;
+                    EXPECT_DOUBLE_EQ(w[i][best], 1.0) << "cell " << i;
+                } else {
+                    EXPECT_EQ(count, 3) << "cell " << i;   // every outside gage contributes
+                }
+            }
+            ASSERT_EQ(swmm_engine_start(engine.e, 0), 0);
+            double days = 0;
+            for (int s = 0; s < 30; ++s) ASSERT_EQ(swmm_engine_step(engine.e, &days), 0);
+            for (int i = 0; i < n; ++i) {
+                double rain = -1;
+                ASSERT_EQ(swmm_2d_get_rainfall(engine.e, i, &rain), 0);
+                double expect = 0;
+                for (int g = 0; g < 3; ++g) expect += w[i][g] * rates[g];
+                EXPECT_GT(rain, 0.0) << "cell " << i;
+                EXPECT_NEAR(rain * 3.6e6, expect, 1e-9) << "cell " << i;
+            }
+        }
+    }
 }
