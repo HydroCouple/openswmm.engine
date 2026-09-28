@@ -2997,6 +2997,16 @@ void resolve_cross_references(SimulationContext& ctx) {
                 ctx.transect_tables.push_back(std::move(ctd));
                 ctx.links.xsect_curve[uj] = custom_idx;
                 custom_memo.emplace(std::pair<int, double>{ci, y_full}, custom_idx);
+            } else {
+                // Dangling reference: legacy resolves the shape curve while
+                // reading the row (link.c:229, project_findObject(CURVE,
+                // tok[3])) and raises fatal ERROR 209 when it is absent. v6 has
+                // to defer the lookup, because [CURVES] may be parsed after
+                // [XSECTIONS], but deferring is not the same as forgiving:
+                // falling through left the link with no shape table at all, so
+                // it ran at zero area with no diagnostic. Mirrors the IRREGULAR
+                // transect check above.
+                ctx.errors.push_back(format_error(ERR_NAME, cname));
             }
         }
     }
