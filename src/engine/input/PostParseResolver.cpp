@@ -3222,6 +3222,19 @@ void resolve_cross_references(SimulationContext& ctx) {
                         ucf::Ucf[ucf::RAINDEPTH][static_cast<std::size_t>(us)];
                 }
             } else {
+                if (rc != 0) {
+                    // setParams has answered "I cannot build a section from
+                    // this" — the same verdict legacy's xsect_setParams returns
+                    // as FALSE, and legacy refuses the deck on it
+                    // (link.c:250, ERROR 211 naming an empty token). v6 computed
+                    // the verdict and then threw it away, falling through to the
+                    // rectangular fallback below: a MODBASKETHANDLE with a top
+                    // width of 0, which has no geometry at all, ran as a
+                    // rectangle. rc is what must be tested, not this branch —
+                    // DUMMY reaches it with rc == 0, because setParams leaves a
+                    // dummy's fields to the caller.
+                    ctx.errors.push_back(format_error(ERR_NUMBER, ""));
+                }
                 // Invalid geometry — preserve the previous generic fallback.
                 a_full = w_max * y_full;
                 double p_def = 2.0 * y_full + w_max;
