@@ -34,6 +34,7 @@
 #include <unordered_map>
 #include <utility>
 #include <stdexcept>
+#include <string>
 #include <limits>
 
 namespace openswmm::twoD {
