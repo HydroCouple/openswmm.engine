@@ -12,9 +12,10 @@ The contract under test:
      complete in less wall-clock time than the sum of their single-threaded
      runtimes — proving the GIL is genuinely released during ``step``.
   2. Bulk getters called concurrently from many threads against the same
-     solver must complete without deadlock, exception, or corruption (each
-     call writes into its own caller-allocated NumPy array; the C engine's
-     read of the state vectors is intrinsically thread-safe for reads).
+     solver must never deadlock or return corrupt data. One engine admits
+     one thread into its native layer at a time (``NativeAccess`` in
+     ``openswmm/engine/_access.py``); a second thread is refused promptly
+     with ``LifecycleError`` rather than blocking, and may retry.
   3. The wall-clock benefit of (1) is enough to be statistically detectable
      above noise. We require strictly *better* than serial, not a hard
      speedup ratio — busy CI machines and small fixtures suppress the
@@ -37,7 +38,7 @@ import unittest
 import numpy as np
 import pytest
 
-from openswmm.engine import EngineState, Solver
+from openswmm.engine import EngineState, ErrorCode, LifecycleError, Solver
 
 from tests._paths import SITE_DRAINAGE_INP, artifact_dir
 from tests.engine._solver_cases import EngineSolverCase
@@ -251,14 +252,15 @@ class TestConcurrency(EngineSolverCase):
     @pytest.mark.slow
     def test_bulk_getters_concurrent_reads(self):
         """Many threads calling node/link/subcatch bulk getters on one ENDED
-        solver should not deadlock, raise, or return corrupt arrays.
+        solver must not deadlock, return corrupt arrays, or fail with
+        anything other than the documented busy refusal.
 
-        Reading from an ENDED solver is safe because state vectors are
-        no longer being mutated. We check that *parallel* reads still
-        agree bit-for-bit with a *serial* baseline. (Concurrent reads
-        while the engine is mid-step are a separate question, not asserted
-        here — the bindings document the engine handle as not thread-safe
-        for concurrent mutation.)
+        ``NativeAccess`` refuses a thread that arrives while another is
+        inside the native layer (``LifecycleError``, "in use by another
+        thread") instead of blocking — see
+        ``test_native_safety.test_foreign_thread_access_fails_without_deadlock``.
+        Readers therefore retry on that refusal, and every read that does
+        get through must agree bit-for-bit with a serial baseline.
         """
         inp, rpt, out = self.solver_files()
         s = Solver(inp, rpt, out)
@@ -277,16 +279,32 @@ class TestConcurrency(EngineSolverCase):
 
             N_THREADS = 8
             N_ITERS = 16
+            TIMEOUT_S = 60.0
+            deadline = time.monotonic() + TIMEOUT_S
             errors: list[BaseException] = []
+
+            def read(getter):
+                # A refusal means another reader holds the engine, so the
+                # pool as a whole always makes progress; the deadline only
+                # guards against a regression that never releases it.
+                while True:
+                    try:
+                        return getter()
+                    except LifecycleError as e:
+                        busy = (e.code == ErrorCode.LIFECYCLE
+                                and "in use by another thread" in e.message)
+                        if not busy or time.monotonic() > deadline:
+                            raise
+                        time.sleep(0.001)
 
             def reader() -> None:
                 try:
                     for _ in range(N_ITERS):
-                        nd = s.nodes.depths
-                        nh = s.nodes.heads
-                        lf = s.links.flows
-                        ld = s.links.depths
-                        sr = s.subcatchments.runoffs
+                        nd = read(lambda: s.nodes.depths)
+                        nh = read(lambda: s.nodes.heads)
+                        lf = read(lambda: s.links.flows)
+                        ld = read(lambda: s.links.depths)
+                        sr = read(lambda: s.subcatchments.runoffs)
                         np.testing.assert_array_equal(nd, baseline_node_depths)
                         np.testing.assert_array_equal(lf, baseline_link_flows)
                         np.testing.assert_array_equal(sr, baseline_runoff)
@@ -299,8 +317,10 @@ class TestConcurrency(EngineSolverCase):
             for t in threads:
                 t.start()
             for t in threads:
-                t.join()
+                t.join(timeout=max(0.0, deadline - time.monotonic()) + 5.0)
 
+            self.assertFalse([t for t in threads if t.is_alive()],
+                             "concurrent readers deadlocked")
             self.assertFalse(errors, f"concurrent reads raised: {errors[:3]}")
         finally:
             try:

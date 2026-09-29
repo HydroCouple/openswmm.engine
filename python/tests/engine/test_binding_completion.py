@@ -135,7 +135,9 @@ def test_2d_diagnostics_and_forcing(tmp_path):
         forcing.link_seepage('C1', 0)
         forcing.element_climate(HeatElemKind.NODE, 'J1', ForcingType.ELEM_AIR_TEMPERATURE, 21, persist=True)
         value, mode = forcing.element_climate_get(HeatElemKind.NODE, 'J1', ForcingType.ELEM_AIR_TEMPERATURE)
-        assert value == 21 and mode == ForcingMode.REPLACE
+        # SI input is stored as °F internally; (21*1.8+32-32)*5/9 is
+        # 21.000000000000007 unless the compiler fuses it into an FMA.
+        assert value == pytest.approx(21) and mode == ForcingMode.REPLACE
         solver.step()
         for read in (surface.get_rainfall_bulk, surface.get_rain_volume_bulk, surface.get_coupling_volume_bulk):
             result = read()
