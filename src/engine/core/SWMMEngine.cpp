@@ -3919,8 +3919,17 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                         ctx_.subcatches.ponded_qual[sq_idx] = 0.0;
                     } else {
                         // Complete-mix balance (matching legacy findPondedLoads):
-                        //   wRunon ≈ 0 (upstream subcatch concentrations not propagated here)
-                        double w_total_pq  = w_mass_pq + w_rain_pq;
+                        // wRunon = the run-on load assembleRunon accumulated
+                        // from the donors' oldRunoff x oldQual (surfqual.c:
+                        // 442-443, reading the newQual accumulator) — the
+                        // run-on WATER was already in v_inflow_pq, so leaving
+                        // the load out both starved and DILUTED the mix.
+                        double w_runon_pq =
+                            (sq_idx < ctx_.subcatches.runon_qual_rate.size())
+                                ? ctx_.subcatches.runon_qual_rate[sq_idx] *
+                                      dt_runoff
+                                : 0.0;
+                        double w_total_pq  = w_mass_pq + w_rain_pq + w_runon_pq;
                         double c_ponded_pq = w_total_pq / v_inflow_pq;  // mg/ft3
 
                         // Mass lost to infiltration
@@ -4009,15 +4018,17 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                         double full_ft2 = ctx_.subcatches.area[ui]
                                         / ucf::UCF(ucf::LANDAREA, ctx_.options);
                         if (std::fabs(lid_ft2 - full_ft2) < 1.0) {
-                            double q_runon37 = ctx_.subcatches.runon_inflow[ui];  // CFS
-                            double c_old37 = (sq_idx < ctx_.subcatches.conc_old.size())
-                                             ? ctx_.subcatches.conc_old[sq_idx] : 0.0;
-                            // conc_old is mg/L (the reported convention), so
-                            // × LperFT3 brings cfs·mg/L·s to mg — legacy
-                            // findLidLoads multiplies its runon term by
-                            // LperFT3 for the same reason.
+                            // legacy findLidLoads (surfqual.c:560-561) reads
+                            // the SAME accumulator findPondedLoads reads —
+                            // the donors' oldRunoff x oldQual assembled into
+                            // newQual — not the RECEIVER's own concentration,
+                            // which this block used before (right only when
+                            // donor and receiver happened to share an EMC).
                             double w_lid_runon =
-                                q_runon37 * c_old37 * L_PER_FT3_37 * dt_runoff;  // mg
+                                (sq_idx < ctx_.subcatches.runon_qual_rate.size())
+                                    ? ctx_.subcatches.runon_qual_rate[sq_idx] *
+                                          dt_runoff
+                                    : 0.0;                                   // mg
                             if (w_lid_runon > 0.0)
                                 total_washoff_load += w_lid_runon / dt_runoff;
                         }
@@ -9328,6 +9339,11 @@ void SWMMEngine::assembleRunon() noexcept {
               ctx_.subcatches.runon_inflow.end(), 0.0);
     std::fill(ctx_.subcatches.runon_rate.begin(),
               ctx_.subcatches.runon_rate.end(), 0.0);
+    // The run-on POLLUTANT load is assembled here with its water, from the
+    // same previous-substep values (legacy zeroes Subcatch.newQual at
+    // setOldState and getRunon then accumulates into it, subcatch.c:488,553).
+    std::fill(ctx_.subcatches.runon_qual_rate.begin(),
+              ctx_.subcatches.runon_qual_rate.end(), 0.0);
     // The age and temperature of that run-on are assembled here too, so
     // their accumulators start clean here (not in the transport step that
     // consumes them — the flow and its temperature must be booked, and
@@ -9422,6 +9438,31 @@ void SWMMEngine::assembleRunon() noexcept {
         // own age and its own heat back to itself.
         if (out_sc >= 0 && out_sc < nsc && out_sc != i) {
             add_runon(out_sc, ctx_.subcatches.runoff[ui]);
+            // The donor's pollutant load rides with its water: legacy
+            // subcatch.c:553, newQual[k] += oldRunoff * oldQual * LperFT3.
+            // conc_old is the donor's previous-substep washoff concentration
+            // in mg/L (rolled by save_state before this assembly, exactly
+            // legacy's oldQual after setOldState), and runoff[ui] still
+            // holds the previous substep's value here, legacy's oldRunoff —
+            // so cfs * mg/L * L/ft3 accumulates mg/sec. Without this the
+            // receiver mixed the donor's WATER at zero concentration:
+            // washoff-runon's subcatchment 2 reported a flat EMC 10 against
+            // legacy's ponded mix rising above it from the first period.
+            {
+                const int np_r = ctx_.n_pollutants();
+                for (int p = 0; p < np_r; ++p) {
+                    auto src = ui * static_cast<std::size_t>(np_r)
+                               + static_cast<std::size_t>(p);
+                    auto dst = static_cast<std::size_t>(out_sc)
+                               * static_cast<std::size_t>(np_r)
+                               + static_cast<std::size_t>(p);
+                    if (src < ctx_.subcatches.conc_old.size() &&
+                        dst < ctx_.subcatches.runon_qual_rate.size())
+                        ctx_.subcatches.runon_qual_rate[dst] +=
+                            ctx_.subcatches.runoff[ui] *
+                            ctx_.subcatches.conc_old[src] * 28.317;
+                }
+            }
             // A3: run-on carries the donor's runoff age. Without this the
             // FLOW path adds q_runon while the age path adds nothing, and a
             // two-subcatchment cascade — the plan's own A3 criterion —
