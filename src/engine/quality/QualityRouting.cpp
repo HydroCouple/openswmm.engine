@@ -261,6 +261,8 @@ void QualitySolver::assembleExternalLoads(SimulationContext& ctx, double dt) {
         std::fill(hs.node_temp_vol_in.begin(), hs.node_temp_vol_in.end(), 0.0);
     }
     std::fill(ctx.nodes.qual_vol_in.begin(),  ctx.nodes.qual_vol_in.end(),  0.0);
+    qual_vol_lat_.assign(static_cast<std::size_t>(ctx.n_nodes()), 0.0);
+    qual_vol_lat_neg_.assign(static_cast<std::size_t>(ctx.n_nodes()), 0.0);
 
     addWetWeatherLoads(ctx, dt);   // Subcatchment washoff → nodes
     addRdiiLoads(ctx, dt);         // RDII pollutant loads → nodes
@@ -269,6 +271,41 @@ void QualitySolver::assembleExternalLoads(SimulationContext& ctx, double dt) {
     addIfaceLoads(ctx, dt);        // Routing interface file loads → nodes
     addExtInflowLoads(ctx, dt);    // Direct [INFLOWS] CONCEN/MASS loads → nodes
     addCouplingLoads(ctx, dt);     // S3: 2D→1D junction drain (volume + mass)
+
+    // legacy seeds the node's quality-inflow DENOMINATOR with the NET lateral
+    // flow floored at zero — routing.c:480, Node.qualInflow =
+    // MAX(0, Node.newLatFlow) — and dynwave's Node.inflow carries the same
+    // floored net into qualrout_execute. A lateral component that WITHDRAWS
+    // water (two-way groundwater exchange running aquifer-ward) therefore
+    // shrinks the carrier volume under the remaining lateral MASS, and the
+    // node's mixed concentration legitimately rises ABOVE every source
+    // concentration. v6 summed each positive source's own volume, so the
+    // negative component never touched the denominator: on usgs-runoff
+    // (Cppt 18 mg/L, GW drawing up to 2,000 cfs out of the receptors) legacy
+    // climbs to 47 mg/L while v6 could never exceed 18. Replace the lateral
+    // share of the accumulated volume with legacy's floored net. The
+    // correction is never positive (net <= sum of positive parts), and the
+    // S3 coupling volume is deliberately outside it (legacy has no 2D seam;
+    // legacy-comparable runs carry coupling_inflow == 0).
+    if (n_pollutants_ > 0) {
+        auto& nodes = ctx.nodes;
+        const std::size_t nn = std::min(qual_vol_lat_.size(),
+                                        nodes.qual_vol_in.size());
+        for (std::size_t ui = 0; ui < nn; ++ui) {
+            // Fire only when a negative lateral component actually arrived —
+            // on every other deck the correction is EXACTLY zero, so their
+            // ULPs are untouched. When it fires, take legacy's denominator
+            // from the flow side's own net lateral (the same newLatFlow
+            // legacy floors), not from re-summing the quality-side parts.
+            if (!(ui < qual_vol_lat_neg_.size() &&
+                  qual_vol_lat_neg_[ui] < 0.0)) continue;
+            const double lat_net_pos =
+                (ui < nodes.lat_flow.size())
+                    ? std::max(0.0, nodes.lat_flow[ui]) * dt : 0.0;
+            const double corr = lat_net_pos - qual_vol_lat_[ui];
+            if (corr < 0.0) nodes.qual_vol_in[ui] += corr;
+        }
+    }
 }
 
 // ============================================================================
@@ -356,8 +393,11 @@ void QualitySolver::addExtInflowLoads(SimulationContext& ctx, double dt) {
         //  array; its volume, age and temperature are booked once, by the
         //  drain loader below, at the storage layer's own values.)
         double q = nodes.ext_inflow[ui];
+        if (q < 0.0 && ui < qual_vol_lat_neg_.size())
+            qual_vol_lat_neg_[ui] += q * dt;
         if (q > 0.0) {
             nodes.qual_vol_in[ui] += q * dt;
+            qual_vol_lat_[ui] += q * dt;
             addAgeVolume(ctx, i, q, WaterAgeSource::EXTERNAL_INFLOW);
             addTempVolume(ctx, i, q, HeatSource::EXTERNAL_INFLOW);
         }
@@ -549,6 +589,7 @@ void QualitySolver::addWetWeatherLoads(SimulationContext& ctx, double dt) {
         if (q <= 0.0) continue;
 
         ctx.nodes.qual_vol_in[ud] += q * dt;
+        if (ud < qual_vol_lat_.size()) qual_vol_lat_[ud] += q * dt;
         // A3: runoff arrives at the age the SUBCATCHMENT computed, not at the
         // configured RAINFALL age. The rainfall age is what enters the
         // subareas; by the time water leaves it has aged on the surface and
@@ -628,6 +669,7 @@ void QualitySolver::addWetWeatherLoads(SimulationContext& ctx, double dt) {
         if (drain_vol_rate <= 0.0) continue;
 
         ctx.nodes.qual_vol_in[uj] += drain_vol_rate * dt;
+        if (uj < qual_vol_lat_.size()) qual_vol_lat_[uj] += drain_vol_rate * dt;
         // A4 RETIRES the RAINFALL stand-in here: the drain now arrives at the
         // age of the LID storage layer it was drawn from, accumulated as a
         // q·age rate in A6b beside this very volume. Falls back to the
@@ -688,6 +730,7 @@ void QualitySolver::addRdiiLoads(SimulationContext& ctx, double dt) {
 
         // Add volume inflow from RDII
         nodes.qual_vol_in[ui] += q * dt;
+        qual_vol_lat_[ui] += q * dt;
         addAgeVolume(ctx, i, q, WaterAgeSource::RDII);
         addTempVolume(ctx, i, q, HeatSource::RDII);
 
@@ -729,12 +772,15 @@ void QualitySolver::addDwfLoads(SimulationContext& ctx, double dt) {
     for (int i = 0; i < ctx.n_nodes(); ++i) {
         auto ui = static_cast<std::size_t>(i);
         double q = nodes.dwf_inflow[ui];
+        if (q < 0.0 && ui < qual_vol_lat_neg_.size())
+            qual_vol_lat_neg_[ui] += q * dt;
         if (q <= 0.0) continue;
 
         // Add volume inflow from DWF (legacy qualrout.c uses Node[j].inflow,
         // which includes DWF, as the mixing denominator). Without this the
         // mass added below is discarded by mixAtNodes when v_in == 0.
         nodes.qual_vol_in[ui] += q * dt;
+        qual_vol_lat_[ui] += q * dt;
         addAgeVolume(ctx, i, q, WaterAgeSource::DWF);
         addTempVolume(ctx, i, q, HeatSource::DWF);
 
@@ -776,11 +822,14 @@ void QualitySolver::addGwLoads(SimulationContext& ctx, double dt) {
     for (int i = 0; i < ctx.n_nodes(); ++i) {
         auto ui = static_cast<std::size_t>(i);
         double q = nodes.gw_inflow[ui];
+        if (q < 0.0 && ui < qual_vol_lat_neg_.size())
+            qual_vol_lat_neg_[ui] += q * dt;
         if (q <= 0.0) continue;  // pollutant load only for positive inflow
 
         // Add volume inflow from groundwater (see addDwfLoads: the mass below
         // is discarded by mixAtNodes unless its carrier volume is counted).
         nodes.qual_vol_in[ui] += q * dt;
+        qual_vol_lat_[ui] += q * dt;
         addAgeVolume(ctx, i, q, WaterAgeSource::GW);
         addTempVolume(ctx, i, q, HeatSource::GW);
 
@@ -822,10 +871,13 @@ void QualitySolver::addIfaceLoads(SimulationContext& ctx, double dt) {
     for (int i = 0; i < ctx.n_nodes(); ++i) {
         auto ui = static_cast<std::size_t>(i);
         double q = nodes.iface_inflow[ui];
+        if (q < 0.0 && ui < qual_vol_lat_neg_.size())
+            qual_vol_lat_neg_[ui] += q * dt;
         if (q <= 0.0) continue;
 
         // Add volume inflow from the interface file
         nodes.qual_vol_in[ui] += q * dt;
+        qual_vol_lat_[ui] += q * dt;
         addAgeVolume(ctx, i, q, WaterAgeSource::IFACE);
         addTempVolume(ctx, i, q, HeatSource::IFACE);
 

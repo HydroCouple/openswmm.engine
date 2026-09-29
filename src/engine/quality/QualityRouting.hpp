@@ -204,6 +204,15 @@ public:
 
 private:
     int n_pollutants_ = 0;
+    /// Per-node LATERAL carrier volume added into qual_vol_in this step, so
+    /// the mixing denominator can be corrected to legacy's form afterwards
+    /// (routing.c:480 seeds quality inflow with MAX(0, NET lateral flow)).
+    std::vector<double> qual_vol_lat_;
+    /// Negative lateral components seen this step (aquifer-ward GW, negative
+    /// external/DWF/iface inflows), ft3. Zero on almost every deck; the
+    /// denominator correction below fires only when this is nonzero, so
+    /// negative-free decks stay byte-identical.
+    std::vector<double> qual_vol_lat_neg_;
 
     // Quality mass inflow arrays are stored on NodeData (nodes.qual_mass_in[],
     // nodes.qual_vol_in[]) so that external quality sources (user forcing, DWF
