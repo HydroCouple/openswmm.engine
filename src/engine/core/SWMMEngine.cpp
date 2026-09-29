@@ -2760,7 +2760,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             int np  = ctx_.n_pollutants();
             int nlu = ctx_.n_landuses();
             // IGNORE_QUALITY: skip street-sweeping buildup removal (runoff.c:274).
-            if ((np > 0 || msxsurf::active(ctx_)) && nlu > 0 && !is_raining
+            if ((np > 0 || msxsurf::active(ctx_)) && nlu > 0
                 && !ctx_.options.ignore_quality) {
                 int sweep_doy = datetime::dayOfYear(abs_time);
                 int ss = ctx_.options.sweep_start;
@@ -2769,13 +2769,35 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                     ? (sweep_doy >= ss && sweep_doy <= se)
                     : (sweep_doy >= ss || sweep_doy <= se);
 
-                if (in_season) {
+                // The clock advances in CALENDAR time. legacy's test is
+                // `aDate - lastSwept >= interval` (surfqual.c:228) — real
+                // dates, so a sweep can come due DURING a storm or out of
+                // season and fire at the next eligible step. This
+                // accumulator only advanced on eligible steps, so every
+                // rainy or off-season day pushed the whole schedule back.
+                {
                     double dt_days = dt_runoff / ucf::SEC_PER_DAY;
+                    for (auto& d : ctx_.subcatches.sweep_last_swept)
+                        d += dt_days;
+                }
+
+                if (in_season) {
                     int nlu_sz = static_cast<int>(ctx_.subcatches.sweep_last_swept.size())
                                  / std::max(ctx_.n_subcatches(), 1);
+                    // legacy MIN_RUNOFF (consts.h): 2.31481e-8 ft/s = 0.001 in/hr.
+                    constexpr double MIN_RUNOFF_FTS = 2.31481e-8;
 
                     for (int i = 0; i < ctx_.n_subcatches(); ++i) {
                         auto ui = static_cast<std::size_t>(i);
+
+                        // legacy runoff.c:284 gates on the SUBCATCHMENT's own
+                        // rainfall, `Subcatch[j].rainfall <= MIN_RUNOFF` — not
+                        // on "any gage raining". A subcatchment whose gage is
+                        // dry sweeps while another's storm runs, and a drizzle
+                        // below MIN_RUNOFF still permits sweeping.
+                        if (ui < ctx_.subcatches.rainfall.size() &&
+                            ctx_.subcatches.rainfall[ui] > MIN_RUNOFF_FTS)
+                            continue;
 
                         // Skip subcatchment if snow on plowable impervious area.
                         // Matches legacy: if (snowpack->wsnow[IMPERV0] > MIN_TOTAL_DEPTH) return;
@@ -2801,11 +2823,15 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                                               std::max(nlu_sz, nlu)) + ulu;
                             if (sw_idx >= ctx_.subcatches.sweep_last_swept.size()) continue;
 
-                            ctx_.subcatches.sweep_last_swept[sw_idx] += dt_days;
                             if (ctx_.subcatches.sweep_last_swept[sw_idx] < interval) continue;
                             ctx_.subcatches.sweep_last_swept[sw_idx] = 0.0;
 
-                            double removal_frac = ctx_.landuses.sweep_removal[ulu] / 100.0;
+                            // legacy sweepRemoval is the [LANDUSES] Availability
+                            // column read RAW — a fraction (landuse.c:70). Only
+                            // the [WASHOFF] sweeping efficiency is a percent,
+                            // divided by 100 below. The /100 here removed 200x
+                            // too little on the sweeps that did fire.
+                            double removal_frac = ctx_.landuses.sweep_removal[ulu];
                             // BW-MSX: same event, same fractions, MSX store.
                             msxsurf::sweep(ctx_, i, lu, frac, removal_frac);
                             for (int p = 0; p < np; ++p) {
@@ -2817,11 +2843,19 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                                     ? frac * ctx_.subcatches.area[ui]
                                     : frac * ctx_.subcatches.curb_length[ui];
                                 double old_bu = surface_quality_.buildup[bu];
-                                double removed = old_bu * removal_frac * effic;
-                                surface_quality_.buildup[bu] =
-                                    std::max(old_bu - removed, 0.0);
+                                // legacy surfqual_sweepBuildup (surfqual.c:
+                                // 236-242): clamp the new store into [0, old]
+                                // FIRST and book the clamped difference, so
+                                // the ledger closes even when removal_frac *
+                                // effic falls outside [0, 1].
+                                double new_bu =
+                                    old_bu * (1.0 - removal_frac * effic);
+                                new_bu = std::min(old_bu, new_bu);
+                                new_bu = std::max(0.0, new_bu);
+                                surface_quality_.buildup[bu] = new_bu;
                                 ctx_.mass_balance.qual_sweeping[
-                                    static_cast<std::size_t>(p)] += removed * norm;
+                                    static_cast<std::size_t>(p)] +=
+                                    (old_bu - new_bu) * norm;
                             }
                         }
                     }
@@ -8992,6 +9026,22 @@ void SWMMEngine::initQuality() noexcept {
             for (int i = 0; i < ctx_.n_subcatches(); ++i) {
                 auto ui = static_cast<std::size_t>(i);
                 for (int lu = 0; lu < nlu; ++lu) {
+                    // legacy landuse_initState (landuse.c:377):
+                    //     lastSwept = StartDateTime - sweepDays0
+                    // — the days-since-last-sweep clock STARTS at the
+                    // [LANDUSES] SweepDays0 column, for every land use,
+                    // covered or not. Left at zero, a deck due for its first
+                    // sweep at t = 0 (runoff46-sw5: interval 1 day,
+                    // days-since-last 1) never swept within a short run:
+                    // legacy removed 886 lbs of COD there, v6 0.000.
+                    {
+                        auto sw_idx = ui * static_cast<std::size_t>(nlu)
+                                      + static_cast<std::size_t>(lu);
+                        if (sw_idx < ctx_.subcatches.sweep_last_swept.size())
+                            ctx_.subcatches.sweep_last_swept[sw_idx] =
+                                ctx_.landuses.last_swept[
+                                    static_cast<std::size_t>(lu)];
+                    }
                     auto cov_idx = ui * static_cast<std::size_t>(nlu)
                                    + static_cast<std::size_t>(lu);
                     double frac = (cov_idx < ctx_.subcatches.coverage.size())

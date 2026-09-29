@@ -450,9 +450,14 @@ void sweep(SimulationContext& ctx, int sc, int lu, double frac, double removal_f
                                 ? frac * ctx.subcatches.area[ui]
                                 : frac * ctx.subcatches.curb_length[ui];
         const double old_bu  = s.buildup[bu];
-        const double removed = old_bu * removal_frac * effic;
-        s.buildup[bu] = std::max(old_bu - removed, 0.0);
-        s.led_sweeping[static_cast<std::size_t>(m)] += removed * norm;
+        // legacy surfqual_sweepBuildup (surfqual.c:236-242): clamp the new
+        // store into [0, old] FIRST and book the clamped difference, so the
+        // ledger closes even when removal_frac * effic falls outside [0,1].
+        double new_bu = old_bu * (1.0 - removal_frac * effic);
+        new_bu = std::min(old_bu, new_bu);
+        new_bu = std::max(0.0, new_bu);
+        s.buildup[bu] = new_bu;
+        s.led_sweeping[static_cast<std::size_t>(m)] += (old_bu - new_bu) * norm;
     }
 }
 

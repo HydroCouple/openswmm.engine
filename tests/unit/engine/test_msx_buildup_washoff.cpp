@@ -217,14 +217,15 @@ TEST(MsxBuildupWashoff, LoadReachesTheNetworkUnderBothSolvers) {
 // ---------------------------------------------------------------------------
 TEST(MsxBuildupWashoff, LedgerCloses) {
     write("_bw_c.rxn", rxn_inert());
-    // LU1 sweeps every 0.05 day (1.2 h) with 60 % availability: the storm
-    // stops at 01:01 and the dry tail of the 3 h run accumulates ~0.08 day,
-    // so exactly one sweep event fires after the washoff. (The engine seeds
-    // the per-(subcatchment, land use) last-swept counter at 0 regardless of
-    // the [LANDUSES] LastSweep column — a pre-existing parity gap, noted in
-    // the BW-MSX handoff — hence the short interval rather than LastSweep.)
+    // LU1 sweeps every 0.05 day (1.2 h) with availability 0.6 — a FRACTION,
+    // as legacy reads it (landuse.c:70; :81 rejects anything outside [0,1]).
+    // The sweep clock runs on calendar time seeded from the LastSweep column
+    // (legacy landuse.c:377), so with LastSweep 0 the first sweep comes due
+    // 1.2 h in — during the storm — and fires at the first dry step after
+    // 01:01, with a second in the dry tail of the 3 h run. The assertion is
+    // ledger closure, which every firing must preserve.
     DeckRun r = run("_bw_c", deck("", std::string(kPollut) + bw({"TSS", "X"}, "50", "20"),
-                              pc("_bw_c.rxn"), "LU1  0.05  60  0\n"));
+                              pc("_bw_c.rxn"), "LU1  0.05  0.6  0\n"));
     ASSERT_TRUE(r.ok);
     const auto& ctx = cpp(r.e).context();
     const auto& ms  = ctx.reactions.surface;
