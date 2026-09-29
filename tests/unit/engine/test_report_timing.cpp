@@ -190,8 +190,10 @@ TEST_F(ReportTimingTest, SubSecondRunReportsLessThanOneSecond) {
 TEST_F(ReportTimingTest, ElapsedUnderOneDayHasNoDayPrefix) {
     ASSERT_EQ(swmm_engine_open(engine_, kInp, kRpt, kOut, nullptr), SWMM_OK);
 
-    // 23 h 59 m 59 s — the last value legacy renders without a day prefix.
-    as_cpp_engine(engine_).context().wall_start -= (23 * 3600 + 59 * 60 + 59);
+    // 23 h 59 m, one minute short of a day. Not 23:59:59: wall_start and the
+    // end stamp are whole-second time_t, so a run that straddles a clock tick
+    // reads 1 s long and 23:59:59 would print as 1.00:00:00 (Windows CI flake).
+    as_cpp_engine(engine_).context().wall_start -= (23 * 3600 + 59 * 60);
 
     run_to_report();
     ASSERT_EQ(swmm_engine_close(engine_), SWMM_OK);
@@ -200,7 +202,7 @@ TEST_F(ReportTimingTest, ElapsedUnderOneDayHasNoDayPrefix) {
     ASSERT_FALSE(elapsed.empty());
     EXPECT_EQ(elapsed.find('.'), std::string::npos)
         << "elapsed under 24 h must not carry a day prefix: " << elapsed;
-    EXPECT_EQ(elapsed.rfind("23:59:5", 0), 0u) << elapsed;
+    EXPECT_EQ(elapsed.rfind("23:59:", 0), 0u) << elapsed;
 }
 
 }  // namespace
