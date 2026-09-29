@@ -26,6 +26,7 @@
 
 #include "LID.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/DateTime.hpp"
 #include "../core/UnitConversion.hpp"
 #include <cmath>
 #include <algorithm>
@@ -120,6 +121,10 @@ void LIDGroupSoA::resize(int n) {
     soil_infil.assign(un, GreenAmptState{});
     old_drain_flow.assign(un, 0.0);
     is_wet.assign(un, 0);
+    rpt_path.assign(un, std::string{});
+    rpt_surf_infil.assign(un, 0.0);
+    rpt_pave_perc.assign(un, 0.0);
+    rpt_soil_perc.assign(un, 0.0);
     can_overflow.assign(un, 1);
     drainmat_alpha.assign(un, 0.0);
     surface_runoff.assign(un, 0.0);
@@ -198,6 +203,22 @@ void LIDSolver::init(SimulationContext& ctx) {
     for (int t = 0; t < N_LID_TYPES; ++t)
         groups_[static_cast<size_t>(t)].resize(type_counts[static_cast<size_t>(t)]);
 
+    // The group's unit-conversion pair feeds the DRAIN LAW itself —
+    // getStorageDrainRate computes `head *= ucf_raindepth` and
+    // `outflow /= ucf_rainfall` (legacy lidproc.c:1399-1414, "underdrain
+    // flow equation in user units"), and the roof-disconnection path caps
+    // at `drain_coeff / ucf_rainfall` (lidproc.c:484). The fields carried
+    // HARD-CODED US defaults (12.0, 43200.0) that nothing overwrote, so on
+    // an SI deck every underdrain ran with in/hr factors: for the common
+    // exponent 0.5 that is sqrt(304.8/12) x 25.4/... = 5.04x too much drain
+    // flow. usgs-runoff's rain barrels (FLOW_UNITS LPS) never filled and
+    // never overflowed — legacy books 96.27 mm of surface outflow there, v6
+    // booked 0.00 and pushed everything down the drain.
+    for (auto& g : groups_) {
+        g.ucf_raindepth = ucfRainDepth;
+        g.ucf_rainfall  = ucfRainfall;
+    }
+
     // 3. Populate per-unit parameters from LidControlStore + LidUsageStore
     std::array<int, 8> type_cursor = {};  // next free slot in each group
     for (int j = 0; j < n_usage; ++j) {
@@ -243,6 +264,10 @@ void LIDSolver::init(SimulationContext& ctx) {
         g.from_perv[us]    = (uj < ctx.lid_usage.from_perv.size())
                              ? ctx.lid_usage.from_perv[uj] / 100.0 : 0.0;
         g.to_perv[us]      = ctx.lid_usage.to_perv[uj];
+        if (uj < ctx.lid_usage.rpt_file.size()) {
+            const auto& fp = ctx.lid_usage.rpt_file[uj];
+            g.rpt_path[us] = fp.absolute.empty() ? fp.original : fp.absolute;
+        }
         // legacy validateLidGroup: no pervious area to return to on a
         // (near-)fully impervious subcatchment.
         {
@@ -1316,6 +1341,12 @@ inline void runUnitLegacy(LIDGroupSoA& g, std::size_t u, double inflow, double e
     g.evap_loss[u]      = lidEvap * dt;     // depth this step (ft)
     g.infil_loss[u]     = lidInfil * dt;    // depth this step (ft)
 
+    // staged for the per-unit LID report file (legacy lidproc_saveResults
+    // reads lidproc.c's static flux variables; the kernel here is per-call)
+    g.rpt_surf_infil[u] = k.SurfaceInfil;
+    g.rpt_pave_perc[u]  = k.PavePerc;
+    g.rpt_soil_perc[u]  = k.SoilPerc;
+
     // per-layer inflow rates after every clamp, for the transport tracks
     g.in_surf[u] = k.SurfaceInflow;
     g.in_pave[u] = (g.type == LIDType::PERM_PAVEMENT) ? k.SurfaceInfil : 0.0;
@@ -1474,7 +1505,133 @@ void LIDSolver::execute(SimulationContext& ctx, double dt,
             // rainfall above MIN_RUNOFF.
             if (g.subcatch_rain[uu] > MIN_RUNOFF) g.dry_time[uu] = 0.0;
             else                                  g.dry_time[uu] += dt;
+            // legacy lidproc_saveResults' report-file half: one row per
+            // evaluated runoff step for a unit with a [LID_USAGE] file.
+            if (!g.rpt_path[uu].empty())
+                saveLidReport(ctx, static_cast<int>(&g - groups_.data()),
+                              g, uu, dt);
         }
+    }
+}
+
+// ============================================================================
+// Per-unit LID report file — legacy createLidRptFile + initLidRptFile
+// (lid.c) and the writing half of lidproc_saveResults (lidproc.c:386-437).
+// Same columns, same formats, same dry-spell compression, so the two
+// engines' files diff line-for-line.
+// ============================================================================
+void LIDSolver::saveLidReport(SimulationContext& ctx, int gi, LIDGroupSoA& g,
+                              std::size_t u, double dt) {
+    auto key = std::make_pair(gi, static_cast<int>(u));
+    auto it = rpt_files_.find(key);
+    if (it == rpt_files_.end()) {
+        auto st = std::make_unique<LidRptFile>();
+        st->f.open(g.rpt_path[u], std::ios::out | std::ios::trunc);
+        st->failed = !st->f.is_open();
+        if (!st->failed) {
+            // --- initLidRptFile: title lines, two heading rows, a units row
+            //     picked by unit system, and the dashed rule.
+            static const char* head1[14] = {
+                "\n                    \t", "  Elapsed\t",
+                "    Total\t", "    Total\t", "  Surface\t", " Pavement\t",
+                "     Soil\t", "  Storage\t", "  Surface\t", "    Drain\t",
+                "  Surface\t", " Pavement\t", "     Soil\t", "  Storage"};
+            static const char* head2[14] = {
+                "\n                    \t", "     Time\t",
+                "   Inflow\t", "     Evap\t", "    Infil\t", "     Perc\t",
+                "     Perc\t", "    Exfil\t", "   Runoff\t", "  OutFlow\t",
+                "    Level\t", "    Level\t", " Moisture\t", "    Level"};
+            static const char* units1[14] = {
+                "\nDate        Time    \t", "    Hours\t",
+                "    in/hr\t", "    in/hr\t", "    in/hr\t", "    in/hr\t",
+                "    in/hr\t", "    in/hr\t", "    in/hr\t", "    in/hr\t",
+                "   inches\t", "   inches\t", "  Content\t", "   inches"};
+            static const char* units2[14] = {
+                "\nDate        Time    \t", "    Hours\t",
+                "    mm/hr\t", "    mm/hr\t", "    mm/hr\t", "    mm/hr\t",
+                "    mm/hr\t", "    mm/hr\t", "    mm/hr\t", "    mm/hr\t",
+                "       mm\t", "       mm\t", "  Content\t", "       mm"};
+            const bool is_us = (g.ucf_raindepth == 12.0);
+            const std::string title =
+                ctx.title_notes.empty() ? std::string{} : ctx.title_notes[0];
+            const int ci = g.control_idx[u];
+            const int si = g.subcatch_idx[u];
+            st->f << "SWMM5 LID Report File\n";
+            st->f << "\nProject:  " << title;
+            st->f << "\nLID Unit: "
+                  << (ci >= 0 ? ctx.lid_names.name_of(ci) : std::string{})
+                  << " in Subcatchment "
+                  << (si >= 0 ? ctx.subcatch_names.name_of(si) : std::string{})
+                  << "\n";
+            for (const char* c : head1) st->f << c;
+            for (const char* c : head2) st->f << c;
+            if (is_us) { for (const char* c : units1) st->f << c; }
+            else       { for (const char* c : units2) st->f << c; }
+            st->f << "\n----------- --------";
+            for (int i = 1; i < 14; ++i) st->f << "\t ---------";
+        }
+        it = rpt_files_.emplace(key, std::move(st)).first;
+    }
+    LidRptFile& r = *it->second;
+    if (r.failed) return;
+
+    // --- rptVars, exactly lidproc.c:391-407: rates x ucfRainfall,
+    //     depths x ucfRainDepth, soil moisture raw.
+    const double total_evap = (dt > 0.0) ? g.evap_loss[u] / dt : 0.0;
+    const double stor_exfil = (dt > 0.0) ? g.infil_loss[u] / dt : 0.0;
+    const double ucfQ = g.ucf_rainfall, ucfD = g.ucf_raindepth;
+    const double rv[12] = {
+        g.in_surf[u]        * ucfQ,   // Total Inflow
+        total_evap          * ucfQ,   // Total Evap
+        g.rpt_surf_infil[u] * ucfQ,   // Surface Infil
+        g.rpt_pave_perc[u]  * ucfQ,   // Pavement Perc
+        g.rpt_soil_perc[u]  * ucfQ,   // Soil Perc
+        stor_exfil          * ucfQ,   // Storage Exfil
+        g.surface_runoff[u] * ucfQ,   // Surface Runoff
+        g.drain_flow[u]     * ucfQ,   // Drain OutFlow
+        g.surf_depth[u]     * ucfD,   // Surface Level
+        g.pave_depth[u]     * ucfD,   // Pavement Level
+        // legacy prints x[SOIL], which stays 0 for a unit with no soil
+        // layer (barrelFluxRates never touches it); g.soil_moist carries a
+        // seeded default there, so mirror the layer test.
+        g.soil_thick[u] > 0.0 ? g.soil_moist[u] : 0.0,  // Soil Moisture
+        g.stor_depth[u]     * ucfD }; // Storage Level
+
+    const bool is_dry = (g.in_surf[u]        < L_MINFLOW &&
+                         g.surface_runoff[u] < L_MINFLOW &&
+                         g.drain_flow[u]     < L_MINFLOW &&
+                         stor_exfil          < L_MINFLOW &&
+                         total_evap          < L_MINFLOW);
+
+    // --- a wet step ending a >1-period dry spell first flushes the HELD
+    //     row (the spell's last state), lidproc.c:412-417.
+    if (!is_dry && r.was_dry > 1) r.f << r.held;
+
+    // --- format the current row into the held buffer
+    const double new_sec = old_runoff_sec_ + dt;
+    const double when = ctx.options.start_date + new_sec / 86400.0;
+    int yy, mo, dd, hh, mi, ss;
+    datetime::decodeDate(when, yy, mo, dd);
+    datetime::decodeTime(when, hh, mi, ss);
+    char ts[24];
+    std::snprintf(ts, sizeof(ts), "%02d/%02d/%04d %02d:%02d:%02d",
+                  mo, dd, yy, hh, mi, ss);
+    char row[512];
+    std::snprintf(row, sizeof(row),
+        "\n%20s\t %8.3f\t %8.3f\t %8.4f\t %8.3f\t %8.3f\t %8.3f\t %8.3f\t"
+        "%8.3f\t %8.3f\t %8.3f\t %8.3f\t %8.3f\t %8.3f",
+        ts, new_sec / 3600.0,
+        rv[0], rv[1], rv[2], rv[3], rv[4], rv[5],
+        rv[6], rv[7], rv[8], rv[9], rv[10], rv[11]);
+    r.held = row;
+
+    // --- dry-spell compression, lidproc.c:419-437
+    if (is_dry) {
+        if (r.was_dry == 0) r.f << r.held;
+        r.was_dry++;
+    } else {
+        r.f << r.held;
+        r.was_dry = 0;
     }
 }
 
