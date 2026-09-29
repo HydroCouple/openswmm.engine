@@ -440,6 +440,14 @@ struct NodeData {
      * @see Legacy: lid.c lid_addDrainInflow() Node[k].newLatFlow contribution
      */
     std::vector<double>     lid_drain_qual_vol;
+    /// Previous runoff step's lid_drain_qual_load, for legacy
+    /// lid_addDrainInflow's routing-step interpolation:
+    ///   w = (1-f)*oldDrainFlow*oldQual + f*newDrainFlow*newQual
+    /// (lid.c). Rolled from the current arrays at the top of each runoff
+    /// step, before A6b refills them.
+    std::vector<double>     lid_drain_qual_load_old;
+    /// Previous runoff step's lid_drain_qual_vol (the q half of the pair).
+    std::vector<double>     lid_drain_qual_vol_old;
     /**
      * @brief LID drain WATER inflow rate per node (ft3/sec) — the routing
      *        twin of `lid_drain_qual_vol`.
@@ -793,6 +801,8 @@ struct NodeData {
         qual_vol_in.assign(un, 0.0);
         lid_drain_qual_load.clear();
         lid_drain_qual_vol.assign(un, 0.0);
+        lid_drain_qual_load_old.clear();
+        lid_drain_qual_vol_old.assign(un, 0.0);
         lid_drain_inflow.assign(un, 0.0);
         inflow.assign(un, 0.0);
         outflow.assign(un, 0.0);
@@ -865,6 +875,7 @@ struct NodeData {
         g(coupling_age_vol_inflow, 0.0); g(coupling_temp_vol_inflow, 0.0);
         qual_vol_in.resize(un, 0.0);
         lid_drain_qual_vol.resize(un, 0.0);
+        lid_drain_qual_vol_old.resize(un, 0.0);
         lid_drain_inflow.resize(un, 0.0);
         g(inflow, 0.0); g(outflow, 0.0); g(overflow, 0.0);
         g(losses, 0.0); g(crown_elev, 0.0); g(degree, 0);
