@@ -2754,41 +2754,54 @@ void resolve_cross_references(SimulationContext& ctx) {
             }
         }
     } else {
-        // DEPTH mode: legacy link_validate (link.c:1061-1070) zeroes a
-        // NEGATIVE authored offset on every link with WARNING 03. Keeping it
-        // shifts the link's invert-relative geometry — slope, elevation
-        // drop, which conduit draws WARNING 04 — and diverges the hydraulics
-        // from the first routing step (800-node-sewer: legacy WARN03 on
-        // conduit 136687's -0.01 inOffset vs v6 WARN04 elsewhere). The ELEV
-        // branch above and the conduit conversion below already clamp their
-        // converted depths the same way. Weir/outlet crests live in the
-        // side tables (legacy keeps them in offset1 and zeroes them by the
-        // same check).
+        // DEPTH mode. Legacy zeroes a negative authored offset in each link
+        // type's OWN validator, and the validators do not agree with each
+        // other:
+        //   CONDUIT  conduit_validate (link.c:1061-1070): offset1 AND
+        //            offset2, each with WARNING 03 (800-node-sewer: legacy
+        //            WARN03 on conduit 136687's -0.01 inOffset).
+        //   ORIFICE  orifice_validate (link.c:1719): offset1 only, SILENTLY.
+        //   WEIR     weir_validate (link.c:2188): offset1 only, SILENTLY.
+        //   OUTLET   nothing — a negative outlet crest is kept as authored
+        //            (it still passes through the WARNING-10 raise below).
+        //   PUMP     has no offsets.
+        // A regulator's offset2 is NEVER zeroed: link_setParams mirrors the
+        // authored value into it (link.c:366-391) and its one reader is the
+        // node crown-elevation pass, which legacy runs on the RAW value — an
+        // orifice authored with a large negative offset contributes a crown
+        // far BELOW its node and never raises the EXTRAN surcharge
+        // threshold. v6 zeroed both ends of every link (and warned each
+        // time), which lifted ST2337's crown in
+        // subcatchments-no-infiltration from legacy's 1.75 ft (conduit
+        // 334.1's crown) to 2.0 ft (the zeroed orifice INLET's), so legacy
+        // switched that junction to the surcharged dqdh depth update one
+        // step before v6 did — bit-exact for 776 report periods, then a
+        // permanent 0.1 % flow bias. The ELEV branch above is different and
+        // untouched: there link_getOffsetHeight converts and clamps every
+        // end, warning included, before the validators run.
         for (int j = 0; j < n_links; ++j) {
             auto uj = static_cast<std::size_t>(j);
-            if (ctx.links.offset1[uj] < 0.0) {
-                ctx.warnings.push_back(format_warning(
-                    WARN_NEGATIVE_OFFSET, ctx.link_names.name_of(j)));
-                ctx.links.offset1[uj] = 0.0;
-            }
-            if (ctx.links.offset2[uj] < 0.0) {
-                ctx.warnings.push_back(format_warning(
-                    WARN_NEGATIVE_OFFSET, ctx.link_names.name_of(j)));
-                ctx.links.offset2[uj] = 0.0;
-            }
-            auto lt = ctx.links.type[uj];
-            if (lt == LinkType::WEIR || lt == LinkType::OUTLET) {
-                const int wr  = ctx.link_subtypes.weir_row(j);
-                const int olr = (wr < 0) ? ctx.link_subtypes.outlet_row(j) : -1;
-                double* crest = (wr >= 0)
-                    ? &ctx.link_subtypes.weirs.crest_height[static_cast<std::size_t>(wr)]
-                    : (olr >= 0 ? &ctx.link_subtypes.outlets.crest_height[static_cast<std::size_t>(olr)]
-                                : nullptr);
-                if (crest && *crest < 0.0) {
+            const auto lt = ctx.links.type[uj];
+            if (lt == LinkType::CONDUIT) {
+                if (ctx.links.offset1[uj] < 0.0) {
                     ctx.warnings.push_back(format_warning(
                         WARN_NEGATIVE_OFFSET, ctx.link_names.name_of(j)));
-                    *crest = 0.0;
+                    ctx.links.offset1[uj] = 0.0;
                 }
+                if (ctx.links.offset2[uj] < 0.0) {
+                    ctx.warnings.push_back(format_warning(
+                        WARN_NEGATIVE_OFFSET, ctx.link_names.name_of(j)));
+                    ctx.links.offset2[uj] = 0.0;
+                }
+            } else if (lt == LinkType::WEIR) {
+                // A weir's WORKING crest is the side-table copy, zeroed next
+                // to the WARNING-10 raise below, AFTER the authored value is
+                // mirrored into offset2 — legacy's order (link_setParams
+                // mirror -> validator zero -> raise). links.offset1 is not
+                // read for weirs past this point; keep it on the value the
+                // old path left there.
+                if (ctx.links.offset1[uj] < 0.0)
+                    ctx.links.offset1[uj] = 0.0;
             }
         }
     }
@@ -2827,14 +2840,33 @@ void resolve_cross_references(SimulationContext& ctx) {
 
         double inv1 = ctx.nodes.invert_elev[static_cast<std::size_t>(n1)];
         double inv2 = ctx.nodes.invert_elev[static_cast<std::size_t>(n2)];
-        // legacy Link.offset2 of a regulator: link_setParams copies offset1
-        // into it and link_convertOffsets keeps them equal, but the raise
-        // below touches offset1 ONLY — link_setOutfallDepth reads offset2
-        // (the un-raised crest) as `z` for a downstream outfall. Kept here
-        // for outfall::legacyOffset. dividers-in-dynamic-wave's outlet
-        // Under5 (crest 0, raised 0.25 m to its FREE outfall's invert) gave
-        // the outfall a 0.25 m depth and ran 2 L/s backwards for the run.
+        // legacy Link.offset2 of a regulator: link_setParams copies the
+        // AUTHORED offset1 into it and link_convertOffsets keeps them equal,
+        // but NOTHING later touches it — not the validators' silent negative
+        // zeroing and not the raise below, which touch offset1 only.
+        // link_setOutfallDepth reads offset2 (the un-raised crest) as `z`
+        // for a downstream outfall (kept for outfall::legacyOffset:
+        // dividers-in-dynamic-wave's outlet Under5, crest 0, raised 0.25 m
+        // to its FREE outfall's invert, gave the outfall a 0.25 m depth and
+        // ran 2 L/s backwards for the run), and the node crown-elevation
+        // pass reads it RAW — an orifice authored with a large negative
+        // offset contributes a crown far BELOW its node and never raises
+        // the EXTRAN surcharge threshold. Mirroring the post-zeroing value
+        // instead lifted ST2337's crown in subcatchments-no-infiltration
+        // from legacy's 1.75 ft (conduit 334.1's crown) to 2.0 ft (the
+        // zeroed orifice INLET's), so legacy switched that junction to the
+        // surcharged dqdh depth update one step before v6 did — bit-exact
+        // for 776 report periods, then a permanent 0.1 % flow bias. So:
+        // mirror FIRST (authored value), zero SECOND, raise LAST. In ELEV
+        // mode *off is already the converted height, clamped non-negative
+        // by legacyOffsetHeight, so the mirror matches link_convertOffsets
+        // and the zeroing below never fires.
         ctx.links.offset2[uj] = *off;
+        // orifice_validate (link.c:1719) / weir_validate (link.c:2188): a
+        // negative crest is zeroed SILENTLY. Outlets have no such check —
+        // a negative outlet crest stays authored and goes into the raise.
+        if ((lt == LinkType::ORIFICE || lt == LinkType::WEIR) && *off < 0.0)
+            *off = 0.0;
         if (inv1 + *off < inv2) {
             if (ctx.options.routing_model == RoutingModel::DYNWAVE ||
                 ctx.options.routing_model == RoutingModel::FV) {
