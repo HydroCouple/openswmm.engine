@@ -47,6 +47,10 @@
 #include <vector>
 #include <cstddef>
 #include <cstdint>
+#include <string>
+#include <fstream>
+#include <map>
+#include <memory>
 
 namespace openswmm {
 
@@ -105,6 +109,13 @@ struct LIDGroupSoA {
     std::vector<double> inflow;        ///< Per-unit inflow rate (ft/sec) — set before execute()
     std::vector<double> evap_rate_unit;///< Per-unit effective PET rate (ft/sec) — filled by execute()
     std::vector<double> subcatch_rain; ///< Parent subcatchment rainfall (ft/sec) — for the rain-barrel dry-time reset (legacy lid.c:1920)
+    std::vector<std::string> rpt_path; ///< Per-unit LID report file ([LID_USAGE] col 9); empty = none
+    // Per-step kernel rates staged for the LID report file (ft/s). Legacy
+    // lidproc_saveResults reads these straight from lidproc.c's static flux
+    // variables; the kernel here is per-call, so runUnitLegacy stages them.
+    std::vector<double> rpt_surf_infil;  ///< SurfaceInfil this step
+    std::vector<double> rpt_pave_perc;   ///< PavePerc this step
+    std::vector<double> rpt_soil_perc;   ///< SoilPerc this step
 
     // Surface layer
     std::vector<double> surf_store;    ///< Surface storage depth (ft)
@@ -340,6 +351,21 @@ public:
 private:
     std::vector<LIDGroupSoA> groups_;
     double old_runoff_sec_ = 0.0;
+
+    /// One legacy TLidRptFile per reporting unit (legacy lid.h:150-156):
+    /// the stream, the count of successive dry periods (seeded 1 by the
+    /// header, initLidRptFile), and the held row that marks the end of a
+    /// dry spell. Keyed (group index, unit index); opened lazily on the
+    /// unit's first evaluated step.
+    struct LidRptFile {
+        std::ofstream f;
+        int  was_dry = 1;
+        std::string held;
+        bool failed = false;
+    };
+    std::map<std::pair<int, int>, std::unique_ptr<LidRptFile>> rpt_files_;
+    void saveLidReport(SimulationContext& ctx, int gi, LIDGroupSoA& g,
+                       std::size_t u, double dt);
     double recovery_factor_ = 1.0;
     std::vector<double> native_infil_;
     std::vector<double> max_native_infil_;
