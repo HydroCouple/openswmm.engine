@@ -408,6 +408,18 @@ struct SubcatchData {
      *  @see Legacy: Subcatch[i].pondedQual[] */
     std::vector<double> ponded_qual;
 
+    /** @brief Incoming run-on pollutant mass RATE per (subcatch, pollutant),
+     *         mg/sec.
+     *  @details Legacy uses Subcatch.newQual[] as a temporary accumulator for
+     *           this between subcatch_getRunon and surfqual_getWashoff:
+     *           upstream subcatchments add oldRunoff * oldQual * LperFT3
+     *           (subcatch.c:553) and findPondedLoads / findLidLoads consume
+     *           it as wRunon = newQual * tStep (surfqual.c:443,561). v6 keeps
+     *           the washoff concentration in `conc`, so the accumulator needs
+     *           its own storage. Rebuilt by assembleRunon() every runoff
+     *           substep, like runon_inflow. */
+    std::vector<double> runon_qual_rate;
+
     /**
      * @brief Area-averaged subarea runoff RATE, ft/sec — legacy's
      *        `subcatch_getRunoff` return value (`runoff / area`).
@@ -972,7 +984,7 @@ struct SubcatchData {
                             v.begin() + static_cast<std::ptrdiff_t>(base + np));
             };
             erase2d(conc); erase2d(conc_old); erase2d(init_loading);
-            erase2d(ponded_qual); erase2d(washoff_load);
+            erase2d(ponded_qual); erase2d(runon_qual_rate); erase2d(washoff_load);
         }
 
         // Flat 2D total load: [sc * np + p]
@@ -1010,6 +1022,7 @@ struct SubcatchData {
             conc_old.assign(total, 0.0);
             init_loading.assign(total, 0.0);
             ponded_qual.assign(total, 0.0);
+            runon_qual_rate.assign(total, 0.0);
             washoff_load.assign(total, 0.0);
         }
     }
@@ -1111,6 +1124,7 @@ struct SubcatchData {
         conc.shrink_to_fit();
         conc_old.shrink_to_fit();
         ponded_qual.shrink_to_fit();
+        runon_qual_rate.shrink_to_fit();
         washoff_load.shrink_to_fit();
         total_load.shrink_to_fit();
         coverage.shrink_to_fit();
