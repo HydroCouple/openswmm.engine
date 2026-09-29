@@ -289,6 +289,9 @@ TEST(MsxParityInflows, WallSpeciesInflowIsRefusedWithAWarning) {
                           "[REACTION_OPTIONS]\nAREA_UNITS  M2\nRATE_UNITS  HR\n\n"
                           "[REACTION_SPECIES]\nBULK Sp MG 0 0\nWALL Wsp MG 0 0\n\n"));
     ASSERT_TRUE(r.opened);
+    // [INFLOWS] rows are classified (and warned about) by InflowSolver::init,
+    // which runs at initialize, not at open.
+    ASSERT_TRUE(startRun(r));
     bool warned = false;
     for (const auto& w : r.eng->context().warnings)
         if (w.find("Wsp") != std::string::npos && w.find("WALL") != std::string::npos)
@@ -350,10 +353,15 @@ TEST(MsxParityInitialQuality, FileSidecarLoadsAndIsReferencedNotExpanded) {
     ASSERT_TRUE(r2.opened);
     const fs::path saved = kOutDir / "iq_file_saved.inp";
     ASSERT_EQ(swmm_model_write(r2.e, saved.string().c_str()), SWMM_OK);
+    // Scope to [INITIAL_QUALITY]: J1 is also, legitimately, in [JUNCTIONS],
+    // [CONDUITS] and [COORDINATES].
     const std::string text = readAll(saved);
-    EXPECT_NE(text.find("FILE"), std::string::npos);
-    EXPECT_NE(text.find("iq_rows.csv"), std::string::npos);
-    EXPECT_EQ(text.find("J1"), text.rfind("J1"))
+    const auto iq = text.find("[INITIAL_QUALITY]");
+    ASSERT_NE(iq, std::string::npos);
+    const std::string section = text.substr(iq, text.find("\n[", iq) - iq);
+    EXPECT_NE(section.find("FILE"), std::string::npos);
+    EXPECT_NE(section.find("iq_rows.csv"), std::string::npos);
+    EXPECT_EQ(section.find("J1"), std::string::npos)
         << "the file's J1 row must not be expanded inline";
     finish(r2);
 }

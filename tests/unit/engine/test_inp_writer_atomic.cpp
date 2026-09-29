@@ -73,7 +73,8 @@ protected:
     }
     void TearDown() override {
         for (const auto& p : fs::recursive_directory_iterator(dir))
-            EXPECT_NE(p.path().filename().string().find(".openswmm-save-"), 0u) << p.path();
+            EXPECT_NE(path_utf8(p.path().filename()).find(".openswmm-save-"), 0u)
+                << path_utf8(p.path());
     }
 };
 
@@ -83,7 +84,9 @@ TEST_F(InpWriterAtomic, ReplacesExistingUnicodeFileAndPreservesPermissions) {
     fs::permissions(model, fs::perms::owner_read | fs::perms::owner_write);
     ASSERT_EQ(write(), 0);
     EXPECT_NE(read(model).find("atomic writer test"), std::string::npos);
+#ifndef _WIN32  // Windows has no group permission bits
     EXPECT_EQ(fs::status(model).permissions() & fs::perms::group_write, fs::perms::none);
+#endif
     EXPECT_EQ(write(), 0);
 }
 TEST_F(InpWriterAtomic, RefusesDirectoryAndMissingParent) {

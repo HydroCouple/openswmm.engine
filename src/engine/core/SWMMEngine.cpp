@@ -1444,6 +1444,25 @@ int SWMMEngine::start(int save_results) noexcept {
 // step()
 // ============================================================================
 
+namespace {
+/// A reserved-species node OVERRIDE is the node's PUBLISHED state
+/// (openswmm_forcing.h). applyForcings writes it before the step, but the
+/// quality stage recomputes a flow-through junction from its inflow, so
+/// step() re-asserts it once transport has run.
+void reassertNodeStateOverrides(SimulationContext& ctx) noexcept {
+    const auto& f = ctx.forcing;
+    const auto nn = static_cast<std::size_t>(ctx.n_nodes());
+    if (ctx.options.heat_transport && ctx.heat_state.node_temp.size() == nn)
+        for (std::size_t u = 0; u < nn && u < f.node_temperature_mode.size(); ++u)
+            if (f.node_temperature_mode[u] == ForcingMode::OVERRIDE)
+                ctx.heat_state.node_temp[u] = f.node_temperature_value[u];
+    if (ctx.options.water_age && ctx.water_age_state.node_age.size() == nn)
+        for (std::size_t u = 0; u < nn && u < f.node_age_mode.size(); ++u)
+            if (f.node_age_mode[u] == ForcingMode::OVERRIDE)
+                ctx.water_age_state.node_age[u] = f.node_age_value[u] * 3600.0;
+}
+}  // namespace
+
 int SWMMEngine::step(double* elapsed_time) noexcept {
     if (ctx_.state != EngineState::RUNNING) {
         if (elapsed_time) *elapsed_time = 0.0;
@@ -1592,6 +1611,7 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
             updateRoutingMassBalance(dt_next);
         }
     }
+    reassertNodeStateOverrides(ctx_);
     computeFinalStorage();
     // IGNORE_QUALITY: surface buildup was never updated this run, so skip the
     // final quality mass-balance pass (legacy skips the whole quality path).

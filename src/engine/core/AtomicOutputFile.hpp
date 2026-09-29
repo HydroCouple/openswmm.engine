@@ -18,7 +18,9 @@ namespace openswmm::io {
 // followed by atomic replacement. This is not a multi-file transaction.
 class AtomicOutputFile {
 public:
-    explicit AtomicOutputFile(const std::filesystem::path& destination)
+    // `binary` publishes exactly the bytes written; the default text mode lets
+    // Windows turn "\n" into "\r\n".
+    explicit AtomicOutputFile(const std::filesystem::path& destination, bool binary = false)
         : destination_(destination)
     {
         namespace fs = std::filesystem;
@@ -52,7 +54,7 @@ public:
         for (int attempt = 0; attempt < 32; ++attempt) {
             const auto candidate = destination_.parent_path() /
                 (".openswmm-save-" + std::to_string(stamp) + "-" + std::to_string(sequence++));
-            file_ = fopen_path(candidate, "wx");
+            file_ = fopen_path(candidate, binary ? "wbx" : "wx");
             if (file_) { staging_ = candidate; break; }
             if (errno != EEXIST) break;
         }

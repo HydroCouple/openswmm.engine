@@ -60,6 +60,11 @@ constexpr int kMaxSubsteps = 512;
 /// Below this store volume (ft3) a node holds no meaningful concentration —
 /// used to decide when a store has emptied rather than merely shrunk.
 constexpr double kMinStoreVol = 1.0e-9;
+/// Relative resync mismatch |v_new/v_old - 1| treated as hydraulic noise
+/// rather than untracked water (see step()). The bit-exact DW kernels leave a
+/// steady chain jittering by up to 5.6e-6 (test_ard_node_store); genuine
+/// untracked gains (the draining-storage deck) are O(0.1).
+constexpr double kResyncNoiseRel = 1.0e-4;
 /// Debt 216's containment band: the temperature row is exempt from the
 /// non-negativity floor (0 degC is an ordinary state, and flooring there
 /// silently pins sub-zero water at freezing) but NOT unbounded — the naked
@@ -1192,9 +1197,12 @@ void ArdEngine::step(SimulationContext& ctx, double dt) {
         // the mass follows the water down. Scale DOWN only: a store whose
         // volume the solver reports as larger has gained water the store did
         // not track, and scaling up would create mass from nothing.
+        // Except within kResyncNoiseRel: scaling down but never up turns
+        // zero-mean solver jitter into one-way dilution (a steady 100 mg/L
+        // arrived 2.5e-5 short), so inside the band concentration is kept.
         if (v_old > kMinStoreVol) {
             const double ratio = v_new / v_old;
-            if (ratio < 1.0)
+            if (ratio < 1.0 || ratio - 1.0 <= kResyncNoiseRel)
                 for (int s = 0; s < ns; ++s)
                     node_mass_[und * uns + static_cast<std::size_t>(s)] *= ratio;
         } else if (v_new <= kMinStoreVol) {

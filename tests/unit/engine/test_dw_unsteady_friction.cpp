@@ -20,8 +20,9 @@
  *
  * @details Valve-closure fixture under DYNWAVE (post-closure mass-oscillation
  *          damping — DW resolves the oscillation, not the acoustic front):
- *          bit-inertness of NONE, damping with k3 > 0 under both SLOT and
- *          EXTRAN (the two celerity arms), k3-monotonicity, stability at the
+ *          bit-inertness of NONE, damping with k3 > 0 under SLOT and
+ *          engagement + boundedness under EXTRAN (the two celerity arms),
+ *          k3-monotonicity, stability at the
  *          paper's sweep ceiling, discrete-rest bit-identity, and Picard
  *          health (trials do not degrade — the dqdh consistency gate U-G6).
  *          Plan: plans/MIXED_FLOW_CLOSURES_TPA_UF_PLAN_2026-08-29.md §3.4/§3.5.
@@ -235,14 +236,27 @@ TEST(DwUnsteadyFriction, ValveClosureK3DampsUnderSlot) {
         << "k3=0.02 must damp the post-closure oscillation (SLOT celerity arm)";
 }
 
-TEST(DwUnsteadyFriction, ValveClosureK3DampsUnderExtran) {
+TEST(DwUnsteadyFriction, ValveClosureK3EngagesAndStaysBoundedUnderExtran) {
+    // No damping-order gate under EXTRAN: a surcharged EXTRAN node has no
+    // storage, so this fixture has no post-closure mass oscillation. Every
+    // conduit is under the UF dead band from t ~ 66 s and JV's ringing decays
+    // to ~1e-9 ft by 300 s; the 420 s+ window holds only legacy's sign-flip
+    // under-relaxation kick (q = +/-0.001 cfs, dwflow.c) at a phase-random
+    // time, so damped-vs-base late_amp is a coin toss (it inverted when
+    // 259a0ed made the bit-exact kernels the default). What EXTRAN can
+    // promise: k3 engages during the surge and stays bounded.
     const auto base = runDeck("dw_ext_k0", valveModel("EXTRAN", ""), "JV", "C_P");
     const auto damped = runDeck("dw_ext_k20", valveModel("EXTRAN", kUfOn),
                                 "JV", "C_P");
     ASSERT_TRUE(base.ok && damped.ok);
-    ASSERT_GT(base.late_amp, 1e-4);
-    EXPECT_LT(damped.late_amp, base.late_amp)
-        << "k3=0.02 must damp under the EXTRAN (frozen-width) celerity arm";
+    EXPECT_NE(fileBytes(outPath("dw_ext_k0.out")), fileBytes(outPath("dw_ext_k20.out")))
+        << "k3=0.02 must engage the EXTRAN (frozen-width) celerity arm";
+    EXPECT_TRUE(std::isfinite(damped.late_amp));
+    EXPECT_LT(damped.max_q, 500.0) << "no blowup under EXTRAN";
+    // Sign-flip restarts measured <= 0.026 ft across k3 in {0, 0.005..0.045}
+    // and ROUTING_STEP {0.2, 0.25, 0.3}; 0.1 ft still catches sustained growth.
+    EXPECT_LT(damped.late_amp, 0.1)
+        << "base=" << base.late_amp << " damped=" << damped.late_amp;
 }
 
 TEST(DwUnsteadyFriction, DampingMonotoneInK3) {

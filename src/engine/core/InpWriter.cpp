@@ -1203,7 +1203,8 @@ static bool writeComponentConfig(const SimulationContext& ctx,
     ec.clear();
     if (staging.has_parent_path()) fs::create_directories(staging.parent_path(), ec);
     if (ec) return fail("cannot create output directory: " + ec.message());
-    io::AtomicOutputFile output(staging);
+    // Binary: configs are copied and compared byte for byte.
+    io::AtomicOutputFile output(staging, /*binary=*/true);
     FILE* f = output.stream();
     if (!f) return fail(output.error());
     // Preserve the existing notice when a successful save replaces different
@@ -1322,7 +1323,15 @@ int writeInpFile(const SimulationContext&  ctx_internal,
 
     // Slice IO-4: pre-compute the rebase anchor + opt-out flag once so each
     // section can pass them to emit_path_token() without re-deriving.
-    const std::string dst_dir = openswmm::io::parentDir(path);
+    // makeRelative needs an absolute anchor (it roots a relative one at "/"),
+    // so a save to "dir/model.inp" is anchored at the working directory.
+    const std::string dst_dir = [&] {
+        const std::string dir = openswmm::io::parentDir(path);
+        if (dir.empty() || openswmm::io::isAbsolutePath(dir)) return dir;
+        std::error_code ec;
+        const auto abs = std::filesystem::absolute(openswmm::io::utf8_path(dir), ec);
+        return ec ? dir : openswmm::io::path_utf8(abs);
+    }();
     const bool        force_abs_paths = ctx.options.write_absolute_paths;
 
     sec(f,"TITLE");
