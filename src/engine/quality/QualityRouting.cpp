@@ -662,10 +662,21 @@ void QualitySolver::addWetWeatherLoads(SimulationContext& ctx, double dt) {
     // (CFS) are set once per runoff step in A6b and persist until overwritten.
     // Matches legacy lid_addDrainInflow() (node drain) / lid_addDrainRunon()
     // (subcatch drain routed to that subcatch's outlet node).
+    // legacy lid_addDrainInflow weights both halves of the pair by where
+    // this routing instant falls between the two runoff steps:
+    //   q = (1-f)*oldDrainFlow + f*newDrainFlow
+    //   w = (1-f)*oldDrainFlow*oldQual + f*newDrainFlow*newQual
+    // The per-node accumulators hold exactly those products, so the same
+    // f addWetWeatherLoads uses interpolates them per node.
+    const double f_dr  = ctx.runoff_interp_f;
+    const double f1_dr = 1.0 - f_dr;
     for (int j = 0; j < ctx.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
-        double drain_vol_rate = (uj < ctx.nodes.lid_drain_qual_vol.size())
-                                ? ctx.nodes.lid_drain_qual_vol[uj] : 0.0;
+        double v_new = (uj < ctx.nodes.lid_drain_qual_vol.size())
+                       ? ctx.nodes.lid_drain_qual_vol[uj] : 0.0;
+        double v_old = (uj < ctx.nodes.lid_drain_qual_vol_old.size())
+                       ? ctx.nodes.lid_drain_qual_vol_old[uj] : 0.0;
+        double drain_vol_rate = f1_dr * v_old + f_dr * v_new;
         if (drain_vol_rate <= 0.0) continue;
 
         ctx.nodes.qual_vol_in[uj] += drain_vol_rate * dt;
@@ -699,8 +710,11 @@ void QualitySolver::addWetWeatherLoads(SimulationContext& ctx, double dt) {
 
         for (int p = 0; p < np; ++p) {
             auto nd_idx = uj * static_cast<std::size_t>(np) + static_cast<std::size_t>(p);
-            double load = (nd_idx < ctx.nodes.lid_drain_qual_load.size())
-                          ? ctx.nodes.lid_drain_qual_load[nd_idx] : 0.0;
+            double w_new = (nd_idx < ctx.nodes.lid_drain_qual_load.size())
+                           ? ctx.nodes.lid_drain_qual_load[nd_idx] : 0.0;
+            double w_old = (nd_idx < ctx.nodes.lid_drain_qual_load_old.size())
+                           ? ctx.nodes.lid_drain_qual_load_old[nd_idx] : 0.0;
+            double load = f1_dr * w_old + f_dr * w_new;
             if (load > 0.0 && nd_idx < ctx.nodes.qual_mass_in.size())
                 ctx.nodes.qual_mass_in[nd_idx] += load;
 

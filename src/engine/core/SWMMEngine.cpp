@@ -1781,6 +1781,17 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                   ctx_.nodes.lid_drain_inflow.end(), 0.0);
         if (ctx_.n_pollutants() > 0 || ctx_.options.water_age ||
             ctx_.options.heat_transport) {
+            // legacy lid_addDrainInflow interpolates the drain's water AND
+            // its load between the previous and current runoff steps at
+            // every routing step. Keep the outgoing step's rates as the
+            // "old" ends of that pair before zeroing for the refill; on a
+            // sharp first flush the constant current-rate form delivered
+            // the pulse one full runoff step early
+            // (swmm-5-model-with-lid-but-no-bottom-infiltration's node
+            // XXXXX00035: v6 899 mg/L at period 8 against legacy ~0, with
+            // legacy's 999 arriving at period 9).
+            ctx_.nodes.lid_drain_qual_load_old = ctx_.nodes.lid_drain_qual_load;
+            ctx_.nodes.lid_drain_qual_vol_old  = ctx_.nodes.lid_drain_qual_vol;
             std::fill(ctx_.nodes.lid_drain_qual_load.begin(),
                       ctx_.nodes.lid_drain_qual_load.end(), 0.0);
             std::fill(ctx_.nodes.lid_drain_qual_vol.begin(),
