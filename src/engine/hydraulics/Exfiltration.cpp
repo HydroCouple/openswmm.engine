@@ -206,12 +206,16 @@ void ExfilSolver::computeAll(SimulationContext& ctx, double dt) {
         if (uni < nodes.aquifer2d_bed.size() && nodes.aquifer2d_bed[uni]) {
             const int sr0 = ctx.node_subtypes.storage_row(ni);
             if (sr0 >= 0)
-                ctx.node_subtypes.storages.exfil_loss[static_cast<std::size_t>(sr0)] = 0.0;
+                ctx.node_subtypes.storages.exfil_rate[static_cast<std::size_t>(sr0)] = 0.0;
             continue;
         }
 
+        // Legacy storage_getLosses calls exfil_getLoss whenever the exfil
+        // object exists, INCLUDING at zero depth: the Green-Ampt state keeps
+        // evolving (recovering) through dry spells, and the volume cap in
+        // Router::initNodeFlows zeroes the booked loss on an empty node.
+        // Skipping dry nodes froze the GA state legacy keeps drying.
         double depth = nodes.depth[uni];
-        if (depth <= 0.0) continue;
 
         double total_loss = 0.0;
 
@@ -257,17 +261,18 @@ void ExfilSolver::computeAll(SimulationContext& ctx, double dt) {
             }
         }
 
-        // Limit to available volume
-        double max_loss = nodes.volume[uni] / dt;
-        total_loss = std::min(total_loss, max_loss);
-
-        // Write pre-computed exfil volume (ft3) into the side-table for
-        // Router::initNodeFlows. Volume is reduced through the routing continuity
-        // equation (nodes.losses) rather than here, so that evap + exfil are
-        // jointly capped to available storage before advancing the timestep.
+        // Hand the RAW rate (cfs) to Router::initNodeFlows, which applies
+        // legacy's single joint evap+exfil cap (node.c storage_getLosses:
+        // ratio = newVolume / ((evapRate + exfilRate) * tStep), both rates
+        // scaled by the ratio of the UNCAPPED values) and books the final
+        // exfil_loss volume. Pre-capping here fed the joint cap a clamped
+        // rate — a different split and different bits whenever a near-dry
+        // storage's fresh Green-Ampt rate exceeded the stored volume — and
+        // the old volume*dt/dt round-trip perturbed the rate by an ULP on
+        // every step (greenville-epa's node 83 at its first wetting).
         const int sr = ctx.node_subtypes.storage_row(static_cast<int>(uni));
         if (sr >= 0)
-            ctx.node_subtypes.storages.exfil_loss[static_cast<std::size_t>(sr)] = total_loss * dt;
+            ctx.node_subtypes.storages.exfil_rate[static_cast<std::size_t>(sr)] = total_loss;
     }
 }
 
