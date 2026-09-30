@@ -12,7 +12,7 @@ def main():
     source = Path(__file__).resolve().parents[1] / 'openswmm'
     destination = Path(sys.argv[1]).resolve() / 'openswmm'
     for path in source.rglob('*'):
-        if path.is_file() and (path.suffix in ('.py', '.pyi') or path.name == 'py.typed'):
+        if path.is_file() and (path.suffix in ('.py', '.pyi') or path.name in ('py.typed', 'catalog.json')):
             target = destination / path.relative_to(source)
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, target)

@@ -1,0 +1,148 @@
+{
+ "element_names": {
+  "nodes": "node",
+  "links": "link",
+  "subcatchments": "subcatchment",
+  "gages": "gage",
+  "pollutants": "pollutant",
+  "quality.landuses": "landuse",
+  "patterns": "pattern",
+  "tables": "table",
+  "process_components": "process_component",
+  "reactions.species": "species",
+  "reactions.coefficients": "coefficient",
+  "reactions.terms": "term"
+ },
+ "subtype_fields": {
+  "Node": "type",
+  "Link": "type"
+ },
+ "subtypes": {
+  "node.storage": [
+   "STORAGE"
+  ],
+  "node.outfall": [
+   "OUTFALL"
+  ],
+  "node.divider": [
+   "DIVIDER"
+  ],
+  "link.pump": [
+   "PUMP"
+  ],
+  "link.weir": [
+   "WEIR"
+  ],
+  "link.orifice": [
+   "ORIFICE"
+  ],
+  "link.outlet": [
+   "OUTLET"
+  ]
+ },
+ "variants": {
+  "table": [
+   "TimeSeries",
+   "Curve"
+  ]
+ },
+ "roots": {
+  "builder": {
+   "class": "ModelBuilder",
+   "construct": {
+    "via": "new",
+    "args": []
+   }
+  },
+  "output": {
+   "class": "OutputReader",
+   "construct": {
+    "via": "new",
+    "args": [
+     "path"
+    ]
+   }
+  },
+  "geopackage": {
+   "class": "GeoPackage",
+   "construct": {
+    "via": "new",
+    "args": [
+     "path"
+    ]
+   }
+  },
+  "hotstart": {
+   "class": "HotStart",
+   "construct": {
+    "via": "open",
+    "args": [
+     "path"
+    ]
+   }
+  },
+  "xsect": {
+   "class": "XSectionGeometry",
+   "construct": {
+    "via": "new",
+    "args": [
+     "shape",
+     "geom1",
+     "geom2",
+     "geom3",
+     "geom4",
+     "units"
+    ]
+   }
+  }
+ },
+ "function_modules": [
+  "datetime",
+  "dates"
+ ],
+ "record_classes": [
+  "ImpactEntry",
+  "ConversionResult"
+ ],
+ "exclude_members": [
+  "Solver.handle",
+  "Solver.generation"
+ ],
+ "exclude_classes": [
+  "EngineError",
+  "BadHandleError",
+  "BadIndexError",
+  "BadParamError",
+  "CRSError",
+  "DependencyError",
+  "FileError",
+  "HotStartError",
+  "LifecycleError",
+  "NumericalError",
+  "ParseError",
+  "PluginError",
+  "StaleObjectError"
+ ],
+ "units": {
+  "link.roughness": "manning_n",
+  "subcatchment.n_imperv": "manning_n",
+  "subcatchment.n_perv": "manning_n",
+  "link.pump.startup_depth": "length",
+  "link.pump.shutoff_depth": "length",
+  "link.weir.crest_height": "length",
+  "node.outfall.param": "length",
+  "link.slope": "fraction",
+  "link.control_setting": "dimensionless",
+  "link.target_setting": "dimensionless",
+  "link.weir.end_contractions": "count",
+  "xsect.full_depth": "length",
+  "xsect.max_width": "length",
+  "xsect.full_hyd_radius": "length",
+  "xsect.full_area": "area",
+  "xsect.max_area": "area",
+  "node.stats.time_flooded": "s",
+  "statistics.node_time_flooded": "s",
+  "subcatchment.infiltration.curve_number_drying_time": "d"
+ },
+ "min_float_units": 97
+}
