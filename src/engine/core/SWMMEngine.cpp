@@ -2342,6 +2342,10 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         //   lidInflow = (qImperv * fromImperv + qPerv * fromPerv) / lidArea
         // where qImperv/qPerv are CFS from non-LID impervious/pervious subareas.
         const auto& rsoa = runoff_.soa();
+        // Legacy VlidIn / qRunoff accumulators for this runoff step (see the
+        // volume-domain fold after A6b).
+        lid_vlidin_vol_.assign(static_cast<std::size_t>(ctx_.n_subcatches()), 0.0);
+        lid_qsurf_cfs_.assign(static_cast<std::size_t>(ctx_.n_subcatches()), 0.0);
         for (int t = 0; t < lid_.numGroups(); ++t) {
             auto& g = lid_.group(t);
             if (g.count == 0) continue;
@@ -2370,36 +2374,40 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                 // −VlidIn (legacy subcatch.c:746-751,
                 // `vOutflow = Voutflow − VlidIn + VlidOut`): the captured share
                 // is the LID's inflow, so it is no longer the subcatchment's
-                // outflow. Without this it leaves the outlet in full AND runs
-                // through the LID, so LID capture buys no runoff reduction and
-                // the run gains volume equal to whatever the unit sheds. The
-                // +VlidOut half is applied below, after the units are stepped.
+                // outflow. Booked in legacy's exact op sequence — lid.c:1698
+                // `VlidIn += lidInflow * lidArea * tStep` with lidInflow the
+                // PRE-rain captured share — and folded back into the runoff
+                // in the VOLUME domain after A6b; subtracting captured_cfs
+                // from the runoff RATE here rounded differently (1-ULP runoff
+                // drift on every LID deck, greenville-all's pump flip at 12 h).
                 // q_imperv/q_perv already carry legacy's fOutlet scaling
-                // (Runoff.cpp), which is what keeps this subtraction bounded by
-                // the outlet runoff it is removing from.
-                if (captured_cfs > 0.0)
-                    ctx_.subcatches.runoff[usc] -= captured_cfs;
-                // Legacy lid.c:1713-1717 (5.3.0): `if (subcatch->area >=
-                // subcatch->lidArea) lidInflow += subcatch->runon;` — the
-                // test is always true for validated input (lidArea never
-                // exceeds area), so the subcatchment's run-on depth rate
-                // (over its non-LID area, or the full area when there is
-                // none) is added onto EVERY unit's inflow, partial coverage
-                // included. 5.2.4 tested `==` (full coverage only); the
-                // pinned oracle is 5.3.0.
-                q_from_sc += ctx_.subcatches.runon_rate[usc];
+                // (Runoff.cpp), which is what keeps this deduction bounded by
+                // the outlet runoff it is removed from.
+                lid_vlidin_vol_[usc] += q_from_sc * lid_area * dt_runoff;
                 // legacy lid_getRunoff: a COVERED rain barrel takes no rain
                 // — the rain on the subcatchment's LID footprint goes back to
                 // the pervious area instead (lid.c: qReturn += rainfall *
-                // lidArea); every other unit adds the rain onto its inflow.
+                // lidArea); every other unit adds the rain onto its inflow
+                // (lid.c:1712 `lidInflow = lidInflow + rainfall`).
                 if (g.type == lid::LIDType::RAIN_BARREL && g.stor_covered[uu]) {
                     g.inflow[uu] = q_from_sc;
                     if (usc < ctx_.subcatches.total_lid_area_ft2.size())
                         ctx_.subcatches.lid_return_to_perv_cfs[usc] +=
                             rain * ctx_.subcatches.total_lid_area_ft2[usc];
                 } else {
-                    g.inflow[uu] = rain + q_from_sc;
+                    g.inflow[uu] = q_from_sc + rain;
                 }
+                // Legacy lid.c:1713-1717 (5.3.0): `if (subcatch->area >=
+                // subcatch->lidArea) lidInflow += subcatch->runon;` — the
+                // test is always true for validated input (lidArea never
+                // exceeds area), so the subcatchment's run-on depth rate
+                // (over its non-LID area, or the full area when there is
+                // none) is added onto EVERY unit's inflow, partial coverage
+                // included, AFTER the rain (FP addition is not associative,
+                // so the legacy order (captured + rain) + runon must hold).
+                // 5.2.4 tested `==` (full coverage only); the pinned oracle
+                // is 5.3.0.
+                g.inflow[uu] += ctx_.subcatches.runon_rate[usc];
                 // Rain-barrel dry-time reset signal (legacy lid.c:1920 uses
                 // Subcatch.rainfall, independent of what the unit captures).
                 g.subcatch_rain[uu] = rain;
@@ -2499,7 +2507,11 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                     / ucf::UCF(ucf::LANDAREA, ctx_.options);
                 const bool can_return = g.to_perv[uu] && sub_area_ft2 > lid_area_sc;
                 if (!can_return) {
-                    ctx_.subcatches.runoff[usc] += g.surface_runoff[uu] * lid_area;  // CFS
+                    // Legacy evalLidUnit accumulates qRunoff (cfs) across the
+                    // group's units; VlidOut = qRunoff*tStep enters the runoff
+                    // through the volume-domain fold below, not by adjusting
+                    // the rate per unit.
+                    lid_qsurf_cfs_[usc] += g.surface_runoff[uu] * lid_area;  // CFS
                 } else {
                     // Store as pervious return flow; consumed by RunoffSolver next step.
                     // Matches legacy lid_getFlowToPerv() one-step-lag mechanism.
@@ -2760,6 +2772,26 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                         }
                     }
                 }
+            }
+        }
+
+        // A6b''. Volume-domain runoff fold for LID subcatchments — legacy
+        // subcatch.c:746-751 verbatim:
+        //     vOutflow = Voutflow      // runoff from all non-LID areas
+        //                - VlidIn      // runoff treated by LID units
+        //                + VlidOut;    // runoff from LID units
+        //     Subcatch[j].newRunoff = vOutflow / tStep;
+        // with VlidOut = qRunoff * tStep (lid.c:1733). Non-LID subcatchments
+        // keep the solver's Voutflow/dt bytes untouched.
+        if (dt_runoff > 0.0) {
+            for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+                auto ui = static_cast<std::size_t>(i);
+                if (ui >= ctx_.subcatches.total_lid_area_ft2.size() ||
+                    ctx_.subcatches.total_lid_area_ft2[ui] <= 0.0) continue;
+                const double v_lid_out = lid_qsurf_cfs_[ui] * dt_runoff;
+                const double v_outflow =
+                    rsoa.outflow_vol[ui] - lid_vlidin_vol_[ui] + v_lid_out;
+                ctx_.subcatches.runoff[ui] = v_outflow / dt_runoff;
             }
         }
 

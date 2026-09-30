@@ -93,6 +93,7 @@ void RunoffSoA::resize(int n) {
     subarea_runoff_rate.assign(un, 0.0);
     imperv_runoff_cfs.assign(un, 0.0);
     perv_runoff_cfs.assign(un, 0.0);
+    outflow_vol.assign(un, 0.0);
 }
 
 void RunoffSoA::computeAlpha() {
@@ -687,13 +688,20 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         // routing, and the −VlidIn subtraction in SWMMEngine::stepRunoff — which
         // removes exactly this captured share from the outlet runoff — could
         // then drive that runoff negative.
-        const double f_out_imperv = (route_mode == 2 && soa_.imperv_pct[ui] < 1.0)
-                                    ? 1.0 - pct : 1.0;
-        const double f_out_perv   = (route_mode == 1 && soa_.imperv_pct[ui] > 0.0)
-                                    ? 1.0 - pct : 1.0;
-        soa_.imperv_runoff_cfs[ui] = ((runoff0 * total_area * f0)
-                                    + (runoff1 * total_area * f1)) * f_out_imperv;
-        soa_.perv_runoff_cfs[ui]   =   runoff_p * total_area * fp  * f_out_perv;
+        // legacy getImpervAreaRunoff / getPervAreaRunoff op order (lid.c:
+        // 1794-1846): sum the subareas' DEPTH rates weighted by their area
+        // FRACTIONS, apply fOutlet to that sum, and multiply by the non-LID
+        // area ONCE at the end. Multiplying each term by the area first
+        // rounds differently (1-ULP q_imperv/q_perv, which VlidIn carries
+        // into the runoff of every LID subcatchment).
+        {
+            double q_i = runoff0 * f0 + runoff1 * f1;
+            if (route_mode == 2 && soa_.imperv_pct[ui] < 1.0) q_i *= 1.0 - pct;
+            soa_.imperv_runoff_cfs[ui] = q_i * total_area;
+            double q_p = runoff_p * fp;
+            if (route_mode == 1 && soa_.imperv_pct[ui] > 0.0) q_p *= 1.0 - pct;
+            soa_.perv_runoff_cfs[ui] = q_p * total_area;
+        }
 
         // ----- Step 4: Compute loss rates and net runoff -----
         // Matches legacy lines 700-709.
@@ -704,6 +712,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         double newRunoff = Voutflow / dt;  // CFS
 
         soa_.runoff[ui] = newRunoff;
+        soa_.outflow_vol[ui] = Voutflow;   // ft3, for the LID volume-domain fold
 
         // Write back to SimulationContext
         ctx.subcatches.runoff[ui]     = newRunoff;
