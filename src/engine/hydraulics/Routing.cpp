@@ -623,11 +623,10 @@ void Router::initNodeFlows(SimulationContext& ctx, double dt, double evap_rate) 
             double stor_evap_rate = evap_rate * evap_frac;
 
             // exfil_cfs is pre-computed by ExfilSolver::computeAll() (called before
-            // router_.step()) and stored as a volume in the side-table's exfil_loss.
-            // Convert back to a rate for joint capping with evaporation.
-            double exfil_cfs = 0.0;
-            if (dt > 0.0 && sr >= 0)
-                exfil_cfs = st.exfil_loss[sru] / dt;
+            // router_.step()) and handed over as the RAW rate in exfil_rate, so
+            // the joint cap below sees exactly what legacy storage_getLosses
+            // sees (no pre-cap, no volume*dt/dt round-trip).
+            double exfil_cfs = (sr >= 0) ? st.exfil_rate[sru] : 0.0;
 
             if (stor_evap_rate > 0.0 || seep_rate > 0.0 || exfil_cfs > 0.0) {
                 double depth = nodes.depth[ui];

@@ -170,8 +170,13 @@ TEST(StorageExfilGeometry, FixedStageGreenAmptGeometryBenchmark) {
         EXPECT_NEAR(ctx.nodes.depth[0], 2.0, 1e-6)
             << "Storage depth drifted from 2.0 ft at step " << i;
 
-        double step_loss = ctx.node_subtypes.storages.exfil_loss[
-            static_cast<std::size_t>(ctx.node_subtypes.storage_row(0))];
+        // computeAll hands Router::initNodeFlows the RAW rate (cfs) in
+        // exfil_rate; the final exfil_loss volume is booked there after the
+        // joint evap+exfil volume cap. This fixed-stage benchmark never
+        // routes, and its 1e9 ft^3 volume keeps the cap disengaged, so the
+        // raw rate IS the booked rate.
+        double step_loss = ctx.node_subtypes.storages.exfil_rate[
+            static_cast<std::size_t>(ctx.node_subtypes.storage_row(0))] * dt;
         cumulative_loss += step_loss;
         max_rate_err = std::max(max_rate_err,
             std::abs(step_loss / dt - rows[i].exfil_rate_cfs));
