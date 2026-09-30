@@ -99,6 +99,14 @@ option(OPENSWMM_WITH_HDF5         "Build HDF5 model I/O (requires hdf5)" ON)
 option(OPENSWMM_BUILD_2D          "Build optional 2D surface routing module (explicit local-inertial marcher; HDF5 output)" ON)
 option(OPENSWMM_BUILD_GPU_PLUGIN  "Build the GPU/Kokkos surface-solver plugin (standalone, dlopen()ed at runtime — never linked into the core). ON by default: a from-source build gets the Kokkos-OpenMP plugin and runtime `auto` uses it (the `gpu` vcpkg feature is in default-features, supplying Kokkos). The portable base build/wheel turns this OFF explicitly and excludes the `gpu` feature (VCPKG_MANIFEST_NO_DEFAULT_FEATURES) to stay Kokkos-free; pip users get OpenMP via the separate `openswmm-gpu-omp` companion wheel. Backend selected via OPENSWMM_GPU_BACKEND (default omp)." ON)
 
+# HC-1 (2026-09-27): the HydroCouple component layer. OFF by default — the
+# engine has shipped without it and a from-source build should not suddenly
+# acquire a git fetch. Program plan D-C1 puts ONE `integrated2d` component
+# behind this (surface + two-zone groundwater + all transport, GW as capability
+# toggles), D-C2 puts the wrappers in `src/couplers/`, and D-C6 restricts the
+# dependency to the header-only interfaces — never `HydroCoupleSDK`.
+option(OPENSWMM_WITH_HYDROCOUPLE   "Build the HydroCouple component wrappers (src/couplers) — header-only interfaces only, no HydroCoupleSDK (D-C6)" OFF)
+
 # OPENSWMM_BUILD_TESTS is a convenience flag that enables both unit and regression
 if(OPENSWMM_BUILD_TESTS)
     set(OPENSWMM_BUILD_UNIT_TESTS ON CACHE BOOL "" FORCE)
@@ -400,6 +408,14 @@ if(OPENSWMM_INSTALL OR OPENSWMMCORE_INSTALL)
         TARGETS openswmm_common
         EXPORT OpenSWMMEngineTargets
     )
+endif()
+
+# HC-1: resolve the HydroCouple interface headers before src/, so
+# src/couplers/ can link HydroCouple::HydroCouple. Guarded, so a default build
+# neither fetches nor requires anything. See cmake/FetchHydroCouple.cmake for
+# why the pin is a SHA.
+if(OPENSWMM_WITH_HYDROCOUPLE)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/FetchHydroCouple.cmake)
 endif()
 
 # Add subdirectories
