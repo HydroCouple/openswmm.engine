@@ -2076,6 +2076,16 @@ void resolve_cross_references(SimulationContext& ctx) {
         if (name.empty()) continue;
         if (ctx.subcatches.snowpack[us] >= 0) continue;  // already resolved
         ctx.subcatches.snowpack[us] = ctx.snowpack_names.find(name);
+        if (ctx.subcatches.snowpack[us] < 0)
+            // Dangling reference: legacy resolves the pack while reading the
+            // row (subcatch.c:171-174, project_findObject(SNOWMELT, tok[8]))
+            // and raises fatal ERROR 209 when it is absent — the parser has
+            // already excluded the "*" placeholder, so a stored name is
+            // always a real reference. Falling through left the subcatchment
+            // with no pack and no diagnostic: it simply never accumulated
+            // snow, and a deck legacy refuses ran to completion. Mirrors the
+            // IRREGULAR transect and CUSTOM curve checks.
+            ctx.errors.push_back(format_error(ERR_NAME, name));
     }
 
     // -------------------------------------------------------------------------
