@@ -59,6 +59,21 @@ set(OPENSWMM_HYDROCOUPLE_GIT_TAG
     "Pinned HydroCouple commit. A SHA, not a branch: WorkflowStatus was \
 renumbered without a release, so a moving ref is a silent ABI change.")
 
+# D1 (2026-09-29): the ABI the pin stands for, enforced on EVERY resolution
+# path, not only the fetch. Resolution tries a local install before the pinned
+# fetch, so without this the pin governs only machines that have no
+# HydroCouple installed — anyone with a sibling checkout silently compiles
+# against whatever ABI that checkout holds. Measured on the day this was
+# written: pin bef95cb = ABI 2, origin/dev = ABI 3 (7e6d142, releaseState),
+# the developer's uncommitted working tree = ABI 4. HC-1's own "ON via
+# CONFIG" check installed that working tree and compiled against ABI 4
+# believing it was on the pin. `tests/compile_check/hydrocouple_headers.cpp`
+# turns this number into a static_assert, so a mismatch is a build error
+# naming both ABIs rather than a runtime surprise. Bump it together with
+# OPENSWMM_HYDROCOUPLE_GIT_TAG, never separately.
+set(OPENSWMM_HYDROCOUPLE_EXPECTED_ABI "2" CACHE STRING
+    "HYDROCOUPLE_ABI_VERSION the pinned commit declares; asserted at compile time")
+
 function(_openswmm_hydrocouple_report _how)
     if(NOT OPENSWMM_HYDROCOUPLE_QUIET)
         message(STATUS "HydroCouple interfaces: ${_how}")
