@@ -286,6 +286,14 @@ Spatial  (CRS, coordinates, vertices, polygons)
    :undoc-members:
    :show-inheritance:
 
+Engine catalog
+--------------
+
+Machine-readable map of this API; see :doc:`guide/catalog`.
+
+.. automodule:: openswmm.engine.catalog
+   :members:
+
 Enumerations
 ------------
 

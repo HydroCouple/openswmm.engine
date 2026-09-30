@@ -6,8 +6,8 @@ the snow module across four rounds against a 14-deck bit-identity corpus in
 which **not one deck has a `[SNOWPACKS]` section**. "14/14 unchanged" was
 structurally incapable of observing any of them. This deck closes that hole.
 
-**It found something on its first run.** See §4 and
-`plans/transport/SNOW_CONTINUITY_FINDING_2026-08-21.md`.
+**It found something on its first run.** See §4 (the full finding of
+2026-08-21 is a working record kept outside the repository).
 
 ---
 
@@ -58,7 +58,7 @@ the constant D1 wrongly "corrected" and S4 restored.
 >
 > The retired baseline (`ed4d0b63…`, runoff continuity **+39.543 %**) is
 > reproduced by NO CLI build — it came from an API-driven run
-> (`plans/transport/O4_API_CLI_DIFFERENTIAL_2026-08-22.md`). Its sums are kept
+> (the O4 API-vs-CLI differential of 2026-08-22). Its sums are kept
 > in `SHA256SUMS` because its numbers are still quoted elsewhere.
 
 ```
@@ -116,8 +116,9 @@ ranking causes for a residual, check whether the residual varies with the
 thing it is supposed to be made of — if it does not, the measurement is what
 is broken.*
 
-Full write-up, including the API-vs-CLI divergence the retraction exposed:
-`plans/transport/SNOW_CONTINUITY_FINDING_2026-08-21.md`.
+The full write-up, including the API-vs-CLI divergence the retraction exposed,
+is the snow continuity finding of 2026-08-21, a working record kept outside the
+repository.
 
 ## 5. Owed
 

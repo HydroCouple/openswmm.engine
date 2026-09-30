@@ -19,7 +19,7 @@ hydraulic half of the same record is
 
 | Section | Formulation | Plan of record | Status |
 |---|---|---|---|
-| 10.1 | Groundwater transport in the mesh aquifer, the hydrology side | `plans/transport/GW_TRANSPORT_HEAT_MSX_PLAN_2026-09-04.md`; `ROADMAP.md` §2.3 | \status{Planned} |
+| 10.1 | Groundwater transport in the mesh aquifer, the hydrology side | Groundwater-transport design, 2026-09-04 (@ref quality_ref_ch11_planned "Quality Chapter 11" §11.2); `ROADMAP.md` §2.3 | \status{Planned} |
 | 10.2 | LID controls as storage nodes, the hydrology side | `plans/LID_StorageNode_Redesign.md`; `ROADMAP.md` §6 | \status{Planned} |
 | 10.3 | LID detailed output | `plans/LID_DETAIL_OUTPUT_PLAN_2026-08-13.md` | \status{Planned} |
 | 10.4 | The non-Gardner recharge closures and the benchmarks that would promote them | `plans/TWO_ZONE_GROUNDWATER_EXPLICIT_LTS_PLAN_2026-08-15.md` §9 steps 4, 7, 13, 18; `plans/TWO_ZONE_GROUNDWATER_FV_INTEGRATION_PLAN.md` §5 | \status{Experimental} |

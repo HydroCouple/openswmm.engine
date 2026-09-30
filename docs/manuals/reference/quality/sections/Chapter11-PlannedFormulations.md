@@ -75,8 +75,8 @@ the node seam on positive groundwater flow only, and exfiltration carries
 nothing; for age and temperature the aquifer is a source volume — new water
 enters at age zero and at the `GW` source temperature of `[HEAT_SOURCES]`.
 
-The design is `plans/transport/GW_TRANSPORT_HEAT_MSX_PLAN_2026-09-04.md`,
-amended 2026-09-07 for the mixed triangle/quadrilateral mesh. Its saturated
+The design (2026-09-04, amended 2026-09-07 for the mixed
+triangle/quadrilateral mesh) is summarized here. Its saturated
 zone carries mass \f$M_s = n\,h_g\,A\,C\f$ and solves the retarded
 advection–dispersion equation on the kernel's own Darcy face fluxes,
 
@@ -150,8 +150,7 @@ Chapter 9 documents the radiative and bed-zone parameters as one number per
 model. Shading, sky view, land-cover emissivity and temperature, burial
 depth, ground temperature and hyporheic velocity are properties of *a place*,
 and collapsing them to a scalar removes the spatial signal a heat model
-exists to produce. The per-element program
-(`plans/transport/PER_ELEMENT_HEAT_ATTRIBUTES_PLAN_2026-09-01.md`) makes them
+exists to produce. The per-element program (2026-09-01) makes them
 specifiable per element, with the per-element value overriding the global.
 
 **Landed (PE1, PE2, PE4 — validated and committed 2026-09-01).** Every flux
