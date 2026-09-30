@@ -6,10 +6,10 @@ that the MCP server and gymnasium consume. Two guarantees are checked here:
 * **Source contract** (no compiled engine needed): the committed catalog equals
   what ``python/scripts/gen_catalog.py`` generates from the current stubs,
   Cython sources and headers; every public class is reachable or deliberately
-  excluded; unit coverage has not regressed.
+  excluded; every float field has a unit kind.
 * **Runtime contract** (compiled engine): every catalogued property and method
-  exists on its runtime class, and every Solver-rooted target resolves on an
-  opened model.
+  exists on its runtime class, every public runtime attribute is catalogued or
+  excluded, and every Solver-rooted target resolves on an opened model.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ import importlib
 import importlib.util
 import json
 import os
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -50,6 +51,20 @@ class CatalogSourceContract(unittest.TestCase):
                 self.assertIn("collection", entry, name)
                 self.assertIn(entry["collection"], targets, name)
 
+    def test_every_unit_kind_has_a_label(self):
+        """A new symbolic unit kind must get a label in catalog.py, in both systems."""
+        spec = importlib.util.spec_from_file_location("_catalog_src", _CATALOG.with_suffix(".py"))
+        src = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(src)
+        kinds = {m["units"] for m in json.loads(_CATALOG.read_text(encoding="utf-8"))["members"]
+                 if "units" in m}
+        # Anything else must look like a literal unit ("m3/s", "s", "1/day"), not a word.
+        unknown = sorted(k for k in kinds - src.UNIT_KINDS if re.fullmatch(r"[a-z_]{4,}", k))
+        self.assertEqual(unknown, [], "unit kinds without a label in catalog.py")
+        for kind in kinds & set(src._BY_SYSTEM):
+            for system in ("US", "SI"):
+                self.assertNotEqual(src.unit_label(kind, system), kind, f"{kind} ({system})")
+
 
 @unittest.skipIf(_engine is None, "compiled openswmm.engine not installed")
 class CatalogRuntimeContract(unittest.TestCase):
@@ -64,6 +79,35 @@ class CatalogRuntimeContract(unittest.TestCase):
                 if not hasattr(cls, m["name"]):
                     missing.append(m["path"])
         self.assertEqual(missing, [], "catalog members absent at runtime")
+
+    # Collection mixins reach the engine through the synthesized items /
+    # get_item / set_item / delete_item members; ``solver`` is a back-reference.
+    _MIXINS = {"append", "clear", "count", "extend", "get", "index", "insert", "keys",
+               "pop", "popitem", "remove", "reverse", "setdefault", "solver", "update",
+               "values"}
+
+    def test_runtime_attributes_are_catalogued(self):
+        """The reverse of the check above: stubs cannot silently omit a public member."""
+        overrides = json.loads(
+            (_PYTHON_DIR / "scripts" / "catalog_overrides.json").read_text(encoding="utf-8")
+        )
+        excluded = set(overrides["exclude_members"])
+        targets = _catalog.targets()
+        unlisted = []
+        for name, entry in targets.items():
+            module = importlib.import_module(f"openswmm.engine.{entry['module']}")
+            cls = getattr(module, entry["class"])
+            prefix = "" if name == "solver" else name + "."
+            listed = {m["name"] for m in _catalog.members(name)} | {
+                t[len(prefix):] for t in targets
+                if t.startswith(prefix) and "." not in t[len(prefix):]
+            }
+            for attr in dir(cls):
+                if attr.startswith("_") or attr in listed or attr in self._MIXINS:
+                    continue
+                if f"{entry['class']}.{attr}" not in excluded:
+                    unlisted.append(f"{name}.{attr}")
+        self.assertEqual(unlisted, [], "public runtime attributes missing from the catalog")
 
     def test_solver_targets_resolve_on_an_opened_model(self):
         from tests._paths import SITE_DRAINAGE_INP, artifact_dir

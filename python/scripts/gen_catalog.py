@@ -303,6 +303,120 @@ UNIT_PATTERNS: list[tuple[str, str]] = [
 _STATE_RE = re.compile(r"@param\s+engine\b[^\n]*?\(([A-Z_]+(?:\s*(?:,|or|/)\s*[A-Z_]+)*)\s+state", re.S)
 
 
+_CALL = re.compile(r"(?:\b(self|cls)\s*\.\s*)?\b([A-Za-z_]\w*)\s*\(")
+# Error reporting runs on every failing call; it is not functionality.
+_NOT_HELPERS = {"_check"}
+
+
+_CLASS_BASES = re.compile(r"^\s*(?:cdef\s+)?class\s+(\w+)\s*(?:\(([^)]*)\))?")
+
+
+def c_symbols_by_def() -> dict[tuple[str, str], set[str]]:
+    """``{(class, def): C symbols}``, following calls into helpers.
+
+    A public method often reaches the C API through a private helper
+    (``self._add``, ``_call_scalar``) or a module-level function, possibly in
+    another module (``Solver.thread_info`` -> ``_transport.thread_info``).
+    Those symbols belong to the public member too. ``self._helper`` calls
+    dispatch on the concrete class, so a method inherited from a Cython base
+    (``Aquifers.rename`` from ``_NamedObjects``) gets the subclass's symbols.
+    Module-level defs use the class ``""``.
+    """
+    direct: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for sym, sites in _provenance.pyx_callgraph().items():
+        for _module, cls, name in sites:
+            direct[(cls, name)].add(sym)
+    calls: dict[tuple[str, str], set[tuple[str, str]]] = defaultdict(set)
+    defined: set[tuple[str, str]] = set()
+    module_defs: dict[str, int] = defaultdict(int)          # name -> modules defining it
+    bases: dict[str, list[str]] = {}
+    for pyx in sorted(ENGINE_DIR.glob("*.pyx")):
+        scopes: list[tuple[int, str, str]] = []
+        in_extern, extern_indent = False, 0
+        for raw in _provenance._audit.executable_cython(pyx.read_text(encoding="utf-8")).splitlines():
+            code = raw.split("#", 1)[0]
+            if not code.strip():
+                continue
+            indent = len(code) - len(code.lstrip())
+            if _provenance._CDEF_EXTERN.match(code.strip()):
+                in_extern, extern_indent = True, indent
+                continue
+            if in_extern:
+                if indent <= extern_indent:
+                    in_extern = False
+                else:
+                    continue
+            if (cm := _provenance._CLASS_RE.match(code)):
+                while scopes and scopes[-1][0] >= len(cm.group("i")):
+                    scopes.pop()
+                scopes.append((len(cm.group("i")), "class", cm.group("name")))
+                bm = _CLASS_BASES.match(code)
+                bases.setdefault(cm.group("name"), [b.strip() for b in (bm.group(2) or "").split(",")
+                                                     if b.strip()])
+                continue
+            if (dm := _provenance._DEF_RE.match(code)):
+                while scopes and scopes[-1][0] >= len(dm.group("i")):
+                    scopes.pop()
+                if not any(s[1] == "def" for s in scopes):
+                    cls = next((s[2] for s in reversed(scopes) if s[1] == "class"), "")
+                    defined.add((cls, dm.group("name")))
+                    if not cls:
+                        module_defs[dm.group("name")] += 1
+                scopes.append((len(dm.group("i")), "def", dm.group("name")))
+                continue
+            cur_def = next((s for s in reversed(scopes) if s[1] == "def"), None)
+            if cur_def is None:
+                continue
+            cls = next((s[2] for s in reversed(scopes) if s[1] == "class"), "")
+            for qual, name in _CALL.findall(code):
+                calls[(cls, cur_def[2])].add((qual, name))
+
+    def mro(cls: str) -> list[str]:
+        out, todo = [], [cls]
+        while todo:
+            c = todo.pop(0)
+            if c not in out:
+                out.append(c)
+                todo.extend(bases.get(c, []))
+        return out
+
+    def owner(cls: str, name: str) -> str | None:
+        return next((c for c in mro(cls) if (c, name) in defined), None)
+
+    memo: dict[tuple[str, str], set[str]] = {}
+
+    def symbols(cls: str, name: str, seen: frozenset) -> set[str]:
+        """Symbols reached by ``cls.name`` (``cls`` is the concrete class)."""
+        key = (cls, name)
+        if key in memo:
+            return memo[key]
+        home = owner(cls, name) if cls else ("" if ("", name) in defined else None)
+        if home is None:
+            return set()
+        out = set(direct.get((home, name), ()))
+        for qual, callee in calls.get((home, name), ()):
+            if callee in _NOT_HELPERS:
+                continue
+            if qual and cls:
+                target = (cls, callee) if callee.startswith("_") and not callee.startswith("__") \
+                    else None
+            else:
+                target = ("", callee) if module_defs.get(callee) == 1 or ("", callee) in defined \
+                    else None
+            if target and target not in seen and target != key:
+                out |= symbols(target[0], target[1], seen | {key})
+        memo[key] = out
+        return out
+
+    result: dict[tuple[str, str], set[str]] = {}
+    for cls in {c for c, _ in defined} | set(bases):
+        for c in mro(cls):
+            for d_cls, name in defined:
+                if d_cls == c and (cls, name) not in result:
+                    result[(cls, name)] = symbols(cls, name, frozenset())
+    return result
+
+
 def parse_headers() -> dict[str, dict]:
     info: dict[str, dict] = {}
     for header in sorted(HEADER_DIR.glob("openswmm_*.h")):
@@ -373,10 +487,7 @@ class Builder:
         self.setters, self.pyx_docs = parse_pyx()
         self.headers = parse_headers()
         self.overrides = json.loads(OVERRIDES.read_text(encoding="utf-8"))
-        self.c_by_member: dict[tuple[str, str], set[str]] = defaultdict(set)
-        for sym, sites in _provenance.pyx_callgraph().items():
-            for _module, cls, method in sites:
-                self.c_by_member[(cls, method)].add(sym)
+        self.c_by_member = c_symbols_by_def()
         self.targets: dict[str, dict] = {}
         self.members: list[dict] = []
         self.class_target: dict[str, str] = {}
@@ -428,6 +539,10 @@ class Builder:
         self.walk("solver", "Solver", "")
         for root, spec in self.overrides["roots"].items():
             self.walk(root, spec["class"], "", construct=spec["construct"])
+            ctor = set().union(*(self.c_by_member.get((spec["class"], d), set())
+                                 for d in ("__cinit__", "__init__", "__dealloc__")))
+            if ctor:
+                self.targets[root]["c"] = sorted(ctor)
         for target, entry in self.targets.items():
             self.add_members(target, entry)
         for target, variants in self.overrides["variants"].items():
@@ -454,7 +569,9 @@ class Builder:
             "c_exports": len(_provenance.c_symbols()),
             "targets": dict(sorted(self.targets.items())),
             "members": sorted(self.members, key=lambda m: m["path"]),
-            "functions": {mod: dict(sorted(f.items())) for mod, f in sorted(self.functions.items())
+            "functions": {mod: {name: dict(fn, c=sorted(self.c_by_member.get(("", name), ())))
+                                for name, fn in sorted(f.items())}
+                          for mod, f in sorted(self.functions.items())
                           if mod.lstrip("_") in self.overrides["function_modules"]},
             "records": records,
             "enums": dict(sorted(self.enums.items())),
@@ -481,6 +598,20 @@ class Builder:
             self.members.extend(self.item_members(target, cls))
         elif any(b.startswith(MAPPING_BASES + SEQUENCE_BASES) for b in cls.bases):
             self.members.extend(self.item_members(target, cls))
+        elif cls.iter_type and not entry.get("element"):
+            # Iterable but not indexable (Inlets, Aquifers): list it.
+            syms = set().union(*(self.c_by_member.get((cls_name, d), set())
+                                 for d in ("__iter__", "__len__", "__contains__")))
+            self.members.append({"path": f"{target}.items", "target": target, "name": "items",
+                                 "form": "item", "python": f"list({cls_name})", "doc": cls.doc,
+                                 "returns": f"list[tuple[int, {_expand(cls.iter_type, self.aliases)}]]",
+                                 "params": [], "c": sorted(syms)})
+        if entry.get("element"):
+            # Element collections are enumerated through len()/iteration by every tool.
+            syms = set().union(*(self.c_by_member.get((cls_name, d), set())
+                                 for d in ("__len__", "__iter__", "__getitem__", "__contains__")))
+            if syms:
+                entry["c"] = sorted(set(entry.get("c", [])) | syms)
 
     def member_entry(self, target: str, cls_name: str, m: Member) -> dict:
         prefix = "" if target == "solver" else target + "."
@@ -498,6 +629,7 @@ class Builder:
             out["params"] = [dict(p, type=_expand(p["type"], self.aliases)) for p in m.params]
             if m.static:
                 out["static"] = True
+        out["c"] = sorted(set(out["c"]) | self.returned_symbols(m.type))
         units = ov_units = self.overrides["units"].get(prefix + m.name)
         # Tuples mix quantities and ints are usually codes, so only plain
         # floats and float arrays carry a single unit.
@@ -511,6 +643,22 @@ class Builder:
             out["phases"] = phases
         return out
 
+    def returned_symbols(self, type_str: str) -> set[str]:
+        """C symbols of an uncatalogued object a member hands back.
+
+        ``OutputReader.node_stats`` returns an ``_OutputNodeStats`` whose
+        properties call the C API; serializing the result reaches them.
+        """
+        out: set[str] = set()
+        for name in re.findall(r"\b(_?[A-Z]\w*)\b", type_str or ""):
+            obj = self.classes.get(name)
+            if obj is None or name in self.class_target or name in self.enums:
+                continue
+            for d in [p for p, pm in obj.members.items() if pm.form == "property"] + \
+                    ["__len__", "__iter__", "__getitem__"]:
+                out |= self.c_by_member.get((name, d), set())
+        return out
+
     def item_members(self, target: str, cls: Cls) -> list[dict]:
         """Synthesize ``items``/``get_item``/``set_item``/``delete_item`` for mapping-like targets."""
         key_t, val_t = cls.getitem or ("", "")
@@ -521,19 +669,26 @@ class Builder:
                 key_t, val_t = (parts[0], parts[1]) if len(parts) == 2 else ("int", parts[0])
         mutable = cls.setitem or any(b.startswith("Mutable") for b in cls.bases)
         key_t, val_t = _expand(key_t, self.aliases), _expand(val_t, self.aliases)
-        base = {"target": target, "form": "item", "python": f"{cls.name}[]", "c": [],
-                "doc": cls.doc}
+        def syms(*defs: str) -> list[str]:
+            return sorted(set().union(*(self.c_by_member.get((cls.name, d), set()) for d in defs)))
+
+        base = {"target": target, "form": "item", "python": f"{cls.name}[]", "doc": cls.doc}
+        values = sorted(self.returned_symbols(val_t))
         out = [dict(base, path=f"{target}.items", name="items", returns=f"list[tuple[{key_t}, {val_t}]]",
-                    params=[]),
+                    params=[], c=sorted(set(syms("__iter__", "__len__", "__getitem__", "keys",
+                                                 "items", "values")) | set(values))),
                dict(base, path=f"{target}.get_item", name="get_item", returns=val_t,
-                    params=[{"name": "key", "type": key_t, "required": True}])]
+                    params=[{"name": "key", "type": key_t, "required": True}],
+                    c=sorted(set(syms("__getitem__")) | set(values)))]
         if mutable:
             out.append(dict(base, path=f"{target}.set_item", name="set_item", returns="None",
                             params=[{"name": "key", "type": key_t, "required": True},
-                                    {"name": "value", "type": val_t, "required": True}]))
+                                    {"name": "value", "type": val_t, "required": True}],
+                            c=syms("__setitem__")))
         if cls.delitem or any(b.startswith("Mutable") for b in cls.bases):
             out.append(dict(base, path=f"{target}.delete_item", name="delete_item", returns="None",
-                            params=[{"name": "key", "type": key_t, "required": True}]))
+                            params=[{"name": "key", "type": key_t, "required": True}],
+                            c=syms("__delitem__")))
         return out
 
     def bulk_links(self) -> dict[str, str]:
@@ -572,29 +727,30 @@ class Builder:
         return missing
 
 
-def unit_report(catalog: dict) -> tuple[int, int]:
-    floats = [m for m in catalog["members"] if m["form"] == "property" and m.get("type") == "float"]
-    return sum(1 for m in floats if "units" in m), len(floats)
+def unitless_floats(catalog: dict) -> list[str]:
+    """Float properties without a unit kind (``dimensionless`` counts as one)."""
+    return [m["path"] for m in catalog["members"]
+            if m["form"] == "property" and m.get("type") == "float" and "units" not in m]
 
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--check", action="store_true",
-                    help="fail if catalog.json is stale, a class is uncovered, or unit coverage regressed")
+                    help="fail if catalog.json is stale, a class is uncovered, or a float field has no unit kind")
     args = ap.parse_args(argv)
     b = Builder()
     catalog = b.build()
     text = json.dumps(catalog, indent=1, ensure_ascii=False) + "\n"
     missing = b.uncovered()
-    with_units, floats = unit_report(catalog)
-    floor = b.overrides["min_float_units"]
+    unitless = unitless_floats(catalog)
     print(f"targets={len(catalog['targets'])} members={len(catalog['members'])} "
-          f"float units={with_units}/{floats} (floor {floor})")
+          f"float fields without a unit kind={len(unitless)}")
     problems = []
     if missing:
         problems.append("classes neither reachable nor excluded: " + ", ".join(missing))
-    if with_units < floor:
-        problems.append(f"float properties with units fell to {with_units} (floor {floor})")
+    if unitless:
+        problems.append("float fields without a unit kind (add one, or 'dimensionless', to "
+                        "catalog_overrides.json): " + ", ".join(unitless))
     if args.check:
         current = OUT_JSON.read_text(encoding="utf-8") if OUT_JSON.exists() else ""
         if current != text:

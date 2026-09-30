@@ -39,7 +39,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-__all__ = ["load", "targets", "members", "lookup", "resolve"]
+__all__ = ["load", "targets", "members", "lookup", "resolve", "unit_label", "UNIT_KINDS"]
 
 _PATH = Path(__file__).with_name("catalog.json")
 
@@ -94,3 +94,58 @@ def resolve(solver: Any, target: str, key: int | str | None = None) -> Any:
         else:
             obj = getattr(obj, part)
     return obj
+
+
+# Unit kinds (a member's ``units``) that are not literal units, and their labels.
+_FIXED = {
+    "dimensionless": "dimensionless",
+    "fraction": "fraction",
+    "percent": "%",
+    "count": "count",
+    "manning_n": "Manning's n",
+    "concentration": "pollutant concentration units",
+    "user_defined": "units implied by the model's expressions",
+    "shape_dependent": "depends on the cross-section shape (see xsect.shape)",
+    "unverified": "stored as given; the engine applies no unit conversion",
+    "datetime": "DateTime (decimal days)",
+}
+_BY_SYSTEM = {  # kind: (US label, SI label)
+    "length": ("ft", "m"),
+    "area": ("ft2", "m2"),
+    "land_area": ("ac", "ha"),
+    "volume": ("ft3", "m3"),
+    "velocity": ("ft/s", "m/s"),
+    "rain_rate": ("in/hr", "mm/hr"),
+    "rain_depth": ("in", "mm"),
+    "evap_rate": ("in/day", "mm/day"),
+    "temperature": ("degF", "degC"),
+    "user_temperature": ("degF", "degC"),
+    "wind_speed": ("mph", "km/hr"),
+    "length2/s": ("ft2/s", "m2/s"),
+    "weir_coeff": ("ft^0.5/s", "m^0.5/s"),
+    "section_factor": ("ft^8/3", "m^8/3"),
+}
+#: Every symbolic unit kind; any other ``units`` value is a literal unit ("m3/s", "s").
+UNIT_KINDS = frozenset(_FIXED) | frozenset(_BY_SYSTEM) | {"flow"}
+
+
+def unit_label(
+    kind: str | None, unit_system: str | None = None, flow_units: str | None = None
+) -> str | None:
+    """Human-readable units for a catalog unit kind in a model's unit system.
+
+    ``flow`` takes the model's flow units (``"CFS"``, ``"CMS"`` ...); other
+    system-dependent kinds take ``"US"`` or ``"SI"`` and come back unchanged
+    without one; literal units pass through.
+
+    .. code-block:: python
+
+        catalog.unit_label(catalog.lookup("link.length")["units"], "SI")   # 'm'
+    """
+    if kind is None or kind in _FIXED:
+        return _FIXED.get(kind) if kind else None
+    if kind == "flow":
+        return flow_units or kind
+    if kind in _BY_SYSTEM and unit_system in ("US", "SI"):
+        return _BY_SYSTEM[kind][unit_system == "SI"]
+    return kind
