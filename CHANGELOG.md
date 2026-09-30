@@ -25,6 +25,15 @@ retroactive.
 
 ### Python bindings
 
+- **Add `openswmm.engine.catalog`**, a machine-readable description
+  (`catalog.json`, shipped in the wheel) of every service, element kind,
+  sub-view and standalone class the Python API exposes: each property's type,
+  access, units and lifecycle phases, each method's signature, the C symbols
+  behind it and the bulk array that reads a whole collection at once.
+  `python/scripts/gen_catalog.py` generates it from the type stubs, Cython
+  sources and header docs; `--check` in the Python contracts workflow fails on
+  a stale catalog, an uncatalogued public class or lost unit coverage. The
+  OpenSWMM MCP server and `openswmm.gymnasium` address engine fields through it.
 - Add groundwater hydrology and transport views, surface-quality tables,
   transport configuration/capability records, 2D rainfall diagnostics, batch
   deletion, live output refresh, compatibility/staged serialization and the
