@@ -490,6 +490,14 @@ private:
     std::vector<double> lid_drain_q_interp_; ///< per-node interpolated LID drain inflow this routing step (cfs; legacy lid_addDrainInflow)
     std::vector<double> gw_q_interp_;   ///< per-subcatch interpolated GW flow (cfs)
     std::vector<int>    gw_q_node_;     ///< receiving node for gw_q_interp_ (-1 = skip)
+    // Legacy lid_getRunoff volume accumulators, per subcatchment per runoff
+    // step: VlidIn (= sum over units of (captured/area)*area*tStep, ft3) and
+    // qRunoff (= sum of unit surface outflow*area, cfs; *tStep = VlidOut).
+    // subcatch.c:746-751 rebuilds newRunoff from these in the VOLUME domain;
+    // adjusting the runoff RATE incrementally instead rounds differently
+    // (1-ULP runoff drift on every LID deck).
+    std::vector<double> lid_vlidin_vol_;  ///< per-subcatch VlidIn this runoff step (ft3)
+    std::vector<double> lid_qsurf_cfs_;   ///< per-subcatch LID surface outflow to outlet (cfs)
     /// Previous runoff step's GW flow RATE per subcatch (ft/s per unit area,
     /// legacy TGroundwater::oldFlow). Legacy interpolates the RATE and
     /// multiplies by the area afterwards (routing.c:766, subcatch.c:912);

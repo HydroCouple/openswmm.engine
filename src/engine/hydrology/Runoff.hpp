@@ -120,6 +120,11 @@ struct RunoffSoA {
     // Used by SWMMEngine to compute LID unit inflow from impervious/pervious fractions.
     std::vector<double> imperv_runoff_cfs;  ///< Impervious subarea runoff (CFS, non-LID area)
     std::vector<double> perv_runoff_cfs;    ///< Pervious subarea runoff (CFS, non-LID area)
+    /// Legacy Voutflow: this step's outlet runoff VOLUME from the non-LID
+    /// area (ft3). Kept so the LID exchange can rebuild newRunoff in the
+    /// volume domain exactly as legacy subcatch.c:746-751 does
+    /// (`vOutflow = Voutflow - VlidIn + VlidOut; newRunoff = vOutflow/tStep`).
+    std::vector<double> outflow_vol;
 
     void resize(int n);
     void computeAlpha();
