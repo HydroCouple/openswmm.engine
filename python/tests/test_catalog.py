@@ -65,6 +65,18 @@ class CatalogSourceContract(unittest.TestCase):
             for system in ("US", "SI"):
                 self.assertNotEqual(src.unit_label(kind, system), kind, f"{kind} ({system})")
 
+    def test_flow_label_takes_a_token_or_the_solver_enum(self):
+        import enum
+
+        spec = importlib.util.spec_from_file_location("_catalog_src", _CATALOG.with_suffix(".py"))
+        src = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(src)
+        flow_units = enum.IntEnum("FlowUnits", {"CFS": 0, "CMS": 3})
+        self.assertEqual(src.unit_label("flow", "US", "CFS"), "CFS")
+        self.assertEqual(src.unit_label("flow", "US", flow_units.CFS), "CFS")  # value 0
+        self.assertEqual(src.unit_label("flow", "SI", flow_units.CMS), "CMS")
+        self.assertEqual(src.unit_label("flow", "US"), "flow")
+
 
 @unittest.skipIf(_engine is None, "compiled openswmm.engine not installed")
 class CatalogRuntimeContract(unittest.TestCase):

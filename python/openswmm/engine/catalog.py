@@ -130,13 +130,14 @@ UNIT_KINDS = frozenset(_FIXED) | frozenset(_BY_SYSTEM) | {"flow"}
 
 
 def unit_label(
-    kind: str | None, unit_system: str | None = None, flow_units: str | None = None
+    kind: str | None, unit_system: str | None = None, flow_units: Any = None
 ) -> str | None:
     """Human-readable units for a catalog unit kind in a model's unit system.
 
-    ``flow`` takes the model's flow units (``"CFS"``, ``"CMS"`` ...); other
-    system-dependent kinds take ``"US"`` or ``"SI"`` and come back unchanged
-    without one; literal units pass through.
+    ``flow`` takes the model's flow units, as a token (``"CFS"``, ``"CMS"``
+    ...) or as ``Solver.flow_units`` itself; other system-dependent kinds take
+    ``"US"`` or ``"SI"`` and come back unchanged without one; literal units
+    pass through.
 
     .. code-block:: python
 
@@ -145,7 +146,10 @@ def unit_label(
     if kind is None or kind in _FIXED:
         return _FIXED.get(kind) if kind else None
     if kind == "flow":
-        return flow_units or kind
+        if flow_units is None or flow_units == "":
+            return kind
+        # A FlowUnits member (CFS is 0, so falsy) labels by its name.
+        return str(getattr(flow_units, "name", flow_units))
     if kind in _BY_SYSTEM and unit_system in ("US", "SI"):
         return _BY_SYSTEM[kind][unit_system == "SI"]
     return kind
