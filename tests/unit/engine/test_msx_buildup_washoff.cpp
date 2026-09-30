@@ -247,7 +247,20 @@ TEST(MsxBuildupWashoff, LedgerCloses) {
     const double tss_final = sq.buildup[sq.bu_idx(0, 0, 0)] * norm;
     EXPECT_EQ(final_store, tss_final);
     EXPECT_EQ(ms.led_sweeping[0], ctx.mass_balance.qual_sweeping[0]);
-    EXPECT_EQ(ms.led_bmp_removal[0], ctx.mass_balance.qual_bmp_removal[0]);
+    // BMP removal is the one quantity in this group that is NOT bit-comparable,
+    // and the comment above overclaimed for it. The two sides reach the same
+    // mathematical number by different expressions — the MSX row books
+    // `bmp_removed * dt_runoff * mcf_m` (MsxSurfaceQuality.cpp), the pollutant
+    // row `c_out * (v_lost - v_infil) * mcf_p` (SWMMEngine.cpp) — so they agree
+    // only to rounding. Clang/macOS happens to produce identical doubles and
+    // GCC/Linux differs by 1 ULP (0.11693027411237766 vs …65), which is why
+    // this stood for weeks: it was only ever exercised on one toolchain.
+    //
+    // This is a corrected assertion, not a widened one. The property that
+    // matters — adding MSX rows leaves the pollutant arithmetic untouched — is
+    // asserted bitwise by the two EXPECT_EQs that remain and by test (d)
+    // below; nothing here is weaker as a result.
+    EXPECT_DOUBLE_EQ(ms.led_bmp_removal[0], ctx.mass_balance.qual_bmp_removal[0]);
     close(r);
 }
 
