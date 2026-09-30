@@ -162,10 +162,17 @@ public:
     void bookGageRates(const SimulationContext& ctx, double runoff_start_s);
 
     /// Per-cell rainfall (m/s) as the .out reports subcatchment rainfall: the
-    /// gage rate current at @p report_date (gage::getReportRainfall), mapped
+    /// source gage rate at @p report_date, independent of runoff cursor, mapped
     /// through RAINFALL_MODE, with the per-cell rainfall forcings applied.
     void reportRainfall(const SimulationContext& ctx, double report_date,
                         std::vector<double>& out) const;
+
+    /// Rainfall volume (m³) integrated to the report boundary, excluding the
+    /// part of a routing/sync window after that boundary. Runtime totals
+    /// remain available through rainCumulative().
+    const std::vector<double>& reportRainCumulative(double report_ms) const noexcept {
+        return report_rain_ms_ == report_ms ? report_rain_cum_ : rain_cum_;
+    }
 
     /// Cell depth (m) at the start of the sync batch that crossed the
     /// current report instant (meaningful when reportWeight() < 1).
@@ -684,6 +691,10 @@ private:
     /// rate — what updateRainfall maps onto the cells.
     std::vector<double> gage_rate_, gage_cum_, gage_window_depth_, gage_window_rate_;
     double gage_since_ = 0.0;
+    // Preserve the integral at the next report boundary before the runoff
+    // clock moves beyond it. Only one gage row and one cell row are retained.
+    std::vector<double> gage_report_depth_, report_rain_cum_;
+    double report_rain_ms_ = -1.0;
 
     /// Resolve per-step boundary driving values: evaluate SPECIFIED_STAGE /
     /// SPECIFIED_FLOW timeseries at time @p t and RATING_CURVE from the boundary

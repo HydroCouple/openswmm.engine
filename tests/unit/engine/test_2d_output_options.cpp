@@ -24,6 +24,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -36,11 +38,13 @@
 #include "2d/mesh/MeshBuilder.hpp"
 #include "2d/output/Default2DOutputPlugin.hpp"
 #include "core/SimulationContext.hpp"
+#include "core/DateTime.hpp"
 #include "openswmm/plugin_sdk/SimulationSnapshot.hpp"
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_2d.h>
 #include <openswmm/engine/openswmm_model.h>
+#include <openswmm/engine/openswmm_forcing.h>
 #include <openswmm/engine/openswmm_sq2d.h>
 
 namespace fs = std::filesystem;
@@ -567,14 +571,151 @@ TEST(Output2DWriter, RainPulseBetweenReportsAccumulates) {
             // 1 mm in 1 min = 60 mm/hr, from 00:05; the 1D splits runoff
             // steps at record edges, so the volume is exact.
             EXPECT_NEAR(rate[k * d[1] + c], k == 0 ? 60.0e-3 / 3600.0 : 0.0, 1e-18);
-            // The cumulative is written at the end of the window that crosses
-            // the report instant (not blended like depth), so at 00:05 it may
-            // already hold up to one 5 s routing step of the burst.
-            if (k == 0)
-                EXPECT_NEAR(cum[c], 0.0, 1.0e-3 * area[c] * 5.0 / 60.0);
-            else
-                EXPECT_NEAR(cum[k * d[1] + c], 1.0e-3 * area[c], 1e-12);
+            EXPECT_NEAR(cum[k * d[1] + c], k == 0 ? 0.0 : 1.0e-3 * area[c], 1e-12);
         }
+}
+
+// Independent piecewise-constant rainfall oracle. Every format describes
+// the same depths; no engine gage conversion or clock is used for expectations.
+TEST(Output2DWriter, RainFormatsAndMismatchedClocks) {
+    fs::create_directories(kOutDir);
+    const std::vector<std::vector<double>> depths_mm = {
+        {0.2, 0.0, 0.1, 0.15, 0.0, 0.3, 0.1},
+        {0.1, 0.2, 0.0, 0.15}, {0.0, 0.3, 0.1}};
+    const int intervals[] = {60, 120, 180};
+    auto depthAt = [&](int g, double t) {
+        double mm = 0;
+        for (size_t k = 0; k < depths_mm[g].size(); ++k)
+            mm += depths_mm[g][k] * std::clamp(
+                (t - k * intervals[g]) / intervals[g], 0.0, 1.0);
+        return mm * 0.001;
+    };
+    auto rateAt = [&](int g, double t) {
+        const auto k = static_cast<size_t>(t / intervals[g]);
+        return k < depths_mm[g].size() ? depths_mm[g][k] * 0.001 / intervals[g] : 0.0;
+    };
+    struct Clock { double route, substep; int report, wet, start, sync = 0, first = 0; bool compact = false; };
+    const Clock clocks[] = {{7, 2, 17, 37, 0}, {31, 7, 60, 120, 17},
+                            {2.5, 0.7, 19, 13, 0}, {7, 2, 17, 37, 0, 29, 68, true}, {31, 7, 53, 120, 17}};
+    for (const auto* mode : {"NATURAL_NEIGHBOUR", "NEAREST_NEIGHBOUR"})
+    for (const auto* units : {"CMS", "CFS"})
+    for (const auto* format : {"INTENSITY", "VOLUME", "CUMULATIVE"})
+    for (size_t ci = 0; ci < std::size(clocks); ++ci) {
+        const auto& clock = clocks[ci];
+        const int first_report = clock.first ? clock.first : clock.report;
+        const int output_step = clock.compact ? 2 * clock.report : clock.report;
+        const std::string stem = std::string("rain_clocks_") + mode + "_" + units + "_" + format + "_" + std::to_string(ci);
+        SCOPED_TRACE(stem);
+        const auto inp = kOutDir / (stem + ".inp");
+        const auto h5 = kOutDir / (stem + ".h5");
+        fs::remove(h5);
+        auto hhmmss = [](int seconds) {
+            std::ostringstream o;
+            o << "00:" << std::setfill('0') << std::setw(2) << seconds / 60
+              << ':' << std::setw(2) << seconds % 60;
+            return o.str();
+        };
+        {
+            std::ofstream f(inp);
+            f << std::setprecision(17)
+              << "[OPTIONS]\nFLOW_UNITS " << units << "\nFLOW_ROUTING DYNWAVE\n"
+              << "START_DATE 01/01/2026\nSTART_TIME " << hhmmss(clock.start)
+              << "\nEND_DATE 01/01/2026\nEND_TIME 00:06:10\nREPORT_STEP " << hhmmss(clock.report)
+              << "\nWET_STEP " << hhmmss(clock.wet) << "\nDRY_STEP " << hhmmss(clock.wet)
+              << "\nROUTING_STEP " << clock.route << "\nVARIABLE_STEP 0\n"
+              << "REPORT_START_DATE 01/01/2026\nREPORT_START_TIME " << hhmmss(clock.start + first_report)
+              << "\n[RAINGAGES]\n";
+            for (int g = 0; g < 3; ++g)
+                f << "G" << g << ' ' << format << " 0:0" << intervals[g] / 60 << " 1 TIMESERIES T" << g << '\n';
+            f << "[TIMESERIES]\n";
+            for (int g = 0; g < 3; ++g) {
+                double counter = 0;
+                for (size_t k = 0; k < depths_mm[g].size(); ++k) {
+                    if (k == 3) counter = 0; // a real cumulative-gage reset
+                    counter += depths_mm[g][k];
+                    double v = std::string(format) == "INTENSITY" ? depths_mm[g][k] * 3600.0 / intervals[g]
+                             : std::string(format) == "VOLUME" ? depths_mm[g][k] : counter;
+                    if (std::string(units) == "CFS") v /= 25.4;
+                    f << "T" << g << " 01/01/2026 " << hhmmss(static_cast<int>(k) * intervals[g]) << ' ' << v << '\n';
+                }
+            }
+            f << "[SYMBOLS]\nG0 -50 -50\nG1 70 -50\nG2 10 80\n"
+              << "[JUNCTIONS]\nJ 0 1 0 0 0\n[OUTFALLS]\nO -0.5 FREE NO\n"
+              << "[CONDUITS]\nC J O 30 0.013 0 0 0\n[XSECTIONS]\nC CIRCULAR 0.3 0 0 0 1\n"
+              << "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP " << clock.substep
+              << "\nREPORT_2D YES\nOUTPUT_FILE " << h5.filename().string()
+              << "\nCOUPLING_SYNC " << clock.sync << "\nREPORT_2D_STEP " << hhmmss(output_step)
+              << "\nOUTPUT_PRECISION " << (clock.compact ? "FLOAT32" : "FLOAT64") << "\nRAINFALL_MODE " << mode
+              << "\n[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n0 10 0\n"
+              << "[2D_TRIANGLES]\n0 1 2 0.03 0\n0 2 3 0.03 0\n[REPORT]\nINPUT NO\n";
+        }
+        struct Engine {
+            SWMM_Engine e = swmm_engine_create();
+            ~Engine() { swmm_engine_close(e); swmm_engine_destroy(e); }
+        } engine;
+        const auto rpt = kOutDir / (stem + ".rpt"), out = kOutDir / (stem + ".out");
+        ASSERT_EQ(swmm_engine_open(engine.e, inp.string().c_str(), rpt.string().c_str(), out.string().c_str(), nullptr), SWMM_OK);
+        ASSERT_EQ(swmm_engine_initialize(engine.e), SWMM_OK);
+        double weights[2][3] = {}, area[2] = {};
+        for (int c = 0; c < 2; ++c) {
+            int method, count, ids[3]; double w[3];
+            ASSERT_EQ(swmm_2d_get_rainfall_weights(engine.e, c, &method, ids, w, 3, &count), SWMM_OK);
+            for (int k = 0; k < count; ++k) weights[c][ids[k]] = w[k];
+            ASSERT_EQ(swmm_2d_triangle_get_area(engine.e, c, &area[c]), SWMM_OK);
+        }
+        ASSERT_EQ(swmm_engine_start(engine.e, 1), SWMM_OK);
+        // On the batched/delayed-output case, also check persistent ADD
+        // forcing on one cell; the other retains pure interpolated rainfall.
+        const double added_rate = clock.compact ? 3e-7 : 0.0;
+        if (added_rate > 0)
+            ASSERT_EQ(swmm_2d_force_rainfall(engine.e, 0, added_rate,
+                      SWMM_FORCING_ADD, SWMM_FORCING_PERSIST), SWMM_OK);
+        double elapsed;
+        do { ASSERT_EQ(swmm_engine_step(engine.e, &elapsed), SWMM_OK); } while (elapsed > 0);
+        double final_vol[2], rain_in;
+        ASSERT_EQ(swmm_2d_get_rain_volume_bulk(engine.e, final_vol), SWMM_OK);
+        ASSERT_EQ(swmm_2d_get_mass_balance(engine.e, nullptr, nullptr, &rain_in, nullptr, nullptr,
+                                          nullptr, nullptr, nullptr, nullptr, nullptr), SWMM_OK);
+        EXPECT_NEAR(final_vol[0] + final_vol[1], rain_in, 1e-11);
+        double expected_final_total = 0;
+        for (int c = 0; c < 2; ++c) {
+            double expected = c == 0 ? added_rate * (370 - clock.start) * area[c] : 0.0;
+            for (int g = 0; g < 3; ++g)
+                expected += weights[c][g] * (depthAt(g, 370) - depthAt(g, clock.start)) * area[c];
+            expected_final_total += expected;
+        }
+        // end() flushes a final partial 2D synchronization batch.
+        ASSERT_EQ(swmm_engine_end(engine.e), SWMM_OK);
+        ASSERT_EQ(swmm_engine_close(engine.e), SWMM_OK);
+        H5File f(h5);
+        ASSERT_GE(f.id, 0);
+        const auto final_mass = f.readAll("mass_balance_2d/rainfall_in");
+        ASSERT_EQ(final_mass.size(), 1u);
+        EXPECT_NEAR(final_mass[0], expected_final_total, 1e-9);
+        EXPECT_EQ(f.dsAttr("time", "units"), "days since 1899-12-30 00:00:00");
+        EXPECT_EQ(f.dsAttr("Mesh2_face_rainfall", "units"), "m s-1");
+        EXPECT_EQ(f.dsAttr("Mesh2_face_rain_cum", "units"), "m3");
+        const auto times = f.readAll("time"), rates = f.readAll("Mesh2_face_rainfall"), cum = f.readAll("Mesh2_face_rain_cum");
+        ASSERT_EQ(rates.size(), times.size() * 2);
+        ASSERT_EQ(cum.size(), rates.size());
+        ASSERT_EQ(times.size(), static_cast<size_t>((370 - clock.start - first_report) / output_step + 1));
+        for (size_t k = 0; k < times.size(); ++k) {
+            EXPECT_NEAR((times[k] - openswmm::datetime::encodeDate(2026, 1, 1)) * 86400.0,
+                        clock.start + first_report + k * output_step + 0.001, 1e-5);
+            const double t = clock.start + first_report + k * output_step;
+            for (int c = 0; c < 2; ++c) {
+                double expected_rate = c == 0 ? added_rate : 0.0;
+                double expected_depth = expected_rate * (t - clock.start);
+                for (int g = 0; g < 3; ++g) {
+                    expected_depth += weights[c][g] * (depthAt(g, t) - depthAt(g, clock.start));
+                    // SWMM's report-gage lookup has a legacy +1 s convention.
+                    expected_rate += weights[c][g] * rateAt(g, t + 1.001);
+                }
+                EXPECT_NEAR(rates[2*k+c], expected_rate, 1e-12) << "time " << t << " cell " << c;
+                EXPECT_NEAR(cum[2*k+c], expected_depth * area[c], clock.compact ? 5e-9 : 1e-9) << "time " << t << " cell " << c;
+            }
+        }
+    }
 }
 
 // S7, end to end: a covered pan under a 1 in/hr hour of rain writes
