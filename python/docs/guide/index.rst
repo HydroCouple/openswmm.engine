@@ -36,6 +36,7 @@ Running a simulation
    error_handling
    native_safety
    datetime
+   catalog
 
 Domain access
 =============

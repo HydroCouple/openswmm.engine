@@ -96,8 +96,8 @@ a separate mechanism and the runner does not touch it.**
 > which no CLI build reproduces. On 2026-08-22 that hash was reproduced
 > exactly by running the deck through the MCP server, whose library was built
 > 2026-08-03 and predates the snow melt fix. **The retired baseline was a
-> stale binary's output, recorded as a reference.** See
-> `plans/transport/O4_RESOLVED_STALE_MCP_LIBRARY_2026-08-22.md`.
+> stale binary's output, recorded as a reference.** (Finding O4, 2026-08-22;
+> the working record is kept outside the repository.)
 
 ## 4. ⚠ What "15/15 unchanged" does not prove
 
@@ -129,8 +129,8 @@ pollutant and FV paths are undisturbed, and — since 2026-08-22 — that the
 snow, age and heat paths are too. It still proves nothing about a LID under
 either reserved species, about any land-area unit defect, or about steady
 routing, because no deck reaches them. Tracked in
-`plans/transport/SNOW_DIVERGENCE_REGISTER.md` (O6, the SI deck),
-`transport/README.md` §5, and `PROGRESS.md`.
+the snow divergence register (O6, the SI deck; a working record kept outside
+the repository), `transport/README.md` §5, and `PROGRESS.md`.
 
 **Every capability line above was a zero until someone wrote the deck, and
 each of those zeros sat behind a green "N/N unchanged" for months.** The
