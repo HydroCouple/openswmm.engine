@@ -38,10 +38,6 @@ from ._transport import Transport, ThreadInfo, EffectiveThreads, TransportCell
 from ._enums import TransportDomain, TransportClass
 
 class ModelBuilder:
-    """Simulation start date/time.
-
-    @raise EngineError: On C API failure.
-    """
     """Build a SWMM model programmatically (no C{.inp} file).
 
     The engine starts in C{BUILDING} state. Use L{add_node}, L{add_link}, etc.

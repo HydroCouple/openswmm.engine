@@ -14,11 +14,14 @@
    "class": "ModelBuilder",
    "module": "_model",
    "path": "",
-   "doc": "Simulation start date/time.",
+   "doc": "Build a SWMM model programmatically (no .inp file).",
    "construct": {
     "via": "new",
     "args": []
-   }
+   },
+   "c": [
+    "swmm_engine_new"
+   ]
   },
   "climate": {
    "class": "Climate",
@@ -77,7 +80,11 @@
    "path": "gages",
    "doc": "",
    "parent": "solver",
-   "element": "gage"
+   "element": "gage",
+   "c": [
+    "swmm_gage_count",
+    "swmm_gage_index"
+   ]
   },
   "geopackage": {
    "class": "GeoPackage",
@@ -89,7 +96,11 @@
     "args": [
      "path"
     ]
-   }
+   },
+   "c": [
+    "swmm_gpkg_close",
+    "swmm_gpkg_open"
+   ]
   },
   "heat": {
    "class": "Heat",
@@ -150,7 +161,10 @@
     "args": [
      "path"
     ]
-   }
+   },
+   "c": [
+    "swmm_hotstart_close"
+   ]
   },
   "inflows": {
    "class": "Inflows",
@@ -285,7 +299,11 @@
    "path": "links",
    "doc": "Indexable, iterable collection of Link wrappers.",
    "parent": "solver",
-   "element": "link"
+   "element": "link",
+   "c": [
+    "swmm_link_count",
+    "swmm_link_index"
+   ]
   },
   "mass_balance": {
    "class": "MassBalance",
@@ -346,7 +364,11 @@
    "path": "nodes",
    "doc": "Indexable, iterable collection of Node wrappers.",
    "parent": "solver",
-   "element": "node"
+   "element": "node",
+   "c": [
+    "swmm_node_count",
+    "swmm_node_index"
+   ]
   },
   "options": {
    "class": "SimulationOptions",
@@ -372,7 +394,12 @@
     "args": [
      "path"
     ]
-   }
+   },
+   "c": [
+    "swmm_output_close",
+    "swmm_output_open",
+    "swmm_output_open_live"
+   ]
   },
   "pattern": {
    "class": "Pattern",
@@ -388,7 +415,10 @@
    "path": "patterns",
    "doc": "",
    "parent": "solver",
-   "element": "pattern"
+   "element": "pattern",
+   "c": [
+    "swmm_pattern_count"
+   ]
   },
   "pollutant": {
    "class": "Pollutant",
@@ -404,7 +434,11 @@
    "path": "pollutants",
    "doc": "",
    "parent": "solver",
-   "element": "pollutant"
+   "element": "pollutant",
+   "c": [
+    "swmm_pollutant_count",
+    "swmm_pollutant_index"
+   ]
   },
   "process_components": {
    "class": "ProcessComponents",
@@ -426,7 +460,11 @@
    "path": "quality.landuses",
    "doc": "",
    "parent": "quality",
-   "element": "landuse"
+   "element": "landuse",
+   "c": [
+    "swmm_landuse_count",
+    "swmm_landuse_index"
+   ]
   },
   "reactions": {
    "class": "Reactions",
@@ -441,7 +479,10 @@
    "path": "reactions.coefficients",
    "doc": "",
    "parent": "reactions",
-   "element": "coefficient"
+   "element": "coefficient",
+   "c": [
+    "swmm_reaction_coeff_count"
+   ]
   },
   "reactions.initial": {
    "class": "_InitialQualityRows",
@@ -456,7 +497,10 @@
    "path": "reactions.species",
    "doc": "",
    "parent": "reactions",
-   "element": "species"
+   "element": "species",
+   "c": [
+    "swmm_reaction_species_count"
+   ]
   },
   "reactions.terms": {
    "class": "_TermCollection",
@@ -464,7 +508,10 @@
    "path": "reactions.terms",
    "doc": "",
    "parent": "reactions",
-   "element": "term"
+   "element": "term",
+   "c": [
+    "swmm_reaction_term_count"
+   ]
   },
   "save_schedule": {
    "class": "SaveSchedule",
@@ -530,6 +577,13 @@
    "doc": "",
    "parent": "subcatchment"
   },
+  "subcatchment.loadings": {
+   "class": "LoadingsView",
+   "module": "_subcatchments",
+   "path": "subcatchments[].loadings",
+   "doc": "Pollutant or species id -> initial buildup on a subcatchment.",
+   "parent": "subcatchment"
+  },
   "subcatchment.stats": {
    "class": "SubcatchmentStatsView",
    "module": "_subcatchments",
@@ -543,7 +597,11 @@
    "path": "subcatchments",
    "doc": "Indexable, iterable collection of Subcatchment wrappers.",
    "parent": "solver",
-   "element": "subcatchment"
+   "element": "subcatchment",
+   "c": [
+    "swmm_subcatch_count",
+    "swmm_subcatch_index"
+   ]
   },
   "surface2d": {
    "class": "Surface2D",
@@ -559,12 +617,26 @@
    "doc": "",
    "parent": "surface2d"
   },
+  "surface2d.groundwater.options": {
+   "class": "AquiferOptions",
+   "module": "_groundwater",
+   "path": "surface2d.groundwater.options",
+   "doc": "Text options using the native INP key/value spellings.",
+   "parent": "surface2d.groundwater"
+  },
   "surface2d.groundwater.transport": {
    "class": "GroundwaterTransport",
    "module": "_gw_transport",
    "path": "surface2d.groundwater.transport",
    "doc": "",
    "parent": "surface2d.groundwater"
+  },
+  "surface2d.groundwater.transport.options": {
+   "class": "GroundwaterTransportOptions",
+   "module": "_gw_transport",
+   "path": "surface2d.groundwater.transport.options",
+   "doc": "Native GW_TRANSPORT_OPTIONS text keys; values preserve INP spelling.",
+   "parent": "surface2d.groundwater.transport"
   },
   "surface2d.infiltration": {
    "class": "Infiltration2DView",
@@ -601,7 +673,11 @@
    "path": "tables",
    "doc": "",
    "parent": "solver",
-   "element": "table"
+   "element": "table",
+   "c": [
+    "swmm_table_count",
+    "swmm_table_index"
+   ]
   },
   "term": {
    "class": "ReactionTerm",
@@ -661,10 +737,34 @@
      "geom4",
      "units"
     ]
-   }
+   },
+   "c": [
+    "swmm_xsect_create",
+    "swmm_xsect_free"
+   ]
   }
  },
  "members": [
+  {
+   "path": "aquifers.add",
+   "target": "aquifers",
+   "name": "add",
+   "form": "method",
+   "python": "Aquifers.add",
+   "doc": "Add a new aquifer definition with default (zero) parameters.",
+   "c": [
+    "swmm_aquifer_add",
+    "swmm_aquifer_count"
+   ],
+   "returns": "int",
+   "params": [
+    {
+     "name": "obj_id",
+     "type": "str",
+     "required": true
+    }
+   ]
+  },
   {
    "path": "aquifers.get_evap_pattern",
    "target": "aquifers",
@@ -680,6 +780,44 @@
     {
      "name": "aquifer",
      "type": "Union[int, str]",
+     "required": true
+    }
+   ]
+  },
+  {
+   "path": "aquifers.get_id",
+   "target": "aquifers",
+   "name": "get_id",
+   "form": "method",
+   "python": "Aquifers.get_id",
+   "doc": "Get the string identifier of an aquifer definition by index.",
+   "c": [
+    "swmm_aquifer_id"
+   ],
+   "returns": "str",
+   "params": [
+    {
+     "name": "idx",
+     "type": "int",
+     "required": true
+    }
+   ]
+  },
+  {
+   "path": "aquifers.get_index",
+   "target": "aquifers",
+   "name": "get_index",
+   "form": "method",
+   "python": "Aquifers.get_index",
+   "doc": "Look up an aquifer's zero-based index by its string identifier.",
+   "c": [
+    "swmm_aquifer_index"
+   ],
+   "returns": "int",
+   "params": [
+    {
+     "name": "obj_id",
+     "type": "str",
      "required": true
     }
    ]
@@ -709,13 +847,28 @@
    ]
   },
   {
+   "path": "aquifers.items",
+   "target": "aquifers",
+   "name": "items",
+   "form": "item",
+   "python": "list(Aquifers)",
+   "doc": "Name-keyed collection of [AQUIFERS] entries (solver.aquifers).",
+   "returns": "list[tuple[int, Iterator[str]]]",
+   "params": [],
+   "c": [
+    "swmm_aquifer_count"
+   ]
+  },
+  {
    "path": "aquifers.rename",
    "target": "aquifers",
    "name": "rename",
    "form": "method",
    "python": "Aquifers.rename",
-   "doc": "",
-   "c": [],
+   "doc": "Rename an aquifer in place.",
+   "c": [
+    "swmm_aquifer_rename"
+   ],
    "returns": "None",
    "params": [
     {
@@ -1047,17 +1200,6 @@
    "params": []
   },
   {
-   "path": "builder.generation",
-   "target": "builder",
-   "name": "generation",
-   "form": "property",
-   "python": "ModelBuilder.generation",
-   "doc": "Monotonic counter bumped on every structural mutation.",
-   "c": [],
-   "type": "int",
-   "access": "r"
-  },
-  {
    "path": "builder.get_crs",
    "target": "builder",
    "name": "get_crs",
@@ -1268,17 +1410,6 @@
      "required": true
     }
    ]
-  },
-  {
-   "path": "builder.handle",
-   "target": "builder",
-   "name": "handle",
-   "form": "property",
-   "python": "ModelBuilder.handle",
-   "doc": "Raw engine handle as an integer (for use by ModelEditor).",
-   "c": [],
-   "type": "int",
-   "access": "r"
   },
   {
    "path": "builder.plugin_get",
@@ -1987,7 +2118,8 @@
     "swmm_climate_set_ati_weight"
    ],
    "type": "float",
-   "access": "rw"
+   "access": "rw",
+   "units": "fraction"
   },
   {
    "path": "climate.elevation",
@@ -2202,7 +2334,8 @@
     "swmm_climate_set_temp_file_start"
    ],
    "type": "float",
-   "access": "rw"
+   "access": "rw",
+   "units": "datetime"
   },
   {
    "path": "climate.temp_source",
@@ -2318,7 +2451,9 @@
    "form": "property",
    "python": "ReactionCoefficient.is_param",
    "doc": "True for a PARAMETER (pipe/tank-overridable), False for a CONSTANT.",
-   "c": [],
+   "c": [
+    "swmm_reaction_coeff_get"
+   ],
    "type": "bool",
    "access": "r"
   },
@@ -2329,7 +2464,9 @@
    "form": "property",
    "python": "ReactionCoefficient.name",
    "doc": "Coefficient name as referenced from expressions.",
-   "c": [],
+   "c": [
+    "swmm_reaction_coeff_get"
+   ],
    "type": "str",
    "access": "r"
   },
@@ -2341,10 +2478,12 @@
    "python": "ReactionCoefficient.value",
    "doc": "Current numeric value, in whatever units the expressions imply.",
    "c": [
+    "swmm_reaction_coeff_get",
     "swmm_reaction_coeff_set_value"
    ],
    "type": "float",
-   "access": "rw"
+   "access": "rw",
+   "units": "user_defined"
   },
   {
    "path": "controls.append",
@@ -2382,7 +2521,6 @@
    "target": "controls",
    "form": "item",
    "python": "Controls[]",
-   "c": [],
    "doc": "",
    "path": "controls.delete_item",
    "name": "delete_item",
@@ -2393,6 +2531,9 @@
      "type": "int",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_control_remove_rule"
    ]
   },
   {
@@ -2418,7 +2559,6 @@
    "target": "controls",
    "form": "item",
    "python": "Controls[]",
-   "c": [],
    "doc": "",
    "path": "controls.get_item",
    "name": "get_item",
@@ -2429,6 +2569,10 @@
      "type": "int",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_control_get_id",
+    "swmm_control_get_rule"
    ]
   },
   {
@@ -2457,12 +2601,16 @@
    "target": "controls",
    "form": "item",
    "python": "Controls[]",
-   "c": [],
    "doc": "",
    "path": "controls.items",
    "name": "items",
    "returns": "list[tuple[int, ControlRule]]",
-   "params": []
+   "params": [],
+   "c": [
+    "swmm_control_count",
+    "swmm_control_get_id",
+    "swmm_control_get_rule"
+   ]
   },
   {
    "path": "controls.remove_rule",
@@ -2487,7 +2635,6 @@
    "target": "controls",
    "form": "item",
    "python": "Controls[]",
-   "c": [],
    "doc": "",
    "path": "controls.set_item",
    "name": "set_item",
@@ -2503,7 +2650,8 @@
      "type": "ControlRule",
      "required": true
     }
-   ]
+   ],
+   "c": []
   },
   {
    "path": "controls.set_link_setting",
@@ -2513,7 +2661,9 @@
    "python": "Controls.set_link_setting",
    "doc": "Set the control setting for a link by id or index.",
    "c": [
-    "swmm_control_set_link_setting"
+    "swmm_control_set_link_setting",
+    "swmm_link_count",
+    "swmm_link_index"
    ],
    "returns": "None",
    "params": [
@@ -2540,7 +2690,9 @@
    "python": "Controls.set_link_status",
    "doc": "Set the open/closed status of a link.",
    "c": [
-    "swmm_control_set_link_status"
+    "swmm_control_set_link_status",
+    "swmm_link_count",
+    "swmm_link_index"
    ],
    "returns": "None",
    "params": [
@@ -2637,7 +2789,9 @@
    "python": "ModelEditor.analyze_aquifer_impact",
    "doc": "Preview which subcatchments reference an aquifer.",
    "c": [
-    "swmm_aquifer_analyze_impact"
+    "swmm_aquifer_analyze_impact",
+    "swmm_aquifer_index",
+    "swmm_impact_report_free"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -2656,7 +2810,9 @@
    "python": "ModelEditor.analyze_gage_impact",
    "doc": "Preview which objects reference a rain gage.",
    "c": [
-    "swmm_gage_analyze_impact"
+    "swmm_gage_analyze_impact",
+    "swmm_gage_index",
+    "swmm_impact_report_free"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -2675,7 +2831,8 @@
    "python": "ModelEditor.analyze_hydrograph_impact",
    "doc": "Preview which objects reference a unit-hydrograph group by name.",
    "c": [
-    "swmm_hydrograph_analyze_impact"
+    "swmm_hydrograph_analyze_impact",
+    "swmm_impact_report_free"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -2694,7 +2851,9 @@
    "python": "ModelEditor.analyze_inlet_impact",
    "doc": "Preview which inlet-usage rows reference an inlet design.",
    "c": [
-    "swmm_inlet_analyze_impact"
+    "swmm_impact_report_free",
+    "swmm_inlet_analyze_impact",
+    "swmm_inlet_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -2713,7 +2872,9 @@
    "python": "ModelEditor.analyze_landuse_impact",
    "doc": "Preview which objects reference a land use.",
    "c": [
-    "swmm_landuse_analyze_impact"
+    "swmm_impact_report_free",
+    "swmm_landuse_analyze_impact",
+    "swmm_landuse_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -2732,7 +2893,9 @@
    "python": "ModelEditor.analyze_lid_impact",
    "doc": "Preview which LID-usage rows reference a LID control.",
    "c": [
-    "swmm_lid_analyze_impact"
+    "swmm_impact_report_free",
+    "swmm_lid_analyze_impact",
+    "swmm_lid_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -2751,7 +2914,9 @@
    "python": "ModelEditor.analyze_link_impact",
    "doc": "Preview which objects reference a link, without deleting it.",
    "c": [
-    "swmm_link_analyze_impact"
+    "swmm_impact_report_free",
+    "swmm_link_analyze_impact",
+    "swmm_link_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -2770,7 +2935,9 @@
    "python": "ModelEditor.analyze_node_impact",
    "doc": "Preview which objects reference a node, without deleting it.",
    "c": [
-    "swmm_node_analyze_impact"
+    "swmm_impact_report_free",
+    "swmm_node_analyze_impact",
+    "swmm_node_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -2789,7 +2956,9 @@
    "python": "ModelEditor.analyze_pattern_impact",
    "doc": "Preview which objects reference a time pattern, without deleting it.",
    "c": [
-    "swmm_pattern_analyze_impact"
+    "swmm_impact_report_free",
+    "swmm_pattern_analyze_impact",
+    "swmm_pattern_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -2808,7 +2977,9 @@
    "python": "ModelEditor.analyze_pollutant_impact",
    "doc": "Preview which objects reference a pollutant, without deleting it.",
    "c": [
-    "swmm_pollutant_analyze_impact"
+    "swmm_impact_report_free",
+    "swmm_pollutant_analyze_impact",
+    "swmm_pollutant_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -2827,7 +2998,9 @@
    "python": "ModelEditor.analyze_snowpack_impact",
    "doc": "Preview which subcatchments reference a snowpack.",
    "c": [
-    "swmm_snowpack_analyze_impact"
+    "swmm_impact_report_free",
+    "swmm_snowpack_analyze_impact",
+    "swmm_snowpack_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -2846,7 +3019,9 @@
    "python": "ModelEditor.analyze_street_impact",
    "doc": "Preview which inlet-usage rows reference a street.",
    "c": [
-    "swmm_street_analyze_impact"
+    "swmm_impact_report_free",
+    "swmm_street_analyze_impact",
+    "swmm_street_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -2865,7 +3040,9 @@
    "python": "ModelEditor.analyze_subcatch_impact",
    "doc": "Preview which objects reference a subcatchment.",
    "c": [
-    "swmm_subcatch_analyze_impact"
+    "swmm_impact_report_free",
+    "swmm_subcatch_analyze_impact",
+    "swmm_subcatch_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -2884,7 +3061,9 @@
    "python": "ModelEditor.analyze_table_impact",
    "doc": "Preview which objects reference a time series or curve.",
    "c": [
-    "swmm_table_analyze_impact"
+    "swmm_impact_report_free",
+    "swmm_table_analyze_impact",
+    "swmm_table_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -2903,6 +3082,7 @@
    "python": "ModelEditor.analyze_transect_impact",
    "doc": "Preview which links reference a transect.",
    "c": [
+    "swmm_impact_report_free",
     "swmm_transect_analyze_impact"
    ],
    "returns": "list[ImpactEntry]",
@@ -2922,7 +3102,9 @@
    "python": "ModelEditor.convert_link",
    "doc": "Convert a link to a different type in place.",
    "c": [
-    "swmm_link_convert"
+    "swmm_conversion_result_free",
+    "swmm_link_convert",
+    "swmm_link_index"
    ],
    "returns": "ConversionResult",
    "params": [
@@ -2946,7 +3128,9 @@
    "python": "ModelEditor.convert_node",
    "doc": "Convert a node to a different type in place.",
    "c": [
-    "swmm_node_convert"
+    "swmm_conversion_result_free",
+    "swmm_node_convert",
+    "swmm_node_index"
    ],
    "returns": "ConversionResult",
    "params": [
@@ -2970,7 +3154,9 @@
    "python": "ModelEditor.delete_aquifer",
    "doc": "Delete an aquifer; referencing subcatchments lose their groundwater.",
    "c": [
-    "swmm_aquifer_delete"
+    "swmm_aquifer_delete",
+    "swmm_aquifer_index",
+    "swmm_impact_report_free"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -2989,7 +3175,9 @@
    "python": "ModelEditor.delete_gage",
    "doc": "Delete a rain gage and nullify subcatchment gage references.",
    "c": [
-    "swmm_gage_delete"
+    "swmm_gage_delete",
+    "swmm_gage_index",
+    "swmm_impact_report_free"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -3009,6 +3197,7 @@
    "doc": "Delete a batch using pre-edit names/indices; validate all before mutation.",
    "c": [
     "swmm_gage_delete_many",
+    "swmm_gage_index",
     "swmm_impact_report_free"
    ],
    "returns": "list[ImpactEntry]",
@@ -3028,7 +3217,8 @@
    "python": "ModelEditor.delete_hydrograph",
    "doc": "Delete a unit-hydrograph group by name.",
    "c": [
-    "swmm_hydrograph_delete"
+    "swmm_hydrograph_delete",
+    "swmm_impact_report_free"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -3047,7 +3237,9 @@
    "python": "ModelEditor.delete_inlet",
    "doc": "Delete an inlet design; cascade-delete referencing inlet-usage rows.",
    "c": [
-    "swmm_inlet_delete"
+    "swmm_impact_report_free",
+    "swmm_inlet_delete",
+    "swmm_inlet_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -3066,7 +3258,9 @@
    "python": "ModelEditor.delete_landuse",
    "doc": "Delete a land use; re-pack buildup/washoff and coverage columns.",
    "c": [
-    "swmm_landuse_delete"
+    "swmm_impact_report_free",
+    "swmm_landuse_delete",
+    "swmm_landuse_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -3085,7 +3279,9 @@
    "python": "ModelEditor.delete_lid",
    "doc": "Delete a LID control; cascade-delete referencing LID-usage rows.",
    "c": [
-    "swmm_lid_delete"
+    "swmm_impact_report_free",
+    "swmm_lid_delete",
+    "swmm_lid_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -3104,7 +3300,9 @@
    "python": "ModelEditor.delete_link",
    "doc": "Delete a link and cascade-delete or nullify referencing objects.",
    "c": [
-    "swmm_link_delete"
+    "swmm_impact_report_free",
+    "swmm_link_delete",
+    "swmm_link_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -3124,7 +3322,8 @@
    "doc": "Delete a batch using pre-edit names/indices; validate all before mutation.",
    "c": [
     "swmm_impact_report_free",
-    "swmm_link_delete_many"
+    "swmm_link_delete_many",
+    "swmm_link_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -3143,7 +3342,9 @@
    "python": "ModelEditor.delete_node",
    "doc": "Delete a node and cascade-delete or nullify all referencing objects.",
    "c": [
-    "swmm_node_delete"
+    "swmm_impact_report_free",
+    "swmm_node_delete",
+    "swmm_node_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -3163,7 +3364,8 @@
    "doc": "Delete a batch using pre-edit names/indices; validate all before mutation.",
    "c": [
     "swmm_impact_report_free",
-    "swmm_node_delete_many"
+    "swmm_node_delete_many",
+    "swmm_node_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -3182,7 +3384,9 @@
    "python": "ModelEditor.delete_pattern",
    "doc": "Delete a time pattern and clear all name-based references.",
    "c": [
-    "swmm_pattern_delete"
+    "swmm_impact_report_free",
+    "swmm_pattern_delete",
+    "swmm_pattern_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -3201,7 +3405,9 @@
    "python": "ModelEditor.delete_pollutant",
    "doc": "Delete a pollutant and re-pack every per-pollutant matrix.",
    "c": [
-    "swmm_pollutant_delete"
+    "swmm_impact_report_free",
+    "swmm_pollutant_delete",
+    "swmm_pollutant_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -3220,7 +3426,9 @@
    "python": "ModelEditor.delete_snowpack",
    "doc": "Delete a snowpack; clear referencing subcatchments and renumber.",
    "c": [
-    "swmm_snowpack_delete"
+    "swmm_impact_report_free",
+    "swmm_snowpack_delete",
+    "swmm_snowpack_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -3239,7 +3447,9 @@
    "python": "ModelEditor.delete_street",
    "doc": "Delete a street; cascade-delete referencing inlet-usage rows.",
    "c": [
-    "swmm_street_delete"
+    "swmm_impact_report_free",
+    "swmm_street_delete",
+    "swmm_street_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -3258,7 +3468,9 @@
    "python": "ModelEditor.delete_subcatch",
    "doc": "Delete a subcatchment and nullify referencing objects.",
    "c": [
-    "swmm_subcatch_delete"
+    "swmm_impact_report_free",
+    "swmm_subcatch_delete",
+    "swmm_subcatch_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -3278,7 +3490,8 @@
    "doc": "Delete a batch using pre-edit names/indices; validate all before mutation.",
    "c": [
     "swmm_impact_report_free",
-    "swmm_subcatch_delete_many"
+    "swmm_subcatch_delete_many",
+    "swmm_subcatch_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -3297,7 +3510,9 @@
    "python": "ModelEditor.delete_table",
    "doc": "Delete a time series or curve and nullify all referencing objects.",
    "c": [
-    "swmm_table_delete"
+    "swmm_impact_report_free",
+    "swmm_table_delete",
+    "swmm_table_index"
    ],
    "returns": "list[ImpactEntry]",
    "params": [
@@ -3316,6 +3531,7 @@
    "python": "ModelEditor.delete_transect",
    "doc": "Delete a transect and reset referencing conduit cross-sections.",
    "c": [
+    "swmm_impact_report_free",
     "swmm_transect_delete"
    ],
    "returns": "list[ImpactEntry]",
@@ -3349,7 +3565,8 @@
    "python": "ModelEditor.fuse_inlet_junction",
    "doc": "Re-fuse the two conduits of an inlet junction into one.",
    "c": [
-    "swmm_inlet_junction_fuse"
+    "swmm_inlet_junction_fuse",
+    "swmm_node_index"
    ],
    "returns": "int",
    "params": [
@@ -3368,6 +3585,7 @@
    "python": "ModelEditor.fuse_virtual_junction",
    "doc": "Re-fuse the two conduits of a virtual junction into one.",
    "c": [
+    "swmm_node_index",
     "swmm_virtual_junction_fuse"
    ],
    "returns": "int",
@@ -3440,6 +3658,7 @@
    "python": "ModelEditor.set_node_inlet",
    "doc": "Promote a node to an inlet junction, or demote it back.",
    "c": [
+    "swmm_node_index",
     "swmm_node_set_inlet"
    ],
    "returns": "None",
@@ -3464,6 +3683,7 @@
    "python": "ModelEditor.set_node_virtual",
    "doc": "Set or clear a node's virtual-junction flag.",
    "c": [
+    "swmm_node_index",
     "swmm_node_set_virtual"
    ],
    "returns": "None",
@@ -3488,7 +3708,8 @@
    "python": "ModelEditor.split_conduit",
    "doc": "Split a conduit at normalized position t, inserting a new node.",
    "c": [
-    "swmm_conduit_split"
+    "swmm_conduit_split",
+    "swmm_link_index"
    ],
    "returns": "tuple[int, int]",
    "params": [
@@ -3527,7 +3748,8 @@
    "python": "ModelEditor.split_conduit_inlet",
    "doc": "Split a street conduit, inserting an inlet junction.",
    "c": [
-    "swmm_conduit_split_inlet"
+    "swmm_conduit_split_inlet",
+    "swmm_link_index"
    ],
    "returns": "tuple[int, int]",
    "params": [
@@ -3610,7 +3832,9 @@
    "form": "method",
    "python": "Solver.effective_threads",
    "doc": "Thread team sizes for this model; zero requests automatic selection.",
-   "c": [],
+   "c": [
+    "swmm_get_effective_threads"
+   ],
    "returns": "EffectiveThreads",
    "params": [
     {
@@ -3707,7 +3931,6 @@
    "target": "events",
    "form": "item",
    "python": "EventsView[]",
-   "c": [],
    "doc": "[EVENTS] block as a MutableSequence. See Solver.events.",
    "path": "events.delete_item",
    "name": "delete_item",
@@ -3718,13 +3941,15 @@
      "type": "int",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_events_remove"
    ]
   },
   {
    "target": "events",
    "form": "item",
    "python": "EventsView[]",
-   "c": [],
    "doc": "[EVENTS] block as a MutableSequence. See Solver.events.",
    "path": "events.get_item",
    "name": "get_item",
@@ -3735,6 +3960,9 @@
      "type": "int",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_events_get"
    ]
   },
   {
@@ -3763,18 +3991,20 @@
    "target": "events",
    "form": "item",
    "python": "EventsView[]",
-   "c": [],
    "doc": "[EVENTS] block as a MutableSequence. See Solver.events.",
    "path": "events.items",
    "name": "items",
    "returns": "list[tuple[int, Event]]",
-   "params": []
+   "params": [],
+   "c": [
+    "swmm_events_count",
+    "swmm_events_get"
+   ]
   },
   {
    "target": "events",
    "form": "item",
    "python": "EventsView[]",
-   "c": [],
    "doc": "[EVENTS] block as a MutableSequence. See Solver.events.",
    "path": "events.set_item",
    "name": "set_item",
@@ -3790,6 +4020,9 @@
      "type": "Event",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_events_set"
    ]
   },
   {
@@ -3813,7 +4046,15 @@
    "python": "Forcing.clear",
    "doc": "Clear all forcing channels on one object.",
    "c": [
-    "swmm_forcing_clear"
+    "swmm_forcing_clear",
+    "swmm_gage_count",
+    "swmm_gage_index",
+    "swmm_link_count",
+    "swmm_link_index",
+    "swmm_node_count",
+    "swmm_node_index",
+    "swmm_subcatch_count",
+    "swmm_subcatch_index"
    ],
    "returns": "None",
    "params": [
@@ -3975,7 +4216,11 @@
    "python": "Forcing.element_climate",
    "doc": "Force local air temperature, humidity, wind or shortwave climate.",
    "c": [
-    "swmm_forcing_element_climate"
+    "swmm_forcing_element_climate",
+    "swmm_link_count",
+    "swmm_link_index",
+    "swmm_node_count",
+    "swmm_node_index"
    ],
    "returns": "None",
    "params": [
@@ -4021,7 +4266,11 @@
    "python": "Forcing.element_climate_get",
    "doc": "Return (value, mode), with mode None when no override is present.",
    "c": [
-    "swmm_forcing_element_climate_get"
+    "swmm_forcing_element_climate_get",
+    "swmm_link_count",
+    "swmm_link_index",
+    "swmm_node_count",
+    "swmm_node_index"
    ],
    "returns": "tuple[float, ForcingMode | None]",
    "params": [
@@ -4050,7 +4299,9 @@
    "python": "Forcing.gage_rainfall",
    "doc": "Force the rainfall rate reported by rain *gage* for the current step (see *mode* / *persist*).",
    "c": [
-    "swmm_forcing_gage_rainfall"
+    "swmm_forcing_gage_rainfall",
+    "swmm_gage_count",
+    "swmm_gage_index"
    ],
    "returns": "None",
    "params": [
@@ -4125,7 +4376,9 @@
    "python": "Forcing.link_flow",
    "doc": "Force the flow through *link* for the current step (see *mode* / *persist*).",
    "c": [
-    "swmm_forcing_link_flow"
+    "swmm_forcing_link_flow",
+    "swmm_link_count",
+    "swmm_link_index"
    ],
    "returns": "None",
    "params": [
@@ -4161,7 +4414,11 @@
    "python": "Forcing.link_quality",
    "doc": "Force pollutant quality on a link.",
    "c": [
-    "swmm_forcing_link_quality"
+    "swmm_forcing_link_quality",
+    "swmm_link_count",
+    "swmm_link_index",
+    "swmm_pollutant_count",
+    "swmm_pollutant_index"
    ],
    "returns": "None",
    "params": [
@@ -4202,7 +4459,9 @@
    "python": "Forcing.link_seepage",
    "doc": "Exchange in ft³/s regardless of project units, positive out of conduit.",
    "c": [
-    "swmm_forcing_link_seepage"
+    "swmm_forcing_link_seepage",
+    "swmm_link_count",
+    "swmm_link_index"
    ],
    "returns": "None",
    "params": [
@@ -4238,7 +4497,9 @@
    "python": "Forcing.link_setting",
    "doc": "Force the control setting (0-1) of *link* for the current step (see *mode* / *persist*).",
    "c": [
-    "swmm_forcing_link_setting"
+    "swmm_forcing_link_setting",
+    "swmm_link_count",
+    "swmm_link_index"
    ],
    "returns": "None",
    "params": [
@@ -4274,7 +4535,9 @@
    "python": "Forcing.node_age",
    "doc": "Age override in hours; ADD uses hours times ft³/s.",
    "c": [
-    "swmm_forcing_node_age"
+    "swmm_forcing_node_age",
+    "swmm_node_count",
+    "swmm_node_index"
    ],
    "returns": "None",
    "params": [
@@ -4310,7 +4573,9 @@
    "python": "Forcing.node_head_boundary",
    "doc": "Force a head/stage boundary at *node* for the current step (see *mode* / *persist*).",
    "c": [
-    "swmm_forcing_node_head_boundary"
+    "swmm_forcing_node_head_boundary",
+    "swmm_node_count",
+    "swmm_node_index"
    ],
    "returns": "None",
    "params": [
@@ -4346,7 +4611,9 @@
    "python": "Forcing.node_lat_inflow",
    "doc": "Force a lateral inflow (flow units) at *node* for the current step; *mode* selects replace/add/scale and *persist* keeps it across steps.",
    "c": [
-    "swmm_forcing_node_lat_inflow"
+    "swmm_forcing_node_lat_inflow",
+    "swmm_node_count",
+    "swmm_node_index"
    ],
    "returns": "None",
    "params": [
@@ -4382,7 +4649,11 @@
    "python": "Forcing.node_quality",
    "doc": "Force a pollutant mass-rate inflow of *pollutant* at *node* (see *mode* / *persist*).",
    "c": [
-    "swmm_forcing_node_quality"
+    "swmm_forcing_node_quality",
+    "swmm_node_count",
+    "swmm_node_index",
+    "swmm_pollutant_count",
+    "swmm_pollutant_index"
    ],
    "returns": "None",
    "params": [
@@ -4423,7 +4694,9 @@
    "python": "Forcing.node_temperature",
    "doc": "Temperature override in degrees C; ADD uses degrees C times ft³/s.",
    "c": [
-    "swmm_forcing_node_temperature"
+    "swmm_forcing_node_temperature",
+    "swmm_node_count",
+    "swmm_node_index"
    ],
    "returns": "None",
    "params": [
@@ -4459,7 +4732,9 @@
    "python": "Forcing.subcatchment_evap",
    "doc": "Prescribe a potential evapotranspiration (PET) rate on a subcatchment.",
    "c": [
-    "swmm_forcing_subcatch_evap"
+    "swmm_forcing_subcatch_evap",
+    "swmm_subcatch_count",
+    "swmm_subcatch_index"
    ],
    "returns": "None",
    "params": [
@@ -4495,7 +4770,9 @@
    "python": "Forcing.subcatchment_rainfall",
    "doc": "Force the rainfall rate on subcatchment *sub* for the current step (see *mode* / *persist*).",
    "c": [
-    "swmm_forcing_subcatch_rainfall"
+    "swmm_forcing_subcatch_rainfall",
+    "swmm_subcatch_count",
+    "swmm_subcatch_index"
    ],
    "returns": "None",
    "params": [
@@ -4531,7 +4808,9 @@
    "python": "Forcing.subcatchment_snowfall",
    "doc": "Prescribe snowfall on a subcatchment.",
    "c": [
-    "swmm_forcing_subcatch_snowfall"
+    "swmm_forcing_subcatch_snowfall",
+    "swmm_subcatch_count",
+    "swmm_subcatch_index"
    ],
    "returns": "None",
    "params": [
@@ -4793,7 +5072,8 @@
     "swmm_gage_set_snow_factor"
    ],
    "type": "float",
-   "access": "rw"
+   "access": "rw",
+   "units": "dimensionless"
   },
   {
    "path": "gage.station_id",
@@ -4927,6 +5207,8 @@
    "python": "Gages.rename",
    "doc": "Rename the rain gage identified by *key* to *new_id*.",
    "c": [
+    "swmm_gage_count",
+    "swmm_gage_index",
     "swmm_gage_rename"
    ],
    "returns": "None",
@@ -5438,7 +5720,6 @@
    "target": "heat.cloud",
    "form": "item",
    "python": "_HeatCloud[]",
-   "c": [],
    "doc": "",
    "path": "heat.cloud.get_item",
    "name": "get_item",
@@ -5449,24 +5730,28 @@
      "type": "Union[HeatCloudParam, int, str]",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_heat_get_cloud"
    ]
   },
   {
    "target": "heat.cloud",
    "form": "item",
    "python": "_HeatCloud[]",
-   "c": [],
    "doc": "",
    "path": "heat.cloud.items",
    "name": "items",
    "returns": "list[tuple[Union[HeatCloudParam, int, str], float]]",
-   "params": []
+   "params": [],
+   "c": [
+    "swmm_heat_get_cloud"
+   ]
   },
   {
    "target": "heat.cloud",
    "form": "item",
    "python": "_HeatCloud[]",
-   "c": [],
    "doc": "",
    "path": "heat.cloud.set_item",
    "name": "set_item",
@@ -5482,6 +5767,9 @@
      "type": "float",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_heat_set_cloud"
    ]
   },
   {
@@ -5547,7 +5835,6 @@
    "target": "heat.modules",
    "form": "item",
    "python": "_HeatModules[]",
-   "c": [],
    "doc": "",
    "path": "heat.modules.get_item",
    "name": "get_item",
@@ -5558,24 +5845,28 @@
      "type": "Union[HeatFluxModule, int, str]",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_heat_get_module"
    ]
   },
   {
    "target": "heat.modules",
    "form": "item",
    "python": "_HeatModules[]",
-   "c": [],
    "doc": "",
    "path": "heat.modules.items",
    "name": "items",
    "returns": "list[tuple[Union[HeatFluxModule, int, str], bool]]",
-   "params": []
+   "params": [],
+   "c": [
+    "swmm_heat_get_module"
+   ]
   },
   {
    "target": "heat.modules",
    "form": "item",
    "python": "_HeatModules[]",
-   "c": [],
    "doc": "",
    "path": "heat.modules.set_item",
    "name": "set_item",
@@ -5591,13 +5882,15 @@
      "type": "bool",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_heat_set_module"
    ]
   },
   {
    "target": "heat.node_overrides",
    "form": "item",
    "python": "_HeatNodeOverrides[]",
-   "c": [],
    "doc": "",
    "path": "heat.node_overrides.get_item",
    "name": "get_item",
@@ -5608,18 +5901,24 @@
      "type": "int",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_heat_get_node_override"
    ]
   },
   {
    "target": "heat.node_overrides",
    "form": "item",
    "python": "_HeatNodeOverrides[]",
-   "c": [],
    "doc": "",
    "path": "heat.node_overrides.items",
    "name": "items",
    "returns": "list[tuple[int, HeatNodeOverride]]",
-   "params": []
+   "params": [],
+   "c": [
+    "swmm_heat_get_node_override",
+    "swmm_heat_node_override_count"
+   ]
   },
   {
    "path": "heat.node_overrides.remove",
@@ -5648,7 +5947,9 @@
    "python": "_HeatNodeOverrides.set",
    "doc": "Add or update the NODE override for (source, node).",
    "c": [
-    "swmm_heat_set_node_override"
+    "swmm_heat_set_node_override",
+    "swmm_node_count",
+    "swmm_node_index"
    ],
    "returns": "None",
    "params": [
@@ -5673,7 +5974,6 @@
    "target": "heat.radiative",
    "form": "item",
    "python": "_HeatRadiative[]",
-   "c": [],
    "doc": "",
    "path": "heat.radiative.get_item",
    "name": "get_item",
@@ -5684,24 +5984,28 @@
      "type": "Union[HeatRadiativeParam, int, str]",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_heat_get_radiative"
    ]
   },
   {
    "target": "heat.radiative",
    "form": "item",
    "python": "_HeatRadiative[]",
-   "c": [],
    "doc": "",
    "path": "heat.radiative.items",
    "name": "items",
    "returns": "list[tuple[Union[HeatRadiativeParam, int, str], float]]",
-   "params": []
+   "params": [],
+   "c": [
+    "swmm_heat_get_radiative"
+   ]
   },
   {
    "target": "heat.radiative",
    "form": "item",
    "python": "_HeatRadiative[]",
-   "c": [],
    "doc": "",
    "path": "heat.radiative.set_item",
    "name": "set_item",
@@ -5717,6 +6021,9 @@
      "type": "float",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_heat_set_radiative"
    ]
   },
   {
@@ -5769,7 +6076,6 @@
    "target": "heat.solar",
    "form": "item",
    "python": "_HeatSolar[]",
-   "c": [],
    "doc": "",
    "path": "heat.solar.get_item",
    "name": "get_item",
@@ -5780,24 +6086,28 @@
      "type": "Union[HeatSolarParam, int, str]",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_heat_get_solar"
    ]
   },
   {
    "target": "heat.solar",
    "form": "item",
    "python": "_HeatSolar[]",
-   "c": [],
    "doc": "",
    "path": "heat.solar.items",
    "name": "items",
    "returns": "list[tuple[Union[HeatSolarParam, int, str], float]]",
-   "params": []
+   "params": [],
+   "c": [
+    "swmm_heat_get_solar"
+   ]
   },
   {
    "target": "heat.solar",
    "form": "item",
    "python": "_HeatSolar[]",
-   "c": [],
    "doc": "",
    "path": "heat.solar.set_item",
    "name": "set_item",
@@ -5813,6 +6123,9 @@
      "type": "float",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_heat_set_solar"
    ]
   },
   {
@@ -5855,7 +6168,9 @@
    "python": "_HeatSources.effective",
    "doc": "The temperature *source* water actually enters *node* at (degC).",
    "c": [
-    "swmm_heat_get_effective_source_temp"
+    "swmm_heat_get_effective_source_temp",
+    "swmm_node_count",
+    "swmm_node_index"
    ],
    "returns": "float",
    "params": [
@@ -5875,7 +6190,6 @@
    "target": "heat.sources",
    "form": "item",
    "python": "_HeatSources[]",
-   "c": [],
    "doc": "",
    "path": "heat.sources.get_item",
    "name": "get_item",
@@ -5886,6 +6200,9 @@
      "type": "Union[WaterAgeSource, int, str]",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_heat_get_source_temp"
    ]
   },
   {
@@ -5911,18 +6228,20 @@
    "target": "heat.sources",
    "form": "item",
    "python": "_HeatSources[]",
-   "c": [],
    "doc": "",
    "path": "heat.sources.items",
    "name": "items",
    "returns": "list[tuple[Union[WaterAgeSource, int, str], float]]",
-   "params": []
+   "params": [],
+   "c": [
+    "swmm_heat_get_source_temp",
+    "swmm_heat_source_count"
+   ]
   },
   {
    "target": "heat.sources",
    "form": "item",
    "python": "_HeatSources[]",
-   "c": [],
    "doc": "",
    "path": "heat.sources.set_item",
    "name": "set_item",
@@ -5938,6 +6257,9 @@
      "type": "float",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_heat_set_source_temp"
    ]
   },
   {
@@ -6211,7 +6533,9 @@
    "python": "Inflows.add_dwf",
    "doc": "Add a dry-weather flow.",
    "c": [
-    "swmm_dwf_add"
+    "swmm_dwf_add",
+    "swmm_node_count",
+    "swmm_node_index"
    ],
    "returns": "None",
    "params": [
@@ -6265,7 +6589,9 @@
    "python": "Inflows.add_external",
    "doc": "Add an external inflow.",
    "c": [
-    "swmm_ext_inflow_add"
+    "swmm_ext_inflow_add",
+    "swmm_node_count",
+    "swmm_node_index"
    ],
    "returns": "None",
    "params": [
@@ -6411,6 +6737,8 @@
    "python": "Inflows.add_rdii",
    "doc": "Add an RDII inflow at *node* driven by unit-hydrograph group *uh_name* over sewered *area*.",
    "c": [
+    "swmm_node_count",
+    "swmm_node_index",
     "swmm_rdii_add"
    ],
    "returns": "None",
@@ -7208,6 +7536,19 @@
    ]
   },
   {
+   "path": "infrastructure.inlet_usages.items",
+   "target": "infrastructure.inlet_usages",
+   "name": "items",
+   "form": "item",
+   "python": "list(InletUsages)",
+   "doc": "",
+   "returns": "list[tuple[int, Iterator[dict[str, Any]]]]",
+   "params": [],
+   "c": [
+    "swmm_inlet_usage_count"
+   ]
+  },
+  {
    "path": "infrastructure.inlet_usages.remove",
    "target": "infrastructure.inlet_usages",
    "name": "remove",
@@ -7432,6 +7773,19 @@
      "type": "int",
      "required": true
     }
+   ]
+  },
+  {
+   "path": "infrastructure.inlets.items",
+   "target": "infrastructure.inlets",
+   "name": "items",
+   "form": "item",
+   "python": "list(Inlets)",
+   "doc": "",
+   "returns": "list[tuple[int, Iterator[str]]]",
+   "params": [],
+   "c": [
+    "swmm_inlet_count"
    ]
   },
   {
@@ -7752,6 +8106,19 @@
    ]
   },
   {
+   "path": "infrastructure.lids.items",
+   "target": "infrastructure.lids",
+   "name": "items",
+   "form": "item",
+   "python": "list(LIDs)",
+   "doc": "",
+   "returns": "list[tuple[int, Iterator[str]]]",
+   "params": [],
+   "c": [
+    "swmm_lid_count"
+   ]
+  },
+  {
    "path": "infrastructure.lids.rename",
    "target": "infrastructure.lids",
    "name": "rename",
@@ -8041,7 +8408,9 @@
    "python": "LIDs.usage_add",
    "doc": "Place lid (id or index) on subcatchment (id or index).",
    "c": [
-    "swmm_lid_usage_add"
+    "swmm_lid_usage_add",
+    "swmm_subcatch_count",
+    "swmm_subcatch_index"
    ],
    "returns": "None",
    "params": [
@@ -8212,6 +8581,19 @@
      "type": "int",
      "required": true
     }
+   ]
+  },
+  {
+   "path": "infrastructure.streets.items",
+   "target": "infrastructure.streets",
+   "name": "items",
+   "form": "item",
+   "python": "list(Streets)",
+   "doc": "",
+   "returns": "list[tuple[int, Iterator[str]]]",
+   "params": [],
+   "c": [
+    "swmm_street_count"
    ]
   },
   {
@@ -8542,6 +8924,19 @@
    ]
   },
   {
+   "path": "infrastructure.transects.items",
+   "target": "infrastructure.transects",
+   "name": "items",
+   "form": "item",
+   "python": "list(Transects)",
+   "doc": "",
+   "returns": "list[tuple[int, Iterator[str]]]",
+   "params": [],
+   "c": [
+    "swmm_transect_count"
+   ]
+  },
+  {
    "path": "infrastructure.transects.remove",
    "target": "infrastructure.transects",
    "name": "remove",
@@ -8810,7 +9205,6 @@
    "target": "initial_quality",
    "form": "item",
    "python": "InitialQuality[]",
-   "c": [],
    "doc": "",
    "path": "initial_quality.get_item",
    "name": "get_item",
@@ -8821,6 +9215,9 @@
      "type": "int",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_init_quality_get"
    ]
   },
   {
@@ -8846,12 +9243,15 @@
    "target": "initial_quality",
    "form": "item",
    "python": "InitialQuality[]",
-   "c": [],
    "doc": "",
    "path": "initial_quality.items",
    "name": "items",
    "returns": "list[tuple[int, InitialQualityEntry]]",
-   "params": []
+   "params": [],
+   "c": [
+    "swmm_init_quality_count",
+    "swmm_init_quality_get"
+   ]
   },
   {
    "path": "initial_quality.remove",
@@ -9318,7 +9718,8 @@
     "swmm_link_set_outlet_expon"
    ],
    "type": "float",
-   "access": "rw"
+   "access": "rw",
+   "units": "dimensionless"
   },
   {
    "path": "link.outlet.rating_type",
@@ -9400,7 +9801,9 @@
    "python": "Link.quality",
    "doc": "Return the current concentration of *pollutant* in this link.",
    "c": [
-    "swmm_link_get_quality"
+    "swmm_link_get_quality",
+    "swmm_pollutant_count",
+    "swmm_pollutant_index"
    ],
    "returns": "float",
    "params": [
@@ -9438,7 +9841,8 @@
     "swmm_link_set_seep_rate"
    ],
    "type": "float",
-   "access": "rw"
+   "access": "rw",
+   "units": "rain_rate"
   },
   {
    "path": "link.set_nodes",
@@ -9750,7 +10154,8 @@
     "swmm_link_set_discharge_coeff"
    ],
    "type": "float",
-   "access": "rw"
+   "access": "rw",
+   "units": "weir_coeff"
   },
   {
    "path": "link.weir.end_contractions",
@@ -9788,7 +10193,9 @@
    "form": "method",
    "python": "XSection.as_tuple",
    "doc": "Return the cross-section as a (shape, geom1, geom2, geom3, geom4) tuple.",
-   "c": [],
+   "c": [
+    "swmm_link_get_xsect"
+   ],
    "returns": "Tuple[XSectShape, float, float, float, float]",
    "params": []
   },
@@ -9798,10 +10205,13 @@
    "name": "g1",
    "form": "property",
    "python": "XSection.g1",
-   "doc": "",
-   "c": [],
+   "doc": "Get the cross-section geometry for a conduit link.",
+   "c": [
+    "swmm_link_get_xsect"
+   ],
    "type": "float",
-   "access": "r"
+   "access": "r",
+   "units": "length"
   },
   {
    "path": "link.xsect.g2",
@@ -9809,10 +10219,13 @@
    "name": "g2",
    "form": "property",
    "python": "XSection.g2",
-   "doc": "",
-   "c": [],
+   "doc": "Get the cross-section geometry for a conduit link.",
+   "c": [
+    "swmm_link_get_xsect"
+   ],
    "type": "float",
-   "access": "r"
+   "access": "r",
+   "units": "shape_dependent"
   },
   {
    "path": "link.xsect.g3",
@@ -9820,10 +10233,13 @@
    "name": "g3",
    "form": "property",
    "python": "XSection.g3",
-   "doc": "",
-   "c": [],
+   "doc": "Get the cross-section geometry for a conduit link.",
+   "c": [
+    "swmm_link_get_xsect"
+   ],
    "type": "float",
-   "access": "r"
+   "access": "r",
+   "units": "shape_dependent"
   },
   {
    "path": "link.xsect.g4",
@@ -9831,10 +10247,13 @@
    "name": "g4",
    "form": "property",
    "python": "XSection.g4",
-   "doc": "",
-   "c": [],
+   "doc": "Get the cross-section geometry for a conduit link.",
+   "c": [
+    "swmm_link_get_xsect"
+   ],
    "type": "float",
-   "access": "r"
+   "access": "r",
+   "units": "shape_dependent"
   },
   {
    "path": "link.xsect.geometry",
@@ -9854,9 +10273,22 @@
    "form": "method",
    "python": "XSection.info",
    "doc": "Return this cross-section as a CrossSection.",
-   "c": [],
+   "c": [
+    "swmm_link_get_xsect"
+   ],
    "returns": "CrossSection",
    "params": []
+  },
+  {
+   "path": "link.xsect.items",
+   "target": "link.xsect",
+   "name": "items",
+   "form": "item",
+   "python": "list(XSection)",
+   "doc": "",
+   "returns": "list[tuple[int, Iterator[Any]]]",
+   "params": [],
+   "c": []
   },
   {
    "path": "link.xsect.shape",
@@ -9864,8 +10296,10 @@
    "name": "shape",
    "form": "property",
    "python": "XSection.shape",
-   "doc": "",
-   "c": [],
+   "doc": "Get the cross-section geometry for a conduit link.",
+   "c": [
+    "swmm_link_get_xsect"
+   ],
    "type": "XSectShape",
    "access": "r"
   },
@@ -10003,7 +10437,11 @@
    "form": "method",
    "python": "Links.get_xsect_info",
    "doc": "Return the cross-section of the link identified by *key*.",
-   "c": [],
+   "c": [
+    "swmm_link_count",
+    "swmm_link_get_xsect",
+    "swmm_link_index"
+   ],
    "returns": "CrossSection",
    "params": [
     {
@@ -10034,8 +10472,11 @@
    "name": "ids",
    "form": "property",
    "python": "Links.ids",
-   "doc": "",
-   "c": [],
+   "doc": "Get link IDs for all links in a single call (stride-packed UTF-8).",
+   "c": [
+    "swmm_link_count",
+    "swmm_link_get_ids_bulk"
+   ],
    "type": "NDArray[Any]",
    "access": "r"
   },
@@ -10081,7 +10522,9 @@
    "doc": "Return an array of *pollutant* concentrations for every link.",
    "c": [
     "swmm_link_count",
-    "swmm_link_get_quality_bulk"
+    "swmm_link_get_quality_bulk",
+    "swmm_pollutant_count",
+    "swmm_pollutant_index"
    ],
    "returns": "NDArray[Any]",
    "params": [
@@ -10100,6 +10543,8 @@
    "python": "Links.rename",
    "doc": "Rename the link identified by *key* to *new_id*.",
    "c": [
+    "swmm_link_count",
+    "swmm_link_index",
     "swmm_link_rename"
    ],
    "returns": "None",
@@ -10185,7 +10630,8 @@
     "swmm_get_max_courant"
    ],
    "type": "float",
-   "access": "r"
+   "access": "r",
+   "units": "dimensionless"
   },
   {
    "path": "mass_balance.quality_continuity_error",
@@ -10195,7 +10641,9 @@
    "python": "MassBalance.quality_continuity_error",
    "doc": "Quality continuity error as a fraction for pollutant (id or index).",
    "c": [
-    "swmm_get_quality_continuity_error"
+    "swmm_get_quality_continuity_error",
+    "swmm_pollutant_count",
+    "swmm_pollutant_index"
    ],
    "returns": "float",
    "params": [
@@ -10214,7 +10662,9 @@
    "python": "MassBalance.quality_evap_loss",
    "doc": "Cumulative mass of pollutant lost to evaporation.",
    "c": [
-    "swmm_get_quality_evap_loss"
+    "swmm_get_quality_evap_loss",
+    "swmm_pollutant_count",
+    "swmm_pollutant_index"
    ],
    "returns": "float",
    "params": [
@@ -10233,7 +10683,9 @@
    "python": "MassBalance.quality_seep_loss",
    "doc": "Cumulative mass of pollutant lost to seepage.",
    "c": [
-    "swmm_get_quality_seep_loss"
+    "swmm_get_quality_seep_loss",
+    "swmm_pollutant_count",
+    "swmm_pollutant_index"
    ],
    "returns": "float",
    "params": [
@@ -10789,7 +11241,9 @@
    "python": "Node.quality",
    "doc": "Return the concentration of pollutant (index or id).",
    "c": [
-    "swmm_node_get_quality"
+    "swmm_node_get_quality",
+    "swmm_pollutant_count",
+    "swmm_pollutant_index"
    ],
    "returns": "float",
    "params": [
@@ -10845,7 +11299,9 @@
    "python": "Node.set_quality_mass_flux",
    "doc": "Inject a mass flux (model units / time) for pollutant.",
    "c": [
-    "swmm_node_set_quality_mass_flux"
+    "swmm_node_set_quality_mass_flux",
+    "swmm_pollutant_count",
+    "swmm_pollutant_index"
    ],
    "returns": "None",
    "params": [
@@ -10992,7 +11448,8 @@
     "swmm_node_set_storage_seep_rate"
    ],
    "type": "float",
-   "access": "rw"
+   "access": "rw",
+   "units": "unverified"
   },
   {
    "path": "node.storage.shape",
@@ -11182,7 +11639,10 @@
    "form": "property",
    "python": "Nodes.ids",
    "doc": "All node ids as a numpy.ndarray of dtype object.",
-   "c": [],
+   "c": [
+    "swmm_node_count",
+    "swmm_node_get_ids_bulk"
+   ],
    "type": "NDArray[Any]",
    "access": "r"
   },
@@ -11289,7 +11749,9 @@
    "doc": "Per-node concentration of pollutant as a numpy array.",
    "c": [
     "swmm_node_count",
-    "swmm_node_get_quality_bulk"
+    "swmm_node_get_quality_bulk",
+    "swmm_pollutant_count",
+    "swmm_pollutant_index"
    ],
    "returns": "NDArray[Any]",
    "params": [
@@ -11308,6 +11770,8 @@
    "python": "Nodes.rename",
    "doc": "Rename the node addressed by key.",
    "c": [
+    "swmm_node_count",
+    "swmm_node_index",
     "swmm_node_rename"
    ],
    "returns": "None",
@@ -11462,7 +11926,6 @@
    "target": "options",
    "form": "item",
    "python": "SimulationOptions[]",
-   "c": [],
    "doc": "View over the [OPTIONS] block. See Solver.options.",
    "path": "options.delete_item",
    "name": "delete_item",
@@ -11473,7 +11936,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "c": []
   },
   {
    "path": "options.end_datetime",
@@ -11490,7 +11954,6 @@
    "target": "options.ext",
    "form": "item",
    "python": "_OptionsExtView[]",
-   "c": [],
    "doc": "Sub-mapping for the [OPTIONS_EXT] block.",
    "path": "options.ext.delete_item",
    "name": "delete_item",
@@ -11501,13 +11964,13 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "c": []
   },
   {
    "target": "options.ext",
    "form": "item",
    "python": "_OptionsExtView[]",
-   "c": [],
    "doc": "Sub-mapping for the [OPTIONS_EXT] block.",
    "path": "options.ext.get_item",
    "name": "get_item",
@@ -11518,24 +11981,28 @@
      "type": "str",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_options_get_ext"
    ]
   },
   {
    "target": "options.ext",
    "form": "item",
    "python": "_OptionsExtView[]",
-   "c": [],
    "doc": "Sub-mapping for the [OPTIONS_EXT] block.",
    "path": "options.ext.items",
    "name": "items",
    "returns": "list[tuple[str, str]]",
-   "params": []
+   "params": [],
+   "c": [
+    "swmm_options_get_ext"
+   ]
   },
   {
    "target": "options.ext",
    "form": "item",
    "python": "_OptionsExtView[]",
-   "c": [],
    "doc": "Sub-mapping for the [OPTIONS_EXT] block.",
    "path": "options.ext.set_item",
    "name": "set_item",
@@ -11551,13 +12018,15 @@
      "type": "str",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_options_set_ext"
    ]
   },
   {
    "target": "options",
    "form": "item",
    "python": "SimulationOptions[]",
-   "c": [],
    "doc": "View over the [OPTIONS] block. See Solver.options.",
    "path": "options.get_item",
    "name": "get_item",
@@ -11568,18 +12037,23 @@
      "type": "str",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_options_get"
    ]
   },
   {
    "target": "options",
    "form": "item",
    "python": "SimulationOptions[]",
-   "c": [],
    "doc": "View over the [OPTIONS] block. See Solver.options.",
    "path": "options.items",
    "name": "items",
    "returns": "list[tuple[str, str]]",
-   "params": []
+   "params": [],
+   "c": [
+    "swmm_options_get"
+   ]
   },
   {
    "path": "options.report_start_datetime",
@@ -11607,7 +12081,6 @@
    "target": "options",
    "form": "item",
    "python": "SimulationOptions[]",
-   "c": [],
    "doc": "View over the [OPTIONS] block. See Solver.options.",
    "path": "options.set_item",
    "name": "set_item",
@@ -11623,6 +12096,9 @@
      "type": "str",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_options_set"
    ]
   },
   {
@@ -11696,7 +12172,10 @@
    "python": "OutputReader.link_attributes",
    "doc": "Return all output variables for *link* at output *period* as a dict.",
    "c": [
-    "swmm_output_get_link_attribute"
+    "swmm_output_get_link_attribute",
+    "swmm_output_get_link_count",
+    "swmm_output_get_node_count",
+    "swmm_output_get_subcatch_count"
    ],
    "returns": "Dict[Union[OutLinkVar, int], float]",
    "params": [
@@ -11731,8 +12210,11 @@
    "name": "link_ids",
    "form": "property",
    "python": "OutputReader.link_ids",
-   "doc": "",
-   "c": [],
+   "doc": "Get the string ID of a link by index.",
+   "c": [
+    "swmm_output_get_link_count",
+    "swmm_output_get_link_id"
+   ],
    "type": "List[str]",
    "access": "r"
   },
@@ -11769,8 +12251,11 @@
    "python": "OutputReader.link_series",
    "doc": "Return the time series of *var* for *link* over the reporting window.",
    "c": [
+    "swmm_output_get_link_count",
     "swmm_output_get_link_series",
-    "swmm_output_get_period_count"
+    "swmm_output_get_node_count",
+    "swmm_output_get_period_count",
+    "swmm_output_get_subcatch_count"
    ],
    "returns": "NDArray[Any]",
    "params": [
@@ -11806,7 +12291,10 @@
    "python": "OutputReader.node_attributes",
    "doc": "Return all output variables for *node* at output *period* as a dict.",
    "c": [
-    "swmm_output_get_node_attribute"
+    "swmm_output_get_link_count",
+    "swmm_output_get_node_attribute",
+    "swmm_output_get_node_count",
+    "swmm_output_get_subcatch_count"
    ],
    "returns": "Dict[Union[OutNodeVar, int], float]",
    "params": [
@@ -11841,8 +12329,11 @@
    "name": "node_ids",
    "form": "property",
    "python": "OutputReader.node_ids",
-   "doc": "",
-   "c": [],
+   "doc": "Get the string ID of a node by index.",
+   "c": [
+    "swmm_output_get_node_count",
+    "swmm_output_get_node_id"
+   ],
    "type": "List[str]",
    "access": "r"
   },
@@ -11879,8 +12370,11 @@
    "python": "OutputReader.node_series",
    "doc": "Return the time series of *var* for *node* over the reporting window.",
    "c": [
+    "swmm_output_get_link_count",
+    "swmm_output_get_node_count",
     "swmm_output_get_node_series",
-    "swmm_output_get_period_count"
+    "swmm_output_get_period_count",
+    "swmm_output_get_subcatch_count"
    ],
    "returns": "NDArray[Any]",
    "params": [
@@ -11915,7 +12409,15 @@
    "form": "method",
    "python": "OutputReader.node_stats",
    "doc": "Cumulative flooding/overflow stats for node.",
-   "c": [],
+   "c": [
+    "swmm_output_get_link_count",
+    "swmm_output_get_node_count",
+    "swmm_output_get_node_stat_max_depth",
+    "swmm_output_get_node_stat_max_overflow",
+    "swmm_output_get_node_stat_time_flooded",
+    "swmm_output_get_node_stat_vol_flooded",
+    "swmm_output_get_subcatch_count"
+   ],
    "returns": "_OutputNodeStats",
    "params": [
     {
@@ -11972,7 +12474,10 @@
    "form": "property",
    "python": "OutputReader.pollutant_ids",
    "doc": "Species (pollutant) column names, in column order.",
-   "c": [],
+   "c": [
+    "swmm_output_get_pollut_count",
+    "swmm_output_get_pollut_id"
+   ],
    "type": "List[str]",
    "access": "r"
   },
@@ -12023,7 +12528,10 @@
    "python": "OutputReader.subcatchment_attributes",
    "doc": "Return all output variables for *sub* at output *period* as a dict.",
    "c": [
-    "swmm_output_get_subcatch_attribute"
+    "swmm_output_get_link_count",
+    "swmm_output_get_node_count",
+    "swmm_output_get_subcatch_attribute",
+    "swmm_output_get_subcatch_count"
    ],
    "returns": "Dict[Union[OutSubcatchVar, int], float]",
    "params": [
@@ -12058,8 +12566,11 @@
    "name": "subcatchment_ids",
    "form": "property",
    "python": "OutputReader.subcatchment_ids",
-   "doc": "",
-   "c": [],
+   "doc": "Get the string ID of a subcatchment by index.",
+   "c": [
+    "swmm_output_get_subcatch_count",
+    "swmm_output_get_subcatch_id"
+   ],
    "type": "List[str]",
    "access": "r"
   },
@@ -12096,7 +12607,10 @@
    "python": "OutputReader.subcatchment_series",
    "doc": "Return the time series of *var* for *sub* over the reporting window.",
    "c": [
+    "swmm_output_get_link_count",
+    "swmm_output_get_node_count",
     "swmm_output_get_period_count",
+    "swmm_output_get_subcatch_count",
     "swmm_output_get_subcatch_series"
    ],
    "returns": "NDArray[Any]",
@@ -12396,7 +12910,8 @@
     "swmm_pollutant_set_gw_conc"
    ],
    "type": "float",
-   "access": "rw"
+   "access": "rw",
+   "units": "concentration"
   },
   {
    "path": "pollutant.id",
@@ -12434,7 +12949,8 @@
     "swmm_pollutant_set_init_conc"
    ],
    "type": "float",
-   "access": "rw"
+   "access": "rw",
+   "units": "concentration"
   },
   {
    "path": "pollutant.kdecay",
@@ -12463,7 +12979,8 @@
     "swmm_pollutant_set_mwt"
    ],
    "type": "float",
-   "access": "rw"
+   "access": "rw",
+   "units": "g/mol"
   },
   {
    "path": "pollutant.rain_conc",
@@ -12477,7 +12994,8 @@
     "swmm_pollutant_set_rain_conc"
    ],
    "type": "float",
-   "access": "rw"
+   "access": "rw",
+   "units": "concentration"
   },
   {
    "path": "pollutant.rdii_conc",
@@ -12491,7 +13009,8 @@
     "swmm_pollutant_set_rdii_conc"
    ],
    "type": "float",
-   "access": "rw"
+   "access": "rw",
+   "units": "concentration"
   },
   {
    "path": "pollutant.set_co_pollutant",
@@ -12501,6 +13020,8 @@
    "python": "Pollutant.set_co_pollutant",
    "doc": "Link this pollutant to co (id, index, or Pollutant) with the given fraction.",
    "c": [
+    "swmm_pollutant_count",
+    "swmm_pollutant_index",
     "swmm_pollutant_set_co_pollutant"
    ],
    "returns": "None",
@@ -12616,6 +13137,8 @@
    "python": "Pollutants.rename",
    "doc": "Rename the pollutant identified by *key* to *new_id*.",
    "c": [
+    "swmm_pollutant_count",
+    "swmm_pollutant_index",
     "swmm_pollutant_rename"
    ],
    "returns": "None",
@@ -12640,7 +13163,11 @@
    "python": "Pollutants.set_link_quality",
    "doc": "Set runtime concentration at link for pollutant.",
    "c": [
-    "swmm_link_set_quality"
+    "swmm_link_count",
+    "swmm_link_index",
+    "swmm_link_set_quality",
+    "swmm_pollutant_count",
+    "swmm_pollutant_index"
    ],
    "returns": "None",
    "params": [
@@ -12672,7 +13199,11 @@
    "python": "Pollutants.set_node_quality",
    "doc": "Set runtime concentration at node for pollutant.",
    "c": [
-    "swmm_node_set_quality"
+    "swmm_node_count",
+    "swmm_node_index",
+    "swmm_node_set_quality",
+    "swmm_pollutant_count",
+    "swmm_pollutant_index"
    ],
    "returns": "None",
    "params": [
@@ -12719,7 +13250,6 @@
    "target": "process_components",
    "form": "item",
    "python": "ProcessComponents[]",
-   "c": [],
    "doc": "",
    "path": "process_components.get_item",
    "name": "get_item",
@@ -12730,18 +13260,24 @@
      "type": "Union[int, str]",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_process_component_get"
    ]
   },
   {
    "target": "process_components",
    "form": "item",
    "python": "ProcessComponents[]",
-   "c": [],
    "doc": "",
    "path": "process_components.items",
    "name": "items",
    "returns": "list[tuple[Union[int, str], ProcessComponent]]",
-   "params": []
+   "params": [],
+   "c": [
+    "swmm_process_component_count",
+    "swmm_process_component_get"
+   ]
   },
   {
    "path": "process_components.known",
@@ -12766,6 +13302,7 @@
    "python": "ProcessComponents.register",
    "doc": "Register a process component and return the new row.",
    "c": [
+    "swmm_process_component_get",
     "swmm_process_component_register"
    ],
    "returns": "ProcessComponent",
@@ -12809,6 +13346,10 @@
    "python": "Quality.clear_treatment",
    "doc": "Remove any treatment for *pollutant* at *node*.",
    "c": [
+    "swmm_node_count",
+    "swmm_node_index",
+    "swmm_pollutant_count",
+    "swmm_pollutant_index",
     "swmm_treatment_clear"
    ],
    "returns": "None",
@@ -12833,7 +13374,11 @@
    "python": "Quality.get_buildup",
    "doc": "Return {\"func\": BuildupFunc, \"c1\": ..., \"c2\": ..., \"c3\": ..., \"normalizer\": int}.",
    "c": [
-    "swmm_buildup_get"
+    "swmm_buildup_get",
+    "swmm_landuse_count",
+    "swmm_landuse_index",
+    "swmm_pollutant_count",
+    "swmm_pollutant_index"
    ],
    "returns": "Dict[str, object]",
    "params": [
@@ -12857,6 +13402,10 @@
    "python": "Quality.get_treatment",
    "doc": "Return the treatment expression for *pollutant* at *node*.",
    "c": [
+    "swmm_node_count",
+    "swmm_node_index",
+    "swmm_pollutant_count",
+    "swmm_pollutant_index",
     "swmm_treatment_get"
    ],
    "returns": "str",
@@ -12881,6 +13430,10 @@
    "python": "Quality.get_washoff",
    "doc": "Return the washoff parameters for *landuse* / *pollutant* as a dict.",
    "c": [
+    "swmm_landuse_count",
+    "swmm_landuse_index",
+    "swmm_pollutant_count",
+    "swmm_pollutant_index",
     "swmm_washoff_get"
    ],
    "returns": "Dict[str, object]",
@@ -12963,7 +13516,11 @@
    "python": "Quality.set_buildup",
    "doc": "Configure buildup for (landuse, pollutant).",
    "c": [
-    "swmm_buildup_set"
+    "swmm_buildup_set",
+    "swmm_landuse_count",
+    "swmm_landuse_index",
+    "swmm_pollutant_count",
+    "swmm_pollutant_index"
    ],
    "returns": "None",
    "params": [
@@ -13017,6 +13574,10 @@
    "python": "Quality.set_treatment",
    "doc": "Set the treatment *expression* for *pollutant* at *node*.",
    "c": [
+    "swmm_node_count",
+    "swmm_node_index",
+    "swmm_pollutant_count",
+    "swmm_pollutant_index",
     "swmm_treatment_set"
    ],
    "returns": "None",
@@ -13046,6 +13607,10 @@
    "python": "Quality.set_washoff",
    "doc": "Set the washoff function and coefficients for *landuse* / *pollutant*.",
    "c": [
+    "swmm_landuse_count",
+    "swmm_landuse_index",
+    "swmm_pollutant_count",
+    "swmm_pollutant_index",
     "swmm_washoff_set"
    ],
    "returns": "None",
@@ -13157,7 +13722,8 @@
    "python": "_CoefficientCollection.add",
    "doc": "Add a coefficient and return a live view of it.",
    "c": [
-    "swmm_reaction_coeff_add"
+    "swmm_reaction_coeff_add",
+    "swmm_reaction_coeff_count"
    ],
    "returns": "ReactionCoefficient",
    "params": [
@@ -13269,7 +13835,6 @@
    "target": "reactions.initial",
    "form": "item",
    "python": "_InitialQualityRows[]",
-   "c": [],
    "doc": "",
    "path": "reactions.initial.get_item",
    "name": "get_item",
@@ -13280,18 +13845,25 @@
      "type": "int",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_reaction_init_elem_count",
+    "swmm_reaction_init_elem_get"
    ]
   },
   {
    "target": "reactions.initial",
    "form": "item",
    "python": "_InitialQualityRows[]",
-   "c": [],
    "doc": "",
    "path": "reactions.initial.items",
    "name": "items",
    "returns": "list[tuple[int, ReactionInitialEntry]]",
-   "params": []
+   "params": [],
+   "c": [
+    "swmm_reaction_init_elem_count",
+    "swmm_reaction_init_elem_get"
+   ]
   },
   {
    "path": "reactions.initial.remove",
@@ -13411,7 +13983,8 @@
    "python": "_SpeciesCollection.add",
    "doc": "Declare a new species and return a live view of it.",
    "c": [
-    "swmm_reaction_species_add"
+    "swmm_reaction_species_add",
+    "swmm_reaction_species_count"
    ],
    "returns": "ReactionSpecies",
    "params": [
@@ -13490,7 +14063,8 @@
    "python": "_TermCollection.add",
    "doc": "Append an intermediate term and return a live view of it.",
    "c": [
-    "swmm_reaction_term_add"
+    "swmm_reaction_term_add",
+    "swmm_reaction_term_count"
    ],
    "returns": "ReactionTerm",
    "params": [
@@ -13685,7 +14259,6 @@
    "target": "save_schedule",
    "form": "item",
    "python": "SaveSchedule[]",
-   "c": [],
    "doc": "",
    "path": "save_schedule.delete_item",
    "name": "delete_item",
@@ -13696,13 +14269,15 @@
      "type": "int",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_hotstart_saves_remove"
    ]
   },
   {
    "target": "save_schedule",
    "form": "item",
    "python": "SaveSchedule[]",
-   "c": [],
    "doc": "",
    "path": "save_schedule.get_item",
    "name": "get_item",
@@ -13713,6 +14288,10 @@
      "type": "int",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_hotstart_saves_get_datetime",
+    "swmm_hotstart_saves_get_path"
    ]
   },
   {
@@ -13741,18 +14320,21 @@
    "target": "save_schedule",
    "form": "item",
    "python": "SaveSchedule[]",
-   "c": [],
    "doc": "",
    "path": "save_schedule.items",
    "name": "items",
    "returns": "list[tuple[int, SaveScheduleEntry]]",
-   "params": []
+   "params": [],
+   "c": [
+    "swmm_hotstart_saves_count",
+    "swmm_hotstart_saves_get_datetime",
+    "swmm_hotstart_saves_get_path"
+   ]
   },
   {
    "target": "save_schedule",
    "form": "item",
    "python": "SaveSchedule[]",
-   "c": [],
    "doc": "",
    "path": "save_schedule.set_item",
    "name": "set_item",
@@ -13768,6 +14350,10 @@
      "type": "SaveScheduleEntry",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_hotstart_saves_set_datetime",
+    "swmm_hotstart_saves_set_path"
    ]
   },
   {
@@ -13892,6 +14478,45 @@
    "access": "r"
   },
   {
+   "path": "snowpacks.add",
+   "target": "snowpacks",
+   "name": "add",
+   "form": "method",
+   "python": "Snowpacks.add",
+   "doc": "Add a new snowpack definition with default (zero) parameters.",
+   "c": [
+    "swmm_snowpack_add",
+    "swmm_snowpack_count"
+   ],
+   "returns": "int",
+   "params": [
+    {
+     "name": "obj_id",
+     "type": "str",
+     "required": true
+    }
+   ]
+  },
+  {
+   "path": "snowpacks.get_id",
+   "target": "snowpacks",
+   "name": "get_id",
+   "form": "method",
+   "python": "Snowpacks.get_id",
+   "doc": "Get the string identifier of a snowpack definition by index.",
+   "c": [
+    "swmm_snowpack_id"
+   ],
+   "returns": "str",
+   "params": [
+    {
+     "name": "idx",
+     "type": "int",
+     "required": true
+    }
+   ]
+  },
+  {
    "path": "snowpacks.get_impervious",
    "target": "snowpacks",
    "name": "get_impervious",
@@ -13906,6 +14531,25 @@
     {
      "name": "snowpack",
      "type": "Union[int, str]",
+     "required": true
+    }
+   ]
+  },
+  {
+   "path": "snowpacks.get_index",
+   "target": "snowpacks",
+   "name": "get_index",
+   "form": "method",
+   "python": "Snowpacks.get_index",
+   "doc": "Look up a snowpack's zero-based index by its string identifier.",
+   "c": [
+    "swmm_snowpack_index"
+   ],
+   "returns": "int",
+   "params": [
+    {
+     "name": "obj_id",
+     "type": "str",
      "required": true
     }
    ]
@@ -13987,13 +14631,28 @@
    ]
   },
   {
+   "path": "snowpacks.items",
+   "target": "snowpacks",
+   "name": "items",
+   "form": "item",
+   "python": "list(Snowpacks)",
+   "doc": "Name-keyed collection of [SNOWPACKS] entries (solver.snowpacks).",
+   "returns": "list[tuple[int, Iterator[str]]]",
+   "params": [],
+   "c": [
+    "swmm_snowpack_count"
+   ]
+  },
+  {
    "path": "snowpacks.rename",
    "target": "snowpacks",
    "name": "rename",
    "form": "method",
    "python": "Snowpacks.rename",
-   "doc": "",
-   "c": [],
+   "doc": "Rename a snow pack in place.",
+   "c": [
+    "swmm_snowpack_rename"
+   ],
    "returns": "None",
    "params": [
     {
@@ -14292,6 +14951,8 @@
    "python": "Spatial.gage_coord",
    "doc": "Return the (x, y) coordinate of rain *gage*.",
    "c": [
+    "swmm_gage_count",
+    "swmm_gage_index",
     "swmm_spatial_get_gage_coord"
    ],
    "returns": "Tuple[float, float]",
@@ -14311,6 +14972,8 @@
    "python": "Spatial.link_coord",
    "doc": "Return the (x, y) mid-point coordinate of *link*.",
    "c": [
+    "swmm_link_count",
+    "swmm_link_index",
     "swmm_spatial_get_link_coord"
    ],
    "returns": "Tuple[float, float]",
@@ -14330,6 +14993,8 @@
    "python": "Spatial.link_vertices",
    "doc": "(n, 2) float64 numpy array of polyline vertices.",
    "c": [
+    "swmm_link_count",
+    "swmm_link_index",
     "swmm_spatial_get_link_vertex_count",
     "swmm_spatial_get_link_vertices"
    ],
@@ -14350,6 +15015,8 @@
    "python": "Spatial.node_coord",
    "doc": "Return the (x, y) coordinate of *node*.",
    "c": [
+    "swmm_node_count",
+    "swmm_node_index",
     "swmm_spatial_get_node_coord"
    ],
    "returns": "Tuple[float, float]",
@@ -14383,6 +15050,8 @@
    "python": "Spatial.set_gage_coord",
    "doc": "Set the (x, y) coordinate of rain *gage*.",
    "c": [
+    "swmm_gage_count",
+    "swmm_gage_index",
     "swmm_spatial_set_gage_coord"
    ],
    "returns": "None",
@@ -14412,6 +15081,8 @@
    "python": "Spatial.set_link_coord",
    "doc": "Set the (x, y) mid-point coordinate of *link*.",
    "c": [
+    "swmm_link_count",
+    "swmm_link_index",
     "swmm_spatial_set_link_coord"
    ],
    "returns": "None",
@@ -14441,6 +15112,8 @@
    "python": "Spatial.set_link_vertices",
    "doc": "Set the polyline vertices of *link* from an (N, 2) array.",
    "c": [
+    "swmm_link_count",
+    "swmm_link_index",
     "swmm_spatial_set_link_vertices"
    ],
    "returns": "None",
@@ -14465,6 +15138,8 @@
    "python": "Spatial.set_node_coord",
    "doc": "Set the (x, y) coordinate of *node*.",
    "c": [
+    "swmm_node_count",
+    "swmm_node_index",
     "swmm_spatial_set_node_coord"
    ],
    "returns": "None",
@@ -14514,7 +15189,9 @@
    "python": "Spatial.set_subcatchment_coord",
    "doc": "Set the (x, y) centroid coordinate of *sub*.",
    "c": [
-    "swmm_spatial_set_subcatch_coord"
+    "swmm_spatial_set_subcatch_coord",
+    "swmm_subcatch_count",
+    "swmm_subcatch_index"
    ],
    "returns": "None",
    "params": [
@@ -14543,7 +15220,9 @@
    "python": "Spatial.set_subcatchment_polygon",
    "doc": "Set the boundary polygon of *sub* from an (N, 2) array.",
    "c": [
-    "swmm_spatial_set_subcatch_polygon"
+    "swmm_spatial_set_subcatch_polygon",
+    "swmm_subcatch_count",
+    "swmm_subcatch_index"
    ],
    "returns": "None",
    "params": [
@@ -14567,7 +15246,9 @@
    "python": "Spatial.subcatchment_coord",
    "doc": "Return the (x, y) centroid coordinate of *sub*.",
    "c": [
-    "swmm_spatial_get_subcatch_coord"
+    "swmm_spatial_get_subcatch_coord",
+    "swmm_subcatch_count",
+    "swmm_subcatch_index"
    ],
    "returns": "Tuple[float, float]",
    "params": [
@@ -14587,7 +15268,9 @@
    "doc": "Return the boundary polygon of *sub* as an (N, 2) array.",
    "c": [
     "swmm_spatial_get_subcatch_polygon",
-    "swmm_spatial_get_subcatch_polygon_count"
+    "swmm_spatial_get_subcatch_polygon_count",
+    "swmm_subcatch_count",
+    "swmm_subcatch_index"
    ],
    "returns": "NDArray[Any]",
    "params": [
@@ -14605,9 +15288,12 @@
    "form": "property",
    "python": "ReactionSpecies.atol",
    "doc": "Absolute solver tolerance; 0.0 means \"use the global ATOL\".",
-   "c": [],
+   "c": [
+    "swmm_reaction_species_get"
+   ],
    "type": "float",
-   "access": "r"
+   "access": "r",
+   "units": "concentration"
   },
   {
    "path": "species.get_expression",
@@ -14651,7 +15337,8 @@
     "swmm_reaction_init_global_set"
    ],
    "type": "float",
-   "access": "rw"
+   "access": "rw",
+   "units": "concentration"
   },
   {
    "path": "species.is_wall",
@@ -14660,7 +15347,9 @@
    "form": "property",
    "python": "ReactionSpecies.is_wall",
    "doc": "True for a WALL species, False for a BULK species.",
-   "c": [],
+   "c": [
+    "swmm_reaction_species_get"
+   ],
    "type": "bool",
    "access": "r"
   },
@@ -14671,7 +15360,9 @@
    "form": "property",
    "python": "ReactionSpecies.name",
    "doc": "Species name as referenced from expressions.",
-   "c": [],
+   "c": [
+    "swmm_reaction_species_get"
+   ],
    "type": "str",
    "access": "r"
   },
@@ -14693,9 +15384,12 @@
    "form": "property",
    "python": "ReactionSpecies.rtol",
    "doc": "Relative solver tolerance; 0.0 means \"use the global RTOL\".",
-   "c": [],
+   "c": [
+    "swmm_reaction_species_get"
+   ],
    "type": "float",
-   "access": "r"
+   "access": "r",
+   "units": "dimensionless"
   },
   {
    "path": "species.set_expression",
@@ -14744,7 +15438,9 @@
    "form": "property",
    "python": "ReactionSpecies.units",
    "doc": "Concentration units token (e.g. \"MG\", \"UG\", \"#\").",
-   "c": [],
+   "c": [
+    "swmm_reaction_species_get"
+   ],
    "type": "str",
    "access": "r"
   },
@@ -15260,13 +15956,12 @@
    ],
    "type": "float",
    "access": "rw",
-   "units": "area"
+   "units": "land_area"
   },
   {
    "target": "subcatchment.coverage",
    "form": "item",
    "python": "CoverageView[]",
-   "c": [],
    "doc": "",
    "path": "subcatchment.coverage.delete_item",
    "name": "delete_item",
@@ -15277,13 +15972,13 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "c": []
   },
   {
    "target": "subcatchment.coverage",
    "form": "item",
    "python": "CoverageView[]",
-   "c": [],
    "doc": "",
    "path": "subcatchment.coverage.get_item",
    "name": "get_item",
@@ -15294,24 +15989,33 @@
      "type": "str",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_landuse_count",
+    "swmm_landuse_index",
+    "swmm_subcatch_get_coverage"
    ]
   },
   {
    "target": "subcatchment.coverage",
    "form": "item",
    "python": "CoverageView[]",
-   "c": [],
    "doc": "",
    "path": "subcatchment.coverage.items",
    "name": "items",
    "returns": "list[tuple[str, float]]",
-   "params": []
+   "params": [],
+   "c": [
+    "swmm_landuse_count",
+    "swmm_landuse_id",
+    "swmm_landuse_index",
+    "swmm_subcatch_get_coverage"
+   ]
   },
   {
    "target": "subcatchment.coverage",
    "form": "item",
    "python": "CoverageView[]",
-   "c": [],
    "doc": "",
    "path": "subcatchment.coverage.set_item",
    "name": "set_item",
@@ -15327,6 +16031,11 @@
      "type": "float",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_landuse_count",
+    "swmm_landuse_index",
+    "swmm_subcatch_set_coverage"
    ]
   },
   {
@@ -15355,7 +16064,8 @@
     "swmm_subcatch_set_ds_imperv"
    ],
    "type": "float",
-   "access": "rw"
+   "access": "rw",
+   "units": "rain_depth"
   },
   {
    "path": "subcatchment.ds_perv",
@@ -15369,7 +16079,8 @@
     "swmm_subcatch_set_ds_perv"
    ],
    "type": "float",
-   "access": "rw"
+   "access": "rw",
+   "units": "rain_depth"
   },
   {
    "path": "subcatchment.evap",
@@ -15383,6 +16094,7 @@
    ],
    "type": "float",
    "access": "r",
+   "units": "evap_rate",
    "bulk": "subcatchments.evaps"
   },
   {
@@ -15528,6 +16240,7 @@
    ],
    "type": "float",
    "access": "r",
+   "units": "rain_rate",
    "bulk": "subcatchments.infils"
   },
   {
@@ -15541,7 +16254,8 @@
     "swmm_subcatch_get_infil_curve_number"
    ],
    "type": "float",
-   "access": "r"
+   "access": "r",
+   "units": "dimensionless"
   },
   {
    "path": "subcatchment.infiltration.curve_number_drying_time",
@@ -15685,15 +16399,84 @@
    ]
   },
   {
-   "path": "subcatchment.loadings",
-   "target": "subcatchment",
-   "name": "loadings",
-   "form": "property",
-   "python": "Subcatchment.loadings",
-   "doc": "subcatchment.loadings — pollutant-id → initial buildup ([LOADINGS]) mapping.",
-   "c": [],
-   "type": "MutableMapping[str, float]",
-   "access": "r"
+   "target": "subcatchment.loadings",
+   "form": "item",
+   "python": "LoadingsView[]",
+   "doc": "Pollutant or species id -> initial buildup on a subcatchment.",
+   "path": "subcatchment.loadings.delete_item",
+   "name": "delete_item",
+   "returns": "None",
+   "params": [
+    {
+     "name": "key",
+     "type": "str",
+     "required": true
+    }
+   ],
+   "c": []
+  },
+  {
+   "target": "subcatchment.loadings",
+   "form": "item",
+   "python": "LoadingsView[]",
+   "doc": "Pollutant or species id -> initial buildup on a subcatchment.",
+   "path": "subcatchment.loadings.get_item",
+   "name": "get_item",
+   "returns": "float",
+   "params": [
+    {
+     "name": "key",
+     "type": "str",
+     "required": true
+    }
+   ],
+   "c": [
+    "swmm_pollutant_count",
+    "swmm_pollutant_index",
+    "swmm_subcatch_get_initial_loading"
+   ]
+  },
+  {
+   "target": "subcatchment.loadings",
+   "form": "item",
+   "python": "LoadingsView[]",
+   "doc": "Pollutant or species id -> initial buildup on a subcatchment.",
+   "path": "subcatchment.loadings.items",
+   "name": "items",
+   "returns": "list[tuple[str, float]]",
+   "params": [],
+   "c": [
+    "swmm_pollutant_count",
+    "swmm_pollutant_id",
+    "swmm_pollutant_index",
+    "swmm_subcatch_get_initial_loading"
+   ]
+  },
+  {
+   "target": "subcatchment.loadings",
+   "form": "item",
+   "python": "LoadingsView[]",
+   "doc": "Pollutant or species id -> initial buildup on a subcatchment.",
+   "path": "subcatchment.loadings.set_item",
+   "name": "set_item",
+   "returns": "None",
+   "params": [
+    {
+     "name": "key",
+     "type": "str",
+     "required": true
+    },
+    {
+     "name": "value",
+     "type": "float",
+     "required": true
+    }
+   ],
+   "c": [
+    "swmm_pollutant_count",
+    "swmm_pollutant_index",
+    "swmm_subcatch_set_initial_loading"
+   ]
   },
   {
    "path": "subcatchment.n_imperv",
@@ -15747,6 +16530,8 @@
    "python": "Subcatchment.ponded_quality",
    "doc": "Return the ponded-water concentration of *pollutant* for this subcatchment.",
    "c": [
+    "swmm_pollutant_count",
+    "swmm_pollutant_index",
     "swmm_subcatch_get_ponded_quality"
    ],
    "returns": "float",
@@ -15766,6 +16551,8 @@
    "python": "Subcatchment.quality",
    "doc": "Return the current runoff concentration of *pollutant* for this subcatchment.",
    "c": [
+    "swmm_pollutant_count",
+    "swmm_pollutant_index",
     "swmm_subcatch_get_quality"
    ],
    "returns": "float",
@@ -15930,6 +16717,8 @@
    "python": "Subcatchment.set_outlet_subcatchment",
    "doc": "Route runoff to another Subcatchment.",
    "c": [
+    "swmm_subcatch_count",
+    "swmm_subcatch_index",
     "swmm_subcatch_set_outlet_subcatch"
    ],
    "returns": "None",
@@ -15949,6 +16738,8 @@
    "python": "Subcatchment.set_ponded_quality",
    "doc": "Set the ponded-water *mass* of *pollutant* for this subcatchment.",
    "c": [
+    "swmm_pollutant_count",
+    "swmm_pollutant_index",
     "swmm_subcatch_set_ponded_quality"
    ],
    "returns": "None",
@@ -16171,7 +16962,8 @@
     "swmm_subcatch_get_evap_bulk"
    ],
    "type": "NDArray[Any]",
-   "access": "r"
+   "access": "r",
+   "units": "evap_rate"
   },
   {
    "path": "subcatchments.get_gwf_expression",
@@ -16181,7 +16973,9 @@
    "python": "Subcatchments.get_gwf_expression",
    "doc": "Return a subcatchment's [GWF] expression (empty if none is set).",
    "c": [
-    "swmm_subcatch_get_gwf_expression"
+    "swmm_subcatch_count",
+    "swmm_subcatch_get_gwf_expression",
+    "swmm_subcatch_index"
    ],
    "returns": "str",
    "params": [
@@ -16270,8 +17064,11 @@
    "name": "ids",
    "form": "property",
    "python": "Subcatchments.ids",
-   "doc": "",
-   "c": [],
+   "doc": "Get subcatchment IDs for all subcatchments in a single call (stride-packed UTF-8).",
+   "c": [
+    "swmm_subcatch_count",
+    "swmm_subcatch_get_ids_bulk"
+   ],
    "type": "NDArray[Any]",
    "access": "r"
   },
@@ -16287,7 +17084,8 @@
     "swmm_subcatch_get_infil_bulk"
    ],
    "type": "NDArray[Any]",
-   "access": "r"
+   "access": "r",
+   "units": "rain_rate"
   },
   {
    "path": "subcatchments.qualities",
@@ -16297,6 +17095,8 @@
    "python": "Subcatchments.qualities",
    "doc": "Return an array of *pollutant* runoff concentrations for every subcatchment.",
    "c": [
+    "swmm_pollutant_count",
+    "swmm_pollutant_index",
     "swmm_subcatch_count",
     "swmm_subcatch_get_quality_bulk"
    ],
@@ -16332,6 +17132,8 @@
    "python": "Subcatchments.rename",
    "doc": "Rename the subcatchment identified by *key* to *new_id*.",
    "c": [
+    "swmm_subcatch_count",
+    "swmm_subcatch_index",
     "swmm_subcatch_rename"
    ],
    "returns": "None",
@@ -16371,6 +17173,8 @@
    "python": "Subcatchments.set_gwf_expression",
    "doc": "Set or clear a subcatchment's [GWF] expression.",
    "c": [
+    "swmm_subcatch_count",
+    "swmm_subcatch_index",
     "swmm_subcatch_set_gwf_expression"
    ],
    "returns": "None",
@@ -17199,7 +18003,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "units": "m/s"
   },
   {
    "path": "surface2d.get_rainfall_bulk",
@@ -17856,15 +18661,77 @@
    "access": "r"
   },
   {
-   "path": "surface2d.groundwater.options",
-   "target": "surface2d.groundwater",
-   "name": "options",
-   "form": "property",
-   "python": "Groundwater.options",
-   "doc": "",
-   "c": [],
-   "type": "MutableMapping[str, str]",
-   "access": "r"
+   "target": "surface2d.groundwater.options",
+   "form": "item",
+   "python": "AquiferOptions[]",
+   "doc": "Text options using the native INP key/value spellings.",
+   "path": "surface2d.groundwater.options.delete_item",
+   "name": "delete_item",
+   "returns": "None",
+   "params": [
+    {
+     "name": "key",
+     "type": "str",
+     "required": true
+    }
+   ],
+   "c": []
+  },
+  {
+   "target": "surface2d.groundwater.options",
+   "form": "item",
+   "python": "AquiferOptions[]",
+   "doc": "Text options using the native INP key/value spellings.",
+   "path": "surface2d.groundwater.options.get_item",
+   "name": "get_item",
+   "returns": "str",
+   "params": [
+    {
+     "name": "key",
+     "type": "str",
+     "required": true
+    }
+   ],
+   "c": [
+    "swmm_gw2d_option_get"
+   ]
+  },
+  {
+   "target": "surface2d.groundwater.options",
+   "form": "item",
+   "python": "AquiferOptions[]",
+   "doc": "Text options using the native INP key/value spellings.",
+   "path": "surface2d.groundwater.options.items",
+   "name": "items",
+   "returns": "list[tuple[str, str]]",
+   "params": [],
+   "c": [
+    "swmm_gw2d_option_get"
+   ]
+  },
+  {
+   "target": "surface2d.groundwater.options",
+   "form": "item",
+   "python": "AquiferOptions[]",
+   "doc": "Text options using the native INP key/value spellings.",
+   "path": "surface2d.groundwater.options.set_item",
+   "name": "set_item",
+   "returns": "None",
+   "params": [
+    {
+     "name": "key",
+     "type": "str",
+     "required": true
+    },
+    {
+     "name": "value",
+     "type": "str",
+     "required": true
+    }
+   ],
+   "c": [
+    "swmm_gw2d_option_set"
+   ]
   },
   {
    "path": "surface2d.groundwater.remove_node",
@@ -18102,15 +18969,77 @@
    "access": "rw"
   },
   {
-   "path": "surface2d.groundwater.transport.options",
-   "target": "surface2d.groundwater.transport",
-   "name": "options",
-   "form": "property",
-   "python": "GroundwaterTransport.options",
-   "doc": "",
-   "c": [],
-   "type": "MutableMapping[str, str]",
-   "access": "r"
+   "target": "surface2d.groundwater.transport.options",
+   "form": "item",
+   "python": "GroundwaterTransportOptions[]",
+   "doc": "Native GW_TRANSPORT_OPTIONS text keys; values preserve INP spelling.",
+   "path": "surface2d.groundwater.transport.options.delete_item",
+   "name": "delete_item",
+   "returns": "None",
+   "params": [
+    {
+     "name": "key",
+     "type": "str",
+     "required": true
+    }
+   ],
+   "c": []
+  },
+  {
+   "target": "surface2d.groundwater.transport.options",
+   "form": "item",
+   "python": "GroundwaterTransportOptions[]",
+   "doc": "Native GW_TRANSPORT_OPTIONS text keys; values preserve INP spelling.",
+   "path": "surface2d.groundwater.transport.options.get_item",
+   "name": "get_item",
+   "returns": "str",
+   "params": [
+    {
+     "name": "key",
+     "type": "str",
+     "required": true
+    }
+   ],
+   "c": [
+    "swmm_gw_transport_option_get"
+   ]
+  },
+  {
+   "target": "surface2d.groundwater.transport.options",
+   "form": "item",
+   "python": "GroundwaterTransportOptions[]",
+   "doc": "Native GW_TRANSPORT_OPTIONS text keys; values preserve INP spelling.",
+   "path": "surface2d.groundwater.transport.options.items",
+   "name": "items",
+   "returns": "list[tuple[str, str]]",
+   "params": [],
+   "c": [
+    "swmm_gw_transport_option_get"
+   ]
+  },
+  {
+   "target": "surface2d.groundwater.transport.options",
+   "form": "item",
+   "python": "GroundwaterTransportOptions[]",
+   "doc": "Native GW_TRANSPORT_OPTIONS text keys; values preserve INP spelling.",
+   "path": "surface2d.groundwater.transport.options.set_item",
+   "name": "set_item",
+   "returns": "None",
+   "params": [
+    {
+     "name": "key",
+     "type": "str",
+     "required": true
+    },
+    {
+     "name": "value",
+     "type": "str",
+     "required": true
+    }
+   ],
+   "c": [
+    "swmm_gw_transport_option_set"
+   ]
   },
   {
    "path": "surface2d.groundwater.transport.parameters",
@@ -18449,7 +19378,6 @@
    "target": "surface2d.infiltration.defaults",
    "form": "item",
    "python": "Infil2DDefaults[]",
-   "c": [],
    "doc": "surface2d.infiltration.defaults — tag → Infil2DRow mapping.",
    "path": "surface2d.infiltration.defaults.delete_item",
    "name": "delete_item",
@@ -18460,13 +19388,15 @@
      "type": "str",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_infil2d_remove_default"
    ]
   },
   {
    "target": "surface2d.infiltration.defaults",
    "form": "item",
    "python": "Infil2DDefaults[]",
-   "c": [],
    "doc": "surface2d.infiltration.defaults — tag → Infil2DRow mapping.",
    "path": "surface2d.infiltration.defaults.get_item",
    "name": "get_item",
@@ -18477,24 +19407,32 @@
      "type": "str",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_infil2d_defaults_count",
+    "swmm_infil2d_get_default",
+    "swmm_infil2d_get_default_tag"
    ]
   },
   {
    "target": "surface2d.infiltration.defaults",
    "form": "item",
    "python": "Infil2DDefaults[]",
-   "c": [],
    "doc": "surface2d.infiltration.defaults — tag → Infil2DRow mapping.",
    "path": "surface2d.infiltration.defaults.items",
    "name": "items",
    "returns": "list[tuple[str, Infil2DRow]]",
-   "params": []
+   "params": [],
+   "c": [
+    "swmm_infil2d_defaults_count",
+    "swmm_infil2d_get_default",
+    "swmm_infil2d_get_default_tag"
+   ]
   },
   {
    "target": "surface2d.infiltration.defaults",
    "form": "item",
    "python": "Infil2DDefaults[]",
-   "c": [],
    "doc": "surface2d.infiltration.defaults — tag → Infil2DRow mapping.",
    "path": "surface2d.infiltration.defaults.set_item",
    "name": "set_item",
@@ -18510,6 +19448,9 @@
      "type": "Infil2DRow",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_infil2d_set_default"
    ]
   },
   {
@@ -18627,7 +19568,8 @@
     "swmm_2d_get_max_depth"
    ],
    "type": "float",
-   "access": "r"
+   "access": "r",
+   "units": "m"
   },
   {
    "path": "surface2d.n_cells",
@@ -19537,7 +20479,8 @@
     "swmm_2d_get_total_exchange_flow"
    ],
    "type": "float",
-   "access": "r"
+   "access": "r",
+   "units": "m3/s"
   },
   {
    "path": "surface2d.total_volume",
@@ -19550,7 +20493,8 @@
     "swmm_2d_get_total_volume"
    ],
    "type": "float",
-   "access": "r"
+   "access": "r",
+   "units": "m3"
   },
   {
    "path": "surface2d.triangle_coupling_count",
@@ -19701,7 +20645,10 @@
    "form": "property",
    "python": "TimeSeries.points",
    "doc": "Structured numpy array with columns time: datetime64[s] and value: float64.",
-   "c": [],
+   "c": [
+    "swmm_table_get_point",
+    "swmm_table_get_point_count"
+   ],
    "type": "NDArray[Any]",
    "access": "r",
    "variant": "TimeSeries"
@@ -19713,7 +20660,10 @@
    "form": "property",
    "python": "Curve.points",
    "doc": "float64 (n_points, 2) numpy array.",
-   "c": [],
+   "c": [
+    "swmm_table_get_point",
+    "swmm_table_get_point_count"
+   ],
    "type": "NDArray[Any]",
    "access": "r",
    "variant": "Curve"
@@ -19766,6 +20716,8 @@
    "doc": "curve_type is the legacy CurveType integer code; the C API accepts 0 for the default.",
    "c": [
     "swmm_curve_add",
+    "swmm_table_get_point",
+    "swmm_table_get_point_count",
     "swmm_table_index"
    ],
    "returns": "Curve",
@@ -19790,8 +20742,11 @@
    "python": "Tables.add_timeseries",
    "doc": "Add a new time series *ts_id* and return its TimeSeries handle.",
    "c": [
+    "swmm_table_get_point",
+    "swmm_table_get_point_count",
     "swmm_table_index",
-    "swmm_timeseries_add"
+    "swmm_timeseries_add",
+    "swmm_timeseries_get_relative_info"
    ],
    "returns": "TimeSeries",
    "params": [
@@ -19809,7 +20764,12 @@
    "form": "method",
    "python": "Tables.as_curve",
    "doc": "Return a Curve view of the table identified by *key*.",
-   "c": [],
+   "c": [
+    "swmm_table_count",
+    "swmm_table_get_point",
+    "swmm_table_get_point_count",
+    "swmm_table_index"
+   ],
    "returns": "Curve",
    "params": [
     {
@@ -19826,7 +20786,13 @@
    "form": "method",
    "python": "Tables.as_timeseries",
    "doc": "Return a TimeSeries view of the table identified by *key*.",
-   "c": [],
+   "c": [
+    "swmm_table_count",
+    "swmm_table_get_point",
+    "swmm_table_get_point_count",
+    "swmm_table_index",
+    "swmm_timeseries_get_relative_info"
+   ],
    "returns": "TimeSeries",
    "params": [
     {
@@ -19882,7 +20848,9 @@
    "python": "Tables.get_type",
    "doc": "The type of a table, as a TableType.",
    "c": [
-    "swmm_table_get_type"
+    "swmm_table_count",
+    "swmm_table_get_type",
+    "swmm_table_index"
    ],
    "returns": "TableType",
    "params": [
@@ -19901,6 +20869,7 @@
    "python": "ReactionTerm.expression",
    "doc": "The term's source expression text.",
    "c": [
+    "swmm_reaction_term_get",
     "swmm_reaction_term_set_expr"
    ],
    "type": "str",
@@ -19924,7 +20893,9 @@
    "form": "property",
    "python": "ReactionTerm.name",
    "doc": "Term name as referenced from later terms and species expressions.",
-   "c": [],
+   "c": [
+    "swmm_reaction_term_get"
+   ],
    "type": "str",
    "access": "r"
   },
@@ -19935,7 +20906,9 @@
    "form": "property",
    "python": "Solver.thread_info",
    "doc": "Process-wide hardware and OpenMP limits.",
-   "c": [],
+   "c": [
+    "swmm_get_thread_info"
+   ],
    "type": "ThreadInfo",
    "access": "r"
   },
@@ -20045,7 +21018,9 @@
    "form": "property",
    "python": "Solver.transport_matrix",
    "doc": "Capability matrix keyed by domain and species class, with reasons.",
-   "c": [],
+   "c": [
+    "swmm_get_transport_matrix"
+   ],
    "type": "dict[TransportDomain, dict[TransportClass, TransportCell]]",
    "access": "r"
   },
@@ -20155,7 +21130,6 @@
    "target": "userflags",
    "form": "item",
    "python": "UserFlags[]",
-   "c": [],
    "doc": "Typed user-flag mapping. See Solver.userflags.",
    "path": "userflags.delete_item",
    "name": "delete_item",
@@ -20166,13 +21140,15 @@
      "type": "str",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_userflag_undefine"
    ]
   },
   {
    "target": "userflags",
    "form": "item",
    "python": "UserFlags[]",
-   "c": [],
    "doc": "Typed user-flag mapping. See Solver.userflags.",
    "path": "userflags.get_item",
    "name": "get_item",
@@ -20183,6 +21159,12 @@
      "type": "str",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_userflag_get_bool",
+    "swmm_userflag_get_int",
+    "swmm_userflag_get_real",
+    "swmm_userflag_value_get"
    ]
   },
   {
@@ -20218,18 +21200,23 @@
    "target": "userflags",
    "form": "item",
    "python": "UserFlags[]",
-   "c": [],
    "doc": "Typed user-flag mapping. See Solver.userflags.",
    "path": "userflags.items",
    "name": "items",
    "returns": "list[tuple[str, Union[bool, int, float, str]]]",
-   "params": []
+   "params": [],
+   "c": [
+    "swmm_userflag_def_count",
+    "swmm_userflag_get_bool",
+    "swmm_userflag_get_int",
+    "swmm_userflag_get_real",
+    "swmm_userflag_value_get"
+   ]
   },
   {
    "target": "userflags",
    "form": "item",
    "python": "UserFlags[]",
-   "c": [],
    "doc": "Typed user-flag mapping. See Solver.userflags.",
    "path": "userflags.set_item",
    "name": "set_item",
@@ -20245,6 +21232,13 @@
      "type": "Union[bool, int, float, str]",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_userflag_define",
+    "swmm_userflag_set_bool",
+    "swmm_userflag_set_int",
+    "swmm_userflag_set_real",
+    "swmm_userflag_value_set"
    ]
   },
   {
@@ -20317,7 +21311,6 @@
    "target": "water_age.globals",
    "form": "item",
    "python": "_WaterAgeGlobals[]",
-   "c": [],
    "doc": "",
    "path": "water_age.globals.get_item",
    "name": "get_item",
@@ -20328,24 +21321,28 @@
      "type": "Union[WaterAgeSource, int, str]",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_water_age_get_global_source"
    ]
   },
   {
    "target": "water_age.globals",
    "form": "item",
    "python": "_WaterAgeGlobals[]",
-   "c": [],
    "doc": "",
    "path": "water_age.globals.items",
    "name": "items",
    "returns": "list[tuple[Union[WaterAgeSource, int, str], float]]",
-   "params": []
+   "params": [],
+   "c": [
+    "swmm_water_age_get_global_source"
+   ]
   },
   {
    "target": "water_age.globals",
    "form": "item",
    "python": "_WaterAgeGlobals[]",
-   "c": [],
    "doc": "",
    "path": "water_age.globals.set_item",
    "name": "set_item",
@@ -20361,13 +21358,15 @@
      "type": "float",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_water_age_set_global_source"
    ]
   },
   {
    "target": "water_age.node_overrides",
    "form": "item",
    "python": "_WaterAgeOverrides[]",
-   "c": [],
    "doc": "",
    "path": "water_age.node_overrides.get_item",
    "name": "get_item",
@@ -20378,18 +21377,24 @@
      "type": "int",
      "required": true
     }
+   ],
+   "c": [
+    "swmm_water_age_get_override"
    ]
   },
   {
    "target": "water_age.node_overrides",
    "form": "item",
    "python": "_WaterAgeOverrides[]",
-   "c": [],
    "doc": "",
    "path": "water_age.node_overrides.items",
    "name": "items",
    "returns": "list[tuple[int, WaterAgeOverride]]",
-   "params": []
+   "params": [],
+   "c": [
+    "swmm_water_age_get_override",
+    "swmm_water_age_override_count"
+   ]
   },
   {
    "path": "water_age.node_overrides.remove",
@@ -20399,6 +21404,8 @@
    "python": "_WaterAgeOverrides.remove",
    "doc": "Remove the NODE override for (source, node).",
    "c": [
+    "swmm_node_count",
+    "swmm_node_index",
     "swmm_water_age_remove_override"
    ],
    "returns": "None",
@@ -20423,6 +21430,8 @@
    "python": "_WaterAgeOverrides.set",
    "doc": "Add or update the NODE override for (source, node).",
    "c": [
+    "swmm_node_count",
+    "swmm_node_index",
     "swmm_water_age_set_override"
    ],
    "returns": "None",
@@ -20583,7 +21592,26 @@
    "form": "method",
    "python": "XSectionGeometry.area",
    "doc": "Flow area at *depth*. @param depth: float or ndarray.",
-   "c": [],
+   "c": [
+    "swmm_xsect_area_of_depth",
+    "swmm_xsect_area_of_depth_array",
+    "swmm_xsect_area_of_sectfactor",
+    "swmm_xsect_area_of_sectfactor_array",
+    "swmm_xsect_critical_depth",
+    "swmm_xsect_critical_depth_array",
+    "swmm_xsect_depth_of_area",
+    "swmm_xsect_depth_of_area_array",
+    "swmm_xsect_dsda",
+    "swmm_xsect_dsda_array",
+    "swmm_xsect_hydrad_of_area",
+    "swmm_xsect_hydrad_of_area_array",
+    "swmm_xsect_hydrad_of_depth",
+    "swmm_xsect_hydrad_of_depth_array",
+    "swmm_xsect_sectfactor_of_area",
+    "swmm_xsect_sectfactor_of_area_array",
+    "swmm_xsect_width_of_depth",
+    "swmm_xsect_width_of_depth_array"
+   ],
    "returns": "NDArray[np.float64]",
    "params": [
     {
@@ -20600,7 +21628,26 @@
    "form": "method",
    "python": "XSectionGeometry.area_from_section_factor",
    "doc": "Flow area for section factor *sf* — used to solve for normal depth.",
-   "c": [],
+   "c": [
+    "swmm_xsect_area_of_depth",
+    "swmm_xsect_area_of_depth_array",
+    "swmm_xsect_area_of_sectfactor",
+    "swmm_xsect_area_of_sectfactor_array",
+    "swmm_xsect_critical_depth",
+    "swmm_xsect_critical_depth_array",
+    "swmm_xsect_depth_of_area",
+    "swmm_xsect_depth_of_area_array",
+    "swmm_xsect_dsda",
+    "swmm_xsect_dsda_array",
+    "swmm_xsect_hydrad_of_area",
+    "swmm_xsect_hydrad_of_area_array",
+    "swmm_xsect_hydrad_of_depth",
+    "swmm_xsect_hydrad_of_depth_array",
+    "swmm_xsect_sectfactor_of_area",
+    "swmm_xsect_sectfactor_of_area_array",
+    "swmm_xsect_width_of_depth",
+    "swmm_xsect_width_of_depth_array"
+   ],
    "returns": "NDArray[np.float64]",
    "params": [
     {
@@ -20617,7 +21664,26 @@
    "form": "method",
    "python": "XSectionGeometry.critical_depth",
    "doc": "Critical depth for *flow*, in flow_units.",
-   "c": [],
+   "c": [
+    "swmm_xsect_area_of_depth",
+    "swmm_xsect_area_of_depth_array",
+    "swmm_xsect_area_of_sectfactor",
+    "swmm_xsect_area_of_sectfactor_array",
+    "swmm_xsect_critical_depth",
+    "swmm_xsect_critical_depth_array",
+    "swmm_xsect_depth_of_area",
+    "swmm_xsect_depth_of_area_array",
+    "swmm_xsect_dsda",
+    "swmm_xsect_dsda_array",
+    "swmm_xsect_hydrad_of_area",
+    "swmm_xsect_hydrad_of_area_array",
+    "swmm_xsect_hydrad_of_depth",
+    "swmm_xsect_hydrad_of_depth_array",
+    "swmm_xsect_sectfactor_of_area",
+    "swmm_xsect_sectfactor_of_area_array",
+    "swmm_xsect_width_of_depth",
+    "swmm_xsect_width_of_depth_array"
+   ],
    "returns": "NDArray[np.float64]",
    "params": [
     {
@@ -20634,7 +21700,26 @@
    "form": "method",
    "python": "XSectionGeometry.depth_from_area",
    "doc": "Depth of flow for *area* — the inverse of area.",
-   "c": [],
+   "c": [
+    "swmm_xsect_area_of_depth",
+    "swmm_xsect_area_of_depth_array",
+    "swmm_xsect_area_of_sectfactor",
+    "swmm_xsect_area_of_sectfactor_array",
+    "swmm_xsect_critical_depth",
+    "swmm_xsect_critical_depth_array",
+    "swmm_xsect_depth_of_area",
+    "swmm_xsect_depth_of_area_array",
+    "swmm_xsect_dsda",
+    "swmm_xsect_dsda_array",
+    "swmm_xsect_hydrad_of_area",
+    "swmm_xsect_hydrad_of_area_array",
+    "swmm_xsect_hydrad_of_depth",
+    "swmm_xsect_hydrad_of_depth_array",
+    "swmm_xsect_sectfactor_of_area",
+    "swmm_xsect_sectfactor_of_area_array",
+    "swmm_xsect_width_of_depth",
+    "swmm_xsect_width_of_depth_array"
+   ],
    "returns": "NDArray[np.float64]",
    "params": [
     {
@@ -20651,7 +21736,26 @@
    "form": "method",
    "python": "XSectionGeometry.dsda",
    "doc": "Derivative of the section factor with respect to area, dS/dA.",
-   "c": [],
+   "c": [
+    "swmm_xsect_area_of_depth",
+    "swmm_xsect_area_of_depth_array",
+    "swmm_xsect_area_of_sectfactor",
+    "swmm_xsect_area_of_sectfactor_array",
+    "swmm_xsect_critical_depth",
+    "swmm_xsect_critical_depth_array",
+    "swmm_xsect_depth_of_area",
+    "swmm_xsect_depth_of_area_array",
+    "swmm_xsect_dsda",
+    "swmm_xsect_dsda_array",
+    "swmm_xsect_hydrad_of_area",
+    "swmm_xsect_hydrad_of_area_array",
+    "swmm_xsect_hydrad_of_depth",
+    "swmm_xsect_hydrad_of_depth_array",
+    "swmm_xsect_sectfactor_of_area",
+    "swmm_xsect_sectfactor_of_area_array",
+    "swmm_xsect_width_of_depth",
+    "swmm_xsect_width_of_depth_array"
+   ],
    "returns": "NDArray[np.float64]",
    "params": [
     {
@@ -20682,7 +21786,8 @@
    "python": "XSectionGeometry.from_curve",
    "doc": "Build a custom section from a normalized shape curve.",
    "c": [
-    "swmm_xsect_create_custom"
+    "swmm_xsect_create_custom",
+    "swmm_xsect_get_shape"
    ],
    "returns": "XSectionGeometry",
    "params": [
@@ -20718,7 +21823,8 @@
    "python": "XSectionGeometry.from_link",
    "doc": "Build a section from a Link of an open model.",
    "c": [
-    "swmm_link_create_xsect"
+    "swmm_link_create_xsect",
+    "swmm_xsect_get_shape"
    ],
    "returns": "XSectionGeometry",
    "params": [
@@ -20738,7 +21844,8 @@
    "python": "XSectionGeometry.from_street",
    "doc": "Build a street section. Mirrors a [STREETS] entry.",
    "c": [
-    "swmm_xsect_create_street"
+    "swmm_xsect_create_street",
+    "swmm_xsect_get_shape"
    ],
    "returns": "XSectionGeometry",
    "params": [
@@ -20815,7 +21922,8 @@
    "python": "XSectionGeometry.from_transect",
    "doc": "Build an irregular (natural channel) section from transect data.",
    "c": [
-    "swmm_xsect_create_irregular"
+    "swmm_xsect_create_irregular",
+    "swmm_xsect_get_shape"
    ],
    "returns": "XSectionGeometry",
    "params": [
@@ -20927,7 +22035,8 @@
     "swmm_xsect_full_properties"
    ],
    "type": "float",
-   "access": "r"
+   "access": "r",
+   "units": "section_factor"
   },
   {
    "path": "xsect.hyd_radius",
@@ -20936,7 +22045,26 @@
    "form": "method",
    "python": "XSectionGeometry.hyd_radius",
    "doc": "Hydraulic radius (area / wetted perimeter) at *depth*.",
-   "c": [],
+   "c": [
+    "swmm_xsect_area_of_depth",
+    "swmm_xsect_area_of_depth_array",
+    "swmm_xsect_area_of_sectfactor",
+    "swmm_xsect_area_of_sectfactor_array",
+    "swmm_xsect_critical_depth",
+    "swmm_xsect_critical_depth_array",
+    "swmm_xsect_depth_of_area",
+    "swmm_xsect_depth_of_area_array",
+    "swmm_xsect_dsda",
+    "swmm_xsect_dsda_array",
+    "swmm_xsect_hydrad_of_area",
+    "swmm_xsect_hydrad_of_area_array",
+    "swmm_xsect_hydrad_of_depth",
+    "swmm_xsect_hydrad_of_depth_array",
+    "swmm_xsect_sectfactor_of_area",
+    "swmm_xsect_sectfactor_of_area_array",
+    "swmm_xsect_width_of_depth",
+    "swmm_xsect_width_of_depth_array"
+   ],
    "returns": "NDArray[np.float64]",
    "params": [
     {
@@ -20953,7 +22081,26 @@
    "form": "method",
    "python": "XSectionGeometry.hyd_radius_from_area",
    "doc": "Hydraulic radius for *area*.",
-   "c": [],
+   "c": [
+    "swmm_xsect_area_of_depth",
+    "swmm_xsect_area_of_depth_array",
+    "swmm_xsect_area_of_sectfactor",
+    "swmm_xsect_area_of_sectfactor_array",
+    "swmm_xsect_critical_depth",
+    "swmm_xsect_critical_depth_array",
+    "swmm_xsect_depth_of_area",
+    "swmm_xsect_depth_of_area_array",
+    "swmm_xsect_dsda",
+    "swmm_xsect_dsda_array",
+    "swmm_xsect_hydrad_of_area",
+    "swmm_xsect_hydrad_of_area_array",
+    "swmm_xsect_hydrad_of_depth",
+    "swmm_xsect_hydrad_of_depth_array",
+    "swmm_xsect_sectfactor_of_area",
+    "swmm_xsect_sectfactor_of_area_array",
+    "swmm_xsect_width_of_depth",
+    "swmm_xsect_width_of_depth_array"
+   ],
    "returns": "NDArray[np.float64]",
    "params": [
     {
@@ -21011,7 +22158,26 @@
    "form": "method",
    "python": "XSectionGeometry.section_factor",
    "doc": "Section factor (A·R^(2/3)) for *area*.",
-   "c": [],
+   "c": [
+    "swmm_xsect_area_of_depth",
+    "swmm_xsect_area_of_depth_array",
+    "swmm_xsect_area_of_sectfactor",
+    "swmm_xsect_area_of_sectfactor_array",
+    "swmm_xsect_critical_depth",
+    "swmm_xsect_critical_depth_array",
+    "swmm_xsect_depth_of_area",
+    "swmm_xsect_depth_of_area_array",
+    "swmm_xsect_dsda",
+    "swmm_xsect_dsda_array",
+    "swmm_xsect_hydrad_of_area",
+    "swmm_xsect_hydrad_of_area_array",
+    "swmm_xsect_hydrad_of_depth",
+    "swmm_xsect_hydrad_of_depth_array",
+    "swmm_xsect_sectfactor_of_area",
+    "swmm_xsect_sectfactor_of_area_array",
+    "swmm_xsect_width_of_depth",
+    "swmm_xsect_width_of_depth_array"
+   ],
    "returns": "NDArray[np.float64]",
    "params": [
     {
@@ -21052,7 +22218,26 @@
    "form": "method",
    "python": "XSectionGeometry.width",
    "doc": "Top width of the water surface at *depth*.",
-   "c": [],
+   "c": [
+    "swmm_xsect_area_of_depth",
+    "swmm_xsect_area_of_depth_array",
+    "swmm_xsect_area_of_sectfactor",
+    "swmm_xsect_area_of_sectfactor_array",
+    "swmm_xsect_critical_depth",
+    "swmm_xsect_critical_depth_array",
+    "swmm_xsect_depth_of_area",
+    "swmm_xsect_depth_of_area_array",
+    "swmm_xsect_dsda",
+    "swmm_xsect_dsda_array",
+    "swmm_xsect_hydrad_of_area",
+    "swmm_xsect_hydrad_of_area_array",
+    "swmm_xsect_hydrad_of_depth",
+    "swmm_xsect_hydrad_of_depth_array",
+    "swmm_xsect_sectfactor_of_area",
+    "swmm_xsect_sectfactor_of_area_array",
+    "swmm_xsect_width_of_depth",
+    "swmm_xsect_width_of_depth_array"
+   ],
    "returns": "NDArray[np.float64]",
    "params": [
     {
@@ -21078,7 +22263,8 @@
     ],
     "doc": "",
     "stub_setter": false,
-    "static": false
+    "static": false,
+    "c": []
    },
    "oadate_to_datetime": {
     "name": "oadate_to_datetime",
@@ -21093,7 +22279,8 @@
     ],
     "doc": "",
     "stub_setter": false,
-    "static": false
+    "static": false,
+    "c": []
    }
   },
   "_datetime": {
@@ -21115,7 +22302,10 @@
     ],
     "doc": "",
     "stub_setter": false,
-    "static": false
+    "static": false,
+    "c": [
+     "swmm_datetime_add_seconds"
+    ]
    },
    "decode_date": {
     "name": "decode_date",
@@ -21130,7 +22320,10 @@
     ],
     "doc": "",
     "stub_setter": false,
-    "static": false
+    "static": false,
+    "c": [
+     "swmm_datetime_decode_date"
+    ]
    },
    "decode_time": {
     "name": "decode_time",
@@ -21145,7 +22338,10 @@
     ],
     "doc": "",
     "stub_setter": false,
-    "static": false
+    "static": false,
+    "c": [
+     "swmm_datetime_decode_time"
+    ]
    },
    "encode_date": {
     "name": "encode_date",
@@ -21170,7 +22366,10 @@
     ],
     "doc": "",
     "stub_setter": false,
-    "static": false
+    "static": false,
+    "c": [
+     "swmm_datetime_encode_date"
+    ]
    },
    "encode_time": {
     "name": "encode_time",
@@ -21195,7 +22394,10 @@
     ],
     "doc": "",
     "stub_setter": false,
-    "static": false
+    "static": false,
+    "c": [
+     "swmm_datetime_encode_time"
+    ]
    },
    "time_diff": {
     "name": "time_diff",
@@ -21215,7 +22417,10 @@
     ],
     "doc": "",
     "stub_setter": false,
-    "static": false
+    "static": false,
+    "c": [
+     "swmm_datetime_time_diff"
+    ]
    }
   }
  },

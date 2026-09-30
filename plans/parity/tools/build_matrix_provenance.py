@@ -18,12 +18,13 @@ name similarity, so there are essentially no false positives:
     so we parse each ``.pyx`` method body for ``swmm_*`` calls and attribute
     them to the enclosing ``def``. Inverting gives, per C symbol, the exact
     wrapping method(s).
-  * Python -> MCP is *name-precise*: MCP tool bodies call binding methods by
-    attribute (``session.nodes.get_depth(...)``). We collect attribute names
-    used in each MCP tool and mark a C symbol MCP-covered when one of its
-    (call-graph-derived) wrapping methods is referenced by name — restricted
-    to names that are actually binding methods, which removes the fuzzy
-    matcher's guesswork.
+  * Python -> MCP is *catalog-reachable*: the MCP server (v2) dispatches any
+    member listed in ``openswmm.engine.catalog`` through its generic tools, so
+    a C symbol is MCP-reachable when a catalogued member (other than the
+    callback setters, which cannot cross MCP) lists it among its C symbols.
+  * Python -> Gymnasium is *catalog-reachable* for the C symbols behind
+    numeric element fields (observable and actuatable by catalog path), plus
+    a name-precise scan of the adapter for anything it calls directly.
 
 Outputs ``provenance_matrix.md`` and ``provenance_gaps.json`` next to the
 fuzzy artefacts (additive — it does not touch ``parity_matrix.md``).
@@ -46,7 +47,7 @@ REPO_ROOT = PARITY_DIR.parents[1]
 ENGINE_DIR = REPO_ROOT / "python" / "openswmm" / "engine"
 HEADER_DIR = REPO_ROOT / "include" / "openswmm" / "engine"
 OVERRIDES_TSV = PARITY_DIR / "overrides.tsv"
-MCP_SRC_DEFAULT = REPO_ROOT.parent / "openswmm.mcp" / "src" / "openswmm_mcp"
+CATALOG_JSON = ENGINE_DIR / "catalog.json"
 GYM_SRC_DEFAULT = (REPO_ROOT.parent / "openswmm.gymnasium" / "src"
                    / "openswmm_gymnasium")
 MATRIX_MD = PARITY_DIR / "provenance_matrix.md"
@@ -130,10 +131,69 @@ def pyx_callgraph() -> dict[str, set[tuple[str, str, str]]]:
 
 
 # ---------------------------------------------------------------------------
-# Python -> MCP (name-precise, via MCP tool ASTs)
+# Catalog reach (MCP and Gymnasium)
 # ---------------------------------------------------------------------------
-# Explicit provenance marker an MCP tool (or .pyx wrapper) can carry to pin
-# exact coverage, e.g. ``# wraps: swmm_forcing_link_flow, swmm_forcing_link_setting``.
+_NUMERIC = {"float", "int", "bool"}
+
+
+def catalog_reach() -> tuple[set[str], set[str]]:
+    """Return (C symbols the MCP reaches, C symbols behind numeric element fields).
+
+    Empty sets when the catalog has not been generated yet.
+    """
+    if not CATALOG_JSON.is_file():
+        return set(), set()
+    cat = json.loads(CATALOG_JSON.read_text(encoding="utf-8"))
+    targets = cat["targets"]
+
+    def element_kind(target: str) -> bool:
+        entry = targets.get(target, {})
+        while "collection" not in entry:
+            parent = entry.get("parent")
+            if parent is None or parent not in targets:
+                return False
+            entry = targets[parent]
+        return True
+
+    skip: set[str] = set()
+    mcp: set[str] = set()
+    fields: set[str] = set()
+    for name, t in targets.items():
+        if name not in skip:
+            mcp |= set(t.get("c", []))
+    for funcs in cat.get("functions", {}).values():
+        for f in funcs.values():
+            mcp |= set(f.get("c", []))
+    for m in cat["members"]:
+        syms = set(m.get("c", []))
+        if m["target"] in skip or (m["target"] == "solver" and m["name"].endswith("_callback")):
+            continue  # Python callables cannot cross MCP
+        mcp |= syms
+        if m["form"] == "property" and m.get("type") in _NUMERIC and element_kind(m["target"]):
+            fields |= syms
+    return mcp, fields
+
+
+# C functions with no meaning over MCP, and why. They are reported as
+# ``mcp-na`` instead of ``mcp-review``.
+MCP_NOT_APPLICABLE = {
+    "swmm_set_progress_callback": "Python callables cannot cross MCP.",
+    "swmm_set_step_begin_callback": "Python callables cannot cross MCP.",
+    "swmm_set_step_end_callback": "Python callables cannot cross MCP.",
+    "swmm_set_warning_callback": "Python callables cannot cross MCP.",
+    "swmm_engine_run": "One-shot run; the MCP run tool steps the session instead.",
+    "swmm_engine_run_with_callback": "One-shot run with a callback; see swmm_engine_run.",
+    "swmm_error_message": "Error text; every MCP error already carries it.",
+    "swmm_gpkg_register": "The GeoPackage plugin registers itself on import.",
+    "swmm_gpkg_is_registered": "The GeoPackage plugin registers itself on import.",
+    "swmm_transport_class_name": "Enum-to-name helper; describe('enum:TransportClass').",
+    "swmm_transport_domain_name": "Enum-to-name helper; describe('enum:TransportDomain').",
+    "swmm_xsect_shape_name": "Enum-to-name helper; describe('enum:XSectShape').",
+}
+
+
+# Explicit provenance marker a gymnasium module (or .pyx wrapper) can carry to
+# pin exact coverage, e.g. ``# wraps: swmm_forcing_link_flow``.
 _WRAPS_RE = re.compile(r"wraps:\s*((?:swmm_[a-z0-9_]+\s*,?\s*)+)", re.IGNORECASE)
 
 
@@ -156,18 +216,6 @@ def _py_refs(paths: list[Path]) -> tuple[set[str], set[str], set[str]]:
             elif isinstance(node, ast.Name):
                 names.add(node.id)
     return attrs, names, wrapped
-
-
-def mcp_refs(mcp_src: Path) -> tuple[set[str], set[str], set[str]]:
-    """Return (attribute_names, class_names, explicitly_wrapped_c_symbols)."""
-    paths = [
-        p
-        for sub in ("tools", "resources", "prompts")
-        if (mcp_src / sub).is_dir()
-        for p in sorted((mcp_src / sub).glob("*.py"))
-        if p.name != "__init__.py"
-    ]
-    return _py_refs(paths)
 
 
 def gym_refs(gym_src: Path) -> tuple[set[str], set[str], set[str]]:
@@ -213,18 +261,18 @@ def load_overrides() -> dict[str, tuple[str, str]]:
 # ---------------------------------------------------------------------------
 # Build
 # ---------------------------------------------------------------------------
-def build(mcp_src: Path, gym_src: Path | None = None) -> list[dict]:
+def build(gym_src: Path | None = None) -> list[dict]:
     csyms = c_symbols()
     c_to_py = pyx_callgraph()
-    mcp_attrs, mcp_names, mcp_wrapped = mcp_refs(mcp_src)
+    mcp_reach, field_reach = catalog_reach()
     if gym_src is not None and gym_src.is_dir():
         gym_attrs, gym_names, gym_wrapped = gym_refs(gym_src)
     else:
         gym_attrs, gym_names, gym_wrapped = set(), set(), set()
     overrides = load_overrides()
 
-    # binding method-name universe (from the call graph) so MCP matching is
-    # restricted to real binding methods.
+    # binding method-name universe (from the call graph) so the gymnasium
+    # name scan is restricted to real binding methods.
     binding_methods = {m for tgts in c_to_py.values() for (_, _, m) in tgts}
 
     rows: list[dict] = []
@@ -234,31 +282,27 @@ def build(mcp_src: Path, gym_src: Path | None = None) -> list[dict]:
         py_methods = {m for (_, _, m) in py}
         py_classes = {c for (_, c, _) in py if c}
 
-        # exact coverage if a `wraps:` annotation names this symbol; else a
-        # name-precise heuristic (wrapping method or class referenced in MCP).
-        explicit = fn in mcp_wrapped
-        heuristic = bool(
-            (py_methods & mcp_attrs & binding_methods)
-            or (py_classes & (mcp_names | mcp_attrs))
-        )
-        mcp = "exact" if explicit else ("heuristic" if heuristic else "none")
+        mcp = "catalog" if fn in mcp_reach else "none"
 
-        # Gymnasium reach, same two tiers. Advisory only: gymnasium is an RL
-        # surface, not an API mirror, so "none" is the expected default and is
-        # never a gate.
+        # Gymnasium reach. Advisory only: gymnasium is an RL surface, not an
+        # API mirror, so "none" is the expected default and is never a gate.
         gym_explicit = fn in gym_wrapped
         gym_heuristic = bool(
             (py_methods & gym_attrs & binding_methods)
             or (py_classes & (gym_names | gym_attrs))
         )
-        gym = "exact" if gym_explicit else ("heuristic" if gym_heuristic else "none")
+        gym = ("exact" if gym_explicit else "field" if fn in field_reach
+               else "heuristic" if gym_heuristic else "none")
 
         if fn in _audit.KNOWN_UNBOUND:
             status = "intentional"
         elif not py:
             status = "py-gap"                       # REAL, exact: no wrapper
-        elif mcp in ("exact", "heuristic"):
+        elif mcp == "catalog":
             status = "parity"
+        elif fn in MCP_NOT_APPLICABLE:
+            status = "mcp-na"
+            ov_note = ov_note or MCP_NOT_APPLICABLE[fn]
         elif domain == "2d":
             status = "mcp-review-2d"                # advisory (2D build-cond.)
         else:
@@ -280,14 +324,12 @@ def render_markdown(rows: list[dict], fuzzy_pygaps: int | None) -> str:
     buf.append("- `py-gap` / `parity` (C↔Python) — **exact**: a wrapper either "
                "calls the C symbol or it doesn't. Trust these; `--check` gates on "
                "`py-gap`.\n")
-    buf.append("- `mcp-review*` — **advisory**: the exact wrapping method/class "
-               "isn't referenced by name in any MCP tool, but MCP legitimately "
-               "aggregates many C ops into one dispatching tool (e.g. "
-               "`forcing_set_forcing`, `lifecycle_events_count`), so a review "
-               "candidate is **not** a confirmed gap. Pin exact MCP coverage by "
-               "adding a `wraps: swmm_x, swmm_y` marker to the MCP tool "
-               "(comment or docstring); the builder reads it and promotes the "
-               "row to `parity`.\n")
+    buf.append("- MCP column — `catalog` means catalog-reachable: the MCP "
+               "server's generic tools dispatch every member of "
+               "`openswmm.engine.catalog`, and a catalogued member lists this "
+               "C symbol. `mcp-na` rows have no meaning over MCP (the note "
+               "says why); `mcp-review*` rows are wrapped in Python but reached "
+               "by no catalogued member.\n")
     totals: dict[str, int] = defaultdict(int)
     mcp_tier: dict[str, int] = defaultdict(int)
     for r in rows:
@@ -296,19 +338,19 @@ def render_markdown(rows: list[dict], fuzzy_pygaps: int | None) -> str:
     buf.append("## Summary\n")
     buf.append("| Status | Count |")
     buf.append("|---|---:|")
-    for s in ["parity", "py-gap", "mcp-review", "mcp-review-2d",
+    for s in ["parity", "py-gap", "mcp-review", "mcp-review-2d", "mcp-na",
               "intentional", "internal"]:
         buf.append(f"| `{s}` | {totals.get(s, 0)} |")
     buf.append(f"| **Total** | **{len(rows)}** |\n")
-    buf.append(f"MCP coverage evidence: `exact` (via `wraps:`) "
-               f"{mcp_tier.get('exact', 0)}, `heuristic` (name reference) "
-               f"{mcp_tier.get('heuristic', 0)}, `none` {mcp_tier.get('none', 0)}.\n")
+    buf.append(f"MCP reach: `catalog` {mcp_tier.get('catalog', 0)}, "
+               f"`none` {mcp_tier.get('none', 0)}.\n")
     gym_tier: dict[str, int] = defaultdict(int)
     for r in rows:
         gym_tier[r.get("gym", "none")] += 1
-    reached = gym_tier.get("exact", 0) + gym_tier.get("heuristic", 0)
+    reached = len(rows) - gym_tier.get("none", 0)
     buf.append(f"Gymnasium reach: **{reached}** of {len(rows)} C symbols are "
-               f"reachable through `SolverAdapter` (`exact` {gym_tier.get('exact', 0)}, "
+               f"reachable (`field` — behind a numeric element field, "
+               f"{gym_tier.get('field', 0)}; `exact` {gym_tier.get('exact', 0)}; "
                f"`heuristic` {gym_tier.get('heuristic', 0)}). This column is "
                f"**advisory and never gated** — gymnasium is an RL surface, not "
                f"an API mirror, so most of the C API is legitimately out of "
@@ -348,7 +390,6 @@ def render_markdown(rows: list[dict], fuzzy_pygaps: int | None) -> str:
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--mcp-root", type=Path, default=MCP_SRC_DEFAULT)
     ap.add_argument("--gym-root", type=Path, default=GYM_SRC_DEFAULT,
                     help="openswmm_gymnasium package root (advisory column)")
     ap.add_argument("--check", action="store_true",
@@ -357,7 +398,7 @@ def main(argv: list[str]) -> int:
                     help="py-gap count from build_matrix.py, for the comparison note")
     args = ap.parse_args(argv[1:])
 
-    rows = build(args.mcp_root, args.gym_root)
+    rows = build(args.gym_root)
     MATRIX_MD.write_text(render_markdown(rows, args.fuzzy_pygaps), encoding="utf-8")
 
     summary: dict[str, list[str]] = defaultdict(list)

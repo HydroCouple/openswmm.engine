@@ -32,8 +32,14 @@ retroactive.
   behind it and the bulk array that reads a whole collection at once.
   `python/scripts/gen_catalog.py` generates it from the type stubs, Cython
   sources and header docs; `--check` in the Python contracts workflow fails on
-  a stale catalog, an uncatalogued public class or lost unit coverage. The
-  OpenSWMM MCP server and `openswmm.gymnasium` address engine fields through it.
+  a stale catalog, an uncatalogued public class or a float field without a
+  unit kind (`dimensionless` is explicit). `catalog.unit_label(kind,
+  unit_system, flow_units)` gives the label for a model's units, and a runtime
+  test fails when a public attribute is missing from the stubs. The OpenSWMM
+  MCP server and `openswmm.gymnasium` address engine fields through it.
+- The type stubs now declare `Subcatchment.loadings` (`LoadingsView`), the
+  container methods of `Aquifers` and `Snowpacks`, and the groundwater and
+  groundwater-transport option records.
 - Add groundwater hydrology and transport views, surface-quality tables,
   transport configuration/capability records, 2D rainfall diagnostics, batch
   deletion, live output refresh, compatibility/staged serialization and the
