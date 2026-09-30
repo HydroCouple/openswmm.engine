@@ -348,6 +348,56 @@ retroactive.
 
 ### Added
 
+- **The 1D ⇄ aquifer quality seam carries mass (T7.4).** T7.1 left both 1D
+  seams moving water with no species: a recharging node and a leaking
+  conduit filled their cells with clean water, and a draining aquifer handed
+  its node nothing. All three now carry the tuple. A **leaking conduit**
+  delivers its own concentration into the cells it crosses, by the same
+  length weights the volume takes — the 1D quality solver already debited
+  that mass as its exfiltration loss, so this completes a transfer that used
+  to be a disappearance, and nothing is removed twice. A **recharging node**
+  sends its quality down the bed, sampled from the same published node row
+  the 2D surface spill reads, so the two 2D seams cannot disagree about what
+  a node is carrying; the 1D books the loss in `qual_routing_seep` — a row
+  it never had, which is why its quality continuity error previously grew by
+  exactly this. A **draining aquifer** hands its mass to the node's coupling
+  queues, the same channel the surface's drain uses, booked to
+  `qual_routing_gw_in`. MSX rows stay where they are: the 1D node has no MSX
+  inflow accumulator for any loader, the same recorded gap the surface seam
+  has. The gaining-conduit direction is still open — a conduit has no
+  per-link quality inlet to receive into. Gates: a leaking conduit's mass
+  arrives and the aquifer still conserves; a recharging node's mass arrives
+  and the 1D books the loss; **what the aquifer gives up is what the node
+  receives, to 1e-9, once the aquifer's conc·m³ is expressed in the 1D's
+  conc·ft³**. GW transport plan §3.5, T7.4.
+- **The aquifer's transported tuple is visible and restartable (T7.5).**
+  T7.1 and T7.2 gave the two-zone kernel species, age and temperature; this
+  round gives them to the modeller. **Results file:**
+  `Mesh2_face_gw_sat_conc` and `Mesh2_face_gw_unsat_conc`
+  (`[time, species, face]` concentrations, one per zone, with a
+  `species_names` attribute) and `groundwater_species_ledger`
+  (`[time, species, 13]`, the per-species twin of `groundwater_ledger`, with
+  its `terms` attribute and a derived residual column), all riding the
+  existing `REPORT_2D_VARIABLES GROUNDWATER` mask and absent on a deck that
+  transports nothing. **Report:** a `2D Aquifer Quality Continuity` block
+  per species beside the water one — initial and final stored mass, every
+  inflow and outflow channel, and the continuity error — printed only when
+  the kernel carried a tuple, so a water-only deck's `.rpt` is unchanged
+  line-for-line. **Hot start:** a new **V6** block carries both stores and
+  the species ledgers, so a restart resumes a plume instead of re-seeding
+  it from `[GW_INITIAL_QUALITY]`; species are matched by NAME, because a row
+  layout depends on `[POLLUTANTS]`, the MSX list and the AGE / TEMPERATURE
+  switches, any of which can differ between the run that wrote the file and
+  the run that reads it — a species the reader lacks is dropped with a
+  warning, one the file lacks keeps its seed. **C API:**
+  `swmm_gw2d_species_count`, `swmm_gw2d_species_name`,
+  `swmm_gw2d_get_cell_conc` (per zone) and `swmm_gw2d_get_species_ledger`.
+  Gates: the C API agrees with the kernel cell for cell and term for term;
+  the `.h5`'s last record is the state the run ended in (at FLOAT64, so the
+  gate tests the plumbing rather than float32's last digit) and its residual
+  column closes; the `.rpt` block appears with the water block; a hotstart
+  round trip resumes both stores and continues the ledgers. GW transport
+  plan §3.4, gate 9, T7.5.
 - **Dispersion, retardation and decay in the aquifer (T7.2).** The
   transported tuple of T7.1 now spreads, sorbs and reacts.
   **Dispersion** rides the lateral Darcy faces — `D = α_L·v_pore + D_m` from
@@ -530,6 +580,101 @@ retroactive.
   scale factor, co-gage, sub-hourly and late start — are now byte-identical
   to legacy. Pinned by `test_engine_gage_cumulative`, which fails 8/8 against
   an `alpha.3` build and passes 8/8 on this one.
+
+- **The aquifer's reported quality error was divided by the wrong total
+  (T7.4).** `.rpt`'s "2D Aquifer Quality Continuity" scaled its residual by
+  its own inline copy of "what came in" — `|init_mass| + |gained_infil| +
+  |net_lateral|` — written before T7.4 gave the aquifer two more inflow
+  routes, neither of which was added to it. On a network deck fed only
+  through its node beds that divides a machine-precision residual by a
+  machine-precision total: the block printed **6 198 889.840 %** beside a
+  balance exact to the last digit. The sum is now
+  `SubsurfaceTransportState::continuityDenominator`, which lives beside the
+  residual it scales, so a sixth channel cannot be added to one and
+  forgotten in the other. The balance rows themselves were always correct;
+  only the percentage was wrong.
+- **ET's effect on water age in the 2D aquifer was implemented but ungated
+  (D-A20).** The kernel has always followed the program plan's D-A20
+  convention — evaporation and ET take age-volume with the water at the
+  supplying layer's age, so the mean age of what remains is unchanged, while
+  solutes stay and the column up-concentrates. Nothing tested it: the only ET
+  gate asserted that the *solute* row lost nothing. Reverting the kernel to
+  the GW transport plan's superseded wording ("ET removes water not
+  age-volume") would therefore have left every gate green. Now gated, and the
+  plan's three stale statements — §2.4, the §3.5 ET row and gate 6's own
+  specification, which contradicted D-A20 — are amended to match the decision
+  and the code.
+- **The node bed delivered 9.4× the water the aquifer released (G-W1).** The
+  cap on an aquifer→node drain measured the cell's drainable water with the
+  textbook specific yield θ_s − θ_r, while the column that then spent it used
+  the closure-consistent θ_s − θ_bot floored at 1e-3. For a table a few
+  centimetres under the ground those are 0.35 and 0.001, so the cap sat 350×
+  above anything reachable and never bound: the column went short on
+  essentially every firing, and the shortfall was refunded into the
+  **aquifer's** books alone — the router had already handed the unrefunded
+  volume to the node. Both continuity blocks closed and the seam still
+  created water: 0.625 m³ delivered against 0.067 m³ released on the gate
+  deck, 89 % of it refunded. Specific yield now has one owner,
+  `SubsurfaceSolver::specificYield`, which the cap and the column both call;
+  the refund no longer fires for the node at all, and the two sides agree to
+  the last digit. The defect needs a thin, near-saturated unsaturated zone
+  to bite — on a deck whose table sits 7.6 m up an 8 m column the cap never
+  binds and the numbers are unchanged — so the gate proves its own deck can
+  see it by counting the firings on which the cap actually clamped, and
+  asserts that the defect's signature (a column going short on the node's
+  account and being refunded) never occurs. The node→aquifer headroom cap has the same inconsistency
+  and is deliberately NOT changed here: making it consistent was attempted
+  twice and reverted twice — the floored yield leaves a saturated column
+  claiming 1e-3 of headroom it does not have (a surcharged node kept
+  trickling into a full column, which G-X1's gate caught), and the unfloored
+  yield takes the gate deck's 1D continuity from −0.66 % to −1.99 %. The
+  measured leak was on the drain side; the fill side needs its own round.
+- **An aquifer species gate was passing on luck (G-W1).** T7.4's three seam
+  gates asserted `|residual| < 1e-10·|init|`, but `nacc_mass` — mass sampled
+  from a 1D node and not yet gathered by the cell — is counted in
+  `ledgeredStorage` while only being booked into `gained_node` at the
+  gather, so the balance is legitimately short by whatever is in transit. A
+  run that ends in that window carries the tail. Tightening the bed cap
+  above moved where the final sample landed and turned a tail that had been
+  ~0 into 0.0705 against an initial 614.9, which read exactly like an 11 %
+  mass leak; `residual` equalled `inFlight1D` to the last digit, which is
+  what identified it. The gates now assert `residual == inFlight1D` — the
+  identity completed, with the bound on it unchanged.
+- **The aquifer quality block reported a perfect balance where it meant an
+  unmeasurable one (T7.4b).** When nothing had entered the aquifer on any
+  route the block had no scale to divide by, and printed `0.000` — which
+  reads as a balance closing exactly. It now prints `n/a`. This matters
+  beyond tidiness: with the denominator above naming every inflow route, a
+  zero scale beside a **non-zero** residual is precisely the signature of
+  mass leaving by a route nobody has booked the arrival of, which is the bug
+  class this stack has produced five times. `0 %` was the one answer that
+  would have hidden the sixth.
+- **The aquifer→node transfer was counted in two inflow rows (T7.4b).** The
+  router queued the mass into `coupling_qual_queue` — which the quality
+  solver drains and books as `qual_routing_ex_in` — *and* booked
+  `qual_routing_gw_in` itself. One transfer, two inflow rows. On a deck whose
+  whole quality budget is aquifer → node → outfall it was a **49.7 %
+  continuity error**; the queue is now the only booking, which takes that
+  deck to ≈ −0.5 %. It was invisible until the fix below landed, because
+  while three quarters of the mass was being dropped the duplicated quantity
+  was ~0.001 lbs. The attribution cost is recorded rather than hidden:
+  **the `.rpt` quality continuity table's "Groundwater Inflow" row now reads
+  0.000 on a deck whose only quality inflow is its aquifer, because that mass
+  moved to the 2D coupling inflow row — it did not vanish, and the table's
+  total is unchanged.** Restoring the dedicated row needs the queued mass
+  tagged by origin, since the queue is shared with the 2D surface's own
+  drain.
+- **The aquifer delivered only a quarter of its drainage mass to the node
+  (T7.4, found by its own gate).** The per-bed weights that split a cell's
+  outgoing mass across the nodes it serves were accumulated over a routing
+  step and cleared at its flush — but a cell fires on the LTS ladder, not the
+  routing step, so any firing whose weights had already been cleared found no
+  weight to split by and dropped its mass. The aquifer still booked the
+  departure in `lost_node`, so the mass left one set of books without
+  arriving in the other: **75 % of it on the gate deck**. The weights are now
+  the volumes the gather itself takes, which makes them exact by
+  construction — they ARE what produced that firing's outgoing volume. The
+  seam delivers 100 %, and the two sides agree to machine precision.
 
 - **Infiltration from an inactive 2D cell never reached the aquifer.** The
   marcher's cheap between-rebuild pass (`lazySourcesOnly`, taken on every
