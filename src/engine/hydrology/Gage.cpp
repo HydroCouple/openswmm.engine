@@ -394,8 +394,8 @@ void updateAllGages(SimulationContext& ctx, double current_time) {
     }
 }
 
-double getReportRainfall(const SimulationContext& ctx, int gage_idx,
-                         double report_date) {
+static double reportRainfall(const SimulationContext& ctx, int gage_idx,
+                             double report_date, bool from_series) {
     // IGNORE_RAINFALL: nothing is reported (legacy leaves gage rainfall 0).
     if (ctx.options.ignore_rainfall) return 0.0;
 
@@ -411,7 +411,7 @@ double getReportRainfall(const SimulationContext& ctx, int gage_idx,
         double primary_sf = ctx.gages.scale_factor[uco];
         double this_sf    = ctx.gages.scale_factor[ug];
         double ratio = (primary_sf > 0.0) ? (this_sf / primary_sf) : 1.0;
-        return getReportRainfall(ctx, co, report_date) * ratio;
+        return reportRainfall(ctx, co, report_date, from_series) * ratio;
     }
 
     // API override (legacy gage.c:544-548)
@@ -447,6 +447,18 @@ double getReportRainfall(const SimulationContext& ctx, int gage_idx,
     const int mon = datetime::monthOfYear(report_date) - 1;
     const double radj = (mon >= 0 && mon < 12) ? ctx.adjust_rain[mon] : 1.0;
 
+    if (from_series) {
+        // A routing step can cross both a report date and a later rain
+        // boundary. The runoff cursor then describes a future record, so
+        // reading st_rain would report that future rate at the earlier date.
+        const auto it = std::upper_bound(rtbl->x.begin(), rtbl->x.end(), t);
+        if (it == rtbl->x.begin()) return 0.0;
+        const int k = static_cast<int>(it - rtbl->x.begin()) - 1;
+        const double end = datetime::addSeconds(rtbl->x[static_cast<std::size_t>(k)],
+                                                ctx.gages.interval_sec[ug]);
+        return t < end ? recordRate(ctx, gage_idx, *rtbl, k) * radj : 0.0;
+    }
+
     double start, end;
     currentInterval(ctx, gage_idx, *rtbl, start, end);
     if (t < end) return ctx.gages.st_rain[ug] * radj;
@@ -454,6 +466,16 @@ double getReportRainfall(const SimulationContext& ctx, int gage_idx,
     if (nxt < 0) return 0.0;                                   // nextRainfall = 0 past the end
     if (t < rtbl->x[static_cast<std::size_t>(nxt)]) return 0.0;
     return recordRate(ctx, gage_idx, *rtbl, nxt) * radj;
+}
+
+double getReportRainfall(const SimulationContext& ctx, int gage_idx,
+                         double report_date) {
+    return reportRainfall(ctx, gage_idx, report_date, false);
+}
+
+double getReportRainfallFromSeries(const SimulationContext& ctx, int gage_idx,
+                                   double report_date) {
+    return reportRainfall(ctx, gage_idx, report_date, true);
 }
 
 } // namespace gage

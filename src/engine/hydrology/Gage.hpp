@@ -238,6 +238,12 @@ void updateAllGages(SimulationContext& ctx, double current_time);
 double getReportRainfall(const SimulationContext& ctx, int gage_idx,
                          double report_date);
 
+/// Report-date rainfall resolved from source records, independently of the
+/// current runoff cursor. Retains SWMM's +1 s report lookup convention.
+/// Used by 2D output when a routing step can advance runoff past the report.
+double getReportRainfallFromSeries(const SimulationContext& ctx, int gage_idx,
+                                   double report_date);
+
 } // namespace gage
 } // namespace openswmm
 

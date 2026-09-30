@@ -6740,7 +6740,7 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
     // report instant, so snap.sim_time is truthful for these fields instead
     // of carrying window-end state stamped with the report date. Derived and
     // forcing fields (gradients, vertex/render fields, rainfall, coupling
-    // flux, cumulatives, edge flux, species) stay current-valued: they are
+    // flux, loss cumulatives, edge flux, species) stay current-valued: they are
     // instantaneous forcings, window-mean contracts, or reconstruction
     // outputs whose recompute on blended copies would be a full extra
     // machinery pass (mixed time base, documented — same spirit as legacy's
@@ -6853,7 +6853,9 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
         snap.surface_infil_cum = infil_cum;
     else
         snap.surface_infil_cum.assign(st.infil_rate.size(), 0.0);
-    snap.surface_rain_cum       = surface_router_.rainCumulative();
+    // Rain integrates the gage step function to the report boundary, even
+    // when the routing window extends past it (depth/head use a blend).
+    snap.surface_rain_cum = surface_router_.reportRainCumulative(ctx_.next_report_ms);
     // Output sign convention: the integrator stores edge_flux and the face
     // velocity INFLOW-positive (a positive edge_flux raises the cell — see
     // SurfaceFluxCalculator), whereas the documented public/HDF5 convention

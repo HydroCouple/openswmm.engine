@@ -1302,6 +1302,9 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     gage_window_rate_.clear();
     rain_gage_last_.clear();
     gage_since_ = 0.0;
+    gage_report_depth_.clear();
+    report_rain_cum_.clear();
+    report_rain_ms_ = -1.0;
     pending_dt_ = 0.0;
     report_old_depth_.assign(
         static_cast<std::size_t>(mesh_.n_triangles()), 0.0);
@@ -1462,6 +1465,11 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
     // (−12 % on a 1-min on/off storm at a 7 s routing step).
     co_forcing_elapsed_ += dt;
     const std::size_t n_gages = static_cast<std::size_t>(std::max(ctx.n_gages(), 0));
+    const double report_s = ctx.next_report_ms / 1000.0;
+    const bool rain_report_due = report_window_new_ms_ >= ctx.next_report_ms &&
+                                 report_s >= sim_time_ - 1e-8;
+    std::vector<double> report_gage_depth;
+    if (rain_report_due) report_gage_depth.assign(n_gages, 0.0);
     if (gage_rate_.size() == n_gages && n_gages > 0) {
         const double t0 = sim_time_, t1 = sim_time_ + dt;
         gage_window_rate_.resize(n_gages);
@@ -1469,6 +1477,14 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
             const double d1 = gage_cum_[g] + gage_rate_[g] * std::max(0.0, t1 - gage_since_);
             gage_window_rate_[g] = (gage_since_ <= t0) ? gage_rate_[g]
                                                        : (d1 - gage_window_depth_[g]) / dt;
+            if (rain_report_due) {
+                // Unlike a linear blend of the whole 2D window, this keeps
+                // a short pulse entirely on its correct side of the report.
+                const double d_report = gage_since_ <= report_s
+                    ? gage_cum_[g] + gage_rate_[g] * (report_s - gage_since_)
+                    : gage_report_depth_[g];
+                report_gage_depth[g] = d_report - gage_window_depth_[g];
+            }
             gage_window_depth_[g] = d1;
         }
     }
@@ -1509,6 +1525,22 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
         }
         co_forcing_elapsed_ = 0.0;
         co_forcing_first_ = false;
+    }
+
+    if (rain_report_due) {
+        // The spatial mapping is linear: rate×seconds maps to depth (m).
+        // Capture forcings before clear_reset_forcings expires one-shot API
+        // prescriptions. They apply uniformly over this executed window.
+        gageRatesToCells(ctx, report_gage_depth, report_rain_cum_);
+        const double span = std::clamp(report_s - sim_time_, 0.0, dt);
+        for (std::size_t i = 0; i < report_rain_cum_.size(); ++i) {
+            if (state_.rainfall_forced[i] == 1)
+                report_rain_cum_[i] = state_.rainfall_force_val[i] * span;
+            else if (state_.rainfall_forced[i] == 2)
+                report_rain_cum_[i] += state_.rainfall_force_val[i] * span;
+            report_rain_cum_[i] = rain_cum_[i] + report_rain_cum_[i] * mesh_.tri_area[i];
+        }
+        report_rain_ms_ = ctx.next_report_ms;
     }
 
     // §5.5.2 (D-I1) — infiltration is a HELD rate on its own INFIL_STEP
@@ -2320,8 +2352,13 @@ void SurfaceRouter2D::bookGageRates(const SimulationContext& ctx, double runoff_
         gage_rate_.assign(n_gages, 0.0);
         gage_cum_.assign(n_gages, 0.0);
         gage_window_depth_.assign(n_gages, 0.0);
+        gage_report_depth_.assign(n_gages, 0.0);
         gage_since_ = 0.0;
     }
+    const double report_s = ctx.next_report_ms / 1000.0;
+    if (gage_since_ <= report_s && runoff_start_s > report_s)
+        for (std::size_t g = 0; g < n_gages; ++g)
+            gage_report_depth_[g] = gage_cum_[g] + gage_rate_[g] * (report_s - gage_since_);
     for (std::size_t g = 0; g < n_gages; ++g) {
         gage_cum_[g] += gage_rate_[g] * std::max(0.0, runoff_start_s - gage_since_);
         gage_rate_[g] = ctx.gages.rainfall[g];
@@ -2334,7 +2371,7 @@ void SurfaceRouter2D::reportRainfall(const SimulationContext& ctx, double report
     const int n_gages = ctx.n_gages();
     std::vector<double> rates(static_cast<std::size_t>(std::max(n_gages, 0)), 0.0);
     for (int g = 0; g < n_gages; ++g)
-        rates[static_cast<std::size_t>(g)] = gage::getReportRainfall(ctx, g, report_date);
+        rates[static_cast<std::size_t>(g)] = gage::getReportRainfallFromSeries(ctx, g, report_date);
     gageRatesToCells(ctx, rates, out);
     for (std::size_t i = 0; i < out.size() && i < state_.rainfall_forced.size(); ++i) {
         if (state_.rainfall_forced[i] == 1)      out[i] = state_.rainfall_force_val[i];

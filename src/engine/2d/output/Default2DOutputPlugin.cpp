@@ -563,7 +563,7 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
     ds_time_ = createUnlimitedDataset("time", 1, zero1, time_chunk,
                                       H5T_NATIVE_DOUBLE);
     writeStringAttr(ds_time_, "standard_name", "time");
-    writeStringAttr(ds_time_, "units", "days since simulation start");
+    writeStringAttr(ds_time_, "units", "days since 1899-12-30 00:00:00");
     writeStringAttr(ds_time_, "calendar", "standard");
 
     // Helper lambda for face datasets
@@ -600,8 +600,9 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
     if (want(report2d::RAINFALL)) {
         ds_face_rainfall_      = createFaceDS("Mesh2_face_rainfall",
                                                "rainfall intensity", "m s-1", "rainfall_rate");
-        // Cumulative rainfall VOLUME per cell (m³) — sums to mass_balance_2d
-        // rainfall_in by construction (SurfaceRouter2D::rainCumulative).
+        // Cumulative rainfall VOLUME per cell (m³) at this report time.
+        // The final mass_balance_2d/rainfall_in can include a trailing
+        // interval after the last scheduled report.
         ds_face_rain_cum_      = createFaceDS("Mesh2_face_rain_cum",
                                                "cumulative rainfall volume", "m3");
     }
