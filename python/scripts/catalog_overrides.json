@@ -94,6 +94,17 @@
      "units"
     ]
    }
+  },
+  "trace": {
+   "class": "FlowTracer",
+   "construct": {
+    "via": "new",
+    "args": [
+     "nodes",
+     "links",
+     "options"
+    ]
+   }
   }
  },
  "function_modules": [
@@ -124,7 +135,8 @@
   "NumericalError",
   "ParseError",
   "PluginError",
-  "StaleObjectError"
+  "StaleObjectError",
+  "TraceError"
  ],
  "units": {
   "climate.ati_weight": "fraction",

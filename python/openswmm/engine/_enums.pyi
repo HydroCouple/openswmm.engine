@@ -29,7 +29,7 @@ Integer-backed enums mirroring the C API enum definitions in
 can be compared directly with integer return values from C API functions.
 """
 
-from enum import IntEnum
+from enum import IntEnum, IntFlag
 
 
 # =============================================================================
@@ -1233,6 +1233,8 @@ class GroundwaterLedger(IntEnum):
     INIT_STORAGE = 8
     STORAGE = 9
     LINK = 10
+    SOURCE_IN = 11
+    SOURCE_OUT = 12
 
 
 class GroundwaterZone(IntEnum):
@@ -1256,6 +1258,8 @@ class GroundwaterSpeciesLedger(IntEnum):
     ET_OUT = 10
     REACTED = 11
     RESIDUAL = 12
+    SOURCE_IN = 13
+    SOURCE_OUT = 14
 
 
 class GroundwaterTransportZone(IntEnum):
@@ -1263,3 +1267,45 @@ class GroundwaterTransportZone(IntEnum):
     SAT = 0
     UNSAT = 1
     LAYER = 2
+
+
+class TraceStatus(IntEnum):
+    """Return codes for the independent tracing API."""
+    OK = 0
+    INVALID = -1
+    IO = -2
+    MISMATCH = -3
+    CANCELLED = -4
+    SOLVER = -5
+    NO_HDF5 = -6
+
+
+class TraceDirection(IntEnum):
+    DOWNSTREAM = 0
+    UPSTREAM = 1
+
+
+class TraceNodeFlags(IntFlag):
+    PONDING = 1
+    EXTERNAL_EXCHANGE = 2
+    ROUTED_OUTFALL = 4
+    UNKNOWN_LOSSES = 8
+
+
+class TraceFlags(IntFlag):
+    UNREACHABLE = 1
+    NO_DIRECTION = 2
+    REVERSAL = 4
+    UNKNOWN_TIME = 8
+    PARTIAL_TIME = 16
+    TRAPPED = 32
+    APPROXIMATE = 64
+
+
+class TraceTerminal(IntEnum):
+    OUTFALL = 0
+    LOSS = 1
+    SOURCE = 2
+    RETAINED = 3
+    UNRESOLVED = 4
+    CIRCULATION = 5

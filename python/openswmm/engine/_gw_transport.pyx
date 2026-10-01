@@ -47,6 +47,8 @@ cdef extern from "openswmm/engine/openswmm_gw_transport.h":
     int swmm_gw_source_count(SWMM_Engine engine)
     int swmm_gw_source_get(SWMM_Engine engine, int idx, char* name_buf, int name_len, int* scope, char* tag_buf, int tag_len, int* cell, double* flow, char* flow_ts_buf, int flow_ts_len)
     int swmm_gw_source_set(SWMM_Engine engine, const char* name, int scope, const char* tag, int cell, double flow, const char* flow_ts)
+    int swmm_gw_source_scale_get(SWMM_Engine engine, int idx, double* value)
+    int swmm_gw_source_scale_set(SWMM_Engine engine, int idx, double value)
     int swmm_gw_source_remove(SWMM_Engine engine, int idx)
     int swmm_gw_source_species_count(SWMM_Engine engine, int src_idx)
     int swmm_gw_source_species_get(SWMM_Engine engine, int src_idx, int term_idx, char* species_buf, int species_len, char* kind_buf, int kind_len, double* value, char* ts_buf, int ts_len)
@@ -320,6 +322,19 @@ class GroundwaterTransport(EngineView):
     def remove_source(self, int index):
         """Remove a row; subsequent indices shift."""
         _check(swmm_gw_source_remove(_h(self), index))
+
+    def source_scale(self, int source_index):
+        """Return the dimensionless multiplier for a source's flow and MASS terms."""
+        cdef double value = 0
+        _check(swmm_gw_source_scale_get(_h(self), source_index, &value))
+        return value
+
+    def set_source_scale(self, int source_index, double value):
+        """Set a finite, nonnegative source multiplier before initialization.
+
+        The multiplier applies to flow and MASS terms; CONC is unchanged.
+        """
+        _check(swmm_gw_source_scale_set(_h(self), source_index, value))
 
     def source_species(self, int source_index):
         """Immutable authored row snapshots in native order."""

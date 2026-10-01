@@ -37,6 +37,7 @@ set(_engine_modules
     _process_components
     _statistics
     _output_reader
+    _trace
     _spatial
     _forcing
     _climate

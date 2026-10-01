@@ -232,3 +232,25 @@ from ._enums import GroundwaterTransportZone as GroundwaterTransportZone
 from ._gw_transport import (GroundwaterTransport as GroundwaterTransport, GroundwaterParameters as GroundwaterParameters, GroundwaterSorption as GroundwaterSorption, GroundwaterInitialQuality as GroundwaterInitialQuality, GroundwaterBoundary as GroundwaterBoundary, GroundwaterSource as GroundwaterSource, GroundwaterSourceTerm as GroundwaterSourceTerm)
 
 from ._surface_quality import (SurfaceQuality as SurfaceQuality, SurfaceCoverage as SurfaceCoverage, SurfaceLoading as SurfaceLoading, SurfaceCurbLength as SurfaceCurbLength)
+
+# Independent offline flow tracing.
+from ._trace import (
+    FlowTracer as FlowTracer,
+    TraceNode as TraceNode,
+    TraceLink as TraceLink,
+    TraceOptions as TraceOptions,
+    TraceInfo as TraceInfo,
+    TraceNodeAverage as TraceNodeAverage,
+    TraceLinkAverage as TraceLinkAverage,
+    TraceValue as TraceValue,
+    TraceSummary as TraceSummary,
+    TraceResult as TraceResult,
+    TraceError as TraceError,
+)
+from ._enums import (
+    TraceStatus as TraceStatus,
+    TraceDirection as TraceDirection,
+    TraceNodeFlags as TraceNodeFlags,
+    TraceFlags as TraceFlags,
+    TraceTerminal as TraceTerminal,
+)

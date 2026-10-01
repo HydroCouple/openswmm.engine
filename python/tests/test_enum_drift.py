@@ -65,3 +65,17 @@ def test_native_macro_selectors(name, prefixes):
             values = {key: value for key, value in values.items() if not key.startswith(('DOMAIN_', 'CLASS_'))}
         assert values, prefix
         assert values == {key: item.value for key, item in enum.__members__.items()}
+
+
+@pytest.mark.parametrize('name,block', [
+    ('TraceStatus', 0), ('TraceDirection', 1), ('TraceNodeFlags', 2),
+    ('TraceFlags', 3), ('TraceTerminal', 4),
+])
+def test_trace_enum_members(name, block):
+    header = Path(__file__).resolve().parents[2] / 'include/openswmm/engine/openswmm_trace.h'
+    blocks = re.findall(r'enum\s*\{(.*?)\};', header.read_text(), re.S)
+    values = {key: int(value) for key, value in
+              re.findall(r'SWMM_TRACE_(\w+)\s*=\s*(-?\d+)', blocks[block])}
+    values.pop('TERMINAL_COUNT', None)
+    enum = getattr(_enums, name)
+    assert values == {key: item.value for key, item in enum.__members__.items()}
