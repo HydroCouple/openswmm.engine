@@ -145,8 +145,21 @@ void ExfilSolver::init(SimulationContext& ctx) {
                 }
             }
 
-            // Note: legacy converts TABULAR areas/depths to internal units
-            // here (exfil.c:126-129, inside the TABULAR case only).
+            // Legacy converts the TABULAR geometry from user units to
+            // internal units here (exfil.c:125-129, inside the TABULAR case
+            // only): areas by UCF(LENGTH)^2, depths by UCF(LENGTH). On a US
+            // deck the factor is 1.0 and the divisions are bitwise no-ops;
+            // on an SI deck the raw curve values left the bottom area
+            // 0.3048^2 low and the bank gates 0.3048 off — greenville-si's
+            // node 83 exfiltrated an order of magnitude less than legacy
+            // from the step its banks first wetted.
+            {
+                const double ucf_len = ucf::UCF(ucf::LENGTH, ctx.options);
+                soa_.btm_area[uk]       /= ucf_len * ucf_len;
+                soa_.bank_max_area[uk]  /= ucf_len * ucf_len;
+                soa_.bank_min_depth[uk] /= ucf_len;
+                soa_.bank_max_depth[uk] /= ucf_len;
+            }
 
         } else {
             // --- FUNCTIONAL: area = A * depth^B + C
