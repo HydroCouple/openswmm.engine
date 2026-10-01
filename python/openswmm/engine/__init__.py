@@ -437,3 +437,26 @@ if HAS_2D:
 if HAS_2D:
     from ._surface_quality import (SurfaceQuality, SurfaceCoverage, SurfaceLoading, SurfaceCurbLength)
     __all__ += ['SurfaceQuality', 'SurfaceCoverage', 'SurfaceLoading', 'SurfaceCurbLength']
+
+# Independent offline flow tracing.
+from ._trace import (
+    FlowTracer as FlowTracer,
+    TraceNode as TraceNode,
+    TraceLink as TraceLink,
+    TraceOptions as TraceOptions,
+    TraceInfo as TraceInfo,
+    TraceNodeAverage as TraceNodeAverage,
+    TraceLinkAverage as TraceLinkAverage,
+    TraceValue as TraceValue,
+    TraceSummary as TraceSummary,
+    TraceResult as TraceResult,
+    TraceError as TraceError,
+)
+from ._enums import (
+    TraceStatus as TraceStatus,
+    TraceDirection as TraceDirection,
+    TraceNodeFlags as TraceNodeFlags,
+    TraceFlags as TraceFlags,
+    TraceTerminal as TraceTerminal,
+)
+__all__ += ['FlowTracer', 'TraceNode', 'TraceLink', 'TraceOptions', 'TraceInfo', 'TraceNodeAverage', 'TraceLinkAverage', 'TraceValue', 'TraceSummary', 'TraceResult', 'TraceError', 'TraceStatus', 'TraceDirection', 'TraceNodeFlags', 'TraceFlags', 'TraceTerminal']

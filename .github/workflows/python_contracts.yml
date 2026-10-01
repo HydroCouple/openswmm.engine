@@ -58,4 +58,4 @@ jobs:
         run: >-
           python python/scripts/test_staged_package.py "${{ runner.temp }}/openswmm-minimal"
           python/tests/minimal_features.py python/tests/engine/test_solver_pythonic.py
-          python/tests/engine/test_transport.py -q
+          python/tests/engine/test_transport.py python/tests/engine/test_trace.py -q

@@ -270,6 +270,14 @@ Statistics
    :undoc-members:
    :show-inheritance:
 
+Offline flow tracing
+--------------------
+
+.. automodule:: openswmm.engine._trace
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Output reader  (binary ``.out`` file)
 -------------------------------------
 

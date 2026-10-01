@@ -108,6 +108,7 @@ balance, accumulated statistics.
    :maxdepth: 1
 
    output_reader
+   trace
    plotting
    hotstart
    massbalance

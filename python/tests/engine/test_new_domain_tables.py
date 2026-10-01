@@ -24,6 +24,16 @@ def test_groundwater_transport_tables(tmp_path):
         t.set_initial_quality(GroundwaterInitialQuality(species='TSS', value=5))
         t.set_boundary(GroundwaterBoundary(cell=1, edge=3, species='TSS', value=2))
         t.set_source(GroundwaterSource(name='well', cell=1, flow=1e-5))
+        assert t.source_scale(0) == 1
+        t.set_source_scale(0, 2.5)
+        assert t.source_scale(0) == 2.5
+        for value in (-1, float('nan'), float('inf')):
+            with pytest.raises(BadParamError):
+                t.set_source_scale(0, value)
+        with pytest.raises(BadIndexError):
+            t.source_scale(999)
+        with pytest.raises(BadIndexError):
+            t.set_source_scale(999, 1)
         t.set_source_species(0, GroundwaterSourceTerm(species='TSS', value=3))
         assert t.source_species(0)[0].value == 3
         assert t.authored
@@ -36,6 +46,7 @@ def test_groundwater_transport_tables(tmp_path):
             for field in ('parameters', 'sorption', 'initial_quality', 'boundaries', 'sources'):
                 assert getattr(actual, field) == getattr(t, field)
             assert actual.source_species(0) == t.source_species(0)
+            assert actual.source_scale(0) == 2.5
         finally:
             cleanup(reopened)
         t.initial_quality_file = tmp_path / ('quality-' + 'x' * 180 + '.csv')

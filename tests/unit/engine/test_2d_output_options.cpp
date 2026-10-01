@@ -908,13 +908,16 @@ TEST(Output2DWriter, DeckGroundwaterFieldsEndToEnd) {
         const auto led = f.readAll("groundwater_ledger");
         const auto dl  = f.dims("groundwater_ledger");
         ASSERT_EQ(dl.size(), 2u);
-        ASSERT_EQ(dl[1], 12u);   // G-X3: + link at LED 10, residual last (11)
+        ASSERT_EQ(dl[1], 14u);   // Residual stays at 11; source in/out append at 12/13.
         EXPECT_EQ(f.dsAttr("groundwater_ledger", "terms"),
                   "recharge,lateral,deep,node,dunne,caprise,et,infil_in,"
-                  "init_storage,storage,link,continuity_residual");
-        const size_t last = (dl[0] - 1) * 12;
+                  "init_storage,storage,link,continuity_residual,source_in,source_out");
+        ASSERT_GT(dl[0], 0u);
+        const size_t last = (dl[0] - 1) * dl[1];
         const double storage = led[last + 9], init = led[last + 8], resid = led[last + 11];
         EXPECT_EQ(led[last + 10], 0.0) << "no conduit seeps on this deck";
+        EXPECT_EQ(led[last + 12], 0.0) << "no named sources on this deck";
+        EXPECT_EQ(led[last + 13], 0.0) << "no named sinks on this deck";
         EXPECT_GT(storage, 0.0);
         EXPECT_GT(led[last + 7], 0.0) << "the aquifer received infiltration";
         EXPECT_LT(std::fabs(resid), 1e-6 * storage + 1e-9) << stem << ": residual " << resid;

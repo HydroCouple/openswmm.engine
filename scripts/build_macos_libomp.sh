@@ -48,8 +48,14 @@ trap 'rm -rf "${work}"' EXIT
 cd "${work}"
 
 base="https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VER}"
-curl -fLsS -o openmp.src.tar.xz "${base}/openmp-${LLVM_VER}.src.tar.xz"
-curl -fLsS -o cmake.src.tar.xz  "${base}/cmake-${LLVM_VER}.src.tar.xz"
+# Release-asset requests can hit transient 5xx responses. Retry both downloads
+# before unpacking, while keeping connection/request times bounded.
+curl -fLsS --retry 5 --retry-delay 2 --retry-max-time 120 \
+  --connect-timeout 20 --max-time 120 \
+  -o openmp.src.tar.xz "${base}/openmp-${LLVM_VER}.src.tar.xz"
+curl -fLsS --retry 5 --retry-delay 2 --retry-max-time 120 \
+  --connect-timeout 20 --max-time 120 \
+  -o cmake.src.tar.xz "${base}/cmake-${LLVM_VER}.src.tar.xz"
 tar xf openmp.src.tar.xz
 tar xf cmake.src.tar.xz
 # The standalone openmp build references ../cmake/Modules from the matching
