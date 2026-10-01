@@ -179,7 +179,7 @@ cdef class Solver:
 
     On entry the solver runs ``open → initialize → start``; on exit it runs
     ``end → report → close → destroy``. Any non-zero return from the C API
-    raises an :class:`EngineError` subclass (see :doc:`error_handling`).
+    raises an :class:`EngineError` subclass (see :doc:`/guide/error_handling`).
     """
 
     def __init__(self,
