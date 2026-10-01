@@ -176,10 +176,15 @@ numfig = True
 
 # -- Intersphinx ----------------------------------------------------------
 
+# Prefer current upstream inventories, but keep cross-references working when
+# either documentation host is unavailable.  See _intersphinx/README.md for
+# snapshot provenance and refresh instructions.  Other warnings remain fatal
+# under the CI build's -W flag.
 intersphinx_mapping = {
-    'python': ('https://docs.python.org/3', None),
-    'numpy': ('https://numpy.org/doc/stable/', None),
+    'python': ('https://docs.python.org/3', (None, '_intersphinx/python.inv')),
+    'numpy': ('https://numpy.org/doc/stable/', (None, '_intersphinx/numpy.inv')),
 }
+intersphinx_timeout = 10
 
 # -- Options for HTML output ----------------------------------------------
 
@@ -189,6 +194,7 @@ todo_include_todos = True
 
 exclude_patterns = [
     '_build',
+    '_intersphinx',
     # Internal planning document — kept in-tree for reference but not
     # surfaced in the published docs.
     'LEGACY_API_EXPANSION_PLAN.md',
