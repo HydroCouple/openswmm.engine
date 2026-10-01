@@ -195,8 +195,11 @@ cdef class XSectionGeometry:
         rc = swmm_xsect_create(ishape, float(geom1), float(geom2),
                                float(geom3), float(geom4), us, &h)
         if rc != 0:
+            # Keep the native helper call outside the f-string so the catalog
+            # audit sees it with both pre-3.12 and newer Python tokenizers.
+            shape_label = _shape_repr(ishape)
             raise ValueError(
-                f"cannot build a {_shape_repr(ishape)} cross-section from "
+                f"cannot build a {shape_label} cross-section from "
                 f"geom=({geom1}, {geom2}, {geom3}, {geom4}) in {units!r} units"
             )
         self._h = h
