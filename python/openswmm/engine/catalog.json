@@ -740,7 +740,8 @@
    },
    "c": [
     "swmm_xsect_create",
-    "swmm_xsect_free"
+    "swmm_xsect_free",
+    "swmm_xsect_shape_name"
    ]
   }
  },

@@ -13,8 +13,9 @@ kind, sub-view and standalone class, and for each member:
 * the bulk array that reads a whole collection at once, where there is one.
 
 The OpenSWMM MCP server and ``openswmm.gymnasium`` use it to reach engine
-fields and methods by path instead of by hand-written wrappers, so a new
-engine capability reaches them without new code.
+fields and methods by path. Existing generic dispatchers can adopt new scalar
+fields and compatible method signatures, but availability, lifecycle, argument
+marshalling and domain-specific behavior still require consumer tests.
 
 Paths
 =====
@@ -65,7 +66,9 @@ Functions
 Units
 =====
 
-Values are always in the model's own units. The catalog records a **unit
+Ordinary 1D fields use model units; fixed-unit fields, including many 2D
+quantities and temperature values, retain the units documented by their APIs.
+The catalog records a **unit
 kind** per float field: a system-dependent kind (``length``, ``volume``,
 ``flow``, ``velocity``, ...), a fixed one (``fraction``, ``percent``,
 ``dimensionless``, ``temperature``, ...) or a literal unit (``m/s``).
@@ -100,3 +103,24 @@ a true ratio ``dimensionless``). ``python/tests/test_catalog.py`` adds the
 runtime contract: every catalogued member exists on its compiled class,
 every public attribute is catalogued or excluded, and every target resolves
 on an opened model.
+
+
+Consumer compatibility
+======================
+
+* Gymnasium ``add_field`` consumes scalar numeric element properties; its
+  per-cell collector supports selected 2D service methods. Writable metadata
+  does not guarantee that a field can be actuated during a running episode.
+* MCP dispatches JSON-compatible catalog operations. Session-owned lifecycle
+  methods and Python callbacks are deliberately restricted; new standalone
+  classes require constructor handling.
+* WASM generates a raw C API from its **pinned engine submodule**, plus numeric
+  enums from the Python source. This is independent of the Python catalog.
+  Its current 1D build excludes 2D, mesh groundwater and surface quality; its
+  TypeScript convenience classes cover only part of the Python object API.
+
+After adding native exports or changing a stub, rebuild the compiled extensions,
+regenerate the catalog, and run both engine and consumer contract tests. An
+unchanged package version does not prove that two development builds expose the
+same catalog or native symbols. A missing newly added extension (for example
+``_transport``) requires a complete rebuild/reinstall, not an import fallback.
