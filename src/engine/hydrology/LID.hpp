@@ -251,6 +251,15 @@ public:
     const LIDGroupSoA& group(int type_index) const { return groups_[static_cast<size_t>(type_index)]; }
     int numGroups() const { return static_cast<int>(groups_.size()); }
 
+    /// (group index, unit index) pairs in [LID_USAGE] parse order. Legacy
+    /// walks each subcatchment's lidList in that order, so every SHARED
+    /// accumulation over units — qReturn/flowToPerv, drain totals, VlidIn,
+    /// the subcatchment's lidArea — must sum in it too; iterating the
+    /// type-indexed groups instead reorders the FP sums (addition is not
+    /// associative) and seeds 1-ULP runoff drift on any deck whose
+    /// subcatchment mixes active unit types (greenville-all's C10).
+    const std::vector<std::pair<int, int>>& usageOrder() const { return usage_order_; }
+
     /// Total water volume currently stored in all LID units (ft³), for the
     /// runoff mass balance (legacy lid_getStoredVolume()). This is the one
     /// SWMMEngine calls (runoff_init_store / runoff_final_store).
@@ -350,6 +359,7 @@ public:
 
 private:
     std::vector<LIDGroupSoA> groups_;
+    std::vector<std::pair<int, int>> usage_order_;  ///< see usageOrder()
     double old_runoff_sec_ = 0.0;
 
     /// One legacy TLidRptFile per reporting unit (legacy lid.h:150-156):

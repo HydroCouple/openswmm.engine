@@ -2346,10 +2346,14 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         // volume-domain fold after A6b).
         lid_vlidin_vol_.assign(static_cast<std::size_t>(ctx_.n_subcatches()), 0.0);
         lid_qsurf_cfs_.assign(static_cast<std::size_t>(ctx_.n_subcatches()), 0.0);
-        for (int t = 0; t < lid_.numGroups(); ++t) {
+        // Iterate the units in [LID_USAGE] parse order (legacy's lidList),
+        // NOT group-by-type: VlidIn and the inflow bookings must accumulate
+        // in legacy's order (see LIDSolver::usageOrder()).
+        for (const auto& tu_ : lid_.usageOrder()) {
+            const int t = tu_.first;
             auto& g = lid_.group(t);
-            if (g.count == 0) continue;
-            for (int u = 0; u < g.count; ++u) {
+            {
+                const int u = tu_.second;
                 auto uu = static_cast<std::size_t>(u);
                 int sc = g.subcatch_idx[uu];
                 if (sc < 0 || sc >= ctx_.n_subcatches()) {
@@ -2479,11 +2483,16 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         // which row they write.
         transport::routeLidLayerTemperature(ctx_, lid_, dt_runoff);
 
-        // A6b. Route LID outputs back to subcatchment runoff totals
-        for (int t = 0; t < lid_.numGroups(); ++t) {
+        // A6b. Route LID outputs back to subcatchment runoff totals.
+        // Units walk in [LID_USAGE] parse order (legacy's lidList): the
+        // return-to-pervious, drain and surface-outflow accumulators sum
+        // across units, and FP addition order must match legacy's
+        // (see LIDSolver::usageOrder()).
+        for (const auto& tu_ : lid_.usageOrder()) {
+            const int t = tu_.first;
             const auto& g = lid_.group(t);
-            if (g.count == 0) continue;
-            for (int u = 0; u < g.count; ++u) {
+            {
+                const int u = tu_.second;
                 auto uu = static_cast<std::size_t>(u);
                 int sc = g.subcatch_idx[uu];
                 if (sc < 0 || sc >= ctx_.n_subcatches()) continue;
