@@ -2120,7 +2120,7 @@ double ExplicitInertialSolver::boundaryFluxSwe(std::size_t k, int i, double dt_c
     return -F.mass * conv * L;                            // inflow-positive m³/s
 }
 
-void ExplicitInertialSolver::runMacroCycle(double dt0, int nsub) {
+void ExplicitInertialSolver::runMacroCycle(double dt0, int nsub, double time) {
     const int K = static_cast<int>(cells_by_tier_.size());
     static const bool dbg_invariant = [] {
         const char* e = std::getenv("OPENSWMM_2D_MARCHER_CHECK");
@@ -2161,7 +2161,7 @@ void ExplicitInertialSolver::runMacroCycle(double dt0, int nsub) {
             // The GW cells of this rung fire AFTER the surface cells of the
             // same rung, so a cell that infiltrated in this substep hands the
             // water down within the substep rather than a rung later.
-            if (gw_) gw_->fireGwCells(k, (1 << k) * dt0, *state_);
+            if (gw_) gw_->fireGwCells(k, (1 << k) * dt0, *state_, time + s * dt0);
         }
         // Node exchange is sampled at tier-0 cadence against the batch-frozen
         // 1D heads, exactly like the surface's junction exchange, and booked
@@ -2236,7 +2236,7 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
         if (nsub_full * dt0_ <= remaining) {
             // Full macro cycle fits (dt0_ <= remaining here, so no clamp).
             if (second_order_) runRk2Step(dt0_);      // K == 1: one global step
-            else               runMacroCycle(dt0_, nsub_full);
+            else               runMacroCycle(dt0_, nsub_full, t);
             t += nsub_full * dt0_;
             last_dt_ = dt0_;
             ++cycles_since_rebuild;
@@ -2287,7 +2287,7 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
                 if (gw_) for (int k = 0; k < Kgw; ++k) gw_->fireGwFaces(k, dt_tail);
                 fireCells(active_cells_, dt_tail, /*tier0=*/true);
                 if (gw_) {
-                    for (int k = 0; k < Kgw; ++k) gw_->fireGwCells(k, dt_tail, *state_);
+                    for (int k = 0; k < Kgw; ++k) gw_->fireGwCells(k, dt_tail, *state_, t + s * dt_tail);
                     if (state_->nodes_1d) gw_->sampleNodeExchange(state_->nodes_1d, dt_tail);
                 }
                 ++substeps_run_;

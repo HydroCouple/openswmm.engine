@@ -50,6 +50,7 @@
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_gw2d.h>
+#include <openswmm/engine/openswmm_2d.h>
 #include <openswmm/engine/openswmm_hotstart.h>   // T7.5
 
 #include <hdf5.h>
@@ -167,8 +168,9 @@ bool run(Deck& r) {
     if (swmm_engine_start(r.e, 1) != SWMM_OK) return false;
     r.started = true;
     double elapsed = 0.0;
-    while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0) {}
-    return true;
+    int status=SWMM_OK;
+    while ((status=swmm_engine_step(r.e, &elapsed)) == SWMM_OK && elapsed > 0.0) {}
+    return status == SWMM_OK;
 }
 
 void finish(Deck& r) {
@@ -721,7 +723,7 @@ TEST(GwTransportKernel, ResultsFileCarriesTheSpeciesFieldsAndLedger) {
     // the same mask the water fields do. FLOAT64 so the comparison tests the
     // PLUMBING rather than float32's last digit — the default precision
     // agrees to ~6e-9 relative, which is the storage class, not the writer.
-    std::string body = deck(Mesh::Tri);
+    std::string body = deck(Mesh::Tri, "[GW_SOURCES]\nW * FLOW 0.0001 TSS CONC 2\n\n");
     const std::string old_rep = "DRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\n";
     const auto at = body.find(old_rep);
     ASSERT_NE(at, std::string::npos);
@@ -746,6 +748,7 @@ TEST(GwTransportKernel, ResultsFileCarriesTheSpeciesFieldsAndLedger) {
     }
     const double want_resid = t.residual(0);
     const double want_infil = t.gained_infil[0];
+    const double want_source = t.gained_source[0];
     finish(r);
 
     const fs::path h5 = kOutDir / "h5_species.h5";
@@ -756,6 +759,13 @@ TEST(GwTransportKernel, ResultsFileCarriesTheSpeciesFieldsAndLedger) {
     EXPECT_TRUE(has("Mesh2_face_gw_sat_conc"));
     EXPECT_TRUE(has("Mesh2_face_gw_unsat_conc"));
     EXPECT_TRUE(has("groundwater_species_ledger"));
+    for (const char* field : {"Mesh2_face_gw_sat_conc", "Mesh2_face_gw_unsat_conc"}) {
+        const hid_t ds=H5Dopen2(fid,field,H5P_DEFAULT);ASSERT_GE(ds,0);
+        const hid_t attr=H5Aopen(ds,"species_units",H5P_DEFAULT);ASSERT_GE(attr,0);
+        const hid_t type=H5Aget_type(attr);std::vector<char> unit(H5Tget_size(type)+1,0);
+        ASSERT_GE(H5Aread(attr,type,unit.data()),0);EXPECT_STREQ(unit.data(),"MG/L");
+        H5Tclose(type);H5Aclose(attr);H5Dclose(ds);
+    }
 
     auto readAll = [&](const char* n) {
         hid_t ds = H5Dopen2(fid, n, H5P_DEFAULT);
@@ -789,11 +799,13 @@ TEST(GwTransportKernel, ResultsFileCarriesTheSpeciesFieldsAndLedger) {
     // derives rather than stores.
     const auto led = readAll("groundwater_species_ledger");
     ASSERT_EQ(led.second.size(), 3u);
-    EXPECT_EQ(static_cast<int>(led.second[2]), 13);
+    EXPECT_EQ(static_cast<int>(led.second[2]), 15);
     const std::size_t ll = (static_cast<std::size_t>(led.second[0]) - 1) *
-                           static_cast<std::size_t>(ns) * 13;
+                           static_cast<std::size_t>(ns) * 15;
     EXPECT_NEAR(led.first[ll + 2], want_infil, 1.0e-9) << "infil_in term";
     EXPECT_NEAR(led.first[ll + 12], want_resid, 1.0e-12) << "residual term";
+    EXPECT_GT(want_source, 0.0);
+    EXPECT_NEAR(led.first[ll + 13], want_source, 1.0e-9) << "source term";
     H5Fclose(fid);
 }
 
@@ -1398,4 +1410,193 @@ TEST(GwTransportKernel, ReportSaysNaWhenThereIsNoScaleToDivideBy) {
            " question is unanswerable — and a zero scale beside a non-zero"
            " residual is exactly how the NEXT unbooked inflow route will"
            " announce itself.";
+}
+
+// Phase35: authored wells must affect the actual aquifer and its persisted books.
+namespace {
+std::string forcingDeck(const std::string& rows, double hg = .3) {
+    auto text = deck(Mesh::Tri, rows, hg);
+    auto replace = [&](const std::string& a, const std::string& b) {
+        const auto at = text.find(a); if (at != std::string::npos) text.replace(at,a.size(),b);
+    };
+    replace("RAIN  0:00  20.0", "RAIN  0:00  0.0");
+    replace("*  CONSTANT  40.0", "*  CONSTANT  0.0");
+    replace("*  36.0  1.0", "*  0.000000001  1.0");
+    replace("CELL 1  36.0  1.0  0.45  0.10  2.0  HG0 0.95", "");
+    return text;
+}
+}
+TEST(GwTransportKernel, NamedSourcesApplyTotalFlowScaleAndNativeMassOnActualCells) {
+    for (const auto& units : {"MG/L", "UG/L", "#/L"}) {
+        auto body=forcingDeck("[GW_SOURCES]\nW * FLOW 0.001 SCALE 0.5 TSS CONC 10\nM CELL 1 FLOW 0 TSS MASS 2\n\n");
+        const auto at=body.find("TSS  MG/L");body.replace(at,9,std::string("TSS  ")+units);
+        Deck r=open(std::string("named_sources_")+units[0],body);ASSERT_TRUE(r.opened);
+        const auto expectedUnit=units[0]=='#'?openswmm::MassUnits::COUNTS_PER_L:
+            units[0]=='U'?openswmm::MassUnits::UG_PER_L:openswmm::MassUnits::MG_PER_L;
+        ASSERT_EQ(r.eng->context().pollutants.units[0],expectedUnit);
+        ASSERT_TRUE(run(r));
+        const auto& gw=r.eng->surfaceRouter2D().subsurface();const auto& tr=gw.transport();
+        EXPECT_NEAR(gw.state().led_source_in,.6,1e-7);
+        EXPECT_NEAR(tr.gained_source[0],8.4,1e-6); // 0.6 m3 × 10 + 2 native-mass/s × 1200 / 1000
+        EXPECT_NEAR(gw.state().continuityResidual(),0,1e-7);
+        EXPECT_NEAR(tr.residual(0),0,1e-7);
+        EXPECT_GT(gw.state().hg[0],.3);EXPECT_GT(gw.state().hg[1],.3);
+        double value=0;ASSERT_EQ(swmm_gw2d_get_ledger(r.e,SWMM_GW2D_LED_SOURCE_IN,&value),SWMM_OK);EXPECT_NEAR(value,.6,1e-7);
+        ASSERT_EQ(swmm_gw2d_get_species_ledger(r.e,0,SWMM_GW2D_SPL_SOURCE_IN,&value),SWMM_OK);EXPECT_NEAR(value,8.4,1e-6);
+        finish(r);
+    }
+}
+TEST(GwTransportKernel, ExtractionIsAvailabilityLimitedAndRemovesDissolvedSpecies) {
+    Deck r=open("source_extraction",forcingDeck("[GW_SOURCES]\nP * FLOW -1\n\n",.1));
+    ASSERT_TRUE(r.opened);ASSERT_TRUE(run(r));const auto& gw=r.eng->surfaceRouter2D().subsurface();
+    EXPECT_GT(gw.state().led_source_out,0);EXPECT_LT(gw.state().led_source_out,20);
+    EXPECT_GT(gw.transport().lost_source[0],0);
+    EXPECT_NEAR(gw.state().continuityResidual(),0,1e-7);EXPECT_NEAR(gw.transport().residual(0),0,1e-7);
+    finish(r);
+}
+TEST(GwTransportKernel, SourceSeriesUsesNonMidnightStartAndFileValues) {
+    fs::create_directories(kOutDir);
+    const auto series=kOutDir/"well_nonmidnight.dat";
+    {std::ofstream out(series);out<<"01/01/2026 12:00 0\n01/01/2026 12:10 0.002\n01/01/2026 12:20 0\n";}
+    auto body=forcingDeck("[TIMESERIES]\nWQ FILE \""+series.string()+"\"\n\n[GW_SOURCES]\nW * FLOW WQ TSS CONC 3\n\n");
+    auto at=body.find("START_TIME           00:00:00");body.replace(at,std::string("START_TIME           00:00:00").size(),"START_TIME           12:00:00");
+    at=body.find("END_TIME             00:20:00");body.replace(at,std::string("END_TIME             00:20:00").size(),"END_TIME             12:20:00");
+    Deck r=open("source_nonmidnight",body);ASSERT_TRUE(r.opened);ASSERT_TRUE(run(r));
+    // End flushes the final partial surface/GW synchronization batch.
+    ASSERT_EQ(swmm_engine_end(r.e),SWMM_OK);r.started=false;
+    const double duration=r.eng->context().options.totalDurationMs()/1000.0;
+    EXPECT_NEAR(r.eng->context().current_time,duration,1e-8);
+    ASSERT_GT(duration,1198);ASSERT_LE(duration,1200);
+    // Legacy duration floors separate datetime fractions: this non-midnight
+    // interval is 1199 s on this representation, not an assumed 1200 s.
+    const double expected=1.2-(1200-duration)*(1200-duration)*.002/(2*600);
+    const auto& gw=r.eng->surfaceRouter2D().subsurface();
+    EXPECT_NEAR(gw.state().led_source_in,expected,1e-8);
+    EXPECT_NEAR(gw.transport().gained_source[0],3*expected,1e-8);finish(r);
+}
+TEST(GwTransportKernel, UnsupportedGroundwaterForcingFailsRatherThanRunningInertly) {
+    const std::vector<std::string> unsupported={
+        "[GW_INITIAL_QUALITY]\n* LAYER 1 TSS 3\n\n",
+        "[GW_BOUNDARY_QUALITY]\n1 0 TSS CONC 3\n\n",
+        "[GW_SOURCES]\nW TAG no_such_tag FLOW 0.001\n\n"};
+    for(std::size_t i=0;i<unsupported.size();++i){
+        SCOPED_TRACE(i);
+        Deck r=open("unsupported_forcing_"+std::to_string(i),forcingDeck(unsupported[i]));
+        if(i<2)ASSERT_TRUE(r.opened); // Valid authored drafts; the active kernel rejects unsupported semantics.
+        if(r.opened)EXPECT_NE(swmm_engine_initialize(r.e),SWMM_OK);
+        std::string errors=swmm_get_last_error_msg(r.e)?swmm_get_last_error_msg(r.e):"";
+        for(int n=0;n<swmm_get_error_count(r.e);++n)if(const char* e=swmm_get_error_at(r.e,n))errors+=e;
+        EXPECT_NE(errors.find(i==0?"LAYER":i==1?"GW_BOUNDARY_QUALITY":"no_such_tag"),std::string::npos)<<errors;
+        finish(r);
+    }
+}
+TEST(GwTransportKernel, InitialCellQualityOverridesLaterGlobalRows) {
+    Deck r=open("initial_scope_precedence",forcingDeck("[GW_INITIAL_QUALITY]\n* SAT TSS 7\n\n"));ASSERT_TRUE(r.opened);ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK);
+    const auto& gw=r.eng->surfaceRouter2D().subsurface();const auto& tr=gw.transport();
+    EXPECT_NEAR(tr.sat_mass[tr.idx(0,0)]/gw.satVolume(0),25,1e-12);
+    EXPECT_NEAR(tr.sat_mass[tr.idx(0,1)]/gw.satVolume(1),7,1e-12);finish(r);
+}
+TEST(GwTransportKernel, SourceLedgersResumeThroughNativeHotstart) {
+    const auto body=forcingDeck("[GW_SOURCES]\nW * FLOW 0.0005 TSS CONC 2\nP CELL 1 FLOW -0.0001\n\n");
+    const auto path=kOutDir/"source_restart.hsf";Deck r=open("source_restart_write",body);ASSERT_TRUE(r.opened);ASSERT_TRUE(run(r));
+    const auto& gw=r.eng->surfaceRouter2D().subsurface();const double waterIn=gw.state().led_source_in,waterOut=gw.state().led_source_out;
+    const double massIn=gw.transport().gained_source[0],massOut=gw.transport().lost_source[0];
+    ASSERT_EQ(swmm_hotstart_save(r.e,path.string().c_str()),SWMM_OK);finish(r);
+    Deck resumed=open("source_restart_read",body);ASSERT_TRUE(resumed.opened);ASSERT_EQ(swmm_engine_initialize(resumed.e),SWMM_OK);
+    SWMM_HotStart hs=nullptr;ASSERT_EQ(swmm_hotstart_open(path.string().c_str(),&hs),SWMM_OK);ASSERT_EQ(swmm_hotstart_apply(resumed.e,hs),SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(resumed.e,1),SWMM_OK);resumed.started=true;
+    const auto& next=resumed.eng->surfaceRouter2D().subsurface();
+    EXPECT_DOUBLE_EQ(next.state().led_source_in,waterIn);EXPECT_DOUBLE_EQ(next.state().led_source_out,waterOut);
+    EXPECT_DOUBLE_EQ(next.transport().gained_source[0],massIn);EXPECT_DOUBLE_EQ(next.transport().lost_source[0],massOut);
+    EXPECT_NEAR(next.transport().residual(0),0,1e-7);
+    double elapsed=0;
+    for(int i=0;i<20;++i){ASSERT_EQ(swmm_engine_step(resumed.e,&elapsed),SWMM_OK);if(elapsed<=0)break;}
+    resumed.eng->surfaceRouter2D().flushPendingBatch(resumed.eng->context());
+    EXPECT_GT(next.state().led_source_in,waterIn);
+    EXPECT_GT(next.transport().gained_source[0],massIn);
+    EXPECT_NEAR(next.transport().residual(0),0,1e-7);
+    swmm_hotstart_close(hs);finish(resumed);
+}
+TEST(GwTransportKernel, FlowReversalCannotWithdrawFutureInjectionAndClosesAcrossCadences) {
+    double firstIn[2]={},firstOut[2]={};
+    for(int cadence=0;cadence<2;++cadence) for(int reverse=0;reverse<2;++reverse){
+        const std::string values=reverse ? "1\nWQ 0:00:03 -1\nWQ 0:00:06 0" : "-1\nWQ 0:00:03 1\nWQ 0:00:06 0";
+        auto body=forcingDeck("[TIMESERIES]\nWQ 0:00:00 "+values+"\n\n[GW_SOURCES]\nW * FLOW WQ TSS CONC 2\n\n",0);
+        if(cadence){auto at=body.find("MAX_TIMESTEP 5");body.replace(at,14,"MAX_TIMESTEP 1");}
+        Deck r=open("reversal_"+std::to_string(cadence)+"_"+std::to_string(reverse),body);ASSERT_TRUE(r.opened);ASSERT_TRUE(run(r));
+        const auto& gw=r.eng->surfaceRouter2D().subsurface();
+        EXPECT_NEAR(gw.state().led_source_in,reverse?.75:2.25,1e-6);
+        if(!reverse)EXPECT_NEAR(gw.state().led_source_out,0,1e-6);
+        else EXPECT_GT(gw.state().led_source_out,.5);
+        EXPECT_NEAR(gw.state().continuityResidual(),0,1e-7);
+        EXPECT_NEAR(gw.transport().residual(0),0,1e-7);
+        if(!cadence){firstIn[reverse]=gw.state().led_source_in;firstOut[reverse]=gw.state().led_source_out;}
+        else {EXPECT_NEAR(gw.state().led_source_in,firstIn[reverse],1e-6);EXPECT_NEAR(gw.state().led_source_out,firstOut[reverse],1e-5);}
+        finish(r);
+    }
+}
+TEST(GwTransportKernel, CoupledGroundwaterRejectsUnsupportedRk2Route) {
+    auto body=forcingDeck("");const auto at=body.find("[2D_OPTIONS]\n");body.insert(at+13,"RECONSTRUCTION_ORDER 2\n");
+    Deck r=open("groundwater_rk2",body);ASSERT_TRUE(r.opened);EXPECT_NE(swmm_engine_initialize(r.e),SWMM_OK);finish(r);
+}
+TEST(GwTransportKernel, AquiferOptionSnapshotsPreserveFullDoublePrecision) {
+    Deck r=open("aquifer_option_precision",forcingDeck(""));ASSERT_TRUE(r.opened);
+    for(const char* key : {"C_GW","C_COL"}) {
+        constexpr double exact=.12345678901234566;
+        ASSERT_EQ(swmm_gw2d_option_set(r.e,key,"0.12345678901234566"),SWMM_OK);
+        char buffer[128]={};ASSERT_EQ(swmm_gw2d_option_get(r.e,key,buffer,sizeof buffer),SWMM_OK);
+        EXPECT_DOUBLE_EQ(std::stod(buffer),exact);
+        ASSERT_EQ(swmm_gw2d_option_set(r.e,key,"0.5"),SWMM_OK);
+        ASSERT_EQ(swmm_gw2d_option_set(r.e,key,buffer),SWMM_OK);
+        ASSERT_EQ(swmm_gw2d_option_get(r.e,key,buffer,sizeof buffer),SWMM_OK);
+        EXPECT_DOUBLE_EQ(std::stod(buffer),exact);
+    }
+    finish(r);
+}
+TEST(GwTransportKernel, AuthoringTagGettersWorkBeforeRuntimeInitialization) {
+    Deck r=open("authoring_tag_snapshot",forcingDeck(""));ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_2d_set_triangle_tag(r.e,0,"selected-groundwater"),SWMM_OK);
+    ASSERT_EQ(swmm_2d_set_vertex_tag(r.e,0,"survey"),SWMM_OK);
+    char text[128]={};ASSERT_EQ(swmm_2d_get_triangle_tag(r.e,0,text,sizeof text),SWMM_OK);EXPECT_STREQ(text,"selected-groundwater");
+    ASSERT_EQ(swmm_2d_get_vertex_tag(r.e,0,text,sizeof text),SWMM_OK);EXPECT_STREQ(text,"survey");
+    EXPECT_EQ(swmm_2d_get_triangle_tag(r.e,-1,text,sizeof text),SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_2d_get_vertex_tag(r.e,999,text,sizeof text),SWMM_ERR_BADINDEX);
+    finish(r);
+}
+TEST(GwTransportKernel, GroundwaterHdfUnitsFollowNativeSpeciesEvenWhenSurfaceTransportIsOff) {
+    const char* inputUnits[]={"MG/L","UG/L","#/L"};
+    const char* outputUnits[]={"MG/L","UG/L","#/L"};
+    for(int variant=0;variant<3;++variant) {
+        const auto file="gw_native_units_"+std::to_string(variant)+".h5";
+        auto body=forcingDeck("[GW_TRANSPORT_OPTIONS]\nTRANSPORT_POLLUTANTS YES\nTRANSPORT_AGE YES\n\n"
+            "[GW_INITIAL_QUALITY]\n* SAT __WATER_AGE__ 3600\n* UNSAT __WATER_AGE__ 3600\n\n"
+            "[GW_SOURCES]\nW * FLOW 0.0001 __WATER_AGE__ CONC 7200\n\n");
+        auto at=body.find("TSS  MG/L");body.replace(at,9,std::string("TSS  ")+inputUnits[variant]);
+        body.insert(body.find("[POLLUTANTS]"),"[OPTIONS]\nWATER_AGE ON\n\n");
+        at=body.find("REPORT_2D NO");body.replace(at,12,"REPORT_2D YES\nOUTPUT_FILE "+file+"\nOUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES DEPTH GROUNDWATER\nTRANSPORT_POLLUTANTS NO\nTRANSPORT_AGE NO");
+        Deck r=open("gw_native_units_"+std::to_string(variant),body);ASSERT_TRUE(r.opened);
+        ASSERT_EQ(r.eng->context().pollutants.units[0],static_cast<openswmm::MassUnits>(variant));
+        ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK);ASSERT_EQ(swmm_engine_start(r.e,1),SWMM_OK);r.started=true;
+        const auto& gw=r.eng->surfaceRouter2D().subsurface();const auto& tr=gw.transport();ASSERT_GE(tr.age_row,0);
+        EXPECT_NEAR(tr.sat_mass[tr.idx(tr.age_row,0)]/gw.satVolume(0),3600,1e-10);
+        double elapsed=0;int status=0;while((status=swmm_engine_step(r.e,&elapsed))==SWMM_OK&&elapsed>0){}
+        ASSERT_EQ(status,SWMM_OK);ASSERT_EQ(swmm_engine_end(r.e),SWMM_OK);r.started=false;
+        EXPECT_NEAR(tr.gained_source[static_cast<std::size_t>(tr.age_row)],864,1e-7);
+        finish(r);
+        const hid_t h5=H5Fopen((kOutDir/file).string().c_str(),H5F_ACC_RDONLY,H5P_DEFAULT);ASSERT_GE(h5,0);
+        EXPECT_LE(H5Lexists(h5,"Mesh2_face_species_conc",H5P_DEFAULT),0);
+        for(const char* field:{"Mesh2_face_gw_sat_conc","Mesh2_face_gw_unsat_conc"}) {
+            const hid_t ds=H5Dopen2(h5,field,H5P_DEFAULT);ASSERT_GE(ds,0);
+            auto attr=[&](const char* key){
+                const hid_t a=H5Aopen(ds,key,H5P_DEFAULT);if(a<0)return std::string{};
+                const hid_t t=H5Aget_type(a);std::vector<char> bytes(H5Tget_size(t)+1,0);
+                const auto ok=H5Aread(a,t,bytes.data());H5Tclose(t);H5Aclose(a);
+                return ok<0?std::string{}:std::string(bytes.data());
+            };
+            EXPECT_EQ(attr("species_names"),"TSS,__WATER_AGE__");
+            EXPECT_EQ(attr("species_units"),std::string(outputUnits[variant])+",s");
+            H5Dclose(ds);
+        }
+        H5Fclose(h5);
+    }
 }

@@ -174,6 +174,12 @@ int SWMMEngine::open(const char* inp_path,
 
     // Reset context for a fresh run
     ctx_.reset();
+#ifdef OPENSWMM_HAS_2D
+    // Router-owned groundwater rows outlive ctx_.reset(). A fresh open must
+    // replace authoring (including derived lookup indexes), not append to it.
+    // Run initialization and hotstart deliberately retain these rows.
+    surface_router_.gwTransport().clear();
+#endif
 
     // Zero the load-phase accumulators so a process that opens several models
     // reports each one separately (see core/PerfTimers.hpp).
@@ -6937,10 +6943,10 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
                         }
                     }
                     snap.gw2d_species_ledger.assign(
-                        static_cast<std::size_t>(tr.n_species) * 13, 0.0);
+                        static_cast<std::size_t>(tr.n_species) * 15, 0.0);
                     for (int sp = 0; sp < tr.n_species; ++sp) {
                         const auto u = static_cast<std::size_t>(sp);
-                        double* d = &snap.gw2d_species_ledger[u * 13];
+                        double* d = &snap.gw2d_species_ledger[u * 15];
                         d[0]  = tr.init_mass[u];
                         d[1]  = tr.ledgeredStorage(sp);
                         d[2]  = tr.gained_infil[u];
@@ -6954,6 +6960,8 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
                         d[10] = tr.lost_et[u];
                         d[11] = tr.lost_reaction[u];
                         d[12] = tr.residual(sp);
+                        d[13] = tr.gained_source[u];
+                        d[14] = tr.lost_source[u];
                     }
                 } else {
                     snap.gw2d_sat_conc.clear();
@@ -6971,7 +6979,7 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
                                 g.led_dunne, g.led_caprise, g.led_et, g.led_infil_in,
                                 g.led_init_storage, g.liveStorage(),
                                 g.led_link,   // G-X3
-                                g.continuityResidual()};
+                                g.continuityResidual(), g.led_source_in, g.led_source_out};
             snap.gw2d_bed_exchange_cum = gw.bedExchangeCumulative();
             snap.gw2d_node_names = surface_router_.aquiferNodeNames().empty()
                                        ? nullptr : &surface_router_.aquiferNodeNames();

@@ -350,7 +350,7 @@ struct SimulationSnapshot {
     /// Domain ledger (m³, cumulative): recharge, lateral, deep, node, dunne,
     /// caprise, et, infil_in, init_storage, storage (live, incl. accumulators),
     /// link (G-X3, conduit seepage in), continuity residual (ledgered) — the
-    /// SWMM_GW2D_LED_* order plus the residual last.
+    /// historical order above, then named source injection and extraction.
     std::vector<double> gw2d_ledger;
     /// Cumulative exchange per `[2D_AQUIFER_NODE]` bed (m³, + out of the
     /// aquifer into the pipe), in the authored bed order; `gw2d_node_names`

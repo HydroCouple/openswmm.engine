@@ -51,6 +51,8 @@
 #define OPENSWMM_ENGINE_2D_GW_TRANSPORT_DATA_HPP
 
 #include <cstdint>
+#include <limits>
+#include <unordered_map>
 #include <string>
 #include <vector>
 
@@ -166,6 +168,7 @@ struct GwSourceRow {
     bool        by_xy = false;
     double      flow = 0.0;              ///< m3/s, + inject / − extract
     std::string flow_ts;                 ///< when the FLOW argument is a series
+    double scale = 1.0;                  ///< source-total multiplier, also applied to MASS (not CONC)
     std::vector<GwSourceSpeciesTerm> species;
 };
 
@@ -194,6 +197,100 @@ struct GwTransportData {
     }
 
     void clear() { *this = GwTransportData{}; }
+
+    // Derived authoring indexes contain positions, never vector pointers. Direct
+    // key edits or bulk replacement must invalidate them; parser and FILE reload
+    // do so explicitly. Size checks also catch ordinary direct append/erase.
+    void invalidateAuthoringIndexes() noexcept {
+        source_index_size_ = quality_index_size_ = noRow;
+    }
+    static constexpr std::size_t noRow = std::numeric_limits<std::size_t>::max();
+
+    std::size_t findSource(const std::string& name) {
+        if (source_index_size_ != sources.size()) {
+            source_index_size_ = noRow;
+            source_index_.clear();
+            source_index_.reserve(sources.size());
+            for (std::size_t i = 0; i < sources.size(); ++i)
+                source_index_.emplace(sources[i].name, i); // first match wins
+            source_index_size_ = sources.size();
+        }
+        const auto it = source_index_.find(name);
+        return it == source_index_.end() ? noRow : it->second;
+    }
+    std::size_t findInitialQuality(const GwInitialQualityRow& row) {
+        if (quality_index_size_ != initial_quality.size()) {
+            quality_index_size_ = noRow;
+            quality_index_.clear();
+            quality_index_.reserve(initial_quality.size());
+            for (std::size_t i = 0; i < initial_quality.size(); ++i)
+                quality_index_.emplace(QualityKey(initial_quality[i]), i);
+            quality_index_size_ = initial_quality.size();
+        }
+        const auto it = quality_index_.find(QualityKey(row));
+        return it == quality_index_.end() ? noRow : it->second;
+    }
+    void sourceAppended() {
+        if (source_index_size_ != noRow && source_index_size_ + 1 == sources.size()) {
+            source_index_.emplace(sources.back().name, sources.size() - 1);
+            source_index_size_ = sources.size();
+        }
+    }
+    void initialQualityAppended() {
+        if (quality_index_size_ != noRow && quality_index_size_ + 1 == initial_quality.size()) {
+            quality_index_.emplace(QualityKey(initial_quality.back()), initial_quality.size() - 1);
+            quality_index_size_ = initial_quality.size();
+        }
+    }
+    void removeSource(std::size_t index) {
+        if (source_index_size_ == sources.size() && index + 1 == sources.size()) {
+            const auto it = source_index_.find(sources[index].name);
+            if (it != source_index_.end() && it->second == index) source_index_.erase(it);
+            --source_index_size_;
+        } else source_index_size_ = noRow;
+        sources.erase(sources.begin() + index);
+    }
+    void removeInitialQuality(std::size_t index) {
+        if (quality_index_size_ == initial_quality.size() && index + 1 == initial_quality.size()) {
+            const auto it = quality_index_.find(QualityKey(initial_quality[index]));
+            if (it != quality_index_.end() && it->second == index) quality_index_.erase(it);
+            --quality_index_size_;
+        } else quality_index_size_ = noRow;
+        initial_quality.erase(initial_quality.begin() + index);
+    }
+
+private:
+    struct QualityKey {
+        GwScope scope;
+        std::string tag;
+        int cell;
+        GwZone zone;
+        int layer;
+        std::string species;
+        explicit QualityKey(const GwInitialQualityRow& r)
+            : scope(r.scope), tag(r.tag), cell(r.cell), zone(r.zone), layer(r.layer), species(r.species) {}
+        bool operator==(const QualityKey& r) const noexcept {
+            return scope == r.scope && tag == r.tag && cell == r.cell &&
+                   zone == r.zone && layer == r.layer && species == r.species;
+        }
+    };
+    struct QualityHash {
+        std::size_t operator()(const QualityKey& r) const noexcept {
+            std::size_t h = 0;
+            const auto combine = [&h](std::size_t v) { h ^= v + 0x9e3779b9u + (h << 6) + (h >> 2); };
+            combine(std::hash<int>{}(static_cast<int>(r.scope)));
+            combine(std::hash<std::string>{}(r.tag));
+            combine(std::hash<int>{}(r.cell));
+            combine(std::hash<int>{}(static_cast<int>(r.zone)));
+            combine(std::hash<int>{}(r.layer));
+            combine(std::hash<std::string>{}(r.species));
+            return h;
+        }
+    };
+    std::unordered_map<std::string, std::size_t> source_index_;
+    std::unordered_map<QualityKey, std::size_t, QualityHash> quality_index_;
+    std::size_t source_index_size_ = noRow;
+    std::size_t quality_index_size_ = noRow;
 };
 
 const char* gwZoneToken(GwZone z) noexcept;

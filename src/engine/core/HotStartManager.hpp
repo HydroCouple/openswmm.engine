@@ -210,9 +210,9 @@ struct HotStartFile {
     std::vector<double>      gw_unsat_mass;     ///< column-store mass
     std::vector<double>      gw_species_ledger; ///< per species, cumulative
     /// init, infil_in, node_in, link_in, lateral_net, deep, node_out,
-    /// link_out, dunne, et, reaction — the `residual` is derived, never
+    /// link_out, dunne, et, reaction, source_in, source_out — the `residual` is derived, never
     /// stored, so a file can never disagree with itself about it.
-    static constexpr int kGwSpeciesLedgerTerms = 11;
+    static constexpr int kGwSpeciesLedgerTerms = 13;
 
     std::string               path;      ///< File path (for flush-on-close)
     bool                      dirty = false; ///< True if set_*() was called

@@ -170,6 +170,7 @@ struct SubsurfaceTransportState {
     std::vector<double> gained_node;     ///< from a recharging node (T7.4 seam)
     std::vector<double> gained_link;     ///< from a leaking conduit (T7.4 seam)
     std::vector<double> net_lateral;     ///< net across the domain edge (0 on a closed mesh)
+    std::vector<double> gained_source, lost_source; ///< wells, native concentration x m3
     std::vector<double> lost_reaction;   ///< T7.2: first-order decay
     /// Mass in both stores at the start of the run — the conservation gate's
     /// reference (the aquifer is seeded from `[GW_INITIAL_QUALITY]`).
@@ -209,6 +210,7 @@ struct SubsurfaceTransportState {
         gained_node.assign(ns, 0.0);
         gained_link.assign(ns, 0.0);
         net_lateral.assign(ns, 0.0);
+        gained_source.assign(ns, 0.0); lost_source.assign(ns, 0.0);
         lost_reaction.assign(ns, 0.0);          // T7.2
         init_mass.assign(ns, 0.0);
         internal_recharge.assign(ns, 0.0);
@@ -299,7 +301,7 @@ struct SubsurfaceTransportState {
         const auto us = static_cast<std::size_t>(s);
         return std::fabs(init_mass[us]) + std::fabs(gained_infil[us]) +
                std::fabs(gained_node[us]) + std::fabs(gained_link[us]) +
-               std::fabs(net_lateral[us]);
+               std::fabs(net_lateral[us]) + std::fabs(gained_source[us]);
     }
 
     /// T7.1's conservation statement, the twin of
@@ -310,9 +312,9 @@ struct SubsurfaceTransportState {
     double residual(int s) const noexcept {
         const auto us = static_cast<std::size_t>(s);
         const double out = lost_deep[us] + lost_node[us] + lost_link[us] +
-                           lost_dunne[us] + lost_et[us] + lost_reaction[us];
+                           lost_dunne[us] + lost_et[us] + lost_reaction[us] + lost_source[us];
         const double in  = gained_infil[us] + gained_node[us] + gained_link[us] +
-                           net_lateral[us];
+                           net_lateral[us] + gained_source[us];
         return ledgeredStorage(s) + out - in - init_mass[us];
     }
 };

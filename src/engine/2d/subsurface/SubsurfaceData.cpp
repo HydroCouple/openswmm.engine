@@ -120,8 +120,8 @@ double SubsurfaceState::ledgeredStorage() const noexcept {
 }
 
 double SubsurfaceState::continuityResidual() const noexcept {
-    const double in  = led_infil_in + led_lateral + led_link;   // G-X3
-    const double out = led_deep + led_node + led_et + led_dunne;
+    const double in  = led_infil_in + led_lateral + led_link + led_source_in;   // G-X3
+    const double out = led_deep + led_node + led_et + led_dunne + led_source_out;
     return ledgeredStorage() - led_init_storage - (in - out);
 }
 

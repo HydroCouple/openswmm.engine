@@ -263,13 +263,13 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
         for (std::size_t i = 0; i < want; ++i)
             if (!write_pod(buf, i < hs.gw_unsat_mass.size() ? hs.gw_unsat_mass[i] : 0.0))
                 return false;
-        const std::size_t want_l =
-            static_cast<std::size_t>(ns) *
-            static_cast<std::size_t>(HotStartFile::kGwSpeciesLedgerTerms);
-        for (std::size_t i = 0; i < want_l; ++i)
-            if (!write_pod(buf, i < hs.gw_species_ledger.size()
-                                    ? hs.gw_species_ledger[i] : 0.0))
-                return false;
+        const int terms = hs.header.version >= 7u ? HotStartFile::kGwSpeciesLedgerTerms : 11;
+        for (std::size_t row = 0; row < ns; ++row)
+            for (int term = 0; term < terms; ++term) {
+                const auto i = row * HotStartFile::kGwSpeciesLedgerTerms + term;
+                if (!write_pod(buf, i < hs.gw_species_ledger.size()
+                                        ? hs.gw_species_ledger[i] : 0.0)) return false;
+            }
     }
 
     // Compute CRC32 over the body
@@ -342,7 +342,7 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
 
     // Header
     if (!read_pod(is, hs.header.version))    return false;
-    if (hs.header.version < 1u || hs.header.version > 6u) {
+    if (hs.header.version < 1u || hs.header.version > 7u) {
         tl_last_io_error = "Unsupported hot start version " +
                            std::to_string(hs.header.version) + " in '" + path + "'";
         return false;
@@ -460,7 +460,11 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
         hs.gw_species_ledger.resize(
             static_cast<std::size_t>(ns) *
             static_cast<std::size_t>(HotStartFile::kGwSpeciesLedgerTerms));
-        for (auto& v : hs.gw_species_ledger) if (!read_pod(is, v)) return false;
+        const int terms = hs.header.version >= 7u ? HotStartFile::kGwSpeciesLedgerTerms : 11;
+        for (std::size_t row = 0; row < ns; ++row)
+            for (int term = 0; term < terms; ++term)
+                if (!read_pod(is, hs.gw_species_ledger[row * HotStartFile::kGwSpeciesLedgerTerms + term]))
+                    return false;
     }
 
     hs.path = path;
@@ -678,7 +682,7 @@ bool captureAquiferBlock(const SimulationContext& ctx, HotStartFile& hs) {
     hs.gw_ledger = {st->led_recharge, st->led_lateral, st->led_deep,
                     st->led_node,     st->led_dunne,   st->led_caprise,
                     st->led_et,       st->led_infil_in, st->led_init_storage,
-                    st->led_link};   // G-X3: 10th term; the block is length-prefixed
+                    st->led_link, st->led_source_in, st->led_source_out}; // Length-prefixed.
     return true;
 #else
     (void)ctx; (void)hs;
@@ -713,6 +717,8 @@ bool captureAquiferSpeciesBlock(const SimulationContext& ctx, HotStartFile& hs) 
         d[8]  = tr->lost_dunne[u];
         d[9]  = tr->lost_et[u];
         d[10] = tr->lost_reaction[u];
+        d[11] = tr->gained_source[u];
+        d[12] = tr->lost_source[u];
     }
     return true;
 #else
@@ -762,6 +768,10 @@ void restoreAquiferSpeciesBlock(const HotStartFile& hs, SimulationContext& ctx,
             tr->lost_dunne[u]    = d[8];
             tr->lost_et[u]       = d[9];
             tr->lost_reaction[u] = d[10];
+            if (lsrc + 12 < hs.gw_species_ledger.size()) {
+                tr->gained_source[u] = d[11];
+                tr->lost_source[u] = d[12];
+            }
         }
     }
     if (!dropped.empty())
@@ -816,7 +826,11 @@ void restoreAquiferBlock(const HotStartFile& hs, SimulationContext& ctx,
         st->led_et           = hs.gw_ledger[6];
         st->led_infil_in     = hs.gw_ledger[7];
         st->led_init_storage = hs.gw_ledger[8];
-        if (hs.gw_ledger.size() >= 10) st->led_link = hs.gw_ledger[9];   // G-X3
+        if (hs.gw_ledger.size() >= 10) st->led_link = hs.gw_ledger[9];
+        if (hs.gw_ledger.size() >= 12) {
+            st->led_source_in = hs.gw_ledger[10];
+            st->led_source_out = hs.gw_ledger[11];
+        }
     }
 #else
     (void)hs; (void)ctx; (void)warn;
@@ -846,7 +860,13 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
     // a reader that stops at V4 still reads a coherent file.
     if (captureAquiferBlock(ctx, *hs)) {
         hs->header.version = 5u;
-        if (captureAquiferSpeciesBlock(ctx, *hs)) hs->header.version = 6u;   // T7.5
+        if (captureAquiferSpeciesBlock(ctx, *hs)) {
+            hs->header.version = 6u;
+            for (std::size_t i = 0; i < hs->gw_species.size(); ++i)
+                if (hs->gw_species_ledger[i * HotStartFile::kGwSpeciesLedgerTerms + 11] != 0.0 ||
+                    hs->gw_species_ledger[i * HotStartFile::kGwSpeciesLedgerTerms + 12] != 0.0)
+                    hs->header.version = 7u;
+        }
     }
     hs->header.timestamp  = static_cast<int64_t>(std::time(nullptr));
     hs->header.sim_time   = ctx.current_time;
@@ -932,7 +952,13 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
     // a reader that stops at V4 still reads a coherent file.
     if (captureAquiferBlock(ctx, *hs)) {
         hs->header.version = 5u;
-        if (captureAquiferSpeciesBlock(ctx, *hs)) hs->header.version = 6u;   // T7.5
+        if (captureAquiferSpeciesBlock(ctx, *hs)) {
+            hs->header.version = 6u;
+            for (std::size_t i = 0; i < hs->gw_species.size(); ++i)
+                if (hs->gw_species_ledger[i * HotStartFile::kGwSpeciesLedgerTerms + 11] != 0.0 ||
+                    hs->gw_species_ledger[i * HotStartFile::kGwSpeciesLedgerTerms + 12] != 0.0)
+                    hs->header.version = 7u;
+        }
     }
     hs->header.timestamp  = static_cast<int64_t>(std::time(nullptr));
     hs->header.sim_time   = ctx.current_time;
