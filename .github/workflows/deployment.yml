@@ -438,7 +438,7 @@ jobs:
           # numpy (the base wheel's only runtime dep) is pulled from PyPI as a wheel.
           "$PY" -m pip install --only-binary :all: numpy
           # The project wheels MUST come from the local wheelhouse, never PyPI.
-          # openswmm / openswmm-gpu-omp are pre-releases (6.0.0a3), and a *stable*
+          # openswmm / openswmm-gpu-omp are pre-releases (for example, 6.0.0a4.dev1), and a *stable*
           # openswmm-gpu-omp 0.0.0 placeholder exists on PyPI; without --no-index pip
           # prefers that stable stub over our local pre-release and installs an empty
           # package (ModuleNotFoundError: openswmm_gpu_omp). --no-index also makes a
@@ -480,7 +480,9 @@ jobs:
           python-version: "3.13"
 
       - name: Check version sync (CMake / vcpkg / pyproject)
-        run: python scripts/check_version_sync.py
+        run: |
+          python -m unittest discover -s scripts -p test_version_sync.py
+          python scripts/check_version_sync.py
 
       - name: Install build frontend
         run: |

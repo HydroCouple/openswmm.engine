@@ -91,7 +91,7 @@ try:
     version = openswmm.__version__
     release = openswmm.__version__
 except Exception:
-    version = '6.0.0a4'
+    version = '6.0.0a4.dev1'
     release = version
 
 # -- General configuration ------------------------------------------------
