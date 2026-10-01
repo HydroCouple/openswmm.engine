@@ -31,6 +31,7 @@
 #include <cmath>
 #include <algorithm>
 #include <array>
+#include <map>
 
 namespace openswmm {
 namespace lid {
@@ -221,6 +222,8 @@ void LIDSolver::init(SimulationContext& ctx) {
 
     // 3. Populate per-unit parameters from LidControlStore + LidUsageStore
     std::array<int, 8> type_cursor = {};  // next free slot in each group
+    usage_order_.clear();
+    usage_order_.reserve(static_cast<std::size_t>(n_usage));
     for (int j = 0; j < n_usage; ++j) {
         auto uj = static_cast<std::size_t>(j);
         int li = ctx.lid_usage.lid_index[uj];
@@ -232,6 +235,7 @@ void LIDSolver::init(SimulationContext& ctx) {
         auto& g = groups_[static_cast<size_t>(ti)];
         int slot = type_cursor[static_cast<size_t>(ti)]++;
         auto us = static_cast<std::size_t>(slot);
+        usage_order_.emplace_back(ti, slot);   // parse order; reversed per sub below
 
         // Usage-level fields. area and full_width are scaled by the
         // replicate count so g.area is the TOTAL footprint of the usage row
@@ -501,18 +505,40 @@ void LIDSolver::init(SimulationContext& ctx) {
         }
     }
 
+    // Legacy's per-subcatchment lidList is built by PREPENDING each parsed
+    // [LID_USAGE] row (lid.c:544-545: `lidList->nextLidUnit =
+    // lidGroup->lidList; lidGroup->lidList = lidList;`), so lid_getRunoff
+    // walks each subcatchment's units in REVERSE parse order. Reorder
+    // usage_order_ to match: subcatchments ascending, each one's rows
+    // reversed. Only the WITHIN-subcatchment order matters (every shared
+    // accumulator is per-subcatchment), but keep a deterministic whole.
+    {
+        std::map<int, std::vector<std::pair<int, int>>> by_sub;
+        for (const auto& tu : usage_order_) {
+            const auto& gg = groups_[static_cast<std::size_t>(tu.first)];
+            by_sub[gg.subcatch_idx[static_cast<std::size_t>(tu.second)]]
+                .push_back(tu);
+        }
+        usage_order_.clear();
+        for (auto& kv : by_sub)
+            for (auto it = kv.second.rbegin(); it != kv.second.rend(); ++it)
+                usage_order_.push_back(*it);
+    }
+
     // Gap #60: accumulate total LID area (ft²) per subcatchment for snow plow exclusion.
     // Matches legacy Subcatch[i].lidArea used in snow.c Build 5.2.0.
     int n_sc = ctx.n_subcatches();
     if (n_sc > 0) {
         ctx.subcatches.total_lid_area_ft2.assign(static_cast<std::size_t>(n_sc), 0.0);
-        for (auto& grp : groups_) {
-            for (int u = 0; u < grp.count; ++u) {
-                auto uu = static_cast<std::size_t>(u);
-                int sc = grp.subcatch_idx[uu];
-                if (sc >= 0 && sc < n_sc)
-                    ctx.subcatches.total_lid_area_ft2[static_cast<std::size_t>(sc)] += grp.area[uu];
-            }
+        // Legacy accumulates Subcatch.lidArea per [LID_USAGE] row in parse
+        // order (lid.c addLidUnit); summing group-by-group reorders the FP
+        // additions when a subcatchment mixes unit types.
+        for (const auto& tu : usage_order_) {
+            const auto& grp = groups_[static_cast<std::size_t>(tu.first)];
+            auto uu = static_cast<std::size_t>(tu.second);
+            int sc = grp.subcatch_idx[uu];
+            if (sc >= 0 && sc < n_sc)
+                ctx.subcatches.total_lid_area_ft2[static_cast<std::size_t>(sc)] += grp.area[uu];
         }
         // Legacy lid_validate() (lid.c:1234): snap the LID total to the full
         // subcatchment area when within 0.1%, so unit-conversion roundoff
