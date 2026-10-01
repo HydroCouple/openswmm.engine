@@ -51,6 +51,26 @@
 
 namespace {
 
+TEST(XsectLinkData, EraseKeepsAuthoredGeometryAlignedWithSurvivors) {
+    openswmm::LinkData links;
+    links.resize(3);
+    links.xsect_geom1 = {1.0, 2.0, 3.0};
+    links.xsect_geom2 = {4.0, 5.0, 6.0};
+    links.xsect_geom3 = {0.5, 1.0, 1.5};
+    links.xsect_geom4 = {2.5, 3.0, 3.5};
+    links.erase_at(1);
+    EXPECT_EQ(links.xsect_geom1, (std::vector<double>{1.0, 3.0}));
+    EXPECT_EQ(links.xsect_geom2, (std::vector<double>{4.0, 6.0}));
+    EXPECT_EQ(links.xsect_geom3, (std::vector<double>{0.5, 1.5}));
+    EXPECT_EQ(links.xsect_geom4, (std::vector<double>{2.5, 3.5}));
+    // Undo appends a new row. It must not expose a deleted row's geometry.
+    links.grow_to(3);
+    EXPECT_DOUBLE_EQ(links.xsect_geom1[2], 0.0);
+    EXPECT_DOUBLE_EQ(links.xsect_geom2[2], 0.0);
+    EXPECT_DOUBLE_EQ(links.xsect_geom3[2], 0.0);
+    EXPECT_DOUBLE_EQ(links.xsect_geom4[2], 0.0);
+}
+
 // The engine deliberately uses legacy SWMM's truncated PI literal (consts.h)
 // rather than a full-precision one, because every derived quantity is pinned to
 // legacy bit-parity. Analytic expectations must use the same literal or they

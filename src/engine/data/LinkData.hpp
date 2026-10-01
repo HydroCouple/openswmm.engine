@@ -769,6 +769,7 @@ struct LinkData {
         e(type); e(node1); e(node2); e(offset1); e(offset2); e(q0); e(q_limit);
 
         e(xsect_shape); e(xsect_y_full); e(xsect_a_full); e(xsect_w_max); e(xsect_curve);
+        e(xsect_geom1); e(xsect_geom2); e(xsect_geom3); e(xsect_geom4);
         e(xsect_r_full); e(xsect_s_full); e(xsect_s_max);
         e(xsect_y_bot); e(xsect_a_bot); e(xsect_s_bot); e(xsect_r_bot); e(xsect_yw_max);
         e(xsect_batch_shape); e(setting); e(target_setting); e(direction);
