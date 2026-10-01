@@ -34,6 +34,7 @@
 
 #include <cctype>
 #include <cmath>
+#include <unordered_set>
 #include <fstream>
 #include <string>
 
@@ -391,11 +392,14 @@ std::string parseGwSourcesLine(const std::vector<std::string>& tokens,
                                std::vector<GwSourceRow>& rows) {
     if (tokens.empty()) return {};
     if (tokens.size() < 4)
-        return "[GW_SOURCES] needs NAME (CELL n | TAG t | XY x y) FLOW value";
+        return "[GW_SOURCES] needs NAME (* | CELL n | TAG t | XY x y) FLOW value";
     GwSourceRow r;
     r.name = tokens[0];
     std::size_t at = 1;
-    if (iequals(tokens[at], "CELL")) {
+    if (tokens[at] == "*" || iequals(tokens[at], "GLOBAL")) {
+        r.scope = GwScope::GLOBAL;
+        ++at;
+    } else if (iequals(tokens[at], "CELL")) {
         int n = 0;
         if (!inum(tokens[at + 1], n) || n < 1)
             return "[GW_SOURCES] invalid CELL index (1-based): " + tokens[at + 1];
@@ -414,7 +418,7 @@ std::string parseGwSourcesLine(const std::vector<std::string>& tokens,
         r.by_xy = true;
         at += 3;
     } else {
-        return "[GW_SOURCES] location must be CELL, TAG or XY, got " + tokens[at];
+        return "[GW_SOURCES] location must be *, CELL, TAG or XY, got " + tokens[at];
     }
 
     if (at >= tokens.size() || !iequals(tokens[at], "FLOW"))
@@ -424,6 +428,11 @@ std::string parseGwSourcesLine(const std::vector<std::string>& tokens,
     valueOrSeries(tokens[at + 1], r.flow, r.flow_ts);
     at += 2;
 
+    if (at < tokens.size() && iequals(tokens[at], "SCALE")) {
+        if (at + 1 >= tokens.size() || !num(tokens[at + 1], r.scale) || !std::isfinite(r.scale) || r.scale < 0)
+            return "[GW_SOURCES] SCALE must be a finite nonnegative multiplier";
+        at += 2;
+    }
     // Trailing species terms: SPECIES (CONC|MASS) value|ts, repeated.
     while (at < tokens.size()) {
         if (at + 2 >= tokens.size())
@@ -463,6 +472,7 @@ void registerGwTransportSections(GwTransportData& gw,
         }, gw.options));
     registry.register_custom("GW_INITIAL_QUALITY",
         makeGwHandler([&gw](const std::vector<std::string>& t) {
+            gw.invalidateAuthoringIndexes();
             return parseGwInitialQualityLine(t, gw.initial_quality,
                                              gw.initial_quality_file);
         }, gw.options));
@@ -472,6 +482,7 @@ void registerGwTransportSections(GwTransportData& gw,
         }, gw.options));
     registry.register_custom("GW_SOURCES",
         makeGwHandler([&gw](const std::vector<std::string>& t) {
+            gw.invalidateAuthoringIndexes();
             return parseGwSourcesLine(t, gw.sources);
         }, gw.options));
 }
@@ -485,6 +496,7 @@ std::vector<std::string> resolveGwTransport(SimulationContext& ctx,
                                             GwTransportData& gw) {
     std::vector<std::string> errs;
     if (gw.empty()) return errs;
+    gw.invalidateAuthoringIndexes();
 
     const int n_cells = mesh.n_cells();
 
@@ -535,10 +547,9 @@ std::vector<std::string> resolveGwTransport(SimulationContext& ctx,
                            " is off the mesh (" + std::to_string(n_cells) +
                            " cells).");
     };
+    const std::unordered_set<std::string> knownTags(mesh.tri_tag.begin(),mesh.tri_tag.end());
     auto checkTag = [&](const std::string& tag, const char* sec) {
-        if (tag.empty()) return;
-        for (const auto& t : mesh.tri_tag)
-            if (t == tag) return;
+        if (tag.empty() || knownTags.count(tag)) return;
         errs.push_back(std::string(sec) + " TAG '" + tag +
                        "' matches no cell tag on the mesh.");
     };
@@ -620,11 +631,10 @@ std::vector<std::string> resolveGwTransport(SimulationContext& ctx,
 
     // Duplicate names are an error, not last-wins — the same reasoning
     // [INITIAL_QUALITY] applies to its own duplicates.
-    for (std::size_t i = 0; i < gw.sources.size(); ++i)
-        for (std::size_t j = 0; j < i; ++j)
-            if (gw.sources[i].name == gw.sources[j].name)
-                errs.push_back("[GW_SOURCES] duplicate source name '" +
-                               gw.sources[i].name + "'.");
+    std::unordered_set<std::string> sourceNames;
+    for (const auto& source : gw.sources)
+        if (!sourceNames.insert(source.name).second)
+            errs.push_back("[GW_SOURCES] duplicate source name '" + source.name + "'.");
 
     return errs;
 }

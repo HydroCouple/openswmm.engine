@@ -661,6 +661,7 @@ if(OPENSWMM_BUILD_2D)
     # keys (GROUNDWATER / GW_ET). Decks under tests/output/gw_transport.
     add_gtest_unit(test_engine_gw_transport_authoring
                    test_gw_transport_authoring.cpp)
+    add_gtest_unit(test_engine_gw_authoring_index test_gw_authoring_index.cpp)
     target_compile_definitions(test_engine_gw_transport_authoring PRIVATE
         OPENSWMM_GW_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
     # G1 (2026-09-07) — the [2D_AQUIFER*] authoring surface, its round trip
@@ -675,6 +676,7 @@ if(OPENSWMM_BUILD_2D)
     # the gate-6 conservation stub on tri / quad / mixed meshes, the surface
     # seam in both directions, ET up-concentration, and the groundwater row
     # of the transport matrix. Decks under tests/output/gw_transport_kernel.
+    add_gtest_unit(test_engine_gw_source_forcing test_gw_source_forcing.cpp)
     add_gtest_unit(test_engine_gw_transport_kernel test_gw_transport_kernel.cpp)
     target_compile_definitions(test_engine_gw_transport_kernel PRIVATE
         OPENSWMM_GW_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")

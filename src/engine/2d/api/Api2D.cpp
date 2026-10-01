@@ -335,7 +335,7 @@ int swmm_2d_set_triangle_tag(SWMM_Engine engine, int idx, const char* tag) {
 int swmm_2d_get_vertex_tag(SWMM_Engine engine, int idx,
                            char* buf, int buflen) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_VERT_IDX(idx, router2d);
     if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
 
@@ -349,7 +349,7 @@ int swmm_2d_get_vertex_tag(SWMM_Engine engine, int idx,
 int swmm_2d_get_triangle_tag(SWMM_Engine engine, int idx,
                              char* buf, int buflen) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(idx, router2d);
     if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
 

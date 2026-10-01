@@ -7,6 +7,7 @@
  */
 
 #include "SurfaceRouter2D.hpp"
+#include "gw/GwSourceResolver.hpp"
 #include "mesh/MeshBuilder.hpp"
 #include "mesh/VertexReconstruction.hpp"
 #include "mesh/VfrClosure.hpp"
@@ -919,6 +920,8 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             "[2D_OPTIONS] GROUNDWATER NO — the [2D_AQUIFER*] rows are kept "
             "but no subsurface runs this simulation.");
     if (gw_wanted && !aquifer_cfg_.empty()) {
+        if (options_.reconstruction_order == 2)
+            throw std::runtime_error("[2D_AQUIFER] groundwater is not advanced by the RK2 surface route; select RECONSTRUCTION_ORDER 1 for coupled groundwater runs.");
         auto* marcher = dynamic_cast<ExplicitInertialSolver*>(solver_.get());
         if (marcher == nullptr)
             throw std::runtime_error(
@@ -998,7 +1001,13 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                             static_cast<std::size_t>(p) < ctx.pollutants.k_decay.size(); ++p)
                 pollut_decay[static_cast<std::size_t>(p)] =
                     ctx.pollutants.k_decay[static_cast<std::size_t>(p)];
+            if (!gw_.boundary_quality.empty())
+                throw std::runtime_error("[GW_BOUNDARY_QUALITY] is unsupported: no hydraulic groundwater edge binding exists; use a well/source for operational forcing.");
+            for (const auto& row : gw_.initial_quality)
+                if (row.zone == GwZone::LAYER)
+                    throw std::runtime_error("[GW_INITIAL_QUALITY] LAYER is unsupported by bulk groundwater transport; use SAT or UNSAT explicitly.");
             subsurface_.initTransport(rows, &gw_, pollut_decay, ctx.warnings);
+            subsurface_.setSources(resolveGwSources(ctx, mesh_, gw_, subsurface_.state(), subsurface_.transport()));
         }
 
         // G-X3 (2026-09-19): conduit seepage → the cells the conduit crosses.

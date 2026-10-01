@@ -105,7 +105,7 @@ SWMM_ENGINE_API int swmm_gw2d_option_get(SWMM_Engine engine, const char* key,
     auto yn = [](bool b) { return std::string(b ? "YES" : "NO"); };
     auto num = [](double v) {
         char t[32];
-        std::snprintf(t, sizeof t, "%.6g", v);
+        std::snprintf(t, sizeof t, "%.17g", v);
         return std::string(t);
     };
     std::string v;
@@ -255,6 +255,8 @@ SWMM_ENGINE_API int swmm_gw2d_row_get_property(SWMM_Engine engine, int index,
     else if (ieq(key, "SOIL_CHAR")) *value = static_cast<double>(r.soil_char);
     else if (ieq(key, "CLOSURE"))   *value = static_cast<double>(r.closure);
     else if (ieq(key, "M_LAYERS"))  *value = r.m_layers;
+    else if (ieq(key, "SOIL_CHAR_SET")) *value = r.soil_char_set ? 1.0 : 0.0;
+    else if (ieq(key, "CLOSURE_SET")) *value = r.closure_set ? 1.0 : 0.0;
     else return SWMM_ERR_BADPARAM;
     return SWMM_OK;
 }
@@ -474,6 +476,8 @@ SWMM_ENGINE_API int swmm_gw2d_get_ledger(SWMM_Engine engine, int term,
         case SWMM_GW2D_LED_INFIL_IN:     *value = st.led_infil_in; break;
         case SWMM_GW2D_LED_INIT_STORAGE: *value = st.led_init_storage; break;
         case SWMM_GW2D_LED_STORAGE:      *value = liveStorage(gw); break;
+        case SWMM_GW2D_LED_SOURCE_IN: *value = st.led_source_in; break;
+        case SWMM_GW2D_LED_SOURCE_OUT: *value = st.led_source_out; break;
         case SWMM_GW2D_LED_LINK:         *value = st.led_link; break;   // G-X3
         default: return SWMM_ERR_BADPARAM;
     }
@@ -547,6 +551,8 @@ SWMM_ENGINE_API int swmm_gw2d_get_species_ledger(SWMM_Engine engine,
         case SWMM_GW2D_SPL_DUNNE_OUT:   *value = tr.lost_dunne[u]; break;
         case SWMM_GW2D_SPL_ET_OUT:      *value = tr.lost_et[u]; break;
         case SWMM_GW2D_SPL_REACTED:     *value = tr.lost_reaction[u]; break;
+        case SWMM_GW2D_SPL_SOURCE_IN: *value = tr.gained_source[u]; break;
+        case SWMM_GW2D_SPL_SOURCE_OUT: *value = tr.lost_source[u]; break;
         case SWMM_GW2D_SPL_RESIDUAL:    *value = tr.residual(species); break;
         default: return SWMM_ERR_BADPARAM;
     }

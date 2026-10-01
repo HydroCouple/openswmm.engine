@@ -169,6 +169,17 @@ SWMM_ENGINE_API int swmm_gw_source_get(SWMM_Engine engine, int idx,
 /** @brief Append or replace the source named @p name. */
 SWMM_ENGINE_API int swmm_gw_source_set(SWMM_Engine engine, const char* name,
         int scope, const char* tag, int cell, double flow, const char* flow_ts);
+/** Source FLOW is total m3/s over active matching cells (area weighted for
+ * GLOBAL/TAG). SCALE multiplies flow and MASS terms; CONC stays unchanged.
+ * MASS is pollutant native mass/s (mg, ug or count); age/temp and unresolved
+ * MSX MASS are unsupported. Extraction carries in-situ dissolved quality and
+ * is limited by available drainable water. Series interpolate linearly and
+ * hold endpoint values outside their range, in the model's absolute time frame.
+ * Active bulk groundwater rejects initial LAYER quality (use SAT or UNSAT),
+ * GW_BOUNDARY_QUALITY without hydraulic edge bindings, and surface RK2
+ * reconstruction order 2. These authoring records can still be saved as drafts. */
+SWMM_ENGINE_API int swmm_gw_source_scale_get(SWMM_Engine engine, int idx, double* value);
+SWMM_ENGINE_API int swmm_gw_source_scale_set(SWMM_Engine engine, int idx, double value);
 SWMM_ENGINE_API int swmm_gw_source_remove(SWMM_Engine engine, int idx);
 
 /** @brief Species terms carried by source @p src_idx. */

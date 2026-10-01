@@ -258,6 +258,7 @@ struct SubsurfaceState {
     double led_link     = 0.0;   ///< G-X3: conduit seepage delivered in
     double led_init_storage  = 0.0;
     double led_final_storage = 0.0;
+    double led_source_in = 0.0, led_source_out = 0.0; ///< wells, m3; separate from node/link exchange
 
     bool active = false;         ///< the kernel ran this simulation
 

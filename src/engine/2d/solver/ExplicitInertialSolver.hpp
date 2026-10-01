@@ -115,7 +115,7 @@ private:
     void fireCellsImpl(const std::vector<int>& cells, double dt_c, bool tier0);
     // One halving-order macro cycle of nsub base substeps: tier k fires every
     // 2^k substeps.
-    void runMacroCycle(double dt0, int nsub);
+    void runMacroCycle(double dt0, int nsub, double time);
 
     MeshData*         mesh_  = nullptr;
     SurfaceStateData* state_ = nullptr;

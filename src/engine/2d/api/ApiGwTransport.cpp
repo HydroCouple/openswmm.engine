@@ -29,6 +29,7 @@
  * @license  Apache-2.0
  */
 
+#include <cmath>
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_gw_transport.h>
 
@@ -342,14 +343,13 @@ SWMM_ENGINE_API int swmm_gw_init_quality_set(SWMM_Engine engine, int scope,
     if (value < 0.0 && r.species != "__TEMPERATURE__" &&
         r.species != "__WATER_AGE__")
         return SWMM_ERR_BADPARAM;
-    for (auto& e : gw.initial_quality)
-        if (e.scope == r.scope && e.tag == r.tag && e.cell == r.cell &&
-            e.zone == r.zone && e.layer == r.layer && e.species == r.species) {
-            e.value = r.value;
-            gw.options.authored = true;
-            return SWMM_OK;
-        }
-    gw.initial_quality.push_back(std::move(r));
+    const auto index = gw.findInitialQuality(r);
+    if (index != GwTransportData::noRow) {
+        gw.initial_quality[index].value = r.value;
+    } else {
+        gw.initial_quality.push_back(std::move(r));
+        gw.initialQualityAppended();
+    }
     gw.options.authored = true;
     return SWMM_OK;
 }
@@ -359,7 +359,7 @@ SWMM_ENGINE_API int swmm_gw_init_quality_remove(SWMM_Engine engine, int idx) {
     GW_EDITABLE(eng);
     if (idx < 0 || idx >= static_cast<int>(gw.initial_quality.size()))
         return SWMM_ERR_BADINDEX;
-    gw.initial_quality.erase(gw.initial_quality.begin() + idx);
+    gw.removeInitialQuality(static_cast<std::size_t>(idx));
     return SWMM_OK;
 }
 
@@ -483,21 +483,22 @@ SWMM_ENGINE_API int swmm_gw_source_set(SWMM_Engine engine, const char* name,
         int scope, const char* tag, int cell, double flow, const char* flow_ts) {
     GW_GET(engine);
     GW_EDITABLE(eng);
-    if (!name || !*name) return SWMM_ERR_BADPARAM;
+    if (!name || !*name || scope < 0 || scope > 2 || !std::isfinite(flow)) return SWMM_ERR_BADPARAM;
     const GwScope sc = toScope(scope);
     if (sc == GwScope::TAG && (!tag || !*tag)) return SWMM_ERR_BADPARAM;
     if (sc == GwScope::CELL && cell < 0)       return SWMM_ERR_BADINDEX;
-    for (auto& e : gw.sources)
-        if (e.name == name) {
-            e.scope   = sc;
-            e.tag     = (sc == GwScope::TAG && tag) ? tag : "";
-            e.cell    = (sc == GwScope::CELL) ? cell : -1;
-            e.by_xy   = false;
-            e.flow    = flow;
-            e.flow_ts = flow_ts ? flow_ts : "";
-            gw.options.authored = true;
-            return SWMM_OK;
-        }
+    const auto index = gw.findSource(name);
+    if (index != GwTransportData::noRow) {
+        auto& e = gw.sources[index];
+        e.scope   = sc;
+        e.tag     = (sc == GwScope::TAG && tag) ? tag : "";
+        e.cell    = (sc == GwScope::CELL) ? cell : -1;
+        e.by_xy   = false;
+        e.flow    = flow;
+        e.flow_ts = flow_ts ? flow_ts : "";
+        gw.options.authored = true;
+        return SWMM_OK;
+    }
     GwSourceRow r;
     r.name    = name;
     r.scope   = sc;
@@ -506,7 +507,23 @@ SWMM_ENGINE_API int swmm_gw_source_set(SWMM_Engine engine, const char* name,
     r.flow    = flow;
     r.flow_ts = flow_ts ? flow_ts : "";
     gw.sources.push_back(std::move(r));
+    gw.sourceAppended();
     gw.options.authored = true;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gw_source_scale_get(SWMM_Engine engine, int idx, double* value) {
+    GW_GET(engine);
+    if (!value) return SWMM_ERR_BADPARAM;
+    if (idx < 0 || idx >= static_cast<int>(gw.sources.size())) return SWMM_ERR_BADINDEX;
+    *value = gw.sources[static_cast<std::size_t>(idx)].scale;
+    return SWMM_OK;
+}
+SWMM_ENGINE_API int swmm_gw_source_scale_set(SWMM_Engine engine, int idx, double value) {
+    GW_GET(engine); GW_EDITABLE(eng);
+    if (!std::isfinite(value) || value < 0) return SWMM_ERR_BADPARAM;
+    if (idx < 0 || idx >= static_cast<int>(gw.sources.size())) return SWMM_ERR_BADINDEX;
+    gw.sources[static_cast<std::size_t>(idx)].scale = value;
     return SWMM_OK;
 }
 
@@ -514,7 +531,7 @@ SWMM_ENGINE_API int swmm_gw_source_remove(SWMM_Engine engine, int idx) {
     GW_GET(engine);
     GW_EDITABLE(eng);
     if (idx < 0 || idx >= static_cast<int>(gw.sources.size())) return SWMM_ERR_BADINDEX;
-    gw.sources.erase(gw.sources.begin() + idx);
+    gw.removeSource(static_cast<std::size_t>(idx));
     return SWMM_OK;
 }
 

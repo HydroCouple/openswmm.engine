@@ -656,11 +656,14 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
                 std::snprintf(loc, sizeof loc, "XY %.12g %.12g", r.x, r.y);
             else if (r.scope == twoD::GwScope::TAG)
                 std::snprintf(loc, sizeof loc, "TAG %s", r.tag.c_str());
+            else if (r.scope == twoD::GwScope::GLOBAL)
+                std::snprintf(loc, sizeof loc, "*");
             else
                 std::snprintf(loc, sizeof loc, "CELL %d", r.cell + 1);
             std::fprintf(f, "%-14s %-16s FLOW ", r.name.c_str(), loc);
             if (!r.flow_ts.empty()) std::fprintf(f, "%-12s", r.flow_ts.c_str());
             else                    std::fprintf(f, "%-12.12g", r.flow);
+            if (r.scale != 1.0) std::fprintf(f, " SCALE %.17g", r.scale);
             for (const auto& t : r.species) {
                 if (!t.ts_name.empty())
                     std::fprintf(f, " %s %s %s", t.species.c_str(),

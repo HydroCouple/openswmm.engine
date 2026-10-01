@@ -72,6 +72,7 @@
 #define OPENSWMM_ENGINE_2D_SUBSURFACE_SOLVER_HPP
 
 #include "SigmaColumn.hpp"
+#include "../gw/GwSourceForcing.hpp"
 #include "SubsurfaceData.hpp"
 #include "SubsurfaceTransportState.hpp"   // T7.1
 
@@ -207,7 +208,8 @@ public:
     /// Lateral Darcy on the faces of one tier; books ±ΔV into `eacc_L/R`.
     void fireGwFaces(int tier, double dt);
     /// Gather + closure + node/deep/ET/Dunne for the cells of one tier.
-    void fireGwCells(int tier, double dt, SurfaceStateData& surf);
+    void fireGwCells(int tier, double dt, SurfaceStateData& surf, double time = 0.0);
+    void setSources(std::vector<GwResolvedSource> sources);
     /// Flush every pending accumulator into its owner. Mandatory before any
     /// re-tier or active-set change (the stranded-flux hazard).
     void settle(SurfaceStateData& surf);
@@ -328,7 +330,13 @@ private:
     void resolveClosures(std::vector<std::string>& warnings);
     soil::Params paramsOf(int i) const noexcept;
     /// One cell's firing — the §gw_split sequence.
-    void fireCell(int i, double dt, SurfaceStateData& surf);
+    void fireCell(int i, double dt, SurfaceStateData& surf, double time);
+    double gather_fraction_ = 1.0;
+    double consumePending(double& value) noexcept {
+        const double take = value * gather_fraction_;
+        value -= take;
+        return take;
+    }
 
     /// T7.1: every water volume one cell's firing moved, so the species pass
     /// can ride exactly the same numbers. Volumes are m³ and signed as the
@@ -341,6 +349,8 @@ private:
         double node_out = 0.0;
         double infil_in = 0.0;
         double link = 0.0;
+        double source_in = 0.0, source_out = 0.0;
+        const std::vector<double>* source_mass = nullptr;
         double recharge = 0.0;
         /// The MOVING TABLE's own swap between the two stores (m³, `+` into
         /// the unsaturated one, i.e. a falling table handing its drained
@@ -383,6 +393,8 @@ private:
                          double* theta_bot_out) const noexcept;
     void markPendingSurface(int i) noexcept;
 
+    std::vector<GwResolvedSource> sources_;
+    std::vector<std::vector<std::pair<std::size_t,double>>> cell_sources_;
     SubsurfaceState  state_;
     SubsurfaceTransportState tr_;   ///< T7.1
     GwOptions        options_;

@@ -39,6 +39,7 @@
 #include "../../../../include/openswmm/plugin_sdk/IOutputPlugin.hpp"
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <hdf5.h>
 
@@ -227,6 +228,7 @@ private:
     PluginState  state_ = PluginState::UNLOADED;
     std::string  last_error_;
 
+    std::unordered_map<std::string,std::string> native_species_units_; // keyed by identity, not surface row
     std::string  model_crs_;                ///< `[OPTIONS] CRS`, verbatim
     double       metres_per_model_unit_ = 1.0;  ///< stored = model x this
 
@@ -263,7 +265,7 @@ private:
     /// live kernel; absent otherwise. `Mesh2_face_gw_bed_elev` and
     /// `Mesh2_face_gw_closure` are static [nFace] and written once.
     static constexpr int kGwFaceFields = 11;   // G-X3: + Mesh2_face_gw_link_seepage
-    static constexpr hsize_t kGwLedgerTerms = 12;   // G-X3: + link (LED 10), residual last
+    static constexpr hsize_t kGwLedgerTerms = 14;   // G-X3: + link (LED 10), residual last
     hid_t   ds_gw_face_[kGwFaceFields] = {H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID,
                                           H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID,
                                           H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID,
@@ -271,7 +273,7 @@ private:
     hid_t   ds_gw_ledger_          = H5I_INVALID_HID;
     /// T7.5: the aquifer's species fields, created with the rest of the
     /// groundwater group when the kernel carries a tuple.
-    static constexpr hsize_t kGwSpeciesLedgerTerms = 13;
+    static constexpr hsize_t kGwSpeciesLedgerTerms = 15;
     hid_t   ds_gw_sat_conc_        = H5I_INVALID_HID;
     hid_t   ds_gw_unsat_conc_      = H5I_INVALID_HID;
     hid_t   ds_gw_species_ledger_  = H5I_INVALID_HID;

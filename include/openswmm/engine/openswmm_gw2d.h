@@ -107,6 +107,8 @@ extern "C" {
 #define SWMM_GW2D_LED_INFIL_IN      7
 #define SWMM_GW2D_LED_INIT_STORAGE  8
 #define SWMM_GW2D_LED_STORAGE       9   /**< storage NOW, incl. accumulators */
+#define SWMM_GW2D_LED_SOURCE_IN     11  /**< Named source injection, m3. */
+#define SWMM_GW2D_LED_SOURCE_OUT    12  /**< Actual availability-limited extraction, m3. */
 #define SWMM_GW2D_LED_LINK          10  /**< G-X3: conduit seepage delivered in */
 
 /* ---- T7.5: the transported tuple (read-only results) --------------------- */
@@ -128,6 +130,8 @@ extern "C" {
 #define SWMM_GW2D_SPL_DUNNE_OUT   9
 #define SWMM_GW2D_SPL_ET_OUT      10
 #define SWMM_GW2D_SPL_REACTED     11
+#define SWMM_GW2D_SPL_SOURCE_IN   13  /**< Native concentration times m3. */
+#define SWMM_GW2D_SPL_SOURCE_OUT  14  /**< Extracted dissolved species. */
 #define SWMM_GW2D_SPL_RESIDUAL    12  /**< storage + out - in - init */
 
 /** How many species rows the aquifer transports (0 when it carries none). */

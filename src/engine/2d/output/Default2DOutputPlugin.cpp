@@ -217,6 +217,30 @@ int Default2DOutputPlugin::prepare(const SimulationContext& ctx) {
     // mutates at runtime. Empty is legitimate — models need not declare a CRS.
     model_crs_ = !ctx.spatial.crs.empty() ? ctx.spatial.crs : ctx.options.crs;
 
+    // Concentration units belong to species identities. The groundwater
+    // row set can differ from the surface row set (including surface off).
+    // Capture authored metadata once; never manufacture a dimensionless
+    // label for an unresolved species.
+    native_species_units_.clear();
+    for (std::size_t p=0; p<ctx.pollutants.units.size(); ++p) {
+        std::string unit;
+        switch(ctx.pollutants.units[p]) {
+        case MassUnits::MG_PER_L: unit="MG/L"; break;
+        case MassUnits::UG_PER_L: unit="UG/L"; break;
+        case MassUnits::COUNTS_PER_L: unit="#/L"; break;
+        }
+        native_species_units_.emplace(ctx.pollutant_names.name_of(static_cast<int>(p)),unit);
+    }
+    for (std::size_t p=0; p<ctx.reactions.species_name.size(); ++p) {
+        if (p<ctx.reactions.species_is_wall.size() && ctx.reactions.species_is_wall[p]) continue;
+        if (p<ctx.reactions.species_units.size())
+            native_species_units_.emplace(ctx.reactions.species_name[p],ctx.reactions.species_units[p]);
+    }
+    // GW snapshots retain raw age-volume / volume (seconds); only the
+    // separate surface snapshot converts its age result to hours.
+    native_species_units_["__WATER_AGE__"]="s";
+    native_species_units_["__TEMPERATURE__"]="degC";
+
     state_ = PluginState::PREPARED;
     return 0;
 }
@@ -995,7 +1019,7 @@ void Default2DOutputPlugin::createGroundwaterDatasets(const SimulationSnapshot& 
             const std::string ln =
                 std::string("groundwater species concentration in the ") + z.what;
             writeStringAttr(*z.ds, "long_name", ln.c_str());
-            writeStringAttr(*z.ds, "units", "1");   // per species; see species_names
+            writeStringAttr(*z.ds, "units", "1");   // per species; see species_units
             writeStringAttr(*z.ds, "mesh", "Mesh2");
             writeStringAttr(*z.ds, "location", "face");
             writeStringAttr(*z.ds, "layout",
@@ -1012,6 +1036,16 @@ void Default2DOutputPlugin::createGroundwaterDatasets(const SimulationSnapshot& 
                 }
                 if (!names.empty())
                     writeStringAttr(*z.ds, "species_names", names.c_str());
+                std::string units;
+                for (hsize_t k=0;k<n_gw_species_;++k) {
+                    if(k)units+=",";
+                    if(k<snap.gw2d_species_names->size()) {
+                        const auto unit=native_species_units_.find((*snap.gw2d_species_names)[static_cast<std::size_t>(k)]);
+                        if(unit!=native_species_units_.end())units+=unit->second;
+                    }
+                }
+                // Empty positions deliberately remain unresolved for readers.
+                writeStringAttr(*z.ds, "species_units", units.c_str());
             }
         }
         hsize_t zerol[3] = {0, n_gw_species_, kGwSpeciesLedgerTerms};
@@ -1024,7 +1058,7 @@ void Default2DOutputPlugin::createGroundwaterDatasets(const SimulationSnapshot& 
         writeStringAttr(ds_gw_species_ledger_, "terms",
                         "init,storage,infil_in,node_in,link_in,lateral_net,"
                         "deep_out,node_out,link_out,dunne_out,et_out,"
-                        "reaction_out,residual");
+                        "reaction_out,residual,source_in,source_out");
         writeStringAttr(ds_gw_species_ledger_, "layout",
                         "[time, species, term]; mass units are the species' "
                         "own (concentration x m3); residual = storage + out "
@@ -1043,7 +1077,7 @@ void Default2DOutputPlugin::createGroundwaterDatasets(const SimulationSnapshot& 
         writeStringAttr(ds_gw_ledger_, "units", "m3");
         writeStringAttr(ds_gw_ledger_, "terms",
                         "recharge,lateral,deep,node,dunne,caprise,et,infil_in,"
-                        "init_storage,storage,link,continuity_residual");
+                        "init_storage,storage,link,continuity_residual,source_in,source_out");
         writeStringAttr(ds_gw_ledger_, "layout",
                         "[time, term]; storage includes water in flight in the side "
                         "accumulators; continuity_residual = ledgered storage − init − (in − out)");
@@ -1162,6 +1196,8 @@ int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
             writeScalar(grp, "init_storage",  g.led_init_storage);
             writeScalar(grp, "final_storage", g.liveStorage());
             writeScalar(grp, "infil_in",      g.led_infil_in);
+            writeScalar(grp, "source_in",     g.led_source_in);
+            writeScalar(grp, "source_out",    g.led_source_out);
             writeScalar(grp, "link_in",       g.led_link);   // G-X3: conduit seepage
             writeScalar(grp, "lateral_in",    g.led_lateral);
             writeScalar(grp, "recharge",      g.led_recharge);
