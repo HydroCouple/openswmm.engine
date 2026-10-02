@@ -422,6 +422,10 @@ private:
     std::vector<double> sigma_;      ///< Inertial damping factor
     std::vector<double> dqdh_;       ///< dQ/dH for node update
     std::vector<double> new_flow_;   ///< Computed flow this iteration
+    /// Per-BARREL flow from the conduit's last solve — legacy Conduit.q1,
+    /// read back as qLast. Rebuilding it as links.flow / barrels is not
+    /// exact once barrels > 1 ((q*6)/6 != q in the last bit).
+    std::vector<double> q1_;
 
     // Per-link area from previous iteration (for unsteady term)
     std::vector<double> area_old_;
