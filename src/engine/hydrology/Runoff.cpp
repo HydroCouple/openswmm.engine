@@ -528,6 +528,11 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             double fOutlet = 1.0;
             int route_mode = ctx.subcatches.subarea_routing[ui];
             double pct = ctx.subcatches.pct_routed[ui];
+            // legacy subcatch_readSubareaParams (subcatch.c:282-284): a 0% or
+            // 100% impervious subcatchment has no second subarea to route to,
+            // so its routing is forced TO_OUTLET and every fOutlet stays 1.
+            if (soa_.imperv_pct[ui] == 0.0 || soa_.imperv_pct[ui] == 1.0)
+                route_mode = 0;
             if (route_mode == 2 && !isPervious) {
                 // IMPERV → PERV: impervious fOutlet = 1 - pct_routed
                 fOutlet = 1.0 - pct;
