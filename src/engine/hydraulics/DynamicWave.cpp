@@ -2747,7 +2747,13 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
             // crown trips closed_nearfull above (fr = 0), and an open shape
             // gets slot width 0 from getSlotWidth() so STEP E never overrides
             // it. Keeping aMid preserves the legacy hydraulic-depth grouping.
-            double dh = (wMid > FUDGE) ? aMid / wMid : 0.0;
+            // PARITY: legacy divides A/W with no width guard. A top width
+            // below FUDGE is real on sliver sections (an ellipse authored
+            // 0.0001 ft wide has W ~ 3e-5 ft at shallow depth): the huge
+            // hydraulic depth gives a small NONZERO Froude that can still
+            // pass getLinkStep's 0.01 gate and set the variable step. Only
+            // W == 0 short-circuits — legacy's A/0 = inf gives Fr = 0 too.
+            double dh = (wMid > 0.0) ? aMid / wMid : 0.0;
             // PARITY: legacy link_getFroude computes sqrt(GRAVITY * y) directly
             // (link.c). Using the precomputed SQRT_GRAVITY constant (a truncated
             // sqrt(32.2)) times sqrt(dh) differs by ~3e-9 and reorders the FP
