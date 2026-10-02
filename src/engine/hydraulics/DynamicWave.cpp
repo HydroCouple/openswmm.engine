@@ -606,6 +606,7 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
     sigma_.resize(ul, 0.0);
     dqdh_.resize(ul, 0.0);
     new_flow_.resize(ul, 0.0);
+    q1_.assign(ul, 0.0);
     area_old_.resize(ul, 0.0);
     bypassed_.assign(ul, 0);
     surf_area1_.resize(ul, 0.0);
@@ -658,6 +659,8 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
                            CD.loss_outlet[ucr] != 0.0 ||
                            CD.loss_avg[ucr] != 0.0);
         barrels_d_[uj] = static_cast<double>(std::max(CD.barrels[ucr], 1));
+        // legacy initLinks (flowrout.c:498): Conduit.q1 = newFlow / barrels.
+        q1_[uj] = links.flow[uj] / barrels_d_[uj];
         double len = CD.mod_length[ucr];
         if (len <= 0.0) len = CD.length[ucr];
         cached_length_[uj] = len;
@@ -1916,11 +1919,12 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
             if (nodes.type[un2] == NodeType::OUTFALL)
                 z2_off_eff = std::max(0.0, z2_off_eff - nodes.depth[un2]);
 
-            const double qLast = std::fabs(links.flow[uj]);
-            const double q = qLast / tile_barrels_d_[uci];
+            // legacy findSurfArea -> getFlowClass(j, qLast, ...) with qLast =
+            // Conduit.q1, the per-barrel flow itself (sign and magnitude).
+            const double q = std::fabs(q1_[uj]);
 
             if (both_wet) {
-                if (links.flow[uj] < 0.0) {
+                if (q1_[uj] < 0.0) {
                     // Reverse flow: check upstream end
                     if (z1_off_eff > 0.0) {
                         XSectParams& xs = xs_ref();
@@ -2513,6 +2517,7 @@ void DWSolver::processDryLink(SimulationContext& ctx, double dt,
     dqdh_[uj] = dt_g * aMid / tile_length_[uci] * barrels_d;
     froude_[uj] = 0.0;
     new_flow_[uj] = 0.0;
+    q1_[uj] = 0.0;   // legacy dwflow.c:196 Conduit.q1 = 0
     double yf = tile_y_full_[uci];
     links.depth[uj] = std::min(depth_mid_[uj], yf);
     // Volume uses RAW user-input length to match legacy. Legacy
@@ -2660,6 +2665,7 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
 
     // Save new flow
     new_flow_[uj] = q * barrels_d;
+    q1_[uj] = q;     // legacy dwflow.c:365 Conduit.q1 = q (per barrel)
 
     // Update link depth and volume
     links.depth[uj] = std::min(depth_mid_[uj], yf);
@@ -2692,7 +2698,7 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
     double inv_len = tile_inv_length_[uci];
     double aMid = area_mid_[uj];
     double rMid = hrad_mid_[uj];
-    double qLast = links.flow[uj] / barrels_d;
+    double qLast = q1_[uj];   // legacy Conduit.q1 (per barrel)
     double yf = tile_y_full_[uci];
     bool isFull = (depth1_[uj] >= yf && depth2_[uj] >= yf);
 
@@ -3093,7 +3099,7 @@ void DWSolver::processForceMainLink(SimulationContext& ctx, double dt, int step,
     double barrels_d = tile_barrels_d_[uci];
     double aMid = area_mid_[uj];
     double rMid = hrad_mid_[uj];
-    double qLast = links.flow[uj] / barrels_d;
+    double qLast = q1_[uj];   // legacy Conduit.q1 (per barrel)
 
     // Conveyance areas — Preissmann slot excluded (issue #144). A force main
     // is full for the whole simulation, so under SLOT the slot is always
