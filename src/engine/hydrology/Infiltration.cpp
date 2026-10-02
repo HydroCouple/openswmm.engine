@@ -59,21 +59,12 @@ void horton_init(HortonState& state, double f0, double fmin,
 double horton_getInfil(HortonState& state, double precip, double depth, double dt) {
     double ia = precip + depth / dt;  // available water rate (ft/sec)
 
-    if (ia <= 0.0) {
-        // Dry period — recovery
-        if (state.regen > 0.0 && state.tp > 0.0) {
-            double r = std::exp(-state.regen * dt);
-            double kd = state.decay;
-            if (kd > 0.0) {
-                double x = 1.0 - std::exp(-kd * state.tp);
-                state.tp = (x > 0.0) ? -std::log(1.0 - r * x) / kd : 0.0;
-            }
-            state.tp = std::max(state.tp, 0.0);
-        }
-        return 0.0;
-    }
-
-    // Wet period — matching legacy infil.c horton_getInfil() exactly
+    // Matching legacy infil.c horton_getInfil() exactly — including the dry
+    // case, which legacy handles in the regeneration branch below (after the
+    // special cases), where it also recovers the cumulative infiltration Fe
+    // toward Fmax. An early dry-period exit here regenerated tp only, so a
+    // Horton deck with MaxInfil > 0 kept Fe frozen through every dry spell
+    // and capped the next storm's infiltration too early.
     double f0   = state.f0;     // InfilFactor applied at call-site when monthly patterns are resolved
     double fmin = state.fmin;   // InfilFactor applied at call-site when monthly patterns are resolved
     double df   = f0 - fmin;
