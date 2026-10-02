@@ -118,7 +118,11 @@ void ExfilSolver::init(SimulationContext& ctx) {
             auto& curve = ctx.tables[curve_idx];
 
             // Bottom area = curve value at depth 0
-            soa_.btm_area[uk] = table_lookup_cursor(curve, 0.0);
+            // legacy exfil_initState uses table_lookupEx, whose below-range
+            // rule is x/x1*y1 (a line through the origin): a curve keyed from
+            // a depth > 0 (e.g. authored in elevations, 278..283 ft) has a
+            // ZERO bottom area, where a clamping lookup returns y[0].
+            soa_.btm_area[uk] = table_lookupEx(curve, 0.0);
 
             // Find bank min/max depths and max bank area by scanning curve
             soa_.bank_min_depth[uk] = 0.0;
