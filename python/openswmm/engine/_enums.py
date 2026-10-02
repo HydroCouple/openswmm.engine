@@ -650,38 +650,42 @@ class OutLinkVar(IntEnum):
 
 
 class OutSystemVar(IntEnum):
-    """System-wide output result variable indices.
+    """System-wide output result variable indices (the .out writer's slot order).
 
     @cvar TEMPERATURE: Air temperature.
     @cvar RAINFALL: System-wide rainfall rate.
     @cvar SNOW_DEPTH: Average snow depth.
-    @cvar EVAP: System-wide evaporation rate.
     @cvar INFIL: System-wide infiltration rate.
     @cvar RUNOFF: System-wide runoff rate.
     @cvar DW_INFLOW: Dry-weather inflow rate.
     @cvar GW_INFLOW: Groundwater inflow rate.
-    @cvar LAT_INFLOW: Total lateral inflow rate.
+    @cvar RDII_INFLOW: RDII inflow rate.
+    @cvar EXT_INFLOW: External (direct) inflow rate.
+    @cvar TOTAL_INFLOW: Total lateral inflow rate.
     @cvar FLOODING: Total flooding rate.
     @cvar OUTFLOW: Total outfall outflow rate.
     @cvar STORAGE: Total network storage volume.
-    @cvar EVAP_TOTAL: Actual evaporation rate.
+    @cvar EVAP: Evaporation rate.
     @cvar PET: Potential evapotranspiration rate.
+    @cvar LAT_INFLOW: Deprecated alias of TOTAL_INFLOW.
     """
 
     TEMPERATURE = 0
     RAINFALL = 1
     SNOW_DEPTH = 2
-    EVAP = 3
-    INFIL = 4
-    RUNOFF = 5
-    DW_INFLOW = 6
-    GW_INFLOW = 7
-    LAT_INFLOW = 8
-    FLOODING = 9
-    OUTFLOW = 10
-    STORAGE = 11
-    EVAP_TOTAL = 12
-    PET = 13
+    INFIL = 3
+    RUNOFF = 4
+    DW_INFLOW = 5
+    GW_INFLOW = 6
+    RDII_INFLOW = 7
+    EXT_INFLOW = 8
+    TOTAL_INFLOW = 9
+    FLOODING = 10
+    OUTFLOW = 11
+    STORAGE = 12
+    EVAP = 13
+    PET = 14
+    LAT_INFLOW = 9
 
 
 # =============================================================================

@@ -128,23 +128,26 @@ typedef enum SWMM_OutLinkVar {
 /**
  * @brief System-wide result variable indices.
  *
- * @details 14 system-wide summary results stored per output period.
+ * @details 15 system-wide summary results stored per output period, in the
+ *          slot order the .out writer uses (legacy SWMM 5 SysResults order).
  */
 typedef enum SWMM_OutSystemVar {
     SWMM_OUT_SYS_TEMPERATURE    =  0, /**< Air temperature. */
     SWMM_OUT_SYS_RAINFALL       =  1, /**< Average rainfall. */
     SWMM_OUT_SYS_SNOW_DEPTH     =  2, /**< Average snow depth. */
-    SWMM_OUT_SYS_EVAP           =  3, /**< Average evaporation. */
-    SWMM_OUT_SYS_INFIL          =  4, /**< Average infiltration. */
-    SWMM_OUT_SYS_RUNOFF         =  5, /**< Total runoff flow. */
-    SWMM_OUT_SYS_DW_INFLOW      =  6, /**< Dry weather inflow. */
-    SWMM_OUT_SYS_GW_INFLOW      =  7, /**< Groundwater inflow. */
-    SWMM_OUT_SYS_LAT_INFLOW     =  8, /**< Lateral inflow. */
-    SWMM_OUT_SYS_FLOODING       =  9, /**< Total flooding. */
-    SWMM_OUT_SYS_OUTFLOW        = 10, /**< Total outfall outflow. */
-    SWMM_OUT_SYS_STORAGE        = 11, /**< Total storage volume. */
-    SWMM_OUT_SYS_EVAP_TOTAL     = 12, /**< Total evaporation. */
-    SWMM_OUT_SYS_PET            = 13  /**< Potential evapotranspiration. */
+    SWMM_OUT_SYS_INFIL          =  3, /**< Average infiltration. */
+    SWMM_OUT_SYS_RUNOFF         =  4, /**< Total runoff flow. */
+    SWMM_OUT_SYS_DW_INFLOW      =  5, /**< Dry weather inflow. */
+    SWMM_OUT_SYS_GW_INFLOW      =  6, /**< Groundwater inflow. */
+    SWMM_OUT_SYS_RDII_INFLOW    =  7, /**< RDII inflow. */
+    SWMM_OUT_SYS_EXT_INFLOW     =  8, /**< External (direct) inflow. */
+    SWMM_OUT_SYS_TOTAL_INFLOW   =  9, /**< Total lateral inflow (runoff + DWF + GW + RDII + external). */
+    SWMM_OUT_SYS_FLOODING       = 10, /**< Total flooding. */
+    SWMM_OUT_SYS_OUTFLOW        = 11, /**< Total outfall outflow. */
+    SWMM_OUT_SYS_STORAGE        = 12, /**< Total storage volume. */
+    SWMM_OUT_SYS_EVAP           = 13, /**< Evaporation rate. */
+    SWMM_OUT_SYS_PET            = 14, /**< Potential evapotranspiration. */
+    SWMM_OUT_SYS_LAT_INFLOW     = SWMM_OUT_SYS_TOTAL_INFLOW /**< Deprecated alias of TOTAL_INFLOW. */
 } SWMM_OutSystemVar;
 
 /* =========================================================================

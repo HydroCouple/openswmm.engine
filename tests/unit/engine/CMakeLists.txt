@@ -104,6 +104,7 @@ add_gtest_unit(test_engine_plugin_filter_invariant test_plugin_filter_invariant.
 add_gtest_unit(test_engine_pluginfactory_builtins test_pluginfactory_builtins.cpp)
 # Slice QA-01.4 — per-node summary stats read from a SWMM_Output handle.
 add_gtest_unit(test_engine_output_node_stats     test_output_node_stats.cpp)
+add_gtest_unit(test_engine_output_system_vars    test_output_system_vars.cpp)
 # Live (footer-less) .out reading — swmm_output_open_live / _refresh.
 add_gtest_unit(test_engine_output_reader_live    test_output_reader_live.cpp)
 add_gtest_unit(test_engine_model_write_with_plugin test_model_write_with_plugin.cpp)
@@ -356,6 +357,7 @@ add_gtest_unit(test_engine_site_drainage_builder test_site_drainage_builder.cpp)
 # parallel with the rest of the suite.
 set_property(TEST
     test_engine_output_node_stats
+    test_engine_output_system_vars
     test_engine_links_bulk_phase3
     test_engine_links_pump_stats_bulk
     test_engine_nodes_bulk_phase3
