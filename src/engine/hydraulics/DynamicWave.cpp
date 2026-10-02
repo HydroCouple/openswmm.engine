@@ -2747,13 +2747,23 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
             // crown trips closed_nearfull above (fr = 0), and an open shape
             // gets slot width 0 from getSlotWidth() so STEP E never overrides
             // it. Keeping aMid preserves the legacy hydraulic-depth grouping.
+            // PARITY: legacy link_getFroude re-evaluates xsect_getAofY(yMid)
+            // rather than reusing the momentum area. Below full the two are
+            // the same bits; ABOVE full (an open shape under SLOT, where yMid
+            // is not clamped) aMid is clamped to aFull while getAofY
+            // extrapolates — a trapezoid at 5.013 of 5 ft reads 65.30 ft2,
+            // not 65.00, and the 0.46% hydraulic-depth gap moved user5-slot's
+            // Courant step across a millisecond boundary.
+            double aFr = aMid;
+            if (depth_mid_[uj] > yf)
+                aFr = xsect::getAofY(buildXSP(ctx, uj), depth_mid_[uj]);
             // PARITY: legacy divides A/W with no width guard. A top width
             // below FUDGE is real on sliver sections (an ellipse authored
             // 0.0001 ft wide has W ~ 3e-5 ft at shallow depth): the huge
             // hydraulic depth gives a small NONZERO Froude that can still
             // pass getLinkStep's 0.01 gate and set the variable step. Only
             // W == 0 short-circuits — legacy's A/0 = inf gives Fr = 0 too.
-            double dh = (wMid > 0.0) ? aMid / wMid : 0.0;
+            double dh = (wMid > 0.0) ? aFr / wMid : 0.0;
             // PARITY: legacy link_getFroude computes sqrt(GRAVITY * y) directly
             // (link.c). Using the precomputed SQRT_GRAVITY constant (a truncated
             // sqrt(32.2)) times sqrt(dh) differs by ~3e-9 and reorders the FP
@@ -4336,12 +4346,16 @@ double DWSolver::getLinkStep(const SimulationContext& ctx, int link_idx) const {
     double vol = ctx.links.volume[uj] / static_cast<double>(barrels);
     double t = vol / q;
 
-    // Apply modified length factor for short conduits / culverts
-    // (matching legacy dynwave.c line 855: t *= modLength / length)
-    t *= Lscale;
-
-    t *= fr / (1.0 + fr);  // Froude-based CFL factor
-    return t;              // CourantFactor applied per-link in getRoutingStep
+    // PARITY: legacy getLinkStep's exact association (dynwave.c:897-901):
+    //     t = t * Conduit[k].modLength / link_getLength(i);
+    //     t = t * Link[i].froude / (1.0 + Link[i].froude) * CourantFactor;
+    // i.e. (t*modL)/L and (t*Fr)/(1+Fr). Pre-forming modL/L or Fr/(1+Fr)
+    // rounds differently — even (t*L)/L is not always t — and the step is
+    // floored to whole milliseconds, so a few-ULP difference straddling a
+    // millisecond boundary moves the step grid by 1 ms (user5-slot).
+    if (L > 0.0 && modL > 0.0) t = t * modL / L;
+    t = t * fr / (1.0 + fr);  // Froude-based CFL factor
+    return t;                 // CourantFactor applied per-link in getRoutingStep
 }
 
 } // namespace dynwave
