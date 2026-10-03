@@ -68,7 +68,8 @@ std::string deck(const std::string& options_extra, const std::string& quality,
          "\n[SUBCATCHMENTS]\nS1  RG1  J1  10.0  50   500  0.5  0\n"
          "\n[SUBAREAS]\nS1  0.01  0.1  0.05  0.05  25  OUTLET\n"
          "\n[INFILTRATION]\nS1  3.0  0.5  4.0  7  0\n"
-         "\n[TIMESERIES]\nTS1  01/01/2026 00:00 1.0\nTS1  01/01/2026 01:00 1.0\nTS1  01/01/2026 01:01 0.0\n"
+         // Spacing >= the 0:05 recording interval (legacy ERROR 159).
+         "\n[TIMESERIES]\nTS1  01/01/2026 00:00 1.0\nTS1  01/01/2026 01:00 1.0\nTS1  01/01/2026 01:05 0.0\n"
          "\n[JUNCTIONS]\nJ1  100.0  10.0  0.0  0.0  0.0\n"
          "\n[OUTFALLS]\nO1  95.0  FREE\n"
          "\n[CONDUITS]\nC1  J1  O1  400.0  0.013  0  0\n"

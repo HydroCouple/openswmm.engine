@@ -7627,11 +7627,39 @@ void SWMMEngine::validate_project() noexcept {
     // subcatchment or UH group reads): hec-hms-hyetographs carries 44 gages
     // down to a 4 s interval, one of which its single subcatchment uses,
     // and legacy keeps WetStep at 60 s and the routing step at 30 s there.
+    // Legacy gage_validate checks only a TIMESERIES gage, and returns before
+    // any check for a co-gage (one sharing an earlier used gage's series).
     const int ng = ctx_.n_gages();
     for (int g = 0; g < ng; ++g) {
+        const auto ug = static_cast<std::size_t>(g);
         if (!gage::gageIsUsed(ctx_, g)) continue;
+        if (ctx_.gages.source[ug] != RainSource::TIMESERIES) continue;
+        if (ctx_.gages.co_gage_index[ug] >= 0) continue;
+
+        // ERROR 159 / WARNING 09: recording interval against the series'
+        // smallest spacing, rounded to whole seconds (gage.c:265-275). A
+        // single-point series has no spacing. File-backed series stream
+        // their rows and are not checked here.
+        const int ts = ctx_.gages.ts_index[ug];
+        if (ts >= 0 && ts < static_cast<int>(ctx_.tables.tables.size())) {
+            const auto& tx = ctx_.tables.tables[static_cast<std::size_t>(ts)].x;
+            if (tx.size() > 1) {
+                double dx_min = tx[1] - tx[0];
+                for (std::size_t k = 2; k < tx.size(); ++k)
+                    dx_min = std::min(dx_min, tx[k] - tx[k - 1]);
+                const int ts_interval =
+                    static_cast<int>(std::floor(dx_min * 86400.0 + 0.5));
+                if (ts_interval > 0 && ctx_.gages.interval_sec[ug] > ts_interval)
+                    ctx_.errors.push_back(
+                        format_error(ERR_RAIN_GAGE_INTERVAL, ctx_.gage_names.name_of(g)));
+                if (ctx_.gages.interval_sec[ug] < ts_interval)
+                    ctx_.warnings.push_back(
+                        format_warning(WARN_GAGE_INTERVAL, ctx_.gage_names.name_of(g)));
+            }
+        }
+
         const double interval =
-            static_cast<double>(ctx_.gages.interval_sec[static_cast<std::size_t>(g)]);
+            static_cast<double>(ctx_.gages.interval_sec[ug]);
         if (interval > 0.0 && opt.wet_step > interval) {
             opt.wet_step = interval;
             ctx_.warnings.push_back(
