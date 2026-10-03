@@ -96,13 +96,20 @@ TEST_F(ControlsParityTest, ActionsRequireTheDeclaredLinkSubtype) {
             ControlEngine eng;
             const std::string rule = "RULE T1\nIF SIMULATION TIME > 0\nTHEN " +
                 std::string(declared_name) + " C1 SETTING = 0.5\n";
+            // Legacy addAction: a CONDUIT action takes STATUS only.
             EXPECT_EQ(eng.parseRuleText(rule, ctx),
-                      actual_type == declared_type ? 1 : -1);
+                      (actual_type == declared_type &&
+                       actual_type != openswmm::LinkType::CONDUIT) ? 1 : -1);
         }
         ControlEngine eng;
+        // Legacy addAction rejects a generic LINK action.
         EXPECT_EQ(eng.parseRuleText(
-            "RULE T1\nIF SIMULATION TIME > 0\nTHEN LINK C1 SETTING = 0.5\n", ctx), 1);
+            "RULE T1\nIF SIMULATION TIME > 0\nTHEN LINK C1 SETTING = 0.5\n", ctx), -1);
     }
+    ctx.link_subtypes.set_link_type(ctx.links, 1, openswmm::LinkType::CONDUIT);
+    ControlEngine eng;
+    EXPECT_EQ(eng.parseRuleText(
+        "RULE T1\nIF SIMULATION TIME > 0\nTHEN CONDUIT C1 STATUS = CLOSED\n", ctx), 1);
 }
 
 TEST_F(ControlsParityTest, SimulationTimeHoursParsedAsDays) {
