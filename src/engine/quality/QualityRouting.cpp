@@ -1040,11 +1040,17 @@ void QualitySolver::mixAtNodes(SimulationContext& ctx, double dt) {
                     nodes.conc[idx] = 0.0;
                 } else if (nodes.depth[ui] > ZERO_DEPTH) {
                     // Legacy 5.2.1: a WET node with no inflow holds its
-                    // quality; a DRY one keeps the accumulated load, which
-                    // with no inflow is nothing.
+                    // quality.
                     nodes.conc[idx] = nodes.conc_old[idx];
                 } else {
-                    nodes.conc[idx] = 0.0;
+                    // A DRY one leaves Node.newQual as the accumulator
+                    // (qualrout.c findNodeQual): the summed q*c load rate,
+                    // published as its concentration. The inflow is only
+                    // at or below ZERO (1e-10 cfs), not absent, so the
+                    // load is tiny but not zero (1943-h-h-elements-si-units
+                    // reports 1e-10..1e-13 mg/L there).
+                    nodes.conc[idx] = (idx < nodes.qual_mass_in.size())
+                                    ? nodes.qual_mass_in[idx] : 0.0;
                 }
             }
             continue;
