@@ -217,7 +217,13 @@ void handle_rdii(SimulationContext& ctx, const std::vector<std::string>& lines) 
 void handle_hydrographs(SimulationContext& ctx, const std::vector<std::string>& lines) {
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
-        if (tok.size() < 2) continue;
+        if (tok.empty()) continue;
+        // Legacy rdii_readUnitHydParams: a gage row has 2 items, a response
+        // row at least 6; anything else is ERR_ITEMS (rdii.c).
+        if (tok.size() == 1 || (tok.size() > 2 && tok.size() < 6)) {
+            ctx.errors.push_back(format_error(ERR_ITEMS, tok[0]));
+            continue;
+        }
 
         const std::string& uh_name = tok[0];
 
@@ -228,7 +234,6 @@ void handle_hydrographs(SimulationContext& ctx, const std::vector<std::string>& 
         }
 
         // Otherwise: UHgroup  Month  Response  R  T  K  [Dmax  Drecov  Dinit]
-        if (tok.size() < 6) continue;
 
         // Parse month: "All" → -1, or numeric 1-12 → 0-based (0-11)
         int month = -1;
