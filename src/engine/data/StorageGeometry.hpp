@@ -52,8 +52,11 @@
 
 namespace openswmm {
 
-/** @brief π to the precision legacy uses (src/legacy/engine/consts.h). */
-inline constexpr double kStoragePi = 3.141592653589793;
+/** @brief π to the precision legacy uses (src/legacy/engine/consts.h:
+ *  `#define PI 3.141592654`, the same truncated literal as constants::PI).
+ *  Full double π differs by 1.3e-10 relative, enough to move a storage
+ *  unit's depth off legacy's bits from the first routing step. */
+inline constexpr double kStoragePi = 3.141592654;
 
 /**
  * @brief True when @p s is one of the four geometric shapes (i.e. its a/b/c are

@@ -46,7 +46,7 @@ using namespace openswmm;
 
 namespace {
 
-constexpr double kPi = 3.141592653589793;
+constexpr double kPi = 3.141592654;   // legacy consts.h PI (truncated literal)
 
 /** @brief One storage node (index 0) carrying shape @p s with dimensions p1/p2/p3. */
 struct ShapeFixture {
