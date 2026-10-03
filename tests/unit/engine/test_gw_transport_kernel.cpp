@@ -95,7 +95,8 @@ std::string deck(Mesh m, const std::string& extra_gw = "",
          "[OUTFALLS]\nO1 -2.5 FREE NO\n\n"
          "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n"
          "[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n\n"
-         "[RAINGAGES]\nRG1 INTENSITY 1:00 1.0 TIMESERIES RAIN\n\n"
+         // Interval <= the series' 10-min spacing (legacy ERROR 159).
+         "[RAINGAGES]\nRG1 INTENSITY 0:10 1.0 TIMESERIES RAIN\n\n"
          "[TIMESERIES]\nRAIN  0:00  20.0\nRAIN  0:10  0.0\n\n"
          "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\n"
          "DRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\nRAINFALL_MODE SYSTEM\n"

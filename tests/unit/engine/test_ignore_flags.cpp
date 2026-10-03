@@ -112,7 +112,8 @@ std::string rain_model(const std::string& ignore_lines,
          ";;Name Date Time Value\n"
          "TS1  01/01/2026 00:00 1.0\n"
          "TS1  01/01/2026 01:00 1.0\n"
-         "TS1  01/01/2026 01:01 0.0\n"
+         // Spacing >= the 0:05 recording interval (legacy ERROR 159).
+         "TS1  01/01/2026 01:05 0.0\n"
          "\n[JUNCTIONS]\n"
          ";;Name Elev MaxDepth InitDepth SurDepth Aponded\n"
          "J1  100.0  10.0  0.0  0.0  0.0\n"
