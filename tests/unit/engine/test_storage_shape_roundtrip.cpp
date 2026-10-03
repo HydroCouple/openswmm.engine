@@ -124,7 +124,7 @@ TEST(StorageShapeInpRoundTrip, ParsesEveryShapeForm) {
     const StorageSnap cyl = snapshot(e, "SCYL");   // major 30, minor 20
     EXPECT_DOUBLE_EQ(cyl.a, 0.0);
     EXPECT_DOUBLE_EQ(cyl.b, 0.0);
-    EXPECT_DOUBLE_EQ(cyl.c, 3.141592653589793 * 15.0 * 10.0);   // π·A·B
+    EXPECT_DOUBLE_EQ(cyl.c, 3.141592654 * 15.0 * 10.0);   // legacy PI·A·B
 
     swmm_engine_close(e);
     swmm_engine_destroy(e);
