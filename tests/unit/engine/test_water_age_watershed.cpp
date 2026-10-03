@@ -110,7 +110,7 @@ void write_deck(const char* path, const std::string& pc_lines,
       << "[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\n\n";
     if (!pc_lines.empty())
         f << "[PROCESS_COMPONENTS]\n" << pc_lines << "\n\n";
-    f << "[REPORT]\nINPUT NO\n";
+    f << "[REPORT]\nINPUT NO\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n";
 }
 
 std::string age_cfg(double rain_h) {
@@ -359,7 +359,7 @@ TEST(WaterAgeWatershedTest, ShedAgeIsTheResidenceTimeUnderSteadyRain) {
           << "[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\n\n"
           << "[PROCESS_COMPONENTS]\n"
           << "org.hydrocouple.openswmm.waterage config=\"_a3t.age\"\n\n"
-          << "[REPORT]\nINPUT NO\n";
+          << "[REPORT]\nINPUT NO\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n";
     }
     SWMM_Engine e = run_and_hold("_a3t.inp", "_a3t.rpt", "_a3t.out");
     ASSERT_NE(e, nullptr);
@@ -504,7 +504,7 @@ TEST(WaterAgeWatershedTest, SubcatchmentAgeReachesTheOutByName) {
           << "[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\n\n"
           << "[PROCESS_COMPONENTS]\n"
           << "org.hydrocouple.openswmm.waterage config=\"_a3o.age\"\n\n"
-          << "[REPORT]\nINPUT NO\n";
+          << "[REPORT]\nINPUT NO\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n";
     }
     SWMM_Engine e = run_and_hold("_a3o.inp", "_a3o.rpt", "_a3o.out");
     ASSERT_NE(e, nullptr);
@@ -617,7 +617,7 @@ TEST(WaterAgeWatershedTest, RunonFromEveryContributorKeepsAgesAboveTheSource) {
           << "[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\n\n"
           << "[PROCESS_COMPONENTS]\n"
           << "org.hydrocouple.openswmm.waterage config=\"_a3l.age\"\n\n"
-          << "[REPORT]\nINPUT NO\n";
+          << "[REPORT]\nINPUT NO\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n";
     }
     SWMM_Engine e = run_and_hold("_a3l.inp", "_a3l.rpt", "_a3l.out");
     ASSERT_NE(e, nullptr);

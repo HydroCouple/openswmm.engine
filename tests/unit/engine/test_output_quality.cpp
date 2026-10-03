@@ -101,7 +101,7 @@ void write_deck(const char* path, const std::string& extra_options = "",
       << kCinit << "\n\n";
     if (!pc_lines.empty())
         f << "[PROCESS_COMPONENTS]\n" << pc_lines << "\n\n";
-    f << "[REPORT]\nINPUT NO\n";
+    f << "[REPORT]\nINPUT NO\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n";
 }
 
 /// The species IDs the .out header carries, read from the bytes.
@@ -489,7 +489,7 @@ TEST(OutputQualityTest, FlowingRegulatorsKeepTheirAge) {
           << "[INFLOWS]\nJ0 FLOW \"\" FLOW 1.0 1.0 5.0\n\n"
           << "[PROCESS_COMPONENTS]\n"
           << "org.hydrocouple.openswmm.waterage config=\"_oq_reg.age\"\n\n"
-          << "[REPORT]\nINPUT NO\n";
+          << "[REPORT]\nINPUT NO\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n";
     }
     ASSERT_TRUE(run_deck("_oq_reg.inp", "_oq_reg.rpt", "_oq_reg.out"));
 

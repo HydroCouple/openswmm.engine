@@ -118,7 +118,7 @@ void write_deck(const char* path, const std::string& extra_options,
              "0    42\n\n";
     if (!pc_lines.empty())
         f << "[PROCESS_COMPONENTS]\n" << pc_lines << "\n\n";
-    f << "[REPORT]\nINPUT NO\n";
+    f << "[REPORT]\nINPUT NO\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n";
 }
 
 /// The standard H1 source table: the two inlet temperatures plus a
