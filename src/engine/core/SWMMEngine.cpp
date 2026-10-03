@@ -3875,8 +3875,16 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                         // type only when a buildup function is modelled.
                         // RATING without buildup supplies its own mass, just
                         // as EMC does; capping it to an empty store erases it.
-                        if (load > max_load && bp.type != landuse::BuildupType::NONE)
+                        // A capped step washes off the whole store: legacy
+                        // subtracts MIN(washoffLoad, buildup) in user mass and
+                        // leaves EXACTLY 0. The rate round trip below leaves
+                        // a ~1e-13 residue, and the next dry step's power-law
+                        // inverse turns that into a nonzero equivalent age.
+                        bool capped = false;
+                        if (load > max_load && bp.type != landuse::BuildupType::NONE) {
                             load = max_load;
+                            capped = true;
+                        }
 
                         // Reduce per-landuse buildup by washoff amount —
                         // buildup is user mass per normalizer unit, so the
@@ -3903,6 +3911,8 @@ void SWMMEngine::stepSurfaceQuality(double dt_runoff) noexcept {
                             if (upb2 < ctx_.mass_balance.qual_surface_buildup.size())
                                 ctx_.mass_balance.qual_surface_buildup[upb2] +=
                                     washed_mass;
+                            surface_quality_.buildup[bu] = 0.0;
+                        } else if (capped) {
                             surface_quality_.buildup[bu] = 0.0;
                         } else if (norm > 0.0) {
                             double washed = washed_mass / norm;
