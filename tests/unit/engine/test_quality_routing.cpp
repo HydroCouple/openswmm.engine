@@ -529,7 +529,7 @@ TEST_F(QualityRoutingTest, ResidualInflowBelowLegacyZeroIsNotDividedBy) {
     const double dt = 10.0;
 
     // Node1 takes L0's flow and is NOT a reactor: no storage type, no old
-    // volume. It is also dry, so the no-inflow branch cannot hold anything.
+    // volume. It is also dry, so the no-inflow branch holds no old quality.
     ctx.nodes.old_volume[1] = 0.0;
     ctx.nodes.volume[1] = 0.0;
     ctx.nodes.depth[1] = 0.0;
@@ -552,7 +552,9 @@ TEST_F(QualityRoutingTest, ResidualInflowBelowLegacyZeroIsNotDividedBy) {
 
     solver.execute(ctx, dt);
 
-    EXPECT_DOUBLE_EQ(ctx.nodes.conc[1 * NP + 0], 0.0)
+    // Legacy leaves a dry node's accumulator in place: the q*c load rate
+    // (1e-14 * 1e5), not the ratio 1e5.
+    EXPECT_DOUBLE_EQ(ctx.nodes.conc[1 * NP + 0], 1.0e-14 * 1.0e5)
         << "an inflow below legacy's ZERO must be refused, not divided by";
 
     // The same node, a decade ABOVE ZERO, still divides: this is a
