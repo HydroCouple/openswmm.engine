@@ -244,7 +244,14 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
         // Timesteps
         // -----------------------------------------------------------------
         } else if (key == "ROUTING_STEP") {
-            opt.routing_step = parse_time_seconds(val);
+            // Legacy project.c:692-694 rejects a step <= 0 (and an
+            // unparseable one, which parses to 0 here) with ERR_NUMBER.
+            const double step = parse_time_seconds(val);
+            if (step <= 0.0) {
+                ctx.errors.push_back(format_error(ERR_NUMBER, val));
+                continue;
+            }
+            opt.routing_step = step;
         } else if (key == "MINIMUM_STEP") {
             opt.min_routing_step = parse_time_seconds(val);
         } else if (key == "DRY_DAYS") {
