@@ -2334,6 +2334,29 @@ void resolve_cross_references(SimulationContext& ctx) {
     }
 
     // -------------------------------------------------------------------------
+    // [INFLOWS] baseline / [DWF] time pattern names (legacy inflow.c:124 and
+    // :270, ERR_NAME). InflowSolver::init skips a name it cannot find, so a
+    // deck naming patterns it never defines ran with unpatterned inflow.
+    // -------------------------------------------------------------------------
+    {
+        std::unordered_map<std::string, int, CiHash, CiEqual> pattern_by_name;
+        for (int k = 0; k < ctx.patterns.count(); ++k)
+            pattern_by_name.emplace(ctx.patterns.names[static_cast<std::size_t>(k)], k);
+        auto check = [&](const std::string& name) {
+            if (!name.empty() && pattern_by_name.find(name) == pattern_by_name.end())
+                ctx.errors.push_back(format_error(ERR_NAME, name));
+        };
+        for (const auto& name : ctx.ext_inflows.pattern_name) check(name);
+        for (int i = 0; i < ctx.dwf_inflows.count(); ++i) {
+            const auto ui = static_cast<std::size_t>(i);
+            check(ctx.dwf_inflows.pat1[ui]);
+            check(ctx.dwf_inflows.pat2[ui]);
+            check(ctx.dwf_inflows.pat3[ui]);
+            check(ctx.dwf_inflows.pat4[ui]);
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // [INITIAL_QUALITY] element + constituent resolution
     // -------------------------------------------------------------------------
     // The section may precede the node/link/pollutant sections, so the handler
