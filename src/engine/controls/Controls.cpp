@@ -1286,7 +1286,7 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                 return fail("no link named '" + toks[static_cast<size_t>(k)] +
                             "' exists in the model");
             // Legacy addAction (controls.c:1435-1461) validates the declared
-            // subtype as well as the name. LINK remains the generic spelling.
+            // subtype as well as the name.
             const auto link_type = ctx.links.type[static_cast<size_t>(link_idx)];
             if ((obj_type == "CONDUIT" && link_type != LinkType::CONDUIT) ||
                 (obj_type == "PUMP" && link_type != LinkType::PUMP) ||
@@ -1307,6 +1307,18 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
             if (attr != "STATUS" && attr != "SETTING")
                 return fail("'" + toks[static_cast<size_t>(k)] + "' is not a valid "
                             "action attribute (expected STATUS or SETTING)");
+            // Legacy addAction (controls.c:1466-1515) then restricts the
+            // attribute by object: CONDUIT takes STATUS only, PUMP STATUS or
+            // SETTING, ORIFICE/WEIR/OUTLET SETTING only, and a generic LINK
+            // action is rejected (ERR_KEYWORD).
+            if (obj_type == "LINK")
+                return fail("a LINK action is not accepted; name the link's type "
+                            "(CONDUIT, PUMP, ORIFICE, WEIR or OUTLET)");
+            if (obj_type == "CONDUIT" && attr != "STATUS")
+                return fail("CONDUIT actions take STATUS only");
+            if ((obj_type == "ORIFICE" || obj_type == "WEIR" || obj_type == "OUTLET") &&
+                attr != "SETTING")
+                return fail(obj_type + " actions take SETTING only");
             k++;
 
             // Skip '=' token
