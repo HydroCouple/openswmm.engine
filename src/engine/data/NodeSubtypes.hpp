@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file NodeSubtypes.hpp
  * @brief Relational (normalized) Structure-of-Arrays side-tables for node subtypes.
@@ -32,7 +48,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_NODE_SUBTYPES_HPP
@@ -90,6 +106,11 @@ struct StorageData {
     std::vector<double>      evap_loss;
     /** @brief Exfiltration loss this timestep (ft3). */
     std::vector<double>      exfil_loss;
+    /** @brief Raw (uncapped) exfiltration rate this timestep (cfs), written by
+     *  ExfilSolver::computeAll and consumed by Router::initNodeFlows, which
+     *  applies legacy's single joint evap+exfil volume cap and books the final
+     *  exfil_loss volume. Kept as a rate so no dt round-trip perturbs bits. */
+    std::vector<double>      exfil_rate;
     /** @brief Green-Ampt suction head for exfiltration. */
     std::vector<double>      exfil_suction;
     /** @brief Green-Ampt saturated conductivity for exfiltration. */
@@ -107,6 +128,7 @@ struct StorageData {
         a.clear(); b.clear(); c.clear();
         p1.clear(); p2.clear(); p3.clear();
         seep_rate.clear(); evap_frac.clear(); evap_loss.clear(); exfil_loss.clear();
+        exfil_rate.clear();
         exfil_suction.clear(); exfil_ksat.clear(); exfil_imd.clear();
     }
 
@@ -118,7 +140,7 @@ struct StorageData {
         a.reserve(un); b.reserve(un); c.reserve(un);
         p1.reserve(un); p2.reserve(un); p3.reserve(un);
         seep_rate.reserve(un); evap_frac.reserve(un);
-        evap_loss.reserve(un); exfil_loss.reserve(un);
+        evap_loss.reserve(un); exfil_loss.reserve(un); exfil_rate.reserve(un);
         exfil_suction.reserve(un); exfil_ksat.reserve(un); exfil_imd.reserve(un);
     }
 
@@ -144,6 +166,7 @@ struct StorageData {
         evap_frac.insert(evap_frac.begin() + p, 0.0);
         evap_loss.insert(evap_loss.begin() + p, 0.0);
         exfil_loss.insert(exfil_loss.begin() + p, 0.0);
+        exfil_rate.insert(exfil_rate.begin() + p, 0.0);
         exfil_suction.insert(exfil_suction.begin() + p, 0.0);
         exfil_ksat.insert(exfil_ksat.begin() + p, 0.0);
         exfil_imd.insert(exfil_imd.begin() + p, 0.0);
@@ -167,6 +190,7 @@ struct StorageData {
         evap_frac.erase(evap_frac.begin() + p);
         evap_loss.erase(evap_loss.begin() + p);
         exfil_loss.erase(exfil_loss.begin() + p);
+        exfil_rate.erase(exfil_rate.begin() + p);
         exfil_suction.erase(exfil_suction.begin() + p);
         exfil_ksat.erase(exfil_ksat.begin() + p);
         exfil_imd.erase(exfil_imd.begin() + p);

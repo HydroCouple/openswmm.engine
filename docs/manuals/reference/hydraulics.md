@@ -41,11 +41,13 @@ water quality and low impact development models.
 
 ## List of Figures
 
+<!-- BEGIN GENERATED: list-of-figures style=plain -->
+
 Figure 1-1 Elements of a typical urban drainage system
 
-Figure 1-2 SWMM's conceptual model of a stormwater drainage system
+Figure 1-2 Objects of an OpenSWMM model
 
-Figure 1-3 Processes modeled by SWMM
+Figure 1-3 Processes modelled by OpenSWMM
 
 Figure 1-4 Block diagram of SWMM's state transition process
 
@@ -53,11 +55,13 @@ Figure 1-5 Flow chart of SWMM's simulation procedure
 
 Figure 1-6 Interpolation of reported values from computed values
 
+Figure 1-7 The hydraulics of this manual: the 1D network, the 2D surface and their coupling
+
 Figure 2-1 Node-link representation of a sewer system
 
-Figure 2-2 Comparison of dynamic wave and kinematic wave solutions
+Figure 2-2 Comparison of dynamic wave and kinematic wave solutions (from Miller, 1984)
 
-Figure 3-1 Node-link representation of a conveyance network in SWMM
+Figure 3-1 Node-link representation of a conveyance network in SWMM (from Roesner et al, 1992).
 
 Figure 3-2 Special flow conditions for dynamic wave analysis
 
@@ -69,15 +73,15 @@ Figure 3-5 Profile view of example rectangular conduit (not to scale)
 
 Figure 3-6 Outflow hydrographs for example conduit -I
 
-Figure 3-7 Outflow hydrographs for example conduit -- II
+Figure 3-7 Outflow hydrographs for example conduit – II
 
 Figure 3-8 Conceptual representation of the dynamic Preissmann slot
 
-Figure 3-9 State transitions of the dynamic Preissmann slot at a conduit end
+Figure 3-9 State transitions of the dynamic Preissmann slot at a conduit end (rendered diagram; states and transitions as implemented in `updateDPSState`)
 
 Figure 3-10 Virtual junction representation of a conduit grade break
 
-Figure 3-11 Workflow of one Anderson-accelerated iteration of the successive-approximation loop
+Figure 3-11 Workflow of one Anderson-accelerated iteration of the successive-approximation loop (rendered diagram)
 
 Figure 4-1 Section factor versus area for a circular shape
 
@@ -103,9 +107,11 @@ Figure 5-8 A natural channel transect
 
 Figure 5-9 A transect depth increment with three compound segments
 
-Figure 5-10 Example of a storage curve and its section view
+Figure 5-10 A one-sided street cross-section (not to scale)
 
-Figure 5-11 Finding the volume at a given depth for a storage curve
+Figure 5-11 Example of a storage curve and its section view
+
+Figure 5-12 Finding the volume at a given depth for a storage curve
 
 Figure 6-1 Orifice orientations
 
@@ -133,19 +139,51 @@ Figure 7-5 SWMM node-link representation of a culvert with a roadway weir
 
 Figure 7-6 Discharge coefficients for roadway weirs (from FHWA, 2012)
 
-Figure 8-1 Substep workflow of the explicit finite-volume solver
+Figure 7-7 Examples of storm drain inlets.
 
-Figure 8-2 Wet/dry and exception handling in one face flux evaluation
+Figure 7-8 Standard types of curb and gutter inlets
 
-Figure 8-3 Hydrostatic reconstruction at a wet/dry front
+Figure 7-9 Performance curve for a custom inlet
 
-Figure 8-4 Node ghost-state construction at a coupling face
+Figure 7-10 Representation of a dual drainage system
 
-Figure 9-1 One 1D–2D co-advance batch and the explicit marcher's substep loop within it
+Figure 7-11 Street cross-section divided into gutter and roadway flow
 
-Figure 9-2 Wetting cases of a planar-bed triangular cell and the wetted-edge face gate
+Figure 7-12 Types of channel drop inlets
+
+Figure 8-1 Node–link routing against the finite-volume view: one momentum balance per conduit versus a conduit cut into cells with the water surface resolved inside it
+
+Figure 8-2 The tapered static slot for a 3 ft circular pipe: top width and celerity across the crown at four slot celerities
+
+Figure 8-3 The Riemann fan at a face: HLL signal speeds for a wet–wet face and the rarefaction-tail estimate at a dry bed
+
+Figure 8-4 Local time stepping: power-of-two tiers, the macro cycle and flux accumulation across a tier interface
+
+Figure 8-5 Substep workflow of the explicit finite-volume solver, including the post-step census retry and local time stepping (rendered diagram)
+
+Figure 8-6 Wet/dry and exception handling in one face flux evaluation (rendered diagram)
+
+Figure 8-7 Hydrostatic reconstruction at a wet/dry front: an advancing front (left) and an emerged bank acting as a wall (right)
+
+Figure 8-8 Node ghost-state construction at a coupling face
+
+Figure 9-1 The one-dimensional network and the two-dimensional surface: exchange pathways
+
+Figure 9-2 One 1D–2D co-advance batch and the explicit marcher's substep loop within it (rendered diagram)
+
+Figure 9-3 Wetting cases of a planar-bed triangular cell and the wetted-edge face gate (placeholder — to be replaced by a final drawing)
+
+Figure 9-4 A quadrilateral and a triangle sharing a face: local edge numbering, the padded slot layout and the centroid-to-edge distance
+
+Figure 9-5 The flux-active set at a wetting front: the default one-ring halo, the front-rebuild halo and the breach that forces an early rebuild
+
+Figure 9-6 Where a node spill is booked under COUPLING_IN_FLOODING: the same totals and the same continuity error, in two different rows
+
+<!-- END GENERATED -->
 
 ## List of Tables
+
+<!-- BEGIN GENERATED: list-of-tables style=plain -->
 
 Table 1-1 Development history of SWMM
 
@@ -193,7 +231,7 @@ Table 6-1 Pump curves recognized by SWMM
 
 Table 6-2 Kindsvater-Carter constants for rectangular weir coefficient
 
-Table 6-3 Rectangular broad-crested weir coefficients (ft<sup>1/2</sup>/sec)
+Table 6-3 Rectangular broad-crested weir coefficients (ft1/2/sec)
 
 Table 6-4 Formulas for flow derivatives of various types of weirs
 
@@ -205,13 +243,31 @@ Table 7-3 Hazen-Williams C-factors for different pipe materials
 
 Table 7-4 Darcy-Weisbach roughness heights for different pipe materials
 
-Table 8-1 Dry-state constants of the explicit finite-volume solver
+Table 7-5 Description of grate inlet types1
 
-Table 9-1 Wetting and drying thresholds and guards of the 2D solver
+Table 7-6 Splash-over velocity for different types of grate inlets1
 
-Table C-1 Circular section properties as function of area
+Table 7-7 Effective depth for curb opening inlets under orifice flow
 
-Table C-2 Circular section properties as function of depth
+Table 8-1 Dry-state constants of the explicit finite-volume solver (internal US units)
+
+Table 9-1 Wetting and drying thresholds and guards of the 2D solver (SI units)
+
+Table 9-2 Momentum closures of the 2D marcher
+
+Table 9-3 Diagonal selection of the two-plane quadrilateral closure (Begnudelli and Sanders, 2007, Cases 1–3)
+
+Table 9-4 The fourteen `REPORT_2D_VARIABLES` tokens
+
+Table 9-5 The forty-two live `[2D_OPTIONS]` keys and the theory each selects
+
+Table 9-6 The sixteen retired `[2D_OPTIONS]` keys and values
+
+Table 10-1 Formulations recorded in this chapter
+
+Table C-1 Circular section properties as function of depth
+
+Table C-2 Circular section properties as function of area
 
 Table D-1 Standard elliptical pipe sizes
 
@@ -246,6 +302,8 @@ Table G-3 Manning's roughness coefficient n for corrugated steel pipe
 Table H-1 Culvert codes
 
 Table H-2 Culvert coefficients
+
+<!-- END GENERATED -->
 
 ## List of Symbols
 
@@ -378,5 +436,6 @@ Table H-2 Culvert coefficients
 - @subpage hydraulics_ref_ch7_advanced_features — Chapter 7: Advanced Features
 - @subpage hydraulics_ref_ch8_finite_volume — Chapter 8: Explicit Finite-Volume Analysis
 - @subpage hydraulics_ref_ch9_two_dimensional — Chapter 9: Two-Dimensional Overland Flow Analysis
+- @subpage hydraulics_ref_ch10_planned — Chapter 10: Planned and Retired Formulations
 - @subpage hydraulics_ref_references — References
 - @subpage hydraulics_ref_appendix — Appendix

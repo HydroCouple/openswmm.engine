@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file GpuPluginOmp.cpp
  * @brief Plugin entry points for the Phase 1 Kokkos/OpenMP surface solver.
@@ -17,7 +33,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "../solver/GpuPluginAbi.h"
@@ -30,23 +46,33 @@
 #include <cstring>
 
 namespace {
-void ensureKokkosInitialized() {
+int g_host_threads = 0;   // threads Kokkos was initialised with (0 = not yet)
+
+// Thread-count precedence (THREAD_LIMITS_AND_OVERSUBSCRIPTION_PLAN §5.2):
+//   1. OPENSWMM_2D_THREADS env         — operator A/B override, always wins
+//   2. requested_threads (ABI v4)      — [OPTIONS] THREADS handed over by the core
+//   3. Kokkos default                  — OMP_NUM_THREADS, else omp_get_max_threads()
+// Kokkos initialises once per process: the first solver built in a process
+// fixes the count for every later one (the core warns when a later request
+// differs — see SurfaceSolverFactory).
+void ensureKokkosInitialized(int requested_threads) {
     if (!Kokkos::is_initialized() && !Kokkos::is_finalized()) {
-        // Thread count: OPENSWMM_2D_THREADS wins, else Kokkos' own defaults
-        // apply (OMP_NUM_THREADS, else all hardware threads — including
-        // efficiency cores on Apple Silicon, which drag the fenced kernel
-        // loops; set OPENSWMM_2D_THREADS to the performance-core count there).
-        // [OPTIONS] THREADS deliberately does NOT govern the plugin: it caps
-        // the host/serial-path loops only.
         Kokkos::InitializationSettings settings;
+        int chosen = 0;
         if (const char* env = std::getenv("OPENSWMM_2D_THREADS")) {
             char* endp = nullptr;
             const long n = std::strtol(env, &endp, 10);
-            if (endp != env && n > 0)
-                settings.set_num_threads(static_cast<int>(n));
+            if (endp != env && n > 0) chosen = static_cast<int>(n);
         }
+        if (chosen <= 0 && requested_threads > 0) chosen = requested_threads;
+        if (chosen > 0) settings.set_num_threads(chosen);
         Kokkos::initialize(settings);
     }
+#if defined(KOKKOS_ENABLE_OPENMP)
+    g_host_threads = Kokkos::OpenMP().concurrency();
+#else
+    g_host_threads = Kokkos::DefaultHostExecutionSpace().concurrency();
+#endif
 }
 } // namespace
 
@@ -62,9 +88,14 @@ openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
     return 0;  // usable backend present
 }
 
+extern "C" OPENSWMM_GPU_ABI int
+openswmm_gpu_host_threads(void) {
+    return g_host_threads;
+}
+
 extern "C" OPENSWMM_GPU_ABI void*
-openswmm_make_gpu_explicit_solver(const OpenSwmmGpuProbe* /*probe*/) {
-    ensureKokkosInitialized();
+openswmm_make_gpu_explicit_solver(const OpenSwmmGpuProbe* probe) {
+    ensureKokkosInitialized(probe ? probe->requested_threads : 0);
     openswmm::twoD::ISurfaceSolver* solver =
         new openswmm::twoD::gpu::ExplicitKokkosSurfaceSolver();
     return static_cast<void*>(solver);

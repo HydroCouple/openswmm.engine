@@ -15,6 +15,8 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_vertex_get_xyz_bulk(void* engine,
                                      double* x, double* y, double* z) nogil
     int swmm_2d_set_vertex_z(void* engine, int idx, double z)
+    # Bulk ground-elevation write — a pure C memory op over an owned buffer.
+    int swmm_2d_set_vertex_z_bulk(void* engine, const double* z, int count) nogil
     int swmm_2d_prepare_for_edit(void* engine)
     int swmm_2d_triangle_get_vertices(void* engine, int idx,
                                        int* v0, int* v1, int* v2)
@@ -35,6 +37,13 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_get_vertex_tag(void* engine, int idx, char* buf, int buflen)
     int swmm_2d_triangle_get_neighbours(void* engine, int idx,
                                          int* n0, int* n1, int* n2)
+    # Mixed triangle/quad meshes (2D_TRI_QUAD_MESH_PLAN_2026-09-06)
+    int swmm_2d_cell_count(void* engine, int* count)
+    int swmm_2d_quad_count(void* engine, int* count)
+    int swmm_2d_edge_stride(void* engine, int* stride)
+    int swmm_2d_cell_vertex_count(void* engine, int idx, int* nv)
+    int swmm_2d_cell_get_vertices(void* engine, int idx, int* v, int* nv)
+    int swmm_2d_cell_get_neighbours(void* engine, int idx, int* n, int* nv)
     int swmm_2d_edge_get_geometry_bulk(void* engine,
                                         double* length, double* nx, double* ny) nogil
 
@@ -79,6 +88,19 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_get_total_exchange_flow(void* engine, double* flow)
     int swmm_2d_get_solver_steps(void* engine, long* steps)
     int swmm_2d_get_solver_last_step(void* engine, double* h_last)
+    ctypedef struct SWMM_2DRunStats:
+        char   backend[64]
+        int    momentum
+        int    lts_tiers
+        long   steps
+        long   face_evals
+        double last_step
+        double active_frac_min
+        double active_frac_mean
+        double active_frac_max
+        int    n_tiers
+        long   tier_cells[8]
+    int swmm_2d_get_run_stats(void* engine, SWMM_2DRunStats* stats)
     int swmm_2d_get_stat_max_depths(void* engine, double* max_depths)
     int swmm_2d_get_stat_max_velocities(void* engine, double* max_velocities)
     int swmm_2d_get_stat_max_continuity_err(void* engine, double* max_errs)
@@ -130,6 +152,10 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_set_edge_bc_tseries_name(void* engine, int tri_idx, int edge, const char* name)
     int swmm_2d_set_edge_bc_flow_tseries_name(void* engine, int tri_idx, int edge, const char* name)
     int swmm_2d_set_edge_bc_rating_curve_name(void* engine, int tri_idx, int edge, const char* name)
+    # SVBC A8 — the setters' mirrors, so an edit can be read back.
+    int swmm_2d_get_edge_bc_tseries_name(void* engine, int tri_idx, int edge, char* buf, int buflen)
+    int swmm_2d_get_edge_bc_flow_tseries_name(void* engine, int tri_idx, int edge, char* buf, int buflen)
+    int swmm_2d_get_edge_bc_rating_curve_name(void* engine, int tri_idx, int edge, char* buf, int buflen)
 
     # Edge conveyance factor (§11A) — per-edge [0,1] multiplier on the
     # diffusion-wave flux; default 1.0; setter mirrors to the partner slot.
@@ -137,3 +163,37 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_set_edge_conveyance(void* engine, int tri, int edge, double conveyance)
     int swmm_2d_get_edge_conveyance_bulk(void* engine, double* conveyance) nogil
     int swmm_2d_reset_edge_conveyance(void* engine)
+
+
+# Per-cell 2D infiltration (plan §5.5.6, track I step I6).
+#
+# Row parameters (`p`) are in PROJECT UNITS — the same numbers a user types
+# into a legacy [INFILTRATION] row. The readback channels are SI like the rest
+# of the 2D API: rate is m/s, cumulative depth is m, total volume is m^3.
+# `p` is declared with the literal width of SWMM_INFIL2D_MAX_PARAMS (5).
+cdef extern from "openswmm_infil2d.h":
+    ctypedef struct SWMM_Infil2DOptions:
+        double infil_step
+
+    ctypedef struct SWMM_Infil2DRow:
+        int has_method
+        int method
+        double p[5]
+        int dest
+
+    int swmm_infil2d_get_options(void* engine, SWMM_Infil2DOptions* options)
+    int swmm_infil2d_set_options(void* engine, const SWMM_Infil2DOptions* options)
+    int swmm_infil2d_defaults_count(void* engine, int* count)
+    int swmm_infil2d_get_default(void* engine, int idx, SWMM_Infil2DRow* row)
+    int swmm_infil2d_get_default_tag(void* engine, int idx, char* buf, int buflen)
+    int swmm_infil2d_set_default(void* engine, const char* tag,
+                                  const SWMM_Infil2DRow* row)
+    int swmm_infil2d_remove_default(void* engine, const char* tag)
+    int swmm_infil2d_get_cell(void* engine, int tri, SWMM_Infil2DRow* row,
+                               int* is_override)
+    int swmm_infil2d_set_cell(void* engine, int tri, const SWMM_Infil2DRow* row)
+    int swmm_infil2d_set_cells(void* engine, const int* tris, int n,
+                                const SWMM_Infil2DRow* row)
+    int swmm_infil2d_get_rate_bulk(void* engine, double* f, int n) nogil
+    int swmm_infil2d_get_cum_bulk(void* engine, double* F, int n) nogil
+    int swmm_infil2d_get_total_volume(void* engine, double* volume)

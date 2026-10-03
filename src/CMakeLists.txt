@@ -27,6 +27,14 @@ add_subdirectory(engine)   # → openswmm_engine (output name: openswmm.engine)
 # ---- CLI ----
 add_subdirectory(cli)
 
+# O4 diagnostic driver — off by default. It is a debugging instrument, not a
+# shipped artefact, and it should not lengthen an ordinary build.
+option(OPENSWMM_BUILD_O4_DIFFERENTIAL
+       "Build the O4 API/CLI differential driver" OFF)
+if(OPENSWMM_BUILD_O4_DIFFERENTIAL)
+    add_subdirectory(tools/o4_differential)
+endif()
+
 # ---- openswmm2d (2D FVHM solver — future coupling target; disabled for now) ----
 # add_subdirectory(openswmm2d)
 

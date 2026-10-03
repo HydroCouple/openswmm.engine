@@ -1,13 +1,30 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file ClimateFormat.cpp
  * @brief User-CSV climate file — parser + materialiser.
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "ClimateFormat.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 
 #include <algorithm>
 #include <cctype>
@@ -58,7 +75,7 @@ double parseOrZero(const std::string& s) {
 
 FormatResult parseClimateCsv(const std::string&        path,
                               std::vector<ClimateRow>&  rows) {
-    std::FILE* fp = std::fopen(path.c_str(), "r");
+    std::FILE* fp = openswmm::io::fopen_utf8(path, "r");
     if (!fp) return fail("could not open '" + path + "' for reading");
 
     char buf[2048];
@@ -106,7 +123,7 @@ FormatResult parseClimateCsv(const std::string&        path,
 
 FormatResult writeClimateCsv(const std::string&             path,
                               const std::vector<ClimateRow>& rows) {
-    std::FILE* fp = std::fopen(path.c_str(), "w");
+    std::FILE* fp = openswmm::io::fopen_utf8(path, "w");
     if (!fp) return fail("could not open '" + path + "' for writing");
     std::fprintf(fp, "date,tmin,tmax,evap,wind,sky,humidity\n");
     for (const auto& r : rows) {

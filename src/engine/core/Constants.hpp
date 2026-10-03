@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file Constants.hpp
  * @brief Global physical, numerical, and model constants for OpenSWMM Engine.
@@ -17,7 +33,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_CONSTANTS_HPP
@@ -77,6 +93,13 @@ constexpr double FUDGE         = 0.0001;
 /// Default minimum surface area (ft²) — approximately a 4-ft diameter manhole.
 /// @see Legacy: MIN_SURFAREA in consts.h
 constexpr double MIN_SURFAREA  = 12.566;  // 4*pi
+
+/// Lateral-inflow floor (cfs): a node's external, dry-weather or groundwater
+/// inflow whose magnitude is below this is dropped to zero before it joins
+/// the node's lateral inflow.
+/// @see Legacy: FLOW_TOL in consts.h; routing.c addExternalInflows,
+///      addDryWeatherInflows, addGroundwaterInflows
+constexpr double FLOW_TOL      = 0.00001;
 
 /// Minimum elevation drop for conduit slope computation (ft).
 constexpr double MIN_DELTA_Z   = 0.001;

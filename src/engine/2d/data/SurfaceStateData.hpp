@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file SurfaceStateData.hpp
  * @brief Structure-of-Arrays (SoA) storage for 2D surface routing state.
@@ -10,7 +26,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_SURFACE_STATE_DATA_HPP
@@ -22,6 +38,9 @@
 #include <algorithm>
 #include <vector>
 
+#include "SurfaceTransportState.hpp"   // S1 — species mass per cell
+#include "MeshData.hpp"                 // kMaxCellVerts edge-slot stride
+
 namespace openswmm { struct NodeData; }  // 1D node data (held during a 2D advance)
 
 namespace openswmm::twoD {
@@ -32,7 +51,7 @@ struct CouplingPoint;  // fwd decl — 1D↔2D coupling descriptor (NodeCoupling
  * @brief SoA storage for 2D surface routing state variables.
  *
  * Per-triangle arrays are indexed [0, n_triangles).
- * Edge arrays are flat 2D: [tri * 3 + edge].
+ * Edge arrays are flat 2D: [cell * kMaxCellVerts + edge] (padded stride).
  * Vertex arrays are indexed [0, n_vertices).
  */
 struct BoundaryData;  // fwd decl — per-edge boundary conditions (BoundaryData.hpp)
@@ -57,7 +76,19 @@ struct SurfaceStateData {
     /// it self-limits) and accumulates the exact ∫Q dt per point.
     /// `nodes_1d` is the 1D node data, frozen for the duration of the batch.
     const NodeData*                   nodes_1d        = nullptr;
+    /// S4: the 1D nodes' PUBLISHED row values, `[node * n_species + s]` in the
+    /// 2D transport row order (pollutant conc, MSX conc, age, temperature),
+    /// assembled by the router before each advance and frozen for the batch.
+    /// What a 1D→2D spill or outfall discharge arrives at.
+    const std::vector<double>*        node_row_conc   = nullptr;
     const std::vector<CouplingPoint>* node_coupling   = nullptr;  ///< non-outfall points
+
+    /// S1 — overland species transport. `transport.active()` is false (and
+    /// every marcher species branch is skipped) unless the router sized it,
+    /// so a hydrodynamics-only model pays one predicate per firing and is
+    /// otherwise untouched. Embedded rather than pointed-to: it is per-cell
+    /// STATE, sized with `volume`, and it is copied when the state is.
+    SurfaceTransportState transport;
 
     std::vector<double> depth;          ///< Mean wetted depth h̄ = V/A_wet (m) [reconstructed]
     std::vector<double> head;           ///< Free-surface elevation η (m) [reconstructed]
@@ -89,13 +120,53 @@ struct SurfaceStateData {
     // Per-cell continuity residual — per triangle (m³/s, ≈0 when conservative)
     std::vector<double> cell_continuity_err;
 
-    // Fluxes — flat 2D: [tri * 3 + edge]
+    // Fluxes — flat 2D: [cell * kMaxCellVerts + edge]
     std::vector<double> edge_flux;      ///< Normal flux through each edge
 
     // Source/sink terms — per triangle
     std::vector<double> rainfall;       ///< Rainfall intensity (m/s)
     std::vector<double> evap_rate;      ///< Evaporation demand rate (m/s, >= 0)
+
+    /// Infiltration loss rate (m/s, >= 0) — a HELD rate (plan §5.5.2, D-I1):
+    /// Infil2D::updateRates republishes it on the INFIL_STEP cadence and it is
+    /// held constant in between, exactly as `rainfall` is. The marcher NEVER
+    /// evaluates an infiltration kernel per substep; it only consumes this
+    /// array through infilSink(), so infiltration has no interaction with the
+    /// LTS tiering or active set. All-zero when no [2D_INFILTRATION*] rows
+    /// resolved — the bitwise-regression fast path (gate I7).
+    std::vector<double> infil_rate;
+
+    /// Infiltration APPLIED depth (m) accumulated since the last mass-balance
+    /// read, then zeroed by it. Every site that integrates the infiltration
+    /// sink into `volume` adds `infilSink(...) * dt` here with the SAME depth
+    /// and the SAME dt it used, so the ledger books what the marcher actually
+    /// removed. Re-deriving the loss from the accepted end-of-step depth is
+    /// only first-order: a cell that dries mid-step is sunk at the higher
+    /// early-step rate but re-derived at the ramped end-of-step rate, and the
+    /// lazy tier integrates a stale depth across a whole sync interval. Both
+    /// leave storage falling by more than the ledger books.
+    std::vector<double> infil_applied;
+
     std::vector<double> coupling_flux;  ///< Exchange with SWMM node (m/s, + = into 2D)
+
+    /// SIGNED per-cell coupling exchange VOLUME (m³) accumulated since the
+    /// last mass-balance read, then zeroed by it. Positive = water arrived in
+    /// this cell from the 1D node (spill / outfall discharge); negative =
+    /// water was abstracted from this cell into the node (drain).
+    ///
+    /// Signed on purpose, and per cell on purpose. The domain totals
+    /// (`MassBalance2D::coupling_1d_to_2d_in` / `coupling_2d_to_1d_out`) are
+    /// two unsigned accumulators and cannot answer "what did THIS cell give
+    /// or take", which is the question asked of a coupling point that
+    /// flip-flops within a batch: the two directions cancel in the net and
+    /// both are invisible in the totals. `coupling_flux` is a rate that is
+    /// overwritten every step, so it cannot answer it either.
+    ///
+    /// Booked at the SAME dt and the same share the marcher applied, exactly
+    /// like `infil_applied` above and for the same reason — re-deriving it
+    /// from end-of-step state is first-order and under-books the cells that
+    /// dried mid-step.
+    std::vector<double> coupling_applied;
     std::vector<double> net_source;     ///< Net source/sink per cell (m/s)
 
     // -----------------------------------------------------------------------
@@ -118,6 +189,13 @@ struct SurfaceStateData {
     /// on the very next step and expires on the step after — the per-step
     /// semantics the swmm_2d_force_* API documents.
     bool forcing_dirty = false;
+
+    /// Sticky companion to forcing_dirty: set by the forcing API the first
+    /// time any prescription is written, never cleared. clear_reset_forcings()
+    /// is called once per routing step and is O(n_cells); on a model that
+    /// never uses the forcing API (every deck without an external controller)
+    /// the whole sweep is dead work, and this flag skips it.
+    bool forcing_ever_set = false;
 
     // -----------------------------------------------------------------------
     // Previous step state
@@ -147,7 +225,7 @@ struct SurfaceStateData {
     void resize(int n_triangles, int n_vertices) {
         auto nt = static_cast<std::size_t>(n_triangles);
         auto nv = static_cast<std::size_t>(n_vertices);
-        auto n3 = nt * 3;
+        auto n3 = nt * static_cast<std::size_t>(kMaxCellVerts);
 
         depth.assign(nt, 0.0);
         head.assign(nt, 0.0);
@@ -164,6 +242,9 @@ struct SurfaceStateData {
         edge_flux.assign(n3, 0.0);
         rainfall.assign(nt, 0.0);
         evap_rate.assign(nt, 0.0);
+        infil_rate.assign(nt, 0.0);
+        infil_applied.assign(nt, 0.0);
+        coupling_applied.assign(nt, 0.0);
         coupling_flux.assign(nt, 0.0);
         net_source.assign(nt, 0.0);
 
@@ -202,6 +283,7 @@ struct SurfaceStateData {
 
     /// Clear RESET forcings after each step
     void clear_reset_forcings() noexcept {
+        if (!forcing_ever_set) return;
         for (std::size_t i = 0; i < rainfall_forced.size(); ++i) {
             if (rainfall_persist[i] == 0 && rainfall_forced[i] != 0) {
                 rainfall_forced[i] = 0;

@@ -190,6 +190,46 @@ Water quality  (landuse, buildup, washoff, treatment)
    :undoc-members:
    :show-inheritance:
 
+Initial quality  (per-element starting concentrations)
+-------------------------------------------------------
+
+.. automodule:: openswmm.engine._initial_quality
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Reactions  (multi-species reaction system)
+-------------------------------------------
+
+.. automodule:: openswmm.engine._reactions
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Process components  (``[PROCESS_COMPONENTS]`` registrations)
+-------------------------------------------------------------
+
+.. automodule:: openswmm.engine._process_components
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Water age  (source ages and node overrides)
+--------------------------------------------
+
+.. automodule:: openswmm.engine._water_age
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Heat transport  (fluxes, solar, cloud, heat sources)
+-----------------------------------------------------
+
+.. automodule:: openswmm.engine._heat
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Tables  (time series, curves, patterns)
 ---------------------------------------
 
@@ -230,6 +270,14 @@ Statistics
    :undoc-members:
    :show-inheritance:
 
+Offline flow tracing
+--------------------
+
+.. automodule:: openswmm.engine._trace
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Output reader  (binary ``.out`` file)
 -------------------------------------
 
@@ -245,6 +293,14 @@ Spatial  (CRS, coordinates, vertices, polygons)
    :members:
    :undoc-members:
    :show-inheritance:
+
+Engine catalog
+--------------
+
+Machine-readable map of this API; see :doc:`guide/catalog`.
+
+.. automodule:: openswmm.engine.catalog
+   :members:
 
 Enumerations
 ------------

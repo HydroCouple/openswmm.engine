@@ -108,6 +108,12 @@ double setUpOneGageOneTimeseries(SimulationContext& ctx,
     // Register names so n_gages() / n_tables() report correctly.
     ctx.gage_names.add("RG1");
     ctx.gages.resize(1);
+    // A subcatchment reads the gage: legacy gage_setState returns at once
+    // for an unused gage (its rainfall stays at the seeded value and the
+    // API override is ignored), and the state machine here mirrors that.
+    ctx.subcatch_names.add("S1");
+    ctx.subcatches.resize(1);
+    ctx.subcatches.gage[0] = 0;
 
     // Timeseries: one entry at OADate = 0.0 (start of epoch), value = ts_value.
     int tidx = ctx.tables.add("TS1", TableType::TIMESERIES);
@@ -170,6 +176,11 @@ TEST(GageUpdateAllGages, CoGageRainfallRescaledByRatio) {
     ctx.gage_names.add("RG1");
     ctx.gage_names.add("RG2");
     ctx.gages.resize(2);
+    ctx.subcatch_names.add("S1");
+    ctx.subcatch_names.add("S2");
+    ctx.subcatches.resize(2);
+    ctx.subcatches.gage[0] = 0;
+    ctx.subcatches.gage[1] = 1;
 
     int tidx = ctx.tables.add("TS1", TableType::TIMESERIES);
     auto& tbl = ctx.tables[tidx];
@@ -207,6 +218,11 @@ TEST(GageUpdateAllGages, CoGageWithEqualScaleFactorsCopiesPrimary) {
     ctx.gage_names.add("RG1");
     ctx.gage_names.add("RG2");
     ctx.gages.resize(2);
+    ctx.subcatch_names.add("S1");
+    ctx.subcatch_names.add("S2");
+    ctx.subcatches.resize(2);
+    ctx.subcatches.gage[0] = 0;
+    ctx.subcatches.gage[1] = 1;
 
     int tidx = ctx.tables.add("TS1", TableType::TIMESERIES);
     auto& tbl = ctx.tables[tidx];
@@ -240,9 +256,10 @@ TEST(GageGetReportRainfall, ScaleFactorAppliedToReport) {
     double t_a = setUpOneGageOneTimeseries(ctx_a, /*scale_factor=*/1.0, /*ts_value=*/1.2);
     double t_b = setUpOneGageOneTimeseries(ctx_b, /*scale_factor=*/2.0, /*ts_value=*/1.2);
 
-    // getReportRainfall reads the cursor — match what updateAllGages would set.
-    ctx_a.tables[0].cursor.index = 0;
-    ctx_b.tables[0].cursor.index = 0;
+    // getReportRainfall reads the legacy gage state (current / next
+    // non-zero record) that updateAllGages forms — run it first.
+    gage::updateAllGages(ctx_a, t_a);
+    gage::updateAllGages(ctx_b, t_b);
 
     double r_a = gage::getReportRainfall(ctx_a, 0, t_a);
     double r_b = gage::getReportRainfall(ctx_b, 0, t_b);

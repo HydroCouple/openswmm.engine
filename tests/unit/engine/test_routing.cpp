@@ -620,6 +620,7 @@ protected:
                 ctx.link_subtypes.set_link_type(ctx.links, i, LinkType::CONDUIT));
             auto& C = ctx.link_subtypes.conduits;
             ctx.links.xsect_shape[i] = XsectShape::CIRCULAR;
+            ctx.links.xsect_batch_shape[i] = static_cast<int>(XSectShape::CIRCULAR);
             ctx.links.xsect_y_full[i] = 2.0;
             ctx.links.xsect_a_full[i] = M_PI;  // π·1²
             ctx.links.xsect_r_full[i] = 0.5;   // full-flow hyd. radius D/4 (2 ft pipe)
@@ -635,11 +636,15 @@ protected:
         ctx.links.node1[0] = 0;  ctx.links.node2[0] = 1;
         ctx.links.node1[1] = 1;  ctx.links.node2[1] = 2;
 
-        // Build cross-section geometry tables
+        // Build cross-section geometry tables. setParams takes the KERNEL
+        // shape code (XSectShape, CIRCULAR = 1); the data enum's CIRCULAR is
+        // 0 = kernel DUMMY, which put these conduits in no shape group, so
+        // the geometry kernels computed zero area at every depth and the
+        // surcharge tests passed on a dry solve.
         params_.resize(2);
         double p[4] = {2.0, 0, 0, 0};
-        xsect::setParams(params_[0], static_cast<int>(XsectShape::CIRCULAR), p, 1.0);
-        xsect::setParams(params_[1], static_cast<int>(XsectShape::CIRCULAR), p, 1.0);
+        xsect::setParams(params_[0], static_cast<int>(XSectShape::CIRCULAR), p, 1.0);
+        xsect::setParams(params_[1], static_cast<int>(XSectShape::CIRCULAR), p, 1.0);
         groups_.build(params_.data(), 2);
     }
 
@@ -833,7 +838,10 @@ TEST_F(AASkipFlagTest, SlotKinkStillSkipsUnderSemiImplicit) {
     ctx.nodes.old_depth[2] = 0.5;
     ctx.nodes.head[2] = ctx.nodes.invert_elev[2] + 0.5;
 
-    solver.execute(ctx, 10.0);
+    // A short step: the flags are formed from the LAST iteration's
+    // mid-depth, and over 10 s the pipes drain the 1 ft head drops far
+    // enough (mid ratio 0.95) to leave the [0.98, 1.02] band.
+    solver.execute(ctx, 1.0);
 
     const auto& flags = solver.aaSkipFlags();
     // C0 (J0→J1) midpoint near the slot kink → both end nodes still skipped

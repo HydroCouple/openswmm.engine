@@ -1,0 +1,194 @@
+{
+ "element_names": {
+  "nodes": "node",
+  "links": "link",
+  "subcatchments": "subcatchment",
+  "gages": "gage",
+  "pollutants": "pollutant",
+  "quality.landuses": "landuse",
+  "patterns": "pattern",
+  "tables": "table",
+  "process_components": "process_component",
+  "reactions.species": "species",
+  "reactions.coefficients": "coefficient",
+  "reactions.terms": "term"
+ },
+ "subtype_fields": {
+  "Node": "type",
+  "Link": "type"
+ },
+ "subtypes": {
+  "node.storage": [
+   "STORAGE"
+  ],
+  "node.outfall": [
+   "OUTFALL"
+  ],
+  "node.divider": [
+   "DIVIDER"
+  ],
+  "link.pump": [
+   "PUMP"
+  ],
+  "link.weir": [
+   "WEIR"
+  ],
+  "link.orifice": [
+   "ORIFICE"
+  ],
+  "link.outlet": [
+   "OUTLET"
+  ]
+ },
+ "variants": {
+  "table": [
+   "TimeSeries",
+   "Curve"
+  ]
+ },
+ "roots": {
+  "builder": {
+   "class": "ModelBuilder",
+   "construct": {
+    "via": "new",
+    "args": []
+   }
+  },
+  "output": {
+   "class": "OutputReader",
+   "construct": {
+    "via": "new",
+    "args": [
+     "path"
+    ]
+   }
+  },
+  "geopackage": {
+   "class": "GeoPackage",
+   "construct": {
+    "via": "new",
+    "args": [
+     "path"
+    ]
+   }
+  },
+  "hotstart": {
+   "class": "HotStart",
+   "construct": {
+    "via": "open",
+    "args": [
+     "path"
+    ]
+   }
+  },
+  "xsect": {
+   "class": "XSectionGeometry",
+   "construct": {
+    "via": "new",
+    "args": [
+     "shape",
+     "geom1",
+     "geom2",
+     "geom3",
+     "geom4",
+     "units"
+    ]
+   }
+  },
+  "trace": {
+   "class": "FlowTracer",
+   "construct": {
+    "via": "new",
+    "args": [
+     "nodes",
+     "links",
+     "options"
+    ]
+   }
+  }
+ },
+ "function_modules": [
+  "datetime",
+  "dates"
+ ],
+ "record_classes": [
+  "ImpactEntry",
+  "ConversionResult"
+ ],
+ "exclude_members": [
+  "Solver.handle",
+  "Solver.generation",
+  "ModelBuilder.transport",
+  "ModelBuilder.handle",
+  "ModelBuilder.generation"
+ ],
+ "exclude_classes": [
+  "EngineError",
+  "BadHandleError",
+  "BadIndexError",
+  "BadParamError",
+  "CRSError",
+  "DependencyError",
+  "FileError",
+  "HotStartError",
+  "LifecycleError",
+  "NumericalError",
+  "ParseError",
+  "PluginError",
+  "StaleObjectError",
+  "TraceError"
+ ],
+ "units": {
+  "climate.ati_weight": "fraction",
+  "climate.temp_file_start": "datetime",
+  "coefficient.value": "user_defined",
+  "gage.snow_factor": "dimensionless",
+  "link.control_setting": "dimensionless",
+  "link.outlet.expon": "dimensionless",
+  "link.pump.shutoff_depth": "length",
+  "link.pump.startup_depth": "length",
+  "link.roughness": "manning_n",
+  "link.seep_rate": "rain_rate",
+  "link.slope": "fraction",
+  "link.target_setting": "dimensionless",
+  "link.weir.crest_height": "length",
+  "link.weir.discharge_coeff": "weir_coeff",
+  "link.weir.end_contractions": "count",
+  "link.xsect.g1": "length",
+  "link.xsect.g2": "shape_dependent",
+  "link.xsect.g3": "shape_dependent",
+  "link.xsect.g4": "shape_dependent",
+  "mass_balance.max_courant": "dimensionless",
+  "node.outfall.param": "length",
+  "node.stats.time_flooded": "s",
+  "node.storage.seep_rate": "unverified",
+  "pollutant.gw_conc": "concentration",
+  "pollutant.init_conc": "concentration",
+  "pollutant.mwt": "g/mol",
+  "pollutant.rain_conc": "concentration",
+  "pollutant.rdii_conc": "concentration",
+  "species.atol": "concentration",
+  "species.initial": "concentration",
+  "species.rtol": "dimensionless",
+  "statistics.node_time_flooded": "s",
+  "subcatchment.area": "land_area",
+  "subcatchment.ds_imperv": "rain_depth",
+  "subcatchment.ds_perv": "rain_depth",
+  "subcatchment.evap": "evap_rate",
+  "subcatchment.infil": "rain_rate",
+  "subcatchment.infiltration.curve_number": "dimensionless",
+  "subcatchment.infiltration.curve_number_drying_time": "d",
+  "subcatchment.n_imperv": "manning_n",
+  "subcatchment.n_perv": "manning_n",
+  "surface2d.get_rainfall": "m/s",
+  "surface2d.max_depth": "m",
+  "surface2d.total_exchange_flow": "m3/s",
+  "surface2d.total_volume": "m3",
+  "xsect.full_area": "area",
+  "xsect.full_depth": "length",
+  "xsect.full_hyd_radius": "length",
+  "xsect.full_section_factor": "section_factor",
+  "xsect.max_area": "area",
+  "xsect.max_width": "length"
+ }
+}

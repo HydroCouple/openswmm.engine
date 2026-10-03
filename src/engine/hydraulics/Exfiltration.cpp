@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file Exfiltration.cpp
  * @brief Storage exfiltration — numerically identical to legacy exfil.c.
@@ -5,7 +21,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "Exfiltration.hpp"
@@ -102,7 +118,11 @@ void ExfilSolver::init(SimulationContext& ctx) {
             auto& curve = ctx.tables[curve_idx];
 
             // Bottom area = curve value at depth 0
-            soa_.btm_area[uk] = table_lookup_cursor(curve, 0.0);
+            // legacy exfil_initState uses table_lookupEx, whose below-range
+            // rule is x/x1*y1 (a line through the origin): a curve keyed from
+            // a depth > 0 (e.g. authored in elevations, 278..283 ft) has a
+            // ZERO bottom area, where a clamping lookup returns y[0].
+            soa_.btm_area[uk] = table_lookupEx(curve, 0.0);
 
             // Find bank min/max depths and max bank area by scanning curve
             soa_.bank_min_depth[uk] = 0.0;
@@ -129,8 +149,21 @@ void ExfilSolver::init(SimulationContext& ctx) {
                 }
             }
 
-            // Note: legacy converts TABULAR areas/depths to internal units
-            // here (exfil.c:126-129, inside the TABULAR case only).
+            // Legacy converts the TABULAR geometry from user units to
+            // internal units here (exfil.c:125-129, inside the TABULAR case
+            // only): areas by UCF(LENGTH)^2, depths by UCF(LENGTH). On a US
+            // deck the factor is 1.0 and the divisions are bitwise no-ops;
+            // on an SI deck the raw curve values left the bottom area
+            // 0.3048^2 low and the bank gates 0.3048 off — greenville-si's
+            // node 83 exfiltrated an order of magnitude less than legacy
+            // from the step its banks first wetted.
+            {
+                const double ucf_len = ucf::UCF(ucf::LENGTH, ctx.options);
+                soa_.btm_area[uk]       /= ucf_len * ucf_len;
+                soa_.bank_max_area[uk]  /= ucf_len * ucf_len;
+                soa_.bank_min_depth[uk] /= ucf_len;
+                soa_.bank_max_depth[uk] /= ucf_len;
+            }
 
         } else {
             // --- FUNCTIONAL: area = A * depth^B + C
@@ -185,48 +218,78 @@ void ExfilSolver::computeAll(SimulationContext& ctx, double dt) {
         int ni = soa_.node_idx[uk];
         if (ni < 0) continue;
         auto uni = static_cast<size_t>(ni);
+        // G-X2 one-owner rule: a storage node with a two-zone aquifer bed
+        // exchanges through the conductance channel instead.
+        if (uni < nodes.aquifer2d_bed.size() && nodes.aquifer2d_bed[uni]) {
+            const int sr0 = ctx.node_subtypes.storage_row(ni);
+            if (sr0 >= 0)
+                ctx.node_subtypes.storages.exfil_rate[static_cast<std::size_t>(sr0)] = 0.0;
+            continue;
+        }
 
+        // Legacy storage_getLosses calls exfil_getLoss whenever the exfil
+        // object exists, INCLUDING at zero depth: the Green-Ampt state keeps
+        // evolving (recovering) through dry spells, and the volume cap in
+        // Router::initNodeFlows zeroes the booked loss on an empty node.
+        // Skipping dry nodes froze the GA state legacy keeps drying.
         double depth = nodes.depth[uni];
-        if (depth <= 0.0) continue;
 
         double total_loss = 0.0;
 
+        // legacy exfil_getLoss (exfil.c): the Green-Ampt object is always
+        // evaluated as MOD_GREEN_AMPT (no inter-event reset of F), with the
+        // global InfilFactor (the monthly conductivity adjustment) and the
+        // evaporation recovery factor; a zero IMDmax means a constant
+        // rate Ks * hydconFactor. Evaluated as plain GREEN_AMPT at factor
+        // 1, the pond of infiltration-detetention-pond lost ~0 where legacy
+        // drains 0.8 cfs.
+        const double infil_factor    = ctx.climate_state.infil_factor;
+        const double recovery_factor = ctx.climate_state.recovery_factor;
+        auto ga_rate = [&](infil::GreenAmptState& ga, double d) {
+            if (ga.IMDmax == 0.0) return ga.Ks * infil_factor;
+            return infil::grnampt_getInfil(ga, 0.0, d, dt, InfilModel::MOD_GREEN_AMPT,
+                                           infil_factor, recovery_factor);
+        };
+
         // Bottom exfiltration
-        double btm_rate = infil::grnampt_getInfil(soa_.btm_ga[uk], 0.0, depth, dt);
-        total_loss += btm_rate * soa_.btm_area[uk];
+        total_loss += ga_rate(soa_.btm_ga[uk], depth) * soa_.btm_area[uk];
 
-        // Bank exfiltration (only above bank_min_depth)
-        if (depth > soa_.bank_min_depth[uk] && soa_.bank_max_area[uk] > 0.0) {
-            double bank_depth;
-            if (depth > soa_.bank_max_depth[uk]) {
-                bank_depth = depth - soa_.bank_max_depth[uk]
-                           + (soa_.bank_max_depth[uk] - soa_.bank_min_depth[uk]) / 2.0;
-            } else {
-                bank_depth = (depth - soa_.bank_min_depth[uk]) / 2.0;
-            }
-
-            // Cap bank area at bank_max_area (matching legacy exfil.c line 191:
-            // area = MIN(area, exfil->bankMaxArea))
+        // Bank exfiltration (only above bank_min_depth): the bank area is
+        // the surface area (capped at the largest area the curve reaches)
+        // LESS the bottom area (exfil.c:191 `MIN(area, bankMaxArea) -
+        // btmArea`), and only when positive.
+        if (depth > soa_.bank_min_depth[uk]) {
             double area = openswmm::node::getSurfArea(ctx.nodes, soa_.node_idx[uk], depth,
                                             &ctx.tables,
                                             openswmm::ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)),
                                             &ctx.node_subtypes);
-            double bank_area = std::min(area, soa_.bank_max_area[uk]);
-            double bank_rate = infil::grnampt_getInfil(soa_.bank_ga[uk], 0.0, bank_depth, dt);
-            total_loss += bank_rate * bank_area;
+            area = std::min(area, soa_.bank_max_area[uk]) - soa_.btm_area[uk];
+            if (area > 0.0) {
+                double bank_depth = depth;
+                if (soa_.bank_ga[uk].IMDmax != 0.0) {
+                    if (depth > soa_.bank_max_depth[uk]) {
+                        bank_depth = depth - soa_.bank_max_depth[uk]
+                                   + (soa_.bank_max_depth[uk] - soa_.bank_min_depth[uk]) / 2.0;
+                    } else {
+                        bank_depth = (depth - soa_.bank_min_depth[uk]) / 2.0;
+                    }
+                }
+                total_loss += area * ga_rate(soa_.bank_ga[uk], bank_depth);
+            }
         }
 
-        // Limit to available volume
-        double max_loss = nodes.volume[uni] / dt;
-        total_loss = std::min(total_loss, max_loss);
-
-        // Write pre-computed exfil volume (ft3) into the side-table for
-        // Router::initNodeFlows. Volume is reduced through the routing continuity
-        // equation (nodes.losses) rather than here, so that evap + exfil are
-        // jointly capped to available storage before advancing the timestep.
+        // Hand the RAW rate (cfs) to Router::initNodeFlows, which applies
+        // legacy's single joint evap+exfil cap (node.c storage_getLosses:
+        // ratio = newVolume / ((evapRate + exfilRate) * tStep), both rates
+        // scaled by the ratio of the UNCAPPED values) and books the final
+        // exfil_loss volume. Pre-capping here fed the joint cap a clamped
+        // rate — a different split and different bits whenever a near-dry
+        // storage's fresh Green-Ampt rate exceeded the stored volume — and
+        // the old volume*dt/dt round-trip perturbed the rate by an ULP on
+        // every step (greenville-epa's node 83 at its first wetting).
         const int sr = ctx.node_subtypes.storage_row(static_cast<int>(uni));
         if (sr >= 0)
-            ctx.node_subtypes.storages.exfil_loss[static_cast<std::size_t>(sr)] = total_loss * dt;
+            ctx.node_subtypes.storages.exfil_rate[static_cast<std::size_t>(sr)] = total_loss;
     }
 }
 

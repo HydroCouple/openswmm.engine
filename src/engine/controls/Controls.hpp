@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file Controls.hpp
  * @brief Rule-based control engine — full legacy parity.
@@ -15,7 +31,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_CONTROLS_HPP
@@ -193,11 +209,22 @@ public:
      *   - ControlValue tracking for modulated actions
      *
      * @param ctx           Simulation context.
-     * @param current_time  Current simulation time (seconds).
+     * @param current_date  legacy routing_execute's currentDate: the
+     *                      absolute date (days) of the START of the step
+     *                      plus 1 ms (swmm5.c getDateTime), from which the
+     *                      rule clock's CurrentDate (its floor), CurrentTime
+     *                      (its fraction) and ElapsedTime (minus the start
+     *                      date) are formed, as controls_evaluate does.
      * @param dt            Routing timestep (seconds).
+     * @param rule_time_reached  legacy evaluateControlRules' RULE_STEP gate
+     *                      (RuleStep == 0 || |NewRoutingTime - NewRuleTime|
+     *                      < 1 ms), decided on the caller's ms clock; false
+     *                      skips the rules (the caller still applies the
+     *                      pending target settings).
      * @returns Number of setting changes made.
      */
-    int evaluate(SimulationContext& ctx, double current_time, double dt);
+    int evaluate(SimulationContext& ctx, double current_date, double dt,
+                 bool rule_time_reached = true);
 
     // Rule parsing (from [CONTROLS] text)
     int parseRuleText(const std::string& text, SimulationContext& ctx);
@@ -223,11 +250,6 @@ public:
 
     /// Number of actions taken in the last evaluate() call.
     int lastActionCount() const { return last_action_count_; }
-
-    /// Reset the RULE_STEP timer; called when a new run begins so the
-    /// first call to evaluate() always runs.
-    /// @see Legacy: routing.c:286-290 (RuleStep gating)
-    void resetRuleStep() { next_rule_eval_time_ = -1.0; }
 
     // ========================================================================
     // SoA batch evaluation index (AD-14)
@@ -313,14 +335,16 @@ private:
     // Step 6 of the parity remediation will move this to ctx.links.time_last_set.
     std::vector<double> link_time_last_set_;
 
-    /// Next absolute date (decimal days) at which evaluate() should run.
-    /// Honors options.rule_step.  -1.0 means "not yet primed".
-    /// @see Legacy: routing.c:286-290 (NewRuleTime)
-    double next_rule_eval_time_ = -1.0;
-
     // Tracked across a single evaluate() call
     double control_value_ = 0.0;
     double set_point_     = 0.0;
+    /// legacy controls.c shared variables for the call: the currentDate
+    /// argument, CurrentDate = floor(currentDate), CurrentTime = the
+    /// fraction, ElapsedTime = currentDate - StartDateTime (days).
+    double eval_date_    = 0.0;
+    double cur_date_     = 0.0;
+    double cur_time_     = 0.0;
+    double elapsed_days_ = 0.0;
 
     // Pending action list (for priority deduplication)
     struct PendingAction {

@@ -12,6 +12,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "math/OdeSolver.hpp"
@@ -70,6 +71,39 @@ TEST(OdeSolver, QuadraticGrowth) {
     int rc = openswmm::ode::integrate(&y, 1, 0.0, 3.0, 1e-8, 0.1, derivs);
     EXPECT_EQ(rc, 0);
     EXPECT_NEAR(y, 9.0, 1e-6);
+}
+
+TEST(OdeSolver, WorkerThreadsMatchMainThreadExactly) {
+    // The integrator keeps its scratch arrays in a thread_local workspace, so
+    // each worker allocates and tears down its own. Two things are checked
+    // here: results must be bit-identical across threads (the workspace is
+    // per-thread state, never shared), and the workspace teardown that runs at
+    // thread exit must not fault -- a double free there would abort this test.
+    // The teardown itself is only *measurable* out of process; the falsifier in
+    // tests/manual/ode_workspace_leak does that.
+    auto derivs = [](double /*x*/, const double* y, double* dydx) {
+        dydx[0] = -y[0];
+    };
+
+    double expected = 1.0;
+    ASSERT_EQ(openswmm::ode::integrate(&expected, 1, 0.0, 1.0, 1e-6, 0.1, derivs), 0);
+
+    constexpr int kThreads = 8;
+    std::vector<double> results(kThreads, 0.0);
+    std::vector<int>    codes(kThreads, -1);
+    std::vector<std::thread> pool;
+    for (int i = 0; i < kThreads; ++i) {
+        pool.emplace_back([&, i] {
+            results[i] = 1.0;
+            codes[i] = openswmm::ode::integrate(&results[i], 1, 0.0, 1.0, 1e-6, 0.1, derivs);
+        });
+    }
+    for (auto& t : pool) t.join();
+
+    for (int i = 0; i < kThreads; ++i) {
+        EXPECT_EQ(codes[i], 0) << "thread " << i;
+        EXPECT_DOUBLE_EQ(results[i], expected) << "thread " << i;
+    }
 }
 
 // ============================================================================

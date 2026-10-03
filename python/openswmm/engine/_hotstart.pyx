@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Hot start files (Pythonic v1 surface)
 =====================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 Hot start files capture the hydraulic + quality state of a simulation
 at a moment in time and let a follow-up run resume from there.
@@ -61,11 +77,12 @@ cdef class HotStart:
     def save_from(Solver solver, path) -> None:
         """Save ``solver`` state to ``path``. Raises on failure."""
         cdef bytes b = os.fspath(path).encode('utf-8')
-        cdef SWMM_Engine h = solver._handle
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>solver.handle
         cdef const char* p = b
         cdef int rc
-        with nogil:
-            rc = swmm_hotstart_save(h, p)
+        with solver._operation(<size_t>h):
+            with nogil:
+                rc = swmm_hotstart_save(h, p)
         _check(rc)
 
     @classmethod
@@ -107,10 +124,10 @@ cdef class HotStart:
     def apply(self, Solver solver) -> None:
         """Apply this hot start to ``solver``. The solver must be
         INITIALIZED (post-:meth:`Solver.initialize`, pre-:meth:`Solver.start`)."""
-        cdef SWMM_Engine h = solver._handle
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>solver.handle
         cdef SWMM_HotStart hs = self._handle
         cdef int rc
-        with nogil:
+        with solver._operation(<size_t>h):
             rc = swmm_hotstart_apply(h, hs)
         _check(rc)
 

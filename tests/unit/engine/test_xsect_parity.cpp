@@ -25,15 +25,21 @@
  */
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <cstdint>
+#include <limits>
+#include <utility>
 #include <string>
 #include <vector>
 
 #include "../../src/engine/hydraulics/XSectBatch.hpp"
 #include "../../src/engine/hydraulics/xsect_tables.hpp"
 #include "../../src/engine/hydraulics/XSectLookup.hpp"
+#include "../../src/engine/hydraulics/XSectKernels.hpp"
+#include "../../src/engine/hydraulics/Transect.hpp"
+#include "../../src/engine/core/SimulationContext.hpp"
 
 using namespace openswmm;
 
@@ -686,4 +692,465 @@ TEST(XSectFastMode, LookupFastWithinTolerance) {
     RecordProperty("fast_lookup_max_rel", std::to_string(max_rel));
     RecordProperty("fast_lookup_max_abs", std::to_string(max_abs));
     EXPECT_LT(max_rel, 1e-6) << "fast-lookup rel deviation regressed; max_rel=" << max_rel;
+}
+
+// ============================================================================
+// Lookup-acceleration identity gate — plans/XSECT_LOOKUP_ACCEL_PLAN.md Phase 1/2.
+//
+// A1 (bucket LUT), A2 (fused tabulated pair) and A3 (transect-grouped element
+// order) are the plan's BIT-EXACT set: each is a pure restatement of how the
+// existing arithmetic is reached, never of the arithmetic itself. That claim is
+// only worth anything if it is pinned, so these tests keep the pre-change forms
+// compiled — plain bisection, two separate lookup passes, the unsorted element
+// order — and assert memcmp-level equality against them, not a tolerance.
+//
+// Note this holds in the SWMM_XSECT_FAST_LOOKUP build too (unlike the
+// legacy-parity checks above, which relax there): both sides of every
+// comparison here are the SAME lookup variant, so the fast mode's ULP
+// deviation from legacy cancels out and the identity is exact either way.
+// ============================================================================
+
+namespace {
+
+using openswmm::xsect::LocateLut;
+using openswmm::xsect::LutId;
+
+// Values that stress the bracket logic: every table node, both nextafter
+// neighbours of each node, cell midpoints, and points outside the value range
+// (which locate() resolves through its own clamps).
+std::vector<double> adversarialTableValues(const double* t, int n) {
+    std::vector<double> v;
+    for (int k = 0; k < n; ++k) {
+        v.push_back(t[k]);
+        v.push_back(std::nextafter(t[k], -1e300));
+        v.push_back(std::nextafter(t[k], 1e300));
+        if (k + 1 < n) v.push_back(0.5 * (t[k] + t[k + 1]));
+    }
+    for (double x : {-1.0, -1e-300, 0.0, 1e-300, 1.0, 1.5, 2.0, 1e6}) v.push_back(x);
+    return v;
+}
+
+// A handful of real transect tables, built by the shipped builder from
+// station/elevation data (a V notch, a wide flood plain with a deep channel,
+// a near-trapezoid, and an asymmetric section) — NOT hand-written tables, so
+// the flat spans and clustered rows a real transect produces are exercised.
+struct TestTransect {
+    openswmm::transect::TransectData td;
+};
+
+const std::vector<TestTransect>& testTransects() {
+    static const std::vector<TestTransect> tts = [] {
+        std::vector<TestTransect> out;
+        const std::vector<std::pair<std::vector<double>, std::vector<double>>> sections = {
+            {{0, 5, 10},                    {10, 0, 10}},                    // V notch
+            {{0, 40, 45, 50, 55, 60, 100},  {12, 10, 2, 0, 2, 10, 12}},      // flood plain
+            {{0, 2, 12, 14},                {6, 0, 0, 6}},                   // trapezoid
+            {{0, 3, 9, 30, 33},             {8, 1.5, 0, 4, 9}},              // asymmetric
+        };
+        for (std::size_t i = 0; i < sections.size(); ++i) {
+            TestTransect tt;
+            tt.td.name       = "T" + std::to_string(i);
+            tt.td.stations   = sections[i].first;
+            tt.td.elevations = sections[i].second;
+            tt.td.n_channel  = 0.03;
+            tt.td.n_left     = 0.05;
+            tt.td.n_right    = 0.05;
+            tt.td.x_left_bank  = sections[i].first.front();
+            tt.td.x_right_bank = sections[i].first.back();
+            openswmm::transect::buildTables(tt.td);
+            out.push_back(std::move(tt));
+        }
+        return out;
+    }();
+    return tts;
+}
+
+}  // namespace
+
+// A1 — the bucket map returns locate()'s index, not merely a nearby one. This
+// is the whole basis of the bit-exactness claim: same index in, same
+// interpolation arithmetic out.
+TEST(XSectAccel, BucketLutReturnsIdenticalIndex) {
+    struct Case { const char* name; const double* t; int n; };
+    using namespace xsect_tables;
+    const std::vector<Case> tables = {
+        {"Y_Gothic", Y_Gothic, N_Y_Gothic},
+        {"Y_Catenary", Y_Catenary, N_Y_Catenary},
+        {"Y_SemiEllip", Y_SemiEllip, N_Y_SemiEllip},
+        {"Y_SemiCirc", Y_SemiCirc, N_Y_SemiCirc},
+        {"A_HorizEllipse", A_HorizEllipse, N_A_HorizEllipse},
+        {"A_VertEllipse", A_VertEllipse, N_A_VertEllipse},
+        {"A_Arch", A_Arch, N_A_Arch},
+        {"S_Circ", S_Circ, N_S_Circ},
+        {"S_Egg", S_Egg, N_S_Egg},
+        {"S_Horseshoe", S_Horseshoe, N_S_Horseshoe},
+        {"S_Gothic", S_Gothic, N_S_Gothic},
+        {"S_Catenary", S_Catenary, N_S_Catenary},
+        {"S_SemiEllip", S_SemiEllip, N_S_SemiEllip},
+        {"S_BasketHandle", S_BasketHandle, N_S_BasketHandle},
+        {"S_SemiCirc", S_SemiCirc, N_S_SemiCirc},
+    };
+
+    int checked = 0;
+    for (const auto& c : tables) {
+        SCOPED_TRACE(c.name);
+        LocateLut lut{};
+        openswmm::xsect::build_invlookup_lut(lut, c.t, c.n);
+        ASSERT_GT(lut.scale, 0.0) << "no map built for " << c.name;
+        const int jLast = lut.j_last;
+        for (double y : adversarialTableValues(c.t, jLast + 1)) {
+            EXPECT_EQ(openswmm::xsect::locate_lut(y, c.t, jLast, lut),
+                      openswmm::xsect::locate_bisect(y, c.t, jLast))
+                << "y=" << y;
+            ++checked;
+        }
+    }
+    // NaN resolves to index 0 in plain bisection (every `y >= t[j]` is false);
+    // the map must not diverge there either.
+    for (const auto& c : tables) {
+        LocateLut lut{};
+        openswmm::xsect::build_invlookup_lut(lut, c.t, c.n);
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        EXPECT_EQ(openswmm::xsect::locate_lut(nan, c.t, lut.j_last, lut),
+                  openswmm::xsect::locate_bisect(nan, c.t, lut.j_last)) << c.name;
+    }
+    EXPECT_GT(checked, 2000);
+}
+
+// A1 — same, on real transect area tables (the getYofA IRREGULAR path).
+TEST(XSectAccel, BucketLutIdenticalOnTransectTables) {
+    for (const auto& tt : testTransects()) {
+        SCOPED_TRACE(tt.td.name);
+        ASSERT_GT(tt.td.a_full, 0.0);
+        ASSERT_GT(tt.td.area_lut.scale, 0.0) << "no map built for this transect";
+        const int jLast = tt.td.area_lut.j_last;
+        for (double y : adversarialTableValues(tt.td.area_tbl, jLast + 1)) {
+            EXPECT_EQ(openswmm::xsect::locate_lut(y, tt.td.area_tbl, jLast, tt.td.area_lut),
+                      openswmm::xsect::locate_bisect(y, tt.td.area_tbl, jLast))
+                << "y=" << y;
+        }
+    }
+}
+
+// A1 — the interpolated value, not just the index: invLookup with and without
+// the map, ULP == 0. Covers the S-tables' two-row top truncation, which is
+// resolved outside locate() and so must be unaffected by the map.
+TEST(XSectAccel, InvLookupWithMapIsBitIdentical) {
+    const xsect::XsectEval& ev = xsect::hostEval();
+    struct Case { const char* name; const double* t; int n; LutId id; };
+    using namespace xsect_tables;
+    const std::vector<Case> tables = {
+        {"Y_Gothic", Y_Gothic, N_Y_Gothic, LutId::Y_Gothic},
+        {"Y_Catenary", Y_Catenary, N_Y_Catenary, LutId::Y_Catenary},
+        {"Y_SemiEllip", Y_SemiEllip, N_Y_SemiEllip, LutId::Y_SemiEllip},
+        {"Y_SemiCirc", Y_SemiCirc, N_Y_SemiCirc, LutId::Y_SemiCirc},
+        {"A_HorizEllipse", A_HorizEllipse, N_A_HorizEllipse, LutId::A_HorizEllipse},
+        {"A_VertEllipse", A_VertEllipse, N_A_VertEllipse, LutId::A_VertEllipse},
+        {"A_Arch", A_Arch, N_A_Arch, LutId::A_Arch},
+        {"S_Circ", S_Circ, N_S_Circ, LutId::S_Circ},
+        {"S_Egg", S_Egg, N_S_Egg, LutId::S_Egg},
+        {"S_Horseshoe", S_Horseshoe, N_S_Horseshoe, LutId::S_Horseshoe},
+        {"S_Gothic", S_Gothic, N_S_Gothic, LutId::S_Gothic},
+        {"S_Catenary", S_Catenary, N_S_Catenary, LutId::S_Catenary},
+        {"S_SemiEllip", S_SemiEllip, N_S_SemiEllip, LutId::S_SemiEllip},
+        {"S_BasketHandle", S_BasketHandle, N_S_BasketHandle, LutId::S_BasketHandle},
+        {"S_SemiCirc", S_SemiCirc, N_S_SemiCirc, LutId::S_SemiCirc},
+    };
+    for (const auto& c : tables) {
+        SCOPED_TRACE(c.name);
+        const LocateLut* lut = xsect::hostTables().lut(c.id);
+        ASSERT_NE(lut, nullptr);
+        for (double y : adversarialTableValues(c.t, c.n)) {
+            EXPECT_TRUE(BitEq(ev.invLookup(y, c.t, c.n, nullptr),
+                              ev.invLookup(y, c.t, c.n, lut))) << "y=" << y;
+        }
+    }
+    for (const auto& tt : testTransects()) {
+        SCOPED_TRACE(tt.td.name);
+        const int n = openswmm::transect::N_TRANSECT_TBL;
+        for (double y : adversarialTableValues(tt.td.area_tbl, n)) {
+            EXPECT_TRUE(BitEq(ev.invLookup(y, tt.td.area_tbl, n, nullptr),
+                              ev.invLookup(y, tt.td.area_tbl, n, &tt.td.area_lut)))
+                << "y=" << y;
+        }
+    }
+}
+
+// A1 — end to end through the dispatchers the solvers actually call, against an
+// evaluator with the maps unbound (`luts == nullptr`), which is exactly the
+// pre-change code path.
+TEST(XSectAccel, DispatchersBitIdenticalWithAndWithoutMaps) {
+    xsect::XsectTables no_luts = xsect::hostTables();
+    no_luts.luts = nullptr;
+    const xsect::XsectEval bisecting{no_luts};
+    const xsect::XsectEval& mapped = xsect::hostEval();
+
+    for (const auto& c : selfContainedShapes()) {
+        SCOPED_TRACE(c.name);
+        LegacyTXsect L{};
+        xsect_setParams(&L, c.type, const_cast<double*>(c.p), 1.0);
+        const XSectParams xs = fromLegacy(L);
+        for (double f : areaFractions()) {
+            const double a = f * xs.a_full;
+            EXPECT_TRUE(BitEq(bisecting.getYofA(xs, a), mapped.getYofA(xs, a))) << "f=" << f;
+            EXPECT_TRUE(BitEq(bisecting.getRofA(xs, a), mapped.getRofA(xs, a))) << "f=" << f;
+        }
+        for (double f : areaFractions()) {
+            const double s = f * xs.s_full;
+            EXPECT_TRUE(BitEq(bisecting.getAofS(xs, s), mapped.getAofS(xs, s))) << "f=" << f;
+        }
+        for (double f : depthFractions()) {
+            const double y = f * xs.y_full;
+            EXPECT_TRUE(BitEq(bisecting.getAofY(xs, y), mapped.getAofY(xs, y))) << "f=" << f;
+        }
+    }
+
+    // The transect path: same comparison, with the per-link map bound or not.
+    for (const auto& tt : testTransects()) {
+        SCOPED_TRACE(tt.td.name);
+        XSectParams xs;
+        xs.type   = static_cast<int>(XSectShape::IRREGULAR);
+        xs.y_full = tt.td.y_full;
+        xs.a_full = tt.td.a_full;
+        xs.r_full = tt.td.r_full;
+        xs.w_max  = tt.td.w_max;
+        xs.area_tbl  = tt.td.area_tbl;
+        xs.hrad_tbl  = tt.td.hrad_tbl;
+        xs.width_tbl = tt.td.width_tbl;
+        xs.transect_tbl_size = openswmm::transect::N_TRANSECT_TBL;
+        XSectParams xs_mapped = xs;
+        xs_mapped.area_lut = &tt.td.area_lut;
+        for (double f : areaFractions()) {
+            const double a = f * xs.a_full;
+            EXPECT_TRUE(BitEq(mapped.getYofA(xs, a), mapped.getYofA(xs_mapped, a)))
+                << "f=" << f;
+        }
+    }
+}
+
+// A2 — the fused area+hyd-radius pass against the two separate passes it
+// replaces, over a batch of links deliberately chasing DIFFERENT transects.
+TEST(XSectAccel, FusedTabulatedPairIsBitIdentical) {
+    const auto& tts = testTransects();
+    ASSERT_FALSE(tts.empty());
+    constexpr int kLinks = 97;                 // prime: no alignment with 4 transects
+    constexpr int n = openswmm::transect::N_TRANSECT_TBL;
+
+    std::vector<double> depth(kLinks), nrm(kLinks), afull(kLinks), rfull(kLinks);
+    std::vector<const double*> ta(kLinks), tb(kLinks);
+    for (int k = 0; k < kLinks; ++k) {
+        const auto& td = tts[static_cast<std::size_t>(k) % tts.size()].td;
+        const auto uk = static_cast<std::size_t>(k);
+        // Sweep depth from below zero (the y<=0 guard) through surcharge.
+        depth[uk] = td.y_full * (-0.05 + 1.15 * static_cast<double>(k) / (kLinks - 1));
+        nrm[uk]   = td.y_full;
+        afull[uk] = td.a_full;
+        rfull[uk] = td.r_full;
+        ta[uk]    = td.area_tbl;
+        tb[uk]    = td.hrad_tbl;
+    }
+#ifdef SWMM_XSECT_FAST_LOOKUP
+    for (int k = 0; k < kLinks; ++k) {         // the kernels take 1/y_full here
+        auto uk = static_cast<std::size_t>(k);
+        nrm[uk] = (nrm[uk] > 0.0) ? 1.0 / nrm[uk] : 0.0;
+    }
+#endif
+
+    std::vector<double> ref_a(kLinks), ref_b(kLinks), got_a(kLinks), got_b(kLinks);
+    xsect_batch::perlink_tabulated(depth.data(), nrm.data(), afull.data(),
+                                   ta.data(), n, ref_a.data(), kLinks);
+    xsect_batch::perlink_tabulated(depth.data(), nrm.data(), rfull.data(),
+                                   tb.data(), n, ref_b.data(), kLinks);
+    xsect_batch::perlink_tabulated_pair(depth.data(), nrm.data(),
+                                        afull.data(), rfull.data(),
+                                        ta.data(), tb.data(), n,
+                                        got_a.data(), got_b.data(), kLinks);
+    EXPECT_EQ(0, std::memcmp(ref_a.data(), got_a.data(), ref_a.size() * sizeof(double)));
+    EXPECT_EQ(0, std::memcmp(ref_b.data(), got_b.data(), ref_b.size() * sizeof(double)));
+    for (int k = 0; k < kLinks; ++k) {         // per-element message on failure
+        auto uk = static_cast<std::size_t>(k);
+        EXPECT_TRUE(BitEq(ref_a[uk], got_a[uk])) << "area k=" << k;
+        EXPECT_TRUE(BitEq(ref_b[uk], got_b[uk])) << "hydrad k=" << k;
+    }
+
+    // A missing table on one side must still behave like the unfused pair.
+    ta[3] = nullptr;
+    tb[7] = nullptr;
+    xsect_batch::perlink_tabulated(depth.data(), nrm.data(), afull.data(),
+                                   ta.data(), n, ref_a.data(), kLinks);
+    xsect_batch::perlink_tabulated(depth.data(), nrm.data(), rfull.data(),
+                                   tb.data(), n, ref_b.data(), kLinks);
+    xsect_batch::perlink_tabulated_pair(depth.data(), nrm.data(),
+                                        afull.data(), rfull.data(),
+                                        ta.data(), tb.data(), n,
+                                        got_a.data(), got_b.data(), kLinks);
+    EXPECT_EQ(0, std::memcmp(ref_a.data(), got_a.data(), ref_a.size() * sizeof(double)));
+    EXPECT_EQ(0, std::memcmp(ref_b.data(), got_b.data(), ref_b.size() * sizeof(double)));
+}
+
+// A3 — the reordering is only sound because the tabulated kernels are
+// elementwise. Feed the same links in two different orders and require each
+// link's result to be identical, which is precisely what the init-time sort
+// relies on.
+TEST(XSectAccel, TabulatedKernelsArePositionIndependent) {
+    const auto& tts = testTransects();
+    constexpr int kLinks = 64;
+    constexpr int n = openswmm::transect::N_TRANSECT_TBL;
+
+    std::vector<double> depth(kLinks), nrm(kLinks), afull(kLinks), rfull(kLinks);
+    std::vector<const double*> ta(kLinks), tb(kLinks);
+    for (int k = 0; k < kLinks; ++k) {
+        // Interleave transects, the ordering the sort exists to undo.
+        const auto& td = tts[static_cast<std::size_t>(k) % tts.size()].td;
+        const auto uk = static_cast<std::size_t>(k);
+        depth[uk] = td.y_full * (0.02 + 0.96 * static_cast<double>(k) / (kLinks - 1));
+        nrm[uk]   = td.y_full;
+        afull[uk] = td.a_full;
+        rfull[uk] = td.r_full;
+        ta[uk]    = td.area_tbl;
+        tb[uk]    = td.hrad_tbl;
+    }
+#ifdef SWMM_XSECT_FAST_LOOKUP
+    for (int k = 0; k < kLinks; ++k) {
+        auto uk = static_cast<std::size_t>(k);
+        nrm[uk] = (nrm[uk] > 0.0) ? 1.0 / nrm[uk] : 0.0;
+    }
+#endif
+
+    std::vector<double> a0(kLinks), b0(kLinks);
+    xsect_batch::perlink_tabulated_pair(depth.data(), nrm.data(),
+                                        afull.data(), rfull.data(),
+                                        ta.data(), tb.data(), n,
+                                        a0.data(), b0.data(), kLinks);
+
+    // Group by transect — exactly the permutation sortGroupByTransect applies.
+    std::vector<int> order(kLinks);
+    for (int k = 0; k < kLinks; ++k) order[static_cast<std::size_t>(k)] = k;
+    std::stable_sort(order.begin(), order.end(), [&](int l, int r) {
+        return (l % static_cast<int>(tts.size())) < (r % static_cast<int>(tts.size()));
+    });
+    std::vector<double> pd(kLinks), pn(kLinks), pa(kLinks), pr(kLinks);
+    std::vector<const double*> pta(kLinks), ptb(kLinks);
+    for (int k = 0; k < kLinks; ++k) {
+        const auto uk = static_cast<std::size_t>(k);
+        const auto us = static_cast<std::size_t>(order[uk]);
+        pd[uk] = depth[us]; pn[uk] = nrm[us];
+        pa[uk] = afull[us]; pr[uk] = rfull[us];
+        pta[uk] = ta[us];   ptb[uk] = tb[us];
+    }
+    std::vector<double> a1(kLinks), b1(kLinks);
+    xsect_batch::perlink_tabulated_pair(pd.data(), pn.data(), pa.data(), pr.data(),
+                                        pta.data(), ptb.data(), n,
+                                        a1.data(), b1.data(), kLinks);
+    for (int k = 0; k < kLinks; ++k) {
+        const auto uk = static_cast<std::size_t>(k);
+        const auto us = static_cast<std::size_t>(order[uk]);
+        EXPECT_TRUE(BitEq(a0[us], a1[uk])) << "area, permuted position " << k;
+        EXPECT_TRUE(BitEq(b0[us], b1[uk])) << "hydrad, permuted position " << k;
+    }
+}
+
+// A3 — the reordering itself, not just the property it leans on.
+//
+// `sortGroupByTransect` permutes FOURTEEN parallel arrays. Permuting the table
+// pointers while leaving (say) `a_full` behind would silently scale each link's
+// area by another link's full area — every kernel would still run, every
+// per-element result would still be "some valid number", and
+// TabulatedKernelsArePositionIndependent above would still pass, because it
+// tests the kernels rather than the permutation. So this test checks the two
+// things that can actually break: that the group really is grouped by transect
+// afterwards, and that each element's parameters still belong to ITS link.
+TEST(XSectAccel, TransectSortKeepsEveryParallelArrayWithItsLink) {
+    const auto& tts = testTransects();
+    ASSERT_GE(tts.size(), 3u);
+
+    // Links deal round-robin from the transect deck, so the pre-sort order
+    // interleaves — the arrangement the sort exists to undo. A prime link count
+    // keeps the cycle from lining up with the group boundaries.
+    constexpr int kLinks = 23;
+    SimulationContext ctx;
+    ctx.links.resize(kLinks);
+    ctx.transect_tables.resize(3);
+    for (std::size_t t = 0; t < ctx.transect_tables.size(); ++t)
+        ctx.transect_tables[t] = tts[t].td;
+
+    std::vector<XSectParams> params(kLinks);
+    std::vector<int> curve_of_link(kLinks);
+    for (int k = 0; k < kLinks; ++k) {
+        const int ti = k % static_cast<int>(ctx.transect_tables.size());
+        curve_of_link[static_cast<std::size_t>(k)] = ti;
+        ctx.links.xsect_curve[static_cast<std::size_t>(k)] = ti;
+        params[static_cast<std::size_t>(k)].type =
+            static_cast<int>(XSectShape::IRREGULAR);
+        // Deliberately WRONG-but-distinct seed values: attachTransectTables
+        // overwrites them from the transect, so if the sort moved an element's
+        // tables without moving its scalars the mismatch shows up below.
+        params[static_cast<std::size_t>(k)].y_full = 1.0 + k;
+        params[static_cast<std::size_t>(k)].a_full = 100.0 + k;
+    }
+
+    XSectGroups groups;
+    groups.build(params.data(), kLinks);
+    groups.attachTransectTables(ctx);
+
+    const ShapeGroup* g = groups.findGroup(XSectShape::IRREGULAR);
+    ASSERT_NE(g, nullptr);
+    ASSERT_EQ(g->count, kLinks);
+
+    // 1. The group is actually grouped: transect indices are non-decreasing.
+    for (int k = 1; k < g->count; ++k) {
+        const int prev = curve_of_link[static_cast<std::size_t>(g->link_idx[static_cast<std::size_t>(k - 1)])];
+        const int cur  = curve_of_link[static_cast<std::size_t>(g->link_idx[static_cast<std::size_t>(k)])];
+        EXPECT_LE(prev, cur) << "group not sorted by transect at position " << k;
+    }
+    // And it really was a reorder, not a no-op on an already-sorted input.
+    bool reordered = false;
+    for (int k = 0; k < g->count; ++k)
+        if (g->link_idx[static_cast<std::size_t>(k)] != k) { reordered = true; break; }
+    EXPECT_TRUE(reordered) << "input was already grouped — this test proves nothing";
+
+    // 2. Every element still carries ITS OWN link's data. link_idx is the only
+    //    thing tying a slot back to a link, so each array is checked against
+    //    the transect that link references.
+    for (int k = 0; k < g->count; ++k) {
+        const auto uk = static_cast<std::size_t>(k);
+        const int link = g->link_idx[uk];
+        const auto& td = ctx.transect_tables[
+            static_cast<std::size_t>(curve_of_link[static_cast<std::size_t>(link)])];
+        SCOPED_TRACE("slot " + std::to_string(k) + " -> link " + std::to_string(link));
+        EXPECT_EQ(g->area_tables[uk],  td.area_tbl);
+        EXPECT_EQ(g->hrad_tables[uk],  td.hrad_tbl);
+        EXPECT_EQ(g->width_tables[uk], td.width_tbl);
+        EXPECT_DOUBLE_EQ(g->y_full[uk], td.y_full);
+        EXPECT_DOUBLE_EQ(g->a_full[uk], td.a_full);
+        EXPECT_DOUBLE_EQ(g->r_full[uk], td.r_full);
+        EXPECT_DOUBLE_EQ(g->w_max[uk],  td.w_max);
+        EXPECT_DOUBLE_EQ(g->inv_y_full[uk], 1.0 / td.y_full);
+    }
+
+    // 3. End to end: the batch area a link gets must equal what the per-element
+    //    accessor computes for that link's own transect. This is the assertion
+    //    that fails if the permutation ever pairs a link with another's table.
+    std::vector<double> depths(kLinks), areas(kLinks, -1.0);
+    for (int k = 0; k < kLinks; ++k) {
+        const auto& td = ctx.transect_tables[
+            static_cast<std::size_t>(curve_of_link[static_cast<std::size_t>(k)])];
+        depths[static_cast<std::size_t>(k)] = 0.37 * td.y_full;
+    }
+    groups.computeAreas(depths.data(), areas.data(), kLinks);
+
+    for (int k = 0; k < kLinks; ++k) {
+        const auto uk = static_cast<std::size_t>(k);
+        const auto& td = ctx.transect_tables[
+            static_cast<std::size_t>(curve_of_link[uk])];
+        XSectParams ref{};
+        ref.type   = static_cast<int>(XSectShape::IRREGULAR);
+        ref.y_full = td.y_full;
+        ref.a_full = td.a_full;
+        ref.area_tbl = td.area_tbl;
+        ref.area_lut = &td.area_lut;
+        ref.transect_tbl_size = openswmm::transect::N_TRANSECT_TBL;
+        EXPECT_TRUE(BATCH_EQ(xsect::getAofY(ref, depths[uk]), areas[uk]))
+            << "link " << k << " got another link's geometry";
+    }
 }

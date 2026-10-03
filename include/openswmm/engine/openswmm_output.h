@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file openswmm_output.h
  * @brief OpenSWMM Engine — Output File Reader C API.
@@ -37,7 +53,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_OUTPUT_H
@@ -112,23 +128,26 @@ typedef enum SWMM_OutLinkVar {
 /**
  * @brief System-wide result variable indices.
  *
- * @details 14 system-wide summary results stored per output period.
+ * @details 15 system-wide summary results stored per output period, in the
+ *          slot order the .out writer uses (legacy SWMM 5 SysResults order).
  */
 typedef enum SWMM_OutSystemVar {
     SWMM_OUT_SYS_TEMPERATURE    =  0, /**< Air temperature. */
     SWMM_OUT_SYS_RAINFALL       =  1, /**< Average rainfall. */
     SWMM_OUT_SYS_SNOW_DEPTH     =  2, /**< Average snow depth. */
-    SWMM_OUT_SYS_EVAP           =  3, /**< Average evaporation. */
-    SWMM_OUT_SYS_INFIL          =  4, /**< Average infiltration. */
-    SWMM_OUT_SYS_RUNOFF         =  5, /**< Total runoff flow. */
-    SWMM_OUT_SYS_DW_INFLOW      =  6, /**< Dry weather inflow. */
-    SWMM_OUT_SYS_GW_INFLOW      =  7, /**< Groundwater inflow. */
-    SWMM_OUT_SYS_LAT_INFLOW     =  8, /**< Lateral inflow. */
-    SWMM_OUT_SYS_FLOODING       =  9, /**< Total flooding. */
-    SWMM_OUT_SYS_OUTFLOW        = 10, /**< Total outfall outflow. */
-    SWMM_OUT_SYS_STORAGE        = 11, /**< Total storage volume. */
-    SWMM_OUT_SYS_EVAP_TOTAL     = 12, /**< Total evaporation. */
-    SWMM_OUT_SYS_PET            = 13  /**< Potential evapotranspiration. */
+    SWMM_OUT_SYS_INFIL          =  3, /**< Average infiltration. */
+    SWMM_OUT_SYS_RUNOFF         =  4, /**< Total runoff flow. */
+    SWMM_OUT_SYS_DW_INFLOW      =  5, /**< Dry weather inflow. */
+    SWMM_OUT_SYS_GW_INFLOW      =  6, /**< Groundwater inflow. */
+    SWMM_OUT_SYS_RDII_INFLOW    =  7, /**< RDII inflow. */
+    SWMM_OUT_SYS_EXT_INFLOW     =  8, /**< External (direct) inflow. */
+    SWMM_OUT_SYS_TOTAL_INFLOW   =  9, /**< Total lateral inflow (runoff + DWF + GW + RDII + external). */
+    SWMM_OUT_SYS_FLOODING       = 10, /**< Total flooding. */
+    SWMM_OUT_SYS_OUTFLOW        = 11, /**< Total outfall outflow. */
+    SWMM_OUT_SYS_STORAGE        = 12, /**< Total storage volume. */
+    SWMM_OUT_SYS_EVAP           = 13, /**< Evaporation rate. */
+    SWMM_OUT_SYS_PET            = 14, /**< Potential evapotranspiration. */
+    SWMM_OUT_SYS_LAT_INFLOW     = SWMM_OUT_SYS_TOTAL_INFLOW /**< Deprecated alias of TOTAL_INFLOW. */
 } SWMM_OutSystemVar;
 
 /* =========================================================================
@@ -142,6 +161,42 @@ typedef enum SWMM_OutSystemVar {
  * @returns Opaque handle, or NULL on failure (invalid file, I/O error).
  */
 SWMM_ENGINE_API SWMM_Output swmm_output_open(const char* path);
+
+/**
+ * @brief Open a binary output file that is still being written.
+ *
+ * @details Unlike swmm_output_open(), this does not need the closing
+ *          records: offsets come from a forward parse of the header and the
+ *          period count from the file size (whole records only). Use it to
+ *          tail a run in progress — both the 6.x engine and the legacy 5.x
+ *          engines flush the file after every report period — or to salvage
+ *          the completed periods of a run that died before finishing. Poll
+ *          swmm_output_refresh() for growth. Never modifies the file.
+ *
+ * @param path  Path to a .out file whose header is complete.
+ * @returns Opaque handle, or NULL if the header cannot be parsed yet.
+ */
+SWMM_ENGINE_API SWMM_Output swmm_output_open_live(const char* path);
+
+/**
+ * @brief Re-count the periods of a file opened with swmm_output_open_live().
+ *
+ * @details Once the writer's closing records appear, they are adopted
+ *          (period count + error code) and the handle stops being live; it
+ *          then behaves exactly like one from swmm_output_open(). On a
+ *          non-live handle this is a no-op that reports the current count.
+ *
+ * @param handle   Output reader handle.
+ * @param periods  Optional out: current period count.
+ * @returns 0 on success, -1 on a NULL handle.
+ */
+SWMM_ENGINE_API int swmm_output_refresh(SWMM_Output handle, int* periods);
+
+/**
+ * @brief 1 while a handle from swmm_output_open_live() has not yet seen the
+ *        closing records, 0 otherwise, -1 on NULL.
+ */
+SWMM_ENGINE_API int swmm_output_is_live(SWMM_Output handle);
 
 /**
  * @brief Close the output file and free all resources.
@@ -257,6 +312,23 @@ SWMM_ENGINE_API const char* swmm_output_get_node_id(SWMM_Output handle,
  */
 SWMM_ENGINE_API const char* swmm_output_get_link_id(SWMM_Output handle,
                                                       int index);
+
+/**
+ * @brief Get the string ID of a species (pollutant) column by index.
+ *
+ * @details The `.out` header carries one name per species column. Reading
+ *          it is the ONLY way to identify a column's meaning: the per-column
+ *          unit field is a three-value concentration enum, so the water-age
+ *          column (`__WATER_AGE__`, reported in HOURS) necessarily reuses a
+ *          concentration code. Consumers plotting or converting a species
+ *          column must key on this name, not on the unit code.
+ *
+ * @param handle  Output reader handle.
+ * @param index   Zero-based species index (0 .. pollut_count-1).
+ * @returns  Null-terminated string owned by the reader, or NULL on error.
+ */
+SWMM_ENGINE_API const char* swmm_output_get_pollut_id(SWMM_Output handle,
+                                                        int index);
 
 /* =========================================================================
  * Per-period result retrieval (all objects, one variable, one period)

@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file openswmm_engine.h
  * @brief OpenSWMM Engine — primary transparent C API (master header).
@@ -63,7 +79,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_H
@@ -305,6 +321,90 @@ SWMM_ENGINE_API int         swmm_get_warning_count (SWMM_Engine engine);
 SWMM_ENGINE_API const char* swmm_get_warning_at    (SWMM_Engine engine, int index);
 
 /* =========================================================================
+ * Thread capability query (engine-independent)
+ * ========================================================================= */
+
+/**
+ * Hardware / OpenMP thread limits as seen by the engine process. Lets a host
+ * show the user what [OPTIONS] THREADS can usefully be set to and why the
+ * effective count may differ from the request.
+ */
+typedef struct {
+    int logical_cpus;       /**< Logical processors (SMT included); 0 if unknown.   */
+    int omp_max_threads;    /**< omp_get_max_threads() in this process. Lower than
+                                 logical_cpus when OMP_NUM_THREADS / OMP_THREAD_LIMIT
+                                 / CPU affinity limit the process. 1 without OpenMP. */
+    int omp_available;      /**< 1 if the engine was built with OpenMP.             */
+    int perf_cores;         /**< macOS: logical CPUs on the performance cluster;
+                                 0 elsewhere / unknown.                              */
+    int kokkos_omp_threads; /**< Threads the Kokkos OpenMP 2D backend initialised
+                                 with in this process; 0 = not initialised.         */
+} SWMM_ThreadInfo;
+
+/** Fill @p out. Returns SWMM_OK, or SWMM_ERR_BADPARAM when @p out is NULL. */
+SWMM_ENGINE_API int swmm_get_thread_info(SWMM_ThreadInfo* out);
+
+/**
+ * Resolve the thread counts the engine WOULD use for @p threads_option
+ * ([OPTIONS] THREADS; 0 = auto) with the engine's current model, applying
+ * the same rules as swmm_engine_start: explicit values are honoured; auto
+ * applies omp_get_max_threads(), the model-size gates and (macOS) the
+ * performance-core clamp. Any of the out-pointers may be NULL. Returns
+ * SWMM_OK, or SWMM_ERR_BADPARAM when @p engine is NULL.
+ *
+ * @param global_threads  Team size for runoff / quality / general loops.
+ * @param dw_threads      Dynamic-wave Picard team (0 when routing is not DYNWAVE
+ *                        or the model is not open).
+ * @param twod_threads    2D CPU marcher team (0 when the model has no 2D mesh).
+ */
+SWMM_ENGINE_API int swmm_get_effective_threads(SWMM_Engine engine, int threads_option,
+                                               int* global_threads, int* dw_threads,
+                                               int* twod_threads);
+
+/* =========================================================================
+ * Transport matrix (E2, 2026-09-07) — which species classes run in which
+ * domain, and why not. Engine-computed from the open model's options
+ * (IGNORE_QUALITY, WATER_AGE, HEAT_TRANSPORT, the reactions component,
+ * IGNORE_2D and the [2D_OPTIONS] TRANSPORT_* keys); the .rpt prints the
+ * same table. Valid after swmm_engine_open; re-read after option edits.
+ * ========================================================================= */
+
+#define SWMM_TRANSPORT_DOMAIN_RUNOFF       0
+#define SWMM_TRANSPORT_DOMAIN_GROUNDWATER  1
+#define SWMM_TRANSPORT_DOMAIN_NETWORK_1D   2
+#define SWMM_TRANSPORT_DOMAIN_SURFACE_2D   3
+#define SWMM_TRANSPORT_DOMAIN_COUNT        4
+
+#define SWMM_TRANSPORT_CLASS_POLLUTANTS    0
+#define SWMM_TRANSPORT_CLASS_MSX           1
+#define SWMM_TRANSPORT_CLASS_AGE           2
+#define SWMM_TRANSPORT_CLASS_TEMPERATURE   3
+#define SWMM_TRANSPORT_CLASS_COUNT         4
+
+#define SWMM_TRANSPORT_ENABLED             0
+#define SWMM_TRANSPORT_DISABLED_BY_USER    1   /**< reason = the option key */
+#define SWMM_TRANSPORT_UNAVAILABLE         2   /**< reason = why nothing is carried */
+
+typedef struct SWMM_TransportCell {
+    int  state;        /**< SWMM_TRANSPORT_ENABLED / _DISABLED_BY_USER / _UNAVAILABLE */
+    int  count;        /**< rows of this class carried in the domain (0 unless ENABLED) */
+    char reason[96];   /**< key or explanation; "" when ENABLED */
+} SWMM_TransportCell;
+
+typedef struct SWMM_TransportMatrix {
+    SWMM_TransportCell cell[SWMM_TRANSPORT_DOMAIN_COUNT][SWMM_TRANSPORT_CLASS_COUNT];
+} SWMM_TransportMatrix;
+
+/** Fill @p out for the open model (an unopened engine reports every cell
+ *  UNAVAILABLE). Returns SWMM_OK, or SWMM_ERR_BADPARAM when @p engine or
+ *  @p out is NULL. */
+SWMM_ENGINE_API int swmm_get_transport_matrix(SWMM_Engine engine, SWMM_TransportMatrix* out);
+
+/** Display names for the matrix axes ("" when out of range). */
+SWMM_ENGINE_API const char* swmm_transport_domain_name(int domain);
+SWMM_ENGINE_API const char* swmm_transport_class_name(int species_class);
+
+/* =========================================================================
  * Simulation timing
  * ========================================================================= */
 
@@ -482,6 +582,9 @@ SWMM_ENGINE_API int swmm_runoff_iface_close(SWMM_Engine engine);
 #include "openswmm_hotstart.h"
 #include "openswmm_spatial.h"
 #include "openswmm_pollutants.h"
+#include "openswmm_initial_quality.h"
+#include "openswmm_reactions.h"
+#include "openswmm_process_components.h"
 #include "openswmm_tables.h"
 #include "openswmm_inflows.h"
 #include "openswmm_controls.h"
@@ -494,6 +597,7 @@ SWMM_ENGINE_API int swmm_runoff_iface_close(SWMM_Engine engine);
 
 #ifdef OPENSWMM_HAS_2D
 #include "openswmm_2d.h"
+#include "openswmm_gw_transport.h"   /* U4 (2026-09-07) */
 #endif
 
 #endif /* OPENSWMM_ENGINE_H */

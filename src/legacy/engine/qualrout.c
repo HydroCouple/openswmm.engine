@@ -253,11 +253,17 @@ void findNodeQual(int j)
     }
 
     // --- otherwise concen. remains the same
+    //     (OUTFALL_BACKFLOW_QUALITY ZERO: a supplying outfall is a fresh
+    //      boundary — its held state reads zero so reverse flow re-enters
+    //      clean instead of carrying the last mix; see findLinkQual, which
+    //      draws the downstream node's quality on reverse flow)
     else
     {
         for (p = 0; p < Nobjects[POLLUT]; p++)
         {
-            if (Node[j].newDepth > ZeroDepth)
+            if ( ZeroOutfallBackflowQual && Node[j].type == OUTFALL )
+                Node[j].newQual[p] = 0.0;
+            else if (Node[j].newDepth > ZeroDepth)
                 Node[j].newQual[p] = Node[j].oldQual[p];
         }
     }

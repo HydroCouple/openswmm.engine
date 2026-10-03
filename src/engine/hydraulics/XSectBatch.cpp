@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file XSectBatch.cpp
  * @brief Data-oriented batch cross-section geometry — shape-grouped SoA.
@@ -14,7 +30,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "XSectBatch.hpp"
@@ -36,6 +52,8 @@
 #include <cmath>
 #include <algorithm>
 #include <numeric>
+#include <type_traits>
+#include <vector>
 
 #if defined(SWMM_USE_OPENMP)
 #include <omp.h>
@@ -133,6 +151,68 @@ void XSectGroups::build(const XSectParams* params, int n_links) {
     }
 }
 
+namespace {
+
+/// Reorder a transect-backed shape group so links sharing a transect table sit
+/// together (plan XSECT_LOOKUP_ACCEL §4 item A3).
+///
+/// A model's IRREGULAR links are grouped by SHAPE, so a group's elements chase
+/// their per-link table pointers in whatever order the links appear in the
+/// input — with a few hundred transects and 51-row × 3 tables each (~1.2 kB per
+/// transect), consecutive elements evict each other's tables from L1. Sorting
+/// by transect index turns that into a run per transect.
+///
+/// This is a pure permutation of the group's element order. Every batch kernel
+/// is elementwise, results scatter through `link_idx`, and the bypass-mask
+/// packed mirrors already reposition elements arbitrarily — so the computed
+/// values are unchanged, position for position. The sort key is the transect
+/// index (not the table address) and ties keep the original order, so the
+/// permutation is reproducible run to run and platform to platform.
+void sortGroupByTransect(ShapeGroup& g, const SimulationContext& ctx) {
+    const int count = g.count;
+    if (count < 2 || g.area_tables.empty()) return;
+
+    std::vector<int> order(static_cast<std::size_t>(count));
+    for (int k = 0; k < count; ++k) order[static_cast<std::size_t>(k)] = k;
+
+    const auto curve_of = [&](int k) {
+        const auto uj = static_cast<std::size_t>(g.link_idx[static_cast<std::size_t>(k)]);
+        return ctx.links.xsect_curve[uj];
+    };
+    std::stable_sort(order.begin(), order.end(),
+                     [&](int lhs, int rhs) { return curve_of(lhs) < curve_of(rhs); });
+
+    bool already_sorted = true;
+    for (int k = 0; k < count; ++k)
+        if (order[static_cast<std::size_t>(k)] != k) { already_sorted = false; break; }
+    if (already_sorted) return;
+
+    const auto permute = [&order, count](auto& vec) {
+        if (static_cast<int>(vec.size()) != count) return;
+        std::decay_t<decltype(vec)> tmp(vec.size());
+        for (int k = 0; k < count; ++k)
+            tmp[static_cast<std::size_t>(k)] =
+                vec[static_cast<std::size_t>(order[static_cast<std::size_t>(k)])];
+        vec.swap(tmp);
+    };
+    permute(g.link_idx);
+    permute(g.y_full);
+    permute(g.inv_y_full);
+    permute(g.a_full);
+    permute(g.r_full);
+    permute(g.s_full);
+    permute(g.w_max);
+    permute(g.y_bot);
+    permute(g.a_bot);
+    permute(g.s_bot);
+    permute(g.r_bot);
+    permute(g.area_tables);
+    permute(g.hrad_tables);
+    permute(g.width_tables);
+}
+
+}  // namespace
+
 void XSectGroups::attachTransectTables(const SimulationContext& ctx) {
     // The packed mirrors must include the per-link table pointers; force a
     // lazy re-init so they pick up the arrays attached below.
@@ -156,6 +236,15 @@ void XSectGroups::attachTransectTables(const SimulationContext& ctx) {
 
             int ci = ctx.links.xsect_curve[uj];
             if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.transect_tables.size()) {
+                // These are raw pointers INTO a vector element. They stay
+                // valid only because every API that can append to
+                // ctx.transect_tables is gated to BUILDING/OPENED
+                // (CHECK_GEOMETRY / CHECK_TOPOLOGY), so nothing can grow the
+                // store once this capture has happened. Pinned by
+                // test_engine_transect_table_stability. Relaxing that gate
+                // requires giving transect_tables stable element addresses
+                // first — std::deque is a drop-in, nothing indexes it
+                // contiguously.
                 const auto& td = ctx.transect_tables[static_cast<std::size_t>(ci)];
                 g.area_tables[uk]  = td.area_tbl;
                 g.hrad_tables[uk]  = td.hrad_tbl;
@@ -168,6 +257,8 @@ void XSectGroups::attachTransectTables(const SimulationContext& ctx) {
                 g.w_max[uk]  = td.w_max;
             }
         }
+
+        sortGroupByTransect(g, ctx);
     }
 }
 
@@ -290,13 +381,109 @@ void area_inv_tabulated(
     const double* OPENSWMM_RESTRICT a_full,
     const double* table,
     int            table_size,
+    const xsect::LocateLut* lut,
     double*       OPENSWMM_RESTRICT area,
     int count
 ) {
     // Shapes whose area table is Y vs A (inverted) use invLookup. Legacy getAofY:
     // a_full * invLookup(y/yFull); norm_x gives x==0 at y<=0 (invLookup(0)==0).
     for (int k = 0; k < count; ++k)
-        area[k] = a_full[k] * xsect::invLookup(norm_x(depth[k], nrm[k]), table, table_size);
+        area[k] = a_full[k] * xsect::invLookup(norm_x(depth[k], nrm[k]), table,
+                                               table_size, lut);
+}
+
+/// Fused per-link tabulated pair — the tabulated analog of
+/// area_hydrad_circular (plan XSECT_LOOKUP_ACCEL §4 item A2).
+///
+/// A transect's area and hydraulic-radius tables share one 51-row normalized
+/// depth grid, so evaluating both at the same depth repeats the whole index
+/// computation: the normalization, the `x / delta` truncation, the segment
+/// origin and the interpolation weights. This does that work once and
+/// interpolates both tables from it, and gathers each link's two table
+/// pointers in one visit instead of two.
+///
+/// Bit-identical to two `perlink_tabulated` passes by construction: every
+/// arithmetic op is the DIVIDE form of `xsect::lookup_exact` in legacy's
+/// grouping (no reciprocal, no FMA), the quadratic refinement and the negative
+/// clamp are applied per table exactly as `lookup_exact` applies them, and the
+/// `i >= n-1` early-out returns the last row unclamped, as there.
+///
+/// (The top width cannot join this pass: the dynamic-wave loop computes widths
+/// in STEP B from crown-capped depths and areas in STEP D from depths STEP C
+/// has since modified — different inputs, so there is no shared index to
+/// share. Fusing them would change the algorithm, not just its cost.)
+void perlink_tabulated_pair(
+    const double* OPENSWMM_RESTRICT depth,
+    const double* OPENSWMM_RESTRICT nrm,
+    const double* OPENSWMM_RESTRICT scale_a,     // a_full
+    const double* OPENSWMM_RESTRICT scale_b,     // r_full
+    const double* const* tables_a,               // per-link area tables
+    const double* const* tables_b,               // per-link hyd-rad tables
+    int            table_size,
+    double*       OPENSWMM_RESTRICT out_a,
+    double*       OPENSWMM_RESTRICT out_b,
+    int count
+) {
+    const int n = table_size;
+#ifdef SWMM_XSECT_FAST_LOOKUP
+    const double inv_delta = static_cast<double>(n - 1);   // exact integer
+    const double delta     = 1.0 / inv_delta;
+#else
+    const double delta = 1.0 / static_cast<double>(n - 1);
+    const double dd    = delta * delta;
+#endif
+
+    for (int k = 0; k < count; ++k) {
+        const double* ta = tables_a[k];
+        const double* tb = tables_b[k];
+        if (!ta || !tb) {                       // degenerate link — no fusion to do
+            out_a[k] = ta ? scale_a[k] * norm_lookup(depth[k], nrm[k], ta, n) : 0.0;
+            out_b[k] = tb ? scale_b[k] * norm_lookup(depth[k], nrm[k], tb, n) : 0.0;
+            continue;
+        }
+
+        const double x = norm_x(depth[k], nrm[k]);
+#ifdef SWMM_XSECT_FAST_LOOKUP
+        const int i = static_cast<int>(x * inv_delta);
+#else
+        const int i = static_cast<int>(x / delta);
+#endif
+        if (i >= n - 1) {                       // lookup_exact's early-out (no clamp)
+            out_a[k] = scale_a[k] * ta[n - 1];
+            out_b[k] = scale_b[k] * tb[n - 1];
+            continue;
+        }
+
+        const double x0 = i * delta;
+#ifdef SWMM_XSECT_FAST_LOOKUP
+        double a = ta[i] + (x - x0) * (ta[i + 1] - ta[i]) * inv_delta;
+        double b = tb[i] + (x - x0) * (tb[i + 1] - tb[i]) * inv_delta;
+        if (i < 2) {
+            const double x1 = (static_cast<double>(i) + 1.0) * delta;
+            const double q  = (x - x0) * (x - x1) * (inv_delta * inv_delta);
+            const double a2 = a + q * (ta[i] / 2.0 - ta[i + 1] + ta[i + 2] / 2.0);
+            const double b2 = b + q * (tb[i] / 2.0 - tb[i + 1] + tb[i + 2] / 2.0);
+            if (a2 > 0.0) a = a2;
+            if (b2 > 0.0) b = b2;
+        }
+#else
+        double a = ta[i] + (x - x0) * (ta[i + 1] - ta[i]) / delta;
+        double b = tb[i] + (x - x0) * (tb[i + 1] - tb[i]) / delta;
+        if (i < 2) {                            // quadratic refinement (legacy lookup)
+            const double x1 = (static_cast<double>(i) + 1.0) * delta;
+            const double a2 = a + (x - x0) * (x - x1) / dd *
+                                  (ta[i] / 2.0 - ta[i + 1] + ta[i + 2] / 2.0);
+            const double b2 = b + (x - x0) * (x - x1) / dd *
+                                  (tb[i] / 2.0 - tb[i + 1] + tb[i + 2] / 2.0);
+            if (a2 > 0.0) a = a2;
+            if (b2 > 0.0) b = b2;
+        }
+#endif
+        if (a < 0.0) a = 0.0;
+        if (b < 0.0) b = 0.0;
+        out_a[k] = scale_a[k] * a;
+        out_b[k] = scale_b[k] * b;
+    }
 }
 
 /// Per-link tabulated lookup (for IRREGULAR shapes where each link has its own table).
@@ -714,6 +901,20 @@ TableRef area_inv_table_for(XSectShape shape) {
     }
 }
 
+/// The bucket map matching area_inv_table_for's table (plan A1). Reads the
+/// host-bound block so the batch path and the per-element accessor accelerate
+/// the same searches with the same maps.
+const xsect::LocateLut* area_inv_lut_for(XSectShape shape) {
+    using xsect::LutId;
+    switch (shape) {
+        case XSectShape::GOTHIC:         return xsect::hostTables().lut(LutId::Y_Gothic);
+        case XSectShape::CATENARY:       return xsect::hostTables().lut(LutId::Y_Catenary);
+        case XSectShape::SEMIELLIPTICAL: return xsect::hostTables().lut(LutId::Y_SemiEllip);
+        case XSectShape::SEMICIRCULAR:   return xsect::hostTables().lut(LutId::Y_SemiCirc);
+        default: return nullptr;
+    }
+}
+
 TableRef hydrad_table_for(XSectShape shape) {
     using namespace xsect_tables;
     switch (shape) {
@@ -808,7 +1009,7 @@ static void apply_area_kernel(const ShapeGroup& g,
                 if (inv.data) {
                     xsect_batch::area_inv_tabulated(ld, norm_param(g) + lo,
                                                     g.a_full.data() + lo, inv.data, inv.size,
-                                                    la, n);
+                                                    area_inv_lut_for(g.shape), la, n);
                 } else {
                     for (int k = lo; k < lo + n; ++k) {
                         auto uk = static_cast<std::size_t>(k);
@@ -957,10 +1158,24 @@ static void apply_area_hydrad_kernel(const ShapeGroup& g, const double* local_d,
         xsect_batch::area_hydrad_circular(local_d + lo, norm_param(g) + lo,
                                           g.a_full.data() + lo, g.r_full.data() + lo,
                                           local_a + lo, local_h + lo, n);
-    } else {
-        apply_area_kernel(g, local_d, local_a, lo, n);
-        apply_hydrad_kernel(g, local_d, local_h, lo, n);
+        return;
     }
+    // Transect-backed shapes get the same treatment: their area and hyd-rad
+    // tables share one depth grid, so one index serves both (plan A2).
+    if ((g.shape == XSectShape::IRREGULAR || g.shape == XSectShape::CUSTOM ||
+         g.shape == XSectShape::STREET_XSECT) &&
+        !g.area_tables.empty() && !g.hrad_tables.empty()) {
+        const auto ulo = static_cast<std::size_t>(lo);
+        xsect_batch::perlink_tabulated_pair(local_d + lo, norm_param(g) + lo,
+                                            g.a_full.data() + lo, g.r_full.data() + lo,
+                                            g.area_tables.data() + ulo,
+                                            g.hrad_tables.data() + ulo,
+                                            g.transect_tbl_size,
+                                            local_a + lo, local_h + lo, n);
+        return;
+    }
+    apply_area_kernel(g, local_d, local_a, lo, n);
+    apply_hydrad_kernel(g, local_d, local_h, lo, n);
 }
 
 static void apply_area_hydrad_kernel(const ShapeGroup& g, const double* local_d,

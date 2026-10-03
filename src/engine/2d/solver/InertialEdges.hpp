@@ -1,10 +1,26 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file InertialEdges.hpp
  * @brief Unique interior-edge structure for the local-inertial momentum DOFs.
  *
  * @details Phase 2 of docs/IMEX_LOCAL_INERTIAL_IMPLEMENTATION_PLAN.md. The
  *          diffusive-wave path stores edges redundantly per cell
- *          (MeshData edge arrays are flat [tri*3+edge]); the local-inertial
+ *          (MeshData edge arrays are flat [cell*kMaxCellVerts+edge]); the local-inertial
  *          scheme instead carries ONE prognostic discharge q per shared
  *          interior edge (the conservation invariant: a single antisymmetric
  *          flux per edge). This builds that canonical unique-edge enumeration
@@ -25,12 +41,13 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_INERTIAL_EDGES_HPP
 #define OPENSWMM_ENGINE_2D_INERTIAL_EDGES_HPP
 
+#include <cstdint>
 #include <vector>
 
 namespace openswmm::twoD {
@@ -55,7 +72,7 @@ struct InertialEdges {
     /// of the centroid-diluted zface (same endpoint rule as the boundary
     /// path's edgeEndpointZ — both incident cells see the identical pair).
     std::vector<double> ze_lo, ze_hi;
-    std::vector<int>    slotL, slotR; ///< flat mesh edge slots [tri*3+e] for writeback
+    std::vector<int>    slotL, slotR; ///< flat mesh edge slots [cell*kMaxCellVerts+e] for writeback
 
     // Explicit-marcher extension (ExplicitInertialSolver). Precomputed here so
     // the per-substep kernels stay pure arithmetic.
@@ -67,9 +84,17 @@ struct InertialEdges {
     /// (inv_dx above) overestimates slopes on non-orthogonal triangle pairs.
     std::vector<double> inv_dx_normal;
     std::vector<double> n2_face;      ///< (½(n_L+n_R))² Manning coefficient
-    /// Per-CELL characteristic length L_char = 2A/ξ_max (smallest altitude, m)
-    /// for the CFL step bound dt = α·L_char/√(g·h).
+    std::vector<double> n_face;       ///< ½(n_L+n_R) — sqrt(n2_face) precomputed for the diffusive law
+    /// Per-CELL characteristic length (m) for the CFL step bound
+    /// dt = α·L_char/√(g·h): √(2A/Σξ·inv_dx_normal) from the discrete wave
+    /// operator; isolated cells fall back to 2A/ξ_max (triangle) or
+    /// 2·min centroid→edge distance (quad).
     std::vector<double> cell_lchar;
+    /// Per-CELL positivity length 2A/P (P = full perimeter, boundary edges
+    /// included; Δx/2 for a square). The FULL_SWE Godunov update uses
+    /// dt = α·(2A/P)/(√(gh)+|u|): α = 1 is the linear stability limit and
+    /// α = ½ the Audusse–Bristeau positivity bound (Σ_faces outflow ≤ ½·V).
+    std::vector<double> cell_lpos;
 
     // Per-cell CSR incidence for the conservative continuity gather. For cell i,
     // the incident edges are cell_edge[cell_ptr[i] .. cell_ptr[i+1]) with sign
@@ -77,7 +102,15 @@ struct InertialEdges {
     //   dV_i/dt (flux part) = − Σ cell_sign · q[edge] · ξ[edge].
     std::vector<int>    cell_ptr;     ///< [n_triangles + 1] CSR row pointers
     std::vector<int>    cell_edge;    ///< incident edge id
-    std::vector<double> cell_sign;    ///< +1 (i==cL) / −1 (i==cR)
+    /// +1 (i==cL) / −1 (i==cR). int8: the value is only ever branched on and
+    /// multiplied by exactly ±1, and as a double it cost 8 bytes of gather
+    /// traffic per CSR entry in the two hottest cell loops.
+    std::vector<int8_t> cell_sign;
+    /// Perot arm (m⃗_e − c⃗_i) per CSR entry — the vector fireCells multiplies
+    /// the signed face discharge by. Precomputed because the cell loop had to
+    /// gather mx[e]/my[e] (scattered by face id) and subtract the centroid on
+    /// every firing of every cell.
+    std::vector<double> cell_arm_x, cell_arm_y;
 
     /// Build the structure from mesh topology. O(n_triangles).
     void build(const MeshData& mesh);

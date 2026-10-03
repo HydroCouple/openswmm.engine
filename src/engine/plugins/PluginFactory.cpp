@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file PluginFactory.cpp
  * @brief Plugin loader, auto-discovery, and lifecycle manager — implementation.
@@ -7,7 +23,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "PluginFactory.hpp"
@@ -18,6 +34,10 @@
 // instead of being picked up accidentally through the discover() scan's
 // dlsym(openswmm_plugin_info) on the engine's own binary. See §R.3 in
 // docs/GUI_IMPLEMENTATION_PLAN.md for the rationale.
+#ifdef OPENSWMM_HAS_HDF5_MODEL
+#  include "../io/hdf5/Hdf5PluginInfo.hpp"
+#endif
+
 #ifdef OPENSWMM_HAS_GEOPACKAGE
 #  include "../input/geopackage/GeoPackagePluginInfo.hpp"
 #endif
@@ -40,6 +60,10 @@
 #if defined(_WIN32)
 #  define WIN32_LEAN_AND_MEAN
 #  include <windows.h>
+#elif defined(__EMSCRIPTEN__)
+   // WebAssembly: no dynamic loading (engine is statically linked into the
+   // .wasm). platform_* helpers below are stubs; built-in plugins
+   // (register_builtin_infos) are unaffected.
 #elif defined(__APPLE__) || defined(__linux__)
 #  include <dlfcn.h>
 #else
@@ -70,6 +94,9 @@ PluginFactory::~PluginFactory() {
 void* PluginFactory::platform_load(const std::string& path) {
 #if defined(_WIN32)
     return static_cast<void*>(::LoadLibraryA(path.c_str()));
+#elif defined(__EMSCRIPTEN__)
+    (void)path;
+    return nullptr;
 #else
     return ::dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
 #endif
@@ -79,6 +106,8 @@ void PluginFactory::platform_unload(void* handle) noexcept {
     if (!handle) return;
 #if defined(_WIN32)
     ::FreeLibrary(static_cast<HMODULE>(handle));
+#elif defined(__EMSCRIPTEN__)
+    // nothing to unload
 #else
     ::dlclose(handle);
 #endif
@@ -89,6 +118,9 @@ void* PluginFactory::platform_sym(void* handle, const char* sym) noexcept {
 #if defined(_WIN32)
     return reinterpret_cast<void*>(
         ::GetProcAddress(static_cast<HMODULE>(handle), sym));
+#elif defined(__EMSCRIPTEN__)
+    (void)sym;
+    return nullptr;
 #else
     return ::dlsym(handle, sym);
 #endif
@@ -102,6 +134,8 @@ std::string PluginFactory::platform_error() noexcept {
                      MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
                      buf, sizeof(buf), nullptr);
     return std::string(buf);
+#elif defined(__EMSCRIPTEN__)
+    return "dynamic plugin loading is not available in WebAssembly";
 #else
     const char* msg = ::dlerror();
     return msg ? std::string(msg) : "(unknown dlerror)";
@@ -127,6 +161,8 @@ std::string PluginFactory::get_library_directory() {
             return p.parent_path().string();
         }
     }
+    return {};
+#elif defined(__EMSCRIPTEN__)
     return {};
 #else
     // Use dladdr to find the shared library containing this function
@@ -609,6 +645,13 @@ void PluginFactory::register_builtin_infos() {
     // Plugins tab.
 #ifdef OPENSWMM_HAS_GEOPACKAGE
     register_one(&openswmm::gpkg::GeoPackagePluginInfo::instance());
+#endif
+
+    // The HDF5 model writer registers the same way and for the same reason:
+    // statically linked, so it must be announced explicitly rather than
+    // discovered by dlsym. See src/engine/io/hdf5/STRATEGY.md.
+#ifdef OPENSWMM_HAS_HDF5_MODEL
+    register_one(&openswmm::h5io::Hdf5PluginInfo::instance());
 #endif
 }
 

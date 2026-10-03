@@ -66,13 +66,29 @@ inline double effectiveArea(double h_max, double z_ground, double full_depth,
 /// (conservative; totalExchangeFlow() unchanged). On a flat surface (Σw ≈ 0) —
 /// or when no cell lies in the upwind direction — fall back to the geometric
 /// partition-of-unity weights the head reconstruction uses (vert_stencil_wt).
+///
+/// S3: when `conc` (length = transport.n_species) is given and Q > 0, the
+/// same share q/area that goes into coupling_flux also goes into
+/// transport.coupling_src[s][cell] × conc[s] — the species mass-rate density
+/// riding this source, so the marcher adds mass beside volume with one rule.
 inline void scatterCouplingFlux(const MeshData& mesh, SurfaceStateData& state,
-                                const CouplingPoint& cp, double Q) noexcept {
+                                const CouplingPoint& cp, double Q,
+                                const double* conc = nullptr) noexcept {
+    auto& tr = state.transport;
+    const bool with_species =
+        conc && Q > 0.0 && tr.active() && !tr.coupling_src.empty();
+    auto add = [&](int cell, double q_share) {
+        const double area = mesh.tri_area[cell];
+        if (!(area > 1.0e-30)) return;
+        const double dens = q_share / area;
+        state.coupling_flux[cell] += dens;
+        if (with_species)
+            for (int s = 0; s < tr.n_species; ++s)
+                tr.coupling_src[tr.idx(s, cell)] += dens * conc[s];
+    };
     // Triangle coupling: single cell, head and flux already co-located.
     if (cp.vertex_idx < 0) {
-        int ci = cp.cell_idx;
-        double area = mesh.tri_area[ci];
-        if (area > 1.0e-30) state.coupling_flux[ci] += Q / area;
+        add(cp.cell_idx, Q);
         return;
     }
 
@@ -107,16 +123,12 @@ inline void scatterCouplingFlux(const MeshData& mesh, SurfaceStateData& state,
             if (d < 1.0e-9) continue;
             double slope = sign * (hv - state.head[kc]) / d;
             if (slope <= 0.0) continue;
-            double area = mesh.tri_area[kc];
-            if (area > 1.0e-30)
-                state.coupling_flux[kc] += (Q * (slope / wsum)) / area;
+            add(kc, Q * (slope / wsum));
         }
     } else {
         for (int k = start; k < end; ++k) {
             int kc = mesh.vert_stencil_idx[k];
-            double area = mesh.tri_area[kc];
-            if (area > 1.0e-30)
-                state.coupling_flux[kc] += (Q * mesh.vert_stencil_wt[k]) / area;
+            add(kc, Q * mesh.vert_stencil_wt[k]);
         }
     }
 }
@@ -363,6 +375,23 @@ std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh,
 
     // Vertex-to-node couplings
     int nv = mesh.n_vertices();
+    // First cell (lowest index) touching each vertex, built once in
+    // O(n_cells·nv). The per-coupling scan of every cell this replaces was
+    // O(n_couplings × n_cells): 0.05 → 0.36 s of the Bellinge start-up after
+    // the nv-generic rewrite (2D_PERF_REGRESSION_DIAGNOSIS). Same answer:
+    // the lowest cell index containing the vertex.
+    std::vector<int> first_cell_of_vertex(static_cast<std::size_t>(nv), -1);
+    {
+        const int nt_all = mesh.n_triangles();
+        for (int t = 0; t < nt_all; ++t) {
+            const int nvc = mesh.cell_vertex_count(t);
+            for (int k = 0; k < nvc; ++k) {
+                const int vv = mesh.cell_vertex(t, k);
+                if (vv >= 0 && vv < nv && first_cell_of_vertex[static_cast<std::size_t>(vv)] < 0)
+                    first_cell_of_vertex[static_cast<std::size_t>(vv)] = t;
+            }
+        }
+    }
     for (int v = 0; v < nv; ++v) {
         int node_idx = mesh.vert_coupled_node[v];
         if (node_idx < 0) continue;
@@ -378,14 +407,7 @@ std::vector<CouplingPoint> buildCouplingPoints(const MeshData& mesh,
 
         // Find the triangle that contains this vertex (use first one)
         // The coupling flux is distributed to triangles sharing this vertex
-        cp.cell_idx = -1;
-        int nt = mesh.n_triangles();
-        for (int t = 0; t < nt; ++t) {
-            if (mesh.tri_v0[t] == v || mesh.tri_v1[t] == v || mesh.tri_v2[t] == v) {
-                cp.cell_idx = t;
-                break;
-            }
-        }
+        cp.cell_idx = first_cell_of_vertex[static_cast<std::size_t>(v)];
         if (cp.cell_idx < 0) continue;
 
         auto ui = static_cast<std::size_t>(node_idx);
@@ -650,12 +672,22 @@ void injectAccumulatedExchange(const std::vector<CouplingPoint>& cps,
                                SurfaceStateData& state,
                                const std::vector<double>& accum_m3,
                                double window_dt,
-                               double sign) {
+                               double sign,
+                               const std::vector<double>* node_conc) {
     if (window_dt <= 0.0) return;
+    const auto ns = static_cast<std::size_t>(state.transport.n_species);
     for (std::size_t k = 0; k < cps.size(); ++k) {
         const double vol = accum_m3[k];
         if (vol == 0.0) continue;
-        scatterCouplingFlux(mesh, state, cps[k], sign * vol / window_dt);
+        // S3: a 2D-source (positive after sign) carries the NODE's published
+        // concentration — for an outfall, the concentration of what the 1D
+        // network discharged. Only when the row exists at this stride.
+        const double* conc = nullptr;
+        if (node_conc && ns > 0 && cps[k].node_idx >= 0) {
+            const auto ni = static_cast<std::size_t>(cps[k].node_idx);
+            if ((ni + 1) * ns <= node_conc->size()) conc = &(*node_conc)[ni * ns];
+        }
+        scatterCouplingFlux(mesh, state, cps[k], sign * vol / window_dt, conc);
     }
 }
 

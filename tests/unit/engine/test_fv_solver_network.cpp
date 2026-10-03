@@ -173,9 +173,16 @@ Channel makeSplitChannel(const XSectParams& xs, int half, double dx,
 
     ch.mesh.geom.resize(1);
     buildGeometry(xs, xsect::isOpen(xs.type), 100.0, ch.mesh.geom[0]);
-    ch.mesh.geom[0].roughness = manning;
-    ch.mesh.geom[0].rough_factor = 32.2 * (manning / 1.486) * (manning / 1.486);
     ch.mesh.geom[0].barrels = 1;
+    ch.mesh.conduit_section    = {0, 0};
+    ch.mesh.conduit_roughness  = {manning, manning};
+    ch.mesh.conduit_rough_factor.assign(2, 32.2 * (manning / 1.486) * (manning / 1.486));
+    ch.mesh.conduit_loss_inlet.assign(2, 0.0);
+    ch.mesh.conduit_loss_outlet.assign(2, 0.0);
+    ch.mesh.conduit_slope.assign(2, 0.0);
+    ch.mesh.conduit_culvert_code.assign(2, 0);
+    ch.mesh.conduit_culvert_curve.assign(2, hydkernels::CulvertCurve{});
+    ch.mesh.conduit_culvert_mitered.assign(2, 0);
 
     auto bed = [&](double x) { return 10.0 - 0.001 * x; };
 
@@ -203,6 +210,7 @@ Channel makeSplitChannel(const XSectParams& xs, int half, double dx,
         ch.mesh.face_dir_l.push_back(dl);
         ch.mesh.face_dir_r.push_back(dr);
         ch.mesh.face_virtual.push_back(vj ? uint8_t{1} : uint8_t{0});
+        ch.mesh.face_vj_node.push_back(-1);
     };
 
     add_face(-1, 0, bed(0.0), 0.5 * dx, 1, 1, false);                 // wall
@@ -323,6 +331,67 @@ TEST(FvNetwork, VirtualJunctionIsIndistinguishableFromAnInteriorCut) {
                 << " discharge at position " << j;
         }
     }
+}
+
+// A lateral inflow AT the virtual junction (plans/VJ_LATERAL_INFLOW_PLAN_
+// 2026-09-04.md §E3). The node owns no faces, so the solver must split the
+// water into the two cells adjoining the spliced face; before that split the
+// forcing was silently discarded. Closed (walled) channel: every drop injected
+// has to show up in the cells.
+TEST(FvNetwork, VirtualJunctionLateralIsSplitIntoBothSpliceCells) {
+    const int half = 20;
+    const double dx = 8.0;
+    const XSectParams xs = rectOpen(15.0, 12.0);
+    Channel ch = makeSplitChannel(xs, half, dx, 0.02, false);
+
+    // One node — the virtual junction the split face (index `half`)
+    // replaced. It has no face list of its own; node_vj_face is the only
+    // association the solver gets.
+    const int f_vj = half;
+    ch.mesh.node_invert      = {ch.mesh.face_zb[static_cast<std::size_t>(f_vj)]};
+    ch.mesh.node_full_depth  = {1.0e6};
+    ch.mesh.node_ponded_area = {0.0};
+    ch.mesh.node_kind        = {kNodeVirtual};
+    ch.mesh.node_area        = {openswmm::constants::MIN_SURFAREA};
+    ch.mesh.node_vol_off     = {-1};
+    ch.mesh.node_vol_dmax    = {0.0};
+    ch.mesh.node_vol_atop    = {0.0};
+    ch.mesh.node_vj_face     = {f_vj};
+    ch.mesh.node_face_ptr    = {0, 0};
+    ch.mesh.face_vj_node[static_cast<std::size_t>(f_vj)] = 0;
+    ch.state.resize(2 * half, 1, 0);
+    seedLevel(ch, 11.0);            // level pool: nothing moves but the lateral
+
+    FvOptions o = defaultOptions();
+    ExplicitFvSolver s;
+    s.initialize(ch.mesh, ch.state, o);
+
+    const double q_lat = 2.0;
+    std::vector<double> lateral = {q_lat};
+    std::vector<double> fixed   = {std::numeric_limits<double>::quiet_NaN()};
+    FvStepForcing f;
+    f.node_lateral    = lateral.data();
+    f.node_fixed_head = fixed.data();
+    f.n_nodes = 1;
+
+    const auto ul = static_cast<std::size_t>(half - 1);
+    const auto ur = static_cast<std::size_t>(half);
+    const double v0   = totalVolume(ch);
+    const double a_l0 = ch.state.cell_a[ul];
+    const double a_r0 = ch.state.cell_a[ur];
+
+    s.advance(0.0, 1.0, f);
+    // The first second lands the water in the two spliced cells, half each
+    // (up to the flux exchange that already starts spreading it).
+    const double d_l = ch.state.cell_a[ul] - a_l0;
+    const double d_r = ch.state.cell_a[ur] - a_r0;
+    EXPECT_GT(d_l, 0.0);
+    EXPECT_GT(d_r, 0.0);
+    EXPECT_NEAR(d_l, d_r, 0.05 * std::max(d_l, d_r));
+
+    for (double t = 1.0; t < 60.0; t += 1.0) s.advance(t, t + 1.0, f);
+    EXPECT_NEAR(totalVolume(ch) - v0, q_lat * 60.0, 1.0e-9 * q_lat * 60.0)
+        << "the lateral at the virtual junction is not conserved";
 }
 
 // ===========================================================================
@@ -714,39 +783,6 @@ void attachPrismaticStorage(Channel& ch, int node, double area, double dmax) {
 }
 }  // namespace
 
-// The property that makes the damping legitimate rather than a fudge: at
-// EQUILIBRIUM the correction is identically zero. It is proportional to the
-// node's net imbalance, and a settled node has none — so the two couplings
-// must agree on the steady state they reach, however differently they get
-// there. If they did not, the damping would be changing the answer rather than
-// the path to it.
-TEST(FvNetwork, NodeCouplingsAgreeOnTheSteadyState) {
-    auto settle = [](NodeCoupling nc) {
-        Channel ch = makeNodedChannel(circular(3.0), 40, 25.0,
-                                      [](double x) { return 0.002 * (1000.0 - x); },
-                                      0.013);
-        attachPrismaticStorage(ch, 0, 12.566, 8.0);   // bucket path under test
-        for (int i = 0; i < ch.n; ++i)
-            ch.state.cell_a[static_cast<std::size_t>(i)] =
-                k::areaOfDepth(ch.mesh.geom[0], 0.8);
-        ch.state.node_head[0] = ch.mesh.node_invert[0] + 0.8;
-        ch.state.node_head[1] = ch.mesh.node_invert[1] + 0.8;
-
-        FvOptions o = defaultOptions();
-        o.node_coupling = nc;
-        runNoded(ch, o, 3000.0, 5.0, /*q_in=*/12.0,
-                 /*stage_dn=*/ch.mesh.node_invert[1] + 0.8);
-        return ch.state.cell_q;
-    };
-
-    const std::vector<double> expl = settle(NodeCoupling::EXPLICIT);
-    const std::vector<double> semi = settle(NodeCoupling::SEMI_IMPLICIT);
-    ASSERT_EQ(expl.size(), semi.size());
-    for (std::size_t i = 5; i + 5 < expl.size(); ++i)
-        EXPECT_NEAR(semi[i], expl[i], 0.02 * 12.0)
-            << "steady discharge differs at cell " << i;
-}
-
 // Conservation is the property that must survive, and the mechanism is
 // specific: the correction is written into the SHARED face-flux array, so the
 // node and the cell see the same number. Damping the node head directly would
@@ -764,7 +800,6 @@ TEST(FvNetwork, SemiImplicitCouplingConservesMassExactly) {
     ch.state.node_head[1] = 1.2;
 
     FvOptions o = defaultOptions();
-    o.node_coupling = NodeCoupling::SEMI_IMPLICIT;
     ExplicitFvSolver s;
     s.initialize(ch.mesh, ch.state, o);
 
@@ -791,46 +826,45 @@ TEST(FvNetwork, SemiImplicitCouplingConservesMassExactly) {
     s.finalize();
 }
 
-// The point of the exercise: the manhole no longer sets the substep. A
-// measurement with a loose gate — it exists so a regression that silently
-// reinstates the node limit is visible.
-TEST(FvNetwork, SemiImplicitCouplingRemovesTheNodeStepLimit) {
-    auto substeps = [](NodeCoupling nc) {
-        Channel ch = makeNodedChannel(circular(3.0), 40, 25.0,
-                                      [](double x) { return 0.002 * (1000.0 - x); },
-                                      0.013);
-        attachPrismaticStorage(ch, 0, 12.566, 8.0);   // bucket path under test
-        for (int i = 0; i < ch.n; ++i)
-            ch.state.cell_a[static_cast<std::size_t>(i)] =
-                k::areaOfDepth(ch.mesh.geom[0], 0.8);
-        ch.state.node_head[0] = ch.mesh.node_invert[0] + 0.8;
-        ch.state.node_head[1] = ch.mesh.node_invert[1] + 0.8;
+// The point of the exercise: the manhole does not set the substep. Before the
+// coupling knob was retired this compared EXPLICIT against SEMI_IMPLICIT on
+// this fixture and recorded 2750 vs 2453 substeps (1.12x; the pre-removal
+// evidence record, openswmm.gui/test_artifacts/eastboston_fv_node_options/
+// EVIDENCE.md). The explicit alternative no longer exists, so the ceiling sits
+// between the two recorded counts: a regression that silently reinstates the
+// node's explicit stability limit walks the count back toward 2750 and trips
+// it. If an unrelated census change moves the count, re-measure both sides
+// rather than loosening past 2750.
+TEST(FvNetwork, NodeDoesNotOwnTheSubstep) {
+    Channel ch = makeNodedChannel(circular(3.0), 40, 25.0,
+                                  [](double x) { return 0.002 * (1000.0 - x); },
+                                  0.013);
+    attachPrismaticStorage(ch, 0, 12.566, 8.0);   // bucket path under test
+    for (int i = 0; i < ch.n; ++i)
+        ch.state.cell_a[static_cast<std::size_t>(i)] =
+            k::areaOfDepth(ch.mesh.geom[0], 0.8);
+    ch.state.node_head[0] = ch.mesh.node_invert[0] + 0.8;
+    ch.state.node_head[1] = ch.mesh.node_invert[1] + 0.8;
 
-        FvOptions o = defaultOptions();
-        o.node_coupling = nc;
-        ExplicitFvSolver s;
-        s.initialize(ch.mesh, ch.state, o);
-        std::vector<double> lateral = {12.0, 0.0};
-        std::vector<double> fixed = {std::numeric_limits<double>::quiet_NaN(),
-                                     ch.mesh.node_invert[1] + 0.8};
-        FvStepForcing f;
-        f.node_lateral = lateral.data();
-        f.node_fixed_head = fixed.data();
-        f.n_nodes = 2;
-        long n = 0;
-        for (double t = 0.0; t < 600.0; t += 5.0) {
-            s.advance(t, t + 5.0, f);
-            n += s.last_num_steps();
-        }
-        s.finalize();
-        return n;
-    };
-
-    const long ex = substeps(NodeCoupling::EXPLICIT);
-    const long si = substeps(NodeCoupling::SEMI_IMPLICIT);
-    std::printf("[fv-node] substeps explicit %ld vs semi-implicit %ld (%.2fx)\n",
-                ex, si, static_cast<double>(ex) / static_cast<double>(std::max(1L, si)));
-    EXPECT_LT(si, ex) << "the node still sets the substep";
+    FvOptions o = defaultOptions();
+    ExplicitFvSolver s;
+    s.initialize(ch.mesh, ch.state, o);
+    std::vector<double> lateral = {12.0, 0.0};
+    std::vector<double> fixed = {std::numeric_limits<double>::quiet_NaN(),
+                                 ch.mesh.node_invert[1] + 0.8};
+    FvStepForcing f;
+    f.node_lateral = lateral.data();
+    f.node_fixed_head = fixed.data();
+    f.n_nodes = 2;
+    long n = 0;
+    for (double t = 0.0; t < 600.0; t += 5.0) {
+        s.advance(t, t + 5.0, f);
+        n += s.last_num_steps();
+    }
+    s.finalize();
+    std::printf("[fv-node] substeps %ld (recorded: semi-implicit 2453, "
+                "explicit 2750)\n", n);
+    EXPECT_LT(n, 2600L) << "the node is setting the substep again";
 }
 
 

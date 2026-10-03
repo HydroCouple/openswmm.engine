@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file openswmm_pollutants_impl.cpp
  * @brief C API implementation — pollutant identity, creation, properties, quality injection.
@@ -7,10 +23,11 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "openswmm_api_common.hpp"
+#include "Constants.hpp"
 #include "../../../include/openswmm/engine/openswmm_pollutants.h"
 
 namespace {
@@ -177,7 +194,10 @@ SWMM_ENGINE_API int swmm_pollutant_set_kdecay(SWMM_Engine engine, int idx, doubl
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
-    ctx.pollutants.k_decay[static_cast<std::size_t>(idx)] = k;
+    // The API speaks deck units (1/day) — the header's contract all
+    // along; storage is 1/sec (KD1), like legacy's swmm_POLLUT_KDECAY.
+    ctx.pollutants.k_decay[static_cast<std::size_t>(idx)] =
+        k / openswmm::constants::SEC_PER_DAY;
     return SWMM_OK;
 }
 
@@ -239,7 +259,8 @@ SWMM_ENGINE_API int swmm_pollutant_get_kdecay(SWMM_Engine engine, int idx, doubl
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
-    if (k) *k = ctx.pollutants.k_decay[static_cast<std::size_t>(idx)];
+    if (k) *k = ctx.pollutants.k_decay[static_cast<std::size_t>(idx)] *
+                openswmm::constants::SEC_PER_DAY;
     return SWMM_OK;
 }
 

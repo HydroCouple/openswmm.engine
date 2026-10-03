@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file test_2d_inertial_marcher.cpp
  * @brief Analytic + property gates for the explicit local-inertial marcher
@@ -23,7 +39,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -64,9 +80,9 @@ MeshData makeGridMesh(int nx, int ny, double dx, ZFn z, double n = 0.03) {
         for (int i = 0; i < nx; ++i) {
             const int v00 = j * nvx + i,       v10 = j * nvx + i + 1;
             const int v01 = (j + 1) * nvx + i, v11 = (j + 1) * nvx + i + 1;
-            mesh.tri_v0[t] = v00; mesh.tri_v1[t] = v10; mesh.tri_v2[t] = v11;
+            mesh.set_triangle(t, v00, v10, v11);
             ++t;
-            mesh.tri_v0[t] = v00; mesh.tri_v1[t] = v11; mesh.tri_v2[t] = v01;
+            mesh.set_triangle(t, v00, v11, v01);
             ++t;
         }
     }
@@ -226,13 +242,13 @@ TEST(InertialMarcher, ManningSteadySlopeRainOutflow) {
 
     // NORMAL_FLOW outlet along the downhill (x = 0) boundary edges.
     BoundaryData boundary;
-    boundary.resize(mesh.n_triangles() * 3);
+    boundary.resize(mesh.n_edge_slots());
     int outlet_slots = 0;
     for (int i = 0; i < mesh.n_triangles(); ++i) {
-        const int nbrs[3] = {mesh.tri_nbr0[i], mesh.tri_nbr1[i],
-                             mesh.tri_nbr2[i]};
+        const int nbrs[3] = {mesh.cell_neighbour(i, 0), mesh.cell_neighbour(i, 1),
+                             mesh.cell_neighbour(i, 2)};
         for (int e = 0; e < 3; ++e) {
-            const int idx = i * 3 + e;
+            const int idx = MeshData::slot(i, e);
             if (nbrs[e] >= 0) continue;
             if (mesh.edge_mx[idx] < 1.0e-9) {        // x = 0 boundary
                 boundary.edge_bc_type[idx] =
@@ -265,7 +281,7 @@ TEST(InertialMarcher, ManningSteadySlopeRainOutflow) {
     double q_out = 0.0;
     for (int i = 0; i < mesh.n_triangles(); ++i)
         for (int e = 0; e < 3; ++e) {
-            const int idx = i * 3 + e;
+            const int idx = MeshData::slot(i, e);
             if (boundary.edge_bc_type[idx] ==
                 static_cast<int8_t>(BoundaryType::NORMAL_FLOW))
                 q_out += -state.edge_flux[idx];
@@ -327,12 +343,12 @@ TEST(InertialMarcher, SteadySlopeNoCheckerboard) {
         auto state = makeState(mesh);
 
         BoundaryData boundary;
-        boundary.resize(mesh.n_triangles() * 3);
+        boundary.resize(mesh.n_edge_slots());
         for (int i = 0; i < mesh.n_triangles(); ++i) {
-            const int nbrs[3] = {mesh.tri_nbr0[i], mesh.tri_nbr1[i],
-                                 mesh.tri_nbr2[i]};
+            const int nbrs[3] = {mesh.cell_neighbour(i, 0), mesh.cell_neighbour(i, 1),
+                                 mesh.cell_neighbour(i, 2)};
             for (int e = 0; e < 3; ++e) {
-                const int idx = i * 3 + e;
+                const int idx = MeshData::slot(i, e);
                 if (nbrs[e] >= 0) continue;
                 if (mesh.edge_mx[idx] < 1.0e-9) {
                     boundary.edge_bc_type[idx] =
@@ -356,8 +372,8 @@ TEST(InertialMarcher, SteadySlopeNoCheckerboard) {
         int    n  = 0;
         for (int i = 0; i < mesh.n_triangles(); ++i) {
             if (mesh.tri_cx[i] < 5.0 || mesh.tri_cx[i] > 35.0) continue;
-            const int nbrs[3] = {mesh.tri_nbr0[i], mesh.tri_nbr1[i],
-                                 mesh.tri_nbr2[i]};
+            const int nbrs[3] = {mesh.cell_neighbour(i, 0), mesh.cell_neighbour(i, 1),
+                                 mesh.cell_neighbour(i, 2)};
             double hs = 0.0;
             int    hn = 0;
             for (int e = 0; e < 3; ++e)
@@ -402,13 +418,13 @@ TEST(InertialMarcher, SpecifiedStageFillAndDrawdownLedger) {
     auto state = makeState(mesh);                     // dry everywhere
 
     BoundaryData boundary;
-    boundary.resize(mesh.n_triangles() * 3);
+    boundary.resize(mesh.n_edge_slots());
     std::vector<int> bc_slots;
     for (int i = 0; i < mesh.n_triangles(); ++i) {
-        const int nbrs[3] = {mesh.tri_nbr0[i], mesh.tri_nbr1[i],
-                             mesh.tri_nbr2[i]};
+        const int nbrs[3] = {mesh.cell_neighbour(i, 0), mesh.cell_neighbour(i, 1),
+                             mesh.cell_neighbour(i, 2)};
         for (int e = 0; e < 3; ++e) {
-            const int idx = i * 3 + e;
+            const int idx = MeshData::slot(i, e);
             if (nbrs[e] >= 0) continue;
             if (mesh.edge_mx[idx] < 1.0e-9) {         // x = 0 boundary
                 boundary.edge_bc_type[idx] =
@@ -512,12 +528,12 @@ TEST(InertialMarcher, FroudeClampSteepFace) {
         // |q| ≤ Fr_max·h_f·√(g·h_f) with the EXACT face flow depth
         // h_f = max(η_L, η_R) − max(z_L, z_R) the clamp itself used.
         for (int i = 0; i < mesh.n_triangles(); ++i) {
-            const int nbrs[3] = {mesh.tri_nbr0[i], mesh.tri_nbr1[i],
-                                 mesh.tri_nbr2[i]};
+            const int nbrs[3] = {mesh.cell_neighbour(i, 0), mesh.cell_neighbour(i, 1),
+                                 mesh.cell_neighbour(i, 2)};
             for (int e = 0; e < 3; ++e) {
                 const int j = nbrs[e];
                 if (j < 0) continue;                  // boundary slot
-                const int idx = i * 3 + e;
+                const int idx = MeshData::slot(i, e);
                 const double q_w =
                     std::fabs(state.edge_flux[idx]) / mesh.edge_length[idx];
                 if (q_w == 0.0) continue;

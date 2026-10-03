@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file openswmm_links.h
  * @brief OpenSWMM Engine — Link (conduit/pump/orifice/weir/outlet) C API.
@@ -10,7 +26,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_LINKS_H
@@ -186,6 +202,22 @@ SWMM_ENGINE_API int swmm_link_get_from_node(SWMM_Engine engine, int idx, int* no
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_link_get_to_node(SWMM_Engine engine, int idx, int* node_idx);
+
+/**
+ * @brief Restore authored From/To orientation on every conduit the parser
+ *        reversed for adverse slope (DYNWAVE/FV routing).
+ *
+ * @details At open, adverse-slope conduits have node1/node2, offset1/offset2,
+ *          initial flow sign and inlet/outlet losses swapped in place. An
+ *          editing host that displays and saves the live context should call
+ *          this once after open so the user sees and edits the orientation
+ *          they authored. Not needed for simulation-only hosts. The .inp
+ *          writer undoes the reversal on its own regardless.
+ * @param engine      Engine handle.
+ * @param[out] count  Optional; receives the number of conduits restored.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_links_restore_authored_orientation(SWMM_Engine engine, int* count);
 
 /* =========================================================================
  * Geometry setters (BUILDING or OPENED)
@@ -596,6 +628,19 @@ SWMM_ENGINE_API int swmm_link_get_capacity(SWMM_Engine engine, int idx, double* 
  */
 SWMM_ENGINE_API int swmm_link_get_volume(SWMM_Engine engine, int idx, double* volume);
 
+/**
+ * @brief Get the portion of a link's stored volume held in the Preissmann slot.
+ * @details Finite-volume routing only: the water standing above the pipe crown
+ *          in the slot (`sum over cells of max(0, A - A_crown) * dx`). Always a
+ *          subset of @ref swmm_link_get_volume; reads 0.0 under the dynamic-wave
+ *          router and whenever the conduit is below its crown.
+ * @param engine       Engine handle.
+ * @param idx          Zero-based link index.
+ * @param[out] volume  Receives the slot volume in project volume units.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_link_get_slot_volume(SWMM_Engine engine, int idx, double* volume);
+
 /* --- Runtime forcing (RUNNING state only) --- */
 
 /**
@@ -903,6 +948,21 @@ SWMM_ENGINE_API int swmm_link_get_stat_max_velocity(SWMM_Engine engine, int idx,
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_link_get_stat_max_filling(SWMM_Engine engine, int idx, double* val);
+
+/**
+ * @brief Peak instantaneous Preissmann-slot storage share of a link.
+ * @details FV routing only: max over the run of slot_volume/volume (0..1).
+ *          Reads 0.0 under the dynamic-wave router.
+ */
+SWMM_ENGINE_API int swmm_link_get_stat_peak_slot_share(SWMM_Engine engine, int idx, double* val);
+
+/**
+ * @brief Run-level Preissmann-slot storage share of a link.
+ * @details FV routing only: the ratio of time integrals
+ *          (∫ slot_volume dt)/(∫ volume dt) over the run (0..1) — never an
+ *          average of instantaneous ratios. Reads 0.0 under dynamic wave.
+ */
+SWMM_ENGINE_API int swmm_link_get_stat_slot_share(SWMM_Engine engine, int idx, double* val);
 
 /**
  * @brief Get the total volume conveyed through a link.

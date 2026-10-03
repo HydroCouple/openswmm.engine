@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file SpatialFrame.hpp
  * @brief Spatial frame — CRS specification and coordinate data for nodes/links.
@@ -21,7 +37,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_SPATIAL_FRAME_HPP
@@ -136,6 +152,12 @@ struct SpatialFrame {
 
     /** @brief Node Y coordinates (northing or latitude). */
     std::vector<double> node_y;
+
+    /** @brief G-X2 (2026-09-19): 1 when the node's coordinates were authored
+     *  ([COORDINATES], the GeoPackage geometry, the spatial C API or a
+     *  virtual-junction split). A node whose entry is 0 sits at the (0, 0)
+     *  fill and must not be located on a mesh by it. Sized with node_x. */
+    std::vector<uint8_t> node_has_xy;
 
     // -----------------------------------------------------------------------
     // Link coordinates (one point per link — nominal centroid or from-node)

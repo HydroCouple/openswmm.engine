@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file ExplicitFvSolver.hpp
  * @brief Serial/OpenMP CPU reference implementation of the explicit FV 1D solver.
@@ -17,7 +33,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_FV_EXPLICIT_FV_SOLVER_HPP
@@ -31,6 +47,11 @@
 #include "FvOptions.hpp"
 #include "INetworkSolver.hpp"
 #include "NetworkMeshData.hpp"
+#include "PressurizedHeadSolver.hpp"
+
+namespace openswmm::transport::fvkernels {
+struct SpeciesKernelView;  // transport/fvkernels/SpeciesTransportKernels.hpp
+}
 
 namespace openswmm::fv {
 
@@ -54,6 +75,13 @@ public:
     double suggested_step() const noexcept override { return suggested_h_; }
     RunStats run_stats() const noexcept override;
     bool   is_initialized() const noexcept override { return mesh_ != nullptr; }
+    bool   divergence(Divergence& d) const noexcept override {
+        if (div_link_ < 0) return false;
+        d.link  = div_link_;
+        d.value = div_value_;
+        d.what  = div_what_;
+        return true;
+    }
 
     /// Per-node net exchange VOLUME (ft³) accumulated over the last advance().
     /// Signed positive INTO the node. The Router glue turns this into the node
@@ -68,6 +96,21 @@ public:
     /// reconstructed from the net afterwards.
     const std::vector<double>& node_inflow_volume() const noexcept { return node_in_; }
     const std::vector<double>& node_outflow_volume() const noexcept { return node_out_; }
+    /// Book a diverted lateral (credited straight into the incident cells,
+    /// bypassing the node's faces) as node OUTFLOW for the substep — it
+    /// entered the node's ledger as lateral inflow and left it, but never
+    /// crossed a face, so the face ledger holds no outflow for it. Per
+    /// substep, on both stepping paths, so a junction that alternates between
+    /// the pass-through and the solved path within a routing step is booked
+    /// exactly (the report's per-node continuity read 80–100 % at every
+    /// lateral-fed pass-through junction without it, 2026-09-13).
+    void bookDivertedLateral(std::size_t un, double dt,
+                             const FvStepForcing& forcing) noexcept {
+        if (node_lat_div_.empty() || !node_lat_div_[un] || !forcing.node_lateral)
+            return;
+        const double lat = forcing.node_lateral[un];
+        if (lat > 0.0) node_out_[un] += lat * dt;
+    }
 
     /// Per-conduit flag: did HEC-5 inlet control cap this culvert's inflow at
     /// any point in the last advance()? Reported as the "Inlet Ctrl" column.
@@ -78,6 +121,39 @@ public:
     /// Per-node flooding VOLUME (ft³) over the last advance().
     const std::vector<double>& node_flood_volume() const noexcept {
         return flood_vol_;
+    }
+
+    /// Per-structure-entry pass-through VOLUME (ft³) over the last advance(),
+    /// parallel to mesh.struct_link. Nonzero only for DUMMY entries, whose
+    /// discharge the solver derives rather than receiving in the forcing — the
+    /// Router has no other way to report their flow or book their node ledger.
+    const std::vector<double>& dummy_volume() const noexcept {
+        return dummy_vol_;
+    }
+
+    /// Pass-through classification (clean degree-2 junctions whose faces
+    /// present the neighbouring cells to each other directly; refreshed with
+    /// the structure flows). The publish path reads it to reconstruct those
+    /// nodes' REPORTED heads face-consistently — the solver-internal head
+    /// stays the stable wet-mean, which also serves as the ghost boundary
+    /// state under LTS tier holds.
+    const std::vector<std::uint8_t>& node_passthrough() const noexcept {
+        return node_pass_;
+    }
+
+    /// Nodes whose PUBLISHED stage should be reconstructed from the incident
+    /// wet cells rather than reported as the solver's own head. A superset of
+    /// node_passthrough(): the same cleanliness and structure/carry tests, but
+    /// at any degree, because the degree-2 restriction exists only for the
+    /// solver's direct-face bypass.
+    ///
+    /// Measured on Example1 under FLOW_ROUTING FV: nodes outside this set
+    /// published a stage up to 0.91 ft above their own adjacent cell at
+    /// FV_MIN_CELLS 1, falling ~first-order with refinement (a datum term),
+    /// while nodes inside it never exceeded 0.0002 ft at any refinement.
+    /// See tests/manual/fv_node_stage/RESULTS.md.
+    const std::vector<std::uint8_t>& node_publish_stage() const noexcept {
+        return node_pub_;
     }
 
     /// Time-integrated cell discharge (ft³) over the last advance(), used to
@@ -107,12 +183,22 @@ private:
     void   refreshDepths();
     void   refreshNodeAreas();
     void   rebuildActiveLists();
-    double censusDt() const;
+    /// Global Courant census. @p press_edit applies the R2 edit: a
+    /// pressurized side of an implicit-eligible face is advection-bound only
+    /// (its acoustic pair is integrated implicitly this substep), and a
+    /// junction the implicit pass will fold is exempt from the algebraic
+    /// feedback bound. false everywhere the implicit pass will NOT run —
+    /// the LTS macro path, and every run without FV_PRESSURIZED_IMPLICIT.
+    double censusDt(bool press_edit = false) const;
     void   reconstructState();
-    void   computeFaceFlux(int face);
+    /// @p mass_only: the node solve's trial evaluation — same reconstruction
+    /// and wave speeds, writes f_mass_ only (plan Phase 1c).
+    void   computeFaceFlux(int face, bool mass_only = false);
+    /// Species transport forwarders (phase E0): the reconstruction / FCT /
+    /// dispersion bodies live in transport/fvkernels/SpeciesTransportKernels
+    /// and consume this solver's members through the view below.
     void   reconstructScalars(double dt);
-    void   limitSpeciesFluxes(int species, double dt);
-    kernels::FaceFlux adjustedFlux(int face) const;
+    transport::fvkernels::SpeciesKernelView speciesKernelView();
     void   computeFluxes();
     void   limitPositivity(double dt);
 
@@ -128,6 +214,14 @@ private:
     /// conservation for stability, which is the one trade this solver cannot
     /// make.
     void   relaxNodeFluxes(double dt, const FvStepForcing& forcing);
+    /// Phase 3d: solve/relax every node in @p nodes, in parallel above
+    /// kOmpMinNodes (order-independent, bit-identical at any thread count).
+    template <class DtOf>
+    void   solveNodes(const std::vector<int>& nodes, DtOf&& dt_of,
+                      const FvStepForcing& forcing);
+    std::vector<int> node_solve_list_;   ///< global-path node list (scratch)
+    std::vector<int> node_heavy_;        ///< junctions that run the bracketed solve (shared by the parallel loop)
+    std::vector<int> node_light_;        ///< pass-through / storage nodes (serial)
 
     /// One node's worth of the above. Split out because the tiered path applies
     /// it per node at that node's own Δt, while the global path applies it to
@@ -167,10 +261,58 @@ private:
     /// other directly (faceSide/computeFaceFlux) — the direct spliced face —
     /// which transmits both momentum and depth across the interface exactly.
     std::vector<std::uint8_t> node_pass_;
+    /// Static/full halves of the PUBLISH-stage test — see
+    /// node_publish_stage(). Deliberately separate from node_pass_, which the
+    /// SOLVER reads: widening node_pass_ instead would change the direct-face
+    /// bypass and with it the routing, which this is explicitly not allowed to
+    /// do (solver-internal heads are load-bearing ghost states under LTS tier
+    /// holds).
+    std::vector<std::uint8_t> node_pub_static_;
+    std::vector<std::uint8_t> node_pub_;
     /// Residual-volume carry (ft³) for algebraic junctions: root-solve
     /// tolerance and any cell-side positivity scaling land here and are bled
     /// back into the next solve's forcing. ≈0 in a converged steady state.
     std::vector<double> node_carry_;
+    /// Lateral inflow diverted from a clean degree-2 junction into its two
+    /// incident cells (half each) as a zero-momentum area source, so the node
+    /// KEEPS the pass-through splice. Head-solving such junctions costs the
+    /// split-Riemann ~1 mm of head per junction that pass-through exists to
+    /// avoid — with rain on every junction of a 400-conduit channel that
+    /// integrated into an 18-25% deep bias with exact q (SWASHES §3.3).
+    /// cell_qlat_ is m³/s per cell; node_lat_div_ flags the nodes whose
+    /// forcing.node_lateral must read as zero on every node path.
+    std::vector<double> cell_qlat_;
+    std::vector<std::uint8_t> node_lat_div_;
+    double nodeLateral(const FvStepForcing& forcing,
+                       std::size_t un) const noexcept {
+        if (!node_lat_div_.empty() && node_lat_div_[un]) return 0.0;
+        return forcing.node_lateral ? forcing.node_lateral[un] : 0.0;
+    }
+    /// The diverted lateral's RIM. A pass-through junction has no head state,
+    /// so the injection above had no ceiling: once the incident cells were
+    /// full, every m³ the pipe could not convey went into the Preissmann
+    /// slot, whose storage is t_slot·L ≈ 1e-3 m² per pipe — about a kilometre
+    /// of head per m³ — and the divergence guard (ERROR 14) fired within a
+    /// routing step of the first overload (Bellinge, 2026-09-05: junction
+    /// depths of 90–200 m alternating with 0.1 m as the 2D drain toggled
+    /// sign, then 3,346 m). A solved junction clamps at its rim and books the
+    /// surplus as flooding or ponded volume; the diverted path now does the
+    /// same at the cell. face_a_rim_ is the receiving cell's area at the node
+    /// rim (invert + full depth, + surcharge depth when sealed; +inf where no
+    /// rim applies: open sections, no full depth on record, faces of
+    /// non-pass-through nodes). The injection stops at that area and the
+    /// remainder is banked per FACE in face_lat_spill_ (ft³) — per face, not
+    /// per cell, because a one-cell conduit can receive from a pass-through
+    /// junction at each end — and drained by bookLateralSpills at the node
+    /// update into flood_vol_ (sealed) or the ponded-volume ledger (pondable,
+    /// which demotes the node to the bucket path exactly as
+    /// settleAlgebraicNode's ponding branch does). Only the owning cell writes
+    /// a boundary face's slot, so the cell update stays race-free.
+    std::vector<double> face_a_rim_;
+    std::vector<double> face_lat_spill_;
+    double injectDivertedLateral(std::size_t uc, double a_new, double dt,
+                                 double inv_dx);
+    void   bookLateralSpills(const std::vector<int>* nodes);
     /// Cached V(full_depth) per node, for the ponding demote test.
     std::vector<double> node_vfull_;
 
@@ -185,6 +327,28 @@ private:
             state_->node_volume[un] > node_vfull_[un]) return false;
         return true;
     }
+
+    /// Is any cell incident to node @p un pressurized (closed section at or
+    /// above its crown, or a TPA-flagged column)? Same predicate as the step
+    /// census and anyPressurizedCell(). Read by refreshStructFlows: a
+    /// surcharged degree-2 junction leaves the pass-through splice for the
+    /// solved path, whose rim clamp and flooding are what the splice lacks.
+    bool incidentPressurized(std::size_t un) const noexcept {
+        for (int p = mesh_->node_face_ptr[un];
+             p < mesh_->node_face_ptr[un + 1]; ++p) {
+            const auto uf = static_cast<std::size_t>(
+                mesh_->node_face_idx[static_cast<std::size_t>(p)]);
+            const int c = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
+                                                    : mesh_->face_cr[uf];
+            if (c < 0) continue;
+            const auto uc = static_cast<std::size_t>(c);
+            if (tpaCell(uc)) return true;
+            const FvGeometry& g =
+                mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
+            if (!g.is_open && state_->cell_h[uc] >= g.y_crown) return true;
+        }
+        return false;
+    }
     void   updateCells(double dt, const FvStepForcing& forcing);
     void   updateNodes(double dt, const FvStepForcing& forcing);
     void   dispersionSolve(double dt);
@@ -198,12 +362,41 @@ private:
     void   refreshStructFlows(const FvStepForcing& forcing);
     std::vector<double> node_qstruct_;
 
-    double nodeDepthFromVolume(int node, double volume) const;
+    /// Pass-through source/sink from DUMMY links, kept separate from
+    /// node_qstruct_ because it is derived, not forced: a dummy carries
+    /// whatever arrives at its upstream node, so its value depends on the very
+    /// fluxes the node update is about to integrate. Computed by
+    /// refreshDummyFlows() immediately before each node update, from the same
+    /// arrival volume that update will use, which makes the drain exact rather
+    /// than lagged. Folded into q_lat alongside node_qstruct_ at all three
+    /// integration sites (relaxOneNode, updateNodes, fireNodes).
+    std::vector<double> node_qdummy_;
 
-    /// dV/dH at an arbitrary depth — what the semi-implicit node correction is
-    /// damped against once Picard sweeping has moved the head off the one
-    /// `node_surf_area` was refreshed at.
-    double nodeStorageSlope(int node, double depth) const;
+    /// Volume each DUMMY link has passed through so far this routing step
+    /// (ft³), parallel to mesh.struct_link. Router divides by dt to publish the
+    /// step-mean discharge, matching how real structure flows are reported.
+    std::vector<double> dummy_vol_;
+
+    /// Compute the DUMMY pass-through for one node-update pass and scatter it
+    /// into node_qdummy_. `arrived(n)` must return the NET volume (ft³) that
+    /// reached node n over `dt` from its faces — the quantity the caller is
+    /// about to add to the node's storage. The dummy removes exactly that,
+    /// plus the node's lateral and structure forcing, so the upstream node's
+    /// volume is unchanged: DW's own continuity for a dummy reduces to
+    /// dV/dt = 0 (findNonConduitFlow sets Q = inflow + overflow, and
+    /// updateNodeFlows books it as outflow — dynwave.c:418-449).
+    template <class ArrivedFn>
+    void refreshDummyFlows(double dt, const FvStepForcing& forcing,
+                           ArrivedFn&& arrived);
+
+    /// node_qdummy_ with the empty-vector case folded in — a model with no
+    /// dummy links never allocates it, and every integration site would
+    /// otherwise need the same guard.
+    double nodeQDummy(std::size_t un) const noexcept {
+        return node_qdummy_.empty() ? 0.0 : node_qdummy_[un];
+    }
+
+    double nodeDepthFromVolume(int node, double volume) const;
 
     /// Is this face's flux the one being computed and booked RIGHT NOW?
     ///
@@ -214,21 +407,20 @@ private:
     /// that belongs to a different window, which is the one property the
     /// macro cycle's face-open/volume-close offset exists to guarantee.
     ///
-    /// Picard's flux re-solve is therefore restricted to live faces. The
-    /// residual still sums over ALL incident faces (a held flux is the best
-    /// estimate of what that face is carrying), and the linear correction is
-    /// still written to all of them, exactly as the single-sweep scheme did —
-    /// only the re-solve is gated. On the global path every face is live.
+    /// The algebraic-junction re-solve and the LTS due-set machinery are the
+    /// callers; both must touch only live faces. On the global path every
+    /// face is live.
     /// Can the LTS macro cycle run under the current options and state?
     /// One predicate shared by advance() and censusDt(): tiering is off under
     /// RK2 (the two stages must share one Δt) and under transport (the FCT
-    /// sweep is synchronous). censusDt() skips the node stability term only
+    /// sweep is synchronous). censusDt() skips the node accuracy bound only
     /// when tiering can actually supply the node its own fine tier — gating
     /// that skip on the FV_LTS option alone silently dropped the node bound
     /// from the global path whenever the option was on but tiering was not
-    /// running (RK2, species), reproducing FV_NODE_DT NONE unasked.
+    /// running (RK2, species).
     bool ltsEligible() const noexcept {
-        return opts_.lts && opts_.time_integration != TimeIntegration::RK2 &&
+        return opts_.lts &&
+               opts_.time_integration != TimeIntegration::RK2 &&
                state_ && state_->n_species == 0;
     }
 
@@ -251,8 +443,41 @@ private:
     /// Semi-implicit friction for one cell: Manning, or — for a FORCE_MAIN
     /// running full — the Hazen-Williams / Darcy-Weisbach law the section
     /// actually obeys, through the engine's own forcemain functions.
-    double frictionFor(const FvGeometry& g, double q, double u, double h,
-                       double dt) const;
+    /// Explicit stability bound for an ALGEBRAIC junction (issue: FV rings on
+    /// pressurized networks while dynamic wave does not).
+    ///
+    /// An algebraic junction has no volume state, so it has no STORAGE bound --
+    /// which is why it was exempted here. But it is not unbounded. Its head is
+    /// solved from the instantaneous flux balance and then handed to the
+    /// incident cells as a ghost, so the neighbours integrate against a
+    /// boundary state that can travel a long way inside one step. That feedback
+    /// loop is explicit, and it has its own limit:
+    ///
+    ///     tau = min_i( 0.5*dx_i*T_i )  /  sum_j( T_j*c_j )
+    ///
+    /// Every incident conduit pushes flux into the junction (the sum), but the
+    /// solved head has to be resolved on the TIGHTEST incident storage (the
+    /// min) -- that is the ghost the stiffest neighbour sees. Summing the
+    /// numerator instead, the obvious first guess and what legacy DW does for
+    /// its own node continuity solve, makes the bound LOOSER at exactly the
+    /// junctions that need it: at a 12 ft barrel meeting a 3 ft one the summed
+    /// area gives an effective length of 2123 ft against a 250 ft cell.
+    ///
+    /// Relative to the cell bound this is 1/(2n) * (T_min/T_max), i.e. purely
+    /// geometric: 4x for two identical barrels, 32x across a 16:1 area step.
+    /// Those are the factors the EPA QA decks were measured to need (test5 2x,
+    /// test2 25x), which is what the global FV_CFL had to be hand-lowered to
+    /// 0.1 and 0.02 to fake.
+    ///
+    /// Gated on the junction actually being pressurized: below the crown the
+    /// slot is not engaged, the head response is soft, and the measured
+    /// oscillation disappears entirely (enlarging the barrels so they never
+    /// surcharge takes the zigzag index from 37.6 to 4.97, dynamic wave's own
+    /// value). So an open-channel network pays nothing for this.
+    double algebraicNodeStableDt(int n) const noexcept;
+
+    double frictionFor(const FvGeometry& g, double roughness, double rough_factor,
+                       double q, double u, double h, double dt) const;
 
     /// Apply the node's capacity rule to a freshly-integrated volume: ponding,
     /// surcharge depth, and the flooding that removes water once neither can
@@ -274,7 +499,9 @@ private:
     /// Partition the active mesh into power-of-two tiers. Returns the tier
     /// count K and writes the finest requirement to @p dt0. K == 1 means the
     /// mesh is uniformly stiff and the caller should take the global path.
-    int    assignTiers(double& dt0);
+    /// @p k_cap_override > 0 caps the tier count (plan Phase 4c: a cycle cut
+    /// to fit the remaining routing-step window).
+    int    assignTiers(double& dt0, int k_cap_override = 0);
 
     /// Fire every entity due at one base substep. Faces compute their flux and
     /// BOOK `±F·Δt` into both incident control volumes' accumulators; cells and
@@ -309,6 +536,20 @@ private:
     /// positivity-limit, transport, then the cell and node updates.
     void   takeSubstep(double dt, const FvStepForcing& forcing);
 
+    // -- implicit pressurized head update (slot program R2a) ----------------
+    /// Any active closed-section cell at/above band entry? Cheap early-exit
+    /// scan deciding whether this substep runs the implicit pass (and
+    /// whether the census may apply the R2 edit).
+    bool   anyPressurizedCell() const;
+    /// Would the implicit pass fold this junction as an unknown row RIGHT
+    /// NOW? Pure state predicate, shared by the census's feedback-bound
+    /// exemption and classify()'s fold pass.
+    bool   nodePressFolded(int n) const;
+    PressurizedView pressView(const FvStepForcing& forcing);
+    PressurizedHeadSolver press_;
+    /// Did classify() find implicit work for the substep in flight?
+    bool   press_step_ = false;
+
     /// Snapshot / average for SSP-RK2. `rkSave` records Uⁿ and the ledger
     /// totals; `rkAverage` forms ½(Uⁿ + U⁽²⁾) and halves the ledger deltas the
     /// two stages accumulated, which is what makes the reported flow integral
@@ -340,7 +581,6 @@ private:
     // g·(I₁(h_K) − I₁(h*_K)) — per-cell, not per-face, which is why they are
     // stored separately from the shared flux.
     std::vector<double> f_mass_, f_mom_, f_sstar_, f_corr_l_, f_corr_r_;
-    std::vector<double> f_scale_;
 
     /// Reconstructed species values on each side of each face, species-major
     /// [s * n_faces + f]. Filled by reconstructScalars() — this is the
@@ -385,6 +625,52 @@ private:
     // Cell scratch.
     std::vector<double> cell_eta_;     ///< z_b + h
     std::vector<double> cell_u_;       ///< Q/A, dry-guarded
+
+    /// Closure at the CELL depth, refreshed by cacheClosure() at every write
+    /// of cell_h: A(h), T(h) and I₁(h) of the cell's own section. Zero for a
+    /// dry or TPA-flagged cell (neither consumer reads it then). faceSide, the
+    /// census and the LTS stability bounds evaluated exactly these at the
+    /// stored depth, several times per substep and once per node-solve trial;
+    /// read from here the value is the same call on the same inputs, so the
+    /// results are bit-identical (plan Phase 1b).
+    std::vector<double> cell_ah_;      ///< areaOfDepth(g, cell_h)
+    std::vector<double> cell_t_;       ///< widthOfDepth(g, cell_h)
+    std::vector<double> cell_i1_;      ///< i1OfDepth(g, cell_h, cell_ah_)
+    void cacheClosure(std::size_t uc, const FvGeometry& g, double h) noexcept;
+
+    /// Unsteady-friction convective term c·sgn(Vⁿ)·|∂V/∂x|ⁿ per cell
+    /// (issue #156). Precomputed from a consistent old-state snapshot before
+    /// each (parallel) cell-update loop so no update reads a mid-update
+    /// neighbor; sized only when FvOptions::unsteady_friction != 0.
+    std::vector<double> uf_grad_;
+
+    /// Fill uf_grad_ for @p cells (nullptr = all cells) from the current
+    /// cell_u_/state snapshot. Same-conduit neighbors only: across virtual
+    /// junction splices the conduit frames may point into each other, so the
+    /// stencil falls back to one-sided there rather than risk a sign flip.
+    void computeUfGradients(const std::vector<int>* cells);
+
+    // -- TPA pressure closure (issue #156 Phase 4) ---------------------------
+    bool tpa_ = false;                    ///< FV_PRESSURE_CLOSURE == TPA
+    bool mixed_wave_ = true;              ///< slot/free interface wave bound (dev switch)
+    bool mw_rh_  = true;                  ///< bore-speed bound at interior slot/free faces
+    bool deg1_guard_slot_ = true;         ///< degree-1 prescribed discharge skips a slot interior (dev: DEG1=1 off)
+    bool census_pass_far_ = true;         ///< census bounds a pass-through ghost by the FAR cell it fluxes (dev: CENSUS_PASS=0 off)
+    bool lts_fit_ = false;                ///< 4c experiment: a shorter macro cycle when the full one does not fit (OPENSWMM_FV_LTS_FIT=1)
+    /// The far cell a pass-through junction's ghost presents at @p face, or
+    /// -1 when the node is not an active pass-through (plan Phase 1e).
+    int  passThroughFarCell(int face, int nd) const noexcept;
+    std::vector<uint8_t> tpa_scratch_;    ///< previous-flag snapshot (sweep)
+    std::vector<uint8_t> save_tpa_;       ///< step-rejection snapshot
+
+    /// Update the per-cell regime flags (state_->cell_tpa) once per substep
+    /// from the venting rule — see the implementation comment.
+    void updateTpaFlags();
+
+    /// Regime of one cell under TPA; always false when the closure is SLOT.
+    bool tpaCell(std::size_t uc) const noexcept {
+        return tpa_ && state_->cell_tpa[uc] != 0;
+    }
     std::vector<double> cell_q_int_;   ///< ∫(mean face mass flux) dt over the
                                        ///< routing step — the DISCHARGE the
                                        ///< report publishes; equals ∫Q dt in
@@ -415,11 +701,37 @@ private:
     std::vector<double> rk_node_vol_, rk_node_head_;
     std::vector<double> rk_exch_, rk_in_, rk_out_, rk_flood_, rk_qint_,
                         rk_carry_;
+    std::vector<uint8_t> rk_tpa_;   ///< Uⁿ regime latch (issue #156 R4c)
 
     /// Accept a substep when the post-step stable step is at least this
     /// fraction of the step actually taken.
     static constexpr double kStepAcceptRatio = 0.5;
     static constexpr int    kMaxStepRetries  = 8;
+
+    /// Substep floor — a loop guard only, far below any stable step this
+    /// solver legitimately computes. NOT constants::MIN_TIMESTEP (0.001 s,
+    /// legacy DYNWAVE routing granularity): clamping an EXPLICIT scheme's
+    /// census up to that value violates CFL wherever a cell demands
+    /// dt < 1 ms, which is routine at acoustic slot celerities on sub-foot
+    /// cells — and was the root cause of the issue-#156 "high-celerity TPA
+    /// instability" class (see the comment at the clamp site in advance()).
+    static constexpr double kMinSubstep = 1.0e-6;   ///< s
+
+    // Divergence guard (issue #156 R3). The retry loop above is sound for CFL
+    // violations, which shrink away with dt — but a dt-INDEPENDENT
+    // amplification (measured: RK2 x TPA on the study's e3 siphon grows the
+    // crown head x20-40 per millisecond at FV_CFL 0.9, 0.45 and 0.25 alike)
+    // fails all 8 retries identically and the loop then ACCEPTS the diverged
+    // step silently. These bounds are physical absurdities, not tolerances: no
+    // water transient carries particle velocity past 1000 ft/s (celerity is
+    // not particle speed), and 10,000 ft of pressure head is 300 bar. A run
+    // that crosses either has left the physics and must say so instead of
+    // scoring OK (P6 finding F3). Checked once per routing step, O(cells).
+    static constexpr double kDivergedVelocity = 1000.0;    ///< ft/s
+    static constexpr double kDivergedDepth    = 10000.0;   ///< ft
+    int         div_link_  = -1;       ///< engine link index, -1 = clean
+    double      div_value_ = 0.0;
+    const char* div_what_  = nullptr;
 
     // Work lists (plan §5.2.1). `halo_` is the compaction safety margin: a wet
     // front advances at most CFL cells per substep, so a halo of `rebuild_
@@ -473,11 +785,57 @@ private:
     long   total_flux_   = 0;
     double min_h_        = 0.0;
     double sim_time_     = 0.0;
+    /// LTS macro cycles that ran / were rejected by the post-cycle census.
+    /// The tier histogram is filled whether or not a cycle ever fits the
+    /// routing step; these say whether tiering ENGAGED.
+    long   n_macro_cycles_   = 0;
+    long   n_macro_rejected_ = 0;
+
+    /// True while cell_h / cell_eta_ / cell_u_ are exactly what the solver's
+    /// own last update derived from cell_a. advance() then skips its entry
+    /// refreshDepths() — a full-mesh depth inversion that was 27-32 % of a
+    /// reach deck's step in the 2026-09-11 baseline — bit-identically, since
+    /// the refresh would recompute the same values from the same areas. The
+    /// Router writes cell_a only before initialize() (the initial seed), so
+    /// initialize()/reinitialize() are the only places that clear it; the
+    /// pressurized-implicit and TPA paths keep the refresh unconditional.
+    bool   state_clean_ = false;
+    /// True while acc_a_/acc_q_/acc_nvol_ hold flux fireFaces booked and no
+    /// volume has drained. Lets settleAccumulators() skip its transfer AND the
+    /// two full-mesh refreshDepths() it ends with when no macro cycle has run
+    /// since the last settle — which, on every deck of the 2026-09-11
+    /// baseline, was always (LTS fired 0 cycles) while costing 25-50 % of wall.
+    bool   acc_dirty_ = false;
+    /// Per-face √(g·A·T) scratch for relaxOneNode: pass 1 evaluates it into
+    /// here and pass 2 reads it, instead of evaluating the same geometry twice.
+    std::vector<double> relax_beta_;
+
+    // dt-argmin attribution (slot program R0): who owned the binding CFL
+    // element, counted once per censusDt (global path) / assignTiers (LTS
+    // path). `mutable` because censusDt is const; these are telemetry.
+    mutable long dt_argmin_pressurized_ = 0;
+    mutable long dt_argmin_band_        = 0;
+    mutable long dt_argmin_free_        = 0;
+    mutable long dt_argmin_node_        = 0;
     double active_sum_   = 0.0;
     double active_min_   = -1.0;
     double active_max_   = -1.0;
     long   active_n_     = 0;
+
+    /// The step the last accepted substep actually TOOK. Published as
+    /// suggested_step() and therefore what Router::getAdaptiveStep offers the
+    /// engine as the next routing step.
     double dt_cache_     = 0.0;
+
+    /// The CFL bound the last census returned — deliberately distinct from
+    /// dt_cache_. `dt_cache_` is clamped to the time remaining in the routing
+    /// step, so caching it as the Courant bound would drag every later substep
+    /// down to whatever fragment closed the previous step. Only this one may be
+    /// carried across a skipped census (FV_CFL_CENSUS_INTERVAL > 1).
+    double dt_census_    = 0.0;
+
+    /// Substeps remaining before the next full Courant census. Reloaded from
+    /// FV_CFL_CENSUS_INTERVAL; zero forces a census on the next substep.
     int    census_count_ = 0;
 };
 

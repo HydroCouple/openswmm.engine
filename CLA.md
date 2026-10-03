@@ -1,10 +1,12 @@
 # Contributor License Agreement — openswmm.engine
 
-**Version 1.0 — May 2026**
+**Version 1.1 — August 2026**
 
 Thank you for your interest in contributing to **openswmm.engine**, maintained by the Technical Manager of the project (currently [@cbuahin](https://github.com/cbuahin)). This Contributor License Agreement ("CLA") clarifies the intellectual property rights granted with contributions to the project. By signing this CLA you confirm that you have the legal authority to grant these rights, and that the Technical Manager may rely on them.
 
 This CLA does **not** transfer your copyright to the Technical Manager. You retain full ownership of your contributions. The CLA grants a license that enables the project to be distributed, maintained, and relicensed in the future without requiring additional consent from every contributor.
+
+The Project is currently distributed to the public under the **Apache License, Version 2.0** (see [LICENSE](./LICENSE)). Contributions accepted into the Project are made available under those terms, together with the attribution notices recorded in [NOTICE](./NOTICE). The relicensing right granted in Section 2 below operates in addition to, and does not revoke, that outbound license: anything already released under the Apache License, Version 2.0 stays available under it.
 
 The Technical Manager role may transfer over time per the succession process described in [CONTRIBUTING.md §3](./CONTRIBUTING.md#3-succession--delegation). Rights granted under this CLA persist through any such transition and vest in whoever holds the Technical Manager role at the time they are exercised.
 
@@ -24,7 +26,9 @@ The Technical Manager role may transfer over time per the succession process des
 Subject to the terms of this CLA, You hereby grant to the Technical Manager a **perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable copyright license** to:
 
 - reproduce, prepare derivative works of, publicly display, publicly perform, sublicense, and distribute Your Contributions and such derivative works;
-- **relicense** Your Contributions under any license, including but not limited to the GPLv3, LGPL, AGPL, MIT, or a commercial license, at the Technical Manager's sole discretion and without further notice to You.
+- **relicense** Your Contributions under any license, including but not limited to the Apache License 2.0, GPLv3, LGPL, AGPL, MIT, or a commercial license, at the Technical Manager's sole discretion and without further notice to You.
+
+This grant is at least as broad as the copyright license in Section 2 of the Apache License, Version 2.0, so the Technical Manager may distribute Your Contributions under the Project's current outbound license without further action by You.
 
 The relicensing right is granted specifically to preserve the Technical Manager's ability to adapt the project's licensing terms over time (for example, to offer a dual open-source/commercial licensing model) without being required to seek individual consent from each contributor.
 
@@ -34,7 +38,7 @@ The relicensing right is granted specifically to preserve the Technical Manager'
 
 Subject to the terms of this CLA, You hereby grant to the Technical Manager and to recipients of software distributed by the Technical Manager a **perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable patent license** to make, have made, use, offer to sell, sell, import, and otherwise transfer Your Contributions, where such license applies only to those patent claims licensable by You that are necessarily infringed by Your Contribution alone or by combination of Your Contribution with the Project.
 
-If any entity institutes patent litigation against You or any other party alleging that Your Contribution constitutes patent infringement, any patent licenses granted to that entity under this CLA for that Contribution shall terminate as of the date such litigation is filed.
+If any entity institutes patent litigation against You or any other party alleging that Your Contribution constitutes patent infringement, any patent licenses granted to that entity under this CLA for that Contribution shall terminate as of the date such litigation is filed. This Section mirrors the patent grant and defensive termination provisions of Section 3 of the Apache License, Version 2.0.
 
 ---
 
@@ -50,7 +54,7 @@ By submitting a Contribution, You represent and warrant that:
 
 1. **You are the author.** You are the sole author of the Contribution, or you have the legal right to submit it on behalf of all co-authors.
 2. **You have authority to grant this license.** The license grant in Sections 2 and 3 does not violate any agreement you have with a third party, and no third party has any claim over your Contribution that would restrict the grant.
-3. **Third-party content is disclosed.** If Your Contribution includes any third-party code, data, or assets, you have identified them clearly in the pull request description, confirmed their licenses are compatible with the Project's current license, and included all required attribution.
+3. **Third-party content is disclosed.** If Your Contribution includes any third-party code, data, or assets, you have identified them clearly in the pull request description, confirmed their licenses are compatible with the Apache License, Version 2.0, and added any attribution those licenses require to [NOTICE](./NOTICE).
 4. **Employer authorization.** If you are employed and your Contribution relates to your employer's business or was created using employer resources, your employer has either (a) authorized you to make this Contribution and granted the necessary rights, or (b) signed a Corporate CLA (see Section 6) covering this Contribution.
 
 ---
@@ -123,4 +127,10 @@ Questions about this CLA should be directed to the Technical Manager via GitHub:
 
 ---
 
-*This CLA is maintained by the Technical Manager of openswmm.engine (currently [@cbuahin](https://github.com/cbuahin)). Last updated: May 2026.*
+## 13. Public Domain Material
+
+Portions of the Project are derived from USEPA SWMM software that resides in the public domain and for which domestic copyright protection is not available under 17 USC § 105. Nothing in this CLA asserts, or asks You to assert, copyright over that material. If Your Contribution modifies or extends public domain material, the licenses granted above apply only to Your own original changes; the underlying public domain material remains free of any such restriction. See [NOTICE](./NOTICE) for the full provenance statement.
+
+---
+
+*This CLA is maintained by the Technical Manager of openswmm.engine (currently [@cbuahin](https://github.com/cbuahin)). Last updated: August 2026.*

@@ -1,0 +1,51 @@
+[TITLE]
+Divider column probe — every trailing column carries a distinctive value so a
+dropped or shifted column is unambiguous in the round-tripped file.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         DYNWAVE
+LINK_OFFSETS         DEPTH
+START_DATE           01/01/2024
+END_DATE             01/01/2024
+REPORT_STEP          00:15:00
+ROUTING_STEP         00:00:30
+ALLOW_PONDING        YES
+
+[JUNCTIONS]
+;;Name  Elev   MaxDepth  InitDepth  SurDepth  Aponded
+J1      100.0  10.0      0.0        0.0       0.0
+
+[DIVIDERS]
+;;Name  Elev   DivLink  Type      (Params)  MaxDepth  InitDepth  SurDepth  Aponded
+DIV_OVR 95.0   L_DIV    OVERFLOW            6.07      1.11       2.22      200.0
+DIV_CUT 95.0   L_DIV2   CUTOFF    3.33      7.07      1.12       2.23      300.0
+
+[OUTFALLS]
+;;Name  Elev   Type   Stage  Gated
+O1      90.0   FREE          NO
+O2      90.0   FREE          NO
+O3      90.0   FREE          NO
+
+[CONDUITS]
+;;Name  From     To    Length  Rough   InOff  OutOff
+L_IN    J1       DIV_OVR  100  0.013   0      0
+L_DIV   DIV_OVR  O1       100  0.013   0      0
+L_MAIN  DIV_OVR  DIV_CUT  100  0.013   0      0
+L_DIV2  DIV_CUT  O2       100  0.013   0      0
+L_MAIN2 DIV_CUT  O3       100  0.013   0      0
+
+[XSECTIONS]
+L_IN     CIRCULAR  1.0  0  0  0
+L_DIV    CIRCULAR  1.0  0  0  0
+L_MAIN   CIRCULAR  1.0  0  0  0
+L_DIV2   CIRCULAR  1.0  0  0  0
+L_MAIN2  CIRCULAR  1.0  0  0  0
+
+[COORDINATES]
+J1       0    0
+DIV_OVR  100  0
+DIV_CUT  200  0
+O1       100  100
+O2       200  100
+O3       300  0

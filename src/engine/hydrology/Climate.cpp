@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file Climate.cpp
  * @brief Climate processing — numerically identical to legacy climate.c.
@@ -5,7 +21,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "Climate.hpp"
@@ -94,7 +110,10 @@ void updateDailyClimate(ClimateState& state, int day_of_year, int month) {
 
     switch (state.evap_method) {
         case EvapMethod::CONSTANT:
-            // evap_rate already set
+            // legacy setEvap: Evap.rate = monthlyEvap[0] / UCF(EVAPRATE) on
+            // EVERY call, so the monthly adjustment added below is applied
+            // to the constant, not accumulated step after step.
+            state.evap_rate = state.monthly_evap[0] / state.evaprate_ucf;
             break;
 
         case EvapMethod::MONTHLY:
@@ -122,8 +141,13 @@ void updateDailyClimate(ClimateState& state, int day_of_year, int month) {
             break;
     }
 
-    // Apply monthly adjustment
-    state.evap_rate *= state.adjust_evap[month];
+    // Apply monthly adjustment — legacy setEvap: Evap.rate += Adjust.evap[mon-1]
+    // (the [ADJUSTMENTS] EVAP row is a rate ADDED to the source, not a factor).
+    // TIMESERIES and PAN are resolved by the engine's climate step, which
+    // adds the adjustment itself.
+    if (state.evap_method != EvapMethod::TIMESERIES &&
+        state.evap_method != EvapMethod::PAN)
+        state.evap_rate += state.adjust_evap[month];
 
     // Saturation vapor pressure (for snowmelt rain-on-snow)
     double ta = state.temperature;
