@@ -83,7 +83,6 @@
 #include "ErrorCodes.hpp"
 #include "ThreadInfo.hpp"
 
-// libomp's KMP_BLOCKTIME override — declared here at file scope because
 // OpenMP support — graceful degradation when not available
 #if defined(SWMM_USE_OPENMP)
 #include <omp.h>
@@ -8055,70 +8054,16 @@ void SWMMEngine::initHydraulics() noexcept {
     //     DWSolver applies its own per-thread conduit-count gate.
     //     The global OMP thread count is also set for Runoff/Quality modules.
     {
-        // Resolve first: the wait-policy decision below depends on whether
-        // the requested team oversubscribes the machine.
         // Thread warnings are collected locally and pushed through
         // push_report_warning() at the end of this block so they reach both
         // the .rpt warning list and the host's warning callback.
         std::vector<std::string> thread_warnings;
         const int nt = threadinfo::resolveRequested(
             ctx_.options.num_threads, "OpenMP team", &thread_warnings);
-        const bool oversubscribed = threadinfo::isOversubscribed(nt);
-        (void)oversubscribed;   // only consulted by the POSIX wait-policy block
-#if defined(SWMM_USE_OPENMP) && !defined(_WIN32)
-        // B2 threading wait policy: the persistent-team DW Picard loop
-        // synchronizes with several barriers per iteration (~1.2M iterations
-        // on large runs). With libomp's DEFAULT passive wait policy each
-        // barrier costs 5-30µs (kernel futex sleep/wake — measured; this is
-        // why legacy-style threading was net-negative). With active spinning
-        // a barrier costs ~0.5-3µs. Request active waiting whenever DW
-        // threading is possible (THREADS > 1 / 0 = auto, or the
-        // SWMM_DW_THREADS A/B override). setenv(overwrite=0) respects an
-        // explicit user override of either variable. This MUST run before
-        // the first OpenMP runtime call in the process — libomp reads the
-        // environment once, at lazy runtime init (typically the
-        // omp_get_max_threads() below). kmp_set_blocktime() is also called
-        // as a runtime-effective fallback in case a host application already
-        // initialized OpenMP before engine start.
-        {
-            const char* dw_env = std::getenv("SWMM_DW_THREADS");
-            const int dw_forced = dw_env ? std::atoi(dw_env) : -1;
-            const bool dw_threading_possible =
-                rm == RouteModel::DYNWAVE &&
-                (ctx_.options.num_threads != 1 || dw_forced > 1) &&
-                dw_forced != 1;
-            // Never request active spinning for an oversubscribed team: a
-            // spinner waiting on a DESCHEDULED spinner turns every barrier
-            // into a scheduler-quantum stall (far worse than passive waits).
-            if (dw_threading_possible && !oversubscribed) {
-                // setenv() is not thread-safe in glibc: adding a name reallocs
-                // the environ array and frees the old block, while ~30 getenv()
-                // call sites on the routing hot path read it concurrently. Two
-                // engines starting on different threads double-freed that block.
-                // libomp reads the environment once at lazy runtime init, so
-                // doing this on the first engine to get here is sufficient —
-                // the values do not vary per engine. kmp_set_blocktime below
-                // stays per-call: it is a runtime call, not an environment write.
-                static std::once_flag omp_wait_policy_set;
-                // A host that pre-set KMP_BLOCKTIME (a GUI sharing the CPUs
-                // with its own threads, or a user A/B) keeps its value: the
-                // setenv below already leaves it alone, and the runtime call
-                // after it must not override it either.
-                static bool host_set_blocktime = false;
-                std::call_once(omp_wait_policy_set, [] {
-                    host_set_blocktime = std::getenv("KMP_BLOCKTIME") != nullptr;
-                    setenv("OMP_WAIT_POLICY", "active", 0);
-                    setenv("KMP_BLOCKTIME", "infinite", 0);
-                });
-#if defined(KMP_VERSION_MAJOR)
-                // libomp extension: set spin-wait blocktime on the calling
-                // (master) thread; workers forked by it inherit the setting.
-                // Effective even when the runtime pre-dates the setenv above.
-                if (!host_set_blocktime) kmp_set_blocktime(2147483647);
-#endif
-            }
-        }
-#endif
+        // No wait-policy override: like legacy, the runtime's own default
+        // applies (libomp spins ~200 ms, then sleeps). Forcing active
+        // waiting with an unbounded blocktime made a THREADS > 1 run 20-100x
+        // slower whenever other work shared the CPUs.
         omp_set_num_threads(nt);
 #if defined(SWMM_USE_OPENMP)
         // OMP_THREAD_LIMIT (or a runtime that refuses oversubscription) caps

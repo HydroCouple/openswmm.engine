@@ -62,8 +62,8 @@
 namespace openswmm {
 
 // Parallelising the outer shape-group loop in each compute* method pays off
-// now that SWMMEngine::start() pins KMP_BLOCKTIME≈infinite so fork cost is
-// ~500 ns (not ~20 µs). Groups write to disjoint conduit indices via
+// while libomp's default blocktime keeps the team spinning between the
+// back-to-back regions of a routing step. Groups write to disjoint conduit indices via
 // scatter_results, so they are race-free. `schedule(dynamic, 1)` keeps the
 // one big shape group (usually CIRCULAR, ~70 % of conduits) from blocking
 // workers. We gate the parallel region on having multiple non-empty
