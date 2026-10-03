@@ -256,8 +256,12 @@ void LIDSolver::init(SimulationContext& ctx) {
         double n_units = static_cast<double>(ctx.lid_usage.number[uj]);
         g.subcatch_idx[us] = ctx.lid_usage.subcatch_index[uj];
         g.control_idx[us]  = li;
-        g.area[us]         = ctx.lid_usage.area[uj]  * n_units / ucfLength2;
-        g.full_width[us]   = ctx.lid_usage.width[uj] * n_units / ucfLength;
+        // Legacy op order: convert ONE unit first (lid.c:551-552,
+        // lidUnit->area = x[0] / SQR(UCF(LENGTH))), then multiply by the
+        // count (lid.c:1168/1688, lidArea = lidUnit->area * number). On an
+        // SI deck (area*n)/ucf^2 rounds differently from (area/ucf^2)*n.
+        g.area[us]         = (ctx.lid_usage.area[uj]  / ucfLength2) * n_units;
+        g.full_width[us]   = (ctx.lid_usage.width[uj] / ucfLength)  * n_units;
         // The swale kernel (legacy swaleFluxRates) is NOT invariant under the
         // n_units scaling: botWidth = topWidth - 2*slope*thickness and the
         // hydraulic radius use ONE unit's width and area (lidUnit->fullWidth,
