@@ -73,6 +73,13 @@ bool InputReader::read_stream(std::istream& stream, SimulationContext& ctx) {
     lines_read_ = 0;
     skipped_sections_.clear();
 
+    // An .inp reports no subcatchments, nodes or links unless [REPORT] names
+    // them (legacy RptFlags default FALSE; SWMM manual: default NONE). The
+    // SimulationOptions default of ALL stays for models built through the API.
+    ctx.options.rpt_subcatchments = 0;
+    ctx.options.rpt_nodes = 0;
+    ctx.options.rpt_links = 0;
+
     std::string            current_tag;     // e.g. "OPTIONS"
     std::vector<std::string> section_lines; // accumulated data lines
 

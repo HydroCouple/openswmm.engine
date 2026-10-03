@@ -177,6 +177,7 @@ std::string overTopModel(const std::string& closure, bool apex_sealed,
           "C_UP   CIRCULAR 1.0 0  0  0  1\n"
           "C_DN   CIRCULAR 1.0 0  0  0  1\n"
           "W_OVF  RECT_OPEN 3.0 1.0 0 0\n"
+          "\n[REPORT]\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n"
           "\n[INFLOWS]\n;;Node Constituent Tseries Type Mfactor Sfactor Baseline\n"
           "TB     FLOW        \"\"      FLOW 1.0     1.0     -"
        << withdraw_cfs << "\n";

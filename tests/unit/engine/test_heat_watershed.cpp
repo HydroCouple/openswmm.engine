@@ -187,7 +187,7 @@ void write_deck(const char* path, const char* cfg_path,
       << "[PROCESS_COMPONENTS]\n"
       << "org.hydrocouple.openswmm.heat config=\"" << cfg_path
       << "\"\n\n"
-      << "[REPORT]\nINPUT NO\n";
+      << "[REPORT]\nINPUT NO\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n";
     (void)path;
 }
 
@@ -409,7 +409,7 @@ TEST(HeatWatershedTest, RunonCarriesTheDonorsTemperature) {
           << "[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\n\n"
           << "[PROCESS_COMPONENTS]\n"
           << "org.hydrocouple.openswmm.heat config=\"_h5c.heat\"\n\n"
-          << "[REPORT]\nINPUT NO\n";
+          << "[REPORT]\nINPUT NO\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n";
     }
     SWMM_Engine e = run_and_hold("_h5c.inp", "_h5c.rpt", "_h5c.out");
     ASSERT_NE(e, nullptr);
@@ -638,7 +638,7 @@ TEST(HeatWatershedTest, EveryRunonContributorKeepsTemperaturesInsideTheSources) 
           << "[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\n\n"
           << "[PROCESS_COMPONENTS]\n"
           << "org.hydrocouple.openswmm.heat config=\"_h5i.heat\"\n\n"
-          << "[REPORT]\nINPUT NO\n";
+          << "[REPORT]\nINPUT NO\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n";
     }
     SWMM_Engine e = run_and_hold("_h5i.inp", "_h5i.rpt", "_h5i.out");
     ASSERT_NE(e, nullptr);
@@ -888,7 +888,7 @@ TEST(HeatWatershedTest, HeatOffLeavesTheWatershedStateEmpty) {
       << "[OUTFALLS]\nOUT 9.0 FREE  NO\n\n"
       << "[CONDUITS]\nC1 J1 OUT 400 0.013 0 0 0\n\n"
       << "[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\n\n"
-      << "[REPORT]\nINPUT NO\n";
+      << "[REPORT]\nINPUT NO\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n";
     f.close();
 
     SWMM_Engine e = run_and_hold("_h5g.inp", "_h5g.rpt", "_h5g.out");
