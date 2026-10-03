@@ -488,6 +488,11 @@ private:
     // different source order rounds differently (1-ULP lat-flow drift).
     std::vector<double> wet_q_interp_;  ///< per-subcatch interpolated runoff (cfs; NOT runon — it is already inside runoff[])
     std::vector<double> lid_drain_q_interp_; ///< per-node interpolated LID drain inflow this routing step (cfs; legacy lid_addDrainInflow)
+    /// The same drain flows PER UNIT as (node, q), in legacy's order
+    /// (subcatchments by index, each one's lidList). Legacy adds each unit's q
+    /// to Node.newLatFlow individually; adding the per-node sum rounds
+    /// differently once two units drain to one node.
+    std::vector<std::pair<int, double>> lid_drain_q_units_;
     std::vector<double> gw_q_interp_;   ///< per-subcatch interpolated GW flow (cfs)
     std::vector<int>    gw_q_node_;     ///< receiving node for gw_q_interp_ (-1 = skip)
     // Legacy lid_getRunoff volume accumulators, per subcatchment per runoff

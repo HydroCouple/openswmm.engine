@@ -2987,21 +2987,30 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
     // wet-weather inflow, added per unit. Before this the runoff step's
     // un-interpolated drain was added at every routing step in between.
     lid_drain_q_interp_.assign(static_cast<std::size_t>(ctx_.n_nodes()), 0.0);
-    for (int t = 0; t < lid_.numGroups(); ++t) {
-        const auto& g = lid_.group(t);
-        for (int u = 0; u < g.count; ++u) {
+    lid_drain_q_units_.clear();
+    // Units in legacy's order: addLidDrainInflows walks subcatchments by index
+    // (skipping those without area or LID area), lid_addDrainInflow walks each
+    // one's lidList — LIDSolver::usageOrder() is exactly that sequence.
+    for (const auto& tu_ : lid_.usageOrder()) {
+        const auto& g = lid_.group(tu_.first);
+        {
+            const int u = tu_.second;
             auto uu = static_cast<std::size_t>(u);
             const int sc = g.subcatch_idx[uu];
             if (sc < 0 || sc >= ctx_.n_subcatches()) continue;
             const auto usc = static_cast<std::size_t>(sc);
+            if (!(ctx_.subcatches.area[usc] > 0.0) ||
+                usc >= ctx_.subcatches.total_lid_area_ft2.size() ||
+                !(ctx_.subcatches.total_lid_area_ft2[usc] > 0.0)) continue;
             int dn = g.drain_node[uu];
             const int dsc = g.drain_subcatch[uu];
             if (dn < 0 && (dsc < 0 || dsc == sc)) dn = ctx_.subcatches.outlet_node[usc];
             if (dn < 0 || dn >= ctx_.n_nodes()) continue;
             const double q_old = g.old_drain_flow[uu] * g.area[uu];
             const double q_new = g.drain_flow[uu] * g.area[uu];
-            lid_drain_q_interp_[static_cast<std::size_t>(dn)] +=
-                (1.0 - f) * q_old + f * q_new;
+            const double q = (1.0 - f) * q_old + f * q_new;
+            lid_drain_q_interp_[static_cast<std::size_t>(dn)] += q;
+            lid_drain_q_units_.emplace_back(dn, q);
         }
     }
 
@@ -9745,12 +9754,13 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
         }
     }
 
-    // LID drains (legacy addLidDrainInflows, after groundwater), then RDII,
+    // LID drains (legacy addLidDrainInflows, after groundwater): each unit's
+    // interpolated q added on its own, in legacy's unit order. Then RDII,
     // then iface, then engine-only extensions — legacy source order.
+    for (const auto& dq : lid_drain_q_units_)
+        ctx_.nodes.lat_flow[static_cast<std::size_t>(dq.first)] += dq.second;
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
-        if (uj < lid_drain_q_interp_.size() && lid_drain_q_interp_[uj] != 0.0)
-            ctx_.nodes.lat_flow[uj] += lid_drain_q_interp_[uj];
         ctx_.nodes.lat_flow[uj] += ctx_.nodes.rdii_inflow[uj];
         ctx_.nodes.lat_flow[uj] += ctx_.nodes.iface_inflow[uj];
 
