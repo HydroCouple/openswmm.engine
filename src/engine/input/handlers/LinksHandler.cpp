@@ -383,7 +383,13 @@ static int find_shape_word(std::string_view s) {
 void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& lines) {
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
-        if (tok.size() < 3) continue;
+        if (tok.empty()) continue;
+        // Legacy link.c:182 rejects a row with fewer than 3 items; skipping
+        // it ran the link on its default cross-section.
+        if (tok.size() < 3) {
+            ctx.errors.push_back(format_error(ERR_ITEMS, tok[0]));
+            continue;
+        }
 
         const int idx = ctx.link_names.find(tok[0]);
         if (idx < 0) {
@@ -410,6 +416,15 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
             continue;
         }
         ctx.links.xsect_shape[idx] = SHAPE_WORDS[shape_word].second;
+
+        // Legacy link.c:221: every shape but IRREGULAR and STREET needs its
+        // four geometry items.
+        if (ctx.links.xsect_shape[idx] != XsectShape::IRREGULAR &&
+            ctx.links.xsect_shape[idx] != XsectShape::STREET_XSECT &&
+            tok.size() < 6) {
+            ctx.errors.push_back(format_error(ERR_ITEMS, tok[0]));
+            continue;
+        }
 
         // IRREGULAR shapes: tok[2] is transect name, not a dimension.
         // STREET shapes:    tok[2] is street name, not a dimension.
