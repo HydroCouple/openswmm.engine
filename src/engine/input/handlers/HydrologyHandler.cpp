@@ -83,6 +83,8 @@
  */
 
 #include "HydrologyHandler.hpp"
+#include <cmath>
+#include <cstdlib>
 
 #include "../Tokenizer.hpp"
 #include "../../core/Constants.hpp"
@@ -131,6 +133,7 @@ static void ensure_aquifer_capacity(AquiferStore& aq, int idx) {
 
 static void ensure_lid_capacity(LidControlStore& lc, int idx) {
     const auto n = static_cast<std::size_t>(idx + 1);
+    if (lc.node_layers.size() < n) lc.node_layers.resize(n);
     if (lc.lid_type.size() < n)  lc.lid_type.resize(n, std::string{});
     if (lc.surface.size() < n)   lc.surface.resize(n, {0,0,0,0,0});
     if (lc.soil.size() < n)     lc.soil.resize(n, {0,0,0,0,0,0,0});
@@ -576,6 +579,25 @@ void handle_lid_controls(SimulationContext& ctx, const std::vector<std::string>&
             continue;
         }
 
+        if (ctx.lid_controls.lid_type[idx] == "NODE") {
+            LidNodeLayer row;
+            int count = 0;
+            if (layer == "SURFACE") { row.kind = LidNodeLayerKind::Surface; count = 2; }
+            else if (layer == "MEDIA") { row.kind = LidNodeLayerKind::Media; count = 7; }
+            else if (layer == "AGGREGATE") { row.kind = LidNodeLayerKind::Aggregate; count = 3; }
+            else if (layer == "BOTTOM") { row.kind = LidNodeLayerKind::Bottom; count = 2; }
+            else { ctx.errors.push_back("Unknown NODE LID layer: " + layer); continue; }
+            bool valid = tok.size() == static_cast<std::size_t>(count + 2);
+            for (int k = 0; valid && k < count; ++k) {
+                char* end = nullptr;
+                row.params[k] = std::strtod(tok[k + 2].c_str(), &end);
+                valid = end != tok[k + 2].c_str() && *end == '\0' && std::isfinite(row.params[k]);
+            }
+            if (!valid) ctx.errors.push_back("Invalid NODE LID layer: " + line);
+            else ctx.lid_controls.node_layers[idx].push_back(row);
+            continue;
+        }
+
         // Subsequent lines define layer parameters
         if (layer == "SURFACE") {
             for (std::size_t i = 0; i < 5 && (i + 2) < tok.size(); ++i)
@@ -635,6 +657,11 @@ void handle_lid_usage(SimulationContext& ctx, const std::vector<std::string>& li
         const int sc_idx  = ctx.subcatch_names.find(tok[0]);
         const int lid_idx = ctx.lid_names.find(tok[1]);
         if (sc_idx < 0 || lid_idx < 0) continue;
+
+        if (ctx.lid_controls.lid_type[lid_idx] == "NODE") {
+            ctx.errors.push_back("NODE LID controls require [LID_NODES], not [LID_USAGE]: " + tok[1]);
+            continue;
+        }
 
         // legacy lid_readGroupParams (lid.c:460-462) atoi()s the count: a
         // negative one is ERROR 211 and zero adds no unit at all.

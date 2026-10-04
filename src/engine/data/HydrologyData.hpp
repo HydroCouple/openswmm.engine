@@ -30,6 +30,7 @@
 #ifndef OPENSWMM_ENGINE_HYDROLOGY_DATA_HPP
 #define OPENSWMM_ENGINE_HYDROLOGY_DATA_HPP
 
+#include "LidNodeData.hpp"
 #include <vector>
 #include <string>
 #include <array>
@@ -115,6 +116,7 @@ struct AquiferStore {
  * @ingroup engine_data
  */
 struct LidControlStore {
+    std::vector<std::vector<LidNodeLayer>> node_layers;
     int count() const { return static_cast<int>(names.size()); }
 
     std::vector<std::string> names;

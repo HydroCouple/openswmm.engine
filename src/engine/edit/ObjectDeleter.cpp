@@ -590,6 +590,9 @@ CascadeResult delete_link(SimulationContext& ctx, int link_idx) {
 
     // --- Step 3: erase SoA row ---
     erase_link_spatial(ctx, link_idx);
+    ctx.lid_node_outlets.erase(std::remove_if(ctx.lid_node_outlets.begin(), ctx.lid_node_outlets.end(),
+        [link_idx](const auto& a) { return a.link == link_idx; }), ctx.lid_node_outlets.end());
+    for (auto& a : ctx.lid_node_outlets) if (a.link > link_idx) --a.link;
     ctx.link_names.remove_at(link_idx);
     ctx.links.erase_at(link_idx);
     // Drop the subtype side-table row and renumber its join keys (mirrors
@@ -1367,6 +1370,9 @@ CascadeResult analyze_lid_impact(const SimulationContext& ctx, int lid_idx) {
     for (int i = ctx.lid_usage.count() - 1; i >= 0; --i)
         if (ctx.lid_usage.lid_index[static_cast<std::size_t>(i)] == lid_idx)
             result.add(SWMM_REF_LID_USAGE, i, "lid_index", true);
+    const auto& st = ctx.node_subtypes.storages;
+    for (int r = 0; r < st.count(); ++r)
+        if (st.lid[r].control == lid_idx) result.add(SWMM_REF_NODE, st.node_idx[r], "lid_control", false);
     return result;
 }
 
@@ -1381,18 +1387,35 @@ CascadeResult delete_lid(SimulationContext& ctx, int lid_idx) {
         }
     }
 
+    for (int r = 0; r < ctx.node_subtypes.storages.count(); ++r) {
+        auto& st = ctx.node_subtypes.storages;
+        if (st.lid[r].control != lid_idx) continue;
+        const int n = st.node_idx[r];
+        result.add(SWMM_REF_NODE, n, "lid_control", false);
+        st.lid_state[r] = {};
+        ctx.nodes.full_volume[n] = 0.0;
+        auto& anchors = ctx.lid_node_outlets;
+        anchors.erase(std::remove_if(anchors.begin(), anchors.end(), [&](const auto& a) {
+            return ctx.links.node1[a.link] == n || ctx.links.node2[a.link] == n;
+        }), anchors.end());
+    }
+
     // --- Step 2: erase the LID control row ---
     {
         auto& L = ctx.lid_controls;
         const auto ui = static_cast<std::size_t>(lid_idx);
         auto e = [&](auto& v) { if (ui < v.size()) v.erase(v.begin() + static_cast<std::ptrdiff_t>(lid_idx)); };
         e(L.names); e(L.lid_type); e(L.surface); e(L.soil); e(L.pavement);
-        e(L.storage); e(L.drain); e(L.drainmat); e(L.removals);
+        e(L.storage); e(L.drain); e(L.drainmat); e(L.removals); e(L.node_layers);
     }
     ctx.lid_names.remove_at(lid_idx);
 
     // --- Step 3: renumber ---
     renumber_refs(ctx.lid_usage.lid_index, lid_idx);
+    for (auto& cfg : ctx.node_subtypes.storages.lid) {
+        if (cfg.control == lid_idx) cfg = LidNodeConfig{};
+        else if (cfg.control > lid_idx) --cfg.control;
+    }
 
     return result;
 }

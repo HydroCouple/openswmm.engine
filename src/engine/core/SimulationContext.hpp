@@ -794,6 +794,7 @@ struct SimulationContext {
     AquiferStore     aquifers;
     NameIndex        aquifer_names;
     LidControlStore  lid_controls;
+    std::vector<LidNodeOutlet> lid_node_outlets;
     NameIndex        lid_names;
     LidUsageStore    lid_usage;
 

@@ -68,6 +68,15 @@ ConversionResult convert_node(SimulationContext& ctx, int idx, NodeType new_type
     NodeData& nd = ctx.nodes;
     const NodeType old_type = nd.type[ui];
 
+    const int storage_row = ctx.node_subtypes.storage_row(idx);
+    if (storage_row >= 0 && ctx.node_subtypes.storages.lid[storage_row].control >= 0) {
+        result.cleared_fields.push_back("lid_control");
+        auto& anchors = ctx.lid_node_outlets;
+        anchors.erase(std::remove_if(anchors.begin(), anchors.end(), [&](const auto& a) {
+            return ctx.links.node1[a.link] == idx || ctx.links.node2[a.link] == idx;
+        }), anchors.end());
+    }
+
     // Record the old type-specific fields cleared by the conversion.
     switch (old_type) {
         case NodeType::OUTFALL:  record_cleared_outfall(result.cleared_fields); break;

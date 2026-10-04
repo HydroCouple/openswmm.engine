@@ -629,6 +629,21 @@ CREATE TABLE IF NOT EXISTS lid_controls (
     UNIQUE(simulation_id, lid_id, layer_type)
 );
 
+-- Ordered NODE layers use an ordinal key so repeated layer kinds are retained.
+CREATE TABLE IF NOT EXISTS lid_node_layers (
+    simulation_id TEXT NOT NULL, lid_id TEXT NOT NULL, ordinal INTEGER NOT NULL,
+    kind INTEGER NOT NULL, p1 REAL, p2 REAL, p3 REAL, p4 REAL, p5 REAL, p6 REAL, p7 REAL,
+    PRIMARY KEY(simulation_id, lid_id, ordinal)
+);
+CREATE TABLE IF NOT EXISTS lid_nodes (
+    simulation_id TEXT NOT NULL, node_id TEXT NOT NULL, lid_id TEXT NOT NULL,
+    initial_saturation REAL NOT NULL, PRIMARY KEY(simulation_id, node_id)
+);
+CREATE TABLE IF NOT EXISTS lid_node_outlets (
+    simulation_id TEXT NOT NULL, link_id TEXT NOT NULL, layer INTEGER NOT NULL,
+    top INTEGER NOT NULL, PRIMARY KEY(simulation_id, link_id)
+);
+
 -- LID usage assignments (one row per subcatchment-LID pair)
 CREATE TABLE IF NOT EXISTS lid_usage (
     fid             INTEGER PRIMARY KEY AUTOINCREMENT,

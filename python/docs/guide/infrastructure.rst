@@ -143,3 +143,48 @@ See also
 * :doc:`links` — irregular cross-sections via :attr:`Link.xsect`
   (``XSectShape.IRREGULAR`` references a transect id).
 * :doc:`error_handling`.
+
+
+Storage-node LIDs with ordered layers
+------------------------------------
+
+Use ``LidType.NODE`` for an arbitrary ordered stack. A node remains a storage
+node; assigning the control synchronizes its maximum depth. All edits below
+are made before initialization, on an opened model containing storage ``S``
+and a link ``Underdrain`` connected to it::
+
+    from openswmm.engine import LidType, LidNodeLayer, LidNodeLayerKind as K
+
+    lids = solver.infrastructure.lids
+    lids.add("Column", LidType.NODE)
+    lids.set_layers("Column", [
+        LidNodeLayer(K.SURFACE, (6, 0.1)),
+        LidNodeLayer(K.MEDIA, (12, .45, .20, .08, 2, 10, 3)),
+        LidNodeLayer(K.MEDIA, (6, .40, .25, .10, 1, 8, 3)),
+        LidNodeLayer(K.AGGREGATE, (6, .40, 100)),
+        LidNodeLayer(K.BOTTOM, (.5, 0)),
+    ])
+    lids.assign_node("S", "Column", initial_saturation=10)
+    lids.set_outlet_anchor("Underdrain", 4, position="BOTTOM")
+    assert lids.node_assignment("S") == (lids.get_index("Column"), 10.0)
+
+Thickness and suction use inches or millimetres; conductivity and seepage
+use inches/hour or millimetres/hour. MEDIA and AGGREGATE rows can repeat
+without a fixed limit. SURFACE must be first and BOTTOM last when present.
+BOTTOM is a boundary, excluded from the one-based outlet layer numbering.
+Invalid stack replacements are atomic and leave the prior configuration
+unchanged, including node depths and outlet offsets.
+
+``get_layers(control)`` returns the authored rows, or normalized layers for
+a supported standard control. ``node_profile(node)`` returns runtime cell
+dictionaries with ``layer``, ``bottom``, ``top``, and ``moisture``. Bottom/top
+are heights above the storage invert in feet or metres; moisture is a
+volumetric fraction. The profile is empty before initialization. Node volume
+includes retained moisture plus mobile water.
+
+``remove_node(node)`` reverts to ordinary storage and removes connected
+anchors. ``set_outlet_anchor(link, 0)`` removes only that anchor. A link with
+two LID endpoints uses explicit offsets because the anchor syntax identifies
+only one endpoint. LID storage routing currently requires Dynamic Wave.
+Native hotstarts preserve the moisture profile and clogging history; use
+contributing subcatchments or external inflow for rainfall on the LID area.

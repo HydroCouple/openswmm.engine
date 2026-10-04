@@ -171,6 +171,9 @@ SWMM_ENGINE_API int swmm_link_pop_last(SWMM_Engine engine, const char* id) {
     if (ctx.link_names.name_of(tail) != id)
         return SWMM_ERR_BADINDEX;
 
+    auto& anchors = ctx.lid_node_outlets;
+    anchors.erase(std::remove_if(anchors.begin(), anchors.end(),
+        [tail](const auto& a) { return a.link == tail; }), anchors.end());
     ctx.link_names.pop_back();
     ctx.links.erase_at(tail);
     ctx.link_subtypes.erase_link(tail, ctx.links.count());

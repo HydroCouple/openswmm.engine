@@ -26,6 +26,7 @@
  */
 
 #include "PostParseResolver.hpp"
+#include "../hydrology/LidNode.hpp"
 #include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 
 #include <array>
@@ -3714,6 +3715,7 @@ void resolve_cross_references(SimulationContext& ctx) {
     // reverse map and sizes it to the final node count (a consistency pass after
     // any in-parse re-types). No build-from-wide.
     ctx.node_subtypes.rebuild_index(ctx.nodes.count());
+    lidnode::validate(ctx);
 }
 
 } /* namespace openswmm::input */

@@ -2547,6 +2547,20 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     WRITE(f, "");
 
     // =====================================================================
+    // Final per-cell profile is dynamic in size and retains authored layer numbers.
+    for (int r = 0; r < ctx.node_subtypes.storages.count(); ++r) {
+        const auto& state = ctx.node_subtypes.storages.lid_state[r];
+        if (state.cells.empty()) continue;
+        const int n = ctx.node_subtypes.storages.node_idx[r];
+        std::fprintf(f, "\n\n  LID Storage Moisture Profile: %s\n  Layer      Bottom         Top     Moisture\n",
+                     ctx.node_names.name_of(n).c_str());
+        for (const auto& c : state.cells) {
+            const double wet = std::clamp((ctx.nodes.depth[n] - c.bottom) / (c.top - c.bottom), 0.0, 1.0);
+            std::fprintf(f, "  %5d %11.4f %11.4f %12.6f\n", c.layer, c.bottom * len_ucf, c.top * len_ucf,
+                         c.theta + (c.porosity - c.theta) * wet);
+        }
+    }
+
     // Storage Volume Summary — matches legacy writeStorageVolumes()
     // =====================================================================
     if (route_rpt) {

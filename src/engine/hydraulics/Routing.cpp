@@ -621,6 +621,15 @@ void Router::initNodeFlows(SimulationContext& ctx, double dt, double evap_rate) 
             const double evap_frac = (sr >= 0) ? st.evap_frac[sru] : 0.0;
             const double seep_rate = (sr >= 0) ? st.seep_rate[sru] : 0.0;
             double stor_evap_rate = evap_rate * evap_frac;
+            if (sr >= 0 && !st.lid_state[sru].cells.empty()) {
+                const auto& state = st.lid_state[sru];
+                const double potential = evap_rate * evap_frac * state.cells.front().area;
+                // The column has already evaporated retained moisture. Only
+                // the unspent demand is allowed to draw mobile water.
+                const double area = node::getSurfArea(nodes, i, nodes.depth[ui], &ctx.tables,
+                    ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)), &ctx.node_subtypes);
+                stor_evap_rate = area > 0.0 ? std::max(0.0, potential - state.evap_volume / dt) / area : 0.0;
+            }
 
             // exfil_cfs is pre-computed by ExfilSolver::computeAll() (called before
             // router_.step()) and handed over as the RAW rate in exfil_rate, so

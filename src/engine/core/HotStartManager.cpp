@@ -1,3 +1,6 @@
+#include "../hydrology/LidNode.hpp"
+#include "../hydraulics/Node.hpp"
+#include "UnitConversion.hpp"
 // SPDX-License-Identifier: Apache-2.0
 //
 // Copyright 2026 Caleb Buahin
@@ -166,6 +169,12 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
         // V3 (A2a): water age, -1 = not tracked.
         if (hs.header.version >= 3u) {
             if (!write_pod(buf, n.age))  return false;
+        }
+        if (hs.header.version >= 8u) {
+            if (!write_pod(buf, static_cast<uint32_t>(n.lid_cells.size())) || !write_pod(buf, n.lid_treated_volume)) return false;
+            for (const auto& c : n.lid_cells)
+                if (!write_pod(buf, static_cast<int32_t>(c.layer)) || !write_pod(buf, c.bottom) || !write_pod(buf, c.top) ||
+                    !write_pod(buf, c.porosity) || !write_pod(buf, c.volume) || !write_pod(buf, c.theta)) return false;
         }
     }
 
@@ -342,7 +351,7 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
 
     // Header
     if (!read_pod(is, hs.header.version))    return false;
-    if (hs.header.version < 1u || hs.header.version > 7u) {
+    if (hs.header.version < 1u || hs.header.version > 8u) {
         tl_last_io_error = "Unsupported hot start version " +
                            std::to_string(hs.header.version) + " in '" + path + "'";
         return false;
@@ -365,6 +374,21 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
         // V3 (A2a): water age; pre-V3 files leave the -1 default.
         if (hs.header.version >= 3u) {
             if (!read_pod(is, n.age)) return false;
+        }
+        if (hs.header.version >= 8u) {
+            uint32_t count = 0;
+            if (!read_pod(is, count) || count > file_size / 44 || !read_pod(is, n.lid_treated_volume)) return false;
+            if (!std::isfinite(n.lid_treated_volume) || n.lid_treated_volume < 0.0) return false;
+            n.lid_cells.resize(count);
+            for (auto& c : n.lid_cells) {
+                int32_t layer;
+                if (!read_pod(is, layer) || !read_pod(is, c.bottom) || !read_pod(is, c.top) ||
+                    !read_pod(is, c.porosity) || !read_pod(is, c.volume) || !read_pod(is, c.theta)) return false;
+                c.layer = layer;
+                if (!std::isfinite(c.bottom) || !std::isfinite(c.top) || !std::isfinite(c.porosity) || !std::isfinite(c.volume) ||
+                    !std::isfinite(c.theta) || c.bottom < 0 || c.top <= c.bottom || c.porosity <= 0 || c.porosity > 1 ||
+                    c.theta < 0 || c.theta > c.porosity || c.volume <= 0 || c.layer < 1) return false;
+            }
         }
     }
 
@@ -883,6 +907,13 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
         hs->nodes[ui].depth  = ctx.nodes.depth[ui];
         hs->nodes[ui].head   = ctx.nodes.head[ui];
         hs->nodes[ui].volume = ctx.nodes.volume[ui];
+        if (lidnode::active(ctx, i)) {
+            hs->header.version = 8u;
+            const auto& state = ctx.node_subtypes.storages.lid_state[ctx.node_subtypes.storage_row(i)];
+            hs->nodes[ui].lid_treated_volume = state.treated_volume;
+            for (const auto& c : state.cells)
+                hs->nodes[ui].lid_cells.push_back({c.layer, c.bottom, c.top, c.porosity, c.geometric_volume, c.theta});
+        }
         if (ctx.options.water_age &&
             ui < ctx.water_age_state.node_age.size())
             hs->nodes[ui].age = ctx.water_age_state.node_age[ui];
@@ -975,6 +1006,13 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
         hs->nodes[ui].depth  = ctx.nodes.depth[ui];
         hs->nodes[ui].head   = ctx.nodes.head[ui];
         hs->nodes[ui].volume = ctx.nodes.volume[ui];
+        if (lidnode::active(ctx, i)) {
+            hs->header.version = 8u;
+            const auto& state = ctx.node_subtypes.storages.lid_state[ctx.node_subtypes.storage_row(i)];
+            hs->nodes[ui].lid_treated_volume = state.treated_volume;
+            for (const auto& c : state.cells)
+                hs->nodes[ui].lid_cells.push_back({c.layer, c.bottom, c.top, c.porosity, c.geometric_volume, c.theta});
+        }
         if (ctx.options.water_age &&
             ui < ctx.water_age_state.node_age.size())
             hs->nodes[ui].age = ctx.water_age_state.node_age[ui];
@@ -1069,6 +1107,33 @@ int HotStartManager::apply(HotStartFile& hs,
             continue;
         }
         const auto i = static_cast<std::size_t>(idx);
+        if (lidnode::active(ctx, idx) || !rec.lid_cells.empty()) {
+            const int r = ctx.node_subtypes.storage_row(idx);
+            bool compatible = r >= 0 && ctx.node_subtypes.storages.lid_state[r].cells.size() == rec.lid_cells.size() && !rec.lid_cells.empty();
+            if (compatible) {
+                const auto& cells = ctx.node_subtypes.storages.lid_state[r].cells;
+                for (std::size_t k = 0; k < cells.size(); ++k) {
+                    const auto& a = cells[k]; const auto& b = rec.lid_cells[k];
+                    compatible &= a.layer == b.layer && a.bottom == b.bottom && a.top == b.top &&
+                                  a.porosity == b.porosity && a.geometric_volume == b.volume && b.theta >= a.wilting_point;
+                }
+            }
+            if (!compatible) {
+                emit_warning("Hot start: LID profile missing or incompatible for node '" + rec.id + "'; node state not applied");
+                continue;
+            }
+            auto& state = ctx.node_subtypes.storages.lid_state[r];
+            state.held_volume = 0.0; state.treated_volume = rec.lid_treated_volume;
+            std::fill(state.port_delta.begin(), state.port_delta.end(), 0.0);
+            for (std::size_t k = 0; k < state.cells.size(); ++k) {
+                state.cells[k].theta = rec.lid_cells[k].theta;
+                state.held_volume += state.cells[k].theta * state.cells[k].geometric_volume;
+            }
+            ctx.nodes.full_volume[i] = 0.0;
+            ctx.nodes.full_volume[i] = node::getVolume(ctx.nodes, idx, ctx.nodes.full_depth[i], &ctx.tables,
+                ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)), &ctx.node_subtypes);
+            ctx.nodes.rpt_full_volume[i] = ctx.nodes.full_volume[i];
+        }
         ctx.nodes.depth[i]  = rec.depth;
         ctx.nodes.head[i]   = rec.head;
         ctx.nodes.volume[i] = rec.volume;

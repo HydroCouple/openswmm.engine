@@ -1,3 +1,4 @@
+#include "../hydrology/LidNode.hpp"
 // SPDX-License-Identifier: Apache-2.0
 //
 // Copyright 2026 Caleb Buahin
@@ -860,7 +861,7 @@ namespace {
 // (HydrologyHandler [LID_CONTROLS]). Index = openswmm_infrastructure.h type
 // enum (0 = BIO_CELL, 1 = RAIN_GARDEN, ...).
 inline const char* lid_type_code(int type) {
-    static const char* codes[] = {"BC", "RG", "GR", "IT", "PP", "RB", "RD", "VS"};
+    static const char* codes[] = {"BC", "RG", "GR", "IT", "PP", "RB", "RD", "VS", "NODE"};
     if (type < 0 || type >= static_cast<int>(sizeof(codes) / sizeof(codes[0])))
         return "";
     return codes[type];
@@ -868,7 +869,7 @@ inline const char* lid_type_code(int type) {
 // Inverse of lid_type_code: 2-letter code string -> type enum int, or -1 if
 // unrecognised.
 inline int lid_type_from_code(const std::string& code) {
-    static const char* codes[] = {"BC", "RG", "GR", "IT", "PP", "RB", "RD", "VS"};
+    static const char* codes[] = {"BC", "RG", "GR", "IT", "PP", "RB", "RD", "VS", "NODE"};
     for (int i = 0; i < static_cast<int>(sizeof(codes) / sizeof(codes[0])); ++i)
         if (code == codes[i]) return i;
     return -1;
@@ -887,7 +888,9 @@ SWMM_ENGINE_API int swmm_lid_add(SWMM_Engine engine, const char* id, int type) {
     // an unguarded NameIndex::add would throw across the C ABI.
     if (ctx.lid_names.find(id) >= 0) return SWMM_ERR_BADPARAM;
 
+    if (type < 0 || type > 8 || id[0] == '\0') return SWMM_ERR_BADPARAM;
     auto& lid = ctx.lid_controls;
+    lid.node_layers.resize(lid.names.size() + 1);
     lid.names.push_back(id);
     lid.lid_type.push_back(lid_type_code(type));
     lid.surface.push_back({});
@@ -936,13 +939,22 @@ SWMM_ENGINE_API int swmm_lid_set_surface(SWMM_Engine engine, int idx, double sto
         ctx.state != openswmm::EngineState::OPENED)
         return SWMM_ERR_LIFECYCLE;
     CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
+    if (ctx.lid_controls.lid_type[idx] == "NODE") return SWMM_ERR_BADPARAM;
     if (storage < 0.0 || roughness < 0.0 || slope < 0.0)
         return SWMM_ERR_BADPARAM;
     // SURFACE layer: [0]=StorHt, [1]=VegVolFrac, [2]=Roughness, [3]=SurfSlope
     auto& p = ctx.lid_controls.surface[static_cast<std::size_t>(idx)];
+    const auto previous = p;
     p[0] = storage;
     p[2] = roughness;
     p[3] = slope;
+    if (std::any_of(ctx.node_subtypes.storages.lid.begin(), ctx.node_subtypes.storages.lid.end(),
+                    [idx](const auto& cfg) { return cfg.control == idx; })) {
+        if (!openswmm::lidnode::validateStack(openswmm::lidnode::layers(ctx, idx)).empty()) {
+            p = previous; return SWMM_ERR_BADPARAM;
+        }
+    }
+    openswmm::lidnode::sync(ctx, idx);
     return SWMM_OK;
 }
 
@@ -953,18 +965,27 @@ SWMM_ENGINE_API int swmm_lid_set_soil(SWMM_Engine engine, int idx, double thick,
         ctx.state != openswmm::EngineState::OPENED)
         return SWMM_ERR_LIFECYCLE;
     CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
+    if (ctx.lid_controls.lid_type[idx] == "NODE") return SWMM_ERR_BADPARAM;
     if (thick < 0.0 || porosity <= 0.0 || porosity > 1.0
         || fc < 0.0 || fc >= porosity || wp < 0.0 || wp >= fc
         || ksat < 0.0)
         return SWMM_ERR_BADPARAM;
     // SOIL layer: [0]=Thick, [1]=Poros, [2]=FC, [3]=WP, [4]=Ksat, [5]=Kslope
     auto& p = ctx.lid_controls.soil[static_cast<std::size_t>(idx)];
+    const auto previous = p;
     p[0] = thick;
     p[1] = porosity;
     p[2] = fc;
     p[3] = wp;
     p[4] = ksat;
     p[5] = kslope;
+    if (std::any_of(ctx.node_subtypes.storages.lid.begin(), ctx.node_subtypes.storages.lid.end(),
+                    [idx](const auto& cfg) { return cfg.control == idx; })) {
+        if (!openswmm::lidnode::validateStack(openswmm::lidnode::layers(ctx, idx)).empty()) {
+            p = previous; return SWMM_ERR_BADPARAM;
+        }
+    }
+    openswmm::lidnode::sync(ctx, idx);
     return SWMM_OK;
 }
 
@@ -975,13 +996,22 @@ SWMM_ENGINE_API int swmm_lid_set_storage(SWMM_Engine engine, int idx, double thi
         ctx.state != openswmm::EngineState::OPENED)
         return SWMM_ERR_LIFECYCLE;
     CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
-    if (thick < 0.0 || void_frac <= 0.0 || void_frac > 1.0 || ksat < 0.0)
+    if (ctx.lid_controls.lid_type[idx] == "NODE") return SWMM_ERR_BADPARAM;
+    if (thick < 0.0 || void_frac <= 0.0 || ksat < 0.0)
         return SWMM_ERR_BADPARAM;
     // STORAGE layer: [0]=Thick, [1]=VoidRatio, [2]=Ksat
     auto& p = ctx.lid_controls.storage[static_cast<std::size_t>(idx)];
+    const auto previous = p;
     p[0] = thick;
     p[1] = void_frac;
     p[2] = ksat;
+    if (std::any_of(ctx.node_subtypes.storages.lid.begin(), ctx.node_subtypes.storages.lid.end(),
+                    [idx](const auto& cfg) { return cfg.control == idx; })) {
+        if (!openswmm::lidnode::validateStack(openswmm::lidnode::layers(ctx, idx)).empty()) {
+            p = previous; return SWMM_ERR_BADPARAM;
+        }
+    }
+    openswmm::lidnode::sync(ctx, idx);
     return SWMM_OK;
 }
 
@@ -989,6 +1019,7 @@ SWMM_ENGINE_API int swmm_lid_set_drain(SWMM_Engine engine, int idx, double coeff
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
+    if (ctx.lid_controls.lid_type[idx] == "NODE") return SWMM_ERR_BADPARAM;
     if (coeff < 0.0 || expon < 0.0 || offset < 0.0)
         return SWMM_ERR_BADPARAM;
     // DRAIN layer: [0]=Coeff, [1]=Expon, [2]=Offset
@@ -1010,17 +1041,26 @@ SWMM_ENGINE_API int swmm_lid_set_pavement(SWMM_Engine engine, int idx, double th
         ctx.state != openswmm::EngineState::OPENED)
         return SWMM_ERR_LIFECYCLE;
     CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
+    if (ctx.lid_controls.lid_type[idx] == "NODE") return SWMM_ERR_BADPARAM;
     if (thick < 0.0 || void_ratio < 0.0 || frac_imperv < 0.0 || frac_imperv > 1.0
         || ksat < 0.0 || clog_factor < 0.0 || regen_days < 0.0)
         return SWMM_ERR_BADPARAM;
     // PAVEMENT layer: [0]=Thick, [1]=VoidRatio, [2]=FracImperv, [3]=Ksat, [4]=ClogFactor, [5]=RegenDays
     auto& p = ctx.lid_controls.pavement[static_cast<std::size_t>(idx)];
+    const auto previous = p;
     p[0] = thick;
     p[1] = void_ratio;
     p[2] = frac_imperv;
     p[3] = ksat;
     p[4] = clog_factor;
     p[5] = regen_days;
+    if (std::any_of(ctx.node_subtypes.storages.lid.begin(), ctx.node_subtypes.storages.lid.end(),
+                    [idx](const auto& cfg) { return cfg.control == idx; })) {
+        if (!openswmm::lidnode::validateStack(openswmm::lidnode::layers(ctx, idx)).empty()) {
+            p = previous; return SWMM_ERR_BADPARAM;
+        }
+    }
+    openswmm::lidnode::sync(ctx, idx);
     return SWMM_OK;
 }
 
@@ -1031,6 +1071,7 @@ SWMM_ENGINE_API int swmm_lid_set_drainmat(SWMM_Engine engine, int idx, double th
         ctx.state != openswmm::EngineState::OPENED)
         return SWMM_ERR_LIFECYCLE;
     CHECK_INDEX(idx >= 0 && idx < ctx.lid_controls.count());
+    if (ctx.lid_controls.lid_type[idx] == "NODE") return SWMM_ERR_BADPARAM;
     if (thick < 0.0 || void_frac < 0.0 || void_frac > 1.0 || roughness < 0.0)
         return SWMM_ERR_BADPARAM;
     // DRAINMAT layer: [0]=Thick, [1]=VoidRatio, [2]=Roughness
@@ -1159,6 +1200,7 @@ SWMM_ENGINE_API int swmm_lid_usage_add(SWMM_Engine engine, int subcatch_idx, int
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(subcatch_idx >= 0 && subcatch_idx < ctx.n_subcatches());
     CHECK_INDEX(lid_idx >= 0 && lid_idx < ctx.lid_controls.count());
+    if (ctx.lid_controls.lid_type[lid_idx] == "NODE") return SWMM_ERR_BADPARAM;
     auto& u = ctx.lid_usage;
     u.subcatch_index.push_back(subcatch_idx);
     u.lid_index.push_back(lid_idx);

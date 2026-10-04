@@ -27,6 +27,7 @@
  */
 
 #include "SWMMEngine.hpp"
+#include "../hydrology/LidNode.hpp"
 #include "DateTime.hpp"
 #include "FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "SimulationContext.hpp"
@@ -809,10 +810,27 @@ int SWMMEngine::initialize() noexcept {
         }
     }
 
+    lidnode::validate(ctx_);
+    if (!ctx_.errors.empty()) {
+        set_error(CFFI_ERR_BADPARAM, ctx_.errors.back().c_str());
+        return CFFI_ERR_BADPARAM;
+    }
+    lidnode::initialize(ctx_);
+    if (!ctx_.errors.empty()) {
+        set_error(CFFI_ERR_BADPARAM, ctx_.errors.back().c_str());
+        return CFFI_ERR_BADPARAM;
+    }
+
     // Compute initial volumes from init_depth (matching legacy node_initState)
     for (int i = 0; i < ctx_.n_nodes(); ++i) {
         auto ui = static_cast<std::size_t>(i);
         double d = ctx_.nodes.init_depth[ui];
+        if (lidnode::active(ctx_, i)) {
+            d = std::max(d, node::getDepth(ctx_.nodes, i, ctx_.nodes.volume[ui], &ctx_.tables,
+                ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units)), &ctx_.node_subtypes));
+            ctx_.nodes.depth[ui] = ctx_.nodes.old_depth[ui] = d;
+            ctx_.nodes.head[ui] = ctx_.nodes.invert_elev[ui] + d;
+        }
         if (d > 0.0) {
             double vol = node::getVolume(ctx_.nodes, i, d, &ctx_.tables,
                 ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units)),
@@ -1100,9 +1118,16 @@ int SWMMEngine::initialize() noexcept {
         // Read the legacy EPA SWMM5 `.hsf` routing state (the format SAVE writes
         // and the de-facto interchange format). Native OPENSWMM_HS_V1 files are
         // applied via the C-API swmm_hotstart_apply path instead.
-        const int rc = HotStartManager::apply_legacy_routing(
-            hs_path, ctx_,
-            [this](const std::string& m) { ctx_.warnings.push_back(m); });
+        const bool lid_restart = std::any_of(ctx_.node_subtypes.storages.lid.begin(), ctx_.node_subtypes.storages.lid.end(),
+            [](const auto& c) { return c.control >= 0; });
+        int rc = 0;
+        if (lid_restart) {
+            std::unique_ptr<HotStartFile> hs(HotStartManager::open(hs_path));
+            rc = hs ? HotStartManager::apply(*hs, ctx_, [this](const std::string& m) { ctx_.warnings.push_back(m); }) : 1;
+        } else {
+            rc = HotStartManager::apply_legacy_routing(hs_path, ctx_,
+                [this](const std::string& m) { ctx_.warnings.push_back(m); });
+        }
         if (rc != 0) {
             set_error(CFFI_ERR_HOTSTART,
                       ("USE HOTSTART: " + HotStartManager::last_io_error()).c_str());
@@ -4744,10 +4769,12 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     // B2d. Check if system is in steady state — skip routing if so
     //       (matching legacy isInSteadyState() in routing.c)
     int action_count = controls_.lastActionCount();
-    if (isInSteadyState(action_count)) {
+    const bool has_lid_nodes = std::any_of(ctx_.node_subtypes.storages.lid.begin(), ctx_.node_subtypes.storages.lid.end(), [](const auto& c) { return c.control >= 0; });
+    if (!has_lid_nodes && isInSteadyState(action_count)) {
         last_step_steady_ = true;
         return;
     }
+    lidnode::prepareStep(ctx_, dt_routing, ctx_.climate_state.evap_rate);
     // legacy routeFlow: the hydraulic old state rolls only on a routed step.
     ctx_.save_hyd_state();
 
@@ -4794,7 +4821,26 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
                 // legacy findNonConduitFlow (dynwave.c:423); only per-type
                 // code with a usable derivative overwrites it (orifice, weir,
                 // outlet=0, pump3/4/5). Do NOT approximate a q/(2·dh) here.
-                hydstruct_.computeNonConduitFlowOne(ctx, dt, surf_buf, j);
+                // Surface ponding can be perched above an unsaturated profile.
+                // Each ordinary structure sees the head at its own layer port.
+                const int a = links.node1[uj], b = links.node2[uj];
+                if (a >= 0 && b >= 0 && (lidnode::active(ctx, a) || lidnode::active(ctx, b))) {
+                    const double da = ctx.nodes.depth[a], db = ctx.nodes.depth[b];
+                    const double ha = ctx.nodes.head[a], hb = ctx.nodes.head[b];
+                    const double va = ctx.nodes.old_volume[a], vb = ctx.nodes.old_volume[b];
+                    ctx.nodes.depth[a] = lidnode::portDepth(ctx, a, links.offset1[uj]);
+                    ctx.nodes.depth[b] = lidnode::portDepth(ctx, b, links.offset2[uj]);
+                    ctx.nodes.head[a] = ctx.nodes.invert_elev[a] + ctx.nodes.depth[a];
+                    ctx.nodes.head[b] = ctx.nodes.invert_elev[b] + ctx.nodes.depth[b];
+                    ctx.nodes.old_volume[a] += lidnode::heldVolume(ctx, a);
+                    ctx.nodes.old_volume[b] += lidnode::heldVolume(ctx, b);
+                    hydstruct_.computeNonConduitFlowOne(ctx, dt, surf_buf, j);
+                    ctx.nodes.depth[a] = da; ctx.nodes.depth[b] = db;
+                    ctx.nodes.head[a] = ha; ctx.nodes.head[b] = hb;
+                    ctx.nodes.old_volume[a] = va; ctx.nodes.old_volume[b] = vb;
+                } else {
+                    hydstruct_.computeNonConduitFlowOne(ctx, dt, surf_buf, j);
+                }
 
                 double q_new = links.flow[uj];
                 // Under-relaxation for iterations > 0 (legacy dynwave.c:435-438);
@@ -4813,6 +4859,10 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
                 // bypassed links too, adding the held Link.surfArea1/2.
                 hydstruct_.scatterHeldSurfArea(ctx, surf_buf, j);
             }
+
+            const double before_port = links.flow[uj];
+            links.flow[uj] = lidnode::exchangePorts(ctx, j, before_port, dt);
+            if (before_port != 0.0 && links.flow[uj] != before_port) links.dqdh[uj] *= links.flow[uj] / before_port;
 
             // Scatter to node inflow/outflow (legacy updateNodeFlows) —
             // IMMEDIATELY, so later links in this loop see the update.
@@ -4876,6 +4926,7 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
         openswmm::perf::ScopedTimer _pt_1d(openswmm::perf::sec_1d_step);
         iters = router_.step(ctx_, dt_routing, ctx_.climate_state.evap_rate, non_conduit_fn);
     }
+    lidnode::finishStep(ctx_);
     // Legacy counts a step as non-converging from the ACTUAL final Picard flag,
     // not merely from "used all MaxTrials" — a step converging on the last
     // allowed iteration is converged (dynwave.c:245). Using the real flag here
@@ -7348,7 +7399,13 @@ int SWMMEngine::end() noexcept {
         const std::string& sp = !entry.path.absolute.empty()
             ? entry.path.absolute : entry.path.original;
         if (sp.empty()) continue;
-        const int rc = HotStartManager::save_legacy_routing(sp, ctx_);
+        const bool lid_restart = std::any_of(ctx_.node_subtypes.storages.lid.begin(), ctx_.node_subtypes.storages.lid.end(),
+            [](const auto& c) { return c.control >= 0; });
+        int rc = 0;
+        if (lid_restart) {
+            std::unique_ptr<HotStartFile> hs(HotStartManager::save(ctx_, sp));
+            rc = hs ? 0 : 1;
+        } else rc = HotStartManager::save_legacy_routing(sp, ctx_);
         if (rc != 0) {
             ctx_.warnings.push_back(
                 "SAVE HOTSTART: " + HotStartManager::last_io_error());
@@ -9996,7 +10053,7 @@ double SWMMEngine::reportedNodeVolume(int i, double depth,
                                       double volume) const noexcept {
     auto ui = static_cast<std::size_t>(i);
     if (ctx_.nodes.type[ui] == NodeType::STORAGE)
-        return volume;                         // storage curve volume (= legacy)
+        return volume + lidnode::heldVolume(ctx_, i); // mobile + retained LID water
     // Kinematic wave / steady flow: legacy setNewNodeState carries a
     // junction's newVolume as the accumulated net inflow (oldVolume +
     // net*dt, kept above fullVolume when it ponds, capped at fullVolume
