@@ -252,7 +252,8 @@ private:
                             double* per_point_ledger = nullptr) noexcept;
     // Sources share one water budget after face transfers have landed. Gross
     // constituent transfers are evaluated even when net water change is zero.
-    void applyCellSources(int cell, double dt);
+    // Returns false only when no source bookkeeping or volume change occurred.
+    bool applyCellSources(int cell, double dt);
     enum class SourceLedger { Infiltration, CouplingOut, Rainfall,
                               CouplingIn, Exfiltration, Boundary, Count };
     void bookSourceLedger(SourceLedger ledger, int species, double mass) noexcept;

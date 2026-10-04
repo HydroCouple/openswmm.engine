@@ -387,7 +387,7 @@ void ExplicitInertialSolver::flushSourceLedgers() {
     }
 }
 
-void ExplicitInertialSolver::applyCellSources(int i, double dt) {
+bool ExplicitInertialSolver::applyCellSources(int i, double dt) {
     const double area = mesh_->tri_area[i];
     const double area_dt = area * dt;
     const double rain = std::max(0.0, state_->rainfall[i]) * area_dt;
@@ -398,7 +398,7 @@ void ExplicitInertialSolver::applyCellSources(int i, double dt) {
         evapSink(state_->evap_rate[i], state_->depth[i], opts_->dry_depth)) * area_dt;
     const double back = gw_ ? gw_->takeToSurface(i) : 0.0;
     if (rain == 0.0 && coupling == 0.0 && requested_infil == 0.0 &&
-        requested_evap == 0.0 && back == 0.0) return;
+        requested_evap == 0.0 && back == 0.0) return false;
 
     const double incoming = rain + std::max(coupling, 0.0) + back;
     const double available = std::max(0.0, state_->volume[i] + incoming);
@@ -460,6 +460,7 @@ void ExplicitInertialSolver::applyCellSources(int i, double dt) {
     // would let the next sink dissolve all evaporative solute residue at
     // an unbounded concentration.
     state_->volume[i] = requested >= available ? 0.0 : available - requested;
+    return true;
 }
 
 void ExplicitInertialSolver::reconstructAll() {
@@ -561,9 +562,10 @@ void ExplicitInertialSolver::lazySourcesOnly(double t) {
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int i = 0; i < nt; ++i) {
         if (cell_active_[i]) continue;
-        applyCellSources(i, dt_lazy);
-        inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i],
-                               state_->head[i], state_->depth[i]);
+        // An inactive cell with no applied sources retains its closure.
+        if (applyCellSources(i, dt_lazy))
+            inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i],
+                                   state_->head[i], state_->depth[i]);
     }
     flushSourceLedgers();
     t_last_sync_ = t;
@@ -571,7 +573,7 @@ void ExplicitInertialSolver::lazySourcesOnly(double t) {
 
 void ExplicitInertialSolver::syncAndRebuild(double t) {
     settleAccumulators();
-    lazySourcesOnly(t);
+    const double dt_lazy = t - t_last_sync_;
     const int nt = mesh_->n_triangles();
 
     // 2. Seed: hysteretic depth threshold (entering cells need h_on, active
@@ -591,10 +593,20 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     std::vector<uint8_t>& next = rebuild_seed_;
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int i = 0; i < nt; ++i) {
+        // Settle this inactive cell before testing its activation threshold.
+        // Source and seed work share a partition, retaining ledger fold order.
+        if (dt_lazy > 0.0 && !cell_active_[i] && applyCellSources(i, dt_lazy))
+            inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i],
+                                   state_->head[i], state_->depth[i]);
         const double thresh = cell_active_[i] ? h_off : h_on;
         if (state_->depth[i] >= thresh || state_->coupling_flux[i] != 0.0 ||
             pin_t0_[i])
             next[i] = 1;
+    }
+
+    if (dt_lazy > 0.0) {
+        flushSourceLedgers();
+        t_last_sync_ = t;
     }
 
     // G1: a cell the aquifer owes water to must route it. Exfiltration and
@@ -616,16 +628,19 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     //    a cell whose update never runs (measured as an 18 % basin loss); the
     //    halo guarantees the front always has an active receiving cell.
     cell_active_ = next;
-    for (int e = 0; e < edges_.ne; ++e) {
-        const int a = edges_.cL[e], b = edges_.cR[e];
-        if (next[a] && !next[b]) cell_active_[b] = 1;
-        else if (next[b] && !next[a]) cell_active_[a] = 1;
+    const int n_seed = static_cast<int>(std::count(next.begin(), next.end(), uint8_t{1}));
+    if (n_seed != 0 && n_seed != nt) {
+        for (int e = 0; e < edges_.ne; ++e) {
+            const int a = edges_.cL[e], b = edges_.cR[e];
+            if (next[a] && !next[b]) cell_active_[b] = 1;
+            else if (next[b] && !next[a]) cell_active_[a] = 1;
+        }
     }
     // FRONT_REBUILD: a dry-bed front travels ~2√(gh) — about one cell per
     // base substep at CFL ½ — so between two macro cycles it can cross
     // several rings. Widen the halo so the front never runs out of active
     // receiving cells before the breach-triggered rebuild lands.
-    if (front_rebuild_) {
+    if (front_rebuild_ && n_seed != 0 && n_seed != nt) {
         // Cell-parallel Jacobi rings (each thread writes only its own cell,
         // reading the previous ring's copy): the same set as the serial
         // edge walk produced, without the O(n_edges) serial passes.
@@ -774,16 +789,39 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
             cells_by_tier_[static_cast<std::size_t>(tier_[i])].push_back(i);
     }
 
-    active_faces_.clear();
-    for (int e = 0; e < edges_.ne; ++e) {
-        const int a = edges_.cL[e], b = edges_.cR[e];
-        if (cell_active_[a] && cell_active_[b]) {
-            const auto ft = std::min(tier_[a], tier_[b]);
+    // Initial velocities may seed q before any active-face list exists.
+    // Establish the zero-inactive-face invariant with the first full sweep.
+    if (na < nt / 4 && active_samples_ > 0) {
+        // Faces outside the previous active set already carry zero momentum.
+        for (const int e : active_faces_)
+            if (!cell_active_[edges_.cL[e]] || !cell_active_[edges_.cR[e]])
+                q_[e] = 0.0;
+        active_faces_.clear();
+        for (const int i : active_cells_)
+            for (int p = edges_.cell_ptr[i]; p < edges_.cell_ptr[i + 1]; ++p) {
+                const int e = edges_.cell_edge[p];
+                if (edges_.cL[e] == i && cell_active_[edges_.cR[e]])
+                    active_faces_.push_back(e);
+            }
+        // Retain the full-sweep ordering, including on mixed meshes.
+        std::sort(active_faces_.begin(), active_faces_.end());
+        for (const int e : active_faces_) {
+            const auto ft = std::min(tier_[edges_.cL[e]], tier_[edges_.cR[e]]);
             face_tier_[e] = ft;
             edges_by_tier_[ft].push_back(e);
-            active_faces_.push_back(e);
-        } else {
-            q_[e] = 0.0;   // walled faces carry no stale momentum
+        }
+    } else {
+        active_faces_.clear();
+        for (int e = 0; e < edges_.ne; ++e) {
+            const int a = edges_.cL[e], b = edges_.cR[e];
+            if (cell_active_[a] && cell_active_[b]) {
+                const auto ft = std::min(tier_[a], tier_[b]);
+                face_tier_[e] = ft;
+                edges_by_tier_[ft].push_back(e);
+                active_faces_.push_back(e);
+            } else {
+                q_[e] = 0.0;   // walled faces carry no stale momentum
+            }
         }
     }
 
