@@ -726,6 +726,13 @@ add_gtest_unit(test_engine_fv_closure test_fv_solver_closure.cpp)
 add_gtest_unit(test_engine_fv_section_geometry test_fv_section_geometry.cpp)
 add_gtest_unit(test_engine_fv_unsteady_friction test_fv_unsteady_friction.cpp)
 add_gtest_unit(test_engine_dw_unsteady_friction test_dw_unsteady_friction.cpp)
+add_gtest_unit(test_engine_perf_timers test_perf_timers.cpp)
+set_tests_properties(test_engine_perf_timers PROPERTIES ENVIRONMENT "OPENSWMM_PERF=1")
+add_test(NAME test_engine_perf_timers_disabled
+    COMMAND ${CMAKE_COMMAND} -E env --unset=OPENSWMM_PERF
+        $<TARGET_FILE:test_engine_perf_timers>
+        --gtest_filter=PerfCounters.DisabledProfilingDoesNotAccumulate)
+set_tests_properties(test_engine_perf_timers_disabled PROPERTIES LABELS "unit")
 add_gtest_unit(test_engine_fv_tpa_closure test_fv_tpa_closure.cpp)
 add_gtest_unit(test_engine_dw_tpa test_dw_tpa.cpp)
 # Analytic scheme gates: exact lake-at-rest over a slope break AND while
