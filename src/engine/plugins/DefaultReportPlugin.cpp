@@ -41,6 +41,8 @@
 #include "../hydraulics/Node.hpp"   // node::getVolume — storage volume from its depth-relation
 #include "../hydraulics/Link.hpp"       // link::buildXSectParams — street spread at max depth
 #include "../hydraulics/XSectBatch.hpp" // xsect::getWofY
+#include "../hydraulics/Transect.hpp"   // shape / street geometry tables
+#include "../hydraulics/Street.hpp"
 #include "../transport/TransportPolicy.hpp"   // E2: Domain x Species matrix block
 #include "../2d/quality/SurfaceQuality2D.hpp"   // S7: 2D Surface Washoff Summary
 #include "../2d/data/MeshData.hpp"
@@ -344,10 +346,55 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
     std::fprintf(f, "\n  Number of nodes ........... %d", ctx.n_nodes());
     std::fprintf(f, "\n  Number of links ........... %d", ctx.n_links());
     std::fprintf(f, "\n  Number of pollutants ...... %d", ctx.n_pollutants());
-    std::fprintf(f, "\n  Number of land uses ....... 0");
+    std::fprintf(f, "\n  Number of land uses ....... %d",
+                 static_cast<int>(ctx.landuse_names.size()));
 
     WRITE(f, "");
     WRITE(f, "");
+
+    // =====================================================================
+    // Pollutant / Landuse Summary — legacy inputrpt.c
+    // =====================================================================
+    if (ctx.n_pollutants() > 0) {
+        static const char* const kQualUnits[] = {"MG/L", "UG/L", "#/L"};
+        WRITE(f, "*****************");
+        WRITE(f, "Pollutant Summary");
+        WRITE(f, "*****************");
+        std::fprintf(f, "\n                               Ppt.      GW         Kdecay");
+        std::fprintf(f, "\n  Name                 Units   Concen.   Concen.    1/days    CoPollutant");
+        std::fprintf(f, "\n  -----------------------------------------------------------------------");
+        const auto& P = ctx.pollutants;
+        for (int i = 0; i < ctx.n_pollutants(); ++i) {
+            const auto ui = static_cast<std::size_t>(i);
+            const int u = static_cast<int>(P.units[ui]);
+            std::fprintf(f, "\n  %-20s %5s%10.2f%10.2f%10.2f",
+                ctx.pollutant_names.name_of(i).c_str(),
+                (u >= 0 && u <= 2) ? kQualUnits[u] : "MG/L",
+                P.c_rain[ui], P.c_gw[ui], P.k_decay[ui] * 86400.0);
+            if (P.co_pollut[ui] >= 0)
+                std::fprintf(f, "    %-s  (%.2f)",
+                    ctx.pollutant_names.name_of(P.co_pollut[ui]).c_str(), P.co_frac[ui]);
+        }
+        WRITE(f, "");
+        WRITE(f, "");
+    }
+    if (ctx.landuse_names.size() > 0) {
+        WRITE(f, "***************");
+        WRITE(f, "Landuse Summary");
+        WRITE(f, "***************");
+        std::fprintf(f, "\n                         Sweeping   Maximum      Last");
+        std::fprintf(f, "\n  Name                   Interval   Removal     Swept");
+        std::fprintf(f, "\n  ---------------------------------------------------");
+        for (int i = 0; i < ctx.landuses.count(); ++i) {
+            const auto ui = static_cast<std::size_t>(i);
+            std::fprintf(f, "\n  %-20s %10.2f%10.2f%10.2f",
+                ctx.landuse_names.name_of(i).c_str(),
+                ctx.landuses.sweep_interval[ui], ctx.landuses.sweep_removal[ui],
+                ctx.landuses.last_swept[ui]);
+        }
+        WRITE(f, "");
+        WRITE(f, "");
+    }
 
     // =====================================================================
     // Raingage Summary — matches legacy inputrpt.c
@@ -405,17 +452,68 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
             const char* gage_name = (gage_idx >= 0) ? ctx.gage_names.name_of(gage_idx).c_str() : "";
             int out_node = ctx.subcatches.outlet_node[ui];
             const char* outlet_name = (out_node >= 0) ? ctx.node_names.name_of(out_node).c_str() : "";
+            // legacy prints the outlet subcatchment when it drains to one
+            const int out_sub = ctx.subcatches.outlet_subcatch[ui];
+            if (out_node < 0 && out_sub >= 0)
+                outlet_name = ctx.subcatch_names.name_of(out_sub).c_str();
 
             std::fprintf(f, "\n  %-20s %10.2f%10.2f%10.2f%10.4f %-20s %-20s",
                 name.c_str(),
                 ctx.subcatches.area[ui],
-                ctx.subcatches.width[ui],
+                ctx.subcatches.width[ui] * du_opt.length,
                 ctx.subcatches.frac_imperv[ui] * 100.0,
                 ctx.subcatches.slope[ui] * 100.0,
                 gage_name, outlet_name);
         }
         WRITE(f, "");
         WRITE(f, "");
+    }
+
+    // =====================================================================
+    // LID Control Summary — legacy lid_writeSummary, written when some
+    // subcatchment has LID area. Each subcatchment's units are listed in
+    // legacy lidList order, which is [LID_USAGE] order REVERSED (prepended).
+    // =====================================================================
+    {
+        const auto& LU = ctx.lid_usage;
+        bool any_lid = false;
+        for (int k = 0; k < LU.count() && !any_lid; ++k)
+            any_lid = LU.area[static_cast<std::size_t>(k)] *
+                      LU.number[static_cast<std::size_t>(k)] > 0.0;
+        if (any_lid) {
+            const double ucf_len  = du_opt.length;
+            const double ucf_len2 = ucf_len * ucf_len;
+            const double la_ft2   = landAreaToFt2(fu);
+            std::fprintf(f, "\n  *******************");
+            std::fprintf(f, "\n  LID Control Summary");
+            std::fprintf(f, "\n  *******************");
+            std::fprintf(f,
+"\n                                   No. of        Unit        Unit      %% Area    %% Imperv      %% Perv");
+            std::fprintf(f,
+"\n  Subcatchment     LID Control      Units        Area       Width     Covered     Treated     Treated");
+            std::fprintf(f,
+"\n  ---------------------------------------------------------------------------------------------------");
+            for (int j = 0; j < ctx.n_subcatches(); ++j) {
+                const double sub_area = ctx.subcatches.area[static_cast<std::size_t>(j)] * la_ft2;
+                for (int k = LU.count() - 1; k >= 0; --k) {
+                    const auto uk = static_cast<std::size_t>(k);
+                    if (LU.subcatch_index[uk] != j) continue;
+                    const double area  = LU.area[uk] / ucf_len2;      // lid.c:551
+                    const double width = LU.width[uk] / ucf_len;
+                    const int    lid   = LU.lid_index[uk];
+                    std::fprintf(f, "\n  %-16s %-16s",
+                        ctx.subcatch_names.name_of(j).c_str(),
+                        lid >= 0 ? ctx.lid_names.name_of(lid).c_str() : "");
+                    std::fprintf(f, "%6d  %10.2f  %10.2f  %10.2f  %10.2f  %10.2f",
+                        LU.number[uk], area * ucf_len2, width * ucf_len,
+                        area * LU.number[uk] / sub_area * 100.0,
+                        LU.from_imperv[uk] / 100.0 * 100.0,
+                        LU.from_perv[uk] / 100.0 * 100.0);
+                }
+            }
+            WRITE(f, "");
+            WRITE(f, "");
+        }
     }
 
     // =====================================================================
@@ -445,6 +543,7 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
         };
         mark(ctx.ext_inflows.node_idx);
         mark(ctx.dwf_inflows.node_idx);
+        mark(ctx.rdii_assigns.node_idx);   // legacy Node.rdiiInflow
 
         for (int i = 0; i < ctx.n_nodes(); ++i) {
             auto ui = static_cast<std::size_t>(i);
@@ -452,9 +551,9 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
             std::fprintf(f, "\n  %-20s %-16s%10.2f%10.2f%10.1f",
                 ctx.node_names.name_of(i).c_str(),
                 nt_str(nt),
-                ctx.nodes.invert_elev[ui],
-                ctx.nodes.full_depth[ui],
-                ctx.nodes.ponded_area[ui]);
+                ctx.nodes.invert_elev[ui] * du_opt.length,
+                ctx.nodes.full_depth[ui] * du_opt.length,
+                ctx.nodes.ponded_area[ui] * du_opt.length * du_opt.length);
             if (has_inflow[ui] != 0u) std::fprintf(f, "    Yes");
         }
         WRITE(f, "");
@@ -563,6 +662,86 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
                     ctx.links.xsect_w_max[ui] * du_opt.length,
                     (cr >= 0) ? CD.barrels[static_cast<size_t>(cr)] : 1,
                     ((cr >= 0) ? CD.q_full[static_cast<size_t>(cr)] : 0.0) * Qcf_pre);
+            }
+            WRITE(f, "");
+            WRITE(f, "");
+        }
+    }
+
+    // =====================================================================
+    // Shape / Transect / Street Summary — legacy inputrpt.c: the normalized
+    // geometry tables, five values a row, entries 1..N-1.
+    // =====================================================================
+    {
+        auto tables = [&](const char* kind, const std::string& name,
+                          const transect::TransectData& td) {
+            std::fprintf(f, "\n\n  %s %s", kind, name.c_str());
+            const double* tbl[3] = {td.area_tbl, td.hrad_tbl, td.width_tbl};
+            const char* lbl[3] = {"Area:  ", "Hrad:  ", "Width: "};
+            for (int t = 0; t < 3; ++t) {
+                std::fprintf(f, "\n  %s", lbl[t]);
+                for (int m = 1; m < transect::N_TRANSECT_TBL; ++m) {
+                    if (m % 5 == 1) std::fprintf(f, "\n          ");
+                    std::fprintf(f, "%10.4f ", tbl[t][m]);
+                }
+            }
+        };
+
+        bool any_shape = false;
+        for (const auto& t : ctx.tables.tables)
+            if (t.type == TableType::CURVE_SHAPE) { any_shape = true; break; }
+        if (any_shape) {
+            WRITE(f, "*************");
+            WRITE(f, "Shape Summary");
+            WRITE(f, "*************");
+            for (const auto& t : ctx.tables.tables) {
+                if (t.type != TableType::CURVE_SHAPE) continue;
+                transect::TransectData td;    // unit height, as shape.c builds it
+                if (!t.x.empty())
+                    transect::buildCustomTables(td, 1.0, t.x.data(), t.y.data(),
+                                                static_cast<int>(t.x.size()));
+                tables("Shape", t.id, td);
+            }
+            WRITE(f, "");
+            WRITE(f, "");
+        }
+
+        const int nt = ctx.transects.count();
+        if (nt > 0) {
+            WRITE(f, "****************");
+            WRITE(f, "Transect Summary");
+            WRITE(f, "****************");
+            for (int i = 0; i < nt && i < static_cast<int>(ctx.transect_tables.size()); ++i) {
+                const auto& td = ctx.transect_tables[static_cast<std::size_t>(i)];
+                tables("Transect", td.name, td);
+            }
+            WRITE(f, "");
+            WRITE(f, "");
+        }
+
+        if (ctx.streets.count() > 0) {
+            WRITE(f, "**************");
+            WRITE(f, "Street Summary");
+            WRITE(f, "**************");
+            const int us = (fu >= 3) ? 1 : 0;
+            const double ucf_len = ucf::Ucf[ucf::LENGTH][us];
+            for (int s = 0; s < ctx.streets.count(); ++s) {
+                const auto su = static_cast<std::size_t>(s);
+                // as PostParseResolver builds it for a STREET cross section
+                street::StreetParams sp;
+                sp.width             = ctx.streets.t_crown[su]       / ucf_len;
+                sp.curb_height       = ctx.streets.h_curb[su]        / ucf_len;
+                sp.slope             = ctx.streets.sx[su]            / 100.0;
+                sp.roughness         = ctx.streets.n_road[su];
+                sp.gutter_depression = ctx.streets.gutter_depres[su] / ucf_len;
+                sp.gutter_width      = ctx.streets.gutter_width[su]  / ucf_len;
+                sp.sides             = ctx.streets.sides[su];
+                sp.back_width        = ctx.streets.back_width[su]    / ucf_len;
+                sp.back_slope        = ctx.streets.back_slope[su]    / 100.0;
+                sp.back_roughness    = ctx.streets.back_n[su];
+                transect::TransectData td;
+                street::buildTransect(sp, td);
+                tables("Street", ctx.streets.names[su], td);
             }
             WRITE(f, "");
             WRITE(f, "");
