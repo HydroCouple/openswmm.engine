@@ -502,15 +502,14 @@ void ExplicitInertialSolver::settleAccumulators() {
         if (species_on_) {
             auto& tr = state_->transport;
             const auto ns  = static_cast<std::size_t>(tr.n_species);
-            const auto nef = static_cast<std::size_t>(ed.ne);
             for (std::size_t s = 0; s < ns; ++s) {
                 double dm = 0.0;
                 for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
                     const auto e = static_cast<std::size_t>(ed.cell_edge[p]);
                     if (ed.cell_sign[p] > 0) {
-                        dm += sacc_L_[s * nef + e]; sacc_L_[s * nef + e] = 0.0;
+                        dm += sacc_L_[e * ns + s]; sacc_L_[e * ns + s] = 0.0;
                     } else {
-                        dm += sacc_R_[s * nef + e]; sacc_R_[s * nef + e] = 0.0;
+                        dm += sacc_R_[e * ns + s]; sacc_R_[e * ns + s] = 0.0;
                     }
                 }
                 if (dm != 0.0) {
@@ -1210,13 +1209,12 @@ void ExplicitInertialSolver::bookFaceSpecies(int e, int a, int b, double dM,
         const auto  ns    = static_cast<std::size_t>(
             state_->transport.n_species);
         const auto  ue    = static_cast<std::size_t>(e);
-        const auto  nef   = static_cast<std::size_t>(ed.ne);
         for (std::size_t s = 0; s < ns; ++s) {
             const double c = donorConc(static_cast<int>(s), donor);
             if (c == 0.0) continue;
             const double dMs = dM * c;
-            sacc_L_[s * nef + ue] -= dMs;
-            sacc_R_[s * nef + ue] += dMs;
+            sacc_L_[ue * ns + s] -= dMs;
+            sacc_R_[ue * ns + s] += dMs;
         }
     }
 
@@ -1243,7 +1241,6 @@ void ExplicitInertialSolver::bookFaceSpecies(int e, int a, int b, double dM,
             const auto  ns  = static_cast<std::size_t>(
                 state_->transport.n_species);
             const auto  ue  = static_cast<std::size_t>(e);
-            const auto  nef = static_cast<std::size_t>(ed.ne);
             auto& tr = state_->transport;
             for (std::size_t s = 0; s < ns; ++s) {
                 const double ma = tr.cell_mass[tr.idx(static_cast<int>(s), a)];
@@ -1288,8 +1285,8 @@ void ExplicitInertialSolver::bookFaceSpecies(int e, int a, int b, double dM,
                     #pragma omp atomic
                     ++tr.dispersion_limiter_binds;
                 }
-                sacc_L_[s * nef + ue] -= dMd;
-                sacc_R_[s * nef + ue] += dMd;
+                sacc_L_[ue * ns + s] -= dMd;
+                sacc_R_[ue * ns + s] += dMd;
             }
         }
     }
@@ -1358,19 +1355,29 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
         }
         if (species) {
             auto& tr = state_->transport;
-            const auto nef = static_cast<std::size_t>(ed.ne);
+            const auto ns = static_cast<std::size_t>(tr.n_species);
             if (!tr.cell_runoff_vol.empty()) tr.cell_runoff_vol[i] -= flux_m3;
-            for (int r = 0; r < tr.n_species; ++r) {
-                double dm = 0.0;
+            // Adjacent species share an edge accumulator cache line. Gather
+            // a bounded block in one CSR walk, preserving each row's edge order.
+            constexpr int block_size = 8;
+            for (int first = 0; first < tr.n_species; first += block_size) {
+                const int count = std::min(block_size, tr.n_species - first);
+                double dm[block_size] = {};
                 for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
                     const auto e = static_cast<std::size_t>(ed.cell_edge[p]);
-                    double& acc = ed.cell_sign[p] > 0
-                        ? sacc_L_[r * nef + e] : sacc_R_[r * nef + e];
-                    dm += acc; acc = 0.0;
+                    double* acc = (ed.cell_sign[p] > 0 ? sacc_L_.data() : sacc_R_.data())
+                        + e * ns + first;
+                    for (int r = 0; r < count; ++r) {
+                        dm[r] += acc[r];
+                        acc[r] = 0.0;
+                    }
                 }
-                double& mass = tr.cell_mass[tr.idx(r, i)];
-                mass += dm;
-                if (!tr.signedRow(r) && mass < 0.0) mass = 0.0;
+                for (int r = 0; r < count; ++r) {
+                    const int row = first + r;
+                    double& mass = tr.cell_mass[tr.idx(row, i)];
+                    mass += dm[r];
+                    if (!tr.signedRow(row) && mass < 0.0) mass = 0.0;
+                }
             }
         }
         state_->volume[i] = std::max(0.0, state_->volume[i] + flux_m3);

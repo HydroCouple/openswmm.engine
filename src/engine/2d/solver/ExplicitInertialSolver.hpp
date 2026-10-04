@@ -223,9 +223,10 @@ private:
     std::vector<double>  facc_L_;       ///< pending ΔM for the cL side (m³)
     std::vector<double>  facc_R_;       ///< pending ΔM for the cR side (m³)
 
-    // S1 — species mass rides the SAME face accumulators, one pair per
-    // species, [s * ne + e]. Booked in fireFaces immediately after the volume
-    // ΔM, from the FINAL qn1 (after the Froude cap and the positivity share),
+    // S1 — species mass rides the SAME face accumulators, with each face
+    // holding adjacent rows at [e * n_species + s]. Booked in fireFaces
+    // immediately after the volume ΔM, from the FINAL qn1 (after the Froude
+    // cap and the positivity share),
     // at the exporting cell's concentration read at that same substep;
     // gathered and cleared in fireCells alongside the volume side. That is
     // D-2DT2: the species flux inherits the volume flux's tier cadence rather
