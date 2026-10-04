@@ -1469,6 +1469,8 @@ struct SimulationContext {
         double sum_step  = 0.0;    ///< Sum of all routing time steps (sec)
         long   n_steps   = 0;      ///< Total number of routing steps
         double steady_pct = 0.0;   ///< Percent of time in steady state
+        double steady_time = 0.0;  ///< Time skipped as steady state (sec)
+        long   report_steps = 0;   ///< Flow-stat steps after report start (legacy ReportStepCount)
 
         /// Number of time step histogram bins (matching legacy TIMELEVELS=5).
         static constexpr int N_TIME_BINS = 5;
@@ -1482,6 +1484,22 @@ struct SimulationContext {
 
         void update(double dt) {
             min_step = std::min(min_step, dt);
+            max_step = std::max(max_step, dt);
+            sum_step += dt;
+            ++n_steps;
+        }
+
+        /// legacy stats_updateTimeStepStats (stats.c): a steady step only adds
+        /// to the steady time; the first step (OldRoutingTime == 0) stays out
+        /// of the minimum and the frequency bins; a step below the smallest
+        /// interval falls in no bin.
+        void record_step(double dt, bool steady, bool first_step) {
+            if (steady) { steady_time += dt; return; }
+            if (!first_step) {
+                min_step = std::min(min_step, dt);
+                for (int i = 0; i < N_TIME_BINS; ++i)
+                    if (dt >= step_intervals[i + 1]) { step_counts[i]++; break; }
+            }
             max_step = std::max(max_step, dt);
             sum_step += dt;
             ++n_steps;
@@ -1731,22 +1749,17 @@ struct SimulationContext {
      *          stats_findMaxStats in stats.c).
      */
     void finalize_max_stats() {
-        long step_count = routing_stats.n_steps;
-        if (step_count <= 0) return;
-        double inv_steps = 1.0 / static_cast<double>(step_count);
-
-        // CFL-critical elements: percentage of steps each element was critical
-        for (int j = 0; j < n_nodes(); ++j) {
-            double x = nodes.stat_time_courant_critical[static_cast<std::size_t>(j)] * inv_steps;
-            updateMaxStats(max_courant_crit, 0, j, 100.0 * x);
-        }
-        for (int j = 0; j < n_links(); ++j) {
-            double x = links.stat_time_courant_critical[static_cast<std::size_t>(j)] * inv_steps;
-            updateMaxStats(max_courant_crit, 1, j, 100.0 * x);
+        // legacy stats_findMaxStats (stats.c): the slots start at -1.0 (time-
+        // step critical, flow turns) or 0.0 (non-convergence), so a value
+        // must exceed that magnitude to enter.
+        for (int k = 0; k < MAX_STATS; ++k) {
+            max_courant_crit[k]  = MaxStats{0, -1, -1.0};
+            max_flow_turns[k]    = MaxStats{1, -1, -1.0};
+            max_non_converged[k] = MaxStats{0, -1, 0.0};
         }
 
-        // Flow instability index (matching legacy normalization)
-        long rpt_steps = routing_stats.n_steps;
+        // Flow instability over the steps after the report start.
+        const long rpt_steps = routing_stats.report_steps;
         if (rpt_steps > 2) {
             double z = 100.0 / (2.0 / 3.0 * static_cast<double>(rpt_steps - 2));
             for (int j = 0; j < n_links(); ++j) {
@@ -1755,10 +1768,24 @@ struct SimulationContext {
             }
         }
 
-        // Non-convergence: fraction of total steps each node failed to converge
+        // The rest are over all routed (non-steady) steps.
+        const long step_count = routing_stats.n_steps;
+        const bool dw = options.routing_model == RoutingModel::DYNWAVE;
+        if (dw) {
+            for (int j = 0; j < n_nodes(); ++j)
+                updateMaxStats(max_non_converged, 0, j,
+                    static_cast<double>(nodes.stat_non_converged_count[static_cast<std::size_t>(j)]) /
+                    static_cast<double>(step_count));
+        }
+        if (!dw || options.variable_step == 0.0 || step_count == 0) return;
+        const double inv_steps = 1.0 / static_cast<double>(step_count);
         for (int j = 0; j < n_nodes(); ++j) {
-            double x = static_cast<double>(nodes.stat_non_converged_count[static_cast<std::size_t>(j)]) * inv_steps;
-            updateMaxStats(max_non_converged, 0, j, x);
+            double x = nodes.stat_time_courant_critical[static_cast<std::size_t>(j)] * inv_steps;
+            updateMaxStats(max_courant_crit, 0, j, 100.0 * x);
+        }
+        for (int j = 0; j < n_links(); ++j) {
+            double x = links.stat_time_courant_critical[static_cast<std::size_t>(j)] * inv_steps;
+            updateMaxStats(max_courant_crit, 1, j, 100.0 * x);
         }
     }
 

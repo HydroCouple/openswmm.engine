@@ -1619,6 +1619,11 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         // state, so running it on a skipped step republished the last routed
         // step's outflow for the rest of the window.
         if (!between_events_) {
+            // legacy stats_updateTimeStepStats, inside the same branch as
+            // stats_updateFlowStats and only for a network with links.
+            if (ctx_.n_links() > 0)
+                ctx_.routing_stats.record_step(dt_next, last_step_steady_,
+                                               ctx_.elapsed_ms <= 0.0);
             updateStatistics(dt_next);
             updateRoutingMassBalance(dt_next);
         }
@@ -4546,9 +4551,7 @@ void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
  * @param dt_routing  Routing timestep (seconds).
  */
 void SWMMEngine::stepRouting(double dt_routing) noexcept {
-    // Track routing time-step statistics
-    ctx_.routing_stats.update(dt_routing);
-    ctx_.routing_stats.record_step_bin(dt_routing);
+    last_step_steady_ = false;
 
     // ================================================================
     // PHASE B: ROUTING (once per routing step)
@@ -4705,6 +4708,7 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     //       (matching legacy isInSteadyState() in routing.c)
     int action_count = controls_.lastActionCount();
     if (isInSteadyState(action_count)) {
+        last_step_steady_ = true;
         return;
     }
     // legacy routeFlow: the hydraulic old state rolls only on a routed step.
@@ -5102,6 +5106,9 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
     const double stat_date = datetime::addSeconds(
         ctx_.options.start_date,
         (ctx_.elapsed_ms + 1000.0 * dt_routing + 1.0) / 1000.0);
+    // ...and only once the reporting period has begun (stats.c:445).
+    if (stat_date < ctx_.options.report_start) return;
+    ++ctx_.routing_stats.report_steps;
 
     // B6. Update statistics (P8-G11)
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
@@ -7196,8 +7203,11 @@ int SWMMEngine::end() noexcept {
     // ctx.warnings directly, so .rpt ordering is not load-bearing).
     quality::summarizeNegativeSourceClamps(ctx_);
 
-    // Build routing time step histogram for report
-    ctx_.routing_stats.build_histogram();
+    // Routing time step histogram: only as the fallback for a run whose
+    // intervals were never set. Rebuilding from the observed min/max relabels
+    // bins the counts were not taken with; legacy prints stats_open's.
+    if (ctx_.routing_stats.step_intervals[0] <= 0.0)
+        ctx_.routing_stats.build_histogram();
 
     // Publish the FV solver's cumulative counters into the context so the
     // report plugin can print them — IReportPlugin only ever sees a
