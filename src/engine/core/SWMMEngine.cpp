@@ -5130,8 +5130,6 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
             ctx_.nodes.stat_max_depth[uj] = cur_depth;
             ctx_.nodes.stat_max_depth_date[uj] = stat_date;
         }
-        if (cur_depth > ctx_.nodes.stat_max_rpt_depth[uj])
-            ctx_.nodes.stat_max_rpt_depth[uj] = cur_depth;
         if (ctx_.nodes.overflow[uj] > ctx_.nodes.stat_max_overflow[uj]) {
             ctx_.nodes.stat_max_overflow[uj] = ctx_.nodes.overflow[uj];
             ctx_.nodes.stat_max_overflow_date[uj] = stat_date;
@@ -5975,6 +5973,25 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
         if (report_date < ctx_.options.report_start) {
             hydraulics::TimestepController::reset_output_timer(ctx_);
             return;
+        }
+
+        // legacy output_saveNodeResults -> stats_updateMaxNodeDepth: the
+        // largest REPORTED depth of every node — interpolated to the report
+        // time, in display units, as the REAL4 the .out stores. (Averages
+        // mode, where legacy takes the period average, is not reproduced.)
+        {
+            const double span = ctx_.elapsed_ms - ctx_.old_elapsed_ms;
+            const double f = (span > 0.0)
+                ? (ctx_.next_report_ms - ctx_.old_elapsed_ms) / span : 1.0;
+            const double f1 = 1.0 - f;
+            const double ucf_len = ucf::UCF(ucf::LENGTH, ctx_.options);
+            for (int i = 0; i < ctx_.n_nodes(); ++i) {
+                const auto ui = static_cast<std::size_t>(i);
+                const float z = static_cast<float>(
+                    (f1 * ctx_.nodes.old_depth[ui] + f * ctx_.nodes.depth[ui]) * ucf_len);
+                if (z > ctx_.nodes.stat_max_rpt_depth[ui])
+                    ctx_.nodes.stat_max_rpt_depth[ui] = z;
+            }
         }
 
         // Routing interface file: write one outfall row per reporting step
