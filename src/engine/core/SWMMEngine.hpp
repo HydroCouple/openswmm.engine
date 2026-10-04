@@ -735,6 +735,16 @@ private:
     void updateStatistics(double dt_routing) noexcept;
 
     /**
+     * @brief Per-node routed volume totals (legacy massbal NodeInflow /
+     *        NodeOutflow), accumulated over a half routing step.
+     * @details Legacy routing_execute calls massbal_updateRoutingTotals(dt/2)
+     *          before and after routing on every step, between events too.
+     *          The report's Node Inflow Summary volumes, flow-balance error and
+     *          Highest Continuity Errors read these totals.
+     */
+    void accumulateNodeRoutingTotals(double half_step) noexcept;
+
+    /**
      * @brief Update routing mass balance totals after routing.
      *
      * @param dt_routing  Routing timestep (seconds).
