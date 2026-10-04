@@ -744,6 +744,9 @@ private:
      */
     void accumulateNodeRoutingTotals(double half_step) noexcept;
 
+    /// True when the last stepRouting() skipped routing as steady state.
+    bool last_step_steady_ = false;
+
     /**
      * @brief Update routing mass balance totals after routing.
      *

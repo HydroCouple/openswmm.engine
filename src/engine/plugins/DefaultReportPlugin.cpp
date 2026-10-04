@@ -1338,6 +1338,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Time-Step Critical Elements — matches legacy report_writeMaxStats()
     // =====================================================================
+    // legacy report_writeMaxStats: dynamic wave with links, variable step.
+    if (opt.routing_model == RoutingModel::DYNWAVE && ctx.n_links() > 0 &&
+        opt.variable_step != 0.0) {
     WRITE(f, "***************************");
     WRITE(f, "Time-Step Critical Elements");
     WRITE(f, "***************************");
@@ -1355,6 +1358,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         }
         if (k == 0) std::fprintf(f, "\n  None");
     }
+    }
 
     WRITE(f, "");
     WRITE(f, "");
@@ -1362,10 +1366,13 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Highest Flow Instability Indexes
     // =====================================================================
+    // legacy report_writeMaxFlowTurns; a top entry at index 0 reads as
+    // "stable" there (index <= 0) and is reproduced.
+    if (ctx.n_links() > 0) {
     WRITE(f, "********************************");
     WRITE(f, "Highest Flow Instability Indexes");
     WRITE(f, "********************************");
-    if (ctx.max_flow_turns[0].index < 0 || ctx.max_flow_turns[0].value <= 0.0) {
+    if (ctx.max_flow_turns[0].index <= 0) {
         std::fprintf(f, "\n  All links are stable.");
     } else {
         for (int i = 0; i < SimulationContext::MAX_STATS; ++i) {
@@ -1375,6 +1382,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                          ctx.link_names.name_of(ms.index).c_str(), ms.value);
         }
     }
+    }
 
     WRITE(f, "");
     WRITE(f, "");
@@ -1382,13 +1390,14 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Most Frequent Nonconverging Nodes
     // =====================================================================
+    // legacy report_writeNonconvergedStats: dynamic wave only; index <= 0
+    // reads as converged there, reproduced.
+    if (ctx.n_nodes() > 0 && opt.routing_model == RoutingModel::DYNWAVE) {
     WRITE(f, "*********************************");
     WRITE(f, "Most Frequent Nonconverging Nodes");
     WRITE(f, "*********************************");
     {
-        const auto& rs = ctx.routing_stats;
-        if (rs.n_non_converged == 0 ||
-            ctx.max_non_converged[0].index < 0 ||
+        if (ctx.max_non_converged[0].index <= 0 ||
             ctx.max_non_converged[0].value < 0.00005) {
             WRITE(f, "Convergence obtained at all time steps.");
         } else {
@@ -1401,6 +1410,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             }
         }
     }
+    }
 
     WRITE(f, "");
     WRITE(f, "");
@@ -1408,11 +1418,16 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Routing Time Step Summary — matches legacy report.c
     // =====================================================================
+    // legacy report_writeTimeStepStats: nothing without links or steps.
+    if (ctx.n_links() > 0 && ctx.routing_stats.n_steps > 0) {
     WRITE(f, "*************************");
     WRITE(f, "Routing Time Step Summary");
     WRITE(f, "*************************");
     {
         const auto& rs = ctx.routing_stats;
+        const double t_total = rs.steady_time + rs.sum_step;
+        const double steady_pct =
+            std::min(t_total > 0.0 ? 100.0 * rs.steady_time / t_total : 0.0, 100.0);
         if (rs.n_steps > 0) {
             std::fprintf(f, "\n  Minimum Time Step           :  %7.2f sec",
                          rs.min_step < 1.0e30 ? rs.min_step : 0.0);
@@ -1421,7 +1436,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             std::fprintf(f, "\n  Maximum Time Step           :  %7.2f sec",
                          rs.max_step);
             std::fprintf(f, "\n  %% of Time in Steady State   :  %7.2f",
-                         rs.steady_pct);
+                         steady_pct);
             // FV has no Picard loop, so what the counter holds is the number
             // of explicit SUBSTEPS the step was filled with. Printing that
             // under the iteration label reads as catastrophic non-convergence
@@ -1444,15 +1459,16 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             // Time step frequency table
             // Build histogram if not already built
             // (bins built at end of simulation in engine)
-            bool has_bins = false;
-            for (int i = 0; i < rs.N_TIME_BINS; ++i) {
-                if (rs.step_counts[i] > 0) { has_bins = true; break; }
-            }
-            if (has_bins) {
+            // legacy report_RouteStepFreq: variable-step dynamic wave only,
+            // as shares of the binned steps.
+            long binned = 0;
+            for (int i = 0; i < rs.N_TIME_BINS; ++i) binned += rs.step_counts[i];
+            if (opt.routing_model == RoutingModel::DYNWAVE &&
+                opt.variable_step > 0.0 && binned > 0) {
                 std::fprintf(f, "\n  Time Step Frequencies       :");
                 for (int i = 0; i < rs.N_TIME_BINS; ++i) {
                     double pct = 100.0 * static_cast<double>(rs.step_counts[i])
-                                 / static_cast<double>(rs.n_steps);
+                                 / static_cast<double>(binned);
                     std::fprintf(f, "\n     %6.3f - %6.3f sec      :  %7.2f %%",
                         rs.step_intervals[i],
                         rs.step_intervals[i+1],
@@ -1461,6 +1477,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             }
         }
     }
+    }  // links and counted steps
 
     // =====================================================================
     // FV Solver Statistics — cumulative explicit-integrator throughput, the
@@ -2104,7 +2121,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         std::fprintf(f,
 "\n  ---------------------------------------------------------------------------------");
 
-        long report_steps = ctx.routing_stats.n_steps;
+        long report_steps = ctx.routing_stats.report_steps;
         report_steps = std::max(report_steps, 1L);
 
         for (int j = 0; j < ctx.n_nodes(); ++j) {
@@ -2313,7 +2330,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             std::fprintf(f,
 "\n  ------------------------------------------------------------------------------------------------");
 
-            long report_steps = ctx.routing_stats.n_steps;
+            long report_steps = ctx.routing_stats.report_steps;
             report_steps = std::max(report_steps, 1L);
 
             for (int j = 0; j < ctx.n_nodes(); ++j) {
@@ -2413,7 +2430,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         double sys_freq_sum = 0.0;
         int outfall_count = 0;
         std::vector<double> pol_totals(static_cast<std::size_t>(np), 0.0);
-        long total_steps = ctx.routing_stats.n_steps;
+        long total_steps = ctx.routing_stats.report_steps;
         total_steps = std::max(total_steps, 1L);
 
         for (int j = 0; j < ctx.n_nodes(); ++j) {
