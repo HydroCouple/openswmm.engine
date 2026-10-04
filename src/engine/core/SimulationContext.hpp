@@ -808,6 +808,10 @@ struct SimulationContext {
     /// [GROUNDWATER] normally precedes [JUNCTIONS] in EPA SWMM output.
     std::vector<std::pair<int, std::string>> pending_gw_nodes;
 
+    /// [GROUNDWATER] aquifer names (subcatch index -> aquifer name) not yet
+    /// defined when the row was read, for [AQUIFERS] placed further down.
+    std::vector<std::pair<int, std::string>> pending_gw_aquifers;
+
     /// Link end-node names (link index -> {from-node name, to-node name}).
     /// Legacy parsing is order-independent, so [CONDUITS] may precede the node
     /// sections; without this the link loads silently orphaned (node1/node2 -1).
@@ -1784,6 +1788,7 @@ struct SimulationContext {
         title_notes.clear();
         deferred_section_rows.clear();
         pending_gw_nodes.clear();
+        pending_gw_aquifers.clear();
         pending_link_nodes.clear();
 
         // Clear SoA stores

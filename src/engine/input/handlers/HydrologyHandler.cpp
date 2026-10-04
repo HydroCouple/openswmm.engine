@@ -57,7 +57,7 @@
  *
  * ### [GROUNDWATER] format
  * ```
- * Subcatch  Aquifer  Node  SurfEl  A1  B1  A2  B2  A3  Twgr  Hstar
+ * Subcatch  Aquifer  Node  SurfEl  A1  B1  A2  B2  A3  Dsw  [Egwt  Ebot  Wgw  Umc]
  * ```
  *
  * ### [LID_CONTROLS] format (multi-line per LID)
@@ -403,7 +403,7 @@ void handle_groundwater(SimulationContext& ctx, const std::vector<std::string>& 
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
         if (tok.empty()) continue;
-        // Subcatch  Aquifer  Node  SurfEl  A1  B1  A2  B2  A3  Twgr  Hstar
+        // Subcatch  Aquifer  Node  SurfEl  A1  B1  A2  B2  A3  Dsw  [Egwt  Ebot  Wgw  Umc]
         // Legacy gwater.c gwater_readGroundwaterParams requires >= 11 tokens;
         // fewer is ERR_ITEMS (too few items). v6 formerly skipped short rows
         // silently, so a truncated row ran instead of being rejected.
@@ -412,35 +412,62 @@ void handle_groundwater(SimulationContext& ctx, const std::vector<std::string>& 
             continue;
         }
 
+        // Legacy registers every object before reading any row, so a
+        // [GROUNDWATER] row placed ahead of [SUBCATCHMENTS] still resolves.
+        // Defer it; the replay reports a name that is still undefined as
+        // ERROR 209 (legacy gwater.c:217). Skipping it silently dropped the
+        // subcatchment's groundwater from the run.
         const int idx = ctx.subcatch_names.find(tok[0]);
-        if (idx < 0) continue;
+        if (idx < 0) {
+            ctx.deferred_section_rows.emplace_back("GROUNDWATER", line);
+            continue;
+        }
+
+        // Required numerics (legacy x[0..6]): a token getDouble() rejects is
+        // ERROR 211, not a silent 0.0.
+        double req[7];
+        std::size_t bad = 0;
+        for (std::size_t k = 0; k < 7 && bad == 0; ++k)
+            if (!parse_double_strict(tok[k + 3], req[k])) bad = k + 3;
+        // Optional Egwt Ebot Wgw Umc (legacy x[7..10]): absent, or a token
+        // whose FIRST character is `*` (gwater.c:240), is MISSING — the
+        // receiving node's invert for Egwt, the aquifer's values for the
+        // other three (legacy gwater_validate). Any other value is literal:
+        // -99 is an elevation of -99, not a sentinel.
+        double opt[4];
+        for (std::size_t k = 0; k < 4 && bad == 0; ++k) {
+            const std::size_t t = k + 10;
+            opt[k] = constants::MISSING;
+            if (tok.size() > t && (tok[t].empty() || tok[t][0] != '*') &&
+                !parse_double_strict(tok[t], opt[k]))
+                bad = t;
+        }
+        if (bad != 0) {
+            ctx.errors.push_back(format_error(ERR_NUMBER, tok[bad]));
+            continue;
+        }
 
         ensure_subcatch_gw_capacity(ctx, idx);
 
+        // Aquifer and node may also be defined further down; resolve them in
+        // PostParseResolver, which raises ERROR 209 naming the token.
         ctx.subcatches.gw_aquifer[idx]   = ctx.aquifer_names.find(tok[1]);
+        if (ctx.subcatches.gw_aquifer[idx] < 0)
+            ctx.pending_gw_aquifers.emplace_back(idx, tok[1]);
         ctx.subcatches.gw_node[idx]      = ctx.node_names.find(tok[2]);
-        // [GROUNDWATER] normally precedes [JUNCTIONS], so the find() above
-        // returns -1 for a forward reference. Defer to PostParseResolver.
         ctx.pending_gw_nodes.emplace_back(idx, tok[2]);
-        ctx.subcatches.gw_surf_elev[idx] = to_double(tok[3]);
-        ctx.subcatches.gw_a1[idx]        = to_double(tok[4]);
-        ctx.subcatches.gw_b1[idx]        = to_double(tok[5]);
-        ctx.subcatches.gw_a2[idx]        = to_double(tok[6]);
-        ctx.subcatches.gw_b2[idx]        = to_double(tok[7]);
-        ctx.subcatches.gw_a3[idx]        = to_double(tok[8]);
-        ctx.subcatches.gw_tw[idx]        = to_double(tok[9]);
-        // Optional Egwt Ebot Wgw Umc (legacy x[7..10]): absent or `*` is
-        // MISSING — the receiving node's invert for Egwt, the aquifer's
-        // values for the other three (legacy gwater_validate). Stored in the
-        // deck's units like the fields above; the engine converts at init.
-        auto opt = [&](std::size_t k) {
-            return (tok.size() > k && tok[k] != "*") ? to_double(tok[k])
-                                                     : constants::MISSING;
-        };
-        ctx.subcatches.gw_hstar[idx]       = opt(10);
-        ctx.subcatches.gw_bot_elev[idx]    = opt(11);
-        ctx.subcatches.gw_wt_elev[idx]     = opt(12);
-        ctx.subcatches.gw_upper_moist[idx] = opt(13);
+        // Stored in the deck's units; the engine converts at init.
+        ctx.subcatches.gw_surf_elev[idx] = req[0];
+        ctx.subcatches.gw_a1[idx]        = req[1];
+        ctx.subcatches.gw_b1[idx]        = req[2];
+        ctx.subcatches.gw_a2[idx]        = req[3];
+        ctx.subcatches.gw_b2[idx]        = req[4];
+        ctx.subcatches.gw_a3[idx]        = req[5];
+        ctx.subcatches.gw_tw[idx]        = req[6];
+        ctx.subcatches.gw_hstar[idx]       = opt[0];
+        ctx.subcatches.gw_bot_elev[idx]    = opt[1];
+        ctx.subcatches.gw_wt_elev[idx]     = opt[2];
+        ctx.subcatches.gw_upper_moist[idx] = opt[3];
     }
 }
 
@@ -458,10 +485,15 @@ void handle_gwf(SimulationContext& ctx, const std::vector<std::string>& lines) {
 
         // Key on the [SUBCATCHMENTS] spelling so a mixed-case name in [GWF]
         // still matches the lookup at start() and the writer (both use the
-        // registry name). An unknown subcatchment keeps the typed name, as
-        // handle_groundwater() tolerates an unresolved name.
+        // registry name). A name not defined yet is deferred like a
+        // [GROUNDWATER] row; one never defined is ERROR 209, as legacy
+        // gwater_readFlowExpression raises it (gwater.c:299).
         const std::string* canon = ctx.subcatch_names.canonical(tok[0]);
-        const std::string& subcatch = canon ? *canon : tok[0];
+        if (!canon) {
+            ctx.deferred_section_rows.emplace_back("GWF", line);
+            continue;
+        }
+        const std::string& subcatch = *canon;
 
         // Legacy gwater.c accepts any "LAT..." spelling for LATERAL.
         const std::string type_tok = Tokenizer::to_upper(tok[1]);

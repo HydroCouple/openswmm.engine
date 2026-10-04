@@ -594,8 +594,12 @@ SWMM_ENGINE_API int swmm_subcatch_get_gw_node(SWMM_Engine engine, int idx, int* 
  * @param a1,b1      Groundwater outflow coefficient & exponent.
  * @param a2,b2      Surface-water outflow coefficient & exponent.
  * @param a3         Surface/groundwater interaction coefficient.
- * @param tw         Threshold groundwater table elevation (Twgr).
- * @param hstar      Water-table elevation at which lateral GW flow ceases (Hstar).
+ * @param tw         Dsw: fixed depth of surface water at the receiving node
+ *                   (length units); 0 = use the node's live water depth.
+ * @param hstar      Egwt: threshold water-table elevation below which there is
+ *                   no lateral flow (length units). -1.0e10 (MISSING, `*` in
+ *                   the .inp) = the receiving node's invert. Any other value,
+ *                   including -99, is a literal elevation.
  * @returns SWMM_OK or error code.
  */
 SWMM_ENGINE_API int swmm_subcatch_set_gw_params(SWMM_Engine engine, int idx,
