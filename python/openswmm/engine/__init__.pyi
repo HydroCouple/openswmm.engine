@@ -255,4 +255,4 @@ from ._enums import (
     TraceTerminal as TraceTerminal,
 )
 
-from ._lid_nodes import LidNodeLayer as LidNodeLayer, LidNodeLayerKind as LidNodeLayerKind
+from ._lid_nodes import LidNodeLayer as LidNodeLayer, LidNodeLayerKind as LidNodeLayerKind, LidLayerTreatment as LidLayerTreatment

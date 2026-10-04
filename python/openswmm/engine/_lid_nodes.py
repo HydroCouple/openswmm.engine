@@ -31,3 +31,17 @@ class LidNodeLayer:
             raise ValueError(f"{kind.name} requires {(2, 7, 3, 2)[kind]} parameters")
         object.__setattr__(self, "kind", kind)
         object.__setattr__(self, "params", values)
+
+
+@dataclass(frozen=True)
+class LidLayerTreatment:
+    """Treatment on a one-based physical layer; removal %, decay per day.
+
+    The optional R= or C= expression acts after fixed removal on outgoing
+    water. Decay acts on retained pollutant mass once per routing step.
+    """
+    layer: int
+    pollutant: str
+    removal_percent: float = 0.0
+    decay_per_day: float = 0.0
+    expression: str = ""

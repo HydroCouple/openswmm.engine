@@ -1,3 +1,4 @@
+#include "hydrology/LidNode.hpp"
 /**
  * @file GeoPackageReader.cpp
  * @brief Reads a GeoPackage file into a SimulationContext (all SWMM input sections).
@@ -1509,6 +1510,16 @@ static void read_lid_nodes(sqlite3* db, SimulationContext& ctx, const std::strin
             LidNodeLayer row; row.kind = static_cast<LidNodeLayerKind>(kind);
             for (int k = 0; k < 7; ++k) row.params[k] = column_double(stmt.get(), k + 2);
             ctx.lid_controls.node_layers[c].push_back(row);
+        }
+    }
+    if(table_exists(db,"lid_layer_treatment")) {
+        auto stmt=prepare(db,"SELECT lid_id,layer,pollutant,removal,decay,expression FROM lid_layer_treatment WHERE simulation_id=?");
+        bind_text(stmt.get(),1,sim);
+        while(sqlite3_step(stmt.get())==SQLITE_ROW) {
+            const int c=ctx.lid_names.find(column_text(stmt.get(),0)), layer=column_int(stmt.get(),1);
+            if(c<0||layer<1||layer>static_cast<int>(ctx.lid_controls.node_layers[c].size())||ctx.lid_controls.node_layers[c][layer-1].kind==LidNodeLayerKind::Bottom)throw std::runtime_error("Invalid LID treatment layer");
+            LidLayerTreatment rule{column_text(stmt.get(),2),column_double(stmt.get(),3)/100,column_double(stmt.get(),4),column_text(stmt.get(),5)};
+            ctx.lid_controls.node_layers[c][layer-1].treatment.push_back(std::move(rule));
         }
     }
     if (table_exists(db, "lid_nodes")) {

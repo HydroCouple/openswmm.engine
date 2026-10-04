@@ -380,7 +380,7 @@ __all__ = [
     # --- Enumerations: hydrology ---
     "InfilModel", "GageDataSource", "GageRainType",
     # --- Enumerations: water quality / LID ---
-    "ConcentrationUnits", "BuildupFunc", "WashoffFunc", "LidType", "LidNodeLayer", "LidNodeLayerKind",
+    "ConcentrationUnits", "BuildupFunc", "WashoffFunc", "LidType", "LidNodeLayer", "LidNodeLayerKind", "LidLayerTreatment",
     # --- Enumerations: hydrology parameters ---
     "AquiferParam", "GwfType",
     # --- Enumerations: output variables ---
@@ -461,4 +461,4 @@ from ._enums import (
 )
 __all__ += ['FlowTracer', 'TraceNode', 'TraceLink', 'TraceOptions', 'TraceInfo', 'TraceNodeAverage', 'TraceLinkAverage', 'TraceValue', 'TraceSummary', 'TraceResult', 'TraceError', 'TraceStatus', 'TraceDirection', 'TraceNodeFlags', 'TraceFlags', 'TraceTerminal']
 
-from ._lid_nodes import LidNodeLayer as LidNodeLayer, LidNodeLayerKind as LidNodeLayerKind
+from ._lid_nodes import LidNodeLayer as LidNodeLayer, LidNodeLayerKind as LidNodeLayerKind, LidLayerTreatment as LidLayerTreatment

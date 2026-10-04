@@ -25,6 +25,12 @@ double bottomConductivity(const SimulationContext&, int storage_row);
 double bottomCloggingFactor(const SimulationContext&, int storage_row);
 double heldVolume(const SimulationContext&, int node);
 bool active(const SimulationContext&, int node);
+bool validTreatment(const SimulationContext&, const LidLayerTreatment&, std::string& error);
+void readTreatment(SimulationContext&, const std::vector<std::string>&);
+void prepareQuality(SimulationContext&, double dt);
+bool receiveQuality(SimulationContext&, int node, int link, double volume, int pollutant, double mass, double dt);
+double outletQuality(const SimulationContext&, int node, int link, int pollutant, double fallback);
+double heldMass(const SimulationContext&, int node, int pollutant);
 void readNodes(SimulationContext&, const std::vector<std::string>&);
 void readOutlets(SimulationContext&, const std::vector<std::string>&);
 } // namespace lidnode

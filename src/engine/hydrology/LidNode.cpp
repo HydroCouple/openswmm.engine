@@ -133,6 +133,10 @@ void readOutlets(SimulationContext& ctx, const std::vector<std::string>& lines) 
 void validate(SimulationContext& ctx) {
     for (int c = 0; c < ctx.lid_controls.count(); ++c) {
         if (ctx.lid_controls.lid_type[c] != "NODE") continue;
+        for(const auto& layer:layers(ctx,c))for(const auto& rule:layer.treatment) {
+            std::string diagnostic;
+            if(!validTreatment(ctx,rule,diagnostic))ctx.errors.push_back("LID treatment: "+diagnostic);
+        }
         auto error = validateStack(layers(ctx, c));
         if (!error.empty()) ctx.errors.push_back("LID control " + ctx.lid_controls.names[c] + ": " + error);
     }
@@ -140,6 +144,8 @@ void validate(SimulationContext& ctx) {
     const bool has_lid = std::any_of(st.lid.begin(), st.lid.end(), [](const auto& c) { return c.control >= 0; });
     if (has_lid && ctx.options.routing_model != RoutingModel::DYNWAVE)
         ctx.errors.push_back("LID storage nodes require FLOW_ROUTING DYNWAVE");
+    if (has_lid && ctx.n_pollutants() > 0 && ctx.options.quality_solver != QualitySolverKind::LEGACY)
+        ctx.errors.push_back("LID layer pollutant routing requires QUALITY_SOLVER LEGACY");
     for (int r = 0; r < st.count(); ++r) {
         const auto& cfg = st.lid[r];
         if (cfg.control < 0) continue;
@@ -269,12 +275,21 @@ void prepareStep(SimulationContext& ctx, double dt, double evaporation) {
         if (state.cells.empty()) continue;
         const int n = st.node_idx[r];
         const double before = state.held_volume;
+        state.quality_old_mobile = ctx.nodes.volume[n];
+        state.quality_old_water.clear(); state.quality_transfers.clear();
+        for (const auto& cell : state.cells) state.quality_old_water.push_back(cell.theta * cell.geometric_volume);
         state.captured_flow = 0.0; state.evap_volume = 0.0;
         for (auto& c : state.cells)
             // A submerged cell retains field-capacity water on recession.
             // The before/after store difference below transfers this water
             // from (or to) mobile storage without changing the total.
-            if (c.top <= ctx.nodes.depth[n]) c.theta = c.field_capacity;
+            if (c.top <= ctx.nodes.depth[n]) {
+                const int i = static_cast<int>(&c - state.cells.data());
+                const double v = (c.field_capacity - c.theta) * c.geometric_volume;
+                if (v > 0) state.quality_transfers.push_back({-1, i, v});
+                else if (v < 0) state.quality_transfers.push_back({i, -1, -v});
+                c.theta = c.field_capacity;
+            }
 
         // Lateral inflows enter the top of the column. Saturated capacity that
         // cannot be retained stays in the hydraulic inflow and raises the HGL.
@@ -283,6 +298,7 @@ void prepareStep(SimulationContext& ctx, double dt, double evaporation) {
         const double capture = std::min(std::max(0.0, ctx.nodes.lat_flow[n]) * dt, capacity);
         if (first.geometric_volume > 0.0) first.theta += capture / first.geometric_volume;
         state.captured_flow = capture / dt;
+        if (capture > 0) state.quality_transfers.push_back({-2, 0, capture});
         state.treated_volume += capture;
         ctx.nodes.lat_flow[n] -= state.captured_flow;
         // Evaporation draws from top to bottom, never below wilting point.
@@ -291,6 +307,7 @@ void prepareStep(SimulationContext& ctx, double dt, double evaporation) {
             const double take = std::min(evap, std::max(0.0, (c.theta - c.wilting_point) * c.geometric_volume));
             if (c.geometric_volume > 0.0) c.theta -= take / c.geometric_volume;
             state.evap_volume += take; evap -= take;
+            if (take > 0) state.quality_transfers.push_back({static_cast<int>(&c - state.cells.data()), -3, take});
         }
         // Bounded forward-Euler method of lines. A shared transfer is removed
         // from its source and added to its receiver exactly once. Substeps keep
@@ -322,6 +339,8 @@ void prepareStep(SimulationContext& ctx, double dt, double evaporation) {
             }
             for (std::size_t i = 0; i < state.cells.size(); ++i) {
                 auto& c = state.cells[i];
+                const int dest = i + 1 < state.cells.size() && state.cells[i + 1].bottom >= ctx.nodes.depth[n] ? static_cast<int>(i + 1) : -1;
+                if (transfer[i] > 0) state.quality_transfers.push_back({static_cast<int>(i), dest, transfer[i]});
                 if (c.geometric_volume > 0.0) c.theta -= transfer[i] / c.geometric_volume;
                 if (i + 1 < state.cells.size()) {
                     auto& below = state.cells[i + 1];
@@ -404,7 +423,7 @@ int portCell(const LidNodeState& state, double offset) {
 void resetPorts(SimulationContext& ctx) {
     for (auto& s : ctx.node_subtypes.storages.lid_state) {
         std::fill(s.port_delta.begin(), s.port_delta.end(), 0.0);
-        s.mobile_delta = 0.0;
+        s.mobile_delta = 0.0; s.quality_ports.clear();
     }
 }
 double portDepth(const SimulationContext& ctx, int node, double offset) {
@@ -443,6 +462,7 @@ double exchangePorts(SimulationContext& ctx, int link, double flow, double dt) {
             const double throttle = c.kind == LidNodeLayerKind::Media ? std::clamp(c.theta / c.porosity, 0.0, 1.0) : 1.0;
             volume = std::min(volume * throttle, available);
             s.port_delta[i] -= volume;
+            s.quality_ports.push_back({link, i, -volume});
             // The routing equation handles only mobile water. Credit the same
             // flux internally so this link draws retained water exactly once.
             ctx.nodes.inflow[source] += volume / dt;
@@ -458,6 +478,7 @@ double exchangePorts(SimulationContext& ctx, int link, double flow, double dt) {
             const double capacity = std::max(0.0, (c.porosity - c.theta) * c.geometric_volume - s.port_delta[i]);
             const double held = std::min(volume, capacity);
             s.port_delta[i] += held;
+            s.quality_ports.push_back({link, i, held});
             mobile_received -= held;
             ctx.nodes.outflow[dest] += held / dt;
         }

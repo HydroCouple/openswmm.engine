@@ -2190,6 +2190,18 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         }
     }
 
+    {
+        bool header=false;
+        for(int c=0;c<static_cast<int>(ctx.lid_controls.node_layers.size());++c) {
+            int layer=0;
+            for(const auto& row:ctx.lid_controls.node_layers[c]) { ++layer; for(const auto& t:row.treatment) {
+                if(swmm5) { note("SWMM 5 export omits layer treatment for " + ctx.lid_names.name_of(c)); continue; }
+                if(!header) { sec(f,"LID_LAYER_TREATMENT");header=true; }
+                std::fprintf(f,"%s %d %s %.17g %.17g %s\n",ctx.lid_names.name_of(c).c_str(),layer,t.pollutant.c_str(),t.removal*100,t.decay,t.expression.empty()?"-":t.expression.c_str());
+            }}
+        }
+    }
+
     // [LID_USAGE]
     if (ctx.lid_usage.count() > 0) {
         sec(f,"LID_USAGE");

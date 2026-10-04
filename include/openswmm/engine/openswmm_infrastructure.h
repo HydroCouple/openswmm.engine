@@ -689,6 +689,19 @@ enum SWMM_LidNodeLayerKind {
     SWMM_LID_NODE_AGGREGATE = 2, SWMM_LID_NODE_BOTTOM = 3
 };
 typedef struct SWMM_LidNodeLayer { int kind; double params[7]; } SWMM_LidNodeLayer;
+/** Per-layer treatment. Layer is one-based; pollutant is its engine index.
+ * Removal percent applies to outgoing mass; decay is first-order per day.
+ * Optional R=/C= expression applies after fixed removal at the layer exit. */
+typedef struct SWMM_LidLayerTreatment {
+    int layer;
+    int pollutant;
+    double removal_percent;
+    double decay_per_day;
+    const char* expression;
+} SWMM_LidLayerTreatment;
+SWMM_ENGINE_API int swmm_lid_node_treatment_count(SWMM_Engine engine, int control);
+SWMM_ENGINE_API int swmm_lid_node_treatment_get(SWMM_Engine engine, int control, int row, SWMM_LidLayerTreatment* out);
+SWMM_ENGINE_API int swmm_lid_node_configure(SWMM_Engine engine, int control, const SWMM_LidNodeLayer* layers, int count, const SWMM_LidLayerTreatment* treatment, int treatment_count);
 SWMM_ENGINE_API int swmm_lid_node_layer_count(SWMM_Engine engine, int control);
 SWMM_ENGINE_API int swmm_lid_node_layer_get(SWMM_Engine engine, int control, int row, SWMM_LidNodeLayer* out);
 /** Atomically replace the stack; sync dependent MaxDepths and outlet offsets.

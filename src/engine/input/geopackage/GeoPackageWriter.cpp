@@ -1265,7 +1265,7 @@ static void write_lid_controls(sqlite3* db, const SimulationContext& ctx,
 
 static void write_lid_nodes(sqlite3* db, const SimulationContext& ctx, const std::string& sim) {
     // Replace this simulation's complete stack, including deleted rows.
-    for (const char* table : {"lid_node_outlets", "lid_nodes", "lid_node_layers"}) {
+    for (const char* table : {"lid_layer_treatment", "lid_node_outlets", "lid_nodes", "lid_node_layers"}) {
         auto del = prepare(db, std::string("DELETE FROM ") + table + " WHERE simulation_id=?");
         bind_text(del.get(), 1, sim);
         if (sqlite3_step(del.get()) != SQLITE_DONE) throw std::runtime_error("Cannot replace LID node data");
@@ -1281,6 +1281,18 @@ static void write_lid_nodes(sqlite3* db, const SimulationContext& ctx, const std
             for (int k = 0; k < 7; ++k) bind_double(layer.get(), 5 + k, row.params[k]);
             if (sqlite3_step(layer.get()) != SQLITE_DONE) throw std::runtime_error("Cannot write LID node layer");
         }
+    }
+    auto treatment=prepare(db,"INSERT INTO lid_layer_treatment VALUES (?,?,?,?,?,?,?)");
+    for(int c=0;c<static_cast<int>(ctx.lid_controls.node_layers.size());++c) {
+        int layer=0;
+        for(const auto& row:ctx.lid_controls.node_layers[c]) { ++layer;for(const auto& rule:row.treatment) {
+            sqlite3_reset(treatment.get());sqlite3_clear_bindings(treatment.get());
+            bind_text(treatment.get(),1,sim);bind_text(treatment.get(),2,ctx.lid_names.name_of(c));
+            bind_int(treatment.get(),3,layer);bind_text(treatment.get(),4,rule.pollutant);
+            bind_double(treatment.get(),5,rule.removal*100);bind_double(treatment.get(),6,rule.decay);
+            bind_text(treatment.get(),7,rule.expression);
+            if(sqlite3_step(treatment.get())!=SQLITE_DONE)throw std::runtime_error("Cannot write LID treatment");
+        }}
     }
     auto node = prepare(db, "INSERT INTO lid_nodes VALUES (?,?,?,?)");
     const auto& st = ctx.node_subtypes.storages;
