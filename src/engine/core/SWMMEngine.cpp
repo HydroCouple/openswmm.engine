@@ -601,8 +601,9 @@ int SWMMEngine::open(const char* inp_path,
 
     // Project-level sanity checks + step-clamp warnings (legacy project_validate:
     // WARNING 01/06/07). Must run before the fatal gate below so any warnings it
-    // records reach the report.
-    {
+    // records reach the report. legacy swmm_open returns after input errors
+    // without calling project_validate (swmm5.c:665-671), so neither do we.
+    if (ctx_.errors.empty()) {
         perf::ScopedTimer _pt(perf::sec_open_validate);
         validate_project();
     }
@@ -7642,6 +7643,19 @@ void SWMMEngine::validate_project() noexcept {
     // subcatchment or UH group reads): hec-hms-hyetographs carries 44 gages
     // down to a 4 s interval, one of which its single subcatchment uses,
     // and legacy keeps WetStep at 60 s and the routing step at 30 s there.
+    // ERROR 108: an outlet name matching both a node and a subcatchment
+    // (legacy subcatch_validate, subcatch.c:391-393, which project_validate
+    // runs before gage_validate).
+    for (int s = 0; s < ctx_.n_subcatches(); ++s) {
+        const auto us = static_cast<std::size_t>(s);
+        if (us >= ctx_.subcatches.outlet_name.size()) continue;
+        const auto& name = ctx_.subcatches.outlet_name[us];
+        if (!name.empty() && ctx_.node_names.find(name) >= 0 &&
+            ctx_.subcatch_names.find(name) >= 0)
+            ctx_.errors.push_back(format_error(
+                ERR_SUBCATCH_OUTLET, ctx_.subcatch_names.name_of(s)));
+    }
+
     // Legacy gage_validate checks only a TIMESERIES gage, and returns before
     // any check for a co-gage (one sharing an earlier used gage's series).
     const int ng = ctx_.n_gages();

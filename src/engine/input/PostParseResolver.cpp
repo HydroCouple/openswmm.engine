@@ -2014,14 +2014,12 @@ void resolve_cross_references(SimulationContext& ctx) {
         const auto& name = ctx.subcatches.outlet_name[us];
         if (name.empty()) continue;
 
-        // Legacy subcatch_validate (subcatch.c:391-393): an outlet name that
-        // matches BOTH a node and a subcatchment is ambiguous — ERROR 108.
-        // Legacy stores the two resolutions independently and errors when
-        // both landed; here the single-slot model must check explicitly.
+        // An outlet name matching BOTH a node and a subcatchment is ambiguous
+        // (ERROR 108). Legacy raises it in subcatch_validate, i.e. only once
+        // the input reads clean, so SWMMEngine::validate_project reports it;
+        // here the outlet is just left unresolved.
         if (ctx.node_names.find(name) >= 0 &&
             ctx.subcatch_names.find(name) >= 0) {
-            ctx.errors.push_back(format_error(
-                ERR_SUBCATCH_OUTLET, ctx.subcatch_names.name_of(s)));
             continue;
         }
 
