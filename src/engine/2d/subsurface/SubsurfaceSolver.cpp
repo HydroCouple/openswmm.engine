@@ -1036,7 +1036,8 @@ void SubsurfaceSolver::bookInfiltrationFromSurface(int cell,
                                                    double vol_m3) noexcept {
     if (!state_.active || cell < 0 || cell >= state_.n_cells) return;
     state_.xacc_from_surface[static_cast<std::size_t>(cell)] += vol_m3;
-    accumulators_pending_ = true;
+    // Cell-local booking is called concurrently by the surface marcher.
+    // settle() does not use the obsolete pending flag; do not race on it.
 }
 
 // G-X3 (2026-09-19): conduit seepage lands in the saturated zone of the

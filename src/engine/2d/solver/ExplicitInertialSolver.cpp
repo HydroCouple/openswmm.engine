@@ -166,6 +166,10 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
         sacc_L_.clear();
         sacc_R_.clear();
     }
+    const auto nledger = static_cast<std::size_t>(SourceLedger::Count) *
+                         static_cast<std::size_t>(state.transport.n_species);
+    source_ledger_stride_ = ((nledger + 1 + 7) / 8) * 8;
+    source_ledgers_.assign(source_ledger_stride_ * std::max(1, opts.num_threads), 0.0);
     // The Perot cell vectors serve the θ-blend AND the convective term, so
     // ADVECTION forces them on even at θ = 1. FULL_SWE uses the same arrays
     // as its prognostic cell momentum.
@@ -341,87 +345,115 @@ void ExplicitInertialSolver::sinkMassAtCellConc(int i, double dv_m3,
         // state, and "min(dm, m)" on two negatives would empty the row.
         const double taken = tr.signedRow(s) ? dm : ((dm < m) ? dm : m);
         m -= taken;
-        ledger[static_cast<std::size_t>(s)] += taken;
+        const auto kind = &ledger == &tr.lost_infiltration
+            ? SourceLedger::Infiltration : &ledger == &tr.lost_boundary
+            ? SourceLedger::Boundary : SourceLedger::CouplingOut;
+        bookSourceLedger(kind, s, taken);
         if (per_point_ledger) per_point_ledger[s] += taken;
     }
 }
 
-void ExplicitInertialSolver::gwInfiltrationSeam(int i, double infil_m3) noexcept {
+int ExplicitInertialSolver::sourceThread() const noexcept {
+#if defined(SWMM_USE_OPENMP)
+    return omp_in_parallel() ? omp_get_thread_num() : 0;
+#else
+    return 0;
+#endif
+}
+
+void ExplicitInertialSolver::bookSourceLedger(SourceLedger ledger, int species,
+                                             double mass) noexcept {
+    const auto ns = static_cast<std::size_t>(state_->transport.n_species);
+    const auto offset = static_cast<std::size_t>(sourceThread()) * source_ledger_stride_;
+    source_ledgers_[offset + static_cast<std::size_t>(ledger) * ns + species] += mass;
+}
+
+void ExplicitInertialSolver::flushSourceLedgers() {
     auto& tr = state_->transport;
-    if (!tr.active()) return;
-    // No aquifer, or an aquifer that transports nothing: infiltration is a
-    // LOSS, exactly as it was before T7.1, and the ledger keeps saying so.
-    const bool to_gw = gw_ != nullptr && gw_->transport().active();
-    if (!to_gw) {
-        sinkMassAtCellConc(i, infil_m3, tr.lost_infiltration);
-        return;
-    }
-    // Otherwise it is a TRANSFER: the surface still books what it lost, and
-    // the aquifer gains the same number, read as the ledger's own delta so
-    // the two can never disagree.
-    const int ns = std::min(tr.n_species, gw_->transport().n_species);
-    std::vector<double>& led = tr.lost_infiltration;
-    static thread_local std::vector<double> before;
-    before.assign(led.begin(), led.begin() + ns);
-    sinkMassAtCellConc(i, infil_m3, led);
-    for (int s = 0; s < ns; ++s) {
-        const double dm = led[static_cast<std::size_t>(s)] -
-                          before[static_cast<std::size_t>(s)];
-        if (dm != 0.0) gw_->bookInfiltrationMass(i, s, dm);
+    const auto ns = static_cast<std::size_t>(tr.n_species);
+    std::vector<double>* ledgers[] = {&tr.lost_infiltration, &tr.lost_coupling,
+        &tr.gained_rainfall, &tr.gained_coupling, &tr.gained_exfiltration,
+        &tr.lost_boundary};
+    for (std::size_t base = 0; base < source_ledgers_.size(); base += source_ledger_stride_) {
+        for (std::size_t k = 0; k < static_cast<std::size_t>(SourceLedger::Count); ++k)
+            for (std::size_t r = 0; r < ns; ++r) {
+                double& delta = source_ledgers_[base + k * ns + r];
+                (*ledgers[k])[r] += delta;
+                delta = 0.0;
+            }
+        double& evap = source_ledgers_[base + static_cast<std::size_t>(SourceLedger::Count) * ns];
+        state_->evap_loss_total += evap;
+        evap = 0.0;
     }
 }
 
-void ExplicitInertialSolver::addRainMass(int i, double rain_m3) noexcept {
-    if (!(rain_m3 > 0.0)) return;
-    auto& tr = state_->transport;
-    if (!tr.active() || tr.rain_conc.empty()) return;
-    for (int s = 0; s < tr.n_species; ++s) {
-        const auto us = static_cast<std::size_t>(s);
-        if (us >= tr.rain_conc.size() || tr.rain_conc[us] == 0.0) continue;
-        const double g = rain_m3 * tr.rain_conc[us];
-        tr.cell_mass[tr.idx(s, i)] += g;
-        tr.gained_rainfall[us] += g;
-    }
-}
+void ExplicitInertialSolver::applyCellSources(int i, double dt) {
+    const double area = mesh_->tri_area[i];
+    const double area_dt = area * dt;
+    const double rain = std::max(0.0, state_->rainfall[i]) * area_dt;
+    const double coupling = state_->coupling_flux[i] * area_dt;
+    const double requested_infil = std::max(0.0,
+        infilSink(state_->infil_rate[i], state_->depth[i], opts_->dry_depth)) * area_dt;
+    const double requested_evap = std::max(0.0,
+        evapSink(state_->evap_rate[i], state_->depth[i], opts_->dry_depth)) * area_dt;
+    const double back = gw_ ? gw_->takeToSurface(i) : 0.0;
+    if (rain == 0.0 && coupling == 0.0 && requested_infil == 0.0 &&
+        requested_evap == 0.0 && back == 0.0) return;
 
-void ExplicitInertialSolver::sinkIntensiveRowsWithEvap(int i, double evap_m3) noexcept {
-    // Evaporation removes WATER and no solute (S1: concentrations rise), but
-    // it removes water AT the water's temperature AND at the water's age: the
-    // temperature row is a temperature-volume and the age row an age-volume,
-    // so leaving either untouched while the volume falls would heat the cell
-    // — or age it — by evaporating it. Sink both rows at the cell's own mean;
-    // no ledger — the enthalpy left with the vapour and the 1D engines book
-    // nothing for it either (H1's convention), and the mean age of what
-    // remains is unchanged (the 1D water-age convention, WaterAgeLegacy
-    // "no evap factor"; program plan D-A20, S4b).
-    if (!(evap_m3 > 0.0)) return;
-    auto& tr = state_->transport;
-    if (!tr.active()) return;
-    const double v = state_->volume[i];
-    if (!(v > 0.0)) return;
-    const double dv = (evap_m3 < v) ? evap_m3 : v;
-    const int rows[2] = { tr.temp_row, tr.age_row };
-    for (const int r : rows) {
-        if (r < 0) continue;
-        double& m = tr.cell_mass[tr.idx(r, i)];
-        m -= dv * (m / v);
-    }
-}
+    const double incoming = rain + std::max(coupling, 0.0) + back;
+    const double available = std::max(0.0, state_->volume[i] + incoming);
+    const double requested_out = std::max(-coupling, 0.0);
+    const double requested = requested_infil + requested_evap + requested_out;
+    const double scale = requested > available && requested > 0.0
+        ? available / requested : 1.0;
+    // Proportional sharing gives all held sinks the same satisfaction ratio.
+    const double infil = requested_infil * scale;
+    const double evap = requested_evap * scale;
+    const double out = requested_out * scale;
+    state_->infil_applied[i] += infil / area;
+    state_->coupling_applied[i] += std::max(coupling, 0.0) - out;
+    const auto ns = static_cast<std::size_t>(state_->transport.n_species);
+    source_ledgers_[static_cast<std::size_t>(sourceThread()) * source_ledger_stride_ +
+                    static_cast<std::size_t>(SourceLedger::Count) * ns] += evap;
+    if (gw_ && infil > 0.0) gw_->bookInfiltrationFromSurface(i, infil);
 
-void ExplicitInertialSolver::addCouplingSourceMass(int i, double area_dt) noexcept {
-    if (!(state_->coupling_flux[i] > 0.0) || !(area_dt > 0.0)) return;
-    auto& tr = state_->transport;
-    if (!tr.active()) return;
-    // S7 (D-A22): discharged / prescribed inflow is not runoff the cell made.
-    if (!tr.cell_runoff_vol.empty())
-        tr.cell_runoff_vol[static_cast<std::size_t>(i)] -= state_->coupling_flux[i] * area_dt;
-    if (tr.coupling_src.empty()) return;
-    for (int s = 0; s < tr.n_species; ++s) {
-        const double g = tr.coupling_src[tr.idx(s, i)] * area_dt;
-        if (g == 0.0) continue;
-        tr.cell_mass[tr.idx(s, i)] += g;
-        tr.gained_coupling[static_cast<std::size_t>(s)] += g;
+    if (species_on_) {
+        auto& tr = state_->transport;
+        if (!tr.cell_runoff_vol.empty())
+            tr.cell_runoff_vol[i] += out - std::max(coupling, 0.0);
+        for (int r = 0; r < tr.n_species; ++r) {
+            double& mass = tr.cell_mass[tr.idx(r, i)];
+            if (gw_ && gw_->transport().active() && r < gw_->transport().n_species) {
+                const double dm = gw_->takeToSurfaceMass(i, r);
+                mass += dm;
+                bookSourceLedger(SourceLedger::Exfiltration, r, dm);
+            }
+            const double rain_mass = static_cast<std::size_t>(r) < tr.rain_conc.size()
+                ? rain * tr.rain_conc[r] : 0.0;
+            const double coupling_mass = coupling > 0.0 && !tr.coupling_src.empty()
+                ? tr.coupling_src[tr.idx(r, i)] * area_dt : 0.0;
+            mass += rain_mass + coupling_mass;
+            bookSourceLedger(SourceLedger::Rainfall, r, rain_mass);
+            bookSourceLedger(SourceLedger::CouplingIn, r, coupling_mass);
+            // All sinks see the same mixed concentration. Passing cell-local
+            // transfers directly to groundwater avoids shared-ledger deltas.
+            const double concentration = available > 0.0 ? mass / available : 0.0;
+            const double mi = concentration * infil;
+            const double mc = concentration * out;
+            const bool intensive = r == tr.age_row || r == tr.temp_row;
+            const double me = intensive ? concentration * evap : 0.0;
+            mass -= mi + mc + me;
+            if (!tr.signedRow(r) && mass < 0.0) mass = 0.0;
+            bookSourceLedger(SourceLedger::Infiltration, r, mi);
+            bookSourceLedger(SourceLedger::CouplingOut, r, mc);
+            if (gw_ && gw_->transport().active() && r < gw_->transport().n_species)
+                gw_->bookInfiltrationMass(i, r, mi);
+        }
     }
+    // A fully exhausted budget must be exactly dry. A rounding-sized film
+    // would let the next sink dissolve all evaporative solute residue at
+    // an unbounded concentration.
+    state_->volume[i] = requested >= available ? 0.0 : available - requested;
 }
 
 void ExplicitInertialSolver::reconstructAll() {
@@ -506,6 +538,8 @@ void ExplicitInertialSolver::settleAccumulators() {
                 qcy_[i] += dmy / A;
             }
         }
+        if (species_on_ && !state_->transport.cell_runoff_vol.empty())
+            state_->transport.cell_runoff_vol[i] -= pending;
         if (pending == 0.0) continue;
         double v = state_->volume[i] + pending;
         state_->volume[i] = (v > 0.0) ? v : 0.0;
@@ -515,117 +549,24 @@ void ExplicitInertialSolver::settleAccumulators() {
 }
 
 void ExplicitInertialSolver::lazySourcesOnly(double t) {
-    const int nt = mesh_->n_triangles();
     const double dt_lazy = t - t_last_sync_;
     if (dt_lazy <= 0.0) return;
+    const int nt = mesh_->n_triangles();
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int i = 0; i < nt; ++i) {
         if (cell_active_[i]) continue;
-        const double infil = infilSink(state_->infil_rate[i], state_->depth[i],
-                                       opts_->dry_depth);
-        // Book before the early-out: rain exactly cancelling the sink leaves
-        // src == 0, but water still infiltrated and the ledger counts the rain.
-        state_->infil_applied[i] += infil * dt_lazy;
-        // T7.1 (2026-09-20): …and hand it to the aquifer, which this pass
-        // never did. `syncAndRebuild`'s lazy pass books it (G1-c item 1);
-        // THIS one — the cheaper alternative taken on every non-rebuild
-        // cycle — infiltrated the water, counted it as an exit on the
-        // surface, and dropped it. The deck's continuity still closed,
-        // because a loss is a loss; the aquifer simply never received
-        // 1.4 % of its recharge on the gate deck. Found by T7.1's seam
-        // gate: the species could not balance while the water did not.
-        if (gw_ && infil > 0.0)
-            gw_->bookInfiltrationFromSurface(i, infil * dt_lazy *
-                                                    mesh_->tri_area[i]);
-        // Signed per-cell coupling volume, booked at the SAME dt the sink
-        // below integrates. Also before the early-out: a spill exactly
-        // cancelled by evaporation leaves src == 0 while water still crossed
-        // the coupling point, and an accumulator that misses those cells
-        // cannot be reconciled against the domain totals.
-        if (state_->coupling_flux[i] != 0.0)
-            state_->coupling_applied[i] +=
-                state_->coupling_flux[i] * dt_lazy * mesh_->tri_area[i];
-        const double evap =
-            evapSink(state_->evap_rate[i], state_->depth[i], opts_->dry_depth);
-        const double src =
-            state_->rainfall[i] + state_->coupling_flux[i] - evap - infil;
-        if (src == 0.0) continue;
-        if (species_on_) {   // S1: see syncAndRebuild's lazy pass
-            auto& tr = state_->transport;
-            const double area = mesh_->tri_area[i];
-            sinkIntensiveRowsWithEvap(i, evap * dt_lazy * area);        // S4/S4b
-            gwInfiltrationSeam(i, infil * dt_lazy * area);              // T7.1
-            if (state_->coupling_flux[i] < 0.0)
-                sinkMassAtCellConc(i, -state_->coupling_flux[i] * dt_lazy *
-                                          area, tr.lost_coupling);
-            addRainMass(i, state_->rainfall[i] * dt_lazy * area);   // S2
-            addCouplingSourceMass(i, dt_lazy * area);                // S3
-        }
-        double v = state_->volume[i] + dt_lazy * src * mesh_->tri_area[i];
-        state_->volume[i] = (v > 0.0) ? v : 0.0;
+        applyCellSources(i, dt_lazy);
         inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i],
                                state_->head[i], state_->depth[i]);
     }
+    flushSourceLedgers();
     t_last_sync_ = t;
 }
 
 void ExplicitInertialSolver::syncAndRebuild(double t) {
     settleAccumulators();
+    lazySourcesOnly(t);
     const int nt = mesh_->n_triangles();
-    const double dt_lazy = t - t_last_sync_;
-
-    // 1. Lazy source integration on INACTIVE cells: rain + held coupling flux
-    //    accumulate as pure storage (no face flux by construction).
-    if (dt_lazy > 0.0) {
-#pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
-        for (int i = 0; i < nt; ++i) {
-            if (cell_active_[i]) continue;
-            const double infil = infilSink(state_->infil_rate[i],
-                                           state_->depth[i], opts_->dry_depth);
-            state_->infil_applied[i] += infil * dt_lazy;
-            if (state_->coupling_flux[i] != 0.0)
-                state_->coupling_applied[i] +=
-                    state_->coupling_flux[i] * dt_lazy * mesh_->tri_area[i];
-            // G1: the lazy tier infiltrates too, so its water must reach the
-            // aquifer on the same terms as an active cell's. Omitting this
-            // loses most of the recharge on a rain-on-grid deck, where the
-            // majority of cells sit below h_move for the whole storm and are
-            // never active — and loses it silently, since infil_applied still
-            // books it as an exit. The return direction needs nothing here:
-            // a cell the aquifer owes water to is seeded active by the pass
-            // below, so it takes it back through fireCellsImpl.
-            if (gw_ && infil > 0.0)
-                gw_->bookInfiltrationFromSurface(
-                    i, infil * dt_lazy * mesh_->tri_area[i]);
-            const double evap = evapSink(state_->evap_rate[i],
-                                         state_->depth[i], opts_->dry_depth);
-            const double src =
-                state_->rainfall[i] + state_->coupling_flux[i] - evap - infil;
-            if (src == 0.0) continue;
-            // S1: the lazy tier moves water without faces; the sinks still
-            // carry the cell's species out (same rule as fireCells).
-            if (species_on_) {
-                auto& tr = state_->transport;
-                const double area = mesh_->tri_area[i];
-                sinkIntensiveRowsWithEvap(i, evap * dt_lazy * area);    // S4/S4b
-                // T7.1: the lazy tier hands its infiltration mass down the
-                // same way the active one does — a cell that only ever
-                // fires lazily would otherwise send the aquifer water with
-                // no species in it.
-                gwInfiltrationSeam(i, infil * dt_lazy * area);
-                if (state_->coupling_flux[i] < 0.0)
-                    sinkMassAtCellConc(i, -state_->coupling_flux[i] * dt_lazy *
-                                              area, tr.lost_coupling);
-                addRainMass(i, state_->rainfall[i] * dt_lazy * area);   // S2
-                addCouplingSourceMass(i, dt_lazy * area);                // S3
-            }
-            double v = state_->volume[i] + dt_lazy * src * mesh_->tri_area[i];
-            state_->volume[i] = (v > 0.0) ? v : 0.0;
-            inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i],
-                                   state_->head[i], state_->depth[i]);
-        }
-    }
-    t_last_sync_ = t;
 
     // 2. Seed: hysteretic depth threshold (entering cells need h_on, active
     //    cells stay until h_off), plus concentrated sources (held coupling)
@@ -906,6 +847,7 @@ void ExplicitInertialSolver::refreshDt0() {
                     opts_->cfl_number, edges_.cell_lchar[i], h,
                     mesh_->mannings_n[i], dw_slope_[i],
                     opts_->flux_dh_eps / std::max(edges_.cell_lchar[i], 1.0e-9));
+            dt /= (1 << tier_[i]);
             if (dt < local) local = dt;
         }
 #pragma omp critical
@@ -1217,14 +1159,6 @@ void ExplicitInertialSolver::bookFaceSpecies(int e, int a, int b, double dM,
     // conservation argument.
     if (species_on_ && dM != 0.0) {
         const int   donor = (dM > 0.0) ? a : b;
-        // S7 (D-A22): the cells' NET runoff — the volume leaves the donor
-        // and arrives at the receiver, at the face's own cadence, so a cell
-        // that only passes water through produces none.
-        if (!state_->transport.cell_runoff_vol.empty()) {
-            auto& rv = state_->transport.cell_runoff_vol;
-            rv[static_cast<std::size_t>(donor)] += std::fabs(dM);
-            rv[static_cast<std::size_t>((dM > 0.0) ? b : a)] -= std::fabs(dM);
-        }
         const auto  ns    = static_cast<std::size_t>(
             state_->transport.n_species);
         const auto  ue    = static_cast<std::size_t>(e);
@@ -1338,7 +1272,8 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
     const bool   front   = front_rebuild_;
     const double dry     = opts_->dry_depth;
 
-#pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
+    int front_breached = 0;
+#pragma omp parallel for schedule(static) num_threads(opts_->num_threads) reduction(|:front_breached)
     for (int k = 0; k < nc; ++k) {
         const int i = cells[static_cast<std::size_t>(k)];
         // ONE walk of this cell's CSR row: gather + clear its side of every
@@ -1373,136 +1308,31 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
                 sy += f * ed.cell_arm_y[p];
             }
         }
-        const double infil =
-            infilSink(state_->infil_rate[i], state_->depth[i], dry);
-        state_->infil_applied[i] += infil * dt_c;
-        if (state_->coupling_flux[i] != 0.0)
-            state_->coupling_applied[i] +=
-                state_->coupling_flux[i] * dt_c * mesh_->tri_area[i];
-        const double evap =
-            evapSink(state_->evap_rate[i], state_->depth[i], dry);
-        // G1 step 11b. With a `[2D_AQUIFER]` present, infiltration is not
-        // LOST — it is booked to the cell's aquifer column, and saturation
-        // excess (Dunne and top-layer rejection) comes back the other way.
-        // Both directions are per-cell slots, so this stays race-free inside
-        // the parallel cell loop; the LIST bookkeeping is compacted serially
-        // at the rebuild.
-        double gw_return = 0.0;
-        if (gw_) {
-            const double A = mesh_->tri_area[i];
-            const double infil_m3 = infil * dt_c * A;
-            if (infil > 0.0)
-                gw_->bookInfiltrationFromSurface(i, infil_m3);
-            const double back = gw_->takeToSurface(i);   // m³
-            if (back != 0.0) gw_return = back / (A * dt_c);
-            // …and the saturation excess brings its own mass back up.
-            if (species && gw_->transport().active()) {
-                auto& tr = state_->transport;
-                const int ns = std::min(tr.n_species, gw_->transport().n_species);
-                for (int s = 0; s < ns; ++s) {
-                    const double dm = gw_->takeToSurfaceMass(i, s);
-                    if (dm == 0.0) continue;
-                    tr.cell_mass[tr.idx(s, i)] += dm;
-                    if (static_cast<std::size_t>(s) < tr.gained_exfiltration.size())
-                        tr.gained_exfiltration[static_cast<std::size_t>(s)] += dm;
-                }
-            }
-        }
-        const double src = state_->rainfall[i] + state_->coupling_flux[i] +
-                           gw_return - evap - infil;
-
-        // S1 species. ORDER MATTERS and is the same as the faces': sinks
-        // read this cell's concentration against its PUBLISHED volume
-        // (before the update below), then the face gather lands, then the
-        // volume moves. Infiltration and a negative (2D→1D) held coupling
-        // flux leave at the cell's concentration; rainfall and a positive
-        // coupling flux arrive at ZERO concentration in S1 (S2/S3 own their
-        // concentrations); evaporation removes no mass at all, so the
-        // concentration rises — the up-concentration the plan's §2.3 wants
-        // right from the start.
         if (species) {
             auto& tr = state_->transport;
-            const double area = mesh_->tri_area[i];
-            sinkIntensiveRowsWithEvap(i, evap * dt_c * area);            // S4/S4b
-            // T7.1: hand the aquifer EXACTLY the mass this sink removed —
-            // the ledger delta, not a second evaluation of `dv × c`. The
-            // sink clamps, it runs after the saturation excess above has
-            // already raised this cell's concentration, and it is the one
-            // place that knows what actually left; recomputing the product
-            // beside it was off by 3 % on the first cut, which is precisely
-            // the kind of seam that leaks water years later.
-            gwInfiltrationSeam(i, infil * dt_c * area);
-            if (state_->coupling_flux[i] < 0.0)
-                sinkMassAtCellConc(i, -state_->coupling_flux[i] * dt_c * area,
-                                   tr.lost_coupling);
-            // S2: rainfall arrives at the [POLLUTANTS] rain concentration.
-            // Volume × concentration, booked to the gained ledger so the
-            // continuity statement (S1 total − sources) still closes.
-            const double rain_m3 = state_->rainfall[i] * dt_c * area;
-            const auto ns  = static_cast<std::size_t>(tr.n_species);
             const auto nef = static_cast<std::size_t>(ed.ne);
-            // S7 (D-A22): as addCouplingSourceMass — inflow, not runoff.
-            if (!tr.cell_runoff_vol.empty() && state_->coupling_flux[i] > 0.0)
-                tr.cell_runoff_vol[i] -= state_->coupling_flux[i] * dt_c * area;
-            for (std::size_t s = 0; s < ns; ++s) {
+            if (!tr.cell_runoff_vol.empty()) tr.cell_runoff_vol[i] -= flux_m3;
+            for (int r = 0; r < tr.n_species; ++r) {
                 double dm = 0.0;
-                if (rain_m3 > 0.0 && s < tr.rain_conc.size() &&
-                    tr.rain_conc[s] != 0.0) {
-                    const double gained = rain_m3 * tr.rain_conc[s];
-                    dm += gained;
-                    tr.gained_rainfall[s] += gained;
-                }
-                // S3: outfall discharge (positive coupling_flux) carries the
-                // outfall's concentration as a mass-rate density.
-                if (!tr.coupling_src.empty() && state_->coupling_flux[i] > 0.0) {
-                    const double g = tr.coupling_src[tr.idx(static_cast<int>(s), i)] *
-                                     dt_c * area;
-                    if (g != 0.0) { dm += g; tr.gained_coupling[s] += g; }
-                }
                 for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
                     const auto e = static_cast<std::size_t>(ed.cell_edge[p]);
-                    if (ed.cell_sign[p] > 0) {
-                        dm += sacc_L_[s * nef + e];
-                        sacc_L_[s * nef + e] = 0.0;
-                    } else {
-                        dm += sacc_R_[s * nef + e];
-                        sacc_R_[s * nef + e] = 0.0;
-                    }
+                    double& acc = ed.cell_sign[p] > 0
+                        ? sacc_L_[r * nef + e] : sacc_R_[r * nef + e];
+                    dm += acc; acc = 0.0;
                 }
-                double& m = tr.cell_mass[tr.idx(static_cast<int>(s), i)];
-                m += dm;
-                // The same backstop the volume has, for the same reason: the
-                // face caps make a deficit ~impossible, and a −1 ulp of mass
-                // must not become a negative concentration in a report.
-                // Nonnegative rows only — the SIGNED temperature row holds
-                // °C·m³ below zero as a state, not an artefact.
-                if (m < 0.0 && !tr.signedRow(static_cast<int>(s))) m = 0.0;
+                double& mass = tr.cell_mass[tr.idx(r, i)];
+                mass += dm;
+                if (!tr.signedRow(r) && mass < 0.0) mass = 0.0;
             }
         }
-
-        double v = state_->volume[i] + flux_m3 +
-                   dt_c * src * mesh_->tri_area[i];
-#ifndef NDEBUG
-        if (v < -1.0e-12) {
-            static thread_local bool warned = false;
-            if (!warned && std::getenv("OPENSWMM_2D_MARCHER_CHECK")) {
-                std::fprintf(stderr,
-                             "[marcher-check] cell %d tier %d clamped v=%.6e "
-                             "(V=%.6e flux=%.6e)\n",
-                             i, static_cast<int>(tier_[i]), v,
-                             state_->volume[i], flux_m3);
-                warned = true;
-            }
-        }
-#endif
-        state_->volume[i] = (v > 0.0) ? v : 0.0;   // backstop; the face caps
-                                                   // make deficits ~impossible
+        state_->volume[i] = std::max(0.0, state_->volume[i] + flux_m3);
+        applyCellSources(i, dt_c);
         inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i],
                                state_->head[i], state_->depth[i]);
         // FRONT_REBUILD: the wetting front reached the halo's outer ring.
-        if (front && !front_breach_ && frontier_[i] &&
+        if (front && frontier_[i] &&
             state_->depth[i] >= h_on_front_)
-            front_breach_ = true;   // benign race: any writer sets true
+            front_breached = 1;
         // Refresh this cell's Perot discharge vector at its own cadence.
         if (perot) {
             const double inv_a = 1.0 / mesh_->tri_area[i];
@@ -1557,6 +1387,9 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
             }
         }
     }
+
+    front_breach_ = front_breach_ || front_breached;
+    flushSourceLedgers();
 
     // Boundary edges owned by cells of this firing (serial: perimeter-sized).
     const bool vfr_face_bc =
@@ -1842,6 +1675,7 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
     // Head-ramp clock: tier-0 fires once per finest substep, so dt_c here is
     // exactly the wall the batch has advanced since the last exchange pass.
     if (tier0) exch_tau_ += dt_c;
+    flushSourceLedgers();
 }
 
 
@@ -1874,6 +1708,13 @@ void ExplicitInertialSolver::computeLimitedGradientsSwe() {
             const double hj = state_->depth[j];
             if (hj <= dry || !cell_active_[j]) { ok = false; break; }
             const double ej = state_->head[j], uj = qcx_[j] / hj, vj = qcy_[j] / hj;
+            // A positive cell volume can still be separated from its wet
+            // neighbour by a dry sill. Such a face needs the same first-
+            // order fallback as a dry neighbour. Extrapolating a surface
+            // gradient into a trapped film otherwise applies unbalanced
+            // pressure with zero mass flux and accelerates it indefinitely.
+            const double sill = std::max(ei - hi, ej - hj);
+            if (ei - sill <= dry || ej - sill <= dry) { ok = false; break; }
             const double sgn = static_cast<double>(ed.cell_sign[p]);   // outward normal sign
             const double nx = sgn * ed.nx[e] * ed.xi[e], ny = sgn * ed.ny[e] * ed.xi[e];
             const double w[3] = {0.5 * (ei + ej), 0.5 * (ui + uj), 0.5 * (vi + vj)};
@@ -1929,6 +1770,7 @@ void ExplicitInertialSolver::runRk2Step(double dt) {
     rk_bc0_ = bc_accum_; rk_ex0_ = exch_; rk_inf0_ = state_->infil_applied;
     rk_cpl0_ = state_->coupling_applied;
     rk_drawn0_ = node_drawn_;
+    const double evap0 = state_->evap_loss_total;
     for (int stage = 0; stage < 2; ++stage) {
         fireFaces(active_faces_, dt, /*global_step=*/true);
         fireCells(active_cells_, dt, /*tier0=*/true);
@@ -1962,6 +1804,7 @@ void ExplicitInertialSolver::runRk2Step(double dt) {
         exch_[k] = rk_ex0_[k] + 0.5 * (exch_[k] - rk_ex0_[k]);
     for (std::size_t k = 0; k < node_drawn_.size(); ++k)
         node_drawn_[k] = rk_drawn0_[k] + 0.5 * (node_drawn_[k] - rk_drawn0_[k]);
+    state_->evap_loss_total = evap0 + 0.5 * (state_->evap_loss_total - evap0);
     accumulators_pending_ = false;
     substeps_run_ += 2;
     last_steps_   += 2;
@@ -2135,8 +1978,9 @@ void ExplicitInertialSolver::runMacroCycle(double dt0, int nsub, double time) {
 
     for (int s = 0; s < nsub; ++s) {
         const double inv0 = dbg_invariant ? invariant() : 0.0;
-        // Fire every tier due at this base substep: faces first (they read the
-        // incident cells' published surfaces), then the due cells.
+        // Faces integrate at the start of their interval; cells publish at
+        // its end, after every incident face has covered that interval.
+        // Thus a complete macro-cycle leaves no unconsumed surface flux.
         for (int k = 0; k < K; ++k) {
             if (s % (1 << k)) continue;
             if (!edges_by_tier_[k].empty())
@@ -2155,13 +1999,13 @@ void ExplicitInertialSolver::runMacroCycle(double dt0, int nsub, double time) {
                              "s=%d d=%.6e\n", s, inv1 - inv0);
         }
         for (int k = 0; k < K; ++k) {
-            if (s % (1 << k)) continue;
+            if ((s + 1) % (1 << k)) continue;
             if (!cells_by_tier_[k].empty() || k == 0)
                 fireCells(cells_by_tier_[k], (1 << k) * dt0, k == 0);
             // The GW cells of this rung fire AFTER the surface cells of the
             // same rung, so a cell that infiltrated in this substep hands the
             // water down within the substep rather than a rung later.
-            if (gw_) gw_->fireGwCells(k, (1 << k) * dt0, *state_, time + s * dt0);
+            if (gw_) gw_->fireGwCells(k, (1 << k) * dt0, *state_, time + (s + 1 - (1 << k)) * dt0);
         }
         // Node exchange is sampled at tier-0 cadence against the batch-frozen
         // 1D heads, exactly like the surface's junction exchange, and booked
@@ -2302,6 +2146,7 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
     }
 
     cycles_since_rebuild_ = cycles_since_rebuild;
+    settleAccumulators();
     // Final lazy-source landing: cheap when nothing is pending — the full
     // rebuild only runs on its own cadence.
     if (t_target > t_last_sync_) {
@@ -2384,6 +2229,7 @@ void ExplicitInertialSolver::resyncFromVolumes(double /*t0*/) {
 }
 
 void ExplicitInertialSolver::finalize() {
+    if (initialized_) { settleAccumulators(); flushSourceLedgers(); }
     if (!telemetry_path_.empty() && !telemetry_.empty()) {
         if (std::FILE* f = openswmm::io::fopen_utf8(telemetry_path_, "w")) {
             std::fprintf(f, "t_s,active_cells,active_frac\n");
