@@ -109,6 +109,7 @@
 #include "../hydrology/Climate.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -1137,6 +1138,16 @@ struct SimulationContext {
         double routing_seep_loss     = 0.0;
         double routing_init_storage  = 0.0;
         double routing_final_storage = 0.0;
+
+        /// The eleven routing flow terms above (dry weather, wet weather,
+        /// groundwater, conduit GW, RDII, external, flooding, coupling out,
+        /// outflow, evaporation, seepage — in that order) accumulated as
+        /// legacy massbal_updateRoutingTotals does, for the printed Flow
+        /// Routing Continuity block only: each step's rate over half the step
+        /// at its start (the previous rate) and at its end. This lags the
+        /// exact ledger by half of the last step; the ledger above stays
+        /// exact so the cross-domain closure checks hold.
+        std::array<double, 11> routing_report{};
 
         // User-forced volumes (diagnostic — subset of routing_external)
         double routing_forcing_inflow = 0.0; ///< Cumulative user-forced lateral inflow (ft3)

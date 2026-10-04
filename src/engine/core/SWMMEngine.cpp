@@ -1618,6 +1618,19 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         // zero. updateRoutingMassBalance re-derives step_outflow from node
         // state, so running it on a skipped step republished the last routed
         // step's outflow for the rest of the window.
+        // legacy massbal_updateRoutingTotals adds StepFlowTotals * dt/2 at the
+        // start of each routing step (the PREVIOUS step's rates) and again at
+        // its end (this step's; zero between events, where the step totals
+        // stay as massbal_initTimeStepTotals left them). updateRoutingMassBalance
+        // books rate * dt for this step exactly; the report copy re-splits it.
+        auto& mbr = ctx_.mass_balance;
+        double* const routing_terms[11] = {
+            &mbr.routing_dry_weather, &mbr.routing_wet_weather, &mbr.routing_gw_inflow,
+            &mbr.routing_link_gw_inflow, &mbr.routing_rdii, &mbr.routing_external,
+            &mbr.routing_flooding, &mbr.routing_coupling_out, &mbr.routing_outflow,
+            &mbr.routing_evap_loss, &mbr.routing_seep_loss };
+        double routing_before[11];
+        for (int k = 0; k < 11; ++k) routing_before[k] = *routing_terms[k];
         if (!between_events_) {
             // legacy stats_updateTimeStepStats, inside the same branch as
             // stats_updateFlowStats and only for a network with links.
@@ -1626,6 +1639,15 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
                                                ctx_.elapsed_ms <= 0.0);
             updateStatistics(dt_next);
             updateRoutingMassBalance(dt_next);
+        }
+        const double half = dt_next / 2.0;
+        for (int k = 0; k < 11; ++k) {
+            const double rate = (dt_next > 0.0)
+                ? (*routing_terms[k] - routing_before[k]) / dt_next : 0.0;
+            double& t = mbr.routing_report[static_cast<std::size_t>(k)];
+            t += routing_prev_rates_[static_cast<std::size_t>(k)] * half;
+            t += rate * half;
+            routing_prev_rates_[static_cast<std::size_t>(k)] = rate;
         }
         accumulateNodeRoutingTotals(dt_next / 2.0);   // routing.c:271
     }
