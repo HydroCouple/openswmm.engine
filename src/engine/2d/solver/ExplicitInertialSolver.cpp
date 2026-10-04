@@ -387,7 +387,23 @@ void ExplicitInertialSolver::flushSourceLedgers() {
     }
 }
 
-bool ExplicitInertialSolver::applyCellSources(int i, double dt) {
+// Compute one source budget after face volume lands; publish final_volume
+// only after every species row has consumed that same budget.
+struct ExplicitInertialSolver::CellSourceStep {
+    double area_dt, rain, coupling, available, infil, evap, out, final_volume;
+    double* ledger;
+};
+
+// These shared helpers also run inside the fused per-row loop. Avoid adding
+// a function call per species when the surrounding OpenMP kernel is large.
+#if defined(_MSC_VER)
+#define OPENSWMM_SOURCE_INLINE __forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+#define OPENSWMM_SOURCE_INLINE inline __attribute__((always_inline))
+#else
+#define OPENSWMM_SOURCE_INLINE inline
+#endif
+OPENSWMM_SOURCE_INLINE bool ExplicitInertialSolver::prepareCellSources(int i, double dt, CellSourceStep& source) {
     const double area = mesh_->tri_area[i];
     const double area_dt = area * dt;
     const double rain = std::max(0.0, state_->rainfall[i]) * area_dt;
@@ -416,52 +432,63 @@ bool ExplicitInertialSolver::applyCellSources(int i, double dt) {
     double* const local_ledger = source_ledgers_.data() +
         static_cast<std::size_t>(sourceThread()) * source_ledger_stride_;
     local_ledger[static_cast<std::size_t>(SourceLedger::Count) * ns] += evap;
-    // The cell keeps its worker throughout this loop. Resolve its private
-    // ledger slice once instead of querying OpenMP for every species term.
-    const auto book = [local_ledger, ns](SourceLedger kind, int row, double mass) {
-        local_ledger[static_cast<std::size_t>(kind) * ns + row] += mass;
-    };
     if (gw_ && infil > 0.0) gw_->bookInfiltrationFromSurface(i, infil);
 
-    if (species_on_) {
-        auto& tr = state_->transport;
-        if (!tr.cell_runoff_vol.empty())
-            tr.cell_runoff_vol[i] += out - std::max(coupling, 0.0);
-        for (int r = 0; r < tr.n_species; ++r) {
-            double& mass = tr.cell_mass[tr.idx(r, i)];
-            if (gw_ && gw_->transport().active() && r < gw_->transport().n_species) {
-                const double dm = gw_->takeToSurfaceMass(i, r);
-                mass += dm;
-                book(SourceLedger::Exfiltration, r, dm);
-            }
-            const double rain_mass = static_cast<std::size_t>(r) < tr.rain_conc.size()
-                ? rain * tr.rain_conc[r] : 0.0;
-            const double coupling_mass = coupling > 0.0 && !tr.coupling_src.empty()
-                ? tr.coupling_src[tr.idx(r, i)] * area_dt : 0.0;
-            mass += rain_mass + coupling_mass;
-            book(SourceLedger::Rainfall, r, rain_mass);
-            book(SourceLedger::CouplingIn, r, coupling_mass);
-            // All sinks see the same mixed concentration. Passing cell-local
-            // transfers directly to groundwater avoids shared-ledger deltas.
-            const double concentration = available > 0.0 ? mass / available : 0.0;
-            const double mi = concentration * infil;
-            const double mc = concentration * out;
-            const bool intensive = r == tr.age_row || r == tr.temp_row;
-            const double me = intensive ? concentration * evap : 0.0;
-            mass -= mi + mc + me;
-            if (!tr.signedRow(r) && mass < 0.0) mass = 0.0;
-            book(SourceLedger::Infiltration, r, mi);
-            book(SourceLedger::CouplingOut, r, mc);
-            if (gw_ && gw_->transport().active() && r < gw_->transport().n_species)
-                gw_->bookInfiltrationMass(i, r, mi);
-        }
-    }
-    // A fully exhausted budget must be exactly dry. A rounding-sized film
-    // would let the next sink dissolve all evaporative solute residue at
-    // an unbounded concentration.
-    state_->volume[i] = requested >= available ? 0.0 : available - requested;
+
+    if (species_on_ && !state_->transport.cell_runoff_vol.empty())
+        state_->transport.cell_runoff_vol[i] += out - std::max(coupling, 0.0);
+    source = {area_dt, rain, coupling, available, infil, evap, out,
+        requested >= available ? 0.0 : available - requested, local_ledger};
     return true;
 }
+
+OPENSWMM_SOURCE_INLINE void ExplicitInertialSolver::applyCellSourceRow(
+    int i, int r, double& mass, const CellSourceStep& source) {
+    auto& tr = state_->transport;
+    const auto ns = static_cast<std::size_t>(tr.n_species);
+    const auto book = [&source, ns](SourceLedger kind, int row, double amount) {
+        source.ledger[static_cast<std::size_t>(kind) * ns + row] += amount;
+    };
+    if (gw_ && gw_->transport().active() && r < gw_->transport().n_species) {
+        const double dm = gw_->takeToSurfaceMass(i, r);
+        mass += dm;
+        book(SourceLedger::Exfiltration, r, dm);
+    }
+    const double rain_mass = static_cast<std::size_t>(r) < tr.rain_conc.size()
+        ? source.rain * tr.rain_conc[r] : 0.0;
+    const double coupling_mass = source.coupling > 0.0 && !tr.coupling_src.empty()
+        ? tr.coupling_src[tr.idx(r, i)] * source.area_dt : 0.0;
+    mass += rain_mass + coupling_mass;
+    book(SourceLedger::Rainfall, r, rain_mass);
+    book(SourceLedger::CouplingIn, r, coupling_mass);
+    // All sinks see the same mixed concentration. Passing cell-local
+    // transfers directly to groundwater avoids shared-ledger deltas.
+    const double concentration = source.available > 0.0 ? mass / source.available : 0.0;
+    const double mi = concentration * source.infil;
+    const double mc = concentration * source.out;
+    const bool intensive = r == tr.age_row || r == tr.temp_row;
+    const double me = intensive ? concentration * source.evap : 0.0;
+    mass -= mi + mc + me;
+    if (!tr.signedRow(r) && mass < 0.0) mass = 0.0;
+    book(SourceLedger::Infiltration, r, mi);
+    book(SourceLedger::CouplingOut, r, mc);
+    if (gw_ && gw_->transport().active() && r < gw_->transport().n_species)
+        gw_->bookInfiltrationMass(i, r, mi);
+}
+
+bool ExplicitInertialSolver::applyCellSources(int i, double dt) {
+    CellSourceStep source;
+    if (!prepareCellSources(i, dt, source)) return false;
+    if (species_on_) {
+        auto& tr = state_->transport;
+        for (int r = 0; r < tr.n_species; ++r)
+            applyCellSourceRow(i, r, tr.cell_mass[tr.idx(r, i)], source);
+    }
+    state_->volume[i] = source.final_volume;
+    return true;
+}
+
+#undef OPENSWMM_SOURCE_INLINE
 
 void ExplicitInertialSolver::reconstructAll() {
     const int nt = mesh_->n_triangles();
@@ -1299,11 +1326,18 @@ void ExplicitInertialSolver::bookFaceSpecies(int e, int a, int b, double dM,
 // the pre-FULL_SWE kernel again). Dispatch is one branch per firing.
 void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
                                        double dt_c, bool tier0) {
-    if (mode_ == Momentum2D::FULL_SWE) fireCellsImpl<true>(cells, dt_c, tier0);
-    else                               fireCellsImpl<false>(cells, dt_c, tier0);
+    // Fuse only when at least one full species block amortizes the setup.
+    const bool fuse = state_->transport.n_species >= 8;
+    if (mode_ == Momentum2D::FULL_SWE) {
+        if (fuse) fireCellsImpl<true, true>(cells, dt_c, tier0);
+        else      fireCellsImpl<true, false>(cells, dt_c, tier0);
+    } else {
+        if (fuse) fireCellsImpl<false, true>(cells, dt_c, tier0);
+        else      fireCellsImpl<false, false>(cells, dt_c, tier0);
+    }
 }
 
-template <bool kSwe>
+template <bool kSwe, bool kFuse>
 void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
                                            double dt_c, bool tier0) {
     const auto& ed = edges_;
@@ -1353,10 +1387,20 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
                 sy += f * ed.cell_arm_y[p];
             }
         }
+        CellSourceStep source;
+        bool has_sources = false;
+        if constexpr (kFuse) {
+            state_->volume[i] = std::max(0.0, state_->volume[i] + flux_m3);
+            if (!state_->transport.cell_runoff_vol.empty())
+                state_->transport.cell_runoff_vol[i] -= flux_m3;
+            has_sources = prepareCellSources(i, dt_c, source);
+        }
         if (species) {
             auto& tr = state_->transport;
             const auto ns = static_cast<std::size_t>(tr.n_species);
-            if (!tr.cell_runoff_vol.empty()) tr.cell_runoff_vol[i] -= flux_m3;
+            if constexpr (!kFuse) {
+                if (!tr.cell_runoff_vol.empty()) tr.cell_runoff_vol[i] -= flux_m3;
+            }
             // Adjacent species share an edge accumulator cache line. Gather
             // a bounded block in one CSR walk, preserving each row's edge order.
             constexpr int block_size = 8;
@@ -1377,11 +1421,18 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
                     double& mass = tr.cell_mass[tr.idx(row, i)];
                     mass += dm[r];
                     if (!tr.signedRow(row) && mass < 0.0) mass = 0.0;
+                    if constexpr (kFuse) {
+                        if (has_sources) applyCellSourceRow(i, row, mass, source);
+                    }
                 }
             }
         }
-        state_->volume[i] = std::max(0.0, state_->volume[i] + flux_m3);
-        applyCellSources(i, dt_c);
+        if constexpr (kFuse) {
+            if (has_sources) state_->volume[i] = source.final_volume;
+        } else {
+            state_->volume[i] = std::max(0.0, state_->volume[i] + flux_m3);
+            applyCellSources(i, dt_c);
+        }
         inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i],
                                state_->head[i], state_->depth[i]);
         // FRONT_REBUILD: the wetting front reached the halo's outer ring.

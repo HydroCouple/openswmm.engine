@@ -113,7 +113,7 @@ private:
     // the live junction exchange), which fires once per finest substep.
     void fireCells(const std::vector<int>& cells, double dt_c, bool tier0);
     /// Closure-specialised body of fireCells (kSwe = FULL_SWE momentum update).
-    template <bool kSwe>
+    template <bool kSwe, bool kFuse>
     void fireCellsImpl(const std::vector<int>& cells, double dt_c, bool tier0);
     // One halving-order macro cycle of nsub base substeps: tier k fires every
     // 2^k substeps.
@@ -255,6 +255,10 @@ private:
     // constituent transfers are evaluated even when net water change is zero.
     // Returns false only when no source bookkeeping or volume change occurred.
     bool applyCellSources(int cell, double dt);
+    struct CellSourceStep;
+    bool prepareCellSources(int cell, double dt, CellSourceStep& source);
+    void applyCellSourceRow(int cell, int row, double& mass,
+                            const CellSourceStep& source);
     enum class SourceLedger { Infiltration, CouplingOut, Rainfall,
                               CouplingIn, Exfiltration, Boundary, Count };
     void bookSourceLedger(SourceLedger ledger, int species, double mass) noexcept;

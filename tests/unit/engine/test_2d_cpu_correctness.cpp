@@ -272,3 +272,79 @@ TEST(Cpu2DCorrectness,ManySpeciesKeepIndependentBudgetsOnMixedWetDryMesh) {
         }
     }
 }
+
+TEST(Cpu2DCorrectness,ManySpeciesTransfersConserveSurfaceAndGroundwaterMass) {
+    for (int ns : {1, 9, 17}) for (int threads : {1, 4}) for (bool quad : {false, true}) {
+        SCOPED_TRACE(::testing::Message() << "species=" << ns << " threads=" << threads << " quad=" << quad);
+        auto m = grid(8, quad); auto s = state(m, .1); auto o = options(threads, 4);
+        InertialEdges ed; ed.build(m);
+        SubsurfaceSolver gw; SubsurfaceConfig cfg; GwAquiferRow aquifer;
+        aquifer.hg0 = .5; aquifer.Ks = 1e-6; cfg.rows.push_back(aquifer);
+        std::vector<std::string> warnings;
+        ASSERT_TRUE(gw.initialize(m, ed, o, GwUnitFactors{}, 0, cfg, warnings).empty());
+        RowLayoutLite layout; layout.n_species = layout.n_pollut = ns;
+        for (int r = 0; r < ns; ++r) layout.names.push_back("Tracer" + std::to_string(r));
+        gw.initTransport(layout, nullptr, {}, warnings);
+        s.transport.resize(ns, m.n_cells(), 0); std::vector<double> initial(ns, 0.0);
+        for (int i = 0; i < m.n_cells(); ++i) {
+            s.infil_rate[i] = .001;
+            for (int r = 0; r < ns; ++r) {
+                const double mass = (1 + r + i % 5) * s.volume[i];
+                s.transport.cell_mass[s.transport.idx(r, i)] = mass; initial[r] += mass;
+            }
+        }
+        ExplicitInertialSolver solver; solver.setSubsurface(&gw); solver.initialize(m, s, o);
+        for (int t = 0; t < 4; ++t) {
+            solver.advance(t, t + 1);
+            for (int r = 0; r < ns; ++r) {
+                double surface = 0;
+                for (int i = 0; i < m.n_cells(); ++i) surface += s.transport.cell_mass[s.transport.idx(r, i)];
+                EXPECT_NEAR(surface + gw.transport().storage(r), initial[r], 1e-8);
+                EXPECT_NEAR(s.transport.lost_infiltration[r], gw.transport().storage(r), 1e-8);
+            }
+        }
+    }
+}
+
+TEST(Cpu2DCorrectness,SpeciesBudgetsSurviveChangingRainCouplingAndEvaporation) {
+    for (int ns : {3, 9, 17}) for (int threads : {1, 4}) for (int mode : {0, 1, 2}) {
+        SCOPED_TRACE(::testing::Message() << "species=" << ns << " threads=" << threads << " mode=" << mode);
+        auto m = grid(8); auto s = state(m, .05); auto o = options(threads, 4);
+        o.momentum = static_cast<Momentum2D>(mode);
+        auto& tr = s.transport; tr.resize(ns, m.n_cells(), 0);
+        tr.age_row = ns - 2; tr.temp_row = ns - 1;
+        tr.rain_conc.resize(ns); tr.coupling_src.assign(ns * m.n_cells(), 0.0);
+        for (int r = 0; r < ns; ++r) tr.rain_conc[r] = r == tr.temp_row ? -4.0 : r + 1.0;
+        for (int i = 0; i < m.n_cells(); ++i) for (int r = 0; r < ns; ++r)
+            tr.cell_mass[tr.idx(r, i)] = tr.rain_conc[r] * s.volume[i];
+        const double initial_volume = sum(s.volume); double rain_volume = 0;
+        ExplicitInertialSolver solver; solver.initialize(m, s, o);
+        for (int t = 0; t < 8; ++t) {
+            const int phase = t % 4;
+            for (int i = 0; i < m.n_cells(); ++i) {
+                s.rainfall[i] = (phase == 0 || phase == 2) ? .004 : 0;
+                s.infil_rate[i] = .001;
+                s.evap_rate[i] = phase == 3 ? .002 : 0;
+                s.coupling_flux[i] = phase == 1 ? (m.tri_cx[i] < 4 ? .002 : -.002) : 0;
+                rain_volume += s.rainfall[i] * m.tri_area[i];
+                for (int r = 0; r < ns; ++r)
+                    tr.coupling_src[tr.idx(r, i)] = std::max(0.0, s.coupling_flux[i]) * tr.rain_conc[r];
+            }
+            solver.advance(t, t + 1);
+            EXPECT_NEAR(sum(s.volume) + infiltration(m, s) + s.evap_loss_total - sum(s.coupling_applied),
+                        initial_volume + rain_volume, 1e-9);
+            for (int r = 0; r < ns; ++r) {
+                double mass = 0;
+                for (int i = 0; i < m.n_cells(); ++i) {
+                    const double mi = tr.cell_mass[tr.idx(r, i)]; mass += mi;
+                    if (r == tr.age_row || r == tr.temp_row)
+                        EXPECT_NEAR(mi, tr.rain_conc[r] * s.volume[i], 1e-9);
+                }
+                if (r != tr.age_row && r != tr.temp_row)
+                    EXPECT_NEAR(mass + tr.lost_infiltration[r] + tr.lost_coupling[r]
+                        - tr.gained_rainfall[r] - tr.gained_coupling[r],
+                        tr.rain_conc[r] * initial_volume, 1e-8);
+            }
+        }
+    }
+}
