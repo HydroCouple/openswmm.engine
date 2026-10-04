@@ -413,8 +413,14 @@ void ExplicitInertialSolver::applyCellSources(int i, double dt) {
     state_->infil_applied[i] += infil / area;
     state_->coupling_applied[i] += std::max(coupling, 0.0) - out;
     const auto ns = static_cast<std::size_t>(state_->transport.n_species);
-    source_ledgers_[static_cast<std::size_t>(sourceThread()) * source_ledger_stride_ +
-                    static_cast<std::size_t>(SourceLedger::Count) * ns] += evap;
+    double* const local_ledger = source_ledgers_.data() +
+        static_cast<std::size_t>(sourceThread()) * source_ledger_stride_;
+    local_ledger[static_cast<std::size_t>(SourceLedger::Count) * ns] += evap;
+    // The cell keeps its worker throughout this loop. Resolve its private
+    // ledger slice once instead of querying OpenMP for every species term.
+    const auto book = [local_ledger, ns](SourceLedger kind, int row, double mass) {
+        local_ledger[static_cast<std::size_t>(kind) * ns + row] += mass;
+    };
     if (gw_ && infil > 0.0) gw_->bookInfiltrationFromSurface(i, infil);
 
     if (species_on_) {
@@ -426,15 +432,15 @@ void ExplicitInertialSolver::applyCellSources(int i, double dt) {
             if (gw_ && gw_->transport().active() && r < gw_->transport().n_species) {
                 const double dm = gw_->takeToSurfaceMass(i, r);
                 mass += dm;
-                bookSourceLedger(SourceLedger::Exfiltration, r, dm);
+                book(SourceLedger::Exfiltration, r, dm);
             }
             const double rain_mass = static_cast<std::size_t>(r) < tr.rain_conc.size()
                 ? rain * tr.rain_conc[r] : 0.0;
             const double coupling_mass = coupling > 0.0 && !tr.coupling_src.empty()
                 ? tr.coupling_src[tr.idx(r, i)] * area_dt : 0.0;
             mass += rain_mass + coupling_mass;
-            bookSourceLedger(SourceLedger::Rainfall, r, rain_mass);
-            bookSourceLedger(SourceLedger::CouplingIn, r, coupling_mass);
+            book(SourceLedger::Rainfall, r, rain_mass);
+            book(SourceLedger::CouplingIn, r, coupling_mass);
             // All sinks see the same mixed concentration. Passing cell-local
             // transfers directly to groundwater avoids shared-ledger deltas.
             const double concentration = available > 0.0 ? mass / available : 0.0;
@@ -444,8 +450,8 @@ void ExplicitInertialSolver::applyCellSources(int i, double dt) {
             const double me = intensive ? concentration * evap : 0.0;
             mass -= mi + mc + me;
             if (!tr.signedRow(r) && mass < 0.0) mass = 0.0;
-            bookSourceLedger(SourceLedger::Infiltration, r, mi);
-            bookSourceLedger(SourceLedger::CouplingOut, r, mc);
+            book(SourceLedger::Infiltration, r, mi);
+            book(SourceLedger::CouplingOut, r, mc);
             if (gw_ && gw_->transport().active() && r < gw_->transport().n_species)
                 gw_->bookInfiltrationMass(i, r, mi);
         }
@@ -947,8 +953,12 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces,
                                                   ed.inv_dx_normal[e]);
             }
         }
-        double qn1 = inertial::inertialFaceUpdate(q_[e], qhat, hf, dt_f, slope,
-                                                 ed.n2_face[e], q_mag, adv);
+        // CPU shortcut: the positive friction denominator cannot change an
+        // exactly zero momentum numerator. Preserve its sign as well.
+        double qn1 = qhat - dt_f * (inertial::kGravity * hf * slope + adv);
+        if (qn1 != 0.0)
+            qn1 = inertial::inertialFaceUpdate(q_[e], qhat, hf, dt_f, slope,
+                                              ed.n2_face[e], q_mag, adv);
         qn1 = inertial::froudeCap(qn1, hf, opts_->froude_max);
 
         // Positivity at face cadence: this face may take at most a β/3 share
