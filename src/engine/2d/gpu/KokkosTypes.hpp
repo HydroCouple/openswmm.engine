@@ -21,7 +21,7 @@
  * @details One backend per plugin build, selected at compile time by the
  *          OPENSWMM_GPU_EXECSPACE_* define the plugin CMake sets:
  *
- *            omp  → Kokkos::OpenMP   (host-parallel; view copies are no-ops)
+ *            omp  → Kokkos::OpenMP   (host-parallel; separate host buffers)
  *            cuda → Kokkos::Cuda     (NVIDIA)
  *            hip  → Kokkos::HIP      (AMD)
  *            sycl → Kokkos::SYCL     (Intel)
@@ -29,9 +29,9 @@
  *          HIP and SYCL are top-level Kokkos:: names as of Kokkos 4.x (the
  *          project pins 4.x via vcpkg-overlays/kokkos). All buffers live in
  *          ExecSpace's memory_space: under OpenMP that is host memory, so the
- *          host↔device deep_copies in the solver are no-ops; under a device
- *          backend they become real transfers, confined to co-advance batch
- *          boundaries.
+ *          host↔device deep_copies in the solver copy between separate host
+ *          buffers; they are not generally no-ops. Under a device backend
+ *          they cross memory spaces at co-advance batch boundaries.
  *
  * @ingroup engine_2d_gpu
  *
