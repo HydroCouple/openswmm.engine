@@ -922,7 +922,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // RDII Continuity — matches legacy report_writeRdiiError()
     // =====================================================================
-    if (has_rdii && opt.rpt_continuity) {
+    // legacy writes it from rdii_closeRdii, which never runs under
+    // IGNORE_RAINFALL (swmm5.c:735 skips rain_open) or IGNORE_RDII
+    if (has_rdii && opt.rpt_continuity && !opt.ignore_rainfall && !opt.ignore_rdii) {
         const auto& mb = ctx.mass_balance;
         double total_area_ft2 = 0.0;
         for (int i = 0; i < ctx.n_subcatches(); ++i)
@@ -1622,7 +1624,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // legacy report_writeNonconvergedStats: dynamic wave only; index <= 0
     // reads as converged there, reproduced.
-    if (ctx.n_nodes() > 0 && opt.routing_model == RoutingModel::DYNWAVE) {
+    // stats_report writes the accuracy tables only with links (stats.c:339)
+    if (ctx.n_nodes() > 0 && ctx.n_links() > 0 &&
+        opt.routing_model == RoutingModel::DYNWAVE) {
     WRITE(f, "*********************************");
     WRITE(f, "Most Frequent Nonconverging Nodes");
     WRITE(f, "*********************************");
@@ -2005,7 +2009,14 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Subcatchment Runoff Summary — matches legacy writeSubcatchRunoff()
     // =====================================================================
-    if (ctx.n_subcatches() > 0) {
+    // legacy statsrpt_writeReport writes the runoff tables (this one, LID
+    // performance, groundwater, washoff) only when rainfall, snowmelt or
+    // groundwater is analyzed (statsrpt.c:103-113).
+    const bool runoff_rpt = ctx.n_subcatches() > 0 &&
+        (!opt.ignore_rainfall ||
+         (ctx.snowpack_names.size() > 0 && !opt.ignore_snow_melt) ||
+         (ctx.aquifer_names.size() > 0 && !opt.ignore_groundwater));
+    if (runoff_rpt) {
         WRITE(f, "***************************");
         WRITE(f, "Subcatchment Runoff Summary");
         WRITE(f, "***************************");
@@ -2072,7 +2083,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // while the ledger row printed 16057× them (known-mass audit,
     // QUALITY_LEDGER_UNITS_AUDIT §7).
     // =====================================================================
-    if (ctx.n_subcatches() > 0 && ctx.n_pollutants() > 0
+    if (runoff_rpt && ctx.n_pollutants() > 0
         && !opt.ignore_quality) {
         int ns = ctx.n_subcatches();
         int np = ctx.n_pollutants();
@@ -2223,7 +2234,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Groundwater Summary — matches legacy writeGroundwater()
     // =====================================================================
-    if (has_gw && !opt.ignore_groundwater) {
+    if (runoff_rpt && has_gw && !opt.ignore_groundwater) {
         WRITE(f, "*******************");
         WRITE(f, "Groundwater Summary");
         WRITE(f, "*******************");
@@ -2272,7 +2283,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // wb_* fields are in ft depth; convert to inches (× 12).
     // Data is copied from LIDGroupSoA to ctx.lid_usage.wb_* in SWMMEngine::report().
     // =====================================================================
-    if (ctx.lid_usage.count() > 0) {
+    if (runoff_rpt && ctx.lid_usage.count() > 0) {
         int n_usage = ctx.lid_usage.count();
         bool has_lids = false;
         for (int j = 0; j < n_usage; ++j) {
@@ -2333,7 +2344,10 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Node Depth Summary — matches legacy writeNodeDepths()
     // =====================================================================
-    if (ctx.n_nodes() > 0) {
+    // legacy statsrpt_writeReport writes the flow-routing tables only when
+    // there are links and routing is not ignored (statsrpt.c:117).
+    const bool route_rpt = ctx.n_links() > 0 && !opt.ignore_routing;
+    if (route_rpt) {
         WRITE(f, "******************");
         WRITE(f, "Node Depth Summary");
         WRITE(f, "******************");
@@ -2375,7 +2389,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Node Inflow Summary — matches legacy writeNodeFlows()
     // =====================================================================
-    if (ctx.n_nodes() > 0) {
+    if (route_rpt) {
         WRITE(f, "*******************");
         WRITE(f, "Node Inflow Summary");
         WRITE(f, "*******************");
@@ -2428,7 +2442,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Node Surcharge Summary — matches legacy writeNodeSurcharge()
     // =====================================================================
-    if (static_cast<int>(opt.routing_model) == 2) { // DYNWAVE only
+    if (route_rpt && static_cast<int>(opt.routing_model) == 2) { // DYNWAVE only
         WRITE(f, "**********************");
         WRITE(f, "Node Surcharge Summary");
         WRITE(f, "**********************");
@@ -2477,7 +2491,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Node Flooding Summary — matches legacy writeNodeFlooding()
     // =====================================================================
-    {
+    if (route_rpt) {
         bool any_flooding = false;
         for (int j = 0; j < ctx.n_nodes(); ++j)
             if (ctx.nodes.stat_vol_flooded[static_cast<std::size_t>(j)] > 0.0)
@@ -2535,7 +2549,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Storage Volume Summary — matches legacy writeStorageVolumes()
     // =====================================================================
-    {
+    if (route_rpt) {
         bool any_storage = false;
         for (int j = 0; j < ctx.n_nodes(); ++j)
             if (ctx.nodes.type[static_cast<std::size_t>(j)] == NodeType::STORAGE)
@@ -2618,7 +2632,11 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Outfall Loading Summary — matches legacy writeOutfallLoads()
     // =====================================================================
-    {
+    // legacy writeOutfallLoads: only when there are outfalls
+    bool any_outfall = false;
+    for (int j = 0; j < ctx.n_nodes() && !any_outfall; ++j)
+        any_outfall = ctx.nodes.type[static_cast<std::size_t>(j)] == NodeType::OUTFALL;
+    if (route_rpt && any_outfall) {
         int np = ctx.n_pollutants();
 
         WRITE(f, "***********************");
@@ -2718,7 +2736,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Link Flow Summary — matches legacy writeLinkFlows()
     // =====================================================================
-    if (ctx.n_links() > 0) {
+    if (route_rpt) {
         WRITE(f, "********************");
         WRITE(f, "Link Flow Summary");
         WRITE(f, "********************");
@@ -2817,7 +2835,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Dynamic wave only in legacy (FV, a v6 router, keeps the table);
     // fractions of the routed time after the report start.
-    if (ctx.n_links() > 0 && (opt.routing_model == RoutingModel::DYNWAVE ||
+    if (route_rpt && (opt.routing_model == RoutingModel::DYNWAVE ||
                               opt.routing_model == RoutingModel::FV)) {
         WRITE(f, "***************************");
         WRITE(f, "Flow Classification Summary");
@@ -2862,7 +2880,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Conduit Surcharge Summary — matches legacy writeLinkSurcharge()
     // =====================================================================
-    {
+    if (route_rpt) {
         // legacy writeLinkSurcharge: true conduits whose four hour totals are
         // not all zero; each value floored at 0.01 h.
         WRITE(f, "*************************");
@@ -2908,7 +2926,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Pumping Summary — matches legacy writePumpFlows()
     // =====================================================================
-    {
+    if (route_rpt) {
         bool any_pump = false;
         for (int j = 0; j < ctx.n_links(); ++j)
             if (ctx.links.type[static_cast<std::size_t>(j)] == LinkType::PUMP)
@@ -2982,7 +3000,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // peak flow, SWMM's spread (flow width at max depth / sides, clipped to
     // the street's curb-to-crown width) and max depth per STREET conduit.
     // ---------------------------------------------------------------------
-    if (ctx.streets.count() > 0) {
+    if (route_rpt && ctx.streets.count() > 0) {
         bool header = false;
         const double inv_len = 1.0 / len_ucf;   // display → ft (street store is user units)
         for (int j = 0; j < ctx.n_links(); ++j) {
@@ -3031,7 +3049,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // under their node name with a "(node)" marker.
     // Volumes in ft³; convert to 1000 gal: × 7.48052 / 1000
     // ---------------------------------------------------------------------
-    if (ctx.inlet_usages.count() > 0) {
+    if (route_rpt && ctx.inlet_usages.count() > 0) {
         int ni = ctx.inlet_usages.count();
         // Only write if stats arrays are populated
         bool has_stats = (static_cast<int>(ctx.inlet_usages.stat_capture_vol.size()) >= ni);
@@ -3132,7 +3150,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // Link Pollutant Load Summary — Gap #64, matches legacy writeLinkLoads()
     // stat_total_load is in ft³ × mg/L; convert to lbs: × 28.317/453592
     // =====================================================================
-    if (ctx.n_links() > 0 && ctx.n_pollutants() > 0
+    if (route_rpt && ctx.n_pollutants() > 0
         && !opt.ignore_quality) {
         int nl = ctx.n_links();
         int np = ctx.n_pollutants();
