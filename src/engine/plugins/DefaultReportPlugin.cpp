@@ -2662,8 +2662,11 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         // Header row 3
         std::fprintf(f, " \n  Outfall Node           Pcnt       %3s       %3s    %8s",
                      FlowUnitWords[fu], FlowUnitWords[fu], vol_word);
+        // legacy LoadUnitsWords: lbs | kg, LogN for a count pollutant
         for (int p = 0; p < np; ++p)
-            std::fprintf(f, "%14s", "lbs");
+            std::fprintf(f, "%14s",
+                ctx.pollutants.units[static_cast<std::size_t>(p)] == MassUnits::COUNTS_PER_L
+                    ? "LogN" : (si_report ? "kg" : "lbs"));
 
         // Bottom separator
         std::fprintf(f, " \n  -----------------------------------------------------------");
@@ -2707,9 +2710,14 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             auto base = uj * static_cast<std::size_t>(np);
             for (int p = 0; p < np; ++p) {
                 auto idx = base + static_cast<std::size_t>(p);
-                double load = (idx < ctx.nodes.stat_total_load.size())
-                    ? ctx.nodes.stat_total_load[idx] : 0.0;
+                // legacy: totalLoad * LperFT3 * Pollut.mcf, LOG10 for counts
+                const auto mu = ctx.pollutants.units[static_cast<std::size_t>(p)];
+                const double mcf = (mu == MassUnits::MG_PER_L) ? cont_mass
+                                 : (mu == MassUnits::UG_PER_L) ? cont_mass / 1000.0 : 1.0;
+                double load = ((idx < ctx.nodes.stat_total_load.size())
+                    ? ctx.nodes.stat_total_load[idx] : 0.0) * 28.317 * mcf;
                 pol_totals[static_cast<std::size_t>(p)] += load;
+                if (mu == MassUnits::COUNTS_PER_L && load > 0.0) load = std::log10(load);
                 std::fprintf(f, "%14.3f", load);
             }
         }
@@ -2724,10 +2732,16 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         std::fprintf(f, "%7.2f ", sys_freq);
         std::fprintf(f, ff, sys_flow_sum);
         std::fprintf(f, " ");
-        std::fprintf(f, ff, sys_max_flow);
+        // legacy MaxOutfallFlow: the peak of the summed outfall inflow
+        (void)sys_max_flow;
+        std::fprintf(f, ff, ctx.routing_stats.max_outfall_flow * Qcf);
         std::fprintf(f, "%12.3f", sys_vol);
-        for (int p = 0; p < np; ++p)
-            std::fprintf(f, "%14.3f", pol_totals[static_cast<std::size_t>(p)]);
+        for (int p = 0; p < np; ++p) {
+            double x = pol_totals[static_cast<std::size_t>(p)];
+            if (ctx.pollutants.units[static_cast<std::size_t>(p)] == MassUnits::COUNTS_PER_L
+                && x > 0.0) x = std::log10(x);
+            std::fprintf(f, "%14.3f", x);
+        }
     }
 
     WRITE(f, "");

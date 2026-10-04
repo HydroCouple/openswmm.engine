@@ -1649,8 +1649,11 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
             if (ctx_.n_links() > 0)
                 ctx_.routing_stats.record_step(dt_next, last_step_steady_,
                                                ctx_.elapsed_ms <= 0.0);
-            updateStatistics(dt_next);
+            // legacy routing_execute: removeSystemOutflows (which makes a
+            // backflowing outfall's inflow its outflow magnitude) runs BEFORE
+            // stats_updateFlowStats (routing.c:258-265)
             updateRoutingMassBalance(dt_next);
+            updateStatistics(dt_next);
         }
         const double half = dt_next / 2.0;
         for (int k = 0; k < 11; ++k) {
@@ -5144,6 +5147,7 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
     if (stat_date < ctx_.options.report_start) return;
     ++ctx_.routing_stats.report_steps;
     ctx_.routing_stats.report_time += dt_routing;
+    double sys_outfall_flow = 0.0;   // legacy SysOutfallFlow
 
     // B6. Update statistics (P8-G11)
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
@@ -5213,6 +5217,7 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
         // Outfall statistics
         if (ctx_.nodes.type[uj] == NodeType::OUTFALL) {
             double qi = ctx_.nodes.inflow[uj];
+            sys_outfall_flow += qi;
             if (qi >= 0.001) { // legacy MIN_RUNOFF_FLOW, stats.c
                 ctx_.nodes.stat_outfall_avg_flow[uj] += qi;
                 if (qi > ctx_.nodes.stat_outfall_max_flow[uj])
@@ -5233,6 +5238,8 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
             }
         }
     }
+    ctx_.routing_stats.max_outfall_flow =
+        std::max(ctx_.routing_stats.max_outfall_flow, sys_outfall_flow);
     ensureXspCache();
     double step_slot_vol = 0.0, step_stored_vol = 0.0;   // slot program R0
     for (int j = 0; j < ctx_.n_links(); ++j) {
@@ -5686,8 +5693,8 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
     // A street inlet's capture node hands its overflow back to the corridor as
     // backflow, so that water never left the system and must come back out of
     // the flooding total just booked. Legacy's slot exactly: routing.c:259-260
-    // runs removeSystemOutflows() then inlet_adjustQualOutflows(). Node-level
-    // flooding statistics are unaffected — updateStatistics() has already run.
+    // runs removeSystemOutflows() then inlet_adjustQualOutflows(); the node
+    // statistics (updateStatistics) run after both, as stats_updateFlowStats.
     inlet_.adjustFloodingTotals(ctx_, dt_routing);
 
     // Accumulate link evaporation and seepage losses
