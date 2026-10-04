@@ -130,6 +130,16 @@ void readOutlets(SimulationContext& ctx, const std::vector<std::string>& lines) 
         out.push_back({link, static_cast<int>(layer), pos == "TOP"});
     }
 }
+// Weirs and rating outlets keep their physical crest in subtype tables,
+// not links.offset1. All LID coupling must use that actual port elevation.
+double portOffset(const SimulationContext& ctx, int link, int node) {
+    double offset=ctx.links.offset1[link];
+    const int wr=ctx.link_subtypes.weir_row(link), out=ctx.link_subtypes.outlet_row(link);
+    if(wr>=0) offset=ctx.link_subtypes.weirs.crest_height[wr];
+    else if(out>=0) offset=ctx.link_subtypes.outlets.crest_height[out];
+    else return ctx.links.node1[link]==node?offset:ctx.links.offset2[link];
+    return ctx.nodes.invert_elev[ctx.links.node1[link]]+offset-ctx.nodes.invert_elev[node];
+}
 void validate(SimulationContext& ctx) {
     for (int c = 0; c < ctx.lid_controls.count(); ++c) {
         if (ctx.lid_controls.lid_type[c] != "NODE") continue;
@@ -169,7 +179,7 @@ void validate(SimulationContext& ctx) {
         const int r = ctx.node_subtypes.storage_row(n);
         const double h = anchorHeight(layers(ctx, st.lid[r].control), anchor.layer, anchor.top);
         if (h < 0.0) { ctx.errors.push_back("LID outlet anchor layer is outside the stack"); continue; }
-        const double offset = ctx.links.node1[anchor.link] == n ? ctx.links.offset1[anchor.link] : ctx.links.offset2[anchor.link];
+        const double offset = portOffset(ctx,anchor.link,n);
         if (std::abs(offset - h / rainDepth(ctx)) > 1.e-7)
             ctx.warnings.push_back("LID outlet " + ctx.link_names.name_of(anchor.link) + ": offset does not match the anchored layer interface");
     }
@@ -190,7 +200,11 @@ void sync(SimulationContext& ctx, int control) {
         if (r < 0 || st.lid[r].control != control) continue;
         const double h = anchorHeight(stack, a.layer, a.top);
         if (h < 0.0) continue;
-        (ctx.links.node1[a.link] == n ? ctx.links.offset1[a.link] : ctx.links.offset2[a.link]) = h / rainDepth(ctx);
+        const double elevation=ctx.nodes.invert_elev[n]+h/rainDepth(ctx);
+        const int wr=ctx.link_subtypes.weir_row(a.link), out=ctx.link_subtypes.outlet_row(a.link);
+        if(wr>=0) ctx.link_subtypes.weirs.crest_height[wr]=elevation-ctx.nodes.invert_elev[ctx.links.node1[a.link]];
+        else if(out>=0) ctx.link_subtypes.outlets.crest_height[out]=elevation-ctx.nodes.invert_elev[ctx.links.node1[a.link]];
+        else (ctx.links.node1[a.link] == n ? ctx.links.offset1[a.link] : ctx.links.offset2[a.link]) = h / rainDepth(ctx);
     }
 }
 } // namespace openswmm::lidnode
@@ -441,8 +455,8 @@ double exchangePorts(SimulationContext& ctx, int link, double flow, double dt) {
     if (!active(ctx, ctx.links.node1[link]) && !active(ctx, ctx.links.node2[link])) return flow;
     const int source = flow > 0 ? ctx.links.node1[link] : ctx.links.node2[link];
     const int dest = flow > 0 ? ctx.links.node2[link] : ctx.links.node1[link];
-    const double source_offset = flow > 0 ? ctx.links.offset1[link] : ctx.links.offset2[link];
-    const double dest_offset = flow > 0 ? ctx.links.offset2[link] : ctx.links.offset1[link];
+    const double source_offset = portOffset(ctx,link,source);
+    const double dest_offset = portOffset(ctx,link,dest);
     double volume = std::abs(flow) * dt;
     int sr = ctx.node_subtypes.storage_row(source);
     if (active(ctx, source) && source_offset < ctx.nodes.depth[source]) {

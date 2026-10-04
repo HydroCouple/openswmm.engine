@@ -5,6 +5,7 @@
 #include "plugins/DefaultInputPlugin.hpp"
 #include "input/PostParseResolver.hpp"
 #include "hydrology/LidNode.hpp"
+#include "quality/QualityRouting.hpp"
 #include "hydraulics/Node.hpp"
 #include "openswmm/engine/openswmm_infrastructure.h"
 #include "openswmm/engine/openswmm_links.h"
@@ -441,4 +442,99 @@ TEST(LidNodes, PollutantRenameAndDeleteFollowLayerTreatment) {
     EXPECT_EQ(rules[1].expression,"R = R_Solids");
     edit::delete_pollutant(c,0);
     EXPECT_TRUE(rules.empty());
+}
+
+TEST(LidNodes, ChainedDrainageAndBackflowConservePollutantMass) {
+    const auto dir = std::filesystem::path(OPENSWMM_TEST_SOURCE_DIR) / "../../output/lid_nodes_2026_10_04";
+    std::filesystem::create_directories(dir);
+    std::ifstream fixture(std::filesystem::path(OPENSWMM_TEST_SOURCE_DIR) / "data/lid_chain_mass_balance.inp");
+    // OPENSWMM_TEST_SOURCE_DIR is the engine test directory.
+    ASSERT_TRUE(fixture.good());
+    const std::string base((std::istreambuf_iterator<char>(fixture)), {});
+    for (bool media : {false, true}) for (bool backwater : {false, true}) for (bool clean_boundary : {false, true}) {
+        auto deck = base;
+        if(clean_boundary) deck.insert(deck.find("FLOW_UNITS"), "OUTFALL_BACKFLOW_QUALITY ZERO\n");
+        if (media) {
+            const auto at = deck.find("Train AGGREGATE 12 .45 100");
+            ASSERT_NE(at, std::string::npos);
+            deck.replace(at, std::string("Train AGGREGATE 12 .45 100").size(),
+                         "Train MEDIA 12 .45 .20 .08 1 10 3");
+        }
+        if (!backwater) {
+            auto at = deck.find("1.60");
+            while (at != std::string::npos) { deck.replace(at, 4, "0.00"); at = deck.find("1.60", at + 4); }
+        }
+        const auto stem = std::string("chain_") + (media ? "media" : "aggregate") + (backwater ? "_backwater" : "_free") + (clean_boundary ? "_zero" : "_last");
+        const auto inp = dir / (stem + ".inp");
+        std::ofstream(inp) << deck;
+        SWMMEngine e;
+        ASSERT_EQ(e.open(inp.string().c_str(), (dir/(stem+".rpt")).string().c_str(), nullptr), 0);
+        ASSERT_EQ(e.initialize(), 0); ASSERT_EQ(e.start(0), 0);
+        double t=0;
+        double max_relative_error = 0, max_time = 0;
+        double reverse_volume = 0;
+        do {
+            ASSERT_EQ(e.step(&t), 0);
+            const auto& c=e.context(); const auto& b=c.mass_balance;
+            double stored=0;
+            for(int n=0;n<c.n_nodes();++n) stored+=c.nodes.conc[n*2+1]*c.nodes.volume[n]+lidnode::heldMass(c,n,1);
+            for(int j=0;j<c.n_links();++j) stored+=c.links.conc[j*2+1]*c.links.volume[j];
+            const double input=b.qual_routing_init[1]+b.qual_routing_ex_in[1];
+            const double output=stored+b.qual_routing_outflow[1]+b.qual_routing_flood[1]+b.qual_routing_reacted[1]+b.qual_routing_seep[1]+b.qual_routing_final_dry[1];
+            if(input>1) {
+                const double error=std::abs(input-output)/input;
+                if(error>max_relative_error) {max_relative_error=error;max_time=t*24;}
+            }
+            reverse_volume+=std::max(0.0,-c.links.flow[1])*.5;
+        } while(t>0);
+        ASSERT_EQ(e.end(),0);
+        for(const auto& warning:e.context().warnings) EXPECT_EQ(warning.find("quality mixtures did not converge"),std::string::npos) << warning;
+        const auto& b=e.context().mass_balance;
+        for(int p=0;p<2;++p) {
+            const double input=b.qual_routing_init[p]+b.qual_routing_ex_in[p];
+            const double output=b.qual_routing_final[p]+b.qual_routing_outflow[p]+b.qual_routing_flood[p]+b.qual_routing_reacted[p]+b.qual_routing_seep[p];
+            EXPECT_NEAR(input,output,input*.001) << stem << " pollutant=" << p << " input=" << input << " output=" << output;
+        }
+        EXPECT_LT(max_relative_error,.001) << stem << " maximum tracer error at hour " << max_time;
+        if(backwater) EXPECT_GT(reverse_volume,10) << stem;
+        e.close();
+    }
+}
+
+TEST(LidNodes, PercolationCanDrainBelowOneLitreWithoutLosingItsLoad) {
+    auto c=model(); c.pollutant_names.add("Tracer");c.pollutants.resize_pollutants(1);
+    c.nodes.resize_quality(1);c.nodes.conc.assign(2,10);c.nodes.conc_old.assign(2,10);
+    c.mass_balance.resize_quality(1);
+    lidnode::initialize(c);
+    auto& state=c.node_subtypes.storages.lid_state[0];
+    for(const auto& cell:state.cells)state.quality_old_water.push_back(cell.theta*cell.geometric_volume);
+    const double before=10*state.held_volume;
+    state.quality_old_mobile=0;
+    // A tiny accepted media-to-mobile transfer drains entirely this step.
+    state.quality_transfers={{5,-1,.002}};
+    c.nodes.old_volume[0]=.002;c.nodes.volume[0]=0;
+    c.link_names.add("Drain");c.links.resize(1);c.links.resize_quality(1);c.links.type[0]=LinkType::ORIFICE;
+    c.links.node1[0]=0;c.links.node2[0]=1;c.links.flow[0]=.004;
+    c.nodes.inflow[1]=.004;c.nodes.outflow[0]=.004;
+    quality::QualitySolver solver;solver.init(2,1,1);solver.execute(c,.5);
+    const double exported=.004*.5*c.nodes.conc[1];
+    EXPECT_NEAR(exported,.02,1.e-12);
+    EXPECT_NEAR(before,lidnode::heldMass(c,0,0)+exported,1.e-10);
+}
+
+TEST(LidNodes, WeirAnchorUsesItsPhysicalCrestAndTracksStackEdits) {
+    auto c=model();c.link_names.add("Spill");c.links.resize(1);c.links.node1[0]=0;c.links.node2[0]=1;
+    c.link_subtypes.set_link_type(c.links,0,LinkType::WEIR);
+    const int wr=c.link_subtypes.weir_row(0);
+    c.nodes.invert_elev[0]=10;c.nodes.invert_elev[1]=9;
+    c.link_subtypes.weirs.crest_height[wr]=1.5;
+    c.lid_node_outlets.push_back({0,1,false});
+    lidnode::validate(c);
+    EXPECT_TRUE(c.warnings.empty());
+    EXPECT_DOUBLE_EQ(lidnode::portOffset(c,0,0),1.5);
+    EXPECT_DOUBLE_EQ(lidnode::portOffset(c,0,1),2.5);
+    c.lid_controls.node_layers[0][1].params[0]=18;
+    lidnode::sync(c,0);
+    EXPECT_DOUBLE_EQ(c.link_subtypes.weirs.crest_height[wr],2);
+    EXPECT_DOUBLE_EQ(lidnode::portOffset(c,0,0),2);
 }
