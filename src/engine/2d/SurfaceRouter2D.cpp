@@ -2535,14 +2535,16 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     // Rainfall inflow (m³): rainfall is m/s after forcings are applied.
     mb.rainfall_in += rain_vol * dt;
 
-    // Evaporation loss (m³): the depth-limited sink assembleRHS integrates,
-    // evaluated at the accepted end-of-step depths (exact when cells stay
-    // wetter than dry_depth; first-order through dry-out, matching the
-    // rainfall term's treatment). Accumulated into the 2D mass-balance struct
-    // so the continuity error and reported totals close natively; the 2D
-    // state mirror (evap_loss_total) is retained for back-compatibility.
-    mb.evap_out += evap_vol * dt;
-    state_.evap_loss_total += evap_vol * dt;
+    // The CPU marcher records the applied evaporation after sharing the
+    // cell's finite water budget. Re-evaluating at the final depth misses
+    // dry-out and cannot close the ledger. Plugins retain their existing
+    // estimate until they implement applied source accounting.
+    if (dynamic_cast<ExplicitInertialSolver*>(solver_.get())) {
+        mb.evap_out = state_.evap_loss_total;
+    } else {
+        mb.evap_out += evap_vol * dt;
+        state_.evap_loss_total += evap_vol * dt;
+    }
 
     // Infiltration loss (m³) — plan §5.5.2 site 5 / §5.5.4. Destination is
     // LOST in this release (D-I4), so it is a true exit from the modelled

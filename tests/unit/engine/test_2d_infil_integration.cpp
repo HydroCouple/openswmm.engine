@@ -458,7 +458,22 @@ TEST_F(Infil2DIntegrationTest, AnInactiveCellStillAdvancesItsInfiltrationState) 
 
     fs::create_directories(dir_);
     const fs::path inp = dir_ / "g6_twin.inp";
-    { std::ofstream f(inp); f << buildModel(sections, "CFS", "02:20:00"); }
+    // This gate requires hydraulic isolation: the ordinary four-cell pan
+    // shares edges, so the early-rain half can wet the nominally dry half.
+    // Give each pair its own closed pan, with a gap and no shared vertices.
+    std::string model = buildModel(sections, "CFS", "02:20:00");
+    const auto vertices = model.find("[2D_VERTICES]");
+    const auto infiltration = model.find("[2D_INFILTRATION_DEFAULTS]");
+    ASSERT_NE(vertices, std::string::npos);
+    ASSERT_NE(infiltration, std::string::npos);
+    model.replace(vertices, infiltration - vertices,
+        "[2D_VERTICES]\n"
+        "0 0 10\n20 0 10\n20 10 10\n0 10 10\n"
+        "0 11 10\n20 11 10\n20 21 10\n0 21 10\n\n"
+        "[2D_TRIANGLES]\n"
+        "0 1 2 0.03 0 LAWN\n0 2 3 0.03 0 WOODS\n"
+        "4 5 6 0.03 0 LAWN\n4 6 7 0.03 0 PAVED\n\n");
+    { std::ofstream f(inp); f << model; }
 
     SWMM_Engine eng = swmm_engine_create();
     ASSERT_EQ(swmm_engine_open(eng, inp.string().c_str(),

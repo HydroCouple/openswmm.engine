@@ -170,8 +170,9 @@ OPENSWMM_KERNEL_FN void hllcFlux(const FaceSide& L, const FaceSide& R,
  * @param corrL_x,corrL_y   out: bed-slope correction for L, ½g(h*_L² − h_L²)·n̂
  *                          (per unit face length; multiply by ξ·Δt)
  * @param corrR_x,corrR_y   out: for R, ½g(h*_R² − h_R²)·(−n̂)
- * @return true when the face carries any flux (at least one side wet after
- *         reconstruction); false ⇒ every output is zero.
+ * @return true when the face carries flux OR a bed-pressure correction.
+ *         A blocked wet/dry face still supplies the wet cell's wall pressure.
+ *         false ⇒ every output is zero.
  */
 OPENSWMM_KERNEL_FN bool faceFlux(double etaL, double hL, double qxL, double qyL,
                                  double etaR, double hR, double qxR, double qyR,
@@ -201,10 +202,16 @@ OPENSWMM_KERNEL_FN bool faceFlux(double etaL, double hL, double qxL, double qyL,
         R.un = ux * nx + uy * ny;
         R.ut = ux * tx + uy * ty;
     }
-    corrL_x = corrL_y = corrR_x = corrR_y = 0.0;
+    // Hydrostatic pressure remains on the wet side of a blocked face.
+    // Dropping it when BOTH reconstructed depths vanish accelerates a lake
+    // away from its shoreline even though no water can cross this face.
+    const double cL = 0.5 * kGravity * (L.h * L.h - hL * hL);
+    const double cR = 0.5 * kGravity * (R.h * R.h - hR * hR);
+    corrL_x = cL * nx; corrL_y = cL * ny;
+    corrR_x = -cR * nx; corrR_y = -cR * ny;
     if (L.h <= 0.0 && R.h <= 0.0) {
         out = FaceFlux{};
-        return false;
+        return cL != 0.0 || cR != 0.0;
     }
     double fh, fn, ft, sstar;
     hllcFlux(L, R, fh, fn, ft, sstar);
@@ -212,11 +219,6 @@ OPENSWMM_KERNEL_FN bool faceFlux(double etaL, double hL, double qxL, double qyL,
     out.mx    = fn * nx + ft * tx;
     out.my    = fn * ny + ft * ty;
     out.sstar = sstar;
-    // Audusse bed-slope corrections (½g(h*² − h²)·n̂_out per side).
-    const double cL = 0.5 * kGravity * (L.h * L.h - hL * hL);
-    const double cR = 0.5 * kGravity * (R.h * R.h - hR * hR);
-    corrL_x =  cL * nx; corrL_y =  cL * ny;
-    corrR_x = -cR * nx; corrR_y = -cR * ny;
     return true;
 }
 
@@ -253,25 +255,22 @@ OPENSWMM_KERNEL_FN bool faceFluxRecon(double etaLf, double uxLf, double uyLf,
         R.un = uxRf * nx + uyRf * ny;
         R.ut = uxRf * tx + uyRf * ty;
     }
-    corrL_x = corrL_y = corrR_x = corrR_y = 0.0;
-    if (L.h <= 0.0 && R.h <= 0.0) { out = FaceFlux{}; return false; }
+    const double hLf = (etaLf - zL > 0.0) ? etaLf - zL : 0.0;
+    const double hRf = (etaRf - zR > 0.0) ? etaRf - zR : 0.0;
+    const double cL = 0.5 * kGravity * (L.h * L.h - hLf * hLf);
+    const double cR = 0.5 * kGravity * (R.h * R.h - hRf * hRf);
+    corrL_x = cL * nx; corrL_y = cL * ny;
+    corrR_x = -cR * nx; corrR_y = -cR * ny;
+    if (L.h <= 0.0 && R.h <= 0.0) {
+        out = FaceFlux{};
+        return cL != 0.0 || cR != 0.0;
+    }
     double fh, fn, ft, sstar;
     hllcFlux(L, R, fh, fn, ft, sstar);
     out.mass  = fh;
     out.mx    = fn * nx + ft * tx;
     out.my    = fn * ny + ft * ty;
     out.sstar = sstar;
-    // Audusse et al. (2004) second order with a piecewise-constant bed per
-    // cell: the correction pairs h* with the RECONSTRUCTED face depth
-    // h⁻ = η_f − z_cell (the centred bed term vanishes), so the flux keeps the
-    // interface pressure difference a linear surface implies. Reduces to the
-    // first-order form when the gradients are zero (rest state exact).
-    const double hLf = (etaLf - zL > 0.0) ? etaLf - zL : 0.0;
-    const double hRf = (etaRf - zR > 0.0) ? etaRf - zR : 0.0;
-    const double cL = 0.5 * kGravity * (L.h * L.h - hLf * hLf);
-    const double cR = 0.5 * kGravity * (R.h * R.h - hRf * hRf);
-    corrL_x =  cL * nx; corrL_y =  cL * ny;
-    corrR_x = -cR * nx; corrR_y = -cR * ny;
     return true;
 }
 

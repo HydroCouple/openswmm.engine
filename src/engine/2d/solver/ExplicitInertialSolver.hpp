@@ -82,6 +82,8 @@ public:
     double spillDeficit() const noexcept { return spill_deficit_; }
 
 private:
+    friend struct ExplicitInertialSolverTestAccess;
+
     // Recompute η/depth from state volumes for the whole mesh.
     void reconstructAll();
     // Flush every pending face accumulator into its cell (CSR gather over ALL
@@ -248,19 +250,18 @@ private:
     /// and no mass, so the concentration rises (§2.3 of the plan).
     void sinkMassAtCellConc(int i, double dv_m3, std::vector<double>& ledger,
                             double* per_point_ledger = nullptr) noexcept;
-    /// S2: rainfall of `rain_m3` on cell `i` brings species at the
-    /// `[POLLUTANTS]` rain concentration; booked to the gained ledger.
-    void addRainMass(int i, double rain_m3) noexcept;
-    /// T7.1: sink this cell's infiltration mass and, when an aquifer is
-    /// transporting under it, hand that exact mass to the aquifer.
-    void gwInfiltrationSeam(int i, double infil_m3) noexcept;
-    /// S3: outfall discharge onto cell `i` over `area_dt = area·dt` brings
-    /// species at `transport.coupling_src` (mass-rate density); gained ledger.
-    void addCouplingSourceMass(int i, double area_dt) noexcept;
-    /// S4/S4b: evaporation of `evap_m3` from cell `i` leaves at the cell's
-    /// own temperature AND its own mean age (the two intensive rows —
-    /// temperature-volume and age-volume); solutes concentrate (S1).
-    void sinkIntensiveRowsWithEvap(int i, double evap_m3) noexcept;
+    // Sources share one water budget after face transfers have landed. Gross
+    // constituent transfers are evaluated even when net water change is zero.
+    void applyCellSources(int cell, double dt);
+    enum class SourceLedger { Infiltration, CouplingOut, Rainfall,
+                              CouplingIn, Exfiltration, Boundary, Count };
+    void bookSourceLedger(SourceLedger ledger, int species, double mass) noexcept;
+    void flushSourceLedgers();
+    int sourceThread() const noexcept;
+    // Each worker owns a cache-line-padded slice: six species ledgers and
+    // applied evaporation volume. Fold only after the parallel region ends.
+    std::vector<double> source_ledgers_;
+    std::size_t source_ledger_stride_ = 0;
     /// False when every booked ΔM is known to have been consumed already —
     /// true after a GLOBAL substep, where every active face fired and then
     /// every active cell gathered both of its sides (faces touching an
