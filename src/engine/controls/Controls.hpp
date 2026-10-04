@@ -192,6 +192,8 @@ struct Rule {
 struct ParseError {
     int         line = -1;   ///< 1-based line in the submitted text; -1 if unknown
     std::string message;     ///< Human-readable reason for the rejection
+    int         code = 0;    ///< Legacy error code for the same rejection
+    std::string token;       ///< Offending token legacy names in its message
 };
 
 class ControlEngine {
