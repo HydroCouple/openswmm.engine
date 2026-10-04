@@ -545,12 +545,24 @@ int SWMMEngine::open(const char* inp_path,
 
     // Warn about unknown/skipped sections. Route through push_report_warning so
     // the warning reaches the .rpt (legacy report_writeWarningMsg), not just the
-    // API callback. Wording matches legacy input.c ("Unknown section '[X]' ...");
-    // the "at line N" locus is omitted (source line numbers are not retained by
-    // the parser — see plan Phase 6).
-    for (const auto& tag : input_plugin->skipped_sections()) {
-        push_report_warning(
-            "WARNING: Unknown section '[" + tag + "]' will be skipped.", 100);
+    // API callback. Wording matches legacy input.c: legacy reads the file twice
+    // (object count, then data) and warns for every unknown header on each
+    // pass, each warning after a blank line (report_writeLine of "\n  WARNING").
+    // The count pass runs before any [OPTIONS] keyword warning, so its copies
+    // go to the front. Plugins without source lines fall back to the tag alone.
+    if (!ctx_.unknown_section_headers.empty()) {
+        std::vector<std::string> msgs;
+        for (const auto& [tok, line] : ctx_.unknown_section_headers)
+            msgs.push_back("\n  WARNING: Unknown section '" + tok + "' at line " +
+                           std::to_string(line) + " will be skipped.");
+        ctx_.warnings.insert(ctx_.warnings.begin(), msgs.begin(), msgs.end());
+        for (const auto& m : msgs) emit_warning(100, m.c_str());
+        for (const auto& m : msgs) push_report_warning(m, 100);
+    } else {
+        for (const auto& tag : input_plugin->skipped_sections()) {
+            push_report_warning(
+                "WARNING: Unknown section '[" + tag + "]' will be skipped.", 100);
+        }
     }
 
     // Resolve cross-references (forward refs, final array sizing, head init)

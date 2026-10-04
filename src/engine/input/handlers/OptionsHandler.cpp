@@ -108,6 +108,27 @@ static bool legacyPrefix(const std::string& tok, const char* keyword) {
     return tok.size() >= n && tok.compare(0, n, keyword) == 0;
 }
 
+// legacy OptionWords (keywords.c): project_readOption warns only for a key
+// none of these prefixes.
+static bool legacy_knows_option(const std::string& key) {
+    static const char* const kWords[] = {
+        "FLOW_UNITS", "INFILTRATION", "FLOW_ROUTING", "START_DATE",
+        "START_TIME", "END_DATE", "END_TIME", "REPORT_START_DATE",
+        "REPORT_START_TIME", "SWEEP_START", "SWEEP_END", "DRY_DAYS",
+        "WET_STEP", "DRY_STEP", "ROUTING_STEP", "RULE_STEP", "REPORT_STEP",
+        "ALLOW_PONDING", "INERTIAL_DAMPING", "SLOPE_WEIGHTING",
+        "VARIABLE_STEP", "NORMAL_FLOW_LIMITED", "LENGTHENING_STEP",
+        "MIN_SURFAREA", "COMPATIBILITY", "SKIP_STEADY_STATE", "TEMPDIR",
+        "IGNORE_RAINFALL", "FORCE_MAIN_EQUATION", "LINK_OFFSETS", "MIN_SLOPE",
+        "IGNORE_SNOWMELT", "IGNORE_GROUNDWATER", "IGNORE_ROUTING",
+        "IGNORE_QUALITY", "MAX_TRIALS", "HEAD_TOLERANCE", "SYS_FLOW_TOL",
+        "LAT_FLOW_TOL", "IGNORE_RDII", "MINIMUM_STEP", "THREADS",
+        "SURCHARGE_METHOD", "OUTFALL_BACKFLOW_QUALITY"};
+    for (const char* w : kWords)
+        if (legacyPrefix(key, w)) return true;
+    return false;
+}
+
 // ============================================================================
 // handle_options() — registered as built-in handler for "OPTIONS"
 // ============================================================================
@@ -663,13 +684,19 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
         // -----------------------------------------------------------------
         // Unknown key → ext_options (R05)
         // -----------------------------------------------------------------
+        } else if (legacy_knows_option(key)) {
+            // A legacy keyword v6 does not act on (e.g. TEMPDIR): kept for the
+            // round trip, and no warning, as legacy accepts it.
+            opt.ext_options[key] = val;
         } else {
             opt.ext_options[key] = val;
             // Record a warning (non-fatal). Push to ctx.warnings so it reaches
             // the .rpt (legacy project.c warns per unknown keyword); keep the
             // legacy wording, and retain warning_code for the C API.
+            // Leading "\n  " as legacy writes it (report_writeLine): a blank
+            // line first, and the report prints it before the title.
             ctx.warnings.push_back(
-                "WARNING: Unknown option keyword '" + tokens[0] +
+                "\n  WARNING: Unknown option keyword '" + tokens[0] +
                 "' in [OPTIONS] section - option will be ignored.");
             if (ctx.warning_code == 0) {
                 ctx.warning_code = 101;  // SWMM_WARN_UNKNOWN_OPTION

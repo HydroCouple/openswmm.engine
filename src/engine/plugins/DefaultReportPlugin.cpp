@@ -212,11 +212,18 @@ int DefaultReportPlugin::update(const SimulationSnapshot& /*snapshot*/) {
 // "Maximum error count exceeded." and stops reading. ctx.errors keeps every
 // error for API callers; only the .rpt is capped. `from` is the first index
 // not yet written.
+// Messages are stored with their own leading blanks; legacy prints every
+// error and warning at a two-blank indent.
+static const char* unindented(const std::string& m) {
+    const auto k = m.find_first_not_of(' ');
+    return m.c_str() + (k == std::string::npos ? m.size() : k);
+}
+
 static void write_errors(std::FILE* f, const std::vector<std::string>& errors,
                          std::size_t from) {
     constexpr std::size_t kMaxErrs = 100;
     for (std::size_t i = from; i < errors.size() && i < kMaxErrs; ++i)
-        std::fprintf(f, "\n  %s", errors[i].c_str());
+        std::fprintf(f, "\n  %s", unindented(errors[i]));
     if (errors.size() > kMaxErrs && from <= kMaxErrs)
         std::fprintf(f, "\n  \n  Maximum error count exceeded.");
 }
@@ -229,7 +236,7 @@ int DefaultReportPlugin::finalize(const SimulationContext& ctx) {
         errors_written_ = ctx.errors.size();
 
         for (std::size_t i = warnings_written_; i < ctx.warnings.size(); ++i)
-            std::fprintf(file_, "\n  %s", ctx.warnings[i].c_str());
+            std::fprintf(file_, "\n  %s", unindented(ctx.warnings[i]));
         warnings_written_ = ctx.warnings.size();
 
         std::fflush(file_);
@@ -259,7 +266,7 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
         // Write all errors/warnings
         write_errors(f, ctx.errors, 0);
         for (const auto& warn : ctx.warnings)
-            std::fprintf(f, "\n  %s", warn.c_str());
+            std::fprintf(f, "\n  %s", unindented(warn));
     }
 
     // Write result sections (continuity, statistics, summaries)
@@ -285,28 +292,33 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
     int fu = static_cast<int>(opt.flow_units);
     if (fu < 0 || fu > 5) fu = 0;
 
-    // Helper: has RDII?
-    bool has_rdii = !ctx.rdii_assigns.node_idx.empty();
-    // Helper: has groundwater?
-    bool has_gw = false;
-    for (int j = 0; j < ctx.n_subcatches(); ++j) {
-        if (ctx.subcatches.gw_aquifer[static_cast<std::size_t>(j)] >= 0) {
-            has_gw = true;
-            break;
-        }
-    }
-    // Helper: has snowmelt?
-    bool has_snow = !ctx.snowpacks.plowable.empty();
+    const ucf::DisplayUnits du_opt = ucf::DisplayUnits::from(opt);
 
     // =====================================================================
     // Title — matches legacy FMT01
     // =====================================================================
     std::fprintf(f, "\n  OPENSWMM ENGINE - VERSION %s", OPENSWMM_VERSION_FULL);
-    std::fprintf(f, "\n  -------------------------------------------");
+    std::fprintf(f, "\n  ------------------------------------------------------------");
+    std::fprintf(f, "\n");   // legacy FMT10
 
-    // [TITLE] content
-    for (const auto& line : ctx.title_notes)
-        std::fprintf(f, "\n  %s", line.c_str());
+    // Warnings raised while legacy reads the input (unknown section / option
+    // keyword) carry their own leading "\n  " and precede the title; the rest
+    // come from validation, after it.
+    for (const auto& warn : ctx.warnings)
+        if (!warn.empty() && warn[0] == '\n')
+            std::fprintf(f, "\n  %s", warn.c_str());
+
+    // [TITLE]: legacy keeps at most MAXTITLE (3) lines, skips comment lines,
+    // and stores each raw line with its line feed turned into a blank.
+    {
+        int n_title = 0;
+        for (const auto& line : ctx.title_notes) {
+            const auto first = line.find_first_not_of(" \t");
+            if (first == std::string::npos || line[first] == ';') continue;
+            if (n_title++ == 3) break;
+            std::fprintf(f, "\n  %s ", line.c_str());
+        }
+    }
 
     // Errors — matches legacy report_writeErrorMsg() format
     write_errors(f, ctx.errors, 0);
@@ -314,7 +326,8 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
 
     // Warnings — matches legacy report_writeWarningMsg() format
     for (const auto& warn : ctx.warnings)
-        std::fprintf(f, "\n  %s", warn.c_str());
+        if (warn.empty() || warn[0] != '\n')
+            std::fprintf(f, "\n  %s", unindented(warn));
     warnings_written_ = ctx.warnings.size();
 
     // =====================================================================
@@ -556,19 +569,16 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
     // Process Models — legacy report_writeOptions() prints NO when the ignore
     // flag is set OR the object class is empty (report.c:270-298).
     std::fprintf(f, "\n  Process Models:");
+    // The object classes are legacy's Nobjects[GAGE/UNITHYD/SNOWMELT/AQUIFER]:
+    // a declared object counts whether or not anything uses it.
     std::fprintf(f, "\n    Rainfall/Runoff ........ %s",
-                 (ctx.n_subcatches() > 0 && ctx.n_gages() > 0
-                  && !opt.ignore_rainfall) ? "YES" : "NO");
-    bool has_exp_decay = (ctx.rdii_decay.count() > 0);
+                 (ctx.n_gages() > 0 && !opt.ignore_rainfall) ? "YES" : "NO");
     std::fprintf(f, "\n    RDII ................... %s",
-                 (has_rdii && !opt.ignore_rdii)
-                     ? (has_exp_decay ? "YES (Exponential IA)"
-                                      : "YES (Linear IA)")
-                     : "NO");
+                 (ctx.unit_hyds.count() > 0 && !opt.ignore_rdii) ? "YES" : "NO");
     std::fprintf(f, "\n    Snowmelt ............... %s",
-                 (has_snow && !opt.ignore_snow_melt) ? "YES" : "NO");
+                 (ctx.snowpack_names.size() > 0 && !opt.ignore_snow_melt) ? "YES" : "NO");
     std::fprintf(f, "\n    Groundwater ............ %s",
-                 (has_gw && !opt.ignore_groundwater) ? "YES" : "NO");
+                 (ctx.aquifer_names.size() > 0 && !opt.ignore_groundwater) ? "YES" : "NO");
     std::fprintf(f, "\n    Flow Routing ........... %s",
                  (ctx.n_links() > 0 && !opt.ignore_routing) ? "YES" : "NO");
     if (ctx.n_links() > 0) {
@@ -579,11 +589,9 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
                  (ctx.n_pollutants() > 0 && !opt.ignore_quality) ? "YES" : "NO");
 
     // E2 — the Domain x Species transport matrix (TransportPolicy), printed
-    // only when the project declares some species class at all, so a
-    // hydraulics-only report is unchanged. Answers "why is there no 2D
-    // quality" in the report itself.
-    if (ctx.n_pollutants() > 0 || ctx.options.water_age ||
-        ctx.options.heat_transport ||
+    // only when the project uses a species class legacy does not have (water
+    // age, heat, MSX), so a legacy-equivalent report is unchanged.
+    if (ctx.options.water_age || ctx.options.heat_transport ||
         (ctx.reactions.configured && ctx.reactions.compiled)) {
         const auto matrix = openswmm::transport::resolve(ctx);
         std::fprintf(f, "\n%s", openswmm::transport::formatReportBlock(matrix).c_str());
@@ -614,16 +622,18 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
                          opt.uf_k3);
         }
 
-        if (rm == 2) { // DYNWAVE
-            int sm = opt.surcharge_method;
-            const char* sm_name = (sm >= 0 && sm <= 3) ? SurchargeWords[sm] : "EXTRAN";
-            std::fprintf(f, "\n  Surcharge Method ......... %s", sm_name);
-            const char* nc_name = (opt.node_continuity == NodeContinuity::SEMI_IMPLICIT)
-                                  ? "SEMI_IMPLICIT" : "EXPLICIT";
-            std::fprintf(f, "\n  Node Continuity .......... %s", nc_name);
-            std::fprintf(f, "\n  Anderson Acceleration .... %s",
-                         opt.anderson_accel ? "YES" : "NO");
-        }
+    }
+
+    // Legacy prints the surcharge method for DYNWAVE even with no links.
+    if (static_cast<int>(opt.routing_model) == 2) { // DYNWAVE
+        int sm = opt.surcharge_method;
+        const char* sm_name = (sm >= 0 && sm <= 3) ? SurchargeWords[sm] : "EXTRAN";
+        std::fprintf(f, "\n  Surcharge Method ......... %s", sm_name);
+        // v6-only options, shown only when changed from the default.
+        if (opt.node_continuity == NodeContinuity::SEMI_IMPLICIT)
+            std::fprintf(f, "\n  Node Continuity .......... SEMI_IMPLICIT");
+        if (opt.anderson_accel)
+            std::fprintf(f, "\n  Anderson Acceleration .... YES");
     }
 
     dateToStr(opt.start_date, ds, sizeof(ds));
@@ -636,13 +646,14 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
 
     std::fprintf(f, "\n  Antecedent Dry Days ...... %.1f", opt.dry_days);
 
-    secsToHMS(static_cast<int>(opt.report_step), buf, sizeof(buf));
+    // Legacy formats these through datetime_encodeTime, which wraps at 24 h.
+    secsToHMS(static_cast<int>(opt.report_step) % 86400, buf, sizeof(buf));
     std::fprintf(f, "\n  Report Time Step ......... %s", buf);
 
     if (ctx.n_subcatches() > 0) {
-        secsToHMS(static_cast<int>(opt.wet_step), buf, sizeof(buf));
+        secsToHMS(static_cast<int>(opt.wet_step) % 86400, buf, sizeof(buf));
         std::fprintf(f, "\n  Wet Time Step ............ %s", buf);
-        secsToHMS(static_cast<int>(opt.dry_step), buf, sizeof(buf));
+        secsToHMS(static_cast<int>(opt.dry_step) % 86400, buf, sizeof(buf));
         std::fprintf(f, "\n  Dry Time Step ............ %s", buf);
     }
 
@@ -652,10 +663,14 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
         if (static_cast<int>(opt.routing_model) == 2) { // DYNWAVE
             std::fprintf(f, "\n  Variable Time Step ....... %s",
                          opt.variable_step > 0.0 ? "YES" : "NO");
-            std::fprintf(f, "\n  Maximum Trials ........... %d", opt.max_trials);
+            // 0 = default; legacy dynwave_validate substitutes 8 before printing.
+            std::fprintf(f, "\n  Maximum Trials ........... %d",
+                         opt.max_trials > 0 ? opt.max_trials : 8);
             std::fprintf(f, "\n  Number of Threads ........ %d", opt.num_threads);
-            std::fprintf(f, "\n  Head Tolerance ........... %f ft",
-                         opt.head_tol == 0.0 ? 0.005 : opt.head_tol);
+            std::fprintf(f, "\n  Head Tolerance ........... %f %s",
+                         // authored in user units; the default is 0.005 ft
+                         opt.head_tol == 0.0 ? 0.005 * du_opt.length : opt.head_tol,
+                         du_opt.unit_system == 1 ? "m" : "ft");
         }
     }
 
