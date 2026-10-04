@@ -24,6 +24,9 @@
  * runoff. Before 2026-10-02 the enum put RUNOFF at slot 5 (the DWF slot),
  * which the runoff identity catches; the inflow identity alone is vacuous on
  * this fixture because it has no DWF, GW, RDII or external inflow.
+ * Each test generates its own output with the current engine: the shared,
+ * checked-in .out predates the report-time runoff aggregation and can also
+ * be overwritten by other test targets.
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
@@ -32,22 +35,31 @@
 
 #include <gtest/gtest.h>
 
+#include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_output.h>
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <numeric>
 #include <vector>
 
 namespace {
 
-constexpr const char* kFixturePath = "site_drainage_model.out";
+constexpr const char* kInputPath = "site_drainage_model.inp";
 
 class OutputSystemVarsTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        handle_ = swmm_output_open(kFixturePath);
-        ASSERT_NE(handle_, nullptr) << "Failed to open fixture '" << kFixturePath << "'";
+        const auto output_dir = std::filesystem::path("output_system_vars") /
+            ::testing::UnitTest::GetInstance()->current_test_info()->name();
+        std::filesystem::create_directories(output_dir);
+        const auto report = (output_dir / "run.rpt").string();
+        const auto output = (output_dir / "run.out").string();
+        ASSERT_EQ(swmm_engine_run(kInputPath, report.c_str(), output.c_str(), nullptr), 0)
+            << "Failed to generate output; see " << report;
+        handle_ = swmm_output_open(output.c_str());
+        ASSERT_NE(handle_, nullptr) << "Failed to open generated output '" << output << "'";
     }
     void TearDown() override {
         if (handle_) swmm_output_close(handle_);
