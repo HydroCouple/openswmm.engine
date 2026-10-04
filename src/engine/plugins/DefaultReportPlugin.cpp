@@ -2587,7 +2587,10 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Flow Classification Summary — matches legacy writeFlowClass()
     // =====================================================================
-    if (ctx.n_links() > 0) {
+    // Dynamic wave only in legacy (FV, a v6 router, keeps the table);
+    // fractions of the routed time after the report start.
+    if (ctx.n_links() > 0 && (opt.routing_model == RoutingModel::DYNWAVE ||
+                              opt.routing_model == RoutingModel::FV)) {
         WRITE(f, "***************************");
         WRITE(f, "Flow Classification Summary");
         WRITE(f, "***************************");
@@ -2598,12 +2601,12 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 "\n  Conduit               Length    Dry  Dry   Dry   Crit  Crit  Crit  Crit  Ltd   Ctrl  "
 "\n  -------------------------------------------------------------------------------------");
 
-        double total_secs = (ctx.routing_stats.n_steps > 0) ?
-            ctx.routing_stats.sum_step : 1.0;
+        const double total_secs = ctx.routing_stats.report_time;
 
         for (int j = 0; j < ctx.n_links(); ++j) {
             auto uj = static_cast<std::size_t>(j);
             if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
+            if (ctx.links.xsect_shape[uj] == XsectShape::DUMMY) continue;
 
             // Adjusted/actual length ratio
             double len_ratio = 1.0;
@@ -2616,28 +2619,14 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             std::fprintf(f, "\n  %-20s", ctx.link_names.name_of(j).c_str());
             std::fprintf(f, "  %6.2f ", len_ratio);
 
-            long total = 0;
             for (int c = 0; c < LinkData::N_FLOW_CLASSES; ++c) {
                 auto idx = uj * LinkData::N_FLOW_CLASSES + static_cast<std::size_t>(c);
-                if (idx < ctx.links.stat_flow_class.size())
-                    total += ctx.links.stat_flow_class[idx];
+                const double t = (idx < ctx.links.stat_flow_class.size()) ?
+                    ctx.links.stat_flow_class[idx] : 0.0;
+                std::fprintf(f, "  %4.2f", t / total_secs);
             }
-            if (total == 0) total = 1;
-
-            for (int c = 0; c < LinkData::N_FLOW_CLASSES; ++c) {
-                auto idx = uj * LinkData::N_FLOW_CLASSES + static_cast<std::size_t>(c);
-                long cnt = (idx < ctx.links.stat_flow_class.size()) ?
-                    ctx.links.stat_flow_class[idx] : 0L;
-                double pct = static_cast<double>(cnt) / static_cast<double>(total);
-                std::fprintf(f, "  %4.2f", pct);
-            }
-            // Normal flow limited and inlet control
-            double norm_pct = static_cast<double>(ctx.links.stat_norm_ltd[uj]) /
-                              static_cast<double>(total);
-            double inlet_pct = static_cast<double>(ctx.links.stat_inlet_ctrl[uj]) /
-                               static_cast<double>(total);
-            std::fprintf(f, "  %4.2f", norm_pct);
-            std::fprintf(f, "  %4.2f", inlet_pct);
+            std::fprintf(f, "  %4.2f", ctx.links.stat_norm_ltd[uj] / total_secs);
+            std::fprintf(f, "  %4.2f", ctx.links.stat_inlet_ctrl[uj] / total_secs);
         }
     }
     WRITE(f, "");
@@ -2646,45 +2635,42 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // Conduit Surcharge Summary — matches legacy writeLinkSurcharge()
     // =====================================================================
     {
-        bool any_surcharge = false;
-        for (int j = 0; j < ctx.n_links(); ++j) {
-            auto uj = static_cast<std::size_t>(j);
-            if (ctx.links.type[uj] == LinkType::CONDUIT &&
-                ctx.links.stat_time_surcharged[uj] > 0.0) {
-                any_surcharge = true; break;
-            }
-        }
-
+        // legacy writeLinkSurcharge: true conduits whose four hour totals are
+        // not all zero; each value floored at 0.01 h.
         WRITE(f, "*************************");
         WRITE(f, "Conduit Surcharge Summary");
         WRITE(f, "*************************");
-
-        if (!any_surcharge) {
-            WRITE(f, "");
-            WRITE(f, "No conduits were surcharged.");
-        } else {
-            std::fprintf(f,
+        int n_written = 0;
+        for (int j = 0; j < ctx.n_links(); ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx.links.type[uj] != LinkType::CONDUIT ||
+                ctx.links.xsect_shape[uj] == XsectShape::DUMMY) continue;
+            double t[5] = {
+                ctx.links.stat_time_surcharged[uj] / 3600.0,
+                ctx.links.stat_time_full_upstream[uj] / 3600.0,
+                ctx.links.stat_time_full_dnstream[uj] / 3600.0,
+                ctx.links.stat_time_full_both[uj] / 3600.0,
+                0.0 };
+            if (t[0] + t[1] + t[2] + t[3] == 0.0) continue;
+            t[4] = ctx.links.stat_time_capacity_limited[uj] / 3600.0;
+            for (double& x : t) x = std::max(0.01, x);
+            if (n_written == 0) {
+                WRITE(f, "");
+                std::fprintf(f,
 "\n  ----------------------------------------------------------------------------"
 "\n                                                           Hours        Hours "
 "\n                         --------- Hours Full --------   Above Full   Capacity"
 "\n  Conduit                Both Ends  Upstream  Dnstream   Normal Flow   Limited"
 "\n  ----------------------------------------------------------------------------");
-
-            for (int j = 0; j < ctx.n_links(); ++j) {
-                auto uj = static_cast<std::size_t>(j);
-                if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
-                if (ctx.links.stat_time_surcharged[uj] <= 0.0) continue;
-
-                double t_both = ctx.links.stat_time_full_both[uj] / 3600.0;
-                double t_up   = ctx.links.stat_time_full_upstream[uj] / 3600.0;
-                double t_dn   = ctx.links.stat_time_full_dnstream[uj] / 3600.0;
-                double t_norm = ctx.links.stat_time_surcharged[uj] / 3600.0;
-                double t_cap  = ctx.links.stat_time_capacity_limited[uj] / 3600.0;
-
-                std::fprintf(f, "\n  %-20s", ctx.link_names.name_of(j).c_str());
-                std::fprintf(f, "    %8.2f  %8.2f  %8.2f  %8.2f     %8.2f",
-                    t_both, t_up, t_dn, t_norm, t_cap);
+                n_written = 1;
             }
+            std::fprintf(f, "\n  %-20s", ctx.link_names.name_of(j).c_str());
+            std::fprintf(f, "    %8.2f  %8.2f  %8.2f  %8.2f     %8.2f",
+                t[0], t[1], t[2], t[3], t[4]);
+        }
+        if (n_written == 0) {
+            WRITE(f, "");
+            WRITE(f, "No conduits were surcharged.");
         }
     }
 

@@ -5109,6 +5109,7 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
     // ...and only once the reporting period has begun (stats.c:445).
     if (stat_date < ctx_.options.report_start) return;
     ++ctx_.routing_stats.report_steps;
+    ctx_.routing_stats.report_time += dt_routing;
 
     // B6. Update statistics (P8-G11)
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
@@ -5230,9 +5231,6 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
         if (filling > ctx_.links.stat_max_filling[uj])
             ctx_.links.stat_max_filling[uj] = filling;
 
-        // Surcharge duration tracking
-        if (d >= y_full && y_full > 0.0)
-            ctx_.links.stat_time_surcharged[uj] += dt_routing;
 
         // Slot-storage share accumulation (FV slot program R0). The run
         // share is ∫slot dt / ∫stored dt — a ratio of integrals, never an
@@ -5253,44 +5251,58 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
             }
         }
 
-        // Conduit surcharge detail tracking (upstream/downstream/both)
-        // Gap #57: use persistent full_state set by routing solver (area/depth-based).
-        if (ctx_.links.type[uj] == LinkType::CONDUIT && y_full > 0.0) {
+        // Conduit statistics, legacy stats_updateLinkStats (true conduits):
+        // time in each flow class; time at or above full normal flow
+        // (q >= qFull * barrels); full state is exclusive there — ALL_FULL
+        // counts as surcharged and full at both ends, UP_FULL / DN_FULL at one
+        // end. Capacity limited (dynwave checkCapacity): upstream end full and
+        // HGL drop > |slope| * the UNLENGTHENED length.
+        if (ctx_.links.type[uj] == LinkType::CONDUIT &&
+            ctx_.links.xsect_shape[uj] != XsectShape::DUMMY) {
             int n1 = ctx_.links.node1[uj];
             int n2 = ctx_.links.node2[uj];
             const int cr = ctx_.link_subtypes.conduit_row(j);
             const auto& CD = ctx_.link_subtypes.conduits;
+
+            int fc = static_cast<int>(ctx_.links.flow_class[uj]);
+            if (fc >= 0 && fc < LinkData::N_FLOW_CLASSES) {
+                auto fc_idx = uj * LinkData::N_FLOW_CLASSES + static_cast<std::size_t>(fc);
+                if (fc_idx < ctx_.links.stat_flow_class.size())
+                    ctx_.links.stat_flow_class[fc_idx] += dt_routing;
+            }
+            if (cr >= 0) {
+                const auto ucr = static_cast<std::size_t>(cr);
+                if (q >= CD.q_full[ucr] * static_cast<double>(CD.barrels[ucr]))
+                    ctx_.links.stat_time_full_both[uj] += dt_routing;
+            }
+
             int8_t fs = (cr >= 0) ? CD.full_state[static_cast<std::size_t>(cr)] : int8_t{0};
-            bool up_full = (fs & 1) != 0;
-            bool dn_full = (fs & 2) != 0;
-            if (up_full) ctx_.links.stat_time_full_upstream[uj] += dt_routing;
-            if (dn_full) ctx_.links.stat_time_full_dnstream[uj] += dt_routing;
-            if (up_full && dn_full) ctx_.links.stat_time_full_both[uj] += dt_routing;
-            // Gap #58: Capacity-limited conduit identification.
-            // KW: capacityLimited = (a1 >= aFull)  ≡ up_full
-            // DW: capacityLimited = (a1 >= aFull) && (HGL slope > bed slope)
-            if (up_full) {
+            const bool up_full = (fs & 1) != 0;
+            const bool dn_full = (fs & 2) != 0;
+            if (up_full && dn_full) {
+                ctx_.links.stat_time_surcharged[uj]    += dt_routing;
+                ctx_.links.stat_time_full_upstream[uj] += dt_routing;
+                ctx_.links.stat_time_full_dnstream[uj] += dt_routing;
+            } else if (up_full) {
+                ctx_.links.stat_time_full_upstream[uj] += dt_routing;
+            } else if (dn_full) {
+                ctx_.links.stat_time_full_dnstream[uj] += dt_routing;
+            }
+            // Dynamic wave tests the midpoint area (bit 4, see DWSolver);
+            // other routers the upstream end.
+            const bool dw = ctx_.options.routing_model == RoutingModel::DYNWAVE;
+            if (dw ? (fs & 4) != 0 : up_full) {
                 bool cap_ltd = true;
-                if ((ctx_.options.routing_model == RoutingModel::DYNWAVE ||
-                     ctx_.options.routing_model == RoutingModel::FV) &&
+                if ((dw || ctx_.options.routing_model == RoutingModel::FV) &&
                     n1 >= 0 && n2 >= 0) {
                     double h1h = ctx_.nodes.head[static_cast<std::size_t>(n1)];
                     double h2h = ctx_.nodes.head[static_cast<std::size_t>(n2)];
-                    double len = (cr >= 0) ? CD.mod_length[static_cast<std::size_t>(cr)] : 0.0;
-                    if (len <= 0.0) len = (cr >= 0) ? CD.length[static_cast<std::size_t>(cr)] : 0.0;
+                    double len = (cr >= 0) ? CD.length[static_cast<std::size_t>(cr)] : 0.0;
                     double slp = std::fabs((cr >= 0) ? CD.slope[static_cast<std::size_t>(cr)] : 0.0);
                     cap_ltd = (h1h - h2h) > slp * len;
                 }
                 if (cap_ltd) ctx_.links.stat_time_capacity_limited[uj] += dt_routing;
             }
-        }
-
-        // Flow classification counter
-        int fc = static_cast<int>(ctx_.links.flow_class[uj]);
-        if (fc >= 0 && fc < LinkData::N_FLOW_CLASSES) {
-            auto fc_idx = uj * LinkData::N_FLOW_CLASSES + static_cast<std::size_t>(fc);
-            if (fc_idx < ctx_.links.stat_flow_class.size())
-                ++ctx_.links.stat_flow_class[fc_idx];
         }
 
         // Normal flow limited / inlet control counters (conduit-only side-table
@@ -5301,11 +5313,11 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
                 const auto ucrs = static_cast<std::size_t>(crs);
                 auto& CDs = ctx_.link_subtypes.conduits;
                 if (CDs.normal_flow_limited[ucrs]) {
-                    ++ctx_.links.stat_norm_ltd[uj];
+                    ctx_.links.stat_norm_ltd[uj] += dt_routing;
                     CDs.normal_flow_limited[ucrs] = uint8_t{0};  // reset for next step
                 }
                 if (CDs.inlet_control[ucrs]) {
-                    ++ctx_.links.stat_inlet_ctrl[uj];
+                    ctx_.links.stat_inlet_ctrl[uj] += dt_routing;
                     CDs.inlet_control[ucrs] = uint8_t{0};
                 }
             }

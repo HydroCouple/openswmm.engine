@@ -2675,6 +2675,17 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
     // `link_getLength` returns the raw `Conduit[k].length`, not the
     // routing-lengthened `Conduit[k].modLength`. See processDryLink note.
     links.volume[uj] = aMidAvg * tile_links_length_[uci] * barrels_d;
+
+    // legacy dwflow.c:370 Conduit.fullState = link_getFullState(a1, a2, aFull)
+    // (the dry exit leaves it as it was); bit 4 records Conduit.a1 >= aFull,
+    // where dwflow has stored the MIDPOINT area in a1 — what dynwave
+    // checkCapacity tests. Read only by the report statistics.
+    const double a_full = links.xsect_a_full[uj];
+    const bool up_full  = area1_[uj] >= a_full;
+    const bool dn_full  = area2_[uj] >= a_full;
+    const bool mid_full = area_mid_[uj] >= a_full;
+    CD.full_state[ucr] = static_cast<int8_t>((up_full ? 1 : 0) | (dn_full ? 2 : 0) |
+                                             (mid_full ? 4 : 0));
 }
 
 // ============================================================================

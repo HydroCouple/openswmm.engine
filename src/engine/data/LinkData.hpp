@@ -494,9 +494,9 @@ struct LinkData {
      * @see Legacy: LinkStats[i].timeInFlowClass[]
      */
     static constexpr int N_FLOW_CLASSES = 7;
-    std::vector<long> stat_flow_class;
-    std::vector<long> stat_norm_ltd;      ///< Count of steps with normal flow limiting
-    std::vector<long> stat_inlet_ctrl;    ///< Count of steps with inlet control
+    std::vector<double> stat_flow_class;  ///< Seconds in each flow class (legacy timeInFlowClass)
+    std::vector<double> stat_norm_ltd;    ///< Seconds normal-flow limited (legacy timeNormalFlow)
+    std::vector<double> stat_inlet_ctrl;  ///< Seconds under inlet control (legacy timeInletControl)
 
     /// Date/time when maximum flow occurred (OADate (days since 12/30/1899)).
     /// @see Legacy: LinkStats[i].maxFlowDate
@@ -510,7 +510,7 @@ struct LinkData {
     /// @see Legacy: LinkStats[i].timeFullDnstream
     std::vector<double>     stat_time_full_dnstream;
 
-    /// Time both ends surcharged (seconds).
+    /// Time flowing at or above full normal flow (seconds).
     /// @see Legacy: LinkStats[i].timeFullFlow
     std::vector<double>     stat_time_full_both;
 
@@ -645,9 +645,9 @@ struct LinkData {
         stat_max_veloc.assign(un, 0.0);
         stat_max_filling.assign(un, 0.0);
         stat_time_surcharged.assign(un, 0.0);
-        stat_flow_class.assign(un * N_FLOW_CLASSES, 0L);
-        stat_norm_ltd.assign(un, 0L);
-        stat_inlet_ctrl.assign(un, 0L);
+        stat_flow_class.assign(un * N_FLOW_CLASSES, 0.0);
+        stat_norm_ltd.assign(un, 0.0);
+        stat_inlet_ctrl.assign(un, 0.0);
         stat_max_flow_date.assign(un, 0.0);
         stat_time_full_upstream.assign(un, 0.0);
         stat_time_full_dnstream.assign(un, 0.0);
@@ -704,9 +704,9 @@ struct LinkData {
         g(stat_pump_was_on, false);
         g(stat_flow_turns, 0L); g(stat_flow_turn_sign, 0);
         g(stat_time_courant_critical, 0.0);
-        g(stat_norm_ltd, 0L); g(stat_inlet_ctrl, 0L);
+        g(stat_norm_ltd, 0.0); g(stat_inlet_ctrl, 0.0);
         // stat_flow_class is flat 2D [n * N_FLOW_CLASSES]
-        stat_flow_class.resize(un * N_FLOW_CLASSES, 0L);
+        stat_flow_class.resize(un * N_FLOW_CLASSES, 0.0);
         // Note: conc, conc_old handled by resize_quality()
         // Note: stat_total_load handled by resize_loads()
     }
