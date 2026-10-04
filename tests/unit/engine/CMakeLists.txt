@@ -749,6 +749,9 @@ add_gtest_unit(test_engine_fv_network test_fv_solver_network.cpp)
 # wetting front crossing tier boundaries without loss, and the substep-count
 # relief a 100x graded reach actually delivers.
 add_gtest_unit(test_engine_fv_lts test_fv_lts.cpp)
+if(TARGET OpenMP::OpenMP_CXX)
+    target_link_libraries(test_engine_fv_lts PRIVATE OpenMP::OpenMP_CXX)
+endif()
 # Engine-level gates (§6.7): FLOW_ROUTING FV end-to-end on the reference
 # drainage model — routing continuity vs DYNWAVE, routed-volume agreement,
 # mesh-refinement CONVERGENCE toward the DW hydrograph (the consistency gate),
