@@ -704,7 +704,7 @@ static int nws_read_online_value(const char* s, long& v, char& flag) {
 /// returns the whole-file statistics the "Rainfall File Summary" reports.
 /// Mirrors legacy readNWSLine + saveRainfall + saveAccumRainfall.
 static void nws_read_file(std::FILE* f, const NwsFileSpec& spec,
-                          double win_lo, double win_hi,
+                          double win_lo, double win_hi, double file_start,
                           Table& series,
                           double& first_date, double& last_date,
                           long& periods_precip) {
@@ -769,6 +769,9 @@ static void nws_read_file(std::FILE* f, const NwsFileSpec& spec,
         }
 
         double date1 = datetime::encodeDate(y, m, d);
+        // legacy readNWSLine (rain.c:774): a line dated
+        // before the FILE start date is skipped whole.
+        if (date1 < file_start) continue;
 
         // --- each recorded time, value & condition code on the line
         while (k < line_length) {
@@ -927,7 +930,8 @@ static void load_external_rain_files_impl(SimulationContext& ctx,
             nws_series.id   = ctx.gage_names.name_of(g);
             double nws_first = 0.0, nws_last = 0.0;
             long   nws_periods = 0;
-            nws_read_file(fp, nws, win_lo, win_hi, nws_series,
+            nws_read_file(fp, nws, win_lo, win_hi,
+                          ctx.gages.file_start_date[ug], nws_series,
                           nws_first, nws_last, nws_periods);
             std::fclose(fp);
 
@@ -961,6 +965,7 @@ static void load_external_rain_files_impl(SimulationContext& ctx,
         float rain_accum_f = 0.0f;  // legacy rain.c file-scope RainAccum
 
         const std::string& sta = ctx.gages.station_id[ug];
+        const double file_start = ctx.gages.file_start_date[ug];
 
         Table series;
         series.type = TableType::TIMESERIES;
@@ -981,8 +986,11 @@ static void load_external_rain_files_impl(SimulationContext& ctx,
                             tok, &yr, &mo, &dy, &hr, &mn, &val) != 7) continue;
             if (!sta.empty() && sta != tok) continue;
 
-            const double dt = datetime::encodeDate(yr, mo, dy)
-                            + datetime::encodeTime(hr, mn, 0);
+            // legacy readStdLine (rain.c:1015): a record dated before the
+            // FILE start date is skipped before anything else sees it.
+            const double day = datetime::encodeDate(yr, mo, dy);
+            if (day < file_start) continue;
+            const double dt = day + datetime::encodeTime(hr, mn, 0);
 
             // Whole-file statistics for the report summary.
             if (first_date == 0.0 || dt < first_date) first_date = dt;

@@ -1862,9 +1862,15 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             // Temperature from climate file (Gap #9: sub-daily sinusoidal interp)
             climate::DailyClimateRecord rec;
             if (climate_file_.getRecord(abs_time, rec)) {
-                if (!std::isnan(rec.tmin) && !std::isnan(rec.tmax)) {
-                    double tmin = rec.tmin + ctx_.climate_state.adjust_temp[mon];
-                    double tmax = rec.tmax + ctx_.climate_state.adjust_temp[mon];
+                // legacy updateFileValues (climate.c:1127-1132) keeps EACH
+                // variable's last value on a day the file leaves it missing;
+                // requiring both used to freeze tmin whenever only tmax was
+                // missing, and the reverse.
+                if (!std::isnan(rec.tmin)) ctx_.climate_state.file_tmin = rec.tmin;
+                if (!std::isnan(rec.tmax)) ctx_.climate_state.file_tmax = rec.tmax;
+                {
+                    double tmin = ctx_.climate_state.file_tmin + ctx_.climate_state.adjust_temp[mon];
+                    double tmax = ctx_.climate_state.file_tmax + ctx_.climate_state.adjust_temp[mon];
                     ctx_.climate_state.temp_range = tmax - tmin;
 
                     if (doy != ctx_.climate_state.last_temp_doy) {
@@ -8708,6 +8714,16 @@ void SWMMEngine::initHydrology() noexcept {
                     "' could not be opened or its format was not recognised — "
                     "no climate data will be applied");
             }
+            // A FILE start date shifts which file day each simulation day
+            // reads (legacy positions the file there and steps one day per
+            // simulated day); without one the file is read at the sim dates.
+            climate_file_.setDayOffset(ctx_.options.temp_file_start > 0.0
+                ? std::floor(ctx_.options.temp_file_start) - std::floor(ctx_.options.start_date)
+                : 0.0);
+            // legacy climate_openFile seeds both held temperatures with
+            // Temp.ta (70 degF) before the first file day is read.
+            ctx_.climate_state.file_tmin = 70.0;
+            ctx_.climate_state.file_tmax = 70.0;
         }
     }
 

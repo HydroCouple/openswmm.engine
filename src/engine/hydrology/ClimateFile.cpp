@@ -478,7 +478,7 @@ void ClimateFileReader::parseDLY0204Line(const char* line) {
 
 bool ClimateFileReader::getRecord(double oa_date, DailyClimateRecord& rec) {
     int y, m, d;
-    oaDateToYMD(oa_date, y, m, d);
+    oaDateToYMD(oa_date + day_offset_, y, m, d);
 
     // Buffer the month if needed
     if (y != buf_year_ || m != buf_month_) {

@@ -1646,8 +1646,11 @@ int writeInpFile(const SimulationContext&  ctx_internal,
                 std::fprintf(f,"FILE         \"%s\"", tok.c_str());
                 // Legacy positional form: FILE fname [startdate] [units]. Emit a
                 // "*" start-date placeholder when units are set without a date.
-                if (opts.temp_file_start > 0.0)
-                    std::fprintf(f," %.6f", opts.temp_file_start);
+                if (opts.temp_file_start > 0.0) {
+                    char sd[32];
+                    fmt_date(sd, opts.temp_file_start);
+                    std::fprintf(f," %s", sd);
+                }
                 else if (opts.temp_units >= 0)
                     std::fprintf(f," *");
                 if (opts.temp_units >= 0) {
@@ -1875,7 +1878,11 @@ int writeInpFile(const SimulationContext&  ctx_internal,
                           tok.c_str(),
                           sta.empty() ? "*" : sta.c_str(),
                           ctx.gages.rain_units[u]==1 ? "MM" : "IN");
-            if(sf!=1.0)std::fprintf(f," * %.4g",sf); // '*' = no start date (tok[8])
+            // tok[8] is the start date ('*' = none), tok[9] the scale factor.
+            const double sd = ctx.gages.file_start_date[u];
+            if(sd>0.0){char db[32]; fmt_date(db,sd); std::fprintf(f," %s",db);}
+            else if(sf!=1.0) std::fprintf(f," *");
+            if(sf!=1.0)std::fprintf(f," %.4g",sf);
         }
         std::fprintf(f,"\n");
     }

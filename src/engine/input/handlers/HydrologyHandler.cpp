@@ -224,8 +224,16 @@ void handle_temperature(SimulationContext& ctx, const std::vector<std::string>& 
         else if (key == "FILE" && tok.size() >= 2) {
             ctx.options.temp_source = 2;
             ctx.options.temp_file = tok[1];
-            if (tok.size() >= 3 && tok[2] != "*")
-                ctx.options.temp_file_start = to_double(tok[2]);
+            // Optional start date (legacy climate.c:565-570): a token whose
+            // FIRST character is `*` means none; anything else must be a date
+            // or it is ERROR 213. It was read with to_double, which stops at
+            // the first '/', so every date became 1.0.
+            ctx.options.temp_file_start = 0.0;
+            if (tok.size() >= 3 && !tok[2].empty() && tok[2][0] != '*') {
+                const double start = parse_date(tok[2]);
+                if (start > 0.0) ctx.options.temp_file_start = start;
+                else ctx.errors.push_back(format_error(ERR_DATETIME, tok[2]));
+            }
             // Optional climate-file temperature units keyword (legacy tok[3]):
             //   C10 = tenths degC, C = degC, F = degF.
             if (tok.size() >= 4) {
