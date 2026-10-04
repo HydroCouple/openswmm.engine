@@ -5930,7 +5930,7 @@ void SWMMEngine::computeFinalStorage() noexcept {
                 const auto idx = static_cast<std::size_t>(j) *
                                  static_cast<std::size_t>(np) + up;
                 if (idx < ctx_.nodes.conc.size())
-                    m += ctx_.nodes.conc[idx] * reportedNodeVolume(j);
+                    m += ctx_.nodes.conc[idx] * ctx_.nodes.volume[j] + lidnode::heldMass(ctx_,j,p);
             }
             for (int j = 0; j < ctx_.n_links(); ++j) {
                 const auto uj  = static_cast<std::size_t>(j);
@@ -10123,7 +10123,7 @@ void SWMMEngine::initMassBalance() noexcept {
                 const auto idx = static_cast<std::size_t>(j) *
                                  static_cast<std::size_t>(np) + up;
                 if (idx < ctx_.nodes.conc.size())
-                    m += ctx_.nodes.conc[idx] * reportedNodeVolume(j);
+                    m += ctx_.nodes.conc[idx] * ctx_.nodes.volume[j] + lidnode::heldMass(ctx_,j,p);
             }
             for (int j = 0; j < ctx_.n_links(); ++j) {
                 const auto uj  = static_cast<std::size_t>(j);

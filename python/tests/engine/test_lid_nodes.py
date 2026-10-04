@@ -2,7 +2,7 @@
 from pathlib import Path
 import unittest
 
-from openswmm.engine import Solver, LidType, LidNodeLayer, LidNodeLayerKind as K, EngineError
+from openswmm.engine import Solver, LidType, LidNodeLayer, LidNodeLayerKind as K, LidLayerTreatment, EngineError
 from tests._paths import artifact_dir
 
 DECK = """[OPTIONS]
@@ -13,6 +13,8 @@ END_DATE 01/01/2004
 END_TIME 00:01:00
 ROUTING_STEP 00:00:01
 REPORT_STEP 00:01:00
+[POLLUTANTS]
+TSS MG/L 0 0 0 0 NO * 0 0 0
 [STORAGE]
 S 0 2 0 FUNCTIONAL 0 0 100 0 0
 [OUTFALLS]
@@ -71,6 +73,19 @@ class TestLidNodes(unittest.TestCase):
         with self.assertRaises(EngineError):
             self.solver.infrastructure.lids.set_layers("Stack", self.layers)
         self.solver.end()
+
+    def test_treatment_roundtrip_and_atomic_validation(self):
+        lids = self.solver.infrastructure.lids
+        rules = [LidLayerTreatment(2, "TSS", 25, 1.5, "R = 0.2")]
+        lids.set_layers("Stack", self.layers, treatments=rules)
+        self.assertEqual(lids.get_treatments("Stack"), rules)
+        lids.set_layers("Stack", self.layers)
+        self.assertEqual(lids.get_treatments("Stack"), rules)
+        with self.assertRaises(EngineError):
+            lids.set_layers("Stack", self.layers, treatments=[LidLayerTreatment(2, "TSS", 101)])
+        self.assertEqual(lids.get_treatments("Stack"), rules)
+        lids.set_layers("Stack", self.layers, treatments=[])
+        self.assertEqual(lids.get_treatments("Stack"), [])
 
     def test_layer_parameter_shape(self):
         with self.assertRaises(ValueError):

@@ -875,6 +875,15 @@ cdef extern from "openswmm_infrastructure.h":
     ctypedef struct SWMM_LidNodeLayer:
         int kind
         double params[7]
+    ctypedef struct SWMM_LidLayerTreatment:
+        int layer
+        int pollutant
+        double removal_percent
+        double decay_per_day
+        const char* expression
+    cdef int swmm_lid_node_treatment_count(SWMM_Engine e, int control)
+    cdef int swmm_lid_node_treatment_get(SWMM_Engine e, int control, int row, SWMM_LidLayerTreatment* out)
+    cdef int swmm_lid_node_configure(SWMM_Engine e, int control, const SWMM_LidNodeLayer* rows, int count, const SWMM_LidLayerTreatment* treatments, int treatment_count)
     cdef int swmm_lid_node_layer_count(SWMM_Engine e, int control)
     cdef int swmm_lid_node_layer_get(SWMM_Engine e, int control, int row, SWMM_LidNodeLayer* out)
     cdef int swmm_lid_node_layers_set(SWMM_Engine e, int control, const SWMM_LidNodeLayer* rows, int count)

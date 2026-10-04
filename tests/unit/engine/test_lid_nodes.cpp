@@ -8,6 +8,7 @@
 #include "hydraulics/Node.hpp"
 #include "openswmm/engine/openswmm_infrastructure.h"
 #include "openswmm/engine/openswmm_links.h"
+#include "openswmm/engine/openswmm_pollutants.h"
 #include "core/HotStartManager.hpp"
 #include "input/geopackage/GeoPackageReader.hpp"
 #include "input/geopackage/GeoPackageWriter.hpp"
@@ -15,6 +16,7 @@
 #include "edit/TypeConverter.hpp"
 #include <filesystem>
 #include <fstream>
+#include <numeric>
 using namespace openswmm;
 namespace {
 SimulationContext model() {
@@ -179,19 +181,21 @@ D 3 BOTTOM
 }
 
 TEST(LidNodes, HotstartRetainsMoistureAndCloggingHistory) {
-    auto c = model(); lidnode::initialize(c);
+    auto c = model(); c.pollutant_names.add("TSS"); c.pollutants.resize_pollutants(1); lidnode::initialize(c);
+    c.node_subtypes.storages.lid_state[0].quality_mass.assign(c.node_subtypes.storages.lid_state[0].cells.size(), 12.5);
     c.nodes.lat_flow[0] = .1;
     lidnode::prepareStep(c, 20, 0); lidnode::finishStep(c);
     const auto saved = c.node_subtypes.storages.lid_state[0];
     const auto path = (std::filesystem::path(OPENSWMM_TEST_SOURCE_DIR) / "../../output/lid_nodes_2026_10_04/profile.hsf").string();
     std::unique_ptr<HotStartFile> hs(HotStartManager::save(c, path));
-    ASSERT_TRUE(hs); EXPECT_EQ(hs->header.version, 8u);
+    ASSERT_TRUE(hs); EXPECT_EQ(hs->header.version, 9u);
     hs.reset(HotStartManager::open(path)); ASSERT_TRUE(hs);
     lidnode::initialize(c);
     ASSERT_EQ(HotStartManager::apply(*hs, c), 0);
     const auto& restored = c.node_subtypes.storages.lid_state[0];
     EXPECT_DOUBLE_EQ(restored.held_volume, saved.held_volume);
     EXPECT_DOUBLE_EQ(restored.treated_volume, saved.treated_volume);
+    EXPECT_EQ(restored.quality_mass, saved.quality_mass);
     for (std::size_t k = 0; k < saved.cells.size(); ++k)
         EXPECT_DOUBLE_EQ(restored.cells[k].theta, saved.cells[k].theta);
     c.node_subtypes.storages.lid_state[0].cells.pop_back();
@@ -200,6 +204,8 @@ TEST(LidNodes, HotstartRetainsMoistureAndCloggingHistory) {
 #ifdef LID_TEST_GEOPACKAGE
 TEST(LidNodes, GeoPackagePreservesOrderedLayersAndAssignment) {
     auto c = model();
+    c.pollutant_names.add("TSS"); c.pollutants.resize_pollutants(1);
+    c.lid_controls.node_layers[0][1].treatment={{"TSS",.25,1.5,"R = 0.2"}};
     // Populate all standard parallel columns as a parsed model would.
     c.lid_controls.surface.resize(1); c.lid_controls.soil.resize(1);
     c.lid_controls.storage.resize(1); c.lid_controls.pavement.resize(1);
@@ -215,6 +221,10 @@ TEST(LidNodes, GeoPackagePreservesOrderedLayersAndAssignment) {
         EXPECT_EQ(restored.lid_controls.node_layers[0][i].params, c.lid_controls.node_layers[0][i].params);
     }
     EXPECT_DOUBLE_EQ(restored.node_subtypes.storages.lid[0].initial_saturation, 10);
+    ASSERT_EQ(restored.lid_controls.node_layers[0][1].treatment.size(), 1u);
+    const auto& rule=restored.lid_controls.node_layers[0][1].treatment[0];
+    EXPECT_EQ(rule.pollutant,"TSS"); EXPECT_DOUBLE_EQ(rule.removal,.25);
+    EXPECT_DOUBLE_EQ(rule.decay,1.5); EXPECT_EQ(rule.expression,"R = 0.2");
 }
 #endif
 TEST(LidNodes, OrdinaryLinksAreNumericallyUnchanged) {
@@ -300,4 +310,135 @@ TEST(LidNodes, SurchargeWetsMediaToFieldCapacityConservatively) {
     EXPECT_NEAR(c.nodes.volume[0] + lidnode::heldVolume(c, 0), before, 1.e-12);
     for (const auto& cell : c.node_subtypes.storages.lid_state[0].cells)
         if (cell.kind == LidNodeLayerKind::Media) EXPECT_DOUBLE_EQ(cell.theta, cell.field_capacity);
+}
+
+TEST(LidNodes, LayerTreatmentApiIsAtomicAndPreservedByPhysicalEdits) {
+    SWMMEngine e;e.context()=model();auto& c=e.context();c.state=EngineState::OPENED;
+    c.pollutant_names.add("TSS");c.pollutants.resize_pollutants(1);
+    const auto h=reinterpret_cast<SWMM_Engine>(&e);
+    SWMM_LidNodeLayer rows[]={{1,{12,.45,.2,.08,2,10,3}},{2,{12,.4,100}}};
+    SWMM_LidLayerTreatment rule{1,0,25,1.5,"R = 0.2"};
+    ASSERT_EQ(swmm_lid_node_configure(h,0,rows,2,&rule,1),SWMM_OK);
+    ASSERT_EQ(swmm_lid_node_treatment_count(h,0),1);
+    rows[0].params[0]=18;
+    ASSERT_EQ(swmm_lid_node_layers_set(h,0,rows,2),SWMM_OK);
+    SWMM_LidLayerTreatment got{};ASSERT_EQ(swmm_lid_node_treatment_get(h,0,0,&got),SWMM_OK);
+    EXPECT_DOUBLE_EQ(got.decay_per_day,1.5);EXPECT_STREQ(got.expression,"R = 0.2");
+    rule.removal_percent=101;
+    EXPECT_NE(swmm_lid_node_configure(h,0,rows,2,&rule,1),SWMM_OK);
+    ASSERT_EQ(swmm_lid_node_treatment_get(h,0,0,&got),SWMM_OK);EXPECT_DOUBLE_EQ(got.removal_percent,25);
+    rule.removal_percent=25;rule.expression="R = nonsense(";
+    EXPECT_NE(swmm_lid_node_configure(h,0,rows,2,&rule,1),SWMM_OK);
+}
+TEST(LidNodes, LayerRatesExpressionsAndTransfersConservePollutantMass) {
+    auto c=model();c.pollutant_names.add("TSS");c.pollutants.resize_pollutants(1);
+    c.nodes.conc_old.assign(2,10);c.nodes.conc.assign(2,10);c.nodes.qual_mass_in.assign(2,0);c.nodes.qual_vol_in.assign(2,0);
+    c.mass_balance.qual_routing_reacted.assign(1,0);
+    lidnode::initialize(c);auto& state=c.node_subtypes.storages.lid_state[0];
+    for(auto& cell:state.cells)cell.theta=.1;
+    state.quality_old_water.clear();for(const auto& cell:state.cells)state.quality_old_water.push_back(cell.theta*cell.geometric_volume);
+    state.quality_old_mobile=0;c.nodes.old_volume[0]=0;
+    // One transfer across a layer boundary; fixed removal and expression compose.
+    state.quality_transfers={{0,1,1}};
+    c.lid_controls.node_layers[0][0].treatment={{"TSS",.25,0,"R = 0.2"}};
+    c.lid_controls.node_layers[0][1].treatment={{"TSS",0,86400*std::log(2.0),""}};
+    const double before=10*std::accumulate(state.quality_old_water.begin(),state.quality_old_water.end(),0.0);
+    lidnode::prepareQuality(c,1);
+    const double after=std::accumulate(state.quality_mass.begin(),state.quality_mass.end(),0.0);
+    EXPECT_NEAR(before,after+c.mass_balance.qual_routing_reacted[0],1.e-10);
+    // First media cell starts at 20 mass, receives 6, then halves in one second.
+    EXPECT_NEAR(state.quality_mass[1],13,1.e-10);
+    EXPECT_NEAR(state.quality_mass[0],40,1.e-10);
+}
+TEST(LidNodes, LayerTreatmentInputRoundTrip) {
+    auto c=model();c.pollutant_names.add("TSS");c.pollutants.resize_pollutants(1);
+    c.lid_controls.node_layers[0][1].treatment={{"TSS",.25,1.5,"R = 0.2"}};
+    const auto path=(std::filesystem::path(OPENSWMM_TEST_SOURCE_DIR)/"../../output/lid_nodes_2026_10_04/treatment_roundtrip.inp").string();
+    ASSERT_EQ(inp_writer::writeInpFile(c,path),0);
+    SimulationContext read;DefaultInputPlugin plugin;ASSERT_EQ(plugin.read(path,read),0);input::resolve_cross_references(read);
+    ASSERT_TRUE(read.errors.empty())<<(read.errors.empty()?"":read.errors[0]);
+    const auto& rules=read.lid_controls.node_layers[0][1].treatment;ASSERT_EQ(rules.size(),1u);
+    EXPECT_DOUBLE_EQ(rules[0].removal,.25);EXPECT_EQ(rules[0].expression,"R = 0.2");
+}
+
+TEST(LidNodes, RoutedLayerTreatmentMassBalance) {
+    const auto dir = std::filesystem::path(OPENSWMM_TEST_SOURCE_DIR) / "../../output/lid_nodes_2026_10_04";
+    for (double inflow : {.01, 1.0}) for (bool treatment : {false, true}) {
+        const auto stem = "quality_" + std::to_string(inflow) + (treatment ? "_treated" : "_plain");
+        const auto path = (dir / (stem + ".inp")).string();
+        std::ofstream f(path);
+        f << R"([OPTIONS]
+FLOW_UNITS CFS
+FLOW_ROUTING DYNWAVE
+START_DATE 01/01/2004
+END_DATE 01/01/2004
+END_TIME 00:05:00
+ROUTING_STEP 0.1
+VARIABLE_STEP 0
+REPORT_STEP 00:01:00
+[STORAGE]
+S 0 2 0 FUNCTIONAL 0 0 100 0 0
+[OUTFALLS]
+O 0 FREE NO
+[ORIFICES]
+D S O SIDE 1.5 .6 NO 0
+[XSECTIONS]
+D CIRCULAR .2 0 0 0
+[POLLUTANTS]
+TSS MG/L 0 0 0 0 NO * 0 0 0
+[DWF]
+S TSS 10
+S FLOW )" << inflow << R"(
+[LID_CONTROLS]
+Stack NODE
+Stack SURFACE 6 .1
+Stack MEDIA 12 .45 .2 .08 2 10 3
+Stack AGGREGATE 6 .4 100
+[LID_NODES]
+S Stack 10
+[LID_NODE_OUTLETS]
+D 1 BOTTOM
+)";
+        if (treatment) f << "[LID_LAYER_TREATMENT]\nStack 1 TSS 25 1 R = 0.2\nStack 2 TSS 10 2 C = C * 0.9\n";
+        f.close();
+        SWMMEngine e;
+        ASSERT_EQ(e.open(path.c_str(), (dir/(stem+".rpt")).string().c_str(), (dir/(stem+".out")).string().c_str()),0);
+        ASSERT_EQ(e.initialize(),0); ASSERT_EQ(e.start(1),0);
+        double t=0; do { ASSERT_EQ(e.step(&t),0); } while(t>0);
+        ASSERT_EQ(e.end(),0);
+        const auto& b=e.context().mass_balance;
+        const double input=b.qual_routing_init[0]+b.qual_routing_dw_in[0]+b.qual_routing_ex_in[0];
+        const double output=b.qual_routing_final[0]+b.qual_routing_outflow[0]+b.qual_routing_flood[0]+b.qual_routing_reacted[0]+b.qual_routing_seep[0]+b.qual_routing_final_dry[0];
+        EXPECT_NEAR(input,output,std::max(.001,input*.005)) << stem << " stored=" << b.qual_routing_final[0] << " out=" << b.qual_routing_outflow[0] << " reacted=" << b.qual_routing_reacted[0];
+        if(treatment) EXPECT_GT(b.qual_routing_reacted[0],0);
+        e.close();
+    }
+}
+
+TEST(LidNodes, SaturatedAggregateDecayConservesMass) {
+    auto c=model(); c.pollutant_names.add("TSS"); c.pollutants.resize_pollutants(1);
+    c.lid_controls.node_layers[0]={{LidNodeLayerKind::Aggregate,{24,.4,100},{{"TSS",0,86400*std::log(2.0),""}}}};
+    c.node_subtypes.storages.lid[0].initial_saturation=100;
+    c.nodes.conc_old.assign(2,10); c.nodes.conc.assign(2,10);
+    c.nodes.qual_mass_in.assign(2,0); c.nodes.qual_vol_in.assign(2,0);
+    c.mass_balance.qual_routing_reacted.assign(1,0);
+    lidnode::initialize(c);
+    auto& state=c.node_subtypes.storages.lid_state[0];
+    state.quality_old_water.assign(state.cells.size(),0);
+    state.quality_old_mobile=80; c.nodes.old_volume[0]=80; c.nodes.old_depth[0]=2;
+    lidnode::prepareQuality(c,1);
+    EXPECT_NEAR(c.nodes.conc_old[0],5,1.e-10);
+    EXPECT_NEAR(c.mass_balance.qual_routing_reacted[0],400,1.e-10);
+}
+
+TEST(LidNodes, PollutantRenameAndDeleteFollowLayerTreatment) {
+    SWMMEngine e; e.context()=model(); auto& c=e.context(); c.state=EngineState::OPENED;
+    c.pollutant_names.add("TSS"); c.pollutant_names.add("BOD"); c.pollutants.resize_pollutants(2);
+    auto& rules=c.lid_controls.node_layers[0][1].treatment;
+    rules={{"TSS",0,1,"C = C_TSS * 0.5"},{"BOD",0,0,"R = R_TSS"}};
+    ASSERT_EQ(swmm_pollutant_rename(reinterpret_cast<SWMM_Engine>(&e),0,"Solids"),SWMM_OK);
+    EXPECT_EQ(rules[0].pollutant,"Solids"); EXPECT_EQ(rules[0].expression,"C = C_Solids * 0.5");
+    EXPECT_EQ(rules[1].expression,"R = R_Solids");
+    edit::delete_pollutant(c,0);
+    EXPECT_TRUE(rules.empty());
 }

@@ -47,7 +47,7 @@ flat (``add_*`` / ``*_count``) rather than dressing it as a collection.
 
 from libc.string cimport memcpy, memset
 from libc.stdlib cimport calloc, free
-from ._lid_nodes import LidNodeLayer, LidNodeLayerKind
+from ._lid_nodes import LidNodeLayer, LidNodeLayerKind, LidLayerTreatment
 
 from ._exceptions import ElementNotFoundError
 from ._enums import (GrateType, InletCurveKind, InletHostKind, InletPlacement,
@@ -844,7 +844,17 @@ class LIDs:
                 tuple(row.params[j] for j in range((2, 7, 3, 2)[row.kind]))))
         return result
 
-    def set_layers(self, key, layers):
+    def get_treatments(self, key):
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int idx = _resolve_index(h, key, swmm_lid_index, swmm_lid_count, "LID")
+        cdef SWMM_LidLayerTreatment row
+        result = []
+        for i in range(swmm_lid_node_treatment_count(h, idx)):
+            _check(swmm_lid_node_treatment_get(h, idx, i, &row))
+            result.append(LidLayerTreatment(row.layer, swmm_pollutant_id(h, row.pollutant).decode(), row.removal_percent, row.decay_per_day, row.expression.decode()))
+        return result
+
+    def set_layers(self, key, layers, *, treatments=None):
         """Atomically replace an arbitrary ordered NODE stack and sync its nodes.
 
         Accepts an iterable of LidNodeLayer. Invalid stacks leave the old stack,
@@ -859,6 +869,8 @@ class LIDs:
         cdef SWMM_LidNodeLayer* rows = <SWMM_LidNodeLayer*>calloc(count, sizeof(SWMM_LidNodeLayer))
         if rows == NULL:
             raise MemoryError()
+        cdef SWMM_LidLayerTreatment* rules = NULL
+        cdef int rule_count = 0
         try:
             for i, layer in enumerate(values):
                 if not isinstance(layer, LidNodeLayer):
@@ -866,8 +878,29 @@ class LIDs:
                 rows[i].kind = int(layer.kind)
                 for j, value in enumerate(layer.params):
                     rows[i].params[j] = value
-            _check(swmm_lid_node_layers_set(h, idx, rows, count))
+            if treatments is None:
+                _check(swmm_lid_node_layers_set(h, idx, rows, count))
+            else:
+                treatment_values = list(treatments)
+                rule_count = len(treatment_values)
+                if any(not isinstance(t, LidLayerTreatment) for t in treatment_values):
+                    raise TypeError("treatments must contain LidLayerTreatment instances")
+                expressions = [t.expression.encode("utf-8") for t in treatment_values]
+                if rule_count:
+                    rules = <SWMM_LidLayerTreatment*>calloc(rule_count, sizeof(SWMM_LidLayerTreatment))
+                    if rules == NULL:
+                        raise MemoryError()
+                for i, treatment in enumerate(treatment_values):
+                    if not isinstance(treatment, LidLayerTreatment):
+                        raise TypeError("treatments must contain LidLayerTreatment instances")
+                    rules[i].layer = treatment.layer
+                    rules[i].pollutant = _resolve_index(h, treatment.pollutant, swmm_pollutant_index, swmm_pollutant_count, "pollutant")
+                    rules[i].removal_percent = treatment.removal_percent
+                    rules[i].decay_per_day = treatment.decay_per_day
+                    rules[i].expression = expressions[i]
+                _check(swmm_lid_node_configure(h, idx, rows, count, rules, rule_count))
         finally:
+            free(rules)
             free(rows)
 
     def assign_node(self, node, control, *, double initial_saturation=0.0):

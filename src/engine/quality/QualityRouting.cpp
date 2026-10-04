@@ -1,3 +1,4 @@
+#include "../hydrology/LidNode.hpp"
 // SPDX-License-Identifier: Apache-2.0
 //
 // Copyright 2026 Caleb Buahin
@@ -483,6 +484,7 @@ void QualitySolver::execute(SimulationContext& ctx, double dt) {
         return;
 
     assembleExternalLoads(ctx, dt);
+    lidnode::prepareQuality(ctx, dt);
     accumulateLinkLoads(ctx, dt);
     mixAtNodes(ctx, dt);
     // R4b (transport half): MSX element state advects on the same CSTR
@@ -949,11 +951,19 @@ void QualitySolver::accumulateLinkLoads(SimulationContext& ctx, double dt) {
             auto np_idx = ud * static_cast<size_t>(np) + static_cast<size_t>(p);
 
             double c_link = (lp < links.conc_old.size()) ? links.conc_old[lp] : 0.0;
+            if (linkTakesUpstreamValue(ctx,j)) {
+                const int source = links.flow[uj]>=0?links.node1[uj]:links.node2[uj];
+                c_link=lidnode::outletQuality(ctx,source,j,p,c_link);
+            }
             double mass = q * c_link;
             if (np_idx < ctx.nodes.qual_mass_in.size()) {
                 ctx.nodes.qual_mass_in[np_idx] += mass;
+                lidnode::receiveQuality(ctx,downstream,j,q*dt,p,mass,dt);
             }
         }
+        const int r=ctx.node_subtypes.storage_row(downstream);
+        if(r>=0) for(const auto& port:ctx.node_subtypes.storages.lid_state[r].quality_ports)
+            if(port.link==j && port.volume>0) ctx.nodes.qual_vol_in[ud]-=port.volume;
     }
     (void)dt;
 }
@@ -1071,7 +1081,7 @@ void QualitySolver::mixAtNodes(SimulationContext& ctx, double dt) {
                 const auto us = static_cast<size_t>(srow);
                 const auto& st = ctx.node_subtypes.storages;
                 const double v_evap =
-                    (us < st.evap_loss.size()) ? st.evap_loss[us] : 0.0;
+                    (us < st.evap_loss.size()) ? std::max(0.0, st.evap_loss[us] - st.lid_state[us].evap_volume) : 0.0;
                 const double v_exfil =
                     (us < st.exfil_loss.size()) ? st.exfil_loss[us] : 0.0;
                 // legacy holds Storage[k].exfilLoss as a VOLUME over the step
@@ -1221,7 +1231,7 @@ void QualitySolver::updateLinkQuality(SimulationContext& ctx, double dt) {
                 auto li = uj * static_cast<size_t>(np) + static_cast<size_t>(p);
                 auto ni = un * static_cast<size_t>(np) + static_cast<size_t>(p);
                 if (li >= links.conc.size() || ni >= nodes.conc.size()) break;
-                links.conc[li] = nodes.conc[ni];
+                links.conc[li] = lidnode::outletQuality(ctx, upstream, j, p, nodes.conc[ni]);
             }
             continue;
         }
@@ -1312,7 +1322,7 @@ void QualitySolver::updateLinkQuality(SimulationContext& ctx, double dt) {
                 if (q_in <= LEGACY_ZERO) {
                     c_new = c2;
                 } else {
-                    const double w_in = nodes.conc[ni] * q_in;
+                    const double w_in = lidnode::outletQuality(ctx, upstream, j, p, nodes.conc[ni]) * q_in;
                     const double v_in = q_in * dt;
                     const double c_in = w_in * dt / v_in;
                     const double c_max = std::max(c2, c_in);

@@ -24,6 +24,7 @@
  */
 
 #include "ObjectDeleter.hpp"
+#include "../quality/Treatment.hpp"
 #include "../data/LinkData.hpp"
 #include "../../../include/openswmm/engine/openswmm_edit.h"
 
@@ -1036,6 +1037,15 @@ static void erase_matrix_row(std::vector<T>& v, int n_rows, int n_cols, int row)
 // ============================================================================
 
 // Shared scan so analyze and delete report identical impact sets.
+static bool layer_rule_uses_pollutant(const SimulationContext& ctx, const LidLayerTreatment& rule, int pollutant) {
+    if (ctx.pollutant_names.find(rule.pollutant)==pollutant) return true;
+    treatment::TreatExpr expr;
+    if (rule.expression.empty() || treatment::parse(rule.expression,expr,ctx.pollutant_names.names())!=0) return false;
+    return std::any_of(expr.tokens.begin(),expr.tokens.end(),[&](const auto& token) {
+        return (token.var==treatment::TreatVar::C_POLLUT || token.var==treatment::TreatVar::R_POLLUT) && token.pollut_ref==pollutant;
+    });
+}
+
 static void scan_pollutant_refs(const SimulationContext& ctx, int pollut_idx,
                                 CascadeResult& result) {
     const int np = ctx.n_pollutants();
@@ -1069,6 +1079,12 @@ static void scan_pollutant_refs(const SimulationContext& ctx, int pollut_idx,
                 result.add(SWMM_REF_TREATMENT, n, "expression", true);
         }
     }
+
+    for (int i=0; i<static_cast<int>(ctx.lid_controls.node_layers.size()); ++i)
+        for (const auto& layer : ctx.lid_controls.node_layers[i])
+            for (const auto& rule : layer.treatment)
+                if (layer_rule_uses_pollutant(ctx, rule, pollut_idx))
+                    result.add(SWMM_REF_LID_CONTROL, i, "layer treatment", false);
 
     // Co-pollutant references
     for (int i = 0; i < np; ++i) {
@@ -1197,6 +1213,15 @@ CascadeResult delete_pollutant(SimulationContext& ctx, int pollut_idx) {
                     pairs.end());
         for (auto& pr : pairs)
             if (pr.first > pollut_idx) --pr.first;
+    }
+
+    for (auto& stack : ctx.lid_controls.node_layers)
+        for (auto& layer : stack)
+            layer.treatment.erase(std::remove_if(layer.treatment.begin(), layer.treatment.end(),
+                [&](const auto& rule) { return layer_rule_uses_pollutant(ctx, rule, pollut_idx); }), layer.treatment.end());
+    for (auto& state : ctx.node_subtypes.storages.lid_state) {
+        erase_matrix_column(state.quality_mass, static_cast<int>(state.cells.size()), np, pollut_idx);
+        state.quality_outlet_conc.clear();
     }
 
     // --- Step 4: erase the pollutant's own definition row ---

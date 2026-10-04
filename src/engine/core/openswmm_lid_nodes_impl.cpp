@@ -55,8 +55,52 @@ SWMM_ENGINE_API int swmm_lid_node_layers_set(SWMM_Engine engine, int control, co
         }
     }
     c.lid_controls.node_layers.resize(c.lid_controls.count());
+    const auto previous = openswmm::lidnode::layers(c, control);
+    for (std::size_t i=0;i<previous.size();++i) if (!previous[i].treatment.empty()) {
+        if (i >= layers.size() || layers[i].kind != previous[i].kind) return SWMM_ERR_BADPARAM;
+        layers[i].treatment = previous[i].treatment;
+    }
     c.lid_controls.node_layers[control] = std::move(layers);
     openswmm::lidnode::sync(c, control);
+    return SWMM_OK;
+}
+SWMM_ENGINE_API int swmm_lid_node_treatment_count(SWMM_Engine engine, int control) {
+    if (!engine) return -1;
+    const auto& c=to_engine(engine)->context();
+    if(control<0||control>=c.lid_controls.count())return -1;
+    int count=0; for(const auto& l:openswmm::lidnode::layers(c,control))count+=l.treatment.size();
+    return count;
+}
+SWMM_ENGINE_API int swmm_lid_node_treatment_get(SWMM_Engine engine,int control,int row,SWMM_LidLayerTreatment* out) {
+    CHECK_HANDLE(engine); if(!out||row<0)return SWMM_ERR_BADPARAM;
+    const auto& c=to_engine(engine)->context();
+    CHECK_INDEX(control>=0&&control<static_cast<int>(c.lid_controls.node_layers.size()));
+    int i=0; for(const auto& l:c.lid_controls.node_layers[control]) { ++i; for(const auto& t:l.treatment) {
+        if(row--==0) { *out={i,c.pollutant_names.find(t.pollutant),t.removal*100,t.decay,t.expression.c_str()};return SWMM_OK; }
+    }}
+    return SWMM_ERR_BADPARAM;
+}
+SWMM_ENGINE_API int swmm_lid_node_configure(SWMM_Engine engine,int control,const SWMM_LidNodeLayer* rows,int count,const SWMM_LidLayerTreatment* treatments,int nt) {
+    CHECK_HANDLE(engine);auto& c=to_engine(engine)->context();
+    if(!editable(c))return SWMM_ERR_LIFECYCLE;
+    CHECK_INDEX(control>=0&&control<c.lid_controls.count());
+    if(!rows||count<1||nt<0||(nt>0&&!treatments))return SWMM_ERR_BADPARAM;
+    std::vector<std::vector<openswmm::LidLayerTreatment>> rules(count);
+    for(int i=0;i<nt;++i) {
+        const auto& t=treatments[i];
+        if(t.layer<1||t.layer>count||rows[t.layer-1].kind==3||t.pollutant<0||t.pollutant>=c.n_pollutants())return SWMM_ERR_BADPARAM;
+        openswmm::LidLayerTreatment rule{c.pollutant_names.name_of(t.pollutant),t.removal_percent/100,t.decay_per_day,t.expression?t.expression:""};
+        std::string error;if(!openswmm::lidnode::validTreatment(c,rule,error))return SWMM_ERR_BADPARAM;
+        auto& layer=rules[t.layer-1];
+        if(std::any_of(layer.begin(),layer.end(),[&](const auto& other){return other.pollutant==rule.pollutant;}))return SWMM_ERR_BADPARAM;
+        layer.push_back(std::move(rule));
+    }
+    c.lid_controls.node_layers.resize(c.lid_controls.count());
+    const auto previous=c.lid_controls.node_layers[control];
+    for(auto& l:c.lid_controls.node_layers[control])l.treatment.clear();
+    const int rc=swmm_lid_node_layers_set(engine,control,rows,count);
+    if(rc!=SWMM_OK) { c.lid_controls.node_layers[control]=previous;return rc; }
+    for(int i=0;i<count;++i)c.lid_controls.node_layers[control][i].treatment=std::move(rules[i]);
     return SWMM_OK;
 }
 SWMM_ENGINE_API int swmm_node_get_lid(SWMM_Engine engine, int node, int* control, double* saturation) {

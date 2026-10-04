@@ -176,6 +176,10 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
                 if (!write_pod(buf, static_cast<int32_t>(c.layer)) || !write_pod(buf, c.bottom) || !write_pod(buf, c.top) ||
                     !write_pod(buf, c.porosity) || !write_pod(buf, c.volume) || !write_pod(buf, c.theta)) return false;
         }
+        if (hs.header.version >= 9u) {
+            if(!write_pod(buf,static_cast<uint32_t>(n.lid_quality_mass.size())))return false;
+            for(double mass:n.lid_quality_mass)if(!write_pod(buf,mass))return false;
+        }
     }
 
     // Links
@@ -351,7 +355,7 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
 
     // Header
     if (!read_pod(is, hs.header.version))    return false;
-    if (hs.header.version < 1u || hs.header.version > 8u) {
+    if (hs.header.version < 1u || hs.header.version > 9u) {
         tl_last_io_error = "Unsupported hot start version " +
                            std::to_string(hs.header.version) + " in '" + path + "'";
         return false;
@@ -389,6 +393,11 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
                     !std::isfinite(c.theta) || c.bottom < 0 || c.top <= c.bottom || c.porosity <= 0 || c.porosity > 1 ||
                     c.theta < 0 || c.theta > c.porosity || c.volume <= 0 || c.layer < 1) return false;
             }
+        }
+        if (hs.header.version >= 9u) {
+            uint32_t count=0;if(!read_pod(is,count)||count>file_size/sizeof(double))return false;
+            n.lid_quality_mass.resize(count);
+            for(auto& mass:n.lid_quality_mass)if(!read_pod(is,mass)||!std::isfinite(mass)||mass<0)return false;
         }
     }
 
@@ -908,9 +917,10 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
         hs->nodes[ui].head   = ctx.nodes.head[ui];
         hs->nodes[ui].volume = ctx.nodes.volume[ui];
         if (lidnode::active(ctx, i)) {
-            hs->header.version = 8u;
+            hs->header.version = 9u;
             const auto& state = ctx.node_subtypes.storages.lid_state[ctx.node_subtypes.storage_row(i)];
             hs->nodes[ui].lid_treated_volume = state.treated_volume;
+            hs->nodes[ui].lid_quality_mass = state.quality_mass;
             for (const auto& c : state.cells)
                 hs->nodes[ui].lid_cells.push_back({c.layer, c.bottom, c.top, c.porosity, c.geometric_volume, c.theta});
         }
@@ -1007,9 +1017,10 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
         hs->nodes[ui].head   = ctx.nodes.head[ui];
         hs->nodes[ui].volume = ctx.nodes.volume[ui];
         if (lidnode::active(ctx, i)) {
-            hs->header.version = 8u;
+            hs->header.version = 9u;
             const auto& state = ctx.node_subtypes.storages.lid_state[ctx.node_subtypes.storage_row(i)];
             hs->nodes[ui].lid_treated_volume = state.treated_volume;
+            hs->nodes[ui].lid_quality_mass = state.quality_mass;
             for (const auto& c : state.cells)
                 hs->nodes[ui].lid_cells.push_back({c.layer, c.bottom, c.top, c.porosity, c.geometric_volume, c.theta});
         }
@@ -1118,12 +1129,14 @@ int HotStartManager::apply(HotStartFile& hs,
                                   a.porosity == b.porosity && a.geometric_volume == b.volume && b.theta >= a.wilting_point;
                 }
             }
+            compatible &= rec.lid_quality_mass.empty() || rec.lid_quality_mass.size()==rec.lid_cells.size()*ctx.n_pollutants();
             if (!compatible) {
                 emit_warning("Hot start: LID profile missing or incompatible for node '" + rec.id + "'; node state not applied");
                 continue;
             }
             auto& state = ctx.node_subtypes.storages.lid_state[r];
             state.held_volume = 0.0; state.treated_volume = rec.lid_treated_volume;
+            state.quality_mass = rec.lid_quality_mass;
             std::fill(state.port_delta.begin(), state.port_delta.end(), 0.0);
             for (std::size_t k = 0; k < state.cells.size(); ++k) {
                 state.cells[k].theta = rec.lid_cells[k].theta;

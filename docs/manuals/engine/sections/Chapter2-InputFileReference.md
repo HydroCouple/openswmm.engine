@@ -3994,3 +3994,13 @@ inert, with a warning, unless `QUALITY_SOLVER` is `EULERIAN_ARD` and
 `IGNORE_QUALITY` is NO.
 
 <!-- source: src/engine/transport/components/EulerianArdComponent/ArdConfig.cpp:247-294,448-496; src/engine/data/ArdConfigData.hpp:61-79,112-131,171-173 -->
+
+
+## [LID_LAYER_TREATMENT] {#engine_lid_layer_treatment}
+
+`Control Layer Pollutant RemovalPercent DecayPerDay [Expression]` assigns one
+pollutant rule to a physical NODE layer (one-based from the top; BOTTOM is
+excluded). Removal is 0–100%; decay is nonnegative in 1/day. Optional `R = ...`
+or `C = ...` expressions act after fixed removal. Use Dynamic Wave and
+`QUALITY_SOLVER LEGACY`. See @ref engine_manual_lid_storage for conservative
+coupling, treatment order, API behavior, persistence and numerical limits.

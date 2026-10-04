@@ -635,6 +635,11 @@ CREATE TABLE IF NOT EXISTS lid_node_layers (
     kind INTEGER NOT NULL, p1 REAL, p2 REAL, p3 REAL, p4 REAL, p5 REAL, p6 REAL, p7 REAL,
     PRIMARY KEY(simulation_id, lid_id, ordinal)
 );
+CREATE TABLE IF NOT EXISTS lid_layer_treatment (
+    simulation_id TEXT NOT NULL, lid_id TEXT NOT NULL, layer INTEGER NOT NULL,
+    pollutant TEXT NOT NULL, removal REAL NOT NULL, decay REAL NOT NULL, expression TEXT NOT NULL,
+    PRIMARY KEY(simulation_id,lid_id,layer,pollutant)
+);
 CREATE TABLE IF NOT EXISTS lid_nodes (
     simulation_id TEXT NOT NULL, node_id TEXT NOT NULL, lid_id TEXT NOT NULL,
     initial_saturation REAL NOT NULL, PRIMARY KEY(simulation_id, node_id)
