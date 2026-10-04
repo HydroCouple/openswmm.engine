@@ -3125,8 +3125,10 @@ void resolve_cross_references(SimulationContext& ctx) {
     // matching legacy street_readParams.
     {
         const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
-        const double inv_len = ucf::Ucf_inv[ucf::LENGTH][static_cast<std::size_t>(us)];
-        // StreetParams derives entirely from the street index (inv_len is
+        // legacy street_readParams DIVIDES by UCF(LENGTH) (street.c:125-132);
+        // multiplying by the inverse differs by an ulp in SI
+        const double ucf_len = ucf::Ucf[ucf::LENGTH][static_cast<std::size_t>(us)];
+        // StreetParams derives entirely from the street index (ucf_len is
         // constant across links), so every link on a street produces the same
         // ~1.2 KB table. N links over S streets used to allocate and tabulate
         // N of them; now it is S. TransectData::name is write-only for these
@@ -3169,14 +3171,14 @@ void resolve_cross_references(SimulationContext& ctx) {
             }
 
             street::StreetParams sp;
-            sp.width             = ctx.streets.t_crown[su]       * inv_len;
-            sp.curb_height       = ctx.streets.h_curb[su]        * inv_len;
+            sp.width             = ctx.streets.t_crown[su]       / ucf_len;
+            sp.curb_height       = ctx.streets.h_curb[su]        / ucf_len;
             sp.slope             = ctx.streets.sx[su]            / 100.0;   // % → fraction
             sp.roughness         = ctx.streets.n_road[su];
-            sp.gutter_depression = ctx.streets.gutter_depres[su] * inv_len;
-            sp.gutter_width      = ctx.streets.gutter_width[su]  * inv_len;
+            sp.gutter_depression = ctx.streets.gutter_depres[su] / ucf_len;
+            sp.gutter_width      = ctx.streets.gutter_width[su]  / ucf_len;
             sp.sides             = ctx.streets.sides[su];
-            sp.back_width        = ctx.streets.back_width[su]    * inv_len;
+            sp.back_width        = ctx.streets.back_width[su]    / ucf_len;
             sp.back_slope        = ctx.streets.back_slope[su]    / 100.0;   // % → fraction
             sp.back_roughness    = ctx.streets.back_n[su];
 
