@@ -1,0 +1,28 @@
+{
+  "baseline_commit": "5c3b10bc97cf341a8b0516f0556d8bc1748086bc",
+  "changed_files": {
+    "src/engine/2d/solver/ExplicitInertialSolver.cpp": "dd9acbbfeabc68b62840e715dab9c7d70f44920b743ca82c41265f1706531acf"
+  },
+  "tests": 170,
+  "skipped": 1,
+  "analytical_runs": 140,
+  "analytical_exact_pairs": 70,
+  "coupled_runs": 24,
+  "coupled_exact_pairs": 12,
+  "measured_component_runs": 70,
+  "measured_coupled_runs": 24,
+  "discarded_timing_warmups": 22,
+  "production_matches_compiled": true,
+  "passed": 169,
+  "expected_groundwater_rejections": 4,
+  "artifacts": {
+    "analytical_results.json": "a51967f7aa5e2001cbed7e20fd9ce962f582c1107a57b908ceb7acea8a4273c5",
+    "regressions_selected.json": "14cc5a666b32de922c7a069ffd64713494f684d093d29c91bc503e0f96e3b3d7",
+    "model_results.json": "1f5455f381b4caeb551f103c9edabed3f3a0698437182a5fd5bddb632d1c8018",
+    "bellinge_results.json": "f93fa65d51743c62616b92ce337de909f70b1c9803eccdaa2d597accb25b1c65",
+    "performance_summary.json": "db5df3a37ce7fc835e70510415d77ae2e5bd953e4e5f85267383dd47e3c06904",
+    "model_timing_summary.json": "cd28823444f4036e67536a59bd26f12bc1bd31dcd259ebddba911d3b116c6e3f",
+    "retained.patch": "9fa0baefd1ae315f0e7b29665f25286bf3801089e2a19a2cd31ccb769b5622c0"
+  },
+  "commit_status_at_validation": "uncommitted"
+}

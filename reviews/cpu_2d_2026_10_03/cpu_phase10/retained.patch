@@ -1,0 +1,40 @@
+--- a/src/engine/2d/solver/ExplicitInertialSolver.cpp
++++ b/src/engine/2d/solver/ExplicitInertialSolver.cpp
+@@ -44,7 +44,19 @@
+ #include "../data/SurfaceStateData.hpp"
+ #include "../data/BoundaryData.hpp"
+ #include "InertialKernels.hpp"
++// Inline the small SWE kernel chain in this CPU translation unit. Keep the
++// shared header's annotation unchanged for other backends and callers.
++#pragma push_macro("OPENSWMM_KERNEL_FN")
++#undef OPENSWMM_KERNEL_FN
++#if defined(_MSC_VER)
++#define OPENSWMM_KERNEL_FN __forceinline
++#elif defined(__GNUC__) || defined(__clang__)
++#define OPENSWMM_KERNEL_FN inline __attribute__((always_inline))
++#else
++#define OPENSWMM_KERNEL_FN inline
++#endif
+ #include "SweKernels.hpp"
++#pragma pop_macro("OPENSWMM_KERNEL_FN")
+ #include "DiffusiveKernels.hpp"
+ #include "SurfaceFluxCalculator.hpp"   // evapSink, computeBoundaryEdgeFlux
+ #include "../coupling/NodeCoupling.hpp"  // computeNodeCouplingQ (live exchange)
+@@ -1087,11 +1099,12 @@
+             // that otherwise remains even on a smooth, fully wet slope.
+             const double ha = state_->depth[a], hb = state_->depth[b];
+             const double za = state_->head[a] - ha, zb = state_->head[b] - hb;
+-            double axa = 0.0, aya = 0.0, axb = 0.0, ayb = 0.0;
+-            for (int p = ed.cell_ptr[a]; p < ed.cell_ptr[a + 1]; ++p)
+-                if (ed.cell_edge[p] == e) { axa = ed.cell_arm_x[p]; aya = ed.cell_arm_y[p]; break; }
+-            for (int p = ed.cell_ptr[b]; p < ed.cell_ptr[b + 1]; ++p)
+-                if (ed.cell_edge[p] == e) { axb = ed.cell_arm_x[p]; ayb = ed.cell_arm_y[p]; break; }
++            // These are the same arms stored by InertialEdges::build().
++            // Read the face midpoint directly instead of searching both CSR rows.
++            const double axa = ed.mx[e] - mesh_->tri_cx[a];
++            const double aya = ed.my[e] - mesh_->tri_cy[a];
++            const double axb = ed.mx[e] - mesh_->tri_cx[b];
++            const double ayb = ed.my[e] - mesh_->tri_cy[b];
+             const double ua = (ha > dry) ? qcx_[a] / ha : 0.0, va = (ha > dry) ? qcy_[a] / ha : 0.0;
+             const double ub = (hb > dry) ? qcx_[b] / hb : 0.0, vb = (hb > dry) ? qcy_[b] / hb : 0.0;
+             const double etaLf = state_->head[a] + gex_[a] * axa + gey_[a] * aya;

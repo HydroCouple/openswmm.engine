@@ -1,0 +1,46 @@
+[
+  {
+    "case": "bellinge_10min_swe2",
+    "median_cpu_ratio": 0.9457115743316209,
+    "paired_ratios": [
+      0.9280581346035603,
+      0.9457115743316209,
+      0.955006589179499
+    ],
+    "baseline_cpu": 0.681453,
+    "selected_cpu": 0.643514
+  },
+  {
+    "case": "parking_lot_swe2_flat",
+    "median_cpu_ratio": 0.8760135573430203,
+    "paired_ratios": [
+      0.8841030051275394,
+      0.8760135573430203,
+      0.8621270769149748
+    ],
+    "baseline_cpu": 0.3699839999999999,
+    "selected_cpu": 0.32691299999999995
+  },
+  {
+    "case": "surface_wet_swe2_t1",
+    "median_cpu_ratio": 0.8104386704646863,
+    "paired_ratios": [
+      0.8919231346444757,
+      0.805818654446835,
+      0.8104386704646863
+    ],
+    "baseline_cpu": 28.335142,
+    "selected_cpu": 23.445756
+  },
+  {
+    "case": "surface_wet_swe2_t4",
+    "median_cpu_ratio": 0.8759833360633942,
+    "paired_ratios": [
+      0.9412756379931244,
+      0.809706584161549,
+      0.8759833360633942
+    ],
+    "baseline_cpu": 33.063976000000004,
+    "selected_cpu": 28.963492000000002
+  }
+]

@@ -1,0 +1,10 @@
+{
+  "parent": "bellinge_provenance.json",
+  "changes": {
+    "START_TIME": "06:13:00",
+    "REPORT_START_TIME": "06:13:00",
+    "END_TIME": "06:23:00"
+  },
+  "sha256": "b4f7914070dc2ee18fe76625b175316f259d5d9425c9ff28d17aa4d2525c7737",
+  "selection": "Largest rolling ten-minute rainfall total in rg5425 on 2012-06-29: 9 mm. Cold-start hydraulic state at the interval start."
+}

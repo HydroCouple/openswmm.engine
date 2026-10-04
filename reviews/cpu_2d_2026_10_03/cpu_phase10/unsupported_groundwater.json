@@ -1,0 +1,26 @@
+[
+  {
+    "closure": "flat",
+    "variant": "baseline",
+    "rejected_as_expected": true,
+    "error": "groundwater is not advanced by the RK2 surface route"
+  },
+  {
+    "closure": "flat",
+    "variant": "selected",
+    "rejected_as_expected": true,
+    "error": "groundwater is not advanced by the RK2 surface route"
+  },
+  {
+    "closure": "vfr",
+    "variant": "baseline",
+    "rejected_as_expected": true,
+    "error": "groundwater is not advanced by the RK2 surface route"
+  },
+  {
+    "closure": "vfr",
+    "variant": "selected",
+    "rejected_as_expected": true,
+    "error": "groundwater is not advanced by the RK2 surface route"
+  }
+]
