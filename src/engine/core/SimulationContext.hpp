@@ -1471,6 +1471,7 @@ struct SimulationContext {
         double steady_pct = 0.0;   ///< Percent of time in steady state
         double steady_time = 0.0;  ///< Time skipped as steady state (sec)
         long   report_steps = 0;   ///< Flow-stat steps after report start (legacy ReportStepCount)
+        double report_time  = 0.0; ///< Their total time, sec (legacy RoutingTimeSpan)
 
         /// Number of time step histogram bins (matching legacy TIMELEVELS=5).
         static constexpr int N_TIME_BINS = 5;
