@@ -1,0 +1,13 @@
+-- The CXX compiler identification is AppleClang 21.0.0.21000334
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Found OpenMP_CXX: -Xclang -fopenmp (found version "5.1")
+-- Found OpenMP: TRUE (found version "5.1") found components: CXX
+-- Enabled Kokkos devices: OPENMP;SERIAL
+-- OpenSWMM Engine: GPU plugin backend = omp (Kokkos OpenMP, Phase 1)
+-- Configuring done (1.7s)
+-- Generating done (0.0s)
+-- Build files have been written to: /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/build/kokkos-plugin-smoke

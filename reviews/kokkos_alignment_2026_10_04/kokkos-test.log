@@ -1,0 +1,10 @@
+Internal ctest changing into directory: /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/build/kokkos-cpu-alignment
+Test project /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/build/kokkos-cpu-alignment
+    Start 1: kokkos_explicit_alignment
+1/2 Test #1: kokkos_explicit_alignment ..............   Passed    0.48 sec
+    Start 2: kokkos_explicit_alignment_one_thread
+2/2 Test #2: kokkos_explicit_alignment_one_thread ...   Passed    0.02 sec
+
+100% tests passed, 0 tests failed out of 2
+
+Total Test time (real) =   0.51 sec

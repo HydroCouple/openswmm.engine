@@ -1,0 +1,46 @@
+{
+  "base_commit": "67b5920a7859447dcdba2cf7a4b3fdbe3a53c2a4",
+  "source_hashes": {
+    "src/engine/2d/gpu/ExplicitKokkosSurfaceSolver.cpp": "c0907ece095c6f00148f3f04deaf0aaa7de13a7b7b293dd4984b72570cdd42f1",
+    "src/engine/2d/gpu/ExplicitKokkosSurfaceSolver.hpp": "31f4ece27484645f119b01c61a88189b09023ef625b99151ec4bcebb793a88e6",
+    "src/engine/2d/gpu/KokkosTypes.hpp": "6de00592c4f22c7267b4159c300a8921ec2c26a0f3fee0a2560a85dd64030f34",
+    "src/engine/2d/gpu/KokkosSourceKernels.hpp": "bbe5fd73a597a7d4f0f4ffa1c210fcbda0c50b246100103965ec61f8af82ee90",
+    "src/engine/2d/gpu/KokkosSweKernels.hpp": "2c684556b8f40af6e1f7fd6c681c40e8f8f0f57db91e1cb7e179c739f1a7b153",
+    "tests/gpu/CMakeLists.txt": "a44aace80b58874db060e786d11b452e86e986966b41f9fe7140591890246e3f",
+    "tests/gpu/test_kokkos_explicit_alignment.cpp": "b7e423429a26ff3ca57b9eedf9d3ca61614ab8a387f4838c99e6ae5fb3a0c5a8"
+  },
+  "cpu_reference_hashes_unchanged": {
+    "src/engine/2d/solver/ExplicitInertialSolver.cpp": "dd9acbbfeabc68b62840e715dab9c7d70f44920b743ca82c41265f1706531acf",
+    "src/engine/2d/solver/ExplicitInertialSolver.hpp": "be35cef7069b687208eeb1587db270e688f73a028a1f6277db6836b4727b49eb",
+    "src/engine/2d/solver/SweKernels.hpp": "8523b2e2e6fb52242ba39f2d83146c65cc79953d066a086fa7dc70227623e221",
+    "src/engine/2d/data/SolverOptions2D.hpp": "1b8db9a88e766b8a558619990a4788db1ffae9d3af6a365dd3289f8e99682523",
+    "tests/unit/engine/test_2d_cpu_correctness.cpp": "888dc787516b75bce1fe679874a865518aa628afab19ca5161909a186ca5d5df"
+  },
+  "kokkos_version": "4.7.4",
+  "execution_space": "OpenMP",
+  "kokkos_threads": [
+    1,
+    4
+  ],
+  "release_ctest_passed": 2,
+  "sanitized_ctest_passed": 2,
+  "per_process_marcher_configurations": 20,
+  "per_process_swe_configurations": 24,
+  "additional_checks": [
+    "frozen-tier CFL",
+    "three unsupported input guards",
+    "RK2 ledger averaging"
+  ],
+  "sanitizers": [
+    "AddressSanitizer",
+    "UndefinedBehaviorSanitizer",
+    "Kokkos bounds checking"
+  ],
+  "leak_detection": false,
+  "plugin_build": "OpenMP plugin compiled and linked; not dynamically qualified through full engine",
+  "gpu_compiled": false,
+  "gpu_executed": false,
+  "full_swe_backend_enabled": false,
+  "limitations": "See HANDOFF.md; no GPU performance claim; full SWE driver and device qualification deferred",
+  "commit_status_at_validation": "uncommitted"
+}

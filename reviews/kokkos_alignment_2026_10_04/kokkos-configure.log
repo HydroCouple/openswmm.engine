@@ -1,0 +1,4 @@
+-- Enabled Kokkos devices: OPENMP;SERIAL
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/build/kokkos-cpu-alignment
