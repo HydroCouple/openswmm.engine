@@ -997,6 +997,13 @@ struct SimulationContext {
      */
     std::vector<std::pair<std::string, std::string>> deferred_section_rows;
 
+    /**
+     * @brief Every unknown section header read, as (token as written, 1-based
+     *        line number), in file order — legacy's "Unknown section '%s' at
+     *        line %ld" warning names both.
+     */
+    std::vector<std::pair<std::string, long>> unknown_section_headers;
+
     // =========================================================================
     // Error / warning tracking
     // =========================================================================
@@ -1826,6 +1833,7 @@ struct SimulationContext {
         errors.clear();
         title_notes.clear();
         deferred_section_rows.clear();
+        unknown_section_headers.clear();
         pending_gw_nodes.clear();
         pending_gw_aquifers.clear();
         pending_link_nodes.clear();

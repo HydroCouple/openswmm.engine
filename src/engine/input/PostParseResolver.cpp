@@ -2943,8 +2943,12 @@ void resolve_cross_references(SimulationContext& ctx) {
             if (ctx.options.routing_model == RoutingModel::DYNWAVE ||
                 ctx.options.routing_model == RoutingModel::FV) {
                 *off = inv2 - inv1;   // legacy link.c:434-435 (bit-exact form)
+                // legacy WARN10b: the raised case has its own wording
+                ctx.warnings.push_back("  WARNING 10: crest elevation raised to downstream "
+                                       "invert for regulator Link " + ctx.link_names.name_of(j));
+            } else {
+                ctx.warnings.push_back(format_warning(WARN_REGULATOR_CREST_LOW, ctx.link_names.name_of(j)));
             }
-            ctx.warnings.push_back(format_warning(WARN_REGULATOR_CREST_LOW, ctx.link_names.name_of(j)));
         }
     }
 
