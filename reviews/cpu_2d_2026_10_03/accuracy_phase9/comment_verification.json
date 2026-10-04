@@ -1,0 +1,7 @@
+{
+  "comments_only": true,
+  "files": [
+    "ExplicitInertialSolver.cpp",
+    "SweKernels.hpp"
+  ]
+}

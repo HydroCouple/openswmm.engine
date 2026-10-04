@@ -1,0 +1,44 @@
+{
+  "committed": false,
+  "baseline_commit": "c74c16895c095c5a16ac45b35cc5d464cf9c544b",
+  "production_hashes": {
+    "src/engine/2d/solver/ExplicitInertialSolver.cpp": "7df1edd2da43ea8bf9b6e1648085acabb3cfef789c27962aeaec52db9a1028a7",
+    "src/engine/2d/solver/ExplicitInertialSolver.hpp": "b41d108d53511eddc9f674fabe291c4d3b519fd0540885d74463112f9bf6dfe5",
+    "src/engine/2d/solver/SweKernels.hpp": "669507ee73e5b2506217c63aef3c1c59a5dcf71d0e89969bf52f9c0f785b511d",
+    "src/engine/2d/data/SolverOptions2D.hpp": "94092298040746545a4ccb99d86e13545163000d0763151050d8d9f4066986e5",
+    "tests/unit/engine/test_2d_cpu_correctness.cpp": "58ad465ffc2ef458a4efb81a273dac48620ecc378d93b385aac2fa8de3c23e14"
+  },
+  "previous_hashes": {
+    "src/engine/2d/solver/ExplicitInertialSolver.cpp": "a1bdb4b4641d48d866fd7d6af8ece719b76bd939e702b4cc4abeb3aeb0645270",
+    "src/engine/2d/solver/ExplicitInertialSolver.hpp": "463f54adb039532e33606a6c0f1d7b709a6ce9237ccd53bc39f15a739f5fcdfd",
+    "src/engine/2d/solver/SweKernels.hpp": "99977b717dc18df8f02633db325acfd8de32adc18f532ec350102365b97883a9",
+    "src/engine/2d/data/SolverOptions2D.hpp": "266e5c806cea6e1e304bb8c5313f3453b557d0fc4a2c4a5e5393062489f4b6b8",
+    "tests/unit/engine/test_2d_cpu_correctness.cpp": "6cd1e723e23e7d61fb167f7d76da2518a9008984f40caa3e011b821dc7e6e9a4"
+  },
+  "tests_passed": 166,
+  "tests_skipped": 1,
+  "new_tests_fail_baseline": 2,
+  "accuracy_executions": 56,
+  "compatibility_executions": 72,
+  "cross_thread_executions": 8,
+  "diagnostic_executions": 20,
+  "screen_executions": 24,
+  "timed_executions": 50,
+  "engine_binary_hashes": {
+    "baseline": "2a765ba1f61aa845346efb8ed76d1d8f00a1e047faeea790596cd07db4f0b257",
+    "selected": "ede1ba4d407ec4af84753cb399ec58a10316c5644bc5c045a4e343c985f8c2a8"
+  },
+  "evidence_hashes": {
+    "REPORT.md": "35edaf81819fbad2d11fac2ecc1bc705ec15aff8a7095bde86fe07178ed4b313",
+    "selected.patch": "5afa1004a840a00505a648ef998e2617745ad943556331a909ef2a73deaecdd0",
+    "accuracy_results.json": "5d75a35f2cf463b8a3dde4c3319172c080ad8c209f880fc3ece60611593cf3aa",
+    "compatibility_results.json": "49c18bacc4bb07cedb7928378d02cf543f70cff975d1a551d6845498bb860091",
+    "thread_results.json": "d017990ea5a70ca66b618b4d05d8fa0a9bcf23f105138308a7ba80af2b48fa19",
+    "regression_results.json": "ecaf2ccd2c2048bf201ecd90c492822e04e18cc69349ea97ddaa983d5008a6aa",
+    "performance_results.json": "4026aca0cf555af08fec91020bb7df04b488ca8b0a7d916e0fa8c042ff8059d1",
+    "new_tests_baseline.xml": "9bfd2fcc29228f9ba235cb86a66f90e8d0cfbd7dd974dc0d2afec0e6d9a0826b",
+    "comparison.png": "a6d78556d746c1ca5c9345d19f07e74e0af9ef71f675a6f9f25fb422779d83c9"
+  },
+  "vfr_emerged_lake_checked": true,
+  "object_layout_changed": false
+}

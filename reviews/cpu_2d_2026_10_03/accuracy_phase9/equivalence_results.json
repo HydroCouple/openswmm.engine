@@ -1,0 +1,146 @@
+[
+  {
+    "case": "radial",
+    "nx": 64,
+    "quad": 0,
+    "skew": 0,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "radial",
+    "nx": 64,
+    "quad": 1,
+    "skew": 0,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "planar",
+    "nx": 64,
+    "quad": 0,
+    "skew": 0,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "planar",
+    "nx": 64,
+    "quad": 1,
+    "skew": 0,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "radial",
+    "nx": 32,
+    "quad": 0,
+    "skew": 0.15,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "radial",
+    "nx": 32,
+    "quad": 1,
+    "skew": 0.15,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "radial",
+    "nx": 32,
+    "quad": 2,
+    "skew": 0.15,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "planar",
+    "nx": 32,
+    "quad": 0,
+    "skew": 0.15,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "planar",
+    "nx": 32,
+    "quad": 1,
+    "skew": 0.15,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "planar",
+    "nx": 32,
+    "quad": 2,
+    "skew": 0.15,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "lake_wet",
+    "nx": 64,
+    "quad": 0,
+    "skew": 0,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "lake_wet",
+    "nx": 64,
+    "quad": 1,
+    "skew": 0,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "lake_dry",
+    "nx": 64,
+    "quad": 0,
+    "skew": 0,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "lake_dry",
+    "nx": 64,
+    "quad": 1,
+    "skew": 0,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "ritter",
+    "nx": 64,
+    "quad": 0,
+    "skew": 0,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "ritter",
+    "nx": 64,
+    "quad": 1,
+    "skew": 0,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "stoker",
+    "nx": 64,
+    "quad": 0,
+    "skew": 0,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "stoker",
+    "nx": 64,
+    "quad": 1,
+    "skew": 0,
+    "non_timing_differences": {},
+    "history_identical": true
+  }
+]

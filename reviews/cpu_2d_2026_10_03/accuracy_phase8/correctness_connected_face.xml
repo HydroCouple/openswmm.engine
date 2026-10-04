@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="1" failures="1" disabled="0" errors="0" time="4.513" timestamp="2026-10-04T08:40:24.826" name="AllTests">
+  <testsuite name="Cpu2DCorrectness" tests="1" failures="1" disabled="0" skipped="0" errors="0" time="4.513" timestamp="2026-10-04T08:40:24.826">
+    <testcase name="SecondOrderPlanarThackerRetainsRotationPhase" file="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase8/test_sources/test_2d_cpu_correctness.cpp" line="388" status="run" result="completed" time="4.513" timestamp="2026-10-04T08:40:24.826" classname="Cpu2DCorrectness">
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase8/test_sources/test_2d_cpu_correctness.cpp:421&#x0A;Expected: (max_speed) &lt; (5 * .5 * omega), actual: 16.493872171164451 vs 3.5011872986174275&#x0A;quad=false&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase8/test_sources/test_2d_cpu_correctness.cpp:421
+Expected: (max_speed) < (5 * .5 * omega), actual: 16.493872171164451 vs 3.5011872986174275
+quad=false
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase8/test_sources/test_2d_cpu_correctness.cpp:421&#x0A;Expected: (max_speed) &lt; (5 * .5 * omega), actual: 15.972980905995247 vs 3.5011872986174275&#x0A;quad=true&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase8/test_sources/test_2d_cpu_correctness.cpp:421
+Expected: (max_speed) < (5 * .5 * omega), actual: 15.972980905995247 vs 3.5011872986174275
+quad=true
+]]></failure>
+    </testcase>
+  </testsuite>
+</testsuites>

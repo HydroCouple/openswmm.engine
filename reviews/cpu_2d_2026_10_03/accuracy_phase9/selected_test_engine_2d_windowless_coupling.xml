@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="3" failures="0" disabled="0" errors="0" time="0.011" timestamp="2026-10-04T09:06:52.581" name="AllTests">
+  <testsuite name="WindowlessCoupling2DTest" tests="2" failures="0" disabled="0" skipped="0" errors="0" time="0.011" timestamp="2026-10-04T09:06:52.581">
+    <testcase name="ReceivedEqualsGivenWindowless" file="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_windowless_coupling.cpp" line="203" status="run" result="completed" time="0.005" timestamp="2026-10-04T09:06:52.581" classname="WindowlessCoupling2DTest" />
+    <testcase name="AutoAreaRederivesOversizedDefaults" file="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_windowless_coupling.cpp" line="220" status="run" result="completed" time="0.006" timestamp="2026-10-04T09:06:52.587" classname="WindowlessCoupling2DTest" />
+  </testsuite>
+  <testsuite name="WindowlessCouplingConductance" tests="1" failures="0" disabled="0" skipped="0" errors="0" time="0." timestamp="2026-10-04T09:06:52.593">
+    <testcase name="SignAndFdParity" file="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_windowless_coupling.cpp" line="234" status="run" result="completed" time="0." timestamp="2026-10-04T09:06:52.593" classname="WindowlessCouplingConductance" />
+  </testsuite>
+</testsuites>

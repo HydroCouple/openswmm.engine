@@ -1,0 +1,59 @@
+{
+  "committed": false,
+  "baseline_commit": "d4e4fef8010f5a34dc404547b2b3ea269547ccdb",
+  "retained_files": {
+    "src/engine/2d/solver/ExplicitInertialSolver.cpp": "a81f2c29837b533222447c873cacb6f47e4acf9df0cd82558d49ccda0fe5d515",
+    "src/engine/2d/solver/ExplicitInertialSolver.hpp": "be35cef7069b687208eeb1587db270e688f73a028a1f6277db6836b4727b49eb",
+    "src/engine/2d/solver/SweKernels.hpp": "8523b2e2e6fb52242ba39f2d83146c65cc79953d066a086fa7dc70227623e221",
+    "src/engine/2d/data/SolverOptions2D.hpp": "1b8db9a88e766b8a558619990a4788db1ffae9d3af6a365dd3289f8e99682523",
+    "tests/unit/engine/test_2d_cpu_correctness.cpp": "888dc787516b75bce1fe679874a865518aa628afab19ca5161909a186ca5d5df"
+  },
+  "tests": 170,
+  "passed": 169,
+  "skipped": 1,
+  "analytical_executions": 448,
+  "analytical_counts": {
+    "screen.json": 126,
+    "joint_results.json": 36,
+    "stencil_results.json": 54,
+    "ablation_results.json": 54,
+    "confirmation.json": 36,
+    "stress_results.json": 18,
+    "mesh_results.json": 84,
+    "accuracy_cost_results.json": 4,
+    "equivalence_results.json": 18,
+    "optimized_confirmation.json": 18
+  },
+  "max_relative_water_error_including_rejected_prototypes": 1.360604995095286e-14,
+  "measured_timing_runs": 74,
+  "discarded_warmup_runs": 18,
+  "compiled_tokens_match": true,
+  "artifacts": {
+    "REPORT.md": "1f0ca3b1c7c6907e22f5856912465398d4160094a12b29bf58c870aa6df5e8ad",
+    "comparison.png": "1a9f71298f232471b5a6ecbd91edcb2ef14385e4ffc47e632c7ee9cd8c5993a9",
+    "comparison.svg": "9b7250cbb631aca903064a7a602f0eb269b3fd3daa5bf877800d3a36203ddf77",
+    "retained.patch": "891825c5af2914bb9d0e90faf451e47c48b99fa9a3097739a09d318bdf72b825",
+    "screen.json": "6e747ce73c06ff326bd6ed6ed7e08d2c449b59a15de8e07355b4de49dd1352c7",
+    "joint_results.json": "5ea9585e15f8671e605ad71a8875e977c00a0092a1eb0fc41bd597bd04d55fe9",
+    "stencil_results.json": "1103e0b79c05222bf050ae96f1c6f387df13d019144417cfaca8e124fb2f67ee",
+    "ablation_results.json": "9c5ece04321759b35c2ba96c83ff0cd99b4be5f4b8707f7b65a945a225adf423",
+    "confirmation.json": "d9fe2cbcd1f7150567d7f3f116f7ad638bf59308089a25eef04c8a4c224d63e4",
+    "optimized_confirmation.json": "9c07cfcfe6d0f6b33209d5d900cb47669352153c2a419d3a4074aa5359f3be14",
+    "stress_results.json": "178d5b13070d69184f9c6033cc3bf92c57a00e9dfbda20c30ad1604251e63792",
+    "mesh_results.json": "e6bef9febb4c14a17fa4d214686bdc711347844214ba69596dcc0304d783fb0b",
+    "accuracy_cost_results.json": "753b041dff7606a694d9e579698e5f17c9f803a907afb4540f093c338f968d03",
+    "equivalence_results.json": "d985b94a71471c0b33235b28fb8ce6b8291b904f9775644e11f88c5317ff65e6",
+    "regressions_selected.json": "7cd2c19a80ee57a481ca146682d1eaab09cb4a9150be37a440910997936bc409",
+    "baseline_new_tests.xml": "f86bf6879f866a835398ee360bfc76523b2646daf78b04b632ff3583326d3394",
+    "performance_results.json": "2b7fdfc87acd92557855e255a9c4ee86bf2d62aca2a0f4ed9d90ee68b58cb80e",
+    "performance_summary.json": "63dba3e7f3bff8848700894c4e593d81a3ef20caaf7e65ee9a3a930151fd6b49",
+    "energy_results.json": "c89b0508327438640d579cdeffd5959a8336a115c0e8fc1e58b00c04c1e9c6aa",
+    "budget_events.json": "12d6d2704d8aa379ba5af2f3608bd308f68cc85e628a2b8cb8c761b39bb81cd3"
+  },
+  "binaries": {
+    "build_selected/review": "b8df857cffb9709b1e5de7b145bf573c209896d657f413e586c51ba5362b9e06",
+    "build_selected/performance": "b7653db189774cf7f76eef652cda7a42be5dcc9346f9a83f06836181f4df6ea0",
+    "build_selected/libopenswmm.engine.selected.dylib": "3b5091e03a788a33e6895c053d7f865c8f39aac6048573b4711c5412bb07a632",
+    "build_selected/test_engine_2d_cpu_correctness": "3e5b06bc33848cc09377794f3f04e973c8daa98ef8da72088d1fac80bebd4752"
+  }
+}

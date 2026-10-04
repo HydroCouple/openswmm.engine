@@ -1,0 +1,37 @@
+{
+  "committed": false,
+  "solver_changes_retained": false,
+  "retained_changes": [
+    "Extend planar Thacker velocity check",
+    "Add distorted/mixed radial Thacker velocity regression"
+  ],
+  "baseline_commit": "d4e4fef8010f5a34dc404547b2b3ea269547ccdb",
+  "production_solver_hashes_unchanged": {
+    "src/engine/2d/solver/ExplicitInertialSolver.cpp": "7df1edd2da43ea8bf9b6e1648085acabb3cfef789c27962aeaec52db9a1028a7",
+    "src/engine/2d/solver/ExplicitInertialSolver.hpp": "b41d108d53511eddc9f674fabe291c4d3b519fd0540885d74463112f9bf6dfe5",
+    "src/engine/2d/solver/SweKernels.hpp": "669507ee73e5b2506217c63aef3c1c59a5dcf71d0e89969bf52f9c0f785b511d",
+    "src/engine/2d/data/SolverOptions2D.hpp": "94092298040746545a4ccb99d86e13545163000d0763151050d8d9f4066986e5"
+  },
+  "test_sha256": "2f2de06cdfcbcf7266a5f8af37ead7dea89058ca09ae46451cafc817d3c766fd",
+  "analytical_runs": 204,
+  "max_relative_water_error": 1.3959453845782803e-14,
+  "tests": 168,
+  "passed": 167,
+  "skipped": 1,
+  "negative_controls": "Both intended regressions fail the rejected prototypes",
+  "artifacts": {
+    "REPORT.md": "ff85e07b0542d96c2bf44ea6b63e280845b2810be2079a0768810a1beb6253c7",
+    "comparison.png": "0fff2082d2cce68fb46746c113c0f909fe3a0ac616834069355ac2dab0dafd8a",
+    "comparison.svg": "9f202146442da42c2f407fcc88dba10df0268101c57f29c9ff23dc8881337b1b",
+    "retained.patch": "8d4fd1e96a8032e9b4bc646750ad371396212f8ecdc7b43fbf68a3872938173c",
+    "regression_results.json": "5825ef4e95058cb23b0a0d6e7d3b8f3252e495e72360ebda4c1af8791d59e411",
+    "final_test_results.json": "3a92a363f1a689496b3f68b99fbccfe425711f76e6cfbbeac47cddf734744a71",
+    "screen.json": "1a02bb160f80262f415cb1e0cf199072c04a0ca8722322dade9cc2db9589e957",
+    "connected_results.json": "6cd7c9b7af3c8315907b75e39bf4c99c216a8b79cd73b4aaa76d4e31c0267515",
+    "confirmation.json": "315b4de89727d7fe2d94add8a0a97f2d0832bad25cdd6f14b557581facc65809",
+    "diagnosis.json": "f1f36309dc0faa413352d1f899d4bd0a25f01b88c46f555382ff07b4562a3e7c",
+    "mesh_results.json": "6f3fd01f6bd94186e1fe1ceeb9f2f8033eea45bedb3ae35108c84cfc1ff75e40",
+    "energy_results.json": "4529150b52315758ab4b37218005a4d6b3c885c9708c9a14c0f41daa5bd78fb2",
+    "performance_results.json": "8fb436dcc246c97ab3794bba61999f4206c4c723425dd4ed093718421ff6bf17"
+  }
+}

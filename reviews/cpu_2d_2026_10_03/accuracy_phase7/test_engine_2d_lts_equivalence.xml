@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="4" failures="0" disabled="0" errors="0" time="0.235" timestamp="2026-10-04T03:04:30.318" name="AllTests">
+  <testsuite name="LtsEquivalence" tests="4" failures="0" disabled="0" skipped="0" errors="0" time="0.235" timestamp="2026-10-04T03:04:30.318">
+    <testcase name="ConservationAtEveryTierCount" file="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_lts_equivalence.cpp" line="164" status="run" result="completed" time="0.055" timestamp="2026-10-04T03:04:30.318" classname="LtsEquivalence" />
+    <testcase name="TierSolutionMatchesGlobalDt" file="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_lts_equivalence.cpp" line="178" status="run" result="completed" time="0.152" timestamp="2026-10-04T03:04:30.373" classname="LtsEquivalence" />
+    <testcase name="FinePatchInCoarseWatershedStable" file="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_lts_equivalence.cpp" line="221" status="run" result="completed" time="0.021" timestamp="2026-10-04T03:04:30.525" classname="LtsEquivalence" />
+    <testcase name="TailSplitsUniformNeverDegenerate" file="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_lts_equivalence.cpp" line="252" status="run" result="completed" time="0.006" timestamp="2026-10-04T03:04:30.547" classname="LtsEquivalence" />
+  </testsuite>
+</testsuites>

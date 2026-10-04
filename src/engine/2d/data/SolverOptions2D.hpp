@@ -221,8 +221,8 @@ struct SolverOptions2D {
     /// LOCAL_INERTIAL (which stays bit-identical to its pre-2026-09 results).
     int front_rebuild = -1;   ///< -1 AUTO, 0 NO, 1 YES
     /// [2D_OPTIONS] RECONSTRUCTION_ORDER 1|2 — FULL_SWE only: 1 = piecewise
-    /// constant (first-order Godunov, forward Euler); 2 = MUSCL on (η, u, v)
-    /// with the Barth–Jespersen-limited Green-Gauss gradient + SSP-RK2
+    /// constant (first-order Godunov, forward Euler); 2 = MUSCL on (eta, h, u, v)
+    /// with limited Green-Gauss / wet-shoreline gradients + SSP-RK2
     /// (global-dt mode; LTS_TIERS > 1 is reduced to 1 with a warning).
     int reconstruction_order = 1;
     /// Max marcher step (s): caps film-cell CFL steps (and thus the LTS tier

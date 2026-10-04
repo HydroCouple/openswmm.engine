@@ -114,7 +114,7 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
         }
         if (second_order_) {
             const auto un = static_cast<std::size_t>(nt);
-            gex_.assign(un, 0.0); gey_.assign(un, 0.0);
+            gex_.assign(2 * un, 0.0); gey_.assign(2 * un, 0.0);
             gux_.assign(un, 0.0); guy_.assign(un, 0.0);
             gvx_.assign(un, 0.0); gvy_.assign(un, 0.0);
         } else {
@@ -1068,6 +1068,7 @@ void ExplicitInertialSolver::fireFacesSwe(const std::vector<int>& faces,
     const double dry   = opts_->dry_depth;
 
     static const bool muscl_off = std::getenv("OPENSWMM_2D_MUSCL_OFF") != nullptr;
+    const auto depth_offset = state_->depth.size();
     if (second_order_) computeLimitedGradientsSwe();
     const bool so = second_order_ && !muscl_off;
     const bool species = species_on_;
@@ -1081,9 +1082,9 @@ void ExplicitInertialSolver::fireFacesSwe(const std::vector<int>& faces,
         double cLx, cLy, cRx, cRy;
         bool wet;
         if (so) {
-            // MUSCL: extrapolate (η, u, v) from each centroid to the face
-            // midpoint along the precomputed Perot arms; the bed stays
-            // piecewise constant per cell.
+            // MUSCL: extrapolate eta, depth and velocity to the face.
+            // Reconstructing depth with eta removes the artificial bed step
+            // that otherwise remains even on a smooth, fully wet slope.
             const double ha = state_->depth[a], hb = state_->depth[b];
             const double za = state_->head[a] - ha, zb = state_->head[b] - hb;
             double axa = 0.0, aya = 0.0, axb = 0.0, ayb = 0.0;
@@ -1099,9 +1100,11 @@ void ExplicitInertialSolver::fireFacesSwe(const std::vector<int>& faces,
             const double vLf = va + gvx_[a] * axa + gvy_[a] * aya;
             const double uRf = ub + gux_[b] * axb + guy_[b] * ayb;
             const double vRf = vb + gvx_[b] * axb + gvy_[b] * ayb;
-            wet = swe::faceFluxRecon(etaLf, uLf, vLf, za, ha,
+            const double hLf = std::max(0.0, ha + gex_[depth_offset + a] * axa + gey_[depth_offset + a] * aya);
+            const double hRf = std::max(0.0, hb + gex_[depth_offset + b] * axb + gey_[depth_offset + b] * ayb);
+            wet = swe::faceFluxReconBed(etaLf, uLf, vLf, za, ha,
                                      etaRf, uRf, vRf, zb, hb,
-                                     ed.nx[e], ed.ny[e], dry, F, cLx, cLy, cRx, cRy);
+                                     ed.nx[e], ed.ny[e], dry, F, cLx, cLy, cRx, cRy, etaLf - hLf, etaRf - hRf);
         } else {
             wet = swe::faceFlux(
                 state_->head[a], state_->depth[a], qcx_[a], qcy_[a],
@@ -1786,76 +1789,130 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
 
 
 
-// RECONSTRUCTION_ORDER 2: Green-Gauss gradients of (η, u, v) over the active
-// cells (face value = mean of the two cells; boundary faces zero-gradient),
-// limited per cell and variable with Barth–Jespersen against the min/max of
-// the cell and its face neighbours. Cells that are dry, thin (< 10·h_dry) or
-// touch a dry cell fall back to first order (φ = 0) — the wet/dry front keeps
-// the robust monotone update.
+// RECONSTRUCTION_ORDER 2: limited Green-Gauss gradients in connected wet
+// interiors; a conditioned wet-neighbour fit of eta and depth at shorelines.
+// Shoreline velocity stays cell-centered. Thin cells and insufficient wet
+// stencils stay first order. All face-midpoint depths remain nonnegative.
 void ExplicitInertialSolver::computeLimitedGradientsSwe() {
+    const auto depth_offset = state_->depth.size();
     const auto& ed = edges_;
     const int na = static_cast<int>(active_cells_.size());
     const double dry = opts_->dry_depth;
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int k = 0; k < na; ++k) {
         const int i = active_cells_[static_cast<std::size_t>(k)];
-        gex_[i] = gey_[i] = gux_[i] = guy_[i] = gvx_[i] = gvy_[i] = 0.0;
+        gex_[depth_offset + i] = gey_[depth_offset + i] = gex_[i] = gey_[i] = gux_[i] = guy_[i] = gvx_[i] = gvy_[i] = 0.0;
         const double hi = state_->depth[i];
         if (hi <= 10.0 * dry) continue;
         const double ei = state_->head[i];
         const double ui = qcx_[i] / hi, vi = qcy_[i] / hi;
-        double gx[3] = {0, 0, 0}, gy[3] = {0, 0, 0};
-        double wmin[3] = {ei, ui, vi}, wmax[3] = {ei, ui, vi};
-        bool ok = true;
+        const double wi[4] = {ei, ui, vi, hi};
+        double gx[4] = {}, gy[4] = {};
+        double wmin[4] = {ei, ui, vi, hi}, wmax[4] = {ei, ui, vi, hi};
+        const int begin = ed.cell_ptr[i], end = ed.cell_ptr[i + 1];
+        unsigned connected = 0;
         int nfaces = 0;
-        for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
+        bool shore = false;
+        for (int p = begin; p < end; ++p) {
             const int e = ed.cell_edge[p];
             const int j = (ed.cL[e] == i) ? ed.cR[e] : ed.cL[e];
             const double hj = state_->depth[j];
-            if (hj <= dry || !cell_active_[j]) { ok = false; break; }
-            const double ej = state_->head[j], uj = qcx_[j] / hj, vj = qcy_[j] / hj;
-            // A positive cell volume can still be separated from its wet
-            // neighbour by a dry sill. Such a face needs the same first-
-            // order fallback as a dry neighbour. Extrapolating a surface
-            // gradient into a trapped film otherwise applies unbalanced
-            // pressure with zero mass flux and accelerates it indefinitely.
+            if (hj <= dry || !cell_active_[j]) { shore = true; continue; }
+            const double ej = state_->head[j];
             const double sill = std::max(ei - hi, ej - hj);
-            if (ei - sill <= dry || ej - sill <= dry) { ok = false; break; }
-            const double sgn = static_cast<double>(ed.cell_sign[p]);   // outward normal sign
+            // A wet neighbour behind a dry sill is not a sample of this
+            // cell's connected water surface or velocity field.
+            if (ei - sill <= dry || ej - sill <= dry) { shore = true; continue; }
+            connected |= 1u << (p - begin);
+            const double uj = qcx_[j] / hj, vj = qcy_[j] / hj;
+            const double sgn = static_cast<double>(ed.cell_sign[p]);
             const double nx = sgn * ed.nx[e] * ed.xi[e], ny = sgn * ed.ny[e] * ed.xi[e];
-            const double w[3] = {0.5 * (ei + ej), 0.5 * (ui + uj), 0.5 * (vi + vj)};
-            const double wj[3] = {ej, uj, vj};
-            for (int m = 0; m < 3; ++m) {
+            const double w[4] = {0.5 * (ei + ej), 0.5 * (ui + uj), 0.5 * (vi + vj), 0.5 * (hi + hj)};
+            const double wj[4] = {ej, uj, vj, hj};
+            for (int m = 0; m < 4; ++m) {
                 gx[m] += w[m] * nx; gy[m] += w[m] * ny;
                 wmin[m] = std::min(wmin[m], wj[m]); wmax[m] = std::max(wmax[m], wj[m]);
             }
             ++nfaces;
         }
-        // Boundary faces (no CSR entry): zero-gradient contribution w_i·n̂·ξ.
+        if (nfaces == 0) continue;
         const int nvc = mesh_->cell_vertex_count(i);
-        if (ok && nfaces < nvc) {
-            for (int kk = 0; kk < nvc; ++kk) {
-                if (mesh_->cell_neighbour(i, kk) >= 0) continue;
-                const int slot = MeshData::slot(i, kk);
-                const double nx = mesh_->edge_nx[slot] * mesh_->edge_length[slot];
-                const double ny = mesh_->edge_ny[slot] * mesh_->edge_length[slot];
-                gx[0] += ei * nx; gy[0] += ei * ny;
-                gx[1] += ui * nx; gy[1] += ui * ny;
-                gx[2] += vi * nx; gy[2] += vi * ny;
+        double phi[4] = {1.0, 1.0, 1.0, 1.0};
+        if (shore) {
+            if (nfaces < 2) continue;
+            // Fit eta and depth to connected wet neighbours. Inverse squared
+            // distance weighting makes the geometry test scale independent.
+            // Keep this extra work out of the fully wet interior path.
+            double xx = 0.0, xy = 0.0, yy = 0.0;
+            double bx[4] = {}, by[4] = {};
+            for (int p = begin; p < end; ++p) {
+                if (!(connected & (1u << (p - begin)))) continue;
+                const int e = ed.cell_edge[p];
+                const int j = (ed.cL[e] == i) ? ed.cR[e] : ed.cL[e];
+                const double dx = mesh_->tri_cx[j] - mesh_->tri_cx[i];
+                const double dy = mesh_->tri_cy[j] - mesh_->tri_cy[i];
+                const double wt = 1.0 / (dx * dx + dy * dy);
+                xx += wt * dx * dx; xy += wt * dx * dy; yy += wt * dy * dy;
+                const double wj[4] = {state_->head[j], 0.0, 0.0, state_->depth[j]};
+                for (int m : {0, 3}) {
+                    bx[m] += wt * dx * (wj[m] - wi[m]);
+                    by[m] += wt * dy * (wj[m] - wi[m]);
+                }
             }
+            const double det = xx * yy - xy * xy;
+            // Nearly opposite wet neighbours do not reliably constrain a
+            // transverse slope. Require a Gram-matrix condition number <98.
+            if (det <= 1e-2 * (xx + yy) * (xx + yy)) continue;
+            for (int m : {0, 3}) {
+                gx[m] = (yy * bx[m] - xy * by[m]) / det;
+                gy[m] = (xx * by[m] - xy * bx[m]) / det;
+            }
+            // A drying cell must export its own velocity. Extrapolating it
+            // from the remaining wet neighbours can remove water faster
+            // than momentum and accelerate the residual film.
+            gx[1] = gy[1] = gx[2] = gy[2] = 0.0;
+            phi[1] = phi[2] = 0.0;
+        } else {
+            // Physical boundary faces have no CSR entry: zero-gradient
+            // contribution w_i*n*length completes the Green-Gauss sum.
+            if (nfaces < nvc) {
+                for (int kk = 0; kk < nvc; ++kk) {
+                    if (mesh_->cell_neighbour(i, kk) >= 0) continue;
+                    const int slot = MeshData::slot(i, kk);
+                    const double nx = mesh_->edge_nx[slot] * mesh_->edge_length[slot];
+                    const double ny = mesh_->edge_ny[slot] * mesh_->edge_length[slot];
+                    for (int m = 0; m < 4; ++m) { gx[m] += wi[m] * nx; gy[m] += wi[m] * ny; }
+                }
+            }
+            const double inv_a = 1.0 / mesh_->tri_area[i];
+            for (int m = 0; m < 4; ++m) { gx[m] *= inv_a; gy[m] *= inv_a; }
         }
-        if (!ok || nfaces == 0) continue;
-        const double inv_a = 1.0 / mesh_->tri_area[i];
-        const double wi[3] = {ei, ui, vi};
-        double phi[3] = {1.0, 1.0, 1.0};
-        for (int m = 0; m < 3; ++m) { gx[m] *= inv_a; gy[m] *= inv_a; }
-        for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
+        for (int p = begin; p < end; ++p) {
+            if (!(connected & (1u << (p - begin)))) continue;
             const double ax = ed.cell_arm_x[p], ay = ed.cell_arm_y[p];
-            for (int m = 0; m < 3; ++m) {
+            for (int m = 0; m < 4; ++m) {
                 const double wf = wi[m] + gx[m] * ax + gy[m] * ay;
                 phi[m] = std::min(phi[m], swe::bjLimiter(wi[m], wf, wmin[m], wmax[m]));
             }
         }
+        // Connected interior faces are already bounded by positive wet
+        // depths. At shore/boundary cells also constrain the omitted faces,
+        // so clipping a negative face value cannot create a different depth
+        // polynomial. Scale eta with h to preserve a flat reconstructed bed.
+        if (nfaces < nvc) {
+            double positive_scale = 1.0;
+            for (int kk = 0; kk < nvc; ++kk) {
+                const int va = mesh_->cell_vertex(i, kk);
+                const int vb = mesh_->cell_vertex(i, (kk + 1) % nvc);
+                const double ax = .5 * (mesh_->vx[va] + mesh_->vx[vb]) - mesh_->tri_cx[i];
+                const double ay = .5 * (mesh_->vy[va] + mesh_->vy[vb]) - mesh_->tri_cy[i];
+                const double dh = phi[3] * (gx[3] * ax + gy[3] * ay);
+                if (dh < -hi) positive_scale = std::min(positive_scale, -hi / dh);
+            }
+            phi[3] *= positive_scale;
+            phi[0] *= positive_scale;
+        }
+        gex_[depth_offset + i] = phi[3] * gx[3]; gey_[depth_offset + i] = phi[3] * gy[3];
         gex_[i] = phi[0] * gx[0]; gey_[i] = phi[0] * gy[0];
         gux_[i] = phi[1] * gx[1]; guy_[i] = phi[1] * gy[1];
         gvx_[i] = phi[2] * gx[2]; gvy_[i] = phi[2] * gy[2];

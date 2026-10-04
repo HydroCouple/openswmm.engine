@@ -154,10 +154,12 @@ private:
     /// caller can rescale it when the availability clamp shrinks the mass.
     /// Scalar: the boundary loop is serial (perimeter-sized).
     double               swe_bc_dqx_ = 0.0, swe_bc_dqy_ = 0.0;
-    /// RECONSTRUCTION_ORDER 2 (FULL_SWE): limited Green-Gauss gradients of
-    /// (η, u, v) per cell, refreshed at every face pass, and the SSP-RK2
+    /// RECONSTRUCTION_ORDER 2 (FULL_SWE): limited reconstruction gradients of
+    /// (eta, h, u, v) per cell, refreshed at every face pass, and the SSP-RK2
     /// stage buffers. Empty at order 1.
     bool                 second_order_ = false;
+    /// gex_/gey_: eta gradients in [0, n), depth gradients in [n, 2*n).
+    /// The second block supplies the face bed (eta - h) only for order 2.
     std::vector<double>  gex_, gey_, gux_, guy_, gvx_, gvy_;
     std::vector<double>  rk_v0_, rk_qx0_, rk_qy0_;
     /// Stage-0 copies of the per-advance ledgers (F6): members so the RK2

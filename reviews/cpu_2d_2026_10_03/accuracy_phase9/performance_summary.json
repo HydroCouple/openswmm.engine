@@ -1,0 +1,263 @@
+[
+  {
+    "comparison": "same_mesh",
+    "case": "radial",
+    "quad": 1,
+    "order": 2,
+    "pairs": 5,
+    "median_paired_cpu_ratio": 1.1702669123967304,
+    "median_paired_wall_ratio": 1.1744724629478571,
+    "paired_cpu_ratio_range": [
+      1.1322276362967734,
+      1.214266379503113
+    ],
+    "baseline": {
+      "nx": 64,
+      "cells": 4096,
+      "cpu_seconds": 0.2632240000000001,
+      "seconds": 0.258523625,
+      "relative_l1": 0.14511118884669477,
+      "steps": 1192
+    },
+    "selected": {
+      "nx": 64,
+      "cells": 4096,
+      "cpu_seconds": 0.309525,
+      "seconds": 0.306938625,
+      "relative_l1": 0.07581394625293791,
+      "steps": 1244
+    }
+  },
+  {
+    "comparison": "same_mesh",
+    "case": "planar",
+    "quad": 1,
+    "order": 2,
+    "pairs": 5,
+    "median_paired_cpu_ratio": 1.1248288439849259,
+    "median_paired_wall_ratio": 1.1142984987635212,
+    "paired_cpu_ratio_range": [
+      1.0727375861381314,
+      1.156604761628696
+    ],
+    "baseline": {
+      "nx": 64,
+      "cells": 4096,
+      "cpu_seconds": 1.0633260000000004,
+      "seconds": 1.08488704,
+      "relative_l1": 0.28185848390593027,
+      "steps": 3612
+    },
+    "selected": {
+      "nx": 64,
+      "cells": 4096,
+      "cpu_seconds": 1.2053350000000005,
+      "seconds": 1.208888,
+      "relative_l1": 0.1611997507683321,
+      "steps": 3718
+    }
+  },
+  {
+    "comparison": "same_mesh",
+    "case": "planar",
+    "quad": 0,
+    "order": 2,
+    "pairs": 5,
+    "median_paired_cpu_ratio": 1.0986903327863644,
+    "median_paired_wall_ratio": 1.1130068065227774,
+    "paired_cpu_ratio_range": [
+      1.092434667061424,
+      1.180324972705967
+    ],
+    "baseline": {
+      "nx": 64,
+      "cells": 8192,
+      "cpu_seconds": 2.864178999999998,
+      "seconds": 2.87483962,
+      "relative_l1": 0.199133374309063,
+      "steps": 6180
+    },
+    "selected": {
+      "nx": 64,
+      "cells": 8192,
+      "cpu_seconds": 3.1437690000000043,
+      "seconds": 3.20258563,
+      "relative_l1": 0.10822731778596709,
+      "steps": 6240
+    }
+  },
+  {
+    "comparison": "same_mesh",
+    "case": "planar",
+    "quad": 1,
+    "order": 1,
+    "pairs": 5,
+    "median_paired_cpu_ratio": 1.010342487028743,
+    "median_paired_wall_ratio": 1.0114868556364345,
+    "paired_cpu_ratio_range": [
+      0.9517297486799772,
+      1.0432889439278115
+    ],
+    "baseline": {
+      "nx": 64,
+      "cells": 4096,
+      "cpu_seconds": 0.3499629999999946,
+      "seconds": 0.344757125,
+      "relative_l1": 0.7336924716701869,
+      "steps": 1655
+    },
+    "selected": {
+      "nx": 64,
+      "cells": 4096,
+      "cpu_seconds": 0.35436200000000495,
+      "seconds": 0.350814791,
+      "relative_l1": 0.7336924716701869,
+      "steps": 1655
+    }
+  },
+  {
+    "comparison": "same_mesh",
+    "case": "ritter",
+    "quad": 0,
+    "order": 2,
+    "pairs": 5,
+    "median_paired_cpu_ratio": 1.0593998425317357,
+    "median_paired_wall_ratio": 1.063638221279646,
+    "paired_cpu_ratio_range": [
+      0.9782849590131413,
+      1.2503743187398637
+    ],
+    "baseline": {
+      "nx": 256,
+      "cells": 2048,
+      "cpu_seconds": 0.13944600000000246,
+      "seconds": 0.134557417,
+      "relative_l1": 0.0016760917313842765,
+      "steps": 716
+    },
+    "selected": {
+      "nx": 256,
+      "cells": 2048,
+      "cpu_seconds": 0.1633329999999979,
+      "seconds": 0.159249875,
+      "relative_l1": 0.0016490659281011887,
+      "steps": 720
+    }
+  },
+  {
+    "comparison": "accuracy_cost",
+    "case": "radial",
+    "quad": 0,
+    "order": 2,
+    "pairs": 3,
+    "median_paired_cpu_ratio": 0.4577074418302004,
+    "median_paired_wall_ratio": 0.45659614960135736,
+    "paired_cpu_ratio_range": [
+      0.4526253227222212,
+      0.48200106451709346
+    ],
+    "baseline": {
+      "nx": 128,
+      "cells": 32768,
+      "cpu_seconds": 4.995075000000002,
+      "seconds": 5.01052379,
+      "relative_l1": 0.03876865313318893,
+      "steps": 3898
+    },
+    "selected": {
+      "nx": 96,
+      "cells": 18432,
+      "cpu_seconds": 2.371491000000001,
+      "seconds": 2.37290687,
+      "relative_l1": 0.029725263214513485,
+      "steps": 2930
+    }
+  },
+  {
+    "comparison": "accuracy_cost",
+    "case": "radial",
+    "quad": 1,
+    "order": 2,
+    "pairs": 3,
+    "median_paired_cpu_ratio": 0.42787805484703567,
+    "median_paired_wall_ratio": 0.42592597187237147,
+    "paired_cpu_ratio_range": [
+      0.416584628089206,
+      0.4557364017037251
+    ],
+    "baseline": {
+      "nx": 128,
+      "cells": 16384,
+      "cpu_seconds": 2.0504299999999978,
+      "seconds": 2.04747229,
+      "relative_l1": 0.07285543376009236,
+      "steps": 2402
+    },
+    "selected": {
+      "nx": 96,
+      "cells": 9216,
+      "cpu_seconds": 0.8874400000000029,
+      "seconds": 0.884054916,
+      "relative_l1": 0.049038689372983287,
+      "steps": 1806
+    }
+  },
+  {
+    "comparison": "accuracy_cost",
+    "case": "planar",
+    "quad": 0,
+    "order": 2,
+    "pairs": 3,
+    "median_paired_cpu_ratio": 0.4630362451777626,
+    "median_paired_wall_ratio": 0.46079929994459384,
+    "paired_cpu_ratio_range": [
+      0.45452542873265805,
+      0.46314764918210977
+    ],
+    "baseline": {
+      "nx": 128,
+      "cells": 32768,
+      "cpu_seconds": 23.324441999999973,
+      "seconds": 23.8399416,
+      "relative_l1": 0.07840643719524894,
+      "steps": 12422
+    },
+    "selected": {
+      "nx": 96,
+      "cells": 18432,
+      "cpu_seconds": 10.623590000000002,
+      "seconds": 11.0222351,
+      "relative_l1": 0.06303893719132778,
+      "steps": 9400
+    }
+  },
+  {
+    "comparison": "accuracy_cost",
+    "case": "planar",
+    "quad": 1,
+    "order": 2,
+    "pairs": 3,
+    "median_paired_cpu_ratio": 0.43942344319641385,
+    "median_paired_wall_ratio": 0.43417395155311184,
+    "paired_cpu_ratio_range": [
+      0.437147975942177,
+      0.45208082768396846
+    ],
+    "baseline": {
+      "nx": 128,
+      "cells": 16384,
+      "cpu_seconds": 7.956665000000024,
+      "seconds": 8.24561742,
+      "relative_l1": 0.10696235464120331,
+      "steps": 7302
+    },
+    "selected": {
+      "nx": 96,
+      "cells": 9216,
+      "cpu_seconds": 3.5118899999999984,
+      "seconds": 3.58839438,
+      "relative_l1": 0.09505489856828168,
+      "steps": 5524
+    }
+  }
+]

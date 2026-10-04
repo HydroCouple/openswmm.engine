@@ -1,0 +1,74 @@
+[
+  {
+    "case": "radial",
+    "quad": 0,
+    "variant": "baseline",
+    "equilibrium_energy": 0.1029599392067113,
+    "initial_energy": 0.1055274135713139,
+    "final_energy": 0.10394620076661304,
+    "oscillatory_energy_ratio": 0.38413686753768034
+  },
+  {
+    "case": "radial",
+    "quad": 0,
+    "variant": "selected",
+    "equilibrium_energy": 0.1029599392067113,
+    "initial_energy": 0.1055274135713139,
+    "final_energy": 0.10458539573993945,
+    "oscillatory_energy_ratio": 0.6330955259526989
+  },
+  {
+    "case": "radial",
+    "quad": 1,
+    "variant": "baseline",
+    "equilibrium_energy": 0.10301150572216851,
+    "initial_energy": 0.10557505377127853,
+    "final_energy": 0.103429749804543,
+    "oscillatory_energy_ratio": 0.16315047518601997
+  },
+  {
+    "case": "radial",
+    "quad": 1,
+    "variant": "selected",
+    "equilibrium_energy": 0.10301150572216851,
+    "initial_energy": 0.10557505377127853,
+    "final_energy": 0.10423935785656514,
+    "oscillatory_energy_ratio": 0.4789659139889748
+  },
+  {
+    "case": "planar",
+    "quad": 0,
+    "variant": "baseline",
+    "equilibrium_energy": 0.1029801122388754,
+    "initial_energy": 0.1800100591103149,
+    "final_energy": 0.15197611713378498,
+    "oscillatory_energy_ratio": 0.6360643734661058
+  },
+  {
+    "case": "planar",
+    "quad": 0,
+    "variant": "selected",
+    "equilibrium_energy": 0.1029801122388754,
+    "initial_energy": 0.1800100591103149,
+    "final_energy": 0.1646180082850754,
+    "oscillatory_energy_ratio": 0.8001809497424639
+  },
+  {
+    "case": "planar",
+    "quad": 1,
+    "variant": "baseline",
+    "equilibrium_energy": 0.1030358683747506,
+    "initial_energy": 0.1800767886704653,
+    "final_energy": 0.14333330227152297,
+    "oscillatory_energy_ratio": 0.5230653234942452
+  },
+  {
+    "case": "planar",
+    "quad": 1,
+    "variant": "selected",
+    "equilibrium_energy": 0.1030358683747506,
+    "initial_energy": 0.1800767886704653,
+    "final_energy": 0.15701033062902703,
+    "oscillatory_energy_ratio": 0.7005947235196602
+  }
+]

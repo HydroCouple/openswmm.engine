@@ -223,26 +223,27 @@ OPENSWMM_KERNEL_FN bool faceFlux(double etaL, double hL, double qxL, double qyL,
 }
 
 /**
- * @brief Face flux from RECONSTRUCTED side states (RECONSTRUCTION_ORDER 2).
+ * @brief Second-order face flux with independently reconstructed depth/bed.
  *
- * The free surface and velocities are the MUSCL-extrapolated face values and
- * the bed stays piecewise constant per cell (z_side = η_cell − h_cell); the
- * bed-slope correction uses the reconstructed face depth, so at rest (zero
- * gradients) the face reduces exactly to the first-order well-balanced form.
- *
- * @param etaLf,uxLf,uyLf   left face-extrapolated free surface and velocity
- * @param zL,hL_cell        left cell bed and cell-mean depth
- * @param etaRf,...         right side likewise
+ * zLf/zRf are face beds from the limited eta and depth reconstruction;
+ * zL/zR are the cell-equivalent beds. Add the hydrostatic face correction
+ * and the centered bed contribution -g*(h_cell+h_face)/2*(z_face-z_cell).
+ * The latter integrates a linear depth along the cell-to-face bed segment.
+ * For constant eta this reduces to g/2*(h_star^2-h_cell^2), preserving
+ * lake-at-rest balance even next to a first-order cell. On a flat bed the
+ * within-cell contribution vanishes. Face-depth positivity and cell-centered
+ * shoreline velocity are enforced by computeLimitedGradientsSwe().
  */
-OPENSWMM_KERNEL_FN bool faceFluxRecon(double etaLf, double uxLf, double uyLf,
+OPENSWMM_KERNEL_FN bool faceFluxReconBed(double etaLf, double uxLf, double uyLf,
                                       double zL, double hL_cell,
                                       double etaRf, double uxRf, double uyRf,
                                       double zR, double hR_cell,
                                       double nx, double ny, double h_dry,
                                       FaceFlux& out,
                                       double& corrL_x, double& corrL_y,
-                                      double& corrR_x, double& corrR_y) noexcept {
-    const double zf = (zL > zR) ? zL : zR;
+                                      double& corrR_x, double& corrR_y,
+                                      double zLf, double zRf) noexcept {
+    const double zf = (zLf > zRf) ? zLf : zRf;
     FaceSide L, R;
     L.h = (etaLf - zf > 0.0) ? etaLf - zf : 0.0;
     R.h = (etaRf - zf > 0.0) ? etaRf - zf : 0.0;
@@ -255,10 +256,13 @@ OPENSWMM_KERNEL_FN bool faceFluxRecon(double etaLf, double uxLf, double uyLf,
         R.un = uxRf * nx + uyRf * ny;
         R.ut = uxRf * tx + uyRf * ty;
     }
-    const double hLf = (etaLf - zL > 0.0) ? etaLf - zL : 0.0;
-    const double hRf = (etaRf - zR > 0.0) ? etaRf - zR : 0.0;
-    const double cL = 0.5 * kGravity * (L.h * L.h - hLf * hLf);
-    const double cR = 0.5 * kGravity * (R.h * R.h - hRf * hRf);
+    const double hLf = std::max(0.0, etaLf - zLf);
+    const double hRf = std::max(0.0, etaRf - zRf);
+    // Hydrostatic face correction plus a centered within-cell bed source.
+    const double cL = 0.5 * kGravity * (L.h * L.h - hLf * hLf
+        - (hL_cell + hLf) * (zLf - zL));
+    const double cR = 0.5 * kGravity * (R.h * R.h - hRf * hRf
+        - (hR_cell + hRf) * (zRf - zR));
     corrL_x = cL * nx; corrL_y = cL * ny;
     corrR_x = -cR * nx; corrR_y = -cR * ny;
     if (L.h <= 0.0 && R.h <= 0.0) {
@@ -272,6 +276,21 @@ OPENSWMM_KERNEL_FN bool faceFluxRecon(double etaLf, double uxLf, double uyLf,
     out.my    = fn * ny + ft * ty;
     out.sstar = sstar;
     return true;
+}
+
+/// Piecewise-constant-bed compatibility entry point.
+OPENSWMM_KERNEL_FN bool faceFluxRecon(double etaLf, double uxLf, double uyLf,
+                                      double zL, double hL_cell,
+                                      double etaRf, double uxRf, double uyRf,
+                                      double zR, double hR_cell,
+                                      double nx, double ny, double h_dry,
+                                      FaceFlux& out,
+                                      double& corrL_x, double& corrL_y,
+                                      double& corrR_x, double& corrR_y) noexcept {
+    return faceFluxReconBed(etaLf, uxLf, uyLf, zL, hL_cell,
+                            etaRf, uxRf, uyRf, zR, hR_cell,
+                            nx, ny, h_dry, out, corrL_x, corrL_y,
+                            corrR_x, corrR_y, zL, zR);
 }
 
 /// Barth–Jespersen limiter factor φ ∈ [0, 1] for one cell/variable given the
