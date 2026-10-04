@@ -215,3 +215,60 @@ TEST(Cpu2DCorrectness,SparseRebuildRetiresMomentumAndOrdersFaces) {
         }
     }
 }
+
+TEST(Cpu2DCorrectness,ManySpeciesKeepIndependentBudgetsOnMixedWetDryMesh) {
+    // Alternating quads and split squares give different CSR row lengths.
+    // Distinct tracer values, including a signed row, expose cross-row mixing.
+    constexpr int n = 8;
+    MeshData m;
+    m.resize_vertices((n + 1) * (n + 1));
+    for (int y = 0; y <= n; ++y) for (int x = 0; x <= n; ++x) {
+        const int v = y * (n + 1) + x;
+        m.vx[v] = x; m.vy[v] = y;
+    }
+    m.resize_triangles(3 * n * n / 2);
+    int cell = 0;
+    for (int y = 0; y < n; ++y) for (int x = 0; x < n; ++x) {
+        const int a = y * (n + 1) + x, b = a + 1, d = a + n + 1, e = d + 1;
+        if ((x + y) % 2 == 0) m.set_quad(cell++, a, b, e, d);
+        else { m.set_triangle(cell++, a, b, e); m.set_triangle(cell++, a, e, d); }
+    }
+    buildMeshTopology(m);
+    for (int ns : {1, 7, 8, 9, 17}) for (int threads : {1, 4}) for (int mode : {0, 1, 2}) {
+        SCOPED_TRACE(::testing::Message() << "species=" << ns << " threads=" << threads << " mode=" << mode);
+        auto s = state(m, 0);
+        auto o = options(threads, 4);
+        o.momentum = static_cast<Momentum2D>(mode);
+        s.transport.resize(ns, m.n_cells(), 0);
+        s.transport.temp_row = ns - 1;
+        s.transport.rain_conc.resize(ns);
+        for (int r = 0; r < ns; ++r) s.transport.rain_conc[r] = r == ns - 1 ? -4.0 : .7 * (r + 1);
+        for (int i = 0; i < m.n_cells(); ++i) {
+            s.volume[i] = m.tri_cx[i] < n / 2 ? .2 * m.tri_area[i] : 0;
+            s.rainfall[i] = .005; s.infil_rate[i] = .001;
+            for (int r = 0; r < ns; ++r)
+                s.transport.cell_mass[s.transport.idx(r, i)] = s.transport.rain_conc[r] * s.volume[i];
+        }
+        const double initial_volume = sum(s.volume);
+        ExplicitInertialSolver solver;
+        solver.initialize(m, s, o);
+        double time = 0;
+        for (double next : {.2, .6, 1.4, 2.0}) {
+            solver.advance(time, next);
+            // Explicit resync also settles any outstanding per-face bookings.
+            solver.resyncFromVolumes(next);
+            EXPECT_NEAR(sum(s.volume) + infiltration(m, s), initial_volume + n * n * .005 * next, 1e-10);
+            for (int r = 0; r < ns; ++r) {
+                double mass = 0;
+                const double c = s.transport.rain_conc[r];
+                for (int i = 0; i < m.n_cells(); ++i) {
+                    const double mi = s.transport.cell_mass[s.transport.idx(r, i)];
+                    mass += mi;
+                    EXPECT_NEAR(mi, c * s.volume[i], 1e-11);
+                }
+                EXPECT_NEAR(mass + s.transport.lost_infiltration[r] - s.transport.gained_rainfall[r], c * initial_volume, 1e-9);
+            }
+            time = next;
+        }
+    }
+}
