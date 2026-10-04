@@ -1,0 +1,8 @@
+{
+  "source": "surface_wet_swe2_t1",
+  "cells": 32768,
+  "threads": 1,
+  "duration_seconds": 20,
+  "report_step_seconds": 5,
+  "sha256": "18ad1ab765274a30aae0f2f52bbabcb5c7655f7f14e1276d0ae176c1f24821d8"
+}

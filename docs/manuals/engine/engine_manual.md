@@ -67,6 +67,7 @@ shows next to them, as @ref manual_error_codes.
 - @subpage engine_manual_ch4_reports — CHAPTER 4 - Status Report; Summary Tables and Output
 - @subpage engine_manual_ch5_api — CHAPTER 5 - Programmatic C API; Python Bindings and Plugins
 - @subpage engine_manual_lid_storage — CHAPTER 6 - Storage-node LIDs: Implementation and Interfaces
+- @subpage engine_manual_2d_cpu — Chapter 7: Two-Dimensional CPU Implementation and Qualification
 - @subpage engine_manual_appendix_a_messages — APPENDIX A - Error and Warning Messages
 
 ## WHERE THE OLD CHAPTERS WENT {#engine_manual_provenance}

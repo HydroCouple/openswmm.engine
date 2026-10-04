@@ -1,0 +1,9 @@
+# CPU 2D implementation documentation
+
+The engine manual now includes Chapter 7 covering configuration, conservation and source-accounting invariants, CPU work reduction, face-local species layout, conditional fusion, reconstruction storage, measurements and reproduction. Hydraulic Reference Chapter 9 describes the coupled elevation/depth reconstruction, connected-wet stencil, conditioned shoreline fit, positivity scaling, centered bed-force correction and RK2 restrictions. The input-option table, contents and generated figure list are updated.
+
+Three reproducible PNG/SVG figures illustrate reconstruction, transport gathering/source fusion and measured accuracy per CPU time. The chart data match the phase-12 JSON evidence. Generate them with `scripts/build_manual_figures.py build --only FIGURE_ID`; the IDs are `hydraulics_ch9_reconstruction`, `hydraulics_ch9_accuracy_cost` and `eng_2d_cpu_pipeline`. NumPy and Matplotlib are required.
+
+Validation: all three figures visually inspected; figure manifest audit passes; generated hydraulic front matter is current; Doxygen HTML generation succeeds; both built chapters contain their expected cross-links and image references. The repository-wide manual linter has the same four errors before and after this work: three unrelated LID input sections missing from its coverage, and one hydrology status-badge formatting error. Existing unresolved internal-code references remain Doxygen warnings; no claim of a warning-free repository documentation build is made. See validation.json.
+
+No solver files changed during documentation. The committed implementation already includes the accepted correctness and CPU changes through phase 10. This documentation commit also records the previously uncommitted phase-11 rejection evidence and phase-12 final qualification. The unrelated pending quiescent rain-reactivation solver hunk remains outside this commit.

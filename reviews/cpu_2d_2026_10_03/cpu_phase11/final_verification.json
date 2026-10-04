@@ -1,0 +1,32 @@
+{
+  "baseline_commit": "59d808de10f43d973ad35c1ec501ff5a13a61d13",
+  "decision": "No production changes retained",
+  "production_files_unchanged": {
+    "src/engine/2d/solver/ExplicitInertialSolver.cpp": "dd9acbbfeabc68b62840e715dab9c7d70f44920b743ca82c41265f1706531acf",
+    "src/engine/2d/solver/ExplicitInertialSolver.hpp": "be35cef7069b687208eeb1587db270e688f73a028a1f6277db6836b4727b49eb",
+    "src/engine/2d/solver/SweKernels.hpp": "8523b2e2e6fb52242ba39f2d83146c65cc79953d066a086fa7dc70227623e221",
+    "src/engine/2d/data/SolverOptions2D.hpp": "1b8db9a88e766b8a558619990a4788db1ffae9d3af6a365dd3289f8e99682523",
+    "tests/unit/engine/test_2d_cpu_correctness.cpp": "888dc787516b75bce1fe679874a865518aa628afab19ca5161909a186ca5d5df"
+  },
+  "screen_executions": 96,
+  "confirmation_executions": 36,
+  "coupled_executions": 8,
+  "measured_screen_executions": 72,
+  "measured_confirmation_executions": 30,
+  "measured_coupled_executions": 6,
+  "scalar_comparisons_exact": true,
+  "coupled_state_reports_and_hdf5_exact": true,
+  "host_one_minute_load_range": [
+    23.4375,
+    56.64794921875
+  ],
+  "artifacts": {
+    "profiles.json": "12d62d863f0264d4eb6c620492d271904714b9513a918a0e853f048c1a274f03",
+    "screen.json": "33f962f85ea488f387a62f3180ccd75d8947a7c0c2a316433f7f7098cbe5fed6",
+    "screen_summary.json": "161d01d64a20bf4e410eb0611a856d34fd3ccf4e22f2e9bf5e232e0ca7f06369",
+    "confirmation.json": "d7c6894d465ac37d32fbafabf73b158d1c82bece22e9bae89bb9045374e8c720",
+    "confirmation_summary.json": "49396233019bdf139621956d032840741be811d5a67f7f5fc6fd9c4278859987",
+    "coupled_probe.json": "aed09dd5f6cdbf4bbf8dd224fbe5b298dcc795d6488642c5dba3781d7bf2c20b",
+    "coupled_probe_summary.json": "832937c84466f42cbcccdebc3cda8bf6ecd843111a14d02c8820dd13fc093c29"
+  }
+}

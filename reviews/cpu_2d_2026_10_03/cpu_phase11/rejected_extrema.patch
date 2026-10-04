@@ -1,0 +1,31 @@
+--- a/src/engine/2d/solver/ExplicitInertialSolver.cpp
++++ b/src/engine/2d/solver/ExplicitInertialSolver.cpp
+@@ -1900,13 +1900,26 @@
+             const double inv_a = 1.0 / mesh_->tri_area[i];
+             for (int m = 0; m < 4; ++m) { gx[m] *= inv_a; gy[m] *= inv_a; }
+         }
++        // The smallest limiter ratio comes from the largest positive or
++        // most negative extrapolation. Accumulate those extrema before
++        // dividing, retaining the same rounded face extrapolations.
++        double dmin[4] = {}, dmax[4] = {};
+         for (int p = begin; p < end; ++p) {
+             if (!(connected & (1u << (p - begin)))) continue;
+             const double ax = ed.cell_arm_x[p], ay = ed.cell_arm_y[p];
+             for (int m = 0; m < 4; ++m) {
+                 const double wf = wi[m] + gx[m] * ax + gy[m] * ay;
+-                phi[m] = std::min(phi[m], swe::bjLimiter(wi[m], wf, wmin[m], wmax[m]));
+-            }
++                const double d = wf - wi[m];
++                dmin[m] = std::min(dmin[m], d);
++                dmax[m] = std::max(dmax[m], d);
++            }
++        }
++        for (int m = 0; m < 4; ++m) {
++            const double upper = wmax[m] - wi[m], lower = wmin[m] - wi[m];
++            if (dmax[m] > 1.0e-14 && upper < dmax[m])
++                phi[m] = std::min(phi[m], upper / dmax[m]);
++            if (dmin[m] < -1.0e-14 && lower > dmin[m])
++                phi[m] = std::min(phi[m], lower / dmin[m]);
+         }
+         // Connected interior faces are already bounded by positive wet
+         // depths. At shore/boundary cells also constrain the omitted faces,

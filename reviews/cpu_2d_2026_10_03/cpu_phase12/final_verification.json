@@ -1,0 +1,45 @@
+{
+  "decision": "Final CPU qualification complete; no solver changes",
+  "production_files_unchanged": {
+    "src/engine/2d/solver/ExplicitInertialSolver.cpp": "dd9acbbfeabc68b62840e715dab9c7d70f44920b743ca82c41265f1706531acf",
+    "src/engine/2d/solver/ExplicitInertialSolver.hpp": "be35cef7069b687208eeb1587db270e688f73a028a1f6277db6836b4727b49eb",
+    "src/engine/2d/solver/SweKernels.hpp": "8523b2e2e6fb52242ba39f2d83146c65cc79953d066a086fa7dc70227623e221",
+    "src/engine/2d/data/SolverOptions2D.hpp": "1b8db9a88e766b8a558619990a4788db1ffae9d3af6a365dd3289f8e99682523",
+    "tests/unit/engine/test_2d_cpu_correctness.cpp": "888dc787516b75bce1fe679874a865518aa628afab19ca5161909a186ca5d5df"
+  },
+  "fresh_regressions": {
+    "tests": 170,
+    "skipped": 1,
+    "passed": 169
+  },
+  "coupled_executions": 24,
+  "coupled_exact_pairs": 12,
+  "analytical_diagnostic_executions": 8,
+  "analytical_timing_executions": 32,
+  "inherited_artifacts_verified": {
+    "reviews/cpu_2d_2026_10_03/cpu_phase10/analytical_results.json": "a51967f7aa5e2001cbed7e20fd9ce962f582c1107a57b908ceb7acea8a4273c5",
+    "reviews/cpu_2d_2026_10_03/cpu_phase10/regressions_selected.json": "14cc5a666b32de922c7a069ffd64713494f684d093d29c91bc503e0f96e3b3d7",
+    "reviews/cpu_2d_2026_10_03/cpu_phase10/model_results.json": "1f5455f381b4caeb551f103c9edabed3f3a0698437182a5fd5bddb632d1c8018",
+    "reviews/cpu_2d_2026_10_03/cpu_phase10/bellinge_results.json": "f93fa65d51743c62616b92ce337de909f70b1c9803eccdaa2d597accb25b1c65",
+    "reviews/cpu_2d_2026_10_03/cpu_phase10/performance_summary.json": "db5df3a37ce7fc835e70510415d77ae2e5bd953e4e5f85267383dd47e3c06904",
+    "reviews/cpu_2d_2026_10_03/cpu_phase10/model_timing_summary.json": "cd28823444f4036e67536a59bd26f12bc1bd31dcd259ebddba911d3b116c6e3f",
+    "reviews/cpu_2d_2026_10_03/cpu_phase10/retained.patch": "9fa0baefd1ae315f0e7b29665f25286bf3801089e2a19a2cd31ccb769b5622c0"
+  },
+  "artifacts": {
+    "cumulative_results.json": "72642c3eb49a72163f8202e854a0dad8f3bf14274f836e5e72127690760644db",
+    "cumulative_summary.json": "9ed2ec14245adf0cb4fde1b2b352c7db4698d179088821cd7651d101935e4f92",
+    "accuracy_results.json": "79a9f1579fea30d82e7c9545e78343a7064e7216d543bc805e73485d3bff4a67",
+    "accuracy_timings.json": "a323e483be9026d8a67bfa5146778150ddc0e82d6ffdbf34702496000e767102",
+    "accuracy_summary.json": "dee67c641f7b905954b7186db2dfd35d2a239e2561974e109c767acf5252229c",
+    "regressions_selected.json": "adfd64a2db5a308aa6baf504c5fc8c1e456c1c517374137e9f8a5ae79af8dc29",
+    "source_manifest.json": "d7e03044fea0f50f6ba3393582ed9914033f5aa22e790c85dee69aca3aa7f56c",
+    "native_manifest.json": "31d2809926acc3da7855103fd1f80d0e82872d65669d49ce30bf32e3737c8abb",
+    "header_layout_review.diff": "e0bc051498359b5ec3bf55d5294c5d45749096a959c7f82249628f5178a5c600",
+    "REPORT.md": "41bd37de513f08620bb39f3ffae42c2f168f8ad33aa22a6dd445332c6b694814"
+  },
+  "host_load_range": [
+    7.3876953125,
+    13.52197265625
+  ],
+  "commit_status": "uncommitted"
+}

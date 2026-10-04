@@ -1,0 +1,35 @@
+{
+  "manual_lint_errors_before": [
+    "ERROR section coverage: [LID_LAYER_TREATMENT] is registered but undocumented and not in KNOWN_SECTION_GAPS.txt",
+    "ERROR section coverage: [LID_NODES] is registered but undocumented and not in KNOWN_SECTION_GAPS.txt",
+    "ERROR section coverage: [LID_NODE_OUTLETS] is registered but undocumented and not in KNOWN_SECTION_GAPS.txt",
+    "ERROR manuals/reference/hydrology/sections/Chapter10-PlannedFormulations.md:22: Status column must hold exactly one \\status{...} badge, found '\\\\status{Experimental} \u2014 bulk transport a'"
+  ],
+  "manual_lint_errors_after": [
+    "ERROR section coverage: [LID_LAYER_TREATMENT] is registered but undocumented and not in KNOWN_SECTION_GAPS.txt",
+    "ERROR section coverage: [LID_NODES] is registered but undocumented and not in KNOWN_SECTION_GAPS.txt",
+    "ERROR section coverage: [LID_NODE_OUTLETS] is registered but undocumented and not in KNOWN_SECTION_GAPS.txt",
+    "ERROR manuals/reference/hydrology/sections/Chapter10-PlannedFormulations.md:22: Status column must hold exactly one \\status{...} badge, found '\\\\status{Experimental} \u2014 bulk transport a'"
+  ],
+  "new_lint_errors": 0,
+  "figure_manifest_errors": 0,
+  "doxygen_exit_code": 0,
+  "rendered_pages_checked": {
+    "engine_manual_2d_cpu.html": [
+      "eng_2d_cpu_pipeline.png",
+      "hydraulics_ref_ch9_two_dimensional.html"
+    ],
+    "hydraulics_ref_ch9_two_dimensional.html": [
+      "hydraulics_ch9_reconstruction.png",
+      "hydraulics_ch9_accuracy_cost.png",
+      "engine_manual_2d_cpu.html"
+    ]
+  },
+  "figures_visually_inspected": [
+    "eng_2d_cpu_pipeline.png",
+    "hydraulics_ch9_reconstruction.png",
+    "hydraulics_ch9_accuracy_cost.png"
+  ],
+  "measurement_data_matches_phase12": true,
+  "scope": "Documentation and phase 11/12 review evidence only; no solver changes"
+}

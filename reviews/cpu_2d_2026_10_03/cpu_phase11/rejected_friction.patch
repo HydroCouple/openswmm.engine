@@ -1,0 +1,13 @@
+--- a/src/engine/2d/solver/ExplicitInertialSolver.cpp
++++ b/src/engine/2d/solver/ExplicitInertialSolver.cpp
+@@ -1502,7 +1502,9 @@
+             if (h_new > dry) {
+                 double qx = (A * qcx_[i] + dmx) / A;
+                 double qy = (A * qcy_[i] + dmy) / A;
+-                swe::frictionUpdate(qx, qy, h_new, mesh_->mannings_n[i], dt_c);
++                // With zero roughness the positive-depth update is the identity.
++                if (mesh_->mannings_n[i] != 0.0)
++                    swe::frictionUpdate(qx, qy, h_new, mesh_->mannings_n[i], dt_c);
+                 qcx_[i] = qx; qcy_[i] = qy;
+             } else {
+                 qcx_[i] = 0.0; qcy_[i] = 0.0;

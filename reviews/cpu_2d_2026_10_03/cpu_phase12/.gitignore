@@ -1,0 +1,10 @@
+/src_*/
+/build_*/
+/engine_src_*/
+/histories/
+/fields/
+/engine_runs/
+/external_data/
+/engine_decks/
+/__pycache__/
+/cumulative*.inp

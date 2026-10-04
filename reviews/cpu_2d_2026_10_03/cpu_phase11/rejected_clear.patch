@@ -1,0 +1,39 @@
+--- a/src/engine/2d/solver/ExplicitInertialSolver.cpp
++++ b/src/engine/2d/solver/ExplicitInertialSolver.cpp
+@@ -1814,9 +1814,11 @@
+ #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
+     for (int k = 0; k < na; ++k) {
+         const int i = active_cells_[static_cast<std::size_t>(k)];
+-        gex_[depth_offset + i] = gey_[depth_offset + i] = gex_[i] = gey_[i] = gux_[i] = guy_[i] = gvx_[i] = gvy_[i] = 0.0;
++        const auto clear_gradients = [&]() {
++            gex_[depth_offset + i] = gey_[depth_offset + i] = gex_[i] = gey_[i] = gux_[i] = guy_[i] = gvx_[i] = gvy_[i] = 0.0;
++        };
+         const double hi = state_->depth[i];
+-        if (hi <= 10.0 * dry) continue;
++        if (hi <= 10.0 * dry) { clear_gradients(); continue; }
+         const double ei = state_->head[i];
+         const double ui = qcx_[i] / hi, vi = qcy_[i] / hi;
+         const double wi[4] = {ei, ui, vi, hi};
+@@ -1848,11 +1850,11 @@
+             }
+             ++nfaces;
+         }
+-        if (nfaces == 0) continue;
++        if (nfaces == 0) { clear_gradients(); continue; }
+         const int nvc = mesh_->cell_vertex_count(i);
+         double phi[4] = {1.0, 1.0, 1.0, 1.0};
+         if (shore) {
+-            if (nfaces < 2) continue;
++            if (nfaces < 2) { clear_gradients(); continue; }
+             // Fit eta and depth to connected wet neighbours. Inverse squared
+             // distance weighting makes the geometry test scale independent.
+             // Keep this extra work out of the fully wet interior path.
+@@ -1875,7 +1877,7 @@
+             const double det = xx * yy - xy * xy;
+             // Nearly opposite wet neighbours do not reliably constrain a
+             // transverse slope. Require a Gram-matrix condition number <98.
+-            if (det <= 1e-2 * (xx + yy) * (xx + yy)) continue;
++            if (det <= 1e-2 * (xx + yy) * (xx + yy)) { clear_gradients(); continue; }
+             for (int m : {0, 3}) {
+                 gx[m] = (yy * bx[m] - xy * by[m]) / det;
+                 gy[m] = (xx * by[m] - xy * bx[m]) / det;

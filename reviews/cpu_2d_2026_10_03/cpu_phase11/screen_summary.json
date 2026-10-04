@@ -1,0 +1,242 @@
+[
+  {
+    "case": "planar",
+    "quad": 0,
+    "threads": 1,
+    "variant": "limiter",
+    "median_cpu_ratio": 1.0183370881583655,
+    "ratios": [
+      1.0183370881583655,
+      0.9712643115924312,
+      1.0487547747120423
+    ]
+  },
+  {
+    "case": "planar",
+    "quad": 0,
+    "threads": 1,
+    "variant": "friction",
+    "median_cpu_ratio": 0.997651415697742,
+    "ratios": [
+      0.997651415697742,
+      1.0032870601355919,
+      0.952559343725326
+    ]
+  },
+  {
+    "case": "planar",
+    "quad": 0,
+    "threads": 1,
+    "variant": "clear",
+    "median_cpu_ratio": 0.9572388475638937,
+    "ratios": [
+      1.0176639056671546,
+      0.9355126411593425,
+      0.9572388475638937
+    ]
+  },
+  {
+    "case": "planar",
+    "quad": 0,
+    "threads": 1,
+    "variant": "combined",
+    "median_cpu_ratio": 1.0382609886615988,
+    "ratios": [
+      1.0506364176618894,
+      1.0382609886615988,
+      0.9246375958824272
+    ]
+  },
+  {
+    "case": "planar",
+    "quad": 0,
+    "threads": 1,
+    "variant": "extrema",
+    "median_cpu_ratio": 1.0077016493493949,
+    "ratios": [
+      1.0088403466302251,
+      0.9660924094346451,
+      1.0077016493493949
+    ]
+  },
+  {
+    "case": "planar",
+    "quad": 1,
+    "threads": 1,
+    "variant": "limiter",
+    "median_cpu_ratio": 1.0281150030779207,
+    "ratios": [
+      1.0317688948876633,
+      0.9663286570348838,
+      1.0281150030779207
+    ]
+  },
+  {
+    "case": "planar",
+    "quad": 1,
+    "threads": 1,
+    "variant": "friction",
+    "median_cpu_ratio": 1.0104402217980515,
+    "ratios": [
+      1.0104402217980515,
+      1.0264774211560166,
+      1.0070438880647414
+    ]
+  },
+  {
+    "case": "planar",
+    "quad": 1,
+    "threads": 1,
+    "variant": "clear",
+    "median_cpu_ratio": 1.04766845119083,
+    "ratios": [
+      1.04766845119083,
+      1.0016800773732941,
+      1.263777461576501
+    ]
+  },
+  {
+    "case": "planar",
+    "quad": 1,
+    "threads": 1,
+    "variant": "combined",
+    "median_cpu_ratio": 1.0198197652709997,
+    "ratios": [
+      1.0639054386857303,
+      0.9622206933684213,
+      1.0198197652709997
+    ]
+  },
+  {
+    "case": "planar",
+    "quad": 1,
+    "threads": 1,
+    "variant": "extrema",
+    "median_cpu_ratio": 0.9750638289283726,
+    "ratios": [
+      1.052080238115615,
+      0.9513974056015885,
+      0.9750638289283726
+    ]
+  },
+  {
+    "case": "planar",
+    "quad": 1,
+    "threads": 4,
+    "variant": "limiter",
+    "median_cpu_ratio": 1.1012797677614268,
+    "ratios": [
+      1.0028671195519638,
+      1.1071586389748098,
+      1.1012797677614268
+    ]
+  },
+  {
+    "case": "planar",
+    "quad": 1,
+    "threads": 4,
+    "variant": "friction",
+    "median_cpu_ratio": 1.0008224555596512,
+    "ratios": [
+      0.9944467261806448,
+      1.0077762900401714,
+      1.0008224555596512
+    ]
+  },
+  {
+    "case": "planar",
+    "quad": 1,
+    "threads": 4,
+    "variant": "clear",
+    "median_cpu_ratio": 1.0158167118260393,
+    "ratios": [
+      1.003380116793421,
+      1.0811451961764746,
+      1.0158167118260393
+    ]
+  },
+  {
+    "case": "planar",
+    "quad": 1,
+    "threads": 4,
+    "variant": "combined",
+    "median_cpu_ratio": 1.0392272617948421,
+    "ratios": [
+      0.9810867673463142,
+      1.1062482764578234,
+      1.0392272617948421
+    ]
+  },
+  {
+    "case": "planar",
+    "quad": 1,
+    "threads": 4,
+    "variant": "extrema",
+    "median_cpu_ratio": 1.080516549185029,
+    "ratios": [
+      0.9887864468017161,
+      1.0989088939759917,
+      1.080516549185029
+    ]
+  },
+  {
+    "case": "radial",
+    "quad": 1,
+    "threads": 1,
+    "variant": "limiter",
+    "median_cpu_ratio": 1.0289425181430498,
+    "ratios": [
+      1.0289425181430498,
+      1.1101852285317348,
+      0.9655520401484043
+    ]
+  },
+  {
+    "case": "radial",
+    "quad": 1,
+    "threads": 1,
+    "variant": "friction",
+    "median_cpu_ratio": 0.9395728780274829,
+    "ratios": [
+      0.8857706485428134,
+      1.0241249629386717,
+      0.9395728780274829
+    ]
+  },
+  {
+    "case": "radial",
+    "quad": 1,
+    "threads": 1,
+    "variant": "clear",
+    "median_cpu_ratio": 1.0210085243635414,
+    "ratios": [
+      1.0210085243635414,
+      1.1004790662109825,
+      0.8933558804276532
+    ]
+  },
+  {
+    "case": "radial",
+    "quad": 1,
+    "threads": 1,
+    "variant": "combined",
+    "median_cpu_ratio": 1.020738729460219,
+    "ratios": [
+      1.079008754751764,
+      1.020738729460219,
+      0.8890055640410166
+    ]
+  },
+  {
+    "case": "radial",
+    "quad": 1,
+    "threads": 1,
+    "variant": "extrema",
+    "median_cpu_ratio": 0.980575394539834,
+    "ratios": [
+      0.980575394539834,
+      0.9811026325233969,
+      0.941618481344083
+    ]
+  }
+]

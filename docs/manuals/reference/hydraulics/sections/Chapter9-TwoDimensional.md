@@ -285,8 +285,10 @@ operator-derived \f$L_{char}\f$ of (9-4); the \f$\beta\f$ share of (9-15)
 remains as a backstop rather than the guarantee. Measured on the SWASHES
 strips of §9.10 the closure runs at roughly two to three times the
 wall-clock of the default. Two further switches belong to it:
-`RECONSTRUCTION_ORDER 2` adds MUSCL reconstruction of \f$(\eta, u, v)\f$ with
-a Barth–Jespersen-limited Green–Gauss gradient and SSP-RK2 time stepping
+`RECONSTRUCTION_ORDER 2` adds coupled MUSCL reconstruction of
+\f$(\eta,h,u,v)\f$: Green–Gauss in connected wet interiors and a
+conditioned wet-neighbour depth/surface fit at shorelines, with limited
+face depths, cell-centred shoreline velocity and SSP-RK2 time stepping
 in global-step mode (§9.5.6, §9.5.10), and is refused with a notice when
 overland transport is active; `FRONT_REBUILD` (§9.5.7) is switched on
 automatically, because a Godunov front outruns the fixed rebuild cadence.
@@ -1150,6 +1152,16 @@ of (9-4); the tier, the active flag and the tier-0 pin flag; and a CSR
 incidence — for cell \f$i\f$ the incident unique faces with orientation
 signs \f$\pm 1\f$ — so the continuity gather is a race-free per-cell loop.
 
+**CPU transport and reconstruction storage.** Private species face accumulators
+use `[face * species_count + species]`; cell gathering handles up to eight
+species in one incidence walk without changing each species' edge-summation
+order. Public cell-mass storage is unchanged. At second order, the existing
+`gex_`/`gey_` vectors contain elevation gradients in their first cell-count
+block and depth gradients in their second block, alongside the four velocity
+gradient vectors and RK stage buffers. This adds two cell-count arrays of
+doubles to gradient storage relative to elevation/velocity-only reconstruction.
+The complete CPU strategy is documented in @ref engine_manual_2d_cpu.
+
 **Per vertex**: coordinates and bed elevation, plus the reconstruction
 stencils of §9.9. Per flat edge slot: the published volumetric flux
 and the boundary-condition tables of §9.6.
@@ -1475,29 +1487,124 @@ a notice. The isoperimetric length replaces \f$L_{char}\f$ of (9-4) because
 the positivity argument is about the volume a cell's faces can remove in
 one step, not about the odd–even mode of the staggered operator.
 
-**Second order (`RECONSTRUCTION_ORDER 2`).** A Green–Gauss gradient of
-\f$(\eta, u, v)\f$ is formed over each active cell — the face value is the
-mean of the two cells, and a boundary face contributes the cell's own
-value (zero gradient) — and limited per variable with the
-Barth–Jespersen factor against the minimum and maximum over the cell
-and its face neighbours. Cells that are dry, thin (below ten times
-`DRY_DEPTH`) or touching a dry or inactive cell fall back to first order,
-so the wet–dry front keeps the monotone update. Each side's face state
-is extrapolated along the precomputed centroid-to-midpoint arm; the bed
-stays piecewise constant per cell, and the correction (9-39) pairs
-\f$h^{*}\f$ with the reconstructed face depth \f$\eta_f - z_{cell}\f$, so a
-linear surface keeps its interface pressure difference and zero
-gradients reduce exactly to the first-order well-balanced form. Time
-integration is SSP-RK2 (Heun): \f$\mathbf{U}^{1} = \mathbf{U}^{0} + \Delta t\,L(\mathbf{U}^{0})\f$,
-\f$\mathbf{U}^{2} = \mathbf{U}^{1} + \Delta t\,L(\mathbf{U}^{1})\f$,
-\f$\mathbf{U}^{n+1} = \tfrac{1}{2}(\mathbf{U}^{0} + \mathbf{U}^{2})\f$, over
-the global active lists (§9.5.6), with every per-advance ledger that both
-stages incremented — boundary and coupling volumes, infiltration, the
-node spill budgets — reset to its trapezoidal value. Second order is
-refused with a notice when overland transport is active.
+**Second order (`RECONSTRUCTION_ORDER 2`).** The CPU route reconstructs
+free-surface elevation and depth independently, as well as velocity where
+the wet stencil permits it. The bed used by this flux is the
+cell-equivalent bed \f$z_i=\eta_i-h_i\f$. With VFR storage this is an
+algebraic equivalent of the stored mean depth, not a replacement for the
+geometric bed used by the volume–stage closure. At face midpoint
+\f$\mathbf{x}_f\f$, with \f$\mathbf{r}_{if}=\mathbf{x}_f-\mathbf{x}_i\f$,
+
+\f[
+\eta_{if}=\eta_i+\nabla\eta_i^{\ell}\cdot\mathbf{r}_{if},\qquad
+h_{if}=h_i+\nabla h_i^{\ell}\cdot\mathbf{r}_{if},\qquad
+z_{if}=\eta_{if}-h_{if}.
+\f]
+
+The superscript \f$\ell\f$ denotes the limited gradient. Reconstructing
+only elevation over a constant cell bed gives the wrong face-depth
+variation on a slope. Reconstructing both quantities permits a smooth
+sloping bed and a smooth water surface while keeping the first-order
+limit when all gradients vanish.
+
+**Connected wet stencil.** A neighbour contributes only when it is
+active, its depth exceeds `DRY_DEPTH`, and both cell surfaces stand more
+than `DRY_DEPTH` above the equivalent-bed sill
+\f$\max(z_i,z_j)\f$. A wet cell behind a dry sill is not a sample of the
+same connected water surface. Boundary faces have no neighbour in the
+interior-face incidence list. Cells with
+\f$h_i\le10\,\texttt{DRY_DEPTH}\f$ retain zero gradients.
+
+For an interior without rejected neighbours, each of the four variables
+uses Green–Gauss integration, with the average of the adjacent cell
+values at an interior face and the cell's own value at a physical
+boundary. A rejected dry, inactive or sill-blocked neighbour selects the
+shoreline path instead. That path fits only \f$\eta\f$ and \f$h\f$ to
+connected wet neighbours. For centroid offsets \f$\mathbf{d}_{ij}\f$,
+
+\f[
+M=\sum_j\frac{\mathbf{d}_{ij}\mathbf{d}_{ij}^{T}}
+                         {\lVert\mathbf{d}_{ij}\rVert^2},\qquad
+\mathbf{b}_w=\sum_j\frac{\mathbf{d}_{ij}(w_j-w_i)}
+                         {\lVert\mathbf{d}_{ij}\rVert^2},\qquad
+\nabla w=M^{-1}\mathbf{b}_w.
+\f]
+
+At least two connected neighbours are required, with
+\f$\det M>0.01(\operatorname{tr}M)^2\f$. This scale-independent test
+rejects nearly collinear stencils (a spectral condition number of about
+98 is the upper limit). An insufficient or rejected stencil stays first
+order. The shoreline velocity gradients remain zero even when the
+surface/depth fit succeeds. Extrapolating velocity from the remaining
+wet cells can export water faster than momentum and accelerate the
+residual film; keeping the exporting cell's velocity avoids that failure
+observed in the distorted-mesh review.
+
+**Limiting and face-depth positivity.** Barth–Jespersen factors constrain
+each variable using connected wet neighbours and their face midpoints.
+At shoreline or physical-boundary cells, a further check includes every
+face midpoint, including faces omitted from the wet fit. For the already
+limited depth increment \f$\delta h_{if}\f$,
+
+\f[
+\theta_i=\min\left(1,\min_{\delta h_{if}<-h_i}
+                    \frac{-h_i}{\delta h_{if}}\right),\qquad
+(\nabla h_i^{\ell},\nabla\eta_i^{\ell})\leftarrow
+\theta_i(\nabla h_i^{\ell},\nabla\eta_i^{\ell}).
+\f]
+
+An empty inner minimum imposes no additional reduction. Scaling both
+gradients together preserves their equality for a flat reconstructed
+bed. This is a slope restriction before the Riemann solve; simply
+clipping an extrapolated negative depth would define a different
+polynomial. The hydrostatic cut and available-volume flux bound remain
+separate safeguards.
+
+![Figure 9-7](figures/png/hydraulics_ch9_reconstruction.png)
+
+*Figure 9-7 Coupled surface/depth reconstruction and the connected-wet-stencil decision at a shoreline. The drawing is schematic, not model output.*
+
+**Pressure and bed-force consistency.** Hydrostatic cutting uses
+\f$z_f^*=\max(z_{Lf},z_{Rf})\f$ and
+\f$h_i^*=\max(0,\eta_{if}-z_f^*)\f$. The scalar correction for side
+\f$i\f$, before multiplication by its outward normal, is
+
+\f[
+C_i=\frac{g}{2}\left[(h_i^*)^2-h_{if}^2
+                     -(h_i+h_{if})(z_{if}-z_i)\right].
+\f]
+
+The last term integrates the bed force with the mean cell/face depth
+along the centroid-to-face segment. It vanishes on a flat bed. At
+constant elevation, \f$z_{if}-z_i=h_i-h_{if}\f$, so the expression reduces
+to \f$g[(h_i^*)^2-h_i^2]/2\f$, the first-order hydrostatic correction.
+Thus a reconstructed cell can meet a first-order cell without losing
+the lake-at-rest cancellation. The common Riemann mass flux is still
+booked once with opposite signs; these side-specific pressure terms
+supply the bed force in momentum, not an additional water transfer.
+
+**Two stages and their ledgers.** With volume and momentum state
+\f$\mathbf U\f$, SSP-RK2 (Heun) advances
+\f$\mathbf U^1=\mathbf U^0+\Delta t L(\mathbf U^0)\f$,
+\f$\mathbf U^2=\mathbf U^1+\Delta t L(\mathbf U^1)\f$, then
+\f$\mathbf U^{n+1}=(\mathbf U^0+\mathbf U^2)/2\f$ over the global
+active lists. Both stages recompute gradients and fluxes. Volume–stage
+closure is refreshed after the averaged state is formed. Source and
+exchange ledgers must receive the same trapezoidal weighting as the
+state: boundary/coupling volumes, infiltration and node spill budgets
+must not count two complete time intervals. Friction is applied through
+the cell momentum update.
+
+Requested second order reduces `LTS_TIERS` to 1 with a notice. Active
+surface transport falls back to first order with a notice; the tier
+reduction occurs before that fallback, so request order 1 explicitly
+when transport should retain multiple tiers. Groundwater attached to an
+active second-order RK2 route is rejected at initialization, because the
+RK2 surface route does not advance groundwater. These are implementation
+limits, not recommendations to discard the corresponding physics.
 
 Implementation: `src/engine/2d/solver/SweKernels.hpp` — `faceFlux`
-(first order), `faceFluxRecon` (second order), `hllcFlux`, `waveSpeeds`,
+(first order), `faceFluxReconBed` (second order; `faceFluxRecon` retains the constant-bed compatibility entry point), `hllcFlux`, `waveSpeeds`,
 `bjLimiter`, `frictionUpdate`; the face firing is
 @ref openswmm::twoD::ExplicitInertialSolver::fireFacesSwe, the momentum
 gather and wall booking are the `FULL_SWE` branch of `fireCells`, the
@@ -2216,6 +2323,75 @@ supercritical profile never steadies at all, and develops a roll-wave-like
 unsteadiness. If your problem looks like that case, this is not the
 solver for it.
 
+### 9.10.1 Qualification of the revised reconstruction and CPU implementation
+
+The October 2026 review separated numerical corrections from
+arithmetic-preserving CPU optimization. The corrected implementation
+uses connected wet stencils, a conditioned shoreline fit, a positive
+face-depth polynomial and a consistent within-cell bed force. Resting
+lakes alone cannot expose all defects: a method may preserve a constant
+surface but still give the wrong mass flux or bed force for a sloping
+surface. The focused tests therefore also check linear wet-face mass
+flux, cell-to-face pressure integration, bounded thin-depth forces,
+phase/depth/velocity in planar Thacker oscillations, and distorted
+triangular, quadrilateral and mixed shorelines.
+
+The final qualification rebuilt the retained CPU solver and passed 169
+of 170 tests across 15 suites; one unavailable Kokkos OpenMP plugin test
+was skipped. Twelve fresh paired full-engine runs matched API states,
+water accounting, normalized reports and all HDF5 contents exactly for
+local-inertial rain/infiltration/drain/pipe workloads with zero, eight
+and 32 transported species. The preceding optimization qualification
+also has 70 exact analytical pairs and 12 exact coupled pairs, including
+FULL_SWE, FLAT/VFR storage and a wet Bellinge interval. Those results
+were carried forward after verifying source and evidence hashes, rather
+than counted as newly executed tests.
+
+For accuracy per CPU cost, the reference is the phase-7 reconstruction
+at 128 divisions and the final implementation at 96 divisions, over
+three Thacker periods, one CPU thread and second-order reconstruction.
+The final mesh has 43.75% fewer cells. Both endpoint and time-mean depth
+errors improve in all four cases:
+
+| Bowl / mesh | Reference endpoint depth L1 | Final endpoint depth L1 | Median paired CPU reduction |
+|---|---:|---:|---:|
+| Radial / triangles | 3.88% | 2.97% | 61.1% |
+| Radial / quadrilaterals | 7.29% | 4.90% | 60.1% |
+| Planar / triangles | 7.84% | 6.30% | 59.9% |
+| Planar / quadrilaterals | 10.70% | 9.51% | 60.9% |
+
+The depth error is the area-weighted absolute depth error divided by the
+area-weighted exact depth. A separate history run computes the arithmetic
+mean of the sampled relative errors. All eight comparison runs keep
+nonnegative depth, with maximum absolute relative volume error
+\f$1.34\times10^{-14}\f$. Three randomized timing pairs after one discarded
+warm-up pair per case provide the CPU ratios; history diagnostics are
+excluded from the timing executable. This is a depth-accuracy comparison,
+not equal velocity error, same-grid speedup or a general convergence order.
+
+![Figure 9-8](figures/png/hydraulics_ch9_accuracy_cost.png)
+
+*Figure 9-8 Final CPU cost and depth error relative to the earlier reconstruction, at different mesh resolutions. Points are measured pairs; bars are paired medians.*
+
+The wet Bellinge control uses 25,600 loaded cells, a cold-start ten-minute
+storm interval, VFR storage and second-order FULL_SWE. It advances 2,728
+internal steps and 104,574,000 face evaluations, with 99.5% mean active
+cells. Its exact before/after agreement validates the CPU optimization,
+not catchment calibration or agreement with observed flooding. The
+separately timed early Bellinge interval is dry and must not be used as
+wet-storm performance evidence.
+
+Long-period damping remains, especially on coarse meshes. Wet-front
+velocity safeguards and the reported depth improvements do not constitute
+an arbitrary-mesh stability proof. GPU execution was unavailable and is
+not validated by CPU agreement. The engine manual's
+@ref engine_manual_2d_cpu describes the implementation, benchmark controls
+and reproduction prerequisites. Detailed source manifests, tests and
+measurements are in `reviews/cpu_2d_2026_10_03/accuracy_phase9`,
+`cpu_phase10`, `cpu_phase11` and `cpu_phase12` in the engine repository.
+Full-engine review binaries use a consistent frozen supporting-engine
+build and do not qualify unrelated concurrent 1D changes.
+
 ## 9.11 Options
 
 All keys live in `[2D_OPTIONS]`. This section is an index, not a
@@ -2364,9 +2540,12 @@ behaviour it once configured is now described.
   stable step through (9-4), so a handful of tiny cells at a coupling
   point can set the substep for the entire mesh — and under
   `DIFFUSIVE_WAVE` the penalty is quadratic in the cell size (9-43).
-- **Second order excludes transport, and tiers.** `RECONSTRUCTION_ORDER 2`
-  runs in global-step mode and falls back to first order when overland
-  transport is active (§9.5.10).
+- **Second-order feature limits.** `RECONSTRUCTION_ORDER 2` runs in
+  global-step mode and falls back to first order when overland transport
+  is active. An active RK2 route with groundwater is rejected at
+  initialization (§9.5.10). Long-period damping remains, and the
+  shoreline fallback does not establish uniform second-order convergence
+  on arbitrary meshes.
 - **The Kokkos backends serve one configuration.** All-triangle meshes
   under the local-inertial closure without transport; everything else
   runs on the CPU marcher (§9.11.1).

@@ -1,0 +1,14 @@
+[
+  {
+    "case": "surface_wet_swe2_t1",
+    "parent_phase": "cpu_phase10",
+    "change": "Duration reduced from 180 to 60 seconds; same initially wet mesh, forcing, coupling and output settings.",
+    "sha256": "83b6947ef169bc6553b26da1403853cce9f6d6e208bb73d484cd21b1b0da9ab0"
+  },
+  {
+    "case": "surface_wet_swe2_t4",
+    "parent_phase": "cpu_phase10",
+    "change": "Duration reduced from 180 to 60 seconds; same initially wet mesh, forcing, coupling and output settings.",
+    "sha256": "046e51d7a030762a0540a3a46741339b6a0e15a0eeecd2a7741317be69dd5237"
+  }
+]
