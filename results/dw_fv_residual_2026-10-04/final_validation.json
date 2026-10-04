@@ -1,0 +1,38 @@
+{
+  "decision": "retain isolated candidate; repeatable serial benefit, multithread elapsed-time gate open",
+  "candidate_changed_files": [
+    "src/engine/hydraulics/fv/ExplicitFvSolver.cpp"
+  ],
+  "selected_suites_passed": 6,
+  "baseline_cost_runs": 4,
+  "network_runs": 60,
+  "internal_audit_runs": 40,
+  "reuse_processes": 2,
+  "reuse_engines_per_process": 4,
+  "timing_runs": 108,
+  "diagnostic_values_finite": true,
+  "candidate_internal_comparisons": {
+    "trial_inputs": 1221192,
+    "residuals": 407064,
+    "final_faces": 88776
+  },
+  "candidate_reuse_records": 47712,
+  "production_relevant_sha256": {
+    "src/engine/hydraulics/fv/ExplicitFvSolver.cpp": "d39c9179de13e5d40e3357b6106a6ae359798d171b726645d81812c82a2300fa",
+    "src/engine/hydraulics/fv/ExplicitFvSolver.hpp": "1e13e4c9806c81c713adc4cd9246e202163f001695579d6f30df427f48ef281b",
+    "src/engine/core/PerfTimers.hpp": "059662bfd4e91617f79f6738660994b78226b13bcfafbb5c66248c084f524e90"
+  },
+  "production_relevant_sources_unchanged": true,
+  "restored_source_files": 803,
+  "source_mismatches": [],
+  "restored_library_sha256": "4fa4454c6f5dbe83c351bbce609af7092c10780ce50a9989584b050beef540bf",
+  "restored_library_matches_accepted": true,
+  "library_sha256": {
+    "baseline": "4fa4454c6f5dbe83c351bbce609af7092c10780ce50a9989584b050beef540bf",
+    "candidate": "1ce3efdcbd02044818d3d0cad2012e458388c6bf4c3cde73f7da30849879245e",
+    "diagnostic_baseline": "87c1d54dea23ca3b17b5c6338dbc1c9b07d863ae09e5a178c944fb157938e43c",
+    "diagnostic_candidate": "2ee20efa3e0545a272a1da3779c0b68ae1f2421576a1114bc88127696ddae073"
+  },
+  "root_head_at_finish": "d4e4fef8010f5a34dc404547b2b3ea269547ccdb",
+  "commit_created": false
+}

@@ -1,0 +1,21 @@
+Internal ctest changing into directory: /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/results/dw_fv_p0_2026-10-03/build
+Test project /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/results/dw_fv_p0_2026-10-03/build
+    Start 118: test_engine_fv_pressurized_implicit
+1/6 Test #118: test_engine_fv_pressurized_implicit ...   Passed    0.59 sec
+    Start 212: test_engine_perf_timers
+2/6 Test #212: test_engine_perf_timers ...............   Passed    0.10 sec
+    Start 213: test_engine_perf_timers_disabled
+3/6 Test #213: test_engine_perf_timers_disabled ......   Passed    0.04 sec
+    Start 217: test_engine_fv_network
+4/6 Test #217: test_engine_fv_network ................   Passed    4.47 sec
+    Start 218: test_engine_fv_lts
+5/6 Test #218: test_engine_fv_lts ....................   Passed    1.10 sec
+    Start 219: test_engine_fv_integration
+6/6 Test #219: test_engine_fv_integration ............   Passed   13.49 sec
+
+100% tests passed, 0 tests failed out of 6
+
+Label Time Summary:
+unit    =  19.80 sec*proc (6 tests)
+
+Total Test time (real) =  19.84 sec

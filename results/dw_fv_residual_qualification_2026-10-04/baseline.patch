@@ -1,0 +1,80 @@
+--- diagnostic
++++ qualification
+@@ -1,3 +1,4 @@
++#include <cstring>
+ #include <functional>
+ /**
+  * @file ExplicitFvSolver.cpp
+@@ -1328,6 +1329,18 @@
+ }
+ }
+ 
++namespace {
++bool qualificationReject(const char* mode) {
++    static bool used = false;
++    const char* request=std::getenv("FV_QUALIFY_REJECT");
++    if (!used && request && std::strcmp(request,mode)==0) {
++        used=true;
++        std::fprintf(stderr,"REJECT %s\n",mode);
++        return true;
++    }
++    return false;
++}
++}
+ void ExplicitFvSolver::computeFaceFlux(int f, bool mass_only) {
+     {
+         const auto uf = static_cast<std::size_t>(f);
+@@ -2345,6 +2358,9 @@
+             const auto up = static_cast<std::size_t>(p);
+             const int f = mesh_->node_face_idx[up];
+             const auto uf = static_cast<std::size_t>(f);
++            if (audit_on && !faceIsLive(f)) std::fprintf(stderr,"H %d %d\n",n,f);
++            if (audit_on && (mesh_->face_culvert[uf]>=0 || mesh_->face_gate[uf]!=0))
++                std::fprintf(stderr,"SPECIAL %d %d %d %d\n",n,f,mesh_->face_culvert[uf],int(mesh_->face_gate[uf]));
+             if (faceIsLive(f)) {
+                 const int cl = mesh_->face_cl[uf];
+                 const int cr = mesh_->face_cr[uf];
+@@ -3092,6 +3108,11 @@
+     if (tpa_) state_->cell_tpa = save_tpa_;   // BEFORE refreshDepths: h(A)
+                                               // is regime-dependent (#156)
+     refreshDepths();               // cell_h / eta / u are derived
++    if (std::getenv("OPENSWMM_FV_RESIDUAL_AUDIT")) {
++        for (std::size_t c=0;c<state_->cell_a.size();++c)
++            std::fprintf(stderr,"CELL %s %zu %a %a %a %a\n","restore",c,state_->cell_a[c],state_->cell_q[c],state_->cell_h[c],cell_u_[c]);
++    }
++
+ }
+ 
+ // ===========================================================================
+@@ -4287,7 +4308,8 @@
+                 // the same post-step rejection applies — with the accumulators
+                 // cleared on rollback, since the fluxes that produced them are
+                 // being discarded with the state that produced them.
+-                if (censusDt() < kStepAcceptRatio * dt0) {
++                const double qualification_post = censusDt();
++                if (qualificationReject("macro") || qualification_post < kStepAcceptRatio * dt0) {
+                     ++n_macro_rejected_;
+                     perf::count(perf::n_fv_macro_rejected);
+                     restoreState();
+@@ -4428,7 +4450,8 @@
+             // Post-step census on the state actually reached — membership is
+             // memoryless, so re-derive it (a cell may have crossed the crown
+             // inside the step, in EITHER direction).
+-            const double dt_post = censusDt(anyPressurizedCell());
++            double dt_post = censusDt(anyPressurizedCell());
++            if (qualificationReject("global")) dt_post = std::min(dt_post, 0.25 * dt);
+             if (dt_post >= kStepAcceptRatio * dt) break;          // admissible
+             restoreState();
+             dt = std::max(0.9 * dt_post, kMinSubstep);
+@@ -4543,6 +4566,11 @@
+         }
+     }
+ 
++    if (std::getenv("OPENSWMM_FV_RESIDUAL_AUDIT")) {
++        for (std::size_t c=0;c<state_->cell_a.size();++c)
++            std::fprintf(stderr,"CELL %s %zu %a %a %a %a\n","advance",c,state_->cell_a[c],state_->cell_q[c],state_->cell_h[c],cell_u_[c]);
++    }
++
+     last_nsteps_ = steps;
+     total_steps_ += steps;
+     perf::count(perf::n_fv_substep, steps);
