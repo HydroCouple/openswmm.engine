@@ -118,7 +118,14 @@ void prepareQuality(SimulationContext& ctx, double dt) {
             for (int p=0;p<np;++p) {
                 const double mass = std::min(v,available)*c[p];
                 const double out = exits ? std::min(v,available)*treatedConcentration(ctx,state.cells[from],stack[state.cells[from].layer-1],p,c[p],c,layerVolume(state,water,from),v/dt,dt) : mass;
-                if (from == -2) ctx.nodes.qual_mass_in[base+p] -= mass/dt;
+                if (from == -2) {
+                    auto& incoming=ctx.nodes.qual_mass_in[base+p];
+                    const double prior=incoming;
+                    incoming-=mass/dt;
+                    // A fully captured lateral load can cancel to a tiny
+                    // negative rate. It is roundoff, not an extraction source.
+                    if(incoming<0 && -incoming<=64*std::numeric_limits<double>::epsilon()*std::max(1.0,std::abs(prior))) incoming=0;
+                }
                 else if (from < 0) mobile_mass[p] -= mass;
                 else state.quality_mass[from*np+p] -= mass;
                 if (to < 0) mobile_mass[p] += out; else state.quality_mass[to*np+p] += out;
@@ -155,11 +162,10 @@ void prepareQuality(SimulationContext& ctx, double dt) {
         // decay by its share of that mobile water, so saturated aggregate and
         // media remain active treatment volumes as the water table rises.
         const double mobile_volume = ctx.nodes.old_volume[node];
-        std::vector<double> mobile_rates(np, 0.0), mobile_layers(stack.size(), 0.0);
+        std::vector<double> mobile_rates(np, 0.0);
         for (const auto& cell : state.cells) {
             const double fraction = std::clamp((ctx.nodes.old_depth[node] - cell.bottom) / (cell.top-cell.bottom), 0.0, 1.0);
             const double v = cell.geometric_volume * std::max(0.0, cell.porosity-cell.theta) * fraction;
-            mobile_layers[cell.layer-1] += v;
             for (const auto& rule : stack[cell.layer-1].treatment) {
                 const int p = ctx.pollutant_names.find(rule.pollutant);
                 if (p >= 0 && mobile_volume > 0) mobile_rates[p] += rule.decay * std::min(1.0, v/mobile_volume);
@@ -177,25 +183,44 @@ void prepareQuality(SimulationContext& ctx, double dt) {
                 ctx.nodes.conc_old[base+p] = 0;
             }
         }
-        // An outlet below the water table draws the shared mobile reactor.
-        // Apply the removal rule at its physical layer, once at the exit.
+    }
+}
+// Refresh only mobile outlets against the mixture used by the coupled node
+// solve. Retained outlet mass was already debited in prepareQuality; its
+// concentration must stay fixed while the mobile mixtures converge.
+void prepareOutletQuality(SimulationContext& ctx, double dt, bool book_reaction) {
+    const int np = ctx.n_pollutants();
+    if (np <= 0) return;
+    auto& st = ctx.node_subtypes.storages;
+    for (int r=0; r<st.count(); ++r) {
+        auto& state=st.lid_state[r];
+        if(state.cells.empty()) continue;
+        const int node=st.node_idx[r], base=node*np;
+        const auto stack=layers(ctx,st.lid[r].control);
+        std::vector<double> mobile_layers(stack.size(),0.0);
+        for(const auto& cell:state.cells) {
+            const double fraction=std::clamp((ctx.nodes.old_depth[node]-cell.bottom)/(cell.top-cell.bottom),0.0,1.0);
+            mobile_layers[cell.layer-1]+=cell.geometric_volume*std::max(0.0,cell.porosity-cell.theta)*fraction;
+        }
         std::vector<double> c(np);
-        for (int p=0;p<np;++p) c[p]=ctx.nodes.conc_old[base+p];
-        for (int link=0; link<ctx.n_links(); ++link) {
+        for(int p=0;p<np;++p) c[p]=ctx.nodes.conc[base+p];
+        for(int link=0;link<ctx.n_links();++link) {
             const double q=ctx.links.flow[link];
-            const int source=q>=0 ? ctx.links.node1[link] : ctx.links.node2[link];
-            if (source!=node || q==0 || std::isfinite(state.quality_outlet_conc[link*np])) continue;
-            const double offset=q>=0 ? ctx.links.offset1[link] : ctx.links.offset2[link];
-            const auto cell=std::find_if(state.cells.begin(),state.cells.end(),[&](const auto& value) {return offset>=value.bottom && offset<=value.top;});
+            const int source=q>=0?ctx.links.node1[link]:ctx.links.node2[link];
+            if(source!=node || q==0) continue;
+            if(std::any_of(state.quality_ports.begin(),state.quality_ports.end(),[&](const auto& port){return port.link==link && port.volume<0;})) continue;
+            const double offset=portOffset(ctx,link,node);
+            const auto cell=std::find_if(state.cells.begin(),state.cells.end(),[&](const auto& value){return offset>=value.bottom && offset<=value.top;});
             if(cell==state.cells.end() || stack[cell->layer-1].treatment.empty()) continue;
             for(int p=0;p<np;++p) {
                 const double out=treatedConcentration(ctx,*cell,stack[cell->layer-1],p,c[p],c,mobile_layers[cell->layer-1],std::abs(q),dt);
                 state.quality_outlet_conc[link*np+p]=out;
-                ctx.mass_balance.qual_routing_reacted[p]+=(c[p]-out)*std::abs(q)*dt;
+                if(book_reaction) ctx.mass_balance.qual_routing_reacted[p]+=(c[p]-out)*std::abs(q)*dt;
             }
         }
     }
 }
+
 bool receiveQuality(SimulationContext& ctx,int node,int link,double volume,int p,double mass,double dt) {
     const int r=ctx.node_subtypes.storage_row(node); if(r<0||volume<=0)return false;
     auto& state=ctx.node_subtypes.storages.lid_state[r];

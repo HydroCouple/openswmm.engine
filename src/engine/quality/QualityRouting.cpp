@@ -485,8 +485,52 @@ void QualitySolver::execute(SimulationContext& ctx, double dt) {
 
     assembleExternalLoads(ctx, dt);
     lidnode::prepareQuality(ctx, dt);
-    accumulateLinkLoads(ctx, dt);
-    mixAtNodes(ctx, dt);
+    const bool coupled_lids = n_pollutants_ > 0 && std::any_of(
+        ctx.node_subtypes.storages.lid_state.begin(), ctx.node_subtypes.storages.lid_state.end(),
+        [](const auto& state) { return !state.cells.empty(); });
+    if (coupled_lids) {
+        // LID hydraulics books the accepted port volume once. Use the same
+        // mobile mixture for its donor debit and recipient credit, including
+        // a reactor that fills and drains within this step. Legacy's lagged
+        // zero-volume link value otherwise drops that reactor's entire load.
+        const auto mass_in = ctx.nodes.qual_mass_in;
+        const auto vol_in = ctx.nodes.qual_vol_in;
+        const auto reacted = ctx.mass_balance.qual_routing_reacted;
+        const auto seeped = ctx.mass_balance.qual_routing_seep;
+        const auto dry = ctx.mass_balance.qual_routing_final_dry;
+        const auto external = ctx.mass_balance.qual_routing_ex_in;
+        const auto negative_sources=ctx.negsrc;
+        std::vector<std::vector<double>> held;
+        for(const auto& state:ctx.node_subtypes.storages.lid_state) held.push_back(state.quality_mass);
+        ctx.nodes.conc = ctx.nodes.conc_old;
+        bool converged=false;
+        for(int iteration=0;iteration<100;++iteration) {
+            const auto previous=ctx.nodes.conc;
+            ctx.nodes.qual_mass_in=mass_in; ctx.nodes.qual_vol_in=vol_in;
+            ctx.mass_balance.qual_routing_reacted=reacted;
+            ctx.mass_balance.qual_routing_seep=seeped;
+            ctx.mass_balance.qual_routing_final_dry=dry;
+            ctx.mass_balance.qual_routing_ex_in=external;
+            ctx.negsrc=negative_sources;
+            for(std::size_t r=0;r<held.size();++r) ctx.node_subtypes.storages.lid_state[r].quality_mass=held[r];
+            lidnode::prepareOutletQuality(ctx,dt,false);
+            accumulateLinkLoads(ctx,dt);
+            mixAtNodes(ctx,dt);
+            converged=true;
+            for(std::size_t i=0;i<previous.size();++i)
+                if(std::abs(previous[i]-ctx.nodes.conc[i])>1.e-11*std::max({1.0,std::abs(previous[i]),std::abs(ctx.nodes.conc[i])})) {converged=false;break;}
+            if(converged) break;
+        }
+        if(!converged) {
+            const std::string warning="LID quality mixtures did not converge; inspect quality continuity and reduce the routing step";
+            if(std::find(ctx.warnings.begin(),ctx.warnings.end(),warning)==ctx.warnings.end()) ctx.warnings.push_back(warning);
+        }
+        // Iteration is provisional: layer reactions are booked only once.
+        lidnode::prepareOutletQuality(ctx,dt,true);
+    } else {
+        accumulateLinkLoads(ctx, dt);
+        mixAtNodes(ctx, dt);
+    }
     // R4b (transport half): MSX element state advects on the same CSTR
     // mirror family as age and heat. It runs BEFORE the react stages —
     // transport-then-react, the pollutant family's own order — because
@@ -953,9 +997,23 @@ void QualitySolver::accumulateLinkLoads(SimulationContext& ctx, double dt) {
             double c_link = (lp < links.conc_old.size()) ? links.conc_old[lp] : 0.0;
             if (linkTakesUpstreamValue(ctx,j)) {
                 const int source = links.flow[uj]>=0?links.node1[uj]:links.node2[uj];
+                if (lidnode::active(ctx,source) || lidnode::active(ctx,downstream)) {
+                    // The coupled LID solve uses one mobile mixture on both
+                    // sides of an accepted zero-volume link transfer.
+                    c_link = ctx.nodes.conc[source*np+p];
+                    if (ctx.nodes.type[source] == NodeType::OUTFALL)
+                        c_link = ctx.options.outfall_backflow_zero ? 0.0 : ctx.nodes.conc_old[source*np+p];
+                }
                 c_link=lidnode::outletQuality(ctx,source,j,p,c_link);
             }
             double mass = q * c_link;
+            if (linkTakesUpstreamValue(ctx,j) && lidnode::active(ctx,downstream)) {
+                const int source = links.flow[uj]>=0?links.node1[uj]:links.node2[uj];
+                // Reverse flow from a held-quality boundary is an external
+                // pollutant source, just as it is an external water source.
+                if (ctx.nodes.type[source] == NodeType::OUTFALL)
+                    ctx.mass_balance.qual_routing_ex_in[p] += mass * dt;
+            }
             if (np_idx < ctx.nodes.qual_mass_in.size()) {
                 ctx.nodes.qual_mass_in[np_idx] += mass;
                 lidnode::receiveQuality(ctx,downstream,j,q*dt,p,mass,dt);
@@ -1101,7 +1159,10 @@ void QualitySolver::mixAtNodes(SimulationContext& ctx, double dt) {
         // by dt. The two agree to within summation order; closing that gap
         // means moving every consumer of qual_vol_in and is left standing.
         const double q_in = (dt > 0.0) ? v_in / dt : 0.0;
-        const bool dry = nodeIsDry(ctx, i, q_in);
+        // A LID may release freshly percolated water and end this step
+        // with an empty mobile store. Its outgoing links still need the
+        // mixture that supplied that water; zeroing it drops the load.
+        const bool dry = nodeIsDry(ctx, i, q_in) && !lidnode::active(ctx,i);
 
         for (int p = 0; p < np; ++p) {
             auto idx = ui * static_cast<size_t>(np) + static_cast<size_t>(p);

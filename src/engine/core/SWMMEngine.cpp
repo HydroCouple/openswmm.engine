@@ -4828,8 +4828,8 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
                     const double da = ctx.nodes.depth[a], db = ctx.nodes.depth[b];
                     const double ha = ctx.nodes.head[a], hb = ctx.nodes.head[b];
                     const double va = ctx.nodes.old_volume[a], vb = ctx.nodes.old_volume[b];
-                    ctx.nodes.depth[a] = lidnode::portDepth(ctx, a, links.offset1[uj]);
-                    ctx.nodes.depth[b] = lidnode::portDepth(ctx, b, links.offset2[uj]);
+                    ctx.nodes.depth[a] = lidnode::portDepth(ctx, a, lidnode::portOffset(ctx,j,a));
+                    ctx.nodes.depth[b] = lidnode::portDepth(ctx, b, lidnode::portOffset(ctx,j,b));
                     ctx.nodes.head[a] = ctx.nodes.invert_elev[a] + ctx.nodes.depth[a];
                     ctx.nodes.head[b] = ctx.nodes.invert_elev[b] + ctx.nodes.depth[b];
                     ctx.nodes.old_volume[a] += lidnode::heldVolume(ctx, a);

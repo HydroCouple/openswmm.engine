@@ -56,7 +56,8 @@ Conductivity/seepage use inches/hour or millimetres/hour. Porosity and moisture
 parameters are fractions. Initial saturation in `[LID_NODES]` is a percentage.
 The engine validates layer order, finite parameters and admissible moisture
 bounds. Outlet anchors are `Link Layer TOP|BOTTOM`; D above is located at the
-bottom of SURFACE, 1.5 ft above the invert. Anchors track geometry edits. Use
+bottom of SURFACE, 1.5 ft above the invert. Anchors track geometry edits, including the physical crest of weirs and
+rating outlets. Use
 explicit offsets for links with two LID endpoints because this syntax selects
 only one LID endpoint. See @ref engine_manual_ch2_input_file for the input reference.
 
@@ -89,7 +90,15 @@ uses the existing storage-node quality reactor. Transfers carry the source
 concentration, debit the source mass and credit the receiving compartment.
 Evaporation removes water and leaves solute. Native quality routing uses the
 layer-specific outlet concentration when a port supplies water; received
-backflow is returned to the appropriate retained compartment.
+backflow is returned to the appropriate retained compartment. Returning
+outfall water carrying LAST quality is also booked as an external pollutant
+source; ZERO backflow quality supplies clean water. Zero-volume connections
+to LIDs resolve the current mobile mixtures consistently between donor and
+recipient, including water that percolates and drains below the ordinary
+node dry-volume cutoff within one routing step. Provisional mixture iterations
+restore inventories and balance counters; layer-exit treatment is booked once.
+Failure to converge produces a warning and requires inspection of continuity
+and routing-step sensitivity.
 
 Each treatment row is:
 
@@ -178,11 +187,18 @@ outlet behavior, treatment, validation and persistence. Python's
 and treatment round trips. GUI layer-model and editor tests cover arbitrary
 counts, reordering, numeric delegates, expression validation and Apply/reload.
 
-The treatment follow-up was checked with 22 focused engine cases, the quality,
-treatment and hotstart regression suites, and four Python cases. Internal
-transfer/reaction checks conserve mass to floating-point tolerance. Full
-network quality routing still needs routing-step convergence: a rapid-filling
-stress model produced about 1.2% quality continuity error at a one-second step,
-while a 0.1-second step met the 0.5% test tolerance. These are test-case results,
-not a universal accuracy guarantee. Inspect both water and pollutant continuity
-and repeat with a smaller step for the model being studied.
+The pollutant-balance follow-up was checked with 25 LID cases and the quality,
+treatment, hotstart, outfall-backflow, LID water-age and LID heat suites: 138
+engine tests passed. The new full-chain fixture covers MEDIA/AGGREGATE,
+free/backwater conditions and ZERO/LAST outfall quality, checking final
+balances and conservative-tracer inventory at every routing step to 0.1%.
+Focused cases cover sub-litre drainage and physical weir-crest anchors.
+
+GUI T10 supplies six complete active-control examples. All eighteen runs
+(0.5, 0.25 and 0.1-second steps) passed 0.5% water/pollutant continuity
+acceptance without engine warnings; reported pollutant errors were below
+0.001%. These are test-case results, not a universal accuracy guarantee.
+Check convergence of performance metrics as well as continuity. Rapid
+surface overflow can alias a coarse output sampling interval; use cumulative
+engine budgets for those losses. Inspect water and pollutant continuity and
+repeat with a smaller step for the model being studied.
