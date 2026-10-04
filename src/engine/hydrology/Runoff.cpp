@@ -40,6 +40,7 @@
 
 #include "Runoff.hpp"
 #include "Gage.hpp"
+#include "../core/Constants.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../math/OdeSolver.hpp"
@@ -217,19 +218,24 @@ void RunoffSolver::init(SimulationContext& ctx) {
     for (int i = 0; i < n; ++i) {
         auto ui = static_cast<std::size_t>(i);
         int im = ctx.subcatches.infil_model[ui];
+        // legacy horton_setParams (infil.c:349) replaces a zero drying time
+        // with TINY, so capacity recovers almost at once; horton_init itself
+        // keeps zero as "no recovery", which the 2D infiltration model uses.
+        const double dry_time = (ctx.subcatches.infil_p4[ui] == 0.0)
+                                    ? constants::TINY : ctx.subcatches.infil_p4[ui];
         switch (im) {
             case 0:
                 infil_models_[ui] = InfilModel::HORTON;
                 infil::horton_init(horton_states_[ui],
                     ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p2[ui],
-                    ctx.subcatches.infil_p3[ui], ctx.subcatches.infil_p4[ui],
+                    ctx.subcatches.infil_p3[ui], dry_time,
                     ctx.subcatches.infil_p5[ui], ctx.options);
                 break;
             case 1:
                 infil_models_[ui] = InfilModel::MOD_HORTON;
                 infil::horton_init(horton_states_[ui],
                     ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p2[ui],
-                    ctx.subcatches.infil_p3[ui], ctx.subcatches.infil_p4[ui],
+                    ctx.subcatches.infil_p3[ui], dry_time,
                     ctx.subcatches.infil_p5[ui], ctx.options);
                 break;
             case 2:

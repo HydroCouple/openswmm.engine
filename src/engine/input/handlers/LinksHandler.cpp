@@ -291,8 +291,14 @@ void handle_outlets(SimulationContext& ctx, const std::vector<std::string>& line
         const int olr = ctx.link_subtypes.set_link_type(ctx.links, idx, LinkType::OUTLET);
         const auto uolr = static_cast<std::size_t>(olr);
         set_link_nodes(ctx, idx, tok[1], tok[2]);
-        if (tok.size() > 3)
-            ctx.link_subtypes.outlets.crest_height[uolr] = offsetToken(ctx, tok[3]);
+        if (tok.size() > 3) {
+            double crest = offsetToken(ctx, tok[3]);
+            // legacy outlet_readParams (link.c:2594) zeroes a negative crest
+            // under LINK_OFFSETS DEPTH as it reads it, so the mirrored offset2
+            // and the regulator raise both see 0, not the authored value.
+            if (ctx.options.link_offsets == 0 && crest < 0.0) crest = 0.0;
+            ctx.link_subtypes.outlets.crest_height[uolr] = crest;
+        }
         // tok[4]: type string (TABULAR/HEAD, TABULAR/DEPTH, FUNCTIONAL/HEAD, FUNCTIONAL/DEPTH)
         // tok[5]: curve name (TABULAR) or C1 coefficient (FUNCTIONAL)
         // tok[6]: C2 exponent (FUNCTIONAL only)

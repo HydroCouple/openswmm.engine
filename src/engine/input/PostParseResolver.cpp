@@ -2607,9 +2607,26 @@ void resolve_cross_references(SimulationContext& ctx) {
         auto& D = ctx.node_subtypes.dividers;
         const auto ur = static_cast<std::size_t>(r);
 
-        // Re-resolve diversion link name → index
-        if (D.link[ur] < 0 && !D.link_name[ur].empty())
+        // Re-resolve diversion link name → index. `*` (or blank) is legacy's
+        // "no diversion link" (node.c:1133); any other unknown name is
+        // ERROR 209 at read time (node.c:1137-1138).
+        bool bad_name = false;
+        if (D.link[ur] < 0 && !D.link_name[ur].empty() && D.link_name[ur] != "*") {
             D.link[ur] = ctx.link_names.find(D.link_name[ur]);
+            if (D.link[ur] < 0) {
+                ctx.errors.push_back(format_error(ERR_NAME, D.link_name[ur]));
+                bad_name = true;
+            }
+        }
+        // legacy divider_validate (node.c:1212-1217): the diversion link must
+        // exist and touch the divider, else ERROR 136. A divider without one
+        // used to run with an undefined split.
+        const int dl = D.link[ur];
+        if (!bad_name &&
+            (dl < 0 || dl >= n_links ||
+             (ctx.links.node1[static_cast<std::size_t>(dl)] != i &&
+              ctx.links.node2[static_cast<std::size_t>(dl)] != i)))
+            ctx.errors.push_back(format_error(ERR_DIVIDER_LINK, ctx.node_names.name_of(i)));
 
         // Re-resolve diversion curve name → index (TABULAR dividers)
         if (D.curve[ur] < 0 && !D.curve_name[ur].empty())
@@ -2911,8 +2928,9 @@ void resolve_cross_references(SimulationContext& ctx) {
         // and the zeroing below never fires.
         ctx.links.offset2[uj] = *off;
         // orifice_validate (link.c:1719) / weir_validate (link.c:2188): a
-        // negative crest is zeroed SILENTLY. Outlets have no such check —
-        // a negative outlet crest stays authored and goes into the raise.
+        // negative crest is zeroed SILENTLY. Outlets have no validate-time
+        // check; under DEPTH offsets their negative crest was already zeroed
+        // at read (handle_outlets, link.c:2594).
         if ((lt == LinkType::ORIFICE || lt == LinkType::WEIR) && *off < 0.0)
             *off = 0.0;
         if (inv1 + *off < inv2) {

@@ -628,16 +628,28 @@ void handle_lid_usage(SimulationContext& ctx, const std::vector<std::string>& li
         const int lid_idx = ctx.lid_names.find(tok[1]);
         if (sc_idx < 0 || lid_idx < 0) continue;
 
+        // legacy lid_readGroupParams (lid.c:460-462) atoi()s the count: a
+        // negative one is ERROR 211 and zero adds no unit at all.
+        const int number = to_int(tok[2], 0);
+        if (number < 0) {
+            ctx.errors.push_back(format_error(ERR_NUMBER, tok[2]));
+            continue;
+        }
+        if (number == 0) continue;
+
         ctx.lid_usage.subcatch_index.push_back(sc_idx);
         ctx.lid_usage.lid_index.push_back(lid_idx);
-        ctx.lid_usage.number.push_back(to_int(tok[2], 1));
+        ctx.lid_usage.number.push_back(number);
         ctx.lid_usage.area.push_back(to_double(tok[3]));
         ctx.lid_usage.width.push_back(to_double(tok[4]));
         ctx.lid_usage.init_sat.push_back(to_double(tok[5]));
         ctx.lid_usage.from_imperv.push_back(to_double(tok[6]));
         ctx.lid_usage.to_perv.push_back(to_int(tok[7]));
 
-        ctx.lid_usage.rpt_file.push_back(tok.size() > 8 ? tok[8] : std::string{});
+        // RptFile `*` is legacy's "no report file" (lid.c:475). Kept as a path
+        // it resolved to <inp dir>/* and the run wrote a file named `*`.
+        ctx.lid_usage.rpt_file.push_back(tok.size() > 8 && tok[8] != "*" ? tok[8]
+                                                                        : std::string{});
         ctx.lid_usage.drain_to.push_back(tok.size() > 9 ? tok[9] : std::string{});
         ctx.lid_usage.from_perv.push_back(tok.size() > 10 ? to_double(tok[10]) : 0.0);
     }
