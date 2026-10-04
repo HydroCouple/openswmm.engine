@@ -1,0 +1,36 @@
+[TITLE]
+OUTLETS negative crest offset under LINK_OFFSETS DEPTH is clamped to 0 (link.c:2594)
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+LINK_OFFSETS         DEPTH
+START_DATE           01/01/2020
+START_TIME           00:00:00
+END_DATE             01/01/2020
+REPORT_STEP          00:15:00
+WET_STEP             00:05:00
+DRY_STEP             01:00:00
+ROUTING_STEP         30
+END_TIME             03:00:00
+
+[JUNCTIONS]
+;;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded
+J1       2     5         1          0         0
+
+[OUTFALLS]
+;;Name  Elev  Type  Stage  Gated
+O1       0     FREE         NO
+
+[OUTLETS]
+;;Name  From  To   Offset  Type               C1   C2   Gated
+OL1     J1    O1   -1.5    FUNCTIONAL/DEPTH   2.0  0.5  NO
+
+[INFLOWS]
+;;Node  Constituent  TimeSeries  Type  Mfactor  Sfactor  Baseline
+J1      FLOW         ""          FLOW  1.0      1.0      0.5
+
+[REPORT]
+NODES ALL
+LINKS ALL
