@@ -19,6 +19,14 @@ struct ExplicitInertialSolverTestAccess {
     static int tier(const ExplicitInertialSolver& s,int i) {return s.tier_[i];}
     static double step(const ExplicitInertialSolver& s,int i) {return s.dt0_*(1<<s.tier_[i]);}
     static double length(const ExplicitInertialSolver& s,int i) {return s.edges_.cell_lchar[i];}
+    static void rebuildAt(ExplicitInertialSolver& s,double t) {s.syncAndRebuild(t);}
+    static const InertialEdges& edges(const ExplicitInertialSolver& s) {return s.edges_;}
+    static const std::vector<int>& faces(const ExplicitInertialSolver& s) {return s.active_faces_;}
+    static bool active(const ExplicitInertialSolver& s,int i) {return s.cell_active_[i]!=0;}
+    static double discharge(const ExplicitInertialSolver& s,int e) {return s.q_[e];}
+    static void markActiveFaces(ExplicitInertialSolver& s) {
+        for(int e:s.active_faces_)s.q_[e]=e+1.;
+    }
 };
 }
 namespace {
@@ -142,4 +150,68 @@ TEST(Cpu2DCorrectness,SecondOrderThackerDoesNotAccelerateTrappedFilms) {
     double err=0,ref=0;
     for(int i=0;i<m.n_cells();++i){double x=m.tri_cx[i]-2-.5*std::cos(2*omega),y=m.tri_cy[i]-2-.5*std::sin(2*omega);double h=std::max(0.,.1*(1-x*x-y*y));err+=std::abs(s.depth[i]-h)*m.tri_area[i];ref+=h*m.tri_area[i];}
     EXPECT_LT(err/ref,.3);
+}
+
+TEST(Cpu2DCorrectness,InactiveRainLandingSeedsFlowAndClosesSpeciesBudget) {
+    for(bool quad:{false,true})for(int mode:{0,1,2})for(int threads:{1,4}){
+        auto m=grid(16,quad);auto s=state(m,0);auto o=options(threads,4);
+        o.momentum=static_cast<Momentum2D>(mode);
+        s.transport.resize(1,m.n_cells(),0);s.transport.rain_conc={3};
+        ExplicitInertialSolver solver;solver.initialize(m,s,o);
+        solver.advance(0,2);EXPECT_EQ(solver.run_stats().nrhs,0);
+        double rain_rate=0;
+        for(int i=0;i<m.n_cells();++i)if(m.tri_cx[i]<1){
+            s.rainfall[i]=.01;rain_rate+=.01*m.tri_area[i];
+        }
+        // Land lazy sources directly at a rebuild, the path fused with seed
+        // selection. Newly wetted cells must be eligible in this same rebuild.
+        ExplicitInertialSolverTestAccess::rebuildAt(solver,3);
+        EXPECT_NEAR(sum(s.volume),rain_rate,1e-12);
+        EXPECT_FALSE(ExplicitInertialSolverTestAccess::faces(solver).empty());
+        for(int i=0;i<m.n_cells();++i)if(m.tri_cx[i]<1)
+            EXPECT_NEAR(s.depth[i],.01,1e-12);
+        solver.advance(3,4);EXPECT_GT(solver.run_stats().nrhs,0);
+        std::fill(s.rainfall.begin(),s.rainfall.end(),0);
+        std::fill(s.infil_rate.begin(),s.infil_rate.end(),.02);
+        for(int t=4;t<9;++t){
+            solver.advance(t,t+1);
+            EXPECT_NEAR(sum(s.volume)+infiltration(m,s),2*rain_rate,1e-10);
+            EXPECT_NEAR(sum(s.transport.cell_mass)+s.transport.lost_infiltration[0],6*rain_rate,1e-10);
+            EXPECT_GE(*std::min_element(s.volume.begin(),s.volume.end()),0);
+        }
+        EXPECT_LT(sum(s.volume),rain_rate);
+    }
+}
+
+TEST(Cpu2DCorrectness,SparseRebuildRetiresMomentumAndOrdersFaces) {
+    using A=ExplicitInertialSolverTestAccess;
+    for(bool quad:{false,true})for(int mode:{0,1,2}){
+        auto m=grid(16,quad);auto s=state(m,.002);auto o=options(4,4);
+        o.momentum=static_cast<Momentum2D>(mode);
+        std::fill(m.tri_init_u.begin(),m.tri_init_u.end(),.25);
+        ExplicitInertialSolver solver;solver.initialize(m,s,o);A::rebuild(solver);
+        // Optional initial velocity may seed q before any face list exists.
+        // A first rebuild must clear that momentum on inactive faces too.
+        EXPECT_TRUE(A::faces(solver).empty());
+        for(int e=0;e<A::edges(solver).ne;++e)EXPECT_EQ(A::discharge(solver,e),0);
+        for(int i=0;i<m.n_cells();++i)s.volume[i]=.1*m.tri_area[i];
+        solver.resyncFromVolumes(0);A::rebuild(solver);A::markActiveFaces(solver);
+        // Retain a small wet patch, then dry everything, then rewet elsewhere.
+        // resync keeps face momentum: rebuild must retire it as cells dry.
+        for(int stage=0;stage<3;++stage){
+            for(int i=0;i<m.n_cells();++i){
+                const bool wet=stage==0 ? m.tri_cx[i]<1 : stage==2 && m.tri_cx[i]>15;
+                s.volume[i]=wet?.1*m.tri_area[i]:0;
+            }
+            solver.resyncFromVolumes(0);A::rebuild(solver);
+            const auto& ed=A::edges(solver);std::vector<int> expected;
+            for(int e=0;e<ed.ne;++e){
+                if(A::active(solver,ed.cL[e])&&A::active(solver,ed.cR[e]))expected.push_back(e);
+                else EXPECT_EQ(A::discharge(solver,e),0);
+                if(stage>0)EXPECT_EQ(A::discharge(solver,e),0);
+            }
+            EXPECT_EQ(A::faces(solver),expected);
+            if(stage==1)EXPECT_TRUE(expected.empty());else EXPECT_FALSE(expected.empty());
+        }
+    }
 }
