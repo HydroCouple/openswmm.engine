@@ -2051,15 +2051,30 @@ void resolve_cross_references(SimulationContext& ctx) {
     // -------------------------------------------------------------------------
     // [GROUNDWATER] normally precedes [JUNCTIONS], so handle_groundwater()
     // resolved the node against an empty name index and stored -1. The raw name
-    // was captured in ctx.pending_gw_nodes for exactly this pass. A name that
-    // still fails to resolve is left at -1: the runtime falls back to the
-    // subcatchment outlet node (Groundwater.cpp), and the [GROUNDWATER] writer
-    // skips the row rather than emitting '*'.
+    // was captured in ctx.pending_gw_nodes for exactly this pass; the aquifer
+    // likewise when [AQUIFERS] comes later. A name that still fails to resolve
+    // is ERROR 209, as legacy gwater_readGroundwaterParams raises it
+    // (gwater.c:223-226). It used to stay -1 silently: an unknown aquifer
+    // switched the subcatchment's groundwater off, an unknown node sent the
+    // flow to the subcatchment outlet instead.
+    for (const auto& [si, nm] : ctx.pending_gw_aquifers) {
+        if (si < 0 || si >= n_subcatch) continue;
+        auto us = static_cast<std::size_t>(si);
+        if (us >= ctx.subcatches.gw_aquifer.size() || ctx.subcatches.gw_aquifer[us] >= 0)
+            continue;
+        ctx.subcatches.gw_aquifer[us] = ctx.aquifer_names.find(nm);
+        if (ctx.subcatches.gw_aquifer[us] < 0)
+            ctx.errors.push_back(format_error(ERR_NAME, nm));
+    }
+    ctx.pending_gw_aquifers.clear();
     for (const auto& [si, nm] : ctx.pending_gw_nodes) {
         if (si < 0 || si >= n_subcatch) continue;
         auto us = static_cast<std::size_t>(si);
-        if (us < ctx.subcatches.gw_node.size() && ctx.subcatches.gw_node[us] < 0)
-            ctx.subcatches.gw_node[us] = ctx.node_names.find(nm);
+        if (us >= ctx.subcatches.gw_node.size() || ctx.subcatches.gw_node[us] >= 0)
+            continue;
+        ctx.subcatches.gw_node[us] = ctx.node_names.find(nm);
+        if (ctx.subcatches.gw_node[us] < 0)
+            ctx.errors.push_back(format_error(ERR_NAME, nm));
     }
     ctx.pending_gw_nodes.clear();
 

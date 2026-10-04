@@ -1998,7 +1998,7 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     }}
 
     // [GROUNDWATER]
-    // Grammar: Subcatch Aquifer Node SurfElev A1 B1 A2 B2 A3 Twgr Hstar
+    // Grammar: Subcatch Aquifer Node SurfElev A1 B1 A2 B2 A3 Dsw [Egwt Ebot Wgw Umc]
     // A subcatchment carries a groundwater row iff gw_aquifer >= 0. gw_node is
     // resolved by PostParseResolver (the section normally precedes [JUNCTIONS]);
     // a row whose node still will not resolve is skipped with a warning rather
@@ -2013,7 +2013,7 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         const int a=ctx.subcatches.gw_aquifer[us];
         if(a>=0 && a<ctx.aquifers.count() && ctx.subcatches.gw_node[us]>=0){anyGw=true;break;}}
     if(anyGw){sec(f,"GROUNDWATER");
-    std::fprintf(f,";;%-16s %-16s %-16s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s\n","Subcatchment","Aquifer","Node","SurfElev","A1","B1","A2","B2","A3","Tw","Hstar");
+    std::fprintf(f,";;%-16s %-16s %-16s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s\n","Subcatchment","Aquifer","Node","SurfElev","A1","B1","A2","B2","A3","Dsw","Egwt");
     std::fprintf(f,";;%-16s %-16s %-16s %-10s %-10s %-10s %-10s %-10s %-10s %-10s %-10s\n","----------------","----------------","----------------","----------","----------","----------","----------","----------","----------","----------","----------");
     for(size_t u=0;u<nGw;++u){const int s=static_cast<int>(u);
     const int aq=ctx.subcatches.gw_aquifer[u];

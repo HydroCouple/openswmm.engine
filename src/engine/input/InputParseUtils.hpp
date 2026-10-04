@@ -57,6 +57,26 @@ inline double to_double(std::string_view sv, double def = 0.0) noexcept {
 }
 
 /**
+ * @brief Parse a WHOLE token as a double, as legacy getDouble() does (strtod
+ *        must consume every character). Returns false, leaving @p out
+ *        untouched, for a partly numeric or non-numeric token. An empty
+ *        token reads as 0.0, as it does in legacy (strtod stops at the NUL).
+ */
+inline bool parse_double_strict(std::string_view sv, double& out) noexcept {
+    if (sv.empty()) { out = 0.0; return true; }
+    if (sv.front() == '+') {                  // strtod accepts a leading '+'
+        sv.remove_prefix(1);
+        if (sv.empty() || sv.front() == '+' || sv.front() == '-') return false;
+    }
+    double v = 0.0;
+    const auto [ptr, ec] =
+        openswmm::from_chars_double(sv.data(), sv.data() + sv.size(), v);
+    if (ec != std::errc{} || ptr != sv.data() + sv.size()) return false;
+    out = v;
+    return true;
+}
+
+/**
  * @brief Parse an int from a string_view, returning a default on failure.
  */
 inline int to_int(std::string_view sv, int def = 0) noexcept {

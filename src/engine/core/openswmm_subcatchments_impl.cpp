@@ -675,7 +675,7 @@ SWMM_ENGINE_API int swmm_subcatch_get_gw_node(SWMM_Engine engine, int idx, int* 
 }
 
 // Groundwater flow parameters, in [GROUNDWATER] token order:
-// SurfEl, A1, B1, A2, B2, A3, Twgr (gw_tw), Hstar (gw_hstar). Stored raw.
+// SurfEl, A1, B1, A2, B2, A3, Dsw (gw_tw), Egwt (gw_hstar). Stored raw.
 SWMM_ENGINE_API int swmm_subcatch_set_gw_params(SWMM_Engine engine, int idx,
                                                 double surf_elev, double a1, double b1,
                                                 double a2, double b2, double a3,
