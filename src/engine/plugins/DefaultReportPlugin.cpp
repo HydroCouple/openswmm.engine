@@ -686,7 +686,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     const double len_ucf   = du.length;      // ft  → ft | m  (depth/HGL/velocity)
     const double svol_ucf  = du.volume;      // ft³ → ft³ | m³ (storage volume)
     const char*  len_word  = du.length_word; // Feet | Meters
-    const double Vcf       = du.mvol;         // node inflow/flooding volume column
+    // legacy statsrpt.c's own factor for every summary-table volume
+    // (7.48 gal/ft3, 28.317 L/ft3 — not the massbal/continuity constants).
+    const double Vcf       = si_report ? 28.317 / 1.0e6 : 7.48 / 1.0e6;
     const char*  vol_word  = du.mvol_word;    // 10^6 gal | 10^6 ltr
     const char*  depth_word = du.depth_word;  // in | mm (rainfall/runoff depth)
 
@@ -1289,45 +1291,39 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Highest Continuity Errors — matches legacy report_writeMaxStats()
     // =====================================================================
-    if (opt.rpt_continuity) {
-        WRITE(f, "*************************");
-        WRITE(f, "Highest Continuity Errors");
-        WRITE(f, "*************************");
-
-        // Find top 5 nodes by continuity error
+    // legacy stats_findMaxStats + report_writeMaxStats: dynamic wave with
+    // links, under FLOWSTATS. Nodes with links and more than 0.1 ft3 of
+    // inflow; error = 1 - outflow/inflow (outflow includes final storage);
+    // the five largest by magnitude above 1 % (the slots start at -1.0),
+    // earlier nodes winning ties. Nothing qualifies -> no section.
+    const bool dw_like = opt.routing_model == RoutingModel::DYNWAVE ||
+                         opt.routing_model == RoutingModel::FV;
+    if (opt.rpt_flowstats && dw_like && ctx.n_links() > 0) {
         struct NodeError { int idx; double error; };
         std::vector<NodeError> errors;
         for (int j = 0; j < ctx.n_nodes(); ++j) {
             auto uj = static_cast<std::size_t>(j);
-            double in_vol  = ctx.nodes.stat_total_inflow_vol[uj];
-            // Final stored volume counts as outflow, matching legacy
-            // massbal_getStorage (massbal.c: NodeOutflow[j] += newVolume at the
-            // final period) — a node that ends the run holding its inflow is
-            // balanced, not a 100% loss.
-            double out_vol = ctx.nodes.stat_total_outflow_vol[uj]
-                           + ctx.nodes.stat_vol_flooded[uj]
-                           + ctx.nodes.volume[uj];
-            double denom = std::max(in_vol, out_vol);
-            if (denom < 1.0) continue; // skip nodes with negligible flow
-            double err_pct = 100.0 * (in_vol - out_vol) / denom;
-            if (std::fabs(err_pct) > 0.1) {
-                errors.push_back({j, err_pct});
-            }
+            if (ctx.nodes.degree[uj] <= 0) continue;
+            const double in_vol = ctx.nodes.stat_total_inflow_vol[uj];
+            if (in_vol <= 0.1) continue;
+            const double out_vol = ctx.nodes.stat_total_outflow_vol[uj] +
+                                   ctx.nodes.volume[uj];
+            const double x = 100.0 * (1.0 - out_vol / in_vol);
+            if (std::fabs(x) > 1.0) errors.push_back({j, x});
         }
-        std::sort(errors.begin(), errors.end(),
+        std::stable_sort(errors.begin(), errors.end(),
             [](const NodeError& a, const NodeError& b) {
                 return std::fabs(a.error) > std::fabs(b.error);
             });
-
-        if (errors.empty()) {
-            WRITE(f, "No errors.");
-        } else {
-            int count = std::min(5, static_cast<int>(errors.size()));
-            for (int i = 0; i < count; ++i) {
+        if (!errors.empty()) {
+            WRITE(f, "*************************");
+            WRITE(f, "Highest Continuity Errors");
+            WRITE(f, "*************************");
+            const int count = std::min(5, static_cast<int>(errors.size()));
+            for (int i = 0; i < count; ++i)
                 std::fprintf(f, "\n  Node %s (%.2f%%)",
                     ctx.node_names.name_of(errors[i].idx).c_str(),
                     errors[i].error);
-            }
         }
     }
 
@@ -2161,17 +2157,24 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             int days, hrs, mins;
             elapsedToParts(ctx.nodes.stat_max_inflow_date[uj], ctx.options.report_start, days, hrs, mins);
 
-            // Flow balance error (approximate)
-            double err = 0.0;
-
             std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(j).c_str());
             std::fprintf(f, " %-9s", nt_str(nt));
             std::fprintf(f, ff, max_lat);
             std::fprintf(f, ff, max_tot);
             std::fprintf(f, "  %4d  %02d:%02d", days, hrs, mins);
-            std::fprintf(f, "%12.3f", vol_lat);
-            std::fprintf(f, "%12.3f", vol_tot);
-            std::fprintf(f, "%12.3f", err);
+            std::fprintf(f, "%12.3g", vol_lat);
+            std::fprintf(f, "%12.3g", vol_tot);
+            // Flow balance error, legacy writeNodeFlows: outflow includes the
+            // final stored volume (massbal_getStorage(TRUE) runs first); below
+            // 1 ft3 of outflow the volume difference is printed instead.
+            const double in_v  = ctx.nodes.stat_total_inflow_vol[uj];
+            const double out_v = ctx.nodes.stat_total_outflow_vol[uj] +
+                                 ctx.nodes.volume[uj];
+            if (std::fabs(out_v) < 1.0)
+                std::fprintf(f, "%12.3f %s", (in_v - out_v) * Vcf * 1.0e6,
+                             si_report ? "ltr" : "gal");
+            else
+                std::fprintf(f, "%12.3f", (in_v - out_v) / out_v * 100.0);
         }
     }
 
@@ -2186,40 +2189,41 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         WRITE(f, "Node Surcharge Summary");
         WRITE(f, "**********************");
 
-        bool any_surcharge = false;
+        // legacy writeNodeSurcharge: outfalls skipped; hours floored at 0.01;
+        // height above the highest conduit crown and depth below the rim,
+        // both from the node's maximum depth.
+        int n_written = 0;
         for (int j = 0; j < ctx.n_nodes(); ++j) {
-            if (ctx.nodes.stat_time_surcharged[static_cast<std::size_t>(j)] > 0.0) {
-                any_surcharge = true; break;
-            }
-        }
-
-        if (!any_surcharge) {
-            WRITE(f, "");
-            WRITE(f, "No nodes were surcharged.");
-        } else {
-            std::fprintf(f,
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx.nodes.type[uj] == NodeType::OUTFALL) continue;
+            if (ctx.nodes.stat_time_surcharged[uj] == 0.0) continue;
+            const double t = std::max(0.01, ctx.nodes.stat_time_surcharged[uj] / 3600.0);
+            if (n_written == 0) {
+                WRITE(f, "");
+                WRITE(f, "Surcharging occurs when water rises above the top of the highest conduit.");
+                std::fprintf(f,
 "\n  ---------------------------------------------------------------------"
 "\n                                               Max. Height   Min. Depth"
-"\n                                   Hours       Above Crown    Below Rim"
-"\n  Node                 Type      Surcharged         %6s       %6s"
-"\n  ---------------------------------------------------------------------",
-                len_word, len_word);
-
-            for (int j = 0; j < ctx.n_nodes(); ++j) {
-                auto uj = static_cast<std::size_t>(j);
-                double t = ctx.nodes.stat_time_surcharged[uj] / 3600.0;
-                if (t <= 0.0) continue;
-                int nt = static_cast<int>(ctx.nodes.type[uj]);
-                double above_crown = ctx.nodes.stat_max_surcharge_height[uj];
-                double below_rim = ctx.nodes.sur_depth[uj] > 0.0 ?
-                    ctx.nodes.sur_depth[uj] - ctx.nodes.stat_max_surcharge_height[uj] : 0.0;
-                below_rim = std::max(below_rim, 0.0);
-
-                std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(j).c_str());
-                std::fprintf(f, " %-9s", nt_str(nt));
-                std::fprintf(f, "  %9.2f      %9.3f    %9.3f",
-                    t, above_crown * len_ucf, below_rim * len_ucf);
+"\n                                   Hours       Above Crown    Below Rim");
+                std::fprintf(f, si_report
+                    ? "\n  Node                 Type      Surcharged         Meters       Meters"
+                    : "\n  Node                 Type      Surcharged           Feet         Feet");
+                std::fprintf(f,
+"\n  ---------------------------------------------------------------------");
+                n_written = 1;
             }
+            const double maxd = ctx.nodes.stat_max_depth[uj];
+            const double d1 = std::max(0.0, maxd + ctx.nodes.invert_elev[uj] -
+                                                ctx.nodes.crown_elev[uj]);
+            const double d2 = std::max(0.0, ctx.nodes.full_depth[uj] - maxd);
+            std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(j).c_str());
+            std::fprintf(f, " %-9s", nt_str(static_cast<int>(ctx.nodes.type[uj])));
+            std::fprintf(f, "  %9.2f      %9.3f    %9.3f",
+                t, d1 * len_ucf, d2 * len_ucf);
+        }
+        if (n_written == 0) {
+            WRITE(f, "");
+            WRITE(f, "No nodes were surcharged.");
         }
     }
 

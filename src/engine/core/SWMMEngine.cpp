@@ -1442,6 +1442,11 @@ int SWMMEngine::start(int save_results) noexcept {
         avg_.resize(ctx_.n_nodes(), ctx_.n_links());
     }
 
+    // legacy massbal_open: NodeInflow starts at each node's stored volume.
+    for (int j = 0; j < ctx_.n_nodes(); ++j)
+        ctx_.nodes.stat_total_inflow_vol[static_cast<std::size_t>(j)] =
+            ctx_.nodes.volume[static_cast<std::size_t>(j)];
+
     ctx_.state = EngineState::RUNNING;
     return SWMM_OK;
 }
@@ -1601,6 +1606,7 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
     // mass-balance accumulation. Runoff and its final-storage bookkeeping still
     // run every step.
     if (do_routing_) {
+        accumulateNodeRoutingTotals(dt_next / 2.0);   // routing.c:227
         stepRouting(dt_next);
         if (const int drc = checkRoutingDiverged(); drc != SWMM_OK)
             return drc;
@@ -1616,6 +1622,7 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
             updateStatistics(dt_next);
             updateRoutingMassBalance(dt_next);
         }
+        accumulateNodeRoutingTotals(dt_next / 2.0);   // routing.c:271
     }
     reassertNodeStateOverrides(ctx_);
     computeFinalStorage();
@@ -5065,6 +5072,27 @@ void SWMMEngine::ensureXspCache() noexcept {
     xsp_cache_gen_ = ctx_.xsect_generation;
 }
 
+void SWMMEngine::accumulateNodeRoutingTotals(double half_step) noexcept {
+    // legacy massbal_updateRoutingTotals (massbal.c:581-595). An outfall, or a
+    // non-storage node with no links, passes its inflow straight out.
+    for (int j = 0; j < ctx_.n_nodes(); ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        const double qin = ctx_.nodes.inflow[uj];
+        ctx_.nodes.stat_total_inflow_vol[uj] += qin * half_step;
+        if (ctx_.nodes.type[uj] == NodeType::OUTFALL ||
+            (ctx_.nodes.degree[uj] == 0 &&
+             ctx_.nodes.type[uj] != NodeType::STORAGE)) {
+            ctx_.nodes.stat_total_outflow_vol[uj] += qin * half_step;
+        } else {
+            ctx_.nodes.stat_total_outflow_vol[uj] +=
+                ctx_.nodes.outflow[uj] * half_step;
+            if (ctx_.nodes.volume[uj] <= ctx_.nodes.full_volume[uj])
+                ctx_.nodes.stat_total_outflow_vol[uj] +=
+                    ctx_.nodes.overflow[uj] * half_step;
+        }
+    }
+}
+
 void SWMMEngine::updateStatistics(double dt_routing) noexcept {
     const int np = ctx_.n_pollutants();
     // legacy stats_updateFlowStats(routingStep, getDateTime(NewRoutingTime)):
@@ -5101,18 +5129,24 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
             ctx_.nodes.stat_max_overflow[uj] = ctx_.nodes.overflow[uj];
             ctx_.nodes.stat_max_overflow_date[uj] = stat_date;
         }
-        if (ctx_.nodes.overflow[uj] > 0.0) {
-            ctx_.nodes.stat_time_flooded[uj] += dt_routing;
-            ctx_.nodes.stat_vol_flooded[uj] += ctx_.nodes.overflow[uj] * dt_routing;
-        }
-
-        // Node surcharge tracking
-        double full_d = ctx_.nodes.full_depth[uj];
-        if (full_d > 0.0 && cur_depth > full_d) {
-            ctx_.nodes.stat_time_surcharged[uj] += dt_routing;
-            double surcharge_h = cur_depth - full_d;
-            if (surcharge_h > ctx_.nodes.stat_max_surcharge_height[uj])
-                ctx_.nodes.stat_max_surcharge_height[uj] = surcharge_h;
+        // Flooding and surcharge, legacy stats_updateNodeStats: a node other
+        // than an outfall floods while above its full volume or overflowing;
+        // under dynamic wave it is surcharged while its water level reaches
+        // the crown of its highest conduit (a storage unit only if it has a
+        // surcharge depth).
+        if (ctx_.nodes.type[uj] != NodeType::OUTFALL) {
+            if (ctx_.nodes.volume[uj] > ctx_.nodes.full_volume[uj] ||
+                ctx_.nodes.overflow[uj] > 0.0) {
+                ctx_.nodes.stat_time_flooded[uj] += dt_routing;
+                ctx_.nodes.stat_vol_flooded[uj] += ctx_.nodes.overflow[uj] * dt_routing;
+            }
+            if (ctx_.options.routing_model == RoutingModel::DYNWAVE &&
+                (ctx_.nodes.type[uj] != NodeType::STORAGE ||
+                 ctx_.nodes.sur_depth[uj] > 0.0) &&
+                cur_depth + ctx_.nodes.invert_elev[uj] + constants::FUDGE >=
+                    ctx_.nodes.crown_elev[uj]) {
+                ctx_.nodes.stat_time_surcharged[uj] += dt_routing;
+            }
         }
 
         // Node inflow statistics (matching legacy stats_updateNodeStats)
@@ -5127,31 +5161,19 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
             ctx_.nodes.stat_max_total_inflow[uj] = total_inflow;
             ctx_.nodes.stat_max_inflow_date[uj] = stat_date;
         }
-        ctx_.nodes.stat_lat_inflow_vol[uj]   += lat * dt_routing;
-        ctx_.nodes.stat_total_inflow_vol[uj] += total_inflow * dt_routing;
+        ctx_.nodes.stat_lat_inflow_vol[uj] +=
+            (ctx_.nodes.old_lat_flow[uj] + lat) * 0.5 * dt_routing;
         // PARITY stats.c:588 stats_updateStorageStats — a storage unit's peak
         // RELEASE, which is what its outlet structures actually passed. Not
         // interchangeable with peak inflow: attenuating the two is the point.
         if (ctx_.nodes.type[uj] == NodeType::STORAGE &&
             ctx_.nodes.outflow[uj] > ctx_.nodes.stat_storage_max_outflow[uj])
             ctx_.nodes.stat_storage_max_outflow[uj] = ctx_.nodes.outflow[uj];
-        // For outfall nodes, outflow = inflow by definition (matching legacy
-        // massbal.c line 587: NodeOutflow[j] += Node[j].inflow * tStep).
-        // For non-storage terminal nodes (degree==0), same treatment.
-        if (ctx_.nodes.type[uj] == NodeType::OUTFALL ||
-            (ctx_.nodes.degree[uj] == 0 &&
-             ctx_.nodes.type[uj] != NodeType::STORAGE)) {
-            ctx_.nodes.stat_total_outflow_vol[uj] += total_inflow * dt_routing;
-        } else {
-            ctx_.nodes.stat_total_outflow_vol[uj] += ctx_.nodes.outflow[uj] * dt_routing;
-            if (ctx_.nodes.volume[uj] <= ctx_.nodes.full_volume[uj])
-                ctx_.nodes.stat_total_outflow_vol[uj] += ctx_.nodes.overflow[uj] * dt_routing;
-        }
 
         // Outfall statistics
         if (ctx_.nodes.type[uj] == NodeType::OUTFALL) {
             double qi = ctx_.nodes.inflow[uj];
-            if (qi > 0.001) { // MIN_RUNOFF_FLOW threshold
+            if (qi >= 0.001) { // legacy MIN_RUNOFF_FLOW, stats.c
                 ctx_.nodes.stat_outfall_avg_flow[uj] += qi;
                 if (qi > ctx_.nodes.stat_outfall_max_flow[uj])
                     ctx_.nodes.stat_outfall_max_flow[uj] = qi;
