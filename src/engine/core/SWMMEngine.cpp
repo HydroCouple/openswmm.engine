@@ -7397,7 +7397,7 @@ int SWMMEngine::close() noexcept {
 
     // FV phase breakdown, only when the FV solver actually ran — an empty line
     // on a DYNWAVE run would be noise the harness has to filter.
-    if (perf::enabled() && perf::n_fv_substep > 0) perf::dump_fv();
+    if (perf::enabled() && perf::value(perf::n_fv_substep) > 0) perf::dump_fv();
 
     // Stop IO thread if still running (safe to call even if already stopped)
     io_thread_.stop();

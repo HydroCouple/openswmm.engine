@@ -264,10 +264,10 @@ public:
     /// end areas, so the within-link |v2−v1| estimator is structurally ZERO
     /// in exactly the pressurized cases UF exists for (measured: pure added
     /// inertia, slight ANTI-damping). The gradient therefore comes from the
-    /// neighboring conduits' previous-iterate velocities across simple
-    /// degree-2 conduit junctions (links.flow is double-buffered within a
-    /// Picard iteration, so neighbor reads are deterministic at any thread
-    /// count). Built once in init() when unsteady_friction != 0; -1 = no
+    /// neighboring conduits' in-place velocities across simple degree-2
+    /// conduit junctions. Momentum runs in serial conduit order when UF is
+    /// active, preserving the existing serial stencil at every team size.
+    /// Built once in init() when unsteady_friction != 0; -1 = no
     /// simple neighbor on that side (falls back one-sided / within-link).
     std::vector<int>    uf_nb_up_, uf_nb_dn_;
     std::vector<int8_t> uf_sg_up_, uf_sg_dn_;   ///< +1 same sense, -1 opposed
@@ -580,9 +580,8 @@ private:
     /// persistent team: new_flow_ pre-init, per-iterate loss recompute,
     /// static-slot/EXTRAN STEP E geometry overrides, momentum category
     /// classification, momentum kernel dispatch, and links.flow commit.
-    /// Every sub-step reads/writes ONLY its own conduit's elements, so the
-    /// fusion preserves the exact per-element operation order of the former
-    /// separate passes — bit-exact at any thread count.
+    /// UF's cross-link in-place reads require serial conduit order; all
+    /// other configurations use the team's parallel conduit loop.
     void momentumKernels(SimulationContext& ctx, double dt, int step);
 
     /// Per-element momentum kernels. Called inside the single OpenMP

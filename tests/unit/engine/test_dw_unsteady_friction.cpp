@@ -35,6 +35,8 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -203,7 +205,104 @@ const char* kUfOn =
     "UNSTEADY_FRICTION    VITKOVSKY\n"
     "UF_K3                0.020\n";
 
+class ForcedDwThreads {
+    bool had_;
+    std::string saved_;
+public:
+    explicit ForcedDwThreads(int threads) {
+        const char* old = std::getenv("SWMM_DW_THREADS");
+        had_ = old != nullptr;
+        if (old) saved_ = old;
+        set(std::to_string(threads).c_str());
+    }
+    ~ForcedDwThreads() { set(had_ ? saved_.c_str() : nullptr); }
+private:
+    static void set(const char* value) {
+#ifdef _WIN32
+        _putenv_s("SWMM_DW_THREADS", value ? value : "");
+#else
+        if (value) setenv("SWMM_DW_THREADS", value, 1);
+        else unsetenv("SWMM_DW_THREADS");
+#endif
+    }
+};
+
+// Compare binary64 API state every routing step, including the valve closure.
+// The force override deliberately crosses worker boundaries on this small
+// fixture; the ordinary model-size policy would keep it serial.
+std::vector<double> threadedTrace(const std::string& name,
+                                  const std::string& surcharge, int threads) {
+    ForcedDwThreads force(threads);
+    std::string deck = valveModel(surcharge, std::string(kUfOn) + "THREADS 1\n");
+    const auto pos = deck.find("00:10:00");
+    EXPECT_NE(pos, std::string::npos);
+    if (pos == std::string::npos) return {};
+    deck.replace(pos, 8, "00:02:00");
+    const std::string inp = outPath(name + ".inp");
+    { std::ofstream f(inp); f << deck; }
+    SWMM_Engine e = swmm_engine_create();
+    if (!e) { ADD_FAILURE() << "engine creation failed"; return {}; }
+    if (swmm_engine_open(e, inp.c_str(), outPath(name + ".rpt").c_str(),
+                         nullptr, nullptr) != 0 ||
+        swmm_engine_initialize(e) != 0 || swmm_engine_start(e, 0) != 0) {
+        ADD_FAILURE() << swmm_get_last_error_msg(e);
+        swmm_engine_destroy(e);
+        return {};
+    }
+    std::vector<int> nodes, links;
+    for (const char* id : {"J1", "J2", "J3", "JV", "UP", "DN"})
+        nodes.push_back(swmm_node_index(e, id));
+    for (const char* id : {"C_1", "C_2", "C_3", "C_P", "VALVE"})
+        links.push_back(swmm_link_index(e, id));
+    std::vector<double> trace;
+    double elapsed = 0.0;
+    for (int step = 0; step < 10000; ++step) {
+        const int rc = swmm_engine_step(e, &elapsed);
+        EXPECT_EQ(rc, 0) << swmm_get_last_error_msg(e);
+        if (rc != 0) break;
+        trace.push_back(elapsed);
+        for (int n : nodes) {
+            double value = 0.0;
+            EXPECT_EQ(swmm_node_get_depth(e, n, &value), 0);
+            EXPECT_TRUE(std::isfinite(value));
+            trace.push_back(value);
+        }
+        for (int l : links) {
+            double value = 0.0;
+            EXPECT_EQ(swmm_link_get_flow(e, l, &value), 0);
+            EXPECT_TRUE(std::isfinite(value));
+            trace.push_back(value);
+        }
+        if (elapsed == 0.0) break;
+    }
+    EXPECT_EQ(elapsed, 0.0);
+    EXPECT_EQ(swmm_engine_end(e), 0);
+    swmm_engine_destroy(e);
+    return trace;
+}
+
 } // namespace
+
+TEST(DwUnsteadyFriction, ThreadedStencilMatchesSerialBits) {
+    SWMM_ThreadInfo info{};
+    ASSERT_EQ(swmm_get_thread_info(&info), 0);
+    if (!info.omp_available) GTEST_SKIP() << "requires an OpenMP build";
+    for (const std::string closure : {"SLOT", "EXTRAN"}) {
+        const auto reference = threadedTrace("uf_threads_" + closure + "_serial", closure, 1);
+        ASSERT_GT(reference.size(), 12u);
+        for (int threads : {2, 4}) {
+            for (int repeat = 0; repeat < 2; ++repeat) {
+                SCOPED_TRACE(closure + " threads=" + std::to_string(threads) +
+                             " repeat=" + std::to_string(repeat));
+                const auto candidate = threadedTrace("uf_threads_" + closure + "_" +
+                    std::to_string(threads) + "_" + std::to_string(repeat), closure, threads);
+                ASSERT_EQ(reference.size(), candidate.size());
+                EXPECT_EQ(std::memcmp(reference.data(), candidate.data(),
+                                      reference.size() * sizeof(double)), 0);
+            }
+        }
+    }
+}
 
 TEST(DwUnsteadyFriction, NoneIsBitIdenticalToAbsent) {
     const auto a = runDeck("dw_absent", valveModel("SLOT", ""), "JV", "C_P");

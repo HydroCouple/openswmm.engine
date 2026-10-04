@@ -2322,12 +2322,9 @@ void DWSolver::recomputeConduitLossOne(SimulationContext& ctx, double dt,
 // solveMomentumBatch pre-init + classifyMomentumCategories + STEP E slot
 // overrides + recomputeConduitLosses passes + kernel dispatch + flow commit).
 //
-// ONE orphaned `omp for` over conduits on the persistent team (legacy
-// findLinkFlows forks per iteration instead, dynwave.c:370). Every sub-step
-// reads and writes ONLY its own conduit's elements, so fusing them preserves
-// the exact per-element operation order of the former pass-by-pass structure
-// — bit-exact at any thread count, and fewer full-array traversals + team
-// barriers per Picard iteration.
+// An orphaned `omp for` over conduits on the persistent team, except when
+// UF's in-place neighbor stencil requires the established serial link order.
+// The fused kernel retains each conduit's geometry/momentum/commit sequence.
 // ============================================================================
 
 void DWSolver::momentumKernels(SimulationContext& ctx, double dt, int step) {
@@ -2346,8 +2343,7 @@ void DWSolver::momentumKernels(SimulationContext& ctx, double dt, int step) {
         vjPrepareIteration(ctx, dt);
     }
 
-    #pragma omp for schedule(static)
-    for (int ci = 0; ci < n_conduits_; ++ci) {
+    auto solve_conduit = [&](int ci) {
         auto uci = static_cast<std::size_t>(ci);
         int j = tile_uj_[uci];
         auto uj = static_cast<std::size_t>(j);
@@ -2373,7 +2369,7 @@ void DWSolver::momentumKernels(SimulationContext& ctx, double dt, int step) {
         // the loss here from that fresher depth booked a different loss than
         // legacy into both end nodes (50-transects: node PURGATORY_7's
         // outflow after step 1 was half a stale-vs-fresh evaporation loss).
-        if (bypassed_[uj]) continue;
+        if (bypassed_[uj]) return;
 
         // Per-iterate evap/seepage loss recompute (flow-class gated inside).
         if (do_losses) recomputeConduitLossOne(ctx, dt, ci);
@@ -2481,9 +2477,9 @@ void DWSolver::momentumKernels(SimulationContext& ctx, double dt, int step) {
                 break;
         }
 
-        // Commit the computed flow (former updateNodeFlows line 1). Own
-        // element: no kernel reads another link's flow, and the bypassed
-        // path above holds links.flow == new_flow_ from its last commit.
+        // UF reads neighboring flow/area in this loop. Its ordered path
+        // below preserves which neighbors have already been updated.
+        // Bypassed links hold links.flow == new_flow_ from their last commit.
         links.flow[uj] = new_flow_[uj];
         // Publish the conduit dqdh alongside (legacy keeps Link.dqdh
         // current for every link). Nothing in the conduit path reads it —
@@ -2491,6 +2487,20 @@ void DWSolver::momentumKernels(SimulationContext& ctx, double dt, int step) {
         // element dump prints links.dqdh, which held 0 for conduits and
         // made per-element dqdh comparison against legacy impossible.
         links.dqdh[uj] = dqdh_[uj];
+    };
+
+    if (unsteady_friction != 0 && uf_k3 > 0.0) {
+        // Preserve the established serial UF stencil, including slot-area
+        // overrides and flow commits. A previous-iterate snapshot would
+        // change that numerical method; concurrent in-place reads are a race.
+        // The single barrier publishes the completed momentum phase.
+        #pragma omp single
+        {
+            for (int ci = 0; ci < n_conduits_; ++ci) solve_conduit(ci);
+        }
+    } else {
+        #pragma omp for schedule(static)
+        for (int ci = 0; ci < n_conduits_; ++ci) solve_conduit(ci);
     }
 }
 
@@ -2970,7 +2980,7 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step,
             // ∂V/∂x: cross-link stencil first (a full link has equal end
             // areas, so the within-link estimator is structurally zero in
             // exactly the pressurized cases UF exists for — measured
-            // anti-damping without this). Neighbor previous-iterate
+            // anti-damping without this). Ordered in-place neighbor
             // velocities, sign-mapped into this link's frame; falls back to
             // the within-link end-velocity difference when no simple
             // degree-2 conduit neighbor exists on either side.
@@ -3049,7 +3059,9 @@ void DWSolver::traceLinkTerms(const SimulationContext& ctx, std::size_t uj,
         static long  lf_step = 0;
         static int   lf_count = 0;
         static int   lf_rows = 0;
-        if (lf_target == -2) {
+        // C++ static initialization synchronizes this configuration across
+        // workers, including the ordinary trace-disabled path.
+        static const bool trace_initialized = [] {
             const char* p  = std::getenv("SWMM_TRACE_LINK");
             const char* tr = std::getenv("SWMM_TRACE_RSTEP");
             const char* sk = std::getenv("SWMM_TRACE_SKIP");
@@ -3065,8 +3077,11 @@ void DWSolver::traceLinkTerms(const SimulationContext& ctx, std::size_t uj,
                 if (lf) std::fprintf(lf,
                     "n,qLast,v,sigma,rho,aWtd,rWtd,dq1,dq2,dq3,dq4,dq5,dq6,qOld,q,sa1,sa2,fc,y1,yMid,a1,aMid,r1,rMid,aMidConv,dqdh,h1,h2,n1,n2,yn1,yn2\n");
             }
-        }
-        if (lf && static_cast<long>(uj) == lf_target) {
+            return true;
+        }();
+        (void)trace_initialized;
+        // Only the selected conduit's worker may inspect/mutate the stream.
+        if (static_cast<long>(uj) == lf_target && lf) {
             ++lf_count;
             // SWMM_TRACE_LSTEP=N: capture while computing routing step >= N
             // (the RSTEP serial increments at the END of each step, so during

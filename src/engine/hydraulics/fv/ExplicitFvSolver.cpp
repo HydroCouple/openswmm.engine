@@ -431,8 +431,9 @@ void ExplicitFvSolver::refreshDepths() {
     // hoisted out: incrementing it per iteration would be a data race, and
     // the count is exactly nc either way.
     perf::count(perf::n_fv_invert, static_cast<long>(nc));
+    perf::CounterBatch counters;
 #ifdef SWMM_USE_OPENMP
-#pragma omp parallel for schedule(static) if (nc >= kOmpMinCells)
+#pragma omp parallel for schedule(static) if (nc >= kOmpMinCells) private(counters)
 #endif
     for (int c = 0; c < nc; ++c) {
         const auto uc = static_cast<std::size_t>(c);
@@ -1309,8 +1310,9 @@ void ExplicitFvSolver::computeFluxes() {
     perf::GatedTimer _pt(perf::sec_fv_flux);
     const int n_act = static_cast<int>(active_faces_.size());
 
+    perf::CounterBatch counters;
 #ifdef SWMM_USE_OPENMP
-#pragma omp parallel for schedule(static) if (n_act >= kOmpMinFaces)
+#pragma omp parallel for schedule(static) if (n_act >= kOmpMinFaces) private(counters)
 #endif
     for (int a = 0; a < n_act; ++a)
         computeFaceFlux(active_faces_[static_cast<std::size_t>(a)]);
@@ -1608,10 +1610,9 @@ void ExplicitFvSolver::relaxNodeFluxes(double dt, const FvStepForcing& forcing) 
 // and its own incident faces and writes only those faces and its own head
 // (a pass-through ghost reads the FAR CELL, never another node), so the
 // nodes are independent and the result is bit-identical in any order and at
-// any thread count. The `perf::n_fv_alg_*` counters inside are plain
-// increments: exact at THREADS 1, an estimate above (same as the closure
-// counters in the flux loop). Dynamic schedule: a junction's cost varies
-// with its bracket expansion (1 to ~80 residuals).
+// any thread count. Private counter batches retain exact operation counts
+// without contended increments in the inner loops. Dynamic schedule: a
+// junction's cost varies with its bracket expansion (1 to ~80 residuals).
 template <class DtOf>
 void ExplicitFvSolver::solveNodes(const std::vector<int>& nodes, DtOf&& dt_of,
                                   const FvStepForcing& forcing) {
@@ -1651,7 +1652,8 @@ void ExplicitFvSolver::solveNodes(const std::vector<int>& nodes, DtOf&& dt_of,
     // the clause form cost 30 % of the run at ONE thread.
 #ifdef SWMM_USE_OPENMP
     if (nh >= kOmpMinNodes && omp_get_max_threads() > 1) {
-#pragma omp parallel for schedule(dynamic, 2)
+        perf::CounterBatch counters;
+#pragma omp parallel for schedule(dynamic, 2) private(counters)
         for (int i = 0; i < nh; ++i)
             solveAlgebraicNode(heavy[static_cast<std::size_t>(i)],
                                dt_of(heavy[static_cast<std::size_t>(i)]), forcing);
@@ -1955,9 +1957,10 @@ void ExplicitFvSolver::updateCells(double dt, const FvStepForcing& forcing) {
     // do. Measured on TwinOaks-v2 (5086 cells, 2 h) against the same run at
     // one thread: static 2.05x, dynamic 2.92x.
     long n_inv = 0;
+    perf::CounterBatch counters;
 #ifdef SWMM_USE_OPENMP
 #pragma omp parallel for schedule(dynamic, 64) reduction(+ : n_inv) \
-        if (nc >= kOmpMinCells)
+        if (nc >= kOmpMinCells) private(counters)
 #endif
     for (int c = 0; c < nc; ++c) {
         const auto uc = static_cast<std::size_t>(c);
@@ -3712,8 +3715,9 @@ void ExplicitFvSolver::fireFaces(const std::vector<int>& faces, double dt0) {
         live_stamp_[static_cast<std::size_t>(faces[static_cast<std::size_t>(i)])] =
             live_gen_;
 
+    perf::CounterBatch counters;
 #ifdef SWMM_USE_OPENMP
-#pragma omp parallel for schedule(static) if (n >= kOmpMinFaces)
+#pragma omp parallel for schedule(static) if (n >= kOmpMinFaces) private(counters)
 #endif
     for (int i = 0; i < n; ++i)
         computeFaceFlux(faces[static_cast<std::size_t>(i)]);
