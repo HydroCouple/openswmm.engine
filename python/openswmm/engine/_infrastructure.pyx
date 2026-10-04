@@ -46,6 +46,8 @@ flat (``add_*`` / ``*_count``) rather than dressing it as a collection.
 # cython: language_level=3
 
 from libc.string cimport memcpy, memset
+from libc.stdlib cimport calloc, free
+from ._lid_nodes import LidNodeLayer, LidNodeLayerKind
 
 from ._exceptions import ElementNotFoundError
 from ._enums import (GrateType, InletCurveKind, InletHostKind, InletPlacement,
@@ -828,6 +830,97 @@ class LIDs:
         cdef bytes b = new_id.encode('utf-8')
         _check(swmm_lid_rename(h, idx, b))
         self._solver._bump_generation()
+
+    def get_layers(self, key):
+        """Return the ordered stack, including an optional BOTTOM boundary."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int idx = _resolve_index(h, key, swmm_lid_index, swmm_lid_count, "LID")
+        cdef int count = swmm_lid_node_layer_count(h, idx)
+        cdef SWMM_LidNodeLayer row
+        result = []
+        for i in range(count):
+            _check(swmm_lid_node_layer_get(h, idx, i, &row))
+            result.append(LidNodeLayer(LidNodeLayerKind(row.kind),
+                tuple(row.params[j] for j in range((2, 7, 3, 2)[row.kind]))))
+        return result
+
+    def set_layers(self, key, layers):
+        """Atomically replace an arbitrary ordered NODE stack and sync its nodes.
+
+        Accepts an iterable of LidNodeLayer. Invalid stacks leave the old stack,
+        node MaxDepths and anchored link offsets unchanged. Pre-start only.
+        """
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int idx = _resolve_index(h, key, swmm_lid_index, swmm_lid_count, "LID")
+        values = list(layers)
+        cdef int count = len(values)
+        if count == 0:
+            raise ValueError("At least one MEDIA or AGGREGATE layer is required")
+        cdef SWMM_LidNodeLayer* rows = <SWMM_LidNodeLayer*>calloc(count, sizeof(SWMM_LidNodeLayer))
+        if rows == NULL:
+            raise MemoryError()
+        try:
+            for i, layer in enumerate(values):
+                if not isinstance(layer, LidNodeLayer):
+                    raise TypeError("layers must contain LidNodeLayer instances")
+                rows[i].kind = int(layer.kind)
+                for j, value in enumerate(layer.params):
+                    rows[i].params[j] = value
+            _check(swmm_lid_node_layers_set(h, idx, rows, count))
+        finally:
+            free(rows)
+
+    def assign_node(self, node, control, *, double initial_saturation=0.0):
+        """Assign a control to a storage node; synchronizes MaxDepth (InitSat %)."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
+        cdef int c = _resolve_index(h, control, swmm_lid_index, swmm_lid_count, "LID")
+        _check(swmm_node_set_lid(h, n, c, initial_saturation))
+
+    def node_profile(self, node):
+        """Runtime sublayers in top-to-bottom order; elevations in model length units."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
+        cdef int count = swmm_lid_node_state_count(h, n)
+        cdef int layer = 0
+        cdef double bottom = 0, top = 0, moisture = 0
+        result = []
+        for i in range(count):
+            _check(swmm_lid_node_state_get(h, n, i, &layer, &bottom, &top, &moisture))
+            result.append({"layer": layer, "bottom": bottom, "top": top, "moisture": moisture})
+        return result
+
+    def node_assignment(self, node):
+        """Return (control index, InitSat %) or None for an ordinary node."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
+        cdef int c = -1
+        cdef double sat = 0.0
+        _check(swmm_node_get_lid(h, n, &c, &sat))
+        return None if c < 0 else (c, sat)
+
+    def remove_node(self, node):
+        """Revert a LID storage node to plain storage and remove its anchors."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
+        _check(swmm_node_set_lid(h, n, -1, 0.0))
+
+    def set_outlet_anchor(self, link, int layer, *, position="BOTTOM"):
+        """Anchor a link to a one-based physical layer; layer=0 removes it."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int i = _resolve_index(h, link, swmm_link_index, swmm_link_count, "Link")
+        position = position.upper()
+        if position not in ("TOP", "BOTTOM"):
+            raise ValueError("position must be TOP or BOTTOM")
+        _check(swmm_lid_node_outlet_set(h, i, layer, int(position == "TOP")))
+
+    def get_outlet_anchor(self, link):
+        """Return (one-based layer, TOP/BOTTOM), or None if unanchored."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int i = _resolve_index(h, link, swmm_link_index, swmm_link_count, "Link")
+        cdef int layer = 0, top = 0
+        _check(swmm_lid_node_outlet_get(h, i, &layer, &top))
+        return None if layer == 0 else (layer, "TOP" if top else "BOTTOM")
 
     def set_surface(self, int idx, *,
                     double storage, double roughness, double slope) -> None:

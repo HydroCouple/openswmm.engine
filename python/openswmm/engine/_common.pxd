@@ -872,6 +872,18 @@ cdef extern from "openswmm_infrastructure.h":
     cdef int swmm_inlet_usage_get(SWMM_Engine e, int usage_idx, SWMM_InletUsage* out)
     cdef int swmm_inlet_usage_set(SWMM_Engine e, const SWMM_InletUsage* usage, int* usage_idx)
     cdef int swmm_inlet_usage_remove(SWMM_Engine e, int usage_idx)
+    ctypedef struct SWMM_LidNodeLayer:
+        int kind
+        double params[7]
+    cdef int swmm_lid_node_layer_count(SWMM_Engine e, int control)
+    cdef int swmm_lid_node_layer_get(SWMM_Engine e, int control, int row, SWMM_LidNodeLayer* out)
+    cdef int swmm_lid_node_layers_set(SWMM_Engine e, int control, const SWMM_LidNodeLayer* rows, int count)
+    cdef int swmm_node_get_lid(SWMM_Engine e, int node, int* control, double* saturation)
+    cdef int swmm_node_set_lid(SWMM_Engine e, int node, int control, double saturation)
+    cdef int swmm_lid_node_outlet_get(SWMM_Engine e, int link, int* layer, int* top)
+    cdef int swmm_lid_node_outlet_set(SWMM_Engine e, int link, int layer, int top)
+    cdef int swmm_lid_node_state_count(SWMM_Engine e, int node)
+    cdef int swmm_lid_node_state_get(SWMM_Engine e, int node, int row, int* layer, double* bottom, double* top, double* moisture)
     # LID controls
     cdef int swmm_lid_add(SWMM_Engine e, const char* id, int type)
     cdef int swmm_lid_set_surface(SWMM_Engine e, int idx, double storage, double roughness, double slope)

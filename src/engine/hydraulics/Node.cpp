@@ -89,6 +89,15 @@ double getVolume(const NodeData& nodes, int idx, double depth,
     auto ui = static_cast<std::size_t>(idx);
 
     if (nodes.type[ui] == NodeType::STORAGE) {
+        const int lr = subs ? subs->storage_row(idx) : -1;
+        if (lr >= 0 && !subs->storages.lid_state[lr].cells.empty()) {
+            double volume = 0.0;
+            for (const auto& cell : subs->storages.lid_state[lr].cells) {
+                const double fraction = std::clamp((depth - cell.bottom) / (cell.top - cell.bottom), 0.0, 1.0);
+                volume += fraction * cell.geometric_volume * std::max(0.0, cell.porosity - cell.theta);
+            }
+            return volume;
+        }
         // Clamp at fullDepth → fullVolume (matching legacy node.c lines 909-910)
         if (depth >= nodes.full_depth[ui] && nodes.full_volume[ui] > 0.0)
             return nodes.full_volume[ui];
@@ -154,10 +163,22 @@ double getVolume(const NodeData& nodes, int idx, double depth,
 
 double getDepth(const NodeData& nodes, int idx, double volume,
                 TableData* tables, int unit_sys, const NodeSubtypes* subs) {
-    if (volume <= 0.0) return 0.0;
+    if (volume < 0.0) return 0.0;
     auto ui = static_cast<std::size_t>(idx);
 
     if (nodes.type[ui] == NodeType::STORAGE) {
+        const int lr = subs ? subs->storage_row(idx) : -1;
+        if (lr >= 0 && !subs->storages.lid_state[lr].cells.empty()) {
+            const auto& cells = subs->storages.lid_state[lr].cells;
+            for (auto i = cells.rbegin(); i != cells.rend(); ++i) {
+                const double capacity = i->geometric_volume * std::max(0.0, i->porosity - i->theta);
+                if (capacity > 0.0 && volume < capacity)
+                    return i->bottom + volume / capacity * (i->top - i->bottom);
+                volume -= capacity;
+            }
+            return nodes.full_depth[ui];
+        }
+        if (volume <= 0.0) return 0.0;
         double fd = nodes.full_depth[ui];
         double fv = nodes.full_volume[ui];
         if (fv > 0.0 && volume >= fv) return fd;
@@ -274,6 +295,15 @@ double getSurfArea(const NodeData& nodes, int idx, double depth,
     auto ui = static_cast<std::size_t>(idx);
 
     if (nodes.type[ui] == NodeType::STORAGE) {
+        const int lr = subs ? subs->storage_row(idx) : -1;
+        if (lr >= 0 && !subs->storages.lid_state[lr].cells.empty()) {
+            const auto& cells = subs->storages.lid_state[lr].cells;
+            for (const auto& c : cells) if (depth >= c.bottom && depth < c.top)
+                return c.area * std::max(0.0, c.porosity - c.theta);
+            const auto& c = depth <= 0.0 ? cells.back() : cells.front();
+            return c.area * std::max(0.0, c.porosity - c.theta);
+        }
+
         const StorageGeom g = storageGeom(nodes, subs, ui);
         // Return RAW storage-curve area (no MIN_SURFAREA clamp here).
         //

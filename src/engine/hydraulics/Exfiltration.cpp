@@ -28,6 +28,7 @@
 #include "Node.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
+#include "../hydrology/LidNode.hpp"
 #include "../data/StorageGeometry.hpp"
 #include <cmath>
 #include <algorithm>
@@ -60,7 +61,7 @@ void ExfilSolver::init(SimulationContext& ctx) {
         // (ExfilSolver::init runs after node_subtypes.build), wide fallback otherwise.
         const int sr = ctx.node_subtypes.storage_row(i);
         const double ksat = (sr >= 0)
-            ? ctx.node_subtypes.storages.exfil_ksat[static_cast<size_t>(sr)] : 0.0;
+            ? lidnode::bottomConductivity(ctx, sr) : 0.0;
         if (nodes.type[ui] == NodeType::STORAGE && ksat > 0.0) {
             ++n_exfil;
         }
@@ -84,7 +85,7 @@ void ExfilSolver::init(SimulationContext& ctx) {
         const double exf_suction = (sr >= 0)
             ? ctx.node_subtypes.storages.exfil_suction[static_cast<size_t>(sr)] : 0.0;
         const double exf_ksat = (sr >= 0)
-            ? ctx.node_subtypes.storages.exfil_ksat[static_cast<size_t>(sr)] : 0.0;
+            ? lidnode::bottomConductivity(ctx, sr) : 0.0;
         const double exf_imd = (sr >= 0)
             ? ctx.node_subtypes.storages.exfil_imd[static_cast<size_t>(sr)] : 0.0;
         if (nodes.type[ui] != NodeType::STORAGE || exf_ksat <= 0.0) {
@@ -252,7 +253,8 @@ void ExfilSolver::computeAll(SimulationContext& ctx, double dt) {
         };
 
         // Bottom exfiltration
-        total_loss += ga_rate(soa_.btm_ga[uk], depth) * soa_.btm_area[uk];
+        total_loss += ga_rate(soa_.btm_ga[uk], depth) * soa_.btm_area[uk]
+            * lidnode::bottomCloggingFactor(ctx, ctx.node_subtypes.storage_row(ni));
 
         // Bank exfiltration (only above bank_min_depth): the bank area is
         // the surface area (capped at the largest area the curve reaches)

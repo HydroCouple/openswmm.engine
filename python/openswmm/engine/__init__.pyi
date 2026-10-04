@@ -254,3 +254,5 @@ from ._enums import (
     TraceFlags as TraceFlags,
     TraceTerminal as TraceTerminal,
 )
+
+from ._lid_nodes import LidNodeLayer as LidNodeLayer, LidNodeLayerKind as LidNodeLayerKind

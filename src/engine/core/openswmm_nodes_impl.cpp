@@ -1,3 +1,4 @@
+#include "../hydrology/LidNode.hpp"
 // SPDX-License-Identifier: Apache-2.0
 //
 // Copyright 2026 Caleb Buahin
@@ -334,7 +335,7 @@ SWMM_ENGINE_API int swmm_node_get_volume(SWMM_Engine engine, int idx, double* vo
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
-    if (volume) *volume = to_display(ctx, openswmm::ucf::VOLUME, ctx.nodes.volume[static_cast<std::size_t>(idx)]); // units
+    if (volume) *volume = to_display(ctx, openswmm::ucf::VOLUME, ctx.nodes.volume[static_cast<std::size_t>(idx)] + openswmm::lidnode::heldVolume(ctx, idx)); // units
     return SWMM_OK;
 }
 
@@ -519,7 +520,7 @@ SWMM_ENGINE_API int swmm_node_get_volumes_bulk(SWMM_Engine engine, double* buf, 
     if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
     const int n = std::min(count, ctx.n_nodes());
     for (int i = 0; i < n; ++i)
-        buf[i] = to_display(ctx, openswmm::ucf::VOLUME, ctx.nodes.volume[static_cast<std::size_t>(i)]); // units
+        buf[i] = to_display(ctx, openswmm::ucf::VOLUME, ctx.nodes.volume[static_cast<std::size_t>(i)] + openswmm::lidnode::heldVolume(ctx, i)); // units
     return SWMM_OK;
 }
 

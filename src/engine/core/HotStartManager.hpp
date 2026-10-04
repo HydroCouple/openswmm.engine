@@ -95,8 +95,14 @@ namespace groundwater { class GWSolver; }
 // ============================================================================
 
 /** @brief Node hydraulic state at hot-start save time. */
+struct HotStartLidCellRecord {
+    int layer = 0;
+    double bottom = 0.0, top = 0.0, porosity = 0.0, volume = 0.0, theta = 0.0;
+};
 struct HotStartNodeRecord {
     std::string id;
+    std::vector<HotStartLidCellRecord> lid_cells; ///< V8 retained moisture and geometry identity
+    double lid_treated_volume = 0.0; ///< V8 clogging history (ft3)
     double      depth  = 0.0;
     double      head   = 0.0;
     double      volume = 0.0;

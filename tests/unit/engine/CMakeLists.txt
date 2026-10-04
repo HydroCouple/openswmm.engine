@@ -1085,3 +1085,11 @@ if(_osw_fixture_clashes)
         "Rename one of them. A RESOURCE_LOCK also works but costs parallelism "
         "and only protects the pair you noticed. See the note above this check.")
 endif()
+
+add_gtest_unit(test_engine_lid_nodes test_lid_nodes.cpp)
+target_compile_definitions(test_engine_lid_nodes PRIVATE OPENSWMM_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
+if(OPENSWMM_WITH_GEOPACKAGE)
+    target_link_libraries(test_engine_lid_nodes PRIVATE openswmm_geopackage)
+    target_compile_definitions(test_engine_lid_nodes PRIVATE LID_TEST_GEOPACKAGE)
+endif()

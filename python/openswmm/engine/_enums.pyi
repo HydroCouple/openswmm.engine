@@ -473,6 +473,7 @@ class LidType(IntEnum):
     RAIN_BARREL = 5
     ROOFTOP_DISCONN = 6
     VEGETATIVE_SWALE = 7
+    NODE = 8
 
 
 class AquiferParam(IntEnum):

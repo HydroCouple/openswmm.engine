@@ -1,3 +1,4 @@
+#include "../hydrology/LidNode.hpp"
 // SPDX-License-Identifier: Apache-2.0
 //
 // Copyright 2026 Caleb Buahin
@@ -1365,6 +1366,25 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
             // pass-by-pass per-element operation order exactly).
             momentumKernels(ctx, dt, t_steps);
 
+#pragma omp single
+            {
+                lidnode::resetPorts(ctx);
+                for (int ci = 0; ci < n_conduits_; ++ci) {
+                    const int j = tile_uj_[ci];
+                    if (!lidnode::active(ctx, tile_n1_[ci]) && !lidnode::active(ctx, tile_n2_[ci])) continue;
+                    const double before = new_flow_[j];
+                    const double after = lidnode::exchangePorts(ctx, j, before, dt);
+                    new_flow_[j] = after;
+                    ctx.links.flow[j] = after;
+                    q1_[j] = after / tile_barrels_d_[ci];
+                    if (before != 0.0 && before != after) {
+                        dqdh_[j] *= after / before;
+                        ctx.links.dqdh[j] = dqdh_[j];
+                    }
+                }
+            }
+
+
             // ---- Step 3a: scatter conduit flows to nodes (team) ----
             // Production path (callback present): parallel CSR node-centric
             // gather — bit-exact per-node accumulation order (see
@@ -1727,8 +1747,8 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
         const double inv2 = tile_inv2_elev_[uci];
         const double z1 = inv1 + tile_z1_off_[uci];
         const double z2 = inv2 + tile_z2_off_[uci];
-        const double h1 = std::max(nodes.depth[un1] + inv1, z1);
-        const double h2 = std::max(nodes.depth[un2] + inv2, z2);
+        const double h1 = std::max(lidnode::portDepth(ctx, static_cast<int>(un1), tile_z1_off_[uci]) + inv1, z1);
+        const double h2 = std::max(lidnode::portDepth(ctx, static_cast<int>(un2), tile_z2_off_[uci]) + inv2, z2);
 
         double y1 = std::max(h1 - z1, FUDGE);
         double y2 = std::max(h2 - z2, FUDGE);
@@ -2670,8 +2690,8 @@ void DWSolver::applyFlowLimits(SimulationContext& ctx, double dt, int step,
     }
 
     // Dry node check
-    if (q >  FUDGE && nodes.depth[un1] <= FUDGE) q =  FUDGE;
-    if (q < -FUDGE && nodes.depth[un2] <= FUDGE) q = -FUDGE;
+    if (q >  FUDGE && lidnode::portDepth(ctx, n1, tile_z1_off_[uci]) <= FUDGE) q =  FUDGE;
+    if (q < -FUDGE && lidnode::portDepth(ctx, n2, tile_z2_off_[uci]) <= FUDGE) q = -FUDGE;
 
     // Save new flow
     new_flow_[uj] = q * barrels_d;
@@ -3648,7 +3668,7 @@ void DWSolver::updateNodeDepthsTeam(SimulationContext& ctx, double dt, int step,
         // (see computeAASkipFlags for the enumerated conditions) or when the
         // residual is too large to trust the linear-convergence assumption
         // AA is built on.
-        if (use_anderson && step >= 1 && !aa_skip_[ui]) {
+        if (use_anderson && step >= 1 && !aa_skip_[ui] && !lidnode::active(ctx, i)) {
             double r_k = g_k - y_last;                     // residual at current iterate
 
             // Residual-magnitude safety gate. When |r_k| is many tolerances
@@ -3811,6 +3831,49 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
     // --- Net flow volume change (trapezoidal averaging with previous step) ---
     double dQ = nodes.inflow[ui] - nodes.outflow[ui];
     double dV = 0.5 * (nodes.old_net_inflow[ui] + dQ) * dt;
+    if (lidnode::active(ctx, node_idx)) {
+        // The moisture split, link port transfers and routing ledger all book
+        // this step's accepted flux once. Solve continuity in volume directly:
+        // a tangent-area depth update can lose water when it crosses layers.
+        double volume = nodes.old_volume[ui] + dQ * dt;
+        // Conduit momentum reports midpoint flow. Each incident end owns
+        // half the change of conduit storage (the ordinary depth update
+        // accounts for this via its half-link surface area). Charge that
+        // same volume explicitly when using the LID volume equation.
+        for (int k = csr_row_[ui]; k < csr_row_[ui + 1]; ++k) {
+            const int link = csr_link_[k];
+            const int other = ctx.links.node1[link] == node_idx ? ctx.links.node2[link] : ctx.links.node1[link];
+            const double share = ctx.nodes.type[other] == NodeType::OUTFALL ? 1.0 : 0.5;
+            volume -= share * (ctx.links.volume[link] - ctx.links.old_volume[link]);
+        }
+        if (volume < 0.0) {
+            auto& state = ctx.node_subtypes.storages.lid_state[ctx.node_subtypes.storage_row(node_idx)];
+            for (std::size_t k = 0; k < state.cells.size() && volume < 0.0; ++k) {
+                const auto& cell = state.cells[k];
+                const double take = std::min(-volume, std::max(0.0,
+                    (cell.theta - cell.wilting_point) * cell.geometric_volume + state.port_delta[k]));
+                state.port_delta[k] -= take;
+                volume += take;
+            }
+        }
+        volume = std::max(0.0, volume);
+        nodes.overflow[ui] = 0.0;
+        const bool pond = ctx.options.allow_ponding && nodes.ponded_area[ui] > 0.0;
+        const double capacity = nodes.full_volume[ui];
+        if (!pond && volume > capacity) {
+            nodes.overflow[ui] = (volume - capacity) / dt;
+            volume = capacity;
+        }
+        double depth = node::getDepth(nodes, node_idx, std::min(volume, capacity), &ctx.tables, unit_sys_, &ctx.node_subtypes);
+        if (pond && volume > capacity)
+            depth = nodes.full_depth[ui] + (volume - capacity) / nodes.ponded_area[ui];
+        nodes.volume[ui] = volume;
+        nodes.depth[ui] = depth;
+        nodes.head[ui] = nodes.invert_elev[ui] + depth;
+        xnode_.dYdT[ui] = std::abs(depth - nodes.old_depth[ui]) / dt;
+        return;
+    }
+
 
     // --- Determine if node is surcharged ---
     //

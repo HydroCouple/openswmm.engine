@@ -502,6 +502,59 @@ For Curve-Number Infiltration:
 p1    SCS Curve Number.
 p2    no longer used.
 p3    time it takes for a fully saturated soil to dry (days). 
+### Storage-node LIDs: [LID_NODES] and [LID_NODE_OUTLETS]
+
+A LID node remains an ordinary storage node. Assign a compatible BC, RG, IT,
+PP, or NODE control using `Node Control InitialSaturationPercent` in
+`[LID_NODES]`. The supported routing formulation is `FLOW_ROUTING DYNWAVE`.
+The storage's maximum depth must equal the sum of the physical layer
+thicknesses, converted to the node's length units.
+
+A NODE control contains any number of ordered physical layers, written from
+top to bottom. MEDIA and AGGREGATE may repeat without a fixed layer limit.
+SURFACE is optional and first; BOTTOM is optional and last.
+
+```text
+[LID_CONTROLS]
+Column NODE
+Column SURFACE    6  0.1
+Column MEDIA     12  0.45  0.20  0.08  2  10  3
+Column MEDIA      6  0.40  0.25  0.10  1   8  3
+Column AGGREGATE  6  0.40  100
+Column BOTTOM     0.5  0
+[LID_NODES]
+S Column 10
+[LID_NODE_OUTLETS]
+Underdrain 4 BOTTOM
+Overflow   1 BOTTOM
+```
+
+For US models this example requires a 2.5-ft storage maximum depth. Layer
+thickness and suction use inches (US) or millimetres (SI); conductivities
+use inches/hour or millimetres/hour. SURFACE parameters are thickness and
+vegetation fraction. MEDIA parameters are thickness, porosity, field
+capacity, wilting point, saturated conductivity, conductivity exponent,
+and suction. AGGREGATE parameters are thickness, porosity, conductivity.
+BOTTOM specifies native-soil seepage and clogging factor and has no thickness
+or layer number. Standard-control storage void ratios are converted to
+porosity as `e / (1 + e)`.
+
+Outlet anchors use one-based physical layer numbers and TOP or BOTTOM.
+The link must have exactly one LID endpoint. Input mismatches between the
+anchor and authored offset produce a warning; layer edits through the API
+synchronize the offset and storage maximum depth. A link between two LID
+nodes can use ordinary explicit offsets without an anchor.
+
+Moisture is discretized into five cells per MEDIA layer, with a separate
+mobile hydraulic volume. Transfers between these stores conserve water.
+Reported node volume includes both stores. Positive lateral inflow enters
+the top of the profile; connected links exchange water at their offsets.
+Supply rainfall through a contributing subcatchment or an external inflow;
+these sections do not select a rain gage for direct rainfall on storage.
+Native hotstarts retain cell moisture and clogging history. INP and
+GeoPackage save the ordered definitions and anchors. SWMM5-compatible INP
+export omits these extensions with warnings and leaves plain storage nodes.
+
 ### Section: [LID_CONTROLS] {#engine_manual_sect_LID_CONTROLS}
 
 Purpose:

@@ -1263,6 +1263,42 @@ static void write_lid_controls(sqlite3* db, const SimulationContext& ctx,
     }
 }
 
+static void write_lid_nodes(sqlite3* db, const SimulationContext& ctx, const std::string& sim) {
+    // Replace this simulation's complete stack, including deleted rows.
+    for (const char* table : {"lid_node_outlets", "lid_nodes", "lid_node_layers"}) {
+        auto del = prepare(db, std::string("DELETE FROM ") + table + " WHERE simulation_id=?");
+        bind_text(del.get(), 1, sim);
+        if (sqlite3_step(del.get()) != SQLITE_DONE) throw std::runtime_error("Cannot replace LID node data");
+    }
+
+    auto layer = prepare(db, "INSERT INTO lid_node_layers VALUES (?,?,?,?,?,?,?,?,?,?,?)");
+    for (int i = 0; i < static_cast<int>(ctx.lid_controls.node_layers.size()); ++i) {
+        int ordinal = 0;
+        for (const auto& row : ctx.lid_controls.node_layers[i]) {
+            sqlite3_reset(layer.get()); sqlite3_clear_bindings(layer.get());
+            bind_text(layer.get(), 1, sim); bind_text(layer.get(), 2, ctx.lid_names.name_of(i));
+            bind_int(layer.get(), 3, ordinal++); bind_int(layer.get(), 4, static_cast<int>(row.kind));
+            for (int k = 0; k < 7; ++k) bind_double(layer.get(), 5 + k, row.params[k]);
+            if (sqlite3_step(layer.get()) != SQLITE_DONE) throw std::runtime_error("Cannot write LID node layer");
+        }
+    }
+    auto node = prepare(db, "INSERT INTO lid_nodes VALUES (?,?,?,?)");
+    const auto& st = ctx.node_subtypes.storages;
+    for (int r = 0; r < st.count(); ++r) if (st.lid[r].control >= 0) {
+        sqlite3_reset(node.get()); sqlite3_clear_bindings(node.get());
+        bind_text(node.get(), 1, sim); bind_text(node.get(), 2, ctx.node_names.name_of(st.node_idx[r]));
+        bind_text(node.get(), 3, ctx.lid_names.name_of(st.lid[r].control)); bind_double(node.get(), 4, st.lid[r].initial_saturation);
+        if (sqlite3_step(node.get()) != SQLITE_DONE) throw std::runtime_error("Cannot write LID node assignment");
+    }
+    auto outlet = prepare(db, "INSERT INTO lid_node_outlets VALUES (?,?,?,?)");
+    for (const auto& a : ctx.lid_node_outlets) {
+        sqlite3_reset(outlet.get()); sqlite3_clear_bindings(outlet.get());
+        bind_text(outlet.get(), 1, sim); bind_text(outlet.get(), 2, ctx.link_names.name_of(a.link));
+        bind_int(outlet.get(), 3, a.layer); bind_int(outlet.get(), 4, a.top);
+        if (sqlite3_step(outlet.get()) != SQLITE_DONE) throw std::runtime_error("Cannot write LID outlet anchor");
+    }
+}
+
 static void write_lid_usage(sqlite3* db, const SimulationContext& ctx,
                              const std::string& sim_id) {
     auto stmt = prepare(db,
@@ -2139,6 +2175,7 @@ void write_model(sqlite3* db, const SimulationContext& ctx,
     write_adjustments(db, ctx, simulation_id);
     write_lid_controls(db, ctx, simulation_id);
     write_lid_usage(db, ctx, simulation_id);
+    write_lid_nodes(db, ctx, simulation_id);
     write_rdii(db, ctx, simulation_id);
     write_treatment(db, ctx, simulation_id);
     write_inflows(db, ctx, simulation_id);

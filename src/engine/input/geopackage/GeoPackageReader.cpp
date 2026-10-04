@@ -1497,6 +1497,44 @@ static void read_lid_controls(sqlite3* db, SimulationContext& ctx,
     }
 }
 
+static void read_lid_nodes(sqlite3* db, SimulationContext& ctx, const std::string& sim) {
+    ctx.lid_controls.node_layers.resize(ctx.lid_controls.count());
+    if (table_exists(db, "lid_node_layers")) {
+        auto stmt = prepare(db, "SELECT lid_id, kind, p1,p2,p3,p4,p5,p6,p7 FROM lid_node_layers WHERE simulation_id=? ORDER BY lid_id, ordinal");
+        bind_text(stmt.get(), 1, sim);
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            int c = ctx.lid_names.find(column_text(stmt.get(), 0));
+            int kind = column_int(stmt.get(), 1);
+            if (c < 0 || kind < 0 || kind > 3) throw std::runtime_error("Invalid LID node layer reference");
+            LidNodeLayer row; row.kind = static_cast<LidNodeLayerKind>(kind);
+            for (int k = 0; k < 7; ++k) row.params[k] = column_double(stmt.get(), k + 2);
+            ctx.lid_controls.node_layers[c].push_back(row);
+        }
+    }
+    if (table_exists(db, "lid_nodes")) {
+        auto stmt = prepare(db, "SELECT node_id,lid_id,initial_saturation FROM lid_nodes WHERE simulation_id=?");
+        bind_text(stmt.get(), 1, sim);
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            int n = ctx.node_names.find(column_text(stmt.get(), 0));
+            int c = ctx.lid_names.find(column_text(stmt.get(), 1));
+            int r = ctx.node_subtypes.storage_row(n);
+            double sat = column_double(stmt.get(), 2);
+            if (r < 0 || c < 0 || !std::isfinite(sat) || sat < 0 || sat > 100) throw std::runtime_error("Invalid LID node assignment");
+            ctx.node_subtypes.storages.lid[r] = {c, sat};
+        }
+    }
+    if (table_exists(db, "lid_node_outlets")) {
+        auto stmt = prepare(db, "SELECT link_id,layer,top FROM lid_node_outlets WHERE simulation_id=?");
+        bind_text(stmt.get(), 1, sim);
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            int link = ctx.link_names.find(column_text(stmt.get(), 0));
+            int layer = column_int(stmt.get(), 1), top = column_int(stmt.get(), 2);
+            if (link < 0 || layer < 1 || top < 0 || top > 1) throw std::runtime_error("Invalid LID node outlet");
+            ctx.lid_node_outlets.push_back({link, layer, top != 0});
+        }
+    }
+}
+
 static void read_lid_usage(sqlite3* db, SimulationContext& ctx,
                             const std::string& sim_id) {
     if (!table_exists(db, "lid_usage")) return;
@@ -2115,6 +2153,7 @@ int read_model(sqlite3* db, SimulationContext& ctx,
         read_adjustments(db, ctx, simulation_id);
         read_lid_controls(db, ctx, simulation_id);
         read_lid_usage(db, ctx, simulation_id);
+        read_lid_nodes(db, ctx, simulation_id);
         read_rdii(db, ctx, simulation_id);
         read_treatment(db, ctx, simulation_id);
         read_inflows(db, ctx, simulation_id);

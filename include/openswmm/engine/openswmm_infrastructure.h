@@ -670,7 +670,7 @@ SWMM_ENGINE_API int swmm_inlet_usage_remove(SWMM_Engine engine, int usage_idx);
  *
  * @details LID types: 0=BIO_CELL, 1=RAIN_GARDEN, 2=GREEN_ROOF,
  *          3=INFIL_TRENCH, 4=PERM_PAVEMENT, 5=RAIN_BARREL,
- *          6=ROOFTOP_DISCONN, 7=VEGETATIVE_SWALE.
+ *          6=ROOFTOP_DISCONN, 7=VEGETATIVE_SWALE, 8=NODE.
  *
  * @param engine  Engine handle (SWMM_STATE_BUILDING).
  * @param id      Unique null-terminated identifier.
@@ -678,6 +678,37 @@ SWMM_ENGINE_API int swmm_inlet_usage_remove(SWMM_Engine engine, int usage_idx);
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_lid_add(SWMM_Engine engine, const char* id, int type);
+
+/** Arbitrary ordered NODE control layers; thickness/suction in in or mm,
+ * conductivity in in/hr or mm/hr. Params: SURFACE=(thickness, vegetation),
+ * MEDIA=(thickness, porosity, FC, WP, Ksat, Kslope, suction),
+ * AGGREGATE=(thickness, porosity, Ksat), BOTTOM=(seepage, clogging).
+ * Unused parameters must be zero. BOTTOM is not a numbered physical layer. */
+enum SWMM_LidNodeLayerKind {
+    SWMM_LID_NODE_SURFACE = 0, SWMM_LID_NODE_MEDIA = 1,
+    SWMM_LID_NODE_AGGREGATE = 2, SWMM_LID_NODE_BOTTOM = 3
+};
+typedef struct SWMM_LidNodeLayer { int kind; double params[7]; } SWMM_LidNodeLayer;
+SWMM_ENGINE_API int swmm_lid_node_layer_count(SWMM_Engine engine, int control);
+SWMM_ENGINE_API int swmm_lid_node_layer_get(SWMM_Engine engine, int control, int row, SWMM_LidNodeLayer* out);
+/** Atomically replace the stack; sync dependent MaxDepths and outlet offsets.
+ * BUILDING/OPENED only. An invalid stack leaves the model unchanged. */
+SWMM_ENGINE_API int swmm_lid_node_layers_set(SWMM_Engine engine, int control, const SWMM_LidNodeLayer* rows, int count);
+/** control=-1 means plain storage. Set assigns and synchronizes MaxDepth.
+ * Get also accepts non-storage nodes, returning control=-1. InitSat is percent. */
+SWMM_ENGINE_API int swmm_node_get_lid(SWMM_Engine engine, int node, int* control, double* saturation);
+SWMM_ENGINE_API int swmm_node_set_lid(SWMM_Engine engine, int node, int control, double saturation);
+/** layer=0 removes an anchor; otherwise layer is one-based, top-to-bottom.
+ * top=0 anchors BOTTOM, top=1 anchors TOP. Requires exactly one LID endpoint. */
+SWMM_ENGINE_API int swmm_lid_node_outlet_get(SWMM_Engine engine, int link, int* layer, int* top);
+SWMM_ENGINE_API int swmm_lid_node_outlet_set(SWMM_Engine engine, int link, int layer, int top);
+/** Runtime profile, in display length units and volumetric moisture fraction.
+ * count=0 before initialization or on plain storage. Rows are top-to-bottom;
+ * each MEDIA layer is discretized into multiple rows. */
+SWMM_ENGINE_API int swmm_lid_node_state_count(SWMM_Engine engine, int node);
+SWMM_ENGINE_API int swmm_lid_node_state_get(SWMM_Engine engine, int node, int row, int* layer, double* bottom, double* top, double* moisture);
+
+
 
 /**
  * @brief Rename an LID control in place.
@@ -727,7 +758,7 @@ SWMM_ENGINE_API int swmm_lid_set_soil(SWMM_Engine engine, int idx, double thick,
  * @param engine    Engine handle.
  * @param idx       Zero-based LID index.
  * @param thick     Storage layer thickness.
- * @param void_frac Void fraction (porosity of gravel/aggregate).
+ * @param void_frac Void ratio (void volume / solid volume); porosity is e/(1+e).
  * @param ksat      Seepage rate through the storage layer bottom.
  * @returns SWMM_OK on success, or an error code.
  */

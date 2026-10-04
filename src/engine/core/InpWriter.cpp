@@ -2091,6 +2091,19 @@ int writeInpFile(const SimulationContext&  ctx_internal,
             auto uj = static_cast<size_t>(j);
             const char* name = ctx.lid_controls.names[uj].c_str();
             const char* ltype = ctx.lid_controls.lid_type[uj].c_str();
+            if (std::string(ltype) == "NODE") {
+                if (swmm5) { note("SWMM 5 export omits NODE LID control " + std::string(name)); continue; }
+                std::fprintf(f, "%-16s NODE\n", name);
+                if (uj < ctx.lid_controls.node_layers.size()) for (const auto& row : ctx.lid_controls.node_layers[uj]) {
+                    static const char* labels[] = {"SURFACE", "MEDIA", "AGGREGATE", "BOTTOM"};
+                    static const int counts[] = {2, 7, 3, 2};
+                    const int k = static_cast<int>(row.kind);
+                    std::fprintf(f, "%-16s %-12s", name, labels[k]);
+                    for (int p = 0; p < counts[k]; ++p) std::fprintf(f, " %.17g", row.params[p]);
+                    std::fprintf(f, "\n");
+                }
+                continue;
+            }
             // Type line
             std::fprintf(f,"%-16s %s\n", name, ltype);
             // SURFACE (5 params)
@@ -2152,6 +2165,27 @@ int writeInpFile(const SimulationContext&  ctx_internal,
                     for (int k=0;k<3;++k) std::fprintf(f," %10.4f",p[k]);
                     std::fprintf(f,"\n");
                 }
+            }
+        }
+    }
+
+    {
+        bool header = false;
+        const auto& st = ctx.node_subtypes.storages;
+        for (int r = 0; r < st.count(); ++r) {
+            const auto& lid = st.lid[r];
+            if (lid.control < 0) continue;
+            const auto& name = ctx.node_names.name_of(st.node_idx[r]);
+            if (swmm5) { note("SWMM 5 export treats LID node " + name + " as plain storage"); continue; }
+            if (!header) { sec(f, "LID_NODES"); header = true; }
+            std::fprintf(f, "%s %s %.17g\n", name.c_str(), ctx.lid_names.name_of(lid.control).c_str(), lid.initial_saturation);
+        }
+        if (!ctx.lid_node_outlets.empty()) {
+            if (swmm5) note("SWMM 5 export omits [LID_NODE_OUTLETS]");
+            else {
+                sec(f, "LID_NODE_OUTLETS");
+                for (const auto& a : ctx.lid_node_outlets)
+                    std::fprintf(f, "%s %d %s\n", ctx.link_names.name_of(a.link).c_str(), a.layer, a.top ? "TOP" : "BOTTOM");
             }
         }
     }

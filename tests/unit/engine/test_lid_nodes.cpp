@@ -1,0 +1,303 @@
+// SPDX-License-Identifier: Apache-2.0
+#include <gtest/gtest.h>
+#include "core/SWMMEngine.hpp"
+#include "core/InpWriter.hpp"
+#include "plugins/DefaultInputPlugin.hpp"
+#include "input/PostParseResolver.hpp"
+#include "hydrology/LidNode.hpp"
+#include "hydraulics/Node.hpp"
+#include "openswmm/engine/openswmm_infrastructure.h"
+#include "openswmm/engine/openswmm_links.h"
+#include "core/HotStartManager.hpp"
+#include "input/geopackage/GeoPackageReader.hpp"
+#include "input/geopackage/GeoPackageWriter.hpp"
+#include "edit/ObjectDeleter.hpp"
+#include "edit/TypeConverter.hpp"
+#include <filesystem>
+#include <fstream>
+using namespace openswmm;
+namespace {
+SimulationContext model() {
+    SimulationContext c;
+    c.nodes.resize(2);
+    c.node_names.add("S"); c.node_names.add("O");
+    c.node_subtypes.set_node_type(c.nodes, 0, NodeType::STORAGE);
+    c.node_subtypes.set_node_type(c.nodes, 1, NodeType::OUTFALL);
+    c.node_subtypes.storages.c[0] = 100.0;
+    c.nodes.full_depth[0] = 2.0;
+    c.lid_names.add("Stack");
+    c.lid_controls.names = {"Stack"}; c.lid_controls.lid_type = {"NODE"};
+    c.lid_controls.node_layers = {{
+        {LidNodeLayerKind::Surface, {6, 0.1}},
+        {LidNodeLayerKind::Media, {12, .45, .2, .08, 2, 10, 3}},
+        {LidNodeLayerKind::Aggregate, {6, .4, 100}},
+        {LidNodeLayerKind::Bottom, {.5, 0}}}};
+    c.node_subtypes.storages.lid[0] = {0, 10};
+    return c;
+}
+}
+TEST(LidNodes, ArbitraryOrderedLayersAndValidation) {
+    auto c = model();
+    auto& stack = c.lid_controls.node_layers[0];
+    for (int i = 0; i < 40; ++i)
+        stack.insert(stack.end() - 1, {LidNodeLayerKind::Media, {1, .5, .2, .1, 2, 5, 3}});
+    EXPECT_EQ(stack.size(), 44u);
+    EXPECT_TRUE(lidnode::validateStack(stack).empty());
+    EXPECT_DOUBLE_EQ(lidnode::thickness(stack), 64.0);
+    lidnode::sync(c, 0);
+    EXPECT_NEAR(c.nodes.full_depth[0], 64.0 / 12.0, 1.e-14);
+    lidnode::validate(c);
+    EXPECT_TRUE(c.errors.empty());
+    stack[2].params[1] = 1.1;
+    EXPECT_FALSE(lidnode::validateStack(stack).empty());
+}
+TEST(LidNodes, RejectsDepthMismatchAndDuplicateAssignment) {
+    auto c = model();
+    c.nodes.full_depth[0] = 4;
+    lidnode::validate(c);
+    ASSERT_EQ(c.errors.size(), 1u);
+    EXPECT_NE(c.errors[0].find("MaxDepth"), std::string::npos);
+    lidnode::readNodes(c, {"S Stack 10"});
+    EXPECT_EQ(c.errors.size(), 2u);
+}
+TEST(LidNodes, InputRoundTripPreservesRepeatedLayers) {
+    auto c = model();
+    auto& stack = c.lid_controls.node_layers[0];
+    stack.insert(stack.begin() + 2, {LidNodeLayerKind::Media, {12, .4, .25, .1, .75, 8, 5}});
+    lidnode::sync(c, 0);
+    auto dir = std::filesystem::path(OPENSWMM_TEST_SOURCE_DIR) / "../../output/lid_nodes_2026_10_04";
+    std::filesystem::create_directories(dir);
+    const auto path = (dir / "roundtrip.inp").string();
+    ASSERT_EQ(inp_writer::writeInpFile(c, path), 0);
+    SimulationContext reread;
+    DefaultInputPlugin plugin;
+    ASSERT_EQ(plugin.read(path, reread), 0);
+    input::resolve_cross_references(reread);
+    ASSERT_TRUE(reread.errors.empty()) << (reread.errors.empty() ? "" : reread.errors.front());
+    ASSERT_EQ(reread.lid_controls.node_layers[0].size(), 5u);
+    EXPECT_DOUBLE_EQ(reread.lid_controls.node_layers[0][2].params[4], .75);
+    EXPECT_EQ(reread.node_subtypes.storages.lid[0].control, 0);
+    EXPECT_DOUBLE_EQ(reread.node_subtypes.storages.lid[0].initial_saturation, 10);
+}
+TEST(LidNodes, AtomicApiStackAndStorageAssignment) {
+    SWMMEngine engine;
+    engine.context() = model();
+    engine.context().state = EngineState::OPENED;
+    auto h = reinterpret_cast<SWMM_Engine>(&engine);
+    SWMM_LidNodeLayer rows[] = {{2, {24, .4, 30}}};
+    ASSERT_EQ(swmm_lid_node_layers_set(h, 0, rows, 1), 0);
+    EXPECT_EQ(swmm_lid_node_layer_count(h, 0), 1);
+    EXPECT_DOUBLE_EQ(engine.context().nodes.full_depth[0], 2);
+    rows[0].params[1] = 1.2;
+    EXPECT_NE(swmm_lid_node_layers_set(h, 0, rows, 1), 0);
+    SWMM_LidNodeLayer out{};
+    ASSERT_EQ(swmm_lid_node_layer_get(h, 0, 0, &out), 0);
+    EXPECT_DOUBLE_EQ(out.params[1], .4);
+    EXPECT_NE(swmm_node_set_lid(h, 1, 0, 10), 0);
+    EXPECT_EQ(swmm_node_set_lid(h, 0, -1, 0), 0);
+    int control; double sat;
+    EXPECT_EQ(swmm_node_get_lid(h, 0, &control, &sat), 0);
+    EXPECT_EQ(control, -1);
+}
+TEST(LidNodes, RetainedAndMobileStorageConserveWater) {
+    auto c = model();
+    lidnode::initialize(c);
+    const double initial = lidnode::heldVolume(c, 0);
+    EXPECT_GT(initial, 0.0);
+    const double totalCapacity = node::getVolume(c.nodes, 0, 2, &c.tables, 0, &c.node_subtypes) + initial;
+    EXPECT_NEAR(totalCapacity, 100 * (.5 * .9 + 1 * .45 + .5 * .4), 1.e-10);
+    for (int step = 0; step < 100; ++step) {
+        c.nodes.lat_flow[0] = .01;
+        lidnode::prepareStep(c, 10.0, 0.0);
+        // Closed-bucket hydraulic balance of the uncaptured inflow.
+        c.nodes.volume[0] += c.nodes.lat_flow[0] * 10;
+        lidnode::finishStep(c);
+        EXPECT_NEAR(c.nodes.volume[0] + lidnode::heldVolume(c, 0), initial + .1 * (step + 1), 1.e-9);
+        for (const auto& cell : c.node_subtypes.storages.lid_state[0].cells) {
+            EXPECT_GE(cell.theta, cell.wilting_point - 1.e-14);
+            EXPECT_LE(cell.theta, cell.porosity + 1.e-14);
+        }
+    }
+}
+TEST(LidNodes, MobileDepthVolumeInverseAcrossEveryLayer) {
+    auto c = model(); lidnode::initialize(c);
+    for (double depth : {.1, .49, .5, .55, 1.2, 1.49, 1.5, 1.8, 2.0}) {
+        double v = node::getVolume(c.nodes, 0, depth, &c.tables, 0, &c.node_subtypes);
+        EXPECT_NEAR(node::getDepth(c.nodes, 0, v, &c.tables, 0, &c.node_subtypes), depth, 1.e-12);
+    }
+}
+TEST(LidNodes, RoutedBucketConservation) {
+    auto dir = std::filesystem::path(OPENSWMM_TEST_SOURCE_DIR) / "../../output/lid_nodes_2026_10_04";
+    std::filesystem::create_directories(dir);
+    const auto inp = (dir / "bucket.inp").string();
+    std::ofstream f(inp);
+    f << R"([OPTIONS]
+FLOW_UNITS CFS
+FLOW_ROUTING DYNWAVE
+START_DATE 01/01/2004
+END_DATE 01/01/2004
+END_TIME 00:10:00
+ROUTING_STEP 00:00:01
+VARIABLE_STEP 0
+REPORT_STEP 00:01:00
+IGNORE_QUALITY YES
+[STORAGE]
+S 0 2 0 FUNCTIONAL 0 0 100 0 0
+[OUTFALLS]
+O 0 FREE NO
+[ORIFICES]
+D S O BOTTOM 0 0.6 NO 0
+[XSECTIONS]
+D CIRCULAR .1 0 0 0
+[DWF]
+S FLOW .01
+[LID_CONTROLS]
+Stack NODE
+Stack SURFACE 6 .1
+Stack MEDIA 12 .45 .2 .08 2 10 3
+Stack AGGREGATE 6 .4 100
+[LID_NODES]
+S Stack 10
+[LID_NODE_OUTLETS]
+D 3 BOTTOM
+)";
+    f.close();
+    SWMMEngine e;
+    ASSERT_EQ(e.open(inp.c_str(), (dir / "bucket.rpt").string().c_str(), (dir / "bucket.out").string().c_str()), 0);
+    ASSERT_EQ(e.initialize(), 0);
+    ASSERT_EQ(e.start(1), 0);
+    double t = 0;
+    do { ASSERT_EQ(e.step(&t), 0); } while (t > 0);
+    ASSERT_EQ(e.end(), 0);
+    auto& mb = e.context().mass_balance;
+    const double initial = mb.routing_init_storage;
+    const double final = mb.routing_final_storage;
+    const double input = mb.routing_dry_weather + mb.routing_external;
+    const double output = mb.routing_outflow + mb.routing_flooding + mb.routing_evap_loss + mb.routing_seep_loss;
+    EXPECT_NEAR(initial + input, final + output, 0.02) << "initial=" << initial << " final=" << final << " input=" << input << " output=" << output;
+    e.close();
+}
+
+TEST(LidNodes, HotstartRetainsMoistureAndCloggingHistory) {
+    auto c = model(); lidnode::initialize(c);
+    c.nodes.lat_flow[0] = .1;
+    lidnode::prepareStep(c, 20, 0); lidnode::finishStep(c);
+    const auto saved = c.node_subtypes.storages.lid_state[0];
+    const auto path = (std::filesystem::path(OPENSWMM_TEST_SOURCE_DIR) / "../../output/lid_nodes_2026_10_04/profile.hsf").string();
+    std::unique_ptr<HotStartFile> hs(HotStartManager::save(c, path));
+    ASSERT_TRUE(hs); EXPECT_EQ(hs->header.version, 8u);
+    hs.reset(HotStartManager::open(path)); ASSERT_TRUE(hs);
+    lidnode::initialize(c);
+    ASSERT_EQ(HotStartManager::apply(*hs, c), 0);
+    const auto& restored = c.node_subtypes.storages.lid_state[0];
+    EXPECT_DOUBLE_EQ(restored.held_volume, saved.held_volume);
+    EXPECT_DOUBLE_EQ(restored.treated_volume, saved.treated_volume);
+    for (std::size_t k = 0; k < saved.cells.size(); ++k)
+        EXPECT_DOUBLE_EQ(restored.cells[k].theta, saved.cells[k].theta);
+    c.node_subtypes.storages.lid_state[0].cells.pop_back();
+    EXPECT_GT(HotStartManager::apply(*hs, c), 0);
+}
+#ifdef LID_TEST_GEOPACKAGE
+TEST(LidNodes, GeoPackagePreservesOrderedLayersAndAssignment) {
+    auto c = model();
+    // Populate all standard parallel columns as a parsed model would.
+    c.lid_controls.surface.resize(1); c.lid_controls.soil.resize(1);
+    c.lid_controls.storage.resize(1); c.lid_controls.pavement.resize(1);
+    c.lid_controls.drain.resize(1); c.lid_controls.drainmat.resize(1); c.lid_controls.removals.resize(1);
+    const auto path = (std::filesystem::path(OPENSWMM_TEST_SOURCE_DIR) / "../../output/lid_nodes_2026_10_04/profile.gpkg").string();
+    ASSERT_EQ(gpkg::write_to_file(path, c, "lid"), 0);
+    SimulationContext restored;
+    ASSERT_EQ(gpkg::read_from_file(path, restored, "lid"), 0);
+    ASSERT_EQ(restored.lid_controls.node_layers.size(), 1u);
+    ASSERT_EQ(restored.lid_controls.node_layers[0].size(), 4u);
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_EQ(restored.lid_controls.node_layers[0][i].kind, c.lid_controls.node_layers[0][i].kind);
+        EXPECT_EQ(restored.lid_controls.node_layers[0][i].params, c.lid_controls.node_layers[0][i].params);
+    }
+    EXPECT_DOUBLE_EQ(restored.node_subtypes.storages.lid[0].initial_saturation, 10);
+}
+#endif
+TEST(LidNodes, OrdinaryLinksAreNumericallyUnchanged) {
+    auto c = model();
+    c.links.resize(1); c.links.node1[0] = 0; c.links.node2[0] = 1;
+    const double q = .123456789123456789;
+    EXPECT_DOUBLE_EQ(lidnode::exchangePorts(c, 0, q, .783943), q);
+}
+TEST(LidNodes, PortsRespectAvailableWaterAndBackflowCapacity) {
+    auto c = model(); lidnode::initialize(c);
+    c.links.resize(1); c.links.node1[0] = 0; c.links.node2[0] = 1;
+    c.links.offset1[0] = 1.5;
+    c.node_subtypes.storages.lid_state[0].cells[0].theta = .1;
+    lidnode::resetPorts(c);
+    const double q = lidnode::exchangePorts(c, 0, 100, 10);
+    EXPECT_NEAR(q, .5, 1.e-12);
+    EXPECT_DOUBLE_EQ(lidnode::exchangePorts(c, 0, 100, 10), 0);
+    lidnode::resetPorts(c);
+    EXPECT_DOUBLE_EQ(lidnode::exchangePorts(c, 0, -100, 10), -100);
+    EXPECT_NEAR(c.node_subtypes.storages.lid_state[0].port_delta[0], 40, 1.e-12);
+}
+
+TEST(LidNodes, ElevatedPortsConserveAcrossPondingAndSurcharge) {
+    const auto dir = std::filesystem::path(OPENSWMM_TEST_SOURCE_DIR) / "../../output/lid_nodes_2026_10_04";
+    for (const bool reverse : {false, true}) for (const bool conduit : {false, true}) {
+        const auto stem = (dir / (std::string(reverse ? "backflow" : "overflow") + (conduit ? "_pipe" : ""))).string();
+        std::ofstream f(stem + ".inp");
+        f << "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2004\nEND_DATE 01/01/2004\nEND_TIME 00:05:00\nROUTING_STEP 00:00:01\nVARIABLE_STEP 0\nREPORT_STEP 00:01:00\nIGNORE_QUALITY YES\n"
+          << "[STORAGE]\nS 0 2 0 FUNCTIONAL 0 0 100 0 0\n[OUTFALLS]\nO 0 "
+          << (reverse ? "FIXED 2.5" : "FREE") << " NO\n" << (conduit ? "[CONDUITS]\nD S O 10 .013 1.5 0 0 0\n" : "[ORIFICES]\nD S O SIDE 1.5 0.6 NO 0\n") << "[XSECTIONS]\nD CIRCULAR .2 0 0 0\n[DWF]\nS FLOW "
+          << (reverse ? 0.0 : 1.0)
+          << "\n[LID_CONTROLS]\nStack NODE\nStack SURFACE 6 .1\nStack MEDIA 12 .45 .2 .08 .01 10 3\nStack AGGREGATE 6 .4 100\n[LID_NODES]\nS Stack 10\n";
+        f.close();
+        SWMMEngine e;
+        ASSERT_EQ(e.open((stem+".inp").c_str(), (stem+".rpt").c_str(), (stem+".out").c_str()), 0);
+        ASSERT_EQ(e.initialize(), 0); ASSERT_EQ(e.start(1), 0);
+        double t = 0;
+        do { ASSERT_EQ(e.step(&t), 0); } while (t > 0);
+        ASSERT_EQ(e.end(), 0);
+        const auto& mb = e.context().mass_balance;
+        EXPECT_NEAR(mb.routing_init_storage + mb.routing_dry_weather + mb.routing_external,
+                    mb.routing_final_storage + mb.routing_outflow + mb.routing_flooding + mb.routing_evap_loss + mb.routing_seep_loss, .1) << stem;
+        for (const auto& c : e.context().node_subtypes.storages.lid_state[0].cells) {
+            EXPECT_LE(c.theta, c.porosity + 1.e-12); EXPECT_GE(c.theta, c.wilting_point - 1.e-12);
+        }
+        e.close();
+    }
+}
+
+TEST(LidNodes, FullySaturatedInitialProfileHasConnectedWaterTable) {
+    auto c = model(); c.node_subtypes.storages.lid[0].initial_saturation = 100;
+    lidnode::initialize(c);
+    EXPECT_NEAR(lidnode::heldVolume(c, 0) + c.nodes.volume[0], 65, 1.e-12);
+    EXPECT_GT(c.nodes.volume[0], 0);
+    EXPECT_NEAR(node::getDepth(c.nodes, 0, c.nodes.volume[0], &c.tables, 0, &c.node_subtypes), 1.5, 1.e-12);
+}
+
+TEST(LidNodes, ConvertingStorageClearsOutletAnchors) {
+    auto c = model(); c.links.resize(1); c.links.node1[0] = 0; c.links.node2[0] = 1;
+    c.lid_node_outlets.push_back({0, 3, false});
+    edit::convert_node(c, 0, NodeType::JUNCTION);
+    EXPECT_TRUE(c.lid_node_outlets.empty());
+    EXPECT_EQ(c.node_subtypes.storage_row(0), -1);
+}
+
+TEST(LidNodes, UndoingAddedOutletClearsItsAnchor) {
+    SWMMEngine engine;
+    engine.context() = model(); engine.context().state = EngineState::OPENED;
+    const auto h = reinterpret_cast<SWMM_Engine>(&engine);
+    ASSERT_EQ(swmm_link_add(h, "Drain", SWMM_LINK_ORIFICE), 0);
+    ASSERT_EQ(swmm_link_set_nodes(h, 0, 0, 1), 0);
+    ASSERT_EQ(swmm_lid_node_outlet_set(h, 0, 3, 0), 0);
+    ASSERT_EQ(swmm_link_pop_last(h, "Drain"), 0);
+    EXPECT_TRUE(engine.context().lid_node_outlets.empty());
+}
+
+TEST(LidNodes, SurchargeWetsMediaToFieldCapacityConservatively) {
+    auto c = model(); lidnode::initialize(c);
+    c.nodes.depth[0] = 1.5;
+    c.nodes.volume[0] = node::getVolume(c.nodes, 0, 1.5, &c.tables, 0, &c.node_subtypes);
+    const double before = c.nodes.volume[0] + lidnode::heldVolume(c, 0);
+    lidnode::prepareStep(c, 1, 0);
+    EXPECT_NEAR(c.nodes.volume[0] + lidnode::heldVolume(c, 0), before, 1.e-12);
+    for (const auto& cell : c.node_subtypes.storages.lid_state[0].cells)
+        if (cell.kind == LidNodeLayerKind::Media) EXPECT_DOUBLE_EQ(cell.theta, cell.field_capacity);
+}

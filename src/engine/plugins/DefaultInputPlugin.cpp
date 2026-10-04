@@ -27,6 +27,7 @@
  */
 
 #include "DefaultInputPlugin.hpp"
+#include "../hydrology/LidNode.hpp"
 
 #include "../input/InputReader.hpp"
 #include "../input/PostParseResolver.hpp"
@@ -99,6 +100,8 @@ void DefaultInputPlugin::register_builtin_handlers() {
     registry_.register_builtin("INFILTRATION",  input::handle_infiltration);
     registry_.register_builtin("LID_CONTROLS",  input::handle_lid_controls);
     registry_.register_builtin("LID_USAGE",     input::handle_lid_usage);
+    registry_.register_builtin("LID_NODES", lidnode::readNodes);
+    registry_.register_builtin("LID_NODE_OUTLETS", lidnode::readOutlets);
     registry_.register_builtin("AQUIFERS",      input::handle_aquifers);
     registry_.register_builtin("GROUNDWATER",   input::handle_groundwater);
     registry_.register_builtin("GWF",           input::handle_gwf);
