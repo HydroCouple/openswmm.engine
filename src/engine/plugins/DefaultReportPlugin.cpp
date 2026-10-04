@@ -73,12 +73,13 @@ static const char* SurchargeWords[] = { "EXTRAN", "SLOT", "DYNAMIC_SLOT", "TPA" 
 static const char* NodeTypeWords[] = { "JUNCTION", "OUTFALL", "DIVIDER", "STORAGE" };
 static const char* LinkTypeWords[] = { "CONDUIT", "PUMP", "ORIFICE", "WEIR", "OUTLET" };
 static const char* RainTypeWords[] = { "INTENSITY", "VOLUME", "CUMULATIVE" };
+// Spelled as legacy XsectTypeWords (keywords.c), which the report prints.
 static const char* XsectShapeWords[] = {
     "CIRCULAR", "FILLED_CIRCULAR", "RECT_CLOSED", "RECT_OPEN",
     "TRAPEZOIDAL", "TRIANGULAR", "PARABOLIC", "POWER",
-    "MOD_BASKET", "EGG", "HORSESHOE", "GOTHIC",
-    "CATENARY", "SEMI_ELLIPTIC", "BASKETHANDLE", "SEMI_CIRCULAR",
-    "RECT_TRIANG", "RECT_ROUND", "HORIZ_ELLIPSE", "VERT_ELLIPSE",
+    "MODBASKETHANDLE", "EGG", "HORSESHOE", "GOTHIC",
+    "CATENARY", "SEMIELLIPTICAL", "BASKETHANDLE", "SEMICIRCULAR",
+    "RECT_TRIANGULAR", "RECT_ROUND", "HORIZ_ELLIPSE", "VERT_ELLIPSE",
     "ARCH", "IRREGULAR", "CUSTOM",
     "FORCE_MAIN", "STREET", "DUMMY"
 };
@@ -476,6 +477,9 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
             auto ui = static_cast<std::size_t>(i);
             int lt = static_cast<int>(ctx.links.type[ui]);
             int n1 = ctx.links.node1[ui], n2 = ctx.links.node2[ui];
+            // legacy lists the end nodes in their original orientation
+            const int dir = ctx.links.direction[ui];
+            if (dir < 0) std::swap(n1, n2);
             const char* n1_name = (n1 >= 0) ? ctx.node_names.name_of(n1).c_str() : "";
             const char* n2_name = (n2 >= 0) ? ctx.node_names.name_of(n2).c_str() : "";
 
@@ -497,9 +501,17 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
                 }
                 std::fprintf(f, "%-12s%10.1f%10.4f%10.4f",
                     "CONDUIT",
-                    (cr >= 0) ? CD.length[static_cast<size_t>(cr)] : 0.0,
-                    ((cr >= 0) ? CD.slope[static_cast<size_t>(cr)] : 0.0) * 100.0,
+                    ((cr >= 0) ? CD.length[static_cast<size_t>(cr)] : 0.0) * du_opt.length,
+                    ((cr >= 0) ? CD.slope[static_cast<size_t>(cr)] : 0.0) * 100.0 * dir,
                     n_rep);
+            } else if (lt == static_cast<int>(LinkType::PUMP)) {
+                // legacy "%-5s PUMP  " with PumpTypeWords; curve_type 1-5 is
+                // TYPE1..TYPE5, anything else (6, or no curve) is IDEAL
+                static const char* const kPumpWords[] =
+                    {"TYPE1", "TYPE2", "TYPE3", "TYPE4", "TYPE5"};
+                const int pr = ctx.link_subtypes.pump_row(i);
+                const int ct = (pr >= 0) ? ctx.link_subtypes.pumps.curve_type[static_cast<size_t>(pr)] : -1;
+                std::fprintf(f, "%-5s PUMP  ", (ct >= 1 && ct <= 5) ? kPumpWords[ct - 1] : "IDEAL");
             } else {
                 std::fprintf(f, "%-12s", lt_str(lt));
             }
@@ -511,13 +523,9 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
     // =====================================================================
     // Cross Section Summary — matches legacy inputrpt.c
     // =====================================================================
+    // legacy writes the heading whenever there are links, conduits or not
     if (ctx.n_links() > 0) {
-        bool any_conduit = false;
-        for (int i = 0; i < ctx.n_links(); ++i)
-            if (ctx.links.type[static_cast<std::size_t>(i)] == LinkType::CONDUIT)
-                { any_conduit = true; break; }
-
-        if (any_conduit) {
+        {
             WRITE(f, "*********************");
             WRITE(f, "Cross Section Summary");
             WRITE(f, "*********************");
@@ -536,16 +544,23 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
                 int shape = static_cast<int>(ctx.links.xsect_shape[ui]);
                 const char* shape_str = (shape >= 0 && shape <= 25) ?
                     XsectShapeWords[shape] : "CIRCULAR";
+                // legacy names a CUSTOM / IRREGULAR / STREET section by its
+                // curve, transect or street
+                const auto xs = ctx.links.xsect_shape[ui];
+                if ((xs == XsectShape::CUSTOM || xs == XsectShape::IRREGULAR ||
+                     xs == XsectShape::STREET_XSECT) &&
+                    !ctx.links.pump_curve_name[ui].empty())
+                    shape_str = ctx.links.pump_curve_name[ui].c_str();
 
                 const int cr = ctx.link_subtypes.conduit_row(i);
                 const auto& CD = ctx.link_subtypes.conduits;
                 std::fprintf(f, "\n  %-16s %-16s %8.2f %8.2f %8.2f %8.2f      %3d %8.2f",
                     ctx.link_names.name_of(i).c_str(),
                     shape_str,
-                    ctx.links.xsect_y_full[ui],
-                    ctx.links.xsect_a_full[ui],
-                    ctx.links.xsect_r_full[ui],
-                    ctx.links.xsect_w_max[ui],
+                    ctx.links.xsect_y_full[ui] * du_opt.length,
+                    ctx.links.xsect_a_full[ui] * du_opt.length * du_opt.length,
+                    ctx.links.xsect_r_full[ui] * du_opt.length,
+                    ctx.links.xsect_w_max[ui] * du_opt.length,
                     (cr >= 0) ? CD.barrels[static_cast<size_t>(cr)] : 1,
                     ((cr >= 0) ? CD.q_full[static_cast<size_t>(cr)] : 0.0) * Qcf_pre);
             }
@@ -1769,14 +1784,12 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // Logged by ControlEngine::applyPendingActions() when rpt_controls == true.
     // =====================================================================
     if (opt.rpt_controls) {
-        WRITE(f, "**********************");
+        WRITE(f, "*********************");
         WRITE(f, "Control Actions Taken");
-        WRITE(f, "**********************");
+        WRITE(f, "*********************");
 
-        if (ctx.control_log.empty()) {
-            WRITE(f, "");
-            WRITE(f, "No control actions were taken.");
-        } else {
+        // legacy writes only the heading when no action was taken
+        if (!ctx.control_log.empty()) {
             // Match legacy report_writeControlAction() exactly:
             //   "  %11s: %8s Link %s setting changed to %6.2f by Control %s"
             // with absolute calendar date/time (not elapsed days).

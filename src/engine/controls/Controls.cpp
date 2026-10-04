@@ -277,7 +277,10 @@ int ControlEngine::evaluate(SimulationContext& ctx, double current_date, double 
         const int r = static_cast<int>(ur);
         const auto& actions = rule_results_[ur]
             ? rules_[ur].then_actions : rules_[ur].else_actions;
-        for (auto a : actions) {
+        // legacy addAction PREPENDS each clause (controls.c:1546), so a
+        // rule's actions run last-authored first
+        for (auto it = actions.rbegin(); it != actions.rend(); ++it) {
+            auto a = *it;
             // PID / CURVE / TIMESERIES actions read the LAST premise's LHS/RHS
             // from control_value_ / set_point_. The batch path does NOT set
             // these members — only the scalar evaluatePremise() path does.
@@ -315,17 +318,35 @@ int ControlEngine::evaluate(SimulationContext& ctx, double current_date, double 
 int ControlEngine::applyPendingActions(SimulationContext& ctx, double current_time) {
     (void)current_time;
 
-    std::unordered_map<int, PendingAction> best;
-    for (const auto& pa : pending_actions_) {
+    // Legacy updateActionList: one slot per link, the first action kept
+    // unless a later one has strictly higher priority; executeActionList
+    // walks the slots head first, which fixes the logged order.
+    for (auto& s : action_slots_) s = -1;               // clearActionList
+    for (int k = 0; k < static_cast<int>(pending_actions_.size()); ++k) {
+        const auto& pa = pending_actions_[static_cast<size_t>(k)];
         if (pa.link_idx < 0 || pa.link_idx >= ctx.n_links()) continue;
-        auto it = best.find(pa.link_idx);
-        if (it == best.end() || pa.priority > it->second.priority) {
-            best[pa.link_idx] = pa;
+        size_t s = 0;
+        bool listed = false;
+        for (; s < action_slots_.size() && action_slots_[s] >= 0; ++s) {
+            auto& cur = action_slots_[s];
+            if (pending_actions_[static_cast<size_t>(cur)].link_idx == pa.link_idx) {
+                if (pa.priority > pending_actions_[static_cast<size_t>(cur)].priority)
+                    cur = k;
+                listed = true;
+                break;
+            }
         }
+        if (listed) continue;
+        if (s < action_slots_.size()) action_slots_[s] = k;   // reuse a node
+        else action_slots_.insert(action_slots_.begin(), k);  // prepend
     }
 
     int changes = 0;
-    for (const auto& kv : best) {
+    for (const int slot : action_slots_) {
+        if (slot < 0) break;
+        const std::pair<int, PendingAction> kv{
+            pending_actions_[static_cast<size_t>(slot)].link_idx,
+            pending_actions_[static_cast<size_t>(slot)]};
         auto ul = static_cast<size_t>(kv.first);
         if (ctx.links.target_setting[ul] != kv.second.value) {
             ctx.links.target_setting[ul] = kv.second.value;
@@ -1008,6 +1029,7 @@ void ControlEngine::clearRules() {
     total_premises_ = 0;
     rule_results_.clear();
     pending_actions_.clear();
+    action_slots_.clear();
     last_parse_error_ = ParseError{};
 }
 
