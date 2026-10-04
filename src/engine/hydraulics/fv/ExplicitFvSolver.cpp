@@ -3853,7 +3853,10 @@ void ExplicitFvSolver::fireFaces(const std::vector<int>& faces, double dt0) {
 
 void ExplicitFvSolver::fireCells(const std::vector<int>& cells, double dt0,
                                  const FvStepForcing& forcing) {
-    for (const int c : cells) {
+    // Each due cell appears once and owns its state, closure and accumulator
+    // writes. A finite spill rim exists only on a node face with one incident
+    // cell; spills are gathered later by fireNodes in the original order.
+    auto update_cell = [&](int c) {
         const auto uc = static_cast<std::size_t>(c);
         const double dt = static_cast<double>(1 << cell_tier_[uc]) * dt0;
         const FvGeometry& g =
@@ -3919,7 +3922,7 @@ void ExplicitFvSolver::fireCells(const std::vector<int>& cells, double dt0,
         if (!tpa_cell && h_new <= k::kDryDepth) {
             state_->cell_q[uc] = 0.0;
             cell_u_[uc]        = 0.0;
-            continue;
+            return;
         }
         const double u = q_new / a_new;
         q_new = frictionFor(g, mesh_->conduit_roughness[static_cast<std::size_t>(mesh_->cell_conduit[uc])],
@@ -3934,7 +3937,19 @@ void ExplicitFvSolver::fireCells(const std::vector<int>& cells, double dt0,
 
         state_->cell_q[uc] = q_new;
         cell_u_[uc] = q_new / a_new;
+    };
+    const int n = static_cast<int>(cells.size());
+    perf::CounterBatch counters;
+#ifdef SWMM_USE_OPENMP
+    // Avoid entering a serialized OpenMP region for small due sets.
+    if (n >= kOmpMinCells && omp_get_max_threads() > 1) {
+#pragma omp parallel for schedule(static) private(counters)
+        for (int i = 0; i < n; ++i)
+            update_cell(cells[static_cast<std::size_t>(i)]);
+        return;
     }
+#endif
+    for (const int c : cells) update_cell(c);
 }
 
 void ExplicitFvSolver::fireNodes(const std::vector<int>& nodes, double dt0,
