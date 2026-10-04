@@ -118,14 +118,21 @@ static void elapsedToStr(double date, double start_date, char* buf, int buflen) 
 }
 
 /// Decompose elapsed date into days/hrs/mins components
-static void elapsedToParts(double date, double start_date, int& days, int& hrs, int& mins) {
+// legacy getElapsedTime (swmm5.c) + datetime_decodeTime: time since the
+// REPORT start, rounded to the nearest second before it is split, so a
+// maximum at 12:59:59.99 reads 13:00 (truncating the fraction read 12:59).
+static void elapsedToParts(double date, double report_start, int& days, int& hrs, int& mins) {
     days = hrs = mins = 0;
-    if (date <= 0.0 || start_date <= 0.0) return;
-    double elapsed = date - start_date;
-    days = static_cast<int>(std::floor(elapsed));
-    double frac = elapsed - days;
-    hrs  = static_cast<int>(frac * 24.0);
-    mins = static_cast<int>((frac * 24.0 - hrs) * 60.0);
+    if (date <= 0.0) return;
+    const double x = date - report_start;
+    if (x <= 0.0) return;
+    days = static_cast<int>(x);
+    int secs = static_cast<int>(std::floor((x - std::floor(x)) * 86400.0 + 0.5));
+    if (secs >= 86400) secs = 86399;
+    const int total_mins = secs / 60;
+    hrs  = total_mins / 60;
+    mins = total_mins % 60;
+    if (hrs > 23) hrs = 0;
 }
 
 static const char* nt_str(int nt) {
@@ -2113,7 +2120,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             double max_hgl = (ctx.nodes.invert_elev[uj] + max_d_int) * len_ucf;
             double rpt_max = ctx.nodes.stat_max_rpt_depth[uj] * len_ucf;
             int days, hrs, mins;
-            elapsedToParts(ctx.nodes.stat_max_depth_date[uj], ctx.options.start_date, days, hrs, mins);
+            elapsedToParts(ctx.nodes.stat_max_depth_date[uj], ctx.options.report_start, days, hrs, mins);
 
             std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(j).c_str());
             std::fprintf(f, " %-9s", nt_str(nt));
@@ -2152,7 +2159,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             double vol_lat  = ctx.nodes.stat_lat_inflow_vol[uj] * Vcf;
             double vol_tot  = ctx.nodes.stat_total_inflow_vol[uj] * Vcf;
             int days, hrs, mins;
-            elapsedToParts(ctx.nodes.stat_max_inflow_date[uj], ctx.options.start_date, days, hrs, mins);
+            elapsedToParts(ctx.nodes.stat_max_inflow_date[uj], ctx.options.report_start, days, hrs, mins);
 
             // Flow balance error (approximate)
             double err = 0.0;
@@ -2256,7 +2263,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 double vol_mgal = ctx.nodes.stat_vol_flooded[uj] * Vcf;
                 int days, hrs, mins;
                 elapsedToParts(ctx.nodes.stat_max_overflow_date[uj],
-                               ctx.options.start_date, days, hrs, mins);
+                               ctx.options.report_start, days, hrs, mins);
                 // Ponded depth = max depth - full depth (for DW only)
                 double ponded = 0.0;
                 if (static_cast<int>(opt.routing_model) == 2) {
@@ -2344,7 +2351,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
                 int days, hrs, mins;
                 elapsedToParts(ctx.nodes.stat_max_depth_date[uj],
-                               ctx.options.start_date, days, hrs, mins);
+                               ctx.options.report_start, days, hrs, mins);
 
                 double max_outflow = ctx.nodes.stat_storage_max_outflow[uj] * Qcf;
 
@@ -2495,23 +2502,61 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             }
 
             int days, hrs, mins;
-            elapsedToParts(ctx.links.stat_max_flow_date[uj], ctx.options.start_date, days, hrs, mins);
+            elapsedToParts(ctx.links.stat_max_flow_date[uj], ctx.options.report_start, days, hrs, mins);
 
+            // Row layout of legacy writeLinkFlows (statsrpt.c). A link with no
+            // [XSECTIONS] row keeps xsect.type DUMMY (0) there — pumps and
+            // outlets — and an IRREGULAR section prints CHANNEL.
+            const auto shape = ctx.links.xsect_shape[uj];
+            const bool dummy = shape == XsectShape::DUMMY ||
+                               lt == static_cast<int>(LinkType::PUMP) ||
+                               lt == static_cast<int>(LinkType::OUTLET);
             std::fprintf(f, "\n  %-20s", ctx.link_names.name_of(j).c_str());
-            std::fprintf(f, " %-7s ", lt_str(lt));
+            if (dummy)                               std::fprintf(f, " DUMMY   ");
+            else if (shape == XsectShape::IRREGULAR) std::fprintf(f, " CHANNEL ");
+            else                                     std::fprintf(f, " %-7s ", lt_str(lt));
             std::fprintf(f, ff, mf);
             std::fprintf(f, "  %4d  %02d:%02d", days, hrs, mins);
 
-            if (lt == static_cast<int>(LinkType::CONDUIT)) {
-                std::fprintf(f, "   %7.2f", mv);
-                std::fprintf(f, "  %6.2f", flow_ratio);
-                std::fprintf(f, "  %6.2f", fill);
-            } else {
-                // Non-conduit: no velocity, full ratios
-                std::fprintf(f, "          ");
-                std::fprintf(f, "  %6.2f", flow_ratio);
-                std::fprintf(f, "        ");
+            // Pumps: max flow over the pump curve's largest flow (legacy
+            // Link.qFull, link.c:1505-1516; 0 for an ideal pump).
+            if (lt == static_cast<int>(LinkType::PUMP)) {
+                double q_full = 0.0;
+                const int pr = ctx.link_subtypes.pump_row(j);
+                if (pr >= 0) {
+                    const int ci = ctx.link_subtypes.pumps.curve[static_cast<std::size_t>(pr)];
+                    if (ci >= 0 && ci < static_cast<int>(ctx.tables.tables.size())) {
+                        const auto& ty = ctx.tables.tables[static_cast<std::size_t>(ci)].y;
+                        if (!ty.empty())
+                            q_full = *std::max_element(ty.begin(), ty.end()) / Qcf;
+                    }
+                }
+                if (q_full > 0.0) {
+                    std::fprintf(f, "          ");
+                    std::fprintf(f, "  %6.2f", ctx.links.stat_max_flow[uj] / q_full);
+                    continue;
+                }
             }
+            if (dummy) continue;
+
+            if (lt == static_cast<int>(LinkType::CONDUIT)) {
+                if (mv > 50.0) std::fprintf(f, "    >50.00");
+                else           std::fprintf(f, "   %7.2f", mv);
+                std::fprintf(f, "  %6.2f", flow_ratio);
+            } else {
+                std::fprintf(f, "                  ");
+            }
+
+            // Max/full depth; a bottom orifice has no full depth.
+            bool no_full_depth = ctx.links.xsect_y_full[uj] <= 0.0;
+            if (lt == static_cast<int>(LinkType::ORIFICE)) {
+                const int orow = ctx.link_subtypes.orifice_row(j);
+                if (orow >= 0 &&
+                    ctx.link_subtypes.orifices.orifice_type[static_cast<std::size_t>(orow)] == 0.0)
+                    no_full_depth = true;
+            }
+            if (no_full_depth) std::fprintf(f, "        ");
+            else               std::fprintf(f, "  %6.2f", fill);
         }
     }
 

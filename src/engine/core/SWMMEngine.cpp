@@ -5067,6 +5067,13 @@ void SWMMEngine::ensureXspCache() noexcept {
 
 void SWMMEngine::updateStatistics(double dt_routing) noexcept {
     const int np = ctx_.n_pollutants();
+    // legacy stats_updateFlowStats(routingStep, getDateTime(NewRoutingTime)):
+    // routing_execute has already advanced the clock, so a maximum is stamped
+    // with the END of the step (+1 ms, getDateTime). This runs before
+    // TimestepController::advance, where current_date is still the start.
+    const double stat_date = datetime::addSeconds(
+        ctx_.options.start_date,
+        (ctx_.elapsed_ms + 1000.0 * dt_routing + 1.0) / 1000.0);
 
     // B6. Update statistics (P8-G11)
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
@@ -5086,13 +5093,13 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
         }
         if (cur_depth > ctx_.nodes.stat_max_depth[uj]) {
             ctx_.nodes.stat_max_depth[uj] = cur_depth;
-            ctx_.nodes.stat_max_depth_date[uj] = ctx_.current_date;
+            ctx_.nodes.stat_max_depth_date[uj] = stat_date;
         }
         if (cur_depth > ctx_.nodes.stat_max_rpt_depth[uj])
             ctx_.nodes.stat_max_rpt_depth[uj] = cur_depth;
         if (ctx_.nodes.overflow[uj] > ctx_.nodes.stat_max_overflow[uj]) {
             ctx_.nodes.stat_max_overflow[uj] = ctx_.nodes.overflow[uj];
-            ctx_.nodes.stat_max_overflow_date[uj] = ctx_.current_date;
+            ctx_.nodes.stat_max_overflow_date[uj] = stat_date;
         }
         if (ctx_.nodes.overflow[uj] > 0.0) {
             ctx_.nodes.stat_time_flooded[uj] += dt_routing;
@@ -5118,7 +5125,7 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
             ctx_.nodes.stat_max_lat_inflow[uj] = lat;
         if (total_inflow > ctx_.nodes.stat_max_total_inflow[uj]) {
             ctx_.nodes.stat_max_total_inflow[uj] = total_inflow;
-            ctx_.nodes.stat_max_inflow_date[uj] = ctx_.current_date;
+            ctx_.nodes.stat_max_inflow_date[uj] = stat_date;
         }
         ctx_.nodes.stat_lat_inflow_vol[uj]   += lat * dt_routing;
         ctx_.nodes.stat_total_inflow_vol[uj] += total_inflow * dt_routing;
@@ -5171,7 +5178,7 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
         double q = std::fabs(ctx_.links.flow[uj]);
         if (q > ctx_.links.stat_max_flow[uj]) {
             ctx_.links.stat_max_flow[uj] = q;
-            ctx_.links.stat_max_flow_date[uj] = ctx_.current_date;
+            ctx_.links.stat_max_flow_date[uj] = stat_date;
         }
 
         // Volume conveyed
