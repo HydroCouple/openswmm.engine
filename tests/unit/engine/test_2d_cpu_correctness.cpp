@@ -14,6 +14,11 @@ using namespace openswmm::twoD;
 namespace openswmm::twoD {
 // Inspect the scheduling invariant without making debug state a public API.
 struct ExplicitInertialSolverTestAccess {
+    static double speed(const ExplicitInertialSolver& s,int i) {
+        const double h = s.state_->depth[i];
+        return h > s.opts_->dry_depth ? std::hypot(s.qcx_[i],s.qcy_[i])/h : 0.0;
+    }
+    static void fireSwe(ExplicitInertialSolver& s,double dt) {s.fireFacesSwe(s.active_faces_,dt,true);}
     static void rebuild(ExplicitInertialSolver& s) { s.syncAndRebuild(0); }
     static void refresh(ExplicitInertialSolver& s) { s.refreshDt0(); }
     static int tier(const ExplicitInertialSolver& s,int i) {return s.tier_[i];}
@@ -126,10 +131,10 @@ TEST(Cpu2DCorrectness,BlockedWetDryFaceRetainsHydrostaticPressure) {
     EXPECT_EQ(f.mass,0);EXPECT_NEAR(lx,-.5*inertial::kGravity*.01,1e-15);
 }
 TEST(Cpu2DCorrectness,LakeAtRestAgainstAnEmergedBump) {
-    for(bool quad:{false,true})for(int order:{1,2}){
+    for(bool quad:{false,true})for(int order:{1,2})for(auto closure:{CellClosure2D::FLAT,CellClosure2D::VFR}){
         auto m=grid(16,quad);
         for(int i=0;i<m.n_vertices();++i){double x=m.vx[i]-8;m.vz[i]=std::abs(x)<2?.2-.05*x*x:0;}
-        buildMeshTopology(m);auto s=state(m,0);auto o=options(4,1);o.momentum=Momentum2D::FULL_SWE;o.reconstruction_order=order;o.dry_depth=1e-7;o.h_move=1e-6;
+        buildMeshTopology(m);auto s=state(m,0);auto o=options(4,1);o.momentum=Momentum2D::FULL_SWE;o.reconstruction_order=order;o.cell_closure=closure;o.dry_depth=1e-7;o.h_move=1e-6;
         for(int i=0;i<m.n_cells();++i){m.mannings_n[i]=0;s.volume[i]=inertial::cellVolumeFromEta(m,o,i,.1);}
         auto initial=s.volume;ExplicitInertialSolver solver;solver.initialize(m,s,o);solver.advance(0,10);
         for(int i=0;i<m.n_cells();++i)EXPECT_NEAR(s.volume[i],initial[i],1e-10);
@@ -346,5 +351,209 @@ TEST(Cpu2DCorrectness,SpeciesBudgetsSurviveChangingRainCouplingAndEvaporation) {
                         tr.rain_conc[r] * initial_volume, 1e-8);
             }
         }
+    }
+}
+
+TEST(Cpu2DCorrectness,SecondOrderSlopeReconstructionCarriesPhysicalMassFlux) {
+    using A = ExplicitInertialSolverTestAccess;
+    for (bool quad : {false, true}) for (int threads : {1, 4}) {
+        auto m = grid(8, quad);
+        for (int i = 0; i < m.n_vertices(); ++i)
+            m.vz[i] = .04 * m.vx[i] + .03 * m.vy[i];
+        buildMeshTopology(m);
+        auto s = state(m, .5); auto o = options(threads, 1);
+        o.momentum = Momentum2D::FULL_SWE; o.reconstruction_order = 2;
+        for (int i = 0; i < m.n_cells(); ++i) {
+            m.tri_init_u[i] = .2; m.tri_init_v[i] = -.1; m.mannings_n[i] = 0;
+        }
+        ExplicitInertialSolver solver; solver.initialize(m, s, o);
+        A::rebuild(solver); A::fireSwe(solver, 1e-4);
+        const auto& ed = A::edges(solver); int checked = 0;
+        for (int e : A::faces(solver)) {
+            const int a = ed.cL[e], b = ed.cR[e];
+            auto interior = [&](int c) {
+                return m.tri_cx[c] > 2 && m.tri_cx[c] < 6 &&
+                       m.tri_cy[c] > 2 && m.tri_cy[c] < 6;
+            };
+            if (!interior(a) || !interior(b)) continue;
+            // Both reconstructed states have h=.5 and the same velocity.
+            // A smooth bed slope must not lower the advected water depth.
+            EXPECT_NEAR(A::discharge(solver, e), .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]), 1e-13);
+            ++checked;
+        }
+        EXPECT_GT(checked, 10);
+    }
+}
+
+TEST(Cpu2DCorrectness,SecondOrderPlanarThackerRetainsRotationPhase) {
+    constexpr double pi = 3.14159265358979323846;
+    const double omega = std::sqrt(2 * inertial::kGravity * .1);
+    const double period = 2 * pi / omega;
+    for (bool quad : {false, true}) {
+        auto m = grid(64, quad);
+        for (int i = 0; i < m.n_vertices(); ++i) {
+            m.vx[i] /= 16; m.vy[i] /= 16;
+            const double x = m.vx[i] - 2, y = m.vy[i] - 2;
+            m.vz[i] = .1 * (x * x + y * y - 1);
+        }
+        buildMeshTopology(m); auto s = state(m, 0); auto o = options(1, 1);
+        o.momentum = Momentum2D::FULL_SWE; o.reconstruction_order = 2;
+        o.max_timestep = .25; o.dry_depth = 1e-7; o.h_move = 1e-6;
+        for (int i = 0; i < m.n_cells(); ++i) {
+            const double x = m.tri_cx[i] - 2.5, y = m.tri_cy[i] - 2;
+            s.volume[i] = std::max(0.0, .1 * (1 - x*x - y*y)) * m.tri_area[i];
+            m.tri_init_v[i] = .5 * omega; m.mannings_n[i] = 0;
+        }
+        const double initial_volume = sum(s.volume);
+        ExplicitInertialSolver solver; solver.initialize(m, s, o);
+        double max_speed = 0;
+        for (int k = 0; k < 192; ++k) {
+            solver.advance(k * period / 64, (k + 1) * period / 64);
+            for (int i = 0; i < m.n_cells(); ++i) {
+                const double speed = ExplicitInertialSolverTestAccess::speed(solver, i);
+                ASSERT_TRUE(std::isfinite(speed));
+                max_speed = std::max(max_speed, speed);
+            }
+        }
+        // The analytical velocity is uniform, with magnitude .5*omega.
+        // Allow shoreline truncation error, but catch thin-film acceleration
+        // even when total volume, centroid phase and depth error look good.
+        EXPECT_LT(max_speed, 5 * .5 * omega) << "quad=" << quad;
+        double x = 0, y = 0, depth_error = 0, reference_volume = 0;
+        for (int i = 0; i < m.n_cells(); ++i) {
+            x += s.volume[i] * (m.tri_cx[i] - 2);
+            y += s.volume[i] * (m.tri_cy[i] - 2);
+            EXPECT_GE(s.volume[i], 0);
+            const double dx=m.tri_cx[i]-2.5, dy=m.tri_cy[i]-2;
+            const double exact_h=std::max(0.0,.1*(1-dx*dx-dy*dy));
+            depth_error += std::abs(s.depth[i]-exact_h)*m.tri_area[i];
+            reference_volume += exact_h*m.tri_area[i];
+        }
+        EXPECT_NEAR(sum(s.volume), initial_volume, 1e-12);
+        // Exact centroid returns to (+.5, 0). Allow spatial damping while
+        // rejecting the former ~30-degree phase lag after three periods.
+        EXPECT_GT(x / initial_volume, .3);
+        EXPECT_LT(std::abs(std::atan2(y, x)), .15);
+        EXPECT_LT(depth_error/reference_volume, .18);
+    }
+}
+
+
+TEST(Cpu2DCorrectness,SecondOrderDistortedThackerKeepsShorelineVelocityBounded) {
+    constexpr int n = 32;
+    constexpr double dx = 4.0 / n, pi = 3.14159265358979323846;
+    const double omega = std::sqrt(8 * inertial::kGravity * .1);
+    const double period = 2 * pi / omega, amplitude = (1-.8*.8)/(1+.8*.8);
+    const double root = std::sqrt(1-amplitude*amplitude);
+    // Maximize the analytical radial speed over the wet disk and a period.
+    const double c = (1-root)/amplitude;
+    const double exact_max_speed = .5*omega*amplitude*
+        std::sqrt((1-c*c)/((1-amplitude*c)*root));
+    for (int shape : {0, 1, 2}) { // triangles, quadrilaterals, mixed cells
+        SCOPED_TRACE(shape);
+        MeshData m; m.resize_vertices((n+1)*(n+1));
+        for (int y = 0; y <= n; ++y) for (int x = 0; x <= n; ++x) {
+            const int i = y*(n+1)+x;
+            const bool inner = x>0 && x<n && y>0 && y<n;
+            m.vx[i] = x*dx + (inner ? .15*dx*std::sin(.7*x+1.1*y) : 0);
+            m.vy[i] = y*dx + (inner ? .15*dx*std::cos(1.3*x-.4*y) : 0);
+            const double xc = m.vx[i]-2, yc = m.vy[i]-2;
+            m.vz[i] = .1*(xc*xc+yc*yc-1);
+        }
+        int nc = 0;
+        for (int y=0; y<n; ++y) for (int x=0; x<n; ++x)
+            nc += (shape==1 || (shape==2 && (x+y)%2)) ? 1 : 2;
+        m.resize_triangles(nc); int cell=0;
+        for (int y=0; y<n; ++y) for (int x=0; x<n; ++x) {
+            const int a=y*(n+1)+x, b=a+1, c=a+n+1, d=c+1;
+            if (shape==1 || (shape==2 && (x+y)%2)) m.set_quad(cell++,a,b,d,c);
+            else {m.set_triangle(cell++,a,b,d); m.set_triangle(cell++,a,d,c);}
+        }
+        buildMeshTopology(m); ASSERT_TRUE(validateMesh(m).empty());
+        auto s = state(m,0); auto o = options(1,1);
+        o.momentum=Momentum2D::FULL_SWE; o.reconstruction_order=2;
+        o.max_timestep=.25; o.dry_depth=1e-7; o.h_move=1e-6;
+        const double scale = root/(1-amplitude);
+        for (int i=0; i<m.n_cells(); ++i) {
+            const double x=m.tri_cx[i]-2, y=m.tri_cy[i]-2;
+            s.volume[i]=std::max(0.0,.1*(scale-(x*x+y*y)*scale*scale))*m.tri_area[i];
+            m.mannings_n[i]=0;
+        }
+        const double initial_volume=sum(s.volume);
+        ExplicitInertialSolver solver; solver.initialize(m,s,o);
+        double max_speed=0;
+        for (int k=0; k<192; ++k) {
+            solver.advance(k*period/64,(k+1)*period/64);
+            for (int i=0; i<m.n_cells(); ++i) {
+                const double speed=ExplicitInertialSolverTestAccess::speed(solver,i);
+                ASSERT_TRUE(std::isfinite(speed));
+                ASSERT_GE(s.volume[i],0);
+                max_speed=std::max(max_speed,speed);
+            }
+        }
+        EXPECT_NEAR(sum(s.volume),initial_volume,1e-12);
+        // Generous truncation allowance: the rejected shoreline fit reached
+        // 18–52 m/s here despite good depth error and exact conservation.
+        EXPECT_LT(max_speed,5*exact_max_speed);
+    }
+}
+
+
+TEST(Cpu2DCorrectness,ReconstructedBedPressureUsesTheCellToFaceDepthIntegral) {
+    // For a linear profile, the bed-source integral is -g*mean(h)*delta(z).
+    // Both sides agree at the face, so the hydrostatic correction is zero.
+    swe::FaceFlux f; double lx,ly,rx,ry;
+    const double h_cell=2, h_face=2.2, z_face=.1, eta_face=h_face+z_face;
+    ASSERT_TRUE(swe::faceFluxReconBed(eta_face,0,0,0,h_cell,
+        eta_face,0,0,z_face,h_face,1,0,1e-7,f,lx,ly,rx,ry,z_face,z_face));
+    EXPECT_NEAR(f.mass,0,1e-14);
+    EXPECT_NEAR(lx,-inertial::kGravity*.5*(h_cell+h_face)*z_face,1e-14);
+    EXPECT_EQ(ly,0); EXPECT_NEAR(rx,0,1e-14); EXPECT_EQ(ry,0);
+    // A bounded positive depth polynomial cannot produce a bed-force per
+    // unit water volume that diverges as the cell dries.
+    for(double h : {1e-4,1e-6,1e-8}) {
+        ASSERT_TRUE(swe::faceFluxReconBed(.01+2*h,0,0,0,h,
+            .1,0,0,.1,0,1,0,1e-10,f,lx,ly,rx,ry,.01,.1));
+        EXPECT_EQ(f.mass,0); EXPECT_EQ(f.mx,0);
+        EXPECT_LT(std::abs(lx)/h,.02*inertial::kGravity);
+    }
+}
+
+TEST(Cpu2DCorrectness,SecondOrderShorelineKeepsConnectedWetFaceAccuracy) {
+    using A = ExplicitInertialSolverTestAccess;
+    for (bool quad : {false, true}) for (int threads : {1, 4}) {
+        auto m = grid(8, quad);
+        for (int i = 0; i < m.n_vertices(); ++i)
+            m.vz[i] = .04 * m.vx[i] + .03 * m.vy[i];
+        buildMeshTopology(m); auto s = state(m, 0); auto o = options(threads, 1);
+        o.momentum = Momentum2D::FULL_SWE; o.reconstruction_order = 2;
+        for (int i = 0; i < m.n_cells(); ++i) {
+            s.volume[i] = m.tri_cx[i] < 4 ? .5 * m.tri_area[i] : 0;
+            m.tri_init_u[i] = .2; m.tri_init_v[i] = -.1; m.mannings_n[i] = 0;
+        }
+        ExplicitInertialSolver solver; solver.initialize(m, s, o);
+        A::rebuild(solver); A::fireSwe(solver, 1e-4);
+        const auto& ed = A::edges(solver); int checked = 0;
+        auto shore = [&](int c) {
+            for (int p = ed.cell_ptr[c]; p < ed.cell_ptr[c+1]; ++p) {
+                const int e = ed.cell_edge[p], j = ed.cL[e] == c ? ed.cR[e] : ed.cL[e];
+                if (s.depth[j] == 0) return true;
+            }
+            return false;
+        };
+        auto interior = [&](int c) {
+            return m.tri_cx[c] > 1 && m.tri_cx[c] < 7 &&
+                   m.tri_cy[c] > 1 && m.tri_cy[c] < 7;
+        };
+        for (int e : A::faces(solver)) {
+            const int a = ed.cL[e], b = ed.cR[e];
+            if (!interior(a) || !interior(b) || s.depth[a] == 0 || s.depth[b] == 0) continue;
+            if (!shore(a) && !shore(b)) continue;
+            // The dry neighbor must not suppress a linear, fully wet face
+            // reconstruction when two independent wet directions remain.
+            EXPECT_NEAR(A::discharge(solver,e), .5*(.2*ed.nx[e]-.1*ed.ny[e]), 1e-13);
+            ++checked;
+        }
+        EXPECT_GT(checked, 3);
     }
 }
