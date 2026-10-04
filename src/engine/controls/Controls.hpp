@@ -357,6 +357,11 @@ private:
         ActionType type = ActionType::NUMERIC;  ///< For report filtering (P1-C08).
     };
     std::vector<PendingAction> pending_actions_;
+    /// Legacy ActionList (controls.c) slot order, head first. Its nodes
+    /// persist across evaluations and are refilled from the head; a new node
+    /// is PREPENDED only when every node is in use. Holds the index into
+    /// pending_actions_ of each slot's action, -1 when empty.
+    std::vector<int> action_slots_;
 
     double getVariableValue(const SimulationContext& ctx,
                             ConditionVar var, int idx,
