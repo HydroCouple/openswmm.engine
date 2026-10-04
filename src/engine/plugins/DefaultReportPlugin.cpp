@@ -49,6 +49,7 @@
 
 #include <version.h>
 
+#include <array>
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
@@ -690,6 +691,14 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // (7.48 gal/ft3, 28.317 L/ft3 — not the massbal/continuity constants).
     const double Vcf       = si_report ? 28.317 / 1.0e6 : 7.48 / 1.0e6;
     const char*  vol_word  = du.mvol_word;    // 10^6 gal | 10^6 ltr
+    // legacy report.c continuity factors: UCF(LENGTH) * UCF(LANDAREA) for
+    // acre-feet / hectare-m, and MGDperCFS (MLDperCFS) / SECperDAY for the
+    // 10^6 gal (ltr) column.
+    const int    cont_us   = si_report ? 1 : 0;
+    const double cont_vcf1 = ucf::Ucf[ucf::LENGTH][cont_us] * ucf::Ucf[ucf::LANDAREA][cont_us];
+    const double cont_vcf2 = si_report ? 2.4466 / 86400.0 : 0.64632 / 86400.0;
+    const double cont_mass = ucf::Ucf[ucf::MASS][cont_us];   // mg -> lb | kg
+    const char*  load_word = si_report ? "kg" : "lbs";
     const char*  depth_word = du.depth_word;  // in | mm (rainfall/runoff depth)
 
     bool has_rdii = !ctx.rdii_assigns.node_idx.empty();
@@ -713,8 +722,8 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         double sewer_rain = mb.runoff_rainfall;
         double rdii_prod = mb.routing_rdii;
         double ratio = (sewer_rain > 0.0) ? rdii_prod / sewer_rain : 0.0;
-        double ucf1 = land_vcf;
-        double ucf2 = mvol_vcf;
+        double ucf1 = cont_vcf1;
+        double ucf2 = cont_vcf2;
 
         std::fprintf(f, "\n  **********************           Volume        Volume");
         std::fprintf(f, si_report
@@ -732,12 +741,16 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Runoff Quantity Continuity — matches legacy report_writeRunoffError()
     // =====================================================================
-    if (opt.rpt_continuity) {
+    // legacy massbal_report: only with subcatchments of some area; printed
+    // under CONTINUITY or when the error exceeds MAX_RUNOFF_BALANCE_ERR (10).
+    {
         const auto& mb = ctx.mass_balance;
         double total_area_ft2 = 0.0;
         for (int i = 0; i < ctx.n_subcatches(); ++i)
             total_area_ft2 += ctx.subcatches.area[static_cast<std::size_t>(i)] * landAreaToFt2(fu);
-
+        const double runoff_err_pct = mb.runoff_error() * 100.0;
+        if (ctx.n_subcatches() > 0 && total_area_ft2 > 0.0 &&
+            (opt.rpt_continuity || runoff_err_pct > 10.0)) {
         std::fprintf(f, "\n  **************************        Volume         Depth");
         std::fprintf(f, si_report
             ? "\n  Runoff Quantity Continuity     hectare-m            mm"
@@ -745,29 +758,14 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         std::fprintf(f, "\n  **************************     ---------       -------");
 
         auto row = [&](const char* label, double vol_ft3) {
-            double af = vol_ft3 * land_vcf;
-            double depth_in = (total_area_ft2 > 0.0) ? vol_ft3 / total_area_ft2 * depth_vcf : 0.0;
+            double af = vol_ft3 * cont_vcf1;
+            double depth_in = vol_ft3 / total_area_ft2 * depth_vcf;
             std::fprintf(f, "\n  %s%14.3f%14.3f", label, af, depth_in);
         };
-
-        // F8 — the three snow rows the ledger never had. Guarded on the
-        // project having snowpacks at all, matching legacy's
-        // `Nobjects[SNOWMELT] > 0` (report.c:519, 560) rather than on the
-        // values being nonzero: a deck WITH packs that shows 0.000 here is
-        // saying something, and a deck without them should not carry the
-        // rows at all. Row ORDER matches legacy exactly, because these
-        // tables are read side by side against EPA SWMM output.
-        //
-        // The existing "Initial Storage" label is LEFT ALONE even though
-        // legacy calls the same row "Initial LID Storage". Renaming it is not
-        // part of this defect, and the 14-deck corpus compares report bytes —
-        // a label change would move decks that have nothing to do with snow
-        // and buy nothing. Recorded here so the difference is a decision
-        // rather than an oversight.
         const bool has_snow = ctx.snowpack_names.size() > 0;
 
         if (mb.runoff_init_store > 0.0)
-            row("Initial Storage ..........", mb.runoff_init_store);
+            row("Initial LID Storage ......", mb.runoff_init_store);
         if (has_snow)
             row("Initial Snow Cover .......", mb.runoff_init_snow);
         row("Total Precipitation ......", mb.runoff_rainfall);
@@ -776,11 +774,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         row("Evaporation Loss .........", mb.runoff_evap);
         row("Infiltration Loss ........", mb.runoff_infil);
         row("Surface Runoff ...........", mb.runoff_runoff);
-        // Legacy prints this row whenever the model has LID area
-        // (report.c:551); the plugin sees only the ledger, so it prints
-        // whenever the term is live — a deck with LIDs but zero drain
-        // outflow omits a 0.000 row legacy would show.
-        if (mb.runoff_lid_drain != 0.0)
+        if (mb.runoff_lid_drain > 0.0)
             row("LID Drainage .............", mb.runoff_lid_drain);
         if (has_snow) {
             row("Snow Removed .............", mb.runoff_snowremov);
@@ -788,80 +782,76 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         }
         row("Final Storage ............", mb.runoff_final_store);
 
-        std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", mb.runoff_error() * 100.0);
+        std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", runoff_err_pct);
+        WRITE(f, "");
+        WRITE(f, "");
+        }
     }
 
-    WRITE(f, "");
-    WRITE(f, "");
-
     // =====================================================================
-    // Runoff Quality Continuity — Gap #73, matches legacy writeRunoffQualError()
-    // Internal units: buildup-derived fields are in display mass (lbs for US);
-    //                 volumetric mass fields (wet dep, infil, runoff) are in mg.
+    // Runoff Quality Continuity — matches legacy report_writeLoadingError():
+    // up to five pollutants per block, side by side. Totals are user mass;
+    // COUNT pollutants print LOG10 (legacy LOG10 macro: non-positive values
+    // pass through). Error: |in - out| < 0.001 -> 0 (TINY), else relative
+    // to the larger side's convention (massbal_getLoadingError).
     // =====================================================================
-    if (opt.rpt_continuity && ctx.n_pollutants() > 0 && !opt.ignore_quality) {
-        int np = ctx.n_pollutants();
+    if (ctx.n_subcatches() > 0 && ctx.n_pollutants() > 0 && !opt.ignore_quality) {
+        const int np = ctx.n_pollutants();
         const auto& mb = ctx.mass_balance;
-
+        auto at = [](const std::vector<double>& v, int p) {
+            return (static_cast<std::size_t>(p) < v.size()) ? v[static_cast<std::size_t>(p)] : 0.0;
+        };
+        auto logn = [](double x) { return x > 0.0 ? std::log10(x) : x; };
+        std::vector<std::array<double, 9>> vals(static_cast<std::size_t>(np));
+        double max_err = 0.0;
         for (int p = 0; p < np; ++p) {
-            auto up = static_cast<std::size_t>(p);
-            MassUnits mu = (up < ctx.pollutants.units.size()) ?
-                            ctx.pollutants.units[up] : MassUnits::MG_PER_L;
-            const char* mu_str;
-            if (mu == MassUnits::COUNTS_PER_L) {
-                mu_str = "#";
-            } else {
-                mu_str = "lbs";
+            const double in_  = at(mb.qual_init_buildup, p) + at(mb.qual_surface_buildup, p) +
+                                at(mb.qual_wet_deposition, p);
+            const double out_ = at(mb.qual_sweeping, p) + at(mb.qual_infil_loss, p) +
+                                at(mb.qual_bmp_removal, p) + at(mb.qual_runoff_load, p) +
+                                at(mb.qual_final_buildup, p);
+            double err = 0.0;
+            if (std::fabs(in_ - out_) < 0.001) err = 0.0;
+            else if (in_ > 0.0)  err = 100.0 * (1.0 - out_ / in_);
+            else if (out_ > 0.0) err = 100.0 * (in_ / out_ - 1.0);
+            max_err = std::max(max_err, err);
+            auto& v = vals[static_cast<std::size_t>(p)];
+            v = { at(mb.qual_init_buildup, p), at(mb.qual_surface_buildup, p),
+                  at(mb.qual_wet_deposition, p), at(mb.qual_sweeping, p),
+                  at(mb.qual_infil_loss, p), at(mb.qual_bmp_removal, p),
+                  at(mb.qual_runoff_load, p), at(mb.qual_final_buildup, p), err };
+            const bool counts = static_cast<std::size_t>(p) < ctx.pollutants.units.size() &&
+                                ctx.pollutants.units[static_cast<std::size_t>(p)] == MassUnits::COUNTS_PER_L;
+            if (counts) for (int k = 0; k < 8; ++k) v[static_cast<std::size_t>(k)] = logn(v[static_cast<std::size_t>(k)]);
+        }
+        if (opt.rpt_continuity || max_err > 10.0) {
+            static const char* labels[9] = {
+                "Initial Buildup ..........", "Surface Buildup ..........",
+                "Wet Deposition ...........", "Sweeping Removal .........",
+                "Infiltration Loss ........", "BMP Removal ..............",
+                "Surface Runoff ...........", "Remaining Buildup ........",
+                "Continuity Error (%) ....." };
+            for (int p1 = 0; p1 < np; p1 += 5) {
+                const int p2 = std::min(p1 + 5, np);
+                std::fprintf(f, "\n  **************************");
+                for (int p = p1; p < p2; ++p)
+                    std::fprintf(f, "%14s", ctx.pollutant_names.name_of(p).c_str());
+                std::fprintf(f, "\n  Runoff Quality Continuity ");
+                for (int p = p1; p < p2; ++p) {
+                    const bool counts = static_cast<std::size_t>(p) < ctx.pollutants.units.size() &&
+                        ctx.pollutants.units[static_cast<std::size_t>(p)] == MassUnits::COUNTS_PER_L;
+                    std::fprintf(f, "%14s", counts ? "LogN" : load_word);
+                }
+                std::fprintf(f, "\n  **************************");
+                for (int p = p1; p < p2; ++p) std::fprintf(f, "    ----------");
+                for (int k = 0; k < 9; ++k) {
+                    std::fprintf(f, "\n  %s", labels[k]);
+                    for (int p = p1; p < p2; ++p)
+                        std::fprintf(f, "%14.3f", vals[static_cast<std::size_t>(p)][static_cast<std::size_t>(k)]);
+                }
+                WRITE(f, "");
+                WRITE(f, "");
             }
-
-            auto getVal = [&](const std::vector<double>& v) -> double {
-                return (up < v.size()) ? v[up] : 0.0;
-            };
-
-            double init_bu  = getVal(mb.qual_init_buildup);
-            double surf_bu  = getVal(mb.qual_surface_buildup);
-            double wet_dep  = getVal(mb.qual_wet_deposition);
-            double sweep    = getVal(mb.qual_sweeping);
-            double bmp      = getVal(mb.qual_bmp_removal);
-            double infil    = getVal(mb.qual_infil_loss);
-            double runoff   = getVal(mb.qual_runoff_load);
-            double final_bu = getVal(mb.qual_final_buildup);
-
-            std::fprintf(f, "\n  **************************%14s",
-                         ctx.pollutant_names.name_of(p).c_str());
-            std::fprintf(f, "\n  Runoff Quality Continuity%15s", mu_str);
-            std::fprintf(f, "\n  **************************    ----------");
-
-            std::fprintf(f, "\n  Initial Buildup ..........%14.3f", init_bu);
-            std::fprintf(f, "\n  Surface Buildup ..........%14.3f", surf_bu);
-            std::fprintf(f, "\n  Wet Deposition ...........%14.3f", wet_dep);
-            std::fprintf(f, "\n  Sweeping Removal .........%14.3f", sweep);
-            std::fprintf(f, "\n  Infiltration Loss ........%14.3f", infil);
-            std::fprintf(f, "\n  BMP Removal ..............%14.3f", bmp);
-            std::fprintf(f, "\n  Surface Runoff ...........%14.3f", runoff);
-            std::fprintf(f, "\n  Remaining Buildup ........%14.3f", final_bu);
-
-            double total_in  = init_bu + surf_bu + wet_dep;
-            double total_out = sweep + bmp + infil + runoff + final_bu;
-            // Legacy's THREE branches (massbal.c:900-911). The third is the
-            // one this site lacked, and this is the site the user reads: the
-            // 2026-08-23 API fix landed in swmm_get_quality_continuity_error
-            // and left the printed row on the two-branch form, so a deck
-            // that discharged mass it never received still printed 0.000 --
-            // which is the exact symptom Finding 10 was raised on.
-            double err_pct;
-            if (std::fabs(total_in - total_out) < 0.001)
-                err_pct = 0.0;
-            else if (total_in > 0.0)
-                err_pct = (total_in - total_out) / total_in * 100.0;
-            else if (total_out > 0.0)
-                err_pct = (total_in - total_out) / total_out * 100.0;
-            else
-                err_pct = 0.0;
-            std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", err_pct);
-
-            WRITE(f, "");
-            WRITE(f, "");
         }
     }
 
@@ -882,7 +872,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
         // Volume conversion: ft³ → acre-ft (multiply by UCF(LANDAREA) for US)
         // Legacy: totals->x * UCF(LENGTH) * UCF(LANDAREA) — for US = x * 1.0 * 2.2957e-5
-        double ucf_vol = land_vcf;  // ft³ → acre-ft (US) | hectare-m (SI)
+        double ucf_vol = cont_vcf1;  // ft³ → acre-ft (US) | hectare-m (SI)
         // Depth conversion: ft³ / gwArea → ft → inches (US) | mm (SI)
         double ucf_dep = depth_vcf;
 
@@ -934,7 +924,10 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // Flow Routing Continuity — matches legacy report_writeFlowError()
     // (report.c:288: suppressed when routing is ignored).
     // =====================================================================
-    if (opt.rpt_continuity && !opt.ignore_routing) {
+    // legacy massbal_report: nodes present and routing on; printed under
+    // CONTINUITY or when the error exceeds MAX_FLOW_BALANCE_ERR (10).
+    if (ctx.n_nodes() > 0 && !opt.ignore_routing &&
+        (opt.rpt_continuity || ctx.mass_balance.routing_error() * 100.0 > 10.0)) {
         const auto& mb = ctx.mass_balance;
         std::fprintf(f, "\n  **************************        Volume        Volume");
         std::fprintf(f, si_report
@@ -942,34 +935,36 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             : "\n  Flow Routing Continuity        acre-feet      10^6 gal");
         std::fprintf(f, "\n  **************************     ---------     ---------");
 
-        double ucf1 = land_vcf;
-        double ucf2 = mvol_vcf;
+        double ucf1 = cont_vcf1;
+        double ucf2 = cont_vcf2;
 
         auto row = [&](const char* label, double vol_ft3) {
             std::fprintf(f, "\n  %s%14.3f%14.3f", label, vol_ft3 * ucf1, vol_ft3 * ucf2);
         };
 
-        row("Dry Weather Inflow .......", mb.routing_dry_weather);
-        row("Wet Weather Inflow .......", mb.routing_wet_weather);
-        row("Groundwater Inflow .......", mb.routing_gw_inflow);
+        // The printed terms are legacy's half-step totals (routing_report).
+        const auto& rr = mb.routing_report;
+        row("Dry Weather Inflow .......", rr[0]);
+        row("Wet Weather Inflow .......", rr[1]);
+        row("Groundwater Inflow .......", rr[2]);
         // G-X4: a gaining reach — the two-zone aquifer feeding a conduit that
         // runs below the water table. Printed only when non-zero, so every
         // deck without the signed conduit exchange keeps its report
         // line-for-line.
-        if (mb.routing_link_gw_inflow != 0.0)
-            row("Conduit GW Inflow ........", mb.routing_link_gw_inflow);
-        row("RDII Inflow ..............", mb.routing_rdii);
-        row("External Inflow ..........", mb.routing_external);
-        row("External Outflow .........", mb.routing_outflow);
-        row("Flooding Loss ............", mb.routing_flooding);
+        if (rr[3] != 0.0)
+            row("Conduit GW Inflow ........", rr[3]);
+        row("RDII Inflow ..............", rr[4]);
+        row("External Inflow ..........", rr[5]);
+        row("External Outflow .........", rr[8]);
+        row("Flooding Loss ............", rr[6]);
         // C2: the 1D→2D coupling spill, split out of Flooding Loss. Printed
         // only when non-zero so an uncoupled model's report is unchanged
         // line-for-line. (COUPLING_IN_FLOODING YES puts it back in the row
         // above and leaves this one at zero, hence hidden.)
-        if (mb.routing_coupling_out != 0.0)
-            row("2D Coupling Outflow ......", mb.routing_coupling_out);
-        row("Evaporation Loss .........", mb.routing_evap_loss);
-        row("Exfiltration Loss ........", mb.routing_seep_loss);
+        if (rr[7] != 0.0)
+            row("2D Coupling Outflow ......", rr[7]);
+        row("Evaporation Loss .........", rr[9]);
+        row("Exfiltration Loss ........", rr[10]);
         row("Initial Stored Volume ....", mb.routing_init_storage);
         row("Final Stored Volume ......", mb.routing_final_storage);
 
@@ -983,7 +978,21 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 row("Final Slot Storage .......", slot_ft3);
         }
 
-        std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", mb.routing_error() * 100.0);
+        // legacy massbal_getFlowError: signed terms move sides; |in - out|
+        // under 1 ft3 reads 0 (TINY).
+        {
+            double tin  = mb.routing_init_storage + rr[1] + rr[4] + rr[3];
+            double tout = mb.routing_final_storage + rr[6] + rr[7] + rr[9] + rr[10];
+            if (rr[0] >= 0.0) tin += rr[0]; else tout -= rr[0];
+            if (rr[2] >= 0.0) tin += rr[2]; else tout -= rr[2];
+            if (rr[5] >= 0.0) tin += rr[5]; else tout -= rr[5];
+            if (rr[8] >= 0.0) tout += rr[8]; else tin -= rr[8];
+            double pct = 0.0;
+            if (std::fabs(tin - tout) < 1.0)   pct = 0.0;
+            else if (std::fabs(tin) > 0.0)     pct = 100.0 * (1.0 - tout / tin);
+            else if (std::fabs(tout) > 0.0)    pct = 100.0 * (tin / tout - 1.0);
+            std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", pct);
+        }
     }
 
     // =====================================================================
@@ -1220,71 +1229,83 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     WRITE(f, "");
 
     // =====================================================================
-    // Quality Routing Continuity — Gap #71, matches legacy writeQualError()
-    // (report.c:298: suppressed when there are no pollutants or quality is ignored).
+    // Quality Routing Continuity — matches legacy report_writeQualError():
+    // five pollutants per block. Raw totals are concentration x ft3; the
+    // error is taken on them (massbal_getQualError) before conversion:
+    // x LperFT3 x UCF(MASS) (/1000 for ug), or LOG10(LperFT3 x) for counts.
     // =====================================================================
-    if (opt.rpt_continuity && ctx.n_pollutants() > 0 && !opt.ignore_quality) {
-        int np = ctx.n_pollutants();
+    if (ctx.n_nodes() > 0 && !opt.ignore_routing &&
+        ctx.n_pollutants() > 0 && !opt.ignore_quality) {
+        const int np = ctx.n_pollutants();
         const auto& mb = ctx.mass_balance;
-        // Internal mass unit: conc (mg/L or ug/L) × volume (ft³)
-        // Convert to lbs: × (28.317 L/ft³) / (453592 mg/lb) for MG_PER_L
-        //                  × (28.317 L/ft³) / (453592000 ug/lb) for UG_PER_L
-        static constexpr double LT_PER_FT3 = 28.317;
+        static constexpr double LperFT3 = 28.317;
+        auto at = [](const std::vector<double>& v, int p) {
+            return (static_cast<std::size_t>(p) < v.size()) ? v[static_cast<std::size_t>(p)] : 0.0;
+        };
+        std::vector<std::array<double, 12>> vals(static_cast<std::size_t>(np));
+        double max_err = 0.0;
         for (int p = 0; p < np; ++p) {
-            auto up = static_cast<std::size_t>(p);
-            MassUnits mu = (up < ctx.pollutants.units.size()) ?
-                            ctx.pollutants.units[up] : MassUnits::MG_PER_L;
-            const char* mu_str;
-            double mass_cf;
-            if (mu == MassUnits::COUNTS_PER_L) {
-                mu_str = "#";
-                mass_cf = 1.0;
-            } else if (mu == MassUnits::UG_PER_L) {
-                mu_str = "lbs";
-                mass_cf = LT_PER_FT3 / 453592000.0;
-            } else {
-                mu_str = "lbs";
-                mass_cf = LT_PER_FT3 / 453592.0;
+            std::array<double, 11> raw = {
+                at(mb.qual_routing_dw_in, p), at(mb.qual_routing_wet, p),
+                at(mb.qual_routing_gw_in, p), at(mb.qual_routing_ii_in, p),
+                at(mb.qual_routing_ex_in, p), at(mb.qual_routing_outflow, p),
+                at(mb.qual_routing_flood, p), at(mb.qual_routing_seep, p),
+                at(mb.qual_routing_reacted, p), at(mb.qual_routing_init, p),
+                at(mb.qual_routing_final, p) };
+            const double in_  = raw[0] + raw[1] + raw[2] + raw[3] + raw[4] + raw[9];
+            const double out_ = raw[6] + raw[5] + raw[8] + raw[7] + raw[10];
+            double err = 0.0;
+            if (std::fabs(in_ - out_) < 0.001) err = 0.0;
+            else if (in_ > 0.0)  err = 100.0 * (1.0 - out_ / in_);
+            else if (out_ > 0.0) err = 100.0 * (in_ / out_ - 1.0);
+            if (std::fabs(err) > std::fabs(max_err)) max_err = err;
+            const MassUnits mu = (static_cast<std::size_t>(p) < ctx.pollutants.units.size())
+                ? ctx.pollutants.units[static_cast<std::size_t>(p)] : MassUnits::MG_PER_L;
+            auto& v = vals[static_cast<std::size_t>(p)];
+            for (int k = 0; k < 11; ++k) {
+                const double x = raw[static_cast<std::size_t>(k)];
+                double y;
+                if (mu == MassUnits::COUNTS_PER_L) {
+                    const double z = LperFT3 * x;
+                    y = z > 0.0 ? std::log10(z) : z;
+                } else {
+                    double cf = LperFT3 * cont_mass;
+                    if (mu == MassUnits::UG_PER_L) cf /= 1000.0;
+                    y = x * cf;
+                }
+                v[static_cast<std::size_t>(k)] = y;
             }
-
-            std::fprintf(f, "\n  **************************%14s", ctx.pollutant_names.name_of(p).c_str());
-            std::fprintf(f, "\n  Quality Routing Continuity%14s", mu_str);
-            std::fprintf(f, "\n  **************************    ----------");
-
-            auto qrow = [&](const char* label, double raw) {
-                std::fprintf(f, "\n  %s%14.3f", label, raw * mass_cf);
-            };
-
-            double wet     = (up < mb.qual_routing_wet.size())      ? mb.qual_routing_wet[up]      : 0.0;
-            double rdii    = (up < mb.qual_routing_ii_in.size())     ? mb.qual_routing_ii_in[up]    : 0.0;
-            double dwf     = (up < mb.qual_routing_dw_in.size())     ? mb.qual_routing_dw_in[up]    : 0.0;
-            double gw      = (up < mb.qual_routing_gw_in.size())     ? mb.qual_routing_gw_in[up]    : 0.0;
-            double ext     = (up < mb.qual_routing_ex_in.size())     ? mb.qual_routing_ex_in[up]    : 0.0;
-            double outflow = (up < mb.qual_routing_outflow.size())   ? mb.qual_routing_outflow[up]  : 0.0;
-            double flood   = (up < mb.qual_routing_flood.size())     ? mb.qual_routing_flood[up]    : 0.0;
-            double seep    = (up < mb.qual_routing_seep.size())      ? mb.qual_routing_seep[up]     : 0.0;
-            double reacted = (up < mb.qual_routing_reacted.size())   ? mb.qual_routing_reacted[up]  : 0.0;
-            double init    = (up < mb.qual_routing_init.size())      ? mb.qual_routing_init[up]     : 0.0;
-            double final_  = (up < mb.qual_routing_final.size())     ? mb.qual_routing_final[up]    : 0.0;
-            qrow("Dry Weather Inflow .......", dwf);
-            qrow("Wet Weather Inflow .......", wet);
-            qrow("Groundwater Inflow .......", gw);
-            qrow("RDII Inflow ..............", rdii);
-            qrow("External Inflow ..........", ext);
-            qrow("External Outflow .........", outflow);
-            qrow("Flooding Loss ............", flood);
-            qrow("Exfiltration Loss ........", seep);
-            qrow("Mass Reacted .............", reacted);
-            qrow("Initial Stored Mass ......", init);
-            qrow("Final Stored Mass ........", final_);
-
-            double total_in  = wet + rdii + dwf + gw + ext + init;
-            double total_out = outflow + flood + reacted + seep + final_;
-            double err_pct = (total_in > 0.0) ? (total_in - total_out) / total_in * 100.0 : 0.0;
-            std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", err_pct);
-
-            WRITE(f, "");
-            WRITE(f, "");
+            v[11] = err;
+        }
+        if (opt.rpt_continuity || max_err > 10.0) {
+            static const char* labels[12] = {
+                "Dry Weather Inflow .......", "Wet Weather Inflow .......",
+                "Groundwater Inflow .......", "RDII Inflow ..............",
+                "External Inflow ..........", "External Outflow .........",
+                "Flooding Loss ............", "Exfiltration Loss ........",
+                "Mass Reacted .............", "Initial Stored Mass ......",
+                "Final Stored Mass ........", "Continuity Error (%) ....." };
+            for (int p1 = 0; p1 < np; p1 += 5) {
+                const int p2 = std::min(p1 + 5, np);
+                std::fprintf(f, "\n  **************************");
+                for (int p = p1; p < p2; ++p)
+                    std::fprintf(f, "%14s", ctx.pollutant_names.name_of(p).c_str());
+                std::fprintf(f, "\n  Quality Routing Continuity");
+                for (int p = p1; p < p2; ++p) {
+                    const bool counts = static_cast<std::size_t>(p) < ctx.pollutants.units.size() &&
+                        ctx.pollutants.units[static_cast<std::size_t>(p)] == MassUnits::COUNTS_PER_L;
+                    std::fprintf(f, "%14s", counts ? "LogN" : load_word);
+                }
+                std::fprintf(f, "\n  **************************");
+                for (int p = p1; p < p2; ++p) std::fprintf(f, "    ----------");
+                for (int k = 0; k < 12; ++k) {
+                    std::fprintf(f, "\n  %s", labels[k]);
+                    for (int p = p1; p < p2; ++p)
+                        std::fprintf(f, "%14.3f", vals[static_cast<std::size_t>(p)][static_cast<std::size_t>(k)]);
+                }
+                WRITE(f, "");
+                WRITE(f, "");
+            }
         }
     }
 

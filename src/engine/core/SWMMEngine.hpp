@@ -83,6 +83,7 @@
 namespace openswmm::twoD { class Default2DOutputPlugin; }
 #endif
 
+#include <array>
 #include <functional>
 #include <memory>
 #include <string>
@@ -746,6 +747,11 @@ private:
 
     /// True when the last stepRouting() skipped routing as steady state.
     bool last_step_steady_ = false;
+
+    /// Previous routing step's system flow RATES (cfs) for the eleven routing
+    /// continuity terms — legacy StepFlowTotals as they stood when the next
+    /// step's first massbal_updateRoutingTotals(dt/2) read them.
+    std::array<double, 11> routing_prev_rates_{};
 
     /**
      * @brief Update routing mass balance totals after routing.
