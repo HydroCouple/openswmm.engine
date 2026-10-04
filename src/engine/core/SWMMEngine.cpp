@@ -8360,13 +8360,14 @@ void SWMMEngine::initHydraulics() noexcept {
             if (rc < 0) {
                 const auto& pe = controls_.lastParseError();
                 ctx_.error_code = 217;  // legacy ERR_RULE (error.h:174)
-                ctx_.error_message =
-                    "Failed to parse [CONTROLS] rule block #" +
-                    std::to_string(i + 1);
-                if (pe.line > 0)
-                    ctx_.error_message += ", line " + std::to_string(pe.line);
-                if (!pe.message.empty())
-                    ctx_.error_message += ": " + pe.message;
+                // Numbered as legacy controls.c reports the same rejection;
+                // v6's explanation and position follow as detail.
+                std::string where = "in [CONTROLS] rule block #" +
+                                    std::to_string(i + 1);
+                if (pe.line > 0) where += ", line " + std::to_string(pe.line);
+                if (!pe.message.empty()) where += ": " + pe.message;
+                ctx_.error_message = format_error(
+                    pe.code > 0 ? pe.code : ERR_CONTROL_RULE, pe.token, where);
                 ctx_.errors.push_back(ctx_.error_message);
                 return;
             }
