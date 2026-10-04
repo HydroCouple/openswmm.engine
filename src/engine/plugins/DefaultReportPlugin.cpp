@@ -200,12 +200,24 @@ int DefaultReportPlugin::update(const SimulationSnapshot& /*snapshot*/) {
     return 0;
 }
 
+// Legacy input.c reports at most MAXERRS (100) input errors, then
+// "Maximum error count exceeded." and stops reading. ctx.errors keeps every
+// error for API callers; only the .rpt is capped. `from` is the first index
+// not yet written.
+static void write_errors(std::FILE* f, const std::vector<std::string>& errors,
+                         std::size_t from) {
+    constexpr std::size_t kMaxErrs = 100;
+    for (std::size_t i = from; i < errors.size() && i < kMaxErrs; ++i)
+        std::fprintf(f, "\n  %s", errors[i].c_str());
+    if (errors.size() > kMaxErrs && from <= kMaxErrs)
+        std::fprintf(f, "\n  \n  Maximum error count exceeded.");
+}
+
 int DefaultReportPlugin::finalize(const SimulationContext& ctx) {
     // Flush any errors/warnings that accumulated during the simulation.
     // This ensures they are persisted even if write_summary() never runs.
     if (file_) {
-        for (std::size_t i = errors_written_; i < ctx.errors.size(); ++i)
-            std::fprintf(file_, "\n  %s", ctx.errors[i].c_str());
+        write_errors(file_, ctx.errors, errors_written_);
         errors_written_ = ctx.errors.size();
 
         for (std::size_t i = warnings_written_; i < ctx.warnings.size(); ++i)
@@ -237,8 +249,7 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
         write_preamble(f, ctx);
 
         // Write all errors/warnings
-        for (const auto& err : ctx.errors)
-            std::fprintf(f, "\n  %s", err.c_str());
+        write_errors(f, ctx.errors, 0);
         for (const auto& warn : ctx.warnings)
             std::fprintf(f, "\n  %s", warn.c_str());
     }
@@ -290,8 +301,7 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
         std::fprintf(f, "\n  %s", line.c_str());
 
     // Errors — matches legacy report_writeErrorMsg() format
-    for (const auto& err : ctx.errors)
-        std::fprintf(f, "\n  %s", err.c_str());
+    write_errors(f, ctx.errors, 0);
     errors_written_ = ctx.errors.size();
 
     // Warnings — matches legacy report_writeWarningMsg() format
