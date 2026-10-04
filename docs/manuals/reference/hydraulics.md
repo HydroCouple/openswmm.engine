@@ -179,6 +179,10 @@ Figure 9-5 The flux-active set at a wetting front: the default one-ring halo, th
 
 Figure 9-6 Where a node spill is booked under COUPLING_IN_FLOODING: the same totals and the same continuity error, in two different rows
 
+Figure 9-7 Coupled surface/depth reconstruction and the connected-wet-stencil decision at a shoreline. The drawing is schematic, not model output.
+
+Figure 9-8 Final CPU cost and depth error relative to the earlier reconstruction, at different mesh resolutions. Points are measured pairs; bars are paired medians.
+
 <!-- END GENERATED -->
 
 ## List of Tables
