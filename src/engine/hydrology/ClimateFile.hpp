@@ -110,6 +110,11 @@ public:
     /// @returns true if data was found, false if date is out of range.
     bool getRecord(double oa_date, DailyClimateRecord& rec);
 
+    /// Read the file this many whole days AHEAD of (or behind) the date asked
+    /// for — legacy's [TEMPERATURE] FILE start date: simulation day N reads
+    /// file day start + N (climate.c climate_openFile / updateFileValues).
+    void setDayOffset(double days) { day_offset_ = days; }
+
     /// Detected file format.
     ClimateFileFormat format() const { return format_; }
 
@@ -130,6 +135,7 @@ private:
     double file_data_[4][32] = {};
     int    buf_year_  = -1;
     int    buf_month_ = -1;
+    double day_offset_ = 0.0;  // see setDayOffset()
 
     // GHCND header-derived field positions
     int  field_pos_[4]   = {-1, -1, -1, -1}; // column start for TMIN,TMAX,EVAP,WIND

@@ -88,6 +88,7 @@ static void ensure_gage_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.gages.file_first_date,    0.0);
     grow(ctx.gages.file_last_date,     0.0);
     grow(ctx.gages.file_periods_precip, 0L);
+    grow(ctx.gages.file_start_date,    0.0);
     if (ctx.gages.rain_series.size() < n) ctx.gages.rain_series.resize(n);
     grow(ctx.gages.file_format,   RainFileFormat::UNKNOWN);
     grow(ctx.gages.interval_sec,  3600);
@@ -415,6 +416,16 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
                 if (tok.size() > 7) {
                     const std::string u = Tokenizer::to_upper(tok[7]);
                     ctx.gages.rain_units[idx] = (u == "MM") ? 1 : 0; // default IN
+                }
+                // Optional start date (legacy gage.c:207-212): a token whose
+                // FIRST character is `*` means none; anything else must be a
+                // date or it is ERROR 213. It was never read, so records from
+                // before the date were routed.
+                ctx.gages.file_start_date[idx] = 0.0;
+                if (tok.size() > 8 && !tok[8].empty() && tok[8][0] != '*') {
+                    const double start = parse_date(tok[8]);
+                    if (start > 0.0) ctx.gages.file_start_date[idx] = start;
+                    else ctx.errors.push_back(format_error(ERR_DATETIME, tok[8]));
                 }
                 // The trailing scale factor is honoured only when present as a
                 // positive number (a start date token would not parse as one).

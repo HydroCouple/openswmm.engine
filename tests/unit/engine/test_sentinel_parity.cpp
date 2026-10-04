@@ -15,6 +15,9 @@
  *   [LID_USAGE]    RptFile `*` = no report file; Number 0 = unit not added.
  *   [DIVIDERS]     DivLink `*` = ERROR 136; undefined link = ERROR 209.
  *   [OUTLETS]      negative crest under LINK_OFFSETS DEPTH clamps to 0.
+ *   [TEMPERATURE]  FILE start date (`*` = none) shifts the file days read;
+ *                  a day missing one of Tmin/Tmax keeps that one's last value.
+ *   [RAINGAGES]    FILE start date skips records dated earlier.
  *
  * Fixtures live in tests/unit/engine/data/ (the test's WORKING_DIRECTORY).
  */
@@ -26,7 +29,10 @@
 #include <sstream>
 #include <string>
 
+#include <openswmm/engine/openswmm_climate.h>
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_forcing.h>
+#include <openswmm/engine/openswmm_gages.h>
 #include <openswmm/engine/openswmm_infrastructure.h>
 #include <openswmm/engine/openswmm_links.h>
 #include <openswmm/engine/openswmm_subcatchments.h>
@@ -97,6 +103,41 @@ double runoff_volume(const std::string& stem) {
     }
     swmm_engine_close(e);
     return vol;
+}
+
+// Run to the first step at or past `days` elapsed and return the air
+// temperature there (deg F).
+double temperature_at(const std::string& stem, double days) {
+    SWMM_Engine e = swmm_engine_create();
+    const std::string inp = stem + ".inp", rpt = stem + ".rpt", out = stem + ".out";
+    double temp = -1.0e30;
+    if (swmm_engine_open(e, inp.c_str(), rpt.c_str(), out.c_str(), nullptr) == SWMM_OK &&
+        swmm_engine_initialize(e) == SWMM_OK && swmm_engine_start(e, 0) == SWMM_OK) {
+        double elapsed = 0.0;
+        while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0 && elapsed < days) {
+        }
+        swmm_climate_get_temperature(e, &temp);
+        swmm_engine_end(e);
+    }
+    swmm_engine_close(e);
+    return temp;
+}
+
+int rain_series_count(const std::string& stem) {
+    SWMM_Engine e = open_only(stem);
+    int n = -1;
+    EXPECT_EQ(swmm_gage_get_rainfall_series_count(e, swmm_gage_index(e, "G1"), &n), SWMM_OK);
+    swmm_engine_close(e);
+    return n;
+}
+
+// Re-write the opened deck and return the text of the written file.
+std::string rewritten(const std::string& stem) {
+    SWMM_Engine e = open_only(stem);
+    const std::string path = stem + "_rewritten.inp";
+    EXPECT_EQ(swmm_model_write(e, path.c_str()), SWMM_OK);
+    swmm_engine_close(e);
+    return read_file(path);
 }
 
 }  // namespace
@@ -249,4 +290,57 @@ TEST(SentinelParityOutlet, NegativeCrestClampedUnderDepthOffsets) {
     EXPECT_EQ(swmm_link_get_crest_height(e, l, &crest), SWMM_OK);
     EXPECT_EQ(crest, 0.0);
     swmm_engine_close(e);
+}
+
+// ---------------------------------------------------------------------------
+// [TEMPERATURE] FILE
+// ---------------------------------------------------------------------------
+
+// The start date is a date (12/01/2019 = OADate 43800), not the 1.0 that
+// to_double("12/01/2019") produced.
+TEST(SentinelParityClimate, FileStartDateIsParsedAsADate) {
+    SWMM_Engine e = open_only("sentinel_climate_startdate");
+    double start = 0.0;
+    EXPECT_EQ(swmm_climate_get_temp_file_start(e, &start), SWMM_OK);
+    EXPECT_EQ(start, 43800.0);
+    swmm_engine_close(e);
+}
+
+// The file holds 20 F every December day and 80 F every January day. A
+// January run told to start the file at 12/01/2019 reads December (legacy
+// climate_openFile / updateFileValues); without a date it reads January.
+TEST(SentinelParityClimate, FileStartDateShiftsTheDaysRead) {
+    EXPECT_EQ(temperature_at("sentinel_climate_startdate", 1.5), 20.0);
+    EXPECT_EQ(temperature_at("sentinel_climate_nostart", 1.5), 80.0);
+}
+
+// The deck's title also carries the date, so match the FILE line itself.
+TEST(SentinelParityClimate, FileStartDateRoundTrips) {
+    const std::string text = rewritten("sentinel_climate_startdate");
+    EXPECT_TRUE(contains(text, "\"sentinel_climate.dat\" 12/01/2019")) << text;
+}
+
+// Jan 1 is 40/40; Jan 2 gives Tmax 60 with Tmin missing. Legacy keeps Tmin at
+// 40 and uses the new Tmax, so the Jan 2 afternoon is warmer than 40. Requiring
+// both values left the temperature frozen at Jan 1's 40.
+TEST(SentinelParityClimate, MissingTminKeepsPreviousTminButUsesNewTmax) {
+    const double t = temperature_at("sentinel_climate_missing_tmin", 1.625);  // Jan 2 15:00
+    EXPECT_GT(t, 40.5);
+    EXPECT_LE(t, 60.0);
+}
+
+// ---------------------------------------------------------------------------
+// [RAINGAGES] FILE start date
+// ---------------------------------------------------------------------------
+
+// sentinel_rain.dat holds three records on Jan 1 and three on Jan 2; a start
+// date of 01/02/2020 drops Jan 1's (legacy rain.c readStdLine).
+TEST(SentinelParityRainFile, StartDateSkipsEarlierRecords) {
+    EXPECT_EQ(rain_series_count("sentinel_raingage_file_nostart"), 6);
+    EXPECT_EQ(rain_series_count("sentinel_raingage_file_startdate"), 3);
+}
+
+TEST(SentinelParityRainFile, StartDateRoundTrips) {
+    const std::string text = rewritten("sentinel_raingage_file_startdate");
+    EXPECT_TRUE(contains(text, "STA1 IN 01/02/2020")) << text;
 }

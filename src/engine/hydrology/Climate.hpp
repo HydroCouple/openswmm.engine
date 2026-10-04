@@ -96,6 +96,8 @@ struct ClimateState {
     // separate lets a one-shot/cleared forcing revert to the data source (or
     // default) even when no source overwrites the value each step.
     double temperature_src = 70.0;  ///< Source/default air temperature (deg F)
+    double file_tmin = 70.0;        ///< Last daily min read from a climate file (deg F)
+    double file_tmax = 70.0;        ///< Last daily max read from a climate file (deg F)
     double wind_speed_src  = 0.0;   ///< Source/default wind speed (mph)
 
     // Derived values

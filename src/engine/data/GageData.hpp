@@ -169,6 +169,13 @@ struct GageData {
     std::vector<long>           file_periods_precip;
 
     /**
+     * @brief [RAINGAGES] FILE StartDate (OADate day, 0 = none / `*`).
+     * @details File records dated before this day are skipped entirely, as
+     *          legacy rain.c readStdLine / readNWSLine do (`date1 < day1`).
+     */
+    std::vector<double>         file_start_date;
+
+    /**
      * @brief Resolved rainfall series for a FILE_RAIN gage (windowed to the run).
      * @details Populated by load_external_rain_files() with the station's records
      *          that fall inside the simulation window, already converted to the
@@ -335,6 +342,7 @@ struct GageData {
         file_first_date.assign(un, 0.0);
         file_last_date.assign(un, 0.0);
         file_periods_precip.assign(un, 0L);
+        file_start_date.assign(un, 0.0);
         rain_series.assign(un, Table{});
         file_format.assign(un, RainFileFormat::UNKNOWN);
         interval_sec.assign(un, 3600);
@@ -377,6 +385,7 @@ struct GageData {
         station_id.resize(un, std::string{});
         g(rain_units, 0);
         g(file_first_date, 0.0); g(file_last_date, 0.0); g(file_periods_precip, 0L);
+        g(file_start_date, 0.0);
         rain_series.resize(un, Table{});
         g(file_format, RainFileFormat::UNKNOWN); g(interval_sec, 3600); g(snow_factor, 1.0);
         g(scale_factor, 1.0);
@@ -404,7 +413,7 @@ struct GageData {
 
         e(rain_type); e(source); e(ts_index); e(ts_name);
         e(file_path); e(col_name); e(file_format); e(interval_sec); e(snow_factor);
-        e(scale_factor);
+        e(scale_factor); e(file_start_date);
         e(rainfall); e(next_rainfall); e(api_rainfall); e(next_rain_date); e(is_raining);
         e(st_cur); e(st_next); e(st_rain); e(st_init); e(st_used);
         e(past_rain_accum); e(past_rain_time); e(cumul_rain_accum); e(co_gage_index);
