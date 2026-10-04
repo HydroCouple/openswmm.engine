@@ -2115,9 +2115,8 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 "\n                                 Average  Maximum  Maximum  Time of Max    Reported"
 "\n                                   Depth    Depth      HGL   Occurrence   Max Depth");
         std::fprintf(f, si_report
-            ? "\n  Node                 Type       %6s   %6s   %6s  days hr:min      %6s"
-            : "\n  Node                 Type       %-6s   %-6s   %-6s  days hr:min      %-6s",
-            len_word, len_word, len_word, len_word);
+            ? "\n  Node                 Type       Meters   Meters   Meters  days hr:min      Meters"
+            : "\n  Node                 Type         Feet     Feet     Feet  days hr:min        Feet");
         std::fprintf(f,
 "\n  ---------------------------------------------------------------------------------");
 
@@ -2131,7 +2130,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             double avg_d = ctx.nodes.stat_sum_depth[uj] / static_cast<double>(report_steps) * len_ucf;
             double max_d = max_d_int * len_ucf;
             double max_hgl = (ctx.nodes.invert_elev[uj] + max_d_int) * len_ucf;
-            double rpt_max = ctx.nodes.stat_max_rpt_depth[uj] * len_ucf;
+            double rpt_max = ctx.nodes.stat_max_rpt_depth[uj];  // already display units
             int days, hrs, mins;
             elapsedToParts(ctx.nodes.stat_max_depth_date[uj], ctx.options.report_start, days, hrs, mins);
 
@@ -2324,8 +2323,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 "\n                         Average    Avg   Evap  Exfil     Maximum    Max    Time of Max    Maximum"
 "\n                          Volume   Pcnt   Pcnt   Pcnt      Volume   Pcnt     Occurrence    Outflow");
             std::fprintf(f, si_report
-                ? "\n  Storage Unit           1000 m3   Full   Loss   Loss     1000 m3   Full    days hr:min        %3s"
-                : "\n  Storage Unit          1000 ft3   Full   Loss   Loss    1000 ft3   Full    days hr:min        %3s",
+                // legacy writes the ANSI superscript byte (statsrpt.c:535-537)
+                ? "\n  Storage Unit           1000 m\xB3   Full   Loss   Loss     1000 m\xB3   Full    days hr:min        %3s"
+                : "\n  Storage Unit          1000 ft\xB3   Full   Loss   Loss    1000 ft\xB3   Full    days hr:min        %3s",
                 FlowUnitWords[fu]);
             std::fprintf(f,
 "\n  ------------------------------------------------------------------------------------------------");
