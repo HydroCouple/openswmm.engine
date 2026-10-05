@@ -372,7 +372,7 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens,
         else if (iequals(val, "AUTO"))                       opts.groundwater = -1;
         else return "Unknown GROUNDWATER: " + val + " (expected YES|NO|AUTO)";
     } else if (iequals(key, "GW_ET")) {
-        static const char* kEt[] = {"NONE", "CAPILLARY_RISE", "BOUNDARY_ET", "BOTH"};
+        static const char* kEt[] = {"AUTO", "NONE", "CAPILLARY_RISE", "BOUNDARY_ET", "BOTH"};
         bool known = false;
         for (const char* e : kEt)
             if (iequals(val, e)) { opts.gw_et = e; known = true; break; }
@@ -562,7 +562,7 @@ std::string format2DOptionValueEx(const SolverOptions2D& opts,
         // alias that open() folds away, so the staging field is normally empty
         // and the authoritative value is the only one to report.
         if (iequals(key, "GW_ET") && opts.gw_et.empty())
-            return aquifer->options.gw_et.empty() ? "NONE"
+            return aquifer->options.gw_et.empty() ? "AUTO"
                                                   : aquifer->options.gw_et;
         // GROUNDWATER is deliberately NOT resolved here: like INFILTRATION it
         // reports AUTO | YES | NO exactly AS STORED, so a host round-trips

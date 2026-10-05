@@ -71,6 +71,10 @@ void SubsurfaceState::resize(int n, int m) {
     infil_remaining.assign(nn, std::numeric_limits<double>::quiet_NaN()); infil_interval.assign(nn, 0.0);
     wetting_front.assign(nn, 0.0); reject_last.assign(nn, 0.0);
     reject_cumulative.assign(nn, 0.0); dunne_cumulative.assign(nn, 0.0);
+    et_pending.assign(nn,0.0); et_potential_cumulative.assign(nn,0.0);
+    et_surface_cumulative.assign(nn,0.0); et_soil_cumulative.assign(nn,0.0); et_unused_cumulative.assign(nn,0.0);
+    et_surface_last.assign(nn,std::numeric_limits<double>::quiet_NaN());
+    et_potential_last=et_surface_last; et_stress=et_surface_last; et_refresh=et_surface_last;
     qlink_last.assign(nn, 0.0);   // G-X3
 
     dt_cell.assign(nn, 0.0);

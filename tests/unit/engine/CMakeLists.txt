@@ -675,6 +675,8 @@ if(OPENSWMM_BUILD_2D)
     # everything between a user's .inp and that kernel. Decks under
     # tests/output/aquifer_2d.
     add_gtest_unit(test_engine_2d_aquifer test_2d_aquifer.cpp)
+    add_gtest_unit(test_engine_surface_et_budget test_surface_et_budget.cpp)
+    target_compile_definitions(test_engine_surface_et_budget PRIVATE OPENSWMM_R3_OUT="${PROJECT_SOURCE_DIR}/tests/verification/surface_r3_2026-10-05/models")
     add_gtest_unit(test_engine_surface_aquifer_receiving test_surface_aquifer_receiving.cpp)
     target_compile_definitions(test_engine_surface_aquifer_receiving PRIVATE OPENSWMM_R2_OUT="${PROJECT_SOURCE_DIR}/tests/verification/surface_r2_2026-10-05/models")
     target_compile_definitions(test_engine_2d_aquifer PRIVATE

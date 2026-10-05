@@ -70,6 +70,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 
 namespace openswmm::twoD {
 
@@ -246,6 +247,9 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh,
     if (cfg.empty()) return {};
 
     options_   = cfg.options;
+    if(options_.gw_et=="AUTO")options_.gw_et=options_.per_subcatch?"NONE":"BOTH";
+    if(options_.link_seepage==GwLinkMode::DEFAULT)options_.link_seepage=options_.per_subcatch?GwLinkMode::AUTO:GwLinkMode::TWO_WAY;
+    options_.wilting_suction=cfg.options.wilting_suction_set?cfg.options.wilting_suction*uf.length:150.0;
     node_beds_ = cfg.node_beds;
     mesh_  = &mesh;
     edges_ = &edges;
@@ -1185,6 +1189,17 @@ void SubsurfaceSolver::compactPending() noexcept {
 // the cell firing (steps 3, 7, 12, 14)
 // ---------------------------------------------------------------------------
 
+void SubsurfaceSolver::bookSurfaceEt(int cell,double dt,double rate,double surface) {
+    if(!active()||options_.per_subcatch||cell<0||cell>=state_.n_cells||!(dt>0.0))return;
+    const auto u=static_cast<std::size_t>(cell);
+    const double potential=std::max(0.0,rate)*state_.area[u]*dt;
+    const double taken=std::clamp(surface,0.0,potential);
+    state_.et_pending[u]+=potential-taken;
+    state_.et_potential_cumulative[u]+=potential; state_.et_surface_cumulative[u]+=taken;
+    state_.et_surface_last[u]=taken/(state_.area[u]*dt); state_.et_potential_last[u]=std::max(0.0,rate);
+    state_.et_refresh[u]=(std::isfinite(state_.et_refresh[u])?state_.et_refresh[u]:0.0)+dt;
+}
+
 void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double time) {
     const auto u = static_cast<std::size_t>(i);
     const int  n = state_.n_cells;
@@ -1213,29 +1228,16 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     state_.qplus_last[u] = q_in;
     state_.led_infil_in += infil_vol;
 
-    // --- ET demand (step 7) -----------------------------------------------
-    // BOUNDARY_ET removes water from the unsaturated column's top with a
-    // Feddes stress from its mean suction. The retired behaviour was a hard
-    // `if (infil <= 0)` gate; the smooth multiplier is what §7 asks for, and
-    // it is why a drying column stops taking ET gradually instead of at a
-    // step.
-    double q_et = 0.0;
-    const bool et_boundary = (options_.gw_et == "BOUNDARY_ET" ||
-                              options_.gw_et == "BOTH");
-    const bool et_caprise  = (options_.gw_et == "CAPILLARY_RISE" ||
-                              options_.gw_et == "BOTH");
-    if (et_boundary && u < surf.evap_rate.size()) {
-        const double demand = std::max(surf.evap_rate[u], 0.0);
-        if (demand > 0.0) {
-            const double Se = (state_.hu[u] > 0.0 && L0 > kTiny)
-                ? std::clamp((state_.hu[u] / L0 - state_.theta_r[u]) /
-                                 std::max(ts - state_.theta_r[u], kTiny),
-                             1.0e-6, 1.0)
-                : 1.0e-6;
-            const double psi   = soil::suctionAtSaturation(p, Se);
-            const double psi_w = 150.0;   // ≈ −15 bar wilting point, in metres
-            q_et = demand * soil::feddesStress(psi, psi_w);
-        }
+    // Surface-cadence demand has already paid actual surface evaporation.
+    const bool et_boundary=(options_.gw_et=="BOUNDARY_ET"||options_.gw_et=="BOTH");
+    const bool et_caprise=(options_.gw_et=="CAPILLARY_RISE"||options_.gw_et=="BOTH");
+    const double budget=options_.per_subcatch?std::max(0.0,surf.evap_rate[u])*A*dt:consumePending(state_.et_pending[u]);
+    double q_et=et_boundary?budget/(A*dt):0.0;
+    if(et_boundary && cl!=GwClosure::SIGMA){
+        const double Se=L0>kTiny?std::clamp((state_.hu[u]/L0-state_.theta_r[u])/std::max(ts-state_.theta_r[u],kTiny),1.0e-6,1.0):1.0;
+        const double psi=cl==GwClosure::ENSLAVED?L0:soil::suctionAtSaturation(p,Se);
+        state_.et_stress[u]=soil::feddesStress(psi,options_.wilting_suction);
+        q_et*=state_.et_stress[u];
     }
 
     // --- 1. recharge across the table -------------------------------------
@@ -1274,7 +1276,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         // the floor does not bind (every deck that was already right).
         theta_bot = ts - Sy;
     }
-    if (!et_caprise && q0 < 0.0) q0 = 0.0;   // GW_ET NONE: no capillary rise
+    if (cl!=GwClosure::ENSLAVED && !et_caprise && q0 < 0.0) q0 = 0.0;   // GW_ET NONE: no capillary rise
 
     // Availability, the same idiom as every other flux here: a column may not
     // hand down more than it holds above residual, and the table may not hand
@@ -1288,10 +1290,22 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
                                          0.0) / dt;
             q0 = std::min(q0, give);
         } else if (q0 < 0.0) {
-            const double take = std::max(hg0, 0.0) *
-                                std::max(ts - state_.theta_r[u], 0.0) / dt;
+            // Already delivered node/pipe withdrawals cannot be refunded
+            // from the aquifer alone. Internal rise spends only the water
+            // remaining after those committed signed exchanges.
+            const double available = std::max(0.0, Sy * hg0 * A
+                                              + lat_vol - node_vol + link_vol);
+            // Leave a few ulps so multiply/divide roundoff cannot make
+            // the saturated update refund an already delivered node debit.
+            const double take = available / (A * dt) * (1.0 - 8.0 * std::numeric_limits<double>::epsilon());
             q0 = std::max(q0, -take);
         }
+    }
+    if(cl==GwClosure::CLOSED_FORM)q_et=std::min(q_et,std::max(0.0,state_.hu[u]-state_.theta_r[u]*L0-std::max(0.0,q0)*dt)/dt);
+    if(cl==GwClosure::ENSLAVED){
+        const double donor=std::max(0.0,ts*hg0+soil::equilibriumStorage(p,L0)-soil::equilibriumStorage(p,zs)
+                                       +q_in*dt+(lat_vol-node_vol+link_vol)/A);
+        q_et=std::min(q_et,donor/dt); q0=q_in-q_et;
     }
     state_.q0_last[u] = q0;
 
@@ -1409,7 +1423,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         }
     }
     state_.led_recharge += q0 * A * dt;
-    if (q0 < 0.0) state_.led_caprise += -q0 * A * dt;
+    if (cl!=GwClosure::ENSLAVED && q0 < 0.0) state_.led_caprise += -q0 * A * dt;
     state_.led_deep += state_.qdeep_last[u] * A * dt;
     state_.led_lateral += lat_vol;
     state_.led_node    += state_.qnode_last[u] * dt;
@@ -1425,11 +1439,13 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         cs.dt        = dt;
         cs.q_in      = q_in;
         cs.q_et      = q_et;
+        cs.wilting_suction=options_.wilting_suction;
         cs.q0_phys   = q0;
         cs.handover_theta = ts - Sy;
         cs.capillary = options_.capillary_diff;
         sigma::advanceColumn(p, &state_.theta_sigma[u], state_.m_layers, n, cs);
         rejected = cs.rejected;
+        state_.et_stress[u]=et_boundary?cs.et_stress:std::numeric_limits<double>::quiet_NaN();
         state_.qet_last[u] = cs.et_taken;
         state_.led_et += cs.et_taken * A * dt;
         state_.hu[u] = sigma::columnStorage(&state_.theta_sigma[u],
@@ -1508,6 +1524,12 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         }
         state_.led_et += state_.qet_last[u] * A * dt;
         state_.hu[u] = hu1;
+    }
+
+    if(!options_.per_subcatch){
+        const double taken=state_.qet_last[u]*A*dt;
+        state_.et_soil_cumulative[u]+=taken;
+        state_.et_unused_cumulative[u]+=std::max(0.0,budget-taken);
     }
 
     // --- 5. Dunne saturation excess (step 12) -----------------------------

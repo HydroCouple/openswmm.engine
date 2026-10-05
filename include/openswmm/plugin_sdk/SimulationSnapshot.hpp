@@ -377,6 +377,15 @@ struct SimulationSnapshot {
     std::vector<double> gw2d_reject; ///< Rejected top-interface delivery returned to surface (m3 s-1)
     std::vector<double> gw2d_reject_cum; ///< Cumulative rejected top-interface delivery (m3)
     std::vector<double> gw2d_dunne_cum; ///< Cumulative physical saturation excess (m3)
+    std::vector<double> gw2d_et_pending;
+    std::vector<double> gw2d_et_potential_cum;
+    std::vector<double> gw2d_et_surface_cum;
+    std::vector<double> gw2d_et_soil_cum;
+    std::vector<double> gw2d_et_unused_cum;
+    std::vector<double> gw2d_et_surface;
+    std::vector<double> gw2d_et_potential;
+    std::vector<double> gw2d_et_stress;
+    std::vector<double> gw2d_et_refresh;
 };
 
 } /* namespace openswmm */

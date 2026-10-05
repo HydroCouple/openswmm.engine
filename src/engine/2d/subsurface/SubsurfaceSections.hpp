@@ -28,7 +28,7 @@
  *
  * | quantity | US | SI |
  * |---|---|---|
- * | lengths — `ZS`, `PSI_B`, `HG0`, `DC` | ft | m |
+ * | lengths — `ZS`, `PSI_B`, `HG0`, `DC`, `WILTING_SUCTION` | ft | m |
  * | rates — `KS`, `C_LOSS`, `KC`        | in/hr | mm/hr |
  * | inverse lengths — `ALPHA`           | 1/ft | 1/m |
  * | areas — `AREA`                      | ft² | m² |
@@ -53,7 +53,13 @@
  * FORCE_CLOSED_FORM NO
  * MODE           MESH | PER_SUBCATCH
  * DUNNE          YES
- * GW_ET          NONE | CAPILLARY_RISE | BOUNDARY_ET | BOTH
+ * GW_ET          AUTO | NONE | CAPILLARY_RISE | BOUNDARY_ET | BOTH
+ * WILTING_SUCTION AUTO | positive_project_length
+ * LINK_SEEPAGE   DEFAULT | ONE_WAY | TWO_WAY | NONE
+ * ;; GW_ET AUTO resolves BOTH on a mesh, NONE in PER_SUBCATCH.
+ * ;; LINK_SEEPAGE DEFAULT resolves TWO_WAY on a mesh; legacy AUTO
+ * ;; remains an accepted explicit ONE_WAY spelling.
+ * ;; Automatic wilting suction is 150 m in either project unit system.
  *
  * [2D_AQUIFER]
  * ;;scope         KS      ZS   THETA_S THETA_R ALPHA  [key value]…

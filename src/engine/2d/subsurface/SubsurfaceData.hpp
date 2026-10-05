@@ -97,7 +97,9 @@ struct GwNodeBed {
 /// (the conduit's existing `[LOSSES]` seepage volume is routed to the cells
 /// it crosses); TWO_WAY replaces the legacy loss law with the signed
 /// MODFLOW-River conductance, so a conduit below the water table GAINS.
-enum class GwLinkMode : int8_t { NONE = 0, AUTO = 1, TWO_WAY = 2 };
+/// DEFAULT resolves TWO_WAY on a mesh and one-way in PER_SUBCATCH. Explicit
+/// legacy AUTO is retained as one-way and written canonically as ONE_WAY.
+enum class GwLinkMode : int8_t { NONE = 0, AUTO = 1, TWO_WAY = 2, DEFAULT = 3 };
 
 /// G-X4: one authored `[2D_AQUIFER_LINKS]` row — the per-conduit override of
 /// the signed exchange. `link` is a NAME until `resolveLinkSeepage` maps it.
@@ -136,22 +138,27 @@ struct GwOptions {
     /// it IS the mass balance (G0 sign-off, draft decision 9); the flag
     /// exists for compatibility comparisons, not as a modelling choice.
     bool      dunne = true;
-    /// GW_ET: NONE | CAPILLARY_RISE | BOUNDARY_ET | BOTH.
-    std::string gw_et = "NONE";
+    /// GW_ET AUTO: BOTH for an active mesh aquifer, NONE in PER_SUBCATCH.
+    /// Explicit NONE | CAPILLARY_RISE | BOUNDARY_ET | BOTH remain authored.
+    std::string gw_et = "AUTO";
+    double wilting_suction = 150.0; ///< automatic SI default; authored values are project lengths
+    bool wilting_suction_set = false;
     /// G-X2: `NODE_ENROLMENT AUTO | ROWS`. AUTO (default, program plan
     /// §B.4b): every node whose [COORDINATES] fall in a mesh cell gets a bed
     /// (direct Darcy, the cell's area) unless a `[2D_AQUIFER_NODE]` row
     /// names it — rows override, `EXCHANGE NO` opts out. ROWS: only the
     /// authored rows exchange (the pre-G-X2 behaviour).
     bool      node_auto = true;
-    /// G-X3/G-X4: `LINK_SEEPAGE AUTO | NONE | TWO_WAY`. AUTO (default,
+    /// R3: DEFAULT resolves to TWO_WAY for a mesh, one-way in PER_SUBCATCH.
+    /// ONE_WAY and legacy AUTO preserve explicit one-way delivery.
+    /// G-X3/G-X4: `LINK_SEEPAGE AUTO | NONE | TWO_WAY`. AUTO (legacy,
     /// program plan §B.4b): every conduit with a [LOSSES] seepage rate whose
     /// polyline crosses the mesh delivers its seepage volume into the cells
     /// it crosses, length-weighted (one-way; the 1D still books the loss).
     /// NONE: seepage is a system loss, as before. TWO_WAY (G-X4): the signed
     /// conductance law replaces the fixed loss, and a conduit under the
     /// water table gains.
-    GwLinkMode link_seepage = GwLinkMode::AUTO;
+    GwLinkMode link_seepage = GwLinkMode::DEFAULT;
     /// True once any [2D_AQUIFER*] row was authored.
     bool      authored = false;
 };
@@ -224,6 +231,10 @@ struct SubsurfaceState {
     std::vector<double> infil_capacity, infil_remaining, infil_refresh, infil_interval;
     std::vector<double> wetting_front, reject_last, reject_cumulative;
     std::vector<double> dunne_cumulative;
+    // R3: atmospheric demand is integrated at the surface cadence, in m3.
+    std::vector<double> et_pending, et_potential_cumulative, et_surface_cumulative;
+    std::vector<double> et_soil_cumulative, et_unused_cumulative;
+    std::vector<double> et_surface_last, et_potential_last, et_stress, et_refresh;
     std::vector<double>  qlink_last;  ///< G-X3: conduit seepage delivered in (m³/s)
 
     // ---- LTS ------------------------------------------------------------

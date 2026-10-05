@@ -895,7 +895,16 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
             &snap.gw2d_table_elev, &snap.gw2d_hg, &snap.gw2d_hu, &snap.gw2d_recharge,
             &snap.gw2d_lateral, &snap.gw2d_node_exchange, &snap.gw2d_deep, &snap.gw2d_et,
             &snap.gw2d_dunne, &snap.gw2d_infil_in, &snap.gw2d_link_seepage,
-            &snap.gw2d_infil_capacity, &snap.gw2d_infil_remaining, &snap.gw2d_infil_refresh, &snap.gw2d_infil_pending, &snap.gw2d_reject, &snap.gw2d_reject_cum, &snap.gw2d_dunne_cum};   // G-X3
+            &snap.gw2d_infil_capacity, &snap.gw2d_infil_remaining, &snap.gw2d_infil_refresh, &snap.gw2d_infil_pending, &snap.gw2d_reject, &snap.gw2d_reject_cum, &snap.gw2d_dunne_cum,
+                &snap.gw2d_et_pending,
+                &snap.gw2d_et_potential_cum,
+                &snap.gw2d_et_surface_cum,
+                &snap.gw2d_et_soil_cum,
+                &snap.gw2d_et_unused_cum,
+                &snap.gw2d_et_surface,
+                &snap.gw2d_et_potential,
+                &snap.gw2d_et_stress,
+                &snap.gw2d_et_refresh};
         for (int k = 0; k < kGwFaceFields; ++k) face(ds_gw_face_[k], *fields[k]);
         if (ds_gw_ledger_ != H5I_INVALID_HID && snap.gw2d_ledger.size() == kGwLedgerTerms)
             extendAndWrite2D(ds_gw_ledger_, snap.gw2d_ledger.data(), kGwLedgerTerms);
@@ -973,6 +982,15 @@ void Default2DOutputPlugin::createGroundwaterDatasets(const SimulationSnapshot& 
         {"Mesh2_face_gw_reject", "Rejected top-interface delivery returned to surface", "m3 s-1"},
         {"Mesh2_face_gw_reject_cum", "Cumulative rejected top-interface delivery", "m3"},
         {"Mesh2_face_gw_dunne_cum", "Cumulative physical saturation excess", "m3"},
+        {"Mesh2_face_et_pending", "Atmospheric demand awaiting the aquifer firing", "m3"},
+        {"Mesh2_face_et_potential_cum", "Cumulative single atmospheric demand", "m3"},
+        {"Mesh2_face_et_surface_cum", "Cumulative actual surface evaporation", "m3"},
+        {"Mesh2_face_et_soil_cum", "Cumulative actual soil ET", "m3"},
+        {"Mesh2_face_et_unused_cum", "Cumulative unused expired atmospheric demand", "m3"},
+        {"Mesh2_face_et_surface", "Actual surface evaporation last surface interval", "m s-1"},
+        {"Mesh2_face_et_potential", "Potential atmospheric loss last surface interval", "m s-1"},
+        {"Mesh2_face_et_stress", "Single stress factor at the soil ET extraction location", "1"},
+        {"Mesh2_face_et_refresh", "End of the last integrated surface ET interval", "s"},
     };
     for (int k = 0; k < kGwFaceFields; ++k) {
         hid_t ds = createUnlimitedDataset(kFields[k].name, 2, zero2, face_chunk);

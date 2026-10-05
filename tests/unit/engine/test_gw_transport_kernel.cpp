@@ -1168,7 +1168,10 @@ TEST(GwTransportKernel, LeakingConduitCarriesItsQualityIntoTheAquifer) {
     // A seeping conduit over the mesh, no node inflow. The 1D already
     // debits this mass as its exfiltration loss, so the aquifer receiving
     // it completes a transfer rather than creating one.
-    const SeamResult s = runSeam("seam_link", seamDeck(0.5, 0.0, 100.0, 0.0));
+    std::string body=seamDeck(0.5,0.0,100.0,0.0);
+    const std::string anchor="[2D_AQUIFER_OPTIONS]\n";
+    body.insert(body.find(anchor)+anchor.size(),"LINK_SEEPAGE ONE_WAY\n");
+    const SeamResult s = runSeam("seam_link",body);
     EXPECT_GT(s.gained_link, 0.0)
         << "a leaking conduit delivered no mass — the seam is still closed";
     // …and it did not come out of the aquifer's own books: the residual

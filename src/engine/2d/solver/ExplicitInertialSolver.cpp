@@ -426,7 +426,10 @@ OPENSWMM_SOURCE_INLINE bool ExplicitInertialSolver::prepareCellSources(int i, do
         evapSink(state_->evap_rate[i], state_->depth[i], opts_->dry_depth)) * area_dt;
     const double back = gw_ ? gw_->takeToSurface(i) : 0.0;
     if (rain == 0.0 && coupling == 0.0 && requested_infil == 0.0 &&
-        requested_evap == 0.0 && back == 0.0) return false;
+        requested_evap == 0.0 && back == 0.0) {
+        if(gw_)gw_->bookSurfaceEt(i,dt,state_->evap_rate[i],0.0);
+        return false;
+    }
 
     const double incoming = rain + std::max(coupling, 0.0) + back;
     const double available = std::max(0.0, state_->volume[i] + incoming);
@@ -438,6 +441,7 @@ OPENSWMM_SOURCE_INLINE bool ExplicitInertialSolver::prepareCellSources(int i, do
     const double infil = gw_ ? gw_->acceptSurfaceInfiltration(i, requested_infil * scale)
                              : requested_infil * scale;
     const double evap = requested_evap * scale;
+    if(gw_)gw_->bookSurfaceEt(i,dt,state_->evap_rate[i],evap);
     const double out = requested_out * scale;
     state_->infil_applied[i] += infil / area;
     state_->coupling_applied[i] += std::max(coupling, 0.0) - out;

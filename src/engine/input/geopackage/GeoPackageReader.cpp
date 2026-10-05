@@ -233,7 +233,7 @@ static void apply_option_2d(SimulationContext& ctx, const std::string& key,
     else if (key == "2D_GROUNDWATER")
         o->groundwater = (val == "AUTO" || val.empty()) ? int8_t{-1}
                        : ((val == "ON" || val == "YES") ? int8_t{1} : int8_t{0});
-    else if (key == "2D_GW_ET")       o->gw_et = (val == "NONE") ? "" : val;
+    else if (key == "2D_GW_ET")       o->gw_et = val;
     // HDF5 results path — restoring it lets SWMMEngine::open re-create the
     // Default2DOutputPlugin (2D results always stream to HDF5, never gpkg).
     else if (key == "2D_OUTPUT_FILE")   o->output_file = val;
