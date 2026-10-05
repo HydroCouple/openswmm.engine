@@ -676,6 +676,8 @@ if(OPENSWMM_BUILD_2D)
     # tests/output/aquifer_2d.
     add_gtest_unit(test_engine_2d_aquifer test_2d_aquifer.cpp)
     add_gtest_unit(test_engine_surface_ownership test_surface_ownership.cpp)
+    add_gtest_unit(test_engine_surface_exchange test_surface_exchange.cpp)
+    target_compile_definitions(test_engine_surface_exchange PRIVATE OPENSWMM_R4_EXCHANGE_OUT="${PROJECT_SOURCE_DIR}/tests/verification/surface_r4_exchange_2026-10-05/models")
     target_compile_definitions(test_engine_surface_ownership PRIVATE OPENSWMM_R4_OUT="${PROJECT_SOURCE_DIR}/tests/verification/surface_r4_2026-10-05/models")
     add_gtest_unit(test_engine_surface_et_budget test_surface_et_budget.cpp)
     target_compile_definitions(test_engine_surface_et_budget PRIVATE OPENSWMM_R3_OUT="${PROJECT_SOURCE_DIR}/tests/verification/surface_r3_2026-10-05/models")

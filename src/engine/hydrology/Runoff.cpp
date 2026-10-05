@@ -48,6 +48,7 @@
 
 #include <cmath>
 #include <algorithm>
+#include <stdexcept>
 
 #if defined(SWMM_USE_OPENMP)
 #include <omp.h>
@@ -90,6 +91,7 @@ void RunoffSoA::resize(int n) {
     evap_loss.assign(un, 0.0);
     infil_loss.assign(un, 0.0);
     perv_evap_vol.assign(un, 0.0);
+    actual_perv_evap_vol.assign(un, 0.0);
     infil_vol.assign(un, 0.0);
     subarea_runoff_rate.assign(un, 0.0);
     imperv_runoff_cfs.assign(un, 0.0);
@@ -179,9 +181,17 @@ void RunoffSolver::updatePondedDepth(double& depth, double inflow,
 // Init
 // ============================================================================
 
-void RunoffSolver::init(SimulationContext& ctx) {
+void RunoffSolver::init(SimulationContext& ctx, const std::vector<std::pair<int, double>>& spatial_areas) {
     int n = ctx.n_subcatches();
+    std::vector<double> external_area(static_cast<std::size_t>(n), -1);
+    for (const auto& [i, area] : spatial_areas) {
+        if (i < 0 || i >= n || !std::isfinite(area) || area < 0 || external_area[i] >= 0)
+            throw std::invalid_argument("Invalid or duplicate reviewed non-LID source area.");
+        external_area[i] = area;
+    }
     soa_.resize(n);
+    spatial_full_area_ft2_.clear();
+    if (!spatial_areas.empty()) spatial_full_area_ft2_.assign(static_cast<std::size_t>(n), -1);
 
     double ucf_area  = ucf::UCF(ucf::LANDAREA,  ctx.options);
     double ucf_depth = ucf::UCF(ucf::RAINDEPTH, ctx.options);
@@ -193,6 +203,10 @@ void RunoffSolver::init(SimulationContext& ctx) {
         double full_area_ft2 = ctx.subcatches.area[ui] / ucf_area;
         double lid_area_ft2  = ctx.subcatches.total_lid_area_ft2[ui]; // already in ft²
         soa_.area[ui]       = std::max(0.0, full_area_ft2 - lid_area_ft2);
+        if (external_area[ui] >= 0) {
+            soa_.area[ui] = external_area[ui] / (.3048 * .3048);
+            spatial_full_area_ft2_[ui] = soa_.area[ui] + lid_area_ft2;
+        }
         soa_.width[ui]      = ctx.subcatches.width[ui];
         soa_.slope[ui]      = ctx.subcatches.slope[ui];
         soa_.imperv_pct[ui] = ctx.subcatches.frac_imperv[ui];
@@ -251,7 +265,8 @@ double RunoffSolver::nativeInfilFullLid(SimulationContext& ctx, int i, double dt
 }
 
 void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_in,
-                           double infil_factor, double recovery_factor, int month) {
+                           double infil_factor, double recovery_factor, int month,
+                           const InfiltrationBoundary* boundary) {
     int n = soa_.n_subcatch;
     if (n == 0) return;
 
@@ -328,6 +343,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         // Mass balance accumulators (matching legacy Vevap, Vinfil, Voutflow)
         double Vevap    = 0.0;  // Total evaporation volume (ft³)
         double Vpevap   = 0.0;  // Pervious-subarea evaporation volume (ft³), legacy Vpevap
+        double actual_perv_evap = 0.0;
         double Vinfil   = 0.0;  // Total infiltration volume (ft³)
         double Voutflow = 0.0;  // Total runoff volume (ft³)
 
@@ -349,7 +365,13 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             // Called INSIDE the per-subarea loop with subarea inflow as runon.
             // For RouteTo=OUTLET models, subarea->inflow = 0 (no inter-subarea runon).
             double infil = 0.0;
-            if (isPervious) {
+            const double available = std::max(0.0, surfMoisture + precip + runon_in - surfEvap);
+            const bool external = isPervious && boundary && (*boundary)(i, depth, available, infil);
+            if (external) {
+                if (!std::isfinite(infil) || infil < 0.0 || ctx.subcatches.gw_aquifer[ui] >= 0)
+                    throw std::invalid_argument("External source intake requires a finite nonnegative rate and no lumped aquifer.");
+                infil = std::min(infil, available);
+            } else if (isPervious) {
                 // Legacy: infil_getInfil(j, tStep, precip, subarea->inflow, depth)
                 //   → horton_getInfil(state, tStep, precip + runon, depth)
                 // subarea->inflow here is the runon from other subareas (0 for OUTLET routing).
@@ -375,7 +397,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             // Gap #40: limit pervious infiltration by GW upper zone capacity.
             // Matching legacy subcatch.c getSubareaInfil():
             //   infil = MIN(infil, GW->maxInfilVol / tStep)
-            if (isPervious && dt > 0.0) {
+            if (isPervious && !external && dt > 0.0) {
                 double max_iv = ctx.subcatches.gw_max_infil_vol[ui];
                 if (max_iv < 1.0e30)
                     infil = std::min(infil, max_iv / dt);
@@ -387,6 +409,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
 
             // Step 3.5: Update mass balance volumes (legacy lines 934-937)
             Vevap  += surfEvap * subarea_area * dt;
+            if (isPervious) actual_perv_evap += surfEvap * subarea_area * dt;
             // legacy subcatch.c:984 `if (i == PERV) Vpevap += Vevap;` — the
             // WHOLE subcatchment's surface evaporation so far (the pervious
             // subarea is processed last, after both impervious ones), not
@@ -598,7 +621,8 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                 sum += runoff1  * (total_area * f1);
                 sum += runoff_p * (total_area * fp);
             }
-            const double full_area = ctx.subcatches.area[ui] / ucf_landarea;
+            const double full_area = !spatial_full_area_ft2_.empty() && spatial_full_area_ft2_[ui] >= 0
+                ? spatial_full_area_ft2_[ui] : ctx.subcatches.area[ui] / ucf_landarea;
             soa_.subarea_runoff_rate[ui] = (full_area > 0.0) ? sum / full_area : 0.0;
         }
 
@@ -668,6 +692,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         // gwater_getGroundwater Vpevap and Vinfil (+ the LID shares) and
         // divides by the FULL area then by tStep there.
         soa_.perv_evap_vol[ui] = Vpevap;
+        soa_.actual_perv_evap_vol[ui] = actual_perv_evap;
         soa_.infil_vol[ui]     = Vinfil;
 
         // Accumulate per-subcatchment statistics (matching legacy stats_updateSubcatchStats)
