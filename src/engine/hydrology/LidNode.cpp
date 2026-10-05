@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 #include <set>
 
 namespace openswmm::lidnode {
@@ -138,7 +139,9 @@ double portOffset(const SimulationContext& ctx, int link, int node) {
     if(wr>=0) offset=ctx.link_subtypes.weirs.crest_height[wr];
     else if(out>=0) offset=ctx.link_subtypes.outlets.crest_height[out];
     else return ctx.links.node1[link]==node?offset:ctx.links.offset2[link];
-    return ctx.nodes.invert_elev[ctx.links.node1[link]]+offset-ctx.nodes.invert_elev[node];
+    // Keep a crest authored relative to its own node exact. Adding its datum
+    // before subtracting the same datum can move an interface by one ULP.
+    return offset+(ctx.nodes.invert_elev[ctx.links.node1[link]]-ctx.nodes.invert_elev[node]);
 }
 void validate(SimulationContext& ctx) {
     for (int c = 0; c < ctx.lid_controls.count(); ++c) {
@@ -427,12 +430,17 @@ double bottomCloggingFactor(const SimulationContext& c, int r) {
 }
 
 namespace openswmm::lidnode {
-namespace {
 int portCell(const LidNodeState& state, double offset) {
-    for (int i = 0; i < static_cast<int>(state.cells.size()); ++i)
-        if (offset >= state.cells[i].bottom && offset < state.cells[i].top) return i;
+    for (int i = 0; i < static_cast<int>(state.cells.size()); ++i) {
+        const auto& cell=state.cells[i];
+        // An interface belongs to the cell above it. Snap only roundoff-sized
+        // differences, not physical offsets near an interface. The same rule
+        // is used for hydraulic head, water withdrawals and outlet treatment.
+        const double scale=std::max({1.0,std::abs(offset),std::abs(cell.bottom),std::abs(cell.top)});
+        const double tolerance=32*std::numeric_limits<double>::epsilon()*scale;
+        if (offset >= cell.bottom-tolerance && offset < cell.top-tolerance) return i;
+    }
     return state.cells.empty() ? -1 : 0;
-}
 }
 void resetPorts(SimulationContext& ctx) {
     for (auto& s : ctx.node_subtypes.storages.lid_state) {

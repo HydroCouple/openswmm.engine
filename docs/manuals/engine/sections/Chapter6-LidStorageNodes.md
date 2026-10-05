@@ -78,6 +78,36 @@ iteration. Inlet or outlet elevations determine which physical region receives
 or supplies water. Supply rainfall through contributing subcatchments or an
 external inflow; assigning a control does not add an independent rainfall load.
 
+Physical layer interfaces belong to the cell above them. Port selection allows
+only roundoff-sized elevation differences and shares this rule between
+hydraulic head, accepted water withdrawals and pollutant outlet treatment.
+Crests authored relative to the upstream node are converted using the
+difference between node datums before adding the crest offset. This avoids
+misclassifying a surface weir as a media outlet after floating-point
+cancellation at a nonzero invert. Surface ponding supplies its local head
+even when the mobile water table remains below the crest.
+
+Intercell retained-water drainage is a gravity-only Darcy–Buckingham
+approximation: `q_i = Ks_i * clamp(theta_i / porosity_i, 0, 1)^n_i` above
+field capacity, otherwise zero, and `Q_i = area_i * q_i`. It uses donor
+properties, without a receiver matric-head gradient or an interface-averaged
+conductivity. Aggregate cells have zero field capacity and the default
+exponent three. Surface entry instead uses receiving conductivity and
+suction: `q = K_b * (1 + suction_b * max(porosity_b - theta_b, 0) /
+max(suction_b + theta_surface * thickness_surface, epsilon))`.
+
+Explicit substeps are at most one second. Accepted volumes are bounded by
+`Q_i * substep`, donor water above field capacity and receiving pore space.
+All transfers use a common pre-update state and equal donor/receiver volumes.
+A receiver intersected by the mobile water table instead transfers into
+mobile storage without the retained pore-capacity bound; donors whose bottoms
+are below that table skip free drainage. The closure omits matric-gradient
+redistribution, including upward capillary flow and capillary barriers. It is
+more restricted than the gravity-plus-diffusivity block formulation of
+[Tu, Wadzuk and Traver (2020)](https://doi.org/10.1371/journal.pone.0235528);
+their validation cannot be applied to this kernel. GUI T10 illustrates the
+flux equations and interpretation limits.
+
 The runtime moisture profile reports cell layer number, bottom/top elevations
 and volumetric moisture. Elevations are relative to the storage invert in
 project length units. A profile is available after initialization.
@@ -194,11 +224,23 @@ free/backwater conditions and ZERO/LAST outfall quality, checking final
 balances and conservative-tracer inventory at every routing step to 0.1%.
 Focused cases cover sub-litre drainage and physical weir-crest anchors.
 
-GUI T10 supplies six complete active-control examples. All eighteen runs
-(0.5, 0.25 and 0.1-second steps) passed 0.5% water/pollutant continuity
-acceptance without engine warnings; reported pollutant errors were below
-0.001%. These are test-case results, not a universal accuracy guarantee.
+GUI T10 supplies six complete active-control examples. Twenty-six distinct
+case/step combinations (0.5, 0.25, 0.1 and 0.025 seconds for all six cases,
+plus 0.05 seconds for the passive cases) passed 0.5% water/pollutant
+continuity acceptance without engine warnings; reported pollutant errors
+were below 0.001%. Figures use the 0.025-second runs. The passive 0.1-second
+results showed performance sensitivity despite good continuity; the
+0.05- and 0.025-second passive runs agreed in half-export time at sampling
+resolution and reacted fraction at report precision. These are test-case results, not a universal accuracy guarantee.
 Check convergence of performance metrics as well as continuity. Rapid
 surface overflow can alias a coarse output sampling interval; use cumulative
 engine budgets for those losses. Inspect water and pollutant continuity and
 repeat with a smaller step for the model being studied.
+
+Three subsequent interface regressions cover perched surface-water withdrawal
+at a nonzero node invert, one-ULP perturbations at cell interfaces versus
+physical offsets, and consistent layer selection for mobile-outlet treatment.
+The seven LID/quality/treatment/restart/backflow/water-age/heat suites now pass
+141 tests. The corrected GUI T10 results and figures supersede the prior
+overflow totals; their validation note records the rebuilt library and
+additional routing-step refinement.

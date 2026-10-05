@@ -17,6 +17,8 @@
 #include "edit/TypeConverter.hpp"
 #include <filesystem>
 #include <fstream>
+#include <cmath>
+#include <limits>
 #include <numeric>
 using namespace openswmm;
 namespace {
@@ -537,4 +539,59 @@ TEST(LidNodes, WeirAnchorUsesItsPhysicalCrestAndTracksStackEdits) {
     lidnode::sync(c,0);
     EXPECT_DOUBLE_EQ(c.link_subtypes.weirs.crest_height[wr],2);
     EXPECT_DOUBLE_EQ(lidnode::portOffset(c,0,0),2);
+}
+
+TEST(LidNodes, PondedWeirAtNonzeroInvertDrawsSurfaceWater) {
+    auto c=model();
+    c.lid_controls.node_layers[0][2].params[0]=12;
+    lidnode::sync(c,0);
+    c.nodes.invert_elev[0]=.3;
+    c.link_names.add("Spill");c.links.resize(1);c.links.node1[0]=0;c.links.node2[0]=1;
+    c.link_subtypes.set_link_type(c.links,0,LinkType::WEIR);
+    c.link_subtypes.weirs.crest_height[c.link_subtypes.weir_row(0)]=2;
+    lidnode::initialize(c);
+    auto& state=c.node_subtypes.storages.lid_state[0];
+    state.cells.front().theta=.36; // 0.20 ft of surface ponding above the crest.
+    c.nodes.depth[0]=.5; // Mobile water table remains in the aggregate.
+    const double offset=lidnode::portOffset(c,0,0);
+    EXPECT_NEAR(lidnode::portDepth(c,0,offset),2.2,1.e-12);
+    lidnode::resetPorts(c);
+    EXPECT_NEAR(lidnode::exchangePorts(c,0,.1,1),.1,1.e-12);
+    EXPECT_NEAR(state.port_delta.front(),-.1,1.e-12);
+    for(std::size_t i=1;i<state.port_delta.size();++i) EXPECT_EQ(state.port_delta[i],0);
+}
+
+TEST(LidNodes, PortInterfacesAllowRoundoffButPreservePhysicalOffsets) {
+    auto c=model();lidnode::initialize(c);
+    const auto& state=c.node_subtypes.storages.lid_state[0];
+    for(std::size_t i=0;i+1<state.cells.size();++i) {
+        const double boundary=state.cells[i].bottom;
+        EXPECT_EQ(lidnode::portCell(state,boundary),i);
+        EXPECT_EQ(lidnode::portCell(state,std::nextafter(boundary,0.0)),i);
+        EXPECT_EQ(lidnode::portCell(state,std::nextafter(boundary,std::numeric_limits<double>::infinity())),i);
+        EXPECT_EQ(lidnode::portCell(state,boundary-1.e-8),i+1);
+    }
+}
+
+TEST(LidNodes, MobileOutletTreatmentUsesTheSameInterfaceOwnerAsHydraulics) {
+    auto c=model();
+    c.pollutant_names.add("Tracer");c.pollutants.resize_pollutants(1);
+    c.nodes.resize_quality(1);c.nodes.conc.assign(2,10);c.nodes.conc_old.assign(2,10);
+    c.mass_balance.resize_quality(1);
+    // A port exactly at the media/aggregate interface belongs to MEDIA.
+    c.lid_controls.node_layers[0][1].treatment={{"Tracer",.25,0,{}}};
+    c.lid_controls.node_layers[0][2].treatment={{"Tracer",.75,0,{}}};
+    c.link_names.add("Drain");
+    c.links.resize(1);c.links.resize_quality(1);c.links.node1[0]=0;c.links.node2[0]=1;
+    c.links.flow[0]=.1;
+    lidnode::initialize(c);
+    for(double offset:{.5,std::nextafter(.5,0.0),std::nextafter(.5,1.0)}) {
+        c.links.offset1[0]=offset;
+        c.node_subtypes.storages.lid_state[0].quality_outlet_conc.assign(1,std::numeric_limits<double>::quiet_NaN());
+        lidnode::prepareOutletQuality(c,1,false);
+        EXPECT_NEAR(lidnode::outletQuality(c,0,0,0,10),7.5,1.e-12);
+    }
+    c.links.offset1[0]=.5-1.e-8;
+    lidnode::prepareOutletQuality(c,1,false);
+    EXPECT_NEAR(lidnode::outletQuality(c,0,0,0,10),2.5,1.e-12);
 }
