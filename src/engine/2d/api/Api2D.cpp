@@ -682,6 +682,18 @@ int swmm_2d_get_rainfall_bulk(SWMM_Engine engine, double* rainfall) {
     return SWMM_OK;
 }
 
+int swmm_2d_get_report_rainfall_bulk(SWMM_Engine engine, double report_date,
+                                   double* rainfall) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    if (!rainfall || !std::isfinite(report_date)) return SWMM_ERR_BADPARAM;
+
+    std::vector<double> values;
+    router2d.reportRainfall(eng->context(), report_date, values);
+    std::memcpy(rainfall, values.data(), values.size() * sizeof(double));
+    return SWMM_OK;
+}
+
 int swmm_2d_get_rain_volume_bulk(SWMM_Engine engine, double* volumes) {
     GET_ENGINE(engine);
     CHECK_2D_ACTIVE(eng);
