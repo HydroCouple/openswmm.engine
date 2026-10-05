@@ -968,6 +968,13 @@ SWMM_ENGINE_API int swmm_aquifer_set_evap_pattern(SWMM_Engine engine, int idx, c
  * Snowpack definitions ([SNOWPACKS] section) — Slice BM.0 / BP.6.6.5
  * ========================================================================= */
 
+/** Assign a snowpack by name before initialization. NULL/empty clears it.
+ * Unknown names return BADPARAM without changing the assignment. */
+SWMM_ENGINE_API int swmm_subcatch_set_snowpack(SWMM_Engine engine, int idx, const char* name);
+/** Return the assigned snowpack name, or an empty string when unassigned.
+ * Returns NULL for an invalid engine/subcatchment. */
+SWMM_ENGINE_API const char* swmm_subcatch_get_snowpack(SWMM_Engine engine, int idx);
+
 /**
  * @brief Get the total number of snowpack definitions in the model.
  * @param engine  Engine handle.

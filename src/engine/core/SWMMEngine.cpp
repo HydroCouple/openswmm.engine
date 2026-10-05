@@ -2255,9 +2255,9 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             }
 
             // Accumulation + plowing BEFORE melt (legacy runoff.c:254).
-            snow_.plowSnow(ctx_, dt_runoff, snow_snow_.data());
+            static_cast<surface::SnowModel&>(snow_).plowSnow(ctx_, dt_runoff, snow_snow_.data());
 
-            snow_.execute(ctx_, dt_runoff, ctx_.climate_state.temperature,
+            static_cast<surface::SnowModel&>(snow_).execute(ctx_, dt_runoff, ctx_.climate_state.temperature,
                           ctx_.climate_state.wind_speed, snow_rain_.data(),
                           snow_snow_.data(),
                           ctx_.climate_state.gamma, ctx_.climate_state.ea);

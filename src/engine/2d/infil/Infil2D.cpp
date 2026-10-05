@@ -48,8 +48,6 @@ namespace {
 // project (US or SI) — see §5.5.1. Conversion happens only here, at the call
 // boundary, so the kernels keep bit-parity with legacy infil.c.
 
-constexpr double kFeetPerMeter  = 3.280839895013123;  ///< m → ft
-constexpr double kMetersPerFoot = 0.3048;             ///< ft → m (exact)
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -210,10 +208,7 @@ bool Infil2D::resolve(const MeshData& mesh, const SimulationOptions& opts,
 
     resolved_.assign(nt_u, Infil2DRow{});
     prov_.assign(nt_u, Infil2DProvenance::NONE);
-    cum_depth_.assign(nt_u, 0.0);
-    horton_.clear();
-    grnampt_.clear();
-    curvenum_.clear();
+    bank_.init(nt);
     active_ = false;
 
     // D-I1: the cadence is INFIL_STEP, falling back to the project WET_STEP
@@ -279,42 +274,7 @@ bool Infil2D::resolve(const MeshData& mesh, const SimulationOptions& opts,
         if (!r.has_method) continue;
         active_ = true;
 
-        switch (r.method) {
-            case InfilModel::HORTON:
-            case InfilModel::MOD_HORTON:
-                if (horton_.empty()) horton_.assign(nt_u, infil::HortonState{});
-                infil::horton_init(horton_[i], r.p[0], r.p[1], r.p[2], r.p[3],
-                                   r.p[4], opts);
-                break;
-
-            case InfilModel::CONSTANT:
-                // A constant rate is a degenerate Horton (f0 == fmin, no decay,
-                // no regeneration), so horton_init performs exactly the
-                // in/hr|mm/hr → ft/s conversion this method needs and
-                // horton_[i].fmin carries the rate. No extra storage, and the
-                // slot reads sanely if anyone inspects it.
-                if (horton_.empty()) horton_.assign(nt_u, infil::HortonState{});
-                infil::horton_init(horton_[i], r.p[0], r.p[0], 0.0, 0.0, 0.0, opts);
-                break;
-
-            case InfilModel::GREEN_AMPT:
-            case InfilModel::MOD_GREEN_AMPT:
-                if (grnampt_.empty()) grnampt_.assign(nt_u, infil::GreenAmptState{});
-                infil::grnampt_init(grnampt_[i], r.p[0], r.p[1], r.p[2], opts);
-                break;
-
-            case InfilModel::CURVE_NUM:
-                // Drying time is p[2] — the third positional column, matching
-                // legacy curvenum_setParams() and Runoff.cpp:252-253.
-                if (curvenum_.empty()) curvenum_.assign(nt_u, infil::CurveNumState{});
-                infil::curvenum_init(curvenum_[i], r.p[0], r.p[2]);
-                break;
-
-            default:
-                err = "2D infiltration cell " + std::to_string(i + 1)
-                    + ": unknown infiltration method";
-                return false;
-        }
+        bank_.setMethod(static_cast<int>(i), r.method, r.p, opts);
     }
 
     // Nothing resolved: drop back to the unconfigured fast path so the
@@ -322,7 +282,7 @@ bool Infil2D::resolve(const MeshData& mesh, const SimulationOptions& opts,
     if (!active_) {
         resolved_.clear();
         prov_.clear();
-        cum_depth_.clear();
+        bank_.clear();
     }
 
     return true;
@@ -339,40 +299,9 @@ void Infil2D::updateRates(const MeshData& mesh, SurfaceStateData& state, double 
         const Infil2DRow& r = resolved_[i];
         if (!r.has_method) continue;
 
-        const double precip_ft = state.rainfall[i] * kFeetPerMeter;
-        const double depth_ft  = state.depth[i]    * kFeetPerMeter;
-
-        double f_ftsec = 0.0;
-        switch (r.method) {
-            case InfilModel::HORTON:
-                f_ftsec = infil::horton_getInfil(horton_[i], precip_ft, depth_ft, dt);
-                break;
-            case InfilModel::MOD_HORTON:
-                f_ftsec = infil::modHorton_getInfil(horton_[i], precip_ft, depth_ft, dt);
-                break;
-            case InfilModel::GREEN_AMPT:
-            case InfilModel::MOD_GREEN_AMPT:
-                // The modified variant is selected by the enum, not a bool.
-                f_ftsec = infil::grnampt_getInfil(grnampt_[i], precip_ft, depth_ft,
-                                                  dt, r.method);
-                break;
-            case InfilModel::CURVE_NUM:
-                // Runoff.cpp:428 folds inter-subarea runon into the depth
-                // argument (and passes rainfall alone as the rate); a mesh cell
-                // has no runon, so the ponded depth passes through unchanged.
-                f_ftsec = infil::curvenum_getInfil(curvenum_[i], precip_ft, depth_ft, dt);
-                break;
-            case InfilModel::CONSTANT:
-                f_ftsec = infil::constant_getInfil(horton_[i].fmin, precip_ft,
-                                                   depth_ft, dt);
-                break;
-            default:
-                break;
-        }
-
-        const double rate_si = std::max(0.0, f_ftsec * kMetersPerFoot);
-        state.infil_rate[i] = rate_si;
-        cum_depth_[i] += rate_si * dt;
+        if (bank_.owner(static_cast<int>(i)) == surface::InfilBank::Owner::EXTERNAL) continue;
+        state.infil_rate[i] = bank_.rate(static_cast<int>(i), state.rainfall[i], 0.0,
+                                         state.depth[i], dt, {1.0, 1.0});
     }
 }
 
@@ -387,10 +316,7 @@ void Infil2D::reset() {
 
     resolved_.clear();
     prov_.clear();
-    cum_depth_.clear();
-    horton_.clear();
-    grnampt_.clear();
-    curvenum_.clear();
+    bank_.clear();
 }
 
 } // namespace openswmm::twoD

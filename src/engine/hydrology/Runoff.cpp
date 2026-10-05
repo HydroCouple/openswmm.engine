@@ -209,57 +209,16 @@ void RunoffSolver::init(SimulationContext& ctx) {
     }
     soa_.computeAlpha();
 
-    horton_states_.resize(static_cast<std::size_t>(n));
-    grnampt_states_.resize(static_cast<std::size_t>(n));
-    curvenum_states_.resize(static_cast<std::size_t>(n));
-    infil_models_.resize(static_cast<std::size_t>(n), InfilModel::HORTON);
+    infil_bank_.init(n);
     infil_factor_used_.assign(static_cast<std::size_t>(n), 1.0);
-
     for (int i = 0; i < n; ++i) {
-        auto ui = static_cast<std::size_t>(i);
-        int im = ctx.subcatches.infil_model[ui];
-        // legacy horton_setParams (infil.c:349) replaces a zero drying time
-        // with TINY, so capacity recovers almost at once; horton_init itself
-        // keeps zero as "no recovery", which the 2D infiltration model uses.
-        const double dry_time = (ctx.subcatches.infil_p4[ui] == 0.0)
-                                    ? constants::TINY : ctx.subcatches.infil_p4[ui];
-        switch (im) {
-            case 0:
-                infil_models_[ui] = InfilModel::HORTON;
-                infil::horton_init(horton_states_[ui],
-                    ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p2[ui],
-                    ctx.subcatches.infil_p3[ui], dry_time,
-                    ctx.subcatches.infil_p5[ui], ctx.options);
-                break;
-            case 1:
-                infil_models_[ui] = InfilModel::MOD_HORTON;
-                infil::horton_init(horton_states_[ui],
-                    ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p2[ui],
-                    ctx.subcatches.infil_p3[ui], dry_time,
-                    ctx.subcatches.infil_p5[ui], ctx.options);
-                break;
-            case 2:
-                infil_models_[ui] = InfilModel::GREEN_AMPT;
-                infil::grnampt_init(grnampt_states_[ui],
-                    ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p2[ui],
-                    ctx.subcatches.infil_p3[ui], ctx.options);
-                break;
-            case 3:
-                infil_models_[ui] = InfilModel::MOD_GREEN_AMPT;
-                infil::grnampt_init(grnampt_states_[ui],
-                    ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p2[ui],
-                    ctx.subcatches.infil_p3[ui], ctx.options);
-                break;
-            case 4:
-                infil_models_[ui] = InfilModel::CURVE_NUM;
-                // Drying time is p3 — the third [INFILTRATION] column, matching
-                // legacy curvenum_setParams(), which reads p[2]. Reading p4 here
-                // left regen at 0 for every file-loaded CN subcatchment, so the
-                // soil store never recovered between events.
-                infil::curvenum_init(curvenum_states_[ui],
-                    ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p3[ui]);
-                break;
-        }
+        const auto ui = static_cast<std::size_t>(i);
+        // Preserve legacy subcatchment zero-drying-time normalization.
+        const double dry_time = ctx.subcatches.infil_p4[ui] == 0.0
+            ? constants::TINY : ctx.subcatches.infil_p4[ui];
+        const double p[5] = {ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p2[ui],
+            ctx.subcatches.infil_p3[ui], dry_time, ctx.subcatches.infil_p5[ui]};
+        infil_bank_.setMethod(i, static_cast<InfilModel>(ctx.subcatches.infil_model[ui]), p, ctx.options);
     }
 }
 
@@ -274,52 +233,7 @@ double RunoffSolver::infilGetInfil(SimulationContext& ctx, int i, double precip,
                                    double runon, double depth, double dt,
                                    double local_infil, double recovery_factor) {
     (void)ctx;
-    auto ui = static_cast<std::size_t>(i);
-    double infil = 0.0;
-    const InfilModel im = infil_models_[ui];
-    switch (im) {
-        case InfilModel::HORTON:
-        case InfilModel::MOD_HORTON: {
-            auto& hs = horton_states_[ui];
-            double save_f0 = hs.f0, save_fmin = hs.fmin, save_regen = hs.regen;
-            hs.f0   *= local_infil;
-            hs.fmin *= local_infil;
-            hs.regen *= recovery_factor;
-            infil = (im == InfilModel::HORTON)
-                ? infil::horton_getInfil(hs, precip + runon, depth, dt)
-                : infil::modHorton_getInfil(hs, precip + runon, depth, dt);
-            hs.f0 = save_f0; hs.fmin = save_fmin; hs.regen = save_regen;
-            break;
-        }
-        case InfilModel::GREEN_AMPT:
-        case InfilModel::MOD_GREEN_AMPT: {
-            // Legacy applies InfilFactor and Evap.recoveryFactor inside
-            // grnampt_getInfil, per call, from the unscaled state (ks = Ks*IF,
-            // lu = Lu*sqrt(IF), Fumax = IMDmax*Lu*sqrt(IF), kr = lu/90000*RF,
-            // T = 5400/lu/RF). Baking them into Ks/Lu/Fumax changed both the
-            // operation order and Fumax (which scaled by IF instead of sqrt(IF)).
-            infil = infil::grnampt_getInfil(grnampt_states_[ui],
-                                            precip + runon, depth, dt, im,
-                                            local_infil, recovery_factor);
-            break;
-        }
-        case InfilModel::CURVE_NUM: {
-            auto& cs = curvenum_states_[ui];
-            // Gap #7: CN treats runon as ponded depth, not as a rainfall rate.
-            // Legacy infil.c lines 318-319: depth += runon * tstep; then pass
-            // only rainfall (not rainfall+runon) as the rate argument.
-            double cn_depth = depth + runon * dt;
-            infil = infil::curvenum_getInfil(cs, precip, cn_depth, dt,
-                                             recovery_factor);
-            break;
-        }
-        case InfilModel::CONSTANT:
-            // 2D-only method (plan §5.5.1): [INFILTRATION] has no token for
-            // it, so no subcatchment can carry it. Listed explicitly to keep
-            // the switch exhaustive.
-            break;
-    }
-    return infil;
+    return infil_bank_.rateFeet(i, precip, runon, depth, dt, {local_infil, recovery_factor});
 }
 
 // Legacy findNativeInfil (lid.c) for a subcatchment whose non-LID area is
@@ -777,87 +691,10 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
 // ============================================================================
 
 void RunoffSolver::infil_get_state(int i, int& model, double state[6]) const noexcept {
-    std::fill(state, state + 6, 0.0);
-    if (i < 0 || static_cast<std::size_t>(i) >= infil_models_.size()) {
-        model = 0;
-        return;
-    }
-    const auto ui = static_cast<std::size_t>(i);
-    model = static_cast<int>(infil_models_[ui]);
-
-    switch (infil_models_[ui]) {
-        case InfilModel::HORTON:
-        case InfilModel::MOD_HORTON: {
-            const auto& h = horton_states_[ui];
-            state[0] = h.tp;
-            state[1] = h.Fe;
-            state[2] = h.Fmh;
-            break;
-        }
-        case InfilModel::GREEN_AMPT:
-        case InfilModel::MOD_GREEN_AMPT: {
-            const auto& g = grnampt_states_[ui];
-            state[0] = g.IMD;
-            state[1] = g.F;
-            state[2] = g.Fu;
-            state[3] = g.T;
-            state[4] = g.saturated ? 1.0 : 0.0;
-            break;
-        }
-        case InfilModel::CURVE_NUM: {
-            const auto& c = curvenum_states_[ui];
-            state[0] = c.S;
-            state[1] = c.Se;
-            state[2] = c.P;
-            state[3] = c.F;
-            state[4] = c.f;
-            state[5] = c.T;
-            break;
-        }
-        case InfilModel::CONSTANT:
-            break;  // 2D-only, stateless — nothing to save
-    }
+    infil_bank_.pack(i, model, state);
 }
-
 void RunoffSolver::infil_set_state(int i, int model, const double state[6]) noexcept {
-    if (i < 0 || static_cast<std::size_t>(i) >= infil_models_.size()) return;
-    const auto ui = static_cast<std::size_t>(i);
-
-    // Only restore if model matches the initialised type
-    if (model != static_cast<int>(infil_models_[ui])) return;
-
-    switch (infil_models_[ui]) {
-        case InfilModel::HORTON:
-        case InfilModel::MOD_HORTON: {
-            auto& h = horton_states_[ui];
-            h.tp  = state[0];
-            h.Fe  = state[1];
-            h.Fmh = state[2];
-            break;
-        }
-        case InfilModel::GREEN_AMPT:
-        case InfilModel::MOD_GREEN_AMPT: {
-            auto& g = grnampt_states_[ui];
-            g.IMD       = state[0];
-            g.F         = state[1];
-            g.Fu        = state[2];
-            g.T         = state[3];
-            g.saturated = (state[4] != 0.0);
-            break;
-        }
-        case InfilModel::CURVE_NUM: {
-            auto& c = curvenum_states_[ui];
-            c.S  = state[0];
-            c.Se = state[1];
-            c.P  = state[2];
-            c.F  = state[3];
-            c.f  = state[4];
-            c.T  = state[5];
-            break;
-        }
-        case InfilModel::CONSTANT:
-            break;  // 2D-only, stateless — nothing to restore
-    }
+    infil_bank_.unpack(i, model, state);
 }
 
 } // namespace runoff

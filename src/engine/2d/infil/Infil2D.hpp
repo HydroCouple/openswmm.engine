@@ -64,7 +64,7 @@
 #include <string>
 #include <vector>
 
-#include "../../hydrology/Infiltration.hpp"
+#include "../../hydrology/surface/InfilBank.hpp"
 
 namespace openswmm { struct SimulationOptions; }
 
@@ -233,6 +233,8 @@ public:
      */
     void updateRates(const MeshData& mesh, SurfaceStateData& state, double dt);
 
+    surface::InfilBank& bank() noexcept { return bank_; }
+
     /// True when at least one cell resolved to a model.
     bool active() const noexcept { return active_; }
 
@@ -253,7 +255,7 @@ public:
     /// ledger-consistent series and is what the sidecar's `infil_cum` and the
     /// C API's `*_get_cum_bulk` report; this one is retained as the kernel-side
     /// diagnostic.
-    const std::vector<double>& cumulative() const noexcept { return cum_depth_; }
+    const std::vector<double>& cumulative() const noexcept { return bank_.cumulative(); }
 
     /// Resolved cadence in seconds (options_.infil_step, or the project
     /// WET_STEP when that was <= 0). Set by resolve().
@@ -277,13 +279,8 @@ private:
     // Per-triangle resolved state (empty when !active_).
     std::vector<Infil2DRow>        resolved_;
     std::vector<Infil2DProvenance> prov_;
-    std::vector<double>            cum_depth_;   ///< m
+    surface::InfilBank bank_;
 
-    // Kernel state, one entry per triangle (allocated only for the methods in
-    // use; indexed by triangle so lookups stay branch-free).
-    std::vector<infil::HortonState>    horton_;
-    std::vector<infil::GreenAmptState> grnampt_;
-    std::vector<infil::CurveNumState>  curvenum_;
 };
 
 // ============================================================================
