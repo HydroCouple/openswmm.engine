@@ -65,6 +65,10 @@ struct FvStepForcing {
     /// continuity equation. Indexed by node. Outfalls arrive here.
     const double* node_fixed_head = nullptr;
 
+    /// Per-incident-link donation limit (cfs) for finite surface reservoirs.
+    /// Null/infinite entries preserve unlimited ordinary stage boundaries.
+    const double* node_source_max = nullptr;
+
     /// Non-conduit (pump/orifice/weir/outlet) link flows in cfs, signed
     /// positive from node1 to node2. Indexed by link; conduits are ignored.
     ///

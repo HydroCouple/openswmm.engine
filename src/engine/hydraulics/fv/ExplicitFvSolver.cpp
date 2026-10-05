@@ -1415,6 +1415,12 @@ void ExplicitFvSolver::computeFaceFlux(int f, bool mass_only) {
                     inlet_control_[ucv] = 1;
                 }
             }
+            if (nd >= 0 && forcing_ && forcing_->node_source_max &&
+                nd < forcing_->n_nodes) {
+                const double cap = forcing_->node_source_max[nd];
+                if (cl < 0 && mass > cap) mass = cap;
+                if (cr < 0 && mass < -cap) mass = -cap;
+            }
             f_mass_[uf] = mass;
             return;
         }
@@ -1492,6 +1498,20 @@ void ExplicitFvSolver::computeFaceFlux(int f, bool mass_only) {
             }
         }
 
+        if (nd >= 0 && forcing_ && forcing_->node_source_max &&
+            nd < forcing_->n_nodes) {
+            const double cap = forcing_->node_source_max[nd];
+            const double accepted = cl < 0 ? std::min(fl.mass, cap)
+                                           : std::max(fl.mass, -cap);
+            if (accepted != fl.mass) {
+                // A limited stage becomes a prescribed-discharge boundary;
+                // retain hydrostatic pressure when its donor runs dry.
+                const auto& up = cl < 0 ? L : R;
+                fl.mass = accepted;
+                fl.mom = accepted * accepted / std::max(up.a, k::kDryArea)
+                         + k::kGravity * up.i1;
+            }
+        }
         f_mass_[uf]  = fl.mass;
         f_mom_[uf]   = fl.mom;
         f_state_l_[uf] = L;
@@ -1526,6 +1546,25 @@ void ExplicitFvSolver::limitPositivity(double dt) {
 
     for (const int f : active_faces_) {
         const auto uf = static_cast<std::size_t>(f);
+        // An implicit pressure solve may have replaced the Riemann flux.
+        // Bound that final shared flux too, before either domain integrates it.
+        const int nd = mesh_->face_node[uf];
+        if (nd >= 0 && forcing_ && forcing_->node_source_max && nd < forcing_->n_nodes) {
+            const double cap = forcing_->node_source_max[nd];
+            const bool left = mesh_->face_cl[uf] < 0;
+            const double accepted = left ? std::min(f_mass_[uf], cap)
+                                         : std::max(f_mass_[uf], -cap);
+            if (accepted != f_mass_[uf]) {
+                const auto& up = left ? f_state_l_[uf] : f_state_r_[uf];
+                f_mass_[uf] = accepted;
+                f_mom_[uf] = accepted * accepted / std::max(up.a, k::kDryArea)
+                             + k::kGravity * up.i1;
+                if (state_->n_species > 0) {
+                    f_flux_[uf].mass = f_mass_[uf];
+                    f_flux_[uf].mom = f_mom_[uf];
+                }
+            }
+        }
         const double fa = f_mass_[uf];
         if (fa == 0.0) continue;
         if (fa > 0.0) {                     // exporting side is L
@@ -2695,6 +2734,9 @@ void ExplicitFvSolver::refreshDummyFlows(double dt, const FvStepForcing& forcing
                 forcing.link_q_cap[static_cast<std::size_t>(mesh_->struct_link[us])];
             if (cap >= 0.0 && q > cap) q = cap;
         }
+
+        if (forcing.node_source_max && u1 < static_cast<std::size_t>(forcing.n_nodes))
+            q = std::min(q, forcing.node_source_max[u1]);
 
         node_qdummy_[u1] -= q;
         node_qdummy_[u2] += q;

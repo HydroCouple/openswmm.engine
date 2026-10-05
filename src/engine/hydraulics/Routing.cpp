@@ -1528,6 +1528,8 @@ int Router::stepFv(SimulationContext& ctx, double dt,
     fv::FvStepForcing forcing;
     forcing.node_lateral    = fv_lateral_.data();
     forcing.node_fixed_head = fv_fixed_head_.data();
+    forcing.node_source_max = ctx.surface_outfall_link_limit.empty()
+        ? nullptr : ctx.surface_outfall_link_limit.data();
     forcing.structure_flow  = fv_struct_flow_.data();
     forcing.link_q_cap      = fv_link_q_cap_.data();
     forcing.conduit_loss    = fv_cond_loss_.data();

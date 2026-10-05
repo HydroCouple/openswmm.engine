@@ -529,3 +529,131 @@ TEST_F(OutfallCoupling2DTest, CarvedOutfallVertexStaysDryOnDryMesh) {
     EXPECT_GE(final_s, -1e-6)
         << "2D storage went negative on a dry mesh (withdrawal from nothing)";
 }
+
+// Surface reservations are checked independently of the 1D hydraulic law.
+#include "2d/coupling/OutfallExchange.hpp"
+#include "2d/mesh/MeshBuilder.hpp"
+#include "2d/mesh/VertexReconstruction.hpp"
+#include "2d/solver/ExplicitInertialSolver.hpp"
+#include "hydraulics/SurfaceExchange.hpp"
+
+TEST(OutfallExchangeBudget, UnevenDonorsOverlappingOutfallsAndParallelLinks) {
+    using namespace openswmm;
+    using namespace openswmm::twoD;
+    for (int threads : {1, 4}) {
+        MeshData m; m.resize_vertices(5);
+        m.vx = {0, 1, 0, -1, 0}; m.vy = {0, 0, 1, 0, -1};
+        m.resize_triangles(2); m.set_triangle(0, 0, 1, 2); m.set_triangle(1, 0, 3, 4);
+        buildMeshTopology(m); buildVertexStencils(m);
+        SurfaceStateData s; s.resize(2, 5); s.volume = {.1, 1.};
+        s.transport.resize(1, 2, 0); s.transport.cell_mass = {.2, 2.};
+        SolverOptions2D o; o.num_threads = threads; o.max_timestep = 1;
+        SimulationContext ctx; ctx.nodes.resize(3); ctx.links.resize(3);
+        for (int j = 0; j < 3; ++j) {
+            ctx.node_names.add("N" + std::to_string(j));
+            ctx.link_names.add("L" + std::to_string(j));
+        }
+        ctx.links.node1 = {2, 2, 2}; ctx.links.node2 = {0, 0, 1};
+        CouplingPoint a{}; a.vertex_idx = 0; a.cell_idx = 0; a.node_idx = 0; a.is_outfall = true;
+        auto b = a; b.node_idx = 1;
+        std::vector<CouplingPoint> points{a, b};
+        ctx.mass_balance_2d.init_storage = ctx.mass_balance_2d.final_storage = 1.1;
+        OutfallExchange exchange; exchange.initialize(m, points, ctx);
+        const double ft3 = .3048 * .3048 * .3048;
+        o.flow_1d_to_2d = ft3;
+        exchange.prepare(m, s, o, ctx, 1);
+        EXPECT_NEAR(ctx.surface_outfall_link_limit[0] * ft3, .275, 1e-14);
+        EXPECT_NEAR(ctx.surface_outfall_link_limit[1] * ft3, .55, 1e-14);
+        const double q0 = boundSurfaceOutfallFlow(ctx, 0, -1000);
+        const double q1 = boundSurfaceOutfallFlow(ctx, 1, -1000);
+        const double q2 = boundSurfaceOutfallFlow(ctx, 2, -1000);
+        ctx.nodes.outflow[0] = -q0-q1; ctx.nodes.outflow[1] = -q2;
+        EXPECT_DOUBLE_EQ(boundSurfaceOutfallFlow(ctx, 0, 1000), 1000);
+        std::swap(ctx.links.node1[0], ctx.links.node2[0]);
+        EXPECT_NEAR(boundSurfaceOutfallFlow(ctx, 0, 1000) * ft3, .275, 1e-14);
+        std::swap(ctx.links.node1[0], ctx.links.node2[0]);
+        o.flow_1d_to_2d = ft3;
+        std::vector<double> ledger(2, 0);
+        ASSERT_TRUE(exchange.apply(m, s, o, ctx, 1, ledger));
+        EXPECT_NEAR(ledger[0] + ledger[1], -1.1, 1e-14);
+        EXPECT_NEAR(s.volume[0] + s.volume[1], 0, 1e-14);
+        EXPECT_NEAR(s.transport.lost_coupling[0], 2.2, 1e-14);
+        EXPECT_GE(s.volume[0], 0); EXPECT_GE(s.volume[1], 0);
+        exchange.prepare(m, s, o, ctx, 1);
+        EXPECT_NEAR(boundSurfaceOutfallFlow(ctx, 0, -1000), 0, 1e-14);
+        // Reverse direction refills the surface. The next reservation sees
+        // the actual refill, not an estimated or stale source rate.
+        ctx.nodes.outflow[0] = ctx.nodes.outflow[1] = 0;
+        ctx.nodes.inflow[0] = .4 / ft3;
+        std::vector<double> conc{3, 3, 3};
+        ASSERT_TRUE(exchange.apply(m, s, o, ctx, 1, ledger, &conc));
+        EXPECT_NEAR(s.volume[0] + s.volume[1], .4, 1e-14);
+        EXPECT_NEAR(s.transport.gained_coupling[0], 1.2, 1e-14);
+        EXPECT_NEAR(ctx.mass_balance_2d.outfall_out, 1.1, 1e-14);
+        EXPECT_NEAR(ctx.mass_balance_2d.outfall_in, .4, 1e-14);
+        EXPECT_NEAR(ctx.mass_balance_2d.final_storage, .4, 1e-14);
+        EXPECT_NEAR(ctx.mass_balance_2d.error(), 0, 1e-14);
+        exchange.prepare(m, s, o, ctx, 1);
+        EXPECT_NEAR(ctx.surface_outfall_link_limit[0] * ft3, .1, 1e-14);
+        // Surface fluxes/sinks only see water left after the accepted debit.
+        s.infil_rate = {1., 1.}; s.evap_rate = {1., 1.};
+        ExplicitInertialSolver solver; solver.initialize(m, s, o); solver.advance(0, 1);
+        const double removed = (s.infil_applied[0]+s.infil_applied[1])*.5+s.evap_loss_total;
+        EXPECT_NEAR(s.volume[0]+s.volume[1]+removed, .4, 1e-12);
+    }
+}
+
+TEST_F(OutfallCoupling2DTest, ReverseFlowClosesSurfaceLedgerWithBatchedSteps) {
+    for (const std::string routing : {"DYNWAVE", "FV"}) for (int sync : {0, 6})
+        for (bool pressure : {false, true}) {
+        if (pressure && routing != "FV") continue;
+        const auto tag = "reverse_" + routing + "_" + std::to_string(sync) + (pressure ? "_pressure" : "");
+        const auto inp = dir_ / (tag + ".inp");
+        const auto rpt = dir_ / (tag + ".rpt");
+        // The outfall sits above the receiving storage. Uneven initial cell
+        // depths expose the former stencil-total cap followed by a different
+        // slope-weighted scatter. Two barrels also exercise aggregate limits.
+        std::ofstream f(inp);
+        f << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING " << routing
+          << "\nFV_PRESSURIZED_IMPLICIT " << (pressure ? "YES" : "NO")
+          << "\nSTART_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
+             "END_DATE 01/01/2026\nEND_TIME 00:01:00\nREPORT_STEP 00:00:10\n"
+             "ROUTING_STEP 2\nVARIABLE_STEP 0\nTHREADS 1\n"
+             "[STORAGE]\nJ -2 10 0 FUNCTIONAL 10 0 0\n"
+             "[OUTFALLS]\nO 0 FREE NO\n"
+             "[CONDUITS]\nC J O 5 0.013 0 0\n"
+             "[XSECTIONS]\nC CIRCULAR 1 0 0 0 2\n"
+             "[2D_OPTIONS]\nBACKEND CPU\nREPORT_2D NO\nMAX_TIMESTEP 1\nLTS_TIERS 4\n"
+             "COUPLING_SYNC " << sync << "\n"
+             "[2D_VERTICES]\n0 0 0\n1 0 0\n0 1 0\n-1 0 0\n0 -1 0\n"
+             "[2D_TRIANGLES]\n0 1 2 .03 .2\n0 3 4 .03 2\n"
+             "[2D_VERTEX_NODE_MAP]\n0 O .7 1\n";
+        f.close();
+        auto eng = swmm_engine_create();
+        ASSERT_EQ(swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(), nullptr, nullptr), SWMM_OK);
+        ASSERT_EQ(swmm_engine_initialize(eng), SWMM_OK);
+        ASSERT_EQ(swmm_engine_start(eng, 0), SWMM_OK);
+        double elapsed = 0;
+        do { ASSERT_EQ(swmm_engine_step(eng, &elapsed), SWMM_OK); } while (elapsed > 0);
+        ASSERT_EQ(swmm_engine_end(eng), SWMM_OK);
+        double initial=0, stored=0, in=0, out=0, err=0;
+        swmm_2d_get_mass_balance(eng, &initial, &stored, nullptr, nullptr, nullptr,
+                                 &in, &out, nullptr, nullptr, nullptr);
+        swmm_2d_get_continuity_error(eng, &err);
+        EXPECT_GT(out, .01) << tag;
+        EXPECT_GE(stored, 0) << tag;
+        EXPECT_NEAR(initial + in - out - stored, 0, 1e-10) << tag;
+        EXPECT_NEAR(err, 0, 1e-10) << tag;
+        double received_1d = 0, emitted_1d = 0, err_1d = 0;
+        swmm_get_routing_total(eng, SWMM_ROUTING_EXTERNAL, &received_1d);
+        swmm_get_routing_total(eng, SWMM_ROUTING_OUTFLOW, &emitted_1d);
+        constexpr double ft3_to_m3 = .3048 * .3048 * .3048;
+        EXPECT_NEAR(received_1d * ft3_to_m3, out, 1e-10) << tag;
+        EXPECT_NEAR(emitted_1d * ft3_to_m3, in, 1e-10) << tag;
+        if (routing == "FV") {
+            swmm_get_routing_continuity_error(eng, &err_1d);
+            EXPECT_NEAR(err_1d, 0, 1e-10) << tag;
+        }
+        swmm_engine_report(eng); swmm_engine_close(eng); swmm_engine_destroy(eng);
+    }
+}

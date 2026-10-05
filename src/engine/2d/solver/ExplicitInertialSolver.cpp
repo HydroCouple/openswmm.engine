@@ -2402,6 +2402,12 @@ void ExplicitInertialSolver::resyncFromVolumes(double /*t0*/) {
     // failed — this is a pure re-time on this path). Pending transfers were
     // booked into volumes at the last cell firing; accumulators stay.
     reconstructAll();
+    cycles_since_rebuild_ = kRebuildEveryCycles;
+}
+
+void ExplicitInertialSolver::pinExternalSourceCells(const std::vector<int>& cells) {
+    for (int cell : cells) pin_t0_.at(static_cast<std::size_t>(cell)) = 1;
+    cycles_since_rebuild_ = kRebuildEveryCycles;
 }
 
 void ExplicitInertialSolver::finalize() {
