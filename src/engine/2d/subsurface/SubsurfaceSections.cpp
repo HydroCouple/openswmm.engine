@@ -26,8 +26,15 @@
  */
 
 #include "SubsurfaceSections.hpp"
+#include "FootprintGeometry.hpp"
+#include <iomanip>
+#include <sstream>
+#include <set>
 
 #include "../data/MeshData.hpp"
+#include "../data/SolverOptions2D.hpp"
+#include <memory>
+#include <array>
 #include "../../core/SimulationContext.hpp"
 #include "../../core/UnitConversion.hpp"
 #include "../../input/InputParseUtils.hpp"
@@ -335,6 +342,12 @@ void registerSubsurfaceSections(SubsurfaceConfig& cfg,
                                 std::vector<std::string>& node_names,
                                 std::vector<std::string>& link_names,
                                 input::SectionRegistry& registry) {
+    registry.register_custom("2D_SURFACE_OWNERSHIP",[&cfg](SimulationContext& ctx,const std::vector<std::string>& lines){
+        for(const auto& raw:lines){const auto t=input::Tokenizer::tokenize(raw);if(t.empty())continue;
+            const auto error=parseSurfaceOwnerLine(t,cfg.surface_owners);
+            if(!error.empty()){ctx.error_code=5;ctx.error_message="[2D_SURFACE_OWNERSHIP] "+error;return;}
+        }
+    });
     registry.register_custom("2D_AQUIFER_OPTIONS",
         makeHandler("2D_AQUIFER_OPTIONS",
             [&cfg](const std::vector<std::string>& t) {
@@ -698,6 +711,150 @@ std::vector<GwLinkShare> resolveLinkSeepage(SimulationContext& ctx,
     return out;
 }
 
+std::string parseSurfaceOwnerLine(const std::vector<std::string>& t,std::vector<SurfaceOwnerRecord>& rows){
+    if(t.size()!=3||!iequals(t[1],"SUBCATCH")||!iequals(t[2],"UNIFORM"))
+        return "expected Subcatchment SUBCATCH UNIFORM; mesh conversion and unreviewed distribution are unavailable.";
+    for(const auto& r:rows)if(iequals(r.subcatch,t[0].c_str()))return "duplicate ownership record for "+t[0];
+    rows.push_back({t[0]});return {};
+}
+
+SurfaceOwnershipPreview resolveSurfaceOwnership(const SimulationContext& ctx,const MeshData& mesh,
+    const SolverOptions2D& opts,const SubsurfaceConfig& cfg,const std::vector<SurfaceOwnerRecord>& proposed,
+    const std::function<bool(int,int)>& progress){
+    using namespace footprint;
+    SurfaceOwnershipPreview p;
+    const double projectLength=gwUnitFactors(ctx).length;
+    const double meshLength=(opts.mesh_units_si||opts.mesh_scaled_to_si)?1.0:projectLength;
+    const double areaUnit=projectLength==1?10000.0:43560.0*.3048*.3048;
+    auto cancelled=[&](int done){if(progress&&!progress(done,mesh.n_cells()+ctx.n_subcatches())){p.cancelled=true;p.errors.push_back("Preview cancelled; no changes applied.");return true;}return false;};
+    std::ostringstream fingerprint;fingerprint<<std::setprecision(17);
+    auto hashValue=[&](auto v){fingerprint<<v<<'|';};
+    hashValue(ctx.spatial.crs);hashValue(int(ctx.options.flow_units));hashValue(opts.mesh_units_si);hashValue(opts.mesh_scaled_to_si);
+    hashValue(opts.groundwater);hashValue(ctx.options.ignore_groundwater);hashValue(ctx.options.ignore_2d);
+    hashValue(ctx.options.ignore_routing);hashValue(cfg.options.per_subcatch);hashValue(int(ctx.files.runoff_mode));
+    hashValue(ctx.options.water_age);hashValue(ctx.options.heat_transport);hashValue(opts.transport_msx);
+    std::string aq;writeSubsurfaceSections(cfg,{}, {},aq,true);hashValue(aq);
+    hashValue(cfg.options.wilting_suction);hashValue(cfg.options.c_gw);hashValue(cfg.options.c_col);
+    for(const auto& r:cfg.rows){for(double v:{r.Ks,r.zs,r.theta_s,r.theta_r,r.alpha,r.psi_b,r.lambda,r.vg_n,r.vg_L,r.c_loss,r.hg0})hashValue(v);}
+    for(const auto& r:cfg.surface_owners)hashValue(r.subcatch);
+    for(std::size_t i=0;i<mesh.vx.size();++i){hashValue(mesh.vx[i]);hashValue(mesh.vy[i]);hashValue(mesh.vz[i]);}
+    std::vector<Ring> cells(mesh.n_cells());
+    for(int c=0;c<mesh.n_cells();++c){
+        if(cancelled(c))return p;
+        auto& ring=cells[c];bool ok=true;const int nv=mesh.cell_vertex_count(c);hashValue(nv);
+        for(int k=0;k<nv;++k){const int v=mesh.cell_vertex(c,k);hashValue(v);
+            if(v<0||v>=mesh.n_vertices()||!std::isfinite(mesh.vx[v])||!std::isfinite(mesh.vy[v])){ok=false;break;}ring.push_back({mesh.vx[v],mesh.vy[v]});}
+        if(!ok||nv<3||nv>4||std::abs(signedArea(ring))<=tolerance(ring)){ok=false;p.errors.push_back("Invalid geometry for cell "+std::to_string(c+1));}
+        if(signedArea(ring)<0)std::reverse(ring.begin(),ring.end());
+        for(int k=0;k<nv&&ok;++k)if(cross(ring[k],ring[(k+1)%nv],ring[(k+2)%nv])<=tolerance(ring)){ok=false;p.errors.push_back("Nonconvex/degenerate cell "+std::to_string(c+1));}
+        p.mesh_weather_area.push_back(std::abs(signedArea(ring))*meshLength*meshLength);
+    }
+    std::unique_ptr<CellLocator> locator;
+    if(p.errors.empty())locator=std::make_unique<CellLocator>(mesh);
+    std::set<int> reviewed;
+    for(const auto& r:proposed){const int s=ctx.subcatch_names.find(r.subcatch);
+        if(s<0)p.errors.push_back("Unknown subcatchment '"+r.subcatch+"'.");
+        else if(!reviewed.insert(s).second)p.errors.push_back("Duplicate ownership for '"+r.subcatch+"'.");
+    }
+    std::vector<Ring> polygons(ctx.n_subcatches());
+    std::vector<std::vector<Ring>> triangles(ctx.n_subcatches());
+    for(int s=0;s<ctx.n_subcatches();++s){
+        if(cancelled(mesh.n_cells()+s))return p;
+        SurfaceOwnerObject o;o.subcatch=s;o.name=ctx.subcatch_names.name_of(s);o.reviewed=reviewed.count(s);
+        if(s<int(ctx.subcatches.tags.size()))o.tag=ctx.subcatches.tags[s];
+        o.declared_area=ctx.subcatches.area[s]*areaUnit;o.lumped=ctx.subcatches.gw_aquifer[s]>=0;
+        hashValue(o.name);hashValue(o.tag);hashValue(ctx.subcatches.area[s]);hashValue(ctx.subcatches.frac_imperv[s]);hashValue(ctx.subcatches.gw_aquifer[s]);hashValue(ctx.subcatches.snowpack[s]);
+        for(int u=0;u<ctx.lid_usage.count();++u)if(ctx.lid_usage.subcatch_index[u]==s){
+            const double a=ctx.lid_usage.area[u]*ctx.lid_usage.number[u]*projectLength*projectLength;
+            hashValue(u);hashValue(ctx.lid_usage.lid_index[u]);hashValue(ctx.lid_usage.number[u]);hashValue(ctx.lid_usage.area[u]);
+            hashValue(ctx.lid_usage.from_imperv[u]);hashValue(ctx.lid_usage.from_perv[u]);hashValue(ctx.lid_usage.drain_to[u]);
+            const int lid=ctx.lid_usage.lid_index[u];
+            if(lid<0||lid>=ctx.lid_controls.count()||ctx.lid_usage.area[u]<0||ctx.lid_usage.number[u]<0||a<0||!std::isfinite(a)){o.reason="Invalid LID area or control.";continue;}
+            o.lid_area+=a;const auto& storage=ctx.lid_controls.storage[lid];
+            for(double v:storage)hashValue(v);
+            if(storage[0]==0||storage[2]>0)o.native_lid_area+=a;
+        }
+        const double f=ctx.subcatches.frac_imperv[s];
+        if(!(o.declared_area>0)||!std::isfinite(o.declared_area)||o.lid_area>o.declared_area||!(f>=0&&f<=1))o.reason="Invalid declared, LID or pervious area.";
+        o.pervious_area=(o.declared_area-o.lid_area)*(1-f);o.impervious_area=(o.declared_area-o.lid_area)*f;
+        auto& poly=polygons[s];
+        if(s<int(ctx.spatial.subcatch_polygon_x.size())&&s<int(ctx.spatial.subcatch_polygon_y.size())){
+            const auto& x=ctx.spatial.subcatch_polygon_x[s];const auto& y=ctx.spatial.subcatch_polygon_y[s];
+            if(x.size()!=y.size())o.reason="Polygon coordinate arrays differ.";
+            for(std::size_t k=0;k<std::min(x.size(),y.size());++k){hashValue(x[k]);hashValue(y[k]);poly.push_back({x[k]*projectLength/meshLength,y[k]*projectLength/meshLength});}
+        }
+        const auto geometryError=triangulate(poly,triangles[s],[&]{return !cancelled(mesh.n_cells()+s);});
+        if(p.cancelled)return p;
+        if(!geometryError.empty())o.reason=geometryError;
+        o.polygon_area=std::abs(signedArea(poly))*meshLength*meshLength;
+        const double eps=std::max(1e-8*std::max(o.declared_area,o.polygon_area),tolerance(poly)*meshLength*meshLength);
+        if(o.reason.empty()&&std::abs(o.declared_area-o.polygon_area)>eps)o.reason="Declared/polygon area mismatch; repair area or geometry (no automatic normalization).";
+        if(o.reason.empty()){
+            double x0=poly[0].x,x1=x0,y0=poly[0].y,y1=y0;
+            for(auto v:poly){x0=std::min(x0,v.x);x1=std::max(x1,v.x);y0=std::min(y0,v.y);y1=std::max(y1,v.y);}
+            for(int c:locator?locator->candidates(x0,y0,x1,y1):std::vector<int>{}){
+                double a=0;for(const auto& tri:triangles[s])a+=intersectionArea(tri,cells[c]);
+                a*=meshLength*meshLength;if(a<=eps*1e-3)continue;
+                SurfaceOwnerShare sh;sh.subcatch=s;sh.cell=c;sh.weather_area=a;
+                const double fraction=a/o.polygon_area;
+                sh.pervious_area=o.pervious_area*fraction;sh.impervious_area=o.impervious_area*fraction;
+                sh.lid_area=o.lid_area*fraction;sh.native_lid_area=o.native_lid_area*fraction;
+                p.shares.push_back(sh);o.inside_area+=a;
+            }
+            if(o.inside_area>o.polygon_area+eps)o.reason="Mesh intersections overbook the source footprint.";
+        }
+        o.outside_area=std::max(0.0,o.declared_area-o.inside_area);
+        o.status=!o.reason.empty()?3:o.inside_area==0?0:o.reviewed?2:1;
+        if(o.reason.empty())o.reason=o.inside_area==0?"Outside mesh; existing path.":o.lumped?"Lumped groundwater wins; no spatial recharge.":o.reviewed?"SUBCATCH UNIFORM; shared receiving limits required.":"Geometric overlap only; ownership unreviewed and recharge unavailable.";
+        p.objects.push_back(std::move(o));
+    }
+    std::set<int> region=reviewed;
+    std::vector<std::vector<int>> sourceCells(ctx.n_subcatches()),cellSources(mesh.n_cells());
+    for(const auto& sh:p.shares){sourceCells[sh.subcatch].push_back(sh.cell);cellSources[sh.cell].push_back(sh.subcatch);}
+    std::vector<int> queue(reviewed.begin(),reviewed.end());std::vector<bool> visitedCell(mesh.n_cells(),false);
+    for(std::size_t next=0;next<queue.size();++next){
+        if(cancelled(mesh.n_cells()+ctx.n_subcatches()))return p;
+        for(int c:sourceCells[queue[next]])if(!visitedCell[c]){visitedCell[c]=true;
+            for(int s:cellSources[c])if(region.insert(s).second)queue.push_back(s);
+        }
+    }
+    if(!proposed.empty()){
+        if(mesh.n_cells()==0)p.errors.push_back("No mesh; spatial ownership is unavailable.");
+        if(cfg.empty()||cfg.options.per_subcatch||opts.groundwater==0||ctx.options.ignore_2d||ctx.options.ignore_routing)
+            p.errors.push_back("An enabled 2D MODE MESH aquifer and active routing are required.");
+        for(auto& o:p.objects){
+            if(o.status==3)p.errors.push_back(o.name+": "+o.reason);
+            else if(region.count(o.subcatch)&&o.inside_area>0&&!o.reviewed)p.errors.push_back(o.name+": competing footprint is not reviewed.");
+        }
+        // Sweep along x so disjoint source footprints do not form an all-pairs scan.
+        struct Bounds{int source;double x0,y0,x1,y1;};std::vector<Bounds> bounds;
+        for(int i=0;i<int(polygons.size());++i)if(!polygons[i].empty()){
+            const auto& poly=polygons[i];Bounds box{i,poly[0].x,poly[0].y,poly[0].x,poly[0].y};
+            for(auto v:poly){box.x0=std::min(box.x0,v.x);box.y0=std::min(box.y0,v.y);box.x1=std::max(box.x1,v.x);box.y1=std::max(box.y1,v.y);}bounds.push_back(box);
+        }
+        std::sort(bounds.begin(),bounds.end(),[](const auto& a,const auto& b){return a.x0<b.x0;});
+        for(std::size_t a=0;a<bounds.size();++a)for(std::size_t b=a+1;b<bounds.size()&&bounds[b].x0<bounds[a].x1;++b){
+            if(cancelled(mesh.n_cells()+ctx.n_subcatches()))return p;
+            const auto& bi=bounds[a];const auto& bj=bounds[b];const int i=bi.source,j=bj.source;
+            if(!(region.count(i)||region.count(j))||bi.y1<=bj.y0||bj.y1<=bi.y0)continue;
+            double overlap=0;for(const auto& ta:triangles[i])for(const auto& tb:triangles[j])overlap+=intersectionArea(ta,tb);
+            if(overlap*meshLength*meshLength>1e-8*std::max(p.objects[i].polygon_area,p.objects[j].polygon_area)){
+                const auto error="Overlapping subcatchment footprints: "+p.objects[i].name+" / "+p.objects[j].name+"; edit geometry.";
+                p.errors.push_back(error);p.objects[i].status=p.objects[j].status=3;p.objects[i].reason=p.objects[j].reason=error;
+            }
+        }
+    }
+    for(const auto& sh:p.shares)if(reviewed.count(sh.subcatch))p.mesh_weather_area[sh.cell]-=sh.weather_area;
+    for(int c=0;c<mesh.n_cells();++c){const double eps=1e-8*std::abs(signedArea(cells[c]))*meshLength*meshLength;
+        if(p.mesh_weather_area[c]<-eps)p.errors.push_back("Cell "+std::to_string(c+1)+" weather area is overbooked.");
+        p.mesh_weather_area[c]=std::max(0.0,p.mesh_weather_area[c]);
+    }
+    std::sort(p.shares.begin(),p.shares.end(),[](const auto& a,const auto& b){return a.cell!=b.cell?a.cell<b.cell:a.subcatch<b.subcatch;});
+    uint64_t hash=14695981039346656037ULL;for(unsigned char c:fingerprint.str()){hash^=c;hash*=1099511628211ULL;}
+    std::ostringstream token;token<<std::hex<<std::setw(16)<<std::setfill('0')<<hash;p.token=token.str();
+    return p;
+}
+
 // ---------------------------------------------------------------------------
 // Writer
 // ---------------------------------------------------------------------------
@@ -705,7 +862,12 @@ std::vector<GwLinkShare> resolveLinkSeepage(SimulationContext& ctx,
 void writeSubsurfaceSections(const SubsurfaceConfig& cfg,
                              const std::vector<std::string>& node_names,
                              const std::vector<std::string>& link_names,
-                             std::string& out) {
+                             std::string& out, bool full_precision) {
+    auto fmt=[full_precision](double v){if(!full_precision)return ::openswmm::twoD::fmt(v);char buf[40];std::snprintf(buf,sizeof buf,"%.17g",v);return std::string(buf);};
+    if(!cfg.surface_owners.empty()){
+        out+="\n[2D_SURFACE_OWNERSHIP]\n;;Subcatchment       Representation Distribution\n";
+        for(const auto& r:cfg.surface_owners)out+=r.subcatch+" SUBCATCH UNIFORM\n";
+    }
     if (cfg.empty()) return;
     const GwOptions d{};   // defaults, for the omit-if-unchanged rule
 
@@ -759,11 +921,11 @@ void writeSubsurfaceSections(const SubsurfaceConfig& cfg,
             if      (r.scope == 0) line = "*";
             else if (r.scope == 1) line = "TAG  " + r.tag;
             else                   line = "CELL " + std::to_string(r.cell + 1);
-            line.append(std::max<std::size_t>(1, 18 - line.size()), ' ');
+            line.append(std::max<int>(1, 18 - int(line.size())), ' ');
             for (double v : {r.Ks, r.zs, r.theta_s, r.theta_r, r.alpha}) {
                 const std::string s = fmt(v);
                 line += s;
-                line.append(std::max<std::size_t>(1, 11 - s.size()), ' ');
+                line.append(std::max<int>(1, 11 - int(s.size())), ' ');
             }
             auto opt = [&line](const char* k, const std::string& v) {
                 line += k; line += ' '; line += v; line += ' ';
@@ -796,11 +958,11 @@ void writeSubsurfaceSections(const SubsurfaceConfig& cfg,
             if (b.automatic) continue;
             std::string line = (i < node_names.size()) ? node_names[i]
                                                        : std::string("?");
-            line.append(std::max<std::size_t>(1, 19 - line.size()), ' ');
+            line.append(std::max<int>(1, 19 - int(line.size())), ' ');
             const std::string c = b.locate ? std::string("AUTO")
                                            : std::to_string(b.cell + 1);
             line += c;
-            line.append(std::max<std::size_t>(1, 11 - c.size()), ' ');
+            line.append(std::max<int>(1, 11 - int(c.size())), ' ');
             if (b.Kc   > 0.0) { line += "KC ";   line += fmt(b.Kc);   line += ' '; }
             if (b.dC   > 0.0) { line += "DC ";   line += fmt(b.dC);   line += ' '; }
             if (b.area > 0.0) { line += "AREA "; line += fmt(b.area); line += ' '; }
@@ -820,7 +982,7 @@ void writeSubsurfaceSections(const SubsurfaceConfig& cfg,
             const auto& r = cfg.link_rows[i];
             std::string line = (i < link_names.size()) ? link_names[i]
                                                        : std::string("?");
-            line.append(std::max<std::size_t>(1, 19 - line.size()), ' ');
+            line.append(std::max<int>(1, 19 - int(line.size())), ' ');
             if (r.Kc > 0.0) { line += "KC "; line += fmt(r.Kc); line += ' '; }
             if (r.dC > 0.0) { line += "DC "; line += fmt(r.dC); line += ' '; }
             if (!r.exchange) { line += "EXCHANGE NO "; }

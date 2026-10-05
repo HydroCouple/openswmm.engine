@@ -6,6 +6,8 @@
  */
 
 #include "GeoPackageReader.hpp"
+#include "2d/subsurface/SubsurfaceSections.hpp"
+#include <sstream>
 #include "../../core/Constants.hpp"
 #include "ExternalContentReader.hpp"
 #include <stdexcept>
@@ -1996,7 +1998,6 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx,
         bind_text(cnt.get(), 1, sim_id);
         if (sqlite3_step(cnt.get()) != SQLITE_ROW) return;
         const int n = column_int(cnt.get(), 0);
-        if (n == 0) return;
         if (column_int(cnt.get(), 1) != n - 1)
             throw GpkgError("mesh_2d_triangles: tri_idx values are not "
                             "contiguous [0, n)");
@@ -2203,6 +2204,23 @@ int read_model(sqlite3* db, SimulationContext& ctx,
         // already applied by read_options above, so mesh_units_si is set
         // before SurfaceRouter2D::initialize() ever looks at it.
         read_mesh_2d(db, ctx, simulation_id);
+        if(table_exists(db,"surface_ownership_2d_input")){
+            auto row=prepare(db,"SELECT sections FROM surface_ownership_2d_input WHERE simulation_id=?");
+            bind_text(row.get(),1,simulation_id);
+            if(sqlite3_step(row.get())==SQLITE_ROW){
+                if(!ctx.twod_io.aquifer||!ctx.twod_io.aquifer_nodes||!ctx.twod_io.aquifer_links)
+                    throw GpkgError("Reviewed surface ownership requires a 2D-enabled engine.");
+                twoD::SubsurfaceConfig proposed;std::vector<std::string> nodes,links;
+                input::SectionRegistry registry;twoD::registerSubsurfaceSections(proposed,nodes,links,registry);
+                std::istringstream lines(column_text(row.get(),0));std::string line,section;std::vector<std::string> body;
+                auto flush=[&]{if(!section.empty()){if(!registry.has(section))throw GpkgError("Unknown reviewed aquifer section: "+section);registry.dispatch(section,ctx,body);if(ctx.error_code)throw GpkgError(ctx.error_message);}body.clear();};
+                while(std::getline(lines,line)){
+                    if(!line.empty()&&line.front()=='['){flush();const auto end=line.find(']');if(end==std::string::npos)throw GpkgError("Invalid reviewed aquifer section.");section=line.substr(1,end-1);}
+                    else body.push_back(line);
+                }
+                flush();*ctx.twod_io.aquifer=std::move(proposed);*ctx.twod_io.aquifer_nodes=std::move(nodes);*ctx.twod_io.aquifer_links=std::move(links);
+            }
+        }
 
         // Slice IO-8 — hydrate external-file slots from Part D tables
         // and materialise scratch files. Skipped when no scratch_dir

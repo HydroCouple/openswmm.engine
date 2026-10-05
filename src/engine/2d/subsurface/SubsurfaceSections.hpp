@@ -158,7 +158,7 @@ std::vector<GwLinkShare> resolveLinkSeepage(SimulationContext& ctx,
 void writeSubsurfaceSections(const SubsurfaceConfig& cfg,
                              const std::vector<std::string>& node_names,
                              const std::vector<std::string>& link_names,
-                             std::string& out);
+                             std::string& out, bool full_precision=false);
 
 }  // namespace openswmm::twoD
 

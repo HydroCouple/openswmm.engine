@@ -203,6 +203,8 @@ void SurfaceRouter2D::prepareForEdit() {
 }
 
 void SurfaceRouter2D::initialize(SimulationContext& ctx) {
+    if(!aquifer_cfg_.surface_owners.empty())
+        throw std::runtime_error("[2D_SURFACE_OWNERSHIP] Reviewed authoring is available; runtime recharge is unavailable until the R4 completed-interval water/quality/ET adapter is qualified. Remove ownership records to run the existing formulation.");
     ctx.surface_outfall_link_limit.clear();
     // Check if 2D sections were parsed (vertices present)
     if (mesh_.n_vertices() < 3 || mesh_.n_triangles() < 1) {
