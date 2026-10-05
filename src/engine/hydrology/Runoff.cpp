@@ -266,9 +266,24 @@ double RunoffSolver::nativeInfilFullLid(SimulationContext& ctx, int i, double dt
 
 void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_in,
                            double infil_factor, double recovery_factor, int month,
-                           const InfiltrationBoundary* boundary) {
+                           const InfiltrationBoundary* boundary,
+                           const std::vector<RunoffSourceForcing>* source_forcing) {
     int n = soa_.n_subcatch;
+    if (source_forcing) {
+        if (!std::isfinite(dt) || dt <= 0.0 || ctx.n_subcatches() != n)
+            throw std::invalid_argument("Completed source solve requires a positive interval and matching source count.");
+        int previous = -1;
+        for (const auto& s : *source_forcing) {
+            if (s.subcatch <= previous || s.subcatch >= n ||
+                !std::isfinite(s.rain) || s.rain < 0.0 || !std::isfinite(s.pet) || s.pet < 0.0)
+                throw std::invalid_argument("Completed source rates require ordered unique sources and finite nonnegative rates.");
+            previous = s.subcatch;
+        }
+    }
     if (n == 0) return;
+
+    const int count = source_forcing ? static_cast<int>(source_forcing->size()) : n;
+    const auto source = [&](int slot) { return source_forcing ? (*source_forcing)[slot].subcatch : slot; };
 
     auto un = static_cast<std::size_t>(n);
     precip_.resize(un);
@@ -290,8 +305,14 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
     // Any subcatchment rainfall forcing resolves on top (OVERRIDE replaces the
     // gage value, ADD augments it) so it cannot be clobbered by the gage
     // re-read — same pattern as the PET forcing below.
-    for (int i = 0; i < n; ++i) {
+    for (int slot = 0; slot < count; ++slot) {
+        const int i = source(slot);
         auto ui = static_cast<std::size_t>(i);
+        if (source_forcing) {
+            precip_[ui] = (*source_forcing)[slot].rain;
+            ctx.subcatches.rainfall[ui] = precip_[ui];
+            continue;
+        }
         gage::PrecipSplit p = gage::splitPrecip(ctx, ui);  // ft/sec
         double rain = p.rainfall;
         // The forcing channel speaks user units; the x*UCF/UCF round trip
@@ -314,8 +335,13 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
     //   evapRate = (dryOnly && rainfall > 0) ? 0 : Evap.rate
     // Any prescribed PET forcing then resolves per subcatchment: an OVERRIDE
     // rate is used as-is (bypasses DRY_ONLY); ADD augments the climate rate.
-    for (int i = 0; i < n; ++i) {
+    for (int slot = 0; slot < count; ++slot) {
+        const int i = source(slot);
         auto ui = static_cast<std::size_t>(i);
+        if (source_forcing) {
+            evap_rate_[ui] = (*source_forcing)[slot].pet;
+            continue;
+        }
         bool is_dry_only = ctx.options.evap_dry_only;
         double rain = precip_[ui] * ucf::UCF(ucf::RAINFALL, ctx.options);
         double broadcast = (is_dry_only && rain > 0.0) ? 0.0 : evap_rate_in;
@@ -326,7 +352,8 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
     // Matches legacy subcatch_getRunoff() → getSubareaRunoff() chain exactly.
     // Infiltration and evaporation are computed INSIDE the per-subarea loop
     // to replicate the legacy's loss-limiting and inflow-subtraction order.
-    for (int i = 0; i < n; ++i) {
+    for (int slot = 0; slot < count; ++slot) {
+        const int i = source(slot);
         auto ui = static_cast<std::size_t>(i);
         double fi = soa_.imperv_pct[ui];
         double fp = 1.0 - fi;
@@ -354,6 +381,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                                   double runon_in, double subarea_n) -> double {
             if (frac <= 0.0) return 0.0;
             double subarea_area = total_area * frac;
+            const double initial_depth = depth;
 
             // Step 3.1: Available surface moisture (legacy line 923)
             double surfMoisture = depth / dt;
@@ -462,6 +490,15 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                     }
                 }
             }
+
+            // A completed source interval transfers its actual discharged
+            // volume. The legacy endpoint-rate rectangle is retained when
+            // no explicit source batch is supplied. For the coupled path,
+            // the reservoir's integrated storage change supplies the mean
+            // outflow, also used by subsequent capture/subarea bookkeeping.
+            if (source_forcing)
+                runoff_rate = std::max(0.0, (initial_depth - depth) / dt +
+                    (inflow - (surfEvap + infil)));
 
             // Step 3.10: Accumulate outlet volume (legacy line 964)
             // fOutlet is the fraction of runoff that goes directly to outlet.

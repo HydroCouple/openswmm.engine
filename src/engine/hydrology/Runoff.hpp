@@ -50,6 +50,15 @@ struct SimulationContext;
 
 namespace runoff {
 
+/// Completed-interval rates, already resolved to internal ft/s. A non-null
+/// batch selects only these sources and bypasses global gage/PET cursors.
+/// Coupled outflow uses the integrated reservoir storage balance (interval
+/// mean flux); an ordinary solve retains its legacy endpoint-rate rectangle.
+struct RunoffSourceForcing {
+    int subcatch = -1;
+    double rain = 0.0, pet = 0.0;
+};
+
 // ============================================================================
 // Constants
 // ============================================================================
@@ -155,7 +164,8 @@ public:
      */
     void execute(SimulationContext& ctx, double dt, double evap_rate = 0.0,
                  double infil_factor = 1.0, double recovery_factor = 1.0,
-                 int month = -1, const InfiltrationBoundary* boundary = nullptr);
+                 int month = -1, const InfiltrationBoundary* boundary = nullptr,
+                 const std::vector<RunoffSourceForcing>* source_forcing = nullptr);
 
     /// Legacy findNativeInfil for a subcatchment with no pervious non-LID
     /// area: the native soil's rate for its own rain + runon (advances the
