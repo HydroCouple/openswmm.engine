@@ -72,6 +72,11 @@ public:
     /// @return the time actually reached (== t_target on success).
     virtual double advance(double t_current, double t_target) = 0;
 
+    /// Horizon through which ALL cell sources have actually landed, including
+    /// lazy inactive cells and LTS accumulators. Unsupported backends return
+    /// -1; an outer routing endpoint alone is not source-completion evidence.
+    virtual double completedSourceTime() const noexcept { return -1.0; }
+
     /// Reinitialize the integrator at @p t0 after external state edits.
     virtual void reinitialize(double t0) = 0;
 
