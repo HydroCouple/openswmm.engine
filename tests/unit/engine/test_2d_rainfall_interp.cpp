@@ -518,3 +518,69 @@ TEST(RainfallMode, GagesOutsideMeshDomainDriveEveryCell) {
         }
     }
 }
+
+TEST(RainfallMode, FileAccumulationTypesReportAlignedSIAndApplyEqualDepths) {
+    const auto folder = std::filesystem::current_path() / "test_2d_rainfall_interp_out";
+    std::filesystem::create_directories(folder);
+    for (const auto* units : {"CFS", "CMS"}) {
+        SCOPED_TRACE(units);
+        const double intensity = std::string(units) == "CFS" ? 1.0 : 25.4;
+        const double rates[] = {1, 2, 0, 1, 0};
+        const auto rain = folder / "accumulation.tsf";
+        {
+            std::ofstream f(rain);
+            f << std::setprecision(17)
+              << "IDs:\tI\tV\tC\nDate/Time\tRainfall\tRainfall\tRainfall\n"
+              << "MM/dd/yyyy\tunits\tunits\tunits\n";
+            const double cumulative[] = {1, 3, 3, 1, 1}; // reset at minute 3
+            for (int m = 0; m < 5; ++m)
+                f << "01/01/2026 12:0" << m << ":00 AM\t"
+                  << rates[m] * intensity << '\t' << rates[m] * intensity / 60
+                  << '\t' << cumulative[m] * intensity / 60 << '\n';
+        }
+        const auto path = folder / "accumulation.inp";
+        {
+            std::ofstream f(path);
+            f << "[OPTIONS]\nFLOW_UNITS " << units << "\nFLOW_ROUTING DYNWAVE\n"
+              << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:05:00\n"
+              << "REPORT_STEP 00:01:00\nWET_STEP 00:01:00\nDRY_STEP 00:01:00\nROUTING_STEP 7\n"
+              << "[RAINGAGES]\nI INTENSITY 0:01 1 FILE \"accumulation.tsf:I\"\n"
+              << "V VOLUME 0:01 1 FILE \"accumulation.tsf:V\"\n"
+              << "C CUMULATIVE 0:01 1 FILE \"accumulation.tsf:C\"\n"
+              << "[SYMBOLS]\nI 10 10\nV 100 10\nC 10 100\n"
+              << "[JUNCTIONS]\nJ 0 1 0 0 0\n[OUTFALLS]\nO -0.5 FREE NO\n"
+              << "[CONDUITS]\nC J O 30 0.013 0 0 0\n[XSECTIONS]\nC CIRCULAR 0.3 0 0 0 1\n"
+              << "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 7\nREPORT_2D NO\n"
+              << "RAINFALL_MODE NATURAL_NEIGHBOUR\n[2D_VERTICES]\n10 10 0\n40 10 0\n10 40 0\n"
+              << "[2D_TRIANGLES]\n0 1 2 0.03 0 pan\n[REPORT]\nINPUT NO\n";
+        }
+        struct Engine {
+            SWMM_Engine e = swmm_engine_create();
+            ~Engine() { swmm_engine_end(e); swmm_engine_close(e); swmm_engine_destroy(e); }
+        } engine;
+        const auto rpt = (folder / "accumulation.rpt").string();
+        ASSERT_EQ(swmm_engine_open(engine.e, path.string().c_str(), rpt.c_str(), nullptr, nullptr), 0);
+        ASSERT_EQ(swmm_engine_initialize(engine.e), 0);
+        ASSERT_EQ(swmm_engine_start(engine.e, 0), 0);
+        double days = 0;
+        do {
+            ASSERT_EQ(swmm_engine_step(engine.e, &days), 0);
+        } while (days > 0 && days * 86400 < 240);
+        // Resolve past and future report dates independently of the live
+        // runoff cursor. Match 1D's report_date + 1 second convention.
+        const double date = 46023.0; // 01/01/2026, SWMM DateTime
+        for (const int sec : {0, 30, 59, 60, 90, 119, 120, 150, 179, 180, 210, 239, 240, 299, 300}) {
+            double reported = -1;
+            ASSERT_EQ(swmm_2d_get_report_rainfall_bulk(engine.e, date + sec / 86400.0, &reported), 0);
+            const int m = (sec + 1) / 60;
+            const double expected = m < 5 ? rates[m] * 0.0254 / 3600 : 0;
+            EXPECT_NEAR(reported, expected, 1e-14) << "second " << sec;
+        }
+        double volume = 0, area = 0;
+        ASSERT_EQ(swmm_2d_get_rain_volume_bulk(engine.e, &volume), 0);
+        ASSERT_EQ(swmm_2d_triangle_get_area(engine.e, 0, &area), 0);
+        EXPECT_NEAR(volume / area, 4 * 0.0254 / 60, 1e-12);
+        EXPECT_EQ(swmm_2d_get_report_rainfall_bulk(engine.e, std::nan(""), &volume), SWMM_ERR_BADPARAM);
+        EXPECT_EQ(swmm_2d_get_report_rainfall_bulk(engine.e, date, nullptr), SWMM_ERR_BADPARAM);
+    }
+}

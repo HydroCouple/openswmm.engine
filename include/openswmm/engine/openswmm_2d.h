@@ -520,11 +520,23 @@ SWMM_ENGINE_API int swmm_2d_get_coupling_fluxes_bulk(SWMM_Engine engine,
                                                        double* fluxes);
 
 /** @brief Bulk get the rainfall intensity (m/s) applied to every triangle
- *  this step — the same field the HDF5 `Mesh2_face_rainfall` dataset
- *  carries. Output pre-allocated to `triangle_count`.
+ *  over the solver's current routing window. Output pre-allocated to
+ *  `triangle_count`.
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_rainfall_bulk(SWMM_Engine engine,
                                                double* rainfall);
+
+/** @brief Bulk rainfall at a report instant, in SI m/s.
+ *
+ * Uses the same gage record conversion and time selection as saved 2D
+ * rainfall reports. The solver's applied window mean remains available from
+ * swmm_2d_get_rainfall_bulk().
+ * @param report_date Absolute SWMM DateTime (decimal days).
+ * @param rainfall Output array of triangle_count doubles.
+ * @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_report_rainfall_bulk(SWMM_Engine engine,
+                                                      double report_date,
+                                                      double* rainfall);
 
 /** @brief Bulk get the cumulative rainfall VOLUME (m³) booked onto every
  *  triangle since the start of the run — the `Mesh2_face_rain_cum` field;
