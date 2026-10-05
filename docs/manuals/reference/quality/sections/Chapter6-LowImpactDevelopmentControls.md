@@ -1942,3 +1942,107 @@ have fully captured and eliminated runoff from this 1-inch storm.
 
 
 
+
+## 6.7 Storage-node LID transport and treatment {#quality_ref_lid_storage_formulation}
+
+**Open-Source SWMM 6 extension.** The preceding sections describe conventional
+subcatchment LIDs. A LID assigned to a network storage node also interacts
+with downstream heads, reversing links and controllable outlets. It uses
+Dynamic Wave routing with `QUALITY_SOLVER LEGACY`. Its retained-cell and
+shared mobile-water inventories are described in
+@ref hydraulics_ref_lid_storage_formulation. They do not imply independent
+saturated plug-flow reactors or separate ARD, MSX or heat layer reactors.
+
+### 6.7.1 Accepted water transfers carry mass
+
+Each retained numerical cell stores mass for every pollutant. Connected
+mobile water uses the existing mixed storage-node reactor. In consistent
+concentration/volume units, \f$C_j=M_j/V_j\f$. An accepted transfer
+\f$\Delta V\f$ debits its source by \f$\Delta M=C_{source}\Delta V\f$;
+the receiver gains the treated remainder. The same accepted volume is used
+in hydraulics and quality. Evaporation removes water but leaves solute;
+seepage and flooding carry their exported mass into the corresponding budgets.
+
+At an authored-layer exit, fixed removal \f$r\f$ gives
+\f$C_{exit}=(1-r)C_{source}\f$, with \f$0\leq r\leq1\f$.
+An optional `R = ...` expression applies a removal fraction to the remainder;
+`C = ...` supplies the remaining effluent concentration. Results are bounded
+so treatment cannot create mass. For example, 25% fixed removal followed by
+`R = 0.2` removes 40% in total. Removal/expressions act once at an authored
+layer exit, not at each of the five numerical MEDIA interfaces.
+
+### 6.7.2 Resident decay and a shared saturated reactor
+
+A retained cell's reaction update uses background plus layer first-order rates:
+
+\f[
+ M_j^{after}=M_j^{before}\exp[-(k_{bg}+k_{layer,j})\Delta t].
+\f]
+
+Rates and time must use consistent units; authored layer decay is in 1/day.
+For shared mobile water, the layer contribution is volume-weighted:
+
+\f[
+ k_m=k_{bg}+\frac{\sum_i k_{layer,i}V_{m,i}}{V_m}.
+\f]
+
+Only physically connected mobile volumes contribute. Surface ponding adds
+volume without a porous-layer rate. A saturated outlet applies the removal
+rule of its actual physical layer, using the shared mixed concentration.
+A surface bypass does not inherit all underlying treatment rows. Saturated
+layer reactions are therefore a weighted shared-reactor approximation,
+not serial plug flow. Reacted mass includes these losses and layer-exit removal.
+
+The synthetic tutorials use 2/day in porous layers, no background decay and
+no fixed removal. That rate has half-life \f$\ln(2)/2=0.347\f$ day, or 8.3 h.
+Longer exposure gives more modeled reaction directly from this assumption;
+it does not establish a field treatment mechanism. Hydraulic control tests
+explore exposure, bypass, release and remaining inventory under that law.
+
+### 6.7.3 Backflow and resaturation
+
+Signed hydraulic flow determines the donor and receiver. Reverse inflow
+enters its actual LID port; retained media wetting and mobile-water receipts
+receive the incoming mass. Water carrying a held outfall concentration
+(`OUTFALL_BACKFLOW_QUALITY LAST`) is an external pollutant source and must
+be counted as incoming mass. `ZERO` explicitly supplies clean boundary water.
+Inter-facility reversals are internal transfers when assessing the whole train.
+
+As the mobile table rises, retained/mobile adjustments debit and credit the
+same water and pollutant inventories. Full media resaturation and recession
+also reconcile modified Green–Ampt history as described in the hydraulic
+reference; changing this history does not itself create water or pollutant.
+A subsequent storm encounters remaining moisture and pollutant inventories.
+
+Zero-volume connections to LIDs use consistently solved current mobile
+mixtures for donor and receiver, including newly percolated water that drains
+within one routing step below the ordinary dry-volume threshold. Provisional
+coupled iterations restore inventories and counters; treatment is booked once.
+Hydraulic and quality ports use the same roundoff-tolerant physical interface
+rule. Failed mixture convergence emits a warning requiring inspection of
+continuity and routing-step sensitivity.
+
+### 6.7.4 Assessment and persistence
+
+For each constituent, over the same assessment horizon:
+
+\f[
+ M_{initial}+M_{incoming}=M_{outfall}+M_{flood}+M_{seep}
+                         +M_{reacted}+M_{stored,final}.
+\f]
+
+Final storage includes retained and mobile mass. Temporary storage is not
+removal, and lower concentration alone is not lower exported load. Count
+all receiving-water exits and bypasses; exported load integrates signed
+boundary transfers of flow times concentration with incoming/outgoing mass
+booked separately. Tracer half-export time is not mean hydraulic residence time.
+Use cumulative engine budgets when brief overflow is missed by coarse samples.
+
+Native V10 hotstarts preserve retained mass, moisture and infiltration history.
+Compatible pre-V10 restarts reconstruct missing history with a warning;
+configuration files preserve parameters rather than runtime inventory.
+Engine @ref engine_manual_lid_storage defines the treatment syntax, units
+and persistence. The GUI T9/T10 tutorials supply layer editing, chained
+active-control models and a reversal–resaturation–recession–second-storm test.
+The first-order kinetics and synthetic model dimensions need calibration
+before use as field predictions.

@@ -74,7 +74,7 @@ bool validLayer(const LidNodeLayer& l) {
     for (int i = used; i < 7; ++i) if (p[i] != 0.0) return false;
     switch (l.kind) {
     case LidNodeLayerKind::Surface: return p[0] > 0.0 && p[1] < 1.0;
-    case LidNodeLayerKind::Media: return p[0] > 0.0 && p[1] > 0.0 && p[1] <= 1.0 && p[3] < p[2] && p[2] < p[1] && p[5] > 0.0;
+    case LidNodeLayerKind::Media: return p[0] > 0.0 && p[1] > 0.0 && p[1] <= 1.0 && p[3] < p[2] && p[2] < p[1];
     case LidNodeLayerKind::Aggregate: return p[0] > 0.0 && p[1] > 0.0 && p[1] <= 1.0;
     case LidNodeLayerKind::Bottom: return true;
     }
@@ -226,6 +226,78 @@ double heldVolume(const SimulationContext& ctx, int node) {
     int r = ctx.node_subtypes.storage_row(node);
     return r >= 0 ? ctx.node_subtypes.storages.lid_state[r].held_volume : 0.0;
 }
+namespace {
+// Mean deficit in Green-Ampt's finite upper zone, including partially
+// submerged cells. Moisture below the hydraulic water table is porosity;
+// retained theta alone is not the physical saturation of that region.
+double infiltrationDeficit(const LidNodeState& state, double head) {
+    if (state.infiltration_cell < 0) return 0.0;
+    const auto& entry = state.cells[state.infiltration_cell];
+    const double bottom = entry.top - state.surface_infil.Lu;
+    double empty = 0.0, geometric = 0.0;
+    for (const auto& cell : state.cells) {
+        if (cell.layer != entry.layer) continue;
+        const double lo = std::max(bottom, cell.bottom);
+        const double hi = std::min(entry.top, cell.top);
+        const double dz = std::max(0.0, hi - lo);
+        geometric += cell.area * dz;
+        empty += cell.area * std::max(0.0, hi - std::max(lo, head)) *
+                 std::max(0.0, cell.porosity - cell.theta);
+    }
+    return geometric > 0.0 ? empty / geometric : 0.0;
+}
+void reconcileInfiltration(LidNodeState& state, double head, bool port_wetting) {
+    if (state.infiltration_cell < 0) return;
+    auto& ga = state.surface_infil;
+    const auto& entry = state.cells[state.infiltration_cell];
+    const double tolerance = 32 * std::numeric_limits<double>::epsilon() * std::max(1.0, std::abs(entry.top));
+    const bool submerged = head >= entry.top - tolerance;
+    const bool previously_submerged = state.infiltration_head >= entry.top - tolerance;
+    const double deficit = submerged ? 0.0 : infiltrationDeficit(state, head);
+    const double wet = std::clamp((ga.IMDmax - deficit) * ga.Lu, 0.0, ga.Fumax);
+    if (head > state.infiltration_head + 1.e-12 || port_wetting) {
+        // Backwater/port wetting is not cumulative surface infiltration.
+        ga.IMD = std::min(ga.IMD, deficit);
+        ga.Fu = std::max(ga.Fu, wet);
+        if (submerged) {
+            ga.IMD = 0.0; ga.Fu = ga.Fumax;
+            ga.F = 0.0; ga.saturated = true;
+        }
+    }
+    if (!submerged && (previously_submerged ||
+        (head < state.infiltration_head - 1.e-12 && ga.F == 0.0))) {
+        // Complete inundation erased the old downward front. Recession starts
+        // a new approximate front from the remaining physical moisture. Keep
+        // tracking gradual recession until accepted surface entry starts it;
+        // the first crossing alone has an almost-zero exposed deficit.
+        ga.IMD = deficit; ga.Fu = wet; ga.F = 0.0; ga.saturated = false;
+    }
+    state.infiltration_head = head;
+}
+}
+void initializeInfiltration(SimulationContext& ctx, int node) {
+    const int r = ctx.node_subtypes.storage_row(node);
+    auto& state = ctx.node_subtypes.storages.lid_state[r];
+    state.surface_infil = {}; state.infiltration_cell = -1;
+    state.infiltration_head = ctx.nodes.depth[node];
+    if (state.cells.size() < 2 || state.cells[0].kind != LidNodeLayerKind::Surface ||
+        state.cells[1].kind != LidNodeLayerKind::Media || state.cells[1].conductivity <= 0.0) return;
+    state.infiltration_cell = 1;
+    const auto& entry = state.cells[1];
+    const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    infil::grnampt_init(state.surface_infil, entry.suction * rainDepth(ctx),
+        entry.conductivity * ucf::Ucf[ucf::RAINFALL][us],
+        entry.porosity - entry.wilting_point, ctx.options);
+    // The empirical recovery zone cannot extend past this authored media.
+    double bottom = entry.bottom;
+    for (const auto& cell : state.cells) if (cell.layer == entry.layer) bottom = std::min(bottom, cell.bottom);
+    auto& ga = state.surface_infil;
+    ga.Lu = std::min(ga.Lu, entry.top - bottom);
+    ga.Fumax = ga.IMDmax * ga.Lu;
+    ga.IMD = infiltrationDeficit(state, ctx.nodes.depth[node]);
+    ga.Fu = std::clamp((ga.IMDmax - ga.IMD) * ga.Lu, 0.0, ga.Fumax);
+    ga.saturated = ctx.nodes.depth[node] >= entry.top;
+}
 void initialize(SimulationContext& ctx) {
     auto& st = ctx.node_subtypes.storages;
     const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
@@ -257,7 +329,7 @@ void initialize(SimulationContext& ctx) {
                 c.porosity = l.kind == LidNodeLayerKind::Surface ? 1.0 - l.params[1] : l.params[1];
                 if (l.kind == LidNodeLayerKind::Media) {
                     c.field_capacity = l.params[2]; c.wilting_point = l.params[3];
-                    c.conductivity = l.params[4] / rf; c.exponent = l.params[5]; c.suction = l.params[6] / rd;
+                    c.conductivity = l.params[4] / rf; c.conductivity_slope = l.params[5]; c.suction = l.params[6] / rd;
                     c.theta = c.wilting_point + st.lid[r].initial_saturation / 100.0 * (c.porosity - c.wilting_point);
                 } else if (l.kind == LidNodeLayerKind::Aggregate) {
                     c.conductivity = l.params[2] / rf;
@@ -281,6 +353,7 @@ void initialize(SimulationContext& ctx) {
             state.held_volume += c.theta * c.geometric_volume;
         }
         ctx.nodes.full_volume[n] = 0.0;
+        initializeInfiltration(ctx, n);
     }
 }
 void prepareStep(SimulationContext& ctx, double dt, double evaporation) {
@@ -296,6 +369,7 @@ void prepareStep(SimulationContext& ctx, double dt, double evaporation) {
         state.quality_old_water.clear(); state.quality_transfers.clear();
         for (const auto& cell : state.cells) state.quality_old_water.push_back(cell.theta * cell.geometric_volume);
         state.captured_flow = 0.0; state.evap_volume = 0.0;
+        reconcileInfiltration(state, ctx.nodes.depth[n], false);
         for (auto& c : state.cells)
             // A submerged cell retains field-capacity water on recession.
             // The before/after store difference below transfers this water
@@ -340,11 +414,39 @@ void prepareStep(SimulationContext& ctx, double dt, double evaporation) {
                 double q = 0.0;
                 if (c.kind == LidNodeLayerKind::Surface && i + 1 < state.cells.size()) {
                     const auto& below = state.cells[i + 1];
-                    const double deficit = std::max(0.0, below.porosity - below.theta);
-                    q = below.conductivity * (1.0 + below.suction * deficit / std::max(below.suction + c.theta * (c.top - c.bottom), 1.e-12)) * c.area;
+                    if (state.infiltration_cell == static_cast<int>(i + 1)) {
+                        auto trial = state.surface_infil;
+                        const double factor = ctx.climate_state.infil_factor;
+                        const double head = c.theta / c.porosity * (c.top - c.bottom);
+                        // Recovery must not dry an upper zone fed by backwater.
+                        const bool wet_from_below = ctx.nodes.depth[n] > below.top - trial.Lu;
+                        // Unlike an open soil surface, a capacity-limited LID
+                        // can retain the trial's saturated flag after ponding
+                        // disappears. Enter the recovery branch once it dries.
+                        if (head <= 0.0 && !wet_from_below) trial.saturated = false;
+                        if (factor > 0.0 && (head > 0.0 || !wet_from_below)) {
+                            q = infil::grnampt_getInfil(trial, 0.0, head, step,
+                                InfilModel::MOD_GREEN_AMPT, factor,
+                                std::max(ctx.climate_state.recovery_factor, 1.e-12)) * c.area;
+                        }
+                        // Save a candidate only here, outside hydraulic trials.
+                        // F/Fu are corrected to the accepted volume below.
+                        state.surface_infil.T = trial.T;
+                        state.surface_infil.saturated = trial.saturated;
+                        if (head <= 0.0 && !wet_from_below) {
+                            const double deficit = infiltrationDeficit(state, ctx.nodes.depth[n]);
+                            trial.Fu = std::max(trial.Fu, (trial.IMDmax - deficit) * trial.Lu);
+                            trial.IMD = std::min(trial.IMD, deficit);
+                            trial.F = std::max(0.0, trial.F);
+                            state.surface_infil = trial;
+                        }
+                    } else if (below.kind == LidNodeLayerKind::Aggregate) {
+                        q = below.conductivity * c.area;
+                    }
                 } else if (c.theta > c.field_capacity) {
-                    const double ratio = std::clamp(c.theta / c.porosity, 0.0, 1.0);
-                    q = c.conductivity * std::pow(ratio, c.exponent) * c.area;
+                    // Legacy soil conductivity slope, not a power exponent.
+                    q = c.conductivity * (c.kind == LidNodeLayerKind::Media ?
+                        std::exp(-c.conductivity_slope * std::max(0.0, c.porosity - c.theta)) : 1.0) * c.area;
                 }
                 double v = std::min(q * step, std::max(0.0, (c.theta - c.field_capacity) * c.geometric_volume));
                 if (i + 1 < state.cells.size()) {
@@ -353,6 +455,12 @@ void prepareStep(SimulationContext& ctx, double dt, double evaporation) {
                         v = std::min(v, std::max(0.0, (below.porosity - below.theta) * below.geometric_volume));
                 }
                 transfer[i] = v;
+                if (c.kind == LidNodeLayerKind::Surface && state.infiltration_cell == static_cast<int>(i + 1)) {
+                    auto& ga = state.surface_infil;
+                    const double accepted = v / c.area;
+                    ga.F += accepted;
+                    ga.Fu = std::min(ga.Fumax, ga.Fu + accepted);
+                }
             }
             for (std::size_t i = 0; i < state.cells.size(); ++i) {
                 auto& c = state.cells[i];
@@ -401,6 +509,11 @@ void finishStep(SimulationContext& ctx) {
         if (ctx.options.allow_ponding && ctx.nodes.ponded_area[n] > 0.0 && ctx.nodes.volume[n] > ctx.nodes.full_volume[n])
             ctx.nodes.depth[n] = ctx.nodes.full_depth[n] + (ctx.nodes.volume[n] - ctx.nodes.full_volume[n]) / ctx.nodes.ponded_area[n];
         ctx.nodes.head[n] = ctx.nodes.invert_elev[n] + ctx.nodes.depth[n];
+        const bool port_wetting = state.infiltration_cell >= 0 &&
+            std::any_of(state.quality_ports.begin(), state.quality_ports.end(), [&](const auto& port) {
+                return port.volume > 0.0 && state.cells[port.cell].layer == state.cells[state.infiltration_cell].layer;
+            });
+        reconcileInfiltration(state, ctx.nodes.depth[n], port_wetting);
         ctx.nodes.lat_flow[st.node_idx[r]] += state.captured_flow;
         st.evap_loss[r] += state.evap_volume;
         state.captured_flow = 0.0;

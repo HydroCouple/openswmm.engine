@@ -101,6 +101,7 @@ struct HotStartLidCellRecord {
 };
 struct HotStartNodeRecord {
     std::string id;
+    std::vector<double> lid_infiltration; ///< V10 S,Ks,IMDmax,IMD,F,Fu,Fumax,Lu,T,head,saturated
     std::vector<double> lid_quality_mass; ///< V9 retained cell pollutant mass
     std::vector<HotStartLidCellRecord> lid_cells; ///< V8 retained moisture and geometry identity
     double lid_treated_volume = 0.0; ///< V8 clogging history (ft3)

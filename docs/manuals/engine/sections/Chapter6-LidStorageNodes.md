@@ -87,26 +87,71 @@ misclassifying a surface weir as a media outlet after floating-point
 cancellation at a nonzero invert. Surface ponding supplies its local head
 even when the mobile water table remains below the crest.
 
-Intercell retained-water drainage is a gravity-only Darcy–Buckingham
-approximation: `q_i = Ks_i * clamp(theta_i / porosity_i, 0, 1)^n_i` above
-field capacity, otherwise zero, and `Q_i = area_i * q_i`. It uses donor
-properties, without a receiver matric-head gradient or an interface-averaged
-conductivity. Aggregate cells have zero field capacity and the default
-exponent three. Surface entry instead uses receiving conductivity and
-suction: `q = K_b * (1 + suction_b * max(porosity_b - theta_b, 0) /
-max(suction_b + theta_surface * thickness_surface, epsilon))`.
+### Legacy conductivity and surface infiltration
+
+MEDIA drainage uses the legacy SWMM LID exponential conductivity law:
+`q_i = Ks_i * exp(-slope_i * (porosity_i - theta_i))` above field capacity,
+otherwise zero; `Q_i = area_i * q_i`. Conductivity slope is dimensionless,
+nonnegative and is not a power exponent. Zero slope is valid and gives Ks
+above field capacity. AGGREGATE drains at its specified conductivity with
+zero field capacity. These are gravity-only, unit-gradient closures; the
+receiver's matric head and conductivity do not form an interface gradient.
+For example, Ks = 10 mm/h, porosity = 0.45, theta = 0.30 and slope = 10
+give 2.23 mm/h. The old node kernel interpreted slope as an exponent;
+existing node-model results must be rerun after this correction.
+
+SURFACE → first MEDIA entry reuses `infil::grnampt_getInfil` in
+`MOD_GREEN_AMPT` mode. Its ponded instantaneous capacity for F > 0 is
+`f_cap = Ks * (1 + (suction + h_surface) * IMD / F)`; the shared routine
+handles F = 0, integrated infiltration and supply-limited transitions.
+Actual ponded depth is `theta_surface * surface_thickness / surface_porosity`.
+Only accepted infiltration advances F and upper-zone wetness Fu. A cloned
+history supplies the potential flux before donor/receiver limits. Dry recovery
+is bounded by actual physical wetness and F cannot become negative.
+An empty surface explicitly enters the dry recovery branch when the finite
+upper zone is free of backwater. Ks = 0 is impermeable and bypasses the
+Green–Ampt calculation. SURFACE → AGGREGATE entry uses aggregate conductivity.
+Repeated/deeper MEDIA layers use the drainage law, not separate fronts.
 
 Explicit substeps are at most one second. Accepted volumes are bounded by
 `Q_i * substep`, donor water above field capacity and receiving pore space.
 All transfers use a common pre-update state and equal donor/receiver volumes.
 A receiver intersected by the mobile water table instead transfers into
 mobile storage without the retained pore-capacity bound; donors whose bottoms
-are below that table skip free drainage. The closure omits matric-gradient
-redistribution, including upward capillary flow and capillary barriers. It is
-more restricted than the gravity-plus-diffusivity block formulation of
-[Tu, Wadzuk and Traver (2020)](https://doi.org/10.1371/journal.pone.0235528);
-their validation cannot be applied to this kernel. GUI T10 illustrates the
-flux equations and interpretation limits.
+are below that table skip free drainage. These explicit cell balances differ
+from legacy SWMM's lumped LID soil-layer integration, so reuse of its laws
+is not a claim of identical conventional-LID results.
+
+### Reverse flow, resaturation and recession
+
+Signed hydraulic port transfers remain authoritative. Accepted reverse inflow
+enters at its physical port; media receipts fill retained capacity before
+excess enters mobile storage. The mobile water table saturates the submerged
+fraction of each cell. Fully submerged cells retain field-capacity moisture
+on recession, with each retained/mobile adjustment booked conservatively.
+
+The modified Green–Ampt upper-zone depth follows the shared empirical Ks
+relationship, bounded by the thickness of the first authored MEDIA layer.
+Its maximum deficit is porosity minus wilting point. Initial deficit and
+wetness come from actual retained moisture plus submerged pore volume.
+After rising backwater or accepted media-port wetting, the finite-zone
+physical deficit reduces IMD and raises Fu; that wetting does not add to F.
+Full submergence of the media top sets IMD = 0, Fu = Fumax and clears the old
+front. Gradual recession tracks remaining moisture until accepted surface entry
+starts a new approximate front.
+Dry recovery is suppressed when the empty surface overlies an upper zone
+intersected by backwater. History is reconciled after accepted transfers;
+hydraulic trial/reset calls never advance it.
+
+This is a finite-zone adaptation for a network-connected facility, not a
+solution of upward capillary flow or colliding wetting fronts. The closure
+omits matric-gradient redistribution, capillary barriers and retention
+hysteresis. It is more restricted than the gravity-plus-diffusivity block
+formulation of [Tu, Wadzuk and Traver (2020)](https://doi.org/10.1371/journal.pone.0235528);
+their HYDRUS comparison cannot validate this kernel. GUI T10 illustrates the
+flux equations, resaturation and interpretation limits. The hydraulic formulation is documented in
+@ref hydraulics_ref_lid_storage_formulation and the mass and treatment
+formulation in @ref quality_ref_lid_storage_formulation.
 
 The runtime moisture profile reports cell layer number, bottom/top elevations
 and volumetric moisture. Elevations are relative to the storage invert in
@@ -199,8 +244,11 @@ contains a complete stack-construction example.
 ## Persistence and lifecycle
 
 INP and GeoPackage round trips preserve layer geometry, rules, assignments and
-anchors. Native V9 hotstarts also preserve retained pollutant masses alongside
-moisture and clogging state. Older compatible hotstarts without layer mass
+anchors. Native V10 hotstarts preserve modified Green–Ampt history and the last
+reconciled head, along with retained pollutant masses, moisture and clogging
+state. Compatible pre-V10 LID hotstarts reconstruct missing infiltration
+history from restored moisture and warn that exact continuation is unavailable.
+V10 rejects incompatible infiltration parameters or geometry. Older compatible hotstarts without layer mass
 initialize that state from the available node concentration. Configuration
 files do not preserve runtime mass. Legacy SWMM 5 export cannot represent
 storage-node LIDs and warns when omitting the extension.
@@ -217,30 +265,25 @@ outlet behavior, treatment, validation and persistence. Python's
 and treatment round trips. GUI layer-model and editor tests cover arbitrary
 counts, reordering, numeric delegates, expression validation and Apply/reload.
 
-The pollutant-balance follow-up was checked with 25 LID cases and the quality,
-treatment, hotstart, outfall-backflow, LID water-age and LID heat suites: 138
-engine tests passed. The new full-chain fixture covers MEDIA/AGGREGATE,
-free/backwater conditions and ZERO/LAST outfall quality, checking final
-balances and conservative-tracer inventory at every routing step to 0.1%.
-Focused cases cover sub-litre drainage and physical weir-crest anchors.
+The revised hydrology passes 241 engine tests in nine suites: LID nodes
+(40), conventional LID (55), infiltration (33), quality (21), treatment (32),
+hotstart (39), outfall backflow (5), LID water age (6) and LID heat (10).
+The new tests check the analytical conductivity law, legacy Green–Ampt
+potential flux and ponding response, accepted-only infiltration history,
+impermeable/zero-multiplier limits, dry recovery, partial/full backwater
+wetting, repeated hydraulic trials, recession, second-event entry and V10
+exact continuation. A converted V9 fixture checks explicit reconstruction
+and warning behavior. A six-minute routed tracer case checks water balance
+and tracer inventory through reversal, resaturation, recession and a second
+storm, without warnings. Existing full-chain regressions cover
+MEDIA/AGGREGATE × free/backwater × ZERO/LAST boundary quality, including
+per-step conservative-tracer closure to 0.1%.
 
-GUI T10 supplies six complete active-control examples. Twenty-six distinct
-case/step combinations (0.5, 0.25, 0.1 and 0.025 seconds for all six cases,
-plus 0.05 seconds for the passive cases) passed 0.5% water/pollutant
-continuity acceptance without engine warnings; reported pollutant errors
-were below 0.001%. Figures use the 0.025-second runs. The passive 0.1-second
-results showed performance sensitivity despite good continuity; the
-0.05- and 0.025-second passive runs agreed in half-export time at sampling
-resolution and reacted fraction at report precision. These are test-case results, not a universal accuracy guarantee.
-Check convergence of performance metrics as well as continuity. Rapid
-surface overflow can alias a coarse output sampling interval; use cumulative
-engine budgets for those losses. Inspect water and pollutant continuity and
-repeat with a smaller step for the model being studied.
-
-Three subsequent interface regressions cover perched surface-water withdrawal
-at a nonzero node invert, one-ULP perturbations at cell interfaces versus
-physical offsets, and consistent layer selection for mobile-outlet treatment.
-The seven LID/quality/treatment/restart/backflow/water-age/heat suites now pass
-141 tests. The corrected GUI T10 results and figures supersede the prior
-overflow totals; their validation note records the rebuilt library and
-additional routing-step refinement.
+GUI T10 supplies six active-control examples plus a separate six-minute
+resaturation example. The 24-hour decks are rerun at 0.1, 0.05 and 0.025 s;
+the article's validation note records binary provenance, continuity,
+performance sensitivity and cumulative overflow budgets. These synthetic
+tests establish conservative implementation behavior, not field validity.
+Check timing, peaks and treatment convergence as well as continuity; rapid
+surface overflow can alias coarse snapshots. Use cumulative engine budgets
+for those losses and calibrate against measurements for field applications.

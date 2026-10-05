@@ -682,6 +682,10 @@ SWMM_ENGINE_API int swmm_lid_add(SWMM_Engine engine, const char* id, int type);
 /** Arbitrary ordered NODE control layers; thickness/suction in in or mm,
  * conductivity in in/hr or mm/hr. Params: SURFACE=(thickness, vegetation),
  * MEDIA=(thickness, porosity, FC, WP, Ksat, Kslope, suction),
+ * with gravity drainage Ksat*exp(-Kslope*(porosity-theta)) above FC.
+ * Kslope is dimensionless and nonnegative, not a power exponent.
+ * Surface entry into the first MEDIA reuses modified Green-Ampt;
+ * accepted backwater wetting reconciles its finite-zone history.
  * AGGREGATE=(thickness, porosity, Ksat), BOTTOM=(seepage, clogging).
  * Unused parameters must be zero. BOTTOM is not a numbered physical layer. */
 enum SWMM_LidNodeLayerKind {

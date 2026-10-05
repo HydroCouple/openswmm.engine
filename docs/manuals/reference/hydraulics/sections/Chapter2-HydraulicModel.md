@@ -130,6 +130,122 @@ The principal input parameters for a storage unit are:
 
 - seepage parameters.
 
+#### 2.1.4.1 Layered LIDs on storage nodes {#hydraulics_ref_lid_storage_formulation}
+
+**Open-Source SWMM 6 extension.** A layered LID can be assigned to an ordinary
+storage node with Dynamic Wave routing. Its footprint comes from the storage
+geometry and its thicknesses from the ordered SURFACE, MEDIA and AGGREGATE
+layers. MEDIA is divided into five numerical cells per authored layer.
+These cells describe retained moisture; they are not separate hydraulic nodes.
+Connections, controls and downstream stages belong to the ordinary network.
+
+For cell geometric volume \f$G_i\f$, void fraction \f$\phi_i\f$, retained
+fraction \f$\theta_i\f$ and mobile water-table depth \f$h\f$ above the invert:
+
+\f[
+ V_r=\sum_i\theta_iG_i,\qquad
+ V_m(h)=\sum_i(\phi_i-\theta_i)G_i\,s_i(h),\qquad
+ V=V_r+V_m.
+\f]
+
+Here \f$s_i(h)\f$ is the fraction of cell thickness below the mobile water
+table, bounded to [0,1]. Below that table, mobile water fills the pores left
+by the retained fraction, making physical moisture equal to porosity.
+Surface void fraction includes vegetation displacement. Reported node volume
+includes both inventories; the routing continuity equation uses mobile volume.
+Internal drainage debits one store and credits the other with the same volume:
+
+\f[
+ \frac{dV}{dt}=Q_{in}-Q_{out}-Q_{overflow}-Q_{flood}-E-Q_{seep}.
+\f]
+
+The flow terms use accepted directions. Rainfall must enter through a
+contributing subcatchment or external inflow; assigning a LID is not an
+additional rainfall source.
+
+**Gravity drainage.** MEDIA uses the exponential conductivity law of legacy
+SWMM LIDs, evaluated from the donor cell:
+
+\f[
+ q_i=\begin{cases}
+ K_{s,i}\exp[-m_i(\phi_i-\theta_i)],&\theta_i>\theta_{FC,i},\\
+ 0,&\theta_i\leq\theta_{FC,i},
+ \end{cases}
+ \qquad Q_i=A_iq_i,\quad A_i=G_i/\Delta z_i.
+\f]
+
+The dimensionless, nonnegative \f$m_i\f$ is **conductivity slope**, not a
+power exponent. Zero slope gives constant saturated conductivity above field
+capacity. AGGREGATE uses its specified conductivity and zero field capacity.
+With downward-positive coordinate \f$\xi\f$, Darcy–Buckingham gives
+\f$q=K(\theta)(1-\partial\psi/\partial\xi)\f$. The node drainage law takes
+the unit-gradient limit; it does not compute intercell matric-head gradients.
+
+**Surface entry.** SURFACE directly over MEDIA reuses modified Green–Ampt.
+For an existing ponded downward front, its instantaneous capacity is:
+
+\f[
+ f_{cap}=K_s\left[1+\frac{(\psi_f+h_s)\,\Delta\theta}{F}\right],
+ \qquad h_s=\frac{\theta_s\Delta z_s}{\phi_s},\quad F>0.
+\f]
+
+The positive \f$\psi_f\f$ is front suction, \f$\Delta\theta\f$ is its
+moisture deficit and \f$F\f$ is active-front cumulative infiltration depth.
+The native routine handles initial wetting at F=0, integrated infiltration
+and supply limits. Increased ponded head increases capacity at the same
+front state. A trial history supplies potential flux; only accepted
+infiltration increments F and upper-zone wetness. Surface-to-aggregate entry
+uses aggregate conductivity; deeper MEDIA layers have no separate fronts.
+
+**Accepted transfer.** Explicit substeps are at most one second. For a
+retained receiver above the water table:
+
+\f[
+ \Delta V_i=\min\{Q_i\delta t,
+ (\theta_i-\theta_{FC,i})_+G_i,
+ (\phi_{i+1}-\theta_{i+1})_+G_{i+1}\}.
+\f]
+
+All trial fluxes use a common pre-update state. A receiver intersected by the
+mobile table routes to mobile storage instead, without a retained-capacity
+bound. Donors below that table skip free drainage. Surface entry has zero
+field capacity and the same volume bounds. Evaporation is bounded so media
+cannot fall below wilting point. BOTTOM seepage is an external loss.
+
+**Ports, reversal and resaturation.** Link ports use their physical offset
+and local available water. In particular, a surface overflow uses ponding
+head, which can be higher than the reported mobile water table. Shared
+interface ownership tolerates only roundoff-sized elevation differences;
+it is used by both hydraulics and pollutant routing. Fully submerged orifices
+without a flap gate can reverse according to the sign of their head difference;
+see @ref hydraulics_ref_ch6_pumps_regulators for the full structure equations.
+
+Reverse flow enters its actual port. Media receipts fill local retained
+capacity before excess joins mobile storage. The infiltration upper-zone
+deficit is averaged over the finite first-media zone, counting submerged
+pores as saturated. Rising backwater or accepted media-port wetting reduces
+the deficit and raises wetness, without adding reverse water to F. Full
+media-top submergence clears the old downward front. During gradual recession,
+the history follows remaining moisture until accepted surface entry starts
+a new approximate front. Previously submerged cells retain field-capacity
+moisture through conservative retained/mobile transfers. Dry history recovery
+cannot make the zone drier than its physical moisture and is suppressed when
+an empty surface overlies an upper zone intersected by backwater.
+
+Native V10 hotstarts preserve that history, last reconciled head, moisture
+and retained pollutant mass. Compatible older files reconstruct missing
+infiltration history and warn that exact continuation is unavailable.
+
+This reduced gravity-drainage/front model is distinct from a Richards solve
+or the gravity-plus-matric-diffusivity block formulation of
+[Tu, Wadzuk and Traver (2020)](https://doi.org/10.1371/journal.pone.0235528).
+It omits upward capillary redistribution, retention hysteresis and capillary
+barriers. Its applicability requires assessment against observations or a
+richer vadose-zone model when those processes matter. Check routing-step
+sensitivity of timing, peaks and treatment, as well as continuity. Treatment
+and signed mass transfers are defined in @ref quality_ref_lid_storage_formulation;
+configuration and restart compatibility are in @ref engine_manual_lid_storage.
+
 ### 2.1.5 Conduit Links
 
 Conduit links are pipes or channels that move water from one node to

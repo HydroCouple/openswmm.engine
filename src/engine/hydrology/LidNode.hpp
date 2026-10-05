@@ -16,6 +16,9 @@ double thickness(const std::vector<LidNodeLayer>&);
 void validate(SimulationContext&);
 void sync(SimulationContext&, int control);
 void initialize(SimulationContext&);
+// Reconstruct infiltration history from current physical moisture when loading
+// a pre-V10 hot start. Exact continuation requires V10 history.
+void initializeInfiltration(SimulationContext&, int node);
 void prepareStep(SimulationContext&, double dt, double evaporation);
 void finishStep(SimulationContext&);
 void resetPorts(SimulationContext&);

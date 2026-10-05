@@ -5,6 +5,7 @@
 #include <array>
 #include <vector>
 #include <string>
+#include "../hydrology/Infiltration.hpp"
 
 namespace openswmm {
 // Authored, ordered layers. Thickness/suction are in rain-depth units (in/mm),
@@ -25,13 +26,19 @@ struct LidNodeCell {
     double bottom = 0.0, top = 0.0; // feet above invert
     double geometric_volume = 0.0, area = 0.0;
     double porosity = 1.0, theta = 0.0, field_capacity = 0.0, wilting_point = 0.0;
-    double conductivity = 0.0, exponent = 3.0, suction = 0.0;
+    double conductivity = 0.0, conductivity_slope = 0.0, suction = 0.0;
     LidNodeLayerKind kind = LidNodeLayerKind::Aggregate;
     int layer = 0;
 };
 struct LidWaterTransfer { int from, to; double volume; }; // -1 mobile, -2 lateral, -3 evaporation
 struct LidPortTransfer { int link, cell; double volume; }; // positive into held water
 struct LidNodeState {
+    // One modified Green-Ampt history for the media directly below SURFACE.
+    // Other layer/port wetting uses the physical cell and mobile inventories.
+    GreenAmptState surface_infil;
+    int infiltration_cell = -1;
+    double infiltration_head = 0.0; // last reconciled mobile water-table depth
+
     std::vector<double> quality_mass; // [cell * pollutant + pollutant], retained stores
     std::vector<double> quality_old_water;
     std::vector<LidWaterTransfer> quality_transfers;
