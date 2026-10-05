@@ -568,6 +568,46 @@ or full Richards-equation solution. See @ref engine_manual_lid_storage and
 @ref hydraulics_ref_lid_storage_formulation for the formulation and
 V10 restart behavior.
 
+### Section: [LID_RICHARDS] {#engine_manual_sect_LID_RICHARDS}
+
+Purpose:
+Selects the optional Richards 1D flow model and defines explicit retention
+materials for a NODE control from [LID_CONTROLS]. The existing storage-node
+flow formulation remains the default when no OPTIONS row enables Richards.
+
+Formats:
+```text
+Control OPTIONS CellsPerPorousLayer AbsTol RelTol MaxInternalStepSeconds
+Control PhysicalLayer ResidualTheta Alpha n l Ss
+```
+
+Parameters:
+Control    name of a NODE control with ordered physical layers.
+CellsPerPorousLayer    integer from 1 to 256; numerical cells in each MEDIA or AGGREGATE layer, independent of physical layer count.
+AbsTol, RelTol    positive finite absolute and relative time-integration tolerances, applied to complete water storage divided by geometric volume.
+MaxInternalStepSeconds    positive finite maximum internal solver step, in seconds.
+PhysicalLayer    one-based layer index from top to bottom; must identify MEDIA or AGGREGATE.
+ResidualTheta    residual water content; nonnegative and below porosity, and below the MEDIA wilting point.
+Alpha    positive van Genuchten retention parameter, in inverse metres.
+n    van Genuchten exponent; greater than 1.
+l    nonnegative Mualem conductivity exponent.
+Ss    positive specific storage, in inverse metres.
+
+Remarks:
+An OPTIONS row enables Richards for the control. Every porous layer needs
+an explicit material row; SURFACE and BOTTOM have no retention rows.
+Duplicate OPTIONS or material rows are errors. Alpha and Ss use inverse
+metres in both US and SI projects; the usual project units still apply to
+layer thickness and saturated conductivity. Retained material rows do not
+alone enable Richards.
+
+Use Dynamic Wave routing. Runtime coupling to an active 2D aquifer bed,
+water age, heat and MSX is not yet supported for Richards nodes and is
+rejected at initialization. See @ref engine_manual_lid_storage for an input
+example, numerical formulation, persistence and validation limits.
+
+<!-- source: src/engine/hydrology/LidNodeRichards.cpp (readRichards); src/engine/hydrology/RichardsColumn.cpp (valid); src/engine/core/InpWriter.cpp -->
+
 ### Section: [LID_CONTROLS] {#engine_manual_sect_LID_CONTROLS}
 
 Purpose:
@@ -2658,6 +2698,39 @@ The section may also be placed in the external mesh file, where it replaces the 
 This section has no counterpart in SWMM 5.
 
 <!-- source: src/engine/2d/input/SectionHandlers2D.cpp:982-1019,1093-1117 (registration 1296-1297) -->
+
+### Section: [2D_SURFACE_OWNERSHIP] {#engine_manual_sect_2D_SURFACE_OWNERSHIP}
+
+Purpose:
+\status{Experimental} Stores opt-in surface ownership records for review of
+subcatchment and LID footprints over the mesh. This release supports
+authoring and geometric review; the runtime water, quality and ET adapter
+is not yet qualified.
+
+Format:
+```text
+Subcatchment SUBCATCH UNIFORM
+```
+
+Parameters:
+Subcatchment    name of an existing subcatchment to include in the ownership review.
+SUBCATCH    the only supported representation token.
+UNIFORM    the only supported distribution token.
+
+Remarks:
+Each row has exactly three tokens. Duplicate subcatchment records are
+rejected. Review requires active routing and an enabled 2D aquifer in
+MODE MESH; ownership records alone do not enable or create an aquifer.
+The resolver checks source geometry and area, overlap and connected source
+shares before accepting a replacement. INP and GeoPackage preserve the
+optional records.
+
+Initialization currently refuses any stored ownership record with an error
+explaining that the completed-interval adapter is not qualified. Remove the
+records to run the existing formulation. Absence of this section retains
+the existing runoff, groundwater and weather accounting.
+
+<!-- source: src/engine/2d/subsurface/SubsurfaceSections.cpp (parseSurfaceOwnerLine, resolveSurfaceOwnership, writeSubsurfaceSections); src/engine/2d/SurfaceRouter2D.cpp (initialize) -->
 
 ### Section: [2D_AQUIFER_OPTIONS] {#engine_manual_sect_2D_AQUIFER_OPTIONS}
 
