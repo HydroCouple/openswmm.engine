@@ -1412,6 +1412,7 @@ void create_schema(sqlite3* db) {
     exec(db, PART_C_DDL);
     exec(db, PART_D_DDL);
     exec(db, MESH_2D_DDL);
+    exec(db, "CREATE TABLE IF NOT EXISTS surface_ownership_2d_input (simulation_id TEXT PRIMARY KEY, sections TEXT NOT NULL)");
 }
 
 void register_crs(sqlite3* db, int srs_id, const std::string& org,

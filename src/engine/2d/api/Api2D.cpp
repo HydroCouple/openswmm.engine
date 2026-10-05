@@ -126,7 +126,7 @@ int swmm_2d_vertex_get_xyz(SWMM_Engine engine, int idx,
 int swmm_2d_vertex_get_xyz_bulk(SWMM_Engine engine,
                                   double* x, double* y, double* z) {
     GET_ENGINE(engine);
-    CHECK_2D_ACTIVE(eng);
+    CHECK_2D_MESH(eng);
     if (!x || !y || !z) return SWMM_ERR_BADPARAM;
 
     auto& m = router2d.mesh();

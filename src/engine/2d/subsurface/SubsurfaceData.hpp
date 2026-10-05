@@ -52,6 +52,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include "SurfaceOwnership.hpp"
 
 namespace openswmm::twoD {
 
@@ -324,6 +325,7 @@ struct SubsurfaceConfig {
     std::vector<GwAquiferRow> rows;
     std::vector<GwNodeBed>    node_beds;
     std::vector<GwLinkRow>    link_rows;   ///< G-X4: [2D_AQUIFER_LINKS]
+    std::vector<SurfaceOwnerRecord> surface_owners; ///< Explicit SUBCATCH UNIFORM records; not aquifer activation.
 
     bool empty() const noexcept {
         return !options.authored && rows.empty() && node_beds.empty() &&

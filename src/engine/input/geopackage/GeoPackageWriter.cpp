@@ -31,6 +31,7 @@
 #include "2d/data/PendingRows2D.hpp"
 #include "2d/data/Serialize2D.hpp"
 #include "2d/data/Report2DVars.hpp"
+#include "2d/subsurface/SubsurfaceSections.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -2228,6 +2229,22 @@ void write_model(sqlite3* db, const SimulationContext& ctx,
     // here — they always stream to the HDF5 file named by 2D_OUTPUT_FILE.
     write_options_2d(db, ctx, simulation_id);
     write_mesh_2d(db, ctx, simulation_id, srs_id);
+    // Preserve the reviewed records together with their receiving aquifer.
+    // Older files without this optional table retain their existing path.
+    {
+        auto remove=prepare(db,"DELETE FROM surface_ownership_2d_input WHERE simulation_id=?");
+        bind_text(remove.get(),1,simulation_id);
+        if(sqlite3_step(remove.get())!=SQLITE_DONE)throw GpkgError(sqlite3_errmsg(db));
+        if(ctx.twod_io.aquifer&&!ctx.twod_io.aquifer->surface_owners.empty()){
+            std::string sections;const std::vector<std::string> empty;
+            twoD::writeSubsurfaceSections(*ctx.twod_io.aquifer,
+                ctx.twod_io.aquifer_nodes?*ctx.twod_io.aquifer_nodes:empty,
+                ctx.twod_io.aquifer_links?*ctx.twod_io.aquifer_links:empty,sections,true);
+            auto insert=prepare(db,"INSERT INTO surface_ownership_2d_input VALUES (?,?)");
+            bind_text(insert.get(),1,simulation_id);bind_text(insert.get(),2,sections);
+            if(sqlite3_step(insert.get())!=SQLITE_DONE)throw GpkgError(sqlite3_errmsg(db));
+        }
+    }
 
     // Slice IO-7 — fan out every external-file reference (timeseries
     // FILE, raingage FILE, climate FILE, [FILES] routing/hotstart) into
