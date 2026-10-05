@@ -23,6 +23,12 @@ retroactive.
 
 ## [Unreleased]
 
+### Surface–subsurface ET (2026-10-05)
+
+- Spatial aquifers now resolve automatic groundwater ET to `BOTH` and automatic conduit exchange to `TWO_WAY`. Explicit `GW_ET NONE`, `LINK_SEEPAGE NONE` / `ONE_WAY`, and `GROUNDWATER NO` remain opt-outs. Legacy explicitly authored `LINK_SEEPAGE AUTO` still means one-way and saves as `ONE_WAY`; new automatic authoring uses `DEFAULT`.
+- Mesh surface evaporation and soil ET share one atmospheric demand per cell. Actual surface evaporation spends it first; soil ET consumes only accumulated past remainder with one stress calculation. Capillary rise stays an internal transfer and cannot spend water already committed to node/conduit exchange.
+- Add positive project-length `WILTING_SUCTION`, with automatic 150 m in either unit system, ET budget result fields and V13 pending-demand restart. The sigma threshold and automatic mesh modes intentionally change aquifer trajectories. Legacy no-aquifer controls retain byte identity; area partitioning with subcatchments/LIDs and UEB integration remain later rounds.
+
 ### Python bindings
 
 - **Add `openswmm.engine.catalog`**, a machine-readable description

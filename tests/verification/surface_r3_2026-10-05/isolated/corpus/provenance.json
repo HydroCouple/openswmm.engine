@@ -1,0 +1,17 @@
+{
+  "base_commit": "35547cd082944622b5da459e56967e0e1c7d677c",
+  "scope": "Current explicit tests/parity/MANIFEST; the 24-case API census independently covers no-aquifer and infiltration OFF mesh trajectories. No recursive generated-fixture census.",
+  "build": "Same Release Ninja configuration and toolchain; candidate is base plus task.patch and the new ET test.",
+  "binaries": {
+    "baseline": {
+      "cli_sha256": "d3a6870430beea132ef616aae8a72b327723d69f1c3a866b2a5896adc0441da1",
+      "engine_sha256": "dae116f985622bd5ef36508e1daf8da2b23abcdde9fb3747e4719b846b925765",
+      "engine_link": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/verification/surface_r3_2026-10-05/isolated/baseline/openswmm:\n\t/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/verification/surface_r3_2026-10-05/isolated/baseline/libopenswmm.engine.6.0.0.dylib (compatibility version 6.0.0, current version 6.0.0)\n\t/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 2200.27.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)\n"
+    },
+    "candidate": {
+      "cli_sha256": "17f6e39191178faa668e778de297616a88eb5de02281254b5116d1ea46771b86",
+      "engine_sha256": "dccc6e74abb9923831aba22c2e76e65acdf88e5588d21669dbcd0971176935f6",
+      "engine_link": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/verification/surface_r3_2026-10-05/isolated/candidate/openswmm:\n\t/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/verification/surface_r3_2026-10-05/isolated/candidate/libopenswmm.engine.6.0.0.dylib (compatibility version 6.0.0, current version 6.0.0)\n\t/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 2200.27.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1359.0.0)\n"
+    }
+  }
+}

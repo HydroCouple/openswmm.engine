@@ -157,13 +157,14 @@ std::string parseAquiferOptionsLine(const std::vector<std::string>& tokens,
         return "NODE_ENROLMENT must be AUTO or ROWS: " + v;
     }
     if (iequals(k, "LINK_SEEPAGE")) {                   // G-X3 / G-X4
-        if (iequals(v, "AUTO"))    { opts.link_seepage = GwLinkMode::AUTO;    return {}; }
+        if (iequals(v, "DEFAULT")) { opts.link_seepage = GwLinkMode::DEFAULT; return {}; }
+        if (iequals(v, "AUTO") || iequals(v, "ONE_WAY")) { opts.link_seepage = GwLinkMode::AUTO; return {}; }
         if (iequals(v, "NONE"))    { opts.link_seepage = GwLinkMode::NONE;    return {}; }
         if (iequals(v, "TWO_WAY")) { opts.link_seepage = GwLinkMode::TWO_WAY; return {}; }
-        return "LINK_SEEPAGE must be AUTO, NONE or TWO_WAY: " + v;
+        return "LINK_SEEPAGE must be DEFAULT, ONE_WAY (legacy AUTO), NONE or TWO_WAY: " + v;
     }
     if (iequals(k, "GW_ET")) {
-        if (iequals(v, "NONE") || iequals(v, "CAPILLARY_RISE") ||
+        if (iequals(v, "AUTO") || iequals(v, "NONE") || iequals(v, "CAPILLARY_RISE") ||
             iequals(v, "BOUNDARY_ET") || iequals(v, "BOTH")) {
             opts.gw_et.assign(v.size(), '\0');
             std::transform(v.begin(), v.end(), opts.gw_et.begin(),
@@ -173,6 +174,12 @@ std::string parseAquiferOptionsLine(const std::vector<std::string>& tokens,
             return {};
         }
         return "GW_ET must be NONE, CAPILLARY_RISE, BOUNDARY_ET or BOTH: " + v;
+    }
+    if (iequals(k,"WILTING_SUCTION")) {
+        if(iequals(v,"AUTO")){opts.wilting_suction=150.0;opts.wilting_suction_set=false;return {};}
+        double suction=0.0;
+        if(!num(v,suction)||!std::isfinite(suction)||!(suction>0.0))return "WILTING_SUCTION must be AUTO or a positive finite project length";
+        opts.wilting_suction=suction;opts.wilting_suction_set=true;return {};
     }
     return "unknown option: " + k;
 }
@@ -614,7 +621,8 @@ std::vector<GwLinkShare> resolveLinkSeepage(SimulationContext& ctx,
         for (const auto& r : cfg.link_rows) if (r.link == link) return &r;
         return nullptr;
     };
-    const bool two_way = cfg.options.link_seepage == GwLinkMode::TWO_WAY;
+    const bool two_way = cfg.options.link_seepage == GwLinkMode::TWO_WAY ||
+                         (cfg.options.link_seepage == GwLinkMode::DEFAULT && !cfg.options.per_subcatch);
 
     auto xy = [&](int ni, double& x, double& y) -> bool {
         const auto u = static_cast<std::size_t>(ni);
@@ -726,13 +734,15 @@ void writeSubsurfaceSections(const SubsurfaceConfig& cfg,
         if (cfg.options.dunne != d.dunne)
             kv("DUNNE", cfg.options.dunne ? "YES" : "NO");
         if (cfg.options.gw_et != d.gw_et) kv("GW_ET", cfg.options.gw_et);
+        if(cfg.options.wilting_suction_set)kv("WILTING_SUCTION",fmt(cfg.options.wilting_suction));
         if (cfg.options.node_auto != d.node_auto)
             kv("NODE_ENROLMENT", cfg.options.node_auto ? "AUTO" : "ROWS");   // G-X2
         if (cfg.options.link_seepage != d.link_seepage)                    // G-X3/G-X4
             kv("LINK_SEEPAGE",
                cfg.options.link_seepage == GwLinkMode::NONE    ? "NONE"
              : cfg.options.link_seepage == GwLinkMode::TWO_WAY ? "TWO_WAY"
-                                                               : "AUTO");
+                                                               : "ONE_WAY");
+        if(body.empty()&&cfg.rows.empty())kv("GW_ET","AUTO"); // Preserve implicit aquifer configuration.
         if (!body.empty()) {
             out += "\n[2D_AQUIFER_OPTIONS]\n";
             out += body;

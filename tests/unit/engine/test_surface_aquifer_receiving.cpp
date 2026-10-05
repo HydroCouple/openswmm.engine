@@ -133,7 +133,7 @@ TEST(AquiferReceiving, RestartRetainsPendingReservationAndHeldCapacity) {
  a.subsurface().bookInfiltrationMass(0,0,3.0);
  a.state().volume[0]-=take;a.state().infil_applied[0]+=take/a.mesh().tri_area[0];
  const auto file=(std::filesystem::path(OPENSWMM_R2_OUT)/"pending.hsf").string();
- std::unique_ptr<HotStartFile> saved(HotStartManager::save(original.engine().context(),file));ASSERT_TRUE(saved);EXPECT_EQ(saved->header.version,12u);
+ std::unique_ptr<HotStartFile> saved(HotStartManager::save(original.engine().context(),file));ASSERT_TRUE(saved);EXPECT_EQ(saved->header.version,13u);
  std::unique_ptr<HotStartFile> loaded(HotStartManager::open(file));ASSERT_TRUE(loaded);
  auto invalid=*loaded;invalid.gw_interface[21].push_back(1.0);
  const auto nodes_before=resumed.engine().context().nodes.depth;

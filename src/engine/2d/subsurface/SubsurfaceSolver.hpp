@@ -140,6 +140,9 @@ public:
                            SubsurfaceConfig& cfg,
                            std::vector<std::string>& warnings);
 
+    /// One surface interval: reserve actual pond evaporation first. No forcing refresh resets this budget.
+    void bookSurfaceEt(int cell,double dt,double potential_rate,double actual_surface_volume);
+
     bool active() const noexcept { return state_.active; }
     SubsurfaceState&       state()       noexcept { return state_; }
     const SubsurfaceState& state() const noexcept { return state_; }

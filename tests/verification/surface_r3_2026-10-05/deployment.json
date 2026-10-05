@@ -1,0 +1,15 @@
+{
+  "engine_source": "Shared Release engine with R3 and existing concurrent work, as verified in test_summary.json.",
+  "raw_source_sha256": "355c0b714cb31b7b0d1fcc633fc0b637e5b8379262a34590c872b06f5c195372",
+  "sdk_sha256": "a86060a65b67244f69e6eccbf00886bb64a5f9fcf436a9eb51f80bd0c282f77d",
+  "app_sha256": "a86060a65b67244f69e6eccbf00886bb64a5f9fcf436a9eb51f80bd0c282f77d",
+  "signature_normalized_sha256": {
+    "source": "bd0d4dc1ec6ef0fadd14df24d97f430388798420f562a4df4b9af3dcf3075e11",
+    "sdk": "bd0d4dc1ec6ef0fadd14df24d97f430388798420f562a4df4b9af3dcf3075e11",
+    "app": "bd0d4dc1ec6ef0fadd14df24d97f430388798420f562a4df4b9af3dcf3075e11"
+  },
+  "normalization": "Strip code signatures on verification copies and ignore __LINKEDIT virtual mapping size. Signing changed only that mapping size in the unsigned files; all segment payloads and other load commands are identical. SDK and app full signed hashes also match.",
+  "app_signature": "codesign --verify --deep --strict passed",
+  "app": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.gui/build/lid-nodes/SWMMVis.app",
+  "last_verification": "Reinstalled matching SDK library after final GUI build/deployment; verified app signature."
+}

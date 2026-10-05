@@ -882,7 +882,7 @@ SeepResult runSeep(const std::string& tag, const std::string& body) {
 TEST(Aquifer2D, ConduitSeepageReachesTheAquiferCellsItCrosses) {
     // (d) x = 1 → 9 at y = 5: 4 m in the upper-left cell, 4 m in the
     // lower-right one — every metre of C1 is over the mesh.
-    const SeepResult a = runSeep("seep_auto", seepDeck("", 1.0, 9.0));
+    const SeepResult a = runSeep("seep_auto", seepDeck("LINK_SEEPAGE ONE_WAY", 1.0, 9.0));
     EXPECT_TRUE(a.warned) << "the enrolment was not announced";
     EXPECT_GT(a.seep_1d, 1.0e-3) << "the conduit did not seep";
     EXPECT_GT(a.led_link, 0.0);
@@ -916,7 +916,7 @@ TEST(Aquifer2D, ConduitSeepageReachesTheAquiferCellsItCrosses) {
 TEST(Aquifer2D, ConduitSeepageIsSharedByTheLengthOverTheMesh) {
     // (e) x = 5 → 15: the first 5 m lie in the lower-right cell, the rest
     // is off the mesh — half the seepage arrives, all of it in cell 0.
-    const SeepResult h = runSeep("seep_half", seepDeck("", 5.0, 15.0));
+    const SeepResult h = runSeep("seep_half", seepDeck("LINK_SEEPAGE ONE_WAY", 5.0, 15.0));
     EXPECT_TRUE(h.warned);
     EXPECT_GT(h.seep_1d, 1.0e-3);
     EXPECT_NEAR(h.led_link + h.pending, 0.5 * h.seep_1d, 1.0e-9 * h.seep_1d)
@@ -928,14 +928,14 @@ TEST(Aquifer2D, ConduitSeepageIsSharedByTheLengthOverTheMesh) {
 
     // entirely off the mesh: nothing enrols, nothing arrives, the 1D still
     // seeps (to nowhere, as before G-X3)
-    const SeepResult o = runSeep("seep_outside", seepDeck("", 20.0, 30.0));
+    const SeepResult o = runSeep("seep_outside", seepDeck("LINK_SEEPAGE ONE_WAY", 20.0, 30.0));
     EXPECT_FALSE(o.warned);
     EXPECT_GT(o.seep_1d, 1.0e-3);
     EXPECT_EQ(o.led_link, 0.0);
     EXPECT_EQ(o.pending, 0.0);
 }
 
-TEST(Aquifer2D, LinkSeepageOptionRoundTripsAndDefaultsToAuto) {   // G-X3
+TEST(Aquifer2D, LinkSeepageOptionRoundTripsAndPreservesLegacyAuto) {   // G-X3
     DeckRun r = openDeck("seep_rt", seepDeck("LINK_SEEPAGE NONE", 1.0, 9.0));
     ASSERT_TRUE(r.opened);
     char buf[16] = {0};
@@ -951,7 +951,7 @@ TEST(Aquifer2D, LinkSeepageOptionRoundTripsAndDefaultsToAuto) {   // G-X3
     }
     ASSERT_EQ(swmm_gw2d_option_set(r.e, "LINK_SEEPAGE", "AUTO"), SWMM_OK);
     ASSERT_EQ(swmm_gw2d_option_get(r.e, "LINK_SEEPAGE", buf, sizeof buf), SWMM_OK);
-    EXPECT_STREQ(buf, "AUTO");
+    EXPECT_STREQ(buf, "ONE_WAY");
     EXPECT_NE(swmm_gw2d_option_set(r.e, "LINK_SEEPAGE", "MAYBE"), SWMM_OK);
     finish(r);
 }
@@ -1079,7 +1079,7 @@ TEST(Aquifer2D, ConduitUnderTheWaterTableGainsFromTheAquifer) {   // gate (f)
     const TwoWayResult down = runTwoWay(
         "gain_two_way_low", twoWayDeck(2.0, "", "LINK_SEEPAGE TWO_WAY\n", /*drowned=*/true));
     const TwoWayResult legacy = runTwoWay(
-        "gain_auto_low", twoWayDeck(2.0, "", "", /*drowned=*/true));
+        "gain_auto_low", twoWayDeck(2.0, "", "LINK_SEEPAGE ONE_WAY\n", /*drowned=*/true));
     EXPECT_GT(down.seep_loss, 1.0e-3);
     EXPECT_EQ(down.gw_inflow, 0.0);
     // The RATE is the invariant, not the cumulative volume: the run starts
@@ -1096,7 +1096,7 @@ TEST(Aquifer2D, ConduitUnderTheWaterTableGainsFromTheAquifer) {   // gate (f)
 TEST(Aquifer2D, LinkSeepageAutoIsUnchangedByTheSignedLaw) {   // gate (g)
     // AUTO is G-X3: one-way, the legacy rate, whatever the table does. The
     // high-table deck that gains under TWO_WAY must still LOSE under AUTO.
-    const TwoWayResult a = runTwoWay("gain_auto_high", twoWayDeck(6.0));
+    const TwoWayResult a = runTwoWay("gain_auto_high", twoWayDeck(6.0, "", "LINK_SEEPAGE AUTO\n"));
     EXPECT_FALSE(a.warned);
     EXPECT_GT(a.seep_loss, 1.0e-3) << "AUTO stopped losing";
     EXPECT_EQ(a.gw_inflow, 0.0) << "AUTO gained — the signed law leaked into it";
@@ -1204,4 +1204,16 @@ TEST(Aquifer2D, HostForcedConduitExchangeIsRoutedAndBooked) {
     EXPECT_NEAR(led_link + pending, -gw_in, 1.0e-9 * gw_in);
     EXPECT_LT(std::fabs(resid), 1.0e-6) << "residual " << resid;
     finish(r);
+}
+
+TEST(Aquifer2D, AutomaticLinkSeepageUsesTheSignedLaw) {
+    const auto automatic=runTwoWay("default_signed",twoWayDeck(6.0));
+    const auto explicitMode=runTwoWay("explicit_signed",twoWayDeck(6.0,"","LINK_SEEPAGE TWO_WAY\n"));
+    EXPECT_GT(automatic.gw_inflow,0.0);
+    EXPECT_EQ(automatic.seep_loss,explicitMode.seep_loss);
+    EXPECT_EQ(automatic.gw_inflow,explicitMode.gw_inflow);
+    EXPECT_EQ(automatic.storage,explicitMode.storage);
+    EXPECT_EQ(automatic.led_link,explicitMode.led_link);
+    EXPECT_EQ(automatic.pending,explicitMode.pending);
+    EXPECT_LT(std::fabs(automatic.resid),1e-9*automatic.storage+1e-12);
 }

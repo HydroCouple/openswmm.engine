@@ -372,7 +372,7 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
 
     // Header
     if (!read_pod(is, hs.header.version))    return false;
-    if (hs.header.version < 1u || hs.header.version > 12u) {
+    if (hs.header.version < 1u || hs.header.version > 13u) {
         tl_last_io_error = "Unsupported hot start version " +
                            std::to_string(hs.header.version) + " in '" + path + "'";
         return false;
@@ -785,6 +785,8 @@ bool captureAquiferBlock(const SimulationContext& ctx, HotStartFile& hs) {
         hs.gw_interface.push_back({router->infiltrationElapsed()});
         hs.gw_interface.push_back(surf.transport.cell_mass);
     }
+    for(const auto* row:std::vector<const std::vector<double>*>{&st->et_pending, &st->et_potential_cumulative, &st->et_surface_cumulative, &st->et_soil_cumulative, &st->et_unused_cumulative, &st->et_surface_last, &st->et_potential_last, &st->et_stress, &st->et_refresh})hs.gw_interface.push_back(*row);
+    if(router){hs.gw_interface.push_back(router->state().evap_rate);hs.gw_interface.push_back({router->state().evap_loss_total});}
     return true;
 #else
     (void)ctx; (void)hs;
@@ -904,7 +906,12 @@ bool validAquiferInterface(const HotStartFile& hs, const SimulationContext& ctx)
     else fields.resize(21,nullptr);
     if(router){const auto& surf=router->state();fields.insert(fields.end(),{&surf.volume,&surf.head,&surf.depth,&surf.infil_rate,&surf.infil_applied});}
     const auto& rows=hs.gw_interface;
-    if(rows.size()!=(router?29u:21u))return false;
+    const std::size_t base=router?29u:21u;
+    if(rows.size()!=base+(hs.header.version>=13u?(router?11u:9u):0u))return false;
+    if(hs.header.version>=13u){
+        for(std::size_t k=0;k<9;++k)if(rows[base+k].size()!=static_cast<std::size_t>(st->n_cells))return false;
+        if(router&&(rows[base+9].size()!=router->state().evap_rate.size()||rows[base+10].size()!=1))return false;
+    }
     for(std::size_t k=0;k<fields.size();++k)
         if(rows[k].size()!=(fields[k]?fields[k]->size():0u))return false;
     return !router || (rows[26].size()==router->infilCumulative().size()&&rows[27].size()==1&&rows[28].size()==router->state().transport.cell_mass.size());
@@ -983,6 +990,12 @@ void restoreAquiferBlock(const HotStartFile& hs, SimulationContext& ctx,
         }
         const auto& rows = hs.gw_interface;
         if (validAquiferInterface(hs,ctx)) {
+            if(hs.header.version>=13u){
+                const std::size_t base=router?29u:21u;
+                std::vector<std::vector<double>*> et={&st->et_pending, &st->et_potential_cumulative, &st->et_surface_cumulative, &st->et_soil_cumulative, &st->et_unused_cumulative, &st->et_surface_last, &st->et_potential_last, &st->et_stress, &st->et_refresh};
+                for(std::size_t k=0;k<et.size();++k)*et[k]=rows[base+k];
+                if(router){router->state().evap_rate=rows[base+9];router->state().evap_loss_total=rows[base+10][0];}
+            }else warn("Hot start V12 lacks pending shared ET demand; atmospheric accounting begins with subsequent surface intervals.");
             for (std::size_t k=0;k<targets.size();++k) if(targets[k]) *targets[k]=rows[k];
             if(router){
                 router->restoreInfiltration(rows[26], rows[27][0]);
@@ -1107,7 +1120,7 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
         }
     }
 
-    if (!hs->gw_interface.empty()) hs->header.version = std::max(hs->header.version, 12u);
+    if (!hs->gw_interface.empty()) hs->header.version = std::max(hs->header.version, 13u);
     if (!write_file(*hs, path)) {
         delete hs;
         return nullptr;
@@ -1228,7 +1241,7 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
         }
     }
 
-    if (!hs->gw_interface.empty()) hs->header.version = std::max(hs->header.version, 12u);
+    if (!hs->gw_interface.empty()) hs->header.version = std::max(hs->header.version, 13u);
     if (!write_file(*hs, path)) {
         delete hs;
         return nullptr;

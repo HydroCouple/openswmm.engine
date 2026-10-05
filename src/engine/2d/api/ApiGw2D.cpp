@@ -37,6 +37,7 @@
 #include "../../core/SWMMEngine.hpp"
 #include "../subsurface/SubsurfaceSections.hpp"
 #include "../subsurface/SubsurfaceSolver.hpp"
+#include "../../core/UnitConversion.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -119,13 +120,29 @@ SWMM_ENGINE_API int swmm_gw2d_option_get(SWMM_Engine engine, const char* key,
     else if (ieq(key, "MODE"))            v = o.per_subcatch ? "PER_SUBCATCH" : "MESH";
     else if (ieq(key, "DUNNE"))           v = yn(o.dunne);
     else if (ieq(key, "GW_ET"))           v = o.gw_et;
+    else if (ieq(key,"WILTING_SUCTION"))v=o.wilting_suction_set?num(o.wilting_suction):"AUTO";
+    else if (ieq(key,"OPTIONS_AUTHORED"))v=yn(o.authored);
+    else if (ieq(key,"CONFIGURED"))v=yn(!cfg.empty());
+    else if (ieq(key,"GW_ET_EFFECTIVE"))v=eng->surfaceRouter2D().options().groundwater==0||cfg.empty()?"NONE":o.gw_et=="AUTO"?(o.per_subcatch?"NONE":"BOTH"):o.gw_et;
+    else if (ieq(key,"LINK_SEEPAGE_EFFECTIVE"))v=eng->surfaceRouter2D().options().groundwater==0||cfg.empty()?"NONE":o.link_seepage==GwLinkMode::NONE?"NONE":o.link_seepage==GwLinkMode::TWO_WAY||(o.link_seepage==GwLinkMode::DEFAULT&&!o.per_subcatch)?"TWO_WAY":"ONE_WAY";
+    else if (ieq(key,"WILTING_SUCTION_EFFECTIVE"))v=num(o.wilting_suction_set?o.wilting_suction:150.0/(openswmm::ucf::getUnitSystem(static_cast<int>(eng->context().options.flow_units))==0?.3048:1.0));
     else if (ieq(key, "NODE_ENROLMENT"))  v = o.node_auto ? "AUTO" : "ROWS";   // G-X2
     else if (ieq(key, "LINK_SEEPAGE"))                                          // G-X3/G-X4
         v = (o.link_seepage == GwLinkMode::NONE)    ? "NONE"
-          : (o.link_seepage == GwLinkMode::TWO_WAY) ? "TWO_WAY" : "AUTO";
+          : (o.link_seepage == GwLinkMode::TWO_WAY) ? "TWO_WAY" : (o.link_seepage == GwLinkMode::DEFAULT ? "DEFAULT" : "ONE_WAY");
     else return SWMM_ERR_BADPARAM;
     copy_to(v, buf, buflen);
     return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gw2d_process_options_set(SWMM_Engine engine,
+    const char* et,const char* link,const char* wilting,int authored) {
+    AQ_CFG(engine); AQ_EDITABLE(eng);
+    if(!et||!link||!wilting||(authored!=0&&authored!=1))return SWMM_ERR_BADPARAM;
+    auto candidate=cfg.options;
+    for(const auto& kv:std::vector<std::pair<std::string,std::string>>{{"GW_ET",et},{"LINK_SEEPAGE",link},{"WILTING_SUCTION",wilting}})
+        if(!openswmm::twoD::parseAquiferOptionsLine({kv.first,kv.second},candidate).empty())return SWMM_ERR_BADPARAM;
+    candidate.authored=authored!=0;cfg.options=std::move(candidate);return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_gw2d_option_set(SWMM_Engine engine, const char* key,
@@ -404,6 +421,15 @@ double cellVar(const openswmm::twoD::SubsurfaceState& st, std::size_t u,
         case SWMM_GW2D_VAR_REJECT: return st.reject_last[u];
         case SWMM_GW2D_VAR_REJECT_CUM: return st.reject_cumulative[u];
         case SWMM_GW2D_VAR_DUNNE_CUM: return st.dunne_cumulative[u];
+        case SWMM_GW2D_VAR_ET_PENDING: return st.et_pending[u];
+        case SWMM_GW2D_VAR_ET_POTENTIAL_CUM: return st.et_potential_cumulative[u];
+        case SWMM_GW2D_VAR_ET_SURFACE_CUM: return st.et_surface_cumulative[u];
+        case SWMM_GW2D_VAR_ET_SOIL_CUM: return st.et_soil_cumulative[u];
+        case SWMM_GW2D_VAR_ET_UNUSED_CUM: return st.et_unused_cumulative[u];
+        case SWMM_GW2D_VAR_ET_SURFACE: return st.et_surface_last[u];
+        case SWMM_GW2D_VAR_ET_POTENTIAL: return st.et_potential_last[u];
+        case SWMM_GW2D_VAR_ET_STRESS: return st.et_stress[u];
+        case SWMM_GW2D_VAR_ET_REFRESH: return st.et_refresh[u];
         default: ok = false; return 0.0;
     }
 }

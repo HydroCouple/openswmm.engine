@@ -185,10 +185,10 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
         // the Feddes stress at its own suction — no `if (infil <= 0)` gate.
         const double avail = std::max(th_top - p.theta_r, 0.0) * dz0 / st.dt;
         const double psi_top = psiOf(th_top);
-        // Wilting suction from the law's own residual end: the suction at
-        // 1 % effective saturation is a stable, law-agnostic proxy.
-        const double psi_w = soil::suctionAtSaturation(p, 0.01);
+        // The reviewed wilting suction is a shared SI model parameter.
+        const double psi_w = st.wilting_suction;
         const double stress = soil::feddesStress(psi_top, psi_w);
+        st.et_stress=stress;
         st.et_taken = std::min(std::max(st.q_et, 0.0) * stress, avail);
         f[0] = st.f_top - st.et_taken;
     }
@@ -224,6 +224,9 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
             }
         }
     }
+
+    // Positivity sharing may reduce the net top export; report actual ET.
+    st.et_taken=std::max(0.0,st.f_top-f[0]);
 
     // ---- 6. Update w, then re-derive θ from the NEW geometry. This is where
     //         the layers compress: same water, new dz.

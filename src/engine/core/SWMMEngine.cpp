@@ -7126,6 +7126,15 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
             snap.gw2d_reject = g.reject_last;
             snap.gw2d_reject_cum = g.reject_cumulative;
             snap.gw2d_dunne_cum = g.dunne_cumulative;
+            snap.gw2d_et_pending = g.et_pending;
+            snap.gw2d_et_potential_cum = g.et_potential_cumulative;
+            snap.gw2d_et_surface_cum = g.et_surface_cumulative;
+            snap.gw2d_et_soil_cum = g.et_soil_cumulative;
+            snap.gw2d_et_unused_cum = g.et_unused_cumulative;
+            snap.gw2d_et_surface = g.et_surface_last;
+            snap.gw2d_et_potential = g.et_potential_last;
+            snap.gw2d_et_stress = g.et_stress;
+            snap.gw2d_et_refresh = g.et_refresh;
             snap.gw2d_hg            = g.hg;
             snap.gw2d_hu            = g.hu;
             snap.gw2d_recharge      = g.q0_last;

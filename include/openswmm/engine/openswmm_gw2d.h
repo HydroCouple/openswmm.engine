@@ -102,6 +102,15 @@ extern "C" {
 #define SWMM_GW2D_VAR_REJECT 18 /**< Rejected top-interface delivery returned to surface (m3 s-1) */
 #define SWMM_GW2D_VAR_REJECT_CUM 19 /**< Cumulative rejected top-interface delivery (m3) */
 #define SWMM_GW2D_VAR_DUNNE_CUM 20 /**< Cumulative physical saturation excess (m3) */
+#define SWMM_GW2D_VAR_ET_PENDING 21 /**< Pending past atmospheric demand after actual surface evaporation (m3) */
+#define SWMM_GW2D_VAR_ET_POTENTIAL_CUM 22 /**< Cumulative single mesh-area potential atmospheric demand (m3) */
+#define SWMM_GW2D_VAR_ET_SURFACE_CUM 23 /**< Cumulative actual surface evaporation (m3) */
+#define SWMM_GW2D_VAR_ET_SOIL_CUM 24 /**< Cumulative actual soil ET (m3) */
+#define SWMM_GW2D_VAR_ET_UNUSED_CUM 25 /**< Cumulative expired unused soil demand (m3) */
+#define SWMM_GW2D_VAR_ET_SURFACE 26 /**< Actual surface evaporation at last surface interval (m s-1) */
+#define SWMM_GW2D_VAR_ET_POTENTIAL 27 /**< Potential demand at last surface interval (m s-1) */
+#define SWMM_GW2D_VAR_ET_STRESS 28 /**< Single extraction-site moisture stress factor (1) */
+#define SWMM_GW2D_VAR_ET_REFRESH 29 /**< Last completed demand interval end since start (s) */
 
 /* ---- Ledger selectors (m3, cumulative) ---------------------------------- */
 
@@ -169,12 +178,23 @@ SWMM_ENGINE_API int swmm_gw2d_get_species_ledger(SWMM_Engine engine,
 
 /** Read one option as text. Keys: SOIL_CHAR, CLOSURE, M_LAYERS,
  *  CAPILLARY_DIFF, C_GW, C_COL, FORCE_CLOSED_FORM, MODE, DUNNE, GW_ET,
- *  NODE_ENROLMENT (AUTO | ROWS — G-X2), LINK_SEEPAGE (AUTO | NONE — G-X3). */
+ *  NODE_ENROLMENT (AUTO | ROWS), LINK_SEEPAGE (DEFAULT | ONE_WAY | TWO_WAY | NONE),
+ *  WILTING_SUCTION (AUTO | positive project length). Read-only keys:
+ *  GW_ET_EFFECTIVE, LINK_SEEPAGE_EFFECTIVE, WILTING_SUCTION_EFFECTIVE,
+ *  CONFIGURED and OPTIONS_AUTHORED. Legacy LINK_SEEPAGE AUTO means ONE_WAY. */
 SWMM_ENGINE_API int swmm_gw2d_option_get(SWMM_Engine engine, const char* key,
                                          char* buf, int buflen);
 
-/** Set one option from text. Same keys and the same token spellings the
- *  `.inp` accepts — one parser, so the file and the API cannot drift. */
+/** Atomically replace GW_ET, LINK_SEEPAGE and WILTING_SUCTION before a run.
+ * GW_ET AUTO defaults to BOTH on a mesh, NONE in PER_SUBCATCH.
+ * LINK_SEEPAGE DEFAULT defaults to TWO_WAY on a mesh; ONE_WAY and legacy
+ * AUTO retain explicit one-way delivery. WILTING_SUCTION AUTO means 150 m;
+ * a custom positive number is in project length units. authored must be 0
+ * or 1 and restores section provenance for atomic GUI Undo. */
+SWMM_ENGINE_API int swmm_gw2d_process_options_set(SWMM_Engine engine,
+    const char* et, const char* link, const char* wilting, int authored);
+
+/** Set an authored option from text through the same parser as the file. */
 SWMM_ENGINE_API int swmm_gw2d_option_set(SWMM_Engine engine, const char* key,
                                          const char* value);
 

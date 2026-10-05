@@ -1,0 +1,51 @@
+[
+  {
+    "target": "test_engine_surface_et_budget",
+    "returncode": 0,
+    "summary": [
+      "[  PASSED  ] 10 tests."
+    ]
+  },
+  {
+    "target": "test_engine_surface_aquifer_receiving",
+    "returncode": 0,
+    "summary": [
+      "[  PASSED  ] 16 tests."
+    ]
+  },
+  {
+    "target": "test_engine_2d_infil",
+    "returncode": 0,
+    "summary": [
+      "[  PASSED  ] 21 tests."
+    ]
+  },
+  {
+    "target": "test_engine_2d_aquifer",
+    "returncode": 0,
+    "summary": [
+      "[  PASSED  ] 23 tests."
+    ]
+  },
+  {
+    "target": "test_engine_hotstart",
+    "returncode": 0,
+    "summary": [
+      "[  PASSED  ] 39 tests."
+    ]
+  },
+  {
+    "target": "test_engine_gw_transport_kernel",
+    "returncode": 0,
+    "summary": [
+      "[  PASSED  ] 30 tests."
+    ]
+  },
+  {
+    "target": "gw2d_gates",
+    "returncode": 0,
+    "summary": [
+      "ALL GATES PASS \u2014 0 failure(s)"
+    ]
+  }
+]
