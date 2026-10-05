@@ -2082,6 +2082,25 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         }
     }}
 
+    // [LID_RICHARDS]: keep SI retention parameters separate from the legacy
+    // layer grammar and numerical model selection explicit.
+    if (!swmm5) {
+        bool header = false;
+        for (int c = 0; c < static_cast<int>(ctx.lid_controls.node_layers.size()); ++c) {
+            const auto& stack = ctx.lid_controls.node_layers[c];
+            if (stack.empty()) continue;
+            const bool has_material = std::any_of(stack.begin(), stack.end(), [](const auto& l) { return richards::valid(l.retention, l.params[1]); });
+            if (!stack.front().flow.enabled && !has_material) continue;
+            if (!header) { sec(f, "LID_RICHARDS"); header = true; }
+            const auto& o = stack.front().flow; const auto& name = ctx.lid_controls.names[c];
+            if (o.enabled) std::fprintf(f, "%s OPTIONS %d %.17g %.17g %.17g\n", name.c_str(), o.cells_per_layer, o.atol, o.rtol, o.max_step);
+            for (std::size_t i = 0; i < stack.size(); ++i) if (stack[i].kind == LidNodeLayerKind::Media || stack[i].kind == LidNodeLayerKind::Aggregate) {
+                const auto& p = stack[i].retention;
+                if (!richards::valid(p, stack[i].params[1])) continue;
+                std::fprintf(f, "%s %zu %.17g %.17g %.17g %.17g %.17g\n", name.c_str(), i + 1, p.theta_r, p.alpha, p.n, p.l, p.specific_storage);
+            }
+        }
+    }
     // [LID_CONTROLS]
     if (ctx.lid_controls.count() > 0) {
         sec(f,"LID_CONTROLS");

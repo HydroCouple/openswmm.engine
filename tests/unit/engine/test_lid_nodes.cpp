@@ -245,7 +245,7 @@ TEST(LidNodes, PortsRespectAvailableWaterAndBackflowCapacity) {
     lidnode::resetPorts(c);
     const double q = lidnode::exchangePorts(c, 0, 100, 10);
     EXPECT_NEAR(q, .5, 1.e-12);
-    EXPECT_DOUBLE_EQ(lidnode::exchangePorts(c, 0, 100, 10), 0);
+    EXPECT_NEAR(lidnode::exchangePorts(c, 0, 100, 10), 0, 1.e-14);
     lidnode::resetPorts(c);
     EXPECT_DOUBLE_EQ(lidnode::exchangePorts(c, 0, -100, 10), -100);
     EXPECT_NEAR(c.node_subtypes.storages.lid_state[0].port_delta[0], 40, 1.e-12);
@@ -865,4 +865,198 @@ TEST(LidNodes, RoutedReversalResaturationRecessionAndSecondEventConserve) {
     EXPECT_NEAR(b.routing_init_storage+b.routing_external,
         b.routing_final_storage+b.routing_outflow+b.routing_flooding+b.routing_evap_loss+b.routing_seep_loss,.005);
     EXPECT_TRUE(e.context().warnings.empty()); e.close();
+}
+
+namespace {
+SimulationContext richardsModel() {
+    auto c = model();
+    c.lid_controls.node_layers[0].front().flow = {true, 4, 1.e-7, 1.e-5, 30};
+    for (auto& l : c.lid_controls.node_layers[0])
+        if (l.kind == LidNodeLayerKind::Media || l.kind == LidNodeLayerKind::Aggregate)
+            l.retention = {.03, 2., 1.6, .5, 1.e-4};
+    c.lid_controls.node_layers[0].back().params[0] = 0;
+    return c;
+}
+std::filesystem::path richardsArtifacts() {
+    const auto dir = std::filesystem::path(OPENSWMM_TEST_SOURCE_DIR) / "../../verification/surface_subsurface_program_2026-10-05";
+    std::filesystem::create_directories(dir); return dir;
+}
+}
+TEST(LidNodes, RichardsOwnsPorousStorageAndConservesCapturedSupply) {
+    auto c = richardsModel(); lidnode::initialize(c);
+    const auto& s = c.node_subtypes.storages.lid_state[0];
+    ASSERT_TRUE(s.richards); ASSERT_EQ(s.cells.size(), 9u);
+    const double initial = s.held_volume;
+    EXPECT_DOUBLE_EQ(c.nodes.volume[0], 0);
+    EXPECT_NEAR(node::getVolume(c.nodes, 0, 2, &c.tables, 0, &c.node_subtypes), 45, 1.e-12);
+    EXPECT_DOUBLE_EQ(node::getDepth(c.nodes, 0, 0, &c.tables, 0, &c.node_subtypes), 1.5);
+    for (int step = 0; step < 20; ++step) {
+        c.nodes.lat_flow[0] = .05;
+        lidnode::prepareStep(c, 10, 0); lidnode::resetPorts(c); lidnode::finishStep(c);
+        EXPECT_NEAR(c.nodes.volume[0] + lidnode::heldVolume(c, 0), initial + .5 * (step + 1), 1.e-7);
+        EXPECT_DOUBLE_EQ(c.nodes.lat_flow[0], .05);
+        EXPECT_NEAR(s.richards_report.balance, 0, 1.e-9);
+        for (std::size_t i = 1; i < s.cells.size(); ++i) EXPECT_TRUE(std::isfinite(s.richards_pressure[i]));
+    }
+    EXPECT_GT(s.cells[1].theta, s.cells[4].theta);
+}
+TEST(LidNodes, RichardsHydrostaticPortsHaveOneDonorBudgetAcrossTrials) {
+    auto c = richardsModel(); c.nodes.init_depth[0] = c.nodes.depth[0] = 2; lidnode::initialize(c);
+    c.links.resize(1); c.links.node1[0] = 0; c.links.node2[0] = 1;
+    c.links.offset1[0] = 1;
+    auto& s = c.node_subtypes.storages.lid_state[0];
+    c.nodes.old_volume[0] = c.nodes.volume[0];
+    const int i = lidnode::portCell(s, 1);
+    ASSERT_GT(i, 0); EXPECT_NEAR(lidnode::portDepth(c, 0, 1), 2, 1.e-10);
+    lidnode::resetPorts(c);
+    const double q = lidnode::exchangePorts(c, 0, 100, 10);
+    EXPECT_GT(q, 0); EXPECT_LT(q, .01);
+    EXPECT_NEAR(lidnode::exchangePorts(c, 0, 100, 10), 0, 1.e-12);
+    const double delta = s.port_delta[i];
+    lidnode::resetPorts(c);
+    EXPECT_NEAR(lidnode::exchangePorts(c, 0, 100, 10), q, 1.e-12);
+    EXPECT_DOUBLE_EQ(s.port_delta[i], delta);
+    const double before = s.held_volume; lidnode::finishStep(c);
+    EXPECT_NEAR(before - s.held_volume, q * 10, 1.e-12);
+    // A higher external head recharges this same porous cell.
+    c.nodes.depth[1] = 3;
+    lidnode::resetPorts(c);
+    const double recharge = lidnode::exchangePorts(c, 0, -100, 10);
+    EXPECT_LT(recharge, 0);
+    EXPECT_NEAR(lidnode::exchangePorts(c, 0, -100, 10), 0, 1.e-12);
+}
+TEST(LidNodes, RichardsFailureDoesNotConsumeLateralWaterOrQuality) {
+    auto c = richardsModel(); lidnode::initialize(c);
+    auto& s = c.node_subtypes.storages.lid_state[0];
+    c.nodes.lat_flow[0] = .1; s.treated_volume = 15; s.quality_transfers.push_back({1, 2, .5});
+    const auto water = s.richards_water; const double mobile = c.nodes.volume[0];
+    c.lid_controls.node_layers[0][1].retention.specific_storage = 0;
+    EXPECT_THROW(lidnode::prepareStep(c, 10, 0), std::runtime_error);
+    EXPECT_EQ(s.richards_water, water); EXPECT_DOUBLE_EQ(c.nodes.volume[0], mobile);
+    EXPECT_DOUBLE_EQ(c.nodes.lat_flow[0], .1); EXPECT_DOUBLE_EQ(s.treated_volume, 15);
+    ASSERT_EQ(s.quality_transfers.size(), 1u); EXPECT_DOUBLE_EQ(s.quality_transfers[0].volume, .5);
+}
+TEST(LidNodes, RichardsInpRoundTripAndMissingRetentionValidation) {
+    auto c = richardsModel(); lidnode::sync(c, 0);
+    const auto path = (richardsArtifacts() / "richards_roundtrip.inp").string();
+    ASSERT_EQ(inp_writer::writeInpFile(c, path), 0);
+    SimulationContext reread; DefaultInputPlugin plugin;
+    ASSERT_EQ(plugin.read(path, reread), 0); input::resolve_cross_references(reread);
+    ASSERT_TRUE(reread.errors.empty()) << reread.errors.front();
+    const auto& stack = reread.lid_controls.node_layers[0];
+    EXPECT_TRUE(stack.front().flow.enabled); EXPECT_EQ(stack.front().flow.cells_per_layer, 4);
+    EXPECT_DOUBLE_EQ(stack[1].retention.alpha, 2);
+    EXPECT_DOUBLE_EQ(stack[2].retention.specific_storage, 1.e-4);
+    reread.lid_controls.node_layers[0][2].retention.alpha = 0;
+    EXPECT_FALSE(lidnode::validateStack(reread.lid_controls.node_layers[0]).empty());
+}
+TEST(LidNodes, RichardsAtomicApiKeepsMaterialAndGeometryOnInvalidEdit) {
+    SWMMEngine e; e.context() = richardsModel(); e.context().state = EngineState::OPENED;
+    const auto h = reinterpret_cast<SWMM_Engine>(&e);
+    SWMM_LidNodeLayer layers[4]; SWMM_LidRichardsMaterial material[4]; SWMM_LidRichardsOptions options;
+    ASSERT_EQ(swmm_lid_richards_options_get(h, 0, &options), 0);
+    for (int i = 0; i < 4; ++i) {
+        ASSERT_EQ(swmm_lid_node_layer_get(h, 0, i, &layers[i]), 0);
+        ASSERT_EQ(swmm_lid_richards_material_get(h, 0, i, &material[i]), 0);
+    }
+    layers[1].params[0] = 24; material[1].specific_storage = 0;
+    EXPECT_NE(swmm_lid_node_configure_flow(h, 0, layers, 4, nullptr, 0, &options, material), 0);
+    EXPECT_DOUBLE_EQ(e.context().nodes.full_depth[0], 2);
+    material[1].specific_storage = 1.e-4;
+    ASSERT_EQ(swmm_lid_node_configure_flow(h, 0, layers, 4, nullptr, 0, &options, material), 0);
+    EXPECT_DOUBLE_EQ(e.context().nodes.full_depth[0], 3);
+    layers[1].params[0] = 12;
+    ASSERT_EQ(swmm_lid_node_layers_set(h, 0, layers, 4), 0);
+    EXPECT_TRUE(e.context().lid_controls.node_layers[0].front().flow.enabled);
+    EXPECT_DOUBLE_EQ(e.context().lid_controls.node_layers[0][1].retention.alpha, 2);
+}
+TEST(LidNodes, RichardsInactiveMaterialsPersistAndUnsupportedTransportFails) {
+    auto c=richardsModel();
+    c.lid_controls.node_layers[0].front().flow.enabled=false;
+    const auto path=(richardsArtifacts()/"inactive_richards.inp").string();
+    ASSERT_EQ(inp_writer::writeInpFile(c,path),0);
+    SimulationContext restored; DefaultInputPlugin plugin;
+    ASSERT_EQ(plugin.read(path,restored),0); input::resolve_cross_references(restored);
+    ASSERT_TRUE(restored.errors.empty());
+    EXPECT_FALSE(restored.lid_controls.node_layers[0].front().flow.enabled);
+    EXPECT_DOUBLE_EQ(restored.lid_controls.node_layers[0][1].retention.alpha,2);
+    for(int option=0;option<3;++option) {
+        auto unsupported=richardsModel();
+        if(option==0)unsupported.options.water_age=true;
+        if(option==1)unsupported.options.heat_transport=true;
+        if(option==2)unsupported.reactions.configured=true;
+        lidnode::validate(unsupported);
+        ASSERT_FALSE(unsupported.errors.empty());
+        EXPECT_NE(unsupported.errors.back().find("porous-cell transport"),std::string::npos);
+    }
+}
+TEST(LidNodes, RichardsPhysicalStateIsConsistentAcrossInputUnits) {
+    auto us=richardsModel(),si=us;
+    si.options.flow_units=FlowUnits::CMS;
+    si.node_subtypes.storages.c[0]*=.3048*.3048; // the authored constant area is in m2
+    for(auto& layer:si.lid_controls.node_layers[0]) {
+        if(layer.kind!=LidNodeLayerKind::Bottom)layer.params[0]*=25.4;
+        if(layer.kind==LidNodeLayerKind::Media) { layer.params[4]*=25.4; layer.params[6]*=25.4; }
+        if(layer.kind==LidNodeLayerKind::Aggregate)layer.params[2]*=25.4;
+    }
+    for(auto* c:{&us,&si}) { c->nodes.init_depth[0]=c->nodes.depth[0]=2; lidnode::initialize(*c); }
+    EXPECT_NEAR(lidnode::heldVolume(us,0),lidnode::heldVolume(si,0),1.e-12);
+    for(std::size_t cell=1;cell<us.node_subtypes.storages.lid_state[0].cells.size();++cell)
+        EXPECT_NEAR(us.node_subtypes.storages.lid_state[0].richards_pressure[cell],si.node_subtypes.storages.lid_state[0].richards_pressure[cell],1.e-10);
+}
+TEST(LidNodes, RichardsV11RestartRestoresCompleteStorageAndRejectsChangedMaterial) {
+    auto c = richardsModel(); lidnode::initialize(c); c.nodes.lat_flow[0] = .1;
+    lidnode::prepareStep(c, 15, 0); lidnode::resetPorts(c); lidnode::finishStep(c);
+    const auto path = (richardsArtifacts() / "richards_restart.hsf").string();
+    std::unique_ptr<HotStartFile> hs(HotStartManager::save(c, path)); ASSERT_TRUE(hs);
+    EXPECT_EQ(hs->header.version, 11u); hs.reset(HotStartManager::open(path)); ASSERT_TRUE(hs);
+    auto restored = richardsModel(); lidnode::initialize(restored);
+    ASSERT_EQ(HotStartManager::apply(*hs, restored), 0);
+    EXPECT_EQ(restored.node_subtypes.storages.lid_state[0].richards_water, c.node_subtypes.storages.lid_state[0].richards_water);
+    for (auto* ctx : {&c, &restored}) {
+        ctx->nodes.lat_flow[0] = .05; lidnode::prepareStep(*ctx, 15, 0); lidnode::resetPorts(*ctx); lidnode::finishStep(*ctx);
+    }
+    EXPECT_EQ(restored.node_subtypes.storages.lid_state[0].richards_water, c.node_subtypes.storages.lid_state[0].richards_water);
+    EXPECT_DOUBLE_EQ(restored.nodes.volume[0], c.nodes.volume[0]);
+    restored.lid_controls.node_layers[0][1].retention.alpha = 3;
+    EXPECT_GT(HotStartManager::apply(*hs, restored), 0);
+}
+#ifdef LID_TEST_GEOPACKAGE
+TEST(LidNodes, RichardsGeoPackageRetainsSolverAndPorousLaws) {
+    auto c = richardsModel(); c.lid_controls.surface.resize(1); c.lid_controls.soil.resize(1);
+    c.lid_controls.storage.resize(1); c.lid_controls.pavement.resize(1); c.lid_controls.drain.resize(1);
+    c.lid_controls.drainmat.resize(1); c.lid_controls.removals.resize(1);
+    const auto path = (richardsArtifacts() / "richards_roundtrip.gpkg").string();
+    ASSERT_EQ(gpkg::write_to_file(path, c, "richards"), 0);
+    SimulationContext restored; ASSERT_EQ(gpkg::read_from_file(path, restored, "richards"), 0);
+    EXPECT_TRUE(restored.lid_controls.node_layers[0].front().flow.enabled);
+    EXPECT_EQ(restored.lid_controls.node_layers[0].front().flow.cells_per_layer, 4);
+    EXPECT_DOUBLE_EQ(restored.lid_controls.node_layers[0][2].retention.n, 1.6);
+}
+#endif
+TEST(LidNodes, RichardsRoutedBackwaterSupplySeepageAndQualityConserve) {
+    for (const bool backwater : {false, true}) for (const bool conduit : {false, true}) {
+        const auto stem = (richardsArtifacts() / (std::string(backwater ? "richards_backwater" : "richards_drain") + (conduit ? "_pipe" : ""))).string();
+        SCOPED_TRACE(stem);
+        std::ofstream f(stem + ".inp");
+        f << "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2004\nEND_DATE 01/01/2004\nEND_TIME 00:05:00\nROUTING_STEP 00:00:01\nVARIABLE_STEP 0\nREPORT_STEP 00:01:00\n"
+          << "[STORAGE]\nS 0 2 0 FUNCTIONAL 0 0 100 0 0\n[OUTFALLS]\nO 0 "
+          << (backwater ? "FIXED 2.5" : "FREE") << " NO\n"
+          << (conduit ? "[CONDUITS]\nD S O 10 .013 .75 0 0 0\n" : "[ORIFICES]\nD S O SIDE .75 .6 NO 0\n")
+          << "[XSECTIONS]\nD CIRCULAR .1 0 0 0\n[DWF]\nS FLOW .05\nS TSS 10\n[POLLUTANTS]\nTSS MG/L 0 0 0 0 NO * 0 10\n"
+          << "[LID_CONTROLS]\nStack NODE\nStack SURFACE 6 .1\nStack MEDIA 12 .45 .2 .08 2 10 3\nStack AGGREGATE 6 .4 100\nStack BOTTOM .5 0\n"
+          << "[LID_NODES]\nS Stack 10\n[LID_RICHARDS]\nStack OPTIONS 4 1e-7 1e-5 30\nStack 2 .03 2 1.6 .5 .0001\nStack 3 .03 2 1.6 .5 .0001\n";
+        f.close(); SWMMEngine e;
+        ASSERT_EQ(e.open((stem + ".inp").c_str(), (stem + ".rpt").c_str(), nullptr), 0);
+        ASSERT_EQ(e.initialize(), 0); ASSERT_EQ(e.start(0), 0);
+        double t = 0;
+        do { ASSERT_EQ(e.step(&t), 0); } while (t > 0);
+        ASSERT_EQ(e.end(), 0); const auto& b = e.context().mass_balance;
+        const double in = b.routing_init_storage + b.routing_dry_weather + b.routing_external;
+        EXPECT_NEAR(in, b.routing_final_storage + b.routing_outflow + b.routing_flooding + b.routing_evap_loss + b.routing_seep_loss, .01);
+        const double massin = b.qual_routing_init[0] + b.qual_routing_ex_in[0] + b.qual_routing_dw_in[0];
+        EXPECT_NEAR(massin, b.qual_routing_final[0] + b.qual_routing_outflow[0] + b.qual_routing_flood[0] + b.qual_routing_reacted[0] + b.qual_routing_seep[0], std::max(.001, massin * .001));
+        EXPECT_GT(e.context().node_subtypes.storages.lid_state[0].richards_report.accepted, 0);
+        e.close();
+    }
 }

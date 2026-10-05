@@ -7,6 +7,7 @@
  */
 
 #include "SurfaceRouter2D.hpp"
+#include "../hydrology/LidNode.hpp"
 #include "gw/GwSourceResolver.hpp"
 #include "mesh/MeshBuilder.hpp"
 #include "mesh/VertexReconstruction.hpp"
@@ -959,6 +960,9 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                 if (b.cell < 0 || b.node < 0 ||
                     static_cast<std::size_t>(b.node) >= ctx.nodes.aquifer2d_bed.size())
                     continue;
+                if (lidnode::richardsMode(ctx, b.node))
+                    throw std::runtime_error("Richards 1D LID '" + ctx.node_names.name_of(b.node) +
+                        "' currently supports sealed or native-soil bottoms; select the existing formulation for an active 2D aquifer node bed.");
                 ctx.nodes.aquifer2d_bed[static_cast<std::size_t>(b.node)] = 1;
                 const int sr = ctx.node_subtypes.storage_row(b.node);
                 if (sr >= 0 &&

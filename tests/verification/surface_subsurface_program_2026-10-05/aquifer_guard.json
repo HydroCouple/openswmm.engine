@@ -1,0 +1,16 @@
+[
+  {
+    "optout": false,
+    "opened": 0,
+    "initialized": 5,
+    "started": 5,
+    "error": "2D initialization failed: Richards 1D LID 'ST1' currently supports sealed or native-soil bottoms; select the existing formulation for an active 2D aquifer node bed."
+  },
+  {
+    "optout": true,
+    "opened": 0,
+    "initialized": 0,
+    "started": 0,
+    "error": ""
+  }
+]

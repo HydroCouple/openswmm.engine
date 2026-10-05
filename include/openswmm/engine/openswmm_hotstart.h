@@ -86,7 +86,9 @@ typedef void* SWMM_HotStart;
 /** @brief Magic string written at the start of every OPENSWMM_HS_V1 file. */
 #define OPENSWMM_HOTSTART_MAGIC    "OPENSWMM_HS_V1\0"
 
-/** @brief Current hot start format version number. */
+/** @brief Base format version. Writers select compatible extensions through
+ * version 11, which stores complete Richards cell water and material identity.
+ * Existing layer/Green-Ampt models continue to use their version 10 extension. */
 #define OPENSWMM_HOTSTART_VERSION  1
 
 /* =========================================================================

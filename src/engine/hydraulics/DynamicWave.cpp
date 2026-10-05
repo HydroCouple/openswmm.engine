@@ -3846,7 +3846,7 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt,
             const double share = ctx.nodes.type[other] == NodeType::OUTFALL ? 1.0 : 0.5;
             volume -= share * (ctx.links.volume[link] - ctx.links.old_volume[link]);
         }
-        if (volume < 0.0) {
+        if (volume < 0.0 && !lidnode::richardsMode(ctx, node_idx)) {
             auto& state = ctx.node_subtypes.storages.lid_state[ctx.node_subtypes.storage_row(node_idx)];
             for (std::size_t k = 0; k < state.cells.size() && volume < 0.0; ++k) {
                 const auto& cell = state.cells[k];

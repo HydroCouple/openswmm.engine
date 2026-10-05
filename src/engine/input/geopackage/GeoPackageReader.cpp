@@ -1513,6 +1513,29 @@ static void read_lid_nodes(sqlite3* db, SimulationContext& ctx, const std::strin
             ctx.lid_controls.node_layers[c].push_back(row);
         }
     }
+    if (table_exists(db, "lid_richards_options")) {
+        auto stmt = prepare(db, "SELECT lid_id,cells,atol,rtol,max_step FROM lid_richards_options WHERE simulation_id=?");
+        bind_text(stmt.get(), 1, sim);
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            const int c = ctx.lid_names.find(column_text(stmt.get(), 0));
+            if (c < 0 || ctx.lid_controls.node_layers[c].empty()) throw std::runtime_error("Invalid LID Richards control");
+            richards::Options o{true, column_int(stmt.get(), 1), column_double(stmt.get(), 2), column_double(stmt.get(), 3), column_double(stmt.get(), 4)};
+            if (!richards::valid(o)) throw std::runtime_error("Invalid LID Richards numerical options");
+            ctx.lid_controls.node_layers[c].front().flow = o;
+        }
+    }
+    if (table_exists(db, "lid_richards_materials")) {
+        auto stmt = prepare(db, "SELECT lid_id,layer,theta_r,alpha,n,l,specific_storage FROM lid_richards_materials WHERE simulation_id=?");
+        bind_text(stmt.get(), 1, sim);
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
+            const int c = ctx.lid_names.find(column_text(stmt.get(), 0)), layer = column_int(stmt.get(), 1);
+            if (c < 0 || layer < 1 || layer > static_cast<int>(ctx.lid_controls.node_layers[c].size())) throw std::runtime_error("Invalid LID Richards material reference");
+            auto& row = ctx.lid_controls.node_layers[c][layer - 1];
+            richards::Material p{column_double(stmt.get(), 2), column_double(stmt.get(), 3), column_double(stmt.get(), 4), column_double(stmt.get(), 5), column_double(stmt.get(), 6)};
+            if ((row.kind != LidNodeLayerKind::Media && row.kind != LidNodeLayerKind::Aggregate) || !richards::valid(p, row.params[1])) throw std::runtime_error("Invalid LID Richards material");
+            row.retention = p;
+        }
+    }
     if(table_exists(db,"lid_layer_treatment")) {
         auto stmt=prepare(db,"SELECT lid_id,layer,pollutant,removal,decay,expression FROM lid_layer_treatment WHERE simulation_id=?");
         bind_text(stmt.get(),1,sim);

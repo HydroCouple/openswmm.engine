@@ -7,6 +7,11 @@
 namespace openswmm {
 struct SimulationContext;
 namespace lidnode {
+bool richardsMode(const SimulationContext&, int node);
+double exchangeRichardsPorts(SimulationContext&, int link, double flow, double dt);
+void prepareRichardsStep(SimulationContext&, double dt, double evaporation);
+void refreshRichardsState(SimulationContext&, int row);
+void readRichards(SimulationContext&, const std::vector<std::string>&);
 std::vector<LidNodeLayer> layers(const SimulationContext&, int control);
 bool validLayer(const LidNodeLayer&);
 std::string validateStack(const std::vector<LidNodeLayer>&);

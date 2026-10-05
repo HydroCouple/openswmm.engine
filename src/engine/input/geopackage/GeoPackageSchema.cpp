@@ -644,6 +644,16 @@ CREATE TABLE IF NOT EXISTS lid_nodes (
     simulation_id TEXT NOT NULL, node_id TEXT NOT NULL, lid_id TEXT NOT NULL,
     initial_saturation REAL NOT NULL, PRIMARY KEY(simulation_id, node_id)
 );
+CREATE TABLE IF NOT EXISTS lid_richards_options (
+    simulation_id TEXT NOT NULL, lid_id TEXT NOT NULL,
+    cells INTEGER NOT NULL, atol REAL NOT NULL, rtol REAL NOT NULL, max_step REAL NOT NULL,
+    PRIMARY KEY(simulation_id,lid_id)
+);
+CREATE TABLE IF NOT EXISTS lid_richards_materials (
+    simulation_id TEXT NOT NULL, lid_id TEXT NOT NULL, layer INTEGER NOT NULL,
+    theta_r REAL NOT NULL, alpha REAL NOT NULL, n REAL NOT NULL, l REAL NOT NULL, specific_storage REAL NOT NULL,
+    PRIMARY KEY(simulation_id,lid_id,layer)
+);
 CREATE TABLE IF NOT EXISTS lid_node_outlets (
     simulation_id TEXT NOT NULL, link_id TEXT NOT NULL, layer INTEGER NOT NULL,
     top INTEGER NOT NULL, PRIMARY KEY(simulation_id, link_id)

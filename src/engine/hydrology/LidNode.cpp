@@ -89,7 +89,16 @@ std::string validateStack(const std::vector<LidNodeLayer>& stack) {
         if (l.kind == LidNodeLayerKind::Bottom && i + 1 != stack.size()) return "BOTTOM must occur once, last";
         porous |= l.kind == LidNodeLayerKind::Media || l.kind == LidNodeLayerKind::Aggregate;
     }
-    return porous ? "" : "at least one MEDIA or AGGREGATE layer is required";
+    if (!porous) return "at least one MEDIA or AGGREGATE layer is required";
+    if (stack.front().flow.enabled) {
+        if (stack.front().kind != LidNodeLayerKind::Surface) return "Richards requires a SURFACE ponding layer";
+        if (!richards::valid(stack.front().flow)) return "invalid Richards numerical options";
+        for (const auto& l : stack) if (l.kind == LidNodeLayerKind::Media || l.kind == LidNodeLayerKind::Aggregate) {
+            if (!richards::valid(l.retention, l.params[1])) return "Richards requires valid retention and specific storage on every porous layer";
+            if (l.kind == LidNodeLayerKind::Media && l.retention.theta_r >= l.params[3]) return "Richards residual water content must be below the media wilting point";
+        }
+    }
+    return "";
 }
 double thickness(const std::vector<LidNodeLayer>& stack) {
     double d = 0.0;
@@ -166,6 +175,8 @@ void validate(SimulationContext& ctx) {
         const auto stack = layers(ctx, cfg.control);
         const auto error = validateStack(stack);
         if (!error.empty()) { ctx.errors.push_back("LID node " + ctx.node_names.name_of(n) + ": " + error); continue; }
+        if (stack.front().flow.enabled && (ctx.options.water_age || ctx.options.heat_transport || ctx.reactions.configured))
+            ctx.errors.push_back("Richards LID node " + ctx.node_names.name_of(n) + ": water age, heat and MSX require porous-cell transport adapters that are not yet supported");
         const double d = thickness(stack) / rainDepth(ctx);
         if (std::abs(d - ctx.nodes.full_depth[n]) > 1.e-7 * std::max(1.0, d))
             ctx.errors.push_back("LID node " + ctx.node_names.name_of(n) + ": MaxDepth must equal the sum of layer thicknesses");
@@ -315,7 +326,8 @@ void initialize(SimulationContext& ctx) {
         for (const auto& l : stack) {
             if (l.kind == LidNodeLayerKind::Bottom) continue;
             ++layer;
-            const int count = l.kind == LidNodeLayerKind::Media ? 5 : 1;
+            const int count = stack.front().flow.enabled && (l.kind == LidNodeLayerKind::Media || l.kind == LidNodeLayerKind::Aggregate) ?
+                stack.front().flow.cells_per_layer : l.kind == LidNodeLayerKind::Media ? 5 : 1;
             const double dz = l.params[0] / rd / count;
             for (int i = 0; i < count; ++i) {
                 LidNodeCell c;
@@ -342,6 +354,29 @@ void initialize(SimulationContext& ctx) {
         auto& state = st.lid_state[r];
         state.cells = std::move(cells);
         state.port_delta.assign(state.cells.size(), 0.0);
+        if (stack.front().flow.enabled) {
+            state.richards = true;
+            state.richards_water.assign(state.cells.size(), 0);
+            state.richards_pressure.assign(state.cells.size(), 0);
+            const double initial_head = ctx.nodes.depth[n];
+            auto& surface = state.cells.front();
+            ctx.nodes.volume[n] = std::max(0.0, initial_head - surface.bottom) * surface.area * surface.porosity;
+            for (std::size_t i = 1; i < state.cells.size(); ++i) {
+                auto& cell = state.cells[i];
+                const auto& p = stack[cell.layer - 1].retention;
+                const double base = cell.kind == LidNodeLayerKind::Media ? cell.wilting_point : p.theta_r;
+                const double initial = base + std::max(st.lid[r].initial_saturation / 100., 1.e-8) * (cell.porosity - base);
+                double h = richards::pressure(p, cell.porosity, initial);
+                const double center = .5 * (cell.top + cell.bottom);
+                if (initial_head > center) h = (initial_head - center) * .3048;
+                state.richards_water[i] = richards::storage(p, cell.porosity, h) * cell.geometric_volume;
+            }
+            refreshRichardsState(ctx, r);
+            ctx.nodes.depth[n] = surface.bottom + ctx.nodes.volume[n] / (surface.area * surface.porosity);
+            ctx.nodes.head[n] = ctx.nodes.invert_elev[n] + ctx.nodes.depth[n];
+            ctx.nodes.full_volume[n] = 0;
+            continue;
+        }
         // Fully saturated cells connected to the base belong to the mobile
         // hydraulic store above field capacity, including InitSat=100%.
         double water_table = node::getDepth(ctx.nodes, n, 0.0, &ctx.tables, us, &ctx.node_subtypes);
@@ -358,11 +393,12 @@ void initialize(SimulationContext& ctx) {
 }
 void prepareStep(SimulationContext& ctx, double dt, double evaporation) {
     if (!(dt > 0.0)) return;
+    prepareRichardsStep(ctx, dt, evaporation);
     auto& st = ctx.node_subtypes.storages;
     const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
     for (int r = 0; r < st.count(); ++r) {
         auto& state = st.lid_state[r];
-        if (state.cells.empty()) continue;
+        if (state.cells.empty() || state.richards) continue;
         const int n = st.node_idx[r];
         const double before = state.held_volume;
         state.quality_old_mobile = ctx.nodes.volume[n];
@@ -497,10 +533,13 @@ void finishStep(SimulationContext& ctx) {
         const int n = st.node_idx[r];
         for (std::size_t i = 0; i < state.cells.size(); ++i) {
             auto& cell = state.cells[i];
-            if (cell.geometric_volume > 0.0) cell.theta += state.port_delta[i] / cell.geometric_volume;
+            if (state.richards) state.richards_water[i] += state.port_delta[i];
+            else if (cell.geometric_volume > 0.0) cell.theta += state.port_delta[i] / cell.geometric_volume;
         }
+        if (state.richards) refreshRichardsState(ctx, r);
         state.held_volume = 0.0;
-        for (const auto& cell : state.cells) state.held_volume += cell.theta * cell.geometric_volume;
+        if (state.richards) for (double water : state.richards_water) state.held_volume += water;
+        else for (const auto& cell : state.cells) state.held_volume += cell.theta * cell.geometric_volume;
         const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
         ctx.nodes.full_volume[n] = 0.0;
         ctx.nodes.full_volume[n] = node::getVolume(ctx.nodes, n, ctx.nodes.full_depth[n], &ctx.tables, us, &ctx.node_subtypes);
@@ -516,6 +555,7 @@ void finishStep(SimulationContext& ctx) {
         reconcileInfiltration(state, ctx.nodes.depth[n], port_wetting);
         ctx.nodes.lat_flow[st.node_idx[r]] += state.captured_flow;
         st.evap_loss[r] += state.evap_volume;
+        st.exfil_loss[r] += state.richards_bottom_loss;
         state.captured_flow = 0.0;
     }
 }
@@ -567,12 +607,15 @@ double portDepth(const SimulationContext& ctx, int node, double offset) {
     if (r < 0) return head;
     const auto& state = ctx.node_subtypes.storages.lid_state[r];
     const int i = portCell(state, offset);
+    if (state.richards && i > 0) return .5 * (state.cells[i].bottom + state.cells[i].top) + state.richards_pressure[i];
     if (i < 0 || state.cells[i].kind != LidNodeLayerKind::Surface || state.cells[i].theta <= 0.0) return head;
     const auto& c = state.cells[i];
     return std::max(head, c.bottom + c.theta / c.porosity * (c.top - c.bottom));
 }
 double exchangePorts(SimulationContext& ctx, int link, double flow, double dt) {
     if (!(dt > 0) || flow == 0) return flow;
+    if (richardsMode(ctx, ctx.links.node1[link]) || richardsMode(ctx, ctx.links.node2[link]))
+        return exchangeRichardsPorts(ctx, link, flow, dt);
     if (!active(ctx, ctx.links.node1[link]) && !active(ctx, ctx.links.node2[link])) return flow;
     const int source = flow > 0 ? ctx.links.node1[link] : ctx.links.node2[link];
     const int dest = flow > 0 ? ctx.links.node2[link] : ctx.links.node1[link];

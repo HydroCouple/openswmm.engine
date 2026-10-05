@@ -695,6 +695,7 @@ void Router::initNodeFlows(SimulationContext& ctx, double dt, double evap_rate) 
                 const double area = node::getSurfArea(nodes, i, nodes.depth[ui], &ctx.tables,
                     ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)), &ctx.node_subtypes);
                 stor_evap_rate = area > 0.0 ? std::max(0.0, potential - state.evap_volume / dt) / area : 0.0;
+                if (state.richards) stor_evap_rate = 0; // one ET budget inside the ODE
             }
 
             // exfil_cfs is pre-computed by ExfilSolver::computeAll() (called before

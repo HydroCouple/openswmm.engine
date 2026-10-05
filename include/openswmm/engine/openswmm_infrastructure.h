@@ -693,6 +693,20 @@ enum SWMM_LidNodeLayerKind {
     SWMM_LID_NODE_AGGREGATE = 2, SWMM_LID_NODE_BOTTOM = 3
 };
 typedef struct SWMM_LidNodeLayer { int kind; double params[7]; } SWMM_LidNodeLayer;
+/** Alternative flow model. model=0 preserves standard SWMM layer drainage;
+ * model=1 is conservative semi-discrete Richards with adaptive stiff BDF1.
+ * atol is water-content fraction, rtol dimensionless, max_step seconds. */
+typedef struct SWMM_LidRichardsOptions {
+    int model, cells_per_layer;
+    double atol, rtol, max_step;
+} SWMM_LidRichardsOptions;
+/** Explicit van Genuchten-Mualem material; alpha and specific storage are
+ * inverse metres in BOTH unit systems. n>1, l>=0, specific_storage>0. */
+typedef struct SWMM_LidRichardsMaterial {
+    double theta_r, alpha, n, l, specific_storage;
+} SWMM_LidRichardsMaterial;
+SWMM_ENGINE_API int swmm_lid_richards_options_get(SWMM_Engine, int control, SWMM_LidRichardsOptions*);
+SWMM_ENGINE_API int swmm_lid_richards_material_get(SWMM_Engine, int control, int row, SWMM_LidRichardsMaterial*);
 /** Per-layer treatment. Layer is one-based; pollutant is its engine index.
  * Removal percent applies to outgoing mass; decay is first-order per day.
  * Optional R=/C= expression applies after fixed removal at the layer exit. */
@@ -706,6 +720,11 @@ typedef struct SWMM_LidLayerTreatment {
 SWMM_ENGINE_API int swmm_lid_node_treatment_count(SWMM_Engine engine, int control);
 SWMM_ENGINE_API int swmm_lid_node_treatment_get(SWMM_Engine engine, int control, int row, SWMM_LidLayerTreatment* out);
 SWMM_ENGINE_API int swmm_lid_node_configure(SWMM_Engine engine, int control, const SWMM_LidNodeLayer* layers, int count, const SWMM_LidLayerTreatment* treatment, int treatment_count);
+/** Atomically configure layers, treatment and flow model. materials has one
+ * row per authored layer (SURFACE/BOTTOM entries are ignored); required for
+ * Richards. Invalid input changes neither layers nor dependent node geometry. */
+SWMM_ENGINE_API int swmm_lid_node_configure_flow(SWMM_Engine, int control, const SWMM_LidNodeLayer*, int count,
+    const SWMM_LidLayerTreatment*, int treatment_count, const SWMM_LidRichardsOptions*, const SWMM_LidRichardsMaterial*);
 SWMM_ENGINE_API int swmm_lid_node_layer_count(SWMM_Engine engine, int control);
 SWMM_ENGINE_API int swmm_lid_node_layer_get(SWMM_Engine engine, int control, int row, SWMM_LidNodeLayer* out);
 /** Atomically replace the stack; sync dependent MaxDepths and outlet offsets.
@@ -724,6 +743,14 @@ SWMM_ENGINE_API int swmm_lid_node_outlet_set(SWMM_Engine engine, int link, int l
  * each MEDIA layer is discretized into multiple rows. */
 SWMM_ENGINE_API int swmm_lid_node_state_count(SWMM_Engine engine, int node);
 SWMM_ENGINE_API int swmm_lid_node_state_get(SWMM_Engine engine, int node, int row, int* layer, double* bottom, double* top, double* moisture);
+/** Richards pressure/total head in project length units, complete cell water
+ * in project volume units. Returns BADPARAM on the existing formulation. */
+SWMM_ENGINE_API int swmm_lid_richards_state_get(SWMM_Engine, int node, int row, double* pressure, double* head, double* water);
+typedef struct SWMM_LidRichardsStatistics {
+    int accepted, rejected, rhs, newton;
+    double min_step, balance_m3;
+} SWMM_LidRichardsStatistics;
+SWMM_ENGINE_API int swmm_lid_richards_statistics_get(SWMM_Engine, int node, SWMM_LidRichardsStatistics*);
 
 
 
