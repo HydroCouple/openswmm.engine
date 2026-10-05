@@ -181,6 +181,19 @@ void RunoffSolver::updatePondedDepth(double& depth, double inflow,
 // Init
 // ============================================================================
 
+double RunoffSolver::pendingRoutingVolume(const SimulationContext& ctx, int source) const {
+    const auto i = static_cast<std::size_t>(source);
+    const auto& s = soa_;
+    if (s.imperv_pct[i] == 0.0 || s.imperv_pct[i] == 1.0) return 0.0;
+    double rate = 0.0;
+    if (ctx.subcatches.subarea_routing[i] == 2)
+        rate = s.old_runoff_imperv0[i] * s.frac_imperv0[i] +
+               s.old_runoff_imperv1[i] * s.frac_imperv1[i];
+    else if (ctx.subcatches.subarea_routing[i] == 1 && s.frac_imperv1[i] > 0.0)
+        rate = s.old_runoff_perv[i] * (1.0 - s.imperv_pct[i]);
+    return rate * ctx.subcatches.pct_routed[i] * s.area[i] * completed_step_seconds_[i];
+}
+
 void RunoffSolver::init(SimulationContext& ctx, const std::vector<std::pair<int, double>>& spatial_areas) {
     int n = ctx.n_subcatches();
     std::vector<double> external_area(static_cast<std::size_t>(n), -1);
@@ -190,6 +203,7 @@ void RunoffSolver::init(SimulationContext& ctx, const std::vector<std::pair<int,
         external_area[i] = area;
     }
     soa_.resize(n);
+    completed_step_seconds_.assign(static_cast<std::size_t>(n), 0.0);
     spatial_full_area_ft2_.clear();
     if (!spatial_areas.empty()) spatial_full_area_ft2_.assign(static_cast<std::size_t>(n), -1);
 
@@ -543,6 +557,9 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         int route_mode = ctx.subcatches.subarea_routing[ui];
         double pct = ctx.subcatches.pct_routed[ui];
         const double f_outlet = 1.0 - pct;   // legacy subArea.fOutlet
+        // A changed interval duration must deliver the previous interval's
+        // routed VOLUME, not hold its rate across the new duration.
+        const double history_scale = source_forcing ? completed_step_seconds_[ui] / dt : 1.0;
         const double runon_sub = (total_area > 0.0) ? ctx.subcatches.runon_rate[ui] : 0.0;
         double runon_imperv0 = runon_sub;
         double runon_imperv1 = runon_sub;
@@ -554,12 +571,12 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             double q1 = soa_.old_runoff_imperv0[ui] * f0;
             double q2 = soa_.old_runoff_imperv1[ui] * f1;
             double q  = q1 + q2;
-            runon_perv += q * (1.0 - f_outlet) / fp;
+            runon_perv += q * (1.0 - f_outlet) / fp * history_scale;
         }
         else if (route_mode == 1 && f1 > 0.0) {
             // legacy Case 2, perv --> imperv (needs an IMPERV1 area)
             double q = soa_.old_runoff_perv[ui];
-            runon_imperv1 += q * (1.0 - f_outlet) * fp / f1;
+            runon_imperv1 += q * (1.0 - f_outlet) * fp / f1 * history_scale;
         }
 
         // Gap #23: LID return flow to pervious area (legacy lid_getFlowToPerv
@@ -640,6 +657,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         soa_.old_runoff_imperv0[ui] = runoff0;
         soa_.old_runoff_imperv1[ui] = runoff1;
         soa_.old_runoff_perv[ui]    = runoff_p;
+        completed_step_seconds_[ui] = dt;
 
         // legacy subcatch_getRunoff's return value (subcatch.c:714-724,
         // 773): `runoff += subArea[i].runoff * area_i` over the three

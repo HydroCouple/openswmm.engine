@@ -177,6 +177,8 @@ public:
     double infilFactorUsed(int i) const { return infil_factor_used_[static_cast<std::size_t>(i)]; }
 
     const RunoffSoA& soa() const { return soa_; }
+    /// Completed water still waiting for next interval's inter-subarea route.
+    double pendingRoutingVolume(const SimulationContext& ctx, int source) const;
 
     // -----------------------------------------------------------------------
     // Hot start helpers — Gap #54
@@ -215,6 +217,7 @@ private:
     // Infiltration state (one per subcatchment)
     surface::InfilBank infil_bank_;
     std::vector<double>         infil_factor_used_; ///< The InfilFactor applied to each subcatchment this step (pattern or global)
+    std::vector<double> completed_step_seconds_; ///< Volume history for selected interval routing.
 
     /// Legacy infil_getInfil: the model dispatch with the factors applied.
     double infilGetInfil(SimulationContext& ctx, int i, double precip, double runon,

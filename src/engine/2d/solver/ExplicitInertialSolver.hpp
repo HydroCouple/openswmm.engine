@@ -62,6 +62,9 @@ public:
     void initialize(MeshData& mesh, SurfaceStateData& state,
                     SolverOptions2D& opts) override;
     double advance(double t_current, double t_target) override;
+    double completedSourceTime() const noexcept override {
+        return initialized_ ? t_last_sync_ : -1.0;
+    }
     void reinitialize(double t0) override;
     void resyncFromVolumes(double t0) override;
     /// External outfall transfers keep these cells and their halo on tier zero.

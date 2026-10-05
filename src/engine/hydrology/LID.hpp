@@ -246,6 +246,19 @@ class LIDSolver {
 public:
     void init(SimulationContext& ctx);
 
+    struct CompletedUnitInput {
+        int type = -1, unit = -1;
+        double inflow = 0.0, rain = 0.0, pet = 0.0;
+        double native_infil = 0.0, max_native_infil = 1.0e10, infil_factor = 1.0;
+    };
+    /// Copy parameters, water state and water ledgers, without report streams.
+    /// Completed trials never resolve forcing twice or perform file IO.
+    LIDSolver waterTrial() const;
+    /// Sorted, unique selected units with resolved ft/s inputs and individual
+    /// bottom ceilings. Validate the entire batch before evaluating any unit.
+    void executeCompleted(double dt, double start, double recovery_factor,
+                          const std::vector<CompletedUnitInput>& inputs);
+
     /// Access a type group (for testing or external queries).
     LIDGroupSoA& group(int type_index) { return groups_[static_cast<size_t>(type_index)]; }
     const LIDGroupSoA& group(int type_index) const { return groups_[static_cast<size_t>(type_index)]; }

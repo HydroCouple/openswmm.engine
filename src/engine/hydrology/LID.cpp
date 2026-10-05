@@ -32,6 +32,7 @@
 #include <algorithm>
 #include <array>
 #include <map>
+#include <stdexcept>
 
 namespace openswmm {
 namespace lid {
@@ -1498,6 +1499,48 @@ double LIDSolver::totalEvapVolume() const {
 // ============================================================================
 // Execute — all LID types batch
 // ============================================================================
+
+LIDSolver LIDSolver::waterTrial() const {
+    LIDSolver trial;
+    trial.groups_ = groups_;
+    trial.usage_order_ = usage_order_;
+    trial.old_runoff_sec_ = old_runoff_sec_;
+    trial.native_infil_ = native_infil_;
+    trial.max_native_infil_ = max_native_infil_;
+    trial.infil_factor_ = infil_factor_;
+    trial.recovery_factor_ = recovery_factor_;
+    return trial;
+}
+
+void LIDSolver::executeCompleted(double dt, double start, double recovery_factor,
+                                const std::vector<CompletedUnitInput>& inputs) {
+    if (!std::isfinite(dt) || dt <= 0.0 || !std::isfinite(start) || start < 0.0 ||
+        !std::isfinite(recovery_factor) || recovery_factor < 0.0)
+        throw std::invalid_argument("Invalid completed LID interval.");
+    std::pair<int, int> previous{-1, -1};
+    for (const auto& in : inputs) {
+        const std::pair<int, int> key{in.type, in.unit};
+        if (in.type < 0 || in.type >= numGroups() || in.unit < 0 ||
+            in.unit >= group(in.type).count || key <= previous)
+            throw std::invalid_argument("Invalid, unordered or duplicate completed LID unit.");
+        for (double rate : {in.inflow, in.rain, in.pet, in.native_infil,
+                            in.max_native_infil, in.infil_factor})
+            if (!std::isfinite(rate) || rate < 0.0)
+                throw std::invalid_argument("Invalid completed LID rate or bottom ceiling.");
+        previous = key;
+    }
+    constexpr double MIN_RUNOFF = 2.31481e-8;
+    for (const auto& in : inputs) {
+        auto& g = group(in.type);
+        const auto u = static_cast<std::size_t>(in.unit);
+        if (g.area[u] <= 0.0) continue;
+        g.inflow[u] = in.inflow; g.subcatch_rain[u] = in.rain; g.evap_rate_unit[u] = in.pet;
+        runUnitLegacy(g, u, in.inflow, in.pet, in.native_infil,
+                      in.max_native_infil, dt, start, in.infil_factor, recovery_factor);
+        if (in.rain > MIN_RUNOFF) g.dry_time[u] = 0.0;
+        else g.dry_time[u] += dt;
+    }
+}
 
 void LIDSolver::execute(SimulationContext& ctx, double dt,
                         double rainfall, double evap_rate) {
