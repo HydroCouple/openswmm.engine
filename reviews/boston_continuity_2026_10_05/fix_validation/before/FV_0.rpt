@@ -1,0 +1,243 @@
+
+  OPENSWMM ENGINE - VERSION 6.0.0-alpha.4
+  ------------------------------------------------------------
+
+  2D rainfall: no located gages; using the uniform system mean.
+  2D solver: cpu (explicit marcher); MOMENTUM_EQUATION LOCAL_INERTIAL; LTS_TIERS 4; 2 cells (0 quads)
+  
+  ****************
+  Analysis Options
+  ****************
+  Flow Units ............... CMS
+  Process Models:
+    Rainfall/Runoff ........ NO
+    RDII ................... NO
+    Snowmelt ............... NO
+    Groundwater ............ NO
+    Flow Routing ........... YES
+    Ponding Allowed ........ NO
+    Water Quality .......... NO
+  Flow Routing Method ...... FV
+  Starting Date ............ 01/01/2026 00:00:00
+  Ending Date .............. 01/01/2026 00:01:00
+  Antecedent Dry Days ...... 0.0
+  Report Time Step ......... 00:00:10
+  Routing Time Step ........ 2.00 sec
+  
+  
+  WARNING: 2D outfall withdrawal was capped by the water available on the surface in 19 sync batch(es); check the outfall stage coupling and the 2D continuity block.
+  **************************        Volume        Volume
+  Flow Routing Continuity        hectare-m      10^6 ltr
+  **************************     ---------     ---------
+  Dry Weather Inflow .......         0.000         0.000
+  Wet Weather Inflow .......         0.000         0.000
+  Groundwater Inflow .......         0.000         0.000
+  RDII Inflow ..............         0.000         0.000
+  External Inflow ..........         0.082         0.819
+  External Outflow .........         0.023         0.232
+  Flooding Loss ............         0.099         0.988
+  Evaporation Loss .........         0.000         0.000
+  Exfiltration Loss ........         0.000         0.000
+  Initial Stored Volume ....         0.000         0.000
+  Final Stored Volume ......         0.010         0.097
+  Final Slot Storage .......         0.000         0.000
+  Continuity Error (%) .....       -60.895
+  
+  
+  **************************        Volume        Volume
+  2D Surface Routing Continuity  cubic meters      10^6 ltr
+  **************************     ---------     ---------
+  Initial Stored Volume ....         1.100         0.001
+  Rainfall Inflow ..........         0.000         0.000
+  1D -> 2D Spill Inflow ....         0.000         0.000
+  Outfall Inflow ...........       200.562         0.201
+  Boundary Inflow ..........         0.000         0.000
+  2D -> 1D Drain Outflow ...         0.000         0.000
+  Outfall Withdrawal .......       197.287         0.197
+  Boundary Outflow .........         0.000         0.000
+  Evaporation Loss .........         0.000         0.000
+  Infiltration Loss ........         0.000         0.000
+  Final Stored Volume ......         4.475         0.004
+  Continuity Error (%) .....        -0.050
+  
+  
+  *************************
+  2D Solver Statistics
+  *************************
+  Internal Steps ...........           630
+  Face-Kernel Evals ........             0
+  Avg Internal Step (s) ....        0.0952
+  Last Internal Step (s) ...        2.0000
+  Active Cells min/mean/max      0.0 / 65.7 /100.0  (%)
+  LTS Tier 0 Occupancy (%) .          95.7
+  LTS Tier 1 Occupancy (%) .           4.3
+  LTS Tier 2 Occupancy (%) .           0.0
+  LTS Tier 3 Occupancy (%) .           0.0
+  
+  
+  
+  
+  
+  
+  ********************************
+  Highest Flow Instability Indexes
+  ********************************
+  All links are stable.
+  
+  
+  
+  
+  *************************
+  Routing Time Step Summary
+  *************************
+  Minimum Time Step           :     2.00 sec
+  Average Time Step           :     2.00 sec
+  Maximum Time Step           :     2.00 sec
+  % of Time in Steady State   :     0.00
+  Average Substeps per Step   :   383.57
+  % of Steps Not Converging   :      n/a
+  
+  
+  *********************
+  FV Solver Statistics
+  *********************
+  Explicit Substeps ........         11507
+  Face Flux Evaluations ....         52896
+  Avg Substep (s) ..........      0.005214
+  Min Substep (s) ..........      0.000511
+  Last Substep (s) .........      0.003953
+  LTS Macro Cycles Fired ...          5204
+  LTS Macro Cycles Rejected              0
+  Active Faces min/mean/max    100.0 /100.0 /100.0  (%)
+  dt Argmin Pressurized (%)           96.9
+  dt Argmin Taper Band (%) .           0.2
+  dt Argmin Free (%) .......           2.8
+  dt Argmin Node Bound (%) .           0.0
+  LTS Tier 0 Occupancy (%) .          87.3
+  LTS Tier 1 Occupancy (%) .          12.7
+  
+  
+  *********************
+  Slot Storage Summary
+  *********************
+  Run Slot Share (%) .......          0.67
+  Peak Slot Share (%) ......          2.66
+  Hours Share Above 1% .....          0.00
+
+  Link                    Peak Share    Run Share   Hrs >1%
+  ----------------------------------------------------------
+  C                         2.66%        0.67%      0.00
+  
+  
+  
+  
+  
+  
+  ******************
+  Node Depth Summary
+  ******************
+
+  ---------------------------------------------------------------------------------
+                                 Average  Maximum  Maximum  Time of Max    Reported
+                                   Depth    Depth      HGL   Occurrence   Max Depth
+  Node                 Type       Meters   Meters   Meters  days hr:min      Meters
+  ---------------------------------------------------------------------------------
+  J                    STORAGE      8.44    10.00     8.00     0  00:00       10.00
+  O                    OUTFALL      7.97    40.67    40.67     0  00:00       40.67
+  
+  
+  *******************
+  Node Inflow Summary
+  *******************
+
+  -------------------------------------------------------------------------------------------------
+                                  Maximum  Maximum                  Lateral       Total        Flow
+                                  Lateral    Total  Time of Max      Inflow      Inflow     Balance
+                                   Inflow   Inflow   Occurrence      Volume      Volume       Error
+  Node                 Type           CMS      CMS  days hr:min    10^6 ltr    10^6 ltr     Percent
+  -------------------------------------------------------------------------------------------------
+  J                    STORAGE      0.000   86.034     0  00:00           0        1.32       0.413
+  O                    OUTFALL      0.000   88.490     0  00:00           0        1.05      -0.111
+  
+  
+  
+  
+  *********************
+  Node Flooding Summary
+  *********************
+
+  Flooding refers to all water that overflows a node, whether it ponds or not.
+  --------------------------------------------------------------------------
+                                                             Total   Maximum
+                                 Maximum   Time of Max       Flood    Ponded
+                        Hours       Rate    Occurrence      Volume     Depth
+  Node                 Flooded       CMS   days hr:min    10^6 ltr    Meters
+  --------------------------------------------------------------------------
+  J                       0.01    86.034      0  00:00       0.991     0.000
+  
+  
+  **********************
+  Storage Volume Summary
+  **********************
+
+  ------------------------------------------------------------------------------------------------
+                         Average    Avg   Evap  Exfil     Maximum    Max    Time of Max    Maximum
+                          Volume   Pcnt   Pcnt   Pcnt      Volume   Pcnt     Occurrence    Outflow
+  Storage Unit           1000 m³   Full   Loss   Loss     1000 m³   Full    days hr:min        CMS
+  ------------------------------------------------------------------------------------------------
+  J                        0.084   84.4    0.0    0.0       0.100  100.0       0  00:00     17.943
+  
+  
+  ***********************
+  Outfall Loading Summary
+  ***********************
+ 
+  ----------------------------------------------------------- 
+                         Flow       Avg       Max       Total 
+                         Freq      Flow      Flow      Volume 
+  Outfall Node           Pcnt       CMS       CMS    10^6 ltr 
+  -----------------------------------------------------------
+  O                     96.67    18.224    88.490       1.051 
+  -----------------------------------------------------------
+  System                96.67    18.224    88.490       1.051
+  
+  
+  ********************
+  Link Flow Summary
+  ********************
+
+  -----------------------------------------------------------------------------
+                                 Maximum  Time of Max   Maximum    Max/    Max/
+                                  |Flow|   Occurrence   |Veloc|    Full    Full
+  Link                 Type          CMS  days hr:min     m/sec    Flow   Depth
+  -----------------------------------------------------------------------------
+  C                    CONDUIT    87.298     0  00:00    >50.00    2.76    1.00
+  
+  
+  ***************************
+  Flow Classification Summary
+  ***************************
+
+  -------------------------------------------------------------------------------------
+                      Adjusted    ---------- Fraction of Time in Flow Class ---------- 
+                       /Actual         Up    Down  Sub   Sup   Up    Down  Norm  Inlet 
+  Conduit               Length    Dry  Dry   Dry   Crit  Crit  Crit  Crit  Ltd   Ctrl  
+  -------------------------------------------------------------------------------------
+  C                       1.00   0.00  0.00  0.00  0.73  0.27  0.00  0.00  0.00  0.00
+  
+  *************************
+  Conduit Surcharge Summary
+  *************************
+  
+  ----------------------------------------------------------------------------
+                                                           Hours        Hours 
+                         --------- Hours Full --------   Above Full   Capacity
+  Conduit                Both Ends  Upstream  Dnstream   Normal Flow   Limited
+  ----------------------------------------------------------------------------
+  C                           0.01      0.01      0.01      0.01         0.01
+  
+  
+
+  Analysis begun on:  Mon Oct  5 04:21:54 2026
+  Analysis ended on:  Mon Oct  5 04:21:54 2026
+  Total elapsed time: < 1 sec

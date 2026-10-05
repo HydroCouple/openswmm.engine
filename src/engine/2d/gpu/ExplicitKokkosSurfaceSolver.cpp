@@ -1359,6 +1359,8 @@ void ExplicitKokkosSurfaceSolver::resyncFromVolumes(double /*t0*/) {
     if (!initialized_) return;
     devRefresh(d_volume_, state_->volume);
     reconstructAllDev();
+    // External outfall transfers can activate previously dry cells.
+    cycles_since_rebuild_ = 1000;
 }
 
 void ExplicitKokkosSurfaceSolver::finalize() {

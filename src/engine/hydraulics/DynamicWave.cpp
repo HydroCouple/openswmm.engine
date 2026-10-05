@@ -55,6 +55,7 @@
  */
 
 #include "DynamicWave.hpp"
+#include "SurfaceExchange.hpp"
 #include "Node.hpp"
 #include "Outfall.hpp"
 #include "XSectBatch.hpp"
@@ -1368,6 +1369,19 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
 
 #pragma omp single
             {
+                // Include bypassed conduits: a new routing step can have a
+                // smaller reservoir even when its hydraulic head converged.
+                if (!ctx.surface_outfall_link_limit.empty()) {
+                    for (int ci = 0; ci < n_conduits_; ++ci) {
+                        const int j = tile_uj_[ci];
+                        const double accepted = boundSurfaceOutfallFlow(ctx, j, new_flow_[j]);
+                        if (accepted != new_flow_[j]) {
+                            new_flow_[j] = ctx.links.flow[j] = accepted;
+                            q1_[j] = accepted / tile_barrels_d_[ci];
+                            dqdh_[j] = ctx.links.dqdh[j] = 0.0;
+                        }
+                    }
+                }
                 lidnode::resetPorts(ctx);
                 for (int ci = 0; ci < n_conduits_; ++ci) {
                     const int j = tile_uj_[ci];
@@ -3292,6 +3306,11 @@ void DWSolver::updateNodeFlows(SimulationContext& ctx) {
     for (int j = 0; j < n_links_; ++j) {
         auto uj = static_cast<std::size_t>(j);
 
+        const double accepted = boundSurfaceOutfallFlow(ctx, j, new_flow_[uj]);
+        if (accepted != new_flow_[uj]) {
+            new_flow_[uj] = accepted;
+            dqdh_[uj] = ctx.links.dqdh[uj] = 0;
+        }
         // Apply computed flow
         links.flow[uj] = new_flow_[uj];
 

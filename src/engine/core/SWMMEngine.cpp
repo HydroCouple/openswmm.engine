@@ -27,6 +27,7 @@
  */
 
 #include "SWMMEngine.hpp"
+#include "../hydraulics/SurfaceExchange.hpp"
 #include "../hydrology/LidNode.hpp"
 #include "DateTime.hpp"
 #include "FileIO.hpp"   // issue #7: UTF-8 paths on Windows
@@ -4774,7 +4775,7 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     // B2c. Pre-routing: update outfall boundary heads from 2D surface state.
     //      Must happen after setOutfallDepths() (called inside router_.step)
     //      but the 2D pre-routing hook modifies outfall heads from 2D state.
-    surface_router_.updateOutfallsPreRouting(ctx_);
+    surface_router_.updateOutfallsPreRouting(ctx_, dt_routing);
 #endif
 
     // B2d. Check if system is in steady state — skip routing if so
@@ -4870,6 +4871,10 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
                 // bypassed links too, adding the held Link.surfArea1/2.
                 hydstruct_.scatterHeldSurfArea(ctx, surf_buf, j);
             }
+
+            const double before_surface = links.flow[uj];
+            links.flow[uj] = boundSurfaceOutfallFlow(ctx, j, before_surface);
+            if (links.flow[uj] != before_surface) links.dqdh[uj] = 0.0;
 
             const double before_port = links.flow[uj];
             links.flow[uj] = lidnode::exchangePorts(ctx, j, before_port, dt);
@@ -5640,7 +5645,15 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
             }
 
             double q_sys = 0.0;
-            if (ctx_.options.routing_model == RoutingModel::FV) {
+            if (uj < ctx_.surface_outfall_link_limit.size() &&
+                std::isfinite(ctx_.surface_outfall_link_limit[uj])) {
+                // Surface outfalls have one accepted, signed transfer. FV
+                // can reverse within a routing step; DW can have incident
+                // links flowing in both directions. Book the same NET as
+                // OutfallExchange, including that simultaneous-flow case.
+                q_sys = q_in - q_out;
+                if (q_sys < 0.0) ctx_.nodes.inflow[uj] = -q_sys;
+            } else if (ctx_.options.routing_model == RoutingModel::FV) {
                 // FV books an outfall's boundary discharge in BOTH halves of
                 // its ledger (publishFv: face flux in, boundary flux out), so
                 // legacy's "both nonzero -> nothing" would drop it; FV keeps

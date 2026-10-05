@@ -44,6 +44,7 @@
 #include "data/BoundaryData.hpp"
 #include "data/PendingRows2D.hpp"
 #include "coupling/NodeCoupling.hpp"
+#include "coupling/OutfallExchange.hpp"
 #include "gw/GwTransportData.hpp"
 #include "quality/SurfaceQuality2D.hpp"   // S7
 #include "subsurface/SubsurfaceSolver.hpp"   // G1: the two-zone GW kernel
@@ -113,7 +114,7 @@ public:
      *
      * @param ctx Simulation context.
      */
-    void updateOutfallsPreRouting(SimulationContext& ctx);
+    void updateOutfallsPreRouting(SimulationContext& ctx, double dt = 0.0);
 
     /**
      * @brief Post-routing hook: compute coupling exchange and advance 2D solver.
@@ -521,6 +522,8 @@ private:
     std::vector<PendingEdgeConveyanceRow> pending_edge_conveyance_rows_;
 
     std::vector<CouplingPoint> coupling_points_;
+    OutfallExchange outfall_exchange_;
+    bool outfall_state_changed_ = false;
     /// Non-outfall coupling points only — the live in-marcher exchange list.
     /// Stable storage that state_.node_coupling points at; built once in
     /// initialize().
@@ -617,18 +620,8 @@ private:
     /// the surface, − = withdrawal) accumulated per sync batch. Indexed like
     /// coupling_points_ (non-outfall slots stay 0).
     std::vector<double> window_outfall_accum_;
-    /// Per-cell withdrawal budget (m³) for the CURRENT sync batch, seeded from
-    /// max(0, cell volume) at the last batch boundary. Outfall withdrawals
-    /// draw it down so their batch-cumulative total can never overdraw the
-    /// state the batch started from.
-    std::vector<double> window_avail_budget_;
-
-    /// Seed window_avail_budget_ from the current state and zero the outfall
-    /// accumulator — called at initialize() and after every sync batch.
+    /// Zero the consumed outfall ledger after each surface sync batch.
     void resetWindowAccumulators();
-    /// Batches in which at least one outfall withdrawal hit the availability
-    /// cap; reported once at finalize().
-    long outfall_clamp_windows_ = 0;
 
     /// Simulation time of the most recent routing step (for the finalize flush).
     double last_t_ = 0.0;

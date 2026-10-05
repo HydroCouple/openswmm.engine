@@ -203,6 +203,7 @@ void SurfaceRouter2D::prepareForEdit() {
 }
 
 void SurfaceRouter2D::initialize(SimulationContext& ctx) {
+    ctx.surface_outfall_link_limit.clear();
     // Check if 2D sections were parsed (vertices present)
     if (mesh_.n_vertices() < 3 || mesh_.n_triangles() < 1) {
         active_ = false;
@@ -729,9 +730,10 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // (prognostic q projection + availability-clamped boundary fluxes), so the
     // router never recomputes edge fluxes post-advance.
 
-    // Outfall batch accumulator and the per-cell withdrawal budget.
+    // Outfall batch ledger and per-routing-step donor reservations.
     window_outfall_accum_.assign(coupling_points_.size(), 0.0);
-    window_avail_budget_.assign(static_cast<std::size_t>(mesh_.n_triangles()), 0.0);
+    outfall_exchange_.initialize(mesh_, coupling_points_, ctx);
+    outfall_state_changed_ = false;
 
     // Construct the time integrator: the Kokkos marcher plugin when installed
     // and eligible (OPENSWMM_2D_BACKEND policy + small-mesh gate), else the
@@ -904,6 +906,17 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         thread_warnings_.emplace_back(buf);
     }
     solver_->initialize(mesh_, state_, options_);
+    if (auto* cpu = dynamic_cast<ExplicitInertialSolver*>(solver_.get())) {
+        std::vector<int> cells;
+        for (const auto& cp : coupling_points_) {
+            if (!cp.is_outfall) continue;
+            if (cp.vertex_idx < 0) cells.push_back(cp.cell_idx);
+            else for (int p = mesh_.vert_stencil_ptr[cp.vertex_idx];
+                      p < mesh_.vert_stencil_ptr[cp.vertex_idx + 1]; ++p)
+                cells.push_back(mesh_.vert_stencil_idx[p]);
+        }
+        cpu->pinExternalSourceCells(cells);
+    }
 
     // G1: the two-zone groundwater kernel, if [2D_AQUIFER] was authored. It
     // shares the marcher's unique-edge topology (one graph, one orientation
@@ -1349,7 +1362,7 @@ void SurfaceRouter2D::step(SimulationContext& ctx, double dt, double t) {
     if (!active_) return;
 
     // Pre-routing: update outfall boundaries from 2D state
-    updateOutfallsPreRouting(ctx);
+    updateOutfallsPreRouting(ctx, dt);
 
     // Note: 1D routing happens between pre and post hooks in SWMMEngine
 
@@ -1358,9 +1371,10 @@ void SurfaceRouter2D::step(SimulationContext& ctx, double dt, double t) {
 }
 
 
-void SurfaceRouter2D::updateOutfallsPreRouting(SimulationContext& ctx) {
+void SurfaceRouter2D::updateOutfallsPreRouting(SimulationContext& ctx, double dt) {
     if (!active_) return;
     updateOutfallBoundaries(coupling_points_, mesh_, state_, ctx, options_);
+    outfall_exchange_.prepare(mesh_, state_, options_, ctx, dt);
 }
 
 
@@ -1415,51 +1429,21 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
     const bool refresh_due = refreshDue(ctx, dt);
     if (refresh_due) state_.save_state();
 
-    // Outfall discharge → 2D: accumulate this step's 1D outfall discharge and
-    // inject it as a constant-rate source over the subcycle (same ledger as
-    // the window path). Junction exchange is LIVE inside the marcher. The
-    // clear is targeted: only the cells outfall points scatter into (full
-    // O(nt) fills per ~1 s routing step were a measured overhead driver).
-    if (accumulateOutfallDischargeStep(coupling_points_, mesh_, state_, ctx,
-                                       options_, dt, window_outfall_accum_,
-                                       window_avail_budget_,
-                                       /*sample_row*/ nullptr) > 0)
-        ++outfall_clamp_windows_;
-    {
-        auto& tr = state_.transport;
-        auto clear_cell = [&](int c) {
-            state_.coupling_flux[c] = 0.0;
-            if (!tr.coupling_src.empty())            // S3: same targeted clear
-                for (int sp = 0; sp < tr.n_species; ++sp)
-                    tr.coupling_src[tr.idx(sp, c)] = 0.0;
-        };
-        for (const auto& cp : coupling_points_) {
-            if (!cp.is_outfall) continue;
-            if (cp.vertex_idx >= 0) {
-                const int s = mesh_.vert_stencil_ptr[cp.vertex_idx];
-                const int e = mesh_.vert_stencil_ptr[cp.vertex_idx + 1];
-                for (int k = s; k < e; ++k)
-                    clear_cell(mesh_.vert_stencil_idx[k]);
-            } else if (cp.cell_idx >= 0) {
-                clear_cell(cp.cell_idx);
-            }
-        }
+    // Outfalls were transferred conservatively after EACH 1D routing step.
+    // Do not inject their volume again as a held source here. A changed
+    // surface must also be published to plugin-owned state.
+    if (outfall_state_changed_) {
+        // CPU closures were updated only on the affected cells; those cells
+        // are permanently pinned, so its cached active set remains valid.
+        if (!dynamic_cast<ExplicitInertialSolver*>(solver_.get()))
+            solver_->resyncFromVolumes(sim_time_);
+        outfall_state_changed_ = false;
     }
-    // S3/S4: the outfall's published row values ride its discharge; the
-    // junction spill inside the marcher reads the same array. Refreshed once
-    // per batch here — the 1D side does not move during the advance.
     publishNodeRows(ctx);
-    // T7.4: the aquifer samples a RECHARGING node's quality from the same
-    // published row the surface spill uses — one authority, so the two 2D
-    // seams can never disagree about what a node is carrying.
     if (subsurface_.active() && subsurface_.transport().active())
         subsurface_.setNodeRowConc(node_row_conc_.empty() ? nullptr
                                                           : node_row_conc_.data(),
                                    state_.transport.n_species);
-    injectAccumulatedExchange(coupling_points_, mesh_, state_,
-                              window_outfall_accum_, dt, +1.0,
-                              state_.transport.coupling_src.empty()
-                                  ? nullptr : &node_row_conc_);
 
     // Rainfall / forcings on a coarse cadence: gage values change at the gage
     // timestep (minutes), and the per-cell interpolation apply is O(nt) — per
@@ -2029,6 +2013,13 @@ void SurfaceRouter2D::publishLinkCoupling(SimulationContext& ctx) {
 void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_dt,
                                           double t) {
     if (!active_) return;
+    // Consume only the accepted hydraulic exchange, against reservations
+    // made before the 1D solve. This also preserves every sample in a batch.
+    publishNodeRows(ctx);
+    outfall_state_changed_ = outfall_exchange_.apply(
+        mesh_, state_, options_, ctx, routing_dt, window_outfall_accum_,
+        node_row_conc_.empty() ? nullptr : &node_row_conc_) || outfall_state_changed_;
+
 
     // Windowless co-advance: live in-marcher exchange, no CFL clamp on the
     // 1D, no failure/carry machinery (the marcher's CFL step is known a
@@ -2227,12 +2218,7 @@ void SurfaceRouter2D::applyAgingAndReactions(SimulationContext& ctx, double dt) 
 
 void SurfaceRouter2D::resetWindowAccumulators() {
     std::fill(window_outfall_accum_.begin(), window_outfall_accum_.end(), 0.0);
-    // Withdrawal budget = the water each cell actually holds right now (the
-    // state the next batch's outfall evaluations will read).
-    const int nt = mesh_.n_triangles();
-    for (int i = 0; i < nt; ++i)
-        window_avail_budget_[static_cast<std::size_t>(i)] =
-            std::max(0.0, state_.volume[static_cast<std::size_t>(i)]);
+
 }
 
 
@@ -2267,14 +2253,6 @@ void SurfaceRouter2D::finalize(SimulationContext& ctx) {
         solver_->finalize();
     }
 #endif
-    if (outfall_clamp_windows_ > 0) {
-        char buf[256];
-        std::snprintf(buf, sizeof(buf),
-            "WARNING: 2D outfall withdrawal was capped by the water available "
-            "on the surface in %ld sync batch(es); check the outfall stage "
-            "coupling and the 2D continuity block.", outfall_clamp_windows_);
-        ctx.warnings.push_back(buf);
-    }
     // S2 telemetry: a face whose dispersive exchange was capped is a face
     // where D·dt/d² exceeded the explicit limit — the physics stayed bounded
     // but the dispersion RATE was degraded there. Surfaced as a warning so a
@@ -2605,17 +2583,17 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
 
     // Coupling and outfall exchange (m³, SI-native, already capped/clamped —
     // exactly what the 2D domain was asked to move). Outfall sign: + = pipe
-    // discharge into 2D (source), − = withdrawal, from the per-batch
-    // accumulator. Junction exchange: the marcher booked the batch's per-node
+    // discharge into 2D (source), − = withdrawal, booked per routing step
+    // by OutfallExchange. Junction exchange: the marcher booked the batch's per-node
     // total into nodes.coupling_volume (before the queue move) — read it with
     // a per-node dedupe. Sign: + = 2D→1D drain (out of 2D), − = 1D→2D spill.
     mb_seen_nodes_.clear();
     for (std::size_t k = 0; k < coupling_points_.size(); ++k) {
         const auto& cp = coupling_points_[k];
         if (cp.is_outfall) {
-            const double v = window_outfall_accum_[k];
-            if (v > 0.0) mb.outfall_in  += v;
-            else         mb.outfall_out += -v;
+            // Already booked with the actual transfer on each 1D step.
+            // A batch net would erase genuine direction reversals.
+            continue;
         } else {
             if (!mb_seen_nodes_.insert(cp.node_idx).second) continue;
             const double vol = ctx.nodes.coupling_volume[

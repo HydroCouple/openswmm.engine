@@ -1221,8 +1221,8 @@ substep loop into one workflow.
 flowchart TD
     A[1D routing step completes - node heads current] --> B{Pending span reaches the sync batch}
     B -- no --> A
-    B -- yes --> C[Save state and seed withdrawal budgets]
-    C --> D[Accumulate outfall discharge and inject as batch-rate source]
+    B -- yes --> C[Save surface diagnostic state]
+    C --> D[Outfall transfers and ledgers already applied each routing step]
     D --> E[Refresh rainfall, forcing overrides and boundary values]
     E --> F[Marcher advance over the batch span]
     F --> G{Rebuild due}
@@ -1235,7 +1235,7 @@ flowchart TD
     L --> M[Tier-0 firings - boundary edges and live junction exchange]
     M --> N{Batch span filled}
     N -- no --> G
-    N -- yes --> O[Book junction, outfall and boundary ledgers into the 2D mass balance]
+    N -- yes --> O[Book junction and boundary ledgers; outfalls already booked]
     O --> P[Queue exchange volumes for uniform delivery to 1D lateral inflow]
     P --> Q[Clear one-shot forcings, reset window accumulators]
     Q --> A
@@ -1877,12 +1877,35 @@ single-step pulse.
 
 An outfall coupled to the mesh works in both directions.
 
-Outward, the node's net discharge for the routing step is accumulated
-and injected into the 2D cells as a constant-rate source over the
-subcycle. Withdrawals — a submerged outfall drawing surface water back
-into the pipe — are capped by a per-cell budget seeded from the state
-the batch started from, so a batch's cumulative withdrawal can never
-overdraw it.
+Before each 1D routing step, surface cells reserve water for their coupled
+outfalls. If \f$m_i\f$ outfall footprints share cell \f$i\f$, each receives
+\f$\max(V_i,0)/m_i\f$. The reservations of an outfall are summed to
+\f$B_o\f$ and divided among its \f$d_o\f$ incident hydraulic links. Each
+link's surface-to-pipe discharge is bounded by
+\f$B_o/(d_o\Delta t)\f$ (converted from m³/s to ft³/s). The dynamic-wave
+solver applies this bound before node continuity; the finite-volume solver
+applies it to the boundary mass flux before either side integrates it.
+Positive pipe-to-surface discharge is not restricted by this donor bound.
+
+After routing, the **accepted** net volume is transferred once. A withdrawal
+uses the same per-cell reservations, proportional to their available water;
+a discharge is distributed by cell area. The cell volumes and the outfall
+ledger receive identical increments. The transfer precedes surface routing,
+infiltration, evaporation and live junction exchange, so those processes
+cannot spend water already withdrawn by an outfall. Transported surface mass
+is removed in the same fraction as the donated water. Every routing step is
+booked in its actual direction, including when `COUPLING_SYNC` batches several
+surface steps. Reversals within a batch therefore retain both the incoming
+and outgoing totals; the current stored-volume total includes each transfer.
+
+This is a conservative, first-order split exchange. Equal reservation shares
+can restrict one active outlet while another leaves its share unused; unused
+water remains on the surface and becomes available in the next routing step.
+Time-step refinement is still needed to assess exchange accuracy. Availability
+limiting is not a substitute for that accuracy check. Previously the code
+capped a stencil-wide request and then scattered a held sink with different
+weights; individual cells could reject that sink while the ledger booked the
+full request. That is not a conservative transfer.
 
 Inward, the 2D surface acts as **dynamic tailwater**. The 2D stage at
 the coupling point is cached, and the outfall's boundary condition
@@ -2000,27 +2023,23 @@ accumulated into the point's ledger \f$\int Q\,dt\f$.
    and a wet/dry factor \f$\sigma(\mathrm{clamp}((d_{2D} - h_{dry})/h_{dry}, 0, 1))\f$ keyed on depth in excess of `DRY_DEPTH`
    (§9.7.2). The outfall boundary logic applies
    \f$\max(h_{standard}, h_{2D})\f$ inside every dynamic-wave iteration,
-   blending by the cached factor and honouring flap gates.
+   blending by the cached factor and honouring flap gates. Reserve donor
+   volumes and publish the per-link withdrawal limits described in §9.7.2.
 2. *1D routing.* Each coupled junction's head sensitivity \f$G\f$ of
    (9-19) is scattered into the node's \f$\sum dQ/dH\f$ denominator every
    iteration (converted by \f$f_{Q,2D \to 1D} \times f_{L,1D \to 2D}\f$,
    m³/s per m to ft³/s per ft). The previous batch's junction
    exchange volumes drain from the delivery queue as a uniform
    lateral-inflow rate over the batch span.
-3. *Post-routing.* The routing step's span joins the pending batch;
+3. *Post-routing.* Transfer the accepted outfall volume once and update
+   the affected cell volumes and heads. The routing step's span joins the pending batch;
    when the pending span reaches the sync span (one routing step by
    default; `COUPLING_SYNC` clamps to between one routing step and
    60 s) the co-advance batch fires:
-   1. Save the batch-start state; it seeds the per-cell outfall
-      withdrawal budgets.
-   2. Accumulate each coupled outfall's net discharge this step,
-      \f$Q_{net} = (Q_{in} - Q_{out}) \times f_{Q,1D \to 2D}\f$;
-      withdrawals are capped by the remaining budget of the cells the
-      point taps. The batch total is injected as a constant-rate
-      `coupling_flux` source, scattered over the vertex stencil with
-      upwind-HGL weights — downhill cells for a source, uphill for a
-      sink — normalized to unity, with the geometric
-      partition-of-unity weights as the flat-surface fallback.
+   1. Save the batch-start state for surface diagnostics.
+   2. Outfall volumes have already been transferred after each 1D routing
+      step using the pre-routing reservations (§9.7.2). Do not reinject them
+      as held `coupling_flux` sources or rebook their already applied ledger.
    3. Refresh rainfall, evaporation and forcing overrides on a 30 s
       cadence (immediately when the forcing API has marked the state
       dirty); resolve boundary time series and rating curves every
@@ -2033,8 +2052,8 @@ accumulated into the point's ledger \f$\int Q\,dt\f$.
       \f$f_{Q,2D \to 1D}\f$ into the per-node exchange volume; the batch's
       boundary-edge volumes accumulate from the published window-mean
       fluxes; the 2D mass balance then ingests rainfall, evaporation,
-      junction, outfall and boundary terms — every one the applied
-      (post-cap) volume.
+      junction and boundary terms, alongside the outfall terms already
+      booked per routing step — every one the applied (post-cap) volume.
    6. Move the junction volumes to the delivery queue for step 2 of
       the following batch, clear one-shot forcings, and reset the
       window accumulators.
@@ -2057,7 +2076,7 @@ Implementation: the exchange law and its sensitivity are
 file-local `orificePhi`, `effectiveArea`, `wetVertexEta`,
 `scatterCouplingFlux`, `budgetAvail`/`budgetDraw`/`budgetCredit`
 helpers); outfall accumulation and tailwater caching are
-@ref openswmm::twoD::accumulateOutfallDischargeStep and
+`OutfallExchange` and
 @ref openswmm::twoD::updateOutfallBoundaries; the in-marcher exchange
 loop is the tier-0 tail of
 @ref openswmm::twoD::ExplicitInertialSolver::fireCells; the batch

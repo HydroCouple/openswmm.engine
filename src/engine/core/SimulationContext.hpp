@@ -1395,6 +1395,10 @@ struct SimulationContext {
      *          inflows/outflows of the 2D domain, signed oppositely to the 1D
      *          routing_external/routing_flooding terms.
      */
+    // Per-incident-link surface donation limit (ft³/s), indexed by node.
+    // Empty for ordinary models; infinity for nodes without a surface outfall.
+    std::vector<double> surface_outfall_link_limit;
+
     struct MassBalance2D {
         double init_storage          = 0.0;  ///< Initial surface storage (m³)
         double final_storage         = 0.0;  ///< Latest surface storage (m³)
@@ -1823,6 +1827,7 @@ struct SimulationContext {
      *          Call this before re-running or re-opening a simulation.
      */
     void reset() {
+        surface_outfall_link_limit.clear();
         state = EngineState::CREATED;
         control_log.clear();
         control_rule_names.clear();

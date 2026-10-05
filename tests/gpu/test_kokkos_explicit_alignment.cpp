@@ -398,6 +398,23 @@ void sweChecks() {
                           << " PASS\n";
             }
 }
+void externalVolumeResync() {
+    auto m = mesh(4);
+    auto a = state(m, 0.0), b = a;
+    auto o = options(4);
+    ExplicitInertialSolver cpu;
+    gpu::ExplicitKokkosSurfaceSolver device_solver;
+    cpu.initialize(m, a, o); device_solver.initialize(m, b, o);
+    cpu.advance(0, 1); device_solver.advance(0, 1);
+    a.volume[0] = b.volume[0] = 1.0;
+    cpu.resyncFromVolumes(1); device_solver.resyncFromVolumes(1);
+    cpu.advance(1, 2); device_solver.advance(1, 2);
+    near(sum(a.volume), 1.0, "CPU external transfer conservation");
+    near(sum(b.volume), 1.0, "Kokkos external transfer conservation");
+    require(a.volume[0] < 1.0 && b.volume[0] < 1.0, "external transfer activates faces");
+    compare(a.volume, b.volume, "external transfer CPU/Kokkos parity", 2e-9);
+    std::cout << "External volume resync PASS\n";
+}
 int main(int argc, char **argv) {
     Kokkos::initialize(argc, argv);
     std::cout << "Execution space: " << gpu::ExecSpace::name()
@@ -407,6 +424,7 @@ int main(int argc, char **argv) {
         frozenTier();
         unsupported();
         marcher();
+        externalVolumeResync();
         sweChecks();
         auto initial = device(std::vector<double>{7., -3., 0.});
         auto live = device(std::vector<double>{11., 5., 2.});

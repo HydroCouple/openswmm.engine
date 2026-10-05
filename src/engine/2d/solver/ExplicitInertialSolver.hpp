@@ -64,6 +64,8 @@ public:
     double advance(double t_current, double t_target) override;
     void reinitialize(double t0) override;
     void resyncFromVolumes(double t0) override;
+    /// External outfall transfers keep these cells and their halo on tier zero.
+    void pinExternalSourceCells(const std::vector<int>& cells);
     void finalize() override;
 
     long   last_num_steps() const noexcept override { return last_steps_; }
