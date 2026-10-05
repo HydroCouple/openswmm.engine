@@ -1018,9 +1018,12 @@ then clogging is ignored.
 
 ### 6.2.10 Underdrain Valve Controls
 
-The modern OpenSWMM engine extends the underdrain model of Equation 6-9
-with an optional two-threshold valve that allows an underdrain to open
-and close automatically in response to the head *h<sub>3</sub>* acting on it.
+Conventional SWMM LID underdrains support optional opening and closing
+thresholds, available since SWMM 5.1.013 (August 2018), together with an
+optional head-based discharge multiplier curve. See the
+[EPA release notes](https://github.com/USEPA/Stormwater-Management-Model/releases/tag/v5.1.13).
+The two-threshold control allows the underdrain to open and close
+automatically in response to the head *h<sub>3</sub>* acting on it.
 Two additional parameters, an opening head *h<sub>open</sub>* and a closing head
 *h<sub>close</sub>*, control the valve state, and the underdrain flow becomes:
 
@@ -1047,6 +1050,19 @@ line continuously open.
 LID type with an underdrain. The per-unit parameters `drain_hopen`,
 `drain_hclose`, and the valve state `drain_open` are defined in
 `src/engine/hydrology/LID.hpp`.
+
+Each conventional LID control has one underdrain definition and one
+opening/closing threshold pair; multiple physical pipes can be represented
+by that combined drain law. The optional control curve multiplies the
+nominal discharge in Equation 6-77 as a function of drain head.
+
+Storage-node LIDs instead connect to any number of ordinary hydraulic links
+at different elevations. Each controllable link can have independent
+control rules and partial valve openings. Dynamic Wave accounts for
+downstream head and permitted reverse flow, which changes storage and
+pollutant exposure within the layered facility. See
+@ref hydraulics_ref_lid_storage_formulation and
+@ref quality_ref_lid_storage_formulation for the hydraulic and mass balances.
 
 ### 6.2.11 Rain Barrel Rainfall Capture and Exfiltration
 
