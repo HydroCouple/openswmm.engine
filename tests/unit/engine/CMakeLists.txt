@@ -1088,6 +1088,7 @@ if(_osw_fixture_clashes)
 endif()
 
 add_gtest_unit(test_engine_lid_nodes test_lid_nodes.cpp)
+add_gtest_unit(test_engine_richards_column test_richards_column.cpp)
 target_compile_definitions(test_engine_lid_nodes PRIVATE OPENSWMM_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 
 if(OPENSWMM_WITH_GEOPACKAGE)

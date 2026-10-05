@@ -184,6 +184,10 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
             if (!write_pod(buf, static_cast<uint32_t>(n.lid_infiltration.size()))) return false;
             for (double value : n.lid_infiltration) if (!write_pod(buf, value)) return false;
         }
+        if (hs.header.version >= 11u) {
+            if (!write_pod(buf, static_cast<uint32_t>(n.lid_richards.size()))) return false;
+            for (double value : n.lid_richards) if (!write_pod(buf, value)) return false;
+        }
     }
 
     // Links
@@ -359,7 +363,7 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
 
     // Header
     if (!read_pod(is, hs.header.version))    return false;
-    if (hs.header.version < 1u || hs.header.version > 10u) {
+    if (hs.header.version < 1u || hs.header.version > 11u) {
         tl_last_io_error = "Unsupported hot start version " +
                            std::to_string(hs.header.version) + " in '" + path + "'";
         return false;
@@ -415,6 +419,12 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
                 n.lid_infiltration[5] > n.lid_infiltration[6] || n.lid_infiltration[6] <= 0 ||
                 n.lid_infiltration[7] <= 0 || n.lid_infiltration[9] < 0 ||
                 (n.lid_infiltration[10] != 0 && n.lid_infiltration[10] != 1))) return false;
+        }
+        if (hs.header.version >= 11u) {
+            uint32_t count = 0;
+            if (!read_pod(is, count) || count > file_size / sizeof(double) || count % 8 != 0) return false;
+            n.lid_richards.resize(count);
+            for (auto& value : n.lid_richards) if (!read_pod(is, value) || !std::isfinite(value)) return false;
         }
     }
 
@@ -934,10 +944,19 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
         hs->nodes[ui].head   = ctx.nodes.head[ui];
         hs->nodes[ui].volume = ctx.nodes.volume[ui];
         if (lidnode::active(ctx, i)) {
-            hs->header.version = 10u;
+            hs->header.version = std::max(hs->header.version, 10u);
             const auto& state = ctx.node_subtypes.storages.lid_state[ctx.node_subtypes.storage_row(i)];
             hs->nodes[ui].lid_treated_volume = state.treated_volume;
             hs->nodes[ui].lid_quality_mass = state.quality_mass;
+            if (state.richards) {
+                hs->header.version = 11u;
+                const auto stack = lidnode::layers(ctx, ctx.node_subtypes.storages.lid[ctx.node_subtypes.storage_row(i)].control);
+                for (std::size_t k = 0; k < state.cells.size(); ++k) {
+                    const auto& cell = state.cells[k]; const auto& p = stack[cell.layer - 1].retention;
+                    auto& values = hs->nodes[ui].lid_richards;
+                    values.insert(values.end(), {state.richards_water[k], p.theta_r, p.alpha, p.n, p.l, p.specific_storage, cell.conductivity, cell.wilting_point});
+                }
+            }
             if (state.infiltration_cell >= 0) {
                 const auto& ga = state.surface_infil;
                 hs->nodes[ui].lid_infiltration = {ga.S, ga.Ks, ga.IMDmax, ga.IMD, ga.F, ga.Fu,
@@ -1039,10 +1058,19 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
         hs->nodes[ui].head   = ctx.nodes.head[ui];
         hs->nodes[ui].volume = ctx.nodes.volume[ui];
         if (lidnode::active(ctx, i)) {
-            hs->header.version = 10u;
+            hs->header.version = std::max(hs->header.version, 10u);
             const auto& state = ctx.node_subtypes.storages.lid_state[ctx.node_subtypes.storage_row(i)];
             hs->nodes[ui].lid_treated_volume = state.treated_volume;
             hs->nodes[ui].lid_quality_mass = state.quality_mass;
+            if (state.richards) {
+                hs->header.version = 11u;
+                const auto stack = lidnode::layers(ctx, ctx.node_subtypes.storages.lid[ctx.node_subtypes.storage_row(i)].control);
+                for (std::size_t k = 0; k < state.cells.size(); ++k) {
+                    const auto& cell = state.cells[k]; const auto& p = stack[cell.layer - 1].retention;
+                    auto& values = hs->nodes[ui].lid_richards;
+                    values.insert(values.end(), {state.richards_water[k], p.theta_r, p.alpha, p.n, p.l, p.specific_storage, cell.conductivity, cell.wilting_point});
+                }
+            }
             if (state.infiltration_cell >= 0) {
                 const auto& ga = state.surface_infil;
                 hs->nodes[ui].lid_infiltration = {ga.S, ga.Ks, ga.IMDmax, ga.IMD, ga.F, ga.Fu,
@@ -1153,10 +1181,24 @@ int HotStartManager::apply(HotStartFile& hs,
                 for (std::size_t k = 0; k < cells.size(); ++k) {
                     const auto& a = cells[k]; const auto& b = rec.lid_cells[k];
                     compatible &= a.layer == b.layer && a.bottom == b.bottom && a.top == b.top &&
-                                  a.porosity == b.porosity && a.geometric_volume == b.volume && b.theta >= a.wilting_point;
+                                  a.porosity == b.porosity && a.geometric_volume == b.volume && (ctx.node_subtypes.storages.lid_state[r].richards || b.theta >= a.wilting_point);
                 }
             }
             compatible &= rec.lid_quality_mass.empty() || rec.lid_quality_mass.size()==rec.lid_cells.size()*ctx.n_pollutants();
+            if (compatible) {
+                const auto& state = ctx.node_subtypes.storages.lid_state[r];
+                compatible &= state.richards ? rec.lid_richards.size() == state.cells.size() * 8 : rec.lid_richards.empty();
+                if (compatible && state.richards) {
+                    const auto stack = lidnode::layers(ctx, ctx.node_subtypes.storages.lid[r].control);
+                    for (std::size_t k = 0; k < state.cells.size(); ++k) {
+                        const auto& cell = state.cells[k]; const auto& p = stack[cell.layer - 1].retention;
+                        const auto* v = rec.lid_richards.data() + k * 8;
+                        compatible &= v[1] == p.theta_r && v[2] == p.alpha && v[3] == p.n && v[4] == p.l &&
+                            v[5] == p.specific_storage && v[6] == cell.conductivity && v[7] == cell.wilting_point;
+                        if (k) compatible &= v[0] > p.theta_r * cell.geometric_volume;
+                    }
+                }
+            }
             if (compatible && hs.header.version >= 10u) {
                 const auto& state = ctx.node_subtypes.storages.lid_state[r];
                 const auto& ga = state.surface_infil;
@@ -1176,6 +1218,10 @@ int HotStartManager::apply(HotStartFile& hs,
             for (std::size_t k = 0; k < state.cells.size(); ++k) {
                 state.cells[k].theta = rec.lid_cells[k].theta;
                 state.held_volume += state.cells[k].theta * state.cells[k].geometric_volume;
+            }
+            if (state.richards) {
+                for (std::size_t k = 0; k < state.cells.size(); ++k) state.richards_water[k] = rec.lid_richards[k * 8];
+                lidnode::refreshRichardsState(ctx, r);
             }
             ctx.nodes.full_volume[i] = 0.0;
             ctx.nodes.full_volume[i] = node::getVolume(ctx.nodes, idx, ctx.nodes.full_depth[i], &ctx.tables,

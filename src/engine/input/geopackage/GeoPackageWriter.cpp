@@ -1266,7 +1266,7 @@ static void write_lid_controls(sqlite3* db, const SimulationContext& ctx,
 
 static void write_lid_nodes(sqlite3* db, const SimulationContext& ctx, const std::string& sim) {
     // Replace this simulation's complete stack, including deleted rows.
-    for (const char* table : {"lid_layer_treatment", "lid_node_outlets", "lid_nodes", "lid_node_layers"}) {
+    for (const char* table : {"lid_richards_materials", "lid_richards_options", "lid_layer_treatment", "lid_node_outlets", "lid_nodes", "lid_node_layers"}) {
         auto del = prepare(db, std::string("DELETE FROM ") + table + " WHERE simulation_id=?");
         bind_text(del.get(), 1, sim);
         if (sqlite3_step(del.get()) != SQLITE_DONE) throw std::runtime_error("Cannot replace LID node data");
@@ -1281,6 +1281,28 @@ static void write_lid_nodes(sqlite3* db, const SimulationContext& ctx, const std
             bind_int(layer.get(), 3, ordinal++); bind_int(layer.get(), 4, static_cast<int>(row.kind));
             for (int k = 0; k < 7; ++k) bind_double(layer.get(), 5 + k, row.params[k]);
             if (sqlite3_step(layer.get()) != SQLITE_DONE) throw std::runtime_error("Cannot write LID node layer");
+        }
+    }
+    auto ro = prepare(db, "INSERT INTO lid_richards_options VALUES (?,?,?,?,?,?)");
+    auto rm = prepare(db, "INSERT INTO lid_richards_materials VALUES (?,?,?,?,?,?,?,?)");
+    for (int c = 0; c < static_cast<int>(ctx.lid_controls.node_layers.size()); ++c) {
+        const auto& stack = ctx.lid_controls.node_layers[c];
+        if (stack.empty()) continue;
+        const auto& o = stack.front().flow;
+        if (o.enabled) {
+        sqlite3_reset(ro.get()); sqlite3_clear_bindings(ro.get());
+        bind_text(ro.get(), 1, sim); bind_text(ro.get(), 2, ctx.lid_names.name_of(c)); bind_int(ro.get(), 3, o.cells_per_layer);
+        bind_double(ro.get(), 4, o.atol); bind_double(ro.get(), 5, o.rtol); bind_double(ro.get(), 6, o.max_step);
+        if (sqlite3_step(ro.get()) != SQLITE_DONE) throw std::runtime_error("Cannot write LID Richards options");
+        }
+        for (std::size_t i = 0; i < stack.size(); ++i) if (stack[i].kind == LidNodeLayerKind::Media || stack[i].kind == LidNodeLayerKind::Aggregate) {
+            const auto& p = stack[i].retention;
+            if (!richards::valid(p, stack[i].params[1])) continue;
+            sqlite3_reset(rm.get()); sqlite3_clear_bindings(rm.get());
+            bind_text(rm.get(), 1, sim); bind_text(rm.get(), 2, ctx.lid_names.name_of(c)); bind_int(rm.get(), 3, i + 1);
+            bind_double(rm.get(), 4, p.theta_r); bind_double(rm.get(), 5, p.alpha); bind_double(rm.get(), 6, p.n);
+            bind_double(rm.get(), 7, p.l); bind_double(rm.get(), 8, p.specific_storage);
+            if (sqlite3_step(rm.get()) != SQLITE_DONE) throw std::runtime_error("Cannot write LID Richards material");
         }
     }
     auto treatment=prepare(db,"INSERT INTO lid_layer_treatment VALUES (?,?,?,?,?,?,?)");

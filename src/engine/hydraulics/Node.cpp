@@ -91,6 +91,11 @@ double getVolume(const NodeData& nodes, int idx, double depth,
     if (nodes.type[ui] == NodeType::STORAGE) {
         const int lr = subs ? subs->storage_row(idx) : -1;
         if (lr >= 0 && !subs->storages.lid_state[lr].cells.empty()) {
+            const auto& state = subs->storages.lid_state[lr];
+            if (state.richards) {
+                const auto& surface = state.cells.front();
+                return std::clamp(depth - surface.bottom, 0., surface.top - surface.bottom) * surface.area * surface.porosity;
+            }
             double volume = 0.0;
             for (const auto& cell : subs->storages.lid_state[lr].cells) {
                 const double fraction = std::clamp((depth - cell.bottom) / (cell.top - cell.bottom), 0.0, 1.0);
@@ -170,6 +175,10 @@ double getDepth(const NodeData& nodes, int idx, double volume,
         const int lr = subs ? subs->storage_row(idx) : -1;
         if (lr >= 0 && !subs->storages.lid_state[lr].cells.empty()) {
             const auto& cells = subs->storages.lid_state[lr].cells;
+            if (subs->storages.lid_state[lr].richards) {
+                const auto& surface = cells.front();
+                return std::min(surface.top, surface.bottom + volume / (surface.area * surface.porosity));
+            }
             for (auto i = cells.rbegin(); i != cells.rend(); ++i) {
                 const double capacity = i->geometric_volume * std::max(0.0, i->porosity - i->theta);
                 if (capacity > 0.0 && volume < capacity)
@@ -298,6 +307,7 @@ double getSurfArea(const NodeData& nodes, int idx, double depth,
         const int lr = subs ? subs->storage_row(idx) : -1;
         if (lr >= 0 && !subs->storages.lid_state[lr].cells.empty()) {
             const auto& cells = subs->storages.lid_state[lr].cells;
+            if (subs->storages.lid_state[lr].richards) return cells.front().area * cells.front().porosity;
             for (const auto& c : cells) if (depth >= c.bottom && depth < c.top)
                 return c.area * std::max(0.0, c.porosity - c.theta);
             const auto& c = depth <= 0.0 ? cells.back() : cells.front();

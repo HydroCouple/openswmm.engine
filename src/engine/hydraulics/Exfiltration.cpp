@@ -219,6 +219,10 @@ void ExfilSolver::computeAll(SimulationContext& ctx, double dt) {
         int ni = soa_.node_idx[uk];
         if (ni < 0) continue;
         auto uni = static_cast<size_t>(ni);
+        if (lidnode::richardsMode(ctx, ni)) {
+            ctx.node_subtypes.storages.exfil_rate[ctx.node_subtypes.storage_row(ni)] = 0;
+            continue; // the column owns its bottom loss
+        }
         // G-X2 one-owner rule: a storage node with a two-zone aquifer bed
         // exchanges through the conductance channel instead.
         if (uni < nodes.aquifer2d_bed.size() && nodes.aquifer2d_bed[uni]) {

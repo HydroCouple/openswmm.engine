@@ -103,6 +103,7 @@ void DefaultInputPlugin::register_builtin_handlers() {
     registry_.register_builtin("LID_LAYER_TREATMENT", lidnode::readTreatment);
     registry_.register_builtin("LID_NODES", lidnode::readNodes);
     registry_.register_builtin("LID_NODE_OUTLETS", lidnode::readOutlets);
+    registry_.register_builtin("LID_RICHARDS", lidnode::readRichards);
     registry_.register_builtin("AQUIFERS",      input::handle_aquifers);
     registry_.register_builtin("GROUNDWATER",   input::handle_groundwater);
     registry_.register_builtin("GWF",           input::handle_gwf);

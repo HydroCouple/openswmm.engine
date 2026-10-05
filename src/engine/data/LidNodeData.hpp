@@ -5,6 +5,7 @@
 #include <array>
 #include <vector>
 #include <string>
+#include "../hydrology/RichardsColumn.hpp"
 #include "../hydrology/Infiltration.hpp"
 
 namespace openswmm {
@@ -21,6 +22,8 @@ struct LidNodeLayer {
     LidNodeLayerKind kind = LidNodeLayerKind::Media;
     std::array<double, 7> params{};
     std::vector<LidLayerTreatment> treatment;
+    richards::Material retention; // explicit inverse-metre parameters
+    richards::Options flow; // control options, stored on first layer only
 };
 struct LidNodeCell {
     double bottom = 0.0, top = 0.0; // feet above invert
@@ -33,6 +36,11 @@ struct LidNodeCell {
 struct LidWaterTransfer { int from, to; double volume; }; // -1 mobile, -2 lateral, -3 evaporation
 struct LidPortTransfer { int link, cell; double volume; }; // positive into held water
 struct LidNodeState {
+    bool richards = false;
+    std::vector<double> richards_water; // ft3, full porous stores; surface row is unused
+    std::vector<double> richards_pressure; // ft, negative means suction
+    richards::Report richards_report; // SI diagnostics for last accepted interval
+    double richards_bottom_loss = 0.0; // ft3, outside-mesh system loss
     // One modified Green-Ampt history for the media directly below SURFACE.
     // Other layer/port wetting uses the physical cell and mobile inventories.
     GreenAmptState surface_infil;

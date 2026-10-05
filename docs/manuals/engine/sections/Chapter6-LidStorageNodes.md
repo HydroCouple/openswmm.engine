@@ -304,3 +304,77 @@ tests establish conservative implementation behavior, not field validity.
 Check timing, peaks and treatment convergence as well as continuity; rapid
 surface overflow can alias coarse snapshots. Use cumulative engine budgets
 for those losses and calibrate against measurements for field applications.
+
+
+## Optional Richards 1D flow model
+
+The existing formulation with backwater remains the default. A NODE control
+can instead use a complete one-dimensional Richards column, with numerical
+cells inside each authored MEDIA and AGGREGATE layer. Physical layer count
+and numerical cell count are independent.
+
+```ini
+[LID_RICHARDS]
+;; Control  OPTIONS  CellsPerPorousLayer  AbsTol  RelTol  MaxInternalStepSeconds
+Stack       OPTIONS  8                    1e-7    1e-5    30
+;; Control  PhysicalLayer  ResidualTheta  Alpha_1_per_m  n    l    Ss_1_per_m
+Stack       2              0.03           2.0            1.6  0.5  0.0001
+Stack       3              0.03           2.0            1.6  0.5  0.0001
+```
+
+Layer indices are one-based, top to bottom. SURFACE and BOTTOM have no
+retention rows. Every porous layer needs an explicit van Genuchten–Mualem law:
+residual water content below porosity (and below the MEDIA wilting point),
+alpha > 0, n > 1, l >= 0, and specific storage Ss > 0. Alpha and Ss are in
+inverse metres in **both** input unit systems; they are not converted with
+project length units. Thickness and saturated conductivity retain their
+usual inches/mm and inches/hour or mm/hour units. The example materials are
+illustrative, not calibrated defaults.
+
+The solver evolves complete cell water volume. Unsaturated moisture follows
+van Genuchten retention; saturated storage is theta_s + Ss*h. Thus moisture
+never exceeds porosity, while pressure and elastic water storage can increase
+under backwater. Specific storage is a physical input, not a numerical
+stabilization setting. The porous column owns all pore water; the hydraulic
+storage node owns surface ponding only.
+
+A conservative spatial flux difference is integrated with adaptive stiff
+BDF1 (implicit Euler, using two half steps for the accepted result). Newton
+iterations use tridiagonal systems. Compatible columns are packed across
+node lanes in batches of up to 64, with independent timesteps, error tests
+and completion masks. This is CPU batching; there is no GPU implementation.
+Time tolerance is applied to complete storage divided by geometric volume.
+Routing boundaries remain fixed during each routing interval, followed by
+one commit of the accepted hydraulic port transfers. Check both cell-size
+and routing-step convergence for a new application.
+
+Without an active aquifer bed, a zero BOTTOM conductivity gives a sealed
+bottom; a positive value gives native-soil drainage as a system loss, limited
+by column and native-soil conductivity. The kernel supports a prescribed
+head bottom for verification, but the runtime aquifer adapter is pending.
+An active 2D aquifer node bed is therefore rejected at initialization.
+An explicit `EXCHANGE NO` retains the native-soil bottom behavior. Water age,
+heat and MSX with Richards nodes are also rejected until their porous-cell
+transport adapters exist. Standard pollutant advection and authored layer
+treatment use accepted directional water transfers; dry pond solute is
+retained and redissolves when water is supplied.
+
+In the LID editor, choose **Richards 1D**, enter retention parameters for each
+porous material, and inspect its moisture/conductivity curves. Numerical
+settings are expandable. Existing-model field capacity is retained for
+switching back; the conductivity slope and Green-Ampt suction do not define
+the Richards constitutive law. The live section shows numerical cell
+moisture and pressure, plus last-interval solver steps, retries and water
+balance. Profile histories in saved results are not yet implemented.
+
+INP and GeoPackage preserve the selected model and retention parameters.
+Hotstart extension 11 stores full Richards water and material identity and
+rejects incompatible materials/discretization. Existing-model hotstarts
+continue to use extension 10. Selecting the existing model preserves the
+authored retention materials, but inactive numerical settings revert to the
+defaults after a file roundtrip.
+
+The input/API/GUI milestone is part of the surface–subsurface program; it
+does not implement UEB or aquifer-owned infiltration/ET. See
+`plans/LID_RICHARDS_1D_IMPLEMENTATION_2026-10-05.md` for equations, validation
+and limitations.
