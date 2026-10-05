@@ -154,6 +154,20 @@ public:
         return (model_ == RouteModel::DYNWAVE) ? dw_solver_.lastConverged() : true;
     }
 
+    /// Start collecting the per-conduit time step summary ([REPORT]
+    /// LINK_STEPS). Call after init(). @return false when the routing model
+    /// cannot supply it (KW/STEADY, or an FV backend other than the in-tree
+    /// ExplicitFvSolver); the report then says so.
+    bool enableLinkStepStats(SimulationContext& ctx);
+
+    /// Whether enableLinkStepStats() succeeded.
+    bool linkStepStatsEnabled() const { return lstep_enabled_; }
+
+    /// Fold the step just routed into ctx.links' time step summary when
+    /// `in_window` (inside the report period and not between events);
+    /// otherwise discard it. Call once per routing step after step().
+    void accumulateLinkStepStats(SimulationContext& ctx, double dt, bool in_window);
+
     /// Access the FV solver (null unless FLOW_ROUTING FV). Used by the report
     /// plugin for the "FV Solver Statistics" block and by the tests.
     const fv::INetworkSolver* fvSolver() const { return fv_solver_.get(); }
@@ -194,6 +208,14 @@ private:
     std::unique_ptr<fv::INetworkSolver>  fv_solver_;
     std::string                          fv_backend_;
     std::vector<std::string>             fv_warnings_, fv_errors_;
+
+    // Per-conduit time step summary ([REPORT] LINK_STEPS). FV samples arrive
+    // through the solver's sink during advance() and wait here, per link,
+    // until accumulateLinkStepStats keeps or discards them.
+    bool                lstep_enabled_ = false;
+    double              lstep_rs_      = 0.0;   ///< routing step (bin edges)
+    std::vector<double> lstep_pmin_, lstep_pmax_, lstep_pdt_time_, lstep_ptime_, lstep_pbin_;
+    static void fvStepSink(void* user, int conduit, double dt, double dur);
 
     // Per-step forcing buffers, allocated once at init.
     std::vector<double> fv_lateral_, fv_fixed_head_, fv_struct_flow_, fv_cond_loss_;

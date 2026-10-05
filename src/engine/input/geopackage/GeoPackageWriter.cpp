@@ -261,6 +261,7 @@ static void write_options(sqlite3* db, const SimulationContext& ctx,
     insert("RPT_FLOWSTATS", opts.rpt_flowstats ? "YES" : "NO");
     insert("RPT_CONTROLS", opts.rpt_controls ? "YES" : "NO");
     insert("RPT_AVERAGES", opts.rpt_averages ? "YES" : "NO");
+    insert("RPT_LINK_STEPS", opts.rpt_link_steps ? "YES" : "NO");
     if (opts.rpt_subcatchments == 0) insert("RPT_SUBCATCHMENTS", "NONE");
     else if (opts.rpt_subcatchments == 1) insert("RPT_SUBCATCHMENTS", "ALL");
     else {

@@ -1680,6 +1680,17 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
             updateRoutingMassBalance(dt_next);
             updateStatistics(dt_next);
         }
+        // [REPORT] LINK_STEPS: same window as updateStatistics (not between
+        // events, step ending at/after REPORT_START). Called every step so
+        // FV's pending samples are drained even outside the window.
+        if (router_.linkStepStatsEnabled()) {
+            const double step_end = datetime::addSeconds(
+                ctx_.options.start_date,
+                (ctx_.elapsed_ms + 1000.0 * dt_next + 1.0) / 1000.0);
+            router_.accumulateLinkStepStats(
+                ctx_, dt_next,
+                !between_events_ && step_end >= ctx_.options.report_start);
+        }
         const double half = dt_next / 2.0;
         for (int k = 0; k < 11; ++k) {
             const double rate = (dt_next > 0.0)
@@ -8053,6 +8064,10 @@ void SWMMEngine::initHydraulics() noexcept {
     else if (ctx_.options.routing_model == RoutingModel::STEADY) rm = RouteModel::STEADY;
     else if (ctx_.options.routing_model == RoutingModel::FV) rm = RouteModel::FV;
     router_.init(ctx_, rm);
+    ctx_.routing_stats.lstep_mode = 0;
+    if (ctx_.options.rpt_link_steps && ctx_.n_links() > 0 &&
+        router_.enableLinkStepStats(ctx_))
+        ctx_.routing_stats.lstep_mode = (rm == RouteModel::FV) ? 2 : 1;
 
     // Surface what the FV mesh builder found. Without this the diagnostics were
     // collected into Router::fv_errors_ and never read by anyone: initFv bails

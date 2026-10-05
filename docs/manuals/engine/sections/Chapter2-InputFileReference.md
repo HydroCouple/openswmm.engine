@@ -280,6 +280,7 @@ INPUT                YES / NO
 CONTINUITY        YES / NO
 FLOWSTATS        YES / NO
 CONTROLS            YES / NO
+LINK_STEPS        YES / NO
 SUBCATCHMENTS    ALL / NONE / &lt;list of subcatchment names&gt;
 NODES                ALL / NONE / &lt;list of node names&gt;
 LINKS                ALL / NONE / &lt;list of link names&gt;
@@ -291,6 +292,7 @@ INPUT specifies whether or not a summary of the input data should be provided in
 CONTINUITY specifies if continuity checks should be reported or not. The default is YES.
 FLOWSTATS specifies whether summary flow statistics should be reported or not. The default is YES.
 CONTROLS specifies whether all control actions taken during a simulation should be listed or not. The default is NO.
+LINK_STEPS (OpenSWMM extension) adds a Conduit Time Step Summary table: for each reported conduit, the minimum, time-weighted average and maximum local time step, the percent of time spent in each of five step ranges below the routing step ((RS/2, RS], (RS/4, RS/2], ..., up to RS/16), and the percent of routing steps in which both end nodes converged. Under DYNWAVE the step is the CFL step each conduit allows (Courant factor applied, capped at the routing step); all conduits still advance at the global step, and dry conduits are not sampled. Under FV it is the local time step each conduit actually took (its finest cell under local time stepping, otherwise the global substep), and the convergence column is blank because the scheme is explicit. Other routing methods print "Not available". The default is NO; the key is not written when exporting to SWMM 5.
 SUBCATCHMENTS gives a list of subcatchments whose results are to be reported. The default is NONE.
 NODES gives a list of nodes whose results are to be reported. The default is NONE.
 LINKS gives a list of links whose results are to be reported. The default is NONE.

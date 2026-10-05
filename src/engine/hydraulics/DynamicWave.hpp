@@ -241,6 +241,18 @@ public:
     double getRoutingStep(SimulationContext& ctx,
                           double fixed_step, double courant_factor);
 
+    /**
+     * @brief Fold this step into the per-conduit time step summary
+     *        ([REPORT] LINK_STEPS).
+     * @details Reporting only — reads the end-of-step state and touches no
+     *          solver state. Each conduit's CFL step (getLinkStep scaled by
+     *          `courant_factor`, capped at `fixed_step`) is weighted by `dt`;
+     *          a conduit counts as converged when both end nodes finished the
+     *          Picard loop converged (an outfall end always counts).
+     */
+    void accumulateLinkStepStats(SimulationContext& ctx, double dt,
+                                 double fixed_step, double courant_factor) const;
+
     double head_tol   = DEFAULT_HEAD_TOL;
     int    max_trials = DEFAULT_MAX_TRIALS;
     double omega      = OMEGA;

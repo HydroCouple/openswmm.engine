@@ -864,6 +864,7 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
     else if (k == "RPT_FLOWSTATS")  val = opt.rpt_flowstats  ? "YES" : "NO";
     else if (k == "RPT_CONTROLS")   val = opt.rpt_controls   ? "YES" : "NO";
     else if (k == "RPT_AVERAGES")   val = opt.rpt_averages   ? "YES" : "NO";
+    else if (k == "RPT_LINK_STEPS") val = opt.rpt_link_steps ? "YES" : "NO";
     else if (k == "RPT_SUBCATCHMENTS") {
         if      (opt.rpt_subcatchments == 0) val = "NONE";
         else if (opt.rpt_subcatchments == 1) val = "ALL";
@@ -1308,6 +1309,7 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         else if (k == "RPT_FLOWSTATS")  { int b = parse_bool(); if (b < 0) return SWMM_ERR_BADPARAM; opt.rpt_flowstats  = (b == 1); }
         else if (k == "RPT_CONTROLS")   { int b = parse_bool(); if (b < 0) return SWMM_ERR_BADPARAM; opt.rpt_controls   = (b == 1); }
         else if (k == "RPT_AVERAGES")   { int b = parse_bool(); if (b < 0) return SWMM_ERR_BADPARAM; opt.rpt_averages   = (b == 1); }
+        else if (k == "RPT_LINK_STEPS") { int b = parse_bool(); if (b < 0) return SWMM_ERR_BADPARAM; opt.rpt_link_steps = (b == 1); }
         else if (k == "RPT_SUBCATCHMENTS") parse_selector(opt.rpt_subcatchments, opt.rpt_subcatch_names);
         else if (k == "RPT_NODES")         parse_selector(opt.rpt_nodes,         opt.rpt_node_names);
         else if (k == "RPT_LINKS")         parse_selector(opt.rpt_links,         opt.rpt_link_names);

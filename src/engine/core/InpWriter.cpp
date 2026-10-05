@@ -2857,6 +2857,8 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     std::fprintf(f,"%-20s %s\n","FLOWSTATS",ctx.options.rpt_flowstats?"YES":"NO");
     std::fprintf(f,"%-20s %s\n","CONTROLS",ctx.options.rpt_controls?"YES":"NO");
     std::fprintf(f,"%-20s %s\n","AVERAGES",ctx.options.rpt_averages?"YES":"NO");
+    if(ctx.options.rpt_link_steps&&!swmm5)   // v6-only key; 5.x rejects it
+    std::fprintf(f,"%-20s %s\n","LINK_STEPS","YES");
     if(ctx.options.rpt_subcatchments==0)std::fprintf(f,"%-20s %s\n","SUBCATCHMENTS","NONE");
     else if(ctx.options.rpt_subcatchments==1)std::fprintf(f,"%-20s %s\n","SUBCATCHMENTS","ALL");
     else for(const auto&n:ctx.options.rpt_subcatch_names)std::fprintf(f,"%-20s %s\n","SUBCATCHMENTS",n.c_str());

@@ -576,6 +576,42 @@ struct LinkData {
     std::vector<double>     stat_time_courant_critical;
 
     // -----------------------------------------------------------------------
+    // Conduit time step summary ([REPORT] LINK_STEPS; accumulated only when
+    // that option is on). Durations are simulated seconds; steps are seconds.
+    // DW: the CFL step the conduit allows; FV: the local step it took.
+    // -----------------------------------------------------------------------
+
+    /** @brief Number of log2 step bins: (RS/2,RS], (RS/4,RS/2], ..., (0,RS/16]. */
+    static constexpr int N_LSTEP_BINS = 5;
+
+    std::vector<double> stat_lstep_min;       ///< Smallest local step (0 = no sample)
+    std::vector<double> stat_lstep_max;       ///< Largest local step
+    std::vector<double> stat_lstep_dt_time;   ///< Sum of step * duration
+    std::vector<double> stat_lstep_time;      ///< Sum of duration
+    std::vector<double> stat_lstep_bin_time;  ///< Flat 2D [link * N_LSTEP_BINS + bin], duration
+    std::vector<long>   stat_conv_steps;      ///< DW steps with both end nodes converged
+    std::vector<long>   stat_conv_total;      ///< DW steps sampled for convergence
+
+    /// Bin of local step `dt` relative to the routing step `rs`:
+    /// 0 = (rs/2, rs], 1 = (rs/4, rs/2], ..., N_LSTEP_BINS-1 = (0, rs/2^(N-1)].
+    static int lstep_bin(double dt, double rs) noexcept {
+        int b = 0;
+        double edge = 0.5 * rs;
+        while (b < N_LSTEP_BINS - 1 && dt <= edge) { ++b; edge *= 0.5; }
+        return b;
+    }
+
+    /// Fold one local-step sample `dt` held for `dur` seconds into link `j`.
+    void add_lstep_sample(int j, double dt, double dur, double rs) noexcept {
+        const auto u = static_cast<std::size_t>(j);
+        if (stat_lstep_time[u] <= 0.0 || dt < stat_lstep_min[u]) stat_lstep_min[u] = dt;
+        if (dt > stat_lstep_max[u]) stat_lstep_max[u] = dt;
+        stat_lstep_dt_time[u] += dt * dur;
+        stat_lstep_time[u]    += dur;
+        stat_lstep_bin_time[u * N_LSTEP_BINS + static_cast<std::size_t>(lstep_bin(dt, rs))] += dur;
+    }
+
+    // -----------------------------------------------------------------------
     // Capacity management
     // -----------------------------------------------------------------------
 
@@ -661,6 +697,13 @@ struct LinkData {
         stat_flow_turns.assign(un, 0L);
         stat_flow_turn_sign.assign(un, 0);
         stat_time_courant_critical.assign(un, 0.0);
+        stat_lstep_min.assign(un, 0.0);
+        stat_lstep_max.assign(un, 0.0);
+        stat_lstep_dt_time.assign(un, 0.0);
+        stat_lstep_time.assign(un, 0.0);
+        stat_lstep_bin_time.assign(un * N_LSTEP_BINS, 0.0);
+        stat_conv_steps.assign(un, 0L);
+        stat_conv_total.assign(un, 0L);
     }
 
     /**
@@ -704,6 +747,10 @@ struct LinkData {
         g(stat_pump_was_on, false);
         g(stat_flow_turns, 0L); g(stat_flow_turn_sign, 0);
         g(stat_time_courant_critical, 0.0);
+        g(stat_lstep_min, 0.0); g(stat_lstep_max, 0.0);
+        g(stat_lstep_dt_time, 0.0); g(stat_lstep_time, 0.0);
+        g(stat_conv_steps, 0L); g(stat_conv_total, 0L);
+        stat_lstep_bin_time.resize(un * N_LSTEP_BINS, 0.0);
         g(stat_norm_ltd, 0.0); g(stat_inlet_ctrl, 0.0);
         // stat_flow_class is flat 2D [n * N_FLOW_CLASSES]
         stat_flow_class.resize(un * N_FLOW_CLASSES, 0.0);
@@ -752,6 +799,9 @@ struct LinkData {
         r(stat_flow_turns); r(stat_flow_turn_sign); r(stat_time_courant_critical); r(stat_norm_ltd);
         r(stat_inlet_ctrl); r(pump_curve_name); r(comments); r(tags);
         r(stat_flow_class);
+        r(stat_lstep_min); r(stat_lstep_max); r(stat_lstep_dt_time); r(stat_lstep_time);
+        r(stat_conv_steps); r(stat_conv_total);
+        stat_lstep_bin_time.reserve(un * N_LSTEP_BINS);
     }
 
     /**
@@ -790,6 +840,15 @@ struct LinkData {
         e(stat_pump_cycles); e(stat_pump_on_time); e(stat_pump_volume); e(stat_pump_energy);
         e(stat_pump_was_on); e(stat_flow_turns); e(stat_flow_turn_sign);
         e(stat_time_courant_critical);
+        e(stat_lstep_min); e(stat_lstep_max); e(stat_lstep_dt_time); e(stat_lstep_time);
+        e(stat_conv_steps); e(stat_conv_total);
+        {
+            const auto base = ui * static_cast<std::size_t>(N_LSTEP_BINS);
+            const auto end  = base + static_cast<std::size_t>(N_LSTEP_BINS);
+            if (end <= stat_lstep_bin_time.size())
+                stat_lstep_bin_time.erase(stat_lstep_bin_time.begin() + static_cast<std::ptrdiff_t>(base),
+                                          stat_lstep_bin_time.begin() + static_cast<std::ptrdiff_t>(end));
+        }
 
         // Flat 2D: stat_flow_class [link * N_FLOW_CLASSES + class]
         {

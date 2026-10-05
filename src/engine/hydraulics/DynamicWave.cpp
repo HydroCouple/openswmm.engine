@@ -4453,5 +4453,29 @@ double DWSolver::getLinkStep(const SimulationContext& ctx, int link_idx) const {
     return t;                 // CourantFactor applied per-link in getRoutingStep
 }
 
+void DWSolver::accumulateLinkStepStats(SimulationContext& ctx, double dt,
+                                       double fixed_step,
+                                       double courant_factor) const {
+    if (dt <= 0.0) return;
+    const double cf = (courant_factor > 0.0) ? courant_factor : 1.0;
+    auto& L = ctx.links;
+    for (int j = 0; j < n_links_; ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        if (L.type[uj] != LinkType::CONDUIT) continue;
+
+        const auto n1 = static_cast<std::size_t>(L.node1[uj]);
+        const auto n2 = static_cast<std::size_t>(L.node2[uj]);
+        const bool c1 = node_tile_[n1].is_outfall || xnode_.converged[n1];
+        const bool c2 = node_tile_[n2].is_outfall || xnode_.converged[n2];
+        ++L.stat_conv_total[uj];
+        if (c1 && c2) ++L.stat_conv_steps[uj];
+
+        // No flow (getLinkStep's 1e10 sentinel): no CFL limit to sample.
+        const double t = getLinkStep(ctx, j);
+        if (t <= 0.0 || t > 1.0e9) continue;
+        L.add_lstep_sample(j, std::min(t * cf, fixed_step), dt, fixed_step);
+    }
+}
+
 } // namespace dynwave
 } // namespace openswmm

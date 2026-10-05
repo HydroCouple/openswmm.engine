@@ -1620,6 +1620,11 @@ struct SimulationContext {
         // alone cannot).
         long   fv_macro_cycles   = 0;
         long   fv_macro_rejected = 0;
+
+        /// Source of the per-conduit time step summary ([REPORT] LINK_STEPS),
+        /// set at init: 0 = not collected / unsupported routing method,
+        /// 1 = DW (CFL-allowable step), 2 = FV (local step taken).
+        int    lstep_mode = 0;
     } routing_stats;
 
     // =========================================================================

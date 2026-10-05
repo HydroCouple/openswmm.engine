@@ -83,6 +83,17 @@ public:
         return true;
     }
 
+    /// Per-conduit local-step sink for the "Conduit Time Step Summary"
+    /// ([REPORT] LINK_STEPS). When set, every accepted global substep and LTS
+    /// macro cycle calls `fn(user, conduit_row, dt, duration)` once per
+    /// conduit row, with `dt` the conduit's governing (finest-cell) step.
+    /// Reporting only: never read by the integrator. Null (default) = off.
+    using ConduitStepSink = void (*)(void* user, int conduit, double dt, double dur);
+    void setConduitStepSink(ConduitStepSink fn, void* user) noexcept {
+        step_sink_ = fn;
+        step_sink_user_ = user;
+    }
+
     /// Per-node net exchange VOLUME (ft³) accumulated over the last advance().
     /// Signed positive INTO the node. The Router glue turns this into the node
     /// inflow/outflow rates the reporting and mass-balance paths expect.
@@ -747,6 +758,12 @@ private:
     // synchronisation point — never mid-cycle — because a cell re-tiered
     // between firings would either skip a flux it owes or drain one twice.
     std::vector<std::uint8_t>     cell_tier_, face_tier_, node_tier_;
+
+    ConduitStepSink step_sink_      = nullptr;  ///< see setConduitStepSink
+    void*           step_sink_user_ = nullptr;
+    /// Report one accepted step to the sink: every conduit at `dt0` (global
+    /// path, `tiered` false) or at its finest cell's 2^tier·dt0 (LTS cycle).
+    void emitConduitSteps(double dt0, double dur, bool tiered) const;
     std::vector<std::vector<int>> cells_by_tier_, faces_by_tier_, nodes_by_tier_;
 
     /// The K NESTED due-sets, `[j]` holding tiers 0..j concatenated. Built once

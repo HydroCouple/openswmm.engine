@@ -4001,6 +4001,24 @@ void ExplicitFvSolver::fireNodes(const std::vector<int>& nodes, double dt0,
     }
 }
 
+void ExplicitFvSolver::emitConduitSteps(double dt0, double dur,
+                                        bool tiered) const {
+    const NetworkMeshData& m = *mesh_;
+    for (int r = 0; r < m.n_conduits(); ++r) {
+        const auto ur = static_cast<std::size_t>(r);
+        double dt = dt0;
+        if (tiered) {
+            const int begin = m.conduit_cell_begin[ur];
+            const int end   = begin + m.conduit_cell_count[ur];
+            int tmin = 255;
+            for (int c = begin; c < end; ++c)
+                tmin = std::min(tmin, static_cast<int>(cell_tier_[static_cast<std::size_t>(c)]));
+            if (tmin < 255) dt = static_cast<double>(1 << tmin) * dt0;
+        }
+        step_sink_(step_sink_user_, r, dt, dur);
+    }
+}
+
 void ExplicitFvSolver::runMacroCycle(double dt0, int nsub,
                                      const FvStepForcing& forcing) {
     if (tpa_) updateTpaFlags();   // once per macro cycle (#156); the caller's
@@ -4276,6 +4294,7 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
                 } else {
                     ++n_macro_cycles_;
                     perf::count(perf::n_fv_macro_cycles);
+                    if (step_sink_) emitConduitSteps(dt0, span, true);
                     t += span;
                     steps += nsub;
                     since_rebuild_ += nsub;
@@ -4319,6 +4338,7 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
                         } else {
                             ++n_macro_cycles_;
                             perf::count(perf::n_fv_macro_cycles);
+                            if (step_sink_) emitConduitSteps(dt0f, spanf, true);
                             t += spanf;
                             steps += nsubf;
                             since_rebuild_ += nsubf;
@@ -4439,6 +4459,12 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
             census_count_ = 0;
         }
 
+        // A substep clamped to land on t_target is a sync sliver, not the
+        // stable step; report it at the step it was clamped from (weighted by
+        // the time it actually covered) so it does not pose as a minimum.
+        if (step_sink_)
+            emitConduitSteps((dt >= remaining) ? std::max(dt, dt_census_) : dt,
+                             dt, false);
         t += dt;
         // RK2 is two full operator evaluations per accepted step; count both,
         // or the reported substeps-per-step halves the actual work done.

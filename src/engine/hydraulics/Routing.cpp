@@ -602,6 +602,72 @@ double Router::getAdaptiveStep(SimulationContext& ctx,
 // Internal helpers
 // ============================================================================
 
+// ============================================================================
+// Conduit time step summary ([REPORT] LINK_STEPS) — reporting only
+// ============================================================================
+
+bool Router::enableLinkStepStats(SimulationContext& ctx) {
+    lstep_rs_ = ctx.options.routing_step;
+    lstep_enabled_ = false;
+    if (model_ == RouteModel::DYNWAVE) {
+        lstep_enabled_ = true;
+    } else if (model_ == RouteModel::FV) {
+        auto* impl = dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get());
+        if (impl) {
+            const auto n = static_cast<std::size_t>(ctx.n_links());
+            lstep_pmin_.assign(n, 0.0);
+            lstep_pmax_.assign(n, 0.0);
+            lstep_pdt_time_.assign(n, 0.0);
+            lstep_ptime_.assign(n, 0.0);
+            lstep_pbin_.assign(n * LinkData::N_LSTEP_BINS, 0.0);
+            impl->setConduitStepSink(&Router::fvStepSink, this);
+            lstep_enabled_ = true;
+        }
+    }
+    return lstep_enabled_;
+}
+
+void Router::fvStepSink(void* user, int conduit, double dt, double dur) {
+    auto* self = static_cast<Router*>(user);
+    const int j = self->fv_mesh_.conduit_link[static_cast<std::size_t>(conduit)];
+    if (j < 0) return;
+    dt = std::min(dt, self->lstep_rs_);   // same cap as DW: the routing step
+    const auto u = static_cast<std::size_t>(j);
+    if (self->lstep_ptime_[u] <= 0.0 || dt < self->lstep_pmin_[u]) self->lstep_pmin_[u] = dt;
+    if (dt > self->lstep_pmax_[u]) self->lstep_pmax_[u] = dt;
+    self->lstep_pdt_time_[u] += dt * dur;
+    self->lstep_ptime_[u]    += dur;
+    self->lstep_pbin_[u * LinkData::N_LSTEP_BINS +
+                      static_cast<std::size_t>(LinkData::lstep_bin(dt, self->lstep_rs_))] += dur;
+}
+
+void Router::accumulateLinkStepStats(SimulationContext& ctx, double dt, bool in_window) {
+    if (!lstep_enabled_) return;
+    if (model_ == RouteModel::DYNWAVE) {
+        if (in_window)
+            dw_solver_.accumulateLinkStepStats(ctx, dt, ctx.options.routing_step,
+                                               ctx.options.variable_step);
+        return;
+    }
+    // FV: fold the pending samples of this advance() (or drop them), then reset.
+    auto& L = ctx.links;
+    constexpr auto NB = static_cast<std::size_t>(LinkData::N_LSTEP_BINS);
+    for (std::size_t u = 0; u < lstep_ptime_.size(); ++u) {
+        if (lstep_ptime_[u] <= 0.0) continue;
+        if (in_window) {
+            if (L.stat_lstep_time[u] <= 0.0 || lstep_pmin_[u] < L.stat_lstep_min[u])
+                L.stat_lstep_min[u] = lstep_pmin_[u];
+            L.stat_lstep_max[u] = std::max(L.stat_lstep_max[u], lstep_pmax_[u]);
+            L.stat_lstep_dt_time[u] += lstep_pdt_time_[u];
+            L.stat_lstep_time[u]    += lstep_ptime_[u];
+            for (std::size_t b = 0; b < NB; ++b)
+                L.stat_lstep_bin_time[u * NB + b] += lstep_pbin_[u * NB + b];
+        }
+        lstep_pmin_[u] = lstep_pmax_[u] = lstep_pdt_time_[u] = lstep_ptime_[u] = 0.0;
+        for (std::size_t b = 0; b < NB; ++b) lstep_pbin_[u * NB + b] = 0.0;
+    }
+}
+
 void Router::initNodeFlows(SimulationContext& ctx, double dt, double evap_rate) {
     auto& nodes = ctx.nodes;
     int n = ctx.n_nodes();
