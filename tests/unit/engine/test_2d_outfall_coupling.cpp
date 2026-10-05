@@ -109,6 +109,7 @@ std::string build_outfall_model() {
 
 struct RunResult {
     bool   ok = false;
+    std::vector<std::string> warnings;
     int    n_tri = 0;
     double peak_depth = 0.0;     // max per-cell 2D depth over the run (m)
     double cont_2d = 0.0;        // 2D surface continuity error (fraction)
@@ -117,12 +118,13 @@ struct RunResult {
     double outfall_out = 0.0;    // 2D ledger: 2D→pipe withdrawal (m³, ~0 here)
 };
 
-RunResult run_outfall_model(const fs::path& dir) {
+RunResult run_outfall_model(const fs::path& dir,
+                           const std::string& model = build_outfall_model()) {
     RunResult r;
     const fs::path inp = dir / "outfall_coupling.inp";
     const fs::path rpt = dir / "outfall_coupling.rpt";
     const fs::path out = dir / "outfall_coupling.out";
-    { std::ofstream f(inp); f << build_outfall_model(); }
+    { std::ofstream f(inp); f << model; }
 
     SWMM_Engine eng = swmm_engine_create();
     if (swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
@@ -132,6 +134,8 @@ RunResult run_outfall_model(const fs::path& dir) {
     if (swmm_engine_initialize(eng) != SWMM_OK) {
         swmm_engine_close(eng); swmm_engine_destroy(eng); return r;
     }
+    for (int i = 0; i < swmm_get_warning_count(eng); ++i)
+        r.warnings.emplace_back(swmm_get_warning_at(eng, i));
     int active = 0;
     swmm_2d_is_active(eng, &active);
     if (!active) { swmm_engine_close(eng); swmm_engine_destroy(eng); return r; }
@@ -180,6 +184,54 @@ protected:
         fs::create_directories(dir_);
     }
 };
+
+// Disconnected outfalls may remain in imported models and auto-generated maps.
+// Ignore all of their coupling rows, with one named warning per node, without
+// diluting a valid outfall's donor reservation or changing its hydraulic run.
+TEST_F(OutfallCoupling2DTest, DisconnectedOutfallMappingsWarnOnceAndDoNotChangeValidExchange) {
+    const auto baseline = run_outfall_model(dir_);
+    ASSERT_TRUE(baseline.ok);
+    for (const std::string mapping : {"vertex", "cell", "both", "only_disconnected"}) {
+        SCOPED_TRACE(mapping);
+        auto model = build_outfall_model();
+        const auto section = model.find("[OUTFALLS]\n") + std::string("[OUTFALLS]\n").size();
+        model.insert(section, "UNCONNECTED 0 FREE NO\n");
+        if (mapping == "vertex" || mapping == "both")
+            model += "1 UNCONNECTED 0.65 1\n2 UNCONNECTED 0.65 1\n";
+        if (mapping == "cell" || mapping == "both")
+            model += "[2D_TRIANGLE_NODE_MAP]\n0 UNCONNECTED 0.65 1\n";
+        if (mapping == "only_disconnected") {
+            const auto row = model.find("0         O1    0.7  2.5");
+            ASSERT_NE(row, std::string::npos);
+            model.replace(row, std::string("0         O1    0.7  2.5").size(),
+                          "0 UNCONNECTED 0.65 1");
+        }
+        const auto case_dir = dir_ / ("disconnected_" + mapping);
+        fs::create_directories(case_dir);
+        const auto result = run_outfall_model(case_dir, model);
+        ASSERT_TRUE(result.ok) << "disconnected coupling must not abort initialization/run";
+        ASSERT_EQ(result.n_tri, baseline.n_tri);
+        int warnings = 0;
+        for (const auto& warning : result.warnings) {
+            if (warning.find("2D coupling ignored for outfall 'UNCONNECTED'") == std::string::npos)
+                continue;
+            ++warnings;
+            EXPECT_NE(warning.find("no incident hydraulic link"), std::string::npos);
+        }
+        EXPECT_EQ(warnings, 1);
+        if (mapping == "only_disconnected") {
+            EXPECT_DOUBLE_EQ(result.peak_depth, 0.0);
+            EXPECT_DOUBLE_EQ(result.outfall_in, 0.0);
+            EXPECT_DOUBLE_EQ(result.outfall_out, 0.0);
+        } else {
+            EXPECT_DOUBLE_EQ(result.peak_depth, baseline.peak_depth);
+            EXPECT_DOUBLE_EQ(result.outfall_in, baseline.outfall_in);
+            EXPECT_DOUBLE_EQ(result.outfall_out, baseline.outfall_out);
+            EXPECT_DOUBLE_EQ(result.cont_2d, baseline.cont_2d);
+            EXPECT_DOUBLE_EQ(result.cont_routing, baseline.cont_routing);
+        }
+    }
+}
 
 // The bug regression: a coupled outfall's pipe discharge must reach the 2D mesh.
 // Pre-fix (read of nodes.outflow≈0) leaves the mesh dry and outfall_in at 0.
