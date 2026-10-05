@@ -37,8 +37,8 @@
  *            `per-cell override > tag row > '*' row > none`, once, at
  *            configure time. The solver never consults tags. Provenance is
  *            retained so the writer re-emits a compact file.
- *          - **D-I4.** `LOST` is the only destination accepted in this
- *            release; the others parse and are rejected with a clear message.
+ *          - **Destinations.** LOST and SUBCATCH_AQUIFER apply to ordinary
+ *            cells. Aquifer-owned cells compute their own receiving capacity.
  *          - **D-I6.** Six methods: HORTON, MOD_HORTON, GREEN_AMPT,
  *            MOD_GREEN_AMPT, CURVE_NUM, CONSTANT.
  *
@@ -77,21 +77,14 @@ struct SurfaceStateData;
 // Value types
 // ============================================================================
 
-/// Destination of infiltrated water. D-I4 as amended by U3 and G1: LOST and
-/// SUBCATCH_AQUIFER are routed, and AQUIFER_2D is accepted once a
-/// `[2D_AQUIFER]` section resolves — without one it is still refused, with a
-/// message naming the section to add.
-///
-/// @note With a `[2D_AQUIFER]` present the aquifer OWNS infiltration: every
-///       infiltrating cell recharges it and LOST reads as AQUIFER_2D. That is
-///       what a user means by putting an aquifer under the mesh, and it keeps
-///       the water to one owner. SUBCATCH_AQUIFER is the one destination that
-///       cannot coexist with it, for the same one-owner reason the integrated
-///       component conflict already states — see `SurfaceRouter2D::initialize`.
+/// Ordinary surface-bank destinations. Aquifer ownership is resolved before
+/// ordinary defaults: covered cells use an EXTERNAL bank row and the aquifer's
+/// receiving capacity. AQUIFER_2D remains parseable for reviewed migration,
+/// but is rejected at initialization (R2, 2026-10-05).
 enum class Infil2DDest : int {
     LOST             = 0,  ///< Leaves the domain; booked to MassBalance2D::infil_out
     SUBCATCH_AQUIFER = 1,  ///< Legacy subcatchment aquifer (U3 track I-b)
-    AQUIFER_2D       = 2   ///< The two-zone 2D kernel (G1 step 11b)
+    AQUIFER_2D       = 2   ///< Obsolete; migrate using the ownership review.
 };
 
 /// Number of positional parameter columns carried per row. Matches the widest
@@ -203,6 +196,9 @@ public:
      */
     bool resolve(const MeshData& mesh, const SimulationOptions& opts,
                  std::string& err);
+    /// Effective coverage, not inferred from conductivity or authored rows.
+    void setAquiferOwners(std::vector<uint8_t> owners) { aquifer_owners_ = std::move(owners); }
+    const std::vector<std::string>& ownershipMessages() const noexcept { return ownership_messages_; }
 
     /**
      * @brief G1 — tell validation that a `[2D_AQUIFER]` resolved, so the
@@ -266,6 +262,9 @@ public:
     void reset();
 
 private:
+    bool resolveImpl(const MeshData&, const SimulationOptions&, std::string&);
+    std::vector<uint8_t> aquifer_owners_;
+    std::vector<std::string> ownership_messages_;
     std::vector<Infil2DDefault>  defaults_;
     std::vector<Infil2DOverride> overrides_;
     Infil2DOptions               options_;

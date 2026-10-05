@@ -330,6 +330,7 @@ struct MeshData;
 struct SolverOptions2D;
 struct BoundaryData;
 class  Infil2D;
+class SurfaceRouter2D;
 struct PendingBoundaryRow;
 struct PendingEdgeConveyanceRow;
 struct PendingInitialQualityRow;
@@ -976,6 +977,7 @@ struct SimulationContext {
         /// the 2D module's solver — an aquifer restarted dry has lost the
         /// months of memory that were the reason to model it.
         twoD::SubsurfaceState*                       aquifer_state = nullptr;
+        twoD::SurfaceRouter2D*                       surface_router = nullptr;
         /// T7.5: the aquifer's transported tuple, for the hotstart block,
         /// the results writer and the `.rpt` quality continuity.
         twoD::SubsurfaceTransportState*              aquifer_transport = nullptr;

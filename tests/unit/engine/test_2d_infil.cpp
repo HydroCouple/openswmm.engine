@@ -660,14 +660,14 @@ TEST_F(Infil2DValidationTest, Aquifer2DDestinationIsRejectedWithoutAnAquifer) {
             << "message does not name the destination: " << err;
         EXPECT_NE(err.find("LAWN"), std::string::npos)
             << "message does not name the offending tag: " << err;
-        EXPECT_NE(err.find("[2D_AQUIFER]"), std::string::npos)
+        EXPECT_NE(err.find("obsolete"), std::string::npos)
             << "message does not name the section that would fix it: " << err;
     }
 }
 
 // …and the same row resolves once an aquifer has been declared. This is the
 // unit-level half of the rule; test_2d_aquifer.cpp runs it on a model.
-TEST_F(Infil2DValidationTest, Aquifer2DDestinationResolvesWithAnAquifer) {
+TEST_F(Infil2DValidationTest, Aquifer2DDestinationIsObsoleteWithAnAquifer) {
     Infil2D infil;
     Infil2DDefault d; d.tag = "LAWN";
     d.row = rowOf(InfilModel::CONSTANT, 1.0);
@@ -676,7 +676,8 @@ TEST_F(Infil2DValidationTest, Aquifer2DDestinationResolvesWithAnAquifer) {
     infil.setAquifer2DAvailable(true);
 
     std::string err;
-    EXPECT_TRUE(infil.resolve(mesh_, usOptions(), err)) << err;
+    EXPECT_FALSE(infil.resolve(mesh_, usOptions(), err));
+    EXPECT_NE(err.find("obsolete"),std::string::npos);
 }
 
 // U3: SUBCATCH_AQUIFER resolves (its containment is a SurfaceRouter2D

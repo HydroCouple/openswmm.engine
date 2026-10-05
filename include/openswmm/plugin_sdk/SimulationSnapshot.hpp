@@ -370,6 +370,13 @@ struct SimulationSnapshot {
     std::vector<double> surface_stat_max_depth;    ///< Max overland depth ψ_o (m), per face
     std::vector<double> surface_stat_max_velocity; ///< Max cell speed |v| (m/s), per face
     std::vector<double> surface_stat_max_cont_err; ///< Max |continuity residual| (m³/s), per face
+    std::vector<double> gw2d_infil_capacity; ///< Aquifer top-interface receiving capacity (m s-1)
+    std::vector<double> gw2d_infil_remaining; ///< Remaining receiving allowance after pending receipts (m3)
+    std::vector<double> gw2d_infil_refresh; ///< Capacity refresh time since simulation start (s)
+    std::vector<double> gw2d_infil_pending; ///< Reserved surface water pending aquifer firing (m3)
+    std::vector<double> gw2d_reject; ///< Rejected top-interface delivery returned to surface (m3 s-1)
+    std::vector<double> gw2d_reject_cum; ///< Cumulative rejected top-interface delivery (m3)
+    std::vector<double> gw2d_dunne_cum; ///< Cumulative physical saturation excess (m3)
 };
 
 } /* namespace openswmm */

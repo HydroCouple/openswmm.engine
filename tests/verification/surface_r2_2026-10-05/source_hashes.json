@@ -1,0 +1,121 @@
+{
+  "base_commit": "546af5d8670a6770451a7345cd68c71bb36a8bd0",
+  "sources": [
+    {
+      "path": "include/openswmm/engine/openswmm_gw2d.h",
+      "sha256": "b79b7fa308ea3617cf6806fa0073dd789939dbae1d887f90b38644d7f0f59222"
+    },
+    {
+      "path": "include/openswmm/engine/openswmm_infil2d.h",
+      "sha256": "0997dc764841af9fe779bd65dc9dbba47e042c48c7ea88ee68aa01caf6c4bc88"
+    },
+    {
+      "path": "include/openswmm/plugin_sdk/SimulationSnapshot.hpp",
+      "sha256": "aa4c194a47a13a18f1269856c415df3b756125e98238a5fc359a52e07ccac905"
+    },
+    {
+      "path": "src/engine/2d/SurfaceRouter2D.cpp",
+      "sha256": "562d8c71ace629a75bc576004ced1b26e16c535ca65784d64185a07684787bac"
+    },
+    {
+      "path": "src/engine/2d/SurfaceRouter2D.hpp",
+      "sha256": "44e44953ea07316bc901b370c695ff5fc983ffed7fa0cb1ae513669f39db16db"
+    },
+    {
+      "path": "src/engine/2d/api/ApiGw2D.cpp",
+      "sha256": "f53d9418f2980a270684b6ab28aa85c456904120758c2f570776fc665dd30ba9"
+    },
+    {
+      "path": "src/engine/2d/api/ApiInfil2D.cpp",
+      "sha256": "27065ca0b0b7129aa55f3c939e5252b7eb398e5002859ff7d0fa4c325765590a"
+    },
+    {
+      "path": "src/engine/2d/infil/Infil2D.cpp",
+      "sha256": "e63abb3fec35bcd18f9185cedc9f83233c02a2364f9d734f849e287a7ba0803a"
+    },
+    {
+      "path": "src/engine/2d/infil/Infil2D.hpp",
+      "sha256": "29fc19930bb09ae5e53094e7aa5e78ea7bf70801fb1a2bc18f4a11088ed584a9"
+    },
+    {
+      "path": "src/engine/2d/output/Default2DOutputPlugin.cpp",
+      "sha256": "b8b3cdb03eefc14af4f9f784f7b952b7e0a8cbf1e9d565e56b726d1ae05518d2"
+    },
+    {
+      "path": "src/engine/2d/output/Default2DOutputPlugin.hpp",
+      "sha256": "10a633878450dce77916be58c136f2f4258f9410f3b5f95ab58eaf246ca92b3d"
+    },
+    {
+      "path": "src/engine/2d/solver/ExplicitInertialSolver.cpp",
+      "sha256": "48fa887fc8638f226879b0bcb396e703755d666283a3b48f218543b7ec823dcf"
+    },
+    {
+      "path": "src/engine/2d/subsurface/SigmaColumn.cpp",
+      "sha256": "508ddbb50307787bd5be4e384cd135735401a2209365f63934c4508d86aac877"
+    },
+    {
+      "path": "src/engine/2d/subsurface/SigmaColumn.hpp",
+      "sha256": "605547bf2eac5517508bdbb7f8802c1cc06ae8cd7b89b802ac32d863e4767e97"
+    },
+    {
+      "path": "src/engine/2d/subsurface/SoilCharacteristic.cpp",
+      "sha256": "a969d5cb528a47e2edf7b0fb329881486a3eeb9f4f1211c56cc1544e2cac4fc9"
+    },
+    {
+      "path": "src/engine/2d/subsurface/SubsurfaceData.cpp",
+      "sha256": "9badace685ef0c2a6fabb05fa8be7fe630eeeb8eaafc97d037357327e8c2cb97"
+    },
+    {
+      "path": "src/engine/2d/subsurface/SubsurfaceData.hpp",
+      "sha256": "c81e118145f19d3f874504e48629206af9388e6f3f61858e84fec6a829cb810c"
+    },
+    {
+      "path": "src/engine/2d/subsurface/SubsurfaceSolver.cpp",
+      "sha256": "a69f1e37e0f04e4b4b59b03723fb6fd977de66cb3b64993f5c8502bd2bc9fae8"
+    },
+    {
+      "path": "src/engine/2d/subsurface/SubsurfaceSolver.hpp",
+      "sha256": "18f714f0e0a100197861da279cfe4a4ad1da7b677587fe25ad4968c4ef07fb37"
+    },
+    {
+      "path": "src/engine/core/HotStartManager.cpp",
+      "sha256": "9a87d6ff531acecf3ca8c349631f779e380f0bc3f65f1fc6e16e44ac5d97800f"
+    },
+    {
+      "path": "src/engine/core/HotStartManager.hpp",
+      "sha256": "fc531c7ce4561a5d17ee15c1463e238234f44cdc689b27b04042f0efdd905588"
+    },
+    {
+      "path": "src/engine/core/SWMMEngine.cpp",
+      "sha256": "749faebac8c0bddbbb02748072e8f079af5ba26520338f281c8c709487f781d6"
+    },
+    {
+      "path": "src/engine/core/SimulationContext.hpp",
+      "sha256": "5a8c7533d2dc79cf2ace3a15380021be4fea5450ad33ff8538a4c5a39331b347"
+    },
+    {
+      "path": "src/engine/hydrology/surface/InfilBank.cpp",
+      "sha256": "2470a067b6f88e12c45852acad3f0100a3d294acda3add9dd7d2331bf86bfdf9"
+    },
+    {
+      "path": "tests/unit/engine/CMakeLists.txt",
+      "sha256": "209f5b6a918dcce16a27e69240af40fb603609cfff586156a4904452c6deabb4"
+    },
+    {
+      "path": "tests/unit/engine/test_2d_aquifer.cpp",
+      "sha256": "726c31c13db6cd2714fb1b259bed922db023845c50833b4d4b17c76e52ca6e27"
+    },
+    {
+      "path": "tests/unit/engine/test_2d_infil.cpp",
+      "sha256": "72bed8de549001e004150af9f9dba1fc6c6d5da694c5721e172ccb305febc2fc"
+    },
+    {
+      "path": "tests/unit/engine/test_gw_transport_kernel.cpp",
+      "sha256": "7bfdcf17c60a6d5da23df3522d2c710d314172dc404bb234e6bd13b3fe4d344a"
+    },
+    {
+      "path": "tests/unit/engine/test_surface_aquifer_receiving.cpp",
+      "sha256": "f1039e8e88346c1e69e02aea2d04e7361813e60fcbee59c6468c6d6f7f33cbf3"
+    }
+  ]
+}

@@ -221,6 +221,9 @@ struct SubsurfaceState {
     std::vector<double>  qet_last;    ///< subsurface ET (m/s, ≥ 0 out)
     std::vector<double>  dunne_last;  ///< saturation-excess to the surface (m³/s)
     std::vector<double>  qplus_last;  ///< infiltration delivered in (m/s)
+    std::vector<double> infil_capacity, infil_remaining, infil_refresh, infil_interval;
+    std::vector<double> wetting_front, reject_last, reject_cumulative;
+    std::vector<double> dunne_cumulative;
     std::vector<double>  qlink_last;  ///< G-X3: conduit seepage delivered in (m³/s)
 
     // ---- LTS ------------------------------------------------------------
@@ -251,6 +254,7 @@ struct SubsurfaceState {
     double led_lateral  = 0.0;   ///< net lateral Darcy across the domain edge
     double led_deep     = 0.0;   ///< deep percolation out
     double led_node     = 0.0;   ///< node exchange, + out of the aquifer
+    double led_reject   = 0.0;   ///< rejected top-interface delivery returned to surface
     double led_dunne    = 0.0;   ///< saturation excess to the surface
     double led_caprise  = 0.0;   ///< capillary rise (the negative recharge share)
     double led_et       = 0.0;   ///< subsurface ET out

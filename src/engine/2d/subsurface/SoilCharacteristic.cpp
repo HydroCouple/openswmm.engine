@@ -239,7 +239,7 @@ double equilibriumStorage(const Params& p, double L) noexcept {
     //
     // So the public quantity is water, and eq. 22 converts on entry. Gates
     // 1, 2 and 4 are what this note is for.
-    const double Lc = std::max(L, kLMin);
+    const double Lc = std::max(L, 0.0);
     return p.theta_r * Lc +
            (p.theta_s - p.theta_r) * saturationIntegral(p, Lc);
 }

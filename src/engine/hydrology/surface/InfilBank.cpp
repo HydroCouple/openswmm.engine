@@ -120,6 +120,7 @@ void InfilBank::pack(int i, int& model, double state[6]) const noexcept {
     }
     const auto ui = static_cast<std::size_t>(i);
     model = static_cast<int>(methods_[ui]);
+    if (owners_[ui] == Owner::EXTERNAL) return;
 
     switch (methods_[ui]) {
         case InfilModel::HORTON:
@@ -159,6 +160,7 @@ void InfilBank::unpack(int i, int model, const double state[6]) noexcept {
     if (i < 0 || static_cast<std::size_t>(i) >= methods_.size()) return;
     const auto ui = static_cast<std::size_t>(i);
 
+    if (owners_[ui] == Owner::EXTERNAL) return;
     // Only restore if model matches the initialised type
     if (model != static_cast<int>(methods_[ui])) return;
 

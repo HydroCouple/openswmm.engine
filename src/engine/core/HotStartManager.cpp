@@ -50,6 +50,7 @@
 #include "../hydrology/Runoff.hpp"
 #include "../hydrology/Groundwater.hpp"
 #ifdef OPENSWMM_HAS_2D
+#include "../2d/SurfaceRouter2D.hpp"
 #include "../2d/subsurface/SubsurfaceData.hpp"
 #include "../2d/subsurface/SubsurfaceTransportState.hpp"   // T7.5   // G1: the V5 aquifer block
 #endif
@@ -293,6 +294,14 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
             }
     }
 
+    if (hs.header.version >= 12u) {
+        if (!write_pod(buf, static_cast<uint32_t>(hs.gw_interface.size()))) return false;
+        for (const auto& row : hs.gw_interface) {
+            if (!write_pod(buf, static_cast<uint32_t>(row.size()))) return false;
+            for (double value : row) if (!write_pod(buf, value)) return false;
+        }
+    }
+
     // Compute CRC32 over the body
     const std::string body = buf.str();
     const uint32_t crc = crc32(
@@ -363,7 +372,7 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
 
     // Header
     if (!read_pod(is, hs.header.version))    return false;
-    if (hs.header.version < 1u || hs.header.version > 11u) {
+    if (hs.header.version < 1u || hs.header.version > 12u) {
         tl_last_io_error = "Unsupported hot start version " +
                            std::to_string(hs.header.version) + " in '" + path + "'";
         return false;
@@ -527,6 +536,18 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
                     return false;
     }
 
+    hs.gw_interface.clear();
+    if (hs.header.version >= 12u) {
+        uint32_t count=0;
+        if (!read_pod(is,count) || count > 64u) return false;
+        hs.gw_interface.resize(count);
+        for (auto& row : hs.gw_interface) {
+            uint32_t size=0;
+            if (!read_pod(is,size) || size > file_size / sizeof(double)) return false;
+            row.resize(size);
+            for (auto& value : row) if (!read_pod(is,value)) return false;
+        }
+    }
     hs.path = path;
     return true;
 }
@@ -742,7 +763,28 @@ bool captureAquiferBlock(const SimulationContext& ctx, HotStartFile& hs) {
     hs.gw_ledger = {st->led_recharge, st->led_lateral, st->led_deep,
                     st->led_node,     st->led_dunne,   st->led_caprise,
                     st->led_et,       st->led_infil_in, st->led_init_storage,
-                    st->led_link, st->led_source_in, st->led_source_out}; // Length-prefixed.
+                    st->led_link, st->led_source_in, st->led_source_out, st->led_reject}; // Length-prefixed.
+    hs.gw_interface = {st->infil_capacity, st->infil_remaining, st->infil_refresh, st->infil_interval, st->wetting_front, st->reject_last, st->reject_cumulative, st->dunne_cumulative, st->xacc_from_surface, st->xacc_to_surface, st->eacc_L, st->eacc_R, st->nacc, st->lacc};
+    const auto* tr = ctx.twod_io.aquifer_transport;
+    hs.gw_interface.push_back(tr ? tr->xacc_from_surface : std::vector<double>{});
+    hs.gw_interface.push_back(tr ? tr->xacc_to_surface : std::vector<double>{});
+    hs.gw_interface.push_back(tr ? tr->sacc_L : std::vector<double>{});
+    hs.gw_interface.push_back(tr ? tr->sacc_R : std::vector<double>{});
+    hs.gw_interface.push_back(tr ? tr->nacc_mass : std::vector<double>{});
+    hs.gw_interface.push_back(tr ? tr->lacc_mass : std::vector<double>{});
+    hs.gw_interface.push_back(tr ? tr->node_out_mass : std::vector<double>{});
+    const auto* router = ctx.twod_io.surface_router;
+    if (router) {
+        const auto& surf = router->state();
+        hs.gw_interface.push_back(surf.volume);
+        hs.gw_interface.push_back(surf.head);
+        hs.gw_interface.push_back(surf.depth);
+        hs.gw_interface.push_back(surf.infil_rate);
+        hs.gw_interface.push_back(surf.infil_applied);
+        hs.gw_interface.push_back(router->infilCumulative());
+        hs.gw_interface.push_back({router->infiltrationElapsed()});
+        hs.gw_interface.push_back(surf.transport.cell_mass);
+    }
     return true;
 #else
     (void)ctx; (void)hs;
@@ -847,6 +889,30 @@ void restoreAquiferSpeciesBlock(const HotStartFile& hs, SimulationContext& ctx,
 /// …and back. Cells are matched by INDEX, so a mismatched count is refused
 /// outright: applying cell 400's table to cell 400 of a different mesh is a
 /// silent, plausible-looking corruption, which is worse than not restarting.
+// Validate the new interface before any hotstart state is changed. A
+// mismatched pending-volume layout cannot safely be restored in part.
+bool validAquiferInterface(const HotStartFile& hs, const SimulationContext& ctx) {
+#ifdef OPENSWMM_HAS_2D
+    if (hs.header.version < 12u || hs.gw_interface.empty()) return true;
+    const auto* st=ctx.twod_io.aquifer_state;
+    if (!st || !st->active) return true;
+    const auto* tr=ctx.twod_io.aquifer_transport;
+    const auto* router=ctx.twod_io.surface_router;
+    if(tr && hs.gw_species!=tr->row_names)return false;
+    std::vector<const std::vector<double>*> fields={&st->infil_capacity,&st->infil_remaining,&st->infil_refresh,&st->infil_interval,&st->wetting_front,&st->reject_last,&st->reject_cumulative,&st->dunne_cumulative,&st->xacc_from_surface,&st->xacc_to_surface,&st->eacc_L,&st->eacc_R,&st->nacc,&st->lacc};
+    if(tr) fields.insert(fields.end(),{&tr->xacc_from_surface,&tr->xacc_to_surface,&tr->sacc_L,&tr->sacc_R,&tr->nacc_mass,&tr->lacc_mass,&tr->node_out_mass});
+    else fields.resize(21,nullptr);
+    if(router){const auto& surf=router->state();fields.insert(fields.end(),{&surf.volume,&surf.head,&surf.depth,&surf.infil_rate,&surf.infil_applied});}
+    const auto& rows=hs.gw_interface;
+    if(rows.size()!=(router?29u:21u))return false;
+    for(std::size_t k=0;k<fields.size();++k)
+        if(rows[k].size()!=(fields[k]?fields[k]->size():0u))return false;
+    return !router || (rows[26].size()==router->infilCumulative().size()&&rows[27].size()==1&&rows[28].size()==router->state().transport.cell_mass.size());
+#else
+    (void)hs;(void)ctx;return true;
+#endif
+}
+
 void restoreAquiferBlock(const HotStartFile& hs, SimulationContext& ctx,
                          const std::function<void(const std::string&)>& warn) {
 #ifdef OPENSWMM_HAS_2D
@@ -887,10 +953,45 @@ void restoreAquiferBlock(const HotStartFile& hs, SimulationContext& ctx,
         st->led_infil_in     = hs.gw_ledger[7];
         st->led_init_storage = hs.gw_ledger[8];
         if (hs.gw_ledger.size() >= 10) st->led_link = hs.gw_ledger[9];
+        if (hs.gw_ledger.size() >= 13) st->led_reject = hs.gw_ledger[12];
         if (hs.gw_ledger.size() >= 12) {
             st->led_source_in = hs.gw_ledger[10];
             st->led_source_out = hs.gw_ledger[11];
         }
+    }
+    if (hs.header.version >= 12u && !hs.gw_interface.empty()) {
+        std::vector<std::vector<double>*> targets = {&st->infil_capacity, &st->infil_remaining, &st->infil_refresh, &st->infil_interval, &st->wetting_front, &st->reject_last, &st->reject_cumulative, &st->dunne_cumulative, &st->xacc_from_surface, &st->xacc_to_surface, &st->eacc_L, &st->eacc_R, &st->nacc, &st->lacc};
+        auto* tr = ctx.twod_io.aquifer_transport;
+        if (tr) {
+            targets.push_back(&tr->xacc_from_surface);
+            targets.push_back(&tr->xacc_to_surface);
+            targets.push_back(&tr->sacc_L);
+            targets.push_back(&tr->sacc_R);
+            targets.push_back(&tr->nacc_mass);
+            targets.push_back(&tr->lacc_mass);
+            targets.push_back(&tr->node_out_mass);
+        }
+        if (!tr) targets.resize(21,nullptr);
+        auto* router = ctx.twod_io.surface_router;
+        if (router) {
+            auto& surf = router->state();
+            targets.push_back(&surf.volume);
+            targets.push_back(&surf.head);
+            targets.push_back(&surf.depth);
+            targets.push_back(&surf.infil_rate);
+            targets.push_back(&surf.infil_applied);
+        }
+        const auto& rows = hs.gw_interface;
+        if (validAquiferInterface(hs,ctx)) {
+            for (std::size_t k=0;k<targets.size();++k) if(targets[k]) *targets[k]=rows[k];
+            if(router){
+                router->restoreInfiltration(rows[26], rows[27][0]);
+                router->state().transport.cell_mass=rows[28];
+                router->subsurface().restorePendingSurface();
+            }
+        } else warn("Hot start: incompatible V12 surface/aquifer interface dimensions");
+    } else if (st->active) {
+        warn("Hot start: pre-V12 aquifer file has no held receiving allowance or pending deliveries; interface continuation is reconstructed");
     }
 #else
     (void)hs; (void)ctx; (void)warn;
@@ -1006,6 +1107,7 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
         }
     }
 
+    if (!hs->gw_interface.empty()) hs->header.version = std::max(hs->header.version, 12u);
     if (!write_file(*hs, path)) {
         delete hs;
         return nullptr;
@@ -1126,6 +1228,7 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
         }
     }
 
+    if (!hs->gw_interface.empty()) hs->header.version = std::max(hs->header.version, 12u);
     if (!write_file(*hs, path)) {
         delete hs;
         return nullptr;
@@ -1164,6 +1267,11 @@ int HotStartManager::apply(HotStartFile& hs,
         if (warn_cb) warn_cb(msg);
         ++missing;
     };
+
+    if (!validAquiferInterface(hs,ctx)) {
+        tl_last_io_error="Incompatible V12 surface/aquifer interface dimensions";
+        emit_warning(tl_last_io_error);return missing;
+    }
 
     // Apply node records
     for (const auto& rec : hs.nodes) {
@@ -1338,6 +1446,7 @@ int HotStartManager::apply(HotStartFile& hs,
                            std::function<void(const std::string&)> warn_cb) {
     // Apply hydraulic state (nodes, links) via the existing V1 overload
     int missing = apply(hs, ctx, warn_cb);
+    if (!validAquiferInterface(hs,ctx)) return missing;
 
     // Apply V2 infiltration + GW state if the file has it
     if (hs.header.version < 2u) return missing;

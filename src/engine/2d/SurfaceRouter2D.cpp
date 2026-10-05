@@ -1107,13 +1107,18 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                     "parameters belong to its method.");
             }
         }
-        // G1: AQUIFER_2D is legal exactly when a [2D_AQUIFER] resolved above.
+        // R2: coverage selects the aquifer owner, independently of destinations.
         // Told before resolve() because that is where the destinations are
         // validated.
         infil_.setAquifer2DAvailable(subsurface_.active());
+        infil_.setAquiferOwners(std::vector<uint8_t>(mesh_.n_triangles(),
+            subsurface_.active() && options_.infiltration != 0 ? 1 : 0));
+        if (options_.infil_destination == "AQUIFER_2D")
+            throw std::runtime_error("[2D_OPTIONS] INFIL_DESTINATION AQUIFER_2D is obsolete; remove this option. Aquifer-owned cells compute their receiving capacity.");
         std::string infil_err;
         if (!infil_.resolve(mesh_, ctx.options, infil_err))
             throw std::runtime_error(infil_err);
+        for (const auto& message : infil_.ownershipMessages()) ctx.warnings.push_back(message);
         // U3 (track I-b): resolve cell → containing subcatchment for every
         // cell whose row routes to SUBCATCH_AQUIFER. Cell-generic: the
         // centroid is MeshData's true-area centroid, valid for triangles and
@@ -1160,8 +1165,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                         "[2D_OPTIONS] INFIL_DESTINATION SUBCATCH_AQUIFER "
                         "conflicts with the [2D_AQUIFER] section: infiltration "
                         "has one owner, and a [2D_AQUIFER] already receives it. "
-                        "Use AQUIFER_2D (or LOST, which reads the same way "
-                        "under an aquifer), or remove the [2D_AQUIFER].");
+                        "Remove the explicit surface row or remove the [2D_AQUIFER].");
 
                 const auto& px = ctx.spatial.subcatch_polygon_x;
                 const auto& py = ctx.spatial.subcatch_polygon_y;
@@ -1306,6 +1310,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         // by one cadence step here, matching how the runoff module evaluates
         // at the start of a wet step.
         infil_.updateRates(mesh_, state_, infil_.stepSeconds(), surface::infiltrationFactors(ctx, 0.0));
+        if (subsurface_.active()) subsurface_.publishInfiltration(state_, infil_.stepSeconds(), 0.0);
         infil_cum_applied_.assign(
             static_cast<std::size_t>(mesh_.n_triangles()), 0.0);
     } else {
@@ -1552,6 +1557,7 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
         infil_elapsed_ += dt;
         if (infil_elapsed_ >= infil_.stepSeconds()) {
             infil_.updateRates(mesh_, state_, infil_elapsed_, surface::infiltrationFactors(ctx, t));
+            if (subsurface_.active()) subsurface_.publishInfiltration(state_, infil_.stepSeconds(), t);
             infil_elapsed_ = 0.0;
         }
     }

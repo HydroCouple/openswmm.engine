@@ -397,6 +397,13 @@ double cellVar(const openswmm::twoD::SubsurfaceState& st, std::size_t u,
         case SWMM_GW2D_VAR_TIER:     return static_cast<double>(st.tier[u]);
         case SWMM_GW2D_VAR_CLOSURE:  return static_cast<double>(st.closure[u]);
         case SWMM_GW2D_VAR_QLINK:    return st.qlink_last[u];   // G-X3
+        case SWMM_GW2D_VAR_INFIL_CAPACITY: return st.infil_capacity[u];
+        case SWMM_GW2D_VAR_INFIL_REMAINING: return st.infil_remaining[u];
+        case SWMM_GW2D_VAR_INFIL_REFRESH: return st.infil_refresh[u];
+        case SWMM_GW2D_VAR_INFIL_PENDING: return st.xacc_from_surface[u];
+        case SWMM_GW2D_VAR_REJECT: return st.reject_last[u];
+        case SWMM_GW2D_VAR_REJECT_CUM: return st.reject_cumulative[u];
+        case SWMM_GW2D_VAR_DUNNE_CUM: return st.dunne_cumulative[u];
         default: ok = false; return 0.0;
     }
 }
@@ -411,6 +418,7 @@ SWMM_ENGINE_API int swmm_gw2d_get_cell(SWMM_Engine engine, int cell, int var,
     bool ok = false;
     const double v = cellVar(st, static_cast<std::size_t>(cell), var, ok);
     if (!ok) return SWMM_ERR_BADPARAM;
+    if (!std::isfinite(v)) return SWMM_ERR_LIFECYCLE;
     *value = v;
     return SWMM_OK;
 }
@@ -470,6 +478,7 @@ SWMM_ENGINE_API int swmm_gw2d_get_ledger(SWMM_Engine engine, int term,
         case SWMM_GW2D_LED_LATERAL:      *value = st.led_lateral; break;
         case SWMM_GW2D_LED_DEEP:         *value = st.led_deep; break;
         case SWMM_GW2D_LED_NODE:         *value = st.led_node; break;
+        case SWMM_GW2D_LED_REJECT: return st.led_reject;
         case SWMM_GW2D_LED_DUNNE:        *value = st.led_dunne; break;
         case SWMM_GW2D_LED_CAPRISE:      *value = st.led_caprise; break;
         case SWMM_GW2D_LED_ET:           *value = st.led_et; break;

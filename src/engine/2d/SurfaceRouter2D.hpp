@@ -346,6 +346,10 @@ public:
         return cell_subcatch_;
     }
 
+    double infiltrationElapsed() const noexcept { return infil_elapsed_; }
+    void restoreInfiltration(const std::vector<double>& cumulative, double elapsed) {
+        infil_cum_applied_ = cumulative; infil_elapsed_ = elapsed;
+    }
     const std::vector<double>& infilCumulative() const noexcept {
         return infil_cum_applied_;
     }

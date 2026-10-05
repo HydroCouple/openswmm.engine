@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <limits>
 
 namespace openswmm::twoD {
 
@@ -65,6 +66,11 @@ void SubsurfaceState::resize(int n, int m) {
     qet_last.assign(nn, 0.0);
     dunne_last.assign(nn, 0.0);
     qplus_last.assign(nn, 0.0);
+    infil_capacity.assign(nn, std::numeric_limits<double>::quiet_NaN());
+    infil_refresh.assign(nn, std::numeric_limits<double>::quiet_NaN());
+    infil_remaining.assign(nn, std::numeric_limits<double>::quiet_NaN()); infil_interval.assign(nn, 0.0);
+    wetting_front.assign(nn, 0.0); reject_last.assign(nn, 0.0);
+    reject_cumulative.assign(nn, 0.0); dunne_cumulative.assign(nn, 0.0);
     qlink_last.assign(nn, 0.0);   // G-X3
 
     dt_cell.assign(nn, 0.0);
@@ -121,7 +127,7 @@ double SubsurfaceState::ledgeredStorage() const noexcept {
 
 double SubsurfaceState::continuityResidual() const noexcept {
     const double in  = led_infil_in + led_lateral + led_link + led_source_in;   // G-X3
-    const double out = led_deep + led_node + led_et + led_dunne + led_source_out;
+    const double out = led_deep + led_node + led_et + led_dunne + led_reject + led_source_out;
     return ledgeredStorage() - led_init_storage - (in - out);
 }
 
