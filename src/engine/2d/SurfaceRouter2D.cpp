@@ -1292,7 +1292,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         // instead of running a whole INFIL_STEP dry. The kernels are advanced
         // by one cadence step here, matching how the runoff module evaluates
         // at the start of a wet step.
-        infil_.updateRates(mesh_, state_, infil_.stepSeconds());
+        infil_.updateRates(mesh_, state_, infil_.stepSeconds(), surface::infiltrationFactors(ctx, 0.0));
         infil_cum_applied_.assign(
             static_cast<std::size_t>(mesh_.n_triangles()), 0.0);
     } else {
@@ -1567,7 +1567,7 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
     if (infil_.active()) {
         infil_elapsed_ += dt;
         if (infil_elapsed_ >= infil_.stepSeconds()) {
-            infil_.updateRates(mesh_, state_, infil_elapsed_);
+            infil_.updateRates(mesh_, state_, infil_elapsed_, surface::infiltrationFactors(ctx, t));
             infil_elapsed_ = 0.0;
         }
     }

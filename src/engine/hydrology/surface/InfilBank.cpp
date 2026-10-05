@@ -3,10 +3,23 @@
 
 #include "InfilBank.hpp"
 #include "../../core/SimulationOptions.hpp"
+#include "../../core/SimulationContext.hpp"
+#include "../../core/DateTime.hpp"
 #include "../../core/UnitConversion.hpp"
 #include <algorithm>
 
 namespace openswmm::surface {
+InfilBank::Factors infiltrationFactors(const SimulationContext& ctx, double elapsed_s) {
+    const int month = datetime::monthOfYear(datetime::addSeconds(ctx.options.start_date, elapsed_s)) - 1;
+    InfilBank::Factors result{ctx.adjust_hydcon[month], 1.0};
+    const int pattern = ctx.climate_state.recovery_pat_index;
+    if (pattern >= 0 && static_cast<std::size_t>(pattern) < ctx.patterns.factors.size()) {
+        const auto& values = ctx.patterns.factors[pattern];
+        if (static_cast<std::size_t>(month) < values.size()) result.recovery = values[month];
+    }
+    return result;
+}
+
 void InfilBank::init(int n) {
     clear();
     methods_.assign(n, InfilModel::HORTON);
