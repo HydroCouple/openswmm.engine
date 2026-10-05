@@ -1,0 +1,27 @@
+{
+  "library": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.gui/build/SWMMVis.app/Contents/Frameworks/libopenswmm.engine.6.dylib",
+  "fixture": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/plans/2d/artifacts/disconnected_outfalls_2026-10-05/boston_disconnected_names.inp",
+  "initialize_code": 0,
+  "ignored_outfall_count": 17,
+  "warnings": [
+    "WARNING: 2D coupling ignored for outfall '2211640003': no incident hydraulic link; all vertex and cell mappings to this outfall are ignored.",
+    "WARNING: 2D coupling ignored for outfall '2211640006': no incident hydraulic link; all vertex and cell mappings to this outfall are ignored.",
+    "WARNING: 2D coupling ignored for outfall '2213640005': no incident hydraulic link; all vertex and cell mappings to this outfall are ignored.",
+    "WARNING: 2D coupling ignored for outfall '2213640010': no incident hydraulic link; all vertex and cell mappings to this outfall are ignored.",
+    "WARNING: 2D coupling ignored for outfall '2213640013': no incident hydraulic link; all vertex and cell mappings to this outfall are ignored.",
+    "WARNING: 2D coupling ignored for outfall '2213640018': no incident hydraulic link; all vertex and cell mappings to this outfall are ignored.",
+    "WARNING: 2D coupling ignored for outfall '2213640019': no incident hydraulic link; all vertex and cell mappings to this outfall are ignored.",
+    "WARNING: 2D coupling ignored for outfall '2213640020': no incident hydraulic link; all vertex and cell mappings to this outfall are ignored.",
+    "WARNING: 2D coupling ignored for outfall '2213640021': no incident hydraulic link; all vertex and cell mappings to this outfall are ignored.",
+    "WARNING: 2D coupling ignored for outfall '2214640002': no incident hydraulic link; all vertex and cell mappings to this outfall are ignored.",
+    "WARNING: 2D coupling ignored for outfall '2214640004': no incident hydraulic link; all vertex and cell mappings to this outfall are ignored.",
+    "WARNING: 2D coupling ignored for outfall '2312640010': no incident hydraulic link; all vertex and cell mappings to this outfall are ignored.",
+    "WARNING: 2D coupling ignored for outfall '2312640011': no incident hydraulic link; all vertex and cell mappings to this outfall are ignored.",
+    "WARNING: 2D coupling ignored for outfall '2312640014': no incident hydraulic link; all vertex and cell mappings to this outfall are ignored.",
+    "WARNING: 2D coupling ignored for outfall '2412640005': no incident hydraulic link; all vertex and cell mappings to this outfall are ignored.",
+    "WARNING: 2D coupling ignored for outfall 'NewOF': no incident hydraulic link; all vertex and cell mappings to this outfall are ignored.",
+    "WARNING: 2D coupling ignored for outfall 'WROX_0578-outfall': no incident hydraulic link; all vertex and cell mappings to this outfall are ignored."
+  ],
+  "duplicate_mapping_warns_once": true,
+  "uses_full_boston_model": false
+}

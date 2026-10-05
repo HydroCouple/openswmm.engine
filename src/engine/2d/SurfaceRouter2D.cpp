@@ -503,6 +503,26 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // Build coupling point descriptors
     coupling_points_ = buildCouplingPoints(mesh_, ctx);
 
+    // Imported/generated maps may include unused outfalls. They cannot
+    // exchange through the hydraulic network; omit their mappings before
+    // tailwater feedback and donor reservations, without rewriting input.
+    std::vector<unsigned char> has_link(static_cast<std::size_t>(ctx.n_nodes()), 0);
+    for (int j = 0; j < ctx.n_links(); ++j) {
+        if (ctx.links.node1[j] >= 0) has_link[ctx.links.node1[j]] = 1;
+        if (ctx.links.node2[j] >= 0) has_link[ctx.links.node2[j]] = 1;
+    }
+    std::unordered_set<int> warned_outfalls;
+    coupling_points_.erase(std::remove_if(coupling_points_.begin(), coupling_points_.end(),
+        [&](const CouplingPoint& cp) {
+            if (!cp.is_outfall || has_link[cp.node_idx]) return false;
+            if (warned_outfalls.insert(cp.node_idx).second)
+                ctx.warnings.push_back(
+                    "WARNING: 2D coupling ignored for outfall '" + ctx.node_names.name_of(cp.node_idx)
+                    + "': no incident hydraulic link; all vertex and cell mappings "
+                      "to this outfall are ignored.");
+            return true;
+        }), coupling_points_.end());
+
     // Live in-marcher exchange points: the marcher evaluates the orifice law
     // per 2D substep against live surface heads, so every non-outfall coupling
     // point becomes a SINGLE-CELL point (the lowest-bed incident cell, where

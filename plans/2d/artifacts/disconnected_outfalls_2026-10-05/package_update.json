@@ -1,0 +1,21 @@
+{
+  "candidate": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/build/agent-gw/src/engine/libopenswmm.engine.6.0.0.dylib",
+  "records": [
+    {
+      "target": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/install/lid-nodes/lib/libopenswmm.engine.6.0.0.dylib",
+      "backup": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/plans/2d/artifacts/disconnected_outfalls_2026-10-05/installed_engine_before.dylib",
+      "previous_sha256": "5cd93eaca99544eb8f8143cef780d93e9dfadbc2798173f9363753dd11bdd2cb",
+      "original_backup_sha256": "5303c73e2e55d99660be31dfc13673b77caa9115d5ea8a8c75753d490082276b",
+      "after_sha256": "addbfdff14505456eef33e564cbc244867e03474ab19ec4a3b59d122dd120099"
+    },
+    {
+      "target": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.gui/build/SWMMVis.app/Contents/Frameworks/libopenswmm.engine.6.dylib",
+      "backup": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/plans/2d/artifacts/disconnected_outfalls_2026-10-05/bundled_engine_before.dylib",
+      "previous_sha256": "76d9f5c6cff428a1c5a136e94df7f6fd209899b516cfe57aa086943b37d8daea",
+      "original_backup_sha256": "5cae40668a960b6ab634d487174088b983d12ecb5020d1f569ada5010bf48e14",
+      "after_sha256": "addbfdff14505456eef33e564cbc244867e03474ab19ec4a3b59d122dd120099"
+    }
+  ],
+  "bundle_signature_verified": true,
+  "atomic_replacement_preserves_existing_process_mappings": true
+}

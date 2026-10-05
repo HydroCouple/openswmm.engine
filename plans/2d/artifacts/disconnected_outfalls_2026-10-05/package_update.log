@@ -1,0 +1,4 @@
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/install/lid-nodes/lib/.disconnected_outfall_update.dylib: replacing existing signature
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.gui/build/SWMMVis.app/Contents/Frameworks/.disconnected_outfall_update.dylib: replacing existing signature
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.gui/build/SWMMVis.app: replacing existing signature
+Updated installed engine and GUI bundle; signature verified.

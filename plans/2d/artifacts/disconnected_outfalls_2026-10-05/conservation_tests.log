@@ -1,0 +1,22 @@
+Running main() from /private/tmp/googletest-20250910-5249-qce8ci/googletest-1.17.0/googletest/src/gtest_main.cc
+[==========] Running 4 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 4 tests from CouplingConservation2DTest
+[ RUN      ] CouplingConservation2DTest.ReceivedEqualsGivenUnderVariableStep
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] CouplingConservation2DTest.ReceivedEqualsGivenUnderVariableStep (14 ms)
+[ RUN      ] CouplingConservation2DTest.PerCellAbstractionTiesBackToTheDomainTotals
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] CouplingConservation2DTest.PerCellAbstractionTiesBackToTheDomainTotals (4 ms)
+[ RUN      ] CouplingConservation2DTest.CouplingOutflowSplitsFromFloodingAndConserves
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] CouplingConservation2DTest.CouplingOutflowSplitsFromFloodingAndConserves (8 ms)
+[ RUN      ] CouplingConservation2DTest.SpillDrawsPondedWaterOnly
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] CouplingConservation2DTest.SpillDrawsPondedWaterOnly (3 ms)
+[----------] 4 tests from CouplingConservation2DTest (30 ms total)
+
+[----------] Global test environment tear-down
+[==========] 4 tests from 1 test suite ran. (31 ms total)
+[  PASSED  ] 4 tests.
