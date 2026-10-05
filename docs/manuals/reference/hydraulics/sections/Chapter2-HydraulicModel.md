@@ -138,6 +138,12 @@ geometry and its thicknesses from the ordered SURFACE, MEDIA and AGGREGATE
 layers. MEDIA is divided into five numerical cells per authored layer.
 These cells describe retained moisture; they are not separate hydraulic nodes.
 Connections, controls and downstream stages belong to the ordinary network.
+Unlike the single underdrain definition and opening/closing threshold pair
+of a conventional subcatchment LID, a storage-node LID can have any number
+of connections at different elevations. Each controllable link can have
+independent rules and settings. An orifice used as a valve permits partial
+openings between settings 0 and 1; its discharge still follows its hydraulic
+law and the heads at both ends.
 
 For cell geometric volume \f$G_i\f$, void fraction \f$\phi_i\f$, retained
 fraction \f$\theta_i\f$ and mobile water-table depth \f$h\f$ above the invert:

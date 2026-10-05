@@ -18,6 +18,23 @@ numbers are one-based from the top and include SURFACE. BOTTOM is a boundary,
 not an outlet or treatment layer. A control can be shared by several storage
 nodes; editing it updates those assignments.
 
+## Multiple connections and independent controls
+
+A conventional subcatchment LID control has one underdrain definition, one
+opening/closing threshold pair and an optional head-based discharge multiplier
+curve. That definition can represent several physical drain pipes but supplies
+one combined drain response. A storage-node LID accepts an arbitrary number
+of ordinary hydraulic links at different elevations. Each controllable link
+has its own control-rule actions. An orifice representing a valve accepts
+settings from 0 (closed) through partial openings to 1 (fully open); this
+specifies opening, not a linear fraction of discharge.
+
+Use separate links for a basal drawdown valve, an intermediate treatment outlet
+and a high-level emergency overflow. Set their offsets or layer anchors
+independently. Dynamic Wave evaluates the head at both endpoints and permitted
+flow reversal. The extension connects layered LID physics to existing SWMM
+network controls; it does not replace the conventional underdrain thresholds.
+
 ## Configuration and units
 
 The following stack has a total thickness of 24 inches (2 ft):
