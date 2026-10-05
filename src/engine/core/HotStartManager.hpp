@@ -199,6 +199,7 @@ struct HotStartFile {
     std::vector<double> gw_hg;           ///< saturated thickness (m)
     std::vector<double> gw_hu;           ///< unsaturated storage (m of water)
     std::vector<double> gw_theta_sigma;  ///< closure-B layers, layer-major
+    std::vector<std::vector<double>> gw_interface; ///< V12: held capacity, pending water/mass, surface intake state
     std::vector<double> gw_ledger;       ///< the cumulative terms (m3): 9, +link since G-X3
 
     /// T7.5 (2026-09-21) — V6 block: the aquifer's TRANSPORTED tuple.

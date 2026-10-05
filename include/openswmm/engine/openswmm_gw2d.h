@@ -95,12 +95,21 @@ extern "C" {
 #define SWMM_GW2D_VAR_CLOSURE   12  /**< resolved closure (AUTO already gone) */
 #define SWMM_GW2D_VAR_QLINK     13  /**< G-X3: conduit seepage delivered in (m3/s) */
 
+#define SWMM_GW2D_VAR_INFIL_CAPACITY 14 /**< Aquifer top-interface receiving capacity (m s-1) */
+#define SWMM_GW2D_VAR_INFIL_REMAINING 15 /**< Remaining receiving allowance after pending receipts (m3) */
+#define SWMM_GW2D_VAR_INFIL_REFRESH 16 /**< Capacity refresh time since simulation start (s) */
+#define SWMM_GW2D_VAR_INFIL_PENDING 17 /**< Reserved surface water pending aquifer firing (m3) */
+#define SWMM_GW2D_VAR_REJECT 18 /**< Rejected top-interface delivery returned to surface (m3 s-1) */
+#define SWMM_GW2D_VAR_REJECT_CUM 19 /**< Cumulative rejected top-interface delivery (m3) */
+#define SWMM_GW2D_VAR_DUNNE_CUM 20 /**< Cumulative physical saturation excess (m3) */
+
 /* ---- Ledger selectors (m3, cumulative) ---------------------------------- */
 
 #define SWMM_GW2D_LED_RECHARGE      0
 #define SWMM_GW2D_LED_LATERAL       1
 #define SWMM_GW2D_LED_DEEP          2
 #define SWMM_GW2D_LED_NODE          3
+#define SWMM_GW2D_LED_REJECT        13 /**< rejected infiltration only (m3) */
 #define SWMM_GW2D_LED_DUNNE         4
 #define SWMM_GW2D_LED_CAPRISE       5
 #define SWMM_GW2D_LED_ET            6

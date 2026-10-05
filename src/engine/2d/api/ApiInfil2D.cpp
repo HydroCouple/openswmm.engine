@@ -40,6 +40,8 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <unordered_map>
+#include <unordered_set>
 
 // Helper macros — same shape as Api2D.cpp.
 #define GET_ENGINE(engine) \
@@ -108,9 +110,16 @@ int fromMethod(InfilModel m) {
 ///
 /// @returns SWMM_OK, or SWMM_ERR_BADPARAM naming nothing (the C API has no
 ///          message channel; the same row is re-validated by resolve()).
-int toRow(const SWMM_Infil2DRow& in, Infil2DRow& out) {
+int toRow(const SWMM_Infil2DRow& in, Infil2DRow& out, bool authored = false) {
     out = Infil2DRow{};
-    if (in.has_method == 0) return SWMM_OK;   // NONE: every other field is moot
+    if (in.has_method == 0) {
+        if(authored){
+            if(in.dest<0 || in.dest>SWMM_INFIL2D_DEST_AQUIFER_2D)return SWMM_ERR_BADPARAM;
+            out.dest=static_cast<Infil2DDest>(in.dest);
+            for(int k=0;k<kInfil2DMaxParams;++k){if(!std::isfinite(in.p[k]))return SWMM_ERR_BADPARAM;out.p[k]=in.p[k];}
+        }
+        return SWMM_OK;
+    }
 
     if (!toMethod(in.method, out.method)) return SWMM_ERR_BADPARAM;
     out.has_method = true;
@@ -120,13 +129,16 @@ int toRow(const SWMM_Infil2DRow& in, Infil2DRow& out) {
         out.p[k] = in.p[k];
     }
 
-    // D-I4: parse the other destinations, accept only LOST.
+    // Ordered authoring replacement must restore obsolete records on Undo.
+    // Ordinary setters retain their prior validation; initialize diagnoses
+    // unsupported authoring, so migration can be reviewed before a run.
     switch (in.dest) {
         case SWMM_INFIL2D_DEST_LOST: out.dest = Infil2DDest::LOST; break;
         case SWMM_INFIL2D_DEST_SUBCATCH_AQUIFER:
         case SWMM_INFIL2D_DEST_AQUIFER_2D:
-        default:
+            if(authored){out.dest=static_cast<Infil2DDest>(in.dest);break;}
             return SWMM_ERR_BADPARAM;
+        default: return SWMM_ERR_BADPARAM;
     }
 
     switch (out.method) {
@@ -306,6 +318,111 @@ int swmm_infil2d_remove_default(SWMM_Engine engine, const char* tag) {
 // ============================================================================
 // Per-cell overrides — [2D_INFILTRATION]
 // ============================================================================
+
+int swmm_infil2d_get_authored_rows(SWMM_Engine engine,
+    SWMM_Infil2DAuthoredRow* out, int len, int* written) {
+    GET_ENGINE(engine);
+    auto& router2d=eng->surfaceRouter2D();
+    const auto& bank=router2d.infil();
+    const int count=static_cast<int>(bank.defaults().size()+bank.overrides().size());
+    if (!written || len<0) return SWMM_ERR_BADPARAM;
+    *written=count;
+    if (!out) return len==0 ? SWMM_OK : SWMM_ERR_BADPARAM;
+    if (len<count) return SWMM_ERR_BADPARAM;
+    for (const auto& d:bank.defaults()) if (d.tag.size()>=sizeof(out[0].tag)) return SWMM_ERR_BADPARAM;
+    int at=0;
+    for (const auto& d:bank.defaults()) {
+        auto& row=out[at++]; row={};row.cell=-1;
+        std::memcpy(row.tag,d.tag.c_str(),d.tag.size()+1);fromRow(d.row,row.row);row.dest_explicit=d.row.dest_explicit;
+    }
+    for (const auto& o:bank.overrides()) {
+        auto& row=out[at++];row={};row.cell=o.tri;fromRow(o.row,row.row);row.dest_explicit=o.row.dest_explicit;
+    }
+    return SWMM_OK;
+}
+
+int swmm_infil2d_replace_authored_rows(SWMM_Engine engine,
+    const SWMM_Infil2DAuthoredRow* rows, int count) {
+    GET_ENGINE(engine);CHECK_EDITABLE(eng);
+    auto& router2d=eng->surfaceRouter2D();
+    if (count<0 || (count>0 && !rows)) return SWMM_ERR_BADPARAM;
+    std::vector<openswmm::twoD::Infil2DDefault> defaults;
+    std::vector<openswmm::twoD::Infil2DOverride> overrides;
+    for (int i=0;i<count;++i) {
+        Infil2DRow row;
+        if (toRow(rows[i].row,row,true)!=SWMM_OK) return SWMM_ERR_BADPARAM;
+        if (rows[i].dest_explicit!=0 && rows[i].dest_explicit!=1) return SWMM_ERR_BADPARAM;
+        row.dest_explicit=rows[i].dest_explicit!=0;
+        if (rows[i].cell==-1) {
+            const char* end=static_cast<const char*>(std::memchr(rows[i].tag,0,sizeof rows[i].tag));
+            if (!end || end==rows[i].tag) return SWMM_ERR_BADPARAM;
+            defaults.push_back({std::string(rows[i].tag,end),row});
+        } else {
+            if (rows[i].cell<0 || rows[i].cell>=router2d.mesh().n_triangles()) return SWMM_ERR_BADINDEX;
+            overrides.push_back({rows[i].cell,row});
+        }
+    }
+    router2d.infil().defaults()=std::move(defaults);
+    router2d.infil().overrides()=std::move(overrides);
+    return SWMM_OK;
+}
+
+int swmm_infil2d_get_ownership_bulk(SWMM_Engine engine,
+    int* owners, int* aq_rows, int* conflicts, int len, int* written) {
+    GET_ENGINE(engine);CHECK_2D_MESH(eng);
+    const int n=router2d.mesh().n_triangles();
+    if (!owners||!aq_rows||!conflicts||len<n) return SWMM_ERR_BADPARAM;
+    const auto& opts=router2d.options();const auto& cfg=router2d.aquiferConfig();
+    const bool covered=opts.groundwater!=0&&!cfg.empty();
+    const int owner=opts.infiltration==0?0:covered?2:1;
+    std::fill(owners,owners+n,owner);std::fill(aq_rows,aq_rows+n,-1);std::fill(conflicts,conflicts+n,0);
+    int global=-1;std::unordered_map<std::string,int> tagged;
+    for (std::size_t row=0;row<cfg.rows.size();++row) {
+        const auto& r=cfg.rows[row];if(r.scope==0)global=static_cast<int>(row);
+        else if(r.scope==1)tagged[r.tag]=static_cast<int>(row);
+    }
+    const auto& tags=router2d.mesh().tri_tag;
+    for(int i=0;i<n;++i){aq_rows[i]=global;if(static_cast<std::size_t>(i)<tags.size()){
+        const auto found=tagged.find(tags[i]);if(found!=tagged.end())aq_rows[i]=found->second;}}
+    for(std::size_t row=0;row<cfg.rows.size();++row){const auto& r=cfg.rows[row];
+        if(r.scope==2&&r.cell>=0&&r.cell<n)aq_rows[r.cell]=static_cast<int>(row);}
+    bool obsolete=opts.infil_destination=="AQUIFER_2D";std::unordered_set<std::string> old_tags;
+    for(const auto& d:router2d.infil().defaults())if(d.row.has_method&&d.row.dest==Infil2DDest::AQUIFER_2D){
+        if(d.tag=="*")obsolete=true;else old_tags.insert(d.tag);}
+    for(int i=0;i<n;++i)if(obsolete||(static_cast<std::size_t>(i)<tags.size()&&old_tags.count(tags[i])))conflicts[i]=2;
+    for(const auto& o:router2d.infil().overrides())if(o.tri>=0&&o.tri<n&&o.row.has_method){
+        if(owners[o.tri]==2&&conflicts[o.tri]==0)conflicts[o.tri]=1;
+        if(o.row.dest==Infil2DDest::AQUIFER_2D)conflicts[o.tri]=2;}
+    if(written)*written=n;return SWMM_OK;
+}
+
+int swmm_infil2d_get_ownership(SWMM_Engine engine, int cell,
+                               int* owner, int* aq_row, int* conflict) {
+    GET_ENGINE(engine); CHECK_2D_MESH(eng); CHECK_TRI_IDX(cell, router2d);
+    if (!owner || !aq_row || !conflict) return SWMM_ERR_BADPARAM;
+    const auto& opts = router2d.options();
+    const auto& cfg = router2d.aquiferConfig();
+    const bool covered = opts.groundwater != 0 && !cfg.empty();
+    *owner = opts.infiltration == 0 ? 0 : covered ? 2 : 1;
+    *aq_row = -1; *conflict = 0;
+    const auto& tags = router2d.mesh().tri_tag;
+    const std::string tag = static_cast<std::size_t>(cell)<tags.size() ? tags[cell] : "";
+    for (int scope=0;scope<3;++scope)
+        for (std::size_t row=0;row<cfg.rows.size();++row) {
+            const auto& r=cfg.rows[row];
+            if (r.scope==scope && (scope==0 || (scope==1 && r.tag==tag) || (scope==2 && r.cell==cell)))
+                *aq_row=static_cast<int>(row);
+        }
+    const auto& infil=router2d.infil();
+    for (const auto& row:infil.overrides())
+        if (row.tri==cell && row.row.has_method && *owner==2) *conflict=1;
+    if (opts.infil_destination=="AQUIFER_2D") *conflict=2;
+    for (const auto& d:infil.defaults())
+        if ((d.tag=="*" || d.tag==tag) && d.row.has_method && d.row.dest==Infil2DDest::AQUIFER_2D) *conflict=2;
+    for (const auto& row:infil.overrides())
+        if (row.tri==cell && row.row.has_method && row.row.dest==Infil2DDest::AQUIFER_2D) *conflict=2;
+    return SWMM_OK;
+}
 
 int swmm_infil2d_get_cell(SWMM_Engine engine, int tri,
                           SWMM_Infil2DRow* row, int* is_override) {

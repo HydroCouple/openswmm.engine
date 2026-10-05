@@ -76,6 +76,7 @@
 #include "SubsurfaceData.hpp"
 #include "SubsurfaceTransportState.hpp"   // T7.1
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -213,6 +214,10 @@ public:
     /// Flush every pending accumulator into its owner. Mandatory before any
     /// re-tier or active-set change (the stranded-flux hazard).
     void settle(SurfaceStateData& surf);
+    void restorePendingSurface() {
+        pending_surface_.clear(); std::fill(pending_flag_.begin(), pending_flag_.end(), 0);
+        for (int i = 0; i < state_.n_cells; ++i) if (state_.xacc_to_surface[i] > 0.0) markPendingSurface(i);
+    }
 
     /// True when the tier's cell list is non-empty.
     bool tierHasCells(int tier) const noexcept {
@@ -234,6 +239,12 @@ public:
     /// The surface books infiltration it delivered to cell `i` (m³) at its
     /// own (finer) cadence; the GW cell gathers it when it fires.
     void bookInfiltrationFromSurface(int cell, double vol_m3) noexcept;
+    /// Publish the aquifer's held rate; publication never restores spent storage.
+    void publishInfiltration(SurfaceStateData& surf, double interval, double time);
+    /// Reserve and book once, BEFORE the sender removes water (SI m3).
+    /// Producers for one cell run serially, as for the existing accumulators.
+    double acceptSurfaceInfiltration(int cell, double requested) noexcept;
+    double infiltrationHeadroom(int cell) const noexcept;
     /// G-X3 (2026-09-19): the router books a conduit's seepage volume (m³,
     /// SI, its length-weighted share for this cell) at the routing cadence;
     /// the GW cell gathers it at its firing as a saturated-zone inflow.
@@ -393,6 +404,8 @@ private:
                          double* theta_bot_out) const noexcept;
     void markPendingSurface(int i) noexcept;
 
+    void publishCellInfiltration(int, SurfaceStateData&, double interval, double time);
+    std::vector<std::vector<std::size_t>> cell_beds_;
     std::vector<GwResolvedSource> sources_;
     std::vector<std::vector<std::pair<std::size_t,double>>> cell_sources_;
     SubsurfaceState  state_;

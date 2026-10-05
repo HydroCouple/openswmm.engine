@@ -423,47 +423,38 @@ TEST(Aquifer2D, CApiAuthorsRowsOptionsAndNodeBeds) {
 // ---------------------------------------------------------------------------
 // A4 — AQUIFER_2D is accepted once there is an aquifer to receive it
 // ---------------------------------------------------------------------------
-TEST(Aquifer2D, Aquifer2DDestinationIsAcceptedWithAnAquifer) {
-    DeckRun r = openDeck("dest_ok",
-                         deck(aquiferSection(), "INFIL_DESTINATION AQUIFER_2D\n"));
-    ASSERT_TRUE(r.opened);
-    ASSERT_TRUE(run(r))
-        << "AQUIFER_2D with a [2D_AQUIFER] present must be accepted";
-    double infil_in = 0.0;
-    ASSERT_EQ(swmm_gw2d_get_ledger(r.e, SWMM_GW2D_LED_INFIL_IN, &infil_in),
-              SWMM_OK);
-    EXPECT_GT(infil_in, 0.0);
-    finish(r);
+TEST(Aquifer2D, Aquifer2DDestinationRequiresOwnershipMigration) {
+    DeckRun r=openDeck("dest_obsolete",deck(aquiferSection(),"INFIL_DESTINATION AQUIFER_2D\n"));
+    ASSERT_TRUE(r.opened);EXPECT_NE(swmm_engine_initialize(r.e),SWMM_OK);
+    swmm_engine_close(r.e);swmm_engine_destroy(r.e);
 }
 
 // ---------------------------------------------------------------------------
 // A5 — one owner for the infiltrated water
 // ---------------------------------------------------------------------------
-TEST(Aquifer2D, SubcatchAquiferAndA2DAquiferAreRefusedTogether) {
-    DeckRun r = openDeck(
-        "two_owners",
-        deck(aquiferSection(), "INFIL_DESTINATION SUBCATCH_AQUIFER\n"));
-    ASSERT_TRUE(r.opened);
-    EXPECT_NE(swmm_engine_initialize(r.e), SWMM_OK)
-        << "the same infiltration would be delivered to both aquifers";
-    swmm_engine_close(r.e);
-    swmm_engine_destroy(r.e);
+TEST(Aquifer2D, SurfaceDefaultForLegacyAquiferIsSkippedOnOwnedCells) {
+    DeckRun r=openDeck("owned_skip_legacy",deck(aquiferSection(),"INFIL_DESTINATION SUBCATCH_AQUIFER\n"));
+    ASSERT_TRUE(r.opened);ASSERT_TRUE(run(r));
+    double accepted=0;ASSERT_EQ(swmm_gw2d_get_ledger(r.e,SWMM_GW2D_LED_INFIL_IN,&accepted),SWMM_OK);
+    EXPECT_GT(accepted,0);finish(r);
 }
 
 // ---------------------------------------------------------------------------
 // A6 — the surface ledger counts what the aquifer hands back
 // ---------------------------------------------------------------------------
 TEST(Aquifer2D, ReturnedSaturationExcessIsAnInflowToTheSurfaceLedger) {
-    // A shallow soil under a deep pond: the column fills, the table reaches
-    // the ground, and everything after that comes straight back up as Dunne
-    // excess. HG0 starts the table 0.1 m below the surface so this happens
-    // inside the half hour the deck runs.
-    DeckRun r = openDeck(
-        "dunne",
-        deck("[2D_AQUIFER]\n*  36.0  0.5  0.45  0.10  2.0  HG0 0.45\n\n",
-             "", /*init_depth=*/1.0, /*infil_mm_hr=*/200.0));
+    // Receiving limits stop surface infiltration before it needs refunding.
+    // A separate link receipt exercises physical saturation excess and the
+    // upward surface-ledger transfer, including its pending delivery.
+    DeckRun r = openDeck("dunne",
+        deck("[2D_AQUIFER]\n* 36.0 0.5 0.45 0.10 2.0 HG0 0.45\n\n",
+             "", 1.0, 200.0));
     ASSERT_TRUE(r.opened);
-    ASSERT_TRUE(run(r));
+    ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(r.e,1),SWMM_OK);r.started=true;
+    r.eng->surfaceRouter2D().subsurface().bookLinkSeepage(0,10.0);
+    double elapsed=0.0;
+    while(swmm_engine_step(r.e,&elapsed)==SWMM_OK&&elapsed>0.0){}
 
     const auto& mb = r.eng->context().mass_balance_2d;
     double dunne = 0.0;
@@ -542,7 +533,7 @@ TEST(Aquifer2D, ExfiltrationReachesADryCellThroughThePendingSeed) {
     // by the Dunne volume (no rain, no evaporation, no other source).
     const double surf = st.volume[0] + st.volume[1];
     EXPECT_GT(st.volume[1], 0.0) << "the dry cell above the saturated column stayed dry";
-    EXPECT_NEAR(surf, dunne, 1.0e-6 * dunne + 1.0e-12)
+    EXPECT_NEAR(surf + mb.infil_out, dunne, 1.0e-6 * dunne + 1.0e-12)
         << "surface storage " << surf << " vs Dunne " << dunne;
     EXPECT_LT(std::fabs(mb.error()), 1.0e-6) << "2D continuity error " << mb.error();
     finish(r);
@@ -564,6 +555,10 @@ TEST(Aquifer2D, FloodedManholeRechargesUntilTheColumnIsFullThenStops) {
                             "*  36.0  4.0  0.45  0.10  2.0  HG0 3.9\n\n"
                             "[2D_AQUIFER_NODE]\nJ1  1\n\n",
                             "", /*init_depth=*/0.0, /*infil_mm_hr=*/0.0);
+    // Isolate the bed receiver from lateral inflow/exfiltration in the
+    // neighboring cell, which has its own physical saturation boundary.
+    const std::string neighbor="0 2 3 0.03 0\n";
+    const auto neighbor_at=body.find(neighbor);ASSERT_NE(neighbor_at,std::string::npos);body.erase(neighbor_at,neighbor.size());
     // a surcharging inflow: 0.5 m³/s into a 0.5 m pipe
     const std::string rep = "[REPORT]\nINPUT NO\n";
     const auto at = body.find(rep);
@@ -597,7 +592,7 @@ TEST(Aquifer2D, FloodedManholeRechargesUntilTheColumnIsFullThenStops) {
     EXPECT_NEAR(storage - init, -node_out, 1.0e-9 * std::fabs(node_out) + 1.0e-9)
         << "stored " << storage - init << " vs recharged " << -node_out;
     EXPECT_FALSE(reversed) << "the exchange flipped from recharge to drain under a surcharged node";
-    EXPECT_NEAR(g.hg[0], g.zs[0], 1.0e-3 * g.zs[0]) << "the column under the node did not fill";
+    EXPECT_NEAR(gw.infiltrationHeadroom(0),0.0,1.0e-9) << "the column under the node did not fill";
     EXPECT_NEAR(g.qnode_last[0], 0.0, 1.0e-12) << "a full column is still taking water";
     EXPECT_NEAR(dunne, 0.0, 1.0e-9) << "recharge into a saturated column came back as Dunne — ping-pong";
     EXPECT_LT(std::fabs(resid), 1.0e-6 * storage + 1.0e-9) << ledgerDump(r.e);

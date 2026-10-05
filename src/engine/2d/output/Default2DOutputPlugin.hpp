@@ -264,12 +264,15 @@ private:
     /// [nTime, mLayers, nFace]. Created lazily on the first update() with a
     /// live kernel; absent otherwise. `Mesh2_face_gw_bed_elev` and
     /// `Mesh2_face_gw_closure` are static [nFace] and written once.
-    static constexpr int kGwFaceFields = 11;   // G-X3: + Mesh2_face_gw_link_seepage
-    static constexpr hsize_t kGwLedgerTerms = 14;   // G-X3: + link (LED 10), residual last
+    static constexpr int kGwFaceFields = 18;   // G-X3: + Mesh2_face_gw_link_seepage
+    static constexpr hsize_t kGwLedgerTerms = 15;   // G-X3: + link (LED 10), residual last
     hid_t   ds_gw_face_[kGwFaceFields] = {H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID,
                                           H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID,
                                           H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID,
-                                          H5I_INVALID_HID, H5I_INVALID_HID};
+                                          H5I_INVALID_HID, H5I_INVALID_HID,
+                                          H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID,
+                                          H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID,
+                                          H5I_INVALID_HID};
     hid_t   ds_gw_ledger_          = H5I_INVALID_HID;
     /// T7.5: the aquifer's species fields, created with the rest of the
     /// groundwater group when the kernel carries a tuple.

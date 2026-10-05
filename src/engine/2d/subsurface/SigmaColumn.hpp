@@ -92,6 +92,7 @@ struct ColumnStep {
     double dt      = 1.0;    ///< the cell's tier step (s)
     double q_in    = 0.0;    ///< infiltration offered at the top (m/s, ≥ 0)
     double q_et    = 0.0;    ///< ET demand at the top (m/s, ≥ 0)
+    double handover_theta = -1.0; ///< <0: actual bottom layer; otherwise paired table storage coefficient
     double q0_phys = 0.0;    ///< physical Darcy flux across the table (m/s)
     bool   capillary = false;///< include the diffusive term
 

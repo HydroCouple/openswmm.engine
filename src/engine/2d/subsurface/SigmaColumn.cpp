@@ -55,7 +55,7 @@ inline double harmonic(double a, double b) noexcept {
 // ---------------------------------------------------------------------------
 
 double columnStorage(const double* theta, int m, int stride, double L) noexcept {
-    const double dz = std::max(L, kLMin) / static_cast<double>(m);
+    const double dz = std::max(L, 0.0) / static_cast<double>(m);
     double s = 0.0;
     for (int j = 0; j < m; ++j) s += at(theta, j, stride) * dz;
     return s;
@@ -63,7 +63,7 @@ double columnStorage(const double* theta, int m, int stride, double L) noexcept 
 
 void seedHydrostatic(const soil::Params& p, double* theta, int m, int stride,
                      double L) noexcept {
-    const double Lc = std::max(L, kLMin);
+    const double Lc = std::max(L, 0.0);
     const double dsig = 1.0 / static_cast<double>(m);
     for (int j = 0; j < m; ++j) {
         // Layer centre: σ = (j + ½)/m, and ψ is the height ABOVE the table,
@@ -116,8 +116,8 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
     if (m <= 0 || !(st.dt > 0.0)) return;
 
     const double dsig = 1.0 / static_cast<double>(m);
-    const double L0   = std::max(st.L_old, kLMin);
-    const double L1   = std::max(st.L_new, kLMin);
+    const double L0   = std::max(st.L_old, 0.0);
+    const double L1   = std::max(st.L_new, 0.0);
     const double Ldot = (L1 - L0) / st.dt;
 
     st.dt_limit = columnDtLimit(p, theta, m, stride, L0, Ldot, 1.0, st.capillary);
@@ -197,7 +197,7 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
     //         handover swept by the moving boundary (σ = 1, ż = L̇).
     {
         const double th_bot = th_old[static_cast<std::size_t>(m - 1)];
-        st.f_bot = st.q0_phys - th_bot * Ldot;
+        st.f_bot = st.q0_phys - (st.handover_theta >= 0.0 ? st.handover_theta : th_bot) * Ldot;
         f[static_cast<std::size_t>(m)] = st.f_bot;
     }
 
@@ -274,7 +274,7 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
 
     for (int j = 0; j < m; ++j)
         at(theta, j, stride) =
-            w_new[static_cast<std::size_t>(j)] / std::max(dz1, 1.0e-12);
+            dz1 > 0.0 ? w_new[static_cast<std::size_t>(j)] / dz1 : p.theta_s;
     st.theta_bot = at(theta, m - 1, stride);
 }
 

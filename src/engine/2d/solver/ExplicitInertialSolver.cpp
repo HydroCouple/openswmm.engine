@@ -435,7 +435,8 @@ OPENSWMM_SOURCE_INLINE bool ExplicitInertialSolver::prepareCellSources(int i, do
     const double scale = requested > available && requested > 0.0
         ? available / requested : 1.0;
     // Proportional sharing gives all held sinks the same satisfaction ratio.
-    const double infil = requested_infil * scale;
+    const double infil = gw_ ? gw_->acceptSurfaceInfiltration(i, requested_infil * scale)
+                             : requested_infil * scale;
     const double evap = requested_evap * scale;
     const double out = requested_out * scale;
     state_->infil_applied[i] += infil / area;
@@ -444,13 +445,14 @@ OPENSWMM_SOURCE_INLINE bool ExplicitInertialSolver::prepareCellSources(int i, do
     double* const local_ledger = source_ledgers_.data() +
         static_cast<std::size_t>(sourceThread()) * source_ledger_stride_;
     local_ledger[static_cast<std::size_t>(SourceLedger::Count) * ns] += evap;
-    if (gw_ && infil > 0.0) gw_->bookInfiltrationFromSurface(i, infil);
+
 
 
     if (species_on_ && !state_->transport.cell_runoff_vol.empty())
         state_->transport.cell_runoff_vol[i] += out - std::max(coupling, 0.0);
     source = {area_dt, rain, coupling, available, infil, evap, out,
-        requested >= available ? 0.0 : available - requested, local_ledger};
+        gw_ ? std::max(0.0, available - infil - evap - out)
+            : (requested >= available ? 0.0 : available - requested), local_ledger};
     return true;
 }
 

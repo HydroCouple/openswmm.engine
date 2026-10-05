@@ -1,0 +1,63 @@
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+[==========] Running 21 tests from 5 test suites.
+[----------] Global test environment set-up.
+[----------] 9 tests from Infil2DUnitsTest
+[ RUN      ] Infil2DUnitsTest.ConstantRateUSProjectPublishesTheHandComputedSIRate
+[       OK ] Infil2DUnitsTest.ConstantRateUSProjectPublishesTheHandComputedSIRate (0 ms)
+[ RUN      ] Infil2DUnitsTest.ConstantRateSIProjectPublishesTheHandComputedSIRate
+[       OK ] Infil2DUnitsTest.ConstantRateSIProjectPublishesTheHandComputedSIRate (0 ms)
+[ RUN      ] Infil2DUnitsTest.EveryMethodAgreesAcrossUnitSystems
+[       OK ] Infil2DUnitsTest.EveryMethodAgreesAcrossUnitSystems (0 ms)
+[ RUN      ] Infil2DUnitsTest.HortonSeriesMatchesTheAnalyticCapacityCurveInSI
+[       OK ] Infil2DUnitsTest.HortonSeriesMatchesTheAnalyticCapacityCurveInSI (0 ms)
+[ RUN      ] Infil2DUnitsTest.ConstantEqualsDegenerateHorton
+[       OK ] Infil2DUnitsTest.ConstantEqualsDegenerateHorton (0 ms)
+[ RUN      ] Infil2DUnitsTest.ConstantIsBoundedByAvailableWater
+[       OK ] Infil2DUnitsTest.ConstantIsBoundedByAvailableWater (0 ms)
+[ RUN      ] Infil2DUnitsTest.GreenAmptObeysItsGoverningEquationInSI
+[       OK ] Infil2DUnitsTest.GreenAmptObeysItsGoverningEquationInSI (0 ms)
+[ RUN      ] Infil2DUnitsTest.CurveNumberCumulativeIsBoundedBySmax
+[       OK ] Infil2DUnitsTest.CurveNumberCumulativeIsBoundedBySmax (0 ms)
+[ RUN      ] Infil2DUnitsTest.ModifiedVariantsDifferFromTheirBaseVariants
+[       OK ] Infil2DUnitsTest.ModifiedVariantsDifferFromTheirBaseVariants (0 ms)
+[----------] 9 tests from Infil2DUnitsTest (0 ms total)
+
+[----------] 5 tests from Infil2DResolutionTest
+[ RUN      ] Infil2DResolutionTest.OverrideBeatsTagBeatsStarBeatsNothing
+[       OK ] Infil2DResolutionTest.OverrideBeatsTagBeatsStarBeatsNothing (0 ms)
+[ RUN      ] Infil2DResolutionTest.TagNoneClearsTheStarDefault
+[       OK ] Infil2DResolutionTest.TagNoneClearsTheStarDefault (0 ms)
+[ RUN      ] Infil2DResolutionTest.NoRowsMeansNoAllocationAndInactive
+[       OK ] Infil2DResolutionTest.NoRowsMeansNoAllocationAndInactive (0 ms)
+[ RUN      ] Infil2DResolutionTest.StarNoneLeavesTheModelInactive
+[       OK ] Infil2DResolutionTest.StarNoneLeavesTheModelInactive (0 ms)
+[ RUN      ] Infil2DResolutionTest.InfilStepDefaultsToWetStep
+[       OK ] Infil2DResolutionTest.InfilStepDefaultsToWetStep (0 ms)
+[----------] 5 tests from Infil2DResolutionTest (0 ms total)
+
+[----------] 5 tests from Infil2DValidationTest
+[ RUN      ] Infil2DValidationTest.Aquifer2DDestinationIsRejectedWithoutAnAquifer
+[       OK ] Infil2DValidationTest.Aquifer2DDestinationIsRejectedWithoutAnAquifer (0 ms)
+[ RUN      ] Infil2DValidationTest.Aquifer2DDestinationIsObsoleteWithAnAquifer
+[       OK ] Infil2DValidationTest.Aquifer2DDestinationIsObsoleteWithAnAquifer (0 ms)
+[ RUN      ] Infil2DValidationTest.SubcatchAquiferDestinationResolves
+[       OK ] Infil2DValidationTest.SubcatchAquiferDestinationResolves (0 ms)
+[ RUN      ] Infil2DValidationTest.OutOfRangeCellIndexIsRejected
+[       OK ] Infil2DValidationTest.OutOfRangeCellIndexIsRejected (0 ms)
+[ RUN      ] Infil2DValidationTest.OutOfRangeParametersAreRejected
+[       OK ] Infil2DValidationTest.OutOfRangeParametersAreRejected (0 ms)
+[----------] 5 tests from Infil2DValidationTest (0 ms total)
+
+[----------] 1 test from Infil2DTokensTest
+[ RUN      ] Infil2DTokensTest.MethodAndDestTokensRoundTrip
+[       OK ] Infil2DTokensTest.MethodAndDestTokensRoundTrip (0 ms)
+[----------] 1 test from Infil2DTokensTest (0 ms total)
+
+[----------] 1 test from Infil2DDryCellTest
+[ RUN      ] Infil2DDryCellTest.HortonRecoversCapacityAcrossADryWindow
+[       OK ] Infil2DDryCellTest.HortonRecoversCapacityAcrossADryWindow (0 ms)
+[----------] 1 test from Infil2DDryCellTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 21 tests from 5 test suites ran. (0 ms total)
+[  PASSED  ] 21 tests.

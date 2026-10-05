@@ -247,7 +247,13 @@ TEST(GwTransportKernel, TupleConservesOnEveryMeshFlavour) {
 TEST(GwTransportKernel, InfiltrationHandsMassToTheAquiferAndExcessBringsItBack) {
     Deck r = open("seam", deck(Mesh::Tri));
     ASSERT_TRUE(r.opened);
-    ASSERT_TRUE(run(r));
+    ASSERT_EQ(swmm_engine_initialize(r.e),SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(r.e,1),SWMM_OK);r.started=true;
+    // Independent upward forcing: surface receiving capacity now prevents
+    // the old forced-infiltration/refund loop from generating this channel.
+    r.eng->surfaceRouter2D().subsurface().bookLinkSeepage(0,10.0);
+    double elapsed=0.0;
+    while(swmm_engine_step(r.e,&elapsed)==SWMM_OK&&elapsed>0.0){}
     const auto& gw  = r.eng->surfaceRouter2D().subsurface();
     const auto& t   = gw.transport();
     const auto& srf = r.eng->surfaceRouter2D().state().transport;
@@ -261,7 +267,9 @@ TEST(GwTransportKernel, InfiltrationHandsMassToTheAquiferAndExcessBringsItBack) 
     // concentration; here it does not, so the mass that goes DOWN is
     // whatever the surface was carrying — zero — and the interesting
     // direction is the one coming UP out of a seeded aquifer.
-    EXPECT_NEAR(srf.lost_infiltration[0], t.gained_infil[0], 1.0e-12)
+    double pending_down=0.0;
+    for(int c=0;c<t.n_cells;++c)pending_down+=t.xacc_from_surface[t.idx(0,c)];
+    EXPECT_NEAR(srf.lost_infiltration[0], t.gained_infil[0] + pending_down, 1.0e-12)
         << "the surface lost " << srf.lost_infiltration[0]
         << " but the aquifer gained " << t.gained_infil[0];
     // …less whatever is still in flight: `lost_dunne` is booked when the GW
@@ -472,11 +480,11 @@ struct T72 {
 /// @param extra rows appended to the `[GW_*]` block (sorption, params…)
 /// @param dispersion the `[GW_TRANSPORT_OPTIONS] DISPERSION` switch
 T72 runT72(const std::string& tag, const std::string& extra,
-           bool dispersion = true) {
+           bool dispersion = true, double deep = 0.0) {
     std::ostringstream gw;
     gw << "[GW_TRANSPORT_OPTIONS]\nDISPERSION " << (dispersion ? "YES" : "NO")
        << "\n\n" << extra;
-    Deck r = open(tag, deck(Mesh::Tri, gw.str()));
+    Deck r = open(tag, deck(Mesh::Tri, gw.str(), 0.5, deep));
     T72 o;
     EXPECT_TRUE(r.opened) << tag;
     if (!r.opened) return o;
@@ -537,8 +545,8 @@ TEST(GwTransportKernel, RetardationHoldsMassBackAndStillConserves) {
     // only a seventh of it travels.
     const std::string sorb = params +
         "[GW_SORPTION]\n;;Scope Species Kd Decay\n*  TSS  2.0  -\n\n";
-    const T72 plain = runT72("retard_off", params);
-    const T72 held  = runT72("retard_on",  sorb);
+    const T72 plain = runT72("retard_off", params, true, 1e-4);
+    const T72 held  = runT72("retard_on",  sorb, true, 1e-4);
 
     // The defining property, and the one that does not depend on which way
     // a particular cell's net flux happens to run: every EXIT from the

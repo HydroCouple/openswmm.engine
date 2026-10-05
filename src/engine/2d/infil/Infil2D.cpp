@@ -64,25 +64,17 @@ bool iequals(std::string_view a, std::string_view b) {
     return true;
 }
 
-/// Validate one row. @p who names the offending cell or tag in every message.
-/// @p aquifer_2d is true once a `[2D_AQUIFER]` has resolved, which is what
-/// gives the AQUIFER_2D destination a receiver.
+/// Validate authored rows before resolving ownership or applying precedence.
 bool validateRow(const Infil2DRow& row, const std::string& who,
-                 bool aquifer_2d, std::string& err) {
-    if (!row.has_method) return true;
-
-    // D-I4 as amended by U3 (2026-09-07) and G1: LOST and SUBCATCH_AQUIFER are
-    // routed. SUBCATCH_AQUIFER recharges the legacy aquifer of the
-    // subcatchment containing the cell (track I-b); AQUIFER_2D recharges the
-    // two-zone kernel and is legal exactly when there is a kernel to receive
-    // it. Refusing it when there is none is deliberate: quietly reading it as
-    // LOST would drain a model the author believed was recharging.
-    if (row.dest == Infil2DDest::AQUIFER_2D && !aquifer_2d) {
-        err = "2D infiltration " + who + ": destination AQUIFER_2D needs a "
-              "[2D_AQUIFER] section to receive the recharge; this model has "
-              "none — add one, or use LOST or SUBCATCH_AQUIFER";
+                 bool /*aquifer_2d*/, std::string& err) {
+    if (row.dest == Infil2DDest::AQUIFER_2D) {
+        err = "2D infiltration " + who + ": destination AQUIFER_2D is obsolete; "
+              "remove the surface infiltration row on aquifer-owned cells. "
+              "The aquifer now computes its own receiving capacity.";
         return false;
     }
+    if (!row.has_method) return true;
+
 
     switch (row.method) {
         case InfilModel::HORTON:
@@ -203,6 +195,14 @@ int infil2DParamCount(InfilModel method) {
 
 bool Infil2D::resolve(const MeshData& mesh, const SimulationOptions& opts,
                       std::string& err) {
+    Infil2D candidate = *this;
+    if (!candidate.resolveImpl(mesh, opts, err)) return false;
+    *this = std::move(candidate);
+    return true;
+}
+
+bool Infil2D::resolveImpl(const MeshData& mesh, const SimulationOptions& opts,
+                          std::string& err) {
     const int  nt   = mesh.n_triangles();
     const auto nt_u = static_cast<std::size_t>(nt);
 
@@ -210,6 +210,19 @@ bool Infil2D::resolve(const MeshData& mesh, const SimulationOptions& opts,
     prov_.assign(nt_u, Infil2DProvenance::NONE);
     bank_.init(nt);
     active_ = false;
+    ownership_messages_.clear();
+    if (aquifer_owners_.empty()) aquifer_owners_.assign(nt_u, aquifer_2d_available_ ? 1 : 0);
+    if (aquifer_owners_.size() != nt_u) { err = "2D infiltration: invalid aquifer coverage size"; return false; }
+    const auto owned = [this](std::size_t i) { return aquifer_owners_[i] != 0; };
+    for (const auto& d : defaults_) {
+        int applied = 0, skipped = 0;
+        for (std::size_t i = 0; i < nt_u; ++i) {
+            if (d.tag != "*" && (i >= mesh.tri_tag.size() || mesh.tri_tag[i] != d.tag)) continue;
+            if (owned(i)) ++skipped; else ++applied;
+        }
+        ownership_messages_.push_back("2D infiltration default '" + d.tag + "': " +
+            std::to_string(applied) + " applied, " + std::to_string(skipped) + " skipped (aquifer-owned)");
+    }
 
     // D-I1: the cadence is INFIL_STEP, falling back to the project WET_STEP
     // (SimulationOptions::wet_step is already in seconds).
@@ -226,6 +239,7 @@ bool Infil2D::resolve(const MeshData& mesh, const SimulationOptions& opts,
 
     if (star != nullptr && star->row.has_method) {
         for (std::size_t i = 0; i < nt_u; ++i) {
+            if (owned(i)) continue;
             resolved_[i] = star->row;
             prov_[i]     = Infil2DProvenance::STAR;
         }
@@ -236,7 +250,7 @@ bool Infil2D::resolve(const MeshData& mesh, const SimulationOptions& opts,
     for (const auto& d : defaults_) {
         if (d.tag == "*") continue;
         for (std::size_t i = 0; i < n_tagged; ++i) {
-            if (mesh.tri_tag[i] != d.tag) continue;
+            if (mesh.tri_tag[i] != d.tag || owned(i)) continue;
             if (d.row.has_method) {
                 resolved_[i] = d.row;
                 prov_[i]     = Infil2DProvenance::TAG;
@@ -258,6 +272,11 @@ bool Infil2D::resolve(const MeshData& mesh, const SimulationOptions& opts,
                          aquifer_2d_available_, err)) return false;
 
         const auto ui = static_cast<std::size_t>(o.tri);
+        if (owned(ui) && o.row.has_method) {
+            err = "2D infiltration cell " + std::to_string(o.tri + 1) +
+                  ": explicit surface method conflicts with aquifer ownership; remove this row";
+            return false;
+        }
         if (o.row.has_method) {
             resolved_[ui] = o.row;
             prov_[ui]     = Infil2DProvenance::OVERRIDE;
@@ -270,6 +289,11 @@ bool Infil2D::resolve(const MeshData& mesh, const SimulationOptions& opts,
     // --- kernel state, from the PROJECT-UNIT parameters (§5.5.1) -----------
 
     for (std::size_t i = 0; i < nt_u; ++i) {
+        if (owned(i)) {
+            bank_.setOwner(static_cast<int>(i), surface::InfilBank::Owner::EXTERNAL);
+            active_ = true;
+            continue;
+        }
         const Infil2DRow& r = resolved_[i];
         if (!r.has_method) continue;
         active_ = true;
@@ -308,6 +332,8 @@ void Infil2D::updateRates(const MeshData& mesh, SurfaceStateData& state, double 
 void Infil2D::reset() {
     defaults_.clear();
     overrides_.clear();
+    aquifer_owners_.clear();
+    ownership_messages_.clear();
     options_ = Infil2DOptions{};
 
     active_       = false;

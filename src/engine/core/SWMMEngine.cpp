@@ -145,6 +145,7 @@ void SWMMEngine::wire2DModelIO() noexcept {
     ctx_.twod_io.aquifer       = &surface_router_.aquiferConfig();     // G1
     ctx_.twod_io.aquifer_nodes = &surface_router_.aquiferNodeNames();  // G1
     ctx_.twod_io.aquifer_links = &surface_router_.aquiferLinkNames();  // G-X4
+    ctx_.twod_io.surface_router = &surface_router_;
     ctx_.twod_io.aquifer_state = &surface_router_.subsurface().state();  // G1
     ctx_.twod_io.aquifer_transport =
         &surface_router_.subsurface().transport();                       // T7.5
@@ -7118,6 +7119,13 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
             snap.gw2d_table_elev.assign(n, 0.0);
             for (std::size_t c = 0; c < n; ++c)
                 snap.gw2d_table_elev[c] = g.z_bed[c] + g.hg[c];
+            snap.gw2d_infil_capacity = g.infil_capacity;
+            snap.gw2d_infil_remaining = g.infil_remaining;
+            snap.gw2d_infil_refresh = g.infil_refresh;
+            snap.gw2d_infil_pending = g.xacc_from_surface;
+            snap.gw2d_reject = g.reject_last;
+            snap.gw2d_reject_cum = g.reject_cumulative;
+            snap.gw2d_dunne_cum = g.dunne_cumulative;
             snap.gw2d_hg            = g.hg;
             snap.gw2d_hu            = g.hu;
             snap.gw2d_recharge      = g.q0_last;
@@ -7185,11 +7193,18 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
                                 g.led_dunne, g.led_caprise, g.led_et, g.led_infil_in,
                                 g.led_init_storage, g.liveStorage(),
                                 g.led_link,   // G-X3
-                                g.continuityResidual(), g.led_source_in, g.led_source_out};
+                                g.continuityResidual(), g.led_source_in, g.led_source_out, g.led_reject};
             snap.gw2d_bed_exchange_cum = gw.bedExchangeCumulative();
             snap.gw2d_node_names = surface_router_.aquiferNodeNames().empty()
                                        ? nullptr : &surface_router_.aquiferNodeNames();
         } else {
+            snap.gw2d_infil_capacity.clear();
+            snap.gw2d_infil_remaining.clear();
+            snap.gw2d_infil_refresh.clear();
+            snap.gw2d_infil_pending.clear();
+            snap.gw2d_reject.clear();
+            snap.gw2d_reject_cum.clear();
+            snap.gw2d_dunne_cum.clear();
             snap.gw2d_table_elev.clear(); snap.gw2d_hg.clear(); snap.gw2d_hu.clear();
             snap.gw2d_recharge.clear(); snap.gw2d_lateral.clear(); snap.gw2d_node_exchange.clear();
             snap.gw2d_deep.clear(); snap.gw2d_et.clear(); snap.gw2d_dunne.clear();

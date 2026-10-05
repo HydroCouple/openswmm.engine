@@ -92,6 +92,34 @@ double harmonic(double a, double b) noexcept {
     return 2.0 * a * b / (a + b);
 }
 
+// Exact Green-Ampt intake over a held interval with frozen suction/moisture.
+// Solving its integral removes the singular instantaneous rate at F=0.
+double frontIntake(double F, double B, double Ks, double dt) noexcept {
+    const double target=Ks*dt;
+    if (!(target>0.0))return 0.0;
+    if (!(B>0.0))return target;
+    F=std::max(F,0.0);
+    auto integral=[&](double x){
+        const double y=x/(F+B);
+        const double remainder=y<1e-3
+            ? y*y*(0.5-y/3.0+y*y/4.0-y*y*y/5.0+y*y*y*y/6.0)
+            : y-std::log1p(y);
+        return F*y+B*remainder;
+    };
+    double lo=0.0,hi=target+std::sqrt(2.0*B*target);
+    while(integral(hi)<target)hi*=2.0;
+    double x=hi;
+    for(int iteration=0;iteration<40;++iteration){
+        const double residual=integral(x)-target;
+        if(std::fabs(residual)<=1e-12*target)return x;
+        if(residual>0.0)hi=x;else lo=x;
+        const double derivative=(F+x)/(F+B+x);
+        const double next=x-residual/derivative;
+        x=(next>lo&&next<hi)?next:0.5*(lo+hi);
+    }
+    return lo; // conservative lower bracket if convergence is limited
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -295,6 +323,9 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh,
         }
     }
 
+    cell_beds_.assign(static_cast<std::size_t>(n), {});
+    for (std::size_t b = 0; b < node_beds_.size(); ++b)
+        if (node_beds_[b].cell >= 0) cell_beds_[node_beds_[b].cell].push_back(b);
     pending_flag_.assign(static_cast<std::size_t>(n), 0);
     pending_surface_.clear();
     accumulators_pending_ = false;
@@ -664,8 +695,6 @@ void SubsurfaceSolver::sampleNodeExchange(const NodeData* nodes, double dt) {
                   std::max(0.5 * state_.zs[ci], kTiny);
 
         double Q = cond * (h_gw - h_pipe);   // m³/s, + out of the aquifer
-        const double Sy = std::max(
-            state_.theta_s[ci] - state_.theta_r[ci], kSyFloor);
         if (Q > 0.0) {
             // Cap an aquifer→pipe drain at the cell's drainable water.
             //
@@ -732,7 +761,10 @@ void SubsurfaceSolver::sampleNodeExchange(const NodeData* nodes, double dt) {
             if (L <= kSatGuard * state_.zs[ci]) {
                 Q = 0.0;
             } else {
-                const double headroom = L * Sy * state_.area[ci];
+                // Use the physical column deficit, including other pending
+                // receipts. The old residual-content slab overpromised
+                // storage when an equilibrium column approached saturation.
+                const double headroom = infiltrationHeadroom(bed.cell);
                 double cap = kFaceShare * headroom / std::max(dt, kTiny);
                 const double v12 = opts_ ? opts_->vol_1d_to_2d : 1.0;
                 const double held = (ni < nodes->volume.size())
@@ -1032,6 +1064,75 @@ double SubsurfaceSolver::takeToSurfaceMass(int cell, int species) noexcept {
 // surface ↔ subsurface (step 11b)
 // ---------------------------------------------------------------------------
 
+double SubsurfaceSolver::infiltrationHeadroom(int cell) const noexcept {
+    if (!state_.active || cell < 0 || cell >= state_.n_cells) return 0.0;
+    const auto u = static_cast<std::size_t>(cell);
+    const double L = std::max(0.0, state_.zs[u] - state_.hg[u]);
+    double col = state_.hu[u];
+    const auto cl = static_cast<GwClosure>(state_.closure[u]);
+    if (cl == GwClosure::ENSLAVED) col = soil::equilibriumStorage(paramsOf(cell), L);
+    if (cl == GwClosure::SIGMA) col = sigma::columnStorage(&state_.theta_sigma[u], state_.m_layers, state_.n_cells, L);
+    double deficit = std::max(0.0, (state_.theta_s[u] * L - col) * state_.area[u]);
+    // Do not promise future drainage from the explicit top layer. Its actual
+    // headroom is renewed only after the column has advanced.
+    if (cl == GwClosure::SIGMA)
+        deficit = std::min(deficit, std::max(0.0, state_.theta_s[u] - state_.theta_sigma[u]) *
+                          L / state_.m_layers * state_.area[u]);
+    double pending = std::max(0.0, state_.xacc_from_surface[u]) + std::max(0.0, state_.lacc[u]);
+    for (int p = edges_->cell_ptr[u]; p < edges_->cell_ptr[u + 1]; ++p) {
+        const auto e = static_cast<std::size_t>(edges_->cell_edge[p]);
+        pending += std::max(0.0, edges_->cell_sign[p] > 0 ? state_.eacc_L[e] : state_.eacc_R[e]);
+    }
+    for (const auto b : cell_beds_[u]) pending += std::max(0.0, -state_.nacc[b]);
+    return std::max(0.0, deficit - pending);
+}
+
+void SubsurfaceSolver::publishInfiltration(SurfaceStateData& surf, double interval, double time) {
+    if (!state_.active || !(interval > 0.0)) return;
+    for (int i = 0; i < state_.n_cells; ++i) publishCellInfiltration(i, surf, interval, time);
+}
+
+void SubsurfaceSolver::publishCellInfiltration(int i, SurfaceStateData& surf, double interval, double time) {
+        const auto u = static_cast<std::size_t>(i);
+        const double A = state_.area[u], L = std::max(0.0, state_.zs[u] - state_.hg[u]);
+        const double remaining = infiltrationHeadroom(i);
+        state_.infil_remaining[u] = remaining;
+        double rate = 0.0;
+        if (remaining > 0.0 && A > 0.0 && L > 0.0) {
+            const auto p = paramsOf(i);
+            const double pond = u < surf.depth.size() ? std::max(0.0, surf.depth[u]) : 0.0;
+            const auto cl = static_cast<GwClosure>(state_.closure[u]);
+            if (cl == GwClosure::SIGMA) {
+                const double Se = std::clamp((state_.theta_sigma[u] - p.theta_r) / (p.theta_s - p.theta_r), 1e-6, 1.0);
+                const double suction = soil::suctionAtSaturation(p, Se);
+                rate = p.Ks * (1.0 + (pond + suction) / (0.5 * L / state_.m_layers));
+            } else if (cl == GwClosure::ENSLAVED) {
+                rate = p.Ks * (1.0 + pond / L);
+            } else {
+                const double theta = std::clamp(state_.hu[u] / L, p.theta_r, p.theta_s);
+                const double delta = p.theta_s - theta;
+                const double Se = std::clamp((theta - p.theta_r) / (p.theta_s - p.theta_r), 1e-6, 1.0);
+                const double suction = soil::suctionAtSaturation(p, Se);
+                rate = frontIntake(state_.wetting_front[u], (pond+suction)*delta, p.Ks, interval)/interval;
+            }
+            rate = std::min(rate, remaining / (A * interval));
+        }
+        state_.infil_capacity[u] = rate;
+        state_.infil_refresh[u] = time; state_.infil_interval[u] = interval;
+        if (u < surf.infil_rate.size()) surf.infil_rate[u] = rate;
+}
+
+double SubsurfaceSolver::acceptSurfaceInfiltration(int cell, double requested) noexcept {
+    if (!(requested > 0.0) || !std::isfinite(requested) || cell < 0 || cell >= state_.n_cells || !state_.active) return 0.0;
+    const auto u = static_cast<std::size_t>(cell);
+    if (!(state_.Ks[u] > 0.0) || !(state_.infil_capacity[u] > 0.0) || !std::isfinite(state_.infil_capacity[u])) return 0.0;
+    const double take = std::min(requested, infiltrationHeadroom(cell));
+    state_.xacc_from_surface[u] += take;
+    state_.wetting_front[u] += take / state_.area[u];
+    state_.infil_remaining[u] = infiltrationHeadroom(cell);
+    return take;
+}
+
 void SubsurfaceSolver::bookInfiltrationFromSurface(int cell,
                                                    double vol_m3) noexcept {
     if (!state_.active || cell < 0 || cell >= state_.n_cells) return;
@@ -1147,7 +1248,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     // the floored θ_s − θ_bot — see specificYield().
     double Sy = specificYield(u, p, ts, L0, cl, &theta_bot);
 
-    if (cl == GwClosure::SIGMA) {
+    if (cl == GwClosure::SIGMA && L0 > 0.0) {
         // The physical Darcy flux across the table is the bottom layer's
         // gravity drainage. It is passed INTO the sweep as `q0_phys` and
         // comes back inside `f_bot` together with the handover, which is why
@@ -1158,7 +1259,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
                                1.0e-6, 1.0)));
     } else if (cl == GwClosure::ENSLAVED) {
         q0 = q_in - q_et;
-    } else {
+    } else if (L0 > 0.0) {
         q0 = soil::rechargeQ0(p, std::max(L0, kTiny), state_.hu[u]);
         // G-X4 (2026-09-20): …and when the FLOOR binds, the pairing above is
         // the floored number, not the raw content. A column already at θ_s
@@ -1319,12 +1420,13 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
 
     if (cl == GwClosure::SIGMA) {
         sigma::ColumnStep cs;
-        cs.L_old     = std::max(L0, kTiny);
-        cs.L_new     = std::max(L1, kTiny);
+        cs.L_old     = L0;
+        cs.L_new     = L1;
         cs.dt        = dt;
         cs.q_in      = q_in;
         cs.q_et      = q_et;
         cs.q0_phys   = q0;
+        cs.handover_theta = ts - Sy;
         cs.capillary = options_.capillary_diff;
         sigma::advanceColumn(p, &state_.theta_sigma[u], state_.m_layers, n, cs);
         rejected = cs.rejected;
@@ -1336,11 +1438,25 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         // hold. Applying it here, in the same firing, is what plan gate 5
         // measures; clamping it away inside the sweep is the classic σ-grid
         // conservation bug and it cost 3.9e-1 m before this line existed.
-        const double net = (cs.overflow_to_sat - cs.deficit_from_sat) * dt;
+        // The returned surplus changes BOTH zone volumes: changing hg
+        // rescales every sigma layer. Spend against that profile's mean
+        // content, not the old bottom-layer specific yield. Include any
+        // bottom-flux availability limit in this internal handover.
+        const double expected_bot = q0 - cs.handover_theta * (L1 - L0) / dt;
+        const double net = (cs.overflow_to_sat - cs.deficit_from_sat +
+                            cs.f_bot - expected_bot) * dt;
         if (net != 0.0) {
-            hg1 += net / Sy;
-            if (hg1 > zs) { dunne_vol += (hg1 - zs) * Sy * A; hg1 = zs; }
-            if (hg1 < 0.0) hg1 = 0.0;
+            double mean = 0.0;
+            for (int j=0; j<state_.m_layers; ++j)
+                mean += state_.theta_sigma[static_cast<std::size_t>(j)*n+u] / state_.m_layers;
+            const double yield = std::max(0.0, ts - mean);
+            if (yield > kTiny) {
+                const double target = hg1 + net / yield;
+                if (target > zs) dunne_vol += (target - zs) * yield * A;
+                hg1 = std::clamp(target, 0.0, zs);
+            } else if (net > 0.0) dunne_vol += net * A;
+            state_.hu[u] = sigma::columnStorage(&state_.theta_sigma[u],
+                                state_.m_layers, n, std::max(0.0, zs - hg1));
         }
     } else if (cl == GwClosure::ENSLAVED) {
         // No state to advance — the column IS its equilibrium. Rejection is
@@ -1406,9 +1522,11 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     if (to_surface > 0.0) {
         state_.xacc_to_surface[u] += to_surface;
         markPendingSurface(i);
-        state_.led_dunne += to_surface;
     }
-    state_.dunne_last[u] = to_surface / dt;
+    const double physical_return = options_.dunne ? dunne_vol : 0.0;
+    state_.led_dunne += physical_return; state_.led_reject += reject_vol;
+    state_.dunne_cumulative[u] += physical_return; state_.reject_cumulative[u] += reject_vol;
+    state_.dunne_last[u] = physical_return / dt; state_.reject_last[u] = reject_vol / dt;
 
     // --- T7.1: the tuple rides the volumes this firing just decided -------
     // Every number below is the one the water used, read AFTER the refund
@@ -1440,6 +1558,15 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     }
 
     state_.hg[u] = hg1;
+    // Drying recovers the equivalent wetting-front depth in proportion to
+    // the newly created column deficit; no second time constant is authored.
+    const double deficit_before = std::max(0.0, ts * L0 - hu_pre);
+    const double deficit_after = std::max(0.0, ts * std::max(0.0, zs - hg1) - state_.hu[u]);
+    const double expected = std::max(0.0, deficit_before - infil_vol / A);
+    if (deficit_after > expected && deficit_after > kTiny)
+        state_.wetting_front[u] *= expected / deficit_after;
+    if (state_.infil_interval[u] > 0.0)
+        publishCellInfiltration(i, surf, state_.infil_interval[u], time + dt);
 }
 
 // ---------------------------------------------------------------------------
