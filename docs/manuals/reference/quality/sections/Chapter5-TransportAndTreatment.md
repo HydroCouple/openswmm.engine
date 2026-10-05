@@ -759,3 +759,21 @@ an Eulerian finite-volume engine and a Lagrangian parcel-tracking
 engine, both described in @ref quality_ref_ch7_ard_transport. They are
 selected with `[OPTIONS] QUALITY_SOLVER` and share this chapter's
 external loads, treatment expressions and mass-balance ledger.
+
+### 5.4.5 Treatment in storage-node LIDs
+
+Open-Source SWMM 6's storage-node LIDs extend this chapter's mixed-reactor
+accounting with explicit retained-cell inventories. Accepted water transfers
+carry the donating compartment's concentration and are debited/credited once.
+Layer-exit fixed removal and optional expressions act once per authored layer;
+resident retained mass decays with background plus layer rates. The connected
+mobile volume remains one mixed reactor with volume-weighted layer decay,
+not a sequence of saturated layer reactors. Physical surface bypasses do not
+receive every underlying layer's treatment.
+
+Reverse outfall water carrying pollutant is an external source; clean ZERO
+backflow carries no pollutant mass. Assess exported, reacted, flooded, seeped
+and still-stored mass over a common horizon. The full equations and restart
+behavior are in @ref quality_ref_lid_storage_formulation; accepted-volume
+hydraulics and backwater wetting are in @ref hydraulics_ref_lid_storage_formulation.
+These LID layer rules require Dynamic Wave with the Legacy quality solver.

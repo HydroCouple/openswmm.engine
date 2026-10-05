@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <fstream>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <numeric>
 using namespace openswmm;
@@ -191,7 +192,7 @@ TEST(LidNodes, HotstartRetainsMoistureAndCloggingHistory) {
     const auto saved = c.node_subtypes.storages.lid_state[0];
     const auto path = (std::filesystem::path(OPENSWMM_TEST_SOURCE_DIR) / "../../output/lid_nodes_2026_10_04/profile.hsf").string();
     std::unique_ptr<HotStartFile> hs(HotStartManager::save(c, path));
-    ASSERT_TRUE(hs); EXPECT_EQ(hs->header.version, 9u);
+    ASSERT_TRUE(hs); EXPECT_EQ(hs->header.version, 10u);
     hs.reset(HotStartManager::open(path)); ASSERT_TRUE(hs);
     lidnode::initialize(c);
     ASSERT_EQ(HotStartManager::apply(*hs, c), 0);
@@ -594,4 +595,274 @@ TEST(LidNodes, MobileOutletTreatmentUsesTheSameInterfaceOwnerAsHydraulics) {
     c.links.offset1[0]=.5-1.e-8;
     lidnode::prepareOutletQuality(c,1,false);
     EXPECT_NEAR(lidnode::outletQuality(c,0,0,0,10),2.5,1.e-12);
+}
+
+namespace {
+double internalTransfer(const LidNodeState& state, int from, int to) {
+    double v = 0;
+    for (const auto& transfer : state.quality_transfers)
+        if (transfer.from == from && transfer.to == to) v += transfer.volume;
+    return v;
+}
+void closedWetStep(SimulationContext& c, double dt, double inflow) {
+    c.nodes.lat_flow[0] = inflow;
+    lidnode::prepareStep(c, dt, 0);
+    c.nodes.volume[0] += c.nodes.lat_flow[0] * dt;
+    lidnode::finishStep(c);
+}
+}
+TEST(LidNodes, MediaDrainageUsesLegacyConductivitySlope) {
+    for (double slope : {0.0, 10.0, 30.0}) {
+        auto c = model(); c.lid_controls.node_layers[0][1].params[5] = slope;
+        EXPECT_TRUE(lidnode::validateStack(c.lid_controls.node_layers[0]).empty());
+        lidnode::initialize(c);
+        auto& state = c.node_subtypes.storages.lid_state[0];
+        for (auto& cell : state.cells) if (cell.kind == LidNodeLayerKind::Media) cell.theta = .3;
+        const double expected = 2.0 / 43200 * std::exp(-slope * (.45 - .3)) * 100 * .1;
+        lidnode::prepareStep(c, .1, 0);
+        EXPECT_NEAR(internalTransfer(state, 1, 2), expected, 1.e-13);
+    }
+    auto c = model(); lidnode::initialize(c);
+    for (auto& cell : c.node_subtypes.storages.lid_state[0].cells)
+        if (cell.kind == LidNodeLayerKind::Media) cell.theta = cell.field_capacity;
+    lidnode::prepareStep(c, .1, 0);
+    EXPECT_DOUBLE_EQ(internalTransfer(c.node_subtypes.storages.lid_state[0], 1, 2), 0);
+}
+TEST(LidNodes, SurfaceEntryReusesModifiedGreenAmptAndRespondsToPonding) {
+    double previous = 0;
+    for (double surface_theta : {.1, .3}) {
+        auto c = model(); lidnode::initialize(c);
+        auto& state = c.node_subtypes.storages.lid_state[0];
+        state.cells[0].theta = surface_theta;
+        state.surface_infil.F = .02;
+        auto expected_state = state.surface_infil;
+        const double head = surface_theta / .9 * .5;
+        const double expected = infil::grnampt_getInfil(expected_state, 0, head, .1,
+            InfilModel::MOD_GREEN_AMPT) * 100 * .1;
+        lidnode::prepareStep(c, .1, 0);
+        const double accepted = internalTransfer(state, 0, 1);
+        EXPECT_NEAR(accepted, expected, 1.e-12);
+        EXPECT_NEAR(state.surface_infil.F, .02 + accepted / 100, 1.e-12);
+        EXPECT_GT(accepted, previous); previous = accepted;
+    }
+}
+TEST(LidNodes, CapacityLimitAdvancesOnlyAcceptedInfiltrationHistory) {
+    auto c = model(); lidnode::initialize(c);
+    auto& state = c.node_subtypes.storages.lid_state[0];
+    state.cells[0].theta = .2;
+    state.cells[1].theta = state.cells[1].porosity - 1.e-8;
+    const double capacity = (state.cells[1].porosity - state.cells[1].theta) * state.cells[1].geometric_volume;
+    const double old_f = state.surface_infil.F;
+    lidnode::prepareStep(c, .1, 0);
+    const double accepted = internalTransfer(state, 0, 1);
+    EXPECT_NEAR(accepted, capacity, 1.e-14);
+    EXPECT_NEAR(state.surface_infil.F - old_f, accepted / 100, 1.e-14);
+    EXPECT_LT(state.surface_infil.F - old_f, 1.e-8);
+}
+TEST(LidNodes, ZeroConductivityIsAnImpermeableSurfaceReceiver) {
+    auto c = model(); c.lid_controls.node_layers[0][1].params[4] = 0;
+    lidnode::initialize(c); auto& state = c.node_subtypes.storages.lid_state[0];
+    state.cells[0].theta = .2;
+    lidnode::prepareStep(c, 10, 0);
+    EXPECT_DOUBLE_EQ(internalTransfer(state, 0, 1), 0);
+    EXPECT_TRUE(std::isfinite(state.surface_infil.F));
+    EXPECT_EQ(state.infiltration_cell, -1);
+}
+TEST(LidNodes, DrySurfaceRecoversHistoryWithoutDryingPhysicalMoisture) {
+    auto c = model(); lidnode::initialize(c);
+    auto& state = c.node_subtypes.storages.lid_state[0];
+    auto& ga = state.surface_infil;
+    ga.F = .1; ga.Fu = std::min(.1, ga.Fumax); ga.saturated = true;
+    const double old_f = ga.F, old_fu = ga.Fu;
+    const double wet_floor = (ga.IMDmax - ga.IMD) * ga.Lu;
+    lidnode::prepareStep(c, 10, 0);
+    EXPECT_FALSE(ga.saturated);
+    EXPECT_LT(ga.F, old_f); EXPECT_LT(ga.Fu, old_fu);
+    EXPECT_GE(ga.Fu, wet_floor); EXPECT_GE(ga.F, 0);
+    EXPECT_DOUBLE_EQ(internalTransfer(state, 0, 1), 0);
+}
+TEST(LidNodes, ZeroClimateConductivityMultiplierDoesNotAdvanceInfiltration) {
+    auto c = model(); lidnode::initialize(c);
+    auto& state = c.node_subtypes.storages.lid_state[0];
+    state.cells[0].theta = .2; c.climate_state.infil_factor = 0;
+    const auto before = state.surface_infil;
+    lidnode::prepareStep(c, 10, 0);
+    EXPECT_DOUBLE_EQ(internalTransfer(state, 0, 1), 0);
+    EXPECT_DOUBLE_EQ(state.surface_infil.F, before.F);
+    EXPECT_DOUBLE_EQ(state.surface_infil.Fu, before.Fu);
+    EXPECT_TRUE(std::isfinite(state.surface_infil.T));
+}
+TEST(LidNodes, ReversedMediaPortWettingDoesNotCountAsSurfaceInfiltration) {
+    for (int trials : {1, 8}) {
+        auto c = model(); c.node_subtypes.storages.lid[0].initial_saturation = 0;
+        lidnode::initialize(c); auto& state = c.node_subtypes.storages.lid_state[0];
+        c.links.resize(1); c.links.node1[0] = 0; c.links.node2[0] = 1; c.links.offset1[0] = 1.4;
+        const double before = state.held_volume;
+        const double initial_deficit = state.surface_infil.IMD;
+        for (int i = 0; i < trials; ++i) {
+            lidnode::resetPorts(c);
+            EXPECT_DOUBLE_EQ(lidnode::exchangePorts(c, 0, -1, 1), -1);
+            EXPECT_DOUBLE_EQ(state.surface_infil.F, 0);
+            EXPECT_DOUBLE_EQ(state.surface_infil.IMD, initial_deficit);
+        }
+        lidnode::finishStep(c);
+        EXPECT_NEAR(state.held_volume - before, 1, 1.e-12);
+        EXPECT_LT(state.surface_infil.IMD, initial_deficit);
+        EXPECT_DOUBLE_EQ(state.surface_infil.F, 0);
+        EXPECT_GT(state.surface_infil.Fu, 0);
+    }
+}
+TEST(LidNodes, PartialBackwaterReconcilesDeficitAndSuppressesDryRecovery) {
+    auto c = model(); c.node_subtypes.storages.lid[0].initial_saturation = 0;
+    lidnode::initialize(c); auto& state = c.node_subtypes.storages.lid_state[0];
+    const double original = state.surface_infil.IMD;
+    c.nodes.depth[0] = 1.2;
+    c.nodes.volume[0] = node::getVolume(c.nodes, 0, 1.2, &c.tables, 0, &c.node_subtypes);
+    const double before = state.held_volume + c.nodes.volume[0];
+    lidnode::prepareStep(c, .1, 0); lidnode::finishStep(c);
+    EXPECT_LT(state.surface_infil.IMD, original);
+    const double wet = state.surface_infil.Fu;
+    EXPECT_GT(wet, 0);
+    for (int i = 0; i < 10; ++i) closedWetStep(c, .1, 0);
+    EXPECT_GE(state.surface_infil.Fu, wet);
+    EXPECT_NEAR(state.held_volume + c.nodes.volume[0], before, 1.e-10);
+}
+TEST(LidNodes, FullResaturationAndRecessionStartFromRemainingMoisture) {
+    auto c = model(); c.node_subtypes.storages.lid[0].initial_saturation = 0;
+    lidnode::initialize(c); auto& state = c.node_subtypes.storages.lid_state[0];
+    state.surface_infil.F = .1;
+    c.nodes.depth[0] = 1.5;
+    c.nodes.volume[0] = node::getVolume(c.nodes, 0, 1.5, &c.tables, 0, &c.node_subtypes);
+    const double before = state.held_volume + c.nodes.volume[0];
+    closedWetStep(c, .1, 0);
+    EXPECT_DOUBLE_EQ(state.surface_infil.IMD, 0);
+    EXPECT_DOUBLE_EQ(state.surface_infil.Fu, state.surface_infil.Fumax);
+    EXPECT_DOUBLE_EQ(state.surface_infil.F, 0);
+    EXPECT_NEAR(state.held_volume + c.nodes.volume[0], before, 1.e-10);
+    // Recession is gradual in a routed model. The first exposed slice has
+    // almost no deficit; it must not freeze the later event's initial state.
+    double previous_deficit = 0;
+    for (double depth : {1.4999, 1.4, 1.2, .7}) {
+        c.nodes.volume[0] = node::getVolume(c.nodes, 0, depth, &c.tables, 0, &c.node_subtypes);
+        lidnode::finishStep(c);
+        EXPECT_GT(state.surface_infil.IMD, previous_deficit);
+        previous_deficit = state.surface_infil.IMD;
+    }
+    EXPECT_NEAR(state.surface_infil.IMD, .45 - .2, 1.e-12);
+    EXPECT_FALSE(state.surface_infil.saturated);
+    EXPECT_DOUBLE_EQ(state.surface_infil.F, 0);
+    // A second event sees the wet media, not the original wilting-point deficit.
+    state.cells[0].theta = .1;
+    const auto original = state.surface_infil;
+    auto expected = original;
+    const double expected_volume = infil::grnampt_getInfil(expected, 0, .1/.9*.5, .1,
+        InfilModel::MOD_GREEN_AMPT) * 100 * .1;
+    lidnode::prepareStep(c, .1, 0);
+    EXPECT_NEAR(internalTransfer(state, 0, 1), expected_volume, 1.e-12);
+}
+TEST(LidNodes, V10HotstartExactlyContinuesInfiltrationAndMoisture) {
+    auto original = model(); lidnode::initialize(original);
+    for (int i = 0; i < 10; ++i) closedWetStep(original, .1, 1);
+    const auto path = (std::filesystem::path(OPENSWMM_TEST_SOURCE_DIR) / "../../output/lid_nodes_2026_10_04/infiltration_v10.hsf").string();
+    std::unique_ptr<HotStartFile> hs(HotStartManager::save(original, path)); ASSERT_TRUE(hs);
+    EXPECT_EQ(hs->header.version, 10u);
+    hs.reset(HotStartManager::open(path)); ASSERT_TRUE(hs);
+    auto resumed = model(); lidnode::initialize(resumed);
+    ASSERT_EQ(HotStartManager::apply(*hs, resumed), 0);
+    for (int i = 0; i < 20; ++i) {
+        closedWetStep(original, .1, i < 10 ? .2 : 0);
+        closedWetStep(resumed, .1, i < 10 ? .2 : 0);
+    }
+    const auto& a = original.node_subtypes.storages.lid_state[0];
+    const auto& b = resumed.node_subtypes.storages.lid_state[0];
+    EXPECT_DOUBLE_EQ(a.surface_infil.F, b.surface_infil.F);
+    EXPECT_DOUBLE_EQ(a.surface_infil.Fu, b.surface_infil.Fu);
+    EXPECT_DOUBLE_EQ(a.surface_infil.IMD, b.surface_infil.IMD);
+    EXPECT_DOUBLE_EQ(a.surface_infil.T, b.surface_infil.T);
+    EXPECT_DOUBLE_EQ(original.nodes.volume[0], resumed.nodes.volume[0]);
+    for (std::size_t i = 0; i < a.cells.size(); ++i) EXPECT_DOUBLE_EQ(a.cells[i].theta, b.cells[i].theta);
+    resumed.lid_controls.node_layers[0][1].params[4] *= 2;
+    lidnode::initialize(resumed);
+    EXPECT_GT(HotStartManager::apply(*hs, resumed), 0); // changed constitutive parameters
+}
+TEST(LidNodes, OlderHotstartExplicitlyReconstructsMissingInfiltrationHistory) {
+    auto c = model(); lidnode::initialize(c); closedWetStep(c, .1, 1);
+    const auto path = (std::filesystem::path(OPENSWMM_TEST_SOURCE_DIR) / "../../output/lid_nodes_2026_10_04/infiltration_v9.hsf").string();
+    std::unique_ptr<HotStartFile> hs(HotStartManager::save(c, path)); ASSERT_TRUE(hs);
+    // Remove the V10 per-node history blocks from a saved file to produce
+    // the actual V9 layout, then recompute its CRC.
+    std::ifstream input(path, std::ios::binary);
+    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(input)), {});
+    auto u32 = [&](std::size_t at) { uint32_t v; std::memcpy(&v, bytes.data()+at, 4); return v; };
+    const uint32_t version = 9; std::memcpy(bytes.data()+16, &version, 4);
+    std::size_t at = 52; at += 4 + u32(at);
+    const uint32_t nodes = u32(at); at += 4;
+    for (uint32_t i = 0; i < nodes; ++i) {
+        at += 4 + u32(at); at += 32; // name, depth/head/volume/age
+        const uint32_t cells = u32(at); at += 12 + cells * 44;
+        const uint32_t masses = u32(at); at += 4 + masses * 8;
+        const uint32_t history = u32(at);
+        bytes.erase(bytes.begin()+at, bytes.begin()+at+4+history*8);
+    }
+    uint32_t crc = 0xffffffffu;
+    for (std::size_t i = 0; i < bytes.size()-4; ++i) {
+        crc ^= bytes[i];
+        for (int bit = 0; bit < 8; ++bit) crc = (crc >> 1) ^ ((crc & 1) ? 0xedb88320u : 0u);
+    }
+    crc ^= 0xffffffffu;
+    std::memcpy(bytes.data()+bytes.size()-4, &crc, 4);
+    std::ofstream output(path, std::ios::binary); output.write(reinterpret_cast<const char*>(bytes.data()), bytes.size()); output.close();
+    hs.reset(HotStartManager::open(path)); ASSERT_TRUE(hs);
+    EXPECT_EQ(hs->header.version, 9u);
+    auto restored = model(); lidnode::initialize(restored);
+    EXPECT_EQ(HotStartManager::apply(*hs, restored), 1);
+    ASSERT_EQ(hs->warnings.size(), 1u);
+    EXPECT_NE(hs->warnings[0].find("infiltration history reconstructed"), std::string::npos);
+    EXPECT_NEAR(restored.nodes.volume[0] + lidnode::heldVolume(restored, 0),
+                c.nodes.volume[0] + lidnode::heldVolume(c, 0), 1.e-12);
+}
+
+TEST(LidNodes, RoutedReversalResaturationRecessionAndSecondEventConserve) {
+    const auto dir = std::filesystem::path(OPENSWMM_TEST_SOURCE_DIR) / "../../output/lid_nodes_2026_10_04";
+    std::filesystem::create_directories(dir);
+    const auto stem = (dir / "resaturation_second_event").string();
+    std::ifstream fixture(std::filesystem::path(OPENSWMM_TEST_SOURCE_DIR) / "data/lid_node_resaturation.inp");
+    ASSERT_TRUE(fixture.good());
+    std::ofstream(stem + ".inp") << fixture.rdbuf();
+    SWMMEngine e;
+    ASSERT_EQ(e.open((stem+".inp").c_str(),(stem+".rpt").c_str(),nullptr),0);
+    ASSERT_EQ(e.initialize(),0); ASSERT_EQ(e.start(0),0);
+    std::ofstream samples(stem + ".csv");
+    samples << "seconds,head,retained_ft3,mobile_ft3,flow_cfs,F_ft,IMD,Fu_ft,media_theta\n";
+    samples.precision(17); int sample_step = 0;
+    double t=0; bool reversed=false, released=false, resaturated=false, second_infiltration=false;
+    do {
+        ASSERT_EQ(e.step(&t),0);
+        const auto& c=e.context(); const auto& state=c.node_subtypes.storages.lid_state[0];
+        if (++sample_step % 10 == 0) {
+            double media_water = 0, media_geometry = 0;
+            for (const auto& cell : state.cells) if (cell.kind == LidNodeLayerKind::Media) {
+                media_water += cell.theta * cell.geometric_volume;
+                media_geometry += cell.geometric_volume;
+            }
+            samples << (t>0?t*86400:360) << ',' << c.nodes.depth[0] << ',' << state.held_volume << ','
+                << c.nodes.volume[0] << ',' << c.links.flow[0] << ',' << state.surface_infil.F << ','
+                << state.surface_infil.IMD << ',' << state.surface_infil.Fu << ',' << media_water/media_geometry << '\n';
+        }
+        reversed |= c.links.flow[0] < -.001;
+        released |= c.links.flow[0] > .001;
+        resaturated |= c.nodes.depth[0] > 1.5 && state.surface_infil.IMD == 0;
+        second_infiltration |= t*86400 > 180 && state.surface_infil.F > 1.e-6;
+        const auto& b=c.mass_balance;
+        const double stored=c.nodes.conc[0]*c.nodes.volume[0]+lidnode::heldMass(c,0,0);
+        const double mass_in=b.qual_routing_init[0]+b.qual_routing_ex_in[0];
+        const double mass_out=stored+b.qual_routing_outflow[0]+b.qual_routing_flood[0]+b.qual_routing_reacted[0]+b.qual_routing_seep[0]+b.qual_routing_final_dry[0];
+        if (mass_in>1) EXPECT_NEAR(mass_in,mass_out,mass_in*.001);
+    } while (t>0);
+    ASSERT_EQ(e.end(),0);
+    EXPECT_TRUE(reversed); EXPECT_TRUE(released); EXPECT_TRUE(resaturated); EXPECT_TRUE(second_infiltration);
+    const auto& b=e.context().mass_balance;
+    EXPECT_NEAR(b.routing_init_storage+b.routing_external,
+        b.routing_final_storage+b.routing_outflow+b.routing_flooding+b.routing_evap_loss+b.routing_seep_loss,.005);
+    EXPECT_TRUE(e.context().warnings.empty()); e.close();
 }

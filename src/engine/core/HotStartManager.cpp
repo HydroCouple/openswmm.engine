@@ -180,6 +180,10 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
             if(!write_pod(buf,static_cast<uint32_t>(n.lid_quality_mass.size())))return false;
             for(double mass:n.lid_quality_mass)if(!write_pod(buf,mass))return false;
         }
+        if (hs.header.version >= 10u) {
+            if (!write_pod(buf, static_cast<uint32_t>(n.lid_infiltration.size()))) return false;
+            for (double value : n.lid_infiltration) if (!write_pod(buf, value)) return false;
+        }
     }
 
     // Links
@@ -355,7 +359,7 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
 
     // Header
     if (!read_pod(is, hs.header.version))    return false;
-    if (hs.header.version < 1u || hs.header.version > 9u) {
+    if (hs.header.version < 1u || hs.header.version > 10u) {
         tl_last_io_error = "Unsupported hot start version " +
                            std::to_string(hs.header.version) + " in '" + path + "'";
         return false;
@@ -398,6 +402,19 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
             uint32_t count=0;if(!read_pod(is,count)||count>file_size/sizeof(double))return false;
             n.lid_quality_mass.resize(count);
             for(auto& mass:n.lid_quality_mass)if(!read_pod(is,mass)||!std::isfinite(mass)||mass<0)return false;
+        }
+        if (hs.header.version >= 10u) {
+            uint32_t count = 0;
+            if (!read_pod(is, count) || (count != 0 && count != 11)) return false;
+            n.lid_infiltration.resize(count);
+            for (auto& value : n.lid_infiltration) if (!read_pod(is, value) || !std::isfinite(value)) return false;
+            if (count && (n.lid_infiltration[0] < 0 || n.lid_infiltration[1] <= 0 ||
+                n.lid_infiltration[2] <= 0 || n.lid_infiltration[2] > 1 ||
+                n.lid_infiltration[3] < 0 || n.lid_infiltration[3] > n.lid_infiltration[2] ||
+                n.lid_infiltration[4] < 0 || n.lid_infiltration[5] < 0 ||
+                n.lid_infiltration[5] > n.lid_infiltration[6] || n.lid_infiltration[6] <= 0 ||
+                n.lid_infiltration[7] <= 0 || n.lid_infiltration[9] < 0 ||
+                (n.lid_infiltration[10] != 0 && n.lid_infiltration[10] != 1))) return false;
         }
     }
 
@@ -917,10 +934,15 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
         hs->nodes[ui].head   = ctx.nodes.head[ui];
         hs->nodes[ui].volume = ctx.nodes.volume[ui];
         if (lidnode::active(ctx, i)) {
-            hs->header.version = 9u;
+            hs->header.version = 10u;
             const auto& state = ctx.node_subtypes.storages.lid_state[ctx.node_subtypes.storage_row(i)];
             hs->nodes[ui].lid_treated_volume = state.treated_volume;
             hs->nodes[ui].lid_quality_mass = state.quality_mass;
+            if (state.infiltration_cell >= 0) {
+                const auto& ga = state.surface_infil;
+                hs->nodes[ui].lid_infiltration = {ga.S, ga.Ks, ga.IMDmax, ga.IMD, ga.F, ga.Fu,
+                    ga.Fumax, ga.Lu, ga.T, state.infiltration_head, ga.saturated ? 1.0 : 0.0};
+            }
             for (const auto& c : state.cells)
                 hs->nodes[ui].lid_cells.push_back({c.layer, c.bottom, c.top, c.porosity, c.geometric_volume, c.theta});
         }
@@ -1017,10 +1039,15 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
         hs->nodes[ui].head   = ctx.nodes.head[ui];
         hs->nodes[ui].volume = ctx.nodes.volume[ui];
         if (lidnode::active(ctx, i)) {
-            hs->header.version = 9u;
+            hs->header.version = 10u;
             const auto& state = ctx.node_subtypes.storages.lid_state[ctx.node_subtypes.storage_row(i)];
             hs->nodes[ui].lid_treated_volume = state.treated_volume;
             hs->nodes[ui].lid_quality_mass = state.quality_mass;
+            if (state.infiltration_cell >= 0) {
+                const auto& ga = state.surface_infil;
+                hs->nodes[ui].lid_infiltration = {ga.S, ga.Ks, ga.IMDmax, ga.IMD, ga.F, ga.Fu,
+                    ga.Fumax, ga.Lu, ga.T, state.infiltration_head, ga.saturated ? 1.0 : 0.0};
+            }
             for (const auto& c : state.cells)
                 hs->nodes[ui].lid_cells.push_back({c.layer, c.bottom, c.top, c.porosity, c.geometric_volume, c.theta});
         }
@@ -1130,6 +1157,14 @@ int HotStartManager::apply(HotStartFile& hs,
                 }
             }
             compatible &= rec.lid_quality_mass.empty() || rec.lid_quality_mass.size()==rec.lid_cells.size()*ctx.n_pollutants();
+            if (compatible && hs.header.version >= 10u) {
+                const auto& state = ctx.node_subtypes.storages.lid_state[r];
+                const auto& ga = state.surface_infil;
+                compatible &= state.infiltration_cell < 0 ? rec.lid_infiltration.empty() :
+                    rec.lid_infiltration.size() == 11 && rec.lid_infiltration[0] == ga.S &&
+                    rec.lid_infiltration[1] == ga.Ks && rec.lid_infiltration[2] == ga.IMDmax &&
+                    rec.lid_infiltration[6] == ga.Fumax && rec.lid_infiltration[7] == ga.Lu;
+            }
             if (!compatible) {
                 emit_warning("Hot start: LID profile missing or incompatible for node '" + rec.id + "'; node state not applied");
                 continue;
@@ -1146,6 +1181,16 @@ int HotStartManager::apply(HotStartFile& hs,
             ctx.nodes.full_volume[i] = node::getVolume(ctx.nodes, idx, ctx.nodes.full_depth[i], &ctx.tables,
                 ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)), &ctx.node_subtypes);
             ctx.nodes.rpt_full_volume[i] = ctx.nodes.full_volume[i];
+            if (!rec.lid_infiltration.empty()) {
+                const auto& v = rec.lid_infiltration;
+                auto& ga = state.surface_infil;
+                ga.IMD = v[3]; ga.F = v[4]; ga.Fu = v[5]; ga.T = v[8];
+                state.infiltration_head = v[9]; ga.saturated = v[10] != 0;
+            } else if (hs.header.version < 10u && state.infiltration_cell >= 0) {
+                ctx.nodes.depth[i] = rec.depth;
+                lidnode::initializeInfiltration(ctx, idx);
+                emit_warning("Hot start: pre-V10 LID infiltration history reconstructed from moisture for node '" + rec.id + "'; exact continuation unavailable");
+            }
         }
         ctx.nodes.depth[i]  = rec.depth;
         ctx.nodes.head[i]   = rec.head;

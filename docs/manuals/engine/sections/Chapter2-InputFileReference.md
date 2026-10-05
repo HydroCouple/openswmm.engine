@@ -535,7 +535,7 @@ For US models this example requires a 2.5-ft storage maximum depth. Layer
 thickness and suction use inches (US) or millimetres (SI); conductivities
 use inches/hour or millimetres/hour. SURFACE parameters are thickness and
 vegetation fraction. MEDIA parameters are thickness, porosity, field
-capacity, wilting point, saturated conductivity, conductivity exponent,
+capacity, wilting point, saturated conductivity, conductivity slope,
 and suction. AGGREGATE parameters are thickness, porosity, conductivity.
 BOTTOM specifies native-soil seepage and clogging factor and has no thickness
 or layer number. Standard-control storage void ratios are converted to
@@ -556,6 +556,15 @@ these sections do not select a rain gage for direct rainfall on storage.
 Native hotstarts retain cell moisture and clogging history. INP and
 GeoPackage save the ordered definitions and anchors. SWMM5-compatible INP
 export omits these extensions with warnings and leaves plain storage nodes.
+
+For storage-node MEDIA, conductivity slope is dimensionless and nonnegative:
+`K = Ksat * exp(-slope * (porosity - theta))` above field capacity.
+A zero slope is valid. SURFACE-to-first-MEDIA entry uses modified Green–Ampt,
+with accepted infiltration history reconciled to backwater wetting and
+remaining moisture after recession. It is not an intercell matric-gradient
+or full Richards-equation solution. See @ref engine_manual_lid_storage and
+@ref hydraulics_ref_lid_storage_formulation for the formulation and
+V10 restart behavior.
 
 ### Section: [LID_CONTROLS] {#engine_manual_sect_LID_CONTROLS}
 
