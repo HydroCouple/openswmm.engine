@@ -1325,6 +1325,26 @@ SWMM_ENGINE_API int swmm_aquifer_set_evap_pattern(SWMM_Engine engine, int idx, c
 // Snowpacks ([SNOWPACKS] section) — Slice BM.0 list + add; setters land with BP
 // ============================================================================
 
+SWMM_ENGINE_API int swmm_subcatch_set_snowpack(SWMM_Engine engine, int idx, const char* name) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    const int pack = name && *name ? ctx.snowpack_names.find(name) : -1;
+    if (name && *name && pack < 0) return SWMM_ERR_BADPARAM;
+    const auto ui = static_cast<std::size_t>(idx);
+    ctx.subcatches.snowpack[ui] = pack;
+    ctx.subcatches.snowpack_name[ui] = pack < 0 ? "" : ctx.snowpack_names.name_of(pack);
+    return SWMM_OK;
+}
+SWMM_ENGINE_API const char* swmm_subcatch_get_snowpack(SWMM_Engine engine, int idx) {
+    if (!engine) return nullptr;
+    const auto& ctx = to_engine(engine)->context();
+    if (idx < 0 || idx >= ctx.n_subcatches()) return nullptr;
+    const int pack = ctx.subcatches.snowpack[static_cast<std::size_t>(idx)];
+    return pack < 0 ? "" : ctx.snowpack_names.name_of(pack).c_str();
+}
+
 SWMM_ENGINE_API int swmm_snowpack_count(SWMM_Engine engine) {
     if (!engine) return -1;
     return to_engine(engine)->context().snowpacks.count();

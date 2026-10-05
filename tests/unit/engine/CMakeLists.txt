@@ -1095,3 +1095,10 @@ if(OPENSWMM_WITH_GEOPACKAGE)
     target_link_libraries(test_engine_lid_nodes PRIVATE openswmm_geopackage)
     target_compile_definitions(test_engine_lid_nodes PRIVATE LID_TEST_GEOPACKAGE)
 endif()
+
+# R1 shared surface-process contracts and cross-driver parity.
+if(OPENSWMM_BUILD_2D)
+    add_gtest_unit(test_engine_surface_processes test_surface_processes.cpp)
+    target_compile_definitions(test_engine_surface_processes PRIVATE
+        OPENSWMM_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+endif()

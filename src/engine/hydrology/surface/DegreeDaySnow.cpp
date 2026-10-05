@@ -15,7 +15,7 @@
 // limitations under the License.
 
 /**
- * @file Snow.cpp
+ * @file DegreeDaySnow.cpp
  * @brief Snowmelt — batch-oriented, vectorisable kernels.
  * @ingroup new_engine
  *
@@ -24,9 +24,9 @@
  * @license  Apache-2.0
  */
 
-#include "Snow.hpp"
-#include "../core/SimulationContext.hpp"
-#include "../core/UnitConversion.hpp"
+#include "DegreeDaySnow.hpp"
+#include "../../core/SimulationContext.hpp"
+#include "../../core/UnitConversion.hpp"
 #include <cmath>
 #include <vector>
 #include <algorithm>
@@ -71,7 +71,7 @@ void SnowSoA::resize(int n) {
     to_subcatch.assign(un, -1);
 }
 
-void SnowSolver::init(int n_subcatch) {
+void DegreeDaySnow::init(int n_subcatch) {
     soa_.resize(n_subcatch);
 }
 
@@ -190,7 +190,7 @@ static double getArealDepletion(SnowSoA& soa, std::size_t ui, int subarea,
 // `rmelt > 0` test.
 // ============================================================================
 
-double SnowSolver::rainMeltRate(double temp, double wind, double gamma,
+double DegreeDaySnow::rainMeltRate(double temp, double wind, double gamma,
                                  double ea, double rainfall) {
     rainfall = rainfall * 43200.0;     // convert rain to in/hr
     if (rainfall > 0.02) {
@@ -208,7 +208,7 @@ double SnowSolver::rainMeltRate(double temp, double wind, double gamma,
 // Execute — scalar convenience overload (broadcast to all subcatchments)
 // ============================================================================
 
-void SnowSolver::execute(SimulationContext& ctx, double dt,
+void DegreeDaySnow::execute(SimulationContext& ctx, double dt,
                           double temp, double wind, double rainfall,
                           double snowfall, double gamma, double ea) {
     int n = soa_.n_subcatch;
@@ -292,7 +292,7 @@ inline double meltSnowpack(SnowSoA& soa, std::size_t ui, double temp,
 
 }  // namespace
 
-void SnowSolver::execute(SimulationContext& /*ctx*/, double dt,
+void DegreeDaySnow::execute(SimulationContext& /*ctx*/, double dt,
                           double temp, double wind, const double* rainfall,
                           const double* snowfall, double gamma, double ea) {
     int n = soa_.n_subcatch;
@@ -308,58 +308,101 @@ void SnowSolver::execute(SimulationContext& /*ctx*/, double dt,
 
         for (int i = SNOW_PLOWABLE; i <= SNOW_PERV; ++i) {
             auto ui = static_cast<std::size_t>(j * N_SUBAREAS + i);
-            double asc, smelt;
-            // `imelt` holds the plowed melt from snow_plowSnow (legacy
-            // snowpack->imelt); the instant melt of a thin pack adds to it.
-            double imelt = soa_.imelt[ui];
-
-            // completely melt pack if its depth is < 0.001 inch
-            if (soa_.wsnow[ui] <= 0.001 / 12.0) {
-                asc   = 0.0;
-                smelt = 0.0;
-                imelt += (soa_.wsnow[ui] + soa_.fw[ui]) / dt;
-                // S2b — the water leaves at the age the pack HAD.
-                if (soa_.track_age) {
-                    soa_.out_age[ui] = soa_.age[ui];
-                    soa_.age[ui]     = 0.0;
-                }
-                soa_.wsnow[ui] = 0.0;
-                soa_.fw[ui]    = 0.0;
-                soa_.coldc[ui] = 0.0;
-            }
-            // otherwise compute areal depletion, find snow melt and route it
-            // through pack (legacy routeSnowmelt, snow.c:883)
-            else {
-                asc   = getArealDepletion(soa_, ui, i, snow, dt);
-                smelt = meltSnowpack(soa_, ui, temp, rmelt, asc, snow, dt);
-
-                double vmelt = smelt * dt;
-                vmelt = std::min(vmelt, soa_.wsnow[ui]);
-                soa_.wsnow[ui] -= vmelt;
-                const double rain_on_snow = rain * dt * asc;
-                // S2b — melt moves wsnow -> fw INSIDE the pool (no age
-                // change); the rain arrives from outside and mixes against
-                // the pool as it is when it lands.
-                if (soa_.track_age && rain_on_snow > 0.0) {
-                    soa_.age[ui] = mixAge(soa_.wsnow[ui] + soa_.fw[ui],
-                                          soa_.age[ui], rain_on_snow,
-                                          soa_.precip_age);
-                }
-                soa_.fw[ui] += vmelt + rain_on_snow;
-                vmelt = soa_.fw[ui] - soa_.fwfrac[ui] * soa_.wsnow[ui];
-                vmelt = std::max(vmelt, 0.0);
-                soa_.fw[ui] -= vmelt;
-                smelt = vmelt / dt;
-                // S2b — water draining out of a complete-mix pool leaves at
-                // the pool's age.
-                if (soa_.track_age) soa_.out_age[ui] = soa_.age[ui];
-            }
-
-            soa_.asc[ui]   = asc;
-            soa_.imelt[ui] = smelt + imelt;
-            if (soa_.track_age && !(soa_.imelt[ui] > 0.0)) soa_.out_age[ui] = 0.0;
+            meltElement(ui, i, dt, temp, rain, snow, rmelt);
         }
     }
+}
+
+void DegreeDaySnow::meltElement(std::size_t ui, int i, double dt, double temp,
+                                double rain, double snow, double rmelt) {
+    double asc, smelt;
+    // `imelt` holds the plowed melt from snow_plowSnow (legacy
+    // snowpack->imelt); the instant melt of a thin pack adds to it.
+    double imelt = soa_.imelt[ui];
+
+    // completely melt pack if its depth is < 0.001 inch
+    if (soa_.wsnow[ui] <= 0.001 / 12.0) {
+        asc   = 0.0;
+        smelt = 0.0;
+        imelt += (soa_.wsnow[ui] + soa_.fw[ui]) / dt;
+        // S2b — the water leaves at the age the pack HAD.
+        if (soa_.track_age) {
+            soa_.out_age[ui] = soa_.age[ui];
+            soa_.age[ui]     = 0.0;
+        }
+        soa_.wsnow[ui] = 0.0;
+        soa_.fw[ui]    = 0.0;
+        soa_.coldc[ui] = 0.0;
+    }
+    // otherwise compute areal depletion, find snow melt and route it
+    // through pack (legacy routeSnowmelt, snow.c:883)
+    else {
+        asc   = getArealDepletion(soa_, ui, i, snow, dt);
+        smelt = meltSnowpack(soa_, ui, temp, rmelt, asc, snow, dt);
+
+        double vmelt = smelt * dt;
+        vmelt = std::min(vmelt, soa_.wsnow[ui]);
+        soa_.wsnow[ui] -= vmelt;
+        const double rain_on_snow = rain * dt * asc;
+        // S2b — melt moves wsnow -> fw INSIDE the pool (no age
+        // change); the rain arrives from outside and mixes against
+        // the pool as it is when it lands.
+        if (soa_.track_age && rain_on_snow > 0.0) {
+            soa_.age[ui] = mixAge(soa_.wsnow[ui] + soa_.fw[ui],
+                                  soa_.age[ui], rain_on_snow,
+                                  soa_.precip_age);
+        }
+        soa_.fw[ui] += vmelt + rain_on_snow;
+        vmelt = soa_.fw[ui] - soa_.fwfrac[ui] * soa_.wsnow[ui];
+        vmelt = std::max(vmelt, 0.0);
+        soa_.fw[ui] -= vmelt;
+        smelt = vmelt / dt;
+        // S2b — water draining out of a complete-mix pool leaves at
+        // the pool's age.
+        if (soa_.track_age) soa_.out_age[ui] = soa_.age[ui];
+    }
+
+    soa_.asc[ui]   = asc;
+    soa_.imelt[ui] = smelt + imelt;
+    if (soa_.track_age && !(soa_.imelt[ui] > 0.0)) soa_.out_age[ui] = 0.0;
+}
+
+void DegreeDaySnow::step(int e, const surface::SnowInputs& input, surface::SnowOutputs& output) {
+    output = {};
+    if (e < 0 || static_cast<std::size_t>(e) >= soa_.wsnow.size() || input.dt_s <= 0) return;
+    const auto ui = static_cast<std::size_t>(e);
+    const double dt = input.dt_s;
+    const double rain = input.rain_m / 0.3048 / dt;
+    const double snow = input.snow_m / 0.3048 / dt;
+    const double temp = input.Ta_C * 1.8 + 32.0;
+    const double wind = input.wind_ms / 0.44704;
+    // Point-element accumulation: batch plowing remains the subcatchment
+    // driver's responsibility. step() includes snowfall exactly once.
+    soa_.imelt[ui] = 0.0;
+    const double added = snow * dt;
+    if (soa_.track_age) {
+        const double have = soa_.wsnow[ui] + soa_.fw[ui];
+        if (have > 0.0) soa_.age[ui] += dt;
+        if (added > 0.0) soa_.age[ui] = mixAge(have, soa_.age[ui], added, soa_.precip_age);
+    }
+    soa_.wsnow[ui] += added;
+    meltElement(ui, e % N_SUBAREAS, dt, temp, rain, snow,
+                rainMeltRate(temp, wind, input.gamma, input.ea, rain));
+    output.melt_m = soa_.imelt[ui] * dt * 0.3048;
+    output.throughfall_m = input.rain_m * (1.0 - soa_.asc[ui]);
+    output.swe_m = (soa_.wsnow[ui] + soa_.fw[ui]) * 0.3048;
+    output.cover_frac = soa_.asc[ui];
+}
+
+void DegreeDaySnow::pack(int e, double* out) const {
+    const std::vector<double>* fields[] = {&soa_.wsnow, &soa_.fw, &soa_.coldc, &soa_.ati,
+        &soa_.awe, &soa_.imelt, &soa_.si, &soa_.sba, &soa_.sbws, &soa_.asc, &soa_.age, &soa_.out_age};
+    for (int i = 0; i < stateSize(); ++i) out[i] = (*fields[i])[e];
+}
+void DegreeDaySnow::unpack(int e, const double* in) {
+    std::vector<double>* fields[] = {&soa_.wsnow, &soa_.fw, &soa_.coldc, &soa_.ati,
+        &soa_.awe, &soa_.imelt, &soa_.si, &soa_.sba, &soa_.sbws, &soa_.asc, &soa_.age, &soa_.out_age};
+    for (int i = 0; i < stateSize(); ++i) (*fields[i])[e] = in[i];
 }
 
 // ============================================================================
@@ -367,7 +410,7 @@ void SnowSolver::execute(SimulationContext& /*ctx*/, double dt,
 // (matching legacy snow.c snow_setMeltCoeffs)
 // ============================================================================
 
-void SnowSolver::setMeltCoeffs(int day_of_year) {
+void DegreeDaySnow::setMeltCoeffs(int day_of_year) {
     // Compute seasonal factor: -1.0 at winter solstice (Dec 21, day ~355),
     // +1.0 at summer solstice (Jun 21, day ~172).
     // season = sin(0.0172615 * (day - 81))   — legacy `climate.c:1176`.
@@ -398,14 +441,14 @@ void SnowSolver::setMeltCoeffs(int day_of_year) {
 // (matching legacy snow.c snow_plowSnow)
 // ============================================================================
 
-void SnowSolver::plowSnow(SimulationContext& ctx, double dt, double snowfall) {
+void DegreeDaySnow::plowSnow(SimulationContext& ctx, double dt, double snowfall) {
     int n = soa_.n_subcatch;
     if (n == 0) return;
     std::vector<double> snow(static_cast<std::size_t>(n), snowfall);
     plowSnow(ctx, dt, snow.data());
 }
 
-void SnowSolver::plowSnow(SimulationContext& ctx, double dt, const double* snowfall) {
+void DegreeDaySnow::plowSnow(SimulationContext& ctx, double dt, const double* snowfall) {
     int n = soa_.n_subcatch;
     if (n == 0) return;
 

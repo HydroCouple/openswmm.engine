@@ -39,7 +39,7 @@
 #define OPENSWMM_RUNOFF_HPP
 
 #include "../data/SubcatchData.hpp"
-#include "Infiltration.hpp"
+#include "surface/InfilBank.hpp"
 #include <vector>
 
 namespace openswmm {
@@ -190,16 +190,14 @@ private:
     RunoffSoA soa_;
 
     // Infiltration state (one per subcatchment)
-    std::vector<InfilModel>     infil_models_;   ///< Per-subcatchment model type (BUG FIX: was a single shared field)
+    surface::InfilBank infil_bank_;
     std::vector<double>         infil_factor_used_; ///< The InfilFactor applied to each subcatchment this step (pattern or global)
 
     /// Legacy infil_getInfil: the model dispatch with the factors applied.
     double infilGetInfil(SimulationContext& ctx, int i, double precip, double runon,
                          double depth, double dt, double local_infil,
                          double recovery_factor);
-    std::vector<HortonState>    horton_states_;
-    std::vector<GreenAmptState> grnampt_states_;
-    std::vector<CurveNumState>  curvenum_states_;
+
 
     // Working buffers (reused each step, sized to n_subcatch)
     std::vector<double> precip_;
