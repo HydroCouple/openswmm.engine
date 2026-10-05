@@ -504,7 +504,7 @@ For Curve-Number Infiltration:
 p1    SCS Curve Number.
 p2    no longer used.
 p3    time it takes for a fully saturated soil to dry (days). 
-### Storage-node LIDs: [LID_NODES] and [LID_NODE_OUTLETS]
+### Section: [LID_NODES] {#engine_manual_sect_LID_NODES}
 
 A LID node remains an ordinary storage node. Assign a compatible BC, RG, IT,
 PP, or NODE control using `Node Control InitialSaturationPercent` in
@@ -540,6 +540,8 @@ and suction. AGGREGATE parameters are thickness, porosity, conductivity.
 BOTTOM specifies native-soil seepage and clogging factor and has no thickness
 or layer number. Standard-control storage void ratios are converted to
 porosity as `e / (1 + e)`.
+
+### Section: [LID_NODE_OUTLETS] {#engine_manual_sect_LID_NODE_OUTLETS}
 
 Outlet anchors use one-based physical layer numbers and TOP or BOTTOM.
 The link must have exactly one LID endpoint. Input mismatches between the
@@ -4007,7 +4009,7 @@ inert, with a warning, unless `QUALITY_SOLVER` is `EULERIAN_ARD` and
 <!-- source: src/engine/transport/components/EulerianArdComponent/ArdConfig.cpp:247-294,448-496; src/engine/data/ArdConfigData.hpp:61-79,112-131,171-173 -->
 
 
-## [LID_LAYER_TREATMENT] {#engine_lid_layer_treatment}
+### Section: [LID_LAYER_TREATMENT] {#engine_lid_layer_treatment}
 
 `Control Layer Pollutant RemovalPercent DecayPerDay [Expression]` assigns one
 pollutant rule to a physical NODE layer (one-based from the top; BOTTOM is

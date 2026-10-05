@@ -146,7 +146,7 @@ See also
 
 
 Storage-node LIDs with ordered layers
-------------------------------------
+-------------------------------------
 
 Use ``LidType.NODE`` for an arbitrary ordered stack. A node remains a storage
 node; assigning the control synchronizes its maximum depth. All edits below
