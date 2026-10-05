@@ -1,0 +1,15 @@
+Internal ctest changing into directory: /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/build/surface-program
+Test project /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/build/surface-program
+    Start 197: test_engine_2d_infil
+1/3 Test #197: test_engine_2d_infil ...............   Passed    0.01 sec
+    Start 198: test_engine_2d_infil_integration
+2/3 Test #198: test_engine_2d_infil_integration ...   Passed    0.06 sec
+    Start 232: test_engine_surface_processes
+3/3 Test #232: test_engine_surface_processes ......   Passed    0.15 sec
+
+100% tests passed, 0 tests failed out of 3
+
+Label Time Summary:
+unit    =   0.23 sec*proc (3 tests)
+
+Total Test time (real) =   0.25 sec

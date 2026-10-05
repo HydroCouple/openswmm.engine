@@ -5,6 +5,7 @@
 #include "../Infiltration.hpp"
 #include <vector>
 
+namespace openswmm { struct SimulationContext; }
 namespace openswmm::surface {
 
 /// One state owner and one dispatch for subcatchments and mesh cells. Kernels
@@ -34,4 +35,7 @@ private:
     std::vector<double> constant_, cumulative_;
     double evaluate(int e, double precip, double runon, double depth, double dt, Factors factors);
 };
+/// Global monthly factors at the mesh evaluation time. The runoff climate
+/// cache may already describe a later runoff interval.
+InfilBank::Factors infiltrationFactors(const SimulationContext& ctx, double elapsed_s);
 } // namespace openswmm::surface

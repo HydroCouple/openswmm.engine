@@ -231,7 +231,8 @@ public:
      * @param state  Surface state — reads `rainfall`/`depth`, writes `infil_rate`.
      * @param dt     Elapsed seconds since the previous call (the INFIL_STEP).
      */
-    void updateRates(const MeshData& mesh, SurfaceStateData& state, double dt);
+    void updateRates(const MeshData& mesh, SurfaceStateData& state, double dt,
+                     surface::InfilBank::Factors factors = {1.0, 1.0});
 
     surface::InfilBank& bank() noexcept { return bank_; }
 

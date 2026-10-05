@@ -288,7 +288,7 @@ bool Infil2D::resolve(const MeshData& mesh, const SimulationOptions& opts,
     return true;
 }
 
-void Infil2D::updateRates(const MeshData& mesh, SurfaceStateData& state, double dt) {
+void Infil2D::updateRates(const MeshData& mesh, SurfaceStateData& state, double dt, surface::InfilBank::Factors factors) {
     (void)mesh;
     if (!active_ || dt <= 0.0) return;
 
@@ -301,7 +301,7 @@ void Infil2D::updateRates(const MeshData& mesh, SurfaceStateData& state, double 
 
         if (bank_.owner(static_cast<int>(i)) == surface::InfilBank::Owner::EXTERNAL) continue;
         state.infil_rate[i] = bank_.rate(static_cast<int>(i), state.rainfall[i], 0.0,
-                                         state.depth[i], dt, {1.0, 1.0});
+                                         state.depth[i], dt, factors);
     }
 }
 
