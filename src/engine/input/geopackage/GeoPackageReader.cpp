@@ -306,6 +306,7 @@ static void read_options(sqlite3* db, SimulationContext& ctx, const std::string&
         else if (key == "RPT_FLOWSTATS") ctx.options.rpt_flowstats = (val == "YES");
         else if (key == "RPT_CONTROLS") ctx.options.rpt_controls = (val == "YES");
         else if (key == "RPT_AVERAGES") ctx.options.rpt_averages = (val == "YES");
+        else if (key == "RPT_LINK_STEPS") ctx.options.rpt_link_steps = (val == "YES");
         else if (key == "RPT_SUBCATCHMENTS") {
             if (val == "NONE") ctx.options.rpt_subcatchments = 0;
             else if (val == "ALL") ctx.options.rpt_subcatchments = 1;

@@ -806,6 +806,12 @@ struct SimulationOptions {
     /** @brief Report time-averaged results (default false). */
     bool rpt_averages = false;
 
+    /** @brief Report the per-conduit time step summary (default false).
+     *  @details [REPORT] LINK_STEPS (OpenSWMM extension; not written to a
+     *  SWMM 5.x deck). DW: each conduit's CFL-allowable step and its share
+     *  of converged steps; FV: the local step each conduit actually took. */
+    bool rpt_link_steps = false;
+
     /** @brief Named subcatchments to report (used when rpt_subcatchments == 2). */
     std::vector<std::string> rpt_subcatch_names;
 

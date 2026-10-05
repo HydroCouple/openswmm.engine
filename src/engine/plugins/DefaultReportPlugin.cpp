@@ -1912,6 +1912,84 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     } // end rpt_flowstats
 
     // =====================================================================
+    // Conduit Time Step Summary — [REPORT] LINK_STEPS (OpenSWMM extension,
+    // off by default). Per conduit: min / time-weighted average / max local
+    // step, the share of time spent in each log2 step range below the routing
+    // step, and (DW) the share of steps with both end nodes converged.
+    // =====================================================================
+    if (opt.rpt_link_steps && ctx.n_links() > 0) {
+        const int mode = ctx.routing_stats.lstep_mode;
+        WRITE(f, "");
+        WRITE(f, "");
+        WRITE(f, "*************************");
+        WRITE(f, "Conduit Time Step Summary");
+        WRITE(f, "*************************");
+        if (mode == 0) {
+            WRITE(f, "Not available for this routing method.");
+        } else {
+            constexpr int NB = LinkData::N_LSTEP_BINS;
+            const double rs = opt.routing_step;
+            if (mode == 1) {
+                WRITE(f, "Dynamic wave: the CFL time step each conduit allows (Courant factor");
+                WRITE(f, "applied, capped at the routing step); all conduits advance at the");
+                WRITE(f, "global routing step. Dry conduits set no limit and are not sampled.");
+            } else {
+                WRITE(f, "Finite volume: the local time step each conduit took (its finest");
+                WRITE(f, "cell under local time stepping, else the global substep).");
+            }
+            // Bin labels: (rs/2,rs], (rs/4,rs/2], ..., (0, rs/2^(NB-1)].
+            char lbl[NB][24];
+            for (int b = 0; b < NB; ++b) {
+                const double hi = rs / static_cast<double>(1 << b);
+                if (b < NB - 1)
+                    std::snprintf(lbl[b], sizeof lbl[b], "%.3g-%.3g", 0.5 * hi, hi);
+                else
+                    std::snprintf(lbl[b], sizeof lbl[b], "<=%.3g", hi);
+            }
+            // Columns: name 20 | 3 x " %8" | " " | NB x " %12" | "  %9".
+            const std::string rule = "\n  " + std::string(20 + 27 + 1 + 13 * NB + 11, '-');
+            std::string band = " % of Time with Step in Range (sec) ";
+            const std::size_t bw = static_cast<std::size_t>(13 * NB - 1);
+            const std::size_t pad = (bw > band.size()) ? bw - band.size() : 0;
+            band = std::string(pad / 2, '-') + band + std::string(pad - pad / 2, '-');
+            std::fprintf(f, "\n");
+            std::fprintf(f, "%s", rule.c_str());
+            std::fprintf(f, "\n  %-20s %8s %8s %8s  %s  %9s", "", "Minimum", "Average",
+                         "Maximum", band.c_str(), "Percent");
+            std::fprintf(f, "\n  %-20s %8s %8s %8s ", "Conduit", "Step", "Step", "Step");
+            for (int b = 0; b < NB; ++b) std::fprintf(f, " %12s", lbl[b]);
+            std::fprintf(f, "  %9s", "Converged");
+            std::fprintf(f, "%s", rule.c_str());
+
+            const auto& L = ctx.links;
+            for (int j = 0; j < ctx.n_links(); ++j) {
+                const auto uj = static_cast<std::size_t>(j);
+                if (L.type[uj] != LinkType::CONDUIT || !L.rpt_flag[uj]) continue;
+                std::fprintf(f, "\n  %-20s", ctx.link_names.name_of(j).c_str());
+                const double tt = L.stat_lstep_time[uj];
+                if (tt > 0.0) {
+                    std::fprintf(f, " %8.4f %8.4f %8.4f ", L.stat_lstep_min[uj],
+                                 L.stat_lstep_dt_time[uj] / tt, L.stat_lstep_max[uj]);
+                    for (int b = 0; b < NB; ++b)
+                        std::fprintf(f, " %12.2f",
+                            100.0 * L.stat_lstep_bin_time[uj * NB + static_cast<std::size_t>(b)] / tt);
+                } else {
+                    std::fprintf(f, " %8s %8s %8s ", "-", "-", "-");
+                    for (int b = 0; b < NB; ++b) std::fprintf(f, " %12s", "-");
+                }
+                if (mode == 1 && L.stat_conv_total[uj] > 0)
+                    std::fprintf(f, "  %9.2f",
+                        100.0 * static_cast<double>(L.stat_conv_steps[uj]) /
+                        static_cast<double>(L.stat_conv_total[uj]));
+                else
+                    std::fprintf(f, "  %9s", "-");
+            }
+            std::fprintf(f, "%s", rule.c_str());
+        }
+        WRITE(f, "");
+    }
+
+    // =====================================================================
     // Rainfall File Summary — matches legacy report_writeRainStats().
     // Printed once per simulation when any gage reads an external rain file.
     // =====================================================================
