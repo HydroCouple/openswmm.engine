@@ -248,6 +248,9 @@ public:
     /// Producers for one cell run serially, as for the existing accumulators.
     double acceptSurfaceInfiltration(int cell, double requested) noexcept;
     double infiltrationHeadroom(int cell) const noexcept;
+    /// Read-only soil/interface rate (m/s) for the actual donor pond head.
+    /// Group headroom is allocated separately; no front or held rate advances.
+    double sourceInfiltrationCapacity(int cell, double pond_m, double interval_s) const noexcept;
     /// G-X3 (2026-09-19): the router books a conduit's seepage volume (m³,
     /// SI, its length-weighted share for this cell) at the routing cadence;
     /// the GW cell gathers it at its firing as a saturated-zone inflow.

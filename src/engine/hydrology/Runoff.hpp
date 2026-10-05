@@ -41,6 +41,8 @@
 #include "../data/SubcatchData.hpp"
 #include "surface/InfilBank.hpp"
 #include <vector>
+#include <functional>
+#include <utility>
 
 namespace openswmm {
 
@@ -109,6 +111,7 @@ struct RunoffSoA {
     std::vector<double> evap_loss;          ///< Evaporation loss (ft3)
     std::vector<double> infil_loss;         ///< Infiltration loss (ft3)
     std::vector<double> perv_evap_vol;      ///< Pervious-subarea evaporation this step (ft3) — legacy Vpevap
+    std::vector<double> actual_perv_evap_vol; ///< Actual PERV evaporation alone (ft3), excluding legacy impervious carry-in.
     std::vector<double> infil_vol;          ///< Non-LID infiltration this step (ft3) — legacy Vinfil
     /// legacy subcatch_getRunoff's return value: the three subareas' runoff
     /// summed over their areas and divided by the FULL area (ft/s), before
@@ -136,14 +139,23 @@ struct RunoffSoA {
 
 class RunoffSolver {
 public:
-    void init(SimulationContext& ctx);
+    /// Whole-pervious-area external boundary for a trial or bounded solve.
+    /// Arguments: source index, ponded depth (ft), available water rate after
+    /// surface evaporation (ft/s), output intake rate (ft/s). False preserves
+    /// the native kernel. True replaces it without advancing native soil state.
+    /// The caller must supply completed forcing and commit a validated trial;
+    /// this boundary does not select sources, partition outside area or schedule.
+    using InfiltrationBoundary = std::function<bool(int, double, double, double&)>;
+    /// Optional reviewed non-LID areas (source index, m2) bypass the legacy
+    /// rounded LANDAREA conversion only for those sources, at initialization.
+    void init(SimulationContext& ctx, const std::vector<std::pair<int, double>>& spatial_areas = {});
     /**
      * @param infil_factor    Monthly infiltration rate multiplier (default 1.0).
      * @param recovery_factor Monthly soil recovery multiplier (default 1.0).
      */
     void execute(SimulationContext& ctx, double dt, double evap_rate = 0.0,
                  double infil_factor = 1.0, double recovery_factor = 1.0,
-                 int month = -1);
+                 int month = -1, const InfiltrationBoundary* boundary = nullptr);
 
     /// Legacy findNativeInfil for a subcatchment with no pervious non-LID
     /// area: the native soil's rate for its own rain + runon (advances the
@@ -188,6 +200,7 @@ public:
 
 private:
     RunoffSoA soa_;
+    std::vector<double> spatial_full_area_ft2_; ///< Reviewed denominator, absent on the legacy path.
 
     // Infiltration state (one per subcatchment)
     surface::InfilBank infil_bank_;

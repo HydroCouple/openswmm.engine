@@ -1098,13 +1098,26 @@ void SubsurfaceSolver::publishInfiltration(SurfaceStateData& surf, double interv
 
 void SubsurfaceSolver::publishCellInfiltration(int i, SurfaceStateData& surf, double interval, double time) {
         const auto u = static_cast<std::size_t>(i);
-        const double A = state_.area[u], L = std::max(0.0, state_.zs[u] - state_.hg[u]);
+        const double A = state_.area[u];
         const double remaining = infiltrationHeadroom(i);
         state_.infil_remaining[u] = remaining;
+        const double pond = u < surf.depth.size() ? std::max(0.0, surf.depth[u]) : 0.0;
+        double rate = remaining > 0.0 ? sourceInfiltrationCapacity(i, pond, interval) : 0.0;
+        if (A > 0.0) rate = std::min(rate, remaining / (A * interval));
+        state_.infil_capacity[u] = rate;
+        state_.infil_refresh[u] = time; state_.infil_interval[u] = interval;
+        if (u < surf.infil_rate.size()) surf.infil_rate[u] = rate;
+}
+
+double SubsurfaceSolver::sourceInfiltrationCapacity(int i, double pond, double interval) const noexcept {
+        if (!state_.active || i < 0 || i >= state_.n_cells ||
+            !(interval > 0.0) || !std::isfinite(interval) ||
+            !(pond >= 0.0) || !std::isfinite(pond)) return 0.0;
+        const auto u = static_cast<std::size_t>(i);
+        const double A = state_.area[u], L = std::max(0.0, state_.zs[u] - state_.hg[u]);
         double rate = 0.0;
-        if (remaining > 0.0 && A > 0.0 && L > 0.0) {
+        if (A > 0.0 && L > 0.0) {
             const auto p = paramsOf(i);
-            const double pond = u < surf.depth.size() ? std::max(0.0, surf.depth[u]) : 0.0;
             const auto cl = static_cast<GwClosure>(state_.closure[u]);
             if (cl == GwClosure::SIGMA) {
                 const double Se = std::clamp((state_.theta_sigma[u] - p.theta_r) / (p.theta_s - p.theta_r), 1e-6, 1.0);
@@ -1119,11 +1132,8 @@ void SubsurfaceSolver::publishCellInfiltration(int i, SurfaceStateData& surf, do
                 const double suction = soil::suctionAtSaturation(p, Se);
                 rate = frontIntake(state_.wetting_front[u], (pond+suction)*delta, p.Ks, interval)/interval;
             }
-            rate = std::min(rate, remaining / (A * interval));
         }
-        state_.infil_capacity[u] = rate;
-        state_.infil_refresh[u] = time; state_.infil_interval[u] = interval;
-        if (u < surf.infil_rate.size()) surf.infil_rate[u] = rate;
+        return std::isfinite(rate) ? std::max(0.0, rate) : 0.0;
 }
 
 double SubsurfaceSolver::acceptSurfaceInfiltration(int cell, double requested) noexcept {
