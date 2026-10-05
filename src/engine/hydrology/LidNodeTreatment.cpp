@@ -210,8 +210,10 @@ void prepareOutletQuality(SimulationContext& ctx, double dt, bool book_reaction)
             if(source!=node || q==0) continue;
             if(std::any_of(state.quality_ports.begin(),state.quality_ports.end(),[&](const auto& port){return port.link==link && port.volume<0;})) continue;
             const double offset=portOffset(ctx,link,node);
-            const auto cell=std::find_if(state.cells.begin(),state.cells.end(),[&](const auto& value){return offset>=value.bottom && offset<=value.top;});
-            if(cell==state.cells.end() || stack[cell->layer-1].treatment.empty()) continue;
+            const int cell_index=portCell(state,offset);
+            if(cell_index<0) continue;
+            const auto* cell=&state.cells[cell_index];
+            if(stack[cell->layer-1].treatment.empty()) continue;
             for(int p=0;p<np;++p) {
                 const double out=treatedConcentration(ctx,*cell,stack[cell->layer-1],p,c[p],c,mobile_layers[cell->layer-1],std::abs(q),dt);
                 state.quality_outlet_conc[link*np+p]=out;

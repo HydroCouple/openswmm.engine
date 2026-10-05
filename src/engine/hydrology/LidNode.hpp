@@ -20,6 +20,9 @@ void prepareStep(SimulationContext&, double dt, double evaporation);
 void finishStep(SimulationContext&);
 void resetPorts(SimulationContext&);
 double portOffset(const SimulationContext&, int link, int node);
+// Physical interfaces belong to the cell above, allowing only roundoff-sized
+// elevation differences. Shared by hydraulic and pollutant port coupling.
+int portCell(const LidNodeState&, double offset);
 double portDepth(const SimulationContext&, int node, double offset);
 double exchangePorts(SimulationContext&, int link, double flow, double dt);
 double bottomConductivity(const SimulationContext&, int storage_row);
