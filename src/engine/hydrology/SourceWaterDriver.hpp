@@ -10,6 +10,8 @@ namespace openswmm::runoff {
 
 struct SourceWaterLedger {
     double initial_storage = 0.0, rain = 0.0, evaporation = 0.0, infiltration = 0.0;
+    /// Completed destination split, ft3; sum equals infiltration.
+    double spatial_infiltration = 0.0, outside_infiltration = 0.0;
     double outlet = 0.0, captured = 0.0, runon = 0.0, pervious_return = 0.0;
 };
 struct SourceWaterDelivery {
@@ -30,7 +32,7 @@ struct SourceAtmosphericLedger {
 /// All context/kernel/volume histories are privately owned. Stage cannot edit
 /// the live engine or write LID reports. Commit adopts the private water trial
 /// and clock together; it DOES NOT settle a spatial receiver or activate R4.
-/// Current profile: non-LID runoff, storage trenches and rain barrels, without
+/// Current profile: non-LID runoff and existing subcatchment LID stores, without
 /// lumped GW, snow, quality/age/heat/MSX or hot starts. No production caller yet.
 class SourceWaterDriver {
 public:
@@ -44,6 +46,9 @@ public:
     std::string initialize(const SimulationContext&, const std::vector<int>& seeds,
                            const std::vector<std::pair<int, double>>& non_lid_areas = {},
                            const lid::LIDSolver* initial_lids = nullptr);
+    /// Bind reviewed uniform inside fractions at initial attachment; no water debit.
+    std::string configureSpatialCoverage(const std::vector<double>& inside_fractions);
+    const std::vector<double>& spatialFractions() const;
     std::string stage(int group, double end, double completed_through,
                       const RunoffSolver::InfiltrationBoundary* boundary = nullptr,
                       const BottomCeiling* bottom_ceiling = nullptr);

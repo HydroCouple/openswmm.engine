@@ -8,11 +8,6 @@
 
 namespace openswmm::runoff {
 namespace {
-double unitStorage(const lid::LIDGroupSoA& g, int u) {
-    return (g.surf_depth[u] * g.surf_void_frac[u] + g.soil_moist[u] * g.soil_thick[u] +
-            g.stor_depth[u] * g.stor_void[u] +
-            g.pave_depth[u] * g.pave_void[u] * (1 - g.pave_imperv_frac[u])) * g.area[u];
-}
 double factor(const SimulationContext& c, int sc, const SourceForcingInterval& f) {
     if (static_cast<std::size_t>(sc) < c.subcatch_infil_pattern.size()) {
         const int p = c.subcatch_infil_pattern[sc];
@@ -27,13 +22,15 @@ struct SourceWaterDriver::State {
     SimulationContext ctx;
     RunoffSolver runoff;
     lid::LIDSolver lids;
+    bool partitioned=false;
+    std::vector<double> inside;
     std::vector<double> runon, pervious_return; // pending ft3, never held rates
     std::vector<SourceWaterLedger> ledger;
     std::vector<SourceWaterDelivery> deliveries;
     std::vector<SourceAtmosphericLedger> atmosphere;
     explicit State(const SimulationContext& c) : ctx(c) {}
     State(const State& s) : ctx(s.ctx), runoff(s.runoff), lids(s.lids.waterTrial()),
-        runon(s.runon), pervious_return(s.pervious_return), ledger(s.ledger), deliveries(s.deliveries), atmosphere(s.atmosphere) {}
+        partitioned(s.partitioned),inside(s.inside),runon(s.runon), pervious_return(s.pervious_return), ledger(s.ledger), deliveries(s.deliveries), atmosphere(s.atmosphere) {}
 };
 SourceWaterDriver::SourceWaterDriver() = default;
 SourceWaterDriver::~SourceWaterDriver() = default;
@@ -49,6 +46,16 @@ const SourceWaterDriver::State& SourceWaterDriver::view(bool trial) const {
     if (!s) throw std::logic_error("No source water state for this view.");
     return *s;
 }
+const std::vector<double>& SourceWaterDriver::spatialFractions() const { return view(false).inside; }
+std::string SourceWaterDriver::configureSpatialCoverage(const std::vector<double>& fractions) {
+    if(!state_ || trial_ || state_->partitioned || fractions.size()!=static_cast<std::size_t>(state_->ctx.n_subcatches()))
+        return "Invalid or already configured completed spatial footprint partition.";
+    for(const auto& g:clocks_.groups())if(g.completed_end!=0 || !g.pending.empty())
+        return "Spatial footprints must bind before any completed source interval.";
+    for(double f:fractions)if(!std::isfinite(f)||f<0||f>1)
+        return "Invalid completed spatial footprint fraction.";
+    state_->inside=fractions;state_->partitioned=true;return {};
+}
 const SimulationContext& SourceWaterDriver::context(bool t) const { return view(t).ctx; }
 const RunoffSolver& SourceWaterDriver::runoff(bool t) const { return view(t).runoff; }
 const lid::LIDSolver& SourceWaterDriver::lids(bool t) const { return view(t).lids; }
@@ -62,7 +69,7 @@ double SourceWaterDriver::storage(const State& s, int sc) const {
         r.depth_imperv1[sc] * r.frac_imperv1[sc] + r.depth_perv[sc] * (1 - r.imperv_pct[sc]));
     for (const auto& [t, u] : s.lids.usageOrder()) {
         const auto& g = s.lids.group(t);
-        if (g.subcatch_idx[u] == sc) v += unitStorage(g, u);
+        if (g.subcatch_idx[u] == sc) v += lid::completedUnitStorage(g,u);
     }
     return v;
 }
@@ -115,7 +122,7 @@ std::string SourceWaterDriver::initialize(const SimulationContext& c, const std:
         }
         s->runoff.init(s->ctx, areas);
         const auto n = static_cast<std::size_t>(c.n_subcatches());
-        s->runon.assign(n, 0); s->pervious_return.assign(n, 0); s->ledger.resize(n);
+        s->inside.assign(n,1);s->runon.assign(n, 0); s->pervious_return.assign(n, 0); s->ledger.resize(n);
         for (const auto& group : clocks.groups()) {
             for (int sc : group.subcatches) {
                 if (c.subcatches.gw_aquifer[sc] >= 0)
@@ -133,8 +140,8 @@ std::string SourceWaterDriver::initialize(const SimulationContext& c, const std:
             for (const auto& [t, u] : s->lids.usageOrder()) {
                 const auto& g = s->lids.group(t); const int sc = g.subcatch_idx[u];
                 if (clocks.groupForSubcatch(sc) < 0) continue;
-                if (g.type != lid::LIDType::INFIL_TRENCH && g.type != lid::LIDType::RAIN_BARREL)
-                    return "Source water driver currently qualifies storage trenches and rain barrels only.";
+                if(g.type==lid::LIDType::VEG_SWALE && (g.surf_store[u]<=0 || g.surf_void_frac[u]<=0 || g.unit_area[u]<=0))
+                    return "Completed swale requires positive surface height, void fraction and unit area.";
                 const double perv = s->runoff.soa().area[sc] * (1 - c.subcatches.frac_imperv[sc]);
                 if (g.type == lid::LIDType::RAIN_BARREL && g.stor_covered[u] && perv <= 0)
                     return "Covered barrel rainfall requires a non-LID pervious return area.";
@@ -144,7 +151,7 @@ std::string SourceWaterDriver::initialize(const SimulationContext& c, const std:
             const auto& g = s->lids.group(t); const int sc = g.subcatch_idx[u];
             if (clocks.groupForSubcatch(sc) >= 0 && g.area[u] > 0)
                 s->atmosphere.push_back({SourceEtKind::LID, sc, t, u, g.area[u],
-                    g.type == lid::LIDType::INFIL_TRENCH && g.stor_ksat[u] > 0});
+                    lid::hasNativeBottom(g.type,g.stor_thick[u],g.stor_ksat[u])});
         }
     } catch (const std::exception& e) { return e.what(); }
     state_ = std::move(s); clocks_ = std::move(clocks); return {};
@@ -154,6 +161,17 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
                                const RunoffSolver::InfiltrationBoundary* boundary,
                                const BottomCeiling* ceiling) {
     const double dt = f.end - f.start; auto& c = s.ctx;
+    if (s.partitioned && !ceiling) {
+        for (const auto& [t, u] : s.lids.usageOrder()) {
+            const auto& g = s.lids.group(t);
+            if (s.inside[g.subcatch_idx[u]] > 0 && g.area[u] > 0 &&
+                lid::hasNativeBottom(g.type, g.stor_thick[u], g.stor_ksat[u]) &&
+                std::any_of(f.sources.begin(), f.sources.end(), [&](const auto& w) {
+                    return w.subcatch == g.subcatch_idx[u];
+                }))
+                throw std::runtime_error("Completed inside native LID area requires a spatial bottom ceiling.");
+        }
+    }
     std::vector<const RunoffSourceForcing*> weather_at(c.n_subcatches(), nullptr);
     for (const auto& weather : f.sources) weather_at[weather.subcatch] = &weather;
     const auto selected = [&](int sc) { return sc >= 0 && sc < c.n_subcatches() && weather_at[sc]; };
@@ -169,15 +187,23 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
         s.runon[sc] = 0; s.pervious_return[sc] = 0;
         s.ledger[sc].rain += weather.rain * dt * full;
     }
-    s.runoff.execute(c, dt, 0, f.infil_factor, f.recovery_factor, f.month, boundary, &f.sources);
+    s.runoff.execute(c, dt, 0, f.infil_factor, f.recovery_factor, f.month, boundary, &f.sources,s.partitioned ? &s.inside : nullptr);
     const auto& r = s.runoff.soa();
     std::vector<double> outlet(c.n_subcatches(), 0), native(c.n_subcatches(), 0);
     for (const auto& weather : f.sources) {
         const int sc = weather.subcatch; outlet[sc] = r.outflow_vol[sc];
         s.ledger[sc].evaporation += c.subcatches.evap_loss[sc] * r.area[sc] * dt;
         s.ledger[sc].infiltration += r.infil_vol[sc];
+        s.ledger[sc].spatial_infiltration+=r.spatial_infil_vol[sc];
+        s.ledger[sc].outside_infiltration+=r.infil_vol[sc]-r.spatial_infil_vol[sc];
         if (c.subcatches.total_lid_area_ft2[sc] > 0) {
-            if (r.area[sc] > 0 && r.imperv_pct[sc] < 1)
+            if (s.partitioned) {
+                if(s.inside[sc]<1) {
+                    if(r.area[sc]>0 && r.imperv_pct[sc]<1)
+                        native[sc]=r.native_infil_rate[sc]*(1-r.imperv_pct[sc]);
+                    else native[sc]=s.runoff.nativeInfilFullLid(c,sc,dt,f.recovery_factor);
+                }
+            } else if (r.area[sc] > 0 && r.imperv_pct[sc] < 1)
                 native[sc] = r.infil_vol[sc] / r.area[sc] / dt;
             else native[sc] = s.runoff.nativeInfilFullLid(c, sc, dt, f.recovery_factor);
         }
@@ -194,9 +220,10 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
         if (g.type == lid::LIDType::RAIN_BARREL && g.stor_covered[u]) {
             s.pervious_return[sc] += rain * g.area[u] * dt; rain = 0;
         }
+        const double bottom=ceiling ? (*ceiling)(t,u,f.start,f.end) : 1.0e10;
         inputs.push_back({t, u, captured / dt / g.area[u] + rain + c.subcatches.runon_rate[sc],
-            weather->rain, weather->pet, native[sc], ceiling ? (*ceiling)(t, u, f.start, f.end) : 1.0e10,
-            factor(c, sc, f)});
+            weather->rain, weather->pet, native[sc], s.partitioned ? 1.0e10 : bottom,
+            factor(c, sc, f),s.partitioned ? s.inside[sc] : -1.0,bottom});
     }
     std::sort(inputs.begin(), inputs.end(), [](const auto& a, const auto& b) {
         return std::pair{a.type, a.unit} < std::pair{b.type, b.unit};
@@ -237,6 +264,8 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
         if (!selected(sc) || g.area[u] <= 0) continue;
         s.ledger[sc].evaporation += g.evap_loss[u] * g.area[u];
         s.ledger[sc].infiltration += g.infil_loss[u] * g.area[u];
+        s.ledger[sc].spatial_infiltration+=g.spatial_infil_loss[u]*g.area[u];
+        s.ledger[sc].outside_infiltration+=(g.infil_loss[u]-g.spatial_infil_loss[u])*g.area[u];
         double surface = g.surface_runoff[u] * g.area[u] * dt;
         double drain = g.drain_flow[u] * g.area[u] * dt;
         const bool can_return = g.to_perv[u] && r.area[sc] * (1 - r.imperv_pct[sc]) > 0;

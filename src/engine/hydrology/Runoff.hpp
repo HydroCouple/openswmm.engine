@@ -121,6 +121,8 @@ struct RunoffSoA {
     std::vector<double> infil_loss;         ///< Infiltration loss (ft3)
     std::vector<double> perv_evap_vol;      ///< Pervious-subarea evaporation this step (ft3) — legacy Vpevap
     std::vector<double> actual_perv_evap_vol; ///< Actual PERV evaporation alone (ft3), excluding legacy impervious carry-in.
+    /// Completed partition diagnostics: ft3 spatial intake and ft/s outside native capacity.
+    std::vector<double> spatial_infil_vol, native_infil_rate;
     std::vector<double> infil_vol;          ///< Non-LID infiltration this step (ft3) — legacy Vinfil
     /// legacy subcatch_getRunoff's return value: the three subareas' runoff
     /// summed over their areas and divided by the FULL area (ft/s), before
@@ -153,7 +155,8 @@ public:
     /// surface evaporation (ft/s), output intake rate (ft/s). False preserves
     /// the native kernel. True replaces it without advancing native soil state.
     /// The caller must supply completed forcing and commit a validated trial;
-    /// this boundary does not select sources, partition outside area or schedule.
+    /// this boundary does not select sources or schedule. An optional completed
+    /// spatial fraction weights its rate; the remainder uses native soil once.
     using InfiltrationBoundary = std::function<bool(int, double, double, double&)>;
     /// Optional reviewed non-LID areas (source index, m2) bypass the legacy
     /// rounded LANDAREA conversion only for those sources, at initialization.
@@ -165,7 +168,8 @@ public:
     void execute(SimulationContext& ctx, double dt, double evap_rate = 0.0,
                  double infil_factor = 1.0, double recovery_factor = 1.0,
                  int month = -1, const InfiltrationBoundary* boundary = nullptr,
-                 const std::vector<RunoffSourceForcing>* source_forcing = nullptr);
+                 const std::vector<RunoffSourceForcing>* source_forcing = nullptr,
+                 const std::vector<double>* spatial_fractions = nullptr);
 
     /// Legacy findNativeInfil for a subcatchment with no pervious non-LID
     /// area: the native soil's rate for its own rain + runon (advances the

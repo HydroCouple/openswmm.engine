@@ -27,7 +27,7 @@ struct Model {
   return swmm_engine_open(h,path.string().c_str(),(dir/(name+".rpt")).string().c_str(),(dir/(name+".out")).string().c_str(),nullptr)==SWMM_OK;
  }
  SurfaceOwnershipPreview preview(std::vector<SurfaceOwnerRecord> rows={{"S1"}}){auto& r=e().surfaceRouter2D();return resolveSurfaceOwnership(e().context(),r.mesh(),r.options(),r.aquiferConfig(),rows);}
- void lid(){auto& c=e().context();c.lid_controls.names={"L1"};c.lid_controls.storage.resize(1);c.lid_controls.storage[0]={1,.4,1,0};c.lid_usage.subcatch_index.resize(1);c.lid_usage.lid_index.resize(1);c.lid_usage.number.resize(1);c.lid_usage.area.resize(1);c.lid_usage.from_imperv.resize(1);c.lid_usage.from_perv.resize(1);c.lid_usage.drain_to.resize(1);c.lid_usage.subcatch_index[0]=0;c.lid_usage.lid_index[0]=0;c.lid_usage.number[0]=2;c.lid_usage.area[0]=100;}
+ void lid(){auto& c=e().context();c.lid_controls.names={"L1"};c.lid_controls.lid_type={"IT"};c.lid_controls.storage.resize(1);c.lid_controls.storage[0]={1,.4,1,0};c.lid_usage.subcatch_index.resize(1);c.lid_usage.lid_index.resize(1);c.lid_usage.number.resize(1);c.lid_usage.area.resize(1);c.lid_usage.from_imperv.resize(1);c.lid_usage.from_perv.resize(1);c.lid_usage.drain_to.resize(1);c.lid_usage.subcatch_index[0]=0;c.lid_usage.lid_index[0]=0;c.lid_usage.number[0]=2;c.lid_usage.area[0]=100;}
  int apply(const std::string& token,std::vector<int> rows={0}){char d[2048];return swmm_surface_owner_replace(h,rows.data(),int(rows.size()),token.c_str(),d,sizeof d);}
 };
 }
@@ -82,4 +82,22 @@ TEST(SurfaceOwnership, InpAndGeoPackagePreserveAuthoredReviewAndAquifer){
  const auto gpkg=dir/"reviewed.gpkg";for(const auto& suffix:{"","-wal","-shm"})std::filesystem::remove(gpkg.string()+suffix);ASSERT_EQ(swmm_model_write_with_plugin(m.h,gpkg.string().c_str(),"org.hydrocouple.openswmm.plugins.geopackage"),0);
  Model g;const int opened=swmm_engine_open(g.h,gpkg.string().c_str(),(dir/"gpkg.rpt").string().c_str(),(dir/"gpkg.out").string().c_str(),"org.hydrocouple.openswmm.plugins.geopackage");ASSERT_EQ(opened,SWMM_OK)<<g.e().context().error_message;const auto& gc=g.e().surfaceRouter2D().aquiferConfig();EXPECT_EQ(gc.surface_owners,cfg.surface_owners);ASSERT_EQ(gc.rows.size(),1);EXPECT_DOUBLE_EQ(gc.rows[0].Ks,r.Ks);{auto p=g.preview();EXPECT_TRUE(p.valid())<<(p.errors.empty()?"":p.errors[0]);}
  EXPECT_NE(swmm_engine_initialize(g.h),SWMM_OK);EXPECT_TRUE(g.e().context().error_message.find("completed-interval")!=std::string::npos);
+}
+
+TEST(SurfaceOwnership, NativeBottomPreviewMatchesProcessAndInvalidatesTypeEdits) {
+    Model m;ASSERT_TRUE(m.open("types"));m.lid();
+    auto& controls=m.e().context().lid_controls;
+    for(const std::string type:{"BC","RG","GR","IT","PP","RB","VS","RD"})
+    for(double thickness:{0.,1.})for(double conductivity:{0.,1.}) {
+        controls.lid_type[0]=type;controls.storage[0][0]=thickness;controls.storage[0][2]=conductivity;
+        const auto p=m.preview();ASSERT_TRUE(p.valid())<<type;
+        const bool native=type=="VS" || ((type=="BC"||type=="RG"||type=="IT"||type=="PP") && (thickness==0||conductivity>0));
+        EXPECT_DOUBLE_EQ(p.objects[0].native_lid_area,native?200:0);
+        EXPECT_DOUBLE_EQ(p.shares[0].native_lid_area,native?100:0);
+        EXPECT_DOUBLE_EQ(p.shares[0].weather_area,500);
+    }
+    controls.lid_type[0]="IT";const auto p=m.preview();controls.lid_type[0]="GR";
+    EXPECT_NE(p.token,m.preview().token);EXPECT_EQ(m.apply(p.token),SWMM_ERR_BADPARAM);
+    EXPECT_TRUE(m.e().surfaceRouter2D().aquiferConfig().surface_owners.empty());
+    controls.lid_type.clear();EXPECT_FALSE(m.preview().valid());
 }

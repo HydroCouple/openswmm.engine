@@ -93,6 +93,7 @@ void RunoffSoA::resize(int n) {
     perv_evap_vol.assign(un, 0.0);
     actual_perv_evap_vol.assign(un, 0.0);
     infil_vol.assign(un, 0.0);
+    spatial_infil_vol.assign(un,0.0);native_infil_rate.assign(un,0.0);
     subarea_runoff_rate.assign(un, 0.0);
     imperv_runoff_cfs.assign(un, 0.0);
     perv_runoff_cfs.assign(un, 0.0);
@@ -281,7 +282,8 @@ double RunoffSolver::nativeInfilFullLid(SimulationContext& ctx, int i, double dt
 void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_in,
                            double infil_factor, double recovery_factor, int month,
                            const InfiltrationBoundary* boundary,
-                           const std::vector<RunoffSourceForcing>* source_forcing) {
+                           const std::vector<RunoffSourceForcing>* source_forcing,
+                           const std::vector<double>* spatial_fractions) {
     int n = soa_.n_subcatch;
     if (source_forcing) {
         if (!std::isfinite(dt) || dt <= 0.0 || ctx.n_subcatches() != n)
@@ -293,6 +295,12 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                 throw std::invalid_argument("Completed source rates require ordered unique sources and finite nonnegative rates.");
             previous = s.subcatch;
         }
+    }
+    if (spatial_fractions) {
+        if (!source_forcing || spatial_fractions->size()!=static_cast<std::size_t>(n))
+            throw std::invalid_argument("Partial spatial intake requires completed forcing and matching fractions.");
+        for (double f:*spatial_fractions) if(!std::isfinite(f)||f<0||f>1)
+            throw std::invalid_argument("Invalid partial spatial intake fraction.");
     }
     if (n == 0) return;
 
@@ -385,6 +393,8 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         double Vevap    = 0.0;  // Total evaporation volume (ft³)
         double Vpevap   = 0.0;  // Pervious-subarea evaporation volume (ft³), legacy Vpevap
         double actual_perv_evap = 0.0;
+        double Vspatial = 0.0;
+        soa_.native_infil_rate[ui]=0;
         double Vinfil   = 0.0;  // Total infiltration volume (ft³)
         double Voutflow = 0.0;  // Total runoff volume (ft³)
 
@@ -395,6 +405,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                                   double runon_in, double subarea_n) -> double {
             if (frac <= 0.0) return 0.0;
             double subarea_area = total_area * frac;
+            if (spatial_fractions && subarea_area <= 0.0) return 0.0;
             const double initial_depth = depth;
 
             // Step 3.1: Available surface moisture (legacy line 923)
@@ -408,12 +419,18 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             // For RouteTo=OUTLET models, subarea->inflow = 0 (no inter-subarea runon).
             double infil = 0.0;
             const double available = std::max(0.0, surfMoisture + precip + runon_in - surfEvap);
-            const bool external = isPervious && boundary && (*boundary)(i, depth, available, infil);
+            const double spatial_fraction=spatial_fractions ? (*spatial_fractions)[ui] : 1.0;
+            const bool external = isPervious && spatial_fraction>0 && boundary && (*boundary)(i, depth, available, infil);
+            if (isPervious && spatial_fractions && spatial_fraction > 0 && !external)
+                throw std::runtime_error("Completed inside pervious area requires a spatial infiltration boundary.");
+            double spatial_rate=0.0;
             if (external) {
                 if (!std::isfinite(infil) || infil < 0.0 || ctx.subcatches.gw_aquifer[ui] >= 0)
                     throw std::invalid_argument("External source intake requires a finite nonnegative rate and no lumped aquifer.");
                 infil = std::min(infil, available);
-            } else if (isPervious) {
+                spatial_rate=infil;
+            }
+            if (isPervious && (!external || spatial_fraction<1)) {
                 // Legacy: infil_getInfil(j, tStep, precip, subarea->inflow, depth)
                 //   → horton_getInfil(state, tStep, precip + runon, depth)
                 // subarea->inflow here is the runon from other subareas (0 for OUTLET routing).
@@ -432,8 +449,12 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                 }
 
                 infil_factor_used_[ui] = local_infil;
-                infil = infilGetInfil(ctx, i, precip, runon, depth, dt,
-                                      local_infil, recovery_factor);
+                const double native = infilGetInfil(ctx, i, precip, runon,
+                    spatial_fractions ? std::max(0.0,depth-surfEvap*dt) : depth, dt,
+                    local_infil, recovery_factor);
+                soa_.native_infil_rate[ui]=spatial_fractions ? std::min(native,available) : native;
+                infil=external ? spatial_fraction*spatial_rate+(1-spatial_fraction)*soa_.native_infil_rate[ui]
+                               : soa_.native_infil_rate[ui];
             }
 
             // Gap #40: limit pervious infiltration by GW upper zone capacity.
@@ -461,6 +482,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             // (runoff41-sw5: legacy's soil moisture holds at field capacity).
             if (isPervious) Vpevap += Vevap;
             Vinfil += infil * subarea_area * dt;
+            if(external) Vspatial+=spatial_rate*spatial_fraction*subarea_area*dt;
 
             // Step 3.6: Loss check shortcut (legacy lines 945-948)
             // If evaporation + infiltration >= total available moisture,
@@ -749,6 +771,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         soa_.perv_evap_vol[ui] = Vpevap;
         soa_.actual_perv_evap_vol[ui] = actual_perv_evap;
         soa_.infil_vol[ui]     = Vinfil;
+        soa_.spatial_infil_vol[ui]=Vspatial;
 
         // Accumulate per-subcatchment statistics (matching legacy stats_updateSubcatchStats)
         ctx.subcatches.stat_evap_vol[ui]  += Vevap;

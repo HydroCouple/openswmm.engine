@@ -14,7 +14,7 @@ struct SurfaceEtReceipt {
     double potential=0,evaporation=0,soil_demand=0,unused=0; // m3
 };
 
-/// Internal water-only source-phase adapter. Bind fully inside reviewed areas;
+/// Internal water-only source-phase adapter. Bind reviewed inside/outside uniform areas;
 /// invoke after accepted face volumes land and before managed source debits.
 /// Whole-context snapshots are qualification scaffolding, not runtime activation.
 class CommonSourceStage {
