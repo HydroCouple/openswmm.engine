@@ -445,8 +445,11 @@ void prepareStep(SimulationContext& ctx, double dt, double evaporation) {
             std::vector<double> transfer(state.cells.size(), 0.0);
             for (std::size_t i = 0; i < state.cells.size(); ++i) {
                 const auto& c = state.cells[i];
-                // A moving water table replaces free drainage below itself.
-                if (c.bottom < ctx.nodes.depth[n]) continue;
+                // Only a fully submerged cell has no free-draining store.
+                // A partly submerged cell must still drain retained excess
+                // into the connected mobile store; stopping at its bottom
+                // traps moisture until pore-capacity collapse raises the HGL.
+                if (c.top <= ctx.nodes.depth[n]) continue;
                 double q = 0.0;
                 if (c.kind == LidNodeLayerKind::Surface && i + 1 < state.cells.size()) {
                     const auto& below = state.cells[i + 1];
@@ -651,7 +654,12 @@ double exchangePorts(SimulationContext& ctx, int link, double flow, double dt) {
     if (sr >= 0 && dest_offset >= ctx.nodes.depth[dest]) {
         auto& s = ctx.node_subtypes.storages.lid_state[sr];
         int i = portCell(s, dest_offset);
-        if (i >= 0) {
+        // Use the same receiver ownership as vertical drainage: a cell
+        // intersected by the water table receives into connected mobile
+        // storage, even when this particular port is above that table.
+        // Otherwise link inflow can fill a non-draining retained cell to
+        // porosity and spuriously reclassify its whole inventory at once.
+        if (i >= 0 && s.cells[i].bottom >= ctx.nodes.depth[dest]) {
             const auto& c = s.cells[i];
             const double capacity = std::max(0.0, (c.porosity - c.theta) * c.geometric_volume - s.port_delta[i]);
             const double held = std::min(volume, capacity);

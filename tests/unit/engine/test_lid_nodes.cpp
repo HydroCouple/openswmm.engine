@@ -251,6 +251,90 @@ TEST(LidNodes, PortsRespectAvailableWaterAndBackflowCapacity) {
     EXPECT_NEAR(c.node_subtypes.storages.lid_state[0].port_delta[0], 40, 1.e-12);
 }
 
+TEST(LidNodes, PartlySubmergedAggregateStillDrainsRetainedWater) {
+    auto c = model(); lidnode::initialize(c);
+    auto& state = c.node_subtypes.storages.lid_state[0];
+    auto& gravel = state.cells.back();
+    gravel.theta = .30;
+    state.held_volume = 0;
+    for (const auto& cell : state.cells) state.held_volume += cell.theta * cell.geometric_volume;
+    c.nodes.depth[0] = .01;
+    c.nodes.volume[0] = node::getVolume(c.nodes, 0, .01, &c.tables, 0, &c.node_subtypes);
+    const double total = state.held_volume + c.nodes.volume[0];
+    const double expected = gravel.conductivity * gravel.area * .1;
+    lidnode::prepareStep(c, .1, 0);
+    EXPECT_NEAR(gravel.theta, .30 - expected / gravel.geometric_volume, 1.e-12);
+    EXPECT_NEAR(state.held_volume + c.nodes.volume[0], total, 1.e-12);
+}
+
+TEST(LidNodes, ElevatedInletInConnectedCellCannotFillRetainedStoreToPorosity) {
+    for (double sign : {-1., 1.}) {
+        auto c = model(); lidnode::initialize(c);
+        c.links.resize(1);
+        c.links.node1[0] = sign < 0 ? 0 : 1;
+        c.links.node2[0] = sign < 0 ? 1 : 0;
+        (sign < 0 ? c.links.offset1[0] : c.links.offset2[0]) = .25;
+        auto& state = c.node_subtypes.storages.lid_state[0];
+        const auto gravel_index = state.cells.size() - 1;
+        // The port is above a tiny water table, but its cell is connected to it.
+        c.nodes.depth[0] = .01;
+        c.nodes.volume[0] = node::getVolume(c.nodes, 0, .01, &c.tables, 0, &c.node_subtypes);
+        const double initial_total = c.nodes.volume[0] + state.held_volume;
+        const double initial_theta = state.cells.back().theta;
+        double previous_depth = c.nodes.depth[0];
+        for (int step = 0; step < 100; ++step) {
+            lidnode::prepareStep(c, 1, 0);
+            lidnode::resetPorts(c);
+            c.nodes.inflow[0] = c.nodes.outflow[0] = 0;
+            // Hydraulic trials must not consume pore capacity repeatedly.
+            for (int trial = 0; trial < 2; ++trial) {
+                lidnode::resetPorts(c); c.nodes.outflow[0] = 0;
+                ASSERT_DOUBLE_EQ(lidnode::exchangePorts(c, 0, sign * .1, 1), sign * .1);
+                EXPECT_DOUBLE_EQ(state.port_delta[gravel_index], 0);
+            }
+            c.nodes.volume[0] += .1 - c.nodes.outflow[0];
+            lidnode::finishStep(c);
+            EXPECT_LE(state.cells.back().theta, initial_theta);
+            EXPECT_NEAR(c.nodes.volume[0] + state.held_volume, initial_total + .1 * (step + 1), 1.e-10);
+            EXPECT_LT(std::abs(c.nodes.depth[0] - previous_depth), .03);
+            previous_depth = c.nodes.depth[0];
+        }
+    }
+}
+
+TEST(LidNodes, ChainedFreeOutletAndBackwaterHaveContinuousStorageHead) {
+    const auto dir = std::filesystem::path(OPENSWMM_TEST_SOURCE_DIR) / "../../output/lid_partition";
+    std::filesystem::create_directories(dir);
+    for (const auto* name : {"lid_partition_free", "lid_partition_backwater"}) {
+        SWMMEngine e;
+        const auto input = std::filesystem::path(OPENSWMM_TEST_SOURCE_DIR) / "data" / (std::string(name) + ".inp");
+        ASSERT_EQ(e.open(input.string().c_str(), (dir / (std::string(name) + ".rpt")).string().c_str(), nullptr), 0);
+        ASSERT_EQ(e.initialize(), 0); ASSERT_EQ(e.start(0), 0);
+        double elapsed = 0, previous_depth = e.context().nodes.depth[1];
+        double largest_jump = 0, jump_hour = 0;
+        do {
+            ASSERT_EQ(e.step(&elapsed), 0);
+            const double depth = e.context().nodes.depth[1];
+            const double change = std::abs(depth - previous_depth);
+            if (change > largest_jump) { largest_jump = change; jump_hour = elapsed * 24; }
+            previous_depth = depth;
+        } while (elapsed > 0);
+        ASSERT_EQ(e.end(), 0);
+        // This slow-ramped, 1000-ft2 fixture has no rapid hydraulic forcing.
+        // Before the fix it conserves water yet raises B by about one foot
+        // when retained gravel water collapses into the mobile store.
+        EXPECT_LT(largest_jump, .01) << name << " at hour " << jump_hour;
+        const auto& balance = e.context().mass_balance;
+        for (int p = 0; p < 2; ++p) {
+            const double input_mass = balance.qual_routing_init[p] + balance.qual_routing_ex_in[p];
+            const double output_mass = balance.qual_routing_final[p] + balance.qual_routing_outflow[p] +
+                balance.qual_routing_flood[p] + balance.qual_routing_reacted[p] + balance.qual_routing_seep[p];
+            EXPECT_NEAR(input_mass, output_mass, input_mass * .001) << name;
+        }
+        e.close();
+    }
+}
+
 TEST(LidNodes, ElevatedPortsConserveAcrossPondingAndSurcharge) {
     const auto dir = std::filesystem::path(OPENSWMM_TEST_SOURCE_DIR) / "../../output/lid_nodes_2026_10_04";
     for (const bool reverse : {false, true}) for (const bool conduit : {false, true}) {
