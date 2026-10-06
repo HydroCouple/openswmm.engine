@@ -73,6 +73,18 @@ enum class LIDType : int {
     ROOF_DISCON     = 7
 };
 
+/// Physical native-bottom classification shared by completed sources and area preview.
+inline bool hasNativeBottom(LIDType type,double storage_thickness,double storage_ksat) {
+    if(type==LIDType::VEG_SWALE) return true;
+    if(type!=LIDType::BIO_CELL && type!=LIDType::RAIN_GARDEN &&
+       type!=LIDType::INFIL_TRENCH && type!=LIDType::PERM_PAVEMENT) return false;
+    return storage_thickness<=0 || storage_ksat>0;
+}
+inline bool hasNativeBottom(const std::string& type,double thickness,double ksat) {
+    if(type=="VS")return true;
+    return (type=="BC"||type=="RG"||type=="IT"||type=="PP") && (thickness<=0||ksat>0);
+}
+
 // ============================================================================
 // Layer state (per LID unit)
 // ============================================================================
@@ -228,6 +240,8 @@ struct LIDGroupSoA {
     // Water balance tracking (cumulative per unit)
     std::vector<double> wb_inflow;     ///< Total inflow volume (ft)
     std::vector<double> wb_evap;       ///< Total evaporation volume (ft)
+    /// Completed spatial bottom water, ft over the full unit footprint.
+    std::vector<double> spatial_infil_loss, wb_spatial_infil;
     std::vector<double> wb_infil;      ///< Total exfiltration volume (ft)
     std::vector<double> wb_surf_flow;  ///< Total surface outflow volume (ft)
     std::vector<double> wb_drain_flow; ///< Total drain outflow volume (ft)
@@ -237,6 +251,10 @@ struct LIDGroupSoA {
 
     void resize(int n);
 };
+
+/// Completed ft3 water content, including the true trapezoidal swale section.
+/// Ordinary storedVolume reporting retains its existing arithmetic.
+double completedUnitStorage(const LIDGroupSoA&,int unit);
 
 // ============================================================================
 // LID solver
@@ -250,6 +268,8 @@ public:
         int type = -1, unit = -1;
         double inflow = 0.0, rain = 0.0, pet = 0.0;
         double native_infil = 0.0, max_native_infil = 1.0e10, infil_factor = 1.0;
+        // Negative fraction retains ordinary completed-kernel arithmetic.
+        double spatial_fraction = -1.0, spatial_max_infil = 1.0e10;
     };
     /// Copy parameters, water state and water ledgers, without report streams.
     /// Completed trials never resolve forcing twice or perform file IO.

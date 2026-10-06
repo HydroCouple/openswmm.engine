@@ -26,6 +26,7 @@
  */
 
 #include "SubsurfaceSections.hpp"
+#include "../../hydrology/LID.hpp"
 #include "FootprintGeometry.hpp"
 #include <iomanip>
 #include <sstream>
@@ -858,10 +859,11 @@ SurfaceOwnershipPreview resolveSurfaceOwnership(const SimulationContext& ctx,con
             hashValue(u);hashValue(ctx.lid_usage.lid_index[u]);hashValue(ctx.lid_usage.number[u]);hashValue(ctx.lid_usage.area[u]);
             hashValue(ctx.lid_usage.from_imperv[u]);hashValue(ctx.lid_usage.from_perv[u]);hashValue(ctx.lid_usage.drain_to[u]);
             const int lid=ctx.lid_usage.lid_index[u];
-            if(lid<0||lid>=ctx.lid_controls.count()||ctx.lid_usage.area[u]<0||ctx.lid_usage.number[u]<0||a<0||!std::isfinite(a)){o.reason="Invalid LID area or control.";continue;}
+            if(lid<0||lid>=ctx.lid_controls.count()||lid>=int(ctx.lid_controls.lid_type.size())||lid>=int(ctx.lid_controls.storage.size())||ctx.lid_usage.area[u]<0||ctx.lid_usage.number[u]<0||a<0||!std::isfinite(a)){o.reason="Invalid LID area or control.";continue;}
             o.lid_area+=a;const auto& storage=ctx.lid_controls.storage[lid];
             for(double v:storage)hashValue(v);
-            if(storage[0]==0||storage[2]>0)o.native_lid_area+=a;
+            const auto& code=ctx.lid_controls.lid_type[lid];hashValue(code);
+            if(openswmm::lid::hasNativeBottom(code,storage[0],storage[2]))o.native_lid_area+=a;
         }
         const double f=ctx.subcatches.frac_imperv[s];
         if(!(o.declared_area>0)||!std::isfinite(o.declared_area)||o.lid_area>o.declared_area||!(f>=0&&f<=1))o.reason="Invalid declared, LID or pervious area.";

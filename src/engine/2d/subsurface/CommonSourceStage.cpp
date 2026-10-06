@@ -22,7 +22,7 @@ double bottomTotal(const runoff::SourceWaterDriver& s,int sc) {
     double v=0;
     for(const auto& [t,u]:s.lids().usageOrder()) {
         const auto& g=s.lids().group(t);
-        if(g.subcatch_idx[u]==sc) v+=g.wb_infil[u]*g.area[u]*ft3;
+        if(g.subcatch_idx[u]==sc) v+=g.wb_spatial_infil[u]*g.area[u]*ft3;
     }
     return v;
 }
@@ -43,39 +43,57 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
     const auto& c=sources.context(); const auto& r=sources.runoff().soa();
     std::vector<Donor> donors;std::vector<bool> owned(mesh.tri_area.size(),false);
     std::vector<double> coverage(mesh.tri_area.size(),0);
-    std::vector<bool> reviewed(c.n_subcatches(),false);
+    std::vector<bool> resolved(c.n_subcatches(),false);
+    std::vector<double> fractions(c.n_subcatches(),0);
     for(const auto& o:preview.objects) {
-        if(!o.reviewed) continue;
         const int sc=o.subcatch;
-        if(sc<0 || sc>=c.n_subcatches() || sources.clocks().groupForSubcatch(sc)<0 || o.lumped || o.outside_area>1e-8)
-            return "Common source stage requires fully inside, non-lumped sources in its clock groups.";
-        if(reviewed[sc]) return "Duplicate reviewed common source.";
-        reviewed[sc]=true;
-        Donor d;d.source=sc;d.area=r.area[sc]*(1-r.imperv_pct[sc])*ft2;
-        double weather=0;
-        for(const auto& share:preview.shares) if(share.subcatch==sc) {
-            if(share.cell<0 || share.cell>=mesh.n_cells() || share.weather_area<0 || share.pervious_area<0)
-                return "Invalid common source contact.";
-            owned[share.cell]=true;coverage[share.cell]+=share.weather_area;weather+=share.weather_area;
-            if(share.pervious_area>0) d.contacts.emplace_back(share.cell,share.pervious_area);
+        if(sc<0 || sc>=c.n_subcatches())return "Invalid reviewed common source.";
+        if(sources.clocks().groupForSubcatch(sc)<0) {
+            if(o.reviewed)return "Reviewed common source is outside its clock groups.";
+            continue;
         }
-        double area=0;for(const auto& x:d.contacts) area+=x.second;
-        if(!closeArea(area,d.area) || !closeArea(weather,(r.area[sc]+c.subcatches.total_lid_area_ft2[sc])*ft2))
-            return "Reviewed source shares do not match private physical water areas.";
-        if(d.area>0) donors.push_back(d);
+        if(o.lumped)return "Common source stage lumped groundwater is not qualified.";
+        if(resolved[sc])return "Duplicate common source footprint.";
+        resolved[sc]=true;
+        const double full=(r.area[sc]+c.subcatches.total_lid_area_ft2[sc])*ft2;
+        if(!std::isfinite(full)||full<=0)return "Common source has no physical footprint.";
+        Donor d;d.source=sc;
+        double weather=0,pervious=0,impervious=0,lid_area=0;
+        for(const auto& share:preview.shares)if(share.subcatch==sc) {
+            if(share.cell<0 || share.cell>=mesh.n_cells())return "Invalid common source contact.";
+            for(double area:{share.weather_area,share.pervious_area,share.impervious_area,share.lid_area})
+                if(!std::isfinite(area)||area<0)return "Invalid common source contact area.";
+            if(!closeArea(share.weather_area,share.pervious_area+share.impervious_area+share.lid_area))
+                return "Reviewed component areas do not close their weather footprint.";
+            if(share.weather_area>0){owned[share.cell]=true;coverage[share.cell]+=share.weather_area;}
+            weather+=share.weather_area;pervious+=share.pervious_area;
+            impervious+=share.impervious_area;lid_area+=share.lid_area;
+            if(share.pervious_area>0)d.contacts.emplace_back(share.cell,share.pervious_area);
+        }
+        if(weather>0 && !o.reviewed)return "Inside source shares require reviewed uniform ownership.";
+        if(!std::isfinite(o.inside_area)||o.inside_area<0||!closeArea(weather,o.inside_area)||
+           !std::isfinite(o.outside_area)||o.outside_area<0||!closeArea(weather+o.outside_area,full)||
+           (o.declared_area>0&&!closeArea(o.declared_area,full)))
+            return "Reviewed inside/outside shares do not match private physical water areas.";
+        fractions[sc]=o.outside_area==0 ? 1.0 : weather==0 ? 0.0 : std::clamp(weather/full,0.0,1.0);
+        if(!closeArea(pervious,r.area[sc]*(1-r.imperv_pct[sc])*ft2*fractions[sc])||
+           !closeArea(impervious,r.area[sc]*r.imperv_pct[sc]*ft2*fractions[sc])||
+           !closeArea(lid_area,c.subcatches.total_lid_area_ft2[sc]*ft2*fractions[sc]))
+            return "Reviewed components do not match uniform inside/outside footprints.";
+        d.area=pervious;if(d.area>0)donors.push_back(d);
         for(std::size_t id=0;id<sources.lids().usageOrder().size();++id) {
             const auto [t,u]=sources.lids().usageOrder()[id];const auto& g=sources.lids().group(t);
-            if(g.subcatch_idx[u]!=sc || g.stor_ksat[u]<=0) continue;
-            Donor l;l.source=sc;l.type=t;l.unit=u;l.identity=int(id);l.area=g.area[u]*ft2;
-            for(const auto& share:preview.shares) if(share.subcatch==sc && share.lid_area>0)
+            if(g.subcatch_idx[u]!=sc || !lid::hasNativeBottom(g.type,g.stor_thick[u],g.stor_ksat[u]) || fractions[sc]==0)continue;
+            Donor l;l.source=sc;l.type=t;l.unit=u;l.identity=int(id);l.area=g.area[u]*ft2*fractions[sc];
+            for(const auto& share:preview.shares)if(share.subcatch==sc && share.lid_area>0)
                 l.contacts.emplace_back(share.cell,share.lid_area*g.area[u]/c.subcatches.total_lid_area_ft2[sc]);
-            double total=0;for(const auto& x:l.contacts) total+=x.second;
-            if(!closeArea(total,l.area)) return "Reviewed LID bottom shares do not match its unit footprint.";
-            donors.push_back(std::move(l));
+            double total=0;for(const auto& x:l.contacts)total+=x.second;
+            if(!closeArea(total,l.area))return "Reviewed LID bottom shares do not match its inside footprint.";
+            if(l.area>0)donors.push_back(std::move(l));
         }
     }
-    for(const auto& g:sources.clocks().groups()) for(int sc:g.subcatches) if(!reviewed[sc])
-        return "Every member of a common source clock group needs reviewed inside shares.";
+    for(const auto& g:sources.clocks().groups())for(int sc:g.subcatches)if(!resolved[sc])
+        return "Every member of a common source clock group needs a resolved inside/outside footprint.";
     std::vector<std::vector<std::pair<int,double>>> et_contacts;
     std::vector<double> atmospheric_area(mesh.tri_area.size(),0);
     for(const auto& b:sources.atmosphere()) {
@@ -87,7 +105,7 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
             if(!std::isfinite(area)||area<0) return "Invalid common atmospheric contact area.";
             if(area>0) { contacts.emplace_back(sh.cell,area);total+=area;atmospheric_area[sh.cell]+=area; }
         }
-        if(!closeArea(total,b.area*ft2)) return "Reviewed atmospheric shares do not match private component footprints.";
+        if(!closeArea(total,b.area*ft2*fractions[b.source])) return "Reviewed atmospheric shares do not match private component footprints.";
         et_contacts.push_back(std::move(contacts));
     }
     std::vector<int> cells;
@@ -101,6 +119,8 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
         cells.push_back(i);
     }
     if(cells.empty()) return "Common source stage has no reviewed receiving cells.";
+    const auto partition_error=sources.configureSpatialCoverage(fractions);
+    if(!partition_error.empty())return partition_error;
     mesh_=&mesh;surface_=&surface;options_=&options;gw_=&gw;sources_=&sources;donors_=std::move(donors);
     cells_=std::move(cells);owned_=std::move(owned);weather_=preview.mesh_weather_area;
     et_contacts_=std::move(et_contacts);
@@ -155,7 +175,7 @@ std::string CommonSourceStage::advance(double start,double end) {
     };
     runoff::SourceWaterDriver::BottomCeiling bottom=[&](int t,int u,double,double) {
         const auto& g=proposal.lids(true).group(t);const int j=findDonor(g.subcatch_idx[u],t,u);
-        return j<0 ? 1e10 : capacity(j,std::max(0.0,g.stor_depth[u])*.3048);
+        return j<0 ? 1e10 : capacity(j,std::max(0.0,g.type==lid::LIDType::VEG_SWALE ? g.surf_depth[u] : g.stor_depth[u])*.3048);
     };
     for(std::size_t group=0;group<proposal.clocks().groups().size();++group) {
         auto error=proposal.stage(int(group),end,end,&candidate,&bottom);
@@ -166,9 +186,9 @@ std::string CommonSourceStage::advance(double start,double end) {
         const auto& d=donors_[j];
         if(d.type>=0) {
             const auto& a=s.lids().group(d.type);const auto& b=sources_->lids().group(d.type);
-            return (a.wb_infil[d.unit]-b.wb_infil[d.unit])*a.area[d.unit]*ft3;
+            return (a.wb_spatial_infil[d.unit]-b.wb_spatial_infil[d.unit])*a.area[d.unit]*ft3;
         }
-        return (s.ledgers()[d.source].infiltration-sources_->ledgers()[d.source].infiltration)*ft3-
+        return (s.ledgers()[d.source].spatial_infiltration-sources_->ledgers()[d.source].spatial_infiltration)*ft3-
             (bottomTotal(s,d.source)-bottomTotal(*sources_,d.source));
     };
     for(std::size_t j=0;j<donors_.size();++j) {
@@ -227,7 +247,7 @@ std::string CommonSourceStage::advance(double start,double end) {
     const auto addEt=[&](SurfaceEtReceipt r,bool eligible) {
         const double remainder=std::max(0.0,r.potential-r.evaporation);
         r.soil_demand=eligible ? remainder : 0;r.unused=eligible ? 0 : remainder;
-        auto& b=et_budget[r.cell];b.potential+=r.potential;b.evaporation+=r.evaporation;b.soil+=r.soil_demand;
+        if(r.cell>=0){auto& b=et_budget[r.cell];b.potential+=r.potential;b.evaporation+=r.evaporation;b.soil+=r.soil_demand;}
         et_receipts.push_back(r);
     };
     for(const auto& m:mesh_trials) addEt({SurfaceEtOwner::MESH,-1,-1,-1,m.cell,start,end,weather_[m.cell],
@@ -240,6 +260,11 @@ std::string CommonSourceStage::advance(double start,double end) {
             const double fraction=area/(a.area*ft2);
             addEt({owner,a.source,a.type,a.unit,cell,start,end,area,
                 (a.potential-b.potential)*ft3*fraction,(a.evaporation-b.evaporation)*ft3*fraction},a.soil_eligible);
+        }
+        const double outside_area=a.area*ft2*(1-bounded.spatialFractions()[a.source]);
+        if(outside_area>0){const double fraction=outside_area/(a.area*ft2);
+            addEt({owner,a.source,a.type,a.unit,-1,start,end,outside_area,
+                (a.potential-b.potential)*ft3*fraction,(a.evaporation-b.evaporation)*ft3*fraction},false);
         }
     }
     // Validate all atmospheric volumes before either receiver or owner changes.

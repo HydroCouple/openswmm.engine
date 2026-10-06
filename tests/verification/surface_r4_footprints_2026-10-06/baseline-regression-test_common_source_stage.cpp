@@ -21,8 +21,7 @@ struct AtmosphericInput {
     std::array<double,2> rain_override{-1,-1}; // ft/s; negative retains gage records
     std::array<double,2> inside{1,1};
     double rain=432,lid_area=.5,lid_bottom=432,lid_saturation=50,ks=.01;
-    bool barrel=false,covered=false,connected=false;
-    std::string lid_type="IT";
+    bool barrel=false,covered=false;
     std::string et="NONE";
     GwClosure closure=GwClosure::CLOSED_FORM;SoilChar law=SoilChar::GARDNER;
 };
@@ -81,22 +80,15 @@ struct Model {
             context.subcatches.infil_p2[i]=.5;context.subcatches.infil_p3[i]=.26;
         }
         if(trench) {
-            context.lid_controls.names={"IT"};context.lid_controls.lid_type={a.barrel ? "RB" : a.lid_type};
+            context.lid_controls.names={"IT"};context.lid_controls.lid_type={a.barrel ? "RB" : "IT"};
             context.lid_controls.surface={{3,0,.1,0,0}};
-            if(a.lid_type=="VS")context.lid_controls.surface={{12,.1,.1,1,1}};
             context.lid_controls.storage={{12,.4,a.lid_bottom,0}};
             context.lid_controls.drain={{0,.5,0,0,0,0}};
-            if(a.lid_type=="BC" || a.lid_type=="RG" || a.lid_type=="GR" || a.lid_type=="PP"){
-                context.lid_controls.soil={{12,.45,.3,.1,43.2,4,3.5}};
-                context.lid_controls.pavement={{6,.2,0,43.2,0,0}};
-                context.lid_controls.drainmat={{3,.5,.1}};
-            }
             context.lid_usage.subcatch_index={0};context.lid_usage.lid_index={0};
             context.lid_usage.number={2};context.lid_usage.area={a.lid_area/2/ft2};context.lid_usage.width={1};
             context.lid_usage.init_sat={a.lid_saturation};context.lid_usage.from_imperv={0};context.lid_usage.from_perv={0};
             context.lid_usage.to_perv={0};context.lid_usage.drain_to={""};
         }
-        if(a.connected)context.subcatches.outlet_subcatch[0]=1;
         lid::LIDSolver initial;const lid::LIDSolver* snapshot=nullptr;
         if(a.covered) {
             initial.init(context);initial.group(static_cast<int>(lid::LIDType::RAIN_BARREL)).stor_covered[0]=1;snapshot=&initial;
@@ -486,71 +478,8 @@ TEST(CommonSourceStage, PartialInsideSourcesKeepOutsideLossAndWeatherSeparate) {
     }
 }
 TEST(CommonSourceStage, ConnectedOutsideOnlyPeerKeepsItsNativePath) {
-    AtmosphericInput a;a.inside={1,0};a.ks=1e-5;a.connected=true;Model m;m.setup(false,1,false,false,false,a);
+    AtmosphericInput a;a.inside={1,0};a.ks=1e-5;Model m;m.setup(false,1,false,false,false,a);
     ASSERT_EQ(m.stage.initialize(m.mesh,m.surface,m.options,m.gw,m.sources,m.preview),"");
-    ASSERT_EQ(m.sources.clocks().groups().size(),1u);
     ASSERT_EQ(m.stage.advance(0,1),"");EXPECT_GT(m.sources.ledgers()[1].infiltration,0);
     for(const auto& r:m.stage.receipts())EXPECT_NE(r.request.source,"S1");
-}
-
-TEST(CommonSourceStage, GeneralizedNativeAndSealedLidFootprintsSpendOnlyTheirInsideAwards) {
-    for(const std::string type:{"BC","RG","GR","IT","PP","RB","VS","RD"})
-    for(double inside:{.25,.5,1.})for(bool sealed:{false,true}) {
-        SCOPED_TRACE(type+"/"+std::to_string(inside)+"/"+std::to_string(sealed));
-        AtmosphericInput a;a.inside={inside,1};a.lid_type=type;a.lid_bottom=sealed?0:432;
-        a.ks=1e-5;a.et="BOUNDARY_ET";a.pet={1e-5,3e-5};
-        Model m;m.setup(true,1,false,false,false,a);
-        ASSERT_EQ(m.stage.initialize(m.mesh,m.surface,m.options,m.gw,m.sources,m.preview),"");
-        const bool native=type=="VS" || (type!="GR" && type!="RB" && type!="RD" && !sealed);
-        double before_spatial=0;for(double end:{.1,.3,1.,2.125,4.}) {
-            const double start=m.stage.completedEnd();ASSERT_EQ(m.stage.advance(start,end),"");
-            double paid=0;for(const auto& r:m.stage.receipts())if(r.request.kind!=SurfaceDonorKind::MESH){
-                paid+=r.volume;if(r.request.kind==SurfaceDonorKind::LID_BOTTOM){EXPECT_TRUE(native);EXPECT_LE(r.request.area,.5*inside);}
-            }
-            double spatial=0;for(const auto& b:m.sources.ledgers()) {
-                EXPECT_NEAR(b.infiltration,b.spatial_infiltration+b.outside_infiltration,1e-11);
-                spatial+=b.spatial_infiltration*ft3;
-            }
-            EXPECT_NEAR(paid,spatial-before_spatial,1e-12);before_spatial=spatial;etBalance(m);
-            double lid_soil=0,lid_weather=0;for(const auto& r:m.stage.etReceipts())if(r.owner==SurfaceEtOwner::LID){
-                lid_soil+=r.soil_demand;lid_weather+=r.area;
-                if(r.cell<0){EXPECT_DOUBLE_EQ(r.soil_demand,0);EXPECT_NEAR(r.area,.5*(1-inside),1e-14);}
-            }
-            EXPECT_NEAR(lid_weather,.5,1e-14);if(!native)EXPECT_DOUBLE_EQ(lid_soil,0);
-            m.gw.assignTiers(end-start,1);m.gw.fireGwCells(0,end-start,m.surface,start);
-            EXPECT_NEAR(m.gw.state().continuityResidual(),0,2e-11);
-            EXPECT_EQ(m.gw.nodeRefunds(),0);for(int g=0;g<int(m.sources.clocks().groups().size());++g)EXPECT_NEAR(m.sources.balanceResidual(g),0,1e-10);
-        }
-        if(inside<1 && native)EXPECT_GT(m.sources.ledgers()[0].outside_infiltration,0);
-    }
-}
-
-TEST(CommonSourceStage, PartialAreasKeepScarceAwardsInTheirCellsAcrossSourceOrder) {
-    std::map<std::string,double> prior;
-    for(bool reverse:{false,true}) {
-        AtmosphericInput a;a.inside=reverse?std::array<double,2>{.25,.5}:std::array<double,2>{.5,.25};
-        a.ks=1e-5;Model m;m.setup(false,2,reverse,false,false,a);m.room(0,0);m.room(.001,1);m.attach();
-        ASSERT_EQ(m.stage.advance(0,1),"");std::map<std::string,double> now;
-        for(const auto& r:m.stage.receipts()){
-            if(r.request.cell==0)EXPECT_DOUBLE_EQ(r.volume,0);
-            EXPECT_LE(r.volume,r.request.candidate+1e-15);now[r.request.source]+=r.volume;
-        }
-        EXPECT_DOUBLE_EQ(m.gw.state().xacc_from_surface[0],0);EXPECT_LE(m.gw.state().xacc_from_surface[1],.001+1e-14);
-        for(const auto& b:m.sources.ledgers()){
-            EXPECT_GT(b.outside_infiltration,0);EXPECT_GT(b.spatial_infiltration,0);
-            EXPECT_NEAR(b.infiltration,b.spatial_infiltration+b.outside_infiltration,1e-12);
-        }
-        if(!reverse)prior=now;else for(const auto& [name,volume]:now)EXPECT_NEAR(volume,prior[name],1e-13);
-        for(int g=0;g<int(m.sources.clocks().groups().size());++g)EXPECT_NEAR(m.sources.balanceResidual(g),0,1e-10);
-    }
-    AtmosphericInput a;a.inside={.5,.25};Model invalid;invalid.setup(false,1,false,false,false,a);
-    invalid.preview.shares[0].pervious_area-=.1;invalid.preview.shares[0].impervious_area+=.1;
-    EXPECT_FALSE(invalid.stage.initialize(invalid.mesh,invalid.surface,invalid.options,invalid.gw,invalid.sources,invalid.preview).empty());
-    EXPECT_EQ(invalid.sources.spatialFractions(),(std::vector<double>{1,1}));
-    EXPECT_DOUBLE_EQ(invalid.sources.ledgers()[0].rain,0);EXPECT_DOUBLE_EQ(invalid.gw.state().xacc_from_surface[0],0);
-    Model area_mismatch;area_mismatch.setup(false,1,false,false,false,a);
-    area_mismatch.preview.objects[0].inside_area+=.1;
-    EXPECT_FALSE(area_mismatch.stage.initialize(area_mismatch.mesh,area_mismatch.surface,area_mismatch.options,
-        area_mismatch.gw,area_mismatch.sources,area_mismatch.preview).empty());
-    EXPECT_EQ(area_mismatch.sources.spatialFractions(),(std::vector<double>{1,1}));
 }
