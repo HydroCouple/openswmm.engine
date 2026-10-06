@@ -34,6 +34,25 @@ TEST(SurfaceEt, PondedSurfaceConsumesOneWholeDemandBeforeAllClosures){
   r.fire(10);EXPECT_DOUBLE_EQ(s.led_et,0);EXPECT_NEAR(s.storage(),initial,1e-12);balance(s);
  }
 }
+TEST(SurfaceEt, AreaBudgetsExpireIneligibleDemandAndUseOneExtractionStress){
+ for(auto cl:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(auto law:{SoilChar::GARDNER,SoilChar::RUSSO,SoilChar::BROOKS_COREY,SoilChar::VAN_GENUCHTEN}){
+  Rig area,reference;area.initialize(cl,law,"BOUNDARY_ET",5);reference.initialize(cl,law,"BOUNDARY_ET",5);
+  auto& s=area.gw.state();const double initial=s.storage();
+  // Two thirds of the residual belong to sealed/impervious areas, and expire.
+  area.gw.bookAreaEt(0,10,2e-4,5e-5,5e-5);balance(s);
+  EXPECT_NEAR(s.et_unused_cumulative[0],1e-4,1e-15);EXPECT_NEAR(s.et_pending[0],5e-5,1e-15);
+  reference.gw.bookSurfaceEt(0,10,2.5e-6,0);area.fire(10);reference.fire(10);
+  EXPECT_NEAR(s.led_et,reference.gw.state().led_et,1e-13);EXPECT_NEAR(initial-s.storage(),s.led_et,1e-12);
+  EXPECT_NEAR(s.et_refresh[0],10,1e-15);EXPECT_NEAR(s.continuityResidual(),0,1e-12);balance(s);
+ }
+}
+TEST(SurfaceEt, InvalidAreaBudgetCannotPartiallyBookDemand){
+ Rig r;r.initialize(GwClosure::CLOSED_FORM,SoilChar::GARDNER);auto& s=r.gw.state();
+ for(const auto& amounts:{std::array<double,3>{1,2,0},{1,0,2},{-1,0,0},{1,-1,0},{1,0,-1}}){
+  EXPECT_THROW(r.gw.bookAreaEt(0,1,amounts[0],amounts[1],amounts[2]),std::invalid_argument);
+  EXPECT_DOUBLE_EQ(s.et_pending[0],0);EXPECT_DOUBLE_EQ(s.et_potential_cumulative[0],0);EXPECT_TRUE(std::isnan(s.et_refresh[0]));
+ }
+}
 TEST(SurfaceEt, DryAndPartialPondDemandUsesExactlyOneStressAtExtraction){
  for(auto cl:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})for(auto law:{SoilChar::GARDNER,SoilChar::RUSSO,SoilChar::BROOKS_COREY,SoilChar::VAN_GENUCHTEN}){
   SCOPED_TRACE(std::to_string(int(cl))+"/"+std::to_string(int(law)));Rig r;r.initialize(cl,law,"BOUNDARY_ET",5);auto& s=r.gw.state();auto p=soil::Params{};p.law=law;

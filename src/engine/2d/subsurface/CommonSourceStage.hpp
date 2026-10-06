@@ -6,6 +6,13 @@
 
 namespace openswmm::twoD {
 struct MeshData; struct SurfaceStateData; struct SolverOptions2D; class SubsurfaceSolver;
+enum class SurfaceEtOwner { MESH, PERVIOUS, IMPERVIOUS, LID };
+struct SurfaceEtReceipt {
+    SurfaceEtOwner owner = SurfaceEtOwner::MESH;
+    int source=-1,type=-1,unit=-1,cell=-1;
+    double start=0,end=0,area=0; // s, m2
+    double potential=0,evaporation=0,soil_demand=0,unused=0; // m3
+};
 
 /// Internal water-only source-phase adapter. Bind fully inside reviewed areas;
 /// invoke after accepted face volumes land and before managed source debits.
@@ -21,6 +28,8 @@ public:
     bool ownsCell(int cell) const { return cell >= 0 && cell < int(owned_.size()) && owned_[cell]; }
     const std::vector<int>& cells() const { return cells_; }
     const std::vector<SurfaceIntakeReceipt>& receipts() const { return exchange_.receipts(); }
+    /// Last committed interval; diagnostic provenance, not restart/result history.
+    const std::vector<SurfaceEtReceipt>& etReceipts() const { return et_receipts_; }
     double completedEnd() const { return exchange_.completedEnd(); }
     long intervals() const { return intervals_; }
     double meshRain() const { return mesh_rain_; }
@@ -38,6 +47,8 @@ private:
     runoff::SourceWaterDriver* sources_=nullptr;
     SurfaceExchange exchange_;
     std::vector<Donor> donors_;
+    std::vector<std::vector<std::pair<int,double>>> et_contacts_;
+    std::vector<SurfaceEtReceipt> et_receipts_;
     std::vector<int> cells_;
     std::vector<bool> owned_;
     std::vector<double> weather_;

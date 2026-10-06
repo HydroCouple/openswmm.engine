@@ -17,6 +17,14 @@ struct SourceWaterDelivery {
     double start = 0.0, end = 0.0, volume = 0.0; // ft3; node -1 = unresolved external outlet
     bool drain = false;
 };
+enum class SourceEtKind { PERVIOUS, IMPERVIOUS, LID };
+struct SourceAtmosphericLedger {
+    SourceEtKind kind = SourceEtKind::PERVIOUS;
+    int source = -1, type = -1, unit = -1;
+    double area = 0.0; // ft2, physical footprint (capture does not enlarge it)
+    bool soil_eligible = false;
+    double potential = 0.0, evaporation = 0.0; // cumulative completed ft3
+};
 
 /// Internal water-only qualification driver, initialized at simulation start.
 /// All context/kernel/volume histories are privately owned. Stage cannot edit
@@ -47,6 +55,7 @@ public:
     const lid::LIDSolver& lids(bool trial = false) const;
     const std::vector<SourceWaterLedger>& ledgers(bool trial = false) const;
     const std::vector<SourceWaterDelivery>& deliveries(bool trial = false) const;
+    const std::vector<SourceAtmosphericLedger>& atmosphere(bool trial = false) const;
     double pendingVolume(int group, bool trial = false) const;
     double balanceResidual(int group, bool trial = false) const;
 private:
