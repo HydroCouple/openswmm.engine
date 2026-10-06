@@ -4,6 +4,7 @@
 # openswmm_2d.h without an intermediate Python layer.
 
 cdef extern from "openswmm_2d.h":
+    int swmm_2d_get_report_rainfall_bulk(void* engine, double report_date, double* rainfall) nogil
     # Status
     int swmm_2d_is_active(void* engine, int* active)
 
@@ -181,6 +182,15 @@ cdef extern from "openswmm_infil2d.h":
         double p[5]
         int dest
 
+    ctypedef struct SWMM_Infil2DAuthoredRow:
+        int cell
+        char tag[4096]
+        SWMM_Infil2DRow row
+        int dest_explicit
+    int swmm_infil2d_get_authored_rows(void* engine, SWMM_Infil2DAuthoredRow* rows, int len, int* written)
+    int swmm_infil2d_replace_authored_rows(void* engine, const SWMM_Infil2DAuthoredRow* rows, int count)
+    int swmm_infil2d_get_ownership(void* engine, int cell, int* owner, int* aq_row, int* conflict)
+    int swmm_infil2d_get_ownership_bulk(void* engine, int* owners, int* aq_rows, int* conflicts, int len, int* written)
     int swmm_infil2d_get_options(void* engine, SWMM_Infil2DOptions* options)
     int swmm_infil2d_set_options(void* engine, const SWMM_Infil2DOptions* options)
     int swmm_infil2d_defaults_count(void* engine, int* count)
@@ -197,3 +207,39 @@ cdef extern from "openswmm_infil2d.h":
     int swmm_infil2d_get_rate_bulk(void* engine, double* f, int n) nogil
     int swmm_infil2d_get_cum_bulk(void* engine, double* F, int n) nogil
     int swmm_infil2d_get_total_volume(void* engine, double* volume)
+
+cdef extern from "openswmm_surface_ownership.h":
+    ctypedef struct SWMM_SurfaceOwnerObject:
+        int subcatch
+        int reviewed
+        int lumped
+        int status
+        double declared_area
+        double polygon_area
+        double lid_area
+        double pervious_area
+        double impervious_area
+        double native_lid_area
+        double inside_area
+        double outside_area
+        char name[256]
+        char tag[256]
+        char reason[512]
+    ctypedef struct SWMM_SurfaceOwnerShare:
+        int subcatch
+        int cell
+        double weather_area
+        double pervious_area
+        double impervious_area
+        double lid_area
+        double native_lid_area
+    ctypedef int (*SWMM_SurfaceOwnerProgress)(int done, int total, void* user) noexcept nogil
+    int swmm_surface_owner_get(void* engine, int* rows, int capacity, int* count)
+    int swmm_surface_owner_preview(void* engine, const int* rows, int count,
+        SWMM_SurfaceOwnerObject* objects, int object_capacity, int* object_count,
+        SWMM_SurfaceOwnerShare* shares, int share_capacity, int* share_count,
+        double* areas, int cell_capacity, int* cell_count, int* valid,
+        char* token, int token_capacity, char* diagnostics, int diagnostic_capacity,
+        SWMM_SurfaceOwnerProgress progress, void* user) nogil
+    int swmm_surface_owner_replace(void* engine, const int* rows, int count,
+        const char* token, char* diagnostics, int diagnostic_capacity) nogil

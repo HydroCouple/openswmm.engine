@@ -92,6 +92,7 @@ class Subcatchment:
     """Single-subcatchment wrapper. See :class:`Subcatchments`."""
     rain_scale_factor: float
     snow_scale_factor: float
+    snowpack: Optional[str]
     loadings: LoadingsView
     def coverages(self) -> list[float]: ...
 

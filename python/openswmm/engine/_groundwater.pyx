@@ -19,6 +19,7 @@ cdef extern from "openswmm/engine/openswmm_gw2d.h":
     int swmm_gw2d_get_cell_conc(SWMM_Engine engine, int zone, int species, double* out, int len, int* written) nogil
     int swmm_gw2d_get_species_ledger(SWMM_Engine engine, int species, int term, double* value) nogil
     int swmm_gw2d_option_get(SWMM_Engine engine, const char* key, char* buf, int buflen) nogil
+    int swmm_gw2d_process_options_set(SWMM_Engine engine, const char* et, const char* link, const char* wilting, int authored) nogil
     int swmm_gw2d_option_set(SWMM_Engine engine, const char* key, const char* value) nogil
     int swmm_gw2d_row_count(SWMM_Engine engine, int* count) nogil
     int swmm_gw2d_row_add(SWMM_Engine engine, int scope, const char* tag, int cell, double ks, double zs, double theta_s, double theta_r, double alpha) nogil
@@ -85,6 +86,17 @@ class AquiferOptions(EngineView, MutableMapping):
         cdef bytes name = str(key).encode('utf-8')
         cdef bytes text = str(value).encode('utf-8')
         _check(swmm_gw2d_option_set(_h(self), name, text))
+    def set_process_options(self, *, str et, str link, wilting="AUTO", bint authored=True):
+        """Atomically set GW_ET, LINK_SEEPAGE and WILTING_SUCTION before a run.
+
+        Custom wilting suction uses project length units; authored restores
+        section provenance for undo. Invalid input leaves all options unchanged.
+        """
+        cdef bytes et_text = et.encode('utf-8')
+        cdef bytes link_text = link.encode('utf-8')
+        cdef bytes wilting_text = str(wilting).encode('utf-8')
+        _check(swmm_gw2d_process_options_set(_h(self), et_text, link_text, wilting_text, authored))
+
     def __delitem__(self, key):
         raise TypeError('Aquifer options cannot be deleted; assign an explicit value')
 

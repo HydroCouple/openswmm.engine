@@ -854,11 +854,62 @@ class LIDs:
             result.append(LidLayerTreatment(row.layer, swmm_pollutant_id(h, row.pollutant).decode(), row.removal_percent, row.decay_per_day, row.expression.decode()))
         return result
 
-    def set_layers(self, key, layers, *, treatments=None):
+    def get_flow_options(self, key):
+        """Flow model (0 existing or 1 Richards), cells and solver tolerances."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int idx = _resolve_index(h, key, swmm_lid_index, swmm_lid_count, "LID")
+        cdef SWMM_LidRichardsOptions options
+        _check(swmm_lid_richards_options_get(h, idx, &options))
+        return dict(model=options.model, cells_per_layer=options.cells_per_layer,
+                    atol=options.atol, rtol=options.rtol, max_step=options.max_step)
+
+    def get_materials(self, key):
+        """Retention materials in layer order; alpha and specific_storage in 1/m.
+
+        SURFACE/BOTTOM rows are present but ignored when configuring flow.
+        """
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int idx = _resolve_index(h, key, swmm_lid_index, swmm_lid_count, "LID")
+        cdef SWMM_LidRichardsMaterial material
+        result = []
+        for i in range(swmm_lid_node_layer_count(h, idx)):
+            _check(swmm_lid_richards_material_get(h, idx, i, &material))
+            result.append(dict(theta_r=material.theta_r, alpha=material.alpha,
+                               n=material.n, l=material.l, specific_storage=material.specific_storage))
+        return result
+
+    def richards_profile(self, node):
+        """Current Richards cell pressure/head in project length and water in volume units.
+
+        The native API rejects profiles of the existing flow formulation.
+        """
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
+        cdef double pressure, head, water
+        result = []
+        for i in range(swmm_lid_node_state_count(h, n)):
+            _check(swmm_lid_richards_state_get(h, n, i, &pressure, &head, &water))
+            result.append(dict(pressure=pressure, head=head, water=water))
+        return result
+
+    def richards_statistics(self, node):
+        """Last-interval counts, minimum step in seconds and balance_m3 in m3."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
+        cdef SWMM_LidRichardsStatistics stats
+        _check(swmm_lid_richards_statistics_get(h, n, &stats))
+        return dict(accepted=stats.accepted, rejected=stats.rejected, rhs=stats.rhs,
+                    newton=stats.newton, min_step=stats.min_step, balance_m3=stats.balance_m3)
+
+    def set_layers(self, key, layers, *, treatments=None, flow=None, materials=None):
         """Atomically replace an arbitrary ordered NODE stack and sync its nodes.
 
         Accepts an iterable of LidNodeLayer. Invalid stacks leave the old stack,
         node MaxDepths and anchored link offsets unchanged. Pre-start only.
+        Optional flow is a mapping with model, cells_per_layer, atol, rtol and
+        max_step (seconds). Materials are mappings with theta_r, alpha, n, l
+        and specific_storage, one per authored layer; alpha/storage use 1/m.
+        When flow is supplied, omitted treatments/materials retain readback values.
         """
         cdef SWMM_Engine h = _h(self._solver)
         cdef int idx = _resolve_index(h, key, swmm_lid_index, swmm_lid_count, "LID")
@@ -871,7 +922,32 @@ class LIDs:
             raise MemoryError()
         cdef SWMM_LidLayerTreatment* rules = NULL
         cdef int rule_count = 0
+        cdef SWMM_LidRichardsOptions options
+        cdef SWMM_LidRichardsMaterial* retention = NULL
         try:
+            if flow is None and materials is not None:
+                raise ValueError("materials requires flow options")
+            if flow is not None:
+                from operator import index
+                options.model = index(flow["model"])
+                options.cells_per_layer = index(flow.get("cells_per_layer", 8))
+                options.atol = flow.get("atol", 1e-7)
+                options.rtol = flow.get("rtol", 1e-5)
+                options.max_step = flow.get("max_step", 30.0)
+                material_values = self.get_materials(key) if materials is None else list(materials)
+                if len(material_values) != count:
+                    raise ValueError("materials must have one row per authored layer")
+                retention = <SWMM_LidRichardsMaterial*>calloc(count, sizeof(SWMM_LidRichardsMaterial))
+                if retention == NULL:
+                    raise MemoryError()
+                for i, material in enumerate(material_values):
+                    retention[i].theta_r = material.get("theta_r", 0.0)
+                    retention[i].alpha = material.get("alpha", 0.0)
+                    retention[i].n = material.get("n", 0.0)
+                    retention[i].l = material.get("l", 0.5)
+                    retention[i].specific_storage = material.get("specific_storage", 0.0)
+                if treatments is None:
+                    treatments = self.get_treatments(key)
             for i, layer in enumerate(values):
                 if not isinstance(layer, LidNodeLayer):
                     raise TypeError("layers must contain LidNodeLayer instances")
@@ -898,8 +974,12 @@ class LIDs:
                     rules[i].removal_percent = treatment.removal_percent
                     rules[i].decay_per_day = treatment.decay_per_day
                     rules[i].expression = expressions[i]
-                _check(swmm_lid_node_configure(h, idx, rows, count, rules, rule_count))
+                if flow is None:
+                    _check(swmm_lid_node_configure(h, idx, rows, count, rules, rule_count))
+                else:
+                    _check(swmm_lid_node_configure_flow(h, idx, rows, count, rules, rule_count, &options, retention))
         finally:
+            free(retention)
             free(rules)
             free(rows)
 

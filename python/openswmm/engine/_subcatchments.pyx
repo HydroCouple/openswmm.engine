@@ -407,6 +407,23 @@ cdef class Subcatchment:
     def solver(self):
         return self._solver
 
+    @property
+    def snowpack(self) -> str:
+        """Assigned snow-pack name; empty when unassigned. Edit before initialization."""
+        _check_fresh(self)
+        cdef const char* name = swmm_subcatch_get_snowpack(_h(self._solver), self._index)
+        if name == NULL:
+            raise ValueError("Invalid subcatchment snow-pack assignment")
+        return name.decode('utf-8')
+
+    @snowpack.setter
+    def snowpack(self, value) -> None:
+        _check_fresh(self)
+        cdef bytes name = (value or "").encode('utf-8')
+        if b"\0" in name:
+            raise ValueError("Snow-pack names cannot contain NUL")
+        _check(swmm_subcatch_set_snowpack(_h(self._solver), self._index, name))
+
     # ---- Geometry / properties -------------------------------------
 
     @property
