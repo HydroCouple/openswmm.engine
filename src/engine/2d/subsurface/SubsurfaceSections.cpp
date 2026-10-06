@@ -475,6 +475,44 @@ public:
         }
         return (t_hi - t_lo) * std::hypot(dx, dy);
     }
+    /// The area of the polygon (px, py) inside cell `c`. Sutherland–Hodgman
+    /// against the cell's edge half-planes — exact for the convex CCW clip
+    /// (the subject may be concave; any degenerate slivers it leaves have
+    /// zero area).
+    double areaInside(int c, const std::vector<double>& px,
+                      const std::vector<double>& py) const {
+        std::vector<double> sx(px), sy(py), ox, oy;
+        const int nv = m_.cell_nv[static_cast<std::size_t>(c)];
+        for (int i = 0, j = nv - 1; i < nv && !sx.empty(); j = i++) {
+            const auto vi = static_cast<std::size_t>(m_.cell_vertex(c, j));
+            const auto vj = static_cast<std::size_t>(m_.cell_vertex(c, i));
+            const double ax = m_.vx[vi], ay = m_.vy[vi];
+            const double ex = m_.vx[vj] - ax, ey = m_.vy[vj] - ay;
+            auto side = [&](double x, double y) { return ex * (y - ay) - ey * (x - ax); };
+            ox.clear(); oy.clear();
+            const std::size_t n = sx.size();
+            for (std::size_t k = 0; k < n; ++k) {
+                const std::size_t k1 = (k + 1) % n;
+                const double s0 = side(sx[k], sy[k]), s1 = side(sx[k1], sy[k1]);
+                if (s0 >= 0.0) { ox.push_back(sx[k]); oy.push_back(sy[k]); }
+                if ((s0 >= 0.0) != (s1 >= 0.0)) {
+                    const double t = s0 / (s0 - s1);
+                    ox.push_back(sx[k] + t * (sx[k1] - sx[k]));
+                    oy.push_back(sy[k] + t * (sy[k1] - sy[k]));
+                }
+            }
+            sx.swap(ox); sy.swap(oy);
+        }
+        return polygonArea(sx, sy);
+    }
+    static double polygonArea(const std::vector<double>& x,
+                              const std::vector<double>& y) {
+        if (x.size() < 3) return 0.0;
+        double a = 0.0;
+        for (std::size_t i = 0, j = x.size() - 1; i < x.size(); j = i++)
+            a += x[j] * y[i] - x[i] * y[j];
+        return 0.5 * std::fabs(a);
+    }
 private:
     int bin(double v, double v0, double d) const {
         return std::clamp(static_cast<int>((v - v0) / d), 0, nb_ - 1);
@@ -705,6 +743,57 @@ std::vector<GwLinkShare> resolveLinkSeepage(SimulationContext& ctx,
         for (const auto& e : len_in) {
             GwLinkShare sh;
             sh.link = j; sh.cell = e.first; sh.weight = e.second / denom;
+            out.push_back(sh);
+        }
+    }
+    return out;
+}
+
+// plans/INFILTRATION_TO_2D_AQUIFER_AND_REMAP_PLAN_2026-10-03.md Step 1: which
+// cells each subcatchment's polygon covers, and by how much of its area. The
+// polygon ([Polygons], project map units) is clipped against the convex cells
+// the locator offers for its bounding box; the per-cell area over the polygon
+// area is the share, capped so a polygon never delivers more than it has
+// (cells tile the mesh, so the shares only exceed 1 by round-off).
+std::vector<GwSubcatchShare> resolveSubcatchInfiltration(const SimulationContext& ctx,
+                                                         const MeshData& mesh,
+                                                         double node_xy_to_mesh,
+                                                         int& n_subcatch) {
+    std::vector<GwSubcatchShare> out;
+    n_subcatch = 0;
+    if (mesh.n_cells() == 0 || mesh.vx.empty()) return out;
+    const CellLocator locator(mesh);
+    const auto& PX = ctx.spatial.subcatch_polygon_x;
+    const auto& PY = ctx.spatial.subcatch_polygon_y;
+    for (int s = 0; s < ctx.n_subcatches(); ++s) {
+        const auto us = static_cast<std::size_t>(s);
+        if (us >= PX.size() || us >= PY.size()) break;
+        const std::size_t nv = std::min(PX[us].size(), PY[us].size());
+        if (nv < 3) continue;
+        std::vector<double> px(nv), py(nv);
+        double x0 = 1.0e300, y0 = 1.0e300, x1 = -1.0e300, y1 = -1.0e300;
+        for (std::size_t k = 0; k < nv; ++k) {
+            px[k] = PX[us][k] * node_xy_to_mesh;
+            py[k] = PY[us][k] * node_xy_to_mesh;
+            x0 = std::min(x0, px[k]); x1 = std::max(x1, px[k]);
+            y0 = std::min(y0, py[k]); y1 = std::max(y1, py[k]);
+        }
+        const double A = CellLocator::polygonArea(px, py);
+        if (A <= 0.0) continue;
+        std::vector<std::pair<int, double>> area_in;
+        double sum = 0.0;
+        for (const int c : locator.candidates(x0, y0, x1, y1)) {
+            const double a = locator.areaInside(c, px, py);
+            if (a <= 0.0) continue;
+            area_in.emplace_back(c, a);
+            sum += a;
+        }
+        if (area_in.empty()) continue;
+        ++n_subcatch;
+        const double denom = std::max(A, sum);
+        for (const auto& e : area_in) {
+            GwSubcatchShare sh;
+            sh.subcatch = s; sh.cell = e.first; sh.weight = e.second / denom;
             out.push_back(sh);
         }
     }

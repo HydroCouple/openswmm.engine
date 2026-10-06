@@ -111,6 +111,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -390,6 +391,23 @@ struct SimulationContext {
      * @see Legacy: Title[MAXTITLE] in globals.h (limited to 3 lines)
      */
     std::vector<std::string> title_notes;
+
+    /**
+     * @brief Sections the solver never reads, kept verbatim so a save does not
+     *        delete them: `[LABELS]`, `[BACKDROP]`, `[PROFILE]`.
+     *
+     * @details Keyed by section tag, holding the data lines exactly as they
+     *          were read (comments and blank lines already stripped by the
+     *          reader). Legacy SWMM has no `case` for any of them in
+     *          `parseLine`, so their content is whatever the authoring GUI
+     *          chose to put there and no engine can validate it — which is
+     *          precisely why replaying it byte-for-byte is both the safest and
+     *          the most faithful thing to do.
+     *
+     *          These were registered as no-op handlers, so a model's map
+     *          labels and backdrop image vanished on the first Open → Save.
+     */
+    std::map<std::string, std::vector<std::string>> passthrough_sections;
 
     // =========================================================================
     // Options & configuration

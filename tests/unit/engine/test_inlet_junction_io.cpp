@@ -589,6 +589,99 @@ TEST(InletJunctionIO, Swmm5ProfileDowngradesInletJunction) {
     destroy(e2);
 }
 
+// The subcatchment / rain-gage scale factors (and the '*' snowpack placeholder
+// that holds their position) are grammar extensions of the in-tree legacy
+// 5.3.0 engine. The SWMM5 profile keeps them; the SWMM5_STOCK profile — for
+// an engine such as stock EPA 5.2.4 that reads '*' as a snowpack name and
+// fails with ERROR 209 — drops them and reports each dropped value. The CRS
+// option key is v6-only and is omitted by both.
+TEST(InletJunctionIO, Swmm5StockProfileDropsScaleFactors) {
+    const std::string deck =
+        "[OPTIONS]\n"
+        "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
+        "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 01:00:00\n"
+        "REPORT_STEP 00:05:00\nROUTING_STEP 0:00:30\n"
+        "CRS EPSG:26986\n"
+        "[RAINGAGES]\n"
+        "RG1  INTENSITY 0:05 1.0 TIMESERIES TS1 2.5\n"
+        "[SUBCATCHMENTS]\n"
+        ";;Name RainGage Outlet Area %Imperv Width %Slope CurbLen Snowpack RainScale SnowScale\n"
+        "S1   RG1 J1 10 50 500 0.5 0 * 10\n"
+        "S2   RG1 J1 10 50 500 0.5 0\n"
+        "[SUBAREAS]\nS1 0.01 0.1 0.05 0.05 25 OUTLET\nS2 0.01 0.1 0.05 0.05 25 OUTLET\n"
+        "[INFILTRATION]\nS1 3.0 0.5 4 7 0\nS2 3.0 0.5 4 7 0\n"
+        "[JUNCTIONS]\nJ1 100 4 0 0 0\n"
+        "[OUTFALLS]\nO1 95 FREE NO\n"
+        "[CONDUITS]\nC1 J1 O1 400 0.013 0 0 0 0\n"
+        "[XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0 1\n"
+        "[TIMESERIES]\nTS1 0:00 1.0\nTS1 0:30 0.0\n";
+
+    auto rows = [](const std::string& txt, const std::string& name) {
+        std::vector<std::vector<std::string>> r;
+        bool on = false;
+        std::istringstream ss(txt);
+        std::string ln;
+        while (std::getline(ss, ln)) {
+            if (!ln.empty() && ln[0] == '[') { on = (ln == "[" + name + "]"); continue; }
+            if (!on || ln.empty() || ln[0] == ';') continue;
+            std::istringstream ls(ln);
+            std::vector<std::string> tok;
+            std::string t;
+            while (ls >> t) tok.push_back(t);
+            if (!tok.empty()) r.push_back(tok);
+        }
+        return r;
+    };
+
+    // --- SWMM5 (legacy 5.3.0 dialect): extensions retained ---
+    {
+        SWMM_Engine e = openModel("sf_swmm5", deck, true);
+        const std::string out = outPath("sf_swmm5.swmm5.inp");
+        ASSERT_EQ(swmm_model_write_compat(e, out.c_str(), SWMM_INP_PROFILE_SWMM5), SWMM_OK);
+        destroy(e);
+        const std::string txt = readFile(out);
+        EXPECT_EQ(txt.find("\nCRS "), std::string::npos) << txt;
+        bool s1 = false;
+        for (const auto& tok : rows(txt, "SUBCATCHMENTS"))
+            if (tok[0] == "S1") { s1 = true; ASSERT_GE(tok.size(), 10u) << txt; EXPECT_EQ(tok[8], "*"); EXPECT_EQ(tok[9], "10"); }
+        EXPECT_TRUE(s1);
+        const auto g = rows(txt, "RAINGAGES");
+        ASSERT_EQ(g.size(), 1u);
+        EXPECT_EQ(g[0].back(), "2.5");
+    }
+
+    // --- SWMM5_STOCK: extensions dropped, each reported ---
+    {
+        SWMM_Engine e = openModel("sf_stock", deck, true);
+        const std::string out = outPath("sf_stock.swmm5.inp");
+        const int warn_before = swmm_get_warning_count(e);
+        ASSERT_EQ(swmm_model_write_compat(e, out.c_str(), SWMM_INP_PROFILE_SWMM5_STOCK), SWMM_OK);
+        bool noted_sub = false, noted_gage = false;
+        for (int i = warn_before; i < swmm_get_warning_count(e); ++i) {
+            const std::string w = swmm_get_warning_at(e, i);
+            if (w.find("S1") != std::string::npos && w.find("scale factor") != std::string::npos) noted_sub = true;
+            if (w.find("RG1") != std::string::npos && w.find("scale factor") != std::string::npos) noted_gage = true;
+        }
+        EXPECT_TRUE(noted_sub)  << "dropped subcatchment scale factor must be reported";
+        EXPECT_TRUE(noted_gage) << "dropped gage scale factor must be reported";
+        destroy(e);
+
+        const std::string txt = readFile(out);
+        EXPECT_EQ(txt.find("\nCRS "), std::string::npos) << txt;
+        for (const auto& tok : rows(txt, "SUBCATCHMENTS")) {
+            EXPECT_EQ(tok.size(), 8u) << "stock grammar: 8 tokens, no '*'/scale — " << txt;
+            for (const auto& t : tok) EXPECT_NE(t, "*") << txt;
+        }
+        const auto g = rows(txt, "RAINGAGES");
+        ASSERT_EQ(g.size(), 1u);
+        EXPECT_EQ(g[0].size(), 6u) << "stock grammar: Name Format Intvl SCF TIMESERIES name — " << txt;
+
+        // The refactored engine still opens the stock file (factors default to 1).
+        SWMM_Engine e2 = openModel("sf_stock_reopen", txt, true);
+        destroy(e2);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Edit operations: split into an inlet junction, then fuse back
 // ---------------------------------------------------------------------------

@@ -110,6 +110,13 @@ endfunction()
 
 # ---- Unit tests (legacy + new engine) ----
 if(OPENSWMM_BUILD_UNIT_TESTS)
+    # D2: the component-discovery test doubles. Added BEFORE unit/, because
+    # they export SMOKE_ENV_DIR / SMOKE_EXPLICIT_DIR into this scope and
+    # unit/engine's loader gate reads them.
+    if(OPENSWMM_WITH_HYDROCOUPLE)
+        add_subdirectory(components/smoke)
+    endif()
+
     add_subdirectory(unit)
 
     # G1 — the two-zone groundwater numerical gates. Deliberately NOT under

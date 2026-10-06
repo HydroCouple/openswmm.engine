@@ -53,12 +53,26 @@ Registration and removal are ``BUILDING``/``OPENED`` edits, and removal
 
 # cython: language_level=3
 
+import os
 from collections.abc import Iterator
 from typing import NamedTuple
 
 from ._common cimport *
 from ._enums import ErrorCode
 from ._exceptions import BadHandleError, ElementNotFoundError
+
+cdef extern from "openswmm/engine/openswmm_process_components.h":
+    ctypedef struct SWMM_ComponentLibraryInfo:
+        char id[256]
+        char caption[256]
+        char version[64]
+        char path[1024]
+        char kind[16]
+        char stamp[256]
+        char load_error[1024]
+    int swmm_component_search_path_add(const char* dir)
+    int swmm_component_library_count()
+    int swmm_component_library_get(int idx, SWMM_ComponentLibraryInfo* info)
 
 
 cdef inline SWMM_Engine _h(solver):
@@ -92,6 +106,27 @@ class KnownProcessComponent(NamedTuple):
     implemented: bool
 
 
+class ComponentLibrary(NamedTuple):
+    """A HydroCouple component library the engine discovered.
+
+    :ivar id: The component id; ``""`` when the library was refused.
+    :ivar caption: Display name.
+    :ivar version: Component version.
+    :ivar path: The library file.
+    :ivar kind: ``"model"`` or ``"other"``; ``""`` when refused.
+    :ivar stamp: The library's ABI stamp, or ``"unstamped(...)"`` for a legacy
+        library.
+    :ivar load_error: ``""`` when loaded; otherwise why it was refused.
+    """
+    id: str
+    caption: str
+    version: str
+    path: str
+    kind: str
+    stamp: str
+    load_error: str
+
+
 class ProcessComponents:
     """``solver.process_components`` — the ``[PROCESS_COMPONENTS]`` table.
 
@@ -112,6 +147,33 @@ class ProcessComponents:
             rows.append(KnownProcessComponent(identifier.decode('utf-8'),
                                               description.decode('utf-8'), bool(implemented)))
         return tuple(rows)
+
+    @staticmethod
+    def libraries():
+        """HydroCouple component libraries found on the search path, refused
+        ones included (with the reason in ``load_error``). Empty when the
+        engine was built without HydroCouple support."""
+        cdef SWMM_ComponentLibraryInfo info
+        rows = []
+        for index in range(swmm_component_library_count()):
+            _check(swmm_component_library_get(index, &info))
+            rows.append(ComponentLibrary(
+                info.id.decode('utf-8'), info.caption.decode('utf-8'),
+                info.version.decode('utf-8'), info.path.decode('utf-8'),
+                info.kind.decode('utf-8'), info.stamp.decode('utf-8'),
+                info.load_error.decode('utf-8')))
+        return tuple(rows)
+
+    @staticmethod
+    def add_search_path(directory):
+        """Scan *directory* for component libraries now, and keep it for later
+        discovery.
+
+        :raises BadParamError: If *directory* is not a directory.
+        :raises PluginError: If the engine was built without HydroCouple support.
+        """
+        cdef bytes b = os.fspath(directory).encode('utf-8')
+        _check(swmm_component_search_path_add(b))
 
     def __init__(self, solver):
         self._solver = solver

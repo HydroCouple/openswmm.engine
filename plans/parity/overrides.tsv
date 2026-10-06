@@ -377,3 +377,6 @@ swmm_gpkg_read_observed_values	parity	via geopackage.compare_sim_vs_observed.
 # Listed here only when they need a richer note than the default classification.
 # Leaving them out keeps the auto status `py-gap`.
 # ----------------------------------------------------------------------------
+
+swmm_coupling_set_source	parity	Scalar C convenience; Python uses the identical swmm_coupling_set_sources contract.
+swmm_coupling_advance_to	parity	C alias of swmm_engine_advance_to, called by Solver.advance_to.

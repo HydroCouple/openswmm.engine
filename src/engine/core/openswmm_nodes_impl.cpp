@@ -754,13 +754,25 @@ SWMM_ENGINE_API int swmm_node_get_storage_geometry(SWMM_Engine engine, int idx,
 }
 
 // TODO(units): storage/exfil rate-unit conversion unverified
+// The storage seepage rate is the constant-rate form of storage exfiltration
+// (a [STORAGE] row ending in a bare Ksat): Ksat with zero suction and IMD. A
+// separate seep_rate was never read by routing, so a rate set here had no
+// effect; it now drives the exfiltration the solver computes.
 SWMM_ENGINE_API int swmm_node_set_storage_seep_rate(SWMM_Engine engine, int idx, double rate) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (!(rate >= 0.0)) return SWMM_ERR_BADPARAM;
     const int r = ctx.node_subtypes.storage_row(idx);
-    if (r >= 0) ctx.node_subtypes.storages.seep_rate[static_cast<std::size_t>(r)] = rate;
+    if (r >= 0) {
+        auto& S = ctx.node_subtypes.storages;
+        const auto ur = static_cast<std::size_t>(r);
+        S.exfil_suction[ur] = 0.0;
+        S.exfil_ksat[ur]    = rate;
+        S.exfil_imd[ur]     = 0.0;
+        S.seep_rate[ur]     = rate;
+    }
     return SWMM_OK;
 }
 
@@ -769,7 +781,13 @@ SWMM_ENGINE_API int swmm_node_get_storage_seep_rate(SWMM_Engine engine, int idx,
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     const int r = ctx.node_subtypes.storage_row(idx);
-    if (rate) *rate = (r >= 0) ? ctx.node_subtypes.storages.seep_rate[static_cast<std::size_t>(r)] : 0.0;
+    double value = 0.0;
+    if (r >= 0) {
+        const auto& S = ctx.node_subtypes.storages;
+        const auto ur = static_cast<std::size_t>(r);
+        if (S.exfil_suction[ur] == 0.0 && S.exfil_imd[ur] == 0.0) value = S.exfil_ksat[ur];
+    }
+    if (rate) *rate = value;
     return SWMM_OK;
 }
 

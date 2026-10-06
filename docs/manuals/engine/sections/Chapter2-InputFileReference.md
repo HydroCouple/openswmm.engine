@@ -1993,7 +1993,15 @@ Format:
     Name  Link1  Link2  ...
 
 Remarks:
-The engine parses and discards this section; it exists so that a profile defined in a client survives a round trip through the engine's writer. It has no effect on the simulation.
+The engine preserves the authored lines for the writer without interpreting or validating the profile path. This section has no effect on the simulation. [PROFILES] is an accepted alias.
+
+### Section: [PROFILES] {#engine_manual_sect_PROFILES}
+
+Purpose:
+Alternate spelling of @ref engine_manual_sect_PROFILE, with the same `Name Link1 Link2 ...` format.
+
+Remarks:
+The writer preserves the section spelling: rows read from [PROFILES] are written under [PROFILES], and rows read from [PROFILE] remain under [PROFILE]. Neither spelling changes the simulation.
 
  
 ### Section: [USER_FLAGS] {#engine_manual_sect_USER_FLAGS}
@@ -3009,7 +3017,7 @@ This section has no counterpart in SWMM 5.
 ### Section: [GW_TRANSPORT_OPTIONS] {#engine_manual_sect_GW_TRANSPORT_OPTIONS}
 
 Purpose:
-\status{Planned} Sets the process switches and thermal boundary conditions of solute and heat transport in the integrated groundwater kernel. The rows are parsed, validated, kept and written back unchanged, but no kernel consumes them in this release.
+\status{Experimental} Sets active bulk-groundwater transport switches and stores additional thermal configuration. The class switches and DISPERSION control the running kernel; the presence of a parsed thermal key does not establish an implemented conduction or thermal-boundary solver.
 
 Format:
 ```
@@ -3046,9 +3054,9 @@ Parameters:
 | C_DIFF | (0, 1] | 0.4 | Explicit diffusion Courant number bounding the transport step. |
 
 Remarks:
-FIXED and FIXED_TEMP require a number and GEOTHERMAL_FLUX a number; TIMESERIES requires a series name. DEPTH is read only as the fourth and fifth tokens of a DEEP_THERMAL_BC line. Naming any [GW_*] section marks subsurface transport as authored, which is what the run-time warning and the writer key on.
+FIXED and FIXED_TEMP require a number and GEOTHERMAL_FLUX a number; TIMESERIES requires a series name. DEPTH is read only as the fourth and fifth tokens of a DEEP_THERMAL_BC line. Naming a [GW_*] section preserves its authored configuration for the writer; active support depends on the specific option and aquifer kernel.
 
-At run time the engine emits one warning: "[GW_*] subsurface transport is AUTHORED but INERT this run: the integrated 2D groundwater component (org.hydrocouple.openswmm.integrated2d) provides the two-zone kernel these sections configure and is not available in this release. The rows are validated, kept and written back unchanged."
+The bulk aquifer transport kernel consumes enabled class switches and dispersion settings. CONDUCTION, thermal boundary conditions and the fuller thermal model remain separate implementation gaps; they must not be inferred from parser acceptance. Active named forcing is documented under [GW_SOURCES].
 
 The intended formulation is described in hydrology Chapter 9 (mesh groundwater).
 
@@ -3059,7 +3067,7 @@ This section has no counterpart in SWMM 5.
 ### Section: [GW_TRANSPORT_PARAMS] {#engine_manual_sect_GW_TRANSPORT_PARAMS}
 
 Purpose:
-\status{Planned} Gives the solute and thermal properties of the aquifer matrix beneath the whole mesh, beneath tagged cells, or beneath one cell. The rows are parsed, validated, kept and written back unchanged, but no kernel consumes them in this release.
+\status{Experimental} Gives scoped solute and thermal properties. The active bulk kernel resolves grain density, dispersivities and molecular diffusivity; the additional thermal and vapour fields are retained without implying an operational thermal solver.
 
 Format:
 ```
@@ -3084,7 +3092,7 @@ GeoFlux    geothermal flux (W per sq m), or the deep temperature (degrees C) whe
 Remarks:
 All nine columns are positional and optional; an omitted column or a `-` keeps the default. More than nine columns is a parse error, and every column but GeoFlux must be >= 0. Values are SI. Scopes resolve `*`, then TAG, then CELL by order of the rows; a tag that matches no cell or a cell beyond the mesh is reported when the model initialises.
 
-At run time the engine emits one warning: "[GW_*] subsurface transport is AUTHORED but INERT this run: the integrated 2D groundwater component (org.hydrocouple.openswmm.integrated2d) provides the two-zone kernel these sections configure and is not available in this release. The rows are validated, kept and written back unchanged."
+The running bulk kernel uses grain density for sorption retardation and longitudinal dispersivity/molecular diffusivity for dispersion. Retaining the remaining columns does not implement the fuller thermal or vapour formulation.
 
 This section has no counterpart in SWMM 5.
 
@@ -3093,7 +3101,7 @@ This section has no counterpart in SWMM 5.
 ### Section: [GW_SORPTION] {#engine_manual_sect_GW_SORPTION}
 
 Purpose:
-\status{Planned} Gives the sorption partition coefficient and, optionally, the first-order decay of a species in the aquifer, by scope. The rows are parsed, validated, kept and written back unchanged, but no kernel consumes them in this release.
+\status{Implemented} Gives the linear sorption partition coefficient and optional first-order decay of an enabled bulk aquifer species, by scope.
 
 Format:
 ```
@@ -3112,7 +3120,7 @@ Decay    first-order decay rate (1/day); >= 0. Absent or `-`: a pollutant uses i
 Remarks:
 Scopes resolve `*`, then TAG, then CELL. An unknown species, a tag that matches no cell or a cell beyond the mesh is reported when the model initialises.
 
-At run time the engine emits one warning: "[GW_*] subsurface transport is AUTHORED but INERT this run: the integrated 2D groundwater component (org.hydrocouple.openswmm.integrated2d) provides the two-zone kernel these sections configure and is not available in this release. The rows are validated, kept and written back unchanged."
+The active bulk kernel applies linear sorption to the dissolved mobile fraction and first-order decay to solute stores. Reserved age and temperature rows are not sorbed or decayed by these coefficients.
 
 This section has no counterpart in SWMM 5.
 
@@ -3121,7 +3129,7 @@ This section has no counterpart in SWMM 5.
 ### Section: [GW_INITIAL_QUALITY] {#engine_manual_sect_GW_INITIAL_QUALITY}
 
 Purpose:
-\status{Planned} Seeds the initial concentration, water age or temperature of a zone of the aquifer column. The rows are parsed, validated, kept and written back unchanged, but no kernel consumes them in this release.
+\status{Implemented} Seeds SAT and UNSAT concentration, water age or temperature in the active aquifer. LAYER is retained for authoring but is not operational.
 
 Format:
 ```
@@ -3138,13 +3146,13 @@ name    a cell tag from [2D_TRIANGLES] or [2D_QUADS].
 n    1-based unified cell index.
 Zone    SAT (the saturated zone), UNSAT (the unsaturated zone) or LAYER j (layer j of a SIGMA column, j >= 1).
 Species    name of a pollutant, of a species of the reactions component, or `__WATER_AGE__` or `__TEMPERATURE__`.
-Value    initial value: concentration in the species' units, water age in hours, temperature in degrees C. Concentrations must be >= 0; age and temperature may be negative.
+Value    initial value: concentration in the species' units, water age in seconds, temperature in degrees C. Concentrations must be >= 0; age and temperature may be negative.
 Fname    name of a CSV file holding the same tokens per line (scope, zone, species, value).
 
 Remarks:
 The FILE form names a sidecar resolved relative to the input file's directory and read when the model initialises. Its fields may be separated by commas, semicolons, tabs or spaces, and a first line that does not parse is taken as a header. A missing file is reported at initialise, as is an unknown species, a tag that matches no cell, a cell beyond the mesh, or a negative concentration.
 
-At run time the engine emits one warning: "[GW_*] subsurface transport is AUTHORED but INERT this run: the integrated 2D groundwater component (org.hydrocouple.openswmm.integrated2d) provides the two-zone kernel these sections configure and is not available in this release. The rows are validated, kept and written back unchanged."
+Active bulk groundwater rejects LAYER rows with an initialization error; they never alias UNSAT. Initial values resolve in GLOBAL, TAG, then CELL precedence, independent of row order.
 
 This section has no counterpart in SWMM 5.
 
@@ -3153,7 +3161,7 @@ This section has no counterpart in SWMM 5.
 ### Section: [GW_BOUNDARY_QUALITY] {#engine_manual_sect_GW_BOUNDARY_QUALITY}
 
 Purpose:
-\status{Planned} Sets the quality of water crossing a lateral boundary edge of the aquifer. The rows are parsed, validated, kept and written back unchanged, but no kernel consumes them in this release.
+\status{Planned} Declares quality on a groundwater boundary edge. Authoring and round-trip persistence are supported, but a hydraulic edge binding is not yet available.
 
 Format:
 ```
@@ -3177,7 +3185,7 @@ Tseries    name of a [TIMESERIES].
 Remarks:
 Exactly five tokens. For CONC, MASSFLUX and HEATFLUX a non-numeric fifth token is taken as a series name. The edge is checked against the cell's own vertex count at initialise, as are the cell index, the species name and any series name.
 
-At run time the engine emits one warning: "[GW_*] subsurface transport is AUTHORED but INERT this run: the integrated 2D groundwater component (org.hydrocouple.openswmm.integrated2d) provides the two-zone kernel these sections configure and is not available in this release. The rows are validated, kept and written back unchanged."
+Active groundwater refuses these records at initialization with an actionable unsupported-boundary diagnostic. Use an operational named source where that represents the intended physical forcing; an edge flux is not automatically converted to a source.
 
 This section has no counterpart in SWMM 5.
 
@@ -3186,34 +3194,38 @@ This section has no counterpart in SWMM 5.
 ### Section: [GW_SOURCES] {#engine_manual_sect_GW_SOURCES}
 
 Purpose:
-\status{Planned} Declares wells and point sources or sinks in the aquifer, with their flow and the quality of injected water. The rows are parsed, validated, kept and written back unchanged, but no kernel consumes them in this release.
+\status{Implemented} Applies named wells and sources or sinks to the active aquifer, with independent injected species terms and cumulative water and species budgets.
 
 Format:
 ```
-Name  CELL n    FLOW  Flow  (Species  CONC  Value) (Species  MASS  Value) ...
-Name  TAG tag   FLOW  Flow  (Species  CONC  Value) ...
-Name  XY x y    FLOW  Flow  (Species  CONC  Value) ...
+Name  *        FLOW  Flow  [SCALE Factor]  [Species CONC|MASS Value] ...
+Name  CELL n   FLOW  Flow  [SCALE Factor]  [Species CONC|MASS Value] ...
+Name  TAG tag  FLOW  Flow  [SCALE Factor]  [Species CONC|MASS Value] ...
+Name  XY x y   FLOW  Flow  [SCALE Factor]  [Species CONC|MASS Value] ...
 ```
 
 Parameters:
-Name    name of the source; unique within the section.
-n    1-based unified cell index of the cell holding the source.
-tag    a cell tag from [2D_TRIANGLES] or [2D_QUADS]; the source applies to every cell carrying it.
-x, y    map coordinates of the source; it is placed in the cell whose centroid is nearest.
-Flow    flow rate (cu m per s), positive to inject and negative to extract, or the name of a [TIMESERIES] of the flow.
-Species    name of a pollutant, of a species of the reactions component, or `__WATER_AGE__` or `__TEMPERATURE__`.
-CONC    the term's value is a concentration in the injected water.
-MASS    the term's value is a mass rate.
-Value    a number, or the name of a [TIMESERIES] in its place.
+Name    unique source name.
+n    1-based unified cell index (the C API uses zero-based indices).
+tag    a tag from [2D_TRIANGLES] or [2D_QUADS].
+x, y    source coordinates; the existing XY locator chooses the nearest cell centroid.
+Flow    total cubic metres per second, positive for injection and negative for extraction, or a [TIMESERIES] name. GLOBAL (`*`) and TAG totals are area-weighted across matching active aquifer cells; CELL applies to one cell.
+Factor    finite nonnegative multiplier, default one; scales FLOW and MASS, never CONC itself.
+Species    enabled groundwater pollutant or reaction species, `__WATER_AGE__`, or `__TEMPERATURE__`.
+CONC    native injected concentration (age in seconds and temperature in degrees C). Only temperature concentration can be negative. Extraction carries existing dissolved aquifer quality.
+MASS    independent pollutant loading in mg/s for MG/L, ug/s for UG/L, or count/s for #/L. MASS for unresolved reaction-species units, age, or temperature is refused. MASS is nonnegative and can operate with zero FLOW.
+Value    finite constant or [TIMESERIES] name.
 
 Remarks:
-A row needs at least Name, a location, FLOW and its value; species terms follow in groups of three and may repeat. A duplicate Name is an error at initialise, not a last-wins overwrite; so are a cell beyond the mesh, a tag that matches no cell, an unknown species and an unknown series. The XY form keeps its coordinates for the writer and resolves to a cell at initialise.
+Series interpolate linearly and hold their endpoints outside the recorded range. Their absolute times are anchored to the complete model start datetime, including a non-midnight start. Flow times concentration is integrated over common linear intervals. Flow sign reversals are applied chronologically; extraction is limited by drainable water available at that interval, and its ledger records actual rather than requested delivery. Existing cross-cadence water and species transfers are apportioned by interval duration. This remains a numerically split groundwater scheme, not a claim of timestep-independent concentrations.
 
-At run time the engine emits one warning: "[GW_*] subsurface transport is AUTHORED but INERT this run: the integrated 2D groundwater component (org.hydrocouple.openswmm.integrated2d) provides the two-zone kernel these sections configure and is not available in this release. The rows are validated, kept and written back unchanged."
+Duplicate source names, duplicate species terms within a source, empty matched scopes, disabled or unknown species, unreadable or non-monotonic series, and invalid values produce diagnostics rather than successful inert forcing. Groundwater coupled to surface reconstruction order two is refused because that RK2 route does not yet advance the aquifer; select reconstruction order one.
+
+Source injection/extraction and species inflow/outflow append separate public API, report, and HDF5 ledger terms without renumbering historical terms. HDF5 groundwater water/species ledger axes now have 14/15 terms, identified by their `terms` metadata. Native hotstarts carrying source species ledgers use version 7; new readers continue reading versions 1–6, including the original eleven-term version 6 species ledger. Version 7 is not readable by older engines.
 
 This section has no counterpart in SWMM 5.
 
-<!-- source: src/engine/2d/gw/GwTransportSections.cpp:91-96,390-444 (registration 473-476; resolution 594-627; warning 632-639); src/engine/2d/gw/GwTransportData.hpp:151-170 -->
+<!-- source: src/engine/2d/gw/GwTransportSections.cpp; src/engine/2d/gw/GwSourceResolver.cpp; src/engine/2d/gw/GwSourceForcing.hpp; src/engine/2d/subsurface/SubsurfaceSolver.cpp; src/engine/core/HotStartManager.cpp -->
 
 ## 2.5 Process Component Configuration Sections
 

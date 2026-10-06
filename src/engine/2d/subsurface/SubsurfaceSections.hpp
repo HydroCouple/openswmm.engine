@@ -152,6 +152,16 @@ std::vector<GwLinkShare> resolveLinkSeepage(SimulationContext& ctx,
                                             double node_xy_to_mesh,
                                             int& n_conduits);
 
+/// The area-weighted (subcatchment, cell) shares for every subcatchment
+/// whose [Polygons] overlap the mesh. Shares are resolved for all of them;
+/// the router skips a subcatchment with a lumped [GROUNDWATER] aquifer at
+/// delivery. @p n_subcatch receives how many subcatchments got at least one
+/// share. Same coordinate factor as resolveSubsurface.
+std::vector<GwSubcatchShare> resolveSubcatchInfiltration(const SimulationContext& ctx,
+                                                         const MeshData& mesh,
+                                                         double node_xy_to_mesh,
+                                                         int& n_subcatch);
+
 /// Write the three sections back in the project's own units — that is, the
 /// authored values verbatim — omitting anything at its default so a
 /// round-trip with no edits adds nothing.

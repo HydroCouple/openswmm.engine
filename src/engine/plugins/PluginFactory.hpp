@@ -176,6 +176,69 @@ public:
     std::vector<ComponentEntry> discovered_components() const;
 
     // -----------------------------------------------------------------------
+    // D2 (program plan §B.2.2) — HydroCouple component libraries
+    // -----------------------------------------------------------------------
+    //
+    // A library that exports no `openswmm_plugin_info` is offered to this
+    // catalogue before it is unloaded: if it carries the HydroCouple component
+    // ABI (`hydrocouple_component_abi_v1`, HydroCouple's
+    // `hydrocouplecomponentabi.h`) its stamp is compared against the engine's
+    // own, and only on agreement is `hydrocouple_component_info_v1` called.
+    //
+    // PROCESS-GLOBAL, unlike the rest of this class. The plan's C API for it
+    // takes no engine handle (§B.2.5 `swmm_component_library_count(void)`),
+    // the same as the built-in `swmm_process_component_known_*` catalogue: a
+    // component library is a fact about the installation, not about one
+    // model. Every engine's `load_library` feeds the same catalogue, which
+    // de-duplicates by path.
+    //
+    // Libraries stay loaded for the life of the process. The component-info
+    // object is a function-local static INSIDE the library, and component
+    // instances are host-owned objects whose code lives there too, so
+    // unloading while anything could still refer to either is undefined
+    // behaviour. Never unloading is the simple correct answer for a discovery
+    // catalogue; only `component_catalog_reset_for_testing` closes handles.
+    //
+    // Without OPENSWMM_WITH_HYDROCOUPLE this compiles and answers "nothing
+    // discovered"; the header exposes no HydroCouple type either way.
+
+    /// One library the catalogue looked at and recognised as a component —
+    /// loaded, or refused. Libraries that are not components at all are not
+    /// recorded (the plan's "skipped silently").
+    struct ComponentLibraryRecord {
+        std::string path;        ///< the file, as found
+        std::string id;          ///< `IComponentInfo::id()`; empty if refused
+        std::string caption;
+        std::string version;
+        std::string kind;        ///< "model" | "other"; empty if refused
+        std::string stamp;       ///< the library's own stamp, or "unstamped(…)"
+        std::string load_error;  ///< empty on success; names both stamps on refusal
+        void*       info = nullptr;  ///< HydroCouple::IComponentInfo*, opaque here
+    };
+
+    /// True when built with OPENSWMM_WITH_HYDROCOUPLE.
+    static bool hydrocouple_enabled() noexcept;
+
+    /// The engine's own component ABI stamp, or "" when not built with it.
+    static std::string component_abi_stamp();
+
+    /// Scan @p dir now and keep it for later discovery. Returns the number of
+    /// component libraries newly recorded (loaded or refused), or -1 when
+    /// @p dir is not a directory or HydroCouple support is not built.
+    static int component_search_path_add(const std::string& dir);
+
+    /// Every recorded library. The first call also runs the default discovery
+    /// (§B.2.3): the engine library's directory, its `plugins/` and
+    /// `components/` subdirectories, then each entry of the path-list
+    /// environment variable `HYDROCOUPLE_COMPONENT_PATH`.
+    static std::vector<ComponentLibraryRecord> component_libraries();
+
+    /// Tests only: forget every record and search path, close every handle,
+    /// and let the next query run default discovery again (re-reading the
+    /// environment). Must not be called while any component instance exists.
+    static void component_catalog_reset_for_testing();
+
+    // -----------------------------------------------------------------------
     // Loading (from specs or explicit paths)
     // -----------------------------------------------------------------------
 
@@ -301,6 +364,19 @@ private:
     static void  platform_unload(void* handle) noexcept;
     static void* platform_sym(void* handle, const char* sym) noexcept;
     static std::string platform_error() noexcept;
+
+    // D2: the component catalogue's internals. Private statics because they
+    // use platform_* above; the catalogue state itself is file-local in
+    // PluginFactory.cpp. Callers must hold the catalogue mutex.
+    /// Offer an OPEN handle that exported no `openswmm_plugin_info`. Returns
+    /// true if the catalogue recorded it (loaded or refused) and has taken
+    /// charge of the handle; false if it is not a component at all, in which
+    /// case the caller still owns the handle.
+    static bool catalog_adopt_locked(const std::string& path, void* handle);
+    /// Scan one directory into the catalogue. Returns records added.
+    static int  catalog_scan_locked(const std::string& dir);
+    /// Run §B.2.3 default discovery once.
+    static void catalog_defaults_locked();
 };
 
 } /* namespace openswmm */

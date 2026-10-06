@@ -45,6 +45,7 @@ from ._exceptions import (
     BadParamError as BadParamError,
     CRSError as CRSError,
     DependencyError as DependencyError,
+    GeoPackageError as GeoPackageError,
     EngineError as EngineError,
     FileError as FileError,
     HotStartError as HotStartError,
@@ -225,6 +226,7 @@ from ._transport import (Transport as Transport, ThreadInfo as ThreadInfo, Effec
 from ._enums import (TransportDomain as TransportDomain, TransportClass as TransportClass, TransportState as TransportState)
 
 from ._process_components import KnownProcessComponent as KnownProcessComponent
+from ._process_components import ComponentLibrary as ComponentLibrary
 
 from ._enums import (CellScope as CellScope, GroundwaterSoil as GroundwaterSoil, GroundwaterClosure as GroundwaterClosure, GroundwaterVariable as GroundwaterVariable, GroundwaterLedger as GroundwaterLedger, GroundwaterZone as GroundwaterZone, GroundwaterSpeciesLedger as GroundwaterSpeciesLedger)
 from ._groundwater import Groundwater as Groundwater, AquiferRow as AquiferRow, AquiferNode as AquiferNode

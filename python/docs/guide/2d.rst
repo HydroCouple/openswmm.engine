@@ -13,9 +13,9 @@
 
 .. currentmodule:: openswmm.engine
 
-The 2-D surface-routing module overlays a triangular mesh on the 1-D
-drainage network and advances the shallow-water surface state with a
-CVODE solver, exchanging flow with 1-D nodes at coupling points. The
+The 2-D surface-routing module overlays a mesh of triangles and quads on the
+1-D drainage network and advances the shallow-water surface state with an
+explicit solver, exchanging flow with 1-D nodes at coupling points. The
 :class:`~openswmm.engine._2d.Surface2D` view hangs off the Solver as a
 lazy attribute and addresses the live mesh:
 
@@ -48,7 +48,7 @@ Quickstart
 
         # Drive the whole mesh with steady rain that survives every step.
         surf.force_rainfall_uniform(
-            30.0,                                  # mm/hr
+            30.0 * 0.001 / 3600.0,                 # 30 mm/hr converted to m/s
             mode=SurfaceForcingMode.OVERRIDE,
             persist=ForcingPersist.PERSIST,
         )

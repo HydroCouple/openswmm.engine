@@ -2024,6 +2024,15 @@ receive the incoming mass. Water carrying a held outfall concentration
 be counted as incoming mass. `ZERO` explicitly supplies clean boundary water.
 Inter-facility reversals are internal transfers when assessing the whole train.
 
+In the existing flow model, an incoming port in a cell intersected by the
+mobile table supplies the mobile reactor, even if that port is above the
+table. Only wholly exposed receivers capture into retained inventory. The
+accepted water destination also selects the mass destination; this transfer
+is not booked again as retained wetting. Partially submerged donors continue
+draining their retained excess with its donor concentration. Checking head
+increments as well as water and pollutant closure detects discontinuous
+retained/mobile partitioning that an end-of-run budget alone cannot detect.
+
 As the mobile table rises, retained/mobile adjustments debit and credit the
 same water and pollutant inventories. Full media resaturation and recession
 also reconcile modified Green–Ampt history as described in the hydraulic
@@ -2062,3 +2071,41 @@ and persistence. The GUI T9/T10 tutorials supply layer editing, chained
 active-control models and a reversal–resaturation–recession–second-storm test.
 The first-order kinetics and synthetic model dimensions need calibration
 before use as field predictions.
+
+
+### 6.7.1 Pollutant balances with the optional Richards column {#quality_ref_lid_richards}
+
+The preceding retained/shared-mobile equations describe the existing flow
+model. In Richards mode each porous numerical cell owns complete water W_i
+and pollutant mass M_i, including saturated cells. Surface ponding has a
+separate mixed inventory. Concentration is C_i = M_i/W_i while wet; dry
+surface solute is retained and redissolves with subsequent water supply.
+
+For each accepted directional water transfer DeltaV, donor mass is debited
+by the lesser of available mass and donor concentration times volume:
+
+\f[
+ \Delta M=\min(M_{donor},\Delta V\,C_{donor}),\qquad
+ M_{donor}^{new}=M_{donor}-\Delta M.
+\f]
+
+The recipient gains the transferred mass after any authored-layer exit
+removal/expression. Accepted chronological transfers come from the vertical
+solver and hydraulic port ledger; reversed transfers exchange donor and
+recipient roles. Fixed removal applies once when leaving a physical authored
+layer, not at every numerical face. A surface overflow does not receive all
+buried-layer removal rules. Evaporation retains solute.
+
+Cell reaction remains first order:
+\f$M_i^{after}=M_i^{before}\exp[-(k_{bg}+k_{layer})\Delta t]\f$.
+Richards saturated cells use their own layer rate rather than a
+volume-weighted shared mobile rate. The illustrative 2/day rate has an
+8.3-hour half-life; a larger reacted fraction with greater exposure follows
+from the assumed kinetics, not independent treatment validation.
+
+Check the sum of porous and surface inventories against external incoming,
+exported, reacted and remaining mass, including pollutant imported by
+reverse boundary flow. Hydrodynamic dispersion, sorption and new chemical
+kinetics are not supplied by selecting Richards. Water age, heat and MSX
+porous-cell adapters are pending and those options are rejected. Hydraulic
+storage/flux equations are in @ref hydraulics_ref_lid_richards.

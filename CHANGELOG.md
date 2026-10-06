@@ -59,6 +59,18 @@ retroactive.
 - Add native API/enum drift gates to CI and release qualification. Wheel tests
   include modern, legacy, top-level and integration tests. Expand Sphinx guides
   with authoring/runtime units, lifecycle, persistence and callback contracts.
+- Bulk reads and writes of an empty collection (`nodes.ids`, `links.flows`,
+  `subcatchments.runoffs`, `statistics.node_max_depth`, `spatial.node_coords()`
+  ...) return empty arrays. They raised `BadParamError`, because the C bulk
+  calls refuse a zero count; the bindings now skip the call.
+- GeoPackage failures are typed: transaction misuse (commit without begin, a
+  second begin) raises `LifecycleError` and any other failure the new
+  `GeoPackageError`. Both are still `RuntimeError`s.
+- `HotStart.sim_datetime` is the moment the state was saved; it read the
+  elapsed seconds as a date (1927). `HotStart.start_datetime` and
+  `swmm_hotstart_get_start_date` give the saving run's start date.
+- `ProcessComponents.libraries()` and `ProcessComponents.add_search_path()`
+  bind the HydroCouple component discovery API (`ComponentLibrary` rows).
 
 
 ### Documentation
@@ -254,6 +266,12 @@ retroactive.
     gate is 0.2 % (the deck's own ledger error is 0.04 % under either closure).
 
 ### Added
+
+- **`OPENSWMM_2D_HDF5_OUTPUT`** (default ON). OFF builds the 2D module without
+  HDF5: the 2D results writer is left out, `[2D_OPTIONS] OUTPUT_FILE` is
+  ignored with a report warning, and 2D results are read through the
+  `swmm_2d_*` API. The WebAssembly package uses it to ship 2D surface routing.
+  The 2D unit tests read the `.h5` file, so configuring them requires ON.
 
 - **Two-zone groundwater results in the 2D results file (G-O).** A model
   with a resolved `[2D_AQUIFER]` now writes its aquifer to the `.h5` under
@@ -580,6 +598,24 @@ retroactive.
   (b) and (c).
 
 ### Fixed
+
+- **`ModelBuilder` wrote START_DATE 02/06/8616.** The default start date was
+  the Julian day number of 2004-01-01 (2453006) stored where an OADate belongs;
+  it is now OADate 37987, legacy's default of 01/01/2004.
+- **A storage node's `seep_rate` had no effect.** Nothing read it: exfiltration
+  comes from the Green-Ampt parameters, whose constant-rate form is a bare
+  Ksat. `swmm_node_set_storage_seep_rate` now sets that form (Ksat with zero
+  suction and IMD), and the getter returns it (0 under Green-Ampt).
+- **2D solver reads before `swmm_engine_initialize()` returned
+  `SWMM_ERR_BADPARAM`.** On a model with a 2D mesh they now return
+  `SWMM_ERR_LIFECYCLE` (Python `LifecycleError`); `SWMM_ERR_BADPARAM` remains
+  for a model without an active 2D surface.
+- Documentation: node time flooded and link surcharge time are seconds, not
+  hours; 2D depths and heads are metres after initialize (the solver runs in
+  SI), not "m or ft"; the catalog records these units.
+- `test_engine_geopackage_mesh2d` failed to link on Linux: with
+  `--as-needed` the engine, listed before the GeoPackage archive that calls
+  it, was dropped. The archive now comes first.
 
 - **A CUMULATIVE rain gage rained for one step per table entry instead of for
   its recording interval (issue #158).** A `CUMULATIVE` gage records a running

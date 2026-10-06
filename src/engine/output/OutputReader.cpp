@@ -245,6 +245,27 @@ bool OutputReader::get_system_result(int period, int var, float* value) const {
     return readReal4(*value);
 }
 
+bool OutputReader::readResultBlock(int period, int objectType, int count, int variables,
+                                   std::vector<float>& values) const {
+    if (!file_ || period < 0 || period >= n_periods_ || count < 0 || variables <= 0)
+        return false;
+    const auto objects = static_cast<std::size_t>(count);
+    const auto stride = static_cast<std::size_t>(variables);
+    if (objects > values.max_size() / stride) return false;
+    values.resize(objects * stride);
+    if (values.empty()) return true;
+    return seekToVar(period, objectType, 0, 0) &&
+           std::fread(values.data(), sizeof(float), values.size(), file_) == values.size();
+}
+
+bool OutputReader::get_node_block(int period, std::vector<float>& values) const {
+    return readResultBlock(period, 1, n_nodes_, n_node_vars_, values);
+}
+
+bool OutputReader::get_link_block(int period, std::vector<float>& values) const {
+    return readResultBlock(period, 2, n_links_, n_link_vars_, values);
+}
+
 // ============================================================================
 // Time series (one object, one variable, period range)
 // ============================================================================

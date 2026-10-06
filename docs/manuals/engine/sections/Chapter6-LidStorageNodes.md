@@ -134,16 +134,21 @@ Explicit substeps are at most one second. Accepted volumes are bounded by
 `Q_i * substep`, donor water above field capacity and receiving pore space.
 All transfers use a common pre-update state and equal donor/receiver volumes.
 A receiver intersected by the mobile water table instead transfers into
-mobile storage without the retained pore-capacity bound; donors whose bottoms
-are below that table skip free drainage. These explicit cell balances differ
+mobile storage without the retained pore-capacity bound. Only fully submerged
+donors skip free drainage; partially submerged cells continue draining their
+retained excess. These explicit cell balances differ
 from legacy SWMM's lumped LID soil-layer integration, so reuse of its laws
 is not a claim of identical conventional-LID results.
 
 ### Reverse flow, resaturation and recession
 
 Signed hydraulic port transfers remain authoritative. Accepted reverse inflow
-enters at its physical port; media receipts fill retained capacity before
-excess enters mobile storage. The mobile water table saturates the submerged
+enters at its physical port. Wholly exposed cells fill retained capacity before
+excess enters mobile storage. A receiving cell whose bottom lies below the
+mobile table routes the entire receipt to mobile storage, even if the port
+itself lies above the table. This matches vertical receiver ownership and
+prevents trapped retained water from reaching porosity and abruptly collapsing
+the cell's mobile depth–volume capacity. The mobile water table saturates the submerged
 fraction of each cell. Fully submerged cells retain field-capacity moisture
 on recession, with each retained/mobile adjustment booked conservatively.
 

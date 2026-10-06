@@ -53,13 +53,12 @@ is exposed via :attr:`Solver.save_schedule`.
 
 import os
 from collections.abc import MutableSequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, NamedTuple, Optional
 
 from ._common cimport *
 from ._solver cimport Solver
 from ._dates import datetime_to_oadate, oadate_to_datetime
-
 
 cdef extern from "openswmm/engine/openswmm_hotstart.h":
     enum:
@@ -152,9 +151,17 @@ cdef class HotStart:
 
     @property
     def sim_datetime(self) -> datetime:
-        """Moment at which the saved state was captured."""
+        """Moment at which the saved state was captured: the saving run's
+        start date plus the elapsed simulation time."""
+        cdef double elapsed = 0.0
+        _check(swmm_hotstart_get_sim_time(self._handle, &elapsed))
+        return self.start_datetime + timedelta(seconds=elapsed)
+
+    @property
+    def start_datetime(self) -> datetime:
+        """Start date and time of the run that saved the state."""
         cdef double v = 0.0
-        _check(swmm_hotstart_get_sim_time(self._handle, &v))
+        _check(swmm_hotstart_get_start_date(self._handle, &v))
         return oadate_to_datetime(v)
 
     @property

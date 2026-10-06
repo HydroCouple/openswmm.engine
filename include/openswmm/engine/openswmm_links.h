@@ -977,7 +977,7 @@ SWMM_ENGINE_API int swmm_link_get_stat_vol_flow(SWMM_Engine engine, int idx, dou
  * @brief Get the total surcharge duration for a link.
  * @param engine    Engine handle.
  * @param idx       Zero-based link index.
- * @param[out] val  Receives the surcharge duration in hours.
+ * @param[out] val  Receives the surcharge duration in seconds.
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_link_get_stat_surcharge_time(SWMM_Engine engine, int idx, double* val);

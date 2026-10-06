@@ -458,6 +458,20 @@ if(MSVC AND OPENSWMM_BUILD_UNIT_TESTS)
     message(STATUS "OpenSWMM Engine: internal STATIC library enabled for MSVC unit tests")
 endif()
 
+# ---- D2: HydroCouple component discovery (program plan §B.2.2) ----
+# The interface headers only (D-C6: never HydroCoupleSDK). PRIVATE: the
+# engine's public headers expose no HydroCouple type, so consumers of the
+# engine do not inherit the dependency. Applied to the MSVC test twin too,
+# since it compiles the same sources.
+if(OPENSWMM_WITH_HYDROCOUPLE)
+    foreach(_hc_tgt openswmm_engine openswmm_engine_internal)
+        if(TARGET ${_hc_tgt})
+            target_link_libraries(${_hc_tgt} PRIVATE HydroCouple::HydroCouple)
+            target_compile_definitions(${_hc_tgt} PRIVATE OPENSWMM_HAS_HYDROCOUPLE=1)
+        endif()
+    endforeach()
+endif()
+
 # ---- Optional 2D Surface Routing Module ----
 if(OPENSWMM_BUILD_2D)
     # Collect 2D source files. The explicit local-inertial LTS marcher is the
@@ -474,7 +488,6 @@ if(OPENSWMM_BUILD_2D)
         2d/solver/SurfaceFluxCalculator.cpp
         2d/coupling/*.cpp
         2d/input/*.cpp
-        2d/output/*.cpp
         2d/SurfaceRouter2D.cpp
         2d/api/*.cpp
     )
@@ -489,27 +502,40 @@ if(OPENSWMM_BUILD_2D)
     # pulls in no Kokkos/GPU dependency itself.
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/SurfaceSolverFactory.cpp)
 
+    # Default2DOutputPlugin writes the [2D_OPTIONS] OUTPUT_FILE results as
+    # CF-1.11/UGRID-1.0 HDF5. It is the 2D module's only HDF5 user, so
+    # OPENSWMM_2D_HDF5_OUTPUT=OFF builds the solver without HDF5 (the
+    # WebAssembly build does): OUTPUT_FILE is then ignored with a warning and
+    # results are read through the swmm_2d_* API.
+    if(OPENSWMM_2D_HDF5_OUTPUT)
+        list(APPEND OPENSWMM_2D_SOURCES 2d/output/Default2DOutputPlugin.cpp)
+    endif()
+
     target_sources(openswmm_engine PRIVATE ${OPENSWMM_2D_SOURCES})
 
-    # Default2DOutputPlugin emits CF-1.11/UGRID-1.0 HDF5 — required dep.
-    # Prefer vcpkg's hdf5-config.cmake (CONFIG mode) since CMake's bundled
-    # FindHDF5.cmake hunts for h5cc/well-known layouts and misses vcpkg installs.
-    # Fall back to FindHDF5 for system installs (Linux distros, Homebrew) that
-    # don't ship hdf5-config.cmake.
-    find_package(hdf5 CONFIG QUIET)
-    if(hdf5_FOUND)
-        if(TARGET hdf5::hdf5-shared)
-            set(_OPENSWMM_HDF5_TARGET hdf5::hdf5-shared)
-        elseif(TARGET hdf5::hdf5-static)
-            set(_OPENSWMM_HDF5_TARGET hdf5::hdf5-static)
+    if(OPENSWMM_2D_HDF5_OUTPUT)
+        # Prefer vcpkg's hdf5-config.cmake (CONFIG mode) since CMake's bundled
+        # FindHDF5.cmake hunts for h5cc/well-known layouts and misses vcpkg installs.
+        # Fall back to FindHDF5 for system installs (Linux distros, Homebrew) that
+        # don't ship hdf5-config.cmake.
+        find_package(hdf5 CONFIG QUIET)
+        if(hdf5_FOUND)
+            if(TARGET hdf5::hdf5-shared)
+                set(_OPENSWMM_HDF5_TARGET hdf5::hdf5-shared)
+            elseif(TARGET hdf5::hdf5-static)
+                set(_OPENSWMM_HDF5_TARGET hdf5::hdf5-static)
+            else()
+                message(FATAL_ERROR "hdf5 CONFIG package found but neither hdf5::hdf5-shared nor hdf5::hdf5-static is defined")
+            endif()
+            target_link_libraries(openswmm_engine PRIVATE ${_OPENSWMM_HDF5_TARGET})
         else()
-            message(FATAL_ERROR "hdf5 CONFIG package found but neither hdf5::hdf5-shared nor hdf5::hdf5-static is defined")
+            find_package(HDF5 REQUIRED COMPONENTS C)
+            target_link_libraries(openswmm_engine PRIVATE ${HDF5_C_LIBRARIES})
+            target_include_directories(openswmm_engine PRIVATE ${HDF5_INCLUDE_DIRS})
         endif()
-        target_link_libraries(openswmm_engine PRIVATE ${_OPENSWMM_HDF5_TARGET})
-    else()
-        find_package(HDF5 REQUIRED COMPONENTS C)
-        target_link_libraries(openswmm_engine PRIVATE ${HDF5_C_LIBRARIES})
-        target_include_directories(openswmm_engine PRIVATE ${HDF5_INCLUDE_DIRS})
+        # PRIVATE: only SWMMEngine.cpp's OUTPUT_FILE wiring reads it. The
+        # engine's headers keep the same layout either way.
+        target_compile_definitions(openswmm_engine PRIVATE OPENSWMM_HAS_2D_HDF5_OUTPUT=1)
     endif()
 
     target_compile_definitions(openswmm_engine PUBLIC OPENSWMM_HAS_2D=1)
@@ -517,16 +543,23 @@ if(OPENSWMM_BUILD_2D)
     # Also add to the internal static library for MSVC unit tests
     if(TARGET openswmm_engine_internal)
         target_sources(openswmm_engine_internal PRIVATE ${OPENSWMM_2D_SOURCES})
-        if(hdf5_FOUND)
-            target_link_libraries(openswmm_engine_internal PRIVATE ${_OPENSWMM_HDF5_TARGET})
-        else()
-            target_link_libraries(openswmm_engine_internal PRIVATE ${HDF5_C_LIBRARIES})
-            target_include_directories(openswmm_engine_internal PRIVATE ${HDF5_INCLUDE_DIRS})
+        if(OPENSWMM_2D_HDF5_OUTPUT)
+            if(hdf5_FOUND)
+                target_link_libraries(openswmm_engine_internal PRIVATE ${_OPENSWMM_HDF5_TARGET})
+            else()
+                target_link_libraries(openswmm_engine_internal PRIVATE ${HDF5_C_LIBRARIES})
+                target_include_directories(openswmm_engine_internal PRIVATE ${HDF5_INCLUDE_DIRS})
+            endif()
+            target_compile_definitions(openswmm_engine_internal PRIVATE OPENSWMM_HAS_2D_HDF5_OUTPUT=1)
         endif()
         target_compile_definitions(openswmm_engine_internal PUBLIC OPENSWMM_HAS_2D=1)
     endif()
 
-    message(STATUS "OpenSWMM Engine: 2D surface routing module enabled (explicit LTS marcher + HDF5)")
+    if(OPENSWMM_2D_HDF5_OUTPUT)
+        message(STATUS "OpenSWMM Engine: 2D surface routing module enabled (explicit LTS marcher + HDF5)")
+    else()
+        message(STATUS "OpenSWMM Engine: 2D surface routing module enabled (explicit LTS marcher; no HDF5 results writer)")
+    endif()
 
     # Optional GPU surface-solver plugin (standalone shared lib, dlopen()ed
     # at runtime — NOT linked into openswmm_engine). Phase 0 stub for now.
@@ -552,10 +585,10 @@ if(OPENSWMM_WITH_HDF5)
     )
     target_sources(openswmm_engine PRIVATE ${OPENSWMM_HDF5_SOURCES})
 
-    # The 2D block above already resolved HDF5 when it is enabled; only look
-    # again when it is not, so the two paths cannot disagree about which HDF5
-    # the engine links.
-    if(NOT OPENSWMM_BUILD_2D)
+    # The 2D block above already resolved HDF5 when its results writer is
+    # built; only look again when it is not, so the two paths cannot disagree
+    # about which HDF5 the engine links.
+    if(NOT (OPENSWMM_BUILD_2D AND OPENSWMM_2D_HDF5_OUTPUT))
         find_package(hdf5 CONFIG QUIET)
         if(hdf5_FOUND)
             if(TARGET hdf5::hdf5-shared)

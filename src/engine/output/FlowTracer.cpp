@@ -437,6 +437,9 @@ int FlowTracer::prepare(const char *path, const char *cache, const char *digest,
     {
         std::vector<float> q, v, lv, nv, lat, in, ov;
     };
+    // Read each object block once per report. Per-variable result accessors
+    // seek once per object, which makes whole-run preparation I/O-bound.
+    std::vector<float> nodeBlock, linkBlock;
     auto sample = [&](int t, Sample &s)
     {
         s.q.resize(links.size());
@@ -446,14 +449,28 @@ int FlowTracer::prepare(const char *path, const char *cache, const char *digest,
         s.lat.resize(nodes.size());
         s.in.resize(nodes.size());
         s.ov.resize(nodes.size());
-        bool ok = reader.get_node_result(t, SWMM_OUT_NODE_VOLUME, s.nv.data()) &&
-                  reader.get_node_result(t, SWMM_OUT_NODE_LATERAL_INFLOW, s.lat.data()) &&
-                  reader.get_node_result(t, SWMM_OUT_NODE_TOTAL_INFLOW, s.in.data()) &&
-                  reader.get_node_result(t, SWMM_OUT_NODE_OVERFLOW, s.ov.data());
-        if (!links.empty())
-            ok = ok && reader.get_link_result(t, SWMM_OUT_LINK_FLOW, s.q.data()) &&
-                 reader.get_link_result(t, SWMM_OUT_LINK_VELOCITY, s.v.data()) &&
-                 reader.get_link_result(t, SWMM_OUT_LINK_VOLUME, s.lv.data());
+        const int nodeStride = reader.node_var_count(), linkStride = reader.link_var_count();
+        if (nodeStride <= SWMM_OUT_NODE_OVERFLOW ||
+            (!links.empty() && linkStride <= SWMM_OUT_LINK_VOLUME) ||
+            !reader.get_node_block(t, nodeBlock) ||
+            (!links.empty() && !reader.get_link_block(t, linkBlock)))
+            return false;
+        for (size_t i = 0; i < nodes.size(); ++i)
+        {
+            const auto *row = nodeBlock.data() + i * nodeStride;
+            s.nv[i] = row[SWMM_OUT_NODE_VOLUME];
+            s.lat[i] = row[SWMM_OUT_NODE_LATERAL_INFLOW];
+            s.in[i] = row[SWMM_OUT_NODE_TOTAL_INFLOW];
+            s.ov[i] = row[SWMM_OUT_NODE_OVERFLOW];
+        }
+        for (size_t i = 0; i < links.size(); ++i)
+        {
+            const auto *row = linkBlock.data() + i * linkStride;
+            s.q[i] = row[SWMM_OUT_LINK_FLOW];
+            s.v[i] = row[SWMM_OUT_LINK_VELOCITY];
+            s.lv[i] = row[SWMM_OUT_LINK_VOLUME];
+        }
+        bool ok = true;
         for (const auto *a : {&s.q, &s.v, &s.lv, &s.nv, &s.lat, &s.in, &s.ov})
             for (float x : *a)
                 ok = ok && std::isfinite(x);
