@@ -59,16 +59,15 @@
  * - **Bottom (σ=1):** `F_bot = q₀_phys − θ_bot·L̇`. The first term is the
  *   physical Darcy flux across the table; the second is the **handover** —
  *   the water swept across the moving boundary. Both together are what the
- *   saturated zone gains, which is why `SubsurfaceSolver` books
- *   `F_bot` and not `q₀_phys` as the recharge.
+ *   saturated zone gains. `SubsurfaceSolver` settles the table using the
+ *   actual bounded `F_bot`, compression surplus and residual support from
+ *   the same sweep. Its physical recharge diagnostic remains `q₀_phys`;
+ *   boundary handover is internal and is excluded from external continuity.
  *
- * @note **Specific yield.** Making the handover explicit forces the
- *       saturated update's storage coefficient to be `θ_s − θ_bot`, not
- *       `θ_s`. The plan's §2.1 writes `θ_s`; `θ_s − θ_bot` is what actually
- *       conserves once the column retains water above a falling table, and
- *       it is the textbook specific yield. This is the one place this
- *       implementation is deliberately more precise than the plan text, and
- *       it is called out again in `SubsurfaceSolver::fireCell`.
+ * @note **Specific yield.** `θ_s − θ_bot` gives the table predictor. The
+ *       final SIGMA bracket pairs saturated storage `θ_s·h_g` with the
+ *       actual column transfer rather than correcting the table after a
+ *       column has collapsed to a zero-yield saturated profile.
  *
  * @ingroup engine_2d
  *

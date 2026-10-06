@@ -92,8 +92,6 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
     }
     std::vector<int> cells;
     for(int i=0;i<mesh.n_cells();++i) if(owned[i]) {
-        if(static_cast<GwClosure>(gw.state().closure[i])==GwClosure::SIGMA)
-            return "Common source SIGMA table/column conservation must be qualified before attachment.";
         const double w=preview.mesh_weather_area[i];
         if(!std::isfinite(w) || w<0 || !closeArea(coverage[i]+w,mesh.tri_area[i]))
             return "Reviewed mesh/source weather areas do not close.";
