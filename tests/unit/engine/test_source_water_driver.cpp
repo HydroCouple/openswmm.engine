@@ -3,6 +3,7 @@
 #include "hydrology/SourceWaterDriver.hpp"
 #include "core/SimulationContext.hpp"
 #include "core/DateTime.hpp"
+#include "core/UnitConversion.hpp"
 #include "2d/solver/ExplicitInertialSolver.hpp"
 #include "2d/mesh/MeshBuilder.hpp"
 #include "2d/data/SurfaceStateData.hpp"
@@ -84,6 +85,49 @@ TEST(SourceWaterDriver, PrivateTrialsCancelRetryAndKeepUnselectedSourcesUntouche
     ASSERT_EQ(d.commit(), ""); EXPECT_DOUBLE_EQ(d.lids().storedVolume(), trial);
     EXPECT_DOUBLE_EQ(d.runoff().soa().depth_perv[2], 0); EXPECT_DOUBLE_EQ(d.ledgers()[2].rain, 0);
     EXPECT_FALSE(d.commit().empty()); EXPECT_FALSE(d.stage(0, 1, 2).empty());
+}
+TEST(SourceWaterDriver, ComponentAtmosphereIsPrivateAndClosesThePhysicalFootprint){
+ auto c=model(1,0);addLid(c,0,"IT",.5,50,432);c.subcatches.frac_imperv[0]=.4;
+ c.forcing.subcatch_evap_mode[0]=ForcingMode::OVERRIDE;c.forcing.subcatch_evap_value[0]=.001;
+ c.forcing.subcatch_evap_persist[0]=ForcingPersist::PERSIST;
+ SourceWaterDriver d;ASSERT_EQ(d.initialize(c,{0},areas(c)),"");
+ SourceWaterDriver::BottomCeiling bottom=[](int,int,double,double){return 0.;};
+ ASSERT_EQ(d.stage(0,1,1,&sealed,&bottom),"");
+ double potential=0,evap=0,area=0;
+ for(const auto& b:d.atmosphere(true)){
+  potential+=b.potential;evap+=b.evaporation;area+=b.area;
+  EXPECT_NEAR(b.potential,.001*b.area,1e-15);EXPECT_LE(b.evaporation,b.potential);
+  if(b.kind==SourceEtKind::LID){EXPECT_GT(b.evaporation,0);EXPECT_TRUE(b.soil_eligible);}
+ }
+ EXPECT_NEAR(area*ft2,1,1e-15);EXPECT_NEAR(potential,.001/ft2,1e-15);
+ EXPECT_NEAR(evap,d.ledgers(true)[0].evaporation,1e-15);
+ d.cancel();for(const auto& b:d.atmosphere())EXPECT_DOUBLE_EQ(b.potential,0);
+ ASSERT_EQ(d.stage(0,1,1,&sealed,&bottom),"");ASSERT_EQ(d.commit(),"");
+ double retry=0;for(const auto& b:d.atmosphere())retry+=b.potential;EXPECT_DOUBLE_EQ(retry,potential);
+ EXPECT_NEAR(d.balanceResidual(0),0,1e-10);
+}
+TEST(SourceWaterDriver, StepPetVolumesArePastOnlyAndEquivalentInUsAndSi){
+ double prior=0;
+ for(auto units:{FlowUnits::CFS,FlowUnits::CMS}){
+  auto c=model(1,0);c.options.flow_units=units;c.subcatches.frac_imperv[0]=.4;
+  c.subcatches.area[0]=units==FlowUnits::CMS ? .0001 : 1/(43560*ft2);
+  c.climate_state.evap_method=climate::EvapMethod::TIMESERIES;c.climate_state.evap_ts_index=1;
+  c.climate_state.evap_rate=99;c.tables.tables.resize(2);
+  c.tables.tables[1].x={datetime::addSeconds(c.options.start_date,2),datetime::addSeconds(c.options.start_date,4)};
+  const double display=units==FlowUnits::CMS ? 25.4 : 1;c.tables.tables[1].y={display,2*display};
+  SourceWaterDriver d;ASSERT_EQ(d.initialize(c,{0},{{0,1}}),"");
+  const double first=(c.tables.tables[1].x[0]-c.options.start_date)*86400;
+  const double second=(c.tables.tables[1].x[1]-c.options.start_date)*86400;
+  step(d,first);for(const auto& b:d.atmosphere())EXPECT_DOUBLE_EQ(b.potential,0);
+  step(d,6);double total=0;
+  for(const auto& b:d.atmosphere()){
+   const double integral=(second-first)+2*(6-second);
+   total+=b.potential;EXPECT_NEAR(b.potential,integral*display/ucf::UCF(ucf::EVAPRATE,c.options)*b.area,1e-14);
+   EXPECT_DOUBLE_EQ(b.evaporation,0);
+  }
+  if(units==FlowUnits::CFS)prior=total;else EXPECT_NEAR(total,prior,1e-14);
+  EXPECT_NEAR(d.balanceResidual(0),0,1e-10);
+ }
 }
 
 TEST(SourceWaterDriver, VariableCadencesPreserveRunoffRunonAndCyclicHistories) {

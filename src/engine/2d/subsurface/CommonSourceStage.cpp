@@ -38,7 +38,6 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
         return "Common source stage runtime coupling providers are not qualified.";
     if(surface.volume.size()!=mesh.tri_area.size() || gw.state().n_cells!=mesh.n_cells())
         return "Common source stage mesh/receiver sizes differ.";
-    if(gw.options().gw_et!="NONE") return "Common source stage requires explicit GW_ET NONE until source soil ET is qualified.";
     for(const auto& g:sources.clocks().groups()) if(g.completed_end!=0 || !g.pending.empty())
         return "Common source stage must attach at the initial source clock.";
     const auto& c=sources.context(); const auto& r=sources.runoff().soa();
@@ -77,11 +76,28 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
     }
     for(const auto& g:sources.clocks().groups()) for(int sc:g.subcatches) if(!reviewed[sc])
         return "Every member of a common source clock group needs reviewed inside shares.";
+    std::vector<std::vector<std::pair<int,double>>> et_contacts;
+    std::vector<double> atmospheric_area(mesh.tri_area.size(),0);
+    for(const auto& b:sources.atmosphere()) {
+        std::vector<std::pair<int,double>> contacts;double total=0;
+        for(const auto& sh:preview.shares) if(sh.subcatch==b.source) {
+            double area=b.kind==runoff::SourceEtKind::PERVIOUS ? sh.pervious_area : sh.impervious_area;
+            if(b.kind==runoff::SourceEtKind::LID)
+                area=sh.lid_area*b.area/c.subcatches.total_lid_area_ft2[b.source];
+            if(!std::isfinite(area)||area<0) return "Invalid common atmospheric contact area.";
+            if(area>0) { contacts.emplace_back(sh.cell,area);total+=area;atmospheric_area[sh.cell]+=area; }
+        }
+        if(!closeArea(total,b.area*ft2)) return "Reviewed atmospheric shares do not match private component footprints.";
+        et_contacts.push_back(std::move(contacts));
+    }
     std::vector<int> cells;
     for(int i=0;i<mesh.n_cells();++i) if(owned[i]) {
+        if(static_cast<GwClosure>(gw.state().closure[i])==GwClosure::SIGMA)
+            return "Common source SIGMA table/column conservation must be qualified before attachment.";
         const double w=preview.mesh_weather_area[i];
         if(!std::isfinite(w) || w<0 || !closeArea(coverage[i]+w,mesh.tri_area[i]))
             return "Reviewed mesh/source weather areas do not close.";
+        if(!closeArea(atmospheric_area[i],coverage[i])) return "Reviewed atmospheric components do not close the cell's owned weather area.";
         double contact=w;for(const auto& d:donors) for(const auto& x:d.contacts) if(x.first==i) contact+=x.second;
         if(contact>mesh.tri_area[i]*(1+1e-8)) return "Common source contact areas overbook the cell.";
         cells.push_back(i);
@@ -89,6 +105,7 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
     if(cells.empty()) return "Common source stage has no reviewed receiving cells.";
     mesh_=&mesh;surface_=&surface;options_=&options;gw_=&gw;sources_=&sources;donors_=std::move(donors);
     cells_=std::move(cells);owned_=std::move(owned);weather_=preview.mesh_weather_area;
+    et_contacts_=std::move(et_contacts);
     return {};
 }
 
@@ -98,8 +115,8 @@ std::string CommonSourceStage::advance(double start,double end) {
     for(const auto& g:sources_->clocks().groups()) if(g.completed_end!=start || !g.pending.empty())
         return "Common source clocks do not match the accepted mesh source interval.";
     if(surface_->transport.n_species>0 || gw_->transport().active()) return "Common source transport changed to an unsupported profile.";
-    if(gw_->options().gw_et!="NONE" || surface_->runtime_sources.active() || surface_->runtime_forcings.active() || gw_->runtimeSources().active())
-        return "Common source ET/runtime provider profile changed to an unsupported configuration.";
+    if(surface_->runtime_sources.active() || surface_->runtime_forcings.active() || gw_->runtimeSources().active())
+        return "Common source runtime provider profile changed to an unsupported configuration.";
     struct MeshTrial { int cell;double rain,evap,out,incoming,candidate; };
     std::vector<MeshTrial> mesh_trials;
     std::vector<SurfaceIntakeRequest> requests;
@@ -206,6 +223,35 @@ std::string CommonSourceStage::advance(double start,double end) {
     for(std::size_t j=0;j<donors_.size();++j) if(std::abs(consumed[j]-donorVolume(bounded,int(j)))>1e-12) {
         exchange_.cancel();return "Common source actual receipts do not match donor withdrawal.";
     }
+    std::vector<SurfaceEtReceipt> et_receipts;
+    struct EtBudget { double potential=0,evaporation=0,soil=0; };
+    std::vector<EtBudget> et_budget(mesh_->n_cells());
+    const auto addEt=[&](SurfaceEtReceipt r,bool eligible) {
+        const double remainder=std::max(0.0,r.potential-r.evaporation);
+        r.soil_demand=eligible ? remainder : 0;r.unused=eligible ? 0 : remainder;
+        auto& b=et_budget[r.cell];b.potential+=r.potential;b.evaporation+=r.evaporation;b.soil+=r.soil_demand;
+        et_receipts.push_back(r);
+    };
+    for(const auto& m:mesh_trials) addEt({SurfaceEtOwner::MESH,-1,-1,-1,m.cell,start,end,weather_[m.cell],
+        std::max(0.0,surface_->evap_rate[m.cell])*weather_[m.cell]*dt,m.evap},true);
+    for(std::size_t j=0;j<bounded.atmosphere().size();++j) {
+        const auto& a=bounded.atmosphere()[j];const auto& b=sources_->atmosphere()[j];
+        const auto owner=a.kind==runoff::SourceEtKind::PERVIOUS ? SurfaceEtOwner::PERVIOUS :
+            a.kind==runoff::SourceEtKind::IMPERVIOUS ? SurfaceEtOwner::IMPERVIOUS : SurfaceEtOwner::LID;
+        for(const auto& [cell,area]:et_contacts_[j]) {
+            const double fraction=area/(a.area*ft2);
+            addEt({owner,a.source,a.type,a.unit,cell,start,end,area,
+                (a.potential-b.potential)*ft3*fraction,(a.evaporation-b.evaporation)*ft3*fraction},a.soil_eligible);
+        }
+    }
+    // Validate all atmospheric volumes before either receiver or owner changes.
+    for(int i:cells_) {
+        const auto& b=et_budget[i];
+        if(!std::isfinite(b.potential)||!std::isfinite(b.evaporation)||!std::isfinite(b.soil)||
+           b.potential<0||b.evaporation<0||b.soil<0||b.evaporation+b.soil>b.potential+1e-12*std::max(1.0,b.potential)) {
+            exchange_.cancel();return "Common source atmospheric area budget does not close.";
+        }
+    }
     // Revalidation and receiver booking happen before any managed source debit.
     error=exchange_.commit(*gw_,actual);if(!error.empty()) { exchange_.cancel();return error; }
     for(const auto& m:mesh_trials) {
@@ -214,10 +260,10 @@ std::string CommonSourceStage::advance(double start,double end) {
         surface_->infil_applied[m.cell]+=infil/A;
         surface_->coupling_applied[m.cell]+=m.incoming-m.rain-m.out;
         surface_->evap_loss_total+=m.evap;
-        gw_->bookSurfaceEt(m.cell,dt,surface_->evap_rate[m.cell]*weather_[m.cell]/A,m.evap);
+        const auto& b=et_budget[m.cell];gw_->bookAreaEt(m.cell,dt,b.potential,b.evaporation,b.soil);
         inertial::cellEtaDepth(*mesh_,*options_,m.cell,surface_->volume[m.cell],surface_->head[m.cell],surface_->depth[m.cell]);
         mesh_rain_+=m.rain;mesh_evap_+=m.evap;
     }
-    *sources_=std::move(bounded);++intervals_;return {};
+    *sources_=std::move(bounded);et_receipts_=std::move(et_receipts);++intervals_;return {};
 }
 }

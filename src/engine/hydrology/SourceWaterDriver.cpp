@@ -30,9 +30,10 @@ struct SourceWaterDriver::State {
     std::vector<double> runon, pervious_return; // pending ft3, never held rates
     std::vector<SourceWaterLedger> ledger;
     std::vector<SourceWaterDelivery> deliveries;
+    std::vector<SourceAtmosphericLedger> atmosphere;
     explicit State(const SimulationContext& c) : ctx(c) {}
     State(const State& s) : ctx(s.ctx), runoff(s.runoff), lids(s.lids.waterTrial()),
-        runon(s.runon), pervious_return(s.pervious_return), ledger(s.ledger), deliveries(s.deliveries) {}
+        runon(s.runon), pervious_return(s.pervious_return), ledger(s.ledger), deliveries(s.deliveries), atmosphere(s.atmosphere) {}
 };
 SourceWaterDriver::SourceWaterDriver() = default;
 SourceWaterDriver::~SourceWaterDriver() = default;
@@ -53,6 +54,7 @@ const RunoffSolver& SourceWaterDriver::runoff(bool t) const { return view(t).run
 const lid::LIDSolver& SourceWaterDriver::lids(bool t) const { return view(t).lids; }
 const std::vector<SourceWaterLedger>& SourceWaterDriver::ledgers(bool t) const { return view(t).ledger; }
 const std::vector<SourceWaterDelivery>& SourceWaterDriver::deliveries(bool t) const { return view(t).deliveries; }
+const std::vector<SourceAtmosphericLedger>& SourceWaterDriver::atmosphere(bool t) const { return view(t).atmosphere; }
 
 double SourceWaterDriver::storage(const State& s, int sc) const {
     const auto& r = s.runoff.soa();
@@ -121,6 +123,12 @@ std::string SourceWaterDriver::initialize(const SimulationContext& c, const std:
                 if (c.subcatches.runon_rate[sc] != 0 || c.subcatches.lid_return_to_perv_cfs[sc] != 0)
                     return "Source water driver requires empty initial transfer histories.";
                 s->ledger[sc].initial_storage = storage(*s, sc);
+                const auto& r = s->runoff.soa();
+                for (auto kind : {SourceEtKind::PERVIOUS, SourceEtKind::IMPERVIOUS}) {
+                    const bool pervious = kind == SourceEtKind::PERVIOUS;
+                    const double area = r.area[sc] * (pervious ? 1 - r.imperv_pct[sc] : r.imperv_pct[sc]);
+                    if (area > 0) s->atmosphere.push_back({kind, sc, -1, -1, area, pervious});
+                }
             }
             for (const auto& [t, u] : s->lids.usageOrder()) {
                 const auto& g = s->lids.group(t); const int sc = g.subcatch_idx[u];
@@ -131,6 +139,12 @@ std::string SourceWaterDriver::initialize(const SimulationContext& c, const std:
                 if (g.type == lid::LIDType::RAIN_BARREL && g.stor_covered[u] && perv <= 0)
                     return "Covered barrel rainfall requires a non-LID pervious return area.";
             }
+        }
+        for (const auto& [t, u] : s->lids.usageOrder()) {
+            const auto& g = s->lids.group(t); const int sc = g.subcatch_idx[u];
+            if (clocks.groupForSubcatch(sc) >= 0 && g.area[u] > 0)
+                s->atmosphere.push_back({SourceEtKind::LID, sc, t, u, g.area[u],
+                    g.type == lid::LIDType::INFIL_TRENCH && g.stor_ksat[u] > 0});
         }
     } catch (const std::exception& e) { return e.what(); }
     state_ = std::move(s); clocks_ = std::move(clocks); return {};
@@ -191,6 +205,20 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
         if (outlet[weather.subcatch] < -1e-12)
             throw std::runtime_error("LID capture exceeds the available non-LID outlet volume.");
     s.lids.executeCompleted(dt, f.start, f.recovery_factor, inputs);
+    for (auto& b : s.atmosphere) {
+        const auto* weather = weather_at[b.source]; if (!weather) continue;
+        const double potential = weather->pet * dt * b.area;
+        double evaporation = r.actual_perv_evap_vol[b.source];
+        if (b.kind == SourceEtKind::IMPERVIOUS)
+            evaporation = c.subcatches.evap_loss[b.source] * r.area[b.source] * dt - evaporation;
+        else if (b.kind == SourceEtKind::LID)
+            evaporation = s.lids.group(b.type).evap_loss[b.unit] * b.area;
+        const double tolerance = 1e-12 * std::max(1.0, potential);
+        if (!std::isfinite(potential) || !std::isfinite(evaporation) || potential < 0 ||
+            evaporation < -tolerance || evaporation > potential + tolerance)
+            throw std::runtime_error("Completed source component exceeds its atmospheric footprint budget.");
+        b.potential += potential; b.evaporation += std::clamp(evaporation, 0.0, potential);
+    }
     const auto route = [&](int sc, int node, int target, double volume, bool drain) {
         if (!std::isfinite(volume) || volume < -1e-12)
             throw std::runtime_error("Source capture/output produced invalid water volume.");

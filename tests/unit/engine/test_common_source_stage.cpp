@@ -16,13 +16,22 @@ using namespace openswmm;
 using namespace openswmm::twoD;
 namespace {
 constexpr double ft2=.3048*.3048,ft3=ft2*.3048;
+struct AtmosphericInput {
+    std::array<double,2> pet{0,0},impervious{0,0}; // ft/s, fraction of non-LID area
+    std::array<double,2> rain_override{-1,-1}; // ft/s; negative retains gage records
+    double rain=432,lid_area=.5,lid_bottom=432,lid_saturation=50,ks=.01;
+    bool barrel=false,covered=false;
+    std::string et="NONE";
+    GwClosure closure=GwClosure::CLOSED_FORM;SoilChar law=SoilChar::GARDNER;
+};
 struct Model {
     MeshData mesh; SurfaceStateData surface; SolverOptions2D options;
     InertialEdges edges; SubsurfaceConfig config; SubsurfaceSolver gw;
     SimulationContext context; runoff::SourceWaterDriver sources;
     SurfaceOwnershipPreview preview; CommonSourceStage stage;
     ExplicitInertialSolver marcher;
-    void setup(bool trench=false,int cells=1,bool reverse=false,bool adjacent=false,bool delayed_rain=false) {
+    void setup(bool trench=false,int cells=1,bool reverse=false,bool adjacent=false,bool delayed_rain=false,
+               const AtmosphericInput& a={}) {
         mesh.resize_vertices(3*cells);mesh.resize_triangles(cells);
         for(int i=0;i<cells;++i) {
             mesh.vx[3*i]=6*i;mesh.vx[3*i+1]=6*i+4;mesh.vx[3*i+2]=6*i;
@@ -36,7 +45,8 @@ struct Model {
         buildMeshTopology(mesh);edges.build(mesh);surface.resize(cells,mesh.n_edge_slots());
         options.num_threads=1;options.lts_tiers=3;
         config.options.authored=true;config.options.force_closed_form=true;
-        config.options.gw_et="NONE";GwAquiferRow row;row.Ks=.01;row.zs=2;row.hg0=1;
+        config.options.gw_et=a.et;config.options.closure=a.closure;config.options.soil_char=a.law;
+        GwAquiferRow row;row.Ks=a.ks;row.zs=2;row.hg0=1;
         config.rows.push_back(row);config.node_beds.push_back({0,0,.01,.1,1});
         std::vector<std::string> warnings;
         ASSERT_EQ(gw.initialize(mesh,edges,options,{},1,config,warnings),"");
@@ -46,7 +56,7 @@ struct Model {
         context.gage_names.try_add("RG");context.tables.tables.resize(1);
         context.gages.ts_index[0]=0;context.gages.interval_sec[0]=30;
         context.tables.tables[0].x={context.options.start_date,datetime::addSeconds(context.options.start_date,30)};
-        context.tables.tables[0].y={432,0};
+        context.tables.tables[0].y={a.rain,0};
         if(delayed_rain) {
             context.gages.interval_sec[0]=1;
             context.tables.tables[0].x={context.options.start_date,datetime::addSeconds(context.options.start_date,1),datetime::addSeconds(context.options.start_date,2)};
@@ -56,24 +66,39 @@ struct Model {
             context.subcatch_names.try_add("S"+std::to_string(reverse ? 1-i : i));
             context.subcatches.gage[i]=0;context.subcatches.area[i]=1/(43560*ft2);
             context.subcatches.width[i]=1;context.subcatches.n_perv[i]=.1;
+            context.subcatches.n_imperv[i]=.1;context.subcatches.frac_imperv[i]=a.impervious[i];
+            context.forcing.subcatch_evap_mode[i]=ForcingMode::OVERRIDE;
+            context.forcing.subcatch_evap_value[i]=a.pet[i];
+            context.forcing.subcatch_evap_persist[i]=ForcingPersist::PERSIST;
+            if(a.rain_override[i]>=0) {
+                context.forcing.subcatch_rainfall_mode[i]=ForcingMode::OVERRIDE;
+                context.forcing.subcatch_rainfall_value[i]=a.rain_override[i];
+                context.forcing.subcatch_rainfall_persist[i]=ForcingPersist::PERSIST;
+            }
             context.subcatches.infil_model[i]=2;context.subcatches.infil_p1[i]=3.5;
             context.subcatches.infil_p2[i]=.5;context.subcatches.infil_p3[i]=.26;
         }
         if(trench) {
-            context.lid_controls.names={"IT"};context.lid_controls.lid_type={"IT"};
+            context.lid_controls.names={"IT"};context.lid_controls.lid_type={a.barrel ? "RB" : "IT"};
             context.lid_controls.surface={{3,0,.1,0,0}};
-            context.lid_controls.storage={{12,.4,432,0}};
+            context.lid_controls.storage={{12,.4,a.lid_bottom,0}};
             context.lid_controls.drain={{0,.5,0,0,0,0}};
             context.lid_usage.subcatch_index={0};context.lid_usage.lid_index={0};
-            context.lid_usage.number={2};context.lid_usage.area={.25/ft2};context.lid_usage.width={1};
-            context.lid_usage.init_sat={50};context.lid_usage.from_imperv={0};context.lid_usage.from_perv={0};
+            context.lid_usage.number={2};context.lid_usage.area={a.lid_area/2/ft2};context.lid_usage.width={1};
+            context.lid_usage.init_sat={a.lid_saturation};context.lid_usage.from_imperv={0};context.lid_usage.from_perv={0};
             context.lid_usage.to_perv={0};context.lid_usage.drain_to={""};
         }
-        ASSERT_EQ(sources.initialize(context,{0,1},{{0,trench ? .5 : 1},{1,1}}),"");
+        lid::LIDSolver initial;const lid::LIDSolver* snapshot=nullptr;
+        if(a.covered) {
+            initial.init(context);initial.group(static_cast<int>(lid::LIDType::RAIN_BARREL)).stor_covered[0]=1;snapshot=&initial;
+        }
+        ASSERT_EQ(sources.initialize(context,{0,1},{{0,trench ? 1-a.lid_area : 1},{1,1}},snapshot),"");
         preview.mesh_weather_area.assign(cells,4-2./cells);
         for(int sc=0;sc<2;++sc) {
             SurfaceOwnerObject o;o.subcatch=sc;o.reviewed=true;preview.objects.push_back(o);
-            for(int i=0;i<cells;++i) preview.shares.push_back({sc,i,1./cells,(trench && sc==0 ? .5 : 1)/cells,0,(trench && sc==0 ? .5 : 0)/cells,0});
+            const double non_lid=trench && sc==0 ? 1-a.lid_area : 1;
+            for(int i=0;i<cells;++i) preview.shares.push_back({sc,i,1./cells,non_lid*(1-a.impervious[sc])/cells,
+                non_lid*a.impervious[sc]/cells,(trench && sc==0 ? a.lid_area : 0)/cells,0});
         }
         for(int i=0;i<cells;++i) {surface.volume[i]=.08;surface.depth[i]=.02;surface.head[i]=10.02;}
     }
@@ -89,6 +114,14 @@ struct Model {
         double v=0;for(const auto& r:stage.receipts()) if(r.request.kind==kind)v+=r.volume;return v;
     }
 };
+void etBalance(const Model& m) {
+    const auto& s=m.gw.state();
+    for(int i=0;i<s.n_cells;++i)
+        EXPECT_NEAR(s.et_potential_cumulative[i],s.et_surface_cumulative[i]+s.et_soil_cumulative[i]+
+            s.et_unused_cumulative[i]+s.et_pending[i],1e-13);
+    for(const auto& r:m.stage.etReceipts())
+        EXPECT_NEAR(r.potential,r.evaporation+r.soil_demand+r.unused,1e-14);
+}
 }
 
 TEST(CommonSourceStage, MeshAndTwoIndependentSourcesShareScarceReceiverBeforeDebits) {
@@ -252,4 +285,167 @@ TEST(CommonSourceStage, IncomingFaceWaterLandsBeforeDryMeshDonorRequestsAreGathe
     EXPECT_GT(into_dry,0);
     EXPECT_NEAR(m.surface.volume[0]+m.surface.volume[1]+total,.08,1e-13);
     EXPECT_NEAR(m.gw.state().continuityResidual(),0,1e-10);m.marcher.finalize();
+}
+
+TEST(CommonSourceStage, DryOwnerDemandUsesReviewedAreasAndOneSoilStressForQualifiedClosuresAndAllLaws) {
+    for(auto cl:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED})
+    for(auto law:{SoilChar::GARDNER,SoilChar::RUSSO,SoilChar::BROOKS_COREY,SoilChar::VAN_GENUCHTEN}) {
+        AtmosphericInput a;a.et="BOUNDARY_ET";a.closure=cl;a.law=law;a.rain=0;a.pet={1e-5,3e-5};
+        a.ks=0; // Isolate atmospheric extraction from recharge/table movement.
+        Model m;m.setup(false,1,false,false,false,a);m.surface.volume[0]=0;m.surface.depth[0]=0;
+        m.surface.evap_rate[0]=2e-6;m.attach();ASSERT_EQ(m.stage.advance(0,10),"");
+        auto& s=m.gw.state();const double independent=10*((1e-5+3e-5)*.3048+2*2e-6);
+        EXPECT_NEAR(s.et_potential_cumulative[0],independent,1e-15);
+        EXPECT_NEAR(s.et_pending[0],independent,1e-15);EXPECT_DOUBLE_EQ(s.et_surface_cumulative[0],0);etBalance(m);
+        double area=0;for(const auto& r:m.stage.etReceipts()){area+=r.area;EXPECT_DOUBLE_EQ(r.end,10);}
+        EXPECT_NEAR(area,4,1e-15);const double initial=s.storage();m.gw.assignTiers(10,1);m.gw.fireGwCells(0,10,m.surface,10);
+        EXPECT_NEAR(s.et_soil_cumulative[0],independent*s.et_stress[0],1e-12);
+        EXPECT_NEAR(initial-s.storage(),s.led_et,1e-12);EXPECT_NEAR(s.continuityResidual(),0,1e-12);
+        EXPECT_DOUBLE_EQ(s.et_refresh[0],10);etBalance(m);
+    }
+}
+
+TEST(CommonSourceStage, WetImperviousEvaporationCannotConsumeDryPerviousDemand) {
+    AtmosphericInput a;a.et="BOUNDARY_ET";a.pet={.0001,.0001};a.impervious={0,1};a.rain_override[0]=0;
+    Model m;m.setup(false,1,false,false,false,a);m.surface.volume[0]=0;m.surface.depth[0]=0;m.attach();
+    ASSERT_EQ(m.stage.advance(0,1),"");ASSERT_EQ(m.stage.advance(1,2),"");
+    const auto& s=m.gw.state();EXPECT_NEAR(s.et_pending[0],.0001*.3048*2,1e-15);
+    EXPECT_NEAR(s.et_surface_cumulative[0],.0001*.3048,1e-15);
+    EXPECT_NEAR(s.et_unused_cumulative[0],.0001*.3048,1e-15);
+    for(const auto& r:m.stage.etReceipts()) if(r.owner==SurfaceEtOwner::IMPERVIOUS){
+        EXPECT_GT(r.evaporation,0);EXPECT_DOUBLE_EQ(r.soil_demand,0);
+    }
+    EXPECT_NEAR(m.sources.runoff().soa().actual_perv_evap_vol[1],0,1e-15);etBalance(m);
+}
+TEST(CommonSourceStage, MixedSourceDoesNotUseLegacyImperviousCarryInAsPerviousEvaporation) {
+    AtmosphericInput a;a.pet={.0001,0};a.impervious={.4,0};a.rain_override[1]=0;
+    Model m;m.setup(false,1,false,false,false,a);m.surface.volume[0]=0;m.surface.depth[0]=0;m.attach();
+    ASSERT_EQ(m.stage.advance(0,1),"");ASSERT_EQ(m.stage.advance(1,2),"");
+    EXPECT_GT(m.sources.runoff().soa().perv_evap_vol[0],0);
+    EXPECT_NEAR(m.sources.runoff().soa().actual_perv_evap_vol[0],0,1e-15);
+    double potential=0,pervious=0,impervious=0;
+    for(const auto& r:m.stage.etReceipts())if(r.source==0){
+        potential+=r.potential;
+        if(r.owner==SurfaceEtOwner::PERVIOUS){pervious+=r.soil_demand;EXPECT_NEAR(r.evaporation,0,1e-15);}
+        if(r.owner==SurfaceEtOwner::IMPERVIOUS)impervious+=r.evaporation;
+    }
+    EXPECT_NEAR(potential,.0001*.3048,1e-15);EXPECT_NEAR(pervious,potential*.6,1e-15);
+    EXPECT_NEAR(impervious,potential*.4,1e-15);etBalance(m);
+}
+
+TEST(CommonSourceStage, OpenAndSealedLidStoresPayTheirOwnDemandBeforeSoil) {
+    for(double bottom:{0.,432.})for(double saturation:{0.,.005,50.}) {
+        AtmosphericInput a;a.rain=0;a.pet={.0001,0};a.lid_bottom=bottom;a.lid_saturation=saturation;
+        Model m;m.setup(true,1,false,false,false,a);m.surface.volume[0]=0;m.surface.depth[0]=0;m.room(0);m.attach();
+        const double stored=m.sources.lids().storedVolume()*ft3;ASSERT_EQ(m.stage.advance(0,1),"");
+        double lid_evap=0,lid_soil=0,lid_unused=0;
+        for(const auto& r:m.stage.etReceipts()) if(r.owner==SurfaceEtOwner::LID){
+            EXPECT_NEAR(r.area,.5,1e-15);lid_evap+=r.evaporation;lid_soil+=r.soil_demand;lid_unused+=r.unused;
+        }
+        const double expected=.0001*.3048*.5;
+        if(saturation>0){
+            EXPECT_NEAR(lid_evap,std::min(expected,stored),1e-15);
+            EXPECT_NEAR(lid_soil+lid_unused,expected-lid_evap,1e-15);
+            if(bottom>0)EXPECT_DOUBLE_EQ(lid_unused,0);else EXPECT_DOUBLE_EQ(lid_soil,0);
+        }
+        else if(bottom>0){EXPECT_DOUBLE_EQ(lid_evap,0);EXPECT_NEAR(lid_soil,expected,1e-15);EXPECT_DOUBLE_EQ(lid_unused,0);}
+        else{EXPECT_DOUBLE_EQ(lid_evap,0);EXPECT_DOUBLE_EQ(lid_soil,0);EXPECT_NEAR(lid_unused,expected,1e-15);}
+        const auto& g=m.sources.lids().group(static_cast<int>(lid::LIDType::INFIL_TRENCH));
+        EXPECT_NEAR(g.wb_evap[0]*g.area[0]*ft3,lid_evap,1e-15);
+        EXPECT_NEAR(m.sources.balanceResidual(0),0,1e-10);etBalance(m);
+    }
+}
+
+TEST(CommonSourceStage, FullLidFootprintDoesNotAddAnExtraNonLidAtmosphericBudget) {
+    AtmosphericInput a;a.rain=0;a.pet={.0001,0};a.lid_area=1;a.lid_saturation=0;a.lid_bottom=0;
+    Model m;m.setup(true,1,false,false,false,a);m.surface.volume[0]=0;m.surface.depth[0]=0;m.attach();
+    ASSERT_EQ(m.stage.advance(0,1),"");EXPECT_NEAR(m.gw.state().et_potential_cumulative[0],.0001*.3048,1e-15);
+    EXPECT_NEAR(m.gw.state().et_unused_cumulative[0],.0001*.3048,1e-15);
+    EXPECT_DOUBLE_EQ(m.gw.state().et_pending[0],0);etBalance(m);
+}
+
+TEST(CommonSourceStage, CoveredAndUncoveredBarrelRemaindersExpireOnTheirOwnFootprint) {
+    for(bool covered:{false,true}) {
+        AtmosphericInput a;a.rain=0;a.pet={.0001,0};a.barrel=true;a.covered=covered;a.lid_bottom=0;
+        Model m;m.setup(true,1,false,false,false,a);m.surface.volume[0]=0;m.surface.depth[0]=0;m.attach();
+        ASSERT_EQ(m.stage.advance(0,1),"");
+        EXPECT_NEAR(m.gw.state().et_pending[0],.0001*.3048*.5,1e-15);
+        EXPECT_NEAR(m.gw.state().et_unused_cumulative[0],.0001*.3048*.5,1e-15);
+        for(const auto& r:m.stage.etReceipts()) if(r.owner==SurfaceEtOwner::LID){
+            EXPECT_DOUBLE_EQ(r.soil_demand,0);EXPECT_DOUBLE_EQ(r.evaporation,0);EXPECT_GT(r.unused,0);
+        }
+        EXPECT_NEAR(m.sources.balanceResidual(0),0,1e-10);etBalance(m);
+    }
+}
+
+TEST(CommonSourceStage, FailedIntervalCannotInstallAnyAtmosphericReceiptOrFutureDemand) {
+    AtmosphericInput a;a.rain=0;a.pet={.0001,.0002};Model m;m.setup(false,1,false,false,false,a);m.attach();
+    m.surface.runtime_sources.rows.push_back({});EXPECT_FALSE(m.stage.advance(0,1).empty());
+    EXPECT_TRUE(m.stage.etReceipts().empty());EXPECT_DOUBLE_EQ(m.gw.state().et_potential_cumulative[0],0);
+    for(const auto& r:m.sources.atmosphere())EXPECT_DOUBLE_EQ(r.potential,0);
+    m.surface.runtime_sources.rows.clear();ASSERT_EQ(m.stage.advance(0,1),"");
+    const auto receipts=m.stage.etReceipts();const double past=m.gw.state().et_pending[0];
+    EXPECT_FALSE(m.stage.advance(1,100000).empty());EXPECT_DOUBLE_EQ(m.gw.state().et_pending[0],past);
+    ASSERT_EQ(m.stage.etReceipts().size(),receipts.size());
+    for(std::size_t j=0;j<receipts.size();++j)EXPECT_DOUBLE_EQ(m.stage.etReceipts()[j].potential,receipts[j].potential);
+    etBalance(m);
+}
+
+TEST(CommonSourceStage, OwnerSpecificDemandKeepsCellProvenanceAcrossSourceOrderAndCadence) {
+    std::map<std::string,double> prior;
+    for(bool reverse:{false,true}) {
+        AtmosphericInput a;a.rain=0;a.pet=reverse ? std::array<double,2>{3e-5,1e-5} : std::array<double,2>{1e-5,3e-5};
+        Model m;m.setup(false,2,reverse,false,false,a);for(int i=0;i<2;++i){m.surface.volume[i]=0;m.surface.depth[i]=0;}
+        m.attach();for(double end:{.1,1.,2.125,4.})ASSERT_EQ(m.stage.advance(m.stage.completedEnd(),end),"");
+        std::map<std::string,double> now;
+        for(const auto& r:m.sources.atmosphere())now[m.sources.context().subcatch_names.name_of(r.source)]+=r.potential;
+        if(!reverse)prior=now;else EXPECT_EQ(prior,now);
+        for(const auto& r:m.stage.etReceipts()){
+            EXPECT_EQ(r.start,2.125);EXPECT_EQ(r.end,4);if(r.source>=0)EXPECT_NEAR(r.area,.5,1e-15);
+        }
+        for(int i=0;i<2;++i)EXPECT_NEAR(m.gw.state().et_pending[i],4*4e-5*.3048*.5,1e-15);
+        m.gw.assignTiers(4,1);m.gw.fireGwCells(0,4,m.surface,4);etBalance(m);
+        for(int i=0;i<2;++i){EXPECT_DOUBLE_EQ(m.gw.state().et_pending[i],0);EXPECT_DOUBLE_EQ(m.gw.state().et_soil_cumulative[i],0);}
+    }
+}
+
+TEST(CommonSourceStage, MarcherConsumesPastSoilDemandWithoutDuplicatingMeshOrSourceEvaporation) {
+    AtmosphericInput a;a.rain=0;a.pet={1e-5,3e-5};a.et="BOUNDARY_ET";
+    Model m;m.setup(false,1,false,false,false,a);m.surface.volume[0]=0;m.surface.depth[0]=0;
+    m.surface.evap_rate[0]=2e-6;m.attach(true);
+    for(double end:{.3,1.,2.125,4.}){
+        const auto start=m.stage.completedEnd();EXPECT_DOUBLE_EQ(m.marcher.advance(start,end),end);etBalance(m);
+        EXPECT_NEAR(m.gw.state().et_potential_cumulative[0],end*(4e-5*.3048+4e-6),1e-15);
+        EXPECT_NEAR(m.gw.state().continuityResidual(),0,1e-11);
+    }
+    EXPECT_GT(m.gw.state().et_soil_cumulative[0],0);EXPECT_DOUBLE_EQ(m.gw.state().et_pending[0],0);
+    EXPECT_DOUBLE_EQ(m.surface.evap_loss_total,0);m.marcher.finalize();
+}
+TEST(CommonSourceStage, ExistingEtModesConsumeOnlyEligibleCompletedDemand) {
+    for(const std::string mode:{"NONE","BOUNDARY_ET","CAPILLARY_RISE","BOTH"}) {
+        AtmosphericInput a;a.rain=0;a.pet={.0001,0};a.impervious={.4,0};a.et=mode;a.ks=0;
+        Model m;m.setup(false,1,false,false,false,a);m.surface.volume[0]=0;m.surface.depth[0]=0;m.attach();
+        ASSERT_EQ(m.stage.advance(0,1),"");m.gw.assignTiers(1,1);m.gw.fireGwCells(0,1,m.surface,1);
+        if(mode=="BOUNDARY_ET"||mode=="BOTH")EXPECT_GT(m.gw.state().led_et,0);
+        else {EXPECT_DOUBLE_EQ(m.gw.state().led_et,0);EXPECT_NEAR(m.gw.state().et_unused_cumulative[0],.0001*.3048,1e-15);}
+        EXPECT_DOUBLE_EQ(m.gw.state().et_pending[0],0);etBalance(m);
+    }
+}
+TEST(CommonSourceStage, ComponentAreasMustCloseEvenWhenTotalWeatherCoverageCloses) {
+    AtmosphericInput a;a.impervious={.4,0};Model m;m.setup(false,1,false,false,false,a);
+    m.preview.shares[0].impervious_area=.5;
+    EXPECT_FALSE(m.stage.initialize(m.mesh,m.surface,m.options,m.gw,m.sources,m.preview).empty());
+    EXPECT_DOUBLE_EQ(m.gw.state().et_potential_cumulative[0],0);
+    m.preview.shares[0].impervious_area=.4;m.attach();
+    Model split;split.setup(false,2,false,false,false,a);
+    // Component totals remain correct, but one cell would borrow its peer's area.
+    split.preview.shares[0].impervious_area+=.1;split.preview.shares[1].impervious_area-=.1;
+    EXPECT_FALSE(split.stage.initialize(split.mesh,split.surface,split.options,split.gw,split.sources,split.preview).empty());
+}
+TEST(CommonSourceStage, UnqualifiedSigmaCannotInstallAnyWaterOrAtmosphericBudget) {
+    AtmosphericInput a;a.closure=GwClosure::SIGMA;a.et="BOUNDARY_ET";a.pet={.0001,.0002};
+    Model m;m.setup(false,1,false,false,false,a);
+    EXPECT_NE(m.stage.initialize(m.mesh,m.surface,m.options,m.gw,m.sources,m.preview).find("SIGMA"),std::string::npos);
+    EXPECT_DOUBLE_EQ(m.gw.state().et_potential_cumulative[0],0);EXPECT_DOUBLE_EQ(m.gw.state().xacc_from_surface[0],0);
+    EXPECT_DOUBLE_EQ(m.sources.clocks().groups()[0].completed_end,0);
 }

@@ -143,6 +143,9 @@ public:
 
     /// One surface interval: reserve actual pond evaporation first. No forcing refresh resets this budget.
     void bookSurfaceEt(int cell,double dt,double potential_rate,double actual_surface_volume);
+    /// SI completed footprint volumes, already paid by their surface/LID owners.
+    /// Only soil_demand may reach this cell's extraction site; the rest expires.
+    void bookAreaEt(int cell,double dt,double potential,double owner_evaporation,double soil_demand);
 
     bool active() const noexcept { return state_.active; }
     SubsurfaceState&       state()       noexcept { return state_; }
