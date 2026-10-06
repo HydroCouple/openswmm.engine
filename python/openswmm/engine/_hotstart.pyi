@@ -38,7 +38,12 @@ class HotStart:
 
     @property
     def sim_datetime(self) -> datetime:
-        """Simulation moment at which the hot-start state was captured."""
+        """Simulation moment at which the hot-start state was captured: the
+        saving run's start date plus the elapsed simulation time."""
+        ...
+    @property
+    def start_datetime(self) -> datetime:
+        """Start date and time of the run that saved the state."""
         ...
     @property
     def crs(self) -> Optional[str]:

@@ -117,8 +117,9 @@ class Spatial:
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] xs = np.empty(n, dtype=np.float64)
         cdef np.ndarray[double, ndim=1] ys = np.empty(n, dtype=np.float64)
-        _check(swmm_spatial_get_node_coords_bulk(
-            h, <double*>xs.data, <double*>ys.data, n))
+        if n > 0:  # the C bulk calls refuse a zero count
+            _check(swmm_spatial_get_node_coords_bulk(
+                h, <double*>xs.data, <double*>ys.data, n))
         return np.column_stack((xs, ys))
 
     def set_node_coords(self, coords) -> None:
@@ -133,8 +134,9 @@ class Spatial:
                 f"({arr.shape[0]}, {arr.shape[1]})")
         cdef np.ndarray[double, ndim=1] xs = np.ascontiguousarray(arr[:, 0])
         cdef np.ndarray[double, ndim=1] ys = np.ascontiguousarray(arr[:, 1])
-        _check(swmm_spatial_set_node_coords_bulk(
-            h, <const double*>xs.data, <const double*>ys.data, n))
+        if n > 0:
+            _check(swmm_spatial_set_node_coords_bulk(
+                h, <const double*>xs.data, <const double*>ys.data, n))
 
     # ------------------------------------------------------------------
     # Link coords + vertices

@@ -214,7 +214,9 @@ retained receiver above the water table:
 
 All trial fluxes use a common pre-update state. A receiver intersected by the
 mobile table routes to mobile storage instead, without a retained-capacity
-bound. Donors below that table skip free drainage. Surface entry has zero
+bound. Only fully submerged donors skip free drainage; partially submerged
+cells continue draining retained excess into the connected mobile store.
+Surface entry has zero
 field capacity and the same volume bounds. Evaporation is bounded so media
 cannot fall below wilting point. BOTTOM seepage is an external loss.
 
@@ -226,8 +228,14 @@ it is used by both hydraulics and pollutant routing. Fully submerged orifices
 without a flap gate can reverse according to the sign of their head difference;
 see @ref hydraulics_ref_ch6_pumps_regulators for the full structure equations.
 
-Reverse flow enters its actual port. Media receipts fill local retained
-capacity before excess joins mobile storage. The infiltration upper-zone
+Reverse flow enters its actual port. A wholly exposed receiving cell fills
+local retained capacity before excess joins mobile storage. If its bottom
+is below the mobile water table, all received water enters mobile storage,
+even when the port itself is above that table. This is the same receiver
+ownership used by vertical drainage. Applying port-elevation ownership alone
+can trap inflow in a partially submerged cell until its retained fraction
+reaches porosity, causing a discontinuous head without a continuity error.
+The infiltration upper-zone
 deficit is averaged over the finite first-media zone, counting submerged
 pores as saturated. Rising backwater or accepted media-port wetting reduces
 the deficit and raises wetness, without adding reverse water to F. Full
@@ -251,6 +259,66 @@ richer vadose-zone model when those processes matter. Check routing-step
 sensitivity of timing, peaks and treatment, as well as continuity. Treatment
 and signed mass transfers are defined in @ref quality_ref_lid_storage_formulation;
 configuration and restart compatibility are in @ref engine_manual_lid_storage.
+
+#### 2.1.4.2 Optional semi-discrete Richards column {#hydraulics_ref_lid_richards}
+
+Selecting `Richards 1D` replaces the preceding gravity/front approximation.
+Every MEDIA and AGGREGATE material has explicit van Genuchten–Mualem
+retention/conductivity and positive specific storage. The porous column
+owns complete pore/elastic water; the storage node owns surface ponding only.
+For cell geometric volume \f$G_i\f$, pressure head \f$\psi_i\f$ and specific
+storage \f$S_{s,i}\f$:
+
+\f[
+ W_i=G_i\left[\theta_i(\psi_i)+S_{s,i}\max(\psi_i,0)\right],\qquad
+ \frac{dW_i}{dt}=Q_{i-1/2}-Q_{i+1/2}-E_i.
+\f]
+
+Cells are ordered top to bottom and Q is downward-positive. With upward
+positive elevation z and total head H = z + psi:
+
+\f[
+ Q_f= A_f K_f\frac{H_i-H_{i+1}}{d_f}.
+\f]
+
+Equal cells in one material use arithmetic face conductivity. Across
+unlike materials the half-cell resistances are in series:
+
+\f[
+ Q_f=\frac{A_f(H_i-H_{i+1})}
+ {\Delta z_i/(2K_i)+\Delta z_{i+1}/(2K_{i+1})}.
+\f]
+
+For negative pressure, effective saturation is
+\f$S_e=[1+(\alpha|\psi|)^n]^{-m}\f$, m = 1 - 1/n,
+\f$\theta=\theta_r+(\phi-\theta_r)S_e\f$, and
+\f$K=K_s S_e^l[1-(1-S_e^{1/m})^m]^2\f$.
+At nonnegative pressure theta = porosity and K = Ks. Alpha and specific
+storage are inverse metres in either project unit system. They must be
+explicitly authored; existing conductivity slope and Green–Ampt suction
+are not converted into retention parameters.
+
+The pond contact uses the mean of the first material's saturated conductivity
+and first-cell conductivity over a half-cell distance. Downward supply
+vanishes continuously over the last 1 micrometre of ponding; upward flow
+remains possible. No separate infiltration-front history or field-capacity
+cutoff is evolved. Sealed/native-soil-drainage bottoms are available; active
+runtime aquifer-bed coupling is pending and is rejected explicitly.
+
+Adaptive implicit Euler (BDF1), with a full/two-half-step error estimate,
+integrates the spatial balances. The two half steps are accepted. Newton
+iterations use tridiagonal systems. Vertical integration and network routing
+are split over each routing interval, with accepted port transfers committed
+once. A buried port uses its intercepted cell's total head; node HEAD/DEPTH
+represents surface ponding. Existing water-table-based control thresholds
+must therefore be reviewed when switching formulations.
+
+This is 1D matrix flow, not a lateral unsaturated or preferential-flow model;
+retention hysteresis is not included. Test cell count, routing step and ODE
+tolerance separately. The method-of-lines context is described by
+[Ireson et al. (2023), openRE](https://doi.org/10.5194/gmd-16-659-2023).
+Input/API/GUI configuration is in @ref engine_manual_lid_storage;
+transport is in @ref quality_ref_lid_richards.
 
 ### 2.1.5 Conduit Links
 
@@ -553,6 +621,5 @@ For dynamic wave analysis, if a non-storage, non-outfall node has not
 had an initial head assigned to it then it's initial head is set equal
 to the average elevation of the initial flow depths in the conduits that
 deliver flow into it.
-
 
 

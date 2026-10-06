@@ -14,7 +14,7 @@ consumer that does not exist.
 | Formulation | Status | What exists today | What is missing |
 |---|---|---|---|
 | Sediment transport (§11.1) | \status{Planned} | A roadmap scope statement | Design record, sections, kernel |
-| Groundwater transport (§11.2) | \status{Planned} | Six `[GW_*]` sections parsed, validated and written back; a design plan | The transport kernel and the component that hosts it |
+| Groundwater transport (§11.2) | \status{Experimental} | Bulk SAT/UNSAT transport, named sources, budgets, results and restart | Per-layer transport, boundary hydraulic bindings and the fuller thermal/reaction formulation |
 | Finite-volume species transport on `[POLLUTANTS]` (§11.3) | \status{Planned} | Contact-upwinded, flux-corrected species kernels verified on their own gates | The connection to the project's species; `FV_DISPERSION` is inert |
 | Per-element heat attributes — constants per tag, link or node, and climate per element through the API (§11.4) | \status{Implemented} | Parsed, resolved, honoured by every flux evaluator, written back | — |
 | Per-element heat attributes — time series, computed shading, scoped API and GUI (§11.4) | \status{Planned} | The identity plumbing the constants ride on | Series resolution, a shade model, the editor table |
@@ -43,40 +43,34 @@ read as a first step toward this item.
 
 ## 11.2 Groundwater Transport
 
-The engine accepts six `[GW_*]` sections that configure solute, reaction
-species, age and temperature transport in a spatially explicit two-zone
-aquifer beneath the 2D mesh: @ref engine_manual_sect_GW_TRANSPORT_OPTIONS,
-@ref engine_manual_sect_GW_TRANSPORT_PARAMS, @ref engine_manual_sect_GW_SORPTION,
-@ref engine_manual_sect_GW_INITIAL_QUALITY,
-@ref engine_manual_sect_GW_BOUNDARY_QUALITY and
-@ref engine_manual_sect_GW_SOURCES. The rows are parsed, validated at open —
-species and time-series names, cell and tag references, an `XY` source
-snapped to the nearest cell centroid, duplicate source names refused rather
-than last-wins — kept, and written back unchanged on save. **No kernel
-consumes them.** A model that carries any of them receives this warning once:
+The two-zone mesh aquifer now has operational bulk SAT/UNSAT species stores,
+hydraulic mass transfers, sorption, dispersion and first-order decay. The
+transport policy controls the enabled species classes; an active aquifer is
+not categorically unavailable. The legacy subcatchment aquifer's constant
+quality boundary remains a separate model.
 
-> [GW_*] subsurface transport is AUTHORED but INERT this run: the integrated
-> 2D groundwater component (org.hydrocouple.openswmm.integrated2d) provides
-> the two-zone kernel these sections configure and is not available in this
-> release. The rows are validated, kept and written back unchanged.
+@ref engine_manual_sect_GW_INITIAL_QUALITY applies SAT and UNSAT seeds with
+GLOBAL < TAG < CELL precedence. @ref engine_manual_sect_GW_SOURCES applies
+named total water flow, native CONC and independent pollutant MASS loading,
+with optional SCALE, chronological series changes, availability-limited
+extraction and separate continuity terms. Source MASS uses mg/s, ug/s or
+count/s for declared MG/L, UG/L or #/L. Groundwater age values are seconds and
+temperature is degrees C. HDF5 SAT/UNSAT concentration datasets now identify
+native units per species, including when surface transport is disabled.
+Native restart version 7 retains source-species ledgers; new readers retain
+version 1–6 support.
 
-The component id named in that warning, `org.hydrocouple.openswmm.integrated2d`,
-is a *planned* entry in the process-component registry: a
-`[PROCESS_COMPONENTS]` row naming it does not fail as an unknown id but is
-refused with a diagnostic naming the phase it arrives with. The same registry
-convention gives the reactions, ARD, LARD, heat and water-age components
-their ids, and it is how a deck written against the design can be recognised
-before the implementation lands.
-
-What the groundwater domain does today is recorded by the transport policy of
-§10.1: every species class reads *unavailable* there, with the reason. For
-pollutants the legacy aquifer supplies a constant groundwater concentration at
-the node seam on positive groundwater flow only, and exfiltration carries
-nothing; for age and temperature the aquifer is a source volume — new water
-enters at age zero and at the `GW` source temperature of `[HEAT_SOURCES]`.
+These implemented paths do not complete the original design. Initial LAYER
+quality and @ref engine_manual_sect_GW_BOUNDARY_QUALITY are explicitly refused
+when active groundwater cannot execute them; LAYER never aliases UNSAT and a
+boundary row never masquerades as a successful inert forcing. Coupled surface
+RK2 is also explicitly unsupported. The fuller per-layer transport,
+conduction and reaction-scope design below remains distinct from bulk
+transport and operational named wells.
 
 The design (2026-09-04, amended 2026-09-07 for the mixed
-triangle/quadrilateral mesh) is summarized here. Its saturated
+triangle/quadrilateral mesh) is retained here as the broader design, not as a
+claim that every term is implemented. Its saturated
 zone carries mass \f$M_s = n\,h_g\,A\,C\f$ and solves the retarded
 advection–dispersion equation on the kernel's own Darcy face fluxes,
 
@@ -99,7 +93,7 @@ rule the surface coupling of §10.4 already follows. The degenerate
 `PER_SUBCATCH` mode, one column per subcatchment, is what would replace the
 constant groundwater columns above on a network-only model.
 
-<!-- source: src/engine/2d/gw/GwTransportSections.cpp:452-476, 590-639; src/engine/plugins/ProcessComponentRegistry.cpp:146-168; src/engine/transport/TransportPolicy.cpp:164-178; plans/transport/GW_TRANSPORT_HEAT_MSX_PLAN_2026-09-04.md:1-33, 35-58, 61-95; plans/transport/TWOD_TRANSPORT_PLAN.md:122-195 -->
+<!-- source: src/engine/2d/subsurface/SubsurfaceSolver.cpp; src/engine/2d/subsurface/SubsurfaceTransportState.hpp; src/engine/2d/gw/GwSourceResolver.cpp; src/engine/2d/gw/GwSourceForcing.hpp; src/engine/2d/SurfaceRouter2D.cpp; src/engine/2d/output/Default2DOutputPlugin.cpp; plans/transport/GW_TRANSPORT_HEAT_MSX_PLAN_2026-09-04.md -->
 
 ## 11.3 Finite-Volume Species Transport Wired to `[POLLUTANTS]`
 

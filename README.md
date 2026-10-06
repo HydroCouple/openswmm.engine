@@ -174,7 +174,7 @@ All third-party libraries are resolved through the vcpkg manifest ([`vcpkg.json`
 | Dependency | Needed for | Default build | Controlled by |
 |---|---|---|---|
 | SQLite3 (rtree) | GeoPackage I/O | included | `-DOPENSWMM_WITH_GEOPACKAGE=ON` (default) / vcpkg feature `geopackage` |
-| HDF5 | 2D module output (CF-1.11 / UGRID-1.0) | included | `-DOPENSWMM_BUILD_2D=ON` (default) / vcpkg feature `2d` |
+| HDF5 | 2D module output (CF-1.11 / UGRID-1.0) | included | `-DOPENSWMM_BUILD_2D=ON` (default) / vcpkg feature `2d`; `-DOPENSWMM_2D_HDF5_OUTPUT=OFF` builds 2D without it (`[2D_OPTIONS] OUTPUT_FILE` is then ignored with a warning; results via the `swmm_2d_*` API — used by the WebAssembly build) |
 | Kokkos (OpenMP) | GPU/threaded 2D surface-solver plugin | included | `-DOPENSWMM_BUILD_GPU_PLUGIN=ON` (default) / vcpkg feature `gpu` |
 | GoogleTest | unit + regression tests | optional | `-DOPENSWMM_BUILD_TESTS=ON` / `*-tests` presets / vcpkg feature `tests` |
 | Google Benchmark | performance benchmarks | optional | `-DOPENSWMM_BUILD_BENCHMARKS=ON` / vcpkg feature `benchmarks` |

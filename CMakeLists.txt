@@ -97,6 +97,7 @@ option(OPENSWMM_BUILD_PYTHON      "Build Python bindings" OFF)
 option(OPENSWMM_WITH_GEOPACKAGE   "Build GeoPackage I/O library (requires sqlite3)" ON)
 option(OPENSWMM_WITH_HDF5         "Build HDF5 model I/O (requires hdf5)" ON)
 option(OPENSWMM_BUILD_2D          "Build optional 2D surface routing module (explicit local-inertial marcher; HDF5 output)" ON)
+option(OPENSWMM_2D_HDF5_OUTPUT    "With OPENSWMM_BUILD_2D: build the 2D HDF5 results writer ([2D_OPTIONS] OUTPUT_FILE; requires hdf5). OFF builds the 2D module without HDF5 (e.g. WebAssembly); OUTPUT_FILE is then ignored with a warning and 2D results are read through the swmm_2d_* API" ON)
 option(OPENSWMM_BUILD_GPU_PLUGIN  "Build the GPU/Kokkos surface-solver plugin (standalone, dlopen()ed at runtime — never linked into the core). ON by default: a from-source build gets the Kokkos-OpenMP plugin and runtime `auto` uses it (the `gpu` vcpkg feature is in default-features, supplying Kokkos). The portable base build/wheel turns this OFF explicitly and excludes the `gpu` feature (VCPKG_MANIFEST_NO_DEFAULT_FEATURES) to stay Kokkos-free; pip users get OpenMP via the separate `openswmm-gpu-omp` companion wheel. Backend selected via OPENSWMM_GPU_BACKEND (default omp)." ON)
 
 # HC-1 (2026-09-27): the HydroCouple component layer. OFF by default — the

@@ -47,17 +47,23 @@ set(OPENSWMM_HYDROCOUPLE_GIT_REPOSITORY
     "https://github.com/hydrocouple/HydroCouple.git"
     CACHE STRING "Git remote for the HydroCouple interface headers")
 
-# bef95cb --- "fix(abi): factory-component instances carry their ownership in
-# the type" (2026-09-04). ABI 2. On origin/dev since 2026-09-29.
+# The pinned commit. EMPTY on purpose since 2026-09-29, and the empty value is
+# the honest one: the owner chose to target ABI 4 — HydroCouple's in-progress
+# "contract-consistency round (breaking)" — which exists only as uncommitted
+# definitions in the developer's checkout. No pushed commit provides it, so
+# there is nothing a clean machine can fetch, and a pin that could never
+# satisfy OPENSWMM_HYDROCOUPLE_EXPECTED_ABI would only move the failure from a
+# clear configure-time message to a static_assert after a clone.
 #
-# The FULL 40-character SHA, not the abbreviation: an abbreviated SHA is only
-# resolvable after the clone has fetched enough history to disambiguate it,
-# and the full one cannot become ambiguous as the repository grows.
+# History: bef95cb19310c6560e7f35158515bf27ec57ac29 was the pin for ABI 2
+# (dbb5ac49, ceff514d). When ABI 4 is pushed, set this to that commit's FULL
+# 40-character SHA — never an abbreviation, never a branch: WorkflowStatus was
+# once renumbered without a release, and a moving ref is a silent ABI change.
 set(OPENSWMM_HYDROCOUPLE_GIT_TAG
-    "bef95cb19310c6560e7f35158515bf27ec57ac29"
+    ""
     CACHE STRING
-    "Pinned HydroCouple commit. A SHA, not a branch: WorkflowStatus was \
-renumbered without a release, so a moving ref is a silent ABI change.")
+    "Pinned HydroCouple commit (full SHA). Empty while the targeted ABI exists \
+only uncommitted; see FETCHCONTENT_SOURCE_DIR_HYDROCOUPLE.")
 
 # D1 (2026-09-29): the ABI the pin stands for, enforced on EVERY resolution
 # path, not only the fetch. Resolution tries a local install before the pinned
@@ -71,14 +77,60 @@ renumbered without a release, so a moving ref is a silent ABI change.")
 # turns this number into a static_assert, so a mismatch is a build error
 # naming both ABIs rather than a runtime surprise. Bump it together with
 # OPENSWMM_HYDROCOUPLE_GIT_TAG, never separately.
-set(OPENSWMM_HYDROCOUPLE_EXPECTED_ABI "2" CACHE STRING
-    "HYDROCOUPLE_ABI_VERSION the pinned commit declares; asserted at compile time")
+#
+# 4 since 2026-09-29, by owner decision: the component layer (D2 onward) is
+# written against HydroCouple's ABI-4 contract-consistency round — ownership
+# via std::unique_ptr creators, the normative error channel, the reconciled
+# lifecycle table — rather than ported to it later.
+set(OPENSWMM_HYDROCOUPLE_EXPECTED_ABI "4" CACHE STRING
+    "HYDROCOUPLE_ABI_VERSION the build must compile against; asserted at compile time")
 
 function(_openswmm_hydrocouple_report _how)
     if(NOT OPENSWMM_HYDROCOUPLE_QUIET)
         message(STATUS "HydroCouple interfaces: ${_how}")
     endif()
 endfunction()
+
+# --- 0. an explicit local source tree ----------------------------------------
+#
+# `FETCHCONTENT_SOURCE_DIR_HYDROCOUPLE` is CMake's own override: FetchContent
+# builds the named directory in place instead of cloning. It is the way to
+# compile against UNCOMMITTED HydroCouple definitions, which is what targeting
+# ABI 4 currently requires:
+#
+#   cmake … -DOPENSWMM_WITH_HYDROCOUPLE=ON \
+#           -DFETCHCONTENT_SOURCE_DIR_HYDROCOUPLE=/path/to/HydroCouple
+#
+# It is checked BEFORE find_package, deliberately: a stale install on
+# CMAKE_PREFIX_PATH would otherwise win over the tree the developer named, and
+# a silently-shadowed ABI is the exact failure D1's static_assert exists for.
+# Edits in that tree are picked up on the next build; there is no install step
+# to forget. The compile-check still asserts the ABI, so pointing this at a
+# checkout on the wrong ABI fails the build rather than compiling quietly.
+if(FETCHCONTENT_SOURCE_DIR_HYDROCOUPLE)
+    if(NOT EXISTS "${FETCHCONTENT_SOURCE_DIR_HYDROCOUPLE}/include/hydrocouple.h")
+        message(FATAL_ERROR
+            "FETCHCONTENT_SOURCE_DIR_HYDROCOUPLE='${FETCHCONTENT_SOURCE_DIR_HYDROCOUPLE}' "
+            "does not contain include/hydrocouple.h — not a HydroCouple checkout.")
+    endif()
+    include(FetchContent)
+    set(HYDROCOUPLE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    # GIT_* are required by the declaration but ignored: the source-dir
+    # override short-circuits the download entirely.
+    FetchContent_Declare(HydroCouple
+        GIT_REPOSITORY ${OPENSWMM_HYDROCOUPLE_GIT_REPOSITORY}
+        GIT_TAG        "local-source-override"
+        EXCLUDE_FROM_ALL)
+    FetchContent_MakeAvailable(HydroCouple)
+    if(NOT TARGET HydroCouple::HydroCouple)
+        message(FATAL_ERROR "The HydroCouple tree at "
+            "${FETCHCONTENT_SOURCE_DIR_HYDROCOUPLE} did not define HydroCouple::HydroCouple.")
+    endif()
+    _openswmm_hydrocouple_report(
+        "LOCAL SOURCE ${FETCHCONTENT_SOURCE_DIR_HYDROCOUPLE} (uncommitted definitions "
+        "allowed; ABI ${OPENSWMM_HYDROCOUPLE_EXPECTED_ABI} asserted at compile time)")
+    return()
+endif()
 
 # --- 1. already satisfied -----------------------------------------------------
 if(TARGET HydroCouple::HydroCouple)
@@ -109,6 +161,16 @@ endif()
 # mistyped commit still surfaces as FetchContent's opaque checkout error. If
 # you see "Failed to checkout tag" with a SHA pin: check that the commit has
 # been pushed to OPENSWMM_HYDROCOUPLE_GIT_REPOSITORY before anything else.
+if(OPENSWMM_HYDROCOUPLE_GIT_TAG STREQUAL "")
+    message(FATAL_ERROR
+        "OPENSWMM_WITH_HYDROCOUPLE=ON, but this build targets HydroCouple ABI "
+        "${OPENSWMM_HYDROCOUPLE_EXPECTED_ABI}, which no pushed commit provides yet, "
+        "and no installed copy was found.\n"
+        "Build against a local checkout:\n"
+        "  -DFETCHCONTENT_SOURCE_DIR_HYDROCOUPLE=/path/to/HydroCouple\n"
+        "Once that ABI is pushed, set OPENSWMM_HYDROCOUPLE_GIT_TAG to its full SHA.")
+endif()
+
 include(FetchContent)
 
 # Ask the remote whether the pin is even reachable before cloning, so the

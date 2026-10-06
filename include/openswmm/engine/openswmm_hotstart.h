@@ -334,12 +334,23 @@ SWMM_ENGINE_API int swmm_hotstart_set_subcatch_runoff(
  * ========================================================================= */
 
 /**
- * @brief Get the simulation timestamp stored in the hot start file.
+ * @brief Get the elapsed simulation time at which the state was saved.
  * @param hs         Hot start handle.
- * @param sim_time   [out] Simulation time (decimal days) at which state was saved.
+ * @param sim_time   [out] Seconds since the saving run's start date (see
+ *                   swmm_hotstart_get_start_date); the saved moment is the start
+ *                   date plus this.
  * @returns SWMM_OK or SWMM_ERR_HOTSTART.
  */
 SWMM_ENGINE_API int swmm_hotstart_get_sim_time(SWMM_HotStart hs, double* sim_time);
+
+/**
+ * @brief Get the start date of the run that saved the hot start file.
+ * @param hs          Hot start handle.
+ * @param start_date  [out] Start date and time as an OADate (decimal days since
+ *                    12/30/1899).
+ * @returns SWMM_OK or SWMM_ERR_HOTSTART.
+ */
+SWMM_ENGINE_API int swmm_hotstart_get_start_date(SWMM_HotStart hs, double* start_date);
 
 /**
  * @brief Get the CRS string stored in the hot start file.

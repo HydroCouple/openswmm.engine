@@ -51,7 +51,7 @@ SWMM_ENGINE_API int swmm_stat_node_max_overflow(SWMM_Engine engine, int idx, dou
 /** @brief Total volume flooded at a node (project volume units). */
 SWMM_ENGINE_API int swmm_stat_node_vol_flooded(SWMM_Engine engine, int idx, double* val);
 
-/** @brief Total time flooded at a node (hours). */
+/** @brief Total time flooded at a node (seconds). */
 SWMM_ENGINE_API int swmm_stat_node_time_flooded(SWMM_Engine engine, int idx, double* val);
 
 /* =========================================================================
@@ -70,7 +70,7 @@ SWMM_ENGINE_API int swmm_stat_link_max_filling(SWMM_Engine engine, int idx, doub
 /** @brief Total volume conveyed through a link (project volume units). */
 SWMM_ENGINE_API int swmm_stat_link_vol_flow(SWMM_Engine engine, int idx, double* val);
 
-/** @brief Total surcharge time for a link (hours). */
+/** @brief Total surcharge time for a link (seconds). */
 SWMM_ENGINE_API int swmm_stat_link_surcharge_time(SWMM_Engine engine, int idx, double* val);
 
 /* =========================================================================

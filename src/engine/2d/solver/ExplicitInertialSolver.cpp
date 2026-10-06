@@ -2404,6 +2404,10 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
             // Quiescent: stride the window; the lazy tier keeps accumulating.
             t = t_target;
             last_dt_ = remaining;
+            // Lazy rain/spill can wet an inactive cell during this stride.
+            // Reconsider activation at the next entry; no macro cycles ran
+            // to advance the normal rebuild cadence.
+            cycles_since_rebuild = kRebuildEveryCycles;
             break;
         }
 

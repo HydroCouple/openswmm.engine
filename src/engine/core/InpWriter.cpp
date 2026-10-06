@@ -1567,7 +1567,9 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     }
     // The spatial frame is the only CRS store a GeoPackage open fills, so
     // fall back to it — otherwise a .gpkg model saved as .inp loses its CRS.
-    {
+    // v6-only key: a 5.x engine has nothing to do with it (stock 5.2.4 as
+    // shipped would reject it; the SWMMVis build warns and ignores).
+    if (!swmm5) {
         const std::string& crs = !o.crs.empty() ? o.crs : ctx.spatial.crs;
         if (!crs.empty())
             std::fprintf(f,"%-20s %s\n",  "CRS",            crs.c_str());
@@ -1841,7 +1843,15 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // prior hardcoded "INTENSITY" silently rewrote VOLUME/CUMULATIVE gages.
     const char* fmt = ctx.gages.rain_type[u]==1 ? "VOLUME"
                     : ctx.gages.rain_type[u]==2 ? "CUMULATIVE" : "INTENSITY";
-    const double sf = ctx.gages.scale_factor[u];
+    double sf = ctx.gages.scale_factor[u];
+    // The trailing scale-factor token is an OpenSWMM legacy-engine extension;
+    // a stock SWMM 5 parser has no slot for it. Drop it for that profile and
+    // say so — it scales the gage's rainfall, so it is model content.
+    if(stock5 && sf!=1.0){
+        note("[RAINGAGES] gage \""+ctx.gage_names.name_of(j)+"\": rain scale factor "+
+             std::to_string(sf)+" dropped (stock SWMM 5 has no such column)");
+        sf = 1.0;
+    }
     if(ts>=0){
         std::fprintf(f,"%-16s %-12s %-8s     %.2f     TIMESERIES %s",ctx.gage_names.name_of(j).c_str(),fmt,gsb,ctx.gages.snow_factor[u],tN(ctx,ts));
         if(sf!=1.0)std::fprintf(f," %.4g",sf);
@@ -3352,6 +3362,22 @@ int writeInpFile(const SimulationContext&  ctx_internal,
             ctx.gage_names.name_of(j).c_str(),
             ctx.spatial.gage_x[u], ctx.spatial.gage_y[u]);
     }}
+    }
+
+    // [LABELS], [BACKDROP] — GUI map annotation the solver never reads,
+    // replayed verbatim from ctx.passthrough_sections. They used to be parsed
+    // by a no-op handler, so every label and the backdrop image were deleted by
+    // the first Open → Save. Emitted here because the legacy SWMM GUI's
+    // ExportMap() writes them at the end of the geospatial block, after
+    // [SYMBOLS]. Nothing validates their content — no engine has ever parsed
+    // it — so the authored lines are written back unchanged.
+    // Each tag is written back under the spelling it was read with, so a deck
+    // that said [PROFILES] still says [PROFILES] afterwards.
+    for(const char* tag : {"LABELS","BACKDROP","PROFILE","PROFILES"}){
+        auto it = ctx.passthrough_sections.find(tag);
+        if(it==ctx.passthrough_sections.end()||it->second.empty()) continue;
+        sec(f,tag);
+        for(const auto& line : it->second) std::fprintf(f,"%s\n",line.c_str());
     }
 
     // [TAGS] — per-object free-form labels. Tags are stored per-SoA

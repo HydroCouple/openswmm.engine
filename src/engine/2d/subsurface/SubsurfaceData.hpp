@@ -122,6 +122,18 @@ struct GwLinkShare {
     double weight = 0.0;  ///< length fraction in (0, 1]
 };
 
+/// One (subcatchment, cell) infiltration share (plans/INFILTRATION_TO_2D_
+/// AQUIFER_AND_REMAP_PLAN_2026-10-03.md): `weight` is the fraction of the
+/// subcatchment polygon's area inside the cell. A subcatchment WITHOUT a
+/// lumped [GROUNDWATER] aquifer delivers `weight × (infiltration volume of
+/// this runoff step)` into the cell; its shares sum to ≤ 1 (the part of its
+/// polygon outside the mesh stays a system loss, as conduit seepage does).
+struct GwSubcatchShare {
+    int    subcatch = -1;  ///< 1D subcatchment index
+    int    cell     = -1;  ///< mesh cell
+    double weight   = 0.0; ///< area fraction in (0, 1]
+};
+
 /// `[2D_AQUIFER_OPTIONS]`. Defaults are the plan's starred values.
 struct GwOptions {
     SoilChar  soil_char = SoilChar::RUSSO;
@@ -272,6 +284,10 @@ struct SubsurfaceState {
     double led_et       = 0.0;   ///< subsurface ET out
     double led_infil_in = 0.0;   ///< q⁺ delivered from the surface
     double led_link     = 0.0;   ///< G-X3: conduit seepage delivered in
+    /// Diagnostic split of `led_infil_in`: the share booked from 1D
+    /// subcatchments without a lumped aquifer, counted at delivery (not a
+    /// second inflow — continuityResidual does not use it).
+    double led_subcatch_in = 0.0;
     double led_init_storage  = 0.0;
     double led_final_storage = 0.0;
     double led_source_in = 0.0, led_source_out = 0.0; ///< wells, m3; separate from node/link exchange

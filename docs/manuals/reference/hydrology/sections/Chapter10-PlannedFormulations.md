@@ -4,7 +4,7 @@
 
 \_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_
 
-**Nothing in this chapter is in this release as designed.** \status{Planned}
+**This chapter records remaining design work and the implemented subsets that precede it.** \status{Planned}
 Chapters 2 through 9 describe formulations the shipped engine executes; this
 chapter records the ones it does not — designed and not built, or built with
 a stated gap between what the code does and what its design or the literature
@@ -19,7 +19,7 @@ hydraulic half of the same record is
 
 | Section | Formulation | Plan of record | Status |
 |---|---|---|---|
-| 10.1 | Groundwater transport in the mesh aquifer, the hydrology side | Groundwater-transport design, 2026-09-04 (@ref quality_ref_ch11_planned "Quality Chapter 11" §11.2); `ROADMAP.md` §2.3 | \status{Planned} |
+| 10.1 | Groundwater transport in the mesh aquifer, the hydrology side | Groundwater-transport design, 2026-09-04 (@ref quality_ref_ch11_planned "Quality Chapter 11" §11.2); `ROADMAP.md` §2.3 | \status{Experimental} — bulk transport and named sources implemented; remaining extensions below |
 | 10.2 | LID controls as storage nodes, the hydrology side | `plans/LID_StorageNode_Redesign.md`; `ROADMAP.md` §6 | \status{Planned} |
 | 10.3 | LID detailed output | `plans/LID_DETAIL_OUTPUT_PLAN_2026-08-13.md` | \status{Planned} |
 | 10.4 | The non-Gardner recharge closures and the benchmarks that would promote them | `plans/TWO_ZONE_GROUNDWATER_EXPLICIT_LTS_PLAN_2026-08-15.md` §9 steps 4, 7, 13, 18; `plans/TWO_ZONE_GROUNDWATER_FV_INTEGRATION_PLAN.md` §5 | \status{Experimental} |
@@ -29,21 +29,28 @@ hydraulic half of the same record is
 
 ## 10.1 Groundwater transport in the mesh aquifer, the hydrology side
 
-The engine accepts six `[GW_*]` sections — @ref engine_manual_sect_GW_TRANSPORT_OPTIONS,
-@ref engine_manual_sect_GW_TRANSPORT_PARAMS, @ref engine_manual_sect_GW_SORPTION,
-@ref engine_manual_sect_GW_INITIAL_QUALITY, @ref engine_manual_sect_GW_BOUNDARY_QUALITY
-and @ref engine_manual_sect_GW_SOURCES. They are registered and parsed,
-validated at open against the mesh, the species registry and the time series
-(cells on the mesh, an edge in \f$0 \ldots n_v - 1\f$ of its own cell, species
-through the one registry, a duplicate source name an error), written back by
-the input writer and editable through the C API of
-`openswmm_gw_transport.h`. **They drive nothing.** Every run that authors any
-of them puts one warning in the report:
+The six `[GW_*]` authoring sections are registered, validated and written back,
+but they no longer have a single "parsed but inert" status. The active two-zone
+kernel carries bulk SAT/UNSAT species stores, hydraulic transfers, linear
+sorption, dispersion and first-order decay. @ref engine_manual_sect_GW_INITIAL_QUALITY
+seeds SAT/UNSAT with GLOBAL < TAG < CELL precedence. @ref engine_manual_sect_GW_SOURCES
+now applies named injection/extraction and native species forcing, with actual
+water/species budgets, HDF5 results and native restart persistence.
 
-> [GW_*] subsurface transport is AUTHORED but INERT this run: the integrated
-> 2D groundwater component (org.hydrocouple.openswmm.integrated2d) provides
-> the two-zone kernel these sections configure and is not available in this
-> release. The rows are validated, kept and written back unchanged.
+Source FLOW is total m³/s, area-weighted for GLOBAL/TAG and local for CELL;
+SCALE multiplies flow and independent MASS loading without scaling CONC twice.
+Linear series use absolute model time and endpoint hold. Native pollutant MASS
+is mg/s, ug/s or count/s for MG/L, UG/L or #/L. Groundwater age is seconds.
+Extraction is availability-limited and removes existing dissolved quality.
+
+The remaining unsupported cases are explicit: initial LAYER quality is refused
+by active bulk transport, @ref engine_manual_sect_GW_BOUNDARY_QUALITY lacks a
+hydraulic groundwater edge binding and fails initialization, and coupled
+surface RK2 is refused rather than silently disabling groundwater. Per-layer
+transport, thermal conduction and additional reaction-scope work remain distinct
+from the operational source and bulk-transport paths. See the input reference
+for the exact current contracts rather than treating the older plan as runtime
+capability evidence.
 
 **What the design intends.** The plan of record moves every species class the
 project carries through the two-zone aquifer of
@@ -87,15 +94,15 @@ positive groundwater flow only, with exfiltration carrying nothing — which the
 plan would migrate to `[GW_INITIAL_QUALITY] * SAT` rows on open, as initial
 conditions rather than eternal constants.
 
-**No kernel exists.** `src/engine/2d/gw/` holds the data, the parsers, the
-validator and the C API only; none of the planned `SubsurfaceTransportState`,
-`SubsurfaceTransport` or `SoilThermal` sources is in the tree, no reaction file
-accepts a `SUBSURFACE` scope, and phases T7.1 to T7.4 of the plan are gated on
-the flow kernel. The plan's own baseline states that the 2D subsurface kernel
-does not exist — true when it was written, overtaken by Chapter 9 since — so
-its first act would be re-verification against the kernel that now runs. \status{Planned}
+**Implementation boundary.** `SubsurfaceTransportState` and the groundwater
+transport in `SubsurfaceSolver` now exist and operate on both bulk zones.
+`GwSourceResolver` and `GwSourceForcing` provide operational named forcing;
+the former blanket inert warning is obsolete for an active aquifer. The fuller
+σ-layer transport and thermal/reaction formulation described above remains a
+design record, not a claim that every `[GW_*]` thermal option is consumed.
+\status{Experimental}
 
-<!-- source: src/engine/2d/gw/GwTransportData.hpp:20-22; src/engine/2d/gw/GwTransportSections.cpp:450-476 (registration), :621-627 (duplicate names), :632-639 (the warning, quoted verbatim); src/engine/2d/gw/GwTransportSections.hpp:81-98 (resolveGwTransport, inert warning); src/engine/core/SWMMEngine.cpp:560-569 (emission); src/engine/core/InpWriter.cpp:535-540 (writer); include/openswmm/engine/openswmm_gw_transport.h:17-43; src/engine/2d/api/ApiGwTransport.cpp:102, :461; plans/transport/GW_TRANSPORT_HEAT_MSX_PLAN_2026-09-04.md:1-5, :7-27 (cell-generic amendment), :35-39 (§0), :45-57 (§1 baseline), :65-74 (§2.1-2.2), :76-93 (§2.3-2.4), :95-107 (§2.5), :113-114 (§3.1), :138-156 (§3.5 tuple table), :205 (PER_SUBCATCH migration), :240-244 (§6), :263-278 (§8 phases), :284 (§9 planned files) -->
+<!-- source: src/engine/2d/subsurface/SubsurfaceSolver.cpp; src/engine/2d/subsurface/SubsurfaceTransportState.hpp; src/engine/2d/gw/GwSourceResolver.cpp; src/engine/2d/gw/GwSourceForcing.hpp; src/engine/2d/SurfaceRouter2D.cpp; src/engine/2d/output/Default2DOutputPlugin.cpp -->
 
 ## 10.2 LID controls as storage nodes, the hydrology side
 

@@ -92,6 +92,41 @@ cdef int _resolve_pollutant(solver, key) except -1:
         _h(solver), key, swmm_pollutant_index, swmm_pollutant_count, "Pollutant")
 
 
+cdef inline int _resolve_surface_species(solver, key) except -1:
+    """BW-MSX (2026-09-19): a buildup / washoff / loading constituent is a
+    pollutant OR a reactions-component (MSX) species. The C API addresses
+    species at ``n_pollutants + m``; this resolver accepts a pollutant id or
+    index as before, a species *name*, or an int in ``[0, np + nm)``."""
+    cdef SWMM_Engine h = _h(solver)
+    cdef int np = swmm_pollutant_count(h)
+    cdef int nm = swmm_reaction_species_count(h)
+    cdef int i, m, is_wall
+    cdef double atol, rtol
+    cdef char name[128]
+    cdef char units[32]
+    cdef bytes b
+    if isinstance(key, str):
+        b = (<str>key).encode('utf-8')
+        i = swmm_pollutant_index(h, b)
+        if i >= 0:
+            return i
+        for m in range(nm):
+            if swmm_reaction_species_get(h, m, name, sizeof(name), &is_wall,
+                                         units, sizeof(units), &atol, &rtol) == 0 \
+                    and name == b:
+                return np + m
+        raise KeyError(f"Pollutant or species '{key}' not found")
+    if isinstance(key, bool):
+        raise TypeError("Pollutant key must be int or str, got bool")
+    if isinstance(key, int) or hasattr(key, "__index__"):
+        i = <int>int(key)
+        if i < 0 or i >= np + nm:
+            raise IndexError(
+                f"Pollutant/species index {i} out of range [0, {np + nm})")
+        return i
+    raise TypeError(f"Pollutant key must be int or str, got {type(key).__name__}")
+
+
 cdef int _resolve_landuse(solver, key) except -1:
     return _resolve_index(
         _h(solver), key, swmm_landuse_index, swmm_landuse_count, "Landuse")
@@ -310,7 +345,7 @@ class LoadingsView(MutableMapping):
 
     def __getitem__(self, key):
         _check_fresh(self._sub)
-        cdef int p = _resolve_pollutant(self._sub._solver, key)
+        cdef int p = _resolve_surface_species(self._sub._solver, key)
         cdef double v = 0.0
         _check(swmm_subcatch_get_initial_loading(
             _h(self._sub._solver), self._sub._index, p, &v))
@@ -318,7 +353,7 @@ class LoadingsView(MutableMapping):
 
     def __setitem__(self, key, value):
         _check_fresh(self._sub)
-        cdef int p = _resolve_pollutant(self._sub._solver, key)
+        cdef int p = _resolve_surface_species(self._sub._solver, key)
         _check(swmm_subcatch_set_initial_loading(
             _h(self._sub._solver), self._sub._index, p, float(value)))
 
@@ -1039,10 +1074,11 @@ cdef class Subcatchments:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_subcatch_get_runoff_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_subcatch_get_runoff_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1051,10 +1087,11 @@ cdef class Subcatchments:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_subcatch_get_rainfall_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_subcatch_get_rainfall_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1063,10 +1100,11 @@ cdef class Subcatchments:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_subcatch_get_evap_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_subcatch_get_evap_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1075,10 +1113,11 @@ cdef class Subcatchments:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_subcatch_get_infil_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_subcatch_get_infil_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1087,10 +1126,11 @@ cdef class Subcatchments:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_subcatch_get_snow_depth_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_subcatch_get_snow_depth_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1100,10 +1140,11 @@ cdef class Subcatchments:
         cdef int n = swmm_subcatch_count(h)
         cdef int p = _resolve_pollutant(self._solver, pollutant)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_subcatch_get_quality_bulk(h, p, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_subcatch_get_quality_bulk(h, p, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1195,10 +1236,11 @@ cdef class Subcatchments:
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[char, ndim=1, mode="c"] buf = np.zeros(
             n * stride, dtype=np.int8)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_subcatch_get_ids_bulk(h, <char*>buf.data, stride, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_subcatch_get_ids_bulk(h, <char*>buf.data, stride, n)
         _check(err)
         raw = bytes(buf)
         out = []

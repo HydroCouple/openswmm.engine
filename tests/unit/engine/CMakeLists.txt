@@ -391,6 +391,15 @@ set_property(TEST
 # `_out.inp`, shared by test_object_deletion_ext and test_quality_roundtrip.
 # Also renamed. The check below is what stops a third.
 
+# The 2D suites read the HDF5 results file the run writes, so they need the
+# 2D results writer. A 2D build without it (OPENSWMM_2D_HDF5_OUTPUT=OFF) is a
+# deployment configuration — the WebAssembly package — not a test one.
+if(OPENSWMM_BUILD_2D AND NOT OPENSWMM_2D_HDF5_OUTPUT)
+    message(FATAL_ERROR
+        "The 2D unit tests read the HDF5 results file: configure them with "
+        "OPENSWMM_2D_HDF5_OUTPUT=ON (or OPENSWMM_BUILD_2D=OFF).")
+endif()
+
 # 2D surface routing tests — geometry, gradients, flux, parsing.
 # The 2D engine sources (MeshBuilder, VertexReconstruction, SurfaceFluxCalculator,
 # SectionHandlers2D, Default2DOutputPlugin) are NOT compiled into the test here:
@@ -910,11 +919,14 @@ if(OPENSWMM_WITH_GEOPACKAGE)
     # ctx.twod_io at locally-owned 2D structs, so this runs in both 2D and
     # non-2D builds).
     add_executable(test_engine_geopackage_mesh2d test_geopackage_mesh2d.cpp)
+    # The static geopackage archive goes before the engine it calls into: with
+    # --as-needed (the Linux default) an engine listed first is dropped, since
+    # the test object itself only calls the geopackage API.
     target_link_libraries(test_engine_geopackage_mesh2d
         PRIVATE
             GTest::gtest GTest::gtest_main GTest::gmock
-            $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
             openswmm_geopackage
+            $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
             openswmm_legacy_engine
     )
     target_include_directories(test_engine_geopackage_mesh2d
@@ -1059,6 +1071,21 @@ if(OPENSWMM_WITH_GEOPACKAGE)
         PROPERTIES LABELS "unit")
 endif()
 
+
+# ---- D2 (program plan §C.1): HydroCouple component discovery, Gate D-a ----
+# Only with the option: the test doubles and the engine's stamp both come
+# from HydroCouple's headers. SMOKE_*_DIR are exported by
+# tests/components/smoke, which tests/CMakeLists.txt adds before unit/.
+if(OPENSWMM_WITH_HYDROCOUPLE)
+    add_gtest_unit(test_engine_process_component_loader test_process_component_loader.cpp)
+    target_link_libraries(test_engine_process_component_loader PRIVATE HydroCouple::HydroCouple)
+    target_compile_definitions(test_engine_process_component_loader PRIVATE
+        SMOKE_ENV_DIR="${SMOKE_ENV_DIR}"
+        SMOKE_EXPLICIT_DIR="${SMOKE_EXPLICIT_DIR}"
+        PC_OUTPUT_DIR="${PROJECT_SOURCE_DIR}/tests/output/process_components")
+    # The libraries must exist on disk before the test scans for them.
+    add_dependencies(test_engine_process_component_loader hc_smoke_components)
+endif()
 
 # ---- No two test sources may share a scratch-fixture name ----
 # Every test here runs with data/ as its WORKING_DIRECTORY, so two files that

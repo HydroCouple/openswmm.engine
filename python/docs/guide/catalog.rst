@@ -21,11 +21,16 @@ Paths
 =====
 
 A **target** is a class reachable from a :class:`~openswmm.engine.Solver`:
-a service (``"forcing"``, ``"surface2d.groundwater"``), an element kind
+a service (``"forcing"``, ``"groundwater2d"``), an element kind
 (``"node"``, ``"link"``), a sub-view of one (``"node.stats"``,
 ``"link.xsect"``) or a standalone class (``"xsect"``, ``"output"``). A
 **member path** is a target plus a member name: ``"node.depth"``,
 ``"link.stats.max_filling"``, ``"forcing.node_lat_inflow"``.
+
+An alternate route to the same service is catalogued as a property with a
+``view_target`` pointing to its canonical target. For example,
+``catalog.lookup("surface2d.groundwater")["view_target"]`` is
+``"groundwater2d"``. Use that target to discover the shared view's members.
 
 .. code-block:: python
 
@@ -116,8 +121,10 @@ Consumer compatibility
   classes require constructor handling.
 * WASM generates a raw C API from its **pinned engine submodule**, plus numeric
   enums from the Python source. This is independent of the Python catalog.
-  Its current 1D build excludes 2D, mesh groundwater and surface quality; its
-  TypeScript convenience classes cover only part of the Python object API.
+  It builds the 2D module without its HDF5 results writer
+  (``OPENSWMM_2D_HDF5_OUTPUT=OFF``) and mirrors ``Surface2D`` and its
+  infiltration view in TypeScript; mesh groundwater, surface quality and the
+  rest of the Python object API are reached through its raw layer.
 
 After adding native exports or changing a stub, rebuild the compiled extensions,
 regenerate the catalog, and run both engine and consumer contract tests. An

@@ -33,6 +33,7 @@
  */
 
 #include <hydrocouple.h>
+#include <hydrocouplecomponentabi.h>   // D0: the loader contract, upstreamed 2026-09-30
 #include <hydrocoupledistributed.h>
 #include <hydrocouplehelpers.h>
 #include <hydrocouplespatial.h>
@@ -47,11 +48,13 @@
 static_assert(HydroCouple::HYDROCOUPLE_ABI_VERSION == OPENSWMM_HYDROCOUPLE_EXPECTED_ABI,
               "The HydroCouple headers found by this build declare a different "
               "HYDROCOUPLE_ABI_VERSION than the pinned commit "
-              "(OPENSWMM_HYDROCOUPLE_EXPECTED_ABI). A local install or sibling "
-              "checkout is shadowing the pin. Either point CMAKE_PREFIX_PATH at an "
-              "install of the pinned commit, disable the local copy with "
-              "-DCMAKE_DISABLE_FIND_PACKAGE_HydroCouple=ON so the pin is fetched, or "
-              "bump OPENSWMM_HYDROCOUPLE_GIT_TAG and OPENSWMM_HYDROCOUPLE_EXPECTED_ABI "
+              "(OPENSWMM_HYDROCOUPLE_EXPECTED_ABI). Something on the resolution "
+              "path is the wrong ABI — a stale install on CMAKE_PREFIX_PATH, a "
+              "checkout named by FETCHCONTENT_SOURCE_DIR_HYDROCOUPLE that is on a "
+              "different ABI, or a pin that predates it. Point the build at a tree "
+              "on the expected ABI (-DFETCHCONTENT_SOURCE_DIR_HYDROCOUPLE=<checkout> "
+              "takes precedence over any install), or change "
+              "OPENSWMM_HYDROCOUPLE_GIT_TAG and OPENSWMM_HYDROCOUPLE_EXPECTED_ABI "
               "together.");
 
 // Referenced so the object is not empty on toolchains that warn about it.

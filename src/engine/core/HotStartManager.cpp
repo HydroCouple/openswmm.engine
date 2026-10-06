@@ -1554,6 +1554,11 @@ int HotStartManager::apply_legacy_routing(
         return 3;
     }
 
+    if (nPollut != ctx.n_pollutants()) {
+        tl_last_io_error = "Hotstart pollutant count mismatch";
+        return 3;
+    }
+
     // --- runoff (subcatchment) section ---
     // Legacy initializeFromHotstartFile() calls readRunoff() BEFORE readRouting()
     // for fileVersion >= 3, and readRouting() itself consumes an inline 2-float
@@ -1647,9 +1652,15 @@ int HotStartManager::apply_legacy_routing(
         nodes.lat_flow[ui] = static_cast<double>(lat);
         if (version >= 4 && nodes.type[ui] == NodeType::STORAGE) {
             float hrt = 0.0f;
-            if (!read_pod(file, hrt)) return 1;  // storage residence time (unused here)
+            if (!read_pod(file, hrt)) return 1;
+            if (ui < nodes.hrt.size()) nodes.hrt[ui] = static_cast<double>(hrt);
         }
-        for (int j = 0; j < nPollut; ++j) { float q = 0.0f; if (!read_pod(file, q)) return 1; }
+        for (int j = 0; j < nPollut; ++j) {
+            float q = 0.0f;
+            if (!read_pod(file, q)) return 1;
+            const auto qi = ui * static_cast<std::size_t>(nPollut) + j;
+            nodes.conc[qi] = nodes.conc_old[qi] = static_cast<double>(q);
+        }
         if (version <= 2)
             for (int j = 0; j < nPollut; ++j) { float q = 0.0f; if (!read_pod(file, q)) return 1; }
     }
@@ -1665,7 +1676,12 @@ int HotStartManager::apply_legacy_routing(
         links.depth[ui]          = static_cast<double>(depth);
         links.setting[ui]        = static_cast<double>(setting);
         links.target_setting[ui] = static_cast<double>(setting);
-        for (int j = 0; j < nPollut; ++j) { float q = 0.0f; if (!read_pod(file, q)) return 1; }
+        for (int j = 0; j < nPollut; ++j) {
+            float q = 0.0f;
+            if (!read_pod(file, q)) return 1;
+            const auto qi = ui * static_cast<std::size_t>(nPollut) + j;
+            links.conc[qi] = links.conc_old[qi] = static_cast<double>(q);
+        }
     }
 
     (void)flowUnits;
@@ -1717,10 +1733,10 @@ int HotStartManager::save_legacy_routing(const std::string& path,
         const auto ui = static_cast<std::size_t>(i);
         write_pod(file, static_cast<float>(nodes.depth[ui]));
         write_pod(file, static_cast<float>(nodes.lat_flow[ui]));
-        // Version-4 storage residence time. The reader discards it and it does
-        // not affect hydraulic routing (quality-only), so 0 is written.
+        // Legacy saveRouting preserves storage treatment residence time.
         if (nodes.type[ui] == NodeType::STORAGE)
-            write_pod(file, 0.0f);
+            write_pod(file, ui < nodes.hrt.size()
+                ? static_cast<float>(nodes.hrt[ui]) : 0.0f);
         for (int j = 0; j < nPollut; ++j) {
             const auto qi = ui * static_cast<std::size_t>(nPollut) +
                             static_cast<std::size_t>(j);

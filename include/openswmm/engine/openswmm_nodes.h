@@ -598,19 +598,26 @@ SWMM_ENGINE_API int swmm_node_get_storage_geometry(SWMM_Engine engine, int idx,
                                                    double* p1, double* p2, double* p3);
 
 /**
- * @brief Set the seepage rate for a storage node.
+ * @brief Set a constant seepage (exfiltration) rate for a storage node.
+ * @details The constant-rate form of storage exfiltration, as a [STORAGE] row
+ *          ending in a bare Ksat: sets the exfiltration Ksat to @p rate with
+ *          zero suction and IMD, replacing any Green-Ampt parameters (see
+ *          swmm_node_set_exfil_params). A rate of 0 turns exfiltration off.
  * @param engine  Engine handle.
  * @param idx     Zero-based node index (must be SWMM_NODE_STORAGE).
- * @param rate    Seepage rate in project length/time units.
- * @returns SWMM_OK on success, or an error code.
+ * @param rate    Seepage rate, in/hr (US) or mm/hr (SI); must be >= 0.
+ * @returns SWMM_OK on success; SWMM_ERR_BADPARAM on a negative rate.
  */
 SWMM_ENGINE_API int swmm_node_set_storage_seep_rate(SWMM_Engine engine, int idx, double rate);
 
 /**
- * @brief Get the seepage rate for a storage node.
+ * @brief Get the constant seepage (exfiltration) rate of a storage node.
+ * @details The exfiltration Ksat when exfiltration uses its constant-rate form
+ *          (zero suction and IMD); 0 when it uses Green-Ampt parameters or is
+ *          off, and for a node that is not storage.
  * @param engine     Engine handle.
  * @param idx        Zero-based node index.
- * @param[out] rate  Receives the seepage rate.
+ * @param[out] rate  Receives the rate, in/hr (US) or mm/hr (SI).
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_node_get_storage_seep_rate(SWMM_Engine engine, int idx, double* rate);
@@ -901,7 +908,7 @@ SWMM_ENGINE_API int swmm_node_get_stat_vol_flooded(SWMM_Engine engine, int idx, 
  * @brief Get the total time a node was flooded during the simulation.
  * @param engine    Engine handle.
  * @param idx       Zero-based node index.
- * @param[out] val  Receives the flooded duration in hours.
+ * @param[out] val  Receives the flooded duration in seconds.
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_node_get_stat_time_flooded(SWMM_Engine engine, int idx, double* val);

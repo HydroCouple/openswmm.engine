@@ -209,6 +209,13 @@ cdef class StorageView:
 
     @property
     def seep_rate(self) -> float:
+        """Constant seepage (exfiltration) rate, in/hr or mm/hr.
+
+        The constant-rate form of storage exfiltration (a ``[STORAGE]`` row
+        ending in a bare Ksat): setting it sets the exfiltration Ksat with
+        zero suction and IMD, replacing any Green-Ampt parameters; it reads
+        0 when exfiltration uses Green-Ampt parameters or is off.
+        """
         _check_fresh(self._node)
         cdef double v = 0.0
         _check(swmm_node_get_storage_seep_rate(_h(self._node._solver), self._node._index, &v))
@@ -908,10 +915,11 @@ cdef class Nodes:
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
         cdef double* p = <double*>buf.data
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_node_get_depths_bulk(h, p, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_node_get_depths_bulk(h, p, n)
         _check(err)
         return buf
 
@@ -924,10 +932,11 @@ cdef class Nodes:
             raise ValueError(
                 f"depths array length {arr.shape[0]} != node count {n}")
         cdef const double* p = <const double*>arr.data
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_node_set_depths_bulk(h, p, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_node_set_depths_bulk(h, p, n)
         _check(err)
 
     @property
@@ -935,10 +944,11 @@ cdef class Nodes:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_node_get_heads_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_node_get_heads_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -947,10 +957,11 @@ cdef class Nodes:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_node_get_inflows_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_node_get_inflows_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -959,10 +970,11 @@ cdef class Nodes:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_node_get_overflows_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_node_get_overflows_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -971,10 +983,11 @@ cdef class Nodes:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_node_get_volumes_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_node_get_volumes_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -983,10 +996,11 @@ cdef class Nodes:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_node_get_outflows_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_node_get_outflows_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -995,10 +1009,11 @@ cdef class Nodes:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_node_get_losses_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_node_get_losses_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1007,10 +1022,11 @@ cdef class Nodes:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_node_get_lateral_inflows_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_node_get_lateral_inflows_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1025,10 +1041,11 @@ cdef class Nodes:
             raise ValueError(
                 f"lateral_inflows array length {arr.shape[0]} != node count {n}")
         cdef const double* p = <const double*>arr.data
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_node_set_lat_inflows_bulk(h, p, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_node_set_lat_inflows_bulk(h, p, n)
         _check(err)
 
     def qualities(self, pollutant):
@@ -1037,10 +1054,11 @@ cdef class Nodes:
         cdef int n = swmm_node_count(h)
         cdef int p_idx = _resolve_pollutant(self._solver, pollutant)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_node_get_quality_bulk(h, p_idx, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_node_get_quality_bulk(h, p_idx, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1054,10 +1072,11 @@ cdef class Nodes:
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[char, ndim=1, mode="c"] buf = np.zeros(
             n * stride, dtype=np.int8)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_node_get_ids_bulk(h, <char*>buf.data, stride, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_node_get_ids_bulk(h, <char*>buf.data, stride, n)
         _check(err)
         raw = bytes(buf)
         out = []

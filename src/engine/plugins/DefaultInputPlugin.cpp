@@ -141,11 +141,31 @@ void DefaultInputPlugin::register_builtin_handlers() {
     registry_.register_builtin("VERTICES",      input::handle_vertices);
     registry_.register_builtin("POLYGONS",      input::handle_polygons);
     registry_.register_builtin("SYMBOLS",       input::handle_symbols);
-    registry_.register_builtin("LABELS",        noop);
-    registry_.register_builtin("BACKDROP",      noop);
+    // [LABELS], [BACKDROP] and [PROFILE] are GUI annotation: legacy SWMM has
+    // no `case` for any of them in parseLine, so no engine reads or validates
+    // their content. They were registered as no-ops, which meant a model's map
+    // labels and backdrop image were silently deleted by the first
+    // Open → Save. Kept verbatim instead — replaying the authored lines is
+    // both the safest reading and an exact one.
+    auto capture = [](const char* tag) {
+        return [tag](SimulationContext& ctx, const std::vector<std::string>& lines) {
+            auto& dst = ctx.passthrough_sections[tag];
+            dst.insert(dst.end(), lines.begin(), lines.end());
+        };
+    };
+
+    registry_.register_builtin("LABELS",        capture("LABELS"));
+    registry_.register_builtin("BACKDROP",      capture("BACKDROP"));
     registry_.register_builtin("MAP",           input::handle_map);
     registry_.register_builtin("TAGS",          input::handle_tags);
-    registry_.register_builtin("PROFILE",       noop);
+    // Both spellings: legacy matches section headers by PREFIX (SectWords
+    // holds "[PROFILE"), so `[PROFILE]` and `[PROFILES]` are the same section
+    // there, while this registry matches the whole tag. Only "PROFILE" was
+    // registered — and no deck in the 1396-deck corpus writes that spelling
+    // while 59 write `[PROFILES]`, so the handler never once fired and every
+    // one of those decks also raised an unknown-section warning.
+    registry_.register_builtin("PROFILE",       capture("PROFILE"));
+    registry_.register_builtin("PROFILES",      capture("PROFILES"));
     registry_.register_builtin("REPORT",        input::handle_report);
     registry_.register_builtin("FILES",         input::handle_files);
     registry_.register_builtin("ADJUSTMENTS",   input::handle_adjustments);
