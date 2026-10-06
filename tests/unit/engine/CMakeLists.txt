@@ -694,6 +694,7 @@ if(OPENSWMM_BUILD_2D)
     # seam in both directions, ET up-concentration, and the groundwater row
     # of the transport matrix. Decks under tests/output/gw_transport_kernel.
     add_gtest_unit(test_engine_gw_source_forcing test_gw_source_forcing.cpp)
+    add_gtest_unit(test_engine_runtime_coupling_api test_runtime_coupling_api.cpp)
     add_gtest_unit(test_engine_gw_transport_kernel test_gw_transport_kernel.cpp)
     target_compile_definitions(test_engine_gw_transport_kernel PRIVATE
         OPENSWMM_GW_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")

@@ -63,7 +63,21 @@ SWMM_ENGINE_API int swmm_engine_start(SWMM_Engine engine, int save_results) {
     return to_engine(engine)->start(save_results);
 }
 
-SWMM_ENGINE_API int swmm_engine_step(SWMM_Engine engine, double* elapsed_time) {
+SWMM_ENGINE_API int swmm_engine_get_elapsed_seconds(SWMM_Engine engine, double* seconds) {
+    auto* eng = reinterpret_cast<openswmm::SWMMEngine*>(engine);
+    if (!eng) return SWMM_ERR_BADHANDLE;
+    if (!seconds) return SWMM_ERR_BADPARAM;
+    *seconds = eng->context().elapsed_ms / 1000.0;
+    return SWMM_OK;
+}
+
+int swmm_engine_advance_to(SWMM_Engine engine, double target, double* actual) {
+    auto* eng = reinterpret_cast<openswmm::SWMMEngine*>(engine);
+    if (!eng) return SWMM_ERR_BADHANDLE;
+    return eng->advanceTo(target, actual);
+}
+
+int swmm_engine_step(SWMM_Engine engine, double* elapsed_time) {
     CHECK_HANDLE(engine);
     return to_engine(engine)->step(elapsed_time);
 }

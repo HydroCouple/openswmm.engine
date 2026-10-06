@@ -252,7 +252,20 @@ public:
     /// Announce that a boundary slot's TYPE changed (the API BC-type setter),
     /// so the compact non-WALL slot list the per-step boundary passes walk is
     /// rebuilt before it is next used.
-    void invalidateBoundaryIndex() noexcept { bc_nonwall_dirty_ = true; }
+    bool runtimeCpuAvailable() const noexcept;
+    RuntimeSources& runtimeSources() noexcept { return state_.runtime_sources; }
+    bool runtimeActive() const noexcept {
+        return state_.runtime_sources.active() || subsurface_.runtimeSources().active() ||
+               !boundary_.runtime_original.empty() || state_.runtime_forcings.active();
+    }
+    double nextRuntimeTime(double now) const noexcept {
+        return std::min({state_.runtime_sources.nextTime(now), subsurface_.runtimeSources().nextTime(now), state_.runtime_forcings.nextTime(now)});
+    }
+    void expireRuntime(double now) {
+        state_.runtime_sources.expire(now); subsurface_.runtimeSources().expire(now); state_.runtime_forcings.expire(now);
+    }
+    void invalidateBoundaryIndex();
+    void invalidateBoundaryNames() noexcept { boundary_names_resolved_ = false; }
 
     /// Bring the render fields (vertex heads, output gradients, vertex render
     /// depths) up to date with the current solver state if a batch has run
@@ -619,6 +632,7 @@ private:
     /// Previous cumulative boundary flux (Σ edge_bc_cum_flux, m³), for the
     /// per-step delta in the global mass balance.
     double prev_boundary_cum_ = 0.0;
+    double prev_boundary_in_ = 0.0, prev_boundary_out_ = 0.0;
 
     /// Per-coupling-point outfall exchange volume (m³, + = 1D discharge onto
     /// the surface, − = withdrawal) accumulated per sync batch. Indexed like

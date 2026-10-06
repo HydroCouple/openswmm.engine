@@ -1016,6 +1016,10 @@ void restoreAquiferBlock(const HotStartFile& hs, SimulationContext& ctx,
 HotStartFile* HotStartManager::save(const SimulationContext& ctx,
                                     const std::string& path) {
     tl_last_io_error.clear();
+    if(ctx.runtime_coupling_used) {
+        tl_last_io_error="Hotstart cannot preserve runtime 2D coupling prescriptions and receipts";
+        return nullptr;
+    }
 
     // Auto-promote to V2 when ctx exposes solver-internal state via
     // accessors, and to V3 when water age is tracked (A2a — the age field
@@ -1138,6 +1142,10 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
                                     const groundwater::GWSolver* gw_solver,
                                     const std::string& path) {
     tl_last_io_error.clear();
+    if(ctx.runtime_coupling_used) {
+        tl_last_io_error="Hotstart cannot preserve runtime 2D coupling prescriptions and receipts";
+        return nullptr;
+    }
 
     auto* hs = new HotStartFile();
     hs->path = path;

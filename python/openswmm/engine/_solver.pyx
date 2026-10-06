@@ -110,6 +110,10 @@ def _path_to_str(p) -> str:
     return os.fspath(p)
 
 
+cdef extern from "openswmm/engine/openswmm_engine.h":
+    int swmm_engine_advance_to(SWMM_Engine, double, double*) nogil
+    int swmm_engine_get_elapsed_seconds(SWMM_Engine, double*) nogil
+
 cdef inline double _td_to_days(object td):
     """Convert a :class:`timedelta` (or numeric) to decimal days."""
     if isinstance(td, timedelta):
@@ -323,6 +327,29 @@ cdef class Solver:
         self._access.raise_callback_error()
         _check(rc)
 
+    def advance_to(self, double seconds) -> timedelta:
+        """Advance to exact elapsed seconds and settle both 2D domains."""
+        self._access.require_idle()
+        cdef double actual=0.0
+        cdef SWMM_Engine h=<SWMM_Engine><size_t>self.handle
+        cdef int rc
+        with self._operation(<size_t>h):
+            with nogil:
+                rc=swmm_engine_advance_to(h,seconds,&actual)
+        self._elapsed=actual/86400.0
+        self._access.raise_callback_error()
+        _check(rc)
+        return _days_to_td(self._elapsed)
+
+    @property
+    def coupling(self):
+        from ._coupling import Coupling
+        return Coupling(self)
+
+    @property
+    def groundwater2d(self):
+        return self.surface2d.groundwater
+
     def step(self) -> timedelta:
         """Advance one routing step.
 
@@ -509,9 +536,12 @@ cdef class Solver:
 
     @property
     def elapsed(self) -> timedelta:
-        """Elapsed simulation time after the last :meth:`step` /
-        :meth:`stride`, as a :class:`timedelta`."""
-        return _days_to_td(self._elapsed)
+        """Current elapsed simulation time, also live inside step callbacks."""
+        cdef double seconds=0.0
+        cdef SWMM_Engine h=<SWMM_Engine><size_t>self.handle
+        with self._operation(<size_t>h):
+            _check(swmm_engine_get_elapsed_seconds(h,&seconds))
+        return timedelta(seconds=seconds)
 
     @property
     def state(self) -> EngineState:

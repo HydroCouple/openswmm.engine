@@ -269,6 +269,46 @@ class Groundwater(EngineView):
             names.append(name.decode('utf-8'))
         return tuple(names)
 
+    @property
+    def sources(self):
+        """Runtime external sources and cumulative accepted-transfer receipts."""
+        self._address()
+        from ._coupling import DomainSources
+        return DomainSources(self._owner, 'groundwater')
+
+    def set_head_boundary(self, int cell, int edge, double head_m, concentrations=None):
+        self.sources.set_boundary(cell,edge,1,head_m,concentrations)
+
+    def set_flow_boundary(self, int cell, int edge, double flow_m3_s, concentrations=None):
+        """Prescribed total outward m³/s; negative supplies boundary water."""
+        self.sources.set_boundary(cell,edge,2,flow_m3_s,concentrations)
+
+    def clear_boundary(self, int cell, int edge):
+        self.sources.clear_boundary(cell,edge)
+
+    def boundary_flow(self, int cell, int edge):
+        """Last accepted outward m³/s; zero for cleared or native no-flow edges."""
+        return self.sources.boundary_flow(cell,edge)
+
+    def boundary_receipt(self, int cell, int edge):
+        """Cumulative boundary receipt, positive inward; heat includes advection."""
+        return self.sources.boundary_receipt(cell,edge)
+
+    def set_water_source(self, cells, flow_m3_s, **kwargs):
+        self.sources.set_source(cells, flow_m3_s, **kwargs)
+
+    def set_heat_source(self, cells, heat_w, *, source_id='heat', until_seconds=None):
+        self.sources.set_source(cells, heat_w=heat_w, source_id=source_id, until_seconds=until_seconds)
+
+    def set_species_source(self, cells, species_rates, *, source_id='species', until_seconds=None):
+        self.sources.set_source(cells, species_rates=species_rates, source_id=source_id, until_seconds=until_seconds)
+
+    def clear_source(self, source_id='external', cell=None):
+        self.sources.clear_source(source_id,cell)
+
+    def source_receipt(self, source_id='external', cell=0):
+        return self.sources.source_receipt(source_id, cell)
+
     def concentrations(self, zone, int species):
         """Per-cell species mass per m³ of zone water; dry zones report zero."""
         cdef SWMM_Engine h = _h(self)

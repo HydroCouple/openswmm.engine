@@ -1046,6 +1046,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                 if (row.zone == GwZone::LAYER)
                     throw std::runtime_error("[GW_INITIAL_QUALITY] LAYER is unsupported by bulk groundwater transport; use SAT or UNSAT explicitly.");
             subsurface_.initTransport(rows, &gw_, pollut_decay, ctx.warnings);
+            marcher->refreshSubsurfaceRows();
             subsurface_.setSources(resolveGwSources(ctx, mesh_, gw_, subsurface_.state(), subsurface_.transport()));
         }
 
@@ -1375,6 +1376,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     ctx.mass_balance_2d.init_storage = totalVolume();
     ctx.mass_balance_2d.final_storage = ctx.mass_balance_2d.init_storage;
     prev_boundary_cum_ = 0.0;
+    prev_boundary_in_ = prev_boundary_out_ = 0.0;
 
     // Seed the render-only vertex free surface so the first snapshot (before
     // any sync batch fires — e.g. a hotstart-restored wet state) already
@@ -1455,6 +1457,9 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
     // old — and every other batch's two full-mesh memcpys were pure cost.
     const bool refresh_due = refreshDue(ctx, dt);
     if (refresh_due) state_.save_state();
+
+    if (!state_.coupling_native.empty())
+        state_.coupling_flux = state_.coupling_native;
 
     // Outfalls were transferred conservatively after EACH 1D routing step.
     // Do not inject their volume again as a held source here. A changed
@@ -1542,13 +1547,21 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
                 state_.evap_rate[i] = state_.evap_force_val[i];
             else if (state_.evap_forced[i] == 2)
                 state_.evap_rate[i] += state_.evap_force_val[i];
+        }
+        co_forcing_elapsed_ = 0.0;
+        co_forcing_first_ = false;
+    }
+
+    // Apply once per batch against the unforced base, never yesterday's
+    // forced rate. Expiry and clear therefore restore the native value.
+    if (state_.forcing_ever_set) {
+        state_.coupling_native = state_.coupling_flux;
+        for (std::size_t i = 0; i < state_.coupling_flux.size(); ++i) {
             if (state_.coupling_forced[i] == 1)
                 state_.coupling_flux[i] = state_.coupling_force_val[i];
             else if (state_.coupling_forced[i] == 2)
                 state_.coupling_flux[i] += state_.coupling_force_val[i];
         }
-        co_forcing_elapsed_ = 0.0;
-        co_forcing_first_ = false;
     }
 
     if (rain_report_due) {
@@ -2399,6 +2412,16 @@ void SurfaceRouter2D::reportRainfall(const SimulationContext& ctx, double report
 }
 
 
+bool SurfaceRouter2D::runtimeCpuAvailable() const noexcept {
+    return active_ && options_.momentum != Momentum2D::FULL_SWE && dynamic_cast<const ExplicitInertialSolver*>(solver_.get());
+}
+
+void SurfaceRouter2D::invalidateBoundaryIndex() {
+    bc_nonwall_dirty_ = true;
+    if (auto* marcher = dynamic_cast<ExplicitInertialSolver*>(solver_.get()))
+        marcher->refreshBoundaries();
+}
+
 void SurfaceRouter2D::resolveBoundaryValues(SimulationContext& ctx, double t) {
     const int ne = boundary_.size();
     if (ne == 0) return;
@@ -2631,18 +2654,23 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
         }
     }
 
-    // Boundary exchange (outward-positive cumulative, m³). Reads 0 until the
-    // non-Wall BC flux integration lands, but the term is wired now.
-    double cur_bnd = 0.0;
-    for (const int idx : bc_nonwall_slots_)
-        cur_bnd += boundary_.edge_bc_cum_flux[idx];
-    double dbnd = cur_bnd - prev_boundary_cum_;
-    prev_boundary_cum_ = cur_bnd;
-    if (dbnd > 0.0) mb.boundary_out += dbnd;
-    else            mb.boundary_in  += -dbnd;
+    // Sum gross accepted transfers at their physical booking sites. Opposing
+    // edges and reversals inside a batch must never disappear in a net sum.
+    double incoming=0.0,outgoing=0.0;
+    for(const auto& entry:boundary_.receipts) {
+        incoming+=entry.second.water_in; outgoing+=entry.second.water_out;
+    }
+    mb.boundary_in+=incoming-prev_boundary_in_;
+    mb.boundary_out+=outgoing-prev_boundary_out_;
+    prev_boundary_in_=incoming; prev_boundary_out_=outgoing;
 
     // Latest storage (m³) — overwrite so the value at simulation end is final
     // (summed in the fused pass above, same ascending order as totalVolume()).
+    mb.external_in = mb.external_out = 0.0;
+    for (const auto& row : state_.runtime_sources.rows) {
+        mb.external_in += row.receipt.water_in;
+        mb.external_out += row.receipt.water_out;
+    }
     mb.final_storage = storage;
 }
 

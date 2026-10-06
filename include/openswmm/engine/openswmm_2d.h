@@ -24,8 +24,15 @@
  *          in the input file and the engine was compiled with OPENSWMM_BUILD_2D.
  *
  *          All functions require the engine to be in SWMM_STATE_RUNNING
- *          unless otherwise noted. Functions return SWMM_ERR_BADPARAM if
- *          the 2D module is not active.
+ *          unless otherwise noted. Solver-state functions return
+ *          SWMM_ERR_LIFECYCLE when the model has a 2D mesh but
+ *          swmm_engine_initialize() has not run yet, and SWMM_ERR_BADPARAM
+ *          when the model has no active 2D surface (no mesh, or IGNORE_2D).
+ *
+ *          Units: swmm_engine_initialize() scales the mesh to SI, so solver
+ *          state (depths, heads, coordinates, velocities, volumes) is in
+ *          metres whatever the project's FLOW_UNITS. Mesh values read before
+ *          initialize are in the mesh's authored units.
  *
  * @defgroup engine_2d 2D Surface Routing API
  * @ingroup  engine_api
@@ -463,11 +470,11 @@ SWMM_ENGINE_API int swmm_2d_set_vertex_coupling_area(SWMM_Engine engine,
 
 /** @brief Get water depth at a triangle.
  *  @param idx Triangle index.
- *  @param depth Output depth (m or ft).
+ *  @param depth Output depth (m).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_depth(SWMM_Engine engine, int idx, double* depth);
 
-/** @brief Get total head at a triangle (z + depth).
+/** @brief Get total head at a triangle (z + depth, m).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_head(SWMM_Engine engine, int idx, double* head);
 
@@ -505,12 +512,12 @@ SWMM_ENGINE_API int swmm_2d_get_rainfall_weights(SWMM_Engine engine, int idx,
 SWMM_ENGINE_API int swmm_2d_get_net_source(SWMM_Engine engine, int idx,
                                              double* net_source);
 
-/** @brief Bulk get depths for all triangles.
+/** @brief Bulk get depths for all triangles (m).
  *  @param depths Output array (pre-allocated to triangle_count).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_depths_bulk(SWMM_Engine engine, double* depths);
 
-/** @brief Bulk get heads for all triangles.
+/** @brief Bulk get heads for all triangles (m).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_heads_bulk(SWMM_Engine engine, double* heads);
 
@@ -575,7 +582,7 @@ SWMM_ENGINE_API int swmm_2d_get_coupling_volume_bulk(SWMM_Engine engine,
  *  NOTE: the integrator stores edge_flux INFLOW-positive internally (a positive
  *  value raises the cell depth); this accessor (and the HDF5 `Mesh2_edge_flux`
  *  dataset) flip the sign so the *public* convention is outward-positive as
- *  documented here. Units `m^2 s^-1` (depth-integrated normal speed). Combine
+ *  documented here. Units `m^3 s^-1` (total flow through the edge). Combine
  *  with `swmm_2d_edge_get_geometry_bulk` to reconstruct cell-centred velocity
  *  (RT0): for each triangle, solve `(NᵀN) v = Nᵀ q` where rows of `N` are the
  *  outward unit normals and `q[e] = flux[e] / length[e]`; with the
@@ -584,6 +591,27 @@ SWMM_ENGINE_API int swmm_2d_get_coupling_volume_bulk(SWMM_Engine engine,
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_edge_flux_bulk(SWMM_Engine engine,
                                                  double* flux);
+
+/* ---- Overland transport results (read-only during RUNNING) -------------- */
+
+/** @brief How many species rows the surface transports (0 when it carries
+ *  none). Row order: pollutants, MSX species, `__WATER_AGE__`,
+ *  `__TEMPERATURE__` — the same order as `swmm_gw2d_species_name`.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_species_count(SWMM_Engine engine, int* count);
+
+/** @brief One surface species row's name.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_species_name(SWMM_Engine engine, int species,
+                                         char* buf, int buflen);
+
+/** @brief Per-cell concentration of one surface species: pollutant and MSX
+ *  rows in their declared units, `__TEMPERATURE__` in degC and
+ *  `__WATER_AGE__` in seconds. A cell at or below the dry depth reports 0
+ *  (it keeps its mass). Writes at most @p len values and sets @p written.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_cell_conc(SWMM_Engine engine, int species,
+                                          double* out, int len, int* written);
 
 /* =========================================================================
  * 2D Edge Conveyance (§11A of docs/2dModelStrategy.md)
@@ -719,7 +747,7 @@ typedef struct SWMM_2DRunStats {
 SWMM_ENGINE_API int swmm_2d_get_run_stats(SWMM_Engine engine,
                                           SWMM_2DRunStats* stats);
 
-/** @brief Get per-triangle max depth statistics (cumulative).
+/** @brief Get per-triangle max depth statistics (cumulative, m).
  *  @param max_depths Output array (pre-allocated to triangle_count).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_stat_max_depths(SWMM_Engine engine,
@@ -858,6 +886,14 @@ SWMM_ENGINE_API int swmm_2d_boundary_edge_count(SWMM_Engine engine, int* count);
 SWMM_ENGINE_API int swmm_2d_get_edge_bc_type(SWMM_Engine engine,
                                                int tri_idx, int edge,
                                                int* bc_type);
+
+/** Restore an edge's pre-runtime boundary prescription, including its time series.
+ * Valid between running steps; cumulative flux accounting is preserved. */
+/** Runtime inflow concentrations in the species getter's units/order. Outflow
+ * uses donor concentrations. clear_edge_bc restores authored hydraulics/quality. */
+SWMM_ENGINE_API int swmm_2d_set_edge_bc_concentrations(SWMM_Engine engine, int cell, int edge,
+    const double* values, int species_count);
+SWMM_ENGINE_API int swmm_2d_clear_edge_bc(SWMM_Engine engine, int cell, int edge);
 
 /** @brief Set boundary condition type for an edge.
  *  @ingroup engine_2d */

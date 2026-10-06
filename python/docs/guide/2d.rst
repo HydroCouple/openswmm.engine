@@ -29,7 +29,8 @@ lazy attribute and addresses the live mesh:
             surf.n_triangles            # mesh size
             surf.get_depth(0)           # state at triangle 0
 
-Reference: ``openswmm_2d.h``.
+Reference: ``openswmm_2d.h``. See :doc:`runtime_coupling` for post-start
+water, heat/species sources, direct boundary setters and exact exchange times.
 
 ----
 

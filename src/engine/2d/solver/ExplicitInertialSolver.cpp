@@ -311,7 +311,18 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     active_frac_sum_ = 0.0;    active_samples_  = 0;
     if (const char* p = std::getenv("OPENSWMM_2D_MARCHER_TELEMETRY"))
         telemetry_path_ = p;
+    refreshSubsurfaceRows();
+    if(state_->boundary)
+        for(int slot:bc_slot_) state_->boundary->ensureReceipt(slot,state_->transport.n_species);
     initialized_ = true;
+}
+
+void ExplicitInertialSolver::refreshSubsurfaceRows() {
+    gw_row_map_.assign(state_->transport.n_species,-1);
+    if(gw_ && gw_->transport().active())
+        for(int r=0;r<state_->transport.n_species;++r)
+            for(int g=0;g<gw_->transport().n_species;++g)
+                if(state_->transport.row_names[r]==gw_->transport().row_names[g]) gw_row_map_[r]=g;
 }
 
 double ExplicitInertialSolver::donorConc(int s, int cell) const noexcept {
@@ -385,7 +396,7 @@ void ExplicitInertialSolver::flushSourceLedgers() {
     const auto ns = static_cast<std::size_t>(tr.n_species);
     std::vector<double>* ledgers[] = {&tr.lost_infiltration, &tr.lost_coupling,
         &tr.gained_rainfall, &tr.gained_coupling, &tr.gained_exfiltration,
-        &tr.lost_boundary};
+        &tr.lost_boundary, &tr.gained_external, &tr.lost_external};
     for (std::size_t base = 0; base < source_ledgers_.size(); base += source_ledger_stride_) {
         for (std::size_t k = 0; k < static_cast<std::size_t>(SourceLedger::Count); ++k)
             for (std::size_t r = 0; r < ns; ++r) {
@@ -402,7 +413,7 @@ void ExplicitInertialSolver::flushSourceLedgers() {
 // Compute one source budget after face volume lands; publish final_volume
 // only after every species row has consumed that same budget.
 struct ExplicitInertialSolver::CellSourceStep {
-    double area_dt, rain, coupling, available, infil, evap, out, final_volume;
+    double area_dt, rain, coupling, available, infil, evap, out, final_volume, requested_infil;
     double* ledger;
 };
 
@@ -418,16 +429,16 @@ struct ExplicitInertialSolver::CellSourceStep {
 OPENSWMM_SOURCE_INLINE bool ExplicitInertialSolver::prepareCellSources(int i, double dt, CellSourceStep& source) {
     const double area = mesh_->tri_area[i];
     const double area_dt = area * dt;
-    const double rain = std::max(0.0, state_->rainfall[i]) * area_dt;
+    const double rain = std::max(0.0, state_->runtime_forcings.rate(1,i,state_->rainfall[i])) * area_dt;
     const double coupling = state_->coupling_flux[i] * area_dt;
     const double requested_infil = std::max(0.0,
-        infilSink(state_->infil_rate[i], state_->depth[i], opts_->dry_depth)) * area_dt;
+        infilSink(state_->runtime_forcings.rate(3,i,state_->infil_rate[i]), state_->depth[i], opts_->dry_depth)) * area_dt;
     const double requested_evap = std::max(0.0,
-        evapSink(state_->evap_rate[i], state_->depth[i], opts_->dry_depth)) * area_dt;
+        evapSink(state_->runtime_forcings.rate(2,i,state_->evap_rate[i]), state_->depth[i], opts_->dry_depth)) * area_dt;
     const double back = gw_ ? gw_->takeToSurface(i) : 0.0;
     if (rain == 0.0 && coupling == 0.0 && requested_infil == 0.0 &&
         requested_evap == 0.0 && back == 0.0) {
-        if(gw_)gw_->bookSurfaceEt(i,dt,state_->evap_rate[i],0.0);
+        if(gw_)gw_->bookSurfaceEt(i,dt,state_->runtime_forcings.rate(2,i,state_->evap_rate[i]),0.0);
         return false;
     }
 
@@ -438,11 +449,17 @@ OPENSWMM_SOURCE_INLINE bool ExplicitInertialSolver::prepareCellSources(int i, do
     const double scale = requested > available && requested > 0.0
         ? available / requested : 1.0;
     // Proportional sharing gives all held sinks the same satisfaction ratio.
-    const double infil = gw_ ? gw_->acceptSurfaceInfiltration(i, requested_infil * scale)
+    const double infil = gw_ ? gw_->acceptSurfaceInfiltration(i, requested_infil * scale, state_->runtime_forcings.get(3,i)!=nullptr)
                              : requested_infil * scale;
     const double evap = requested_evap * scale;
-    if(gw_)gw_->bookSurfaceEt(i,dt,state_->evap_rate[i],evap);
+    if(gw_)gw_->bookSurfaceEt(i,dt,state_->runtime_forcings.rate(2,i,state_->evap_rate[i]),evap);
     const double out = requested_out * scale;
+    if(auto* row=const_cast<RuntimeForcing*>(state_->runtime_forcings.get(3,i))) {
+        auto& receipt=row->receipt;
+        receipt.requested+=requested_infil; receipt.applied+=infil;
+        receipt.water_out+=infil;
+        receipt.last_flow=infil/dt; receipt.last_dt=dt;
+    }
     state_->infil_applied[i] += infil / area;
     state_->coupling_applied[i] += std::max(coupling, 0.0) - out;
     const auto ns = static_cast<std::size_t>(state_->transport.n_species);
@@ -456,7 +473,7 @@ OPENSWMM_SOURCE_INLINE bool ExplicitInertialSolver::prepareCellSources(int i, do
         state_->transport.cell_runoff_vol[i] += out - std::max(coupling, 0.0);
     source = {area_dt, rain, coupling, available, infil, evap, out,
         gw_ ? std::max(0.0, available - infil - evap - out)
-            : (requested >= available ? 0.0 : available - requested), local_ledger};
+            : (requested >= available ? 0.0 : available - requested), requested_infil, local_ledger};
     return true;
 }
 
@@ -467,13 +484,15 @@ OPENSWMM_SOURCE_INLINE void ExplicitInertialSolver::applyCellSourceRow(
     const auto book = [&source, ns](SourceLedger kind, int row, double amount) {
         source.ledger[static_cast<std::size_t>(kind) * ns + row] += amount;
     };
-    if (gw_ && gw_->transport().active() && r < gw_->transport().n_species) {
-        const double dm = gw_->takeToSurfaceMass(i, r);
+    if (gw_ && r<static_cast<int>(gw_row_map_.size()) && gw_row_map_[r]>=0) {
+        const double dm = gw_->takeToSurfaceMass(i, gw_row_map_[r]);
         mass += dm;
         book(SourceLedger::Exfiltration, r, dm);
     }
-    const double rain_mass = static_cast<std::size_t>(r) < tr.rain_conc.size()
-        ? source.rain * tr.rain_conc[r] : 0.0;
+    const auto* rain_row=state_->runtime_forcings.get(4,i);
+    if(!rain_row || rain_row->concentrations.empty()) rain_row=state_->runtime_forcings.get(1,i);
+    const auto& rain_conc=rain_row && !rain_row->concentrations.empty() ? rain_row->concentrations : tr.rain_conc;
+    const double rain_mass=static_cast<std::size_t>(r)<rain_conc.size() ? source.rain*rain_conc[r] : 0.0;
     const double coupling_mass = source.coupling > 0.0 && !tr.coupling_src.empty()
         ? tr.coupling_src[tr.idx(r, i)] * source.area_dt : 0.0;
     mass += rain_mass + coupling_mass;
@@ -490,23 +509,97 @@ OPENSWMM_SOURCE_INLINE void ExplicitInertialSolver::applyCellSourceRow(
     if (!tr.signedRow(r) && mass < 0.0) mass = 0.0;
     book(SourceLedger::Infiltration, r, mi);
     book(SourceLedger::CouplingOut, r, mc);
-    if (gw_ && gw_->transport().active() && r < gw_->transport().n_species)
-        gw_->bookInfiltrationMass(i, r, mi);
+    if(auto* row=const_cast<RuntimeForcing*>(state_->runtime_forcings.get(3,i))) {
+        row->receipt.requested_mass[r]+=concentration*source.requested_infil;
+        row->receipt.applied_mass[r]+=mi;
+        if(r==tr.temp_row) {
+            row->receipt.heat_requested+=concentration*source.requested_infil*runtimeWaterHeatCapacity;
+            row->receipt.heat_applied+=mi*runtimeWaterHeatCapacity;
+        }
+    }
+    if (gw_ && r<static_cast<int>(gw_row_map_.size()) && gw_row_map_[r]>=0)
+        gw_->bookInfiltrationMass(i, gw_row_map_[r], mi);
 }
 
 bool ExplicitInertialSolver::applyCellSources(int i, double dt) {
     CellSourceStep source;
-    if (!prepareCellSources(i, dt, source)) return false;
+    if (!prepareCellSources(i, dt, source)) return applyRuntimeSources(i, dt);
     if (species_on_) {
         auto& tr = state_->transport;
         for (int r = 0; r < tr.n_species; ++r)
             applyCellSourceRow(i, r, tr.cell_mass[tr.idx(r, i)], source);
     }
     state_->volume[i] = source.final_volume;
+    applyRuntimeSources(i, dt);
     return true;
 }
 
 #undef OPENSWMM_SOURCE_INLINE
+
+bool ExplicitInertialSolver::applyRuntimeSources(int i, double dt) {
+    auto& store = state_->runtime_sources;
+    if (i >= static_cast<int>(store.cells.size()) || store.cells[i].empty()) return false;
+    auto& tr = state_->transport;
+    double incoming = 0.0, outgoing = 0.0;
+    for (auto k : store.cells[i]) {
+        const auto& s = store.rows[k];
+        incoming += std::max(0.0, s.flow) * dt;
+        outgoing += std::max(0.0, -s.flow) * dt;
+    }
+    const double available = state_->volume[i] + incoming;
+    const double scale = outgoing > available ? available / outgoing : 1.0;
+    // All providers mix before any withdrawal, independent of registration order.
+    for (int r = 0; r < tr.n_species; ++r) {
+        double& mass = tr.cell_mass[tr.idx(r, i)];
+        for (auto k : store.cells[i]) {
+            auto& s = store.rows[k];
+            double dm = std::max(0.0, s.flow) * dt * s.concentrations[r] + dt * std::max(0.0,s.rates[r]);
+            if (r == tr.temp_row && available > 0.0) dm += s.heat * dt / runtimeWaterHeatCapacity;
+            mass += dm;
+            s.receipt.requested_mass[r] += dm;
+            s.receipt.applied_mass[r] += dm;
+            bookSourceLedger(SourceLedger::ExternalIn, r, dm);
+        }
+        const double conc = available > 0.0 ? mass / available : 0.0;
+        for (auto k : store.cells[i]) {
+            auto& s = store.rows[k];
+            const double requested = std::max(0.0, -s.flow) * dt * conc;
+            const double applied = requested * scale;
+            mass -= applied;
+            s.receipt.requested_mass[r] -= requested;
+            s.receipt.applied_mass[r] -= applied;
+            bookSourceLedger(SourceLedger::ExternalOut, r, applied);
+        }
+        // Independent species removals share the remaining mass after water
+        // withdrawals; no provider can remove mass another provider already took.
+        double sink=0.0;
+        for(auto k:store.cells[i]) sink+=std::max(0.0,-store.rows[k].rates[r])*dt;
+        const double mass_scale=sink>0.0 ? std::min(1.0,std::max(0.0,mass)/sink) : 1.0;
+        for(auto k:store.cells[i]) {
+            auto& s=store.rows[k];
+            const double requested=std::max(0.0,-s.rates[r])*dt;
+            const double applied=requested*mass_scale;
+            mass-=applied;
+            s.receipt.requested_mass[r]-=requested;
+            s.receipt.applied_mass[r]-=applied;
+            bookSourceLedger(SourceLedger::ExternalOut,r,applied);
+        }
+        if (!tr.signedRow(r)) mass = std::max(0.0, mass);
+    }
+    for (auto k : store.cells[i]) {
+        auto& s = store.rows[k];
+        const double in = std::max(0.0, s.flow) * dt;
+        const double out = std::max(0.0, -s.flow) * dt * scale;
+        s.receipt.requested += s.flow * dt;
+        s.receipt.applied += in - out;
+        s.receipt.last_flow=(in-out)/dt; s.receipt.last_dt=dt;
+        s.receipt.water_in += in; s.receipt.water_out += out;
+        s.receipt.heat_requested += s.heat * dt;
+        if (available > 0.0) s.receipt.heat_applied += s.heat * dt;
+    }
+    state_->volume[i] = std::max(0.0, available - outgoing * scale);
+    return true;
+}
 
 void ExplicitInertialSolver::reconstructAll() {
     const int nt = mesh_->n_triangles();
@@ -1451,6 +1544,7 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
         }
         if constexpr (kFuse) {
             if (has_sources) state_->volume[i] = source.final_volume;
+            applyRuntimeSources(i, dt_c);
         } else {
             state_->volume[i] = std::max(0.0, state_->volume[i] + flux_m3);
             applyCellSources(i, dt_c);
@@ -1574,6 +1668,8 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
             }
             if (hf <= opts_->dry_depth) {
                 bc_q_[k] = 0.0;
+                auto& receipt=state_->boundary->receipts.at(idx);
+                receipt.last_flow=0.0; receipt.last_dt=dt_c;
                 continue;
             }
             double deta = state_->head[i] - eta_bc;
@@ -1594,10 +1690,13 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
             f = computeBoundaryEdgeFlux(*mesh_, *state_, *opts_,
                                         opts_->flux_dh_eps, i, idx);
         }
+        auto& receipt=state_->boundary->receipts.at(idx);
+        receipt.last_flow=0.0; receipt.last_dt=dt_c;
         if (f == 0.0) {
             bc_q_[k] = 0.0;
             continue;
         }
+        const double requested_volume=f*dt_c;
         // Clamp the exchange in VOLUME space and re-derive the booked flux
         // from the applied change, so booking matches application exactly
         // (no −1 ulp volume dust from the flux-space clamp).
@@ -1628,6 +1727,22 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells,
         // Momentum matches applied mass (mirrors the interior positivity-cap
         // rescale of qn1) — the prescribed-flux types record theirs here too.
         bc_q_[k] = (L > 1.0e-12) ? f / L : 0.0;
+        const double applied_volume=v_new-v_old;
+        receipt.requested+=requested_volume; receipt.applied+=applied_volume;
+        receipt.water_in+=std::max(0.0,applied_volume);
+        receipt.water_out+=std::max(0.0,-applied_volume);
+        receipt.last_flow=f;
+        const auto ns=static_cast<std::size_t>(state_->transport.n_species);
+        for(std::size_t r=0;r<ns;++r) {
+            const double c=requested_volume<0.0 ? donorConc(static_cast<int>(r),i)
+                : k*ns+r<state_->transport.bc_conc.size() ? state_->transport.bc_conc[k*ns+r] : 0.0;
+            const double requested=requested_volume*c, applied=applied_volume*c;
+            receipt.requested_mass[r]+=requested; receipt.applied_mass[r]+=applied;
+            if(static_cast<int>(r)==state_->transport.temp_row) {
+                receipt.heat_requested+=requested*runtimeWaterHeatCapacity;
+                receipt.heat_applied+=applied*runtimeWaterHeatCapacity;
+            }
+        }
         if (f != 0.0) {
             // S1: an OUTFLOW boundary carries the cell's concentration out;
             // an inflow boundary brings water at zero concentration until S2
@@ -1947,6 +2062,7 @@ void ExplicitInertialSolver::runRk2Step(double dt) {
     // Member buffers: vector assignment reuses capacity, so no per-step
     // allocation (F6).
     rk_v0_  = state_->volume;
+    const auto boundary_receipts0=state_->boundary->receipts;
     rk_qx0_ = qcx_;
     rk_qy0_ = qcy_;
     rk_bc0_ = bc_accum_; rk_ex0_ = exch_; rk_inf0_ = state_->infil_applied;
@@ -1979,6 +2095,18 @@ void ExplicitInertialSolver::runRk2Step(double dt) {
                 rk_cpl0_[i] + 0.5 * (state_->coupling_applied[i] - rk_cpl0_[i]);
         }
         if (state_->depth[i] <= opts_->dry_depth) { qcx_[i] = 0.0; qcy_[i] = 0.0; }
+    }
+    for(auto& entry:state_->boundary->receipts) {
+        const auto& before=boundary_receipts0.at(entry.first); auto& now=entry.second;
+        const auto blend=[](double a,double b){return a+0.5*(b-a);};
+        now.requested=blend(before.requested,now.requested); now.applied=blend(before.applied,now.applied);
+        now.water_in=blend(before.water_in,now.water_in); now.water_out=blend(before.water_out,now.water_out);
+        now.heat_requested=blend(before.heat_requested,now.heat_requested);
+        now.heat_applied=blend(before.heat_applied,now.heat_applied);
+        for(std::size_t r=0;r<now.applied_mass.size();++r) {
+            now.requested_mass[r]=blend(before.requested_mass[r],now.requested_mass[r]);
+            now.applied_mass[r]=blend(before.applied_mass[r],now.applied_mass[r]);
+        }
     }
     for (std::size_t k = 0; k < bc_accum_.size(); ++k)
         bc_accum_[k] = rk_bc0_[k] + 0.5 * (bc_accum_[k] - rk_bc0_[k]);
@@ -2400,6 +2528,50 @@ void ExplicitInertialSolver::reinitialize(double /*t0*/) {
     }
     accumulators_pending_ = false;
     reconstructAll();
+}
+
+void ExplicitInertialSolver::refreshBoundaries() {
+    if (!initialized_ || !state_->boundary) return;
+    settleAccumulators();
+    const auto old_slots = bc_slot_;
+    const auto old_q = bc_q_;
+
+    const auto ns = static_cast<std::size_t>(state_->transport.n_species);
+    bc_cell_.clear(); bc_slot_.clear();
+    wall_ptr_.clear(); wall_slot_.clear();
+    wall_ptr_.push_back(0);
+    for (int c = 0; c < mesh_->n_cells(); ++c) {
+        for (int e = 0; e < mesh_->cell_vertex_count(c); ++e) {
+            if (mesh_->cell_neighbour(c, e) >= 0) continue;
+            const int slot = MeshData::slot(c, e);
+            if (static_cast<BoundaryType>(state_->boundary->edge_bc_type[slot]) == BoundaryType::WALL) {
+                wall_slot_.push_back(slot);
+                state_->edge_flux[slot] = 0.0;
+            } else {
+                bc_cell_.push_back(c); bc_slot_.push_back(slot);
+                pin_t0_[static_cast<std::size_t>(c)] = 1;
+            }
+        }
+        wall_ptr_.push_back(static_cast<int>(wall_slot_.size()));
+    }
+    bc_accum_.assign(bc_slot_.size(), 0.0);
+    bc_q_.assign(bc_slot_.size(), 0.0);
+    auto& conc = state_->transport.bc_conc;
+    conc.assign(bc_slot_.size() * ns, 0.0);
+    for(int slot:bc_slot_) state_->boundary->ensureReceipt(slot,static_cast<int>(ns));
+    for (std::size_t k = 0; k < bc_slot_.size(); ++k) {
+        const auto it = std::lower_bound(old_slots.begin(), old_slots.end(), bc_slot_[k]);
+        if (it != old_slots.end() && *it == bc_slot_[k]) {
+            const auto j = static_cast<std::size_t>(it - old_slots.begin());
+            bc_q_[k] = old_q[j];
+        }
+        for (const auto& row : state_->transport.bc_quality_rows)
+            if (row.slot == bc_slot_[k]) conc[k * ns + row.species] = row.conc;
+        const auto found=state_->transport.runtime_bc_conc.find(bc_slot_[k]);
+        if(found!=state_->transport.runtime_bc_conc.end())
+            for(std::size_t row=0;row<ns;++row) conc[k*ns+row]=found->second[row];
+    }
+    cycles_since_rebuild_ = kRebuildEveryCycles;
 }
 
 void ExplicitInertialSolver::resyncFromVolumes(double /*t0*/) {

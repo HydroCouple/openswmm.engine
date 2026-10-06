@@ -86,6 +86,8 @@ KNOWN_UNBOUND = frozenset({
     "swmm_get_last_error",      # typed EngineError exceptions
     "swmm_get_last_error_msg",  # typed EngineError exceptions
     "swmm_get_current_time",    # Solver.current_datetime
+    "swmm_coupling_set_source", # scalar C convenience; Python uses identical atomic set_sources
+    "swmm_coupling_advance_to", # C alias of swmm_engine_advance_to used by Solver.advance_to
 })
 
 

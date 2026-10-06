@@ -63,6 +63,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <map>
 
 namespace openswmm::twoD {
 
@@ -104,6 +105,7 @@ struct SurfaceTransportState {
     // in S1 they are the record that mass left the surface and where.
     std::vector<double> lost_infiltration;   ///< left through the bed
     std::vector<double> lost_boundary;       ///< left through an open edge
+    std::vector<double> gained_external, lost_external;
     std::vector<double> lost_coupling;       ///< left through the 1D↔2D exchange
     /// [k * n_species + s] species mass drained through coupling point k this
     /// advance (m³·conc, + = 2D→1D). Reset with `exch_` per advance; S3's
@@ -129,6 +131,7 @@ struct SurfaceTransportState {
     /// solver to its own `bc_cell_` list at initialize; empty ⇒ inflow
     /// arrives clean. Outflow always leaves at the cell's concentration.
     std::vector<double> bc_conc;
+    std::map<int,std::vector<double>> runtime_bc_conc;
     /// Raw `[2D_BOUNDARY_QUALITY]` rows, resolved by the solver against its
     /// boundary-edge list: (flat mesh edge slot tri*3+e, species, conc).
     struct BoundaryQualityRow { int slot = -1; int species = -1; double conc = 0.0; };
@@ -189,6 +192,7 @@ struct SurfaceTransportState {
         cell_mass.assign(ns * static_cast<std::size_t>(n_cells), 0.0);
         lost_infiltration.assign(ns, 0.0);
         lost_boundary.assign(ns, 0.0);
+        gained_external.assign(ns, 0.0); lost_external.assign(ns, 0.0);
         lost_coupling.assign(ns, 0.0);
         exch_mass.assign(ns * static_cast<std::size_t>(
                                   n_coupling_points > 0 ? n_coupling_points
@@ -198,6 +202,7 @@ struct SurfaceTransportState {
                               n_coupling_points > 0 ? n_coupling_points : 0),
                           0.0);
         rain_conc.clear();          // S2: router fills when pollutants carry one
+        runtime_bc_conc.clear();
         bc_conc.clear();            // S2: solver sizes at initialize
         bc_quality_rows.clear();
         dispersion_limiter_binds = 0;
@@ -237,7 +242,7 @@ struct SurfaceTransportState {
         // Sources are SUBTRACTED so the quantity is "what was there at t=0":
         // surface + everything that left − everything that arrived.
         return m + lost_infiltration[us] + lost_boundary[us] +
-               lost_coupling[us] -
+               lost_coupling[us] + lost_external[us] - gained_external[us] -
                (us < gained_rainfall.size() ? gained_rainfall[us] : 0.0) -
                (us < gained_boundary.size() ? gained_boundary[us] : 0.0) -
                (us < gained_coupling.size() ? gained_coupling[us] : 0.0) -

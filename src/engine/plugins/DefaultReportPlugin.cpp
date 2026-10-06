@@ -1229,6 +1229,8 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         row2("1D -> 2D Spill Inflow ....", mb2.coupling_1d_to_2d_in);
         row2("Outfall Inflow ...........", mb2.outfall_in);
         row2("Boundary Inflow ..........", mb2.boundary_in);
+        if(mb2.external_in!=0.0) row2("Runtime Source Inflow ....", mb2.external_in);
+        if(mb2.external_out!=0.0) row2("Runtime Source Outflow ...", mb2.external_out);
         row2("2D -> 1D Drain Outflow ...", mb2.coupling_2d_to_1d_out);
         row2("Outfall Withdrawal .......", mb2.outfall_out);
         row2("Boundary Outflow .........", mb2.boundary_out);

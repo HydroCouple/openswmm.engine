@@ -61,6 +61,21 @@ from ._solver cimport Solver
 from ._dates import datetime_to_oadate, oadate_to_datetime
 
 
+cdef extern from "openswmm/engine/openswmm_hotstart.h":
+    enum:
+        SWMM_ERR_HOTSTART
+    const char* swmm_hotstart_last_io_error()
+
+cdef void _check_io(int rc) except *:
+    cdef const char* detail
+    if rc == SWMM_ERR_HOTSTART:
+        detail = swmm_hotstart_last_io_error()
+        if detail != NULL and detail[0] != 0:
+            from ._exceptions import raise_for_code
+            raise_for_code(rc, detail.decode('utf-8'))
+    _check(rc)
+
+
 cdef class HotStart:
     """Handle to a hot start file. See module docstring."""
 
@@ -83,7 +98,7 @@ cdef class HotStart:
         with solver._operation(<size_t>h):
             with nogil:
                 rc = swmm_hotstart_save(h, p)
-        _check(rc)
+            _check_io(rc)
 
     @classmethod
     def open(cls, path) -> "HotStart":
@@ -95,7 +110,7 @@ cdef class HotStart:
         cdef int rc
         with nogil:
             rc = swmm_hotstart_open(p, &hs)
-        _check(rc)
+        _check_io(rc)
         obj._handle = hs
         return obj
 

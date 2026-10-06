@@ -74,7 +74,8 @@
 #include "SigmaColumn.hpp"
 #include "../gw/GwSourceForcing.hpp"
 #include "SubsurfaceData.hpp"
-#include "SubsurfaceTransportState.hpp"   // T7.1
+#include "SubsurfaceTransportState.hpp"
+#include "../coupling/RuntimeCoupling.hpp"   // T7.1
 
 #include <algorithm>
 #include <string>
@@ -213,6 +214,8 @@ public:
     void fireGwFaces(int tier, double dt);
     /// Gather + closure + node/deep/ET/Dunne for the cells of one tier.
     void fireGwCells(int tier, double dt, SurfaceStateData& surf, double time = 0.0);
+    RuntimeSources& runtimeSources() noexcept { return runtime_sources_; }
+    const RuntimeSources& runtimeSources() const noexcept { return runtime_sources_; }
     void setSources(std::vector<GwResolvedSource> sources);
     /// Flush every pending accumulator into its owner. Mandatory before any
     /// re-tier or active-set change (the stranded-flux hazard).
@@ -246,7 +249,7 @@ public:
     void publishInfiltration(SurfaceStateData& surf, double interval, double time);
     /// Reserve and book once, BEFORE the sender removes water (SI m3).
     /// Producers for one cell run serially, as for the existing accumulators.
-    double acceptSurfaceInfiltration(int cell, double requested) noexcept;
+    double acceptSurfaceInfiltration(int cell, double requested, bool prescribed=false) noexcept;
     double infiltrationHeadroom(int cell) const noexcept;
     /// Read-only soil/interface rate (m/s) for the actual donor pond head.
     /// Group headroom is allocated separately; no front or held rate advances.
@@ -361,6 +364,7 @@ private:
     /// (G-X4: `+` a leaking conduit filling the cell, `−` a gaining one
     /// drawing from it), `+ recharge` is unsaturated → saturated.
     struct CellFlux {
+        double runtime_dt=0.0, requested_source_out=0.0;
         double v_sat0 = 0.0, v_uns0 = 0.0;   ///< water volumes BEFORE the firing
         double lateral = 0.0;                ///< gathered, + into the cell
         double node_out = 0.0;
@@ -412,6 +416,7 @@ private:
 
     void publishCellInfiltration(int, SurfaceStateData&, double interval, double time);
     std::vector<std::vector<std::size_t>> cell_beds_;
+    RuntimeSources runtime_sources_;
     std::vector<GwResolvedSource> sources_;
     std::vector<std::vector<std::pair<std::size_t,double>>> cell_sources_;
     SubsurfaceState  state_;

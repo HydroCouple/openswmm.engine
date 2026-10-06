@@ -4,6 +4,8 @@
 # openswmm_2d.h without an intermediate Python layer.
 
 cdef extern from "openswmm_2d.h":
+    int swmm_2d_set_edge_bc_concentrations(void* engine, int cell, int edge, const double* values, int count) nogil
+    int swmm_2d_clear_edge_bc(void* engine, int cell, int edge)
     int swmm_2d_get_report_rainfall_bulk(void* engine, double report_date, double* rainfall) nogil
     # Status
     int swmm_2d_is_active(void* engine, int* active)
@@ -77,6 +79,12 @@ cdef extern from "openswmm_2d.h":
     int swmm_2d_get_heads_bulk(void* engine, double* heads) nogil
     int swmm_2d_get_coupling_fluxes_bulk(void* engine, double* fluxes) nogil
     int swmm_2d_get_edge_flux_bulk(void* engine, double* flux) nogil
+
+    # State — overland transport (read-only)
+    int swmm_2d_species_count(void* engine, int* count)
+    int swmm_2d_species_name(void* engine, int species, char* buf, int buflen)
+    int swmm_2d_get_cell_conc(void* engine, int species, double* out,
+                              int len, int* written) nogil
 
     # State — per vertex
     int swmm_2d_vertex_get_head(void* engine, int idx, double* head)

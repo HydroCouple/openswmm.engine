@@ -33,6 +33,7 @@ water quality, spatial data, and GeoPackage I/O.
 # =============================================================================
 # Engine lifecycle & errors
 # =============================================================================
+from ._coupling import Coupling as Coupling, DomainSources as DomainSources, RuntimeSource as RuntimeSource, SourceReceipt as SourceReceipt, BoundaryReceipt as BoundaryReceipt, CouplingFrame as CouplingFrame, RuntimeBoundary as RuntimeBoundary, RuntimeForcing as RuntimeForcing, RuntimeClear as RuntimeClear
 from ._solver import (
     Solver as Solver,
     run as run,

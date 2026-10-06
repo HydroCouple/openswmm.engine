@@ -70,6 +70,8 @@ public:
     /// External outfall transfers keep these cells and their halo on tier zero.
     void pinExternalSourceCells(const std::vector<int>& cells);
     void finalize() override;
+    /// Refresh changed perimeter topology between completed advances.
+    void refreshBoundaries();
 
     long   last_num_steps() const noexcept override { return last_steps_; }
     double last_step_size() const noexcept override { return last_dt_; }
@@ -262,12 +264,13 @@ private:
     // constituent transfers are evaluated even when net water change is zero.
     // Returns false only when no source bookkeeping or volume change occurred.
     bool applyCellSources(int cell, double dt);
+    bool applyRuntimeSources(int cell, double dt);
     struct CellSourceStep;
     bool prepareCellSources(int cell, double dt, CellSourceStep& source);
     void applyCellSourceRow(int cell, int row, double& mass,
                             const CellSourceStep& source);
     enum class SourceLedger { Infiltration, CouplingOut, Rainfall,
-                              CouplingIn, Exfiltration, Boundary, Count };
+                              CouplingIn, Exfiltration, Boundary, ExternalIn, ExternalOut, Count };
     void bookSourceLedger(SourceLedger ledger, int species, double mass) noexcept;
     void flushSourceLedgers();
     int sourceThread() const noexcept;
@@ -287,6 +290,7 @@ private:
     double dt0_ = 0.0;                  ///< base (tier-0) step from the rebuild
     std::vector<int>     bc_cell_;      ///< cells with a non-WALL boundary edge
     std::vector<int>     bc_slot_;      ///< matching flat mesh edge slot
+    std::vector<int> gw_row_map_;
     std::vector<double>  bc_accum_;     ///< ∫F_applied dt per BC entry (m³),
                                         ///< inflow-positive, reset per advance
     std::vector<double>  bc_q_;         ///< prognostic boundary-edge discharge
@@ -369,6 +373,7 @@ public:
     /// Attach (or detach, with nullptr) the groundwater kernel. Must be
     /// called before the first advance and after `initialize`.
     void setSubsurface(SubsurfaceSolver* gw) noexcept { gw_ = gw; }
+    void refreshSubsurfaceRows();
 
     /// The unique interior-edge topology this marcher built. Exposed so the
     /// groundwater kernel can put its lateral Darcy flux on the SAME faces

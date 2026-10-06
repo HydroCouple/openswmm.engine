@@ -1,3 +1,6 @@
+
+from typing import Any, Mapping
+from ._coupling import DomainSources, SourceReceipt
 # SPDX-License-Identifier: Apache-2.0
 #
 # Copyright 2026 Caleb Buahin
@@ -441,8 +444,10 @@ class Surface2D:
         """Return depths for all triangles as a NumPy array. GIL is
         released during the C call.
 
-        @return: Array of shape C{(n_triangles,)} with dtype C{float64}.
+        @return: Array of shape C{(n_triangles,)} with dtype C{float64}, in m
+            (the 2D solver runs in SI after initialize, whatever the flow units).
         @rtype: np.ndarray
+        @raise LifecycleError: Before C{initialize()} on a model with a 2D mesh.
         @raise EngineError: If the C API call fails.
         """
         ...
@@ -451,7 +456,7 @@ class Surface2D:
         """Return total heads for all triangles as a NumPy array. GIL is
         released during the C call.
 
-        @return: Array of shape C{(n_triangles,)} with dtype C{float64}.
+        @return: Array of shape C{(n_triangles,)} with dtype C{float64}, in m.
         @rtype: np.ndarray
         @raise EngineError: If the C API call fails.
         """
@@ -477,6 +482,17 @@ class Surface2D:
         """
         ...
 
+    @property
+    def species(self) -> tuple[str, ...]:
+        """Surface-transported species names in native row order: pollutants,
+        MSX species, C{__WATER_AGE__}, C{__TEMPERATURE__}."""
+        ...
+
+    def concentrations(self, species: int) -> npt.NDArray[np.float64]:
+        """Per-cell concentration of one surface species (declared units;
+        degC for temperature, seconds for age; dry cells report 0)."""
+        ...
+
     def get_edge_geometry_bulk(self) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
         """Return time-invariant edge lengths and outward unit normal components.
         GIL is released during the C call.
@@ -496,7 +512,7 @@ class Surface2D:
 
         @param idx: Triangle index.
         @type idx: int
-        @return: Water depth.
+        @return: Water depth (m).
         @rtype: float
         @raise EngineError: If the C API call fails.
         """
@@ -507,7 +523,7 @@ class Surface2D:
 
         @param idx: Triangle index.
         @type idx: int
-        @return: Total head.
+        @return: Total head (m).
         @rtype: float
         @raise EngineError: If the C API call fails.
         """
@@ -873,6 +889,22 @@ class Surface2D:
         @raise EngineError: If the C API call fails.
         """
         ...
+
+    @property
+    def sources(self) -> DomainSources: ...
+    def boundary_receipt(self, cell: int, edge: int) -> SourceReceipt: ...
+    def species_ledger(self, species: str) -> dict[str, float]: ...
+    def set_water_source(self, cells: Any, flow_m3_s: Any, **kwargs: Any) -> None: ...
+    def set_heat_source(self, cells: Any, heat_w: Any, *, source_id: str = ..., until_seconds: float | None = ...) -> None: ...
+    def set_species_source(self, cells: Any, species_rates: Mapping[str, Any], *, source_id: str = ..., until_seconds: float | None = ...) -> None: ...
+    def clear_source(self, source_id: str = ..., cell: int | None = ...) -> None: ...
+    def source_receipt(self, source_id: str = ..., cell: int = ...) -> SourceReceipt: ...
+    def set_head_boundary(self, cell: int, edge: int, head_m: float, concentrations: Mapping[str, float] | None = ...) -> None: ...
+    def set_flow_boundary(self, cell: int, edge: int, flow_m3_s: float, concentrations: Mapping[str, float] | None = ...) -> None: ...
+    def clear_boundary(self, cell: int, edge: int) -> None: ...
+    def boundary_flow(self, cell: int, edge: int) -> float: ...
+    def set_edge_bc_concentrations(self, cell: int, edge: int, concentrations: Mapping[str, float]) -> None: ...
+    def clear_edge_bc(self, cell: int, edge: int) -> None: ...
 
     def set_edge_bc_type(
         self, tri_idx: int, edge: int, bc_type: SurfaceBoundaryType

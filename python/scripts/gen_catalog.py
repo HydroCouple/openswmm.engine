@@ -592,6 +592,12 @@ class Builder:
                     # expose it as a value -- the referenced element's id.
                     self.members.append(dict(self.member_entry(target, cls_name, m),
                                              type=f"ref:{ref}"))
+                elif ref and ref != ("" if target == "solver" else target + ".") + name:
+                    # An alternate route to a view already named by its shortest
+                    # path. Preserve the property and point tools to that view's
+                    # members, without treating it as an element-id reference.
+                    self.members.append(dict(self.member_entry(target, cls_name, m),
+                                             view_target=ref))
                 continue            # otherwise a navigable sub-target, not a value
             self.members.append(self.member_entry(target, cls_name, m))
         if cls.getitem and not entry.get("element"):
