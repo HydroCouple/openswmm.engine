@@ -1,0 +1,222 @@
+{
+  "tests": 20,
+  "failures": 0,
+  "disabled": 0,
+  "errors": 0,
+  "timestamp": "2026-10-06T10:31:34Z",
+  "time": "0.007s",
+  "name": "AllTests",
+  "testsuites": [
+    {
+      "name": "SourceWaterDriver",
+      "tests": 20,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T10:31:34Z",
+      "time": "0.007s",
+      "testsuite": [
+        {
+          "name": "PrivateTrialsCancelRetryAndKeepUnselectedSourcesUntouched",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_water_driver.cpp",
+          "line": 76,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "SourceWaterDriver"
+        },
+        {
+          "name": "ComponentAtmosphereIsPrivateAndClosesThePhysicalFootprint",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_water_driver.cpp",
+          "line": 89,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "SourceWaterDriver"
+        },
+        {
+          "name": "StepPetVolumesArePastOnlyAndEquivalentInUsAndSi",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_water_driver.cpp",
+          "line": 109,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "SourceWaterDriver"
+        },
+        {
+          "name": "VariableCadencesPreserveRunoffRunonAndCyclicHistories",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_water_driver.cpp",
+          "line": 133,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "SourceWaterDriver"
+        },
+        {
+          "name": "InterSubareaTransfersKeepTheirOriginalVolumeWhenStepChanges",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_water_driver.cpp",
+          "line": 147,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "SourceWaterDriver"
+        },
+        {
+          "name": "PartialLidRunonCountsFullPhysicalAreaOnlyOnce",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_water_driver.cpp",
+          "line": 159,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "SourceWaterDriver"
+        },
+        {
+          "name": "CaptureDrainsAndPerviousReturnsArePrivatePendingVolumes",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_water_driver.cpp",
+          "line": 168,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "SourceWaterDriver"
+        },
+        {
+          "name": "ExplicitLidDrainsConnectAndDeliverToTargetSubcatchment",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_water_driver.cpp",
+          "line": 181,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "SourceWaterDriver"
+        },
+        {
+          "name": "NodeNamePrecedenceAndSelfDrainsResolveToOwnOutlet",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_water_driver.cpp",
+          "line": 190,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "SourceWaterDriver"
+        },
+        {
+          "name": "MultipleCoveredBarrelsReturnOnlyTheirOwnRainArea",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_water_driver.cpp",
+          "line": 202,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "SourceWaterDriver"
+        },
+        {
+          "name": "FullLidCoverageAndIndividualBottomCeilingsConserveWater",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_water_driver.cpp",
+          "line": 214,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "SourceWaterDriver"
+        },
+        {
+          "name": "BadBottomBatchCannotPartiallyInstallAnyWaterOrClock",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_water_driver.cpp",
+          "line": 224,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "SourceWaterDriver"
+        },
+        {
+          "name": "ResolvedPetIsAppliedOnceAndTrialsNeverWriteLidReports",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_water_driver.cpp",
+          "line": 233,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "SourceWaterDriver"
+        },
+        {
+          "name": "UnsupportedProfilesRefuseWithSpecificReasons",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_water_driver.cpp",
+          "line": 248,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "SourceWaterDriver"
+        },
+        {
+          "name": "IndependentGroupsKeepTheirOwnClockAndPendingState",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_water_driver.cpp",
+          "line": 260,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "SourceWaterDriver"
+        },
+        {
+          "name": "OverCaptureRefusesBeforeAdoptingPrivateStores",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_water_driver.cpp",
+          "line": 271,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "SourceWaterDriver"
+        },
+        {
+          "name": "ResolvedLidBatchValidatesAllUnitsBeforeAnyMutation",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_water_driver.cpp",
+          "line": 280,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "SourceWaterDriver"
+        },
+        {
+          "name": "CompletedMeshHorizonIncludesWetLazySourcesAcrossAdvances",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_water_driver.cpp",
+          "line": 292,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "SourceWaterDriver"
+        },
+        {
+          "name": "GroupWaterRefinementConvergesWithPendingTransfersInBalance",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_water_driver.cpp",
+          "line": 305,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0.003s",
+          "classname": "SourceWaterDriver"
+        },
+        {
+          "name": "RealMarcherCompletionSupportsOneCellTwoSourceSettlement",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_water_driver.cpp",
+          "line": 329,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "SourceWaterDriver"
+        }
+      ]
+    }
+  ]
+}

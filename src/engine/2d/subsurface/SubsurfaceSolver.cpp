@@ -29,12 +29,11 @@
  * | SIGMA       | `Σ θ_j·L·Δσ`      | `(θ_s − θ_bot)·ḣ_g = q₀_phys + …` |
  * | ENSLAVED    | `hᵤ*(L)`, algebraic | `(θ_s − θ(ψ=L))·ḣ_g = q⁺ + …` |
  *
- * The SIGMA row is the one the plan text writes with `θ_s`. It is wrong by
- * exactly the handover: the column's bottom flux is `f_bot = q₀_phys −
- * θ_bot·L̇`, and `L̇ = −ḣ_g`, so `θ_s·ḣ_g = f_bot` rearranges to
- * `(θ_s − θ_bot)·ḣ_g = q₀_phys`. Same equation, but only the second form can
- * be written down without also tracking `f_bot`, and only the second form
- * conserves once the column retains water above a falling table.
+ * For an unbounded SIGMA bottom flux, `f_bot = q₀_phys − θ_bot·L̇`,
+ * so `θ_s·ḣ_g = f_bot` rearranges to `(θ_s − θ_bot)·ḣ_g = q₀_phys`.
+ * The latter gives the table predictor. The final discrete balance uses
+ * actual bounded bottom water, compression surplus and residual support,
+ * since an explicit column sweep can limit or redirect these transfers.
  *
  * ENSLAVED falls out of the same algebra: `S_col = hᵤ*(L)` gives
  * `Ṡ_col = d(hᵤ*)/dL · L̇ = −θ(ψ=L)·ḣ_g`, since `d(hᵤ*)/dL = θ(L)` by the
@@ -45,11 +44,12 @@
  *
  * @section split Why the split is ordered the way it is
  *
- * `fireCell` runs: q₀ → saturated update → clamp → column sweep at the
- * CLAMPED `L̇` → apply the column's overflow/deficit → Dunne. Deriving `L̇`
- * from the clamped `h_g` is what makes the clamp harmless: the column and the
- * saturated zone always agree on how far the table actually moved, so no
- * water is created at `h_g = z_s` or destroyed at `h_g = 0`.
+ * `fireCell` gathers completed exchanges, computes Darcy recharge and a
+ * specific-yield table predictor. SIGMA then brackets the physical table
+ * interval while replaying the existing explicit column sweep from its
+ * original state. One final column/table pair closes the actual discrete
+ * bottom transfer; only excess outside the bracket becomes Dunne water or
+ * a withdrawal refund. CLOSED_FORM and ENSLAVED keep their existing update.
  *
  * @ingroup engine_2d
  *
@@ -1470,10 +1470,10 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     double dunne_vol = 0.0;
     if (ens_dunne >= 0.0) {
         dunne_vol = ens_dunne;                       // ENSLAVED: exact, above
-    } else if (hg1 > zs) {
+    } else if (cl != GwClosure::SIGMA && hg1 > zs) {
         dunne_vol = (hg1 - zs) * Sy * A;
         hg1 = zs;
-    } else if (hg1 < 0.0 || ens_short >= 0.0) {
+    } else if (cl != GwClosure::SIGMA && (hg1 < 0.0 || ens_short >= 0.0)) {
         const double short_vol = (ens_short >= 0.0) ? ens_short : -hg1 * Sy * A;
         hg1 = 0.0;
         // Refund proportionally to the sinks that overdrew: deep loss first
@@ -1509,61 +1509,72 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     double rejected = 0.0;
 
     if (cl == GwClosure::SIGMA) {
+        // A post-sweep height correction cannot spend a negative surplus
+        // when the predicted column collapses to a saturated, zero-yield
+        // profile. Settle the table with the actual bounded bottom transfer
+        // instead; every trial starts from the same original layer water.
+        static thread_local std::vector<double> original, trial;
+        original.resize(state_.m_layers);trial.resize(state_.m_layers);
+        for(int j=0;j<state_.m_layers;++j) original[j]=state_.theta_sigma[static_cast<std::size_t>(j)*n+u];
         sigma::ColumnStep cs;
-        cs.L_old     = L0;
-        cs.L_new     = L1;
-        cs.dt        = dt;
-        cs.q_in      = q_in;
-        cs.q_et      = q_et;
-        cs.wilting_suction=options_.wilting_suction;
-        cs.q0_phys   = q0;
-        cs.handover_theta = ts - Sy;
-        cs.capillary = options_.capillary_diff;
-        sigma::advanceColumn(p, &state_.theta_sigma[u], state_.m_layers, n, cs);
-        rejected = cs.rejected;
-        state_.et_stress[u]=et_boundary?cs.et_stress:std::numeric_limits<double>::quiet_NaN();
-        state_.qet_last[u] = cs.et_taken;
-        state_.led_et += cs.et_taken * A * dt;
-        state_.hu[u] = sigma::columnStorage(&state_.theta_sigma[u],
-                                            state_.m_layers, n, cs.L_new);
-        // The compression surplus / stretch deficit the ALE sweep could not
-        // hold. Applying it here, in the same firing, is what plan gate 5
-        // measures; clamping it away inside the sweep is the classic σ-grid
-        // conservation bug and it cost 3.9e-1 m before this line existed.
-        // The returned surplus changes BOTH zone volumes: changing hg
-        // rescales every sigma layer. Spend against that profile's mean
-        // content, not the old bottom-layer specific yield. Include any
-        // bottom-flux availability limit in this internal handover.
-        const double expected_bot = q0 - cs.handover_theta * (L1 - L0) / dt;
-        const double net = (cs.overflow_to_sat - cs.deficit_from_sat +
-                            cs.f_bot - expected_bot) * dt;
-        if (net != 0.0) {
-            double mean = 0.0;
-            for (int j=0; j<state_.m_layers; ++j)
-                mean += state_.theta_sigma[static_cast<std::size_t>(j)*n+u] / state_.m_layers;
-            const double yield = std::max(0.0, ts - mean);
-            if (yield > kTiny) {
-                const double target = hg1 + net / yield;
-                if (target > zs) dunne_vol += (target - zs) * yield * A;
-                hg1 = std::clamp(target, 0.0, zs);
-                if (target < 0.0) {
-                    // The column requested more residual support than the
-                    // saturated store can give. Clamping the table alone
-                    // creates -target*yield water. Return that unfulfilled
-                    // support from the column's mobile water, proportionally
-                    // over layers; residual content remains untouched.
-                    const double mobile = std::max(0.0, mean-p.theta_r)*zs;
-                    const double keep = mobile>0.0
-                        ? std::max(0.0,1.0+target*yield/mobile) : 0.0;
-                    for(int j=0;j<state_.m_layers;++j) {
-                        double& theta=state_.theta_sigma[static_cast<std::size_t>(j)*n+u];
-                        theta=p.theta_r+(theta-p.theta_r)*keep;
-                    }
+        double external=(lat_vol-node_vol+link_vol+source.in-source.out)/A-state_.qdeep_last[u]*dt;
+        const double tolerance=1e-15*std::max({1.0,zs,std::abs(external)});
+        const auto evaluate=[&](double h) {
+            trial=original;cs={};cs.L_old=L0;cs.L_new=std::max(0.0,zs-h);cs.dt=dt;
+            cs.q_in=q_in;cs.q_et=q_et;cs.q0_phys=q0;cs.handover_theta=ts-Sy;
+            cs.wilting_suction=options_.wilting_suction;cs.capillary=options_.capillary_diff;
+            sigma::advanceColumn(p,trial.data(),state_.m_layers,1,cs);
+            // ts * delta_h = external + the actual column-to-table water.
+            const double balance = ts*(h-hg0)-external-
+                (cs.f_bot+cs.overflow_to_sat-cs.deficit_from_sat)*dt;
+            if (!std::isfinite(balance))
+                throw std::runtime_error("SIGMA table/column water settlement is non-finite.");
+            return balance;
+        };
+        double lo=0.0,hi=zs;
+        hg1=std::clamp(hg1,lo,hi);
+        double residual=evaluate(hg1);
+        if(std::abs(residual)>tolerance) {
+            double lower=evaluate(lo);
+            if(lower>tolerance) {
+                // No saturated water remains to support this withdrawal.
+                // Preserve the existing deep-first refund order, using the
+                // settled column balance rather than a floored predictor.
+                double short_volume=lower*A;
+                const double deep=std::min(short_volume,state_.qdeep_last[u]*A*dt);
+                state_.qdeep_last[u]-=deep/(A*dt);state_.led_deep-=deep;
+                external+=deep/A;short_volume-=deep;
+                const double node=std::min(short_volume,std::max(0.0,state_.qnode_last[u]*dt));
+                if(node>0) {
+                    ++node_refunds_;state_.qnode_last[u]-=node/dt;state_.led_node-=node;
+                    external+=node/A;
                 }
-            } else if (net > 0.0) dunne_vol += net * A;
-            state_.hu[u] = sigma::columnStorage(&state_.theta_sigma[u],
-                                state_.m_layers, n, std::max(0.0, zs - hg1));
+                lower=evaluate(lo);
+                if(lower>tolerance) throw std::runtime_error("SIGMA saturated withdrawals exceed available column/table water.");
+            }
+            const double upper=evaluate(hi);
+            if(upper<-tolerance) {
+                hg1=hi;dunne_vol=-upper*A;
+            } else if(std::abs(lower)<=tolerance) {
+                hg1=lo;evaluate(hg1);
+            } else if(std::abs(upper)<=tolerance) {
+                hg1=hi;
+            } else {
+                // Bounded scalar consistency solve; no forcing or water
+                // histories change in a trial, and no future flux is credit.
+                for(int iteration=0;iteration<100;++iteration) {
+                    hg1=lo+.5*(hi-lo);residual=evaluate(hg1);
+                    if(std::abs(residual)<=tolerance) break;
+                    if(residual>0) hi=hg1;else lo=hg1;
+                }
+                if(std::abs(residual)>tolerance)
+                    throw std::runtime_error("SIGMA table/column water settlement did not converge.");
+            }
         }
+        for(int j=0;j<state_.m_layers;++j) state_.theta_sigma[static_cast<std::size_t>(j)*n+u]=trial[j];
+        rejected=cs.rejected;state_.et_stress[u]=et_boundary?cs.et_stress:std::numeric_limits<double>::quiet_NaN();
+        state_.qet_last[u]=cs.et_taken;state_.led_et+=cs.et_taken*A*dt;
+        state_.hu[u]=sigma::columnStorage(trial.data(),state_.m_layers,1,zs-hg1);
     } else if (cl == GwClosure::ENSLAVED) {
         // No state to advance — the column IS its equilibrium. Rejection is
         // whatever the (now saturated) table cannot accept.
