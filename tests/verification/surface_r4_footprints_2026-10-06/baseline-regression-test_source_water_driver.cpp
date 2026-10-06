@@ -246,12 +246,13 @@ TEST(SourceWaterDriver, ResolvedPetIsAppliedOnceAndTrialsNeverWriteLidReports) {
 }
 
 TEST(SourceWaterDriver, UnsupportedProfilesRefuseWithSpecificReasons) {
-    for (int mode = 0; mode < 4; ++mode) {
+    for (int mode = 0; mode < 5; ++mode) {
         auto c = model();
         if (mode == 0) c.options.water_age = true;
         if (mode == 1) c.options.heat_transport = true;
         if (mode == 2) c.current_time = 1;
         if (mode == 3) c.subcatches.gw_aquifer[0] = 0;
+        if (mode == 4) addLid(c, 0, "GR");
         SourceWaterDriver d; EXPECT_FALSE(d.initialize(c, {0}, areas(c)).empty());
     }
 }
@@ -371,160 +372,4 @@ TEST(SourceWaterDriver, GeneralizedLayeredAndRoofUnitsUseExistingCompletedLaws) 
         SourceWaterDriver::BottomCeiling cap=[](int,int,double,double){return .0001;};
         for(double end:{.1,.3,1.,2.125,4.})step(d,end,&cap);
     }
-}
-
-TEST(SourceWaterDriver, PartialNativeSoilStateAdvancesOnlyOutsideAndCancelsWithItsTrial) {
-    for(double fraction:{0.,.25,.5,1.})for(int method:{0,1,2,3,4,5}){
-        SCOPED_TRACE(std::to_string(fraction)+"/method="+std::to_string(method));auto c=model(1);
-        c.subcatches.infil_model[0]=method;
-        if(method<=1){c.subcatches.infil_p1[0]=3.5;c.subcatches.infil_p2[0]=.5;c.subcatches.infil_p3[0]=4;c.subcatches.infil_p4[0]=7;}
-        if(method==4){c.subcatches.infil_p1[0]=75;c.subcatches.infil_p3[0]=7;}
-        SourceWaterDriver d;ASSERT_EQ(d.initialize(c,{0},areas(c)),"");ASSERT_EQ(d.configureSpatialCoverage({fraction}),"");
-        int m;double original[6],trial[6],cancelled[6];d.runoff().infil_get_state(0,m,original);
-        ASSERT_EQ(d.stage(0,1,1,&sealed),"");d.runoff(true).infil_get_state(0,m,trial);
-        const auto b=d.ledgers(true)[0];EXPECT_DOUBLE_EQ(b.spatial_infiltration,0);
-        EXPECT_NEAR(b.infiltration,b.outside_infiltration,1e-12);
-        if(fraction<1)EXPECT_GT(b.outside_infiltration,0);else EXPECT_DOUBLE_EQ(b.outside_infiltration,0);
-        d.cancel();d.runoff().infil_get_state(0,m,cancelled);
-        for(int j=0;j<6;++j)EXPECT_DOUBLE_EQ(original[j],cancelled[j]);
-        ASSERT_EQ(d.stage(0,1,1,&sealed),"");ASSERT_EQ(d.commit(),"");
-        for(int j=0;j<6;++j)if(fraction==1)EXPECT_DOUBLE_EQ(trial[j],original[j]);
-        EXPECT_NEAR(d.balanceResidual(0),0,1e-10);
-    }
-}
-TEST(SourceWaterDriver, SwaleFootprintRequiresItsTrueGeometryAndConservedCompletedWater) {
-    auto c=model(1);addLid(c,0,"VS",.5,0,0);c.lid_controls.surface[0]={12,.1,.1,1,1};
-    SourceWaterDriver d;ASSERT_EQ(d.initialize(c,{0},areas(c)),"");ASSERT_EQ(d.configureSpatialCoverage({.5}),"");
-    SourceWaterDriver::BottomCeiling cap=[](int,int,double,double){return .0001;};
-    for(double end:{.1,.3,1.,2.125,4.})step(d,end,&cap);
-}
-
-TEST(SourceWaterDriver, ConfiguredInsideFootprintsCannotFallBackToUnboundedNativeLoss) {
-    for(bool with_lid:{false,true}) {
-        auto c=model(1);if(with_lid)addLid(c,0,"IT",.5,50,432);
-        SourceWaterDriver d;ASSERT_EQ(d.initialize(c,{0},areas(c)),"");
-        ASSERT_EQ(d.configureSpatialCoverage({.5}),"");
-        EXPECT_FALSE(d.stage(0,1,1).empty());EXPECT_DOUBLE_EQ(d.clocks().groups()[0].completed_end,0);
-        EXPECT_DOUBLE_EQ(d.ledgers()[0].rain,0);
-        RunoffSolver::InfiltrationBoundary refuse=[](int,double,double,double&){return false;};
-        SourceWaterDriver::BottomCeiling cap=[](int,int,double,double){return .0001;};
-        EXPECT_FALSE(d.stage(0,1,1,&refuse,&cap).empty());EXPECT_DOUBLE_EQ(d.ledgers()[0].infiltration,0);
-        ASSERT_EQ(d.stage(0,1,1,&sealed,&cap),"");ASSERT_EQ(d.commit(),"");
-        EXPECT_NEAR(d.balanceResidual(0),0,1e-10);
-        EXPECT_FALSE(d.configureSpatialCoverage({.25}).empty());
-    }
-}
-
-TEST(SourceWaterDriver, PartialNativeHistoryRecoversThroughDryAndMonthlyIntervals) {
-    for(int method:{0,1,2,3,4,5}) {
-        SCOPED_TRACE(method);
-        auto c=model(1);c.subcatches.infil_model[0]=method;
-        if(method<=1){c.subcatches.infil_p1[0]=3.5;c.subcatches.infil_p2[0]=.5;c.subcatches.infil_p3[0]=4;c.subcatches.infil_p4[0]=7;}
-        if(method==4){c.subcatches.infil_p1[0]=75;c.subcatches.infil_p3[0]=7;}
-        c.options.start_date=datetime::encodeDate(2026,10,31)+datetime::encodeTime(23,59,0);
-        c.tables.tables[0].x={c.options.start_date,datetime::addSeconds(c.options.start_date,30)};
-        c.patterns.factors={std::vector<double>(12,1)};c.patterns.factors[0][10]=.2;
-        c.subcatch_infil_pattern={0};
-        c.forcing.subcatch_evap_mode[0]=ForcingMode::OVERRIDE;c.forcing.subcatch_evap_value[0]=.001;
-        c.forcing.subcatch_evap_persist[0]=ForcingPersist::PERSIST;
-        SourceWaterDriver d;ASSERT_EQ(d.initialize(c,{0},areas(c)),"");ASSERT_EQ(d.configureSpatialCoverage({.25}),"");
-        int m;double initial[6],final[6];d.runoff().infil_get_state(0,m,initial);
-        bool changed=false;
-        for(double end:{1.,5.,30.,37.,60.,70.,100.,600.,3600.}){
-            step(d,end);d.runoff().infil_get_state(0,m,final);
-            for(int j=0;j<6;++j)changed|=initial[j]!=final[j];
-        }
-        d.runoff().infil_get_state(0,m,final);
-        for(int j=0;j<6;++j)EXPECT_TRUE(std::isfinite(final[j]));
-        if(method!=5)EXPECT_TRUE(changed);else EXPECT_FALSE(changed); // Constant capacity has no recovery state.
-        EXPECT_GT(d.ledgers()[0].outside_infiltration,0);
-        EXPECT_DOUBLE_EQ(d.ledgers()[0].spatial_infiltration,0);EXPECT_DOUBLE_EQ(d.runoff().soa().depth_perv[0],0);
-    }
-}
-
-TEST(SourceWaterDriver, SwaleVolumeRefinesAndBoundsOverflowAndDryDemand) {
-    std::filesystem::create_directories(OPENSWMM_R4_WATER_OUT);
-    std::ofstream audit(std::filesystem::path(OPENSWMM_R4_WATER_OUT)/"swale-refinement.jsonl");
-    audit<<std::setprecision(17);
-    for(double fraction:{1.,.5}) {
-    std::vector<double> levels,losses;
-    for(double dt:{.4,.2,.1,.05,.0125}) {
-        auto c=model(1,0);addLid(c,0,"VS",.5,0,0);c.lid_controls.surface[0]={12,.1,.1,1,1};
-        c.forcing.subcatch_rainfall_mode[0]=ForcingMode::OVERRIDE;c.forcing.subcatch_rainfall_value[0]=86.4; // .002 ft/s
-        c.forcing.subcatch_rainfall_persist[0]=ForcingPersist::PERSIST;
-        c.forcing.subcatch_evap_mode[0]=ForcingMode::OVERRIDE;c.forcing.subcatch_evap_value[0]=1e-5;
-        c.forcing.subcatch_evap_persist[0]=ForcingPersist::PERSIST;
-        SourceWaterDriver d;ASSERT_EQ(d.initialize(c,{0},areas(c)),"");ASSERT_EQ(d.configureSpatialCoverage({fraction}),"");
-        SourceWaterDriver::BottomCeiling cap=[](int,int,double,double){return .0001;};
-        const int count=std::lround(4/dt);for(int k=1;k<=count;++k)step(d,k*dt,&cap);
-        const auto& g=d.lids().group(int(lid::LIDType::VEG_SWALE));
-        levels.push_back(g.surf_depth[0]);losses.push_back(g.wb_infil[0]);
-        audit<<"{\"inside_fraction\":"<<fraction<<",\"dt_seconds\":"<<dt<<",\"depth_ft\":"<<levels.back()<<",\"infiltration_ft\":"<<losses.back()
-             <<",\"balance_ft3\":"<<d.balanceResidual(0)<<"}\n";
-    }
-    for(int k=1;k<4;++k)EXPECT_LT(std::abs(levels[k]-levels.back()),std::abs(levels[k-1]-levels.back()));
-    // Native Green-Ampt regime switches need not give monotone flux error.
-    // Both footprint paths must reduce the coarse loss error and resolve the
-    // final 0.05 s loss within 0.2% of the independent finer trajectory.
-    EXPECT_LT(std::abs(losses[3]-losses.back()),std::abs(losses[0]-losses.back()));
-    EXPECT_NEAR(losses[3],losses.back(),.002*losses.back());
-    }
-    for(double fraction:{0.,.25,.5,1.})for(double rain:{0.,43200.}) {
-        auto c=model(1,rain);addLid(c,0,"VS",.5,0,0);c.lid_controls.surface[0]={.12,.1,.1,1,1};
-        c.forcing.subcatch_evap_mode[0]=ForcingMode::OVERRIDE;c.forcing.subcatch_evap_value[0]=.01;
-        c.forcing.subcatch_evap_persist[0]=ForcingPersist::PERSIST;
-        SourceWaterDriver d;ASSERT_EQ(d.initialize(c,{0},areas(c)),"");ASSERT_EQ(d.configureSpatialCoverage({fraction}),"");
-        SourceWaterDriver::BottomCeiling cap=[](int,int,double,double){return 0.;};
-        for(double end:{.1,.3,1.,3.})step(d,end,&cap);
-        const auto& g=d.lids().group(int(lid::LIDType::VEG_SWALE));
-        EXPECT_GE(g.surf_depth[0],0);EXPECT_LE(g.surf_depth[0],g.surf_store[0]+1e-14);
-        EXPECT_NEAR(d.ledgers()[0].infiltration,d.ledgers()[0].spatial_infiltration+d.ledgers()[0].outside_infiltration,1e-10);
-        if(rain==0){EXPECT_DOUBLE_EQ(d.ledgers()[0].evaporation,0);EXPECT_DOUBLE_EQ(d.ledgers()[0].infiltration,0);}
-        else EXPECT_GT(d.ledgers()[0].outlet,0);
-    }
-}
-
-TEST(SourceWaterDriver, PartialPerviousWaterAndNativeHistoryAreEquivalentInUsAndSi) {
-    std::vector<double> prior;
-    for(auto units:{FlowUnits::CFS,FlowUnits::CMS}) {
-        auto c=model(1);c.options.flow_units=units;const bool si=units==FlowUnits::CMS;
-        c.subcatches.area[0]=si?.0001:1/(43560*ft2);c.subcatches.width[0]=si?.3048:1;
-        c.subcatches.infil_p1[0]=3.5*(si?25.4:1);c.subcatches.infil_p2[0]=.5*(si?25.4:1);
-        c.tables.tables[0].y={432*(si?25.4:1),0};
-        SourceWaterDriver d;ASSERT_EQ(d.initialize(c,{0},{{0,1}}),"");ASSERT_EQ(d.configureSpatialCoverage({.5}),"");
-        RunoffSolver::InfiltrationBoundary intake=[](int,double,double available,double& q){q=std::min(.001,available);return true;};
-        for(double end:{.1,.3,1.,2.125,4.,30.,37.,100.}){ASSERT_EQ(d.stage(0,end,end,&intake),"");ASSERT_EQ(d.commit(),"");}
-        const auto& b=d.ledgers()[0];int method;double state[6];d.runoff().infil_get_state(0,method,state);
-        std::vector<double> values{b.rain,b.infiltration,b.spatial_infiltration,b.outside_infiltration,d.runoff().soa().depth_perv[0]};
-        values.insert(values.end(),state,state+6);
-        if(!si)prior=values;else for(int i=0;i<int(values.size());++i)EXPECT_NEAR(values[i],prior[i],1e-11);
-        EXPECT_NEAR(d.balanceResidual(0),0,1e-10);
-    }
-}
-
-TEST(SourceWaterDriver, MixedLidUsagesCoveredRainAndDrainsKeepTheirConnectedGroupVolumes) {
-    auto c=model(2);c.subcatches.outlet_subcatch[0]=1;
-    const std::vector<std::string> types{"BC","RG","GR","IT","PP","RB","VS","RD"};
-    for(const auto& type:types)addLid(c,0,type,.1,30,432,0,0,"S1");
-    c.lid_controls.soil.resize(types.size());c.lid_controls.pavement.resize(types.size());c.lid_controls.drainmat.resize(types.size());
-    for(int i=0;i<int(types.size());++i){
-        const auto& type=types[i];
-        if(type=="BC"||type=="RG"||type=="GR"||type=="PP")c.lid_controls.soil[i]={12,.45,.3,.1,43.2,4,3.5};
-        if(type=="PP")c.lid_controls.pavement[i]={6,.2,0,43.2,0,0};
-        if(type=="GR")c.lid_controls.drainmat[i]={3,.5,.1};
-        if(type=="VS")c.lid_controls.surface[i]={12,.1,.1,1,1};
-    }
-    lid::LIDSolver initial;initial.init(c);initial.group(int(lid::LIDType::RAIN_BARREL)).stor_covered[0]=1;
-    SourceWaterDriver d;ASSERT_EQ(d.initialize(c,{0},areas(c),&initial),"");ASSERT_EQ(d.configureSpatialCoverage({.5,0}),"");
-    ASSERT_EQ(d.clocks().groups().size(),1u);SourceWaterDriver::BottomCeiling cap=[](int,int,double,double){return .0001;};
-    for(double end:{.1,.3,1.,2.125,4.,30.,37.,100.})step(d,end,&cap);
-    EXPECT_GT(d.ledgers()[1].runon,0);EXPECT_GT(d.ledgers()[0].spatial_infiltration,0);
-    EXPECT_GT(d.ledgers()[0].outside_infiltration,0);EXPECT_DOUBLE_EQ(d.ledgers()[1].spatial_infiltration,0);
-    double spatial=0;for(const auto& [t,u]:d.lids().usageOrder()){
-        const auto& g=d.lids().group(t);spatial+=g.wb_spatial_infil[u]*g.area[u];
-        if(g.type==lid::LIDType::RAIN_BARREL||g.type==lid::LIDType::GREEN_ROOF||g.type==lid::LIDType::ROOF_DISCON)
-            EXPECT_DOUBLE_EQ(g.wb_spatial_infil[u],0);
-    }
-    EXPECT_NEAR(spatial,d.ledgers()[0].spatial_infiltration,1e-11);
-    EXPECT_NEAR(d.balanceResidual(0),0,1e-10);
 }

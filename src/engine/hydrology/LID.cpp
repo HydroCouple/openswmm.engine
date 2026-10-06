@@ -137,6 +137,7 @@ void LIDGroupSoA::resize(int n) {
     wb_inflow.assign(un, 0.0);
     wb_evap.assign(un, 0.0);
     wb_infil.assign(un, 0.0);
+    spatial_infil_loss.assign(un,0.0);wb_spatial_infil.assign(un,0.0);
     wb_surf_flow.assign(un, 0.0);
     wb_drain_flow.assign(un, 0.0);
     wb_init_vol.assign(un, 0.0);
@@ -559,6 +560,18 @@ void LIDSolver::init(SimulationContext& ctx) {
     }
 }
 
+double completedUnitStorage(const LIDGroupSoA& g,int u) {
+    if(g.type==LIDType::VEG_SWALE) {
+        const double top=std::max(g.unit_width[u],.5),height=g.surf_store[u];
+        double side=g.surf_side_slope[u],bottom=top-2*side*height;
+        if(bottom<.5){bottom=.5;side=.5*(top-.5)/height;}
+        const double depth=g.surf_depth[u];
+        return g.area[u]/top*depth*(bottom+side*depth)*g.surf_void_frac[u];
+    }
+    return (g.surf_depth[u]*g.surf_void_frac[u]+g.soil_moist[u]*g.soil_thick[u]+
+        g.stor_depth[u]*g.stor_void[u]+g.pave_depth[u]*g.pave_void[u]*(1-g.pave_imperv_frac[u]))*g.area[u];
+}
+
 double LIDSolver::storedVolume() const {
     // Same per-unit water content the water-balance init uses above (and
     // legacy lid_getStoredVolume(), lid.c:1426): void-weighted layer depths
@@ -625,6 +638,8 @@ class LegacyLidKernel {
 public:
     // legacy file-scope shared variables (lidproc.c)
     double Tstep = 0.0, EvapRate = 0.0, MaxNativeInfil = L_BIG;
+    double SpatialFraction=-1.0,SpatialLimit=L_BIG,SpatialExfilRatio=0.0;
+    bool Completed=false;
     double SurfaceInflow = 0, SurfaceInfil = 0, SurfaceEvap = 0, SurfaceOutflow = 0;
     double PaveEvap = 0, PavePerc = 0, SoilEvap = 0, SoilPerc = 0;
     double StorageInflow = 0, StorageExfil = 0, StorageEvap = 0, StorageDrain = 0;
@@ -679,18 +694,24 @@ public:
     }
 
     // ---- legacy getStorageExfilRate
-    double getStorageExfilRate() const {
+    double getStorageExfilRate() {
         double infil = 0.0;
         double clogFactor = 0.0;
-        if (P->stor_ksat == 0.0) return 0.0;
-        if (MaxNativeInfil == 0.0) return 0.0;
+        if (SpatialFraction<0 && P->stor_ksat == 0.0) return 0.0;
+        if (SpatialFraction<0 && MaxNativeInfil == 0.0) return 0.0;
         clogFactor = P->stor_clog;
         if (clogFactor > 0.0) {
             clogFactor = G->wb_inflow[U] / clogFactor;
             clogFactor = std::min(clogFactor, 1.0);
         }
         infil = P->stor_ksat * (1.0 - clogFactor);
-        return std::min(infil, MaxNativeInfil);
+        const double native=std::min(infil,MaxNativeInfil);
+        if(SpatialFraction<0)return native;
+        const double inside=hasNativeBottom(P->type,P->stor_thick,P->stor_ksat)
+            ? (P->stor_thick<=0 ? SpatialLimit : std::min(infil,SpatialLimit)) : 0.0;
+        const double total=SpatialFraction*inside+(1-SpatialFraction)*native;
+        SpatialExfilRatio=total>0 ? SpatialFraction*inside/total : 0.0;
+        return total;
     }
 
     // ---- legacy getStorageDrainRate
@@ -1149,6 +1170,29 @@ public:
         StorageVolume = 0.0;
     }
 
+    // Completed swales evolve actual water volume. The ordinary omega=0.5
+    // depth update reports only its final rates and cannot close a completed
+    // extensive-water receipt. Retain its instantaneous flux laws, bound their
+    // shared demand by available water, then invert the same physical section.
+    void completedSwale(double x[],double f[]) {
+        const double top=std::max(P->full_width,.5),height=P->surf_thick;
+        double side=P->surf_side,bottom=top-2*side*height;
+        if(bottom<.5){bottom=.5;side=.5*(top-.5)/height;}
+        const auto volume=[&](double depth){return depth*(bottom+side*depth)*P->surf_void/top;};
+        const double old_depth=x[L_SURF],initial=volume(old_depth);
+        swaleFluxRates(x,f);
+        const double available=initial+SurfaceInflow*Tstep;
+        const double demand=(SurfaceEvap+StorageExfil+SurfaceOutflow)*Tstep;
+        const double scale=demand>available && demand>0 ? available/demand : 1;
+        SurfaceEvap*=scale;StorageExfil*=scale;SurfaceOutflow*=scale;
+        double final=std::max(0.0,available-demand*scale);
+        const double excess=std::max(0.0,final-volume(height));
+        SurfaceOutflow+=excess/Tstep;final-=excess;
+        const double section=final*top/P->surf_void;
+        x[L_SURF]=2*section/(bottom+std::sqrt(bottom*bottom+4*side*section));
+        SurfaceVolume=final;f[L_SURF]=(x[L_SURF]-old_depth)/Tstep;
+    }
+
     // ---- legacy barrelFluxRates
     void barrelFluxRates(const double x[], double f[]) {
         const double storageDepth = x[L_STOR];
@@ -1264,13 +1308,22 @@ public:
         // surface-to-soil infiltration: the unit's own Green-Ampt state, or
         // the native soil rate when the unit has no soil layer
         if (P->type == LIDType::PERM_PAVEMENT) SurfaceInfil = 0.0;
-        else if (G->soil_infil[U].Ks > 0.0) {
+        else if (G->soil_infil[U].Ks > 0.0 &&
+                 !(SpatialFraction==1 && P->type==LIDType::VEG_SWALE)) {
             SurfaceInfil = infil::grnampt_getInfil(G->soil_infil[U], SurfaceInflow,
                                                    G->surf_depth[U], Tstep,
                                                    InfilModel::MOD_GREEN_AMPT,
                                                    infil_factor, recovery_factor);
         }
         else SurfaceInfil = infil;
+        if(SpatialFraction>=0 && P->type==LIDType::VEG_SWALE) {
+            const double native=std::min(SurfaceInfil,MaxNativeInfil);
+            SurfaceInfil=SpatialFraction*SpatialLimit+(1-SpatialFraction)*native;
+            SpatialExfilRatio=SurfaceInfil>0 ? SpatialFraction*SpatialLimit/SurfaceInfil : 0.0;
+        }
+
+        if(Completed && SpatialFraction<0 && P->type==LIDType::VEG_SWALE)
+            SurfaceInfil=std::min(SurfaceInfil,MaxNativeInfil);
 
         if (P->soil_thick > 0.0) {
             xMin[L_SOIL] = P->soil_wp;
@@ -1281,7 +1334,8 @@ public:
         if (P->type == LIDType::GREEN_ROOF) xMax[L_STOR] = P->dm_thick;
         if (P->type == LIDType::VEG_SWALE) omega = 0.5;
 
-        modpulsSolve(L_MAX, x, xOld, xPrev, xMin, xMax, xTol, fOld, f, tStep, omega);
+        if(Completed && P->type==LIDType::VEG_SWALE)completedSwale(x,f);
+        else modpulsSolve(L_MAX, x, xOld, xPrev, xMin, xMax, xTol, fOld, f, tStep, omega);
 
         if (P->can_overflow || P->full_width == 0.0)
             SurfaceOutflow += getSurfaceOverflowRate(&x[L_SURF]);
@@ -1338,13 +1392,14 @@ inline LidProcView makeView(const LIDGroupSoA& g, std::size_t u) {
 inline void runUnitLegacy(LIDGroupSoA& g, std::size_t u, double inflow, double evap,
                           double native_infil, double max_native_infil, double dt,
                           double old_runoff_sec, double infil_factor,
-                          double recovery_factor) {
+                          double recovery_factor,double spatial_fraction=-1.0,double spatial_limit=L_BIG,bool completed=false) {
     LidProcView view = makeView(g, u);
     LegacyLidKernel k;
     k.P = &view;
     k.G = &g;
     k.U = u;
     k.old_runoff_days = old_runoff_sec / 86400.0;
+    k.SpatialFraction=spatial_fraction;k.SpatialLimit=spatial_limit;k.Completed=completed;
 
     double lidEvap = 0.0, lidInfil = 0.0, lidDrain = 0.0;
     double lidRunoff = k.getOutflow(inflow, evap, native_infil, max_native_infil, dt,
@@ -1370,7 +1425,9 @@ inline void runUnitLegacy(LIDGroupSoA& g, std::size_t u, double inflow, double e
     g.surface_runoff[u] = lidRunoff;
     g.drain_flow[u]     = lidDrain;
     g.evap_loss[u]      = lidEvap * dt;     // depth this step (ft)
-    g.infil_loss[u]     = lidInfil * dt;    // depth this step (ft)
+    g.infil_loss[u]     = lidInfil * dt;
+    g.spatial_infil_loss[u]=g.infil_loss[u]*k.SpatialExfilRatio;
+    g.wb_spatial_infil[u]+=g.spatial_infil_loss[u];    // depth this step (ft)
 
     // staged for the per-unit LID report file (legacy lidproc_saveResults
     // reads lidproc.c's static flux variables; the kernel here is per-call)
@@ -1524,9 +1581,12 @@ void LIDSolver::executeCompleted(double dt, double start, double recovery_factor
             in.unit >= group(in.type).count || key <= previous)
             throw std::invalid_argument("Invalid, unordered or duplicate completed LID unit.");
         for (double rate : {in.inflow, in.rain, in.pet, in.native_infil,
-                            in.max_native_infil, in.infil_factor})
+                            in.max_native_infil, in.infil_factor,in.spatial_max_infil})
             if (!std::isfinite(rate) || rate < 0.0)
                 throw std::invalid_argument("Invalid completed LID rate or bottom ceiling.");
+        if(!std::isfinite(in.spatial_fraction) ||
+           (in.spatial_fraction != -1 && (in.spatial_fraction < 0 || in.spatial_fraction > 1)))
+            throw std::invalid_argument("Invalid completed LID spatial footprint fraction.");
         previous = key;
     }
     constexpr double MIN_RUNOFF = 2.31481e-8;
@@ -1536,7 +1596,8 @@ void LIDSolver::executeCompleted(double dt, double start, double recovery_factor
         if (g.area[u] <= 0.0) continue;
         g.inflow[u] = in.inflow; g.subcatch_rain[u] = in.rain; g.evap_rate_unit[u] = in.pet;
         runUnitLegacy(g, u, in.inflow, in.pet, in.native_infil,
-                      in.max_native_infil, dt, start, in.infil_factor, recovery_factor);
+                      in.max_native_infil, dt, start, in.infil_factor, recovery_factor,
+                      in.spatial_fraction,in.spatial_max_infil,true);
         if (in.rain > MIN_RUNOFF) g.dry_time[u] = 0.0;
         else g.dry_time[u] += dt;
     }
