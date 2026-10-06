@@ -11,6 +11,7 @@
 #include "openswmm/engine/openswmm_links.h"
 #include "openswmm/engine/openswmm_pollutants.h"
 #include "core/HotStartManager.hpp"
+#include "core/UnitConversion.hpp"
 #include "input/geopackage/GeoPackageReader.hpp"
 #include "input/geopackage/GeoPackageWriter.hpp"
 #include "edit/ObjectDeleter.hpp"
@@ -1077,12 +1078,17 @@ TEST(LidNodes, RichardsInactiveMaterialsPersistAndUnsupportedTransportFails) {
 TEST(LidNodes, RichardsPhysicalStateIsConsistentAcrossInputUnits) {
     auto us=richardsModel(),si=us;
     si.options.flow_units=FlowUnits::CMS;
-    si.node_subtypes.storages.c[0]*=.3048*.3048; // the authored constant area is in m2
+    // Functional storage evaluates project depth and divides by SWMM's
+    // deliberately rounded VOLUME factor. Compare identical internal curves,
+    // rather than exact ft2->m2 areas with slightly different internal volumes.
+    si.node_subtypes.storages.c[0]*=ucf::Ucf[ucf::VOLUME][1]/ucf::Ucf[ucf::LENGTH][1];
     for(auto& layer:si.lid_controls.node_layers[0]) {
         if(layer.kind!=LidNodeLayerKind::Bottom)layer.params[0]*=25.4;
         if(layer.kind==LidNodeLayerKind::Media) { layer.params[4]*=25.4; layer.params[6]*=25.4; }
         if(layer.kind==LidNodeLayerKind::Aggregate)layer.params[2]*=25.4;
     }
+    EXPECT_NEAR(node::getVolume(us.nodes,0,2,&us.tables,0,&us.node_subtypes),
+                node::getVolume(si.nodes,0,2,&si.tables,1,&si.node_subtypes),1.e-12);
     for(auto* c:{&us,&si}) { c->nodes.init_depth[0]=c->nodes.depth[0]=2; lidnode::initialize(*c); }
     EXPECT_NEAR(lidnode::heldVolume(us,0),lidnode::heldVolume(si,0),1.e-12);
     for(std::size_t cell=1;cell<us.node_subtypes.storages.lid_state[0].cells.size();++cell)

@@ -28,6 +28,10 @@ class SourceWaterDriver {
 public:
     SourceWaterDriver();
     ~SourceWaterDriver();
+    SourceWaterDriver(SourceWaterDriver&&) noexcept;
+    SourceWaterDriver& operator=(SourceWaterDriver&&) noexcept;
+    /// Independent water/clock snapshot for a multi-group receiving trial.
+    SourceWaterDriver waterTrial() const;
     using BottomCeiling = std::function<double(int type, int unit, double start, double end)>;
     std::string initialize(const SimulationContext&, const std::vector<int>& seeds,
                            const std::vector<std::pair<int, double>>& non_lid_areas = {},

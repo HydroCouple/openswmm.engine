@@ -56,6 +56,7 @@
 namespace openswmm::twoD {
 
 class SubsurfaceSolver;   // G1: the two-zone groundwater kernel, if authored
+class CommonSourceStage;
 
 class ExplicitInertialSolver final : public ISurfaceSolver {
 public:
@@ -69,6 +70,8 @@ public:
     void resyncFromVolumes(double t0) override;
     /// External outfall transfers keep these cells and their halo on tier zero.
     void pinExternalSourceCells(const std::vector<int>& cells);
+    /// Internal qualification adapter; owned externally and attached at time zero.
+    void setCommonSourceStage(CommonSourceStage& stage);
     void finalize() override;
     /// Refresh changed perimeter topology between completed advances.
     void refreshBoundaries();
@@ -331,6 +334,8 @@ private:
     double               exch_tau_ = 0.0;  ///< time into current advance (s)
 
     double t_last_sync_ = 0.0;          ///< lazy-source clock
+    CommonSourceStage* common_stage_ = nullptr;
+    double source_phase_end_ = 0.0;
     int    cycles_since_rebuild_ = 1000; ///< persists across advances (co-advance)
     /// Lazy-source landing without the O(nt) rebuild (advance boundaries
     /// between rebuild cadences).

@@ -1,0 +1,28 @@
+{
+  "phase": "first pass before unit-fixture correction",
+  "files": {
+    "src/engine/hydrology/LidNode.cpp": {
+      "head_sha256": "be39f712e3c9cac90757725b7ee5a9693d9db9ba47ed5b186404cfccef6a7b25",
+      "tested_sha256": "be39f712e3c9cac90757725b7ee5a9693d9db9ba47ed5b186404cfccef6a7b25"
+    },
+    "src/engine/hydrology/RichardsColumn.cpp": {
+      "head_sha256": "b2c40217f37d455704f6586831dfc1beac46dfce5942fe383d2650cf95a8bcdc",
+      "tested_sha256": "b2c40217f37d455704f6586831dfc1beac46dfce5942fe383d2650cf95a8bcdc"
+    },
+    "src/engine/hydraulics/Node.cpp": {
+      "head_sha256": "2c335ff503d842ffb83ac28890a1c7f0981363f5a823a7d87f5654146b0149a2",
+      "tested_sha256": "2c335ff503d842ffb83ac28890a1c7f0981363f5a823a7d87f5654146b0149a2"
+    },
+    "tests/unit/engine/test_lid_nodes.cpp": {
+      "head_sha256": "96c2ef20bf2be2f3e0ac9c782a53f771a58ac305bbe031a4fd8522f0fc47b8ce",
+      "tested_sha256": "96c2ef20bf2be2f3e0ac9c782a53f771a58ac305bbe031a4fd8522f0fc47b8ce"
+    }
+  },
+  "fixture_failure": {
+    "held_volume_us_ft3": 65.005715,
+    "held_volume_si_ft3": 64.99847666872431,
+    "difference_ft3": 0.00723833127568696,
+    "cause": "Exact area conversion was combined with rounded legacy SWMM storage volume conversion."
+  },
+  "production_node_richards_storage_code_changed": false
+}

@@ -36,6 +36,13 @@ struct SourceWaterDriver::State {
 };
 SourceWaterDriver::SourceWaterDriver() = default;
 SourceWaterDriver::~SourceWaterDriver() = default;
+SourceWaterDriver::SourceWaterDriver(SourceWaterDriver&&) noexcept = default;
+SourceWaterDriver& SourceWaterDriver::operator=(SourceWaterDriver&&) noexcept = default;
+SourceWaterDriver SourceWaterDriver::waterTrial() const {
+    if (!state_ || trial_) throw std::logic_error("Source snapshot requires committed water state.");
+    SourceWaterDriver copy; copy.state_ = std::make_unique<State>(*state_); copy.clocks_ = clocks_;
+    return copy;
+}
 const SourceWaterDriver::State& SourceWaterDriver::view(bool trial) const {
     const auto* s = trial ? trial_.get() : state_.get();
     if (!s) throw std::logic_error("No source water state for this view.");

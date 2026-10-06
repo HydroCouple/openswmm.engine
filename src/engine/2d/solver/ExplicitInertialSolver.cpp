@@ -28,6 +28,7 @@
 #include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 
 #include "../subsurface/SubsurfaceSolver.hpp"
+#include "../subsurface/CommonSourceStage.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -80,6 +81,7 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     mesh_  = &mesh;
     state_ = &state;
     opts_  = &opts;
+    common_stage_ = nullptr;
 
     const int nt = mesh.n_triangles();
     if (nt <= 0) return;
@@ -522,6 +524,7 @@ OPENSWMM_SOURCE_INLINE void ExplicitInertialSolver::applyCellSourceRow(
 }
 
 bool ExplicitInertialSolver::applyCellSources(int i, double dt) {
+    if (common_stage_ && common_stage_->ownsCell(i)) return false;
     CellSourceStep source;
     if (!prepareCellSources(i, dt, source)) return applyRuntimeSources(i, dt);
     if (species_on_) {
@@ -1441,6 +1444,22 @@ void ExplicitInertialSolver::bookFaceSpecies(int e, int a, int b, double dM,
 // the pre-FULL_SWE kernel again). Dispatch is one branch per firing.
 void ExplicitInertialSolver::fireCells(const std::vector<int>& cells,
                                        double dt_c, bool tier0) {
+    if (tier0 && common_stage_) {
+        // Managed cells are pinned on the finest tier. Land their accepted
+        // face water before gathering requests; momentum still lands below.
+        for (int i : common_stage_->cells()) {
+            double flux = 0.0;
+            for (int p = edges_.cell_ptr[i]; p < edges_.cell_ptr[i + 1]; ++p) {
+                const int e = edges_.cell_edge[p];
+                double& side = edges_.cell_sign[p] > 0 ? facc_L_[e] : facc_R_[e];
+                flux += side; side = 0.0;
+            }
+            state_->volume[i] = std::max(0.0, state_->volume[i] + flux);
+            inertial::cellEtaDepth(*mesh_, *opts_, i, state_->volume[i], state_->head[i], state_->depth[i]);
+        }
+        const auto error = common_stage_->advance(common_stage_->completedEnd(), source_phase_end_);
+        if (!error.empty()) throw std::runtime_error("[2D_COMMON_SOURCE_STAGE] " + error);
+    }
     // Fuse only when at least one full species block amortizes the setup.
     const bool fuse = state_->transport.n_species >= 8;
     if (mode_ == Momentum2D::FULL_SWE) {
@@ -2310,6 +2329,7 @@ void ExplicitInertialSolver::runMacroCycle(double dt0, int nsub, double time) {
         }
         for (int k = 0; k < K; ++k) {
             if ((s + 1) % (1 << k)) continue;
+            if (k == 0) source_phase_end_ = time + (s + 1) * dt0;
             if (!cells_by_tier_[k].empty() || k == 0)
                 fireCells(cells_by_tier_[k], (1 << k) * dt0, k == 0);
             // The GW cells of this rung fire AFTER the surface cells of the
@@ -2419,7 +2439,7 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
         {
             // Sub-ulp residue (macro landing shortfall): land without
             // firing physics on a span below any numerical significance.
-            if (remaining <= dt0_ * 1.0e-9) {
+            if (!common_stage_ && remaining <= dt0_ * 1.0e-9) {
                 t = t_target;
                 break;
             }
@@ -2439,6 +2459,7 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
                 // Every GW tier fires once at the tail step, the same
                 // collapse the surface lists get.
                 if (gw_) for (int k = 0; k < Kgw; ++k) gw_->fireGwFaces(k, dt_tail);
+                source_phase_end_ = s + 1 == nt ? t_target : t + (s + 1) * dt_tail;
                 fireCells(active_cells_, dt_tail, /*tier0=*/true);
                 if (gw_) {
                     for (int k = 0; k < Kgw; ++k) gw_->fireGwCells(k, dt_tail, *state_, t + s * dt_tail);
@@ -2511,6 +2532,7 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
 }
 
 void ExplicitInertialSolver::reinitialize(double /*t0*/) {
+    if (common_stage_) throw std::runtime_error("Common source stage restart/rollback is not qualified.");
     if (!initialized_) return;
     // External state edit (hot start / breach redo): volumes are authoritative;
     // face momentum and pending transfers are stale — drop them.
@@ -2575,6 +2597,7 @@ void ExplicitInertialSolver::refreshBoundaries() {
 }
 
 void ExplicitInertialSolver::resyncFromVolumes(double /*t0*/) {
+    if (common_stage_) throw std::runtime_error("Common source stage external volume edits are not qualified.");
     if (!initialized_) return;
     // Volumes already live in state_->volume; keep the face momentum (nothing
     // failed — this is a pure re-time on this path). Pending transfers were
@@ -2588,7 +2611,17 @@ void ExplicitInertialSolver::pinExternalSourceCells(const std::vector<int>& cell
     cycles_since_rebuild_ = kRebuildEveryCycles;
 }
 
+void ExplicitInertialSolver::setCommonSourceStage(CommonSourceStage& stage) {
+    if (!initialized_ || second_order_ || t_last_sync_ != 0.0 || stage.completedEnd() != 0.0 ||
+        !stage.matches(mesh_, state_, gw_))
+        throw std::invalid_argument("Common source stage requires matching initial first-order mesh/receiver state.");
+    if (common_stage_) throw std::invalid_argument("Common source stage already attached.");
+    common_stage_ = &stage;
+    pinExternalSourceCells(stage.cells());
+}
+
 void ExplicitInertialSolver::finalize() {
+    common_stage_ = nullptr;
     if (initialized_) { settleAccumulators(); flushSourceLedgers(); }
     if (!telemetry_path_.empty() && !telemetry_.empty()) {
         if (std::FILE* f = openswmm::io::fopen_utf8(telemetry_path_, "w")) {
