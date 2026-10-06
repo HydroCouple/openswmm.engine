@@ -72,7 +72,9 @@
 
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/input/SectionHandlers2D.hpp"
+#ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
 #include "../2d/output/Default2DOutputPlugin.hpp"
+#endif
 #endif
 #include <filesystem>  // 2D mesh file + [PROCESS_COMPONENTS] path resolution
 
@@ -674,6 +676,17 @@ int SWMMEngine::open(const char* inp_path,
     // until SurfaceRouter2D::initialize() runs (called from SWMMEngine::initialize).
     {
         const std::string& of = surface_router_.options().output_file;
+#ifndef OPENSWMM_HAS_2D_HDF5_OUTPUT
+        // Built without the HDF5 results writer (OPENSWMM_2D_HDF5_OUTPUT=OFF,
+        // e.g. WebAssembly): the run proceeds and 2D results stay readable
+        // through the swmm_2d_* API.
+        if (!of.empty()) {
+            push_report_warning(
+                "[2D_OPTIONS] OUTPUT_FILE " + of + " ignored: this engine was "
+                "built without the 2D HDF5 results writer; read 2D results "
+                "through the swmm_2d_* API", 0);
+        }
+#else
         if (!of.empty()) {
             std::string resolved = of;
             // utf8_path/path_utf8, not fs::path(std::string)/.string(): the
@@ -690,6 +703,7 @@ int SWMMEngine::open(const char* inp_path,
             plugins_.add_output_plugin(op);
             surface_output_plugin_ = op;
         }
+#endif
     }
 #endif
 
@@ -1454,7 +1468,7 @@ int SWMMEngine::start(int save_results) noexcept {
         }
     }
 
-#ifdef OPENSWMM_HAS_2D
+#ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
     // After plugin->prepare() created the HDF5 file (root attrs only), write
     // the static mesh topology and create the time-varying datasets. This is
     // a separate step because the IOutputPlugin contract has no mesh access
@@ -9232,7 +9246,10 @@ void SWMMEngine::initQuality() noexcept {
     // always 0.
     {
         const int np = ctx_.n_pollutants();
-        if (np > 0) {
+        // USE HOTSTART has already restored routing quality before module
+        // initialization. Saved concentrations override Cinit and per-element
+        // seeds, including at dry elements (legacy hotstart.c readRouting).
+        if (np > 0 && ctx_.files.hotstart_use_path.empty()) {
             // Legacy qualrout.c: static const double ZeroDepth = 0.003281 (1 mm).
             constexpr double zero_depth = 0.003281;
             for (int i = 0; i < ctx_.n_nodes(); ++i) {
@@ -9273,8 +9290,7 @@ void SWMMEngine::initQuality() noexcept {
             // on their first step FROM these arrays, and the legacy CSTR
             // routes on them directly. Reserved-species rows (age /
             // temperature, kind < 0) are consumed at their seed sites (E-A3).
-            // When hotstart quality restore lands it must win over both
-            // seeds — apply it AFTER this block (D-IQ5).
+            // USE HOTSTART bypasses both cold-start seeds (D-IQ5).
             {
                 const auto& iq = ctx_.initial_quality;
                 for (int r = 0; r < iq.count(); ++r) {

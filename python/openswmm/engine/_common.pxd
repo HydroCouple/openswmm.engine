@@ -651,6 +651,7 @@ cdef extern from "openswmm_hotstart.h":
     cdef int swmm_hotstart_set_subcatch_runoff(SWMM_HotStart hs, const char* subcatch_id, double runoff)
     # Metadata
     cdef int swmm_hotstart_get_sim_time(SWMM_HotStart hs, double* sim_time)
+    cdef int swmm_hotstart_get_start_date(SWMM_HotStart hs, double* start_date)
     cdef int swmm_hotstart_get_crs(SWMM_HotStart hs, char* buf, int buflen)
     cdef int swmm_hotstart_node_count(SWMM_HotStart hs)
     cdef int swmm_hotstart_link_count(SWMM_HotStart hs)

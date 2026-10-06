@@ -1263,6 +1263,8 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             row2("Initial Stored Volume ....", g.led_init_storage);
             row2("Infiltration Inflow ......", g.led_infil_in);
             row2("Conduit Seepage Inflow ...", g.led_link);   // G-X3
+            if (g.led_source_in != 0.0) row2("Named Source Injection ...", g.led_source_in);
+            if (g.led_source_out != 0.0) row2("Named Source Extraction ..", g.led_source_out);
             row2("Lateral Net Inflow .......", g.led_lateral);
             row2("Deep Percolation .........", g.led_deep);
             row2("Node Exchange Outflow ....", g.led_node);
@@ -1271,7 +1273,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             row2("Final Stored Volume ......", g.liveStorage());
             row2("  (Recharge, internal) ...", g.led_recharge);
             row2("  (Capillary Rise, int.) .", g.led_caprise);
-            const double denom = g.led_init_storage + g.led_infil_in + g.led_link +   // G-X3
+            const double denom = g.led_init_storage + g.led_infil_in + g.led_link + g.led_source_in +   // G-X3
                                  std::max(0.0, g.led_lateral);
             std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f",
                          (denom > 0.0) ? g.continuityResidual() / denom * 100.0 : 0.0);
@@ -1303,6 +1305,8 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                     qrow("Node Exchange Inflow .....", t.gained_node[u]);
                 if (t.gained_link[u] != 0.0)
                     qrow("Conduit Seepage Inflow ...", t.gained_link[u]);
+                if (t.gained_source[u] != 0.0) qrow("Named Source Injection ...", t.gained_source[u]);
+                if (t.lost_source[u] != 0.0) qrow("Named Source Extraction ..", t.lost_source[u]);
                 qrow("Lateral Net Inflow .......", t.net_lateral[u]);
                 qrow("Deep Percolation .........", t.lost_deep[u]);
                 qrow("Node Exchange Outflow ....", t.lost_node[u]);

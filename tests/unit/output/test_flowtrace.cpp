@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <cmath>
+#include <limits>
 #include <gtest/gtest.h>
 #include <openswmm/engine/openswmm_trace.h>
 #include <vector>
@@ -182,7 +183,8 @@ namespace
 // A small public-format .out fixture gives exact integrals at unequal report
 // intervals and exercises ID remapping independently of simulation dynamics.
 std::string writeOutput(const std::string &name, int units = 3, bool invalidTime = false,
-                        int count = 3)
+                        int count = 3, int extra = 0, bool noLinks = false,
+                        bool missingOverflow = false)
 {
     const auto folder = std::filesystem::path(TRACE_TEST_OUTPUT);
     std::filesystem::create_directories(folder);
@@ -191,10 +193,19 @@ std::string writeOutput(const std::string &name, int units = 3, bool invalidTime
     auto integer = [&](int32_t v) { file.write(reinterpret_cast<const char *>(&v), 4); };
     auto real = [&](float v) { file.write(reinterpret_cast<const char *>(&v), 4); };
     auto date = [&](double v) { file.write(reinterpret_cast<const char *>(&v), 8); };
-    for (auto n : {516114522, 60000, units, 0, 2, 1, 0})
+    const int subcatchments = extra ? 1 : 0;
+    for (auto n : {516114522, 60000, units, subcatchments, 2, noLinks ? 0 : 1, extra})
         integer(n);
     int idPosition = int(file.tellp());
-    for (const std::string id : {"O", "S", "SO"})
+    std::vector<std::string> ids;
+    if (subcatchments)
+        ids.push_back("C");
+    ids.insert(ids.end(), {"O", "S"});
+    if (!noLinks)
+        ids.push_back("SO");
+    for (int i = 0; i < extra; ++i)
+        ids.push_back("P" + std::to_string(i));
+    for (const std::string &id : ids)
     {
         integer(int(id.size()));
         file.write(id.data(), id.size());
@@ -202,6 +213,8 @@ std::string writeOutput(const std::string &name, int units = 3, bool invalidTime
     int inputPosition = int(file.tellp());
     integer(1);
     integer(1);
+    if (subcatchments)
+        real(1);
     integer(3);
     for (int i = 0; i < 3; ++i)
         integer(i);
@@ -214,10 +227,13 @@ std::string writeOutput(const std::string &name, int units = 3, bool invalidTime
     integer(5);
     for (int i = 0; i < 5; ++i)
         integer(i);
-    integer(0);
-    for (int i = 0; i < 4; ++i)
-        real(1);
-    for (int vars : {0, 6, 5, 0})
+    if (!noLinks)
+    {
+        integer(0);
+        for (int i = 0; i < 4; ++i)
+            real(1);
+    }
+    for (int vars : {subcatchments ? 8 + extra : 0, 6 + extra - int(missingOverflow), 5 + extra, 0})
     {
         integer(vars);
         for (int i = 0; i < vars; ++i)
@@ -231,6 +247,9 @@ std::string writeOutput(const std::string &name, int units = 3, bool invalidTime
     for (int i = 0; i < count; ++i)
     {
         date(45000 + (invalidTime ? times[0] : times[i]));
+        if (subcatchments)
+            for (int k = 0; k < 8 + extra; ++k)
+                real(99);
         for (int node = 0; node < 2; ++node)
         {
             real(0);
@@ -238,17 +257,67 @@ std::string writeOutput(const std::string &name, int units = 3, bool invalidTime
             real(node ? volumes[i] : 0);
             real(node ? flows[i] : 0);
             real(std::abs(flows[i]));
-            real(0);
+            if (!missingOverflow)
+                real(0);
+            for (int k = 0; k < extra; ++k)
+                real(std::numeric_limits<float>::quiet_NaN());
         }
-        real(flows[i]);
-        real(0);
-        real(flows[i]);
-        real(volumes[i]);
-        real(0);
+        if (!noLinks)
+        {
+            real(flows[i]);
+            real(0);
+            real(flows[i]);
+            real(volumes[i]);
+            real(0);
+            for (int k = 0; k < extra; ++k)
+                real(std::numeric_limits<float>::quiet_NaN());
+        }
     }
     for (auto n : {idPosition, inputPosition, outputPosition, count, 0, 516114522})
         integer(n);
     return path;
+}
+TEST(FlowTraceReports, BlockReadsSkipSubcatchmentsAndUnusedPollutantColumns)
+{
+    Fixture f({{"S", 0, 0}, {"O", 1, 0}}, {{"SO", 0, 1, 0, 30}});
+    const auto baseline = writeOutput("block-baseline.out");
+    ASSERT_EQ(0, swmm_trace_prepare(f.h, baseline.c_str(), nullptr, nullptr, nullptr, nullptr));
+    ASSERT_EQ(0, swmm_trace_get_averages(f.h, f.na.data(), 2, f.la.data(), 1));
+    const auto nodes = f.na;
+    const auto links = f.la;
+    const auto wide = writeOutput("block-pollutants.out", 3, false, 3, 4);
+    ASSERT_EQ(0, swmm_trace_prepare(f.h, wide.c_str(), nullptr, nullptr, nullptr, nullptr));
+    ASSERT_EQ(0, swmm_trace_get_averages(f.h, f.na.data(), 2, f.la.data(), 1));
+    for (int i = 0; i < 2; ++i)
+    {
+        EXPECT_DOUBLE_EQ(nodes[i].volume_m3, f.na[i].volume_m3);
+        EXPECT_DOUBLE_EQ(nodes[i].lateral_in_m3s, f.na[i].lateral_in_m3s);
+        EXPECT_DOUBLE_EQ(nodes[i].withdrawal_m3s, f.na[i].withdrawal_m3s);
+        EXPECT_DOUBLE_EQ(nodes[i].inflow_m3s, f.na[i].inflow_m3s);
+        EXPECT_DOUBLE_EQ(nodes[i].overflow_m3s, f.na[i].overflow_m3s);
+        EXPECT_EQ(nodes[i].flags, f.na[i].flags);
+    }
+    EXPECT_DOUBLE_EQ(links[0].net_flow_m3s, f.la[0].net_flow_m3s);
+    EXPECT_DOUBLE_EQ(links[0].absolute_flow_m3s, f.la[0].absolute_flow_m3s);
+    EXPECT_DOUBLE_EQ(links[0].absolute_velocity_mps, f.la[0].absolute_velocity_mps);
+    EXPECT_DOUBLE_EQ(links[0].last_volume_m3, f.la[0].last_volume_m3);
+    EXPECT_EQ(links[0].flags, f.la[0].flags);
+    auto cancel = [](double progress, const char *, void *) { return int(progress > .05); };
+    EXPECT_EQ(SWMM_TRACE_CANCELLED,
+              swmm_trace_prepare(f.h, wide.c_str(), nullptr, nullptr, cancel, nullptr));
+}
+TEST(FlowTraceReports, BlockReadsHandleNoLinksAndRejectMissingHydraulicFields)
+{
+    Fixture isolated({{"S", 0, 0}, {"O", 1, 0}}, {});
+    const auto noLinks = writeOutput("block-no-links.out", 3, false, 3, 0, true);
+    ASSERT_EQ(0,
+              swmm_trace_prepare(isolated.h, noLinks.c_str(), nullptr, nullptr, nullptr, nullptr));
+    ASSERT_EQ(0, swmm_trace_get_averages(isolated.h, isolated.na.data(), 2, nullptr, 0));
+    EXPECT_NEAR(25, isolated.na[0].volume_m3, 1e-8);
+    Fixture f({{"S", 0, 0}, {"O", 1, 0}}, {{"SO", 0, 1, 0, 30}});
+    const auto missing = writeOutput("block-missing-overflow.out", 3, false, 3, 0, false, true);
+    EXPECT_EQ(SWMM_TRACE_IO,
+              swmm_trace_prepare(f.h, missing.c_str(), nullptr, nullptr, nullptr, nullptr));
 }
 TEST(FlowTraceReports, UnequalIntervalsCrossingsUnitsAndCache)
 {

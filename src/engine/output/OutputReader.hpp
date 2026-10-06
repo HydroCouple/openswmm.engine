@@ -162,6 +162,12 @@ public:
     /** @brief Read one system variable at a period. */
     bool get_system_result(int period, int var, float* value) const;
 
+    /** @brief Read all node/link variables at one period with one contiguous read.
+     * Values are object-major: values[object * var_count + variable].
+     * Storage is reused across calls; no history or live-file data is cached. */
+    bool get_node_block(int period, std::vector<float>& values) const;
+    bool get_link_block(int period, std::vector<float>& values) const;
+
     // -- Time series (one object, one variable, period range) --------------
 
     bool get_subcatch_series(int obj_idx, int var,
@@ -253,6 +259,8 @@ private:
 
     // -- Helpers ----------------------------------------------------------
 
+    bool readResultBlock(int period, int objectType, int count, int variables,
+                         std::vector<float>& values) const;
     bool readFooter();
     bool readHeader();
     bool readIDs();

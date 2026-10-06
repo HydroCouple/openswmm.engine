@@ -1421,3 +1421,43 @@ TEST(InpWriterRoundTrip, AdjustmentRowsNameTheirPatternNotATable) {
     EXPECT_EQ(nperv.at(1), "S_GA");
     EXPECT_EQ(nperv.at(2), "NPERVPAT") << "pattern resolved through the wrong store";
 }
+
+// ===========================================================================
+// GUI annotation sections (audit F6)
+//
+// [LABELS], [BACKDROP] and [PROFILES] were registered as no-op handlers, so a
+// model's map labels and backdrop image were deleted by the first Open → Save.
+// 350 corpus decks carry [LABELS]; 2 carry [BACKDROP].
+//
+// Legacy has no `case` for any of them in parseLine, so no engine parses or
+// validates their content. They are therefore kept VERBATIM rather than
+// modelled — replaying the authored lines is both the safest reading and an
+// exact one.
+// ===========================================================================
+
+TEST(InpWriterRoundTrip, GuiAnnotationSectionsSurviveVerbatim) {
+    const auto g = gen1("passthrough_sections.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    // Quoted strings with embedded spaces, an empty quoted field, a negative
+    // coordinate — anything that reformats rather than replays loses one.
+    const auto labels = section(g.text, "LABELS");
+    ASSERT_EQ(labels.size(), 2u) << "[LABELS] rows lost";
+    EXPECT_NE(labels[0].find("\"Outfall structure\""), std::string::npos);
+    EXPECT_NE(labels[0].find("\"\""), std::string::npos) << "empty quoted field lost";
+    EXPECT_NE(labels[1].find("-512.250"), std::string::npos);
+    EXPECT_NE(labels[1].find("\"Times New Roman\""), std::string::npos);
+
+    const auto backdrop = section(g.text, "BACKDROP");
+    ASSERT_EQ(backdrop.size(), 2u) << "[BACKDROP] rows lost";
+    EXPECT_NE(backdrop[0].find("\"Site Post.jpg\""), std::string::npos)
+        << "a filename with a space must survive";
+    EXPECT_NE(backdrop[1].find("-0.123"), std::string::npos);
+
+    // [PROFILES], not [PROFILE] — the spelling every real deck uses, and the
+    // one the registry did not have. The name is padded INSIDE its quotes.
+    const auto profiles = section(g.text, "PROFILES");
+    ASSERT_EQ(profiles.size(), 1u) << "[PROFILES] row lost (wrong tag registered?)";
+    EXPECT_NE(profiles[0].find("\"profileA        \""), std::string::npos)
+        << "padding inside the quotes was reformatted away";
+}

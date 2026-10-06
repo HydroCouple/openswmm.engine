@@ -192,6 +192,7 @@ from ._exceptions import (
     NumericalError,
     CRSError,
     DependencyError,
+    GeoPackageError,
     StaleObjectError,
 )
 
@@ -338,7 +339,7 @@ __all__ = [
     "BadHandleError", "BadIndexError", "BadParamError",
     "LifecycleError", "HotStartError", "PluginError",
     "FileError", "ParseError", "NumericalError",
-    "CRSError", "DependencyError", "StaleObjectError",
+    "CRSError", "DependencyError", "GeoPackageError", "StaleObjectError",
     # --- Programmatic model building & editing ---
     "ModelBuilder", "ModelEditor", "ImpactEntry", "ConversionResult",
     # --- Geometry helpers ---
@@ -420,7 +421,8 @@ if HAS_GEOPACKAGE:
     __all__.append("GeoPackage")
 
 from ._process_components import KnownProcessComponent as KnownProcessComponent
-__all__.append("KnownProcessComponent")
+from ._process_components import ComponentLibrary as ComponentLibrary
+__all__ += ["KnownProcessComponent", "ComponentLibrary"]
 
 from ._enums import (CellScope as CellScope, GroundwaterSoil as GroundwaterSoil, GroundwaterClosure as GroundwaterClosure, GroundwaterVariable as GroundwaterVariable, GroundwaterLedger as GroundwaterLedger, GroundwaterZone as GroundwaterZone, GroundwaterSpeciesLedger as GroundwaterSpeciesLedger)
 __all__ += ['CellScope', 'GroundwaterSoil', 'GroundwaterClosure', 'GroundwaterVariable', 'GroundwaterLedger', 'GroundwaterZone', 'GroundwaterSpeciesLedger']

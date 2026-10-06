@@ -28,6 +28,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <regex>
 #include <string>
 
 #include <openswmm/engine/openswmm_engine.h>
@@ -221,3 +222,65 @@ TEST_F(DecoupledStepping2DTest, MarcherSyncBatchesConserve) {
 
     writeCsv(dir_, "marcher_batches", r, rel);
 }
+
+// Mesh-only projects must advance even with no legacy routing objects. A
+// sloping, initially wet two-cell patch exposes a skipped solver: rain alone
+// could be booked without moving water between the cells.
+class MeshOnlyStepping2DTest : public ::testing::TestWithParam<double> {};
+
+TEST_P(MeshOnlyStepping2DTest, RoutesRainAndRedistributesWetWater) {
+    const fs::path dir("decoupled_stepping_out");
+    fs::create_directories(dir);
+    const std::string name = GetParam() > 0.0 ? "mesh_only_wet" : "mesh_only_dry";
+    const auto inp = dir / (name + ".inp");
+    const auto rpt = dir / (name + ".rpt");
+    const auto out = dir / (name + ".out");
+    {
+        std::ofstream f(inp);
+        f << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\n"
+             "START_DATE 01/01/2026\nEND_DATE 01/01/2026\n"
+             "END_TIME 00:01:00\nROUTING_STEP 1\nREPORT_STEP 00:00:10\n"
+             "SKIP_STEADY_STATE YES\n"
+             "[EVAPORATION]\nCONSTANT 0\n"
+             "[2D_OPTIONS]\nMAX_TIMESTEP 1\nREPORT_2D NO\n"
+             "[2D_VERTICES]\n0 0 0\n10 0 1\n10 10 1\n0 10 0\n"
+             "[2D_TRIANGLES]\n0 1 2 0.03 " << GetParam()
+          << "\n0 2 3 0.03 " << GetParam() << "\n";
+    }
+    SWMM_Engine eng = swmm_engine_create();
+    ASSERT_NE(eng, nullptr);
+    ASSERT_EQ(swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
+                              out.string().c_str(), nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(eng), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(eng, 1), SWMM_OK);
+    ASSERT_EQ(swmm_2d_force_rainfall_uniform(eng, 0.0001,
+              SWMM_FORCING_OVERRIDE, SWMM_FORCING_PERSIST), SWMM_OK);
+    double elapsed = 0.0;
+    do {
+        ASSERT_EQ(swmm_engine_step(eng, &elapsed), SWMM_OK);
+    } while (elapsed > 0.0);
+    double rain = 0.0, storage = 0.0, initial = 0.0;
+    ASSERT_EQ(swmm_2d_get_mass_balance(eng, &initial, &storage, &rain,
+              nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr), SWMM_OK);
+    EXPECT_NEAR(initial, GetParam() * 100.0, 1e-8);
+    EXPECT_NEAR(rain, 0.6, 1e-6);
+    EXPECT_NEAR(storage, initial + rain, 1e-5);
+    double high = 0.0, low = 0.0;
+    ASSERT_EQ(swmm_2d_get_depth(eng, 0, &high), SWMM_OK);
+    ASSERT_EQ(swmm_2d_get_depth(eng, 1, &low), SWMM_OK);
+    if (GetParam() > 0.0)
+        EXPECT_GT(low - high, 0.01) << "the wet sloping patch did not route";
+    ASSERT_EQ(swmm_engine_end(eng), SWMM_OK);
+    ASSERT_EQ(swmm_engine_report(eng), SWMM_OK);
+    swmm_engine_close(eng);
+    swmm_engine_destroy(eng);
+    std::ifstream report(rpt);
+    const std::string text((std::istreambuf_iterator<char>(report)), {});
+    std::smatch match;
+    ASSERT_TRUE(std::regex_search(text, match,
+                std::regex("Internal Steps[ .]+([0-9]+)")));
+    EXPECT_GT(std::stoll(match[1]), 0) << "surface never became active";
+}
+
+INSTANTIATE_TEST_SUITE_P(WetAndDry, MeshOnlyStepping2DTest,
+                        ::testing::Values(0.1, 0.0));

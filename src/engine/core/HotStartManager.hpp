@@ -359,14 +359,16 @@ public:
      *
      * @details Mirrors legacy hotstart.c readRouting(): sets each node's depth +
      *          lateral inflow and each link's flow + depth + setting, all stored
-     *          as float in internal units (ft, cfs). Supports file stamps
-     *          `SWMM5-HOTSTART1..4`. Currently routing-only: returns a non-zero
-     *          error if the file contains subcatchments (the runoff section is
-     *          not yet parsed). Derived state (head, volumes, old-step values)
-     *          is recomputed by the caller from the applied depths/flows.
+     *          as float in internal units (ft, cfs). Also restores node/link
+     *          pollutant concentrations (current and old) and v4 storage HRT.
+     *          Supports legacy versions 1–4. Subcatchment state is skipped with
+     *          a warning; this is a routing-only restore. Derived hydraulic
+     *          state (head, volumes, old-step values) is recomputed by the caller.
+     *          Cold quality seeds must not overwrite the restored concentrations.
      *
      * @param path    Absolute path to the legacy `.hsf` file.
-     * @param ctx     Target context (node/link counts must match the file).
+     * @param ctx     Allocated target context; node/link/pollutant counts must
+     *                match the file.
      * @param warn_cb Optional warning callback.
      * @returns 0 on success; non-zero error code otherwise (description in
      *          last_io_error()).
@@ -385,8 +387,8 @@ public:
      *          (nSub, nLand, nNodes, nLinks, nPollut, flowUnits as int32), then
      *          per node `depth, latFlow[, storage hrt], qual[]` and per link
      *          `flow, depth, setting, qual[]` — all float, internal units
-     *          (ft, cfs). Storage residence time (hrt) is written as 0 (the
-     *          reader discards it; it does not affect hydraulic routing).
+     *          (ft, cfs). Storage residence time is preserved when quality
+     *          state is allocated, and otherwise written as zero.
      *
      * @param path  Absolute path for the `.hsf` file.
      * @param ctx   Source context (final routing state).

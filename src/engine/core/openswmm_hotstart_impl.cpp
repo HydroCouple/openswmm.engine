@@ -223,6 +223,13 @@ SWMM_ENGINE_API int swmm_hotstart_get_sim_time(SWMM_HotStart hs, double* sim_tim
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_hotstart_get_start_date(SWMM_HotStart hs, double* start_date) {
+    CHECK_HS(hs);
+    if (!start_date) return SWMM_ERR_BADPARAM;
+    *start_date = to_hs(hs)->header.start_date;
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_hotstart_get_crs(SWMM_HotStart hs, char* buf, int buflen) {
     CHECK_HS(hs);
     if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;

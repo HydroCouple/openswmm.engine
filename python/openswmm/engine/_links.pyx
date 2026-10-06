@@ -1037,10 +1037,11 @@ cdef class Links:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_link_get_flows_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_link_get_flows_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1052,10 +1053,11 @@ cdef class Links:
         if arr.shape[0] != n:
             raise ValueError(f"flows array length {arr.shape[0]} != link count {n}")
         cdef const double* p = <const double*>arr.data
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_link_set_flows_bulk(h, p, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_link_set_flows_bulk(h, p, n)
         _check(err)
 
     @property
@@ -1063,10 +1065,11 @@ cdef class Links:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_link_get_depths_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_link_get_depths_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1075,10 +1078,11 @@ cdef class Links:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_link_get_velocities_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_link_get_velocities_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1087,10 +1091,11 @@ cdef class Links:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_link_get_capacities_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_link_get_capacities_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1099,10 +1104,11 @@ cdef class Links:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_link_get_volumes_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_link_get_volumes_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1111,10 +1117,11 @@ cdef class Links:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_link_get_control_settings_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_link_get_control_settings_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1123,10 +1130,11 @@ cdef class Links:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_link_get_target_settings_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_link_get_target_settings_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1135,10 +1143,11 @@ cdef class Links:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_link_get_hyd_powers_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_link_get_hyd_powers_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1148,10 +1157,11 @@ cdef class Links:
         cdef int n = swmm_link_count(h)
         cdef int p_idx = _resolve_pollutant(self._solver, pollutant)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_link_get_quality_bulk(h, p_idx, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_link_get_quality_bulk(h, p_idx, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -1163,11 +1173,12 @@ cdef class Links:
         cdef np.ndarray[int, ndim=1] cyc = np.zeros(n, dtype=np.int32)
         cdef np.ndarray[double, ndim=1] ont = np.zeros(n, dtype=np.float64)
         cdef np.ndarray[double, ndim=1] vol = np.zeros(n, dtype=np.float64)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_link_get_pump_stats_bulk(
-                    h, <int*>cyc.data, <double*>ont.data, <double*>vol.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_link_get_pump_stats_bulk(
+                        h, <int*>cyc.data, <double*>ont.data, <double*>vol.data, n)
         _check(err)
         return (cyc, ont, vol)
 
@@ -1180,10 +1191,11 @@ cdef class Links:
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[char, ndim=1, mode="c"] buf = np.zeros(
             n * stride, dtype=np.int8)
-        cdef int err
-        with self._solver._operation(<size_t>h):
-            with nogil:
-                err = swmm_link_get_ids_bulk(h, <char*>buf.data, stride, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_link_get_ids_bulk(h, <char*>buf.data, stride, n)
         _check(err)
         raw = bytes(buf)
         out = []
