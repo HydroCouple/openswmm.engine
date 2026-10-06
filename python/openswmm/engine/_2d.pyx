@@ -33,6 +33,8 @@ with ``OPENSWMM_BUILD_2D=ON``.
 cimport numpy as np
 import numpy as np
 from libc.stdint cimport uintptr_t
+from libc.stdlib cimport calloc, free
+from libc.string cimport memcpy
 
 from collections import namedtuple
 from collections.abc import MutableMapping
@@ -44,7 +46,16 @@ from ._enums import (SurfaceForcingMode, ForcingPersist, SurfaceBoundaryType,
 
 from ._common cimport _check
 from ._access import resolve_owner
-from ._exceptions import StaleObjectError
+from ._exceptions import StaleObjectError, raise_for_code
+
+
+cdef object _surface_owner_indices(object rows):
+    from operator import index
+    values = [index(row) for row in rows]
+    if any(value < 0 or value > 2147483647 for value in values):
+        raise ValueError("Ownership indices must be nonnegative C integers")
+    # Empty proposals pass NULL to the native API.
+    return np.asarray(values, dtype=np.intc) if values else np.zeros(0, dtype=np.intc)
 
 
 cdef class Surface2D:
@@ -85,6 +96,111 @@ cdef class Surface2D:
         with self._owner._operation(<size_t>h):
             with nogil:
                 rc = swmm_2d_get_rainfall_bulk(h, &values[0])
+        _check(rc)
+        return np.asarray(values)[:n]
+
+    def get_surface_owners(self):
+        """Authored SUBCATCH UNIFORM ownership records as zero-based source indices."""
+        cdef int count = 0
+        cdef void* h = self._h()
+        _check(swmm_surface_owner_get(h, NULL, 0, &count))
+        cdef int[::1] rows = np.zeros(max(count, 1), dtype=np.intc)
+        _check(swmm_surface_owner_get(h, &rows[0], count, &count))
+        return np.asarray(rows)[:count]
+
+    def preview_surface_owners(self, rows=None):
+        """Review stored (None) or proposed source indices without changing the model.
+
+        Returns objects, shares, mesh_weather_area (m2), valid, token and
+        diagnostics. Requires editing state; reviewed records do not activate
+        recharge. Native diagnostic text is limited to 16383 UTF-8 bytes.
+        """
+        cdef int[::1] proposed = np.zeros(1, dtype=np.intc)
+        cdef int count = -1
+        if rows is not None:
+            proposed = _surface_owner_indices(rows)
+            count = len(proposed)
+        cdef void* h = self._h()
+        cdef int on = 0, sn = 0, an = 0, valid = 0, rc
+        cdef int oc, sc, ac
+        cdef char token[17]
+        cdef char diagnostics[16384]
+        cdef SWMM_SurfaceOwnerObject* objects = NULL
+        cdef SWMM_SurfaceOwnerShare* shares = NULL
+        cdef double[::1] areas
+        try:
+            with self._owner._operation(<size_t>h):
+                with nogil:
+                    rc = swmm_surface_owner_preview(h, &proposed[0] if count else NULL, count,
+                        NULL, 0, &on, NULL, 0, &sn, NULL, 0, &an, &valid,
+                        token, 17, diagnostics, 16384, NULL, NULL)
+                _check(rc)
+                oc, sc, ac = on, sn, an
+                objects = <SWMM_SurfaceOwnerObject*>calloc(max(oc, 1), sizeof(SWMM_SurfaceOwnerObject))
+                shares = <SWMM_SurfaceOwnerShare*>calloc(max(sc, 1), sizeof(SWMM_SurfaceOwnerShare))
+                if objects == NULL or shares == NULL:
+                    raise MemoryError()
+                areas = np.zeros(max(ac, 1), dtype=np.float64)
+                with nogil:
+                    rc = swmm_surface_owner_preview(h, &proposed[0] if count else NULL, count,
+                        objects, oc, &on, shares, sc, &sn, &areas[0], ac, &an, &valid,
+                        token, 17, diagnostics, 16384, NULL, NULL)
+                _check(rc)
+            result_objects = []
+            for i in range(on):
+                result_objects.append(dict(subcatch=objects[i].subcatch,
+                    reviewed=bool(objects[i].reviewed), lumped=bool(objects[i].lumped), status=objects[i].status,
+                    name=objects[i].name.decode('utf-8', 'replace'), tag=objects[i].tag.decode('utf-8', 'replace'),
+                    reason=objects[i].reason.decode('utf-8', 'replace'),
+                    declared_area=objects[i].declared_area, polygon_area=objects[i].polygon_area,
+                    lid_area=objects[i].lid_area, pervious_area=objects[i].pervious_area,
+                    impervious_area=objects[i].impervious_area, native_lid_area=objects[i].native_lid_area,
+                    inside_area=objects[i].inside_area, outside_area=objects[i].outside_area))
+            result_shares = [dict(subcatch=shares[i].subcatch, cell=shares[i].cell,
+                weather_area=shares[i].weather_area, pervious_area=shares[i].pervious_area,
+                impervious_area=shares[i].impervious_area, lid_area=shares[i].lid_area,
+                native_lid_area=shares[i].native_lid_area) for i in range(sn)]
+            return dict(objects=result_objects, shares=result_shares,
+                mesh_weather_area=np.asarray(areas)[:an], valid=bool(valid),
+                token=token.decode('ascii'), diagnostics=diagnostics.decode('utf-8', 'replace'))
+        finally:
+            free(objects)
+            free(shares)
+
+    def replace_surface_owners(self, rows, str expected_token):
+        """Atomically replace ownership using the latest preview token; [] clears it.
+
+        Stale tokens or invalid proposals leave the authored records unchanged.
+        """
+        cdef int[::1] proposed = _surface_owner_indices(rows)
+        cdef int count = len(proposed), rc
+        cdef bytes token_bytes = expected_token.encode('ascii')
+        if b"\0" in token_bytes:
+            raise ValueError("Ownership tokens cannot contain NUL")
+        cdef const char* token = token_bytes
+        cdef char diagnostics[16384]
+        cdef void* h = self._h()
+        diagnostics[0] = 0
+        with self._owner._operation(<size_t>h):
+            with nogil:
+                rc = swmm_surface_owner_replace(h, &proposed[0] if count else NULL, count,
+                                                token, diagnostics, 16384)
+        if rc and diagnostics[0]:
+            raise_for_code(rc, diagnostics.decode('utf-8', 'replace'))
+        _check(rc)
+
+    def get_report_rainfall_bulk(self, double report_date):
+        """Rainfall at an absolute SWMM DateTime (decimal days), in SI m/s.
+
+        Uses saved-report time selection rather than the routing-window mean.
+        """
+        cdef int n = 0, rc
+        cdef void* h = self._h()
+        _check(swmm_2d_cell_count(h, &n))
+        cdef double[::1] values = np.zeros(max(n, 1), dtype=np.float64)
+        with self._owner._operation(<size_t>h):
+            with nogil:
+                rc = swmm_2d_get_report_rainfall_bulk(h, report_date, &values[0])
         _check(rc)
         return np.asarray(values)[:n]
 
@@ -1877,6 +1993,74 @@ cdef class Infiltration2DView:
         if self._generation != self._owner.generation:
             raise StaleObjectError("Infiltration view was invalidated")
         return <void*><uintptr_t>self._owner.handle
+
+    def authored_rows(self):
+        """Ordered raw records with cell/tag, row and destination inheritance flag."""
+        cdef int count = 0
+        cdef void* h = self._h()
+        _check(swmm_infil2d_get_authored_rows(h, NULL, 0, &count))
+        cdef SWMM_Infil2DAuthoredRow* rows = <SWMM_Infil2DAuthoredRow*>calloc(max(count, 1), sizeof(SWMM_Infil2DAuthoredRow))
+        if rows == NULL:
+            raise MemoryError()
+        try:
+            _check(swmm_infil2d_get_authored_rows(h, rows, count, &count))
+            result = []
+            for i in range(count):
+                result.append(dict(cell=rows[i].cell, tag=rows[i].tag.decode('utf-8'),
+                    row=Infil2DRow(SurfaceInfilMethod(rows[i].row.method) if rows[i].row.has_method else None,
+                        tuple(rows[i].row.p[j] for j in range(5)), SurfaceInfilDest(rows[i].row.dest)),
+                    dest_explicit=bool(rows[i].dest_explicit)))
+            return result
+        finally:
+            free(rows)
+
+    def replace_authored_rows(self, records):
+        """Atomically restore ordered records before initialization, including duplicates.
+
+        Preserves obsolete destinations for migration/undo; initialization
+        still rejects unsupported routing. Invalid batches change nothing.
+        """
+        values = list(records)
+        cdef int count = len(values)
+        cdef SWMM_Infil2DAuthoredRow* rows = <SWMM_Infil2DAuthoredRow*>calloc(max(count, 1), sizeof(SWMM_Infil2DAuthoredRow))
+        cdef bytes tag
+        if rows == NULL:
+            raise MemoryError()
+        try:
+            from operator import index
+            for i, record in enumerate(values):
+                rows[i].cell = index(record["cell"])
+                tag = record["tag"].encode('utf-8')
+                if len(tag) >= 4096 or b"\0" in tag:
+                    raise ValueError("Tags must fit 4095 UTF-8 bytes and contain no NUL")
+                memcpy(rows[i].tag, <const char*>tag, len(tag) + 1)
+                _infil_row_to_c(record["row"], &rows[i].row)
+                rows[i].row.dest = int(SurfaceInfilDest(record["row"].dest))
+                rows[i].dest_explicit = bool(record["dest_explicit"])
+            _check(swmm_infil2d_replace_authored_rows(self._h(), rows, count))
+        finally:
+            free(rows)
+
+    def ownership(self, int cell):
+        """Return (owner, aquifer row, conflict) before initialization.
+
+        Owners: 0 disabled, 1 surface bank, 2 aquifer. Conflicts: 0 none,
+        1 explicit cell method, 2 obsolete destination. Aquifer row -1 is implicit.
+        """
+        cdef int owner = 0, aquifer_row = -1, conflict = 0
+        _check(swmm_infil2d_get_ownership(self._h(), cell, &owner, &aquifer_row, &conflict))
+        return owner, aquifer_row, conflict
+
+    def ownership_bulk(self):
+        """Owned integer arrays (owners, aquifer rows, conflicts) for all cells."""
+        cdef int n = 0, written = 0
+        cdef void* h = self._h()
+        _check(swmm_2d_triangle_count(h, &n))
+        cdef int[::1] owners = np.zeros(max(n, 1), dtype=np.intc)
+        cdef int[::1] aquifer_rows = np.zeros(max(n, 1), dtype=np.intc)
+        cdef int[::1] conflicts = np.zeros(max(n, 1), dtype=np.intc)
+        _check(swmm_infil2d_get_ownership_bulk(h, &owners[0], &aquifer_rows[0], &conflicts[0], n, &written))
+        return np.asarray(owners)[:written], np.asarray(aquifer_rows)[:written], np.asarray(conflicts)[:written]
 
     # -- options -------------------------------------------------------
 

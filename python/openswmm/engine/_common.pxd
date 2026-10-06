@@ -436,6 +436,8 @@ cdef extern from "openswmm_subcatchments.h":
     cdef const char* swmm_subcatch_id(SWMM_Engine e, int idx)
     # Creation
     cdef int swmm_subcatch_add(SWMM_Engine e, const char* id)
+    cdef const char* swmm_subcatch_get_snowpack(SWMM_Engine e, int idx)
+    cdef int swmm_subcatch_set_snowpack(SWMM_Engine e, int idx, const char* name)
     # Aquifers and snowpacks (model-global named objects)
     cdef int         swmm_aquifer_count(SWMM_Engine e)
     cdef int         swmm_aquifer_index(SWMM_Engine e, const char* id)
@@ -875,6 +877,29 @@ cdef extern from "openswmm_infrastructure.h":
     ctypedef struct SWMM_LidNodeLayer:
         int kind
         double params[7]
+    ctypedef struct SWMM_LidRichardsOptions:
+        int model
+        int cells_per_layer
+        double atol
+        double rtol
+        double max_step
+    ctypedef struct SWMM_LidRichardsMaterial:
+        double theta_r
+        double alpha
+        double n
+        double l
+        double specific_storage
+    ctypedef struct SWMM_LidRichardsStatistics:
+        int accepted
+        int rejected
+        int rhs
+        int newton
+        double min_step
+        double balance_m3
+    cdef int swmm_lid_richards_options_get(SWMM_Engine e, int control, SWMM_LidRichardsOptions* out)
+    cdef int swmm_lid_richards_material_get(SWMM_Engine e, int control, int row, SWMM_LidRichardsMaterial* out)
+    cdef int swmm_lid_richards_state_get(SWMM_Engine e, int node, int row, double* pressure, double* head, double* water)
+    cdef int swmm_lid_richards_statistics_get(SWMM_Engine e, int node, SWMM_LidRichardsStatistics* out)
     ctypedef struct SWMM_LidLayerTreatment:
         int layer
         int pollutant
@@ -884,6 +909,7 @@ cdef extern from "openswmm_infrastructure.h":
     cdef int swmm_lid_node_treatment_count(SWMM_Engine e, int control)
     cdef int swmm_lid_node_treatment_get(SWMM_Engine e, int control, int row, SWMM_LidLayerTreatment* out)
     cdef int swmm_lid_node_configure(SWMM_Engine e, int control, const SWMM_LidNodeLayer* rows, int count, const SWMM_LidLayerTreatment* treatments, int treatment_count)
+    cdef int swmm_lid_node_configure_flow(SWMM_Engine e, int control, const SWMM_LidNodeLayer* rows, int count, const SWMM_LidLayerTreatment* treatments, int treatment_count, const SWMM_LidRichardsOptions* options, const SWMM_LidRichardsMaterial* materials)
     cdef int swmm_lid_node_layer_count(SWMM_Engine e, int control)
     cdef int swmm_lid_node_layer_get(SWMM_Engine e, int control, int row, SWMM_LidNodeLayer* out)
     cdef int swmm_lid_node_layers_set(SWMM_Engine e, int control, const SWMM_LidNodeLayer* rows, int count)

@@ -72,3 +72,54 @@ means not applicable, 0 natural neighbour, 1 inverse distance, and 2 nearest.
 ``output_variable_mask(text)`` accepts DEFAULT, MINIMAL, ALL or a variable list;
 invalid selections raise ValueError. ``output_variable_text(mask)`` returns the
 canonical text for storing the selection.
+
+Richards LIDs and surface ownership
+-----------------------------------
+
+``solver.subcatchments[name].snowpack`` reads the assigned snow-pack name
+(empty when unassigned). Assign a name before initialization, or assign
+``None`` to clear it. An unknown name leaves the previous assignment intact.
+
+``solver.infrastructure.lids.get_flow_options(control)`` reports the flow
+model (0 for the existing formulation or 1 for Richards), numerical cells
+per porous layer, absolute/relative tolerances and maximum step in seconds.
+``get_materials(control)`` returns retention mappings in authored layer order;
+alpha and specific storage use inverse metres in both unit systems.
+``set_layers(control, layers, flow=options, materials=materials)`` changes
+the stack and flow model atomically. Supply one material mapping per layer;
+SURFACE/BOTTOM entries are ignored. Omitted treatments retain their current
+values; pass an empty list to remove them. Invalid input leaves the model
+unchanged. ``richards_profile(node)`` reports live cell pressure/head in
+project length units and complete water in project volume units.
+``richards_statistics(node)`` reports the last interval's solver counters,
+minimum step in seconds and water-balance residual in cubic metres.
+
+``solver.surface2d.infiltration.authored_rows()`` returns ordered raw records
+with ``cell``, ``tag``, ``row`` and ``dest_explicit`` fields.
+``replace_authored_rows(records)`` restores a complete set before initialization,
+including duplicate/order information and obsolete destinations needed for
+undo. Acceptance for authoring does not enable an obsolete runtime destination.
+``ownership(cell)`` and ``ownership_bulk()`` expose resolved owner, aquifer row
+and conflict codes without modifying these records.
+
+``solver.surface2d.groundwater.options.set_process_options(et=..., link=...,
+wilting=..., authored=...)`` atomically changes groundwater ET, conduit
+exchange and wilting suction. Custom suction is in project length units;
+``authored`` restores section provenance for undo.
+
+``solver.surface2d.get_report_rainfall_bulk(report_date)`` reads report-instant
+rainfall in metres per second. The date is an absolute SWMM DateTime in
+decimal days; routing-window rainfall remains available through
+``get_rainfall_bulk()``.
+
+Surface ownership is currently an authoring/review facility. While editing,
+``get_surface_owners()`` reads zero-based subcatchment indices and
+``preview_surface_owners(rows)`` reviews a proposed complete set. Passing
+``None`` reviews the stored set. The result contains source objects, cell
+shares and remaining mesh weather areas in square metres, blocking diagnostics,
+``valid`` and a revision ``token``. Use that token with
+``replace_surface_owners(rows, token)``; a stale token or invalid proposal
+leaves the model unchanged. An empty list clears the records. Initialization
+currently rejects stored ownership records until the completed-interval
+runtime adapter is qualified; geometric acceptance alone does not activate
+recharge or suppress existing weather sources.
