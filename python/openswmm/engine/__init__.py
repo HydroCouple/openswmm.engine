@@ -462,3 +462,7 @@ from ._enums import (
 __all__ += ['FlowTracer', 'TraceNode', 'TraceLink', 'TraceOptions', 'TraceInfo', 'TraceNodeAverage', 'TraceLinkAverage', 'TraceValue', 'TraceSummary', 'TraceResult', 'TraceError', 'TraceStatus', 'TraceDirection', 'TraceNodeFlags', 'TraceFlags', 'TraceTerminal']
 
 from ._lid_nodes import LidNodeLayer as LidNodeLayer, LidNodeLayerKind as LidNodeLayerKind, LidLayerTreatment as LidLayerTreatment
+
+if HAS_2D:
+    from ._coupling import Coupling, DomainSources, RuntimeSource, SourceReceipt, BoundaryReceipt, CouplingFrame, RuntimeBoundary, RuntimeForcing, RuntimeClear
+    __all__ += ["Coupling", "DomainSources", "RuntimeSource", "SourceReceipt", "BoundaryReceipt", "CouplingFrame", "RuntimeBoundary", "RuntimeForcing", "RuntimeClear"]

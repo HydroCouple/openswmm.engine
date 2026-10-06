@@ -1136,10 +1136,10 @@ double SubsurfaceSolver::sourceInfiltrationCapacity(int i, double pond, double i
         return std::isfinite(rate) ? std::max(0.0, rate) : 0.0;
 }
 
-double SubsurfaceSolver::acceptSurfaceInfiltration(int cell, double requested) noexcept {
+double SubsurfaceSolver::acceptSurfaceInfiltration(int cell, double requested, bool prescribed) noexcept {
     if (!(requested > 0.0) || !std::isfinite(requested) || cell < 0 || cell >= state_.n_cells || !state_.active) return 0.0;
     const auto u = static_cast<std::size_t>(cell);
-    if (!(state_.Ks[u] > 0.0) || !(state_.infil_capacity[u] > 0.0) || !std::isfinite(state_.infil_capacity[u])) return 0.0;
+    if (!prescribed && (!(state_.Ks[u] > 0.0) || !(state_.infil_capacity[u] > 0.0) || !std::isfinite(state_.infil_capacity[u]))) return 0.0;
     const double take = std::min(requested, infiltrationHeadroom(cell));
     state_.xacc_from_surface[u] += take;
     state_.wetting_front[u] += take / state_.area[u];
@@ -1330,8 +1330,51 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     GwSourcePulse source;
     if (u < cell_sources_.size() && !cell_sources_[u].empty()) {
         source.mass.assign(static_cast<std::size_t>(tr_.n_species), 0.0);
-        for (const auto& entry : cell_sources_[u])
-            integrateGwSource(sources_[entry.first], time, dt, entry.second, source);
+        for (const auto& entry : cell_sources_[u]) {
+            const auto& authored=sources_[entry.first];
+            bool overridden=false;
+            if(u<runtime_sources_.cells.size())
+                for(auto k:runtime_sources_.cells[u])
+                    if(runtime_sources_.rows[k].id==authored.name) { overridden=true; break; }
+            if(!overridden) integrateGwSource(authored,time,dt,entry.second,source);
+        }
+    }
+    const bool runtime = u < runtime_sources_.cells.size() && !runtime_sources_.cells[u].empty();
+    if (runtime) {
+        source.mass.resize(tr_.n_species, 0.0);
+        for (auto k : runtime_sources_.cells[u]) {
+            auto& s = runtime_sources_.rows[k];
+            if (s.boundary_edge>=0 && std::isfinite(s.boundary_head)) {
+                // One-sided unconfined Darcy face: arithmetic saturated
+                // transmissivity between the cell and the boundary head.
+                const int slot=MeshData::slot(i,s.boundary_edge);
+                const double outside=std::max(s.boundary_head,state_.z_bed[u]);
+                const double height=std::clamp(outside-state_.z_bed[u],0.0,zs);
+                const double conductance=state_.Ks[u]*0.5*(hg0+height)*mesh_->edge_length[slot]
+                    /mesh_->edge_dist_c[slot];
+                s.flow=conductance*(outside-state_.z_bed[u]-hg0);
+            }
+            const double in = std::max(0.0,s.flow)*dt;
+            source.in += in; source.out += std::max(0.0,-s.flow)*dt;
+            s.receipt.requested += s.flow*dt;
+            for(int r=0;r<tr_.n_species;++r) {
+                const double dm = in*s.concentrations[r]+dt*std::max(0.0,s.rates[r]);
+                source.mass[r] += dm;
+                s.receipt.requested_mass[r] += dm;
+                s.receipt.applied_mass[r] += dm;
+            }
+        }
+        for (auto k : runtime_sources_.cells[u]) {
+            auto& s=runtime_sources_.rows[k];
+            s.receipt.heat_requested += s.heat*dt;
+            if (ts*hg0*A+source.in>0.0 && tr_.temp_row>=0) {
+                const double dm=s.heat*dt/runtimeWaterHeatCapacity;
+                source.mass[tr_.temp_row] += dm;
+                s.receipt.heat_applied += s.heat*dt;
+                s.receipt.requested_mass[tr_.temp_row] += dm;
+                s.receipt.applied_mass[tr_.temp_row] += dm;
+            }
+        }
     }
     const double other_sat = (q0 - q_deep) * A * dt + lat_vol - node_vol + link_vol;
     // Wells withdraw only available water after all other signed channels.
@@ -1341,7 +1384,15 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     if (cl == GwClosure::ENSLAVED)
         drainable = std::max(0.0, ts * hg0 + soil::equilibriumStorage(p,L0)
                                   - soil::equilibriumStorage(p,zs)) * A;
+    const double requested_source_out = source.out;
     source.out = std::min(source.out, std::max(0.0,drainable + other_sat + source.in));
+    const double runtime_scale = requested_source_out > 0.0 ? source.out/requested_source_out : 1.0;
+    if(runtime) for(auto k:runtime_sources_.cells[u]) {
+        auto& s=runtime_sources_.rows[k];
+        const double in=std::max(0.0,s.flow)*dt, out=std::max(0.0,-s.flow)*dt*runtime_scale;
+        s.receipt.applied+=in-out; s.receipt.water_in+=in; s.receipt.water_out+=out;
+        s.receipt.last_flow=(in-out)/dt; s.receipt.last_dt=dt;
+    }
     state_.led_source_in += source.in;
     state_.led_source_out += source.out;
     const double dV_sat = other_sat + source.in - source.out;
@@ -1480,6 +1531,20 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
                 const double target = hg1 + net / yield;
                 if (target > zs) dunne_vol += (target - zs) * yield * A;
                 hg1 = std::clamp(target, 0.0, zs);
+                if (target < 0.0) {
+                    // The column requested more residual support than the
+                    // saturated store can give. Clamping the table alone
+                    // creates -target*yield water. Return that unfulfilled
+                    // support from the column's mobile water, proportionally
+                    // over layers; residual content remains untouched.
+                    const double mobile = std::max(0.0, mean-p.theta_r)*zs;
+                    const double keep = mobile>0.0
+                        ? std::max(0.0,1.0+target*yield/mobile) : 0.0;
+                    for(int j=0;j<state_.m_layers;++j) {
+                        double& theta=state_.theta_sigma[static_cast<std::size_t>(j)*n+u];
+                        theta=p.theta_r+(theta-p.theta_r)*keep;
+                    }
+                }
             } else if (net > 0.0) dunne_vol += net * A;
             state_.hu[u] = sigma::columnStorage(&state_.theta_sigma[u],
                                 state_.m_layers, n, std::max(0.0, zs - hg1));
@@ -1566,6 +1631,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     // so mass can never travel on a volume the water gave back.
     if (tr_.active()) {
         CellFlux f;
+        f.runtime_dt=dt; f.requested_source_out=requested_source_out;
         f.v_sat0   = hg0 * ts * A;
         f.v_uns0   = hu_pre * A;
         f.lateral  = lat_vol;
@@ -1754,7 +1820,35 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) noexcept {
             }
         }
         tr_.lost_deep[us] += take(msat, f.deep, v_sat, mob_sat);
-        tr_.lost_source[us] += take(msat, f.source_out, v_sat, mob_sat);
+        const double source_conc = v_sat>0.0 ? msat*mob_sat/v_sat : 0.0;
+        const double source_export = take(msat, f.source_out, v_sat, mob_sat);
+        tr_.lost_source[us] += source_export;
+        if(static_cast<std::size_t>(i)<runtime_sources_.cells.size())
+            for(auto k:runtime_sources_.cells[i]) {
+                auto& row=runtime_sources_.rows[k];
+                const double requested=std::max(0.0,-row.flow)*f.runtime_dt;
+                row.receipt.requested_mass[us] -= requested*source_conc;
+                if(f.requested_source_out>0.0)
+                    row.receipt.applied_mass[us] -= source_export*requested/f.requested_source_out;
+            }
+
+        // Independent species sinks act on the dissolved fraction of the
+        // saturated store, sharing its remaining mobile mass proportionally.
+        if(static_cast<std::size_t>(i)<runtime_sources_.cells.size()) {
+            double requested=0.0;
+            for(auto k:runtime_sources_.cells[i])
+                requested+=std::max(0.0,-runtime_sources_.rows[k].rates[us])*f.runtime_dt;
+            const double scale=requested>0.0
+                ? std::min(1.0,std::max(0.0,msat*mob_sat)/requested) : 1.0;
+            for(auto k:runtime_sources_.cells[i]) {
+                auto& row=runtime_sources_.rows[k];
+                const double wanted=std::max(0.0,-row.rates[us])*f.runtime_dt;
+                const double applied=wanted*scale;
+                msat-=applied; tr_.lost_source[us]+=applied;
+                row.receipt.requested_mass[us]-=wanted;
+                row.receipt.applied_mass[us]-=applied;
+            }
+        }
 
         // (6) ET carries the INTENSIVE rows only: the solutes stay and the
         //     column up-concentrates (GW plan §3.5), while temperature and
@@ -1795,6 +1889,7 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) noexcept {
 }
 
 void SubsurfaceSolver::setSources(std::vector<GwResolvedSource> sources) {
+    runtime_sources_ = {};
     sources_ = std::move(sources);
     cell_sources_.assign(static_cast<std::size_t>(state_.n_cells), {});
     for (std::size_t row=0; row<sources_.size(); ++row)

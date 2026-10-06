@@ -189,6 +189,14 @@
   "xsect.full_hyd_radius": "length",
   "xsect.full_section_factor": "section_factor",
   "xsect.max_area": "area",
-  "xsect.max_width": "length"
+  "xsect.max_width": "length",
+  "surface2d.get_coupling_flux": "m/s",
+  "surface2d.get_depth": "m",
+  "surface2d.get_depths": "m",
+  "surface2d.get_head": "m",
+  "surface2d.get_heads": "m",
+  "surface2d.get_net_source": "m/s",
+  "surface2d.get_stat_max_depths": "m",
+  "surface2d.get_stat_max_velocities": "m/s"
  }
 }

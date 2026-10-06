@@ -152,6 +152,12 @@ class CatalogRuntimeContract(unittest.TestCase):
         with self.assertRaises(KeyError):
             _catalog.lookup("node.not_a_field")
 
+    def test_shared_coupling_views_preserve_their_aliases(self):
+        self.assertEqual(_catalog.lookup("surface2d.groundwater")["view_target"],
+                         "groundwater2d")
+        self.assertIn("set_source", {m["name"] for m in _catalog.members(
+            _catalog.lookup("surface2d.sources")["view_target"])})
+
 
 def _collection_of(entry: dict) -> str:
     """Name of the collection target that owns an element (or sub-view) target."""

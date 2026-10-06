@@ -212,6 +212,11 @@ SWMM_ENGINE_API int swmm_hotstart_saves_clear(SWMM_Engine engine);
  */
 SWMM_ENGINE_API int swmm_hotstart_save(SWMM_Engine engine, const char* path);
 
+/** Last diagnostic from the built-in hot-start reader/writer on this thread.
+ * The borrowed string is valid until the next hot-start I/O call on this thread.
+ * An empty string means no detailed diagnostic is available. */
+SWMM_ENGINE_API const char* swmm_hotstart_last_io_error(void);
+
 /* =========================================================================
  * Open / read
  * ========================================================================= */

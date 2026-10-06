@@ -38,6 +38,7 @@
 #include <algorithm>
 #include <vector>
 
+#include "../coupling/RuntimeCoupling.hpp"
 #include "SurfaceTransportState.hpp"   // S1 — species mass per cell
 #include "MeshData.hpp"                 // kMaxCellVerts edge-slot stride
 
@@ -188,6 +189,10 @@ struct SurfaceStateData {
     /// forcing-refresh cadence, so a one-shot (RESET) prescription applies
     /// on the very next step and expires on the step after — the per-step
     /// semantics the swmm_2d_force_* API documents.
+    // Unforced coupling is restored before each batch; ADD never compounds.
+    RuntimeSources runtime_sources;
+    RuntimeForcings runtime_forcings;
+    std::vector<double> coupling_native;
     bool forcing_dirty = false;
 
     /// Sticky companion to forcing_dirty: set by the forcing API the first
@@ -246,6 +251,9 @@ struct SurfaceStateData {
         infil_applied.assign(nt, 0.0);
         coupling_applied.assign(nt, 0.0);
         coupling_flux.assign(nt, 0.0);
+        coupling_native.clear();
+        runtime_sources = {};
+        runtime_forcings = {};
         net_source.assign(nt, 0.0);
 
         rainfall_forced.assign(nt, 0);

@@ -208,6 +208,10 @@ SWMM_ENGINE_API int swmm_engine_initialize(SWMM_Engine engine);
 /** @brief Start the simulation → SWMM_STATE_STARTED. */
 SWMM_ENGINE_API int swmm_engine_start(SWMM_Engine engine, int save_results);
 
+/** Advance to an exact elapsed time in seconds, settling pending 2D work. */
+SWMM_ENGINE_API int swmm_engine_advance_to(SWMM_Engine engine, double target_seconds, double* actual_seconds);
+/** Current elapsed seconds, including inside step callbacks. */
+SWMM_ENGINE_API int swmm_engine_get_elapsed_seconds(SWMM_Engine engine, double* seconds);
 /** @brief Advance one explicit timestep. elapsed_time==0 when done. */
 SWMM_ENGINE_API int swmm_engine_step(SWMM_Engine engine, double* elapsed_time);
 

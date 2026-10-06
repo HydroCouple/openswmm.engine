@@ -1312,6 +1312,11 @@ int SWMMEngine::start(int save_results) noexcept {
     // routing-step-size coarsening, and the outfall interface write are all
     // gated on this in step()/postOutputSnapshot().
     do_routing_ = (ctx_.n_nodes() > 0 && !ctx_.options.ignore_routing);
+#ifdef OPENSWMM_HAS_2D
+    // Surface-only engines still need the routing clock and surface advance.
+    do_routing_ = do_routing_ ||
+        (surface_router_.isActive() && !ctx_.options.ignore_routing);
+#endif
 
     // Everything up to prepare_all() is interface-file work ([FILES] inflows /
     // outflows / hotstart / RDII / rainfall).
@@ -1513,7 +1518,35 @@ void reassertNodeStateOverrides(SimulationContext& ctx) noexcept {
 }
 }  // namespace
 
+int SWMMEngine::advanceTo(double seconds, double* actual) noexcept {
+    if (!actual || !std::isfinite(seconds)) return CFFI_ERR_BADPARAM;
+    *actual = ctx_.elapsed_ms / 1000.0;
+    if (step_active_ || ctx_.state != EngineState::RUNNING) return CFFI_ERR_LIFECYCLE;
+    if (seconds < *actual || seconds > ctx_.options.totalDurationMs()/1000.0)
+        return CFFI_ERR_BADPARAM;
+    exchange_target_ = seconds;
+    int rc = SWMM_OK;
+    while (ctx_.elapsed_ms/1000.0 < seconds) {
+        const double before = ctx_.elapsed_ms;
+        double days;
+        rc = step(&days);
+        if (rc != SWMM_OK || ctx_.elapsed_ms <= before) break;
+    }
+    exchange_target_ = -1.0;
+#ifdef OPENSWMM_HAS_2D
+    surface_router_.flushPendingBatch(ctx_);
+#endif
+    *actual = ctx_.elapsed_ms/1000.0;
+    return rc;
+}
+
 int SWMMEngine::step(double* elapsed_time) noexcept {
+    if (step_active_) return CFFI_ERR_LIFECYCLE;
+    step_active_ = true;
+    struct StepGuard {
+        bool& active; bool& pipeline;
+        ~StepGuard() { active=false; pipeline=false; }
+    } step_guard{step_active_, runtime_pipeline_};
     if (ctx_.state != EngineState::RUNNING) {
         if (elapsed_time) *elapsed_time = 0.0;
         set_error(SWMM_ERR_WRONG_STATE,
@@ -1611,6 +1644,14 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         }
     }
 
+    const auto bound_runtime_step = [&]() {
+        const double now = ctx_.elapsed_ms/1000.0;
+        if (exchange_target_ >= 0.0) dt_next = std::min(dt_next, exchange_target_-now);
+#ifdef OPENSWMM_HAS_2D
+        dt_next = std::min(dt_next, surface_router_.nextRuntimeTime(now)-now);
+#endif
+    };
+    bound_runtime_step();
     // Fire step-begin callback
     emit_progress();
     if (callbacks_.on_step_begin) {
@@ -1621,6 +1662,10 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
             callbacks_.step_begin_ud
         );
     }
+
+    // A begin callback may install a source expiring during this step.
+    bound_runtime_step();
+    runtime_pipeline_ = true;
 
     // Snapshot the every-step old state (legacy initSystemInflows'
     // oldLatFlow and the quality old state). The HYDRAULIC old state rolls
@@ -1704,6 +1749,10 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         }
         accumulateNodeRoutingTotals(dt_next / 2.0);   // routing.c:271
     }
+#ifdef OPENSWMM_HAS_2D
+    if (surface_router_.runtimeActive() || exchange_target_ >= 0.0)
+        surface_router_.flushPendingBatch(ctx_);
+#endif
     reassertNodeStateOverrides(ctx_);
     computeFinalStorage();
     // IGNORE_QUALITY: surface buildup was never updated this run, so skip the
@@ -1754,6 +1803,10 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         accumulateAvgResults();
     }
 
+#ifdef OPENSWMM_HAS_2D
+    surface_router_.expireRuntime(ctx_.elapsed_ms/1000.0);
+#endif
+    runtime_pipeline_ = false;
     // Fire step-end callback
     if (callbacks_.on_step_end) {
         callbacks_.on_step_end(
@@ -10056,6 +10109,10 @@ bool SWMMEngine::isBetweenEvents(double current_date) const {
 // ============================================================================
 
 bool SWMMEngine::isInSteadyState(int action_count) const {
+#ifdef OPENSWMM_HAS_2D
+    // Quiescent 1D inflows do not imply a steady surface or runtime sources.
+    if (surface_router_.isActive()) return false;
+#endif
     if (!ctx_.options.skip_steady_state) return false;
     // legacy isInSteadyState (routing.c): never on the first step, never
     // after a control action, not when the PREVIOUS step's flow error

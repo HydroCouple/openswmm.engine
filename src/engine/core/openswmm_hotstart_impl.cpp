@@ -69,6 +69,10 @@ static inline openswmm::HotStartFile* to_hs(SWMM_HotStart hs) noexcept {
 
 extern "C" {
 
+SWMM_ENGINE_API const char* swmm_hotstart_last_io_error(void) {
+    return openswmm::HotStartManager::last_io_error().c_str();
+}
+
 // ----------------------------------------------------------------------------
 // swmm_hotstart_save()
 // ----------------------------------------------------------------------------

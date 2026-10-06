@@ -1401,9 +1401,11 @@ struct SimulationContext {
     // Empty for ordinary models; infinity for nodes without a surface outfall.
     std::vector<double> surface_outfall_link_limit;
 
+    bool runtime_coupling_used = false; ///< Runtime prescriptions require a future restart format.
     struct MassBalance2D {
         double init_storage          = 0.0;  ///< Initial surface storage (m³)
         double final_storage         = 0.0;  ///< Latest surface storage (m³)
+        double external_in = 0.0, external_out = 0.0; ///< Runtime external source volumes (m³)
         double rainfall_in           = 0.0;  ///< Cumulative rainfall volume (m³)
         double coupling_1d_to_2d_in  = 0.0;  ///< Cumulative 1D→2D spill into 2D (m³)
         double coupling_2d_to_1d_out = 0.0;  ///< Cumulative 2D→1D drainage out (m³)
@@ -1459,9 +1461,9 @@ struct SimulationContext {
         /// 2D surface continuity error (fraction).
         double error() const {
             double total_in  = rainfall_in + coupling_1d_to_2d_in + outfall_in
-                               + boundary_in + aquifer_in + init_storage;
+                               + boundary_in + aquifer_in + init_storage + external_in;
             double total_out = coupling_2d_to_1d_out + outfall_out + boundary_out
-                               + evap_out + infil_out + final_storage;
+                               + evap_out + infil_out + final_storage + external_out;
             return (total_in > 0.0) ? (total_in - total_out) / total_in : 0.0;
         }
     } mass_balance_2d;
@@ -1829,6 +1831,7 @@ struct SimulationContext {
      *          Call this before re-running or re-opening a simulation.
      */
     void reset() {
+        runtime_coupling_used = false;
         surface_outfall_link_limit.clear();
         state = EngineState::CREATED;
         control_log.clear();
@@ -1954,6 +1957,7 @@ struct SimulationContext {
      *          and static properties are NOT changed.
      */
     void reset_state() noexcept {
+        runtime_coupling_used = false;
         nodes.reset_state();
         links.reset_state();
         subcatches.reset_state();

@@ -72,12 +72,14 @@ cdef class Surface2D:
 
     cdef object _owner
     cdef long long _generation
+    cdef object _groundwater
     cdef object _infiltration
 
     def __cinit__(self, owner):
         self._owner = resolve_owner(owner)
         self._generation = self._owner.generation
         self._infiltration = None
+        self._groundwater = None
 
     @property
     def quality(self):
@@ -271,7 +273,53 @@ cdef class Surface2D:
         """Two-zone aquifer authoring and runtime snapshots."""
         self._h()
         from ._groundwater import Groundwater
-        return Groundwater(self._owner)
+        if self._groundwater is None:
+            self._groundwater = Groundwater(self._owner)
+        return self._groundwater
+
+    @property
+    def sources(self):
+        """Runtime external sources and cumulative accepted-transfer receipts."""
+        self._h()
+        from ._coupling import DomainSources
+        return DomainSources(self._owner, 'surface')
+
+    def set_head_boundary(self, int cell, int edge, double head_m, concentrations=None):
+        self.sources.set_boundary(cell,edge,1,head_m,concentrations)
+
+    def set_flow_boundary(self, int cell, int edge, double flow_m3_s, concentrations=None):
+        """Total outward m³/s, with inflow quality; overrides authored series."""
+        self.sources.set_boundary(cell,edge,2,flow_m3_s,concentrations)
+
+    def clear_boundary(self, int cell, int edge):
+        self.clear_edge_bc(cell,edge)
+
+    def boundary_flow(self, int cell, int edge):
+        """Last published window-mean outward flow in total m³/s."""
+        self.get_edge_bc_type(cell,edge)  # native cell/perimeter index validation
+        return self.get_edge_flux_bulk()[cell*self.edge_stride+edge]
+
+    def boundary_receipt(self, int cell, int edge):
+        """Applied boundary transfer, positive inward, including advective heat."""
+        return self.sources.boundary_receipt(cell,edge)
+
+    def species_ledger(self, species):
+        return self.sources.species_ledger(species)
+
+    def set_water_source(self, cells, flow_m3_s, **kwargs):
+        self.sources.set_source(cells, flow_m3_s, **kwargs)
+
+    def set_heat_source(self, cells, heat_w, *, source_id='heat', until_seconds=None):
+        self.sources.set_source(cells, heat_w=heat_w, source_id=source_id, until_seconds=until_seconds)
+
+    def set_species_source(self, cells, species_rates, *, source_id='species', until_seconds=None):
+        self.sources.set_source(cells, species_rates=species_rates, source_id=source_id, until_seconds=until_seconds)
+
+    def clear_source(self, source_id='external', cell=None):
+        self.sources.clear_source(source_id,cell)
+
+    def source_receipt(self, source_id='external', cell=0):
+        return self.sources.source_receipt(source_id, cell)
 
     def _is_current(self):
         return self._generation == self._owner.generation
@@ -974,6 +1022,49 @@ cdef class Surface2D:
         _check(err)
         return arr
 
+    @property
+    def species(self):
+        """Surface-transported species names in native row order: pollutants,
+        MSX species, C{__WATER_AGE__}, C{__TEMPERATURE__}. Empty when the
+        surface carries no transport.
+
+        @rtype: tuple
+        @raise EngineError: If the C API call fails.
+        """
+        cdef void* eng = self._h()
+        cdef int count = 0, index
+        cdef char name[512]
+        _check(swmm_2d_species_count(eng, &count))
+        names = []
+        for index in range(count):
+            _check(swmm_2d_species_name(eng, index, name, 512))
+            names.append(name.decode('utf-8'))
+        return tuple(names)
+
+    def concentrations(self, int species):
+        """Per-cell concentration of one surface species. The GIL is released
+        during the C call.
+
+        Pollutant and MSX rows are in their declared units, the temperature
+        row in degC and the water-age row in seconds. Dry cells report 0.
+
+        @param species: Row index into L{species}.
+        @type species: int
+        @return: Owned array of shape C{(n_triangles,)}, dtype C{float64}.
+        @rtype: np.ndarray
+        @raise EngineError: If the C API call fails.
+        """
+        cdef int n = self.n_triangles, written = 0
+        cdef np.ndarray[double, ndim=1] arr = np.empty(max(n, 1), dtype=np.float64)
+        cdef void* eng = self._h()
+        cdef double* p = <double*>arr.data
+        cdef int err
+        with self._owner._operation(<uintptr_t>eng):
+            with nogil:
+                err = swmm_2d_get_cell_conc(eng, species, p, n, &written)
+        _check(err)
+        return arr[:written].copy()
+
     def get_edge_geometry_bulk(self):
         """Return time-invariant edge lengths and outward unit normal components.
         The GIL is released during the C call.
@@ -1275,7 +1366,8 @@ cdef class Surface2D:
         @return: Mapping with keys C{init_storage}, C{final_storage},
             C{rainfall_in}, C{coupling_1d_to_2d_in}, C{coupling_2d_to_1d_out},
             C{outfall_in}, C{outfall_out}, C{boundary_in}, C{boundary_out},
-            C{evap_out} (all C{m^3}) and C{continuity_error} (fraction).
+            C{evap_out}, C{external_in}, C{external_out} (all C{m^3})
+            and C{continuity_error} (fraction).
         @rtype: dict[str, float]
         @raise EngineError: If the 2D module did not run.
         """
@@ -1308,6 +1400,7 @@ cdef class Surface2D:
             "boundary_in": boundary_in,
             "boundary_out": boundary_out,
             "evap_out": evap_out,
+            **self.sources.water_totals,
             "continuity_error": err,
         }
 
@@ -1475,6 +1568,24 @@ cdef class Surface2D:
         cdef int bc_type = 0
         _check(swmm_2d_get_edge_bc_type(self._h(), tri_idx, edge, &bc_type))
         return SurfaceBoundaryType(bc_type)
+
+    def set_edge_bc_concentrations(self, int cell, int edge, concentrations):
+        """Set inflow quality by species name; omitted species arrive at zero.
+
+        Includes `__TEMPERATURE__` (°C) and `__WATER_AGE__` (seconds) if enabled.
+        """
+        cdef void* h=self._h()
+        names=list(self.species)
+        unknown=set(concentrations)-set(names)
+        if unknown: raise ValueError(f'Unknown or disabled species: {sorted(unknown)}')
+        cdef np.ndarray[np.float64_t, ndim=1] values=np.array(
+            [concentrations.get(n,0.0) for n in names],dtype=np.float64)
+        with self._owner._operation(<size_t>h):
+            _check(swmm_2d_set_edge_bc_concentrations(h,cell,edge,<double*>values.data,len(names)))
+
+    def clear_edge_bc(self, int cell, int edge):
+        """Restore the boundary prescription that preceded runtime API edits."""
+        _check(swmm_2d_clear_edge_bc(self._h(), cell, edge))
 
     def set_edge_bc_type(self, int tri_idx, int edge, bc_type):
         """Set the boundary condition type for a triangle edge.

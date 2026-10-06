@@ -39,8 +39,11 @@
 #ifndef OPENSWMM_ENGINE_2D_BOUNDARY_DATA_HPP
 #define OPENSWMM_ENGINE_2D_BOUNDARY_DATA_HPP
 
+#include "../coupling/RuntimeCoupling.hpp"
 #include <vector>
 #include <cstdint>
+#include <map>
+#include <string>
 
 namespace openswmm::twoD {
 
@@ -122,6 +125,44 @@ struct BoundaryData {
     /// Curve name for deferred resolution (cleared after resolve).
     std::vector<std::string> edge_bc_rating_curve_name;
 
+    struct RuntimeOriginal {
+        int8_t type;
+        double head, flow, slope;
+        int stage_ts, flow_ts, rating;
+        std::string stage_name, flow_name, rating_name;
+    };
+    std::map<int, RuntimeOriginal> runtime_original;
+    std::map<int,std::string> runtime_owner;
+    mutable std::map<int,RuntimeReceipt> receipts;
+    void ensureReceipt(int slot,int species) const {
+        auto& receipt=receipts[slot];
+        if(receipt.applied_mass.size()!=static_cast<std::size_t>(species)) {
+            receipt.requested_mass.assign(species,0.0);
+            receipt.applied_mass.assign(species,0.0);
+        }
+    }
+    void saveRuntime(int slot) {
+        if (runtime_original.count(slot)) return;
+        runtime_original.emplace(slot, RuntimeOriginal{
+            edge_bc_type[slot], edge_bc_head[slot], edge_bc_flow[slot], edge_bed_slope[slot],
+            edge_bc_tseries[slot], edge_bc_flow_tseries[slot], edge_bc_rating_curve[slot],
+            edge_bc_tseries_name[slot], edge_bc_flow_tseries_name[slot], edge_bc_rating_curve_name[slot]});
+    }
+    void clearRuntime(int slot) {
+        const auto it = runtime_original.find(slot);
+        if (it == runtime_original.end()) return;
+        const auto& b = it->second;
+        edge_bc_type[slot] = b.type; edge_bc_head[slot] = b.head;
+        edge_bc_flow[slot] = b.flow; edge_bed_slope[slot] = b.slope;
+        edge_bc_tseries[slot] = b.stage_ts; edge_bc_flow_tseries[slot] = b.flow_ts;
+        edge_bc_rating_curve[slot] = b.rating;
+        edge_bc_tseries_name[slot] = b.stage_name;
+        edge_bc_flow_tseries_name[slot] = b.flow_name;
+        edge_bc_rating_curve_name[slot] = b.rating_name;
+        runtime_original.erase(it);
+        runtime_owner.erase(slot);
+    }
+
     // -----------------------------------------------------------------------
     // Lifecycle
     // -----------------------------------------------------------------------
@@ -131,6 +172,9 @@ struct BoundaryData {
      * @param n_edges Total number of edge slots (n_cells * kMaxCellVerts).
      */
     void resize(int n_edges) {
+        runtime_original.clear();
+        runtime_owner.clear();
+        receipts.clear();
         auto n = static_cast<std::size_t>(n_edges);
         edge_bc_type.assign(n, static_cast<int8_t>(BoundaryType::WALL));
         edge_bed_slope.assign(n, 0.0);

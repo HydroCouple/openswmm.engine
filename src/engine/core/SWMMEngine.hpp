@@ -181,6 +181,8 @@ public:
      * @returns SWMM_OK or an error code.
      */
     int step(double* elapsed_time) noexcept;
+    int advanceTo(double seconds, double* actual) noexcept;
+    bool runtimeUpdateAllowed() const noexcept { return !runtime_pipeline_; }
 
     /**
      * @brief End the simulation loop and flush output.
@@ -459,6 +461,9 @@ private:
 
     std::string rpt_path_;  ///< Report file path
     std::string out_path_;  ///< Binary output file path
+
+    bool step_active_ = false, runtime_pipeline_ = false;
+    double exchange_target_ = -1.0;
 
     // Runoff clock (matching legacy OldRunoffTime / NewRunoffTime)
     // Runoff advances on its own timestep (300 sec wet, 3600 sec dry);

@@ -26,9 +26,23 @@
     auto* eng = reinterpret_cast<openswmm::SWMMEngine*>(engine); \
     if (!eng) return SWMM_ERR_BADHANDLE
 
+namespace {
+// Why the 2D solver is not active. A mesh parsed on an engine that has not been
+// initialized yet is a lifecycle error: swmm_engine_initialize() builds the
+// solver state. No mesh, or a mesh gated off by IGNORE_2D, is a bad parameter.
+int inactive2DError(openswmm::SWMMEngine& eng) {
+    using S = openswmm::EngineState;
+    const S st = eng.context().state;
+    const bool before_init = st == S::CREATED || st == S::OPENED || st == S::BUILDING;
+    if (before_init && eng.surfaceRouter2D().mesh().n_vertices() > 0)
+        return SWMM_ERR_LIFECYCLE;
+    return SWMM_ERR_BADPARAM;
+}
+}  // namespace
+
 #define CHECK_2D_ACTIVE(eng) \
     auto& router2d = eng->surfaceRouter2D(); \
-    if (!router2d.isActive()) return SWMM_ERR_BADPARAM
+    if (!router2d.isActive()) return inactive2DError(*eng)
 
 // Mesh-data edit/query guard: requires a parsed mesh but NOT an initialized
 // solver, so these operations work in the OPENED state the GUI keeps the
@@ -843,6 +857,49 @@ int swmm_2d_get_edge_flux_bulk(SWMM_Engine engine, double* flux) {
     return SWMM_OK;
 }
 
+int swmm_2d_species_count(SWMM_Engine engine, int* count) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    if (!count) return SWMM_ERR_BADPARAM;
+    const auto& tr = router2d.state().transport;
+    *count = tr.active() ? tr.n_species : 0;
+    return SWMM_OK;
+}
+
+int swmm_2d_species_name(SWMM_Engine engine, int species, char* buf,
+                         int buflen) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    const auto& tr = router2d.state().transport;
+    if (!tr.active() || species < 0 || species >= tr.n_species)
+        return SWMM_ERR_BADINDEX;
+    std::snprintf(buf, static_cast<std::size_t>(buflen), "%s",
+                  tr.row_names[static_cast<std::size_t>(species)].c_str());
+    return SWMM_OK;
+}
+
+int swmm_2d_get_cell_conc(SWMM_Engine engine, int species, double* out,
+                          int len, int* written) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    if (!out || len <= 0) return SWMM_ERR_BADPARAM;
+    const auto& s  = router2d.state();
+    const auto& tr = s.transport;
+    if (!tr.active() || species < 0 || species >= tr.n_species)
+        return SWMM_ERR_BADINDEX;
+    // Same derivation as the results snapshot (SWMMEngine), without its
+    // seconds-to-hours scaling of the age row.
+    const auto& mesh = router2d.mesh();
+    const double dry_depth = router2d.options().dry_depth;
+    const int n = std::min(len, tr.n_cells);
+    for (int c = 0; c < n; ++c)
+        out[c] = tr.concentration(species, c, s.volume[c],
+                                  dry_depth * mesh.tri_area[c]);
+    if (written) *written = n;
+    return SWMM_OK;
+}
+
 int swmm_2d_edge_get_geometry_bulk(SWMM_Engine engine,
                                      double* length, double* nx, double* ny) {
     GET_ENGINE(engine);
@@ -1051,13 +1108,23 @@ int swmm_2d_get_mass_balance(SWMM_Engine engine,
 // 2D Forcing
 // ============================================================================
 
+static bool forcingOwned(const openswmm::twoD::SurfaceRouter2D& router,int channel,int cell) {
+    for(const auto& row:router.state().runtime_forcings.rows)
+        if(row.enabled && !row.owner.empty() && (row.channel==channel || (channel==1 && row.channel==4)) &&
+           (cell<0 || row.cell<0 || row.cell==cell)) return true;
+    return false;
+}
+
 int swmm_2d_force_rainfall(SWMM_Engine engine, int idx,
                              double value, int mode, int persist) {
     GET_ENGINE(engine);
     CHECK_2D_ACTIVE(eng);
     CHECK_TRI_IDX(idx, router2d);
-    if (persist == SWMM_FORCING_RESET && mode != SWMM_FORCING_NONE)
-        router2d.prepareOneShotForcing(eng->context());
+    if (!std::isfinite(value) || mode < SWMM_FORCING_NONE || mode > SWMM_FORCING_ADD ||
+        (persist != SWMM_FORCING_RESET && persist != SWMM_FORCING_PERSIST))
+        return SWMM_ERR_BADPARAM;
+    if(forcingOwned(router2d,1,idx)) return SWMM_ERR_BADPARAM;
+    router2d.prepareOneShotForcing(eng->context());
 
     auto& s = const_cast<openswmm::twoD::SurfaceStateData&>(router2d.state());
     s.rainfall_forced[idx]    = static_cast<int8_t>(mode);
@@ -1072,8 +1139,11 @@ int swmm_2d_force_rainfall_uniform(SWMM_Engine engine,
                                      double value, int mode, int persist) {
     GET_ENGINE(engine);
     CHECK_2D_ACTIVE(eng);
-    if (persist == SWMM_FORCING_RESET && mode != SWMM_FORCING_NONE)
-        router2d.prepareOneShotForcing(eng->context());
+    if (!std::isfinite(value) || mode < SWMM_FORCING_NONE || mode > SWMM_FORCING_ADD ||
+        (persist != SWMM_FORCING_RESET && persist != SWMM_FORCING_PERSIST))
+        return SWMM_ERR_BADPARAM;
+    if(forcingOwned(router2d,1,-1)) return SWMM_ERR_BADPARAM;
+    router2d.prepareOneShotForcing(eng->context());
 
     auto& s = const_cast<openswmm::twoD::SurfaceStateData&>(router2d.state());
     int nt = router2d.mesh().n_triangles();
@@ -1092,8 +1162,11 @@ int swmm_2d_force_evap(SWMM_Engine engine, int idx,
     GET_ENGINE(engine);
     CHECK_2D_ACTIVE(eng);
     CHECK_TRI_IDX(idx, router2d);
-    if (persist == SWMM_FORCING_RESET && mode != SWMM_FORCING_NONE)
-        router2d.prepareOneShotForcing(eng->context());
+    if (!std::isfinite(value) || mode < SWMM_FORCING_NONE || mode > SWMM_FORCING_ADD ||
+        (persist != SWMM_FORCING_RESET && persist != SWMM_FORCING_PERSIST))
+        return SWMM_ERR_BADPARAM;
+    if(forcingOwned(router2d,2,idx)) return SWMM_ERR_BADPARAM;
+    router2d.prepareOneShotForcing(eng->context());
 
     auto& s = const_cast<openswmm::twoD::SurfaceStateData&>(router2d.state());
     s.evap_forced[idx]    = static_cast<int8_t>(mode);
@@ -1108,8 +1181,11 @@ int swmm_2d_force_evap_uniform(SWMM_Engine engine,
                                  double value, int mode, int persist) {
     GET_ENGINE(engine);
     CHECK_2D_ACTIVE(eng);
-    if (persist == SWMM_FORCING_RESET && mode != SWMM_FORCING_NONE)
-        router2d.prepareOneShotForcing(eng->context());
+    if (!std::isfinite(value) || mode < SWMM_FORCING_NONE || mode > SWMM_FORCING_ADD ||
+        (persist != SWMM_FORCING_RESET && persist != SWMM_FORCING_PERSIST))
+        return SWMM_ERR_BADPARAM;
+    if(forcingOwned(router2d,2,-1)) return SWMM_ERR_BADPARAM;
+    router2d.prepareOneShotForcing(eng->context());
 
     auto& s = const_cast<openswmm::twoD::SurfaceStateData&>(router2d.state());
     int nt = router2d.mesh().n_triangles();
@@ -1128,8 +1204,10 @@ int swmm_2d_force_coupling_flux(SWMM_Engine engine, int idx,
     GET_ENGINE(engine);
     CHECK_2D_ACTIVE(eng);
     CHECK_TRI_IDX(idx, router2d);
-    if (persist == SWMM_FORCING_RESET && mode != SWMM_FORCING_NONE)
-        router2d.prepareOneShotForcing(eng->context());
+    if (!std::isfinite(value) || mode < SWMM_FORCING_NONE || mode > SWMM_FORCING_ADD ||
+        (persist != SWMM_FORCING_RESET && persist != SWMM_FORCING_PERSIST))
+        return SWMM_ERR_BADPARAM;
+    router2d.prepareOneShotForcing(eng->context());
 
     auto& s = const_cast<openswmm::twoD::SurfaceStateData&>(router2d.state());
     s.coupling_forced[idx]    = static_cast<int8_t>(mode);
@@ -1143,6 +1221,7 @@ int swmm_2d_force_coupling_flux(SWMM_Engine engine, int idx,
 int swmm_2d_force_clear_all(SWMM_Engine engine) {
     GET_ENGINE(engine);
     CHECK_2D_ACTIVE(eng);
+    router2d.prepareOneShotForcing(eng->context());
 
     auto& s = const_cast<openswmm::twoD::SurfaceStateData&>(router2d.state());
     int nt = router2d.mesh().n_triangles();
@@ -1243,6 +1322,63 @@ int swmm_2d_get_edge_bc_type(SWMM_Engine engine, int tri_idx, int edge,
     return SWMM_OK;
 }
 
+// Validate before the barrier: rejected edits cannot advance pending work.
+static int prepareBoundaryEdit(openswmm::SWMMEngine* eng,
+                               openswmm::twoD::SurfaceRouter2D& router,
+                               int cell, int edge, bool save = true) {
+    const auto state = eng->context().state;
+    if (state != openswmm::EngineState::OPENED &&
+        state != openswmm::EngineState::BUILDING &&
+        state != openswmm::EngineState::INITIALIZED &&
+        state != openswmm::EngineState::RUNNING) return SWMM_ERR_LIFECYCLE;
+    if (router.mesh().cell_neighbour(cell, edge) >= 0) return SWMM_ERR_BADPARAM;
+    const int slot = openswmm::twoD::MeshData::slot(cell, edge);
+    if (slot >= router.boundary().size()) return SWMM_ERR_BADPARAM;
+    const auto owner=router.boundary().runtime_owner.find(slot);
+    if(owner!=router.boundary().runtime_owner.end() && !owner->second.empty()) return SWMM_ERR_BADPARAM;
+    if (router.isActive()) {
+        if (!eng->runtimeUpdateAllowed() || !router.runtimeCpuAvailable()) return SWMM_ERR_LIFECYCLE;
+        router.prepareOneShotForcing(eng->context());
+        if (save) { router.boundary().saveRuntime(slot); eng->context().runtime_coupling_used=true; }
+    }
+    return SWMM_OK;
+}
+
+int swmm_2d_set_edge_bc_concentrations(SWMM_Engine engine, int cell, int edge,
+                                        const double* values, int count) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(cell, router2d);
+    CHECK_EDGE_IDX(cell, edge, router2d);
+    auto& tr=router2d.state().transport;
+    if(count!=tr.n_species || (count && !values)) return SWMM_ERR_BADPARAM;
+    for(int r=0;r<count;++r)
+        if(!std::isfinite(values[r]) || (!tr.signedRow(r) && values[r]<0.0)) return SWMM_ERR_BADPARAM;
+    try {
+        std::vector<double> copy;
+        if(count) copy.assign(values,values+count);
+        const int rc=prepareBoundaryEdit(eng,router2d,cell,edge);
+        if(rc) return rc;
+        tr.runtime_bc_conc[openswmm::twoD::MeshData::slot(cell,edge)]=std::move(copy);
+        router2d.invalidateBoundaryIndex();
+        return SWMM_OK;
+    } catch(...) { return SWMM_ERR_NOMEM; }
+}
+
+int swmm_2d_clear_edge_bc(SWMM_Engine engine, int tri_idx, int edge) {
+    GET_ENGINE(engine);
+    CHECK_2D_ACTIVE(eng);
+    CHECK_TRI_IDX(tri_idx, router2d);
+    CHECK_EDGE_IDX(tri_idx, edge, router2d);
+    const int rc = prepareBoundaryEdit(eng, router2d, tri_idx, edge, false);
+    if (rc != SWMM_OK) return rc;
+    router2d.boundary().clearRuntime(openswmm::twoD::MeshData::slot(tri_idx, edge));
+    router2d.state().transport.runtime_bc_conc.erase(openswmm::twoD::MeshData::slot(tri_idx, edge));
+    router2d.invalidateBoundaryNames();
+    router2d.invalidateBoundaryIndex();
+    return SWMM_OK;
+}
+
 int swmm_2d_set_edge_bc_type(SWMM_Engine engine, int tri_idx, int edge,
                               int bc_type) {
     GET_ENGINE(engine);
@@ -1256,6 +1392,9 @@ int swmm_2d_set_edge_bc_type(SWMM_Engine engine, int tri_idx, int edge,
         bc_type != SWMM_2D_BC_RATING_CURVE) {    // V-E5
         return SWMM_ERR_BADPARAM;
     }
+
+    const int rc = prepareBoundaryEdit(eng, router2d, tri_idx, edge);
+    if (rc != SWMM_OK) return rc;
 
     router2d.boundary().edge_bc_type[openswmm::twoD::MeshData::slot(tri_idx, edge)] =
         static_cast<int8_t>(bc_type);
@@ -1282,8 +1421,16 @@ int swmm_2d_set_edge_bc_head(SWMM_Engine engine, int tri_idx, int edge,
     CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
     CHECK_EDGE_IDX(tri_idx, edge, router2d);
+    if (!std::isfinite(head)) return SWMM_ERR_BADPARAM;
+    const int rc = prepareBoundaryEdit(eng, router2d, tri_idx, edge);
+    if (rc != SWMM_OK) return rc;
 
     router2d.boundary().edge_bc_head[openswmm::twoD::MeshData::slot(tri_idx, edge)] = head;
+    if (router2d.isActive()) {
+        const int slot = openswmm::twoD::MeshData::slot(tri_idx, edge);
+        router2d.boundary().edge_bc_tseries[slot] = -1;
+        router2d.boundary().edge_bc_tseries_name[slot].clear();
+    }
     return SWMM_OK;
 }
 
@@ -1306,6 +1453,9 @@ int swmm_2d_set_edge_bc_slope(SWMM_Engine engine, int tri_idx, int edge,
     CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
     CHECK_EDGE_IDX(tri_idx, edge, router2d);
+    if (!std::isfinite(slope) || slope < 0.0) return SWMM_ERR_BADPARAM;
+    const int rc = prepareBoundaryEdit(eng, router2d, tri_idx, edge);
+    if (rc != SWMM_OK) return rc;
     if (slope < 0.0) return SWMM_ERR_BADPARAM;
 
     router2d.boundary().edge_bed_slope[openswmm::twoD::MeshData::slot(tri_idx, edge)] = slope;
@@ -1337,6 +1487,9 @@ int swmm_2d_set_edge_bc_tseries_name(SWMM_Engine engine, int tri_idx, int edge,
     CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
     CHECK_EDGE_IDX(tri_idx, edge, router2d);
+    if (router2d.isActive() && name && *name && eng->context().find_timeseries(name)<0) return SWMM_ERR_BADPARAM;
+    const int rc = prepareBoundaryEdit(eng, router2d, tri_idx, edge);
+    if (rc != SWMM_OK) return rc;
 
     const int idx = openswmm::twoD::MeshData::slot(tri_idx, edge);
     auto& b = router2d.boundary();
@@ -1347,6 +1500,7 @@ int swmm_2d_set_edge_bc_tseries_name(SWMM_Engine engine, int tri_idx, int edge,
         b.edge_bc_tseries_name[idx] = name;
         b.edge_bc_tseries[idx]      = -2;  // deferred resolution
     }
+    router2d.invalidateBoundaryNames();
     return SWMM_OK;
 }
 
@@ -1421,8 +1575,18 @@ int swmm_2d_set_edge_bc_flow(SWMM_Engine engine, int tri_idx, int edge,
     CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
     CHECK_EDGE_IDX(tri_idx, edge, router2d);
+    if (!std::isfinite(flow)) return SWMM_ERR_BADPARAM;
+    const int rc = prepareBoundaryEdit(eng, router2d, tri_idx, edge);
+    if (rc != SWMM_OK) return rc;
 
     router2d.boundary().edge_bc_flow[openswmm::twoD::MeshData::slot(tri_idx, edge)] = flow;
+    if (router2d.isActive()) {
+        const int slot = openswmm::twoD::MeshData::slot(tri_idx, edge);
+        router2d.boundary().edge_bc_flow_tseries[slot] = -1;
+        router2d.boundary().edge_bc_flow_tseries_name[slot].clear();
+        router2d.boundary().edge_bc_rating_curve[slot] = -1;
+        router2d.boundary().edge_bc_rating_curve_name[slot].clear();
+    }
     return SWMM_OK;
 }
 
@@ -1432,6 +1596,9 @@ int swmm_2d_set_edge_bc_flow_tseries_name(SWMM_Engine engine, int tri_idx, int e
     CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
     CHECK_EDGE_IDX(tri_idx, edge, router2d);
+    if (router2d.isActive() && name && *name && eng->context().find_timeseries(name)<0) return SWMM_ERR_BADPARAM;
+    const int rc = prepareBoundaryEdit(eng, router2d, tri_idx, edge);
+    if (rc != SWMM_OK) return rc;
 
     const int idx = openswmm::twoD::MeshData::slot(tri_idx, edge);
     auto& b = router2d.boundary();
@@ -1442,6 +1609,7 @@ int swmm_2d_set_edge_bc_flow_tseries_name(SWMM_Engine engine, int tri_idx, int e
         b.edge_bc_flow_tseries_name[idx] = name;
         b.edge_bc_flow_tseries[idx]      = -2;
     }
+    router2d.invalidateBoundaryNames();
     return SWMM_OK;
 }
 
@@ -1451,6 +1619,9 @@ int swmm_2d_set_edge_bc_rating_curve_name(SWMM_Engine engine, int tri_idx, int e
     CHECK_2D_MESH(eng);
     CHECK_TRI_IDX(tri_idx, router2d);
     CHECK_EDGE_IDX(tri_idx, edge, router2d);
+    if (router2d.isActive() && name && *name && eng->context().find_curve(name)<0) return SWMM_ERR_BADPARAM;
+    const int rc = prepareBoundaryEdit(eng, router2d, tri_idx, edge);
+    if (rc != SWMM_OK) return rc;
 
     const int idx = openswmm::twoD::MeshData::slot(tri_idx, edge);
     auto& b = router2d.boundary();
@@ -1461,6 +1632,7 @@ int swmm_2d_set_edge_bc_rating_curve_name(SWMM_Engine engine, int tri_idx, int e
         b.edge_bc_rating_curve_name[idx] = name;
         b.edge_bc_rating_curve[idx]      = -2;
     }
+    router2d.invalidateBoundaryNames();
     return SWMM_OK;
 }
 

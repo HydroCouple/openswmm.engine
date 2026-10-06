@@ -138,4 +138,5 @@ explicit finite-volume solver; persist results and observed data to a GeoPackage
    :maxdepth: 1
 
    2d
+   runtime_coupling
    geopackage
