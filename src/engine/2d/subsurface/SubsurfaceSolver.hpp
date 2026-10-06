@@ -44,22 +44,21 @@
  *
  * @section gw_split Operator split within one cell firing
  *
- * The order matters and is the plan's (§2.3 "apply saturated Δh_g first,
- * then the column sees the new L"):
+ * 1. Gather completed lateral, node, link, source, infiltration and ET water.
+ * 2. Compute physical Darcy recharge and a specific-yield table predictor.
+ * 3. CLOSED_FORM and ENSLAVED retain their bulk/equilibrium updates. SIGMA
+ *    trials the existing explicit column sweep from one original snapshot
+ *    while bracketing the table on `[0, z_s]`. Saturated storage change must
+ *    equal external saturated exchanges plus actual bottom transfer,
+ *    compression surplus and residual support from that same sweep.
+ * 4. Commit one settled column/table pair. Only water outside the physical
+ *    bracket becomes saturation excess or an unavailable-withdrawal refund.
+ * 5. Pair the accepted water with species and completed atmospheric ledgers.
  *
- * 1. `q₀_phys` — the physical Darcy flux across the table, from the current
- *    column state (closure B) or the closed form (closure A).
- * 2. Saturated update with `q₀_phys`, lateral gather, node exchange, deep
- *    loss → new `h_g`, clamped to `[0, z_s]`.
- * 3. `L̇` from the CLAMPED `h_g`, so clamping cannot break conservation.
- * 4. Column sweep with that `L̇`; its `f_bot` carries the handover, and its
- *    `overflow_to_sat` / `deficit_from_sat` are applied to `h_g` in this same
- *    firing.
- * 5. Dunne: `h_g > z_s − ε` moves the excess to the surface twin.
- *
- * @note **Specific yield.** Step 2 divides by `θ_s − θ_bot`, not `θ_s`. See
- *       `SigmaColumn.hpp`'s note: with the handover made explicit, `θ_s`
- *       does not conserve and `θ_s − θ_bot` is the textbook specific yield.
+ * @note **Specific yield.** The predictor uses `θ_s − θ_bot`. SIGMA's final
+ *       consistency equation uses saturated storage `θ_s·h_g` and the
+ *       actual bottom flux including handover; it never treats the
+ *       predictor or a floored storage derivative as completed water.
  *
  * @ingroup engine_2d
  *

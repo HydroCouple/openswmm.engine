@@ -288,7 +288,7 @@ TEST(CommonSourceStage, IncomingFaceWaterLandsBeforeDryMeshDonorRequestsAreGathe
 }
 
 TEST(CommonSourceStage, DryOwnerDemandUsesReviewedAreasAndOneSoilStressForQualifiedClosuresAndAllLaws) {
-    for(auto cl:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED})
+    for(auto cl:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA})
     for(auto law:{SoilChar::GARDNER,SoilChar::RUSSO,SoilChar::BROOKS_COREY,SoilChar::VAN_GENUCHTEN}) {
         AtmosphericInput a;a.et="BOUNDARY_ET";a.closure=cl;a.law=law;a.rain=0;a.pet={1e-5,3e-5};
         a.ks=0; // Isolate atmospheric extraction from recharge/table movement.
@@ -442,10 +442,22 @@ TEST(CommonSourceStage, ComponentAreasMustCloseEvenWhenTotalWeatherCoverageClose
     split.preview.shares[0].impervious_area+=.1;split.preview.shares[1].impervious_area-=.1;
     EXPECT_FALSE(split.stage.initialize(split.mesh,split.surface,split.options,split.gw,split.sources,split.preview).empty());
 }
-TEST(CommonSourceStage, UnqualifiedSigmaCannotInstallAnyWaterOrAtmosphericBudget) {
-    AtmosphericInput a;a.closure=GwClosure::SIGMA;a.et="BOUNDARY_ET";a.pet={.0001,.0002};
-    Model m;m.setup(false,1,false,false,false,a);
-    EXPECT_NE(m.stage.initialize(m.mesh,m.surface,m.options,m.gw,m.sources,m.preview).find("SIGMA"),std::string::npos);
-    EXPECT_DOUBLE_EQ(m.gw.state().et_potential_cumulative[0],0);EXPECT_DOUBLE_EQ(m.gw.state().xacc_from_surface[0],0);
-    EXPECT_DOUBLE_EQ(m.sources.clocks().groups()[0].completed_end,0);
+TEST(CommonSourceStage, QualifiedSigmaMarchesCompletedOwnerEtWithMovingTable) {
+    for(auto law:{SoilChar::GARDNER,SoilChar::RUSSO,SoilChar::BROOKS_COREY,SoilChar::VAN_GENUCHTEN}) {
+        AtmosphericInput a;a.closure=GwClosure::SIGMA;a.law=law;a.rain=0;
+        a.et="BOUNDARY_ET";a.pet={1e-5,3e-5};a.ks=.01;
+        Model m;m.setup(false,1,false,false,false,a);
+        m.surface.volume[0]=0;m.surface.depth[0]=0;m.surface.head[0]=10;
+        m.surface.evap_rate[0]=2e-6;const double initial=m.gw.state().storage();
+        m.attach(true);
+        for(double end:{.3,1.,2.125,4.,10.,20.}) {
+            const double start=m.stage.completedEnd();EXPECT_DOUBLE_EQ(m.marcher.advance(start,end),end);
+            etBalance(m);EXPECT_NEAR(m.gw.state().continuityResidual(),0,2e-11);
+            EXPECT_NEAR(initial-m.gw.state().storage(),m.gw.state().led_et,2e-11);
+            EXPECT_NEAR(m.gw.state().led_dunne,0,2e-11);EXPECT_EQ(m.gw.nodeRefunds(),0);
+            EXPECT_NEAR(m.gw.state().et_potential_cumulative[0],end*(4e-5*.3048+4e-6),1e-14);
+        }
+        EXPECT_GT(m.gw.state().et_soil_cumulative[0],0);EXPECT_DOUBLE_EQ(m.surface.evap_loss_total,0);
+        m.marcher.finalize();
+    }
 }
