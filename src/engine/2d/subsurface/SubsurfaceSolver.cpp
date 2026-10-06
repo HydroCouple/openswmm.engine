@@ -1210,6 +1210,21 @@ void SubsurfaceSolver::bookSurfaceEt(int cell,double dt,double rate,double surfa
     state_.et_refresh[u]=(std::isfinite(state_.et_refresh[u])?state_.et_refresh[u]:0.0)+dt;
 }
 
+void SubsurfaceSolver::bookAreaEt(int cell,double dt,double potential,double evaporation,double soil) {
+    if(!active()||options_.per_subcatch||cell<0||cell>=state_.n_cells||!(dt>0.0))return;
+    if(!std::isfinite(dt)||!std::isfinite(potential)||!std::isfinite(evaporation)||!std::isfinite(soil)||
+       potential<0||evaporation<0||soil<0||evaporation+soil>potential+1e-12*std::max(1.0,potential))
+        throw std::invalid_argument("Invalid completed atmospheric area budget.");
+    const auto u=static_cast<std::size_t>(cell);
+    soil=std::min(soil,std::max(0.0,potential-evaporation));
+    state_.et_pending[u]+=soil;
+    state_.et_potential_cumulative[u]+=potential;state_.et_surface_cumulative[u]+=evaporation;
+    state_.et_unused_cumulative[u]+=std::max(0.0,potential-evaporation-soil);
+    state_.et_surface_last[u]=evaporation/(state_.area[u]*dt);
+    state_.et_potential_last[u]=potential/(state_.area[u]*dt);
+    state_.et_refresh[u]=(std::isfinite(state_.et_refresh[u])?state_.et_refresh[u]:0.0)+dt;
+}
+
 void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double time) {
     const auto u = static_cast<std::size_t>(i);
     const int  n = state_.n_cells;
