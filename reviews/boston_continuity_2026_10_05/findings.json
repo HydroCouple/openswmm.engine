@@ -1,0 +1,17 @@
+{
+  "boston_saved_result": "/Volumes/BaseI/Boston/BWSC_Combined_Model_July 2026_New GAAR_T Storm 2070 - v1/BWSC_Combined_Model_July",
+  "continuity_fraction": -0.047595268219397226,
+  "rainfall_in": 1152996.2846519344,
+  "coupling_in": 97613.76976620752,
+  "outfall_in": 55780.7617385136,
+  "coupling_out": 196597.46098630715,
+  "outfall_out": 90545.6168957834,
+  "final_storage": 1081425.7595688982,
+  "probe_initial": 1.1,
+  "probe_requested_withdrawal": 1.1,
+  "probe_actual_withdrawal": 0.9999999999999999,
+  "probe_final_storage": 0.1,
+  "status": "Conservative outfall exchange bounds implemented and regression-tested. Full Boston residual attribution and rerun remain pending; saved result may differ from current live run.",
+  "boston_residual_m3": -62178.02129433327,
+  "fix_validation": "fix_validation/validation.json"
+}

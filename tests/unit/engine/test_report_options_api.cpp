@@ -65,6 +65,14 @@ TEST_F(ReportOptionsApiTest, BoolKeyDefaults) {
     EXPECT_EQ(getopt("RPT_FLOWSTATS"),  "YES");
     EXPECT_EQ(getopt("RPT_CONTROLS"),   "NO");
     EXPECT_EQ(getopt("RPT_AVERAGES"),   "NO");
+    EXPECT_EQ(getopt("RPT_LINK_STEPS"), "NO");
+}
+
+TEST_F(ReportOptionsApiTest, LinkStepsRoundTrip) {
+    EXPECT_EQ(swmm_options_set(engine, "RPT_LINK_STEPS", "YES"), SWMM_OK);
+    EXPECT_EQ(getopt("RPT_LINK_STEPS"), "YES");
+    EXPECT_EQ(swmm_options_set(engine, "RPT_LINK_STEPS", "NO"), SWMM_OK);
+    EXPECT_EQ(getopt("RPT_LINK_STEPS"), "NO");
 }
 
 TEST_F(ReportOptionsApiTest, BoolKeyRoundTrip) {

@@ -1,9 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Exception hierarchy for :mod:`openswmm.engine`.
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 Every non-zero return from the C API is mapped to an exception subclass
 that **also** inherits from a standard Python exception, so callers can
@@ -45,6 +61,7 @@ __all__ = [
     "NumericalError",
     "CRSError",
     "DependencyError",
+    "GeoPackageError",
     "ElementNotFoundError",
     "StaleObjectError",
     "raise_for_code",
@@ -138,6 +155,12 @@ class CRSError(EngineError, ValueError):
 class DependencyError(EngineError, RuntimeError):
     """Object has dependents that block the requested operation
     (``SWMM_ERR_DEPENDENCY``)."""
+
+
+class GeoPackageError(EngineError, RuntimeError):
+    """A GeoPackage operation failed: opening the file, a query or a write
+    (``SWMM_ERR_IO``). The GeoPackage C API reports failures without a code;
+    the message carries the library's reason."""
 
 
 class ElementNotFoundError(BadIndexError, KeyError):

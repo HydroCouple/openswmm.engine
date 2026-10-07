@@ -1,0 +1,217 @@
+
+  OPENSWMM ENGINE - VERSION 6.0.0-alpha.4
+  ------------------------------------------------------------
+
+  2D rainfall: no located gages; using the uniform system mean.
+  2D solver: cpu (explicit marcher); MOMENTUM_EQUATION LOCAL_INERTIAL; LTS_TIERS 4; 2 cells (0 quads)
+  
+  ****************
+  Analysis Options
+  ****************
+  Flow Units ............... CMS
+  Process Models:
+    Rainfall/Runoff ........ NO
+    RDII ................... NO
+    Snowmelt ............... NO
+    Groundwater ............ NO
+    Flow Routing ........... YES
+    Ponding Allowed ........ NO
+    Water Quality .......... NO
+  Flow Routing Method ...... DYNWAVE
+  Surcharge Method ......... EXTRAN
+  Starting Date ............ 01/01/2026 00:00:00
+  Ending Date .............. 01/01/2026 00:01:00
+  Antecedent Dry Days ...... 0.0
+  Report Time Step ......... 00:00:10
+  Routing Time Step ........ 2.00 sec
+  Variable Time Step ....... NO
+  Maximum Trials ........... 8
+  Number of Threads ........ 1
+  Head Tolerance ........... 0.001524 m
+  
+  
+  **************************        Volume        Volume
+  Flow Routing Continuity        hectare-m      10^6 ltr
+  **************************     ---------     ---------
+  Dry Weather Inflow .......         0.000         0.000
+  Wet Weather Inflow .......         0.000         0.000
+  Groundwater Inflow .......         0.000         0.000
+  RDII Inflow ..............         0.000         0.000
+  External Inflow ..........         0.000         0.001
+  External Outflow .........         0.000         0.000
+  Flooding Loss ............         0.000         0.000
+  Evaporation Loss .........         0.000         0.000
+  Exfiltration Loss ........         0.000         0.000
+  Initial Stored Volume ....         0.000         0.000
+  Final Stored Volume ......         0.000         0.001
+  Continuity Error (%) .....         6.716
+  
+  
+  **************************        Volume        Volume
+  2D Surface Routing Continuity  cubic meters      10^6 ltr
+  **************************     ---------     ---------
+  Initial Stored Volume ....         1.100         0.001
+  Rainfall Inflow ..........         0.000         0.000
+  1D -> 2D Spill Inflow ....         0.000         0.000
+  Outfall Inflow ...........         0.000         0.000
+  Boundary Inflow ..........         0.000         0.000
+  2D -> 1D Drain Outflow ...         0.000         0.000
+  Outfall Withdrawal .......         1.100         0.001
+  Boundary Outflow .........         0.000         0.000
+  Evaporation Loss .........         0.000         0.000
+  Infiltration Loss ........         0.000         0.000
+  Final Stored Volume ......         0.000         0.000
+  Continuity Error (%) .....         0.000
+  
+  
+  *************************
+  2D Solver Statistics
+  *************************
+  Internal Steps ...........            60
+  Face-Kernel Evals ........             0
+  Avg Internal Step (s) ....        1.0000
+  Last Internal Step (s) ...        1.0000
+  Active Cells min/mean/max    100.0 /100.0 /100.0  (%)
+  LTS Tier 0 Occupancy (%) .         100.0
+  LTS Tier 1 Occupancy (%) .           0.0
+  LTS Tier 2 Occupancy (%) .           0.0
+  LTS Tier 3 Occupancy (%) .           0.0
+  
+  
+  
+  
+  
+  
+  ********************************
+  Highest Flow Instability Indexes
+  ********************************
+  All links are stable.
+  
+  
+  *********************************
+  Most Frequent Nonconverging Nodes
+  *********************************
+  Convergence obtained at all time steps.
+  
+  
+  *************************
+  Routing Time Step Summary
+  *************************
+  Minimum Time Step           :     2.00 sec
+  Average Time Step           :     2.00 sec
+  Maximum Time Step           :     2.00 sec
+  % of Time in Steady State   :     0.00
+  Average Iterations per Step :     2.03
+  % of Steps Not Converging   :     0.00
+  
+  
+  
+  
+  
+  
+  ******************
+  Node Depth Summary
+  ******************
+
+  ---------------------------------------------------------------------------------
+                                 Average  Maximum  Maximum  Time of Max    Reported
+                                   Depth    Depth      HGL   Occurrence   Max Depth
+  Node                 Type       Meters   Meters   Meters  days hr:min      Meters
+  ---------------------------------------------------------------------------------
+  J                    STORAGE      0.08     0.09    -1.91     0  00:00        0.09
+  O                    OUTFALL      0.07     2.00     2.00     0  00:00        0.00
+  
+  
+  *******************
+  Node Inflow Summary
+  *******************
+
+  -------------------------------------------------------------------------------------------------
+                                  Maximum  Maximum                  Lateral       Total        Flow
+                                  Lateral    Total  Time of Max      Inflow      Inflow     Balance
+                                   Inflow   Inflow   Occurrence      Volume      Volume       Error
+  Node                 Type           CMS      CMS  days hr:min    10^6 ltr    10^6 ltr     Percent
+  -------------------------------------------------------------------------------------------------
+  J                    STORAGE      0.000    0.550     0  00:00           0      0.0011      27.682
+  O                    OUTFALL      0.000    0.550     0  00:00           0      0.0011       0.000
+  
+  
+  **********************
+  Node Surcharge Summary
+  **********************
+  
+  No nodes were surcharged.
+  
+  
+  *********************
+  Node Flooding Summary
+  *********************
+  
+  No nodes were flooded.
+  
+  
+  **********************
+  Storage Volume Summary
+  **********************
+
+  ------------------------------------------------------------------------------------------------
+                         Average    Avg   Evap  Exfil     Maximum    Max    Time of Max    Maximum
+                          Volume   Pcnt   Pcnt   Pcnt      Volume   Pcnt     Occurrence    Outflow
+  Storage Unit           1000 m³   Full   Loss   Loss     1000 m³   Full    days hr:min        CMS
+  ------------------------------------------------------------------------------------------------
+  J                        0.001    0.8    0.0    0.0       0.001    0.9       0  00:00      0.000
+  
+  
+  ***********************
+  Outfall Loading Summary
+  ***********************
+ 
+  ----------------------------------------------------------- 
+                         Flow       Avg       Max       Total 
+                         Freq      Flow      Flow      Volume 
+  Outfall Node           Pcnt       CMS       CMS    10^6 ltr 
+  -----------------------------------------------------------
+  O                      3.33     0.550     0.550       0.001 
+  -----------------------------------------------------------
+  System                 3.33     0.550     0.550       0.001
+  
+  
+  ********************
+  Link Flow Summary
+  ********************
+
+  -----------------------------------------------------------------------------
+                                 Maximum  Time of Max   Maximum    Max/    Max/
+                                  |Flow|   Occurrence   |Veloc|    Full    Full
+  Link                 Type          CMS  days hr:min     m/sec    Flow   Depth
+  -----------------------------------------------------------------------------
+  C                    CONDUIT     0.550     0  00:00      0.66    0.02    0.52
+  
+  
+  ***************************
+  Flow Classification Summary
+  ***************************
+
+  -------------------------------------------------------------------------------------
+                      Adjusted    ---------- Fraction of Time in Flow Class ---------- 
+                       /Actual         Up    Down  Sub   Sup   Up    Down  Norm  Inlet 
+  Conduit               Length    Dry  Dry   Dry   Crit  Crit  Crit  Crit  Ltd   Ctrl  
+  -------------------------------------------------------------------------------------
+  C                       1.00   0.00  0.97  0.00  0.03  0.00  0.00  0.00  0.00  0.00
+  
+  *************************
+  Conduit Surcharge Summary
+  *************************
+  
+  ----------------------------------------------------------------------------
+                                                           Hours        Hours 
+                         --------- Hours Full --------   Above Full   Capacity
+  Conduit                Both Ends  Upstream  Dnstream   Normal Flow   Limited
+  ----------------------------------------------------------------------------
+  C                           0.01      0.01      0.01      0.01         0.01
+  
+  
+
+  Analysis begun on:  Mon Oct  5 04:37:11 2026
+  Analysis ended on:  Mon Oct  5 04:37:11 2026
+  Total elapsed time: < 1 sec

@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file test_site_drainage_builder.cpp
  * @brief End-to-end model-builder parity test for the site drainage model.
@@ -49,7 +65,7 @@
  *       _pct_routed / _snowpack.
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @license  MIT License
+ * @license  Apache-2.0
  * @ingroup  engine_tests
  */
 
@@ -226,9 +242,17 @@ void build_site_drainage_model(SWMM_Engine e) {
     ASSERT_EQ(swmm_timeseries_add(e, "2-yr"), SWMM_OK);
     const int ts = swmm_table_index(e, "2-yr");
     ASSERT_GE(ts, 0);
+    int n_storm = 0;
     for (const auto& p : kStorm) {
         ASSERT_EQ(swmm_table_add_point(e, ts, p.minutes / 1440.0, p.value), SWMM_OK);
+        ++n_storm;
     }
+    // The points above are ELAPSED times (days from the simulation start),
+    // the time-only [TIMESERIES] form. Declare that explicitly so the
+    // resolve pass anchors them at START_DATE — the engine no longer
+    // guesses relative-ness from x-value magnitude (the old x[0] < 366
+    // heuristic corrupted mixed relative+dated series).
+    ASSERT_EQ(swmm_timeseries_set_relative_info(e, ts, n_storm, 0.0), SWMM_OK);
 
     // --- [RAINGAGES] RainGage : VOLUME, 0:05 interval, scale 1.0 ---
     ASSERT_EQ(swmm_gage_add(e, "RainGage"), SWMM_OK);

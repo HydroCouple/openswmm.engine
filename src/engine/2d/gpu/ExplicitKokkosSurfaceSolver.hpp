@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file ExplicitKokkosSurfaceSolver.hpp
  * @brief Kokkos (OpenMP/CUDA/HIP/SYCL) port of the explicit local-inertial
@@ -21,16 +37,16 @@
  *          {volume, head, depth, edge_flux, ∫Q dt} out. All marching state
  *          (V, η, h, q, accumulators, tiers, active sets) is device-resident.
  *
- *          Determinism: every kernel writes disjoint outputs in fixed CSR
- *          order and the only reductions are min (FP-exact) — on the OpenMP
- *          backend results are bit-identical to the serial marcher for any
- *          thread count (gated by test_2d_omp_explicit).
+ *          Determinism: face/cell kernels write disjoint outputs in fixed CSR
+ *          order. Evaporation drains in fixed host cell order. CPU/OpenMP
+ *          parity is tested with explicit tolerances; no cross-device bitwise
+ *          equivalence or GPU validation is implied.
  *
  * @ingroup engine_2d_gpu
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_GPU_EXPLICIT_KOKKOS_SURFACE_SOLVER_HPP
@@ -67,6 +83,7 @@ public:
     bool is_initialized() const noexcept override { return initialized_; }
 
 private:
+    friend struct ExplicitKokkosSurfaceSolverTestAccess;
     // Host-side handles (owned by SurfaceRouter2D; outlive the solver).
     MeshData*         mesh_  = nullptr;
     SurfaceStateData* state_ = nullptr;
@@ -75,7 +92,7 @@ private:
 
     // ---- device geometry (const after initialize) -------------------------
     DView d_tri_area_, d_tri_cz_, d_tri_cx_, d_tri_cy_, d_vz_, d_vx_, d_vy_;
-    IView d_tri_v0_, d_tri_v1_, d_tri_v2_;
+    IView d_cell_v_;                   ///< padded [cell*kMaxCellVerts + k] connectivity
     DView d_vs_wt_;                    ///< vertex-stencil weights
     IView d_vs_ptr_, d_vs_idx_;        ///< vertex-stencil CSR
     DView d_edge_length_, d_mannings_n_;
@@ -87,8 +104,29 @@ private:
     // ---- device state -----------------------------------------------------
     DView d_volume_, d_head_, d_depth_;
     DView d_q_, d_faccL_, d_faccR_, d_qcx_, d_qcy_;
-    DView d_rain_, d_coup_, d_evap_;
-    DView d_edge_flux_;                ///< 3·nt flat slots (published)
+    DView d_rain_, d_coup_, d_evap_, d_infil_;
+
+    /// Infiltration APPLIED depth (m) accumulated on device since the last
+    /// publish, then drained ADDITIVELY into state_->infil_applied and zeroed.
+    /// Additive because the host array is consumed on the routing-step cadence
+    /// while this one drains on the publish cadence — a plain overwrite would
+    /// lose or double-count whatever fell between the two.
+    DView d_infil_applied_;
+    DView d_evap_applied_;
+    std::vector<double> evap_applied_host_;
+    /// Signed per-cell coupling exchange volume (m³), mirroring
+    /// SurfaceStateData::coupling_applied. Kept on device beside
+    /// d_infil_applied_ and drained by the same host pass — a GPU run that
+    /// left it zero would report "no coupling" on exactly the decks the
+    /// plugin is chosen for.
+    DView d_coupling_applied_;
+    /// C3: node full_volume (1D ft³) on device, so the spill cap can use the
+    /// PONDED share (volume − full_volume) rather than total node storage.
+    /// Static for the run, uploaded once beside d_node_invert_.
+    DView d_node_fullvol_;
+    std::vector<double> infil_applied_host_;  ///< drain scratch (nt)
+    std::vector<double> coupling_applied_host_;  ///< drain scratch (nt)
+    DView d_edge_flux_;                ///< kMaxCellVerts·nt flat slots (published)
     IView d_active_, d_pin_t0_, d_tier_, d_face_tier_;
     IView d_cells_compact_, d_edges_compact_;  ///< per-tier segments
     IView d_scratch_;                  ///< seed flags scratch (nt)
@@ -134,8 +172,8 @@ public:
     void syncAndRebuild(double t);
     void refreshDt0();   ///< tighten-only dt0_ between rebuilds (== serial)
     void collapseToGlobalDt();         ///< tail: everything to tier 0
-    void fireFaces(int tier, double dt_f);
-    void fireCells(int tier, double dt_c);
+    void fireFaces(int tier, double dt_f, bool global_step = false);
+    void fireCells(int tier, double dt_c, bool global_step = false);
     void runMacroCycle(double dt0, int nsub);
     void pushForcings();
     void pushNodeState();

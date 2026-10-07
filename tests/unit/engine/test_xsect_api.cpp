@@ -1,8 +1,24 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /*!
  * \file   test_xsect_api.cpp
  * \author Caleb Buahin <caleb.buahin@gmail.com>
  * \date   2026
- * \license MIT
+ * \license Apache-2.0
  * \brief  Standalone cross-section geometry C API (openswmm_xsect.h).
  *
  * Covers:
@@ -34,6 +50,26 @@
 #include <vector>
 
 namespace {
+
+TEST(XsectLinkData, EraseKeepsAuthoredGeometryAlignedWithSurvivors) {
+    openswmm::LinkData links;
+    links.resize(3);
+    links.xsect_geom1 = {1.0, 2.0, 3.0};
+    links.xsect_geom2 = {4.0, 5.0, 6.0};
+    links.xsect_geom3 = {0.5, 1.0, 1.5};
+    links.xsect_geom4 = {2.5, 3.0, 3.5};
+    links.erase_at(1);
+    EXPECT_EQ(links.xsect_geom1, (std::vector<double>{1.0, 3.0}));
+    EXPECT_EQ(links.xsect_geom2, (std::vector<double>{4.0, 6.0}));
+    EXPECT_EQ(links.xsect_geom3, (std::vector<double>{0.5, 1.5}));
+    EXPECT_EQ(links.xsect_geom4, (std::vector<double>{2.5, 3.5}));
+    // Undo appends a new row. It must not expose a deleted row's geometry.
+    links.grow_to(3);
+    EXPECT_DOUBLE_EQ(links.xsect_geom1[2], 0.0);
+    EXPECT_DOUBLE_EQ(links.xsect_geom2[2], 0.0);
+    EXPECT_DOUBLE_EQ(links.xsect_geom3[2], 0.0);
+    EXPECT_DOUBLE_EQ(links.xsect_geom4[2], 0.0);
+}
 
 // The engine deliberately uses legacy SWMM's truncated PI literal (consts.h)
 // rather than a full-precision one, because every derived quantity is pinned to

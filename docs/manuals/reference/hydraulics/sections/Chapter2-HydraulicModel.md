@@ -14,7 +14,7 @@ system of sewer lines and their appurtenances are abstracted into a
 network of nodes and links of different types (pipe and pump links;
 junction, storage and outfall nodes for this particular example).
 
-![SewerSystem2.png](hydraulics/media/media/image7.png)
+![SewerSystem2.png](hydraulics/media/media/image7.jpg)
 
 **Figure 2-1 Node-link representation of a sewer system**
 **(Background from http://www.sewerhistory.org/photosgraphics/japan/)**
@@ -130,6 +130,196 @@ The principal input parameters for a storage unit are:
 
 - seepage parameters.
 
+#### 2.1.4.1 Layered LIDs on storage nodes {#hydraulics_ref_lid_storage_formulation}
+
+**Open-Source SWMM 6 extension.** A layered LID can be assigned to an ordinary
+storage node with Dynamic Wave routing. Its footprint comes from the storage
+geometry and its thicknesses from the ordered SURFACE, MEDIA and AGGREGATE
+layers. MEDIA is divided into five numerical cells per authored layer.
+These cells describe retained moisture; they are not separate hydraulic nodes.
+Connections, controls and downstream stages belong to the ordinary network.
+Unlike the single underdrain definition and opening/closing threshold pair
+of a conventional subcatchment LID, a storage-node LID can have any number
+of connections at different elevations. Each controllable link can have
+independent rules and settings. An orifice used as a valve permits partial
+openings between settings 0 and 1; its discharge still follows its hydraulic
+law and the heads at both ends.
+
+For cell geometric volume \f$G_i\f$, void fraction \f$\phi_i\f$, retained
+fraction \f$\theta_i\f$ and mobile water-table depth \f$h\f$ above the invert:
+
+\f[
+ V_r=\sum_i\theta_iG_i,\qquad
+ V_m(h)=\sum_i(\phi_i-\theta_i)G_i\,s_i(h),\qquad
+ V=V_r+V_m.
+\f]
+
+Here \f$s_i(h)\f$ is the fraction of cell thickness below the mobile water
+table, bounded to [0,1]. Below that table, mobile water fills the pores left
+by the retained fraction, making physical moisture equal to porosity.
+Surface void fraction includes vegetation displacement. Reported node volume
+includes both inventories; the routing continuity equation uses mobile volume.
+Internal drainage debits one store and credits the other with the same volume:
+
+\f[
+ \frac{dV}{dt}=Q_{in}-Q_{out}-Q_{overflow}-Q_{flood}-E-Q_{seep}.
+\f]
+
+The flow terms use accepted directions. Rainfall must enter through a
+contributing subcatchment or external inflow; assigning a LID is not an
+additional rainfall source.
+
+**Gravity drainage.** MEDIA uses the exponential conductivity law of legacy
+SWMM LIDs, evaluated from the donor cell:
+
+\f[
+ q_i=\begin{cases}
+ K_{s,i}\exp[-m_i(\phi_i-\theta_i)],&\theta_i>\theta_{FC,i},\\
+ 0,&\theta_i\leq\theta_{FC,i},
+ \end{cases}
+ \qquad Q_i=A_iq_i,\quad A_i=G_i/\Delta z_i.
+\f]
+
+The dimensionless, nonnegative \f$m_i\f$ is **conductivity slope**, not a
+power exponent. Zero slope gives constant saturated conductivity above field
+capacity. AGGREGATE uses its specified conductivity and zero field capacity.
+With downward-positive coordinate \f$\xi\f$, Darcy–Buckingham gives
+\f$q=K(\theta)(1-\partial\psi/\partial\xi)\f$. The node drainage law takes
+the unit-gradient limit; it does not compute intercell matric-head gradients.
+
+**Surface entry.** SURFACE directly over MEDIA reuses modified Green–Ampt.
+For an existing ponded downward front, its instantaneous capacity is:
+
+\f[
+ f_{cap}=K_s\left[1+\frac{(\psi_f+h_s)\,\Delta\theta}{F}\right],
+ \qquad h_s=\frac{\theta_s\Delta z_s}{\phi_s},\quad F>0.
+\f]
+
+The positive \f$\psi_f\f$ is front suction, \f$\Delta\theta\f$ is its
+moisture deficit and \f$F\f$ is active-front cumulative infiltration depth.
+The native routine handles initial wetting at F=0, integrated infiltration
+and supply limits. Increased ponded head increases capacity at the same
+front state. A trial history supplies potential flux; only accepted
+infiltration increments F and upper-zone wetness. Surface-to-aggregate entry
+uses aggregate conductivity; deeper MEDIA layers have no separate fronts.
+
+**Accepted transfer.** Explicit substeps are at most one second. For a
+retained receiver above the water table:
+
+\f[
+ \Delta V_i=\min\{Q_i\delta t,
+ (\theta_i-\theta_{FC,i})_+G_i,
+ (\phi_{i+1}-\theta_{i+1})_+G_{i+1}\}.
+\f]
+
+All trial fluxes use a common pre-update state. A receiver intersected by the
+mobile table routes to mobile storage instead, without a retained-capacity
+bound. Only fully submerged donors skip free drainage; partially submerged
+cells continue draining retained excess into the connected mobile store.
+Surface entry has zero
+field capacity and the same volume bounds. Evaporation is bounded so media
+cannot fall below wilting point. BOTTOM seepage is an external loss.
+
+**Ports, reversal and resaturation.** Link ports use their physical offset
+and local available water. In particular, a surface overflow uses ponding
+head, which can be higher than the reported mobile water table. Shared
+interface ownership tolerates only roundoff-sized elevation differences;
+it is used by both hydraulics and pollutant routing. Fully submerged orifices
+without a flap gate can reverse according to the sign of their head difference;
+see @ref hydraulics_ref_ch6_pumps_regulators for the full structure equations.
+
+Reverse flow enters its actual port. A wholly exposed receiving cell fills
+local retained capacity before excess joins mobile storage. If its bottom
+is below the mobile water table, all received water enters mobile storage,
+even when the port itself is above that table. This is the same receiver
+ownership used by vertical drainage. Applying port-elevation ownership alone
+can trap inflow in a partially submerged cell until its retained fraction
+reaches porosity, causing a discontinuous head without a continuity error.
+The infiltration upper-zone
+deficit is averaged over the finite first-media zone, counting submerged
+pores as saturated. Rising backwater or accepted media-port wetting reduces
+the deficit and raises wetness, without adding reverse water to F. Full
+media-top submergence clears the old downward front. During gradual recession,
+the history follows remaining moisture until accepted surface entry starts
+a new approximate front. Previously submerged cells retain field-capacity
+moisture through conservative retained/mobile transfers. Dry history recovery
+cannot make the zone drier than its physical moisture and is suppressed when
+an empty surface overlies an upper zone intersected by backwater.
+
+Native V10 hotstarts preserve that history, last reconciled head, moisture
+and retained pollutant mass. Compatible older files reconstruct missing
+infiltration history and warn that exact continuation is unavailable.
+
+This reduced gravity-drainage/front model is distinct from a Richards solve
+or the gravity-plus-matric-diffusivity block formulation of
+[Tu, Wadzuk and Traver (2020)](https://doi.org/10.1371/journal.pone.0235528).
+It omits upward capillary redistribution, retention hysteresis and capillary
+barriers. Its applicability requires assessment against observations or a
+richer vadose-zone model when those processes matter. Check routing-step
+sensitivity of timing, peaks and treatment, as well as continuity. Treatment
+and signed mass transfers are defined in @ref quality_ref_lid_storage_formulation;
+configuration and restart compatibility are in @ref engine_manual_lid_storage.
+
+#### 2.1.4.2 Optional semi-discrete Richards column {#hydraulics_ref_lid_richards}
+
+Selecting `Richards 1D` replaces the preceding gravity/front approximation.
+Every MEDIA and AGGREGATE material has explicit van Genuchten–Mualem
+retention/conductivity and positive specific storage. The porous column
+owns complete pore/elastic water; the storage node owns surface ponding only.
+For cell geometric volume \f$G_i\f$, pressure head \f$\psi_i\f$ and specific
+storage \f$S_{s,i}\f$:
+
+\f[
+ W_i=G_i\left[\theta_i(\psi_i)+S_{s,i}\max(\psi_i,0)\right],\qquad
+ \frac{dW_i}{dt}=Q_{i-1/2}-Q_{i+1/2}-E_i.
+\f]
+
+Cells are ordered top to bottom and Q is downward-positive. With upward
+positive elevation z and total head H = z + psi:
+
+\f[
+ Q_f= A_f K_f\frac{H_i-H_{i+1}}{d_f}.
+\f]
+
+Equal cells in one material use arithmetic face conductivity. Across
+unlike materials the half-cell resistances are in series:
+
+\f[
+ Q_f=\frac{A_f(H_i-H_{i+1})}
+ {\Delta z_i/(2K_i)+\Delta z_{i+1}/(2K_{i+1})}.
+\f]
+
+For negative pressure, effective saturation is
+\f$S_e=[1+(\alpha|\psi|)^n]^{-m}\f$, m = 1 - 1/n,
+\f$\theta=\theta_r+(\phi-\theta_r)S_e\f$, and
+\f$K=K_s S_e^l[1-(1-S_e^{1/m})^m]^2\f$.
+At nonnegative pressure theta = porosity and K = Ks. Alpha and specific
+storage are inverse metres in either project unit system. They must be
+explicitly authored; existing conductivity slope and Green–Ampt suction
+are not converted into retention parameters.
+
+The pond contact uses the mean of the first material's saturated conductivity
+and first-cell conductivity over a half-cell distance. Downward supply
+vanishes continuously over the last 1 micrometre of ponding; upward flow
+remains possible. No separate infiltration-front history or field-capacity
+cutoff is evolved. Sealed/native-soil-drainage bottoms are available; active
+runtime aquifer-bed coupling is pending and is rejected explicitly.
+
+Adaptive implicit Euler (BDF1), with a full/two-half-step error estimate,
+integrates the spatial balances. The two half steps are accepted. Newton
+iterations use tridiagonal systems. Vertical integration and network routing
+are split over each routing interval, with accepted port transfers committed
+once. A buried port uses its intercepted cell's total head; node HEAD/DEPTH
+represents surface ponding. Existing water-table-based control thresholds
+must therefore be reviewed when switching formulations.
+
+This is 1D matrix flow, not a lateral unsaturated or preferential-flow model;
+retention hysteresis is not included. Test cell count, routing step and ODE
+tolerance separately. The method-of-lines context is described by
+[Ireson et al. (2023), openRE](https://doi.org/10.5194/gmd-16-659-2023).
+Input/API/GUI configuration is in @ref engine_manual_lid_storage;
+transport is in @ref quality_ref_lid_richards.
+
 ### 2.1.5 Conduit Links
 
 Conduit links are pipes or channels that move water from one node to
@@ -151,11 +341,11 @@ The required input parameters for a conduit link are:
 
 - cross-section shape and dimensions.
 
-![Link_offset.bmp](hydraulics/media/media/image8.png)
+![Link_offset.bmp](hydraulics/media/media/hydraulics-image8.png)
 
 SWMM allows conduits to be offset some distance above the invert of their connecting end nodes as shown in the figure on the right. The offset can be specified as either a distance above the invert (i.e., the distance between points 1 and 2 in the figure) or as the elevation of the conduit's invert (i.e., the elevation of point 1). Internally the offset is maintained as an elevation.
 
-![slope.png](hydraulics/media/media/image9.png)
+![slope.png](hydraulics/media/media/hydraulics-image9.png)
 
 SWMM also makes use of a conduit's slope in its hydraulic calculations. Slope is not provided directly as an input variable but is instead computed from the elevation of a conduit's end node inverts and its offsets. Let *L* be the length of the conduit, *∆y* be the difference in elevation and *∆x* the horizontal distance between the invert at each end of the conduit. Then from the diagram on the right:
 
@@ -362,7 +552,7 @@ hydrograph shape. This behavior is depicted in Figure 2-2 from Miller
 | Reverse flow | yes | no |
 | Tidal effects | yes | no |
 
-![KWvsDW.png](hydraulics/media/media/image10.png)
+![KWvsDW.png](hydraulics/media/media/hydraulics-image10.png)
 
 **Figure 2-2 Comparison of dynamic wave and kinematic wave solutions (from Miller, 1984)**
 
@@ -431,6 +621,5 @@ For dynamic wave analysis, if a non-storage, non-outfall node has not
 had an initial head assigned to it then it's initial head is set equal
 to the average elevation of the initial flow depths in the conduits that
 deliver flow into it.
-
 
 

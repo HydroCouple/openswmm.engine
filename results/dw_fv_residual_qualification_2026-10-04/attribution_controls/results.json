@@ -1,0 +1,38 @@
+[
+  {
+    "case": "free",
+    "cells": 4,
+    "matched_runs": 12,
+    "signature": {
+      "output_sha256": "2aaca6d0931df83ab1313d2c7a07ef497f2176ede3867d690577966096547490",
+      "step_times_sha256": "0a4212f11464e6f4e35e8389c087d039155c3ac32499edc72f7705479fbb6807",
+      "substeps": 240.0,
+      "fluxes": 921600.0,
+      "macros": 0.0
+    }
+  },
+  {
+    "case": "free",
+    "cells": 16,
+    "matched_runs": 12,
+    "signature": {
+      "output_sha256": "6b5435ad19190d8187c0d6afb9e6e053f2f3082f583c247885dd0af7ff786a08",
+      "step_times_sha256": "a83aa9836c276f4c20cccd4b831aef8093f02d9bcd3a7b76d6110adc976de6d0",
+      "substeps": 415.0,
+      "fluxes": 5418240.0,
+      "macros": 0.0
+    }
+  },
+  {
+    "case": "rest",
+    "cells": 4,
+    "matched_runs": 12,
+    "signature": {
+      "output_sha256": "71918e67783ee4f4ddc4cb4bcb9cbf83458707abd8b2554a58ca3179a9e4e84e",
+      "step_times_sha256": "0a4212f11464e6f4e35e8389c087d039155c3ac32499edc72f7705479fbb6807",
+      "substeps": 240.0,
+      "fluxes": 921600.0,
+      "macros": 0.0
+    }
+  }
+]

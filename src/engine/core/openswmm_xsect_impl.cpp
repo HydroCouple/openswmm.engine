@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file openswmm_xsect_impl.cpp
  * @brief C API implementation — standalone cross-section geometry.
@@ -19,7 +35,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "openswmm_api_common.hpp"
@@ -418,6 +434,7 @@ SWMM_ENGINE_API int swmm_link_create_xsect(SWMM_Engine engine, int link_idx,
         h->params.area_tbl          = h->table.area_tbl;
         h->params.hrad_tbl          = h->table.hrad_tbl;
         h->params.width_tbl         = h->table.width_tbl;
+        h->params.area_lut          = &h->table.area_lut;
         h->params.transect_tbl_size = openswmm::transect::N_TRANSECT_TBL;
     }
 

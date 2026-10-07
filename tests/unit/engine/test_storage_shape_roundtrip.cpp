@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file test_storage_shape_roundtrip.cpp
  * @brief `.inp` round-trip for the storage shapes — the §0 data-loss path.
@@ -19,7 +35,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -108,7 +124,7 @@ TEST(StorageShapeInpRoundTrip, ParsesEveryShapeForm) {
     const StorageSnap cyl = snapshot(e, "SCYL");   // major 30, minor 20
     EXPECT_DOUBLE_EQ(cyl.a, 0.0);
     EXPECT_DOUBLE_EQ(cyl.b, 0.0);
-    EXPECT_DOUBLE_EQ(cyl.c, 3.141592653589793 * 15.0 * 10.0);   // π·A·B
+    EXPECT_DOUBLE_EQ(cyl.c, 3.141592654 * 15.0 * 10.0);   // legacy PI·A·B
 
     swmm_engine_close(e);
     swmm_engine_destroy(e);

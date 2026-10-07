@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "../../src/engine/core/HotStartManager.hpp"
+#include "../../src/engine/core/SWMMEngine.hpp"
 #include "../../src/engine/core/SimulationContext.hpp"
 #include "../../include/openswmm/engine/openswmm_hotstart.h"
 
@@ -556,6 +557,23 @@ TEST(HotStartCApiTest, GetSimTimeMatchesSaved) {
     swmm_hotstart_close(h);
 }
 
+TEST(HotStartCApiTest, GetStartDateMatchesSaved) {
+    TempFile tmp;
+    SimulationContext ctx = make_test_context();
+
+    HotStartFile* hs = HotStartManager::save(ctx, tmp.path());
+    ASSERT_NE(hs, nullptr);
+    delete hs;
+
+    SWMM_HotStart h = nullptr;
+    ASSERT_EQ(swmm_hotstart_open(tmp.path().c_str(), &h), SWMM_OK);
+    double start = -1.0;
+    EXPECT_EQ(swmm_hotstart_get_start_date(h, &start), SWMM_OK);
+    EXPECT_DOUBLE_EQ(start, ctx.options.start_date);
+    EXPECT_EQ(swmm_hotstart_get_start_date(h, nullptr), SWMM_ERR_BADPARAM);
+    swmm_hotstart_close(h);
+}
+
 TEST(HotStartCApiTest, GetCrsMatchesSaved) {
     TempFile tmp;
     SimulationContext ctx = make_test_context();
@@ -668,15 +686,15 @@ static void write_legacy_hsf_v4(const std::string& path,
         put_pod<float>(b, node_dl[static_cast<std::size_t>(i)][0]);
         put_pod<float>(b, node_dl[static_cast<std::size_t>(i)][1]);
         if (node_types[static_cast<std::size_t>(i)] == NodeType::STORAGE)
-            put_pod<float>(b, 7.0f);                  // storage HRT (reader discards)
-        for (int j = 0; j < nPollut; ++j) put_pod<float>(b, 0.0f);
+            put_pod<float>(b, 7.0f);                  // storage HRT
+        for (int j = 0; j < nPollut; ++j) put_pod<float>(b, 10.0f * (i + 1) + j);
     }
     // Routing section — links: flow, depth, setting, quality.
     for (int i = 0; i < nLinks; ++i) {
         put_pod<float>(b, link_fds[static_cast<std::size_t>(i)][0]);
         put_pod<float>(b, link_fds[static_cast<std::size_t>(i)][1]);
         put_pod<float>(b, link_fds[static_cast<std::size_t>(i)][2]);
-        for (int j = 0; j < nPollut; ++j) put_pod<float>(b, 0.0f);
+        for (int j = 0; j < nPollut; ++j) put_pod<float>(b, 40.0f * (i + 1) + j);
     }
 
     std::ofstream f(path, std::ios::binary | std::ios::trunc);
@@ -749,6 +767,12 @@ TEST(HotStartLegacyRoutingTest, ReadsFileWithSubcatchmentsAndAppliesRouting) {
     EXPECT_FLOAT_EQ(static_cast<float>(ctx.links.flow[1]),           1.1f);
     EXPECT_FLOAT_EQ(static_cast<float>(ctx.links.setting[1]),        0.5f);
 
+    EXPECT_DOUBLE_EQ(ctx.nodes.conc[0], 10.0);
+    EXPECT_DOUBLE_EQ(ctx.nodes.conc_old[2], 30.0);
+    EXPECT_DOUBLE_EQ(ctx.nodes.hrt[1], 7.0);
+    EXPECT_DOUBLE_EQ(ctx.links.conc[1], 80.0);
+    EXPECT_DOUBLE_EQ(ctx.links.conc_old[0], 40.0);
+
     // The routing-only limitation must be surfaced, not silent.
     ASSERT_EQ(warnings.size(), 1u);
     EXPECT_NE(warnings[0].find("subcatchment"), std::string::npos);
@@ -805,6 +829,99 @@ TEST(HotStartLegacyRoutingTest, RoutingOnlyFileStillWorksWithoutWarning) {
     EXPECT_FLOAT_EQ(static_cast<float>(ctx.nodes.depth[0]), 4.2f);
     EXPECT_FLOAT_EQ(static_cast<float>(ctx.links.flow[0]),  2.2f);
     EXPECT_TRUE(warnings.empty());   // no subcatchments -> no routing-only warning
+}
+
+TEST(HotStartLegacyRoutingTest, OlderFormatsRestoreQualityAndSkipCompatibilityZeros) {
+    for (int version = 1; version <= 3; ++version) {
+        SCOPED_TRACE(version);
+        TempFile hs(".hsf");
+        SimulationContext ctx;
+        ctx.node_names.add("J");
+        ctx.node_names.add("OUT");
+        ctx.link_names.add("C");
+        ctx.pollutant_names.add("TSS");
+        ctx.pollutant_names.add("Lead");
+        ctx.allocate_objects();
+        std::string bytes = "SWMM5-HOTSTART";
+        if (version >= 2) bytes += static_cast<char>('0' + version);
+        if (version >= 2) put_pod<int32_t>(bytes, 0); // subcatchments
+        if (version >= 3) put_pod<int32_t>(bytes, 0); // land uses
+        for (int v : {2, 1, 2, 0}) put_pod<int32_t>(bytes, v);
+        for (int i = 0; i < 2; ++i) {
+            for (float v : {1.0f, 0.0f, 10.0f + i, 20.0f + i})
+                put_pod<float>(bytes, v);
+            if (version <= 2) {
+                put_pod<float>(bytes, 0.0f);
+                put_pod<float>(bytes, 0.0f);
+            }
+        }
+        for (float v : {0.0f, 1.0f, 1.0f, 30.0f, 40.0f}) put_pod<float>(bytes, v);
+        { std::ofstream f(hs.path(), std::ios::binary); f.write(bytes.data(), bytes.size()); }
+        ASSERT_EQ(HotStartManager::apply_legacy_routing(hs.path(), ctx), 0);
+        EXPECT_EQ(ctx.nodes.conc, (std::vector<double>{10, 20, 11, 21}));
+        EXPECT_EQ(ctx.nodes.conc_old, ctx.nodes.conc);
+        EXPECT_EQ(ctx.links.conc, (std::vector<double>{30, 40}));
+        EXPECT_EQ(ctx.links.conc_old, ctx.links.conc);
+        ctx.pollutant_names.add("extra");
+        EXPECT_NE(HotStartManager::apply_legacy_routing(hs.path(), ctx), 0);
+        EXPECT_NE(HotStartManager::last_io_error().find("pollutant count mismatch"),
+                  std::string::npos);
+    }
+}
+
+TEST(HotStartLegacyRoutingTest, SavedQualityOverridesColdSeedsAtStartup) {
+    TempFile inp(".inp"), hs(".hsf"), saved(".hsf");
+    {
+        std::ofstream f(inp.path());
+        f << R"([OPTIONS]
+FLOW_UNITS CFS
+FLOW_ROUTING DYNWAVE
+START_DATE 01/01/2026
+END_DATE 01/01/2026
+END_TIME 00:05:00
+[STORAGE]
+ST 10 10 0 FUNCTIONAL 100 0 0
+[OUTFALLS]
+OUT 0 FREE NO
+[CONDUITS]
+C ST OUT 100 0.013 0 0
+[XSECTIONS]
+C CIRCULAR 2 0 0 0 1
+[POLLUTANTS]
+TSS MG/L 0 0 0 0 NO * 0 0 99
+Lead MG/L 0 0 0 0 NO * 0 0 88
+[INITIAL_QUALITY]
+NODE ST TSS 777
+LINK C Lead 666
+[FILES]
+USE HOTSTART ")" << hs.path() << "\"\n";
+    }
+    write_legacy_hsf_v4(hs.path(), 0, 0, 2, 1, 2, {}, {},
+        {NodeType::STORAGE, NodeType::OUTFALL},
+        {{{1.0f, 0.0f}}, {{0.0f, 0.0f}}}, {{{0.0f, 1.0f, 1.0f}}});
+    openswmm::SWMMEngine engine;
+    ASSERT_EQ(engine.open(inp.path().c_str(), nullptr, nullptr), 0);
+    ASSERT_EQ(engine.initialize(), 0);
+    ASSERT_EQ(engine.start(0), 0);
+    const auto& ctx = engine.context();
+    EXPECT_EQ(ctx.nodes.conc, (std::vector<double>{10, 11, 20, 21}));
+    EXPECT_EQ(ctx.nodes.conc_old, ctx.nodes.conc);
+    EXPECT_EQ(ctx.links.conc, (std::vector<double>{40, 41}));
+    EXPECT_EQ(ctx.links.conc_old, ctx.links.conc);
+    EXPECT_DOUBLE_EQ(ctx.nodes.hrt[0], 7.0);
+    EXPECT_NEAR(ctx.mass_balance.qual_routing_init[0],
+                10 * ctx.nodes.volume[0] + 40 * ctx.links.volume[0], 1e-10);
+    ASSERT_EQ(HotStartManager::save_legacy_routing(saved.path(), ctx), 0);
+    auto restored = ctx;
+    restored.nodes.conc.assign(4, -1);
+    restored.nodes.hrt[0] = -1;
+    restored.links.conc.assign(2, -1);
+    ASSERT_EQ(HotStartManager::apply_legacy_routing(saved.path(), restored), 0);
+    EXPECT_EQ(restored.nodes.conc, ctx.nodes.conc);
+    EXPECT_EQ(restored.links.conc, ctx.links.conc);
+    EXPECT_DOUBLE_EQ(restored.nodes.hrt[0], 7.0);
+    EXPECT_EQ(engine.end(), 0);
+    EXPECT_EQ(engine.close(), 0);
 }
 
 } /* legacy-routing regression namespace */

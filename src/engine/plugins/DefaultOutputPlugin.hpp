@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file DefaultOutputPlugin.hpp
  * @brief Built-in output plugin that writes the legacy SWMM binary output format.
@@ -17,7 +33,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_DEFAULT_OUTPUT_PLUGIN_HPP
@@ -91,10 +107,11 @@ private:
     int                 n_periods_  = 0;
 
     // Static-object header is written from the SimulationContext (internal
-    // units), so it still needs these two factors. Per-timestep results arrive
-    // pre-converted by the engine boundary and need no plugin-side conversion.
+    // units), so it still needs this length factor. Subcatchment area is
+    // already held in display units and needs none. Per-timestep results
+    // arrive pre-converted by the engine boundary and need no plugin-side
+    // conversion.
     double ucf_length_    = 1.0;
-    double ucf_landarea_  = 1.0;
 
     // Per-object report flags, captured during prepare() from SimulationContext
     std::vector<char> subcatch_rpt_flag_;

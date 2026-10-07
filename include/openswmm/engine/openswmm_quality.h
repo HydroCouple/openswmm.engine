@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file openswmm_quality.h
  * @brief OpenSWMM Engine — Water Quality (Landuse / Buildup / Washoff / Treatment) C API.
@@ -11,7 +27,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_QUALITY_H
@@ -90,7 +106,10 @@ SWMM_ENGINE_API int swmm_buildup_set(SWMM_Engine engine, int lu_idx, int pollut_
  *
  * @param engine     Engine handle.
  * @param lu_idx     Landuse index.
- * @param pollut_idx Pollutant index.
+ * @param pollut_idx Surface-species index: a pollutant index, or
+ *                   `n_pollutants + m` for the reactions component's m-th
+ *                   species (BW-MSX, 2026-09-19 — MSX species build up and
+ *                   wash off by the same relations).
  * @param[out] func_type  Buildup function type (0=NONE, 1=POW, 2=EXP, 3=SAT, 4=EXT).
  * @param[out] c1         Coefficient 1.
  * @param[out] c2         Coefficient 2.
@@ -111,7 +130,8 @@ SWMM_ENGINE_API int swmm_buildup_get(SWMM_Engine engine, int lu_idx, int pollut_
  *
  * @param engine       Engine handle.
  * @param lu_idx       Landuse index.
- * @param pollut_idx   Pollutant index.
+ * @param pollut_idx   Surface-species index (pollutant, or `n_pollutants + m`
+ *                     for the m-th reactions-component species — BW-MSX).
  * @param func_type    Washoff function type (0=NONE, 1=EXP, 2=RC, 3=EMC).
  * @param coeff        Washoff coefficient.
  * @param expon        Washoff exponent.

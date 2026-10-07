@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file ErrorCodes.cpp
  * @brief Error/warning description table and formatting — legacy-compatible.
@@ -12,7 +28,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "ErrorCodes.hpp"
@@ -167,9 +183,16 @@ static const std::unordered_map<int, const char*>& error_table() {
         {611, "Virtual Junction %s connects conduits with different cross sections."},
         {613, "Virtual Junction %s has a conduit with a nonzero offset."},
         {615, "Virtual Junction %s conduit inverts do not agree at the node."},
-        {617, "Virtual Junction %s cannot receive lateral inflow."},
+        {617, "Virtual Junction %s cannot be coupled to a 2D surface mesh."},
         {619, "Virtual Junction %s requires DYNWAVE or FV flow routing."},
         {621, "too many items for Virtual Junction %s."},
+        {623, "Inlet Junction %s must connect two STREET conduits."},
+        {625, "Inlet Junction %s references an unknown inlet design."},
+        {627, "Inlet Junction %s has an invalid capture node."},
+        {629, "Inlet Junction %s has a conduit that also carries an [INLET_USAGE] entry."},
+        {631, "too many items for Inlet Junction %s."},
+        {633, "Inlet Junction %s has no inlet design assigned."},
+        {635, "Inlet %s cannot be used with the cross section of its host."},
     };
     return table;
 }
@@ -180,19 +203,27 @@ static const std::unordered_map<int, const char*>& error_table() {
 
 static const std::unordered_map<int, const char*>& warning_table() {
     static const std::unordered_map<int, const char*> table = {
-        {1,  "wet weather time step reduced to recording interval for Rain Gage %s."},
-        {2,  "maximum depth increased for Node %s."},
-        {3,  "negative offset ignored for Link %s."},
-        {4,  "minimum elevation drop used for Conduit %s."},
-        {5,  "minimum slope used for Conduit %s."},
-        {6,  "dry weather time step increased to the wet weather time step."},
-        {7,  "routing time step reduced to the wet weather time step."},
-        {8,  "elevation drop exceeds length for Conduit %s."},
-        {9,  "time series interval greater than recording interval for Rain Gage %s."},
-        {10, "crest elevation is below downstream invert for regulator Link %s."},
-        {11, "non-matching attributes in Control Rule %s."},
-        {12, "inlet removed due to unsupported shape for Conduit %s."},
-        {13, "parameters for same month provided more than once for Unit Hydrograph %s."},
+        // Codes 1-13 are legacy's own, and legacy's report_writeWarningMsg
+        // prints `"%s %s"` — the text from text.h then the object ID, with
+        // NO closing period (report.c:writeWarningMsg, text.h:47-64). v6
+        // ended each of these with '.', so every deck that raises one
+        // differed from the oracle on punctuation alone: `WARNING 04:
+        // minimum elevation drop used for Conduit 31.` against legacy's
+        // `... Conduit 31`. Kept verbatim against text.h; the 6.0-only
+        // warnings below have no legacy counterpart and keep their own style.
+        {1,  "wet weather time step reduced to recording interval for Rain Gage %s"},
+        {2,  "maximum depth increased for Node %s"},
+        {3,  "negative offset ignored for Link %s"},
+        {4,  "minimum elevation drop used for Conduit %s"},
+        {5,  "minimum slope used for Conduit %s"},
+        {6,  "dry weather time step increased to the wet weather time step"},
+        {7,  "routing time step reduced to the wet weather time step"},
+        {8,  "elevation drop exceeds length for Conduit %s"},
+        {9,  "time series interval greater than recording interval for Rain Gage %s"},
+        {10, "crest elevation is below downstream invert for regulator Link %s"},
+        {11, "non-matching attributes in Control Rule %s"},
+        {12, "inlet removed due to unsupported shape for Conduit %s"},
+        {13, "parameters for same month provided more than once for Unit Hydrograph %s"},
 
         // New 6.0
         {101, "Time Series %s has duplicate x values."},
@@ -204,6 +235,11 @@ static const std::unordered_map<int, const char*>& warning_table() {
         {105, "%s is accepted but has no effect yet under FLOW_ROUTING FV."},
         {106, "%s is a dynamic wave option and does not apply under "
               "FLOW_ROUTING FV."},
+        {107, "unreadable row(s) were skipped in the rainfall CSV for Rain "
+              "Gage %s."},
+        {108, "the Preissmann slot width cap (5% of the section top width) "
+              "overrides the requested FV_SLOT_CELERITY for %s; celerities "
+              "below the cap-implied value have no effect there."},
     };
     return table;
 }

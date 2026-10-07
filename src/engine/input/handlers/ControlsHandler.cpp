@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file ControlsHandler.cpp
  * @brief Section handlers for [CONTROLS] and [REPORT].
@@ -31,6 +47,7 @@
  * CONTINUITY  YES
  * FLOWSTATS  YES
  * CONTROLS  NO
+ * LINK_STEPS  NO     (OpenSWMM extension: Conduit Time Step Summary)
  * ```
  *
  * @see Legacy reference: src/solver/input.c — readControl(), readReport()
@@ -38,7 +55,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "ControlsHandler.hpp"
@@ -149,6 +166,9 @@ void handle_report(SimulationContext& ctx, const std::vector<std::string>& lines
         }
         else if (keyword == "AVERAGES") {
             ctx.options.rpt_averages = Tokenizer::parse_boolean(tok[1]);
+        }
+        else if (keyword == "LINK_STEPS") {
+            ctx.options.rpt_link_steps = Tokenizer::parse_boolean(tok[1]);
         }
         else if (keyword == "DISABLED") {
             ctx.options.rpt_disabled = Tokenizer::parse_boolean(tok[1]);

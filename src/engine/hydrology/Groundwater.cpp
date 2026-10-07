@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file Groundwater.cpp
  * @brief Two-zone groundwater — matching legacy gwater.c via RKF45 ODE solver.
@@ -5,7 +21,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "Groundwater.hpp"
@@ -16,6 +32,10 @@
 #include "../math/OdeSolver.hpp"
 #include <cmath>
 #include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <string>
+#include <vector>
 
 namespace openswmm {
 namespace groundwater {
@@ -39,6 +59,7 @@ void GWSoA::resize(int n) {
     lower_evap_depth.assign(un, 0.0);
     lower_loss_coeff.assign(un, 0.0);
     total_depth.assign(un, 0.0);
+    bottom_elev.assign(un, 0.0);
 
     a1.assign(un, 0.0); b1.assign(un, 0.0);
     a2.assign(un, 0.0); b2.assign(un, 0.0);
@@ -249,6 +270,11 @@ void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap,
             soa_.deep_loss[ui] = 0.0;
             continue;
         }
+        // Legacy gwater_getGroundwater: `if (FracPerv <= 0.0) return;` — a
+        // fully impervious subcatchment's aquifer is never updated at all
+        // (no fluxes, no flow, no statistics); its flow stays at its last
+        // value, which is 0.
+        if (frac_perv[i] <= 0.0) continue;
 
         // --- Build per-subcatchment context (matching legacy shared vars) ---
         GWContext c;
@@ -316,7 +342,7 @@ void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap,
         double node_flow = 0.0;
         if (gw_node >= 0 && gw_node < ctx.n_nodes()) {
             auto un = static_cast<std::size_t>(gw_node);
-            double area_ft2 = ctx.subcatches.area[ui] * ucf::ACRES_TO_FT2;
+            double area_ft2 = ctx.subcatches.area[ui] / ucf::UCF(ucf::LANDAREA, ctx.options);   // legacy Subcatch.area (ft2)
             if (area_ft2 > 0.0)
                 node_flow = (ctx.nodes.inflow[un] + ctx.nodes.volume[un] / dt) / area_ft2;
         }
@@ -372,7 +398,7 @@ void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap,
         auto ui = static_cast<std::size_t>(i);
         if (soa_.total_depth[ui] <= 0.0) continue;
 
-        double area = ctx.subcatches.area[ui] * ucf::ACRES_TO_FT2;
+        double area = ctx.subcatches.area[ui] / ucf::UCF(ucf::LANDAREA, ctx.options);   // legacy Subcatch.area (ft2)
         double ft2sec = area * dt;
 
         mb.gw_infil        += infil_rate[i] * ft2sec;
@@ -382,6 +408,233 @@ void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap,
         // Trapezoidal averaging of GW flow (matching legacy)
         mb.gw_lateral_flow += 0.5 * (soa_.old_flow[ui] + soa_.gw_flow[ui]) * ft2sec;
     }
+}
+
+// ============================================================================
+// [GWF] expression validation — diagnostic peer of mathexpr::parse
+// ============================================================================
+// mathexpr::parse is deliberately lenient (unknown characters are skipped,
+// unknown identifiers evaluate to 0.0), so an editor cannot use "does it
+// parse" as its verdict. This is a strict tokenizer + recursive-descent
+// grammar check that never compiles or stores anything.
+
+namespace {
+
+enum class GwfTok { NUM, VAR, FUNC, OP, LPAREN, RPAREN, COMMA, END };
+
+struct GwfToken {
+    GwfTok      kind;
+    std::string text;   // as typed (identifiers keep the user's case)
+    int         col;
+};
+
+struct GwfFail {
+    std::string msg;
+    int         col;
+};
+
+bool gwf_is_variable(const std::string& upper) {
+    // Legacy getVariableIndex() resolves a GW variable with findmatch(): a
+    // variable NAME that is a case-insensitive PREFIX of the token matches, so
+    // "Ksat" -> "KS" (saturated conductivity), "Area" -> "A". An exact compare
+    // wrongly rejected such legacy-valid names as ERR 233. As in legacy this is
+    // lenient — a token like "Hgww" also resolves ("HGW" is a prefix). `upper`
+    // is already upper-cased by the caller and GW_VAR_NAMES are upper-case.
+    for (const char* v : GW_VAR_NAMES) {
+        std::size_t k = 0;
+        while (v[k] && k < upper.size() && upper[k] == v[k]) ++k;
+        if (v[k] == '\0') return true;   // whole variable name is a prefix of `upper`
+    }
+    return false;
+}
+
+bool gwf_is_function(const std::string& lower) {
+    for (const auto& f : mathexpr::function_names())
+        if (lower == f) return true;
+    return false;
+}
+
+std::vector<GwfToken> gwf_tokenize(const std::string& s) {
+    std::vector<GwfToken> out;
+    std::size_t i = 0;
+    while (i < s.size()) {
+        const char c = s[i];
+        if (std::isspace(static_cast<unsigned char>(c))) { ++i; continue; }
+        const int col = static_cast<int>(i);
+
+        if (std::isdigit(static_cast<unsigned char>(c)) || c == '.') {
+            const std::size_t start = i;
+            while (i < s.size() &&
+                   (std::isdigit(static_cast<unsigned char>(s[i])) ||
+                    s[i] == '.' || s[i] == 'e' || s[i] == 'E' ||
+                    ((s[i] == '+' || s[i] == '-') && i > 0 &&
+                     (s[i-1] == 'e' || s[i-1] == 'E'))))
+                ++i;
+            const std::string word = s.substr(start, i - start);
+            char* end = nullptr;
+            std::strtod(word.c_str(), &end);
+            if (end == word.c_str() || *end != '\0')
+                throw GwfFail{"malformed number '" + word + "'", col};
+            out.push_back({GwfTok::NUM, word, col});
+            continue;
+        }
+
+        if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
+            const std::size_t start = i;
+            while (i < s.size() &&
+                   (std::isalnum(static_cast<unsigned char>(s[i])) || s[i] == '_'))
+                ++i;
+            const std::string word = s.substr(start, i - start);
+            std::string lower = word, upper = word;
+            for (auto& ch : lower) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            for (auto& ch : upper) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+            if (gwf_is_function(lower))      out.push_back({GwfTok::FUNC, word, col});
+            else if (gwf_is_variable(upper)) out.push_back({GwfTok::VAR, word, col});
+            else throw GwfFail{"unknown variable '" + word + "'", col};
+            continue;
+        }
+
+        switch (c) {
+            case '+': case '-': case '*': case '/': case '^':
+                out.push_back({GwfTok::OP, std::string(1, c), col}); break;
+            case '(': out.push_back({GwfTok::LPAREN, "(", col}); break;
+            case ')': out.push_back({GwfTok::RPAREN, ")", col}); break;
+            case ',': out.push_back({GwfTok::COMMA, ",", col}); break;
+            default:
+                throw GwfFail{std::string("unexpected character '") + c + "'", col};
+        }
+        ++i;
+    }
+    out.push_back({GwfTok::END, "", static_cast<int>(s.size())});
+    return out;
+}
+
+// expr   := term (('+'|'-') term)*
+// term   := unary (('*'|'/') unary)*
+// unary  := '-' unary | power
+// power  := primary ('^' unary)?
+// primary:= NUM | VAR | FUNC '(' expr (',' expr)* ')' | '(' expr ')'
+struct GwfParser {
+    const std::vector<GwfToken>& t;
+    std::size_t p = 0;
+    int paren_depth = 0;   // > 0 while inside any '(' — decides ')' diagnostics
+    int func_depth  = 0;   // > 0 while inside a function's argument list
+
+    const GwfToken& cur() const { return t[p]; }
+    bool is_op(const char* s) const { return cur().kind == GwfTok::OP && cur().text == s; }
+
+    void expr() {
+        term();
+        while (is_op("+") || is_op("-")) { ++p; term(); }
+    }
+    void term() {
+        unary();
+        while (is_op("*") || is_op("/")) { ++p; unary(); }
+    }
+    void unary() {
+        if (is_op("-")) { ++p; unary(); return; }
+        power();
+    }
+    void power() {
+        primary();
+        if (is_op("^")) { ++p; unary(); }
+    }
+    void primary() {
+        const GwfToken& k = cur();
+        switch (k.kind) {
+            case GwfTok::NUM:
+            case GwfTok::VAR:
+                ++p;
+                return;
+            case GwfTok::FUNC: {
+                ++p;
+                if (cur().kind != GwfTok::LPAREN)
+                    throw GwfFail{"function '" + k.text + "' must be followed by '('",
+                                  cur().col};
+                const GwfToken& open = cur();
+                ++p; ++paren_depth; ++func_depth;
+                int nargs = 1;
+                expr();
+                while (cur().kind == GwfTok::COMMA) { ++p; ++nargs; expr(); }
+                close_paren(open);
+                --paren_depth; --func_depth;
+                std::string lower = k.text;
+                for (auto& ch : lower) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+                const int want = (lower == "min" || lower == "max") ? 2 : 1;
+                if (nargs != want)
+                    throw GwfFail{"function '" + k.text + "' takes " +
+                                  std::to_string(want) +
+                                  (want == 1 ? " argument" : " arguments"), k.col};
+                return;
+            }
+            case GwfTok::LPAREN: {
+                const GwfToken& open = cur();
+                ++p; ++paren_depth;
+                expr();
+                if (cur().kind == GwfTok::COMMA)
+                    throw GwfFail{"unexpected ','", cur().col};
+                close_paren(open);
+                --paren_depth;
+                return;
+            }
+            case GwfTok::OP:
+                throw GwfFail{"missing operand before '" + k.text + "'", k.col};
+            case GwfTok::RPAREN:
+                if (paren_depth == 0) throw GwfFail{"unbalanced parenthesis", k.col};
+                throw GwfFail{"missing operand before ')'", k.col};
+            case GwfTok::COMMA:
+                if (func_depth == 0) throw GwfFail{"unexpected ','", k.col};
+                throw GwfFail{"missing operand before ','", k.col};
+            case GwfTok::END: {
+                const GwfToken& prev = t[p - 1];
+                if (prev.kind == GwfTok::LPAREN)
+                    throw GwfFail{"unbalanced parenthesis", prev.col};
+                throw GwfFail{"missing operand after '" + prev.text + "'", prev.col};
+            }
+        }
+    }
+    // After an expression inside '(': the next token must close it.
+    void close_paren(const GwfToken& open) {
+        if (cur().kind == GwfTok::RPAREN) { ++p; return; }
+        if (cur().kind == GwfTok::END)
+            throw GwfFail{"unbalanced parenthesis", open.col};
+        throw GwfFail{"missing operator before '" + cur().text + "'", cur().col};
+    }
+};
+
+} // namespace
+
+int gwf_validate(const std::string& expr, std::string& msg, int& col) {
+    msg.clear();
+    col = -1;
+    try {
+        const auto tokens = gwf_tokenize(expr);
+        if (tokens.front().kind == GwfTok::END)
+            throw GwfFail{"expression is empty", 0};
+
+        GwfParser parser{tokens};
+        parser.expr();
+        const GwfToken& rest = parser.cur();
+        if (rest.kind != GwfTok::END) {
+            if (rest.kind == GwfTok::RPAREN) throw GwfFail{"unbalanced parenthesis", rest.col};
+            if (rest.kind == GwfTok::COMMA)  throw GwfFail{"unexpected ','", rest.col};
+            throw GwfFail{"missing operator before '" + rest.text + "'", rest.col};
+        }
+
+        // Drift guard: the production parser must accept what we accept.
+        mathexpr::Expression probe;
+        if (mathexpr::parse(expr, probe) != 0 || !probe.valid)
+            throw GwfFail{"internal: expression rejected by the engine parser", -1};
+    } catch (const GwfFail& f) {
+        msg = f.msg;
+        col = f.col;
+        return -1;
+    } catch (...) {
+        msg = "internal: expression rejected by the engine parser";
+        col = -1;
+        return -1;
+    }
+    return 0;
 }
 
 } // namespace groundwater

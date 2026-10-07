@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Node access (Pythonic v1 surface)
 =================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 Type stubs for :mod:`openswmm.engine._nodes`.
 """
@@ -35,6 +51,9 @@ class StorageView:
     shape: StorageShape
     geometry: Tuple[float, float, float]
     seep_rate: float
+    """Constant seepage (exfiltration) rate, in/hr or mm/hr: the exfiltration
+    Ksat with zero suction and IMD. Setting it replaces Green-Ampt parameters;
+    reads 0 when exfiltration uses them."""
     exfil_params: Tuple[float, float, float]
 
 
@@ -65,11 +84,14 @@ class Node:
     type: NodeType
     is_virtual: bool
     virtual_rule_violation: int
+    is_inlet: bool
+    def inlet_rule_violation(self, for_drop_inlet: bool = ...) -> int: ...
     solver: Solver
 
     # Geometry
     invert_elev: float
     max_depth: float
+    rim_depth: float
     surcharge_depth: float
     ponded_area: float
     initial_depth: float

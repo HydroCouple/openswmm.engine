@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file PluginFactory.cpp
  * @brief Plugin loader, auto-discovery, and lifecycle manager — implementation.
@@ -7,7 +23,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "PluginFactory.hpp"
@@ -18,6 +34,10 @@
 // instead of being picked up accidentally through the discover() scan's
 // dlsym(openswmm_plugin_info) on the engine's own binary. See §R.3 in
 // docs/GUI_IMPLEMENTATION_PLAN.md for the rationale.
+#ifdef OPENSWMM_HAS_HDF5_MODEL
+#  include "../io/hdf5/Hdf5PluginInfo.hpp"
+#endif
+
 #ifdef OPENSWMM_HAS_GEOPACKAGE
 #  include "../input/geopackage/GeoPackagePluginInfo.hpp"
 #endif
@@ -35,11 +55,24 @@
 #include <algorithm>
 #include <string>
 #include <stdexcept>
+#include <cstdlib>
+#include <cstring>
+#include <mutex>
+
+// D2 (program plan §B.2.2): the HydroCouple component loader contract,
+// upstreamed into HydroCouple in D0. Header-only; D-C6 forbids the SDK.
+#ifdef OPENSWMM_HAS_HYDROCOUPLE
+#include <hydrocouplecomponentabi.h>
+#endif
 
 // Platform-specific dynamic loading and path detection
 #if defined(_WIN32)
 #  define WIN32_LEAN_AND_MEAN
 #  include <windows.h>
+#elif defined(__EMSCRIPTEN__)
+   // WebAssembly: no dynamic loading (engine is statically linked into the
+   // .wasm). platform_* helpers below are stubs; built-in plugins
+   // (register_builtin_infos) are unaffected.
 #elif defined(__APPLE__) || defined(__linux__)
 #  include <dlfcn.h>
 #else
@@ -49,6 +82,43 @@
 namespace fs = std::filesystem;
 
 namespace openswmm {
+
+// ============================================================================
+// D2 — the process-global HydroCouple component catalogue (state)
+// ============================================================================
+//
+// File-local so the header exposes no HydroCouple type. Everything in it is
+// guarded by component_catalog_mutex(); see PluginFactory.hpp for why it is
+// process-global and why its handles are never closed outside tests.
+namespace {
+
+struct ComponentCatalogState {
+    bool                                               defaults_done = false;
+    std::vector<std::string>                           explicit_dirs;
+    std::vector<PluginFactory::ComponentLibraryRecord> records;
+    std::vector<void*>                                 handles;
+};
+
+ComponentCatalogState& component_catalog_state() {
+    static ComponentCatalogState s;
+    return s;
+}
+
+std::mutex& component_catalog_mutex() {
+    static std::mutex m;
+    return m;
+}
+
+/// The same library reached through two spellings of its directory (a
+/// symlinked build tree, `./components` vs an absolute path) must be one
+/// record, so paths are compared canonicalised.
+std::string component_canonical_path(const std::string& p) {
+    std::error_code ec;
+    const fs::path c = fs::weakly_canonical(fs::path(p), ec);
+    return ec ? p : c.string();
+}
+
+} // namespace
 
 // ============================================================================
 // Constructor / Destructor
@@ -70,6 +140,9 @@ PluginFactory::~PluginFactory() {
 void* PluginFactory::platform_load(const std::string& path) {
 #if defined(_WIN32)
     return static_cast<void*>(::LoadLibraryA(path.c_str()));
+#elif defined(__EMSCRIPTEN__)
+    (void)path;
+    return nullptr;
 #else
     return ::dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
 #endif
@@ -79,6 +152,8 @@ void PluginFactory::platform_unload(void* handle) noexcept {
     if (!handle) return;
 #if defined(_WIN32)
     ::FreeLibrary(static_cast<HMODULE>(handle));
+#elif defined(__EMSCRIPTEN__)
+    // nothing to unload
 #else
     ::dlclose(handle);
 #endif
@@ -89,6 +164,9 @@ void* PluginFactory::platform_sym(void* handle, const char* sym) noexcept {
 #if defined(_WIN32)
     return reinterpret_cast<void*>(
         ::GetProcAddress(static_cast<HMODULE>(handle), sym));
+#elif defined(__EMSCRIPTEN__)
+    (void)sym;
+    return nullptr;
 #else
     return ::dlsym(handle, sym);
 #endif
@@ -102,6 +180,8 @@ std::string PluginFactory::platform_error() noexcept {
                      MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
                      buf, sizeof(buf), nullptr);
     return std::string(buf);
+#elif defined(__EMSCRIPTEN__)
+    return "dynamic plugin loading is not available in WebAssembly";
 #else
     const char* msg = ::dlerror();
     return msg ? std::string(msg) : "(unknown dlerror)";
@@ -127,6 +207,8 @@ std::string PluginFactory::get_library_directory() {
             return p.parent_path().string();
         }
     }
+    return {};
+#elif defined(__EMSCRIPTEN__)
     return {};
 #else
     // Use dladdr to find the shared library containing this function
@@ -237,7 +319,15 @@ IPluginComponentInfo* PluginFactory::load_library(
         platform_sym(handle, "openswmm_plugin_info"));
 
     if (!factory_fn) {
-        // Not an OpenSWMM plugin — silently skip
+        // Not an OpenSWMM IO plugin. D2: offer it to the HydroCouple
+        // component catalogue before unloading, so a component library found
+        // by any engine's discovery is recorded once, process-wide. If the
+        // catalogue takes it, the handle is the catalogue's now.
+        {
+            std::lock_guard<std::mutex> lock(component_catalog_mutex());
+            if (catalog_adopt_locked(path, handle)) return nullptr;
+        }
+        // Not a component either — silently skip, as before.
         platform_unload(handle);
         return nullptr;
     }
@@ -610,6 +700,13 @@ void PluginFactory::register_builtin_infos() {
 #ifdef OPENSWMM_HAS_GEOPACKAGE
     register_one(&openswmm::gpkg::GeoPackagePluginInfo::instance());
 #endif
+
+    // The HDF5 model writer registers the same way and for the same reason:
+    // statically linked, so it must be announced explicitly rather than
+    // discovered by dlsym. See src/engine/io/hdf5/STRATEGY.md.
+#ifdef OPENSWMM_HAS_HDF5_MODEL
+    register_one(&openswmm::h5io::Hdf5PluginInfo::instance());
+#endif
 }
 
 // ============================================================================
@@ -648,6 +745,192 @@ void PluginFactory::validate_filter_invariant(
         && !has_role(PluginRole::STATE_READ)
         && !has_role(PluginRole::STATE_WRITE))
         warn("STATE_IO", PluginRole::STATE_READ);
+}
+
+
+// ============================================================================
+// D2 — the process-global HydroCouple component catalogue
+// ============================================================================
+
+bool PluginFactory::hydrocouple_enabled() noexcept {
+#ifdef OPENSWMM_HAS_HYDROCOUPLE
+    return true;
+#else
+    return false;
+#endif
+}
+
+std::string PluginFactory::component_abi_stamp() {
+#ifdef OPENSWMM_HAS_HYDROCOUPLE
+    return HYDROCOUPLE_COMPONENT_ABI_STAMP;
+#else
+    return {};
+#endif
+}
+
+bool PluginFactory::catalog_adopt_locked(const std::string& path, void* handle) {
+#ifdef OPENSWMM_HAS_HYDROCOUPLE
+    auto& st = component_catalog_state();
+    const std::string canon = component_canonical_path(path);
+    for (const auto& r : st.records) {
+        if (component_canonical_path(r.path) == canon) {
+            // Already recorded through another discovery route. dlopen
+            // refcounted this open; give the extra reference back.
+            platform_unload(handle);
+            return true;
+        }
+    }
+
+    ComponentLibraryRecord rec;
+    rec.path = path;
+    HydroCouple::IComponentInfo* info = nullptr;
+
+    // The stamp is the ONLY symbol that may be called before the check
+    // succeeds: it is pure C returning a string, safe across any toolchain
+    // mismatch. Nothing C++ is touched until the two stamps agree.
+    auto abi_fn = reinterpret_cast<HydroCoupleComponentAbiFn>(
+        platform_sym(handle, HYDROCOUPLE_COMPONENT_ABI_SYMBOL));
+
+    if (abi_fn) {
+        const char* theirs = abi_fn();
+        rec.stamp = theirs ? theirs : "";
+        if (rec.stamp != HYDROCOUPLE_COMPONENT_ABI_STAMP) {
+            // Refused, and recorded: a library that looks like a component
+            // but cannot safely be called is exactly what a user needs to be
+            // told about, with both stamps, not silently skipped.
+            rec.load_error = "refused: HydroCouple component ABI stamp mismatch — library '" +
+                             rec.stamp + "', engine '" + HYDROCOUPLE_COMPONENT_ABI_STAMP + "'";
+            st.records.push_back(std::move(rec));
+            platform_unload(handle);
+            return true;
+        }
+        auto info_fn = reinterpret_cast<HydroCoupleComponentInfoFn>(
+            platform_sym(handle, HYDROCOUPLE_COMPONENT_INFO_SYMBOL));
+        if (!info_fn) {
+            rec.load_error = std::string("stamped, but does not export ") +
+                             HYDROCOUPLE_COMPONENT_INFO_SYMBOL;
+            st.records.push_back(std::move(rec));
+            platform_unload(handle);
+            return true;
+        }
+        info = info_fn();
+    } else {
+        // The pre-stamp convention HydroCouple's Python loader uses. There is
+        // genuinely no way to verify its toolchain before calling it, so it
+        // is loaded best-effort and REPORTED as unstamped — never silently
+        // treated as verified. Refusing it would split the ecosystem.
+        auto legacy_fn = reinterpret_cast<HydroCoupleLegacyComponentInfoFn>(
+            platform_sym(handle, HYDROCOUPLE_COMPONENT_LEGACY_INFO_SYMBOL));
+        if (!legacy_fn) return false;   // not a component: caller keeps the handle
+        rec.stamp = HYDROCOUPLE_COMPONENT_UNSTAMPED;
+        info = legacy_fn();
+    }
+
+    if (!info) {
+        rec.load_error = "the component-info entry point returned null";
+        st.records.push_back(std::move(rec));
+        platform_unload(handle);
+        return true;
+    }
+
+    rec.id      = info->id();
+    rec.caption = info->caption();
+    rec.version = info->version();
+    rec.kind    = dynamic_cast<HydroCouple::IModelComponentInfo*>(info) ? "model" : "other";
+
+    // One id, one library. The later one is refused rather than allowed to
+    // shadow the earlier, and the message names both so the duplicate can be
+    // found; which one "should" win is not something discovery can know.
+    for (const auto& r : st.records) {
+        if (r.load_error.empty() && r.id == rec.id) {
+            rec.load_error = "refused: duplicate component id '" + rec.id +
+                             "' — already loaded from '" + r.path + "'";
+            rec.kind.clear();
+            st.records.push_back(std::move(rec));
+            platform_unload(handle);
+            return true;
+        }
+    }
+
+    info->setLibraryFilePath(path);
+    rec.info = info;
+    st.records.push_back(std::move(rec));
+    st.handles.push_back(handle);   // kept for the life of the process
+    return true;
+#else
+    (void)path; (void)handle;
+    return false;
+#endif
+}
+
+int PluginFactory::catalog_scan_locked(const std::string& dir) {
+    const std::size_t before = component_catalog_state().records.size();
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec)) return 0;
+    for (const auto& entry : fs::directory_iterator(dir, ec)) {
+        if (!entry.is_regular_file(ec)) continue;
+        if (!is_shared_library(entry.path().filename().string())) continue;
+        const std::string path = entry.path().string();
+        void* handle = platform_load(path);
+        if (!handle) continue;   // discovery never fails on an unloadable file
+        if (!catalog_adopt_locked(path, handle)) platform_unload(handle);
+    }
+    return static_cast<int>(component_catalog_state().records.size() - before);
+}
+
+void PluginFactory::catalog_defaults_locked() {
+    auto& st = component_catalog_state();
+    if (st.defaults_done) return;
+    st.defaults_done = true;
+
+    // §B.2.3, in order: next to the host library, then the environment.
+    const std::string base = get_library_directory();
+    if (!base.empty()) {
+        catalog_scan_locked(base);
+        catalog_scan_locked((fs::path(base) / "plugins").string());
+        catalog_scan_locked((fs::path(base) / "components").string());
+    }
+    if (const char* env = std::getenv("HYDROCOUPLE_COMPONENT_PATH")) {
+#if defined(_WIN32)
+        const char sep = ';';
+#else
+        const char sep = ':';
+#endif
+        std::string list(env), item;
+        for (std::size_t i = 0; i <= list.size(); ++i) {
+            if (i == list.size() || list[i] == sep) {
+                if (!item.empty()) catalog_scan_locked(item);
+                item.clear();
+            } else {
+                item.push_back(list[i]);
+            }
+        }
+    }
+}
+
+int PluginFactory::component_search_path_add(const std::string& dir) {
+    if (!hydrocouple_enabled()) return -1;
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec)) return -1;
+    std::lock_guard<std::mutex> lock(component_catalog_mutex());
+    // Defaults first, so an explicit directory can never displace a default
+    // one under the duplicate-id rule merely by being scanned earlier.
+    catalog_defaults_locked();
+    component_catalog_state().explicit_dirs.push_back(dir);
+    return catalog_scan_locked(dir);
+}
+
+std::vector<PluginFactory::ComponentLibraryRecord> PluginFactory::component_libraries() {
+    std::lock_guard<std::mutex> lock(component_catalog_mutex());
+    if (hydrocouple_enabled()) catalog_defaults_locked();
+    return component_catalog_state().records;
+}
+
+void PluginFactory::component_catalog_reset_for_testing() {
+    std::lock_guard<std::mutex> lock(component_catalog_mutex());
+    auto& st = component_catalog_state();
+    for (void* h : st.handles) platform_unload(h);
+    st = ComponentCatalogState{};
 }
 
 } /* namespace openswmm */

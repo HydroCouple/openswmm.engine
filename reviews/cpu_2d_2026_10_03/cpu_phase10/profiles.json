@@ -1,0 +1,128 @@
+[
+  {
+    "case": "planar",
+    "quad": 0,
+    "timers": {
+      "advance": {
+        "seconds": 3.5443535,
+        "calls": 192
+      },
+      "computeLimitedGradientsSwe": {
+        "seconds": 0.735988477,
+        "calls": 6240
+      },
+      "fireCellsImpl": {
+        "seconds": 0.710421032,
+        "calls": 6240
+      },
+      "fireFacesSwe": {
+        "seconds": 2.39095054,
+        "calls": 6240
+      },
+      "lazySourcesOnly": {
+        "seconds": 0.00103125,
+        "calls": 40
+      },
+      "refreshDt0": {
+        "seconds": 0.036072559,
+        "calls": 2491
+      },
+      "runRk2Step": {
+        "seconds": 3.28324588,
+        "calls": 3120
+      },
+      "settleAccumulators": {
+        "seconds": 0.00013373,
+        "calls": 1165
+      },
+      "syncAndRebuild": {
+        "seconds": 0.22117857,
+        "calls": 781
+      }
+    }
+  },
+  {
+    "case": "planar",
+    "quad": 1,
+    "timers": {
+      "advance": {
+        "seconds": 1.31585654,
+        "calls": 192
+      },
+      "computeLimitedGradientsSwe": {
+        "seconds": 0.255898516,
+        "calls": 3718
+      },
+      "fireCellsImpl": {
+        "seconds": 0.246677809,
+        "calls": 3718
+      },
+      "fireFacesSwe": {
+        "seconds": 0.885677293,
+        "calls": 3718
+      },
+      "lazySourcesOnly": {
+        "seconds": 0.001391457,
+        "calls": 112
+      },
+      "refreshDt0": {
+        "seconds": 0.009731871,
+        "calls": 1474
+      },
+      "runRk2Step": {
+        "seconds": 1.24394399,
+        "calls": 1859
+      },
+      "settleAccumulators": {
+        "seconds": 5.046e-05,
+        "calls": 849
+      },
+      "syncAndRebuild": {
+        "seconds": 0.059185082,
+        "calls": 465
+      }
+    }
+  },
+  {
+    "case": "radial",
+    "quad": 1,
+    "timers": {
+      "advance": {
+        "seconds": 0.308004044,
+        "calls": 192
+      },
+      "computeLimitedGradientsSwe": {
+        "seconds": 0.073616081,
+        "calls": 1244
+      },
+      "fireCellsImpl": {
+        "seconds": 0.049626797,
+        "calls": 1244
+      },
+      "fireFacesSwe": {
+        "seconds": 0.219629016,
+        "calls": 1244
+      },
+      "lazySourcesOnly": {
+        "seconds": 0.001810676,
+        "calls": 131
+      },
+      "refreshDt0": {
+        "seconds": 0.002215485,
+        "calls": 527
+      },
+      "runRk2Step": {
+        "seconds": 0.284366747,
+        "calls": 622
+      },
+      "settleAccumulators": {
+        "seconds": 2.1245e-05,
+        "calls": 540
+      },
+      "syncAndRebuild": {
+        "seconds": 0.018535541,
+        "calls": 156
+      }
+    }
+  }
+]

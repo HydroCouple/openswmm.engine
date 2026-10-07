@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Water quality (Pythonic v1 surface)
 ===================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 ``solver.quality`` exposes landuse, buildup, washoff, and treatment
 configuration with enum-typed function selectors and ``int | str``
@@ -45,6 +61,41 @@ cdef inline int _resolve_landuse(solver, key) except -1:
 cdef inline int _resolve_pollutant(solver, key) except -1:
     return _resolve_index(
         _h(solver), key, swmm_pollutant_index, swmm_pollutant_count, "Pollutant")
+
+
+cdef inline int _resolve_surface_species(solver, key) except -1:
+    """BW-MSX (2026-09-19): a buildup / washoff / loading constituent is a
+    pollutant OR a reactions-component (MSX) species. The C API addresses
+    species at ``n_pollutants + m``; this resolver accepts a pollutant id or
+    index as before, a species *name*, or an int in ``[0, np + nm)``."""
+    cdef SWMM_Engine h = _h(solver)
+    cdef int np = swmm_pollutant_count(h)
+    cdef int nm = swmm_reaction_species_count(h)
+    cdef int i, m, is_wall
+    cdef double atol, rtol
+    cdef char name[128]
+    cdef char units[32]
+    cdef bytes b
+    if isinstance(key, str):
+        b = (<str>key).encode('utf-8')
+        i = swmm_pollutant_index(h, b)
+        if i >= 0:
+            return i
+        for m in range(nm):
+            if swmm_reaction_species_get(h, m, name, sizeof(name), &is_wall,
+                                         units, sizeof(units), &atol, &rtol) == 0 \
+                    and name == b:
+                return np + m
+        raise KeyError(f"Pollutant or species '{key}' not found")
+    if isinstance(key, bool):
+        raise TypeError("Pollutant key must be int or str, got bool")
+    if isinstance(key, int) or hasattr(key, "__index__"):
+        i = <int>int(key)
+        if i < 0 or i >= np + nm:
+            raise IndexError(
+                f"Pollutant/species index {i} out of range [0, {np + nm})")
+        return i
+    raise TypeError(f"Pollutant key must be int or str, got {type(key).__name__}")
 
 
 cdef inline int _resolve_node(solver, key) except -1:
@@ -201,7 +252,7 @@ class Quality:
         :param normalizer: 0 = per acre, 1 = per curb length.
         """
         cdef int lu = _resolve_landuse(self._solver, landuse)
-        cdef int p = _resolve_pollutant(self._solver, pollutant)
+        cdef int p = _resolve_surface_species(self._solver, pollutant)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_buildup_set(h, lu, p, int(func), c1, c2, c3, normalizer))
 
@@ -209,7 +260,7 @@ class Quality:
         """Return ``{"func": BuildupFunc, "c1": ..., "c2": ..., "c3": ...,
         "normalizer": int}``."""
         cdef int lu = _resolve_landuse(self._solver, landuse)
-        cdef int p = _resolve_pollutant(self._solver, pollutant)
+        cdef int p = _resolve_surface_species(self._solver, pollutant)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int func = 0, normalizer = 0
         cdef double c1 = 0.0, c2 = 0.0, c3 = 0.0
@@ -229,7 +280,7 @@ class Quality:
                     double sweep_effic=0.0, double bmp_effic=0.0) -> None:
         """Set the washoff function and coefficients for *landuse* / *pollutant*."""
         cdef int lu = _resolve_landuse(self._solver, landuse)
-        cdef int p = _resolve_pollutant(self._solver, pollutant)
+        cdef int p = _resolve_surface_species(self._solver, pollutant)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_washoff_set(
             h, lu, p, int(func), coeff, expon, sweep_effic, bmp_effic))
@@ -237,7 +288,7 @@ class Quality:
     def get_washoff(self, landuse, pollutant) -> Dict[str, object]:
         """Return the washoff parameters for *landuse* / *pollutant* as a dict."""
         cdef int lu = _resolve_landuse(self._solver, landuse)
-        cdef int p = _resolve_pollutant(self._solver, pollutant)
+        cdef int p = _resolve_surface_species(self._solver, pollutant)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int func = 0
         cdef double coeff = 0.0, expon = 0.0, sweep = 0.0, bmp = 0.0

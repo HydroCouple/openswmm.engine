@@ -1,0 +1,25 @@
+Running main() from /private/tmp/googletest-20250910-5249-qce8ci/googletest-1.17.0/googletest/src/gtest_main.cc
+Note: Google Test filter = OutfallCoupling2DTest.DisconnectedOutfallMappingsWarnOnceAndDoNotChangeValidExchange
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from OutfallCoupling2DTest
+[ RUN      ] OutfallCoupling2DTest.DisconnectedOutfallMappingsWarnOnceAndDoNotChangeValidExchange
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_2d_outfall_coupling.cpp:212: Failure
+Value of: result.ok
+  Actual: false
+Expected: true
+disconnected coupling must not abort initialization/run
+Google Test trace:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/unit/engine/test_2d_outfall_coupling.cpp:195: vertex
+
+[  FAILED  ] OutfallCoupling2DTest.DisconnectedOutfallMappingsWarnOnceAndDoNotChangeValidExchange (83 ms)
+[----------] 1 test from OutfallCoupling2DTest (83 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (83 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] OutfallCoupling2DTest.DisconnectedOutfallMappingsWarnOnceAndDoNotChangeValidExchange
+
+ 1 FAILED TEST

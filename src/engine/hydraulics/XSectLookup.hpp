@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file XSectLookup.hpp
  * @brief Bit-exact geometry-table interpolation — the single source of truth.
@@ -34,7 +50,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_XSECT_LOOKUP_HPP
@@ -126,6 +142,139 @@ inline double norm_lookup(double depth, double param, const double* t, int n) no
 #else
     return lookup_exact(norm_x(depth, param), t, n);
 #endif
+}
+
+// ============================================================================
+// Bucket LUT for locate() — plan XSECT_LOOKUP_ACCEL §4 item A1.
+//
+// `locate()` is a bisection over a monotone table: ~log2(n) data-dependent
+// branches (~6 on the 51-row transect/built-in tables). The LUT replaces the
+// first few of them with one multiply + truncate: the table's VALUE range is
+// split into kBuckets equal spans, and for each span we precompute an index
+// bracket that provably contains locate()'s answer. A short bisection inside
+// that bracket finishes the job.
+//
+// **Index identity (why this stays bit-exact).** `locate()`'s answer is the
+// unique index `max{ j <= jLast : table[j] <= y }`. This routine returns the
+// same index for every input — it only narrows the search window — so the
+// interpolation arithmetic downstream is byte-for-byte unchanged. The proof
+// rests on one property: `bucket_of()` is monotone non-decreasing in y (an
+// affine map with a positive scale, then a truncating cast, then a clamp), and
+// the table is checked monotone non-decreasing at build time. Then
+//
+//   lo[b] = max{ j : bucket_of(table[j]) < b }        (0 if the set is empty)
+//
+// satisfies table[lo[b]] <= y for every y in bucket b, and — because
+// `bucket_of(table[j])` is non-decreasing in j, so {j : bucket_of <= b} is a
+// prefix — `lo[b+1] + 1` is exactly `min{ j : bucket_of(table[j]) > b }`, whose
+// table value is strictly greater than y. That is precisely the bisection
+// invariant, on a window of one or two table cells instead of the whole table.
+//
+// A table that fails the monotonicity check (or is degenerate) leaves `scale`
+// at 0, which callers read as "no LUT" and fall back to plain bisection — so a
+// pathological table can never change a result, only its speed.
+// ============================================================================
+
+/// Precomputed value→index-bracket map for one geometry table.
+///
+/// POD: trivially copyable into a device kernel alongside the table it indexes
+/// (the Kokkos FV path copies XsectTables by value).
+struct LocateLut {
+    static constexpr int kBuckets = 64;
+
+    double        t0     = 0.0;   ///< table[0] — the low end of the value range
+    double        scale  = 0.0;   ///< kBuckets / (table[jLast] - t0); 0 == disabled
+    int           j_last = 0;     ///< the `jLast` this map was built for
+    unsigned char lo[kBuckets + 1] = {};  ///< lo[b] = max{ j : bucket(table[j]) < b }
+};
+
+/// Bucket index for a value — the ONE expression used by both build and query.
+inline int lut_bucket(const LocateLut& L, double y) noexcept {
+    int b = static_cast<int>((y - L.t0) * L.scale);
+    if (b < 0) b = 0;
+    else if (b >= LocateLut::kBuckets) b = LocateLut::kBuckets - 1;
+    return b;
+}
+
+/// Plain bisection — the shipped `locate()` body, kept here so the LUT builder
+/// and the fallback path share one definition with XsectEval::locate.
+inline int locate_bisect(double y, const double* table, int jLast) noexcept {
+    int j1 = 0;
+    int j2 = jLast;
+    if (y <= table[0])     return 0;
+    if (y >= table[jLast]) return jLast;
+    while (j2 - j1 > 1) {
+        int j = (j1 + j2) >> 1;
+        if (y >= table[j]) j1 = j;
+        else               j2 = j;
+    }
+    return j1;
+}
+
+/// Build the bucket map for `table` over indices [0, jLast].
+///
+/// Leaves the map disabled (scale == 0) for a degenerate or non-monotone table,
+/// or one too long to index with a byte — the caller then bisects as before.
+inline void build_locate_lut(LocateLut& L, const double* table, int jLast) noexcept {
+    L = LocateLut{};
+    if (!table || jLast < 2 || jLast > 254) return;
+    for (int j = 1; j <= jLast; ++j)
+        if (!(table[j] >= table[j - 1])) return;   // non-monotone (or NaN) — no LUT
+
+    const double span = table[jLast] - table[0];
+    if (!(span > 0.0)) return;                     // flat table — nothing to bracket
+
+    L.t0     = table[0];
+    L.scale  = static_cast<double>(LocateLut::kBuckets) / span;
+    L.j_last = jLast;
+    for (int b = 0; b <= LocateLut::kBuckets; ++b) {
+        int best = 0;
+        for (int j = 0; j <= jLast; ++j) {
+            if (lut_bucket(L, table[j]) >= b) break;   // bucket(table[.]) is sorted
+            best = j;
+        }
+        L.lo[b] = static_cast<unsigned char>(best);
+    }
+}
+
+/// LUT-accelerated `locate()` — returns the identical index for every input.
+inline int locate_lut(double y, const double* table, int jLast,
+                      const LocateLut& L) noexcept {
+    // `!(y > table[0])` (not `y <= table[0]`) also catches NaN, which plain
+    // bisection resolves to 0 because every `y >= table[j]` test is false.
+    if (!(y > table[0])) return 0;
+    if (y >= table[jLast]) return jLast;
+
+    const int b  = lut_bucket(L, y);
+    int       j1 = L.lo[b];
+    int       j2 = L.lo[b + 1] + 1;
+    if (j2 > jLast) j2 = jLast;
+    while (j2 - j1 > 1) {
+        int jm = (j1 + j2) >> 1;
+        if (y >= table[jm]) j1 = jm;
+        else                j2 = jm;
+    }
+    return j1;
+}
+
+/// Dispatch: use the map when one was built for this exact table extent.
+inline int locate_maybe_lut(double y, const double* table, int jLast,
+                            const LocateLut* L) noexcept {
+    if (L && L->scale > 0.0 && L->j_last == jLast)
+        return locate_lut(y, table, jLast, *L);
+    return locate_bisect(y, table, jLast);
+}
+
+/// Build the map for the extent `invLookup(y, table, n_items)` actually
+/// searches — including the section-factor tables' two-row top truncation, so
+/// the S_* maps bracket the same window `locate()` is called on. (The
+/// truncated top rows are resolved by invLookup's own branch, outside
+/// `locate`, and are unaffected.)
+inline void build_invlookup_lut(LocateLut& L, const double* table, int n_items) noexcept {
+    if (!table || n_items < 4) { L = LocateLut{}; return; }
+    int n = n_items;
+    if (table[n - 3] > table[n - 1]) n = n - 2;
+    build_locate_lut(L, table, n - 1);
 }
 
 } // namespace openswmm::xsect

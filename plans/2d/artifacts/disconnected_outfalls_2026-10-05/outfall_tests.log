@@ -1,0 +1,32 @@
+Running main() from /private/tmp/googletest-20250910-5249-qce8ci/googletest-1.17.0/googletest/src/gtest_main.cc
+[==========] Running 6 tests from 2 test suites.
+[----------] Global test environment set-up.
+[----------] 5 tests from OutfallCoupling2DTest
+[ RUN      ] OutfallCoupling2DTest.DisconnectedOutfallMappingsWarnOnceAndDoNotChangeValidExchange
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] OutfallCoupling2DTest.DisconnectedOutfallMappingsWarnOnceAndDoNotChangeValidExchange (32 ms)
+[ RUN      ] OutfallCoupling2DTest.OutfallDischargeReaches2DAndContinuityCloses
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] OutfallCoupling2DTest.OutfallDischargeReaches2DAndContinuityCloses (4 ms)
+[ RUN      ] OutfallCoupling2DTest.BuriedOutfallFreesAndJunctionDrainsWhenSurfaceDries
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] OutfallCoupling2DTest.BuriedOutfallFreesAndJunctionDrainsWhenSurfaceDries (6 ms)
+[ RUN      ] OutfallCoupling2DTest.CarvedOutfallVertexStaysDryOnDryMesh
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] OutfallCoupling2DTest.CarvedOutfallVertexStaysDryOnDryMesh (1 ms)
+[ RUN      ] OutfallCoupling2DTest.ReverseFlowClosesSurfaceLedgerWithBatchedSteps
+[       OK ] OutfallCoupling2DTest.ReverseFlowClosesSurfaceLedgerWithBatchedSteps (13 ms)
+[----------] 5 tests from OutfallCoupling2DTest (59 ms total)
+
+[----------] 1 test from OutfallExchangeBudget
+[ RUN      ] OutfallExchangeBudget.UnevenDonorsOverlappingOutfallsAndParallelLinks
+[       OK ] OutfallExchangeBudget.UnevenDonorsOverlappingOutfallsAndParallelLinks (0 ms)
+[----------] 1 test from OutfallExchangeBudget (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 6 tests from 2 test suites ran. (59 ms total)
+[  PASSED  ] 6 tests.

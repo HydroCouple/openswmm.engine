@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file test_fv_lts.cpp
  * @brief Plan §6.12 — local time stepping: equivalence, tier-interface
@@ -20,7 +36,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -28,6 +44,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 #include <numeric>
 #include <vector>
 
@@ -308,4 +328,75 @@ TEST(FvLts, ShortPipesNoLongerSetTheWorkRateForTheWholeReach) {
                 glob.substeps, tier.substeps);
     EXPECT_GT(ratio, 1.5)
         << "tiering did not reduce face work on a 40x graded reach";
+}
+
+// Exercise both coarse batches above the default worksharing threshold and
+// small fine-tier batches. UF reads its pre-tier gradient snapshot; no cell
+// may observe another cell's partially published update.
+TEST(FvLts, DueCellThreadsPreserveStateAndScheduleBits) {
+#ifndef _OPENMP
+    GTEST_SKIP() << "requires OpenMP";
+#else
+    if (omp_get_thread_limit() < 2) GTEST_SKIP() << "requires at least two workers";
+    struct RestoreThreads {
+        int count = omp_get_max_threads();
+        int dynamic = omp_get_dynamic();
+        ~RestoreThreads() { omp_set_num_threads(count); omp_set_dynamic(dynamic); }
+    } restore;
+    omp_set_dynamic(0);
+    constexpr int n = 8192;
+    constexpr int advances = 8;
+    for (int uf : {0, 1}) {
+        std::vector<std::vector<double>> reference;
+        std::vector<openswmm::fv::INetworkSolver::RunStats> stats;
+        for (int nt : {1, 2, 4}) {
+            if (nt > omp_get_thread_limit()) continue;
+            omp_set_num_threads(nt);
+            int actual = 0;
+#pragma omp parallel
+            {
+#pragma omp single
+                actual = omp_get_num_threads();
+            }
+            ASSERT_EQ(actual, nt);
+            auto ch = makeGradedChannel(rectOpen(10.0, 20.0), n,
+                [](int c) { return (c >= n / 2 - 8 && c < n / 2 + 8) ? 0.5 : 10.0; },
+                [](double) { return 0.0; }, 0.013);
+            for (int c = 0; c < n; ++c)
+                ch.state.cell_a[static_cast<std::size_t>(c)] = c < n / 2 ? 20.0 : 10.0;
+            auto opts = defaultOptions();
+            opts.lts = true;
+            opts.unsteady_friction = uf;
+            openswmm::fv::ExplicitFvSolver solver;
+            solver.initialize(ch.mesh, ch.state, opts);
+            openswmm::fv::FvStepForcing forcing;
+            forcing.n_nodes = 0;
+            for (int step = 0; step < advances; ++step) {
+                solver.advance(4.0 * step, 4.0 * (step + 1), forcing);
+                int field = 0;
+                for (const auto* values : {&ch.state.cell_a, &ch.state.cell_q, &ch.state.cell_h}) {
+                    if (nt == 1) reference.push_back(*values);
+                    else {
+                        const auto& expected = reference[3 * step + field];
+                        ASSERT_EQ(values->size(), expected.size());
+                        EXPECT_EQ(std::memcmp(values->data(), expected.data(), values->size() * sizeof(double)), 0)
+                            << "threads " << nt << " UF " << uf << " advance " << step << " field " << field;
+                    }
+                    ++field;
+                }
+                const auto current = solver.run_stats();
+                if (nt == 1) stats.push_back(current);
+                else {
+                    EXPECT_EQ(current.nsteps, stats[step].nsteps);
+                    EXPECT_EQ(current.nflux, stats[step].nflux);
+                    EXPECT_EQ(current.n_macro_cycles, stats[step].n_macro_cycles);
+                    EXPECT_EQ(current.n_macro_rejected, stats[step].n_macro_rejected);
+                    EXPECT_EQ(std::memcmp(current.tier_cells, stats[step].tier_cells, sizeof(current.tier_cells)), 0);
+                }
+            }
+            EXPECT_GT(solver.run_stats().n_macro_cycles, 0);
+            solver.finalize();
+        }
+    }
+#endif
 }

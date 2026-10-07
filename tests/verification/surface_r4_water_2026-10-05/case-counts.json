@@ -1,0 +1,47 @@
+{
+  "test_engine_2d_inertial_marcher": {
+    "tests": 11,
+    "failures": 0,
+    "disabled": 0
+  },
+  "test_engine_lid": {
+    "tests": 55,
+    "failures": 0,
+    "disabled": 0
+  },
+  "test_engine_runoff": {
+    "tests": 17,
+    "failures": 0,
+    "disabled": 0
+  },
+  "test_engine_source_clock_groups": {
+    "tests": 16,
+    "failures": 0,
+    "disabled": 0
+  },
+  "test_engine_source_water_driver": {
+    "tests": 18,
+    "failures": 0,
+    "disabled": 0
+  },
+  "test_engine_surface_aquifer_receiving": {
+    "tests": 16,
+    "failures": 0,
+    "disabled": 0
+  },
+  "test_engine_surface_et_budget": {
+    "tests": 10,
+    "failures": 0,
+    "disabled": 0
+  },
+  "test_engine_surface_exchange": {
+    "tests": 15,
+    "failures": 0,
+    "disabled": 0
+  },
+  "test_engine_surface_ownership": {
+    "tests": 9,
+    "failures": 0,
+    "disabled": 0
+  }
+}

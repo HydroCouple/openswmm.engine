@@ -1,14 +1,31 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file TypeConverter.cpp
  * @brief In-place node and link type conversion.
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "TypeConverter.hpp"
 #include "../core/TypeHelpers.hpp"
+#include "VirtualJunctionOps.hpp"
 
 namespace openswmm::edit {
 
@@ -50,6 +67,15 @@ ConversionResult convert_node(SimulationContext& ctx, int idx, NodeType new_type
     const auto ui = static_cast<std::size_t>(idx);
     NodeData& nd = ctx.nodes;
     const NodeType old_type = nd.type[ui];
+
+    const int storage_row = ctx.node_subtypes.storage_row(idx);
+    if (storage_row >= 0 && ctx.node_subtypes.storages.lid[storage_row].control >= 0) {
+        result.cleared_fields.push_back("lid_control");
+        auto& anchors = ctx.lid_node_outlets;
+        anchors.erase(std::remove_if(anchors.begin(), anchors.end(), [&](const auto& a) {
+            return ctx.links.node1[a.link] == idx || ctx.links.node2[a.link] == idx;
+        }), anchors.end());
+    }
 
     // Record the old type-specific fields cleared by the conversion.
     switch (old_type) {
@@ -101,9 +127,14 @@ ConversionResult convert_node(SimulationContext& ctx, int idx, NodeType new_type
 
     // Converting a virtual junction to any other type clears the virtual
     // flag (the zero-storage contract only exists for JUNCTION-typed nodes).
+    // vj_clear_virtual also promotes the rendering rim depth back to the real
+    // full depth, so the converted node keeps the surface it was drawn at.
+    // An inlet junction also loses its inlet flag and its usage row there.
     if (ui < nd.is_virtual.size() && nd.is_virtual[ui]) {
-        nd.is_virtual[ui] = 0;
+        const bool was_inlet = ui < nd.is_inlet.size() && nd.is_inlet[ui] != 0;
+        vj_clear_virtual(ctx, idx);
         result.cleared_fields.push_back("is_virtual");
+        if (was_inlet) result.cleared_fields.push_back("is_inlet");
     }
 
     // Move the subtype row and set nd.type (single source of truth). Erases the

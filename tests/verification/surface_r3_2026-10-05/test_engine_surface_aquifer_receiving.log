@@ -1,0 +1,73 @@
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+[==========] Running 16 tests from 2 test suites.
+[----------] Global test environment set-up.
+[----------] 13 tests from AquiferReceiving
+[ RUN      ] AquiferReceiving.SaturatedAndSealedPublishValidZero
+[       OK ] AquiferReceiving.SaturatedAndSealedPublishValidZero (0 ms)
+[ RUN      ] AquiferReceiving.PendingReservationsCannotBeSpentTwiceOrResetByRefresh
+[       OK ] AquiferReceiving.PendingReservationsCannotBeSpentTwiceOrResetByRefresh (0 ms)
+[ RUN      ] AquiferReceiving.PendingPositiveLinkReceiptReducesAllowance
+[       OK ] AquiferReceiving.PendingPositiveLinkReceiptReducesAllowance (0 ms)
+[ RUN      ] AquiferReceiving.AcceptedDrainageCreatesCapacityAfterFiring
+[       OK ] AquiferReceiving.AcceptedDrainageCreatesCapacityAfterFiring (0 ms)
+[ RUN      ] AquiferReceiving.AcceptedDeliveryClosesEachSoilAndClosureWithoutRejection
+[       OK ] AquiferReceiving.AcceptedDeliveryClosesEachSoilAndClosureWithoutRejection (0 ms)
+[ RUN      ] AquiferReceiving.RestartRetainsPendingReservationAndHeldCapacity
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] AquiferReceiving.RestartRetainsPendingReservationAndHeldCapacity (3 ms)
+[ RUN      ] AquiferReceiving.ZeroColumnRemainsEmptyThroughFirings
+[       OK ] AquiferReceiving.ZeroColumnRemainsEmptyThroughFirings (0 ms)
+[ RUN      ] AquiferReceiving.ProjectUnitsProduceTheSamePhysicalCapacity
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] AquiferReceiving.ProjectUnitsProduceTheSamePhysicalCapacity (15 ms)
+[ RUN      ] AquiferReceiving.SealedUnsaturatedColumnCannotAcceptSurfaceDelivery
+[       OK ] AquiferReceiving.SealedUnsaturatedColumnCannotAcceptSurfaceDelivery (0 ms)
+[ RUN      ] AquiferReceiving.ExternalOnlyRunWritesCapacityAndOffIsUnavailable
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] AquiferReceiving.ExternalOnlyRunWritesCapacityAndOffIsUnavailable (11 ms)
+[ RUN      ] AquiferReceiving.DeepBulkColumnApproachesAnalyticGreenAmptIntake
+[       OK ] AquiferReceiving.DeepBulkColumnApproachesAnalyticGreenAmptIntake (2 ms)
+[ RUN      ] AquiferReceiving.TopLayerWettingAndRisingTableReduceCapacity
+[       OK ] AquiferReceiving.TopLayerWettingAndRisingTableReduceCapacity (0 ms)
+[ RUN      ] AquiferReceiving.ZeroFrontHasFiniteAnalyticFirstIntervalIntake
+[       OK ] AquiferReceiving.ZeroFrontHasFiniteAnalyticFirstIntervalIntake (0 ms)
+[----------] 13 tests from AquiferReceiving (34 ms total)
+
+[----------] 3 tests from AquiferOwnership
+[ RUN      ] AquiferOwnership.MixedDefaultsSkipCoveredCellsAndExplicitConflictIsAtomic
+[       OK ] AquiferOwnership.MixedDefaultsSkipCoveredCellsAndExplicitConflictIsAtomic (0 ms)
+[ RUN      ] AquiferOwnership.ExternalOnlyBankHasNoOrdinaryKernelState
+[       OK ] AquiferOwnership.ExternalOnlyBankHasNoOrdinaryKernelState (0 ms)
+[ RUN      ] AquiferOwnership.BulkPreviewAndAtomicAuthoredReplacementPreserveOrderingAndPresence
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] AquiferOwnership.BulkPreviewAndAtomicAuthoredReplacementPreserveOrderingAndPresence (0 ms)
+[----------] 3 tests from AquiferOwnership (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 16 tests from 2 test suites ran. (35 ms total)
+[  PASSED  ] 16 tests.

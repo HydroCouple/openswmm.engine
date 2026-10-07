@@ -1,0 +1,3 @@
+[  8%] Building CXX object CMakeFiles/test_kokkos_explicit_alignment.dir/test_kokkos_explicit_alignment.cpp.o
+[ 16%] Linking CXX executable test_kokkos_explicit_alignment
+[100%] Built target test_kokkos_explicit_alignment

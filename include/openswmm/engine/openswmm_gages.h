@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file openswmm_gages.h
  * @brief OpenSWMM Engine — Rain Gage C API.
@@ -9,7 +25,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_GAGES_H
@@ -127,10 +143,13 @@ SWMM_ENGINE_API int swmm_gage_set_timeseries(SWMM_Engine engine, int idx, const 
  *                    file grammar `Fname Station Units`).
  * @returns SWMM_OK on success, or an error code.
  *
- * @details Sets the data source to FILE and selects the standard SWMM rain
- *          file format (STAN_PRCP). The station id is stored in the gage's
- *          `station_id` slot (the token matched against the file's first
- *          column), not the CSV column-name slot.
+ * @details Sets the data source to FILE. The file format is preserved when
+ *          the gage is already USER_CSV (multi-column "path:col"), otherwise
+ *          it is auto-detected: a non-empty file column implies USER_CSV and
+ *          anything else selects the standard SWMM rain file format
+ *          (STAN_PRCP). The station id is stored in the gage's `station_id`
+ *          slot (the token matched against the file's first column), not the
+ *          CSV column-name slot — see swmm_gage_set_file_column().
  */
 SWMM_ENGINE_API int swmm_gage_set_filename(SWMM_Engine engine, int idx, const char* path,
                                                    const char* station_id);
@@ -143,6 +162,45 @@ SWMM_ENGINE_API int swmm_gage_set_filename(SWMM_Engine engine, int idx, const ch
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_gage_set_station_id(SWMM_Engine engine, int idx, const char* station_id);
+
+/**
+ * @brief Set the data column name for a multi-column rain-file gage.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based gage index.
+ * @param column  Column header name inside the file (empty = use the first
+ *                data column).
+ * @returns SWMM_OK on success, or an error code.
+ *
+ * @details Stores the column selector used by the "FILE path:col" form
+ *          (multi-column CSV/TSV/TSF). Setting a non-empty column switches
+ *          the gage's file format to USER_CSV; clearing it leaves the format
+ *          unchanged (an empty column on a USER_CSV gage reads the file's
+ *          first data column).
+ */
+SWMM_ENGINE_API int swmm_gage_set_file_column(SWMM_Engine engine, int idx, const char* column);
+
+/**
+ * @brief Set the rain file format for a file-based gage.
+ * @param engine  Engine handle.
+ * @param idx     Zero-based gage index.
+ * @param format  RainFileFormat code (-1 = UNKNOWN, 5 = STAN_PRCP standard
+ *                SWMM rain file, 6 = USER_CSV multi-column CSV/TSV/TSF).
+ * @returns SWMM_OK on success, or SWMM_ERR_BADPARAM for a code that is not a
+ *          RainFileFormat value.
+ *
+ * @details The counterpart of swmm_gage_get_file_format(), and the only way
+ *          back out of USER_CSV: swmm_gage_set_file_column() and
+ *          swmm_gage_set_filename() both preserve USER_CSV by design, so
+ *          without this a host that ever set a column could not return the
+ *          gage to a standard rain file.
+ *
+ *          The two formats' row selectors are mutually exclusive, so this
+ *          clears the one that does not apply: selecting USER_CSV clears the
+ *          gage's `station_id` (a multi-column file has no station column),
+ *          and selecting any station-based format — STAN_PRCP included —
+ *          clears its file column name.
+ */
+SWMM_ENGINE_API int swmm_gage_set_file_format(SWMM_Engine engine, int idx, int format);
 
 /**
  * @brief Set the snow-catch deficiency correction factor (SCF) for a gage.
@@ -249,6 +307,29 @@ SWMM_ENGINE_API int swmm_gage_get_timeseries(SWMM_Engine engine, int idx, char* 
 SWMM_ENGINE_API int swmm_gage_get_station_id(SWMM_Engine engine, int idx, char* buf, int buflen);
 
 /**
+ * @brief Get the data column name for a multi-column rain-file gage.
+ * @param engine       Engine handle.
+ * @param idx          Zero-based gage index.
+ * @param[out] buf     Caller buffer that receives the NUL-terminated column
+ *                    name (empty string when none is set).
+ * @param buflen       Size of @p buf in bytes.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_gage_get_file_column(SWMM_Engine engine, int idx, char* buf, int buflen);
+
+/**
+ * @brief Get the rain file format for a file-based gage.
+ * @param engine        Engine handle.
+ * @param idx           Zero-based gage index.
+ * @param[out] format   Receives the RainFileFormat code (-1 = UNKNOWN,
+ *                      5 = STAN_PRCP standard SWMM rain file, 6 = USER_CSV
+ *                      multi-column CSV/TSV/TSF). Meaningful only when the
+ *                      data source is FILE.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_gage_get_file_format(SWMM_Engine engine, int idx, int* format);
+
+/**
  * @brief Get the rain-depth units declared for a file-based gage.
  * @param engine        Engine handle.
  * @param idx           Zero-based gage index.
@@ -289,6 +370,80 @@ SWMM_ENGINE_API int swmm_gage_get_rainfall_bulk(SWMM_Engine engine, double* buf,
  *  Returns SWMM_ERR_BADPARAM if newId is null, empty, already in use, or
  *  idx is out of range. */
 SWMM_ENGINE_API int swmm_gage_rename(SWMM_Engine engine, int idx, const char* newId);
+
+/* =========================================================================
+ * Resolved rainfall series
+ * ========================================================================= */
+
+/**
+ * @brief Number of entries in a gage's resolved rainfall series.
+ *
+ * @details Works for both data sources: a TIMESERIES gage reports its table's
+ *          length, a FILE gage the length of the series loaded from disk at
+ *          open. A FILE gage reports 0 when its file could not be read or its
+ *          format is not one the engine loads — in which case that gage also
+ *          contributes no rainfall to the run.
+ *
+ * @param engine     Engine handle.
+ * @param idx        Zero-based gage index.
+ * @param[out] count Receives the entry count.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_gage_get_rainfall_series_count(SWMM_Engine engine, int idx,
+                                                        int* count);
+
+/**
+ * @brief Copy a gage's resolved rainfall series.
+ *
+ * @details Returns the rainfall the engine will ACTUALLY apply, so a caller
+ *          never has to know how a gage stores its data. The rain-type
+ *          transform, the rain-file units factor, and the gage scale factor
+ *          are all applied, using the same conversion the routing update runs
+ *          — so a series read back here and replayed through a TIMESERIES gage
+ *          of type INTENSITY reproduces the original gage.
+ *
+ *          Each entry is the intensity that applies from its own time stamp
+ *          until the recording interval elapses or the next entry begins,
+ *          whichever comes first; rainfall is zero in between. Pair this with
+ *          swmm_gage_get_rain_interval() to reconstruct that behaviour.
+ *
+ * @note A FILE gage's series is windowed to the [OPTIONS] simulation dates
+ *       (± one day) and reflects the file as it was read at open. Call
+ *       swmm_gage_reload_rain_files() first if the path, station, units, or
+ *       simulation dates have changed since.
+ *
+ * @param engine      Engine handle.
+ * @param idx         Zero-based gage index.
+ * @param[out] times  Receives entry times as SWMM DateTime (decimal days),
+ *                    matching swmm_table_get_point(). May be NULL.
+ * @param[out] values Receives rainfall INTENSITY in the project's rain units
+ *                    per hour (in/hr for US flow units, mm/hr for SI).
+ *                    May be NULL.
+ * @param count       Capacity of each output array; at most this many entries
+ *                    are written.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_gage_get_rainfall_series(SWMM_Engine engine, int idx,
+                                                  double* times, double* values,
+                                                  int count);
+
+/**
+ * @brief Re-read every FILE-source rain gage's data from disk.
+ *
+ * @details Rain files are loaded once, during open(). Nothing re-runs that
+ *          afterwards, so changing a gage's path, station id, or rain units —
+ *          or the simulation dates the data is windowed to — has no effect
+ *          until the model is reopened, and readers keep seeing the previous
+ *          file's contents. Call this after such an edit.
+ *
+ *          Rebuilds the resolved series and the rainfall-file summary
+ *          statistics for every FILE gage. Requires the model to be editable
+ *          (BUILDING or OPENED); it is not valid mid-run.
+ *
+ * @param engine Engine handle.
+ * @returns SWMM_OK on success, or an error code.
+ */
+SWMM_ENGINE_API int swmm_gage_reload_rain_files(SWMM_Engine engine);
 
 #ifdef __cplusplus
 } /* extern "C" */

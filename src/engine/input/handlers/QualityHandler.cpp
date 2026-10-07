@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file QualityHandler.cpp
  * @brief Section handlers for [POLLUTANTS], [LANDUSES], [COVERAGES],
@@ -51,7 +67,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "QualityHandler.hpp"
@@ -63,11 +79,44 @@
 #include "../../data/QualityData.hpp"
 
 #include "../InputParseUtils.hpp"
+#include "../../core/Constants.hpp"
 
 #include <charconv>
+#include <initializer_list>
 #include <string>
 
 namespace openswmm::input {
+
+namespace {
+
+/// Legacy `findmatch(tok, Words)` (input.c:791) over a keyword list, where
+/// `match(str, substr)` (input.c:805) returns true when the KEYWORD is a
+/// PREFIX of the token — not when the two are equal.
+///
+/// That distinction is load-bearing here. Legacy's BuildupTypeWords are the
+/// three-letter stems POW / EXP / SAT / EXT and its WashoffTypeWords are
+/// EXP / RC / EMC, while decks — including everything the SWMM GUI writes —
+/// spell the functions out as POWER, EXPON, SATUR, EXTERNAL. Comparing for
+/// equality left `func_type` at NONE for every one of them, so the land use
+/// silently had NO buildup function: nothing accumulated over the antecedent
+/// dry period and there was nothing for the washoff to wash off.
+///
+/// Returns the keyword's index, or -1 for no match.
+int findmatch_prefix(const std::string& token,
+                     std::initializer_list<const char*> words) {
+    int i = 0;
+    for (const char* w : words) {
+        // The tokenizer has already stripped the leading blanks legacy's
+        // match() skips, so this is a plain prefix test.
+        const std::size_t n = std::char_traits<char>::length(w);
+        if (n > 0 && token.size() >= n && token.compare(0, n, w) == 0)
+            return i;
+        ++i;
+    }
+    return -1;
+}
+
+}  // namespace
 
 // ============================================================================
 // handle_pollutants()
@@ -112,7 +161,11 @@ void handle_pollutants(SimulationContext& ctx, const std::vector<std::string>& l
         if (tok.size() > 2) ctx.pollutants.c_rain[idx]  = to_double(tok[2]);
         if (tok.size() > 3) ctx.pollutants.c_gw[idx]    = to_double(tok[3]);
         if (tok.size() > 4) ctx.pollutants.c_rdii[idx]  = to_double(tok[4]);
-        if (tok.size() > 5) ctx.pollutants.k_decay[idx] = to_double(tok[5]);
+        // The Kdecay column is 1/day; store 1/sec, exactly as legacy
+        // does (landuse.c divides by SECperDAY at parse) — KD1.
+        if (tok.size() > 5)
+            ctx.pollutants.k_decay[idx] =
+                to_double(tok[5]) / constants::SEC_PER_DAY;
 
         // SnowOnly
         if (tok.size() > 6) {
@@ -190,6 +243,15 @@ void handle_coverages(SimulationContext& ctx, const std::vector<std::string>& li
     if (ctx.subcatches.coverage.size() < total) {
         ctx.subcatches.coverage.assign(total, 0.0);
     }
+    // BW-MSX round (2026-09-19), pre-existing defect: the per-(subcatchment,
+    // land use) last-swept counters were sized only by the C API
+    // (resize_coverage) and the GeoPackage reader — never by this handler —
+    // so street sweeping silently never fired on an .inp deck (the A7 loop
+    // skips any index past the empty array). Size them with the coverage
+    // matrix, as resize_coverage does.
+    if (ctx.subcatches.sweep_last_swept.size() < total) {
+        ctx.subcatches.sweep_last_swept.assign(total, 0.0);
+    }
     ctx.subcatches.coverage_n_landuses = n_landuses;
 
     for (const auto& line : lines) {
@@ -214,10 +276,11 @@ void handle_coverages(SimulationContext& ctx, const std::vector<std::string>& li
 void handle_buildup(SimulationContext& ctx, const std::vector<std::string>& lines) {
     const int n_landuses   = ctx.landuse_names.size();
     const int n_pollutants = ctx.pollutant_names.size();
-    if (n_landuses <= 0 || n_pollutants <= 0) return;
+    if (n_landuses <= 0) return;
 
     // Ensure buildup arrays are sized
-    if (ctx.buildup.n_landuses != n_landuses || ctx.buildup.n_pollutants != n_pollutants) {
+    if (n_pollutants > 0 &&
+        (ctx.buildup.n_landuses != n_landuses || ctx.buildup.n_pollutants != n_pollutants)) {
         ctx.buildup.resize(n_landuses, n_pollutants);
     }
 
@@ -230,17 +293,36 @@ void handle_buildup(SimulationContext& ctx, const std::vector<std::string>& line
         if (lu_idx < 0) continue;
 
         const int p_idx = ctx.pollutant_names.find(tok[1]);
-        if (p_idx < 0) continue;
+        if (p_idx < 0) {
+            // BW-MSX: not a pollutant — park the row by name for the
+            // reactions component's species, resolved after the component
+            // is applied (msxsurf::resolve). Same deferral as [INITIAL_QUALITY].
+            MsxSurfaceRows::Buildup r;
+            r.landuse = tok[0]; r.species = tok[1];
+            const std::string ts = Tokenizer::to_upper(tok[2]);
+            const int mbt = findmatch_prefix(ts, {"NONE", "POW", "EXP", "SAT", "EXT"});
+            r.func_type = (mbt >= 0) ? mbt : 0;
+            r.c1 = to_double(tok[3]);
+            r.c2 = to_double(tok[4]);
+            if (tok.size() > 5) {
+                if (r.func_type == 4) r.ts_name = tok[5];
+                else                  r.c3 = to_double(tok[5]);
+            }
+            if (tok.size() > 6) r.normalizer = (Tokenizer::to_upper(tok[6]) == "CURB") ? 1 : 0;
+            ctx.reactions.surface.rows.buildup.push_back(std::move(r));
+            continue;
+        }
+        if (n_pollutants <= 0) continue;
 
         const auto flat = static_cast<std::size_t>(lu_idx * n_pollutants + p_idx);
 
-        // Type: NONE=0, POW=1, EXP=2, SAT=3, EXT=4
+        // Type: NONE=0, POW=1, EXP=2, SAT=3, EXT=4 — legacy BuildupTypeWords,
+        // matched by PREFIX so the decks' POWER / EXPON / SATUR / EXTERNAL
+        // reach their stems (see findmatch_prefix).
         const std::string type_str = Tokenizer::to_upper(tok[2]);
-        if      (type_str == "POW") ctx.buildup.func_type[flat] = 1;
-        else if (type_str == "EXP") ctx.buildup.func_type[flat] = 2;
-        else if (type_str == "SAT") ctx.buildup.func_type[flat] = 3;
-        else if (type_str == "EXT") ctx.buildup.func_type[flat] = 4;
-        else                        ctx.buildup.func_type[flat] = 0;
+        const int bt = findmatch_prefix(type_str,
+                                        {"NONE", "POW", "EXP", "SAT", "EXT"});
+        ctx.buildup.func_type[flat] = (bt >= 0) ? bt : 0;
 
         ctx.buildup.coeff1[flat] = to_double(tok[3]);
         ctx.buildup.coeff2[flat] = to_double(tok[4]);
@@ -271,10 +353,11 @@ void handle_buildup(SimulationContext& ctx, const std::vector<std::string>& line
 void handle_washoff(SimulationContext& ctx, const std::vector<std::string>& lines) {
     const int n_landuses   = ctx.landuse_names.size();
     const int n_pollutants = ctx.pollutant_names.size();
-    if (n_landuses <= 0 || n_pollutants <= 0) return;
+    if (n_landuses <= 0) return;
 
     // Ensure washoff arrays are sized
-    if (ctx.washoff.n_landuses != n_landuses || ctx.washoff.n_pollutants != n_pollutants) {
+    if (n_pollutants > 0 &&
+        (ctx.washoff.n_landuses != n_landuses || ctx.washoff.n_pollutants != n_pollutants)) {
         ctx.washoff.resize(n_landuses, n_pollutants);
     }
 
@@ -287,16 +370,30 @@ void handle_washoff(SimulationContext& ctx, const std::vector<std::string>& line
         if (lu_idx < 0) continue;
 
         const int p_idx = ctx.pollutant_names.find(tok[1]);
-        if (p_idx < 0) continue;
+        if (p_idx < 0) {
+            // BW-MSX: park by name (see handle_buildup).
+            MsxSurfaceRows::Washoff r;
+            r.landuse = tok[0]; r.species = tok[1];
+            const std::string ts = Tokenizer::to_upper(tok[2]);
+            const int mwt = findmatch_prefix(ts, {"NONE", "EXP", "RC", "EMC"});
+            r.func_type = (mwt >= 0) ? mwt : 0;
+            r.coeff = to_double(tok[3]);
+            r.expon = to_double(tok[4]);
+            if (tok.size() > 5) r.sweep_effic = to_double(tok[5]);
+            if (tok.size() > 6) r.bmp_effic   = to_double(tok[6]);
+            ctx.reactions.surface.rows.washoff.push_back(std::move(r));
+            continue;
+        }
+        if (n_pollutants <= 0) continue;
 
         const auto flat = static_cast<std::size_t>(lu_idx * n_pollutants + p_idx);
 
-        // Type: NONE=0, EXP=1, RC=2, EMC=3
+        // Type: NONE=0, EXP=1, RC=2, EMC=3 — legacy WashoffTypeWords, matched
+        // by PREFIX so a deck spelling EXPON reaches EXP (see
+        // findmatch_prefix).
         const std::string type_str = Tokenizer::to_upper(tok[2]);
-        if      (type_str == "EXP") ctx.washoff.func_type[flat] = 1;
-        else if (type_str == "RC")  ctx.washoff.func_type[flat] = 2;
-        else if (type_str == "EMC") ctx.washoff.func_type[flat] = 3;
-        else                        ctx.washoff.func_type[flat] = 0;
+        const int wt = findmatch_prefix(type_str, {"NONE", "EXP", "RC", "EMC"});
+        ctx.washoff.func_type[flat] = (wt >= 0) ? wt : 0;
 
         ctx.washoff.coeff[flat] = to_double(tok[3]);
         ctx.washoff.expon[flat] = to_double(tok[4]);
@@ -349,6 +446,17 @@ void handle_treatment(SimulationContext& ctx, const std::vector<std::string>& li
 
 void handle_loadings(SimulationContext& ctx, const std::vector<std::string>& lines) {
     const int n_pollutants = ctx.pollutant_names.size();
+    // BW-MSX: rows naming a non-pollutant are parked by name for the
+    // reactions component's species (msxsurf::resolve); a deck with no
+    // [POLLUTANTS] at all may still carry MSX loadings.
+    for (const auto& line : lines) {
+        auto tok = Tokenizer::tokenize(line);
+        if (tok.size() < 3) continue;
+        if (ctx.pollutant_names.find(tok[1]) >= 0) continue;
+        MsxSurfaceRows::Loading r;
+        r.subcatch = tok[0]; r.species = tok[1]; r.value = to_double(tok[2]);
+        ctx.reactions.surface.rows.loadings.push_back(std::move(r));
+    }
     if (n_pollutants <= 0) return;
 
     // Size the quality arrays now (iteration 4): they used to be sized only
@@ -373,9 +481,78 @@ void handle_loadings(SimulationContext& ctx, const std::vector<std::string>& lin
         if (p_idx < 0) continue;
 
         const auto flat = static_cast<std::size_t>(sub_idx * n_pollutants + p_idx);
-        if (flat < ctx.subcatches.conc.size()) {
-            ctx.subcatches.conc[flat] = to_double(tok[2]);
+        // The row is an initial surface BUILDUP per unit area, not a runoff
+        // concentration — see SubcatchData::init_loading.
+        if (flat < ctx.subcatches.init_loading.size()) {
+            ctx.subcatches.init_loading[flat] = to_double(tok[2]);
         }
+    }
+}
+
+// ============================================================================
+// handle_initial_quality()
+// ============================================================================
+// [INITIAL_QUALITY] format:
+//   ;;Scope   Element   Constituent      Value
+//   NODE      J1        TSS              12.5
+//   NODE      ST1       __WATER_AGE__    6.0        ; hours
+//   LINK      C3        __TEMPERATURE__  18.5       ; degC
+//
+// Per-element initial values overriding the global [POLLUTANTS] Cinit /
+// sidecar INITIAL_STATE seeds. Element names and constituents may be defined
+// in later sections, so both resolution and constituent classification are
+// deferred to PostParseResolver (legacy two-pass parsing is order-
+// independent); only row shape is validated here, loudly.
+// ============================================================================
+
+void handle_initial_quality(SimulationContext& ctx,
+                            const std::vector<std::string>& lines) {
+    for (const auto& line : lines) {
+        auto tok = Tokenizer::tokenize(line);
+        if (tok.empty()) continue;
+        // U2: `FILE <path>` names a CSV sidecar (scope,element,constituent,
+        // value per line; header optional) read at open once the .inp
+        // directory is known (SWMMEngine::open → load_initial_quality_file).
+        if (Tokenizer::to_upper(tok[0]) == "FILE") {
+            if (tok.size() < 2) {
+                ctx.errors.push_back("[INITIAL_QUALITY] FILE needs a path.");
+                continue;
+            }
+            ctx.initial_quality.file = tok[1];
+            continue;
+        }
+        if (tok.size() < 4) {
+            ctx.errors.push_back(
+                "[INITIAL_QUALITY] row needs NODE|LINK element constituent "
+                "value: '" + line + "'.");
+            continue;
+        }
+
+        const std::string scope = Tokenizer::to_upper(tok[0]);
+        bool link = false;
+        if (scope == "LINK") {
+            link = true;
+        } else if (scope != "NODE") {
+            ctx.errors.push_back(
+                "[INITIAL_QUALITY] scope must be NODE or LINK: '" + tok[0] +
+                "'.");
+            continue;
+        }
+
+        // Value must be fully numeric — a lenient default here would turn a
+        // typo into a silent 0.0 initial condition.
+        const std::string& vs = tok[3];
+        double v = 0.0;
+        auto [p, ec] = openswmm::from_chars_double(vs.data(),
+                                                   vs.data() + vs.size(), v);
+        if (ec != std::errc{} || p != vs.data() + vs.size()) {
+            ctx.errors.push_back(
+                "[INITIAL_QUALITY] bad value '" + vs + "' for '" + tok[2] +
+                "' at " + scope + " '" + tok[1] + "'.");
+            continue;
+        }
+
+        ctx.initial_quality.add(link, tok[1], tok[2], v);
     }
 }
 

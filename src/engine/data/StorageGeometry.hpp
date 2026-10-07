@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file StorageGeometry.hpp
  * @brief Storage-shape raw parameters ⇄ area-relation coefficients, and the
@@ -22,7 +38,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_DATA_STORAGEGEOMETRY_HPP
@@ -36,8 +52,11 @@
 
 namespace openswmm {
 
-/** @brief π to the precision legacy uses (src/legacy/engine/consts.h). */
-inline constexpr double kStoragePi = 3.141592653589793;
+/** @brief π to the precision legacy uses (src/legacy/engine/consts.h:
+ *  `#define PI 3.141592654`, the same truncated literal as constants::PI).
+ *  Full double π differs by 1.3e-10 relative, enough to move a storage
+ *  unit's depth off legacy's bits from the first routing step. */
+inline constexpr double kStoragePi = 3.141592654;
 
 /**
  * @brief True when @p s is one of the four geometric shapes (i.e. its a/b/c are

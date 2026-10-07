@@ -1,0 +1,27 @@
+[0/2] Re-checking globbed directories...
+-- GLOB mismatch!
+[1/2] Re-running CMake...
+-- OpenSWMM Engine version (refactored): 6.0.0-alpha.4
+-- OpenSWMM Engine version (legacy):     5.3.0-beta.3
+-- OpenMP found and will be used for legacy engine
+-- OpenSWMM Legacy Engine: -mcpu=native enabled for arm64
+-- Searching for Homebrew OpenMP...
+-- Found Homebrew libomp at /opt/homebrew/opt/libomp
+-- OpenSWMM Engine: OpenMP enabled for parallel solver loops
+-- OpenSWMM Engine: -mcpu=native enabled for arm64
+-- OpenSWMM Engine: fast kernels OFF — bit-exact vs legacy (shipping default)
+-- OpenSWMM Engine: IPO/LTO enabled
+-- OpenSWMM Engine: 2D surface routing module enabled (explicit LTS marcher + HDF5)
+-- Enabled Kokkos devices: OPENMP;SERIAL
+-- OpenSWMM Engine: GPU plugin backend = omp (Kokkos OpenMP, Phase 1)
+-- OpenSWMM Engine: HDF5 model I/O enabled
+-- OpenSWMM Engine: GeoPackage I/O library enabled (built-in plugin)
+-- Configuring done (1.8s)
+-- Generating done (0.5s)
+-- Build files have been written to: /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/build/agent-gw
+[0/4] Re-checking globbed directories...
+[1/8] Building CXX object src/engine/CMakeFiles/openswmm_engine.dir/hydrology/SourceClockGroups.cpp.o
+[2/8] Linking CXX shared library src/engine/libopenswmm.engine.6.0.0.dylib
+[3/8] Creating library symlink src/engine/libopenswmm.engine.6.dylib src/engine/libopenswmm.engine.dylib
+[4/8] Linking CXX executable bin/Release/test_engine_2d_coupling_conservation
+[5/8] Linking CXX executable bin/Release/test_engine_2d_outfall_coupling

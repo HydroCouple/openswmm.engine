@@ -1,0 +1,50 @@
+{
+  "decision": "retain isolated; synthetic retry and culvert fallback qualified, elapsed-time scaling gate still open",
+  "qualification_runs": 32,
+  "attribution_runs": 36,
+  "clean_numerical_control_runs": 3,
+  "candidate_comparison_records": {
+    "I": 306792,
+    "R": 102264,
+    "E": 26640,
+    "CELL": 36288,
+    "REJECT": 12,
+    "H": 0,
+    "SPECIAL": 30168
+  },
+  "source_files_restored": 803,
+  "source_mismatches": [],
+  "restored_library_sha256": "4fa4454c6f5dbe83c351bbce609af7092c10780ce50a9989584b050beef540bf",
+  "accepted_library_matches": true,
+  "prior_frozen_libraries_unchanged": true,
+  "production_relevant_sha256": {
+    "src/engine/hydraulics/fv/ExplicitFvSolver.cpp": "d39c9179de13e5d40e3357b6106a6ae359798d171b726645d81812c82a2300fa",
+    "src/engine/hydraulics/fv/ExplicitFvSolver.hpp": "1e13e4c9806c81c713adc4cd9246e202163f001695579d6f30df427f48ef281b",
+    "src/engine/core/PerfTimers.hpp": "059662bfd4e91617f79f6738660994b78226b13bcfafbb5c66248c084f524e90"
+  },
+  "production_relevant_unchanged": true,
+  "library_sha256": {
+    "baseline": "6801b6bb70a9ad5ae3794f1d476d8ccc20cc62623476b8bbb974b45abf9ab212",
+    "candidate": "1cbb462f331d15735d5068c9bae480822b474c1a4a9e79509cefae8c1ca16243",
+    "attribution_baseline": "3bad2ff0f98cc7d5b7015ebc378962751e355c4f691a05b13e43c653f35a37dd",
+    "attribution_candidate": "3d52c4396c331ef8c59490fb58ec3fcb74b1ee5afe0d518700bb6b875f3c4c00"
+  },
+  "artifact_sha256": {
+    "attribution_baseline.cpp": "6b3971172966ad30ede783f866f18a58b32678a37745722e78ebea682534c921",
+    "prepare_attribution.py": "2efc89675234bc598c91d02f252437b1de5d8ed6c3d7be5fbefc3078135afaf6",
+    "candidate.patch": "ee346b9a1b91935a50ad03ca1409abc4ab93398c7af4eb0ed64c257336b8f550",
+    "final_validate.py": "d3b5af3e2e38a4a2a0751576a7f717a7805ee87e2052c66217adf15b6fecaaf4",
+    "checks.py": "b814ccdfebad3297d58616679c9d607481c4fea8feb32fba05b15b2d2607a243",
+    "candidate.cpp": "bfa95b392e13ae1b0becab5ba75455ae23a0ad6c44907edb106c603f198ba6bd",
+    "attribution_baseline.patch": "b9d139642536c580b5841c7ebe9e5a0aa937a0b99dc038ba03a34fc9e315b2e6",
+    "baseline.patch": "4a85b21fe2e62dccb0aa293a286999ae47c984b7a7c25dc41d27c16038e5bcf9",
+    "attribution.py": "83fd0b5059259b8f085f8f9cd6959f47af58ae4c1a625d68d02240d381dc5b70",
+    "baseline.cpp": "2be3091e0b1037e64c8ea91ac315186903a1b6e5fdea7789826a1cde7e114b00",
+    "attribution_candidate.cpp": "6718e8a57f7c6f8b39901755a5161c61b6971c57115404bc5223d005dd401a83",
+    "validate_attribution.py": "757823ff4e0e093a947eef32872cb1c62916eb90cf385bec4532e0f593a75733",
+    "prepare.py": "ce518e5e1a5f656421f9dd0fd66a1378bc415c6d88c1bfbb3d1f2bb5d7f66931",
+    "attribution_candidate.patch": "b9d139642536c580b5841c7ebe9e5a0aa937a0b99dc038ba03a34fc9e315b2e6"
+  },
+  "root_head": "d4e4fef8010f5a34dc404547b2b3ea269547ccdb",
+  "commit_created": false
+}

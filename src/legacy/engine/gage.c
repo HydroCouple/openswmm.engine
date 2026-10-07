@@ -260,14 +260,19 @@ void  gage_validate(int gageIndex)
         {
             report_writeErrorMsg(ERR_RAIN_GAGE_TSERIES, Gage[gageIndex].ID);
         }
-        gageInterval = (int)(floor(Tseries[k].dxMin*SECperDAY + 0.5));
-        if ( gageInterval > 0 && Gage[gageIndex].rainInterval > gageInterval )
+        // --- a single-point time series never updates dxMin from its BIG
+        //     sentinel, so it has no meaningful recording interval to check
+        if ( Tseries[k].dxMin < BIG )
         {
-            report_writeErrorMsg(ERR_RAIN_GAGE_INTERVAL, Gage[gageIndex].ID);
-        } 
-        if ( Gage[gageIndex].rainInterval < gageInterval )
-        {
-            report_writeWarningMsg(WARN09, Gage[gageIndex].ID);
+            gageInterval = (int)(floor(Tseries[k].dxMin*SECperDAY + 0.5));
+            if ( gageInterval > 0 && Gage[gageIndex].rainInterval > gageInterval )
+            {
+                report_writeErrorMsg(ERR_RAIN_GAGE_INTERVAL, Gage[gageIndex].ID);
+            }
+            if ( Gage[gageIndex].rainInterval < gageInterval )
+            {
+                report_writeWarningMsg(WARN09, Gage[gageIndex].ID);
+            }
         }
         if ( Gage[gageIndex].rainInterval < WetStep )
         {

@@ -1,0 +1,3658 @@
+[
+  {
+    "name": "free_global_baseline_t1",
+    "label": "baseline",
+    "case": "free",
+    "rejection": "global",
+    "threads": 1,
+    "observed_teams": [
+      1
+    ],
+    "records": {
+      "I": 5904,
+      "R": 1968,
+      "E": 672,
+      "REJECT": 1,
+      "CELL": 2592
+    },
+    "restore_cell_records": 96,
+    "specials": [],
+    "profile": {
+      "step": 0.0243,
+      "total": 0.0207,
+      "census": 0.0002,
+      "flux": 0.0004,
+      "nodesolve": 0.0193,
+      "positivity": 0.0,
+      "cellupdate": 0.0005,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0001,
+      "savestate": 0.0,
+      "restore": 0.0001,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0001,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0,
+      "settle": 0.0,
+      "tier": 0.0,
+      "n.substep": 27.0,
+      "n.census": 55.0,
+      "n.censusface": 6600.0,
+      "n.invert": 2976.0,
+      "n.savestate": 28.0,
+      "n.rollback": 1.0,
+      "n.structrefresh": 27.0,
+      "n.algvisit": 224.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 224.0,
+      "n.algresidual": 1968.0,
+      "n.algfaceflux": 5904.0,
+      "n.area": 18120.0,
+      "n.width": 18120.0,
+      "n.i1": 10896.0,
+      "n.hydrad": 2688.0,
+      "n.macro": 0.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0357,
+      "algresid_per_solve": 8.79,
+      "algflux_per_solve": 26.36
+    },
+    "signature": {
+      "nodes": {
+        "0": "c885420cf0a08c0e1e96cd2fbe3dcdafbf7a30c2ba54ddd3ac2837df1240ae9f",
+        "1": "b58919ccb19e83d3351b52683d7caa68d96c63533a0755d3617ea1f0a768781d",
+        "2": "9a0fce852fc1eaebc9efadcc74b16555f5087aba335d30c22d054b5545a57a40",
+        "3": "3e230b3d1b6d34a4961d42c98da9a3dc9e54a8213b25b464be60f27f1d5cbc06",
+        "4": "4c2580131b68b6fdfb57715acab591f4d6dbe342205f6042cbc31bbe4c139f00",
+        "5": "215a3af04cefc9ec876614e7725e86819fc02402b1d0f1b740156d7a42176f97",
+        "6": "33d99322a0aa70c0fe7ce22e625d134ec6490c99d8b779b8fc8e6e2ee9b3a38a",
+        "7": "fcad15a3d6c1354a4f17c355934c813c6687333329f1dba35a3cc8d3aec62b86"
+      },
+      "serial": "b912b60e30ccb3b335ede24737b1d36a467603a01ee505dfdc545e07cd14a0b5",
+      "output": "e4067656e8ae6201ce886dcf3ece922c229192b0d3a56d2de1da1988263bc074",
+      "schedule": "ecbc9ba8a8ec0eb8a25e72439d48b3ea834905c90be6c59aa1afda2c2a70e025",
+      "counts": {
+        "n.substep": 27.0,
+        "n.census": 55.0,
+        "n.censusface": 6600.0,
+        "n.invert": 2976.0,
+        "n.savestate": 28.0,
+        "n.rollback": 1.0,
+        "n.structrefresh": 27.0,
+        "n.algvisit": 224.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 224.0,
+        "n.algresidual": 1968.0,
+        "n.algfaceflux": 5904.0,
+        "n.hydrad": 2688.0,
+        "n.macro": 0.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "free_global_candidate_t1",
+    "label": "candidate",
+    "case": "free",
+    "rejection": "global",
+    "threads": 1,
+    "observed_teams": [
+      1
+    ],
+    "records": {
+      "I": 5904,
+      "R": 1968,
+      "E": 672,
+      "REJECT": 1,
+      "CELL": 2592
+    },
+    "restore_cell_records": 96,
+    "specials": [],
+    "profile": {
+      "step": 0.0642,
+      "total": 0.0578,
+      "census": 0.0001,
+      "flux": 0.0003,
+      "nodesolve": 0.0566,
+      "positivity": 0.0,
+      "cellupdate": 0.0005,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0,
+      "savestate": 0.0,
+      "restore": 0.0002,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0,
+      "settle": 0.0,
+      "tier": 0.0,
+      "n.substep": 27.0,
+      "n.census": 55.0,
+      "n.censusface": 6600.0,
+      "n.invert": 2976.0,
+      "n.savestate": 28.0,
+      "n.rollback": 1.0,
+      "n.structrefresh": 27.0,
+      "n.algvisit": 224.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 224.0,
+      "n.algresidual": 1968.0,
+      "n.algfaceflux": 5904.0,
+      "n.area": 18120.0,
+      "n.width": 18120.0,
+      "n.i1": 10896.0,
+      "n.hydrad": 2688.0,
+      "n.macro": 0.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0357,
+      "algresid_per_solve": 8.79,
+      "algflux_per_solve": 26.36
+    },
+    "signature": {
+      "nodes": {
+        "0": "c885420cf0a08c0e1e96cd2fbe3dcdafbf7a30c2ba54ddd3ac2837df1240ae9f",
+        "1": "b58919ccb19e83d3351b52683d7caa68d96c63533a0755d3617ea1f0a768781d",
+        "2": "9a0fce852fc1eaebc9efadcc74b16555f5087aba335d30c22d054b5545a57a40",
+        "3": "3e230b3d1b6d34a4961d42c98da9a3dc9e54a8213b25b464be60f27f1d5cbc06",
+        "4": "4c2580131b68b6fdfb57715acab591f4d6dbe342205f6042cbc31bbe4c139f00",
+        "5": "215a3af04cefc9ec876614e7725e86819fc02402b1d0f1b740156d7a42176f97",
+        "6": "33d99322a0aa70c0fe7ce22e625d134ec6490c99d8b779b8fc8e6e2ee9b3a38a",
+        "7": "fcad15a3d6c1354a4f17c355934c813c6687333329f1dba35a3cc8d3aec62b86"
+      },
+      "serial": "b912b60e30ccb3b335ede24737b1d36a467603a01ee505dfdc545e07cd14a0b5",
+      "output": "e4067656e8ae6201ce886dcf3ece922c229192b0d3a56d2de1da1988263bc074",
+      "schedule": "ecbc9ba8a8ec0eb8a25e72439d48b3ea834905c90be6c59aa1afda2c2a70e025",
+      "counts": {
+        "n.substep": 27.0,
+        "n.census": 55.0,
+        "n.censusface": 6600.0,
+        "n.invert": 2976.0,
+        "n.savestate": 28.0,
+        "n.rollback": 1.0,
+        "n.structrefresh": 27.0,
+        "n.algvisit": 224.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 224.0,
+        "n.algresidual": 1968.0,
+        "n.algfaceflux": 5904.0,
+        "n.hydrad": 2688.0,
+        "n.macro": 0.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "free_global_candidate_t4",
+    "label": "candidate",
+    "case": "free",
+    "rejection": "global",
+    "threads": 4,
+    "observed_teams": [
+      4
+    ],
+    "records": {
+      "I": 5904,
+      "R": 1968,
+      "E": 672,
+      "REJECT": 1,
+      "CELL": 2592
+    },
+    "restore_cell_records": 96,
+    "specials": [],
+    "profile": {
+      "step": 0.0705,
+      "total": 0.0668,
+      "census": 0.0001,
+      "flux": 0.0002,
+      "nodesolve": 0.0644,
+      "positivity": 0.0011,
+      "cellupdate": 0.0008,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0,
+      "savestate": 0.0,
+      "restore": 0.0001,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0001,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0,
+      "settle": 0.0,
+      "tier": 0.0,
+      "n.substep": 27.0,
+      "n.census": 55.0,
+      "n.censusface": 6600.0,
+      "n.invert": 2976.0,
+      "n.savestate": 28.0,
+      "n.rollback": 1.0,
+      "n.structrefresh": 27.0,
+      "n.algvisit": 224.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 224.0,
+      "n.algresidual": 1968.0,
+      "n.algfaceflux": 5904.0,
+      "n.area": 18120.0,
+      "n.width": 18120.0,
+      "n.i1": 10896.0,
+      "n.hydrad": 2688.0,
+      "n.macro": 0.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0357,
+      "algresid_per_solve": 8.79,
+      "algflux_per_solve": 26.36
+    },
+    "signature": {
+      "nodes": {
+        "0": "c885420cf0a08c0e1e96cd2fbe3dcdafbf7a30c2ba54ddd3ac2837df1240ae9f",
+        "1": "b58919ccb19e83d3351b52683d7caa68d96c63533a0755d3617ea1f0a768781d",
+        "2": "9a0fce852fc1eaebc9efadcc74b16555f5087aba335d30c22d054b5545a57a40",
+        "3": "3e230b3d1b6d34a4961d42c98da9a3dc9e54a8213b25b464be60f27f1d5cbc06",
+        "4": "4c2580131b68b6fdfb57715acab591f4d6dbe342205f6042cbc31bbe4c139f00",
+        "5": "215a3af04cefc9ec876614e7725e86819fc02402b1d0f1b740156d7a42176f97",
+        "6": "33d99322a0aa70c0fe7ce22e625d134ec6490c99d8b779b8fc8e6e2ee9b3a38a",
+        "7": "fcad15a3d6c1354a4f17c355934c813c6687333329f1dba35a3cc8d3aec62b86"
+      },
+      "serial": "b912b60e30ccb3b335ede24737b1d36a467603a01ee505dfdc545e07cd14a0b5",
+      "output": "e4067656e8ae6201ce886dcf3ece922c229192b0d3a56d2de1da1988263bc074",
+      "schedule": "ecbc9ba8a8ec0eb8a25e72439d48b3ea834905c90be6c59aa1afda2c2a70e025",
+      "counts": {
+        "n.substep": 27.0,
+        "n.census": 55.0,
+        "n.censusface": 6600.0,
+        "n.invert": 2976.0,
+        "n.savestate": 28.0,
+        "n.rollback": 1.0,
+        "n.structrefresh": 27.0,
+        "n.algvisit": 224.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 224.0,
+        "n.algresidual": 1968.0,
+        "n.algfaceflux": 5904.0,
+        "n.hydrad": 2688.0,
+        "n.macro": 0.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "free_global_candidate_t8",
+    "label": "candidate",
+    "case": "free",
+    "rejection": "global",
+    "threads": 8,
+    "observed_teams": [
+      8
+    ],
+    "records": {
+      "I": 5904,
+      "R": 1968,
+      "E": 672,
+      "REJECT": 1,
+      "CELL": 2592
+    },
+    "restore_cell_records": 96,
+    "specials": [],
+    "profile": {
+      "step": 0.0635,
+      "total": 0.0599,
+      "census": 0.0003,
+      "flux": 0.0003,
+      "nodesolve": 0.0582,
+      "positivity": 0.0,
+      "cellupdate": 0.0008,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0,
+      "savestate": 0.0,
+      "restore": 0.0001,
+      "structrefresh": 0.0001,
+      "bndcallback": 0.0,
+      "rebuild": 0.0,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0,
+      "settle": 0.0,
+      "tier": 0.0,
+      "n.substep": 27.0,
+      "n.census": 55.0,
+      "n.censusface": 6600.0,
+      "n.invert": 2976.0,
+      "n.savestate": 28.0,
+      "n.rollback": 1.0,
+      "n.structrefresh": 27.0,
+      "n.algvisit": 224.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 224.0,
+      "n.algresidual": 1968.0,
+      "n.algfaceflux": 5904.0,
+      "n.area": 18120.0,
+      "n.width": 18120.0,
+      "n.i1": 10896.0,
+      "n.hydrad": 2688.0,
+      "n.macro": 0.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0357,
+      "algresid_per_solve": 8.79,
+      "algflux_per_solve": 26.36
+    },
+    "signature": {
+      "nodes": {
+        "0": "c885420cf0a08c0e1e96cd2fbe3dcdafbf7a30c2ba54ddd3ac2837df1240ae9f",
+        "2": "9a0fce852fc1eaebc9efadcc74b16555f5087aba335d30c22d054b5545a57a40",
+        "3": "3e230b3d1b6d34a4961d42c98da9a3dc9e54a8213b25b464be60f27f1d5cbc06",
+        "4": "4c2580131b68b6fdfb57715acab591f4d6dbe342205f6042cbc31bbe4c139f00",
+        "5": "215a3af04cefc9ec876614e7725e86819fc02402b1d0f1b740156d7a42176f97",
+        "6": "33d99322a0aa70c0fe7ce22e625d134ec6490c99d8b779b8fc8e6e2ee9b3a38a",
+        "7": "fcad15a3d6c1354a4f17c355934c813c6687333329f1dba35a3cc8d3aec62b86",
+        "1": "b58919ccb19e83d3351b52683d7caa68d96c63533a0755d3617ea1f0a768781d"
+      },
+      "serial": "b912b60e30ccb3b335ede24737b1d36a467603a01ee505dfdc545e07cd14a0b5",
+      "output": "e4067656e8ae6201ce886dcf3ece922c229192b0d3a56d2de1da1988263bc074",
+      "schedule": "ecbc9ba8a8ec0eb8a25e72439d48b3ea834905c90be6c59aa1afda2c2a70e025",
+      "counts": {
+        "n.substep": 27.0,
+        "n.census": 55.0,
+        "n.censusface": 6600.0,
+        "n.invert": 2976.0,
+        "n.savestate": 28.0,
+        "n.rollback": 1.0,
+        "n.structrefresh": 27.0,
+        "n.algvisit": 224.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 224.0,
+        "n.algresidual": 1968.0,
+        "n.algfaceflux": 5904.0,
+        "n.hydrad": 2688.0,
+        "n.macro": 0.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "free_rk2_global_baseline_t1",
+    "label": "baseline",
+    "case": "free_rk2",
+    "rejection": "global",
+    "threads": 1,
+    "observed_teams": [
+      1
+    ],
+    "records": {
+      "I": 12408,
+      "R": 4136,
+      "E": 1344,
+      "REJECT": 1,
+      "CELL": 2592
+    },
+    "restore_cell_records": 96,
+    "specials": [],
+    "profile": {
+      "step": 0.0656,
+      "total": 0.0606,
+      "census": 0.0002,
+      "flux": 0.001,
+      "nodesolve": 0.0574,
+      "positivity": 0.0001,
+      "cellupdate": 0.0012,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0004,
+      "savestate": 0.0,
+      "restore": 0.0002,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0001,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0,
+      "settle": 0.0,
+      "tier": 0.0,
+      "n.substep": 54.0,
+      "n.census": 55.0,
+      "n.censusface": 6600.0,
+      "n.invert": 8352.0,
+      "n.savestate": 28.0,
+      "n.rollback": 1.0,
+      "n.structrefresh": 27.0,
+      "n.algvisit": 448.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 448.0,
+      "n.algresidual": 4136.0,
+      "n.algfaceflux": 12408.0,
+      "n.area": 37152.0,
+      "n.width": 37152.0,
+      "n.i1": 24792.0,
+      "n.hydrad": 5376.0,
+      "n.macro": 0.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0357,
+      "algresid_per_solve": 9.23,
+      "algflux_per_solve": 27.7
+    },
+    "signature": {
+      "nodes": {
+        "0": "2cbcc93a577f8e1cbd7c45f306539339015ae5e73c5087911b2fa23e0023fc8c",
+        "1": "7e67ebe3e90a488bafc5e990ca0cc9c9fa75a53cbff7735f824766db2a469d35",
+        "2": "e75c4ce51ea5289559e3ed24ba9c9443c4d52d39e2b49508646cde377c083ecf",
+        "3": "672bfb457b07fabf4f1d9604d9d8b7c31a821ecfb73bc26bc66a7686c3c59a56",
+        "4": "016770c25925bdfe6b7f68b664d17c6c400c1c863b5f60b32f334f5b4e390444",
+        "5": "62cf8b6a6d4ae91aa118655a3db80bcdcb3a99b47c3c3d1330be31276a3b1c81",
+        "6": "01951108d203a66da51884bb43cadfc15ea7782159568e62f20b2987ebe83f98",
+        "7": "70dc64ebe01a0362d9b503318667b16e248676e978acafea91138cbe45a47418"
+      },
+      "serial": "bad20cd6576b433c715d9348fd2a18363aebfbf39599769cc8f3ccbbbb2c9071",
+      "output": "8c51178193d891bdd5aa5631b15fe0004bd303dfc24d0393b4a618837168b012",
+      "schedule": "ecbc9ba8a8ec0eb8a25e72439d48b3ea834905c90be6c59aa1afda2c2a70e025",
+      "counts": {
+        "n.substep": 54.0,
+        "n.census": 55.0,
+        "n.censusface": 6600.0,
+        "n.invert": 8352.0,
+        "n.savestate": 28.0,
+        "n.rollback": 1.0,
+        "n.structrefresh": 27.0,
+        "n.algvisit": 448.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 448.0,
+        "n.algresidual": 4136.0,
+        "n.algfaceflux": 12408.0,
+        "n.hydrad": 5376.0,
+        "n.macro": 0.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "free_rk2_global_candidate_t1",
+    "label": "candidate",
+    "case": "free_rk2",
+    "rejection": "global",
+    "threads": 1,
+    "observed_teams": [
+      1
+    ],
+    "records": {
+      "I": 12408,
+      "R": 4136,
+      "E": 1344,
+      "REJECT": 1,
+      "CELL": 2592
+    },
+    "restore_cell_records": 96,
+    "specials": [],
+    "profile": {
+      "step": 0.0629,
+      "total": 0.0576,
+      "census": 0.0002,
+      "flux": 0.0007,
+      "nodesolve": 0.0548,
+      "positivity": 0.0001,
+      "cellupdate": 0.0012,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0005,
+      "savestate": 0.0,
+      "restore": 0.0001,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0001,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0,
+      "settle": 0.0,
+      "tier": 0.0,
+      "n.substep": 54.0,
+      "n.census": 55.0,
+      "n.censusface": 6600.0,
+      "n.invert": 8352.0,
+      "n.savestate": 28.0,
+      "n.rollback": 1.0,
+      "n.structrefresh": 27.0,
+      "n.algvisit": 448.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 448.0,
+      "n.algresidual": 4136.0,
+      "n.algfaceflux": 12408.0,
+      "n.area": 37152.0,
+      "n.width": 37152.0,
+      "n.i1": 24792.0,
+      "n.hydrad": 5376.0,
+      "n.macro": 0.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0357,
+      "algresid_per_solve": 9.23,
+      "algflux_per_solve": 27.7
+    },
+    "signature": {
+      "nodes": {
+        "0": "2cbcc93a577f8e1cbd7c45f306539339015ae5e73c5087911b2fa23e0023fc8c",
+        "1": "7e67ebe3e90a488bafc5e990ca0cc9c9fa75a53cbff7735f824766db2a469d35",
+        "2": "e75c4ce51ea5289559e3ed24ba9c9443c4d52d39e2b49508646cde377c083ecf",
+        "3": "672bfb457b07fabf4f1d9604d9d8b7c31a821ecfb73bc26bc66a7686c3c59a56",
+        "4": "016770c25925bdfe6b7f68b664d17c6c400c1c863b5f60b32f334f5b4e390444",
+        "5": "62cf8b6a6d4ae91aa118655a3db80bcdcb3a99b47c3c3d1330be31276a3b1c81",
+        "6": "01951108d203a66da51884bb43cadfc15ea7782159568e62f20b2987ebe83f98",
+        "7": "70dc64ebe01a0362d9b503318667b16e248676e978acafea91138cbe45a47418"
+      },
+      "serial": "bad20cd6576b433c715d9348fd2a18363aebfbf39599769cc8f3ccbbbb2c9071",
+      "output": "8c51178193d891bdd5aa5631b15fe0004bd303dfc24d0393b4a618837168b012",
+      "schedule": "ecbc9ba8a8ec0eb8a25e72439d48b3ea834905c90be6c59aa1afda2c2a70e025",
+      "counts": {
+        "n.substep": 54.0,
+        "n.census": 55.0,
+        "n.censusface": 6600.0,
+        "n.invert": 8352.0,
+        "n.savestate": 28.0,
+        "n.rollback": 1.0,
+        "n.structrefresh": 27.0,
+        "n.algvisit": 448.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 448.0,
+        "n.algresidual": 4136.0,
+        "n.algfaceflux": 12408.0,
+        "n.hydrad": 5376.0,
+        "n.macro": 0.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "free_rk2_global_candidate_t4",
+    "label": "candidate",
+    "case": "free_rk2",
+    "rejection": "global",
+    "threads": 4,
+    "observed_teams": [
+      4
+    ],
+    "records": {
+      "I": 12408,
+      "R": 4136,
+      "E": 1344,
+      "REJECT": 1,
+      "CELL": 2592
+    },
+    "restore_cell_records": 96,
+    "specials": [],
+    "profile": {
+      "step": 0.1698,
+      "total": 0.1595,
+      "census": 0.0005,
+      "flux": 0.001,
+      "nodesolve": 0.1532,
+      "positivity": 0.0002,
+      "cellupdate": 0.004,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0004,
+      "savestate": 0.0,
+      "restore": 0.0002,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0001,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0,
+      "settle": 0.0,
+      "tier": 0.0,
+      "n.substep": 54.0,
+      "n.census": 55.0,
+      "n.censusface": 6600.0,
+      "n.invert": 8352.0,
+      "n.savestate": 28.0,
+      "n.rollback": 1.0,
+      "n.structrefresh": 27.0,
+      "n.algvisit": 448.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 448.0,
+      "n.algresidual": 4136.0,
+      "n.algfaceflux": 12408.0,
+      "n.area": 37152.0,
+      "n.width": 37152.0,
+      "n.i1": 24792.0,
+      "n.hydrad": 5376.0,
+      "n.macro": 0.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0357,
+      "algresid_per_solve": 9.23,
+      "algflux_per_solve": 27.7
+    },
+    "signature": {
+      "nodes": {
+        "0": "2cbcc93a577f8e1cbd7c45f306539339015ae5e73c5087911b2fa23e0023fc8c",
+        "1": "7e67ebe3e90a488bafc5e990ca0cc9c9fa75a53cbff7735f824766db2a469d35",
+        "2": "e75c4ce51ea5289559e3ed24ba9c9443c4d52d39e2b49508646cde377c083ecf",
+        "3": "672bfb457b07fabf4f1d9604d9d8b7c31a821ecfb73bc26bc66a7686c3c59a56",
+        "4": "016770c25925bdfe6b7f68b664d17c6c400c1c863b5f60b32f334f5b4e390444",
+        "5": "62cf8b6a6d4ae91aa118655a3db80bcdcb3a99b47c3c3d1330be31276a3b1c81",
+        "6": "01951108d203a66da51884bb43cadfc15ea7782159568e62f20b2987ebe83f98",
+        "7": "70dc64ebe01a0362d9b503318667b16e248676e978acafea91138cbe45a47418"
+      },
+      "serial": "bad20cd6576b433c715d9348fd2a18363aebfbf39599769cc8f3ccbbbb2c9071",
+      "output": "8c51178193d891bdd5aa5631b15fe0004bd303dfc24d0393b4a618837168b012",
+      "schedule": "ecbc9ba8a8ec0eb8a25e72439d48b3ea834905c90be6c59aa1afda2c2a70e025",
+      "counts": {
+        "n.substep": 54.0,
+        "n.census": 55.0,
+        "n.censusface": 6600.0,
+        "n.invert": 8352.0,
+        "n.savestate": 28.0,
+        "n.rollback": 1.0,
+        "n.structrefresh": 27.0,
+        "n.algvisit": 448.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 448.0,
+        "n.algresidual": 4136.0,
+        "n.algfaceflux": 12408.0,
+        "n.hydrad": 5376.0,
+        "n.macro": 0.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "free_rk2_global_candidate_t8",
+    "label": "candidate",
+    "case": "free_rk2",
+    "rejection": "global",
+    "threads": 8,
+    "observed_teams": [
+      8
+    ],
+    "records": {
+      "I": 12408,
+      "R": 4136,
+      "E": 1344,
+      "REJECT": 1,
+      "CELL": 2592
+    },
+    "restore_cell_records": 96,
+    "specials": [],
+    "profile": {
+      "step": 0.1303,
+      "total": 0.1253,
+      "census": 0.0001,
+      "flux": 0.0006,
+      "nodesolve": 0.1222,
+      "positivity": 0.0001,
+      "cellupdate": 0.0012,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0009,
+      "savestate": 0.0,
+      "restore": 0.0001,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0001,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0,
+      "settle": 0.0,
+      "tier": 0.0,
+      "n.substep": 54.0,
+      "n.census": 55.0,
+      "n.censusface": 6600.0,
+      "n.invert": 8352.0,
+      "n.savestate": 28.0,
+      "n.rollback": 1.0,
+      "n.structrefresh": 27.0,
+      "n.algvisit": 448.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 448.0,
+      "n.algresidual": 4136.0,
+      "n.algfaceflux": 12408.0,
+      "n.area": 37152.0,
+      "n.width": 37152.0,
+      "n.i1": 24792.0,
+      "n.hydrad": 5376.0,
+      "n.macro": 0.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0357,
+      "algresid_per_solve": 9.23,
+      "algflux_per_solve": 27.7
+    },
+    "signature": {
+      "nodes": {
+        "0": "2cbcc93a577f8e1cbd7c45f306539339015ae5e73c5087911b2fa23e0023fc8c",
+        "1": "7e67ebe3e90a488bafc5e990ca0cc9c9fa75a53cbff7735f824766db2a469d35",
+        "2": "e75c4ce51ea5289559e3ed24ba9c9443c4d52d39e2b49508646cde377c083ecf",
+        "3": "672bfb457b07fabf4f1d9604d9d8b7c31a821ecfb73bc26bc66a7686c3c59a56",
+        "4": "016770c25925bdfe6b7f68b664d17c6c400c1c863b5f60b32f334f5b4e390444",
+        "5": "62cf8b6a6d4ae91aa118655a3db80bcdcb3a99b47c3c3d1330be31276a3b1c81",
+        "6": "01951108d203a66da51884bb43cadfc15ea7782159568e62f20b2987ebe83f98",
+        "7": "70dc64ebe01a0362d9b503318667b16e248676e978acafea91138cbe45a47418"
+      },
+      "serial": "bad20cd6576b433c715d9348fd2a18363aebfbf39599769cc8f3ccbbbb2c9071",
+      "output": "8c51178193d891bdd5aa5631b15fe0004bd303dfc24d0393b4a618837168b012",
+      "schedule": "ecbc9ba8a8ec0eb8a25e72439d48b3ea834905c90be6c59aa1afda2c2a70e025",
+      "counts": {
+        "n.substep": 54.0,
+        "n.census": 55.0,
+        "n.censusface": 6600.0,
+        "n.invert": 8352.0,
+        "n.savestate": 28.0,
+        "n.rollback": 1.0,
+        "n.structrefresh": 27.0,
+        "n.algvisit": 448.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 448.0,
+        "n.algresidual": 4136.0,
+        "n.algfaceflux": 12408.0,
+        "n.hydrad": 5376.0,
+        "n.macro": 0.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "transition_tpa_global_baseline_t1",
+    "label": "baseline",
+    "case": "transition_tpa",
+    "rejection": "global",
+    "threads": 1,
+    "observed_teams": [
+      1
+    ],
+    "records": {
+      "I": 33888,
+      "R": 11296,
+      "E": 2616,
+      "REJECT": 1,
+      "CELL": 2688
+    },
+    "restore_cell_records": 96,
+    "specials": [],
+    "profile": {
+      "step": 0.1648,
+      "total": 0.1568,
+      "census": 0.0008,
+      "flux": 0.0011,
+      "nodesolve": 0.151,
+      "positivity": 0.0002,
+      "cellupdate": 0.0025,
+      "nodeupdate": 0.0001,
+      "refreshdepths": 0.0002,
+      "savestate": 0.0001,
+      "restore": 0.0002,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0007,
+      "rebuild": 0.0001,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0,
+      "settle": 0.0,
+      "tier": 0.0,
+      "n.substep": 108.0,
+      "n.census": 217.0,
+      "n.censusface": 26040.0,
+      "n.invert": 13248.0,
+      "n.savestate": 109.0,
+      "n.rollback": 1.0,
+      "n.structrefresh": 108.0,
+      "n.algvisit": 872.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 872.0,
+      "n.algresidual": 11296.0,
+      "n.algfaceflux": 33888.0,
+      "n.area": 87040.0,
+      "n.width": 87040.0,
+      "n.i1": 47872.0,
+      "n.hydrad": 10464.0,
+      "n.macro": 0.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0092,
+      "algresid_per_solve": 12.95,
+      "algflux_per_solve": 38.86
+    },
+    "signature": {
+      "nodes": {
+        "0": "0e14f7834d423ef72d6c02a8057bfbacd53bacb4b644de403c76c162131f91f5",
+        "1": "7d2fc5485b92fce96f4e469d4e52193920211b5c11d64b6ca9d7f01a2cffb63a",
+        "2": "deb152b5f7f9aeb96559a9c08e642e2287ae13809c3ab04664bd7a6aa9ea5061",
+        "3": "f588252872a7203f10d123ff8fd9c5ce34e423381ffaa94778d4c8f2b5fd748a",
+        "4": "7423734f045a0c454277329a9efe54e079f1273b02bd30d659fe424f2350495f",
+        "5": "ff988a16e08df6c57cb4cc89fd10e3b9e8ab002b993ffb88b582680ceb1200f7",
+        "6": "10a866a419b4c3947087f4b70f6b94671300351a7fdcd32589d215a8f461e60e",
+        "7": "dccd2d66742dcc690b280ee1c6d126b51b43751e86a1b5962e9849962791ad45"
+      },
+      "serial": "879e762d72dc900d6c29467921eefeeb15b868db15bed267b4fc7ea4fd61690b",
+      "output": "19c3c70c9bb2e29e24cdc5609202f5c7457dbea59ed9662d39661dc858b5ecba",
+      "schedule": "b90eb56e6a0881ccf4c5e09f966d44830b5ba412c17438fabedf1403761cc06f",
+      "counts": {
+        "n.substep": 108.0,
+        "n.census": 217.0,
+        "n.censusface": 26040.0,
+        "n.invert": 13248.0,
+        "n.savestate": 109.0,
+        "n.rollback": 1.0,
+        "n.structrefresh": 108.0,
+        "n.algvisit": 872.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 872.0,
+        "n.algresidual": 11296.0,
+        "n.algfaceflux": 33888.0,
+        "n.hydrad": 10464.0,
+        "n.macro": 0.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": 0.0
+  },
+  {
+    "name": "transition_tpa_global_candidate_t1",
+    "label": "candidate",
+    "case": "transition_tpa",
+    "rejection": "global",
+    "threads": 1,
+    "observed_teams": [
+      1
+    ],
+    "records": {
+      "I": 33888,
+      "R": 11296,
+      "E": 2616,
+      "REJECT": 1,
+      "CELL": 2688
+    },
+    "restore_cell_records": 96,
+    "specials": [],
+    "profile": {
+      "step": 0.1537,
+      "total": 0.147,
+      "census": 0.001,
+      "flux": 0.0015,
+      "nodesolve": 0.1406,
+      "positivity": 0.0002,
+      "cellupdate": 0.0018,
+      "nodeupdate": 0.0002,
+      "refreshdepths": 0.0002,
+      "savestate": 0.0001,
+      "restore": 0.0001,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0011,
+      "rebuild": 0.0002,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0,
+      "settle": 0.0,
+      "tier": 0.0,
+      "n.substep": 108.0,
+      "n.census": 217.0,
+      "n.censusface": 26040.0,
+      "n.invert": 13248.0,
+      "n.savestate": 109.0,
+      "n.rollback": 1.0,
+      "n.structrefresh": 108.0,
+      "n.algvisit": 872.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 872.0,
+      "n.algresidual": 11296.0,
+      "n.algfaceflux": 33888.0,
+      "n.area": 87040.0,
+      "n.width": 87040.0,
+      "n.i1": 47872.0,
+      "n.hydrad": 10464.0,
+      "n.macro": 0.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0092,
+      "algresid_per_solve": 12.95,
+      "algflux_per_solve": 38.86
+    },
+    "signature": {
+      "nodes": {
+        "0": "0e14f7834d423ef72d6c02a8057bfbacd53bacb4b644de403c76c162131f91f5",
+        "1": "7d2fc5485b92fce96f4e469d4e52193920211b5c11d64b6ca9d7f01a2cffb63a",
+        "2": "deb152b5f7f9aeb96559a9c08e642e2287ae13809c3ab04664bd7a6aa9ea5061",
+        "3": "f588252872a7203f10d123ff8fd9c5ce34e423381ffaa94778d4c8f2b5fd748a",
+        "4": "7423734f045a0c454277329a9efe54e079f1273b02bd30d659fe424f2350495f",
+        "5": "ff988a16e08df6c57cb4cc89fd10e3b9e8ab002b993ffb88b582680ceb1200f7",
+        "6": "10a866a419b4c3947087f4b70f6b94671300351a7fdcd32589d215a8f461e60e",
+        "7": "dccd2d66742dcc690b280ee1c6d126b51b43751e86a1b5962e9849962791ad45"
+      },
+      "serial": "879e762d72dc900d6c29467921eefeeb15b868db15bed267b4fc7ea4fd61690b",
+      "output": "19c3c70c9bb2e29e24cdc5609202f5c7457dbea59ed9662d39661dc858b5ecba",
+      "schedule": "b90eb56e6a0881ccf4c5e09f966d44830b5ba412c17438fabedf1403761cc06f",
+      "counts": {
+        "n.substep": 108.0,
+        "n.census": 217.0,
+        "n.censusface": 26040.0,
+        "n.invert": 13248.0,
+        "n.savestate": 109.0,
+        "n.rollback": 1.0,
+        "n.structrefresh": 108.0,
+        "n.algvisit": 872.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 872.0,
+        "n.algresidual": 11296.0,
+        "n.algfaceflux": 33888.0,
+        "n.hydrad": 10464.0,
+        "n.macro": 0.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": 0.0
+  },
+  {
+    "name": "transition_tpa_global_candidate_t4",
+    "label": "candidate",
+    "case": "transition_tpa",
+    "rejection": "global",
+    "threads": 4,
+    "observed_teams": [
+      4
+    ],
+    "records": {
+      "I": 33888,
+      "R": 11296,
+      "E": 2616,
+      "REJECT": 1,
+      "CELL": 2688
+    },
+    "restore_cell_records": 96,
+    "specials": [],
+    "profile": {
+      "step": 0.2548,
+      "total": 0.2472,
+      "census": 0.0009,
+      "flux": 0.0019,
+      "nodesolve": 0.2399,
+      "positivity": 0.0002,
+      "cellupdate": 0.0023,
+      "nodeupdate": 0.0001,
+      "refreshdepths": 0.0003,
+      "savestate": 0.0001,
+      "restore": 0.0002,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0009,
+      "rebuild": 0.0004,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0,
+      "settle": 0.0,
+      "tier": 0.0,
+      "n.substep": 108.0,
+      "n.census": 217.0,
+      "n.censusface": 26040.0,
+      "n.invert": 13248.0,
+      "n.savestate": 109.0,
+      "n.rollback": 1.0,
+      "n.structrefresh": 108.0,
+      "n.algvisit": 872.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 872.0,
+      "n.algresidual": 11296.0,
+      "n.algfaceflux": 33888.0,
+      "n.area": 87040.0,
+      "n.width": 87040.0,
+      "n.i1": 47872.0,
+      "n.hydrad": 10464.0,
+      "n.macro": 0.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0092,
+      "algresid_per_solve": 12.95,
+      "algflux_per_solve": 38.86
+    },
+    "signature": {
+      "nodes": {
+        "0": "0e14f7834d423ef72d6c02a8057bfbacd53bacb4b644de403c76c162131f91f5",
+        "1": "7d2fc5485b92fce96f4e469d4e52193920211b5c11d64b6ca9d7f01a2cffb63a",
+        "2": "deb152b5f7f9aeb96559a9c08e642e2287ae13809c3ab04664bd7a6aa9ea5061",
+        "6": "10a866a419b4c3947087f4b70f6b94671300351a7fdcd32589d215a8f461e60e",
+        "7": "dccd2d66742dcc690b280ee1c6d126b51b43751e86a1b5962e9849962791ad45",
+        "4": "7423734f045a0c454277329a9efe54e079f1273b02bd30d659fe424f2350495f",
+        "5": "ff988a16e08df6c57cb4cc89fd10e3b9e8ab002b993ffb88b582680ceb1200f7",
+        "3": "f588252872a7203f10d123ff8fd9c5ce34e423381ffaa94778d4c8f2b5fd748a"
+      },
+      "serial": "879e762d72dc900d6c29467921eefeeb15b868db15bed267b4fc7ea4fd61690b",
+      "output": "19c3c70c9bb2e29e24cdc5609202f5c7457dbea59ed9662d39661dc858b5ecba",
+      "schedule": "b90eb56e6a0881ccf4c5e09f966d44830b5ba412c17438fabedf1403761cc06f",
+      "counts": {
+        "n.substep": 108.0,
+        "n.census": 217.0,
+        "n.censusface": 26040.0,
+        "n.invert": 13248.0,
+        "n.savestate": 109.0,
+        "n.rollback": 1.0,
+        "n.structrefresh": 108.0,
+        "n.algvisit": 872.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 872.0,
+        "n.algresidual": 11296.0,
+        "n.algfaceflux": 33888.0,
+        "n.hydrad": 10464.0,
+        "n.macro": 0.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": 0.0
+  },
+  {
+    "name": "transition_tpa_global_candidate_t8",
+    "label": "candidate",
+    "case": "transition_tpa",
+    "rejection": "global",
+    "threads": 8,
+    "observed_teams": [
+      8
+    ],
+    "records": {
+      "I": 33888,
+      "R": 11296,
+      "E": 2616,
+      "REJECT": 1,
+      "CELL": 2688
+    },
+    "restore_cell_records": 96,
+    "specials": [],
+    "profile": {
+      "step": 0.3218,
+      "total": 0.3142,
+      "census": 0.0006,
+      "flux": 0.0011,
+      "nodesolve": 0.3086,
+      "positivity": 0.0002,
+      "cellupdate": 0.0019,
+      "nodeupdate": 0.0002,
+      "refreshdepths": 0.0005,
+      "savestate": 0.0001,
+      "restore": 0.0001,
+      "structrefresh": 0.0001,
+      "bndcallback": 0.0006,
+      "rebuild": 0.0003,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0,
+      "settle": 0.0,
+      "tier": 0.0,
+      "n.substep": 108.0,
+      "n.census": 217.0,
+      "n.censusface": 26040.0,
+      "n.invert": 13248.0,
+      "n.savestate": 109.0,
+      "n.rollback": 1.0,
+      "n.structrefresh": 108.0,
+      "n.algvisit": 872.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 872.0,
+      "n.algresidual": 11296.0,
+      "n.algfaceflux": 33888.0,
+      "n.area": 87040.0,
+      "n.width": 87040.0,
+      "n.i1": 47872.0,
+      "n.hydrad": 10464.0,
+      "n.macro": 0.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0092,
+      "algresid_per_solve": 12.95,
+      "algflux_per_solve": 38.86
+    },
+    "signature": {
+      "nodes": {
+        "0": "0e14f7834d423ef72d6c02a8057bfbacd53bacb4b644de403c76c162131f91f5",
+        "1": "7d2fc5485b92fce96f4e469d4e52193920211b5c11d64b6ca9d7f01a2cffb63a",
+        "2": "deb152b5f7f9aeb96559a9c08e642e2287ae13809c3ab04664bd7a6aa9ea5061",
+        "3": "f588252872a7203f10d123ff8fd9c5ce34e423381ffaa94778d4c8f2b5fd748a",
+        "4": "7423734f045a0c454277329a9efe54e079f1273b02bd30d659fe424f2350495f",
+        "5": "ff988a16e08df6c57cb4cc89fd10e3b9e8ab002b993ffb88b582680ceb1200f7",
+        "6": "10a866a419b4c3947087f4b70f6b94671300351a7fdcd32589d215a8f461e60e",
+        "7": "dccd2d66742dcc690b280ee1c6d126b51b43751e86a1b5962e9849962791ad45"
+      },
+      "serial": "879e762d72dc900d6c29467921eefeeb15b868db15bed267b4fc7ea4fd61690b",
+      "output": "19c3c70c9bb2e29e24cdc5609202f5c7457dbea59ed9662d39661dc858b5ecba",
+      "schedule": "b90eb56e6a0881ccf4c5e09f966d44830b5ba412c17438fabedf1403761cc06f",
+      "counts": {
+        "n.substep": 108.0,
+        "n.census": 217.0,
+        "n.censusface": 26040.0,
+        "n.invert": 13248.0,
+        "n.savestate": 109.0,
+        "n.rollback": 1.0,
+        "n.structrefresh": 108.0,
+        "n.algvisit": 872.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 872.0,
+        "n.algresidual": 11296.0,
+        "n.algfaceflux": 33888.0,
+        "n.hydrad": 10464.0,
+        "n.macro": 0.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": 0.0
+  },
+  {
+    "name": "lts_macro_baseline_t1",
+    "label": "baseline",
+    "case": "lts",
+    "rejection": "macro",
+    "threads": 1,
+    "observed_teams": [
+      1
+    ],
+    "records": {
+      "I": 15504,
+      "R": 5168,
+      "E": 1224,
+      "REJECT": 1,
+      "CELL": 192
+    },
+    "restore_cell_records": 96,
+    "specials": [],
+    "profile": {
+      "step": 0.0785,
+      "total": 0.0778,
+      "census": 0.0,
+      "flux": 0.0,
+      "nodesolve": 0.0048,
+      "positivity": 0.0,
+      "cellupdate": 0.0001,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0001,
+      "savestate": 0.0,
+      "restore": 0.0001,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0725,
+      "settle": 0.0,
+      "tier": 0.0001,
+      "n.substep": 43.0,
+      "n.census": 12.0,
+      "n.censusface": 1440.0,
+      "n.invert": 3072.0,
+      "n.savestate": 9.0,
+      "n.rollback": 1.0,
+      "n.structrefresh": 8.0,
+      "n.algvisit": 408.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 408.0,
+      "n.algresidual": 5168.0,
+      "n.algfaceflux": 15504.0,
+      "n.area": 35544.0,
+      "n.width": 35544.0,
+      "n.i1": 21576.0,
+      "n.hydrad": 2304.0,
+      "n.macro": 5.0,
+      "n.macrorej": 1.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.1111,
+      "algresid_per_solve": 12.67,
+      "algflux_per_solve": 38.0
+    },
+    "signature": {
+      "nodes": {
+        "0": "07c3a837f4940760711e192e91ee29280a35957bf57165e06e99b85423895943",
+        "1": "36b224ed5cfe328935b8d12b643aea453a38f0669246d168622f1cad8d5d2539",
+        "2": "1fe5cc81e7392cb2f4cb63a5f83853525b08e96de268aa16edf02733d56c3c00",
+        "3": "50388f34d7816f8ee5942e1c2e2e6d654f7a1063d73d9dc7a9e40ed7ea19dffe",
+        "4": "f45257d1446d34528d26d8841c45443eb8d2e994aaa37a3e5aaa5f80f587e909",
+        "5": "2147273288eecf2e6e5b7ba95b57694e1a825d8e915e1a5e196bb08092781029",
+        "6": "0e59edac4fd3477576571db83511588da1b2aed19ad483f06a16d1102433c055",
+        "7": "4e34131b8ffc86b2aba65eddec73e7a9614009e9511bee1756df48d7f3ad330b"
+      },
+      "serial": "71cfb1b87c47f93255fcc27ba23264cba1ec3f47d07ea123be3e9e83d1391a3b",
+      "output": "71fff47821610ac0c523b37ef809a8b4cc7f46d69f56d427b79175fe24fea073",
+      "schedule": "b4c7ef9609b01fde9b41ef46692c9087941fd5cd9015b778082429c532f84cee",
+      "counts": {
+        "n.substep": 43.0,
+        "n.census": 12.0,
+        "n.censusface": 1440.0,
+        "n.invert": 3072.0,
+        "n.savestate": 9.0,
+        "n.rollback": 1.0,
+        "n.structrefresh": 8.0,
+        "n.algvisit": 408.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 408.0,
+        "n.algresidual": 5168.0,
+        "n.algfaceflux": 15504.0,
+        "n.hydrad": 2304.0,
+        "n.macro": 5.0,
+        "n.macrorej": 1.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "lts_macro_candidate_t1",
+    "label": "candidate",
+    "case": "lts",
+    "rejection": "macro",
+    "threads": 1,
+    "observed_teams": [
+      1
+    ],
+    "records": {
+      "I": 15504,
+      "R": 5168,
+      "E": 1224,
+      "REJECT": 1,
+      "CELL": 192
+    },
+    "restore_cell_records": 96,
+    "specials": [],
+    "profile": {
+      "step": 0.0725,
+      "total": 0.072,
+      "census": 0.0,
+      "flux": 0.0,
+      "nodesolve": 0.003,
+      "positivity": 0.0,
+      "cellupdate": 0.0001,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0001,
+      "savestate": 0.0,
+      "restore": 0.0001,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0684,
+      "settle": 0.0,
+      "tier": 0.0002,
+      "n.substep": 43.0,
+      "n.census": 12.0,
+      "n.censusface": 1440.0,
+      "n.invert": 3072.0,
+      "n.savestate": 9.0,
+      "n.rollback": 1.0,
+      "n.structrefresh": 8.0,
+      "n.algvisit": 408.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 408.0,
+      "n.algresidual": 5168.0,
+      "n.algfaceflux": 15504.0,
+      "n.area": 35544.0,
+      "n.width": 35544.0,
+      "n.i1": 21576.0,
+      "n.hydrad": 2304.0,
+      "n.macro": 5.0,
+      "n.macrorej": 1.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.1111,
+      "algresid_per_solve": 12.67,
+      "algflux_per_solve": 38.0
+    },
+    "signature": {
+      "nodes": {
+        "0": "07c3a837f4940760711e192e91ee29280a35957bf57165e06e99b85423895943",
+        "1": "36b224ed5cfe328935b8d12b643aea453a38f0669246d168622f1cad8d5d2539",
+        "2": "1fe5cc81e7392cb2f4cb63a5f83853525b08e96de268aa16edf02733d56c3c00",
+        "3": "50388f34d7816f8ee5942e1c2e2e6d654f7a1063d73d9dc7a9e40ed7ea19dffe",
+        "4": "f45257d1446d34528d26d8841c45443eb8d2e994aaa37a3e5aaa5f80f587e909",
+        "5": "2147273288eecf2e6e5b7ba95b57694e1a825d8e915e1a5e196bb08092781029",
+        "6": "0e59edac4fd3477576571db83511588da1b2aed19ad483f06a16d1102433c055",
+        "7": "4e34131b8ffc86b2aba65eddec73e7a9614009e9511bee1756df48d7f3ad330b"
+      },
+      "serial": "71cfb1b87c47f93255fcc27ba23264cba1ec3f47d07ea123be3e9e83d1391a3b",
+      "output": "71fff47821610ac0c523b37ef809a8b4cc7f46d69f56d427b79175fe24fea073",
+      "schedule": "b4c7ef9609b01fde9b41ef46692c9087941fd5cd9015b778082429c532f84cee",
+      "counts": {
+        "n.substep": 43.0,
+        "n.census": 12.0,
+        "n.censusface": 1440.0,
+        "n.invert": 3072.0,
+        "n.savestate": 9.0,
+        "n.rollback": 1.0,
+        "n.structrefresh": 8.0,
+        "n.algvisit": 408.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 408.0,
+        "n.algresidual": 5168.0,
+        "n.algfaceflux": 15504.0,
+        "n.hydrad": 2304.0,
+        "n.macro": 5.0,
+        "n.macrorej": 1.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "lts_macro_candidate_t4",
+    "label": "candidate",
+    "case": "lts",
+    "rejection": "macro",
+    "threads": 4,
+    "observed_teams": [
+      4
+    ],
+    "records": {
+      "I": 15504,
+      "R": 5168,
+      "E": 1224,
+      "REJECT": 1,
+      "CELL": 192
+    },
+    "restore_cell_records": 96,
+    "specials": [],
+    "profile": {
+      "step": 0.1157,
+      "total": 0.1152,
+      "census": 0.0,
+      "flux": 0.0005,
+      "nodesolve": 0.0101,
+      "positivity": 0.0,
+      "cellupdate": 0.0,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0001,
+      "savestate": 0.0,
+      "restore": 0.0001,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0002,
+      "rebuild": 0.0,
+      "reconstruct": 0.0,
+      "ltsfire": 0.1039,
+      "settle": 0.0,
+      "tier": 0.0002,
+      "n.substep": 43.0,
+      "n.census": 12.0,
+      "n.censusface": 1440.0,
+      "n.invert": 3072.0,
+      "n.savestate": 9.0,
+      "n.rollback": 1.0,
+      "n.structrefresh": 8.0,
+      "n.algvisit": 408.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 408.0,
+      "n.algresidual": 5168.0,
+      "n.algfaceflux": 15504.0,
+      "n.area": 35544.0,
+      "n.width": 35544.0,
+      "n.i1": 21576.0,
+      "n.hydrad": 2304.0,
+      "n.macro": 5.0,
+      "n.macrorej": 1.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.1111,
+      "algresid_per_solve": 12.67,
+      "algflux_per_solve": 38.0
+    },
+    "signature": {
+      "nodes": {
+        "0": "07c3a837f4940760711e192e91ee29280a35957bf57165e06e99b85423895943",
+        "1": "36b224ed5cfe328935b8d12b643aea453a38f0669246d168622f1cad8d5d2539",
+        "4": "f45257d1446d34528d26d8841c45443eb8d2e994aaa37a3e5aaa5f80f587e909",
+        "6": "0e59edac4fd3477576571db83511588da1b2aed19ad483f06a16d1102433c055",
+        "7": "4e34131b8ffc86b2aba65eddec73e7a9614009e9511bee1756df48d7f3ad330b",
+        "5": "2147273288eecf2e6e5b7ba95b57694e1a825d8e915e1a5e196bb08092781029",
+        "2": "1fe5cc81e7392cb2f4cb63a5f83853525b08e96de268aa16edf02733d56c3c00",
+        "3": "50388f34d7816f8ee5942e1c2e2e6d654f7a1063d73d9dc7a9e40ed7ea19dffe"
+      },
+      "serial": "71cfb1b87c47f93255fcc27ba23264cba1ec3f47d07ea123be3e9e83d1391a3b",
+      "output": "71fff47821610ac0c523b37ef809a8b4cc7f46d69f56d427b79175fe24fea073",
+      "schedule": "b4c7ef9609b01fde9b41ef46692c9087941fd5cd9015b778082429c532f84cee",
+      "counts": {
+        "n.substep": 43.0,
+        "n.census": 12.0,
+        "n.censusface": 1440.0,
+        "n.invert": 3072.0,
+        "n.savestate": 9.0,
+        "n.rollback": 1.0,
+        "n.structrefresh": 8.0,
+        "n.algvisit": 408.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 408.0,
+        "n.algresidual": 5168.0,
+        "n.algfaceflux": 15504.0,
+        "n.hydrad": 2304.0,
+        "n.macro": 5.0,
+        "n.macrorej": 1.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "lts_macro_candidate_t8",
+    "label": "candidate",
+    "case": "lts",
+    "rejection": "macro",
+    "threads": 8,
+    "observed_teams": [
+      8
+    ],
+    "records": {
+      "I": 15504,
+      "R": 5168,
+      "E": 1224,
+      "REJECT": 1,
+      "CELL": 192
+    },
+    "restore_cell_records": 96,
+    "specials": [],
+    "profile": {
+      "step": 0.136,
+      "total": 0.1351,
+      "census": 0.0,
+      "flux": 0.0,
+      "nodesolve": 0.0078,
+      "positivity": 0.0,
+      "cellupdate": 0.0,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0001,
+      "savestate": 0.0,
+      "restore": 0.0001,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0,
+      "reconstruct": 0.0,
+      "ltsfire": 0.127,
+      "settle": 0.0,
+      "tier": 0.0001,
+      "n.substep": 43.0,
+      "n.census": 12.0,
+      "n.censusface": 1440.0,
+      "n.invert": 3072.0,
+      "n.savestate": 9.0,
+      "n.rollback": 1.0,
+      "n.structrefresh": 8.0,
+      "n.algvisit": 408.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 408.0,
+      "n.algresidual": 5168.0,
+      "n.algfaceflux": 15504.0,
+      "n.area": 35544.0,
+      "n.width": 35544.0,
+      "n.i1": 21576.0,
+      "n.hydrad": 2304.0,
+      "n.macro": 5.0,
+      "n.macrorej": 1.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.1111,
+      "algresid_per_solve": 12.67,
+      "algflux_per_solve": 38.0
+    },
+    "signature": {
+      "nodes": {
+        "0": "07c3a837f4940760711e192e91ee29280a35957bf57165e06e99b85423895943",
+        "1": "36b224ed5cfe328935b8d12b643aea453a38f0669246d168622f1cad8d5d2539",
+        "2": "1fe5cc81e7392cb2f4cb63a5f83853525b08e96de268aa16edf02733d56c3c00",
+        "3": "50388f34d7816f8ee5942e1c2e2e6d654f7a1063d73d9dc7a9e40ed7ea19dffe",
+        "4": "f45257d1446d34528d26d8841c45443eb8d2e994aaa37a3e5aaa5f80f587e909",
+        "5": "2147273288eecf2e6e5b7ba95b57694e1a825d8e915e1a5e196bb08092781029",
+        "6": "0e59edac4fd3477576571db83511588da1b2aed19ad483f06a16d1102433c055",
+        "7": "4e34131b8ffc86b2aba65eddec73e7a9614009e9511bee1756df48d7f3ad330b"
+      },
+      "serial": "71cfb1b87c47f93255fcc27ba23264cba1ec3f47d07ea123be3e9e83d1391a3b",
+      "output": "71fff47821610ac0c523b37ef809a8b4cc7f46d69f56d427b79175fe24fea073",
+      "schedule": "b4c7ef9609b01fde9b41ef46692c9087941fd5cd9015b778082429c532f84cee",
+      "counts": {
+        "n.substep": 43.0,
+        "n.census": 12.0,
+        "n.censusface": 1440.0,
+        "n.invert": 3072.0,
+        "n.savestate": 9.0,
+        "n.rollback": 1.0,
+        "n.structrefresh": 8.0,
+        "n.algvisit": 408.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 408.0,
+        "n.algresidual": 5168.0,
+        "n.algfaceflux": 15504.0,
+        "n.hydrad": 2304.0,
+        "n.macro": 5.0,
+        "n.macrorej": 1.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "culvert_natural_baseline_t1",
+    "label": "baseline",
+    "case": "culvert",
+    "rejection": "",
+    "threads": 1,
+    "observed_teams": [
+      1
+    ],
+    "records": {
+      "I": 4296,
+      "SPECIAL": 1432,
+      "R": 1432,
+      "E": 480,
+      "CELL": 1920
+    },
+    "restore_cell_records": 0,
+    "specials": [
+      [
+        "11",
+        "0"
+      ],
+      [
+        "14",
+        "0"
+      ],
+      [
+        "17",
+        "0"
+      ],
+      [
+        "2",
+        "0"
+      ],
+      [
+        "20",
+        "0"
+      ],
+      [
+        "23",
+        "0"
+      ],
+      [
+        "5",
+        "0"
+      ],
+      [
+        "8",
+        "0"
+      ]
+    ],
+    "profile": {
+      "step": 0.0404,
+      "total": 0.037,
+      "census": 0.0001,
+      "flux": 0.0002,
+      "nodesolve": 0.0361,
+      "positivity": 0.0,
+      "cellupdate": 0.0004,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0,
+      "savestate": 0.0,
+      "restore": 0.0,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0,
+      "settle": 0.0,
+      "tier": 0.0,
+      "n.substep": 20.0,
+      "n.census": 40.0,
+      "n.censusface": 4800.0,
+      "n.invert": 2112.0,
+      "n.savestate": 20.0,
+      "n.rollback": 0.0,
+      "n.structrefresh": 20.0,
+      "n.algvisit": 160.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 160.0,
+      "n.algresidual": 1432.0,
+      "n.algfaceflux": 4296.0,
+      "n.area": 13104.0,
+      "n.width": 13104.0,
+      "n.i1": 7848.0,
+      "n.hydrad": 1920.0,
+      "n.macro": 0.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0,
+      "algresid_per_solve": 8.95,
+      "algflux_per_solve": 26.85
+    },
+    "signature": {
+      "nodes": {
+        "0": "c0b3a09285c3c9ded983019ecd390dd5cfb66c212c3a0d93503a0769b0c735da",
+        "1": "4abfb6d7fb211f2e00b3f2c983369feb97400c61acbff56620bd4d774ab82592",
+        "2": "9f1e222fd9eabe54cbfdef63460ec312f1703aeee4bb2e1c67111ef965ba7ab1",
+        "3": "1021afae797fc93c8b082b3e1c4b6ee9ae35d21b4e6f38143d961ce4b73dacc4",
+        "4": "561012a540b56b49ba0be82e3404622d4edd61a839c2ac57098f6b5f7b3ba128",
+        "5": "4eaad3d5b8bc1098c8010ebb116ed6e712430a279c5a56119ad04215738c497d",
+        "6": "208194fe18beb4dce5b2f0b9705a0a6409198386d55b529eba2155fcdffa15a3",
+        "7": "e19ed011adb9b0f4a3b269569b2f4a662eebccf21df3c872f79c5f77fadeb93a"
+      },
+      "serial": "eafcba24033964d100982fc6fd684089798bb0a8224b6d4bb0bdc3452e1a2ea0",
+      "output": "d2d107797715e938294f1b932b71933c3a72c45a2309a4d6583e87ca207a401f",
+      "schedule": "fe983a234ca172c1f421f5cef1bdaded8aee31f668f6bbfe45d9d6701ac594b4",
+      "counts": {
+        "n.substep": 20.0,
+        "n.census": 40.0,
+        "n.censusface": 4800.0,
+        "n.invert": 2112.0,
+        "n.savestate": 20.0,
+        "n.rollback": 0.0,
+        "n.structrefresh": 20.0,
+        "n.algvisit": 160.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 160.0,
+        "n.algresidual": 1432.0,
+        "n.algfaceflux": 4296.0,
+        "n.hydrad": 1920.0,
+        "n.macro": 0.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "culvert_natural_candidate_t1",
+    "label": "candidate",
+    "case": "culvert",
+    "rejection": "",
+    "threads": 1,
+    "observed_teams": [
+      1
+    ],
+    "records": {
+      "I": 4296,
+      "SPECIAL": 1432,
+      "R": 1432,
+      "E": 480,
+      "CELL": 1920
+    },
+    "restore_cell_records": 0,
+    "specials": [
+      [
+        "11",
+        "0"
+      ],
+      [
+        "14",
+        "0"
+      ],
+      [
+        "17",
+        "0"
+      ],
+      [
+        "2",
+        "0"
+      ],
+      [
+        "20",
+        "0"
+      ],
+      [
+        "23",
+        "0"
+      ],
+      [
+        "5",
+        "0"
+      ],
+      [
+        "8",
+        "0"
+      ]
+    ],
+    "profile": {
+      "step": 0.0267,
+      "total": 0.0229,
+      "census": 0.0002,
+      "flux": 0.0002,
+      "nodesolve": 0.0219,
+      "positivity": 0.0,
+      "cellupdate": 0.0004,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0,
+      "savestate": 0.0,
+      "restore": 0.0,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0002,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0,
+      "settle": 0.0,
+      "tier": 0.0,
+      "n.substep": 20.0,
+      "n.census": 40.0,
+      "n.censusface": 4800.0,
+      "n.invert": 2112.0,
+      "n.savestate": 20.0,
+      "n.rollback": 0.0,
+      "n.structrefresh": 20.0,
+      "n.algvisit": 160.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 160.0,
+      "n.algresidual": 1432.0,
+      "n.algfaceflux": 4296.0,
+      "n.area": 13104.0,
+      "n.width": 13104.0,
+      "n.i1": 7848.0,
+      "n.hydrad": 1920.0,
+      "n.macro": 0.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0,
+      "algresid_per_solve": 8.95,
+      "algflux_per_solve": 26.85
+    },
+    "signature": {
+      "nodes": {
+        "0": "c0b3a09285c3c9ded983019ecd390dd5cfb66c212c3a0d93503a0769b0c735da",
+        "1": "4abfb6d7fb211f2e00b3f2c983369feb97400c61acbff56620bd4d774ab82592",
+        "2": "9f1e222fd9eabe54cbfdef63460ec312f1703aeee4bb2e1c67111ef965ba7ab1",
+        "3": "1021afae797fc93c8b082b3e1c4b6ee9ae35d21b4e6f38143d961ce4b73dacc4",
+        "4": "561012a540b56b49ba0be82e3404622d4edd61a839c2ac57098f6b5f7b3ba128",
+        "5": "4eaad3d5b8bc1098c8010ebb116ed6e712430a279c5a56119ad04215738c497d",
+        "6": "208194fe18beb4dce5b2f0b9705a0a6409198386d55b529eba2155fcdffa15a3",
+        "7": "e19ed011adb9b0f4a3b269569b2f4a662eebccf21df3c872f79c5f77fadeb93a"
+      },
+      "serial": "eafcba24033964d100982fc6fd684089798bb0a8224b6d4bb0bdc3452e1a2ea0",
+      "output": "d2d107797715e938294f1b932b71933c3a72c45a2309a4d6583e87ca207a401f",
+      "schedule": "fe983a234ca172c1f421f5cef1bdaded8aee31f668f6bbfe45d9d6701ac594b4",
+      "counts": {
+        "n.substep": 20.0,
+        "n.census": 40.0,
+        "n.censusface": 4800.0,
+        "n.invert": 2112.0,
+        "n.savestate": 20.0,
+        "n.rollback": 0.0,
+        "n.structrefresh": 20.0,
+        "n.algvisit": 160.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 160.0,
+        "n.algresidual": 1432.0,
+        "n.algfaceflux": 4296.0,
+        "n.hydrad": 1920.0,
+        "n.macro": 0.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "culvert_natural_candidate_t4",
+    "label": "candidate",
+    "case": "culvert",
+    "rejection": "",
+    "threads": 4,
+    "observed_teams": [
+      4
+    ],
+    "records": {
+      "I": 4296,
+      "SPECIAL": 1432,
+      "R": 1432,
+      "E": 480,
+      "CELL": 1920
+    },
+    "restore_cell_records": 0,
+    "specials": [
+      [
+        "11",
+        "0"
+      ],
+      [
+        "14",
+        "0"
+      ],
+      [
+        "17",
+        "0"
+      ],
+      [
+        "2",
+        "0"
+      ],
+      [
+        "20",
+        "0"
+      ],
+      [
+        "23",
+        "0"
+      ],
+      [
+        "5",
+        "0"
+      ],
+      [
+        "8",
+        "0"
+      ]
+    ],
+    "profile": {
+      "step": 0.0366,
+      "total": 0.0325,
+      "census": 0.0001,
+      "flux": 0.0004,
+      "nodesolve": 0.0315,
+      "positivity": 0.0,
+      "cellupdate": 0.0004,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0,
+      "savestate": 0.0,
+      "restore": 0.0,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0,
+      "settle": 0.0,
+      "tier": 0.0,
+      "n.substep": 20.0,
+      "n.census": 40.0,
+      "n.censusface": 4800.0,
+      "n.invert": 2112.0,
+      "n.savestate": 20.0,
+      "n.rollback": 0.0,
+      "n.structrefresh": 20.0,
+      "n.algvisit": 160.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 160.0,
+      "n.algresidual": 1432.0,
+      "n.algfaceflux": 4296.0,
+      "n.area": 13104.0,
+      "n.width": 13104.0,
+      "n.i1": 7848.0,
+      "n.hydrad": 1920.0,
+      "n.macro": 0.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0,
+      "algresid_per_solve": 8.95,
+      "algflux_per_solve": 26.85
+    },
+    "signature": {
+      "nodes": {
+        "0": "c0b3a09285c3c9ded983019ecd390dd5cfb66c212c3a0d93503a0769b0c735da",
+        "1": "4abfb6d7fb211f2e00b3f2c983369feb97400c61acbff56620bd4d774ab82592",
+        "2": "9f1e222fd9eabe54cbfdef63460ec312f1703aeee4bb2e1c67111ef965ba7ab1",
+        "3": "1021afae797fc93c8b082b3e1c4b6ee9ae35d21b4e6f38143d961ce4b73dacc4",
+        "4": "561012a540b56b49ba0be82e3404622d4edd61a839c2ac57098f6b5f7b3ba128",
+        "5": "4eaad3d5b8bc1098c8010ebb116ed6e712430a279c5a56119ad04215738c497d",
+        "6": "208194fe18beb4dce5b2f0b9705a0a6409198386d55b529eba2155fcdffa15a3",
+        "7": "e19ed011adb9b0f4a3b269569b2f4a662eebccf21df3c872f79c5f77fadeb93a"
+      },
+      "serial": "eafcba24033964d100982fc6fd684089798bb0a8224b6d4bb0bdc3452e1a2ea0",
+      "output": "d2d107797715e938294f1b932b71933c3a72c45a2309a4d6583e87ca207a401f",
+      "schedule": "fe983a234ca172c1f421f5cef1bdaded8aee31f668f6bbfe45d9d6701ac594b4",
+      "counts": {
+        "n.substep": 20.0,
+        "n.census": 40.0,
+        "n.censusface": 4800.0,
+        "n.invert": 2112.0,
+        "n.savestate": 20.0,
+        "n.rollback": 0.0,
+        "n.structrefresh": 20.0,
+        "n.algvisit": 160.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 160.0,
+        "n.algresidual": 1432.0,
+        "n.algfaceflux": 4296.0,
+        "n.hydrad": 1920.0,
+        "n.macro": 0.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "culvert_natural_candidate_t8",
+    "label": "candidate",
+    "case": "culvert",
+    "rejection": "",
+    "threads": 8,
+    "observed_teams": [
+      8
+    ],
+    "records": {
+      "I": 4296,
+      "SPECIAL": 1432,
+      "R": 1432,
+      "E": 480,
+      "CELL": 1920
+    },
+    "restore_cell_records": 0,
+    "specials": [
+      [
+        "11",
+        "0"
+      ],
+      [
+        "14",
+        "0"
+      ],
+      [
+        "17",
+        "0"
+      ],
+      [
+        "2",
+        "0"
+      ],
+      [
+        "20",
+        "0"
+      ],
+      [
+        "23",
+        "0"
+      ],
+      [
+        "5",
+        "0"
+      ],
+      [
+        "8",
+        "0"
+      ]
+    ],
+    "profile": {
+      "step": 0.0603,
+      "total": 0.0546,
+      "census": 0.0001,
+      "flux": 0.0002,
+      "nodesolve": 0.0534,
+      "positivity": 0.0002,
+      "cellupdate": 0.0007,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0,
+      "savestate": 0.0,
+      "restore": 0.0,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0,
+      "settle": 0.0,
+      "tier": 0.0,
+      "n.substep": 20.0,
+      "n.census": 40.0,
+      "n.censusface": 4800.0,
+      "n.invert": 2112.0,
+      "n.savestate": 20.0,
+      "n.rollback": 0.0,
+      "n.structrefresh": 20.0,
+      "n.algvisit": 160.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 160.0,
+      "n.algresidual": 1432.0,
+      "n.algfaceflux": 4296.0,
+      "n.area": 13104.0,
+      "n.width": 13104.0,
+      "n.i1": 7848.0,
+      "n.hydrad": 1920.0,
+      "n.macro": 0.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0,
+      "algresid_per_solve": 8.95,
+      "algflux_per_solve": 26.85
+    },
+    "signature": {
+      "nodes": {
+        "0": "c0b3a09285c3c9ded983019ecd390dd5cfb66c212c3a0d93503a0769b0c735da",
+        "1": "4abfb6d7fb211f2e00b3f2c983369feb97400c61acbff56620bd4d774ab82592",
+        "2": "9f1e222fd9eabe54cbfdef63460ec312f1703aeee4bb2e1c67111ef965ba7ab1",
+        "3": "1021afae797fc93c8b082b3e1c4b6ee9ae35d21b4e6f38143d961ce4b73dacc4",
+        "4": "561012a540b56b49ba0be82e3404622d4edd61a839c2ac57098f6b5f7b3ba128",
+        "5": "4eaad3d5b8bc1098c8010ebb116ed6e712430a279c5a56119ad04215738c497d",
+        "6": "208194fe18beb4dce5b2f0b9705a0a6409198386d55b529eba2155fcdffa15a3",
+        "7": "e19ed011adb9b0f4a3b269569b2f4a662eebccf21df3c872f79c5f77fadeb93a"
+      },
+      "serial": "eafcba24033964d100982fc6fd684089798bb0a8224b6d4bb0bdc3452e1a2ea0",
+      "output": "d2d107797715e938294f1b932b71933c3a72c45a2309a4d6583e87ca207a401f",
+      "schedule": "fe983a234ca172c1f421f5cef1bdaded8aee31f668f6bbfe45d9d6701ac594b4",
+      "counts": {
+        "n.substep": 20.0,
+        "n.census": 40.0,
+        "n.censusface": 4800.0,
+        "n.invert": 2112.0,
+        "n.savestate": 20.0,
+        "n.rollback": 0.0,
+        "n.structrefresh": 20.0,
+        "n.algvisit": 160.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 160.0,
+        "n.algresidual": 1432.0,
+        "n.algfaceflux": 4296.0,
+        "n.hydrad": 1920.0,
+        "n.macro": 0.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "culvert_all_natural_baseline_t1",
+    "label": "baseline",
+    "case": "culvert_all",
+    "rejection": "",
+    "threads": 1,
+    "observed_teams": [
+      1
+    ],
+    "records": {
+      "SPECIAL": 4296,
+      "I": 4296,
+      "R": 1432,
+      "E": 480,
+      "CELL": 1920
+    },
+    "restore_cell_records": 0,
+    "specials": [
+      [
+        "0",
+        "0"
+      ],
+      [
+        "1",
+        "0"
+      ],
+      [
+        "10",
+        "0"
+      ],
+      [
+        "11",
+        "0"
+      ],
+      [
+        "12",
+        "0"
+      ],
+      [
+        "13",
+        "0"
+      ],
+      [
+        "14",
+        "0"
+      ],
+      [
+        "15",
+        "0"
+      ],
+      [
+        "16",
+        "0"
+      ],
+      [
+        "17",
+        "0"
+      ],
+      [
+        "18",
+        "0"
+      ],
+      [
+        "19",
+        "0"
+      ],
+      [
+        "2",
+        "0"
+      ],
+      [
+        "20",
+        "0"
+      ],
+      [
+        "21",
+        "0"
+      ],
+      [
+        "22",
+        "0"
+      ],
+      [
+        "23",
+        "0"
+      ],
+      [
+        "3",
+        "0"
+      ],
+      [
+        "4",
+        "0"
+      ],
+      [
+        "5",
+        "0"
+      ],
+      [
+        "6",
+        "0"
+      ],
+      [
+        "7",
+        "0"
+      ],
+      [
+        "8",
+        "0"
+      ],
+      [
+        "9",
+        "0"
+      ]
+    ],
+    "profile": {
+      "step": 0.0381,
+      "total": 0.0325,
+      "census": 0.0001,
+      "flux": 0.0002,
+      "nodesolve": 0.0312,
+      "positivity": 0.0,
+      "cellupdate": 0.0009,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0,
+      "savestate": 0.0,
+      "restore": 0.0,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0,
+      "settle": 0.0,
+      "tier": 0.0,
+      "n.substep": 20.0,
+      "n.census": 40.0,
+      "n.censusface": 4800.0,
+      "n.invert": 2112.0,
+      "n.savestate": 20.0,
+      "n.rollback": 0.0,
+      "n.structrefresh": 20.0,
+      "n.algvisit": 160.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 160.0,
+      "n.algresidual": 1432.0,
+      "n.algfaceflux": 4296.0,
+      "n.area": 13104.0,
+      "n.width": 13104.0,
+      "n.i1": 7848.0,
+      "n.hydrad": 1920.0,
+      "n.macro": 0.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0,
+      "algresid_per_solve": 8.95,
+      "algflux_per_solve": 26.85
+    },
+    "signature": {
+      "nodes": {
+        "0": "88bcf4f90e0be707eafe6d954f1b20b18d0f64aee2c3d15ea252ebd6e67a306f",
+        "1": "2be91667f7635af13636ffe74cb45f1eaab3e7efe8e4b8801341ba8f4bc15644",
+        "2": "8fbf51221d437e9ab78ea4d556c03a0e22d5bc08509ee3bb2e333943a02d68a1",
+        "3": "b4ca78a70dc7f31e77c83639d46599d1165563c22c208815bb3a5eafea03be1b",
+        "4": "0b3799f0b2088292bfb568b2414f2d142d7962df3eb96bbf90d746a7103a923b",
+        "5": "4a5fde7071c2c637366c1e1e6e8f43d98b220a0d176bce5176d6b9912cd4e3c2",
+        "6": "ebd6f426d4d5a4f38b53c7cd54a31240ea76c9ca00b9370003f9ff24d6cbc95e",
+        "7": "60a400279cdc8c771d84148835557b8135e576d53e0f5cb09b66dc37e7d789bc"
+      },
+      "serial": "3878ead62c191b4ae5fd311025d5dc38d8a41e60caab521a7ae862decf11ab95",
+      "output": "e5ac39bba356a334bcf2de69a781532a8503d4fc2477051eaaf8235e07ef2b82",
+      "schedule": "fe983a234ca172c1f421f5cef1bdaded8aee31f668f6bbfe45d9d6701ac594b4",
+      "counts": {
+        "n.substep": 20.0,
+        "n.census": 40.0,
+        "n.censusface": 4800.0,
+        "n.invert": 2112.0,
+        "n.savestate": 20.0,
+        "n.rollback": 0.0,
+        "n.structrefresh": 20.0,
+        "n.algvisit": 160.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 160.0,
+        "n.algresidual": 1432.0,
+        "n.algfaceflux": 4296.0,
+        "n.hydrad": 1920.0,
+        "n.macro": 0.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "culvert_all_natural_candidate_t1",
+    "label": "candidate",
+    "case": "culvert_all",
+    "rejection": "",
+    "threads": 1,
+    "observed_teams": [
+      1
+    ],
+    "records": {
+      "SPECIAL": 4296,
+      "I": 4296,
+      "R": 1432,
+      "E": 480,
+      "CELL": 1920
+    },
+    "restore_cell_records": 0,
+    "specials": [
+      [
+        "0",
+        "0"
+      ],
+      [
+        "1",
+        "0"
+      ],
+      [
+        "10",
+        "0"
+      ],
+      [
+        "11",
+        "0"
+      ],
+      [
+        "12",
+        "0"
+      ],
+      [
+        "13",
+        "0"
+      ],
+      [
+        "14",
+        "0"
+      ],
+      [
+        "15",
+        "0"
+      ],
+      [
+        "16",
+        "0"
+      ],
+      [
+        "17",
+        "0"
+      ],
+      [
+        "18",
+        "0"
+      ],
+      [
+        "19",
+        "0"
+      ],
+      [
+        "2",
+        "0"
+      ],
+      [
+        "20",
+        "0"
+      ],
+      [
+        "21",
+        "0"
+      ],
+      [
+        "22",
+        "0"
+      ],
+      [
+        "23",
+        "0"
+      ],
+      [
+        "3",
+        "0"
+      ],
+      [
+        "4",
+        "0"
+      ],
+      [
+        "5",
+        "0"
+      ],
+      [
+        "6",
+        "0"
+      ],
+      [
+        "7",
+        "0"
+      ],
+      [
+        "8",
+        "0"
+      ],
+      [
+        "9",
+        "0"
+      ]
+    ],
+    "profile": {
+      "step": 0.0315,
+      "total": 0.0262,
+      "census": 0.0001,
+      "flux": 0.0004,
+      "nodesolve": 0.0251,
+      "positivity": 0.0001,
+      "cellupdate": 0.0004,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0,
+      "savestate": 0.0,
+      "restore": 0.0,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0,
+      "settle": 0.0,
+      "tier": 0.0,
+      "n.substep": 20.0,
+      "n.census": 40.0,
+      "n.censusface": 4800.0,
+      "n.invert": 2112.0,
+      "n.savestate": 20.0,
+      "n.rollback": 0.0,
+      "n.structrefresh": 20.0,
+      "n.algvisit": 160.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 160.0,
+      "n.algresidual": 1432.0,
+      "n.algfaceflux": 4296.0,
+      "n.area": 13104.0,
+      "n.width": 13104.0,
+      "n.i1": 7848.0,
+      "n.hydrad": 1920.0,
+      "n.macro": 0.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0,
+      "algresid_per_solve": 8.95,
+      "algflux_per_solve": 26.85
+    },
+    "signature": {
+      "nodes": {
+        "0": "88bcf4f90e0be707eafe6d954f1b20b18d0f64aee2c3d15ea252ebd6e67a306f",
+        "1": "2be91667f7635af13636ffe74cb45f1eaab3e7efe8e4b8801341ba8f4bc15644",
+        "2": "8fbf51221d437e9ab78ea4d556c03a0e22d5bc08509ee3bb2e333943a02d68a1",
+        "3": "b4ca78a70dc7f31e77c83639d46599d1165563c22c208815bb3a5eafea03be1b",
+        "4": "0b3799f0b2088292bfb568b2414f2d142d7962df3eb96bbf90d746a7103a923b",
+        "5": "4a5fde7071c2c637366c1e1e6e8f43d98b220a0d176bce5176d6b9912cd4e3c2",
+        "6": "ebd6f426d4d5a4f38b53c7cd54a31240ea76c9ca00b9370003f9ff24d6cbc95e",
+        "7": "60a400279cdc8c771d84148835557b8135e576d53e0f5cb09b66dc37e7d789bc"
+      },
+      "serial": "3878ead62c191b4ae5fd311025d5dc38d8a41e60caab521a7ae862decf11ab95",
+      "output": "e5ac39bba356a334bcf2de69a781532a8503d4fc2477051eaaf8235e07ef2b82",
+      "schedule": "fe983a234ca172c1f421f5cef1bdaded8aee31f668f6bbfe45d9d6701ac594b4",
+      "counts": {
+        "n.substep": 20.0,
+        "n.census": 40.0,
+        "n.censusface": 4800.0,
+        "n.invert": 2112.0,
+        "n.savestate": 20.0,
+        "n.rollback": 0.0,
+        "n.structrefresh": 20.0,
+        "n.algvisit": 160.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 160.0,
+        "n.algresidual": 1432.0,
+        "n.algfaceflux": 4296.0,
+        "n.hydrad": 1920.0,
+        "n.macro": 0.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "culvert_all_natural_candidate_t4",
+    "label": "candidate",
+    "case": "culvert_all",
+    "rejection": "",
+    "threads": 4,
+    "observed_teams": [
+      4
+    ],
+    "records": {
+      "SPECIAL": 4296,
+      "I": 4296,
+      "R": 1432,
+      "E": 480,
+      "CELL": 1920
+    },
+    "restore_cell_records": 0,
+    "specials": [
+      [
+        "0",
+        "0"
+      ],
+      [
+        "1",
+        "0"
+      ],
+      [
+        "10",
+        "0"
+      ],
+      [
+        "11",
+        "0"
+      ],
+      [
+        "12",
+        "0"
+      ],
+      [
+        "13",
+        "0"
+      ],
+      [
+        "14",
+        "0"
+      ],
+      [
+        "15",
+        "0"
+      ],
+      [
+        "16",
+        "0"
+      ],
+      [
+        "17",
+        "0"
+      ],
+      [
+        "18",
+        "0"
+      ],
+      [
+        "19",
+        "0"
+      ],
+      [
+        "2",
+        "0"
+      ],
+      [
+        "20",
+        "0"
+      ],
+      [
+        "21",
+        "0"
+      ],
+      [
+        "22",
+        "0"
+      ],
+      [
+        "23",
+        "0"
+      ],
+      [
+        "3",
+        "0"
+      ],
+      [
+        "4",
+        "0"
+      ],
+      [
+        "5",
+        "0"
+      ],
+      [
+        "6",
+        "0"
+      ],
+      [
+        "7",
+        "0"
+      ],
+      [
+        "8",
+        "0"
+      ],
+      [
+        "9",
+        "0"
+      ]
+    ],
+    "profile": {
+      "step": 0.0413,
+      "total": 0.0354,
+      "census": 0.0002,
+      "flux": 0.0002,
+      "nodesolve": 0.0344,
+      "positivity": 0.0,
+      "cellupdate": 0.0005,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0,
+      "savestate": 0.0,
+      "restore": 0.0,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0,
+      "settle": 0.0,
+      "tier": 0.0,
+      "n.substep": 20.0,
+      "n.census": 40.0,
+      "n.censusface": 4800.0,
+      "n.invert": 2112.0,
+      "n.savestate": 20.0,
+      "n.rollback": 0.0,
+      "n.structrefresh": 20.0,
+      "n.algvisit": 160.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 160.0,
+      "n.algresidual": 1432.0,
+      "n.algfaceflux": 4296.0,
+      "n.area": 13104.0,
+      "n.width": 13104.0,
+      "n.i1": 7848.0,
+      "n.hydrad": 1920.0,
+      "n.macro": 0.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0,
+      "algresid_per_solve": 8.95,
+      "algflux_per_solve": 26.85
+    },
+    "signature": {
+      "nodes": {
+        "0": "88bcf4f90e0be707eafe6d954f1b20b18d0f64aee2c3d15ea252ebd6e67a306f",
+        "1": "2be91667f7635af13636ffe74cb45f1eaab3e7efe8e4b8801341ba8f4bc15644",
+        "2": "8fbf51221d437e9ab78ea4d556c03a0e22d5bc08509ee3bb2e333943a02d68a1",
+        "3": "b4ca78a70dc7f31e77c83639d46599d1165563c22c208815bb3a5eafea03be1b",
+        "4": "0b3799f0b2088292bfb568b2414f2d142d7962df3eb96bbf90d746a7103a923b",
+        "5": "4a5fde7071c2c637366c1e1e6e8f43d98b220a0d176bce5176d6b9912cd4e3c2",
+        "6": "ebd6f426d4d5a4f38b53c7cd54a31240ea76c9ca00b9370003f9ff24d6cbc95e",
+        "7": "60a400279cdc8c771d84148835557b8135e576d53e0f5cb09b66dc37e7d789bc"
+      },
+      "serial": "3878ead62c191b4ae5fd311025d5dc38d8a41e60caab521a7ae862decf11ab95",
+      "output": "e5ac39bba356a334bcf2de69a781532a8503d4fc2477051eaaf8235e07ef2b82",
+      "schedule": "fe983a234ca172c1f421f5cef1bdaded8aee31f668f6bbfe45d9d6701ac594b4",
+      "counts": {
+        "n.substep": 20.0,
+        "n.census": 40.0,
+        "n.censusface": 4800.0,
+        "n.invert": 2112.0,
+        "n.savestate": 20.0,
+        "n.rollback": 0.0,
+        "n.structrefresh": 20.0,
+        "n.algvisit": 160.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 160.0,
+        "n.algresidual": 1432.0,
+        "n.algfaceflux": 4296.0,
+        "n.hydrad": 1920.0,
+        "n.macro": 0.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "culvert_all_natural_candidate_t8",
+    "label": "candidate",
+    "case": "culvert_all",
+    "rejection": "",
+    "threads": 8,
+    "observed_teams": [
+      8
+    ],
+    "records": {
+      "SPECIAL": 4296,
+      "I": 4296,
+      "R": 1432,
+      "E": 480,
+      "CELL": 1920
+    },
+    "restore_cell_records": 0,
+    "specials": [
+      [
+        "0",
+        "0"
+      ],
+      [
+        "1",
+        "0"
+      ],
+      [
+        "10",
+        "0"
+      ],
+      [
+        "11",
+        "0"
+      ],
+      [
+        "12",
+        "0"
+      ],
+      [
+        "13",
+        "0"
+      ],
+      [
+        "14",
+        "0"
+      ],
+      [
+        "15",
+        "0"
+      ],
+      [
+        "16",
+        "0"
+      ],
+      [
+        "17",
+        "0"
+      ],
+      [
+        "18",
+        "0"
+      ],
+      [
+        "19",
+        "0"
+      ],
+      [
+        "2",
+        "0"
+      ],
+      [
+        "20",
+        "0"
+      ],
+      [
+        "21",
+        "0"
+      ],
+      [
+        "22",
+        "0"
+      ],
+      [
+        "23",
+        "0"
+      ],
+      [
+        "3",
+        "0"
+      ],
+      [
+        "4",
+        "0"
+      ],
+      [
+        "5",
+        "0"
+      ],
+      [
+        "6",
+        "0"
+      ],
+      [
+        "7",
+        "0"
+      ],
+      [
+        "8",
+        "0"
+      ],
+      [
+        "9",
+        "0"
+      ]
+    ],
+    "profile": {
+      "step": 0.0619,
+      "total": 0.0571,
+      "census": 0.0008,
+      "flux": 0.0002,
+      "nodesolve": 0.0555,
+      "positivity": 0.0001,
+      "cellupdate": 0.0005,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0,
+      "savestate": 0.0,
+      "restore": 0.0,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0,
+      "settle": 0.0,
+      "tier": 0.0,
+      "n.substep": 20.0,
+      "n.census": 40.0,
+      "n.censusface": 4800.0,
+      "n.invert": 2112.0,
+      "n.savestate": 20.0,
+      "n.rollback": 0.0,
+      "n.structrefresh": 20.0,
+      "n.algvisit": 160.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 160.0,
+      "n.algresidual": 1432.0,
+      "n.algfaceflux": 4296.0,
+      "n.area": 13104.0,
+      "n.width": 13104.0,
+      "n.i1": 7848.0,
+      "n.hydrad": 1920.0,
+      "n.macro": 0.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0,
+      "algresid_per_solve": 8.95,
+      "algflux_per_solve": 26.85
+    },
+    "signature": {
+      "nodes": {
+        "0": "88bcf4f90e0be707eafe6d954f1b20b18d0f64aee2c3d15ea252ebd6e67a306f",
+        "1": "2be91667f7635af13636ffe74cb45f1eaab3e7efe8e4b8801341ba8f4bc15644",
+        "2": "8fbf51221d437e9ab78ea4d556c03a0e22d5bc08509ee3bb2e333943a02d68a1",
+        "3": "b4ca78a70dc7f31e77c83639d46599d1165563c22c208815bb3a5eafea03be1b",
+        "4": "0b3799f0b2088292bfb568b2414f2d142d7962df3eb96bbf90d746a7103a923b",
+        "5": "4a5fde7071c2c637366c1e1e6e8f43d98b220a0d176bce5176d6b9912cd4e3c2",
+        "6": "ebd6f426d4d5a4f38b53c7cd54a31240ea76c9ca00b9370003f9ff24d6cbc95e",
+        "7": "60a400279cdc8c771d84148835557b8135e576d53e0f5cb09b66dc37e7d789bc"
+      },
+      "serial": "3878ead62c191b4ae5fd311025d5dc38d8a41e60caab521a7ae862decf11ab95",
+      "output": "e5ac39bba356a334bcf2de69a781532a8503d4fc2477051eaaf8235e07ef2b82",
+      "schedule": "fe983a234ca172c1f421f5cef1bdaded8aee31f668f6bbfe45d9d6701ac594b4",
+      "counts": {
+        "n.substep": 20.0,
+        "n.census": 40.0,
+        "n.censusface": 4800.0,
+        "n.invert": 2112.0,
+        "n.savestate": 20.0,
+        "n.rollback": 0.0,
+        "n.structrefresh": 20.0,
+        "n.algvisit": 160.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 160.0,
+        "n.algresidual": 1432.0,
+        "n.algfaceflux": 4296.0,
+        "n.hydrad": 1920.0,
+        "n.macro": 0.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "lts_culvert_natural_baseline_t1",
+    "label": "baseline",
+    "case": "lts_culvert",
+    "rejection": "",
+    "threads": 1,
+    "observed_teams": [
+      1
+    ],
+    "records": {
+      "I": 12984,
+      "SPECIAL": 4328,
+      "R": 4328,
+      "E": 1032,
+      "CELL": 96
+    },
+    "restore_cell_records": 0,
+    "specials": [
+      [
+        "11",
+        "0"
+      ],
+      [
+        "14",
+        "0"
+      ],
+      [
+        "17",
+        "0"
+      ],
+      [
+        "2",
+        "0"
+      ],
+      [
+        "20",
+        "0"
+      ],
+      [
+        "23",
+        "0"
+      ],
+      [
+        "5",
+        "0"
+      ],
+      [
+        "8",
+        "0"
+      ]
+    ],
+    "profile": {
+      "step": 0.0802,
+      "total": 0.0796,
+      "census": 0.0,
+      "flux": 0.0,
+      "nodesolve": 0.0075,
+      "positivity": 0.0,
+      "cellupdate": 0.0004,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0001,
+      "savestate": 0.0,
+      "restore": 0.0,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0714,
+      "settle": 0.0,
+      "tier": 0.0001,
+      "n.substep": 43.0,
+      "n.census": 11.0,
+      "n.censusface": 1320.0,
+      "n.invert": 2640.0,
+      "n.savestate": 8.0,
+      "n.rollback": 0.0,
+      "n.structrefresh": 8.0,
+      "n.algvisit": 344.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 344.0,
+      "n.algresidual": 4328.0,
+      "n.algfaceflux": 12984.0,
+      "n.area": 29896.0,
+      "n.width": 29896.0,
+      "n.i1": 18160.0,
+      "n.hydrad": 1968.0,
+      "n.macro": 5.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0,
+      "algresid_per_solve": 12.58,
+      "algflux_per_solve": 37.74
+    },
+    "signature": {
+      "nodes": {
+        "0": "98577186be02c826e96cb925b2e1cef7fe33d08ad2a567511dbde5672b61676a",
+        "1": "25c7f9817ef59462320af9c96ea6c42591be770ed30101343efb8efbc6d01ecd",
+        "2": "82c74a9f2a71d0ed2695bf76b64e792100ec87b71f8dc57b6c3133d438c51dc2",
+        "3": "4939864f4f5017f50e1f47dc2d490b2d910e794ce74c7c5da51127c0ce253ead",
+        "4": "229aec8cb011812e8f5fb2c4666f785c373e44c4901423ef09747cd301332ab8",
+        "5": "c489ea2a600a65038c267431ccaccc93d74a927723b32befc1a2f88878b43dbb",
+        "6": "ddda9f68c878163d2ad67a2a46fa26c61d009a32538abb35b120af489bc66e53",
+        "7": "ece1e385325ebe0cfa584f587dc2bf01ed066f0509eb145ec5a789f9a3c37222"
+      },
+      "serial": "c0400140c643e654aca754bff8419c86f5ec2dec81a843b9d744a0304dd4200a",
+      "output": "d037254117951063edf906bc52ee21c843f93f0bc901fbbbed5a9faab62a7af1",
+      "schedule": "b4c7ef9609b01fde9b41ef46692c9087941fd5cd9015b778082429c532f84cee",
+      "counts": {
+        "n.substep": 43.0,
+        "n.census": 11.0,
+        "n.censusface": 1320.0,
+        "n.invert": 2640.0,
+        "n.savestate": 8.0,
+        "n.rollback": 0.0,
+        "n.structrefresh": 8.0,
+        "n.algvisit": 344.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 344.0,
+        "n.algresidual": 4328.0,
+        "n.algfaceflux": 12984.0,
+        "n.hydrad": 1968.0,
+        "n.macro": 5.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "lts_culvert_natural_candidate_t1",
+    "label": "candidate",
+    "case": "lts_culvert",
+    "rejection": "",
+    "threads": 1,
+    "observed_teams": [
+      1
+    ],
+    "records": {
+      "I": 12984,
+      "SPECIAL": 4328,
+      "R": 4328,
+      "E": 1032,
+      "CELL": 96
+    },
+    "restore_cell_records": 0,
+    "specials": [
+      [
+        "11",
+        "0"
+      ],
+      [
+        "14",
+        "0"
+      ],
+      [
+        "17",
+        "0"
+      ],
+      [
+        "2",
+        "0"
+      ],
+      [
+        "20",
+        "0"
+      ],
+      [
+        "23",
+        "0"
+      ],
+      [
+        "5",
+        "0"
+      ],
+      [
+        "8",
+        "0"
+      ]
+    ],
+    "profile": {
+      "step": 0.0678,
+      "total": 0.0666,
+      "census": 0.0001,
+      "flux": 0.0,
+      "nodesolve": 0.0032,
+      "positivity": 0.0,
+      "cellupdate": 0.0001,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0001,
+      "savestate": 0.0,
+      "restore": 0.0,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0,
+      "reconstruct": 0.0,
+      "ltsfire": 0.063,
+      "settle": 0.0,
+      "tier": 0.0001,
+      "n.substep": 43.0,
+      "n.census": 11.0,
+      "n.censusface": 1320.0,
+      "n.invert": 2640.0,
+      "n.savestate": 8.0,
+      "n.rollback": 0.0,
+      "n.structrefresh": 8.0,
+      "n.algvisit": 344.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 344.0,
+      "n.algresidual": 4328.0,
+      "n.algfaceflux": 12984.0,
+      "n.area": 29896.0,
+      "n.width": 29896.0,
+      "n.i1": 18160.0,
+      "n.hydrad": 1968.0,
+      "n.macro": 5.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0,
+      "algresid_per_solve": 12.58,
+      "algflux_per_solve": 37.74
+    },
+    "signature": {
+      "nodes": {
+        "0": "98577186be02c826e96cb925b2e1cef7fe33d08ad2a567511dbde5672b61676a",
+        "1": "25c7f9817ef59462320af9c96ea6c42591be770ed30101343efb8efbc6d01ecd",
+        "2": "82c74a9f2a71d0ed2695bf76b64e792100ec87b71f8dc57b6c3133d438c51dc2",
+        "3": "4939864f4f5017f50e1f47dc2d490b2d910e794ce74c7c5da51127c0ce253ead",
+        "4": "229aec8cb011812e8f5fb2c4666f785c373e44c4901423ef09747cd301332ab8",
+        "5": "c489ea2a600a65038c267431ccaccc93d74a927723b32befc1a2f88878b43dbb",
+        "6": "ddda9f68c878163d2ad67a2a46fa26c61d009a32538abb35b120af489bc66e53",
+        "7": "ece1e385325ebe0cfa584f587dc2bf01ed066f0509eb145ec5a789f9a3c37222"
+      },
+      "serial": "c0400140c643e654aca754bff8419c86f5ec2dec81a843b9d744a0304dd4200a",
+      "output": "d037254117951063edf906bc52ee21c843f93f0bc901fbbbed5a9faab62a7af1",
+      "schedule": "b4c7ef9609b01fde9b41ef46692c9087941fd5cd9015b778082429c532f84cee",
+      "counts": {
+        "n.substep": 43.0,
+        "n.census": 11.0,
+        "n.censusface": 1320.0,
+        "n.invert": 2640.0,
+        "n.savestate": 8.0,
+        "n.rollback": 0.0,
+        "n.structrefresh": 8.0,
+        "n.algvisit": 344.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 344.0,
+        "n.algresidual": 4328.0,
+        "n.algfaceflux": 12984.0,
+        "n.hydrad": 1968.0,
+        "n.macro": 5.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "lts_culvert_natural_candidate_t4",
+    "label": "candidate",
+    "case": "lts_culvert",
+    "rejection": "",
+    "threads": 4,
+    "observed_teams": [
+      4
+    ],
+    "records": {
+      "I": 12984,
+      "SPECIAL": 4328,
+      "R": 4328,
+      "E": 1032,
+      "CELL": 96
+    },
+    "restore_cell_records": 0,
+    "specials": [
+      [
+        "11",
+        "0"
+      ],
+      [
+        "14",
+        "0"
+      ],
+      [
+        "17",
+        "0"
+      ],
+      [
+        "2",
+        "0"
+      ],
+      [
+        "20",
+        "0"
+      ],
+      [
+        "23",
+        "0"
+      ],
+      [
+        "5",
+        "0"
+      ],
+      [
+        "8",
+        "0"
+      ]
+    ],
+    "profile": {
+      "step": 0.0908,
+      "total": 0.0901,
+      "census": 0.0,
+      "flux": 0.0,
+      "nodesolve": 0.006,
+      "positivity": 0.0,
+      "cellupdate": 0.0,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0001,
+      "savestate": 0.0,
+      "restore": 0.0,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0839,
+      "settle": 0.0,
+      "tier": 0.0001,
+      "n.substep": 43.0,
+      "n.census": 11.0,
+      "n.censusface": 1320.0,
+      "n.invert": 2640.0,
+      "n.savestate": 8.0,
+      "n.rollback": 0.0,
+      "n.structrefresh": 8.0,
+      "n.algvisit": 344.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 344.0,
+      "n.algresidual": 4328.0,
+      "n.algfaceflux": 12984.0,
+      "n.area": 29896.0,
+      "n.width": 29896.0,
+      "n.i1": 18160.0,
+      "n.hydrad": 1968.0,
+      "n.macro": 5.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0,
+      "algresid_per_solve": 12.58,
+      "algflux_per_solve": 37.74
+    },
+    "signature": {
+      "nodes": {
+        "0": "98577186be02c826e96cb925b2e1cef7fe33d08ad2a567511dbde5672b61676a",
+        "4": "229aec8cb011812e8f5fb2c4666f785c373e44c4901423ef09747cd301332ab8",
+        "5": "c489ea2a600a65038c267431ccaccc93d74a927723b32befc1a2f88878b43dbb",
+        "2": "82c74a9f2a71d0ed2695bf76b64e792100ec87b71f8dc57b6c3133d438c51dc2",
+        "3": "4939864f4f5017f50e1f47dc2d490b2d910e794ce74c7c5da51127c0ce253ead",
+        "6": "ddda9f68c878163d2ad67a2a46fa26c61d009a32538abb35b120af489bc66e53",
+        "7": "ece1e385325ebe0cfa584f587dc2bf01ed066f0509eb145ec5a789f9a3c37222",
+        "1": "25c7f9817ef59462320af9c96ea6c42591be770ed30101343efb8efbc6d01ecd"
+      },
+      "serial": "c0400140c643e654aca754bff8419c86f5ec2dec81a843b9d744a0304dd4200a",
+      "output": "d037254117951063edf906bc52ee21c843f93f0bc901fbbbed5a9faab62a7af1",
+      "schedule": "b4c7ef9609b01fde9b41ef46692c9087941fd5cd9015b778082429c532f84cee",
+      "counts": {
+        "n.substep": 43.0,
+        "n.census": 11.0,
+        "n.censusface": 1320.0,
+        "n.invert": 2640.0,
+        "n.savestate": 8.0,
+        "n.rollback": 0.0,
+        "n.structrefresh": 8.0,
+        "n.algvisit": 344.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 344.0,
+        "n.algresidual": 4328.0,
+        "n.algfaceflux": 12984.0,
+        "n.hydrad": 1968.0,
+        "n.macro": 5.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "lts_culvert_natural_candidate_t8",
+    "label": "candidate",
+    "case": "lts_culvert",
+    "rejection": "",
+    "threads": 8,
+    "observed_teams": [
+      8
+    ],
+    "records": {
+      "I": 12984,
+      "SPECIAL": 4328,
+      "R": 4328,
+      "E": 1032,
+      "CELL": 96
+    },
+    "restore_cell_records": 0,
+    "specials": [
+      [
+        "11",
+        "0"
+      ],
+      [
+        "14",
+        "0"
+      ],
+      [
+        "17",
+        "0"
+      ],
+      [
+        "2",
+        "0"
+      ],
+      [
+        "20",
+        "0"
+      ],
+      [
+        "23",
+        "0"
+      ],
+      [
+        "5",
+        "0"
+      ],
+      [
+        "8",
+        "0"
+      ]
+    ],
+    "profile": {
+      "step": 0.121,
+      "total": 0.1205,
+      "census": 0.0,
+      "flux": 0.0001,
+      "nodesolve": 0.0065,
+      "positivity": 0.0,
+      "cellupdate": 0.0001,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0001,
+      "savestate": 0.0001,
+      "restore": 0.0,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0,
+      "reconstruct": 0.0,
+      "ltsfire": 0.1135,
+      "settle": 0.0,
+      "tier": 0.0001,
+      "n.substep": 43.0,
+      "n.census": 11.0,
+      "n.censusface": 1320.0,
+      "n.invert": 2640.0,
+      "n.savestate": 8.0,
+      "n.rollback": 0.0,
+      "n.structrefresh": 8.0,
+      "n.algvisit": 344.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 344.0,
+      "n.algresidual": 4328.0,
+      "n.algfaceflux": 12984.0,
+      "n.area": 29896.0,
+      "n.width": 29896.0,
+      "n.i1": 18160.0,
+      "n.hydrad": 1968.0,
+      "n.macro": 5.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0,
+      "algresid_per_solve": 12.58,
+      "algflux_per_solve": 37.74
+    },
+    "signature": {
+      "nodes": {
+        "0": "98577186be02c826e96cb925b2e1cef7fe33d08ad2a567511dbde5672b61676a",
+        "1": "25c7f9817ef59462320af9c96ea6c42591be770ed30101343efb8efbc6d01ecd",
+        "2": "82c74a9f2a71d0ed2695bf76b64e792100ec87b71f8dc57b6c3133d438c51dc2",
+        "4": "229aec8cb011812e8f5fb2c4666f785c373e44c4901423ef09747cd301332ab8",
+        "5": "c489ea2a600a65038c267431ccaccc93d74a927723b32befc1a2f88878b43dbb",
+        "3": "4939864f4f5017f50e1f47dc2d490b2d910e794ce74c7c5da51127c0ce253ead",
+        "6": "ddda9f68c878163d2ad67a2a46fa26c61d009a32538abb35b120af489bc66e53",
+        "7": "ece1e385325ebe0cfa584f587dc2bf01ed066f0509eb145ec5a789f9a3c37222"
+      },
+      "serial": "c0400140c643e654aca754bff8419c86f5ec2dec81a843b9d744a0304dd4200a",
+      "output": "d037254117951063edf906bc52ee21c843f93f0bc901fbbbed5a9faab62a7af1",
+      "schedule": "b4c7ef9609b01fde9b41ef46692c9087941fd5cd9015b778082429c532f84cee",
+      "counts": {
+        "n.substep": 43.0,
+        "n.census": 11.0,
+        "n.censusface": 1320.0,
+        "n.invert": 2640.0,
+        "n.savestate": 8.0,
+        "n.rollback": 0.0,
+        "n.structrefresh": 8.0,
+        "n.algvisit": 344.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 344.0,
+        "n.algresidual": 4328.0,
+        "n.algfaceflux": 12984.0,
+        "n.hydrad": 1968.0,
+        "n.macro": 5.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "lts_natural_baseline_t1",
+    "label": "baseline",
+    "case": "lts",
+    "rejection": "",
+    "threads": 1,
+    "observed_teams": [
+      1
+    ],
+    "records": {
+      "I": 12984,
+      "R": 4328,
+      "E": 1032,
+      "CELL": 96
+    },
+    "restore_cell_records": 0,
+    "specials": [],
+    "profile": {
+      "step": 0.0753,
+      "total": 0.0747,
+      "census": 0.0001,
+      "flux": 0.0,
+      "nodesolve": 0.0089,
+      "positivity": 0.0,
+      "cellupdate": 0.0001,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0001,
+      "savestate": 0.0,
+      "restore": 0.0,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0655,
+      "settle": 0.0,
+      "tier": 0.0001,
+      "n.substep": 43.0,
+      "n.census": 11.0,
+      "n.censusface": 1320.0,
+      "n.invert": 2640.0,
+      "n.savestate": 8.0,
+      "n.rollback": 0.0,
+      "n.structrefresh": 8.0,
+      "n.algvisit": 344.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 344.0,
+      "n.algresidual": 4328.0,
+      "n.algfaceflux": 12984.0,
+      "n.area": 29896.0,
+      "n.width": 29896.0,
+      "n.i1": 18160.0,
+      "n.hydrad": 1968.0,
+      "n.macro": 5.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0,
+      "algresid_per_solve": 12.58,
+      "algflux_per_solve": 37.74
+    },
+    "signature": {
+      "nodes": {
+        "0": "134aabb8a97f0d621d1e5a39a9b0968de2b02c6f7c98cb163b26b5152f1ffc29",
+        "1": "01268b2051138bab5918e881fe33995519499a862815b39cc38174323d0ceaf9",
+        "2": "3568843d6b37a98078683ee6c284bd057eade5b4849029e1462f4518dab0b63f",
+        "3": "f85f3851dd31c1ecc20aac3acd3b8c45428e10457b115bcba8950178b6b7e5e1",
+        "4": "86430be0299a770d2d9fe3a1c455ac7a59176c97d21ebd37b247d545c5368975",
+        "5": "afef90e8664d93e47f6dda433ca8dcefcbaa72954a6cc5af741762a5f06616c0",
+        "6": "60e72ef67e36196258975e09df2ab7e3d10adf586a63fc7b9ea4fef5afbc2574",
+        "7": "e687c267354566c86c1ebd153d2e62c9ef3c7dd597c9d05f8ae88fb3f18a65f0"
+      },
+      "serial": "c0400140c643e654aca754bff8419c86f5ec2dec81a843b9d744a0304dd4200a",
+      "output": "bb191555fe89f92fe5860f3944eea94a3c0456717a7430ad862e4a32b5e058c0",
+      "schedule": "b4c7ef9609b01fde9b41ef46692c9087941fd5cd9015b778082429c532f84cee",
+      "counts": {
+        "n.substep": 43.0,
+        "n.census": 11.0,
+        "n.censusface": 1320.0,
+        "n.invert": 2640.0,
+        "n.savestate": 8.0,
+        "n.rollback": 0.0,
+        "n.structrefresh": 8.0,
+        "n.algvisit": 344.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 344.0,
+        "n.algresidual": 4328.0,
+        "n.algfaceflux": 12984.0,
+        "n.hydrad": 1968.0,
+        "n.macro": 5.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "lts_natural_candidate_t1",
+    "label": "candidate",
+    "case": "lts",
+    "rejection": "",
+    "threads": 1,
+    "observed_teams": [
+      1
+    ],
+    "records": {
+      "I": 12984,
+      "R": 4328,
+      "E": 1032,
+      "CELL": 96
+    },
+    "restore_cell_records": 0,
+    "specials": [],
+    "profile": {
+      "step": 0.073,
+      "total": 0.0723,
+      "census": 0.0,
+      "flux": 0.0,
+      "nodesolve": 0.0045,
+      "positivity": 0.0001,
+      "cellupdate": 0.0001,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0001,
+      "savestate": 0.0,
+      "restore": 0.0,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0002,
+      "rebuild": 0.0,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0671,
+      "settle": 0.0,
+      "tier": 0.0001,
+      "n.substep": 43.0,
+      "n.census": 11.0,
+      "n.censusface": 1320.0,
+      "n.invert": 2640.0,
+      "n.savestate": 8.0,
+      "n.rollback": 0.0,
+      "n.structrefresh": 8.0,
+      "n.algvisit": 344.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 344.0,
+      "n.algresidual": 4328.0,
+      "n.algfaceflux": 12984.0,
+      "n.area": 29896.0,
+      "n.width": 29896.0,
+      "n.i1": 18160.0,
+      "n.hydrad": 1968.0,
+      "n.macro": 5.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0,
+      "algresid_per_solve": 12.58,
+      "algflux_per_solve": 37.74
+    },
+    "signature": {
+      "nodes": {
+        "0": "134aabb8a97f0d621d1e5a39a9b0968de2b02c6f7c98cb163b26b5152f1ffc29",
+        "1": "01268b2051138bab5918e881fe33995519499a862815b39cc38174323d0ceaf9",
+        "2": "3568843d6b37a98078683ee6c284bd057eade5b4849029e1462f4518dab0b63f",
+        "3": "f85f3851dd31c1ecc20aac3acd3b8c45428e10457b115bcba8950178b6b7e5e1",
+        "4": "86430be0299a770d2d9fe3a1c455ac7a59176c97d21ebd37b247d545c5368975",
+        "5": "afef90e8664d93e47f6dda433ca8dcefcbaa72954a6cc5af741762a5f06616c0",
+        "6": "60e72ef67e36196258975e09df2ab7e3d10adf586a63fc7b9ea4fef5afbc2574",
+        "7": "e687c267354566c86c1ebd153d2e62c9ef3c7dd597c9d05f8ae88fb3f18a65f0"
+      },
+      "serial": "c0400140c643e654aca754bff8419c86f5ec2dec81a843b9d744a0304dd4200a",
+      "output": "bb191555fe89f92fe5860f3944eea94a3c0456717a7430ad862e4a32b5e058c0",
+      "schedule": "b4c7ef9609b01fde9b41ef46692c9087941fd5cd9015b778082429c532f84cee",
+      "counts": {
+        "n.substep": 43.0,
+        "n.census": 11.0,
+        "n.censusface": 1320.0,
+        "n.invert": 2640.0,
+        "n.savestate": 8.0,
+        "n.rollback": 0.0,
+        "n.structrefresh": 8.0,
+        "n.algvisit": 344.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 344.0,
+        "n.algresidual": 4328.0,
+        "n.algfaceflux": 12984.0,
+        "n.hydrad": 1968.0,
+        "n.macro": 5.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "lts_natural_candidate_t4",
+    "label": "candidate",
+    "case": "lts",
+    "rejection": "",
+    "threads": 4,
+    "observed_teams": [
+      4
+    ],
+    "records": {
+      "I": 12984,
+      "R": 4328,
+      "E": 1032,
+      "CELL": 96
+    },
+    "restore_cell_records": 0,
+    "specials": [],
+    "profile": {
+      "step": 0.1002,
+      "total": 0.0992,
+      "census": 0.0,
+      "flux": 0.0,
+      "nodesolve": 0.0058,
+      "positivity": 0.0,
+      "cellupdate": 0.0001,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0001,
+      "savestate": 0.0,
+      "restore": 0.0,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0931,
+      "settle": 0.0,
+      "tier": 0.0001,
+      "n.substep": 43.0,
+      "n.census": 11.0,
+      "n.censusface": 1320.0,
+      "n.invert": 2640.0,
+      "n.savestate": 8.0,
+      "n.rollback": 0.0,
+      "n.structrefresh": 8.0,
+      "n.algvisit": 344.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 344.0,
+      "n.algresidual": 4328.0,
+      "n.algfaceflux": 12984.0,
+      "n.area": 29896.0,
+      "n.width": 29896.0,
+      "n.i1": 18160.0,
+      "n.hydrad": 1968.0,
+      "n.macro": 5.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0,
+      "algresid_per_solve": 12.58,
+      "algflux_per_solve": 37.74
+    },
+    "signature": {
+      "nodes": {
+        "0": "134aabb8a97f0d621d1e5a39a9b0968de2b02c6f7c98cb163b26b5152f1ffc29",
+        "1": "01268b2051138bab5918e881fe33995519499a862815b39cc38174323d0ceaf9",
+        "2": "3568843d6b37a98078683ee6c284bd057eade5b4849029e1462f4518dab0b63f",
+        "3": "f85f3851dd31c1ecc20aac3acd3b8c45428e10457b115bcba8950178b6b7e5e1",
+        "4": "86430be0299a770d2d9fe3a1c455ac7a59176c97d21ebd37b247d545c5368975",
+        "5": "afef90e8664d93e47f6dda433ca8dcefcbaa72954a6cc5af741762a5f06616c0",
+        "6": "60e72ef67e36196258975e09df2ab7e3d10adf586a63fc7b9ea4fef5afbc2574",
+        "7": "e687c267354566c86c1ebd153d2e62c9ef3c7dd597c9d05f8ae88fb3f18a65f0"
+      },
+      "serial": "c0400140c643e654aca754bff8419c86f5ec2dec81a843b9d744a0304dd4200a",
+      "output": "bb191555fe89f92fe5860f3944eea94a3c0456717a7430ad862e4a32b5e058c0",
+      "schedule": "b4c7ef9609b01fde9b41ef46692c9087941fd5cd9015b778082429c532f84cee",
+      "counts": {
+        "n.substep": 43.0,
+        "n.census": 11.0,
+        "n.censusface": 1320.0,
+        "n.invert": 2640.0,
+        "n.savestate": 8.0,
+        "n.rollback": 0.0,
+        "n.structrefresh": 8.0,
+        "n.algvisit": 344.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 344.0,
+        "n.algresidual": 4328.0,
+        "n.algfaceflux": 12984.0,
+        "n.hydrad": 1968.0,
+        "n.macro": 5.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": -0.0
+  },
+  {
+    "name": "lts_natural_candidate_t8",
+    "label": "candidate",
+    "case": "lts",
+    "rejection": "",
+    "threads": 8,
+    "observed_teams": [
+      8
+    ],
+    "records": {
+      "I": 12984,
+      "R": 4328,
+      "E": 1032,
+      "CELL": 96
+    },
+    "restore_cell_records": 0,
+    "specials": [],
+    "profile": {
+      "step": 0.0948,
+      "total": 0.0938,
+      "census": 0.0,
+      "flux": 0.0,
+      "nodesolve": 0.0049,
+      "positivity": 0.0,
+      "cellupdate": 0.0001,
+      "nodeupdate": 0.0,
+      "refreshdepths": 0.0001,
+      "savestate": 0.0,
+      "restore": 0.0,
+      "structrefresh": 0.0,
+      "bndcallback": 0.0,
+      "rebuild": 0.0,
+      "reconstruct": 0.0,
+      "ltsfire": 0.0886,
+      "settle": 0.0,
+      "tier": 0.0,
+      "n.substep": 43.0,
+      "n.census": 11.0,
+      "n.censusface": 1320.0,
+      "n.invert": 2640.0,
+      "n.savestate": 8.0,
+      "n.rollback": 0.0,
+      "n.structrefresh": 8.0,
+      "n.algvisit": 344.0,
+      "n.algpassthru": 0.0,
+      "n.algsolve": 344.0,
+      "n.algresidual": 4328.0,
+      "n.algfaceflux": 12984.0,
+      "n.area": 29896.0,
+      "n.width": 29896.0,
+      "n.i1": 18160.0,
+      "n.hydrad": 1968.0,
+      "n.macro": 5.0,
+      "n.macrorej": 0.0,
+      "passthru_frac": 0.0,
+      "rollback_frac": 0.0,
+      "algresid_per_solve": 12.58,
+      "algflux_per_solve": 37.74
+    },
+    "signature": {
+      "nodes": {
+        "0": "134aabb8a97f0d621d1e5a39a9b0968de2b02c6f7c98cb163b26b5152f1ffc29",
+        "1": "01268b2051138bab5918e881fe33995519499a862815b39cc38174323d0ceaf9",
+        "6": "60e72ef67e36196258975e09df2ab7e3d10adf586a63fc7b9ea4fef5afbc2574",
+        "7": "e687c267354566c86c1ebd153d2e62c9ef3c7dd597c9d05f8ae88fb3f18a65f0",
+        "2": "3568843d6b37a98078683ee6c284bd057eade5b4849029e1462f4518dab0b63f",
+        "3": "f85f3851dd31c1ecc20aac3acd3b8c45428e10457b115bcba8950178b6b7e5e1",
+        "4": "86430be0299a770d2d9fe3a1c455ac7a59176c97d21ebd37b247d545c5368975",
+        "5": "afef90e8664d93e47f6dda433ca8dcefcbaa72954a6cc5af741762a5f06616c0"
+      },
+      "serial": "c0400140c643e654aca754bff8419c86f5ec2dec81a843b9d744a0304dd4200a",
+      "output": "bb191555fe89f92fe5860f3944eea94a3c0456717a7430ad862e4a32b5e058c0",
+      "schedule": "b4c7ef9609b01fde9b41ef46692c9087941fd5cd9015b778082429c532f84cee",
+      "counts": {
+        "n.substep": 43.0,
+        "n.census": 11.0,
+        "n.censusface": 1320.0,
+        "n.invert": 2640.0,
+        "n.savestate": 8.0,
+        "n.rollback": 0.0,
+        "n.structrefresh": 8.0,
+        "n.algvisit": 344.0,
+        "n.algpassthru": 0.0,
+        "n.algsolve": 344.0,
+        "n.algresidual": 4328.0,
+        "n.algfaceflux": 12984.0,
+        "n.hydrad": 1968.0,
+        "n.macro": 5.0,
+        "n.macrorej": 0.0
+      }
+    },
+    "continuity_percent": -0.0
+  }
+]

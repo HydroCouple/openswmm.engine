@@ -80,6 +80,7 @@ J1      99.0       1.5       0.0        0.0       0.0
 [OUTFALLS]
 ;;Name  Elevation  Type   Stage      Gated   Route To
 OUT1    98.0       FREE   *          NO
+OUT2    98.0       FREE   *          NO
 
 
 [STORAGE]
@@ -92,7 +93,7 @@ ST1     99.5   1.5       0.0        FUNCTIONAL  0      0    5.0    0         0
 [CONDUITS]
 ;;Name  FromNode  ToNode  Length  Roughness  InOffset  OutOffset  InitFlow  MaxFlow
 C1      J1        OUT1    100     0.013      0         0          0         0
-C2      ST1       OUT1     50     0.013      0         0          0         0
+C2      ST1       OUT2     50     0.013      0         0          0         0
 
 
 [XSECTIONS]
@@ -238,6 +239,7 @@ OUTPUT_FILE             2d_complete_example.h5   ;; HDF5 output (relative to thi
 J1       10.0      10.0
 ST1      15.0      15.0
 OUT1     22.0       0.0
+OUT2     22.0      15.0
 
 
 [MAP]

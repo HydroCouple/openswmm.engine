@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file RainfallInterpolator.hpp
  * @brief Static per-cell weights mapping raingage rainfall onto the 2D mesh.
@@ -22,7 +38,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_RAINFALL_INTERPOLATOR_HPP
@@ -43,6 +59,20 @@ namespace openswmm::twoD {
  */
 class RainfallInterpolator {
 public:
+    enum class Method { NaturalNeighbour, NearestNeighbour };
+    /// How build() weighted one cell (values match swmm_2d_get_rainfall_weights).
+    enum class CellMethod : signed char {
+        NaturalNeighbour = 0,  ///< Laplace weights inside the gage hull.
+        InverseDistance  = 1,  ///< IDW: outside the hull, 2 sites, or degenerate.
+        Nearest          = 2   ///< One gage, weight 1 (nearest mode or 1 site).
+    };
+    struct Diagnostics {
+        int unlocated = 0;
+        int invalid = 0;
+        int duplicates = 0;
+        int idwCells = 0;
+    };
+    const Diagnostics& diagnostics() const noexcept { return diagnostics_; }
     /**
      * @brief Precompute per-cell interpolation weights.
      *
@@ -58,7 +88,8 @@ public:
      */
     void build(const std::vector<double>& cx, const std::vector<double>& cy,
                const std::vector<double>& gage_x, const std::vector<double>& gage_y,
-               int n_gages, double gage_scale);
+               int n_gages, double gage_scale,
+               Method method = Method::NaturalNeighbour);
 
     /// True once build() produced usable weights (≥ 1 located gage).
     bool ready() const noexcept { return ready_; }
@@ -73,7 +104,14 @@ public:
      */
     void apply(const std::vector<double>& rain, std::vector<double>& out) const;
 
+    /// Per-cell diagnostic: the method used and the contributing (global gage
+    /// index, weight) pairs of cell @p i. Requires ready() and 0 ≤ i < cells.
+    CellMethod cellMethod(int i) const { return cell_method_[static_cast<std::size_t>(i)]; }
+    void cellWeights(int i, std::vector<int>& gages, std::vector<double>& weights) const;
+
 private:
+    Diagnostics diagnostics_;
+    std::vector<CellMethod> cell_method_;
     bool ready_ = false;
     int  nt_    = 0;
 

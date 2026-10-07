@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file ISurfaceSolver.hpp
  * @brief Backend-neutral interface for the 2D surface-routing time integrator.
@@ -17,7 +33,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_I_SURFACE_SOLVER_HPP
@@ -55,6 +71,11 @@ public:
     /// Advance the solution from @p t_current to @p t_target (s).
     /// @return the time actually reached (== t_target on success).
     virtual double advance(double t_current, double t_target) = 0;
+
+    /// Horizon through which ALL cell sources have actually landed, including
+    /// lazy inactive cells and LTS accumulators. Unsupported backends return
+    /// -1; an outer routing endpoint alone is not source-completion evidence.
+    virtual double completedSourceTime() const noexcept { return -1.0; }
 
     /// Reinitialize the integrator at @p t0 after external state edits.
     virtual void reinitialize(double t0) = 0;

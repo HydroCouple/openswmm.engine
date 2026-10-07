@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file openswmm_hotstart.h
  * @brief Hot start file management — transparent C API.
@@ -52,7 +68,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_HOTSTART_H
@@ -70,7 +86,9 @@ typedef void* SWMM_HotStart;
 /** @brief Magic string written at the start of every OPENSWMM_HS_V1 file. */
 #define OPENSWMM_HOTSTART_MAGIC    "OPENSWMM_HS_V1\0"
 
-/** @brief Current hot start format version number. */
+/** @brief Base format version. Writers select compatible extensions through
+ * version 11, which stores complete Richards cell water and material identity.
+ * Existing layer/Green-Ampt models continue to use their version 10 extension. */
 #define OPENSWMM_HOTSTART_VERSION  1
 
 /* =========================================================================
@@ -194,6 +212,11 @@ SWMM_ENGINE_API int swmm_hotstart_saves_clear(SWMM_Engine engine);
  */
 SWMM_ENGINE_API int swmm_hotstart_save(SWMM_Engine engine, const char* path);
 
+/** Last diagnostic from the built-in hot-start reader/writer on this thread.
+ * The borrowed string is valid until the next hot-start I/O call on this thread.
+ * An empty string means no detailed diagnostic is available. */
+SWMM_ENGINE_API const char* swmm_hotstart_last_io_error(void);
+
 /* =========================================================================
  * Open / read
  * ========================================================================= */
@@ -311,12 +334,23 @@ SWMM_ENGINE_API int swmm_hotstart_set_subcatch_runoff(
  * ========================================================================= */
 
 /**
- * @brief Get the simulation timestamp stored in the hot start file.
+ * @brief Get the elapsed simulation time at which the state was saved.
  * @param hs         Hot start handle.
- * @param sim_time   [out] Simulation time (decimal days) at which state was saved.
+ * @param sim_time   [out] Seconds since the saving run's start date (see
+ *                   swmm_hotstart_get_start_date); the saved moment is the start
+ *                   date plus this.
  * @returns SWMM_OK or SWMM_ERR_HOTSTART.
  */
 SWMM_ENGINE_API int swmm_hotstart_get_sim_time(SWMM_HotStart hs, double* sim_time);
+
+/**
+ * @brief Get the start date of the run that saved the hot start file.
+ * @param hs          Hot start handle.
+ * @param start_date  [out] Start date and time as an OADate (decimal days since
+ *                    12/30/1899).
+ * @returns SWMM_OK or SWMM_ERR_HOTSTART.
+ */
+SWMM_ENGINE_API int swmm_hotstart_get_start_date(SWMM_HotStart hs, double* start_date);
 
 /**
  * @brief Get the CRS string stored in the hot start file.

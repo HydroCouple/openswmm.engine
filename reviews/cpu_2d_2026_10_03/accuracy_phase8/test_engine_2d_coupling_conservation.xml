@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="4" failures="0" disabled="0" errors="0" time="0.017" timestamp="2026-10-04T08:45:57.772" name="AllTests">
+  <testsuite name="CouplingConservation2DTest" tests="4" failures="0" disabled="0" skipped="0" errors="0" time="0.017" timestamp="2026-10-04T08:45:57.772">
+    <testcase name="ReceivedEqualsGivenUnderVariableStep" file="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_coupling_conservation.cpp" line="220" status="run" result="completed" time="0.004" timestamp="2026-10-04T08:45:57.772" classname="CouplingConservation2DTest" />
+    <testcase name="PerCellAbstractionTiesBackToTheDomainTotals" file="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_coupling_conservation.cpp" line="266" status="run" result="completed" time="0.003" timestamp="2026-10-04T08:45:57.776" classname="CouplingConservation2DTest" />
+    <testcase name="CouplingOutflowSplitsFromFloodingAndConserves" file="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_coupling_conservation.cpp" line="286" status="run" result="completed" time="0.006" timestamp="2026-10-04T08:45:57.779" classname="CouplingConservation2DTest" />
+    <testcase name="SpillDrawsPondedWaterOnly" file="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_coupling_conservation.cpp" line="310" status="run" result="completed" time="0.003" timestamp="2026-10-04T08:45:57.786" classname="CouplingConservation2DTest" />
+  </testsuite>
+</testsuites>

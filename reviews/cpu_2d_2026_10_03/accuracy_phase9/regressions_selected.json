@@ -1,0 +1,212 @@
+[
+  {
+    "suite": "test_engine_2d_inertial_marcher",
+    "code": 0,
+    "counts": {
+      "tests": "11",
+      "failures": "0",
+      "disabled": "0",
+      "errors": "0",
+      "time": "1.367",
+      "timestamp": "2026-10-04T09:06:44.271",
+      "name": "AllTests",
+      "skipped": 0
+    }
+  },
+  {
+    "suite": "test_engine_2d_lts_equivalence",
+    "code": 0,
+    "counts": {
+      "tests": "4",
+      "failures": "0",
+      "disabled": "0",
+      "errors": "0",
+      "time": "0.159",
+      "timestamp": "2026-10-04T09:06:45.660",
+      "name": "AllTests",
+      "skipped": 0
+    }
+  },
+  {
+    "suite": "test_engine_2d_quad_mesh",
+    "code": 0,
+    "counts": {
+      "tests": "16",
+      "failures": "0",
+      "disabled": "0",
+      "errors": "0",
+      "time": "0.406",
+      "timestamp": "2026-10-04T09:06:45.841",
+      "name": "AllTests",
+      "skipped": 0
+    }
+  },
+  {
+    "suite": "test_engine_2d_momentum_modes",
+    "code": 0,
+    "counts": {
+      "tests": "13",
+      "failures": "0",
+      "disabled": "0",
+      "errors": "0",
+      "time": "5.481",
+      "timestamp": "2026-10-04T09:06:46.269",
+      "name": "AllTests",
+      "skipped": 0
+    }
+  },
+  {
+    "suite": "test_engine_2d_transport_s1",
+    "code": 0,
+    "counts": {
+      "tests": "6",
+      "failures": "0",
+      "disabled": "0",
+      "errors": "0",
+      "time": "0.113",
+      "timestamp": "2026-10-04T09:06:51.778",
+      "name": "AllTests",
+      "skipped": 0
+    }
+  },
+  {
+    "suite": "test_engine_2d_transport_s2",
+    "code": 0,
+    "counts": {
+      "tests": "9",
+      "failures": "0",
+      "disabled": "0",
+      "errors": "0",
+      "time": "0.374",
+      "timestamp": "2026-10-04T09:06:51.912",
+      "name": "AllTests",
+      "skipped": 0
+    }
+  },
+  {
+    "suite": "test_engine_2d_transport_s3",
+    "code": 0,
+    "counts": {
+      "tests": "4",
+      "failures": "0",
+      "disabled": "0",
+      "errors": "0",
+      "time": "0.011",
+      "timestamp": "2026-10-04T09:06:52.305",
+      "name": "AllTests",
+      "skipped": 0
+    }
+  },
+  {
+    "suite": "test_engine_2d_transport_s4",
+    "code": 0,
+    "counts": {
+      "tests": "10",
+      "failures": "0",
+      "disabled": "0",
+      "errors": "0",
+      "time": "0.114",
+      "timestamp": "2026-10-04T09:06:52.337",
+      "name": "AllTests",
+      "skipped": 0
+    }
+  },
+  {
+    "suite": "test_engine_2d_infil_integration",
+    "code": 0,
+    "counts": {
+      "tests": "13",
+      "failures": "0",
+      "disabled": "0",
+      "errors": "0",
+      "time": "0.048",
+      "timestamp": "2026-10-04T09:06:52.475",
+      "name": "AllTests",
+      "skipped": 1
+    }
+  },
+  {
+    "suite": "test_engine_2d_coupling_conservation",
+    "code": 0,
+    "counts": {
+      "tests": "4",
+      "failures": "0",
+      "disabled": "0",
+      "errors": "0",
+      "time": "0.018",
+      "timestamp": "2026-10-04T09:06:52.544",
+      "name": "AllTests",
+      "skipped": 0
+    }
+  },
+  {
+    "suite": "test_engine_2d_windowless_coupling",
+    "code": 0,
+    "counts": {
+      "tests": "3",
+      "failures": "0",
+      "disabled": "0",
+      "errors": "0",
+      "time": "0.011",
+      "timestamp": "2026-10-04T09:06:52.581",
+      "name": "AllTests",
+      "skipped": 0
+    }
+  },
+  {
+    "suite": "test_engine_2d_aquifer",
+    "code": 0,
+    "counts": {
+      "tests": "22",
+      "failures": "0",
+      "disabled": "0",
+      "errors": "0",
+      "time": "0.112",
+      "timestamp": "2026-10-04T09:06:52.611",
+      "name": "AllTests",
+      "skipped": 0
+    }
+  },
+  {
+    "suite": "test_engine_gw_transport_kernel",
+    "code": 0,
+    "counts": {
+      "tests": "30",
+      "failures": "0",
+      "disabled": "0",
+      "errors": "0",
+      "time": "0.127",
+      "timestamp": "2026-10-04T09:06:52.747",
+      "name": "AllTests",
+      "skipped": 0
+    }
+  },
+  {
+    "suite": "test_engine_gw_source_forcing",
+    "code": 0,
+    "counts": {
+      "tests": "4",
+      "failures": "0",
+      "disabled": "0",
+      "errors": "0",
+      "time": "0.",
+      "timestamp": "2026-10-04T09:06:52.898",
+      "name": "AllTests",
+      "skipped": 0
+    }
+  },
+  {
+    "suite": "test_engine_2d_cpu_correctness",
+    "code": 0,
+    "counts": {
+      "tests": "21",
+      "failures": "0",
+      "disabled": "0",
+      "errors": "0",
+      "time": "6.949",
+      "timestamp": "2026-10-04T09:06:52.992",
+      "name": "AllTests",
+      "skipped": 0
+    }
+  }
+]

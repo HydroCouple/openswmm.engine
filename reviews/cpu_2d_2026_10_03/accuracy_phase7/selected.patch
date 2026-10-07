@@ -1,0 +1,302 @@
+--- a/src/engine/2d/solver/ExplicitInertialSolver.cpp
++++ b/src/engine/2d/solver/ExplicitInertialSolver.cpp
+@@ -114,7 +114,7 @@
+         }
+         if (second_order_) {
+             const auto un = static_cast<std::size_t>(nt);
+-            gex_.assign(un, 0.0); gey_.assign(un, 0.0);
++            gex_.assign(2 * un, 0.0); gey_.assign(2 * un, 0.0);
+             gux_.assign(un, 0.0); guy_.assign(un, 0.0);
+             gvx_.assign(un, 0.0); gvy_.assign(un, 0.0);
+         } else {
+@@ -1068,6 +1068,7 @@
+     const double dry   = opts_->dry_depth;
+ 
+     static const bool muscl_off = std::getenv("OPENSWMM_2D_MUSCL_OFF") != nullptr;
++    const auto depth_offset = state_->depth.size();
+     if (second_order_) computeLimitedGradientsSwe();
+     const bool so = second_order_ && !muscl_off;
+     const bool species = species_on_;
+@@ -1081,9 +1082,9 @@
+         double cLx, cLy, cRx, cRy;
+         bool wet;
+         if (so) {
+-            // MUSCL: extrapolate (η, u, v) from each centroid to the face
+-            // midpoint along the precomputed Perot arms; the bed stays
+-            // piecewise constant per cell.
++            // MUSCL: extrapolate eta, depth and velocity to the face.
++            // Reconstructing depth with eta removes the artificial bed step
++            // that otherwise remains even on a smooth, fully wet slope.
+             const double ha = state_->depth[a], hb = state_->depth[b];
+             const double za = state_->head[a] - ha, zb = state_->head[b] - hb;
+             double axa = 0.0, aya = 0.0, axb = 0.0, ayb = 0.0;
+@@ -1099,9 +1100,11 @@
+             const double vLf = va + gvx_[a] * axa + gvy_[a] * aya;
+             const double uRf = ub + gux_[b] * axb + guy_[b] * ayb;
+             const double vRf = vb + gvx_[b] * axb + gvy_[b] * ayb;
+-            wet = swe::faceFluxRecon(etaLf, uLf, vLf, za, ha,
++            const double hLf = std::max(0.0, ha + gex_[depth_offset + a] * axa + gey_[depth_offset + a] * aya);
++            const double hRf = std::max(0.0, hb + gex_[depth_offset + b] * axb + gey_[depth_offset + b] * ayb);
++            wet = swe::faceFluxReconBed(etaLf, uLf, vLf, za, ha,
+                                      etaRf, uRf, vRf, zb, hb,
+-                                     ed.nx[e], ed.ny[e], dry, F, cLx, cLy, cRx, cRy);
++                                     ed.nx[e], ed.ny[e], dry, F, cLx, cLy, cRx, cRy, etaLf - hLf, etaRf - hRf);
+         } else {
+             wet = swe::faceFlux(
+                 state_->head[a], state_->depth[a], qcx_[a], qcy_[a],
+@@ -1786,26 +1789,27 @@
+ 
+ 
+ 
+-// RECONSTRUCTION_ORDER 2: Green-Gauss gradients of (η, u, v) over the active
++// RECONSTRUCTION_ORDER 2: Green-Gauss gradients of (eta, u, v, h) over the active
+ // cells (face value = mean of the two cells; boundary faces zero-gradient),
+ // limited per cell and variable with Barth–Jespersen against the min/max of
+ // the cell and its face neighbours. Cells that are dry, thin (< 10·h_dry) or
+ // touch a dry cell fall back to first order (φ = 0) — the wet/dry front keeps
+ // the robust monotone update.
+ void ExplicitInertialSolver::computeLimitedGradientsSwe() {
++    const auto depth_offset = state_->depth.size();
+     const auto& ed = edges_;
+     const int na = static_cast<int>(active_cells_.size());
+     const double dry = opts_->dry_depth;
+ #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
+     for (int k = 0; k < na; ++k) {
+         const int i = active_cells_[static_cast<std::size_t>(k)];
+-        gex_[i] = gey_[i] = gux_[i] = guy_[i] = gvx_[i] = gvy_[i] = 0.0;
++        gex_[depth_offset + i] = gey_[depth_offset + i] = gex_[i] = gey_[i] = gux_[i] = guy_[i] = gvx_[i] = gvy_[i] = 0.0;
+         const double hi = state_->depth[i];
+         if (hi <= 10.0 * dry) continue;
+         const double ei = state_->head[i];
+         const double ui = qcx_[i] / hi, vi = qcy_[i] / hi;
+-        double gx[3] = {0, 0, 0}, gy[3] = {0, 0, 0};
+-        double wmin[3] = {ei, ui, vi}, wmax[3] = {ei, ui, vi};
++        double gx[4] = {0, 0, 0, 0}, gy[4] = {0, 0, 0, 0};
++        double wmin[4] = {ei, ui, vi, hi}, wmax[4] = {ei, ui, vi, hi};
+         bool ok = true;
+         int nfaces = 0;
+         for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
+@@ -1823,9 +1827,9 @@
+             if (ei - sill <= dry || ej - sill <= dry) { ok = false; break; }
+             const double sgn = static_cast<double>(ed.cell_sign[p]);   // outward normal sign
+             const double nx = sgn * ed.nx[e] * ed.xi[e], ny = sgn * ed.ny[e] * ed.xi[e];
+-            const double w[3] = {0.5 * (ei + ej), 0.5 * (ui + uj), 0.5 * (vi + vj)};
+-            const double wj[3] = {ej, uj, vj};
+-            for (int m = 0; m < 3; ++m) {
++            const double w[4] = {0.5 * (ei + ej), 0.5 * (ui + uj), 0.5 * (vi + vj), 0.5 * (hi + hj)};
++            const double wj[4] = {ej, uj, vj, hj};
++            for (int m = 0; m < 4; ++m) {
+                 gx[m] += w[m] * nx; gy[m] += w[m] * ny;
+                 wmin[m] = std::min(wmin[m], wj[m]); wmax[m] = std::max(wmax[m], wj[m]);
+             }
+@@ -1842,20 +1846,22 @@
+                 gx[0] += ei * nx; gy[0] += ei * ny;
+                 gx[1] += ui * nx; gy[1] += ui * ny;
+                 gx[2] += vi * nx; gy[2] += vi * ny;
++                gx[3] += hi * nx; gy[3] += hi * ny;
+             }
+         }
+         if (!ok || nfaces == 0) continue;
+         const double inv_a = 1.0 / mesh_->tri_area[i];
+-        const double wi[3] = {ei, ui, vi};
+-        double phi[3] = {1.0, 1.0, 1.0};
+-        for (int m = 0; m < 3; ++m) { gx[m] *= inv_a; gy[m] *= inv_a; }
++        const double wi[4] = {ei, ui, vi, hi};
++        double phi[4] = {1.0, 1.0, 1.0, 1.0};
++        for (int m = 0; m < 4; ++m) { gx[m] *= inv_a; gy[m] *= inv_a; }
+         for (int p = ed.cell_ptr[i]; p < ed.cell_ptr[i + 1]; ++p) {
+             const double ax = ed.cell_arm_x[p], ay = ed.cell_arm_y[p];
+-            for (int m = 0; m < 3; ++m) {
++            for (int m = 0; m < 4; ++m) {
+                 const double wf = wi[m] + gx[m] * ax + gy[m] * ay;
+                 phi[m] = std::min(phi[m], swe::bjLimiter(wi[m], wf, wmin[m], wmax[m]));
+             }
+         }
++        gex_[depth_offset + i] = phi[3] * gx[3]; gey_[depth_offset + i] = phi[3] * gy[3];
+         gex_[i] = phi[0] * gx[0]; gey_[i] = phi[0] * gy[0];
+         gux_[i] = phi[1] * gx[1]; guy_[i] = phi[1] * gy[1];
+         gvx_[i] = phi[2] * gx[2]; gvy_[i] = phi[2] * gy[2];
+--- a/src/engine/2d/solver/ExplicitInertialSolver.hpp
++++ b/src/engine/2d/solver/ExplicitInertialSolver.hpp
+@@ -155,9 +155,11 @@
+     /// Scalar: the boundary loop is serial (perimeter-sized).
+     double               swe_bc_dqx_ = 0.0, swe_bc_dqy_ = 0.0;
+     /// RECONSTRUCTION_ORDER 2 (FULL_SWE): limited Green-Gauss gradients of
+-    /// (η, u, v) per cell, refreshed at every face pass, and the SSP-RK2
++    /// (eta, h, u, v) per cell, refreshed at every face pass, and the SSP-RK2
+     /// stage buffers. Empty at order 1.
+     bool                 second_order_ = false;
++    /// gex_/gey_: eta gradients in [0, n), depth gradients in [n, 2*n).
++    /// The second block supplies the face bed (eta - h) only for order 2.
+     std::vector<double>  gex_, gey_, gux_, guy_, gvx_, gvy_;
+     std::vector<double>  rk_v0_, rk_qx0_, rk_qy0_;
+     /// Stage-0 copies of the per-advance ledgers (F6): members so the RK2
+--- a/src/engine/2d/solver/SweKernels.hpp
++++ b/src/engine/2d/solver/SweKernels.hpp
+@@ -223,26 +223,25 @@
+ }
+ 
+ /**
+- * @brief Face flux from RECONSTRUCTED side states (RECONSTRUCTION_ORDER 2).
+- *
+- * The free surface and velocities are the MUSCL-extrapolated face values and
+- * the bed stays piecewise constant per cell (z_side = η_cell − h_cell); the
+- * bed-slope correction uses the reconstructed face depth, so at rest (zero
+- * gradients) the face reduces exactly to the first-order well-balanced form.
+- *
+- * @param etaLf,uxLf,uyLf   left face-extrapolated free surface and velocity
+- * @param zL,hL_cell        left cell bed and cell-mean depth
+- * @param etaRf,...         right side likewise
+- */
+-OPENSWMM_KERNEL_FN bool faceFluxRecon(double etaLf, double uxLf, double uyLf,
++ * @brief Second-order face flux with independently reconstructed depth/bed.
++ *
++ * zLf/zRf are face beds from the limited eta and depth reconstruction.
++ * zL/zR remain the cell-equivalent beds. The pressure reference deliberately
++ * uses eta_face - z_cell: relative to the usual hydrostatic face correction,
++ * this includes the within-cell bed source. Keeping that reference makes a
++ * constant free surface balance exactly, including a first-order neighbour.
++ * On a flat bed it reduces to the original homogeneous MUSCL flux.
++ */
++OPENSWMM_KERNEL_FN bool faceFluxReconBed(double etaLf, double uxLf, double uyLf,
+                                       double zL, double hL_cell,
+                                       double etaRf, double uxRf, double uyRf,
+                                       double zR, double hR_cell,
+                                       double nx, double ny, double h_dry,
+                                       FaceFlux& out,
+                                       double& corrL_x, double& corrL_y,
+-                                      double& corrR_x, double& corrR_y) noexcept {
+-    const double zf = (zL > zR) ? zL : zR;
++                                      double& corrR_x, double& corrR_y,
++                                      double zLf, double zRf) noexcept {
++    const double zf = (zLf > zRf) ? zLf : zRf;
+     FaceSide L, R;
+     L.h = (etaLf - zf > 0.0) ? etaLf - zf : 0.0;
+     R.h = (etaRf - zf > 0.0) ? etaRf - zf : 0.0;
+@@ -272,6 +271,21 @@
+     out.my    = fn * ny + ft * ty;
+     out.sstar = sstar;
+     return true;
++}
++
++/// Piecewise-constant-bed compatibility entry point.
++OPENSWMM_KERNEL_FN bool faceFluxRecon(double etaLf, double uxLf, double uyLf,
++                                      double zL, double hL_cell,
++                                      double etaRf, double uxRf, double uyRf,
++                                      double zR, double hR_cell,
++                                      double nx, double ny, double h_dry,
++                                      FaceFlux& out,
++                                      double& corrL_x, double& corrL_y,
++                                      double& corrR_x, double& corrR_y) noexcept {
++    return faceFluxReconBed(etaLf, uxLf, uyLf, zL, hL_cell,
++                            etaRf, uxRf, uyRf, zR, hR_cell,
++                            nx, ny, h_dry, out, corrL_x, corrL_y,
++                            corrR_x, corrR_y, zL, zR);
+ }
+ 
+ /// Barth–Jespersen limiter factor φ ∈ [0, 1] for one cell/variable given the
+--- a/src/engine/2d/data/SolverOptions2D.hpp
++++ b/src/engine/2d/data/SolverOptions2D.hpp
+@@ -221,7 +221,7 @@
+     /// LOCAL_INERTIAL (which stays bit-identical to its pre-2026-09 results).
+     int front_rebuild = -1;   ///< -1 AUTO, 0 NO, 1 YES
+     /// [2D_OPTIONS] RECONSTRUCTION_ORDER 1|2 — FULL_SWE only: 1 = piecewise
+-    /// constant (first-order Godunov, forward Euler); 2 = MUSCL on (η, u, v)
++    /// constant (first-order Godunov, forward Euler); 2 = MUSCL on (eta, h, u, v)
+     /// with the Barth–Jespersen-limited Green-Gauss gradient + SSP-RK2
+     /// (global-dt mode; LTS_TIERS > 1 is reduced to 1 with a warning).
+     int reconstruction_order = 1;
+--- a/tests/unit/engine/test_2d_cpu_correctness.cpp
++++ b/tests/unit/engine/test_2d_cpu_correctness.cpp
+@@ -14,6 +14,7 @@
+ namespace openswmm::twoD {
+ // Inspect the scheduling invariant without making debug state a public API.
+ struct ExplicitInertialSolverTestAccess {
++    static void fireSwe(ExplicitInertialSolver& s,double dt) {s.fireFacesSwe(s.active_faces_,dt,true);}
+     static void rebuild(ExplicitInertialSolver& s) { s.syncAndRebuild(0); }
+     static void refresh(ExplicitInertialSolver& s) { s.refreshDt0(); }
+     static int tier(const ExplicitInertialSolver& s,int i) {return s.tier_[i];}
+@@ -126,10 +127,10 @@
+     EXPECT_EQ(f.mass,0);EXPECT_NEAR(lx,-.5*inertial::kGravity*.01,1e-15);
+ }
+ TEST(Cpu2DCorrectness,LakeAtRestAgainstAnEmergedBump) {
+-    for(bool quad:{false,true})for(int order:{1,2}){
++    for(bool quad:{false,true})for(int order:{1,2})for(auto closure:{CellClosure2D::FLAT,CellClosure2D::VFR}){
+         auto m=grid(16,quad);
+         for(int i=0;i<m.n_vertices();++i){double x=m.vx[i]-8;m.vz[i]=std::abs(x)<2?.2-.05*x*x:0;}
+-        buildMeshTopology(m);auto s=state(m,0);auto o=options(4,1);o.momentum=Momentum2D::FULL_SWE;o.reconstruction_order=order;o.dry_depth=1e-7;o.h_move=1e-6;
++        buildMeshTopology(m);auto s=state(m,0);auto o=options(4,1);o.momentum=Momentum2D::FULL_SWE;o.reconstruction_order=order;o.cell_closure=closure;o.dry_depth=1e-7;o.h_move=1e-6;
+         for(int i=0;i<m.n_cells();++i){m.mannings_n[i]=0;s.volume[i]=inertial::cellVolumeFromEta(m,o,i,.1);}
+         auto initial=s.volume;ExplicitInertialSolver solver;solver.initialize(m,s,o);solver.advance(0,10);
+         for(int i=0;i<m.n_cells();++i)EXPECT_NEAR(s.volume[i],initial[i],1e-10);
+@@ -348,3 +349,70 @@
+         }
+     }
+ }
++
++TEST(Cpu2DCorrectness,SecondOrderSlopeReconstructionCarriesPhysicalMassFlux) {
++    using A = ExplicitInertialSolverTestAccess;
++    for (bool quad : {false, true}) for (int threads : {1, 4}) {
++        auto m = grid(8, quad);
++        for (int i = 0; i < m.n_vertices(); ++i)
++            m.vz[i] = .04 * m.vx[i] + .03 * m.vy[i];
++        buildMeshTopology(m);
++        auto s = state(m, .5); auto o = options(threads, 1);
++        o.momentum = Momentum2D::FULL_SWE; o.reconstruction_order = 2;
++        for (int i = 0; i < m.n_cells(); ++i) {
++            m.tri_init_u[i] = .2; m.tri_init_v[i] = -.1; m.mannings_n[i] = 0;
++        }
++        ExplicitInertialSolver solver; solver.initialize(m, s, o);
++        A::rebuild(solver); A::fireSwe(solver, 1e-4);
++        const auto& ed = A::edges(solver); int checked = 0;
++        for (int e : A::faces(solver)) {
++            const int a = ed.cL[e], b = ed.cR[e];
++            auto interior = [&](int c) {
++                return m.tri_cx[c] > 2 && m.tri_cx[c] < 6 &&
++                       m.tri_cy[c] > 2 && m.tri_cy[c] < 6;
++            };
++            if (!interior(a) || !interior(b)) continue;
++            // Both reconstructed states have h=.5 and the same velocity.
++            // A smooth bed slope must not lower the advected water depth.
++            EXPECT_NEAR(A::discharge(solver, e), .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]), 1e-13);
++            ++checked;
++        }
++        EXPECT_GT(checked, 10);
++    }
++}
++
++TEST(Cpu2DCorrectness,SecondOrderPlanarThackerRetainsRotationPhase) {
++    constexpr double pi = 3.14159265358979323846;
++    const double omega = std::sqrt(2 * inertial::kGravity * .1);
++    const double period = 2 * pi / omega;
++    for (bool quad : {false, true}) {
++        auto m = grid(64, quad);
++        for (int i = 0; i < m.n_vertices(); ++i) {
++            m.vx[i] /= 16; m.vy[i] /= 16;
++            const double x = m.vx[i] - 2, y = m.vy[i] - 2;
++            m.vz[i] = .1 * (x * x + y * y - 1);
++        }
++        buildMeshTopology(m); auto s = state(m, 0); auto o = options(1, 1);
++        o.momentum = Momentum2D::FULL_SWE; o.reconstruction_order = 2;
++        o.max_timestep = .25; o.dry_depth = 1e-7; o.h_move = 1e-6;
++        for (int i = 0; i < m.n_cells(); ++i) {
++            const double x = m.tri_cx[i] - 2.5, y = m.tri_cy[i] - 2;
++            s.volume[i] = std::max(0.0, .1 * (1 - x*x - y*y)) * m.tri_area[i];
++            m.tri_init_v[i] = .5 * omega; m.mannings_n[i] = 0;
++        }
++        const double initial_volume = sum(s.volume);
++        ExplicitInertialSolver solver; solver.initialize(m, s, o);
++        for (int k = 0; k < 192; ++k) solver.advance(k * period / 64, (k + 1) * period / 64);
++        double x = 0, y = 0;
++        for (int i = 0; i < m.n_cells(); ++i) {
++            x += s.volume[i] * (m.tri_cx[i] - 2);
++            y += s.volume[i] * (m.tri_cy[i] - 2);
++            EXPECT_GE(s.volume[i], 0);
++        }
++        EXPECT_NEAR(sum(s.volume), initial_volume, 1e-12);
++        // Exact centroid returns to (+.5, 0). Allow spatial damping while
++        // rejecting the former ~30-degree phase lag after three periods.
++        EXPECT_GT(x / initial_volume, .3);
++        EXPECT_LT(std::abs(std::atan2(y, x)), .15);
++    }
++}

@@ -402,3 +402,12 @@ See also
 * :doc:`datetime` — SWMM DateTime ↔ Python ``datetime`` conversion.
 * :doc:`nodes`, :doc:`links`, :doc:`subcatchments`, :doc:`output_reader` —
   the most-used domain accessors.
+
+Compatibility output
+====================
+
+``solver.write_compat(path, InpProfile.FULL)`` writes native OpenSWMM input.
+``InpProfile.SWMM5`` targets the OpenSWMM legacy engine, while
+``InpProfile.SWMM5_STOCK`` targets stock EPA SWMM 5 input. Compatibility profiles
+may substitute or omit unsupported features. Inspect ``solver.open_warnings``
+after writing for conversion diagnostics. The live model is not modified.

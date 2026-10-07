@@ -1,0 +1,28 @@
+{
+  "head": "b26b0a25b89e73c7e0f041b2eeca5021eb9481ca",
+  "task_source_tree": "49f7c0d64bbe711d550abae16c08653e28604ac0",
+  "build_source_path": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.gui/tests/verification/surface_r4_2026-10-05/isolated/openswmm.engine",
+  "files": {
+    "src/engine/hydrology/SourceWaterDriver.hpp": "375cbb56981aa304bedcbbde9965f503d3970fd7cc216398159c8d388b5b47b5",
+    "src/engine/hydrology/SourceWaterDriver.cpp": "972847d34441aff9dbac22853435079e0c01fc13905c5728e70cf01ca8fc2bc0",
+    "src/engine/2d/subsurface/CommonSourceStage.hpp": "b54dc0504eff9ffc820dd46ff773a16e0eb16dbbb187fc3dc17b9efe5dda8b7d",
+    "src/engine/2d/subsurface/CommonSourceStage.cpp": "2999edf5e5244a7ca40f20459c5f99507b835f984bac4421db824abc5f48ab54",
+    "src/engine/2d/subsurface/SubsurfaceSolver.hpp": "fb2c2ab135b100ef5f02deeac7613116b52b17c9564c65ab9a84c4f4ee872315",
+    "src/engine/2d/subsurface/SubsurfaceSolver.cpp": "d5ed2885028066e7f01736e966b21c9166a0e7acd01e3ecfd092d124a60c389b",
+    "tests/unit/engine/test_source_water_driver.cpp": "9b89c1e2d66ff364d58e94b360e1077be64c6b54122b065718df8b5ced8fd6d9",
+    "tests/unit/engine/test_common_source_stage.cpp": "5c85c1815aa4e2c2fc6962ce57ad45057b28b3c76e87bafc821aff47a370c48c",
+    "tests/unit/engine/test_surface_et_budget.cpp": "05065b71c3631390bd6f53d718a02353a2d834b8070c4689276886a8313c0d21",
+    "tests/unit/engine/CMakeLists.txt": "4b48f8ec8cea38475fe77cdb98dfe165c802b190dfbca460db504e8a14f73aa5",
+    "plans/SURFACE_PROCESS_R4_AREA_ET_2026-10-06.md": "4dc649271f9660274e805216558473553aedfbdd573a06ff9e74d7f98c4fe252"
+  },
+  "unchanged_controls": {
+    "src/engine/hydrology/LidNode.cpp": "be39f712e3c9cac90757725b7ee5a9693d9db9ba47ed5b186404cfccef6a7b25",
+    "src/engine/hydrology/RichardsColumn.cpp": "b2c40217f37d455704f6586831dfc1beac46dfce5942fe383d2650cf95a8bcdc",
+    "src/engine/2d/subsurface/SigmaColumn.cpp": "9fb1e5373cef6bc853ebaa00a3cb4b0d1eb48c7e7ba1f8b967e94a910b8cb6d1",
+    "src/engine/hydraulics/Node.cpp": "2c335ff503d842ffb83ac28890a1c7f0981363f5a823a7d87f5654146b0149a2"
+  },
+  "final_documentation_sha256": {
+    "plans/SURFACE_PROCESS_R4_AREA_ET_2026-10-06.md": "fbb7c2abbdac99e0cf080bb89d56fec4b43aaa48b95082df65c2f3bfaa624d3e"
+  },
+  "qualified_code_unchanged_since_tests": true
+}

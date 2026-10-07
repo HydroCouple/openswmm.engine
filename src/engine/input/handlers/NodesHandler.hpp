@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file NodesHandler.hpp
  * @brief Section handlers for node types: JUNCTIONS, OUTFALLS, DIVIDERS, STORAGE.
@@ -6,7 +22,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_NODES_HANDLER_HPP
@@ -27,6 +43,15 @@ void handle_junctions(SimulationContext& ctx, const std::vector<std::string>& li
  *           two attached conduits in PostParseResolver. Extra tokens are a
  *           parse error (ERR_VJ_EXTRA_TOKENS). Refactored engine only. */
 void handle_virtual_junctions(SimulationContext& ctx, const std::vector<std::string>& lines);
+
+/** @brief Parse [INLET_JUNCTIONS] — virtual junctions that carry a street inlet.
+ *  @details `Name Elev MaxDepth Inlet CaptureNode (#Inlets %Clog Qmax aLocal
+ *           wLocal Placement)`: the node gets is_virtual = is_inlet = 1 and a
+ *           node-hosted InletUsageStore row whose design / capture-node names
+ *           are resolved by PostParseResolver. More than 11 tokens is a parse
+ *           error (ERR_IJ_EXTRA_TOKENS). Implemented in InfraHandler.cpp
+ *           beside the [INLET_USAGE] tail parser it shares. */
+void handle_inlet_junctions(SimulationContext& ctx, const std::vector<std::string>& lines);
 
 /** @brief Parse [OUTFALLS] — sets outfall-specific fields for nodes of type OUTFALL. */
 void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lines);

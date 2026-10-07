@@ -202,7 +202,7 @@ protected:
 
     // Write the edited model back out and return its text (round-trip oracle).
     std::string written_model(const std::string& tag) {
-        const fs::path p = kArtifactDir / (tag + "_out.inp");
+        const fs::path p = kArtifactDir / (tag + "_objdel_out.inp");
         EXPECT_EQ(swmm_model_write(engine, p.string().c_str()), SWMM_OK);
         return read_file(p);
     }

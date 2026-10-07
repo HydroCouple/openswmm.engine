@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file InflowsHandler.cpp
  * @brief Section handlers for [PATTERNS], [INFLOWS], [DWF], [RDII],
@@ -33,7 +49,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "InflowsHandler.hpp"
@@ -201,7 +217,13 @@ void handle_rdii(SimulationContext& ctx, const std::vector<std::string>& lines) 
 void handle_hydrographs(SimulationContext& ctx, const std::vector<std::string>& lines) {
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
-        if (tok.size() < 2) continue;
+        if (tok.empty()) continue;
+        // Legacy rdii_readUnitHydParams: a gage row has 2 items, a response
+        // row at least 6; anything else is ERR_ITEMS (rdii.c).
+        if (tok.size() == 1 || (tok.size() > 2 && tok.size() < 6)) {
+            ctx.errors.push_back(format_error(ERR_ITEMS, tok[0]));
+            continue;
+        }
 
         const std::string& uh_name = tok[0];
 
@@ -212,7 +234,6 @@ void handle_hydrographs(SimulationContext& ctx, const std::vector<std::string>& 
         }
 
         // Otherwise: UHgroup  Month  Response  R  T  K  [Dmax  Drecov  Dinit]
-        if (tok.size() < 6) continue;
 
         // Parse month: "All" → -1, or numeric 1-12 → 0-based (0-11)
         int month = -1;

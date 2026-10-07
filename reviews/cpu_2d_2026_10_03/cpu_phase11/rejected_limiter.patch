@@ -1,0 +1,17 @@
+--- a/src/engine/2d/solver/ExplicitInertialSolver.cpp
++++ b/src/engine/2d/solver/ExplicitInertialSolver.cpp
+@@ -1905,7 +1905,13 @@
+             const double ax = ed.cell_arm_x[p], ay = ed.cell_arm_y[p];
+             for (int m = 0; m < 4; ++m) {
+                 const double wf = wi[m] + gx[m] * ax + gy[m] * ay;
+-                phi[m] = std::min(phi[m], swe::bjLimiter(wi[m], wf, wmin[m], wmax[m]));
++                // An extrapolation inside the neighbour bounds cannot
++                // tighten a limiter already in [0, 1]. Divide only when it can.
++                const double d = wf - wi[m];
++                if (d > 1.0e-14 && wmax[m] - wi[m] < d)
++                    phi[m] = std::min(phi[m], (wmax[m] - wi[m]) / d);
++                else if (d < -1.0e-14 && wmin[m] - wi[m] > d)
++                    phi[m] = std::min(phi[m], (wmin[m] - wi[m]) / d);
+             }
+         }
+         // Connected interior faces are already bounded by positive wet

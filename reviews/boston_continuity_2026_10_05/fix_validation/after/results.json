@@ -1,0 +1,42 @@
+[
+  {
+    "case": "DYNWAVE_0",
+    "steps": 31,
+    "initial": 1.1,
+    "stored": 0.0,
+    "outfall_in": 0.0,
+    "outfall_out": 1.1,
+    "continuity_2d": 0.0,
+    "continuity_1d": 0.06715887791514764
+  },
+  {
+    "case": "DYNWAVE_6",
+    "steps": 31,
+    "initial": 1.1,
+    "stored": 0.0,
+    "outfall_in": 0.0,
+    "outfall_out": 1.1,
+    "continuity_2d": 0.0,
+    "continuity_1d": 0.06715887791514764
+  },
+  {
+    "case": "FV_0",
+    "steps": 31,
+    "initial": 1.1,
+    "stored": 0.0,
+    "outfall_in": 0.0,
+    "outfall_out": 1.1,
+    "continuity_2d": 0.0,
+    "continuity_1d": -1.8291205280449427e-15
+  },
+  {
+    "case": "FV_6",
+    "steps": 31,
+    "initial": 1.1,
+    "stored": 0.0,
+    "outfall_in": 0.0,
+    "outfall_out": 1.1,
+    "continuity_2d": 0.0,
+    "continuity_1d": -1.8291205280449427e-15
+  }
+]

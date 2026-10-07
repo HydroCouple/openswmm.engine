@@ -1,0 +1,160 @@
+[
+  {
+    "stats": {
+      "backend": "cpu (explicit marcher)",
+      "momentum": 1,
+      "lts_tiers": 1,
+      "steps": 120,
+      "face_evals": 1995240,
+      "active_frac_mean": 0.4536328125000002
+    },
+    "groundwater": {
+      "active": false
+    },
+    "cpu_seconds": 0.763547,
+    "cells": 25600,
+    "init_seconds": 1.5127423749945592,
+    "run_seconds": 0.47217987501062453,
+    "total_seconds": 2.005380916001741,
+    "routing_steps": 62,
+    "depth_hash": "8eafc7bd411c1f02b9e972a83d2b0a4164eefc5ef51e6b63ad7acc78be4ad44f",
+    "mass_balance": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "infiltration": 0.0,
+    "continuity_error": 0.0,
+    "peak_rss_bytes": 103350272,
+    "report_hash": "18e4f165cf43384213d3d16a7838a9cd1dd5c6a9812423076cabc5c6dc8030ae",
+    "case": "bellinge_10min_swe2",
+    "variant": "baseline"
+  },
+  {
+    "stats": {
+      "backend": "cpu (explicit marcher)",
+      "momentum": 1,
+      "lts_tiers": 1,
+      "steps": 120,
+      "face_evals": 1995240,
+      "active_frac_mean": 0.4536328125000002
+    },
+    "groundwater": {
+      "active": false
+    },
+    "cpu_seconds": 0.7475469999999999,
+    "cells": 25600,
+    "init_seconds": 1.1541867079795338,
+    "run_seconds": 0.46534437499940395,
+    "total_seconds": 1.6338919999834616,
+    "routing_steps": 62,
+    "depth_hash": "8eafc7bd411c1f02b9e972a83d2b0a4164eefc5ef51e6b63ad7acc78be4ad44f",
+    "mass_balance": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0
+    ],
+    "infiltration": 0.0,
+    "continuity_error": 0.0,
+    "peak_rss_bytes": 102940672,
+    "report_hash": "18e4f165cf43384213d3d16a7838a9cd1dd5c6a9812423076cabc5c6dc8030ae",
+    "case": "bellinge_10min_swe2",
+    "variant": "selected",
+    "hdf5_exact": [
+      "BellingeSWMM_v021_nopervious.2d.h5"
+    ]
+  },
+  {
+    "stats": {
+      "backend": "cpu (explicit marcher)",
+      "momentum": 1,
+      "lts_tiers": 1,
+      "steps": 2728,
+      "face_evals": 104574000,
+      "active_frac_mean": 0.9952540751080692
+    },
+    "groundwater": {
+      "active": false
+    },
+    "cpu_seconds": 22.575929000000002,
+    "cells": 25600,
+    "init_seconds": 0.783288583974354,
+    "run_seconds": 23.581310042005498,
+    "total_seconds": 24.579124959011097,
+    "routing_steps": 228,
+    "depth_hash": "b8575556185e9991602825e817006501dc84fbd5d120af3c39e38211bf1dabec",
+    "mass_balance": [
+      0.0,
+      465596.49522580317,
+      445081.4346449075,
+      29446.90090181468,
+      3730.4911745283503,
+      807.7646572585423,
+      226.6928629873782,
+      0.0,
+      5804.049597629974,
+      0.0
+    ],
+    "infiltration": 0.0,
+    "continuity_error": -4.550181852146693e-05,
+    "peak_rss_bytes": 103333888,
+    "report_hash": "9e3e0749b0ee217a4bb8348f9a203d527c343917885b2b8ccc3288a01e0944cc",
+    "case": "bellinge_storm_swe2",
+    "variant": "baseline"
+  },
+  {
+    "stats": {
+      "backend": "cpu (explicit marcher)",
+      "momentum": 1,
+      "lts_tiers": 1,
+      "steps": 2728,
+      "face_evals": 104574000,
+      "active_frac_mean": 0.9952540751080692
+    },
+    "groundwater": {
+      "active": false
+    },
+    "cpu_seconds": 19.946891,
+    "cells": 25600,
+    "init_seconds": 0.5282027500215918,
+    "run_seconds": 19.85527133301366,
+    "total_seconds": 20.579588374996092,
+    "routing_steps": 228,
+    "depth_hash": "b8575556185e9991602825e817006501dc84fbd5d120af3c39e38211bf1dabec",
+    "mass_balance": [
+      0.0,
+      465596.49522580317,
+      445081.4346449075,
+      29446.90090181468,
+      3730.4911745283503,
+      807.7646572585423,
+      226.6928629873782,
+      0.0,
+      5804.049597629974,
+      0.0
+    ],
+    "infiltration": 0.0,
+    "continuity_error": -4.550181852146693e-05,
+    "peak_rss_bytes": 102350848,
+    "report_hash": "9e3e0749b0ee217a4bb8348f9a203d527c343917885b2b8ccc3288a01e0944cc",
+    "case": "bellinge_storm_swe2",
+    "variant": "selected",
+    "hdf5_exact": [
+      "BellingeSWMM_v021_nopervious.2d.h5"
+    ]
+  }
+]

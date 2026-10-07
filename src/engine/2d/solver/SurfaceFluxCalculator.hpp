@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file SurfaceFluxCalculator.hpp
  * @brief Edge flux computation, gradient calculation, and slope limiting.
@@ -12,7 +28,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_SURFACE_FLUX_CALCULATOR_HPP
@@ -72,6 +88,34 @@ inline double evapSink(double rate, double depth, double dry_depth) noexcept {
 }
 
 /**
+ * @brief Depth-limited infiltration sink rate (m/s) for one cell (plan §5.5).
+ *
+ * Identical contract to evapSink: the held per-cell rate (D-I1,
+ * SurfaceStateData::infil_rate) applies in full for depth ≥ dry_depth and
+ * shuts off through the same cubic Hermite wet/dry ramp as the cell dries.
+ * Negative rates are treated as zero (infiltration is a loss only;
+ * exfiltration is not a v1 destination — D-I4).
+ *
+ * D-I2 sink ordering: evaporation is taken FIRST with its semantics
+ * unchanged, and infiltration is then applied against what is left, so a
+ * surface-only project (infil_rate all zero) is bitwise unchanged. Both sinks
+ * ramp to zero together as the cell dries, and every call site feeds the sum
+ * into a volume update that floors at zero, so the pair cannot leave a cell
+ * with negative water.
+ *
+ * @param rate      Held infiltration rate (m/s).
+ * @param depth     Current cell depth (m).
+ * @param dry_depth Dry-depth threshold (m).
+ * @return Effective sink rate (m/s, ≥ 0).
+ */
+inline double infilSink(double rate, double depth, double dry_depth) noexcept {
+    if (rate <= 0.0 || depth <= 0.0) return 0.0;
+    if (depth >= dry_depth) return rate;
+    double t = depth / dry_depth;
+    return rate * t * t * (3.0 - 2.0 * t);
+}
+
+/**
  * @brief Boundary-edge flux for cell @p i across flat mesh edge slot @p idx
  *        (m³/s, inflow-positive). Exported wrapper over the file-local
  *        boundary kernel so non-DW solvers (the explicit marcher) evaluate
@@ -88,11 +132,12 @@ double computeBoundaryEdgeFlux(const MeshData& mesh,
  * Evaluates the discrete semi-discrete balance for each cell:
  *   residual_i = (ψ_i − ψ_old_i)·A_i/dt
  *                − ( Σ_e F_e  +  (rainfall_i + coupling_flux_i
- *                                 − evapSink_i)·A_i )
+ *                                 − evapSink_i − infilSink_i)·A_i )
  * where F_e = edge_flux[i·3+e] is the inflow-positive volumetric edge flux
  * (m³/s). A perfectly conservative step yields ~0 (first-order diagnostic,
  * not the solver's internal error). Reads old_depth, depth, edge_flux,
- * rainfall, evap_rate, coupling_flux; writes cell_continuity_err (m³/s).
+ * rainfall, evap_rate, infil_rate, coupling_flux; writes cell_continuity_err
+ * (m³/s).
  *
  * Call AFTER the solver advance, with old_depth holding the start-of-step
  * depths (i.e. after save_state() but before the next save_state()).

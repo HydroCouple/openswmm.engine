@@ -12,7 +12,7 @@
 [![CodeQL](https://github.com/HydroCouple/openswmm.engine/actions/workflows/codeql.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/codeql.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/HydroCouple/openswmm.engine/badge)](https://securityscorecards.dev/viewer/?uri=github.com/HydroCouple/openswmm.engine)
 [![Issues](https://img.shields.io/github/issues/HydroCouple/openswmm.engine)](https://github.com/HydroCouple/openswmm.engine/issues)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/HydroCouple/openswmm.engine/blob/HEAD/LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://github.com/HydroCouple/openswmm.engine/blob/HEAD/LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/openswmm.svg)](https://pypi.org/project/openswmm)
 [![Downloads](https://pepy.tech/badge/openswmm)](https://pepy.tech/project/openswmm)
 [![Python](https://img.shields.io/pypi/pyversions/openswmm.svg)](https://pypi.org/project/openswmm)
@@ -22,10 +22,11 @@
 
 | | Site | Contents |
 |---|---|---|
-| **C / C++ Engine** | **[hydrocouple.org/openswmm.engine](https://hydrocouple.org/openswmm.engine)** | Full C API reference, hydrology / hydraulics / water-quality reference manuals, user manual, architecture notes. |
+| **C / C++ Engine** | **[hydrocouple.org/openswmm.engine](https://hydrocouple.org/openswmm.engine)** | Full C API reference, hydrology / hydraulics / water-quality reference manuals, engine manual (input format, files, reports, C API), architecture notes. |
 | **Python Bindings** | **[hydrocouple.org/openswmm.engine/python](https://hydrocouple.org/openswmm.engine/python)** | Quickstart, per-domain user guide, Cython API reference, SWMM 5 → v6 migration. |
+| **SWMMVis (GUI)** | **[hydrocouple.org/openswmm.gui](https://www.hydrocouple.org/openswmm.gui/)** | The graphical application: map canvas, layers and CRS, every editor, running simulations, plots and animation, 2D meshing, tutorials, reference tables and error codes. |
 
-Both sites cross-link from their top navigation.
+The sites cross-link from their top navigation.
 
 ---
 
@@ -173,7 +174,7 @@ All third-party libraries are resolved through the vcpkg manifest ([`vcpkg.json`
 | Dependency | Needed for | Default build | Controlled by |
 |---|---|---|---|
 | SQLite3 (rtree) | GeoPackage I/O | included | `-DOPENSWMM_WITH_GEOPACKAGE=ON` (default) / vcpkg feature `geopackage` |
-| HDF5 | 2D module output (CF-1.11 / UGRID-1.0) | included | `-DOPENSWMM_BUILD_2D=ON` (default) / vcpkg feature `2d` |
+| HDF5 | 2D module output (CF-1.11 / UGRID-1.0) | included | `-DOPENSWMM_BUILD_2D=ON` (default) / vcpkg feature `2d`; `-DOPENSWMM_2D_HDF5_OUTPUT=OFF` builds 2D without it (`[2D_OPTIONS] OUTPUT_FILE` is then ignored with a warning; results via the `swmm_2d_*` API — used by the WebAssembly build) |
 | Kokkos (OpenMP) | GPU/threaded 2D surface-solver plugin | included | `-DOPENSWMM_BUILD_GPU_PLUGIN=ON` (default) / vcpkg feature `gpu` |
 | GoogleTest | unit + regression tests | optional | `-DOPENSWMM_BUILD_TESTS=ON` / `*-tests` presets / vcpkg feature `tests` |
 | Google Benchmark | performance benchmarks | optional | `-DOPENSWMM_BUILD_BENCHMARKS=ON` / vcpkg feature `benchmarks` |
@@ -273,7 +274,7 @@ Signing is automated through [CLA Assistant](https://cla-assistant.io) — when 
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Original EPA SWMM material is in the public domain under 17 USC § 105.
+Apache License, Version 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Original EPA SWMM material is in the public domain under 17 USC § 105 and is not subject to the Apache license grant.
 
 ## Acknowledgements
 

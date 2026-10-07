@@ -1,0 +1,10 @@
+{
+  "baseline": {
+    "libopenswmm.engine.6.dylib": "4fa4454c6f5dbe83c351bbce609af7092c10780ce50a9989584b050beef540bf",
+    "openswmm": "aace1f4ff87adb14baaaf237f11c630d0aa128afd9301195492d49d49f94a621"
+  },
+  "candidate": {
+    "libopenswmm.engine.6.dylib": "1ce3efdcbd02044818d3d0cad2012e458388c6bf4c3cde73f7da30849879245e",
+    "openswmm": "aace1f4ff87adb14baaaf237f11c630d0aa128afd9301195492d49d49f94a621"
+  }
+}

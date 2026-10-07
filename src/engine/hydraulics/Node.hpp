@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file Node.hpp
  * @brief Node hydraulics — volume/depth/head conversions, surface area, overflow.
@@ -10,7 +26,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_NODE_HPP
@@ -102,6 +118,34 @@ double getMaxOutflow(const NodeData& nodes, int idx, double q, double dt);
  * @returns Overflow rate (ft3/s).
  */
 double getOverflow(double new_volume, double full_volume, double dt);
+
+/**
+ * @brief Water held at a node as a completely mixed transport STORE (ft3).
+ *
+ * @details The routers book nodes.volume in legacy's Node.newVolume
+ *          convention: a junction, outfall or divider holds nothing below
+ *          its rim (legacy fullVolume is 0 there, node.c node_getVolume) and
+ *          only the ponded water above it. A transport module that models a
+ *          node as a mixed store needs the water the dynamic wave's
+ *          continuity equation attributes to the node — its MIN_SURFAREA-
+ *          floored surface area times depth, which is full_volume scaled by
+ *          depth / full_depth (full_volume carries that area for a junction)
+ *          — plus the ponded water. A storage node's store is its curve
+ *          volume, i.e. nodes.volume itself, and an outfall — a boundary
+ *          the routers never book a volume for — stores nothing.
+ *
+ * @param nodes  SoA node data.
+ * @param idx    Node index.
+ * @returns Store volume (ft3, >= 0).
+ */
+double storeVolume(const NodeData& nodes, int idx);
+
+/**
+ * @brief storeVolume() for an explicit depth / booked-volume pair, so a
+ *        caller can evaluate the previous step's store from old_depth and
+ *        old_volume.
+ */
+double storeVolume(const NodeData& nodes, int idx, double depth, double volume);
 
 /**
  * @brief Compute depth from volume for a single node (inverse of getVolume).

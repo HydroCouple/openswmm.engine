@@ -1,0 +1,136 @@
+[TITLE]
+;;Project Title/Notes
+HEC-22 example 4-10 where
+flow capture is 1.76 cfs.
+
+[OPTIONS]
+;;Option            	Value
+FLOW_UNITS          	CFS
+INFILTRATION        	HORTON
+FLOW_ROUTING        	DYNWAVE
+LINK_OFFSETS        	DEPTH
+MIN_SLOPE           	0
+ALLOW_PONDING       	NO
+SKIP_STEADY_STATE   	NO
+
+START_DATE          	07/27/2020
+START_TIME          	00:00:00
+REPORT_START_DATE   	07/27/2020
+REPORT_START_TIME   	01:00:00
+END_DATE            	07/27/2020
+END_TIME            	06:00:00
+SWEEP_START         	01/01
+SWEEP_END           	12/31
+DRY_DAYS            	0
+REPORT_STEP         	00:15:00
+WET_STEP            	00:05:00
+DRY_STEP            	01:00:00
+ROUTING_STEP        	0:00:30 
+RULE_STEP           	00:00:00
+
+INERTIAL_DAMPING    	PARTIAL
+NORMAL_FLOW_LIMITED 	BOTH
+FORCE_MAIN_EQUATION 	H-W
+VARIABLE_STEP       	0.75
+LENGTHENING_STEP    	0
+MIN_SURFAREA        	12.566
+MAX_TRIALS          	8
+HEAD_TOLERANCE      	0.005
+SYS_FLOW_TOL        	5
+LAT_FLOW_TOL        	5
+MINIMUM_STEP        	0.5
+THREADS             	1
+
+[EVAPORATION]
+;;Data Source   	Parameters
+;;--------------	----------------
+CONSTANT        	0.0
+DRY_ONLY        	NO
+
+[JUNCTIONS]
+;;Name          	Elevation 	MaxDepth  	InitDepth 	SurDepth  	Aponded   
+;;--------------	----------	----------	----------	----------	----------
+1               	100       	0         	0         	0         	0         
+2               	96        	0         	0         	0         	0         
+3               	92        	0         	0         	0         	0         
+4               	2         	0         	0         	0         	0         
+5               	1         	0         	0         	0         	0         
+
+[OUTFALLS]
+;;Name          	Elevation 	Type      	Stage Data      	Gated   	Route To        
+;;--------------	----------	----------	----------------	--------	----------------
+6               	0         	FREE      	                	NO      	                
+7               	88        	FREE      	                	NO      	                
+
+[CONDUITS]
+;;Name          	From Node       	To Node         	Length    	Roughness 	InOffset  	OutOffset 	InitFlow  	MaxFlow   
+;;--------------	----------------	----------------	----------	----------	----------	----------	----------	----------
+1               	1               	2               	400       	0.016     	0         	0         	0         	0         
+2               	2               	3               	400       	0.016     	0         	0         	0         	0         
+4               	4               	5               	400       	0.01      	0         	0         	0         	0         
+5               	5               	6               	400       	0.01      	0         	0         	0         	0         
+6               	3               	7               	400       	0.016     	0         	0         	0         	0         
+
+[XSECTIONS]
+;;Link          	Shape       	Geom1           	Geom2     	Geom3     	Geom4     	Barrels   	Culvert   
+;;--------------	------------	----------------	----------	----------	----------	----------	----------
+1               	STREET      	Street1         	0         	0         	0         	1         	          
+2               	STREET      	Street1         	0         	0         	0         	1         	          
+4               	CIRCULAR    	2               	0         	0         	0         	1         	          
+5               	CIRCULAR    	2               	0         	0         	0         	1         	          
+6               	STREET      	Street1         	0         	0         	0         	1         	          
+
+[STREETS]
+;;Name          	Tcrown  	Hcurb   	Sroad   	nRoad   	Hdep    	Wdep    	Sides   	Wback   	Sback   	nBack   
+;;--------------	--------	--------	--------	--------	--------	--------	--------	--------	--------	--------
+Street1         	20      	0.5     	2       	0.016   	0.124   	2       	1       	0       	0       	0       
+
+[INLETS]
+;;Name          	Type            	Parameters:
+;;--------------	----------------	-----------
+SweeperCombo    	GRATE           	2       	2       	CURVED_VANE     
+SweeperCombo    	CURB            	9.8     	0.5     	HORIZONTAL
+
+[INLET_USAGE]
+;;Conduit       	Inlet_Type      	Inlet_Node      	#Inlets  	%Clogged 	MaxFlow  	Local_Depression
+;;--------------	----------------	----------------	---------	---------	---------	---------	---------
+2               	SweeperCombo    	5               	1        	0        	0        	0        	0        
+
+[INFLOWS]
+;;Node          	Constituent     	Time Series     	Type    	Mfactor 	Sfactor 	Baseline	Pattern
+;;--------------	----------------	----------------	--------	--------	--------	--------	--------
+1               	FLOW            	""              	FLOW    	1.0     	1.0     	1.77    
+
+[REPORT]
+;;Reporting Options
+INPUT     	YES
+SUBCATCHMENTS	ALL
+NODES	ALL
+LINKS	ALL
+
+[TAGS]
+
+[MAP]
+DIMENSIONS	0.000	0.000	10000.000	10000.000
+Units     	None
+
+[COORDINATES]
+;;Node          	X-Coord           	Y-Coord           
+;;--------------	------------------	------------------
+1               	643.236           	8076.923          
+2               	3269.231          	7586.207          
+3               	5815.650          	7015.915          
+4               	3163.130          	5623.342          
+5               	5722.812          	5397.878          
+6               	7765.252          	5079.576          
+7               	7744.216          	6645.244          
+
+[VERTICES]
+;;Link          	X-Coord           	Y-Coord           
+;;--------------	------------------	------------------
+
+[LABELS]
+;;X-Coord         	Y-Coord           	Label           
+383.117           	8506.494          	"1.77 cfs inflow"	""	"Arial"	10	0	0
+4227.273          	7870.130          	"2x2 Grate + 9.8 ft Curb Opening"	""	"Arial"	10	0	0
+

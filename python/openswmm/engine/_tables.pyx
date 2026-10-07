@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Tables, curves, patterns (Pythonic v1 surface)
 ==============================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 Three collections live on the engine — time series, curves, and
 patterns — and the C side stores time series and curves in a single
@@ -151,6 +167,25 @@ cdef class _PointTable:
 cdef class TimeSeries(_PointTable):
     """A SWMM time series — x is a SWMM DateTime double; we surface it as
     ``datetime64[s]``."""
+
+    @property
+    def relative_info(self):
+        """(number of leading relative rows, OADate anchor in days).
+
+        Stored x values are absolute. Subtract the anchor to recover authored
+        elapsed days. This metadata controls time-only INP serialization.
+        """
+        cdef int count = 0
+        cdef double anchor = 0
+        _check(swmm_timeseries_get_relative_info(_h(self._solver), self._index, &count, &anchor))
+        return (count, anchor)
+
+    def set_relative_info(self, int count, double anchor):
+        """Mark leading rows as relative without changing stored x values.
+
+        Call after rebuilding points. Count zero marks all rows explicitly dated.
+        """
+        _check(swmm_timeseries_set_relative_info(_h(self._solver), self._index, count, anchor))
 
     @property
     def points(self):
@@ -501,3 +536,8 @@ cdef class Patterns:
             return f"<Patterns n={len(self)}>"
         except Exception:
             return "<Patterns (engine closed)>"
+
+
+cdef extern from "openswmm/engine/openswmm_tables.h":
+    int swmm_timeseries_get_relative_info(SWMM_Engine, int, int*, double*)
+    int swmm_timeseries_set_relative_info(SWMM_Engine, int, int, double)

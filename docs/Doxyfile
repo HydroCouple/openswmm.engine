@@ -48,13 +48,13 @@ PROJECT_NAME           = "OpenSWMM Engine"
 # could be handy for archiving the generated documentation or if some version
 # control system is used.
 
-PROJECT_NUMBER         = 6.0.0-alpha.3
+PROJECT_NUMBER         = 6.0.0-alpha.4
 
 # Using the PROJECT_BRIEF tag one can provide an optional one line description
 # for a project that appears at the top of each page and should give viewers a
 # quick idea about the purpose of the project. Keep the description short.
 
-PROJECT_BRIEF          = "Data-oriented, plugin-extensible SWMM Engine (6.0.0-alpha.3)"
+PROJECT_BRIEF          = "Data-oriented, plugin-extensible SWMM Engine (6.0.0-alpha.4)"
 
 # With the PROJECT_LOGO tag one can specify a logo or an icon that is included
 # in the documentation. The maximum height of the logo should not exceed 55
@@ -293,7 +293,8 @@ TAB_SIZE               = 4
 ALIASES                = "license=\par License\n" \
                          "description=\par Discription\n" \
                          "mod=\par Modified\n" \
-                         "moditem{3}=\b \date\1 \author\2 \3\n"
+                         "moditem{3}=\b \date\1 \author\2 \3\n" \
+                         "status{1}=\htmlonly<span class=\"status-badge\" data-status=\"\1\">\1</span>\endhtmlonly"
 
 # Set the OPTIMIZE_OUTPUT_FOR_C tag to YES if your project consists of C sources
 # only. Doxygen will then generate output that is more tailored for C. For
@@ -1002,11 +1003,10 @@ INPUT                  = ../README.md \
                          ../src/output \
                          ../include \
                          ./images/*.png \
-                         ./manuals/user/figures/*.png \
-                         ./Updates.md \
+                         ./manuals/engine/figures/*.png \
                          ./authors.md \
                          ./manuals/manuals.md \
-                         ./manuals/user \
+                         ./manuals/engine \
                          ./manuals/reference \
                          ./manuals/application
 
@@ -1122,7 +1122,7 @@ EXCLUDE_SYMLINKS       = NO
 # exclude all test directories for example use the pattern */test/*
 
 EXCLUDE_PATTERNS       = */SWMM* \
-                         manuals/user/figures/* \
+                         manuals/engine/figures/* \
                          manuals/reference/*/media/* \
                          manuals/reference/*/figures/* \
                          manuals/application/figures/* \
@@ -1140,28 +1140,36 @@ EXCLUDE_SYMBOLS        =
 # that contain example code fragments that are included (see the \include
 # command).
 
-EXAMPLE_PATH           =
+# The manuals quote worked-example decks verbatim with \snippet between
+# ;//! [marker] pairs, so prose and deck cannot drift apart.
+EXAMPLE_PATH           = ./figures/decks
 
 # If the value of the EXAMPLE_PATH tag contains directories, you can use the
 # EXAMPLE_PATTERNS tag to specify one or more wildcard pattern (like *.cpp and
 # *.h) to filter out the source-files in the directories. If left blank all
 # files are included.
 
-EXAMPLE_PATTERNS       = 
+EXAMPLE_PATTERNS       = *.inp \
+                         *.rxn \
+                         *.ard \
+                         *.age \
+                         *.heat \
+                         *.py
 
 # If the EXAMPLE_RECURSIVE tag is set to YES then subdirectories will be
 # searched for input files to be used with the \include or \dontinclude commands
 # irrespective of the value of the RECURSIVE tag.
 # The default value is: NO.
 
-EXAMPLE_RECURSIVE      = NO
+EXAMPLE_RECURSIVE      = YES
 
 # The IMAGE_PATH tag can be used to specify one or more files or directories
 # that contain images that are to be included in the documentation (see the
 # \image command).
 
 IMAGE_PATH             = ./images \
-                         ./manuals/user/figures \
+                         ./figures/png \
+                         ./manuals/engine/figures \
                          ./manuals/reference/hydrology/media/media \
                          ./manuals/reference/hydraulics/media/media \
                          ./manuals/reference/quality/media/media
@@ -1474,7 +1482,8 @@ HTML_STYLESHEET        =
 # documentation.
 # This tag requires that the tag GENERATE_HTML is set to YES.
 
-HTML_EXTRA_STYLESHEET  = ./custom/css/doxygen-awesome.css
+HTML_EXTRA_STYLESHEET  = ./custom/css/doxygen-awesome.css \
+                         ./custom/css/manual.css
 
 # The HTML_EXTRA_FILES tag can be used to specify one or more extra images or
 # other source files which should be copied to the HTML output directory. Note
@@ -1489,6 +1498,7 @@ HTML_EXTRA_FILES       = custom/js/doxygen-awesome-darkmode-toggle.js \
                          custom/js/doxygen-awesome-interactive-toc.js \
                          custom/js/doxygen-awesome-paragraph-link.js \
                          custom/js/doxygen-awesome-tabs.js \
+                         custom/js/manual-interactive.js \
                          custom/mathjax-config.js
 
 # The HTML_COLORSTYLE tag can be used to specify if the generated HTML output
@@ -2584,7 +2594,7 @@ SKIP_FUNCTION_MACROS   = YES
 # the path). If a tag file is not located in the directory in which Doxygen is
 # run, you must also specify the path to the tagfile here.
 
-TAGFILES               =
+TAGFILES               = tags/swmmvis-manual.tag=https://www.hydrocouple.org/openswmm.gui/
 
 # When a file name is specified after GENERATE_TAGFILE, Doxygen will create a
 # tag file that is based on the input files it reads. See section "Linking to
@@ -2611,7 +2621,7 @@ EXTERNAL_GROUPS        = YES
 # be listed.
 # The default value is: YES.
 
-EXTERNAL_PAGES         = YES
+EXTERNAL_PAGES         = NO
 
 #---------------------------------------------------------------------------
 # Configuration options related to diagram generator tools

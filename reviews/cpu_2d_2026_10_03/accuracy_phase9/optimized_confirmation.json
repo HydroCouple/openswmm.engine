@@ -1,0 +1,164 @@
+[
+  {
+    "case": "radial",
+    "nx": 32,
+    "quad": 0,
+    "skew": 0,
+    "periods": 3,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "radial",
+    "nx": 32,
+    "quad": 1,
+    "skew": 0,
+    "periods": 3,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "planar",
+    "nx": 32,
+    "quad": 0,
+    "skew": 0,
+    "periods": 3,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "planar",
+    "nx": 32,
+    "quad": 1,
+    "skew": 0,
+    "periods": 3,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "radial",
+    "nx": 128,
+    "quad": 0,
+    "skew": 0,
+    "periods": 3,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "radial",
+    "nx": 128,
+    "quad": 1,
+    "skew": 0,
+    "periods": 3,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "planar",
+    "nx": 128,
+    "quad": 0,
+    "skew": 0,
+    "periods": 3,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "planar",
+    "nx": 128,
+    "quad": 1,
+    "skew": 0,
+    "periods": 3,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "radial",
+    "nx": 64,
+    "quad": 0,
+    "skew": 0,
+    "periods": 10,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "radial",
+    "nx": 64,
+    "quad": 1,
+    "skew": 0,
+    "periods": 10,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "planar",
+    "nx": 64,
+    "quad": 0,
+    "skew": 0,
+    "periods": 10,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "planar",
+    "nx": 64,
+    "quad": 1,
+    "skew": 0,
+    "periods": 10,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "radial",
+    "nx": 64,
+    "quad": 0,
+    "skew": 0.15,
+    "periods": 3,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "radial",
+    "nx": 64,
+    "quad": 1,
+    "skew": 0.15,
+    "periods": 3,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "radial",
+    "nx": 64,
+    "quad": 2,
+    "skew": 0.15,
+    "periods": 3,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "planar",
+    "nx": 64,
+    "quad": 0,
+    "skew": 0.15,
+    "periods": 3,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "planar",
+    "nx": 64,
+    "quad": 1,
+    "skew": 0.15,
+    "periods": 3,
+    "non_timing_differences": {},
+    "history_identical": true
+  },
+  {
+    "case": "planar",
+    "nx": 64,
+    "quad": 2,
+    "skew": 0.15,
+    "periods": 3,
+    "non_timing_differences": {},
+    "history_identical": true
+  }
+]

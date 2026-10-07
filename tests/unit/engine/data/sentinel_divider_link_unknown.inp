@@ -1,0 +1,39 @@
+[TITLE]
+DIVIDERS DivLink naming an undefined link is ERROR 209
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         KINWAVE
+LINK_OFFSETS         DEPTH
+START_DATE           01/01/2020
+START_TIME           00:00:00
+END_DATE             01/01/2020
+REPORT_STEP          00:15:00
+WET_STEP             00:05:00
+DRY_STEP             01:00:00
+ROUTING_STEP         30
+END_TIME             03:00:00
+
+[DIVIDERS]
+;;Name  Elev  DivLink  Type    Cutoff  MaxDepth  InitDepth  SurDepth  Aponded
+D1      2     C9       CUTOFF  0.5     5         0          0         0
+
+[OUTFALLS]
+;;Name  Elev  Type  Stage  Gated
+O1       0     FREE         NO
+O2       0     FREE         NO
+
+[CONDUITS]
+;;Name  From  To   Length  Rough   In  Out  Init  Max
+C1       D1    O1   400     0.01    0   0    0     0
+C2       D1    O2   400     0.01    0   0    0     0
+
+[XSECTIONS]
+;;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels
+C1       CIRCULAR  1.0    0      0      0      1
+C2       CIRCULAR  1.0    0      0      0      1
+
+[INFLOWS]
+;;Node  Constituent  TimeSeries  Type  Mfactor  Sfactor  Baseline
+D1      FLOW         ""          FLOW  1.0      1.0      1.0

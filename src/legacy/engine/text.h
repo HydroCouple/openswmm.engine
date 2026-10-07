@@ -107,6 +107,9 @@
 #define  w_MIN_ROUTE_STEP    "MINIMUM_STEP"
 #define  w_NUM_THREADS       "THREADS"
 #define  w_SURCHARGE_METHOD  "SURCHARGE_METHOD"
+#define  w_OUTFALL_BF_QUAL   "OUTFALL_BACKFLOW_QUALITY"
+#define  w_LAST              "LAST"
+#define  w_ZERO              "ZERO"
 
 // Flow Units
 #define  w_CFS               "CFS"

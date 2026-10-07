@@ -1,0 +1,106 @@
+[
+  {
+    "label": "baseline",
+    "observed_teams": {
+      "0": [
+        1
+      ],
+      "1": [
+        4
+      ],
+      "2": [
+        8
+      ],
+      "3": [
+        1
+      ]
+    },
+    "trace_records": 47712,
+    "trace_hashes": {
+      "(0, 0)": "f07391fc831c4d47cda28b680ad7c3ffeb235a4be69252078c85ded6d2288625",
+      "(0, 1)": "e22304943dbc5c646c1c67f1a837c9f48a5482017d29f069dba29f4a024a9f09",
+      "(0, 2)": "b90171d55d237000c469e8855c29c5ef8e044bdad3eafbdcbfd31426f24bfae5",
+      "(0, 3)": "32ebb6a310e0a54ca398f1e59fd3d05ee20c18e9d204b0074b80df2a3dc52a44",
+      "(0, 4)": "6717acc6d0ec6d859ea9624f2ea8f407390cb3ba29510059902e2c9db6117bde",
+      "(0, 5)": "900664d8ae6443cab1b38160ccfd86c27ceebdefb22d3a946d7d0c3d9d4f5af5",
+      "(0, 6)": "116e4f5fee92e67a4d4073fda449e73f195ab692315c15e6d53fa540f805959a",
+      "(0, 7)": "389cfbd9722fd85e842807788f9ef4521da2af16cce8de3e8c788a8d3ff6e97d",
+      "(1, 0)": "e07527035963ccd77384b7d833f585dd270242c976629fd7ed2f772f282fbda7",
+      "(1, 4)": "7c433707f29666fd3fa98dc7cc8a78992cd2097b242f43c6b3a3137e8e6ac391",
+      "(1, 2)": "c65620740d849b83b281e8e59b2c2b8284923e3d4d0137bebdef58f3dd0eac5f",
+      "(1, 6)": "aef310aa218599a4c8ff251078ab4995e22b45a151910c7b9da2cfe730ad9eca",
+      "(1, 3)": "f94db1e06dfa8fdf147675e9bcf4f0979c9cec7ad6546860e32ff5de6a023bbd",
+      "(1, 5)": "0793934898700b892c77c696af39333c60a83a860b1ea9500f44d9c9eaf04440",
+      "(1, 7)": "68754685eb6703daa52fb4c294df52cf9179c881cf7820ccda1324b21fa0490d",
+      "(1, 1)": "6b6c86390db5d7d69c9ea3a67c4203edeb2de7e6a8bbfac35326c7870caec483",
+      "(2, 2)": "74b53ddf18cd1ad47aa9ba081cb0df790b265d38a27f974b4933b3dedc5f56d7",
+      "(2, 3)": "99901fefcc354cc7b148acbf43448e9f875f5ba72ad1fd2e71abe0a3766f97b6",
+      "(2, 0)": "0ea40f7f5f73cad445cece828c2c0f42aa30f106bf88612d5caa5ea61cc23330",
+      "(2, 1)": "d111ba11b79a3f4288c2be2a45d832a562a1d7ba4c9925ce23d395fd4243adfb",
+      "(2, 4)": "2ae7069ff3cb4df65e41475366236fd9437246ecd80c7c282cb272983679f75f",
+      "(2, 6)": "b1866481611fbe2312d92ddd60016f118b56ac928017654e3f2a739c08b67ab0",
+      "(2, 7)": "7ddac810ec48d8690d6cc28d46a03b5a2200c7165951b872d49594aa0ecdc5df",
+      "(2, 5)": "0510696df80b967c7d44c1d0b56d719d0e9471ce69129d8e9f1be5d2adc2612e",
+      "(3, 0)": "368f41747eff74c29954b7454fd3fac927c2e0b39ecd680c4b84c00aa1296a72",
+      "(3, 1)": "44bbbf92a2483c2d3d093cbab6fb303f1bef06e6927f9a4520204371ab19ff89",
+      "(3, 2)": "b508b832762570ff2e83d31c6dfdd9e195c44c31f5eb946602c93bb79157eaeb",
+      "(3, 3)": "d639c8b5965a4446c2f843c7640c2e1381e34b60f88fb520f6aa390415a50a2e",
+      "(3, 4)": "2cb7ab0bf8b36d0231db8513da2de12aaa10c67c93947043f006b0160ba2cb14",
+      "(3, 5)": "bf7c1b3e0a66f575106ba9ca920b5bc293dcf63ca4b163f3179637fd8e38e1eb",
+      "(3, 6)": "244449c06defb10438f7fe52144eca6e52508a2d1ab3094760a792b3a8b17032",
+      "(3, 7)": "5a83bdf13b7a5f7485dcb4edc33c2e2126107d552017d9975ec8a1e5c913cb6a"
+    }
+  },
+  {
+    "label": "candidate",
+    "observed_teams": {
+      "0": [
+        1
+      ],
+      "1": [
+        4
+      ],
+      "2": [
+        8
+      ],
+      "3": [
+        1
+      ]
+    },
+    "trace_records": 47712,
+    "trace_hashes": {
+      "(0, 0)": "f07391fc831c4d47cda28b680ad7c3ffeb235a4be69252078c85ded6d2288625",
+      "(0, 1)": "e22304943dbc5c646c1c67f1a837c9f48a5482017d29f069dba29f4a024a9f09",
+      "(0, 2)": "b90171d55d237000c469e8855c29c5ef8e044bdad3eafbdcbfd31426f24bfae5",
+      "(0, 3)": "32ebb6a310e0a54ca398f1e59fd3d05ee20c18e9d204b0074b80df2a3dc52a44",
+      "(0, 4)": "6717acc6d0ec6d859ea9624f2ea8f407390cb3ba29510059902e2c9db6117bde",
+      "(0, 5)": "900664d8ae6443cab1b38160ccfd86c27ceebdefb22d3a946d7d0c3d9d4f5af5",
+      "(0, 6)": "116e4f5fee92e67a4d4073fda449e73f195ab692315c15e6d53fa540f805959a",
+      "(0, 7)": "389cfbd9722fd85e842807788f9ef4521da2af16cce8de3e8c788a8d3ff6e97d",
+      "(1, 0)": "e07527035963ccd77384b7d833f585dd270242c976629fd7ed2f772f282fbda7",
+      "(1, 4)": "7c433707f29666fd3fa98dc7cc8a78992cd2097b242f43c6b3a3137e8e6ac391",
+      "(1, 6)": "aef310aa218599a4c8ff251078ab4995e22b45a151910c7b9da2cfe730ad9eca",
+      "(1, 7)": "68754685eb6703daa52fb4c294df52cf9179c881cf7820ccda1324b21fa0490d",
+      "(1, 1)": "6b6c86390db5d7d69c9ea3a67c4203edeb2de7e6a8bbfac35326c7870caec483",
+      "(1, 2)": "c65620740d849b83b281e8e59b2c2b8284923e3d4d0137bebdef58f3dd0eac5f",
+      "(1, 3)": "f94db1e06dfa8fdf147675e9bcf4f0979c9cec7ad6546860e32ff5de6a023bbd",
+      "(1, 5)": "0793934898700b892c77c696af39333c60a83a860b1ea9500f44d9c9eaf04440",
+      "(2, 0)": "0ea40f7f5f73cad445cece828c2c0f42aa30f106bf88612d5caa5ea61cc23330",
+      "(2, 1)": "d111ba11b79a3f4288c2be2a45d832a562a1d7ba4c9925ce23d395fd4243adfb",
+      "(2, 2)": "74b53ddf18cd1ad47aa9ba081cb0df790b265d38a27f974b4933b3dedc5f56d7",
+      "(2, 3)": "99901fefcc354cc7b148acbf43448e9f875f5ba72ad1fd2e71abe0a3766f97b6",
+      "(2, 4)": "2ae7069ff3cb4df65e41475366236fd9437246ecd80c7c282cb272983679f75f",
+      "(2, 5)": "0510696df80b967c7d44c1d0b56d719d0e9471ce69129d8e9f1be5d2adc2612e",
+      "(2, 6)": "b1866481611fbe2312d92ddd60016f118b56ac928017654e3f2a739c08b67ab0",
+      "(2, 7)": "7ddac810ec48d8690d6cc28d46a03b5a2200c7165951b872d49594aa0ecdc5df",
+      "(3, 0)": "368f41747eff74c29954b7454fd3fac927c2e0b39ecd680c4b84c00aa1296a72",
+      "(3, 1)": "44bbbf92a2483c2d3d093cbab6fb303f1bef06e6927f9a4520204371ab19ff89",
+      "(3, 2)": "b508b832762570ff2e83d31c6dfdd9e195c44c31f5eb946602c93bb79157eaeb",
+      "(3, 3)": "d639c8b5965a4446c2f843c7640c2e1381e34b60f88fb520f6aa390415a50a2e",
+      "(3, 4)": "2cb7ab0bf8b36d0231db8513da2de12aaa10c67c93947043f006b0160ba2cb14",
+      "(3, 5)": "bf7c1b3e0a66f575106ba9ca920b5bc293dcf63ca4b163f3179637fd8e38e1eb",
+      "(3, 6)": "244449c06defb10438f7fe52144eca6e52508a2d1ab3094760a792b3a8b17032",
+      "(3, 7)": "5a83bdf13b7a5f7485dcb4edc33c2e2126107d552017d9975ec8a1e5c913cb6a"
+    }
+  }
+]

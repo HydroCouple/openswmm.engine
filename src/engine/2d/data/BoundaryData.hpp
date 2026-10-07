@@ -1,10 +1,26 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file BoundaryData.hpp
  * @brief Structure-of-Arrays (SoA) storage for 2D mesh boundary conditions.
  *
  * @details Stores per-edge boundary condition type, parameters, and cumulative
- *          flux tracking. Arrays are flat 2D [tri * 3 + edge_local], sized to
- *          n_triangles * 3 (matching edge_flux, edge_length, etc.).
+ *          flux tracking. Arrays are flat 2D [cell * kMaxCellVerts + edge_local],
+ *          sized to n_cells * kMaxCellVerts (matching edge_flux, edge_length, etc.).
  *
  *          Boundary types:
  *          - WALL: Zero-flux (default). No water crosses the boundary.
@@ -17,14 +33,17 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_BOUNDARY_DATA_HPP
 #define OPENSWMM_ENGINE_2D_BOUNDARY_DATA_HPP
 
+#include "../coupling/RuntimeCoupling.hpp"
 #include <vector>
 #include <cstdint>
+#include <map>
+#include <string>
 
 namespace openswmm::twoD {
 
@@ -48,7 +67,7 @@ enum class BoundaryType : int8_t {
 /**
  * @brief SoA storage for per-edge boundary conditions.
  *
- * All arrays are flat 2D: indexed as [tri * 3 + edge_local] where
+ * All arrays are flat 2D: indexed as [cell * kMaxCellVerts + edge_local] where
  * edge_local ∈ {0,1,2}. Only meaningful for boundary edges (tri_nbr == -1),
  * but allocated for all edges to avoid indirection in the flux loop.
  */
@@ -106,15 +125,56 @@ struct BoundaryData {
     /// Curve name for deferred resolution (cleared after resolve).
     std::vector<std::string> edge_bc_rating_curve_name;
 
+    struct RuntimeOriginal {
+        int8_t type;
+        double head, flow, slope;
+        int stage_ts, flow_ts, rating;
+        std::string stage_name, flow_name, rating_name;
+    };
+    std::map<int, RuntimeOriginal> runtime_original;
+    std::map<int,std::string> runtime_owner;
+    mutable std::map<int,RuntimeReceipt> receipts;
+    void ensureReceipt(int slot,int species) const {
+        auto& receipt=receipts[slot];
+        if(receipt.applied_mass.size()!=static_cast<std::size_t>(species)) {
+            receipt.requested_mass.assign(species,0.0);
+            receipt.applied_mass.assign(species,0.0);
+        }
+    }
+    void saveRuntime(int slot) {
+        if (runtime_original.count(slot)) return;
+        runtime_original.emplace(slot, RuntimeOriginal{
+            edge_bc_type[slot], edge_bc_head[slot], edge_bc_flow[slot], edge_bed_slope[slot],
+            edge_bc_tseries[slot], edge_bc_flow_tseries[slot], edge_bc_rating_curve[slot],
+            edge_bc_tseries_name[slot], edge_bc_flow_tseries_name[slot], edge_bc_rating_curve_name[slot]});
+    }
+    void clearRuntime(int slot) {
+        const auto it = runtime_original.find(slot);
+        if (it == runtime_original.end()) return;
+        const auto& b = it->second;
+        edge_bc_type[slot] = b.type; edge_bc_head[slot] = b.head;
+        edge_bc_flow[slot] = b.flow; edge_bed_slope[slot] = b.slope;
+        edge_bc_tseries[slot] = b.stage_ts; edge_bc_flow_tseries[slot] = b.flow_ts;
+        edge_bc_rating_curve[slot] = b.rating;
+        edge_bc_tseries_name[slot] = b.stage_name;
+        edge_bc_flow_tseries_name[slot] = b.flow_name;
+        edge_bc_rating_curve_name[slot] = b.rating_name;
+        runtime_original.erase(it);
+        runtime_owner.erase(slot);
+    }
+
     // -----------------------------------------------------------------------
     // Lifecycle
     // -----------------------------------------------------------------------
 
     /**
      * @brief Resize all arrays to n_edges and initialize to WALL defaults.
-     * @param n_edges Total number of edge slots (n_triangles * 3).
+     * @param n_edges Total number of edge slots (n_cells * kMaxCellVerts).
      */
     void resize(int n_edges) {
+        runtime_original.clear();
+        runtime_owner.clear();
+        receipts.clear();
         auto n = static_cast<std::size_t>(n_edges);
         edge_bc_type.assign(n, static_cast<int8_t>(BoundaryType::WALL));
         edge_bed_slope.assign(n, 0.0);

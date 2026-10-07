@@ -1,0 +1,52 @@
+--- reviews/cpu_2d_2026_10_03/cpu_phase12/engine_src_start/src/engine/2d/solver/ExplicitInertialSolver.hpp	2026-10-04 11:34:47
++++ reviews/cpu_2d_2026_10_03/cpu_phase12/engine_src_selected/src/engine/2d/solver/ExplicitInertialSolver.hpp	2026-10-04 11:34:47
+@@ -113,7 +113,7 @@
+     // the live junction exchange), which fires once per finest substep.
+     void fireCells(const std::vector<int>& cells, double dt_c, bool tier0);
+     /// Closure-specialised body of fireCells (kSwe = FULL_SWE momentum update).
+-    template <bool kSwe>
++    template <bool kSwe, bool kFuse>
+     void fireCellsImpl(const std::vector<int>& cells, double dt_c, bool tier0);
+     // One halving-order macro cycle of nsub base substeps: tier k fires every
+     // 2^k substeps.
+@@ -155,9 +155,11 @@
+     /// Scalar: the boundary loop is serial (perimeter-sized).
+     double               swe_bc_dqx_ = 0.0, swe_bc_dqy_ = 0.0;
+     /// RECONSTRUCTION_ORDER 2 (FULL_SWE): limited Green-Gauss gradients of
+-    /// (η, u, v) per cell, refreshed at every face pass, and the SSP-RK2
++    /// (eta, h, u, v) per cell, refreshed at every face pass, and the SSP-RK2
+     /// stage buffers. Empty at order 1.
+     bool                 second_order_ = false;
++    /// gex_/gey_: eta gradients in [0, n), depth gradients in [n, 2*n).
++    /// The second block supplies the face bed (eta - h) only for order 2.
+     std::vector<double>  gex_, gey_, gux_, guy_, gvx_, gvy_;
+     std::vector<double>  rk_v0_, rk_qx0_, rk_qy0_;
+     /// Stage-0 copies of the per-advance ledgers (F6): members so the RK2
+@@ -223,9 +225,10 @@
+     std::vector<double>  facc_L_;       ///< pending ΔM for the cL side (m³)
+     std::vector<double>  facc_R_;       ///< pending ΔM for the cR side (m³)
+ 
+-    // S1 — species mass rides the SAME face accumulators, one pair per
+-    // species, [s * ne + e]. Booked in fireFaces immediately after the volume
+-    // ΔM, from the FINAL qn1 (after the Froude cap and the positivity share),
++    // S1 — species mass rides the SAME face accumulators, with each face
++    // holding adjacent rows at [e * n_species + s]. Booked in fireFaces
++    // immediately after the volume ΔM, from the FINAL qn1 (after the Froude
++    // cap and the positivity share),
+     // at the exporting cell's concentration read at that same substep;
+     // gathered and cleared in fireCells alongside the volume side. That is
+     // D-2DT2: the species flux inherits the volume flux's tier cadence rather
+@@ -252,7 +255,12 @@
+                             double* per_point_ledger = nullptr) noexcept;
+     // Sources share one water budget after face transfers have landed. Gross
+     // constituent transfers are evaluated even when net water change is zero.
+-    void applyCellSources(int cell, double dt);
++    // Returns false only when no source bookkeeping or volume change occurred.
++    bool applyCellSources(int cell, double dt);
++    struct CellSourceStep;
++    bool prepareCellSources(int cell, double dt, CellSourceStep& source);
++    void applyCellSourceRow(int cell, int row, double& mass,
++                            const CellSourceStep& source);
+     enum class SourceLedger { Infiltration, CouplingOut, Rainfall,
+                               CouplingIn, Exfiltration, Boundary, Count };
+     void bookSourceLedger(SourceLedger ledger, int species, double mass) noexcept;

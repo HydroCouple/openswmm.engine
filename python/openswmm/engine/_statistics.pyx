@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Simulation statistics (Pythonic v1 surface)
 ===========================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 This module exposes the **bulk** views of the per-object cumulative
 statistics. Single-object access lives on the wrapper classes
@@ -54,9 +70,11 @@ class Statistics:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_stat_node_max_depth_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_stat_node_max_depth_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -65,9 +83,11 @@ class Statistics:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_stat_node_max_overflow_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_stat_node_max_overflow_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -76,9 +96,11 @@ class Statistics:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_stat_node_vol_flooded_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_stat_node_vol_flooded_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -88,9 +110,11 @@ class Statistics:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_node_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_stat_node_time_flooded_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_stat_node_time_flooded_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -103,9 +127,11 @@ class Statistics:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_stat_link_max_flow_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_stat_link_max_flow_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -114,9 +140,11 @@ class Statistics:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_stat_link_max_velocity_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_stat_link_max_velocity_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -125,9 +153,11 @@ class Statistics:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_stat_link_max_filling_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_stat_link_max_filling_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -136,9 +166,11 @@ class Statistics:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_stat_link_vol_flow_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_stat_link_vol_flow_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -147,9 +179,11 @@ class Statistics:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_link_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_stat_link_surcharge_time_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_stat_link_surcharge_time_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -162,9 +196,11 @@ class Statistics:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_stat_subcatch_runoff_vol_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_stat_subcatch_runoff_vol_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -173,9 +209,11 @@ class Statistics:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = swmm_subcatch_count(h)
         cdef np.ndarray[double, ndim=1] buf = np.empty(n, dtype=np.float64)
-        cdef int err
-        with nogil:
-            err = swmm_stat_subcatch_max_runoff_bulk(h, <double*>buf.data, n)
+        cdef int err = 0
+        if n > 0:  # the C bulk calls refuse a zero count
+            with self._solver._operation(<size_t>h):
+                with nogil:
+                    err = swmm_stat_subcatch_max_runoff_bulk(h, <double*>buf.data, n)
         _check(err)
         return buf
 
@@ -248,7 +286,7 @@ class Statistics:
         return v
 
     def node_time_flooded_at(self, int idx) -> float:
-        """Total time flooded at one node (hours).
+        """Total time flooded at one node (seconds).
 
         @rtype: float
         """
@@ -288,7 +326,7 @@ class Statistics:
         return v
 
     def link_surcharge_time_at(self, int idx) -> float:
-        """Total surcharge time of one link (hours).
+        """Total surcharge time of one link (seconds).
 
         @rtype: float
         """

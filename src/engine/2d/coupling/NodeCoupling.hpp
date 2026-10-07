@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file NodeCoupling.hpp
  * @brief Orifice-equation exchange between 2D surface and SWMM nodes.
@@ -15,7 +31,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_NODE_COUPLING_HPP
@@ -122,13 +138,20 @@ int accumulateOutfallDischargeStep(const std::vector<CouplingPoint>& cps,
  *          −1: accum is 2D→1D-drain-positive, e.g. junction exchange, so the
  *          2D-side source is its negation). coupling_flux is NOT cleared here —
  *          callers zero it once before injecting both accumulators.
+ *
+ * @param node_conc S3 (nullable): the 1D nodes' published concentrations,
+ *                  flat `[node * n_species + s]` with the 2D transport
+ *                  stride. When given, each 2D-source volume also scatters
+ *                  `transport.coupling_src` at the point's node concentration
+ *                  (callers clear coupling_src alongside coupling_flux).
  */
 void injectAccumulatedExchange(const std::vector<CouplingPoint>& cps,
                                const MeshData& mesh,
                                SurfaceStateData& state,
                                const std::vector<double>& accum_m3,
                                double window_dt,
-                               double sign);
+                               double sign,
+                               const std::vector<double>* node_conc = nullptr);
 
 /**
  * @brief Live node-coupling orifice flux for ONE non-outfall coupling point.

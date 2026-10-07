@@ -3,7 +3,7 @@
 #
 # Project:     openswmm.engine
 # Description: Open Storm Water Management Model Engine
-# Version:     6.0.0-alpha.3 (refactored engine) / 5.3.0-beta.3 (legacy engine wrapper)
+# Version:     6.0.0-alpha.4 (refactored engine) / 5.3.0-beta.3 (legacy engine wrapper)
 #
 # This is the root CMake file for the openswmm.engine project which contains:
 #   - openswmm_legacy_engine : Original EPA SWMM 5.x C solver (preserved unmodified)
@@ -34,7 +34,7 @@ project(
 )
 
 # Pre-release label for the refactored engine (e.g. "alpha.1", "beta.1", "rc.1"). Leave empty for a final release.
-set(OPENSWMM_PRERELEASE "alpha.3" CACHE STRING "Pre-release tag for the refactored engine (e.g. alpha.1, beta.1, rc.1). Empty for a final release.")
+set(OPENSWMM_PRERELEASE "alpha.4" CACHE STRING "Pre-release tag for the refactored engine (e.g. alpha.1, beta.1, rc.1). Empty for a final release.")
 
 # Legacy SWMM engine version (EPA SWMM 5.x lineage, independent of the OpenSWMM
 # Engine version). Single source of truth: src/legacy/engine/CMakeLists.txt
@@ -95,8 +95,18 @@ option(OPENSWMM_BUILD_BENCHMARKS  "Build Google Benchmark performance tests" OFF
 option(OPENSWMM_INSTALL           "Install openswmm libraries" ON)
 option(OPENSWMM_BUILD_PYTHON      "Build Python bindings" OFF)
 option(OPENSWMM_WITH_GEOPACKAGE   "Build GeoPackage I/O library (requires sqlite3)" ON)
+option(OPENSWMM_WITH_HDF5         "Build HDF5 model I/O (requires hdf5)" ON)
 option(OPENSWMM_BUILD_2D          "Build optional 2D surface routing module (explicit local-inertial marcher; HDF5 output)" ON)
+option(OPENSWMM_2D_HDF5_OUTPUT    "With OPENSWMM_BUILD_2D: build the 2D HDF5 results writer ([2D_OPTIONS] OUTPUT_FILE; requires hdf5). OFF builds the 2D module without HDF5 (e.g. WebAssembly); OUTPUT_FILE is then ignored with a warning and 2D results are read through the swmm_2d_* API" ON)
 option(OPENSWMM_BUILD_GPU_PLUGIN  "Build the GPU/Kokkos surface-solver plugin (standalone, dlopen()ed at runtime — never linked into the core). ON by default: a from-source build gets the Kokkos-OpenMP plugin and runtime `auto` uses it (the `gpu` vcpkg feature is in default-features, supplying Kokkos). The portable base build/wheel turns this OFF explicitly and excludes the `gpu` feature (VCPKG_MANIFEST_NO_DEFAULT_FEATURES) to stay Kokkos-free; pip users get OpenMP via the separate `openswmm-gpu-omp` companion wheel. Backend selected via OPENSWMM_GPU_BACKEND (default omp)." ON)
+
+# HC-1 (2026-09-27): the HydroCouple component layer. OFF by default — the
+# engine has shipped without it and a from-source build should not suddenly
+# acquire a git fetch. Program plan D-C1 puts ONE `integrated2d` component
+# behind this (surface + two-zone groundwater + all transport, GW as capability
+# toggles), D-C2 puts the wrappers in `src/couplers/`, and D-C6 restricts the
+# dependency to the header-only interfaces — never `HydroCoupleSDK`.
+option(OPENSWMM_WITH_HYDROCOUPLE   "Build the HydroCouple component wrappers (src/couplers) — header-only interfaces only, no HydroCoupleSDK (D-C6)" OFF)
 
 # OPENSWMM_BUILD_TESTS is a convenience flag that enables both unit and regression
 if(OPENSWMM_BUILD_TESTS)
@@ -227,10 +237,27 @@ function(openswmm_bundle_runtime_deps TARGET_NAME SUBDIR)
     # unresolved-deps warnings on Windows and never get included in the
     # cpack zip. Linux/macOS usually resolve them via rpath, but the extra
     # dir is harmless on those platforms.
+    #
+    # vcpkg's DEBUG binaries live in <triplet>/debug/bin, not <triplet>/bin, so
+    # both trees are captured and the install script picks the order by config
+    # (issue #9). Searching only the release tree left Debug installs broken in
+    # two different ways:
+    #
+    #   - HDF5's debug DLLs carry a _D suffix (hdf5_D.dll, hdf5_hl_D.dll). The
+    #     name in the import table has no match under bin/, so it surfaced as
+    #     "unresolved runtime dep: hdf5_D.dll" and the installed exe died at
+    #     startup with STATUS_DLL_NOT_FOUND (0xC0000135).
+    #   - sqlite3's debug DLL keeps the release NAME, so it resolved happily —
+    #     against the RELEASE copy, quietly mixing a release sqlite3 into a
+    #     Debug package. That one never warned, which is why it looked fine.
+    #
     set(OPENSWMM_BUNDLE_EXTRA_DIRS "")
+    set(OPENSWMM_BUNDLE_EXTRA_DIRS_DEBUG "")
     if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
         list(APPEND OPENSWMM_BUNDLE_EXTRA_DIRS
             "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+        list(APPEND OPENSWMM_BUNDLE_EXTRA_DIRS_DEBUG
+            "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin")
     elseif(DEFINED ENV{VCPKG_ROOT})
         # Fallback: use the env-var-rooted classic-mode layout.
         set(_triplet "${VCPKG_TARGET_TRIPLET}")
@@ -240,6 +267,8 @@ function(openswmm_bundle_runtime_deps TARGET_NAME SUBDIR)
         if(_triplet)
             list(APPEND OPENSWMM_BUNDLE_EXTRA_DIRS
                 "$ENV{VCPKG_ROOT}/installed/${_triplet}/bin")
+            list(APPEND OPENSWMM_BUNDLE_EXTRA_DIRS_DEBUG
+                "$ENV{VCPKG_ROOT}/installed/${_triplet}/debug/bin")
         endif()
     endif()
 
@@ -380,6 +409,14 @@ if(OPENSWMM_INSTALL OR OPENSWMMCORE_INSTALL)
         TARGETS openswmm_common
         EXPORT OpenSWMMEngineTargets
     )
+endif()
+
+# HC-1: resolve the HydroCouple interface headers before src/, so
+# src/couplers/ can link HydroCouple::HydroCouple. Guarded, so a default build
+# neither fetches nor requires anything. See cmake/FetchHydroCouple.cmake for
+# why the pin is a SHA.
+if(OPENSWMM_WITH_HYDROCOUPLE)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/FetchHydroCouple.cmake)
 endif()
 
 # Add subdirectories

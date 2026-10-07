@@ -1,0 +1,106 @@
+[
+  {
+    "case": "dunne_species9",
+    "origin": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/cpu_phase6/engine_decks/dunne_species9/model.inp",
+    "changes": "Unchanged phase-6 qualification fixture",
+    "sha256": "714afd1e9e6dde5d83b97e1b208ac7ca6e96b3ce1ea921e2d074d2c523aacdb4"
+  },
+  {
+    "case": "parking_lot",
+    "origin": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/cpu_phase6/engine_decks/parking_lot/model.inp",
+    "changes": "Unchanged phase-6 qualification fixture",
+    "sha256": "d588333fd749ee261dc55b5ef49eeb8c90468427d36640ba8b78cbfaedf13b9e"
+  },
+  {
+    "case": "parking_lot_swe2_flat",
+    "origin": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/cpu_phase6/engine_decks/parking_lot/model.inp",
+    "changes": {
+      "MOMENTUM_EQUATION": "FULL_SWE",
+      "RECONSTRUCTION_ORDER": 2,
+      "LTS_TIERS": 1,
+      "CELL_CLOSURE": "FLAT"
+    },
+    "sha256": "39242592763c065d58a393e0b92ebfebe4f02f759a73097a02a61ac491b90960"
+  },
+  {
+    "case": "parking_lot_swe2_vfr",
+    "origin": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/cpu_phase6/engine_decks/parking_lot/model.inp",
+    "changes": {
+      "MOMENTUM_EQUATION": "FULL_SWE",
+      "RECONSTRUCTION_ORDER": 2,
+      "LTS_TIERS": 1,
+      "CELL_CLOSURE": "VFR"
+    },
+    "sha256": "53510a487ffc5f1064c29fde9d4b1fcd2ed9e0b0d314c13bcdae2a99caa58a0b"
+  },
+  {
+    "case": "surface_output_species32",
+    "origin": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/cpu_phase6/engine_decks/surface_output_species32/model.inp",
+    "changes": "Unchanged phase-6 qualification fixture",
+    "sha256": "3ea0a4b58097fdda198bbf22fe85a5782288d48a32b953b07351a1301427b7a7"
+  },
+  {
+    "case": "two_way_groundwater",
+    "origin": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/cpu_phase6/engine_decks/two_way_groundwater/model.inp",
+    "changes": "Unchanged phase-6 qualification fixture",
+    "sha256": "0a58b9892d1e709055480902b0392c95e352bcc8b1521b1f2ed5cbf227a2f81a"
+  },
+  {
+    "case": "two_way_groundwater_swe1_flat",
+    "origin": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/cpu_phase6/engine_decks/two_way_groundwater/model.inp",
+    "changes": {
+      "MOMENTUM_EQUATION": "FULL_SWE",
+      "RECONSTRUCTION_ORDER": 1,
+      "LTS_TIERS": 1,
+      "CELL_CLOSURE": "FLAT"
+    },
+    "sha256": "77933aaa6d39008f9dd3640f6e314a0a2a28526b7531d7684fe65339fc01af71",
+    "reason": "RK2 intentionally rejects groundwater coupling; qualify the supported FULL_SWE first-order path."
+  },
+  {
+    "case": "two_way_groundwater_swe1_vfr",
+    "origin": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/cpu_phase6/engine_decks/two_way_groundwater/model.inp",
+    "changes": {
+      "MOMENTUM_EQUATION": "FULL_SWE",
+      "RECONSTRUCTION_ORDER": 1,
+      "LTS_TIERS": 1,
+      "CELL_CLOSURE": "VFR"
+    },
+    "sha256": "72c433986a0913f4f0e1ad6465830b529c54d5bd333651509879807926c54f97",
+    "reason": "RK2 intentionally rejects groundwater coupling; qualify the supported FULL_SWE first-order path."
+  },
+  {
+    "case": "surface_wet_swe2_t1",
+    "origin": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/cpu_phase6/engine_decks/surface_output_species32/model.inp",
+    "changes": {
+      "MOMENTUM_EQUATION": "FULL_SWE",
+      "RECONSTRUCTION_ORDER": 2,
+      "LTS_TIERS": 1,
+      "CELL_CLOSURE": "FLAT",
+      "THREADS": 1,
+      "removed": [
+        "POLLUTANTS",
+        "2D_INITIAL_QUALITY"
+      ],
+      "initial_depth_m": 0.03
+    },
+    "sha256": "02a564ea4b795f44cde3dd97660865fb2ee969790d8be60b8f64c00f3e4ca049"
+  },
+  {
+    "case": "surface_wet_swe2_t4",
+    "origin": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/cpu_phase6/engine_decks/surface_output_species32/model.inp",
+    "changes": {
+      "MOMENTUM_EQUATION": "FULL_SWE",
+      "RECONSTRUCTION_ORDER": 2,
+      "LTS_TIERS": 1,
+      "CELL_CLOSURE": "FLAT",
+      "THREADS": 4,
+      "removed": [
+        "POLLUTANTS",
+        "2D_INITIAL_QUALITY"
+      ],
+      "initial_depth_m": 0.03
+    },
+    "sha256": "ecacaf3324059c88bd52feb794782dc70661062678f3d4f6c75f5fa9888a4c9d"
+  }
+]

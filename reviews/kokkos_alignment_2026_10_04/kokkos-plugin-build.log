@@ -1,0 +1,5 @@
+[ 25%] Building CXX object gpu/CMakeFiles/openswmm_gpu_omp.dir/ExplicitKokkosSurfaceSolver.cpp.o
+[ 50%] Building CXX object gpu/CMakeFiles/openswmm_gpu_omp.dir/GpuPluginOmp.cpp.o
+[ 75%] Building CXX object gpu/CMakeFiles/openswmm_gpu_omp.dir/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/src/engine/2d/solver/InertialEdges.cpp.o
+[100%] Linking CXX shared library libopenswmm_gpu_omp.dylib
+[100%] Built target openswmm_gpu_omp

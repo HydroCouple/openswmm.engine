@@ -1,0 +1,1 @@
+{"case":"planar","nx":32,"ny":32,"quad":2,"tiers":1,"order":2,"threads":1,"duration":1,"end":4.4864675689163596,"cells":1536,"l1_m":0.0015292925904082189,"relative_l1":0.1556335491599701,"l2_m":0.0035256433139909523,"linf_m":0.021426439067306881,"volume_relative_error":1.5888591611811272e-15,"min_depth":0,"max_depth_change":0.021426439067306881,"seconds":0.410925416,"steps":1400}

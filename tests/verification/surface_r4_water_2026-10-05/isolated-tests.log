@@ -1,0 +1,27 @@
+Internal ctest changing into directory: /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/build/surface-r4-isolated
+Test project /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/build/surface-r4-isolated
+    Start 124: test_engine_runoff
+1/9 Test #124: test_engine_runoff ......................   Passed    0.17 sec
+    Start 135: test_engine_lid
+2/9 Test #135: test_engine_lid .........................   Passed    0.14 sec
+    Start 185: test_engine_2d_inertial_marcher
+3/9 Test #185: test_engine_2d_inertial_marcher .........   Passed    1.71 sec
+    Start 206: test_engine_surface_ownership
+4/9 Test #206: test_engine_surface_ownership ...........   Passed    0.17 sec
+    Start 207: test_engine_surface_exchange
+5/9 Test #207: test_engine_surface_exchange ............   Passed    0.11 sec
+    Start 208: test_engine_source_clock_groups
+6/9 Test #208: test_engine_source_clock_groups .........   Passed    0.12 sec
+    Start 209: test_engine_source_water_driver
+7/9 Test #209: test_engine_source_water_driver .........   Passed    0.02 sec
+    Start 210: test_engine_surface_et_budget
+8/9 Test #210: test_engine_surface_et_budget ...........   Passed    0.18 sec
+    Start 211: test_engine_surface_aquifer_receiving
+9/9 Test #211: test_engine_surface_aquifer_receiving ...   Passed    0.15 sec
+
+100% tests passed, 0 tests failed out of 9
+
+Label Time Summary:
+unit    =   2.78 sec*proc (9 tests)
+
+Total Test time (real) =   2.81 sec

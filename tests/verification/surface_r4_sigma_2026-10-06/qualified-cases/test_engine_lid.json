@@ -1,0 +1,781 @@
+{
+  "tests": 55,
+  "failures": 0,
+  "disabled": 0,
+  "errors": 0,
+  "timestamp": "2026-10-06T10:31:34Z",
+  "time": "0.009s",
+  "name": "AllTests",
+  "testsuites": [
+    {
+      "name": "LIDGroupSoA",
+      "tests": 3,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T10:31:34Z",
+      "time": "0s",
+      "testsuite": [
+        {
+          "name": "ResizeSetsCorrectSizes",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 97,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDGroupSoA"
+        },
+        {
+          "name": "ResizeZeroIsEmpty",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 108,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDGroupSoA"
+        },
+        {
+          "name": "DefaultValuesReasonable",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 115,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDGroupSoA"
+        }
+      ]
+    },
+    {
+      "name": "LIDModelBuilder",
+      "tests": 12,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T10:31:34Z",
+      "time": "0.002s",
+      "testsuite": [
+        {
+          "name": "EmptyUsageProducesEmptyGroups",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 128,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDModelBuilder"
+        },
+        {
+          "name": "SingleBioCellPopulated",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 137,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDModelBuilder"
+        },
+        {
+          "name": "InitialSaturationSetsState",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 161,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDModelBuilder"
+        },
+        {
+          "name": "MultipleTypesDistributed",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 180,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDModelBuilder"
+        },
+        {
+          "name": "ReplicateNumberScalesAreaAndWidth",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 227,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDModelBuilder"
+        },
+        {
+          "name": "MetricUsageAreaAndWidthConvertToInternalFeet",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 258,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDModelBuilder"
+        },
+        {
+          "name": "ManningAlphaComputed",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 283,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDModelBuilder"
+        },
+        {
+          "name": "FromImpervConvertedToFraction",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 817,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDModelBuilder"
+        },
+        {
+          "name": "StorageVoidRatioAboveOneIsLegal",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 839,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0.001s",
+          "classname": "LIDModelBuilder"
+        },
+        {
+          "name": "DrainToNodeResolved",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 877,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDModelBuilder"
+        },
+        {
+          "name": "DrainToSubcatchResolved",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 897,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDModelBuilder"
+        },
+        {
+          "name": "ToPerFlagPreserved",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 916,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDModelBuilder"
+        }
+      ]
+    },
+    {
+      "name": "LIDBioCell",
+      "tests": 6,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T10:31:34Z",
+      "time": "0s",
+      "testsuite": [
+        {
+          "name": "RainfallFillsSurface",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 301,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDBioCell"
+        },
+        {
+          "name": "SoilPercolationOccurs",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 329,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDBioCell"
+        },
+        {
+          "name": "DrainActivatesAboveOffset",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 355,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDBioCell"
+        },
+        {
+          "name": "DrainInactiveWhenBelowOffset",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 380,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDBioCell"
+        },
+        {
+          "name": "WaterBalanceConserved",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 402,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDBioCell"
+        },
+        {
+          "name": "EvaporationReducesSurfaceDepth",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 670,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDBioCell"
+        }
+      ]
+    },
+    {
+      "name": "LIDBarrel",
+      "tests": 3,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T10:31:34Z",
+      "time": "0s",
+      "testsuite": [
+        {
+          "name": "FillsAndOverflows",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 433,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDBarrel"
+        },
+        {
+          "name": "DrainReducesStorage",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 451,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDBarrel"
+        },
+        {
+          "name": "WaterBalanceConserved",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 470,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDBarrel"
+        }
+      ]
+    },
+    {
+      "name": "LIDSwale",
+      "tests": 1,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T10:31:34Z",
+      "time": "0s",
+      "testsuite": [
+        {
+          "name": "ManningsOutflowOccurs",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 503,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDSwale"
+        }
+      ]
+    },
+    {
+      "name": "LIDGreenRoof",
+      "tests": 1,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T10:31:34Z",
+      "time": "0s",
+      "testsuite": [
+        {
+          "name": "SoilPercolationToDrainMat",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 527,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDGreenRoof"
+        }
+      ]
+    },
+    {
+      "name": "LIDPavement",
+      "tests": 2,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T10:31:34Z",
+      "time": "0s",
+      "testsuite": [
+        {
+          "name": "PavementPercolation",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 564,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDPavement"
+        },
+        {
+          "name": "CloggingReducesPermeability",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 598,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDPavement"
+        }
+      ]
+    },
+    {
+      "name": "LIDRoof",
+      "tests": 1,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T10:31:34Z",
+      "time": "0s",
+      "testsuite": [
+        {
+          "name": "SplitsBetweenOverflowAndDrain",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 630,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDRoof"
+        }
+      ]
+    },
+    {
+      "name": "LIDBatch",
+      "tests": 1,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T10:31:34Z",
+      "time": "0s",
+      "testsuite": [
+        {
+          "name": "MultipleBarrelsProcessedCorrectly",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 698,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDBatch"
+        }
+      ]
+    },
+    {
+      "name": "LIDEdge",
+      "tests": 2,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T10:31:34Z",
+      "time": "0s",
+      "testsuite": [
+        {
+          "name": "ZeroRainfallNoChange",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 728,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDEdge"
+        },
+        {
+          "name": "NegativeDepthsClamped",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 744,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDEdge"
+        }
+      ]
+    },
+    {
+      "name": "LIDInflow",
+      "tests": 2,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T10:31:34Z",
+      "time": "0s",
+      "testsuite": [
+        {
+          "name": "PerUnitInflowUsedOverRainfall",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 774,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDInflow"
+        },
+        {
+          "name": "ZeroInflowFallsBackToRainfall",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 794,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDInflow"
+        }
+      ]
+    },
+    {
+      "name": "LIDModPuls",
+      "tests": 4,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T10:31:34Z",
+      "time": "0s",
+      "testsuite": [
+        {
+          "name": "SwaleConvergesToSteadyState",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 934,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDModPuls"
+        },
+        {
+          "name": "SwaleModPulsMoreStableThanEuler",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 977,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDModPuls"
+        },
+        {
+          "name": "SwalePreservesFOldBetweenTimesteps",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 1012,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDModPuls"
+        },
+        {
+          "name": "SwaleWaterBalanceWithModPuls",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 1036,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDModPuls"
+        }
+      ]
+    },
+    {
+      "name": "LIDDrainHysteresis",
+      "tests": 3,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T10:31:34Z",
+      "time": "0s",
+      "testsuite": [
+        {
+          "name": "DrainOpensAtHOpen",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 1073,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDDrainHysteresis"
+        },
+        {
+          "name": "DrainStaysOpenAboveHClose",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 1107,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDDrainHysteresis"
+        },
+        {
+          "name": "DrainClosesBelow",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 1140,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDDrainHysteresis"
+        }
+      ]
+    },
+    {
+      "name": "LIDBarrelCovered",
+      "tests": 2,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T10:31:34Z",
+      "time": "0s",
+      "testsuite": [
+        {
+          "name": "CoveredBlocksRainfall",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 1177,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDBarrelCovered"
+        },
+        {
+          "name": "UncoveredReceivesRainfall",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 1194,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDBarrelCovered"
+        }
+      ]
+    },
+    {
+      "name": "LIDBarrelDelay",
+      "tests": 2,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T10:31:34Z",
+      "time": "0s",
+      "testsuite": [
+        {
+          "name": "DrainBlockedDuringRain",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 1214,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDBarrelDelay"
+        },
+        {
+          "name": "DrainActivatesAfterDelay",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 1234,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDBarrelDelay"
+        }
+      ]
+    },
+    {
+      "name": "LIDStorageClog",
+      "tests": 1,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T10:31:34Z",
+      "time": "0s",
+      "testsuite": [
+        {
+          "name": "CloggingReducesExfiltration",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 1258,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDStorageClog"
+        }
+      ]
+    },
+    {
+      "name": "LIDPavementRegen",
+      "tests": 1,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T10:31:34Z",
+      "time": "0s",
+      "testsuite": [
+        {
+          "name": "RegenerationReducesClogging",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 1291,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDPavementRegen"
+        }
+      ]
+    },
+    {
+      "name": "LIDPollutantRemoval",
+      "tests": 3,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T10:31:34Z",
+      "time": "0s",
+      "testsuite": [
+        {
+          "name": "RemovalFractionsPopulatedFromContext",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 1322,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDPollutantRemoval"
+        },
+        {
+          "name": "NoRemovalsByDefault",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 1370,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDPollutantRemoval"
+        },
+        {
+          "name": "RemovalsStoreParsedCorrectly",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 1386,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDPollutantRemoval"
+        }
+      ]
+    },
+    {
+      "name": "LIDStorageExfil",
+      "tests": 2,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T10:31:34Z",
+      "time": "0s",
+      "testsuite": [
+        {
+          "name": "TrajectoryMatchesBenchmark",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 1445,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDStorageExfil"
+        },
+        {
+          "name": "CloggingTrajectoryMatchesBenchmark",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 1531,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0s",
+          "classname": "LIDStorageExfil"
+        }
+      ]
+    },
+    {
+      "name": "LidRunoffAreaTest",
+      "tests": 3,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T10:31:34Z",
+      "time": "0.005s",
+      "testsuite": [
+        {
+          "name": "LidFootprintExcludedFromRunoffArea",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 1581,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0.001s",
+          "classname": "LidRunoffAreaTest"
+        },
+        {
+          "name": "CapturedRunoffLeavesTheSubcatchmentOutlet",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 1692,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0.001s",
+          "classname": "LidRunoffAreaTest"
+        },
+        {
+          "name": "FullCoverageByReplicateUnitsShedsNothing",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid.cpp",
+          "line": 1802,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T10:31:34Z",
+          "time": "0.001s",
+          "classname": "LidRunoffAreaTest"
+        }
+      ]
+    }
+  ]
+}

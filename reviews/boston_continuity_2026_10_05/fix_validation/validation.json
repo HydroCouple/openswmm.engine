@@ -1,0 +1,74 @@
+{
+  "date": "2026-10-05",
+  "base_head": "85ebe25152bf516355d2702944242b856479a4f8",
+  "working_tree_note": "Contains other unrelated pending changes; hashes describe the complete tested source files, not isolated patches.",
+  "source_sha256": {
+    "src/engine/2d/coupling/OutfallExchange.hpp": "f8428d1e574f7d4fba04f0142b8a6f718183e580cc9283ef74b76c3ad02ef7f6",
+    "src/engine/2d/coupling/OutfallExchange.cpp": "e9f5664c2f5e4b8810deed00207c84104a5146e54803549bcbd25a4e94bb27bd",
+    "src/engine/hydraulics/SurfaceExchange.hpp": "5db1873877daa133c36c2a2f6254517237c64bdc9fbf23d8e31c3621cda5159a",
+    "src/engine/2d/SurfaceRouter2D.cpp": "b7aaa494ae6f735af6f4ad6e6836cc9fe551d1c27ff0d891e810c3620878a594",
+    "src/engine/2d/SurfaceRouter2D.hpp": "c244e01bf54d2195099a4ce99aa12e4fdfa0e99d7d31b9ce773959f28a7d5a05",
+    "src/engine/core/SimulationContext.hpp": "2eec3040489ad45314e26002bd3ed8661da2c5fd026f3ed52b713ea16326540e",
+    "src/engine/core/SWMMEngine.cpp": "345a14475587fcde040de0d73327c3bf1f820a0fbf397027b8b87631aa70ef88",
+    "src/engine/hydraulics/DynamicWave.cpp": "2c3a57ff4691eaa274f88eaba7b473acfdffe51a13767c1bb5628fb31743387c",
+    "src/engine/hydraulics/Routing.cpp": "49a9a664ea7787c3cee2960d4d8e9ce85d7d1a437eec53af29b9565fa8e0b998",
+    "src/engine/hydraulics/fv/INetworkSolver.hpp": "296d5b2a1dbe015a67bccb349bb95a15f7a71ddd4fb3e8945a211ee7ef812379",
+    "src/engine/hydraulics/fv/ExplicitFvSolver.cpp": "bd3e35da207353e4b60c086341922ecdc337a18c6f5f4f7ebad18bd3c4b93887",
+    "src/engine/2d/solver/ExplicitInertialSolver.cpp": "f9eefc14f73d08b7e2c74831faab7240911285ad34ca379d2429b7f160f00cee",
+    "src/engine/2d/solver/ExplicitInertialSolver.hpp": "c1887f5fad9a59da90d449a29ad6caec91e2c5fbfa41a9a6aa499bcf1f4c3b9d",
+    "src/engine/2d/gpu/ExplicitKokkosSurfaceSolver.cpp": "f679eb5a144a9b686b9c8198cb6f052bb20fc62943888d62d143a8c0b7374d8d",
+    "tests/unit/engine/test_2d_outfall_coupling.cpp": "9f16897f87164609916f0fa9c8842502ccabfee83204fac0034685398ec7dee9",
+    "tests/gpu/test_kokkos_explicit_alignment.cpp": "8278874714b6923b3e81eada945773a092ef1ae963fbc75c0625691fad63612a"
+  },
+  "engine_sha256": "e509655303d11b3d2f9e39b1fb1135d00064fc89c9d874372e250ce60c313258",
+  "unit_integration_tests_passed": 77,
+  "kokkos_cpu_test_processes_passed": 2,
+  "reverse_flow_results": [
+    {
+      "case": "DYNWAVE_0",
+      "steps": 31,
+      "initial": 1.1,
+      "stored": 0.0,
+      "outfall_in": 0.0,
+      "outfall_out": 1.1,
+      "continuity_2d": 0.0,
+      "continuity_1d": 0.06715887791514764
+    },
+    {
+      "case": "DYNWAVE_6",
+      "steps": 31,
+      "initial": 1.1,
+      "stored": 0.0,
+      "outfall_in": 0.0,
+      "outfall_out": 1.1,
+      "continuity_2d": 0.0,
+      "continuity_1d": 0.06715887791514764
+    },
+    {
+      "case": "FV_0",
+      "steps": 31,
+      "initial": 1.1,
+      "stored": 0.0,
+      "outfall_in": 0.0,
+      "outfall_out": 1.1,
+      "continuity_2d": 0.0,
+      "continuity_1d": -1.8291205280449427e-15
+    },
+    {
+      "case": "FV_6",
+      "steps": 31,
+      "initial": 1.1,
+      "stored": 0.0,
+      "outfall_in": 0.0,
+      "outfall_out": 1.1,
+      "continuity_2d": 0.0,
+      "continuity_1d": -1.8291205280449427e-15
+    }
+  ],
+  "limitations": [
+    "Full Boston model not rerun",
+    "GUI application bundle not rebuilt or installed",
+    "Actual GPU execution not tested",
+    "Dynamic-wave overall 1D residual is 6.7158877915% in abrupt dry-pipe fixture despite matching exchange ledgers"
+  ]
+}

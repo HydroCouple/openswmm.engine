@@ -1,0 +1,786 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="2" failures="2" disabled="0" errors="0" time="3.77" timestamp="2026-10-04T03:04:55.814" name="AllTests">
+  <testsuite name="Cpu2DCorrectness" tests="2" failures="2" disabled="0" skipped="0" errors="0" time="3.77" timestamp="2026-10-04T03:04:55.814">
+    <testcase name="SecondOrderSlopeReconstructionCarriesPhysicalMassFlux" file="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp" line="353" status="run" result="completed" time="0.004" timestamp="2026-10-04T03:04:55.814" classname="Cpu2DCorrectness">
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666667902, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.096333333333333215,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666667902, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.096333333333333215,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059314761, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738898,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059314761, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738898,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666705, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048333333333333332,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666705, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048333333333333332,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666667902, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.096333333333333215,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666667902, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.096333333333333215,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059314761, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738898,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059314761, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738898,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666705, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048333333333333332,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666705, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048333333333333332,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.003666666666666929, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.096333333333333077,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.003666666666666929, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.096333333333333077,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059314761, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738898,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059314761, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738898,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666635, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048333333333333339,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666635, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048333333333333339,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059311985, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738901,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059311985, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738901,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666667745, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048333333333333228,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666667745, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048333333333333228,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.09633333333333334,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.09633333333333334,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059325863, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738887,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059325863, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738887,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666705, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048333333333333332,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666705, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048333333333333332,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.09633333333333334,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.09633333333333334,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738884,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738884,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666635, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048333333333333339,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666635, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048333333333333339,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.09633333333333334,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.09633333333333334,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059325863, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738887,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059325863, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738887,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666635, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048333333333333339,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666635, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048333333333333339,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738884,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738884,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666705, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048333333333333332,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666705, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048333333333333332,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.09633333333333334,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.09633333333333334,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738884,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738884,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666635, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048333333333333339,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666635, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048333333333333339,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.09633333333333334,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.09633333333333334,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059325863, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738887,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059325863, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738887,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666635, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048333333333333339,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666635, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048333333333333339,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.09633333333333334,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.09633333333333334,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738884,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738884,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666705, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048333333333333332,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666705, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048333333333333332,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738884,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738884,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666705, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048333333333333332,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666705, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048333333333333332,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.09633333333333334,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.09633333333333334,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059325863, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738887,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059325863, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738887,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.09633333333333334,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.09633333333333334,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738884,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738884,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.09633333333333334,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.09633333333333334,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738884,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738884,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738884,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738884,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666667902, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.096333333333333215,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666667902, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.096333333333333215,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059314761, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738898,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059314761, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738898,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666705, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048333333333333332,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666705, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048333333333333332,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666667902, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.096333333333333215,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666667902, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.096333333333333215,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059314761, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738898,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059314761, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738898,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666705, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048333333333333332,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666705, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048333333333333332,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.003666666666666929, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.096333333333333077,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.003666666666666929, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.096333333333333077,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059314761, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738898,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059314761, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738898,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666635, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048333333333333339,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666635, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048333333333333339,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059311985, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738901,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059311985, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738901,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666667745, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048333333333333228,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666667745, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048333333333333228,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.09633333333333334,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.09633333333333334,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059325863, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738887,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059325863, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738887,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666705, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048333333333333332,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666705, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048333333333333332,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.09633333333333334,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.09633333333333334,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738884,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738884,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666635, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048333333333333339,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666635, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048333333333333339,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.09633333333333334,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.09633333333333334,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059325863, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738887,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059325863, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738887,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666635, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048333333333333339,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666635, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048333333333333339,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738884,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738884,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666705, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048333333333333332,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666705, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048333333333333332,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.09633333333333334,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.09633333333333334,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738884,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738884,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666635, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048333333333333339,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666635, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048333333333333339,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.09633333333333334,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.09633333333333334,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059325863, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738887,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059325863, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738887,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666635, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048333333333333339,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666635, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048333333333333339,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.09633333333333334,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.09633333333333334,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738884,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738884,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666705, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048333333333333332,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666705, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048333333333333332,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738884,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738884,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666705, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048333333333333332,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0016666666666666705, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048333333333333332,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.09633333333333334,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.09633333333333334,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059325863, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738887,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059325863, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738887,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.09633333333333334,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.09633333333333334,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738884,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738884,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.09633333333333334,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0036666666666666653, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.09633333333333334,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738884,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738884,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.10571246378738884,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.00035355339059328639, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.10571246378738884,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.10606601717798213, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999619, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.096000000000000044,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999619, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.096000000000000044,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0014999999999998764, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048500000000000126,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0014999999999998764, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048500000000000126,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0040000000000001285, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.095999999999999877,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0040000000000001285, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.095999999999999877,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0015000000000000013, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048500000000000001,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0015000000000000013, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048500000000000001,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0040000000000001007, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.095999999999999905,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0040000000000001007, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.095999999999999905,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0015000000000000013, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048500000000000001,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0015000000000000013, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048500000000000001,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0014999999999999875, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048500000000000015,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0014999999999999875, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048500000000000015,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999619, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.096000000000000044,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999619, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.096000000000000044,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0015000000000000013, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048500000000000001,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0015000000000000013, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048500000000000001,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0040000000000002395, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.095999999999999766,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0040000000000002395, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.095999999999999766,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0015000000000000013, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048500000000000001,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0015000000000000013, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048500000000000001,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999897, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.096000000000000016,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999897, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.096000000000000016,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0014999999999999875, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048500000000000015,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0014999999999999875, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048500000000000015,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0014999999999998834, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048500000000000119,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0014999999999998834, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048500000000000119,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0040000000000002395, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.095999999999999766,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0040000000000002395, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.095999999999999766,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0015000000000000013, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048500000000000001,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0015000000000000013, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048500000000000001,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999897, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.096000000000000016,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999897, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.096000000000000016,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0014999999999999875, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048500000000000015,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0014999999999999875, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048500000000000015,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999897, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.096000000000000016,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999897, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.096000000000000016,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0014999999999998834, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048500000000000119,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0014999999999998834, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048500000000000119,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0015000000000000013, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048500000000000001,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0015000000000000013, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048500000000000001,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999897, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.096000000000000016,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999897, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.096000000000000016,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999897, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.096000000000000016,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999897, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.096000000000000016,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999897, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.096000000000000016,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999897, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.096000000000000016,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999619, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.096000000000000044,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999619, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.096000000000000044,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0014999999999998764, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048500000000000126,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0014999999999998764, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048500000000000126,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0040000000000001285, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.095999999999999877,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0040000000000001285, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.095999999999999877,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0015000000000000013, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048500000000000001,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0015000000000000013, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048500000000000001,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0040000000000001007, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.095999999999999905,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0040000000000001007, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.095999999999999905,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0015000000000000013, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048500000000000001,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0015000000000000013, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048500000000000001,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0014999999999999875, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048500000000000015,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0014999999999999875, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048500000000000015,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999619, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.096000000000000044,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999619, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.096000000000000044,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0015000000000000013, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048500000000000001,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0015000000000000013, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048500000000000001,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0040000000000002395, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.095999999999999766,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0040000000000002395, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.095999999999999766,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0015000000000000013, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048500000000000001,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0015000000000000013, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048500000000000001,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999897, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.096000000000000016,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999897, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.096000000000000016,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0014999999999999875, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048500000000000015,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0014999999999999875, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048500000000000015,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0014999999999998834, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048500000000000119,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0014999999999998834, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048500000000000119,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0040000000000002395, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.095999999999999766,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0040000000000002395, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.095999999999999766,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0015000000000000013, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048500000000000001,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0015000000000000013, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048500000000000001,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999897, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.096000000000000016,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999897, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.096000000000000016,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0014999999999999875, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048500000000000015,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0014999999999999875, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048500000000000015,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999897, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.096000000000000016,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999897, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.096000000000000016,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0014999999999998834, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048500000000000119,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0014999999999998834, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048500000000000119,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0015000000000000013, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to -0.048500000000000001,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0015000000000000013, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to -0.048500000000000001,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to -0.050000000000000003, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999897, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.096000000000000016,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999897, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.096000000000000016,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999897, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.096000000000000016,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999897, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.096000000000000016,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377&#x0A;The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999897, which exceeds 1e-13, where&#x0A;A::discharge(solver, e) evaluates to 0.096000000000000016,&#x0A;.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and&#x0A;1e-13 evaluates to 1e-13.&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:377
+The difference between A::discharge(solver, e) and .5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) is 0.0039999999999999897, which exceeds 1e-13, where
+A::discharge(solver, e) evaluates to 0.096000000000000016,
+.5 * (.2 * ed.nx[e] - .1 * ed.ny[e]) evaluates to 0.10000000000000001, and
+1e-13 evaluates to 1e-13.
+]]></failure>
+    </testcase>
+    <testcase name="SecondOrderPlanarThackerRetainsRotationPhase" file="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp" line="384" status="run" result="completed" time="3.765" timestamp="2026-10-04T03:04:55.818" classname="Cpu2DCorrectness">
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:415&#x0A;Expected: (x / initial_volume) &gt; (.3), actual: 0.28557364116038153 vs 0.3&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:415
+Expected: (x / initial_volume) > (.3), actual: 0.28557364116038153 vs 0.3
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:416&#x0A;Expected: (std::abs(std::atan2(y, x))) &lt; (.15), actual: 0.52135697364977229 vs 0.15&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:416
+Expected: (std::abs(std::atan2(y, x))) < (.15), actual: 0.52135697364977229 vs 0.15
+]]></failure>
+      <failure message="/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:416&#x0A;Expected: (std::abs(std::atan2(y, x))) &lt; (.15), actual: 0.58016900227933599 vs 0.15&#x0A;" type=""><![CDATA[/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/reviews/cpu_2d_2026_10_03/accuracy_phase7/test_sources/test_2d_cpu_correctness.cpp:416
+Expected: (std::abs(std::atan2(y, x))) < (.15), actual: 0.58016900227933599 vs 0.15
+]]></failure>
+    </testcase>
+  </testsuite>
+</testsuites>

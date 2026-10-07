@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
  * @file openswmm_output_impl.cpp
  * @brief C FFI wrapper for the OutputReader class.
@@ -12,7 +28,7 @@
  *
  * @author   Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license  Apache-2.0
  */
 
 #include "../../../include/openswmm/engine/openswmm_output.h"
@@ -39,6 +55,30 @@ SWMM_ENGINE_API SWMM_Output swmm_output_open(const char* path) {
         return nullptr;
     }
     return static_cast<SWMM_Output>(reader);
+}
+
+SWMM_ENGINE_API SWMM_Output swmm_output_open_live(const char* path) {
+    if (!path) return nullptr;
+    auto* reader = new (std::nothrow) openswmm::OutputReader();
+    if (!reader) return nullptr;
+    if (!reader->openLive(path)) {
+        delete reader;
+        return nullptr;
+    }
+    return static_cast<SWMM_Output>(reader);
+}
+
+SWMM_ENGINE_API int swmm_output_refresh(SWMM_Output handle, int* periods) {
+    CHECK_READER(handle);
+    const int n = to_reader(handle)->refresh();
+    if (n < 0) return -1;
+    if (periods) *periods = n;
+    return 0;
+}
+
+SWMM_ENGINE_API int swmm_output_is_live(SWMM_Output handle) {
+    if (!handle) return -1;
+    return to_reader(handle)->is_live() ? 1 : 0;
 }
 
 SWMM_ENGINE_API void swmm_output_close(SWMM_Output handle) {
@@ -120,6 +160,12 @@ SWMM_ENGINE_API const char* swmm_output_get_link_id(SWMM_Output handle,
                                                       int index) {
     if (!handle) return nullptr;
     return to_reader(handle)->link_id(index);
+}
+
+SWMM_ENGINE_API const char* swmm_output_get_pollut_id(SWMM_Output handle,
+                                                       int index) {
+    if (!handle) return nullptr;
+    return to_reader(handle)->pollut_id(index);
 }
 
 /* =========================================================================

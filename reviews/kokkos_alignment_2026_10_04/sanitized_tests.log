@@ -1,0 +1,245 @@
+Start testing: Oct 04 12:18 EDT
+----------------------------------------------------------
+1/2 Testing: kokkos_explicit_alignment
+1/2 Test: kokkos_explicit_alignment
+Command: "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/build/kokkos-cpu-alignment-asan/test_kokkos_explicit_alignment"
+Directory: /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/build/kokkos-cpu-alignment-asan
+"kokkos_explicit_alignment" start time: Oct 04 12:18 EDT
+Output:
+----------------------------------------------------------
+Execution space: OpenMP, concurrency=4
+step tiers=1 case=0 end=0.932823 cpu=17 kk=17
+step tiers=1 case=0 end=1.86565 cpu=14 kk=14
+step tiers=1 case=0 end=2 cpu=2 kk=2
+marcher tiers=1 scenario=0 PASS
+step tiers=1 case=1 end=0.932823 cpu=5 kk=5
+step tiers=1 case=1 end=1.86565 cpu=1 kk=1
+step tiers=1 case=1 end=2 cpu=1 kk=1
+marcher tiers=1 scenario=1 PASS
+step tiers=1 case=2 end=0.932823 cpu=0 kk=0
+step tiers=1 case=2 end=1.86565 cpu=3 kk=3
+step tiers=1 case=2 end=2 cpu=1 kk=1
+marcher tiers=1 scenario=2 PASS
+step tiers=1 case=3 end=0.932823 cpu=6 kk=6
+step tiers=1 case=3 end=1.86565 cpu=6 kk=6
+step tiers=1 case=3 end=2 cpu=1 kk=1
+marcher tiers=1 scenario=3 PASS
+step tiers=1 case=4 end=0.932823 cpu=33 kk=33
+step tiers=1 case=4 end=1.86565 cpu=3 kk=3
+step tiers=1 case=4 end=2 cpu=0 kk=0
+marcher tiers=1 scenario=4 PASS
+step tiers=4 case=0 end=0.932823 cpu=8 kk=8
+step tiers=4 case=0 end=1.86565 cpu=31 kk=31
+step tiers=4 case=0 end=2 cpu=12 kk=12
+marcher tiers=4 scenario=0 PASS
+step tiers=4 case=1 end=0.932823 cpu=6 kk=6
+step tiers=4 case=1 end=1.86565 cpu=6 kk=6
+step tiers=4 case=1 end=2 cpu=1 kk=1
+marcher tiers=4 scenario=1 PASS
+step tiers=4 case=2 end=0.932823 cpu=0 kk=0
+step tiers=4 case=2 end=1.86565 cpu=3 kk=3
+step tiers=4 case=2 end=2 cpu=1 kk=1
+marcher tiers=4 scenario=2 PASS
+step tiers=4 case=3 end=0.932823 cpu=6 kk=6
+step tiers=4 case=3 end=1.86565 cpu=6 kk=6
+step tiers=4 case=3 end=2 cpu=1 kk=1
+marcher tiers=4 scenario=3 PASS
+step tiers=4 case=4 end=0.932823 cpu=8 kk=8
+step tiers=4 case=4 end=1.86565 cpu=24 kk=24
+step tiers=4 case=4 end=2 cpu=0 kk=0
+marcher tiers=4 scenario=4 PASS
+step tiers=1 case=0 end=0.932823 cpu=16 kk=16
+step tiers=1 case=0 end=1.86565 cpu=13 kk=13
+step tiers=1 case=0 end=2 cpu=3 kk=3
+marcher tiers=1 scenario=0 PASS
+step tiers=1 case=1 end=0.932823 cpu=5 kk=5
+step tiers=1 case=1 end=1.86565 cpu=1 kk=1
+step tiers=1 case=1 end=2 cpu=1 kk=1
+marcher tiers=1 scenario=1 PASS
+step tiers=1 case=2 end=0.932823 cpu=0 kk=0
+step tiers=1 case=2 end=1.86565 cpu=4 kk=4
+step tiers=1 case=2 end=2 cpu=1 kk=1
+marcher tiers=1 scenario=2 PASS
+step tiers=1 case=3 end=0.932823 cpu=7 kk=7
+step tiers=1 case=3 end=1.86565 cpu=8 kk=8
+step tiers=1 case=3 end=2 cpu=2 kk=2
+marcher tiers=1 scenario=3 PASS
+step tiers=1 case=4 end=0.932823 cpu=28 kk=28
+step tiers=1 case=4 end=1.86565 cpu=7 kk=7
+step tiers=1 case=4 end=2 cpu=1 kk=1
+marcher tiers=1 scenario=4 PASS
+step tiers=4 case=0 end=0.932823 cpu=8 kk=8
+step tiers=4 case=0 end=1.86565 cpu=31 kk=31
+step tiers=4 case=0 end=2 cpu=11 kk=11
+marcher tiers=4 scenario=0 PASS
+step tiers=4 case=1 end=0.932823 cpu=6 kk=6
+step tiers=4 case=1 end=1.86565 cpu=6 kk=6
+step tiers=4 case=1 end=2 cpu=1 kk=1
+marcher tiers=4 scenario=1 PASS
+step tiers=4 case=2 end=0.932823 cpu=0 kk=0
+step tiers=4 case=2 end=1.86565 cpu=3 kk=3
+step tiers=4 case=2 end=2 cpu=1 kk=1
+marcher tiers=4 scenario=2 PASS
+step tiers=4 case=3 end=0.932823 cpu=6 kk=6
+step tiers=4 case=3 end=1.86565 cpu=7 kk=7
+step tiers=4 case=3 end=2 cpu=2 kk=2
+marcher tiers=4 scenario=3 PASS
+step tiers=4 case=4 end=0.932823 cpu=8 kk=8
+step tiers=4 case=4 end=1.86565 cpu=24 kk=24
+step tiers=4 case=4 end=2 cpu=0 kk=0
+marcher tiers=4 scenario=4 PASS
+SWE shape=0 scenario=0 order=1 PASS
+SWE shape=0 scenario=0 order=2 PASS
+SWE shape=0 scenario=1 order=1 PASS
+SWE shape=0 scenario=1 order=2 PASS
+SWE shape=0 scenario=2 order=1 PASS
+SWE shape=0 scenario=2 order=2 PASS
+SWE shape=0 scenario=3 order=1 PASS
+SWE shape=0 scenario=3 order=2 PASS
+SWE shape=1 scenario=0 order=1 PASS
+SWE shape=1 scenario=0 order=2 PASS
+SWE shape=1 scenario=1 order=1 PASS
+SWE shape=1 scenario=1 order=2 PASS
+SWE shape=1 scenario=2 order=1 PASS
+SWE shape=1 scenario=2 order=2 PASS
+SWE shape=1 scenario=3 order=1 PASS
+SWE shape=1 scenario=3 order=2 PASS
+SWE shape=2 scenario=0 order=1 PASS
+SWE shape=2 scenario=0 order=2 PASS
+SWE shape=2 scenario=1 order=1 PASS
+SWE shape=2 scenario=1 order=2 PASS
+SWE shape=2 scenario=2 order=1 PASS
+SWE shape=2 scenario=2 order=2 PASS
+SWE shape=2 scenario=3 order=1 PASS
+SWE shape=2 scenario=3 order=2 PASS
+PASS host/device-space alignment checks
+<end of output>
+Test time =   0.32 sec
+----------------------------------------------------------
+Test Passed.
+"kokkos_explicit_alignment" end time: Oct 04 12:18 EDT
+"kokkos_explicit_alignment" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/2 Testing: kokkos_explicit_alignment_one_thread
+2/2 Test: kokkos_explicit_alignment_one_thread
+Command: "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/build/kokkos-cpu-alignment-asan/test_kokkos_explicit_alignment"
+Directory: /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/build/kokkos-cpu-alignment-asan
+"kokkos_explicit_alignment_one_thread" start time: Oct 04 12:18 EDT
+Output:
+----------------------------------------------------------
+Execution space: OpenMP, concurrency=1
+step tiers=1 case=0 end=0.932823 cpu=17 kk=17
+step tiers=1 case=0 end=1.86565 cpu=14 kk=14
+step tiers=1 case=0 end=2 cpu=2 kk=2
+marcher tiers=1 scenario=0 PASS
+step tiers=1 case=1 end=0.932823 cpu=5 kk=5
+step tiers=1 case=1 end=1.86565 cpu=1 kk=1
+step tiers=1 case=1 end=2 cpu=1 kk=1
+marcher tiers=1 scenario=1 PASS
+step tiers=1 case=2 end=0.932823 cpu=0 kk=0
+step tiers=1 case=2 end=1.86565 cpu=3 kk=3
+step tiers=1 case=2 end=2 cpu=1 kk=1
+marcher tiers=1 scenario=2 PASS
+step tiers=1 case=3 end=0.932823 cpu=6 kk=6
+step tiers=1 case=3 end=1.86565 cpu=6 kk=6
+step tiers=1 case=3 end=2 cpu=1 kk=1
+marcher tiers=1 scenario=3 PASS
+step tiers=1 case=4 end=0.932823 cpu=33 kk=33
+step tiers=1 case=4 end=1.86565 cpu=3 kk=3
+step tiers=1 case=4 end=2 cpu=0 kk=0
+marcher tiers=1 scenario=4 PASS
+step tiers=4 case=0 end=0.932823 cpu=8 kk=8
+step tiers=4 case=0 end=1.86565 cpu=31 kk=31
+step tiers=4 case=0 end=2 cpu=12 kk=12
+marcher tiers=4 scenario=0 PASS
+step tiers=4 case=1 end=0.932823 cpu=6 kk=6
+step tiers=4 case=1 end=1.86565 cpu=6 kk=6
+step tiers=4 case=1 end=2 cpu=1 kk=1
+marcher tiers=4 scenario=1 PASS
+step tiers=4 case=2 end=0.932823 cpu=0 kk=0
+step tiers=4 case=2 end=1.86565 cpu=3 kk=3
+step tiers=4 case=2 end=2 cpu=1 kk=1
+marcher tiers=4 scenario=2 PASS
+step tiers=4 case=3 end=0.932823 cpu=6 kk=6
+step tiers=4 case=3 end=1.86565 cpu=6 kk=6
+step tiers=4 case=3 end=2 cpu=1 kk=1
+marcher tiers=4 scenario=3 PASS
+step tiers=4 case=4 end=0.932823 cpu=8 kk=8
+step tiers=4 case=4 end=1.86565 cpu=24 kk=24
+step tiers=4 case=4 end=2 cpu=0 kk=0
+marcher tiers=4 scenario=4 PASS
+step tiers=1 case=0 end=0.932823 cpu=16 kk=16
+step tiers=1 case=0 end=1.86565 cpu=13 kk=13
+step tiers=1 case=0 end=2 cpu=3 kk=3
+marcher tiers=1 scenario=0 PASS
+step tiers=1 case=1 end=0.932823 cpu=5 kk=5
+step tiers=1 case=1 end=1.86565 cpu=1 kk=1
+step tiers=1 case=1 end=2 cpu=1 kk=1
+marcher tiers=1 scenario=1 PASS
+step tiers=1 case=2 end=0.932823 cpu=0 kk=0
+step tiers=1 case=2 end=1.86565 cpu=4 kk=4
+step tiers=1 case=2 end=2 cpu=1 kk=1
+marcher tiers=1 scenario=2 PASS
+step tiers=1 case=3 end=0.932823 cpu=7 kk=7
+step tiers=1 case=3 end=1.86565 cpu=8 kk=8
+step tiers=1 case=3 end=2 cpu=2 kk=2
+marcher tiers=1 scenario=3 PASS
+step tiers=1 case=4 end=0.932823 cpu=28 kk=28
+step tiers=1 case=4 end=1.86565 cpu=7 kk=7
+step tiers=1 case=4 end=2 cpu=1 kk=1
+marcher tiers=1 scenario=4 PASS
+step tiers=4 case=0 end=0.932823 cpu=8 kk=8
+step tiers=4 case=0 end=1.86565 cpu=31 kk=31
+step tiers=4 case=0 end=2 cpu=11 kk=11
+marcher tiers=4 scenario=0 PASS
+step tiers=4 case=1 end=0.932823 cpu=6 kk=6
+step tiers=4 case=1 end=1.86565 cpu=6 kk=6
+step tiers=4 case=1 end=2 cpu=1 kk=1
+marcher tiers=4 scenario=1 PASS
+step tiers=4 case=2 end=0.932823 cpu=0 kk=0
+step tiers=4 case=2 end=1.86565 cpu=3 kk=3
+step tiers=4 case=2 end=2 cpu=1 kk=1
+marcher tiers=4 scenario=2 PASS
+step tiers=4 case=3 end=0.932823 cpu=6 kk=6
+step tiers=4 case=3 end=1.86565 cpu=7 kk=7
+step tiers=4 case=3 end=2 cpu=2 kk=2
+marcher tiers=4 scenario=3 PASS
+step tiers=4 case=4 end=0.932823 cpu=8 kk=8
+step tiers=4 case=4 end=1.86565 cpu=24 kk=24
+step tiers=4 case=4 end=2 cpu=0 kk=0
+marcher tiers=4 scenario=4 PASS
+SWE shape=0 scenario=0 order=1 PASS
+SWE shape=0 scenario=0 order=2 PASS
+SWE shape=0 scenario=1 order=1 PASS
+SWE shape=0 scenario=1 order=2 PASS
+SWE shape=0 scenario=2 order=1 PASS
+SWE shape=0 scenario=2 order=2 PASS
+SWE shape=0 scenario=3 order=1 PASS
+SWE shape=0 scenario=3 order=2 PASS
+SWE shape=1 scenario=0 order=1 PASS
+SWE shape=1 scenario=0 order=2 PASS
+SWE shape=1 scenario=1 order=1 PASS
+SWE shape=1 scenario=1 order=2 PASS
+SWE shape=1 scenario=2 order=1 PASS
+SWE shape=1 scenario=2 order=2 PASS
+SWE shape=1 scenario=3 order=1 PASS
+SWE shape=1 scenario=3 order=2 PASS
+SWE shape=2 scenario=0 order=1 PASS
+SWE shape=2 scenario=0 order=2 PASS
+SWE shape=2 scenario=1 order=1 PASS
+SWE shape=2 scenario=1 order=2 PASS
+SWE shape=2 scenario=2 order=1 PASS
+SWE shape=2 scenario=2 order=2 PASS
+SWE shape=2 scenario=3 order=1 PASS
+SWE shape=2 scenario=3 order=2 PASS
+PASS host/device-space alignment checks
+<end of output>
+Test time =   0.16 sec
+----------------------------------------------------------
+Test Passed.
+"kokkos_explicit_alignment_one_thread" end time: Oct 04 12:18 EDT
+"kokkos_explicit_alignment_one_thread" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Oct 04 12:18 EDT
