@@ -114,6 +114,8 @@ void LIDGroupSoA::resize(int n) {
     in_pave.assign(un, 0.0);
     in_soil.assign(un, 0.0);
     in_stor.assign(un, 0.0);
+    evap_surf.assign(un, 0.0); evap_pave.assign(un, 0.0);
+    evap_soil.assign(un, 0.0); evap_stor.assign(un, 0.0);
 
     f_old_surf.assign(un, 0.0);
     f_old_soil.assign(un, 0.0);
@@ -1437,6 +1439,10 @@ inline void runUnitLegacy(LIDGroupSoA& g, std::size_t u, double inflow, double e
 
     // per-layer inflow rates after every clamp, for the transport tracks
     g.in_surf[u] = k.SurfaceInflow;
+    if (completed) {
+        g.evap_surf[u] = k.SurfaceEvap; g.evap_pave[u] = k.PaveEvap;
+        g.evap_soil[u] = k.SoilEvap; g.evap_stor[u] = k.StorageEvap;
+    }
     g.in_pave[u] = (g.type == LIDType::PERM_PAVEMENT) ? k.SurfaceInfil : 0.0;
     g.in_soil[u] = (g.type == LIDType::PERM_PAVEMENT) ? k.PavePerc
                  : (g.soil_thick[u] > 0.0 ? k.SurfaceInfil : 0.0);

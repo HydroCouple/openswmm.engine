@@ -14,8 +14,11 @@ struct SurfaceEtReceipt {
     double potential=0,evaporation=0,soil_demand=0,unused=0; // m3
 };
 
-/// Internal water-only source-phase adapter. Bind reviewed inside/outside uniform areas;
+/// Internal completed source-phase adapter. Bind reviewed inside/outside uniform areas;
 /// invoke after accepted face volumes land and before managed source debits.
+/// Pollutants currently require conservative LID-only donors, matching pollutant
+/// IDs and fully source-owned receiving-cell weather; mesh quality and source
+/// returns are not qualified. Water-only profiles retain mixed-source support.
 /// Whole-context snapshots are qualification scaffolding, not runtime activation.
 class CommonSourceStage {
 public:

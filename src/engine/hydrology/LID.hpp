@@ -230,6 +230,9 @@ struct LIDGroupSoA {
     std::vector<double> in_pave;      ///< Surface → pavement
     std::vector<double> in_soil;      ///< Layer above → soil
     std::vector<double> in_stor;      ///< Layer above → storage
+    /// Completed-only post-clamp evaporation rates (ft/s); pollutant
+    /// transport removes water but retains solute in the donor layer.
+    std::vector<double> evap_surf, evap_pave, evap_soil, evap_stor;
 
     // Previous flux rates (for Modified Puls time weighting)
     std::vector<double> f_old_surf;   ///< Previous surface flux rate

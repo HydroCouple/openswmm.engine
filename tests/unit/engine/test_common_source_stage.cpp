@@ -132,6 +132,156 @@ void etBalance(const Model& m) {
     for(const auto& r:m.stage.etReceipts())
         EXPECT_NEAR(r.potential,r.evaporation+r.soil_demand+r.unused,1e-14);
 }
+void pollutantSources(Model& m,int cells=1,double inside_fraction=1) {
+    m.setup(true,cells);
+    const double full=2*cells/inside_fraction;
+    m.context.subcatches.area.assign(2,full/(43560*ft2));
+    m.context.lid_usage.subcatch_index={0,1};m.context.lid_usage.lid_index={0,0};
+    m.context.lid_usage.number={2,2};m.context.lid_usage.area={full/2/ft2,full/2/ft2};
+    m.context.lid_usage.width={1,1};m.context.lid_usage.init_sat={80,20};
+    m.context.lid_usage.from_imperv={0,0};m.context.lid_usage.from_perv={0,0};
+    m.context.lid_usage.to_perv={0,0};m.context.lid_usage.drain_to={"",""};
+    m.context.pollutant_names.try_add("Dissolved");m.context.pollutant_names.try_add("Counts");
+    m.context.pollutants.resize_pollutants(2);m.context.pollutants.c_rain={7,23};
+    m.context.pollutants.units[1]=MassUnits::COUNTS_PER_L;m.context.options.ignore_quality=false;
+    m.sources=runoff::SourceWaterDriver{};
+    ASSERT_EQ(m.sources.initialize(m.context,{0,1},{{0,0},{1,0}}),"");
+    m.preview={};m.preview.mesh_weather_area.assign(cells,0);
+    for(int sc=0;sc<2;++sc) {
+        SurfaceOwnerObject o;o.subcatch=sc;o.reviewed=true;o.declared_area=full;
+        o.inside_area=2*cells;o.outside_area=full-o.inside_area;m.preview.objects.push_back(o);
+        for(int i=0;i<cells;++i)m.preview.shares.push_back({sc,i,2,0,0,2,0});
+    }
+    RowLayoutLite rows;rows.n_species=2;rows.n_pollut=2;rows.names={"Dissolved","Counts"};
+    std::vector<std::string> warnings;m.gw.initTransport(rows,nullptr,{},warnings);
+    m.surface.transport.resize(2,cells,0);m.surface.transport.row_names=rows.names;
+    m.surface.transport.cell_mass.assign(2*cells,19); // unrelated mesh pool must stay intact
+}
+}
+
+TEST(CommonSourceStage, CompletedLidPollutantsPairWithBoundedReceiverExactlyOnce) {
+    Model m;pollutantSources(m);m.room(.001);m.attach();
+    const auto mesh_mass=m.surface.transport.cell_mass;
+    ASSERT_EQ(m.stage.advance(0,1),"");
+    std::array<double,2> mass{};double water=0;
+    for(const auto& r:m.stage.receipts()) {
+        EXPECT_EQ(r.request.kind,SurfaceDonorKind::LID_BOTTOM);ASSERT_EQ(r.mass.size(),2u);
+        water+=r.volume;for(int p=0;p<2;++p)mass[p]+=r.mass[p];
+    }
+    EXPECT_GT(water,0);EXPECT_LE(water,.001+1e-12);EXPECT_GT(mass[0],0);
+    EXPECT_LT(mass[0]/water,7); // initially clean bottom store dilutes rain
+    EXPECT_EQ(m.surface.transport.cell_mass,mesh_mass);
+    EXPECT_DOUBLE_EQ(m.surface.transport.lost_infiltration[0],0);
+    for(int p=0;p<2;++p) {
+        EXPECT_NEAR(m.gw.transport().xacc_from_surface[m.gw.transport().idx(p,0)],mass[p],1e-15);
+        double withdrawal=0;for(const auto& b:m.sources.pollutants())withdrawal+=b.spatial_infiltration[p];
+        EXPECT_NEAR(withdrawal,mass[p],1e-15);
+        for(int group=0;group<2;++group)EXPECT_NEAR(m.sources.pollutantBalanceResidual(group,p),0,1e-12);
+    }
+    EXPECT_FALSE(m.stage.advance(0,1).empty());
+    EXPECT_NEAR(m.gw.transport().xacc_from_surface[0],mass[0],1e-15);
+}
+
+TEST(CommonSourceStage, DeniedLidRechargeRetainsBothWaterAndPollutants) {
+    Model m;pollutantSources(m);m.room(0);m.attach();ASSERT_EQ(m.stage.advance(0,1),"");
+    for(const auto& r:m.stage.receipts()) {EXPECT_DOUBLE_EQ(r.volume,0);for(double a:r.mass)EXPECT_DOUBLE_EQ(a,0);}
+    EXPECT_DOUBLE_EQ(m.gw.transport().xacc_from_surface[0],0);
+    for(const auto& b:m.sources.pollutants()) {
+        EXPECT_DOUBLE_EQ(b.spatial_infiltration[0],0);EXPECT_GT(b.layers[0][3],0);
+    }
+    for(int group=0;group<2;++group)EXPECT_NEAR(m.sources.pollutantBalanceResidual(group,0),0,1e-12);
+}
+
+TEST(CommonSourceStage, PartialOutsideLidBottomKeepsSeparateMassAndDeniedCellShare) {
+    Model m;pollutantSources(m,2,.5);m.room(0,0);m.room(.01,1);m.attach();ASSERT_EQ(m.stage.advance(0,1),"");
+    std::array<double,2> received{};
+    for(const auto& r:m.stage.receipts()) {
+        if(r.request.cell==0) {EXPECT_DOUBLE_EQ(r.volume,0);for(double a:r.mass)EXPECT_DOUBLE_EQ(a,0);}
+        else for(int p=0;p<2;++p)received[p]+=r.mass[p];
+    }
+    EXPECT_DOUBLE_EQ(m.gw.transport().xacc_from_surface[0],0);
+    EXPECT_GT(received[0],0);
+    for(int p=0;p<2;++p) {
+        double spatial=0,outside=0;
+        for(const auto& b:m.sources.pollutants()){spatial+=b.spatial_infiltration[p];outside+=b.outside_infiltration[p];}
+        EXPECT_NEAR(spatial,received[p],1e-15);EXPECT_GT(outside,0);
+        EXPECT_NEAR(m.gw.transport().xacc_from_surface[m.gw.transport().idx(p,1)],received[p],1e-15);
+        for(int group=0;group<2;++group)EXPECT_NEAR(m.sources.pollutantBalanceResidual(group,p),0,1e-12);
+    }
+}
+
+TEST(CommonSourceStage, PollutantLayoutAndMeshProfileFailuresCannotPartiallyAttach) {
+    for(int mode=0;mode<4;++mode) {
+        Model m;pollutantSources(m);
+        if(mode==0)std::swap(m.gw.transport().row_names[0],m.gw.transport().row_names[1]);
+        if(mode==1)m.surface.transport.temp_row=1;
+        if(mode==2)m.preview.mesh_weather_area[0]=.1;
+        if(mode==3)m.surface.transport.n_pollut=1;
+        EXPECT_FALSE(m.stage.initialize(m.mesh,m.surface,m.options,m.gw,m.sources,m.preview).empty());
+        EXPECT_EQ(m.sources.spatialFractions(),(std::vector<double>{1,1}));
+        EXPECT_DOUBLE_EQ(m.sources.pollutants()[0].rain[0],0);EXPECT_DOUBLE_EQ(m.gw.state().xacc_from_surface[0],0);
+    }
+}
+
+TEST(CommonSourceStage, PollutantProfileFailureCanRetryWithoutWaterOrMassMutation) {
+    Model m;pollutantSources(m);m.room(.001);m.attach();m.surface.coupling_flux[0]=.01;
+    const auto old=m.surface.transport.cell_mass;
+    EXPECT_FALSE(m.stage.advance(0,1).empty());EXPECT_DOUBLE_EQ(m.stage.completedEnd(),0);
+    EXPECT_DOUBLE_EQ(m.sources.pollutants()[0].rain[0],0);EXPECT_DOUBLE_EQ(m.gw.transport().xacc_from_surface[0],0);
+    EXPECT_EQ(m.surface.transport.cell_mass,old);m.surface.coupling_flux[0]=0;
+    m.gw.transport().row_names[0]="Wrong";EXPECT_FALSE(m.stage.advance(0,1).empty());
+    m.gw.transport().row_names[0]="Dissolved";ASSERT_EQ(m.stage.advance(0,1),"");
+    EXPECT_GT(m.gw.transport().xacc_from_surface[0],0);
+}
+
+TEST(CommonSourceStage, PollutantsConserveThroughPendingAndActualGroundwaterFirings) {
+    Model m;pollutantSources(m,1,.5);m.attach();
+    std::array<double,2> delivered{};
+    for(double end:{.1,.3,1.,2.125,4.}) {
+        const double start=m.stage.completedEnd();ASSERT_EQ(m.stage.advance(start,end),"");
+        for(const auto& r:m.stage.receipts())for(int p=0;p<2;++p)delivered[p]+=r.mass[p];
+        for(int p=0;p<2;++p) {
+            EXPECT_NEAR(m.gw.transport().gained_infil[p]+m.gw.transport().xacc_from_surface[p],delivered[p],1e-14);
+            EXPECT_NEAR(m.gw.transport().residual(p),0,1e-12);
+        }
+        m.gw.assignTiers(end-start,1);m.gw.fireGwCells(0,end-start,m.surface,start);
+        for(int p=0;p<2;++p) {
+            EXPECT_DOUBLE_EQ(m.gw.transport().xacc_from_surface[p],0);
+            EXPECT_NEAR(m.gw.transport().gained_infil[p],delivered[p],1e-14);
+            EXPECT_NEAR(m.gw.transport().residual(p),0,1e-12);
+            double rain=0,stores=0,external=0,spatial=0;
+            for(const auto& b:m.sources.pollutants()) {
+                rain+=b.rain[p];spatial+=b.spatial_infiltration[p];
+                external+=b.outlet[p]+b.removed[p]+b.outside_infiltration[p];
+                for(double mass:b.layers[p])stores+=mass;
+            }
+            EXPECT_NEAR(spatial,delivered[p],1e-14);
+            const auto& tr=m.gw.transport();
+            EXPECT_NEAR(rain,stores+external+tr.ledgeredStorage(p)+tr.lost_deep[p]+tr.lost_node[p]+
+                tr.lost_link[p]+tr.lost_dunne[p]+tr.lost_et[p]+tr.lost_reaction[p],1e-12);
+        }
+        EXPECT_NEAR(m.gw.state().continuityResidual(),0,1e-12);
+    }
+}
+
+TEST(CommonSourceStage, ActualMarcherPairsLidPollutantsWithoutInventingMeshRainMass) {
+    Model m;pollutantSources(m);m.surface.rainfall[0]=.005;m.attach(true);
+    const auto mesh_mass=m.surface.transport.cell_mass;
+    for(double end:{.3,1.,2.125,4.}) {
+        const double start=m.stage.completedEnd();EXPECT_DOUBLE_EQ(m.marcher.advance(start,end),end);
+        EXPECT_DOUBLE_EQ(m.stage.completedEnd(),end);EXPECT_DOUBLE_EQ(m.marcher.completedSourceTime(),end);
+        EXPECT_EQ(m.surface.transport.cell_mass,mesh_mass);
+        for(int p=0;p<2;++p) {
+            EXPECT_DOUBLE_EQ(m.surface.transport.gained_rainfall[p],0);
+            EXPECT_DOUBLE_EQ(m.surface.transport.lost_infiltration[p],0);
+            EXPECT_DOUBLE_EQ(m.gw.transport().xacc_from_surface[p],0);
+            double spatial=0;for(const auto& b:m.sources.pollutants())spatial+=b.spatial_infiltration[p];
+            EXPECT_NEAR(m.gw.transport().gained_infil[p],spatial,1e-13);
+            EXPECT_NEAR(m.gw.transport().residual(p),0,1e-12);
+            for(int group=0;group<2;++group)EXPECT_NEAR(m.sources.pollutantBalanceResidual(group,p),0,1e-12);
+        }
+    }
+    EXPECT_GT(m.gw.transport().gained_infil[0],0);m.marcher.finalize();
 }
 
 TEST(CommonSourceStage, MeshAndTwoIndependentSourcesShareScarceReceiverBeforeDebits) {

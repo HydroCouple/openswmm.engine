@@ -4,6 +4,7 @@
 #define OPENSWMM_SOURCE_WATER_DRIVER_HPP
 #include "SourceClockGroups.hpp"
 #include "LID.hpp"
+#include <array>
 #include <memory>
 
 namespace openswmm::runoff {
@@ -18,6 +19,16 @@ struct SourceWaterDelivery {
     int source = -1, node = -1;
     double start = 0.0, end = 0.0, volume = 0.0; // ft3; node -1 = unresolved external outlet
     bool drain = false;
+    std::vector<double> mass; // pollutant concentration units times m3, paired with volume
+};
+/// Private completed LID pollutant accounting. All masses use concentration
+/// units times m3 (no kg/lb conversion); layers are surface, pavement, soil,
+/// storage. Initial LID water is clean; network INIT_CONC is not a LID seed.
+struct SourcePollutantLedger {
+    int source = -1, type = -1, unit = -1;
+    std::vector<std::array<double, 4>> layers;
+    std::vector<double> rain, spatial_infiltration, outside_infiltration, outlet, removed;
+    std::vector<double> surface_mass, drain_mass; // last completed forcing segment
 };
 enum class SourceEtKind { PERVIOUS, IMPERVIOUS, LID };
 struct SourceAtmosphericLedger {
@@ -28,12 +39,15 @@ struct SourceAtmosphericLedger {
     double potential = 0.0, evaporation = 0.0; // cumulative completed ft3
 };
 
-/// Internal water-only qualification driver, initialized at simulation start.
+/// Internal completed-source qualification driver, initialized at simulation start.
 /// All context/kernel/volume histories are privately owned. Stage cannot edit
 /// the live engine or write LID reports. Commit adopts the private water trial
 /// and clock together; it DOES NOT settle a spatial receiver or activate R4.
-/// Current profile: non-LID runoff and existing subcatchment LID stores, without
-/// lumped GW, snow, quality/age/heat/MSX or hot starts. No production caller yet.
+/// Water profile: non-LID runoff and existing subcatchment LID stores. Pollutant
+/// profile: conservative rain pollutants in LID-only sources, without captured
+/// runoff, source returns, inter-subcatchment transfers or land-use quality.
+/// Neither profile supports lumped GW, snow, age/heat/MSX or hot starts.
+/// No production caller yet.
 class SourceWaterDriver {
 public:
     SourceWaterDriver();
@@ -61,6 +75,9 @@ public:
     const std::vector<SourceWaterLedger>& ledgers(bool trial = false) const;
     const std::vector<SourceWaterDelivery>& deliveries(bool trial = false) const;
     const std::vector<SourceAtmosphericLedger>& atmosphere(bool trial = false) const;
+    const std::vector<std::string>& pollutantNames() const;
+    const std::vector<SourcePollutantLedger>& pollutants(bool trial = false) const;
+    double pollutantBalanceResidual(int group, int pollutant, bool trial = false) const;
     double pendingVolume(int group, bool trial = false) const;
     double balanceResidual(int group, bool trial = false) const;
 private:

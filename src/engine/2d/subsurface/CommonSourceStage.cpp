@@ -26,6 +26,18 @@ double bottomTotal(const runoff::SourceWaterDriver& s,int sc) {
     }
     return v;
 }
+std::string qualityProfile(const runoff::SourceWaterDriver& sources,
+                          const SurfaceStateData& surface,const SubsurfaceSolver& gw) {
+    const auto& names=sources.pollutantNames();const int np=int(names.size());
+    const auto& a=surface.transport;const auto& b=gw.transport();
+    if(np==0) return a.n_species>0 || b.active() ? "Common source stage quality/age/heat/MSX is not qualified." : "";
+    if(a.n_species!=np || a.n_pollut!=np || a.n_msx!=0 || a.age_row>=0 || a.temp_row>=0 || a.row_names!=names ||
+       b.n_species!=np || b.n_pollut!=np || b.n_msx!=0 || b.age_row>=0 || b.temp_row>=0 || b.row_names!=names ||
+       a.n_cells!=gw.state().n_cells || b.n_cells!=gw.state().n_cells ||
+       b.xacc_from_surface.size()!=std::size_t(np*b.n_cells) || b.xacc_to_surface.size()!=std::size_t(np*b.n_cells))
+        return "Common source pollutant layout must match the source pollutant IDs; age/heat/MSX are not qualified.";
+    return {};
+}
 }
 
 std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData& surface,
@@ -33,7 +45,7 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
     if(mesh_) return "Common source stage already initialized.";
     if(!gw.active() || !preview.valid() || preview.cancelled || preview.mesh_weather_area.size()!=mesh.tri_area.size())
         return "Common source stage requires a valid reviewed mesh/receiver snapshot.";
-    if(surface.transport.n_species>0 || gw.transport().active()) return "Common source stage quality/age/heat/MSX is not qualified.";
+    const auto quality_error=qualityProfile(sources,surface,gw);if(!quality_error.empty())return quality_error;
     if(surface.runtime_sources.active() || surface.runtime_forcings.active() || gw.runtimeSources().active())
         return "Common source stage runtime coupling providers are not qualified.";
     if(surface.volume.size()!=mesh.tri_area.size() || gw.state().n_cells!=mesh.n_cells())
@@ -111,6 +123,8 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
     std::vector<int> cells;
     for(int i=0;i<mesh.n_cells();++i) if(owned[i]) {
         const double w=preview.mesh_weather_area[i];
+        if(!sources.pollutantNames().empty() && w!=0)
+            return "Common LID pollutant pairing requires fully source-owned cell weather; mesh intake quality is not qualified.";
         if(!std::isfinite(w) || w<0 || !closeArea(coverage[i]+w,mesh.tri_area[i]))
             return "Reviewed mesh/source weather areas do not close.";
         if(!closeArea(atmospheric_area[i],coverage[i])) return "Reviewed atmospheric components do not close the cell's owned weather area.";
@@ -132,7 +146,8 @@ std::string CommonSourceStage::advance(double start,double end) {
     const double dt=end-start;
     for(const auto& g:sources_->clocks().groups()) if(g.completed_end!=start || !g.pending.empty())
         return "Common source clocks do not match the accepted mesh source interval.";
-    if(surface_->transport.n_species>0 || gw_->transport().active()) return "Common source transport changed to an unsupported profile.";
+    const auto quality_error=qualityProfile(*sources_,*surface_,*gw_);if(!quality_error.empty())return quality_error;
+    const int np=int(sources_->pollutantNames().size());
     if(surface_->runtime_sources.active() || surface_->runtime_forcings.active() || gw_->runtimeSources().active())
         return "Common source runtime provider profile changed to an unsupported configuration.";
     struct MeshTrial { int cell;double rain,evap,out,incoming,candidate; };
@@ -146,6 +161,11 @@ std::string CommonSourceStage::advance(double start,double end) {
            !std::isfinite(surface_->coupling_flux[i]) || !std::isfinite(surface_->depth[i]))
             return "Common source mesh water/forcing is invalid.";
         if(gw_->state().xacc_to_surface[i]!=0) return "Common source stage needs qualified source refunds/Dunne ownership before surface returns.";
+        if(np>0) {
+            if(surface_->coupling_flux[i]!=0) return "Common LID pollutant pairing has no qualified mesh coupling donor.";
+            for(int j=0;j<np;++j) if(gw_->transport().xacc_to_surface[gw_->transport().idx(j,i)]!=0)
+                return "Common LID pollutant pairing needs qualified paired source returns.";
+        }
         const double A=mesh_->tri_area[i],w=weather_[i];
         const double rain=std::max(0.0,surface_->rainfall[i])*w*dt;
         const double coupling=surface_->coupling_flux[i]*A*dt;
@@ -191,6 +211,14 @@ std::string CommonSourceStage::advance(double start,double end) {
         return (s.ledgers()[d.source].spatial_infiltration-sources_->ledgers()[d.source].spatial_infiltration)*ft3-
             (bottomTotal(s,d.source)-bottomTotal(*sources_,d.source));
     };
+    const auto donorMass=[&](const runoff::SourceWaterDriver& s,int j,int pollutant) {
+        const auto& d=donors_[j];double mass=0;
+        for(const auto& b:s.pollutants()) if(b.type==d.type && b.unit==d.unit)
+            mass+=b.spatial_infiltration[pollutant];
+        for(const auto& b:sources_->pollutants()) if(b.type==d.type && b.unit==d.unit)
+            mass-=b.spatial_infiltration[pollutant];
+        return mass;
+    };
     for(std::size_t j=0;j<donors_.size();++j) {
         const auto& d=donors_[j];const double volume=std::max(0.0,donorVolume(proposal,int(j)));
         const double p=pond[j]==1e30 ? 0 : pond[j];double total=0;
@@ -224,8 +252,10 @@ std::string CommonSourceStage::advance(double start,double end) {
         if(!error.empty()) { exchange_.cancel();return error; }
     }
     std::vector<SurfaceIntakeActual> actual;std::vector<double> consumed(donors_.size(),0),processed(donors_.size(),0);
+    std::vector<std::vector<double>> consumed_mass(donors_.size(),std::vector<double>(np,0));
     for(const auto& a:exchange_.awards()) {
         double volume=a.maximum;
+        std::vector<double> mass(np,0);
         if(a.request.kind!=SurfaceDonorKind::MESH) {
             const int j=donor_index.at(key(a.request));const double taken=std::max(0.0,donorVolume(bounded,j));
             if(taken>awarded[j]+1e-12) { exchange_.cancel();return "Bounded source exceeded its shared award."; }
@@ -235,8 +265,19 @@ std::string CommonSourceStage::advance(double start,double end) {
             volume=awarded[j]>0 ? std::min({a.maximum,std::max(0.0,taken-consumed[j]),
                 processed[j]>=awarded[j] ? std::max(0.0,taken-consumed[j]) : taken*a.maximum/awarded[j]}) : 0;
             consumed[j]+=volume;
+            for(int p=0;p<np;++p) {
+                const double transferred=donorMass(bounded,j,p);
+                mass[p]=taken>0 ? transferred*(volume/taken) : 0;
+                consumed_mass[j][p]+=mass[p];
+            }
         }
-        actual.push_back({volume,{}});
+        actual.push_back({volume,std::move(mass)});
+    }
+    for(std::size_t j=0;j<donors_.size();++j) for(int p=0;p<np;++p) {
+        const double mass=donorMass(bounded,int(j),p);
+        if(!std::isfinite(mass) || mass<0 || std::abs(consumed_mass[j][p]-mass)>1e-12*std::max(1.0,mass)) {
+            exchange_.cancel();return "Common LID pollutant receipts do not match the actual donor-layer withdrawal.";
+        }
     }
     for(std::size_t j=0;j<donors_.size();++j) if(std::abs(consumed[j]-donorVolume(bounded,int(j)))>1e-12) {
         exchange_.cancel();return "Common source actual receipts do not match donor withdrawal.";
