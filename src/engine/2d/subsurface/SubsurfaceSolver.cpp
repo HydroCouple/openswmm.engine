@@ -71,6 +71,7 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <stdexcept>
 
 namespace openswmm::twoD {
 
