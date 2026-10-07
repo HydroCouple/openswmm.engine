@@ -4,11 +4,9 @@
 # Working notes not intended for version control
 doc/FlashX_SWMM_crosswalk.md
 doc/Verification_Implementation_Plan.md
-# Plans, handoffs, verification notes and generated result write-ups are
-# working records, never committed (user decision 2026-09-30; this reverses the
-# 2026-09-01 decision to track plans/transport). The plans/parity tooling and
-# its .tsv/.json data stay tracked.
-/plans/*
+# Local plans and reviews are working records, never committed.
+/plans/
+/reviews/
 *HANDOFF*.md
 *_PLAN.md
 *_PLAN_*.md
