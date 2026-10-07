@@ -130,6 +130,37 @@ def test_collector_distinguishes_declarations_comments_and_helpers():
 class TestApiCoverage(unittest.TestCase):
     """Drift guards for the C API ↔ Cython binding surface."""
 
+    def test_callgraph_tracks_helpers_and_member_scopes(self):
+        from unittest.mock import patch
+        from tests._paths import artifact_dir
+
+        sources = Path(artifact_dir(self))
+        (sources / "_wrapper.pyx").write_text(
+            '\n'.join([
+                '"""class Fake: swmm_doc_only()"""',
+                'cdef extern from "header.h":',
+                '    int swmm_decl_only(int x)',
+                '',
+                'cdef class Probe:',
+                '    def read(self):',
+                '        # swmm_comment_only()',
+                '        text = "swmm_string_only()"',
+                '        callback = swmm_function_pointer',
+                '        return swmm_real_call(1)',
+            ]), encoding="utf-8",
+        )
+        (sources / "_helper.pxd").write_text(
+            'cdef inline int helper():\n    return swmm_helper_call(1)\n',
+            encoding="utf-8",
+        )
+        with patch.object(_audit, "ENGINE", sources):
+            graph = _audit.pyx_callgraph()
+        self.assertEqual(graph, {
+            "swmm_real_call": {("_wrapper", "Probe", "read")},
+            "swmm_function_pointer": {("_wrapper", "Probe", "read")},
+            "swmm_helper_call": {("_helper", "", "helper")},
+        })
+
     def test_extraction_finds_a_large_surface(self):
         """Sanity: if either side returns near-zero symbols the regexes
         have broken and the rest of this file is silently meaningless."""

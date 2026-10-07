@@ -29,6 +29,7 @@ import tokenize
 import json
 import re
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 # repo root = two levels up from this file (python/scripts/ -> python/ -> repo)
@@ -118,6 +119,62 @@ def executable_cython(text: str, *, declarations: bool = False) -> str:
         if in_extern == declarations:
             out.append(line)
     return "".join(out)
+
+
+_SWMM_TOKEN = re.compile(r"\b(swmm_[a-z0-9_]+)\b")
+_CDEF_EXTERN = re.compile(r"cdef\s+extern\b")
+_CLASS_RE = re.compile(r"^(?P<i>\s*)(?:cdef\s+)?class\s+(?P<name>\w+)")
+_DEF_RE = re.compile(r"^(?P<i>\s*)(?:cdef|cpdef|def)\s+(?:[\w\.\[\], \*]+?\s+)??(?P<name>\w+)\s*\(")
+
+
+def pyx_callgraph() -> dict[str, set[tuple[str, str, str]]]:
+    """Return {c_symbol: {(module, class, method), ...}} from real call sites."""
+    c_to_py: dict[str, set[tuple[str, str, str]]] = defaultdict(set)
+    for pyx in sorted([*ENGINE.glob("*.pyx"), *ENGINE.glob("*.pxd")]):
+        module = pyx.stem
+        scopes: list[tuple[int, str, str]] = []   # (indent, kind, name)
+        in_extern = False
+        extern_indent = 0
+        for raw in executable_cython(pyx.read_text(encoding="utf-8")).splitlines():
+            code = raw.split("#", 1)[0]
+            if not code.strip():
+                continue
+            indent = len(code) - len(code.lstrip())
+            if _CDEF_EXTERN.match(code.strip()):
+                in_extern = True
+                extern_indent = indent
+                continue
+            if in_extern:
+                if indent <= extern_indent:
+                    in_extern = False
+                else:
+                    continue
+            cm = _CLASS_RE.match(code)
+            if cm:
+                ci = len(cm.group("i"))
+                while scopes and scopes[-1][0] >= ci:
+                    scopes.pop()
+                scopes.append((ci, "class", cm.group("name")))
+                continue
+            dm = _DEF_RE.match(code)
+            if dm:
+                di = len(dm.group("i"))
+                while scopes and scopes[-1][0] >= di:
+                    scopes.pop()
+                scopes.append((di, "def", dm.group("name")))
+                continue
+            calls = _SWMM_TOKEN.findall(code)
+            if not calls:
+                continue
+            # attribute to the innermost def scope; enclosing class = nearest
+            # class scope beneath it.
+            cur_def = next((s for s in reversed(scopes) if s[1] == "def"), None)
+            cur_cls = next((s for s in reversed(scopes) if s[1] == "class"), None)
+            method = cur_def[2] if cur_def else "<module>"
+            cls = cur_cls[2] if cur_cls else ""
+            for sym in calls:
+                c_to_py[sym].add((module, cls, method))
+    return c_to_py
 
 
 def collect_pxd_functions() -> set[str]:
