@@ -5,10 +5,10 @@ permissions:
 
 on:
   push:
-    branches: [main]
+    branches: [main, swmm6_rel]
     tags: ["v*.*.*"]
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, swmm6_rel]
   workflow_dispatch:
 
 env:
@@ -502,8 +502,8 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   #  C++ unit-test gate for releases.
   #
-  #  The test workflows (unit_testing*.yml, regression_testing.yml) only run on
-  #  push/PR to main/develop — NOT on tag pushes — so without this a tag could
+  #  The standalone test workflows run on branch pushes/PRs, not tag pushes,
+  #  so without this gate a tag could
   #  release binaries that fail the suite. This job runs the Linux C++ unit
   #  tests and is a `needs:` of `release`. (The Python binding tests already run
   #  per-wheel via cibuildwheel's test-command, so the gap was the C++ side.)
