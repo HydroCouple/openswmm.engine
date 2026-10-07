@@ -98,3 +98,7 @@ tests/unit/legacy/engine/data/hotstart/site_drainage_model_save_hotstart.rpt
 # SQLite side-car files left when a GeoPackage fixture is opened WAL-mode.
 *.gpkg-shm
 *.gpkg-wal
+
+# Local plans and reviews are working records, never committed.
+/plans/
+/reviews/
