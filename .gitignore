@@ -4,9 +4,10 @@
 # Working notes not intended for version control
 doc/FlashX_SWMM_crosswalk.md
 doc/Verification_Implementation_Plan.md
-# Local plans and reviews are working records, never committed.
+# Local plans, reviews and results are working records, never committed.
 /plans/
 /reviews/
+/results/
 *HANDOFF*.md
 *_PLAN.md
 *_PLAN_*.md
