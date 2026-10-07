@@ -107,3 +107,7 @@ tests/benchmarks/generated/*.inp
 tests/benchmarks/generated/*.rpt
 tests/benchmarks/generated/*.out
 tests/benchmarks/generated/*.json
+
+# Local plans and reviews are working records, never committed.
+/plans/
+/reviews/
