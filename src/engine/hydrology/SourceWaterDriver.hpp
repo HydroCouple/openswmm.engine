@@ -21,14 +21,17 @@ struct SourceWaterDelivery {
     bool drain = false;
     std::vector<double> mass; // pollutant concentration units times m3, paired with volume
 };
-/// Private completed LID pollutant accounting. All masses use concentration
-/// units times m3 (no kg/lb conversion); layers are surface, pavement, soil,
-/// storage. Initial LID water is clean; network INIT_CONC is not a LID seed.
+/// Private completed source pollutant accounting, concentration units times
+/// m3 (no kg/lb conversion). For LIDs, layers are surface/pavement/soil/storage;
+/// type -1 denotes non-LID IMPERV0/IMPERV1/PERV pools (fourth slot unused).
+/// Initial source water is clean; network INIT_CONC is not a source seed.
 struct SourcePollutantLedger {
     int source = -1, type = -1, unit = -1;
     std::vector<std::array<double, 4>> layers;
     std::vector<double> rain, spatial_infiltration, outside_infiltration, outlet, removed;
     std::vector<double> surface_mass, drain_mass; // last completed forcing segment
+    std::vector<double> impervious_mass, pervious_mass; // non-LID outlet pools before capture
+    std::vector<double> pending_routing, incoming; // internal subarea queue; cumulative received transfers
 };
 enum class SourceEtKind { PERVIOUS, IMPERVIOUS, LID };
 struct SourceAtmosphericLedger {
@@ -44,8 +47,8 @@ struct SourceAtmosphericLedger {
 /// the live engine or write LID reports. Commit adopts the private water trial
 /// and clock together; it DOES NOT settle a spatial receiver or activate R4.
 /// Water profile: non-LID runoff and existing subcatchment LID stores. Pollutant
-/// profile: conservative rain pollutants in LID-only sources, without captured
-/// runoff, source returns, inter-subcatchment transfers or land-use quality.
+/// profile: conservative pollutants in non-LID/LID pools and their captured,
+/// returned and connected runoff, without land-use quality or reactions.
 /// Neither profile supports lumped GW, snow, age/heat/MSX or hot starts.
 /// No production caller yet.
 class SourceWaterDriver {
@@ -78,6 +81,7 @@ public:
     const std::vector<std::string>& pollutantNames() const;
     const std::vector<SourcePollutantLedger>& pollutants(bool trial = false) const;
     double pollutantBalanceResidual(int group, int pollutant, bool trial = false) const;
+    double pendingPollutantMass(int group, int pollutant, bool trial = false) const;
     double pendingVolume(int group, bool trial = false) const;
     double balanceResidual(int group, bool trial = false) const;
 private:

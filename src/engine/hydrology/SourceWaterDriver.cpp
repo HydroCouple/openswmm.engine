@@ -10,6 +10,52 @@
 namespace openswmm::runoff {
 namespace {
 constexpr double ft3 = .3048 * .3048 * .3048;
+SourcePollutantLedger pollutantLedger(int source, int type, int unit, int np) {
+    SourcePollutantLedger b; b.source = source; b.type = type; b.unit = unit;
+    b.layers.resize(np); b.rain.assign(np, 0); b.spatial_infiltration.assign(np, 0);
+    b.outside_infiltration.assign(np, 0); b.outlet.assign(np, 0); b.removed.assign(np, 0);
+    b.surface_mass.assign(np, 0); b.drain_mass.assign(np, 0);
+    b.impervious_mass.assign(np, 0); b.pervious_mass.assign(np, 0);
+    b.pending_routing.assign(np, 0); b.incoming.assign(np, 0); return b;
+}
+
+void advanceNonLidPollutants(SourcePollutantLedger& b, const std::array<CompletedSubareaWater, 3>& flux,
+                            const SimulationContext& c, double full,
+                            const std::vector<double>& runon, const std::vector<double>& pervious_return) {
+    for (const auto& w : flux) {
+        for (double v : {w.opening, w.rain, w.runon, w.evaporation, w.infiltration,
+                         w.spatial_infiltration, w.outflow, w.outlet, w.closing})
+            if (!std::isfinite(v) || v < 0) throw std::runtime_error("Invalid completed non-LID pollutant water budget: " + c.subcatch_names.name_of(b.source));
+        if (w.spatial_infiltration > w.infiltration || w.outlet > w.outflow ||
+            std::abs(w.opening + w.rain + w.runon - w.evaporation - w.infiltration - w.outflow - w.closing) >
+                1e-10 * std::max(1.0, w.opening + w.rain + w.runon))
+            throw std::runtime_error("Completed non-LID pollutant water budget does not close: " + c.subcatch_names.name_of(b.source));
+    }
+    const int mode = c.subcatches.subarea_routing[b.source];
+    const int destination = mode == 2 ? 2 : mode == 1 ? 1 : -1;
+    for (std::size_t p = 0; p < b.layers.size(); ++p) {
+        const double routed = b.pending_routing[p]; b.pending_routing[p] = 0;
+        b.impervious_mass[p] = b.pervious_mass[p] = 0;
+        for (int k = 0; k < 3; ++k) {
+            const auto& w = flux[k];
+            const double rain = w.rain * ft3 * c.pollutants.c_rain[p];
+            const double received = runon[p] * (w.area / full) + (k == 2 ? pervious_return[p] : 0);
+            const double available = b.layers[p][k] + rain + received + (k == destination ? routed : 0);
+            const double water = w.closing + w.outflow + w.infiltration;
+            const auto take = [&](double v) { return water > 0 ? available * (v / water) : 0; };
+            b.rain[p] += rain; b.incoming[p] += received;
+            b.spatial_infiltration[p] += take(w.spatial_infiltration);
+            b.outside_infiltration[p] += take(w.infiltration - w.spatial_infiltration);
+            b.pending_routing[p] += take(w.outflow - w.outlet);
+            if (k == 2) b.pervious_mass[p] += take(w.outlet);
+            else b.impervious_mass[p] += take(w.outlet);
+            b.layers[p][k] = water > 0 ? take(w.closing) : available;
+            if (!std::isfinite(available) || !std::isfinite(b.layers[p][k]))
+                throw std::runtime_error("Non-finite completed non-LID pollutant mixture: " + c.subcatch_names.name_of(b.source));
+        }
+        b.surface_mass[p] = b.impervious_mass[p] + b.pervious_mass[p];
+    }
+}
 std::array<double, 4> layerWater(const lid::LIDGroupSoA& g, int u) {
     double v[transport::kNL]; transport::layerVolumes(g, u, v);
     std::array<double, 4> result;
@@ -25,7 +71,8 @@ std::array<double, 4> layerWater(const lid::LIDGroupSoA& g, int u) {
 // the completed water solve, not the ordinary outlet-concentration adapter.
 void advanceLidPollutants(SourcePollutantLedger& b, const lid::LIDGroupSoA& g,
                          const PollutantData& p, const std::array<double, 4>& old,
-                         double dt, const std::string& source_name) {
+                         double dt, const std::string& source_name, double rain_volume,
+                         const std::vector<double>& other_mass) {
     const int u = b.unit;
     auto d = transport::donorsFor(g.type, g.soil_thick[u] > 0);
     // The completed barrel kernel retains overflow on its surface and sends
@@ -67,10 +114,13 @@ void advanceLidPollutants(SourcePollutantLedger& b, const lid::LIDGroupSoA& g,
         const auto leaving = [&](int layer, double volume) {
             return water[layer] > 0 ? mixture[layer] * (volume / water[layer]) : 0;
         };
-        const double rain = in[transport::kSurf] * p.c_rain[j];
+        const double rain = rain_volume * p.c_rain[j];
         b.rain[j] += rain;
+        b.incoming[j] += other_mass[j];
+        const double external_mass = other_mass[j] +
+            (g.type == lid::LIDType::RAIN_BARREL && g.stor_covered[u] ? 0 : rain);
         for (int k = 0; k < 4; ++k) {
-            const double arriving = donor[k] == transport::kExternal ? rain :
+            const double arriving = donor[k] == transport::kExternal ? external_mass :
                 donor[k] >= 0 ? leaving(donor[k], in[k]) : 0;
             const double available = b.layers[j][k] + arriving;
             water[k] = closing[k] + out[k]; mixture[k] = available;
@@ -86,7 +136,6 @@ void advanceLidPollutants(SourcePollutantLedger& b, const lid::LIDGroupSoA& g,
         b.removed[j] += drain_mass * removal;
         b.surface_mass[j] = leaving(transport::kSurf, surface);
         b.drain_mass[j] = drain_mass * (1 - removal);
-        b.outlet[j] += b.surface_mass[j] + b.drain_mass[j];
     }
 }
 double factor(const SimulationContext& c, int sc, const SourceForcingInterval& f) {
@@ -111,10 +160,11 @@ struct SourceWaterDriver::State {
     std::vector<SourceAtmosphericLedger> atmosphere;
     std::vector<std::string> pollutant_names;
     std::vector<SourcePollutantLedger> pollutants;
+    std::vector<std::vector<double>> runon_mass, return_mass; // pending paired transfers, conc*m3
     explicit State(const SimulationContext& c) : ctx(c) {}
     State(const State& s) : ctx(s.ctx), runoff(s.runoff), lids(s.lids.waterTrial()),
         partitioned(s.partitioned),inside(s.inside),runon(s.runon), pervious_return(s.pervious_return), ledger(s.ledger), deliveries(s.deliveries), atmosphere(s.atmosphere),
-        pollutant_names(s.pollutant_names), pollutants(s.pollutants) {}
+        pollutant_names(s.pollutant_names), pollutants(s.pollutants), runon_mass(s.runon_mass), return_mass(s.return_mass) {}
 };
 SourceWaterDriver::SourceWaterDriver() = default;
 SourceWaterDriver::~SourceWaterDriver() = default;
@@ -150,13 +200,19 @@ const std::vector<std::string>& SourceWaterDriver::pollutantNames() const { retu
 const std::vector<SourcePollutantLedger>& SourceWaterDriver::pollutants(bool t) const { return view(t).pollutants; }
 double SourceWaterDriver::pollutantBalanceResidual(int group, int pollutant, bool t) const {
     const auto& s = view(t); (void)s.pollutant_names.at(pollutant);
-    double residual = 0;
+    double residual = -pendingPollutantMass(group, pollutant, t);
     for (const auto& b : s.pollutants) if (clocks_.groupForSubcatch(b.source) == group) {
         residual += b.rain[pollutant] - b.spatial_infiltration[pollutant] - b.outside_infiltration[pollutant] -
             b.outlet[pollutant] - b.removed[pollutant];
         for (double mass : b.layers[pollutant]) residual -= mass;
     }
     return residual;
+}
+double SourceWaterDriver::pendingPollutantMass(int group, int pollutant, bool t) const {
+    const auto& s = view(t); (void)s.pollutant_names.at(pollutant); double mass = 0;
+    for (int sc : clocks_.groups().at(group).subcatches) mass += s.runon_mass[sc][pollutant] + s.return_mass[sc][pollutant];
+    for (const auto& b : s.pollutants) if (clocks_.groupForSubcatch(b.source) == group) mass += b.pending_routing[pollutant];
+    return mass;
 }
 
 double SourceWaterDriver::storage(const State& s, int sc) const {
@@ -233,6 +289,7 @@ std::string SourceWaterDriver::initialize(const SimulationContext& c, const std:
         s->runoff.init(s->ctx, areas);
         const auto n = static_cast<std::size_t>(c.n_subcatches());
         s->inside.assign(n,1);s->runon.assign(n, 0); s->pervious_return.assign(n, 0); s->ledger.resize(n);
+        s->runon_mass.assign(n, std::vector<double>(np, 0)); s->return_mass = s->runon_mass;
         for (const auto& group : clocks.groups()) {
             for (int sc : group.subcatches) {
                 if (c.subcatches.gw_aquifer[sc] >= 0)
@@ -241,8 +298,7 @@ std::string SourceWaterDriver::initialize(const SimulationContext& c, const std:
                     return "Source water driver requires empty initial transfer histories.";
                 s->ledger[sc].initial_storage = storage(*s, sc);
                 const auto& r = s->runoff.soa();
-                if (np > 0 && (r.area[sc] > 0 || c.subcatches.outlet_subcatch[sc] >= 0))
-                    return "Completed pollutants require LID-only sources without inter-subcatchment outlets: " + c.subcatch_names.name_of(sc);
+                if (np > 0 && r.area[sc] > 0) s->pollutants.push_back(pollutantLedger(sc, -1, -1, np));
                 for (auto kind : {SourceEtKind::PERVIOUS, SourceEtKind::IMPERVIOUS}) {
                     const bool pervious = kind == SourceEtKind::PERVIOUS;
                     const double area = r.area[sc] * (pervious ? 1 - r.imperv_pct[sc] : r.imperv_pct[sc]);
@@ -265,19 +321,13 @@ std::string SourceWaterDriver::initialize(const SimulationContext& c, const std:
                 s->atmosphere.push_back({SourceEtKind::LID, sc, t, u, g.area[u],
                     lid::hasNativeBottom(g.type,g.stor_thick[u],g.stor_ksat[u])});
             if (np > 0 && clocks.groupForSubcatch(sc) >= 0 && g.area[u] > 0) {
-                if (g.from_imperv[u] != 0 || g.from_perv[u] != 0 || g.to_perv[u] ||
-                    g.drain_subcatch[u] >= 0 || g.stor_covered[u])
-                    return "Completed LID pollutant capture/returns/covered storage are not qualified: " + c.subcatch_names.name_of(sc);
                 if (g.n_pollutants != np || g.drain_rmvl.size() != std::size_t(g.count * np))
                     return "Completed LID pollutant drain removal layout is invalid.";
                 for (int j = 0; j < np; ++j) {
                     const double f = g.drain_rmvl[u * np + j];
                     if (!std::isfinite(f) || f < 0 || f > 1) return "Invalid completed LID pollutant drain removal fraction.";
                 }
-                SourcePollutantLedger b; b.source = sc; b.type = t; b.unit = u;
-                b.layers.resize(np); b.rain.assign(np, 0); b.spatial_infiltration.assign(np, 0);
-                b.outside_infiltration.assign(np, 0); b.outlet.assign(np, 0); b.removed.assign(np, 0);
-                b.surface_mass.assign(np, 0); b.drain_mass.assign(np, 0); s->pollutants.push_back(std::move(b));
+                s->pollutants.push_back(pollutantLedger(sc, t, u, np));
             }
         }
         for (int j = 0; j < np; ++j) s->pollutant_names.push_back(c.pollutant_names.name_of(j));
@@ -303,6 +353,9 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
     std::vector<const RunoffSourceForcing*> weather_at(c.n_subcatches(), nullptr);
     for (const auto& weather : f.sources) weather_at[weather.subcatch] = &weather;
     const auto selected = [&](int sc) { return sc >= 0 && sc < c.n_subcatches() && weather_at[sc]; };
+    const int np = int(s.pollutant_names.size());
+    const auto incoming_runon = s.runon_mass, incoming_return = s.return_mass;
+    std::vector<std::vector<double>> outlet_mass(c.n_subcatches(), std::vector<double>(np, 0));
     // Consume each pending volume once. Runon is distributed across the full
     // non-LID + LID footprint, so partial LID coverage cannot multiply it.
     for (const auto& weather : f.sources) {
@@ -313,10 +366,18 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
         c.subcatches.lid_return_to_perv_cfs[sc] = s.pervious_return[sc] / dt;
         s.ledger[sc].runon += s.runon[sc]; s.ledger[sc].pervious_return += s.pervious_return[sc];
         s.runon[sc] = 0; s.pervious_return[sc] = 0;
+        std::fill(s.runon_mass[sc].begin(), s.runon_mass[sc].end(), 0);
+        std::fill(s.return_mass[sc].begin(), s.return_mass[sc].end(), 0);
         s.ledger[sc].rain += weather.rain * dt * full;
     }
     s.runoff.execute(c, dt, 0, f.infil_factor, f.recovery_factor, f.month, boundary, &f.sources,s.partitioned ? &s.inside : nullptr);
     const auto& r = s.runoff.soa();
+    for (auto& b : s.pollutants) if (b.type < 0 && selected(b.source)) {
+        const int sc = b.source;
+        advanceNonLidPollutants(b, r.completed[sc], c, r.area[sc] + c.subcatches.total_lid_area_ft2[sc],
+            incoming_runon[sc], incoming_return[sc]);
+        outlet_mass[sc] = b.surface_mass;
+    }
     std::vector<double> outlet(c.n_subcatches(), 0), native(c.n_subcatches(), 0);
     for (const auto& weather : f.sources) {
         const int sc = weather.subcatch; outlet[sc] = r.outflow_vol[sc];
@@ -337,15 +398,30 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
         }
     }
     std::vector<lid::LIDSolver::CompletedUnitInput> inputs;
+    std::vector<std::vector<double>> lid_incoming(s.pollutants.size(), std::vector<double>(np, 0));
+    std::vector<double> capture_impervious(c.n_subcatches(), 0), capture_pervious(c.n_subcatches(), 0);
     for (const auto& [t, u] : s.lids.usageOrder()) {
         const auto& g = s.lids.group(t); const int sc = g.subcatch_idx[u];
         if (!selected(sc) || g.area[u] <= 0) continue;
         const auto* weather = weather_at[sc];
         const double captured = (r.imperv_runoff_cfs[sc] * g.from_imperv[u] +
                                  r.perv_runoff_cfs[sc] * g.from_perv[u]) * dt;
+        capture_impervious[sc] += g.from_imperv[u]; capture_pervious[sc] += g.from_perv[u];
         outlet[sc] -= captured; s.ledger[sc].captured += captured;
+        for (std::size_t j = 0; j < s.pollutants.size(); ++j) {
+            const auto& b = s.pollutants[j];
+            if (b.type != t || b.unit != u) continue;
+            for (int p = 0; p < np; ++p) {
+                double mass = 0;
+                for (const auto& nonlid : s.pollutants) if (nonlid.source == sc && nonlid.type < 0)
+                    mass = nonlid.impervious_mass[p] * g.from_imperv[u] + nonlid.pervious_mass[p] * g.from_perv[u];
+                lid_incoming[j][p] = mass + incoming_runon[sc][p] *
+                    (g.area[u] / (r.area[sc] + c.subcatches.total_lid_area_ft2[sc]));
+            }
+        }
         double rain = weather->rain;
         if (g.type == lid::LIDType::RAIN_BARREL && g.stor_covered[u]) {
+            for (int p = 0; p < np; ++p) s.return_mass[sc][p] += rain * g.area[u] * dt * ft3 * c.pollutants.c_rain[p];
             s.pervious_return[sc] += rain * g.area[u] * dt; rain = 0;
         }
         const double bottom=ceiling ? (*ceiling)(t,u,f.start,f.end) : 1.0e10;
@@ -357,15 +433,26 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
         return std::pair{a.type, a.unit} < std::pair{b.type, b.unit};
     });
     for (const auto& weather : f.sources)
-        if (outlet[weather.subcatch] < -1e-12)
+        if (outlet[weather.subcatch] < -1e-12 ||
+            capture_impervious[weather.subcatch] * r.imperv_runoff_cfs[weather.subcatch] * dt > r.imperv_runoff_cfs[weather.subcatch] * dt + 1e-12 ||
+            capture_pervious[weather.subcatch] * r.perv_runoff_cfs[weather.subcatch] * dt > r.perv_runoff_cfs[weather.subcatch] * dt + 1e-12)
             throw std::runtime_error("LID capture exceeds the available non-LID outlet volume.");
+    for (auto& b : s.pollutants) if (b.type < 0 && selected(b.source)) {
+        // Form the uncaptured fraction once. Repeated subtraction of nearly
+        // equal mass shares can leave signed residue after a 100% capture.
+        for (int p = 0; p < np; ++p) b.surface_mass[p] =
+            b.impervious_mass[p] * std::max(0.0, 1 - capture_impervious[b.source]) +
+            b.pervious_mass[p] * std::max(0.0, 1 - capture_pervious[b.source]);
+        outlet_mass[b.source] = b.surface_mass;
+    }
     std::vector<std::array<double, 4>> old_layers;
-    for (const auto& b : s.pollutants) old_layers.push_back(layerWater(s.lids.group(b.type), b.unit));
+    for (const auto& b : s.pollutants) old_layers.push_back(b.type >= 0 ? layerWater(s.lids.group(b.type), b.unit) : std::array<double, 4>{});
     s.lids.executeCompleted(dt, f.start, f.recovery_factor, inputs);
     for (std::size_t j = 0; j < s.pollutants.size(); ++j) {
         auto& b = s.pollutants[j];
-        if (selected(b.source)) advanceLidPollutants(b, s.lids.group(b.type), c.pollutants, old_layers[j], dt,
-            c.subcatch_names.name_of(b.source));
+        if (b.type >= 0 && selected(b.source)) advanceLidPollutants(b, s.lids.group(b.type), c.pollutants, old_layers[j], dt,
+            c.subcatch_names.name_of(b.source), weather_at[b.source]->rain * s.lids.group(b.type).area[b.unit] * dt * ft3,
+            lid_incoming[j]);
     }
     for (auto& b : s.atmosphere) {
         const auto* weather = weather_at[b.source]; if (!weather) continue;
@@ -381,17 +468,21 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
             throw std::runtime_error("Completed source component exceeds its atmospheric footprint budget.");
         b.potential += potential; b.evaporation += std::clamp(evaporation, 0.0, potential);
     }
-    std::vector<std::vector<double>> outlet_mass(c.n_subcatches(), std::vector<double>(s.pollutant_names.size(), 0));
     const auto route = [&](int sc, int node, int target, double volume, bool drain, const std::vector<double>& mass) {
         if (!std::isfinite(volume) || volume < -1e-12)
             throw std::runtime_error("Source capture/output produced invalid water volume.");
         volume = std::max(volume, 0.0);
+        for (double m : mass) if (!std::isfinite(m) || m < -1e-12 || (volume == 0 && m != 0))
+            throw std::runtime_error("Source capture/output produced invalid paired pollutant mass.");
         if (node < 0 && target >= 0 && target != sc) {
             if (!selected(target)) throw std::runtime_error("Transfer escaped its source clock group.");
             s.runon[target] += volume;
+            for (int p = 0; p < np; ++p) s.runon_mass[target][p] += std::max(0.0, mass[p]);
+            return false;
         } else if (volume > 0) {
             s.deliveries.push_back({sc, node, f.start, f.end, volume, drain, mass}); s.ledger[sc].outlet += volume;
         }
+        return true;
     };
     // Preserve parse order for accumulations. A pervious return is a pending
     // volume, not rainfall, and drains retain the legacy target precedence.
@@ -404,28 +495,40 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
         s.ledger[sc].outside_infiltration+=(g.infil_loss[u]-g.spatial_infil_loss[u])*g.area[u];
         double surface = g.surface_runoff[u] * g.area[u] * dt;
         double drain = g.drain_flow[u] * g.area[u] * dt;
-        std::vector<double> drain_mass;
-        for (const auto& b : s.pollutants) if (b.type == t && b.unit == u) {
-            drain_mass = b.drain_mass;
-            for (std::size_t j = 0; j < b.layers.size(); ++j) outlet_mass[sc][j] += b.surface_mass[j];
-        }
+        SourcePollutantLedger* quality = nullptr;
+        for (auto& b : s.pollutants) if (b.type == t && b.unit == u) quality = &b;
+        std::vector<double> drain_mass = quality ? quality->drain_mass : std::vector<double>{};
         const bool can_return = g.to_perv[u] && r.area[sc] * (1 - r.imperv_pct[sc]) > 0;
         const bool to_outlet = (g.drain_node[u] < 0 && g.drain_subcatch[u] < 0) ||
             (g.drain_node[u] == c.subcatches.outlet_node[sc] && g.drain_subcatch[u] == c.subcatches.outlet_subcatch[sc]);
         if (can_return) {
             s.pervious_return[sc] += surface;
-            if (to_outlet) { s.pervious_return[sc] += drain; drain = 0; g.drain_flow[u] = 0; }
-        } else outlet[sc] += surface;
+            if (quality) for (int p = 0; p < np; ++p) s.return_mass[sc][p] += quality->surface_mass[p];
+            if (to_outlet) {
+                s.pervious_return[sc] += drain; drain = 0; g.drain_flow[u] = 0;
+                if (quality) for (int p = 0; p < np; ++p) {
+                    s.return_mass[sc][p] += drain_mass[p]; drain_mass[p] = 0;
+                }
+            }
+        } else {
+            outlet[sc] += surface;
+            if (quality) for (int p = 0; p < np; ++p) outlet_mass[sc][p] += quality->surface_mass[p];
+        }
         int node = g.drain_node[u], target = g.drain_subcatch[u];
         if (node < 0 && (target < 0 || target == sc)) {
             node = c.subcatches.outlet_node[sc]; target = c.subcatches.outlet_subcatch[sc];
         }
-        route(sc, node, target, drain, true, drain_mass);
+        if (route(sc, node, target, drain, true, drain_mass) && quality)
+            for (int p = 0; p < np; ++p) quality->outlet[p] += drain_mass[p];
         g.drain_open[u] = g.drain_flow[u] > 0; g.old_drain_flow[u] = g.drain_flow[u];
     }
     for (const auto& weather : f.sources) {
         const int sc = weather.subcatch;
-        route(sc, c.subcatches.outlet_node[sc], c.subcatches.outlet_subcatch[sc], outlet[sc], false, outlet_mass[sc]);
+        if (route(sc, c.subcatches.outlet_node[sc], c.subcatches.outlet_subcatch[sc], outlet[sc], false, outlet_mass[sc]))
+            for (auto& b : s.pollutants) if (b.source == sc) {
+                const bool returned = b.type >= 0 && s.lids.group(b.type).to_perv[b.unit] && r.area[sc] * (1 - r.imperv_pct[sc]) > 0;
+                if (!returned) for (int p = 0; p < np; ++p) b.outlet[p] += b.surface_mass[p];
+            }
         c.subcatches.runoff[sc] = std::max(outlet[sc], 0.0) / dt;
         c.subcatches.runon_rate[sc] = 0;
     }
@@ -452,7 +555,7 @@ std::string SourceWaterDriver::stage(int group, double end, double completed_thr
                 if (clocks_.groupForSubcatch(b.source) == group) mass_scale += b.rain[j];
             const double mass_residual = pollutantBalanceResidual(group, int(j), true);
             if (!std::isfinite(mass_residual) || std::abs(mass_residual) > 1e-10 * mass_scale)
-                throw std::runtime_error("Completed LID pollutant trial failed mass conservation: " + trial_->pollutant_names[j]);
+                throw std::runtime_error("Completed source pollutant trial failed mass conservation: " + trial_->pollutant_names[j]);
         }
     } catch (const std::exception& e) { error = e.what(); cancel(); return error; }
     return {};

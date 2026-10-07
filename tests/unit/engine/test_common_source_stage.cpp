@@ -11,6 +11,7 @@
 #include <fstream>
 #include <iomanip>
 #include <map>
+#include <limits>
 
 using namespace openswmm;
 using namespace openswmm::twoD;
@@ -157,6 +158,19 @@ void pollutantSources(Model& m,int cells=1,double inside_fraction=1) {
     m.surface.transport.resize(2,cells,0);m.surface.transport.row_names=rows.names;
     m.surface.transport.cell_mass.assign(2*cells,19); // unrelated mesh pool must stay intact
 }
+void mixedPollutants(Model& m,int cells=1,const AtmosphericInput& a={}) {
+    m.setup(true,cells,false,false,false,a);
+    m.context.pollutant_names.try_add("Dissolved");m.context.pollutant_names.try_add("Counts");
+    m.context.pollutants.resize_pollutants(2);m.context.pollutants.c_rain={7,23};
+    m.context.pollutants.units[1]=MassUnits::COUNTS_PER_L;m.context.options.ignore_quality=false;
+    m.sources=runoff::SourceWaterDriver{};
+    ASSERT_EQ(m.sources.initialize(m.context,{0,1},{{0,1-a.lid_area},{1,1}}),"");
+    RowLayoutLite rows;rows.n_species=2;rows.n_pollut=2;rows.names={"Dissolved","Counts"};
+    std::vector<std::string> warnings;m.gw.initTransport(rows,nullptr,{},warnings);
+    auto& tr=m.surface.transport;tr.resize(2,cells,0);tr.row_names=rows.names;
+    tr.cell_mass.assign(2*cells,19);tr.rain_conc={3,11};
+    m.surface.rainfall.assign(cells,.001);
+}
 }
 
 TEST(CommonSourceStage, CompletedLidPollutantsPairWithBoundedReceiverExactlyOnce) {
@@ -180,6 +194,120 @@ TEST(CommonSourceStage, CompletedLidPollutantsPairWithBoundedReceiverExactlyOnce
     }
     EXPECT_FALSE(m.stage.advance(0,1).empty());
     EXPECT_NEAR(m.gw.transport().xacc_from_surface[0],mass[0],1e-15);
+}
+
+TEST(CommonSourceStage, MeshAndLidPollutantsShareReviewedWaterAndMass) {
+    Model m;pollutantSources(m);
+    for(auto& o:m.preview.objects){o.inside_area=1;o.outside_area=1;}
+    for(auto& s:m.preview.shares){s.weather_area=1;s.lid_area=1;}
+    m.preview.mesh_weather_area[0]=2;m.surface.rainfall[0]=.001;
+    m.surface.transport.rain_conc={3,11};m.room(.001);m.attach();
+    ASSERT_EQ(m.stage.advance(0,1),"");EXPECT_GT(m.receipts(SurfaceDonorKind::MESH),0);
+    EXPECT_GT(m.receipts(SurfaceDonorKind::LID_BOTTOM),0);
+    EXPECT_NEAR(m.surface.transport.gained_rainfall[0],.002*3,1e-15);
+}
+
+TEST(CommonSourceStage, AllThreeDonorKindsUseTheirOwnMixtureAndActualReceipt) {
+    AtmosphericInput a;a.inside={.5,.25};Model m;mixedPollutants(m,1,a);m.room(.001);m.attach();
+    ASSERT_EQ(m.stage.advance(0,1),"");
+    std::array<double,2> received{},mesh{},nonlid{},lid{};
+    for(const auto& r:m.stage.receipts()) {
+        ASSERT_EQ(r.mass.size(),2u);EXPECT_LE(r.volume,r.request.candidate+1e-15);
+        for(int p=0;p<2;++p) {
+            received[p]+=r.mass[p];
+            if(r.request.kind==SurfaceDonorKind::MESH) {
+                mesh[p]+=r.mass[p];
+                const double rain=.001*m.preview.mesh_weather_area[0];
+                EXPECT_NEAR(r.mass[p],r.volume*(19+rain*m.surface.transport.rain_conc[p])/(.08+rain),1e-13);
+            } else if(r.request.kind==SurfaceDonorKind::NON_LID) {
+                nonlid[p]+=r.mass[p];EXPECT_NEAR(r.mass[p],r.volume*m.context.pollutants.c_rain[p],1e-14);
+            } else {
+                lid[p]+=r.mass[p];EXPECT_LT(r.mass[p],r.volume*m.context.pollutants.c_rain[p]);
+            }
+        }
+    }
+    EXPECT_GT(mesh[0],0);EXPECT_GT(nonlid[0],0);EXPECT_GT(lid[0],0);
+    for(int p=0;p<2;++p) {
+        double source=0;for(const auto& b:m.sources.pollutants())source+=b.spatial_infiltration[p];
+        EXPECT_NEAR(source,nonlid[p]+lid[p],1e-14);
+        const auto& tr=m.surface.transport;
+        EXPECT_NEAR(tr.cell_mass[p]+mesh[p],19+tr.gained_rainfall[p],1e-13);
+        EXPECT_NEAR(tr.lost_infiltration[p],mesh[p],1e-13);
+        EXPECT_NEAR(m.gw.transport().xacc_from_surface[p],received[p],1e-13);
+        for(int group=0;group<2;++group)EXPECT_NEAR(m.sources.pollutantBalanceResidual(group,p),0,1e-12);
+    }
+}
+
+TEST(CommonSourceStage, MeshEvaporationUsesPreEvaporationMixtureAndDryMassRewets) {
+    Model wet;mixedPollutants(wet);wet.surface.evap_rate[0]=.0001;wet.room(.001);wet.attach();
+    ASSERT_EQ(wet.stage.advance(0,1),"");EXPECT_GT(wet.surface.evap_loss_total,0);
+    for(const auto& r:wet.stage.receipts())if(r.request.kind==SurfaceDonorKind::MESH)
+        EXPECT_NEAR(r.mass[0],r.volume*(19+.002*3)/(.08+.002),1e-13);
+    AtmosphericInput a;a.ks=0;Model m;mixedPollutants(m,1,a);m.surface.rainfall[0]=0;m.surface.evap_rate[0]=1;
+    m.room(0);m.attach();ASSERT_EQ(m.stage.advance(0,1),"");
+    EXPECT_DOUBLE_EQ(m.surface.volume[0],0);EXPECT_EQ(m.surface.transport.cell_mass,(std::vector<double>{19,19}));
+    m.surface.rainfall[0]=.001;m.surface.evap_rate[0]=.0001;m.gw.state().Ks[0]=.01;m.room(.001);
+    ASSERT_EQ(m.stage.advance(1,2),"");
+    double withdrawn=0;for(const auto& r:m.stage.receipts())if(r.request.kind==SurfaceDonorKind::MESH) {
+        withdrawn+=r.mass[0];EXPECT_NEAR(r.mass[0],r.volume*(19+.002*3)/.002,1e-12);
+    }
+    EXPECT_GT(withdrawn,0);EXPECT_NEAR(m.surface.transport.cell_mass[0]+withdrawn,19+.006,1e-12);
+    EXPECT_DOUBLE_EQ(m.surface.evap_loss_total,.08); // first rewet step starts at dry depth
+}
+
+TEST(CommonSourceStage, MixedQualityKeepsUnequalAwardsAndMassInTheirCells) {
+    AtmosphericInput a;a.inside={.5,.25};Model m;mixedPollutants(m,2,a);
+    m.room(0,0);m.room(.001,1);m.surface.transport.cell_mass={5,19,17,31};m.attach();
+    const auto old=m.surface.transport.cell_mass;ASSERT_EQ(m.stage.advance(0,1),"");
+    std::array<double,2> received{};
+    for(const auto& r:m.stage.receipts()) {
+        if(r.request.cell==0){EXPECT_DOUBLE_EQ(r.volume,0);for(double mass:r.mass)EXPECT_DOUBLE_EQ(mass,0);}
+        else for(int p=0;p<2;++p)received[p]+=r.mass[p];
+    }
+    for(int p=0;p<2;++p) {
+        const auto& tr=m.surface.transport;
+        EXPECT_NEAR(tr.cell_mass[tr.idx(p,0)],old[tr.idx(p,0)]+.001*m.preview.mesh_weather_area[0]*tr.rain_conc[p],1e-14);
+        EXPECT_DOUBLE_EQ(m.gw.transport().xacc_from_surface[m.gw.transport().idx(p,0)],0);
+        EXPECT_NEAR(m.gw.transport().xacc_from_surface[m.gw.transport().idx(p,1)],received[p],1e-13);
+        EXPECT_GT(received[p],0);
+    }
+}
+
+TEST(CommonSourceStage, InvalidMeshMassAndRainDefinitionsRollbackAndRetry) {
+    for(int mode=0;mode<7;++mode) {
+        Model m;mixedPollutants(m);m.attach();
+        if(mode==0)m.surface.transport.cell_mass[0]=-1;
+        if(mode==1)m.surface.transport.cell_mass[0]=std::numeric_limits<double>::quiet_NaN();
+        if(mode==2)m.surface.transport.rain_conc[0]=-1;
+        if(mode==3)m.surface.transport.rain_conc[0]=std::numeric_limits<double>::infinity();
+        if(mode==4)m.surface.transport.cell_mass.pop_back();
+        if(mode==5)m.surface.transport.rain_conc.pop_back();
+        if(mode==6)m.surface.transport.lost_infiltration.pop_back();
+        const double water=m.surface.volume[0];EXPECT_FALSE(m.stage.advance(0,1).empty());
+        EXPECT_DOUBLE_EQ(m.stage.completedEnd(),0);EXPECT_TRUE(m.stage.receipts().empty());
+        EXPECT_DOUBLE_EQ(m.surface.volume[0],water);EXPECT_DOUBLE_EQ(m.gw.state().xacc_from_surface[0],0);
+        for(const auto& b:m.sources.pollutants())EXPECT_DOUBLE_EQ(b.rain[0],0);
+        m.surface.transport.cell_mass={19,19};m.surface.transport.rain_conc={3,11};
+        m.surface.transport.lost_infiltration={0,0};ASSERT_EQ(m.stage.advance(0,1),"");
+    }
+}
+
+TEST(CommonSourceStage, MixedQualityConservesThroughRealMarcherAndGroundwaterFirings) {
+    AtmosphericInput a;a.inside={.5,.25};Model m;mixedPollutants(m,1,a);m.attach(true);
+    for(double end:{.3,1.,2.125,4.}) {
+        const double start=m.stage.completedEnd();ASSERT_DOUBLE_EQ(m.marcher.advance(start,end),end);
+        for(int p=0;p<2;++p) {
+            const auto& tr=m.surface.transport;const auto& gt=m.gw.transport();
+            double source=0;for(const auto& b:m.sources.pollutants())source+=b.spatial_infiltration[p];
+            EXPECT_NEAR(gt.gained_infil[p],source+tr.lost_infiltration[p],1e-13);
+            EXPECT_NEAR(tr.cell_mass[p]+tr.lost_infiltration[p],19+tr.gained_rainfall[p],1e-13);
+            EXPECT_NEAR(tr.gained_rainfall[p],.001*3.25*end*tr.rain_conc[p],1e-14);
+            EXPECT_NEAR(gt.residual(p),0,1e-12);EXPECT_DOUBLE_EQ(gt.xacc_from_surface[p],0);
+            for(int group=0;group<2;++group)EXPECT_NEAR(m.sources.pollutantBalanceResidual(group,p),0,1e-12);
+        }
+        EXPECT_NEAR(m.gw.state().continuityResidual(),0,2e-11);
+    }
+    m.marcher.finalize();
 }
 
 TEST(CommonSourceStage, DeniedLidRechargeRetainsBothWaterAndPollutants) {

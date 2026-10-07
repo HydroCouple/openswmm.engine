@@ -98,6 +98,7 @@ void RunoffSoA::resize(int n) {
     imperv_runoff_cfs.assign(un, 0.0);
     perv_runoff_cfs.assign(un, 0.0);
     outflow_vol.assign(un, 0.0);
+    completed.assign(un, {});
 }
 
 void RunoffSoA::computeAlpha() {
@@ -393,6 +394,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         double Vevap    = 0.0;  // Total evaporation volume (ft³)
         double Vpevap   = 0.0;  // Pervious-subarea evaporation volume (ft³), legacy Vpevap
         double actual_perv_evap = 0.0;
+        if (source_forcing) soa_.completed[ui] = {};
         double Vspatial = 0.0;
         soa_.native_infil_rate[ui]=0;
         double Vinfil   = 0.0;  // Total infiltration volume (ft³)
@@ -402,7 +404,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         // Args: depth, alpha, dStore, subareaFrac, isPervious, runon
         auto processSubarea = [&](double& depth, double alpha, double dStore,
                                   double frac, bool isPervious,
-                                  double runon_in, double subarea_n) -> double {
+                                  double runon_in, double subarea_n, int pool) -> double {
             if (frac <= 0.0) return 0.0;
             double subarea_area = total_area * frac;
             if (spatial_fractions && subarea_area <= 0.0) return 0.0;
@@ -557,6 +559,17 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                 fOutlet = 1.0 - pct;
             }
             Voutflow += fOutlet * runoff_rate * subarea_area * dt;
+            if (source_forcing) {
+                auto& w = soa_.completed[ui][pool]; w.area = subarea_area;
+                w.opening = initial_depth * subarea_area;
+                w.rain = precip * subarea_area * dt; w.runon = runon_in * subarea_area * dt;
+                w.evaporation = surfEvap * subarea_area * dt;
+                w.infiltration = infil * subarea_area * dt;
+                w.spatial_infiltration = external ? spatial_rate * spatial_fraction * subarea_area * dt : 0;
+                w.outflow = runoff_rate * subarea_area * dt;
+                w.outlet = fOutlet * runoff_rate * subarea_area * dt;
+                w.closing = depth * subarea_area;
+            }
 
             return runoff_rate;
         };
@@ -632,10 +645,10 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         // Process all 3 subareas (matching legacy loop: IMPERV0, IMPERV1, PERV)
         precip = precip_imperv;
         double runoff0  = processSubarea(soa_.depth_imperv0[ui], alpha_i, 0.0,
-                                         f0, false, runon_imperv0, soa_.n_imperv[ui]);
+                                         f0, false, runon_imperv0, soa_.n_imperv[ui], 0);
         double runoff1  = processSubarea(soa_.depth_imperv1[ui], alpha_i,
                                          soa_.ds_imperv[ui], f1, false, runon_imperv1,
-                                         soa_.n_imperv[ui]);
+                                         soa_.n_imperv[ui], 1);
         // legacy adjustSubareaParams (subcatch.c:1168-1200): the PERVIOUS
         // subarea's depression storage and runoff coefficient carry this
         // month's [ADJUSTMENTS] DSTORE / N-PERV pattern, re-applied to the
@@ -671,7 +684,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         precip = precip_perv;
         double runoff_p = processSubarea(soa_.depth_perv[ui], alpha_p_adj,
                                          ds_perv_adj, fp, true, runon_perv,
-                                         soa_.n_perv[ui]);
+                                         soa_.n_perv[ui], 2);
         precip = precip_[ui];   // restore for subsequent use
 
 

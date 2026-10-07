@@ -950,6 +950,9 @@ public:
         getEvapRates(SurfaceVolume, 0.0, 0.0, StorageVolume, 1.0);
         if (surfaceDepth > 0.0) StorageEvap = 0.0;
         StorageInflow = SurfaceInflow + SurfaceVolume / Tstep;
+        // A completed interval transfers only surface water left after its
+        // evaporation. Otherwise the dry-depth clamp creates that water again.
+        if (Completed) StorageInflow = std::max(0.0, StorageInflow - SurfaceEvap);
         StorageExfil = getStorageExfilRate();
         StorageDrain = 0.0;
         if (P->drain_coeff > 0.0) {

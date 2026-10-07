@@ -41,6 +41,7 @@
 #include "../data/SubcatchData.hpp"
 #include "surface/InfilBank.hpp"
 #include <vector>
+#include <array>
 #include <functional>
 #include <utility>
 
@@ -57,6 +58,12 @@ namespace runoff {
 struct RunoffSourceForcing {
     int subcatch = -1;
     double rain = 0.0, pet = 0.0;
+};
+/// Actual completed subarea water budget (ft3; area in ft2). Pool order is
+/// IMPERV0, IMPERV1, PERV. Ordinary runoff does not write these diagnostics.
+struct CompletedSubareaWater {
+    double area = 0, opening = 0, rain = 0, runon = 0, evaporation = 0;
+    double infiltration = 0, spatial_infiltration = 0, outflow = 0, outlet = 0, closing = 0;
 };
 
 // ============================================================================
@@ -139,6 +146,7 @@ struct RunoffSoA {
     /// volume domain exactly as legacy subcatch.c:746-751 does
     /// (`vOutflow = Voutflow - VlidIn + VlidOut; newRunoff = vOutflow/tStep`).
     std::vector<double> outflow_vol;
+    std::vector<std::array<CompletedSubareaWater, 3>> completed;
 
     void resize(int n);
     void computeAlpha();
