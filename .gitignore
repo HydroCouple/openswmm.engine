@@ -58,3 +58,7 @@ __pycache__/
 CLAUDE.md
 MEMORY.md
 scratchpad/
+
+# Local plans and reviews are working records, never committed.
+/plans/
+/reviews/
