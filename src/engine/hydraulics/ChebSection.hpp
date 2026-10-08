@@ -47,6 +47,7 @@
 #define OPENSWMM_CHEB_SECTION_HPP
 
 #include <cmath>
+#include <cstdint>
 #include <functional>
 #include <type_traits>
 
@@ -185,7 +186,7 @@ struct ChebPiece {
     /// Retained coefficient counts. n_u == 0 means this piece has no compiled
     /// inverse and chebYofA must fall back to its Newton solve — a safety
     /// valve for a shape whose inverse does not resolve, never the normal path.
-    uint16_t n_a = 0, n_w = 0, n_p = 0, n_i1 = 0, n_u = 0;
+    std::uint16_t n_a = 0, n_w = 0, n_p = 0, n_i1 = 0, n_u = 0;
 
     /// Offsets into the section's shared ChebSection::coef pool (promptperf.md
     /// Phase B — packed, variable-length storage in place of seven
@@ -202,10 +203,10 @@ struct ChebPiece {
     ///       alongside a different field, so they pack at their own exact
     ///       length. compile() is the only place that must keep this in sync;
     ///       see its packing pass.
-    uint16_t off_a = 0, off_w = 0, off_p = 0, off_i1 = 0;
-    uint16_t off_da = 0;  ///< d(c_a)/du, n_a-1 terms (chebDeriv's convention)
-    uint16_t off_dp = 0;  ///< d(c_p)/du, n_p-1 terms
-    uint16_t off_u = 0;   ///< fit variable u as a function of t(A), n_u terms
+    std::uint16_t off_a = 0, off_w = 0, off_p = 0, off_i1 = 0;
+    std::uint16_t off_da = 0;  ///< d(c_a)/du, n_a-1 terms (chebDeriv's convention)
+    std::uint16_t off_dp = 0;  ///< d(c_p)/du, n_p-1 terms
+    std::uint16_t off_u = 0;   ///< fit variable u as a function of t(A), n_u terms
 
     // -- the compiled INVERSE, u(A) ----------------------------------------
     //
@@ -235,7 +236,7 @@ struct ChebPiece {
     ///          else dA/du is bounded away from zero and u is analytic in A.
     ///          That last case is the common one; the map is the identity and
     ///          costs nothing.
-    int8_t inv_k = 1;
+    std::int8_t inv_k = 1;
 
     /// Whether the branch point sits at the piece's UPPER end (a_hi) rather
     /// than its lower one. compile() guarantees at most one end is singular,

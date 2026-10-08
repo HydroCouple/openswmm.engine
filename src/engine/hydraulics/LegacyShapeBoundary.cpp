@@ -18,6 +18,8 @@
 #include "XSectKernels.hpp"
 
 #include <cmath>
+#include <cstddef>
+#include <vector>
 
 namespace openswmm::xsboundary {
 

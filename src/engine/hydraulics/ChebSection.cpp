@@ -23,6 +23,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <vector>
 
@@ -601,21 +603,21 @@ int compile(ChebSection& out, const BElem* elems, int n, bool is_open) {
         pc.a_lo = rp.a_lo; pc.a_hi = rp.a_hi;
         pc.inv_span_a = rp.inv_span_a;
         pc.rho_a = rp.rho_a;
-        pc.inv_k = static_cast<int8_t>(rp.inv_k);
+        pc.inv_k = static_cast<std::int8_t>(rp.inv_k);
         pc.inv_at_hi = rp.inv_at_hi;
-        pc.n_a = static_cast<uint16_t>(rp.n_a);
-        pc.n_w = static_cast<uint16_t>(rp.n_w);
-        pc.n_p = static_cast<uint16_t>(rp.n_p);
-        pc.n_i1 = static_cast<uint16_t>(rp.n_i1);
-        pc.n_u = static_cast<uint16_t>(rp.n_u);
+        pc.n_a = static_cast<std::uint16_t>(rp.n_a);
+        pc.n_w = static_cast<std::uint16_t>(rp.n_w);
+        pc.n_p = static_cast<std::uint16_t>(rp.n_p);
+        pc.n_i1 = static_cast<std::uint16_t>(rp.n_i1);
+        pc.n_u = static_cast<std::uint16_t>(rp.n_u);
 
         const int nmax4 = std::max({rp.n_a, rp.n_w, rp.n_p, rp.n_i1});
 
         auto packAt = [&](const double* src, int len, int stored_len,
-                          uint16_t& off) -> bool {
+                          std::uint16_t& off) -> bool {
             if (stored_len <= 0) { off = 0; return true; }
             if (out.n_coef + stored_len > kMaxPoolCoeff) return false;
-            off = static_cast<uint16_t>(out.n_coef);
+            off = static_cast<std::uint16_t>(out.n_coef);
             for (int i = 0; i < stored_len; ++i) {
                 out.coef[out.n_coef + i] = (i < len) ? src[i] : 0.0;
             }
