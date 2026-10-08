@@ -642,20 +642,33 @@ if(OPENSWMM_WITH_HDF5)
     # about which HDF5 the engine links.
     if(NOT (OPENSWMM_BUILD_2D AND OPENSWMM_2D_HDF5_OUTPUT))
         find_package(hdf5 CONFIG QUIET)
+        set(_OPENSWMM_HDF5_TARGET "")
         if(hdf5_FOUND)
             if(TARGET hdf5::hdf5-shared)
                 set(_OPENSWMM_HDF5_TARGET hdf5::hdf5-shared)
             elseif(TARGET hdf5::hdf5-static)
                 set(_OPENSWMM_HDF5_TARGET hdf5::hdf5-static)
-            else()
-                message(FATAL_ERROR "hdf5 CONFIG package found but neither hdf5::hdf5-shared nor hdf5::hdf5-static is defined")
             endif()
-        else()
+        endif()
+        if(NOT _OPENSWMM_HDF5_TARGET)
+            # Same rationale as the 2D block above: a CONFIG package that
+            # defines NEITHER canonical target is not an error. Homebrew's
+            # hdf5-config.cmake exports no hdf5:: targets at all, and
+            # FATAL_ERROR here made OPENSWMM_WITH_HDF5 (default ON)
+            # unconfigurable on those machines. Fall through to FindHDF5,
+            # the same route taken when no CONFIG package exists.
+            if(hdf5_FOUND)
+                message(STATUS "OpenSWMM Engine: hdf5 CONFIG package defines neither "
+                        "hdf5::hdf5-shared nor hdf5::hdf5-static — falling back to FindHDF5")
+            endif()
             find_package(HDF5 REQUIRED COMPONENTS C)
         endif()
     endif()
 
-    if(hdf5_FOUND)
+    # Key off the resolved TARGET, not hdf5_FOUND: the CONFIG package can be
+    # found while exporting neither canonical target, in which case the
+    # module-mode variables above are what actually link.
+    if(_OPENSWMM_HDF5_TARGET)
         target_link_libraries(openswmm_engine PRIVATE ${_OPENSWMM_HDF5_TARGET})
     else()
         target_link_libraries(openswmm_engine PRIVATE ${HDF5_C_LIBRARIES})
