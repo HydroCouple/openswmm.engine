@@ -891,3 +891,47 @@ TEST(SourceWaterDriver, MixedLidUsagesCoveredRainAndDrainsKeepTheirConnectedGrou
     EXPECT_NEAR(spatial,d.ledgers()[0].spatial_infiltration,1e-11);
     EXPECT_NEAR(d.balanceResidual(0),0,1e-10);
 }
+
+TEST(SourceWaterDriver, PairedSurfaceCreditsValidateAtomicallyAndSurviveTrialCancellation) {
+    auto c=pollutantLid("IT",0);c.lid_controls={};c.lid_usage={};
+    c.subcatches.frac_imperv[0]=.4;c.subcatches.pct_zero[0]=50;
+    SourceWaterDriver d;ASSERT_EQ(d.initialize(c,{0},{{0,1}}),"");
+    SourceSurfaceReturn q;q.source=0;q.pool=2;q.volume=.01;q.mass={2,7};
+    auto invalid=q;invalid.mass[1]=-1;
+    EXPECT_FALSE(d.creditSurfaceReturns(0,{q,invalid}).empty());
+    EXPECT_DOUBLE_EQ(d.pendingVolume(0),0);EXPECT_DOUBLE_EQ(d.ledgers()[0].aquifer_return,0);
+    auto impervious=q;impervious.pool=0;impervious.mass={3,11};
+    ASSERT_EQ(d.creditSurfaceReturns(0,{q,impervious}),"");
+    EXPECT_NEAR(d.pendingVolume(0),.02,1e-15);EXPECT_EQ(d.pendingPollutantMass(0,0),5);
+    EXPECT_EQ(d.pendingPollutantMass(0,1),18);EXPECT_NEAR(d.balanceResidual(0),0,1e-15);massBalance(d);
+    ASSERT_EQ(d.stage(0,1,1,&sealed),"");massBalance(d,true);d.cancel();
+    EXPECT_NEAR(d.pendingVolume(0),.02,1e-15);EXPECT_DOUBLE_EQ(d.ledgers()[0].rain,0);
+    ASSERT_EQ(d.stage(0,1,1,&sealed),"");ASSERT_EQ(d.commit(),"");
+    EXPECT_DOUBLE_EQ(d.pendingVolume(0),0);EXPECT_GT(d.runoff().soa().depth_perv[0],0);
+    EXPECT_GT(d.runoff().soa().depth_imperv0[0],0);EXPECT_DOUBLE_EQ(d.runoff().soa().depth_imperv1[0],0);
+    EXPECT_DOUBLE_EQ(d.ledgers()[0].rain,0);massBalance(d);
+    EXPECT_FALSE(d.creditSurfaceReturns(0,{q}).empty());
+    step(d,3);EXPECT_DOUBLE_EQ(d.ledgers()[0].aquifer_return,.02);massBalance(d);
+}
+TEST(SourceWaterDriver, ExactLidSurfaceCreditsConserveThroughAllExistingUnitKernels) {
+    for(const std::string type:{"BC","RG","GR","IT","PP","RB","VS","RD"}) {
+        SCOPED_TRACE(type);auto c=pollutantLid(type,0);
+        SourceWaterDriver d;ASSERT_EQ(d.initialize(c,{0},areas(c)),"");
+        const auto [t,u]=d.lids().usageOrder()[0];
+        SourceSurfaceReturn q;q.source=0;q.type=t;q.unit=u;q.volume=.1;q.mass={2,7};
+        ASSERT_EQ(d.creditSurfaceReturns(0,{q}),"");EXPECT_NEAR(d.pendingVolume(0),.1,1e-15);
+        SourceWaterDriver::BottomCeiling bottom=[](int,int,double,double){return 0.;};
+        for(double end:{.1,1.,2.,5.}){step(d,end,&bottom);massBalance(d);}
+        EXPECT_DOUBLE_EQ(d.ledgers()[0].rain,0);EXPECT_DOUBLE_EQ(d.ledgers()[0].aquifer_return,.1);
+        for(const auto& b:d.pollutants())EXPECT_DOUBLE_EQ(b.rain[0],0);
+    }
+}
+TEST(SourceWaterDriver, CoveredBarrelAcceptsPairedCreditsWithoutRainfallRedirection) {
+    auto c=pollutantLid("RB",0);c.lid_usage.area[0]*=.5;
+    lid::LIDSolver initial;initial.init(c);const auto [t,u]=initial.usageOrder()[0];initial.group(t).stor_covered[u]=1;
+    SourceWaterDriver d;ASSERT_EQ(d.initialize(c,{0},areas(c),&initial),"");
+    SourceSurfaceReturn q;q.source=0;q.type=t;q.unit=u;q.volume=.1;q.mass={2,7};
+    ASSERT_EQ(d.creditSurfaceReturns(0,{q}),"");step(d,1);massBalance(d);
+    EXPECT_DOUBLE_EQ(d.ledgers()[0].rain,0);EXPECT_DOUBLE_EQ(d.ledgers()[0].pervious_return,0);
+    EXPECT_GT(d.lids().group(t).stor_depth[u],0);
+}

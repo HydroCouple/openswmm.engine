@@ -294,6 +294,8 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             if (s.subcatch <= previous || s.subcatch >= n ||
                 !std::isfinite(s.rain) || s.rain < 0.0 || !std::isfinite(s.pet) || s.pet < 0.0)
                 throw std::invalid_argument("Completed source rates require ordered unique sources and finite nonnegative rates.");
+            for(double rate:s.surface_return) if(!std::isfinite(rate) || rate<0)
+                throw std::invalid_argument("Invalid completed surface return rate.");
             previous = s.subcatch;
         }
     }
@@ -599,6 +601,10 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         double runon_imperv0 = runon_sub;
         double runon_imperv1 = runon_sub;
         double runon_perv    = runon_sub;
+        if(source_forcing) {
+            const auto& rates=(*source_forcing)[slot].surface_return;
+            runon_imperv0+=rates[0];runon_imperv1+=rates[1];runon_perv+=rates[2];
+        }
 
         if (route_mode == 2 && fp > 0.0) {
             // legacy Case 1, imperv --> perv: area-weighted outflow of both

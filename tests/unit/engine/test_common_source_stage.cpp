@@ -832,3 +832,253 @@ TEST(CommonSourceStage, PartialAreasKeepScarceAwardsInTheirCellsAcrossSourceOrde
         area_mismatch.gw,area_mismatch.sources,area_mismatch.preview).empty());
     EXPECT_EQ(area_mismatch.sources.spatialFractions(),(std::vector<double>{1,1}));
 }
+
+TEST(CommonSourceStage, NumericalBackstopKeepsOwnedReturnsOutOfGenericMeshAccumulator) {
+    Model m;mixedPollutants(m);m.room(.005);m.attach();
+    ASSERT_EQ(m.stage.advance(0,1),"");
+    ASSERT_EQ(m.stage.advance(1,2),"");
+    m.gw.state().lacc[0]=4;
+    m.gw.fireGwCells(0,2,m.surface,0);
+    EXPECT_GT(m.gw.state().led_reject,0);
+    EXPECT_DOUBLE_EQ(m.gw.state().xacc_to_surface[0],0);
+    EXPECT_DOUBLE_EQ(m.gw.transport().xacc_to_surface[0],0);
+    EXPECT_EQ(m.stage.advance(2,3),"");
+}
+TEST(CommonSourceStage, PhysicalDunneUsesReviewedSourceOwnership) {
+    Model m;pollutantSources(m);m.attach();
+    ASSERT_EQ(m.stage.advance(0,1),"");
+    m.gw.state().lacc[0]=10;
+    m.gw.fireGwCells(0,1,m.surface,0);
+    EXPECT_GT(m.gw.state().led_dunne,0);
+    EXPECT_DOUBLE_EQ(m.gw.state().xacc_to_surface[0],0);
+    EXPECT_EQ(m.stage.advance(1,2),"");
+}
+
+TEST(CommonSourceStage, PendingIntervalsRefundOriginalMixturesAndRetryExactlyOnce) {
+    Model m;mixedPollutants(m);m.room(.005);m.attach();
+    std::vector<SurfaceIntakeReceipt> original;
+    for(int t=0;t<2;++t) {
+        ASSERT_EQ(m.stage.advance(t,t+1),"");
+        for(const auto& r:m.stage.receipts())if(r.volume>0)original.push_back(r);
+    }
+    ASSERT_EQ(m.gw.pendingSourceReceipts(0).size(),original.size());
+    auto& tr=m.gw.transport();tr.unsat_mass={5,17};tr.init_mass={5,17};
+    m.gw.state().lacc[0]=4;m.gw.fireGwCells(0,2,m.surface,0);
+    EXPECT_TRUE(m.gw.pendingSourceReceipts(0).empty());
+    const auto pending=m.gw.sourceReturns();ASSERT_FALSE(pending.empty());
+    double refund=0,excess=0,physical=0;int matched=0;
+    for(const auto& r:pending) {
+        EXPECT_LE(r.available_at,2);
+        if(r.kind==SurfaceReturnKind::NUMERICAL_REFUND) {
+            ++matched;refund+=r.volume;
+            auto donor=std::find_if(original.begin(),original.end(),[&](const auto& x){
+                return x.start==r.intake.start && x.request.kind==r.intake.request.kind &&
+                    x.request.source==r.intake.request.source && x.request.unit==r.intake.request.unit;
+            });
+            ASSERT_NE(donor,original.end());
+            EXPECT_EQ(r.intake.end,donor->end);EXPECT_EQ(r.intake.mass,donor->mass);
+            for(int p=0;p<2;++p)EXPECT_NEAR(r.mass[p],donor->mass[p]*r.volume/donor->volume,1e-14);
+        } else if(r.kind==SurfaceReturnKind::COLUMN_EXCESS)excess+=r.volume;
+        else physical+=r.volume;
+    }
+    EXPECT_EQ(matched,int(original.size()));
+    EXPECT_NEAR(refund+excess,m.gw.state().led_reject,1e-13);
+    EXPECT_NEAR(physical,m.gw.state().led_dunne,1e-13);
+    for(int p=0;p<2;++p)EXPECT_NEAR(tr.residual(p),0,1e-12);
+    const double mesh_volume=m.surface.volume[0];m.surface.volume[0]=-1;
+    EXPECT_FALSE(m.stage.advance(2,3).empty());EXPECT_EQ(m.stage.completedEnd(),2);
+    EXPECT_EQ(m.gw.sourceReturns().size(),pending.size());
+    for(const auto& b:m.sources.ledgers())EXPECT_DOUBLE_EQ(b.aquifer_return,0);
+    m.surface.volume[0]=mesh_volume;ASSERT_EQ(m.stage.advance(2,3),"");
+    EXPECT_TRUE(m.gw.sourceReturns().empty());EXPECT_EQ(m.stage.returns().size(),pending.size());
+    double credited=m.stage.meshReturn();for(const auto& b:m.sources.ledgers())credited+=b.aquifer_return*ft3;
+    EXPECT_NEAR(credited,refund+excess+physical,1e-12);
+    const auto source0=m.sources.ledgers()[0].aquifer_return;
+    ASSERT_EQ(m.stage.advance(3,4),"");EXPECT_TRUE(m.stage.returns().empty());
+    EXPECT_DOUBLE_EQ(m.sources.ledgers()[0].aquifer_return,source0);
+    for(int group=0;group<2;++group) {
+        EXPECT_NEAR(m.sources.balanceResidual(group),0,1e-9);
+        for(int p=0;p<2;++p)EXPECT_NEAR(m.sources.pollutantBalanceResidual(group,p),0,1e-10);
+    }
+}
+TEST(CommonSourceStage, ReturnOwnershipUsesPhysicalAreasIncludingImperviousPools) {
+    AtmosphericInput a;a.impervious={.6,.4};a.inside={.75,.25};
+    Model m;mixedPollutants(m,1,a);m.attach();
+    m.gw.state().lacc[0]=10;m.gw.transport().sat_mass={3,11};m.gw.transport().init_mass={3,11};
+    m.gw.fireGwCells(0,1,m.surface,0);
+    double volume=0;std::array<double,2> mass{};
+    for(const auto& r:m.gw.sourceReturns()){volume+=r.volume;for(int p=0;p<2;++p)mass[p]+=r.mass[p];}
+    ASSERT_GT(volume,0);ASSERT_EQ(m.stage.advance(0,1),"");ASSERT_EQ(m.stage.advance(1,2),"");
+    EXPECT_NEAR(m.stage.meshReturn(),volume*.75,1e-12); // 3 m2 of the 4 m2 cell
+    for(int sc=0;sc<2;++sc) {
+        EXPECT_NEAR(m.sources.ledgers()[sc].aquifer_return*ft3,volume*a.inside[sc]/4,1e-12);
+        for(int p=0;p<2;++p) {
+            double returned=0;for(const auto& b:m.sources.pollutants())if(b.source==sc)returned+=b.aquifer_return[p];
+            EXPECT_NEAR(returned,mass[p]*a.inside[sc]/4,1e-13);
+            EXPECT_NEAR(m.sources.pollutantBalanceResidual(sc,p),0,1e-10);
+        }
+    }
+    for(int p=0;p<2;++p)EXPECT_NEAR(m.surface.transport.gained_exfiltration[p],mass[p]*.75,1e-13);
+}
+TEST(CommonSourceStage, FutureIntakesFailBeforeGatherAndReturnsNeverLookAhead) {
+    Model m;mixedPollutants(m);m.attach();ASSERT_EQ(m.stage.advance(0,1),"");
+    const auto volume=m.gw.state().xacc_from_surface[0];const auto mass=m.gw.transport().xacc_from_surface;
+    EXPECT_THROW(m.gw.fireGwCells(0,.5,m.surface,0),std::runtime_error);
+    EXPECT_DOUBLE_EQ(m.gw.state().xacc_from_surface[0],volume);EXPECT_EQ(m.gw.transport().xacc_from_surface,mass);
+    EXPECT_FALSE(m.gw.pendingSourceReceipts(0).empty());
+    m.gw.state().lacc[0]=10;m.gw.fireGwCells(0,2,m.surface,0);
+    ASSERT_FALSE(m.gw.sourceReturns().empty());const auto count=m.gw.sourceReturns().size();
+    ASSERT_EQ(m.stage.advance(1,2),"");EXPECT_TRUE(m.stage.returns().empty());
+    EXPECT_EQ(m.gw.sourceReturns().size(),count);
+    ASSERT_EQ(m.stage.advance(2,3),"");EXPECT_TRUE(m.gw.sourceReturns().empty());
+}
+TEST(CommonSourceStage, OwnedCellRejectsUnpairedInputsBeforeCellMutation) {
+    Model m;mixedPollutants(m);m.attach();
+    m.gw.bookInfiltrationFromSurface(0,.001);const auto water=m.gw.storage();
+    EXPECT_THROW(m.gw.fireGwCells(0,1,m.surface,0),std::runtime_error);
+    EXPECT_DOUBLE_EQ(m.gw.storage(),water);EXPECT_DOUBLE_EQ(m.gw.state().xacc_from_surface[0],.001);
+}
+TEST(CommonSourceStage, ForcingKnotsPreserveTupleFractionsAndCompletedAvailability) {
+    Model m;mixedPollutants(m);m.room(.005);m.attach();ASSERT_EQ(m.stage.advance(0,2),"");
+    const auto original=m.gw.pendingSourceReceipts(0);
+    GwResolvedSource forcing;forcing.cells={{0,1}};forcing.flow.times={0,.5,1,2};forcing.flow.values={0,0,0,0};
+    m.gw.setSources({forcing});m.gw.state().lacc[0]=4;m.gw.fireGwCells(0,2,m.surface,0);
+    EXPECT_TRUE(m.gw.pendingSourceReceipts(0).empty());
+    int refunds=0;double volume=0;std::array<double,2> mass{};
+    for(const auto& r:m.gw.sourceReturns())if(r.kind==SurfaceReturnKind::NUMERICAL_REFUND) {
+        ++refunds;EXPECT_EQ(r.available_at,2);volume+=r.volume;
+        for(int p=0;p<2;++p){mass[p]+=r.mass[p];EXPECT_NEAR(r.mass[p],r.intake.mass[p]*r.volume/r.intake.volume,1e-14);}
+    }
+    EXPECT_GT(refunds,int(original.size()));double incoming=0;std::array<double,2> input_mass{};
+    for(const auto& r:original){incoming+=r.volume;for(int p=0;p<2;++p)input_mass[p]+=r.mass[p];}
+    EXPECT_LE(volume,incoming+1e-13);for(int p=0;p<2;++p)EXPECT_LE(mass[p],input_mass[p]+1e-13);
+    ASSERT_EQ(m.stage.advance(2,3),"");EXPECT_TRUE(m.gw.sourceReturns().empty());
+}
+TEST(CommonSourceStage, WaterOnlyReturnsRemainLocalAcrossCellsAndClosures) {
+    for(auto closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA}) {
+        AtmosphericInput a;a.closure=closure;Model m;m.setup(true,2,false,false,false,a);m.attach();
+        const double initial=m.gw.storage();ASSERT_EQ(m.stage.advance(0,1),"");
+        m.gw.state().lacc[0]=10;m.gw.fireGwCells(0,1,m.surface,0);
+        double returned=0,mesh_return=0;
+        for(const auto& r:m.gw.sourceReturns()) {
+            EXPECT_EQ(r.intake.request.cell,0);returned+=r.volume;EXPECT_TRUE(r.mass.empty());
+            mesh_return+=r.kind==SurfaceReturnKind::NUMERICAL_REFUND ?
+                (r.intake.request.kind==SurfaceDonorKind::MESH ? r.volume : 0) : r.volume*.75;
+        }
+        EXPECT_GT(returned,0);EXPECT_NEAR(m.gw.storage()+returned+m.gw.state().led_deep,initial+10+m.gw.state().led_infil_in,1e-9);
+        const auto before=m.surface.volume;ASSERT_EQ(m.stage.advance(1,2),"");
+        EXPECT_NEAR(m.stage.meshReturn(),mesh_return,1e-12); // refunds use their donor, emergence uses area
+        EXPECT_LE(m.surface.volume[1],before[1]+1e-12); // no emergence migrates to cell 1
+        for(int group=0;group<2;++group)EXPECT_NEAR(m.sources.balanceResidual(group),0,1e-9);
+    }
+}
+
+TEST(CommonSourceStage, ColumnExcessCannotInventAnIntakeDonor) {
+    Model m;mixedPollutants(m);m.attach();
+    // Exercise the rejection backstop with an already oversaturated bulk
+    // store: no intake exists to refund, so all excess needs a local owner.
+    m.gw.state().hu[0]=m.gw.state().theta_s[0]*1.1;
+    m.gw.transport().unsat_mass={5,17};m.gw.transport().init_mass={5,17};
+    const double initial=m.gw.storage();m.gw.fireGwCells(0,1,m.surface,0);
+    double excess=0;for(const auto& r:m.gw.sourceReturns()) {
+        EXPECT_NE(r.kind,SurfaceReturnKind::NUMERICAL_REFUND);
+        if(r.kind==SurfaceReturnKind::COLUMN_EXCESS)excess+=r.volume;
+    }
+    EXPECT_GT(excess,0);EXPECT_NEAR(excess,m.gw.state().led_reject,1e-13);
+    EXPECT_NEAR(m.gw.storage()+excess+m.gw.state().led_dunne+m.gw.state().led_deep,initial,1e-10);
+    for(int p=0;p<2;++p)EXPECT_NEAR(m.gw.transport().residual(p),0,1e-12);
+    ASSERT_EQ(m.stage.advance(0,1),"");EXPECT_TRUE(m.stage.returns().empty());
+    ASSERT_EQ(m.stage.advance(1,2),"");EXPECT_TRUE(m.gw.sourceReturns().empty());
+}
+
+TEST(CommonSourceStage, PartialRejectionPreservesOriginalConcentrationAndAcceptedMass) {
+    bool partial=false;
+    for(double rise:{.001,.01,.1,.5,.7,.75,.78,.79,.8,1.,4.}) {
+        Model m;mixedPollutants(m);m.room(.005);m.attach();ASSERT_EQ(m.stage.advance(0,1),"");
+        double incoming=0;for(const auto& r:m.gw.pendingSourceReceipts(0))incoming+=r.volume;
+        m.gw.state().lacc[0]=rise;m.gw.fireGwCells(0,1,m.surface,0);
+        double refund=0;for(const auto& r:m.gw.sourceReturns())if(r.kind==SurfaceReturnKind::NUMERICAL_REFUND) {
+            refund+=r.volume;
+            for(int p=0;p<2;++p)EXPECT_NEAR(r.mass[p],r.intake.mass[p]*r.volume/r.intake.volume,1e-14);
+        }
+        if(refund>1e-12 && refund<incoming-1e-12)partial=true;
+        for(int p=0;p<2;++p)EXPECT_NEAR(m.gw.transport().residual(p),0,1e-12);
+    }
+    EXPECT_TRUE(partial);
+}
+TEST(CommonSourceStage, CombinedWaterAndPollutantBalanceIncludesPendingAndReturnedTuples) {
+    for(auto closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA}) {
+    SCOPED_TRACE(int(closure));AtmosphericInput a;a.closure=closure;
+    Model m;mixedPollutants(m,1,a);m.attach();const double initial_water=m.gw.storage()+m.surface.volume[0]+m.sources.lids().storedVolume()*ft3;
+    const auto totals=[&]() {
+        std::array<double,3> t{};t[0]=m.gw.storage()+m.surface.volume[0];
+        const auto& r=m.sources.runoff().soa();
+        for(int sc=0;sc<2;++sc) {
+            t[0]+=r.area[sc]*(r.depth_imperv0[sc]*r.frac_imperv0[sc]+r.depth_imperv1[sc]*r.frac_imperv1[sc]+r.depth_perv[sc]*(1-r.imperv_pct[sc]))*ft3;
+            t[0]+=m.sources.pendingVolume(sc)*ft3;
+        }
+        t[0]+=m.sources.lids().storedVolume()*ft3+m.gw.state().xacc_from_surface[0];
+        for(int p=0;p<2;++p) {
+            t[p+1]=m.surface.transport.cell_mass[p]+m.gw.transport().sat_mass[p]+m.gw.transport().unsat_mass[p]+m.gw.transport().xacc_from_surface[p];
+            for(const auto& b:m.sources.pollutants())for(double mass:b.layers[p])t[p+1]+=mass;
+            for(int group=0;group<2;++group)t[p+1]+=m.sources.pendingPollutantMass(group,p);
+        }
+        for(const auto& q:m.gw.sourceReturns()){t[0]+=q.volume;for(int p=0;p<2;++p)t[p+1]+=q.mass[p];}
+        return t;
+    };
+    const auto balance=[&]() {
+        auto current=totals();double inputs=initial_water+m.stage.meshRain()+m.gw.state().led_link;
+        double outputs=m.stage.meshEvaporation()+m.gw.state().led_et+m.gw.state().led_deep;
+        for(const auto& b:m.sources.ledgers()){inputs+=b.rain*ft3;outputs+=(b.evaporation+b.outside_infiltration+b.outlet)*ft3;}
+        EXPECT_NEAR(current[0]+outputs,inputs,1e-9);
+        for(int p=0;p<2;++p) {
+            double rain=m.surface.transport.gained_rainfall[p],out=m.gw.transport().lost_deep[p]+m.gw.transport().lost_reaction[p];
+            for(const auto& b:m.sources.pollutants()){rain+=b.rain[p];out+=b.outside_infiltration[p]+b.outlet[p]+b.removed[p];}
+            EXPECT_NEAR(current[p+1]+out,19+rain,1e-9);
+        }
+    };
+    ASSERT_EQ(m.stage.advance(0,1),"");balance();
+    ASSERT_EQ(m.stage.advance(1,2),"");balance();
+    m.gw.state().lacc[0]=10;m.gw.fireGwCells(0,2,m.surface,0);balance();
+    ASSERT_EQ(m.stage.advance(2,3),"");balance();
+    m.gw.fireGwCells(0,1,m.surface,2);balance();
+    ASSERT_EQ(m.stage.advance(3,4),"");balance();
+    }
+}
+
+TEST(CommonSourceStage, ReceiptSpeciesChangesFailBeforeGather) {
+    Model m;mixedPollutants(m);m.attach();ASSERT_EQ(m.stage.advance(0,1),"");
+    const auto water=m.gw.state().xacc_from_surface[0],storage=m.gw.storage();
+    const auto mass=m.gw.transport().xacc_from_surface;
+    std::reverse(m.gw.transport().row_names.begin(),m.gw.transport().row_names.end());
+    EXPECT_THROW(m.gw.fireGwCells(0,1,m.surface,0),std::runtime_error);
+    EXPECT_DOUBLE_EQ(m.gw.storage(),storage);EXPECT_DOUBLE_EQ(m.gw.state().xacc_from_surface[0],water);
+    EXPECT_EQ(m.gw.transport().xacc_from_surface,mass);
+    std::reverse(m.gw.transport().row_names.begin(),m.gw.transport().row_names.end());
+    m.gw.fireGwCells(0,1,m.surface,0);EXPECT_TRUE(m.gw.pendingSourceReceipts(0).empty());
+}
+TEST(CommonSourceStage, DuplicateReceiverBindingLeavesFreshSourcePartitionRetryable) {
+    Model m;m.setup();m.attach();
+    runoff::SourceWaterDriver fresh;ASSERT_EQ(fresh.initialize(m.context,{0,1},{{0,1},{1,1}}),"");
+    CommonSourceStage duplicate;EXPECT_FALSE(duplicate.initialize(m.mesh,m.surface,m.options,m.gw,fresh,m.preview).empty());
+    EXPECT_EQ(fresh.configureSpatialCoverage({1,1}),"");
+}
+
+TEST(CommonSourceStage, FailedSourceTrialLeavesReadyReturnTuplesAndCreditsUntouched) {
+    AtmosphericInput a;a.rain=0;a.impervious={.8,0};Model m;mixedPollutants(m,1,a);
+    m.context.subcatches.n_imperv[0]=0;m.context.lid_usage.from_imperv[0]=120;
+    m.sources=runoff::SourceWaterDriver{};ASSERT_EQ(m.sources.initialize(m.context,{0,1},{{0,.5},{1,1}}),"");
+    m.surface.rainfall[0]=0;m.attach();ASSERT_EQ(m.stage.advance(0,1),"");
+    m.gw.state().lacc[0]=10;m.gw.fireGwCells(0,1,m.surface,0);
+    const auto returns=m.gw.sourceReturns();ASSERT_FALSE(returns.empty());const auto opening=m.surface.volume;
+    for(int attempt=0;attempt<2;++attempt) {
+        EXPECT_NE(m.stage.advance(1,2).find("capture exceeds"),std::string::npos);
+        EXPECT_EQ(m.stage.completedEnd(),1);EXPECT_EQ(m.surface.volume,opening);
+        ASSERT_EQ(m.gw.sourceReturns().size(),returns.size());
+        for(std::size_t i=0;i<returns.size();++i) {
+            EXPECT_DOUBLE_EQ(m.gw.sourceReturns()[i].volume,returns[i].volume);
+            EXPECT_EQ(m.gw.sourceReturns()[i].mass,returns[i].mass);
+        }
+        for(const auto& b:m.sources.ledgers())EXPECT_DOUBLE_EQ(b.aquifer_return,0);
+    }
+}

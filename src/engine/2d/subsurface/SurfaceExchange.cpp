@@ -101,6 +101,7 @@ std::string SurfaceExchange::commit(SubsurfaceSolver& gw, const std::vector<Surf
     // Validation/allocation finish before any receiver mutation. No unused award
     // is booked, and capacity refresh cannot restore an accepted pending receipt.
     for (const auto& r : receipts) {
+        gw.retainSourceReceipt(r);
         gw.bookInfiltrationFromSurface(r.request.cell, r.volume);
         gw.state().wetting_front[r.request.cell] += r.volume / gw.state().area[r.request.cell];
         gw.state().infil_remaining[r.request.cell] = gw.infiltrationHeadroom(r.request.cell);

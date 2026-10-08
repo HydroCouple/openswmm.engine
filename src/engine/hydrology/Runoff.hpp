@@ -58,6 +58,7 @@ namespace runoff {
 struct RunoffSourceForcing {
     int subcatch = -1;
     double rain = 0.0, pet = 0.0;
+    std::array<double,3> surface_return{}; // ft/s by IMPERV0/IMPERV1/PERV; never rain
 };
 /// Actual completed subarea water budget (ft3; area in ft2). Pool order is
 /// IMPERV0, IMPERV1, PERV. Ordinary runoff does not write these diagnostics.

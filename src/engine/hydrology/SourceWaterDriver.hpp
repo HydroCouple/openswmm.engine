@@ -13,6 +13,7 @@ struct SourceWaterLedger {
     double initial_storage = 0.0, rain = 0.0, evaporation = 0.0, infiltration = 0.0;
     /// Completed destination split, ft3; sum equals infiltration.
     double spatial_infiltration = 0.0, outside_infiltration = 0.0;
+    double aquifer_return = 0.0; // cumulative paired surface credits, ft3, never rainfall
     double outlet = 0.0, captured = 0.0, runon = 0.0, pervious_return = 0.0;
 };
 struct SourceWaterDelivery {
@@ -31,7 +32,13 @@ struct SourcePollutantLedger {
     std::vector<double> rain, spatial_infiltration, outside_infiltration, outlet, removed;
     std::vector<double> surface_mass, drain_mass; // last completed forcing segment
     std::vector<double> impervious_mass, pervious_mass; // non-LID outlet pools before capture
+    std::vector<double> aquifer_return; // cumulative paired surface credits
     std::vector<double> pending_routing, incoming; // internal subarea queue; cumulative received transfers
+};
+struct SourceSurfaceReturn {
+    int source=-1,type=-1,unit=-1,pool=2; // non-LID subarea or exact LID unit
+    double volume=0; // ft3, consumed once at the next source segment
+    std::vector<double> mass; // pollutant concentration units times m3
 };
 enum class SourceEtKind { PERVIOUS, IMPERVIOUS, LID };
 struct SourceAtmosphericLedger {
@@ -66,6 +73,8 @@ public:
     /// Bind reviewed uniform inside fractions at initial attachment; no water debit.
     std::string configureSpatialCoverage(const std::vector<double>& inside_fractions);
     const std::vector<double>& spatialFractions() const;
+    /// Atomic batch on a committed private snapshot, before interval trials.
+    std::string creditSurfaceReturns(double start,const std::vector<SourceSurfaceReturn>&);
     std::string stage(int group, double end, double completed_through,
                       const RunoffSolver::InfiltrationBoundary* boundary = nullptr,
                       const BottomCeiling* bottom_ceiling = nullptr);

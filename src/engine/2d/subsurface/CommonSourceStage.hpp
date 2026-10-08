@@ -18,7 +18,8 @@ struct SurfaceEtReceipt {
 /// invoke after accepted face volumes land and before managed source debits.
 /// Conservative pollutants pair actual non-LID/LID withdrawals and the mesh's
 /// remaining weather footprint, with matching pollutant IDs. Age, heat, MSX,
-/// mesh coupling donors and receiver-to-source returns are not qualified.
+/// mesh coupling donors are not qualified. Paired refunds and locally owned
+/// emergence are consumed once in the next eligible completed interval.
 /// Whole-context snapshots are qualification scaffolding, not runtime activation.
 class CommonSourceStage {
 public:
@@ -31,12 +32,14 @@ public:
     bool ownsCell(int cell) const { return cell >= 0 && cell < int(owned_.size()) && owned_[cell]; }
     const std::vector<int>& cells() const { return cells_; }
     const std::vector<SurfaceIntakeReceipt>& receipts() const { return exchange_.receipts(); }
+    const std::vector<SurfaceReturnReceipt>& returns() const { return returns_; }
     /// Last committed interval; diagnostic provenance, not restart/result history.
     const std::vector<SurfaceEtReceipt>& etReceipts() const { return et_receipts_; }
     double completedEnd() const { return exchange_.completedEnd(); }
     long intervals() const { return intervals_; }
     double meshRain() const { return mesh_rain_; }
     double meshEvaporation() const { return mesh_evap_; }
+    double meshReturn() const { return mesh_return_; }
 private:
     struct Donor {
         int source=-1, type=-1, unit=-1, identity=-1;
@@ -52,10 +55,11 @@ private:
     std::vector<Donor> donors_;
     std::vector<std::vector<std::pair<int,double>>> et_contacts_;
     std::vector<SurfaceEtReceipt> et_receipts_;
+    std::vector<SurfaceReturnReceipt> returns_;
     std::vector<int> cells_;
     std::vector<bool> owned_;
     std::vector<double> weather_;
     long intervals_=0;
-    double mesh_rain_=0,mesh_evap_=0;
+    double mesh_rain_=0,mesh_evap_=0,mesh_return_=0;
 };
 }

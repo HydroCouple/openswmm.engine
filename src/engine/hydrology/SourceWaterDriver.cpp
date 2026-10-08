@@ -16,12 +16,13 @@ SourcePollutantLedger pollutantLedger(int source, int type, int unit, int np) {
     b.outside_infiltration.assign(np, 0); b.outlet.assign(np, 0); b.removed.assign(np, 0);
     b.surface_mass.assign(np, 0); b.drain_mass.assign(np, 0);
     b.impervious_mass.assign(np, 0); b.pervious_mass.assign(np, 0);
-    b.pending_routing.assign(np, 0); b.incoming.assign(np, 0); return b;
+    b.aquifer_return.assign(np,0);b.pending_routing.assign(np, 0); b.incoming.assign(np, 0); return b;
 }
 
 void advanceNonLidPollutants(SourcePollutantLedger& b, const std::array<CompletedSubareaWater, 3>& flux,
                             const SimulationContext& c, double full,
-                            const std::vector<double>& runon, const std::vector<double>& pervious_return) {
+                            const std::vector<double>& runon, const std::vector<double>& pervious_return,
+                            const std::vector<std::array<double,3>>& aquifer_return) {
     for (const auto& w : flux) {
         for (double v : {w.opening, w.rain, w.runon, w.evaporation, w.infiltration,
                          w.spatial_infiltration, w.outflow, w.outlet, w.closing})
@@ -39,7 +40,7 @@ void advanceNonLidPollutants(SourcePollutantLedger& b, const std::array<Complete
         for (int k = 0; k < 3; ++k) {
             const auto& w = flux[k];
             const double rain = w.rain * ft3 * c.pollutants.c_rain[p];
-            const double received = runon[p] * (w.area / full) + (k == 2 ? pervious_return[p] : 0);
+            const double received = runon[p] * (w.area / full) + (k == 2 ? pervious_return[p] : 0) + aquifer_return[p][k];
             const double available = b.layers[p][k] + rain + received + (k == destination ? routed : 0);
             const double water = w.closing + w.outflow + w.infiltration;
             const auto take = [&](double v) { return water > 0 ? available * (v / water) : 0; };
@@ -155,6 +156,7 @@ struct SourceWaterDriver::State {
     bool partitioned=false;
     std::vector<double> inside;
     std::vector<double> runon, pervious_return; // pending ft3, never held rates
+    std::vector<SourceSurfaceReturn> aquifer_returns;
     std::vector<SourceWaterLedger> ledger;
     std::vector<SourceWaterDelivery> deliveries;
     std::vector<SourceAtmosphericLedger> atmosphere;
@@ -163,7 +165,7 @@ struct SourceWaterDriver::State {
     std::vector<std::vector<double>> runon_mass, return_mass; // pending paired transfers, conc*m3
     explicit State(const SimulationContext& c) : ctx(c) {}
     State(const State& s) : ctx(s.ctx), runoff(s.runoff), lids(s.lids.waterTrial()),
-        partitioned(s.partitioned),inside(s.inside),runon(s.runon), pervious_return(s.pervious_return), ledger(s.ledger), deliveries(s.deliveries), atmosphere(s.atmosphere),
+        partitioned(s.partitioned),inside(s.inside),runon(s.runon), pervious_return(s.pervious_return), aquifer_returns(s.aquifer_returns), ledger(s.ledger), deliveries(s.deliveries), atmosphere(s.atmosphere),
         pollutant_names(s.pollutant_names), pollutants(s.pollutants), runon_mass(s.runon_mass), return_mass(s.return_mass) {}
 };
 SourceWaterDriver::SourceWaterDriver() = default;
@@ -190,6 +192,32 @@ std::string SourceWaterDriver::configureSpatialCoverage(const std::vector<double
         return "Invalid completed spatial footprint fraction.";
     state_->inside=fractions;state_->partitioned=true;return {};
 }
+std::string SourceWaterDriver::creditSurfaceReturns(double start,const std::vector<SourceSurfaceReturn>& returns) {
+    if(!state_ || trial_ || !std::isfinite(start))return "Surface return requires committed source state.";
+    const auto& s=*state_;const int np=int(s.pollutant_names.size());
+    for(const auto& r:returns) {
+        const int group=clocks_.groupForSubcatch(r.source);
+        if(group<0 || clocks_.groups()[group].completed_end!=start || !clocks_.groups()[group].pending.empty() ||
+           !std::isfinite(r.volume) || r.volume<0 || int(r.mass.size())!=np)
+            return "Invalid surface return source, interval or paired volume.";
+        bool found=false;
+        if(r.type==-1 && r.unit==-1 && r.pool>=0 && r.pool<3) {
+            const auto& a=s.runoff.soa();
+            const double fraction=r.pool==0 ? a.frac_imperv0[r.source] : r.pool==1 ? a.frac_imperv1[r.source] : 1-a.imperv_pct[r.source];
+            found=a.area[r.source]*fraction>0;
+        } else for(const auto& [t,u]:s.lids.usageOrder())
+            if(t==r.type && u==r.unit && s.lids.group(t).subcatch_idx[u]==r.source && s.lids.group(t).area[u]>0)found=true;
+        if(!found)return "Surface return has no originating physical pool.";
+        for(double mass:r.mass)if(!std::isfinite(mass) || mass<0 || (r.volume==0 && mass!=0))
+            return "Invalid paired surface return mass.";
+    }
+    for(const auto& r:returns)if(r.volume>0) {
+        state_->aquifer_returns.push_back(r);state_->ledger[r.source].aquifer_return+=r.volume;
+        for(auto& b:state_->pollutants)if(b.source==r.source && b.type==r.type && b.unit==r.unit)
+            for(int p=0;p<np;++p)b.aquifer_return[p]+=r.mass[p];
+    }
+    return {};
+}
 const SimulationContext& SourceWaterDriver::context(bool t) const { return view(t).ctx; }
 const RunoffSolver& SourceWaterDriver::runoff(bool t) const { return view(t).runoff; }
 const lid::LIDSolver& SourceWaterDriver::lids(bool t) const { return view(t).lids; }
@@ -202,7 +230,7 @@ double SourceWaterDriver::pollutantBalanceResidual(int group, int pollutant, boo
     const auto& s = view(t); (void)s.pollutant_names.at(pollutant);
     double residual = -pendingPollutantMass(group, pollutant, t);
     for (const auto& b : s.pollutants) if (clocks_.groupForSubcatch(b.source) == group) {
-        residual += b.rain[pollutant] - b.spatial_infiltration[pollutant] - b.outside_infiltration[pollutant] -
+        residual += b.rain[pollutant] + b.aquifer_return[pollutant] - b.spatial_infiltration[pollutant] - b.outside_infiltration[pollutant] -
             b.outlet[pollutant] - b.removed[pollutant];
         for (double mass : b.layers[pollutant]) residual -= mass;
     }
@@ -212,6 +240,7 @@ double SourceWaterDriver::pendingPollutantMass(int group, int pollutant, bool t)
     const auto& s = view(t); (void)s.pollutant_names.at(pollutant); double mass = 0;
     for (int sc : clocks_.groups().at(group).subcatches) mass += s.runon_mass[sc][pollutant] + s.return_mass[sc][pollutant];
     for (const auto& b : s.pollutants) if (clocks_.groupForSubcatch(b.source) == group) mass += b.pending_routing[pollutant];
+    for(const auto& r:s.aquifer_returns)if(clocks_.groupForSubcatch(r.source)==group)mass+=r.mass[pollutant];
     return mass;
 }
 
@@ -229,13 +258,14 @@ double SourceWaterDriver::pendingVolume(int group, bool trial) const {
     const auto& s = view(trial); double v = 0;
     for (int sc : clocks_.groups().at(group).subcatches)
         v += s.runon[sc] + s.pervious_return[sc] + s.runoff.pendingRoutingVolume(s.ctx, sc);
+    for(const auto& r:s.aquifer_returns)if(clocks_.groupForSubcatch(r.source)==group)v+=r.volume;
     return v;
 }
 double SourceWaterDriver::balanceResidual(int group, bool trial) const {
     const auto& s = view(trial); double v = -pendingVolume(group, trial);
     for (int sc : clocks_.groups().at(group).subcatches) {
         const auto& b = s.ledger[sc];
-        v += b.initial_storage + b.rain - b.evaporation - b.infiltration - b.outlet - storage(s, sc);
+        v += b.initial_storage + b.rain + b.aquifer_return - b.evaporation - b.infiltration - b.outlet - storage(s, sc);
     }
     return v;
 }
@@ -354,6 +384,19 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
     for (const auto& weather : f.sources) weather_at[weather.subcatch] = &weather;
     const auto selected = [&](int sc) { return sc >= 0 && sc < c.n_subcatches() && weather_at[sc]; };
     const int np = int(s.pollutant_names.size());
+    auto forcing=f.sources;
+    std::vector<SourceSurfaceReturn> incoming_aquifer;
+    std::vector<std::vector<std::array<double,3>>> nonlid_return(c.n_subcatches(),std::vector<std::array<double,3>>(np));
+    for(const auto& q:s.aquifer_returns)if(selected(q.source)) {
+        incoming_aquifer.push_back(q);
+        if(q.type<0) {
+            const auto& a=s.runoff.soa();
+            const double fraction=q.pool==0 ? a.frac_imperv0[q.source] : q.pool==1 ? a.frac_imperv1[q.source] : 1-a.imperv_pct[q.source];
+            for(auto& w:forcing)if(w.subcatch==q.source)w.surface_return[q.pool]+=q.volume/dt/a.area[q.source]/fraction;
+            for(int p=0;p<np;++p)nonlid_return[q.source][p][q.pool]+=q.mass[p];
+        }
+    }
+    std::erase_if(s.aquifer_returns,[&](const auto& q){return selected(q.source);});
     const auto incoming_runon = s.runon_mass, incoming_return = s.return_mass;
     std::vector<std::vector<double>> outlet_mass(c.n_subcatches(), std::vector<double>(np, 0));
     // Consume each pending volume once. Runon is distributed across the full
@@ -370,12 +413,12 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
         std::fill(s.return_mass[sc].begin(), s.return_mass[sc].end(), 0);
         s.ledger[sc].rain += weather.rain * dt * full;
     }
-    s.runoff.execute(c, dt, 0, f.infil_factor, f.recovery_factor, f.month, boundary, &f.sources,s.partitioned ? &s.inside : nullptr);
+    s.runoff.execute(c, dt, 0, f.infil_factor, f.recovery_factor, f.month, boundary, &forcing,s.partitioned ? &s.inside : nullptr);
     const auto& r = s.runoff.soa();
     for (auto& b : s.pollutants) if (b.type < 0 && selected(b.source)) {
         const int sc = b.source;
         advanceNonLidPollutants(b, r.completed[sc], c, r.area[sc] + c.subcatches.total_lid_area_ft2[sc],
-            incoming_runon[sc], incoming_return[sc]);
+            incoming_runon[sc], incoming_return[sc],nonlid_return[sc]);
         outlet_mass[sc] = b.surface_mass;
     }
     std::vector<double> outlet(c.n_subcatches(), 0), native(c.n_subcatches(), 0);
@@ -419,13 +462,19 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
                     (g.area[u] / (r.area[sc] + c.subcatches.total_lid_area_ft2[sc]));
             }
         }
+        double returned=0;
+        for(const auto& q:incoming_aquifer)if(q.type==t && q.unit==u) {
+            returned+=q.volume;
+            for(std::size_t j=0;j<s.pollutants.size();++j)if(s.pollutants[j].type==t && s.pollutants[j].unit==u)
+                for(int p=0;p<np;++p)lid_incoming[j][p]+=q.mass[p];
+        }
         double rain = weather->rain;
         if (g.type == lid::LIDType::RAIN_BARREL && g.stor_covered[u]) {
             for (int p = 0; p < np; ++p) s.return_mass[sc][p] += rain * g.area[u] * dt * ft3 * c.pollutants.c_rain[p];
             s.pervious_return[sc] += rain * g.area[u] * dt; rain = 0;
         }
         const double bottom=ceiling ? (*ceiling)(t,u,f.start,f.end) : 1.0e10;
-        inputs.push_back({t, u, captured / dt / g.area[u] + rain + c.subcatches.runon_rate[sc],
+        inputs.push_back({t, u, (captured+returned) / dt / g.area[u] + rain + c.subcatches.runon_rate[sc],
             weather->rain, weather->pet, native[sc], s.partitioned ? 1.0e10 : bottom,
             factor(c, sc, f),s.partitioned ? s.inside[sc] : -1.0,bottom});
     }

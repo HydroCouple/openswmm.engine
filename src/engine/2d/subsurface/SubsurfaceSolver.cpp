@@ -332,6 +332,7 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh,
     for (std::size_t b = 0; b < node_beds_.size(); ++b)
         if (node_beds_[b].cell >= 0) cell_beds_[node_beds_[b].cell].push_back(b);
     pending_flag_.assign(static_cast<std::size_t>(n), 0);
+    source_owned_.assign(n,false);source_receipts_.assign(n,{});source_returns_.clear();source_species_.clear();
     pending_surface_.clear();
     accumulators_pending_ = false;
     state_.active = true;
@@ -1055,6 +1056,26 @@ void SubsurfaceSolver::bookInfiltrationMass(int cell, int species,
     tr_.xacc_from_surface[tr_.idx(species, cell)] += mass;
 }
 
+std::string SubsurfaceSolver::configureSourceReceipts(const std::vector<int>& cells) {
+    if(sourceReceiptOwnershipBound())
+        return "Aquifer source receipts already configured.";
+    for(int i:cells) {
+        if(i<0 || i>=state_.n_cells || state_.xacc_from_surface[i]!=0 || state_.xacc_to_surface[i]!=0)
+            return "Source receipt ownership must bind before pending surface exchange.";
+        for(int p=0;p<tr_.n_species;++p)
+            if(tr_.xacc_from_surface[tr_.idx(p,i)]!=0 || tr_.xacc_to_surface[tr_.idx(p,i)]!=0)
+                return "Source receipt ownership must bind before pending mass exchange.";
+    }
+    for(int i:cells) source_owned_[i]=true;source_species_=tr_.row_names;
+    return {};
+}
+void SubsurfaceSolver::retainSourceReceipt(const SurfaceIntakeReceipt& r) {
+    if(source_owned_[r.request.cell] && r.volume>0) source_receipts_[r.request.cell].push_back(r);
+}
+void SubsurfaceSolver::acknowledgeSourceReturns(double through) {
+    std::erase_if(source_returns_,[&](const auto& r){return r.available_at<=through;});
+}
+
 double SubsurfaceSolver::takeToSurfaceMass(int cell, int species) noexcept {
     if (!tr_.active()) return 0.0;
     if (cell < 0 || cell >= tr_.n_cells) return 0.0;
@@ -1239,6 +1260,23 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     const double hu_pre = state_.hu[u];   // T7.1: the column store this firing starts from
     const double L0  = std::max(zs - hg0, 0.0);
 
+    // Verify the paired queue before any cell/face gather. Unpaired or future
+    // receipts cannot be consumed by an owned cell's groundwater firing.
+    const bool paired=source_owned_[u];
+    if(paired) {
+        if(source_species_!=tr_.row_names || int(source_species_.size())!=tr_.n_species)
+            throw std::runtime_error("Source receipt pollutant layout changed before groundwater firing.");
+        double volume=0;std::vector<double> mass(tr_.n_species,0);
+        for(const auto& r:source_receipts_[u]) {
+            if(int(r.mass.size())!=tr_.n_species)throw std::runtime_error("Source receipt mass layout differs from groundwater.");
+            if(r.end>source_firing_end_) throw std::runtime_error("Future source receipt in groundwater firing.");
+            volume+=r.volume;for(int p=0;p<tr_.n_species;++p)mass[p]+=r.mass[p];
+        }
+        const auto close=[](double a,double b){return std::abs(a-b)<=1e-12*std::max({1.0,std::abs(a),std::abs(b)});};
+        if(!close(volume,state_.xacc_from_surface[u]))throw std::runtime_error("Unpaired source water in owned groundwater cell.");
+        for(int p=0;p<tr_.n_species;++p)if(!close(mass[p],tr_.xacc_from_surface[tr_.idx(p,i)]))
+            throw std::runtime_error("Unpaired source mass in owned groundwater cell.");
+    }
     // --- gather the accumulated cross-cadence volumes ---------------------
     const double lat_vol  = gatherLateral(i);                 // m³, + in
     const double node_vol = gatherNode(i);                    // m³, + OUT
@@ -1638,12 +1676,13 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     // Two routes reach the surface twin and they are physically distinct:
     // `dunne_vol` is the table itself arriving at the ground (`h_g → z_s`),
     // and `reject_vol` is water the top layer would not take. Both are
-    // saturation excess, both are booked to the same accumulator, and
-    // neither is a correction — together they ARE the mass balance
+    // saturation excess. Ordinary cells use the mesh accumulator; reviewed
+    // source cells keep donor refunds distinct from local emergence. Together
+    // they ARE the mass balance
     // (draft decision 9), which is why DUNNE defaults ON.
     const double reject_vol = rejected * A * dt;
     const double to_surface = (options_.dunne ? dunne_vol : 0.0) + reject_vol;
-    if (to_surface > 0.0) {
+    if (to_surface > 0.0 && !paired) {
         state_.xacc_to_surface[u] += to_surface;
         markPendingSurface(i);
     }
@@ -1651,6 +1690,31 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     state_.led_dunne += physical_return; state_.led_reject += reject_vol;
     state_.dunne_cumulative[u] += physical_return; state_.reject_cumulative[u] += reject_vol;
     state_.dunne_last[u] = physical_return / dt; state_.reject_last[u] = reject_vol / dt;
+
+    // Consume the same fraction as the existing water/mass gathers. Keep
+    // residual tuples until the next knot/firing, even across source intervals.
+    const double paired_refund=paired ? std::min(reject_vol,infil_vol) : 0;
+    std::vector<double> refund_mass,dunne_mass,excess_mass;
+    std::vector<SurfaceReturnReceipt> refunds;
+    double return_ready=time+dt;
+    if(paired) {
+        refund_mass.assign(tr_.n_species,0);dunne_mass.assign(tr_.n_species,0);excess_mass.assign(tr_.n_species,0);
+        const double fraction=infil_vol>0 ? paired_refund/infil_vol : 0;
+        for(auto& pending:source_receipts_[u]) {
+            auto consumed=pending;
+            consumed.volume=consumePending(pending.volume);
+            for(int p=0;p<tr_.n_species;++p)consumed.mass[p]=consumePending(pending.mass[p]);
+            return_ready=std::max(return_ready,consumed.end);
+            if(fraction>0 && consumed.volume>0) {
+                SurfaceReturnReceipt r;r.kind=SurfaceReturnKind::NUMERICAL_REFUND;r.intake=consumed;
+                r.available_at=std::max(time+dt,consumed.end);r.volume=consumed.volume*fraction;
+                r.mass.resize(tr_.n_species);
+                for(int p=0;p<tr_.n_species;++p) {r.mass[p]=consumed.mass[p]*fraction;refund_mass[p]+=r.mass[p];}
+                refunds.push_back(std::move(r));
+            }
+        }
+        std::erase_if(source_receipts_[u],[](const auto& r){return r.volume==0;});
+    }
 
     // --- T7.1: the tuple rides the volumes this firing just decided -------
     // Every number below is the one the water used, read AFTER the refund
@@ -1672,6 +1736,8 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         f.dt       = dt;   // T7.2
         f.dunne    = options_.dunne ? dunne_vol : 0.0;
         f.reject   = reject_vol;
+        if(paired) { f.paired_refund=paired_refund;f.refund_mass=&refund_mass;
+            f.dunne_mass=&dunne_mass;f.excess_mass=&excess_mass; }
         // What the column's own balance could not have been produced by a
         // flux IS the moving boundary's swap. Reading it off the final
         // store rather than re-deriving `θ_bot·ΔL` keeps it exact under
@@ -1682,6 +1748,16 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         fireCellSpecies(i, f);
     }
 
+    if(paired) {
+        for(auto& r:refunds)source_returns_.push_back(std::move(r));
+        const auto emergence=[&](SurfaceReturnKind kind,double volume,const std::vector<double>& mass) {
+            if(volume<=0)return;
+            SurfaceReturnReceipt r;r.kind=kind;r.intake.request.cell=i;r.intake.start=time;r.intake.end=time+dt;
+            r.available_at=return_ready;r.volume=volume;r.mass=mass;source_returns_.push_back(std::move(r));
+        };
+        emergence(SurfaceReturnKind::PHYSICAL_DUNNE,physical_return,dunne_mass);
+        emergence(SurfaceReturnKind::COLUMN_EXCESS,reject_vol-paired_refund,excess_mass);
+    }
     state_.hg[u] = hg1;
     // Drying recovers the equivalent wetting-front depth in proportion to
     // the newly created column deficit; no second time constant is authored.
@@ -1708,7 +1784,7 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) noexcept {
     // sink in this firing reads the same pair, because the water update
     // decided all of them simultaneously.
     const double v_sat = f.v_sat0 + f.lateral + std::max(f.link, 0.0) + f.source_in;
-    const double v_uns = f.v_uns0 + f.infil_in;
+    const double v_uns = f.v_uns0 + f.infil_in - f.paired_refund;
     const auto   uc = static_cast<std::size_t>(i);
     // T7.2: the water contents retardation is computed against. The
     // saturated zone is at θ_s by definition; the column's mean content is
@@ -1760,7 +1836,7 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) noexcept {
         //     was carrying when it left the surface cell.
         const double in_m = consumePending(tr_.xacc_from_surface[k]);
         if (in_m != 0.0) {
-            muns += in_m;
+            muns += f.refund_mass ? std::max(0.0,in_m-(*f.refund_mass)[us]) : in_m;
             tr_.gained_infil[us] += in_m;
         }
 
@@ -1888,15 +1964,19 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) noexcept {
 
         // (7) saturation excess back to the surface: the table's own water
         //     from the saturated zone, the column's rejection from the
-        //     unsaturated one. Both are owed to the surface twin, which
-        //     drains them with `takeToSurfaceMass`.
+        //     unsaturated one. Reviewed refunds bypass mixing and remain in
+        //     paired source receipts; ordinary cells use takeToSurfaceMass.
         double up = 0.0;
-        if (f.dunne  > 0.0) up += take(msat, f.dunne,  v_sat, mob_sat);
-        if (f.reject > 0.0) up += take(muns, f.reject, v_uns, mob_uns);
-        if (up != 0.0) {
-            tr_.xacc_to_surface[k] += up;
-            tr_.lost_dunne[us] += up;
+        if(f.refund_mass) {
+            (*f.dunne_mass)[us]=take(msat,f.dunne,v_sat,mob_sat);
+            (*f.excess_mass)[us]=take(muns,f.reject-f.paired_refund,v_uns,mob_uns);
+            up=(*f.refund_mass)[us]+(*f.dunne_mass)[us]+(*f.excess_mass)[us];
+        } else {
+            if (f.dunne  > 0.0) up += take(msat, f.dunne,  v_sat, mob_sat);
+            if (f.reject > 0.0) up += take(muns, f.reject, v_uns, mob_uns);
+            if(up!=0.0)tr_.xacc_to_surface[k] += up;
         }
+        tr_.lost_dunne[us] += up;
 
         // (8) T7.2: first-order decay, on the TOTAL mass of both zones —
         //     dissolved and sorbed alike, the usual assumption for a
@@ -1925,6 +2005,7 @@ void SubsurfaceSolver::setSources(std::vector<GwResolvedSource> sources) {
                 cell_sources_[static_cast<std::size_t>(cell.first)].push_back({row,cell.second});
 }
 void SubsurfaceSolver::fireGwCells(int tier, double dt, SurfaceStateData& surf, double time) {
+    source_firing_end_=time+dt;
     if (!state_.active || !tierHasCells(tier)) return;
     for (const int i : cells_by_tier_[static_cast<std::size_t>(tier)]) {
         const auto u = static_cast<std::size_t>(i);

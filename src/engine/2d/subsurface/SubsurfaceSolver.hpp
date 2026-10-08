@@ -71,6 +71,7 @@
 #define OPENSWMM_ENGINE_2D_SUBSURFACE_SOLVER_HPP
 
 #include "SigmaColumn.hpp"
+#include "SurfaceExchange.hpp"
 #include "../gw/GwSourceForcing.hpp"
 #include "SubsurfaceData.hpp"
 #include "SubsurfaceTransportState.hpp"
@@ -181,6 +182,15 @@ public:
     /// mass the water it booked through `bookInfiltrationFromSurface` was
     /// carrying, gathered when the GW cell fires.
     void bookInfiltrationMass(int cell, int species, double mass) noexcept;
+    /// Internal reviewed-source ownership. Must bind before pending exchange.
+    bool sourceReceiptOwnershipBound() const {
+        return std::any_of(source_owned_.begin(),source_owned_.end(),[](bool x){return x;});
+    }
+    std::string configureSourceReceipts(const std::vector<int>& cells);
+    void retainSourceReceipt(const SurfaceIntakeReceipt&);
+    const std::vector<SurfaceIntakeReceipt>& pendingSourceReceipts(int cell) const { return source_receipts_.at(cell); }
+    const std::vector<SurfaceReturnReceipt>& sourceReturns() const { return source_returns_; }
+    void acknowledgeSourceReturns(double completed_through);
     /// …and takes back what saturation excess and rejection carried up.
     /// Drained by the surface cell in the same call that takes the water.
     double takeToSurfaceMass(int cell, int species) noexcept;
@@ -353,6 +363,11 @@ private:
     soil::Params paramsOf(int i) const noexcept;
     /// One cell's firing — the §gw_split sequence.
     void fireCell(int i, double dt, SurfaceStateData& surf, double time);
+    std::vector<bool> source_owned_;
+    std::vector<std::string> source_species_;
+    std::vector<std::vector<SurfaceIntakeReceipt>> source_receipts_;
+    std::vector<SurfaceReturnReceipt> source_returns_;
+    double source_firing_end_ = 0.0;
     double gather_fraction_ = 1.0;
     double consumePending(double& value) noexcept {
         const double take = value * gather_fraction_;
@@ -387,6 +402,10 @@ private:
         double deep = 0.0;
         double dt = 0.0;                     ///< T7.2: the firing's own step (s), for decay
         double dunne = 0.0;                  ///< saturation excess, out of the saturated zone
+        double paired_refund = 0.0;
+        const std::vector<double>* refund_mass = nullptr;
+        std::vector<double>* dunne_mass = nullptr;
+        std::vector<double>* excess_mass = nullptr;
         double reject = 0.0;                 ///< column rejection, out of the unsaturated zone
     };
     /// Move the tuple along @p f. Called at the END of `fireCell`, when every
