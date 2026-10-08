@@ -26,6 +26,7 @@
  */
 
 #include "DefaultStateIOPlugin.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 
 #include "../core/HotStartManager.hpp"
 #include "../core/SimulationContext.hpp"
@@ -43,7 +44,7 @@ namespace {
 // Read the leading bytes of a file into buf without depending on
 // HotStartManager internals. Returns the number of bytes read.
 std::size_t read_head(const std::string& path, char* buf, std::size_t len) noexcept {
-    std::FILE* f = std::fopen(path.c_str(), "rb");
+    std::FILE* f = openswmm::io::fopen_utf8(path, "rb");
     if (!f) return 0;
     const std::size_t n = std::fread(buf, 1, len, f);
     std::fclose(f);

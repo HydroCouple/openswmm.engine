@@ -1,0 +1,47 @@
+{
+  "milestone": "Richards 1D alternative for LID nodes",
+  "original_program_complete": false,
+  "kernel_tests": 9,
+  "lid_tests": 50,
+  "gui_layer_tests": 7,
+  "gui_section_tests": 17,
+  "gui_editor_acceptance": "passed against packaged engine; rendered retention tab with all parameters and axes visible",
+  "independent_reference": "SciPy Radau, 8/16/32/64 cells; max theta difference < 1.3e-5",
+  "aquifer_guard": "active bed rejected; EXCHANGE NO starts",
+  "corpus": "No matched-source full-corpus parity claim",
+  "source_sha256": {
+    "src/engine/hydrology/RichardsColumn.cpp": "b2c40217f37d455704f6586831dfc1beac46dfce5942fe383d2650cf95a8bcdc",
+    "src/engine/hydrology/RichardsColumn.hpp": "8ddaf000fd66c087480cda81b5cff91ba0b9a9f018efbca26a072c1b4a7babad",
+    "src/engine/hydrology/LidNodeRichards.cpp": "de928be0b004b284d4bef4c64e3d6fb2ff4f5015d14662096dcf8ab645fa66a9",
+    "src/engine/hydrology/LidNode.cpp": "f4fa0cecb942d302380001982d1bb3203573c0e4185065add10dcea1a5357609",
+    "src/engine/hydrology/LidNodeTreatment.cpp": "d8acc10f3c5cd056ea9a971267d99da8055465a251f05c63ddbb6523ac527c5a",
+    "src/engine/core/openswmm_lid_nodes_impl.cpp": "4fd07e49544ed3442181fcd63449866afb46449c89bd2e75e57dc791bffe387b",
+    "src/engine/core/HotStartManager.cpp": "4df72ad288e681cc70ac1cbdf0790722004c52a672bfeafd6f6920464802c958",
+    "src/engine/core/InpWriter.cpp": "8c63ee4979125572e4cf775b3acd0b1f68a27378187b9a1b9f1c6775aa00061d",
+    "src/engine/data/LidNodeData.hpp": "97931d24ba89f2d0c369ab9bef6a399286d528a691c87c72889036f35dc998ca",
+    "include/openswmm/engine/openswmm_infrastructure.h": "041383fc2bc2acbb038ba2cb3a3ce0ca9d88654d9d4f4193a3336124b2e83ddb",
+    "tests/unit/engine/test_lid_nodes.cpp": "ec6d3cdc810b59a4b64248fd73edc61b509ac515009c0337e14ef38ddb46530c",
+    "tests/unit/engine/test_richards_column.cpp": "8720423d6b8ac80acba2f8596eb1ce456543ec14ac2ed48f4ba40a672ab08b9f"
+  },
+  "limitations": [
+    "Aquifer bottom adapter pending R5",
+    "Heat/age/MSX porous transport pending",
+    "Saved Richards profile histories pending",
+    "Broader soils and application coupling-step convergence pending"
+  ],
+  "gui_build": "SWMMVis compiled, packaged engine refreshed, deep signature verified",
+  "examples": "drainage.inp and backwater.inp both complete 300 routing steps",
+  "gui_source_sha256": {
+    "include/lid/lidcontrolprovider.h": "a03f201848efa9c83320228dafa08ffefec3a13894054920496bc129d35ae95c",
+    "src/lid/lidcontrolprovider.cpp": "0371064766a60f36c310ef8db7f43cb2e601ddfc4a6eb707d07d6e7143cf92e5",
+    "src/lid/lidcontrolregistry.cpp": "279da0d6ab2552db42b4d4ecdbc61afb1beaa5a44c84dcd1e9b3dbf9313fcaff",
+    "include/ui/models/lidnodelayermodel.h": "465baca56b353e08c7d8e5410f7f032bfedd4a18a8272e80b5728dfe7ecc4dab",
+    "src/ui/models/lidnodelayermodel.cpp": "85556518189971dadf4783d8e8867f8d9a796855c7541636f0f63b0bdaacc317",
+    "include/ui/dialogs/lidcontroleditordialog.h": "769b55b4dbb13a56445e7b13bfe04634ec07312cb51ccd8d57520b04c44c84d4",
+    "src/ui/dialogs/lidcontroleditordialog.cpp": "ba6e4b09af15ced145578fdcebe5eb9ff8aa58024edbd2dd0152d70201c3bf73",
+    "src/ui/sectionview/sectionmodelbuilders.cpp": "9bd38c36fd0159ec26f973738849274ec5c471c4c60ceb096b911c8e20e379f5",
+    "tests/gui/test_lid_treatment_editor.cpp": "ceec6696332b535158b9de4aaab36aeb91f37f961f124dd30eb6c554e3a3e4c3",
+    "tests/gui/test_lid_node_layers.cpp": "e76e635e5282b6aa1a4e307c9d5567f3a3719de0e80d2a5f1eda3d6997872ddd",
+    "tests/gui/test_sectionmodelbuilders.cpp": "87e70c43248dc62aa2e9af11a01a60b4e92d666792cf7cdb772e08a616cd49f4"
+  }
+}

@@ -187,7 +187,7 @@ void write_deck(const char* path, const char* cfg_path,
       << "[PROCESS_COMPONENTS]\n"
       << "org.hydrocouple.openswmm.heat config=\"" << cfg_path
       << "\"\n\n"
-      << "[REPORT]\nINPUT NO\n";
+      << "[REPORT]\nINPUT NO\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n";
     (void)path;
 }
 
@@ -409,7 +409,7 @@ TEST(HeatWatershedTest, RunonCarriesTheDonorsTemperature) {
           << "[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\n\n"
           << "[PROCESS_COMPONENTS]\n"
           << "org.hydrocouple.openswmm.heat config=\"_h5c.heat\"\n\n"
-          << "[REPORT]\nINPUT NO\n";
+          << "[REPORT]\nINPUT NO\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n";
     }
     SWMM_Engine e = run_and_hold("_h5c.inp", "_h5c.rpt", "_h5c.out");
     ASSERT_NE(e, nullptr);
@@ -591,8 +591,8 @@ TEST(HeatWatershedTest, AnUnknownDryPolicyIsRefused) {
 // every flux module off nothing can add or remove energy, so every
 // temperature in the model must lie inside [12, 40].
 //
-// LID layer parameters are in FEET and FEET/SECOND — see the warning in
-// test_water_age_lid.cpp; the engine does not unit-convert them (issue #131).
+// LID layer parameters are in the section's user units (PR #103 converts
+// them) — see the note in test_water_age_lid.cpp.
 // ---------------------------------------------------------------------------
 TEST(HeatWatershedTest, EveryRunonContributorKeepsTemperaturesInsideTheSources) {
     constexpr double kFloorC = 12.0;   // RAINFALL and INITIAL_STATE
@@ -619,11 +619,16 @@ TEST(HeatWatershedTest, EveryRunonContributorKeepsTemperaturesInsideTheSources) 
           << "[INFILTRATION]\nS1 3.0 0.5 4 7 0\nS2 3.0 0.5 4 7 0\n\n"
           << "[LID_CONTROLS]\n"
           << "BC1 BC\n"
-          << "BC1 SURFACE  0.05   0.0  0.1  1.0  5\n"
-          << "BC1 SOIL     0.25   0.5  0.2  0.1  2.0e-5 10.0 0.3\n"
-          << "BC1 STORAGE  1.0    0.75 0.0  0\n"
-          << "BC1 DRAIN    1.0e-3 0.5  0    0\n\n"
-          << "[LID_USAGE]\nS1 BC1 1 43560 500 50 100 0\n\n"
+          << "BC1 SURFACE  0.6    0.0  0.1  100  5\n"
+          << "BC1 SOIL     3.0    0.5  0.2  0.1  0.864  10.0 3.6\n"
+          << "BC1 STORAGE  12.0   3.0  0.0  0\n"
+          << "BC1 DRAIN    12.4708 0.5  0    0\n\n"
+          // The unit sits on S2 and its underdrain is routed to S1 (the
+          // DrainTo column): an underdrain returning to its OWN subcatchment
+          // is not run-on — legacy lid_addDrainRunon guards k != j and sends
+          // a target-less drain to the subcatchment's outlet — so the
+          // contributor this gate counts has to cross a subcatchment boundary.
+          << "[LID_USAGE]\nS2 BC1 1 43560 500 50 100 0 * S1\n\n"
           << "[JUNCTIONS]\nJ1 10.0 10 0 0 0\n\n"
           << "[DWF]\nJ1 FLOW 5.0\n\n"
           // The trailing S2 is the RouteTo column: this outfall's discharge
@@ -633,7 +638,7 @@ TEST(HeatWatershedTest, EveryRunonContributorKeepsTemperaturesInsideTheSources) 
           << "[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\n\n"
           << "[PROCESS_COMPONENTS]\n"
           << "org.hydrocouple.openswmm.heat config=\"_h5i.heat\"\n\n"
-          << "[REPORT]\nINPUT NO\n";
+          << "[REPORT]\nINPUT NO\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n";
     }
     SWMM_Engine e = run_and_hold("_h5i.inp", "_h5i.rpt", "_h5i.out");
     ASSERT_NE(e, nullptr);
@@ -717,18 +722,21 @@ TEST(HeatWatershedTest, EveryRunonContributorKeepsTemperaturesInsideTheSources) 
             << " C, above the " << kCeilC << " C warmest source.";
     }
 
-    // (2) S1's uncounted contributor must leave the mean over LESS water,
-    //     not drag it toward zero: with nothing known, the fallback is the
-    //     rain temperature exactly.
-    EXPECT_NEAR(hs.subcatch_runoff_temp[0], kFloorC, 1.0e-9)
-        << "S1 sheds at " << hs.subcatch_runoff_temp[0] << " C. Its only "
-           "run-on is a LID underdrain, which since H5b leaves at its own "
-           "storage-layer temperature — and with no flux enabled the whole "
-           "column is still at the " << kFloorC << " C it was rained on "
-           "with. Before H5b this held for a different reason: the known "
-           "rate was zero and the fallback was the rain temperature. Both "
-           "answers are " << kFloorC << ", which is why the deck could not "
-           "tell them apart and the completeness assertion above exists.";
+    // (2) S1's only run-on is S2's underdrain. S2 receives the outfall's
+    //     40 C dry-weather return, its LID percolates that water, and the
+    //     drain leaves at the storage layer's temperature — so S1 must shed
+    //     ABOVE the rain. This used to assert S1 == 12 C exactly, when the
+    //     unit sat on S1 and recirculated onto itself at the column's
+    //     rain-fed temperature; that reading could not tell "carried at 12"
+    //     from "fell back to 12" (the comment said so). Moving the unit
+    //     across a subcatchment boundary (LID fix round, 2026-08-30) makes
+    //     the carried temperature distinguishable from the fallback.
+    EXPECT_GT(hs.subcatch_runoff_temp[0], kFloorC + 1.0e-3)
+        << "S1 sheds at " << hs.subcatch_runoff_temp[0] << " C, the rain "
+           "temperature. Its only run-on is S2's underdrain, which carries "
+           "outfall-warmed water — the drain temperature is not reaching "
+           "addRunonTemperatureAt, or S2's LID is not receiving its run-on.";
+    EXPECT_LE(hs.subcatch_runoff_temp[0], kCeilC + 1.0e-9);
 
     // (3) S2's counted contributor must actually be carried. Without it the
     //     same fallback returns exactly the rain temperature, so this is a
@@ -880,7 +888,7 @@ TEST(HeatWatershedTest, HeatOffLeavesTheWatershedStateEmpty) {
       << "[OUTFALLS]\nOUT 9.0 FREE  NO\n\n"
       << "[CONDUITS]\nC1 J1 OUT 400 0.013 0 0 0\n\n"
       << "[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\n\n"
-      << "[REPORT]\nINPUT NO\n";
+      << "[REPORT]\nINPUT NO\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n";
     f.close();
 
     SWMM_Engine e = run_and_hold("_h5g.inp", "_h5g.rpt", "_h5g.out");

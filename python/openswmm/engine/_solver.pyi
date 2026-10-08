@@ -1,3 +1,6 @@
+
+from ._coupling import Coupling
+from ._groundwater import Groundwater
 # SPDX-License-Identifier: Apache-2.0
 #
 # Copyright 2026 Caleb Buahin
@@ -41,15 +44,20 @@ if TYPE_CHECKING:
     from ._edit import ModelEditor
     from ._forcing import Forcing
     from ._gages import Gages
+    from ._heat import Heat
     from ._hotstart import SaveSchedule
     from ._infrastructure import Infrastructure
     from ._inflows import Inflows
+    from ._initial_quality import InitialQuality
     from ._links import Links
     from ._massbalance import MassBalance
     from ._nodes import Nodes
     from ._pollutants import Pollutants
+    from ._process_components import ProcessComponents
     from ._quality import Quality
+    from ._reactions import Reactions
     from ._spatial import Spatial
+    from ._water_age import WaterAge
     from ._statistics import Statistics
     from ._subcatchments import Aquifers, Snowpacks, Subcatchments
     from ._tables import Patterns, Tables
@@ -217,6 +225,9 @@ def run_with_callback(
 # ---------------------------------------------------------------------------
 
 
+from ._transport import Transport, ThreadInfo, EffectiveThreads, TransportCell
+from ._enums import TransportDomain, TransportClass, InpProfile
+
 class Solver:
     """SWMM engine lifecycle manager.
 
@@ -232,6 +243,17 @@ class Solver:
                 if elapsed >= timedelta(hours=24):
                     break
     """
+    def write_staged(self, final_path: _PathLike, mapper: Callable[[str, int], _PathLike | None]) -> None: ...
+    def write_compat(self, path: _PathLike, profile: InpProfile) -> None: ...
+
+    @property
+    def thread_info(self) -> ThreadInfo: ...
+    def effective_threads(self, requested: int = ...) -> EffectiveThreads: ...
+    @property
+    def transport_matrix(self) -> dict[TransportDomain, dict[TransportClass, TransportCell]]: ...
+    @property
+    def transport(self) -> Transport: ...
+
 
     def __init__(
         self,
@@ -248,6 +270,11 @@ class Solver:
     def open(self, plugin_lib: Optional[_PathLike] = None) -> None: ...
     def initialize(self) -> None: ...
     def start(self, save_results: bool = True) -> None: ...
+    def advance_to(self, seconds: float) -> timedelta: ...
+    @property
+    def coupling(self) -> Coupling: ...
+    @property
+    def groundwater2d(self) -> Groundwater: ...
     def step(self) -> timedelta: ...
     def stride(self, n_steps: int) -> timedelta: ...
     def end(self) -> None: ...
@@ -379,6 +406,16 @@ class Solver:
     def spatial(self) -> "Spatial": ...
     @property
     def quality(self) -> "Quality": ...
+    @property
+    def initial_quality(self) -> "InitialQuality": ...
+    @property
+    def reactions(self) -> "Reactions": ...
+    @property
+    def heat(self) -> "Heat": ...
+    @property
+    def water_age(self) -> "WaterAge": ...
+    @property
+    def process_components(self) -> "ProcessComponents": ...
     @property
     def statistics(self) -> "Statistics": ...
     @property

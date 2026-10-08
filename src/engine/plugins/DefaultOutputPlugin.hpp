@@ -107,10 +107,11 @@ private:
     int                 n_periods_  = 0;
 
     // Static-object header is written from the SimulationContext (internal
-    // units), so it still needs these two factors. Per-timestep results arrive
-    // pre-converted by the engine boundary and need no plugin-side conversion.
+    // units), so it still needs this length factor. Subcatchment area is
+    // already held in display units and needs none. Per-timestep results
+    // arrive pre-converted by the engine boundary and need no plugin-side
+    // conversion.
     double ucf_length_    = 1.0;
-    double ucf_landarea_  = 1.0;
 
     // Per-object report flags, captured during prepare() from SimulationContext
     std::vector<char> subcatch_rpt_flag_;

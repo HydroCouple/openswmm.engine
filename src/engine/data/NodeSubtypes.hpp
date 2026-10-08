@@ -54,6 +54,7 @@
 #ifndef OPENSWMM_ENGINE_NODE_SUBTYPES_HPP
 #define OPENSWMM_ENGINE_NODE_SUBTYPES_HPP
 
+#include "LidNodeData.hpp"
 #include <algorithm>
 #include <vector>
 #include <cstdint>
@@ -73,6 +74,8 @@ namespace openswmm {
  *          `storage_*` / `exfil_*` fields of NodeData.
  */
 struct StorageData {
+    std::vector<LidNodeConfig> lid;
+    std::vector<LidNodeState> lid_state;
     /** @brief Base NodeData index this row belongs to (the join key). */
     std::vector<int>         node_idx;
 
@@ -106,6 +109,11 @@ struct StorageData {
     std::vector<double>      evap_loss;
     /** @brief Exfiltration loss this timestep (ft3). */
     std::vector<double>      exfil_loss;
+    /** @brief Raw (uncapped) exfiltration rate this timestep (cfs), written by
+     *  ExfilSolver::computeAll and consumed by Router::initNodeFlows, which
+     *  applies legacy's single joint evap+exfil volume cap and books the final
+     *  exfil_loss volume. Kept as a rate so no dt round-trip perturbs bits. */
+    std::vector<double>      exfil_rate;
     /** @brief Green-Ampt suction head for exfiltration. */
     std::vector<double>      exfil_suction;
     /** @brief Green-Ampt saturated conductivity for exfiltration. */
@@ -123,7 +131,8 @@ struct StorageData {
         a.clear(); b.clear(); c.clear();
         p1.clear(); p2.clear(); p3.clear();
         seep_rate.clear(); evap_frac.clear(); evap_loss.clear(); exfil_loss.clear();
-        exfil_suction.clear(); exfil_ksat.clear(); exfil_imd.clear();
+        exfil_rate.clear();
+        exfil_suction.clear(); exfil_ksat.clear(); exfil_imd.clear(); lid.clear(); lid_state.clear();
     }
 
     /** @brief Reserve capacity for `n` rows. */
@@ -134,8 +143,8 @@ struct StorageData {
         a.reserve(un); b.reserve(un); c.reserve(un);
         p1.reserve(un); p2.reserve(un); p3.reserve(un);
         seep_rate.reserve(un); evap_frac.reserve(un);
-        evap_loss.reserve(un); exfil_loss.reserve(un);
-        exfil_suction.reserve(un); exfil_ksat.reserve(un); exfil_imd.reserve(un);
+        evap_loss.reserve(un); exfil_loss.reserve(un); exfil_rate.reserve(un);
+        exfil_suction.reserve(un); exfil_ksat.reserve(un); exfil_imd.reserve(un); lid.reserve(un); lid_state.reserve(un);
     }
 
     /** @brief Insert a default storage row for base node `i`, keeping `node_idx`
@@ -160,9 +169,12 @@ struct StorageData {
         evap_frac.insert(evap_frac.begin() + p, 0.0);
         evap_loss.insert(evap_loss.begin() + p, 0.0);
         exfil_loss.insert(exfil_loss.begin() + p, 0.0);
+        exfil_rate.insert(exfil_rate.begin() + p, 0.0);
         exfil_suction.insert(exfil_suction.begin() + p, 0.0);
         exfil_ksat.insert(exfil_ksat.begin() + p, 0.0);
         exfil_imd.insert(exfil_imd.begin() + p, 0.0);
+        lid.insert(lid.begin() + p, LidNodeConfig{});
+        lid_state.insert(lid_state.begin() + p, LidNodeState{});
         return static_cast<int>(p);
     }
 
@@ -183,9 +195,12 @@ struct StorageData {
         evap_frac.erase(evap_frac.begin() + p);
         evap_loss.erase(evap_loss.begin() + p);
         exfil_loss.erase(exfil_loss.begin() + p);
+        exfil_rate.erase(exfil_rate.begin() + p);
         exfil_suction.erase(exfil_suction.begin() + p);
         exfil_ksat.erase(exfil_ksat.begin() + p);
         exfil_imd.erase(exfil_imd.begin() + p);
+        lid.erase(lid.begin() + p);
+        lid_state.erase(lid_state.begin() + p);
     }
 };
 

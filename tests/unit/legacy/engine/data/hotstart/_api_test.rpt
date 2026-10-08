@@ -48,13 +48,13 @@
   Runoff Quality Continuity            lbs
   **************************    ----------
   Initial Buildup ..........       913.850
-  Surface Buildup ..........        14.900
+  Surface Buildup ..........        85.109
   Wet Deposition ...........         0.000
   Sweeping Removal .........         0.000
   Infiltration Loss ........         0.000
   BMP Removal ..............         0.000
-  Surface Runoff ...........         0.000
-  Remaining Buildup ........       928.750
+  Surface Runoff ...........       906.043
+  Remaining Buildup ........        92.916
   Continuity Error (%) .....         0.000
   
   
@@ -79,17 +79,17 @@
   Quality Routing Continuity           lbs
   **************************    ----------
   Dry Weather Inflow .......         0.000
-  Wet Weather Inflow .......         0.000
+  Wet Weather Inflow .......       905.493
   Groundwater Inflow .......         0.000
   RDII Inflow ..............         0.000
   External Inflow ..........         0.000
-  External Outflow .........         0.000
+  External Outflow .........       921.110
   Flooding Loss ............         0.000
   Exfiltration Loss ........         0.000
   Mass Reacted .............         0.000
   Initial Stored Mass ......         0.000
-  Final Stored Mass ........         0.000
-  Continuity Error (%) .....         0.000
+  Final Stored Mass ........         0.002
+  Continuity Error (%) .....        -1.725
   
   
   ***************************
@@ -153,15 +153,15 @@
                                  TSS
   Subcatchment                   lbs
   ----------------------------------
-  S1                           0.000
-  S2                           0.000
-  S3                           0.000
-  S4                           0.000
-  S5                           0.000
-  S6                           0.000
+  S1                         164.486
+  S2                         191.281
+  S3                          59.283
+  S4                         155.761
+  S5                         230.781
+  S6                         104.451
   S7                           0.000
   ----------------------------------
-  System                       0.000
+  System                     906.043
   
   
   ******************
@@ -234,9 +234,9 @@
                          Freq      Flow      Flow      Volume           TSS
   Outfall Node           Pcnt       CFS       CFS    10^6 gal           lbs
   -------------------------------------------------------------------------
-  O1                    98.62      2.01     71.61       1.506         0.000
+  O1                    98.62      2.01     71.61       1.506       921.297
   -------------------------------------------------------------------------
-  System                98.62      2.01     71.61       1.506         0.000
+  System                98.62      2.01     71.61       1.506       921.297
   
   
   ********************
@@ -298,19 +298,19 @@
                                  TSS
   Link                           lbs
   ----------------------------------
-  C1                           0.000
-  C2                           0.000
-  C3                           0.000
-  C4                           0.000
-  C5                           0.000
-  C6                           0.000
-  C7                           0.000
-  C8                           0.000
-  C9                           0.000
-  C10                          0.000
-  C11                          0.000
+  C1                         181.265
+  C2                         189.155
+  C3                          60.152
+  C4                          67.154
+  C5                         243.626
+  C6                         168.636
+  C7                         390.383
+  C8                         408.529
+  C9                         426.746
+  C10                        643.869
+  C11                        921.297
   
 
-  Analysis begun on:  Wed Aug 19 03:06:22 2026
-  Analysis ended on:  Wed Aug 19 03:06:22 2026
+  Analysis begun on:  Wed Oct  7 22:41:45 2026
+  Analysis ended on:  Wed Oct  7 22:41:45 2026
   Total elapsed time: < 1 sec

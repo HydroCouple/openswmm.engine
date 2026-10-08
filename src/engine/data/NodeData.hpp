@@ -178,6 +178,18 @@ struct NodeData {
     std::vector<uint8_t>    is_virtual;
 
     /**
+     * @brief Inlet-junction flag (0 = plain node, 1 = inlet junction).
+     *
+     * @details An inlet junction is a virtual junction (`is_virtual` is always
+     *          set alongside this flag) that additionally carries a street
+     *          inlet: it sits between two STREET conduits and diverts captured
+     *          gutter flow to a separate capture node through the usage row
+     *          `InletUsageStore::find_by_node_host(idx)` (INP section
+     *          [INLET_JUNCTIONS]). Refactored engine only.
+     */
+    std::vector<uint8_t>    is_inlet;
+
+    /**
      * @brief Rendering-only rim (ground) depth above the invert, project
      *        length units. 0 = unset.
      *
@@ -302,6 +314,12 @@ struct NodeData {
      *          In-memory only (not serialized to hotstart). See plan / review §11.
      */
     std::vector<double>     coupling_volume;
+    /// G-X2 (2026-09-19): 1 when the node has a two-zone aquifer bed under
+    /// it (a `[2D_AQUIFER_NODE]` row or auto-enrolment). A storage node so
+    /// flagged exchanges through the conductance channel and its own
+    /// exfiltration is skipped (one owner). Empty until the 2D router
+    /// resolved an aquifer.
+    std::vector<uint8_t>    aquifer2d_bed;
 
     /**
      * @brief Delivery queue for the 1D↔2D junction exchange (1D units, ft³).
@@ -320,6 +338,42 @@ struct NodeData {
      *          spill. In-memory only (not serialized to hotstart).
      */
     std::vector<double>     coupling_queue;
+
+    /**
+     * @brief S3 — species MASS queue for the 2D→1D junction drain, per
+     *        (node, pollutant), 1D mass units (conc × ft³).
+     * @details Filled by SurfaceRouter2D from the marcher's per-point
+     *          `exch_mass` (2D→1D drains only, at the CELL's concentration);
+     *          drained by assembleLateralInflows with the SAME rule as
+     *          `coupling_queue` (uniform rate over the remaining delivery span,
+     *          flushed when remaining ≤ dt) so mass and water arrive in the
+     *          same proportions. Flat 2D `[node * n_pollutants + pollutant]`.
+     *          Never negative: a 1D→2D spill removes mass from the node
+     *          IMPLICITLY through the reduced mixing volume (the CSTR takes
+     *          every outflow at the mixed concentration), so no debit is
+     *          queued for it. In-memory only.
+     */
+    std::vector<double>     coupling_qual_queue;
+    /** @brief S3 — this step's delivered 2D→1D species mass RATE per
+     *  (node, pollutant) (mass/sec); read by QualitySolver::addCouplingLoads(). */
+    std::vector<double>     coupling_qual_inflow;
+
+    /**
+     * @brief S4 — the tuple's age-volume and temperature-volume halves,
+     *        per node (age·ft³ / °C·ft³ queued; age·ft³/s / °C·ft³/s
+     *        delivered). Same queue/drain rule as `coupling_qual_queue`;
+     *        consumed by addCouplingLoads into `node_age_vol_in` /
+     *        `node_temp_vol_in` when the 2D surface carries the row
+     *        (`coupling_tuple_age` / `coupling_tuple_temp`), which replaces
+     *        the EXTERNAL_INFLOW stand-in S3 used. Sized with the node
+     *        count (cheap); untouched on decks without a 2D surface.
+     */
+    std::vector<double>     coupling_age_vol_queue;
+    std::vector<double>     coupling_temp_vol_queue;
+    std::vector<double>     coupling_age_vol_inflow;
+    std::vector<double>     coupling_temp_vol_inflow;
+    bool coupling_tuple_age  = false;  ///< set by SurfaceRouter2D at initialize
+    bool coupling_tuple_temp = false;
 
     // -----------------------------------------------------------------------
     // Quality mass inflow assembly arrays
@@ -358,6 +412,17 @@ struct NodeData {
     std::vector<double>     ext_qual_mass;
 
     /**
+     * @brief Per-node DWF pollutant mass-rate ADJUSTMENT (mass/sec), net of
+     *        the global default: row mass (q·pattern-adjusted value) minus
+     *        q·Pollut.dwfConcen when the global default is set. Adding it on
+     *        top of the global-default DWF load reproduces legacy
+     *        addDryWeatherInflows' add-row-then-subtract-default exactly.
+     *        Flat 2D: [node * n_pollutants + pollutant].
+     * @see Legacy: routing.c addDryWeatherInflows() pollutant portion
+     */
+    std::vector<double>     dwf_qual_mass;
+
+    /**
      * @brief LID drain quality mass rate per (node, pollutant) (mass/sec).
      * @details Set once per runoff step (cleared at runoff step start); read
      *          each routing step by addWetWeatherLoads() → added to qual_mass_in.
@@ -375,6 +440,27 @@ struct NodeData {
      * @see Legacy: lid.c lid_addDrainInflow() Node[k].newLatFlow contribution
      */
     std::vector<double>     lid_drain_qual_vol;
+    /// Previous runoff step's lid_drain_qual_load, for legacy
+    /// lid_addDrainInflow's routing-step interpolation:
+    ///   w = (1-f)*oldDrainFlow*oldQual + f*newDrainFlow*newQual
+    /// (lid.c). Rolled from the current arrays at the top of each runoff
+    /// step, before A6b refills them.
+    std::vector<double>     lid_drain_qual_load_old;
+    /// Previous runoff step's lid_drain_qual_vol (the q half of the pair).
+    std::vector<double>     lid_drain_qual_vol_old;
+    /**
+     * @brief LID drain WATER inflow rate per node (ft3/sec) — the routing
+     *        twin of `lid_drain_qual_vol`.
+     * @details Set once per runoff step by the LID block in stepRunoff() and
+     *          read by assembleLateralInflows() every routing step until the
+     *          next runoff step overwrites it. It is NOT `ext_inflow`: that
+     *          array is cleared by clearInflowSources() at the top of every
+     *          routing step, i.e. AFTER stepRunoff has added to it, so a drain
+     *          booked there never reached the network (LID fix round,
+     *          2026-08-30 — every drain-to-node case, not only the target-less
+     *          one). Legacy books it as Node.newLatFlow + EXTERNAL_INFLOW.
+     */
+    std::vector<double>     lid_drain_inflow;
 
     // -----------------------------------------------------------------------
     // Per-node quality state — flat 2D: [node * n_pollutants + pollutant]
@@ -438,7 +524,13 @@ struct NodeData {
     std::vector<double>     crown_elev;
 
     /**
-     * @brief Node degree — number of connecting links (+ve downstream, -ve upstream terminal).
+     * @brief legacy Node.degree: the OUTFLOW-link count (toposort_sortLinks,
+     *        a reversed conduit counted from its other end, an outfall's
+     *        link at its downstream node), negated under the dynamic wave
+     *        for a node with no inflow links (validateGeneralLayout):
+     *        < 0 headwater (EXTRAN surcharge corr 0.6), == 0 terminal.
+     *        Set in SWMMEngine::initialize (the resolver's connectivity
+     *        count is provisional).
      * @see Legacy: Node[i].degree
      */
     std::vector<int>        degree;
@@ -454,6 +546,20 @@ struct NodeData {
      * @see Legacy: Node[i].fullVolume
      */
     std::vector<double>     full_volume;
+
+    /**
+     * @brief Full volume in the LEGACY convention (legacy Node.fullVolume as
+     *        node_validate leaves it): 0 for junctions, outfalls and dividers,
+     *        the pump curve's maximum volume for a Type-1 pump's wet well
+     *        (link.c:1529), the curve volume for storage.
+     *
+     * The dynamic wave books node volume in this convention, so a ponded
+     * junction holds only the water above its rim and a plain junction none;
+     * that is what the .out NODE_VOLUME, the routing mass balance, control
+     * rules and quality mixing see. full_volume keeps MIN_SURFAREA*fullDepth
+     * for junctions because the FV mesh derives its node area from it.
+     */
+    std::vector<double>     rpt_full_volume;
 
     // -----------------------------------------------------------------------
     // Previous-step state (for output interpolation / CFL checks)
@@ -664,6 +770,7 @@ struct NodeData {
         sur_depth.assign(un, 0.0);
         ponded_area.assign(un, 0.0);
         is_virtual.assign(un, 0);
+        is_inlet.assign(un, 0);
         rim_depth.assign(un, 0.0);
 
         // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables.
@@ -681,12 +788,22 @@ struct NodeData {
         coupling_inflow.assign(un, 0.0);
         coupling_volume.assign(un, 0.0);
         coupling_queue.assign(un, 0.0);
+        coupling_age_vol_queue.assign(un, 0.0);
+        coupling_temp_vol_queue.assign(un, 0.0);
+        coupling_age_vol_inflow.assign(un, 0.0);
+        coupling_temp_vol_inflow.assign(un, 0.0);
         qual_mass_in.clear();
         iface_qual_mass.clear();
+        coupling_qual_queue.clear();
+        coupling_qual_inflow.clear();
         ext_qual_mass.clear();
+        dwf_qual_mass.clear();
         qual_vol_in.assign(un, 0.0);
         lid_drain_qual_load.clear();
         lid_drain_qual_vol.assign(un, 0.0);
+        lid_drain_qual_load_old.clear();
+        lid_drain_qual_vol_old.assign(un, 0.0);
+        lid_drain_inflow.assign(un, 0.0);
         inflow.assign(un, 0.0);
         outflow.assign(un, 0.0);
         overflow.assign(un, 0.0);
@@ -695,6 +812,7 @@ struct NodeData {
         degree.assign(un, 0);
         old_net_inflow.assign(un, 0.0);
         full_volume.assign(un, 0.0);
+        rpt_full_volume.assign(un, 0.0);
         old_depth.assign(un, 0.0);
         old_volume.assign(un, 0.0);
         old_lat_flow.assign(un, 0.0);
@@ -745,6 +863,7 @@ struct NodeData {
         g(invert_elev, 0.0); g(full_depth, 0.0); g(init_depth, 0.0);
         g(sur_depth, 0.0); g(ponded_area, 0.0);
         g(is_virtual, static_cast<uint8_t>(0));
+        g(is_inlet, static_cast<uint8_t>(0));
         g(rim_depth, 0.0);
         // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables.
         g(depth, 0.0); g(head, 0.0); g(volume, 0.0);
@@ -752,11 +871,15 @@ struct NodeData {
         g(runoff_inflow, 0.0); g(gw_inflow, 0.0); g(ext_inflow, 0.0);
         g(dwf_inflow, 0.0); g(rdii_inflow, 0.0); g(iface_inflow, 0.0);
         g(coupling_inflow, 0.0); g(coupling_volume, 0.0); g(coupling_queue, 0.0);
+        g(coupling_age_vol_queue, 0.0); g(coupling_temp_vol_queue, 0.0);
+        g(coupling_age_vol_inflow, 0.0); g(coupling_temp_vol_inflow, 0.0);
         qual_vol_in.resize(un, 0.0);
         lid_drain_qual_vol.resize(un, 0.0);
+        lid_drain_qual_vol_old.resize(un, 0.0);
+        lid_drain_inflow.resize(un, 0.0);
         g(inflow, 0.0); g(outflow, 0.0); g(overflow, 0.0);
         g(losses, 0.0); g(crown_elev, 0.0); g(degree, 0);
-        g(old_net_inflow, 0.0); g(full_volume, 0.0);
+        g(old_net_inflow, 0.0); g(full_volume, 0.0); g(rpt_full_volume, 0.0);
         g(old_depth, 0.0); g(old_volume, 0.0); g(old_lat_flow, 0.0);
         g(old_inflow, 0.0);
         comments.resize(un, std::string{});
@@ -804,13 +927,15 @@ struct NodeData {
         if (type.capacity() >= un) return;
         auto r = [&](auto& vec) { vec.reserve(un); };
         r(type); r(invert_elev); r(full_depth); r(init_depth);
-        r(sur_depth); r(ponded_area); r(is_virtual); r(rim_depth); r(depth);
+        r(sur_depth); r(ponded_area); r(is_virtual); r(is_inlet); r(rim_depth); r(depth);
         r(head); r(volume); r(lat_flow); r(user_lat_flow);
         r(runoff_inflow); r(gw_inflow); r(ext_inflow); r(dwf_inflow);
         r(rdii_inflow); r(iface_inflow); r(coupling_inflow); r(coupling_volume);
         r(coupling_queue); r(inflow); r(outflow); r(overflow);
+        r(coupling_age_vol_queue); r(coupling_temp_vol_queue);
+        r(coupling_age_vol_inflow); r(coupling_temp_vol_inflow);
         r(losses); r(crown_elev); r(degree); r(old_net_inflow);
-        r(full_volume); r(old_depth); r(old_volume); r(old_lat_flow);
+        r(full_volume); r(rpt_full_volume); r(old_depth); r(old_volume); r(old_lat_flow);
         r(old_inflow); r(rpt_flag); r(stat_vol_flooded); r(stat_time_flooded);
         r(stat_max_depth); r(stat_max_overflow); r(stat_max_overflow_date); r(stat_sum_depth);
         r(stat_sum_volume); r(stat_max_depth_date); r(stat_max_rpt_depth); r(stat_max_inflow_date);
@@ -818,7 +943,7 @@ struct NodeData {
         r(stat_storage_max_outflow);
         r(stat_lat_inflow_vol); r(stat_total_inflow_vol); r(stat_total_outflow_vol); r(stat_outfall_avg_flow);
         r(stat_outfall_max_flow); r(stat_outfall_periods); r(stat_non_converged_count); r(stat_time_courant_critical);
-        r(qual_vol_in); r(lid_drain_qual_vol); r(comments); r(tags);
+        r(qual_vol_in); r(lid_drain_qual_vol); r(lid_drain_inflow); r(comments); r(tags);
     }
 
     /**
@@ -835,7 +960,7 @@ struct NodeData {
         auto e = [&](auto& v) { if (ui < v.size()) v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx)); };
 
         e(type); e(invert_elev); e(full_depth); e(init_depth); e(sur_depth); e(ponded_area);
-        e(is_virtual); e(rim_depth);
+        e(is_virtual); e(is_inlet); e(rim_depth);
 
         // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables;
         // its rows are erased/renumbered by NodeSubtypes::erase_node (called by the
@@ -845,9 +970,11 @@ struct NodeData {
         e(runoff_inflow); e(gw_inflow); e(ext_inflow); e(dwf_inflow);
         e(rdii_inflow); e(iface_inflow);
         e(coupling_inflow); e(coupling_volume); e(coupling_queue);
-        e(qual_vol_in); e(lid_drain_qual_vol);
+        e(coupling_age_vol_queue); e(coupling_temp_vol_queue);
+        e(coupling_age_vol_inflow); e(coupling_temp_vol_inflow);
+        e(qual_vol_in); e(lid_drain_qual_vol); e(lid_drain_inflow);
         e(inflow); e(outflow); e(overflow); e(losses);
-        e(crown_elev); e(degree); e(old_net_inflow); e(full_volume);
+        e(crown_elev); e(degree); e(old_net_inflow); e(full_volume); e(rpt_full_volume);
         e(old_depth); e(old_volume); e(old_lat_flow); e(old_inflow);
         e(comments); e(tags); e(rpt_flag);
 
@@ -871,7 +998,9 @@ struct NodeData {
             };
             erase2d(conc); erase2d(conc_old);
             erase2d(qual_mass_in); erase2d(iface_qual_mass);
+            erase2d(coupling_qual_queue); erase2d(coupling_qual_inflow);
             erase2d(ext_qual_mass);
+            erase2d(dwf_qual_mass);
             erase2d(lid_drain_qual_load); erase2d(user_conc_mass_flux);
             if (ui < hrt.size()) hrt.erase(hrt.begin() + static_cast<std::ptrdiff_t>(idx));
         }
@@ -913,7 +1042,10 @@ struct NodeData {
             user_conc_mass_flux.assign(total, 0.0);
             qual_mass_in.assign(total, 0.0);
             iface_qual_mass.assign(total, 0.0);
+            coupling_qual_queue.assign(total, 0.0);
+            coupling_qual_inflow.assign(total, 0.0);
             ext_qual_mass.assign(total, 0.0);
+            dwf_qual_mass.assign(total, 0.0);
             lid_drain_qual_load.assign(total, 0.0);
         }
     }
@@ -933,6 +1065,7 @@ struct NodeData {
         sur_depth.shrink_to_fit();
         ponded_area.shrink_to_fit();
         is_virtual.shrink_to_fit();
+        is_inlet.shrink_to_fit();
         rim_depth.shrink_to_fit();
 
         // Subtype config (storage/outfall/divider) lives in NodeSubtypes side-tables.
@@ -950,9 +1083,14 @@ struct NodeData {
         coupling_inflow.shrink_to_fit();
         coupling_volume.shrink_to_fit();
         coupling_queue.shrink_to_fit();
+        coupling_age_vol_queue.shrink_to_fit(); coupling_temp_vol_queue.shrink_to_fit();
+        coupling_age_vol_inflow.shrink_to_fit(); coupling_temp_vol_inflow.shrink_to_fit();
         qual_mass_in.shrink_to_fit();
         iface_qual_mass.shrink_to_fit();
+        coupling_qual_queue.shrink_to_fit();
+        coupling_qual_inflow.shrink_to_fit();
         ext_qual_mass.shrink_to_fit();
+        dwf_qual_mass.shrink_to_fit();
         qual_vol_in.shrink_to_fit();
         conc.shrink_to_fit();
         conc_old.shrink_to_fit();
@@ -965,6 +1103,7 @@ struct NodeData {
         degree.shrink_to_fit();
         old_net_inflow.shrink_to_fit();
         full_volume.shrink_to_fit();
+        rpt_full_volume.shrink_to_fit();
         old_depth.shrink_to_fit();
         old_volume.shrink_to_fit();
         old_lat_flow.shrink_to_fit();
@@ -1002,15 +1141,28 @@ struct NodeData {
      * @brief Snapshot current state into old-step arrays before solving.
      */
     void save_state() noexcept {
+        save_hyd_state();
+        save_lat_qual_state();
+    }
+
+    /// Legacy node_setOldHydState (node.c:294-299): oldDepth, oldVolume,
+    /// oldFlowInflow, oldNetInflow — rolled by routeFlow, i.e. ONLY on a
+    /// step that is actually routed (a SKIP_STEADY_STATE step keeps the last
+    /// routed step's old/new pair for its reports and its steady test).
+    void save_hyd_state() noexcept {
         std::copy(depth.begin(),    depth.end(),    old_depth.begin());
         std::copy(volume.begin(),   volume.end(),   old_volume.begin());
-        std::copy(lat_flow.begin(), lat_flow.end(), old_lat_flow.begin());
-        // Legacy node_setOldHydState (node.c:294): oldFlowInflow = inflow
         std::copy(inflow.begin(),   inflow.end(),   old_inflow.begin());
         // Save net inflow for trapezoidal averaging in next step
         for (std::size_t i = 0; i < inflow.size(); ++i) {
             old_net_inflow[i] = inflow[i] - outflow[i];
         }
+    }
+
+    /// Legacy initSystemInflows (oldLatFlow = newLatFlow) and
+    /// node_setOldQualState — rolled every routing step, routed or not.
+    void save_lat_qual_state() noexcept {
+        std::copy(lat_flow.begin(), lat_flow.end(), old_lat_flow.begin());
         std::copy(conc.begin(), conc.end(), conc_old.begin());
     }
 
@@ -1047,6 +1199,12 @@ struct NodeData {
         std::fill(coupling_inflow.begin(), coupling_inflow.end(), 0.0);
         std::fill(coupling_volume.begin(), coupling_volume.end(), 0.0);
         std::fill(coupling_queue.begin(), coupling_queue.end(), 0.0);
+        std::fill(coupling_qual_queue.begin(), coupling_qual_queue.end(), 0.0);
+        std::fill(coupling_qual_inflow.begin(), coupling_qual_inflow.end(), 0.0);
+        std::fill(coupling_age_vol_queue.begin(),  coupling_age_vol_queue.end(),  0.0);
+        std::fill(coupling_temp_vol_queue.begin(), coupling_temp_vol_queue.end(), 0.0);
+        std::fill(coupling_age_vol_inflow.begin(),  coupling_age_vol_inflow.end(),  0.0);
+        std::fill(coupling_temp_vol_inflow.begin(), coupling_temp_vol_inflow.end(), 0.0);
         clearInflowSources();
         std::fill(conc.begin(), conc.end(), 0.0);
         std::fill(conc_old.begin(), conc_old.end(), 0.0);
@@ -1070,6 +1228,7 @@ struct NodeData {
         std::fill(iface_inflow.begin(),  iface_inflow.end(),  0.0);
         std::fill(iface_qual_mass.begin(), iface_qual_mass.end(), 0.0);
         std::fill(ext_qual_mass.begin(),   ext_qual_mass.end(),   0.0);
+        std::fill(dwf_qual_mass.begin(),   dwf_qual_mass.end(),   0.0);
         std::fill(qual_mass_in.begin(),  qual_mass_in.end(),  0.0);
         std::fill(qual_vol_in.begin(),   qual_vol_in.end(),   0.0);
     }

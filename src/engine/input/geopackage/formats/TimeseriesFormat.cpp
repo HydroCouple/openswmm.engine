@@ -24,6 +24,7 @@
  */
 
 #include "TimeseriesFormat.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 
 #include "../../../core/DateTime.hpp"
 
@@ -34,7 +35,7 @@ namespace openswmm::gpkg::formats {
 
 FormatResult parseTimeseriesText(const std::string&          path,
                                   std::vector<TimeseriesRow>& rows) {
-    std::FILE* fp = std::fopen(path.c_str(), "r");
+    std::FILE* fp = openswmm::io::fopen_utf8(path, "r");
     if (!fp) return fail("could not open '" + path + "' for reading");
 
     char line[512];
@@ -67,7 +68,7 @@ FormatResult parseTimeseriesText(const std::string&          path,
 
 FormatResult writeTimeseriesText(const std::string&                path,
                                   const std::vector<TimeseriesRow>& rows) {
-    std::FILE* fp = std::fopen(path.c_str(), "w");
+    std::FILE* fp = openswmm::io::fopen_utf8(path, "w");
     if (!fp) return fail("could not open '" + path + "' for writing");
 
     for (const auto& r : rows) {

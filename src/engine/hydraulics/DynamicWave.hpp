@@ -51,6 +51,7 @@
 #include "../data/LinkData.hpp"
 #include <cstdint>
 #include <functional>
+#include <string>
 #include <vector>
 
 namespace openswmm {
@@ -157,7 +158,11 @@ struct DWNodeArrays {
 enum class SurchargeMethod : int {
     EXTRAN = 0,  ///< Classic EXTRAN approach — dQ/dH for surcharged nodes
     SLOT   = 1,  ///< Preissmann slot — fictitious narrow slot above crown
-    DYNAMIC_SLOT = 2   ///< Dynamic slot — slot width varies with flow conditions (experimental) Sharior, S., Hodges, B.R., & Vasconcelos, J.G. (2023). Generalized, Dynamic, and Transient-Storage Form of the Preissmann Slot. Journal of Hydraulic Engineering, 149(11), 04023046.
+    DYNAMIC_SLOT = 2,  ///< Dynamic slot — slot width varies with flow conditions (experimental) Sharior, S., Hodges, B.R., & Vasconcelos, J.G. (2023). Generalized, Dynamic, and Transient-Storage Form of the Preissmann Slot. Journal of Hydraulic Engineering, 149(11), 04023046.
+    TPA    = 3   ///< Two-component pressure approach (experimental, issue #156):
+                 ///< constant-width slot w = g·A_full/a² above the crown plus a
+                 ///< per-conduit sub-atmospheric latch below it. Vasconcelos,
+                 ///< Wright & Roe (2006), J. Hydraul. Eng. 132(6).
 };
 
 /**
@@ -194,12 +199,17 @@ public:
      * @brief Set the number of OpenMP threads for parallel loops.
      *
      * @details Called after init() when the thread count is finalized.
-     *          A threshold is applied: if n_links < 4 * n, threading is
-     *          disabled (matching legacy dynwave.c behaviour).
+     *          Resolution (threadinfo::dwThreads): 0 = auto —
+     *          omp_get_max_threads(), the conduits-per-thread gate and the
+     *          Apple Silicon P-core clamp; N > 0 = honoured exactly, subject
+     *          only to the conduits-per-thread gate, with warnings when N
+     *          exceeds the machine / runtime limits. SWMM_DW_THREADS forces
+     *          the count outright (warned).
      *
-     * @param n  Requested thread count (0 = use omp_get_max_threads()).
+     * @param n         Requested thread count ([OPTIONS] THREADS).
+     * @param warnings  Optional sink for human-readable warnings.
      */
-    void setNumThreads(int n);
+    void setNumThreads(int n, std::vector<std::string>* warnings = nullptr);
 
     /// Callback for computing non-conduit link flows inside the Picard loop.
     /// Parameters: (ctx, dt, picard_step) where step=0 is first iteration.
@@ -231,12 +241,48 @@ public:
     double getRoutingStep(SimulationContext& ctx,
                           double fixed_step, double courant_factor);
 
+    /**
+     * @brief Fold this step into the per-conduit time step summary
+     *        ([REPORT] LINK_STEPS).
+     * @details Reporting only — reads the end-of-step state and touches no
+     *          solver state. Each conduit's CFL step (getLinkStep scaled by
+     *          `courant_factor`, capped at `fixed_step`) is weighted by `dt`;
+     *          a conduit counts as converged when both end nodes finished the
+     *          Picard loop converged (an outfall end always counts).
+     */
+    void accumulateLinkStepStats(SimulationContext& ctx, double dt,
+                                 double fixed_step, double courant_factor) const;
+
     double head_tol   = DEFAULT_HEAD_TOL;
     int    max_trials = DEFAULT_MAX_TRIALS;
     double omega      = OMEGA;
     SurchargeMethod surcharge_method = SurchargeMethod::EXTRAN;
     NodeContinuity  node_continuity  = NodeContinuity::EXPLICIT;
     bool   anderson_accel = false;       ///< Enable Anderson acceleration
+
+    /// Unsteady friction (issue #156 Phase 3): 0 = NONE (default, bit-inert),
+    /// 1 = VITKOVSKY. Folded into the momentum denominator (so dqdh_ stays
+    /// consistent with the surcharge Jacobian) with the same dead-band and
+    /// half-momentum clamp as kernels::ufUpdate on the FV side.
+    int    unsteady_friction = 0;
+    double uf_k3 = 0.015;  ///< Brunone-type k3; consumed only when active.
+
+    /// TPA acoustic celerity a (PROJECT length units per second, converted to
+    /// ft/s at init like FV_SLOT_CELERITY). Sets the constant slot width
+    /// w_tpa = g·A_full/a² per conduit (TPA plan §B1). Issue #156.
+    double tpa_celerity = 100.0;
+
+    /// Cross-link ∂V/∂x stencil for UF (issue #156). A full link has equal
+    /// end areas, so the within-link |v2−v1| estimator is structurally ZERO
+    /// in exactly the pressurized cases UF exists for (measured: pure added
+    /// inertia, slight ANTI-damping). The gradient therefore comes from the
+    /// neighboring conduits' in-place velocities across simple degree-2
+    /// conduit junctions. Momentum runs in serial conduit order when UF is
+    /// active, preserving the existing serial stencil at every team size.
+    /// Built once in init() when unsteady_friction != 0; -1 = no
+    /// simple neighbor on that side (falls back one-sided / within-link).
+    std::vector<int>    uf_nb_up_, uf_nb_dn_;
+    std::vector<int8_t> uf_sg_up_, uf_sg_dn_;   ///< +1 same sense, -1 opposed
 
     /// Evaporation rate (ft/s) — set by Router::step() each timestep so that
     /// solveMomentumBatch can recompute dq6 per Picard iteration (Gap #14).
@@ -288,6 +334,11 @@ private:
     // timestep, or per outfall update.
     // ------------------------------------------------------------------------
     std::vector<int>    tile_uj_;            ///< == conduit_idx_, co-located with rest
+    /// ConduitData row of tile entry ci. NOT the tile index: conduit_idx_
+    /// skips DUMMY-shaped conduits, so every ConduitData array (length,
+    /// seep_rate, evap_loss_rate, inlet_control, …) must be indexed by this,
+    /// never by ci — the two only coincide on a deck with no DUMMY conduit.
+    std::vector<int>    tile_crow_;
     std::vector<int>    tile_n1_;            ///< links.node1[uj] for ci
     std::vector<int>    tile_n2_;            ///< links.node2[uj]
     std::vector<double> tile_inv1_elev_;     ///< nodes.invert_elev[node1]
@@ -300,7 +351,7 @@ private:
     std::vector<double> tile_w_max_;         ///< links.xsect_w_max
     std::vector<double> tile_length_;        ///< cached_length_ = max(mod_length, length); used for arithmetic stability
     std::vector<double> tile_inv_length_;    ///< inv_length_
-    std::vector<double> tile_links_length_;  ///< raw ConduitData.length — used for volume calculations only
+    std::vector<double> tile_links_length_;  ///< routing length (legacy link_getLength) — volume and the dq6 divisor
     std::vector<double> tile_beta_;          ///< ConduitData.beta
     std::vector<double> tile_q_max_;         ///< ConduitData.q_max
     std::vector<double> tile_rough_factor_;  ///< ConduitData.rough_factor
@@ -332,6 +383,8 @@ private:
     std::vector<double>  tile_loss_outlet_;
     std::vector<double>  tile_loss_avg_;     ///< ConduitData.loss_avg
     std::vector<double>  tile_roughness_;    ///< ConduitData.roughness (force-main detection)
+    std::vector<double>  tile_fm_sbot_;      ///< Force-main sBot rough factor (legacy link.c:1127-1131, incl. lengthFactor)
+    std::vector<double>  tile_fm_rbot_;      ///< Force-main C / roughness height (xsect rBot) for the D-W friction factor
     std::vector<uint8_t> tile_has_flap_gate_;
     std::vector<int8_t>  tile_direction_;
 
@@ -381,6 +434,10 @@ private:
     std::vector<double> sigma_;      ///< Inertial damping factor
     std::vector<double> dqdh_;       ///< dQ/dH for node update
     std::vector<double> new_flow_;   ///< Computed flow this iteration
+    /// Per-BARREL flow from the conduit's last solve — legacy Conduit.q1,
+    /// read back as qLast. Rebuilding it as links.flow / barrels is not
+    /// exact once barrels > 1 ((q*6)/6 != q in the last bit).
+    std::vector<double> q1_;
 
     // Per-link area from previous iteration (for unsteady term)
     std::vector<double> area_old_;
@@ -443,6 +500,17 @@ private:
     std::vector<int32_t>   vj_pair_n1_;
     std::vector<int32_t>   vj_pair_n2_;
 
+    /// Wetting floor for a virtual junction that receives lateral inflow
+    /// (plans/VJ_LATERAL_INFLOW_PLAN_2026-09-04.md): the pair's natural
+    /// half-link free-surface area evaluated at the seed depth
+    /// kVjWetSeedFrac · y_full, so an imposed lateral can wet a dry pair
+    /// without dividing dV by a vanishing area — and without the fixed
+    /// MIN_SURFAREA storage the feature exists to remove. max(natural, floor)
+    /// is continuous at the seed depth and inert above it. Zero for every
+    /// other node; read only when is_virtual && lat_flow != 0.
+    static constexpr double kVjWetSeedFrac = 0.02;
+    std::vector<double>    vj_wet_floor_;
+
     /// Build vjunc_ / vj_of_link_ from topology (called from init(), post-CSR).
     void buildVirtualJunctionPairs(const SimulationContext& ctx);
     /// Per-Picard-iteration pair cache: shared sigma, upwind states, dq4j.
@@ -467,6 +535,7 @@ private:
         double  ponded_area;
         double  sur_depth;
         double  full_volume;
+        double  rpt_full_volume; ///< legacy Node.fullVolume convention (NodeData::rpt_full_volume)
         int32_t degree;
         uint8_t is_storage;
         uint8_t is_outfall;
@@ -523,9 +592,8 @@ private:
     /// persistent team: new_flow_ pre-init, per-iterate loss recompute,
     /// static-slot/EXTRAN STEP E geometry overrides, momentum category
     /// classification, momentum kernel dispatch, and links.flow commit.
-    /// Every sub-step reads/writes ONLY its own conduit's elements, so the
-    /// fusion preserves the exact per-element operation order of the former
-    /// separate passes — bit-exact at any thread count.
+    /// UF's cross-link in-place reads require serial conduit order; all
+    /// other configurations use the team's parallel conduit loop.
     void momentumKernels(SimulationContext& ctx, double dt, int step);
 
     /// Per-element momentum kernels. Called inside the single OpenMP
@@ -535,6 +603,12 @@ private:
     void processDryLink(SimulationContext& ctx, double dt, std::size_t uj);
     void processManningLink(SimulationContext& ctx, double dt, int step,
                             std::size_t uj, MomentumCategory cat);
+    /// SWMM_TRACE_LINK term trace shared by the Manning and force-main kernels.
+    void traceLinkTerms(const SimulationContext& ctx, std::size_t uj,
+                        double qLast, double v, double sig, double rho,
+                        double aWtd, double rWtd, double dq1, double dq2,
+                        double dq3, double dq4, double dq5, double dq6,
+                        double qOld, double q, double aMidConv);
     void processForceMainLink(SimulationContext& ctx, double dt, int step,
                               std::size_t uj, MomentumCategory cat);
     void applyFlowLimits(SimulationContext& ctx, double dt, int step,
@@ -640,6 +714,29 @@ private:
 
     /// Apply DPS geometry overrides for surcharged conduits (replaces static slot in STEP E).
     void applyDPSGeometry(SimulationContext& ctx);
+
+    // -- TPA (SurchargeMethod::TPA, issue #156 Phase 5) ----------------------
+    /// Constant slot width g·A_full/a² per conduit (ft), from tpa_celerity.
+    std::vector<double> tpa_w_;
+    /// Sub-atmospheric latch per conduit: while set, the conduit keeps
+    /// full-pipe geometry (signed slot line) even when node heads drop below
+    /// the crown — the latch's only job is preventing the free-surface
+    /// tables from reinterpreting a sealed head as a depth (TPA plan §B2).
+    std::vector<uint8_t> tpa_latch_;
+    /// Latch transitions this routing step (for the AA skip walk, §B3).
+    std::vector<uint8_t> tpa_latch_changed_;
+
+    /// Once per routing step, BEFORE the Picard loop (the operator stays
+    /// fixed within the iteration): set on isFull; clear on atmosphere
+    /// contact at an UNSUBMERGED vented end (P4's submergence lesson) or on
+    /// column separation (yMid < y_full − 30 ft).
+    void updateTpaLatch(SimulationContext& ctx);
+
+    /// DPS-style geometry override for TPA conduits (called where
+    /// applyDPSGeometry is): engaged when latched or above the crown —
+    /// area on the SIGNED slot line, width w_tpa, hyd radius r_full, slot
+    /// surface areas at both ends.
+    void applyTpaGeometry(SimulationContext& ctx);
 
     /// Update DPS temporal state after Picard convergence (P decay, t_s tracking).
     void updateDPSState(SimulationContext& ctx, double dt);

@@ -85,8 +85,19 @@ enum class RoutingModel : int {
 enum class QualitySolverKind : int {
     LEGACY       = 0,  ///< Legacy-parity CSTR mixing (QualityRouting.cpp)
     EULERIAN_ARD = 1,  ///< Eulerian ARD on the FV cell mesh (all routing models)
-    LAGRANGIAN   = 2   ///< LARD segment transport — X1 skeleton dispatch only;
-                       ///< transport lands in X2
+    LAGRANGIAN   = 2   ///< LARD segment transport. LIVE: LTD advection +
+                       ///< junction/storage mixing (X2 `8c141a5e`), RWPT
+                       ///< dispersion (X3b `b9852cee`), water age (X4
+                       ///< `9f155227`), exact-exponential KDECAY.
+                       ///< NOT YET, each behind a live open() warning in
+                       ///< SWMMEngine::open: MSX reactions on segments (L3),
+                       ///< treatment interop, heat (H7). Storage mixing
+                       ///< beyond CMSTR is also absent but is NOT warned —
+                       ///< there is no input surface for it yet, so there is
+                       ///< nothing to bypass.
+                       ///< (This comment said "X1 skeleton dispatch only;
+                       ///< transport lands in X2" until 2026-08-25, five
+                       ///< rounds after X2 landed.)
                        ///< (plans/transport/LARD_AGE_EXPEDITE_SUBPLAN_2026-08-23.md,
                        ///< plans/LAGRANGIAN_QUALITY_STRATEGY.md)
 };
@@ -186,7 +197,7 @@ struct SimulationOptions {
 
     /** @brief Simulation start date/time (decimal days, OADate (days since 12/30/1899)).
      *  @details Legacy default: Jan 1, 2004 = datetime_encodeDate(2004,1,1). */
-    double start_date = 2453006.0;  // Jan 1, 2004 OADate (days since 12/30/1899) (legacy default)
+    double start_date = 37987.0;  // Jan 1, 2004 OADate (days since 12/30/1899) (legacy default)
 
     /** @brief Simulation end date/time (decimal days, OADate (days since 12/30/1899)). */
     double end_date = 0.0;
@@ -207,6 +218,23 @@ struct SimulationOptions {
 
     /** @brief Hydraulic routing timestep in seconds. Legacy default: 20. */
     double routing_step = 20.0;
+
+    /**
+     * @brief The ROUTING_STEP as authored, before WARNING 07 reduces
+     *        routing_step to the wet-weather step (SWMMEngine::validate_project).
+     * @details legacy project_validate runs link_validate BEFORE that
+     *          reduction, so every RouteStep-derived link constant — the
+     *          Courant lengthening's MIN(RouteStep, LengtheningStep), an
+     *          orifice's / weir's equivalent length 2·RouteStep·sqrt(g·yFull)
+     *          — is formed from the written value. 0 = not recorded (use
+     *          routing_step). Runtime-only; not written by the .inp writer.
+     */
+    double routing_step_authored = 0.0;
+
+    /// The routing step legacy's link_validate saw (see routing_step_authored).
+    double linkValidateRoutingStep() const noexcept {
+        return routing_step_authored > 0.0 ? routing_step_authored : routing_step;
+    }
 
     /** @brief Minimum routing timestep in seconds (CFL floor). */
     double min_routing_step = 0.5;
@@ -357,8 +385,23 @@ struct SimulationOptions {
      *          never reached the running state. Surface heat exchange is the
      *          first consumer, so the deck key arrives with it. Monthly like
      *          `WINDSPEED`; a single value fills all twelve months.
+     *
+     *          Holds RH (%) when `humidity_var == 0`, dew point (project
+     *          temperature units) when `humidity_var == 1`. Used when
+     *          `humidity_type` is CONSTANT (0) or MONTHLY (1).
      */
     double humidity[12] = {50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50};
+
+    /** @brief Humidity source: 0=CONSTANT, 1=MONTHLY, 2=TIMESERIES. */
+    int humidity_type = 0;
+
+    /** @brief Humidity quantity: 0=RELATIVE (%), 1=DEWPOINT (deg F US / deg C SI).
+     *  @details Dew point is converted to RH each step from the effective air
+     *           temperature: RH = 100·e_s(Td)/e_s(Ta), clamped to [0, 100]. */
+    int humidity_var = 0;
+
+    /** @brief Timeseries name for humidity (humidity_type == 2). */
+    std::string humidity_ts_name;
 
     /**
      * @brief Water density, kg/m³ (`[OPTIONS] WATER_DENSITY`; CSH Table 4.1).
@@ -412,6 +455,12 @@ struct SimulationOptions {
      *  @see Sharior et al. (2023) for DYNAMIC_SLOT */
     int surcharge_method = 0;
 
+    /** @brief TPA acoustic celerity a for SURCHARGE_METHOD TPA (PROJECT
+     *         length units per second, converted like FV_SLOT_CELERITY).
+     *         Sets the constant slot width w = g·A_full/a² (issue #156).
+     *  @see Vasconcelos, Wright & Roe (2006) */
+    double tpa_celerity = 100.0;
+
     /** @brief DPS target pressure celerity (m/s, converted to ft/s at init).
      *  @details Controls the maximum modeled pressure wave speed. Lower values
      *           allow larger timesteps but reduce transient fidelity.
@@ -431,6 +480,33 @@ struct SimulationOptions {
      *           oscillations. Should be meaningful physical/numerical time scale.
      *  @see Sharior et al. (2023) Eq. 22 */
     double dps_decay_time = 0.5;
+
+    /** @brief Unsteady friction model: 0=NONE (default, inert), 1=VITKOVSKY.
+     *  @details Adds the Pinto/Vasconcelos/Soares (2025) unsteady-friction
+     *           source term S_fu = (k3/g)(dV/dt + c·sgn(V)|dV/dx|) with
+     *           regime-dependent celerity c to the momentum equation.
+     *           CONSUMED BY THE FV SOLVER as of issue #156 Phase 2 (copied
+     *           into FvOptions by Router::initFv; applied by
+     *           kernels::ufUpdate after the steady-friction stage, with the
+     *           convective term precomputed per substep). Under DYNWAVE the
+     *           key is still parsed, round-tripped and echoed but inert —
+     *           the dynamic wave source term is Phase 3.
+     *  @see Pinto, Vasconcelos & Soares (2025), J. Hydraul. Eng. 152(1);
+     *       Vitkovsky et al. (2000). Plan: plans/MIXED_FLOW_CLOSURES_TPA_UF_PLAN_2026-08-29.md §3 */
+    int unsteady_friction = 0;
+
+    /** @brief Report signed piezometric heads: 0 = NO (default, legacy
+     *         bit-parity — NODE_HEAD is rebuilt as f32(floored depth) +
+     *         f32(invert)), 1 = YES — the .out HEAD field carries the TRUE
+     *         signed head (point-in-time), so sub-atmospheric TPA columns are
+     *         observable (issue #156 O-6). DEPTH stays floored either way. */
+    int report_signed_heads = 0;
+
+    /** @brief Unsteady friction coefficient k3 (dimensionless).
+     *  @details Brunone-type coefficient; used only when unsteady_friction != 0.
+     *           Paper-calibrated range 0.005–0.020 (tested to 0.045).
+     *  @see Pinto et al. (2025) Table 1 (issue #156) */
+    double uf_k3 = 0.015;
 
     /** @brief Node continuity formulation for depth update. Default: EXPLICIT (legacy). */
     NodeContinuity node_continuity = NodeContinuity::EXPLICIT;
@@ -488,8 +564,11 @@ struct SimulationOptions {
     double min_surf_area = 0.0;  // 0 = use MIN_SURFAREA constant
 
     /** @brief Convergence head tolerance in project length units.
-     *  @details Legacy default: 0.0 (sentinel → runtime default 0.005 ft). */
-    double head_tol = 0.005;
+     *  @details Legacy default: 0.0 (sentinel → runtime default 0.005 ft,
+     *  dynwave_validate). A written value is in the project's length unit
+     *  and is divided by UCF(LENGTH) at routing init — a 0.005 on an SI
+     *  deck is 0.005 m (0.0164 ft), not the default. */
+    double head_tol = 0.0;
 
     /** @brief System flow tolerance (fraction, e.g., 0.05 = 5%).
      *  @details Legacy default: 0.05. Input is in percent, divided by 100. */
@@ -571,14 +650,24 @@ struct SimulationOptions {
     /**
      * @brief Number of OpenMP threads for parallel solver loops.
      *
-     * @details Parsed from the THREADS keyword in [OPTIONS].
-     *   - 0 → use all available threads (omp_get_max_threads()).
+     * @details Parsed from the THREADS keyword in [OPTIONS]. Resolution
+     * (core/ThreadInfo.hpp, THREAD_LIMITS_AND_OVERSUBSCRIPTION_PLAN):
+     *   - 0 → auto: omp_get_max_threads() — the logical processors the
+     *     OpenMP runtime allows (lowered by OMP_NUM_THREADS / OMP_THREAD_LIMIT
+     *     / CPU affinity) — then the model-size gates and, on Apple Silicon,
+     *     the dynamic-wave performance-core clamp.
      *   - 1 → single-threaded (default, no OpenMP overhead).
-     *   - N → use min(N, omp_get_max_threads()) threads.
+     *   - N → exactly N threads. Values above the logical processors or the
+     *     runtime limit are honoured (oversubscription) with a warning; the
+     *     active spin-wait policy is disabled for an oversubscribed run.
      *
-     * A performance threshold is applied at startup: if the number of
-     * conduit links is less than 4 × num_threads, threading is disabled
-     * to avoid overhead dominating on small networks.
+     * Model-size gates still apply to explicit values (warned): dynamic wave
+     * keeps >= 100 conduits per thread; the 2D marcher needs >= 4 triangles
+     * per thread. The 2D Kokkos OpenMP backend receives the raw value via
+     * the plugin ABI (v4) and initialises once per process.
+     *
+     * Environment overrides (each warned when active): SWMM_DW_THREADS forces
+     * the dynamic-wave count; OPENSWMM_2D_THREADS forces the Kokkos backend.
      *
      * @see Legacy reference: globals.h NumThreads, project.c
      */
@@ -746,6 +835,12 @@ struct SimulationOptions {
 
     /** @brief Report time-averaged results (default false). */
     bool rpt_averages = false;
+
+    /** @brief Report the per-conduit time step summary (default false).
+     *  @details [REPORT] LINK_STEPS (OpenSWMM extension; not written to a
+     *  SWMM 5.x deck). DW: each conduit's CFL-allowable step and its share
+     *  of converged steps; FV: the local step each conduit actually took. */
+    bool rpt_link_steps = false;
 
     /** @brief Named subcatchments to report (used when rpt_subcatchments == 2). */
     std::vector<std::string> rpt_subcatch_names;

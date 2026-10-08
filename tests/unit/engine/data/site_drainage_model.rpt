@@ -1,20 +1,10 @@
 
   OPENSWMM ENGINE - VERSION 6.0.0-alpha.3
-  -------------------------------------------
-  ;;Project Title/Notes
-  A site surface drainage model.
-  See Site_Drainage_Model.txt for more details.
-    WARNING 02: maximum depth increased for Node J1.
-    WARNING 02: maximum depth increased for Node J5.
-    WARNING 02: maximum depth increased for Node J2.
-    WARNING 02: maximum depth increased for Node J11.
-    WARNING 02: maximum depth increased for Node J3.
-    WARNING 02: maximum depth increased for Node J4.
-    WARNING 02: maximum depth increased for Node J6.
-    WARNING 02: maximum depth increased for Node J7.
-    WARNING 02: maximum depth increased for Node J8.
-    WARNING 02: maximum depth increased for Node J9.
-    WARNING 02: maximum depth increased for Node J10.
+  ------------------------------------------------------------
+
+  A site surface drainage model. 
+  See Site_Drainage_Model.txt for more details. 
+  WARNING 09: time series interval greater than recording interval for Rain Gage RainGage
   
   ****************
   Analysis Options
@@ -30,9 +20,11 @@
     Water Quality .......... YES
   Infiltration Method ...... HORTON
   Flow Routing Method ...... DYNWAVE
+  Cross-Section Geometry ... LEGACY
   Surcharge Method ......... EXTRAN
   Node Continuity .......... EXPLICIT
   Anderson Acceleration .... NO
+  Surcharge Method ......... EXTRAN
   Starting Date ............ 01/01/1998 00:00:00
   Ending Date .............. 01/02/1998 06:00:00
   Antecedent Dry Days ...... 5.0

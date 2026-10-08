@@ -81,6 +81,7 @@
 #include <functional>
 #include "FilePathPair.hpp"
 #include "../data/ArdConfigData.hpp"
+#include "../data/BedZoneData.hpp"
 #include "../data/GageData.hpp"
 #include "../data/HeatData.hpp"
 #include "../data/WaterAgeData.hpp"
@@ -110,8 +111,10 @@
 #include "../hydrology/Climate.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <deque>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -331,8 +334,16 @@ struct MeshData;
 struct SolverOptions2D;
 struct BoundaryData;
 class  Infil2D;
+class SurfaceRouter2D;
 struct PendingBoundaryRow;
 struct PendingEdgeConveyanceRow;
+struct PendingInitialQualityRow;
+struct PendingBoundaryQualityRow;
+struct GwTransportData;
+class SurfaceQuality2D;   // S7 (2026-09-19)
+struct SubsurfaceConfig;  // G1: the [2D_AQUIFER*] rows
+struct SubsurfaceState;   // G1: the running two-zone kernel state
+struct SubsurfaceTransportState;   // T7.5: and what is dissolved in it
 } // namespace twoD
 
 // ============================================================================
@@ -383,6 +394,23 @@ struct SimulationContext {
      * @see Legacy: Title[MAXTITLE] in globals.h (limited to 3 lines)
      */
     std::vector<std::string> title_notes;
+
+    /**
+     * @brief Sections the solver never reads, kept verbatim so a save does not
+     *        delete them: `[LABELS]`, `[BACKDROP]`, `[PROFILE]`.
+     *
+     * @details Keyed by section tag, holding the data lines exactly as they
+     *          were read (comments and blank lines already stripped by the
+     *          reader). Legacy SWMM has no `case` for any of them in
+     *          `parseLine`, so their content is whatever the authoring GUI
+     *          chose to put there and no engine can validate it — which is
+     *          precisely why replaying it byte-for-byte is both the safest and
+     *          the most faithful thing to do.
+     *
+     *          These were registered as no-op handlers, so a model's map
+     *          labels and backdrop image vanished on the first Open → Save.
+     */
+    std::map<std::string, std::vector<std::string>> passthrough_sections;
 
     // =========================================================================
     // Options & configuration
@@ -473,6 +501,19 @@ struct SimulationContext {
      *          output_saveResults() (output.c:481).
      */
     double next_report_ms = 0.0;
+
+    /**
+     * @brief Where this routing instant falls between the two runoff times.
+     * @details Legacy's `f = (routingTime - OldRunoffTime) /
+     *          (NewRunoffTime - OldRunoffTime)`, clamped to [0,1]
+     *          (routing.c:707). It weights EVERY subcatchment quantity handed
+     *          to a node this step — the runoff flow in
+     *          addWetWeatherInflows, and the washoff load right beside it in
+     *          surfqual_getWtdWashoff. SWMMEngine::assembleLateralInflows
+     *          forms it and publishes it here so the quality loaders use the
+     *          same number rather than assuming a midpoint.
+     */
+    double runoff_interp_f = 1.0;
 
     /**
      * @brief Time remaining until the next control rule event (seconds).
@@ -584,6 +625,18 @@ struct SimulationContext {
      */
     HeatConfigData heat_config;
     HeatState      heat_state;
+
+    /**
+     * @brief The bed / hyporheic transient-storage zone (phase H6b).
+     *
+     * @details One entry per LINK, carrying a temperature and a per-species
+     *          concentration. It sits beside `heat_state` rather than inside
+     *          it because it holds solute state too — the reference's HTS
+     *          zone is a transient-storage zone for tracers as much as a
+     *          thermal mass. Empty and untouched unless `[HEAT_FLUXES]
+     *          SEDIMENT_EXCHANGE` is on. @see data/BedZoneData.hpp.
+     */
+    BedZoneState bed_state;
 
     /**
      * @brief Species names as REPORTED (phase A2b): the pollutant names,
@@ -779,7 +832,7 @@ struct SimulationContext {
      * @see Legacy: Adjust struct (temp[], evap[], rain[], hydcon[])
      */
     double adjust_temp[12]   = {0,0,0,0,0,0,0,0,0,0,0,0};
-    double adjust_evap[12]   = {1,1,1,1,1,1,1,1,1,1,1,1};
+    double adjust_evap[12]   = {0,0,0,0,0,0,0,0,0,0,0,0};   ///< [ADJUSTMENTS] EVAP: ADDED to the evaporation rate (in/day or mm/day), legacy Adjust.evap
     double adjust_rain[12]   = {1,1,1,1,1,1,1,1,1,1,1,1};
     double adjust_hydcon[12] = {1,1,1,1,1,1,1,1,1,1,1,1};
 
@@ -806,6 +859,7 @@ struct SimulationContext {
     AquiferStore     aquifers;
     NameIndex        aquifer_names;
     LidControlStore  lid_controls;
+    std::vector<LidNodeOutlet> lid_node_outlets;
     NameIndex        lid_names;
     LidUsageStore    lid_usage;
 
@@ -820,6 +874,10 @@ struct SimulationContext {
     /// [GROUNDWATER] receiving-node names (subcatch index -> node name).
     /// [GROUNDWATER] normally precedes [JUNCTIONS] in EPA SWMM output.
     std::vector<std::pair<int, std::string>> pending_gw_nodes;
+
+    /// [GROUNDWATER] aquifer names (subcatch index -> aquifer name) not yet
+    /// defined when the row was read, for [AQUIFERS] placed further down.
+    std::vector<std::pair<int, std::string>> pending_gw_aquifers;
 
     /// Link end-node names (link index -> {from-node name, to-node name}).
     /// Legacy parsing is order-independent, so [CONDUITS] may precede the node
@@ -947,11 +1005,46 @@ struct SimulationContext {
         twoD::BoundaryData*                          boundary   = nullptr;
         std::vector<twoD::PendingBoundaryRow>*       pending_bc = nullptr;
         std::vector<twoD::PendingEdgeConveyanceRow>* pending_ec = nullptr;
+        /// S2/S3: authored [2D_INITIAL_QUALITY] / [2D_BOUNDARY_QUALITY] rows,
+        /// retained after initialize() so the InpWriter can round-trip them.
+        std::vector<twoD::PendingInitialQualityRow>*  pending_iq = nullptr;
+        std::vector<twoD::PendingBoundaryQualityRow>* pending_bq = nullptr;
         /// Per-cell infiltration (track I, plan §5.5). Owned by
         /// SurfaceRouter2D; the [2D_INFILTRATION*] section handlers populate
         /// its defaults()/overrides()/options() and the InpWriter reads them
         /// back. Null when the engine was built without 2D support.
         twoD::Infil2D*                               infil      = nullptr;
+        /// U4 (2026-09-07): the `[GW_*]` subsurface-transport authoring rows.
+        /// Owned by SurfaceRouter2D like `infil`; null without 2D support.
+        /// Authoring-only until the integrated groundwater kernel lands —
+        /// see GwTransportData.hpp.
+        twoD::GwTransportData*                       gw         = nullptr;
+        /// S7 (2026-09-19): the `[2D_COVERAGES]` / `[2D_LOADINGS]` /
+        /// `[2D_CURB_LENGTH]` rows and the cell buildup store. Owned by
+        /// SurfaceRouter2D like `gw`; null without 2D support.
+        twoD::SurfaceQuality2D*                      surface_quality = nullptr;
+        /// G1: the `[2D_AQUIFER*]` rows, in the user's OWN units. Owned by
+        /// SurfaceRouter2D; the section handlers fill it and the InpWriter
+        /// echoes it back verbatim. The SI values live only in the kernel's
+        /// state — see SubsurfaceSections.hpp's GwUnitFactors note.
+        twoD::SubsurfaceConfig*                      aquifer    = nullptr;
+        /// The `[2D_AQUIFER_NODE]` node NAMES, parallel to
+        /// `aquifer->node_beds`, kept so the writer can round-trip names it
+        /// resolved to indices.
+        std::vector<std::string>*                    aquifer_nodes = nullptr;
+        /// G-X4: the `[2D_AQUIFER_LINKS]` row names, parallel to
+        /// `aquifer->link_rows` — the writer's round-trip key.
+        std::vector<std::string>*                    aquifer_links = nullptr;
+        /// G1: the RUNNING kernel state (SI), or null when no `[2D_AQUIFER]`
+        /// resolved. Published so the hotstart can carry a water table
+        /// across a restart without HotStartManager needing to know about
+        /// the 2D module's solver — an aquifer restarted dry has lost the
+        /// months of memory that were the reason to model it.
+        twoD::SubsurfaceState*                       aquifer_state = nullptr;
+        twoD::SurfaceRouter2D*                       surface_router = nullptr;
+        /// T7.5: the aquifer's transported tuple, for the hotstart block,
+        /// the results writer and the `.rpt` quality continuity.
+        twoD::SubsurfaceTransportState*              aquifer_transport = nullptr;
     } twod_io;
 
     /**
@@ -970,6 +1063,13 @@ struct SimulationContext {
      *          Parse-time scratch only — empty once reading finishes.
      */
     std::vector<std::pair<std::string, std::string>> deferred_section_rows;
+
+    /**
+     * @brief Every unknown section header read, as (token as written, 1-based
+     *        line number), in file order — legacy's "Unknown section '%s' at
+     *        line %ld" warning names both.
+     */
+    std::vector<std::pair<std::string, long>> unknown_section_headers;
 
     // =========================================================================
     // Error / warning tracking
@@ -1058,6 +1158,7 @@ struct SimulationContext {
         double runoff_evap       = 0.0;  ///< Total evaporation volume (ft3)
         double runoff_infil      = 0.0;  ///< Total infiltration volume (ft3)
         double runoff_runoff     = 0.0;  ///< Total surface runoff volume (ft3)
+        double runoff_lid_drain  = 0.0;  ///< LID drain-to-node outflow (ft3), legacy RUNOFF_DRAINS / VlidDrain
         double runoff_snowremov  = 0.0;  ///< Total snow removal volume (ft3)
         double runoff_init_store = 0.0;  ///< Initial surface storage (ft3)
         double runoff_final_store= 0.0;  ///< Final surface storage (ft3)
@@ -1080,14 +1181,47 @@ struct SimulationContext {
         double routing_dry_weather   = 0.0;
         double routing_wet_weather   = 0.0;
         double routing_gw_inflow     = 0.0;
+        /// G-X4 (2026-09-20): water the two-zone `[2D_AQUIFER]` handed to
+        /// conduits running below the water table (ft³, ≥ 0) — a gaining
+        /// reach, the inflow term legacy SWMM has no conduit source for.
+        /// It is the negative half of `seep_loss_rate`; the positive half
+        /// stays `routing_seep_loss`, so the two never net each other out
+        /// and a deck can report both in the same run.
+        double routing_link_gw_inflow = 0.0;
         double routing_rdii          = 0.0;
         double routing_external      = 0.0;
         double routing_flooding      = 0.0;
+        /// C2 (2026-09-07): cumulative water the 1D→2D coupling spill removed
+        /// from coupled nodes (ft³). It used to be folded into
+        /// `routing_flooding`, which reported a coupling TRANSFER under
+        /// "Flooding Loss" — the water did not flood, it went to the 2D
+        /// surface, where `MassBalance2D::coupling_1d_to_2d_in` books it
+        /// arriving. Both ledgers are individually right; only the 1D report
+        /// row was misleading, and a modeller reading it saw flooding they
+        /// did not have.
+        ///
+        /// It remains an OUTFLOW of the 1D system, so `routing_error()`
+        /// counts it exactly as before — this change moves a number between
+        /// report rows, it does not move water.
+        ///
+        /// `[2D_OPTIONS] COUPLING_IN_FLOODING YES` restores the old grouping
+        /// for run-to-run comparison against previous versions.
+        double routing_coupling_out  = 0.0;
         double routing_outflow       = 0.0;
         double routing_evap_loss     = 0.0;
         double routing_seep_loss     = 0.0;
         double routing_init_storage  = 0.0;
         double routing_final_storage = 0.0;
+
+        /// The eleven routing flow terms above (dry weather, wet weather,
+        /// groundwater, conduit GW, RDII, external, flooding, coupling out,
+        /// outflow, evaporation, seepage — in that order) accumulated as
+        /// legacy massbal_updateRoutingTotals does, for the printed Flow
+        /// Routing Continuity block only: each step's rate over half the step
+        /// at its start (the previous rate) and at its end. This lags the
+        /// exact ledger by half of the last step; the ledger above stays
+        /// exact so the cross-domain closure checks hold.
+        std::array<double, 11> routing_report{};
 
         // User-forced volumes (diagnostic — subset of routing_external)
         double routing_forcing_inflow = 0.0; ///< Cumulative user-forced lateral inflow (ft3)
@@ -1104,6 +1238,16 @@ struct SimulationContext {
         double gw_lateral_flow  = 0.0; ///< Cumulative lateral GW flow (ft)
         double gw_init_storage  = 0.0; ///< Initial GW storage (ft)
         double gw_final_storage = 0.0; ///< Final GW storage (ft)
+        /// U3 (track I-b, 2026-09-07): the part of the groundwater's
+        /// infiltration input that arrived from the 2D surface
+        /// ([2D_OPTIONS] INFIL_DESTINATION SUBCATCH_AQUIFER), ft³ — the same
+        /// unit as `gw_infil` (rate × area × dt). Already inside it: the
+        /// recharge is added to each subcatchment's infiltration rate before
+        /// GWSolver::execute books it, so this is a diagnostic split, not a
+        /// second inflow. Booked at delivery, in the same loop as
+        /// `mass_balance_2d.infil_to_aquifer` (G1-c item 1), so the two are
+        /// the same volumes in two units.
+        double gw_infil_2d_recharge = 0.0;
 
         // Per-step accumulators (reset each step for reporting)
         double step_flooding     = 0.0;
@@ -1112,6 +1256,16 @@ struct SimulationContext {
         double step_gw_inflow    = 0.0;
         double step_rdii_inflow  = 0.0;
         double step_ext_inflow   = 0.0;
+        /// legacy massbal_getStepFlowError() of the PREVIOUS routing step —
+        /// 1 - outflow/inflow of that step's StepFlowTotals, formed at the
+        /// end of updateRoutingMassBalance — which isInSteadyState compares
+        /// with SysFlowTol at the start of the next step.
+        double last_step_flow_error = 0.0;
+        /// legacy addExternalInflows (routing.c): a node's NEGATIVE external
+        /// flow (a withdrawal) is booked as system OUTFLOW, not as a negative
+        /// external inflow; summed here per step, ahead of the outfall and
+        /// flooding terms as legacy's StepFlowTotals.outflow is.
+        double step_ext_withdrawal = 0.0;
 
         // Quality mass balance (per-pollutant, in mass units)
         std::vector<double> qual_init_buildup;   ///< Initial buildup mass
@@ -1134,6 +1288,12 @@ struct SimulationContext {
         std::vector<double> qual_routing_ex_in;  ///< External (interface file) quality mass inflow
         std::vector<double> qual_routing_seep;   ///< Quality mass lost to seepage
         std::vector<double> qual_routing_evap;   ///< Quality mass lost to evaporation
+        /// Mass booked to final storage as a link went dry, accumulated over
+        /// the run (legacy massbal_addToFinalStorage). Legacy adds the
+        /// end-of-run stored mass ON TOP of this running total
+        /// (massbal.c:885), so it is kept apart from qual_routing_final,
+        /// which SWMMEngine recomputes from state every routing step.
+        std::vector<double> qual_routing_final_dry;
 
         void resize_quality(int n_pollutants) {
             auto np = static_cast<std::size_t>(n_pollutants);
@@ -1157,6 +1317,7 @@ struct SimulationContext {
             qual_routing_ex_in.assign(np, 0.0);
             qual_routing_seep.assign(np, 0.0);
             qual_routing_evap.assign(np, 0.0);
+            qual_routing_final_dry.assign(np, 0.0);
             routing_forcing_qual_inflow.assign(np, 0.0);
         }
 
@@ -1182,6 +1343,7 @@ struct SimulationContext {
             auto qrex = std::move(qual_routing_ex_in);
             auto qrseep = std::move(qual_routing_seep);
             auto qrevap = std::move(qual_routing_evap);
+            auto qrfd = std::move(qual_routing_final_dry);
             auto qrfqi = std::move(routing_forcing_qual_inflow);
             *this = MassBalance{};
             qual_init_buildup = std::move(qi);
@@ -1204,6 +1366,7 @@ struct SimulationContext {
             qual_routing_ex_in = std::move(qrex);
             qual_routing_seep = std::move(qrseep);
             qual_routing_evap = std::move(qrevap);
+            qual_routing_final_dry = std::move(qrfd);
             routing_forcing_qual_inflow = std::move(qrfqi);
             // Zero out the quality vectors (except init_buildup which is
             // computed once during initQuality and must survive reset)
@@ -1220,6 +1383,7 @@ struct SimulationContext {
                             &qual_routing_ex_in,
                             &qual_routing_seep,
                             &qual_routing_evap,
+                            &qual_routing_final_dry,
                             &routing_forcing_qual_inflow}) {
                 std::fill(v->begin(), v->end(), 0.0);
             }
@@ -1234,6 +1398,7 @@ struct SimulationContext {
             double total_in = runoff_rainfall + runoff_runon + runoff_init_store +
                               runoff_init_snow;
             double total_out = runoff_evap + runoff_infil + runoff_runoff +
+                               runoff_lid_drain +
                                runoff_final_store + runoff_snowremov +
                                runoff_final_snow;
             return (total_in > 0.0) ? (total_in - total_out) / total_in : 0.0;
@@ -1242,9 +1407,11 @@ struct SimulationContext {
         /// Routing continuity error (fraction).
         double routing_error() const {
             double total_in = routing_dry_weather + routing_wet_weather +
-                              routing_gw_inflow + routing_rdii + routing_external +
+                              routing_gw_inflow + routing_link_gw_inflow +   // G-X4
+                              routing_rdii + routing_external +
                               routing_init_storage;
-            double total_out = routing_flooding + routing_outflow +
+            double total_out = routing_flooding + routing_coupling_out +
+                               routing_outflow +
                                routing_evap_loss + routing_seep_loss +
                                routing_final_storage;
             return (total_in > 0.0) ? (total_in - total_out) / total_in : 0.0;
@@ -1274,7 +1441,12 @@ struct SimulationContext {
         double shortfall_mass   = 0.0; ///< unmet extraction, internal units
         long   age_clamp_events = 0;   ///< age-row clamps
         int    first_node       = -1;  ///< element of the first clamp
-        bool   runtime_warned   = false;
+        /// First clamp seen — captures `first_node` once. NOT a warning flag:
+        /// the per-clamp runtime warning was removed 2026-08-29 because it
+        /// fired on every correct extraction deck (a deck extracting 40 % of
+        /// its inflow logged 108 clamps while the chain wetted). The
+        /// end-of-run summary is the diagnostic.
+        bool   first_clamp_recorded = false;
         bool   api_warned       = false; ///< first negative API mass flux
         void reset() { *this = NegativeSourceStats{}; }
     } negsrc;
@@ -1289,9 +1461,15 @@ struct SimulationContext {
      *          inflows/outflows of the 2D domain, signed oppositely to the 1D
      *          routing_external/routing_flooding terms.
      */
+    // Per-incident-link surface donation limit (ft³/s), indexed by node.
+    // Empty for ordinary models; infinity for nodes without a surface outfall.
+    std::vector<double> surface_outfall_link_limit;
+
+    bool runtime_coupling_used = false; ///< Runtime prescriptions require a future restart format.
     struct MassBalance2D {
         double init_storage          = 0.0;  ///< Initial surface storage (m³)
         double final_storage         = 0.0;  ///< Latest surface storage (m³)
+        double external_in = 0.0, external_out = 0.0; ///< Runtime external source volumes (m³)
         double rainfall_in           = 0.0;  ///< Cumulative rainfall volume (m³)
         double coupling_1d_to_2d_in  = 0.0;  ///< Cumulative 1D→2D spill into 2D (m³)
         double coupling_2d_to_1d_out = 0.0;  ///< Cumulative 2D→1D drainage out (m³)
@@ -1305,6 +1483,28 @@ struct SimulationContext {
         /// from the modelled system and enters the continuity balance as a loss
         /// term alongside evap_out.
         double infil_out             = 0.0;
+        /// U3 (track I-b, 2026-09-07): the part of `infil_out` routed into a
+        /// legacy subcatchment aquifer ([2D_OPTIONS] INFIL_DESTINATION
+        /// SUBCATCH_AQUIFER), m³. It is a TRANSFER, not an exit: the same
+        /// volume enters the 1D groundwater ledger as recharge, so a
+        /// whole-model balance nets it out. `infil_out` still carries it,
+        /// so the 2D-only continuity check is unchanged.
+        double infil_to_aquifer      = 0.0;
+        /// G1-c item 1 (2026-09-19): the SUBCATCH_AQUIFER share the marcher
+        /// has applied but the runoff step has not yet delivered to the
+        /// aquifer (m³) — the volume between one runoff drain and the next,
+        /// non-zero at the end of a run. `infil_to_aquifer` is booked at
+        /// delivery, so `infil_to_aquifer + infil_aquifer_pending` is the
+        /// aquifer-bound share of `infil_out` at any instant.
+        double infil_aquifer_pending = 0.0;
+        /// G1 (2026-09-07): cumulative water the two-zone `[2D_AQUIFER]`
+        /// returned to the surface — Dunne saturation excess and top-layer
+        /// rejection — m³. An INFLOW to the surface domain, and the mirror of
+        /// the `infil_out` share the aquifer received. Without it the returned
+        /// water reads as storage created from nothing and the 2D continuity
+        /// error grows by exactly the volume that came back up. Zero unless a
+        /// `[2D_AQUIFER]` resolved.
+        double aquifer_in            = 0.0;
         bool   active                = false;///< True if the 2D module ran
 
         // Cumulative marcher statistics (published by SurfaceRouter2D at
@@ -1325,9 +1525,9 @@ struct SimulationContext {
         /// 2D surface continuity error (fraction).
         double error() const {
             double total_in  = rainfall_in + coupling_1d_to_2d_in + outfall_in
-                               + boundary_in + init_storage;
+                               + boundary_in + aquifer_in + init_storage + external_in;
             double total_out = coupling_2d_to_1d_out + outfall_out + boundary_out
-                               + evap_out + infil_out + final_storage;
+                               + evap_out + infil_out + final_storage + external_out;
             return (total_in > 0.0) ? (total_in - total_out) / total_in : 0.0;
         }
     } mass_balance_2d;
@@ -1360,6 +1560,10 @@ struct SimulationContext {
         double sum_step  = 0.0;    ///< Sum of all routing time steps (sec)
         long   n_steps   = 0;      ///< Total number of routing steps
         double steady_pct = 0.0;   ///< Percent of time in steady state
+        double steady_time = 0.0;  ///< Time skipped as steady state (sec)
+        long   report_steps = 0;   ///< Flow-stat steps after report start (legacy ReportStepCount)
+        double report_time  = 0.0; ///< Their total time, sec (legacy RoutingTimeSpan)
+        double max_outfall_flow = 0.0; ///< Peak of the summed outfall inflow, cfs (legacy MaxOutfallFlow)
 
         /// Number of time step histogram bins (matching legacy TIMELEVELS=5).
         static constexpr int N_TIME_BINS = 5;
@@ -1373,6 +1577,22 @@ struct SimulationContext {
 
         void update(double dt) {
             min_step = std::min(min_step, dt);
+            max_step = std::max(max_step, dt);
+            sum_step += dt;
+            ++n_steps;
+        }
+
+        /// legacy stats_updateTimeStepStats (stats.c): a steady step only adds
+        /// to the steady time; the first step (OldRoutingTime == 0) stays out
+        /// of the minimum and the frequency bins; a step below the smallest
+        /// interval falls in no bin.
+        void record_step(double dt, bool steady, bool first_step) {
+            if (steady) { steady_time += dt; return; }
+            if (!first_step) {
+                min_step = std::min(min_step, dt);
+                for (int i = 0; i < N_TIME_BINS; ++i)
+                    if (dt >= step_intervals[i + 1]) { step_counts[i]++; break; }
+            }
             max_step = std::max(max_step, dt);
             sum_step += dt;
             ++n_steps;
@@ -1466,6 +1686,17 @@ struct SimulationContext {
         long   fv_dt_argmin_band        = 0;
         long   fv_dt_argmin_free        = 0;
         long   fv_dt_argmin_node        = 0;
+
+        // LTS macro cycles that ran / were rejected. Distinguishes "tiering
+        // never engaged" from "tiering did not help" (the tier histogram
+        // alone cannot).
+        long   fv_macro_cycles   = 0;
+        long   fv_macro_rejected = 0;
+
+        /// Source of the per-conduit time step summary ([REPORT] LINK_STEPS),
+        /// set at init: 0 = not collected / unsupported routing method,
+        /// 1 = DW (CFL-allowable step), 2 = FV (local step taken).
+        int    lstep_mode = 0;
     } routing_stats;
 
     // =========================================================================
@@ -1494,20 +1725,89 @@ struct SimulationContext {
     } vj_diag;
 
     // =========================================================================
+    // Street inlet performance diagnostics
+    // =========================================================================
+
+    /**
+     * @brief Per-inlet-usage performance block for the .rpt street tables.
+     *
+     * @details Row i corresponds to `inlet_usages` row i. Populated by
+     *          `inlet::InletSolver::gatherStats()` before the summary is
+     *          written; these are the legacy `TInletStats` counters
+     *          (inlet.c:78-87) that the Street Flow Summary reports and that
+     *          `InletUsageStore` (a persistent .inp store) deliberately does
+     *          not carry.
+     */
+    struct InletDiag {
+        std::vector<int>     host_node;         ///< inlet-junction node (−1 = conduit host)
+        std::vector<int>     up_link;           ///< approach conduit (−1 = none)
+        std::vector<uint8_t> is_sag;            ///< resolved placement: 1 = ON_SAG
+        std::vector<int>     num_inlets;
+        std::vector<int>     flow_periods;      ///< # periods with approach flow
+        std::vector<int>     capture_periods;   ///< # periods with captured flow
+        std::vector<int>     backflow_periods;  ///< # periods with backflow
+        std::vector<double>  peak_flow;         ///< peak approach flow (cfs)
+        std::vector<double>  peak_flow_capture; ///< capture efficiency at peak flow (%)
+        std::vector<double>  avg_flow_capture;  ///< Σ capture efficiency over capture periods
+        std::vector<double>  bypass_freq;       ///< # capture periods that also bypassed
+
+        int count() const { return static_cast<int>(host_node.size()); }
+
+        void resize(int n) {
+            auto un = static_cast<std::size_t>(n);
+            host_node.assign(un, -1);
+            up_link.assign(un, -1);
+            is_sag.assign(un, static_cast<uint8_t>(0));
+            num_inlets.assign(un, 1);
+            flow_periods.assign(un, 0);
+            capture_periods.assign(un, 0);
+            backflow_periods.assign(un, 0);
+            peak_flow.assign(un, 0.0);
+            peak_flow_capture.assign(un, 0.0);
+            avg_flow_capture.assign(un, 0.0);
+            bypass_freq.assign(un, 0.0);
+        }
+
+        void clear() {
+            host_node.clear(); up_link.clear(); is_sag.clear(); num_inlets.clear();
+            flow_periods.clear(); capture_periods.clear(); backflow_periods.clear();
+            peak_flow.clear(); peak_flow_capture.clear(); avg_flow_capture.clear();
+            bypass_freq.clear();
+        }
+    } inlet_diag;
+
+    // =========================================================================
     // Control action log — Gap #67
     // Populated by ControlEngine::applyPendingActions() when rpt_controls is on.
     // =========================================================================
 
-    /// One entry per control rule action that changed a link setting.
+    /// One entry per control rule action that changed a link setting. POD:
+    /// the rule NAME is interned in control_rule_names (index rule_idx), so a
+    /// deck that toggles a pump every routing step does not heap-allocate a
+    /// string per action — this log is only drained at report time.
     struct ControlLogEntry {
-        int         link_idx;    ///< Index of the link whose setting changed
-        std::string rule_name;   ///< Name of the rule that triggered the change
-        double      new_setting; ///< The new target setting value (0-1)
-        double      date;        ///< OADate when the change occurred
+        int    link_idx;    ///< Index of the link whose setting changed
+        int    rule_idx;    ///< Index into control_rule_names; -1 = unknown ("Rule?")
+        double new_setting; ///< The new target setting value (0-1)
+        double date;        ///< OADate when the change occurred
     };
 
-    /// Chronological log of all control actions taken during the simulation.
+    /// Chronological log of the control actions taken during the simulation,
+    /// capped at kMaxControlLog entries (see logControlAction).
     std::vector<ControlLogEntry> control_log;
+    /// Rule names by rule index, interned by ControlEngine as actions are logged.
+    std::vector<std::string> control_rule_names;
+    /// Actions NOT logged because the cap was reached; the report says so once.
+    std::size_t control_log_dropped = 0;
+    static constexpr std::size_t kMaxControlLog = 1'000'000;
+
+    /// Append to control_log unless the cap is reached, in which case count
+    /// the overflow instead: bounds memory on multi-week oscillating decks
+    /// (24 B per entry → 24 MB at the cap).
+    void logControlAction(const ControlLogEntry& e) {
+        if (control_log.size() >= kMaxControlLog) { ++control_log_dropped; return; }
+        control_log.push_back(e);
+    }
 
     // =========================================================================
     // Input file path (for model write / hot start)
@@ -1547,22 +1847,17 @@ struct SimulationContext {
      *          stats_findMaxStats in stats.c).
      */
     void finalize_max_stats() {
-        long step_count = routing_stats.n_steps;
-        if (step_count <= 0) return;
-        double inv_steps = 1.0 / static_cast<double>(step_count);
-
-        // CFL-critical elements: percentage of steps each element was critical
-        for (int j = 0; j < n_nodes(); ++j) {
-            double x = nodes.stat_time_courant_critical[static_cast<std::size_t>(j)] * inv_steps;
-            updateMaxStats(max_courant_crit, 0, j, 100.0 * x);
-        }
-        for (int j = 0; j < n_links(); ++j) {
-            double x = links.stat_time_courant_critical[static_cast<std::size_t>(j)] * inv_steps;
-            updateMaxStats(max_courant_crit, 1, j, 100.0 * x);
+        // legacy stats_findMaxStats (stats.c): the slots start at -1.0 (time-
+        // step critical, flow turns) or 0.0 (non-convergence), so a value
+        // must exceed that magnitude to enter.
+        for (int k = 0; k < MAX_STATS; ++k) {
+            max_courant_crit[k]  = MaxStats{0, -1, -1.0};
+            max_flow_turns[k]    = MaxStats{1, -1, -1.0};
+            max_non_converged[k] = MaxStats{0, -1, 0.0};
         }
 
-        // Flow instability index (matching legacy normalization)
-        long rpt_steps = routing_stats.n_steps;
+        // Flow instability over the steps after the report start.
+        const long rpt_steps = routing_stats.report_steps;
         if (rpt_steps > 2) {
             double z = 100.0 / (2.0 / 3.0 * static_cast<double>(rpt_steps - 2));
             for (int j = 0; j < n_links(); ++j) {
@@ -1571,10 +1866,24 @@ struct SimulationContext {
             }
         }
 
-        // Non-convergence: fraction of total steps each node failed to converge
+        // The rest are over all routed (non-steady) steps.
+        const long step_count = routing_stats.n_steps;
+        const bool dw = options.routing_model == RoutingModel::DYNWAVE;
+        if (dw) {
+            for (int j = 0; j < n_nodes(); ++j)
+                updateMaxStats(max_non_converged, 0, j,
+                    static_cast<double>(nodes.stat_non_converged_count[static_cast<std::size_t>(j)]) /
+                    static_cast<double>(step_count));
+        }
+        if (!dw || options.variable_step == 0.0 || step_count == 0) return;
+        const double inv_steps = 1.0 / static_cast<double>(step_count);
         for (int j = 0; j < n_nodes(); ++j) {
-            double x = static_cast<double>(nodes.stat_non_converged_count[static_cast<std::size_t>(j)]) * inv_steps;
-            updateMaxStats(max_non_converged, 0, j, x);
+            double x = nodes.stat_time_courant_critical[static_cast<std::size_t>(j)] * inv_steps;
+            updateMaxStats(max_courant_crit, 0, j, 100.0 * x);
+        }
+        for (int j = 0; j < n_links(); ++j) {
+            double x = links.stat_time_courant_critical[static_cast<std::size_t>(j)] * inv_steps;
+            updateMaxStats(max_courant_crit, 1, j, 100.0 * x);
         }
     }
 
@@ -1586,8 +1895,12 @@ struct SimulationContext {
      *          Call this before re-running or re-opening a simulation.
      */
     void reset() {
+        runtime_coupling_used = false;
+        surface_outfall_link_limit.clear();
         state = EngineState::CREATED;
         control_log.clear();
+        control_rule_names.clear();
+        control_log_dropped = 0;
         current_time = 0.0;
         current_date = 0.0;
         dt_controls_remaining = 0.0;
@@ -1601,7 +1914,9 @@ struct SimulationContext {
         errors.clear();
         title_notes.clear();
         deferred_section_rows.clear();
+        unknown_section_headers.clear();
         pending_gw_nodes.clear();
+        pending_gw_aquifers.clear();
         pending_link_nodes.clear();
 
         // Clear SoA stores
@@ -1635,9 +1950,11 @@ struct SimulationContext {
         heat_config = HeatConfigData{};
         heat_state.clear();
         lid_layer_state.clear();
+        bed_state.clear();      // H6b
 
         // Virtual-junction diagnostics
         vj_diag.clear();
+        inlet_diag.clear();
 
         // Clear daily climate state (re-initialized by SWMMEngine on next run)
         climate_state = climate::ClimateState{};
@@ -1649,7 +1966,7 @@ struct SimulationContext {
         user_flags.clear();
         events.clear();
         std::fill(std::begin(adjust_temp), std::end(adjust_temp), 0.0);
-        std::fill(std::begin(adjust_evap), std::end(adjust_evap), 1.0);
+        std::fill(std::begin(adjust_evap), std::end(adjust_evap), 0.0);
         std::fill(std::begin(adjust_rain), std::end(adjust_rain), 1.0);
         std::fill(std::begin(adjust_hydcon), std::end(adjust_hydcon), 1.0);
         subcatch_n_perv_pattern.clear();
@@ -1670,6 +1987,8 @@ struct SimulationContext {
     void save_state() noexcept {
         nodes.save_state();
         links.save_state();
+        // (SWMMEngine::step rolls the two halves separately — see
+        // save_lat_qual_state / save_hyd_state.)
         // NOTE: subcatches.save_state() is intentionally NOT called here.
         // Subcatchment old-state (old_runoff/old_runon/conc_old) is the
         // runoff-step snapshot used to linearly interpolate lateral inflow
@@ -1681,6 +2000,20 @@ struct SimulationContext {
         // runoff-advance loop in SWMMEngine::stepRunoff().
     }
 
+    /// The every-step half of legacy routing_execute: initSystemInflows'
+    /// oldLatFlow roll and node/link _setOldQualState.
+    void save_lat_qual_state() noexcept {
+        nodes.save_lat_qual_state();
+        links.save_qual_state();
+    }
+
+    /// The routed-step half: legacy routeFlow's node/link _setOldHydState,
+    /// skipped with the routing on a SKIP_STEADY_STATE step.
+    void save_hyd_state() noexcept {
+        nodes.save_hyd_state();
+        links.save_hyd_state();
+    }
+
     /**
      * @brief Reset all state variables to initial conditions (cold start).
      *
@@ -1688,6 +2021,7 @@ struct SimulationContext {
      *          and static properties are NOT changed.
      */
     void reset_state() noexcept {
+        runtime_coupling_used = false;
         nodes.reset_state();
         links.reset_state();
         subcatches.reset_state();
@@ -1726,6 +2060,7 @@ struct SimulationContext {
         // Resize spatial coordinate arrays
         spatial.node_x.assign(static_cast<std::size_t>(node_names.size()), 0.0);
         spatial.node_y.assign(static_cast<std::size_t>(node_names.size()), 0.0);
+        spatial.node_has_xy.assign(static_cast<std::size_t>(node_names.size()), 0);   // G-X2
         spatial.link_x.assign(static_cast<std::size_t>(link_names.size()), 0.0);
         spatial.link_y.assign(static_cast<std::size_t>(link_names.size()), 0.0);
         spatial.subcatch_x.assign(static_cast<std::size_t>(subcatch_names.size()), 0.0);

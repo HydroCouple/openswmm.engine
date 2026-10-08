@@ -37,6 +37,7 @@
  */
 
 #include "DefaultOutputPlugin.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "../../../include/openswmm/plugin_sdk/PluginState.hpp"
 #include "../../../include/openswmm/plugin_sdk/SimulationSnapshot.hpp"
 #include "../core/SimulationContext.hpp"
@@ -74,7 +75,7 @@ constexpr std::size_t kOutputBufferBytes = 1u << 20;
 
 int DefaultOutputPlugin::prepare(const SimulationContext& ctx) {
     // Open binary output file
-    out_file_ = std::fopen(out_path_.c_str(), "w+b");
+    out_file_ = openswmm::io::fopen_utf8(out_path_, "w+b");
     if (!out_file_) {
         last_error_ = "Cannot open output file: " + out_path_;
         return -1;
@@ -97,7 +98,6 @@ int DefaultOutputPlugin::prepare(const SimulationContext& ctx) {
     // factors it needs.
     flow_units_code_ = static_cast<int>(ctx.options.flow_units);
     ucf_length_      = ucf::UCF(ucf::LENGTH,   ctx.options);
-    ucf_landarea_    = ucf::UCF(ucf::LANDAREA, ctx.options);
 
     // Write header
     writeHeader(ctx);
@@ -208,6 +208,12 @@ int DefaultOutputPlugin::update(const SimulationSnapshot& snapshot) {
     sys[14] = static_cast<float>(snapshot.sys_pet);         // SYS_PET
 
     std::fwrite(sys, sizeof(float), MAX_SYS_RESULTS, out_file_);
+
+    // Push the completed period to disk so a live reader (OutputReader::
+    // openLive / swmm_output_open_live) can count it from the file size.
+    // Runs on the IO thread; one write(2) per report step. The 1 MB stdio
+    // buffer still batches the per-element fwrites inside the period.
+    std::fflush(out_file_);
 
     ++n_periods_;
     ++step_count_;
@@ -322,14 +328,18 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
     // Input data start
     input_start_pos_ = std::ftell(out_file_);
 
-    // Subcatchment input: area (converting to display units)
+    // Subcatchment input: area, in display units (acres / hectares).
+    // Legacy output.c:245-252 writes `Subcatch[j].area * UCF(LANDAREA)`
+    // because legacy stores the area in ft2. v6 stores it in DISPLAY units
+    // already — CatchmentHandler.cpp:159 keeps the [SUBCATCHMENTS] token
+    // verbatim, and every other consumer multiplies by ACRES_TO_FT2 to get
+    // ft2 — so applying UCF(LANDAREA) here divided every area by 43560.
     writeInt4(1);
     writeInt4(1);  // INPUT_AREA code
     for (int j = 0; j < ctx.n_subcatches(); ++j) {
         auto uj = static_cast<std::size_t>(j);
         if (uj >= subcatch_rpt_flag_.size() || !subcatch_rpt_flag_[uj]) continue;
-        writeReal4(static_cast<float>(
-            ctx.subcatches.area[uj] * ucf_landarea_));
+        writeReal4(static_cast<float>(ctx.subcatches.area[uj]));
     }
 
     // Node input: type, invert, max depth

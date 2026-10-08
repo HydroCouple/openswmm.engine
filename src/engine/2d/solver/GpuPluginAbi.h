@@ -69,11 +69,17 @@
 extern "C" {
 #endif
 
-/** ABI version. The core refuses a plugin whose abi_version disagrees.
+/** ABI version. The core refuses a plugin whose abi_version disagrees,
+ *  except that a v3 plugin is still accepted through the thread-count
+ *  environment fallback (see requested_threads below).
  *  v3: CVODE/ARKODE plugin solvers retired (D2, 2026-07-29) — the explicit
  *  marcher factory is the only solver entry, and SurfaceStateData dropped the
- *  active_set pointer, so a v2 plugin would mis-read the struct layout. */
-#define OPENSWMM_GPU_ABI_VERSION 3
+ *  active_set pointer, so a v2 plugin would mis-read the struct layout.
+ *  v4: OpenSwmmGpuProbe gained requested_threads (core → plugin, appended
+ *  so the v3 prefix layout is unchanged) and the optional entry point
+ *  openswmm_gpu_host_threads() (plugin → core). */
+#define OPENSWMM_GPU_ABI_VERSION 4
+#define OPENSWMM_GPU_ABI_VERSION_ENV_THREADS_FALLBACK 3
 
 /** GPU vendor / backend identifier reported by a plugin. */
 typedef enum OpenSwmmGpuVendor {
@@ -91,6 +97,12 @@ typedef struct OpenSwmmGpuProbe {
     int                vendor;            /**< an OpenSwmmGpuVendor value           */
     char               device_name[128];  /**< human-readable device name           */
     unsigned long long device_mem_bytes; /**< global memory of selected device     */
+    /** v4, core → plugin: [OPTIONS] THREADS for the host (OpenMP) backend.
+     *  0 = plugin default. Written by the core AFTER openswmm_gpu_probe()
+     *  returns and BEFORE openswmm_make_gpu_explicit_solver() is called; the
+     *  plugin zero-fills it in the probe. Device backends ignore it. The
+     *  OPENSWMM_2D_THREADS environment variable still overrides it. */
+    int                requested_threads;
 } OpenSwmmGpuProbe;
 
 /**
@@ -115,6 +127,17 @@ OPENSWMM_GPU_ABI int openswmm_gpu_probe(OpenSwmmGpuProbe* out);
  * ISurfaceSolver* (as void*) owned by the caller, or NULL.
  */
 OPENSWMM_GPU_ABI void* openswmm_make_gpu_explicit_solver(const OpenSwmmGpuProbe* probe);
+
+/**
+ * @brief (v4, optional) Host thread count the plugin's Kokkos runtime is
+ *        initialised with; 0 when not yet initialised or not a host backend.
+ *
+ * Kokkos initialises once per process, so this is the number every later
+ * solver in the process will run with regardless of requested_threads. The
+ * core dlsym()s it optionally — a plugin that does not export it is still
+ * accepted.
+ */
+OPENSWMM_GPU_ABI int openswmm_gpu_host_threads(void);
 
 #ifdef __cplusplus
 } /* extern "C" */

@@ -26,6 +26,9 @@ env:
   MACOSX_DEPLOYMENT_TARGET: "11.0"
 
 jobs:
+  python-contracts:
+    uses: ./.github/workflows/python_contracts.yml
+
   # ──────────────────────────────────────────────────────────────────────
   #  Build release binaries
   # ──────────────────────────────────────────────────────────────────────
@@ -435,7 +438,7 @@ jobs:
           # numpy (the base wheel's only runtime dep) is pulled from PyPI as a wheel.
           "$PY" -m pip install --only-binary :all: numpy
           # The project wheels MUST come from the local wheelhouse, never PyPI.
-          # openswmm / openswmm-gpu-omp are pre-releases (6.0.0a3), and a *stable*
+          # openswmm / openswmm-gpu-omp are pre-releases (for example, 6.0.0a4.dev1), and a *stable*
           # openswmm-gpu-omp 0.0.0 placeholder exists on PyPI; without --no-index pip
           # prefers that stable stub over our local pre-release and installs an empty
           # package (ModuleNotFoundError: openswmm_gpu_omp). --no-index also makes a
@@ -443,9 +446,14 @@ jobs:
           # resolving to PyPI.
           "$PY" -m pip install --only-binary :all: --no-index --find-links wheelhouse openswmm openswmm-gpu-omp
           "$PY" -m pip show openswmm | tee wheel-smoke-${{ matrix.os }}.txt
-          # gpu-omp companion must import AND be auto-discovered by base openswmm
-          # (import openswmm runs _register_gpu_companion → OPENSWMM_GPU_PLUGIN_PATH).
-          "$PY" -c "import os,openswmm,openswmm_gpu_omp as g; p=os.environ.get('OPENSWMM_GPU_PLUGIN_PATH'); assert p, 'gpu-omp plugin not discovered'; print('OPENSWMM_GPU_PLUGIN_PATH='+p); print('companion at '+g.__file__)" | tee -a wheel-smoke-${{ matrix.os }}.txt
+          # A plugin must be auto-discovered on `import openswmm`
+          # (_register_gpu_plugin → OPENSWMM_GPU_PLUGIN_PATH), the companion must
+          # import, and the discovered directory must actually CONTAIN a built
+          # plugin binary — a non-empty env var alone would pass even if the
+          # OpenMP build had silently produced nothing. The base wheel now ships
+          # the plugin too, so the discovered dir is normally openswmm/engine;
+          # the shim prefers it and skips the companion (one OpenMP runtime).
+          "$PY" -c "import os,glob,openswmm,openswmm_gpu_omp as g; p=os.environ.get('OPENSWMM_GPU_PLUGIN_PATH'); assert p, 'no gpu plugin discovered'; d=p.split(os.pathsep)[0]; hits=[f for f in glob.glob(os.path.join(d,'*openswmm_gpu_*')) if f.endswith(('.so','.dylib','.dll'))]; assert hits, 'discovered dir has no plugin binary: '+d; print('OPENSWMM_GPU_PLUGIN_PATH='+p); print('plugin: '+hits[0]); print('companion at '+g.__file__)" | tee -a wheel-smoke-${{ matrix.os }}.txt
           # Run the example model end-to-end via the shared smoke script.
           "$PY" python/smoke_test.py 2>&1 | tee -a wheel-smoke-${{ matrix.os }}.txt
 
@@ -472,7 +480,9 @@ jobs:
           python-version: "3.13"
 
       - name: Check version sync (CMake / vcpkg / pyproject)
-        run: python scripts/check_version_sync.py
+        run: |
+          python -m unittest discover -s scripts -p test_version_sync.py
+          python scripts/check_version_sync.py
 
       - name: Install build frontend
         run: |
@@ -552,7 +562,7 @@ jobs:
   release:
     name: Create GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, test, wheels, gpu-omp-wheels, sdist, wheel-smoke]
+    needs: [build, test, wheels, gpu-omp-wheels, sdist, wheel-smoke, python-contracts]
     runs-on: ubuntu-latest
     permissions:
       contents: write

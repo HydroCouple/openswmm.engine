@@ -27,6 +27,7 @@
  */
 
 #include "DefaultInputPlugin.hpp"
+#include "../hydrology/LidNode.hpp"
 
 #include "../input/InputReader.hpp"
 #include "../input/PostParseResolver.hpp"
@@ -77,6 +78,7 @@ void DefaultInputPlugin::register_builtin_handlers() {
     // Node sections
     registry_.register_builtin("JUNCTIONS",    input::handle_junctions);
     registry_.register_builtin("VIRTUAL_JUNCTIONS", input::handle_virtual_junctions);
+    registry_.register_builtin("INLET_JUNCTIONS", input::handle_inlet_junctions);
     registry_.register_builtin("OUTFALLS",     input::handle_outfalls);
     registry_.register_builtin("DIVIDERS",     input::handle_dividers);
     registry_.register_builtin("STORAGE",      input::handle_storage);
@@ -98,6 +100,10 @@ void DefaultInputPlugin::register_builtin_handlers() {
     registry_.register_builtin("INFILTRATION",  input::handle_infiltration);
     registry_.register_builtin("LID_CONTROLS",  input::handle_lid_controls);
     registry_.register_builtin("LID_USAGE",     input::handle_lid_usage);
+    registry_.register_builtin("LID_LAYER_TREATMENT", lidnode::readTreatment);
+    registry_.register_builtin("LID_NODES", lidnode::readNodes);
+    registry_.register_builtin("LID_NODE_OUTLETS", lidnode::readOutlets);
+    registry_.register_builtin("LID_RICHARDS", lidnode::readRichards);
     registry_.register_builtin("AQUIFERS",      input::handle_aquifers);
     registry_.register_builtin("GROUNDWATER",   input::handle_groundwater);
     registry_.register_builtin("GWF",           input::handle_gwf);
@@ -135,11 +141,31 @@ void DefaultInputPlugin::register_builtin_handlers() {
     registry_.register_builtin("VERTICES",      input::handle_vertices);
     registry_.register_builtin("POLYGONS",      input::handle_polygons);
     registry_.register_builtin("SYMBOLS",       input::handle_symbols);
-    registry_.register_builtin("LABELS",        noop);
-    registry_.register_builtin("BACKDROP",      noop);
+    // [LABELS], [BACKDROP] and [PROFILE] are GUI annotation: legacy SWMM has
+    // no `case` for any of them in parseLine, so no engine reads or validates
+    // their content. They were registered as no-ops, which meant a model's map
+    // labels and backdrop image were silently deleted by the first
+    // Open → Save. Kept verbatim instead — replaying the authored lines is
+    // both the safest reading and an exact one.
+    auto capture = [](const char* tag) {
+        return [tag](SimulationContext& ctx, const std::vector<std::string>& lines) {
+            auto& dst = ctx.passthrough_sections[tag];
+            dst.insert(dst.end(), lines.begin(), lines.end());
+        };
+    };
+
+    registry_.register_builtin("LABELS",        capture("LABELS"));
+    registry_.register_builtin("BACKDROP",      capture("BACKDROP"));
     registry_.register_builtin("MAP",           input::handle_map);
     registry_.register_builtin("TAGS",          input::handle_tags);
-    registry_.register_builtin("PROFILE",       noop);
+    // Both spellings: legacy matches section headers by PREFIX (SectWords
+    // holds "[PROFILE"), so `[PROFILE]` and `[PROFILES]` are the same section
+    // there, while this registry matches the whole tag. Only "PROFILE" was
+    // registered — and no deck in the 1396-deck corpus writes that spelling
+    // while 59 write `[PROFILES]`, so the handler never once fired and every
+    // one of those decks also raised an unknown-section warning.
+    registry_.register_builtin("PROFILE",       capture("PROFILE"));
+    registry_.register_builtin("PROFILES",      capture("PROFILES"));
     registry_.register_builtin("REPORT",        input::handle_report);
     registry_.register_builtin("FILES",         input::handle_files);
     registry_.register_builtin("ADJUSTMENTS",   input::handle_adjustments);
@@ -200,10 +226,30 @@ int DefaultInputPlugin::read(const std::string& path, SimulationContext& ctx) {
 }
 
 int DefaultInputPlugin::write(const std::string& path, const SimulationContext& ctx) {
-    int err = inp_writer::writeInpFile(ctx, path);
+    // The writer's warning sink is optional and this caller used to pass
+    // nullptr, which is half of why the "embedded [REACTION_*] sections are
+    // lost from this save" notice never reached a user (2026-08-26). The
+    // other two callers forward into ctx.warnings; this one cannot — the
+    // plugin interface hands it a CONST context by design — so the notice
+    // goes to the plugin's own diagnostic channel instead.
+    //
+    // ⚠ On a SUCCESSFUL write `last_error_message()` is not conventionally
+    // read, so a caller driving the engine through this interface can still
+    // miss it. That is a real residual gap, recorded rather than papered
+    // over: closing it needs a non-error diagnostic channel on IInputPlugin,
+    // which is an interface change and not this round's.
+    std::vector<std::string> warns;
+    int err = inp_writer::writeInpFile(ctx, path, &warns);
     if (err != 0) {
         last_error_ = "Failed to write .inp file: " + path;
+        // Losing model data is worth saying even while reporting the failure.
+        for (const auto& w : warns) last_error_ += "\n" + w;
     }
+    // On SUCCESS the warnings are collected and deliberately NOT written to
+    // last_error_. Putting a non-error in an error channel is worse than the
+    // silence it replaces: a caller that checks last_error_message() after a
+    // successful write would read a warning as a failure. The first draft of
+    // this hunk did exactly that and it was wrong.
     return err;
 }
 

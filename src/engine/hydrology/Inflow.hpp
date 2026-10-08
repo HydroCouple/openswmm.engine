@@ -34,6 +34,7 @@
 #ifndef OPENSWMM_INFLOW_HPP
 #define OPENSWMM_INFLOW_HPP
 
+#include <cstdint>
 #include <vector>
 
 namespace openswmm {
@@ -67,7 +68,12 @@ enum class ExtInflowKind : int {
     /// after conv_factor) carried by the node's external inflow — it adds
     /// no water and no mass; the EXTERNAL_INFLOW loader books q·age with
     /// this age instead of the source table's.
-    AGE    = 3
+    AGE    = 3,
+    /// U2 (2026-09-07): a row naming a reactions-component species.
+    /// pollut_idx holds the SPECIES index (0..n_species-1). The load goes to
+    /// ReactionData::msx_ext_mass_in, never to the pollutant arrays.
+    MSX_CONCEN = 4,
+    MSX_MASS   = 5
 };
 
 struct ExtInflowSoA {
@@ -81,8 +87,9 @@ struct ExtInflowSoA {
     /// Row kind (see ExtInflowKind). Without this every row — including
     /// pollutant rows — was added to the node's flow, injecting phantom water.
     std::vector<int>    kind;
-    /// Pollutant index for CONCEN/MASS rows; -1 for FLOW rows (and for a
-    /// constituent name that matches no declared pollutant).
+    /// Pollutant index for CONCEN/MASS rows, SPECIES index for MSX_CONCEN /
+    /// MSX_MASS rows; -1 for FLOW rows (and for a constituent name that
+    /// matches no declared pollutant or species).
     std::vector<int>    pollut_idx;
 
     void resize(int n);
@@ -100,6 +107,15 @@ struct DwfInflowSoA {
     std::vector<int>    pat_daily;      ///< Daily pattern index (-1 = none)
     std::vector<int>    pat_hourly;     ///< Hourly pattern index (-1 = none)
     std::vector<int>    pat_weekend;    ///< Weekend pattern index (-1 = none)
+    /// Constituent is FLOW (legacy TDwfInflow.param == -1). A pollutant DWF
+    /// row is a CONCENTRATION — it must never be added as water (legacy
+    /// addDryWeatherInflows reads only the FLOW row for the hydrograph).
+    std::vector<uint8_t> is_flow;
+    /// Pollutant index for a non-FLOW row (-1 when FLOW or unmatched).
+    std::vector<int>     pollut_idx;
+    /// U2: reactions-species index for a row naming a species (-1 else).
+    /// Its concentration rides the node's DWF flow into msx_ext_mass_in.
+    std::vector<int>     msx_idx;
 
     void resize(int n);
 };

@@ -56,12 +56,14 @@
 #include "../Tokenizer.hpp"
 #include "../SectionParser.hpp"
 #include "../MultiColumnSeriesFile.hpp"
+#include "../../core/ErrorCodes.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../data/SubcatchData.hpp"
 #include "../../data/GageData.hpp"
 
 #include "../InputParseUtils.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <string>
 
@@ -86,6 +88,7 @@ static void ensure_gage_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.gages.file_first_date,    0.0);
     grow(ctx.gages.file_last_date,     0.0);
     grow(ctx.gages.file_periods_precip, 0L);
+    grow(ctx.gages.file_start_date,    0.0);
     if (ctx.gages.rain_series.size() < n) ctx.gages.rain_series.resize(n);
     grow(ctx.gages.file_format,   RainFileFormat::UNKNOWN);
     grow(ctx.gages.interval_sec,  3600);
@@ -97,6 +100,11 @@ static void ensure_gage_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.gages.api_rainfall,  -1.0);  // -1 = no API override
     grow(ctx.gages.next_rain_date,0.0);
     grow(ctx.gages.is_raining,    false);
+    grow(ctx.gages.st_cur,  -2);
+    grow(ctx.gages.st_next, -1);
+    grow(ctx.gages.st_rain, 0.0);
+    grow(ctx.gages.st_init, static_cast<uint8_t>(0));
+    grow(ctx.gages.st_used, static_cast<uint8_t>(0));
 
     // Past-rain tracking (used by updateAllGages for controls past-rain)
     grow(ctx.gages.past_rain_accum,   0.0);
@@ -156,7 +164,11 @@ void handle_subcatchments(SimulationContext& ctx, const std::vector<std::string>
         }
 
         ctx.subcatches.area[idx]       = to_double(tok[3]);
-        ctx.subcatches.frac_imperv[idx]= to_double(tok[4]) / 100.0;  // % → fraction
+        // Legacy subcatch_readParams: fracImperv = MIN(x[4], 100) / 100 — a
+        // percentage above 100 (w-wo-rb-2subcatchments writes 5000) is a
+        // fully impervious subcatchment, not a 50x area.
+        ctx.subcatches.frac_imperv[idx]=
+            std::min(to_double(tok[4]), 100.0) / 100.0;  // % → fraction
         ctx.subcatches.width[idx]      = to_double(tok[5]);
         ctx.subcatches.slope[idx]      = to_double(tok[6]) / 100.0;  // % → fraction
 
@@ -209,23 +221,38 @@ void handle_subareas(SimulationContext& ctx, const std::vector<std::string>& lin
         ctx.subcatches.ds_perv[idx]   = to_double(tok[4]);
 
         // PctZero → fraction of impervious with no depression storage
+        // Both forms are kept: the 0-1 fraction every consumer reads, and
+        // the authored percent the runoff kernel needs to reproduce legacy's
+        // `fracImperv * x[4] / 100.0` bit for bit (see pct_zero).
+        ctx.subcatches.pct_zero[idx] = to_double(tok[5]);
         ctx.subcatches.frac_imperv_no_store[idx] = to_double(tok[5]) / 100.0;
 
-        // RouteTo: OUTLET (0), IMPERV (1), or PERV (2)
+        // RouteTo: OUTLET (0), IMPERV (1), or PERV (2). Legacy subcatch.c uses
+        // findmatch(tok[6], {"OUTLET","IMPERV","PERV"}) where match() treats the
+        // keyword as a case-insensitive PREFIX of the token — so the full words
+        // "IMPERVIOUS"/"PERVIOUS" that decks actually write map to IMPERV/PERV.
+        // v6 formerly required an EXACT "IMPERV"/"PERV", so the full words fell
+        // through to OUTLET and silently dropped all inter-subarea runon.
         if (tok.size() > 6) {
             std::string rt = Tokenizer::to_upper(tok[6]);
-            if (rt == "IMPERV")       ctx.subcatches.subarea_routing[idx] = 1;
-            else if (rt == "PERV")    ctx.subcatches.subarea_routing[idx] = 2;
-            else                      ctx.subcatches.subarea_routing[idx] = 0; // OUTLET
-        }
+            auto has_prefix = [&](const char* p) { return rt.rfind(p, 0) == 0; };
+            int mode = 0;  // OUTLET
+            if      (has_prefix("OUTLET")) mode = 0;
+            else if (has_prefix("IMPERV")) mode = 1;
+            else if (has_prefix("PERV"))   mode = 2;
+            ctx.subcatches.subarea_routing[idx] = mode;
 
-        // PctRouted (default 100%)
-        if (tok.size() > 7) {
-            ctx.subcatches.pct_routed[idx] = to_double(tok[7]) / 100.0;
-        } else if (tok.size() > 6) {
-            // If RouteTo specified but no PctRouted, default to 100%
-            std::string rt = Tokenizer::to_upper(tok[6]);
-            if (rt == "IMPERV" || rt == "PERV")
+            // PctRouted defaults to 100%, then tok[7] overrides. Legacy sets
+            // x[6] = 1.0 up front for EVERY RouteTo (subcatch.c), including
+            // OUTLET; gating the default on `mode != 0` left OUTLET rows at
+            // the array's initialised 0.0. That is inert in the solver —
+            // fOutlet is only overridden for TO_IMPERV/TO_PERV — but the
+            // writer then emitted an explicit "0.00" where the deck had no
+            // column at all, so a later edit of RouteTo to PERVIOUS would
+            // silently mean 0% routed where the original file meant 100%.
+            if (tok.size() > 7)
+                ctx.subcatches.pct_routed[idx] = to_double(tok[7]) / 100.0;
+            else
                 ctx.subcatches.pct_routed[idx] = 1.0;
         }
     }
@@ -247,12 +274,58 @@ void handle_infiltration(SimulationContext& ctx, const std::vector<std::string>&
         const int idx = ctx.subcatch_names.find(tok[0]);
         if (idx < 0) continue;
 
-        ctx.subcatches.infil_model[idx] = model;
-        ctx.subcatches.infil_p1[idx] = to_double(tok[1]);
-        ctx.subcatches.infil_p2[idx] = to_double(tok[2]);
-        ctx.subcatches.infil_p3[idx] = to_double(tok[3]);
-        if (tok.size() > 4) ctx.subcatches.infil_p4[idx] = to_double(tok[4]);
-        if (tok.size() > 5) ctx.subcatches.infil_p5[idx] = to_double(tok[5]);
+        // SWMM 5.2 allows a per-subcatchment method override as the LAST
+        // token (legacy infil.c:150-155: findmatch against InfilModelWords).
+        // Without this the keyword parsed as 0.0 into a parameter slot.
+        std::size_t ntoks = tok.size();
+        int row_model = model;
+        {
+            const std::string last = Tokenizer::to_upper(tok[ntoks - 1]);
+            if      (last == "HORTON")         { row_model = 0; --ntoks; }
+            else if (last == "MOD_HORTON" ||
+                     last == "MODIFIED_HORTON") { row_model = 1; --ntoks; }
+            else if (last == "GREEN_AMPT")     { row_model = 2; --ntoks; }
+            else if (last == "MOD_GREEN_AMPT" ||
+                     last == "MODIFIED_GREEN_AMPT") { row_model = 3; --ntoks; }
+            else if (last == "CURVE_NUMBER")   { row_model = 4; --ntoks; }
+        }
+
+        ctx.subcatches.infil_model[idx] = row_model;
+        if (ntoks > 1) ctx.subcatches.infil_p1[idx] = to_double(tok[1]);
+        if (ntoks > 2) ctx.subcatches.infil_p2[idx] = to_double(tok[2]);
+        if (ntoks > 3) ctx.subcatches.infil_p3[idx] = to_double(tok[3]);
+        if (ntoks > 4) ctx.subcatches.infil_p4[idx] = to_double(tok[4]);
+        if (ntoks > 5) ctx.subcatches.infil_p5[idx] = to_double(tok[5]);
+
+        // Parameter validation — legacy infil_readParams raises ERROR 235
+        // when the model's setParams rejects the values (infil.c:198).
+        // Checks run on the RAW display-unit values, as legacy does.
+        const double p1 = ctx.subcatches.infil_p1[idx];
+        const double p2 = ctx.subcatches.infil_p2[idx];
+        const double p3 = ctx.subcatches.infil_p3[idx];
+        const double p4 = ctx.subcatches.infil_p4[idx];
+        const double p5 = ctx.subcatches.infil_p5[idx];
+        bool ok = true;
+        switch (static_cast<InfiltrationModel>(row_model)) {
+            case InfiltrationModel::HORTON:
+            case InfiltrationModel::MOD_HORTON:
+                // horton_setParams (infil.c:328): no negatives, f0 >= fmin
+                ok = p1 >= 0.0 && p2 >= 0.0 && p3 >= 0.0 &&
+                     p4 >= 0.0 && p5 >= 0.0 && p1 >= p2;
+                break;
+            case InfiltrationModel::GREEN_AMPT:
+            case InfiltrationModel::MOD_GREEN_AMPT:
+                // grnampt_setParams (infil.c:605): suction >= 0, Ksat > 0,
+                // IMD a fraction in [0, 1]
+                ok = p1 >= 0.0 && p2 > 0.0 && p3 >= 0.0 && p3 <= 1.0;
+                break;
+            case InfiltrationModel::CURVE_NUMBER:
+                // curvenum_setParams (infil.c): drying time (3rd param) > 0
+                ok = p3 > 0.0;
+                break;
+        }
+        if (!ok)
+            ctx.errors.push_back(format_error(ERR_INFILTRATION, ""));
     }
 }
 
@@ -343,6 +416,16 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
                 if (tok.size() > 7) {
                     const std::string u = Tokenizer::to_upper(tok[7]);
                     ctx.gages.rain_units[idx] = (u == "MM") ? 1 : 0; // default IN
+                }
+                // Optional start date (legacy gage.c:207-212): a token whose
+                // FIRST character is `*` means none; anything else must be a
+                // date or it is ERROR 213. It was never read, so records from
+                // before the date were routed.
+                ctx.gages.file_start_date[idx] = 0.0;
+                if (tok.size() > 8 && !tok[8].empty() && tok[8][0] != '*') {
+                    const double start = parse_date(tok[8]);
+                    if (start > 0.0) ctx.gages.file_start_date[idx] = start;
+                    else ctx.errors.push_back(format_error(ERR_DATETIME, tok[8]));
                 }
                 // The trailing scale factor is honoured only when present as a
                 // positive number (a start date token would not parse as one).

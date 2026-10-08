@@ -114,6 +114,17 @@ struct Expression {
  */
 int parse(const std::string& expr_str, Expression& result);
 
+/**
+ * @brief Names of the built-in functions the tokenizer recognises.
+ *
+ * @details Lower-case, in FUNC_* enumerator order (abs, sgn, sqrt, log, exp,
+ *          sin, cos, tan, asin, acos, atan, step, min, max, cot, sinh, cosh,
+ *          tanh, coth, log10, acot). Single source for editors/validators so
+ *          the list is never duplicated. min and max take two arguments; all
+ *          others take one.
+ */
+const std::vector<std::string>& function_names();
+
 // ============================================================================
 // Variable binding (Tier 1 optimization)
 // ============================================================================

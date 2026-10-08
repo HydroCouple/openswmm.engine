@@ -27,6 +27,8 @@
  */
 
 #include "openswmm_api_common.hpp"
+#include <cctype>
+#include "Constants.hpp"
 #include "../../../include/openswmm/engine/openswmm_pollutants.h"
 
 namespace {
@@ -178,6 +180,29 @@ SWMM_ENGINE_API int swmm_pollutant_rename(SWMM_Engine engine, int idx, const cha
     // else (co-pollutant, LID removals, buildup/washoff, treatment) is
     // index/positional and unaffected.
     const std::string next = new_id;
+    auto upper = [](std::string value) {
+        for (auto& ch : value) ch=static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+        return value;
+    };
+    const auto old_upper=upper(prev);
+    for (auto& stack : ctx.lid_controls.node_layers)
+        for (auto& layer : stack)
+            for (auto& rule : layer.treatment) {
+                if (upper(rule.pollutant)==old_upper) rule.pollutant=next;
+                auto& expr=rule.expression;
+                for (std::size_t i=0;i<expr.size();) {
+                    if (!std::isalpha(static_cast<unsigned char>(expr[i])) && expr[i]!='_') {++i;continue;}
+                    const auto begin=i++;
+                    while(i<expr.size() && (std::isalnum(static_cast<unsigned char>(expr[i])) || expr[i]=='_')) ++i;
+                    if(begin>0 && std::isdigit(static_cast<unsigned char>(expr[begin-1]))) continue;
+                    const auto word=upper(expr.substr(begin,i-begin));
+                    const std::string reserved=" C R DT HRT Q V D AREA EXP LOG LN SQRT MIN MAX ABS SGN STEP ";
+                    std::string replacement;
+                    if(word=="C_"+old_upper || word=="R_"+old_upper) replacement=word.substr(0,2)+next;
+                    else if(word==old_upper && reserved.find(" "+word+" ")==std::string::npos) replacement=next;
+                    if(!replacement.empty()) {expr.replace(begin,i-begin,replacement);i=begin+replacement.size();}
+                }
+            }
     for (auto& c : ctx.ext_inflows.constituent)
         if (c == prev) c = next;
     for (auto& c : ctx.dwf_inflows.constituent)
@@ -193,7 +218,10 @@ SWMM_ENGINE_API int swmm_pollutant_set_kdecay(SWMM_Engine engine, int idx, doubl
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
-    ctx.pollutants.k_decay[static_cast<std::size_t>(idx)] = k;
+    // The API speaks deck units (1/day) — the header's contract all
+    // along; storage is 1/sec (KD1), like legacy's swmm_POLLUT_KDECAY.
+    ctx.pollutants.k_decay[static_cast<std::size_t>(idx)] =
+        k / openswmm::constants::SEC_PER_DAY;
     return SWMM_OK;
 }
 
@@ -255,7 +283,8 @@ SWMM_ENGINE_API int swmm_pollutant_get_kdecay(SWMM_Engine engine, int idx, doubl
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
-    if (k) *k = ctx.pollutants.k_decay[static_cast<std::size_t>(idx)];
+    if (k) *k = ctx.pollutants.k_decay[static_cast<std::size_t>(idx)] *
+                openswmm::constants::SEC_PER_DAY;
     return SWMM_OK;
 }
 

@@ -70,7 +70,7 @@ class MassBalance:
 
     @property
     def runoff_continuity_error(self) -> float:
-        """Runoff continuity error (%)."""
+        """Runoff continuity error as a fraction (0.001 means 0.1%)."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef double v = 0.0
         _check(swmm_get_runoff_continuity_error(h, &v))
@@ -78,14 +78,14 @@ class MassBalance:
 
     @property
     def routing_continuity_error(self) -> float:
-        """Flow routing continuity error (%)."""
+        """Flow routing continuity error as a fraction (0.001 means 0.1%)."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef double v = 0.0
         _check(swmm_get_routing_continuity_error(h, &v))
         return v
 
     def quality_continuity_error(self, pollutant) -> float:
-        """Quality continuity error (%) for ``pollutant`` (id or index)."""
+        """Quality continuity error as a fraction for ``pollutant`` (id or index)."""
         cdef int p = _resolve_pollutant(self._solver, pollutant)
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef double v = 0.0

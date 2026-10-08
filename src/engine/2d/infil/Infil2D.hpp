@@ -37,8 +37,8 @@
  *            `per-cell override > tag row > '*' row > none`, once, at
  *            configure time. The solver never consults tags. Provenance is
  *            retained so the writer re-emits a compact file.
- *          - **D-I4.** `LOST` is the only destination accepted in this
- *            release; the others parse and are rejected with a clear message.
+ *          - **Destinations.** LOST and SUBCATCH_AQUIFER apply to ordinary
+ *            cells. Aquifer-owned cells compute their own receiving capacity.
  *          - **D-I6.** Six methods: HORTON, MOD_HORTON, GREEN_AMPT,
  *            MOD_GREEN_AMPT, CURVE_NUM, CONSTANT.
  *
@@ -64,7 +64,7 @@
 #include <string>
 #include <vector>
 
-#include "../../hydrology/Infiltration.hpp"
+#include "../../hydrology/surface/InfilBank.hpp"
 
 namespace openswmm { struct SimulationOptions; }
 
@@ -77,13 +77,14 @@ struct SurfaceStateData;
 // Value types
 // ============================================================================
 
-/// Destination of infiltrated water. D-I4: only LOST is accepted in this
-/// release; the others parse so the grammar is stable, and are rejected at
-/// validation with a "not supported in this release" message.
+/// Ordinary surface-bank destinations. Aquifer ownership is resolved before
+/// ordinary defaults: covered cells use an EXTERNAL bank row and the aquifer's
+/// receiving capacity. AQUIFER_2D remains parseable for reviewed migration,
+/// but is rejected at initialization (R2, 2026-10-05).
 enum class Infil2DDest : int {
     LOST             = 0,  ///< Leaves the domain; booked to MassBalance2D::infil_out
-    SUBCATCH_AQUIFER = 1,  ///< Reserved — legacy subcatchment aquifer (G1 step 11b)
-    AQUIFER_2D       = 2   ///< Reserved — the two-zone 2D kernel (G1 step 11b)
+    SUBCATCH_AQUIFER = 1,  ///< Legacy subcatchment aquifer (U3 track I-b)
+    AQUIFER_2D       = 2   ///< Obsolete; migrate using the ownership review.
 };
 
 /// Number of positional parameter columns carried per row. Matches the widest
@@ -116,6 +117,11 @@ struct Infil2DRow {
     InfilModel  method     = InfilModel::HORTON;
     double      p[kInfil2DMaxParams] = {0.0, 0.0, 0.0, 0.0, 0.0};
     Infil2DDest dest       = Infil2DDest::LOST;
+    /// E2: true when the row spelled its own DEST column. Rows that did not
+    /// take the project default ([2D_OPTIONS] INFIL_DESTINATION) at
+    /// initialize; the writer emits DEST only for explicit rows so a deck
+    /// round-trips unchanged.
+    bool        dest_explicit = false;
 };
 
 /// One `[2D_INFILTRATION_DEFAULTS]` row. `tag == "*"` is the mesh-wide
@@ -190,6 +196,21 @@ public:
      */
     bool resolve(const MeshData& mesh, const SimulationOptions& opts,
                  std::string& err);
+    /// Effective coverage, not inferred from conductivity or authored rows.
+    void setAquiferOwners(std::vector<uint8_t> owners) { aquifer_owners_ = std::move(owners); }
+    const std::vector<std::string>& ownershipMessages() const noexcept { return ownership_messages_; }
+
+    /**
+     * @brief G1 — tell validation that a `[2D_AQUIFER]` resolved, so the
+     *        `AQUIFER_2D` destination has somewhere to send its water.
+     *
+     * @details Must be called before `resolve()`. Without it `AQUIFER_2D` is
+     *          refused, which is the right answer when there is no aquifer:
+     *          silently treating it as LOST would drain a model the user
+     *          believed was recharging.
+     */
+    void setAquifer2DAvailable(bool on) noexcept { aquifer_2d_available_ = on; }
+    bool aquifer2DAvailable() const noexcept { return aquifer_2d_available_; }
 
     /**
      * @brief Recompute and publish per-cell infiltration rates (D-I1).
@@ -206,10 +227,17 @@ public:
      * @param state  Surface state — reads `rainfall`/`depth`, writes `infil_rate`.
      * @param dt     Elapsed seconds since the previous call (the INFIL_STEP).
      */
-    void updateRates(const MeshData& mesh, SurfaceStateData& state, double dt);
+    void updateRates(const MeshData& mesh, SurfaceStateData& state, double dt,
+                     surface::InfilBank::Factors factors = {1.0, 1.0});
+
+    surface::InfilBank& bank() noexcept { return bank_; }
 
     /// True when at least one cell resolved to a model.
     bool active() const noexcept { return active_; }
+
+    /// E2: [2D_OPTIONS] INFILTRATION NO — keep the rows (they still save)
+    /// but run without infiltration. Called after resolve().
+    void deactivate() noexcept { active_ = false; }
 
     /// Resolved method per triangle; `has_method == false` entries are NONE.
     const std::vector<Infil2DRow>& resolvedRows() const noexcept { return resolved_; }
@@ -224,7 +252,7 @@ public:
     /// ledger-consistent series and is what the sidecar's `infil_cum` and the
     /// C API's `*_get_cum_bulk` report; this one is retained as the kernel-side
     /// diagnostic.
-    const std::vector<double>& cumulative() const noexcept { return cum_depth_; }
+    const std::vector<double>& cumulative() const noexcept { return bank_.cumulative(); }
 
     /// Resolved cadence in seconds (options_.infil_step, or the project
     /// WET_STEP when that was <= 0). Set by resolve().
@@ -234,23 +262,25 @@ public:
     void reset();
 
 private:
+    bool resolveImpl(const MeshData&, const SimulationOptions&, std::string&);
+    std::vector<uint8_t> aquifer_owners_;
+    std::vector<std::string> ownership_messages_;
     std::vector<Infil2DDefault>  defaults_;
     std::vector<Infil2DOverride> overrides_;
     Infil2DOptions               options_;
 
     bool   active_        = false;
     double step_seconds_  = 0.0;
+    /// G1: a `[2D_AQUIFER]` resolved, so AQUIFER_2D has a receiver. Set by
+    /// SurfaceRouter2D before resolve(), and cleared by reset() with the rest
+    /// of the authored state.
+    bool   aquifer_2d_available_ = false;
 
     // Per-triangle resolved state (empty when !active_).
     std::vector<Infil2DRow>        resolved_;
     std::vector<Infil2DProvenance> prov_;
-    std::vector<double>            cum_depth_;   ///< m
+    surface::InfilBank bank_;
 
-    // Kernel state, one entry per triangle (allocated only for the methods in
-    // use; indexed by triangle so lookups stay branch-free).
-    std::vector<infil::HortonState>    horton_;
-    std::vector<infil::GreenAmptState> grnampt_;
-    std::vector<infil::CurveNumState>  curvenum_;
 };
 
 // ============================================================================

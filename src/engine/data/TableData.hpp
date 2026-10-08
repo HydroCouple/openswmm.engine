@@ -82,7 +82,8 @@ enum class TableType : int {
     CURVE_PUMP3   = 9,  ///< Pump curve type 3 (volume vs time)
     CURVE_PUMP4   = 10, ///< Pump curve type 4 (depth vs speed)
     CURVE_PUMP5   = 11, ///< Pump curve type 5 (head vs flow, variable speed)
-    CURVE_XPOLYGON = 12 ///< POLYGON cross-section arc/line boundary curve
+    CURVE_WEIR    = 12, ///< Weir rating curve (legacy CurveTypeWords "WEIR")
+    CURVE_XPOLYGON = 13 ///< POLYGON cross-section arc/line boundary curve
 };
 
 // ============================================================================
@@ -168,6 +169,20 @@ struct Table {
      *          triples even when every sibling row in the curve was pairs.
      */
     int                  xpolygon_stride = 0;
+
+    // ---- Time-only (relative) timeseries rows ----
+    // Legacy SWMM seeds every timeseries' lastDate with StartDate+StartTime
+    // (input.c:170), so rows authored WITHOUT a date are elapsed times
+    // anchored at the simulation start, until an explicit date re-anchors
+    // the series. The parser counts those leading date-less rows here and
+    // resolve_cross_references() adds options.start_date to exactly those
+    // rows (recording the applied offset in rel_anchor so re-resolution is
+    // idempotent and a later START_DATE change re-anchors by the delta).
+    // InpWriter subtracts rel_anchor to emit the rows back in their
+    // authored time-only form; rows at index >= n_relative are absolute
+    // date/times and are written with explicit dates.
+    int    n_relative = 0;  ///< Leading rows authored as elapsed time-of-start
+    double rel_anchor = 0.0; ///< start_date offset currently baked into them
 
     // ---- File-backed time series support ----
     bool               is_file_based = false; ///< True if data is read from external file
@@ -642,11 +657,15 @@ inline double table_getSlope(const Table& tbl, double x_query) noexcept {
         return (dx > 0.0) ? (tbl.y[1] - tbl.y[0]) / dx : 0.0;
     }
 
-    // Use last interval for x above range
-    if (x_query >= tbl.x[n - 1]) {
-        double dx = tbl.x[n - 1] - tbl.x[n - 2];
-        return (dx > 0.0) ? (tbl.y[n - 1] - tbl.y[n - 2]) / dx : 0.0;
-    }
+    // Above the last entry the slope is 0: legacy table_getSlope's scan
+    // runs off the end with x1 = x2 = the last entry (dx == 0 → 0.0). A
+    // head-based pump driven past its curve therefore contributes NO dqdh
+    // to its end nodes' surcharge denominator (session81-small-pump-fm-
+    // model's 5002 at 142 ft of head: the last segment's -15.6 GPM/ft
+    // here kept node 16's Picard update damped where legacy let it run).
+    // Exactly AT the last entry legacy breaks on `x <= x2` with the last
+    // segment bracketed, so that case falls through to the loop.
+    if (x_query > tbl.x[n - 1]) return 0.0;
 
     for (int i = 1; i < n; ++i) {
         if (tbl.x[i] >= x_query) {
@@ -726,7 +745,10 @@ struct TableData {
      * @returns Index of the new table.
      */
     int add(const std::string& id, TableType type) {
-        tables.push_back({id, type, {}, {}, {}});
+        Table t;
+        t.id   = id;
+        t.type = type;
+        tables.push_back(std::move(t));
         const int idx = static_cast<int>(tables.size()) - 1;
         by_name[id].push_back(idx);
         return idx;

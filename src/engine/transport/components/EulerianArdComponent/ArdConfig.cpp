@@ -28,11 +28,13 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <vector>
 
+#include "../../../core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "../../../core/SimulationContext.hpp"
 #include "../../../plugins/ProcessComponentRegistry.hpp"
 
@@ -124,6 +126,7 @@ void applyArdSections(SimulationContext& ctx,
                         continue;
                     }
                     const std::string v = upper(toks[1]);
+                    ctx.ard_config.sets_scalar_scheme = true;  // IO3c
                     if (v == "UPWIND")
                         ctx.options.fv.scalar_scheme = fv::ScalarScheme::UPWIND;
                     else if (v == "MUSCL")
@@ -143,6 +146,7 @@ void applyArdSections(SimulationContext& ctx,
                         continue;
                     }
                     const std::string v = upper(toks[1]);
+                    ctx.ard_config.sets_limiter = true;  // IO3c
                     if (v == "MINMOD")
                         ctx.options.fv.limiter = fv::Limiter::MINMOD;
                     else if (v == "VANLEER")
@@ -178,13 +182,18 @@ void applyArdSections(SimulationContext& ctx,
                     // directory (component-file locality, like the config
                     // itself resolves against the .inp).
                     namespace fsys = std::filesystem;
-                    fsys::path p(toks[1]);
+                    // utf8_path/path_utf8, not fsys::path(std::string)/.string():
+                    // the token and the config's own path are UTF-8, and the
+                    // narrow forms decode/encode in the ANSI code page (#7).
+                    fsys::path p = openswmm::io::utf8_path(toks[1]);
                     if (p.is_relative()) {
                         const fsys::path base =
-                            fsys::path(config.source_path).parent_path();
+                            openswmm::io::utf8_path(config.source_path)
+                                .parent_path();
                         if (!base.empty()) p = base / p;
                     }
-                    ctx.ard_config.detailed_output_path = p.string();
+                    ctx.ard_config.detailed_output_path =
+                        openswmm::io::path_utf8(p);
                 } else {
                     errors.push_back(
                         "[TRANSPORT_OPTIONS] unknown key '" + toks[0] +
@@ -258,10 +267,15 @@ void applyArdSections(SimulationContext& ctx,
                 const std::string mode = upper(toks[2]);
                 if (mode == "VALUE") {
                     double v = 0.0;
-                    if (!parse_value(toks[3], v) || v < 0.0) {
+                    // P1.4: a boundary CONCENTRATION below zero is
+                    // meaningless and stays refused; a source RATE below
+                    // zero is extraction (D-NS1) and is accepted here, then
+                    // warned once in resolveArdTransportRows.
+                    if (!parse_value(toks[3], v) || (is_bc && v < 0.0)) {
                         errors.push_back(
                             "[" + tag + "] '" + toks[0] + "': VALUE '" +
-                            toks[3] + "' is not a non-negative number.");
+                            toks[3] + (is_bc ? "' is not a non-negative number."
+                                             : "' is not a number."));
                         continue;
                     }
                     row.value = v;
@@ -455,6 +469,18 @@ void resolveArdTransportRows(SimulationContext& ctx,
                 break;
             }
         if (dup) continue;
+        // P1.4 / D-NS1: a negative rate is legal — it means extraction — but
+        // it is unusual enough to say so once at parse time, matching the
+        // node seam's warning for negative [INFLOWS] quality baselines.
+        // Only configured VALUE rows are scanned; a TIMESERIES that dips
+        // negative at runtime is covered by the clamp warning instead
+        // (X6 §2.6's recorded caveat, same reasoning).
+        if (!row.is_ts && row.value < 0.0)
+            ctx.warnings.push_back(
+                "[TRANSPORT_SOURCES] '" + row.element + "' species '" +
+                row.species + "': negative rate is treated as EXTRACTION "
+                "(D-NS1). Removal is clamped to the mass the conduit's "
+                "cells actually hold.");
         cfg.src_link.push_back(link);
         cfg.src_msx.push_back(s);
         // VALUE rates arrive in species mass units per second; internal MSX
@@ -469,6 +495,94 @@ void resolveArdTransportRows(SimulationContext& ctx,
     cfg.transport_rows_resolved = true;
 }
 
+namespace {
+
+/// Shortest decimal that reads back EXACTLY (fmt_degc's convention).
+std::string fmt_num(double v) {
+    char buf[64];
+    for (int prec = 15; prec <= 17; ++prec) {
+        std::snprintf(buf, sizeof(buf), "%.*g", prec, v);
+        if (std::strtod(buf, nullptr) == v) break;
+    }
+    return buf;
+}
+
+/// IO3c: render model.ard from the live config. Boundary/source rows
+/// come from the RAW copies (element/species/value exactly as parsed —
+/// no unit conversion ever touched them; the resolved arrays are
+/// derived, not authoritative). SCALAR_SCHEME and LIMITER are ALIASES
+/// of [OPTIONS] FV_SCALAR_SCHEME / FV_LIMITER — but the INP writer
+/// emits the FV_* block only under FLOW_ROUTING FV, so on a non-FV
+/// deck THIS file is the only carrier of that state across a save.
+/// The provenance flags (sets_scalar_scheme/sets_limiter) say whether
+/// the file spelled the alias: if so it re-renders with the CURRENT
+/// live value (API/GUI edits persist); if not, no alias is invented
+/// (lesson 196).
+/// DETAILED_OUTPUT canonicalises to the absolute path resolved at
+/// apply (the original relative spelling is not retained).
+std::string saveArdConfig(const SimulationContext& ctx) {
+    const auto& cfg = ctx.ard_config;
+    if (!cfg.configured) return {};
+    std::string out;
+    std::string opts;
+    if (cfg.sets_scalar_scheme) {
+        static const char* const kScalar[] = {"UPWIND", "MUSCL",
+                                              "QUICKEST_ULTIMATE"};
+        opts += std::string("SCALAR_SCHEME ") +
+                kScalar[static_cast<int>(ctx.options.fv.scalar_scheme)] +
+                "\n";
+    }
+    if (cfg.sets_limiter) {
+        static const char* const kLim[] = {"MINMOD", "VANLEER",
+                                           "SUPERBEE"};
+        opts += std::string("LIMITER ") +
+                kLim[static_cast<int>(ctx.options.fv.limiter)] + "\n";
+    }
+    if (cfg.dispersion_mode == ArdDispersionMode::FISCHER)
+        opts += "DISPERSION FISCHER\n";
+    else if (cfg.dispersion_mode == ArdDispersionMode::VALUE)
+        opts += "DISPERSION " + fmt_num(cfg.dispersion_value) + "\n";
+    if (cfg.target_dx > 0.0)
+        opts += "TARGET_DX " + fmt_num(cfg.target_dx) + "\n";
+    if (!cfg.detailed_output_path.empty())
+        opts += "DETAILED_OUTPUT " + cfg.detailed_output_path + "\n";
+    if (!opts.empty()) out += "[TRANSPORT_OPTIONS]\n" + opts + "\n";
+    if (!cfg.conduit_disp_link.empty()) {
+        out += "[CONDUIT_DISPERSION]\n";
+        for (std::size_t i = 0; i < cfg.conduit_disp_link.size(); ++i) {
+            const int lk = cfg.conduit_disp_link[i];
+            if (lk < 0 || lk >= ctx.n_links()) continue;
+            out += ctx.link_names.name_of(lk);
+            out += ' ';
+            out += fmt_num(cfg.conduit_disp_value[i]);
+            out += "\n";
+        }
+        out += "\n";
+    }
+    const auto rows = [&out](const char* tag,
+                             const std::vector<ArdTransportRow>& rs) {
+        if (rs.empty()) return;
+        out += std::string("[") + tag + "]\n";
+        for (const auto& r : rs) {
+            out += r.element;
+            out += ' ';
+            out += r.species;
+            out += ' ';
+            if (r.is_ts)
+                out += "TIMESERIES " + r.ts_name;
+            else
+                out += "VALUE " + fmt_num(r.value);
+            out += "\n";
+        }
+        out += "\n";
+    };
+    rows("TRANSPORT_BOUNDARIES", cfg.boundary_rows);
+    rows("TRANSPORT_SOURCES", cfg.source_rows);
+    return out;
+}
+
+}  // namespace
+
 void registerArdComponent() {
     components::ProcessComponentRegistry::instance().register_component(
         kArdId,
@@ -478,6 +592,10 @@ void registerArdComponent() {
            const components::ComponentConfigSections& config,
            std::vector<std::string>& errors) {
             applyArdSections(ctx, config, errors);
+        },
+        [](const SimulationContext& ctx,
+           const ProcessComponentSpec& /*spec*/) -> std::string {
+            return saveArdConfig(ctx);
         });
 }
 

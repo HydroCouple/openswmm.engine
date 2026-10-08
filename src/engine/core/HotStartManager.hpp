@@ -95,8 +95,17 @@ namespace groundwater { class GWSolver; }
 // ============================================================================
 
 /** @brief Node hydraulic state at hot-start save time. */
+struct HotStartLidCellRecord {
+    int layer = 0;
+    double bottom = 0.0, top = 0.0, porosity = 0.0, volume = 0.0, theta = 0.0;
+};
 struct HotStartNodeRecord {
     std::string id;
+    std::vector<double> lid_richards; ///< V11: per-row storage and material identity
+    std::vector<double> lid_infiltration; ///< V10 S,Ks,IMDmax,IMD,F,Fu,Fumax,Lu,T,head,saturated
+    std::vector<double> lid_quality_mass; ///< V9 retained cell pollutant mass
+    std::vector<HotStartLidCellRecord> lid_cells; ///< V8 retained moisture and geometry identity
+    double lid_treated_volume = 0.0; ///< V8 clogging history (ft3)
     double      depth  = 0.0;
     double      head   = 0.0;
     double      volume = 0.0;
@@ -160,6 +169,60 @@ struct HotStartFile {
     std::vector<HotStartNodeRecord>   nodes;
     std::vector<HotStartLinkRecord>   links;
     std::vector<HotStartSubcatchRecord> subcatches;
+
+    /// U2 (2026-09-07, D-IQ5) — V4 species block: per-element concentrations
+    /// for every [POLLUTANTS] entry and every reactions-component species,
+    /// keyed by NAME so a file applies to a model whose species order
+    /// differs. `node_species` / `link_species` are [element * n + s] with
+    /// the same element order as `nodes` / `links`. Age keeps its per-record
+    /// field (V3); temperature is not carried (its seed paths are per
+    /// engine — a follow-up).
+    std::vector<std::string> species;
+    std::vector<double>      node_species;
+    std::vector<double>      link_species;
+
+    /// G1 (2026-09-07) — V5 block: the two-zone groundwater state.
+    ///
+    /// A run restarted without this reruns the entire wetting history from a
+    /// dry table, which for an aquifer is not an approximation — the whole
+    /// point of the kernel is that it has memory measured in seasons. Cells
+    /// are carried by INDEX, not name, because a mesh has no cell ids; a file
+    /// whose `gw_n_cells` does not match the model is reported and skipped
+    /// rather than applied to the wrong cells.
+    ///
+    /// `gw_theta_sigma` is layer-major `[layer * n_cells + cell]`, the SoA's
+    /// own order, and is empty when no cell uses closure B. The ledger terms
+    /// ride along so a restarted run's continuity check continues the
+    /// original's instead of starting from zero against a non-zero storage.
+    uint32_t            gw_n_cells  = 0;
+    uint32_t            gw_m_layers = 0;
+    std::vector<double> gw_hg;           ///< saturated thickness (m)
+    std::vector<double> gw_hu;           ///< unsaturated storage (m of water)
+    std::vector<double> gw_theta_sigma;  ///< closure-B layers, layer-major
+    std::vector<std::vector<double>> gw_interface; ///< V12: receiving interface; V13 appends pending/cumulative ET and held surface evaporation
+    std::vector<double> gw_ledger;       ///< the cumulative terms (m3): 9, +link since G-X3
+
+    /// T7.5 (2026-09-21) — V6 block: the aquifer's TRANSPORTED tuple.
+    ///
+    /// Without it a restarted run keeps the water table's memory (V5) and
+    /// throws away what is dissolved in it, which for a plume is the whole
+    /// state. Species are carried by NAME, not by row index: a row layout
+    /// depends on `[POLLUTANTS]`, the MSX species list and the AGE /
+    /// TEMPERATURE switches, any of which can differ between the run that
+    /// wrote the file and the run that reads it. A species the reader does
+    /// not have is dropped with a warning; one it has and the file does not
+    /// simply starts from its `[GW_INITIAL_QUALITY]` seed.
+    ///
+    /// Both stores are species-major `[s * n_cells + cell]`, the kernel's
+    /// own order. `gw_species_ledger` is `[s * kGwSpeciesLedgerTerms + t]`.
+    std::vector<std::string> gw_species;        ///< row names, in file order
+    std::vector<double>      gw_sat_mass;       ///< saturated-zone mass
+    std::vector<double>      gw_unsat_mass;     ///< column-store mass
+    std::vector<double>      gw_species_ledger; ///< per species, cumulative
+    /// init, infil_in, node_in, link_in, lateral_net, deep, node_out,
+    /// link_out, dunne, et, reaction, source_in, source_out — the `residual` is derived, never
+    /// stored, so a file can never disagree with itself about it.
+    static constexpr int kGwSpeciesLedgerTerms = 13;
 
     std::string               path;      ///< File path (for flush-on-close)
     bool                      dirty = false; ///< True if set_*() was called
@@ -296,14 +359,16 @@ public:
      *
      * @details Mirrors legacy hotstart.c readRouting(): sets each node's depth +
      *          lateral inflow and each link's flow + depth + setting, all stored
-     *          as float in internal units (ft, cfs). Supports file stamps
-     *          `SWMM5-HOTSTART1..4`. Currently routing-only: returns a non-zero
-     *          error if the file contains subcatchments (the runoff section is
-     *          not yet parsed). Derived state (head, volumes, old-step values)
-     *          is recomputed by the caller from the applied depths/flows.
+     *          as float in internal units (ft, cfs). Also restores node/link
+     *          pollutant concentrations (current and old) and v4 storage HRT.
+     *          Supports legacy versions 1–4. Subcatchment state is skipped with
+     *          a warning; this is a routing-only restore. Derived hydraulic
+     *          state (head, volumes, old-step values) is recomputed by the caller.
+     *          Cold quality seeds must not overwrite the restored concentrations.
      *
      * @param path    Absolute path to the legacy `.hsf` file.
-     * @param ctx     Target context (node/link counts must match the file).
+     * @param ctx     Allocated target context; node/link/pollutant counts must
+     *                match the file.
      * @param warn_cb Optional warning callback.
      * @returns 0 on success; non-zero error code otherwise (description in
      *          last_io_error()).
@@ -322,8 +387,8 @@ public:
      *          (nSub, nLand, nNodes, nLinks, nPollut, flowUnits as int32), then
      *          per node `depth, latFlow[, storage hrt], qual[]` and per link
      *          `flow, depth, setting, qual[]` — all float, internal units
-     *          (ft, cfs). Storage residence time (hrt) is written as 0 (the
-     *          reader discards it; it does not affect hydraulic routing).
+     *          (ft, cfs). Storage residence time is preserved when quality
+     *          state is allocated, and otherwise written as zero.
      *
      * @param path  Absolute path for the `.hsf` file.
      * @param ctx   Source context (final routing state).

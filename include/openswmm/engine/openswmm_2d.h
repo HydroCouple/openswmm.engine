@@ -24,8 +24,15 @@
  *          in the input file and the engine was compiled with OPENSWMM_BUILD_2D.
  *
  *          All functions require the engine to be in SWMM_STATE_RUNNING
- *          unless otherwise noted. Functions return SWMM_ERR_BADPARAM if
- *          the 2D module is not active.
+ *          unless otherwise noted. Solver-state functions return
+ *          SWMM_ERR_LIFECYCLE when the model has a 2D mesh but
+ *          swmm_engine_initialize() has not run yet, and SWMM_ERR_BADPARAM
+ *          when the model has no active 2D surface (no mesh, or IGNORE_2D).
+ *
+ *          Units: swmm_engine_initialize() scales the mesh to SI, so solver
+ *          state (depths, heads, coordinates, velocities, volumes) is in
+ *          metres whatever the project's FLOW_UNITS. Mesh values read before
+ *          initialize are in the mesh's authored units.
  *
  * @defgroup engine_2d 2D Surface Routing API
  * @ingroup  engine_api
@@ -154,11 +161,59 @@ SWMM_ENGINE_API int swmm_2d_set_vertex_z_bulk(SWMM_Engine engine,
                                                 const double* z, int count);
 
 /** @brief Get triangle connectivity (3 vertex indices).
- *  @param idx Triangle index (0-based).
+ *  @param idx Cell index (0-based). Returns SWMM_ERR_BADPARAM when the cell
+ *             is a quadrilateral — use ::swmm_2d_cell_get_vertices.
  *  @param v0,v1,v2 Output vertex indices.
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_triangle_get_vertices(SWMM_Engine engine, int idx,
                                                     int* v0, int* v1, int* v2);
+
+/* -------------------------------------------------------------------------
+ * Mixed triangle / quadrilateral meshes (2D_TRI_QUAD_MESH_PLAN_2026-09-06).
+ *
+ * A "triangle index" everywhere in this header is a CELL index: cells are
+ * numbered triangles first (the [2D_TRIANGLES] rows), then quads (the
+ * [2D_QUADS] rows). Every swmm_2d_triangle_* accessor that reads a per-cell
+ * scalar (area, centroid, Manning, init depth/velocity, tag, coupling) works
+ * on a quad too; only the two 3-slot connectivity getters refuse quads.
+ * Local edge k of a cell has endpoints v[(k+1)%nv], v[(k+2)%nv].
+ * ------------------------------------------------------------------------- */
+
+/** @brief Number of cells (triangles + quads) — same value as
+ *  ::swmm_2d_triangle_count.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_cell_count(SWMM_Engine engine, int* count);
+
+/** @brief Number of quadrilateral cells (0 for an all-triangle mesh).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_quad_count(SWMM_Engine engine, int* count);
+
+/** @brief Edge-slot stride of the bulk edge arrays
+ *  (::swmm_2d_get_edge_flux_bulk, ::swmm_2d_edge_get_geometry_bulk,
+ *  ::swmm_2d_get_edge_conveyance_bulk): 3 for an all-triangle mesh (the
+ *  historical `[tri*3 + localEdge]` layout, byte-compatible), 4 once the mesh
+ *  holds any quad (`[cell*4 + localEdge]`, padding slots of a triangle row
+ *  are 0). Size every bulk buffer as `triangle_count * stride`.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_edge_stride(SWMM_Engine engine, int* stride);
+
+/** @brief Vertices (== edges) of a cell: 3 or 4.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_cell_vertex_count(SWMM_Engine engine, int idx, int* nv);
+
+/** @brief Cell connectivity for any shape.
+ *  @param v  Caller-provided int[4]; slots beyond @p nv are −1.
+ *  @param nv Output vertex count (3 or 4).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_cell_get_vertices(SWMM_Engine engine, int idx,
+                                              int* v, int* nv);
+
+/** @brief Neighbour cell across each local edge, any shape.
+ *  @param n  Caller-provided int[4]; −1 = boundary edge, −2 = padding slot.
+ *  @param nv Output edge count (3 or 4).
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_cell_get_neighbours(SWMM_Engine engine, int idx,
+                                                int* n, int* nv);
 
 /** @brief Get triangle area.
  *  @param idx Triangle index.
@@ -383,19 +438,26 @@ SWMM_ENGINE_API int swmm_2d_set_vertex_coupling_cd(SWMM_Engine engine,
                                                      double cd);
 
 /** @brief Get the coupling exchange area of a vertex
- *         (`[2D_VERTEX_NODE_MAP]` AREA column, m²; default 1.0).
+ *         (`[2D_VERTEX_NODE_MAP]` AREA column; default 1.0).
+ *
+ *  Units follow the MESH: mesh length units squared as authored (ft² for a
+ *  US-FLOW_UNITS project unless the mesh file declares `;; UNITS: SI (m)`),
+ *  converted to m² in place by swmm_engine_initialize() together with the
+ *  vertex coordinates. Before initialize the value is therefore in mesh
+ *  (project) units; after it, m².
  *  @param vertex_idx Vertex index in `[0, vertex_count)`.
- *  @param area Output exchange area (m²).
+ *  @param area Output exchange area (mesh length units²).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_vertex_coupling_area(SWMM_Engine engine,
                                                        int vertex_idx,
                                                        double* area);
 
 /** @brief Set the coupling exchange area of a vertex
- *         (`[2D_VERTEX_NODE_MAP]` AREA column, m²). Persisted by the `.inp`
- *         writer.
+ *         (`[2D_VERTEX_NODE_MAP]` AREA column). Persisted by the `.inp`
+ *         writer. Same units convention as the getter: mesh length units²
+ *         (project units before initialize, m² after).
  *  @param vertex_idx Vertex index in `[0, vertex_count)`.
- *  @param area Exchange area in m²; must be > 0.
+ *  @param area Exchange area in mesh length units²; must be > 0.
  *  @return SWMM_OK on success; SWMM_ERR_BADPARAM on non-positive area.
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_set_vertex_coupling_area(SWMM_Engine engine,
@@ -408,11 +470,11 @@ SWMM_ENGINE_API int swmm_2d_set_vertex_coupling_area(SWMM_Engine engine,
 
 /** @brief Get water depth at a triangle.
  *  @param idx Triangle index.
- *  @param depth Output depth (m or ft).
+ *  @param depth Output depth (m).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_depth(SWMM_Engine engine, int idx, double* depth);
 
-/** @brief Get total head at a triangle (z + depth).
+/** @brief Get total head at a triangle (z + depth, m).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_head(SWMM_Engine engine, int idx, double* head);
 
@@ -426,17 +488,36 @@ SWMM_ENGINE_API int swmm_2d_get_coupling_flux(SWMM_Engine engine, int idx,
 SWMM_ENGINE_API int swmm_2d_get_rainfall(SWMM_Engine engine, int idx,
                                            double* rainfall);
 
+/** @brief Inspect how RAINFALL_MODE maps the gages onto one triangle.
+ *
+ *  Diagnoses a cell that receives no rain: a zero from a dry contributing
+ *  gage is a valid reading, not a missing weight.
+ *
+ *  @param method       Receives 0 natural neighbour, 1 inverse-distance
+ *                      fallback, 2 single nearest gage, or -1 when no per-cell
+ *                      weights apply (SYSTEM / NONE, or no located gage).
+ *  @param gage_indices Receives up to @p capacity contributing gage indices
+ *                      (may be NULL when @p capacity is 0).
+ *  @param weights      Receives the matching normalized weights (sum to 1).
+ *  @param count        Receives the total number of contributing gages, which
+ *                      may exceed @p capacity.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_rainfall_weights(SWMM_Engine engine, int idx,
+                                                   int* method, int* gage_indices,
+                                                   double* weights, int capacity,
+                                                   int* count);
+
 /** @brief Get net source/sink rate at a triangle (m/s).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_net_source(SWMM_Engine engine, int idx,
                                              double* net_source);
 
-/** @brief Bulk get depths for all triangles.
+/** @brief Bulk get depths for all triangles (m).
  *  @param depths Output array (pre-allocated to triangle_count).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_depths_bulk(SWMM_Engine engine, double* depths);
 
-/** @brief Bulk get heads for all triangles.
+/** @brief Bulk get heads for all triangles (m).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_heads_bulk(SWMM_Engine engine, double* heads);
 
@@ -444,6 +525,54 @@ SWMM_ENGINE_API int swmm_2d_get_heads_bulk(SWMM_Engine engine, double* heads);
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_coupling_fluxes_bulk(SWMM_Engine engine,
                                                        double* fluxes);
+
+/** @brief Bulk get the rainfall intensity (m/s) applied to every triangle
+ *  over the solver's current routing window. Output pre-allocated to
+ *  `triangle_count`.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_rainfall_bulk(SWMM_Engine engine,
+                                               double* rainfall);
+
+/** @brief Bulk rainfall at a report instant, in SI m/s.
+ *
+ * Uses the same gage record conversion and time selection as saved 2D
+ * rainfall reports. The solver's applied window mean remains available from
+ * swmm_2d_get_rainfall_bulk().
+ * @param report_date Absolute SWMM DateTime (decimal days).
+ * @param rainfall Output array of triangle_count doubles.
+ * @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_report_rainfall_bulk(SWMM_Engine engine,
+                                                      double report_date,
+                                                      double* rainfall);
+
+/** @brief Bulk get the cumulative rainfall VOLUME (m³) booked onto every
+ *  triangle since the start of the run — the `Mesh2_face_rain_cum` field;
+ *  sums over cells to the 2D mass balance's rainfall inflow. Output
+ *  pre-allocated to `triangle_count`.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_rain_volume_bulk(SWMM_Engine engine,
+                                                  double* volumes);
+
+/** @brief Bulk get the SIGNED cumulative 1D↔2D coupling exchange VOLUME (m³)
+ *  per triangle since the start of the run.
+ *
+ *  Sign is from the 2D cell's point of view: **positive = the 1D node
+ *  delivered water INTO this cell** (spill, submerged-outfall discharge);
+ *  **negative = the node abstracted water FROM it** (drain). Output
+ *  pre-allocated to `triangle_count`.
+ *
+ *  Summing the array gives `coupling_1d_to_2d_in − coupling_2d_to_1d_out`
+ *  from the 2D mass balance — the identity that ties this per-cell series to
+ *  the domain totals, and the natural check for a validator.
+ *
+ *  Why signed and per cell: the two domain accumulators are unsigned and
+ *  cannot answer "what did THIS cell give or take", which is exactly the
+ *  question at a coupling point that reverses within a batch — the two
+ *  directions cancel in the net and neither is visible in the totals.
+ *  `swmm_2d_get_coupling_flux` is a rate that is overwritten every step.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_coupling_volume_bulk(SWMM_Engine engine,
+                                                     double* volumes);
 
 /** @brief Bulk get normal edge flux at every edge of every triangle.
  *
@@ -453,7 +582,7 @@ SWMM_ENGINE_API int swmm_2d_get_coupling_fluxes_bulk(SWMM_Engine engine,
  *  NOTE: the integrator stores edge_flux INFLOW-positive internally (a positive
  *  value raises the cell depth); this accessor (and the HDF5 `Mesh2_edge_flux`
  *  dataset) flip the sign so the *public* convention is outward-positive as
- *  documented here. Units `m^2 s^-1` (depth-integrated normal speed). Combine
+ *  documented here. Units `m^3 s^-1` (total flow through the edge). Combine
  *  with `swmm_2d_edge_get_geometry_bulk` to reconstruct cell-centred velocity
  *  (RT0): for each triangle, solve `(NᵀN) v = Nᵀ q` where rows of `N` are the
  *  outward unit normals and `q[e] = flux[e] / length[e]`; with the
@@ -462,6 +591,27 @@ SWMM_ENGINE_API int swmm_2d_get_coupling_fluxes_bulk(SWMM_Engine engine,
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_edge_flux_bulk(SWMM_Engine engine,
                                                  double* flux);
+
+/* ---- Overland transport results (read-only during RUNNING) -------------- */
+
+/** @brief How many species rows the surface transports (0 when it carries
+ *  none). Row order: pollutants, MSX species, `__WATER_AGE__`,
+ *  `__TEMPERATURE__` — the same order as `swmm_gw2d_species_name`.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_species_count(SWMM_Engine engine, int* count);
+
+/** @brief One surface species row's name.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_species_name(SWMM_Engine engine, int species,
+                                         char* buf, int buflen);
+
+/** @brief Per-cell concentration of one surface species: pollutant and MSX
+ *  rows in their declared units, `__TEMPERATURE__` in degC and
+ *  `__WATER_AGE__` in seconds. A cell at or below the dry depth reports 0
+ *  (it keeps its mass). Writes at most @p len values and sets @p written.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_cell_conc(SWMM_Engine engine, int species,
+                                          double* out, int len, int* written);
 
 /* =========================================================================
  * 2D Edge Conveyance (§11A of docs/2dModelStrategy.md)
@@ -571,7 +721,33 @@ SWMM_ENGINE_API int swmm_2d_get_solver_steps(SWMM_Engine engine, long* steps);
 SWMM_ENGINE_API int swmm_2d_get_solver_last_step(SWMM_Engine engine,
                                                    double* h_last);
 
-/** @brief Get per-triangle max depth statistics (cumulative).
+/** @brief Cumulative explicit-marcher run statistics plus the backend and
+ *  closure this run is on — the numbers the .rpt "2D Solver Statistics"
+ *  block prints, readable DURING the run (after swmm_engine_start).
+ *  @ingroup engine_2d */
+typedef struct SWMM_2DRunStats {
+    char   backend[64];        /**< Solver label chosen at initialize, e.g.
+                                    "cpu (explicit marcher)", "omp (Kokkos OpenMP …)". */
+    int    momentum;           /**< 0 LOCAL_INERTIAL, 1 FULL_SWE, 2 DIFFUSIVE_WAVE. */
+    int    lts_tiers;          /**< Configured [2D_OPTIONS] LTS_TIERS. */
+    long   steps;              /**< Cumulative internal (marcher) substeps. */
+    long   face_evals;         /**< Cumulative face-kernel evaluations. */
+    double last_step;          /**< Last accepted internal step (s). */
+    double active_frac_min;    /**< Active-cell fraction over rebuild samples; -1 = not populated. */
+    double active_frac_mean;
+    double active_frac_max;
+    int    n_tiers;            /**< Populated entries of tier_cells (0 = no LTS telemetry). */
+    long   tier_cells[8];      /**< Cumulative rebuild-sampled cells per LTS tier. */
+} SWMM_2DRunStats;
+
+/** @brief Read the cumulative marcher statistics and backend of the 2D run.
+ *  Counters are zero (and n_tiers 0) before the first advance and again once
+ *  the solver has been finalised at swmm_engine_end; backend stays filled.
+ *  @ingroup engine_2d */
+SWMM_ENGINE_API int swmm_2d_get_run_stats(SWMM_Engine engine,
+                                          SWMM_2DRunStats* stats);
+
+/** @brief Get per-triangle max depth statistics (cumulative, m).
  *  @param max_depths Output array (pre-allocated to triangle_count).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_stat_max_depths(SWMM_Engine engine,
@@ -711,6 +887,14 @@ SWMM_ENGINE_API int swmm_2d_get_edge_bc_type(SWMM_Engine engine,
                                                int tri_idx, int edge,
                                                int* bc_type);
 
+/** Restore an edge's pre-runtime boundary prescription, including its time series.
+ * Valid between running steps; cumulative flux accounting is preserved. */
+/** Runtime inflow concentrations in the species getter's units/order. Outflow
+ * uses donor concentrations. clear_edge_bc restores authored hydraulics/quality. */
+SWMM_ENGINE_API int swmm_2d_set_edge_bc_concentrations(SWMM_Engine engine, int cell, int edge,
+    const double* values, int species_count);
+SWMM_ENGINE_API int swmm_2d_clear_edge_bc(SWMM_Engine engine, int cell, int edge);
+
 /** @brief Set boundary condition type for an edge.
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_set_edge_bc_type(SWMM_Engine engine,
@@ -718,12 +902,17 @@ SWMM_ENGINE_API int swmm_2d_set_edge_bc_type(SWMM_Engine engine,
                                                int bc_type);
 
 /** @brief Get specified stage boundary head for an edge.
+ *
+ *  Units follow the mesh vertical datum: mesh length units as authored
+ *  (feet for a US project without an SI mesh header) before
+ *  swmm_engine_initialize(), metres after it.
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_edge_bc_head(SWMM_Engine engine,
                                                int tri_idx, int edge,
                                                double* head);
 
-/** @brief Set specified stage boundary head for an edge.
+/** @brief Set specified stage boundary head for an edge (same units
+ *         convention as the getter).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_set_edge_bc_head(SWMM_Engine engine,
                                                int tri_idx, int edge,
@@ -764,14 +953,20 @@ SWMM_ENGINE_API int swmm_2d_get_edge_bc_tseries_name(SWMM_Engine engine,
                                                        int edge,
                                                        char* buf, int buflen);
 
-/** @brief Get prescribed flow per metre of edge (m³/s/m) for a
- *         SPECIFIED_FLOW edge. V-E4.
+/** @brief Get prescribed flow per metre of edge for a SPECIFIED_FLOW edge.
+ *         V-E4.
+ *
+ *  Units: project display flow units per metre (the `[2D_BOUNDARY_CONDITIONS]`
+ *  file contract, e.g. CFS/m) before swmm_engine_initialize(); m³/s/m after
+ *  it (initialize scales the constants in place; the writers scale back).
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_get_edge_bc_flow(SWMM_Engine engine,
                                                int tri_idx, int edge,
                                                double* flow);
 
-/** @brief Set prescribed flow per metre of edge (m³/s/m). V-E4. */
+/** @brief Set prescribed flow per metre of edge (same units convention as
+ *         the getter: display flow units/m before initialize, m³/s/m after).
+ *         V-E4. */
 SWMM_ENGINE_API int swmm_2d_set_edge_bc_flow(SWMM_Engine engine,
                                                int tri_idx, int edge,
                                                double flow);
@@ -814,6 +1009,26 @@ SWMM_ENGINE_API int swmm_2d_get_edge_bc_rating_curve_name(SWMM_Engine engine,
 SWMM_ENGINE_API int swmm_2d_get_edge_bc_cum_flux(SWMM_Engine engine,
                                                     int tri_idx, int edge,
                                                     double* cum_flux);
+
+
+/* =========================================================================
+ * Results-file variable selection ([2D_OPTIONS] REPORT_2D_VARIABLES)
+ * =========================================================================
+ * Engine-independent helpers so a host can build a checklist without
+ * re-implementing the token vocabulary. Tokens are listed in bit order; the
+ * presets DEFAULT / MINIMAL / ALL map to masks. Use swmm_options_get_ext /
+ * swmm_options_set_ext with key "REPORT_2D_VARIABLES" to read/write a model.
+ */
+
+/** Number of selectable dataset groups. */
+SWMM_ENGINE_API int swmm_2d_output_variable_count(void);
+/** Token of group @p i (0-based, bit i), or "" when out of range. */
+SWMM_ENGINE_API const char* swmm_2d_output_variable_name(int i);
+/** Bitmask for a preset name ("DEFAULT", "MINIMAL", "ALL") or a token list;
+ *  returns 0 for an unparseable string. */
+SWMM_ENGINE_API unsigned swmm_2d_output_variable_mask(const char* text);
+/** Preset name or token list for @p mask (static buffer, valid until the next call). */
+SWMM_ENGINE_API const char* swmm_2d_output_variable_text(unsigned mask);
 
 #ifdef __cplusplus
 } /* extern "C" */

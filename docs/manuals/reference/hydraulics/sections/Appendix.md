@@ -4,7 +4,7 @@
 
 ____________________________________________________________________________________________
 
-#### Newton-Raphson-Bisection Root Finding Method
+## A. Newton-Raphson-Bisection Root Finding Method
 
 The following Newton-Raphson procedure adapted from Press et al. (1992)
 is used to solve the equation \f$f(x) = 0\f$ over the interval
@@ -34,7 +34,7 @@ the solution with initial estimate *x* and convergence tolerance *ε* :
 > **Step 5:** Return to Step 2.
 
 
-#### Ridder's Root Finding Method
+## B. Ridder's Root Finding Method
 
 Ridder's method uses the following iterative procedure adapted from
 Press et al. (1992) to solve the equation \f$f(x) = 0\f$ over the interval
@@ -78,7 +78,7 @@ solution with a convergence tolerance of *ε*:
 
 
 
-#### Section Properties of Circular Pipes
+## C. Section Properties of Circular Pipes
 
 **Table C‑1 Circular section properties as function of depth**
 | **Y/Y<sub>full</sub>** | **A/A<sub>full</sub>** | **W/W<sub>max</sub>** | **R/R<sub>full</sub>** | **Y/Y<sub>full</sub>** | **A/A<sub>full</sub>** | **W/W<sub>max</sub>** | **R/R<sub>full</sub>** |
@@ -140,7 +140,7 @@ solution with a convergence tolerance of *ε*:
 | 0.48 | 0.48430 | 0.47329 | 1.00 | 1.0000 | 1.00000 |
 | 0.50 | 0.50000 | 0.49980 | | | |
 
-#### Section Properties of Elliptical Pipes
+## D. Section Properties of Elliptical Pipes
 
 **Table D‑1 Standard elliptical pipe sizes**
 | **Code** | **Minor Axis (in)** | **Major Axis (in)** | **A<sub>full</sub> (ft²)** | **R<sub>full</sub> (ft)** |
@@ -206,7 +206,7 @@ Source: American Concrete Pipe Association (2011).
 | 0.96 | 0.985 | 0.3919 | 1.185 | 0.990 | 0.3919 | 1.122 |
 | 1.00 | 1.000 | 0.0000 | 1.000 | 1.000 | 0.0000 | 1.000 |
 
-#### Section Properties of Arch Pipes
+## E. Section Properties of Arch Pipes
 
 **Table E‑1 Standard arch pipe sizes**
 | **Code** | **Material** | **Rise (Y<sub>full</sub>) (in)** | **Span (W<sub>max</sub>) (in)** | **A<sub>full</sub> (in²)** | **R<sub>full</sub> (in)** |
@@ -351,7 +351,7 @@ Source: American Iron and Steel Institute (1999).
 | 0.96 | 0.995 | 0.3195 | 1.112 |
 | 1.00 | 1.000 | 0.000 | 1.000 |
 
-#### Section Properties of Masonry Sewers
+## F. Section Properties of Masonry Sewers
 
 **Table F‑1 Area of masonry sewers as function of depth**
 | **Y/Y<sub>full</sub>** | **Basket Handle** | **Egg** | **Horseshoe** |
@@ -690,7 +690,7 @@ Source: American Iron and Steel Institute (1999).
 | 1.00 | 1.00000 | 1.00000 | 1.00000 | 1.00000 |
 
 
-#### Manning's Roughness Coefficients
+## G. Manning's Roughness Coefficients
 
 **Table G‑1 Manning's roughness coefficient n for open channels**
 | **Type of Channel and Description** | **Minimum** | **Normal** | **Maximum** |
@@ -868,7 +868,7 @@ Source: Chow, 1959.
 
 Source: American Iron and Steel Institute, 1999.
 
-#### Culvert Coefficients
+## H. Culvert Coefficients
 
 **Table H‑1 Culvert codes**
 | **Culvert Shape and Material** | **Inlet Configuration** | **Code** |

@@ -28,6 +28,8 @@
 
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_process_components.h"
+#include "../plugins/ProcessComponentRegistry.hpp"   // U1: built-in catalogue
+#include "../plugins/PluginFactory.hpp"             // D2: component-library catalogue
 
 #include <cstring>
 #include <string>
@@ -39,6 +41,13 @@ inline void copy_to_buf(const std::string& src, char* buf, int buflen) {
     const int copy_len = std::min(static_cast<int>(src.size()), buflen - 1);
     std::memcpy(buf, src.c_str(), static_cast<std::size_t>(copy_len));
     buf[copy_len] = '\0';
+}
+
+// D2: fixed-size struct fields, sized by the array itself so a field can
+// never be copied with the wrong length.
+template <std::size_t N>
+inline void copy_to_field(const std::string& src, char (&field)[N]) {
+    copy_to_buf(src, field, static_cast<int>(N));
 }
 
 } // namespace
@@ -65,6 +74,55 @@ SWMM_ENGINE_API int swmm_process_component_get(SWMM_Engine engine, int idx,
     copy_to_buf(s.id, id_buf, id_len);
     copy_to_buf(s.config_path, config_buf, config_len);
     copy_to_buf(s.resolved_config_path, resolved_buf, resolved_len);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_process_component_known_count(void) {
+    return static_cast<int>(
+        openswmm::components::ProcessComponentRegistry::instance().known_ids().size());
+}
+
+SWMM_ENGINE_API int swmm_process_component_known_get(int idx,
+        char* id_buf, int id_len, char* desc_buf, int desc_len,
+        int* implemented) {
+    const auto& reg = openswmm::components::ProcessComponentRegistry::instance();
+    const auto ids = reg.known_ids();
+    if (idx < 0 || idx >= static_cast<int>(ids.size())) return SWMM_ERR_BADINDEX;
+    const std::string& id = ids[static_cast<std::size_t>(idx)];
+    const auto* entry = reg.find(id);
+    if (!entry) return SWMM_ERR_INTERNAL;
+    copy_to_buf(id, id_buf, id_len);
+    copy_to_buf(entry->description, desc_buf, desc_len);
+    if (implemented) *implemented = entry->apply ? 1 : 0;
+    return SWMM_OK;
+}
+
+// ---- D2 (program plan §B.2.5): discovered component libraries -------------
+
+SWMM_ENGINE_API int swmm_component_search_path_add(const char* dir) {
+    if (!dir || !*dir) return SWMM_ERR_BADPARAM;
+    if (!openswmm::PluginFactory::hydrocouple_enabled()) return SWMM_ERR_PLUGIN;
+    return openswmm::PluginFactory::component_search_path_add(dir) < 0
+        ? SWMM_ERR_BADPARAM : SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_component_library_count(void) {
+    return static_cast<int>(openswmm::PluginFactory::component_libraries().size());
+}
+
+SWMM_ENGINE_API int swmm_component_library_get(int idx,
+        SWMM_ComponentLibraryInfo* info) {
+    if (!info) return SWMM_ERR_BADPARAM;
+    const auto recs = openswmm::PluginFactory::component_libraries();
+    if (idx < 0 || idx >= static_cast<int>(recs.size())) return SWMM_ERR_BADINDEX;
+    const auto& r = recs[static_cast<std::size_t>(idx)];
+    copy_to_field(r.id,         info->id);
+    copy_to_field(r.caption,    info->caption);
+    copy_to_field(r.version,    info->version);
+    copy_to_field(r.path,       info->path);
+    copy_to_field(r.kind,       info->kind);
+    copy_to_field(r.stamp,      info->stamp);
+    copy_to_field(r.load_error, info->load_error);
     return SWMM_OK;
 }
 

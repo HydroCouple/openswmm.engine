@@ -46,7 +46,7 @@ static constexpr double PHI = 1.486;
 // too SMALL on overbank / multi-roughness sections (e.g. user5 T171: R=2.46 vs
 // legacy 3.22 at full depth), over-stating friction and collapsing the initial
 // flow on q0 transect conduits (extran8a). See src/legacy/engine/transect.c.
-void buildTables(TransectData& td) {
+void buildTables(TransectData& td, bool add_end_walls) {
     int n_in = static_cast<int>(td.stations.size());
     if (n_in < 2 || static_cast<int>(td.elevations.size()) != n_in) return;
 
@@ -71,16 +71,39 @@ void buildTables(TransectData& td) {
 
     // add vertical end-walls reaching full height (legacy transect_validate)
     int N = n_in;
-    std::vector<double> X(static_cast<size_t>(N) + 2);
-    std::vector<double> Y(static_cast<size_t>(N) + 2);
-    X[0] = td.stations[0];              Y[0] = ymax;
-    for (int i = 0; i < N; ++i) {
-        X[static_cast<size_t>(i + 1)] = td.stations[static_cast<size_t>(i)];
-        Y[static_cast<size_t>(i + 1)] = td.elevations[static_cast<size_t>(i)];
+    // N+3, not N+2: getFlow() below reads X[k+1] at k == Nsta == N+1 when the
+    // right-bank branch is taken, which is one past the last written element.
+    // Legacy indexes fixed `static double Station[MAXSTATION+1]` arrays, so the
+    // same read lands on zero-initialised slack rather than out of bounds — the
+    // trailing element here is value-initialised to 0.0 to match it.
+    //
+    // Reachable only when accumulated `y` overshoots ymax by a rounding step,
+    // so the last end-wall segment is not skipped by `ylo >= y`. That made it a
+    // silent over-read on Linux and an abort on the Windows debug STL
+    // ("vector subscript out of range", exit 0xc0000409) — dependent on the
+    // deck: 7-station flood-plain transects trip it, 3-station V-notches do not.
+    std::vector<double> X(static_cast<size_t>(N) + 3);
+    std::vector<double> Y(static_cast<size_t>(N) + 3);
+    int Nsta;
+    if (add_end_walls) {
+        X[0] = td.stations[0];              Y[0] = ymax;
+        for (int i = 0; i < N; ++i) {
+            X[static_cast<size_t>(i + 1)] = td.stations[static_cast<size_t>(i)];
+            Y[static_cast<size_t>(i + 1)] = td.elevations[static_cast<size_t>(i)];
+        }
+        X[static_cast<size_t>(N + 1)] = td.stations[static_cast<size_t>(N - 1)];
+        Y[static_cast<size_t>(N + 1)] = ymax;
+        Nsta = N + 1;
+    } else {
+        // A street's points already include its end walls, so they are laid
+        // out exactly as legacy's Station[0..Nstations] (transect.c
+        // createStreetTransect -> createTables) with Nstations = N - 1.
+        for (int i = 0; i < N; ++i) {
+            X[static_cast<size_t>(i)] = td.stations[static_cast<size_t>(i)];
+            Y[static_cast<size_t>(i)] = td.elevations[static_cast<size_t>(i)];
+        }
+        Nsta = N - 1;
     }
-    X[static_cast<size_t>(N + 1)] = td.stations[static_cast<size_t>(N - 1)];
-    Y[static_cast<size_t>(N + 1)] = ymax;
-    const int Nsta = N + 1;
 
     auto getFlow = [&](int k, double a, double wp, bool findFlow) -> double {
         if (!findFlow) {

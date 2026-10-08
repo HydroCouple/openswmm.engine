@@ -50,9 +50,15 @@
  * @par Why a separate file
  *      The traversal belongs to neither module. It lived in both — H2's copy
  *      and H3's near-identical copy — which is also how H3 came to carry
- *      H2's divergence through a different spelling. A fifth flux family
- *      (H6's SEDIMENT_EXCHANGE) is one line in `netFluxOut` here, and there
- *      is no longer a shape in which it could acquire a binding of its own.
+ *      H2's divergence through a different spelling. A SURFACE flux family
+ *      is one line in `netFluxOut` here and cannot acquire a binding of its
+ *      own — but that sentence once claimed H6's SEDIMENT_EXCHANGE too, and
+ *      it was wrong: the bed acts on the wetted perimeter (a different area,
+ *      nonzero exactly when the free surface is zero) and adds a SECOND state
+ *      variable, so `relaxT`'s fixed equilibrium does not exist for it. H6b
+ *      therefore steps the water/bed pair as ONE coupled relaxation
+ *      (`BedExchange.hpp`) inside this file's link loop — coupled rather than
+ *      sequential for exactly the D-H5e reason above.
  *
  * @see plans/transport/HEAT_TRANSPORT_PLAN.md §6.2 D-H5d, §6.3 D-H5e
  * @ingroup engine_transport
@@ -64,6 +70,8 @@
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_HEAT_FLUXES_HPP
 #define OPENSWMM_ENGINE_TRANSPORT_HEAT_FLUXES_HPP
+
+#include "../../../data/HeatOverrideData.hpp"   // HeatElement (PE1)
 
 namespace openswmm {
 struct SimulationContext;
@@ -84,8 +92,17 @@ namespace openswmm::transport::heat {
  *          own element geometry but must compose the flux identically — the
  *          alternative being four hand-rolled copies of the same sum, which
  *          is the duplication that produced the defect above.
+ *
+ *          **PE1: `elem` names WHICH element is being evaluated**, so a
+ *          module can read per-element attributes (shading, sky view, bed
+ *          properties) instead of one global block. Passing a default-
+ *          constructed `HeatElement` yields the global config — which is
+ *          exactly what every caller got before PE — so a binding that
+ *          forgets to pass its element degrades to the old behaviour rather
+ *          than reading element 0's attributes.
  */
-double netFluxOut(const SimulationContext& ctx, double t_w) noexcept;
+double netFluxOut(const SimulationContext& ctx,
+                  const HeatElement& elem, double t_w) noexcept;
 
 /**
  * @brief Apply one step of surface heat exchange to every exchanging

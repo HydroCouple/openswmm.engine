@@ -1,0 +1,2632 @@
+--- a/src/engine/hydrology/Runoff.cpp
++++ b/src/engine/hydrology/Runoff.cpp
+@@ -209,57 +209,16 @@
+     }
+     soa_.computeAlpha();
+ 
+-    horton_states_.resize(static_cast<std::size_t>(n));
+-    grnampt_states_.resize(static_cast<std::size_t>(n));
+-    curvenum_states_.resize(static_cast<std::size_t>(n));
+-    infil_models_.resize(static_cast<std::size_t>(n), InfilModel::HORTON);
++    infil_bank_.init(n);
+     infil_factor_used_.assign(static_cast<std::size_t>(n), 1.0);
+-
+     for (int i = 0; i < n; ++i) {
+-        auto ui = static_cast<std::size_t>(i);
+-        int im = ctx.subcatches.infil_model[ui];
+-        // legacy horton_setParams (infil.c:349) replaces a zero drying time
+-        // with TINY, so capacity recovers almost at once; horton_init itself
+-        // keeps zero as "no recovery", which the 2D infiltration model uses.
+-        const double dry_time = (ctx.subcatches.infil_p4[ui] == 0.0)
+-                                    ? constants::TINY : ctx.subcatches.infil_p4[ui];
+-        switch (im) {
+-            case 0:
+-                infil_models_[ui] = InfilModel::HORTON;
+-                infil::horton_init(horton_states_[ui],
+-                    ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p2[ui],
+-                    ctx.subcatches.infil_p3[ui], dry_time,
+-                    ctx.subcatches.infil_p5[ui], ctx.options);
+-                break;
+-            case 1:
+-                infil_models_[ui] = InfilModel::MOD_HORTON;
+-                infil::horton_init(horton_states_[ui],
+-                    ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p2[ui],
+-                    ctx.subcatches.infil_p3[ui], dry_time,
+-                    ctx.subcatches.infil_p5[ui], ctx.options);
+-                break;
+-            case 2:
+-                infil_models_[ui] = InfilModel::GREEN_AMPT;
+-                infil::grnampt_init(grnampt_states_[ui],
+-                    ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p2[ui],
+-                    ctx.subcatches.infil_p3[ui], ctx.options);
+-                break;
+-            case 3:
+-                infil_models_[ui] = InfilModel::MOD_GREEN_AMPT;
+-                infil::grnampt_init(grnampt_states_[ui],
+-                    ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p2[ui],
+-                    ctx.subcatches.infil_p3[ui], ctx.options);
+-                break;
+-            case 4:
+-                infil_models_[ui] = InfilModel::CURVE_NUM;
+-                // Drying time is p3 — the third [INFILTRATION] column, matching
+-                // legacy curvenum_setParams(), which reads p[2]. Reading p4 here
+-                // left regen at 0 for every file-loaded CN subcatchment, so the
+-                // soil store never recovered between events.
+-                infil::curvenum_init(curvenum_states_[ui],
+-                    ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p3[ui]);
+-                break;
+-        }
++        const auto ui = static_cast<std::size_t>(i);
++        // Preserve legacy subcatchment zero-drying-time normalization.
++        const double dry_time = ctx.subcatches.infil_p4[ui] == 0.0
++            ? constants::TINY : ctx.subcatches.infil_p4[ui];
++        const double p[5] = {ctx.subcatches.infil_p1[ui], ctx.subcatches.infil_p2[ui],
++            ctx.subcatches.infil_p3[ui], dry_time, ctx.subcatches.infil_p5[ui]};
++        infil_bank_.setMethod(i, static_cast<InfilModel>(ctx.subcatches.infil_model[ui]), p, ctx.options);
+     }
+ }
+ 
+@@ -274,52 +233,7 @@
+                                    double runon, double depth, double dt,
+                                    double local_infil, double recovery_factor) {
+     (void)ctx;
+-    auto ui = static_cast<std::size_t>(i);
+-    double infil = 0.0;
+-    const InfilModel im = infil_models_[ui];
+-    switch (im) {
+-        case InfilModel::HORTON:
+-        case InfilModel::MOD_HORTON: {
+-            auto& hs = horton_states_[ui];
+-            double save_f0 = hs.f0, save_fmin = hs.fmin, save_regen = hs.regen;
+-            hs.f0   *= local_infil;
+-            hs.fmin *= local_infil;
+-            hs.regen *= recovery_factor;
+-            infil = (im == InfilModel::HORTON)
+-                ? infil::horton_getInfil(hs, precip + runon, depth, dt)
+-                : infil::modHorton_getInfil(hs, precip + runon, depth, dt);
+-            hs.f0 = save_f0; hs.fmin = save_fmin; hs.regen = save_regen;
+-            break;
+-        }
+-        case InfilModel::GREEN_AMPT:
+-        case InfilModel::MOD_GREEN_AMPT: {
+-            // Legacy applies InfilFactor and Evap.recoveryFactor inside
+-            // grnampt_getInfil, per call, from the unscaled state (ks = Ks*IF,
+-            // lu = Lu*sqrt(IF), Fumax = IMDmax*Lu*sqrt(IF), kr = lu/90000*RF,
+-            // T = 5400/lu/RF). Baking them into Ks/Lu/Fumax changed both the
+-            // operation order and Fumax (which scaled by IF instead of sqrt(IF)).
+-            infil = infil::grnampt_getInfil(grnampt_states_[ui],
+-                                            precip + runon, depth, dt, im,
+-                                            local_infil, recovery_factor);
+-            break;
+-        }
+-        case InfilModel::CURVE_NUM: {
+-            auto& cs = curvenum_states_[ui];
+-            // Gap #7: CN treats runon as ponded depth, not as a rainfall rate.
+-            // Legacy infil.c lines 318-319: depth += runon * tstep; then pass
+-            // only rainfall (not rainfall+runon) as the rate argument.
+-            double cn_depth = depth + runon * dt;
+-            infil = infil::curvenum_getInfil(cs, precip, cn_depth, dt,
+-                                             recovery_factor);
+-            break;
+-        }
+-        case InfilModel::CONSTANT:
+-            // 2D-only method (plan §5.5.1): [INFILTRATION] has no token for
+-            // it, so no subcatchment can carry it. Listed explicitly to keep
+-            // the switch exhaustive.
+-            break;
+-    }
+-    return infil;
++    return infil_bank_.rateFeet(i, precip, runon, depth, dt, {local_infil, recovery_factor});
+ }
+ 
+ // Legacy findNativeInfil (lid.c) for a subcatchment whose non-LID area is
+@@ -777,87 +691,10 @@
+ // ============================================================================
+ 
+ void RunoffSolver::infil_get_state(int i, int& model, double state[6]) const noexcept {
+-    std::fill(state, state + 6, 0.0);
+-    if (i < 0 || static_cast<std::size_t>(i) >= infil_models_.size()) {
+-        model = 0;
+-        return;
+-    }
+-    const auto ui = static_cast<std::size_t>(i);
+-    model = static_cast<int>(infil_models_[ui]);
+-
+-    switch (infil_models_[ui]) {
+-        case InfilModel::HORTON:
+-        case InfilModel::MOD_HORTON: {
+-            const auto& h = horton_states_[ui];
+-            state[0] = h.tp;
+-            state[1] = h.Fe;
+-            state[2] = h.Fmh;
+-            break;
+-        }
+-        case InfilModel::GREEN_AMPT:
+-        case InfilModel::MOD_GREEN_AMPT: {
+-            const auto& g = grnampt_states_[ui];
+-            state[0] = g.IMD;
+-            state[1] = g.F;
+-            state[2] = g.Fu;
+-            state[3] = g.T;
+-            state[4] = g.saturated ? 1.0 : 0.0;
+-            break;
+-        }
+-        case InfilModel::CURVE_NUM: {
+-            const auto& c = curvenum_states_[ui];
+-            state[0] = c.S;
+-            state[1] = c.Se;
+-            state[2] = c.P;
+-            state[3] = c.F;
+-            state[4] = c.f;
+-            state[5] = c.T;
+-            break;
+-        }
+-        case InfilModel::CONSTANT:
+-            break;  // 2D-only, stateless — nothing to save
+-    }
+-}
+-
++    infil_bank_.pack(i, model, state);
++}
+ void RunoffSolver::infil_set_state(int i, int model, const double state[6]) noexcept {
+-    if (i < 0 || static_cast<std::size_t>(i) >= infil_models_.size()) return;
+-    const auto ui = static_cast<std::size_t>(i);
+-
+-    // Only restore if model matches the initialised type
+-    if (model != static_cast<int>(infil_models_[ui])) return;
+-
+-    switch (infil_models_[ui]) {
+-        case InfilModel::HORTON:
+-        case InfilModel::MOD_HORTON: {
+-            auto& h = horton_states_[ui];
+-            h.tp  = state[0];
+-            h.Fe  = state[1];
+-            h.Fmh = state[2];
+-            break;
+-        }
+-        case InfilModel::GREEN_AMPT:
+-        case InfilModel::MOD_GREEN_AMPT: {
+-            auto& g = grnampt_states_[ui];
+-            g.IMD       = state[0];
+-            g.F         = state[1];
+-            g.Fu        = state[2];
+-            g.T         = state[3];
+-            g.saturated = (state[4] != 0.0);
+-            break;
+-        }
+-        case InfilModel::CURVE_NUM: {
+-            auto& c = curvenum_states_[ui];
+-            c.S  = state[0];
+-            c.Se = state[1];
+-            c.P  = state[2];
+-            c.F  = state[3];
+-            c.f  = state[4];
+-            c.T  = state[5];
+-            break;
+-        }
+-        case InfilModel::CONSTANT:
+-            break;  // 2D-only, stateless — nothing to restore
+-    }
++    infil_bank_.unpack(i, model, state);
+ }
+ 
+ } // namespace runoff
+--- a/src/engine/hydrology/Runoff.hpp
++++ b/src/engine/hydrology/Runoff.hpp
+@@ -39,7 +39,7 @@
+ #define OPENSWMM_RUNOFF_HPP
+ 
+ #include "../data/SubcatchData.hpp"
+-#include "Infiltration.hpp"
++#include "surface/InfilBank.hpp"
+ #include <vector>
+ 
+ namespace openswmm {
+@@ -190,16 +190,14 @@
+     RunoffSoA soa_;
+ 
+     // Infiltration state (one per subcatchment)
+-    std::vector<InfilModel>     infil_models_;   ///< Per-subcatchment model type (BUG FIX: was a single shared field)
++    surface::InfilBank infil_bank_;
+     std::vector<double>         infil_factor_used_; ///< The InfilFactor applied to each subcatchment this step (pattern or global)
+ 
+     /// Legacy infil_getInfil: the model dispatch with the factors applied.
+     double infilGetInfil(SimulationContext& ctx, int i, double precip, double runon,
+                          double depth, double dt, double local_infil,
+                          double recovery_factor);
+-    std::vector<HortonState>    horton_states_;
+-    std::vector<GreenAmptState> grnampt_states_;
+-    std::vector<CurveNumState>  curvenum_states_;
++
+ 
+     // Working buffers (reused each step, sized to n_subcatch)
+     std::vector<double> precip_;
+--- a/src/engine/hydrology/Snow.hpp
++++ b/src/engine/hydrology/Snow.hpp
+@@ -1,236 +1,6 @@
+ // SPDX-License-Identifier: Apache-2.0
+-//
+ // Copyright 2026 Caleb Buahin
+-//
+-// Licensed under the Apache License, Version 2.0 (the "License");
+-// you may not use this file except in compliance with the License.
+-// You may obtain a copy of the License at
+-//
+-//     http://www.apache.org/licenses/LICENSE-2.0
+-//
+-// Unless required by applicable law or agreed to in writing, software
+-// distributed under the License is distributed on an "AS IS" BASIS,
+-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-// See the License for the specific language governing permissions and
+-// limitations under the License.
+ 
+-/**
+- * @file Snow.hpp
+- * @brief Snowmelt — degree-day and rain-on-snow methods.
+- *
+- * @details Batch-oriented: all snowpack computations use the same daily
+- *          temperature/wind. The per-subcatchment snowmelt calculation is
+- *          independent and vectorisable. Three subareas (plowable, imperv,
+- *          perv) are processed per subcatchment — inner loop can be unrolled.
+- *
+- *          Key vectorisable operations:
+- *          - ATI update: ati += tipm * (Ta - ati) → batch over subcatchments
+- *          - Degree-day melt: smelt = dhm * (Ta - Tbase) → batch over subcatchments
+- *          - Cold content update: cc += rnm * dhm * (ati - Ta) * dt → batch
+- *          - Snow accumulation: wsnow += snowfall * dt → batch
+- *
+- * @note Legacy reference: src/legacy/engine/snow.c
+- * @ingroup new_engine
+- *
+- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+- * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+- * @license  Apache-2.0
+- */
+-
+-#ifndef OPENSWMM_SNOW_HPP
+-#define OPENSWMM_SNOW_HPP
+-
+-#include <vector>
+-
+-namespace openswmm {
+-
+-struct SimulationContext;
+-
+-namespace snow {
+-
+-// ============================================================================
+-// Constants
+-// ============================================================================
+-
+-constexpr int N_SUBAREAS = 3;    ///< Plowable, Impervious, Pervious
+-constexpr int SNOW_PLOWABLE = 0;
+-constexpr int SNOW_IMPERV   = 1;
+-constexpr int SNOW_PERV     = 2;
+-
+-// ============================================================================
+-// Per-subcatchment snowpack state (SoA for vectorization)
+-// ============================================================================
+-
+-struct SnowSoA {
+-    int n_subcatch = 0;
+-
+-    // Per subcatchment × 3 subareas = flat arrays [subcatch * 3 + subarea]
+-    std::vector<double> wsnow;    ///< Snow water equivalent (ft)
+-    std::vector<double> fw;       ///< Free water in pack (ft)
+-    std::vector<double> coldc;    ///< Cold content (ft water equiv)
+-    std::vector<double> ati;      ///< Antecedent temperature index (deg F)
+-    std::vector<double> awe;      ///< Areal depletion index
+-    std::vector<double> imelt;    ///< Melt rate output (ft/sec)
+-
+-    // Per subcatchment × 3 subareas: parameters
+-    std::vector<double> tbase;    ///< Base melt temperature (deg F)
+-    std::vector<double> dhm;      ///< Degree-day melt factor (ft/deg-F/sec)
+-    std::vector<double> dhmin;    ///< Min melt coeff (winter solstice) (ft/deg-F/sec)
+-    std::vector<double> dhmax;    ///< Max melt coeff (summer solstice) (ft/deg-F/sec)
+-    std::vector<double> fwfrac;   ///< Free water capacity fraction
+-
+-    // Per subcatchment × 3 subareas: area fractions
+-    std::vector<double> fArea;    ///< Fraction of total area for each subarea
+-
+-    /// S2b — WATER AGE of the pack's water (seconds), per subcatchment ×
+-    /// subarea. **Complete-mix over `wsnow + fw` TOGETHER.**
+-    ///
+-    /// Two stores would be more faithful — snow and free water have
+-    /// genuinely different residence times — but the melt path moves water
+-    /// between them within a single step anyway, and one age is the minimum
+-    /// that carries residence time at all. Recorded as a deliberate
+-    /// approximation in SNOW_DIVERGENCE_REGISTER.md rather than left
+-    /// unnamed, which is what lesson 64 is actually about.
+-    ///
+-    /// Maintained inside this solver on purpose. Plowing moves water between
+-    /// surfaces AND to another subcatchment inside `plowSnow`; an age update
+-    /// running afterwards can see only the end state and would have to guess
+-    /// which water went where. The age therefore moves at the point the
+-    /// water moves, which is the only place that knows.
+-    std::vector<double> age;
+-    /// S2b — age of the water this step PUBLISHED as `imelt` (seconds).
+-    ///
+-    /// Not the same as `age`, and the difference is the whole reason this
+-    /// array exists: in a complete-mix pool the water leaving carries the
+-    /// pool's age, but a pack that EMPTIES this step leaves `age` at 0 with
+-    /// no water to describe. Meltwater from such a pack still carries the
+-    /// age the pack had. Sentinel-free — it is only meaningful where
+-    /// `imelt > 0`, and callers gate on that.
+-    std::vector<double> out_age;
+-
+-    // Per subcatchment × 3 subareas: areal depletion state
+-    std::vector<double> si;       ///< Snow depth for 100% cover (ft)
+-    std::vector<double> sba;      ///< Snow coverage area at start of new-snow ADC
+-    std::vector<double> sbws;     ///< Snow water equiv at end of new-snow ADC
+-    std::vector<double> asc;      ///< Computed areal snow coverage (0–1), per subarea
+-
+-    // Global ADC curves (shared by all subcatchments, 10 points each)
+-    double adc_imperv[10] = {1,1,1,1,1,1,1,1,1,1};
+-    double adc_perv[10]   = {1,1,1,1,1,1,1,1,1,1};
+-
+-    // Per subcatchment: area fractions
+-    std::vector<double> snn;      ///< Plowable fraction of impervious area
+-
+-    // Per subcatchment: plowing parameters
+-    std::vector<double> weplow;   ///< Depth at which plowing begins (ft)
+-    std::vector<double> sfrac;    ///< Plowing fractions [subcatch * 5 + i]
+-                                  ///<   [0]=removed, [1]=to imperv, [2]=to perv,
+-                                  ///<   [3]=immediate melt, [4]=to other subcatch
+-    std::vector<int>    to_subcatch; ///< Target subcatchment for plowed snow
+-
+-    // Global parameters
+-    double tipm    = 0.5;         ///< ATI weighting factor
+-    double rnm     = 0.6;         ///< Negative melt ratio
+-    double season  = 0.0;         ///< Current snowmelt season factor (-1 to +1)
+-    double removed = 0.0;         ///< Cumulative snow plowed out of system (ft3)
+-
+-    /// S2b — age of water arriving from the sky (seconds). Set by the engine
+-    /// each runoff step from the water-age component's `RAINFALL` source.
+-    ///
+-    /// A scalar set from outside rather than a lookup into the transport
+-    /// config, so hydrology keeps no dependency on the transport layer —
+-    /// the same shape as `season`, `tipm` and `rnm`.
+-    double precip_age = 0.0;
+-    /// S2b — whether to maintain `age` / `out_age` at all.
+-    ///
+-    /// The age arrays are pure bookkeeping: nothing in the water balance
+-    /// reads them, so a deck is byte-identical either way. The flag exists
+-    /// to keep the arithmetic off the hot path when WATER_AGE is off, not to
+-    /// protect an answer.
+-    bool track_age = false;
+-
+-    void resize(int n);
+-};
+-
+-// ============================================================================
+-// Snow solver
+-// ============================================================================
+-
+-class SnowSolver {
+-public:
+-    void init(int n_subcatch);
+-
+-    /**
+-     * @brief Compute snowmelt for all subcatchments (batch).
+-     *
+-     * @details For each subcatchment × subarea:
+-     *   1. Batch ATI update (vectorisable)
+-     *   2. Batch cold content update (vectorisable)
+-     *   3. Batch degree-day or rain-on-snow melt (vectorisable)
+-     *   4. Batch snow accumulation from snowfall (vectorisable)
+-     *   5. Batch free water routing (vectorisable)
+-     *
+-     * @param ctx  Simulation context.
+-     * @param dt   Timestep (seconds).
+-     * @param temp Air temperature (deg F, scalar — broadcast).
+-     * @param wind Wind speed (mph, scalar — broadcast).
+-     * @param rainfall Per-subcatchment rainfall rate (ft/sec, sized
+-     *                 n_subcatch — matching legacy subcatch_getRunoff →
+-     *                 snow_getSnowMelt which receives each subcatchment's
+-     *                 own precipitation).
+-     * @param snowfall Per-subcatchment snowfall rate (ft/sec, sized
+-     *                 n_subcatch).
+-     * @param gamma Psychrometric constant from climate (deg F^-1).
+-     * @param ea    Saturation vapor pressure from climate (in Hg).
+-     */
+-    void execute(SimulationContext& ctx, double dt,
+-                 double temp, double wind, const double* rainfall,
+-                 const double* snowfall,
+-                 double gamma = 0.0, double ea = 0.0);
+-
+-    /// Scalar convenience overload: broadcast a single rainfall (and
+-    /// optional snowfall) rate to every subcatchment. Equivalent to filling
+-    /// per-subcatchment arrays with the same value and calling the array
+-    /// form above.
+-    void execute(SimulationContext& ctx, double dt,
+-                 double temp, double wind, double rainfall,
+-                 double snowfall = 0.0,
+-                 double gamma = 0.0, double ea = 0.0);
+-
+-    /**
+-     * @brief Update seasonal melt coefficients based on day of year.
+-     * @param day_of_year  Day of year (1-365).
+-     * @note Legacy reference: snow.c — snow_setMeltCoeffs()
+-     */
+-    void setMeltCoeffs(int day_of_year);
+-
+-    /**
+-     * @brief Snow accumulation + plowing — adds new snowfall to each pack
+-     *        and redistributes excess snow between subareas.
+-     * @param ctx  Simulation context (for subcatchment areas).
+-     * @param dt   Timestep (seconds).
+-     * @param snowfall  Per-subcatchment snowfall rate (ft/sec, sized n_subcatch).
+-     * @note Legacy reference: snow.c — snow_plowSnow(), called from
+-     *       runoff_execute() each runoff step before melt computation.
+-     */
+-    void plowSnow(SimulationContext& ctx, double dt, const double* snowfall);
+-
+-    /// Scalar convenience overload: broadcast a single snowfall rate to every
+-    /// subcatchment before accumulation + plowing.
+-    void plowSnow(SimulationContext& ctx, double dt, double snowfall);
+-
+-    SnowSoA& state() { return soa_; }
+-    const SnowSoA& state() const { return soa_; }
+-
+-private:
+-    SnowSoA soa_;
+-
+-    /// Rain-on-snow melt rate for one rainfall value (legacy getRainmelt)
+-    static double rainMeltRate(double temp, double wind, double gamma,
+-                               double ea, double rainfall);
+-};
+-
+-} // namespace snow
+-} // namespace openswmm
+-
+-#endif // OPENSWMM_SNOW_HPP
++// Compatibility include for existing engine and transport clients.
++#pragma once
++#include "surface/DegreeDaySnow.hpp"
+--- a/src/engine/2d/infil/Infil2D.cpp
++++ b/src/engine/2d/infil/Infil2D.cpp
+@@ -48,8 +48,6 @@
+ // project (US or SI) — see §5.5.1. Conversion happens only here, at the call
+ // boundary, so the kernels keep bit-parity with legacy infil.c.
+ 
+-constexpr double kFeetPerMeter  = 3.280839895013123;  ///< m → ft
+-constexpr double kMetersPerFoot = 0.3048;             ///< ft → m (exact)
+ 
+ // ---------------------------------------------------------------------------
+ // Small helpers
+@@ -210,10 +208,7 @@
+ 
+     resolved_.assign(nt_u, Infil2DRow{});
+     prov_.assign(nt_u, Infil2DProvenance::NONE);
+-    cum_depth_.assign(nt_u, 0.0);
+-    horton_.clear();
+-    grnampt_.clear();
+-    curvenum_.clear();
++    bank_.init(nt);
+     active_ = false;
+ 
+     // D-I1: the cadence is INFIL_STEP, falling back to the project WET_STEP
+@@ -279,42 +274,7 @@
+         if (!r.has_method) continue;
+         active_ = true;
+ 
+-        switch (r.method) {
+-            case InfilModel::HORTON:
+-            case InfilModel::MOD_HORTON:
+-                if (horton_.empty()) horton_.assign(nt_u, infil::HortonState{});
+-                infil::horton_init(horton_[i], r.p[0], r.p[1], r.p[2], r.p[3],
+-                                   r.p[4], opts);
+-                break;
+-
+-            case InfilModel::CONSTANT:
+-                // A constant rate is a degenerate Horton (f0 == fmin, no decay,
+-                // no regeneration), so horton_init performs exactly the
+-                // in/hr|mm/hr → ft/s conversion this method needs and
+-                // horton_[i].fmin carries the rate. No extra storage, and the
+-                // slot reads sanely if anyone inspects it.
+-                if (horton_.empty()) horton_.assign(nt_u, infil::HortonState{});
+-                infil::horton_init(horton_[i], r.p[0], r.p[0], 0.0, 0.0, 0.0, opts);
+-                break;
+-
+-            case InfilModel::GREEN_AMPT:
+-            case InfilModel::MOD_GREEN_AMPT:
+-                if (grnampt_.empty()) grnampt_.assign(nt_u, infil::GreenAmptState{});
+-                infil::grnampt_init(grnampt_[i], r.p[0], r.p[1], r.p[2], opts);
+-                break;
+-
+-            case InfilModel::CURVE_NUM:
+-                // Drying time is p[2] — the third positional column, matching
+-                // legacy curvenum_setParams() and Runoff.cpp:252-253.
+-                if (curvenum_.empty()) curvenum_.assign(nt_u, infil::CurveNumState{});
+-                infil::curvenum_init(curvenum_[i], r.p[0], r.p[2]);
+-                break;
+-
+-            default:
+-                err = "2D infiltration cell " + std::to_string(i + 1)
+-                    + ": unknown infiltration method";
+-                return false;
+-        }
++        bank_.setMethod(static_cast<int>(i), r.method, r.p, opts);
+     }
+ 
+     // Nothing resolved: drop back to the unconfigured fast path so the
+@@ -322,7 +282,7 @@
+     if (!active_) {
+         resolved_.clear();
+         prov_.clear();
+-        cum_depth_.clear();
++        bank_.clear();
+     }
+ 
+     return true;
+@@ -339,40 +299,9 @@
+         const Infil2DRow& r = resolved_[i];
+         if (!r.has_method) continue;
+ 
+-        const double precip_ft = state.rainfall[i] * kFeetPerMeter;
+-        const double depth_ft  = state.depth[i]    * kFeetPerMeter;
+-
+-        double f_ftsec = 0.0;
+-        switch (r.method) {
+-            case InfilModel::HORTON:
+-                f_ftsec = infil::horton_getInfil(horton_[i], precip_ft, depth_ft, dt);
+-                break;
+-            case InfilModel::MOD_HORTON:
+-                f_ftsec = infil::modHorton_getInfil(horton_[i], precip_ft, depth_ft, dt);
+-                break;
+-            case InfilModel::GREEN_AMPT:
+-            case InfilModel::MOD_GREEN_AMPT:
+-                // The modified variant is selected by the enum, not a bool.
+-                f_ftsec = infil::grnampt_getInfil(grnampt_[i], precip_ft, depth_ft,
+-                                                  dt, r.method);
+-                break;
+-            case InfilModel::CURVE_NUM:
+-                // Runoff.cpp:428 folds inter-subarea runon into the depth
+-                // argument (and passes rainfall alone as the rate); a mesh cell
+-                // has no runon, so the ponded depth passes through unchanged.
+-                f_ftsec = infil::curvenum_getInfil(curvenum_[i], precip_ft, depth_ft, dt);
+-                break;
+-            case InfilModel::CONSTANT:
+-                f_ftsec = infil::constant_getInfil(horton_[i].fmin, precip_ft,
+-                                                   depth_ft, dt);
+-                break;
+-            default:
+-                break;
+-        }
+-
+-        const double rate_si = std::max(0.0, f_ftsec * kMetersPerFoot);
+-        state.infil_rate[i] = rate_si;
+-        cum_depth_[i] += rate_si * dt;
++        if (bank_.owner(static_cast<int>(i)) == surface::InfilBank::Owner::EXTERNAL) continue;
++        state.infil_rate[i] = bank_.rate(static_cast<int>(i), state.rainfall[i], 0.0,
++                                         state.depth[i], dt, {1.0, 1.0});
+     }
+ }
+ 
+@@ -387,10 +316,7 @@
+ 
+     resolved_.clear();
+     prov_.clear();
+-    cum_depth_.clear();
+-    horton_.clear();
+-    grnampt_.clear();
+-    curvenum_.clear();
++    bank_.clear();
+ }
+ 
+ } // namespace openswmm::twoD
+--- a/src/engine/2d/infil/Infil2D.hpp
++++ b/src/engine/2d/infil/Infil2D.hpp
+@@ -64,7 +64,7 @@
+ #include <string>
+ #include <vector>
+ 
+-#include "../../hydrology/Infiltration.hpp"
++#include "../../hydrology/surface/InfilBank.hpp"
+ 
+ namespace openswmm { struct SimulationOptions; }
+ 
+@@ -233,6 +233,8 @@
+      */
+     void updateRates(const MeshData& mesh, SurfaceStateData& state, double dt);
+ 
++    surface::InfilBank& bank() noexcept { return bank_; }
++
+     /// True when at least one cell resolved to a model.
+     bool active() const noexcept { return active_; }
+ 
+@@ -253,7 +255,7 @@
+     /// ledger-consistent series and is what the sidecar's `infil_cum` and the
+     /// C API's `*_get_cum_bulk` report; this one is retained as the kernel-side
+     /// diagnostic.
+-    const std::vector<double>& cumulative() const noexcept { return cum_depth_; }
++    const std::vector<double>& cumulative() const noexcept { return bank_.cumulative(); }
+ 
+     /// Resolved cadence in seconds (options_.infil_step, or the project
+     /// WET_STEP when that was <= 0). Set by resolve().
+@@ -277,13 +279,8 @@
+     // Per-triangle resolved state (empty when !active_).
+     std::vector<Infil2DRow>        resolved_;
+     std::vector<Infil2DProvenance> prov_;
+-    std::vector<double>            cum_depth_;   ///< m
+-
+-    // Kernel state, one entry per triangle (allocated only for the methods in
+-    // use; indexed by triangle so lookups stay branch-free).
+-    std::vector<infil::HortonState>    horton_;
+-    std::vector<infil::GreenAmptState> grnampt_;
+-    std::vector<infil::CurveNumState>  curvenum_;
++    surface::InfilBank bank_;
++
+ };
+ 
+ // ============================================================================
+--- a/src/engine/core/openswmm_subcatchments_impl.cpp
++++ b/src/engine/core/openswmm_subcatchments_impl.cpp
+@@ -1325,6 +1325,26 @@
+ // Snowpacks ([SNOWPACKS] section) — Slice BM.0 list + add; setters land with BP
+ // ============================================================================
+ 
++SWMM_ENGINE_API int swmm_subcatch_set_snowpack(SWMM_Engine engine, int idx, const char* name) {
++    CHECK_HANDLE(engine);
++    auto& ctx = to_engine(engine)->context();
++    CHECK_EDITABLE(ctx);
++    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
++    const int pack = name && *name ? ctx.snowpack_names.find(name) : -1;
++    if (name && *name && pack < 0) return SWMM_ERR_BADPARAM;
++    const auto ui = static_cast<std::size_t>(idx);
++    ctx.subcatches.snowpack[ui] = pack;
++    ctx.subcatches.snowpack_name[ui] = pack < 0 ? "" : ctx.snowpack_names.name_of(pack);
++    return SWMM_OK;
++}
++SWMM_ENGINE_API const char* swmm_subcatch_get_snowpack(SWMM_Engine engine, int idx) {
++    if (!engine) return nullptr;
++    const auto& ctx = to_engine(engine)->context();
++    if (idx < 0 || idx >= ctx.n_subcatches()) return nullptr;
++    const int pack = ctx.subcatches.snowpack[static_cast<std::size_t>(idx)];
++    return pack < 0 ? "" : ctx.snowpack_names.name_of(pack).c_str();
++}
++
+ SWMM_ENGINE_API int swmm_snowpack_count(SWMM_Engine engine) {
+     if (!engine) return -1;
+     return to_engine(engine)->context().snowpacks.count();
+--- a/include/openswmm/engine/openswmm_subcatchments.h
++++ b/include/openswmm/engine/openswmm_subcatchments.h
+@@ -968,6 +968,13 @@
+  * Snowpack definitions ([SNOWPACKS] section) — Slice BM.0 / BP.6.6.5
+  * ========================================================================= */
+ 
++/** Assign a snowpack by name before initialization. NULL/empty clears it.
++ * Unknown names return BADPARAM without changing the assignment. */
++SWMM_ENGINE_API int swmm_subcatch_set_snowpack(SWMM_Engine engine, int idx, const char* name);
++/** Return the assigned snowpack name, or an empty string when unassigned.
++ * Returns NULL for an invalid engine/subcatchment. */
++SWMM_ENGINE_API const char* swmm_subcatch_get_snowpack(SWMM_Engine engine, int idx);
++
+ /**
+  * @brief Get the total number of snowpack definitions in the model.
+  * @param engine  Engine handle.
+--- a/src/engine/core/SWMMEngine.cpp
++++ b/src/engine/core/SWMMEngine.cpp
+@@ -2255,9 +2255,9 @@
+             }
+ 
+             // Accumulation + plowing BEFORE melt (legacy runoff.c:254).
+-            snow_.plowSnow(ctx_, dt_runoff, snow_snow_.data());
+-
+-            snow_.execute(ctx_, dt_runoff, ctx_.climate_state.temperature,
++            static_cast<surface::SnowModel&>(snow_).plowSnow(ctx_, dt_runoff, snow_snow_.data());
++
++            static_cast<surface::SnowModel&>(snow_).execute(ctx_, dt_runoff, ctx_.climate_state.temperature,
+                           ctx_.climate_state.wind_speed, snow_rain_.data(),
+                           snow_snow_.data(),
+                           ctx_.climate_state.gamma, ctx_.climate_state.ea);
+--- a/tests/unit/engine/CMakeLists.txt
++++ b/tests/unit/engine/CMakeLists.txt
+@@ -1095,3 +1095,10 @@
+     target_link_libraries(test_engine_lid_nodes PRIVATE openswmm_geopackage)
+     target_compile_definitions(test_engine_lid_nodes PRIVATE LID_TEST_GEOPACKAGE)
+ endif()
++
++# R1 shared surface-process contracts and cross-driver parity.
++if(OPENSWMM_BUILD_2D)
++    add_gtest_unit(test_engine_surface_processes test_surface_processes.cpp)
++    target_compile_definitions(test_engine_surface_processes PRIVATE
++        OPENSWMM_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
++endif()
+--- /dev/null
++++ b/src/engine/hydrology/surface/Element.hpp
+@@ -0,0 +1,14 @@
++// SPDX-License-Identifier: Apache-2.0
++// Copyright 2026 Caleb Buahin
++
++#pragma once
++namespace openswmm::surface {
++/// Non-owning geometry/site view. SI lengths and area, slope as rise/run,
++/// aspect/location in degrees. Null optional fields mean no authored override.
++struct SurfaceElement {
++    const double *area = nullptr, *slope = nullptr, *aspect = nullptr;
++    const double *latitude = nullptr, *longitude = nullptr, *elevation = nullptr;
++    const double *forest_cover = nullptr, *drift = nullptr, *ground_heat_flux = nullptr;
++    const double *albedo_extinction_depth = nullptr;
++};
++}
+--- /dev/null
++++ b/src/engine/hydrology/surface/InfilBank.cpp
+@@ -0,0 +1,186 @@
++// SPDX-License-Identifier: Apache-2.0
++// Copyright 2026 Caleb Buahin
++
++#include "InfilBank.hpp"
++#include "../../core/SimulationOptions.hpp"
++#include "../../core/UnitConversion.hpp"
++#include <algorithm>
++
++namespace openswmm::surface {
++void InfilBank::init(int n) {
++    clear();
++    methods_.assign(n, InfilModel::HORTON);
++    owners_.assign(n, Owner::BANK);
++    constant_.assign(n, 0.0);
++    cumulative_.assign(n, 0.0);
++}
++void InfilBank::clear() {
++    methods_.clear(); owners_.clear(); horton_.clear(); grnampt_.clear();
++    curvenum_.clear(); constant_.clear(); cumulative_.clear();
++}
++void InfilBank::setMethod(int e, InfilModel method, const double p[5], const SimulationOptions& opts) {
++    methods_[e] = method;
++    switch (method) {
++    case InfilModel::HORTON:
++    case InfilModel::MOD_HORTON:
++        if (horton_.empty()) horton_.resize(methods_.size());
++        infil::horton_init(horton_[e], p[0], p[1], p[2], p[3], p[4], opts);
++        break;
++    case InfilModel::GREEN_AMPT:
++    case InfilModel::MOD_GREEN_AMPT:
++        if (grnampt_.empty()) grnampt_.resize(methods_.size());
++        infil::grnampt_init(grnampt_[e], p[0], p[1], p[2], opts);
++        break;
++    case InfilModel::CURVE_NUM:
++        if (curvenum_.empty()) curvenum_.resize(methods_.size());
++        infil::curvenum_init(curvenum_[e], p[0], p[2]);
++        break;
++    case InfilModel::CONSTANT:
++        // Dedicated stateless rate, preserving the original init operation order.
++        constant_[e] = p[0] / ucf::UCF(ucf::RAINFALL, opts);
++        break;
++    }
++}
++double InfilBank::rateFeet(int e, double precip, double runon, double depth, double dt, Factors factors) {
++    if (owners_[e] == Owner::EXTERNAL || dt <= 0.0) return 0.0;
++    const double f = evaluate(e, precip, runon, depth, dt, factors);
++    cumulative_[e] += std::max(0.0, f * 0.3048) * dt;
++    return f;
++}
++double InfilBank::rate(int e, double precip, double runon, double depth, double dt, Factors factors) {
++    constexpr double feet_per_metre = 3.280839895013123;
++    return std::max(0.0, rateFeet(e, precip * feet_per_metre, runon * feet_per_metre,
++                                depth * feet_per_metre, dt, factors) * 0.3048);
++}
++double InfilBank::evaluate(int i, double precip, double runon, double depth, double dt, Factors factors) {
++    const auto ui = static_cast<std::size_t>(i);
++    double infil = 0.0;
++    const InfilModel im = methods_[ui];
++    switch (im) {
++        case InfilModel::HORTON:
++        case InfilModel::MOD_HORTON: {
++            auto& hs = horton_[ui];
++            double save_f0 = hs.f0, save_fmin = hs.fmin, save_regen = hs.regen;
++            hs.f0   *= factors.infiltration;
++            hs.fmin *= factors.infiltration;
++            hs.regen *= factors.recovery;
++            infil = (im == InfilModel::HORTON)
++                ? infil::horton_getInfil(hs, precip + runon, depth, dt)
++                : infil::modHorton_getInfil(hs, precip + runon, depth, dt);
++            hs.f0 = save_f0; hs.fmin = save_fmin; hs.regen = save_regen;
++            break;
++        }
++        case InfilModel::GREEN_AMPT:
++        case InfilModel::MOD_GREEN_AMPT: {
++            // Legacy applies InfilFactor and Evap.recoveryFactor inside
++            // grnampt_getInfil, per call, from the unscaled state (ks = Ks*IF,
++            // lu = Lu*sqrt(IF), Fumax = IMDmax*Lu*sqrt(IF), kr = lu/90000*RF,
++            // T = 5400/lu/RF). Baking them into Ks/Lu/Fumax changed both the
++            // operation order and Fumax (which scaled by IF instead of sqrt(IF)).
++            infil = infil::grnampt_getInfil(grnampt_[ui],
++                                            precip + runon, depth, dt, im,
++                                            factors.infiltration, factors.recovery);
++            break;
++        }
++        case InfilModel::CURVE_NUM: {
++            auto& cs = curvenum_[ui];
++            // Gap #7: CN treats runon as ponded depth, not as a rainfall rate.
++            // Legacy infil.c lines 318-319: depth += runon * tstep; then pass
++            // only rainfall (not rainfall+runon) as the rate argument.
++            double cn_depth = depth + runon * dt;
++            infil = infil::curvenum_getInfil(cs, precip, cn_depth, dt,
++                                             factors.recovery);
++            break;
++        }
++        case InfilModel::CONSTANT:
++            infil = infil::constant_getInfil(constant_[ui] * factors.infiltration, precip + runon, depth, dt);
++            break;
++    }
++    return infil;
++}
++
++void InfilBank::pack(int i, int& model, double state[6]) const noexcept {
++    std::fill(state, state + 6, 0.0);
++    if (i < 0 || static_cast<std::size_t>(i) >= methods_.size()) {
++        model = 0;
++        return;
++    }
++    const auto ui = static_cast<std::size_t>(i);
++    model = static_cast<int>(methods_[ui]);
++
++    switch (methods_[ui]) {
++        case InfilModel::HORTON:
++        case InfilModel::MOD_HORTON: {
++            const auto& h = horton_[ui];
++            state[0] = h.tp;
++            state[1] = h.Fe;
++            state[2] = h.Fmh;
++            break;
++        }
++        case InfilModel::GREEN_AMPT:
++        case InfilModel::MOD_GREEN_AMPT: {
++            const auto& g = grnampt_[ui];
++            state[0] = g.IMD;
++            state[1] = g.F;
++            state[2] = g.Fu;
++            state[3] = g.T;
++            state[4] = g.saturated ? 1.0 : 0.0;
++            break;
++        }
++        case InfilModel::CURVE_NUM: {
++            const auto& c = curvenum_[ui];
++            state[0] = c.S;
++            state[1] = c.Se;
++            state[2] = c.P;
++            state[3] = c.F;
++            state[4] = c.f;
++            state[5] = c.T;
++            break;
++        }
++        case InfilModel::CONSTANT:
++            break;  // 2D-only, stateless — nothing to save
++    }
++}
++
++void InfilBank::unpack(int i, int model, const double state[6]) noexcept {
++    if (i < 0 || static_cast<std::size_t>(i) >= methods_.size()) return;
++    const auto ui = static_cast<std::size_t>(i);
++
++    // Only restore if model matches the initialised type
++    if (model != static_cast<int>(methods_[ui])) return;
++
++    switch (methods_[ui]) {
++        case InfilModel::HORTON:
++        case InfilModel::MOD_HORTON: {
++            auto& h = horton_[ui];
++            h.tp  = state[0];
++            h.Fe  = state[1];
++            h.Fmh = state[2];
++            break;
++        }
++        case InfilModel::GREEN_AMPT:
++        case InfilModel::MOD_GREEN_AMPT: {
++            auto& g = grnampt_[ui];
++            g.IMD       = state[0];
++            g.F         = state[1];
++            g.Fu        = state[2];
++            g.T         = state[3];
++            g.saturated = (state[4] != 0.0);
++            break;
++        }
++        case InfilModel::CURVE_NUM: {
++            auto& c = curvenum_[ui];
++            c.S  = state[0];
++            c.Se = state[1];
++            c.P  = state[2];
++            c.F  = state[3];
++            c.f  = state[4];
++            c.T  = state[5];
++            break;
++        }
++        case InfilModel::CONSTANT:
++            break;  // 2D-only, stateless — nothing to restore
++    }
++}
++
++} // namespace openswmm::surface
+--- /dev/null
++++ b/src/engine/hydrology/surface/InfilBank.hpp
+@@ -0,0 +1,37 @@
++// SPDX-License-Identifier: Apache-2.0
++// Copyright 2026 Caleb Buahin
++
++#pragma once
++#include "../Infiltration.hpp"
++#include <vector>
++
++namespace openswmm::surface {
++
++/// One state owner and one dispatch for subcatchments and mesh cells. Kernels
++/// retain their legacy feet arithmetic; the SI boundary converts only once.
++class InfilBank {
++public:
++    enum class Owner { BANK, EXTERNAL };
++    struct Factors { double infiltration = 1.0, recovery = 1.0; };
++    void init(int n);
++    void setMethod(int e, InfilModel method, const double p[5], const SimulationOptions& options);
++    void setOwner(int e, Owner owner) { owners_[e] = owner; }
++    Owner owner(int e) const { return owners_[e]; }
++    double rate(int e, double precip_m_s, double runon_m_s, double depth_m,
++                double dt, Factors factors);
++    // Avoid a feet -> SI -> feet roundtrip on the existing runoff path.
++    double rateFeet(int e, double precip, double runon, double depth, double dt, Factors factors);
++    void pack(int e, int& method, double state[6]) const noexcept;
++    void unpack(int e, int method, const double state[6]) noexcept;
++    const std::vector<double>& cumulative() const noexcept { return cumulative_; }
++    void clear();
++private:
++    std::vector<InfilModel> methods_;
++    std::vector<Owner> owners_;
++    std::vector<HortonState> horton_;
++    std::vector<GreenAmptState> grnampt_;
++    std::vector<CurveNumState> curvenum_;
++    std::vector<double> constant_, cumulative_;
++    double evaluate(int e, double precip, double runon, double depth, double dt, Factors factors);
++};
++} // namespace openswmm::surface
+--- /dev/null
++++ b/src/engine/hydrology/surface/SnowModel.hpp
+@@ -0,0 +1,32 @@
++// SPDX-License-Identifier: Apache-2.0
++// Copyright 2026 Caleb Buahin
++
++#pragma once
++namespace openswmm { struct SimulationContext; }
++namespace openswmm::surface {
++struct SnowInputs {
++    double dt_s = 0, rain_m = 0, snow_m = 0, Ta_C = 0, wind_ms = 0;
++    double rh = 0, Qsi = 0, Qli = 0, Qg = 0, cos_psi_avg = 0, hri = 0;
++    // Existing climate coefficients for degree-day rain-on-snow; passed
++    // through unchanged on the legacy batch boundary (F^-1 and in Hg).
++    double gamma = 0, ea = 0;
++};
++struct SnowOutputs {
++    double melt_m = 0, throughfall_m = 0, sublim_m = 0, swe_m = 0, cover_frac = 0;
++    double Ts_C = 0, T_C = 0, albedo = 0, energy_kJm2 = 0;
++};
++class SnowModel {
++public:
++    virtual ~SnowModel() = default;
++    virtual void initializeElements(int n) = 0;
++    virtual void step(int e, const SnowInputs&, SnowOutputs&) = 0;
++    virtual int stateSize() const = 0;
++    virtual void pack(int e, double*) const = 0;
++    virtual void unpack(int e, const double*) = 0;
++    // Existing subcatchments use this native-unit batch boundary to preserve
++    // operation order and inter-subcatchment plowing. SI elements use step().
++    virtual void execute(SimulationContext&, double dt_s, double temp_F, double wind_mph,
++                         const double* rain_ft_s, const double* snow_ft_s, double gamma, double ea) = 0;
++    virtual void plowSnow(SimulationContext&, double dt_s, const double* snow_ft_s) = 0;
++};
++}
+--- /dev/null
++++ b/src/engine/hydrology/surface/DegreeDaySnow.cpp
+@@ -0,0 +1,620 @@
++// SPDX-License-Identifier: Apache-2.0
++//
++// Copyright 2026 Caleb Buahin
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++/**
++ * @file DegreeDaySnow.cpp
++ * @brief Snowmelt — batch-oriented, vectorisable kernels.
++ * @ingroup new_engine
++ *
++ * @author   Caleb Buahin <caleb.buahin@gmail.com>
++ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
++ * @license  Apache-2.0
++ */
++
++#include "DegreeDaySnow.hpp"
++#include "../../core/SimulationContext.hpp"
++#include "../../core/UnitConversion.hpp"
++#include <cmath>
++#include <vector>
++#include <algorithm>
++
++namespace openswmm {
++namespace snow {
++
++void SnowSoA::resize(int n) {
++    n_subcatch = n;
++    auto total = static_cast<std::size_t>(n * N_SUBAREAS);
++    auto un = static_cast<std::size_t>(n);
++
++    wsnow.assign(total, 0.0);
++    fw.assign(total, 0.0);
++    coldc.assign(total, 0.0);
++    ati.assign(total, 32.0);
++    // 1.0, matching legacy `snow_initSnowpack` (snow.c:199). The new-snow
++    // ADC index starts ABOVE any real pack, so `awesi < awe` sends the first
++    // depleting step to the regular curve. Initialising it to 0 makes
++    // `awesi >= awe` true instead and `getArealDepletion` returns full cover
++    // forever — which was invisible while `si` was pinned to the initial pack
++    // depth, because the `wsnow >= si` branch then fired on step 1 and set
++    // `awe = 1.0` itself. Reading SD100 (F6) is what exposes it: a pack that
++    // starts BELOW its SD100 never takes that branch.
++    awe.assign(total, 1.0);
++    imelt.assign(total, 0.0);
++    tbase.assign(total, 32.0);
++    dhm.assign(total, 0.0);
++    dhmin.assign(total, 0.0);
++    dhmax.assign(total, 0.0);
++    fwfrac.assign(total, 0.1);
++    fArea.assign(total, 0.0);
++    age.assign(total, 0.0);
++    out_age.assign(total, 0.0);
++    si.assign(total, 0.0);
++    sba.assign(total, 0.0);
++    sbws.assign(total, 0.0);
++    asc.assign(total, 1.0);
++    snn.assign(un, 0.0);
++    weplow.assign(un, 0.0);
++    sfrac.assign(static_cast<std::size_t>(n * 5), 0.0);
++    to_subcatch.assign(un, -1);
++}
++
++void DegreeDaySnow::init(int n_subcatch) {
++    soa_.resize(n_subcatch);
++}
++
++// ============================================================================
++// Areal depletion curve interpolation (matching legacy getArealSnowCover)
++// ============================================================================
++
++/// Interpolate areal snow coverage from a 10-point ADC curve.
++/// @param adc    10-point curve (index 0-9 maps to AWESI 0.0-0.9+)
++/// @param awesi  Snow water equivalent relative to depth at 100% cover
++/// @return       Areal snow coverage fraction (0 to 1)
++// ============================================================================
++// S2b — complete-mix age arithmetic
++// ============================================================================
++
++/**
++ * @brief Mix `v_in` of water at age `a_in` into a pool holding `v_have` at
++ *        age `a_have`. Returns the pool's new age.
++ *
++ * @details Volume-weighted, and **guarded on the TOTAL rather than on either
++ *          term**: a pool that is empty before and after has no age to
++ *          report, and returning anything but 0 there would let a stale age
++ *          survive a pack that no longer exists. That is the shape of the
++ *          dry-element carried-temperature item still open from H1, and it
++ *          is cheaper to not create it than to mask it later.
++ *
++ * @note Removing water at the pool's own age leaves the age UNCHANGED, so
++ *       drainage and melt-out need no call here — only arrivals do.
++ */
++static inline double mixAge(double v_have, double a_have,
++                            double v_in, double a_in) noexcept {
++    const double v = v_have + v_in;
++    if (!(v > 0.0)) return 0.0;
++    return (v_have * a_have + v_in * a_in) / v;
++}
++
++// Legacy getArealSnowCover (snow.c:691): the ADC plots the covered fraction
++// at 10 equal awesi increments; the last interval interpolates to 1.0.
++static double getArealSnowCover(const double* adc, double awesi) {
++    if (awesi <= 0.0)    return 0.0;
++    if (awesi >= 0.9999) return 1.0;
++    int m = static_cast<int>(awesi * 10.0 + 0.00001);
++    double asc1 = adc[m];
++    double asc2 = (m >= 9) ? 1.0 : adc[m + 1];
++    return asc1 + (asc2 - asc1) / 0.1 * (awesi - 0.1 * static_cast<float>(m));
++}
++
++// ============================================================================
++// Areal depletion with new-snow ADC transition — legacy getArealDepletion
++// (snow.c:610), statement for statement. `wsnow` already carries this
++// step's snowfall (snow_plowSnow ran first), which is why the new-snow
++// branch subtracts it back out to find the pre-snow index.
++// ============================================================================
++
++/// @param soa      Snow state arrays (sba/sbws/awe updated in place).
++/// @param ui       Flat array index (subcatch * N_SUBAREAS + subarea).
++/// @param subarea  Subarea index (SNOW_PLOWABLE, SNOW_IMPERV, SNOW_PERV).
++/// @param snowfall Snowfall rate this step (ft/sec).
++/// @param dt       Timestep (sec).
++/// @return         Areal snow coverage fraction (0 to 1).
++static double getArealDepletion(SnowSoA& soa, std::size_t ui, int subarea,
++                                double snowfall, double dt) {
++    // Plowable sub-area not subject to areal depletion.
++    if (subarea == SNOW_PLOWABLE) return 1.0;
++
++    const double si = soa.si[ui];
++
++    // No depletion if depth zero or above SI.
++    if (si == 0.0 || soa.wsnow[ui] >= si) {
++        soa.awe[ui] = 1.0;
++        return 1.0;
++    }
++    if (soa.wsnow[ui] == 0.0) {
++        soa.awe[ui] = 1.0;
++        return 0.0;
++    }
++
++    const double* adc = (subarea == SNOW_PERV) ? soa.adc_perv : soa.adc_imperv;
++
++    // Case of new snowfall.
++    if (snowfall > 0.0) {
++        double awe = (soa.wsnow[ui] - snowfall * dt) / si;
++        awe = std::max(awe, 0.0);
++        double sba  = getArealSnowCover(adc, awe);
++        double sbws = awe + (0.75 * snowfall * dt) / si;
++        sbws = std::min(sbws, 1.0);
++        soa.awe[ui]  = awe;
++        soa.sba[ui]  = sba;
++        soa.sbws[ui] = sbws;
++        return 1.0;
++    }
++
++    // Case of no new snow.
++    const double awe   = soa.awe[ui];
++    const double sba   = soa.sba[ui];
++    const double sbws  = soa.sbws[ui];
++    const double awesi = soa.wsnow[ui] / si;
++    double asc;
++    if (awesi < soa.awe[ui]) {
++        // relative snow depth is below start of new snow ADC
++        soa.awe[ui] = 1.0;
++        asc = getArealSnowCover(adc, awesi);
++    } else if (awesi >= soa.sbws[ui]) {
++        // relative snow depth is above end of new snow ADC
++        asc = 1.0;
++    } else {
++        // relative snow depth is on new snow ADC
++        asc = sba + (1.0 - sba) / (sbws - awe) * (awesi - awe);
++    }
++    return asc;
++}
++
++// ============================================================================
++// Rain-on-snow melt rate — legacy getRainmelt (snow.c:775). Returns the raw
++// value (it can be NEGATIVE below 32 F); the caller applies legacy's
++// `rmelt > 0` test.
++// ============================================================================
++
++double DegreeDaySnow::rainMeltRate(double temp, double wind, double gamma,
++                                 double ea, double rainfall) {
++    rainfall = rainfall * 43200.0;     // convert rain to in/hr
++    if (rainfall > 0.02) {
++        double uadj = 0.006 * wind;
++        double t1 = temp - 32.0;
++        double t2 = 7.5 * gamma * uadj;
++        double t3 = 8.5 * uadj * (ea - 0.18);
++        double smelt = t1 * (0.001167 + t2 + 0.007 * rainfall) + t3;
++        return smelt / 43200.0;
++    }
++    return 0.0;
++}
++
++// ============================================================================
++// Execute — scalar convenience overload (broadcast to all subcatchments)
++// ============================================================================
++
++void DegreeDaySnow::execute(SimulationContext& ctx, double dt,
++                          double temp, double wind, double rainfall,
++                          double snowfall, double gamma, double ea) {
++    int n = soa_.n_subcatch;
++    if (n == 0) return;
++    std::vector<double> rain(static_cast<std::size_t>(n), rainfall);
++    std::vector<double> snow(static_cast<std::size_t>(n), snowfall);
++    execute(ctx, dt, temp, wind, rain.data(), snow.data(), gamma, ea);
++}
++
++// ============================================================================
++// Execute — legacy snow_getSnowMelt (snow.c:510) for every subcatchment,
++// each snow sub-area in legacy's order and with legacy's arithmetic:
++// getArealDepletion -> meltSnowpack (getRainmelt / degree-day /
++// updateColdContent, reduceColdContent) -> routeSnowmelt. The result per
++// surface is `imelt` = the liquid melt rate leaving the pack (legacy's
++// `smelt + snowpack->imelt`, the second being the plowed/instant melt), and
++// `asc`, from which the engine forms legacy's netPrecip.
++// ============================================================================
++
++namespace {
++
++// legacy updateColdContent (snow.c:801)
++inline void updateColdContent(SnowSoA& soa, std::size_t ui, double temp,
++                              double asc, double snowfall, double dt) {
++    double ati = soa.ati[ui];
++    double cc  = soa.coldc[ui];
++    // if snowing, ATI = snow (air) temperature
++    if (snowfall * 43200.0 > 0.02) ati = temp;
++    else {
++        // convert ATI weighting factor from 6-hr to tStep time basis
++        double tipm = 1.0 - std::pow(1.0 - soa.tipm, dt / (6.0 * 3600.0));
++        ati += tipm * (temp - ati);
++    }
++    // ATI cannot exceed snow melt base temperature
++    ati = std::min(ati, soa.tbase[ui]);
++    // update cold content
++    cc += soa.rnm * soa.dhm[ui] * (ati - temp) * dt * asc;
++    cc = std::max(cc, 0.0);
++    // maximum cold content based on assumed specific heat of snow
++    double ccMax = soa.wsnow[ui] * 0.007 / 12.0 * (soa.tbase[ui] - ati);
++    cc = std::min(cc, ccMax);
++    soa.coldc[ui] = cc;
++    soa.ati[ui]   = ati;
++}
++
++// legacy reduceColdContent (snow.c:854)
++inline double reduceColdContent(SnowSoA& soa, std::size_t ui, double smelt,
++                                double ccFactor) {
++    double cc = soa.coldc[ui];
++    if (smelt * ccFactor > cc) {
++        smelt -= cc / ccFactor;
++        cc = 0.0;
++    } else {
++        cc -= smelt * ccFactor;
++        smelt = 0.0;
++    }
++    soa.coldc[ui] = cc;
++    return smelt;
++}
++
++// legacy meltSnowpack (snow.c:729)
++inline double meltSnowpack(SnowSoA& soa, std::size_t ui, double temp,
++                           double rmelt, double asc, double snowfall,
++                           double dt) {
++    double smelt;
++    if (rmelt > 0.0) smelt = rmelt;
++    else if (temp >= soa.tbase[ui])
++        smelt = soa.dhm[ui] * (temp - soa.tbase[ui]);
++    else {
++        updateColdContent(soa, ui, temp, asc, snowfall, dt);
++        return 0.0;
++    }
++    // adjust snowmelt for area of snow cover
++    smelt *= asc;
++    // reduce cold content of melting pack
++    double ccFactor = dt * soa.rnm * asc;
++    smelt = reduceColdContent(soa, ui, smelt, ccFactor);
++    soa.ati[ui] = soa.tbase[ui];
++    return smelt;
++}
++
++}  // namespace
++
++void DegreeDaySnow::execute(SimulationContext& /*ctx*/, double dt,
++                          double temp, double wind, const double* rainfall,
++                          const double* snowfall, double gamma, double ea) {
++    int n = soa_.n_subcatch;
++    if (n == 0) return;
++
++    for (int j = 0; j < n; ++j) {
++        auto uj = static_cast<std::size_t>(j);
++        const double rain = rainfall[uj];
++        const double snow = snowfall[uj];
++
++        // compute snowmelt over entire subcatchment when rain falling
++        const double rmelt = rainMeltRate(temp, wind, gamma, ea, rain);
++
++        for (int i = SNOW_PLOWABLE; i <= SNOW_PERV; ++i) {
++            auto ui = static_cast<std::size_t>(j * N_SUBAREAS + i);
++            meltElement(ui, i, dt, temp, rain, snow, rmelt);
++        }
++    }
++}
++
++void DegreeDaySnow::meltElement(std::size_t ui, int i, double dt, double temp,
++                                double rain, double snow, double rmelt) {
++    double asc, smelt;
++    // `imelt` holds the plowed melt from snow_plowSnow (legacy
++    // snowpack->imelt); the instant melt of a thin pack adds to it.
++    double imelt = soa_.imelt[ui];
++
++    // completely melt pack if its depth is < 0.001 inch
++    if (soa_.wsnow[ui] <= 0.001 / 12.0) {
++        asc   = 0.0;
++        smelt = 0.0;
++        imelt += (soa_.wsnow[ui] + soa_.fw[ui]) / dt;
++        // S2b — the water leaves at the age the pack HAD.
++        if (soa_.track_age) {
++            soa_.out_age[ui] = soa_.age[ui];
++            soa_.age[ui]     = 0.0;
++        }
++        soa_.wsnow[ui] = 0.0;
++        soa_.fw[ui]    = 0.0;
++        soa_.coldc[ui] = 0.0;
++    }
++    // otherwise compute areal depletion, find snow melt and route it
++    // through pack (legacy routeSnowmelt, snow.c:883)
++    else {
++        asc   = getArealDepletion(soa_, ui, i, snow, dt);
++        smelt = meltSnowpack(soa_, ui, temp, rmelt, asc, snow, dt);
++
++        double vmelt = smelt * dt;
++        vmelt = std::min(vmelt, soa_.wsnow[ui]);
++        soa_.wsnow[ui] -= vmelt;
++        const double rain_on_snow = rain * dt * asc;
++        // S2b — melt moves wsnow -> fw INSIDE the pool (no age
++        // change); the rain arrives from outside and mixes against
++        // the pool as it is when it lands.
++        if (soa_.track_age && rain_on_snow > 0.0) {
++            soa_.age[ui] = mixAge(soa_.wsnow[ui] + soa_.fw[ui],
++                                  soa_.age[ui], rain_on_snow,
++                                  soa_.precip_age);
++        }
++        soa_.fw[ui] += vmelt + rain_on_snow;
++        vmelt = soa_.fw[ui] - soa_.fwfrac[ui] * soa_.wsnow[ui];
++        vmelt = std::max(vmelt, 0.0);
++        soa_.fw[ui] -= vmelt;
++        smelt = vmelt / dt;
++        // S2b — water draining out of a complete-mix pool leaves at
++        // the pool's age.
++        if (soa_.track_age) soa_.out_age[ui] = soa_.age[ui];
++    }
++
++    soa_.asc[ui]   = asc;
++    soa_.imelt[ui] = smelt + imelt;
++    if (soa_.track_age && !(soa_.imelt[ui] > 0.0)) soa_.out_age[ui] = 0.0;
++}
++
++void DegreeDaySnow::step(int e, const surface::SnowInputs& input, surface::SnowOutputs& output) {
++    output = {};
++    if (e < 0 || static_cast<std::size_t>(e) >= soa_.wsnow.size() || input.dt_s <= 0) return;
++    const auto ui = static_cast<std::size_t>(e);
++    const double dt = input.dt_s;
++    const double rain = input.rain_m / 0.3048 / dt;
++    const double snow = input.snow_m / 0.3048 / dt;
++    const double temp = input.Ta_C * 1.8 + 32.0;
++    const double wind = input.wind_ms / 0.44704;
++    // Point-element accumulation: batch plowing remains the subcatchment
++    // driver's responsibility. step() includes snowfall exactly once.
++    soa_.imelt[ui] = 0.0;
++    const double added = snow * dt;
++    if (soa_.track_age) {
++        const double have = soa_.wsnow[ui] + soa_.fw[ui];
++        if (have > 0.0) soa_.age[ui] += dt;
++        if (added > 0.0) soa_.age[ui] = mixAge(have, soa_.age[ui], added, soa_.precip_age);
++    }
++    soa_.wsnow[ui] += added;
++    meltElement(ui, e % N_SUBAREAS, dt, temp, rain, snow,
++                rainMeltRate(temp, wind, input.gamma, input.ea, rain));
++    output.melt_m = soa_.imelt[ui] * dt * 0.3048;
++    output.throughfall_m = input.rain_m * (1.0 - soa_.asc[ui]);
++    output.swe_m = (soa_.wsnow[ui] + soa_.fw[ui]) * 0.3048;
++    output.cover_frac = soa_.asc[ui];
++}
++
++void DegreeDaySnow::pack(int e, double* out) const {
++    const std::vector<double>* fields[] = {&soa_.wsnow, &soa_.fw, &soa_.coldc, &soa_.ati,
++        &soa_.awe, &soa_.imelt, &soa_.si, &soa_.sba, &soa_.sbws, &soa_.asc, &soa_.age, &soa_.out_age};
++    for (int i = 0; i < stateSize(); ++i) out[i] = (*fields[i])[e];
++}
++void DegreeDaySnow::unpack(int e, const double* in) {
++    std::vector<double>* fields[] = {&soa_.wsnow, &soa_.fw, &soa_.coldc, &soa_.ati,
++        &soa_.awe, &soa_.imelt, &soa_.si, &soa_.sba, &soa_.sbws, &soa_.asc, &soa_.age, &soa_.out_age};
++    for (int i = 0; i < stateSize(); ++i) (*fields[i])[e] = in[i];
++}
++
++// ============================================================================
++// Seasonal melt coefficient interpolation
++// (matching legacy snow.c snow_setMeltCoeffs)
++// ============================================================================
++
++void DegreeDaySnow::setMeltCoeffs(int day_of_year) {
++    // Compute seasonal factor: -1.0 at winter solstice (Dec 21, day ~355),
++    // +1.0 at summer solstice (Jun 21, day ~172).
++    // season = sin(0.0172615 * (day - 81))   — legacy `climate.c:1176`.
++    //
++    // The constant is NOT a mis-divided year, and it was retracted from the
++    // divergence register once that was checked. It gives a period of
++    // exactly 364.000 days, and with the day-81 phase offset (the vernal
++    // equinox) the sine peaks at day 172.000 — the summer solstice, June 21.
++    // 364 = 4 x 91 is what makes the equinox-to-solstice quarter a whole
++    // number of days. Substituting 2*pi/365 moves the seasonal melt peak to
++    // day 172.25, off the solstice, and buys nothing.
++    constexpr double kSeasonRad = 0.0172615;   // rad/day; period 364.000 d
++    double season = std::sin(kSeasonRad * (day_of_year - 81.0));
++    soa_.season = season;  // Store for reporting (matching legacy Snow.season)
++
++    int total = soa_.n_subcatch * N_SUBAREAS;
++    for (int i = 0; i < total; ++i) {
++        auto ui = static_cast<std::size_t>(i);
++        // dhm = 0.5 * (dhmax * (1 + season) + dhmin * (1 - season))
++        // (matching legacy snow.c line 382-383)
++        soa_.dhm[ui] = 0.5 * (soa_.dhmax[ui] * (1.0 + season)
++                             + soa_.dhmin[ui] * (1.0 - season));
++    }
++}
++
++// ============================================================================
++// Snow plowing — redistribute excess snow between subareas
++// (matching legacy snow.c snow_plowSnow)
++// ============================================================================
++
++void DegreeDaySnow::plowSnow(SimulationContext& ctx, double dt, double snowfall) {
++    int n = soa_.n_subcatch;
++    if (n == 0) return;
++    std::vector<double> snow(static_cast<std::size_t>(n), snowfall);
++    plowSnow(ctx, dt, snow.data());
++}
++
++void DegreeDaySnow::plowSnow(SimulationContext& ctx, double dt, const double* snowfall) {
++    int n = soa_.n_subcatch;
++    if (n == 0) return;
++
++    for (int j = 0; j < n; ++j) {
++        auto uj = static_cast<std::size_t>(j);
++
++        // Add this subcatchment's snowfall to all subareas
++        for (int k = SNOW_PLOWABLE; k <= SNOW_PERV; ++k) {
++            auto idx = static_cast<std::size_t>(j * N_SUBAREAS + k);
++            if (soa_.fArea[idx] > 0.0) {
++                const double add = snowfall[uj] * dt;
++                // S2b — age, THEN mix, and both before the store moves.
++                //
++                // This is the step's first snow call (SWMMEngine.cpp:1596
++                // calls plowSnow immediately before execute, matching legacy
++                // runoff.c:254), so it is where the pack ages. Ageing here
++                // rather than in `execute` means new snow is mixed in at its
++                // source age and is aged from the NEXT step, which is the
++                // A3/A4 convention: arriving water is not older than the
++                // instant it arrived.
++                if (soa_.track_age) {
++                    const double have = soa_.wsnow[idx] + soa_.fw[idx];
++                    if (have > 0.0) soa_.age[idx] += dt;
++                    if (add > 0.0)
++                        soa_.age[idx] = mixAge(have, soa_.age[idx],
++                                               add, soa_.precip_age);
++                }
++                soa_.wsnow[idx] += add;
++                soa_.imelt[idx] = 0.0;
++            }
++        }
++    }
++
++    // S2b — ageing is a SEPARATE PASS over every subcatchment, completed
++    // before any plowing starts. Interleaving the two ages water twice when
++    // it is plowed into a subcatchment the loop has not reached yet, and not
++    // at all when it goes to one already passed: the answer then depends on
++    // subcatchment ORDER, which nothing else in this model does. Measured on
++    // the two-subcatchment transfer gate: age-volume gained exactly
++    // `dt * moved`, 60 against a 40180 baseline.
++    for (int j = 0; j < n; ++j) {
++        auto uj = static_cast<std::size_t>(j);
++
++        // Check if plowable area has excess snow
++        auto plow_idx = static_cast<std::size_t>(j * N_SUBAREAS + SNOW_PLOWABLE);
++        if (soa_.fArea[plow_idx] <= 0.0) continue;
++        // legacy snow.c:454: `if (wsnow >= weplow)` — an SDplow of 0 plows
++        // every step (there was a `weplow <= 0` skip here).
++        if (soa_.wsnow[plow_idx] < soa_.weplow[uj]) continue;
++
++        double exc = soa_.wsnow[plow_idx];
++        auto sf = static_cast<std::size_t>(j * 5); // sfrac base index
++        double sfracTotal = 0.0;
++        // S2b — the donor's age, read ONCE before any transfer moves water.
++        //
++        // Every receiving surface below takes water from this same pool, so
++        // they must all mix against the age the pool had at the start of the
++        // transfer, not against a value that the previous transfer moved.
++        // Plowing does not touch `fw`, and removing water from a complete-mix
++        // pool at the pool's own age leaves that age unchanged — so the
++        // plowable surface's own age needs no update here at all.
++        const double donor_age = soa_.track_age ? soa_.age[plow_idx] : 0.0;
++
++        // Plow out of system (sfrac[0])
++        // Accumulate removed volume: depth (ft) * plowable area fraction * non-LID area (ft2)
++        // Gap #60: exclude LID area from plow volume (matches legacy snow.c Build 5.2.0).
++        if (soa_.sfrac[sf + 0] > 0.0) {
++            double lid_ft2 = (uj < ctx.subcatches.total_lid_area_ft2.size())
++                             ? ctx.subcatches.total_lid_area_ft2[uj] : 0.0;
++            // F9 — this read `* 43560.0` with the comment "acres -> ft2".
++            // `subcatches.area` is in PROJECT land-area units, which are
++            // acres only in US; in SI they are hectares, and the plough
++            // volume came out **2.471x too small** — the identical defect
++            // SWMMEngine.cpp's rainfall-volume site carries a comment about
++            // having already fixed once.
++            //
++            // Fixed HERE, in the ledger round rather than its own, and the
++            // reason is specific: `runoff_snowremov` had no writer until this
++            // round, so this number reached nobody. Wiring it up is what
++            // makes the error visible, and shipping a newly-visible wrong
++            // number is worse than shipping no number at all.
++            double area_ft2 = ctx.subcatches.area[uj] /
++                                  ucf::UCF(ucf::LANDAREA, ctx.options)
++                              - lid_ft2;
++            if (area_ft2 < 0.0) area_ft2 = 0.0;
++            soa_.removed += soa_.sfrac[sf + 0] * exc *
++                            soa_.fArea[plow_idx] * area_ft2;
++        }
++        sfracTotal += soa_.sfrac[sf + 0];
++
++        // Plow onto non-plowable impervious area (sfrac[1])
++        auto imperv_idx = static_cast<std::size_t>(j * N_SUBAREAS + SNOW_IMPERV);
++        if (soa_.fArea[imperv_idx] > 0.0) {
++            double f = soa_.fArea[plow_idx] / soa_.fArea[imperv_idx];
++            const double moved = soa_.sfrac[sf + 1] * exc * f;
++            if (soa_.track_age && moved > 0.0) {
++                soa_.age[imperv_idx] =
++                    mixAge(soa_.wsnow[imperv_idx] + soa_.fw[imperv_idx],
++                           soa_.age[imperv_idx], moved, donor_age);
++            }
++            soa_.wsnow[imperv_idx] += moved;
++            sfracTotal += soa_.sfrac[sf + 1];
++        }
++
++        // Plow onto pervious area (sfrac[2])
++        auto perv_idx = static_cast<std::size_t>(j * N_SUBAREAS + SNOW_PERV);
++        if (soa_.fArea[perv_idx] > 0.0) {
++            double f = soa_.fArea[plow_idx] / soa_.fArea[perv_idx];
++            const double moved = soa_.sfrac[sf + 2] * exc * f;
++            if (soa_.track_age && moved > 0.0) {
++                soa_.age[perv_idx] =
++                    mixAge(soa_.wsnow[perv_idx] + soa_.fw[perv_idx],
++                           soa_.age[perv_idx], moved, donor_age);
++            }
++            soa_.wsnow[perv_idx] += moved;
++            sfracTotal += soa_.sfrac[sf + 2];
++        }
++
++        // Convert to immediate melt (sfrac[3])
++        if (dt > 0.0) {
++            soa_.imelt[plow_idx] = soa_.sfrac[sf + 3] * exc / dt;
++            // S2b — plough-melt leaves the pack at the pack's age. `execute`
++            // runs next and will overwrite both `imelt` and `out_age` for
++            // this surface (step 4 assigns `imelt`), so this write is not
++            // what a caller reads; it is here so that the pair is never
++            // inconsistent at any point in the step, which is the invariant
++            // that makes the pair safe to read from anywhere later.
++            if (soa_.track_age) soa_.out_age[plow_idx] = donor_age;
++        }
++        sfracTotal += soa_.sfrac[sf + 3];
++
++        // Send to another subcatchment (sfrac[4])
++        if (soa_.sfrac[sf + 4] > 0.0 && soa_.to_subcatch[uj] >= 0) {
++            int m = soa_.to_subcatch[uj];
++            if (m < n) {
++                auto target_perv = static_cast<std::size_t>(m * N_SUBAREAS + SNOW_PERV);
++                if (soa_.fArea[target_perv] > 0.0) {
++                    double f = soa_.fArea[plow_idx] / soa_.fArea[target_perv];
++                    const double moved = soa_.sfrac[sf + 4] * exc * f;
++                    // S2b — the CROSS-SUBCATCHMENT transfer, and the reason
++                    // the age has to live in this solver. An update running
++                    // after `execute` sees only that subcatchment `m` gained
++                    // snow; it cannot know it came from `j`, nor at what age.
++                    if (soa_.track_age && moved > 0.0) {
++                        soa_.age[target_perv] =
++                            mixAge(soa_.wsnow[target_perv] + soa_.fw[target_perv],
++                                   soa_.age[target_perv], moved, donor_age);
++                    }
++                    soa_.wsnow[target_perv] += moved;
++                    sfracTotal += soa_.sfrac[sf + 4];
++                }
++            }
++        }
++
++        // Reduce plowable snow by total fraction plowed
++        sfracTotal = std::min(sfracTotal, 1.0);
++        soa_.wsnow[plow_idx] = exc * (1.0 - sfracTotal);
++        // S2b — a surface plowed clean has no water, so it has no age.
++        // Leaving the old value would let it survive as the mixing partner
++        // for the next snowfall, which would make new snow arrive old.
++        if (soa_.track_age &&
++            !(soa_.wsnow[plow_idx] + soa_.fw[plow_idx] > 0.0)) {
++            soa_.age[plow_idx] = 0.0;
++        }
++    }
++}
++
++} // namespace snow
++} // namespace openswmm
+--- /dev/null
++++ b/src/engine/hydrology/surface/DegreeDaySnow.hpp
+@@ -0,0 +1,248 @@
++// SPDX-License-Identifier: Apache-2.0
++//
++// Copyright 2026 Caleb Buahin
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++/**
++ * @file DegreeDaySnow.hpp
++ * @brief Snowmelt — degree-day and rain-on-snow methods.
++ *
++ * @details Batch-oriented: all snowpack computations use the same daily
++ *          temperature/wind. The per-subcatchment snowmelt calculation is
++ *          independent and vectorisable. Three subareas (plowable, imperv,
++ *          perv) are processed per subcatchment — inner loop can be unrolled.
++ *
++ *          Key vectorisable operations:
++ *          - ATI update: ati += tipm * (Ta - ati) → batch over subcatchments
++ *          - Degree-day melt: smelt = dhm * (Ta - Tbase) → batch over subcatchments
++ *          - Cold content update: cc += rnm * dhm * (ati - Ta) * dt → batch
++ *          - Snow accumulation: wsnow += snowfall * dt → batch
++ *
++ * @note Legacy reference: src/legacy/engine/snow.c
++ * @ingroup new_engine
++ *
++ * @author   Caleb Buahin <caleb.buahin@gmail.com>
++ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
++ * @license  Apache-2.0
++ */
++
++#ifndef OPENSWMM_SNOW_HPP
++#define OPENSWMM_SNOW_HPP
++
++#include <cstddef>
++#include <vector>
++#include "SnowModel.hpp"
++
++namespace openswmm {
++
++struct SimulationContext;
++
++namespace snow {
++
++// ============================================================================
++// Constants
++// ============================================================================
++
++constexpr int N_SUBAREAS = 3;    ///< Plowable, Impervious, Pervious
++constexpr int SNOW_PLOWABLE = 0;
++constexpr int SNOW_IMPERV   = 1;
++constexpr int SNOW_PERV     = 2;
++
++// ============================================================================
++// Per-subcatchment snowpack state (SoA for vectorization)
++// ============================================================================
++
++struct SnowSoA {
++    int n_subcatch = 0;
++
++    // Per subcatchment × 3 subareas = flat arrays [subcatch * 3 + subarea]
++    std::vector<double> wsnow;    ///< Snow water equivalent (ft)
++    std::vector<double> fw;       ///< Free water in pack (ft)
++    std::vector<double> coldc;    ///< Cold content (ft water equiv)
++    std::vector<double> ati;      ///< Antecedent temperature index (deg F)
++    std::vector<double> awe;      ///< Areal depletion index
++    std::vector<double> imelt;    ///< Melt rate output (ft/sec)
++
++    // Per subcatchment × 3 subareas: parameters
++    std::vector<double> tbase;    ///< Base melt temperature (deg F)
++    std::vector<double> dhm;      ///< Degree-day melt factor (ft/deg-F/sec)
++    std::vector<double> dhmin;    ///< Min melt coeff (winter solstice) (ft/deg-F/sec)
++    std::vector<double> dhmax;    ///< Max melt coeff (summer solstice) (ft/deg-F/sec)
++    std::vector<double> fwfrac;   ///< Free water capacity fraction
++
++    // Per subcatchment × 3 subareas: area fractions
++    std::vector<double> fArea;    ///< Fraction of total area for each subarea
++
++    /// S2b — WATER AGE of the pack's water (seconds), per subcatchment ×
++    /// subarea. **Complete-mix over `wsnow + fw` TOGETHER.**
++    ///
++    /// Two stores would be more faithful — snow and free water have
++    /// genuinely different residence times — but the melt path moves water
++    /// between them within a single step anyway, and one age is the minimum
++    /// that carries residence time at all. Recorded as a deliberate
++    /// approximation in SNOW_DIVERGENCE_REGISTER.md rather than left
++    /// unnamed, which is what lesson 64 is actually about.
++    ///
++    /// Maintained inside this solver on purpose. Plowing moves water between
++    /// surfaces AND to another subcatchment inside `plowSnow`; an age update
++    /// running afterwards can see only the end state and would have to guess
++    /// which water went where. The age therefore moves at the point the
++    /// water moves, which is the only place that knows.
++    std::vector<double> age;
++    /// S2b — age of the water this step PUBLISHED as `imelt` (seconds).
++    ///
++    /// Not the same as `age`, and the difference is the whole reason this
++    /// array exists: in a complete-mix pool the water leaving carries the
++    /// pool's age, but a pack that EMPTIES this step leaves `age` at 0 with
++    /// no water to describe. Meltwater from such a pack still carries the
++    /// age the pack had. Sentinel-free — it is only meaningful where
++    /// `imelt > 0`, and callers gate on that.
++    std::vector<double> out_age;
++
++    // Per subcatchment × 3 subareas: areal depletion state
++    std::vector<double> si;       ///< Snow depth for 100% cover (ft)
++    std::vector<double> sba;      ///< Snow coverage area at start of new-snow ADC
++    std::vector<double> sbws;     ///< Snow water equiv at end of new-snow ADC
++    std::vector<double> asc;      ///< Computed areal snow coverage (0–1), per subarea
++
++    // Global ADC curves (shared by all subcatchments, 10 points each)
++    double adc_imperv[10] = {1,1,1,1,1,1,1,1,1,1};
++    double adc_perv[10]   = {1,1,1,1,1,1,1,1,1,1};
++
++    // Per subcatchment: area fractions
++    std::vector<double> snn;      ///< Plowable fraction of impervious area
++
++    // Per subcatchment: plowing parameters
++    std::vector<double> weplow;   ///< Depth at which plowing begins (ft)
++    std::vector<double> sfrac;    ///< Plowing fractions [subcatch * 5 + i]
++                                  ///<   [0]=removed, [1]=to imperv, [2]=to perv,
++                                  ///<   [3]=immediate melt, [4]=to other subcatch
++    std::vector<int>    to_subcatch; ///< Target subcatchment for plowed snow
++
++    // Global parameters
++    double tipm    = 0.5;         ///< ATI weighting factor
++    double rnm     = 0.6;         ///< Negative melt ratio
++    double season  = 0.0;         ///< Current snowmelt season factor (-1 to +1)
++    double removed = 0.0;         ///< Cumulative snow plowed out of system (ft3)
++
++    /// S2b — age of water arriving from the sky (seconds). Set by the engine
++    /// each runoff step from the water-age component's `RAINFALL` source.
++    ///
++    /// A scalar set from outside rather than a lookup into the transport
++    /// config, so hydrology keeps no dependency on the transport layer —
++    /// the same shape as `season`, `tipm` and `rnm`.
++    double precip_age = 0.0;
++    /// S2b — whether to maintain `age` / `out_age` at all.
++    ///
++    /// The age arrays are pure bookkeeping: nothing in the water balance
++    /// reads them, so a deck is byte-identical either way. The flag exists
++    /// to keep the arithmetic off the hot path when WATER_AGE is off, not to
++    /// protect an answer.
++    bool track_age = false;
++
++    void resize(int n);
++};
++
++// ============================================================================
++// Snow solver
++// ============================================================================
++
++class DegreeDaySnow : public surface::SnowModel {
++public:
++    void init(int n_subcatch);
++    void initializeElements(int n) override { init((n + N_SUBAREAS - 1) / N_SUBAREAS); }
++    void step(int e, const surface::SnowInputs&, surface::SnowOutputs&) override;
++    int stateSize() const override { return 12; }
++    void pack(int e, double*) const override;
++    void unpack(int e, const double*) override;
++
++    /**
++     * @brief Compute snowmelt for all subcatchments (batch).
++     *
++     * @details For each subcatchment × subarea:
++     *   1. Batch ATI update (vectorisable)
++     *   2. Batch cold content update (vectorisable)
++     *   3. Batch degree-day or rain-on-snow melt (vectorisable)
++     *   4. Batch snow accumulation from snowfall (vectorisable)
++     *   5. Batch free water routing (vectorisable)
++     *
++     * @param ctx  Simulation context.
++     * @param dt   Timestep (seconds).
++     * @param temp Air temperature (deg F, scalar — broadcast).
++     * @param wind Wind speed (mph, scalar — broadcast).
++     * @param rainfall Per-subcatchment rainfall rate (ft/sec, sized
++     *                 n_subcatch — matching legacy subcatch_getRunoff →
++     *                 snow_getSnowMelt which receives each subcatchment's
++     *                 own precipitation).
++     * @param snowfall Per-subcatchment snowfall rate (ft/sec, sized
++     *                 n_subcatch).
++     * @param gamma Psychrometric constant from climate (deg F^-1).
++     * @param ea    Saturation vapor pressure from climate (in Hg).
++     */
++    void execute(SimulationContext& ctx, double dt,
++                 double temp, double wind, const double* rainfall,
++                 const double* snowfall,
++                 double gamma = 0.0, double ea = 0.0) override;
++
++    /// Scalar convenience overload: broadcast a single rainfall (and
++    /// optional snowfall) rate to every subcatchment. Equivalent to filling
++    /// per-subcatchment arrays with the same value and calling the array
++    /// form above.
++    void execute(SimulationContext& ctx, double dt,
++                 double temp, double wind, double rainfall,
++                 double snowfall = 0.0,
++                 double gamma = 0.0, double ea = 0.0);
++
++    /**
++     * @brief Update seasonal melt coefficients based on day of year.
++     * @param day_of_year  Day of year (1-365).
++     * @note Legacy reference: snow.c — snow_setMeltCoeffs()
++     */
++    void setMeltCoeffs(int day_of_year);
++
++    /**
++     * @brief Snow accumulation + plowing — adds new snowfall to each pack
++     *        and redistributes excess snow between subareas.
++     * @param ctx  Simulation context (for subcatchment areas).
++     * @param dt   Timestep (seconds).
++     * @param snowfall  Per-subcatchment snowfall rate (ft/sec, sized n_subcatch).
++     * @note Legacy reference: snow.c — snow_plowSnow(), called from
++     *       runoff_execute() each runoff step before melt computation.
++     */
++    void plowSnow(SimulationContext& ctx, double dt, const double* snowfall) override;
++
++    /// Scalar convenience overload: broadcast a single snowfall rate to every
++    /// subcatchment before accumulation + plowing.
++    void plowSnow(SimulationContext& ctx, double dt, double snowfall);
++
++    SnowSoA& state() { return soa_; }
++    const SnowSoA& state() const { return soa_; }
++
++private:
++    SnowSoA soa_;
++    void meltElement(std::size_t ui, int subarea, double dt, double temp,
++                     double rain, double snow, double rmelt);
++
++    /// Rain-on-snow melt rate for one rainfall value (legacy getRainmelt)
++    static double rainMeltRate(double temp, double wind, double gamma,
++                               double ea, double rainfall);
++};
++
++using SnowSolver = DegreeDaySnow;
++} // namespace snow
++} // namespace openswmm
++
++namespace openswmm::surface { using DegreeDaySnow = snow::DegreeDaySnow; }
++
++#endif // OPENSWMM_SNOW_HPP
+--- /dev/null
++++ b/tests/unit/engine/test_surface_processes.cpp
+@@ -0,0 +1,159 @@
++// SPDX-License-Identifier: Apache-2.0
++// Copyright 2026 Caleb Buahin
++#include <gtest/gtest.h>
++#include "hydrology/surface/InfilBank.hpp"
++#include "hydrology/surface/DegreeDaySnow.hpp"
++#include "hydrology/Runoff.hpp"
++#include "core/SimulationContext.hpp"
++#include "core/UnitConversion.hpp"
++#include "2d/infil/Infil2D.hpp"
++#include "2d/data/MeshData.hpp"
++#include "2d/data/SurfaceStateData.hpp"
++#include <openswmm/engine/openswmm_engine.h>
++#include <openswmm/engine/openswmm_subcatchments.h>
++#include <openswmm/engine/openswmm_model.h>
++#include <filesystem>
++#include <array>
++#include <cstring>
++using namespace openswmm;
++
++namespace {
++std::array<double,5> parameters(InfilModel method, bool si) {
++    const double scale = si ? 25.4 : 1.0;
++    switch (method) {
++    case InfilModel::HORTON: case InfilModel::MOD_HORTON:
++        return {3*scale, .4*scale, 4, .1, 10*scale};
++    case InfilModel::GREEN_AMPT: case InfilModel::MOD_GREEN_AMPT:
++        return {4*scale, .5*scale, .3, 0, 0};
++    case InfilModel::CURVE_NUM: return {75, 0, .1, 0, 0};
++    case InfilModel::CONSTANT: return {.5*scale, 0, 0, 0, 0};
++    }
++    return {};
++}
++}
++
++// Exercise the actual runoff and cell drivers on the same ponded-water/rain
++// history, rather than comparing two direct calls to the common dispatch.
++TEST(SurfaceProcesses, SubcatchmentAndCellAgreeThroughWetDryWetEventsBothUnitSystems) {
++    for (bool si : {false, true}) for (int m=0; m<5; ++m) {
++        SCOPED_TRACE(::testing::Message() << "SI=" << si << " method=" << m);
++        SimulationContext ctx;
++        ctx.options.flow_units = si ? FlowUnits::CMS : FlowUnits::CFS;
++        ctx.options.ignore_snow_melt = true;
++        ctx.subcatch_names.add("S"); ctx.subcatches.resize(1);
++        ctx.gage_names.add("G"); ctx.gages.resize(1); ctx.subcatches.gage[0] = 0;
++        ctx.subcatches.area[0] = 1; ctx.subcatches.frac_imperv[0] = 0;
++        ctx.subcatches.n_perv[0] = .1; ctx.subcatches.slope[0] = 0;
++        ctx.subcatches.ds_perv[0] = 1000; // hold water; no runoff loss
++        const auto p=parameters(static_cast<InfilModel>(m),si);
++        ctx.subcatches.infil_model[0] = m;
++        ctx.subcatches.infil_p1[0]=p[0]; ctx.subcatches.infil_p2[0]=p[1];
++        ctx.subcatches.infil_p3[0]=p[2]; ctx.subcatches.infil_p4[0]=p[3]; ctx.subcatches.infil_p5[0]=p[4];
++        runoff::RunoffSolver runoff; runoff.init(ctx);
++        twoD::MeshData mesh; mesh.resize_triangles(1);
++        twoD::SurfaceStateData state; state.resize(1,0);
++        twoD::Infil2D infil; twoD::Infil2DDefault d; d.tag="*"; d.row.has_method=true;
++        d.row.method=static_cast<InfilModel>(m); std::copy(p.begin(),p.end(),d.row.p); infil.defaults().push_back(d);
++        std::string error; ASSERT_TRUE(infil.resolve(mesh,ctx.options,error)) << error;
++        double cumulative1=0, cumulative2=0;
++        for (int k=0;k<180;++k) {
++            const double rain = k<40 || k>=120 ? 5.0/43200.0 : 0.0;
++            ctx.gages.rainfall[0]=rain*ucf::UCF(ucf::RAINFALL,ctx.options);
++            state.rainfall[0]=rain*.3048; state.depth[0]=runoff.soa().depth_perv[0]*.3048;
++            infil.updateRates(mesh,state,60);
++            runoff.execute(ctx,60);
++            const double depth1 = runoff.soa().infil_vol[0]/runoff.soa().area[0]*.3048;
++            const double depth2 = state.infil_rate[0]*60;
++            EXPECT_NEAR(depth1,depth2,1e-12) << "step=" << k;
++            cumulative1+=depth1; cumulative2+=depth2;
++        }
++        EXPECT_GT(cumulative1,0); EXPECT_NEAR(cumulative1,cumulative2,1e-12);
++    }
++}
++
++TEST(SurfaceProcesses, ConstantCellMatchesPhysicalRateAndSharedSingleElementBothUnits) {
++    for (bool si : {false,true}) {
++        SimulationOptions options; options.flow_units=si?FlowUnits::CMS:FlowUnits::CFS;
++        auto p=parameters(InfilModel::CONSTANT,si);
++        surface::InfilBank bank; bank.init(1); bank.setMethod(0,InfilModel::CONSTANT,p.data(),options);
++        twoD::MeshData mesh; mesh.resize_triangles(1); twoD::SurfaceStateData s; s.resize(1,0); s.depth[0]=1;
++        twoD::Infil2D infil; twoD::Infil2DDefault d; d.tag="*"; d.row.has_method=true;
++        d.row.method=InfilModel::CONSTANT; std::copy(p.begin(),p.end(),d.row.p); infil.defaults().push_back(d);
++        std::string err; ASSERT_TRUE(infil.resolve(mesh,options,err)); infil.updateRates(mesh,s,60);
++        const double f=bank.rate(0,0,0,1,60,{1,1});
++        EXPECT_NEAR(f,.5*.0254/3600,1e-15); EXPECT_DOUBLE_EQ(s.infil_rate[0],f);
++    }
++}
++
++TEST(SurfaceProcesses, ExternalOwnerKeepsPublishedRateAndKernelStateUntouched) {
++    twoD::MeshData mesh; mesh.resize_triangles(1); twoD::SurfaceStateData s; s.resize(1,0);
++    SimulationOptions opts; twoD::Infil2D infil; twoD::Infil2DDefault d; d.tag="*";
++    d.row.has_method=true; d.row.method=InfilModel::GREEN_AMPT; d.row.p[0]=4; d.row.p[1]=1; d.row.p[2]=.3;
++    infil.defaults().push_back(d); std::string err; ASSERT_TRUE(infil.resolve(mesh,opts,err));
++    int m; double before[6],after[6]; infil.bank().pack(0,m,before);
++    infil.bank().setOwner(0,surface::InfilBank::Owner::EXTERNAL);
++    s.rainfall[0]=1e-5; s.depth[0]=.1; s.infil_rate[0]=2e-6; infil.updateRates(mesh,s,300);
++    EXPECT_DOUBLE_EQ(s.infil_rate[0],2e-6); EXPECT_DOUBLE_EQ(infil.cumulative()[0],0);
++    infil.bank().pack(0,m,after); EXPECT_EQ(std::memcmp(before,after,sizeof before),0);
++    EXPECT_DOUBLE_EQ(infil.bank().rate(0,1e-5,0,.1,300,{1,1}),0);
++}
++
++TEST(SurfaceProcesses, InfiltrationPackRestoresContinuationForEveryStatefulMethod) {
++    SimulationOptions opts;
++    for (int m=0;m<5;++m) {
++        auto p=parameters(static_cast<InfilModel>(m),false);
++        surface::InfilBank a,b; a.init(1);b.init(1);a.setMethod(0,static_cast<InfilModel>(m),p.data(),opts);b.setMethod(0,static_cast<InfilModel>(m),p.data(),opts);
++        for(int k=0;k<20;++k) a.rate(0,2e-5,0,.01,60,{.7,1.3});
++        int model;double state[6];a.pack(0,model,state);b.unpack(0,model,state);
++        for(int k=0;k<20;++k) EXPECT_DOUBLE_EQ(a.rate(0,k<10?0:2e-5,0,0,60,{.7,1.3}),b.rate(0,k<10?0:2e-5,0,0,60,{.7,1.3}));
++    }
++}
++
++TEST(SurfaceProcesses, SnowContractPacksEveryTransientFieldAndBalancesPointElement) {
++    surface::DegreeDaySnow a,b; surface::SnowModel& model=a; model.initializeElements(3);b.init(1);
++    auto& s=a.state();s.wsnow[0]=.1;s.fw[0]=.01;s.si[0]=.1;s.fwfrac[0]=.05;
++    s.dhm[0]=1e-6;s.tbase[0]=32;s.track_age=true;s.age[0]=200;s.precip_age=10;
++    const double old=(s.wsnow[0]+s.fw[0])*.3048;
++    surface::SnowInputs input;input.dt_s=60;input.Ta_C=5;input.rain_m=.0001;input.snow_m=.0002;
++    surface::SnowOutputs output;model.step(0,input,output);
++    EXPECT_NEAR(old+input.rain_m+input.snow_m-output.melt_m-output.throughfall_m-output.swe_m,0,1e-15);
++    double state[12],copy[12];model.pack(0,state);b.unpack(0,state);b.pack(0,copy);
++    EXPECT_EQ(std::memcmp(state,copy,sizeof state),0);
++    // Fresh snowfall is mixed at source age; it is not aged before arrival.
++    EXPECT_LT(a.state().age[0],260);
++}
++
++TEST(SurfaceProcesses, SnowpackAssignmentValidationAndRenameAreAtomic) {
++    SWMM_Engine e=swmm_engine_new();ASSERT_TRUE(e);
++    ASSERT_EQ(swmm_subcatch_add(e,"S"),0);ASSERT_EQ(swmm_snowpack_add(e,"Pack"),0);
++    EXPECT_STREQ(swmm_subcatch_get_snowpack(e,0),"");
++    EXPECT_EQ(swmm_subcatch_set_snowpack(e,0,"Pack"),0);EXPECT_STREQ(swmm_subcatch_get_snowpack(e,0),"Pack");
++    EXPECT_NE(swmm_subcatch_set_snowpack(e,0,"Missing"),0);EXPECT_STREQ(swmm_subcatch_get_snowpack(e,0),"Pack");
++    EXPECT_EQ(swmm_snowpack_rename(e,0,"Renamed"),0);EXPECT_STREQ(swmm_subcatch_get_snowpack(e,0),"Renamed");
++    EXPECT_EQ(swmm_subcatch_set_snowpack(e,0,nullptr),0);EXPECT_STREQ(swmm_subcatch_get_snowpack(e,0),"");
++    EXPECT_EQ(swmm_subcatch_get_snowpack(e,1),nullptr);swmm_engine_destroy(e);
++}
++
++TEST(SurfaceProcesses, ClearingParsedSnowpackSurvivesSaveAndReopenAndRuntimeEditIsRejected) {
++    const auto root=std::filesystem::path(OPENSWMM_TEST_SOURCE_DIR).parent_path().parent_path();
++    const auto deck=root/"parity/snow/snow_parity.inp";
++    const auto output=root/"verification/surface_r1_2026-10-05/snowpack_assignment";
++    std::filesystem::create_directories(output);
++    SWMM_Engine e=swmm_engine_create(); ASSERT_TRUE(e);
++    ASSERT_EQ(swmm_engine_open(e,deck.string().c_str(),(output/"source.rpt").string().c_str(),(output/"source.out").string().c_str(),nullptr),0);
++    ASSERT_GT(swmm_snowpack_count(e),0);
++    const std::string name=swmm_snowpack_id(e,0);
++    ASSERT_EQ(swmm_subcatch_set_snowpack(e,0,name.c_str()),0);
++    ASSERT_EQ(swmm_model_write(e,(output/"assigned.inp").string().c_str()),0);
++    ASSERT_EQ(swmm_subcatch_set_snowpack(e,0,""),0);
++    ASSERT_EQ(swmm_model_write(e,(output/"cleared.inp").string().c_str()),0);
++    swmm_engine_destroy(e);
++    for (bool assigned : {false,true}) {
++        e=swmm_engine_create(); ASSERT_TRUE(e);
++        ASSERT_EQ(swmm_engine_open(e,(output/(assigned?"assigned.inp":"cleared.inp")).string().c_str(),(output/"reopen.rpt").string().c_str(),(output/"reopen.out").string().c_str(),nullptr),0);
++        EXPECT_STREQ(swmm_subcatch_get_snowpack(e,0),assigned?name.c_str():"");
++        ASSERT_EQ(swmm_engine_initialize(e),0);
++        EXPECT_NE(swmm_subcatch_set_snowpack(e,0,name.c_str()),0);
++        swmm_engine_destroy(e);
++    }
++}
+--- a/src/engine/hydrology/Snow.cpp
++++ /dev/null
+@@ -1,577 +0,0 @@
+-// SPDX-License-Identifier: Apache-2.0
+-//
+-// Copyright 2026 Caleb Buahin
+-//
+-// Licensed under the Apache License, Version 2.0 (the "License");
+-// you may not use this file except in compliance with the License.
+-// You may obtain a copy of the License at
+-//
+-//     http://www.apache.org/licenses/LICENSE-2.0
+-//
+-// Unless required by applicable law or agreed to in writing, software
+-// distributed under the License is distributed on an "AS IS" BASIS,
+-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-// See the License for the specific language governing permissions and
+-// limitations under the License.
+-
+-/**
+- * @file Snow.cpp
+- * @brief Snowmelt — batch-oriented, vectorisable kernels.
+- * @ingroup new_engine
+- *
+- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+- * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+- * @license  Apache-2.0
+- */
+-
+-#include "Snow.hpp"
+-#include "../core/SimulationContext.hpp"
+-#include "../core/UnitConversion.hpp"
+-#include <cmath>
+-#include <vector>
+-#include <algorithm>
+-
+-namespace openswmm {
+-namespace snow {
+-
+-void SnowSoA::resize(int n) {
+-    n_subcatch = n;
+-    auto total = static_cast<std::size_t>(n * N_SUBAREAS);
+-    auto un = static_cast<std::size_t>(n);
+-
+-    wsnow.assign(total, 0.0);
+-    fw.assign(total, 0.0);
+-    coldc.assign(total, 0.0);
+-    ati.assign(total, 32.0);
+-    // 1.0, matching legacy `snow_initSnowpack` (snow.c:199). The new-snow
+-    // ADC index starts ABOVE any real pack, so `awesi < awe` sends the first
+-    // depleting step to the regular curve. Initialising it to 0 makes
+-    // `awesi >= awe` true instead and `getArealDepletion` returns full cover
+-    // forever — which was invisible while `si` was pinned to the initial pack
+-    // depth, because the `wsnow >= si` branch then fired on step 1 and set
+-    // `awe = 1.0` itself. Reading SD100 (F6) is what exposes it: a pack that
+-    // starts BELOW its SD100 never takes that branch.
+-    awe.assign(total, 1.0);
+-    imelt.assign(total, 0.0);
+-    tbase.assign(total, 32.0);
+-    dhm.assign(total, 0.0);
+-    dhmin.assign(total, 0.0);
+-    dhmax.assign(total, 0.0);
+-    fwfrac.assign(total, 0.1);
+-    fArea.assign(total, 0.0);
+-    age.assign(total, 0.0);
+-    out_age.assign(total, 0.0);
+-    si.assign(total, 0.0);
+-    sba.assign(total, 0.0);
+-    sbws.assign(total, 0.0);
+-    asc.assign(total, 1.0);
+-    snn.assign(un, 0.0);
+-    weplow.assign(un, 0.0);
+-    sfrac.assign(static_cast<std::size_t>(n * 5), 0.0);
+-    to_subcatch.assign(un, -1);
+-}
+-
+-void SnowSolver::init(int n_subcatch) {
+-    soa_.resize(n_subcatch);
+-}
+-
+-// ============================================================================
+-// Areal depletion curve interpolation (matching legacy getArealSnowCover)
+-// ============================================================================
+-
+-/// Interpolate areal snow coverage from a 10-point ADC curve.
+-/// @param adc    10-point curve (index 0-9 maps to AWESI 0.0-0.9+)
+-/// @param awesi  Snow water equivalent relative to depth at 100% cover
+-/// @return       Areal snow coverage fraction (0 to 1)
+-// ============================================================================
+-// S2b — complete-mix age arithmetic
+-// ============================================================================
+-
+-/**
+- * @brief Mix `v_in` of water at age `a_in` into a pool holding `v_have` at
+- *        age `a_have`. Returns the pool's new age.
+- *
+- * @details Volume-weighted, and **guarded on the TOTAL rather than on either
+- *          term**: a pool that is empty before and after has no age to
+- *          report, and returning anything but 0 there would let a stale age
+- *          survive a pack that no longer exists. That is the shape of the
+- *          dry-element carried-temperature item still open from H1, and it
+- *          is cheaper to not create it than to mask it later.
+- *
+- * @note Removing water at the pool's own age leaves the age UNCHANGED, so
+- *       drainage and melt-out need no call here — only arrivals do.
+- */
+-static inline double mixAge(double v_have, double a_have,
+-                            double v_in, double a_in) noexcept {
+-    const double v = v_have + v_in;
+-    if (!(v > 0.0)) return 0.0;
+-    return (v_have * a_have + v_in * a_in) / v;
+-}
+-
+-// Legacy getArealSnowCover (snow.c:691): the ADC plots the covered fraction
+-// at 10 equal awesi increments; the last interval interpolates to 1.0.
+-static double getArealSnowCover(const double* adc, double awesi) {
+-    if (awesi <= 0.0)    return 0.0;
+-    if (awesi >= 0.9999) return 1.0;
+-    int m = static_cast<int>(awesi * 10.0 + 0.00001);
+-    double asc1 = adc[m];
+-    double asc2 = (m >= 9) ? 1.0 : adc[m + 1];
+-    return asc1 + (asc2 - asc1) / 0.1 * (awesi - 0.1 * static_cast<float>(m));
+-}
+-
+-// ============================================================================
+-// Areal depletion with new-snow ADC transition — legacy getArealDepletion
+-// (snow.c:610), statement for statement. `wsnow` already carries this
+-// step's snowfall (snow_plowSnow ran first), which is why the new-snow
+-// branch subtracts it back out to find the pre-snow index.
+-// ============================================================================
+-
+-/// @param soa      Snow state arrays (sba/sbws/awe updated in place).
+-/// @param ui       Flat array index (subcatch * N_SUBAREAS + subarea).
+-/// @param subarea  Subarea index (SNOW_PLOWABLE, SNOW_IMPERV, SNOW_PERV).
+-/// @param snowfall Snowfall rate this step (ft/sec).
+-/// @param dt       Timestep (sec).
+-/// @return         Areal snow coverage fraction (0 to 1).
+-static double getArealDepletion(SnowSoA& soa, std::size_t ui, int subarea,
+-                                double snowfall, double dt) {
+-    // Plowable sub-area not subject to areal depletion.
+-    if (subarea == SNOW_PLOWABLE) return 1.0;
+-
+-    const double si = soa.si[ui];
+-
+-    // No depletion if depth zero or above SI.
+-    if (si == 0.0 || soa.wsnow[ui] >= si) {
+-        soa.awe[ui] = 1.0;
+-        return 1.0;
+-    }
+-    if (soa.wsnow[ui] == 0.0) {
+-        soa.awe[ui] = 1.0;
+-        return 0.0;
+-    }
+-
+-    const double* adc = (subarea == SNOW_PERV) ? soa.adc_perv : soa.adc_imperv;
+-
+-    // Case of new snowfall.
+-    if (snowfall > 0.0) {
+-        double awe = (soa.wsnow[ui] - snowfall * dt) / si;
+-        awe = std::max(awe, 0.0);
+-        double sba  = getArealSnowCover(adc, awe);
+-        double sbws = awe + (0.75 * snowfall * dt) / si;
+-        sbws = std::min(sbws, 1.0);
+-        soa.awe[ui]  = awe;
+-        soa.sba[ui]  = sba;
+-        soa.sbws[ui] = sbws;
+-        return 1.0;
+-    }
+-
+-    // Case of no new snow.
+-    const double awe   = soa.awe[ui];
+-    const double sba   = soa.sba[ui];
+-    const double sbws  = soa.sbws[ui];
+-    const double awesi = soa.wsnow[ui] / si;
+-    double asc;
+-    if (awesi < soa.awe[ui]) {
+-        // relative snow depth is below start of new snow ADC
+-        soa.awe[ui] = 1.0;
+-        asc = getArealSnowCover(adc, awesi);
+-    } else if (awesi >= soa.sbws[ui]) {
+-        // relative snow depth is above end of new snow ADC
+-        asc = 1.0;
+-    } else {
+-        // relative snow depth is on new snow ADC
+-        asc = sba + (1.0 - sba) / (sbws - awe) * (awesi - awe);
+-    }
+-    return asc;
+-}
+-
+-// ============================================================================
+-// Rain-on-snow melt rate — legacy getRainmelt (snow.c:775). Returns the raw
+-// value (it can be NEGATIVE below 32 F); the caller applies legacy's
+-// `rmelt > 0` test.
+-// ============================================================================
+-
+-double SnowSolver::rainMeltRate(double temp, double wind, double gamma,
+-                                 double ea, double rainfall) {
+-    rainfall = rainfall * 43200.0;     // convert rain to in/hr
+-    if (rainfall > 0.02) {
+-        double uadj = 0.006 * wind;
+-        double t1 = temp - 32.0;
+-        double t2 = 7.5 * gamma * uadj;
+-        double t3 = 8.5 * uadj * (ea - 0.18);
+-        double smelt = t1 * (0.001167 + t2 + 0.007 * rainfall) + t3;
+-        return smelt / 43200.0;
+-    }
+-    return 0.0;
+-}
+-
+-// ============================================================================
+-// Execute — scalar convenience overload (broadcast to all subcatchments)
+-// ============================================================================
+-
+-void SnowSolver::execute(SimulationContext& ctx, double dt,
+-                          double temp, double wind, double rainfall,
+-                          double snowfall, double gamma, double ea) {
+-    int n = soa_.n_subcatch;
+-    if (n == 0) return;
+-    std::vector<double> rain(static_cast<std::size_t>(n), rainfall);
+-    std::vector<double> snow(static_cast<std::size_t>(n), snowfall);
+-    execute(ctx, dt, temp, wind, rain.data(), snow.data(), gamma, ea);
+-}
+-
+-// ============================================================================
+-// Execute — legacy snow_getSnowMelt (snow.c:510) for every subcatchment,
+-// each snow sub-area in legacy's order and with legacy's arithmetic:
+-// getArealDepletion -> meltSnowpack (getRainmelt / degree-day /
+-// updateColdContent, reduceColdContent) -> routeSnowmelt. The result per
+-// surface is `imelt` = the liquid melt rate leaving the pack (legacy's
+-// `smelt + snowpack->imelt`, the second being the plowed/instant melt), and
+-// `asc`, from which the engine forms legacy's netPrecip.
+-// ============================================================================
+-
+-namespace {
+-
+-// legacy updateColdContent (snow.c:801)
+-inline void updateColdContent(SnowSoA& soa, std::size_t ui, double temp,
+-                              double asc, double snowfall, double dt) {
+-    double ati = soa.ati[ui];
+-    double cc  = soa.coldc[ui];
+-    // if snowing, ATI = snow (air) temperature
+-    if (snowfall * 43200.0 > 0.02) ati = temp;
+-    else {
+-        // convert ATI weighting factor from 6-hr to tStep time basis
+-        double tipm = 1.0 - std::pow(1.0 - soa.tipm, dt / (6.0 * 3600.0));
+-        ati += tipm * (temp - ati);
+-    }
+-    // ATI cannot exceed snow melt base temperature
+-    ati = std::min(ati, soa.tbase[ui]);
+-    // update cold content
+-    cc += soa.rnm * soa.dhm[ui] * (ati - temp) * dt * asc;
+-    cc = std::max(cc, 0.0);
+-    // maximum cold content based on assumed specific heat of snow
+-    double ccMax = soa.wsnow[ui] * 0.007 / 12.0 * (soa.tbase[ui] - ati);
+-    cc = std::min(cc, ccMax);
+-    soa.coldc[ui] = cc;
+-    soa.ati[ui]   = ati;
+-}
+-
+-// legacy reduceColdContent (snow.c:854)
+-inline double reduceColdContent(SnowSoA& soa, std::size_t ui, double smelt,
+-                                double ccFactor) {
+-    double cc = soa.coldc[ui];
+-    if (smelt * ccFactor > cc) {
+-        smelt -= cc / ccFactor;
+-        cc = 0.0;
+-    } else {
+-        cc -= smelt * ccFactor;
+-        smelt = 0.0;
+-    }
+-    soa.coldc[ui] = cc;
+-    return smelt;
+-}
+-
+-// legacy meltSnowpack (snow.c:729)
+-inline double meltSnowpack(SnowSoA& soa, std::size_t ui, double temp,
+-                           double rmelt, double asc, double snowfall,
+-                           double dt) {
+-    double smelt;
+-    if (rmelt > 0.0) smelt = rmelt;
+-    else if (temp >= soa.tbase[ui])
+-        smelt = soa.dhm[ui] * (temp - soa.tbase[ui]);
+-    else {
+-        updateColdContent(soa, ui, temp, asc, snowfall, dt);
+-        return 0.0;
+-    }
+-    // adjust snowmelt for area of snow cover
+-    smelt *= asc;
+-    // reduce cold content of melting pack
+-    double ccFactor = dt * soa.rnm * asc;
+-    smelt = reduceColdContent(soa, ui, smelt, ccFactor);
+-    soa.ati[ui] = soa.tbase[ui];
+-    return smelt;
+-}
+-
+-}  // namespace
+-
+-void SnowSolver::execute(SimulationContext& /*ctx*/, double dt,
+-                          double temp, double wind, const double* rainfall,
+-                          const double* snowfall, double gamma, double ea) {
+-    int n = soa_.n_subcatch;
+-    if (n == 0) return;
+-
+-    for (int j = 0; j < n; ++j) {
+-        auto uj = static_cast<std::size_t>(j);
+-        const double rain = rainfall[uj];
+-        const double snow = snowfall[uj];
+-
+-        // compute snowmelt over entire subcatchment when rain falling
+-        const double rmelt = rainMeltRate(temp, wind, gamma, ea, rain);
+-
+-        for (int i = SNOW_PLOWABLE; i <= SNOW_PERV; ++i) {
+-            auto ui = static_cast<std::size_t>(j * N_SUBAREAS + i);
+-            double asc, smelt;
+-            // `imelt` holds the plowed melt from snow_plowSnow (legacy
+-            // snowpack->imelt); the instant melt of a thin pack adds to it.
+-            double imelt = soa_.imelt[ui];
+-
+-            // completely melt pack if its depth is < 0.001 inch
+-            if (soa_.wsnow[ui] <= 0.001 / 12.0) {
+-                asc   = 0.0;
+-                smelt = 0.0;
+-                imelt += (soa_.wsnow[ui] + soa_.fw[ui]) / dt;
+-                // S2b — the water leaves at the age the pack HAD.
+-                if (soa_.track_age) {
+-                    soa_.out_age[ui] = soa_.age[ui];
+-                    soa_.age[ui]     = 0.0;
+-                }
+-                soa_.wsnow[ui] = 0.0;
+-                soa_.fw[ui]    = 0.0;
+-                soa_.coldc[ui] = 0.0;
+-            }
+-            // otherwise compute areal depletion, find snow melt and route it
+-            // through pack (legacy routeSnowmelt, snow.c:883)
+-            else {
+-                asc   = getArealDepletion(soa_, ui, i, snow, dt);
+-                smelt = meltSnowpack(soa_, ui, temp, rmelt, asc, snow, dt);
+-
+-                double vmelt = smelt * dt;
+-                vmelt = std::min(vmelt, soa_.wsnow[ui]);
+-                soa_.wsnow[ui] -= vmelt;
+-                const double rain_on_snow = rain * dt * asc;
+-                // S2b — melt moves wsnow -> fw INSIDE the pool (no age
+-                // change); the rain arrives from outside and mixes against
+-                // the pool as it is when it lands.
+-                if (soa_.track_age && rain_on_snow > 0.0) {
+-                    soa_.age[ui] = mixAge(soa_.wsnow[ui] + soa_.fw[ui],
+-                                          soa_.age[ui], rain_on_snow,
+-                                          soa_.precip_age);
+-                }
+-                soa_.fw[ui] += vmelt + rain_on_snow;
+-                vmelt = soa_.fw[ui] - soa_.fwfrac[ui] * soa_.wsnow[ui];
+-                vmelt = std::max(vmelt, 0.0);
+-                soa_.fw[ui] -= vmelt;
+-                smelt = vmelt / dt;
+-                // S2b — water draining out of a complete-mix pool leaves at
+-                // the pool's age.
+-                if (soa_.track_age) soa_.out_age[ui] = soa_.age[ui];
+-            }
+-
+-            soa_.asc[ui]   = asc;
+-            soa_.imelt[ui] = smelt + imelt;
+-            if (soa_.track_age && !(soa_.imelt[ui] > 0.0)) soa_.out_age[ui] = 0.0;
+-        }
+-    }
+-}
+-
+-// ============================================================================
+-// Seasonal melt coefficient interpolation
+-// (matching legacy snow.c snow_setMeltCoeffs)
+-// ============================================================================
+-
+-void SnowSolver::setMeltCoeffs(int day_of_year) {
+-    // Compute seasonal factor: -1.0 at winter solstice (Dec 21, day ~355),
+-    // +1.0 at summer solstice (Jun 21, day ~172).
+-    // season = sin(0.0172615 * (day - 81))   — legacy `climate.c:1176`.
+-    //
+-    // The constant is NOT a mis-divided year, and it was retracted from the
+-    // divergence register once that was checked. It gives a period of
+-    // exactly 364.000 days, and with the day-81 phase offset (the vernal
+-    // equinox) the sine peaks at day 172.000 — the summer solstice, June 21.
+-    // 364 = 4 x 91 is what makes the equinox-to-solstice quarter a whole
+-    // number of days. Substituting 2*pi/365 moves the seasonal melt peak to
+-    // day 172.25, off the solstice, and buys nothing.
+-    constexpr double kSeasonRad = 0.0172615;   // rad/day; period 364.000 d
+-    double season = std::sin(kSeasonRad * (day_of_year - 81.0));
+-    soa_.season = season;  // Store for reporting (matching legacy Snow.season)
+-
+-    int total = soa_.n_subcatch * N_SUBAREAS;
+-    for (int i = 0; i < total; ++i) {
+-        auto ui = static_cast<std::size_t>(i);
+-        // dhm = 0.5 * (dhmax * (1 + season) + dhmin * (1 - season))
+-        // (matching legacy snow.c line 382-383)
+-        soa_.dhm[ui] = 0.5 * (soa_.dhmax[ui] * (1.0 + season)
+-                             + soa_.dhmin[ui] * (1.0 - season));
+-    }
+-}
+-
+-// ============================================================================
+-// Snow plowing — redistribute excess snow between subareas
+-// (matching legacy snow.c snow_plowSnow)
+-// ============================================================================
+-
+-void SnowSolver::plowSnow(SimulationContext& ctx, double dt, double snowfall) {
+-    int n = soa_.n_subcatch;
+-    if (n == 0) return;
+-    std::vector<double> snow(static_cast<std::size_t>(n), snowfall);
+-    plowSnow(ctx, dt, snow.data());
+-}
+-
+-void SnowSolver::plowSnow(SimulationContext& ctx, double dt, const double* snowfall) {
+-    int n = soa_.n_subcatch;
+-    if (n == 0) return;
+-
+-    for (int j = 0; j < n; ++j) {
+-        auto uj = static_cast<std::size_t>(j);
+-
+-        // Add this subcatchment's snowfall to all subareas
+-        for (int k = SNOW_PLOWABLE; k <= SNOW_PERV; ++k) {
+-            auto idx = static_cast<std::size_t>(j * N_SUBAREAS + k);
+-            if (soa_.fArea[idx] > 0.0) {
+-                const double add = snowfall[uj] * dt;
+-                // S2b — age, THEN mix, and both before the store moves.
+-                //
+-                // This is the step's first snow call (SWMMEngine.cpp:1596
+-                // calls plowSnow immediately before execute, matching legacy
+-                // runoff.c:254), so it is where the pack ages. Ageing here
+-                // rather than in `execute` means new snow is mixed in at its
+-                // source age and is aged from the NEXT step, which is the
+-                // A3/A4 convention: arriving water is not older than the
+-                // instant it arrived.
+-                if (soa_.track_age) {
+-                    const double have = soa_.wsnow[idx] + soa_.fw[idx];
+-                    if (have > 0.0) soa_.age[idx] += dt;
+-                    if (add > 0.0)
+-                        soa_.age[idx] = mixAge(have, soa_.age[idx],
+-                                               add, soa_.precip_age);
+-                }
+-                soa_.wsnow[idx] += add;
+-                soa_.imelt[idx] = 0.0;
+-            }
+-        }
+-    }
+-
+-    // S2b — ageing is a SEPARATE PASS over every subcatchment, completed
+-    // before any plowing starts. Interleaving the two ages water twice when
+-    // it is plowed into a subcatchment the loop has not reached yet, and not
+-    // at all when it goes to one already passed: the answer then depends on
+-    // subcatchment ORDER, which nothing else in this model does. Measured on
+-    // the two-subcatchment transfer gate: age-volume gained exactly
+-    // `dt * moved`, 60 against a 40180 baseline.
+-    for (int j = 0; j < n; ++j) {
+-        auto uj = static_cast<std::size_t>(j);
+-
+-        // Check if plowable area has excess snow
+-        auto plow_idx = static_cast<std::size_t>(j * N_SUBAREAS + SNOW_PLOWABLE);
+-        if (soa_.fArea[plow_idx] <= 0.0) continue;
+-        // legacy snow.c:454: `if (wsnow >= weplow)` — an SDplow of 0 plows
+-        // every step (there was a `weplow <= 0` skip here).
+-        if (soa_.wsnow[plow_idx] < soa_.weplow[uj]) continue;
+-
+-        double exc = soa_.wsnow[plow_idx];
+-        auto sf = static_cast<std::size_t>(j * 5); // sfrac base index
+-        double sfracTotal = 0.0;
+-        // S2b — the donor's age, read ONCE before any transfer moves water.
+-        //
+-        // Every receiving surface below takes water from this same pool, so
+-        // they must all mix against the age the pool had at the start of the
+-        // transfer, not against a value that the previous transfer moved.
+-        // Plowing does not touch `fw`, and removing water from a complete-mix
+-        // pool at the pool's own age leaves that age unchanged — so the
+-        // plowable surface's own age needs no update here at all.
+-        const double donor_age = soa_.track_age ? soa_.age[plow_idx] : 0.0;
+-
+-        // Plow out of system (sfrac[0])
+-        // Accumulate removed volume: depth (ft) * plowable area fraction * non-LID area (ft2)
+-        // Gap #60: exclude LID area from plow volume (matches legacy snow.c Build 5.2.0).
+-        if (soa_.sfrac[sf + 0] > 0.0) {
+-            double lid_ft2 = (uj < ctx.subcatches.total_lid_area_ft2.size())
+-                             ? ctx.subcatches.total_lid_area_ft2[uj] : 0.0;
+-            // F9 — this read `* 43560.0` with the comment "acres -> ft2".
+-            // `subcatches.area` is in PROJECT land-area units, which are
+-            // acres only in US; in SI they are hectares, and the plough
+-            // volume came out **2.471x too small** — the identical defect
+-            // SWMMEngine.cpp's rainfall-volume site carries a comment about
+-            // having already fixed once.
+-            //
+-            // Fixed HERE, in the ledger round rather than its own, and the
+-            // reason is specific: `runoff_snowremov` had no writer until this
+-            // round, so this number reached nobody. Wiring it up is what
+-            // makes the error visible, and shipping a newly-visible wrong
+-            // number is worse than shipping no number at all.
+-            double area_ft2 = ctx.subcatches.area[uj] /
+-                                  ucf::UCF(ucf::LANDAREA, ctx.options)
+-                              - lid_ft2;
+-            if (area_ft2 < 0.0) area_ft2 = 0.0;
+-            soa_.removed += soa_.sfrac[sf + 0] * exc *
+-                            soa_.fArea[plow_idx] * area_ft2;
+-        }
+-        sfracTotal += soa_.sfrac[sf + 0];
+-
+-        // Plow onto non-plowable impervious area (sfrac[1])
+-        auto imperv_idx = static_cast<std::size_t>(j * N_SUBAREAS + SNOW_IMPERV);
+-        if (soa_.fArea[imperv_idx] > 0.0) {
+-            double f = soa_.fArea[plow_idx] / soa_.fArea[imperv_idx];
+-            const double moved = soa_.sfrac[sf + 1] * exc * f;
+-            if (soa_.track_age && moved > 0.0) {
+-                soa_.age[imperv_idx] =
+-                    mixAge(soa_.wsnow[imperv_idx] + soa_.fw[imperv_idx],
+-                           soa_.age[imperv_idx], moved, donor_age);
+-            }
+-            soa_.wsnow[imperv_idx] += moved;
+-            sfracTotal += soa_.sfrac[sf + 1];
+-        }
+-
+-        // Plow onto pervious area (sfrac[2])
+-        auto perv_idx = static_cast<std::size_t>(j * N_SUBAREAS + SNOW_PERV);
+-        if (soa_.fArea[perv_idx] > 0.0) {
+-            double f = soa_.fArea[plow_idx] / soa_.fArea[perv_idx];
+-            const double moved = soa_.sfrac[sf + 2] * exc * f;
+-            if (soa_.track_age && moved > 0.0) {
+-                soa_.age[perv_idx] =
+-                    mixAge(soa_.wsnow[perv_idx] + soa_.fw[perv_idx],
+-                           soa_.age[perv_idx], moved, donor_age);
+-            }
+-            soa_.wsnow[perv_idx] += moved;
+-            sfracTotal += soa_.sfrac[sf + 2];
+-        }
+-
+-        // Convert to immediate melt (sfrac[3])
+-        if (dt > 0.0) {
+-            soa_.imelt[plow_idx] = soa_.sfrac[sf + 3] * exc / dt;
+-            // S2b — plough-melt leaves the pack at the pack's age. `execute`
+-            // runs next and will overwrite both `imelt` and `out_age` for
+-            // this surface (step 4 assigns `imelt`), so this write is not
+-            // what a caller reads; it is here so that the pair is never
+-            // inconsistent at any point in the step, which is the invariant
+-            // that makes the pair safe to read from anywhere later.
+-            if (soa_.track_age) soa_.out_age[plow_idx] = donor_age;
+-        }
+-        sfracTotal += soa_.sfrac[sf + 3];
+-
+-        // Send to another subcatchment (sfrac[4])
+-        if (soa_.sfrac[sf + 4] > 0.0 && soa_.to_subcatch[uj] >= 0) {
+-            int m = soa_.to_subcatch[uj];
+-            if (m < n) {
+-                auto target_perv = static_cast<std::size_t>(m * N_SUBAREAS + SNOW_PERV);
+-                if (soa_.fArea[target_perv] > 0.0) {
+-                    double f = soa_.fArea[plow_idx] / soa_.fArea[target_perv];
+-                    const double moved = soa_.sfrac[sf + 4] * exc * f;
+-                    // S2b — the CROSS-SUBCATCHMENT transfer, and the reason
+-                    // the age has to live in this solver. An update running
+-                    // after `execute` sees only that subcatchment `m` gained
+-                    // snow; it cannot know it came from `j`, nor at what age.
+-                    if (soa_.track_age && moved > 0.0) {
+-                        soa_.age[target_perv] =
+-                            mixAge(soa_.wsnow[target_perv] + soa_.fw[target_perv],
+-                                   soa_.age[target_perv], moved, donor_age);
+-                    }
+-                    soa_.wsnow[target_perv] += moved;
+-                    sfracTotal += soa_.sfrac[sf + 4];
+-                }
+-            }
+-        }
+-
+-        // Reduce plowable snow by total fraction plowed
+-        sfracTotal = std::min(sfracTotal, 1.0);
+-        soa_.wsnow[plow_idx] = exc * (1.0 - sfracTotal);
+-        // S2b — a surface plowed clean has no water, so it has no age.
+-        // Leaving the old value would let it survive as the mixing partner
+-        // for the next snowfall, which would make new snow arrive old.
+-        if (soa_.track_age &&
+-            !(soa_.wsnow[plow_idx] + soa_.fw[plow_idx] > 0.0)) {
+-            soa_.age[plow_idx] = 0.0;
+-        }
+-    }
+-}
+-
+-} // namespace snow
+-} // namespace openswmm

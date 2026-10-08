@@ -27,6 +27,7 @@
  */
 
 #include "openswmm_api_common.hpp"
+#include "../transport/MsxInitialQuality.hpp"   // U2
 #include "../../../include/openswmm/engine/openswmm_initial_quality.h"
 
 #include <cstring>
@@ -51,7 +52,13 @@ inline int classify(const openswmm::SimulationContext& ctx,
     if (cons == "__TEMPERATURE__")
         return openswmm::InitialQualityData::kKindTemperature;
     const int p = ctx.pollutant_names.find(cons);
-    return (p >= 0) ? p : openswmm::InitialQualityData::kKindUnresolved;
+    if (p >= 0) return p;
+    // U2: reactions-component species are first-class constituents here.
+    if (ctx.reactions.configured) {
+        const int m = ctx.reactions.find_species(cons);
+        if (m >= 0) return openswmm::InitialQualityData::msxKind(m);
+    }
+    return openswmm::InitialQualityData::kKindUnresolved;
 }
 
 } // namespace
@@ -101,9 +108,10 @@ SWMM_ENGINE_API int swmm_init_quality_set(SWMM_Engine engine, int is_link,
     const int kind = classify(ctx, cons);
     if (kind == openswmm::InitialQualityData::kKindUnresolved)
         return SWMM_ERR_BADPARAM;
-    // Pollutant concentrations may not be negative; the reserved species
-    // may (signed age per D-NS1; degC temperatures).
-    if (kind >= 0 && value < 0.0) return SWMM_ERR_BADPARAM;
+    // Pollutant / species concentrations may not be negative; the reserved
+    // species may (signed age per D-NS1; degC temperatures).
+    if ((kind >= 0 || kind <= openswmm::InitialQualityData::kKindMsxFirst) && value < 0.0)
+        return SWMM_ERR_BADPARAM;
 
     auto& iq = ctx.initial_quality;
     const std::string& name = is_link
@@ -119,10 +127,22 @@ SWMM_ENGINE_API int swmm_init_quality_set(SWMM_Engine engine, int is_link,
             iq.value[ur]       = value;
             iq.constituent[ur] = cons;
             iq.elem_name[ur]   = name;
+            if (kind <= openswmm::InitialQualityData::kKindMsxFirst) {
+                // Keep the engines' seed table in step (upsert there too).
+                auto& rx = ctx.reactions;
+                const int m = openswmm::InitialQualityData::msxSpecies(kind);
+                for (std::size_t k = 0; k < rx.init_elem_idx.size(); ++k)
+                    if ((rx.init_elem_is_link[k] != 0) == (is_link != 0) &&
+                        rx.init_elem_idx[k] == elem_idx && rx.init_elem_species[k] == m)
+                        rx.init_elem_value[k] = value;
+                openswmm::transport::mirrorInitialQualityMsxRows(ctx);
+            }
             return SWMM_OK;
         }
     }
     iq.add(is_link != 0, name, cons, value, elem_idx, kind);
+    if (kind <= openswmm::InitialQualityData::kKindMsxFirst)
+        openswmm::transport::mirrorInitialQualityMsxRows(ctx);
     return SWMM_OK;
 }
 
@@ -132,8 +152,51 @@ SWMM_ENGINE_API int swmm_init_quality_remove(SWMM_Engine engine,
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(entry_idx >= 0 && entry_idx < ctx.initial_quality.count());
+    // U2: an MSX row leaves the engines' seed table with it.
+    {
+        const auto u = static_cast<std::size_t>(entry_idx);
+        const auto& iq = ctx.initial_quality;
+        const int m = openswmm::InitialQualityData::msxSpecies(iq.kind[u]);
+        if (m >= 0) {
+            auto& rx = ctx.reactions;
+            for (std::size_t k = 0; k < rx.init_elem_idx.size(); ++k) {
+                if ((rx.init_elem_is_link[k] != 0) == (iq.is_link[u] != 0) &&
+                    rx.init_elem_idx[k] == iq.elem_idx[u] &&
+                    rx.init_elem_species[k] == m) {
+                    rx.init_elem_is_link.erase(rx.init_elem_is_link.begin() + static_cast<std::ptrdiff_t>(k));
+                    rx.init_elem_idx.erase(rx.init_elem_idx.begin() + static_cast<std::ptrdiff_t>(k));
+                    rx.init_elem_species.erase(rx.init_elem_species.begin() + static_cast<std::ptrdiff_t>(k));
+                    rx.init_elem_value.erase(rx.init_elem_value.begin() + static_cast<std::ptrdiff_t>(k));
+                    break;
+                }
+            }
+        }
+    }
     ctx.initial_quality.erase(entry_idx);
     return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_init_quality_file_get(SWMM_Engine engine, char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    copy_to_buf(to_engine(engine)->context().initial_quality.file, buf, buflen);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_init_quality_file_set(SWMM_Engine engine, const char* path) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    ctx.initial_quality.file = path ? path : "";
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_init_quality_is_file(SWMM_Engine engine, int entry_idx) {
+    if (!engine) return 0;
+    const auto& iq = to_engine(engine)->context().initial_quality;
+    if (entry_idx < 0 || entry_idx >= iq.count()) return 0;
+    const auto u = static_cast<std::size_t>(entry_idx);
+    return (u < iq.from_file.size() && iq.from_file[u]) ? 1 : 0;
 }
 
 } // extern "C"

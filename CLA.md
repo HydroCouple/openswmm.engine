@@ -1,6 +1,6 @@
 # Contributor License Agreement — openswmm.engine
 
-**Version 1.1 — August 2026**
+**Version 1.2 — October 2026**
 
 Thank you for your interest in contributing to **openswmm.engine**, maintained by the Technical Manager of the project (currently [@cbuahin](https://github.com/cbuahin)). This Contributor License Agreement ("CLA") clarifies the intellectual property rights granted with contributions to the project. By signing this CLA you confirm that you have the legal authority to grant these rights, and that the Technical Manager may rely on them.
 
@@ -61,14 +61,13 @@ By submitting a Contribution, You represent and warrant that:
 
 ## 6. Corporate Contributors
 
-If you are submitting a Contribution on behalf of a company, organization, or other legal entity ("Organization"), the Organization must also sign a **Corporate CLA (CCLA)**. The CCLA covers all individuals authorized by the Organization to submit Contributions on its behalf.
+If you are submitting a Contribution on behalf of a company, organization, or other legal entity ("Organization"), or if Section 5, item 4 applies to your Contribution, the Organization must also sign the Corporate Contributor License Agreement (CCLA). The CCLA text is at [CCLA.md](./CCLA.md). It covers all individuals the Organization designates as authorized to submit Contributions on its behalf.
 
-To submit a CCLA, open a GitHub Discussion in the **[openswmm.engine Discussions](https://github.com/HydroCouple/openswmm.engine/discussions)** tab with the title `[CCLA] <Organization Name>` and include:
-- The legal name of the Organization.
-- The name and title of the authorized signatory.
-- A list of GitHub usernames authorized to submit Contributions under the CCLA.
+The CCLA does not replace this Individual CLA. Individuals must sign both.
 
-Tag [@cbuahin](https://github.com/cbuahin) in the discussion. The CCLA takes effect when acknowledged in writing by the Technical Manager.
+To submit a CCLA, complete Schedules A, B, and C of [CCLA.md](./CCLA.md) and either email the completed agreement to the Technical Manager at [support@hydrocouple.org](mailto:support@hydrocouple.org) or open a GitHub Discussion titled `[CCLA] <Organization Name>` in the Project's Discussions tab. The CCLA takes effect when acknowledged in writing by the Technical Manager.
+
+**Merge policy.** Where Section 5, item 4 applies, Contributions may be developed and reviewed openly at any time and are held in review, but will not be merged into any branch of the Project until a CCLA covering them is on file or the Organization has provided written authorization. This requirement applies uniformly to all contributors, including the Technical Manager. It was adopted on October 3, 2026 and applies to merges after that date.
 
 ---
 
@@ -88,17 +87,19 @@ Your Contributions are provided on an **"AS IS" basis**, without warranties or c
 
 ### Individual Contributors
 
-First-time contributors must sign this CLA before their pull request can be merged. Signing is done entirely through GitHub — no PDF or email is required.
+First-time contributors must sign this CLA before their pull request can be merged. Signing is done through GitHub or by email — no PDF is required.
 
-**Using CLA Assistant (recommended):**
+**Using the CLA Assistant GitHub Action (recommended):**
 
-The project uses [CLA Assistant](https://cla-assistant.io) to automate CLA signing. When you open your first pull request, a bot will post a comment asking you to sign. Click the link in that comment and authenticate with your GitHub account to record your agreement.
+The project is adopting the [CLA Assistant GitHub Action](https://github.com/contributor-assistant/github-action) to automate CLA signing, but it is not yet enabled on this repository. Until it is, sign by pull request comment or by email as described below. Once it is enabled, the action will post a comment on your first pull request asking you to sign. When you reply with the comment shown below, it will record your GitHub username, the pull request, and the date and time of your signature in `.github/cla-signatures.json` in this repository.
 
 Alternatively, you may sign manually by posting the following comment on your pull request:
 
 > I have read the CLA Document and I hereby sign the CLA.
 
 Your GitHub username and the date of the comment serve as your electronic signature and are recorded permanently in the pull request history.
+
+**By email.** A contributor may also sign by sending an email from the contributor's personal email address to [support@hydrocouple.org](mailto:support@hydrocouple.org), stating the contributor's name, GitHub username, the Project repository, the CLA version, and the sentence "I have read the CLA Document and I hereby sign the CLA," or attaching a signed copy of this CLA. The signature, the date the email was received, and the Maintainer who recorded it are entered in [CLA-SIGNATORIES.md](./CLA-SIGNATORIES.md), and the recording Maintainer also enters the signature in the CLA Assistant record.
 
 ### Returning Contributors
 
@@ -114,7 +115,7 @@ If you have previously submitted Contributions to this project before this CLA w
 
 ## 11. Governing Law
 
-This CLA shall be governed by and construed in accordance with the laws of the United States, without regard to its conflict of law provisions.
+This CLA shall be governed by and construed in accordance with the laws of the Commonwealth of Kentucky, without regard to its conflict of law provisions.
 
 ---
 
@@ -133,4 +134,4 @@ Portions of the Project are derived from USEPA SWMM software that resides in the
 
 ---
 
-*This CLA is maintained by the Technical Manager of openswmm.engine (currently [@cbuahin](https://github.com/cbuahin)). Last updated: August 2026.*
+*This CLA is maintained by the Technical Manager of openswmm.engine (currently [@cbuahin](https://github.com/cbuahin)). Last updated: October 2026.*

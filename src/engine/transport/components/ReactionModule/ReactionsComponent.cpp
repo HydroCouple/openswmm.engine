@@ -24,6 +24,8 @@
  */
 
 #include "ReactionsComponent.hpp"
+#include "../../MsxInitialQuality.hpp"   // U2
+#include "ReactionsWriter.hpp"   // IO3a save hook
 
 #include <cstdlib>
 
@@ -120,6 +122,12 @@ void parseOptions(SimulationContext& ctx, const std::vector<std::string>& lines,
         } else if (key == "RTOL") {
             if (to_num(tok[1], num) && num > 0.0) rx.rtol = num;
             else errors.push_back("[REACTION_OPTIONS] bad RTOL '" + tok[1] + "'.");
+        } else if (key == "TEMPERATURE") {
+            // TEMP's fallback (degC) for elements without a heat-transport
+            // temperature. Any finite value is a temperature; no range gate.
+            if (to_num(tok[1], num)) rx.default_temp_c = num;
+            else errors.push_back("[REACTION_OPTIONS] bad TEMPERATURE '" +
+                                  tok[1] + "'.");
         } else {
             errors.push_back("[REACTION_OPTIONS] unknown option '" + tok[0] + "'.");
         }
@@ -375,6 +383,10 @@ void parseQuality(SimulationContext& ctx, const std::vector<std::string>& lines,
         }
         rx.init_global[static_cast<std::size_t>(s)] = v;
     }
+    // U2: [INITIAL_QUALITY] MSX rows live in ctx.initial_quality (already
+    // classified when this is a re-apply; PostParseResolver mirrors them at
+    // open). The block reset above emptied init_elem_*, so bring them back.
+    for (const auto& e : mirrorInitialQualityMsxRows(ctx)) errors.push_back(e);
 }
 
 }  // namespace
@@ -528,6 +540,15 @@ void registerReactionsComponent() {
            const components::ComponentConfigSections& config,
            std::vector<std::string>& errors) {
             applyReactionSections(ctx, config, errors);
+        },
+        // IO3a: the canonical .rxn serializer already existed (E-C3,
+        // ReactionsWriter) and was reachable only through the C API's
+        // get-text call. Nothing ever asked it to write the file on save, so
+        // reaction edits made through the API or the GUI were lost exactly
+        // like heat's. The capability was present; the CALL SITE was missing.
+        [](const SimulationContext& ctx,
+           const ProcessComponentSpec& /*spec*/) -> std::string {
+            return transport::serializeReactionSystem(ctx);
         });
 }
 

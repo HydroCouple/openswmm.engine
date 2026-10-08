@@ -45,7 +45,13 @@ flat (``add_*`` / ``*_count``) rather than dressing it as a collection.
 
 # cython: language_level=3
 
+from libc.string cimport memcpy, memset
+from libc.stdlib cimport calloc, free
+from ._lid_nodes import LidNodeLayer, LidNodeLayerKind, LidLayerTreatment
+
 from ._exceptions import ElementNotFoundError
+from ._enums import (GrateType, InletCurveKind, InletHostKind, InletPlacement,
+                     InletType, ThroatType)
 from ._common cimport *
 
 
@@ -498,6 +504,253 @@ class Inlets:
         _check(swmm_inlet_rename(h, idx, b))
         self._solver._bump_generation()
 
+    # ---- Full design surface (SWMM_InletDesign) ---------------------
+
+    def get_design(self, key) -> dict:
+        """Read every field of an inlet design.
+
+        Superset of :meth:`get_params`, which only covers the grate/slotted
+        dimensions. Only the fields the design's C{type} actually uses carry
+        meaning; the rest read back as zero.
+
+        @param key: Integer index or string id.
+        @return: Mapping with keys ``type`` (L{InletType}), ``grate_length``,
+            ``grate_width``, ``grate_type`` (L{GrateType}), ``open_area``,
+            ``splash_veloc``, ``curb_length``, ``curb_height``, ``throat``
+            (L{ThroatType}), ``slot_length``, ``slot_width``, ``curve_id``,
+            ``curve_kind`` (L{InletCurveKind}).
+        @rtype: dict
+        @raise KeyError: If C{key} is a name and no inlet has it.
+        @raise EngineError: On C API failure.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int idx = key if isinstance(key, int) else self.get_index(key)
+        cdef SWMM_InletDesign d
+        cdef char curve[64]
+        _check(swmm_inlet_get_design(h, idx, &d))
+        memcpy(curve, d.curve_id, sizeof(curve))
+        curve[sizeof(curve) - 1] = 0
+        return {
+            "type": InletType(d.type),
+            "grate_length": d.grate_length,
+            "grate_width": d.grate_width,
+            "grate_type": GrateType(d.grate_type),
+            "open_area": d.open_area,
+            "splash_veloc": d.splash_veloc,
+            "curb_length": d.curb_length,
+            "curb_height": d.curb_height,
+            "throat": ThroatType(d.throat),
+            "slot_length": d.slot_length,
+            "slot_width": d.slot_width,
+            "curve_id": curve.decode('utf-8'),
+            "curve_kind": InletCurveKind(d.curve_kind),
+        }
+
+    def set_design(self, key, design=None, **kwargs) -> None:
+        """Overwrite every field of an inlet design (the type may change).
+
+        Accepts the mapping :meth:`get_design` returns, keyword arguments, or
+        both (keywords win), so a read-modify-write is a one-liner::
+
+            inlets.set_design("Curb1", throat=ThroatType.INCLINED)
+
+        Only the fields the resulting C{type} uses are validated: the
+        dimensions it needs must be positive, ``open_area`` must lie in
+        (0, 1] for a C{GENERIC} grate, and a C{CUSTOM} design needs a
+        non-empty ``curve_id``. A ``curve_kind`` that contradicts the named
+        curve's own C{[CURVES]} type is rejected; when the curve does not
+        exist yet the kind is stored as given and re-derived on validation.
+
+        @param key: Integer index or string id.
+        @param design: Optional mapping of field values (defaults are read
+            from the existing design, so an omitted field is preserved).
+        @type design: dict or None
+        @raise KeyError: If C{key} is a name and no inlet has it.
+        @raise EngineError: On a violated constraint or C API failure.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int idx = key if isinstance(key, int) else self.get_index(key)
+        cdef SWMM_InletDesign d
+        _check(swmm_inlet_get_design(h, idx, &d))
+
+        values = dict(design or {})
+        values.update(kwargs)
+        cdef bytes b_curve
+        if "type" in values:         d.type         = int(values["type"])
+        if "grate_length" in values: d.grate_length = float(values["grate_length"])
+        if "grate_width" in values:  d.grate_width  = float(values["grate_width"])
+        if "grate_type" in values:   d.grate_type   = int(values["grate_type"])
+        if "open_area" in values:    d.open_area    = float(values["open_area"])
+        if "splash_veloc" in values: d.splash_veloc = float(values["splash_veloc"])
+        if "curb_length" in values:  d.curb_length  = float(values["curb_length"])
+        if "curb_height" in values:  d.curb_height  = float(values["curb_height"])
+        if "throat" in values:       d.throat       = int(values["throat"])
+        if "slot_length" in values:  d.slot_length  = float(values["slot_length"])
+        if "slot_width" in values:   d.slot_width   = float(values["slot_width"])
+        if "curve_kind" in values:   d.curve_kind   = int(values["curve_kind"])
+        if "curve_id" in values:
+            b_curve = (values["curve_id"] or "").encode('utf-8')
+            if len(b_curve) >= sizeof(d.curve_id):
+                raise ValueError("curve_id is longer than 63 bytes")
+            memset(d.curve_id, 0, sizeof(d.curve_id))
+            memcpy(d.curve_id, <const char*>b_curve, len(b_curve))
+        _check(swmm_inlet_set_design(h, idx, &d))
+
+    def get_comment(self, key) -> str:
+        """Return the free-text description of an inlet design.
+
+        @param key: Integer index or string id.
+        @rtype: str
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int idx = key if isinstance(key, int) else self.get_index(key)
+        cdef char buf[1024]
+        _check(swmm_inlet_get_comment(h, idx, buf, sizeof(buf)))
+        return buf.decode('utf-8')
+
+    def set_comment(self, key, str text) -> None:
+        """Set the free-text description of an inlet design.
+
+        @param key: Integer index or string id.
+        @param text: Description; round-tripped as a C{';'} comment line.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int idx = key if isinstance(key, int) else self.get_index(key)
+        cdef bytes b = (text or "").encode('utf-8')
+        _check(swmm_inlet_set_comment(h, idx, b))
+
+
+# ---- Inlet usage ----------------------------------------------------
+
+class InletUsages:
+    """``solver.infrastructure.inlet_usages`` view — inlet placements.
+
+    One row per placement, of either host kind: a conduit carrying an
+    C{[INLET_USAGE]} row, or an inlet junction (an C{[INLET_JUNCTIONS]}
+    node). Both kinds live in one store, so C{len()} counts them together
+    and :meth:`get` reports which kind a row is through its ``host_kind``.
+    """
+
+    def __init__(self, solver):
+        self._solver = solver
+
+    def __len__(self) -> int:
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = swmm_inlet_usage_count(h)
+        return n if n > 0 else 0
+
+    def find_link(self, link_idx) -> int:
+        """Row index of the usage hosted by conduit C{link_idx}, or C{-1}.
+
+        @param link_idx: Zero-based link index.
+        @rtype: int
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        return swmm_inlet_usage_find_link(h, int(link_idx))
+
+    def find_node(self, node_idx) -> int:
+        """Row index of the usage hosted by inlet junction C{node_idx}, or C{-1}.
+
+        @param node_idx: Zero-based node index.
+        @rtype: int
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        return swmm_inlet_usage_find_node(h, int(node_idx))
+
+    def get(self, int usage_idx) -> dict:
+        """Read one usage row.
+
+        @param usage_idx: Zero-based usage-row index.
+        @return: Mapping with keys ``host_kind`` (L{InletHostKind}),
+            ``host_idx`` (a link index for C{LINK}, a node index for
+            C{NODE}), ``design_idx``, ``capture_node_idx``, ``num_inlets``,
+            ``pct_clogged``, ``flow_limit``, ``local_depress``,
+            ``local_width``, ``placement`` (L{InletPlacement}).
+        @rtype: dict
+        @raise EngineError: On a bad index or C API failure.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef SWMM_InletUsage u
+        _check(swmm_inlet_usage_get(h, usage_idx, &u))
+        return {
+            "host_kind": InletHostKind(u.host_kind),
+            "host_idx": u.host_idx,
+            "design_idx": u.design_idx,
+            "capture_node_idx": u.capture_node_idx,
+            "num_inlets": u.num_inlets,
+            "pct_clogged": u.pct_clogged,
+            "flow_limit": u.flow_limit,
+            "local_depress": u.local_depress,
+            "local_width": u.local_width,
+            "placement": InletPlacement(u.placement),
+        }
+
+    def set(self, int host_kind, int host_idx, int design_idx,
+            int capture_node_idx, *, int num_inlets=1,
+            double pct_clogged=0.0, double flow_limit=0.0,
+            double local_depress=0.0, double local_width=0.0,
+            int placement=0) -> int:
+        """Create or replace the usage row for a host.
+
+        At most one row exists per host: an existing row for
+        C{(host_kind, host_idx)} is overwritten, otherwise a row is appended.
+        A C{NODE} host must already be an inlet junction (see
+        C{Node.is_inlet}); a C{LINK} host must be a conduit. The capture node
+        must exist, must not be the host node, and must not itself be virtual.
+
+        Flow and length values are in the project's display units, as
+        authored in C{[INLET_USAGE]}.
+
+        @param host_kind: L{InletHostKind} — C{LINK} or C{NODE}.
+        @param host_idx: Zero-based link or node index per C{host_kind}.
+        @param design_idx: Zero-based inlet-design index.
+        @param capture_node_idx: Receiving (underdrain) node index.
+        @param num_inlets: Inlets per side (>= 1).
+        @param pct_clogged: Clogged fraction, 0..99.
+        @param flow_limit: Max capture per inlet; C{0} = unlimited.
+        @param local_depress: Local gutter depression.
+        @param local_width: Local depression width.
+        @param placement: L{InletPlacement}.
+        @return: Index of the created or replaced row.
+        @rtype: int
+        @raise EngineError: On a violated constraint or C API failure.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef SWMM_InletUsage u
+        cdef int row = -1
+        u.host_kind = host_kind
+        u.host_idx = host_idx
+        u.design_idx = design_idx
+        u.capture_node_idx = capture_node_idx
+        u.num_inlets = num_inlets
+        u.pct_clogged = pct_clogged
+        u.flow_limit = flow_limit
+        u.local_depress = local_depress
+        u.local_width = local_width
+        u.placement = placement
+        _check(swmm_inlet_usage_set(h, &u, &row))
+        self._solver._bump_generation()
+        return row
+
+    def remove(self, int usage_idx) -> None:
+        """Delete a usage row.
+
+        Removing an inlet junction's row leaves the node flagged as an inlet
+        with nothing to capture, which the model validator rejects; demote
+        the node instead (C{Node.is_inlet = False}) or give it a new row.
+
+        @param usage_idx: Zero-based usage-row index.
+        @raise EngineError: On a bad index or C API failure.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_inlet_usage_remove(h, usage_idx))
+        self._solver._bump_generation()
+
+    def __iter__(self):
+        cdef int n = len(self)
+        for i in range(n):
+            yield self.get(i)
+
 
 # ---- LID controls + usage ------------------------------------------
 
@@ -577,6 +830,210 @@ class LIDs:
         cdef bytes b = new_id.encode('utf-8')
         _check(swmm_lid_rename(h, idx, b))
         self._solver._bump_generation()
+
+    def get_layers(self, key):
+        """Return the ordered stack, including an optional BOTTOM boundary."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int idx = _resolve_index(h, key, swmm_lid_index, swmm_lid_count, "LID")
+        cdef int count = swmm_lid_node_layer_count(h, idx)
+        cdef SWMM_LidNodeLayer row
+        result = []
+        for i in range(count):
+            _check(swmm_lid_node_layer_get(h, idx, i, &row))
+            result.append(LidNodeLayer(LidNodeLayerKind(row.kind),
+                tuple(row.params[j] for j in range((2, 7, 3, 2)[row.kind]))))
+        return result
+
+    def get_treatments(self, key):
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int idx = _resolve_index(h, key, swmm_lid_index, swmm_lid_count, "LID")
+        cdef SWMM_LidLayerTreatment row
+        result = []
+        for i in range(swmm_lid_node_treatment_count(h, idx)):
+            _check(swmm_lid_node_treatment_get(h, idx, i, &row))
+            result.append(LidLayerTreatment(row.layer, swmm_pollutant_id(h, row.pollutant).decode(), row.removal_percent, row.decay_per_day, row.expression.decode()))
+        return result
+
+    def get_flow_options(self, key):
+        """Flow model (0 existing or 1 Richards), cells and solver tolerances."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int idx = _resolve_index(h, key, swmm_lid_index, swmm_lid_count, "LID")
+        cdef SWMM_LidRichardsOptions options
+        _check(swmm_lid_richards_options_get(h, idx, &options))
+        return dict(model=options.model, cells_per_layer=options.cells_per_layer,
+                    atol=options.atol, rtol=options.rtol, max_step=options.max_step)
+
+    def get_materials(self, key):
+        """Retention materials in layer order; alpha and specific_storage in 1/m.
+
+        SURFACE/BOTTOM rows are present but ignored when configuring flow.
+        """
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int idx = _resolve_index(h, key, swmm_lid_index, swmm_lid_count, "LID")
+        cdef SWMM_LidRichardsMaterial material
+        result = []
+        for i in range(swmm_lid_node_layer_count(h, idx)):
+            _check(swmm_lid_richards_material_get(h, idx, i, &material))
+            result.append(dict(theta_r=material.theta_r, alpha=material.alpha,
+                               n=material.n, l=material.l, specific_storage=material.specific_storage))
+        return result
+
+    def richards_profile(self, node):
+        """Current Richards cell pressure/head in project length and water in volume units.
+
+        The native API rejects profiles of the existing flow formulation.
+        """
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
+        cdef double pressure, head, water
+        result = []
+        for i in range(swmm_lid_node_state_count(h, n)):
+            _check(swmm_lid_richards_state_get(h, n, i, &pressure, &head, &water))
+            result.append(dict(pressure=pressure, head=head, water=water))
+        return result
+
+    def richards_statistics(self, node):
+        """Last-interval counts, minimum step in seconds and balance_m3 in m3."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
+        cdef SWMM_LidRichardsStatistics stats
+        _check(swmm_lid_richards_statistics_get(h, n, &stats))
+        return dict(accepted=stats.accepted, rejected=stats.rejected, rhs=stats.rhs,
+                    newton=stats.newton, min_step=stats.min_step, balance_m3=stats.balance_m3)
+
+    def set_layers(self, key, layers, *, treatments=None, flow=None, materials=None):
+        """Atomically replace an arbitrary ordered NODE stack and sync its nodes.
+
+        Accepts an iterable of LidNodeLayer. Invalid stacks leave the old stack,
+        node MaxDepths and anchored link offsets unchanged. Pre-start only.
+        Optional flow is a mapping with model, cells_per_layer, atol, rtol and
+        max_step (seconds). Materials are mappings with theta_r, alpha, n, l
+        and specific_storage, one per authored layer; alpha/storage use 1/m.
+        When flow is supplied, omitted treatments/materials retain readback values.
+        """
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int idx = _resolve_index(h, key, swmm_lid_index, swmm_lid_count, "LID")
+        values = list(layers)
+        cdef int count = len(values)
+        if count == 0:
+            raise ValueError("At least one MEDIA or AGGREGATE layer is required")
+        cdef SWMM_LidNodeLayer* rows = <SWMM_LidNodeLayer*>calloc(count, sizeof(SWMM_LidNodeLayer))
+        if rows == NULL:
+            raise MemoryError()
+        cdef SWMM_LidLayerTreatment* rules = NULL
+        cdef int rule_count = 0
+        cdef SWMM_LidRichardsOptions options
+        cdef SWMM_LidRichardsMaterial* retention = NULL
+        try:
+            if flow is None and materials is not None:
+                raise ValueError("materials requires flow options")
+            if flow is not None:
+                from operator import index
+                options.model = index(flow["model"])
+                options.cells_per_layer = index(flow.get("cells_per_layer", 8))
+                options.atol = flow.get("atol", 1e-7)
+                options.rtol = flow.get("rtol", 1e-5)
+                options.max_step = flow.get("max_step", 30.0)
+                material_values = self.get_materials(key) if materials is None else list(materials)
+                if len(material_values) != count:
+                    raise ValueError("materials must have one row per authored layer")
+                retention = <SWMM_LidRichardsMaterial*>calloc(count, sizeof(SWMM_LidRichardsMaterial))
+                if retention == NULL:
+                    raise MemoryError()
+                for i, material in enumerate(material_values):
+                    retention[i].theta_r = material.get("theta_r", 0.0)
+                    retention[i].alpha = material.get("alpha", 0.0)
+                    retention[i].n = material.get("n", 0.0)
+                    retention[i].l = material.get("l", 0.5)
+                    retention[i].specific_storage = material.get("specific_storage", 0.0)
+                if treatments is None:
+                    treatments = self.get_treatments(key)
+            for i, layer in enumerate(values):
+                if not isinstance(layer, LidNodeLayer):
+                    raise TypeError("layers must contain LidNodeLayer instances")
+                rows[i].kind = int(layer.kind)
+                for j, value in enumerate(layer.params):
+                    rows[i].params[j] = value
+            if treatments is None:
+                _check(swmm_lid_node_layers_set(h, idx, rows, count))
+            else:
+                treatment_values = list(treatments)
+                rule_count = len(treatment_values)
+                if any(not isinstance(t, LidLayerTreatment) for t in treatment_values):
+                    raise TypeError("treatments must contain LidLayerTreatment instances")
+                expressions = [t.expression.encode("utf-8") for t in treatment_values]
+                if rule_count:
+                    rules = <SWMM_LidLayerTreatment*>calloc(rule_count, sizeof(SWMM_LidLayerTreatment))
+                    if rules == NULL:
+                        raise MemoryError()
+                for i, treatment in enumerate(treatment_values):
+                    if not isinstance(treatment, LidLayerTreatment):
+                        raise TypeError("treatments must contain LidLayerTreatment instances")
+                    rules[i].layer = treatment.layer
+                    rules[i].pollutant = _resolve_index(h, treatment.pollutant, swmm_pollutant_index, swmm_pollutant_count, "pollutant")
+                    rules[i].removal_percent = treatment.removal_percent
+                    rules[i].decay_per_day = treatment.decay_per_day
+                    rules[i].expression = expressions[i]
+                if flow is None:
+                    _check(swmm_lid_node_configure(h, idx, rows, count, rules, rule_count))
+                else:
+                    _check(swmm_lid_node_configure_flow(h, idx, rows, count, rules, rule_count, &options, retention))
+        finally:
+            free(retention)
+            free(rules)
+            free(rows)
+
+    def assign_node(self, node, control, *, double initial_saturation=0.0):
+        """Assign a control to a storage node; synchronizes MaxDepth (InitSat %)."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
+        cdef int c = _resolve_index(h, control, swmm_lid_index, swmm_lid_count, "LID")
+        _check(swmm_node_set_lid(h, n, c, initial_saturation))
+
+    def node_profile(self, node):
+        """Runtime sublayers in top-to-bottom order; elevations in model length units."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
+        cdef int count = swmm_lid_node_state_count(h, n)
+        cdef int layer = 0
+        cdef double bottom = 0, top = 0, moisture = 0
+        result = []
+        for i in range(count):
+            _check(swmm_lid_node_state_get(h, n, i, &layer, &bottom, &top, &moisture))
+            result.append({"layer": layer, "bottom": bottom, "top": top, "moisture": moisture})
+        return result
+
+    def node_assignment(self, node):
+        """Return (control index, InitSat %) or None for an ordinary node."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
+        cdef int c = -1
+        cdef double sat = 0.0
+        _check(swmm_node_get_lid(h, n, &c, &sat))
+        return None if c < 0 else (c, sat)
+
+    def remove_node(self, node):
+        """Revert a LID storage node to plain storage and remove its anchors."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
+        _check(swmm_node_set_lid(h, n, -1, 0.0))
+
+    def set_outlet_anchor(self, link, int layer, *, position="BOTTOM"):
+        """Anchor a link to a one-based physical layer; layer=0 removes it."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int i = _resolve_index(h, link, swmm_link_index, swmm_link_count, "Link")
+        position = position.upper()
+        if position not in ("TOP", "BOTTOM"):
+            raise ValueError("position must be TOP or BOTTOM")
+        _check(swmm_lid_node_outlet_set(h, i, layer, int(position == "TOP")))
+
+    def get_outlet_anchor(self, link):
+        """Return (one-based layer, TOP/BOTTOM), or None if unanchored."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int i = _resolve_index(h, link, swmm_link_index, swmm_link_count, "Link")
+        cdef int layer = 0, top = 0
+        _check(swmm_lid_node_outlet_get(h, i, &layer, &top))
+        return None if layer == 0 else (layer, "TOP" if top else "BOTTOM")
 
     def set_surface(self, int idx, *,
                     double storage, double roughness, double slope) -> None:
@@ -774,13 +1231,14 @@ class LIDs:
 # ---- Top-level Infrastructure view ----------------------------------
 
 class Infrastructure:
-    """``solver.infrastructure`` — entry point for the four sub-views."""
+    """``solver.infrastructure`` — entry point for the five sub-views."""
 
     def __init__(self, solver):
         self._solver = solver
         self._transects = None
         self._streets = None
         self._inlets = None
+        self._inlet_usages = None
         self._lids = None
 
     @property
@@ -802,6 +1260,12 @@ class Infrastructure:
         return self._inlets
 
     @property
+    def inlet_usages(self) -> InletUsages:
+        if self._inlet_usages is None:
+            self._inlet_usages = InletUsages(self._solver)
+        return self._inlet_usages
+
+    @property
     def lids(self) -> LIDs:
         if self._lids is None:
             self._lids = LIDs(self._solver)
@@ -811,6 +1275,7 @@ class Infrastructure:
         try:
             return (f"<Infrastructure transects={len(self.transects)} "
                     f"streets={len(self.streets)} inlets={len(self.inlets)} "
+                    f"inlet_usages={len(self.inlet_usages)} "
                     f"lids={len(self.lids)}>")
         except Exception:
             return "<Infrastructure (engine closed)>"

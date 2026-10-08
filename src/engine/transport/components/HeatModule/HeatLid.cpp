@@ -33,6 +33,7 @@
 #include "../../../core/SimulationContext.hpp"
 #include "../../../hydrology/LID.hpp"
 #include "../HeatFluxModules/HeatFluxes.hpp"
+#include "../HeatFluxModules/SolarRadiation.hpp"
 #include "../HeatFluxModules/SurfaceExchange.hpp"
 #include "../LidLayerCommon.hpp"
 
@@ -213,6 +214,10 @@ void routeLidLayerTemperature(SimulationContext& ctx,
     const bool   do_flux = ctx.heat_config.surface_exchange ||
                            ctx.heat_config.radiative_exchange;
 
+    // H6a: runoff-clock binding, same reasoning as HeatWatershed
+    // (SolarRadiation.hpp).
+    heat::updateSolarForcing(ctx);
+
     for (int t = 0; t < solver.numGroups(); ++t) {
         const auto& g = solver.group(t);
         if (g.count == 0) continue;
@@ -377,9 +382,17 @@ void routeLidLayerTemperature(SimulationContext& ctx,
                     // layer of a stack that has one is where the exchange
                     // happens, and for a rain barrel that layer is storage.
                     const int top = idx[0];
-                    const double j0 = heat::netFluxOut(ctx, tk[top]);
+                    // PE1: a LID layer has no per-element attribute table
+                    // (kind LID resolves to the global in radiativeFor), but
+                    // the token is passed rather than defaulted so this call
+                    // site, like HeatWatershed's, says WHICH element it
+                    // means. This file was the call site the PE changeset
+                    // missed — a caller outside the changeset that a per-file
+                    // syntax check cannot see.
+                    const HeatElement el{HeatElemKind::LID, flat};
+                    const double j0 = heat::netFluxOut(ctx, el, tk[top]);
                     const double j1 =
-                        heat::netFluxOut(ctx, tk[top] + heat::kProbeC);
+                        heat::netFluxOut(ctx, el, tk[top] + heat::kProbeC);
                     const double djdt = (j1 - j0) / heat::kProbeC;
                     // Linearize as J(T) = j0 + J'(T - T0), the same
                     // linearization relaxT performs, so the coupled solve

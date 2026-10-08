@@ -31,6 +31,45 @@
 
 namespace openswmm {
 
+#ifdef __EMSCRIPTEN__
+// ============================================================================
+// WebAssembly: single-threaded build (no -pthread). Run every write task
+// synchronously on the caller's thread; the public contract is unchanged.
+// ============================================================================
+
+IOThread::IOThread(PluginFactory& factory, std::size_t capacity)
+    : factory_(factory)
+    , capacity_(capacity)
+{}
+
+IOThread::~IOThread() {
+    stop();
+}
+
+void IOThread::start() {
+    stop_flag_.store(false, std::memory_order_relaxed);
+    running_.store(true, std::memory_order_relaxed);
+}
+
+void IOThread::post(SimulationSnapshot snap) {
+    if (stop_flag_.load(std::memory_order_relaxed)) return;
+    WriteTask task(std::move(snap), next_sequence_++);
+    const int rc = factory_.update_all(task.snapshot);
+    if (rc != 0) {
+        last_error_.store(rc, std::memory_order_relaxed);
+    }
+    tasks_completed_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void IOThread::stop() {
+    stop_flag_.store(true, std::memory_order_relaxed);
+    running_.store(false, std::memory_order_relaxed);
+}
+
+void IOThread::run() {}
+
+#else
+
 // ============================================================================
 // Constructor / Destructor
 // ============================================================================
@@ -129,5 +168,7 @@ void IOThread::run() {
 
     running_.store(false, std::memory_order_relaxed);
 }
+
+#endif /* __EMSCRIPTEN__ */
 
 } /* namespace openswmm */

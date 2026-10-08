@@ -30,10 +30,13 @@
  */
 
 #include "RdiiInterface.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "../core/SimulationContext.hpp"
+#include "../core/Constants.hpp"
 #include "../core/DateTime.hpp"
 #include "../core/UnitConversion.hpp"
 
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 
@@ -59,7 +62,7 @@ int RdiiInterfaceFile::openForRead(SimulationContext& ctx,
 
     // Try binary first: check the file stamp (legacy reads strlen(FileStamp)
     // bytes and compares).
-    fp_ = std::fopen(path.c_str(), "rb");
+    fp_ = openswmm::io::fopen_utf8(path, "rb");
     if (!fp_) return -1;
 
     char stamp[16] = {};
@@ -72,7 +75,7 @@ int RdiiInterfaceFile::openForRead(SimulationContext& ctx,
     } else {
         // Not binary — reopen in text mode (legacy openRdiiTextFile).
         std::fclose(fp_);
-        fp_ = std::fopen(path.c_str(), "rt");
+        fp_ = openswmm::io::fopen_utf8(path, "rt");
         if (!fp_) return -1;
         binary_ = false;
         const int rc = readTextHeader(ctx);
@@ -228,8 +231,10 @@ void RdiiInterfaceFile::applyFlows(SimulationContext& ctx,
     for (std::size_t i = 0; i < node_idx_.size(); ++i) {
         const int j = node_idx_[i];
         if (j < 0 || j >= ctx.n_nodes()) continue;
-        ctx.nodes.rdii_inflow[static_cast<std::size_t>(j)] +=
-            static_cast<double>(flows_[i]);
+        const double q = static_cast<double>(flows_[i]);
+        // legacy addRdiiInflows: `if (fabs(q) < FLOW_TOL) continue;`
+        if (std::fabs(q) < constants::FLOW_TOL) continue;
+        ctx.nodes.rdii_inflow[static_cast<std::size_t>(j)] += q;
     }
 }
 
@@ -242,7 +247,7 @@ int RdiiInterfaceFile::openForWrite(const std::string& path, int rdii_step,
     close();
     if (node_idx.empty()) return -2;   // no RDII in model — nothing to save
 
-    fp_ = std::fopen(path.c_str(), "wb");
+    fp_ = openswmm::io::fopen_utf8(path, "wb");
     if (!fp_) return -1;
 
     writing_ = true;

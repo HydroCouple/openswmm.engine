@@ -42,6 +42,17 @@ set(_post_excludes @OPENSWMM_BUNDLE_POST_EXCLUDES@)
 # installed/<triplet>/bin where SUNDIALS, HDF5, etc. live. The list is
 # `;`-separated; ${_extra_dirs} dereference splits it into separate args.
 set(_extra_dirs    "@OPENSWMM_BUNDLE_EXTRA_DIRS@")
+# vcpkg keeps debug binaries in <triplet>/debug/bin (issue #9). Under a
+# multi-config generator the config is only known HERE, at install time, so the
+# ordering is decided here rather than at configure time: for a debug install
+# the debug tree is searched FIRST, so a DLL that keeps its release name
+# (sqlite3.dll) resolves to the debug copy instead of silently pulling the
+# release one into a Debug package. The release tree stays on the list as a
+# fallback for anything vcpkg ships release-only.
+set(_extra_dirs_debug "@OPENSWMM_BUNDLE_EXTRA_DIRS_DEBUG@")
+if(_extra_dirs_debug AND "${CMAKE_INSTALL_CONFIG_NAME}" MATCHES "^([Dd]ebug|DEBUG)$")
+    set(_extra_dirs "${_extra_dirs_debug};${_extra_dirs}")
+endif()
 
 file(GET_RUNTIME_DEPENDENCIES
     RESOLVED_DEPENDENCIES_VAR   _resolved

@@ -123,7 +123,7 @@ const FuncDef* findFunc(const std::string& ident) {
 /// the GUI through reactionHydVarInfo — one copy of the truth). Meanings and
 /// units per ReactionTokens.hpp.
 const char* kHydVarNames[] = {"D", "Q", "U", "RE", "US", "FF", "AV",
-                              "HRT", "DT"};
+                              "HRT", "DT", "TEMP"};
 const char* kHydVarDescs[] = {
     "Depth (ft)",
     "Flow (cfs)",
@@ -134,6 +134,7 @@ const char* kHydVarDescs[] = {
     "Wetted surface area per volume (1/ft)",
     "Hydraulic residence time (s)",
     "Reaction step (s)",
+    "Water temperature (degC; TEMPERATURE option when heat is off)",
 };
 static_assert(sizeof(kHydVarNames) / sizeof(kHydVarNames[0]) ==
                   static_cast<std::size_t>(RxHydVar::COUNT_),

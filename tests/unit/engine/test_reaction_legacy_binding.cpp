@@ -96,14 +96,21 @@ void write_deck(const char* path, const std::string& pc_lines,
       << "END_DATE 01/01/2026\nEND_TIME 00:02:00\n"
       << "ROUTING_STEP 5\nREPORT_STEP 00:01:00\n"
       << extra_options << "\n"
-      << "[JUNCTIONS]\nJ0 10.0 10 0.5 0 0\n\n"
+      // J0 is a STORAGE unit, not a junction: legacy routes a node's
+      // quality through findStorageQual (mix + decay) only for STORAGE or
+      // a node holding volume, and a junction holds none below its rim
+      // (Node.fullVolume = 0), so legacy findNodeQual keeps a junction's
+      // concentration unchanged — the legacy engine reports 10.0 at a
+      // no-inflow junction for the whole run. The 1000 ft2 constant area
+      // keeps the node wet over the 2-minute horizon as the old junction did.
+      << "[STORAGE]\nJ0 10.0 10 0.5 FUNCTIONAL 0 0 1000 0 0\n\n"
       << "[OUTFALLS]\nOUT 7.0 FREE  NO\n\n"
       << "[CONDUITS]\nC1 J0 OUT 400 0.013 0 0 0\n\n"
       << "[XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\n";
     if (pollutants)
         f << "[POLLUTANTS]\n"
           << ";;Name Units Crain Cgw Crdii Kdecay SnowOnly CoPollut CoFrac Cdwf Cinit\n"
-          << "TSS    MG/L  0     0   0     " << kK
+          << "TSS    MG/L  0     0   0     " << (kK * 86400.0)  // 1/day column (KD1)
           << "    NO       *        0      0    " << kC0 << "\n\n";
     if (!pc_lines.empty())
         f << "[PROCESS_COMPONENTS]\n" << pc_lines << "\n\n";
@@ -276,6 +283,12 @@ TEST_F(ReactionLegacyBindingTest, PollutantKineticsRowErrors) {
 // their kinetics may reference pollutants.
 // ---------------------------------------------------------------------------
 TEST_F(ReactionLegacyBindingTest, RateMsxEvolvesLocallyWithWarning) {
+    // R4b (2026-09-01) retired the "not yet transported" warning WITH its
+    // condition — routeLegacyMsx advects the element state — so this gate
+    // flips: the species still accumulates, and the warning must be GONE
+    // (a deleted warning with unchanged behaviour is the failure mode the
+    // closeout gates exist for; the transport itself is observed by
+    // MsxSpeciesAdvectUnderLegacy in test_quality_closeout_bindings).
     write_rxn("_r4_rate.rxn",
               "[REACTION_OPTIONS]\nRATE_UNITS SEC\n"
               "[REACTION_SPECIES]\nBULK X MG\n"
@@ -285,7 +298,9 @@ TEST_F(ReactionLegacyBindingTest, RateMsxEvolvesLocallyWithWarning) {
     ASSERT_NO_FATAL_FAILURE(
         run_deck("_r4_rate.inp", "_r4_rate.rpt", "_r4_rate.out"));
     const auto& ctx = as_cpp_engine(engine_).context();
-    EXPECT_TRUE(warned(ctx, "not yet transported between elements"));
+    EXPECT_FALSE(warned(ctx, "not yet transported between elements"))
+        << "the R4b deferral warning is back — its condition was retired "
+           "2026-09-01";
     ASSERT_FALSE(ctx.reactions.msx_node_conc.empty());
     EXPECT_GT(ctx.reactions.msx_node_conc[0], 0.0)
         << "X accumulates from the TSS-driven source at the node";

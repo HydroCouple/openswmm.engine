@@ -31,6 +31,7 @@
  */
 
 #include "DefaultReportPlugin.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 
 #include "../../../include/openswmm/plugin_sdk/PluginState.hpp"
 #include "../../../include/openswmm/plugin_sdk/SimulationSnapshot.hpp"
@@ -38,10 +39,21 @@
 #include "../core/UnitConversion.hpp"
 #include "../core/DateTime.hpp"
 #include "../hydraulics/Node.hpp"   // node::getVolume — storage volume from its depth-relation
+#include "../hydraulics/Link.hpp"       // link::buildXSectParams — street spread at max depth
+#include "../hydraulics/XSectBatch.hpp" // xsect::getWofY
+#include "../hydraulics/Transect.hpp"   // shape / street geometry tables
+#include "../hydraulics/Street.hpp"
+#include "../transport/TransportPolicy.hpp"   // E2: Domain x Species matrix block
+#include "../2d/quality/SurfaceQuality2D.hpp"   // S7: 2D Surface Washoff Summary
+#include "../2d/data/MeshData.hpp"
+#include "../2d/subsurface/SubsurfaceData.hpp"   // G-O: 2D Aquifer Continuity
+#include "../2d/subsurface/SubsurfaceTransportState.hpp"  // T7.5: its quality twin
 
 #include <version.h>
 
+#include <array>
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <ctime>
@@ -59,16 +71,17 @@ static const char* InfilModelWords[] = {
     "HORTON", "MODIFIED_HORTON", "GREEN_AMPT",
     "MODIFIED_GREEN_AMPT", "CURVE_NUMBER"
 };
-static const char* SurchargeWords[] = { "EXTRAN", "SLOT", "DYNAMIC_SLOT" };
+static const char* SurchargeWords[] = { "EXTRAN", "SLOT", "DYNAMIC_SLOT", "TPA" };
 static const char* NodeTypeWords[] = { "JUNCTION", "OUTFALL", "DIVIDER", "STORAGE" };
 static const char* LinkTypeWords[] = { "CONDUIT", "PUMP", "ORIFICE", "WEIR", "OUTLET" };
 static const char* RainTypeWords[] = { "INTENSITY", "VOLUME", "CUMULATIVE" };
+// Spelled as legacy XsectTypeWords (keywords.c), which the report prints.
 static const char* XsectShapeWords[] = {
     "CIRCULAR", "FILLED_CIRCULAR", "RECT_CLOSED", "RECT_OPEN",
     "TRAPEZOIDAL", "TRIANGULAR", "PARABOLIC", "POWER",
-    "MOD_BASKET", "EGG", "HORSESHOE", "GOTHIC",
-    "CATENARY", "SEMI_ELLIPTIC", "BASKETHANDLE", "SEMI_CIRCULAR",
-    "RECT_TRIANG", "RECT_ROUND", "HORIZ_ELLIPSE", "VERT_ELLIPSE",
+    "MODBASKETHANDLE", "EGG", "HORSESHOE", "GOTHIC",
+    "CATENARY", "SEMIELLIPTICAL", "BASKETHANDLE", "SEMICIRCULAR",
+    "RECT_TRIANGULAR", "RECT_ROUND", "HORIZ_ELLIPSE", "VERT_ELLIPSE",
     "ARCH", "IRREGULAR", "CUSTOM",
     "FORCE_MAIN", "STREET", "DUMMY", "POLYGON"
 };
@@ -109,14 +122,21 @@ static void elapsedToStr(double date, double start_date, char* buf, int buflen) 
 }
 
 /// Decompose elapsed date into days/hrs/mins components
-static void elapsedToParts(double date, double start_date, int& days, int& hrs, int& mins) {
+// legacy getElapsedTime (swmm5.c) + datetime_decodeTime: time since the
+// REPORT start, rounded to the nearest second before it is split, so a
+// maximum at 12:59:59.99 reads 13:00 (truncating the fraction read 12:59).
+static void elapsedToParts(double date, double report_start, int& days, int& hrs, int& mins) {
     days = hrs = mins = 0;
-    if (date <= 0.0 || start_date <= 0.0) return;
-    double elapsed = date - start_date;
-    days = static_cast<int>(std::floor(elapsed));
-    double frac = elapsed - days;
-    hrs  = static_cast<int>(frac * 24.0);
-    mins = static_cast<int>((frac * 24.0 - hrs) * 60.0);
+    if (date <= 0.0) return;
+    const double x = date - report_start;
+    if (x <= 0.0) return;
+    days = static_cast<int>(x);
+    int secs = static_cast<int>(std::floor((x - std::floor(x)) * 86400.0 + 0.5));
+    if (secs >= 86400) secs = 86399;
+    const int total_mins = secs / 60;
+    hrs  = total_mins / 60;
+    mins = total_mins % 60;
+    if (hrs > 23) hrs = 0;
 }
 
 static const char* nt_str(int nt) {
@@ -175,7 +195,7 @@ int DefaultReportPlugin::prepare(const SimulationContext& ctx) {
     // analysis options) so they are available immediately — even if the
     // simulation crashes before write_summary() is called.
     if (!rpt_path_.empty() && !ctx.options.rpt_disabled) {
-        file_ = std::fopen(rpt_path_.c_str(), "w");
+        file_ = openswmm::io::fopen_utf8(rpt_path_, "w");
         if (file_) {
             write_preamble(file_, ctx);
             std::fflush(file_);
@@ -191,16 +211,35 @@ int DefaultReportPlugin::update(const SimulationSnapshot& /*snapshot*/) {
     return 0;
 }
 
+// Legacy input.c reports at most MAXERRS (100) input errors, then
+// "Maximum error count exceeded." and stops reading. ctx.errors keeps every
+// error for API callers; only the .rpt is capped. `from` is the first index
+// not yet written.
+// Messages are stored with their own leading blanks; legacy prints every
+// error and warning at a two-blank indent.
+static const char* unindented(const std::string& m) {
+    const auto k = m.find_first_not_of(' ');
+    return m.c_str() + (k == std::string::npos ? m.size() : k);
+}
+
+static void write_errors(std::FILE* f, const std::vector<std::string>& errors,
+                         std::size_t from) {
+    constexpr std::size_t kMaxErrs = 100;
+    for (std::size_t i = from; i < errors.size() && i < kMaxErrs; ++i)
+        std::fprintf(f, "\n  %s", unindented(errors[i]));
+    if (errors.size() > kMaxErrs && from <= kMaxErrs)
+        std::fprintf(f, "\n  \n  Maximum error count exceeded.");
+}
+
 int DefaultReportPlugin::finalize(const SimulationContext& ctx) {
     // Flush any errors/warnings that accumulated during the simulation.
     // This ensures they are persisted even if write_summary() never runs.
     if (file_) {
-        for (std::size_t i = errors_written_; i < ctx.errors.size(); ++i)
-            std::fprintf(file_, "\n  %s", ctx.errors[i].c_str());
+        write_errors(file_, ctx.errors, errors_written_);
         errors_written_ = ctx.errors.size();
 
         for (std::size_t i = warnings_written_; i < ctx.warnings.size(); ++i)
-            std::fprintf(file_, "\n  %s", ctx.warnings[i].c_str());
+            std::fprintf(file_, "\n  %s", unindented(ctx.warnings[i]));
         warnings_written_ = ctx.warnings.size();
 
         std::fflush(file_);
@@ -223,15 +262,14 @@ int DefaultReportPlugin::write_summary(const SimulationContext& ctx) {
     if (!f) {
         // Fallback: prepare() was not called or file open failed.
         // Write the entire report monolithically.
-        f = std::fopen(rpt_path_.c_str(), "w");
+        f = openswmm::io::fopen_utf8(rpt_path_, "w");
         if (!f) return -1;
         write_preamble(f, ctx);
 
         // Write all errors/warnings
-        for (const auto& err : ctx.errors)
-            std::fprintf(f, "\n  %s", err.c_str());
+        write_errors(f, ctx.errors, 0);
         for (const auto& warn : ctx.warnings)
-            std::fprintf(f, "\n  %s", warn.c_str());
+            std::fprintf(f, "\n  %s", unindented(warn));
     }
 
     // Write result sections (continuity, statistics, summaries)
@@ -257,37 +295,42 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
     int fu = static_cast<int>(opt.flow_units);
     if (fu < 0 || fu > 5) fu = 0;
 
-    // Helper: has RDII?
-    bool has_rdii = !ctx.rdii_assigns.node_idx.empty();
-    // Helper: has groundwater?
-    bool has_gw = false;
-    for (int j = 0; j < ctx.n_subcatches(); ++j) {
-        if (ctx.subcatches.gw_aquifer[static_cast<std::size_t>(j)] >= 0) {
-            has_gw = true;
-            break;
-        }
-    }
-    // Helper: has snowmelt?
-    bool has_snow = !ctx.snowpacks.plowable.empty();
+    const ucf::DisplayUnits du_opt = ucf::DisplayUnits::from(opt);
 
     // =====================================================================
     // Title — matches legacy FMT01
     // =====================================================================
     std::fprintf(f, "\n  OPENSWMM ENGINE - VERSION %s", OPENSWMM_VERSION_FULL);
-    std::fprintf(f, "\n  -------------------------------------------");
+    std::fprintf(f, "\n  ------------------------------------------------------------");
+    std::fprintf(f, "\n");   // legacy FMT10
 
-    // [TITLE] content
-    for (const auto& line : ctx.title_notes)
-        std::fprintf(f, "\n  %s", line.c_str());
+    // Warnings raised while legacy reads the input (unknown section / option
+    // keyword) carry their own leading "\n  " and precede the title; the rest
+    // come from validation, after it.
+    for (const auto& warn : ctx.warnings)
+        if (!warn.empty() && warn[0] == '\n')
+            std::fprintf(f, "\n  %s", warn.c_str());
+
+    // [TITLE]: legacy keeps at most MAXTITLE (3) lines, skips comment lines,
+    // and stores each raw line with its line feed turned into a blank.
+    {
+        int n_title = 0;
+        for (const auto& line : ctx.title_notes) {
+            const auto first = line.find_first_not_of(" \t");
+            if (first == std::string::npos || line[first] == ';') continue;
+            if (n_title++ == 3) break;
+            std::fprintf(f, "\n  %s ", line.c_str());
+        }
+    }
 
     // Errors — matches legacy report_writeErrorMsg() format
-    for (const auto& err : ctx.errors)
-        std::fprintf(f, "\n  %s", err.c_str());
+    write_errors(f, ctx.errors, 0);
     errors_written_ = ctx.errors.size();
 
     // Warnings — matches legacy report_writeWarningMsg() format
     for (const auto& warn : ctx.warnings)
-        std::fprintf(f, "\n  %s", warn.c_str());
+        if (warn.empty() || warn[0] != '\n')
+            std::fprintf(f, "\n  %s", unindented(warn));
     warnings_written_ = ctx.warnings.size();
 
     // =====================================================================
@@ -303,10 +346,55 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
     std::fprintf(f, "\n  Number of nodes ........... %d", ctx.n_nodes());
     std::fprintf(f, "\n  Number of links ........... %d", ctx.n_links());
     std::fprintf(f, "\n  Number of pollutants ...... %d", ctx.n_pollutants());
-    std::fprintf(f, "\n  Number of land uses ....... 0");
+    std::fprintf(f, "\n  Number of land uses ....... %d",
+                 static_cast<int>(ctx.landuse_names.size()));
 
     WRITE(f, "");
     WRITE(f, "");
+
+    // =====================================================================
+    // Pollutant / Landuse Summary — legacy inputrpt.c
+    // =====================================================================
+    if (ctx.n_pollutants() > 0) {
+        static const char* const kQualUnits[] = {"MG/L", "UG/L", "#/L"};
+        WRITE(f, "*****************");
+        WRITE(f, "Pollutant Summary");
+        WRITE(f, "*****************");
+        std::fprintf(f, "\n                               Ppt.      GW         Kdecay");
+        std::fprintf(f, "\n  Name                 Units   Concen.   Concen.    1/days    CoPollutant");
+        std::fprintf(f, "\n  -----------------------------------------------------------------------");
+        const auto& P = ctx.pollutants;
+        for (int i = 0; i < ctx.n_pollutants(); ++i) {
+            const auto ui = static_cast<std::size_t>(i);
+            const int u = static_cast<int>(P.units[ui]);
+            std::fprintf(f, "\n  %-20s %5s%10.2f%10.2f%10.2f",
+                ctx.pollutant_names.name_of(i).c_str(),
+                (u >= 0 && u <= 2) ? kQualUnits[u] : "MG/L",
+                P.c_rain[ui], P.c_gw[ui], P.k_decay[ui] * 86400.0);
+            if (P.co_pollut[ui] >= 0)
+                std::fprintf(f, "    %-s  (%.2f)",
+                    ctx.pollutant_names.name_of(P.co_pollut[ui]).c_str(), P.co_frac[ui]);
+        }
+        WRITE(f, "");
+        WRITE(f, "");
+    }
+    if (ctx.landuse_names.size() > 0) {
+        WRITE(f, "***************");
+        WRITE(f, "Landuse Summary");
+        WRITE(f, "***************");
+        std::fprintf(f, "\n                         Sweeping   Maximum      Last");
+        std::fprintf(f, "\n  Name                   Interval   Removal     Swept");
+        std::fprintf(f, "\n  ---------------------------------------------------");
+        for (int i = 0; i < ctx.landuses.count(); ++i) {
+            const auto ui = static_cast<std::size_t>(i);
+            std::fprintf(f, "\n  %-20s %10.2f%10.2f%10.2f",
+                ctx.landuse_names.name_of(i).c_str(),
+                ctx.landuses.sweep_interval[ui], ctx.landuses.sweep_removal[ui],
+                ctx.landuses.last_swept[ui]);
+        }
+        WRITE(f, "");
+        WRITE(f, "");
+    }
 
     // =====================================================================
     // Raingage Summary — matches legacy inputrpt.c
@@ -364,17 +452,68 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
             const char* gage_name = (gage_idx >= 0) ? ctx.gage_names.name_of(gage_idx).c_str() : "";
             int out_node = ctx.subcatches.outlet_node[ui];
             const char* outlet_name = (out_node >= 0) ? ctx.node_names.name_of(out_node).c_str() : "";
+            // legacy prints the outlet subcatchment when it drains to one
+            const int out_sub = ctx.subcatches.outlet_subcatch[ui];
+            if (out_node < 0 && out_sub >= 0)
+                outlet_name = ctx.subcatch_names.name_of(out_sub).c_str();
 
             std::fprintf(f, "\n  %-20s %10.2f%10.2f%10.2f%10.4f %-20s %-20s",
                 name.c_str(),
                 ctx.subcatches.area[ui],
-                ctx.subcatches.width[ui],
+                ctx.subcatches.width[ui] * du_opt.length,
                 ctx.subcatches.frac_imperv[ui] * 100.0,
                 ctx.subcatches.slope[ui] * 100.0,
                 gage_name, outlet_name);
         }
         WRITE(f, "");
         WRITE(f, "");
+    }
+
+    // =====================================================================
+    // LID Control Summary — legacy lid_writeSummary, written when some
+    // subcatchment has LID area. Each subcatchment's units are listed in
+    // legacy lidList order, which is [LID_USAGE] order REVERSED (prepended).
+    // =====================================================================
+    {
+        const auto& LU = ctx.lid_usage;
+        bool any_lid = false;
+        for (int k = 0; k < LU.count() && !any_lid; ++k)
+            any_lid = LU.area[static_cast<std::size_t>(k)] *
+                      LU.number[static_cast<std::size_t>(k)] > 0.0;
+        if (any_lid) {
+            const double ucf_len  = du_opt.length;
+            const double ucf_len2 = ucf_len * ucf_len;
+            const double la_ft2   = landAreaToFt2(fu);
+            std::fprintf(f, "\n  *******************");
+            std::fprintf(f, "\n  LID Control Summary");
+            std::fprintf(f, "\n  *******************");
+            std::fprintf(f,
+"\n                                   No. of        Unit        Unit      %% Area    %% Imperv      %% Perv");
+            std::fprintf(f,
+"\n  Subcatchment     LID Control      Units        Area       Width     Covered     Treated     Treated");
+            std::fprintf(f,
+"\n  ---------------------------------------------------------------------------------------------------");
+            for (int j = 0; j < ctx.n_subcatches(); ++j) {
+                const double sub_area = ctx.subcatches.area[static_cast<std::size_t>(j)] * la_ft2;
+                for (int k = LU.count() - 1; k >= 0; --k) {
+                    const auto uk = static_cast<std::size_t>(k);
+                    if (LU.subcatch_index[uk] != j) continue;
+                    const double area  = LU.area[uk] / ucf_len2;      // lid.c:551
+                    const double width = LU.width[uk] / ucf_len;
+                    const int    lid   = LU.lid_index[uk];
+                    std::fprintf(f, "\n  %-16s %-16s",
+                        ctx.subcatch_names.name_of(j).c_str(),
+                        lid >= 0 ? ctx.lid_names.name_of(lid).c_str() : "");
+                    std::fprintf(f, "%6d  %10.2f  %10.2f  %10.2f  %10.2f  %10.2f",
+                        LU.number[uk], area * ucf_len2, width * ucf_len,
+                        area * LU.number[uk] / sub_area * 100.0,
+                        LU.from_imperv[uk] / 100.0 * 100.0,
+                        LU.from_perv[uk] / 100.0 * 100.0);
+                }
+            }
+            WRITE(f, "");
+            WRITE(f, "");
+        }
     }
 
     // =====================================================================
@@ -404,6 +543,7 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
         };
         mark(ctx.ext_inflows.node_idx);
         mark(ctx.dwf_inflows.node_idx);
+        mark(ctx.rdii_assigns.node_idx);   // legacy Node.rdiiInflow
 
         for (int i = 0; i < ctx.n_nodes(); ++i) {
             auto ui = static_cast<std::size_t>(i);
@@ -411,9 +551,9 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
             std::fprintf(f, "\n  %-20s %-16s%10.2f%10.2f%10.1f",
                 ctx.node_names.name_of(i).c_str(),
                 nt_str(nt),
-                ctx.nodes.invert_elev[ui],
-                ctx.nodes.full_depth[ui],
-                ctx.nodes.ponded_area[ui]);
+                ctx.nodes.invert_elev[ui] * du_opt.length,
+                ctx.nodes.full_depth[ui] * du_opt.length,
+                ctx.nodes.ponded_area[ui] * du_opt.length * du_opt.length);
             if (has_inflow[ui] != 0u) std::fprintf(f, "    Yes");
         }
         WRITE(f, "");
@@ -436,6 +576,9 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
             auto ui = static_cast<std::size_t>(i);
             int lt = static_cast<int>(ctx.links.type[ui]);
             int n1 = ctx.links.node1[ui], n2 = ctx.links.node2[ui];
+            // legacy lists the end nodes in their original orientation
+            const int dir = ctx.links.direction[ui];
+            if (dir < 0) std::swap(n1, n2);
             const char* n1_name = (n1 >= 0) ? ctx.node_names.name_of(n1).c_str() : "";
             const char* n2_name = (n2 >= 0) ? ctx.node_names.name_of(n2).c_str() : "";
 
@@ -445,11 +588,29 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
             if (lt == static_cast<int>(LinkType::CONDUIT)) {
                 const int cr = ctx.link_subtypes.conduit_row(i);
                 const auto& CD = ctx.link_subtypes.conduits;
+                // Legacy prints Conduit.roughness, which conduit_validate has
+                // replaced by the transect's channel n for an IRREGULAR
+                // conduit (link.c:1024); the stored value here stays authored.
+                double n_rep = (cr >= 0) ? CD.roughness[static_cast<size_t>(cr)] : 0.01;
+                if (cr >= 0 && ctx.links.xsect_shape[static_cast<size_t>(i)] == XsectShape::IRREGULAR) {
+                    const int ti = ctx.links.xsect_curve[static_cast<size_t>(i)];
+                    if (ti >= 0 && static_cast<size_t>(ti) < ctx.transects.n_channel.size() &&
+                        ctx.transects.n_channel[static_cast<size_t>(ti)] > 0.0)
+                        n_rep = ctx.transects.n_channel[static_cast<size_t>(ti)];
+                }
                 std::fprintf(f, "%-12s%10.1f%10.4f%10.4f",
                     "CONDUIT",
-                    (cr >= 0) ? CD.length[static_cast<size_t>(cr)] : 0.0,
-                    ((cr >= 0) ? CD.slope[static_cast<size_t>(cr)] : 0.0) * 100.0,
-                    (cr >= 0) ? CD.roughness[static_cast<size_t>(cr)] : 0.01);
+                    ((cr >= 0) ? CD.length[static_cast<size_t>(cr)] : 0.0) * du_opt.length,
+                    ((cr >= 0) ? CD.slope[static_cast<size_t>(cr)] : 0.0) * 100.0 * dir,
+                    n_rep);
+            } else if (lt == static_cast<int>(LinkType::PUMP)) {
+                // legacy "%-5s PUMP  " with PumpTypeWords; curve_type 1-5 is
+                // TYPE1..TYPE5, anything else (6, or no curve) is IDEAL
+                static const char* const kPumpWords[] =
+                    {"TYPE1", "TYPE2", "TYPE3", "TYPE4", "TYPE5"};
+                const int pr = ctx.link_subtypes.pump_row(i);
+                const int ct = (pr >= 0) ? ctx.link_subtypes.pumps.curve_type[static_cast<size_t>(pr)] : -1;
+                std::fprintf(f, "%-5s PUMP  ", (ct >= 1 && ct <= 5) ? kPumpWords[ct - 1] : "IDEAL");
             } else {
                 std::fprintf(f, "%-12s", lt_str(lt));
             }
@@ -461,13 +622,9 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
     // =====================================================================
     // Cross Section Summary — matches legacy inputrpt.c
     // =====================================================================
+    // legacy writes the heading whenever there are links, conduits or not
     if (ctx.n_links() > 0) {
-        bool any_conduit = false;
-        for (int i = 0; i < ctx.n_links(); ++i)
-            if (ctx.links.type[static_cast<std::size_t>(i)] == LinkType::CONDUIT)
-                { any_conduit = true; break; }
-
-        if (any_conduit) {
+        {
             WRITE(f, "*********************");
             WRITE(f, "Cross Section Summary");
             WRITE(f, "*********************");
@@ -486,18 +643,105 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
                 int shape = static_cast<int>(ctx.links.xsect_shape[ui]);
                 const char* shape_str = (shape >= 0 && shape <= 26) ?
                     XsectShapeWords[shape] : "CIRCULAR";
+                // legacy names a CUSTOM / IRREGULAR / STREET section by its
+                // curve, transect or street
+                const auto xs = ctx.links.xsect_shape[ui];
+                if ((xs == XsectShape::CUSTOM || xs == XsectShape::IRREGULAR ||
+                     xs == XsectShape::STREET_XSECT) &&
+                    !ctx.links.pump_curve_name[ui].empty())
+                    shape_str = ctx.links.pump_curve_name[ui].c_str();
 
                 const int cr = ctx.link_subtypes.conduit_row(i);
                 const auto& CD = ctx.link_subtypes.conduits;
                 std::fprintf(f, "\n  %-16s %-16s %8.2f %8.2f %8.2f %8.2f      %3d %8.2f",
                     ctx.link_names.name_of(i).c_str(),
                     shape_str,
-                    ctx.links.xsect_y_full[ui],
-                    ctx.links.xsect_a_full[ui],
-                    ctx.links.xsect_r_full[ui],
-                    ctx.links.xsect_w_max[ui],
+                    ctx.links.xsect_y_full[ui] * du_opt.length,
+                    ctx.links.xsect_a_full[ui] * du_opt.length * du_opt.length,
+                    ctx.links.xsect_r_full[ui] * du_opt.length,
+                    ctx.links.xsect_w_max[ui] * du_opt.length,
                     (cr >= 0) ? CD.barrels[static_cast<size_t>(cr)] : 1,
                     ((cr >= 0) ? CD.q_full[static_cast<size_t>(cr)] : 0.0) * Qcf_pre);
+            }
+            WRITE(f, "");
+            WRITE(f, "");
+        }
+    }
+
+    // =====================================================================
+    // Shape / Transect / Street Summary — legacy inputrpt.c: the normalized
+    // geometry tables, five values a row, entries 1..N-1.
+    // =====================================================================
+    {
+        auto tables = [&](const char* kind, const std::string& name,
+                          const transect::TransectData& td) {
+            std::fprintf(f, "\n\n  %s %s", kind, name.c_str());
+            const double* tbl[3] = {td.area_tbl, td.hrad_tbl, td.width_tbl};
+            const char* lbl[3] = {"Area:  ", "Hrad:  ", "Width: "};
+            for (int t = 0; t < 3; ++t) {
+                std::fprintf(f, "\n  %s", lbl[t]);
+                for (int m = 1; m < transect::N_TRANSECT_TBL; ++m) {
+                    if (m % 5 == 1) std::fprintf(f, "\n          ");
+                    std::fprintf(f, "%10.4f ", tbl[t][m]);
+                }
+            }
+        };
+
+        bool any_shape = false;
+        for (const auto& t : ctx.tables.tables)
+            if (t.type == TableType::CURVE_SHAPE) { any_shape = true; break; }
+        if (any_shape) {
+            WRITE(f, "*************");
+            WRITE(f, "Shape Summary");
+            WRITE(f, "*************");
+            for (const auto& t : ctx.tables.tables) {
+                if (t.type != TableType::CURVE_SHAPE) continue;
+                transect::TransectData td;    // unit height, as shape.c builds it
+                if (!t.x.empty())
+                    transect::buildCustomTables(td, 1.0, t.x.data(), t.y.data(),
+                                                static_cast<int>(t.x.size()));
+                tables("Shape", t.id, td);
+            }
+            WRITE(f, "");
+            WRITE(f, "");
+        }
+
+        const int nt = ctx.transects.count();
+        if (nt > 0) {
+            WRITE(f, "****************");
+            WRITE(f, "Transect Summary");
+            WRITE(f, "****************");
+            for (int i = 0; i < nt && i < static_cast<int>(ctx.transect_tables.size()); ++i) {
+                const auto& td = ctx.transect_tables[static_cast<std::size_t>(i)];
+                tables("Transect", td.name, td);
+            }
+            WRITE(f, "");
+            WRITE(f, "");
+        }
+
+        if (ctx.streets.count() > 0) {
+            WRITE(f, "**************");
+            WRITE(f, "Street Summary");
+            WRITE(f, "**************");
+            const int us = (fu >= 3) ? 1 : 0;
+            const double ucf_len = ucf::Ucf[ucf::LENGTH][us];
+            for (int s = 0; s < ctx.streets.count(); ++s) {
+                const auto su = static_cast<std::size_t>(s);
+                // as PostParseResolver builds it for a STREET cross section
+                street::StreetParams sp;
+                sp.width             = ctx.streets.t_crown[su]       / ucf_len;
+                sp.curb_height       = ctx.streets.h_curb[su]        / ucf_len;
+                sp.slope             = ctx.streets.sx[su]            / 100.0;
+                sp.roughness         = ctx.streets.n_road[su];
+                sp.gutter_depression = ctx.streets.gutter_depres[su] / ucf_len;
+                sp.gutter_width      = ctx.streets.gutter_width[su]  / ucf_len;
+                sp.sides             = ctx.streets.sides[su];
+                sp.back_width        = ctx.streets.back_width[su]    / ucf_len;
+                sp.back_slope        = ctx.streets.back_slope[su]    / 100.0;
+                sp.back_roughness    = ctx.streets.back_n[su];
+                transect::TransectData td;
+                street::buildTransect(sp, td);
+                tables("Street", ctx.streets.names[su], td);
             }
             WRITE(f, "");
             WRITE(f, "");
@@ -519,19 +763,16 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
     // Process Models — legacy report_writeOptions() prints NO when the ignore
     // flag is set OR the object class is empty (report.c:270-298).
     std::fprintf(f, "\n  Process Models:");
+    // The object classes are legacy's Nobjects[GAGE/UNITHYD/SNOWMELT/AQUIFER]:
+    // a declared object counts whether or not anything uses it.
     std::fprintf(f, "\n    Rainfall/Runoff ........ %s",
-                 (ctx.n_subcatches() > 0 && ctx.n_gages() > 0
-                  && !opt.ignore_rainfall) ? "YES" : "NO");
-    bool has_exp_decay = (ctx.rdii_decay.count() > 0);
+                 (ctx.n_gages() > 0 && !opt.ignore_rainfall) ? "YES" : "NO");
     std::fprintf(f, "\n    RDII ................... %s",
-                 (has_rdii && !opt.ignore_rdii)
-                     ? (has_exp_decay ? "YES (Exponential IA)"
-                                      : "YES (Linear IA)")
-                     : "NO");
+                 (ctx.unit_hyds.count() > 0 && !opt.ignore_rdii) ? "YES" : "NO");
     std::fprintf(f, "\n    Snowmelt ............... %s",
-                 (has_snow && !opt.ignore_snow_melt) ? "YES" : "NO");
+                 (ctx.snowpack_names.size() > 0 && !opt.ignore_snow_melt) ? "YES" : "NO");
     std::fprintf(f, "\n    Groundwater ............ %s",
-                 (has_gw && !opt.ignore_groundwater) ? "YES" : "NO");
+                 (ctx.aquifer_names.size() > 0 && !opt.ignore_groundwater) ? "YES" : "NO");
     std::fprintf(f, "\n    Flow Routing ........... %s",
                  (ctx.n_links() > 0 && !opt.ignore_routing) ? "YES" : "NO");
     if (ctx.n_links() > 0) {
@@ -540,6 +781,15 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
     }
     std::fprintf(f, "\n    Water Quality .......... %s",
                  (ctx.n_pollutants() > 0 && !opt.ignore_quality) ? "YES" : "NO");
+
+    // E2 — the Domain x Species transport matrix (TransportPolicy), printed
+    // only when the project uses a species class legacy does not have (water
+    // age, heat, MSX), so a legacy-equivalent report is unchanged.
+    if (ctx.options.water_age || ctx.options.heat_transport ||
+        (ctx.reactions.configured && ctx.reactions.compiled)) {
+        const auto matrix = openswmm::transport::resolve(ctx);
+        std::fprintf(f, "\n%s", openswmm::transport::formatReportBlock(matrix).c_str());
+    }
 
     if (ctx.n_subcatches() > 0) {
         int im = static_cast<int>(opt.infiltration);
@@ -554,6 +804,11 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
                             : (rm == 1) ? "KINWAVE"
                                         : "STEADY";
         std::fprintf(f, "\n  Flow Routing Method ...... %s", rm_name);
+
+        // TPA pressure closure (issue #156 Phase 4): FV, non-default only.
+        if (rm == 3 && opt.fv.pressure_closure == 1) {
+            std::fprintf(f, "\n  Pressure Closure ......... TPA");
+        }
 
         const char* xg_name = (opt.xsect_geometry == XsectGeometryMode::EXACT)
                               ? "EXACT" : "LEGACY";
@@ -586,6 +841,25 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
             std::fprintf(f, "\n  Anderson Acceleration .... %s",
                          opt.anderson_accel ? "YES" : "NO");
         }
+
+        // Unsteady friction (issue #156): applies to DW and FV alike.
+        if ((rm == 2 || rm == 3) && opt.unsteady_friction != 0) {
+            std::fprintf(f, "\n  Unsteady Friction ........ VITKOVSKY (k3 = %g)",
+                         opt.uf_k3);
+        }
+
+    }
+
+    // Legacy prints the surcharge method for DYNWAVE even with no links.
+    if (static_cast<int>(opt.routing_model) == 2) { // DYNWAVE
+        int sm = opt.surcharge_method;
+        const char* sm_name = (sm >= 0 && sm <= 3) ? SurchargeWords[sm] : "EXTRAN";
+        std::fprintf(f, "\n  Surcharge Method ......... %s", sm_name);
+        // v6-only options, shown only when changed from the default.
+        if (opt.node_continuity == NodeContinuity::SEMI_IMPLICIT)
+            std::fprintf(f, "\n  Node Continuity .......... SEMI_IMPLICIT");
+        if (opt.anderson_accel)
+            std::fprintf(f, "\n  Anderson Acceleration .... YES");
     }
 
     dateToStr(opt.start_date, ds, sizeof(ds));
@@ -598,13 +872,14 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
 
     std::fprintf(f, "\n  Antecedent Dry Days ...... %.1f", opt.dry_days);
 
-    secsToHMS(static_cast<int>(opt.report_step), buf, sizeof(buf));
+    // Legacy formats these through datetime_encodeTime, which wraps at 24 h.
+    secsToHMS(static_cast<int>(opt.report_step) % 86400, buf, sizeof(buf));
     std::fprintf(f, "\n  Report Time Step ......... %s", buf);
 
     if (ctx.n_subcatches() > 0) {
-        secsToHMS(static_cast<int>(opt.wet_step), buf, sizeof(buf));
+        secsToHMS(static_cast<int>(opt.wet_step) % 86400, buf, sizeof(buf));
         std::fprintf(f, "\n  Wet Time Step ............ %s", buf);
-        secsToHMS(static_cast<int>(opt.dry_step), buf, sizeof(buf));
+        secsToHMS(static_cast<int>(opt.dry_step) % 86400, buf, sizeof(buf));
         std::fprintf(f, "\n  Dry Time Step ............ %s", buf);
     }
 
@@ -614,9 +889,14 @@ void DefaultReportPlugin::write_preamble(std::FILE* f,
         if (static_cast<int>(opt.routing_model) == 2) { // DYNWAVE
             std::fprintf(f, "\n  Variable Time Step ....... %s",
                          opt.variable_step > 0.0 ? "YES" : "NO");
-            std::fprintf(f, "\n  Maximum Trials ........... %d", opt.max_trials);
+            // 0 = default; legacy dynwave_validate substitutes 8 before printing.
+            std::fprintf(f, "\n  Maximum Trials ........... %d",
+                         opt.max_trials > 0 ? opt.max_trials : 8);
             std::fprintf(f, "\n  Number of Threads ........ %d", opt.num_threads);
-            std::fprintf(f, "\n  Head Tolerance ........... %f ft", opt.head_tol);
+            std::fprintf(f, "\n  Head Tolerance ........... %f %s",
+                         // authored in user units; the default is 0.005 ft
+                         opt.head_tol == 0.0 ? 0.005 * du_opt.length : opt.head_tol,
+                         du_opt.unit_system == 1 ? "m" : "ft");
         }
     }
 
@@ -648,8 +928,18 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     const double len_ucf   = du.length;      // ft  → ft | m  (depth/HGL/velocity)
     const double svol_ucf  = du.volume;      // ft³ → ft³ | m³ (storage volume)
     const char*  len_word  = du.length_word; // Feet | Meters
-    const double Vcf       = du.mvol;         // node inflow/flooding volume column
+    // legacy statsrpt.c's own factor for every summary-table volume
+    // (7.48 gal/ft3, 28.317 L/ft3 — not the massbal/continuity constants).
+    const double Vcf       = si_report ? 28.317 / 1.0e6 : 7.48 / 1.0e6;
     const char*  vol_word  = du.mvol_word;    // 10^6 gal | 10^6 ltr
+    // legacy report.c continuity factors: UCF(LENGTH) * UCF(LANDAREA) for
+    // acre-feet / hectare-m, and MGDperCFS (MLDperCFS) / SECperDAY for the
+    // 10^6 gal (ltr) column.
+    const int    cont_us   = si_report ? 1 : 0;
+    const double cont_vcf1 = ucf::Ucf[ucf::LENGTH][cont_us] * ucf::Ucf[ucf::LANDAREA][cont_us];
+    const double cont_vcf2 = si_report ? 2.4466 / 86400.0 : 0.64632 / 86400.0;
+    const double cont_mass = ucf::Ucf[ucf::MASS][cont_us];   // mg -> lb | kg
+    const char*  load_word = si_report ? "kg" : "lbs";
     const char*  depth_word = du.depth_word;  // in | mm (rainfall/runoff depth)
 
     bool has_rdii = !ctx.rdii_assigns.node_idx.empty();
@@ -664,7 +954,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // RDII Continuity — matches legacy report_writeRdiiError()
     // =====================================================================
-    if (has_rdii && opt.rpt_continuity) {
+    // legacy writes it from rdii_closeRdii, which never runs under
+    // IGNORE_RAINFALL (swmm5.c:735 skips rain_open) or IGNORE_RDII
+    if (has_rdii && opt.rpt_continuity && !opt.ignore_rainfall && !opt.ignore_rdii) {
         const auto& mb = ctx.mass_balance;
         double total_area_ft2 = 0.0;
         for (int i = 0; i < ctx.n_subcatches(); ++i)
@@ -673,8 +965,8 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         double sewer_rain = mb.runoff_rainfall;
         double rdii_prod = mb.routing_rdii;
         double ratio = (sewer_rain > 0.0) ? rdii_prod / sewer_rain : 0.0;
-        double ucf1 = land_vcf;
-        double ucf2 = mvol_vcf;
+        double ucf1 = cont_vcf1;
+        double ucf2 = cont_vcf2;
 
         std::fprintf(f, "\n  **********************           Volume        Volume");
         std::fprintf(f, si_report
@@ -692,12 +984,16 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Runoff Quantity Continuity — matches legacy report_writeRunoffError()
     // =====================================================================
-    if (opt.rpt_continuity) {
+    // legacy massbal_report: only with subcatchments of some area; printed
+    // under CONTINUITY or when the error exceeds MAX_RUNOFF_BALANCE_ERR (10).
+    {
         const auto& mb = ctx.mass_balance;
         double total_area_ft2 = 0.0;
         for (int i = 0; i < ctx.n_subcatches(); ++i)
             total_area_ft2 += ctx.subcatches.area[static_cast<std::size_t>(i)] * landAreaToFt2(fu);
-
+        const double runoff_err_pct = mb.runoff_error() * 100.0;
+        if (ctx.n_subcatches() > 0 && total_area_ft2 > 0.0 &&
+            (opt.rpt_continuity || runoff_err_pct > 10.0)) {
         std::fprintf(f, "\n  **************************        Volume         Depth");
         std::fprintf(f, si_report
             ? "\n  Runoff Quantity Continuity     hectare-m            mm"
@@ -705,29 +1001,14 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         std::fprintf(f, "\n  **************************     ---------       -------");
 
         auto row = [&](const char* label, double vol_ft3) {
-            double af = vol_ft3 * land_vcf;
-            double depth_in = (total_area_ft2 > 0.0) ? vol_ft3 / total_area_ft2 * depth_vcf : 0.0;
+            double af = vol_ft3 * cont_vcf1;
+            double depth_in = vol_ft3 / total_area_ft2 * depth_vcf;
             std::fprintf(f, "\n  %s%14.3f%14.3f", label, af, depth_in);
         };
-
-        // F8 — the three snow rows the ledger never had. Guarded on the
-        // project having snowpacks at all, matching legacy's
-        // `Nobjects[SNOWMELT] > 0` (report.c:519, 560) rather than on the
-        // values being nonzero: a deck WITH packs that shows 0.000 here is
-        // saying something, and a deck without them should not carry the
-        // rows at all. Row ORDER matches legacy exactly, because these
-        // tables are read side by side against EPA SWMM output.
-        //
-        // The existing "Initial Storage" label is LEFT ALONE even though
-        // legacy calls the same row "Initial LID Storage". Renaming it is not
-        // part of this defect, and the 14-deck corpus compares report bytes —
-        // a label change would move decks that have nothing to do with snow
-        // and buy nothing. Recorded here so the difference is a decision
-        // rather than an oversight.
         const bool has_snow = ctx.snowpack_names.size() > 0;
 
         if (mb.runoff_init_store > 0.0)
-            row("Initial Storage ..........", mb.runoff_init_store);
+            row("Initial LID Storage ......", mb.runoff_init_store);
         if (has_snow)
             row("Initial Snow Cover .......", mb.runoff_init_snow);
         row("Total Precipitation ......", mb.runoff_rainfall);
@@ -736,86 +1017,84 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         row("Evaporation Loss .........", mb.runoff_evap);
         row("Infiltration Loss ........", mb.runoff_infil);
         row("Surface Runoff ...........", mb.runoff_runoff);
+        if (mb.runoff_lid_drain > 0.0)
+            row("LID Drainage .............", mb.runoff_lid_drain);
         if (has_snow) {
             row("Snow Removed .............", mb.runoff_snowremov);
             row("Final Snow Cover .........", mb.runoff_final_snow);
         }
         row("Final Storage ............", mb.runoff_final_store);
 
-        std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", mb.runoff_error() * 100.0);
+        std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", runoff_err_pct);
+        WRITE(f, "");
+        WRITE(f, "");
+        }
     }
 
-    WRITE(f, "");
-    WRITE(f, "");
-
     // =====================================================================
-    // Runoff Quality Continuity — Gap #73, matches legacy writeRunoffQualError()
-    // Internal units: buildup-derived fields are in display mass (lbs for US);
-    //                 volumetric mass fields (wet dep, infil, runoff) are in mg.
+    // Runoff Quality Continuity — matches legacy report_writeLoadingError():
+    // up to five pollutants per block, side by side. Totals are user mass;
+    // COUNT pollutants print LOG10 (legacy LOG10 macro: non-positive values
+    // pass through). Error: |in - out| < 0.001 -> 0 (TINY), else relative
+    // to the larger side's convention (massbal_getLoadingError).
     // =====================================================================
-    if (opt.rpt_continuity && ctx.n_pollutants() > 0 && !opt.ignore_quality) {
-        int np = ctx.n_pollutants();
+    if (ctx.n_subcatches() > 0 && ctx.n_pollutants() > 0 && !opt.ignore_quality) {
+        const int np = ctx.n_pollutants();
         const auto& mb = ctx.mass_balance;
-
+        auto at = [](const std::vector<double>& v, int p) {
+            return (static_cast<std::size_t>(p) < v.size()) ? v[static_cast<std::size_t>(p)] : 0.0;
+        };
+        auto logn = [](double x) { return x > 0.0 ? std::log10(x) : x; };
+        std::vector<std::array<double, 9>> vals(static_cast<std::size_t>(np));
+        double max_err = 0.0;
         for (int p = 0; p < np; ++p) {
-            auto up = static_cast<std::size_t>(p);
-            MassUnits mu = (up < ctx.pollutants.units.size()) ?
-                            ctx.pollutants.units[up] : MassUnits::MG_PER_L;
-            const char* mu_str;
-            if (mu == MassUnits::COUNTS_PER_L) {
-                mu_str = "#";
-            } else {
-                mu_str = "lbs";
+            const double in_  = at(mb.qual_init_buildup, p) + at(mb.qual_surface_buildup, p) +
+                                at(mb.qual_wet_deposition, p);
+            const double out_ = at(mb.qual_sweeping, p) + at(mb.qual_infil_loss, p) +
+                                at(mb.qual_bmp_removal, p) + at(mb.qual_runoff_load, p) +
+                                at(mb.qual_final_buildup, p);
+            double err = 0.0;
+            if (std::fabs(in_ - out_) < 0.001) err = 0.0;
+            else if (in_ > 0.0)  err = 100.0 * (1.0 - out_ / in_);
+            else if (out_ > 0.0) err = 100.0 * (in_ / out_ - 1.0);
+            max_err = std::max(max_err, err);
+            auto& v = vals[static_cast<std::size_t>(p)];
+            v = { at(mb.qual_init_buildup, p), at(mb.qual_surface_buildup, p),
+                  at(mb.qual_wet_deposition, p), at(mb.qual_sweeping, p),
+                  at(mb.qual_infil_loss, p), at(mb.qual_bmp_removal, p),
+                  at(mb.qual_runoff_load, p), at(mb.qual_final_buildup, p), err };
+            const bool counts = static_cast<std::size_t>(p) < ctx.pollutants.units.size() &&
+                                ctx.pollutants.units[static_cast<std::size_t>(p)] == MassUnits::COUNTS_PER_L;
+            if (counts) for (int k = 0; k < 8; ++k) v[static_cast<std::size_t>(k)] = logn(v[static_cast<std::size_t>(k)]);
+        }
+        if (opt.rpt_continuity || max_err > 10.0) {
+            static const char* labels[9] = {
+                "Initial Buildup ..........", "Surface Buildup ..........",
+                "Wet Deposition ...........", "Sweeping Removal .........",
+                "Infiltration Loss ........", "BMP Removal ..............",
+                "Surface Runoff ...........", "Remaining Buildup ........",
+                "Continuity Error (%) ....." };
+            for (int p1 = 0; p1 < np; p1 += 5) {
+                const int p2 = std::min(p1 + 5, np);
+                std::fprintf(f, "\n  **************************");
+                for (int p = p1; p < p2; ++p)
+                    std::fprintf(f, "%14s", ctx.pollutant_names.name_of(p).c_str());
+                std::fprintf(f, "\n  Runoff Quality Continuity ");
+                for (int p = p1; p < p2; ++p) {
+                    const bool counts = static_cast<std::size_t>(p) < ctx.pollutants.units.size() &&
+                        ctx.pollutants.units[static_cast<std::size_t>(p)] == MassUnits::COUNTS_PER_L;
+                    std::fprintf(f, "%14s", counts ? "LogN" : load_word);
+                }
+                std::fprintf(f, "\n  **************************");
+                for (int p = p1; p < p2; ++p) std::fprintf(f, "    ----------");
+                for (int k = 0; k < 9; ++k) {
+                    std::fprintf(f, "\n  %s", labels[k]);
+                    for (int p = p1; p < p2; ++p)
+                        std::fprintf(f, "%14.3f", vals[static_cast<std::size_t>(p)][static_cast<std::size_t>(k)]);
+                }
+                WRITE(f, "");
+                WRITE(f, "");
             }
-
-            auto getVal = [&](const std::vector<double>& v) -> double {
-                return (up < v.size()) ? v[up] : 0.0;
-            };
-
-            double init_bu  = getVal(mb.qual_init_buildup);
-            double surf_bu  = getVal(mb.qual_surface_buildup);
-            double wet_dep  = getVal(mb.qual_wet_deposition);
-            double sweep    = getVal(mb.qual_sweeping);
-            double bmp      = getVal(mb.qual_bmp_removal);
-            double infil    = getVal(mb.qual_infil_loss);
-            double runoff   = getVal(mb.qual_runoff_load);
-            double final_bu = getVal(mb.qual_final_buildup);
-
-            std::fprintf(f, "\n  **************************%14s",
-                         ctx.pollutant_names.name_of(p).c_str());
-            std::fprintf(f, "\n  Runoff Quality Continuity%15s", mu_str);
-            std::fprintf(f, "\n  **************************    ----------");
-
-            std::fprintf(f, "\n  Initial Buildup ..........%14.3f", init_bu);
-            std::fprintf(f, "\n  Surface Buildup ..........%14.3f", surf_bu);
-            std::fprintf(f, "\n  Wet Deposition ...........%14.3f", wet_dep);
-            std::fprintf(f, "\n  Sweeping Removal .........%14.3f", sweep);
-            std::fprintf(f, "\n  Infiltration Loss ........%14.3f", infil);
-            std::fprintf(f, "\n  BMP Removal ..............%14.3f", bmp);
-            std::fprintf(f, "\n  Surface Runoff ...........%14.3f", runoff);
-            std::fprintf(f, "\n  Remaining Buildup ........%14.3f", final_bu);
-
-            double total_in  = init_bu + surf_bu + wet_dep;
-            double total_out = sweep + bmp + infil + runoff + final_bu;
-            // Legacy's THREE branches (massbal.c:900-911). The third is the
-            // one this site lacked, and this is the site the user reads: the
-            // 2026-08-23 API fix landed in swmm_get_quality_continuity_error
-            // and left the printed row on the two-branch form, so a deck
-            // that discharged mass it never received still printed 0.000 --
-            // which is the exact symptom Finding 10 was raised on.
-            double err_pct;
-            if (std::fabs(total_in - total_out) < 0.001)
-                err_pct = 0.0;
-            else if (total_in > 0.0)
-                err_pct = (total_in - total_out) / total_in * 100.0;
-            else if (total_out > 0.0)
-                err_pct = (total_in - total_out) / total_out * 100.0;
-            else
-                err_pct = 0.0;
-            std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", err_pct);
-
-            WRITE(f, "");
-            WRITE(f, "");
         }
     }
 
@@ -836,7 +1115,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
         // Volume conversion: ft³ → acre-ft (multiply by UCF(LANDAREA) for US)
         // Legacy: totals->x * UCF(LENGTH) * UCF(LANDAREA) — for US = x * 1.0 * 2.2957e-5
-        double ucf_vol = land_vcf;  // ft³ → acre-ft (US) | hectare-m (SI)
+        double ucf_vol = cont_vcf1;  // ft³ → acre-ft (US) | hectare-m (SI)
         // Depth conversion: ft³ / gwArea → ft → inches (US) | mm (SI)
         double ucf_dep = depth_vcf;
 
@@ -854,6 +1133,12 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
         gwRow("Initial Storage ..........", mb.gw_init_storage);
         gwRow("Infiltration .............", mb.gw_infil);
+        // U3 (track I-b): the 2D surface's share of that infiltration, named
+        // so a user can see the cross-domain transfer. Printed only when a
+        // deck actually routes it (INFIL_DESTINATION SUBCATCH_AQUIFER); it
+        // is INSIDE the Infiltration row above, not a second inflow.
+        if (mb.gw_infil_2d_recharge != 0.0)
+            gwRow("  of which from 2D .......", mb.gw_infil_2d_recharge);
         gwRow("Upper Zone ET ............", mb.gw_upper_evap);
         gwRow("Lower Zone ET ............", mb.gw_lower_evap);
         gwRow("Deep Percolation .........", mb.gw_lower_perc);
@@ -882,7 +1167,10 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // Flow Routing Continuity — matches legacy report_writeFlowError()
     // (report.c:288: suppressed when routing is ignored).
     // =====================================================================
-    if (opt.rpt_continuity && !opt.ignore_routing) {
+    // legacy massbal_report: nodes present and routing on; printed under
+    // CONTINUITY or when the error exceeds MAX_FLOW_BALANCE_ERR (10).
+    if (ctx.n_nodes() > 0 && !opt.ignore_routing &&
+        (opt.rpt_continuity || ctx.mass_balance.routing_error() * 100.0 > 10.0)) {
         const auto& mb = ctx.mass_balance;
         std::fprintf(f, "\n  **************************        Volume        Volume");
         std::fprintf(f, si_report
@@ -890,22 +1178,36 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             : "\n  Flow Routing Continuity        acre-feet      10^6 gal");
         std::fprintf(f, "\n  **************************     ---------     ---------");
 
-        double ucf1 = land_vcf;
-        double ucf2 = mvol_vcf;
+        double ucf1 = cont_vcf1;
+        double ucf2 = cont_vcf2;
 
         auto row = [&](const char* label, double vol_ft3) {
             std::fprintf(f, "\n  %s%14.3f%14.3f", label, vol_ft3 * ucf1, vol_ft3 * ucf2);
         };
 
-        row("Dry Weather Inflow .......", mb.routing_dry_weather);
-        row("Wet Weather Inflow .......", mb.routing_wet_weather);
-        row("Groundwater Inflow .......", mb.routing_gw_inflow);
-        row("RDII Inflow ..............", mb.routing_rdii);
-        row("External Inflow ..........", mb.routing_external);
-        row("External Outflow .........", mb.routing_outflow);
-        row("Flooding Loss ............", mb.routing_flooding);
-        row("Evaporation Loss .........", mb.routing_evap_loss);
-        row("Exfiltration Loss ........", mb.routing_seep_loss);
+        // The printed terms are legacy's half-step totals (routing_report).
+        const auto& rr = mb.routing_report;
+        row("Dry Weather Inflow .......", rr[0]);
+        row("Wet Weather Inflow .......", rr[1]);
+        row("Groundwater Inflow .......", rr[2]);
+        // G-X4: a gaining reach — the two-zone aquifer feeding a conduit that
+        // runs below the water table. Printed only when non-zero, so every
+        // deck without the signed conduit exchange keeps its report
+        // line-for-line.
+        if (rr[3] != 0.0)
+            row("Conduit GW Inflow ........", rr[3]);
+        row("RDII Inflow ..............", rr[4]);
+        row("External Inflow ..........", rr[5]);
+        row("External Outflow .........", rr[8]);
+        row("Flooding Loss ............", rr[6]);
+        // C2: the 1D→2D coupling spill, split out of Flooding Loss. Printed
+        // only when non-zero so an uncoupled model's report is unchanged
+        // line-for-line. (COUPLING_IN_FLOODING YES puts it back in the row
+        // above and leaves this one at zero, hence hidden.)
+        if (rr[7] != 0.0)
+            row("2D Coupling Outflow ......", rr[7]);
+        row("Evaporation Loss .........", rr[9]);
+        row("Exfiltration Loss ........", rr[10]);
         row("Initial Stored Volume ....", mb.routing_init_storage);
         row("Final Stored Volume ......", mb.routing_final_storage);
 
@@ -919,7 +1221,21 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 row("Final Slot Storage .......", slot_ft3);
         }
 
-        std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", mb.routing_error() * 100.0);
+        // legacy massbal_getFlowError: signed terms move sides; |in - out|
+        // under 1 ft3 reads 0 (TINY).
+        {
+            double tin  = mb.routing_init_storage + rr[1] + rr[4] + rr[3];
+            double tout = mb.routing_final_storage + rr[6] + rr[7] + rr[9] + rr[10];
+            if (rr[0] >= 0.0) tin += rr[0]; else tout -= rr[0];
+            if (rr[2] >= 0.0) tin += rr[2]; else tout -= rr[2];
+            if (rr[5] >= 0.0) tin += rr[5]; else tout -= rr[5];
+            if (rr[8] >= 0.0) tout += rr[8]; else tin -= rr[8];
+            double pct = 0.0;
+            if (std::fabs(tin - tout) < 1.0)   pct = 0.0;
+            else if (std::fabs(tin) > 0.0)     pct = 100.0 * (1.0 - tout / tin);
+            else if (std::fabs(tout) > 0.0)    pct = 100.0 * (tin / tout - 1.0);
+            std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", pct);
+        }
     }
 
     // =====================================================================
@@ -945,15 +1261,123 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         row2("1D -> 2D Spill Inflow ....", mb2.coupling_1d_to_2d_in);
         row2("Outfall Inflow ...........", mb2.outfall_in);
         row2("Boundary Inflow ..........", mb2.boundary_in);
+        if(mb2.external_in!=0.0) row2("Runtime Source Inflow ....", mb2.external_in);
+        if(mb2.external_out!=0.0) row2("Runtime Source Outflow ...", mb2.external_out);
         row2("2D -> 1D Drain Outflow ...", mb2.coupling_2d_to_1d_out);
         row2("Outfall Withdrawal .......", mb2.outfall_out);
         row2("Boundary Outflow .........", mb2.boundary_out);
         row2("Evaporation Loss .........", mb2.evap_out);
         row2("Infiltration Loss ........", mb2.infil_out);
+        // G1-c item 1: the SUBCATCH_AQUIFER share — delivered to the legacy
+        // aquifer (the same number the Groundwater Continuity block prints as
+        // "of which from 2D", in ft³) and the tail still in flight at the end.
+        if (mb2.infil_to_aquifer > 0.0 || mb2.infil_aquifer_pending > 0.0) {
+            row2("  to Aquifer (delivered) .", mb2.infil_to_aquifer);
+            row2("  to Aquifer (in flight) .", mb2.infil_aquifer_pending);
+        }
         row2("Final Stored Volume ......", mb2.final_storage);
 
         std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f",
                      mb2.error() * 100.0);
+
+#ifdef OPENSWMM_HAS_2D
+        // G-O: the two-zone [2D_AQUIFER] ledger, the same terms the .h5
+        // /groundwater_2d group and groundwater_ledger series carry. Recharge
+        // and capillary rise are internal (unsaturated <-> saturated zone of
+        // the same cell) and are listed for information, not in the balance.
+        if (ctx.twod_io.aquifer_state && ctx.twod_io.aquifer_state->active) {
+            const auto& g = *ctx.twod_io.aquifer_state;
+            WRITE(f, "");
+            WRITE(f, "");
+            std::fprintf(f, "\n  **************************        Volume        Volume");
+            std::fprintf(f, "\n  2D Aquifer Continuity          cubic meters      10^6 ltr");
+            std::fprintf(f, "\n  **************************     ---------     ---------");
+            row2("Initial Stored Volume ....", g.led_init_storage);
+            row2("Infiltration Inflow ......", g.led_infil_in);
+            row2("Conduit Seepage Inflow ...", g.led_link);   // G-X3
+            if (g.led_source_in != 0.0) row2("Named Source Injection ...", g.led_source_in);
+            if (g.led_source_out != 0.0) row2("Named Source Extraction ..", g.led_source_out);
+            row2("Lateral Net Inflow .......", g.led_lateral);
+            row2("Deep Percolation .........", g.led_deep);
+            row2("Node Exchange Outflow ....", g.led_node);
+            row2("Subsurface ET ............", g.led_et);
+            row2("Saturation Excess Return .", g.led_dunne);
+            row2("Final Stored Volume ......", g.liveStorage());
+            row2("  (Recharge, internal) ...", g.led_recharge);
+            row2("  (Capillary Rise, int.) .", g.led_caprise);
+            const double denom = g.led_init_storage + g.led_infil_in + g.led_link + g.led_source_in +   // G-X3
+                                 std::max(0.0, g.led_lateral);
+            std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f",
+                         (denom > 0.0) ? g.continuityResidual() / denom * 100.0 : 0.0);
+        }
+
+        // T7.5: the aquifer's SPECIES continuity, one block per transported
+        // row — the quality twin of the water block above, and the only
+        // place a modeller sees where a plume went. Printed only when the
+        // kernel actually carried a tuple, so a water-only aquifer deck's
+        // report is unchanged line-for-line.
+        if (ctx.twod_io.aquifer_transport != nullptr &&
+            ctx.twod_io.aquifer_transport->active()) {
+            const auto& t = *ctx.twod_io.aquifer_transport;
+            for (int sp = 0; sp < t.n_species; ++sp) {
+                const auto u = static_cast<std::size_t>(sp);
+                const std::string& nm =
+                    (u < t.row_names.size()) ? t.row_names[u] : std::string("?");
+                WRITE(f, "");
+                WRITE(f, "");
+                std::fprintf(f, "\n  **************************%14s", nm.c_str());
+                std::fprintf(f, "\n  2D Aquifer Quality Continuity%11s", "mass");
+                std::fprintf(f, "\n  **************************    ----------");
+                auto qrow = [&](const char* label, double v) {
+                    std::fprintf(f, "\n  %s%14.4f", label, v);
+                };
+                qrow("Initial Stored Mass ......", t.init_mass[u]);
+                qrow("Infiltration Inflow ......", t.gained_infil[u]);
+                if (t.gained_node[u] != 0.0)
+                    qrow("Node Exchange Inflow .....", t.gained_node[u]);
+                if (t.gained_link[u] != 0.0)
+                    qrow("Conduit Seepage Inflow ...", t.gained_link[u]);
+                if (t.gained_source[u] != 0.0) qrow("Named Source Injection ...", t.gained_source[u]);
+                if (t.lost_source[u] != 0.0) qrow("Named Source Extraction ..", t.lost_source[u]);
+                qrow("Lateral Net Inflow .......", t.net_lateral[u]);
+                qrow("Deep Percolation .........", t.lost_deep[u]);
+                qrow("Node Exchange Outflow ....", t.lost_node[u]);
+                if (t.lost_link[u] != 0.0)
+                    qrow("Conduit Seepage Outflow ..", t.lost_link[u]);
+                qrow("Saturation Excess Return .", t.lost_dunne[u]);
+                qrow("Evapotranspiration .......", t.lost_et[u]);
+                if (t.lost_reaction[u] != 0.0)
+                    qrow("Reacted / Decayed ........", t.lost_reaction[u]);
+                qrow("Final Stored Mass ........", t.ledgeredStorage(sp));
+                // The denominator is the scale the residual is judged
+                // against: what the aquifer started with plus every route
+                // mass can arrive by.
+                //
+                // T7.4 (2026-09-21): the sum lives on the state, beside the
+                // residual it scales, so a new channel cannot be added to one
+                // and forgotten in the other — which is exactly what happened
+                // when T7.4 added the node and link seams and this block's
+                // own copy kept dividing by three terms.
+                //
+                // T7.4b (2026-09-21): when the scale is zero there is no
+                // percentage to print. This used to print 0.000, which claims
+                // a perfect balance where the truth is that the question is
+                // unanswerable — and with the denominator now naming every
+                // route, a zero scale beside a NON-zero residual is precisely
+                // the signature of a route nobody has booked yet. Printing
+                // 0 % there would hide the next instance of the bug this
+                // denominator was fixed for, so it prints `n/a` instead.
+                const double denom = t.continuityDenominator(sp);
+                if (denom > 0.0)
+                    std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f",
+                                 t.residual(sp) / denom * 100.0);
+                else
+                    std::fprintf(f, "\n  Continuity Error (%%) .....%14s",
+                                 "n/a");
+            }
+        }
+
+#endif
 
         // 2D Solver Statistics — cumulative marcher throughput. Printed only
         // when populated (>=0).
@@ -1025,12 +1449,21 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             rowx("Net 1D -> 2D .............", spill_1d - drain_1d);
 
             // Flow-routing continuity with the exchange internal: remove the
-            // drain from external inflow and the spill from flooding loss.
+            // drain from external inflow and the spill from whichever outflow
+            // category carries it.
+            //
+            // C2: the spill now lives in routing_coupling_out by default, and
+            // only in routing_flooding under COUPLING_IN_FLOODING. Subtracting
+            // it from the SUM of the two is correct in both groupings and
+            // needs no branch — the category it is not in contributes zero.
             const double in_adj  = mb1.routing_dry_weather + mb1.routing_wet_weather
-                                 + mb1.routing_gw_inflow + mb1.routing_rdii
+                                 + mb1.routing_gw_inflow
+                                 + mb1.routing_link_gw_inflow   // G-X4
+                                 + mb1.routing_rdii
                                  + (mb1.routing_external - drain_1d)
                                  + mb1.routing_init_storage;
-            const double out_adj = (mb1.routing_flooding - spill_1d)
+            const double out_adj = (mb1.routing_flooding
+                                    + mb1.routing_coupling_out - spill_1d)
                                  + mb1.routing_outflow + mb1.routing_evap_loss
                                  + mb1.routing_seep_loss + mb1.routing_final_storage;
             const double err_adj = (in_adj > 0.0)
@@ -1045,116 +1478,122 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     WRITE(f, "");
 
     // =====================================================================
-    // Quality Routing Continuity — Gap #71, matches legacy writeQualError()
-    // (report.c:298: suppressed when there are no pollutants or quality is ignored).
+    // Quality Routing Continuity — matches legacy report_writeQualError():
+    // five pollutants per block. Raw totals are concentration x ft3; the
+    // error is taken on them (massbal_getQualError) before conversion:
+    // x LperFT3 x UCF(MASS) (/1000 for ug), or LOG10(LperFT3 x) for counts.
     // =====================================================================
-    if (opt.rpt_continuity && ctx.n_pollutants() > 0 && !opt.ignore_quality) {
-        int np = ctx.n_pollutants();
+    if (ctx.n_nodes() > 0 && !opt.ignore_routing &&
+        ctx.n_pollutants() > 0 && !opt.ignore_quality) {
+        const int np = ctx.n_pollutants();
         const auto& mb = ctx.mass_balance;
-        // Internal mass unit: conc (mg/L or ug/L) × volume (ft³)
-        // Convert to lbs: × (28.317 L/ft³) / (453592 mg/lb) for MG_PER_L
-        //                  × (28.317 L/ft³) / (453592000 ug/lb) for UG_PER_L
-        static constexpr double LT_PER_FT3 = 28.317;
+        static constexpr double LperFT3 = 28.317;
+        auto at = [](const std::vector<double>& v, int p) {
+            return (static_cast<std::size_t>(p) < v.size()) ? v[static_cast<std::size_t>(p)] : 0.0;
+        };
+        std::vector<std::array<double, 12>> vals(static_cast<std::size_t>(np));
+        double max_err = 0.0;
         for (int p = 0; p < np; ++p) {
-            auto up = static_cast<std::size_t>(p);
-            MassUnits mu = (up < ctx.pollutants.units.size()) ?
-                            ctx.pollutants.units[up] : MassUnits::MG_PER_L;
-            const char* mu_str;
-            double mass_cf;
-            if (mu == MassUnits::COUNTS_PER_L) {
-                mu_str = "#";
-                mass_cf = 1.0;
-            } else if (mu == MassUnits::UG_PER_L) {
-                mu_str = "lbs";
-                mass_cf = LT_PER_FT3 / 453592000.0;
-            } else {
-                mu_str = "lbs";
-                mass_cf = LT_PER_FT3 / 453592.0;
+            std::array<double, 11> raw = {
+                at(mb.qual_routing_dw_in, p), at(mb.qual_routing_wet, p),
+                at(mb.qual_routing_gw_in, p), at(mb.qual_routing_ii_in, p),
+                at(mb.qual_routing_ex_in, p), at(mb.qual_routing_outflow, p),
+                at(mb.qual_routing_flood, p), at(mb.qual_routing_seep, p),
+                at(mb.qual_routing_reacted, p), at(mb.qual_routing_init, p),
+                at(mb.qual_routing_final, p) };
+            const double in_  = raw[0] + raw[1] + raw[2] + raw[3] + raw[4] + raw[9];
+            const double out_ = raw[6] + raw[5] + raw[8] + raw[7] + raw[10];
+            double err = 0.0;
+            if (std::fabs(in_ - out_) < 0.001) err = 0.0;
+            else if (in_ > 0.0)  err = 100.0 * (1.0 - out_ / in_);
+            else if (out_ > 0.0) err = 100.0 * (in_ / out_ - 1.0);
+            if (std::fabs(err) > std::fabs(max_err)) max_err = err;
+            const MassUnits mu = (static_cast<std::size_t>(p) < ctx.pollutants.units.size())
+                ? ctx.pollutants.units[static_cast<std::size_t>(p)] : MassUnits::MG_PER_L;
+            auto& v = vals[static_cast<std::size_t>(p)];
+            for (int k = 0; k < 11; ++k) {
+                const double x = raw[static_cast<std::size_t>(k)];
+                double y;
+                if (mu == MassUnits::COUNTS_PER_L) {
+                    const double z = LperFT3 * x;
+                    y = z > 0.0 ? std::log10(z) : z;
+                } else {
+                    double cf = LperFT3 * cont_mass;
+                    if (mu == MassUnits::UG_PER_L) cf /= 1000.0;
+                    y = x * cf;
+                }
+                v[static_cast<std::size_t>(k)] = y;
             }
-
-            std::fprintf(f, "\n  **************************%14s", ctx.pollutant_names.name_of(p).c_str());
-            std::fprintf(f, "\n  Quality Routing Continuity%14s", mu_str);
-            std::fprintf(f, "\n  **************************    ----------");
-
-            auto qrow = [&](const char* label, double raw) {
-                std::fprintf(f, "\n  %s%14.3f", label, raw * mass_cf);
-            };
-
-            double wet     = (up < mb.qual_routing_wet.size())      ? mb.qual_routing_wet[up]      : 0.0;
-            double rdii    = (up < mb.qual_routing_ii_in.size())     ? mb.qual_routing_ii_in[up]    : 0.0;
-            double dwf     = (up < mb.qual_routing_dw_in.size())     ? mb.qual_routing_dw_in[up]    : 0.0;
-            double gw      = (up < mb.qual_routing_gw_in.size())     ? mb.qual_routing_gw_in[up]    : 0.0;
-            double ext     = (up < mb.qual_routing_ex_in.size())     ? mb.qual_routing_ex_in[up]    : 0.0;
-            double outflow = (up < mb.qual_routing_outflow.size())   ? mb.qual_routing_outflow[up]  : 0.0;
-            double flood   = (up < mb.qual_routing_flood.size())     ? mb.qual_routing_flood[up]    : 0.0;
-            double seep    = (up < mb.qual_routing_seep.size())      ? mb.qual_routing_seep[up]     : 0.0;
-            double reacted = (up < mb.qual_routing_reacted.size())   ? mb.qual_routing_reacted[up]  : 0.0;
-            double init    = (up < mb.qual_routing_init.size())      ? mb.qual_routing_init[up]     : 0.0;
-            double final_  = (up < mb.qual_routing_final.size())     ? mb.qual_routing_final[up]    : 0.0;
-            qrow("Dry Weather Inflow .......", dwf);
-            qrow("Wet Weather Inflow .......", wet);
-            qrow("Groundwater Inflow .......", gw);
-            qrow("RDII Inflow ..............", rdii);
-            qrow("External Inflow ..........", ext);
-            qrow("External Outflow .........", outflow);
-            qrow("Flooding Loss ............", flood);
-            qrow("Exfiltration Loss ........", seep);
-            qrow("Mass Reacted .............", reacted);
-            qrow("Initial Stored Mass ......", init);
-            qrow("Final Stored Mass ........", final_);
-
-            double total_in  = wet + rdii + dwf + gw + ext + init;
-            double total_out = outflow + flood + reacted + seep + final_;
-            double err_pct = (total_in > 0.0) ? (total_in - total_out) / total_in * 100.0 : 0.0;
-            std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", err_pct);
-
-            WRITE(f, "");
-            WRITE(f, "");
+            v[11] = err;
+        }
+        if (opt.rpt_continuity || max_err > 10.0) {
+            static const char* labels[12] = {
+                "Dry Weather Inflow .......", "Wet Weather Inflow .......",
+                "Groundwater Inflow .......", "RDII Inflow ..............",
+                "External Inflow ..........", "External Outflow .........",
+                "Flooding Loss ............", "Exfiltration Loss ........",
+                "Mass Reacted .............", "Initial Stored Mass ......",
+                "Final Stored Mass ........", "Continuity Error (%) ....." };
+            for (int p1 = 0; p1 < np; p1 += 5) {
+                const int p2 = std::min(p1 + 5, np);
+                std::fprintf(f, "\n  **************************");
+                for (int p = p1; p < p2; ++p)
+                    std::fprintf(f, "%14s", ctx.pollutant_names.name_of(p).c_str());
+                std::fprintf(f, "\n  Quality Routing Continuity");
+                for (int p = p1; p < p2; ++p) {
+                    const bool counts = static_cast<std::size_t>(p) < ctx.pollutants.units.size() &&
+                        ctx.pollutants.units[static_cast<std::size_t>(p)] == MassUnits::COUNTS_PER_L;
+                    std::fprintf(f, "%14s", counts ? "LogN" : load_word);
+                }
+                std::fprintf(f, "\n  **************************");
+                for (int p = p1; p < p2; ++p) std::fprintf(f, "    ----------");
+                for (int k = 0; k < 12; ++k) {
+                    std::fprintf(f, "\n  %s", labels[k]);
+                    for (int p = p1; p < p2; ++p)
+                        std::fprintf(f, "%14.3f", vals[static_cast<std::size_t>(p)][static_cast<std::size_t>(k)]);
+                }
+                WRITE(f, "");
+                WRITE(f, "");
+            }
         }
     }
 
     // =====================================================================
     // Highest Continuity Errors — matches legacy report_writeMaxStats()
     // =====================================================================
-    if (opt.rpt_continuity) {
-        WRITE(f, "*************************");
-        WRITE(f, "Highest Continuity Errors");
-        WRITE(f, "*************************");
-
-        // Find top 5 nodes by continuity error
+    // legacy stats_findMaxStats + report_writeMaxStats: dynamic wave with
+    // links, under FLOWSTATS. Nodes with links and more than 0.1 ft3 of
+    // inflow; error = 1 - outflow/inflow (outflow includes final storage);
+    // the five largest by magnitude above 1 % (the slots start at -1.0),
+    // earlier nodes winning ties. Nothing qualifies -> no section.
+    const bool dw_like = opt.routing_model == RoutingModel::DYNWAVE ||
+                         opt.routing_model == RoutingModel::FV;
+    if (opt.rpt_flowstats && dw_like && ctx.n_links() > 0) {
         struct NodeError { int idx; double error; };
         std::vector<NodeError> errors;
         for (int j = 0; j < ctx.n_nodes(); ++j) {
             auto uj = static_cast<std::size_t>(j);
-            double in_vol  = ctx.nodes.stat_total_inflow_vol[uj];
-            // Final stored volume counts as outflow, matching legacy
-            // massbal_getStorage (massbal.c: NodeOutflow[j] += newVolume at the
-            // final period) — a node that ends the run holding its inflow is
-            // balanced, not a 100% loss.
-            double out_vol = ctx.nodes.stat_total_outflow_vol[uj]
-                           + ctx.nodes.stat_vol_flooded[uj]
-                           + ctx.nodes.volume[uj];
-            double denom = std::max(in_vol, out_vol);
-            if (denom < 1.0) continue; // skip nodes with negligible flow
-            double err_pct = 100.0 * (in_vol - out_vol) / denom;
-            if (std::fabs(err_pct) > 0.1) {
-                errors.push_back({j, err_pct});
-            }
+            if (ctx.nodes.degree[uj] <= 0) continue;
+            const double in_vol = ctx.nodes.stat_total_inflow_vol[uj];
+            if (in_vol <= 0.1) continue;
+            const double out_vol = ctx.nodes.stat_total_outflow_vol[uj] +
+                                   ctx.nodes.volume[uj];
+            const double x = 100.0 * (1.0 - out_vol / in_vol);
+            if (std::fabs(x) > 1.0) errors.push_back({j, x});
         }
-        std::sort(errors.begin(), errors.end(),
+        std::stable_sort(errors.begin(), errors.end(),
             [](const NodeError& a, const NodeError& b) {
                 return std::fabs(a.error) > std::fabs(b.error);
             });
-
-        if (errors.empty()) {
-            WRITE(f, "No errors.");
-        } else {
-            int count = std::min(5, static_cast<int>(errors.size()));
-            for (int i = 0; i < count; ++i) {
+        if (!errors.empty()) {
+            WRITE(f, "*************************");
+            WRITE(f, "Highest Continuity Errors");
+            WRITE(f, "*************************");
+            const int count = std::min(5, static_cast<int>(errors.size()));
+            for (int i = 0; i < count; ++i)
                 std::fprintf(f, "\n  Node %s (%.2f%%)",
                     ctx.node_names.name_of(errors[i].idx).c_str(),
                     errors[i].error);
-            }
         }
     }
 
@@ -1169,6 +1608,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Time-Step Critical Elements — matches legacy report_writeMaxStats()
     // =====================================================================
+    // legacy report_writeMaxStats: dynamic wave with links, variable step.
+    if (opt.routing_model == RoutingModel::DYNWAVE && ctx.n_links() > 0 &&
+        opt.variable_step != 0.0) {
     WRITE(f, "***************************");
     WRITE(f, "Time-Step Critical Elements");
     WRITE(f, "***************************");
@@ -1186,6 +1628,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         }
         if (k == 0) std::fprintf(f, "\n  None");
     }
+    }
 
     WRITE(f, "");
     WRITE(f, "");
@@ -1193,10 +1636,13 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Highest Flow Instability Indexes
     // =====================================================================
+    // legacy report_writeMaxFlowTurns; a top entry at index 0 reads as
+    // "stable" there (index <= 0) and is reproduced.
+    if (ctx.n_links() > 0) {
     WRITE(f, "********************************");
     WRITE(f, "Highest Flow Instability Indexes");
     WRITE(f, "********************************");
-    if (ctx.max_flow_turns[0].index < 0 || ctx.max_flow_turns[0].value <= 0.0) {
+    if (ctx.max_flow_turns[0].index <= 0) {
         std::fprintf(f, "\n  All links are stable.");
     } else {
         for (int i = 0; i < SimulationContext::MAX_STATS; ++i) {
@@ -1206,6 +1652,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                          ctx.link_names.name_of(ms.index).c_str(), ms.value);
         }
     }
+    }
 
     WRITE(f, "");
     WRITE(f, "");
@@ -1213,13 +1660,16 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Most Frequent Nonconverging Nodes
     // =====================================================================
+    // legacy report_writeNonconvergedStats: dynamic wave only; index <= 0
+    // reads as converged there, reproduced.
+    // stats_report writes the accuracy tables only with links (stats.c:339)
+    if (ctx.n_nodes() > 0 && ctx.n_links() > 0 &&
+        opt.routing_model == RoutingModel::DYNWAVE) {
     WRITE(f, "*********************************");
     WRITE(f, "Most Frequent Nonconverging Nodes");
     WRITE(f, "*********************************");
     {
-        const auto& rs = ctx.routing_stats;
-        if (rs.n_non_converged == 0 ||
-            ctx.max_non_converged[0].index < 0 ||
+        if (ctx.max_non_converged[0].index <= 0 ||
             ctx.max_non_converged[0].value < 0.00005) {
             WRITE(f, "Convergence obtained at all time steps.");
         } else {
@@ -1232,6 +1682,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             }
         }
     }
+    }
 
     WRITE(f, "");
     WRITE(f, "");
@@ -1239,11 +1690,16 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Routing Time Step Summary — matches legacy report.c
     // =====================================================================
+    // legacy report_writeTimeStepStats: nothing without links or steps.
+    if (ctx.n_links() > 0 && ctx.routing_stats.n_steps > 0) {
     WRITE(f, "*************************");
     WRITE(f, "Routing Time Step Summary");
     WRITE(f, "*************************");
     {
         const auto& rs = ctx.routing_stats;
+        const double t_total = rs.steady_time + rs.sum_step;
+        const double steady_pct =
+            std::min(t_total > 0.0 ? 100.0 * rs.steady_time / t_total : 0.0, 100.0);
         if (rs.n_steps > 0) {
             std::fprintf(f, "\n  Minimum Time Step           :  %7.2f sec",
                          rs.min_step < 1.0e30 ? rs.min_step : 0.0);
@@ -1252,7 +1708,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             std::fprintf(f, "\n  Maximum Time Step           :  %7.2f sec",
                          rs.max_step);
             std::fprintf(f, "\n  %% of Time in Steady State   :  %7.2f",
-                         rs.steady_pct);
+                         steady_pct);
             // FV has no Picard loop, so what the counter holds is the number
             // of explicit SUBSTEPS the step was filled with. Printing that
             // under the iteration label reads as catastrophic non-convergence
@@ -1275,15 +1731,16 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             // Time step frequency table
             // Build histogram if not already built
             // (bins built at end of simulation in engine)
-            bool has_bins = false;
-            for (int i = 0; i < rs.N_TIME_BINS; ++i) {
-                if (rs.step_counts[i] > 0) { has_bins = true; break; }
-            }
-            if (has_bins) {
+            // legacy report_RouteStepFreq: variable-step dynamic wave only,
+            // as shares of the binned steps.
+            long binned = 0;
+            for (int i = 0; i < rs.N_TIME_BINS; ++i) binned += rs.step_counts[i];
+            if (opt.routing_model == RoutingModel::DYNWAVE &&
+                opt.variable_step > 0.0 && binned > 0) {
                 std::fprintf(f, "\n  Time Step Frequencies       :");
                 for (int i = 0; i < rs.N_TIME_BINS; ++i) {
                     double pct = 100.0 * static_cast<double>(rs.step_counts[i])
-                                 / static_cast<double>(rs.n_steps);
+                                 / static_cast<double>(binned);
                     std::fprintf(f, "\n     %6.3f - %6.3f sec      :  %7.2f %%",
                         rs.step_intervals[i],
                         rs.step_intervals[i+1],
@@ -1292,6 +1749,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             }
         }
     }
+    }  // links and counted steps
 
     // =====================================================================
     // FV Solver Statistics — cumulative explicit-integrator throughput, the
@@ -1324,6 +1782,13 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         std::fprintf(f, "\n  Avg Substep (s) ..........%14.6f", rs.fv_avg_h);
         std::fprintf(f, "\n  Min Substep (s) ..........%14.6f", rs.fv_min_h);
         std::fprintf(f, "\n  Last Substep (s) .........%14.6f", rs.fv_last_h);
+        // Whether local time stepping ever ran a macro cycle. The tier
+        // occupancy rows below are filled by the tier ASSIGNMENT, which runs
+        // whether or not a cycle fits the routing step, so on their own they
+        // cannot distinguish "tiering did not help" from "tiering never
+        // engaged" — these two rows can.
+        srow("LTS Macro Cycles Fired ...", rs.fv_macro_cycles);
+        srow("LTS Macro Cycles Rejected ", rs.fv_macro_rejected);
 
         // Compaction telemetry: the share of faces on the active list at each
         // rebuild. A mean near 1.0 means compaction is finding nothing to skip.
@@ -1443,6 +1908,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             "\n  Name                 Conduit          Conduit               Maximum          Mean");
         std::fprintf(f,
             "\n  ------------------------------------------------------------------------------------");
+        bool any_fed = false;
         for (std::size_t r = 0; r < ctx.vj_diag.node_idx.size(); ++r) {
             const int ni = ctx.vj_diag.node_idx[r];
             const int ju = ctx.vj_diag.up_link[r];
@@ -1450,17 +1916,116 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             const long long n = ctx.vj_diag.resid_n[r];
             const double mean = (n > 0)
                 ? ctx.vj_diag.resid_sum[r] / static_cast<double>(n) : 0.0;
-            std::fprintf(f, "\n  %-20s %-16s %-16s %13.6f %13.6f",
-                ctx.node_names.name_of(ni).c_str(),
-                (ju >= 0) ? ctx.link_names.name_of(ju).c_str() : "*",
-                (jd >= 0) ? ctx.link_names.name_of(jd).c_str() : "*",
-                ctx.vj_diag.resid_max[r], mean);
+            // A virtual junction fed by a lateral inflow (plans/
+            // VJ_LATERAL_INFLOW_PLAN_2026-09-04.md) legitimately shows a
+            // nonzero residual — the added mass carries no momentum — so
+            // the row says so. Unfed rows keep the original format.
+            const auto uni = static_cast<std::size_t>(ni);
+            const double max_lat = (ni >= 0 && uni < ctx.nodes.stat_max_lat_inflow.size())
+                ? ctx.nodes.stat_max_lat_inflow[uni] : 0.0;
+            // Signed statistic (an inlet junction's capture sink is negative).
+            if (std::fabs(max_lat) > 0.0) {
+                std::fprintf(f, "\n  %-20s %-16s %-16s %13.6f %13.6f   lateral %.3f %s",
+                    ctx.node_names.name_of(ni).c_str(),
+                    (ju >= 0) ? ctx.link_names.name_of(ju).c_str() : "*",
+                    (jd >= 0) ? ctx.link_names.name_of(jd).c_str() : "*",
+                    ctx.vj_diag.resid_max[r], mean,
+                    max_lat * Qcf, FlowUnitWords[fu]);
+                any_fed = true;
+            } else {
+                std::fprintf(f, "\n  %-20s %-16s %-16s %13.6f %13.6f",
+                    ctx.node_names.name_of(ni).c_str(),
+                    (ju >= 0) ? ctx.link_names.name_of(ju).c_str() : "*",
+                    (jd >= 0) ? ctx.link_names.name_of(jd).c_str() : "*",
+                    ctx.vj_diag.resid_max[r], mean);
+            }
         }
+        if (any_fed)
+            std::fprintf(f, "\n  (lateral: maximum lateral inflow at the node; "
+                            "its residual includes the added zero-momentum mass)");
         WRITE(f, "");
         WRITE(f, "");
     }
 
     } // end rpt_flowstats
+
+    // =====================================================================
+    // Conduit Time Step Summary — [REPORT] LINK_STEPS (OpenSWMM extension,
+    // off by default). Per conduit: min / time-weighted average / max local
+    // step, the share of time spent in each log2 step range below the routing
+    // step, and (DW) the share of steps with both end nodes converged.
+    // =====================================================================
+    if (opt.rpt_link_steps && ctx.n_links() > 0) {
+        const int mode = ctx.routing_stats.lstep_mode;
+        WRITE(f, "");
+        WRITE(f, "");
+        WRITE(f, "*************************");
+        WRITE(f, "Conduit Time Step Summary");
+        WRITE(f, "*************************");
+        if (mode == 0) {
+            WRITE(f, "Not available for this routing method.");
+        } else {
+            constexpr int NB = LinkData::N_LSTEP_BINS;
+            const double rs = opt.routing_step;
+            if (mode == 1) {
+                WRITE(f, "Dynamic wave: the CFL time step each conduit allows (Courant factor");
+                WRITE(f, "applied, capped at the routing step); all conduits advance at the");
+                WRITE(f, "global routing step. Dry conduits set no limit and are not sampled.");
+            } else {
+                WRITE(f, "Finite volume: the local time step each conduit took (its finest");
+                WRITE(f, "cell under local time stepping, else the global substep).");
+            }
+            // Bin labels: (rs/2,rs], (rs/4,rs/2], ..., (0, rs/2^(NB-1)].
+            char lbl[NB][24];
+            for (int b = 0; b < NB; ++b) {
+                const double hi = rs / static_cast<double>(1 << b);
+                if (b < NB - 1)
+                    std::snprintf(lbl[b], sizeof lbl[b], "%.3g-%.3g", 0.5 * hi, hi);
+                else
+                    std::snprintf(lbl[b], sizeof lbl[b], "<=%.3g", hi);
+            }
+            // Columns: name 20 | 3 x " %8" | " " | NB x " %12" | "  %9".
+            const std::string rule = "\n  " + std::string(20 + 27 + 1 + 13 * NB + 11, '-');
+            std::string band = " % of Time with Step in Range (sec) ";
+            const std::size_t bw = static_cast<std::size_t>(13 * NB - 1);
+            const std::size_t pad = (bw > band.size()) ? bw - band.size() : 0;
+            band = std::string(pad / 2, '-') + band + std::string(pad - pad / 2, '-');
+            std::fprintf(f, "\n");
+            std::fprintf(f, "%s", rule.c_str());
+            std::fprintf(f, "\n  %-20s %8s %8s %8s  %s  %9s", "", "Minimum", "Average",
+                         "Maximum", band.c_str(), "Percent");
+            std::fprintf(f, "\n  %-20s %8s %8s %8s ", "Conduit", "Step", "Step", "Step");
+            for (int b = 0; b < NB; ++b) std::fprintf(f, " %12s", lbl[b]);
+            std::fprintf(f, "  %9s", "Converged");
+            std::fprintf(f, "%s", rule.c_str());
+
+            const auto& L = ctx.links;
+            for (int j = 0; j < ctx.n_links(); ++j) {
+                const auto uj = static_cast<std::size_t>(j);
+                if (L.type[uj] != LinkType::CONDUIT || !L.rpt_flag[uj]) continue;
+                std::fprintf(f, "\n  %-20s", ctx.link_names.name_of(j).c_str());
+                const double tt = L.stat_lstep_time[uj];
+                if (tt > 0.0) {
+                    std::fprintf(f, " %8.4f %8.4f %8.4f ", L.stat_lstep_min[uj],
+                                 L.stat_lstep_dt_time[uj] / tt, L.stat_lstep_max[uj]);
+                    for (int b = 0; b < NB; ++b)
+                        std::fprintf(f, " %12.2f",
+                            100.0 * L.stat_lstep_bin_time[uj * NB + static_cast<std::size_t>(b)] / tt);
+                } else {
+                    std::fprintf(f, " %8s %8s %8s ", "-", "-", "-");
+                    for (int b = 0; b < NB; ++b) std::fprintf(f, " %12s", "-");
+                }
+                if (mode == 1 && L.stat_conv_total[uj] > 0)
+                    std::fprintf(f, "  %9.2f",
+                        100.0 * static_cast<double>(L.stat_conv_steps[uj]) /
+                        static_cast<double>(L.stat_conv_total[uj]));
+                else
+                    std::fprintf(f, "  %9s", "-");
+            }
+            std::fprintf(f, "%s", rule.c_str());
+        }
+        WRITE(f, "");
+    }
 
     // =====================================================================
     // Rainfall File Summary — matches legacy report_writeRainStats().
@@ -1518,14 +2083,12 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // Logged by ControlEngine::applyPendingActions() when rpt_controls == true.
     // =====================================================================
     if (opt.rpt_controls) {
-        WRITE(f, "**********************");
+        WRITE(f, "*********************");
         WRITE(f, "Control Actions Taken");
-        WRITE(f, "**********************");
+        WRITE(f, "*********************");
 
-        if (ctx.control_log.empty()) {
-            WRITE(f, "");
-            WRITE(f, "No control actions were taken.");
-        } else {
+        // legacy writes only the heading when no action was taken
+        if (!ctx.control_log.empty()) {
             // Match legacy report_writeControlAction() exactly:
             //   "  %11s: %8s Link %s setting changed to %6.2f by Control %s"
             // with absolute calendar date/time (not elapsed days).
@@ -1536,13 +2099,23 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 char datebuf[16], timebuf[16];
                 std::snprintf(datebuf, sizeof(datebuf), "%02d/%02d/%04d", mo, dy, yr);
                 std::snprintf(timebuf, sizeof(timebuf), "%02d:%02d:%02d", hr, mn, sc);
+                const char* rule_name =
+                    (entry.rule_idx >= 0
+                     && entry.rule_idx < static_cast<int>(ctx.control_rule_names.size()))
+                        ? ctx.control_rule_names[static_cast<std::size_t>(entry.rule_idx)].c_str()
+                        : "Rule?";
                 std::fprintf(f,
                     "\n  %11s: %8s Link %s setting changed to %6.2f by Control %s",
                     datebuf, timebuf,
                     ctx.link_names.name_of(entry.link_idx).c_str(),
                     entry.new_setting,
-                    entry.rule_name.c_str());
+                    rule_name);
             }
+            if (ctx.control_log_dropped > 0)
+                std::fprintf(f,
+                    "\n  (%zu further control actions not listed: the log is "
+                    "capped at %zu entries)",
+                    ctx.control_log_dropped, SimulationContext::kMaxControlLog);
         }
 
         WRITE(f, "");
@@ -1552,7 +2125,14 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Subcatchment Runoff Summary — matches legacy writeSubcatchRunoff()
     // =====================================================================
-    if (ctx.n_subcatches() > 0 && opt.rpt_subcatchments != 0) {
+    // legacy statsrpt_writeReport writes the runoff tables (this one, LID
+    // performance, groundwater, washoff) only when rainfall, snowmelt or
+    // groundwater is analyzed (statsrpt.c:103-113).
+    const bool runoff_rpt = ctx.n_subcatches() > 0 &&
+        (!opt.ignore_rainfall ||
+         (ctx.snowpack_names.size() > 0 && !opt.ignore_snow_melt) ||
+         (ctx.aquifer_names.size() > 0 && !opt.ignore_groundwater));
+    if (runoff_rpt) {
         WRITE(f, "***************************");
         WRITE(f, "Subcatchment Runoff Summary");
         WRITE(f, "***************************");
@@ -1619,7 +2199,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // while the ledger row printed 16057× them (known-mass audit,
     // QUALITY_LEDGER_UNITS_AUDIT §7).
     // =====================================================================
-    if (ctx.n_subcatches() > 0 && ctx.n_pollutants() > 0 && opt.rpt_subcatchments != 0
+    if (runoff_rpt && ctx.n_pollutants() > 0
         && !opt.ignore_quality) {
         int ns = ctx.n_subcatches();
         int np = ctx.n_pollutants();
@@ -1672,9 +2252,105 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     }
 
     // =====================================================================
+    // BW-MSX (2026-09-19): the reactions component's species that build up
+    // and wash off — same layout as the pollutant block, user mass per
+    // species (MG/UG species print lbs/kg; other units print "mass").
+    // =====================================================================
+    {
+        const auto& ms = ctx.reactions.surface;
+        if (ms.active() && ctx.n_subcatches() > 0
+            && !opt.ignore_quality) {
+            const int ns = ctx.n_subcatches();
+            const int nm = ms.n_species;
+            WRITE(f, "********************************");
+            WRITE(f, "Subcatchment MSX Washoff Summary");
+            WRITE(f, "********************************");
+            std::fprintf(f, "\n");
+            std::fprintf(f, " \n  ----------------------------------");
+            for (int m = 1; m < nm; ++m) std::fprintf(f, "--------------");
+            std::fprintf(f, " \n                                ");
+            for (int m = 0; m < nm; ++m)
+                std::fprintf(f, "%14s", ctx.reactions.species_name[static_cast<std::size_t>(m)].c_str());
+            std::fprintf(f, " \n  Subcatchment                  ");
+            for (int m = 0; m < nm; ++m) {
+                const double mcf = ms.mcf[static_cast<std::size_t>(m)];
+                std::fprintf(f, "%14s", (mcf == 1.0) ? "mass" : (si_report ? "kg" : "lbs"));
+            }
+            std::fprintf(f, " \n  ----------------------------------");
+            for (int m = 1; m < nm; ++m) std::fprintf(f, "--------------");
+            std::vector<double> sys(static_cast<std::size_t>(nm), 0.0);
+            for (int j = 0; j < ns; ++j) {
+                std::fprintf(f, "\n  %-30s", ctx.subcatch_names.name_of(j).c_str());
+                for (int m = 0; m < nm; ++m) {
+                    const double v = ms.led_subcatch_load[ms.sidx(j, m)];
+                    sys[static_cast<std::size_t>(m)] += v;
+                    std::fprintf(f, "%14.3f", v);
+                }
+            }
+            std::fprintf(f, " \n  ----------------------------------");
+            for (int m = 1; m < nm; ++m) std::fprintf(f, "--------------");
+            std::fprintf(f, "\n  System                        ");
+            for (int m = 0; m < nm; ++m) std::fprintf(f, "%14.3f", sys[static_cast<std::size_t>(m)]);
+            WRITE(f, "");
+            std::fprintf(f, "  Surface ledger (species: initial buildup, net buildup, washed to network, swept, BMP removed):\n");
+            for (int m = 0; m < nm; ++m) {
+                const auto um = static_cast<std::size_t>(m);
+                std::fprintf(f, "    %-16s %14.3f %14.3f %14.3f %14.3f %14.3f\n",
+                             ctx.reactions.species_name[um].c_str(),
+                             ms.led_init_buildup[um], ms.led_buildup[um],
+                             ms.led_runoff_load[um], ms.led_sweeping[um], ms.led_bmp_removal[um]);
+            }
+            WRITE(f, "");
+            WRITE(f, "");
+        }
+    }
+
+#ifdef OPENSWMM_HAS_2D
+    // S7: 2D Surface Washoff Summary — the cells' land-use surfaces, per
+    // surface species (pollutants, then MSX). The same ledger rows as the
+    // subcatchment blocks above, in the same user mass, plus the store left
+    // on the mesh; "washed" is what entered the cell rows (it reaches the
+    // network through the coupling tuple, so it is not a node load here).
+    {
+        const auto* sq = ctx.twod_io.surface_quality;
+        if (sq && sq->active() && !opt.ignore_quality) {
+            const int nsp = sq->nSpecies();
+            WRITE(f, "**************************");
+            WRITE(f, "2D Surface Washoff Summary");
+            WRITE(f, "**************************");
+            std::fprintf(f, "\n");
+            std::fprintf(f, "  Cells: %d  Land uses: %d  (buildup per %s)\n",
+                         sq->nCells(), sq->nLandUses(), si_report ? "hectare" : "acre");
+            std::fprintf(f, "  %-16s %14s %14s %14s %14s %14s %14s\n", "Species",
+                         "Init Buildup", "Net Buildup", "Washed Off", "Swept", "BMP Removed", "On Mesh");
+            for (int sidx = 0; sidx < nsp; ++sidx) {
+                const auto us = static_cast<std::size_t>(sidx);
+                double store = 0.0;
+                if (ctx.twod_io.mesh) {
+                    const auto& mesh = *ctx.twod_io.mesh;
+                    const double to_la = si_report ? 1.0e-4 : 1.0 / 4046.8564224;   // m² → ha | acre
+                    for (int c = 0; c < sq->nCells(); ++c)
+                        store += sq->buildupPerArea(c, sidx) *
+                                 mesh.tri_area[static_cast<std::size_t>(c)] * to_la;
+                }
+                std::fprintf(f, "  %-16s %14.3f %14.3f %14.3f %14.3f %14.3f %14.3f\n",
+                             sq->speciesName(sidx).c_str(),
+                             sq->ledInitBuildup()[us], sq->ledBuildup()[us], sq->ledWashoff()[us],
+                             sq->ledSweeping()[us], sq->ledBmp()[us], store);
+            }
+            std::fprintf(f, "  (%s; a reactions species declared in UG or as a count keeps its own unit)\n",
+                         si_report ? "kg" : "lbs");
+            WRITE(f, "");
+            WRITE(f, "");
+        }
+    }
+
+#endif
+
+    // =====================================================================
     // Groundwater Summary — matches legacy writeGroundwater()
     // =====================================================================
-    if (has_gw && opt.rpt_subcatchments != 0 && !opt.ignore_groundwater) {
+    if (runoff_rpt && has_gw && !opt.ignore_groundwater) {
         WRITE(f, "*******************");
         WRITE(f, "Groundwater Summary");
         WRITE(f, "*******************");
@@ -1723,7 +2399,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // wb_* fields are in ft depth; convert to inches (× 12).
     // Data is copied from LIDGroupSoA to ctx.lid_usage.wb_* in SWMMEngine::report().
     // =====================================================================
-    if (ctx.lid_usage.count() > 0 && opt.rpt_subcatchments != 0) {
+    if (runoff_rpt && ctx.lid_usage.count() > 0) {
         int n_usage = ctx.lid_usage.count();
         bool has_lids = false;
         for (int j = 0; j < n_usage; ++j) {
@@ -1784,7 +2460,10 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Node Depth Summary — matches legacy writeNodeDepths()
     // =====================================================================
-    if (ctx.n_nodes() > 0 && opt.rpt_nodes != 0) {
+    // legacy statsrpt_writeReport writes the flow-routing tables only when
+    // there are links and routing is not ignored (statsrpt.c:117).
+    const bool route_rpt = ctx.n_links() > 0 && !opt.ignore_routing;
+    if (route_rpt) {
         WRITE(f, "******************");
         WRITE(f, "Node Depth Summary");
         WRITE(f, "******************");
@@ -1794,13 +2473,12 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 "\n                                 Average  Maximum  Maximum  Time of Max    Reported"
 "\n                                   Depth    Depth      HGL   Occurrence   Max Depth");
         std::fprintf(f, si_report
-            ? "\n  Node                 Type       %6s   %6s   %6s  days hr:min      %6s"
-            : "\n  Node                 Type       %-6s   %-6s   %-6s  days hr:min      %-6s",
-            len_word, len_word, len_word, len_word);
+            ? "\n  Node                 Type       Meters   Meters   Meters  days hr:min      Meters"
+            : "\n  Node                 Type         Feet     Feet     Feet  days hr:min        Feet");
         std::fprintf(f,
 "\n  ---------------------------------------------------------------------------------");
 
-        long report_steps = ctx.routing_stats.n_steps;
+        long report_steps = ctx.routing_stats.report_steps;
         report_steps = std::max(report_steps, 1L);
 
         for (int j = 0; j < ctx.n_nodes(); ++j) {
@@ -1810,9 +2488,9 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             double avg_d = ctx.nodes.stat_sum_depth[uj] / static_cast<double>(report_steps) * len_ucf;
             double max_d = max_d_int * len_ucf;
             double max_hgl = (ctx.nodes.invert_elev[uj] + max_d_int) * len_ucf;
-            double rpt_max = ctx.nodes.stat_max_rpt_depth[uj] * len_ucf;
+            double rpt_max = ctx.nodes.stat_max_rpt_depth[uj];  // already display units
             int days, hrs, mins;
-            elapsedToParts(ctx.nodes.stat_max_depth_date[uj], ctx.options.start_date, days, hrs, mins);
+            elapsedToParts(ctx.nodes.stat_max_depth_date[uj], ctx.options.report_start, days, hrs, mins);
 
             std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(j).c_str());
             std::fprintf(f, " %-9s", nt_str(nt));
@@ -1827,7 +2505,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Node Inflow Summary — matches legacy writeNodeFlows()
     // =====================================================================
-    if (ctx.n_nodes() > 0 && opt.rpt_nodes != 0) {
+    if (route_rpt) {
         WRITE(f, "*******************");
         WRITE(f, "Node Inflow Summary");
         WRITE(f, "*******************");
@@ -1851,19 +2529,26 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             double vol_lat  = ctx.nodes.stat_lat_inflow_vol[uj] * Vcf;
             double vol_tot  = ctx.nodes.stat_total_inflow_vol[uj] * Vcf;
             int days, hrs, mins;
-            elapsedToParts(ctx.nodes.stat_max_inflow_date[uj], ctx.options.start_date, days, hrs, mins);
-
-            // Flow balance error (approximate)
-            double err = 0.0;
+            elapsedToParts(ctx.nodes.stat_max_inflow_date[uj], ctx.options.report_start, days, hrs, mins);
 
             std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(j).c_str());
             std::fprintf(f, " %-9s", nt_str(nt));
             std::fprintf(f, ff, max_lat);
             std::fprintf(f, ff, max_tot);
             std::fprintf(f, "  %4d  %02d:%02d", days, hrs, mins);
-            std::fprintf(f, "%12.3f", vol_lat);
-            std::fprintf(f, "%12.3f", vol_tot);
-            std::fprintf(f, "%12.3f", err);
+            std::fprintf(f, "%12.3g", vol_lat);
+            std::fprintf(f, "%12.3g", vol_tot);
+            // Flow balance error, legacy writeNodeFlows: outflow includes the
+            // final stored volume (massbal_getStorage(TRUE) runs first); below
+            // 1 ft3 of outflow the volume difference is printed instead.
+            const double in_v  = ctx.nodes.stat_total_inflow_vol[uj];
+            const double out_v = ctx.nodes.stat_total_outflow_vol[uj] +
+                                 ctx.nodes.volume[uj];
+            if (std::fabs(out_v) < 1.0)
+                std::fprintf(f, "%12.3f %s", (in_v - out_v) * Vcf * 1.0e6,
+                             si_report ? "ltr" : "gal");
+            else
+                std::fprintf(f, "%12.3f", (in_v - out_v) / out_v * 100.0);
         }
     }
 
@@ -1873,45 +2558,46 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Node Surcharge Summary — matches legacy writeNodeSurcharge()
     // =====================================================================
-    if (static_cast<int>(opt.routing_model) == 2 && opt.rpt_nodes != 0) { // DYNWAVE only
+    if (route_rpt && static_cast<int>(opt.routing_model) == 2) { // DYNWAVE only
         WRITE(f, "**********************");
         WRITE(f, "Node Surcharge Summary");
         WRITE(f, "**********************");
 
-        bool any_surcharge = false;
+        // legacy writeNodeSurcharge: outfalls skipped; hours floored at 0.01;
+        // height above the highest conduit crown and depth below the rim,
+        // both from the node's maximum depth.
+        int n_written = 0;
         for (int j = 0; j < ctx.n_nodes(); ++j) {
-            if (ctx.nodes.stat_time_surcharged[static_cast<std::size_t>(j)] > 0.0) {
-                any_surcharge = true; break;
-            }
-        }
-
-        if (!any_surcharge) {
-            WRITE(f, "");
-            WRITE(f, "No nodes were surcharged.");
-        } else {
-            std::fprintf(f,
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx.nodes.type[uj] == NodeType::OUTFALL) continue;
+            if (ctx.nodes.stat_time_surcharged[uj] == 0.0) continue;
+            const double t = std::max(0.01, ctx.nodes.stat_time_surcharged[uj] / 3600.0);
+            if (n_written == 0) {
+                WRITE(f, "");
+                WRITE(f, "Surcharging occurs when water rises above the top of the highest conduit.");
+                std::fprintf(f,
 "\n  ---------------------------------------------------------------------"
 "\n                                               Max. Height   Min. Depth"
-"\n                                   Hours       Above Crown    Below Rim"
-"\n  Node                 Type      Surcharged         %6s       %6s"
-"\n  ---------------------------------------------------------------------",
-                len_word, len_word);
-
-            for (int j = 0; j < ctx.n_nodes(); ++j) {
-                auto uj = static_cast<std::size_t>(j);
-                double t = ctx.nodes.stat_time_surcharged[uj] / 3600.0;
-                if (t <= 0.0) continue;
-                int nt = static_cast<int>(ctx.nodes.type[uj]);
-                double above_crown = ctx.nodes.stat_max_surcharge_height[uj];
-                double below_rim = ctx.nodes.sur_depth[uj] > 0.0 ?
-                    ctx.nodes.sur_depth[uj] - ctx.nodes.stat_max_surcharge_height[uj] : 0.0;
-                below_rim = std::max(below_rim, 0.0);
-
-                std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(j).c_str());
-                std::fprintf(f, " %-9s", nt_str(nt));
-                std::fprintf(f, "  %9.2f      %9.3f    %9.3f",
-                    t, above_crown * len_ucf, below_rim * len_ucf);
+"\n                                   Hours       Above Crown    Below Rim");
+                std::fprintf(f, si_report
+                    ? "\n  Node                 Type      Surcharged         Meters       Meters"
+                    : "\n  Node                 Type      Surcharged           Feet         Feet");
+                std::fprintf(f,
+"\n  ---------------------------------------------------------------------");
+                n_written = 1;
             }
+            const double maxd = ctx.nodes.stat_max_depth[uj];
+            const double d1 = std::max(0.0, maxd + ctx.nodes.invert_elev[uj] -
+                                                ctx.nodes.crown_elev[uj]);
+            const double d2 = std::max(0.0, ctx.nodes.full_depth[uj] - maxd);
+            std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(j).c_str());
+            std::fprintf(f, " %-9s", nt_str(static_cast<int>(ctx.nodes.type[uj])));
+            std::fprintf(f, "  %9.2f      %9.3f    %9.3f",
+                t, d1 * len_ucf, d2 * len_ucf);
+        }
+        if (n_written == 0) {
+            WRITE(f, "");
+            WRITE(f, "No nodes were surcharged.");
         }
     }
 
@@ -1921,7 +2607,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Node Flooding Summary — matches legacy writeNodeFlooding()
     // =====================================================================
-    if (opt.rpt_nodes != 0) {
+    if (route_rpt) {
         bool any_flooding = false;
         for (int j = 0; j < ctx.n_nodes(); ++j)
             if (ctx.nodes.stat_vol_flooded[static_cast<std::size_t>(j)] > 0.0)
@@ -1955,7 +2641,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
                 double vol_mgal = ctx.nodes.stat_vol_flooded[uj] * Vcf;
                 int days, hrs, mins;
                 elapsedToParts(ctx.nodes.stat_max_overflow_date[uj],
-                               ctx.options.start_date, days, hrs, mins);
+                               ctx.options.report_start, days, hrs, mins);
                 // Ponded depth = max depth - full depth (for DW only)
                 double ponded = 0.0;
                 if (static_cast<int>(opt.routing_model) == 2) {
@@ -1977,9 +2663,23 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     WRITE(f, "");
 
     // =====================================================================
+    // Final per-cell profile is dynamic in size and retains authored layer numbers.
+    for (int r = 0; r < ctx.node_subtypes.storages.count(); ++r) {
+        const auto& state = ctx.node_subtypes.storages.lid_state[r];
+        if (state.cells.empty()) continue;
+        const int n = ctx.node_subtypes.storages.node_idx[r];
+        std::fprintf(f, "\n\n  LID Storage Moisture Profile: %s\n  Layer      Bottom         Top     Moisture\n",
+                     ctx.node_names.name_of(n).c_str());
+        for (const auto& c : state.cells) {
+            const double wet = std::clamp((ctx.nodes.depth[n] - c.bottom) / (c.top - c.bottom), 0.0, 1.0);
+            std::fprintf(f, "  %5d %11.4f %11.4f %12.6f\n", c.layer, c.bottom * len_ucf, c.top * len_ucf,
+                         c.theta + (c.porosity - c.theta) * wet);
+        }
+    }
+
     // Storage Volume Summary — matches legacy writeStorageVolumes()
     // =====================================================================
-    if (opt.rpt_nodes != 0) {
+    if (route_rpt) {
         bool any_storage = false;
         for (int j = 0; j < ctx.n_nodes(); ++j)
             if (ctx.nodes.type[static_cast<std::size_t>(j)] == NodeType::STORAGE)
@@ -1995,13 +2695,14 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 "\n                         Average    Avg   Evap  Exfil     Maximum    Max    Time of Max    Maximum"
 "\n                          Volume   Pcnt   Pcnt   Pcnt      Volume   Pcnt     Occurrence    Outflow");
             std::fprintf(f, si_report
-                ? "\n  Storage Unit           1000 m3   Full   Loss   Loss     1000 m3   Full    days hr:min        %3s"
-                : "\n  Storage Unit          1000 ft3   Full   Loss   Loss    1000 ft3   Full    days hr:min        %3s",
+                // legacy writes the ANSI superscript byte (statsrpt.c:535-537)
+                ? "\n  Storage Unit           1000 m\xB3   Full   Loss   Loss     1000 m\xB3   Full    days hr:min        %3s"
+                : "\n  Storage Unit          1000 ft\xB3   Full   Loss   Loss    1000 ft\xB3   Full    days hr:min        %3s",
                 FlowUnitWords[fu]);
             std::fprintf(f,
 "\n  ------------------------------------------------------------------------------------------------");
 
-            long report_steps = ctx.routing_stats.n_steps;
+            long report_steps = ctx.routing_stats.report_steps;
             report_steps = std::max(report_steps, 1L);
 
             for (int j = 0; j < ctx.n_nodes(); ++j) {
@@ -2043,7 +2744,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 
                 int days, hrs, mins;
                 elapsedToParts(ctx.nodes.stat_max_depth_date[uj],
-                               ctx.options.start_date, days, hrs, mins);
+                               ctx.options.report_start, days, hrs, mins);
 
                 double max_outflow = ctx.nodes.stat_storage_max_outflow[uj] * Qcf;
 
@@ -2061,7 +2762,11 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Outfall Loading Summary — matches legacy writeOutfallLoads()
     // =====================================================================
-    if (opt.rpt_nodes != 0) {
+    // legacy writeOutfallLoads: only when there are outfalls
+    bool any_outfall = false;
+    for (int j = 0; j < ctx.n_nodes() && !any_outfall; ++j)
+        any_outfall = ctx.nodes.type[static_cast<std::size_t>(j)] == NodeType::OUTFALL;
+    if (route_rpt && any_outfall) {
         int np = ctx.n_pollutants();
 
         WRITE(f, "***********************");
@@ -2087,8 +2792,11 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         // Header row 3
         std::fprintf(f, " \n  Outfall Node           Pcnt       %3s       %3s    %8s",
                      FlowUnitWords[fu], FlowUnitWords[fu], vol_word);
+        // legacy LoadUnitsWords: lbs | kg, LogN for a count pollutant
         for (int p = 0; p < np; ++p)
-            std::fprintf(f, "%14s", "lbs");
+            std::fprintf(f, "%14s",
+                ctx.pollutants.units[static_cast<std::size_t>(p)] == MassUnits::COUNTS_PER_L
+                    ? "LogN" : (si_report ? "kg" : "lbs"));
 
         // Bottom separator
         std::fprintf(f, " \n  -----------------------------------------------------------");
@@ -2101,7 +2809,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         double sys_freq_sum = 0.0;
         int outfall_count = 0;
         std::vector<double> pol_totals(static_cast<std::size_t>(np), 0.0);
-        long total_steps = ctx.routing_stats.n_steps;
+        long total_steps = ctx.routing_stats.report_steps;
         total_steps = std::max(total_steps, 1L);
 
         for (int j = 0; j < ctx.n_nodes(); ++j) {
@@ -2132,9 +2840,14 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             auto base = uj * static_cast<std::size_t>(np);
             for (int p = 0; p < np; ++p) {
                 auto idx = base + static_cast<std::size_t>(p);
-                double load = (idx < ctx.nodes.stat_total_load.size())
-                    ? ctx.nodes.stat_total_load[idx] : 0.0;
+                // legacy: totalLoad * LperFT3 * Pollut.mcf, LOG10 for counts
+                const auto mu = ctx.pollutants.units[static_cast<std::size_t>(p)];
+                const double mcf = (mu == MassUnits::MG_PER_L) ? cont_mass
+                                 : (mu == MassUnits::UG_PER_L) ? cont_mass / 1000.0 : 1.0;
+                double load = ((idx < ctx.nodes.stat_total_load.size())
+                    ? ctx.nodes.stat_total_load[idx] : 0.0) * 28.317 * mcf;
                 pol_totals[static_cast<std::size_t>(p)] += load;
+                if (mu == MassUnits::COUNTS_PER_L && load > 0.0) load = std::log10(load);
                 std::fprintf(f, "%14.3f", load);
             }
         }
@@ -2149,10 +2862,16 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         std::fprintf(f, "%7.2f ", sys_freq);
         std::fprintf(f, ff, sys_flow_sum);
         std::fprintf(f, " ");
-        std::fprintf(f, ff, sys_max_flow);
+        // legacy MaxOutfallFlow: the peak of the summed outfall inflow
+        (void)sys_max_flow;
+        std::fprintf(f, ff, ctx.routing_stats.max_outfall_flow * Qcf);
         std::fprintf(f, "%12.3f", sys_vol);
-        for (int p = 0; p < np; ++p)
-            std::fprintf(f, "%14.3f", pol_totals[static_cast<std::size_t>(p)]);
+        for (int p = 0; p < np; ++p) {
+            double x = pol_totals[static_cast<std::size_t>(p)];
+            if (ctx.pollutants.units[static_cast<std::size_t>(p)] == MassUnits::COUNTS_PER_L
+                && x > 0.0) x = std::log10(x);
+            std::fprintf(f, "%14.3f", x);
+        }
     }
 
     WRITE(f, "");
@@ -2161,7 +2880,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Link Flow Summary — matches legacy writeLinkFlows()
     // =====================================================================
-    if (ctx.n_links() > 0 && opt.rpt_links != 0) {
+    if (route_rpt) {
         WRITE(f, "********************");
         WRITE(f, "Link Flow Summary");
         WRITE(f, "********************");
@@ -2194,23 +2913,61 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             }
 
             int days, hrs, mins;
-            elapsedToParts(ctx.links.stat_max_flow_date[uj], ctx.options.start_date, days, hrs, mins);
+            elapsedToParts(ctx.links.stat_max_flow_date[uj], ctx.options.report_start, days, hrs, mins);
 
+            // Row layout of legacy writeLinkFlows (statsrpt.c). A link with no
+            // [XSECTIONS] row keeps xsect.type DUMMY (0) there — pumps and
+            // outlets — and an IRREGULAR section prints CHANNEL.
+            const auto shape = ctx.links.xsect_shape[uj];
+            const bool dummy = shape == XsectShape::DUMMY ||
+                               lt == static_cast<int>(LinkType::PUMP) ||
+                               lt == static_cast<int>(LinkType::OUTLET);
             std::fprintf(f, "\n  %-20s", ctx.link_names.name_of(j).c_str());
-            std::fprintf(f, " %-7s ", lt_str(lt));
+            if (dummy)                               std::fprintf(f, " DUMMY   ");
+            else if (shape == XsectShape::IRREGULAR) std::fprintf(f, " CHANNEL ");
+            else                                     std::fprintf(f, " %-7s ", lt_str(lt));
             std::fprintf(f, ff, mf);
             std::fprintf(f, "  %4d  %02d:%02d", days, hrs, mins);
 
-            if (lt == static_cast<int>(LinkType::CONDUIT)) {
-                std::fprintf(f, "   %7.2f", mv);
-                std::fprintf(f, "  %6.2f", flow_ratio);
-                std::fprintf(f, "  %6.2f", fill);
-            } else {
-                // Non-conduit: no velocity, full ratios
-                std::fprintf(f, "          ");
-                std::fprintf(f, "  %6.2f", flow_ratio);
-                std::fprintf(f, "        ");
+            // Pumps: max flow over the pump curve's largest flow (legacy
+            // Link.qFull, link.c:1505-1516; 0 for an ideal pump).
+            if (lt == static_cast<int>(LinkType::PUMP)) {
+                double q_full = 0.0;
+                const int pr = ctx.link_subtypes.pump_row(j);
+                if (pr >= 0) {
+                    const int ci = ctx.link_subtypes.pumps.curve[static_cast<std::size_t>(pr)];
+                    if (ci >= 0 && ci < static_cast<int>(ctx.tables.tables.size())) {
+                        const auto& ty = ctx.tables.tables[static_cast<std::size_t>(ci)].y;
+                        if (!ty.empty())
+                            q_full = *std::max_element(ty.begin(), ty.end()) / Qcf;
+                    }
+                }
+                if (q_full > 0.0) {
+                    std::fprintf(f, "          ");
+                    std::fprintf(f, "  %6.2f", ctx.links.stat_max_flow[uj] / q_full);
+                    continue;
+                }
             }
+            if (dummy) continue;
+
+            if (lt == static_cast<int>(LinkType::CONDUIT)) {
+                if (mv > 50.0) std::fprintf(f, "    >50.00");
+                else           std::fprintf(f, "   %7.2f", mv);
+                std::fprintf(f, "  %6.2f", flow_ratio);
+            } else {
+                std::fprintf(f, "                  ");
+            }
+
+            // Max/full depth; a bottom orifice has no full depth.
+            bool no_full_depth = ctx.links.xsect_y_full[uj] <= 0.0;
+            if (lt == static_cast<int>(LinkType::ORIFICE)) {
+                const int orow = ctx.link_subtypes.orifice_row(j);
+                if (orow >= 0 &&
+                    ctx.link_subtypes.orifices.orifice_type[static_cast<std::size_t>(orow)] == 0.0)
+                    no_full_depth = true;
+            }
+            if (no_full_depth) std::fprintf(f, "        ");
+            else               std::fprintf(f, "  %6.2f", fill);
         }
     }
 
@@ -2220,7 +2977,10 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Flow Classification Summary — matches legacy writeFlowClass()
     // =====================================================================
-    if (ctx.n_links() > 0 && opt.rpt_links != 0) {
+    // Dynamic wave only in legacy (FV, a v6 router, keeps the table);
+    // fractions of the routed time after the report start.
+    if (route_rpt && (opt.routing_model == RoutingModel::DYNWAVE ||
+                              opt.routing_model == RoutingModel::FV)) {
         WRITE(f, "***************************");
         WRITE(f, "Flow Classification Summary");
         WRITE(f, "***************************");
@@ -2231,12 +2991,12 @@ void DefaultReportPlugin::write_results(std::FILE* f,
 "\n  Conduit               Length    Dry  Dry   Dry   Crit  Crit  Crit  Crit  Ltd   Ctrl  "
 "\n  -------------------------------------------------------------------------------------");
 
-        double total_secs = (ctx.routing_stats.n_steps > 0) ?
-            ctx.routing_stats.sum_step : 1.0;
+        const double total_secs = ctx.routing_stats.report_time;
 
         for (int j = 0; j < ctx.n_links(); ++j) {
             auto uj = static_cast<std::size_t>(j);
             if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
+            if (ctx.links.xsect_shape[uj] == XsectShape::DUMMY) continue;
 
             // Adjusted/actual length ratio
             double len_ratio = 1.0;
@@ -2249,28 +3009,14 @@ void DefaultReportPlugin::write_results(std::FILE* f,
             std::fprintf(f, "\n  %-20s", ctx.link_names.name_of(j).c_str());
             std::fprintf(f, "  %6.2f ", len_ratio);
 
-            long total = 0;
             for (int c = 0; c < LinkData::N_FLOW_CLASSES; ++c) {
                 auto idx = uj * LinkData::N_FLOW_CLASSES + static_cast<std::size_t>(c);
-                if (idx < ctx.links.stat_flow_class.size())
-                    total += ctx.links.stat_flow_class[idx];
+                const double t = (idx < ctx.links.stat_flow_class.size()) ?
+                    ctx.links.stat_flow_class[idx] : 0.0;
+                std::fprintf(f, "  %4.2f", t / total_secs);
             }
-            if (total == 0) total = 1;
-
-            for (int c = 0; c < LinkData::N_FLOW_CLASSES; ++c) {
-                auto idx = uj * LinkData::N_FLOW_CLASSES + static_cast<std::size_t>(c);
-                long cnt = (idx < ctx.links.stat_flow_class.size()) ?
-                    ctx.links.stat_flow_class[idx] : 0L;
-                double pct = static_cast<double>(cnt) / static_cast<double>(total);
-                std::fprintf(f, "  %4.2f", pct);
-            }
-            // Normal flow limited and inlet control
-            double norm_pct = static_cast<double>(ctx.links.stat_norm_ltd[uj]) /
-                              static_cast<double>(total);
-            double inlet_pct = static_cast<double>(ctx.links.stat_inlet_ctrl[uj]) /
-                               static_cast<double>(total);
-            std::fprintf(f, "  %4.2f", norm_pct);
-            std::fprintf(f, "  %4.2f", inlet_pct);
+            std::fprintf(f, "  %4.2f", ctx.links.stat_norm_ltd[uj] / total_secs);
+            std::fprintf(f, "  %4.2f", ctx.links.stat_inlet_ctrl[uj] / total_secs);
         }
     }
     WRITE(f, "");
@@ -2278,46 +3024,43 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Conduit Surcharge Summary — matches legacy writeLinkSurcharge()
     // =====================================================================
-    if (opt.rpt_links != 0) {
-        bool any_surcharge = false;
-        for (int j = 0; j < ctx.n_links(); ++j) {
-            auto uj = static_cast<std::size_t>(j);
-            if (ctx.links.type[uj] == LinkType::CONDUIT &&
-                ctx.links.stat_time_surcharged[uj] > 0.0) {
-                any_surcharge = true; break;
-            }
-        }
-
+    if (route_rpt) {
+        // legacy writeLinkSurcharge: true conduits whose four hour totals are
+        // not all zero; each value floored at 0.01 h.
         WRITE(f, "*************************");
         WRITE(f, "Conduit Surcharge Summary");
         WRITE(f, "*************************");
-
-        if (!any_surcharge) {
-            WRITE(f, "");
-            WRITE(f, "No conduits were surcharged.");
-        } else {
-            std::fprintf(f,
+        int n_written = 0;
+        for (int j = 0; j < ctx.n_links(); ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx.links.type[uj] != LinkType::CONDUIT ||
+                ctx.links.xsect_shape[uj] == XsectShape::DUMMY) continue;
+            double t[5] = {
+                ctx.links.stat_time_surcharged[uj] / 3600.0,
+                ctx.links.stat_time_full_upstream[uj] / 3600.0,
+                ctx.links.stat_time_full_dnstream[uj] / 3600.0,
+                ctx.links.stat_time_full_both[uj] / 3600.0,
+                0.0 };
+            if (t[0] + t[1] + t[2] + t[3] == 0.0) continue;
+            t[4] = ctx.links.stat_time_capacity_limited[uj] / 3600.0;
+            for (double& x : t) x = std::max(0.01, x);
+            if (n_written == 0) {
+                WRITE(f, "");
+                std::fprintf(f,
 "\n  ----------------------------------------------------------------------------"
 "\n                                                           Hours        Hours "
 "\n                         --------- Hours Full --------   Above Full   Capacity"
 "\n  Conduit                Both Ends  Upstream  Dnstream   Normal Flow   Limited"
 "\n  ----------------------------------------------------------------------------");
-
-            for (int j = 0; j < ctx.n_links(); ++j) {
-                auto uj = static_cast<std::size_t>(j);
-                if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
-                if (ctx.links.stat_time_surcharged[uj] <= 0.0) continue;
-
-                double t_both = ctx.links.stat_time_full_both[uj] / 3600.0;
-                double t_up   = ctx.links.stat_time_full_upstream[uj] / 3600.0;
-                double t_dn   = ctx.links.stat_time_full_dnstream[uj] / 3600.0;
-                double t_norm = ctx.links.stat_time_surcharged[uj] / 3600.0;
-                double t_cap  = ctx.links.stat_time_capacity_limited[uj] / 3600.0;
-
-                std::fprintf(f, "\n  %-20s", ctx.link_names.name_of(j).c_str());
-                std::fprintf(f, "    %8.2f  %8.2f  %8.2f  %8.2f     %8.2f",
-                    t_both, t_up, t_dn, t_norm, t_cap);
+                n_written = 1;
             }
+            std::fprintf(f, "\n  %-20s", ctx.link_names.name_of(j).c_str());
+            std::fprintf(f, "    %8.2f  %8.2f  %8.2f  %8.2f     %8.2f",
+                t[0], t[1], t[2], t[3], t[4]);
+        }
+        if (n_written == 0) {
+            WRITE(f, "");
+            WRITE(f, "No conduits were surcharged.");
         }
     }
 
@@ -2327,7 +3070,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // =====================================================================
     // Pumping Summary — matches legacy writePumpFlows()
     // =====================================================================
-    if (opt.rpt_links != 0) {
+    if (route_rpt) {
         bool any_pump = false;
         for (int j = 0; j < ctx.n_links(); ++j)
             if (ctx.links.type[static_cast<std::size_t>(j)] == LinkType::PUMP)
@@ -2370,13 +3113,91 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     }
 
     // =====================================================================
-    // Street Inlet Flow Summary — Gap #68
-    // Volumes in ft³; convert to 1000 gal: × 7.48052 / 1000
+    // Street tables — Street Flow Summary (Gap #9) and the Street Inlet Flow
+    // Summary (Gap #68). Both are gated the same way the inlet table already
+    // was: link reporting on, and something street-related in the model.
+    //
+    // Street index of a STREET conduit: xsect_curve is the built transect
+    // table, whose name is the street it was built from
+    // (PostParseResolver.cpp:2298-2310).
     // =====================================================================
-    if (ctx.inlet_usages.count() > 0 && opt.rpt_links != 0) {
+    auto street_of_link = [&ctx](int j) -> int {
+        const auto uj = static_cast<std::size_t>(j);
+        if (ctx.links.xsect_shape[uj] != XsectShape::STREET_XSECT) return -1;
+        const int tt = ctx.links.xsect_curve[uj];
+        if (tt < 0 || tt >= static_cast<int>(ctx.transect_tables.size())) return -1;
+        const std::string& sname = ctx.transect_tables[static_cast<std::size_t>(tt)].name;
+        for (int s = 0; s < ctx.streets.count(); ++s) {
+            const std::string& a = ctx.streets.names[static_cast<std::size_t>(s)];
+            if (a.size() != sname.size()) continue;
+            bool same = true;
+            for (std::size_t c = 0; c < a.size(); ++c)
+                if (std::tolower(static_cast<unsigned char>(a[c])) !=
+                    std::tolower(static_cast<unsigned char>(sname[c]))) { same = false; break; }
+            if (same) return s;
+        }
+        return -1;
+    };
+
+    // ---------------------------------------------------------------------
+    // Street Flow Summary — legacy writeStreetStats (inlet.c:1055-1094):
+    // peak flow, SWMM's spread (flow width at max depth / sides, clipped to
+    // the street's curb-to-crown width) and max depth per STREET conduit.
+    // ---------------------------------------------------------------------
+    if (route_rpt && ctx.streets.count() > 0) {
+        bool header = false;
+        const double inv_len = 1.0 / len_ucf;   // display → ft (street store is user units)
+        for (int j = 0; j < ctx.n_links(); ++j) {
+            const int si = street_of_link(j);
+            if (si < 0) continue;
+            const auto uj = static_cast<std::size_t>(j);
+            const auto su = static_cast<std::size_t>(si);
+
+            if (!header) {
+                WRITE(f, "*******************");
+                WRITE(f, "Street Flow Summary");
+                WRITE(f, "*******************");
+                std::fprintf(f,
+"\n\n  -------------------------------------------------------"
+"\n                          Peak   Maximum   Maximum"
+"\n                          Flow    Spread     Depth"
+"\n  Street Conduit           %-3s     %-5s     %-5s"
+"\n  -------------------------------------------------------",
+                    FlowUnitWords[fu], si_report ? "m" : "ft",
+                    si_report ? "m" : "ft");
+                header = true;
+            }
+
+            const double max_flow  = ctx.links.stat_max_flow[uj];
+            const double max_depth = ctx.links.stat_max_filling[uj]
+                                   * ctx.links.xsect_y_full[uj];
+
+            // SWMM's spread (flow width) at max depth — not HEC-22's, which is
+            // based on max flow and cannot see backwater (inlet.c:1077-1089).
+            const XSectParams xs =
+                link::buildXSectParams(ctx.links, uj, &ctx.transect_tables);
+            const int sides = std::max(ctx.streets.sides[su], 1);
+            double max_spread = xsect::getWofY(xs, max_depth) / sides;
+            max_spread = std::min(max_spread, ctx.streets.t_crown[su] * inv_len);
+
+            std::fprintf(f, "\n  %-16s %9.3f %9.3f %9.3f",
+                ctx.link_names.name_of(j).c_str(),
+                max_flow * Qcf, max_spread * len_ucf, max_depth * len_ucf);
+        }
+        if (header) { WRITE(f, ""); WRITE(f, ""); }
+    }
+
+    // ---------------------------------------------------------------------
+    // Street Inlet Flow Summary — Gap #68 volumes plus the legacy per-inlet
+    // performance columns (inlet.c:1096-1124). Inlet junctions are listed
+    // under their node name with a "(node)" marker.
+    // Volumes in ft³; convert to 1000 gal: × 7.48052 / 1000
+    // ---------------------------------------------------------------------
+    if (route_rpt && ctx.inlet_usages.count() > 0) {
         int ni = ctx.inlet_usages.count();
         // Only write if stats arrays are populated
         bool has_stats = (static_cast<int>(ctx.inlet_usages.stat_capture_vol.size()) >= ni);
+        const bool has_diag = (ctx.inlet_diag.count() >= ni);
 
         WRITE(f, "**************************");
         WRITE(f, "Street Inlet Flow Summary");
@@ -2388,34 +3209,81 @@ void DefaultReportPlugin::write_results(std::FILE* f,
         } else {
             static constexpr double FT3_TO_KGAL = 7.48052 / 1000.0;
             std::fprintf(f,
-"\n\n  -----------------------------------------------------------------------------------------"
-"\n                                          Peak        Pcnt        Pcnt       Vol.       Vol."
-"\n  Conduit               Inlet           Flow        Captured    Bypassed   Captured   Bypassed"
-"\n                                        %-3s         Percent     Percent    1000 Gal   1000 Gal"
-"\n  -----------------------------------------------------------------------------------------",
-                FlowUnitWords[fu]);
+"\n\n  ------------------------------------------------------------------------------------------------------------------------------------------"
+"\n                                                              Peak      Peak       Avg.    Bypass      Back      Peak      Peak      Vol.      Vol."
+"\n                                                              Flow   Capture    Capture      Flow      Flow   Capture    Bypass  Captured  Bypassed"
+"\n  Inlet Location        Inlet Design       Placement  Count     %-3s      Pcnt       Pcnt      Pcnt      Pcnt   / Inlet      %-3s  1000 Gal  1000 Gal"
+"\n  ------------------------------------------------------------------------------------------------------------------------------------------",
+                FlowUnitWords[fu], FlowUnitWords[fu]);
 
             for (int i = 0; i < ni; ++i) {
                 auto ui = static_cast<std::size_t>(i);
                 int li  = ctx.inlet_usages.link_index[i];
+                int nh  = ctx.inlet_usages.node_host[ui];
                 int di  = ctx.inlet_usages.design_index[i];
 
-                const char* link_name  = (li >= 0) ? ctx.link_names.name_of(li).c_str() : "?";
+                std::string host_name = "?";
+                if (nh >= 0) host_name = ctx.node_names.name_of(nh) + " (node)";
+                else if (li >= 0) host_name = ctx.link_names.name_of(li);
+
                 const char* inlet_name = (di >= 0 && di < ctx.inlets.count())
                                          ? ctx.inlets.names[di].c_str() : "?";
 
                 double cap_vol  = ctx.inlet_usages.stat_capture_vol[ui];
                 double byp_vol  = ctx.inlet_usages.stat_bypass_vol[ui];
-                double peak     = ctx.inlet_usages.stat_peak_flow[ui] * Qcf;
-                double total    = cap_vol + byp_vol;
-                double cap_pct  = (total > 0.0) ? cap_vol / total * 100.0 : 0.0;
-                double byp_pct  = (total > 0.0) ? byp_vol / total * 100.0 : 0.0;
+                // "Peak Flow" is the peak APPROACH flow the inlet saw, like
+                // legacy's street maxFlow column (inlet.c:1092); the peak
+                // captured flow is the stat_peak_flow fallback only when the
+                // solver never ran (no diagnostics block).
+                double peak     = (has_diag ? ctx.inlet_diag.peak_flow[ui]
+                                            : ctx.inlet_usages.stat_peak_flow[ui]) * Qcf;
                 double cap_kgal = cap_vol * FT3_TO_KGAL;
                 double byp_kgal = byp_vol * FT3_TO_KGAL;
 
-                std::fprintf(f, "\n  %-20s  %-14s  %9.3f  %9.2f  %9.2f  %9.3f  %9.3f",
-                    link_name, inlet_name,
-                    peak, cap_pct, byp_pct, cap_kgal, byp_kgal);
+                // Legacy performance block. fp/cp are the legacy period counts
+                // divided by 100 so the sums below read out as percentages
+                // (inlet.c:1106-1122).
+                const char* placement = "ON-GRADE";
+                int    n_inlets = 1;
+                double pfc = 0.0, afc = 0.0, bpf = 0.0, bff = 0.0;
+                double peak_cap_per_inlet = 0.0, peak_bypass = 0.0;
+                if (has_diag) {
+                    const auto& dg = ctx.inlet_diag;
+                    placement = (dg.is_sag[ui] != 0) ? "ON-SAG  " : "ON-GRADE";
+                    n_inlets  = std::max(dg.num_inlets[ui], 1);
+                    const double fp = dg.flow_periods[ui] / 100.0;
+                    if (fp > 0.0) {
+                        const double cp = dg.capture_periods[ui] / 100.0;
+                        pfc = dg.peak_flow_capture[ui];
+                        if (cp > 0.0) {
+                            afc = dg.avg_flow_capture[ui] / cp;
+                            bpf = dg.bypass_freq[ui] / cp;
+                        }
+                        bff = dg.backflow_periods[ui] / fp;
+
+                        // Peak capture per inlet / peak bypass are scaled off
+                        // the approach conduit's peak flow (the host link, or
+                        // the inlet junction's approach conduit).
+                        const int hl = (li >= 0) ? li : dg.up_link[ui];
+                        if (hl >= 0 && hl < ctx.n_links()) {
+                            const auto uh = static_cast<std::size_t>(hl);
+                            const double max_flow = ctx.links.stat_max_flow[uh];
+                            const int si = street_of_link(hl);
+                            const int sides = (si >= 0)
+                                ? std::max(ctx.streets.sides[static_cast<std::size_t>(si)], 1)
+                                : 1;
+                            peak_cap_per_inlet = (max_flow / sides) * Qcf * 0.01
+                                                 * pfc / n_inlets;
+                            peak_bypass = max_flow * Qcf * 0.01 * (100.0 - pfc);
+                        }
+                    }
+                }
+
+                std::fprintf(f,
+                    "\n  %-20s  %-16s   %-9s  %5d  %8.3f  %8.2f  %9.2f  %8.2f  %8.2f  %8.3f  %8.3f  %8.3f  %8.3f",
+                    host_name.c_str(), inlet_name, placement, n_inlets,
+                    peak, pfc, afc, bpf, bff,
+                    peak_cap_per_inlet, peak_bypass, cap_kgal, byp_kgal);
             }
         }
         WRITE(f, "");
@@ -2426,7 +3294,7 @@ void DefaultReportPlugin::write_results(std::FILE* f,
     // Link Pollutant Load Summary — Gap #64, matches legacy writeLinkLoads()
     // stat_total_load is in ft³ × mg/L; convert to lbs: × 28.317/453592
     // =====================================================================
-    if (ctx.n_links() > 0 && ctx.n_pollutants() > 0 && opt.rpt_links != 0
+    if (route_rpt && ctx.n_pollutants() > 0
         && !opt.ignore_quality) {
         int nl = ctx.n_links();
         int np = ctx.n_pollutants();

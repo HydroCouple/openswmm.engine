@@ -33,6 +33,7 @@ water quality, spatial data, and GeoPackage I/O.
 # =============================================================================
 # Engine lifecycle & errors
 # =============================================================================
+from ._coupling import Coupling as Coupling, DomainSources as DomainSources, RuntimeSource as RuntimeSource, SourceReceipt as SourceReceipt, BoundaryReceipt as BoundaryReceipt, CouplingFrame as CouplingFrame, RuntimeBoundary as RuntimeBoundary, RuntimeForcing as RuntimeForcing, RuntimeClear as RuntimeClear
 from ._solver import (
     Solver as Solver,
     run as run,
@@ -44,6 +45,7 @@ from ._exceptions import (
     BadParamError as BadParamError,
     CRSError as CRSError,
     DependencyError as DependencyError,
+    GeoPackageError as GeoPackageError,
     EngineError as EngineError,
     FileError as FileError,
     HotStartError as HotStartError,
@@ -90,10 +92,30 @@ from ._output_reader import OutputReader as OutputReader
 # =============================================================================
 from ._pollutants import Pollutants as Pollutants
 from ._quality import Quality as Quality
+from ._initial_quality import InitialQuality as InitialQuality
+from ._initial_quality import InitialQualityEntry as InitialQualityEntry
 from ._tables import Tables as Tables
 from ._inflows import Inflows as Inflows
 from ._controls import Controls as Controls
 from ._forcing import Forcing as Forcing
+
+# =============================================================================
+# Transport processes — heat, water age, reactions, process components
+# =============================================================================
+from ._heat import Heat as Heat
+from ._heat import HeatNodeOverride as HeatNodeOverride
+from ._water_age import WaterAge as WaterAge
+from ._water_age import WaterAgeOverride as WaterAgeOverride
+from ._reactions import Reactions as Reactions
+from ._reactions import ReactionSpecies as ReactionSpecies
+from ._reactions import ReactionCoefficient as ReactionCoefficient
+from ._reactions import ReactionTerm as ReactionTerm
+from ._reactions import ReactionInitialEntry as ReactionInitialEntry
+from ._reactions import ReactionHydVar as ReactionHydVar
+from ._reactions import ReactionFunction as ReactionFunction
+from ._reactions import ExpressionDiagnostic as ExpressionDiagnostic
+from ._process_components import ProcessComponents as ProcessComponents
+from ._process_components import ProcessComponent as ProcessComponent
 
 # =============================================================================
 # Spatial / infrastructure / 2D
@@ -101,6 +123,10 @@ from ._forcing import Forcing as Forcing
 from ._infrastructure import Infrastructure as Infrastructure
 from ._spatial import Spatial as Spatial
 from ._2d import Surface2D as Surface2D
+from ._2d import Infiltration2DView as Infiltration2DView
+from ._2d import Infil2DDefaults as Infil2DDefaults
+from ._2d import Infil2DRow as Infil2DRow
+from ._2d import Infil2DCell as Infil2DCell
 
 # =============================================================================
 # Optional GeoPackage I/O (only available with OPENSWMM_WITH_GEOPACKAGE build)
@@ -141,10 +167,28 @@ from ._enums import (
     InfilModel as InfilModel,
     # Water quality / LID
     AquiferParam as AquiferParam,
+    GwfType as GwfType,
     BuildupFunc as BuildupFunc,
     ConcentrationUnits as ConcentrationUnits,
     LidType as LidType,
     WashoffFunc as WashoffFunc,
+    # Transport processes — heat, water age, reactions
+    HeatFluxModule as HeatFluxModule,
+    HeatShortwaveMode as HeatShortwaveMode,
+    HeatRadiativeParam as HeatRadiativeParam,
+    HeatSolarParam as HeatSolarParam,
+    HeatCloudParam as HeatCloudParam,
+    HeatSourceKind as HeatSourceKind,
+    WaterAgeSource as WaterAgeSource,
+    ReactionScope as ReactionScope,
+    ReactionExprForm as ReactionExprForm,
+    # Street inlets
+    InletType as InletType,
+    GrateType as GrateType,
+    ThroatType as ThroatType,
+    InletCurveKind as InletCurveKind,
+    InletPlacement as InletPlacement,
+    InletHostKind as InletHostKind,
     # Output variables
     OutLinkVar as OutLinkVar,
     OutNodeVar as OutNodeVar,
@@ -159,6 +203,8 @@ from ._enums import (
     # 2D surface routing
     SurfaceForcingMode as SurfaceForcingMode,
     SurfaceBoundaryType as SurfaceBoundaryType,
+    SurfaceInfilMethod as SurfaceInfilMethod,
+    SurfaceInfilDest as SurfaceInfilDest,
     # Nodes / editing
     DividerType as DividerType,
     RefType as RefType,
@@ -170,3 +216,46 @@ from ._enums import (
 HAS_GEOPACKAGE: bool
 
 __all__: list[str]
+
+# Native climate, transport, writer and unit-system selectors.
+from ._enums import (
+    EvapType as EvapType, TempSource as TempSource, WindType as WindType, HumidityType as HumidityType, HumidityVar as HumidityVar, HeatElemKind as HeatElemKind, InpProfile as InpProfile, TransportDispersionMode as TransportDispersionMode, UnitSystem as UnitSystem
+)
+
+from ._transport import (Transport as Transport, ThreadInfo as ThreadInfo, EffectiveThreads as EffectiveThreads, TransportCell as TransportCell, TransportRow as TransportRow, ConduitDispersion as ConduitDispersion, transport_domain_name as transport_domain_name, transport_class_name as transport_class_name)
+from ._enums import (TransportDomain as TransportDomain, TransportClass as TransportClass, TransportState as TransportState)
+
+from ._process_components import KnownProcessComponent as KnownProcessComponent
+from ._process_components import ComponentLibrary as ComponentLibrary
+
+from ._enums import (CellScope as CellScope, GroundwaterSoil as GroundwaterSoil, GroundwaterClosure as GroundwaterClosure, GroundwaterVariable as GroundwaterVariable, GroundwaterLedger as GroundwaterLedger, GroundwaterZone as GroundwaterZone, GroundwaterSpeciesLedger as GroundwaterSpeciesLedger)
+from ._groundwater import Groundwater as Groundwater, AquiferRow as AquiferRow, AquiferNode as AquiferNode
+
+from ._enums import GroundwaterTransportZone as GroundwaterTransportZone
+from ._gw_transport import (GroundwaterTransport as GroundwaterTransport, GroundwaterParameters as GroundwaterParameters, GroundwaterSorption as GroundwaterSorption, GroundwaterInitialQuality as GroundwaterInitialQuality, GroundwaterBoundary as GroundwaterBoundary, GroundwaterSource as GroundwaterSource, GroundwaterSourceTerm as GroundwaterSourceTerm)
+
+from ._surface_quality import (SurfaceQuality as SurfaceQuality, SurfaceCoverage as SurfaceCoverage, SurfaceLoading as SurfaceLoading, SurfaceCurbLength as SurfaceCurbLength)
+
+# Independent offline flow tracing.
+from ._trace import (
+    FlowTracer as FlowTracer,
+    TraceNode as TraceNode,
+    TraceLink as TraceLink,
+    TraceOptions as TraceOptions,
+    TraceInfo as TraceInfo,
+    TraceNodeAverage as TraceNodeAverage,
+    TraceLinkAverage as TraceLinkAverage,
+    TraceValue as TraceValue,
+    TraceSummary as TraceSummary,
+    TraceResult as TraceResult,
+    TraceError as TraceError,
+)
+from ._enums import (
+    TraceStatus as TraceStatus,
+    TraceDirection as TraceDirection,
+    TraceNodeFlags as TraceNodeFlags,
+    TraceFlags as TraceFlags,
+    TraceTerminal as TraceTerminal,
+)
+
+from ._lid_nodes import LidNodeLayer as LidNodeLayer, LidNodeLayerKind as LidNodeLayerKind, LidLayerTreatment as LidLayerTreatment

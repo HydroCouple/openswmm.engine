@@ -136,6 +136,18 @@ struct ArdConfigData {
     /// Ignored with a warning under FLOW_ROUTING FV (the solver mesh
     /// governs) — the plan §8 open item resolved.
     double target_dx = 0.0;
+    /// IO3c provenance: true when THIS component's file carried the
+    /// SCALAR_SCHEME / LIMITER alias. The live values sit in
+    /// ctx.options.fv (the aliases write through at apply), and the
+    /// INP writer emits FV_SCALAR_SCHEME/FV_LIMITER only under
+    /// FLOW_ROUTING FV — so on a non-FV deck this file is the ONLY
+    /// carrier of that state across a save. The serializer emits the
+    /// alias (with the CURRENT live value, so API/GUI edits persist)
+    /// exactly when the flag says the file owned it; a file that
+    /// never spelled the alias never gains one (lesson 196).
+    bool sets_scalar_scheme = false;
+    bool sets_limiter = false;
+
     /// [TRANSPORT_OPTIONS] DETAILED_OUTPUT: per-cell CSV sidecar path,
     /// resolved at apply against the CONFIG file's directory (empty ⇒ off).
     std::string detailed_output_path;

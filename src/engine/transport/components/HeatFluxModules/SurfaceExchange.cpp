@@ -139,11 +139,21 @@ double sensibleFlux(double latent_flux, double bowen_ratio) noexcept {
     return bowen_ratio * latent_flux;
 }
 
-double surfaceFluxOut(const SimulationContext& ctx, double t_w) noexcept {
+double surfaceFluxOut(const SimulationContext& ctx,
+                      const HeatElement& elem, double t_w) noexcept {
     if (!ctx.options.heat_transport || !ctx.heat_config.surface_exchange)
         return 0.0;
-    return netFluxOut(t_w, airTempCelsius(ctx), ctx.climate_state.humidity,
-                      ctx.climate_state.wind_speed * kMphToMs,
+    // PE4: air temperature, humidity and wind are GLOBAL in the deck and
+    // per-element only through the forcing API. Resolving them HERE rather
+    // than writing them into `climate_state` is what keeps a per-link push
+    // out of snowmelt and evaporation — see ForcingData::elementClimate.
+    const double t_air = ctx.forcing.elementAirTempF(elem,
+                             ctx.climate_state.temperature);
+    const double rh    = ctx.forcing.elementHumidity(elem,
+                             ctx.climate_state.humidity);
+    const double wind  = ctx.forcing.elementWindMph(elem,
+                             ctx.climate_state.wind_speed);
+    return netFluxOut(t_w, (t_air - 32.0) * 5.0 / 9.0, rh, wind * kMphToMs,
                       ctx.options.wind_func_coeff_a,
                       ctx.options.wind_func_coeff_b,
                       ctx.options.water_density,

@@ -39,7 +39,14 @@ SWMM_ENGINE_API int swmm_spatial_set_crs(SWMM_Engine engine, const char* crs) {
     CHECK_HANDLE(engine);
     if (!crs) return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
+    // The CRS is held in two places: the spatial frame (this API, the
+    // GeoPackage reader/writer, hot-start headers) and the [OPTIONS] table
+    // (swmm_get_crs, swmm_options_set("CRS"), and the .inp writer). The .inp
+    // reader fills both; this setter used to fill only the frame, so a caller
+    // that reprojected coordinates and then saved the model wrote the NEW
+    // coordinates under the OLD `CRS` line. Keep both in step.
     ctx.spatial.crs = crs;
+    ctx.options.crs = crs;
     return SWMM_OK;
 }
 
@@ -65,6 +72,9 @@ SWMM_ENGINE_API int swmm_spatial_set_node_coord(SWMM_Engine engine, int idx, dou
     const auto ui = static_cast<std::size_t>(idx);
     ctx.spatial.node_x[ui] = x;
     ctx.spatial.node_y[ui] = y;
+    if (ctx.spatial.node_has_xy.size() < ctx.spatial.node_x.size())
+        ctx.spatial.node_has_xy.resize(ctx.spatial.node_x.size(), 0);
+    ctx.spatial.node_has_xy[ui] = 1;   // G-X2
     return SWMM_OK;
 }
 

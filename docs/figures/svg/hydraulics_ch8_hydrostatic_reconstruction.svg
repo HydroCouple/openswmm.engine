@@ -1,0 +1,259 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="620.065227pt" height="254.178516pt" viewBox="0 0 620.065227 254.178516" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:format>image/svg+xml</dc:format>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 254.178516 
+L 620.065227 254.178516 
+L 620.065227 0 
+L 0 0 
+z
+" style="fill: #fcfcfb"/>
+  </g>
+  <g id="axes_1">
+   <g id="FillBetweenPolyCollection_1">
+    <defs>
+     <path id="m6c9c822e5a" d="M 0 -72.670476 
+L 0 -19.12381 
+L 147.799943 -19.12381 
+L 147.799943 -72.670476 
+L 147.799943 -72.670476 
+L 0 -72.670476 
+z
+" style="stroke: #e2d7bd"/>
+    </defs>
+    <g clip-path="url(#p30b9eebb1c)">
+     <use xlink:href="#m6c9c822e5a" x="0" y="254.178516" style="fill: #e2d7bd; stroke: #e2d7bd"/>
+    </g>
+   </g>
+   <g id="FillBetweenPolyCollection_2">
+    <defs>
+     <path id="m1b230f3638" d="M 147.799943 -141.51619 
+L 147.799943 -19.12381 
+L 295.599886 -19.12381 
+L 295.599886 -141.51619 
+L 295.599886 -141.51619 
+L 147.799943 -141.51619 
+z
+" style="stroke: #e2d7bd"/>
+    </defs>
+    <g clip-path="url(#p30b9eebb1c)">
+     <use xlink:href="#m1b230f3638" x="0" y="254.178516" style="fill: #e2d7bd; stroke: #e2d7bd"/>
+    </g>
+   </g>
+   <g id="FillBetweenPolyCollection_3">
+    <defs>
+     <path id="m4f1df6f71f" d="M 0 -179.76381 
+L 0 -72.670476 
+L 147.799943 -72.670476 
+L 147.799943 -179.76381 
+L 147.799943 -179.76381 
+L 0 -179.76381 
+z
+" style="stroke: #2a78d6; stroke-opacity: 0.28"/>
+    </defs>
+    <g clip-path="url(#p30b9eebb1c)">
+     <use xlink:href="#m4f1df6f71f" x="0" y="254.178516" style="fill: #2a78d6; fill-opacity: 0.28; stroke: #2a78d6; stroke-opacity: 0.28"/>
+    </g>
+   </g>
+   <g id="patch_2">
+    <path d="M 120.238104 60.645563 
+Q 155.190623 60.645563 188.354287 60.645563 
+" clip-path="url(#p30b9eebb1c)" style="fill: none; stroke: #2a78d6; stroke-width: 1.6; stroke-linecap: round"/>
+    <path d="M 182.754287 57.845563 
+L 188.354287 60.645563 
+L 182.754287 63.445563 
+z
+" clip-path="url(#p30b9eebb1c)" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.6; stroke-linecap: round"/>
+   </g>
+   <g id="line2d_1">
+    <path d="M 0 181.508039 
+L 147.799943 181.508039 
+" clip-path="url(#p30b9eebb1c)" style="fill: none; stroke: #0b0b0b; stroke-width: 1.8; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_2">
+    <path d="M 147.799943 112.662325 
+L 295.599886 112.662325 
+" clip-path="url(#p30b9eebb1c)" style="fill: none; stroke: #0b0b0b; stroke-width: 1.8; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_3">
+    <path d="M 147.799943 181.508039 
+L 147.799943 112.662325 
+" clip-path="url(#p30b9eebb1c)" style="fill: none; stroke: #0b0b0b; stroke-width: 1.8; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_4">
+    <path d="M 96.069963 112.662325 
+L 199.529923 112.662325 
+" clip-path="url(#p30b9eebb1c)" style="fill: none; stroke-dasharray: 4,2; stroke-dashoffset: 0; stroke: #898781"/>
+   </g>
+   <g id="line2d_5">
+    <path d="M 0 74.414706 
+L 147.799943 74.414706 
+" clip-path="url(#p30b9eebb1c)" style="fill: none; stroke: #2a78d6; stroke-width: 2; stroke-linecap: square"/>
+   </g>
+   <g id="text_1">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #898781" x="203.224922" y="123.701414" transform="rotate(-0 203.224922 123.701414)">z* = max(z_L, z_R)</text>
+   </g>
+   <g id="text_2">
+    <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #2a78d6" x="9.237496" y="69.060039" transform="rotate(-0 9.237496 69.060039)">η_L</text>
+   </g>
+   <g id="text_3">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="9.237496" y="203.395368" transform="rotate(-0 9.237496 203.395368)">z_L</text>
+   </g>
+   <g id="text_4">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="273.429895" y="134.549654" transform="rotate(-0 273.429895 134.549654)">z_R</text>
+   </g>
+   <g id="patch_3">
+    <path d="M 160.732438 109.541334 
+Q 160.732438 93.539163 160.732438 77.536992 
+" style="fill: none; stroke: #2a78d6; stroke-linecap: round"/>
+    <path d="M 162.532438 105.941334 
+L 160.732438 109.541334 
+L 158.932438 105.941334 
+" style="fill: none; stroke: #2a78d6; stroke-linecap: round"/>
+    <path d="M 158.932438 81.136992 
+L 160.732438 77.536992 
+L 162.532438 81.136992 
+" style="fill: none; stroke: #2a78d6; stroke-linecap: round"/>
+   </g>
+   <g id="text_5">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #2a78d6" x="166.274936" y="95.896797" transform="rotate(-0 166.274936 95.896797)">h*_L = η_L − z*</text>
+   </g>
+   <g id="text_6">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #2a78d6" x="155.18994" y="49.93623" transform="rotate(-0 155.18994 49.93623)">front advances onto the dry cell</text>
+   </g>
+   <g id="text_7">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="236.479909" y="103.482897" transform="rotate(-0 236.479909 103.482897)">h*_R = 0 (dry)</text>
+   </g>
+   <g id="text_8">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #898781" x="73.899972" y="230.039092" transform="rotate(-0 73.899972 230.039092)">cell L</text>
+   </g>
+   <g id="text_9">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #898781" x="221.699915" y="230.039092" transform="rotate(-0 221.699915 230.039092)">cell R</text>
+   </g>
+   <g id="text_10">
+    <text style="font-size: 9.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="0" y="7.218516" transform="rotate(-0 0 7.218516)">Wetting front: η_L above z*</text>
+   </g>
+  </g>
+  <g id="axes_2">
+   <g id="FillBetweenPolyCollection_4">
+    <defs>
+     <path id="mb601c889dd" d="M 324.465341 -72.670476 
+L 324.465341 -19.12381 
+L 472.265284 -19.12381 
+L 472.265284 -72.670476 
+L 472.265284 -72.670476 
+L 324.465341 -72.670476 
+z
+" style="stroke: #e2d7bd"/>
+    </defs>
+    <g clip-path="url(#p10cfd607c0)">
+     <use xlink:href="#mb601c889dd" x="0" y="254.178516" style="fill: #e2d7bd; stroke: #e2d7bd"/>
+    </g>
+   </g>
+   <g id="FillBetweenPolyCollection_5">
+    <defs>
+     <path id="m982d5d3daa" d="M 472.265284 -141.51619 
+L 472.265284 -19.12381 
+L 620.065227 -19.12381 
+L 620.065227 -141.51619 
+L 620.065227 -141.51619 
+L 472.265284 -141.51619 
+z
+" style="stroke: #e2d7bd"/>
+    </defs>
+    <g clip-path="url(#p10cfd607c0)">
+     <use xlink:href="#m982d5d3daa" x="0" y="254.178516" style="fill: #e2d7bd; stroke: #e2d7bd"/>
+    </g>
+   </g>
+   <g id="FillBetweenPolyCollection_6">
+    <defs>
+     <path id="mfd2919afae" d="M 324.465341 -122.392381 
+L 324.465341 -72.670476 
+L 472.265284 -72.670476 
+L 472.265284 -122.392381 
+L 472.265284 -122.392381 
+L 324.465341 -122.392381 
+z
+" style="stroke: #2a78d6; stroke-opacity: 0.28"/>
+    </defs>
+    <g clip-path="url(#p10cfd607c0)">
+     <use xlink:href="#mfd2919afae" x="0" y="254.178516" style="fill: #2a78d6; fill-opacity: 0.28; stroke: #2a78d6; stroke-opacity: 0.28"/>
+    </g>
+   </g>
+   <g id="line2d_6">
+    <path d="M 324.465341 181.508039 
+L 472.265284 181.508039 
+" clip-path="url(#p10cfd607c0)" style="fill: none; stroke: #0b0b0b; stroke-width: 1.8; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_7">
+    <path d="M 472.265284 112.662325 
+L 620.065227 112.662325 
+" clip-path="url(#p10cfd607c0)" style="fill: none; stroke: #0b0b0b; stroke-width: 1.8; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_8">
+    <path d="M 472.265284 181.508039 
+L 472.265284 112.662325 
+" clip-path="url(#p10cfd607c0)" style="fill: none; stroke: #0b0b0b; stroke-width: 1.8; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_9">
+    <path d="M 420.535304 112.662325 
+L 523.995264 112.662325 
+" clip-path="url(#p10cfd607c0)" style="fill: none; stroke-dasharray: 4,2; stroke-dashoffset: 0; stroke: #898781"/>
+   </g>
+   <g id="line2d_10">
+    <path d="M 324.465341 131.786135 
+L 472.265284 131.786135 
+" clip-path="url(#p10cfd607c0)" style="fill: none; stroke: #2a78d6; stroke-width: 2; stroke-linecap: square"/>
+   </g>
+   <g id="text_11">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #898781" x="527.690263" y="123.701414" transform="rotate(-0 527.690263 123.701414)">z* = max(z_L, z_R)</text>
+   </g>
+   <g id="text_12">
+    <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #2a78d6" x="333.702837" y="126.431468" transform="rotate(-0 333.702837 126.431468)">η_L</text>
+   </g>
+   <g id="text_13">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="333.702837" y="203.395368" transform="rotate(-0 333.702837 203.395368)">z_L</text>
+   </g>
+   <g id="text_14">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="597.895236" y="134.549654" transform="rotate(-0 597.895236 134.549654)">z_R</text>
+   </g>
+   <g id="text_15">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'; fill: #0b0b0b" transform="translate(435.801925 67.911124)">h*_L = h*_R = 0</text>
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'; fill: #0b0b0b" transform="translate(410.4388 78.239468)">zero flux: the bank is a wall</text>
+   </g>
+   <g id="text_16">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="560.94525" y="103.482897" transform="rotate(-0 560.94525 103.482897)">dry</text>
+   </g>
+   <g id="text_17">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #898781" x="398.365312" y="230.039092" transform="rotate(-0 398.365312 230.039092)">cell L</text>
+   </g>
+   <g id="text_18">
+    <text style="font-size: 8.5px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #898781" x="546.165256" y="230.039092" transform="rotate(-0 546.165256 230.039092)">cell R</text>
+   </g>
+   <g id="text_19">
+    <text style="font-size: 9.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="324.465341" y="7.218516" transform="rotate(-0 324.465341 7.218516)">Emerged bank: η_L below z*</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p30b9eebb1c">
+   <rect x="0" y="13.218516" width="295.599886" height="240.96"/>
+  </clipPath>
+  <clipPath id="p10cfd607c0">
+   <rect x="324.465341" y="13.218516" width="295.599886" height="240.96"/>
+  </clipPath>
+ </defs>
+</svg>

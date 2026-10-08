@@ -28,6 +28,8 @@
 
 #include "openswmm_api_common.hpp"
 #include "StringCase.hpp"
+#include "../hydrology/Groundwater.hpp"
+#include "../math/MathExpr.hpp"
 #include "../../../include/openswmm/engine/openswmm_subcatchments.h"
 
 #include <algorithm>
@@ -144,6 +146,7 @@ SWMM_ENGINE_API int swmm_subcatch_set_zero_imperv_pct(SWMM_Engine engine, int id
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    ctx.subcatches.pct_zero[static_cast<std::size_t>(idx)] = pct;
     ctx.subcatches.frac_imperv_no_store[static_cast<std::size_t>(idx)] = pct / 100.0;
     return SWMM_OK;
 }
@@ -525,10 +528,23 @@ SWMM_ENGINE_API int swmm_subcatch_set_initial_loading(SWMM_Engine engine, int sc
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(sc_idx >= 0 && sc_idx < ctx.n_subcatches());
+    if (pollut_idx >= ctx.n_pollutants()) {          // BW-MSX species index
+        auto& ms = ctx.reactions.surface;
+        const int m = pollut_idx - ctx.n_pollutants();
+        CHECK_INDEX(m >= 0 && m < ctx.reactions.n_species());
+        if (ms.n_landuses != ctx.n_landuses() || ms.n_species != ctx.reactions.n_species())
+            ms.resize_params(ctx.n_landuses(), ctx.reactions.n_species());
+        const auto want = static_cast<std::size_t>(ctx.n_subcatches()) *
+                          static_cast<std::size_t>(ms.n_species);
+        if (ms.init_loading.size() != want) ms.init_loading.assign(want, 0.0);
+        ms.init_loading[ms.sidx(sc_idx, m)] = buildup;
+        ms.resolved = true;
+        return SWMM_OK;
+    }
     CHECK_INDEX(pollut_idx >= 0 && pollut_idx < ctx.n_pollutants());
 
     // Ensure the quality arrays are sized ([LOADINGS] parks the initial
-    // buildup in subcatches.conc — same storage handle_loadings uses).
+    // buildup in subcatches.init_loading — same storage handle_loadings uses).
     if (ctx.subcatches.conc_n_pollutants != ctx.n_pollutants() ||
         static_cast<int>(ctx.subcatches.conc.size()) !=
             ctx.n_subcatches() * ctx.n_pollutants()) {
@@ -538,7 +554,7 @@ SWMM_ENGINE_API int swmm_subcatch_set_initial_loading(SWMM_Engine engine, int sc
     auto k = static_cast<std::size_t>(sc_idx) *
              static_cast<std::size_t>(ctx.n_pollutants()) +
              static_cast<std::size_t>(pollut_idx);
-    ctx.subcatches.conc[k] = buildup;
+    ctx.subcatches.init_loading[k] = buildup;
     return SWMM_OK;
 }
 
@@ -546,9 +562,20 @@ SWMM_ENGINE_API int swmm_subcatch_get_initial_loading(SWMM_Engine engine, int sc
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(sc_idx >= 0 && sc_idx < ctx.n_subcatches());
+    if (pollut_idx >= ctx.n_pollutants()) {          // BW-MSX species index
+        const auto& ms = ctx.reactions.surface;
+        const int m = pollut_idx - ctx.n_pollutants();
+        CHECK_INDEX(m >= 0 && m < ctx.reactions.n_species());
+        const auto want = static_cast<std::size_t>(ctx.n_subcatches()) *
+                          static_cast<std::size_t>(ms.n_species);
+        if (buildup) *buildup = (ms.n_species == ctx.reactions.n_species() &&
+                                 ms.init_loading.size() == want)
+                                    ? ms.init_loading[ms.sidx(sc_idx, m)] : 0.0;
+        return SWMM_OK;
+    }
     CHECK_INDEX(pollut_idx >= 0 && pollut_idx < ctx.n_pollutants());
 
-    if (ctx.subcatches.conc.empty() ||
+    if (ctx.subcatches.init_loading.empty() ||
         ctx.subcatches.conc_n_pollutants != ctx.n_pollutants()) {
         if (buildup) *buildup = 0.0;
         return SWMM_OK;
@@ -557,7 +584,7 @@ SWMM_ENGINE_API int swmm_subcatch_get_initial_loading(SWMM_Engine engine, int sc
     auto k = static_cast<std::size_t>(sc_idx) *
              static_cast<std::size_t>(ctx.n_pollutants()) +
              static_cast<std::size_t>(pollut_idx);
-    if (buildup) *buildup = ctx.subcatches.conc[k];
+    if (buildup) *buildup = ctx.subcatches.init_loading[k];
     return SWMM_OK;
 }
 
@@ -648,7 +675,7 @@ SWMM_ENGINE_API int swmm_subcatch_get_gw_node(SWMM_Engine engine, int idx, int* 
 }
 
 // Groundwater flow parameters, in [GROUNDWATER] token order:
-// SurfEl, A1, B1, A2, B2, A3, Twgr (gw_tw), Hstar (gw_hstar). Stored raw.
+// SurfEl, A1, B1, A2, B2, A3, Dsw (gw_tw), Egwt (gw_hstar). Stored raw.
 SWMM_ENGINE_API int swmm_subcatch_set_gw_params(SWMM_Engine engine, int idx,
                                                 double surf_elev, double a1, double b1,
                                                 double a2, double b2, double a3,
@@ -686,6 +713,105 @@ SWMM_ENGINE_API int swmm_subcatch_get_gw_params(SWMM_Engine engine, int idx,
     if (tw)        *tw        = ctx.subcatches.gw_tw[uidx];
     if (hstar)     *hstar     = ctx.subcatches.gw_hstar[uidx];
     return SWMM_OK;
+}
+
+// ============================================================================
+// Custom groundwater flow expressions ([GWF])
+// ============================================================================
+// Single source of truth stays where handle_gwf() / InpWriter / start() already
+// look: options.ext_options["GWF:<subcatch>:LATERAL|DEEP"], keyed by the
+// registry (canonical) spelling of the subcatchment name.
+
+// C++ linkage for the helpers: this file body sits inside extern "C", and a
+// C-linkage function returning std::string draws -Wreturn-type-c-linkage.
+extern "C++" {
+namespace {
+
+std::string gwf_key(const openswmm::SimulationContext& ctx, int idx, int type) {
+    const char* ty = (type == SWMM_GWF_LATERAL) ? "LATERAL" : "DEEP";
+    return "GWF:" + ctx.subcatch_names.name_of(idx) + ":" + ty;
+}
+
+int gwf_copy_out(const std::string& s, char* buf, int buflen) {
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    const std::size_t n = std::min(s.size(), static_cast<std::size_t>(buflen - 1));
+    std::memcpy(buf, s.data(), n);
+    buf[n] = '\0';
+    return SWMM_OK;
+}
+
+} // namespace
+} // extern "C++"
+
+SWMM_ENGINE_API int swmm_subcatch_get_gwf_expression(SWMM_Engine engine, int index, int type,
+                                                     char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
+    if (type != SWMM_GWF_LATERAL && type != SWMM_GWF_DEEP) return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(index >= 0 && index < ctx.n_subcatches());
+    auto it = ctx.options.ext_options.find(gwf_key(ctx, index, type));
+    return gwf_copy_out(it == ctx.options.ext_options.end() ? std::string{} : it->second,
+                    buf, buflen);
+}
+
+SWMM_ENGINE_API int swmm_subcatch_set_gwf_expression(SWMM_Engine engine, int index, int type,
+                                                     const char* expr) {
+    CHECK_HANDLE(engine);
+    if (type != SWMM_GWF_LATERAL && type != SWMM_GWF_DEEP) return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    // Compiled at start() like the aquifer evap pattern — pre-start-only.
+    CHECK_GEOMETRY(ctx);
+    CHECK_INDEX(index >= 0 && index < ctx.n_subcatches());
+    const std::string key = gwf_key(ctx, index, type);
+    if (!expr || !*expr) ctx.options.ext_options.erase(key);
+    else                 ctx.options.ext_options[key] = expr;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gwf_validate_expression(SWMM_Engine engine, const char* expr,
+                                                 char* errbuf, int buflen, int* col_out) {
+    CHECK_HANDLE(engine);
+    if (errbuf && buflen > 0) errbuf[0] = '\0';
+    if (col_out) *col_out = -1;
+    if (!expr) return SWMM_ERR_BADPARAM;
+
+    std::string msg;
+    int col = -1;
+    if (openswmm::groundwater::gwf_validate(expr, msg, col) == 0) return SWMM_OK;
+
+    if (errbuf && buflen > 0) gwf_copy_out(msg, errbuf, buflen);
+    if (col_out) *col_out = col;
+    return SWMM_ERR_BADPARAM;
+}
+
+SWMM_ENGINE_API int swmm_gwf_variable_count(SWMM_Engine engine) {
+    if (!engine) return -1;
+    return openswmm::groundwater::GWV_MAX;
+}
+
+SWMM_ENGINE_API int swmm_gwf_variable_name(SWMM_Engine engine, int i, char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    CHECK_INDEX(i >= 0 && i < openswmm::groundwater::GWV_MAX);
+    return gwf_copy_out(openswmm::groundwater::GW_VAR_NAMES[i], buf, buflen);
+}
+
+SWMM_ENGINE_API int swmm_gwf_variable_description(SWMM_Engine engine, int i, char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    CHECK_INDEX(i >= 0 && i < openswmm::groundwater::GWV_MAX);
+    return gwf_copy_out(openswmm::groundwater::GW_VAR_DESCRIPTIONS[i], buf, buflen);
+}
+
+SWMM_ENGINE_API int swmm_gwf_function_count(SWMM_Engine engine) {
+    if (!engine) return -1;
+    return static_cast<int>(openswmm::mathexpr::function_names().size());
+}
+
+SWMM_ENGINE_API int swmm_gwf_function_name(SWMM_Engine engine, int i, char* buf, int buflen) {
+    CHECK_HANDLE(engine);
+    const auto& names = openswmm::mathexpr::function_names();
+    CHECK_INDEX(i >= 0 && static_cast<std::size_t>(i) < names.size());
+    return gwf_copy_out(names[static_cast<std::size_t>(i)], buf, buflen);
 }
 
 // ============================================================================
@@ -1198,6 +1324,26 @@ SWMM_ENGINE_API int swmm_aquifer_set_evap_pattern(SWMM_Engine engine, int idx, c
 // ============================================================================
 // Snowpacks ([SNOWPACKS] section) — Slice BM.0 list + add; setters land with BP
 // ============================================================================
+
+SWMM_ENGINE_API int swmm_subcatch_set_snowpack(SWMM_Engine engine, int idx, const char* name) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    const int pack = name && *name ? ctx.snowpack_names.find(name) : -1;
+    if (name && *name && pack < 0) return SWMM_ERR_BADPARAM;
+    const auto ui = static_cast<std::size_t>(idx);
+    ctx.subcatches.snowpack[ui] = pack;
+    ctx.subcatches.snowpack_name[ui] = pack < 0 ? "" : ctx.snowpack_names.name_of(pack);
+    return SWMM_OK;
+}
+SWMM_ENGINE_API const char* swmm_subcatch_get_snowpack(SWMM_Engine engine, int idx) {
+    if (!engine) return nullptr;
+    const auto& ctx = to_engine(engine)->context();
+    if (idx < 0 || idx >= ctx.n_subcatches()) return nullptr;
+    const int pack = ctx.subcatches.snowpack[static_cast<std::size_t>(idx)];
+    return pack < 0 ? "" : ctx.snowpack_names.name_of(pack).c_str();
+}
 
 SWMM_ENGINE_API int swmm_snowpack_count(SWMM_Engine engine) {
     if (!engine) return -1;

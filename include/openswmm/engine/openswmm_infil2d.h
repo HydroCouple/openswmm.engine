@@ -102,12 +102,12 @@ extern "C" {
 /** Destination codes for infiltrated water. Mirror
  *  `openswmm::twoD::Infil2DDest`.
  *
- *  D-I4: `LOST` is the only destination this release routes. The other two
- *  exist so the grammar is stable and are rejected at validation with a
- *  "not supported in this release" message. */
+ *  LOST and SUBCATCH_AQUIFER route ordinary bank cells. Aquifer-owned
+ *  cells use their column capacity. AQUIFER_2D is retained for readable
+ *  migration and is rejected at initialization. */
 #define SWMM_INFIL2D_DEST_LOST             0  /**< Leaves the domain; booked to the `infil_out` ledger row. */
 #define SWMM_INFIL2D_DEST_SUBCATCH_AQUIFER 1  /**< Reserved — legacy subcatchment aquifer. */
-#define SWMM_INFIL2D_DEST_AQUIFER_2D       2  /**< Reserved — the two-zone 2D kernel. */
+#define SWMM_INFIL2D_DEST_AQUIFER_2D       2  /**< Obsolete; requires reviewed ownership migration. */
 
 /* =========================================================================
  * Value types
@@ -159,6 +159,31 @@ typedef struct SWMM_Infil2DRow {
      *  `SWMM_INFIL2D_DEST_LOST` is accepted in this release (D-I4). */
     int    dest;
 } SWMM_Infil2DRow;
+
+/** Ordered authoring record, including inheritance presence. cell=-1: default/tag.
+ * Fixed tag buffer matches the other authoring read APIs; oversized tags are
+ * refused rather than truncated. Replacement retains obsolete destination
+ * values for migration Undo; initialize still rejects them. It validates the entire batch
+ * before writing, retains duplicates/order, and is available only while editable. */
+typedef struct SWMM_Infil2DAuthoredRow {
+    int cell;
+    char tag[4096];
+    SWMM_Infil2DRow row;
+    int dest_explicit;
+} SWMM_Infil2DAuthoredRow;
+SWMM_ENGINE_API int swmm_infil2d_get_authored_rows(SWMM_Engine engine,
+    SWMM_Infil2DAuthoredRow* out, int len, int* written);
+SWMM_ENGINE_API int swmm_infil2d_replace_authored_rows(SWMM_Engine engine,
+    const SWMM_Infil2DAuthoredRow* rows, int count);
+
+/** Resolved authoring ownership: 0 disabled, 1 surface bank, 2 aquifer.
+ * aq_row = -1 denotes the implicit whole-mesh aquifer default.
+ * conflict: 0 none, 1 explicit cell method, 2 obsolete AQUIFER_2D destination.
+ * Available before initialize; authoring records are never modified. */
+SWMM_ENGINE_API int swmm_infil2d_get_ownership_bulk(SWMM_Engine engine,
+    int* owners, int* aq_rows, int* conflicts, int len, int* written);
+SWMM_ENGINE_API int swmm_infil2d_get_ownership(SWMM_Engine engine, int cell,
+    int* owner, int* aq_row, int* conflict);
 
 /* =========================================================================
  * Options — `[2D_INFILTRATION_OPTIONS]`

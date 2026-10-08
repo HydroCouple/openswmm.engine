@@ -36,6 +36,7 @@
  * FILE  "filename"  StartDate
  * WINDSPEED  MONTHLY  1.0 1.0 ... (12 values)
  * WINDSPEED  FILE
+ * HUMIDITY  [DEWPOINT]  value | MONTHLY h1 ... h12 | TIMESERIES name
  * SNOWMELT  divT  ATIwt  nrgRatio  lat  minMelt  maxMelt
  * ADC  IMPERVIOUS  frac1  frac2  ... frac10
  * ADC  PERVIOUS    frac1  frac2  ... frac10
@@ -56,7 +57,7 @@
  *
  * ### [GROUNDWATER] format
  * ```
- * Subcatch  Aquifer  Node  SurfEl  A1  B1  A2  B2  A3  Twgr  Hstar
+ * Subcatch  Aquifer  Node  SurfEl  A1  B1  A2  B2  A3  Dsw  [Egwt  Ebot  Wgw  Umc]
  * ```
  *
  * ### [LID_CONTROLS] format (multi-line per LID)
@@ -82,11 +83,15 @@
  */
 
 #include "HydrologyHandler.hpp"
+#include <cmath>
+#include <cstdlib>
 
 #include "../Tokenizer.hpp"
+#include "../../core/Constants.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../data/SubcatchData.hpp"
 #include "../../data/HydrologyData.hpp"
+#include "../../hydrology/Groundwater.hpp"
 
 #include "../InputParseUtils.hpp"
 
@@ -128,6 +133,7 @@ static void ensure_aquifer_capacity(AquiferStore& aq, int idx) {
 
 static void ensure_lid_capacity(LidControlStore& lc, int idx) {
     const auto n = static_cast<std::size_t>(idx + 1);
+    if (lc.node_layers.size() < n) lc.node_layers.resize(n);
     if (lc.lid_type.size() < n)  lc.lid_type.resize(n, std::string{});
     if (lc.surface.size() < n)   lc.surface.resize(n, {0,0,0,0,0});
     if (lc.soil.size() < n)     lc.soil.resize(n, {0,0,0,0,0,0,0});
@@ -151,7 +157,10 @@ static void ensure_subcatch_gw_capacity(SimulationContext& ctx, int idx) {
     grow(ctx.subcatches.gw_b2,        0.0);
     grow(ctx.subcatches.gw_a3,        0.0);
     grow(ctx.subcatches.gw_tw,        0.0);
-    grow(ctx.subcatches.gw_hstar,     0.0);
+    grow(ctx.subcatches.gw_hstar,     constants::MISSING);
+    grow(ctx.subcatches.gw_bot_elev,  constants::MISSING);
+    grow(ctx.subcatches.gw_wt_elev,   constants::MISSING);
+    grow(ctx.subcatches.gw_upper_moist, constants::MISSING);
 }
 
 // ============================================================================
@@ -218,8 +227,16 @@ void handle_temperature(SimulationContext& ctx, const std::vector<std::string>& 
         else if (key == "FILE" && tok.size() >= 2) {
             ctx.options.temp_source = 2;
             ctx.options.temp_file = tok[1];
-            if (tok.size() >= 3 && tok[2] != "*")
-                ctx.options.temp_file_start = to_double(tok[2]);
+            // Optional start date (legacy climate.c:565-570): a token whose
+            // FIRST character is `*` means none; anything else must be a date
+            // or it is ERROR 213. It was read with to_double, which stops at
+            // the first '/', so every date became 1.0.
+            ctx.options.temp_file_start = 0.0;
+            if (tok.size() >= 3 && !tok[2].empty() && tok[2][0] != '*') {
+                const double start = parse_date(tok[2]);
+                if (start > 0.0) ctx.options.temp_file_start = start;
+                else ctx.errors.push_back(format_error(ERR_DATETIME, tok[2]));
+            }
             // Optional climate-file temperature units keyword (legacy tok[3]):
             //   C10 = tenths degC, C = degC, F = degF.
             if (tok.size() >= 4) {
@@ -242,45 +259,59 @@ void handle_temperature(SimulationContext& ctx, const std::vector<std::string>& 
         }
         // H2: relative humidity, % — the met input SurfaceExchange needs and
         // the first thing ever to write ClimateState::humidity, which has
-        // carried a 50 % default with no writer. Monthly like WINDSPEED; a
-        // single value fills all twelve months so a constant-RH deck is one
-        // token.
+        // carried a 50 % default with no writer. Forms:
+        //   HUMIDITY [DEWPOINT] <value>
+        //   HUMIDITY [DEWPOINT] MONTHLY h1 ... h12
+        //   HUMIDITY [DEWPOINT] TIMESERIES <name>
+        // A bare value is CONSTANT and fills all twelve months. DEWPOINT
+        // stores dew-point temperature (project temperature units) that the
+        // engine converts to RH each step.
         else if (key == "HUMIDITY" && tok.size() >= 2) {
-            const std::string htype = Tokenizer::to_upper(tok[1]);
-            if (htype == "MONTHLY" && tok.size() >= 14) {
+            std::size_t p = 1;
+            ctx.options.humidity_var = 0;
+            if (Tokenizer::to_upper(tok[p]) == "DEWPOINT") {
+                ctx.options.humidity_var = 1;
+                ++p;
+            }
+            if (p >= tok.size()) continue;
+            const std::string htype = Tokenizer::to_upper(tok[p]);
+            if (htype == "MONTHLY" && tok.size() >= p + 13) {
+                ctx.options.humidity_type = 1;
                 for (int i = 0; i < 12; ++i)
-                    ctx.options.humidity[i] = to_double(tok[2 + i]);
-            } else {
-                const double h = to_double(tok[1]);
+                    ctx.options.humidity[i] = to_double(tok[p + 1 + static_cast<std::size_t>(i)]);
+            }
+            else if (htype == "TIMESERIES" && tok.size() >= p + 2) {
+                ctx.options.humidity_type = 2;
+                ctx.options.humidity_ts_name = tok[p + 1];
+            }
+            else if (htype != "MONTHLY" && htype != "TIMESERIES") {
+                ctx.options.humidity_type = 0;
+                const double h = to_double(tok[p]);
                 for (int i = 0; i < 12; ++i) ctx.options.humidity[i] = h;
             }
         }
         else if (key == "SNOWMELT" && tok.size() >= 7) {
-            // Legacy [TEMPERATURE] SNOWMELT format (9 tokens):
-            //   SNOWMELT divT ATIwt nrgRatio elev lat dtlong minMelt maxMelt
-            // New engine format (7 tokens):
-            //   SNOWMELT divT ATIwt nrgRatio lat minMelt maxMelt
-            // Disambiguate: if 9+ tokens, treat as legacy (elevation at tok[4])
+            // Legacy [TEMPERATURE] SNOWMELT line (climate.c case 3):
+            //   SNOWMELT Stemp ATIwt RNM Elev Lat DTLong
+            // Stemp and Elev stay in the deck's units here (degC / m on an
+            // SI deck) and are converted at init like legacy's.
+            // A previous reading took a 7-token line as a v6-only
+            // "divT ATIwt nrgRatio lat minMelt maxMelt" form, so every
+            // standard deck had its elevation read as the latitude and no
+            // elevation at all (psychrometric constant at sea level).
+            // Tokens 7-8, when present, are the v6-only minMelt/maxMelt
+            // (unused by the solver; legacy ignores extra tokens).
             ctx.options.snow_divt      = to_double(tok[1]);
             ctx.options.snow_ati_wt    = to_double(tok[2]);
             ctx.options.snow_nrg_ratio = to_double(tok[3]);
+            ctx.options.snow_elev      = to_double(tok[4]);
+            ctx.options.snow_lat       = to_double(tok[5]);
+            // tok[6] = longitude/solar-time correction (minutes); stored
+            // verbatim and converted to hours at init (legacy climate.c).
+            ctx.options.snow_dtlong    = to_double(tok[6]);
             if (tok.size() >= 9) {
-                // Legacy: elev at [4], lat at [5], dtlong at [6], min at [7], max at [8]
-                ctx.options.snow_elev      = to_double(tok[4]);
-                ctx.options.snow_lat       = to_double(tok[5]);
-                // tok[6] = longitude/solar-time correction (minutes); stored
-                // verbatim and converted to hours at init (legacy climate.c).
-                ctx.options.snow_dtlong    = to_double(tok[6]);
                 ctx.options.snow_min_melt  = to_double(tok[7]);
                 ctx.options.snow_max_melt  = to_double(tok[8]);
-            } else {
-                // New engine: lat at [4], min at [5], max at [6]
-                ctx.options.snow_lat       = to_double(tok[4]);
-                ctx.options.snow_min_melt  = to_double(tok[5]);
-                ctx.options.snow_max_melt  = to_double(tok[6]);
-                // Optional elevation at tok[7] (new extended format)
-                if (tok.size() >= 8)
-                    ctx.options.snow_elev  = to_double(tok[7]);
             }
         }
         else if (key == "ADC" && tok.size() >= 12) {
@@ -382,27 +413,72 @@ void handle_aquifers(SimulationContext& ctx, const std::vector<std::string>& lin
 void handle_groundwater(SimulationContext& ctx, const std::vector<std::string>& lines) {
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
-        if (tok.size() < 11) continue;
-        // Subcatch  Aquifer  Node  SurfEl  A1  B1  A2  B2  A3  Twgr  Hstar
+        if (tok.empty()) continue;
+        // Subcatch  Aquifer  Node  SurfEl  A1  B1  A2  B2  A3  Dsw  [Egwt  Ebot  Wgw  Umc]
+        // Legacy gwater.c gwater_readGroundwaterParams requires >= 11 tokens;
+        // fewer is ERR_ITEMS (too few items). v6 formerly skipped short rows
+        // silently, so a truncated row ran instead of being rejected.
+        if (tok.size() < 11) {
+            ctx.errors.push_back(format_error(ERR_ITEMS, ""));
+            continue;
+        }
 
+        // Legacy registers every object before reading any row, so a
+        // [GROUNDWATER] row placed ahead of [SUBCATCHMENTS] still resolves.
+        // Defer it; the replay reports a name that is still undefined as
+        // ERROR 209 (legacy gwater.c:217). Skipping it silently dropped the
+        // subcatchment's groundwater from the run.
         const int idx = ctx.subcatch_names.find(tok[0]);
-        if (idx < 0) continue;
+        if (idx < 0) {
+            ctx.deferred_section_rows.emplace_back("GROUNDWATER", line);
+            continue;
+        }
+
+        // Required numerics (legacy x[0..6]): a token getDouble() rejects is
+        // ERROR 211, not a silent 0.0.
+        double req[7];
+        std::size_t bad = 0;
+        for (std::size_t k = 0; k < 7 && bad == 0; ++k)
+            if (!parse_double_strict(tok[k + 3], req[k])) bad = k + 3;
+        // Optional Egwt Ebot Wgw Umc (legacy x[7..10]): absent, or a token
+        // whose FIRST character is `*` (gwater.c:240), is MISSING — the
+        // receiving node's invert for Egwt, the aquifer's values for the
+        // other three (legacy gwater_validate). Any other value is literal:
+        // -99 is an elevation of -99, not a sentinel.
+        double opt[4];
+        for (std::size_t k = 0; k < 4 && bad == 0; ++k) {
+            const std::size_t t = k + 10;
+            opt[k] = constants::MISSING;
+            if (tok.size() > t && (tok[t].empty() || tok[t][0] != '*') &&
+                !parse_double_strict(tok[t], opt[k]))
+                bad = t;
+        }
+        if (bad != 0) {
+            ctx.errors.push_back(format_error(ERR_NUMBER, tok[bad]));
+            continue;
+        }
 
         ensure_subcatch_gw_capacity(ctx, idx);
 
+        // Aquifer and node may also be defined further down; resolve them in
+        // PostParseResolver, which raises ERROR 209 naming the token.
         ctx.subcatches.gw_aquifer[idx]   = ctx.aquifer_names.find(tok[1]);
+        if (ctx.subcatches.gw_aquifer[idx] < 0)
+            ctx.pending_gw_aquifers.emplace_back(idx, tok[1]);
         ctx.subcatches.gw_node[idx]      = ctx.node_names.find(tok[2]);
-        // [GROUNDWATER] normally precedes [JUNCTIONS], so the find() above
-        // returns -1 for a forward reference. Defer to PostParseResolver.
         ctx.pending_gw_nodes.emplace_back(idx, tok[2]);
-        ctx.subcatches.gw_surf_elev[idx] = to_double(tok[3]);
-        ctx.subcatches.gw_a1[idx]        = to_double(tok[4]);
-        ctx.subcatches.gw_b1[idx]        = to_double(tok[5]);
-        ctx.subcatches.gw_a2[idx]        = to_double(tok[6]);
-        ctx.subcatches.gw_b2[idx]        = to_double(tok[7]);
-        ctx.subcatches.gw_a3[idx]        = to_double(tok[8]);
-        ctx.subcatches.gw_tw[idx]        = to_double(tok[9]);
-        ctx.subcatches.gw_hstar[idx]     = to_double(tok[10]);
+        // Stored in the deck's units; the engine converts at init.
+        ctx.subcatches.gw_surf_elev[idx] = req[0];
+        ctx.subcatches.gw_a1[idx]        = req[1];
+        ctx.subcatches.gw_b1[idx]        = req[2];
+        ctx.subcatches.gw_a2[idx]        = req[3];
+        ctx.subcatches.gw_b2[idx]        = req[4];
+        ctx.subcatches.gw_a3[idx]        = req[5];
+        ctx.subcatches.gw_tw[idx]        = req[6];
+        ctx.subcatches.gw_hstar[idx]       = opt[0];
+        ctx.subcatches.gw_bot_elev[idx]    = opt[1];
+        ctx.subcatches.gw_wt_elev[idx]     = opt[2];
+        ctx.subcatches.gw_upper_moist[idx] = opt[3];
     }
 }
 
@@ -418,14 +494,58 @@ void handle_gwf(SimulationContext& ctx, const std::vector<std::string>& lines) {
         auto tok = Tokenizer::tokenize(line);
         if (tok.size() < 3) continue;
 
-        const std::string& subcatch = tok[0];
-        const std::string type = Tokenizer::to_upper(tok[1]);
+        // Key on the [SUBCATCHMENTS] spelling so a mixed-case name in [GWF]
+        // still matches the lookup at start() and the writer (both use the
+        // registry name). A name not defined yet is deferred like a
+        // [GROUNDWATER] row; one never defined is ERROR 209, as legacy
+        // gwater_readFlowExpression raises it (gwater.c:299).
+        const std::string* canon = ctx.subcatch_names.canonical(tok[0]);
+        if (!canon) {
+            ctx.deferred_section_rows.emplace_back("GWF", line);
+            continue;
+        }
+        const std::string& subcatch = *canon;
 
-        // Reconstruct expression from remaining tokens
-        std::string expr;
-        for (std::size_t i = 2; i < tok.size(); ++i) {
-            if (!expr.empty()) expr += ' ';
-            expr += tok[i];
+        // Legacy gwater.c accepts any "LAT..." spelling for LATERAL.
+        const std::string type_tok = Tokenizer::to_upper(tok[1]);
+        std::string type;
+        if (type_tok.rfind("LAT", 0) == 0) type = "LATERAL";
+        else if (type_tok == "DEEP")       type = "DEEP";
+        else {
+            ctx.errors.push_back(format_error(ERR_KEYWORD, tok[1]));
+            continue;
+        }
+
+        // The expression is free text — take it verbatim from the line.
+        // Re-joining the tokenizer's output would drop the ',' between
+        // min/max arguments (the tokenizer treats a comma as a column
+        // separator), turning "MIN(HGW, HCB)" into "MIN(HGW HCB)".
+        std::string_view rest = Tokenizer::strip_comment(line);
+        for (int col = 0; col < 2; ++col) {          // skip Subcatch, Type
+            std::size_t i = 0;
+            while (i < rest.size() && (rest[i] == ' ' || rest[i] == '\t')) ++i;
+            if (i < rest.size() && rest[i] == '"') {
+                ++i;
+                while (i < rest.size() && rest[i] != '"') ++i;
+                if (i < rest.size()) ++i;
+            } else {
+                while (i < rest.size() && rest[i] != ' ' && rest[i] != '\t' &&
+                       rest[i] != ',') ++i;
+            }
+            while (i < rest.size() && (rest[i] == ' ' || rest[i] == '\t')) ++i;
+            if (i < rest.size() && rest[i] == ',') ++i;  // optional CSV comma
+            rest.remove_prefix(i);
+        }
+        std::string expr(Tokenizer::trim(rest));
+
+        // mathexpr::parse is lenient (unknown identifiers evaluate to 0.0),
+        // so reject malformed expressions here like legacy ERR_MATH_EXPR.
+        std::string msg;
+        int col = -1;
+        if (groundwater::gwf_validate(expr, msg, col) != 0) {
+            ctx.errors.push_back(format_error(ERR_MATH_EXPR, "",
+                "in [GWF] " + type + " for Subcatchment " + subcatch + ": " + msg));
+            continue;
         }
 
         std::string key = "GWF:" + subcatch + ":" + type;
@@ -456,6 +576,25 @@ void handle_lid_controls(SimulationContext& ctx, const std::vector<std::string>&
         // First line for a LID sets its type code (e.g., BC, RG, GR, etc.)
         if (tok.size() == 2) {
             ctx.lid_controls.lid_type[idx] = layer;
+            continue;
+        }
+
+        if (ctx.lid_controls.lid_type[idx] == "NODE") {
+            LidNodeLayer row;
+            int count = 0;
+            if (layer == "SURFACE") { row.kind = LidNodeLayerKind::Surface; count = 2; }
+            else if (layer == "MEDIA") { row.kind = LidNodeLayerKind::Media; count = 7; }
+            else if (layer == "AGGREGATE") { row.kind = LidNodeLayerKind::Aggregate; count = 3; }
+            else if (layer == "BOTTOM") { row.kind = LidNodeLayerKind::Bottom; count = 2; }
+            else { ctx.errors.push_back("Unknown NODE LID layer: " + layer); continue; }
+            bool valid = tok.size() == static_cast<std::size_t>(count + 2);
+            for (int k = 0; valid && k < count; ++k) {
+                char* end = nullptr;
+                row.params[k] = std::strtod(tok[k + 2].c_str(), &end);
+                valid = end != tok[k + 2].c_str() && *end == '\0' && std::isfinite(row.params[k]);
+            }
+            if (!valid) ctx.errors.push_back("Invalid NODE LID layer: " + line);
+            else ctx.lid_controls.node_layers[idx].push_back(row);
             continue;
         }
 
@@ -519,16 +658,33 @@ void handle_lid_usage(SimulationContext& ctx, const std::vector<std::string>& li
         const int lid_idx = ctx.lid_names.find(tok[1]);
         if (sc_idx < 0 || lid_idx < 0) continue;
 
+        if (ctx.lid_controls.lid_type[lid_idx] == "NODE") {
+            ctx.errors.push_back("NODE LID controls require [LID_NODES], not [LID_USAGE]: " + tok[1]);
+            continue;
+        }
+
+        // legacy lid_readGroupParams (lid.c:460-462) atoi()s the count: a
+        // negative one is ERROR 211 and zero adds no unit at all.
+        const int number = to_int(tok[2], 0);
+        if (number < 0) {
+            ctx.errors.push_back(format_error(ERR_NUMBER, tok[2]));
+            continue;
+        }
+        if (number == 0) continue;
+
         ctx.lid_usage.subcatch_index.push_back(sc_idx);
         ctx.lid_usage.lid_index.push_back(lid_idx);
-        ctx.lid_usage.number.push_back(to_int(tok[2], 1));
+        ctx.lid_usage.number.push_back(number);
         ctx.lid_usage.area.push_back(to_double(tok[3]));
         ctx.lid_usage.width.push_back(to_double(tok[4]));
         ctx.lid_usage.init_sat.push_back(to_double(tok[5]));
         ctx.lid_usage.from_imperv.push_back(to_double(tok[6]));
         ctx.lid_usage.to_perv.push_back(to_int(tok[7]));
 
-        ctx.lid_usage.rpt_file.push_back(tok.size() > 8 ? tok[8] : std::string{});
+        // RptFile `*` is legacy's "no report file" (lid.c:475). Kept as a path
+        // it resolved to <inp dir>/* and the run wrote a file named `*`.
+        ctx.lid_usage.rpt_file.push_back(tok.size() > 8 && tok[8] != "*" ? tok[8]
+                                                                        : std::string{});
         ctx.lid_usage.drain_to.push_back(tok.size() > 9 ? tok[9] : std::string{});
         ctx.lid_usage.from_perv.push_back(tok.size() > 10 ? to_double(tok[10]) : 0.0);
     }

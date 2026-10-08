@@ -48,8 +48,6 @@ namespace {
 // project (US or SI) — see §5.5.1. Conversion happens only here, at the call
 // boundary, so the kernels keep bit-parity with legacy infil.c.
 
-constexpr double kFeetPerMeter  = 3.280839895013123;  ///< m → ft
-constexpr double kMetersPerFoot = 0.3048;             ///< ft → m (exact)
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -66,17 +64,17 @@ bool iequals(std::string_view a, std::string_view b) {
     return true;
 }
 
-/// Validate one row. @p who names the offending cell or tag in every message.
-bool validateRow(const Infil2DRow& row, const std::string& who, std::string& err) {
-    if (!row.has_method) return true;
-
-    // D-I4: LOST is the only destination this release routes.
-    if (row.dest != Infil2DDest::LOST) {
-        err = "2D infiltration " + who + ": destination "
-            + infil2DDestToken(row.dest)
-            + " is not supported in this release; see plan §5.5.4";
+/// Validate authored rows before resolving ownership or applying precedence.
+bool validateRow(const Infil2DRow& row, const std::string& who,
+                 bool /*aquifer_2d*/, std::string& err) {
+    if (row.dest == Infil2DDest::AQUIFER_2D) {
+        err = "2D infiltration " + who + ": destination AQUIFER_2D is obsolete; "
+              "remove the surface infiltration row on aquifer-owned cells. "
+              "The aquifer now computes its own receiving capacity.";
         return false;
     }
+    if (!row.has_method) return true;
+
 
     switch (row.method) {
         case InfilModel::HORTON:
@@ -197,16 +195,34 @@ int infil2DParamCount(InfilModel method) {
 
 bool Infil2D::resolve(const MeshData& mesh, const SimulationOptions& opts,
                       std::string& err) {
+    Infil2D candidate = *this;
+    if (!candidate.resolveImpl(mesh, opts, err)) return false;
+    *this = std::move(candidate);
+    return true;
+}
+
+bool Infil2D::resolveImpl(const MeshData& mesh, const SimulationOptions& opts,
+                          std::string& err) {
     const int  nt   = mesh.n_triangles();
     const auto nt_u = static_cast<std::size_t>(nt);
 
     resolved_.assign(nt_u, Infil2DRow{});
     prov_.assign(nt_u, Infil2DProvenance::NONE);
-    cum_depth_.assign(nt_u, 0.0);
-    horton_.clear();
-    grnampt_.clear();
-    curvenum_.clear();
+    bank_.init(nt);
     active_ = false;
+    ownership_messages_.clear();
+    if (aquifer_owners_.empty()) aquifer_owners_.assign(nt_u, aquifer_2d_available_ ? 1 : 0);
+    if (aquifer_owners_.size() != nt_u) { err = "2D infiltration: invalid aquifer coverage size"; return false; }
+    const auto owned = [this](std::size_t i) { return aquifer_owners_[i] != 0; };
+    for (const auto& d : defaults_) {
+        int applied = 0, skipped = 0;
+        for (std::size_t i = 0; i < nt_u; ++i) {
+            if (d.tag != "*" && (i >= mesh.tri_tag.size() || mesh.tri_tag[i] != d.tag)) continue;
+            if (owned(i)) ++skipped; else ++applied;
+        }
+        ownership_messages_.push_back("2D infiltration default '" + d.tag + "': " +
+            std::to_string(applied) + " applied, " + std::to_string(skipped) + " skipped (aquifer-owned)");
+    }
 
     // D-I1: the cadence is INFIL_STEP, falling back to the project WET_STEP
     // (SimulationOptions::wet_step is already in seconds).
@@ -216,12 +232,14 @@ bool Infil2D::resolve(const MeshData& mesh, const SimulationOptions& opts,
 
     const Infil2DDefault* star = nullptr;
     for (const auto& d : defaults_) {
-        if (!validateRow(d.row, "tag '" + d.tag + "'", err)) return false;
+        if (!validateRow(d.row, "tag '" + d.tag + "'",
+                         aquifer_2d_available_, err)) return false;
         if (d.tag == "*") star = &d;
     }
 
     if (star != nullptr && star->row.has_method) {
         for (std::size_t i = 0; i < nt_u; ++i) {
+            if (owned(i)) continue;
             resolved_[i] = star->row;
             prov_[i]     = Infil2DProvenance::STAR;
         }
@@ -232,7 +250,7 @@ bool Infil2D::resolve(const MeshData& mesh, const SimulationOptions& opts,
     for (const auto& d : defaults_) {
         if (d.tag == "*") continue;
         for (std::size_t i = 0; i < n_tagged; ++i) {
-            if (mesh.tri_tag[i] != d.tag) continue;
+            if (mesh.tri_tag[i] != d.tag || owned(i)) continue;
             if (d.row.has_method) {
                 resolved_[i] = d.row;
                 prov_[i]     = Infil2DProvenance::TAG;
@@ -250,9 +268,15 @@ bool Infil2D::resolve(const MeshData& mesh, const SimulationOptions& opts,
                 + std::to_string(nt) + " triangles)";
             return false;
         }
-        if (!validateRow(o.row, "cell " + std::to_string(o.tri + 1), err)) return false;
+        if (!validateRow(o.row, "cell " + std::to_string(o.tri + 1),
+                         aquifer_2d_available_, err)) return false;
 
         const auto ui = static_cast<std::size_t>(o.tri);
+        if (owned(ui) && o.row.has_method) {
+            err = "2D infiltration cell " + std::to_string(o.tri + 1) +
+                  ": explicit surface method conflicts with aquifer ownership; remove this row";
+            return false;
+        }
         if (o.row.has_method) {
             resolved_[ui] = o.row;
             prov_[ui]     = Infil2DProvenance::OVERRIDE;
@@ -265,46 +289,16 @@ bool Infil2D::resolve(const MeshData& mesh, const SimulationOptions& opts,
     // --- kernel state, from the PROJECT-UNIT parameters (§5.5.1) -----------
 
     for (std::size_t i = 0; i < nt_u; ++i) {
+        if (owned(i)) {
+            bank_.setOwner(static_cast<int>(i), surface::InfilBank::Owner::EXTERNAL);
+            active_ = true;
+            continue;
+        }
         const Infil2DRow& r = resolved_[i];
         if (!r.has_method) continue;
         active_ = true;
 
-        switch (r.method) {
-            case InfilModel::HORTON:
-            case InfilModel::MOD_HORTON:
-                if (horton_.empty()) horton_.assign(nt_u, infil::HortonState{});
-                infil::horton_init(horton_[i], r.p[0], r.p[1], r.p[2], r.p[3],
-                                   r.p[4], opts);
-                break;
-
-            case InfilModel::CONSTANT:
-                // A constant rate is a degenerate Horton (f0 == fmin, no decay,
-                // no regeneration), so horton_init performs exactly the
-                // in/hr|mm/hr → ft/s conversion this method needs and
-                // horton_[i].fmin carries the rate. No extra storage, and the
-                // slot reads sanely if anyone inspects it.
-                if (horton_.empty()) horton_.assign(nt_u, infil::HortonState{});
-                infil::horton_init(horton_[i], r.p[0], r.p[0], 0.0, 0.0, 0.0, opts);
-                break;
-
-            case InfilModel::GREEN_AMPT:
-            case InfilModel::MOD_GREEN_AMPT:
-                if (grnampt_.empty()) grnampt_.assign(nt_u, infil::GreenAmptState{});
-                infil::grnampt_init(grnampt_[i], r.p[0], r.p[1], r.p[2], opts);
-                break;
-
-            case InfilModel::CURVE_NUM:
-                // Drying time is p[2] — the third positional column, matching
-                // legacy curvenum_setParams() and Runoff.cpp:252-253.
-                if (curvenum_.empty()) curvenum_.assign(nt_u, infil::CurveNumState{});
-                infil::curvenum_init(curvenum_[i], r.p[0], r.p[2]);
-                break;
-
-            default:
-                err = "2D infiltration cell " + std::to_string(i + 1)
-                    + ": unknown infiltration method";
-                return false;
-        }
+        bank_.setMethod(static_cast<int>(i), r.method, r.p, opts);
     }
 
     // Nothing resolved: drop back to the unconfigured fast path so the
@@ -312,13 +306,13 @@ bool Infil2D::resolve(const MeshData& mesh, const SimulationOptions& opts,
     if (!active_) {
         resolved_.clear();
         prov_.clear();
-        cum_depth_.clear();
+        bank_.clear();
     }
 
     return true;
 }
 
-void Infil2D::updateRates(const MeshData& mesh, SurfaceStateData& state, double dt) {
+void Infil2D::updateRates(const MeshData& mesh, SurfaceStateData& state, double dt, surface::InfilBank::Factors factors) {
     (void)mesh;
     if (!active_ || dt <= 0.0) return;
 
@@ -329,57 +323,26 @@ void Infil2D::updateRates(const MeshData& mesh, SurfaceStateData& state, double 
         const Infil2DRow& r = resolved_[i];
         if (!r.has_method) continue;
 
-        const double precip_ft = state.rainfall[i] * kFeetPerMeter;
-        const double depth_ft  = state.depth[i]    * kFeetPerMeter;
-
-        double f_ftsec = 0.0;
-        switch (r.method) {
-            case InfilModel::HORTON:
-                f_ftsec = infil::horton_getInfil(horton_[i], precip_ft, depth_ft, dt);
-                break;
-            case InfilModel::MOD_HORTON:
-                f_ftsec = infil::modHorton_getInfil(horton_[i], precip_ft, depth_ft, dt);
-                break;
-            case InfilModel::GREEN_AMPT:
-            case InfilModel::MOD_GREEN_AMPT:
-                // The modified variant is selected by the enum, not a bool.
-                f_ftsec = infil::grnampt_getInfil(grnampt_[i], precip_ft, depth_ft,
-                                                  dt, r.method);
-                break;
-            case InfilModel::CURVE_NUM:
-                // Runoff.cpp:428 folds inter-subarea runon into the depth
-                // argument (and passes rainfall alone as the rate); a mesh cell
-                // has no runon, so the ponded depth passes through unchanged.
-                f_ftsec = infil::curvenum_getInfil(curvenum_[i], precip_ft, depth_ft, dt);
-                break;
-            case InfilModel::CONSTANT:
-                f_ftsec = infil::constant_getInfil(horton_[i].fmin, precip_ft,
-                                                   depth_ft, dt);
-                break;
-            default:
-                break;
-        }
-
-        const double rate_si = std::max(0.0, f_ftsec * kMetersPerFoot);
-        state.infil_rate[i] = rate_si;
-        cum_depth_[i] += rate_si * dt;
+        if (bank_.owner(static_cast<int>(i)) == surface::InfilBank::Owner::EXTERNAL) continue;
+        state.infil_rate[i] = bank_.rate(static_cast<int>(i), state.rainfall[i], 0.0,
+                                         state.depth[i], dt, factors);
     }
 }
 
 void Infil2D::reset() {
     defaults_.clear();
     overrides_.clear();
+    aquifer_owners_.clear();
+    ownership_messages_.clear();
     options_ = Infil2DOptions{};
 
     active_       = false;
     step_seconds_ = 0.0;
+    aquifer_2d_available_ = false;
 
     resolved_.clear();
     prov_.clear();
-    cum_depth_.clear();
-    horton_.clear();
-    grnampt_.clear();
-    curvenum_.clear();
+    bank_.clear();
 }
 
 } // namespace openswmm::twoD

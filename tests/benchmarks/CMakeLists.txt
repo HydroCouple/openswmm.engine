@@ -118,6 +118,41 @@ add_custom_command(TARGET bench_xsect_eval POST_BUILD
         ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/$<TARGET_FILE_NAME:bench_xsect_eval>
 )
 
+# ---------------------------------------------------------------------------
+# bench_fv_closure — per-op cost of the explicit-FV cross-section closure
+# (FvKernels.hpp) on the geometries the mesh builder builds: the rows every
+# candidate closure kernel reports against, and the ns/call that turns the
+# solver's [PERF-FV] closure-call counters into a share of the routing step
+# (plans/FV1D_CLOSURE_KERNEL_PERF_PLAN_2026-09-11.md, Phase 0 / Phase 2a″).
+# Own main(), CSV output, reaches into src/engine — same shape as
+# bench_xsect_eval above.
+# ---------------------------------------------------------------------------
+if(NOT TARGET bench_fv_closure)
+    add_executable(bench_fv_closure bench_fv_closure.cpp)
+
+    target_link_libraries(bench_fv_closure PRIVATE openswmm_engine)
+
+    target_include_directories(bench_fv_closure
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+    )
+
+    if(OPENSWMM_FAST_XSECT_LOOKUP)
+        target_compile_definitions(bench_fv_closure PRIVATE SWMM_XSECT_FAST_LOOKUP)
+    endif()
+
+    set_target_properties(bench_fv_closure PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+    )
+
+    add_custom_command(TARGET bench_fv_closure POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy
+            $<TARGET_FILE:bench_fv_closure>
+            ${CMAKE_BINARY_DIR}/bin/$<CONFIG>/$<TARGET_FILE_NAME:bench_fv_closure>
+    )
+endif()
+
 # The two load-optimization ctest gates are registered in tests/CMakeLists.txt,
 # not here: they need no Google Benchmark, and this directory is only added
 # when OPENSWMM_BUILD_BENCHMARKS is ON — a build that has enable_testing() off,

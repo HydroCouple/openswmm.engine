@@ -8,6 +8,8 @@
 // loop. The split is printed once from SWMMEngine::end() when OPENSWMM_PERF is
 // set. Zero cost when the env var is unset except the clock reads themselves.
 // -----------------------------------------------------------------------------
+#include <array>
+#include <mutex>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -63,9 +65,8 @@ inline double sec_start_plugins = 0.0;   // plugins_.prepare_all (report preambl
 // (`+= n`) at loop boundaries rather than by ++ inside the loop, which also
 // keeps them correct without atomics when the flux loop goes parallel.
 //
-// SERIAL-PATH ONLY. `n_fv_alg_*` are incremented inside solveAlgebraicNode,
-// which is serial today (plan Phase 3d proposes parallelizing it). If that
-// lands, these become per-thread accumulators or they become wrong.
+// Parallel closure and node-solve counters are accumulated privately and
+// merged after each worksharing phase. Counts are exact at every team size.
 // ---------------------------------------------------------------------------
 
 inline double sec_fv_census      = 0.0;  // censusDt (Courant min-reduction)
@@ -85,21 +86,37 @@ inline double sec_fv_ltsfire     = 0.0;  // fireFaces (LTS face pass)
 inline double sec_fv_settle      = 0.0;  // settleAccumulators
 inline double sec_fv_tier        = 0.0;  // assignTiers
 
-inline long n_fv_substep     = 0;  // accepted substeps
-inline long n_fv_census      = 0;  // censusDt calls
-inline long n_fv_census_face = 0;  // faces visited by all censuses
-inline long n_fv_invert      = 0;  // depthOfArea calls (by loop extent)
-inline long n_fv_savestate   = 0;  // saveState calls
-inline long n_fv_restore     = 0;  // ROLLBACKS — the rate saveState pays for
-inline long n_fv_structref   = 0;  // substep structure refreshes
-inline long n_fv_alg_visit   = 0;  // solveAlgebraicNode calls that got past the
-                                   // fixed-head early-out
-inline long n_fv_alg_passthru= 0;  // ...of which took the degree-2 shortcut.
-                                   // passthru/visit is the fraction Phase 3c
-                                   // is trying to raise
-inline long n_fv_alg_solve   = 0;  // ...of which ran the root solve
-inline long n_fv_alg_resid   = 0;  // residual(h) evaluations inside them
-inline long n_fv_alg_flux    = 0;  // computeFaceFlux calls made from residuals
+// Each worker accumulates into a private CounterBatch. Only the completed
+// batch is merged, once per worker/phase; no atomics on individual operations.
+enum FvCounter : std::size_t {
+    n_fv_substep,
+    n_fv_census,
+    n_fv_census_face,
+    n_fv_invert,
+    n_fv_savestate,
+    n_fv_restore,
+    n_fv_structref,
+    n_fv_alg_visit,
+    n_fv_alg_passthru,
+    n_fv_alg_solve,
+    n_fv_alg_resid,
+    n_fv_alg_flux,
+    n_fv_geom_area,
+    n_fv_geom_width,
+    n_fv_geom_i1,
+    n_fv_geom_hydrad,
+    n_fv_macro_cycles,
+    n_fv_macro_rejected,
+    n_fv_counter_count
+};
+using FvCounts = std::array<long, n_fv_counter_count>;
+inline FvCounts fv_counts{};
+inline thread_local FvCounts* local_fv_counts = nullptr;
+inline std::mutex fv_counts_mutex;
+
+// Read/reset only between worksharing regions. Like the existing phase
+// timers, totals describe one profiled simulation at a time.
+inline long value(FvCounter counter) noexcept { return fv_counts[counter]; }
 
 /** @brief Zeroes the FV phase accumulators. Called from Router::initFv. */
 inline void reset_fv() noexcept {
@@ -109,10 +126,7 @@ inline void reset_fv() noexcept {
     sec_fv_structref = sec_fv_bndcallback = 0.0;
     sec_fv_rebuild = sec_fv_reconstruct = sec_fv_ltsfire = 0.0;
     sec_fv_settle = sec_fv_tier = 0.0;
-    n_fv_substep = n_fv_census = n_fv_census_face = n_fv_invert = 0;
-    n_fv_savestate = n_fv_restore = n_fv_structref = 0;
-    n_fv_alg_visit = n_fv_alg_passthru = 0;
-    n_fv_alg_solve = n_fv_alg_resid = n_fv_alg_flux = 0;
+    fv_counts.fill(0);
 }
 
 /**
@@ -144,6 +158,8 @@ inline void dump_fv() noexcept {
         "n.savestate=%ld n.rollback=%ld n.structrefresh=%ld "
         "n.algvisit=%ld n.algpassthru=%ld n.algsolve=%ld "
         "n.algresidual=%ld n.algfaceflux=%ld "
+        "n.area=%ld n.width=%ld n.i1=%ld n.hydrad=%ld "
+        "n.macro=%ld n.macrorej=%ld "
         "passthru_frac=%.4f rollback_frac=%.4f "
         "algresid_per_solve=%.2f algflux_per_solve=%.2f\n",
         sec_1d_step, total,
@@ -152,18 +168,20 @@ inline void dump_fv() noexcept {
         sec_fv_savestate, sec_fv_restore, sec_fv_structref, sec_fv_bndcallback,
         sec_fv_rebuild, sec_fv_reconstruct, sec_fv_ltsfire, sec_fv_settle,
         sec_fv_tier,
-        n_fv_substep, n_fv_census, n_fv_census_face, n_fv_invert,
-        n_fv_savestate, n_fv_restore, n_fv_structref,
-        n_fv_alg_visit, n_fv_alg_passthru, n_fv_alg_solve,
-        n_fv_alg_resid, n_fv_alg_flux,
-        (n_fv_alg_visit > 0)
-            ? static_cast<double>(n_fv_alg_passthru) / static_cast<double>(n_fv_alg_visit) : 0.0,
-        (n_fv_savestate > 0)
-            ? static_cast<double>(n_fv_restore) / static_cast<double>(n_fv_savestate) : 0.0,
-        (n_fv_alg_solve > 0)
-            ? static_cast<double>(n_fv_alg_resid) / static_cast<double>(n_fv_alg_solve) : 0.0,
-        (n_fv_alg_solve > 0)
-            ? static_cast<double>(n_fv_alg_flux) / static_cast<double>(n_fv_alg_solve) : 0.0);
+        value(n_fv_substep), value(n_fv_census), value(n_fv_census_face), value(n_fv_invert),
+        value(n_fv_savestate), value(n_fv_restore), value(n_fv_structref),
+        value(n_fv_alg_visit), value(n_fv_alg_passthru), value(n_fv_alg_solve),
+        value(n_fv_alg_resid), value(n_fv_alg_flux),
+        value(n_fv_geom_area), value(n_fv_geom_width), value(n_fv_geom_i1), value(n_fv_geom_hydrad),
+        value(n_fv_macro_cycles), value(n_fv_macro_rejected),
+        (value(n_fv_alg_visit) > 0)
+            ? static_cast<double>(value(n_fv_alg_passthru)) / static_cast<double>(value(n_fv_alg_visit)) : 0.0,
+        (value(n_fv_savestate) > 0)
+            ? static_cast<double>(value(n_fv_restore)) / static_cast<double>(value(n_fv_savestate)) : 0.0,
+        (value(n_fv_alg_solve) > 0)
+            ? static_cast<double>(value(n_fv_alg_resid)) / static_cast<double>(value(n_fv_alg_solve)) : 0.0,
+        (value(n_fv_alg_solve) > 0)
+            ? static_cast<double>(value(n_fv_alg_flux)) / static_cast<double>(value(n_fv_alg_solve)) : 0.0);
 }
 
 /** @brief Manual timing pair, for phases that do not fit a lexical scope. */
@@ -295,10 +313,43 @@ struct GatedTimer {
     GatedTimer& operator=(const GatedTimer&) = delete;
 };
 
-/// Adds @p n to a counter only when profiling is on, so the counters cost the
-/// same predicted branch as the timers and never appear in a release profile.
-inline void count(long& c, long n = 1) noexcept {
-    if (enabled()) c += n;
+/** @brief Private counters for one worker in a worksharing phase.
+ * Nested batches merge into the enclosing worker's batch. The outer batch
+ * merges under one lock after the loop; hydraulic arithmetic is unaffected.
+ * When profiling is disabled, no counters are initialized or merged.
+ */
+class CounterBatch {
+    FvCounts local_;
+    FvCounts* previous_ = nullptr;
+    bool active_;
+public:
+    CounterBatch() noexcept : active_(enabled()) {
+        if (!active_) return;
+        local_.fill(0);
+        previous_ = local_fv_counts;
+        local_fv_counts = &local_;
+    }
+    ~CounterBatch() noexcept {
+        if (!active_) return;
+        local_fv_counts = previous_;
+        if (previous_) {
+            for (std::size_t i = 0; i < local_.size(); ++i)
+                (*previous_)[i] += local_[i];
+        } else {
+            const std::lock_guard<std::mutex> lock(fv_counts_mutex);
+            for (std::size_t i = 0; i < local_.size(); ++i)
+                fv_counts[i] += local_[i];
+        }
+    }
+    CounterBatch(const CounterBatch&) = delete;
+    CounterBatch& operator=(const CounterBatch&) = delete;
+};
+
+/// Parallel callers install a CounterBatch before entering their work loop.
+inline void count(FvCounter counter, long n = 1) noexcept {
+    if (!enabled()) return;
+    if (local_fv_counts) (*local_fv_counts)[counter] += n;
+    else fv_counts[counter] += n;
 }
 
 } // namespace openswmm::perf

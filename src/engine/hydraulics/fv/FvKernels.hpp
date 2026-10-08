@@ -95,41 +95,6 @@ inline constexpr double kDryArea = 1.0e-12;
 inline constexpr double kEtaDeadband = 1.0e-12;
 
 // ===========================================================================
-// Section evaluation — the ONE place the cross-section machinery is called
-// ===========================================================================
-//
-// These three go through the geometry's own evaluator (XSectKernels.hpp) — the
-// SAME bodies XSection.cpp's public accessors and XSectBatch's kernels run.
-// Only where the evaluator's tables live differs between the host solver and
-// the device backend, so the §6.8 parity harness compares two instantiations of
-// one implementation rather than two implementations.
-
-/// Section area at depth h, EXCLUDING the slot (h clamped to the crown).
-/// Scaled by the barrel count: a cell is the aggregate of the parallel barrels
-/// at a shared depth (see FvGeometry::barrel_scale).
-OPENSWMM_KERNEL_FN double sectionArea(const FvGeometry& g, double h) noexcept {
-    if (h <= 0.0) return 0.0;
-    return g.barrel_scale * g.eval->getAofY(g.xs, (h < g.y_full) ? h : g.y_full);
-}
-
-/// Section top width at depth h, EXCLUDING the slot. RECT_CLOSED returns 0 at
-/// exactly y_full (the crown is a point); the slot term added by widthOfDepth
-/// is what keeps the total width — and hence the celerity — finite there.
-OPENSWMM_KERNEL_FN double sectionWidth(const FvGeometry& g, double h) noexcept {
-    if (h <= 0.0) return 0.0;
-    return g.barrel_scale * g.eval->getWofY(g.xs, (h < g.y_full) ? h : g.y_full);
-}
-
-/// Section hydraulic radius at depth h. Frozen at r_full above the crown —
-/// the slot is a numerical device and must not contribute wetted perimeter
-/// (same convention as legacy dwflow.c::getHydRad).
-OPENSWMM_KERNEL_FN double sectionHydRad(const FvGeometry& g, double h) noexcept {
-    if (h <= 0.0) return 0.0;
-    if (h >= g.y_full) return g.r_full;
-    return g.eval->getRofY(g.xs, h);
-}
-
-// ===========================================================================
 // Preissmann slot taper (plan §3.3.2)
 // ===========================================================================
 
@@ -154,165 +119,44 @@ OPENSWMM_KERNEL_FN double slotRampIntegral(double s) noexcept {
 // ===========================================================================
 // Closure — one continuous geometry from dry bed to full pressurization
 // ===========================================================================
+//
+// This is the memoryless SLOT closure — every cell, every state, no history.
+// TPA exception (issue #156): under FV_PRESSURE_CLOSURE TPA a cell whose
+// regime flag is set evaluates the tpa* kernels at the end of this file
+// instead. The flag is physical air-pathway history (cleared on cold start
+// and hotstart restore), not numerical relaxation; unflagged cells — and the
+// entire SLOT closure path — are untouched.
 
 /// Flow area at depth @p h, INCLUDING the tapered slot. Monotone in h for any
-/// section, which is what makes the depth inversion well posed.
+/// section, which is what makes the depth inversion well posed. Every closure
+/// function here evaluates the geometry's FvClosure (FvClosureKernels.hpp):
+/// the exact section sampled at build time into a monotone cubic on which the
+/// top width IS dA/dh and the first moment IS ∫A, with the slot folded in.
 OPENSWMM_KERNEL_FN double areaOfDepth(const FvGeometry& g, double h) noexcept {
-    if (h <= 0.0) return 0.0;
-    if (h >= g.y_full) return g.a_crown + g.t_slot * (h - g.y_full);
-    const double band = g.y_full - g.y_crown;
-    const double ax = sectionArea(g, h);
-    if (band <= 0.0) return ax;                 // open section: no taper band
-    const double s = (h - g.y_crown) / band;
-    return ax + g.t_slot * band * slotRampIntegral(s);
+    return closureArea(g.closure_tbl, h);
 }
 
 /// Top width dA/dh at depth @p h, INCLUDING the tapered slot.
 OPENSWMM_KERNEL_FN double widthOfDepth(const FvGeometry& g, double h) noexcept {
-    if (h <= 0.0) return 0.0;
-    if (h >= g.y_full) return g.t_slot;
-    const double band = g.y_full - g.y_crown;
-    const double wx = sectionWidth(g, h);
-    if (band <= 0.0) return wx;
-    const double s = (h - g.y_crown) / band;
-    return wx + g.t_slot * slotRamp(s);
+    return closureWidth(g.closure_tbl, h);
 }
 
 /// Hydraulic radius at depth @p h.
 OPENSWMM_KERNEL_FN double hydRadOfDepth(const FvGeometry& g, double h) noexcept {
-    if (h <= 0.0) return 0.0;
-    if (h >= g.y_full) return g.r_full;
-    return sectionHydRad(g, h);
+    return closureHydRad(g.closure_tbl, h);
 }
 
 /**
- * @brief Hydrostatic first moment I₁(h) = ∫₀ʰ A(η)dη.
- *
- * Below the crown this reads the per-geometry table built at init (uniform on
- * [0, y_full]) and refines with one trapezoid step using the exact A(h) the
- * caller needs anyway, plus a residual term (below) that makes the refinement
- * land exactly on the next table node.
- *
- * Above the crown A is exactly linear (A = a_crown + t_slot·(h − y_full)), so
- * the extension is analytic — deep surcharge stays exact with a small table.
- *
- * @note The residual term is load-bearing, and an earlier version of this
- *       comment was wrong about why. It claimed a single-valued function of h
- *       was "all the well-balanced property requires". It is not: lake-at-rest
- *       needs the discrete pressure term to be a CONTINUOUS antiderivative of
- *       the same A the mass update uses. The table nodes are accumulated with
- *       composite Simpson (or, for a compiled boundary, `exactI1`) while the
- *       in-interval refinement is a trapezoid, and those two disagree — so
- *       without the correction I₁ jumped at EVERY node, by up to 8% relative
- *       near the invert and 7.1e-5 ft³ at the taper onset, where A is most
- *       curved. Measured consequence: a still pool over a slope break drifted
- *       off level by 7.4e-5 ft, which this project had recorded as an
- *       untouchable limitation of the Preissmann taper band. It was not the
- *       taper band; it was this. With the correction the same sweep holds
- *       level to 4.4e-14 ft across every fill level, and the drift at the
- *       originally reported case is exactly zero.
- *
- * @note Why the residual is ramped by a smoothstep rather than added flat, and
- *       why not just interpolate: the ramp w(t) = t²(3−2t) has w(0) = w(1) = 0
- *       for its DERIVATIVE, so the correction changes neither endpoint's slope
- *       — dI₁/dh still equals A exactly at every node — while w(0) = 0 and
- *       w(1) = 1 make the value land on both nodes. A plain cubic Hermite in
- *       (I₁, A) at the two nodes is more accurate in isolation (4.7e-6 vs
- *       2.9e-5 worst absolute) but was measured WORSE end to end, because it
- *       never reads `area_at_h`: decoupling I₁ from the exact A the same step
- *       uses for mass moved storage-node continuity from −0.023% to +0.058%
- *       and failed its gate. Accuracy of the interpolant is not the objective;
- *       consistency with A is.
+ * @brief Hydrostatic first moment I₁(h) = ∫₀ʰ A(η)dη — the closure's own
+ *        integral of its own A, so it is single-valued in h by construction
+ *        (all the well-balanced property requires). Above the crown A is
+ *        exactly linear and the extension is analytic. @p area_at_h is kept
+ *        for the call sites that already hold it; the closure does not need it.
  */
 OPENSWMM_KERNEL_FN double i1OfDepth(const FvGeometry& g, double h,
                                     double area_at_h) noexcept {
-    if (h <= 0.0) return 0.0;
-    if (h >= g.y_full) {
-        const double d = h - g.y_full;
-        return g.i1_crown + g.a_crown * d + 0.5 * g.t_slot * d * d;
-    }
-    const int n = static_cast<int>(kI1Samples);
-    const double dh = g.y_full / static_cast<double>(n - 1);
-    int i = static_cast<int>(h / dh);
-    if (i < 0) i = 0;
-    if (i > n - 2) i = n - 2;
-    const double h_i = static_cast<double>(i) * dh;
-    // i1_tbl stores I₁ at the sample points; the companion area sample is the
-    // second half of the same buffer (see buildI1Table).
-    const double i1_i = g.i1_tbl[static_cast<std::size_t>(i)];
-    const double a_i  = g.i1_tbl[static_cast<std::size_t>(n + i)];
-    // Gap between the node the table records and where the trapezoid alone
-    // would land at that node — the quadrature disagreement, closed below.
-    const double i1_n = g.i1_tbl[static_cast<std::size_t>(i + 1)];
-    const double a_n  = g.i1_tbl[static_cast<std::size_t>(n + i + 1)];
-    const double resid = i1_n - (i1_i + 0.5 * (a_i + a_n) * dh);
-    const double t = (h - h_i) / dh;
-    return i1_i + 0.5 * (a_i + area_at_h) * (h - h_i)
-         + resid * t * t * (3.0 - 2.0 * t);
-}
-
-/**
- * @brief Evaluate the full closure at one depth in a single pass.
- * @details Performs the crown clamp and the slot-taper branch ONCE and returns
- *          all four closure quantities. Semantically identical to calling
- *          areaOfDepth/widthOfDepth/hydRadOfDepth/i1OfDepth separately at the
- *          same `h` — this is a fusion optimization, not a change of
- *          formulation. `I1` reuses the `A` this call already computed rather
- *          than recomputing it, exactly as every existing i1OfDepth call site
- *          already does by hand.
- * @param g  conduit closure
- * @param h  depth above invert (ft)
- * @param[out] A  flow area, including the tapered slot (ft²)
- * @param[out] W  top width, including the tapered slot (ft)
- * @param[out] R  hydraulic radius (ft)
- * @param[out] I1 hydrostatic first moment ∫₀ʰ A(η)dη (ft³)
- * @note Bit-identical results to the unfused path are REQUIRED. See test F1.
- */
-OPENSWMM_KERNEL_FN void closureAll(const FvGeometry& g, double h,
-                                   double* A, double* W, double* R,
-                                   double* I1) noexcept {
-    if (h <= 0.0) {
-        *A = 0.0; *W = 0.0; *R = 0.0; *I1 = 0.0;
-        return;
-    }
-    if (h >= g.y_full) {
-        const double d = h - g.y_full;
-        *A  = g.a_crown + g.t_slot * d;
-        *W  = g.t_slot;
-        *R  = g.r_full;
-        *I1 = g.i1_crown + g.a_crown * d + 0.5 * g.t_slot * d * d;
-        return;
-    }
-    // A compiled boundary (POLYGON always; any shape under XSECT_GEOMETRY
-    // EXACT) reaches A, W and R in ONE piece scan and ONE basis recurrence.
-    // The three getters below are pure passthroughs to chebAofY/chebWofY/
-    // chebRofY when xs.cheb is set — each an independent scan, and chebRofY
-    // re-evaluates the area series on top — so this branch is bit-identical
-    // by construction while doing a quarter of the work. This is the call
-    // site behind the measured 3.7x FV EXACT-vs-LEGACY gap (Phase 6):
-    // closureAll runs per cell, per timestep.
-    double ax, wx;
-    if (g.xs.cheb) {
-        double a = 0.0, w = 0.0, r = 0.0;
-        chebsec::chebAWRofY(*g.xs.cheb, h, a, w, r);
-        ax = g.barrel_scale * a;
-        wx = g.barrel_scale * w;
-        *R = r;
-    } else {
-        ax = g.barrel_scale * g.eval->getAofY(g.xs, h);
-        wx = g.barrel_scale * g.eval->getWofY(g.xs, h);
-        *R = g.eval->getRofY(g.xs, h);
-    }
-    const double band = g.y_full - g.y_crown;
-    if (band <= 0.0) {
-        *A = ax;
-        *W = wx;
-    } else {
-        const double s = (h - g.y_crown) / band;
-        *A = ax + g.t_slot * band * slotRampIntegral(s);
-        *W = wx + g.t_slot * slotRamp(s);
-    }
-    *I1 = i1OfDepth(g, h, *A);
+    (void)area_at_h;
+    return closureI1(g.closure_tbl, h);
 }
 
 /**
@@ -326,190 +170,51 @@ OPENSWMM_KERNEL_FN void closureAll(const FvGeometry& g, double h,
  *          whole well-balanced construction exists to deliver — would fail on
  *          every partly-full pipe.
  *
- *          `xsect::getYofA` cannot be used for this. The legacy geometry tables
- *          are INDEPENDENT tabulations of the same shape — `A_Circ` gives area
- *          from depth, `Y_Circ` gives depth from area — and they round-trip only
- *          to table resolution (measured: 0.016 ft on a 3 ft circular pipe near
- *          the crown, ~0.5 % of the diameter). That is fine for the legacy
- *          solver, which never composes them; it is fatal here.
- *
- *          So the inverse is built from the forward closure itself: bracket on
- *          the A samples stored alongside the I₁ table (both were produced by
- *          areaOfDepth, so the bracket is exact), then Illinois-regula-falsi
- *          inside the panel. A is strictly increasing — a monotone section plus
- *          a strictly increasing slot term — so the bracket always holds and
- *          convergence is unconditional; within one panel A is nearly linear, so
- *          it typically takes four or five evaluations.
- *
- *          Above the crown A is exactly linear, so that branch is closed-form.
+ *          The inverse is therefore a bracketed Newton iteration on the same
+ *          panel cubic the forward closure evaluates (closureDepthOfArea):
+ *          the cubic is monotone by construction, its derivative is the
+ *          closure's own top width, and the exit is 1e-15·y_full in depth —
+ *          measured round trip ≤ 1.2e-15·y_full over the whole depth range,
+ *          slot band included. The polynomial class inverts in closed form.
  */
-OPENSWMM_KERNEL_FN double depthOfAreaBracketed(const FvGeometry& g,
-                                               double a) noexcept {
-    if (a <= 0.0) return 0.0;
-    if (a >= g.a_crown) return g.y_full + (a - g.a_crown) / g.t_slot;
-
-    const int n = static_cast<int>(kI1Samples);
-    const double dh = g.y_full / static_cast<double>(n - 1);
-
-    int lo = 0, hi = n - 1;
-    while (hi - lo > 1) {
-        const int mid = (lo + hi) / 2;
-        if (g.i1_tbl[static_cast<std::size_t>(n + mid)] <= a) lo = mid;
-        else                                                  hi = mid;
-    }
-
-    double xa = static_cast<double>(lo) * dh;
-    double xb = static_cast<double>(hi) * dh;
-    double fa = g.i1_tbl[static_cast<std::size_t>(n + lo)] - a;
-    double fb = g.i1_tbl[static_cast<std::size_t>(n + hi)] - a;
-    if (fa >= 0.0) return xa;
-    if (fb <= 0.0) return xb;
-
-    for (int it = 0; it < 40; ++it) {
-        double x = xb - fb * (xb - xa) / (fb - fa);
-        if (!(x > xa && x < xb)) x = 0.5 * (xa + xb);
-        const double f = areaOfDepth(g, x) - a;
-        if (f == 0.0) return x;
-        if (f < 0.0) { xa = x; fa = f; fb *= 0.5; }   // Illinois down-weighting
-        else         { xb = x; fb = f; fa *= 0.5; }
-        if (xb - xa <= 1.0e-15 * g.y_full) break;
-    }
-    return 0.5 * (xa + xb);
+/**
+ * @brief Evaluate the whole closure at one depth in a single pass.
+ *
+ * Semantically identical to calling areaOfDepth / widthOfDepth / hydRadOfDepth
+ * / i1OfDepth separately, and asserted bit-identical to them by
+ * `FvClosure.F1_ClosureAllIsBitIdenticalToUnfusedPath_*`.
+ *
+ * @note Kept as the fused facade over the four kernels above after the
+ *       FvClosure rework replaced this branch's own fusion: the solver's hot
+ *       path now calls `closureEval` directly (one panel locate for A, T and
+ *       I₁), so this is the convenience entry point and the invariant the
+ *       acceptance test pins, not a performance path.
+ */
+OPENSWMM_KERNEL_FN void closureAll(const FvGeometry& g, double h,
+                                   double* a, double* w, double* r,
+                                   double* i1) noexcept {
+    const ClosureEval e = closureEval(g.closure_tbl, h);
+    if (a)  *a  = e.a;
+    if (w)  *w  = e.t;
+    if (i1) *i1 = e.i1;
+    if (r)  *r  = hydRadOfDepth(g, h);
 }
 
-/**
- * @brief Invert A → h. Same root as depthOfAreaBracketed, found far faster.
- *
- * @details This is the solver's hottest kernel by a wide margin — profiling a
- *          Δx = 20 ft run put it and the closure evaluations it drives at 87 %
- *          of total time — so how it converges matters more than anywhere else
- *          in the scheme.
- *
- *          **Why the obvious approach is slow.** Illinois regula-falsi on the
- *          depth-uniform bracket does not converge superlinearly here: measured
- *          16 closure evaluations per call on a circular pipe and 35 on a
- *          trapezoid, with the iteration count falling only linearly as the
- *          tolerance is relaxed — the signature of bisection. Seeding it better
- *          changes nothing, because the exit test is the BRACKET collapsing and
- *          Illinois replaces only one end per step.
- *
- *          **Why not Newton.** The width is dA/dh analytically, and Newton with
- *          it needs 3–5 evaluations. But for tabulated shapes W and A are
- *          INDEPENDENT legacy tabulations rather than an exact derivative pair
- *          (§7A.2), and the error that introduces is not small: measured
- *          round-trip error 4.7e-4 ft on a 3 ft circular pipe, five orders
- *          worse than the scheme needs and enough to break lake-at-rest.
- *
- *          **Brent.** Inverse quadratic interpolation with a secant fallback
- *          and a bisection safeguard — superlinear using function values ONLY,
- *          so the width inconsistency cannot mislead it. 5.9 / 3.1 / 6.3
- *          evaluations on circular / rectangular / trapezoidal at full
- *          round-trip accuracy (≤ 2.7e-15 ft).
- *
- *          The bracket comes from the area-uniform inverse table widened by one
- *          panel each side and is then VERIFIED by evaluating both ends. The
- *          two evaluations that costs are why a rectangular pipe — which the
- *          old path nailed in 1.5 — now takes 3.1; that trade is worth it, and
- *          the guard falls back to the bracketed inverse if the table's bracket
- *          somehow fails to contain the root.
- */
 OPENSWMM_KERNEL_FN double depthOfArea(const FvGeometry& g, double a) noexcept {
-    if (a <= 0.0) return 0.0;
-    if (a >= g.a_crown) return g.y_full + (a - g.a_crown) / g.t_slot;
-
-    // ---- A compiled inverse was tried here and REJECTED (promptperf.md
-    // Phase E). Do not re-add it without new evidence. -----------------------
-    //
-    // The idea was sound and the opening is real: the "Why not Newton"
-    // argument above is about TABULATED shapes, where W and A are
-    // independent legacy tabulations and so not an exact derivative pair. A
-    // compiled boundary removes exactly that objection — W is the analytic
-    // derivative of A by construction — and profiling a live FV EXACT run
-    // put this function and the area evaluations it drives at ~53% of
-    // non-idle solver work, so it is unambiguously where the time is.
-    //
-    // It was built: seed from chebYofA (exact below the taper band, where
-    // the slot contributes nothing), then Newton on the true areaOfDepth
-    // with the exact width. Measured on Bellinge FV EXACT, 2 h window:
-    // 264 s -> 162 s. What killed it was the convergence test, and both
-    // ways out are worse than not doing it:
-    //
-    //   * Stopping on a step of 1e-15*y_full is reachable in 2-3 iterations
-    //     but leaves the iterate short of a true fixed point, and this
-    //     function's contract is to be the EXACT inverse of areaOfDepth, not
-    //     an accurate one. Worst free-surface drift on a partly-full closed
-    //     pipe went 5.6e-5 (bracketed solver) -> 1.1e-4. Lake-at-rest is the
-    //     property the whole well-balanced construction exists to deliver.
-    //   * Tightening to a machine-precision fixed point is UNREACHABLE:
-    //     areaOfDepth is itself a Chebyshev evaluation carrying ~1e-16
-    //     relative noise, so near the root the Newton step jitters at the
-    //     noise floor and never settles. Every call then burned the full
-    //     iteration budget AND fell back to the bracketed solve anyway —
-    //     measured 366 s and 639 s for two such variants, i.e. slower than
-    //     the 296 s this branch started from.
-    //
-    // Brent converges on the BRACKET, which is why it reaches the root
-    // robustly on a noisy function where a derivative-based step cannot.
-    // Anyone revisiting should attack the number of CALLS (the solver
-    // inverting the same area repeatedly) rather than the cost of one call.
-
-    const int n = static_cast<int>(kI1Samples);
-    const double da = g.a_crown / static_cast<double>(n - 1);
-    if (!(da > 0.0)) return depthOfAreaBracketed(g, a);
-
-    int j = static_cast<int>(a / da);
-    if (j < 1) j = 1;
-    if (j > n - 3) j = n - 3;
-
-    double xa = g.h_tbl[static_cast<std::size_t>(j - 1)];
-    double xb = g.h_tbl[static_cast<std::size_t>(j + 2)];
-    if (!(xb > xa)) return depthOfAreaBracketed(g, a);
-
-    double fa = areaOfDepth(g, xa) - a;
-    double fb = areaOfDepth(g, xb) - a;
-    if (fa > 0.0 || fb < 0.0) return depthOfAreaBracketed(g, a);
-    if (fa == 0.0) return xa;
-    if (fb == 0.0) return xb;
-
-    const double tol = 1.0e-15 * g.y_full;
-    double c = xa, fc = fa, d = xb - xa, e = d;
-    for (int it = 0; it < 60; ++it) {
-        if (fb * fc > 0.0) { c = xa; fc = fa; d = xb - xa; e = d; }
-        if (std::fabs(fc) < std::fabs(fb)) {
-            xa = xb; xb = c; c = xa;
-            fa = fb; fb = fc; fc = fa;
-        }
-        const double m = 0.5 * (c - xb);
-        if (std::fabs(m) <= tol || fb == 0.0) return xb;
-
-        if (std::fabs(e) < tol || std::fabs(fa) <= std::fabs(fb)) {
-            d = m; e = m;                                   // bisect
-        } else {
-            const double sfb = fb / fa;
-            double p, q;
-            if (xa == c) {                                  // secant
-                p = 2.0 * m * sfb;
-                q = 1.0 - sfb;
-            } else {                                        // inverse quadratic
-                const double qq = fa / fc;
-                const double r  = fb / fc;
-                p = sfb * (2.0 * m * qq * (qq - r) - (xb - xa) * (r - 1.0));
-                q = (qq - 1.0) * (r - 1.0) * (sfb - 1.0);
-            }
-            if (p > 0.0) q = -q; else p = -p;
-            if (2.0 * p < ((3.0 * m * q - std::fabs(tol * q) < std::fabs(e * q))
-                               ? 3.0 * m * q - std::fabs(tol * q)
-                               : std::fabs(e * q))) {
-                e = d; d = p / q;
-            } else {
-                d = m; e = m;
-            }
-        }
-        xa = xb; fa = fb;
-        xb += (std::fabs(d) > tol) ? d : ((m > 0.0) ? tol : -tol);
-        fb = areaOfDepth(g, xb) - a;
-    }
-    return xb;
+    // NOTE (promptperf.md Phase E, carried forward): a COMPILED inverse was
+    // built here and rejected. Seeding from chebYofA and running Newton on the
+    // true areaOfDepth measured 264 s -> 162 s on Bellinge FV EXACT (2 h), but
+    // stopping on a 1e-15*y_full step leaves the iterate short of a true fixed
+    // point and this function's contract is to be the EXACT inverse of
+    // areaOfDepth: worst free-surface drift on a partly-full closed pipe went
+    // 5.6e-5 -> 1.1e-4 ft, and lake-at-rest is the property the whole
+    // well-balanced construction exists to deliver. Tightening to a
+    // machine-precision fixed point is unreachable (areaOfDepth carries ~1e-16
+    // relative noise, so the step jitters at the noise floor) and measured
+    // SLOWER than doing nothing. The bracket is what makes the root reachable
+    // on a noisy function; closureDepthOfArea keeps one. Anyone revisiting
+    // should attack the number of CALLS, not the cost of one.
+    return closureDepthOfArea(g.closure_tbl, a);
 }
 
 /// Gravity-wave celerity √(g·A/T). Guarded so a vanishing top width (dry, or a
@@ -530,6 +235,11 @@ struct FaceState {
     double u  = 0.0;  ///< velocity (ft/s)
     double c  = 0.0;  ///< celerity (ft/s)
     double i1 = 0.0;  ///< hydrostatic first moment at the reconstructed depth
+    /// 1: the side stands in the Preissmann slot (or is TPA-flagged) and its
+    /// `c` is the acoustic slot celerity; 0: free surface; 2: a vented
+    /// junction's own-head ghost, which never takes part in the slot/free
+    /// bore bound (see waveSpeeds). Set by the solver.
+    uint8_t press = 0;
 };
 
 /// Result of a face flux evaluation.
@@ -551,6 +261,35 @@ OPENSWMM_KERNEL_FN void waveSpeeds(const FaceState& L, const FaceState& R,
     if (wetL && wetR) {
         sl = std::min(L.u - L.c, R.u - R.c);
         sr = std::max(L.u + L.c, R.u + R.c);
+        // Slot/free-surface interface (one side in the slot, the other not).
+        // Davis's symmetric estimate carries the slot's acoustic celerity into
+        // BOTH waves, but no signal enters the free-surface side at the slot
+        // speed: the wave that crosses into it is the filling/emptying bore,
+        // whose speed is the Rankine–Hugoniot jump (ΔQ/ΔA), bounded below by
+        // that side's own u ± c and above by the Davis bound. With the slot
+        // celerity on both waves the HLL diffusion term at a pressurized
+        // entrance is O(c_slot·ΔA) — measured 52 cfs of spurious mass flux and
+        // a −245 ft⁴/s² momentum sink on a 3 ft culvert whose junction then
+        // flooded at 108 of 120 cfs however high its head rose.
+        // A vented junction's ghost (press == 2) is excluded: bounding the
+        // wave into a pressurized cell beside it cut the acoustic exchange at
+        // every lateral junction of a pressurized tunnel (the node solve then
+        // clamped at its rim and booked 63 000 m³ of flooding — Klaver
+        // Example_02, 2026-09-13), and bounding the wave into a free cell
+        // beside it drove a 2× over-conveying limit cycle at an overloaded
+        // entrance. The bound acts at the INTERIOR slot/free faces, which is
+        // where the entrance lock lived.
+        if (L.press != R.press && L.press < 2 && R.press < 2) {
+            if (L.press) {
+                const double da = L.a - R.a;
+                const double w  = (da > 0.0) ? (L.q - R.q) / da : sr;
+                sr = std::max(R.u + R.c, std::min(sr, w));
+            } else {
+                const double da = R.a - L.a;
+                const double w  = (da > 0.0) ? (R.q - L.q) / da : sl;
+                sl = std::min(L.u - L.c, std::max(sl, w));
+            }
+        }
     } else if (wetR) {                      // dry left
         sl = R.u - 2.0 * R.c;
         sr = R.u + R.c;
@@ -568,6 +307,23 @@ OPENSWMM_KERNEL_FN void physicalFlux(const FaceState& S,
                                      double& fa, double& fq) noexcept {
     fa = S.q;
     fq = S.q * S.u + kGravity * S.i1;
+}
+
+/// The MASS component of riemannFlux alone — the same wave speeds and the
+/// same HLL expression, so the value is bit-identical to `riemannFlux().mass`;
+/// what it skips is the momentum flux, the contact speed and every store. The
+/// algebraic node solve reads back one scalar per trial head (plan Phase 1c).
+OPENSWMM_KERNEL_FN double riemannMassFlux(const FaceState& L,
+                                          const FaceState& R) noexcept {
+    if (L.a <= kDryArea && R.a <= kDryArea) return 0.0;
+    double sl = 0.0, sr = 0.0;
+    waveSpeeds(L, R, sl, sr);
+    double fal = 0.0, fql = 0.0, far = 0.0, fqr = 0.0;
+    physicalFlux(L, fal, fql);
+    physicalFlux(R, far, fqr);
+    if (sl >= 0.0) return fal;
+    if (sr <= 0.0) return far;
+    return (sr * fal - sl * far + sl * sr * (R.a - L.a)) / (sr - sl);
 }
 
 /**
@@ -690,6 +446,73 @@ OPENSWMM_KERNEL_FN double localLossUpdate(double q, double u, double k,
                                           double dx, double dt) noexcept {
     if (k <= 0.0 || dx <= 0.0) return q;
     return q / (1.0 + dt * k * std::fabs(u) / (2.0 * dx));
+}
+
+/**
+ * @brief Unsteady-friction momentum update (issue #156).
+ *
+ * Pinto/Vasconcelos/Soares (2025) source term, split by stiffness:
+ *   S_fu = (k3/g)·(∂V/∂t + c·sgn(V)·|∂V/∂x|)
+ * The local-acceleration half integrates IMPLICITLY (Δt cancels:
+ * ΔQ = −k3·A·(V^{n+1} − Vⁿ) ⇒ Q^{n+1} = (Q* + k3·A·Vⁿ)/(1 + k3)),
+ * so it is unconditionally stable like frictionUpdate. The convective half
+ * enters explicitly through @p grad_term = c·sgn(Vⁿ)·|∂V/∂x|ⁿ, precomputed by
+ * the solver from a consistent old-state snapshot (never from mid-update
+ * neighbors). The combined change is clamped to half the incoming momentum
+ * per substep — the paper reports instability for k3 ≳ 0.02 with no such
+ * guard; the clamp also makes UF exactly inert at rest (q = 0 ⇒ cap = 0,
+ * and u_old = grad = 0 anyway), preserving the well-balanced property.
+ * k3 = 0 returns q bit-unchanged.
+ */
+OPENSWMM_KERNEL_FN double ufUpdate(double q, double a, double u_old,
+                                   double k3, double grad_term,
+                                   double dt) noexcept {
+    if (k3 <= 0.0 || a <= 0.0) return q;
+    // Dead-band (measured, issue #156): the implicit fold acts as added
+    // inertia — it resists velocity DECAY too, so applied to the ~mm/s
+    // numerical ripple of a storage-coupled pool it sustained noise that
+    // steady friction was correctly killing (0.004 → 0.011 cfs on the
+    // at-rest fixture). UF correlations are calibrated for real transients
+    // (paper velocities O(0.1–1 m/s)); below 0.01 ft/s the term is noise
+    // amplification, not physics. Both the old and candidate velocities must
+    // clear the floor, so a genuinely at-rest deck stays bit-identical.
+    constexpr double kUfVelFloor = 0.01;  // ft/s, internal units
+    if (std::fabs(u_old) < kUfVelFloor && std::fabs(q / a) < kUfVelFloor)
+        return q;
+    double qn = (q + k3 * a * u_old) / (1.0 + k3);
+    qn -= dt * k3 * a * grad_term;
+    const double dq  = qn - q;
+    const double cap = 0.5 * std::fabs(q);
+    if (std::fabs(dq) > cap) qn = q + ((dq > 0.0) ? cap : -cap);
+    return qn;
+}
+
+// ---------------------------------------------------------------------------
+// TPA — two-component pressure approach (issue #156 Phase 4)
+// ---------------------------------------------------------------------------
+// Vasconcelos, Wright & Roe (2006). For a cell whose regime FLAG is set
+// (state.cell_tpa — physical air-pathway history, updated once per substep by
+// the solver, NOT evaluated here), the closure is the slot line extended to
+// BOTH signs of ΔA = A − a_crown:
+//     h(A) = y_full + (A − a_crown)/t_slot        (hs = h − y_full, signed)
+//     A(h) = a_crown + t_slot·(h − y_full)
+//     I₁(h) = i1_crown + a_crown·(h − y_full)     (paper Eq. 12b: the slot's
+//                                                  ½·t_slot·d² numerical
+//                                                  storage pressure is dropped)
+//     T = t_slot,  R = r_full,  c = √(g·A/t_slot) ≈ acoustic celerity a.
+// Free-surface (unflagged) cells use the table closure above UNCHANGED,
+// including the crown taper. The pair is continuous at A = a_crown, h = y_full.
+
+OPENSWMM_KERNEL_FN double tpaDepthOfArea(const FvGeometry& g, double a) noexcept {
+    return g.y_full + (a - g.a_crown) / g.t_slot;
+}
+
+OPENSWMM_KERNEL_FN double tpaAreaOfDepth(const FvGeometry& g, double h) noexcept {
+    return g.a_crown + g.t_slot * (h - g.y_full);
+}
+
+OPENSWMM_KERNEL_FN double tpaI1OfDepth(const FvGeometry& g, double h) noexcept {
+    return g.i1_crown + g.a_crown * (h - g.y_full);
 }
 
 /// CFL-limited step for one face: α·Δx/(|u| + c).

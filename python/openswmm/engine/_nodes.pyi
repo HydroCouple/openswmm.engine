@@ -51,6 +51,9 @@ class StorageView:
     shape: StorageShape
     geometry: Tuple[float, float, float]
     seep_rate: float
+    """Constant seepage (exfiltration) rate, in/hr or mm/hr: the exfiltration
+    Ksat with zero suction and IMD. Setting it replaces Green-Ampt parameters;
+    reads 0 when exfiltration uses them."""
     exfil_params: Tuple[float, float, float]
 
 
@@ -81,6 +84,8 @@ class Node:
     type: NodeType
     is_virtual: bool
     virtual_rule_violation: int
+    is_inlet: bool
+    def inlet_rule_violation(self, for_drop_inlet: bool = ...) -> int: ...
     solver: Solver
 
     # Geometry

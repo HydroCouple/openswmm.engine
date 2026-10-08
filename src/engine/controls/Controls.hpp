@@ -192,6 +192,8 @@ struct Rule {
 struct ParseError {
     int         line = -1;   ///< 1-based line in the submitted text; -1 if unknown
     std::string message;     ///< Human-readable reason for the rejection
+    int         code = 0;    ///< Legacy error code for the same rejection
+    std::string token;       ///< Offending token legacy names in its message
 };
 
 class ControlEngine {
@@ -209,11 +211,22 @@ public:
      *   - ControlValue tracking for modulated actions
      *
      * @param ctx           Simulation context.
-     * @param current_time  Current simulation time (seconds).
+     * @param current_date  legacy routing_execute's currentDate: the
+     *                      absolute date (days) of the START of the step
+     *                      plus 1 ms (swmm5.c getDateTime), from which the
+     *                      rule clock's CurrentDate (its floor), CurrentTime
+     *                      (its fraction) and ElapsedTime (minus the start
+     *                      date) are formed, as controls_evaluate does.
      * @param dt            Routing timestep (seconds).
+     * @param rule_time_reached  legacy evaluateControlRules' RULE_STEP gate
+     *                      (RuleStep == 0 || |NewRoutingTime - NewRuleTime|
+     *                      < 1 ms), decided on the caller's ms clock; false
+     *                      skips the rules (the caller still applies the
+     *                      pending target settings).
      * @returns Number of setting changes made.
      */
-    int evaluate(SimulationContext& ctx, double current_time, double dt);
+    int evaluate(SimulationContext& ctx, double current_date, double dt,
+                 bool rule_time_reached = true);
 
     // Rule parsing (from [CONTROLS] text)
     int parseRuleText(const std::string& text, SimulationContext& ctx);
@@ -239,11 +252,6 @@ public:
 
     /// Number of actions taken in the last evaluate() call.
     int lastActionCount() const { return last_action_count_; }
-
-    /// Reset the RULE_STEP timer; called when a new run begins so the
-    /// first call to evaluate() always runs.
-    /// @see Legacy: routing.c:286-290 (RuleStep gating)
-    void resetRuleStep() { next_rule_eval_time_ = -1.0; }
 
     // ========================================================================
     // SoA batch evaluation index (AD-14)
@@ -329,14 +337,16 @@ private:
     // Step 6 of the parity remediation will move this to ctx.links.time_last_set.
     std::vector<double> link_time_last_set_;
 
-    /// Next absolute date (decimal days) at which evaluate() should run.
-    /// Honors options.rule_step.  -1.0 means "not yet primed".
-    /// @see Legacy: routing.c:286-290 (NewRuleTime)
-    double next_rule_eval_time_ = -1.0;
-
     // Tracked across a single evaluate() call
     double control_value_ = 0.0;
     double set_point_     = 0.0;
+    /// legacy controls.c shared variables for the call: the currentDate
+    /// argument, CurrentDate = floor(currentDate), CurrentTime = the
+    /// fraction, ElapsedTime = currentDate - StartDateTime (days).
+    double eval_date_    = 0.0;
+    double cur_date_     = 0.0;
+    double cur_time_     = 0.0;
+    double elapsed_days_ = 0.0;
 
     // Pending action list (for priority deduplication)
     struct PendingAction {
@@ -347,6 +357,11 @@ private:
         ActionType type = ActionType::NUMERIC;  ///< For report filtering (P1-C08).
     };
     std::vector<PendingAction> pending_actions_;
+    /// Legacy ActionList (controls.c) slot order, head first. Its nodes
+    /// persist across evaluations and are refilled from the head; a new node
+    /// is PREPENDED only when every node is in use. Holds the index into
+    /// pending_actions_ of each slot's action, -1 when empty.
+    std::vector<int> action_slots_;
 
     double getVariableValue(const SimulationContext& ctx,
                             ConditionVar var, int idx,

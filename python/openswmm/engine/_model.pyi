@@ -34,6 +34,9 @@ from typing import Optional
 from ._solver import Solver
 
 
+from ._transport import Transport, ThreadInfo, EffectiveThreads, TransportCell
+from ._enums import TransportDomain, TransportClass
+
 class ModelBuilder:
     """Build a SWMM model programmatically (no C{.inp} file).
 
@@ -57,6 +60,9 @@ class ModelBuilder:
         m.finalize()
         solver = m.to_solver()
     """
+    @property
+    def transport(self) -> Transport: ...
+
 
     def __init__(self) -> None: ...
 
@@ -511,10 +517,6 @@ class ModelBuilder:
     # =========================================================================
 
     start_datetime: datetime
-    """Simulation start date/time.
-
-    @raise EngineError: On C API failure.
-    """
 
     end_datetime: datetime
     """Simulation end date/time.

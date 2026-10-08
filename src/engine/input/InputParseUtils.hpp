@@ -57,6 +57,26 @@ inline double to_double(std::string_view sv, double def = 0.0) noexcept {
 }
 
 /**
+ * @brief Parse a WHOLE token as a double, as legacy getDouble() does (strtod
+ *        must consume every character). Returns false, leaving @p out
+ *        untouched, for a partly numeric or non-numeric token. An empty
+ *        token reads as 0.0, as it does in legacy (strtod stops at the NUL).
+ */
+inline bool parse_double_strict(std::string_view sv, double& out) noexcept {
+    if (sv.empty()) { out = 0.0; return true; }
+    if (sv.front() == '+') {                  // strtod accepts a leading '+'
+        sv.remove_prefix(1);
+        if (sv.empty() || sv.front() == '+' || sv.front() == '-') return false;
+    }
+    double v = 0.0;
+    const auto [ptr, ec] =
+        openswmm::from_chars_double(sv.data(), sv.data() + sv.size(), v);
+    if (ec != std::errc{} || ptr != sv.data() + sv.size()) return false;
+    out = v;
+    return true;
+}
+
+/**
  * @brief Parse an int from a string_view, returning a default on failure.
  */
 inline int to_int(std::string_view sv, int def = 0) noexcept {
@@ -71,7 +91,21 @@ inline int to_int(std::string_view sv, int def = 0) noexcept {
 // ============================================================================
 
 /**
- * @brief Parse a date string in MM/DD/YYYY format to a DateTime (decimal days).
+ * @brief Parse a date string in MM/DD/YYYY or MM-DD-YYYY form to a DateTime
+ *        (decimal days).
+ *
+ * @details legacy datetime_strToDate accepts EITHER separator — it opens with
+ *          `if (strchr(s,'-') || strchr(s,'/'))` and then reads
+ *          `%d%c%d%c%d`, so `1-1-2000` and `01/01/2000` are the same date to
+ *          it (datetime.c). This parser took '/' only and returned 0.0 for
+ *          anything else, which is not a parse failure the caller can see: a
+ *          deck writing `START_DATE 1-1-2000` got a start and an end of zero,
+ *          a zero-length simulation, and an .out file with no periods at all
+ *          while the run reported success. 1900-nodes is the corpus case —
+ *          legacy writes 240 periods and 20 MB, v6 wrote 0 and 95 KB.
+ *
+ *          Single-digit months and days come for free, since from_chars reads
+ *          a run of digits rather than a fixed width.
  */
 inline double parse_date(std::string_view sv) {
     unsigned m = 0, d = 0, y = 0;
@@ -84,11 +118,15 @@ inline double parse_date(std::string_view sv) {
         p = np;
         return true;
     };
+    auto read_sep = [&]() -> bool {
+        if (p < end && (*p == '/' || *p == '-')) { ++p; return true; }
+        return false;
+    };
 
     if (!read_uint(m)) return 0.0;
-    if (p < end && *p == '/') ++p; else return 0.0;
+    if (!read_sep()) return 0.0;
     if (!read_uint(d)) return 0.0;
-    if (p < end && *p == '/') ++p; else return 0.0;
+    if (!read_sep()) return 0.0;
     if (!read_uint(y)) return 0.0;
 
     return datetime::encodeDate(static_cast<int>(y),
@@ -143,10 +181,23 @@ inline double parse_time_seconds(std::string_view sv) {
  * @details For use with datetime::encodeTime. Returns fractional day [0, 1).
  */
 inline double parse_time_day_fraction(std::string_view sv) {
-    unsigned h = 0, m = 0, s = 0;
     const char* p = sv.data();
     const char* end = sv.data() + sv.size();
 
+    // A time token is EITHER decimal hours (a bare number such as "0.167" or
+    // "10") OR a clock string "HH:MM[:SS]" — matching legacy datetime_strToTime
+    // ("accepts time as hr:min:sec or as decimal hours"). Try a full decimal
+    // parse first: if the WHOLE token is a number it is decimal hours (/24);
+    // otherwise fall back to integer HH:MM:SS. This helper (and parse_datetime
+    // through it) previously handled only HH:MM:SS, so a bare "0.167" on a dated
+    // [TIMESERIES] row was truncated to 0 — corrupting the series and colliding
+    // with the prior day's "24" row (dx == 0 -> spurious ERR 173).
+    double dec_hours = 0.0;
+    auto [dp, dec] = openswmm::from_chars_double(p, end, dec_hours);
+    if (dec == std::errc{} && dp == end)
+        return dec_hours / 24.0;
+
+    unsigned h = 0, m = 0, s = 0;
     auto read_uint = [&](unsigned& out) -> bool {
         auto [np, ec] = std::from_chars(p, end, out);
         if (ec != std::errc{}) return false;

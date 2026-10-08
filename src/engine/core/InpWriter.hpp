@@ -32,6 +32,7 @@
 #ifndef OPENSWMM_INP_WRITER_HPP
 #define OPENSWMM_INP_WRITER_HPP
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -70,11 +71,57 @@ namespace inp_writer {
  * @param path      Output file path.
  * @param warnings  Optional sink for non-fatal portability warnings
  *                  (cross-volume slots, etc.). Pass nullptr to discard.
+ * @details Main INP, engine-owned mesh and written component configs use adjacent temporary files,
+ *          checked write/flush/sync/close, and individual atomic replacement.
+ *          Errors are returned and described in warnings when supplied.
+ *          This is not a multi-file transaction: a later main-file failure
+ *          does not roll back an already-published mesh or component
+ *          configuration. Output redirection/recovery remain caller concerns.
  * @returns 0 on success, -1 on file error.
  */
 int writeInpFile(const SimulationContext& ctx,
                  const std::string&       path,
                  std::vector<std::string>* warnings = nullptr);
+
+/**
+ * @brief Write profile: which engine the file is written for.
+ *
+ * @details `Full` is the native format. `Swmm5` writes a file a SWMM 5.x
+ *          engine can read (MULTI_ENGINE plan V2 Phase 4): the v6-only
+ *          sections are omitted ([2D_*], [PLUGINS], [PROCESS_COMPONENTS],
+ *          [USER_FLAGS], [USER_FLAG_VALUES], [RDII_DECAY]), v6-only option
+ *          keys are omitted and incompatible values mapped (FLOW_ROUTING FV →
+ *          DYNWAVE, SURCHARGE_METHOD DYNAMIC_SLOT/TPA → SLOT), a virtual
+ *          junction becomes an ordinary junction, and an inlet junction
+ *          becomes an ordinary junction plus an [INLET_USAGE] row on its
+ *          approach conduit with the same capture node (the legacy-equivalent
+ *          model). Every substitution is reported through `warnings`; the
+ *          file starts with a comment naming the profile.
+ *
+ *          `Swmm5Stock` is `Swmm5` for a STOCK EPA SWMM 5 engine (5.2.4 as
+ *          built for SWMMVis): it additionally drops the positional grammar
+ *          extensions the in-tree legacy 5.3.0 engine added — the
+ *          [SUBCATCHMENTS] Snowpack `*` placeholder with the RainScale /
+ *          SnowScale columns behind it, and the [RAINGAGES] scale-factor
+ *          column — which a stock parser reads as an object name or a
+ *          malformed row (ERROR 209 / 200). A dropped factor that is not 1.0
+ *          is reported through `warnings`, since it is real model content.
+ */
+struct InpWriteOptions {
+    enum class Profile { Full, Swmm5, Swmm5Stock };
+    Profile profile = Profile::Full;
+    enum class OutputKind { Model = 0, Mesh = 1, Component = 2 };
+    // Final paths remain the reference anchor. Every actual output is sent
+    // here before opening; an empty mapped path refuses that output.
+    // The caller owns staging cleanup, validation and publication.
+    std::function<std::string(const std::string&, OutputKind)> map_output;
+
+};
+
+int writeInpFile(const SimulationContext&  ctx,
+                 const std::string&        path,
+                 std::vector<std::string>* warnings,
+                 const InpWriteOptions&    opts);
 
 } // namespace inp_writer
 } // namespace openswmm

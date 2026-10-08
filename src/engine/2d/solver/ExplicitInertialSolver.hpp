@@ -51,17 +51,30 @@
 
 #include "ISurfaceSolver.hpp"
 #include "InertialEdges.hpp"
+#include "../data/SolverOptions2D.hpp"   // Momentum2D
 
 namespace openswmm::twoD {
+
+class SubsurfaceSolver;   // G1: the two-zone groundwater kernel, if authored
+class CommonSourceStage;
 
 class ExplicitInertialSolver final : public ISurfaceSolver {
 public:
     void initialize(MeshData& mesh, SurfaceStateData& state,
                     SolverOptions2D& opts) override;
     double advance(double t_current, double t_target) override;
+    double completedSourceTime() const noexcept override {
+        return initialized_ ? t_last_sync_ : -1.0;
+    }
     void reinitialize(double t0) override;
     void resyncFromVolumes(double t0) override;
+    /// External outfall transfers keep these cells and their halo on tier zero.
+    void pinExternalSourceCells(const std::vector<int>& cells);
+    /// Internal qualification adapter; owned externally and attached at time zero.
+    void setCommonSourceStage(CommonSourceStage& stage);
     void finalize() override;
+    /// Refresh changed perimeter topology between completed advances.
+    void refreshBoundaries();
 
     long   last_num_steps() const noexcept override { return last_steps_; }
     double last_step_size() const noexcept override { return last_dt_; }
@@ -72,7 +85,15 @@ public:
         return exch_;
     }
 
+    /// C3: cumulative spill volume (m³) the coupled nodes could not supply
+    /// from their ponded storage. Should stay 0 on a well-posed deck; a
+    /// growing value means the orifice is sized to move more water than the
+    /// nodes hold above the rim.
+    double spillDeficit() const noexcept { return spill_deficit_; }
+
 private:
+    friend struct ExplicitInertialSolverTestAccess;
+
     // Recompute η/depth from state volumes for the whole mesh.
     void reconstructAll();
     // Flush every pending face accumulator into its cell (CSR gather over ALL
@@ -101,17 +122,90 @@ private:
     // tier0 = this firing carries the tier-0 cadence work (boundary edges and
     // the live junction exchange), which fires once per finest substep.
     void fireCells(const std::vector<int>& cells, double dt_c, bool tier0);
+    /// Closure-specialised body of fireCells (kSwe = FULL_SWE momentum update).
+    template <bool kSwe, bool kFuse>
+    void fireCellsImpl(const std::vector<int>& cells, double dt_c, bool tier0);
     // One halving-order macro cycle of nsub base substeps: tier k fires every
     // 2^k substeps.
-    void runMacroCycle(double dt0, int nsub);
+    void runMacroCycle(double dt0, int nsub, double time);
 
     MeshData*         mesh_  = nullptr;
     SurfaceStateData* state_ = nullptr;
     SolverOptions2D*  opts_  = nullptr;
 
     InertialEdges edges_;
-    std::vector<double>  q_;            ///< per unique interior face (m²/s)
-    std::vector<double>  qcx_, qcy_;    ///< Perot cell discharge vector (θ < 1)
+    /// Per unique interior face (m²/s). LOCAL_INERTIAL: the prognostic face
+    /// discharge. FULL_SWE / DIFFUSIVE_WAVE: the last evaluated face mass
+    /// flux per unit width (diagnostic — published as edge_flux).
+    std::vector<double>  q_;
+    /// LOCAL_INERTIAL: Perot cell discharge vector (θ < 1 / ADVECTION).
+    /// FULL_SWE: the PROGNOSTIC cell-mean unit discharge (h·u, h·v), m²/s.
+    std::vector<double>  qcx_, qcy_;
+
+    // -----------------------------------------------------------------------
+    // Momentum closure (MOMENTUM_EQUATION, 2D_FULL_SWE plan §2.1). One
+    // marcher, three face laws; everything below the face/cell kernels
+    // (tiers, active sets, positivity, coupling, transport) is shared.
+    // -----------------------------------------------------------------------
+    Momentum2D mode_ = Momentum2D::LOCAL_INERTIAL;
+    /// Mesh carries at least one quad (2D_PERF_REGRESSION_DIAGNOSIS §2 F1):
+    /// resolved ONCE in initialize(). MeshData::n_quads() is an O(n_cells)
+    /// scan and was being re-run at the top of every face-tier fire.
+    bool       has_quads_ = false;
+    /// FULL_SWE: CSR of WALL boundary slots per cell (wall_ptr_[i] ..
+    /// wall_ptr_[i+1]) so the mirror-flux booking touches only the perimeter
+    /// cells that have one (F5); every other cell's row is empty.
+    std::vector<int>     wall_ptr_, wall_slot_;
+    /// FULL_SWE momentum accumulators per face side (m⁴/s = m²·m²/s): the
+    /// x/y momentum the face booked for cL / cR, gathered and cleared by the
+    /// cell exactly like facc_L_/facc_R_ (same writer, same cadence).
+    std::vector<double>  macc_x_L_, macc_x_R_, macc_y_L_, macc_y_R_;
+    /// Momentum the last boundaryFluxSwe() call booked into qcx_/qcy_, so its
+    /// caller can rescale it when the availability clamp shrinks the mass.
+    /// Scalar: the boundary loop is serial (perimeter-sized).
+    double               swe_bc_dqx_ = 0.0, swe_bc_dqy_ = 0.0;
+    /// RECONSTRUCTION_ORDER 2 (FULL_SWE): limited reconstruction gradients of
+    /// (eta, h, u, v) per cell, refreshed at every face pass, and the SSP-RK2
+    /// stage buffers. Empty at order 1.
+    bool                 second_order_ = false;
+    /// gex_/gey_: eta gradients in [0, n), depth gradients in [n, 2*n).
+    /// The second block supplies the face bed (eta - h) only for order 2.
+    std::vector<double>  gex_, gey_, gux_, guy_, gvx_, gvy_;
+    std::vector<double>  rk_v0_, rk_qx0_, rk_qy0_;
+    /// Stage-0 copies of the per-advance ledgers (F6): members so the RK2
+    /// step allocates nothing.
+    std::vector<double>  rk_inf0_, rk_bc0_, rk_ex0_, rk_drawn0_, rk_cpl0_;
+    void computeLimitedGradientsSwe();
+    /// One SSP-RK2 (Heun) step of length dt over the active lists: two
+    /// forward-Euler substeps averaged with the start state; the ledgers
+    /// that accumulated over both stages are halved to the trapezoidal value.
+    void runRk2Step(double dt);
+    /// FRONT_REBUILD: frontier_[i] = 1 for an active cell with at least one
+    /// inactive neighbour (the outer ring of the halo). When such a cell
+    /// crosses the activation depth the front has used up the halo, and the
+    /// next macro cycle rebuilds the active set instead of waiting for the
+    /// cadence (front_breach_).
+    bool                 front_rebuild_ = false;
+    std::vector<uint8_t> frontier_;
+    bool                 front_breach_  = false;
+    double               h_on_front_    = 0.0;   ///< activation depth of the last rebuild
+    /// DIFFUSIVE_WAVE: per-cell largest |surface slope| over its faces, from
+    /// the last rebuild/refresh — the explicit diffusion step bound's slope.
+    std::vector<double>  dw_slope_;
+    /// Face kernels of the three closures (fireFaces dispatches on mode_).
+    void fireFacesInertial(const std::vector<int>& faces, double dt_f, bool global_step);
+    void fireFacesSwe(const std::vector<int>& faces, double dt_f, bool global_step);
+    void fireFacesDiffusive(const std::vector<int>& faces, double dt_f, bool global_step);
+    /// Species advection + dispersion booked on face e for the mass transfer
+    /// dM (m³, positive cL→cR) at face depth hf — shared by every closure.
+    void bookFaceSpecies(int e, int a, int b, double dM, double hf, double dt_f,
+                         bool global_step) noexcept;
+    /// FULL_SWE ghost-cell Riemann boundary flux for BC entry k on cell i:
+    /// returns the inflow-positive volumetric flux (m³/s) and adds the
+    /// momentum change (with the bed-slope correction) to the cell's q⃗.
+    double boundaryFluxSwe(std::size_t k, int i, double dt_c);
+    /// DIFFUSIVE_WAVE step bound helper: refresh dw_slope_ for the active cells.
+    void refreshDiffusiveSlopes();
     std::vector<uint8_t> cell_active_;
     std::vector<int>     active_cells_;
     /// Every face with both sides active, ascending — the union of the face
@@ -140,6 +234,53 @@ private:
     std::vector<uint8_t> face_tier_;    ///< per unique face
     std::vector<double>  facc_L_;       ///< pending ΔM for the cL side (m³)
     std::vector<double>  facc_R_;       ///< pending ΔM for the cR side (m³)
+
+    // S1 — species mass rides the SAME face accumulators, with each face
+    // holding adjacent rows at [e * n_species + s]. Booked in fireFaces
+    // immediately after the volume ΔM, from the FINAL qn1 (after the Froude
+    // cap and the positivity share),
+    // at the exporting cell's concentration read at that same substep;
+    // gathered and cleared in fireCells alongside the volume side. That is
+    // D-2DT2: the species flux inherits the volume flux's tier cadence rather
+    // than reproducing it, so conservation across tier interfaces is the
+    // marcher's own property and not a second one to prove. Empty unless
+    // `state_->transport.active()`.
+    std::vector<double>  sacc_L_;
+    std::vector<double>  sacc_R_;
+    /// S7: "transport rows are live" — set with the accumulators above. The
+    /// sites used to test `!sacc_L_.empty()`, which is ALSO empty on a mesh
+    /// with no interior edge (one cell), where every species sink and source
+    /// then silently skipped while the rows were active.
+    bool                 species_on_ = false;
+    /// Exporter concentration for a species at a cell, read against the
+    /// cell's CURRENT published volume — the same volume the positivity share
+    /// budgets against, so cumulative species takes are bounded by the same
+    /// β share as the water and mass cannot go negative where volume cannot.
+    double donorConc(int s, int cell) const noexcept;
+    /// Remove `dv_m3` of water from cell `i` at the cell's concentration and
+    /// book it to `ledger` — infiltration, boundary outflow, coupling drain.
+    /// Evaporation deliberately does NOT go through here: it removes volume
+    /// and no mass, so the concentration rises (§2.3 of the plan).
+    void sinkMassAtCellConc(int i, double dv_m3, std::vector<double>& ledger,
+                            double* per_point_ledger = nullptr) noexcept;
+    // Sources share one water budget after face transfers have landed. Gross
+    // constituent transfers are evaluated even when net water change is zero.
+    // Returns false only when no source bookkeeping or volume change occurred.
+    bool applyCellSources(int cell, double dt);
+    bool applyRuntimeSources(int cell, double dt);
+    struct CellSourceStep;
+    bool prepareCellSources(int cell, double dt, CellSourceStep& source);
+    void applyCellSourceRow(int cell, int row, double& mass,
+                            const CellSourceStep& source);
+    enum class SourceLedger { Infiltration, CouplingOut, Rainfall,
+                              CouplingIn, Exfiltration, Boundary, ExternalIn, ExternalOut, Count };
+    void bookSourceLedger(SourceLedger ledger, int species, double mass) noexcept;
+    void flushSourceLedgers();
+    int sourceThread() const noexcept;
+    // Each worker owns a cache-line-padded slice: six species ledgers and
+    // applied evaporation volume. Fold only after the parallel region ends.
+    std::vector<double> source_ledgers_;
+    std::size_t source_ledger_stride_ = 0;
     /// False when every booked ΔM is known to have been consumed already —
     /// true after a GLOBAL substep, where every active face fired and then
     /// every active cell gathered both of its sides (faces touching an
@@ -152,6 +293,7 @@ private:
     double dt0_ = 0.0;                  ///< base (tier-0) step from the rebuild
     std::vector<int>     bc_cell_;      ///< cells with a non-WALL boundary edge
     std::vector<int>     bc_slot_;      ///< matching flat mesh edge slot
+    std::vector<int> gw_row_map_;
     std::vector<double>  bc_accum_;     ///< ∫F_applied dt per BC entry (m³),
                                         ///< inflow-positive, reset per advance
     std::vector<double>  bc_q_;         ///< prognostic boundary-edge discharge
@@ -171,6 +313,13 @@ private:
     // volume so fill-and-spill thrash is structurally impossible.
     std::vector<double>  exch_;
     std::vector<double>  node_drawn_;   ///< spill drawn per node this advance (m³)
+    /// C3: cumulative volume (m³) the orifice law asked a node for and the
+    /// node's PONDED storage could not supply. Not an error — a spill that
+    /// empties the ponded water is the physically right outcome — but it must
+    /// be visible, because the 1D side's `y_new = max(y_new, 0)` floor would
+    /// otherwise absorb an over-draw silently and create water. A validator
+    /// watches this against zero on a well-posed deck.
+    double               spill_deficit_ = 0.0;
 
 public:
     /// Experimental (OPENSWMM_2D_HEAD_RAMP): per-coupling-point 1D head trend
@@ -185,6 +334,8 @@ private:
     double               exch_tau_ = 0.0;  ///< time into current advance (s)
 
     double t_last_sync_ = 0.0;          ///< lazy-source clock
+    CommonSourceStage* common_stage_ = nullptr;
+    double source_phase_end_ = 0.0;
     int    cycles_since_rebuild_ = 1000; ///< persists across advances (co-advance)
     /// Lazy-source landing without the O(nt) rebuild (advance boundaries
     /// between rebuild cadences).
@@ -199,10 +350,41 @@ private:
     // rebuild; dumped as CSV at finalize() when OPENSWMM_2D_MARCHER_TELEMETRY
     // names a file. The Phase-1 gate reads this to verify the thin-film budget
     // assumption on the Bellinge storm slice.
-    std::vector<std::pair<double, int>> telemetry_;
+    std::vector<std::pair<double, int>> telemetry_;   ///< kept ONLY when telemetry_path_ is set
     std::string telemetry_path_;
+    /// Running active-fraction statistics for run_stats(). The samples above
+    /// used to be kept for the whole run unconditionally, just to be folded
+    /// into min/mean/max at the end (16 B per rebuild, ~10 MB per 2.6 M steps).
+    double active_frac_min_ = 1.0e30;
+    double active_frac_max_ = -1.0e30;
+    double active_frac_sum_ = 0.0;
+    long   active_samples_  = 0;
     /// Cumulative rebuild-sampled cell count per LTS tier (report histogram).
     std::array<long, 8> tier_occupancy_{};
+
+    /// G1: the two-zone groundwater kernel, or nullptr when no
+    /// `[2D_AQUIFER]` was authored. Not owned — SurfaceRouter2D holds it.
+    ///
+    /// The marcher drives it through four hooks (SubsurfaceSolver.hpp
+    /// §gw_lts) so the subsurface shares this ladder instead of running a
+    /// loop of its own. The subsurface's tiers come from ITS OWN stability
+    /// steps (guarantee G-A): a GW cell that exchanges with a node or
+    /// receives infiltration is deliberately NOT pinned to tier 0 — only its
+    /// surface twin is. Cross-cadence volume rides the same ±Δ side
+    /// accumulators the surface faces use (G-B).
+    SubsurfaceSolver* gw_ = nullptr;
+
+public:
+    /// Attach (or detach, with nullptr) the groundwater kernel. Must be
+    /// called before the first advance and after `initialize`.
+    void setSubsurface(SubsurfaceSolver* gw) noexcept { gw_ = gw; }
+    void refreshSubsurfaceRows();
+
+    /// The unique interior-edge topology this marcher built. Exposed so the
+    /// groundwater kernel can put its lateral Darcy flux on the SAME faces
+    /// rather than build a second, necessarily-consistent copy of the same
+    /// graph. Valid only after `initialize`.
+    const InertialEdges& inertialEdges() const noexcept { return edges_; }
 };
 
 } // namespace openswmm::twoD

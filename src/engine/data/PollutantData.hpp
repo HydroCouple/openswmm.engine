@@ -87,7 +87,10 @@ struct PollutantData {
     std::vector<double>     mwt;
 
     /**
-     * @brief First-order decay coefficient (1/day).
+     * @brief First-order decay coefficient (1/sec). The [POLLUTANTS]
+     *        Kdecay column is 1/day: the parser divides by SEC_PER_DAY
+     *        and every writer multiplies back (KD1) — the same seam
+     *        legacy keeps (landuse.c / SECperDAY).
      * @see Legacy: Pollut[i].kDecay
      */
     std::vector<double>     k_decay;

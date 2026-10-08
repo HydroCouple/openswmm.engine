@@ -77,8 +77,8 @@ void routeSubcatchmentAge(SimulationContext& ctx,
         const double area = soa.area[ui];
         const double fi   = soa.imperv_pct[ui];
         const double fp   = 1.0 - fi;
-        const double f0   = fi * soa.imperv0_pct[ui];
-        const double f1   = fi * (1.0 - soa.imperv0_pct[ui]);
+        const double f0   = soa.frac_imperv0[ui];
+        const double f1   = soa.frac_imperv1[ui];
 
         // Area-weighted subarea volumes, the same expression the runoff
         // mass balance uses (SWMMEngine.cpp:3664-3666).
@@ -176,10 +176,8 @@ void routeSubcatchmentAge(SimulationContext& ctx,
                 (out_den > kTinyVol) ? out_num / out_den : a_rain;
     }
 
-    // The run-on accumulator is a per-step rate, like node_age_vol_in:
-    // zero it once consumed so the next assembly starts clean.
-    std::fill(ws.subcatch_runon_age_vol_in.begin(),
-              ws.subcatch_runon_age_vol_in.end(), 0.0);
+    // The run-on accumulator is zeroed by SWMMEngine::assembleRunon at the
+    // start of the next runoff step, beside the flow it describes.
 }
 
 }  // namespace openswmm::transport

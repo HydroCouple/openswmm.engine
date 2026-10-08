@@ -23,7 +23,7 @@ Pollutant access (Pythonic v1 surface)
 :license: Apache-2.0
 
 The :class:`Pollutants` collection and :class:`Pollutant` wrapper
-mirror the shape of :doc:`nodes` / :doc:`links`.
+mirror the shape of :doc:`/guide/nodes` / :doc:`/guide/links`.
 
 .. code-block:: python
 

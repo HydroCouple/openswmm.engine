@@ -1,0 +1,11 @@
+
+  OPENSWMM ENGINE - VERSION 5.3.0 (Build 5.3.0)
+  ------------------------------------------------------------
+
+  
+  ERROR 205: invalid keyword SOMETIMES at line 17 of [OPTION] section:
+  OUTFALL_BACKFLOW_QUALITY
+
+  Analysis begun on:  Wed Oct  7 22:42:55 2026
+  Analysis ended on:  Wed Oct  7 22:42:55 2026
+  Total elapsed time: < 1 sec

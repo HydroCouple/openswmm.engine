@@ -75,10 +75,12 @@ const char* const kNumericKeys[] = {
     "VARIABLE_STEP", "THREADS",
     // Finite volume
     "FV_CELL_LENGTH", "FV_MIN_CELLS", "FV_CFL", "FV_ORDER",
-    "FV_SLOT_CELERITY", "FV_DISPERSION", "FV_NODE_PICARD",
+    "FV_SLOT_CELERITY", "FV_DISPERSION",
     "FV_MIN_PARALLEL_CELLS", "FV_LTS_MAX_TIERS", "FV_CFL_CENSUS_INTERVAL",
     // Quality & transport (Y0)
     "QUALITY_STEP", "MAX_SEGMENTS_PER_LINK", "RWPT_SEED",
+    // Unsteady friction (issue #156)
+    "UF_K3",
 };
 
 /// Values every numeric key must refuse. VALIDATION FINDING (H1 round):
@@ -101,7 +103,7 @@ const char* const kMalformed[] = {
 /// family std::stoi silently truncated before H1 ("1.5" became 1,
 /// "1e999999" became 1 — a caller's typo turned into a different number).
 const char* const kIntKeys[] = {
-    "MAX_TRIALS", "THREADS", "FV_MIN_CELLS", "FV_ORDER", "FV_NODE_PICARD",
+    "MAX_TRIALS", "THREADS", "FV_MIN_CELLS", "FV_ORDER",
     "FV_MIN_PARALLEL_CELLS", "FV_LTS_MAX_TIERS", "FV_CFL_CENSUS_INTERVAL",
     "MAX_SEGMENTS_PER_LINK", "RWPT_SEED",
 };
@@ -239,6 +241,7 @@ TEST(OptionsMalformedValuesTest, EnumKeysStillRejectUnknownTokens) {
     EXPECT_NE(swmm_options_set(e, "QUALITY_SOLVER", "MAGIC"),    SWMM_OK);
     EXPECT_NE(swmm_options_set(e, "DISPERSION",     "FISCHER"),  SWMM_OK);
     EXPECT_NE(swmm_options_set(e, "FV_RIEMANN",     "ROE"),      SWMM_OK);
+    EXPECT_NE(swmm_options_set(e, "UNSTEADY_FRICTION", "BRUNONE"), SWMM_OK);
 
     swmm_engine_destroy(e);
 }

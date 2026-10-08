@@ -41,6 +41,7 @@
 #include <string>
 #include <vector>
 
+#include "../../src/engine/core/DateTime.hpp"
 #include "../../src/engine/core/SimulationContext.hpp"
 #include "../../src/engine/core/InpWriter.hpp"
 #include "../../src/engine/input/handlers/TablesHandler.hpp"
@@ -307,4 +308,72 @@ TEST(TimeseriesFileRoundTrip, ParseWriteParsePreservesToken) {
     ASSERT_EQ(ctx2.tables.tables.size(), 1u);
     EXPECT_EQ(ctx2.tables.tables.front().id,        "RAIN_X");
     EXPECT_EQ(ctx2.tables.tables.front().file_path, "data/rain.dat");
+}
+
+// ---------------------------------------------------------------------------
+// Legacy external-file row grammar (table_parseFileLine). The loader used to
+// accept ONLY "M/D/Y H:MM value" rows, so every elapsed-time or decimal-hour
+// legacy file parsed zero rows and failed the open with ERROR 363 — which is
+// how "timeseries specified by filepath" broke in the GUI for legacy models.
+// Working directory is tests/unit/engine/data/ (see CMakeLists).
+// ---------------------------------------------------------------------------
+
+TEST(TimeseriesFileRoundTrip, ElapsedTimeFileAnchorsAtSimulationStart) {
+    SimulationContext ctx;
+    ctx.inp_file_path = "rain_series/model.inp";
+    // Legacy input.c:176 seeds lastDate = StartDate + StartTime, so date-less
+    // rows are elapsed from the start DATETIME — time fraction included.
+    const double start = openswmm::datetime::encodeDate(2024, 1, 1)
+                       + openswmm::datetime::encodeTime(6, 0, 0);
+    ctx.options.start_date = start;
+    openswmm::input::handle_timeseries(ctx, {
+        "TS_EL   FILE   \"legacy_elapsed.dat\"",
+    });
+    openswmm::input::resolve_cross_references(ctx);
+
+    const auto& tbl = ctx.tables.tables.front();
+    ASSERT_EQ(tbl.x.size(), 4u) << "elapsed-time rows must parse";
+    EXPECT_NEAR(tbl.x[0], start, 1e-12);
+    EXPECT_NEAR(tbl.x[2], start + 2.0 / 24.0, 1e-12);
+    EXPECT_NEAR(tbl.y[2], 5.0, 1e-12);
+}
+
+TEST(TimeseriesFileRoundTrip, DecimalHourFileParses) {
+    SimulationContext ctx;
+    ctx.inp_file_path = "rain_series/model.inp";
+    const double start = openswmm::datetime::encodeDate(2024, 3, 1);
+    ctx.options.start_date = start;
+    openswmm::input::handle_timeseries(ctx, {
+        "TS_DEC   FILE   \"legacy_dechours.dat\"",
+    });
+    openswmm::input::resolve_cross_references(ctx);
+
+    const auto& tbl = ctx.tables.tables.front();
+    ASSERT_EQ(tbl.x.size(), 4u) << "decimal-hour rows must parse";
+    EXPECT_NEAR(tbl.x[1], start + 1.5 / 24.0, 1e-12);
+    EXPECT_NEAR(tbl.x[3], start + 25.25 / 24.0, 1e-12)
+        << "hours past 24 keep accumulating (no day wrap for elapsed rows)";
+    EXPECT_NEAR(tbl.y[3], 3.0, 1e-12);
+}
+
+TEST(TimeseriesFileRoundTrip, DatedFileFullLegacyGrammar) {
+    SimulationContext ctx;
+    ctx.inp_file_path = "rain_series/model.inp";
+    // start_date deliberately far from the file's dates: dated rows must NOT
+    // be shifted by the relative-row anchoring.
+    ctx.options.start_date = openswmm::datetime::encodeDate(2030, 6, 15);
+    openswmm::input::handle_timeseries(ctx, {
+        "TS_MIX   FILE   \"legacy_dated_mixed.dat\"",
+    });
+    openswmm::input::resolve_cross_references(ctx);
+
+    const double jan1 = openswmm::datetime::encodeDate(2024, 1, 1);
+    const auto& tbl = ctx.tables.tables.front();
+    ASSERT_EQ(tbl.x.size(), 4u)
+        << "dash dates, month names, carryover and decimal-hour rows must parse";
+    EXPECT_NEAR(tbl.x[0], jan1, 1e-12);                     // 01-01-2024 0:00
+    EXPECT_NEAR(tbl.x[1], jan1 + 6.0 / 24.0, 1e-12);        // Jan-01-2024 6:00
+    EXPECT_NEAR(tbl.x[2], jan1 + 12.0 / 24.0, 1e-12);       // 12:00 (carryover)
+    EXPECT_NEAR(tbl.x[3], jan1 + 1.0 + 6.5 / 24.0, 1e-12);  // 01/02/2024 6.5
+    EXPECT_NEAR(tbl.y[3], 4.0, 1e-12);
 }

@@ -1,3 +1,6 @@
+
+from typing import Any, Mapping
+from ._coupling import DomainSources, SourceReceipt
 # SPDX-License-Identifier: Apache-2.0
 #
 # Copyright 2026 Caleb Buahin
@@ -25,20 +28,34 @@
 Type stubs for :mod:`openswmm.engine._2d`.
 
 The :class:`Surface2D` class provides read/write access to the optional 2D
-surface routing module (requires ``OPENSWMM_BUILD_2D=ON`` and SUNDIALS).
+surface routing module (requires ``OPENSWMM_BUILD_2D=ON``).
 """
+
+from collections.abc import Iterator, MutableMapping, Sequence
+from typing import Any, NamedTuple
 
 import numpy as np
 import numpy.typing as npt
 
-from ._enums import SurfaceForcingMode, ForcingPersist, SurfaceBoundaryType
+from ._surface_quality import SurfaceQuality
+from ._groundwater import Groundwater
+from ._solver import Solver
+from ._model import ModelBuilder
+
+from ._enums import (
+    SurfaceForcingMode,
+    ForcingPersist,
+    SurfaceBoundaryType,
+    SurfaceInfilMethod,
+    SurfaceInfilDest,
+)
 
 
 class Surface2D:
     """Read/write interface to the optional 2D surface routing module.
 
     The module solves the depth-averaged shallow-water equations on an
-    unstructured triangular mesh and is integrated in time with the
+    unstructured mixed-cell mesh and is integrated in time with the
     explicit local-inertial finite-volume marcher. Two-way coupling with
     the 1D drainage network is supported per-vertex and per-triangle.
 
@@ -48,20 +65,40 @@ class Surface2D:
         from openswmm.engine._2d import Surface2D
 
         with Solver("model.inp", "model.rpt", "model.out") as s:
-            mesh = Surface2D(s.handle)
+            mesh = s.surface2d
             if mesh.is_active:
                 depths = mesh.get_depths()
 
     @ivar _engine: Internal pointer to the underlying C{SWMM_Engine}
         handle (managed by the Cython extension).
     """
+    def get_rainfall_bulk(self) -> np.ndarray: ...
+    def get_report_rainfall_bulk(self, report_date: float) -> np.ndarray: ...
+    def get_surface_owners(self) -> npt.NDArray[np.intc]: ...
+    def preview_surface_owners(self, rows: Sequence[int] | None = ...) -> dict[str, Any]: ...
+    def replace_surface_owners(self, rows: Sequence[int], expected_token: str) -> None: ...
+    def get_rain_volume_bulk(self) -> np.ndarray: ...
+    def get_coupling_volume_bulk(self) -> np.ndarray: ...
+    def rainfall_weights(self, cell: int) -> tuple[int, np.ndarray, np.ndarray]: ...
+    @staticmethod
+    def output_variables() -> tuple[str, ...]: ...
+    @staticmethod
+    def output_variable_mask(text: str) -> int: ...
+    @staticmethod
+    def output_variable_text(mask: int) -> str: ...
 
-    def __init__(self, engine_ptr: int) -> None:
-        """Construct a L{Surface2D} accessor from a raw engine handle.
 
-        @param engine_ptr: The raw engine handle (C{SWMM_Engine} cast to
-            an integer via C{solver.handle}).
-        @type engine_ptr: int
+    @property
+    def quality(self) -> SurfaceQuality: ...
+
+    @property
+    def groundwater(self) -> Groundwater: ...
+
+    def __init__(self, owner: Solver | ModelBuilder | int) -> None:
+        """Construct an accessor retaining its engine owner. Raw registered
+        pointers are deprecated; use ``solver.surface2d``.
+
+        @param owner: The owning solver or model builder.
         """
         ...
 
@@ -75,7 +112,7 @@ class Surface2D:
 
         @return: Activation flag.
         @rtype: bool
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -89,7 +126,7 @@ class Surface2D:
 
         @return: Vertex count.
         @rtype: int
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -99,8 +136,35 @@ class Surface2D:
 
         @return: Triangle count.
         @rtype: int
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
+        ...
+
+    @property
+    def n_cells(self) -> int:
+        """Number of mesh cells (triangles + quads)."""
+        ...
+
+    @property
+    def n_quads(self) -> int:
+        """Number of quadrilateral cells (0 for an all-triangle mesh)."""
+        ...
+
+    @property
+    def edge_stride(self) -> int:
+        """Edge slots per cell row in the bulk edge arrays (3 all-tri, 4 mixed)."""
+        ...
+
+    def get_cell_vertex_count(self, idx: int) -> int:
+        """Vertices (== edges) of a cell: 3 or 4."""
+        ...
+
+    def get_cell_vertices(self, idx: int) -> tuple[int, ...]:
+        """Vertex indices of any cell (length 3 or 4)."""
+        ...
+
+    def get_cell_neighbours(self, idx: int) -> tuple[int, ...]:
+        """Neighbour cell across each local edge (-1 = boundary), length 3 or 4."""
         ...
 
     def get_vertex_coords(
@@ -116,7 +180,7 @@ class Surface2D:
         @return: Tuple C{(x, y, z)}, each of shape C{(n_vertices,)} with
             dtype C{float64}.
         @rtype: tuple[np.ndarray, np.ndarray, np.ndarray]
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -137,7 +201,21 @@ class Surface2D:
         @type idx: int
         @param z: New ground elevation (project vertical units).
         @type z: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
+        """
+        ...
+
+    def set_vertex_z_bulk(self, z: Sequence[float] | npt.NDArray[np.float64]) -> None:
+        """Set EVERY vertex ground elevation in one call.
+
+        Equivalent to calling :meth:`set_vertex_z` per vertex, but rescans the
+        mesh once instead of once per vertex. GIL is released during the C
+        call.
+
+        @param z: One ground elevation per vertex (project vertical units).
+        @type z: Sequence[float] | np.ndarray
+        @raise ValueError: If C{len(z)} does not equal L{n_vertices}.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -161,7 +239,7 @@ class Surface2D:
         @type idx: int
         @return: Tuple of three vertex indices.
         @rtype: tuple[int, int, int]
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -172,7 +250,7 @@ class Surface2D:
         @type idx: int
         @return: Triangle area in project units squared.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -183,7 +261,7 @@ class Surface2D:
         @type idx: int
         @return: Tuple C{(cx, cy, cz)} centroid coordinates.
         @rtype: tuple[float, float, float]
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -194,7 +272,7 @@ class Surface2D:
         @type idx: int
         @return: Manning's M{n} roughness.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -242,7 +320,7 @@ class Surface2D:
         @return: Tuple of three neighbour triangle indices; C{-1}
             indicates a boundary edge.
         @rtype: tuple[int, int, int]
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -256,7 +334,7 @@ class Surface2D:
 
         @return: Coupling count.
         @rtype: int
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -266,7 +344,7 @@ class Surface2D:
 
         @return: Coupling count.
         @rtype: int
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -277,7 +355,7 @@ class Surface2D:
         @type vertex_idx: int
         @return: Node index, or C{-1} if no coupling exists.
         @rtype: int
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -295,7 +373,7 @@ class Surface2D:
         @type vertex_idx: int
         @return: Discharge coefficient.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -313,7 +391,7 @@ class Surface2D:
         @type vertex_idx: int
         @return: Exchange area in m^2.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -328,7 +406,7 @@ class Surface2D:
         @type tri_idx: int
         @return: Node index, or C{-1} if no coupling exists.
         @rtype: int
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -366,9 +444,11 @@ class Surface2D:
         """Return depths for all triangles as a NumPy array. GIL is
         released during the C call.
 
-        @return: Array of shape C{(n_triangles,)} with dtype C{float64}.
+        @return: Array of shape C{(n_triangles,)} with dtype C{float64}, in m
+            (the 2D solver runs in SI after initialize, whatever the flow units).
         @rtype: np.ndarray
-        @raise RuntimeError: If the C API call fails.
+        @raise LifecycleError: Before C{initialize()} on a model with a 2D mesh.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -376,9 +456,9 @@ class Surface2D:
         """Return total heads for all triangles as a NumPy array. GIL is
         released during the C call.
 
-        @return: Array of shape C{(n_triangles,)} with dtype C{float64}.
+        @return: Array of shape C{(n_triangles,)} with dtype C{float64}, in m.
         @rtype: np.ndarray
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -389,7 +469,7 @@ class Surface2D:
         @return: Array of shape C{(n_triangles,)} with dtype C{float64}.
             Positive values denote flux into the 2D surface.
         @rtype: np.ndarray
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -400,6 +480,17 @@ class Surface2D:
         Indexed as C{[tri*3 + localEdge]}.
         @return: Array of shape C{(n_triangles*3,)} with dtype C{float64}.
         """
+        ...
+
+    @property
+    def species(self) -> tuple[str, ...]:
+        """Surface-transported species names in native row order: pollutants,
+        MSX species, C{__WATER_AGE__}, C{__TEMPERATURE__}."""
+        ...
+
+    def concentrations(self, species: int) -> npt.NDArray[np.float64]:
+        """Per-cell concentration of one surface species (declared units;
+        degC for temperature, seconds for age; dry cells report 0)."""
         ...
 
     def get_edge_geometry_bulk(self) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
@@ -421,9 +512,9 @@ class Surface2D:
 
         @param idx: Triangle index.
         @type idx: int
-        @return: Water depth.
+        @return: Water depth (m).
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -432,9 +523,9 @@ class Surface2D:
 
         @param idx: Triangle index.
         @type idx: int
-        @return: Total head.
+        @return: Total head (m).
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -445,7 +536,7 @@ class Surface2D:
         @type idx: int
         @return: Rainfall rate.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -456,7 +547,7 @@ class Surface2D:
         @type idx: int
         @return: Net source term.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -467,7 +558,7 @@ class Surface2D:
         @type idx: int
         @return: Coupling flux value (positive = into 2D surface).
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -481,7 +572,7 @@ class Surface2D:
 
         @return: Array of shape C{(n_vertices,)} with dtype C{float64}.
         @rtype: np.ndarray
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -494,7 +585,7 @@ class Surface2D:
 
         @return: Array of shape C{(n_vertices,)} with dtype C{float64}.
         @rtype: np.ndarray
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -508,7 +599,7 @@ class Surface2D:
 
         @return: Maximum depth.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -518,7 +609,7 @@ class Surface2D:
 
         @return: Total volume.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -529,7 +620,7 @@ class Surface2D:
         @return: Exchange flow rate in C{m^3/s} (positive = into 1D
             network).
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -541,7 +632,7 @@ class Surface2D:
 
         @return: Step count.
         @rtype: int
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -554,7 +645,26 @@ class Surface2D:
 
         @return: Step size.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
+        """
+        ...
+
+    @property
+    def run_stats(self) -> dict[str, Any]:
+        """Cumulative marcher statistics and the backend of this 2D run.
+
+        Keys: C{backend}, C{momentum}, C{lts_tiers}, C{steps},
+        C{face_evals}, C{last_step}, C{active_frac} (min, mean, max) and
+        C{tier_cells} (one entry per populated LTS tier).
+
+        The value type is C{Any} because the mapping is heterogeneous:
+        C{str} for C{backend}, C{str} or C{int} for C{momentum}, C{int}
+        counts, C{float} for C{last_step}, a 3-tuple for C{active_frac} and
+        a list for C{tier_cells}.
+
+        @return: Statistics dictionary.
+        @rtype: dict[str, Any]
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -563,7 +673,7 @@ class Surface2D:
 
         @return: Array of shape C{(n_triangles,)} with dtype C{float64}, in m.
         @rtype: np.ndarray
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -572,7 +682,7 @@ class Surface2D:
 
         @return: Array of shape C{(n_triangles,)} with dtype C{float64}, in m/s.
         @rtype: np.ndarray
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -582,7 +692,7 @@ class Surface2D:
         @return: Array of shape C{(n_triangles,)} with dtype C{float64}, in
             C{m^3/s}.
         @rtype: np.ndarray
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -593,7 +703,7 @@ class Surface2D:
         @return: M{(total_in - total_out) / total_in}, the domain mass-balance
             error as a fraction.
         @rtype: float
-        @raise RuntimeError: If the 2D module did not run.
+        @raise EngineError: If the 2D module did not run.
         """
         ...
 
@@ -605,7 +715,7 @@ class Surface2D:
             C{outfall_in}, C{boundary_in}, C{boundary_out}, C{evap_out}
             (all C{m^3}) and C{continuity_error} (fraction).
         @rtype: dict[str, float]
-        @raise RuntimeError: If the 2D module did not run.
+        @raise EngineError: If the 2D module did not run.
         """
         ...
 
@@ -632,7 +742,7 @@ class Surface2D:
         @param persist: C{PERSIST} to hold until cleared; C{RESET} for a
             single step.
         @type persist: L{ForcingPersist}
-        @raise RuntimeError: If the C API rejects the forcing.
+        @raise EngineError: If the C API rejects the forcing.
         """
         ...
 
@@ -652,7 +762,7 @@ class Surface2D:
         @param persist: C{PERSIST} to hold until cleared; C{RESET} for a
             single step.
         @type persist: L{ForcingPersist}
-        @raise RuntimeError: If the C API rejects the forcing.
+        @raise EngineError: If the C API rejects the forcing.
         """
         ...
 
@@ -679,7 +789,7 @@ class Surface2D:
         @param persist: C{PERSIST} to hold until cleared; C{RESET} for a
             single step.
         @type persist: L{ForcingPersist}
-        @raise RuntimeError: If the C API rejects the forcing.
+        @raise EngineError: If the C API rejects the forcing.
         """
         ...
 
@@ -699,7 +809,7 @@ class Surface2D:
         @param persist: C{PERSIST} to hold until cleared; C{RESET} for a
             single step.
         @type persist: L{ForcingPersist}
-        @raise RuntimeError: If the C API rejects the forcing.
+        @raise EngineError: If the C API rejects the forcing.
         """
         ...
 
@@ -722,14 +832,14 @@ class Surface2D:
         @param persist: C{PERSIST} to hold until cleared; C{RESET} for a
             single step.
         @type persist: L{ForcingPersist}
-        @raise RuntimeError: If the C API rejects the forcing.
+        @raise EngineError: If the C API rejects the forcing.
         """
         ...
 
     def force_clear_all(self) -> None:
         """Clear all 2D forcings.
 
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -743,7 +853,7 @@ class Surface2D:
 
         @return: Threshold depth.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -753,7 +863,7 @@ class Surface2D:
 
         @param value: New threshold depth (m).
         @type value: float
-        @raise RuntimeError: If the C API rejects the value.
+        @raise EngineError: If the C API rejects the value.
         """
         ...
 
@@ -763,7 +873,7 @@ class Surface2D:
 
         @return: Boundary edge count.
         @rtype: int
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -776,9 +886,25 @@ class Surface2D:
         @type edge: int
         @return: Boundary condition type.
         @rtype: L{SurfaceBoundaryType}
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
+
+    @property
+    def sources(self) -> DomainSources: ...
+    def boundary_receipt(self, cell: int, edge: int) -> SourceReceipt: ...
+    def species_ledger(self, species: str) -> dict[str, float]: ...
+    def set_water_source(self, cells: Any, flow_m3_s: Any, **kwargs: Any) -> None: ...
+    def set_heat_source(self, cells: Any, heat_w: Any, *, source_id: str = ..., until_seconds: float | None = ...) -> None: ...
+    def set_species_source(self, cells: Any, species_rates: Mapping[str, Any], *, source_id: str = ..., until_seconds: float | None = ...) -> None: ...
+    def clear_source(self, source_id: str = ..., cell: int | None = ...) -> None: ...
+    def source_receipt(self, source_id: str = ..., cell: int = ...) -> SourceReceipt: ...
+    def set_head_boundary(self, cell: int, edge: int, head_m: float, concentrations: Mapping[str, float] | None = ...) -> None: ...
+    def set_flow_boundary(self, cell: int, edge: int, flow_m3_s: float, concentrations: Mapping[str, float] | None = ...) -> None: ...
+    def clear_boundary(self, cell: int, edge: int) -> None: ...
+    def boundary_flow(self, cell: int, edge: int) -> float: ...
+    def set_edge_bc_concentrations(self, cell: int, edge: int, concentrations: Mapping[str, float]) -> None: ...
+    def clear_edge_bc(self, cell: int, edge: int) -> None: ...
 
     def set_edge_bc_type(
         self, tri_idx: int, edge: int, bc_type: SurfaceBoundaryType
@@ -791,7 +917,7 @@ class Surface2D:
         @type edge: int
         @param bc_type: Boundary condition type.
         @type bc_type: L{SurfaceBoundaryType}
-        @raise RuntimeError: If the C API rejects the assignment.
+        @raise EngineError: If the C API rejects the assignment.
         """
         ...
 
@@ -804,7 +930,7 @@ class Surface2D:
         @type edge: int
         @return: Boundary head value.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -817,7 +943,7 @@ class Surface2D:
         @type edge: int
         @param head: Boundary head value.
         @type head: float
-        @raise RuntimeError: If the C API rejects the assignment.
+        @raise EngineError: If the C API rejects the assignment.
         """
         ...
 
@@ -830,7 +956,7 @@ class Surface2D:
         @type edge: int
         @return: Boundary slope.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -845,7 +971,7 @@ class Surface2D:
         @type edge: int
         @param slope: Boundary slope.
         @type slope: float
-        @raise RuntimeError: If the C API rejects the assignment.
+        @raise EngineError: If the C API rejects the assignment.
         """
         ...
 
@@ -858,7 +984,7 @@ class Surface2D:
         @type edge: int
         @return: Cumulative boundary flux through the edge.
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -871,7 +997,7 @@ class Surface2D:
         @type edge: int
         @return: Prescribed flow per metre of edge (C{m^3/s/m}).
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -884,7 +1010,7 @@ class Surface2D:
         @type edge: int
         @param flow: Prescribed flow per metre of edge (C{m^3/s/m}).
         @type flow: float
-        @raise RuntimeError: If the C API rejects the assignment.
+        @raise EngineError: If the C API rejects the assignment.
         """
         ...
 
@@ -899,7 +1025,20 @@ class Surface2D:
         @type edge: int
         @param name: Timeseries name, or C{""} to clear.
         @type name: str
-        @raise RuntimeError: If the C API rejects the assignment.
+        @raise EngineError: If the C API rejects the assignment.
+        """
+        ...
+
+    def get_edge_bc_tseries_name(self, tri_idx: int, edge: int) -> str:
+        """Return the timeseries name driving a SPECIFIED_STAGE edge.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @return: Timeseries name; C{""} when the slot is clear.
+        @rtype: str
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -914,7 +1053,20 @@ class Surface2D:
         @type edge: int
         @param name: Timeseries name, or C{""} to clear.
         @type name: str
-        @raise RuntimeError: If the C API rejects the assignment.
+        @raise EngineError: If the C API rejects the assignment.
+        """
+        ...
+
+    def get_edge_bc_flow_tseries_name(self, tri_idx: int, edge: int) -> str:
+        """Return the timeseries name driving a SPECIFIED_FLOW edge.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @return: Timeseries name; C{""} when the slot is clear.
+        @rtype: str
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -929,7 +1081,20 @@ class Surface2D:
         @type edge: int
         @param name: Rating-curve name, or C{""} to clear.
         @type name: str
-        @raise RuntimeError: If the C API rejects the assignment.
+        @raise EngineError: If the C API rejects the assignment.
+        """
+        ...
+
+    def get_edge_bc_rating_curve_name(self, tri_idx: int, edge: int) -> str:
+        """Return the rating-curve name driving a RATING_CURVE edge.
+
+        @param tri_idx: Triangle index.
+        @type tri_idx: int
+        @param edge: Edge index in C{0}-C{2}.
+        @type edge: int
+        @return: Rating-curve name; C{""} when the slot is clear.
+        @rtype: str
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -946,7 +1111,7 @@ class Surface2D:
         @type edge: int
         @return: Conveyance factor (1.0 = unrestricted, 0.0 = wall).
         @rtype: float
-        @raise RuntimeError: If the C API call fails.
+        @raise EngineError: If the C API call fails.
         """
         ...
 
@@ -962,7 +1127,7 @@ class Surface2D:
         @type edge: int
         @param conveyance: New value in C{[0, 1]}.
         @type conveyance: float
-        @raise RuntimeError: If the C API rejects the assignment.
+        @raise EngineError: If the C API rejects the assignment.
         """
         ...
 
@@ -976,4 +1141,106 @@ class Surface2D:
 
     def reset_edge_conveyance(self) -> None:
         """Reset every edge's conveyance factor to 1.0 (unrestricted)."""
+        ...
+
+    # ====================================================================
+    # Per-cell infiltration
+    # ====================================================================
+
+    @property
+    def infiltration(self) -> "Infiltration2DView":
+        """``surface2d.infiltration`` — the per-cell infiltration sub-view.
+
+        @rtype: Infiltration2DView
+        """
+        ...
+
+
+class Infil2DRow(NamedTuple):
+    """One infiltration specification.
+
+    C{method} is C{None} for "no infiltration model". C{params} carries up
+    to five POSITIONAL values in B{PROJECT UNITS} (the same numbers a user
+    types into a legacy C{[INFILTRATION]} row). Only
+    C{SurfaceInfilDest.LOST} is routed in this release.
+    """
+
+    method: SurfaceInfilMethod | None
+    params: tuple[float, ...] = (0.0, 0.0, 0.0, 0.0, 0.0)
+    dest: SurfaceInfilDest = SurfaceInfilDest.LOST
+
+
+class Infil2DCell(NamedTuple):
+    """The infiltration specification in force at one cell."""
+
+    row: Infil2DRow
+    is_override: bool
+
+
+class Infil2DDefaults(MutableMapping[str, Infil2DRow]):
+    """``surface2d.infiltration.defaults`` — tag → L{Infil2DRow} mapping.
+
+    Mirrors C{[2D_INFILTRATION_DEFAULTS]}. The key C{"*"} is the mesh-wide
+    fallback.
+    """
+
+    def __init__(self, owner: Solver | ModelBuilder | int) -> None: ...
+    def __len__(self) -> int: ...
+    def __iter__(self) -> Iterator[str]: ...
+    def __getitem__(self, key: str) -> Infil2DRow: ...
+    def __setitem__(self, key: str, value: Infil2DRow | None) -> None: ...
+    def __delitem__(self, key: str) -> None: ...
+
+
+class Infiltration2DView:
+    """``surface2d.infiltration`` — per-cell infiltration on the 2D mesh.
+
+    Row parameters are in B{project units}; every readback channel is SI.
+    Writers raise C{RuntimeError} once the solver has been initialized.
+    """
+    def authored_rows(self) -> list[dict[str, Any]]: ...
+    def replace_authored_rows(self, records: Sequence[dict[str, Any]]) -> None: ...
+    def ownership(self, cell: int) -> tuple[int, int, int]: ...
+    def ownership_bulk(self) -> tuple[npt.NDArray[np.intc], npt.NDArray[np.intc], npt.NDArray[np.intc]]: ...
+
+    def __init__(self, owner: Solver | ModelBuilder | int) -> None: ...
+
+    @property
+    def infil_step(self) -> float:
+        """Evaluation cadence in seconds; C{<= 0} means "use C{WET_STEP}"."""
+        ...
+
+    @infil_step.setter
+    def infil_step(self, seconds: float) -> None: ...
+
+    @property
+    def defaults(self) -> Infil2DDefaults:
+        """The C{[2D_INFILTRATION_DEFAULTS]} tag → row mapping."""
+        ...
+
+    def cell(self, tri: int) -> Infil2DCell:
+        """Return C{(row, is_override)} for one triangle."""
+        ...
+
+    def set_cell(self, tri: int, row: Infil2DRow | None) -> None:
+        """Set (C{row}) or clear (C{None}) the per-cell override."""
+        ...
+
+    def set_cells(
+        self, tris: Sequence[int], row: Infil2DRow | None
+    ) -> None:
+        """Assign one row to many triangles — all-or-nothing."""
+        ...
+
+    def rate(self) -> npt.NDArray[np.float64]:
+        """Held per-cell infiltration rate (m/s), one entry per triangle."""
+        ...
+
+    def cumulative(self) -> npt.NDArray[np.float64]:
+        """Cumulative infiltrated depth (m), one entry per triangle."""
+        ...
+
+    @property
+    def total_volume(self) -> float:
+        """Cumulative 2D infiltration loss (m³) — the C{infil_out} row."""
         ...

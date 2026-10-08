@@ -45,13 +45,22 @@ namespace outfall {
  *   - FREE: critical depth from downstream conduit
  *   - NORMAL: normal depth from downstream conduit
  *   - FIXED: specified water surface elevation
- *   - TIDAL: elevation from tidal curve at current time
- *   - TIMESERIES: elevation from timeseries at current time
+ *   - TIDAL: elevation from the tidal curve at the END of the routing step,
+ *     legacy node.c outfall_setOutletDepth: x = the curve's first x +
+ *     the fractional ELAPSED day (NewRoutingTime / MSECperDAY) * 24 — the
+ *     time of day counted from the simulation start, not the calendar hour
+ *   - TIMESERIES: elevation from the time series at StartDateTime +
+ *     NewRoutingTime / MSECperDAY (plain division, not getDateTime),
+ *     interpolated
  *
- * @param ctx           Simulation context.
- * @param current_time  Current simulation time (decimal days).
+ * Legacy routing_execute advances NewRoutingTime before routeFlow, so the
+ * stage boundaries belong to the end of the step while the inflows and the
+ * control rules belong to its start (ctx.current_date, still the start here).
+ *
+ * @param ctx         Simulation context (ctx.elapsed_ms = the step's start).
+ * @param dt_routing  The routing step being taken (s).
  */
-void setAllOutfallDepths(SimulationContext& ctx, double current_time);
+void setAllOutfallDepths(SimulationContext& ctx, double dt_routing);
 
 /**
  * @brief Precompute outfall → connecting-conduit index map.

@@ -39,14 +39,25 @@
 #define OPENSWMM_RUNOFF_HPP
 
 #include "../data/SubcatchData.hpp"
-#include "Infiltration.hpp"
+#include "surface/InfilBank.hpp"
 #include <vector>
+#include <functional>
+#include <utility>
 
 namespace openswmm {
 
 struct SimulationContext;
 
 namespace runoff {
+
+/// Completed-interval rates, already resolved to internal ft/s. A non-null
+/// batch selects only these sources and bypasses global gage/PET cursors.
+/// Coupled outflow uses the integrated reservoir storage balance (interval
+/// mean flux); an ordinary solve retains its legacy endpoint-rate rectangle.
+struct RunoffSourceForcing {
+    int subcatch = -1;
+    double rain = 0.0, pet = 0.0;
+};
 
 // ============================================================================
 // Constants
@@ -68,7 +79,18 @@ struct RunoffSoA {
     std::vector<double> width;         ///< Subcatchment width (ft)
     std::vector<double> slope;         ///< Average slope (ft/ft)
     std::vector<double> imperv_pct;    ///< Impervious fraction (0-1)
-    std::vector<double> imperv0_pct;   ///< Fraction of imperv with zero dStore (0-1)
+    /// The three subarea area fractions, formed exactly as legacy forms them
+    /// (subcatch.c:268-270) from the AUTHORED [SUBAREAS] PctZero percent:
+    ///   frac_imperv0 = fracImperv * PctZero / 100
+    ///   frac_imperv1 = fracImperv * (1 - PctZero / 100)
+    /// Legacy multiplies by the percent and divides afterwards; dividing
+    /// first and multiplying by the stored 0-1 fraction is a different
+    /// double for about a tenth of all percentages, and the difference lands
+    /// straight in the subarea's area. Every consumer — the runoff kernel,
+    /// the stored-volume accounting, the water-age and heat watershed
+    /// modules — reads these so there is one definition of the split.
+    std::vector<double> frac_imperv0;  ///< IMPERV0 (no depression storage)
+    std::vector<double> frac_imperv1;  ///< IMPERV1 (with depression storage)
 
     // Per-subarea SoA: alpha = runoff coefficient
     std::vector<double> alpha_imperv;  ///< Alpha for impervious subareas
@@ -97,11 +119,26 @@ struct RunoffSoA {
     std::vector<double> runoff;             ///< Total runoff rate (cfs)
     std::vector<double> evap_loss;          ///< Evaporation loss (ft3)
     std::vector<double> infil_loss;         ///< Infiltration loss (ft3)
+    std::vector<double> perv_evap_vol;      ///< Pervious-subarea evaporation this step (ft3) — legacy Vpevap
+    std::vector<double> actual_perv_evap_vol; ///< Actual PERV evaporation alone (ft3), excluding legacy impervious carry-in.
+    /// Completed partition diagnostics: ft3 spatial intake and ft/s outside native capacity.
+    std::vector<double> spatial_infil_vol, native_infil_rate;
+    std::vector<double> infil_vol;          ///< Non-LID infiltration this step (ft3) — legacy Vinfil
+    /// legacy subcatch_getRunoff's return value: the three subareas' runoff
+    /// summed over their areas and divided by the FULL area (ft/s), before
+    /// the inter-subarea routing and the LID exchange — what runoff_execute
+    /// tests for HasRunoff and hands surfqual_getWashoff.
+    std::vector<double> subarea_runoff_rate;
 
     // Per-subcatchment: per-subarea runoff CFS from non-LID area (Gap #23)
     // Used by SWMMEngine to compute LID unit inflow from impervious/pervious fractions.
     std::vector<double> imperv_runoff_cfs;  ///< Impervious subarea runoff (CFS, non-LID area)
     std::vector<double> perv_runoff_cfs;    ///< Pervious subarea runoff (CFS, non-LID area)
+    /// Legacy Voutflow: this step's outlet runoff VOLUME from the non-LID
+    /// area (ft3). Kept so the LID exchange can rebuild newRunoff in the
+    /// volume domain exactly as legacy subcatch.c:746-751 does
+    /// (`vOutflow = Voutflow - VlidIn + VlidOut; newRunoff = vOutflow/tStep`).
+    std::vector<double> outflow_vol;
 
     void resize(int n);
     void computeAlpha();
@@ -113,16 +150,39 @@ struct RunoffSoA {
 
 class RunoffSolver {
 public:
-    void init(SimulationContext& ctx);
+    /// Whole-pervious-area external boundary for a trial or bounded solve.
+    /// Arguments: source index, ponded depth (ft), available water rate after
+    /// surface evaporation (ft/s), output intake rate (ft/s). False preserves
+    /// the native kernel. True replaces it without advancing native soil state.
+    /// The caller must supply completed forcing and commit a validated trial;
+    /// this boundary does not select sources or schedule. An optional completed
+    /// spatial fraction weights its rate; the remainder uses native soil once.
+    using InfiltrationBoundary = std::function<bool(int, double, double, double&)>;
+    /// Optional reviewed non-LID areas (source index, m2) bypass the legacy
+    /// rounded LANDAREA conversion only for those sources, at initialization.
+    void init(SimulationContext& ctx, const std::vector<std::pair<int, double>>& spatial_areas = {});
     /**
      * @param infil_factor    Monthly infiltration rate multiplier (default 1.0).
      * @param recovery_factor Monthly soil recovery multiplier (default 1.0).
      */
     void execute(SimulationContext& ctx, double dt, double evap_rate = 0.0,
                  double infil_factor = 1.0, double recovery_factor = 1.0,
-                 int month = -1);
+                 int month = -1, const InfiltrationBoundary* boundary = nullptr,
+                 const std::vector<RunoffSourceForcing>* source_forcing = nullptr,
+                 const std::vector<double>* spatial_fractions = nullptr);
+
+    /// Legacy findNativeInfil for a subcatchment with no pervious non-LID
+    /// area: the native soil's rate for its own rain + runon (advances the
+    /// subcatchment's infiltration state, as legacy does).
+    double nativeInfilFullLid(SimulationContext& ctx, int i, double dt,
+                              double recovery_factor);
+
+    /// The InfilFactor the last execute() applied to subcatchment i.
+    double infilFactorUsed(int i) const { return infil_factor_used_[static_cast<std::size_t>(i)]; }
 
     const RunoffSoA& soa() const { return soa_; }
+    /// Completed water still waiting for next interval's inter-subarea route.
+    double pendingRoutingVolume(const SimulationContext& ctx, int source) const;
 
     // -----------------------------------------------------------------------
     // Hot start helpers — Gap #54
@@ -156,12 +216,18 @@ public:
 
 private:
     RunoffSoA soa_;
+    std::vector<double> spatial_full_area_ft2_; ///< Reviewed denominator, absent on the legacy path.
 
     // Infiltration state (one per subcatchment)
-    std::vector<InfilModel>     infil_models_;   ///< Per-subcatchment model type (BUG FIX: was a single shared field)
-    std::vector<HortonState>    horton_states_;
-    std::vector<GreenAmptState> grnampt_states_;
-    std::vector<CurveNumState>  curvenum_states_;
+    surface::InfilBank infil_bank_;
+    std::vector<double>         infil_factor_used_; ///< The InfilFactor applied to each subcatchment this step (pattern or global)
+    std::vector<double> completed_step_seconds_; ///< Volume history for selected interval routing.
+
+    /// Legacy infil_getInfil: the model dispatch with the factors applied.
+    double infilGetInfil(SimulationContext& ctx, int i, double precip, double runon,
+                         double depth, double dt, double local_infil,
+                         double recovery_factor);
+
 
     // Working buffers (reused each step, sized to n_subcatch)
     std::vector<double> precip_;
@@ -170,11 +236,11 @@ private:
 
     /// Solve dd/dt = inflow - alpha*(d-Ds)^(5/3) using RK45.
     /// Matches legacy updatePondedDepth() + odesolve_integrate().
+    /// `t_runoff` returns legacy's tRunoff: the part of `dt` over which the
+    /// depth stood above the depression storage (`*dt = tx`).
     static void updatePondedDepth(double& depth, double inflow, double alpha,
-                                  double dStore, double dt);
+                                  double dStore, double dt, double& t_runoff);
 
-    /// Compute runoff rate from final depth (after ODE integration).
-    static double getRunoffRate(double depth, double dStore, double alpha);
 };
 
 } // namespace runoff

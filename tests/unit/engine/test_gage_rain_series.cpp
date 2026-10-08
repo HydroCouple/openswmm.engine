@@ -301,8 +301,15 @@ TEST_F(GageRainSeries, RuntimeAgreement) {
 
     // Reproduce the engine's own boxcar rule from the reported series, then
     // check it against what the running gage reports at the same instant.
-    // updateAllGages probes at (current_time + 1 s), so match that offset or
-    // every interval boundary reads as an off-by-one.
+    // The gage state is refreshed at the START of the last runoff substep
+    // before the routing time (legacy runoff_execute updates gages at
+    // OldRunoffTime), and runoff substeps snap to every gage's entry
+    // boundaries — so at routing time T the gage still holds the interval
+    // containing T − ε: probe one second BELOW the routing time. (The old
+    // +1 s probe encoded the 0.5 s routing-grid offset a link-less model
+    // used to pick up from the DW variable-step startup; with the legacy
+    // fixed-step guard the grid is aligned and exact boundary instants
+    // report the interval that ENDS there, as legacy does.)
     const double kSecond = 1.0 / 86400.0;
     double start = 0.0;
     ASSERT_EQ(swmm_datetime_encode_date(2020, 1, 1, &start), SWMM_OK);
@@ -316,7 +323,7 @@ TEST_F(GageRainSeries, RuntimeAgreement) {
     for (int step = 0; step < 5000; ++step) {
         if (swmm_engine_step(engine_, &elapsed) != SWMM_OK) break;
         if (elapsed <= 0.0) break;
-        const double probe = start + elapsed + kSecond;
+        const double probe = start + elapsed - kSecond;
 
         for (const GageProbe& p : probes) {
             double expected = 0.0;

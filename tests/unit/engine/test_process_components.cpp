@@ -33,6 +33,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <sstream>
 
 #include <cstdio>
 #include <filesystem>
@@ -41,9 +42,11 @@
 #include <vector>
 
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_model.h>
 
 #include "core/InpWriter.hpp"
 #include "core/SWMMEngine.hpp"
+#include "plugins/DefaultInputPlugin.hpp"
 #include "plugins/ProcessComponentRegistry.hpp"
 
 namespace {
@@ -315,3 +318,198 @@ TEST_F(ProcessComponentsTest, AbsoluteConfigPathIsRebasedOnWrite) {
 }
 
 }  // namespace
+
+// ---------------------------------------------------------------------------
+// A save that DESTROYS embedded model data must say so, THROUGH THE PATH THE
+// PRODUCTION CALLERS TAKE.
+//
+// Found 2026-08-26. The writer's "embedded [REACTION_*] sections are lost from
+// this save" notice (InpWriter.cpp:2580-2586) is gated on an OPTIONAL warnings
+// sink, and every production caller passed nullptr -- so it never fired.
+// Opening a deck with embedded reaction sections, editing anything and saving
+// destroyed the reaction system silently, from the GUI included.
+//
+// The reason it survived is the shape this gate is built to avoid: the
+// existing round-trip coverage calls `inp_writer::writeInpFile` DIRECTLY and
+// hands it a sink, so it exercises a code path production never takes and
+// certifies a behaviour users never get. Lesson 91's family, one level out.
+//
+// So this gate drives `swmm_model_write_with_plugin` -- literally what the GUI
+// calls -- and reads `swmm_get_warning_at`, literally what the GUI reads. It
+// touches the writer's own API nowhere.
+TEST_F(ProcessComponentsTest, SavingWarnsThroughTheApiWhenEmbeddedSectionsAreLost) {
+    // A deck carrying an EMBEDDED [REACTION_*] section -- no external config
+    // file, which is exactly the configuration that gets silently dropped.
+    {
+        std::ofstream f("_pc_embed.inp");
+        f << "[TITLE]\nembedded reaction sections, saved via the C API\n\n"
+          << "[OPTIONS]\n"
+          << "FLOW_UNITS           CFS\nFLOW_ROUTING         DYNWAVE\n"
+          << "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+          << "END_DATE             01/01/2026\nEND_TIME             00:30:00\n"
+          << "ROUTING_STEP         5\nREPORT_STEP          00:05:00\n\n"
+          << "[JUNCTIONS]\nJ0     10.0 10 0.5 0 0\n\n"
+          << "[OUTFALLS]\nOUT 7.0 FREE  NO\n\n"
+          << "[CONDUITS]\nC1 J0 OUT 400 0.013 0 0 0\n\n"
+          << "[XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\n"
+          << "[POLLUTANTS]\nTSS MG/L 0.0 0.0 0.0 0.0 NO * 0.0 0.0 0.0\n\n"
+          << "[REACTION_OPTIONS]\nSOLVER RK5\n\n"
+          // A reactions config is rejected without at least one species, so
+          // the embedded block has to be a VALID one for the deck to open at
+          // all. Species 'A' deliberately does not collide with the [POLLUTANTS]
+          // name above -- a collision is its own open failure.
+          << "[REACTION_SPECIES]\nBULK A MG\n\n"
+          << "[REPORT]\nINPUT NO\n";
+    }
+
+    ASSERT_EQ(open_deck("_pc_embed.inp", "_pc_embed.rpt", "_pc_embed.out"), 0)
+        << swmm_get_last_error_msg(engine_);
+
+    // SETUP leg: the deck must actually carry an embedded section, or the
+    // assertion below is vacuous and would pass on any deck at all.
+    const auto& ctx = as_cpp_engine(engine_).context();
+    ASSERT_FALSE(ctx.embedded_component_sections.empty())
+        << "the deck carries no embedded component sections, so this gate "
+           "cannot observe the loss it exists for -- fix the deck, not the "
+           "assertion";
+
+    const int warns_before = swmm_get_warning_count(engine_);
+
+    // THE PRODUCTION PATH. Empty plugin id == the built-in writer, which is
+    // what the GUI's save uses.
+    ASSERT_EQ(swmm_model_write_with_plugin(engine_, "_pc_embed_saved.inp", ""), 0)
+        << swmm_get_last_error_msg(engine_);
+
+    // The save SUCCEEDS -- warn, not refuse -- but it must not be silent.
+    const int warns_after = swmm_get_warning_count(engine_);
+    ASSERT_GT(warns_after, warns_before)
+        << "saving destroyed the embedded reaction sections and emitted NO "
+           "warning through the C API. The notice exists in InpWriter but is "
+           "gated on an optional sink; if this fails, a production caller is "
+           "passing nullptr again.";
+
+    // ...and it must be the RIGHT warning, naming the section it dropped.
+    bool names_loss = false, names_section = false;
+    for (int i = warns_before; i < warns_after; ++i) {
+        const std::string w = swmm_get_warning_at(engine_, i);
+        if (w.find("lost from this save") != std::string::npos) names_loss = true;
+        if (w.find("REACTION_OPTIONS") != std::string::npos) names_section = true;
+    }
+    EXPECT_TRUE(names_loss)
+        << "a warning was emitted but it does not say the data is lost";
+    EXPECT_TRUE(names_section)
+        << "the warning does not name the section that was dropped, so a user "
+           "cannot tell what to rescue";
+
+    // And the loss itself is real -- the saved deck has no reaction section.
+    // This is the claim the warning makes; if it stops being true the warning
+    // becomes a lie rather than a courtesy.
+    std::ifstream in("_pc_embed_saved.inp");
+    ASSERT_TRUE(in.good());
+    std::stringstream ss;
+    ss << in.rdbuf();
+    EXPECT_EQ(ss.str().find("[REACTION_OPTIONS]"), std::string::npos)
+        << "the saved deck DOES contain the reaction section -- if per-component "
+           "saveData() has landed (IO3), this gate and the warning it checks "
+           "are both obsolete and should be replaced by a round-trip assertion";
+}
+
+
+// ---------------------------------------------------------------------------
+// Closes the "only swmm_model_write_with_plugin is gated" gap recorded in the
+// 2026-08-26 handoff §5. Falsifier ii of that round proved the point the hard
+// way: reverting the sink at `swmm_model_write` alone leaves the gate above
+// GREEN, because it drives the other entry point entirely. Two entry points,
+// two gates.
+TEST_F(ProcessComponentsTest, SwmmModelWriteAlsoWarnsWhenEmbeddedSectionsAreLost) {
+    {
+        std::ofstream f("_pc_embed2.inp");
+        f << "[TITLE]\nembedded reaction sections, saved via swmm_model_write\n\n"
+          << "[OPTIONS]\n"
+          << "FLOW_UNITS           CFS\nFLOW_ROUTING         DYNWAVE\n"
+          << "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+          << "END_DATE             01/01/2026\nEND_TIME             00:30:00\n"
+          << "ROUTING_STEP         5\nREPORT_STEP          00:05:00\n\n"
+          << "[JUNCTIONS]\nJ0     10.0 10 0.5 0 0\n\n"
+          << "[OUTFALLS]\nOUT 7.0 FREE  NO\n\n"
+          << "[CONDUITS]\nC1 J0 OUT 400 0.013 0 0 0\n\n"
+          << "[XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\n"
+          << "[POLLUTANTS]\nTSS MG/L 0.0 0.0 0.0 0.0 NO * 0.0 0.0 0.0\n\n"
+          << "[REACTION_OPTIONS]\nSOLVER RK5\n\n"
+          << "[REACTION_SPECIES]\nBULK A MG\n\n"
+          << "[REPORT]\nINPUT NO\n";
+    }
+
+    ASSERT_EQ(open_deck("_pc_embed2.inp", "_pc_embed2.rpt", "_pc_embed2.out"), 0)
+        << swmm_get_last_error_msg(engine_);
+
+    const auto& ctx = as_cpp_engine(engine_).context();
+    ASSERT_FALSE(ctx.embedded_component_sections.empty())
+        << "the deck carries no embedded component sections, so this gate "
+           "cannot observe the loss it exists for";
+
+    const int warns_before = swmm_get_warning_count(engine_);
+    ASSERT_EQ(swmm_model_write(engine_, "_pc_embed2_saved.inp"), 0)
+        << swmm_get_last_error_msg(engine_);
+    const int warns_after = swmm_get_warning_count(engine_);
+
+    ASSERT_GT(warns_after, warns_before)
+        << "swmm_model_write destroyed the embedded reaction sections and "
+           "emitted NO warning through the C API";
+
+    bool names_loss = false, names_section = false;
+    for (int i = warns_before; i < warns_after; ++i) {
+        const std::string w = swmm_get_warning_at(engine_, i);
+        if (w.find("lost from this save") != std::string::npos) names_loss = true;
+        if (w.find("REACTION_OPTIONS") != std::string::npos) names_section = true;
+    }
+    EXPECT_TRUE(names_loss);
+    EXPECT_TRUE(names_section)
+        << "the warning does not name the section that was dropped";
+}
+
+// ---------------------------------------------------------------------------
+// Closes the "falsifier vi has no gate" gap recorded in the same handoff §5.
+//
+// DefaultInputPlugin::write receives a CONST context and cannot reach
+// ctx.warnings, so it routes the loss notice to last_error_ -- but ONLY when
+// the write actually fails. The round's author drafted it the other way first
+// and caught it: a warning sitting in an ERROR channel after a SUCCESSFUL
+// write is worse than the silence it replaces, because a caller checking
+// last_error_message() reads it as a failure. Nothing stopped a future edit
+// from putting it back. This does.
+TEST_F(ProcessComponentsTest, PluginWriteLeavesTheErrorChannelCleanOnSuccess) {
+    {
+        std::ofstream f("_pc_embed3.inp");
+        f << "[TITLE]\nembedded sections, written through the input plugin\n\n"
+          << "[OPTIONS]\n"
+          << "FLOW_UNITS           CFS\nFLOW_ROUTING         DYNWAVE\n"
+          << "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+          << "END_DATE             01/01/2026\nEND_TIME             00:30:00\n"
+          << "ROUTING_STEP         5\nREPORT_STEP          00:05:00\n\n"
+          << "[JUNCTIONS]\nJ0     10.0 10 0.5 0 0\n\n"
+          << "[OUTFALLS]\nOUT 7.0 FREE  NO\n\n"
+          << "[CONDUITS]\nC1 J0 OUT 400 0.013 0 0 0\n\n"
+          << "[XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\n"
+          << "[POLLUTANTS]\nTSS MG/L 0.0 0.0 0.0 0.0 NO * 0.0 0.0 0.0\n\n"
+          << "[REACTION_OPTIONS]\nSOLVER RK5\n\n"
+          << "[REACTION_SPECIES]\nBULK A MG\n\n"
+          << "[REPORT]\nINPUT NO\n";
+    }
+
+    ASSERT_EQ(open_deck("_pc_embed3.inp", "_pc_embed3.rpt", "_pc_embed3.out"), 0)
+        << swmm_get_last_error_msg(engine_);
+
+    const auto& ctx = as_cpp_engine(engine_).context();
+    ASSERT_FALSE(ctx.embedded_component_sections.empty())
+        << "the deck carries no embedded component sections, so a successful "
+           "write here would drop nothing and the gate would be vacuous";
+
+    openswmm::DefaultInputPlugin plugin;
+    ASSERT_EQ(plugin.write("_pc_embed3_saved.inp", ctx), 0);
+
+    EXPECT_STREQ(plugin.last_error_message(), "")
+        << "a SUCCESSFUL write left text in the error channel. Data-loss "
+           "notices must not be reported as errors -- a caller checking "
+           "last_error_message() would read this as a failed save.";
+}

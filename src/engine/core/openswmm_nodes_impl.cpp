@@ -1,3 +1,4 @@
+#include "../hydrology/LidNode.hpp"
 // SPDX-License-Identifier: Apache-2.0
 //
 // Copyright 2026 Caleb Buahin
@@ -244,6 +245,39 @@ SWMM_ENGINE_API int swmm_node_virtual_eligible(SWMM_Engine engine, int idx, int*
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_node_is_inlet(SWMM_Engine engine, int idx, int* is_inlet) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (is_inlet) {
+        const auto ui = static_cast<std::size_t>(idx);
+        *is_inlet = (ui < ctx.nodes.is_inlet.size() &&
+                     ctx.nodes.is_inlet[ui]) ? 1 : 0;
+    }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_inlet_eligible(SWMM_Engine engine, int idx,
+                                             int for_drop_inlet, int* rule_code) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (rule_code)
+        *rule_code = openswmm::edit::ij_rule_violation(ctx, idx, for_drop_inlet != 0);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_node_set_inlet(SWMM_Engine engine, int idx, int make_inlet) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    const int code = openswmm::edit::ij_set_inlet(ctx, idx, make_inlet != 0);
+    if (code == 0)  return SWMM_OK;
+    if (code == -1) return SWMM_ERR_BADPARAM;   // non-junction node
+    return code;   // distinct ERR_VJ_* / ERR_IJ_* rule code (openswmm_nodes.h)
+}
+
 SWMM_ENGINE_API int swmm_node_get_invert_elev(SWMM_Engine engine, int idx, double* elev) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
@@ -301,7 +335,7 @@ SWMM_ENGINE_API int swmm_node_get_volume(SWMM_Engine engine, int idx, double* vo
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
-    if (volume) *volume = to_display(ctx, openswmm::ucf::VOLUME, ctx.nodes.volume[static_cast<std::size_t>(idx)]); // units
+    if (volume) *volume = to_display(ctx, openswmm::ucf::VOLUME, ctx.nodes.volume[static_cast<std::size_t>(idx)] + openswmm::lidnode::heldVolume(ctx, idx)); // units
     return SWMM_OK;
 }
 
@@ -340,10 +374,6 @@ SWMM_ENGINE_API int swmm_node_set_lateral_inflow(SWMM_Engine engine, int idx, do
     CHECK_RUNNING(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     auto uidx = static_cast<std::size_t>(idx);
-    // Virtual junctions cannot receive lateral inflow (zero-storage contract).
-    if (uidx < ctx.nodes.is_virtual.size() && ctx.nodes.is_virtual[uidx] &&
-        flow != 0.0)
-        return SWMM_ERR_BADPARAM;
     if (uidx >= ctx.nodes.user_lat_flow.size()) {
         // Lazily resize if not yet allocated (e.g. hot-started context)
         ctx.nodes.user_lat_flow.resize(ctx.nodes.lat_flow.size(), 0.0);
@@ -466,14 +496,6 @@ SWMM_ENGINE_API int swmm_node_set_lat_inflows_bulk(SWMM_Engine engine, const dou
     CHECK_RUNNING(ctx);
     if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
     const int n = std::min(count, ctx.n_nodes());
-    // Virtual junctions cannot receive lateral inflow: a nonzero entry for a
-    // virtual node rejects the whole call so the caller can fix its buffer.
-    for (int i = 0; i < n; ++i) {
-        const auto ui = static_cast<std::size_t>(i);
-        if (ui < ctx.nodes.is_virtual.size() && ctx.nodes.is_virtual[ui] &&
-            buf[i] != 0.0)
-            return SWMM_ERR_BADPARAM;
-    }
     for (int i = 0; i < n; ++i)
         ctx.nodes.lat_flow[static_cast<std::size_t>(i)] = to_internal(ctx, openswmm::ucf::FLOW, buf[i]); // units
     return SWMM_OK;
@@ -498,7 +520,7 @@ SWMM_ENGINE_API int swmm_node_get_volumes_bulk(SWMM_Engine engine, double* buf, 
     if (!buf || count <= 0) return SWMM_ERR_BADPARAM;
     const int n = std::min(count, ctx.n_nodes());
     for (int i = 0; i < n; ++i)
-        buf[i] = to_display(ctx, openswmm::ucf::VOLUME, ctx.nodes.volume[static_cast<std::size_t>(i)]); // units
+        buf[i] = to_display(ctx, openswmm::ucf::VOLUME, ctx.nodes.volume[static_cast<std::size_t>(i)] + openswmm::lidnode::heldVolume(ctx, i)); // units
     return SWMM_OK;
 }
 
@@ -732,13 +754,25 @@ SWMM_ENGINE_API int swmm_node_get_storage_geometry(SWMM_Engine engine, int idx,
 }
 
 // TODO(units): storage/exfil rate-unit conversion unverified
+// The storage seepage rate is the constant-rate form of storage exfiltration
+// (a [STORAGE] row ending in a bare Ksat): Ksat with zero suction and IMD. A
+// separate seep_rate was never read by routing, so a rate set here had no
+// effect; it now drives the exfiltration the solver computes.
 SWMM_ENGINE_API int swmm_node_set_storage_seep_rate(SWMM_Engine engine, int idx, double rate) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
+    if (!(rate >= 0.0)) return SWMM_ERR_BADPARAM;
     const int r = ctx.node_subtypes.storage_row(idx);
-    if (r >= 0) ctx.node_subtypes.storages.seep_rate[static_cast<std::size_t>(r)] = rate;
+    if (r >= 0) {
+        auto& S = ctx.node_subtypes.storages;
+        const auto ur = static_cast<std::size_t>(r);
+        S.exfil_suction[ur] = 0.0;
+        S.exfil_ksat[ur]    = rate;
+        S.exfil_imd[ur]     = 0.0;
+        S.seep_rate[ur]     = rate;
+    }
     return SWMM_OK;
 }
 
@@ -747,7 +781,13 @@ SWMM_ENGINE_API int swmm_node_get_storage_seep_rate(SWMM_Engine engine, int idx,
     auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     const int r = ctx.node_subtypes.storage_row(idx);
-    if (rate) *rate = (r >= 0) ? ctx.node_subtypes.storages.seep_rate[static_cast<std::size_t>(r)] : 0.0;
+    double value = 0.0;
+    if (r >= 0) {
+        const auto& S = ctx.node_subtypes.storages;
+        const auto ur = static_cast<std::size_t>(r);
+        if (S.exfil_suction[ur] == 0.0 && S.exfil_imd[ur] == 0.0) value = S.exfil_ksat[ur];
+    }
+    if (rate) *rate = value;
     return SWMM_OK;
 }
 

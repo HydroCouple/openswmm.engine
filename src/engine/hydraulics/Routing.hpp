@@ -64,6 +64,19 @@ enum class RouteModel : int {
     FV        = 3    ///< Explicit conservative finite volume (Godunov)
 };
 
+/**
+ * @brief Apply legacy conduit_validate's Courant lengthening and the
+ *        conveyance re-derivation (beta, roughFactor, qFull, qMax) it implies.
+ *
+ * @details Legacy performs both during project validation — before
+ *          link_initState computes a q0 conduit's normal depth and before
+ *          flowrout_init seeds node depths from it — so the initial state must
+ *          see the lengthened beta. Idempotent: every input is a stored,
+ *          unmodified quantity, so SWMMEngine may call it ahead of the
+ *          initial-state loops and Router::init again afterwards.
+ */
+void applyConduitLengthening(SimulationContext& ctx, RouteModel model);
+
 // ============================================================================
 // Routing orchestrator
 // ============================================================================
@@ -151,7 +164,9 @@ public:
     bool hasCycle() const { return cycle_detected_; }
 
     /// Set the DWSolver OpenMP thread count (delegates to DWSolver::setNumThreads).
-    void setDWNumThreads(int n) { dw_solver_.setNumThreads(n); }
+    void setDWNumThreads(int n, std::vector<std::string>* warnings = nullptr) {
+        dw_solver_.setNumThreads(n, warnings);
+    }
 
     /// Access the DW solver (for non-conduit node state scatter).
     dynwave::DWSolver& dwSolver() { return dw_solver_; }
@@ -170,6 +185,20 @@ public:
     bool lastStepConverged() const {
         return (model_ == RouteModel::DYNWAVE) ? dw_solver_.lastConverged() : true;
     }
+
+    /// Start collecting the per-conduit time step summary ([REPORT]
+    /// LINK_STEPS). Call after init(). @return false when the routing model
+    /// cannot supply it (KW/STEADY, or an FV backend other than the in-tree
+    /// ExplicitFvSolver); the report then says so.
+    bool enableLinkStepStats(SimulationContext& ctx);
+
+    /// Whether enableLinkStepStats() succeeded.
+    bool linkStepStatsEnabled() const { return lstep_enabled_; }
+
+    /// Fold the step just routed into ctx.links' time step summary when
+    /// `in_window` (inside the report period and not between events);
+    /// otherwise discard it. Call once per routing step after step().
+    void accumulateLinkStepStats(SimulationContext& ctx, double dt, bool in_window);
 
     /// Access the FV solver (null unless FLOW_ROUTING FV). Used by the report
     /// plugin for the "FV Solver Statistics" block and by the tests.
@@ -197,6 +226,9 @@ private:
     /// Per-node "already converged this step" flag for storage units under
     /// STEADY (the KW solver keeps its own).
     std::vector<char> steady_storage_updated_;
+    /// Per-link end-of-step flow depth under STEADY routing (uniform along
+    /// the conduit); consumed by kinwave::finishRouting's node-depth raises.
+    std::vector<double> steady_y_;
 
     // --- Explicit finite-volume solver (FLOW_ROUTING FV) -------------------
     // The mesh and state are owned here, not by the solver, exactly as
@@ -209,8 +241,22 @@ private:
     std::string                          fv_backend_;
     std::vector<std::string>             fv_warnings_, fv_errors_;
 
+    // Per-conduit time step summary ([REPORT] LINK_STEPS). FV samples arrive
+    // through the solver's sink during advance() and wait here, per link,
+    // until accumulateLinkStepStats keeps or discards them.
+    bool                lstep_enabled_ = false;
+    double              lstep_rs_      = 0.0;   ///< routing step (bin edges)
+    std::vector<double> lstep_pmin_, lstep_pmax_, lstep_pdt_time_, lstep_ptime_, lstep_pbin_;
+    static void fvStepSink(void* user, int conduit, double dt, double dur);
+
     // Per-step forcing buffers, allocated once at init.
     std::vector<double> fv_lateral_, fv_fixed_head_, fv_struct_flow_, fv_cond_loss_;
+
+    /// Per-link cap on a DUMMY link's pass-through discharge: the control
+    /// setting and FLOW_LIMIT, which the solver cannot see. Negative means
+    /// unlimited; only DUMMY entries are ever read. Refreshed with the
+    /// structures, because a control rule can close the link mid-step.
+    std::vector<double> fv_link_q_cap_;
 
     /// Time integral of each structure's discharge over the routing step
     /// (ft³), and the elapsed time the last segment started at. Under

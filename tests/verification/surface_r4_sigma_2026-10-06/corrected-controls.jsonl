@@ -1,0 +1,16 @@
+{"mode":"controls","law":1,"closure":0,"forced":false,"hg":1,"hu":0.25131632543359278,"storage":2.8052653017343712,"et":0,"dunne":0,"residual":0,"layers":[0,0,0,0,0,0,0,0]}
+{"mode":"controls","law":1,"closure":0,"forced":true,"hg":1.0020205406792202,"hu":0.25224708582935462,"storage":2.8126253165400148,"et":0.00063998519435521685,"dunne":0,"residual":-1.1674688993323912e-15,"layers":[0,0,0,0,0,0,0,0]}
+{"mode":"controls","law":1,"closure":1,"forced":false,"hg":1,"hu":0.25131632543359278,"storage":2.8052653017343712,"et":0,"dunne":0,"residual":0,"layers":[0,0,0,0,0,0,0,0]}
+{"mode":"controls","law":1,"closure":1,"forced":true,"hg":1.0060858688824854,"hu":0.25041770554713155,"storage":2.8126253861769999,"et":0.00063991555737285741,"dunne":0,"residual":1.5404344466674047e-15,"layers":[0,0,0,0,0,0,0,0]}
+{"mode":"controls","law":0,"closure":0,"forced":false,"hg":1,"hu":0.42044987864376782,"storage":3.4817995145750711,"et":0,"dunne":0,"residual":0,"layers":[0,0,0,0,0,0,0,0]}
+{"mode":"controls","law":0,"closure":0,"forced":true,"hg":1.01387673288339,"hu":0.41604535500266626,"storage":3.489159539200767,"et":0.00063997537430474419,"dunne":0,"residual":6.8695049648681561e-16,"layers":[0,0,0,0,0,0,0,0]}
+{"mode":"controls","law":0,"closure":1,"forced":false,"hg":1,"hu":0.42044987864376782,"storage":3.4817995145750711,"et":0,"dunne":0,"residual":0,"layers":[0,0,0,0,0,0,0,0]}
+{"mode":"controls","law":0,"closure":1,"forced":true,"hg":1.024585991386822,"hu":0.41122620324760906,"storage":3.489159597486716,"et":0.0006399170877836001,"dunne":0,"residual":-5.7150117971360714e-13,"layers":[0,0,0,0,0,0,0,0]}
+{"mode":"controls","law":2,"closure":0,"forced":false,"hg":1,"hu":0.35976157718043955,"storage":3.2390463087217585,"et":0,"dunne":0,"residual":0,"layers":[0,0,0,0,0,0,0,0]}
+{"mode":"controls","law":2,"closure":0,"forced":true,"hg":1.0044682796545448,"hu":0.35959085506676691,"storage":3.2464063236452483,"et":0.00063998507651057916,"dunne":0,"residual":3.7209818559702512e-16,"layers":[0,0,0,0,0,0,0,0]}
+{"mode":"controls","law":2,"closure":1,"forced":false,"hg":1,"hu":0.35976157718043955,"storage":3.2390463087217585,"et":0,"dunne":0,"residual":0,"layers":[0,0,0,0,0,0,0,0]}
+{"mode":"controls","law":2,"closure":1,"forced":true,"hg":1.0111023429597565,"hu":0.35660554385431686,"storage":3.2464063927448294,"et":0.00063991597692653903,"dunne":0,"residual":-2.499736528882579e-15,"layers":[0,0,0,0,0,0,0,0]}
+{"mode":"controls","law":3,"closure":0,"forced":false,"hg":1,"hu":0.37466212001740684,"storage":3.2986484800696276,"et":0,"dunne":0,"residual":0,"layers":[0,0,0,0,0,0,0,0]}
+{"mode":"controls","law":3,"closure":0,"forced":true,"hg":1.0053605818265701,"hu":0.37408986283133921,"storage":3.306008498613183,"et":0.00063998145644471457,"dunne":0,"residual":8.8470897274817162e-17,"layers":[0,0,0,0,0,0,0,0]}
+{"mode":"controls","law":3,"closure":1,"forced":false,"hg":1,"hu":0.37466212001740684,"storage":3.2986484800696276,"et":0,"dunne":0,"residual":0,"layers":[0,0,0,0,0,0,0,0]}
+{"mode":"controls","law":3,"closure":1,"forced":true,"hg":1.0129707362059048,"hu":0.37066530969166361,"storage":3.3060085639372834,"et":0.00063991613226673351,"dunne":0,"residual":-7.7542139376163277e-14,"layers":[0,0,0,0,0,0,0,0]}

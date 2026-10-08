@@ -110,7 +110,10 @@ void updateDailyClimate(ClimateState& state, int day_of_year, int month) {
 
     switch (state.evap_method) {
         case EvapMethod::CONSTANT:
-            // evap_rate already set
+            // legacy setEvap: Evap.rate = monthlyEvap[0] / UCF(EVAPRATE) on
+            // EVERY call, so the monthly adjustment added below is applied
+            // to the constant, not accumulated step after step.
+            state.evap_rate = state.monthly_evap[0] / state.evaprate_ucf;
             break;
 
         case EvapMethod::MONTHLY:
@@ -138,8 +141,13 @@ void updateDailyClimate(ClimateState& state, int day_of_year, int month) {
             break;
     }
 
-    // Apply monthly adjustment
-    state.evap_rate *= state.adjust_evap[month];
+    // Apply monthly adjustment — legacy setEvap: Evap.rate += Adjust.evap[mon-1]
+    // (the [ADJUSTMENTS] EVAP row is a rate ADDED to the source, not a factor).
+    // TIMESERIES and PAN are resolved by the engine's climate step, which
+    // adds the adjustment itself.
+    if (state.evap_method != EvapMethod::TIMESERIES &&
+        state.evap_method != EvapMethod::PAN)
+        state.evap_rate += state.adjust_evap[month];
 
     // Saturation vapor pressure (for snowmelt rain-on-snow)
     double ta = state.temperature;

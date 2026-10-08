@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 
 #include "FvKernels.hpp"
@@ -29,12 +30,32 @@ namespace k = kernels;
 namespace {
 
 /// Below this many faces the OpenMP fork/join costs more than the flux loop.
-constexpr int kOmpMinFaces = 4096;
+/// Env-overridable for the Phase 3 gate sweep (OPENSWMM_FV_OMP_MIN_FACES /
+/// _CELLS / _NODES); read once.
+int ompMinEnv(const char* name, int dflt) {
+    const char* e = std::getenv(name);
+    return (e && e[0]) ? std::atoi(e) : dflt;
+}
+const int kOmpMinFaces = ompMinEnv("OPENSWMM_FV_OMP_MIN_FACES", 4096);
 
 /// Same trade for the per-cell loops (depth refresh, cell update). Kept at the
 /// face threshold: a conduit mesh carries comparable cell and face counts, and
 /// the per-item work is the same order.
-constexpr int kOmpMinCells = 4096;
+const int kOmpMinCells = ompMinEnv("OPENSWMM_FV_OMP_MIN_CELLS", 4096);
+
+/// Node solves (Phase 3d): each junction's algebraic solve re-evaluates only
+/// its own incident faces and writes only its own head, so the loop is
+/// order-independent and bit-identical at any thread count. A solve costs
+/// ~10 face fluxes, so far fewer items amortize the fork/join than a cell loop.
+const int kOmpMinNodes = ompMinEnv("OPENSWMM_FV_OMP_MIN_NODES", 64);
+
+/// Column-separation vacuum limit, ~1 atm of water column (issue #156): a
+/// sealed TPA reach can sustain sub-atmospheric pressure only to about
+/// hs ≈ −30 ft before the column separates and a vapor cavity forms — modeled
+/// as an unconditional exit to free surface (documented limitation; real
+/// cavity dynamics are out of scope). Shared by the substep entry/exit rule
+/// (updateTpaFlags) and the same-substep floor check (R4d).
+constexpr double kCavHead = 30.0;   // ft
 
 /// limitSlope moved to transport/fvkernels/SpeciesTransportKernels.hpp
 /// (phase E0) — shared between the species kernels and the hydrodynamic
@@ -89,17 +110,59 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
 
     cell_eta_.assign(nc, 0.0);
     cell_u_.assign(nc, 0.0);
+    cell_ah_.assign(nc, 0.0);
+    cell_t_.assign(nc, 0.0);
+    cell_i1_.assign(nc, 0.0);
     cell_q_int_.assign(nc, 0.0);
+    // Unsteady friction (issue #156): scratch sized only when active so the
+    // default path allocates nothing.
+    uf_grad_.assign((opts.unsteady_friction != 0) ? nc : 0, 0.0);
+
+    // TPA pressure closure (issue #156 Phase 4): the regime flag lives in the
+    // STATE so the static membership predicates see it; empty ⇒ SLOT closure
+    // everywhere (bit-inert default). Cold start: all-free (worst case one
+    // spurious re-pressurization step after a hotstart — TPA plan §5).
+    tpa_ = (opts.pressure_closure == 1);
+    // Dev switch for the slot/free-surface interface treatment (entrance
+    // lock investigation, 2026-09-11): OPENSWMM_FV_MIXED_WAVE=0 restores the
+    // symmetric Davis estimate and the acoustic vented-node ghost.
+    {
+        const char* mw = std::getenv("OPENSWMM_FV_MIXED_WAVE");
+        mixed_wave_ = !(mw && mw[0] == '0');
+        mw_rh_  = mixed_wave_;
+        const char* d1 = std::getenv("OPENSWMM_FV_DEG1");
+        deg1_guard_slot_ = !(d1 && d1[0] == '1');
+        const char* cp = std::getenv("OPENSWMM_FV_CENSUS_PASS");
+        census_pass_far_ = !(cp && cp[0] == '0');
+        const char* lf = std::getenv("OPENSWMM_FV_LTS_FIT");
+        lts_fit_ = (lf && lf[0] == '1');
+        // Phase 4a sweep: OPENSWMM_FV_CFL overrides the deck's FV_CFL so the
+        // analytic harnesses run unchanged. Dev only.
+        if (const char* cf = std::getenv("OPENSWMM_FV_CFL")) {
+            const double v = std::atof(cf);
+            if (v > 0.0 && v <= 1.0) opts_.cfl = v;
+        }
+    }
+    if (tpa_) {
+        state.cell_tpa.assign(nc, 0);
+        tpa_scratch_.assign(nc, 0);
+    } else {
+        state.cell_tpa.clear();
+        tpa_scratch_.clear();
+    }
 
     node_exch_.assign(nn, 0.0);
     node_in_.assign(nn, 0.0);
     node_out_.assign(nn, 0.0);
     flood_vol_.assign(nn, 0.0);
+    node_qdummy_.assign(mesh.struct_is_dummy.empty() ? 0 : nn, 0.0);
+    dummy_vol_.assign(mesh.struct_link.size(), 0.0);
     inlet_control_.assign(static_cast<std::size_t>(mesh.n_conduits()), 0);
 
     cell_tier_.assign(nc, 0);
     node_tier_.assign(nn, 0);
     face_tier_.assign(nf, 0);
+    relax_beta_.assign(nf, 0.0);
     acc_a_.clear();
     acc_q_.clear();
     acc_nvol_.clear();
@@ -128,6 +191,10 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
     active_min_  = -1.0;
     active_max_  = -1.0;
     active_n_    = 0;
+    n_macro_cycles_   = 0;
+    n_macro_rejected_ = 0;
+    state_clean_      = false;
+    acc_dirty_        = false;
 
     refreshDepths();
     refreshNodeAreas();
@@ -136,7 +203,9 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
     // (no storage table) with at least one incident face. A node with only
     // structure links has no face flux to balance — its residual would carry
     // no head dependence — so it keeps the bucket machinery. Outfalls are
-    // excluded by kind; virtual junctions never reach the node paths at all.
+    // excluded by kind; virtual junctions never reach the node paths at all
+    // (their only node-level state is a lateral inflow, which
+    // refreshStructFlows diverts into the two spliced cells).
     node_alg_.assign(nn, 0);
     node_carry_.assign(nn, 0.0);
     node_vfull_.assign(nn, 0.0);
@@ -177,6 +246,36 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
             mesh_->node_face_ptr[un + 1] - mesh_->node_face_ptr[un] == 2)
             node_pass_static_[un] = 1;
     }
+
+    // Rim cap for the diverted lateral (face_a_rim_ in the header): the
+    // receiving cell's area at the junction rim, per boundary face of every
+    // statically pass-through-eligible junction. Static for the run, as the
+    // rim and the cell bed are. The rim is the same ceiling the solved path
+    // brackets against (solveAlgebraicNode's `top`).
+    face_a_rim_.assign(nf, std::numeric_limits<double>::infinity());
+    face_lat_spill_.assign(nf, 0.0);
+    for (std::size_t un = 0; un < nn; ++un) {
+        if (!node_pass_static_[un]) continue;
+        const double full = mesh_->node_full_depth[un];
+        if (!(full > 0.0)) continue;
+        const double rim = mesh_->node_invert[un] + full +
+                           (mesh_->node_can_pond[un] ? 0.0
+                                                     : mesh_->node_sur_depth[un]);
+        for (int p = mesh_->node_face_ptr[un];
+             p < mesh_->node_face_ptr[un + 1]; ++p) {
+            const auto uf = static_cast<std::size_t>(
+                mesh_->node_face_idx[static_cast<std::size_t>(p)]);
+            const int c = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
+                                                    : mesh_->face_cr[uf];
+            if (c < 0) continue;
+            const auto uc = static_cast<std::size_t>(c);
+            const FvGeometry& g =
+                mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
+            if (g.is_open) continue;   // a real free surface has no slot to overfill
+            const double h_rim = rim - mesh_->cell_zb[uc];
+            face_a_rim_[uf] = (h_rim > 0.0) ? k::areaOfDepth(g, h_rim) : 0.0;
+        }
+    }
 }
 
 void ExplicitFvSolver::reinitialize(double /*t0*/) {
@@ -186,6 +285,7 @@ void ExplicitFvSolver::reinitialize(double /*t0*/) {
     census_count_ = 0;
     dt_cache_     = 0.0;
     dt_census_    = 0.0;
+    state_clean_  = false;   // the caller may have written the state
     refreshDepths();
     refreshNodeAreas();
 }
@@ -201,12 +301,26 @@ double ExplicitFvSolver::refreshConduitGeometry(int conduit,
     // The OLD closure must outlive the swap: CONSERVE_DEPTH inverts area in it
     // (depthOfArea -> areaOfDepth -> sectionArea -> eval->getAofY(g.xs, .)), so
     // a reference into mesh_->geom would read the new section halfway through.
-    const FvGeometry g_old = mesh_->geom[ur];
-    mesh_->geom[ur] = g_new;
-    const FvGeometry& g = mesh_->geom[ur];
+    //
+    // Sections are SHARED: mesh_->geom is indexed by section, and every
+    // conduit with identical geometry points at the same entry
+    // (NetworkMeshBuilder's geom_memo). Overwriting it in place would silently
+    // re-shape every one of them, so this conduit is given a section of its
+    // own and repointed at it — the conduit it was sharing with keeps the
+    // original. geom may reallocate here, so g_old is a value and g is bound
+    // only after the push_back.
+    const int sec_old = mesh_->conduit_section[ur];
+    const FvGeometry g_old = mesh_->geom[static_cast<std::size_t>(sec_old)];
 
     const int c0 = mesh_->conduit_cell_begin[ur];
     const int nc = mesh_->conduit_cell_count[ur];
+
+    const int sec_new = static_cast<int>(mesh_->geom.size());
+    mesh_->geom.push_back(g_new);
+    mesh_->conduit_section[ur] = sec_new;
+    for (int i = 0; i < nc; ++i)
+        mesh_->cell_geom[static_cast<std::size_t>(c0 + i)] = sec_new;
+    const FvGeometry& g = mesh_->geom[static_cast<std::size_t>(sec_new)];
 
     // How far the FLOW INVERT moved. Both closures measure depth from their own
     // lowest point, so a section sitting on a raised bed reports a smaller depth
@@ -316,6 +430,8 @@ INetworkSolver::RunStats ExplicitFvSolver::run_stats() const noexcept {
     s.dt_argmin_band        = dt_argmin_band_;
     s.dt_argmin_free        = dt_argmin_free_;
     s.dt_argmin_node        = dt_argmin_node_;
+    s.n_macro_cycles        = n_macro_cycles_;
+    s.n_macro_rejected      = n_macro_rejected_;
     return s;
 }
 
@@ -392,6 +508,30 @@ double ExplicitFvSolver::nodeDepthFromVolume(int node, double volume) const {
 // State refresh
 // ===========================================================================
 
+// The closure at the cell's own depth, kept beside cell_h. Every consumer that
+// used to evaluate A/T/I₁ at cell_h reads these instead; a dry or TPA-flagged
+// cell stores zeros because no consumer reads the cache in those states
+// (faceSide takes the TPA branch, the census uses t_slot). Per-cell writes
+// only, so it is safe inside the parallel cell loops.
+void ExplicitFvSolver::cacheClosure(std::size_t uc, const FvGeometry& g,
+                                    double h) noexcept {
+    if (h > k::kDryDepth && !tpaCell(uc)) {
+        perf::count(perf::n_fv_geom_area);
+        perf::count(perf::n_fv_geom_width);
+        perf::count(perf::n_fv_geom_i1);
+        // One panel locate for all three: the closure's A, T and I₁ come
+        // from the same cubic.
+        const k::ClosureEval e = k::closureEval(g.closure_tbl, h);
+        cell_ah_[uc] = e.a;
+        cell_t_[uc]  = e.t;
+        cell_i1_[uc] = e.i1;
+    } else {
+        cell_ah_[uc] = 0.0;
+        cell_t_[uc]  = 0.0;
+        cell_i1_[uc] = 0.0;
+    }
+}
+
 void ExplicitFvSolver::refreshDepths() {
     perf::GatedTimer _pt(perf::sec_fv_refreshdep);
     const int nc = mesh_->n_cells();
@@ -403,21 +543,30 @@ void ExplicitFvSolver::refreshDepths() {
     // hoisted out: incrementing it per iteration would be a data race, and
     // the count is exactly nc either way.
     perf::count(perf::n_fv_invert, static_cast<long>(nc));
+    perf::CounterBatch counters;
 #ifdef SWMM_USE_OPENMP
-#pragma omp parallel for schedule(static) if (nc >= kOmpMinCells)
+#pragma omp parallel for schedule(static) if (nc >= kOmpMinCells) private(counters)
 #endif
     for (int c = 0; c < nc; ++c) {
         const auto uc = static_cast<std::size_t>(c);
         const FvGeometry& g = mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
         double a = state_->cell_a[uc];
         if (a < 0.0) a = 0.0;
-        const double h = k::depthOfArea(g, a);
+        const bool tpa_cell = tpaCell(uc);   // regime-consistent h(A) (#156)
+        const double h = tpa_cell ? k::tpaDepthOfArea(g, a)
+                                  : k::depthOfArea(g, a);
         state_->cell_a[uc] = a;
         state_->cell_h[uc] = h;
         cell_eta_[uc] = mesh_->cell_zb[uc] + h;
-        if (h <= k::kDryDepth) {
+        cacheClosure(uc, g, h);
+        if (!tpa_cell && h <= k::kDryDepth) {
             state_->cell_q[uc] = 0.0;
             cell_u_[uc]        = 0.0;
+        } else if (tpa_cell) {
+            // A flagged cell has no dry cutoff above, so a == 0.0 exactly
+            // would put inf/NaN in cell_u_ (issue #156 R4b). Floor at
+            // kDryArea, the same vacuum floor faceSide's TPA side uses.
+            cell_u_[uc] = state_->cell_q[uc] / std::max(a, k::kDryArea);
         } else {
             cell_u_[uc] = state_->cell_q[uc] / a;
         }
@@ -497,11 +646,30 @@ void ExplicitFvSolver::rebuildActiveLists() {
 
     // Seed: any cell holding water or momentum, plus any cell fed by a node
     // that stands above the conduit invert — a dry pipe hanging off a full
-    // manhole must not be skipped.
+    // manhole must not be skipped. A TPA-SEALED cell is active at any h
+    // (issue #156 R4a): a sealed sub-atmospheric column has NEGATIVE cell_h,
+    // so an at-rest one (q exactly 0) read as dry here, was deactivated, and
+    // updateTpaFlags then cleared its seal — converting a resting vacuum
+    // column into a free-surface film whose eta sits ~|hs| above the truth,
+    // primed to inject that head on reactivation. Today only q's float
+    // non-zeroness protects the quiescent sealed column (the P5 at-rest
+    // pressurized class); this makes the protection structural.
+    // A cell that receives a diverted junction lateral (cell_qlat_, filled by
+    // refreshStructFlows) is active whatever its depth: updateCells is the
+    // only place the injection lands, and it skips inactive cells. Without
+    // this a lateral into a DRY reach vanished — the node had marked it
+    // delivered (node_lat_div_), the ledger booked it as inflow, and no cell
+    // ever took it. Measured on a 7 km tunnel filling from dry (Klaver
+    // Example_02, 2026-09-13): 100 % of the first 70 min of lateral inflow at
+    // a degree-2 junction lost, 4.7 % of the run's total, until the wetting
+    // front from upstream activated the cells.
+    const bool have_qlat = !cell_qlat_.empty();
     for (int c = 0; c < nc; ++c) {
         const auto uc = static_cast<std::size_t>(c);
         cell_active_[uc] = (state_->cell_h[uc] > k::kDryDepth ||
-                            state_->cell_q[uc] != 0.0) ? char{1} : char{0};
+                            state_->cell_q[uc] != 0.0 ||
+                            (have_qlat && cell_qlat_[uc] != 0.0) ||
+                            tpaCell(uc)) ? char{1} : char{0};
     }
     for (int f = 0; f < nf; ++f) {
         const auto uf = static_cast<std::size_t>(f);
@@ -571,6 +739,20 @@ void ExplicitFvSolver::rebuildActiveLists() {
 // CFL census
 // ===========================================================================
 
+int ExplicitFvSolver::passThroughFarCell(int face, int nd) const noexcept {
+    if (nd < 0 || node_pass_.empty() ||
+        !node_pass_[static_cast<std::size_t>(nd)] || !algebraicActive(nd))
+        return -1;
+    const auto und = static_cast<std::size_t>(nd);
+    for (int p = mesh_->node_face_ptr[und]; p < mesh_->node_face_ptr[und + 1]; ++p) {
+        const int of = mesh_->node_face_idx[static_cast<std::size_t>(p)];
+        if (of == face) continue;
+        const auto uof = static_cast<std::size_t>(of);
+        return (mesh_->face_cl[uof] >= 0) ? mesh_->face_cl[uof] : mesh_->face_cr[uof];
+    }
+    return -1;
+}
+
 double ExplicitFvSolver::censusDt(bool press_edit) const {
     perf::GatedTimer _pt(perf::sec_fv_census);
     perf::count(perf::n_fv_census);
@@ -613,25 +795,48 @@ double ExplicitFvSolver::censusDt(bool press_edit) const {
             const auto uc = static_cast<std::size_t>(cell);
             dx_ref = std::min(dx_ref, mesh_->cell_dx[uc]);
             const double h = state_->cell_h[uc];
-            if (h <= k::kDryDepth) return;
+            const bool tpa_c = tpaCell(uc);   // full of water at any h (#156)
+            if (!tpa_c && h <= k::kDryDepth) return;
             const FvGeometry& g =
                 mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
-            if (fmode == PressurizedHeadSolver::kFull && !g.is_open &&
-                h >= g.y_crown) {
+            if (fmode == PressurizedHeadSolver::kFull &&
+                (tpa_c || (!g.is_open && h >= g.y_crown))) {
                 speed = std::max(speed, std::fabs(cell_u_[uc]));
                 return;
             }
+            // T(cell_h) from the cache filled at the depth write — the same
+            // widthOfDepth(g, h) this used to evaluate, bit for bit.
             speed = std::max(speed,
                              std::fabs(cell_u_[uc]) +
                                  k::celerity(state_->cell_a[uc],
-                                             k::widthOfDepth(g, h)));
+                                             tpa_c ? g.t_slot
+                                                   : cell_t_[uc]));
         };
         if (cl >= 0) consider_cell(cl);
         if (cr >= 0) consider_cell(cr);
 
         if (nd >= 0) {
             const int other = (cl >= 0) ? cl : cr;
-            if (other >= 0) {
+            // Pass-through junction (plan Phase 1e): the flux presents the FAR
+            // cell's centred state at this face (faceSide), so the census
+            // bounds THAT state — not a ghost rebuilt from node_head − z_face,
+            // which after a drop offset stands above the downstream crown and
+            // carries the slot celerity the flux never sees (Bellinge measured
+            // a dry-weather dt0 of 0.036 s from exactly this).
+            const int far = census_pass_far_ ? passThroughFarCell(f, nd) : -1;
+            if (far >= 0) {
+                const auto ufar = static_cast<std::size_t>(far);
+                const bool tpa_f = tpaCell(ufar);
+                if (tpa_f || state_->cell_h[ufar] > k::kDryDepth) {
+                    const FvGeometry& gfar =
+                        mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[ufar])];
+                    speed = std::max(speed,
+                                     std::fabs(cell_u_[ufar]) +
+                                         k::celerity(state_->cell_a[ufar],
+                                                     tpa_f ? gfar.t_slot
+                                                           : cell_t_[ufar]));
+                }
+            } else if (other >= 0) {
                 const auto uo = static_cast<std::size_t>(other);
                 const FvGeometry& g =
                     mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uo])];
@@ -647,13 +852,13 @@ double ExplicitFvSolver::censusDt(bool press_edit) const {
                         hg >= g.y_crown) {
                         speed = std::max(speed, std::fabs(cell_u_[uo]));
                     } else {
-                        // Fused closure (test F1: bit-identical to the
-                        // separate areaOfDepth/widthOfDepth pair).
-                        double ag, wg, rg, i1g;
-                        k::closureAll(g, hg, &ag, &wg, &rg, &i1g);
+                        perf::count(perf::n_fv_geom_area);
+                        perf::count(perf::n_fv_geom_width);
+                        const double ag = k::areaOfDepth(g, hg);
                         speed = std::max(speed,
                                          std::fabs(cell_u_[uo]) +
-                                             k::celerity(ag, wg));
+                                             k::celerity(ag,
+                                                         k::widthOfDepth(g, hg)));
                     }
                 }
             }
@@ -747,20 +952,13 @@ double ExplicitFvSolver::censusDt(bool press_edit) const {
     // on does not mean tiering runs: RK2 disables the LTS path outright, and
     // a water-quality run (species FCT needs a synchronous sweep) degenerates
     // assignTiers() to K = 1. Both fall through to the global path, and
-    // skipping the node term there silently reproduced FV_NODE_DT NONE —
-    // with its measured 10-50× accuracy loss — while the option still read
-    // STABILITY.
-    //
-    // FV_NODE_DT NONE is honoured here as well, so the option means the same
-    // thing on both paths — and only under SEMI_IMPLICIT coupling, because
-    // for explicitly coupled nodes the bound buys stability, not accuracy,
-    // and there is no opting out of it.
+    // skipping the node term there silently dropped the bound — with its
+    // measured 10-50× accuracy loss — while nothing had asked for that.
     //
     // The relaxation was swept rather than assumed: with tiering on, 1×, 4×,
     // 16×, 64× and unbounded gave 14.7 / 7.3 / 5.1 / 5.1 / 5.0 s at 7.2 / 7.2 /
     // 7.1 / 7.2 / 7.2 % mean agreement.
-    if (opts_.node_coupling == NodeCoupling::SEMI_IMPLICIT &&
-        (ltsEligible() || opts_.node_dt_limit == NodeDtLimit::NONE)) {
+    if (ltsEligible()) {
         if (dt >= std::numeric_limits<double>::max() * 0.5) dt = 1.0e30;
         count_argmin();
         return dt;
@@ -907,7 +1105,11 @@ void ExplicitFvSolver::reconstructState() {
         const auto uc = static_cast<std::size_t>(c);
         const double h = state_->cell_h[uc];
         const double fall = std::fabs(mesh_->cell_dzdx[uc]) * mesh_->cell_dx[uc];
-        cell_ho2_[uc] = (h > k::kDryDepth && fall < 0.5 * h) ? char{1} : char{0};
+        // TPA-flagged cells stay first-order: the HO2 bed source and slope
+        // extrapolation evaluate free-surface geometry, which a pressurized
+        // (possibly sub-atmospheric) cell no longer has (#156).
+        cell_ho2_[uc] = (h > k::kDryDepth && fall < 0.5 * h && !tpaCell(uc))
+                            ? char{1} : char{0};
     }
 
     for (int ch = 0; ch < mesh_->n_chains(); ++ch) {
@@ -983,6 +1185,14 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
     const FvGeometry* g = nullptr;
     double eta = 0.0, h_raw = 0.0, u = 0.0;
     z_side = 0.0;
+    // Set when this side is a cell presented at its stored centred depth, so
+    // the closure at h_raw is exactly what cacheClosure() holds for it.
+    bool centred = false;
+    std::size_t uc_cached = 0;
+    // Set when this side is a ghost built from the node's own head (a vented
+    // node's free surface), as opposed to a pass-through far cell or a
+    // closed-end mirror: only that ghost takes the free-surface celerity cap.
+    bool node_head_ghost = false;
 
     // The section this FACE reconstructs in — the same one for both sides, so
     // the Riemann problem is posed between states in a single geometry. It is
@@ -1004,6 +1214,8 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
             h_raw  = state_->cell_h[uc];
             u      = static_cast<double>(dir) * cell_u_[uc];
             z_side = mesh_->cell_zb[uc];
+            centred   = true;
+            uc_cached = uc;
         } else {
             // Extrapolate to the face along the cell's own axis. `half` is
             // signed: positive toward the cell's downstream end. The BED is
@@ -1037,6 +1249,7 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
             h_raw = std::max(0.0, eta - mesh_->face_zb[uf]);
             u     = u_interior;
             z_side = mesh_->face_zb[uf];
+            node_head_ghost = true;
             // PASS-THROUGH junction: the ghost presents the FAR cell's full
             // centred state — surface, depth, bed — so together with the far
             // velocity (computeFaceFlux) the two node faces reproduce the
@@ -1062,6 +1275,7 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
                         eta    = cell_eta_[uoc];
                         h_raw  = state_->cell_h[uoc];
                         z_side = mesh_->cell_zb[uoc];
+                        node_head_ghost = false;
                     }
                 }
             }
@@ -1086,12 +1300,64 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
     // pass discarded (its i1 out-param is written twice and never read).
     if (measure_only) { i1_raw = 0.0; out = k::FaceState{}; return; }
 
+    // TPA pressurized side (issue #156 Phase 4): the closure line extends to
+    // hs < 0, so neither dry cutoff applies — the pipe is full of water at
+    // (possibly sub-atmospheric) piezometric head. Which regime a SIDE uses:
+    // a cell side follows its own cell's flag; a node ghost follows the
+    // interior cell's flag only when the node is SEALED (SUR_DEPTH > 0) —
+    // a vented node's ghost carries hs = 0 by construction (plan §A3); a
+    // closed-end mirror ghost mirrors the interior regime.
+    bool tpa_side = false;
+    if (tpa_) {
+        if (cell >= 0) {
+            tpa_side = tpaCell(static_cast<std::size_t>(cell));
+        } else {
+            const int other2 = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
+                                                         : mesh_->face_cr[uf];
+            if (other2 >= 0) {
+                const bool interior_tpa =
+                    tpaCell(static_cast<std::size_t>(other2));
+                if (node >= 0) {
+                    tpa_side = interior_tpa &&
+                        mesh_->node_sur_depth[static_cast<std::size_t>(node)] > 0.0;
+                } else {
+                    tpa_side = interior_tpa;
+                }
+            }
+        }
+    }
+    if (tpa_side) {
+        // Use the UNCLAMPED piezometric depth (eta − z_side): every h_raw
+        // branch above floors at 0, which is wrong for a sub-atmospheric
+        // column whose head can sit below the local invert.
+        i1_raw = k::tpaI1OfDepth(*g, eta - z_side);
+        const double h_star_t = eta - zstar;          // signed; no clamp
+        double a_t = k::tpaAreaOfDepth(*gf, h_star_t);
+        if (a_t < k::kDryArea) a_t = k::kDryArea;     // vacuum floor guard
+        out.a  = a_t;
+        out.u  = u;
+        out.q  = a_t * u;
+        out.c  = k::celerity(a_t, gf->t_slot);        // acoustic celerity
+        out.i1 = k::tpaI1OfDepth(*gf, h_star_t);
+        out.press = (mixed_wave_ && mw_rh_) ? uint8_t{1} : uint8_t{0};
+        return;
+    }
+
     // i1_raw stays in the CELL's own section — it is the cell's true
     // hydrostatic moment, and the difference from the reconstructed one is the
     // correction that puts the balance back (computeFaceFlux).
-    if (h_raw > k::kDryDepth) {
-        double a_raw, w_raw, r_raw;
-        k::closureAll(*g, h_raw, &a_raw, &w_raw, &r_raw, &i1_raw);
+    // ...and only a CELL side's is ever read: computeFaceFlux books the
+    // Audusse correction as a cell source and drops a ghost side's i1_raw
+    // (`(cl >= 0) ? … : 0.0`), so evaluating it there was pure waste — one
+    // area and one I₁ per node face per flux, and per node-solve trial.
+    if (cell >= 0 && h_raw > k::kDryDepth) {
+        if (centred) {
+            i1_raw = cell_i1_[uc_cached];   // I₁(cell_h), cached at the write
+        } else {
+            // Second-order side: reconstructed depth, no cache — one locate.
+            i1_raw = k::closureI1(g->closure_tbl, h_raw);
+            perf::count(perf::n_fv_geom_i1);
+        }
     } else {
         i1_raw = 0.0;
     }
@@ -1103,27 +1369,69 @@ void ExplicitFvSolver::faceSide(int face, int cell, int node, double zstar,
     }
     // …while the reconstructed state is evaluated in the FACE's section, which
     // both sides share. Where they are the same section (every prismatic face)
-    // this is the identical computation.
-    double w_star, r_star;
-    k::closureAll(*gf, h_star, &out.a, &w_star, &r_star, &out.i1);
+    // this is the identical computation — and where the reconstructed depth IS
+    // the stored depth (the higher-bed side, z* being its own bed), it is the
+    // cached one: same function, same arguments, same bits.
+    // Slot/free-surface interface treatment (OPENSWMM_FV_MIXED_WAVE, on by
+    // default): a side standing in the slot is flagged so waveSpeeds can bound
+    // the wave crossing into a free-surface neighbour by the bore speed. A
+    // vented junction's own-head ghost never takes part (press 2): marked
+    // free, a face whose cell side stands in the slot too (a whole tunnel
+    // pressurized 50 m above the junction crowns) became a "slot/free" pair
+    // and the bound cut the acoustic waves at every lateral junction — the
+    // node solve then found no head below its ceiling, clamped at the rim
+    // and booked 63 000 m³ of "flooding" at junctions whose published depth
+    // never exceeded half their rim (Klaver Example_02, 2026-09-13). The
+    // entrance lock the bound exists for lives at the INTERIOR slot/free
+    // faces (measured: the bound alone releases it, a ghost celerity cap
+    // alone does not). That cap — the vented ghost held to the free-surface
+    // crown celerity — was removed the same day: with the ghost in the slot
+    // and the cell beside it momentarily free it fed a 20× overloaded 0.5 ft
+    // pipe through a near-upwind flux at 4.4 cfs, a 2× over-conveying limit
+    // cycle. A sealed node's ghost carries the slot celerity like any side.
+    auto finish = [&](k::FaceState& o) {
+        if (!mixed_wave_) return;
+        o.press = (mw_rh_ && !gf->is_open && h_star >= gf->y_full) ? uint8_t{1} : uint8_t{0};
+        if (node_head_ghost && node >= 0 &&
+            mesh_->node_sur_depth[static_cast<std::size_t>(node)] <= 0.0)
+            o.press = mw_rh_ ? uint8_t{2} : uint8_t{0};
+    };
+    if (centred && gf == g && h_star == h_raw) {
+        out.a  = cell_ah_[uc_cached];
+        out.u  = u;
+        out.q  = out.a * u;
+        out.c  = k::celerity(out.a, cell_t_[uc_cached]);
+        out.i1 = cell_i1_[uc_cached];
+        finish(out);
+        return;
+    }
+    perf::count(perf::n_fv_geom_area);
+    perf::count(perf::n_fv_geom_width);
+    perf::count(perf::n_fv_geom_i1);
+    // Fused: A, T and I₁ from one panel locate.
+    const k::ClosureEval e = k::closureEval(gf->closure_tbl, h_star);
+    out.a  = e.a;
     out.u  = u;
-    out.q  = out.a * u;
-    out.c  = k::celerity(out.a, w_star);
+    out.q  = e.a * u;
+    out.c  = k::celerity(e.a, e.t);
+    out.i1 = e.i1;
+    finish(out);
 }
 
 void ExplicitFvSolver::computeFluxes() {
     perf::GatedTimer _pt(perf::sec_fv_flux);
     const int n_act = static_cast<int>(active_faces_.size());
 
+    perf::CounterBatch counters;
 #ifdef SWMM_USE_OPENMP
-#pragma omp parallel for schedule(static) if (n_act >= kOmpMinFaces)
+#pragma omp parallel for schedule(static) if (n_act >= kOmpMinFaces) private(counters)
 #endif
     for (int a = 0; a < n_act; ++a)
         computeFaceFlux(active_faces_[static_cast<std::size_t>(a)]);
     total_flux_ += n_act;
 }
 
-void ExplicitFvSolver::computeFaceFlux(int f) {
+void ExplicitFvSolver::computeFaceFlux(int f, bool mass_only) {
     {
         const auto uf = static_cast<std::size_t>(f);
         const int cl = mesh_->face_cl[uf];
@@ -1190,6 +1498,45 @@ void ExplicitFvSolver::computeFaceFlux(int f) {
         faceSide(f, cl, nd, zstar, mesh_->face_dir_l[uf], u_int, L, i1l, zdummy, false);
         faceSide(f, cr, nd, zstar, mesh_->face_dir_r[uf], u_int, R, i1r, zdummy, false);
 
+        // Mass-only trial (plan Phase 1c): the algebraic node solve reads back
+        // f_mass_ alone per trial head. Same reconstruction, same wave speeds,
+        // same gate and culvert decisions — riemannMassFlux is bit-identical to
+        // riemannFlux().mass — so the residual sequence, hence the root and the
+        // final full flux, are unchanged; what is skipped is the momentum flux,
+        // the contact speed, the Audusse corrections and ~130 bytes of stores.
+        if (mass_only) {
+            double mass = k::riemannMassFlux(L, R);
+            const uint8_t gate_m = mesh_->face_gate[uf];
+            if (gate_m != 0 && ((mass > 0.0 && (gate_m & 1u)) ||
+                                (mass < 0.0 && (gate_m & 2u))))
+                mass = 0.0;
+            const int cvr_m = mesh_->face_culvert[uf];
+            if (cvr_m >= 0 && mass > 0.0 && nd >= 0) {
+                const auto ucv = static_cast<std::size_t>(cvr_m);
+                const FvGeometry& gc = mesh_->geom[
+                    static_cast<std::size_t>(mesh_->conduit_section[ucv])];
+                const double head =
+                    state_->node_head[static_cast<std::size_t>(nd)] - mesh_->face_zb[uf];
+                double dqdh = 0.0;
+                const double q_cap = hydkernels::culvertInflow(
+                    mass, head, gc.y_full, gc.xs.a_full, mesh_->conduit_slope[ucv],
+                    mesh_->conduit_culvert_curve[ucv],
+                    mesh_->conduit_culvert_mitered[ucv] != 0, dqdh);
+                if (q_cap < mass) {
+                    mass = q_cap;
+                    inlet_control_[ucv] = 1;
+                }
+            }
+            if (nd >= 0 && forcing_ && forcing_->node_source_max &&
+                nd < forcing_->n_nodes) {
+                const double cap = forcing_->node_source_max[nd];
+                if (cl < 0 && mass > cap) mass = cap;
+                if (cr < 0 && mass < -cap) mass = -cap;
+            }
+            f_mass_[uf] = mass;
+            return;
+        }
+
         k::FaceFlux fl = k::riemannFlux(L, R);
 
         // Non-prismatic pass-through junction — RESOLVED 2026-08-13 by giving
@@ -1236,13 +1583,16 @@ void ExplicitFvSolver::computeFaceFlux(int f) {
         // compares Link.newFlow against a per-barrel capacity.
         const int cvr = mesh_->face_culvert[uf];
         if (cvr >= 0 && fl.mass > 0.0 && nd >= 0) {
-            const FvGeometry& gc = mesh_->geom[static_cast<std::size_t>(cvr)];
+            const auto ucv = static_cast<std::size_t>(cvr);
+            const FvGeometry& gc = mesh_->geom[
+                static_cast<std::size_t>(mesh_->conduit_section[ucv])];
             const double head =
                 state_->node_head[static_cast<std::size_t>(nd)] - mesh_->face_zb[uf];
             double dqdh = 0.0;
             const double q_cap = hydkernels::culvertInflow(
-                fl.mass, head, gc.y_full, gc.xs.a_full, gc.slope,
-                gc.culvert_curve, gc.culvert_mitered != 0, dqdh);
+                fl.mass, head, gc.y_full, gc.xs.a_full, mesh_->conduit_slope[ucv],
+                mesh_->conduit_culvert_curve[ucv],
+                mesh_->conduit_culvert_mitered[ucv] != 0, dqdh);
             if (q_cap < fl.mass) {
                 // Inlet control means the INLET is the control section, so the
                 // face becomes a prescribed-discharge boundary and its flux is
@@ -1260,12 +1610,33 @@ void ExplicitFvSolver::computeFaceFlux(int f) {
             }
         }
 
+        if (nd >= 0 && forcing_ && forcing_->node_source_max &&
+            nd < forcing_->n_nodes) {
+            const double cap = forcing_->node_source_max[nd];
+            const double accepted = cl < 0 ? std::min(fl.mass, cap)
+                                           : std::max(fl.mass, -cap);
+            if (accepted != fl.mass) {
+                // A limited stage becomes a prescribed-discharge boundary;
+                // retain hydrostatic pressure when its donor runs dry.
+                const auto& up = cl < 0 ? L : R;
+                fl.mass = accepted;
+                fl.mom = accepted * accepted / std::max(up.a, k::kDryArea)
+                         + k::kGravity * up.i1;
+            }
+        }
         f_mass_[uf]  = fl.mass;
         f_mom_[uf]   = fl.mom;
-        f_sstar_[uf] = fl.sstar;
         f_state_l_[uf] = L;
         f_state_r_[uf] = R;
-        f_flux_[uf]    = fl;
+        // Species-only stores (plan Phase 1g): the contact speed and the whole
+        // flux record are read by the transport kernels alone (the implicit
+        // head update only WRITES them, to keep the species copies coherent),
+        // so a run without species skips the 48 bytes per face flux. The face
+        // STATES stay: the degree-1 fallback and the implicit view read them.
+        if (state_->n_species > 0) {
+            f_sstar_[uf] = fl.sstar;
+            f_flux_[uf]  = fl;
+        }
         // Audusse well-balanced correction — a CELL source, so it exists only
         // on sides that are cells.
         f_corr_l_[uf] = (cl >= 0) ? k::kGravity * (i1l - L.i1) : 0.0;
@@ -1287,6 +1658,25 @@ void ExplicitFvSolver::limitPositivity(double dt) {
 
     for (const int f : active_faces_) {
         const auto uf = static_cast<std::size_t>(f);
+        // An implicit pressure solve may have replaced the Riemann flux.
+        // Bound that final shared flux too, before either domain integrates it.
+        const int nd = mesh_->face_node[uf];
+        if (nd >= 0 && forcing_ && forcing_->node_source_max && nd < forcing_->n_nodes) {
+            const double cap = forcing_->node_source_max[nd];
+            const bool left = mesh_->face_cl[uf] < 0;
+            const double accepted = left ? std::min(f_mass_[uf], cap)
+                                         : std::max(f_mass_[uf], -cap);
+            if (accepted != f_mass_[uf]) {
+                const auto& up = left ? f_state_l_[uf] : f_state_r_[uf];
+                f_mass_[uf] = accepted;
+                f_mom_[uf] = accepted * accepted / std::max(up.a, k::kDryArea)
+                             + k::kGravity * up.i1;
+                if (state_->n_species > 0) {
+                    f_flux_[uf].mass = f_mass_[uf];
+                    f_flux_[uf].mom = f_mom_[uf];
+                }
+            }
+        }
         const double fa = f_mass_[uf];
         if (fa == 0.0) continue;
         if (fa > 0.0) {                     // exporting side is L
@@ -1352,182 +1742,346 @@ void ExplicitFvSolver::limitPositivity(double dt) {
 
 void ExplicitFvSolver::relaxNodeFluxes(double dt, const FvStepForcing& forcing) {
     perf::GatedTimer _pt(perf::sec_fv_nodesolve);
-    const bool semi = (opts_.node_coupling == NodeCoupling::SEMI_IMPLICIT);
     all_faces_live_ = true;      // global path: every face was just computed
     const int nn = mesh_->n_nodes();
     const auto& fold = press_.foldedNodes();
     const bool have_fold = press_step_ && !fold.empty();
+    node_solve_list_.clear();
     for (int n = 0; n < nn; ++n) {
         // A junction the implicit pass folds is a ROW of the SPD head
         // system — solving or damping it here would overwrite the very
         // fluxes the solve is about to own (slot program R2).
         if (have_fold && fold[static_cast<std::size_t>(n)]) continue;
-        // The algebraic solve is not a relaxation — it applies under either
-        // coupling mode. Storage nodes (and demoted ponding junctions) keep
-        // the semi-implicit correction.
-        if (algebraicActive(n))  solveAlgebraicNode(n, dt, forcing);
-        else if (semi)           relaxOneNode(n, dt, forcing);
+        node_solve_list_.push_back(n);
     }
+    solveNodes(node_solve_list_, [&](int) { return dt; }, forcing);
 }
 
-// dV/dH at a given depth — the storage response the correction is damped
-// against. Mirrors refreshNodeAreas' three cases, but evaluated at an
-// ARBITRARY depth rather than at the node's current one, because that is the
-// whole point of iterating: past the first sweep the head has moved.
-double ExplicitFvSolver::nodeStorageSlope(int node, double depth) const {
-    const auto un = static_cast<std::size_t>(node);
-    const double full = mesh_->node_full_depth[un];
-    if (mesh_->node_can_pond[un] && full > 0.0 && depth > full)
-        return mesh_->node_ponded_area[un];
-    if (mesh_->node_vol_off[un] < 0)          // junction: V = A_s·depth, A_s fixed
-        return state_->node_surf_area[un];
-    const double dd = mesh_->node_vol_dmax[un] /
-                      static_cast<double>(kNodeVolSamples - 1);
-    const double d = std::max(0.0, depth);
-    return std::max((nodeVolumeFromDepth(node, d + dd) -
-                     nodeVolumeFromDepth(node, d)) / dd,
-                    constants::MIN_SURFAREA);
+// Phase 3d: the node solves in parallel. Every node's solve reads cell state
+// and its own incident faces and writes only those faces and its own head
+// (a pass-through ghost reads the FAR CELL, never another node), so the
+// nodes are independent and the result is bit-identical in any order and at
+// any thread count. Private counter batches retain exact operation counts
+// without contended increments in the inner loops. Dynamic schedule: a
+// junction's cost varies with its bracket expansion (1 to ~80 residuals).
+template <class DtOf>
+void ExplicitFvSolver::solveNodes(const std::vector<int>& nodes, DtOf&& dt_of,
+                                  const FvStepForcing& forcing) {
+    // Split by cost. A pass-through junction (node_pass_) takes the degree-2
+    // shortcut inside solveAlgebraicNode — an average of two surfaces — and a
+    // storage node's relaxation is one pass over its faces; only a junction
+    // that actually runs the bracketed root solve (~10 face fluxes, up to ~80
+    // residuals) is worth a thread. Measured on TwinOaks (5084 pipes, 96 %
+    // pass-through): forking all 5000 nodes per substep cost more than the
+    // solves it distributed (+30 s at 8 threads on a 129 s run).
+    // Solver members, NOT thread_local scratch: the heavy list is read by
+    // every thread of the parallel loop below (a thread_local would hand each
+    // worker its own, empty, copy).
+    std::vector<int>& heavy = node_heavy_;
+    std::vector<int>& light = node_light_;
+    heavy.clear(); light.clear();
+    const bool have_pass = !node_pass_.empty();
+    for (const int n : nodes) {
+        const auto un = static_cast<std::size_t>(n);
+        const bool fixed = forcing.node_fixed_head &&
+                           std::isfinite(forcing.node_fixed_head[un]);
+        if (!fixed && algebraicActive(n) && !(have_pass && node_pass_[un]))
+            heavy.push_back(n);
+        else
+            light.push_back(n);
+    }
+    for (const int n : light) {
+        // The algebraic solve is not a relaxation. Storage nodes (and demoted
+        // ponding junctions) get the semi-implicit correction.
+        if (algebraicActive(n))  solveAlgebraicNode(n, dt_of(n), forcing);
+        else                     relaxOneNode(n, dt_of(n), forcing);
+    }
+    const int nh = static_cast<int>(heavy.size());
+    // An explicit branch, not an `if` clause on the pragma: a parallel region
+    // that the clause disables still enters the runtime, and this loop runs
+    // once per tier firing — 13 M times on the 5-day East Boston deck, where
+    // the clause form cost 30 % of the run at ONE thread.
+#ifdef SWMM_USE_OPENMP
+    if (nh >= kOmpMinNodes && omp_get_max_threads() > 1) {
+        perf::CounterBatch counters;
+#pragma omp parallel for schedule(dynamic, 2) private(counters)
+        for (int i = 0; i < nh; ++i)
+            solveAlgebraicNode(heavy[static_cast<std::size_t>(i)],
+                               dt_of(heavy[static_cast<std::size_t>(i)]), forcing);
+        return;
+    }
+#endif
+    for (int i = 0; i < nh; ++i)
+        solveAlgebraicNode(heavy[static_cast<std::size_t>(i)],
+                           dt_of(heavy[static_cast<std::size_t>(i)]), forcing);
 }
 
 void ExplicitFvSolver::relaxOneNode(int n, double dt,
                                     const FvStepForcing& forcing) {
-    {
-        const auto un = static_cast<std::size_t>(n);
-        if (mesh_->node_kind[un] == kNodeVirtual) return;
-        // A prescribed head has no continuity equation to damp — the stage is
-        // imposed and the exchange is whatever the Riemann solver produced.
-        if (forcing.node_fixed_head && std::isfinite(forcing.node_fixed_head[un]))
-            return;
-        if (!(state_->node_surf_area[un] > 0.0)) return;
+    const auto un = static_cast<std::size_t>(n);
+    if (mesh_->node_kind[un] == kNodeVirtual) return;
+    // A prescribed head has no continuity equation to damp — the stage is
+    // imposed and the exchange is whatever the Riemann solver produced.
+    if (forcing.node_fixed_head && std::isfinite(forcing.node_fixed_head[un]))
+        return;
+    if (!(state_->node_surf_area[un] > 0.0)) return;
+    // A dummy-drain node has no head to relax toward: the pass-through removes
+    // exactly what arrives, so its continuity residual — the numerator of the
+    // correction below — is identically zero. Computing it anyway would only
+    // add a spurious resistance at the incident faces and turn a free-drainage
+    // boundary into a mild backwater.
+    if (!mesh_->node_dummy_drain.empty() && mesh_->node_dummy_drain[un]) return;
 
-        const int b = mesh_->node_face_ptr[un];
-        const int e = mesh_->node_face_ptr[un + 1];
+    const int b = mesh_->node_face_ptr[un];
+    const int e = mesh_->node_face_ptr[un + 1];
 
-        const double q_lat = nodeLateral(forcing, un) + node_qstruct_[un];
-        const double invert  = mesh_->node_invert[un];
-        const double h_start = state_->node_head[un];
-        const double v_start =
-            nodeVolumeFromDepth(n, std::max(0.0, h_start - invert));
+    const double q_lat = nodeLateral(forcing, un) + node_qstruct_[un] +
+                         nodeQDummy(un);
+    // ONE correction, with the characteristic resistance √(g·A·T), the node
+    // surface area and the face fluxes all frozen at the head the substep
+    // started from. Exact for the linearized problem — the residual after it
+    // is identically zero. The real problem's nonlinearity is what a fine LTS
+    // tier resolves; iterating this correction instead (FV_NODE_PICARD) was
+    // retired with a recorded negative result (4987f552).
+    const double h0 = state_->node_head[un];
 
-        // One sweep is the original scheme, and stays bit-identical to it: the
-        // residual is the raw face sum, and the resistance, the storage area
-        // and the fluxes are all the ones the substep started with. Additional
-        // sweeps re-evaluate all three at the head the previous sweep landed
-        // on, so the node converges on its own continuity equation rather than
-        // on a tangent taken at the start of the step (plan §7B.8).
-        const int sweeps = std::max(1, opts_.node_picard_sweeps);
-        double h_k = h_start;
+    // Σ ∂F/∂H over the incident faces, from the characteristic relation
+    // for a simple wave: |dQ/dH| = gA/c = √(g·A·T) at the ghost state.
+    // Always a RESISTANCE — raising the head drives more out and lets
+    // less in, on either side of the face — so the denominator below
+    // can only grow, and the correction can only damp.
+    double sum_f = 0.0, resist = 0.0;
+    for (int p = b; p < e; ++p) {
+        const auto up = static_cast<std::size_t>(p);
+        const int f = mesh_->node_face_idx[up];
+        const auto uf = static_cast<std::size_t>(f);
+        sum_f += mesh_->node_face_sign[up] * f_mass_[uf];
+        relax_beta_[uf] = 0.0;
 
-        for (int it = 0; it < sweeps; ++it) {
-            // Σ ∂F/∂H over the incident faces, from the characteristic relation
-            // for a simple wave: |dQ/dH| = gA/c = √(g·A·T) at the ghost state.
-            // Always a RESISTANCE — raising the head drives more out and lets
-            // less in, on either side of the face — so the denominator below
-            // can only grow, and the correction can only damp.
-            double sum_f = 0.0, resist = 0.0;
-            for (int p = b; p < e; ++p) {
-                const auto up = static_cast<std::size_t>(p);
-                const int f = mesh_->node_face_idx[up];
-                const auto uf = static_cast<std::size_t>(f);
-                sum_f += mesh_->node_face_sign[up] * f_mass_[uf];
+        const int cell = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
+                                                   : mesh_->face_cr[uf];
+        if (cell < 0) continue;
+        const auto uc = static_cast<std::size_t>(cell);
+        const FvGeometry& g =
+            mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
+        const double hg = h0 - mesh_->face_zb[uf];
+        if (hg <= k::kDryDepth) continue;
+        perf::count(perf::n_fv_geom_area);
+        perf::count(perf::n_fv_geom_width);
+        const double ag = k::areaOfDepth(g, hg);
+        const double tg = k::widthOfDepth(g, hg);
+        if (ag <= k::kDryArea || tg <= 0.0) continue;
+        // β = √(gAT) per face, kept for pass 2 — the same geometry used to be
+        // evaluated a second time there to produce this same number.
+        const double beta = std::sqrt(k::kGravity * ag * tg);
+        relax_beta_[uf] = beta;
+        resist += beta;
+    }
+    if (resist <= 0.0) return;
 
-                const int cell = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
-                                                           : mesh_->face_cr[uf];
-                if (cell < 0) continue;
-                const auto uc = static_cast<std::size_t>(cell);
-                const FvGeometry& g =
-                    mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
-                const double hg = h_k - mesh_->face_zb[uf];
-                if (hg <= k::kDryDepth) continue;
-                double ag, tg, rg, i1g;
-                k::closureAll(g, hg, &ag, &tg, &rg, &i1g);
-                if (ag <= k::kDryArea || tg <= 0.0) continue;
-                resist += std::sqrt(k::kGravity * ag * tg);
-            }
-            if (resist <= 0.0) break;
+    const double as = state_->node_surf_area[un];
+    const double dh = dt * (sum_f + q_lat) / (as + dt * resist);
+    if (dh == 0.0) return;
 
-            // Residual of the node's own continuity equation at h_k. On the
-            // first sweep h_k == h_start, so the storage term is identically
-            // zero and this is the original expression.
-            const double as = (it == 0)
-                                  ? state_->node_surf_area[un]
-                                  : nodeStorageSlope(n, h_k - invert);
-            const double dv =
-                (it == 0) ? 0.0
-                          : nodeVolumeFromDepth(n, std::max(0.0, h_k - invert)) -
-                                v_start;
-            const double dh =
-                dt * (sum_f + q_lat - dv / dt) / (as + dt * resist);
-            if (dh == 0.0) break;
+    // Write the correction into f_mass_ — the ONE array both the cell
+    // update and the node update read. That is what keeps mass
+    // conservation exact: whatever the correction does, the two sides
+    // of every face see the same number.
+    for (int p = b; p < e; ++p) {
+        const auto up = static_cast<std::size_t>(p);
+        const int f = mesh_->node_face_idx[up];
+        const auto uf = static_cast<std::size_t>(f);
+        // β = −sign·√(gAT): the node on a face's LEFT exports on a
+        // positive flux, the node on its RIGHT imports, and raising the
+        // head opposes the import in both cases. √(gAT) is the value pass 1
+        // evaluated for this face (zero for every face it skipped).
+        const double a = relax_beta_[uf];
+        if (a <= 0.0) continue;
+        f_mass_[uf] += -mesh_->node_face_sign[up] * a * dh;
+    }
+}
 
-            const bool last = (it + 1 >= sweeps) ||
-                              (std::fabs(dh) <= opts_.node_picard_tol);
-            if (!last) {
-                // Re-solve the incident faces against the corrected head. This
-                // REPLACES the linear extrapolation with the flux the Riemann
-                // solver actually returns there, which is the part a single
-                // tangent gets wrong at a large Δt.
-                //
-                // Two gates, and they are different claims. cell_active_ keeps
-                // work-list compaction results-transparent (§6.10): only faces
-                // the flux pass itself would have computed are touched.
-                // faceIsLive keeps LOCAL TIME STEPPING correct: under LTS a
-                // node's incident faces can sit in different tiers, and a face
-                // that is not firing on this base step is holding the flux it
-                // will book over its own 2^k·dt₀ window. Re-solving it here
-                // would re-time that flux against the wrong Δt and break the
-                // macro cycle's face-open/volume-close contract — the very
-                // property that makes a tiered step conservative in TIME as
-                // well as in mass.
-                h_k += dh;
-                state_->node_head[un] = h_k;
-                for (int p = b; p < e; ++p) {
-                    const auto up = static_cast<std::size_t>(p);
-                    const int f = mesh_->node_face_idx[up];
-                    const auto uf = static_cast<std::size_t>(f);
-                    if (!faceIsLive(f)) continue;
-                    const int cl = mesh_->face_cl[uf];
-                    const int cr = mesh_->face_cr[uf];
-                    const bool la = (cl >= 0) &&
-                                    cell_active_[static_cast<std::size_t>(cl)];
-                    const bool ra = (cr >= 0) &&
-                                    cell_active_[static_cast<std::size_t>(cr)];
-                    if (la || ra) computeFaceFlux(f);
-                }
-                continue;
-            }
+// ===========================================================================
+// Unsteady friction (issue #156)
+// ===========================================================================
 
-            // Write the correction into f_mass_ — the ONE array both the cell
-            // update and the node update read. That is what keeps mass
-            // conservation exact: whatever the correction does, the two sides
-            // of every face see the same number.
-            for (int p = b; p < e; ++p) {
-                const auto up = static_cast<std::size_t>(p);
-                const int f = mesh_->node_face_idx[up];
-                const auto uf = static_cast<std::size_t>(f);
-                const int cell = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
-                                                           : mesh_->face_cr[uf];
-                if (cell < 0) continue;
-                const auto uc = static_cast<std::size_t>(cell);
-                const FvGeometry& g =
-                    mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
-                const double hg = h_k - mesh_->face_zb[uf];
-                if (hg <= k::kDryDepth) continue;
-                double ag, tg, rg, i1g;
-                k::closureAll(g, hg, &ag, &tg, &rg, &i1g);
-                if (ag <= k::kDryArea || tg <= 0.0) continue;
-                // β = −sign·√(gAT): the node on a face's LEFT exports on a
-                // positive flux, the node on its RIGHT imports, and raising the
-                // head opposes the import in both cases.
-                const double a = std::sqrt(k::kGravity * ag * tg);
-                f_mass_[uf] += -mesh_->node_face_sign[up] * a * dh;
-            }
-            break;
+// Precompute the convective UF term c·sgn(Vⁿ)·|∂V/∂x|ⁿ per cell from the
+// CURRENT (pre-update) cell_u_/state snapshot, so the parallel update loops
+// never read a mid-update neighbor. Stencil is same-conduit only: within one
+// conduit every cell shares the conduit frame, while across virtual-junction
+// splices and node faces the frames may oppose (face_dir_l/r flips), so the
+// stencil degrades to one-sided/own there — slightly diffusive at splices,
+// never sign-wrong. Wave celerity is regime-consistent by construction:
+// kernels::celerity(A, T) delivers √(gA/T), which above the crown is the slot
+// (acoustic) celerity because T = t_slot — exactly the paper's Eq. (12).
+void ExplicitFvSolver::computeUfGradients(const std::vector<int>* cells) {
+    const int nc = mesh_->n_cells();
+    auto grad_for = [&](int c) {
+        const auto uc = static_cast<std::size_t>(c);
+        uf_grad_[uc] = 0.0;
+        if (!cell_active_[uc]) return;
+        const double h = state_->cell_h[uc];
+        if (h <= k::kDryDepth) return;
+        const double u = cell_u_[uc];
+        if (u == 0.0) return;
+
+        const int cond = mesh_->cell_conduit[uc];
+        const double dx_c = mesh_->cell_dx[uc];
+        double uL = u, uR = u, dsum = 0.0;
+        const int faces[2]    = {mesh_->cell_face0[uc], mesh_->cell_face1[uc]};
+        const int8_t sides[2] = {mesh_->cell_side0[uc], mesh_->cell_side1[uc]};
+        for (int e = 0; e < 2; ++e) {
+            const auto uf = static_cast<std::size_t>(faces[e]);
+            // sides==0: this cell is the face's LEFT cell -> neighbor right.
+            const int nb = (sides[e] == 0) ? mesh_->face_cr[uf]
+                                           : mesh_->face_cl[uf];
+            if (nb < 0) continue;                                  // node face
+            const auto unb = static_cast<std::size_t>(nb);
+            if (mesh_->cell_conduit[unb] != cond) continue;        // VJ splice
+            const double d = 0.5 * (dx_c + mesh_->cell_dx[unb]);
+            if (sides[e] == 0) { uR = cell_u_[unb]; dsum += d; }
+            else               { uL = cell_u_[unb]; dsum += d; }
         }
+        if (dsum <= 0.0) return;
+        const FvGeometry& g =
+            mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
+        // Regime-consistent wave speed (issue #156 P5b — same rule as the
+        // dt census and the implicit storage width): a FLAGGED cell's h is
+        // the SIGNED slot-line depth, and the free-surface table width is
+        // wrong at every h off the slot band (at 0 < h < y_crown it is the
+        // free width, ~1e5 × t_slot at study celerities, and the resulting
+        // c_wave drives the Vitkovsky term unstable — e4 × TPA + UF NaN'd at
+        // the reflected surge once the P5b refresh made regime-true h
+        // reachable there). A flagged cell's celerity is the constant
+        // acoustic value from the slot width at ANY h.
+        const double c_wave = tpaCell(uc)
+                                  ? k::celerity(state_->cell_a[uc], g.t_slot)
+                                  : k::celerity(state_->cell_a[uc],
+                                                k::widthOfDepth(g, h));
+        const double sgn = (u > 0.0) ? 1.0 : -1.0;
+        uf_grad_[uc] = c_wave * sgn * std::fabs((uR - uL) / dsum);
+    };
+    if (cells) {
+        for (const int c : *cells) grad_for(c);
+    } else {
+#ifdef SWMM_USE_OPENMP
+#pragma omp parallel for schedule(dynamic, 64) if (nc >= kOmpMinCells)
+#endif
+        for (int c = 0; c < nc; ++c) grad_for(c);
+    }
+}
 
-        // The head is the node update's to set, from the volume ledger. Any
-        // provisional value above was scaffolding for the flux re-solve.
-        state_->node_head[un] = h_start;
+// ===========================================================================
+// TPA regime flags (issue #156 Phase 4)
+// ===========================================================================
+// Once per substep, BEFORE reconstruction (TPA plan §A2 — not per RK stage,
+// so both Heun stages see one operator). Entry (FS→P) is unconditional at
+// A ≥ a_crown (the cell filled through the taper). Exit (P→FS) requires
+// ΔA at/below the crown area (with an ε-hysteresis band, gate A-G2) AND
+// atmosphere contact this step. Contact rule — air is not modeled, so any
+// free surface is atmospheric (the paper's own assumption): an unsealed node
+// face (SURCHARGE_DEPTH == 0; virtual junctions never reach the node set and
+// are sealed splices by construction, plan §2.2(6)), or a face neighbor that
+// was free-surface last step. Transitions read the PREVIOUS flags via the
+// tpa_scratch_ snapshot, so the pass is order-independent and parallel-safe.
+void ExplicitFvSolver::updateTpaFlags() {
+    const int nc = mesh_->n_cells();
+    tpa_scratch_ = state_->cell_tpa;
+    constexpr double kEpsHead = 1.0e-4;   // ft — FUDGE-scale hysteresis
+#ifdef SWMM_USE_OPENMP
+#pragma omp parallel for schedule(static) if (nc >= kOmpMinCells)
+#endif
+    for (int c = 0; c < nc; ++c) {
+        const auto uc = static_cast<std::size_t>(c);
+        // An inactive cell is SKIPPED, not mutated (issue #156 R4a): the old
+        // `cell_tpa = 0` write here destroyed the seal of any flagged cell
+        // the compaction predicate missed. With the rebuild seed keeping
+        // flagged cells active, a flagged inactive cell no longer exists —
+        // and if one ever does, silently unsealing it is the worst response.
+        if (!cell_active_[uc]) continue;
+        const FvGeometry& g =
+            mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
+        if (g.is_open) { state_->cell_tpa[uc] = 0; continue; }
+        const double a = state_->cell_a[uc];
+        // Atmosphere contact of THIS cell (the exit rule's vent test): an
+        // unsealed node face whose water level sits below the pipe crown at
+        // that face, or a free-surface neighbor whose level sits below the
+        // shared crown.
+        auto ventedCell = [&]() -> bool {
+            const int faces2[2] = {mesh_->cell_face0[uc], mesh_->cell_face1[uc]};
+            for (const int f : faces2) {
+                const auto uf = static_cast<std::size_t>(f);
+                const double crown_elev = mesh_->face_zb[uf] + g.y_full;
+                const int nd = mesh_->face_node[uf];
+                if (nd >= 0) {
+                    const auto und = static_cast<std::size_t>(nd);
+                    if (mesh_->node_sur_depth[und] <= 0.0 &&
+                        state_->node_head[und] < crown_elev)
+                        return true;
+                    continue;
+                }
+                const int nb = (mesh_->face_cl[uf] == c) ? mesh_->face_cr[uf]
+                                                         : mesh_->face_cl[uf];
+                // Interface rule (P5b, measured both ways — the P4/P5
+                // submergence-checked contact rule STANDS). The paper vents
+                // the regime-transition interface unconditionally ("…or the
+                // flow regime transition interface, hs is set to zero"), but
+                // taken literally that unzips a submerged pressurized leg
+                // through a chain of momentary exits (the open-apex gate
+                // diverged), and a ±2 ft "weakly sub-atmospheric" band
+                // variant failed the same gates — both REJECTED (see the P5b
+                // handoff delta). An interface vents only when air actually
+                // sits at the shared face: a free-surface neighbor whose
+                // level is below the shared crown.
+                if (nb >= 0 &&
+                    tpa_scratch_[static_cast<std::size_t>(nb)] == 0 &&
+                    cell_eta_[static_cast<std::size_t>(nb)] < crown_elev)
+                    return true;
+            }
+            return false;
+        };
+        // Regime-consistent state refresh on ANY transition (P5b, measured on
+        // the e2 filling deck): the stored cell_h belongs to the OLD regime —
+        // an exited cell otherwise carries its line-depth (−200 ft class)
+        // through the whole substep's reconstruction, and the resulting eta
+        // gradients pump mass until the run NaNs at the reflected surge
+        // (~21.6 s, ERROR 14; traced: heads to 2485 ft with 5–15 flag flips
+        // per substep).
+        auto refresh = [&](uint8_t now) {
+            state_->cell_tpa[uc] = now;
+            const double h2 = now ? k::tpaDepthOfArea(g, a)
+                                  : k::depthOfArea(g, a);
+            state_->cell_h[uc] = h2;
+            cell_eta_[uc] = mesh_->cell_zb[uc] + h2;
+            cacheClosure(uc, g, h2);
+        };
+        if (tpa_scratch_[uc] == 0) {
+            // Entry at the crown area is unconditional (Phase-4 rule,
+            // unchanged). A P5b variant that ALSO forced entry for un-vented
+            // essentially-full cells (A ≥ a_full islands) was measured and
+            // REJECTED — it broke e4 and the open-apex gate (see the P5b
+            // handoff delta); do not resurrect without new evidence.
+            const uint8_t now = (a >= g.a_crown) ? uint8_t{1} : uint8_t{0};
+            if (now != tpa_scratch_[uc]) refresh(now);
+            continue;
+        }
+        // Column separation floor (the paper's own two-phase boundary; the
+        // kCavHead constant is file-scope, shared with the R4d same-substep
+        // check in takeSubstep).
+        if (a < g.a_crown - g.t_slot * kCavHead) {
+            refresh(0);   // column separation: exit + regime-true h
+            continue;
+        }
+        if (a > g.a_crown - g.t_slot * kEpsHead) continue;   // stays P
+        // Atmosphere contact requires an UNSUBMERGED opening: air cannot
+        // enter through a vented node whose water level stands above the
+        // pipe crown at that face (a submerged inlet holds the siphon), nor
+        // from a free-surface neighbor whose surface is above the shared
+        // crown. Without the submergence check every sealed reach unzips
+        // from its vented ends (measured: the sealed-siphon fixture drained
+        // and then diverged). A closed end (nb < 0, no node) is a sealed
+        // wall, not a vent. Shares ventedCell with the entry rule above.
+        if (ventedCell()) refresh(0);
     }
 }
 
@@ -1554,9 +2108,10 @@ void ExplicitFvSolver::updateCells(double dt, const FvStepForcing& forcing) {
     // do. Measured on TwinOaks-v2 (5086 cells, 2 h) against the same run at
     // one thread: static 2.05x, dynamic 2.92x.
     long n_inv = 0;
+    perf::CounterBatch counters;
 #ifdef SWMM_USE_OPENMP
 #pragma omp parallel for schedule(dynamic, 64) reduction(+ : n_inv) \
-        if (nc >= kOmpMinCells)
+        if (nc >= kOmpMinCells) private(counters)
 #endif
     for (int c = 0; c < nc; ++c) {
         const auto uc = static_cast<std::size_t>(c);
@@ -1588,7 +2143,9 @@ void ExplicitFvSolver::updateCells(double dt, const FvStepForcing& forcing) {
             // is: the node sitting on the face's LEFT means this is the
             // conduit's upstream end, hence the entrance loss.
             if (mesh_->face_node[uf] >= 0)
-                k_loss += (mesh_->face_cl[uf] < 0) ? g.loss_inlet : g.loss_outlet;
+                k_loss += (mesh_->face_cl[uf] < 0)
+                              ? mesh_->conduit_loss_inlet[static_cast<std::size_t>(mesh_->cell_conduit[uc])]
+                              : mesh_->conduit_loss_outlet[static_cast<std::size_t>(mesh_->cell_conduit[uc])];
         }
         // Reported DISCHARGE is the mass actually moving through the cell —
         // the mean of its two face fluxes in the conduit frame — not the
@@ -1627,15 +2184,10 @@ void ExplicitFvSolver::updateCells(double dt, const FvStepForcing& forcing) {
             const double eta_c = cell_eta_[uc];
             const double hp = std::max(0.0, eta_c - zp);
             const double hm = std::max(0.0, eta_c - zm);
-            double i1p = 0.0, i1m = 0.0;
-            if (hp > 0.0) {
-                double ap, wp, rp;
-                k::closureAll(g, hp, &ap, &wp, &rp, &i1p);
-            }
-            if (hm > 0.0) {
-                double am, wm, rm;
-                k::closureAll(g, hm, &am, &wm, &rm, &i1m);
-            }
+            const double i1p = (hp > 0.0) ? k::i1OfDepth(g, hp, k::areaOfDepth(g, hp)) : 0.0;
+            const double i1m = (hm > 0.0) ? k::i1OfDepth(g, hm, k::areaOfDepth(g, hm)) : 0.0;
+            perf::count(perf::n_fv_geom_area, (hp > 0.0 ? 1L : 0L) + (hm > 0.0 ? 1L : 0L));
+            perf::count(perf::n_fv_geom_i1,   (hp > 0.0 ? 1L : 0L) + (hm > 0.0 ? 1L : 0L));
             dQ += k::kGravity * (i1p - i1m);
         }
 
@@ -1645,9 +2197,10 @@ void ExplicitFvSolver::updateCells(double dt, const FvStepForcing& forcing) {
 
         // Diverted junction lateral inflow (refreshStructFlows): mass only,
         // zero momentum, added BEFORE the scalar divide so clean inflow
-        // dilutes the advected species.
+        // dilutes the advected species. Capped at the junction rim; the
+        // surplus is banked for the node update (face_a_rim_).
         if (!cell_qlat_.empty() && cell_qlat_[uc] != 0.0)
-            a_new += dt * cell_qlat_[uc] * inv_dx;
+            a_new = injectDivertedLateral(uc, a_new, dt, inv_dx);
 
         // ---- advected scalars, on the SAME divergence -----------------------
         // Updating m = A·φ with the same face MASS fluxes and dividing by the
@@ -1688,18 +2241,36 @@ void ExplicitFvSolver::updateCells(double dt, const FvStepForcing& forcing) {
 
         // ---- friction + local losses, both semi-implicit --------------------
         ++n_inv;
-        const double h_new = k::depthOfArea(g, a_new);
+        const bool tpa_cell = tpaCell(uc);   // regime-consistent closure (#156)
+        const double h_new = tpa_cell ? k::tpaDepthOfArea(g, a_new)
+                                      : k::depthOfArea(g, a_new);
         state_->cell_a[uc] = a_new;
         state_->cell_h[uc] = h_new;
         cell_eta_[uc] = mesh_->cell_zb[uc] + h_new;
-        if (h_new <= k::kDryDepth) {
+        cacheClosure(uc, g, h_new);
+        // A flagged cell is FULL of water at (possibly sub-atmospheric)
+        // piezometric head — the dry cutoff must not fire on h < kDryDepth.
+        // A degenerate vacuum cell (area collapsed toward zero before the
+        // column-separation exit fires next flag update) must not divide by
+        // ~zero area.
+        if ((!tpa_cell && h_new <= k::kDryDepth) ||
+            (tpa_cell && a_new <= k::kDryArea)) {
             state_->cell_q[uc] = 0.0;
             cell_u_[uc]        = 0.0;
             continue;
         }
         const double u = q_new / a_new;
-        q_new = frictionFor(g, q_new, u, h_new, dt);
+        // Friction for a flagged cell evaluates at full depth (R = r_full,
+        // and a full FORCE_MAIN keeps its pressurized law).
+        q_new = frictionFor(g, mesh_->conduit_roughness[static_cast<std::size_t>(mesh_->cell_conduit[uc])],
+                            mesh_->conduit_rough_factor[static_cast<std::size_t>(mesh_->cell_conduit[uc])],
+                            q_new, u, tpa_cell ? g.y_full : h_new, dt);
         if (k_loss > 0.0) q_new = k::localLossUpdate(q_new, u, k_loss, dx, dt);
+        // Unsteady friction (issue #156): cell_u_[uc] still holds Vⁿ here —
+        // it is overwritten only below, and only by this cell's own iteration.
+        if (opts_.unsteady_friction != 0)
+            q_new = k::ufUpdate(q_new, a_new, cell_u_[uc], opts_.uf_k3,
+                                uf_grad_[uc], dt);
 
         state_->cell_q[uc] = q_new;
         cell_u_[uc] = q_new / a_new;
@@ -1720,6 +2291,10 @@ namespace {
 /// a bracketing probe cannot disturb lake-at-rest by the solve tolerance.
 constexpr double kAlgQEps     = 1.0e-12;
 constexpr int    kAlgMaxIters = 16;
+/// |Δh| convergence floor of the root find and the bracket's seed step (ft).
+/// Was FvOptions::node_picard_tol, which the retired Picard sweeps shared;
+/// the value is load-bearing here and must stay 1.0e-6.
+constexpr double kAlgHeadTol  = 1.0e-6;
 // The EXPANSION loop gets its own, larger budget: its first step is the
 // quasi-Newton scale |R|/resist, which below a pipe crown (large open-channel
 // resistance) can start near the tolerance floor — 16 doublings from 1e-6 ft
@@ -1797,7 +2372,12 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
             const auto uc = static_cast<std::size_t>(c);
             const double eta = cell_eta_[uc];
             if (!any || eta < lowest) { lowest = eta; any = true; }
-            if (state_->cell_h[uc] <= k::kDryDepth) continue;
+            // A TPA-flagged cell is FULL of water at a (possibly negative)
+            // gauge pressure — it is the wettest state there is, and its eta
+            // is the piezometric level the node shares. The h > kDryDepth
+            // test reads it as dry, which dropped the sealed column's own
+            // vacuum out of the average and left the node on the fallback.
+            if (!tpaCell(uc) && state_->cell_h[uc] <= k::kDryDepth) continue;
             s += eta;
             ++m;
         }
@@ -1848,6 +2428,22 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
                              (mesh_->node_can_pond[un]
                                   ? 0.0 : mesh_->node_sur_depth[un]);
         if (mesh_->node_full_depth[un] > 0.0 && eta_c >= rim) return false;
+        // A cell already standing in the slot cannot take a prescribed
+        // discharge: its stage below the rim is a slot head, not a free
+        // surface with room, and forcing q_ext into it lifts that head by
+        // q_ext·dt/(t_slot·dx) per substep — measured on the 0.5 ft pipe fed
+        // 10 cfs (8× capacity): the junction chattered between dry and
+        // 40–80 ft while the clamp-and-flood path it displaced holds the rim.
+        // The fallback keeps its force-main role for a FREE-SURFACE interior
+        // (the pressurized-main plateau the solve under-delivers on) and
+        // hands a slot interior back to the clamp (dev: OPENSWMM_FV_DEG1=1
+        // restores the stage-only guard).
+        if (deg1_guard_slot_) {
+            const auto ucg = static_cast<std::size_t>(cell);
+            const FvGeometry& gg =
+                mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[ucg])];
+            if (!gg.is_open && state_->cell_h[ucg] >= gg.y_full) return false;
+        }
         const double sgn = mesh_->node_face_sign[up0];
         const k::FaceState& in = (mesh_->face_cl[uf0] >= 0) ? f_state_l_[uf0]
                                                             : f_state_r_[uf0];
@@ -1862,9 +2458,11 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
     // every incident face shares one tier, so whenever this runs they are all
     // live and the balance is complete.
     double h_best = 0.0, r_best = std::numeric_limits<double>::infinity();
+    double h_last = std::numeric_limits<double>::quiet_NaN();
     auto residual = [&](double h) -> double {
         perf::count(perf::n_fv_alg_resid);
         state_->node_head[un] = h;
+        h_last = h;
         double r = q_ext;
         for (int p = b; p < e; ++p) {
             const auto up = static_cast<std::size_t>(p);
@@ -1877,16 +2475,37 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
                     (cl >= 0) && cell_active_[static_cast<std::size_t>(cl)];
                 const bool ra =
                     (cr >= 0) && cell_active_[static_cast<std::size_t>(cr)];
-                // The whole of Phase 3a rests on this number: every trial head
-                // pays a FULL flux (momentum, I1, wave speeds, 20 stores) to
-                // read back one scalar, f_mass_. Counted separately from the
-                // residual count so the multiplier is measured, not assumed.
-                if (la || ra) { perf::count(perf::n_fv_alg_flux); computeFaceFlux(f); }
+                // Every trial head reads back one scalar, f_mass_: the trial
+                // flux is MASS-ONLY (plan Phase 1c); finalize() below runs the
+                // full flux once at the accepted head. Counted separately from
+                // the residual count so the multiplier is measured, not assumed.
+                if (la || ra) { perf::count(perf::n_fv_alg_flux); computeFaceFlux(f, true); }
             }
             r += mesh_->node_face_sign[up] * f_mass_[uf];
         }
         if (std::fabs(r) < std::fabs(r_best)) { h_best = h; r_best = r; }
         return r;
+    };
+    // The full flux (momentum, corrections, face states) at the head the last
+    // trial evaluated — exactly what the last full-flux residual used to leave
+    // behind, so every exit below calls this first. The head itself is
+    // restored to whatever the exit chose (the balanced exit keeps h0).
+    auto finalize = [&]() {
+        if (!(h_last == h_last)) return;              // no trial ran
+        const double keep = state_->node_head[un];
+        state_->node_head[un] = h_last;
+        for (int p = b; p < e; ++p) {
+            const auto up = static_cast<std::size_t>(p);
+            const int f = mesh_->node_face_idx[up];
+            const auto uf = static_cast<std::size_t>(f);
+            if (!faceIsLive(f)) continue;
+            const int cl = mesh_->face_cl[uf];
+            const int cr = mesh_->face_cr[uf];
+            const bool la = (cl >= 0) && cell_active_[static_cast<std::size_t>(cl)];
+            const bool ra = (cr >= 0) && cell_active_[static_cast<std::size_t>(cr)];
+            if (la || ra) computeFaceFlux(f);
+        }
+        state_->node_head[un] = keep;
     };
     // Σ|dQ/dH| at the ghost states — the quasi-Newton step estimate.
     auto resistAt = [&](double h) -> double {
@@ -1902,8 +2521,10 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
                 mesh_->cell_geom[static_cast<std::size_t>(cell)])];
             const double hg = h - mesh_->face_zb[uf];
             if (hg <= k::kDryDepth) continue;
-            double ag, tg, rg, i1g;
-            k::closureAll(g, hg, &ag, &tg, &rg, &i1g);
+            perf::count(perf::n_fv_geom_area);
+            perf::count(perf::n_fv_geom_width);
+            const double ag = k::areaOfDepth(g, hg);
+            const double tg = k::widthOfDepth(g, hg);
             if (ag <= k::kDryArea || tg <= 0.0) continue;
             resist += std::sqrt(k::kGravity * ag * tg);
         }
@@ -1936,13 +2557,32 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
     }
     double lo = invert;
     double hi = invert + top;
+    // TPA (issue #156 Phase 4): a SEALED node inside a pressurized column
+    // carries sub-atmospheric head — the floor extends below the invert by
+    // the column-separation bound, matching the flag update's kCavHead. Only
+    // when at least one incident cell is flagged: an all-free sealed node is
+    // an ordinary junction and keeps the ordinary floor.
+    if (tpa_ && mesh_->node_sur_depth[un] > 0.0) {
+        bool any_flagged = false;
+        for (int p = b; p < e; ++p) {
+            const auto uf = static_cast<std::size_t>(
+                mesh_->node_face_idx[static_cast<std::size_t>(p)]);
+            const int cell = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
+                                                       : mesh_->face_cr[uf];
+            if (cell >= 0 && tpaCell(static_cast<std::size_t>(cell))) {
+                any_flagged = true;
+                break;
+            }
+        }
+        if (any_flagged) lo = invert - 35.0;
+    }
 
     const double h0 = state_->node_head[un];
     double h = std::min(std::max(h0, lo), hi);
     double r = (h == h0) ? residual(h0) : residual(h);
     // Already balanced (a lake at rest is the load-bearing case): leave the
     // head exactly where it is.
-    if (std::fabs(r) <= kAlgQEps) { state_->node_head[un] = h0; return; }
+    if (std::fabs(r) <= kAlgQEps) { state_->node_head[un] = h0; finalize(); return; }
 
     // Expanding bracket from the CURRENT head, never a probe of the domain
     // ends: the ceiling can be arbitrarily high (a junction with no rim gets
@@ -1955,9 +2595,9 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
     // evaluated at the clamped head.
     const double dir  = (r > 0.0) ? 1.0 : -1.0;
     const double res0 = resistAt(h);
-    double step = std::max(opts_.node_picard_tol,
+    double step = std::max(kAlgHeadTol,
                            (res0 > 0.0) ? std::fabs(r) / res0
-                                        : opts_.node_picard_tol);
+                                        : kAlgHeadTol);
     double h_a = h, r_a = r;
     bool bracketed = false;
     for (int it = 0; it < kAlgMaxExpand; ++it) {
@@ -1965,7 +2605,7 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
         if (h_b <= lo) h_b = lo;
         if (h_b >= hi) h_b = hi;
         const double r_b = residual(h_b);
-        if (std::fabs(r_b) <= kAlgQEps) return;      // landed on the root
+        if (std::fabs(r_b) <= kAlgQEps) { finalize(); return; }   // landed on the root
         if ((r_a > 0.0) != (r_b > 0.0)) {            // sign change: bracketed
             if (dir > 0.0) { lo = h_a; hi = h_b; }
             else           { lo = h_b; hi = h_a; }
@@ -1976,6 +2616,7 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
         if (h_b == lo || h_b == hi) {                // clamped at an end
             // Ceiling with inflow still unpassed = the slot plateau; hand
             // the face to the prescribed-discharge fallback if it applies.
+            finalize();   // the fallback reads the face STATE at this head
             if (h_b == hi && r_b > 0.0 && prescribeDegree1()) return;
             return;
         }
@@ -1985,6 +2626,7 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
     if (!bracketed) {
         // Budget spent walking: settle on the best head seen.
         if (h_best != h_a) residual(h_best);
+        finalize();
         return;
     }
 
@@ -2000,7 +2642,7 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
         h = h_new;
         r = residual(h);
         if (r > 0.0) lo = h; else hi = h;
-        if (std::fabs(dh) <= opts_.node_picard_tol ||
+        if (std::fabs(dh) <= kAlgHeadTol ||
             std::fabs(r) <= kAlgQEps)
             break;
     }
@@ -2009,9 +2651,10 @@ void ExplicitFvSolver::solveAlgebraicNode(int n, double dt,
     // would otherwise park the head a full tolerance away and bleed
     // tolerance-scale noise into a system at rest.
     if (std::fabs(r_best) < std::fabs(r)) residual(h_best);
-    // The final residual() evaluation left both the head and the incident
-    // fluxes at the accepted root — the solve owns the head; updateNodes will
-    // not overwrite it for this node.
+    // The final residual() evaluation left the head at the accepted root and
+    // finalize() the incident fluxes — the solve owns the head; updateNodes
+    // will not overwrite it for this node.
+    finalize();
 }
 
 // Structure links contribute a source/sink pair. They are held constant
@@ -2028,6 +2671,12 @@ void ExplicitFvSolver::refreshStructFlows(const FvStepForcing& forcing) {
         const int nstruct = static_cast<int>(mesh_->struct_link.size());
         for (int s = 0; s < nstruct; ++s) {
             const auto us = static_cast<std::size_t>(s);
+            // A DUMMY entry's forcing slot holds nothing meaningful: its
+            // discharge is derived per substep by refreshDummyFlows and lands
+            // in node_qdummy_, not here. Reading it would double-count against
+            // whatever the engine-side pass-through last happened to compute.
+            if (!mesh_->struct_is_dummy.empty() && mesh_->struct_is_dummy[us])
+                continue;
             const double q = forcing.structure_flow[mesh_->struct_link[us]];
             if (q == 0.0) continue;
             node_qstruct_[static_cast<std::size_t>(mesh_->struct_n1[us])] -= q;
@@ -2054,20 +2703,75 @@ void ExplicitFvSolver::refreshStructFlows(const FvStepForcing& forcing) {
     if (node_lat_div_.size() != nn) node_lat_div_.assign(nn, 0);
     else std::fill(node_lat_div_.begin(), node_lat_div_.end(), 0);
     for (std::size_t un = 0; un < nn; ++un) {
-        const bool clean = node_pass_static_[un] &&
-                           node_qstruct_[un] == 0.0 && node_carry_[un] == 0.0;
+        // A dummy-drain node is never a clean splice, however few faces it has:
+        // the pass-through removes water at it, so its two neighbours are not
+        // presenting anything to each other.
+        const bool drains =
+            !mesh_->node_dummy_drain.empty() && mesh_->node_dummy_drain[un];
+        // A SURCHARGED degree-2 junction takes the solved path too. The splice
+        // has no head state and so no rim: the water an overloaded pipe cannot
+        // pass has nowhere to go but the Preissmann slot, and its ~1e-3 m² of
+        // storage per pipe turns a tenth of a m³ of excess into a hundred
+        // metres of head (Bellinge, 2026-09-05 — ERROR 14 within a routing
+        // step of the first overload). Capping the injection alone
+        // (face_a_rim_) bounds the mass but leaves an on/off relief valve on a
+        // stiff acoustic line, which chatters and still diverged on chains of
+        // small pipes. The solved path is the boundary condition DW provides:
+        // a ghost head clamped at the rim, the surplus booked as flooding or
+        // ponding. Under pressure the ~1 mm splice accuracy is moot, so the
+        // trade is free. Evaluated here, at the top of a cycle with the
+        // ledger settled, like every other forcing change; the injection cap
+        // covers the cycle in between. Sticky in practice — a solved node
+        // banks a tolerance-scale residual carry every substep, which the
+        // carry test below reads as "not clean" — exactly as a structure flow
+        // has always revoked the splice for good.
+        const bool clean = node_pass_static_[un] && !drains &&
+                           node_qstruct_[un] == 0.0 && node_carry_[un] == 0.0 &&
+                           !incidentPressurized(un);
         const double lat =
             forcing.node_lateral ? forcing.node_lateral[un] : 0.0;
         if (clean && lat != 0.0) {
-            node_lat_div_[un] = 1;
+            bool credited = false;
             for (int p = mesh_->node_face_ptr[un];
                  p < mesh_->node_face_ptr[un + 1]; ++p) {
                 const auto uf = static_cast<std::size_t>(
                     mesh_->node_face_idx[static_cast<std::size_t>(p)]);
                 const int c = (mesh_->face_cl[uf] >= 0) ? mesh_->face_cl[uf]
                                                         : mesh_->face_cr[uf];
-                if (c >= 0)
+                if (c >= 0) {
                     cell_qlat_[static_cast<std::size_t>(c)] += 0.5 * lat;
+                    credited = true;
+                    // A dry receiving cell is inactive under compaction; the
+                    // rebuild (see rebuildActiveLists) activates it.
+                    if (!cell_active_.empty() &&
+                        !cell_active_[static_cast<std::size_t>(c)])
+                        lists_valid_ = false;
+                }
+            }
+            // Flag only once a cell actually took the water: nodeLateral()
+            // reads the flag as "already delivered", so flagging a node whose
+            // faces credited nothing would make the inflow vanish. (A clean
+            // node always has two boundary faces, so this is a no-op today.)
+            if (credited) node_lat_div_[un] = 1;
+        } else if (lat != 0.0 && mesh_->node_kind[un] == kNodeVirtual &&
+                   !mesh_->node_vj_face.empty() &&
+                   mesh_->node_vj_face[un] >= 0) {
+            // A virtual junction owns no faces — its two conduits were spliced
+            // into one interior face — so the same half/half zero-momentum
+            // split goes to the two cells adjoining that face. Without this
+            // the lateral was booked by the mass balance and routed nowhere
+            // (plans/VJ_LATERAL_INFLOW_PLAN_2026-09-04.md §E3).
+            const auto uf = static_cast<std::size_t>(mesh_->node_vj_face[un]);
+            const int cl = mesh_->face_cl[uf];
+            const int cr = mesh_->face_cr[uf];
+            if (cl >= 0 && cr >= 0) {
+                cell_qlat_[static_cast<std::size_t>(cl)] += 0.5 * lat;
+                cell_qlat_[static_cast<std::size_t>(cr)] += 0.5 * lat;
+                node_lat_div_[un] = 1;
+                if (!cell_active_.empty() &&
+                    (!cell_active_[static_cast<std::size_t>(cl)] ||
+                     !cell_active_[static_cast<std::size_t>(cr)]))
+                    lists_valid_ = false;
             }
         }
         node_pass_[un] = (clean && (lat == 0.0 || node_lat_div_[un])) ? 1 : 0;
@@ -2087,14 +2791,91 @@ void ExplicitFvSolver::refreshStructFlows(const FvStepForcing& forcing) {
         // head is, not whether the incident wet cells describe the stage the
         // profile should draw. Confirmed by measurement — the published
         // excess survives on nodes with no lateral inflow at all.
-        node_pub_[un] = (node_pub_static_[un] && node_qstruct_[un] == 0.0)
-                        ? 1 : 0;
+        node_pub_[un] = (node_pub_static_[un] && node_qstruct_[un] == 0.0 &&
+                         !drains) ? 1 : 0;
+    }
+}
+
+// A DUMMY conduit has no section to march, so it cannot be a control volume;
+// but it is not a wall either. It declares that whatever reaches its upstream
+// node leaves immediately for its downstream node, with no storage and no head
+// loss — legacy findNonConduitFlow (dynwave.c:418-449) sets Q = inflow +
+// overflow and updateNodeFlows books it as outflow, so the upstream node's
+// continuity reduces to dV/dt = 0. It is a free-drainage boundary.
+//
+// That is what this reproduces, and it is why the discharge cannot come from
+// the forcing array the way a weir's does: the answer is not a head relation,
+// it is the arrival rate at the upstream node — a quantity only the solver
+// knows, and only at the moment the node update is about to consume it.
+// Calling this immediately before each node update, with the SAME arrival
+// volume that update will integrate, makes the drain exact rather than lagged
+// by a substep.
+template <class ArrivedFn>
+void ExplicitFvSolver::refreshDummyFlows(double dt, const FvStepForcing& forcing,
+                                         ArrivedFn&& arrived) {
+    if (mesh_->struct_is_dummy.empty() || dt <= 0.0) return;
+    std::fill(node_qdummy_.begin(), node_qdummy_.end(), 0.0);
+
+    const int nstruct = static_cast<int>(mesh_->struct_link.size());
+    for (int s = 0; s < nstruct; ++s) {
+        const auto us = static_cast<std::size_t>(s);
+        if (!mesh_->struct_is_dummy[us]) continue;
+        const auto u1 = static_cast<std::size_t>(mesh_->struct_n1[us]);
+        const auto u2 = static_cast<std::size_t>(mesh_->struct_n2[us]);
+
+        // Everything arriving at the upstream node over this window: the net
+        // face volume, plus its lateral and structure forcing. node_qdummy_ is
+        // deliberately NOT in the sum — checkDummyLinks guarantees a dummy is
+        // the only outlet of its upstream node, so there is no second dummy
+        // here to chase, and a node cannot be the upstream end of one dummy
+        // and the downstream end of another.
+        double q = arrived(u1) / dt + nodeLateral(forcing, u1) +
+                   node_qstruct_[u1];
+
+        // Never reverses: a dummy is a one-way declaration of connectivity,
+        // and legacy's Q = inflow + overflow is a magnitude sum that cannot go
+        // negative. A node running dry simply passes nothing.
+        if (q < 0.0) q = 0.0;
+
+        // Control setting, then FLOW_LIMIT — the same order and the same
+        // meaning as computeNonConduitFlowOne's DUMMY branch. A closed dummy
+        // is a wall, and the upstream node then fills on its own continuity,
+        // exactly as it does under DW.
+        if (forcing.link_q_cap) {
+            const double cap =
+                forcing.link_q_cap[static_cast<std::size_t>(mesh_->struct_link[us])];
+            if (cap >= 0.0 && q > cap) q = cap;
+        }
+
+        if (forcing.node_source_max && u1 < static_cast<std::size_t>(forcing.n_nodes))
+            q = std::min(q, forcing.node_source_max[u1]);
+
+        node_qdummy_[u1] -= q;
+        node_qdummy_[u2] += q;
+        dummy_vol_[us]   += q * dt;
     }
 }
 
 void ExplicitFvSolver::updateNodes(double dt, const FvStepForcing& forcing) {
     perf::GatedTimer _pt(perf::sec_fv_nodeupdate);
     const int nn = mesh_->n_nodes();
+
+    // Net face volume arriving at a node over this substep, which is exactly
+    // what the loop below is about to add to its storage.
+    refreshDummyFlows(dt, forcing, [&](std::size_t un) {
+        double sum = 0.0;
+        for (int p = mesh_->node_face_ptr[un]; p < mesh_->node_face_ptr[un + 1]; ++p) {
+            const auto up = static_cast<std::size_t>(p);
+            sum += mesh_->node_face_sign[up] *
+                   f_mass_[static_cast<std::size_t>(mesh_->node_face_idx[up])];
+        }
+        return sum * dt;
+    });
+
+    // Lateral the incident cells refused at their rim this substep
+    // (injectDivertedLateral) — booked before the ledger loop so a pondable
+    // node demoted by it integrates the bucket path in this same substep.
+    bookLateralSpills(nullptr);
 
     for (int n = 0; n < nn; ++n) {
         const auto un = static_cast<std::size_t>(n);
@@ -2116,6 +2897,7 @@ void ExplicitFvSolver::updateNodes(double dt, const FvStepForcing& forcing) {
             if (q > 0.0) node_in_[un]  += q * dt;
             else         node_out_[un] -= q * dt;
         }
+        bookDivertedLateral(un, dt, forcing);
 
         if (forcing.node_fixed_head && std::isfinite(forcing.node_fixed_head[un])) {
             // Stage boundary (outfalls, tide/time-series). The head is imposed;
@@ -2125,7 +2907,8 @@ void ExplicitFvSolver::updateNodes(double dt, const FvStepForcing& forcing) {
             continue;
         }
 
-        const double q_lat = nodeLateral(forcing, un) + node_qstruct_[un];
+        const double q_lat = nodeLateral(forcing, un) + node_qstruct_[un] +
+                             nodeQDummy(un);
 
         if (algebraicActive(n)) {
             settleAlgebraicNode(n, node_carry_[un] + dt * (sum_faces + q_lat));
@@ -2192,7 +2975,17 @@ void ExplicitFvSolver::settleAlgebraicNode(int n, double carry) {
     // are where an interface junction's water physically stands — split
     // evenly, zero momentum. Anything a near-dry cell cannot absorb stays
     // in the carry and demotes the node next step (conservative fallback).
-    if (!node_pass_.empty() && node_pass_[un] && carry != 0.0) {
+    //
+    // Never into a PRESSURIZED cell. Above the crown a cell's storage is the
+    // Preissmann slot, t_slot·dx, so the O(ΔB) window residual that is
+    // harmless as free-surface volume lands as hundreds of metres of head
+    // (Bellinge 2026-09-05: single-step spikes to 0.7–1.8 km at width-step
+    // junctions, recovering within the next step). Bank it instead — the
+    // banked carry is also what hands the junction to the solved path at
+    // the next refresh (refreshStructFlows), where the solve absorbs the
+    // residual as forcing.
+    if (!node_pass_.empty() && node_pass_[un] && carry != 0.0 &&
+        !incidentPressurized(un)) {
         double left = carry;
         const int b = mesh_->node_face_ptr[un];
         const int e = mesh_->node_face_ptr[un + 1];
@@ -2216,6 +3009,7 @@ void ExplicitFvSolver::settleAlgebraicNode(int n, double carry) {
             state_->cell_a[uc] = a_new;
             state_->cell_h[uc] = h_new;
             cell_eta_[uc] = mesh_->cell_zb[uc] + h_new;
+            cacheClosure(uc, g, h_new);
             if (h_new <= k::kDryDepth) {
                 state_->cell_q[uc] = 0.0;
                 cell_u_[uc]        = 0.0;
@@ -2239,6 +3033,66 @@ void ExplicitFvSolver::settleAlgebraicNode(int n, double carry) {
 }
 
 // ===========================================================================
+// Diverted lateral: rim cap and spill booking (face_a_rim_ in the header)
+// ===========================================================================
+
+double ExplicitFvSolver::injectDivertedLateral(std::size_t uc, double a_new,
+                                               double dt, double inv_dx) {
+    const double add = dt * cell_qlat_[uc] * inv_dx;
+    // Withdrawals are not capped (the a_new >= 0 clamp that follows handles
+    // them), and a cell with no rimmed face takes the whole inflow as before.
+    if (add <= 0.0 || face_a_rim_.empty()) return a_new + add;
+    const int faces[2] = {mesh_->cell_face0[uc], mesh_->cell_face1[uc]};
+    int    f_rim = -1;
+    double a_rim = std::numeric_limits<double>::infinity();
+    for (const int f : faces) {
+        const auto uf = static_cast<std::size_t>(f);
+        if (face_a_rim_[uf] < a_rim) { a_rim = face_a_rim_[uf]; f_rim = f; }
+    }
+    if (f_rim < 0 || a_new + add <= a_rim) return a_new + add;
+    // The lowest rim binds first, as it would for two manholes on one pipe.
+    // Nothing already in the cell is removed — water its neighbours pushed
+    // above the rim stays and drains through the fluxes; only the INJECTION
+    // is refused, and the refused volume is banked for the node update.
+    const double room = std::max(0.0, a_rim - a_new);
+    face_lat_spill_[static_cast<std::size_t>(f_rim)] += (add - room) / inv_dx;
+    return a_new + room;
+}
+
+void ExplicitFvSolver::bookLateralSpills(const std::vector<int>* nodes) {
+    if (face_lat_spill_.empty()) return;
+    auto book = [&](int n) {
+        const auto un = static_cast<std::size_t>(n);
+        if (!node_pass_static_[un]) return;      // only their faces carry a rim
+        double spill = 0.0;
+        for (int p = mesh_->node_face_ptr[un];
+             p < mesh_->node_face_ptr[un + 1]; ++p) {
+            const auto uf = static_cast<std::size_t>(
+                mesh_->node_face_idx[static_cast<std::size_t>(p)]);
+            spill += face_lat_spill_[uf];
+            face_lat_spill_[uf] = 0.0;
+        }
+        if (spill <= 0.0) return;
+        if (mesh_->node_can_pond[un]) {
+            // Same destination as settleAlgebraicNode's ponding branch: real
+            // water on the ponded area. algebraicActive() then reads the node
+            // as demoted and the ledger loop that follows integrates it on the
+            // bucket path, head from volume, until it drains below v_full.
+            state_->node_volume[un] =
+                std::max(state_->node_volume[un], node_vfull_[un]) + spill;
+        } else {
+            flood_vol_[un] += spill;
+        }
+    };
+    if (nodes) {
+        for (const int n : *nodes) book(n);
+    } else {
+        const int nn = mesh_->n_nodes();
+        for (int n = 0; n < nn; ++n) book(n);
+    }
+}
+
+// ===========================================================================
 // frictionFor — Manning, or the force main's own pressurized law
 // ===========================================================================
 
@@ -2259,18 +3113,20 @@ void ExplicitFvSolver::settleAlgebraicNode(int n, double carry) {
 // The friction laws come from HydClosureKernels.hpp — the same bodies
 // ForceMain.cpp's public entry points forward to — so this compiles unchanged
 // for the device backend (plan §5.1).
-double ExplicitFvSolver::frictionFor(const FvGeometry& g, double q, double u,
+double ExplicitFvSolver::frictionFor(const FvGeometry& g, double roughness,
+                                     double rough_factor, double q, double u,
                                      double h, double dt) const {
+    perf::count(perf::n_fv_geom_hydrad);
     const double r = k::hydRadOfDepth(g, h);
     if (g.xs.type == static_cast<int>(XSectShape::FORCE_MAIN) && h >= g.y_full) {
         const double absu = std::fabs(u);
         if (absu <= 0.0) return q;
-        const double sf = (g.roughness < 1.0)
-                              ? hydkernels::fricSlopeDW(u, r, g.roughness)
-                              : hydkernels::fricSlopeHW(u, r, g.roughness);
+        const double sf = (roughness < 1.0)
+                              ? hydkernels::fricSlopeDW(u, r, roughness)
+                              : hydkernels::fricSlopeHW(u, r, roughness);
         return q / (1.0 + dt * k::kGravity * sf / absu);
     }
-    return k::frictionUpdate(q, u, r, dt, g.rough_factor);
+    return k::frictionUpdate(q, u, r, dt, rough_factor);
 }
 
 // ===========================================================================
@@ -2336,6 +3192,8 @@ void ExplicitFvSolver::saveState() {
     save_flood_     = flood_vol_;
     save_qint_      = cell_q_int_;
     save_carry_     = node_carry_;
+    if (tpa_) save_tpa_ = state_->cell_tpa;   // regime flags roll back with
+                                              // the state that set them (#156)
 }
 
 void ExplicitFvSolver::restoreState() {
@@ -2352,6 +3210,12 @@ void ExplicitFvSolver::restoreState() {
     flood_vol_          = save_flood_;
     cell_q_int_         = save_qint_;
     node_carry_         = save_carry_;
+    // Spill banked by the cells is drained by the node update of the same
+    // substep, so nothing should be pending here; a rolled-back step must not
+    // leave any to be booked against the restored state.
+    std::fill(face_lat_spill_.begin(), face_lat_spill_.end(), 0.0);
+    if (tpa_) state_->cell_tpa = save_tpa_;   // BEFORE refreshDepths: h(A)
+                                              // is regime-dependent (#156)
     refreshDepths();               // cell_h / eta / u are derived
 }
 
@@ -2411,10 +3275,13 @@ PressurizedView ExplicitFvSolver::pressView(const FvStepForcing& forcing) {
     pv.node_vfull   = &node_vfull_;
     pv.node_lat_div = &node_lat_div_;
     pv.cell_qlat    = &cell_qlat_;
+    pv.uf_grad      = &uf_grad_;   // empty unless unsteady_friction (issue #156)
     return pv;
 }
 
 void ExplicitFvSolver::takeSubstep(double dt, const FvStepForcing& forcing) {
+    if (tpa_) updateTpaFlags();   // once per substep, before reconstruction;
+                                  // rolled back with the state on rejection
     reconstructState();
     computeFluxes();
     // R2a: derive the pressurized subset BEFORE the node pass, so the node
@@ -2426,6 +3293,12 @@ void ExplicitFvSolver::takeSubstep(double dt, const FvStepForcing& forcing) {
     }
     relaxNodeFluxes(dt, forcing);   // BEFORE limiting: the limiter must bound
                                     // the flux that is actually applied
+    if (opts_.unsteady_friction != 0)
+        computeUfGradients(nullptr);   // old-state snapshot (issue #156);
+                                       // BEFORE the implicit solve, whose
+                                       // face fold consumes the same snapshot
+                                       // (nothing between here and updateCells
+                                       // writes cell_u_ or the cell state)
     if (press_step_) {
         // The implicit acoustic solve: overwrites the implicit faces'
         // entries in f_mass_ (the single flux ledger), so everything
@@ -2446,6 +3319,30 @@ void ExplicitFvSolver::takeSubstep(double dt, const FvStepForcing& forcing) {
         PressurizedView pv = pressView(forcing);
         press_.finalizeCells(pv);
     }
+    // Same-substep column-separation floor (issue #156 R4d). The entry/exit
+    // rule at the TOP of this function applies the floor to the state the
+    // substep STARTED from, so a single substep could overshoot it and carry
+    // the overshoot through the post-step census and the next reconstruction
+    // (measured −35 ft at the crest on the diverged e3 RK2 run, against the
+    // −30 ft physical limit). Apply the exit in the substep that crosses the
+    // floor — same action as updateTpaFlags' refresh(0): regime change with
+    // regime-true h, no mass touched.
+    if (tpa_) {
+        const int nc2 = mesh_->n_cells();
+        for (int c = 0; c < nc2; ++c) {
+            const auto uc = static_cast<std::size_t>(c);
+            if (!cell_active_[uc] || state_->cell_tpa[uc] == 0) continue;
+            const FvGeometry& g =
+                mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
+            const double a = state_->cell_a[uc];
+            if (a >= g.a_crown - g.t_slot * kCavHead) continue;
+            state_->cell_tpa[uc] = 0;
+            const double h2 = k::depthOfArea(g, a);
+            state_->cell_h[uc] = h2;
+            cell_eta_[uc] = mesh_->cell_zb[uc] + h2;
+            cacheClosure(uc, g, h2);
+        }
+    }
     dispersionSolve(dt);
 }
 
@@ -2461,6 +3358,7 @@ void ExplicitFvSolver::rkSave() {
     rk_flood_     = flood_vol_;
     rk_qint_      = cell_q_int_;
     rk_carry_     = node_carry_;
+    if (tpa_) rk_tpa_ = state_->cell_tpa;
 }
 
 void ExplicitFvSolver::rkAverage(const FvStepForcing& forcing) {
@@ -2511,6 +3409,18 @@ void ExplicitFvSolver::rkAverage(const FvStepForcing& forcing) {
     avg_delta(cell_q_int_, rk_qint_);
     avg_delta(node_carry_, rk_carry_);
 
+    // The regime latch travels with the state (issue #156 R4c) — the same
+    // invariant saveState/restoreState carry for step rejection: h(A) must be
+    // read in the regime that produced A. The averaged area anchors on Uⁿ,
+    // exactly as a rollback does; leaving stage 2's flags here made the
+    // refresh below read the average on whatever regime the SECOND stage
+    // happened to end in. Anchoring is not a stability fix (measured: it does
+    // not touch the RK2 x TPA amplification, which the divergence guard now
+    // catches) — it is the file's own documented invariant, restored. The
+    // next substep's updateTpaFlags re-derives transitions on the averaged
+    // state as usual.
+    if (tpa_) state_->cell_tpa = rk_tpa_;
+
     refreshDepths();
 }
 
@@ -2525,9 +3435,20 @@ double ExplicitFvSolver::cellStableDt(int c) const {
 
     double speed = 0.0;
     const double h = state_->cell_h[uc];
-    if (h > k::kDryDepth)
+    // TPA (issue #156): a FLAGGED cell's fluxes run at the acoustic slot
+    // celerity at ANY h — the signed slot line has no free-surface width, and
+    // a sub-crown (or sub-invert, h < 0) sealed cell tiered on the table
+    // width lands in a coarse tier its own acoustic exchange then detonates.
+    // Same predicate the global census (censusDt::consider_cell) uses; the
+    // LTS bounds were the one place the regime was missed (measured on E3:
+    // the at-rest pressurized sloped column NaN'd inside the first report
+    // step — P5 task-3 finding).
+    const bool tpa_c = tpaCell(uc);
+    if (tpa_c || h > k::kDryDepth) {
         speed = std::fabs(cell_u_[uc]) +
-                k::celerity(state_->cell_a[uc], k::widthOfDepth(g, h));
+                k::celerity(state_->cell_a[uc],
+                            tpa_c ? g.t_slot : cell_t_[uc]);   // cached T(cell_h)
+    }
 
     // The ghost a boundary face presents counts against THIS cell's step, for
     // the same reason the global census is face-based: a surcharged manhole
@@ -2539,12 +3460,31 @@ double ExplicitFvSolver::cellStableDt(int c) const {
         const auto uf = static_cast<std::size_t>(f);
         const int nd = mesh_->face_node[uf];
         if (nd < 0) continue;
+        // Pass-through junction (plan Phase 1e): bound the far cell's state,
+        // which is what the face actually fluxes (see censusDt).
+        const int far = census_pass_far_ ? passThroughFarCell(f, nd) : -1;
+        if (far >= 0) {
+            const auto ufar = static_cast<std::size_t>(far);
+            const bool tpa_f = tpaCell(ufar);
+            if (tpa_f || state_->cell_h[ufar] > k::kDryDepth) {
+                const FvGeometry& gfar =
+                    mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[ufar])];
+                speed = std::max(speed,
+                                 std::fabs(cell_u_[ufar]) +
+                                     k::celerity(state_->cell_a[ufar],
+                                                 tpa_f ? gfar.t_slot
+                                                       : cell_t_[ufar]));
+            }
+            continue;
+        }
         const double hg = state_->node_head[static_cast<std::size_t>(nd)] -
                           mesh_->face_zb[uf];
         if (hg <= k::kDryDepth) continue;
-        double ag, wg, rg, i1g;
-        k::closureAll(g, hg, &ag, &wg, &rg, &i1g);
-        speed = std::max(speed, std::fabs(cell_u_[uc]) + k::celerity(ag, wg));
+        perf::count(perf::n_fv_geom_area);
+        perf::count(perf::n_fv_geom_width);
+        speed = std::max(speed, std::fabs(cell_u_[uc]) +
+                                    k::celerity(k::areaOfDepth(g, hg),
+                                                k::widthOfDepth(g, hg)));
     }
 
     return (speed > 1.0e-12) ? opts_.cfl * dx / speed : 1.0e30;
@@ -2568,18 +3508,20 @@ double ExplicitFvSolver::algebraicNodeStableDt(int n) const noexcept {
         // Not gated on cell_active_, for the same reason nodeStableDt is not:
         // the tier schedule must not depend on whether compaction is on.
         const double h = state_->cell_h[uc];
-        if (h <= k::kDryDepth) continue;
+        const bool tpa_c = tpaCell(uc);   // full of water at any h (#156)
+        if (!tpa_c && h <= k::kDryDepth) continue;
         const FvGeometry& g =
             mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
-        const double t = k::widthOfDepth(g, h);
+        const double t = tpa_c ? g.t_slot : cell_t_[uc];   // cached T(cell_h)
         if (t <= 0.0) continue;
 
         // Every live face contributes flux the junction has to balance.
         admit_sum += t * k::celerity(state_->cell_a[uc], t);
 
         // Only a PRESSURIZED face contributes the stiff storage. Below the
-        // crown the slot has not engaged and the response is soft.
-        if (h >= g.y_crown) {
+        // crown the slot has not engaged and the response is soft. A FLAGGED
+        // cell is pressurized at any h (#156).
+        if (tpa_c || h >= g.y_crown) {
             const double store = 0.5 * mesh_->cell_dx[uc] * t;
             if (store < store_min) store_min = store;
         }
@@ -2626,10 +3568,11 @@ double ExplicitFvSolver::nodeStableDt(int n) const {
         // the same whether or not compaction is on (§6.10), and a dry cell is
         // excluded by its own depth test in either case.
         const double h = state_->cell_h[uc];
-        if (h <= k::kDryDepth) continue;
+        const bool tpa_c = tpaCell(uc);   // full of water at any h (#156)
+        if (!tpa_c && h <= k::kDryDepth) continue;
         const FvGeometry& g =
             mesh_->geom[static_cast<std::size_t>(mesh_->cell_geom[uc])];
-        const double t = k::widthOfDepth(g, h);
+        const double t = tpa_c ? g.t_slot : cell_t_[uc];   // cached T(cell_h)
         if (t <= 0.0) continue;
         dt = std::min(dt, k::faceCflDt(opts_.cfl, as / t, cell_u_[uc],
                                        k::celerity(state_->cell_a[uc], t)));
@@ -2637,7 +3580,7 @@ double ExplicitFvSolver::nodeStableDt(int n) const {
     return dt;
 }
 
-int ExplicitFvSolver::assignTiers(double& dt0) {
+int ExplicitFvSolver::assignTiers(double& dt0, int k_cap_override) {
     perf::GatedTimer _pt(perf::sec_fv_tier);
     const int nc = mesh_->n_cells();
     const int nf = mesh_->n_faces();
@@ -2666,21 +3609,15 @@ int ExplicitFvSolver::assignTiers(double& dt0) {
         dt_cell[uc] = cellStableDt(c);
         if (dt_cell[uc] < dt_min) { dt_min = dt_cell[uc]; dt_argmin_cell = c; }
     }
-    // FV_NODE_DT NONE: the node's term is an EXPLICIT stability bound on an
-    // unconditionally-stable semi-implicit update (see NodeDtLimit). Dropping
-    // it from dt0 lets the CELL Courant limit set the base step — which is what
-    // the non-LTS path has always used — while tiering stays intact. Nodes are
-    // still TIERED (dt_node feeds tier_of below), just not allowed to drag the
-    // global base step down with them.
-    // As in censusDt(): NONE is a semi-implicit privilege — an explicitly
-    // coupled node's bound is a genuine stability limit and always applies.
-    const bool node_sets_dt0 =
-        (opts_.node_dt_limit == NodeDtLimit::STABILITY) ||
-        (opts_.node_coupling != NodeCoupling::SEMI_IMPLICIT);
+    // The node's term is an EXPLICIT stability bound on an unconditionally
+    // stable semi-implicit update; it stays in dt0 for ACCURACY (censusDt's
+    // rationale). nodeStableDt() exempts algebraic junctions and outfalls, so
+    // only storage-like nodes ever set the base step; every node is still
+    // TIERED (dt_node feeds tier_of below).
     for (int n = 0; n < nn; ++n) {
         const auto un = static_cast<std::size_t>(n);
         dt_node[un] = nodeStableDt(n);
-        if (node_sets_dt0 && dt_node[un] < dt_min) {
+        if (dt_node[un] < dt_min) {
             dt_min = dt_node[un];
             dt_argmin_cell = -2;   // node bound owns dt0
         }
@@ -2742,7 +3679,8 @@ int ExplicitFvSolver::assignTiers(double& dt0) {
         else                     ++dt_argmin_free_;
     }
 
-    const int k_cap = std::min(std::max(opts_.lts_max_tiers, 1), kMaxLtsTiers);
+    int k_cap = std::min(std::max(opts_.lts_max_tiers, 1), kMaxLtsTiers);
+    if (k_cap_override > 0) k_cap = std::min(k_cap, k_cap_override);
     auto tier_of = [&](double dt) -> int {
         if (dt >= 1.0e29) return k_cap - 1;
         const int k = static_cast<int>(std::floor(std::log2(dt / dt_min)));
@@ -2931,8 +3869,9 @@ void ExplicitFvSolver::fireFaces(const std::vector<int>& faces, double dt0) {
         live_stamp_[static_cast<std::size_t>(faces[static_cast<std::size_t>(i)])] =
             live_gen_;
 
+    perf::CounterBatch counters;
 #ifdef SWMM_USE_OPENMP
-#pragma omp parallel for schedule(static) if (n >= kOmpMinFaces)
+#pragma omp parallel for schedule(static) if (n >= kOmpMinFaces) private(counters)
 #endif
     for (int i = 0; i < n; ++i)
         computeFaceFlux(faces[static_cast<std::size_t>(i)]);
@@ -2942,24 +3881,29 @@ void ExplicitFvSolver::fireFaces(const std::vector<int>& faces, double dt0) {
     // node's OWN tier step. Conservation is untouched for the same reason: the
     // correction lands in f_mass_, which is what gets booked into both incident
     // accumulators below.
-    const bool semi = (opts_.node_coupling == NodeCoupling::SEMI_IMPLICIT);
     if (forcing_) {
         static thread_local std::vector<char> touched;
+        static thread_local std::vector<int> touched_nodes;
         touched.assign(acc_nvol_.size(), 0);
+        touched_nodes.clear();
         for (const int f : faces) {
             const int nd = mesh_->face_node[static_cast<std::size_t>(f)];
-            if (nd >= 0) touched[static_cast<std::size_t>(nd)] = 1;
+            if (nd >= 0 && !touched[static_cast<std::size_t>(nd)]) {
+                touched[static_cast<std::size_t>(nd)] = 1;
+                touched_nodes.push_back(nd);
+            }
         }
-        for (std::size_t nd = 0; nd < touched.size(); ++nd) {
-            if (!touched[nd]) continue;
-            const int n = static_cast<int>(nd);
-            const double dtn = static_cast<double>(1 << node_tier_[nd]) * dt0;
-            // Algebraic junctions share one tier across their incident faces
-            // (assignTiers pinning), so a touched node's faces are all in this
-            // due set and the flux-balance solve is complete.
-            if (algebraicActive(n))  solveAlgebraicNode(n, dtn, *forcing_);
-            else if (semi)           relaxOneNode(n, dtn, *forcing_);
-        }
+        // Face order, deduplicated by the bitmap: the node solves are
+        // independent, so the visiting order does not affect the result.
+        // Algebraic junctions share one tier across their incident faces
+        // (assignTiers pinning), so a touched node's faces are all in this
+        // due set and the flux-balance solve is complete.
+        solveNodes(touched_nodes,
+                   [&](int n) {
+                       return static_cast<double>(
+                                  1 << node_tier_[static_cast<std::size_t>(n)]) * dt0;
+                   },
+                   *forcing_);
     }
 
     // Positivity, in VOLUME rather than rate: the faces in this set fire with
@@ -3028,6 +3972,7 @@ void ExplicitFvSolver::fireFaces(const std::vector<int>& faces, double dt0) {
         }
         const double fq = f_mom_[uf];
 
+        acc_dirty_ = true;   // flux booked; settleAccumulators has work again
         if (cl >= 0) {
             const auto ul = static_cast<std::size_t>(cl);
             acc_a_[ul] -= fa * dt;
@@ -3062,7 +4007,10 @@ void ExplicitFvSolver::fireFaces(const std::vector<int>& faces, double dt0) {
 
 void ExplicitFvSolver::fireCells(const std::vector<int>& cells, double dt0,
                                  const FvStepForcing& forcing) {
-    for (const int c : cells) {
+    // Each due cell appears once and owns its state, closure and accumulator
+    // writes. A finite spill rim exists only on a node face with one incident
+    // cell; spills are gathered later by fireNodes in the original order.
+    auto update_cell = [&](int c) {
         const auto uc = static_cast<std::size_t>(c);
         const double dt = static_cast<double>(1 << cell_tier_[uc]) * dt0;
         const FvGeometry& g =
@@ -3080,15 +4028,10 @@ void ExplicitFvSolver::fireCells(const std::vector<int>& cells, double dt0,
             const double eta_c = cell_eta_[uc];
             const double hp = std::max(0.0, eta_c - zp);
             const double hm = std::max(0.0, eta_c - zm);
-            double i1p = 0.0, i1m = 0.0;
-            if (hp > 0.0) {
-                double ap, wp, rp;
-                k::closureAll(g, hp, &ap, &wp, &rp, &i1p);
-            }
-            if (hm > 0.0) {
-                double am, wm, rm;
-                k::closureAll(g, hm, &am, &wm, &rm, &i1m);
-            }
+            const double i1p = (hp > 0.0) ? k::i1OfDepth(g, hp, k::areaOfDepth(g, hp)) : 0.0;
+            const double i1m = (hm > 0.0) ? k::i1OfDepth(g, hm, k::areaOfDepth(g, hm)) : 0.0;
+            perf::count(perf::n_fv_geom_area, (hp > 0.0 ? 1L : 0L) + (hm > 0.0 ? 1L : 0L));
+            perf::count(perf::n_fv_geom_i1,   (hp > 0.0 ? 1L : 0L) + (hm > 0.0 ? 1L : 0L));
             dQ_src = k::kGravity * (i1p - i1m) * dt;
         }
 
@@ -3097,7 +4040,9 @@ void ExplicitFvSolver::fireCells(const std::vector<int>& cells, double dt0,
         for (const int f : faces) {
             const auto uf = static_cast<std::size_t>(f);
             if (mesh_->face_node[uf] >= 0)
-                k_loss += (mesh_->face_cl[uf] < 0) ? g.loss_inlet : g.loss_outlet;
+                k_loss += (mesh_->face_cl[uf] < 0)
+                              ? mesh_->conduit_loss_inlet[static_cast<std::size_t>(mesh_->cell_conduit[uc])]
+                              : mesh_->conduit_loss_outlet[static_cast<std::size_t>(mesh_->cell_conduit[uc])];
         }
 
         // Drain. Zeroing here — not at the top of the cycle — is what makes the
@@ -3109,9 +4054,10 @@ void ExplicitFvSolver::fireCells(const std::vector<int>& cells, double dt0,
         acc_q_[uc] = 0.0;
 
         // Diverted junction lateral inflow over this cell's LTS window
-        // (mirrors updateCells; dt here is the tier window span).
+        // (mirrors updateCells; dt here is the tier window span), capped at
+        // the junction rim exactly as on the global path.
         if (!cell_qlat_.empty() && cell_qlat_[uc] != 0.0)
-            a_new += dt * cell_qlat_[uc] * inv_dx;
+            a_new = injectDivertedLateral(uc, a_new, dt, inv_dx);
 
         if (forcing.conduit_loss) {
             const int cr = mesh_->cell_conduit[uc];
@@ -3120,39 +4066,76 @@ void ExplicitFvSolver::fireCells(const std::vector<int>& cells, double dt0,
         if (a_new < 0.0) a_new = 0.0;
 
         perf::count(perf::n_fv_invert);
-        const double h_new = k::depthOfArea(g, a_new);
+        const bool tpa_cell = tpaCell(uc);   // regime-consistent closure (#156)
+        const double h_new = tpa_cell ? k::tpaDepthOfArea(g, a_new)
+                                      : k::depthOfArea(g, a_new);
         state_->cell_a[uc] = a_new;
         state_->cell_h[uc] = h_new;
         cell_eta_[uc] = mesh_->cell_zb[uc] + h_new;
-        if (h_new <= k::kDryDepth) {
+        cacheClosure(uc, g, h_new);
+        if (!tpa_cell && h_new <= k::kDryDepth) {
             state_->cell_q[uc] = 0.0;
             cell_u_[uc]        = 0.0;
-            continue;
+            return;
         }
         const double u = q_new / a_new;
-        q_new = frictionFor(g, q_new, u, h_new, dt);
+        q_new = frictionFor(g, mesh_->conduit_roughness[static_cast<std::size_t>(mesh_->cell_conduit[uc])],
+                            mesh_->conduit_rough_factor[static_cast<std::size_t>(mesh_->cell_conduit[uc])],
+                            q_new, u, tpa_cell ? g.y_full : h_new, dt);
         if (k_loss > 0.0) q_new = k::localLossUpdate(q_new, u, k_loss, dx, dt);
+        // Unsteady friction (issue #156): dt here is the tier window span,
+        // matching the local-acceleration difference (Vⁿ over the same span).
+        if (opts_.unsteady_friction != 0)
+            q_new = k::ufUpdate(q_new, a_new, cell_u_[uc], opts_.uf_k3,
+                                uf_grad_[uc], dt);
 
         state_->cell_q[uc] = q_new;
         cell_u_[uc] = q_new / a_new;
+    };
+    const int n = static_cast<int>(cells.size());
+    perf::CounterBatch counters;
+#ifdef SWMM_USE_OPENMP
+    // Avoid entering a serialized OpenMP region for small due sets.
+    if (n >= kOmpMinCells && omp_get_max_threads() > 1) {
+#pragma omp parallel for schedule(static) private(counters)
+        for (int i = 0; i < n; ++i)
+            update_cell(cells[static_cast<std::size_t>(i)]);
+        return;
     }
+#endif
+    for (const int c : cells) update_cell(c);
 }
 
 void ExplicitFvSolver::fireNodes(const std::vector<int>& nodes, double dt0,
                                  const FvStepForcing& forcing) {
+    // Both ends of a structure link are pinned to tier 0 (assignTiers), so a
+    // dummy's two nodes always fire in the same window with the same dt — the
+    // source and the sink integrate the identical discharge over the identical
+    // span, which is what keeps the pair exactly conservative. acc_nvol_ is the
+    // window's arrival volume and is zeroed below, so the drain has to be
+    // computed from it BEFORE the loop consumes it.
+    refreshDummyFlows(dt0, forcing, [&](std::size_t un) { return acc_nvol_[un]; });
+
+    // A pass-through node is pinned to its finest incident cell (assignTiers),
+    // so it is due whenever either cell fired: everything the cells refused at
+    // their rim in this window is booked here, in the same window.
+    bookLateralSpills(&nodes);
+
     for (const int n : nodes) {
         const auto un = static_cast<std::size_t>(n);
         const double dt = static_cast<double>(1 << node_tier_[un]) * dt0;
 
         const double drained = acc_nvol_[un];
         acc_nvol_[un] = 0.0;
+        bookDivertedLateral(un, dt, forcing);
 
         if (forcing.node_fixed_head && std::isfinite(forcing.node_fixed_head[un])) {
             state_->node_head[un] = forcing.node_fixed_head[un];
             continue;
         }
 
-        const double q_lat = nodeLateral(forcing, un) + node_qstruct_[un];
+        const double q_lat = nodeLateral(forcing, un) + node_qstruct_[un] +
+                             nodeQDummy(un);
 
         if (algebraicActive(n)) {
             // Head was set by the flux-balance solve at face-firing time; the
@@ -3172,8 +4155,29 @@ void ExplicitFvSolver::fireNodes(const std::vector<int>& nodes, double dt0,
     }
 }
 
+void ExplicitFvSolver::emitConduitSteps(double dt0, double dur,
+                                        bool tiered) const {
+    const NetworkMeshData& m = *mesh_;
+    for (int r = 0; r < m.n_conduits(); ++r) {
+        const auto ur = static_cast<std::size_t>(r);
+        double dt = dt0;
+        if (tiered) {
+            const int begin = m.conduit_cell_begin[ur];
+            const int end   = begin + m.conduit_cell_count[ur];
+            int tmin = 255;
+            for (int c = begin; c < end; ++c)
+                tmin = std::min(tmin, static_cast<int>(cell_tier_[static_cast<std::size_t>(c)]));
+            if (tmin < 255) dt = static_cast<double>(1 << tmin) * dt0;
+        }
+        step_sink_(step_sink_user_, r, dt, dur);
+    }
+}
+
 void ExplicitFvSolver::runMacroCycle(double dt0, int nsub,
                                      const FvStepForcing& forcing) {
+    if (tpa_) updateTpaFlags();   // once per macro cycle (#156); the caller's
+                                  // saveState precedes this, so rejection
+                                  // restores the pre-cycle flags
     const int K = static_cast<int>(cells_by_tier_.size());
 
     // A tier-k FACE opens its window at s ≡ 0 (mod 2^k); a tier-k VOLUME closes
@@ -3195,6 +4199,8 @@ void ExplicitFvSolver::runMacroCycle(double dt0, int nsub,
 
         if (opts_.order >= 2) reconstructState();
         fireFaces(due_f_upto_[jf], dt0);
+        if (opts_.unsteady_friction != 0)
+            computeUfGradients(&due_c_upto_[jv]);  // pre-tier snapshot (#156)
         fireCells(due_c_upto_[jv], dt0, forcing);
         fireNodes(due_n_upto_[jv], dt0, forcing);
     }
@@ -3209,6 +4215,14 @@ void ExplicitFvSolver::runMacroCycle(double dt0, int nsub,
 void ExplicitFvSolver::settleAccumulators() {
     perf::GatedTimer _pt(perf::sec_fv_settle);
     if (acc_a_.empty()) return;
+    // Nothing pending: fireFaces has not run since the last settle, so every
+    // accumulator is exactly zero, the transfer below is a no-op, and the
+    // full-mesh refreshDepths() it ends with would recompute the state that
+    // is already there. On the 2026-09-11 baseline LTS never fired a cycle on
+    // any deck, so this was every call — at two full-mesh inversions each.
+    // TPA keeps the unconditional path: its regime latch is re-run here on
+    // purpose before depths are derived (see below).
+    if (!acc_dirty_ && !tpa_) return;
     const int nc = mesh_->n_cells();
     const int nn = mesh_->n_nodes();
 
@@ -3243,6 +4257,18 @@ void ExplicitFvSolver::settleAccumulators() {
         state_->node_head[un] =
             mesh_->node_invert[un] + nodeDepthFromVolume(n, vol);
     }
+    acc_dirty_ = false;   // everything booked has now been drained
+    // TPA (#156): re-evaluate the regime BEFORE deriving depths, so the state
+    // this cycle exports is regime-consistent. updateTpaFlags otherwise runs
+    // only at substep/cycle ENTRY, and a cell whose area collapses DURING the
+    // cycle keeps the flag until the next entry — long enough for the exported
+    // depth to come off the TPA line far past the column-separation floor the
+    // flag update itself enforces. Measured on the vented sealed-apex fixture
+    // (t_slot 2.5e-3 ft, so 0.25 ft^2 of lost area is ~98 ft of head): the
+    // published apex head reached -95.06 ft on a deck whose apex is OPEN to
+    // atmosphere and can hold no vacuum at all. It was invisible until node
+    // heads stopped being overwritten by invert+depth (Routing.cpp).
+    if (tpa_) updateTpaFlags();
     refreshDepths();
 }
 
@@ -3262,8 +4288,15 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
     std::fill(flood_vol_.begin(), flood_vol_.end(), 0.0);
     std::fill(inlet_control_.begin(), inlet_control_.end(), uint8_t{0});
     std::fill(cell_q_int_.begin(), cell_q_int_.end(), 0.0);
+    // The pass-through ledger is per routing step, like cell_q_int_: the Router
+    // divides it by dt to publish a step-mean discharge.
+    std::fill(dummy_vol_.begin(), dummy_vol_.end(), 0.0);
 
-    refreshDepths();
+    // A full-mesh inversion, needed only when someone other than this solver
+    // wrote cell_a since the last advance() (see state_clean_). The solver's
+    // own last update left cell_h/cell_eta_/cell_u_ as exactly what this call
+    // would recompute, so skipping it is bit-identical.
+    if (!state_clean_) refreshDepths();
     // Re-seed the node volume ledger from the head the engine currently holds,
     // so external edits (API writes, hot start, an outfall stage) take effect.
     // With the junction area fixed at init this is EXACT — it reproduces the
@@ -3368,7 +4401,9 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
             const bool stiffness_moved =
                 lts_valid_ && lts_tiers_ > 1 &&
                 (now < 0.9 * lts_dt0_ || now > 2.0 * lts_dt0_);
+            bool retiered = false;
             if (!lts_valid_ || lts_countdown_ <= 0 || stiffness_moved) {
+                retiered = true;
                 settleAccumulators();
                 lts_tiers_ = assignTiers(lts_dt0_);
                 lts_valid_ = true;
@@ -3396,18 +4431,24 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
                 // cleared on rollback, since the fluxes that produced them are
                 // being discarded with the state that produced them.
                 if (censusDt() < kStepAcceptRatio * dt0) {
+                    ++n_macro_rejected_;
+                    perf::count(perf::n_fv_macro_rejected);
                     restoreState();
                     lts_valid_ = false;      // the state that produced these
                                              // tiers is being discarded
                     std::fill(acc_a_.begin(), acc_a_.end(), 0.0);
                     std::fill(acc_q_.begin(), acc_q_.end(), 0.0);
                     std::fill(acc_nvol_.begin(), acc_nvol_.end(), 0.0);
+                    acc_dirty_ = false;
                     census_count_ = 0;
                     // Fall through to the global path, which carries the
                     // shrink-and-retry loop — and which censuses immediately,
                     // on this same state, because the countdown is zero. A
                     // census here would be that identical call made twice.
                 } else {
+                    ++n_macro_cycles_;
+                    perf::count(perf::n_fv_macro_cycles);
+                    if (step_sink_) emitConduitSteps(dt0, span, true);
                     t += span;
                     steps += nsub;
                     since_rebuild_ += nsub;
@@ -3417,6 +4458,63 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
                     census_count_ = 0;
                     continue;
                 }
+            } else if (K > 1 && lts_fit_ && (t_target - t) >= 2.0 * dt0) {
+                // Phase 4c experiment: the full cycle does not fit the rest of
+                // the routing step, which today hands the remainder to GLOBAL
+                // stepping at dt₀ — every face and cell at the finest step.
+                // Cut a cycle that fits instead: re-tier with the tier count
+                // capped so 2^(K_f−1)·dt₀ ≤ remaining, run it, and invalidate
+                // the cache so the next cycle re-tiers at the full cap.
+                const double remaining = t_target - t;
+                int kf = 1 + static_cast<int>(std::floor(std::log2(remaining / dt0)));
+                kf = std::min(kf, K);
+                if (kf >= 2) {
+                    settleAccumulators();
+                    double dt0f = lts_dt0_;
+                    const int Kf = assignTiers(dt0f, kf);
+                    lts_valid_ = false;
+                    lts_countdown_ = 0;
+                    census_count_ = 0;
+                    const int nsubf = 1 << (Kf - 1);
+                    const double spanf = static_cast<double>(nsubf) * dt0f;
+                    if (Kf > 1 && spanf <= remaining) {
+                        if (opts_.order < 2) reconstructState();
+                        saveState();
+                        runMacroCycle(dt0f, nsubf, forcing);
+                        if (censusDt() < kStepAcceptRatio * dt0f) {
+                            ++n_macro_rejected_;
+                            perf::count(perf::n_fv_macro_rejected);
+                            restoreState();
+                            std::fill(acc_a_.begin(), acc_a_.end(), 0.0);
+                            std::fill(acc_q_.begin(), acc_q_.end(), 0.0);
+                            std::fill(acc_nvol_.begin(), acc_nvol_.end(), 0.0);
+                            acc_dirty_ = false;
+                        } else {
+                            ++n_macro_cycles_;
+                            perf::count(perf::n_fv_macro_cycles);
+                            if (step_sink_) emitConduitSteps(dt0f, spanf, true);
+                            t += spanf;
+                            steps += nsubf;
+                            since_rebuild_ += nsubf;
+                            last_h_ = dt0f;
+                            min_h_ = (min_h_ <= 0.0) ? dt0f : std::min(min_h_, dt0f);
+                            dt_cache_ = dt0f;
+                            continue;
+                        }
+                    }
+                }
+            }
+            // Fell through to the global path without settling, re-tiering
+            // or moving the state: the census taken above for the stiffness
+            // test read this same state through this same function (press
+            // is false on this path), so it IS the global path's census.
+            // Reusing it removes the second full face sweep every substep
+            // paid on the LTS path — 2.5 censuses per substep against the
+            // global path's 2.0 in the 2026-08-20 verification. A rejected
+            // cycle leaves lts_valid_ false and takes the fresh census.
+            if (!retiered && lts_valid_ && now > 0.0) {
+                dt_census_    = now;
+                census_count_ = std::max(1, opts_.cfl_census_interval);
             }
         }
 
@@ -3429,8 +4527,23 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
         const double remaining = t_target - t;
         double dt = std::min(dt_census_, remaining);
         if (!(dt > 0.0)) dt = remaining;
-        if (dt < constants::MIN_TIMESTEP)
-            dt = std::min(constants::MIN_TIMESTEP, remaining);
+        // The floor is a LOOP GUARD, not a granularity (issue #156 R2 root
+        // cause). constants::MIN_TIMESTEP (0.001 s) is legacy DYNWAVE routing
+        // granularity — sane for an iterated implicit scheme, fatal for an
+        // explicit one: clamping the census UP past the CFL limit detonated
+        // every deck whose stiffest cell demanded dt < 1 ms. That single
+        // clamp was the whole "high-celerity TPA instability" class, measured:
+        // the a = 25 vs 150 m/s filling threshold IS the clamp boundary
+        // (stable dt 1.4e-3 vs 2.4e-4 s on 0.04 m cells); e3's 0.23 m stub at
+        // a = 300 was clamped ~7x over CFL and blew up bit-identically at
+        // every FV_CFL because the census was discarded either way; e4's
+        // non-monotone k3 "knife edge" was cells wandering across the clamp;
+        // and the RK2-vs-Euler asymmetry was never the integrator — RK2
+        // disables LTS, whose tier-0 dt is unclamped, so only RK2 was forced
+        // through the clamped global path. kMinSubstep below exists solely so
+        // a pathological collapse cannot loop forever (the 2M-step backstop
+        // is the second line).
+        if (dt < kMinSubstep) dt = std::min(kMinSubstep, remaining);
 
         // Take the substep, then re-census the state it produced. If a cell
         // crossed the crown (or wetted, or pressurized a node) the stable step
@@ -3456,7 +4569,7 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
                 takeSubstep(dt, forcing);
             }
 
-            if (attempt >= kMaxStepRetries || dt <= constants::MIN_TIMESTEP) break;
+            if (attempt >= kMaxStepRetries || dt <= kMinSubstep) break;
             // Post-step census on the state actually reached — membership is
             // memoryless, so re-derive it (a cell may have crossed the crown
             // inside the step, in EITHER direction).
@@ -3468,7 +4581,7 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
             if (dt_post >= kStepAcceptRatio * dt * (1.0 + kStepAcceptEps))
                 break;                                            // admissible
             restoreState();
-            dt = std::max(0.9 * dt_post, constants::MIN_TIMESTEP);
+            dt = std::max(0.9 * dt_post, kMinSubstep);
             if (dt > remaining) dt = remaining;
         }
         dt_cache_ = dt;                 // what suggested_step() reports
@@ -3505,6 +4618,12 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
             census_count_ = 0;
         }
 
+        // A substep clamped to land on t_target is a sync sliver, not the
+        // stable step; report it at the step it was clamped from (weighted by
+        // the time it actually covered) so it does not pose as a minimum.
+        if (step_sink_)
+            emitConduitSteps((dt >= remaining) ? std::max(dt, dt_census_) : dt,
+                             dt, false);
         t += dt;
         // RK2 is two full operator evaluations per accepted step; count both,
         // or the reported substeps-per-step halves the actual work done.
@@ -3522,6 +4641,11 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
     // Publish a complete state: any flux still booked but not yet drained is
     // water the engine would otherwise never see.
     settleAccumulators();
+    // From here until the next advance() nothing but this solver derives the
+    // cell state, so the entry refresh can be skipped next time. The
+    // pressurized-implicit and TPA paths rewrite cell momentum / regime
+    // flags outside the plain update and keep the unconditional refresh.
+    state_clean_ = !opts_.pressurized_implicit && !tpa_;
 
     // Publish eligibility must reflect the state actually reached, not the
     // static classification: a pondable junction that rose above its rim was
@@ -3532,6 +4656,48 @@ double ExplicitFvSolver::advance(double t_current, double t_target,
     for (std::size_t un = 0; un < node_pub_.size(); ++un)
         if (node_pub_[un] && !algebraicActive(static_cast<int>(un)))
             node_pub_[un] = 0;
+
+    // Divergence guard (issue #156 R3, bounds documented at their definition).
+    // The retry loop cannot reject a dt-independent amplification — all 8
+    // retries fail identically and the step is accepted — so the state that
+    // survives to here is the last line of defence. Track the worst offender
+    // by its ratio to the bound so the reported element is the one furthest
+    // gone, not the first one found.
+    div_link_ = -1;
+    {
+        double worst = 1.0;
+        const int n_cells = mesh_->n_cells();
+        for (int c = 0; c < n_cells; ++c) {
+            const auto uc = static_cast<std::size_t>(c);
+            const double a = state_->cell_a[uc];
+            const double q = state_->cell_q[uc];
+            const double h = state_->cell_h[uc];
+            const double u = cell_u_[uc];
+            double ratio;
+            const char* what;
+            double bad = h;
+            if (!std::isfinite(a) || !std::isfinite(q) || !std::isfinite(h)) {
+                ratio = std::numeric_limits<double>::infinity();
+                what  = "non-finite state";
+                bad   = !std::isfinite(a) ? a : (!std::isfinite(q) ? q : h);
+            } else if (std::fabs(u) > kDivergedVelocity * worst) {
+                ratio = std::fabs(u) / kDivergedVelocity;
+                what  = "velocity (ft/s)";
+            } else if (std::fabs(h) > kDivergedDepth * worst) {
+                ratio = std::fabs(h) / kDivergedDepth;
+                what  = "depth magnitude (ft)";
+            } else {
+                continue;
+            }
+            worst      = std::min(ratio,
+                                  std::numeric_limits<double>::max());
+            div_link_  = mesh_->conduit_link[static_cast<std::size_t>(
+                mesh_->cell_conduit[uc])];
+            div_value_ = (what[0] == 'v') ? u : bad;
+            div_what_  = what;
+            if (!std::isfinite(ratio)) break;  // cannot get worse
+        }
+    }
 
     last_nsteps_ = steps;
     total_steps_ += steps;

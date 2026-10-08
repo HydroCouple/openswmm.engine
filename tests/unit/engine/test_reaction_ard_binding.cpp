@@ -146,7 +146,7 @@ void write_deck(const char* path, const std::string& pc_lines,
         f << "[POLLUTANTS]\n"
           << ";;Name Units Crain Cgw Crdii Kdecay SnowOnly CoPollut CoFrac "
              "Cdwf Cinit\n"
-          << "TSS    MG/L  0     0   0     " << kdecay
+          << "TSS    MG/L  0     0   0     " << (kdecay * 86400.0)  // 1/day column (KD1)
           << "      NO       *        0      0    " << cinit << "\n\n";
     if (!pc_lines.empty())
         f << "[PROCESS_COMPONENTS]\n" << pc_lines << "\n\n";

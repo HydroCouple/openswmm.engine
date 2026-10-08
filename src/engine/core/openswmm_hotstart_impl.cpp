@@ -69,6 +69,10 @@ static inline openswmm::HotStartFile* to_hs(SWMM_HotStart hs) noexcept {
 
 extern "C" {
 
+SWMM_ENGINE_API const char* swmm_hotstart_last_io_error(void) {
+    return openswmm::HotStartManager::last_io_error().c_str();
+}
+
 // ----------------------------------------------------------------------------
 // swmm_hotstart_save()
 // ----------------------------------------------------------------------------
@@ -216,6 +220,13 @@ SWMM_ENGINE_API int swmm_hotstart_get_sim_time(SWMM_HotStart hs, double* sim_tim
     CHECK_HS(hs);
     if (!sim_time) return SWMM_ERR_BADPARAM;
     *sim_time = to_hs(hs)->header.sim_time;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_hotstart_get_start_date(SWMM_HotStart hs, double* start_date) {
+    CHECK_HS(hs);
+    if (!start_date) return SWMM_ERR_BADPARAM;
+    *start_date = to_hs(hs)->header.start_date;
     return SWMM_OK;
 }
 

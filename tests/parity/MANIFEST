@@ -9,10 +9,9 @@
 # earns its place by reaching a code path no other deck reaches, and the
 # reason column is where you say which.
 
-# ---- FV routing (10) ------------------------------------------------------
-# Ten of fifteen.  The corpus is heavily weighted to one router; see
-# README.md §4, which is the honest statement of what "15/15 unchanged"
-# does and does not prove.
+# ---- FV routing (11) ------------------------------------------------------
+# The corpus is heavily weighted to one router; see README.md §4, which is
+# the honest statement of what "N/N unchanged" does and does not prove.
 tests/parity/corpus/decks/agree_pass.inp	FV, AGREE flux, passing flow
 tests/parity/corpus/decks/agree_vj.inp	FV, AGREE flux at a vertical junction
 tests/parity/corpus/decks/steep_pass.inp	FV on a steep reach -- the supercritical branch
@@ -23,6 +22,7 @@ tests/parity/corpus/decks/vj_fv_steep_datum.inp	FV vertical junction on a steep 
 tests/parity/corpus/decks/sdm_fv_o1.inp	Site Drainage Model under FV, first-order
 tests/parity/corpus/decks/sdm_fv_o2.inp	Site Drainage Model under FV, second-order
 tests/parity/corpus/decks/sdm_fv_o2_superbee.inp	Site Drainage Model under FV, second-order + superbee limiter
+tests/parity/corpus/decks/storage_bucket_fv.inp	FV storage node -- the only deck reaching relaxOneNode / the semi-implicit bucket relaxation (plain junctions are algebraic and bypass it)
 
 # ---- Dynamic wave, and the two quality solvers (4) ------------------------
 tests/parity/corpus/decks/force_legacy.inp	DYNWAVE + runtime-forced quality through the LEGACY solver
@@ -65,3 +65,25 @@ tests/parity/transport/age_legacy.inp	WATER_AGE ON with np=0, default solver -- 
 tests/parity/transport/age_ard.inp	the same body under QUALITY_SOLVER EULERIAN_ARD -- age as an ARD mesh row (A1a); the pair localises a movement to one engine
 tests/parity/transport/age_lard.inp	the same body once more under QUALITY_SOLVER LAGRANGIAN -- age as the LARD segment row (X4); the TRIPLE localises a movement to one of three engines
 tests/parity/transport/heat_parity.inp	pollutant + age + heat -- the only deck reaching the np+age+heat reported stride (D-UT10's seam); carries heat_parity.heat beside it
+tests/parity/transport/heat_lard.inp	the same body under QUALITY_SOLVER LAGRANGIAN -- temperature as the LARD segment row (H7b); the pair with heat_parity localises a heat movement to one engine
+
+# ---- SI and STEADY (2) ----------------------------------------------------
+# Added 2026-09-01.  UNIFIED_PLAN_STATUS §8 recorded the composition debt in
+# so many words: "21 decks; 0 2D, 0 SI, 0 STEADY".  Every UCF conversion seam
+# and the quality path's is_steady branch (pollutants AND each CSTR mirror)
+# were unobserved.  The 2D hole remains -- a mesh deck belongs to the Phase 3
+# opener, not here (trackI_bitwise_regression.sh covers 2D separately and is
+# still not wired into this runner; that wiring is a recorded debt).
+tests/parity/corpus/decks/si_dw_quality.inp	SI units (LPS) + DYNWAVE + buildup/washoff + age + heat -- the only SI deck; the UCF seams' first observer
+tests/parity/corpus/decks/steady_quality.inp	STEADY routing + pollutant + age -- the only STEADY deck; the is_steady quality branches' first observer
+
+# ---- Overland transport (1) -----------------------------------------------
+# Added 2026-09-02.  Every 2D deck the trackI census sweeps carries no
+# [POLLUTANTS], so S1 (species on the marcher), S2 (dispersion, source
+# concentrations) and S3 (the 1D<->2D coupling tuple) were invisible to it
+# (lesson 225).  This deck's J1 Cu column IS the coupling tuple.  EXPECT IT TO
+# MOVE on any overland-transport change; it moved on the round that added it
+# (base: J1 read 0, the quality sections silently ignored at rc 0).  The census
+# also sweeps it (it has a mesh) -- one deck, two nets, attribute once.
+tests/parity/corpus/decks/twod_coupled_quality.inp	DYNWAVE + coupled 2D pan with [POLLUTANTS], [2D_INITIAL_QUALITY] (* and TAG), DISPERSION -- the only deck where species cross the 1D<->2D coupling
+tests/parity/corpus/decks/twod_mixed_quality.inp	the same pan tessellated as one [2D_QUADS] cell + two triangles -- the only deck on the padded kMaxCellVerts=4 / edge-stride-4 layout; a movement in ONLY this deck is the quad path (added 2026-09-07, E1)

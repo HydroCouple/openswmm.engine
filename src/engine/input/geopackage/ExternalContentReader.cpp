@@ -25,6 +25,7 @@
  */
 
 #include "ExternalContentReader.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "GpkgUtils.hpp"
 #include "formats/ClimateFormat.hpp"
 #include "formats/HotstartFormat.hpp"
@@ -72,13 +73,16 @@ double isoToOaDate(const char* iso) {
 
 void ensureDir(const std::string& dir) {
     std::error_code ec;
-    fs::create_directories(dir, ec);
+    // utf8_path, not the implicit std::string -> fs::path conversion, which
+    // decodes in the ANSI code page on Windows (issue #7).
+    fs::create_directories(openswmm::io::utf8_path(dir), ec);
 }
 
 std::string joinScratch(const std::string& scratch_dir,
                          const std::string& filename) {
-    fs::path p = fs::path(scratch_dir) / filename;
-    return p.string();
+    fs::path p = openswmm::io::utf8_path(scratch_dir)
+               / openswmm::io::utf8_path(filename);
+    return openswmm::io::path_utf8(p);
 }
 
 void bindSlot(FilePathPair& slot,
@@ -429,7 +433,7 @@ void hydrateHotstart(sqlite3* db, SimulationContext& ctx,
 
         if (s.status != "populated") {
             // Create an empty placeholder so the path exists for the GUI.
-            std::FILE* fp = std::fopen(scratch_path.c_str(), "wb");
+            std::FILE* fp = openswmm::io::fopen_utf8(scratch_path, "wb");
             if (fp) std::fclose(fp);
         } else {
             // Build a HotstartSnapshot from state rows.
@@ -572,8 +576,12 @@ void hydrateHotstart(sqlite3* db, SimulationContext& ctx,
 // ============================================================================
 
 std::string scratchDirFor(const std::string& gpkg_path) {
-    fs::path p(gpkg_path);
-    std::string stem = p.stem().string();
+    // utf8_path/path_utf8, not fs::path(std::string)/.string(): the .gpkg path
+    // is UTF-8 and the narrow forms decode/encode in the ANSI code page, so a
+    // non-ASCII stem or parent came back mangled and the scratch dir landed
+    // somewhere else (issue #7).
+    const fs::path p = openswmm::io::utf8_path(gpkg_path);
+    std::string stem = openswmm::io::path_utf8(p.stem());
     if (stem.empty()) stem = "gpkg";
     const std::string leaf = stem + ".scratch";
     // Emit a portable forward-slash path. fs::path::operator/ joins with the
@@ -581,7 +589,7 @@ std::string scratchDirFor(const std::string& gpkg_path) {
     // like "/tmp\\foo.scratch"; build the sibling path with '/' instead.
     const fs::path parent = p.parent_path();
     if (parent.empty()) return leaf;
-    return parent.generic_string() + "/" + leaf;
+    return openswmm::io::path_utf8(parent, /*generic=*/true) + "/" + leaf;
 }
 
 void read_external_content(sqlite3*               db,

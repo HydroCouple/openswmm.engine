@@ -98,6 +98,34 @@ void load_external_rain_files(SimulationContext& ctx);
 void convert_internal_to_display(SimulationContext& ctx);
 
 /**
+ * @brief True when the context holds parse-time normalisations that the .inp
+ *        writer must undo: LINK_OFFSETS=ELEVATION (offsets stored as depths)
+ *        or any conduit reversed for adverse slope (direction == -1).
+ */
+bool needs_authored_conversion(const SimulationContext& ctx);
+
+/**
+ * @brief Undo the parse-time adverse-slope reversal on every conduit with
+ *        direction == -1 (node1/node2, offset1/offset2, q0 sign, inlet/outlet
+ *        losses, slope sign) and reset direction to +1.
+ * @returns Number of conduits restored.
+ */
+int restore_authored_orientation(SimulationContext& ctx);
+
+/**
+ * @brief Restore authored link data for writing: un-reverse adverse-slope
+ *        conduits (node1/node2, offset1/offset2, q0 sign, inlet/outlet losses)
+ *        and, in ELEVATION offset mode, re-add each node's invert to the
+ *        depth-normalised offsets and weir/outlet crests.
+ *
+ * @details Exact inverse of the reversal and ELEV_OFFSET passes inside
+ *          @ref resolve_cross_references. Operate on a copy — the live engine
+ *          state must keep its canonical (depth, positive-slope) form.
+ *          Vertices are untouched (the reversal never reorders them).
+ */
+void convert_internal_to_authored(SimulationContext& ctx);
+
+/**
  * @brief Slice IO-3: Resolve every external-file slot's `.original` token
  *        against an anchor directory and populate `.absolute`.
  *
@@ -146,6 +174,40 @@ void resolve_external_file_slots(SimulationContext& ctx,
  * @param j    Link index.
  */
 void recompute_conduit_flow_properties(SimulationContext& ctx, int j);
+
+/**
+ * @brief The Manning's n a conduit actually routes with, before any Courant
+ *        lengthening adjustment — legacy conduit_validate's @c roughness.
+ *
+ * @details Starts from the [CONDUITS] value and applies, in legacy's order:
+ *          an IRREGULAR conduit takes its transect's main-channel n
+ *          (link.c:1024); a force main under dynamic-wave routing takes its
+ *          equivalent Manning n (link.c:1093-1096); an IRREGULAR conduit is
+ *          then scaled by the square root of its transect's meander length
+ *          factor (link.c:1101-1105). The stored @c roughness is never
+ *          overwritten — it is the authored value the writers persist.
+ *
+ * @return The effective n, or 0 for a non-conduit / missing conduit row.
+ */
+double conduit_manning_n(const SimulationContext& ctx, int j);
+
+/**
+ * @brief The length a conduit actually routes with — legacy
+ *        @c conduit_getLength (link.c:1198-1216).
+ *
+ * @details For every section but IRREGULAR this is the authored [CONDUITS]
+ *          length. For an IRREGULAR one the authored number is the MAIN
+ *          CHANNEL's length (what a FEMA study reports) while the routing
+ *          length is the whole flood plain's, @c length / @c
+ *          Transect.lengthFactor. The slope, the Courant lengthening ratio,
+ *          the conduit's stored volume, the dq6 friction divisor, the
+ *          evaporation / seepage loss rate and the variable-step scale all
+ *          use it; the .inp writer, the report's length column and
+ *          modLength's parse-time default keep the authored value.
+ *
+ * @return The routing length (ft), or 0 for a non-conduit / missing row.
+ */
+double conduit_true_length(const SimulationContext& ctx, int j);
 
 } /* namespace openswmm::input */
 

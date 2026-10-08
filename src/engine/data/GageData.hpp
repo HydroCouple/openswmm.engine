@@ -169,6 +169,13 @@ struct GageData {
     std::vector<long>           file_periods_precip;
 
     /**
+     * @brief [RAINGAGES] FILE StartDate (OADate day, 0 = none / `*`).
+     * @details File records dated before this day are skipped entirely, as
+     *          legacy rain.c readStdLine / readNWSLine do (`date1 < day1`).
+     */
+    std::vector<double>         file_start_date;
+
+    /**
      * @brief Resolved rainfall series for a FILE_RAIN gage (windowed to the run).
      * @details Populated by load_external_rain_files() with the station's records
      *          that fall inside the simulation window, already converted to the
@@ -244,6 +251,38 @@ struct GageData {
      */
     std::vector<bool>           is_raining;
 
+    /**
+     * @brief Legacy rain-gage state machine (gage_initState / gage_setState /
+     *        getNextRainfall), kept as record indices on the gage's series
+     *        and advanced by updateAllGages():
+     *        - st_cur: the record legacy's startDate/endDate name — -2 while
+     *          there is no state (NO_DATE: no series, empty series,
+     *          IGNORE_RAINFALL, not yet initialised), -1 for the pre-record
+     *          interval [StartDateTime, x0) legacy forms when the record
+     *          begins after the simulation start, else a record index (the
+     *          FIRST record whatever its value, afterwards only records with
+     *          a non-zero rate: getNextRainfall skips zero rates);
+     *        - st_next: the record legacy's nextDate/nextRainfall name, -1
+     *          for NO_DATE;
+     *        - st_rain: legacy Gage.rainfall as the machine last left it
+     *          (0 in a gap, the current record's rate otherwise), the value
+     *          gage_setReportRainfall reads; user rain units with the units
+     *          and scale factors, before the monthly rain adjustment.
+     *        - st_init: the machine has been seeded (lazily, on the first
+     *          update, from the simulation start date); st_used: legacy
+     *          Gage.isUsed as found then — an unused gage's machine never
+     *          advances and its rainfall keeps the seeded value (legacy
+     *          gage_setState returns at once; runoff_execute still reads
+     *          Gage.rainfall for IsRaining).
+     * @see Legacy: gage_initState, gage_setState, getNextRainfall,
+     *      gage_getNextRainDate, gage_setReportRainfall
+     */
+    std::vector<int>            st_cur;
+    std::vector<int>            st_next;
+    std::vector<double>         st_rain;
+    std::vector<uint8_t>        st_init;
+    std::vector<uint8_t>        st_used;
+
     // -----------------------------------------------------------------------
     // Past-rain history (for control rules — GAGE_RAIN_PAST)
     // -----------------------------------------------------------------------
@@ -303,6 +342,7 @@ struct GageData {
         file_first_date.assign(un, 0.0);
         file_last_date.assign(un, 0.0);
         file_periods_precip.assign(un, 0L);
+        file_start_date.assign(un, 0.0);
         rain_series.assign(un, Table{});
         file_format.assign(un, RainFileFormat::UNKNOWN);
         interval_sec.assign(un, 3600);
@@ -314,6 +354,11 @@ struct GageData {
         api_rainfall.assign(un, -1.0);  // -1.0 means no API override
         next_rain_date.assign(un, 0.0);
         is_raining.assign(un, false);
+        st_cur.assign(un, -2);
+        st_next.assign(un, -1);
+        st_rain.assign(un, 0.0);
+        st_init.assign(un, 0);
+        st_used.assign(un, 0);
 
         past_rain.assign(un * MAXPASTRAIN, 0.0);
         past_rain_accum.assign(un, 0.0);
@@ -340,11 +385,14 @@ struct GageData {
         station_id.resize(un, std::string{});
         g(rain_units, 0);
         g(file_first_date, 0.0); g(file_last_date, 0.0); g(file_periods_precip, 0L);
+        g(file_start_date, 0.0);
         rain_series.resize(un, Table{});
         g(file_format, RainFileFormat::UNKNOWN); g(interval_sec, 3600); g(snow_factor, 1.0);
         g(scale_factor, 1.0);
         g(rainfall, 0.0); g(next_rainfall, 0.0);
         g(api_rainfall, -1.0); g(next_rain_date, 0.0); g(is_raining, false);
+        g(st_cur, -2); g(st_next, -1); g(st_rain, 0.0); g(st_init, static_cast<uint8_t>(0));
+        g(st_used, static_cast<uint8_t>(0));
         // Flat 2D: [gage * MAXPASTRAIN + hour]
         past_rain.resize(un * static_cast<std::size_t>(MAXPASTRAIN), 0.0);
         g(past_rain_accum, 0.0); g(past_rain_time, 0.0); g(cumul_rain_accum, 0.0);
@@ -365,8 +413,9 @@ struct GageData {
 
         e(rain_type); e(source); e(ts_index); e(ts_name);
         e(file_path); e(col_name); e(file_format); e(interval_sec); e(snow_factor);
-        e(scale_factor);
+        e(scale_factor); e(file_start_date);
         e(rainfall); e(next_rainfall); e(api_rainfall); e(next_rain_date); e(is_raining);
+        e(st_cur); e(st_next); e(st_rain); e(st_init); e(st_used);
         e(past_rain_accum); e(past_rain_time); e(cumul_rain_accum); e(co_gage_index);
         e(comments);
 
@@ -398,6 +447,11 @@ struct GageData {
         api_rainfall.shrink_to_fit();
         next_rain_date.shrink_to_fit();
         is_raining.shrink_to_fit();
+        st_cur.shrink_to_fit();
+        st_next.shrink_to_fit();
+        st_rain.shrink_to_fit();
+        st_init.shrink_to_fit();
+        st_used.shrink_to_fit();
 
         past_rain.shrink_to_fit();
         past_rain_accum.shrink_to_fit();
@@ -412,6 +466,11 @@ struct GageData {
         std::fill(next_rainfall.begin(), next_rainfall.end(), 0.0);
         std::fill(api_rainfall.begin(),  api_rainfall.end(),  -1.0); // -1 = no override
         std::fill(is_raining.begin(),    is_raining.end(),    false);
+        std::fill(st_cur.begin(),  st_cur.end(),  -2);
+        std::fill(st_next.begin(), st_next.end(), -1);
+        std::fill(st_rain.begin(), st_rain.end(), 0.0);
+        std::fill(st_init.begin(), st_init.end(), static_cast<uint8_t>(0));
+        std::fill(st_used.begin(), st_used.end(), static_cast<uint8_t>(0));
         std::fill(past_rain.begin(),     past_rain.end(),     0.0);
         std::fill(past_rain_accum.begin(), past_rain_accum.end(), 0.0);
         std::fill(past_rain_time.begin(),  past_rain_time.end(),  0.0);

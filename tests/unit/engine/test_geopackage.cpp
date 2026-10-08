@@ -13,6 +13,8 @@
 #include <gmock/gmock.h>
 
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <cstdio>
 
 #include "core/SimulationContext.hpp"
@@ -319,8 +321,12 @@ protected:
             ctx.subcatches.sweep_last_swept[0 * 2 + 0] = 1.0;
 
             ctx.subcatches.resize_quality(1);
-            ctx.subcatches.conc[0 * 1 + 0] = 1.5;        // S1/TSS loading
-            ctx.subcatches.conc[1 * 1 + 0] = 2.25;       // S2/TSS loading
+            // [LOADINGS] is an initial surface BUILDUP per unit area, and
+            // it lives in its own array — it used to be parked in `conc`,
+            // the reported washoff concentration, where nothing could read
+            // it back as a loading.
+            ctx.subcatches.init_loading[0 * 1 + 0] = 1.5;   // S1/TSS loading
+            ctx.subcatches.init_loading[1 * 1 + 0] = 2.25;  // S2/TSS loading
         }
 
         // --- PATTERNS ---
@@ -517,6 +523,114 @@ TEST_F(GeoPackageTest, VirtualJunctionFlagAndRimRoundTrip) {
     ASSERT_GE(in1, 0);
     EXPECT_EQ(ctx_in.nodes.is_virtual[static_cast<std::size_t>(in1)], 0);
     EXPECT_DOUBLE_EQ(ctx_in.nodes.rim_depth[static_cast<std::size_t>(in1)], 0.0);
+}
+
+// [STREETS], [INLETS] and both inlet-placement grammars round-trip. A model
+// with an inlet junction re-reads with its usage row, so rule 633 holds.
+TEST_F(GeoPackageTest, StreetsInletsAndInletUsageRoundTrip) {
+    auto ctx_out = build_test_context();
+
+    auto& S = ctx_out.streets;
+    S.names.push_back("ST1");
+    S.t_crown.push_back(20.0);   S.h_curb.push_back(0.5);     S.sx.push_back(4.0);
+    S.n_road.push_back(0.016);   S.gutter_depres.push_back(0.167);
+    S.gutter_width.push_back(2.0); S.sides.push_back(2);
+    S.back_width.push_back(10.0); S.back_slope.push_back(4.0); S.back_n.push_back(0.02);
+
+    auto& I = ctx_out.inlets;
+    const int combo = I.add_row("Combo1", "COMBO");
+    {
+        const auto u = static_cast<std::size_t>(combo);
+        I.length[u] = 2.0;  I.width[u] = 2.0;  I.grate_type[u] = "P_BAR-50";
+        I.curb_length[u] = 3.0;  I.curb_height[u] = 0.5;  I.curb_throat[u] = 0;
+        I.comments[u] = "combination inlet";
+    }
+    const int custom = I.add_row("Custom1", "CUSTOM");
+    I.curve_id[static_cast<std::size_t>(custom)] = "CAP1";
+
+    const int c1 = ctx_out.link_names.find("C1");
+    const int j1 = ctx_out.node_names.find("J1");
+    const int j2 = ctx_out.node_names.find("J2");
+    const int j3 = ctx_out.node_names.find("J3");
+    ASSERT_TRUE(c1 >= 0 && j1 >= 0 && j2 >= 0 && j3 >= 0);
+
+    // Conduit-hosted placement on C1, two 25 %-clogged inlets, ON_SAG, capture J3.
+    {
+        const int r = ctx_out.inlet_usages.add_row(c1, -1, combo, j3);
+        const auto ur = static_cast<std::size_t>(r);
+        ctx_out.inlet_usages.num_inlets[ur]    = 2;
+        ctx_out.inlet_usages.clog_factor[ur]   = 0.75;
+        ctx_out.inlet_usages.flow_limit[ur]    = 1.5;
+        ctx_out.inlet_usages.local_depress[ur] = 0.1;
+        ctx_out.inlet_usages.local_width[ur]   = 1.0;
+        ctx_out.inlet_usages.placement[ur]     = 2;
+    }
+    // Inlet junction J2 (usage hosted by the node), capture J1.
+    {
+        const auto n = static_cast<std::size_t>(ctx_out.node_names.size());
+        ctx_out.nodes.is_virtual.resize(n, 0);
+        ctx_out.nodes.is_inlet.resize(n, 0);
+        ctx_out.nodes.rim_depth.resize(n, 0.0);
+        const auto u2 = static_cast<std::size_t>(j2);
+        ctx_out.nodes.is_virtual[u2] = 1;
+        ctx_out.nodes.is_inlet[u2]   = 1;
+        ctx_out.nodes.rim_depth[u2]  = 0.5;
+        ctx_out.inlet_usages.add_row(-1, j2, custom, j1);
+    }
+
+    ASSERT_EQ(write_to_file(db_path_, ctx_out, "test_run"), 0);
+    SimulationContext ctx_in{};
+    ASSERT_EQ(read_from_file(db_path_, ctx_in, "test_run"), 0);
+
+    ASSERT_EQ(ctx_in.streets.count(), 1);
+    EXPECT_EQ(ctx_in.streets.names[0], "ST1");
+    EXPECT_DOUBLE_EQ(ctx_in.streets.t_crown[0], 20.0);
+    EXPECT_DOUBLE_EQ(ctx_in.streets.sx[0], 4.0);
+    EXPECT_DOUBLE_EQ(ctx_in.streets.gutter_depres[0], 0.167);
+    EXPECT_EQ(ctx_in.streets.sides[0], 2);
+    EXPECT_DOUBLE_EQ(ctx_in.streets.back_n[0], 0.02);
+
+    ASSERT_EQ(ctx_in.inlets.count(), 2);
+    EXPECT_EQ(ctx_in.inlets.names[0], "Combo1");
+    EXPECT_EQ(ctx_in.inlets.inlet_type[0], "COMBO");
+    EXPECT_DOUBLE_EQ(ctx_in.inlets.length[0], 2.0);
+    EXPECT_EQ(ctx_in.inlets.grate_type[0], "P_BAR-50");
+    EXPECT_DOUBLE_EQ(ctx_in.inlets.curb_length[0], 3.0);
+    EXPECT_DOUBLE_EQ(ctx_in.inlets.curb_height[0], 0.5);
+    EXPECT_EQ(ctx_in.inlets.curb_throat[0], 0);
+    EXPECT_EQ(ctx_in.inlets.comments[0], "combination inlet");
+    EXPECT_EQ(ctx_in.inlets.inlet_type[1], "CUSTOM");
+    EXPECT_EQ(ctx_in.inlets.curve_id[1], "CAP1");
+
+    ASSERT_EQ(ctx_in.inlet_usages.count(), 2);
+    const int in_c1 = ctx_in.link_names.find("C1");
+    const int in_j2 = ctx_in.node_names.find("J2");
+    ASSERT_TRUE(in_c1 >= 0 && in_j2 >= 0);
+    const int rl = ctx_in.inlet_usages.find_by_link(in_c1);
+    ASSERT_GE(rl, 0);
+    {
+        const auto ur = static_cast<std::size_t>(rl);
+        EXPECT_EQ(ctx_in.inlet_usages.node_host[ur], -1);
+        EXPECT_EQ(ctx_in.inlet_usages.design_index[ur], 0);
+        EXPECT_EQ(ctx_in.node_names.name_of(ctx_in.inlet_usages.node_index[ur]), "J3");
+        EXPECT_EQ(ctx_in.inlet_usages.num_inlets[ur], 2);
+        EXPECT_NEAR(ctx_in.inlet_usages.clog_factor[ur], 0.75, 1e-12);
+        EXPECT_DOUBLE_EQ(ctx_in.inlet_usages.flow_limit[ur], 1.5);
+        EXPECT_DOUBLE_EQ(ctx_in.inlet_usages.local_depress[ur], 0.1);
+        EXPECT_DOUBLE_EQ(ctx_in.inlet_usages.local_width[ur], 1.0);
+        EXPECT_EQ(ctx_in.inlet_usages.placement[ur], 2);
+    }
+    const int rn = ctx_in.inlet_usages.find_by_node_host(in_j2);
+    ASSERT_GE(rn, 0);
+    {
+        const auto ur = static_cast<std::size_t>(rn);
+        EXPECT_EQ(ctx_in.inlet_usages.link_index[ur], -1);
+        EXPECT_EQ(ctx_in.inlet_usages.design_index[ur], 1);
+        EXPECT_EQ(ctx_in.node_names.name_of(ctx_in.inlet_usages.node_index[ur]), "J1");
+        EXPECT_EQ(ctx_in.inlet_usages.placement[ur], 0);
+    }
+    EXPECT_EQ(ctx_in.nodes.is_inlet[static_cast<std::size_t>(in_j2)], 1);
+    EXPECT_DOUBLE_EQ(ctx_in.nodes.rim_depth[static_cast<std::size_t>(in_j2)], 0.5);
 }
 
 // A .gpkg written before those two columns existed must still open, with no
@@ -1198,8 +1312,8 @@ TEST_F(GeoPackageTest, QualityTablesRoundTrip) {
     EXPECT_DOUBLE_EQ(ctx_in.subcatches.sweep_last_swept[s1 * nLu + res], 1.0);
 
     ASSERT_EQ(ctx_in.subcatches.conc_n_pollutants, 1);
-    EXPECT_DOUBLE_EQ(ctx_in.subcatches.conc[s1 * np + 0], 1.5);
-    EXPECT_DOUBLE_EQ(ctx_in.subcatches.conc[s2 * np + 0], 2.25);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.init_loading[s1 * np + 0], 1.5);
+    EXPECT_DOUBLE_EQ(ctx_in.subcatches.init_loading[s2 * np + 0], 2.25);
 }
 
 TEST_F(GeoPackageTest, PatternsRoundTrip) {
@@ -1970,4 +2084,95 @@ TEST_F(GeoPackageTest, SpeciesCollidingWithHydraulicVariableFailsPrepare) {
     ASSERT_TRUE(depth.found);
     EXPECT_EQ(depth.category, "STATE")
         << "the built-in depth variable was overwritten by the species";
+}
+
+// ===========================================================================
+// LINK_OFFSETS=ELEVATION
+//
+// Engine-level on purpose: the defect lives in resolve_cross_references, which
+// the data-level read_from_file tests above never run.
+//
+// Under ELEVATION the offsets in an .inp are ELEVATIONS, and the resolver
+// rewrites each as a depth above its node invert. A GeoPackage stores those
+// RESOLVED depths — it is the engine's canonical internal store, which is why
+// convert_inputs_to_internal is skipped for it. Running the ELEVATION pass
+// again on reopen subtracted the node invert a SECOND time and the negative
+// result clamped to zero, so every offset in the model collapsed onto its node
+// invert on the first .gpkg round trip.
+// ===========================================================================
+
+#include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_model.h>
+
+namespace {
+
+constexpr const char* kGpkgPluginId = "org.hydrocouple.openswmm.plugins.geopackage";
+
+/// The InOffset/OutOffset columns of a [CONDUITS] row in a written .inp.
+///
+/// Asserted through the FILE rather than through swmm_link_get_offset_*,
+/// because those getters hand back the AUTHORED offset — they undo the very
+/// normalisation under test, so they report the right answer either way. The
+/// file is what a user reopens and what the defect actually destroyed.
+struct Offsets { double up, dn; };
+
+Offsets conduit_offsets(const std::string& inp_path, const std::string& link) {
+    std::ifstream in(inp_path);
+    EXPECT_TRUE(in.good()) << "cannot read " << inp_path;
+    std::string line;
+    bool in_conduits = false;
+    while (std::getline(in, line)) {
+        const std::string t = line.substr(0, line.find(';'));
+        std::istringstream ls(t);
+        std::string first;
+        if (!(ls >> first)) continue;
+        if (first.front() == '[') {
+            in_conduits = (t.find("[CONDUITS]") != std::string::npos);
+            continue;
+        }
+        if (!in_conduits || first != link) continue;
+        std::string n1, n2, len, rough;
+        Offsets o{-1.0, -1.0};
+        ls >> n1 >> n2 >> len >> rough >> o.up >> o.dn;
+        return o;
+    }
+    ADD_FAILURE() << "no [CONDUITS] row for " << link << " in " << inp_path;
+    return {-1.0, -1.0};
+}
+
+}  // namespace
+
+TEST(GeoPackageElevationOffsets, ElevationOffsetsSurviveAGpkgRoundTrip) {
+    const std::string src  = "inp_roundtrip/elevation_offsets.inp";
+    const std::string gpkg = "inp_roundtrip/_elevation_offsets.gpkg";
+    const std::string back = "inp_roundtrip/_elevation_offsets_back.inp";
+    std::remove(gpkg.c_str());
+    std::remove(back.c_str());
+
+    // .inp -> .gpkg
+    SWMM_Engine a = swmm_engine_create();
+    ASSERT_NE(a, nullptr);
+    ASSERT_EQ(swmm_engine_open(a, src.c_str(), nullptr, nullptr, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_model_write_with_plugin(a, gpkg.c_str(), kGpkgPluginId), SWMM_OK);
+    swmm_engine_close(a);
+    swmm_engine_destroy(a);
+
+    // .gpkg -> .inp
+    SWMM_Engine b = swmm_engine_create();
+    ASSERT_NE(b, nullptr);
+    ASSERT_EQ(swmm_engine_open(b, gpkg.c_str(), nullptr, nullptr, kGpkgPluginId), SWMM_OK);
+    ASSERT_EQ(swmm_model_write(b, back.c_str()), SWMM_OK);
+    swmm_engine_close(b);
+    swmm_engine_destroy(b);
+
+    // The fixture authors ELEVATIONS, and the file is written back under an
+    // ELEVATION header, so the elevations must come back unchanged. The defect
+    // collapsed each one onto its node invert (102.0 -> 100.0, 99.5 -> 98.0).
+    const Offsets c1 = conduit_offsets(back, "C1");
+    EXPECT_NEAR(c1.up, 102.0, 1e-6) << "upstream offset collapsed onto J1's invert";
+    EXPECT_NEAR(c1.dn,  99.5, 1e-6) << "downstream offset collapsed onto J2's invert";
+
+    const Offsets c2 = conduit_offsets(back, "C2");
+    EXPECT_NEAR(c2.up, 98.5, 1e-6);
+    EXPECT_NEAR(c2.dn, 90.0, 1e-6);
 }

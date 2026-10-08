@@ -317,7 +317,8 @@ def main():
                 print("MISSING: %s" % name)
                 bad += 1
                 continue
-            have = open(path).read()
+            with open(path, encoding="utf-8", newline="") as f:
+                have = f.read()
             if have != text:
                 bad += 1
                 print("DIFFERS: %s" % name)
@@ -326,7 +327,7 @@ def main():
                                          text.splitlines(True),
                                          "on-disk", "generated"))
         else:
-            with open(path, "w") as f:
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
                 f.write(text)
             print("wrote %s (%d bytes)" % (name, len(text.encode("utf-8"))))
     if check:

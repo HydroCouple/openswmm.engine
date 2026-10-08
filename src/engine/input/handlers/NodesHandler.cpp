@@ -107,6 +107,27 @@ void handle_junctions(SimulationContext& ctx, const std::vector<std::string>& li
 
         ensure_node_capacity(ctx, idx);
 
+        // legacy junc_readParams (node.c): the INVERT ELEVATION may be
+        // negative, but max depth, initial depth, surcharge depth and ponded
+        // area may not — "check for non-negative values (except for invert
+        // elev.)" — and a negative one is ERROR 211 naming the offending token,
+        // tested in column order once the row is read.
+        //
+        // Accepting them is not a lenient no-op. A negative max depth drives a
+        // pathological run: 1218-nodes carries maxDepth = -612 on six junctions
+        // and v6 simulated 21 days straight past the 1,800 s harness cap, where
+        // legacy refuses the deck in 24 ms. 960-nodes is the same rule at
+        // -0.100000.
+        bool negative_param = false;
+        for (std::size_t i = 2; i < tok.size() && i <= 5; ++i) {
+            if (to_double(tok[i]) < 0.0) {
+                ctx.errors.push_back(format_error(ERR_NUMBER, tok[i]));
+                negative_param = true;
+                break;
+            }
+        }
+        if (negative_param) continue;
+
         ctx.node_subtypes.set_node_type(ctx.nodes, idx, NodeType::JUNCTION);
         ctx.nodes.invert_elev[idx] = to_double(tok[1]);                          // Elev
         if (tok.size() > 2) ctx.nodes.full_depth[idx]  = to_double(tok[2]);     // MaxDepth
@@ -281,18 +302,31 @@ void handle_dividers(SimulationContext& ctx, const std::vector<std::string>& lin
             }
         } else if (dtype == "WEIR") {
             D.method[drow] = DividerType::WEIR;
+            // Legacy column order (node.c:1112): qMin dhMax cWeir — dhMax is
+            // token 5 and the discharge coefficient token 6 (was swapped).
             if (tok.size() > 4) D.cutoff[drow]    = to_double(tok[4]);
-            if (tok.size() > 5) D.cd[drow]        = to_double(tok[5]);
-            if (tok.size() > 6) D.max_depth[drow] = to_double(tok[6]);
+            if (tok.size() > 5) D.max_depth[drow] = to_double(tok[5]);
+            if (tok.size() > 6) D.cd[drow]        = to_double(tok[6]);
         }
 
-        // MaxDepth after type-specific fields
-        int md_offset = 5;
-        if (dtype == "CUTOFF" || dtype == "OVERFLOW") md_offset = 5;
-        else if (dtype == "TABULAR") md_offset = 5;
-        else if (dtype == "WEIR") md_offset = 7;
-        if (static_cast<int>(tok.size()) > md_offset)
-            ctx.nodes.full_depth[ui] = to_double(tok[md_offset]);
+        // The optional tail is "maxDepth initDepth surDepth aPond", read from
+        // the first token AFTER the type-specific parameters — legacy's `n`
+        // (node.c divider_readParams, into x[7..10]).  OVERFLOW takes NO type
+        // parameter, so its tail starts at token 4; CUTOFF (qCutoff) and
+        // TABULAR (curve name) take one, WEIR (qMin dhMax cWeir) takes three.
+        //
+        // Two defects lived here: OVERFLOW used 5, so MaxDepth was read from
+        // the InitDepth column; and initDepth/surDepth/aPond were never read
+        // at all, so every divider silently lost them on load — not just on
+        // save, since the live model carried the zeros into the simulation.
+        int tail = 5;                                   // CUTOFF, TABULAR
+        if      (dtype == "OVERFLOW") tail = 4;
+        else if (dtype == "WEIR")     tail = 7;
+        const int ntoks = static_cast<int>(tok.size());
+        if (ntoks > tail)     ctx.nodes.full_depth[ui] = to_double(tok[tail]);
+        if (ntoks > tail + 1) ctx.nodes.init_depth[ui] = to_double(tok[tail + 1]);
+        if (ntoks > tail + 2) ctx.nodes.sur_depth[ui]  = to_double(tok[tail + 2]);
+        if (ntoks > tail + 3) ctx.nodes.ponded_area[ui] = to_double(tok[tail + 3]);
         if (!pl.comment.empty())
             ctx.nodes.comments[ui] = pl.comment;
     }
@@ -361,15 +395,33 @@ void handle_storage(SimulationContext& ctx, const std::vector<std::string>& line
             S.curve[srow] = -1;
         }
 
-        // Optional: SurDepth, Fevap, Seep — TABULAR consumes one token for the curve
-        // name, every other shape consumes three numeric params.
+        // Optional: SurDepth, Fevap, then the exfiltration parameters —
+        // TABULAR consumes one token for the curve name, every other shape
+        // three numeric params (legacy storage_readParams n = 6 / 8).
+        // legacy exfil_readStorageParams: ONE remaining token is a bare Ksat
+        // (suction and IMD 0 → a constant Ks rate), otherwise three tokens
+        // Psi Ksat IMD (Green-Ampt); Ksat 0 = no exfiltration. The third
+        // token used to land in the dead `seep_rate` slot and the
+        // Green-Ampt columns were never read, so every .inp storage
+        // exfiltration (36 corpus decks) was silently ignored.
         const int param_offset = (sshape == StorageShape::TABULAR) ? 6 : 8;
         if (static_cast<int>(tok.size()) > param_offset)
             ctx.nodes.sur_depth[idx] = to_double(tok[param_offset]);
         if (static_cast<int>(tok.size()) > param_offset + 1)
             S.evap_frac[srow] = to_double(tok[param_offset + 1]);
-        if (static_cast<int>(tok.size()) > param_offset + 2)
-            S.seep_rate[srow] = to_double(tok[param_offset + 2]);
+        {
+            const int n = param_offset + 2;
+            const int ntoks = static_cast<int>(tok.size());
+            if (ntoks == n + 1) {
+                S.exfil_suction[srow] = 0.0;
+                S.exfil_ksat[srow]    = to_double(tok[n]);
+                S.exfil_imd[srow]     = 0.0;
+            } else if (ntoks >= n + 3) {
+                S.exfil_suction[srow] = to_double(tok[n]);
+                S.exfil_ksat[srow]    = to_double(tok[n + 1]);
+                S.exfil_imd[srow]     = to_double(tok[n + 2]);
+            }
+        }
         if (!pl.comment.empty())
             ctx.nodes.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
@@ -404,6 +456,9 @@ void handle_coordinates(SimulationContext& ctx, const std::vector<std::string>& 
 
         ctx.spatial.node_x[idx] = to_double(tok[1]);
         ctx.spatial.node_y[idx] = to_double(tok[2]);
+        if (ctx.spatial.node_has_xy.size() < ctx.spatial.node_x.size())
+            ctx.spatial.node_has_xy.resize(ctx.spatial.node_x.size(), 0);
+        ctx.spatial.node_has_xy[static_cast<std::size_t>(idx)] = 1;   // G-X2
     }
 }
 

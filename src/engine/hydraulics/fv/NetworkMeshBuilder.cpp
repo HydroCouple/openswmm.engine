@@ -15,6 +15,7 @@
 #include <tuple>
 
 #include "FvKernels.hpp"
+#include "SectionGeometry.hpp"
 #include "../../core/ErrorCodes.hpp"
 #include "../Culvert.hpp"
 #include "../Link.hpp"
@@ -33,108 +34,134 @@ struct Attachment {
     int end     = 0;    ///< 0 = conduit's upstream (node1) end, 1 = downstream
 };
 
-/// Exact I₁ for a compiled section, replacing buildI1Table's Simpson
-/// quadrature below.
-///
-/// promptperf.md Phase 6 asks for the I₁ table to come "directly from
-/// chebI1ofY". Taken literally that is WRONG here, and the reason is worth
-/// recording: `buildI1Table` integrates `areaOfDepth`, which is NOT the
-/// section area. It is `barrel_scale * A_section` plus the Preissmann slot's
-/// tapered contribution, and `chebI1ofY` knows about neither. Substituting it
-/// unmodified would silently drop the slot area from the pressure term of
-/// every momentum flux on every closed conduit.
-///
-/// The decomposition is exact, though, because `areaOfDepth` is itself a sum
-/// of two terms that integrate independently:
-///
-///     ∫₀ʰ A dη = barrel_scale·I₁_section(h) + t_slot·band²·(S⁴/4 − S⁵/10)
-///
-/// with S = clamp((h − y_crown)/band, 0, 1), since the slot term is
-/// t_slot·band·slotRampIntegral(s) and ∫₀^S (σ³ − σ⁴/2)dσ = S⁴/4 − S⁵/10.
-/// Both halves are closed form, so the table nodes become exact rather than
-/// eighth-order-accurate — which matters most near the invert, where A ~ h^1.5
-/// has an unbounded fourth derivative and Simpson converges worst. That is
-/// precisely the dry-weather regime this project exists to serve.
-///
-/// @note Well-balancedness is unaffected either way: it requires only that I₁
-///       be single-valued in h (see FvKernels.hpp's file header), which a
-///       closed form satisfies at least as well as a quadrature.
-double exactI1(const FvGeometry& g, double h) {
-    const double i1_sec = chebsec::chebI1ofY(*g.xs.cheb, h);
-    double slot = 0.0;
+/**
+ * @brief Build the exact-geometry closure table for one section.
+ *
+ * Samples SectionGeometry (closed forms where they exist, the legacy
+ * evaluator where the table is the definition) at kClosurePanels+1 uniform
+ * depths with the tapered slot folded in, takes the exact top width as the
+ * Hermite slope, limits the slopes for monotonicity (Fritsch–Carlson), and
+ * integrates the panel cubics for I₁. Open polynomial sections get the
+ * closed-form class instead. Areas and widths are per cell (barrels folded
+ * in); R is per barrel. a_crown / i1_crown are then the closure's own values.
+ */
+void buildClosure(FvGeometry& g) {
+    FvClosure& c = g.closure_tbl;
+    c = FvClosure{};
+    const int N = kClosurePanels;
+    if (!(g.y_full > 0.0)) return;
+
+    c.y_full = g.y_full;
+    c.dh     = g.y_full / static_cast<double>(N);
+    c.inv_dh = static_cast<double>(N) / g.y_full;
+    c.t_slot = g.t_slot;
+    c.r_full = g.r_full;
+    const double bs   = g.barrel_scale;
     const double band = g.y_full - g.y_crown;
-    if (band > 0.0 && h > g.y_crown) {
-        double S = (h - g.y_crown) / band;
-        if (S > 1.0) S = 1.0;
-        const double S4 = S * S * S * S;
-        slot = g.t_slot * band * band * (0.25 * S4 - 0.1 * S4 * S);
-    }
-    return g.barrel_scale * i1_sec + slot;
-}
+    const XSectParams& xs = g.xs;
 
-/// Composite integration of A(h) over [0, y_full] onto the kI1Samples grid.
-/// Each table interval is integrated with kSub Simpson panels of the exact
-/// closure, so the tabulated I₁ is far more accurate than a trapezoid over the
-/// coarse grid would be — it is the pressure term of every momentum flux.
-/// A compiled boundary skips this entirely in favor of exactI1 above.
-void buildI1Table(FvGeometry& g) {
-    constexpr int kSub = 8;                      // Simpson panels per interval
-    const int n = kI1Samples;
-    for (int q = 0; q < 2 * n; ++q) g.i1_tbl[q] = 0.0;
-    if (g.y_full <= 0.0) return;
-
-    const double dh = g.y_full / static_cast<double>(n - 1);
-
-    // Compiled boundary: I₁ is available in closed form, so skip the
-    // quadrature entirely (see exactI1 above).
-    if (g.xs.cheb) {
-        g.i1_tbl[0] = 0.0;
-        g.i1_tbl[static_cast<std::size_t>(n)] = 0.0;
-        for (int i = 1; i < n; ++i) {
-            const double h_i = static_cast<double>(i) * dh;
-            g.i1_tbl[static_cast<std::size_t>(i)] = exactI1(g, h_i);
-            g.i1_tbl[static_cast<std::size_t>(n + i)] =
-                kernels::areaOfDepth(g, h_i);
+    if (g.is_open && secgeom::isPolynomialOpen(xs.type)) {
+        c.kind = kClosurePolynomial;
+        switch (static_cast<XSectShape>(xs.type)) {
+            case XSectShape::RECT_OPEN:
+                c.c2 = 0.0;            c.c1 = bs * xs.w_max;
+                c.p0 = bs * xs.w_max;  c.p1 = bs * (2.0 - xs.s_bot);
+                break;
+            case XSectShape::TRAPEZOIDAL:
+                c.c2 = bs * xs.s_bot;  c.c1 = bs * xs.y_bot;
+                c.p0 = bs * xs.y_bot;  c.p1 = bs * xs.r_bot;
+                break;
+            default:  // TRIANGULAR
+                c.c2 = bs * xs.s_bot;  c.c1 = 0.0;
+                c.p0 = 0.0;            c.p1 = bs * 2.0 * xs.r_bot;
+                break;
         }
-        g.i1_crown = exactI1(g, g.y_full);
-        return;
-    }
-    const double hs = dh / static_cast<double>(2 * kSub);   // Simpson half-panel
-
-    double acc = 0.0;
-    g.i1_tbl[0] = 0.0;
-    g.i1_tbl[static_cast<std::size_t>(n)] = 0.0;            // A(0) = 0
-    for (int i = 1; i < n; ++i) {
-        const double h0 = static_cast<double>(i - 1) * dh;
-        // Composite Simpson over [h0, h0 + dh].
-        double s = kernels::areaOfDepth(g, h0) +
-                   kernels::areaOfDepth(g, h0 + dh);
-        for (int k = 1; k < 2 * kSub; ++k) {
-            const double hk = h0 + static_cast<double>(k) * hs;
-            s += ((k & 1) ? 4.0 : 2.0) * kernels::areaOfDepth(g, hk);
+        c.a_crown  = (c.c2 * g.y_full + c.c1) * g.y_full;
+        c.i1_crown = (c.c2 * g.y_full / 3.0 + 0.5 * c.c1) * g.y_full * g.y_full;
+        c.inv_a_crown_n = (c.a_crown > 0.0) ? static_cast<double>(N) / c.a_crown : 0.0;
+    } else {
+        c.kind = kClosureTabulated;
+        for (int i = 0; i <= N; ++i) {
+            const double h = g.y_full * static_cast<double>(i) / static_cast<double>(N);
+            double a = bs * secgeom::areaOfDepth(xs, h);
+            double w = bs * secgeom::widthOfDepth(xs, h);
+            const double r = secgeom::hydRadOfDepth(xs, h);
+            if (band > 0.0 && h > g.y_crown) {
+                const double s = (h - g.y_crown) / band;
+                a += g.t_slot * band * kernels::slotRampIntegral(s);
+                w += g.t_slot * kernels::slotRamp(s);
+            }
+            c.A[i] = a;
+            c.M[i] = (w > 0.0) ? w : 0.0;
+            c.R[i] = (r > 0.0) ? r : 0.0;
         }
-        acc += s * hs / 3.0;
-        const double h_i = static_cast<double>(i) * dh;
-        g.i1_tbl[static_cast<std::size_t>(i)] = acc;
-        g.i1_tbl[static_cast<std::size_t>(n + i)] = kernels::areaOfDepth(g, h_i);
+        c.A[0] = 0.0;
+        c.R[N] = g.r_full;
+
+        // Node slopes. For a closed-form section the exact top width IS dA/dh
+        // and is used directly. For a table-defined section the legacy W table
+        // is an INDEPENDENT tabulation that is not the derivative of the
+        // legacy A table (the very inconsistency this closure exists to
+        // remove), so the slopes come from the A samples themselves: the
+        // PCHIP three-point formula (harmonic mean of the adjacent secants),
+        // which is monotone by construction and keeps T consistent with A.
+        if (!secgeom::hasClosedForm(xs.type)) {
+            double d[kClosurePanels];
+            for (int i = 0; i < N; ++i) d[i] = (c.A[i + 1] - c.A[i]) * c.inv_dh;
+            c.M[0] = d[0];
+            c.M[N] = d[N - 1];
+            for (int i = 1; i < N; ++i) {
+                if (d[i - 1] > 0.0 && d[i] > 0.0)
+                    c.M[i] = 2.0 / (1.0 / d[i - 1] + 1.0 / d[i]);
+                else
+                    c.M[i] = 0.0;
+            }
+            // Keep the slot's own slope at the crown node: above it the
+            // closure is the slot line, and continuity of T there is what the
+            // taper band is for.
+            if (band > 0.0) c.M[N] = std::max(c.M[N], g.t_slot);
+        }
+
+        // Fritsch–Carlson: with the exact width as node slope the limiter
+        // almost never engages, but it is what makes monotonicity a property
+        // of the table rather than of the shape.
+        for (int i = 0; i < N; ++i) {
+            const double delta = (c.A[i + 1] - c.A[i]) * c.inv_dh;
+            if (!(delta > 0.0)) { c.M[i] = 0.0; c.M[i + 1] = 0.0; continue; }
+            double alpha = c.M[i] / delta, beta = c.M[i + 1] / delta;
+            if (alpha < 0.0) { alpha = 0.0; c.M[i] = 0.0; }
+            if (beta  < 0.0) { beta  = 0.0; c.M[i + 1] = 0.0; }
+            const double s2 = alpha * alpha + beta * beta;
+            if (s2 > 9.0) {
+                const double tau = 3.0 / std::sqrt(s2);
+                c.M[i]     = tau * alpha * delta;
+                c.M[i + 1] = tau * beta  * delta;
+            }
+        }
+
+        // I₁ = running integral of the panel cubics (Hermite quadrature).
+        c.I1[0] = 0.0;
+        for (int i = 0; i < N; ++i)
+            c.I1[i + 1] = c.I1[i] + c.dh * (0.5 * (c.A[i] + c.A[i + 1]) +
+                                            c.dh / 12.0 * (c.M[i] - c.M[i + 1]));
+        c.a_crown  = c.A[N];
+        c.i1_crown = c.I1[N];
+        c.inv_a_crown_n = (c.a_crown > 0.0) ? static_cast<double>(N) / c.a_crown : 0.0;
+
+        // Area-uniform panel index for the inverse.
+        for (int k = 0; k <= N; ++k) {
+            const double ak = c.a_crown * static_cast<double>(k) / static_cast<double>(N);
+            int lo = 0, hi = N;
+            while (hi - lo > 1) {
+                const int mid = (lo + hi) / 2;
+                if (c.A[mid] <= ak) lo = mid; else hi = mid;
+            }
+            c.j_of_a[k] = static_cast<int16_t>((lo > N - 1) ? N - 1 : lo);
+        }
     }
-    g.i1_crown = acc;
-}
 
-/// The area-uniform inverse table, built from the bracketed inverse so the
-/// fast path and the slow one converge to the same root by construction. Must
-/// run AFTER buildI1Table and after a_crown is set — it inverts what they
-/// produced.
-void buildDepthTable(FvGeometry& g) {
-    const int n = kI1Samples;
-    for (int j = 0; j < n; ++j) g.h_tbl[j] = 0.0;
-    if (!(g.a_crown > 0.0) || g.y_full <= 0.0) return;
-
-    const double da = g.a_crown / static_cast<double>(n - 1);
-    g.h_tbl[0] = 0.0;
-    for (int j = 1; j < n - 1; ++j)
-        g.h_tbl[j] = kernels::depthOfAreaBracketed(g, static_cast<double>(j) * da);
-    g.h_tbl[n - 1] = g.y_full;              // A(y_full) == a_crown by definition
+    g.a_crown  = c.a_crown;
+    g.i1_crown = c.i1_crown;
 }
 
 } // namespace
@@ -148,10 +175,6 @@ void buildGeometry(const XSectParams& xs, bool is_open, double slot_celerity,
     g.xs      = xs;
     g.barrels = std::max(1, barrels);
     g.barrel_scale = static_cast<double>(g.barrels);
-    // Host binding by default. A device backend rebinds this to its own
-    // evaluator over device copies of the same tables (plan §5.1); nothing else
-    // about the geometry changes.
-    g.eval    = &xsect::hostEval();
     // Area and width are aggregate over the barrels; depth and hydraulic radius
     // are per barrel and unscaled.
     g.y_full  = xs.y_full;
@@ -184,8 +207,7 @@ void buildGeometry(const XSectParams& xs, bool is_open, double slot_celerity,
     const double band = g.y_full - g.y_crown;
     g.a_crown = g.a_full + g.t_slot * band * 0.5;   // ∫₀¹ ramp = ½
 
-    buildI1Table(g);
-    buildDepthTable(g);
+    buildClosure(g);
 }
 
 // ===========================================================================
@@ -212,6 +234,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
     mesh.node_sur_depth.resize(static_cast<std::size_t>(n_nodes));
     mesh.node_can_pond.resize(static_cast<std::size_t>(n_nodes));
     mesh.node_kind.resize(static_cast<std::size_t>(n_nodes));
+    mesh.node_vj_face.assign(static_cast<std::size_t>(n_nodes), -1);
     mesh.node_area.assign(static_cast<std::size_t>(n_nodes),
                           constants::MIN_SURFAREA);
     for (int i = 0; i < n_nodes; ++i) {
@@ -279,7 +302,20 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
     // -----------------------------------------------------------------------
     // Per-conduit geometry + cell allocation
     // -----------------------------------------------------------------------
-    mesh.geom.resize(static_cast<std::size_t>(n_cond));
+    // One section block per DISTINCT (section, barrels, open) — plan Phase 1f.
+    mesh.geom.clear();
+    {
+        const auto un_cond = static_cast<std::size_t>(n_cond);
+        mesh.conduit_section.assign(un_cond, -1);
+        mesh.conduit_roughness.assign(un_cond, 0.01);
+        mesh.conduit_rough_factor.assign(un_cond, 0.0);
+        mesh.conduit_loss_inlet.assign(un_cond, 0.0);
+        mesh.conduit_loss_outlet.assign(un_cond, 0.0);
+        mesh.conduit_slope.assign(un_cond, 0.0);
+        mesh.conduit_culvert_code.assign(un_cond, 0);
+        mesh.conduit_culvert_curve.assign(un_cond, hydkernels::CulvertCurve{});
+        mesh.conduit_culvert_mitered.assign(un_cond, 0);
+    }
     mesh.conduit_cell_begin.assign(static_cast<std::size_t>(n_cond), -1);
     mesh.conduit_cell_count.assign(static_cast<std::size_t>(n_cond), 0);
     mesh.conduit_link.assign(static_cast<std::size_t>(n_cond), -1);
@@ -333,13 +369,28 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         const int j = CD.link_idx[ur];
         if (j < 0 || j >= n_links) continue;
         const auto uj = static_cast<std::size_t>(j);
+
+        // A DUMMY conduit is connectivity, not a channel: it declares that
+        // water leaving one node arrives at another with no section, no
+        // storage and no head loss. Legacy isTrueConduit (dynwave.c:411-414)
+        // is false for it and DW never momentum-solves one — it is routed as a
+        // pass-through by findNonConduitFlow. Do the same here: leave the row
+        // unmeshed (cell_begin −1, count 0, conduit_link −1, so every downstream
+        // consumer skips it) and pick it up in the structure loop below.
+        //
+        // This has to be tested on the SHAPE, before buildXSectParams, rather
+        // than falling through to the zero-geometry check: that check must stay
+        // an error for a link whose geometry genuinely failed to resolve.
+        if (ctx.links.xsect_shape[uj] == XsectShape::DUMMY) continue;
+
         mesh.conduit_link[ur] = j;
 
         XSectParams xs = link::buildXSectParams(ctx.links, uj, &ctx.transect_tables,
                                                 &ctx.cheb_sections);
         if (xs.y_full <= 0.0 || xs.a_full <= 0.0) {
-            // A control volume needs a real section. DUMMY-shape conduits and
-            // links whose geometry never resolved cannot be marched.
+            // A control volume needs a real section. A link whose geometry
+            // never resolved cannot be marched. (DUMMY shapes are handled
+            // above and never reach here.)
             rep.errors.push_back(
                 "FV routing: conduit '" + ctx.link_names.name_of(j) +
                 "' has no usable cross-section (full depth/area is zero). "
@@ -347,18 +398,31 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
             continue;
         }
 
-        auto& g = mesh.geom[ur];
+        // Per-INSTANCE isOpen, not isOpen(xs.type): a POLYGON (or any
+        // section carrying a compiled boundary under XSECT_GEOMETRY
+        // EXACT) has no shape code the int overload can classify, so it
+        // falls to `default: return false` and an open channel would be
+        // built as a closed pipe (slot and all). Identical for every
+        // other shape -- the overload forwards to isOpen(int) when no
+        // compiled boundary is attached.
         const bool is_open = xsect::isOpen(xs);
+        int sec;
         if (const auto hit = geom_memo.find(geom_key(xs, CD.barrels[ur], is_open));
             hit != geom_memo.end()) {
-            // Copy the already-tabulated geometry wholesale. The per-conduit
-            // scalars below are assigned after this point in both branches, so
-            // the result is identical to re-running buildGeometry.
-            g = mesh.geom[static_cast<std::size_t>(hit->second)];
+            // Shared section block (plan Phase 1f): the block carries nothing
+            // per-conduit any more, so every conduit with this key points at
+            // the same entry. Same bytes → bit-identical to the per-conduit
+            // copies it replaces.
+            sec = hit->second;
         } else {
-            buildGeometry(xs, is_open, opts.slot_celerity, g, CD.barrels[ur]);
-            geom_memo.emplace(geom_key(xs, CD.barrels[ur], is_open), r);
+            sec = static_cast<int>(mesh.geom.size());
+            mesh.geom.emplace_back();
+            buildGeometry(xs, is_open, opts.slot_celerity, mesh.geom.back(),
+                          CD.barrels[ur]);
+            geom_memo.emplace(geom_key(xs, CD.barrels[ur], is_open), sec);
         }
+        mesh.conduit_section[ur] = sec;
+        const FvGeometry& g = mesh.geom[static_cast<std::size_t>(sec)];
         if (!g.is_open) {
             const double c_req = std::max(opts.slot_celerity, 1.0);
             const double uncapped = kernels::kGravity * g.a_full / (c_req * c_req);
@@ -371,18 +435,18 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
                     std::sqrt(kernels::kGravity * g.a_full / g.t_slot));
             }
         }
-        g.roughness    = CD.roughness[ur];
-        g.rough_factor = CD.rough_factor[ur];
-        g.loss_inlet   = CD.loss_inlet[ur];
-        g.loss_outlet  = CD.loss_outlet[ur];
-        g.culvert_code = CD.culvert_code[ur];
-        g.slope        = CD.slope[ur];
-        if (g.culvert_code > 0) {
-            const culvert::CulvertCoeffs cc = culvert::getCoeffs(g.culvert_code);
-            g.culvert_curve = {cc.K, cc.M, cc.C, cc.Y};
-            g.culvert_mitered = static_cast<uint8_t>(
-                g.culvert_code == 5 || g.culvert_code == 37 ||
-                g.culvert_code == 46);
+        mesh.conduit_roughness[ur]    = CD.roughness[ur];
+        mesh.conduit_rough_factor[ur] = CD.rough_factor[ur];
+        mesh.conduit_loss_inlet[ur]   = CD.loss_inlet[ur];
+        mesh.conduit_loss_outlet[ur]  = CD.loss_outlet[ur];
+        mesh.conduit_culvert_code[ur] = CD.culvert_code[ur];
+        mesh.conduit_slope[ur]        = CD.slope[ur];
+        if (CD.culvert_code[ur] > 0) {
+            const culvert::CulvertCoeffs cc = culvert::getCoeffs(CD.culvert_code[ur]);
+            mesh.conduit_culvert_curve[ur] = {cc.K, cc.M, cc.C, cc.Y};
+            mesh.conduit_culvert_mitered[ur] = static_cast<uint8_t>(
+                CD.culvert_code[ur] == 5 || CD.culvert_code[ur] == 37 ||
+                CD.culvert_code[ur] == 46);
         }
 
         // Mesh length: the Courant-lengthened mod_length is reused as the Δx
@@ -418,7 +482,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
         for (int i = 0; i < ncell; ++i) {
             const double t = (static_cast<double>(i) + 0.5) /
                              static_cast<double>(ncell);
-            mesh.cell_geom.push_back(r);
+            mesh.cell_geom.push_back(sec);
             mesh.cell_conduit.push_back(r);
             mesh.cell_dx.push_back(dx);
             mesh.cell_zb.push_back(z1 + (z2 - z1) * t);
@@ -575,6 +639,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
             add_face(cl, cr, -1, mesh.node_invert[ui], 0.5 * (dxl + dxr),
                      dl, dr, true);
             mesh.face_vj_node.back() = i;
+            mesh.node_vj_face[ui] = mesh.n_faces() - 1;
             ++rep.n_virtual;
             continue;
         }
@@ -600,7 +665,7 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
 
             // HEC-5 inlet control acts at the culvert's UPSTREAM face only.
             if (a.end == 0 &&
-                mesh.geom[static_cast<std::size_t>(a.conduit)].culvert_code > 0)
+                mesh.conduit_culvert_code[static_cast<std::size_t>(a.conduit)] > 0)
                 mesh.face_culvert[static_cast<std::size_t>(fidx)] = a.conduit;
         }
     }
@@ -695,12 +760,9 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
                 FvGeometry g{};
                 buildGeometry(xs, xsect::isOpen(xs), opts.slot_celerity, g,
                               a.barrels);
-                // Friction/loss scalars are never read through the face
-                // section (faceSide uses only A, W and I₁ from it), but carry
-                // the average so nothing downstream sees an unset field.
-                g.roughness    = 0.5 * (a.roughness + b.roughness);
-                g.rough_factor = 0.5 * (a.rough_factor + b.rough_factor);
-                g.slope        = 0.5 * (a.slope + b.slope);
+                // A face section is geometry only: friction and losses are
+                // read through the CELL's conduit (mesh.conduit_*), never
+                // through the face (faceSide uses only A, W and I₁ from it).
                 gf = static_cast<int>(mesh.geom.size());
                 mesh.geom.push_back(g);
                 pair_geom.emplace(key, gf);
@@ -819,16 +881,35 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx,
 
     // -----------------------------------------------------------------------
     // Non-conduit links — applied as node source/sink pairs (plan §3.4).
+    //
+    // The membership test matches StructureSolver::nc_indices_
+    // (HydStructures.cpp:221-233) exactly, DUMMY conduits included: the two
+    // lists have to agree or a link is computed by one side and applied by
+    // neither. Dummies are flagged so the solver knows to derive their
+    // discharge itself instead of reading it from the forcing array.
     // -----------------------------------------------------------------------
+    mesh.node_dummy_drain.assign(static_cast<std::size_t>(n_nodes), 0);
     for (int j = 0; j < n_links; ++j) {
         const auto uj = static_cast<std::size_t>(j);
-        if (ctx.links.type[uj] == LinkType::CONDUIT) continue;
+        const bool is_dummy = (ctx.links.type[uj] == LinkType::CONDUIT &&
+                               ctx.links.xsect_shape[uj] == XsectShape::DUMMY);
+        if (ctx.links.type[uj] == LinkType::CONDUIT && !is_dummy) continue;
         const int a = ctx.links.node1[uj];
         const int b = ctx.links.node2[uj];
         if (a < 0 || b < 0) continue;
         mesh.struct_link.push_back(j);
         mesh.struct_n1.push_back(a);
         mesh.struct_n2.push_back(b);
+        mesh.struct_is_dummy.push_back(is_dummy ? 1 : 0);
+        if (is_dummy) mesh.node_dummy_drain[static_cast<std::size_t>(a)] = 1;
+    }
+    // Leave both vectors EMPTY when the model has no dummy links at all, so
+    // `node_dummy_drain.empty()` is a cheap "nothing to do" test the solver's
+    // hot paths can branch on, and a model without dummies allocates nothing.
+    if (std::find(mesh.struct_is_dummy.begin(), mesh.struct_is_dummy.end(),
+                  uint8_t{1}) == mesh.struct_is_dummy.end()) {
+        mesh.struct_is_dummy.clear();
+        mesh.node_dummy_drain.clear();
     }
 
     rep.n_cells    = nc;

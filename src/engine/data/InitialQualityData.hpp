@@ -49,6 +49,17 @@ struct InitialQualityData {
     static constexpr int kKindWaterAge    = -1;  ///< __WATER_AGE__ (hours)
     static constexpr int kKindTemperature = -2;  ///< __TEMPERATURE__ (degC)
     static constexpr int kKindUnresolved  = -3;  ///< Not yet classified
+    /// U2 (2026-09-07): MSX species m of the reactions component is encoded
+    /// as kind = kKindMsxFirst - m (every value <= kKindMsxFirst). The row
+    /// stays here for the writer ([INITIAL_QUALITY] is the canonical home)
+    /// and is mirrored into ReactionData::init_elem_* for the engines by
+    /// transport::mirrorInitialQualityMsxRows.
+    static constexpr int kKindMsxFirst    = -100;
+    static constexpr int msxKind(int species) noexcept { return kKindMsxFirst - species; }
+    /// Species index for an MSX kind, -1 for any other kind.
+    static constexpr int msxSpecies(int k) noexcept {
+        return (k <= kKindMsxFirst) ? (kKindMsxFirst - k) : -1;
+    }
 
     int count() const { return static_cast<int>(is_link.size()); }
 
@@ -58,15 +69,24 @@ struct InitialQualityData {
     std::vector<std::string> constituent;  ///< Raw constituent name (writer round-trip)
     std::vector<int>         kind;         ///< >=0 pollutant idx; kKind* otherwise
     std::vector<double>      value;        ///< Raw user-units value
+    /// U2: 1 when the row came from the `[INITIAL_QUALITY] FILE <csv>`
+    /// sidecar. The writer emits the FILE line and the inline rows only;
+    /// the sidecar is the source of its rows (edit or re-import it).
+    std::vector<uint8_t>     from_file;
+
+    /// U2: `[INITIAL_QUALITY] FILE <path>` as written (relative to the .inp);
+    /// empty when none. Read at open, after the .inp parse.
+    std::string file;
 
     void add(bool link, const std::string& name, const std::string& cons,
-             double v, int ei = -1, int k = kKindUnresolved) {
+             double v, int ei = -1, int k = kKindUnresolved, bool fromFile = false) {
         is_link.push_back(link ? 1 : 0);
         elem_name.push_back(name);
         elem_idx.push_back(ei);
         constituent.push_back(cons);
         kind.push_back(k);
         value.push_back(v);
+        from_file.push_back(fromFile ? 1 : 0);
     }
 
     /// Remove the entry at @p idx. No-op if out of range. Subsequent entries
@@ -80,6 +100,7 @@ struct InitialQualityData {
         constituent.erase(constituent.begin() + u);
         kind.erase(kind.begin() + u);
         value.erase(value.begin() + u);
+        if (u < from_file.size()) from_file.erase(from_file.begin() + u);
     }
 };
 

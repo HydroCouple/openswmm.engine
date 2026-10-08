@@ -26,7 +26,12 @@
  *          (θ = 1), unconditionally stably. Everything else stays exactly the
  *          explicit Godunov scheme: membership is a pure function of the
  *          instantaneous state (h ≥ y_crown, band entry — no flags, no
- *          memory), and the solve is a FLUX PREDICTOR whose back-substituted
+ *          memory) — EXCEPT under the TPA closure (issue #156), where
+ *          membership IS the regime flag (physical air-pathway history,
+ *          cleared on cold start and hotstart restore; see cellPressurized
+ *          below — the SLOT-closure path above is untouched). The flag is
+ *          fixed within a substep, so the SPD structure is unchanged either
+ *          way — and the solve is a FLUX PREDICTOR whose back-substituted
  *          face discharges overwrite `f_mass_`, the single array both the
  *          cell update and the node update read — so conservation, rollback,
  *          hot start and reporting are structurally untouched.
@@ -45,7 +50,8 @@
  *          Thomas algorithm; components with a degree-≥3 folded junction by
  *          Jacobi-preconditioned CG.
  *
- *          Face taxonomy (memoryless, re-derived every substep):
+ *          Face taxonomy (re-derived every substep; memoryless under SLOT,
+ *          flag-consistent under TPA via cellPressurized/ghostPressurized):
  *            FULL   — both sides pressurized (cell–cell, or cell–node with a
  *                     pressurized ghost). The Casulli-form flux above; at
  *                     steady state it reduces to ΔH/L = −S_f exactly, which
@@ -118,6 +124,12 @@ struct PressurizedView {
     const double* cell_eta = nullptr;
     double*       cell_u   = nullptr;
 
+    /// Unsteady-friction convective term c·sgn(Vⁿ)·|∂V/∂x|ⁿ per cell
+    /// (issue #156), precomputed by ExplicitFvSolver::computeUfGradients from
+    /// the old-state snapshot BEFORE solve() runs. Null/empty when
+    /// FvOptions::unsteady_friction == 0.
+    const std::vector<double>* uf_grad = nullptr;
+
     const std::vector<int>*  active_faces = nullptr;
     const std::vector<char>* cell_active  = nullptr;
 
@@ -186,9 +198,15 @@ public:
     // -- static predicates shared with the census edit ----------------------
 
     /// Is this cell pressurized (band entry and above) under the R2 rule?
+    /// Under the TPA closure (issue #156: state.cell_tpa non-empty) membership
+    /// IS the regime flag — a latched sub-atmospheric cell sits below y_crown
+    /// yet is exactly the stiff-acoustic case this solver exists for (plan
+    /// §2.2(1)). The flag is fixed within a substep, so the SPD structure and
+    /// the census edit stay consistent.
     static bool cellPressurized(const NetworkMeshData& mesh,
                                 const NetworkStateData& state, int cell) {
         const auto uc = static_cast<std::size_t>(cell);
+        if (!state.cell_tpa.empty()) return state.cell_tpa[uc] != 0;
         const FvGeometry& g =
             mesh.geom[static_cast<std::size_t>(mesh.cell_geom[uc])];
         return !g.is_open && state.cell_h[uc] >= g.y_crown;
@@ -240,6 +258,17 @@ public:
         const FvGeometry& g = mesh.geom[static_cast<std::size_t>(
             mesh.cell_geom[static_cast<std::size_t>(other)])];
         if (g.is_open) return false;
+        // TPA (issue #156 Phase 5): a SEALED node against a flagged interior
+        // cell carries the pressurized column at sub-atmospheric head — the
+        // ghost is pressurized even though head < crown (the same rule
+        // faceSide uses for its ghost regime). Without this the sealed
+        // sub-crown junction's faces degrade to kDelta, the fold pass skips
+        // the node, and the implicit path breaks the column (the P4 pinned
+        // known-issue).
+        if (!state.cell_tpa.empty() &&
+            state.cell_tpa[static_cast<std::size_t>(other)] != 0 &&
+            mesh.node_sur_depth[static_cast<std::size_t>(nd)] > 0.0)
+            return true;
         const double hg =
             state.node_head[static_cast<std::size_t>(nd)] - mesh.face_zb[uf];
         return hg >= g.y_crown;

@@ -147,6 +147,15 @@ TEST(ReportParserTest, AveragesYes) {
     EXPECT_TRUE(ctx.options.rpt_averages);
 }
 
+TEST(ReportParserTest, LinkStepsDefaultNoAndYes) {
+    SimulationContext ctx;
+    EXPECT_FALSE(ctx.options.rpt_link_steps);
+    parse_report(ctx, {"LINK_STEPS  YES"});
+    EXPECT_TRUE(ctx.options.rpt_link_steps);
+    parse_report(ctx, {"LINK_STEPS  NO"});
+    EXPECT_FALSE(ctx.options.rpt_link_steps);
+}
+
 TEST(ReportParserTest, SubcatchmentsAll) {
     SimulationContext ctx;
     ctx.options.rpt_subcatchments = 0;  // start NONE
@@ -388,6 +397,22 @@ TEST_F(ReportInpRoundTripTest, AllKeywordsWritten) {
     EXPECT_NE(text.find("C2"), std::string::npos);
 }
 
+TEST_F(ReportInpRoundTripTest, LinkStepsOmittedWhenOffOrSwmm5) {
+    SimulationContext ctx;
+    ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, tmp_path_), 0);
+    std::string text;
+    for (const auto& l : extract_report_section(tmp_path_)) text += l + "\n";
+    EXPECT_EQ(text.find("LINK_STEPS"), std::string::npos);   // default NO: not written
+
+    ctx.options.rpt_link_steps = true;
+    openswmm::inp_writer::InpWriteOptions o;
+    o.profile = openswmm::inp_writer::InpWriteOptions::Profile::Swmm5;
+    ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, tmp_path_, nullptr, o), 0);
+    text.clear();
+    for (const auto& l : extract_report_section(tmp_path_)) text += l + "\n";
+    EXPECT_EQ(text.find("LINK_STEPS"), std::string::npos);   // 5.x rejects the key
+}
+
 TEST_F(ReportInpRoundTripTest, ParseWrittenReportSection) {
     // Build, write, then parse the [REPORT] section
     SimulationContext ctx_write;
@@ -397,6 +422,7 @@ TEST_F(ReportInpRoundTripTest, ParseWrittenReportSection) {
     ctx_write.options.rpt_flowstats = false;
     ctx_write.options.rpt_controls = true;
     ctx_write.options.rpt_averages = true;
+    ctx_write.options.rpt_link_steps = true;
     ctx_write.options.rpt_subcatchments = 0;  // NONE
     ctx_write.options.rpt_nodes = 1;          // ALL
     ctx_write.options.rpt_links = 2;          // SOME
@@ -417,6 +443,7 @@ TEST_F(ReportInpRoundTripTest, ParseWrittenReportSection) {
     EXPECT_EQ(ctx_read.options.rpt_flowstats, false);
     EXPECT_EQ(ctx_read.options.rpt_controls, true);
     EXPECT_EQ(ctx_read.options.rpt_averages, true);
+    EXPECT_EQ(ctx_read.options.rpt_link_steps, true);
     EXPECT_EQ(ctx_read.options.rpt_subcatchments, 0);  // NONE
     EXPECT_EQ(ctx_read.options.rpt_nodes, 1);           // ALL
     EXPECT_EQ(ctx_read.options.rpt_links, 2);            // SOME

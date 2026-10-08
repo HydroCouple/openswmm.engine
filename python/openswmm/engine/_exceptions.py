@@ -61,6 +61,7 @@ __all__ = [
     "NumericalError",
     "CRSError",
     "DependencyError",
+    "GeoPackageError",
     "ElementNotFoundError",
     "StaleObjectError",
     "raise_for_code",
@@ -154,6 +155,12 @@ class CRSError(EngineError, ValueError):
 class DependencyError(EngineError, RuntimeError):
     """Object has dependents that block the requested operation
     (``SWMM_ERR_DEPENDENCY``)."""
+
+
+class GeoPackageError(EngineError, RuntimeError):
+    """A GeoPackage operation failed: opening the file, a query or a write
+    (``SWMM_ERR_IO``). The GeoPackage C API reports failures without a code;
+    the message carries the library's reason."""
 
 
 class ElementNotFoundError(BadIndexError, KeyError):

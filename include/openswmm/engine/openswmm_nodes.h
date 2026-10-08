@@ -245,7 +245,9 @@ SWMM_ENGINE_API int swmm_node_is_virtual(SWMM_Engine engine, int idx, int* is_vi
  *          distinct rule code on a violated usage rule so callers can render
  *          actionable messages: 609 = not exactly two conduits, 611 =
  *          cross-section mismatch, 613 = nonzero offset at the node, 617 =
- *          a lateral inflow source targets the node.
+ *          the node is a 2D surface-coupling point. Point lateral inflows
+ *          ([INFLOWS], [DWF], RDII, subcatchment outlets, LID drains, the
+ *          runtime lateral-inflow API) are permitted at a virtual junction.
  */
 SWMM_ENGINE_API int swmm_node_set_virtual(SWMM_Engine engine, int idx, int make_virtual);
 
@@ -254,8 +256,8 @@ SWMM_ENGINE_API int swmm_node_set_virtual(SWMM_Engine engine, int idx, int make_
  *
  * @details Read-only: evaluates the same structural rules that
  *          swmm_node_set_virtual() enforces (exactly two attached conduits of
- *          identical cross-section, zero offsets, no lateral inflow sources,
- *          dynamic-wave routing) without changing any state and without
+ *          identical cross-section, zero offsets, no 2D surface coupling,
+ *          dynamic-wave or FV routing) without changing any state and without
  *          requiring the node to currently be a JUNCTION — so callers can
  *          offer "convert to virtual junction" only when it would succeed.
  *
@@ -267,6 +269,38 @@ SWMM_ENGINE_API int swmm_node_set_virtual(SWMM_Engine engine, int idx, int make_
  * @returns SWMM_OK on success, or an error code for a bad handle/index.
  */
 SWMM_ENGINE_API int swmm_node_virtual_eligible(SWMM_Engine engine, int idx, int* rule_code);
+
+/* -------------------------------------------------------------------------
+ * Inlet junctions (2026-09-05). An inlet junction is a virtual junction
+ * (is_virtual = 1) that additionally carries is_inlet = 1, sits between two
+ * STREET conduits (or RECT_OPEN/TRAPEZOIDAL for drop-inlet designs), owns one
+ * inlet-usage row (swmm_inlet_usage_set with SWMM_INLET_HOST_NODE) naming the
+ * inlet design and the capture node, and — unlike a plain virtual junction —
+ * is NOT sealed: it floods above the street section's full depth (or the
+ * [INLET_JUNCTIONS] MaxDepth when supplied) and receives the capture node's
+ * overflow back as street flow.
+ * ------------------------------------------------------------------------- */
+
+/** @param[out] is_inlet Receives 1 if the node is an inlet junction. */
+SWMM_ENGINE_API int swmm_node_is_inlet(SWMM_Engine engine, int idx, int* is_inlet);
+
+/**
+ * @brief Dry-run check of the inlet-junction rules (all virtual-junction
+ *        rules plus 623: both attached conduits are STREET; drop-inlet shapes
+ *        are accepted when `for_drop_inlet` is nonzero).
+ * @param[out] rule_code 0 when eligible, else the violated ERR_VJ_ / ERR_IJ_ code.
+ */
+SWMM_ENGINE_API int swmm_node_inlet_eligible(SWMM_Engine engine, int idx, int for_drop_inlet, int* rule_code);
+
+/**
+ * @brief Promote a node to an inlet junction (sets is_virtual and is_inlet,
+ *        applying the virtual-junction derived-geometry contract) or demote
+ *        it. Demoting with `make_inlet = 0` clears is_inlet only — the node
+ *        stays a virtual junction; use swmm_node_set_virtual(idx, 0) to
+ *        return it to a plain junction. Demotion removes the node's usage row.
+ * @returns SWMM_OK; generic codes; or a distinct rule code (609/611/613/617/623).
+ */
+SWMM_ENGINE_API int swmm_node_set_inlet(SWMM_Engine engine, int idx, int make_inlet);
 
 /**
  * @brief Get a node's invert elevation.
@@ -564,19 +598,26 @@ SWMM_ENGINE_API int swmm_node_get_storage_geometry(SWMM_Engine engine, int idx,
                                                    double* p1, double* p2, double* p3);
 
 /**
- * @brief Set the seepage rate for a storage node.
+ * @brief Set a constant seepage (exfiltration) rate for a storage node.
+ * @details The constant-rate form of storage exfiltration, as a [STORAGE] row
+ *          ending in a bare Ksat: sets the exfiltration Ksat to @p rate with
+ *          zero suction and IMD, replacing any Green-Ampt parameters (see
+ *          swmm_node_set_exfil_params). A rate of 0 turns exfiltration off.
  * @param engine  Engine handle.
  * @param idx     Zero-based node index (must be SWMM_NODE_STORAGE).
- * @param rate    Seepage rate in project length/time units.
- * @returns SWMM_OK on success, or an error code.
+ * @param rate    Seepage rate, in/hr (US) or mm/hr (SI); must be >= 0.
+ * @returns SWMM_OK on success; SWMM_ERR_BADPARAM on a negative rate.
  */
 SWMM_ENGINE_API int swmm_node_set_storage_seep_rate(SWMM_Engine engine, int idx, double rate);
 
 /**
- * @brief Get the seepage rate for a storage node.
+ * @brief Get the constant seepage (exfiltration) rate of a storage node.
+ * @details The exfiltration Ksat when exfiltration uses its constant-rate form
+ *          (zero suction and IMD); 0 when it uses Green-Ampt parameters or is
+ *          off, and for a node that is not storage.
  * @param engine     Engine handle.
  * @param idx        Zero-based node index.
- * @param[out] rate  Receives the seepage rate.
+ * @param[out] rate  Receives the rate, in/hr (US) or mm/hr (SI).
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_node_get_storage_seep_rate(SWMM_Engine engine, int idx, double* rate);
@@ -867,7 +908,7 @@ SWMM_ENGINE_API int swmm_node_get_stat_vol_flooded(SWMM_Engine engine, int idx, 
  * @brief Get the total time a node was flooded during the simulation.
  * @param engine    Engine handle.
  * @param idx       Zero-based node index.
- * @param[out] val  Receives the flooded duration in hours.
+ * @param[out] val  Receives the flooded duration in seconds.
  * @returns SWMM_OK on success, or an error code.
  */
 SWMM_ENGINE_API int swmm_node_get_stat_time_flooded(SWMM_Engine engine, int idx, double* val);

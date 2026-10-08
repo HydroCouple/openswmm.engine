@@ -41,8 +41,11 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_SOURCES
     plugins/*.cpp
     math/*.cpp
     transport/*.cpp
+    io/*.cpp
 )
 list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "input/geopackage/.*")
+# io/hdf5 is gated on OPENSWMM_WITH_HDF5 and re-added below when it is on.
+list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "io/hdf5/.*")
 
 file(GLOB_RECURSE OPENSWMM_ENGINE_HEADERS
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
@@ -62,16 +65,29 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_HEADERS
 list(FILTER OPENSWMM_ENGINE_HEADERS EXCLUDE REGEX "input/geopackage/.*")
 
 # ---- Library target ----
+# WebAssembly (Emscripten) has no shared objects: the engine is built as a
+# STATIC archive and linked into the consumer's .wasm (openswmm.engine.wasm).
+# OPENSWMM_ENGINE_STATIC makes SWMM_ENGINE_API expand to nothing there.
+if(EMSCRIPTEN)
+    set(_OPENSWMM_ENGINE_LIB_TYPE STATIC)
+else()
+    set(_OPENSWMM_ENGINE_LIB_TYPE SHARED)
+endif()
+
 # NOTE: If there are no .cpp files yet (skeleton phase), use a placeholder.
 # Remove this condition when real sources exist.
 if(OPENSWMM_ENGINE_SOURCES)
-    add_library(openswmm_engine SHARED ${OPENSWMM_ENGINE_SOURCES})
+    add_library(openswmm_engine ${_OPENSWMM_ENGINE_LIB_TYPE} ${OPENSWMM_ENGINE_SOURCES})
 else()
     # Placeholder object library until sources are written
     file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/placeholder.cpp
          "// OpenSWMM Engine — placeholder (Phase 2+ sources not yet written)\n"
          "// See docs/MASTER_IMPLEMENTATION_PLAN.md\n")
-    add_library(openswmm_engine SHARED ${CMAKE_CURRENT_BINARY_DIR}/placeholder.cpp)
+    add_library(openswmm_engine ${_OPENSWMM_ENGINE_LIB_TYPE} ${CMAKE_CURRENT_BINARY_DIR}/placeholder.cpp)
+endif()
+
+if(EMSCRIPTEN)
+    target_compile_definitions(openswmm_engine PUBLIC OPENSWMM_ENGINE_STATIC)
 endif()
 
 # ---- Alias targets ----
@@ -124,8 +140,12 @@ target_link_libraries(openswmm_engine
 )
 
 # ---- Threads (for IOThread) ----
-find_package(Threads REQUIRED)
-target_link_libraries(openswmm_engine PRIVATE Threads::Threads)
+# Emscripten: single-threaded build (no -pthread / SharedArrayBuffer);
+# IOThread runs synchronously there (see output/IOThread.cpp).
+if(NOT EMSCRIPTEN)
+    find_package(Threads REQUIRED)
+    target_link_libraries(openswmm_engine PRIVATE Threads::Threads)
+endif()
 
 # ---- OpenMP (for parallel solver loops) ----
 # macOS/AppleClang is the only platform where the stock FindOpenMP cannot
@@ -138,7 +158,7 @@ target_link_libraries(openswmm_engine PRIVATE Threads::Threads)
 if(APPLE)
     list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
     include(${PROJECT_SOURCE_DIR}/cmake/FindOpenMP.cmake)
-else()
+elseif(NOT EMSCRIPTEN)
     find_package(OpenMP)
 endif()
 
@@ -151,7 +171,8 @@ else()
 endif()
 
 # ---- Platform-specific DLL loading ----
-if(UNIX AND NOT APPLE)
+# Emscripten: dlopen() is in libc (returns NULL without -sMAIN_MODULE), no -ldl.
+if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
     target_link_libraries(openswmm_engine PRIVATE dl)
 elseif(APPLE)
     # dl is part of libSystem on macOS
@@ -189,27 +210,37 @@ else()
     endif()
 endif()
 
-# ---- Fast geometry / Manning kernels (opt-OUT; default ON) ----
-# The refactored engine ships with the fast cross-section table lookup
-# (reciprocal-multiply + `*inv_delta`, no per-element IEEE divide) and the fast
-# Manning friction (x*cbrt(x) instead of libm pow). Together ~10% faster DW
-# routing. These are NOT bit-exact vs legacy (ULP-level; ~1e-4 flow accumulated
-# over long runs — well inside the abs 1e-8 / rel 1e-7 gate per lookup). Turn
-# BOTH off for bit-exact legacy parity (the QA parity harness / regression
-# baselines): -DOPENSWMM_FAST_XSECT_LOOKUP=OFF -DOPENSWMM_FAST_MANNING_POW=OFF
+# ---- Fast geometry / Manning kernels (opt-IN; default OFF) ----
+# The fast cross-section table lookup (reciprocal-multiply + `*inv_delta`, no
+# per-element IEEE divide) and the fast Manning friction (x*cbrt(x) instead of
+# libm pow) are together ~10% faster DW routing, but they are NOT bit-exact vs
+# legacy (ULP-level per lookup; the error accumulates over a long run — on the
+# East Boston 5-day model, ON diverges from legacy at routing step 1, OFF stays
+# bit-identical for 133,472 steps).
+#
+# They default OFF because the SHIPPED engine — the one the GUI loads — must be
+# bit-identical to the legacy engine: that is what makes a v6-vs-5.x comparison
+# in the GUI a parity comparison rather than an apples-to-oranges one. Perf is
+# opt-in, via the `<Platform>-fast` configure presets (or -D...=ON directly).
+#
+# BOTH must be ON to get the speedup and BOTH OFF for parity; do not mix.
 option(OPENSWMM_FAST_XSECT_LOOKUP
-    "Fast cross-section table lookup (reciprocal-multiply; not bit-exact vs legacy)" ON)
+    "Fast cross-section table lookup (reciprocal-multiply; NOT bit-exact vs legacy)" OFF)
 option(OPENSWMM_FAST_MANNING_POW
-    "Fast Manning friction via cbrt instead of libm pow (not bit-exact vs legacy)" ON)
+    "Fast Manning friction via cbrt instead of libm pow (NOT bit-exact vs legacy)" OFF)
 if(OPENSWMM_FAST_XSECT_LOOKUP)
     target_compile_definitions(openswmm_engine PRIVATE SWMM_XSECT_FAST_LOOKUP)
 endif()
 if(OPENSWMM_FAST_MANNING_POW)
     target_compile_definitions(openswmm_engine PRIVATE SWMM_FAST_MANNING_POW)
 endif()
-message(STATUS "OpenSWMM Engine: fast kernels — xsect_lookup=${OPENSWMM_FAST_XSECT_LOOKUP}"
-        " manning_pow=${OPENSWMM_FAST_MANNING_POW}"
-        " (ON ⇒ ~10% faster DW routing, NOT bit-exact vs legacy)")
+if(OPENSWMM_FAST_XSECT_LOOKUP OR OPENSWMM_FAST_MANNING_POW)
+    message(STATUS "OpenSWMM Engine: fast kernels — xsect_lookup=${OPENSWMM_FAST_XSECT_LOOKUP}"
+            " manning_pow=${OPENSWMM_FAST_MANNING_POW}"
+            " (~10% faster DW routing, NOT bit-exact vs legacy — do not ship)")
+else()
+    message(STATUS "OpenSWMM Engine: fast kernels OFF — bit-exact vs legacy (shipping default)")
+endif()
 
 # ---- Floating-point reproducibility (ALWAYS ON) ----
 # The legacy bit-parity contract is enforced here, not merely declared.
@@ -466,6 +497,20 @@ if(MSVC AND OPENSWMM_BUILD_UNIT_TESTS)
     message(STATUS "OpenSWMM Engine: internal STATIC library enabled for MSVC unit tests")
 endif()
 
+# ---- D2: HydroCouple component discovery (program plan §B.2.2) ----
+# The interface headers only (D-C6: never HydroCoupleSDK). PRIVATE: the
+# engine's public headers expose no HydroCouple type, so consumers of the
+# engine do not inherit the dependency. Applied to the MSVC test twin too,
+# since it compiles the same sources.
+if(OPENSWMM_WITH_HYDROCOUPLE)
+    foreach(_hc_tgt openswmm_engine openswmm_engine_internal)
+        if(TARGET ${_hc_tgt})
+            target_link_libraries(${_hc_tgt} PRIVATE HydroCouple::HydroCouple)
+            target_compile_definitions(${_hc_tgt} PRIVATE OPENSWMM_HAS_HYDROCOUPLE=1)
+        endif()
+    endforeach()
+endif()
+
 # ---- Optional 2D Surface Routing Module ----
 if(OPENSWMM_BUILD_2D)
     # Collect 2D source files. The explicit local-inertial LTS marcher is the
@@ -474,12 +519,14 @@ if(OPENSWMM_BUILD_2D)
     file(GLOB_RECURSE OPENSWMM_2D_SOURCES
         RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
         2d/data/*.cpp
+        2d/gw/*.cpp
+        2d/quality/*.cpp   # S7
         2d/infil/*.cpp
+        2d/subsurface/*.cpp
         2d/mesh/*.cpp
         2d/solver/SurfaceFluxCalculator.cpp
         2d/coupling/*.cpp
         2d/input/*.cpp
-        2d/output/*.cpp
         2d/SurfaceRouter2D.cpp
         2d/api/*.cpp
     )
@@ -494,39 +541,53 @@ if(OPENSWMM_BUILD_2D)
     # pulls in no Kokkos/GPU dependency itself.
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/SurfaceSolverFactory.cpp)
 
+    # Default2DOutputPlugin writes the [2D_OPTIONS] OUTPUT_FILE results as
+    # CF-1.11/UGRID-1.0 HDF5. It is the 2D module's only HDF5 user, so
+    # OPENSWMM_2D_HDF5_OUTPUT=OFF builds the solver without HDF5 (the
+    # WebAssembly build does): OUTPUT_FILE is then ignored with a warning and
+    # results are read through the swmm_2d_* API.
+    if(OPENSWMM_2D_HDF5_OUTPUT)
+        list(APPEND OPENSWMM_2D_SOURCES 2d/output/Default2DOutputPlugin.cpp)
+    endif()
+
     target_sources(openswmm_engine PRIVATE ${OPENSWMM_2D_SOURCES})
 
-    # Default2DOutputPlugin emits CF-1.11/UGRID-1.0 HDF5 — required dep.
-    # Prefer vcpkg's hdf5-config.cmake (CONFIG mode) since CMake's bundled
-    # FindHDF5.cmake hunts for h5cc/well-known layouts and misses vcpkg installs.
-    # Fall back to FindHDF5 for system installs (Linux distros, Homebrew) that
-    # don't ship hdf5-config.cmake.
-    find_package(hdf5 CONFIG QUIET)
-    set(_OPENSWMM_HDF5_TARGET "")
-    if(hdf5_FOUND)
-        if(TARGET hdf5::hdf5-shared)
-            set(_OPENSWMM_HDF5_TARGET hdf5::hdf5-shared)
-        elseif(TARGET hdf5::hdf5-static)
-            set(_OPENSWMM_HDF5_TARGET hdf5::hdf5-static)
-        endif()
-    endif()
-    if(_OPENSWMM_HDF5_TARGET)
-        target_link_libraries(openswmm_engine PRIVATE ${_OPENSWMM_HDF5_TARGET})
-    else()
-        # A CONFIG package that defines NEITHER canonical target is not an error
-        # — several HDF5 distributions (Homebrew among them) ship an
-        # hdf5-config.cmake exporting other names, and this used to abort the
-        # whole configure with FATAL_ERROR, making -DOPENSWMM_BUILD_2D=ON
-        # unusable on those machines even though FindHDF5 resolves them fine.
-        # Fall through to the module path instead, which is the same route
-        # taken when no CONFIG package exists at all.
+    if(OPENSWMM_2D_HDF5_OUTPUT)
+        # Default2DOutputPlugin emits CF-1.11/UGRID-1.0 HDF5 — required dep.
+        # Prefer vcpkg's hdf5-config.cmake (CONFIG mode) since CMake's bundled
+        # FindHDF5.cmake hunts for h5cc/well-known layouts and misses vcpkg installs.
+        # Fall back to FindHDF5 for system installs (Linux distros, Homebrew) that
+        # don't ship hdf5-config.cmake.
+        find_package(hdf5 CONFIG QUIET)
+        set(_OPENSWMM_HDF5_TARGET "")
         if(hdf5_FOUND)
-            message(STATUS "OpenSWMM Engine: hdf5 CONFIG package defines neither "
-                    "hdf5::hdf5-shared nor hdf5::hdf5-static — falling back to FindHDF5")
+            if(TARGET hdf5::hdf5-shared)
+                set(_OPENSWMM_HDF5_TARGET hdf5::hdf5-shared)
+            elseif(TARGET hdf5::hdf5-static)
+                set(_OPENSWMM_HDF5_TARGET hdf5::hdf5-static)
+            endif()
         endif()
-        find_package(HDF5 REQUIRED COMPONENTS C)
-        target_link_libraries(openswmm_engine PRIVATE ${HDF5_C_LIBRARIES})
-        target_include_directories(openswmm_engine PRIVATE ${HDF5_INCLUDE_DIRS})
+        if(_OPENSWMM_HDF5_TARGET)
+            target_link_libraries(openswmm_engine PRIVATE ${_OPENSWMM_HDF5_TARGET})
+        else()
+            # A CONFIG package that defines NEITHER canonical target is not an error
+            # — several HDF5 distributions (Homebrew among them) ship an
+            # hdf5-config.cmake exporting other names, and this used to abort the
+            # whole configure with FATAL_ERROR, making -DOPENSWMM_BUILD_2D=ON
+            # unusable on those machines even though FindHDF5 resolves them fine.
+            # Fall through to the module path instead, which is the same route
+            # taken when no CONFIG package exists at all.
+            if(hdf5_FOUND)
+                message(STATUS "OpenSWMM Engine: hdf5 CONFIG package defines neither "
+                        "hdf5::hdf5-shared nor hdf5::hdf5-static — falling back to FindHDF5")
+            endif()
+            find_package(HDF5 REQUIRED COMPONENTS C)
+            target_link_libraries(openswmm_engine PRIVATE ${HDF5_C_LIBRARIES})
+            target_include_directories(openswmm_engine PRIVATE ${HDF5_INCLUDE_DIRS})
+        endif()
+        # PRIVATE: only SWMMEngine.cpp's OUTPUT_FILE wiring reads it. The
+        # engine's headers keep the same layout either way.
+        target_compile_definitions(openswmm_engine PRIVATE OPENSWMM_HAS_2D_HDF5_OUTPUT=1)
     endif()
 
     target_compile_definitions(openswmm_engine PUBLIC OPENSWMM_HAS_2D=1)
@@ -534,16 +595,23 @@ if(OPENSWMM_BUILD_2D)
     # Also add to the internal static library for MSVC unit tests
     if(TARGET openswmm_engine_internal)
         target_sources(openswmm_engine_internal PRIVATE ${OPENSWMM_2D_SOURCES})
-        if(hdf5_FOUND)
-            target_link_libraries(openswmm_engine_internal PRIVATE ${_OPENSWMM_HDF5_TARGET})
-        else()
-            target_link_libraries(openswmm_engine_internal PRIVATE ${HDF5_C_LIBRARIES})
-            target_include_directories(openswmm_engine_internal PRIVATE ${HDF5_INCLUDE_DIRS})
+        if(OPENSWMM_2D_HDF5_OUTPUT)
+            if(hdf5_FOUND)
+                target_link_libraries(openswmm_engine_internal PRIVATE ${_OPENSWMM_HDF5_TARGET})
+            else()
+                target_link_libraries(openswmm_engine_internal PRIVATE ${HDF5_C_LIBRARIES})
+                target_include_directories(openswmm_engine_internal PRIVATE ${HDF5_INCLUDE_DIRS})
+            endif()
+            target_compile_definitions(openswmm_engine_internal PRIVATE OPENSWMM_HAS_2D_HDF5_OUTPUT=1)
         endif()
         target_compile_definitions(openswmm_engine_internal PUBLIC OPENSWMM_HAS_2D=1)
     endif()
 
-    message(STATUS "OpenSWMM Engine: 2D surface routing module enabled (explicit LTS marcher + HDF5)")
+    if(OPENSWMM_2D_HDF5_OUTPUT)
+        message(STATUS "OpenSWMM Engine: 2D surface routing module enabled (explicit LTS marcher + HDF5)")
+    else()
+        message(STATUS "OpenSWMM Engine: 2D surface routing module enabled (explicit LTS marcher; no HDF5 results writer)")
+    endif()
 
     # Optional GPU surface-solver plugin (standalone shared lib, dlopen()ed
     # at runtime — NOT linked into openswmm_engine). Phase 0 stub for now.
@@ -553,6 +621,64 @@ if(OPENSWMM_BUILD_2D)
     endif()
 else()
     message(STATUS "OpenSWMM Engine: 2D surface routing disabled (set -DOPENSWMM_BUILD_2D=ON to enable)")
+endif()
+
+# ---- Optional HDF5 model I/O ----
+#
+# Compiled straight into the engine rather than as a separate static library
+# (the GeoPackage pattern): it is a few translation units, it needs no
+# dependency of its own beyond HDF5, and HDF5 is already PRIVATE-linked here
+# when the 2D module is on. Its own option exists so a 2D-less build can still
+# write .h5 models. See src/engine/io/hdf5/STRATEGY.md §8.
+if(OPENSWMM_WITH_HDF5)
+    file(GLOB OPENSWMM_HDF5_SOURCES
+        RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
+        io/hdf5/*.cpp
+    )
+    target_sources(openswmm_engine PRIVATE ${OPENSWMM_HDF5_SOURCES})
+
+    # The 2D block above already resolved HDF5 when its results writer is
+    # built; only look again when it is not, so the two paths cannot disagree
+    # about which HDF5 the engine links.
+    if(NOT (OPENSWMM_BUILD_2D AND OPENSWMM_2D_HDF5_OUTPUT))
+        find_package(hdf5 CONFIG QUIET)
+        if(hdf5_FOUND)
+            if(TARGET hdf5::hdf5-shared)
+                set(_OPENSWMM_HDF5_TARGET hdf5::hdf5-shared)
+            elseif(TARGET hdf5::hdf5-static)
+                set(_OPENSWMM_HDF5_TARGET hdf5::hdf5-static)
+            else()
+                message(FATAL_ERROR "hdf5 CONFIG package found but neither hdf5::hdf5-shared nor hdf5::hdf5-static is defined")
+            endif()
+        else()
+            find_package(HDF5 REQUIRED COMPONENTS C)
+        endif()
+    endif()
+
+    if(hdf5_FOUND)
+        target_link_libraries(openswmm_engine PRIVATE ${_OPENSWMM_HDF5_TARGET})
+    else()
+        target_link_libraries(openswmm_engine PRIVATE ${HDF5_C_LIBRARIES})
+        target_include_directories(openswmm_engine PRIVATE ${HDF5_INCLUDE_DIRS})
+    endif()
+
+    # PUBLIC so PluginFactory's own TU sees it and registers the singleton.
+    target_compile_definitions(openswmm_engine PUBLIC OPENSWMM_HAS_HDF5_MODEL=1)
+
+    if(TARGET openswmm_engine_internal)
+        target_sources(openswmm_engine_internal PRIVATE ${OPENSWMM_HDF5_SOURCES})
+        if(hdf5_FOUND)
+            target_link_libraries(openswmm_engine_internal PRIVATE ${_OPENSWMM_HDF5_TARGET})
+        else()
+            target_link_libraries(openswmm_engine_internal PRIVATE ${HDF5_C_LIBRARIES})
+            target_include_directories(openswmm_engine_internal PRIVATE ${HDF5_INCLUDE_DIRS})
+        endif()
+        target_compile_definitions(openswmm_engine_internal PUBLIC OPENSWMM_HAS_HDF5_MODEL=1)
+    endif()
+
+    message(STATUS "OpenSWMM Engine: HDF5 model I/O enabled")
+else()
+    message(STATUS "OpenSWMM Engine: HDF5 model I/O disabled (set -DOPENSWMM_WITH_HDF5=ON to enable)")
 endif()
 
 # ---- Optional GeoPackage I/O library ----
@@ -603,6 +729,10 @@ if(OPENSWMM_WITH_GEOPACKAGE)
         target_link_options(openswmm_engine PRIVATE
             "LINKER:-force_load,$<TARGET_FILE:openswmm_geopackage>"
         )
+    elseif(EMSCRIPTEN)
+        # Engine is STATIC here; link options on a static archive are not
+        # applied. The wasm consumer retains swmm_gpkg_* by naming them in
+        # -sEXPORTED_FUNCTIONS, which forces wasm-ld to pull the objects.
     else()
         # GNU ld / lld accept bracketed --whole-archive; the archive path
         # must appear between the two flags.

@@ -47,6 +47,8 @@ class LinkStatsView:
     max_filling: float
     vol_flow: float
     surcharge_time: float
+    peak_slot_share: float
+    slot_share: float
     pump_cycles: int
     pump_on_time: float
     pump_volume: float
@@ -123,6 +125,7 @@ class Link:
     velocity: float
     capacity: float
     volume: float
+    slot_volume: float
     hyd_power: float
 
     # Control
@@ -155,6 +158,8 @@ class Link:
 
 class Links:
     """Indexable, iterable collection of :class:`Link` wrappers."""
+    def restore_authored_orientation(self) -> int: ...
+
 
     def __init__(self, solver: Solver) -> None: ...
 

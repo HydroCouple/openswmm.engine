@@ -64,6 +64,9 @@
 #include <vector>
 
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_model.h>
+
+#include <iterator>
 
 #include "core/SWMMEngine.hpp"
 
@@ -272,6 +275,143 @@ TEST(ArdTransportBcsTest, SourceSteadyStateDeltaIsAnalytic) {
         << "steady-state downstream concentration is not r/(L/ft³·Q)";
     EXPECT_LT(c1.back(), 0.05 * expected)
         << "a C3 source contaminated C1, upstream of it";
+}
+
+// ---------------------------------------------------------------------------
+// P1.4 — a NEGATIVE source row is extraction (D-NS1), not a no-op.
+//
+// Before P1.4 `updateTransportRows` did `src_now_[i] = std::max(0.0, r)`, so
+// a negative rate was zeroed before the apply loop ever saw it: the row did
+// nothing and said nothing. This gate FAILS at base — downstream would sit at
+// the boundary value instead of below it.
+// ---------------------------------------------------------------------------
+TEST(ArdTransportBcsTest, NegativeSourceExtractsMass) {
+    // Boundary supplies 5 mg/L; the source removes 2 mg/L worth at Q.
+    const double c_in    = 5.0;
+    const double r_mg_s  = 2.0 * kQ * kLperFt3;   // same arithmetic as gate 3
+    write_file("_e5_nsrc.rxn", kInertRxn);
+    write_file("_e5_nsrc.ard",
+               "[TRANSPORT_BOUNDARIES]\nJ0 X VALUE " + std::to_string(c_in) +
+                   "\n[TRANSPORT_SOURCES]\nC3 X VALUE -" +
+                   std::to_string(r_mg_s) + "\n");
+    write_deck("_e5_nsrc.inp", pc_two("_e5_nsrc.rxn", "_e5_nsrc.ard", false));
+    const auto rec =
+        run_recording("_e5_nsrc.inp", "_e5_nsrc.rpt", "_e5_nsrc.out");
+    ASSERT_TRUE(rec.ok);
+    const auto& c5 = rec.msx_link[kC5];
+    const auto& c1 = rec.msx_link[kC1];
+    ASSERT_FALSE(c5.empty());
+
+    const double expected = c_in - r_mg_s / (kLperFt3 * kQ);   // = 3.0 mg/L
+    // Measured 3.00000007 on landing; 1 % is 15x looser than that floor and
+    // 15x tighter than gate 3's band, which extraction does not need.
+    EXPECT_NEAR(c5.back(), expected, 0.01 * expected)
+        << "a negative [TRANSPORT_SOURCES] row did not extract mass — at "
+           "base it is silently zeroed, which is the P1.4 defect";
+    // Upstream of C3 is untouched: extraction must not propagate backwards.
+    EXPECT_NEAR(c1.back(), c_in, 0.15 * c_in)
+        << "extraction at C3 changed C1, upstream of it";
+}
+
+// ---------------------------------------------------------------------------
+// P1.4 — over-extraction clamps to the mass actually held, warns, and never
+// drives a cell negative. The clamp is COUNTED, not ledgered: cell sources
+// resolve to MSX species rows only (np + src_msx) and MSX species have no
+// mass-balance row, so there is nothing to un-book. See NegativeSources.hpp.
+// ---------------------------------------------------------------------------
+TEST(ArdTransportBcsTest, OverExtractionClampsAndStaysNonNegative) {
+    const double c_in   = 5.0;
+    const double r_mg_s = 50.0 * kQ * kLperFt3;   // 10× more than exists
+    write_file("_e5_nover.rxn", kInertRxn);
+    write_file("_e5_nover.ard",
+               "[TRANSPORT_BOUNDARIES]\nJ0 X VALUE " + std::to_string(c_in) +
+                   "\n[TRANSPORT_SOURCES]\nC3 X VALUE -" +
+                   std::to_string(r_mg_s) + "\n");
+    write_deck("_e5_nover.inp",
+               pc_two("_e5_nover.rxn", "_e5_nover.ard", false));
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_engine_open(e, "_e5_nover.inp", "_e5_nover.rpt",
+                               "_e5_nover.out", nullptr),
+              SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+    double elapsed = 0.0;
+    int    guard   = 0;   // same cap convention as run_recording above:
+                          // a hung test is worse than a failed assertion
+    // Watch the downstream conduit while stepping: the clamp's PHYSICAL
+    // claim is that no cell is ever driven below zero and that the chain
+    // downstream of the extraction runs dry of species -- counting clamps
+    // alone would pass a clamp that mis-signs the correction.
+    auto&  ctx    = as_cpp_engine(e).context();
+    const auto nm = static_cast<std::size_t>(ctx.reactions.n_species());
+    ASSERT_GT(nm, 0u);
+    // C3 is the conduit being extracted from: an unclamped extraction
+    // drives ITS cells negative, and the volume-weighted link projection
+    // carries the sign. C5 sees the depletion but not the sign -- the
+    // node hand-off downstream does not propagate a negative donor.
+    constexpr int kC3 = 2;
+    double c3_min = 1e300, c5_min = 1e300, c5_last = -1.0;
+    do {
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK);
+        const auto i3 = static_cast<std::size_t>(kC3) * nm;
+        const auto i5 = static_cast<std::size_t>(kC5) * nm;
+        ASSERT_LT(i5, ctx.reactions.msx_link_conc.size());
+        c3_min  = std::min(c3_min, ctx.reactions.msx_link_conc[i3]);
+        c5_last = ctx.reactions.msx_link_conc[i5];
+        c5_min  = std::min(c5_min, c5_last);
+    } while (elapsed > 0.0 && ++guard < 100000);
+    ASSERT_LT(guard, 100000) << "step loop did not terminate";
+    ASSERT_EQ(swmm_engine_end(e), SWMM_OK);
+
+    EXPECT_GE(c3_min, 0.0)
+        << "the extracted conduit went negative (c3_min " << c3_min << ")";
+    EXPECT_GE(c5_min, 0.0)
+        << "a cell downstream of the extraction went negative";
+    EXPECT_LT(c5_last, 0.15 * c_in)
+        << "extraction of 10x the held mass left species downstream";
+    EXPECT_GT(ctx.negsrc.clamp_events, 0)
+        << "extraction of 10x the held mass never clamped";
+    EXPECT_GT(ctx.negsrc.shortfall_mass, 0.0)
+        << "a clamp was counted but no unmet mass recorded";
+    // The per-clamp runtime warning was removed 2026-08-29 (it fired on every
+    // correct extraction deck — during fill every cell is near-empty and any
+    // extraction clamps trivially). The END-OF-RUN SUMMARY is the observer.
+    EXPECT_TRUE(has_needle(ctx.warnings, "D-NS1 summary"))
+        << "the clamp reached no user-visible channel at all";
+    EXPECT_FALSE(has_needle(ctx.warnings, "clamped to the available amount"))
+        << "the per-clamp runtime warning is supposed to be gone";
+    swmm_engine_destroy(e);
+}
+
+// ---------------------------------------------------------------------------
+// P1.4 — the parse warning fires on a negative VALUE row and ONLY then.
+// A notice that fires on every source deck is one users learn to ignore
+// (lesson 148).
+// ---------------------------------------------------------------------------
+TEST(ArdTransportBcsTest, NegativeSourceRowWarnsAtParseOnlyWhenNegative) {
+    for (const bool negative : {true, false}) {
+        const char* tag = negative ? "_e5_nwarn_n" : "_e5_nwarn_p";
+        write_file((std::string(tag) + ".rxn").c_str(), kInertRxn);
+        write_file((std::string(tag) + ".ard").c_str(),
+                   (std::string("[TRANSPORT_SOURCES]\nC3 X VALUE ") +
+                    (negative ? "-100" : "100") + "\n").c_str());
+        write_deck((std::string(tag) + ".inp").c_str(),
+                   pc_two((std::string(tag) + ".rxn").c_str(),
+                          (std::string(tag) + ".ard").c_str(), false));
+        SWMM_Engine e = swmm_engine_create();
+        ASSERT_NE(e, nullptr);
+        ASSERT_EQ(swmm_engine_open(e, (std::string(tag) + ".inp").c_str(),
+                                   (std::string(tag) + ".rpt").c_str(),
+                                   (std::string(tag) + ".out").c_str(),
+                                   nullptr),
+                  SWMM_OK)
+            << tag;
+        auto& ctx = as_cpp_engine(e).context();
+        EXPECT_EQ(has_needle(ctx.warnings, "treated as EXTRACTION"), negative)
+            << tag;
+        swmm_engine_destroy(e);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -502,3 +642,107 @@ TEST(ArdTransportBcsTest, TimeseriesSourceMatchesValueSource) {
 }
 
 }  // namespace
+
+// ===========================================================================
+// IO3c — the transport.ard component writes its own config file.
+// ===========================================================================
+
+namespace {
+
+std::string io3c_slurp(const char* path) {
+    std::ifstream f(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(f),
+                       std::istreambuf_iterator<char>());
+}
+
+}  // namespace
+
+// Base-FAILING leg: the written model.ard is RENDERED, not copied — the
+// SCALAR_SCHEME/LIMITER rows are aliases of [OPTIONS] FV_SCALAR_SCHEME /
+// FV_LIMITER, which the main writer persists in the .inp; the renderer
+// deliberately drops them from the component file because it cannot know
+// whether the live value came from this file, the deck, or a default
+// (emitting it would invent configuration — IO3a's invented-row lesson).
+// The copy fallback preserves them, which is how this gate fails at base.
+TEST(ArdIo3cSaveTest, ArdConfigIsRenderedNotCopied) {
+    write_file("_io3c_a.rxn", kInertRxn);
+    // The ;; comment is the rendered-vs-copied discriminator: the section
+    // reader strips comments (strip_comment), so only the COPY fallback can
+    // reproduce one in the written file.
+    write_file("_io3c_a.ard",
+               "[TRANSPORT_OPTIONS]\n"
+               ";; hand comment — only a byte copy preserves this line\n"
+               "DISPERSION 1.5\n"
+               "SCALAR_SCHEME MUSCL\n"
+               "TARGET_DX 25\n"
+               "[CONDUIT_DISPERSION]\n"
+               "C2 0.75\n"
+               "[TRANSPORT_BOUNDARIES]\n"
+               "J0 X VALUE 8.25\n"
+               "[TRANSPORT_SOURCES]\n"
+               "C3 X TIMESERIES src_ts\n");
+    write_deck("_io3c_a.inp", pc_two("_io3c_a.rxn", "_io3c_a.ard", false),
+               "", true, "src_ts 0 1.0\nsrc_ts 1 1.0\n");
+
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_engine_open(e, "_io3c_a.inp", "_io3c_a.rpt", "_io3c_a.out",
+                               nullptr), SWMM_OK)
+        << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_model_write(e, "_io3c_a_out.inp"), SWMM_OK)
+        << swmm_get_last_error_msg(e);
+    swmm_engine_destroy(e);
+
+    const std::string ard = io3c_slurp("_io3c_a.ard");
+    EXPECT_EQ(ard.find(";;"), std::string::npos)
+        << "the written model.ard still carries the hand comment — the "
+           "renderer did not run (copy fallback)";
+    // The alias is PRESERVED (with the live value): the INP writer emits
+    // FV_SCALAR_SCHEME only under FLOW_ROUTING FV, so on this DYNWAVE deck
+    // the component file is the only carrier of that state across a save.
+    EXPECT_NE(ard.find("SCALAR_SCHEME MUSCL"), std::string::npos)
+        << "the SCALAR_SCHEME alias was dropped — on a non-FV deck nothing "
+           "else persists it (the FV_* [OPTIONS] block is FV-gated)";
+    EXPECT_NE(ard.find("DISPERSION 1.5"), std::string::npos);
+    EXPECT_NE(ard.find("TARGET_DX 25"), std::string::npos);
+    EXPECT_NE(ard.find("C2 0.75"), std::string::npos);
+    EXPECT_NE(ard.find("J0 X VALUE 8.25"), std::string::npos);
+    EXPECT_NE(ard.find("C3 X TIMESERIES src_ts"), std::string::npos);
+
+    // Invention leg (lesson 196): a config that never spelled the alias
+    // must not gain one — the provenance flags, not ctx.options.fv, decide.
+    write_file("_io3c_b.rxn", kInertRxn);
+    write_file("_io3c_b.ard", "[TRANSPORT_OPTIONS]\nDISPERSION 2.25\n");
+    write_deck("_io3c_b.inp", pc_two("_io3c_b.rxn", "_io3c_b.ard", true));
+    SWMM_Engine e2 = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e2, "_io3c_b.inp", "_io3c_b.rpt",
+                               "_io3c_b.out", nullptr), SWMM_OK)
+        << swmm_get_last_error_msg(e2);
+    ASSERT_EQ(swmm_model_write(e2, "_io3c_b_out.inp"), SWMM_OK);
+    swmm_engine_destroy(e2);
+    const std::string ard_b = io3c_slurp("_io3c_b.ard");
+    EXPECT_EQ(ard_b.find("SCALAR_SCHEME"), std::string::npos)
+        << "an alias-free model.ard gained SCALAR_SCHEME on save — "
+           "invented configuration";
+    EXPECT_EQ(ard_b.find("LIMITER"), std::string::npos);
+    EXPECT_NE(ard_b.find("DISPERSION 2.25"), std::string::npos);
+
+    // Reopen: everything still applies (the renderer's spellings are ones
+    // the parser accepts — the IO3b key-space lesson), and the second and
+    // third generations are byte-identical (fixed point).
+    e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, "_io3c_a_out.inp", "_io3c_a_r.rpt",
+                               "_io3c_a_r.out", nullptr), SWMM_OK)
+        << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_model_write(e, "_io3c_a_out2.inp"), SWMM_OK);
+    swmm_engine_destroy(e);
+    const std::string gen2 = io3c_slurp("_io3c_a.ard");
+    e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, "_io3c_a_out2.inp", "_io3c_a_r2.rpt",
+                               "_io3c_a_r2.out", nullptr), SWMM_OK)
+        << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_model_write(e, "_io3c_a_out3.inp"), SWMM_OK);
+    swmm_engine_destroy(e);
+    const std::string gen3 = io3c_slurp("_io3c_a.ard");
+    EXPECT_EQ(gen2, gen3);
+}

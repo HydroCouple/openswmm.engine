@@ -193,9 +193,18 @@ enum ErrorCode : int {
     ERR_VJ_XSECT_MISMATCH       = 611,  ///< Virtual Junction %s connects conduits with different cross sections
     ERR_VJ_OFFSET               = 613,  ///< Virtual Junction %s has a conduit with a nonzero offset
     ERR_VJ_INVERT_MISMATCH      = 615,  ///< Virtual Junction %s conduit inverts do not agree at the node
-    ERR_VJ_LATERAL_INFLOW       = 617,  ///< Virtual Junction %s cannot receive lateral inflow
+    ERR_VJ_LATERAL_INFLOW       = 617,  ///< Virtual Junction %s cannot be coupled to a 2D surface mesh (point laterals are allowed)
     ERR_VJ_ROUTING_MODEL        = 619,  ///< Virtual Junction %s requires DYNWAVE or FV flow routing
     ERR_VJ_EXTRA_TOKENS         = 621,  ///< too many items for Virtual Junction %s
+
+    // --- Inlet junctions (623–635) — refactored engine only ---
+    ERR_IJ_NOT_STREET           = 623,  ///< Inlet Junction %s must connect two STREET conduits (or RECT_OPEN/TRAPEZOIDAL for drop inlets)
+    ERR_IJ_DESIGN               = 625,  ///< Inlet Junction %s references an unknown inlet design
+    ERR_IJ_CAPTURE_NODE         = 627,  ///< Inlet Junction %s has an invalid capture node (missing, itself, or virtual)
+    ERR_IJ_USAGE_ON_PAIR        = 629,  ///< Inlet Junction %s conduit also carries an [INLET_USAGE] entry
+    ERR_IJ_EXTRA_TOKENS         = 631,  ///< too many items for Inlet Junction %s
+    ERR_IJ_NO_USAGE             = 633,  ///< Inlet Junction %s has no inlet design assigned
+    ERR_INLET_USAGE_SHAPE       = 635,  ///< Inlet %s cannot be used with the cross section of %s
 };
 
 // ============================================================================

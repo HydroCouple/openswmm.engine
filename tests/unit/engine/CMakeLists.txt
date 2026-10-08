@@ -91,16 +91,23 @@ add_gtest_unit(test_engine_timeseries_file_roundtrip test_timeseries_file_roundt
 add_gtest_unit(test_engine_pathresolver      test_pathresolver.cpp)
 add_gtest_unit(test_engine_postparse_resolver test_postparse_resolver.cpp)
 add_gtest_unit(test_engine_warning_error_parity test_warning_error_parity.cpp)
+add_gtest_unit(test_engine_sentinel_parity test_sentinel_parity.cpp)
 add_gtest_unit(test_engine_outfall_stage_data test_outfall_stage_data.cpp)
 add_gtest_unit(test_engine_inp_writer_relative_paths test_inp_writer_relative_paths.cpp)
 add_gtest_unit(test_engine_inp_writer_saveas_paths test_inp_writer_saveas_paths.cpp)
 add_gtest_unit(test_engine_inp_writer_roundtrip test_inp_writer_roundtrip.cpp)
+add_gtest_unit(test_engine_inp_writer_atomic test_inp_writer_atomic.cpp)
+add_gtest_unit(test_engine_filled_circular_offset_api test_filled_circular_offset_api.cpp)
+add_gtest_unit(test_engine_timeseries_time_modes test_timeseries_time_modes.cpp)
 add_gtest_unit(test_engine_plugin_lifecycle      test_plugin_lifecycle.cpp)
 add_gtest_unit(test_engine_plugin_filter_invariant test_plugin_filter_invariant.cpp)
 # Slice RC.5 — GeoPackage explicit-builtin registration + is_builtin flag.
 add_gtest_unit(test_engine_pluginfactory_builtins test_pluginfactory_builtins.cpp)
 # Slice QA-01.4 — per-node summary stats read from a SWMM_Output handle.
 add_gtest_unit(test_engine_output_node_stats     test_output_node_stats.cpp)
+add_gtest_unit(test_engine_output_system_vars    test_output_system_vars.cpp)
+# Live (footer-less) .out reading — swmm_output_open_live / _refresh.
+add_gtest_unit(test_engine_output_reader_live    test_output_reader_live.cpp)
 add_gtest_unit(test_engine_model_write_with_plugin test_model_write_with_plugin.cpp)
 add_gtest_unit(test_engine_files_section          test_files_section.cpp)
 add_gtest_unit(test_engine_iface_routing          test_iface_routing.cpp)
@@ -123,10 +130,14 @@ add_gtest_unit(test_engine_reaction_integrators   test_reaction_integrators.cpp)
 add_gtest_unit(test_engine_reaction_legacy_binding test_reaction_legacy_binding.cpp)
 add_gtest_unit(test_engine_ard_dispersion         test_ard_dispersion.cpp)
 add_gtest_unit(test_engine_reaction_ard_binding   test_reaction_ard_binding.cpp)
+# BW-MSX (2026-09-19): reactions-component species build up / wash off by the
+# pollutant relations (OVERLAND plan §8.9).
+add_gtest_unit(test_engine_msx_buildup_washoff    test_msx_buildup_washoff.cpp)
 add_gtest_unit(test_engine_ard_transport_bcs      test_ard_transport_bcs.cpp)
 add_gtest_unit(test_engine_ard_e5b                test_ard_e5b.cpp)
 add_gtest_unit(test_engine_ard_node_store         test_ard_node_store.cpp)
 add_gtest_unit(test_engine_lard_wiring            test_lard_wiring.cpp)
+add_gtest_unit(test_engine_lard_heat              test_lard_heat.cpp)
 add_gtest_unit(test_engine_lard_transport         test_lard_transport.cpp)
 add_gtest_unit(test_engine_kinwave_storage        test_kinwave_storage_outlets.cpp)
 add_gtest_unit(test_engine_lard_age               test_lard_age.cpp)
@@ -148,14 +159,33 @@ add_gtest_unit(test_engine_transport_snow       test_transport_snow.cpp)
 add_gtest_unit(test_engine_heat_transport         test_heat_transport.cpp)
 add_gtest_unit(test_engine_heat_surface_exchange  test_heat_surface_exchange.cpp)
 add_gtest_unit(test_engine_heat_radiative_exchange test_heat_radiative_exchange.cpp)
+# Step 3 — the [HEAT_SOURCES] C API (the one heat section H6a left without one).
+add_gtest_unit(test_engine_heat_sources_api       test_heat_sources_api.cpp)
+add_gtest_unit(test_engine_heat_solar_radiation   test_heat_solar_radiation.cpp)
 add_gtest_unit(test_engine_heat_ard_binding       test_heat_ard_binding.cpp)
+# H6b — the coupled bed / hyporheic stepper (pure-function gates).
+add_gtest_unit(test_engine_bed_exchange           test_bed_exchange.cpp)
+# 2026-09-01 closeout — five bindings, one gate each.
+add_gtest_unit(test_engine_quality_closeout_bindings test_quality_closeout_bindings.cpp)
+# PE1/PE2/PE4 — per-element heat attributes and per-element climate forcing.
+add_gtest_unit(test_engine_heat_per_element       test_heat_per_element.cpp)
 add_gtest_unit(test_engine_output_quality         test_output_quality.cpp)
 # In-place rename for snow packs / aquifers / inlets / streets / LID controls.
 # Without these APIs the GUI registries flushed a renamed object as a NEW one,
 # duplicating it in the engine and orphaning the original.
 add_gtest_unit(test_engine_object_rename          test_object_rename.cpp)
 add_gtest_unit(test_engine_options_api_units      test_options_api_units.cpp)
+# CRS lives in two stores (spatial frame + [OPTIONS]); every C-API write path
+# must fill both and the .inp writer must emit whichever is set.
+add_gtest_unit(test_engine_crs_api_roundtrip      test_crs_api_roundtrip.cpp)
 add_gtest_unit(test_engine_climate_api             test_climate_api.cpp)
+# [TEMPERATURE] HUMIDITY: CONSTANT/MONTHLY/TIMESERIES, DEWPOINT -> RH, writer
+# round-trip. The heat model's met input the GUI Climatology dialog edits.
+add_gtest_unit(test_engine_climate_humidity        test_climate_humidity.cpp)
+# Issue #7: a model under a non-ASCII path (…/模拟情景8/模拟情景[8].inp) must
+# open, run and write its .rpt/.out. Windows' narrow file APIs decode in the
+# ANSI code page, so every engine open goes through core/FileIO.hpp.
+add_gtest_unit(test_engine_utf8_paths        test_utf8_paths.cpp)
 add_gtest_unit(test_engine_hotstart          test_hotstart.cpp)
 add_gtest_unit(test_engine_simd_math         test_simd_math.cpp)
 add_gtest_unit(test_engine_mathexpr          test_mathexpr.cpp)
@@ -226,8 +256,18 @@ target_compile_definitions(test_engine_link_polygon_runtime PRIVATE
 # snowpack surfaces, inlet params/type, LID layers/type).
 add_gtest_unit(test_engine_editor_roundtrip_api test_editor_roundtrip_api.cpp)
 add_gtest_unit(test_engine_virtual_junction test_virtual_junction.cpp)
+# HEC-22 inlet capture kernel + end-to-end capture for both host kinds
+# (plans/INLET_JUNCTION_IMPLEMENTATION_PLAN_2026-09-05.md).
+add_gtest_unit(test_engine_inlet_capture test_inlet_capture.cpp)
+# Inlet designs, inlet usage rows and [INLET_JUNCTIONS] IO / validation / edits
+# (plans/INLET_JUNCTION_IMPLEMENTATION_PLAN_2026-09-05.md).
+add_gtest_unit(test_engine_inlet_junction_io test_inlet_junction_io.cpp)
+# Species/age loads carried by a lateral at a virtual junction, every routing
+# x quality-solver pair (plans/VJ_LATERAL_INFLOW_PLAN_2026-09-04.md E4).
+add_gtest_unit(test_engine_virtual_junction_quality test_virtual_junction_quality.cpp)
 add_gtest_unit(test_engine_fv_node_head_consistency test_fv_node_head_consistency.cpp)
 add_gtest_unit(test_engine_fv_slot_volume test_fv_slot_volume.cpp)
+add_gtest_unit(test_engine_report_link_steps test_report_link_steps.cpp)
 add_gtest_unit(test_engine_fv_closure_shapes test_fv_closure_shapes.cpp)
 add_gtest_unit(test_engine_fv_pressurized_implicit test_fv_pressurized_implicit.cpp)
 
@@ -249,6 +289,13 @@ add_gtest_unit(test_engine_gage_scalefactor test_gage_scalefactor.cpp)
 add_gtest_unit(test_engine_subcatch_scale_factors test_subcatch_scale_factors.cpp)
 add_gtest_unit(test_engine_gage_attributes  test_gage_attributes.cpp)
 add_gtest_unit(test_engine_gage_file_roundtrip test_gage_file_roundtrip.cpp)
+
+# Issue #158 — CUMULATIVE rain-gage format. The intensity is the rise since the
+# previous record over the RECORDING INTERVAL, applied for that whole interval;
+# alpha.3 applied it for a single runoff step at each table entry, which spiked
+# the hydrograph and booked interval/step less rain (3600/300 = the reported
+# "factor of 12"). Guards both symptoms analytically and against legacy.
+add_gtest_unit(test_engine_gage_cumulative  test_gage_cumulative.cpp)
 
 # USER_CSV rain-file loading (documented in the manual, previously never read —
 # such a gage contributed zero rainfall silently) plus the guard that the
@@ -290,6 +337,8 @@ target_compile_definitions(test_engine_benchmark_corpus PRIVATE
     "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
 )
 add_gtest_unit(test_engine_treatment        test_treatment.cpp)
+# [GWF] expression C API + validator (AQUIFER_GROUNDWATER_EXCHANGE_GUI_PLAN E1).
+add_gtest_unit(test_engine_gwf_api          test_gwf_api.cpp)
 add_gtest_unit(test_engine_rdii             test_rdii.cpp)
 add_gtest_unit(test_engine_hydrograph_mutation test_hydrograph_mutation_api.cpp)
 add_gtest_unit(test_engine_pattern_mutation  test_pattern_mutation_api.cpp)
@@ -315,6 +364,9 @@ add_gtest_unit(test_engine_report_section  test_report_section.cpp)
 add_gtest_unit(test_engine_concurrent       test_concurrent_engines.cpp)
 add_gtest_unit(test_engine_object_deletion test_object_deletion.cpp)
 add_gtest_unit(test_engine_object_deletion_ext test_object_deletion_ext.cpp)
+# Perf plan Phase A1 — swmm_*_delete_many parity with sequential descending
+# per-object deletes, all-or-nothing validation, and the one-rehash batch.
+add_gtest_unit(test_engine_object_deletion_many test_object_deletion_many.cpp)
 add_gtest_unit(test_engine_quality_roundtrip test_quality_roundtrip.cpp)
 add_gtest_unit(test_engine_type_conversion test_type_conversion.cpp)
 add_gtest_unit(test_engine_tags           test_tags.cpp)
@@ -338,6 +390,7 @@ add_gtest_unit(test_engine_site_drainage_builder test_site_drainage_builder.cpp)
 # parallel with the rest of the suite.
 set_property(TEST
     test_engine_output_node_stats
+    test_engine_output_system_vars
     test_engine_links_bulk_phase3
     test_engine_links_pump_stats_bulk
     test_engine_nodes_bulk_phase3
@@ -368,6 +421,15 @@ set_property(TEST
 # A sweep at the time found a SECOND, unlocked instance nobody had hit:
 # `_out.inp`, shared by test_object_deletion_ext and test_quality_roundtrip.
 # Also renamed. The check below is what stops a third.
+
+# The 2D suites read the HDF5 results file the run writes, so they need the
+# 2D results writer. A 2D build without it (OPENSWMM_2D_HDF5_OUTPUT=OFF) is a
+# deployment configuration — the WebAssembly package — not a test one.
+if(OPENSWMM_BUILD_2D AND NOT OPENSWMM_2D_HDF5_OUTPUT)
+    message(FATAL_ERROR
+        "The 2D unit tests read the HDF5 results file: configure them with "
+        "OPENSWMM_2D_HDF5_OUTPUT=ON (or OPENSWMM_BUILD_2D=OFF).")
+endif()
 
 # 2D surface routing tests — geometry, gradients, flux, parsing.
 # The 2D engine sources (MeshBuilder, VertexReconstruction, SurfaceFluxCalculator,
@@ -542,10 +604,56 @@ if(OPENSWMM_BUILD_2D)
     # closed-basin conservation + positivity through a dam-break, Manning
     # steady-slope rain/outflow ledger + normal depth, Froude clamp.
     add_gtest_unit(test_engine_2d_inertial_marcher test_2d_inertial_marcher.cpp)
+    add_gtest_unit(test_engine_2d_cpu_correctness test_2d_cpu_correctness.cpp)
     # Tiered LTS gates: exact conservation at every tier count through a
     # multiscale dam-break, K-tier ≈ global-dt equivalence, and the
     # fine-patch-in-coarse-watershed stability case.
     add_gtest_unit(test_engine_2d_lts_equivalence test_2d_lts_equivalence.cpp)
+    # Mixed triangle/quad meshes (plans/2D_TRI_QUAD_MESH_PLAN_2026-09-06.md):
+    # padded stride-4 layout, quad geometry, B&S 2007 quad VFR closure vs a
+    # brute-force integration oracle, marcher gates on quads / mixed strips
+    # (lake at rest, dry wall, positivity with four exporting faces, Manning
+    # quad strip), [2D_QUADS] parser + MOMENTUM_EQUATION option contract.
+    add_gtest_unit(test_engine_2d_quad_mesh test_2d_quad_mesh.cpp)
+    # MOMENTUM_EQUATION FULL_SWE / DIFFUSIVE_WAVE closures
+    # (plans/2D_FULL_SWE_SHOCK_CAPTURING_PLAN_2026-09-05.md): HLLC kernel
+    # properties, well-balanced rest, Stoker / Ritter dam breaks vs exact
+    # solutions (first and second order), Manning steady slope, conservation.
+    add_gtest_unit(test_engine_2d_momentum_modes test_2d_momentum_modes.cpp)
+    # swmm_2d_get_run_stats: backend label, closure, LTS tiers and the
+    # cumulative marcher counters the GUI shows during a run, plus the
+    # "2D solver: …" advisory in the report.
+    add_gtest_unit(test_engine_2d_run_stats test_2d_run_stats.cpp)
+    # Overland transport S1 (D-2DT1..D-2DT3): species MASS rides the marcher's
+    # own face accumulators on the face's tier. The uniform-concentration
+    # property to round-off across a 6-tier dam-break with a wet/dry front is
+    # the whole of S1's claim; its single-tier control tells a tier defect
+    # from a donor-timing one. Plus mass conservation, the max principle,
+    # two-species stride isolation, infiltration ledgering vs evaporative
+    # up-concentration, and species-as-passenger bit-identity.
+    add_gtest_unit(test_engine_2d_transport_s1 test_2d_transport_s1.cpp)
+    # Overland transport S2: rain and boundary-inflow source concentrations
+    # (uniformity to round-off when the source matches the pond), limited
+    # explicit isotropic dispersion on the face cadence (conservation, max
+    # principle, Fickian 2·D·t rate, limiter bind at unstable D, D=0 inert),
+    # and [2D_BOUNDARY_QUALITY] refusal on a WALL edge.
+    add_gtest_unit(test_engine_2d_transport_s2 test_2d_transport_s2.cpp)
+    # Overland transport S3 (D-2DT4): the 1D↔2D coupling carries species —
+    # drain at the cell's concentration through the node mass queue (junction
+    # reads exactly c0), spill at nodes.conc (pan stays uniform), outfall
+    # discharge through coupling_src (max principle + bound), cross-domain
+    # mass identity, and species-as-passenger bit-identity on coupled decks.
+    add_gtest_unit(test_engine_2d_transport_s3 test_2d_transport_s3.cpp)
+    # Overland transport S4: age / temperature / MSX rows in the 1D layout —
+    # evaporation concentrates solutes but not temperature, the temperature
+    # row is signed end-to-end, a still pan ages exactly, the coupling tuple
+    # delivers temperature (not the EXTERNAL_INFLOW stand-in), spill arrives
+    # at the node temperature, kdecay applies and is ledgered, rows are
+    # passengers on the hydraulics.
+    add_gtest_unit(test_engine_2d_transport_s4 test_2d_transport_s4.cpp)
+    # S7 (2026-09-19): cell coverages / buildup / washoff / sweeping on the 2D
+    # surface (OVERLAND plan §8).
+    add_gtest_unit(test_engine_2d_surface_quality test_2d_surface_quality.cpp)
     # Windowless co-advance coupling gates: cross-domain conservation through
     # the live in-marcher exchange + batch queue delivery, COUPLING_AREA AUTO
     # rederivation, conductance sign + FD parity.
@@ -560,7 +668,112 @@ if(OPENSWMM_BUILD_2D)
     # residual (the silent call site 4), lazy/inactive-cell equivalence,
     # section round-trip and the C API surface.
     add_gtest_unit(test_engine_2d_infil_integration test_2d_infil_integration.cpp)
+    # 1D↔2D unit exchange for boundary conditions on a US (ft / CFS) project:
+    # constant stage follows the mesh units, TS/rating stage follows
+    # FLOW_UNITS only, flows follow FLOW_UNITS, writers emit display units,
+    # and neither reopen nor a repeated initialize() converts twice.
+    add_gtest_unit(test_engine_2d_bc_units test_2d_bc_units.cpp)
+    target_compile_definitions(test_engine_2d_bc_units PRIVATE
+        OPENSWMM_BC_UNITS_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+    # Results-file size controls ([2D_OPTIONS] OUTPUT_PRECISION /
+    # OUTPUT_COMPRESSION / REPORT_2D_VARIABLES / REPORT_2D_SPECIES /
+    # REPORT_2D_STEP): grammar + C API round trip, float32 storage, unselected
+    # datasets absent, species subset, 2D report cadence. Reads the HDF5 file
+    # back, so it links HDF5 like test_engine_2d_surface.
+    add_gtest_unit(test_engine_2d_output_options test_2d_output_options.cpp)
+    target_compile_definitions(test_engine_2d_output_options PRIVATE
+        OPENSWMM_2D_OUTPUT_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+    if(TARGET hdf5::hdf5-shared)
+        target_link_libraries(test_engine_2d_output_options PRIVATE hdf5::hdf5-shared)
+    elseif(TARGET hdf5::hdf5-static)
+        target_link_libraries(test_engine_2d_output_options PRIVATE hdf5::hdf5-static)
+    else()
+        if(NOT HDF5_FOUND)
+            find_package(HDF5 REQUIRED COMPONENTS C)
+        endif()
+        target_link_libraries(test_engine_2d_output_options PRIVATE ${HDF5_C_LIBRARIES})
+        target_include_directories(test_engine_2d_output_options PRIVATE ${HDF5_INCLUDE_DIRS})
+    endif()
+    # E2 (2026-09-07) — TransportPolicy (Domain x Species matrix),
+    # swmm_get_transport_matrix, the .rpt matrix block and the [2D_OPTIONS]
+    # process keys (TRANSPORT_*, INFILTRATION, INFIL_STEP alias,
+    # INFIL_DEFAULT_METHOD, INFIL_DESTINATION, EVAPORATION). Decks and
+    # reports land under tests/output/transport_policy.
+    add_gtest_unit(test_engine_transport_policy test_transport_policy.cpp)
+    target_compile_definitions(test_engine_transport_policy PRIVATE
+        OPENSWMM_TRANSPORT_POLICY_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+    # U3 (track I-b, 2026-09-07) — [2D_OPTIONS] INFIL_DESTINATION
+    # SUBCATCH_AQUIFER: cell→subcatchment containment, the recharge into the
+    # legacy aquifer, the outside-every-polygon warning and the one-owner
+    # refusal. Decks under tests/output/infil_subcatch_aquifer.
+    add_gtest_unit(test_engine_2d_infil_subcatch_aquifer
+                   test_2d_infil_subcatch_aquifer.cpp)
+    target_compile_definitions(test_engine_2d_infil_subcatch_aquifer PRIVATE
+        OPENSWMM_INFIL_AQ_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+    # U4 + U5 (2026-09-07) — [GW_*] subsurface-transport authoring sections
+    # (round trip, cell-generic EDGE on a mixed tri/quad mesh, species/series
+    # resolution, one inert warning, the C API) and the 2D groundwater page
+    # keys (GROUNDWATER / GW_ET). Decks under tests/output/gw_transport.
+    add_gtest_unit(test_engine_gw_transport_authoring
+                   test_gw_transport_authoring.cpp)
+    add_gtest_unit(test_engine_gw_authoring_index test_gw_authoring_index.cpp)
+    target_compile_definitions(test_engine_gw_transport_authoring PRIVATE
+        OPENSWMM_GW_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+    # G1 (2026-09-07) — the [2D_AQUIFER*] authoring surface, its round trip
+    # and the swmm_gw2d_* C API, on a model. The kernel's own conservation
+    # gates are tests/verification/gw2d_gates, which needs no engine; this is
+    # everything between a user's .inp and that kernel. Decks under
+    # tests/output/aquifer_2d.
+    add_gtest_unit(test_engine_2d_aquifer test_2d_aquifer.cpp)
+    add_gtest_unit(test_engine_surface_ownership test_surface_ownership.cpp)
+    add_gtest_unit(test_engine_surface_exchange test_surface_exchange.cpp)
+    add_gtest_unit(test_engine_source_clock_groups test_source_clock_groups.cpp)
+    add_gtest_unit(test_engine_source_water_driver test_source_water_driver.cpp)
+    add_gtest_unit(test_engine_common_source_stage test_common_source_stage.cpp)
+    add_gtest_unit(test_engine_sigma_conservation test_sigma_conservation.cpp)
+    target_compile_definitions(test_engine_common_source_stage PRIVATE OPENSWMM_R4_STAGE_OUT="${PROJECT_SOURCE_DIR}/tests/verification/surface_r4_stage_2026-10-06/models")
+    target_compile_definitions(test_engine_source_water_driver PRIVATE OPENSWMM_R4_WATER_OUT="${PROJECT_SOURCE_DIR}/tests/verification/surface_r4_water_2026-10-05/models")
+    target_compile_definitions(test_engine_source_clock_groups PRIVATE OPENSWMM_R4_CLOCK_OUT="${PROJECT_SOURCE_DIR}/tests/verification/surface_r4_clocks_2026-10-05/models")
+    target_compile_definitions(test_engine_surface_exchange PRIVATE OPENSWMM_R4_EXCHANGE_OUT="${PROJECT_SOURCE_DIR}/tests/verification/surface_r4_exchange_2026-10-05/models")
+    target_compile_definitions(test_engine_surface_ownership PRIVATE OPENSWMM_R4_OUT="${PROJECT_SOURCE_DIR}/tests/verification/surface_r4_2026-10-05/models")
+    add_gtest_unit(test_engine_surface_et_budget test_surface_et_budget.cpp)
+    target_compile_definitions(test_engine_surface_et_budget PRIVATE OPENSWMM_R3_OUT="${PROJECT_SOURCE_DIR}/tests/verification/surface_r3_2026-10-05/models")
+    add_gtest_unit(test_engine_surface_aquifer_receiving test_surface_aquifer_receiving.cpp)
+    target_compile_definitions(test_engine_surface_aquifer_receiving PRIVATE OPENSWMM_R2_OUT="${PROJECT_SOURCE_DIR}/tests/verification/surface_r2_2026-10-05/models")
+    target_compile_definitions(test_engine_2d_aquifer PRIVATE
+        OPENSWMM_AQUIFER_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+    # T7.1 (2026-09-20) — the transported tuple INSIDE the two-zone kernel:
+    # the gate-6 conservation stub on tri / quad / mixed meshes, the surface
+    # seam in both directions, ET up-concentration, and the groundwater row
+    # of the transport matrix. Decks under tests/output/gw_transport_kernel.
+    add_gtest_unit(test_engine_gw_source_forcing test_gw_source_forcing.cpp)
+    add_gtest_unit(test_engine_runtime_coupling_api test_runtime_coupling_api.cpp)
+    add_gtest_unit(test_engine_gw_transport_kernel test_gw_transport_kernel.cpp)
+    target_compile_definitions(test_engine_gw_transport_kernel PRIVATE
+        OPENSWMM_GW_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+    # T7.5 reads the .h5 the run wrote, so it links HDF5 the same way the
+    # 2D surface suite does.
+    if(TARGET hdf5::hdf5-shared)
+        target_link_libraries(test_engine_gw_transport_kernel PRIVATE hdf5::hdf5-shared)
+    elseif(TARGET hdf5::hdf5-static)
+        target_link_libraries(test_engine_gw_transport_kernel PRIVATE hdf5::hdf5-static)
+    else()
+        if(NOT HDF5_FOUND)
+            find_package(HDF5 REQUIRED COMPONENTS C)
+        endif()
+        target_link_libraries(test_engine_gw_transport_kernel PRIVATE ${HDF5_C_LIBRARIES})
+        target_include_directories(test_engine_gw_transport_kernel PRIVATE ${HDF5_INCLUDE_DIRS})
+    endif()
 endif()
+
+# U2 (2026-09-07) — MSX parity at the authoring seams: [INITIAL_QUALITY]
+# species rows (all three quality solvers), [INFLOWS] CONCEN/MASS and [DWF]
+# species rows, the [INITIAL_QUALITY] FILE sidecar, the V4 hotstart species
+# block, and swmm_forcing_node_temperature / _age. Decks and CSVs land under
+# tests/output/msx_parity.
+add_gtest_unit(test_engine_msx_parity test_msx_parity.cpp)
+target_compile_definitions(test_engine_msx_parity PRIVATE
+    OPENSWMM_MSX_PARITY_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
 
 # ---------------------------------------------------------------------------
 # Explicit finite-volume 1D network solver (FLOW_ROUTING FV).
@@ -571,6 +784,24 @@ endif()
 # I₁ as the antiderivative of A with an analytic above-crown extension, and the
 # FV_SLOT_CELERITY design value actually delivered.
 add_gtest_unit(test_engine_fv_closure test_fv_solver_closure.cpp)
+# Exact-geometry closure (plans/FV1D_CLOSURE_KERNEL_PERF_PLAN_2026-09-11 §2c):
+# SectionGeometry's closed forms are self-consistent (A = ∫W) and match the
+# legacy full-depth properties; the monotone cubic closure reproduces the exact
+# section to interpolation accuracy, inverts to its tolerance, integrates to
+# its own I₁, the open polynomial class is exact, and a byte copy of the POD
+# closure evaluates bit-identically (the device-capture contract).
+add_gtest_unit(test_engine_fv_section_geometry test_fv_section_geometry.cpp)
+add_gtest_unit(test_engine_fv_unsteady_friction test_fv_unsteady_friction.cpp)
+add_gtest_unit(test_engine_dw_unsteady_friction test_dw_unsteady_friction.cpp)
+add_gtest_unit(test_engine_perf_timers test_perf_timers.cpp)
+set_tests_properties(test_engine_perf_timers PROPERTIES ENVIRONMENT "OPENSWMM_PERF=1")
+add_test(NAME test_engine_perf_timers_disabled
+    COMMAND ${CMAKE_COMMAND} -E env --unset=OPENSWMM_PERF
+        $<TARGET_FILE:test_engine_perf_timers>
+        --gtest_filter=PerfCounters.DisabledProfilingDoesNotAccumulate)
+set_tests_properties(test_engine_perf_timers_disabled PROPERTIES LABELS "unit")
+add_gtest_unit(test_engine_fv_tpa_closure test_fv_tpa_closure.cpp)
+add_gtest_unit(test_engine_dw_tpa test_dw_tpa.cpp)
 # Analytic scheme gates: exact lake-at-rest over a slope break AND while
 # pressurized, Ritter (dry) and Stoker (wet) dam break vs. the closed-form
 # solutions incl. shock SPEED, and mass conservation to machine precision over
@@ -592,6 +823,9 @@ target_compile_definitions(test_engine_fv_polygon_network PRIVATE
 # wetting front crossing tier boundaries without loss, and the substep-count
 # relief a 100x graded reach actually delivers.
 add_gtest_unit(test_engine_fv_lts test_fv_lts.cpp)
+if(TARGET OpenMP::OpenMP_CXX)
+    target_link_libraries(test_engine_fv_lts PRIVATE OpenMP::OpenMP_CXX)
+endif()
 # Engine-level gates (§6.7): FLOW_ROUTING FV end-to-end on the reference
 # drainage model — routing continuity vs DYNWAVE, routed-volume agreement,
 # mesh-refinement CONVERGENCE toward the DW hydrograph (the consistency gate),
@@ -601,6 +835,15 @@ target_compile_definitions(test_engine_fv_integration PRIVATE
     OPENSWMM_FV_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/regression/data"
     OPENSWMM_FV_UNIT_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
     OPENSWMM_FV_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+
+# Thread-capability query + THREADS resolution rules
+# (THREAD_LIMITS_AND_OVERSUBSCRIPTION_PLAN_2026-09-03): explicit THREADS is
+# honoured above the hardware limit with a warning, size gates still apply,
+# and an oversubscribed run matches the serial continuity block.
+add_gtest_unit(test_engine_thread_info test_thread_info.cpp)
+target_compile_definitions(test_engine_thread_info PRIVATE
+    OPENSWMM_THREAD_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/regression/data"
+    OPENSWMM_THREAD_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
 
 # Golden cross-section parity harness — diffs the new xsect:: implementation
 # against the legacy xsect.c. The legacy dylib hides its internal xsect_*
@@ -649,6 +892,49 @@ add_test(
 )
 set_tests_properties(test_engine_xsect_parity PROPERTIES LABELS "unit")
 
+# HDF5 model writer (only when the format is built). Links the HDF5 headers
+# directly: the engine keeps them PRIVATE, because a consumer with its own
+# HDF5 otherwise dies in H5_term_library on foreign global state.
+if(OPENSWMM_WITH_HDF5)
+    add_executable(test_engine_hdf5_model test_hdf5_model.cpp)
+    target_link_libraries(test_engine_hdf5_model
+        PRIVATE
+            GTest::gtest GTest::gtest_main GTest::gmock
+            $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+    )
+    # HEADERS ONLY, never the library. HDF5 is PRIVATE-linked into the engine
+    # with hidden symbols; a test that linked its own copy would run two HDF5
+    # instances with separate global state, and an id opened by one is
+    # meaningless to the other — which presents exactly as a corrupt file.
+    # Every H5* call therefore lives behind the h5io helpers in the engine.
+    if(hdf5_FOUND)
+        get_target_property(_h5_inc ${_OPENSWMM_HDF5_TARGET} INTERFACE_INCLUDE_DIRECTORIES)
+        if(_h5_inc)
+            target_include_directories(test_engine_hdf5_model PRIVATE ${_h5_inc})
+        endif()
+    else()
+        target_include_directories(test_engine_hdf5_model PRIVATE ${HDF5_INCLUDE_DIRS})
+    endif()
+    target_include_directories(test_engine_hdf5_model
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src/engine
+    )
+    set_target_properties(test_engine_hdf5_model PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+        RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+        INSTALL_RPATH "${LIB_ROOT}"
+    )
+    openswmm_stage_test_runtime_deps(test_engine_hdf5_model)
+    add_test(
+        NAME    test_engine_hdf5_model
+        COMMAND $<TARGET_FILE:test_engine_hdf5_model>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+    )
+    set_tests_properties(test_engine_hdf5_model PROPERTIES LABELS "unit")
+endif()
+
 # GeoPackage tests (only if the library is built)
 if(OPENSWMM_WITH_GEOPACKAGE)
     add_executable(test_engine_geopackage test_geopackage.cpp)
@@ -682,11 +968,14 @@ if(OPENSWMM_WITH_GEOPACKAGE)
     # ctx.twod_io at locally-owned 2D structs, so this runs in both 2D and
     # non-2D builds).
     add_executable(test_engine_geopackage_mesh2d test_geopackage_mesh2d.cpp)
+    # The static geopackage archive goes before the engine it calls into: with
+    # --as-needed (the Linux default) an engine listed first is dropped, since
+    # the test object itself only calls the geopackage API.
     target_link_libraries(test_engine_geopackage_mesh2d
         PRIVATE
             GTest::gtest GTest::gtest_main GTest::gmock
-            $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
             openswmm_geopackage
+            $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
             openswmm_legacy_engine
     )
     target_include_directories(test_engine_geopackage_mesh2d
@@ -832,6 +1121,21 @@ if(OPENSWMM_WITH_GEOPACKAGE)
 endif()
 
 
+# ---- D2 (program plan §C.1): HydroCouple component discovery, Gate D-a ----
+# Only with the option: the test doubles and the engine's stamp both come
+# from HydroCouple's headers. SMOKE_*_DIR are exported by
+# tests/components/smoke, which tests/CMakeLists.txt adds before unit/.
+if(OPENSWMM_WITH_HYDROCOUPLE)
+    add_gtest_unit(test_engine_process_component_loader test_process_component_loader.cpp)
+    target_link_libraries(test_engine_process_component_loader PRIVATE HydroCouple::HydroCouple)
+    target_compile_definitions(test_engine_process_component_loader PRIVATE
+        SMOKE_ENV_DIR="${SMOKE_ENV_DIR}"
+        SMOKE_EXPLICIT_DIR="${SMOKE_EXPLICIT_DIR}"
+        PC_OUTPUT_DIR="${PROJECT_SOURCE_DIR}/tests/output/process_components")
+    # The libraries must exist on disk before the test scans for them.
+    add_dependencies(test_engine_process_component_loader hc_smoke_components)
+endif()
+
 # ---- No two test sources may share a scratch-fixture name ----
 # Every test here runs with data/ as its WORKING_DIRECTORY, so two files that
 # write the same "_name.ext" are one test wearing two names: under -jN they
@@ -872,4 +1176,20 @@ if(_osw_fixture_clashes)
         "with data/ as their working directory:\n${_osw_clash_text}\n"
         "Rename one of them. A RESOURCE_LOCK also works but costs parallelism "
         "and only protects the pair you noticed. See the note above this check.")
+endif()
+
+add_gtest_unit(test_engine_lid_nodes test_lid_nodes.cpp)
+add_gtest_unit(test_engine_richards_column test_richards_column.cpp)
+target_compile_definitions(test_engine_lid_nodes PRIVATE OPENSWMM_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
+if(OPENSWMM_WITH_GEOPACKAGE)
+    target_link_libraries(test_engine_lid_nodes PRIVATE openswmm_geopackage)
+    target_compile_definitions(test_engine_lid_nodes PRIVATE LID_TEST_GEOPACKAGE)
+endif()
+
+# R1 shared surface-process contracts and cross-driver parity.
+if(OPENSWMM_BUILD_2D)
+    add_gtest_unit(test_engine_surface_processes test_surface_processes.cpp)
+    target_compile_definitions(test_engine_surface_processes PRIVATE
+        OPENSWMM_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 endif()

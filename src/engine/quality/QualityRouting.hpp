@@ -49,6 +49,74 @@ namespace quality {
 
 constexpr double ZERO_VOLUME = 0.0353147;  ///< 1 liter in ft3
 constexpr double ZERO_DEPTH  = 0.003281;   ///< 1 mm in ft
+/// Legacy's effective-zero flow (`ZERO` in src/legacy/engine/consts.h). The
+/// mixing kernels test the inflow RATE against this, not against 0.0.
+/// Published here because the water-age, heat and MSX transport mirrors run
+/// the same kernels and must not drift from them.
+constexpr double LEGACY_ZERO = 1.0e-10;
+
+// ============================================================================
+// Shared shape of the legacy mixing kernels
+//
+// The pollutant kernels in QualityRouting.cpp and the water-age, heat and MSX
+// mirrors in transport/components all route on the SAME rules — that identity
+// is the mirrors' design contract, and the reason WATER_AGE or HEAT_TRANSPORT
+// can be switched on without moving a pollutant trajectory. Four hand-copies
+// of those rules had already drifted apart (each mirror still carried the
+// pre-correction spelling, and their "matches the quality path" zero-volume
+// constant was 1e-10 against the quality path's one litre), so the rules live
+// here once and every kernel asks rather than re-derives.
+// ============================================================================
+
+/// Legacy findLinkQual's opening test: a non-conduit link — pump, orifice,
+/// weir, outlet — or a conduit with a DUMMY cross-section holds no water, so
+/// it takes its upstream node's value outright, with no mixing, no
+/// evaporation factor and no reaction.
+bool linkTakesUpstreamValue(const SimulationContext& ctx, int link);
+
+/// The mixing inflow rate a conduit sees over one step (legacy findLinkQual):
+/// KW's accepted upstream flow, or |Link.newFlow| for single-rate models,
+/// plus — under a single-rate dynamic model only — the volume
+/// the conduit gained together with what it lost to seepage and evaporation,
+/// the sum clamped at zero.
+double conduitMixingInflow(const SimulationContext& ctx, int link, double dt);
+
+/// Legacy findLinkQual's closing test: the link ends the step essentially
+/// empty — under a litre of water OR under a millimetre of depth.
+bool linkIsDry(const SimulationContext& ctx, int link);
+
+/// Legacy qualrout_execute's node dispatch: true when the node routes as a
+/// mixed reactor (findStorageQual), false when it is pure flow-through
+/// (findNodeQual). Note the asymmetry — the STORAGE half tests the node's
+/// TYPE, so a storage unit never drops to flow-through however empty it gets.
+bool nodeIsReactor(const SimulationContext& ctx, int node);
+
+/// Legacy findStorageQual's closing test: the node ends the step essentially
+/// empty AND is taking nothing in. Both halves matter — a dry node still
+/// receiving flow keeps its mix.
+bool nodeIsDry(const SimulationContext& ctx, int node, double q_in);
+
+/**
+ * @brief One node's [TREATMENT] application, against the CALLER's inflow
+ *        figures — the seam the LEGACY pass and the LARD MIX share.
+ *
+ * @details Evaluates the node's compiled expressions (removal- and
+ *          concentration-typed, with co-treatment resolution and cycle
+ *          detection), rewrites `nodes.conc` for every treated pollutant and
+ *          books the removed mass into `qual_routing_reacted`. The inflow
+ *          concentration and rate come from the CALLER because the two
+ *          engines hold them in different places: LEGACY accumulates
+ *          `qual_mass_in`/`qual_vol_in`, while LARD's node inflow lives in
+ *          its solver-internal drain accumulators — reading the LEGACY
+ *          arrays under LARD made an R-typed expression a literal no-op
+ *          (`cin` read 0, and `cOut = (c_in > 0) ? … : c_node` kept the
+ *          untreated value; P2.3's first draft shipped exactly that).
+ *
+ * @param q_in_cfs  Inflow rate feeding the node this interval, ft³/s.
+ * @param cin       Per-pollutant inflow concentration, length `np`.
+ */
+void applyNodeTreatment(SimulationContext& ctx, int node, double dt,
+                        double q_in_cfs, const double* cin);
 
 // ============================================================================
 // Quality solver
@@ -97,6 +165,10 @@ public:
      * @see Legacy: routing.c addExternalInflows() pollutant portion
      */
     void addExtInflowLoads(SimulationContext& ctx, double dt);
+    /// S3: 2D→1D junction drain — its water into qual_vol_in, its species
+    /// mass (queued by SurfaceRouter2D, drained by assembleLateralInflows)
+    /// into qual_mass_in. No-op when no 2D coupling is active.
+    void addCouplingLoads(SimulationContext& ctx, double dt);
 
     /**
      * @brief Add subcatchment washoff quality loads to node inflows.
@@ -118,10 +190,29 @@ public:
     /// the engine absorbs the treated concentrations back into its node
     /// stores (ArdEngine::absorbTreatedNodeConc). Books its own
     /// qual_routing_reacted losses.
-    void applyTreatment(SimulationContext& ctx, double dt);
+    /**
+     * @brief Apply [TREATMENT] at every node that has one.
+     *
+     * @param full_inflow  true when the caller assembled the node's COMPLETE
+     *        inflow (link mass flow plus the external loaders), which is what
+     *        legacy's Cin means. The EULERIAN_ARD entry runs only
+     *        assembleExternalLoads, so its accumulators hold the external
+     *        share alone and it passes false — see the note at the Cin site.
+     */
+    void applyTreatment(SimulationContext& ctx, double dt,
+                        bool full_inflow = true);
 
 private:
     int n_pollutants_ = 0;
+    /// Per-node LATERAL carrier volume added into qual_vol_in this step, so
+    /// the mixing denominator can be corrected to legacy's form afterwards
+    /// (routing.c:480 seeds quality inflow with MAX(0, NET lateral flow)).
+    std::vector<double> qual_vol_lat_;
+    /// Negative lateral components seen this step (aquifer-ward GW, negative
+    /// external/DWF/iface inflows), ft3. Zero on almost every deck; the
+    /// denominator correction below fires only when this is nonzero, so
+    /// negative-free decks stay byte-identical.
+    std::vector<double> qual_vol_lat_neg_;
 
     // Quality mass inflow arrays are stored on NodeData (nodes.qual_mass_in[],
     // nodes.qual_vol_in[]) so that external quality sources (user forcing, DWF

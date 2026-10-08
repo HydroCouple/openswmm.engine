@@ -968,3 +968,496 @@ TEST(InpWriterRoundTrip, IrregularFixtureConvergesAtTheSecondGeneration) {
               slurp(data("_irregular_transect_rt3.inp")))
         << "irregular_transect.inp: writer does not converge";
 }
+
+// ===========================================================================
+// Unsteady friction — [OPTIONS] UNSTEADY_FRICTION / UF_K3 (issue #156)
+//
+// Both keys are inert in this build (no solver reads them), so a writer that
+// drops them loses data with no other symptom: the file still reloads, just
+// with the defaults back in place. Non-default values in the fixture are what
+// make that visible.
+// ===========================================================================
+
+TEST(InpWriterRoundTrip, UnsteadyFrictionKeysSurviveTheRoundTrip) {
+    const auto g = gen1("uf_options.inp");
+    EXPECT_EQ(row(g.text, "OPTIONS", "UNSTEADY_FRICTION").at(1), "VITKOVSKY");
+    EXPECT_DOUBLE_EQ(std::stod(row(g.text, "OPTIONS", "UF_K3").at(1)), 0.02);
+
+    Reopened r("_uf_options_rt1.inp");
+    char buf[64] = {};
+    ASSERT_EQ(swmm_options_get(r.e, "UNSTEADY_FRICTION", buf, sizeof(buf)), SWMM_OK);
+    EXPECT_STREQ(buf, "VITKOVSKY");
+    ASSERT_EQ(swmm_options_get(r.e, "UF_K3", buf, sizeof(buf)), SWMM_OK);
+    EXPECT_DOUBLE_EQ(std::stod(buf), 0.02);
+}
+
+TEST(InpWriterRoundTrip, UnsteadyFrictionKeysAreWrittenEvenAtTheirDefaults) {
+    // The keys are emitted unconditionally (like SURCHARGE_METHOD), so a deck
+    // that never named them still carries them forward. Without this the
+    // previous test would also pass against a writer that only emits
+    // non-defaults — and the GUI's Save would silently drop a user's explicit
+    // "NONE" back to an absent key.
+    const auto g = gen1("hydrology.inp");
+    EXPECT_EQ(row(g.text, "OPTIONS", "UNSTEADY_FRICTION").at(1), "NONE");
+    EXPECT_DOUBLE_EQ(std::stod(row(g.text, "OPTIONS", "UF_K3").at(1)), 0.015);
+}
+
+// ===========================================================================
+// Defect 12 — save-idempotence drift in [OPTIONS] SWEEP_* and [MAP] Units.
+//
+// Two independent parse/format asymmetries made the SECOND save differ from
+// the first on every deck (found by H6b's save check, on a control deck with
+// no sweep or map configuration at all):
+//
+//   * SWEEP_* parsed against a LEAP-year anchor (2000: 12/31 → doy 366) but
+//     formatted against a non-leap one (2001: doy 366 → "1/1"), so every
+//     date past Feb 28 shifted one day per save/reopen cycle and the default
+//     12/31 wrapped to January 1st.
+//   * [MAP] Units wrote the literal "None" while the parser uppercases, so
+//     gen1 said "None" and every later generation said "NONE".
+//
+// The gate drives one deck to generation 3 and requires generations 2 and 3
+// to agree byte-for-byte — idempotence, not just plausibility — plus the
+// specific values that used to walk.
+// ===========================================================================
+
+TEST(InpWriterRoundTrip, SweepDatesAndMapUnitsAreSaveIdempotent) {
+    {
+        std::ofstream f(data("_swp_idem.inp"));
+        f << "[OPTIONS]\n"
+             "FLOW_UNITS           CFS\nFLOW_ROUTING         KINWAVE\n"
+             "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+             "END_DATE             01/01/2026\nEND_TIME             01:00:00\n"
+             "ROUTING_STEP         5\nREPORT_STEP          00:05:00\n"
+             "SWEEP_START          03/15\nSWEEP_END            12/31\n\n"
+             "[JUNCTIONS]\nJ0 10.0 10 0.5 0 0\n\n"
+             "[OUTFALLS]\nOUT 7.0 FREE NO\n\n"
+             "[CONDUITS]\nC1 J0 OUT 400 0.013 0 0 0\n\n"
+             "[XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\n"
+             "[MAP]\nDIMENSIONS 0 0 100 100\nUnits      None\n\n"
+             "[REPORT]\nINPUT NO\n";
+    }
+    const auto g1 = writeOnce("_swp_idem.inp",     "_swp_idem_rt1.inp");
+    const auto g2 = writeOnce("_swp_idem_rt1.inp", "_swp_idem_rt2.inp");
+    const auto g3 = writeOnce("_swp_idem_rt2.inp", "_swp_idem_rt3.inp");
+
+    // The two values that used to walk, at every generation.
+    for (const auto* g : {&g1, &g2, &g3}) {
+        EXPECT_EQ(row(g->text, "OPTIONS", "SWEEP_START").at(1), "3/15");
+        EXPECT_EQ(row(g->text, "OPTIONS", "SWEEP_END").at(1), "12/31")
+            << "the leap-anchor parse turned December 31st into January 1st";
+        EXPECT_EQ(row(g->text, "MAP", "Units").at(1), "None")
+            << "the [MAP] Units value changed case between generations";
+    }
+
+    // And the strong form: a second save of a saved file changes NOTHING.
+    EXPECT_EQ(g2.text, g3.text)
+        << "generation 2 and generation 3 differ — the writer is not "
+           "idempotent over its own output";
+}
+
+// ===========================================================================
+// Defect 12 — authored form (offset convention + conduit orientation)
+//
+// resolve_cross_references rewrites ELEVATION offsets as depths and reverses
+// adverse-slope conduits in place. The writer emitted both as-is, so a plain
+// Open → Save wrote depths under `LINK_OFFSETS ELEVATION` (the next open
+// subtracted the invert again and clamped to 0) and swapped From/To, offsets,
+// losses and InitFlow on every adverse conduit. Legacy SWMM-GUI never hit
+// this because it exports its own object model, never engine state.
+// ===========================================================================
+
+namespace {
+double num(const std::vector<std::string>& c, std::size_t i) { return std::stod(c.at(i)); }
+}
+
+TEST(InpWriterRoundTrip, ElevationOffsetsAreWrittenAsElevations) {
+    const auto g = gen1("authored_form.inp");
+    ASSERT_FALSE(g.text.empty());
+    EXPECT_EQ(row(g.text, "OPTIONS", "LINK_OFFSETS").at(1), "ELEVATION");
+
+    const auto c_ok = row(g.text, "CONDUITS", "C_OK");
+    ASSERT_GE(c_ok.size(), 7u);
+    EXPECT_NEAR(num(c_ok, 5), 12.5, 1e-6) << "InOffset was written as a depth";
+    EXPECT_NEAR(num(c_ok, 6), 11.0, 1e-6) << "OutOffset was written as a depth";
+
+    EXPECT_NEAR(num(row(g.text, "ORIFICES", "OR1"), 4), 11.5, 1e-6);
+    EXPECT_NEAR(num(row(g.text, "WEIRS",    "W1"),  4), 12.0, 1e-6);
+    EXPECT_NEAR(num(row(g.text, "OUTLETS",  "L1"),  3), 11.25, 1e-6);
+}
+
+TEST(InpWriterRoundTrip, AdverseConduitKeepsAuthoredOrientation) {
+    const auto g = gen1("authored_form.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    const auto c = row(g.text, "CONDUITS", "C_ADV");
+    ASSERT_GE(c.size(), 8u);
+    EXPECT_EQ(c.at(1), "J1") << "From node was swapped by the adverse-slope reversal";
+    EXPECT_EQ(c.at(2), "J2");
+    EXPECT_NEAR(num(c, 5), 10.5,  1e-6);
+    EXPECT_NEAR(num(c, 6), 12.25, 1e-6);
+    EXPECT_NEAR(num(c, 7), 0.75,  1e-6) << "InitFlow sign was flipped";
+
+    const auto l = row(g.text, "LOSSES", "C_ADV");
+    ASSERT_GE(l.size(), 3u);
+    EXPECT_NEAR(num(l, 1), 0.1, 1e-6) << "Kentry/Kexit were swapped";
+    EXPECT_NEAR(num(l, 2), 0.2, 1e-6);
+
+    // Vertices were never reordered by the reversal; they must still read
+    // J1 → J2 alongside the restored endpoints.
+    const auto v = section(g.text, "VERTICES");
+    ASSERT_EQ(v.size(), 2u);
+    EXPECT_NEAR(num(cols(v[0]), 1), 100.0, 1e-6);
+    EXPECT_NEAR(num(cols(v[1]), 1), 200.0, 1e-6);
+}
+
+TEST(InpWriterRoundTrip, AuthoredFormIsSaveIdempotentAndReopensClean) {
+    const auto g1 = gen1("authored_form.inp");
+    const auto g2 = writeOnce("_authored_form_rt1.inp", "_authored_form_rt2.inp");
+    const auto g3 = writeOnce("_authored_form_rt2.inp", "_authored_form_rt3.inp");
+    EXPECT_EQ(g2.text, g3.text);
+    EXPECT_EQ(row(g1.text, "CONDUITS", "C_ADV"), row(g3.text, "CONDUITS", "C_ADV"));
+    EXPECT_EQ(row(g1.text, "CONDUITS", "C_OK"),  row(g3.text, "CONDUITS", "C_OK"));
+
+    // The reopened model must hold the same depths as the original open —
+    // and no negative-offset warning, which is what the double-subtraction
+    // used to produce.
+    Reopened r("_authored_form_rt2.inp");
+    const int idx = swmm_link_index(r.e, "C_OK");
+    ASSERT_GE(idx, 0);
+    double up = 0, dn = 0;
+    ASSERT_EQ(swmm_link_get_offset_up(r.e, idx, &up), SWMM_OK);
+    ASSERT_EQ(swmm_link_get_offset_dn(r.e, idx, &dn), SWMM_OK);
+    EXPECT_NEAR(up, 0.5, 1e-6);
+    EXPECT_NEAR(dn, 0.0, 1e-6);
+    for (int i = 0; i < swmm_get_warning_count(r.e); ++i) {
+        const std::string w = swmm_get_warning_at(r.e, i);
+        EXPECT_EQ(w.find("negative offset"), std::string::npos) << w;
+    }
+}
+
+TEST(InpWriterRoundTrip, RestoreAuthoredOrientationApiUnreversesTheLiveContext) {
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, data("authored_form.inp").c_str(),
+                               data("_authored_form.inp.rpt").c_str(), nullptr, nullptr),
+              SWMM_OK);
+    const int idx = swmm_link_index(e, "C_ADV");
+    const int j1  = swmm_node_index(e, "J1");
+    const int j2  = swmm_node_index(e, "J2");
+    ASSERT_GE(idx, 0); ASSERT_GE(j1, 0); ASSERT_GE(j2, 0);
+
+    int from = -1;
+    swmm_link_get_from_node(e, idx, &from);
+    EXPECT_EQ(from, j2) << "fixture no longer triggers the parse-time reversal";
+
+    int n = 0;
+    ASSERT_EQ(swmm_links_restore_authored_orientation(e, &n), SWMM_OK);
+    EXPECT_EQ(n, 1);
+    swmm_link_get_from_node(e, idx, &from);
+    EXPECT_EQ(from, j1);
+    double up = 0;
+    swmm_link_get_offset_up(e, idx, &up);
+    EXPECT_NEAR(up, 0.5, 1e-6) << "offset did not travel back with its node";
+
+    // Idempotent, and the writer no longer has anything to undo.
+    ASSERT_EQ(swmm_links_restore_authored_orientation(e, &n), SWMM_OK);
+    EXPECT_EQ(n, 0);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+}
+
+// ===========================================================================
+// Defect — FILLED_CIRCULAR offsets written bumped by the sediment depth
+// ===========================================================================
+//
+// resolve_cross_references raises both offsets of a partly filled circular
+// conduit by yBot (legacy link.c:1072-1077) so the hydraulics see the sediment
+// as the effective invert. That is engine state, not authored input: a save
+// must write the offsets the user typed, or every Open -> Save cycle grows
+// them by the fill depth and the next open raises the invert again.
+TEST(InpWriterRoundTrip, FilledCircularOffsetsStayAuthored) {
+    const auto g = gen1("filled_circular_offsets.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    const auto c1 = row(g.text, "CONDUITS", "C1");
+    ASSERT_GE(c1.size(), 7u);
+    EXPECT_NEAR(std::stod(c1.at(5)), 0.3, 1e-9) << "InOffset was bumped by the fill";
+    EXPECT_NEAR(std::stod(c1.at(6)), 0.7, 1e-9) << "OutOffset was bumped by the fill";
+}
+
+// The resolver's slope loop skips a conduit with a dangling node or zero
+// length (a lenient open keeps such a model loadable), but the writers undo
+// the sediment bump for EVERY filled conduit, as the C API does. The bump must
+// therefore be applied to the skipped conduits as well, or a lenient-opened
+// filled conduit on a missing node is written yBot LOWER than authored.
+TEST(InpWriterRoundTrip, FilledCircularOffsetsStayAuthoredOnADanglingConduit) {
+    const auto g = writeOnceLenient("filled_circular_offsets_dangling.inp",
+                                    "_filled_circular_offsets_dangling_rt1.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    const auto c1 = row(g.text, "CONDUITS", "C1");
+    ASSERT_GE(c1.size(), 7u);
+    EXPECT_NEAR(std::stod(c1.at(5)), 0.3, 1e-9) << "resolved conduit InOffset";
+    EXPECT_NEAR(std::stod(c1.at(6)), 0.7, 1e-9) << "resolved conduit OutOffset";
+
+    const auto c2 = row(g.text, "CONDUITS", "C2");
+    ASSERT_GE(c2.size(), 7u);
+    EXPECT_NEAR(std::stod(c2.at(5)), 0.4, 1e-9) << "dangling conduit InOffset lost the bump";
+    EXPECT_NEAR(std::stod(c2.at(6)), 0.6, 1e-9) << "dangling conduit OutOffset lost the bump";
+}
+
+// ===========================================================================
+// File-IO parity audit (plans/FILE_IO_PARITY_AUDIT_2026-09-22.md)
+//
+// Every case below asserts against GENERATION ZERO — the authored fixture —
+// not against a later generation. The suite's existing convergence test
+// (gen2 == gen3) cannot see this defect class at all: a value that decays to a
+// fixed point converges perfectly while being wrong. [LOSSES] seepage written
+// in internal units printed 0.000000 after one save and was stable at zero
+// forever after.
+//
+// The fixture's own header records why each value was chosen.
+// ===========================================================================
+
+// F1. MINIMUM_STEP is legacy's MIN_ROUTE_STEP, a bare getDouble with no clock
+// fallback (project.c:701-704) — unlike ROUTE_STEP, which accepts both forms.
+// Running it through fmt_step emitted "0:00:00" for every whole-second value,
+// and legacy answered ERROR 211 and refused the ENTIRE deck.
+TEST(InpWriterRoundTrip, MinimumStepIsWrittenAsDecimalSecondsNotAClock) {
+    const auto g = gen1("column_and_precision.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    const auto r = row(g.text, "OPTIONS", "MINIMUM_STEP");
+    ASSERT_EQ(r.size(), 2u) << "[OPTIONS] MINIMUM_STEP row missing";
+    EXPECT_EQ(r.at(1).find(':'), std::string::npos)
+        << "MINIMUM_STEP written as a clock (" << r.at(1)
+        << ") — legacy rejects the whole deck with ERROR 211";
+    // The fixture's value is a WHOLE number of seconds deliberately: fmt_step
+    // only emitted the fatal clock form for those, so a fractional value would
+    // pass this test against the unfixed writer.
+    EXPECT_NEAR(std::stod(r.at(1)), 1.0, 1e-12);
+}
+
+// F2/F3. The optional divider tail is "maxDepth initDepth surDepth aPond",
+// read from the first token AFTER the type parameters — legacy's `n`
+// (node.c divider_readParams). OVERFLOW takes NO type parameter, so its tail
+// starts one column earlier than CUTOFF's. The reader used 5 for both and
+// never read past MaxDepth, so an OVERFLOW divider reported InitDepth as its
+// MaxDepth and every divider silently lost the last three values ON LOAD.
+TEST(InpWriterRoundTrip, DividerTailColumnsSurviveForEveryDividerType) {
+    const auto g = gen1("column_and_precision.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    const auto ovr = row(g.text, "DIVIDERS", "DIV_OVR");
+    ASSERT_GE(ovr.size(), 8u) << "OVERFLOW divider lost trailing columns";
+    EXPECT_NEAR(std::stod(ovr.at(4)), 6.07, 1e-9) << "MaxDepth read from the wrong column";
+    EXPECT_NEAR(std::stod(ovr.at(5)), 1.11, 1e-9) << "InitDepth dropped";
+    EXPECT_NEAR(std::stod(ovr.at(6)), 2.22, 1e-9) << "SurDepth dropped";
+    EXPECT_NEAR(std::stod(ovr.at(7)), 200.0, 1e-9) << "Aponded dropped";
+
+    // CUTOFF carries one type parameter, so its tail is shifted by one.
+    const auto cut = row(g.text, "DIVIDERS", "DIV_CUT");
+    ASSERT_GE(cut.size(), 9u) << "CUTOFF divider lost trailing columns";
+    EXPECT_NEAR(std::stod(cut.at(4)), 3.33, 1e-9) << "qCutoff";
+    EXPECT_NEAR(std::stod(cut.at(5)), 7.07, 1e-9) << "MaxDepth";
+    EXPECT_NEAR(std::stod(cut.at(6)), 1.12, 1e-9) << "InitDepth dropped";
+    EXPECT_NEAR(std::stod(cut.at(7)), 2.23, 1e-9) << "SurDepth dropped";
+    EXPECT_NEAR(std::stod(cut.at(8)), 300.0, 1e-9) << "Aponded dropped";
+}
+
+// F4. The culvert code is legacy tok[7] and conduits only (link.c:258-264).
+// It is parsed, it drives inlet control in the dynamic wave, and the
+// GeoPackage writer persists it — but the .inp writer stopped at Barrels, so
+// Open -> Save turned every culvert into an ordinary conduit. Legacy offers no
+// way to skip Barrels, so the code is only reachable by writing both.
+TEST(InpWriterRoundTrip, CulvertCodeSurvivesAndKeepsItsBarrelsColumn) {
+    const auto g = gen1("column_and_precision.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    const auto c = row(g.text, "XSECTIONS", "C_CULVERT");
+    ASSERT_GE(c.size(), 8u) << "culvert code column missing";
+    EXPECT_EQ(c.at(6), "1") << "Barrels must precede the culvert code";
+    EXPECT_EQ(c.at(7), "4") << "culvert code lost on save";
+
+    // A conduit with no culvert stops at Barrels — 0 means "not a culvert" and
+    // writing it would be noise.
+    const auto plain = row(g.text, "XSECTIONS", "C_SEEP");
+    ASSERT_GE(plain.size(), 7u);
+    EXPECT_EQ(plain.size(), 7u) << "a non-culvert conduit gained a culvert column";
+}
+
+// F5. [LOSSES] seepage arrives in in/hr and is divided by UCF(RAINFALL) =
+// 43200 on read, in BOTH unit systems. The write-side mirror existed but the
+// caller gated the whole conversion on UCF(LENGTH) != 1.0, which is false for
+// every US deck — so US models wrote internal ft/s under an in/hr column and
+// at %10.6f the value printed 0.000000 after a single save.
+TEST(InpWriterRoundTrip, SeepageSurvivesOnAUsUnitDeck) {
+    const auto g = gen1("column_and_precision.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    const auto l = row(g.text, "LOSSES", "C_SEEP");
+    ASSERT_GE(l.size(), 6u) << "[LOSSES] row for C_SEEP missing";
+    EXPECT_NEAR(std::stod(l.at(5)), 0.25, 1e-9)
+        << "seepage was written in internal units on a CFS deck";
+}
+
+// F11. Fixed-width formats truncated fields that scale the simulation:
+// %12.4f is an ABSOLUTE 4-decimal format, so a small area lost most of its
+// significance, and a bare %g is 6 significant digits, so a storage
+// coefficient lost its fraction. Both were near-perfect predictors of a round
+// trip that changed the answer in the corpus sweep.
+TEST(InpWriterRoundTrip, SolverFacingValuesKeepFullPrecision) {
+    const auto g = gen1("column_and_precision.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    const auto s = row(g.text, "SUBCATCHMENTS", "S1");
+    ASSERT_GE(s.size(), 5u);
+    EXPECT_NEAR(std::stod(s.at(3)), 0.018939394, 1e-15)
+        << "subcatchment area truncated (%12.4f gave 0.0189)";
+
+    const auto st = row(g.text, "STORAGE", "ST1");
+    ASSERT_GE(st.size(), 6u);
+    EXPECT_NEAR(std::stod(st.at(5)), 278.539816, 1e-9)
+        << "functional storage A1 truncated (bare %g gave 278.54)";
+}
+
+// F7. An outfall with a flap gate AND a Route To subcatchment is not
+// expressible in SWMM 5.x: legacy assigns the gate only when the row has
+// exactly `n` tokens and RouteTo only at `n+1`, so writing both makes a legacy
+// reader drop the gate. Our own reader takes both columns, so the file stays
+// faithful for v6 — the writer says so rather than losing it silently. This is
+// the same treatment swmm_model_write_compat gives a dropped 5.x feature.
+TEST(InpWriterRoundTrip, OutfallGatePlusRouteToIsReportedAsInexpressible) {
+    const auto g = writeOnceLenient("outfall_gate_and_route.inp",
+                                    "_outfall_gate_and_route_rt1.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    // Both columns are still written — v6 reads them correctly.
+    const auto both = row(g.text, "OUTFALLS", "O_BOTH");
+    ASSERT_GE(both.size(), 5u);
+    EXPECT_EQ(both.at(3), "YES") << "flap gate dropped";
+    EXPECT_EQ(both.at(4), "S_RECV") << "RouteTo dropped";
+
+    int warned = 0, spurious = 0;
+    for (const auto& w : g.warnings) {
+        if (w.find("O_BOTH") != std::string::npos) ++warned;
+        if (w.find("O_GATE") != std::string::npos) ++spurious;
+    }
+    EXPECT_EQ(warned, 1) << "no warning for the inexpressible combination";
+    EXPECT_EQ(spurious, 0) << "warned about an outfall with only a flap gate";
+}
+
+// ===========================================================================
+// Grammar edges the legacy reader enforces (audit §9.1)
+//
+// Each of these produced a file legacy REFUSED, found by running the legacy
+// engine over the round-tripped corpus rather than by reading code. The
+// fixture's header records why every value in it was chosen.
+// ===========================================================================
+
+// A recording interval is H:MM only while it IS a whole number of minutes.
+// Legacy reads the column with getDouble FIRST and only then tries a clock
+// (gage.c readGageSeriesFormat), so decimal hours are legal — and are the only
+// form that can carry a sub-minute interval. A 4-second gage was written as
+// "0:00", which legacy answers with ERROR 213, refusing the whole deck.
+TEST(InpWriterRoundTrip, SubMinuteGageIntervalIsWrittenAsDecimalHours) {
+    const auto g = gen1("legacy_grammar_edges.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    const auto fast = row(g.text, "RAINGAGES", "RG_FAST");
+    ASSERT_GE(fast.size(), 3u);
+    EXPECT_EQ(fast.at(2).find(':'), std::string::npos)
+        << "a 4-second interval cannot be expressed as H:MM (" << fast.at(2) << ")";
+    EXPECT_NEAR(std::stod(fast.at(2)) * 3600.0, 4.0, 1e-6);
+
+    // A whole-minute interval keeps the readable clock form.
+    const auto slow = row(g.text, "RAINGAGES", "RG_SLOW");
+    ASSERT_GE(slow.size(), 3u);
+    EXPECT_EQ(slow.at(2), "0:15");
+}
+
+// Legacy rejects a [GROUNDWATER] row with ERR_ITEMS below ELEVEN tokens
+// (gwater.c), even though only ten are mandatory — the eleventh may be '*',
+// but it must be present. The writer emitted the optional depth columns only
+// as far as the last one actually set, so a row with none stopped at ten.
+TEST(InpWriterRoundTrip, GroundwaterRowKeepsLegacysEleventhToken) {
+    const auto g = gen1("legacy_grammar_edges.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    const auto gw = row(g.text, "GROUNDWATER", "GW_SUB");
+    ASSERT_GE(gw.size(), 11u)
+        << "legacy refuses a groundwater row with fewer than 11 tokens";
+    EXPECT_EQ(gw.at(10), "*") << "an unset optional depth is written as '*'";
+}
+
+// Green-Ampt requires Ksat > 0 (grnampt_setParams) and answers ERROR 235
+// otherwise. %10.4f is an ABSOLUTE 4-decimal format, so a low-conductivity
+// soil at 1e-6 in/hr was written as 0.0000 — the same truncation class that
+// cost subcatchment areas and storage coefficients their significance.
+TEST(InpWriterRoundTrip, TinyInfiltrationParametersSurvive) {
+    const auto g = gen1("legacy_grammar_edges.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    const auto inf = row(g.text, "INFILTRATION", "S_GA");
+    ASSERT_GE(inf.size(), 4u);
+    EXPECT_GT(std::stod(inf.at(2)), 0.0) << "Ksat truncated to zero";
+    EXPECT_NEAR(std::stod(inf.at(2)), 1e-6, 1e-18);
+}
+
+// [ADJUSTMENTS] N-PERV/DSTORE/INFIL rows name a PATTERN. Patterns live in
+// their own store, not in ctx.tables, so resolving the index through the table
+// list returned whatever curve or series sat at that slot and legacy answered
+// ERROR 209 on an undefined object.
+TEST(InpWriterRoundTrip, AdjustmentRowsNameTheirPatternNotATable) {
+    const auto g = gen1("legacy_grammar_edges.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    std::vector<std::string> nperv;
+    for (const auto& r : section(g.text, "ADJUSTMENTS")) {
+        auto c = cols(r);
+        if (!c.empty() && c[0] == "N-PERV") { nperv = c; break; }
+    }
+    ASSERT_GE(nperv.size(), 3u) << "the N-PERV adjustment row was dropped";
+    EXPECT_EQ(nperv.at(1), "S_GA");
+    EXPECT_EQ(nperv.at(2), "NPERVPAT") << "pattern resolved through the wrong store";
+}
+
+// ===========================================================================
+// GUI annotation sections (audit F6)
+//
+// [LABELS], [BACKDROP] and [PROFILES] were registered as no-op handlers, so a
+// model's map labels and backdrop image were deleted by the first Open → Save.
+// 350 corpus decks carry [LABELS]; 2 carry [BACKDROP].
+//
+// Legacy has no `case` for any of them in parseLine, so no engine parses or
+// validates their content. They are therefore kept VERBATIM rather than
+// modelled — replaying the authored lines is both the safest reading and an
+// exact one.
+// ===========================================================================
+
+TEST(InpWriterRoundTrip, GuiAnnotationSectionsSurviveVerbatim) {
+    const auto g = gen1("passthrough_sections.inp");
+    ASSERT_FALSE(g.text.empty());
+
+    // Quoted strings with embedded spaces, an empty quoted field, a negative
+    // coordinate — anything that reformats rather than replays loses one.
+    const auto labels = section(g.text, "LABELS");
+    ASSERT_EQ(labels.size(), 2u) << "[LABELS] rows lost";
+    EXPECT_NE(labels[0].find("\"Outfall structure\""), std::string::npos);
+    EXPECT_NE(labels[0].find("\"\""), std::string::npos) << "empty quoted field lost";
+    EXPECT_NE(labels[1].find("-512.250"), std::string::npos);
+    EXPECT_NE(labels[1].find("\"Times New Roman\""), std::string::npos);
+
+    const auto backdrop = section(g.text, "BACKDROP");
+    ASSERT_EQ(backdrop.size(), 2u) << "[BACKDROP] rows lost";
+    EXPECT_NE(backdrop[0].find("\"Site Post.jpg\""), std::string::npos)
+        << "a filename with a space must survive";
+    EXPECT_NE(backdrop[1].find("-0.123"), std::string::npos);
+
+    // [PROFILES], not [PROFILE] — the spelling every real deck uses, and the
+    // one the registry did not have. The name is padded INSIDE its quotes.
+    const auto profiles = section(g.text, "PROFILES");
+    ASSERT_EQ(profiles.size(), 1u) << "[PROFILES] row lost (wrong tag registered?)";
+    EXPECT_NE(profiles[0].find("\"profileA        \""), std::string::npos)
+        << "padding inside the quotes was reformatted away";
+}

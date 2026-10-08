@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 
 #include "../HydClosureKernels.hpp"
@@ -48,7 +49,8 @@ namespace {
 /// Godunov flux — no bore-speed consistency binds it — so it is free to use
 /// the conveyance area, the same distinction legacy DW draws with
 /// conveyArea (#144).
-double frictionGamma(const FvGeometry& g, double q, double a, double h) {
+double frictionGamma(const FvGeometry& g, double roughness, double rough_factor,
+                     double q, double a, double h) {
     const double a_conv = std::min(a, std::max(g.a_crown, k::kDryArea));
     if (a_conv <= k::kDryArea) return 0.0;
     const double u = q / a_conv;
@@ -58,14 +60,14 @@ double frictionGamma(const FvGeometry& g, double q, double a, double h) {
     if (g.xs.type == static_cast<int>(XSectShape::FORCE_MAIN) &&
         h >= g.y_full) {
         if (absu <= 0.0) return 0.0;
-        const double sf = (g.roughness < 1.0)
-                              ? hydkernels::fricSlopeDW(u, r, g.roughness)
-                              : hydkernels::fricSlopeHW(u, r, g.roughness);
+        const double sf = (roughness < 1.0)
+                              ? hydkernels::fricSlopeDW(u, r, roughness)
+                              : hydkernels::fricSlopeHW(u, r, roughness);
         return k::kGravity * sf / absu;
     }
-    if (g.rough_factor <= 0.0) return 0.0;
+    if (rough_factor <= 0.0) return 0.0;
     const double r43 = r * std::cbrt(r);
-    return g.rough_factor * absu / r43;
+    return rough_factor * absu / r43;
 }
 
 bool fixedHead(const FvStepForcing* f, std::size_t un) {
@@ -269,7 +271,21 @@ void PressurizedHeadSolver::solve(const PressurizedView& v, double dt) {
             const FvGeometry& g =
                 mesh.geom[static_cast<std::size_t>(mesh.cell_geom[uc])];
             const double h = state.cell_h[uc];
-            const double T = std::max(k::widthOfDepth(g, h), 1.0e-12);
+            // TPA (issue #156 Phase 5): a FLAGGED cell lives on the SIGNED
+            // slot line, whose storage derivative dA/dη is the constant
+            // t_slot at ANY piezometric depth — including h < 0 (where the
+            // table width is zero and the clamp made this an almost
+            // storage-free row) and 0 < h < y_crown (where the table returns
+            // the free-surface width, ~1e5 × t_slot at study celerities).
+            // Either mis-width detonates the linearized head update on a
+            // sloped pressurized start: measured on E3 implicit × TPA, the
+            // apex cell's head left the physical range within 4 substeps and
+            // the run NaN'd at t=0 (P5 task-3). The width must follow the
+            // regime, exactly as censusDt/cellStableDt already do.
+            const bool tpa_c =
+                !state.cell_tpa.empty() && state.cell_tpa[uc] != 0;
+            const double T =
+                std::max(tpa_c ? g.t_slot : k::widthOfDepth(g, h), 1.0e-12);
             unk_store_[static_cast<std::size_t>(u)] =
                 T * mesh.cell_dx[uc] / dt;
             unk_eta0_[static_cast<std::size_t>(u)] = v.cell_eta[uc];
@@ -329,19 +345,67 @@ void PressurizedHeadSolver::solve(const PressurizedView& v, double dt) {
             const auto uc = static_cast<std::size_t>(c);
             const FvGeometry& g =
                 mesh.geom[static_cast<std::size_t>(mesh.cell_geom[uc])];
-            gamma += frictionGamma(g, state.cell_q[uc], state.cell_a[uc],
-                                   state.cell_h[uc]);
+            // A TPA-flagged cell (issue #156) is full at any piezometric
+            // depth: friction evaluates at y_full (R = r_full, and a full
+            // FORCE_MAIN keeps its pressurized law) rather than at a
+            // sub-atmospheric h the table would read as part-full.
+            const double h_fric =
+                (!state.cell_tpa.empty() && state.cell_tpa[uc] != 0 &&
+                 state.cell_h[uc] < g.y_full)
+                    ? g.y_full : state.cell_h[uc];
+            const auto ucd = static_cast<std::size_t>(mesh.cell_conduit[uc]);
+            gamma += frictionGamma(g, mesh.conduit_roughness[ucd],
+                                   mesh.conduit_rough_factor[ucd],
+                                   state.cell_q[uc], state.cell_a[uc], h_fric);
             ++ngam;
         }
         if (ngam > 0) gamma /= static_cast<double>(ngam);
 
-        F.alpha = 1.0 / (1.0 + dt * gamma);
-        F.cond  = F.alpha * dt * k::kGravity * ahat / Lf;
-        F.qstar = 0.5 * (L.q + R.q);
-
-        // Time-n heads / Dirichlet values of each side.
         const int cl = mesh.face_cl[uf];
         const int cr = mesh.face_cr[uf];
+        const double qstar0 = 0.5 * (L.q + R.q);
+
+        // Unsteady friction (issue #156): the Vitkovsky local-acceleration
+        // part folds into the SAME semi-implicit denominator steady friction
+        // uses — q^{n+1}·(1 + Δt·γ + k3) = (1+k3)·q* − Δt·gÂ/L·Δη −
+        // Δt·k3·Â·grad — so the implicit path damps exactly as
+        // kernels::ufUpdate does on the explicit path (without this the
+        // fully-pressurized e1 waterhammer is byte-inert under UF, U-G2).
+        // The convective part rides the old-state uf_grad snapshot the
+        // solver precomputed BEFORE this pass. Dead-band and the
+        // half-momentum clamp mirror the kernel, so a discretely-at-rest
+        // deck stays bit-identical; k3 = 0 (or UF off) leaves every
+        // coefficient bit-unchanged (adding 0.0 is exact).
+        double k3 = 0.0, uf_src = 0.0;
+        if (v.opts && v.opts->unsteady_friction != 0 &&
+            v.opts->uf_k3 > 0.0 && v.uf_grad && !v.uf_grad->empty() &&
+            std::fabs(qstar0 / ahat) >= 0.01 /* ft/s dead-band */) {
+            k3 = v.opts->uf_k3;
+            double gterm = 0.0;
+            if (cl >= 0 && cr >= 0) {
+                const auto ucl = static_cast<std::size_t>(cl);
+                const auto ucr = static_cast<std::size_t>(cr);
+                if (mesh.cell_conduit[ucl] == mesh.cell_conduit[ucr])
+                    gterm = 0.5 * ((*v.uf_grad)[ucl] + (*v.uf_grad)[ucr]);
+                // else: VJ splice — the frames may oppose; drop the
+                // convective part rather than risk an energizing sign
+                // (same rule as the cell stencil, one-sided there).
+            } else if (cl >= 0) {
+                gterm = (*v.uf_grad)[static_cast<std::size_t>(cl)];
+            } else if (cr >= 0) {
+                gterm = (*v.uf_grad)[static_cast<std::size_t>(cr)];
+            }
+            uf_src = dt * k3 * ahat * gterm;
+            const double cap = 0.5 * std::fabs(qstar0);
+            if (std::fabs(uf_src) > cap)
+                uf_src = (uf_src > 0.0) ? cap : -cap;
+        }
+
+        F.alpha = 1.0 / (1.0 + dt * gamma + k3);
+        F.cond  = F.alpha * dt * k::kGravity * ahat / Lf;
+        F.qstar = qstar0 * (1.0 + k3) - uf_src;
+
+        // Time-n heads / Dirichlet values of each side.
         const int nd = mesh.face_node[uf];
         F.eta_l = (cl >= 0) ? v.cell_eta[static_cast<std::size_t>(cl)]
                             : state.node_head[static_cast<std::size_t>(nd)];
@@ -356,34 +420,117 @@ void PressurizedHeadSolver::solve(const PressurizedView& v, double dt) {
     // floor) is demoted to a Dirichlet row at the clamp and the system is
     // re-solved; the flux imbalance that creates lands in the carry ledger,
     // where settleAlgebraicNode books flooding/ponding exactly as today.
-    for (int pass = 0; pass < 4; ++pass) {
-        assembleRhs(v, dt);
-        buildComponents();
-        const int ncomp =
-            static_cast<int>(comp_ptr_.empty() ? 0 : comp_ptr_.size() - 1);
-        for (int cidx = 0; cidx < ncomp; ++cidx)
-            solveComponent(cidx, v, dt);
+    auto solvePass = [&]() {
+        unk_dirichlet_.assign(unu, 0);
+        unk_dirvalue_.assign(unu, 0.0);
+        for (int pass = 0; pass < 4; ++pass) {
+            assembleRhs(v, dt);
+            buildComponents();
+            const int ncomp =
+                static_cast<int>(comp_ptr_.empty() ? 0 : comp_ptr_.size() - 1);
+            for (int cidx = 0; cidx < ncomp; ++cidx)
+                solveComponent(cidx, v, dt);
 
-        bool violated = false;
-        for (int u = 0; u < nu; ++u) {
-            const auto uu = static_cast<std::size_t>(u);
-            if (unk_dirichlet_[uu]) continue;
-            const int ent = unk_entity_[uu];
-            if (ent < mesh.n_cells()) continue;
-            const int n = ent - mesh.n_cells();
-            const double lo = mesh.node_invert[static_cast<std::size_t>(n)];
-            const double hi = nodeCeiling(mesh, n);
-            if (unk_head_[uu] > hi) {
-                unk_dirichlet_[uu] = 1;
-                unk_dirvalue_[uu] = hi;
-                violated = true;
-            } else if (unk_head_[uu] < lo) {
-                unk_dirichlet_[uu] = 1;
-                unk_dirvalue_[uu] = lo;
-                violated = true;
+            bool violated = false;
+            for (int u = 0; u < nu; ++u) {
+                const auto uu = static_cast<std::size_t>(u);
+                if (unk_dirichlet_[uu]) continue;
+                const int ent = unk_entity_[uu];
+                if (ent < mesh.n_cells()) continue;
+                const int n = ent - mesh.n_cells();
+                // TPA (issue #156 Phase 5): a SEALED folded junction inside
+                // a pressurized column carries sub-atmospheric head —
+                // demoting it to a Dirichlet row AT THE INVERT is what broke
+                // the sealed drawdown column under FV_PRESSURIZED_IMPLICIT
+                // (measured |TA−TB| 3.743 vs 0.003 explicit). Extend the
+                // floor by the column-separation bound, mirroring
+                // solveAlgebraicNode.
+                double lo = mesh.node_invert[static_cast<std::size_t>(n)];
+                if (!state.cell_tpa.empty() &&
+                    mesh.node_sur_depth[static_cast<std::size_t>(n)] > 0.0)
+                    lo -= 35.0;
+                const double hi = nodeCeiling(mesh, n);
+                if (unk_head_[uu] > hi) {
+                    unk_dirichlet_[uu] = 1;
+                    unk_dirvalue_[uu] = hi;
+                    violated = true;
+                } else if (unk_head_[uu] < lo) {
+                    unk_dirichlet_[uu] = 1;
+                    unk_dirvalue_[uu] = lo;
+                    violated = true;
+                }
             }
+            if (!violated) break;
         }
-        if (!violated) break;
+    };
+    solvePass();
+
+    // ---- secant correction of the storage linearization --------------------
+    // The storage row above is the TANGENT dA/dh at the old depth, but the
+    // mass update that follows is exact: a cell rising through the crown
+    // realizes Δh = ΔA / T(new), not ΔA / T(old). Below a closed crown T
+    // falls to the slot width — the exact circle's width vanishes like
+    // √(y_full − h) — so a single tangent step overshoots into the slot and
+    // the realized head spikes by ΔA / t_slot (measured on the e2 rapid-fill
+    // implicit cell with the exact-geometry closure: single-substep spikes to
+    // 0.98 m against 0.37 m; e3 at c = 300 m/s diverged to 31 m). The legacy
+    // 51-row table hid this because its last chord kept dA/dh ≥ ~0.15·D
+    // right up to the crown. Picard corrections: re-solve with each cell's
+    // storage set to the SECANT of its own closure between the old depth and
+    // the latest predicted one (Casulli & Zanolli's nested iteration on the
+    // nonlinear wet area), until the predicted heads stop moving. One secant
+    // step toward a wild tangent prediction over-stiffens the crown cell and
+    // the front creeps (bore arrival 75 s at c = 660 against 45 s at
+    // c = 150), so the iteration is carried further. CAVEAT (measured
+    // 2026-09-11): on stiff slots (t_slot ~ 1e-4 ft²) this Picard map does
+    // NOT contract — the e2 c = 50 spike reads 1.17 / 1.41 / 0.38 / 0.98 m at
+    // 1 / 2 / 3 / 4 passes, and ½-under-relaxation does not cure it — so
+    // three passes is the best measured point, not a converged solve. The
+    // converged remedy is a Newton iteration on the nonlinear storage with a
+    // monotone line search (Casulli–Zanolli's nested Newton); until it lands
+    // the UF ring relation at c = 1000 ft/s does not hold under the exact
+    // closure (ValveClosureDampsOnImplicitPath). A cell that stays on the
+    // slot line keeps t_slot exactly, so a fully pressurized column re-solves
+    // to the same heads; TPA-flagged rows keep their regime width.
+    {
+        // Development knob for the follow-up on the nonlinear storage
+        // (see the caveat above): number of secant passes, default 3.
+        static const int kSecantPasses = [] {
+            const char* e = std::getenv("OPENSWMM_FV_PRESS_SECANT_PASSES");
+            return e ? std::atoi(e) : 3;
+        }();
+        std::vector<double> eta_prev(unu, 0.0);
+        for (int it = 0; it < kSecantPasses; ++it) {
+            bool changed = false;
+            double move = 0.0;
+            for (int u = 0; u < nu; ++u) {
+                const auto uu = static_cast<std::size_t>(u);
+                const int ent = unk_entity_[uu];
+                if (ent >= mesh.n_cells()) continue;
+                const auto uc = static_cast<std::size_t>(ent);
+                if (!state.cell_tpa.empty() && state.cell_tpa[uc] != 0) continue;
+                const FvGeometry& g =
+                    mesh.geom[static_cast<std::size_t>(mesh.cell_geom[uc])];
+                const double h0 = state.cell_h[uc];
+                const double eta1 =
+                    unk_dirichlet_[uu] ? unk_dirvalue_[uu] : unk_head_[uu];
+                if (it > 0) move = std::max(move, std::fabs(eta1 - eta_prev[uu]));
+                eta_prev[uu] = eta1;
+                double h1 = h0 + (eta1 - unk_eta0_[uu]);
+                if (h1 < 0.0) h1 = 0.0;
+                if (h0 >= g.y_full && h1 >= g.y_full) continue;   // slot: T = t_slot
+                const double dh = h1 - h0;
+                if (std::fabs(dh) <= 1.0e-12 * g.y_full) continue;
+                const double T_sec =
+                    std::max((k::areaOfDepth(g, h1) - k::areaOfDepth(g, h0)) / dh,
+                             1.0e-12);
+                unk_store_[uu] = T_sec * mesh.cell_dx[uc] / dt;
+                changed = true;
+            }
+            if (!changed) break;
+            if (it > 0 && move <= 1.0e-9) break;   // ft — predictions converged
+            solvePass();
+        }
     }
 
     backSubstitute(v);

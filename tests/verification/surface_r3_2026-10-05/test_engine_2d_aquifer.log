@@ -1,0 +1,82 @@
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+[==========] Running 23 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 23 tests from Aquifer2D
+[ RUN      ] Aquifer2D.AuthoredSectionResolvesAndTheKernelConserves
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] Aquifer2D.AuthoredSectionResolvesAndTheKernelConserves (13 ms)
+[ RUN      ] Aquifer2D.SectionsRoundTripThroughTheWriter
+[       OK ] Aquifer2D.SectionsRoundTripThroughTheWriter (2 ms)
+[ RUN      ] Aquifer2D.CApiAuthorsRowsOptionsAndNodeBeds
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] Aquifer2D.CApiAuthorsRowsOptionsAndNodeBeds (13 ms)
+[ RUN      ] Aquifer2D.Aquifer2DDestinationRequiresOwnershipMigration
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] Aquifer2D.Aquifer2DDestinationRequiresOwnershipMigration (1 ms)
+[ RUN      ] Aquifer2D.SurfaceDefaultForLegacyAquiferIsSkippedOnOwnedCells
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] Aquifer2D.SurfaceDefaultForLegacyAquiferIsSkippedOnOwnedCells (10 ms)
+[ RUN      ] Aquifer2D.ReturnedSaturationExcessIsAnInflowToTheSurfaceLedger
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] Aquifer2D.ReturnedSaturationExcessIsAnInflowToTheSurfaceLedger (7 ms)
+[ RUN      ] Aquifer2D.ExfiltrationReachesADryCellThroughThePendingSeed
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] Aquifer2D.ExfiltrationReachesADryCellThroughThePendingSeed (2 ms)
+[ RUN      ] Aquifer2D.FloodedManholeRechargesUntilTheColumnIsFullThenStops
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] Aquifer2D.FloodedManholeRechargesUntilTheColumnIsFullThenStops (3 ms)
+[ RUN      ] Aquifer2D.SpringOnDryGroundReachesTheNetworkThroughTheOrificeCoupling
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] Aquifer2D.SpringOnDryGroundReachesTheNetworkThroughTheOrificeCoupling (2 ms)
+[ RUN      ] Aquifer2D.NodesInsideTheMeshEnrolByTheirCoordinates
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] Aquifer2D.NodesInsideTheMeshEnrolByTheirCoordinates (4 ms)
+[ RUN      ] Aquifer2D.NodeEnrolmentRowsKeepsOnlyAuthoredBeds
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] Aquifer2D.NodeEnrolmentRowsKeepsOnlyAuthoredBeds (0 ms)
+[ RUN      ] Aquifer2D.ExchangeNoOptsANodeOutAndRoundTrips
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] Aquifer2D.ExchangeNoOptsANodeOutAndRoundTrips (2 ms)
+[ RUN      ] Aquifer2D.StorageExfiltrationIsReplacedByTheBedWhenEnrolled
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] Aquifer2D.StorageExfiltrationIsReplacedByTheBedWhenEnrolled (5 ms)
+[ RUN      ] Aquifer2D.DefaultOptionsAreNotWrittenBack
+[       OK ] Aquifer2D.DefaultOptionsAreNotWrittenBack (1 ms)
+[ RUN      ] Aquifer2D.ConduitSeepageReachesTheAquiferCellsItCrosses
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] Aquifer2D.ConduitSeepageReachesTheAquiferCellsItCrosses (5 ms)
+[ RUN      ] Aquifer2D.ConduitSeepageIsSharedByTheLengthOverTheMesh
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] Aquifer2D.ConduitSeepageIsSharedByTheLengthOverTheMesh (5 ms)
+[ RUN      ] Aquifer2D.LinkSeepageOptionRoundTripsAndPreservesLegacyAuto
+[       OK ] Aquifer2D.LinkSeepageOptionRoundTripsAndPreservesLegacyAuto (1 ms)
+[ RUN      ] Aquifer2D.ConduitUnderTheWaterTableGainsFromTheAquifer
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] Aquifer2D.ConduitUnderTheWaterTableGainsFromTheAquifer (8 ms)
+[ RUN      ] Aquifer2D.LinkSeepageAutoIsUnchangedByTheSignedLaw
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] Aquifer2D.LinkSeepageAutoIsUnchangedByTheSignedLaw (2 ms)
+[ RUN      ] Aquifer2D.AquiferLinksRowOverridesAndOptsOut
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] Aquifer2D.AquiferLinksRowOverridesAndOptsOut (8 ms)
+[ RUN      ] Aquifer2D.TwoWayRoundTripsAndTheRowsEcho
+[       OK ] Aquifer2D.TwoWayRoundTripsAndTheRowsEcho (1 ms)
+[ RUN      ] Aquifer2D.HostForcedConduitExchangeIsRoutedAndBooked
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] Aquifer2D.HostForcedConduitExchangeIsRoutedAndBooked (3 ms)
+[ RUN      ] Aquifer2D.AutomaticLinkSeepageUsesTheSignedLaw
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] Aquifer2D.AutomaticLinkSeepageUsesTheSignedLaw (6 ms)
+[----------] 23 tests from Aquifer2D (113 ms total)
+
+[----------] Global test environment tear-down
+[==========] 23 tests from 1 test suite ran. (113 ms total)
+[  PASSED  ] 23 tests.

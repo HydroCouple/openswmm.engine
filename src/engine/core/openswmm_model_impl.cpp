@@ -26,6 +26,10 @@
  * @license  Apache-2.0
  */
 
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "openswmm_api_common.hpp"
 #include "InpWriter.hpp"
 #include "DateTime.hpp"
@@ -259,10 +263,74 @@ SWMM_ENGINE_API int swmm_finalize_model(SWMM_Engine engine) {
 // Model serialisation
 // ============================================================================
 
+namespace {
+
+// The writer's `warnings` sink is OPTIONAL, and until 2026-08-26 every
+// production caller passed nullptr — so the "embedded [REACTION_*] sections
+// are lost from this save" notice (InpWriter.cpp:2580-2586) was real code
+// that NEVER FIRED. Opening a deck with embedded reaction sections, editing
+// anything and saving destroyed the reaction system silently, from the GUI
+// included. The test that certified the behaviour called the writer directly
+// WITH a sink, so it could not see this.
+//
+// Every write path now collects and forwards into `ctx.warnings` — the same
+// vector `swmm_get_warning_count`/`swmm_get_warning_at` read
+// (`openswmm_engine_impl.cpp:242-252`), which the GUI already consumes. The
+// save still SUCCEEDS: warn-not-refuse is the writer's existing intent and
+// the defect was the silence, not the policy. Whether a save that loses model
+// data should refuse outright is a real question, deliberately left to IO3 —
+// where per-component saveData() removes the loss and makes the question moot.
+void forwardWriteWarnings(openswmm::SimulationContext& ctx,
+                          std::vector<std::string>&    sink) {
+    for (auto& w : sink) ctx.warnings.push_back(std::move(w));
+}
+
+}  // namespace
+
 SWMM_ENGINE_API int swmm_model_write(SWMM_Engine engine, const char* new_inp_path) {
     CHECK_HANDLE(engine);
     if (!new_inp_path) return SWMM_ERR_BADPARAM;
-    return openswmm::inp_writer::writeInpFile(to_engine(engine)->context(), new_inp_path);
+    auto& ctx = to_engine(engine)->context();
+    std::vector<std::string> warns;
+    const int rc = openswmm::inp_writer::writeInpFile(ctx, new_inp_path, &warns);
+    forwardWriteWarnings(ctx, warns);
+    return rc;
+}
+
+SWMM_ENGINE_API int swmm_model_write_staged(SWMM_Engine engine,
+                                             const char* final_inp_path,
+                                             SWMM_StageOutputCallback mapper,
+                                             void* user_data) {
+    CHECK_HANDLE(engine);
+    if (!final_inp_path || !final_inp_path[0] || !mapper) return SWMM_ERR_BADPARAM;
+    openswmm::inp_writer::InpWriteOptions opts;
+    opts.map_output = [=](const std::string& path, auto kind) {
+        const char* mapped = mapper(user_data, path.c_str(), static_cast<int>(kind));
+        return mapped ? std::string(mapped) : std::string();
+    };
+    auto& ctx = to_engine(engine)->context();
+    std::vector<std::string> warns;
+    const int rc = openswmm::inp_writer::writeInpFile(ctx, final_inp_path, &warns, opts);
+    forwardWriteWarnings(ctx, warns);
+    return rc;
+}
+
+SWMM_ENGINE_API int swmm_model_write_compat(SWMM_Engine engine, const char* new_inp_path,
+                                            int profile) {
+    CHECK_HANDLE(engine);
+    if (!new_inp_path) return SWMM_ERR_BADPARAM;
+    openswmm::inp_writer::InpWriteOptions opts;
+    switch (profile) {
+        case SWMM_INP_PROFILE_FULL:        opts.profile = openswmm::inp_writer::InpWriteOptions::Profile::Full;       break;
+        case SWMM_INP_PROFILE_SWMM5:       opts.profile = openswmm::inp_writer::InpWriteOptions::Profile::Swmm5;      break;
+        case SWMM_INP_PROFILE_SWMM5_STOCK: opts.profile = openswmm::inp_writer::InpWriteOptions::Profile::Swmm5Stock; break;
+        default: return SWMM_ERR_BADPARAM;
+    }
+    auto& ctx = to_engine(engine)->context();
+    std::vector<std::string> warns;
+    const int rc = openswmm::inp_writer::writeInpFile(ctx, new_inp_path, &warns, opts);
+    forwardWriteWarnings(ctx, warns);
+    return rc;
 }
 
 SWMM_ENGINE_API int swmm_model_write_with_plugin(SWMM_Engine engine,
@@ -272,9 +340,14 @@ SWMM_ENGINE_API int swmm_model_write_with_plugin(SWMM_Engine engine,
     if (!new_path) return SWMM_ERR_BADPARAM;
 
     // Empty / NULL plugin id → built-in .inp writer.
+    // This is the path the GUI takes; see forwardWriteWarnings above for why
+    // the sink is no longer nullptr.
     if (!output_plugin_id || output_plugin_id[0] == '\0') {
-        return openswmm::inp_writer::writeInpFile(
-            to_engine(engine)->context(), new_path);
+        auto& ctx = to_engine(engine)->context();
+        std::vector<std::string> warns;
+        const int rc = openswmm::inp_writer::writeInpFile(ctx, new_path, &warns);
+        forwardWriteWarnings(ctx, warns);
+        return rc;
     }
 
     auto* eng = to_engine(engine);
@@ -791,6 +864,7 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
     else if (k == "RPT_FLOWSTATS")  val = opt.rpt_flowstats  ? "YES" : "NO";
     else if (k == "RPT_CONTROLS")   val = opt.rpt_controls   ? "YES" : "NO";
     else if (k == "RPT_AVERAGES")   val = opt.rpt_averages   ? "YES" : "NO";
+    else if (k == "RPT_LINK_STEPS") val = opt.rpt_link_steps ? "YES" : "NO";
     else if (k == "RPT_SUBCATCHMENTS") {
         if      (opt.rpt_subcatchments == 0) val = "NONE";
         else if (opt.rpt_subcatchments == 1) val = "ALL";
@@ -885,10 +959,11 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
     else if (k == "RULE_STEP") val = std::to_string(static_cast<long long>(opt.rule_step));
     else if (k == "DRY_DAYS")  val = std::to_string(opt.dry_days);
 
-    // Sweep day-of-year → MM/DD via year-2000 anchor (matches the
-    // OptionsHandler parser's convention).
+    // Sweep day-of-year → MM/DD via the NON-leap year-2001 anchor (matches
+    // OptionsHandler's parser and InpWriter's fmt_sweep — the 2000 anchor
+    // was the leap-year half of the SWEEP_END 12/31→1/1 drift).
     else if (k == "SWEEP_START") {
-        const auto dt = openswmm::datetime::encodeDate(2000, 1, 1)
+        const auto dt = openswmm::datetime::encodeDate(2001, 1, 1)
                       + (opt.sweep_start - 1);
         int y, m, d;
         openswmm::datetime::decodeDate(dt, y, m, d);
@@ -897,7 +972,7 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
         val = tmp;
     }
     else if (k == "SWEEP_END") {
-        const auto dt = openswmm::datetime::encodeDate(2000, 1, 1)
+        const auto dt = openswmm::datetime::encodeDate(2001, 1, 1)
                       + (opt.sweep_end - 1);
         int y, m, d;
         openswmm::datetime::decodeDate(dt, y, m, d);
@@ -930,8 +1005,16 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
     else if (k == "SURCHARGE_METHOD") {
         if      (opt.surcharge_method == 0) val = "EXTRAN";
         else if (opt.surcharge_method == 1) val = "SLOT";
+        else if (opt.surcharge_method == 3) val = "TPA";   // issue #156
         else                                val = "DYNAMIC_SLOT";
     }
+    else if (k == "TPA_CELERITY")      val = std::to_string(opt.tpa_celerity);
+    else if (k == "UNSTEADY_FRICTION") {  // issue #156
+        val = (opt.unsteady_friction == 1) ? "VITKOVSKY" : "NONE";
+    }
+    else if (k == "UF_K3")             val = std::to_string(opt.uf_k3);
+    else if (k == "REPORT_SIGNED_HEADS")  // issue #156 O-6
+        val = opt.report_signed_heads ? "YES" : "NO";
     else if (k == "NODE_CONTINUITY") {
         val = (opt.node_continuity == openswmm::NodeContinuity::SEMI_IMPLICIT)
               ? "SEMI_IMPLICIT" : "EXPLICIT";
@@ -1002,19 +1085,19 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine,
     else if (k == "FV_SLOT_CELERITY")  val = std::to_string(opt.fv.slot_celerity);
     else if (k == "FV_PRESSURIZED_IMPLICIT")
         val = opt.fv.pressurized_implicit ? "YES" : "NO";
+    else if (k == "FV_PRESSURE_CLOSURE")  // issue #156
+        val = (opt.fv.pressure_closure == 1) ? "TPA" : "SLOT";
     else if (k == "FV_DISPERSION")     val = std::to_string(opt.fv.dispersion);
     else if (k == "FV_STRUCTURE_COUPLING")
         val = (opt.fv.structure_coupling == openswmm::fv::StructureCoupling::ROUTING_STEP)
                   ? "ROUTING_STEP" : "SUBSTEP";
     else if (k == "FV_COMPACTION")     val = opt.fv.compaction ? "YES" : "NO";
     else if (k == "FV_NODE_COUPLING")
-        val = (opt.fv.node_coupling == openswmm::fv::NodeCoupling::EXPLICIT)
-                  ? "EXPLICIT" : "SEMI_IMPLICIT";
+        val = "SEMI_IMPLICIT";            // retired option; the only coupling
     else if (k == "FV_NODE_DT")
-        val = (opt.fv.node_dt_limit == openswmm::fv::NodeDtLimit::NONE)
-                  ? "NONE" : "STABILITY";
+        val = "STABILITY";                // retired option; bound always armed
     else if (k == "FV_NODE_PICARD")
-        val = std::to_string(opt.fv.node_picard_sweeps);
+        val = "1";                        // retired option; always one sweep
     else if (k == "FV_NODE_CELL_COUPLING")
         val = "NO";                       // retired option; kept readable
     else if (k == "FV_JUNCTION_MODEL")
@@ -1175,7 +1258,10 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
                            / openswmm::datetime::SecsPerDay;
     }
     else if (k == "CRS") {
+        // Mirror into the spatial frame as well — see swmm_spatial_set_crs
+        // for why the two CRS stores must stay in step.
         opt.crs = v;
+        to_engine(engine)->context().spatial.crs = v;
     }
 
     // [REPORT] section keys (Slice BV.1 — added 2026-05-22). Boolean keys
@@ -1223,6 +1309,7 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         else if (k == "RPT_FLOWSTATS")  { int b = parse_bool(); if (b < 0) return SWMM_ERR_BADPARAM; opt.rpt_flowstats  = (b == 1); }
         else if (k == "RPT_CONTROLS")   { int b = parse_bool(); if (b < 0) return SWMM_ERR_BADPARAM; opt.rpt_controls   = (b == 1); }
         else if (k == "RPT_AVERAGES")   { int b = parse_bool(); if (b < 0) return SWMM_ERR_BADPARAM; opt.rpt_averages   = (b == 1); }
+        else if (k == "RPT_LINK_STEPS") { int b = parse_bool(); if (b < 0) return SWMM_ERR_BADPARAM; opt.rpt_link_steps = (b == 1); }
         else if (k == "RPT_SUBCATCHMENTS") parse_selector(opt.rpt_subcatchments, opt.rpt_subcatch_names);
         else if (k == "RPT_NODES")         parse_selector(opt.rpt_nodes,         opt.rpt_node_names);
         else if (k == "RPT_LINKS")         parse_selector(opt.rpt_links,         opt.rpt_link_names);
@@ -1254,7 +1341,7 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         std::from_chars(sp, se, sd);
         if (sm < 1 || sm > 12 || sd < 1 || sd > 31) return SWMM_ERR_BADPARAM;
         const int doy = openswmm::datetime::dayOfYear(
-            openswmm::datetime::encodeDate(2000,
+            openswmm::datetime::encodeDate(2001,   // non-leap: see the getter
                                            static_cast<int>(sm),
                                            static_cast<int>(sd)));
         if (k == "SWEEP_START") opt.sweep_start = doy;
@@ -1315,7 +1402,22 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         if      (vu == "EXTRAN")       opt.surcharge_method = 0;
         else if (vu == "SLOT")         opt.surcharge_method = 1;
         else if (vu == "DYNAMIC_SLOT") opt.surcharge_method = 2;
+        else if (vu == "TPA")          opt.surcharge_method = 3;  // issue #156
         else return SWMM_ERR_BADPARAM;
+    }
+    else if (k == "UNSTEADY_FRICTION") {  // issue #156
+        std::string vu(v);
+        for (auto& c : vu) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+        if      (vu == "NONE")      opt.unsteady_friction = 0;
+        else if (vu == "VITKOVSKY") opt.unsteady_friction = 1;
+        else return SWMM_ERR_BADPARAM;
+    }
+    else if (k == "UF_K3")             opt.uf_k3 = stod_strict(v);
+    else if (k == "TPA_CELERITY")      opt.tpa_celerity = stod_strict(v);
+    else if (k == "REPORT_SIGNED_HEADS") {  // issue #156 O-6
+        const std::string vu = upper_copy(v);
+        opt.report_signed_heads =
+            (vu == "YES" || vu == "TRUE" || vu == "ON" || vu == "1") ? 1 : 0;
     }
     else if (k == "NODE_CONTINUITY") {
         std::string vu(v);
@@ -1383,6 +1485,12 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         opt.fv.pressurized_implicit =
             (vu == "YES" || vu == "TRUE" || vu == "ON" || vu == "1");
     }
+    else if (k == "FV_PRESSURE_CLOSURE") {  // issue #156
+        const std::string vu = upper_copy(v);
+        if      (vu == "SLOT") opt.fv.pressure_closure = 0;
+        else if (vu == "TPA")  opt.fv.pressure_closure = 1;
+        else return SWMM_ERR_BADPARAM;
+    }
     else if (k == "FV_DISPERSION")     opt.fv.dispersion       = stod_strict(v);
     else if (k == "FV_MIN_PARALLEL_CELLS")
         opt.fv.min_parallel_cells = stol_strict(v);
@@ -1390,25 +1498,14 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine,
         const std::string vu = upper_copy(v);
         opt.fv.compaction = !(vu == "NO" || vu == "FALSE" || vu == "0" || vu == "OFF");
     }
-    else if (k == "FV_NODE_COUPLING") {
-        const std::string vu = upper_copy(v);
-        if      (vu == "EXPLICIT")
-            opt.fv.node_coupling = openswmm::fv::NodeCoupling::EXPLICIT;
-        else if (vu == "SEMI_IMPLICIT")
-            opt.fv.node_coupling = openswmm::fv::NodeCoupling::SEMI_IMPLICIT;
-        else return SWMM_ERR_BADPARAM;
-    }
-    else if (k == "FV_NODE_DT") {
-        const std::string vu = upper_copy(v);
-        if      (vu == "STABILITY") opt.fv.node_dt_limit = openswmm::fv::NodeDtLimit::STABILITY;
-        else if (vu == "NONE")      opt.fv.node_dt_limit = openswmm::fv::NodeDtLimit::NONE;
-        else return SWMM_ERR_BADPARAM;
-    }
-    else if (k == "FV_NODE_PICARD")
-        opt.fv.node_picard_sweeps = std::max(1, stoi_strict(v));
-    else if (k == "FV_NODE_CELL_COUPLING" || k == "FV_JUNCTION_MODEL") {
+    else if (k == "FV_NODE_CELL_COUPLING" || k == "FV_JUNCTION_MODEL" ||
+             k == "FV_NODE_COUPLING" || k == "FV_NODE_DT" ||
+             k == "FV_NODE_PICARD") {
         // Retired options, accepted and ignored: junctions are always
-        // algebraic interfaces now.
+        // algebraic interfaces, storage-node coupling is always semi-implicit
+        // with a single sweep, and the node accuracy bound is always armed.
+        // The .inp parser warns when a retired key asks for the behaviour that
+        // no longer exists; the C API stays silent, as for the older two.
     }
     else if (k == "FV_LTS") {
         const std::string vu = upper_copy(v);
@@ -1542,8 +1639,10 @@ SWMM_ENGINE_API int swmm_options_get_ext(SWMM_Engine engine,
     // of truth, wired through ctx.twod_io) instead of the generic
     // ext_options map — see swmm_options_set_ext for the write side.
     if (ctx.twod_io.options && openswmm::twoD::is2DOptionKey(key)) {
-        const std::string v =
-            openswmm::twoD::format2DOptionValue(*ctx.twod_io.options, key);
+        // E2: the infiltration keys resolve AUTO / unset against the rows;
+        // U5: the groundwater keys likewise against the [2D_AQUIFER*] rows.
+        const std::string v = openswmm::twoD::format2DOptionValueEx(
+            *ctx.twod_io.options, ctx.twod_io.infil, ctx.twod_io.aquifer, key);
         std::strncpy(buf, v.c_str(), static_cast<std::size_t>(buflen - 1));
         buf[buflen - 1] = '\0';
         return SWMM_OK;
@@ -1613,6 +1712,20 @@ SWMM_ENGINE_API int swmm_options_set_ext(SWMM_Engine engine,
             openswmm::twoD::parse2DOptionsLine({key, value}, tmp);
         if (!err.empty()) return SWMM_ERR_BADPARAM;
         *ctx.twod_io.options = std::move(tmp);
+        // E2: INFIL_STEP is an alias — write through to the Infil2D options
+        // (the C API's swmm_infil2d_get_options and the writer read there).
+        if (ctx.twod_io.infil && upper_key(key) == "INFIL_STEP") {
+            ctx.twod_io.infil->options().infil_step = ctx.twod_io.options->infil_step;
+            ctx.twod_io.options->infil_step = 0.0;
+        }
+        // U5: GW_ET is an alias of [2D_AQUIFER_OPTIONS] GW_ET — write through
+        // so a host that sets it here and the 2D Groundwater editor are
+        // editing ONE value, not two that disagree.
+        if (ctx.twod_io.aquifer && upper_key(key) == "GW_ET") {
+            ctx.twod_io.aquifer->options.gw_et    = ctx.twod_io.options->gw_et;
+            ctx.twod_io.aquifer->options.authored = true;
+            ctx.twod_io.options->gw_et.clear();
+        }
         ctx.options.ext_options.erase(key);
         return SWMM_OK;
     }
@@ -1625,7 +1738,10 @@ SWMM_ENGINE_API int swmm_options_set_ext(SWMM_Engine engine,
 SWMM_ENGINE_API int swmm_get_crs(SWMM_Engine engine, char* buf, int buflen) {
     CHECK_HANDLE(engine);
     if (!buf || buflen <= 0) return SWMM_ERR_BADPARAM;
-    const auto& crs = to_engine(engine)->context().options.crs;
+    // Prefer the [OPTIONS] value; fall back to the spatial frame, which is
+    // the only store a GeoPackage open fills (see swmm_spatial_set_crs).
+    const auto& ctx = to_engine(engine)->context();
+    const auto& crs = !ctx.options.crs.empty() ? ctx.options.crs : ctx.spatial.crs;
     if (crs.empty()) return SWMM_ERR_CRS;
     std::strncpy(buf, crs.c_str(), static_cast<std::size_t>(buflen - 1));
     buf[buflen - 1] = '\0';

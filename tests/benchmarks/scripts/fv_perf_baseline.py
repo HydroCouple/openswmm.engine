@@ -74,6 +74,15 @@ _CONTINUITY_RE = re.compile(
 
 _SUBSTEPS_RE = re.compile(r"Average Substeps per Step\s*:\s*([0-9.]+)")
 _EXPLICIT_SUBSTEPS_RE = re.compile(r"Explicit Substeps\s*\.*\s*([0-9]+)")
+_MACRO_FIRED_RE = re.compile(r"LTS Macro Cycles Fired\s*\.*\s*([0-9]+)")
+_MACRO_REJ_RE = re.compile(r"LTS Macro Cycles Rejected\s*\.*\s*([0-9]+)")
+
+#: File extensions a deck may reference as sidecars (rain files, curves,
+#: meshes). Anything else next to a deck — .out, .rpt, .h5, other decks — is
+#: not copied into the run directory.
+_SIDECAR_SUFFIXES = {".dat", ".txt", ".ts", ".csv", ".hsf", ".2dm", ".tif",
+                     ".tiff", ".json", ".prn", ".rain"}
+_SIDECAR_MAX_BYTES = 512 << 20
 
 # ---------------------------------------------------------------------------
 # Configurations under test
@@ -89,9 +98,55 @@ CONFIGS: list[tuple[str, dict[str, str]]] = [
     # assumed. Both are results-affecting or option-gated; they are here to
     # produce the numbers those phases need, not as proposed defaults.
     ("fv_default_nolts", {"FLOW_ROUTING": "FV", "FV_MIN_CELLS": "4", "FV_LTS": "NO"}),
-    ("fv_default_routingstep", {"FLOW_ROUTING": "FV", "FV_MIN_CELLS": "4",
-                                "FV_STRUCTURE_COUPLING": "ROUTING_STEP"}),
+    # fv_default_routingstep (FV_STRUCTURE_COUPLING ROUTING_STEP) was in the
+    # 2026-08-20 sweep and came back byte-identical to fv_default on all seven
+    # decks with the same wall clock (none has a structure). Dropped 2026-09-11
+    # to shorten the sweep; re-add it when a structure-bearing deck joins.
 ]
+
+#: Configurations for REAL decks (``--real-deck``). These keep the deck's own
+#: FV_* keys — the point is to measure the model as its author runs it — and
+#: vary only the solver and the thread count. The ratio column pairs each
+#: ``fv_tN`` with ``dynwave_tN``. THREADS in [OPTIONS] is what the engine
+#: honours; OMP_NUM_THREADS is set to the same value so the two never disagree.
+REAL_CONFIGS: list[tuple[str, dict[str, str]]] = [
+    ("dynwave_t1", {"FLOW_ROUTING": "DYNWAVE", "THREADS": "1"}),
+    ("dynwave_t8", {"FLOW_ROUTING": "DYNWAVE", "THREADS": "8"}),
+    ("fv_t1", {"FLOW_ROUTING": "FV", "THREADS": "1"}),
+    ("fv_t8", {"FLOW_ROUTING": "FV", "THREADS": "8"}),
+]
+
+
+def _dw_reference(cfg: str) -> str:
+    """The dynamic-wave config a given FV config is compared against."""
+    if "_t" in cfg:
+        return "dynwave_t" + cfg.rsplit("_t", 1)[1]
+    return "dynwave"
+
+
+def _copy_sidecars(deck: Path, case_dir: Path) -> None:
+    """Copies files the deck references by name (rain files, curves, meshes)
+    into the run directory so relative paths resolve. Tokens of the deck text
+    — bare or double-quoted — that name an existing sibling file with a
+    sidecar extension are copied; nothing else is."""
+    text = deck.read_text(encoding="utf-8", errors="replace")
+    names: set[str] = set()
+    for m in re.finditer(r'"([^"]+)"', text):
+        names.add(m.group(1))
+    for tok in text.split():
+        names.add(tok.strip('"'))
+    for name in names:
+        cand = (deck.parent / name)
+        if cand.suffix.lower() not in _SIDECAR_SUFFIXES:
+            continue
+        try:
+            if not cand.is_file() or cand.stat().st_size > _SIDECAR_MAX_BYTES:
+                continue
+        except OSError:
+            continue
+        dest = case_dir / cand.name
+        if not dest.exists():
+            shutil.copy2(cand, dest)
 
 
 # ---------------------------------------------------------------------------
@@ -295,12 +350,15 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def run_once(engine: Path, inp: Path, timeout: float) -> dict:
+def run_once(engine: Path, inp: Path, timeout: float,
+             env_extra: dict[str, str] | None = None) -> dict:
     """One engine invocation. Returns wall time, perf split, continuity, hashes."""
     rpt = inp.with_suffix(".rpt")
     out = inp.with_suffix(".out")
     env = dict(os.environ)
     env["OPENSWMM_PERF"] = "1"
+    if env_extra:
+        env.update(env_extra)
     t0 = time.perf_counter()
     try:
         proc = subprocess.run(
@@ -321,6 +379,8 @@ def run_once(engine: Path, inp: Path, timeout: float) -> dict:
     continuity = None
     substeps = None
     explicit = None
+    macro_fired = None
+    macro_rejected = None
     if rpt.exists():
         rpt_text = rpt.read_text(encoding="utf-8", errors="replace")
         m = _CONTINUITY_RE.search(rpt_text)
@@ -332,6 +392,12 @@ def run_once(engine: Path, inp: Path, timeout: float) -> dict:
         m = _EXPLICIT_SUBSTEPS_RE.search(rpt_text)
         if m:
             explicit = int(m.group(1))
+        m = _MACRO_FIRED_RE.search(rpt_text)
+        if m:
+            macro_fired = int(m.group(1))
+        m = _MACRO_REJ_RE.search(rpt_text)
+        if m:
+            macro_rejected = int(m.group(1))
 
     return {
         "ok": rc == 0,
@@ -341,6 +407,8 @@ def run_once(engine: Path, inp: Path, timeout: float) -> dict:
         "continuity": continuity,
         "substeps_per_step": substeps,
         "explicit_substeps": explicit,
+        "macro_fired": macro_fired,
+        "macro_rejected": macro_rejected,
         "out_sha256": sha256(out),
         "stderr_tail": stderr[-2000:] if rc != 0 else "",
     }
@@ -352,13 +420,18 @@ def run_case(engine: Path, deck: Path, workdir: Path, config: str,
     case_dir.mkdir(parents=True, exist_ok=True)
     variant = case_dir / deck.name
     write_variant(deck, variant, overrides)
-    # Sidecar files a deck may reference (rain files, curves) — copy the whole
-    # sibling set for small decks so relative paths resolve.
+    # Sidecar files a deck may reference (rain files, curves, meshes) — copy
+    # the ones the deck names so relative paths resolve from the run dir.
     for sib in deck.parent.glob(deck.stem + ".*"):
         if sib.suffix.lower() in (".dat", ".txt", ".ts"):
             shutil.copy2(sib, case_dir / sib.name)
+    _copy_sidecars(deck, case_dir)
 
-    runs = [run_once(engine, variant, timeout) for _ in range(repeat)]
+    env_extra: dict[str, str] = {}
+    if "THREADS" in overrides:
+        env_extra["OMP_NUM_THREADS"] = overrides["THREADS"]
+
+    runs = [run_once(engine, variant, timeout, env_extra) for _ in range(repeat)]
     ok = all(r["ok"] for r in runs)
     best = min((r for r in runs if r["ok"]), key=lambda r: r["wall"], default=runs[0])
     hashes = {r.get("out_sha256", "") for r in runs if r["ok"]}
@@ -374,6 +447,8 @@ def run_case(engine: Path, deck: Path, workdir: Path, config: str,
         "continuity_pct": best.get("continuity"),
         "substeps_per_step": best.get("substeps_per_step"),
         "explicit_substeps": best.get("explicit_substeps"),
+        "macro_fired": best.get("macro_fired"),
+        "macro_rejected": best.get("macro_rejected"),
         "perf": best.get("perf", {}),
         "stderr_tail": best.get("stderr_tail", ""),
         "deck_path": str(variant),
@@ -420,14 +495,15 @@ def markdown(results: list[dict], meta: dict) -> str:
     for r in results:
         by_deck.setdefault(r["deck"], {})[r["config"]] = r
     for deck, configs in by_deck.items():
-        dw = configs.get("dynwave")
-        dw_wall = dw["wall_best"] if dw and dw["ok"] else None
         for cfg, r in configs.items():
             if not r["ok"]:
                 L.append(f"| {deck} | {cfg} | — | — | — | — | — |  <!-- {r['reason']} -->")
                 continue
+            dw = configs.get(_dw_reference(cfg))
+            dw_wall = dw["wall_best"] if dw and dw["ok"] else None
             ratio = (f"{r['wall_best'] / dw_wall:.1f}"
-                     if dw_wall and dw_wall > 0 and cfg != "dynwave" else "1.0")
+                     if dw_wall and dw_wall > 0 and not cfg.startswith("dynwave")
+                     else ("1.0" if cfg.startswith("dynwave") else "—"))
             sub = (f"{r['substeps_per_step']:.2f}"
                    if r["substeps_per_step"] is not None else "—")
             cont = (f"{r['continuity_pct']:.3f}"
@@ -451,7 +527,7 @@ def markdown(results: list[dict], meta: dict) -> str:
     L.append("|---|---|---:|---:|---:|" + "---:|" * len(PHASES))
     for r in results:
         p = r.get("perf") or {}
-        if not p or r["config"] == "dynwave":
+        if not p or r["config"].startswith("dynwave"):
             continue
         step, total = p.get("step", 0.0), p.get("total", 0.0)
         unattr = (100.0 * (step - total) / step) if step > 0 else 0.0
@@ -473,11 +549,12 @@ def markdown(results: list[dict], meta: dict) -> str:
              "shortcut share (Phase 3c targets it).")
     L.append("")
     L.append("| deck | config | substeps | censuses | inversions | alg solves | "
-             "resid/solve | flux/solve | passthru frac | rollback frac |")
-    L.append("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|")
+             "resid/solve | flux/solve | passthru frac | rollback frac | "
+             "LTS fired | LTS rejected |")
+    L.append("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     for r in results:
         p = r.get("perf") or {}
-        if not p or r["config"] == "dynwave":
+        if not p or r["config"].startswith("dynwave"):
             continue
         g = lambda k: p.get(k, 0.0)  # noqa: E731
         L.append(
@@ -485,7 +562,31 @@ def markdown(results: list[dict], meta: dict) -> str:
             f"{int(g('n.census'))} | {int(g('n.invert'))} | "
             f"{int(g('n.algsolve'))} | {g('algresid_per_solve'):.2f} | "
             f"{g('algflux_per_solve'):.2f} | {g('passthru_frac'):.3f} | "
-            f"{g('rollback_frac'):.4f} |")
+            f"{g('rollback_frac'):.4f} | {int(g('n.macro'))} | "
+            f"{int(g('n.macrorej'))} |")
+    L.append("")
+
+    # ---- closure-call counts --------------------------------------------
+    L.append("## 3b. Closure calls (per substep)")
+    L.append("")
+    L.append("Calls into the cross-section closure at the solver's call sites, "
+             "divided by accepted substeps. Multiply by the ns/call rows of "
+             "`bench_fv_closure` to size the closure's share of the step. "
+             "Exact at THREADS 1; an estimate above (plain increments inside "
+             "parallel regions).")
+    L.append("")
+    L.append("| deck | config | area | width | i1 | hydrad | invert |")
+    L.append("|---|---|---:|---:|---:|---:|---:|")
+    for r in results:
+        p = r.get("perf") or {}
+        if not p or r["config"].startswith("dynwave"):
+            continue
+        n = max(1.0, p.get("n.substep", 0.0))
+        per = lambda k: p.get(k, 0.0) / n  # noqa: E731
+        L.append(
+            f"| {r['deck']} | {r['config']} | {per('n.area'):.1f} | "
+            f"{per('n.width'):.1f} | {per('n.i1'):.1f} | {per('n.hydrad'):.1f} | "
+            f"{per('n.invert'):.1f} |")
     L.append("")
 
     # ---- hashes ---------------------------------------------------------
@@ -530,10 +631,14 @@ def main() -> int:
     ap.add_argument("--timeout", type=float, default=1800.0)
     ap.add_argument("--outdir", type=Path, default=None)
     ap.add_argument("--deck", action="append", type=Path, default=[],
-                    help="extra deck to include; repeatable")
+                    help="extra deck to include under the standard configs; repeatable")
+    ap.add_argument("--real-deck", action="append", type=Path, default=[],
+                    help="real-network deck run AS AUTHORED (its own FV_* keys) "
+                         "under REAL_CONFIGS: dynwave/fv x THREADS 1/8; repeatable")
     ap.add_argument("--only", default=None,
                     help="substring filter on deck stem")
     ap.add_argument("--no-synthetics", action="store_true")
+    ap.add_argument("--no-example1", action="store_true")
     args = ap.parse_args()
 
     if not args.engine.exists():
@@ -548,19 +653,23 @@ def main() -> int:
 
     decks: list[Path] = []
     ref = REPO / "tests" / "regression" / "data" / "Example1.inp"
-    if ref.exists():
+    if args.no_example1:
+        pass
+    elif ref.exists():
         decks.append(ref)
     else:
         print(f"warning: reference deck missing: {ref}", file=sys.stderr)
     if not args.no_synthetics:
         decks.extend(generate_synthetics(outdir / "synthetic"))
     decks.extend(p for p in args.deck if p.exists())
-    for p in args.deck:
+    real_decks = [p for p in args.real_deck if p.exists()]
+    for p in list(args.deck) + list(args.real_deck):
         if not p.exists():
             print(f"warning: deck not found, skipped: {p}", file=sys.stderr)
     if args.only:
         decks = [d for d in decks if args.only in d.stem]
-    if not decks:
+        real_decks = [d for d in real_decks if args.only in d.stem]
+    if not decks and not real_decks:
         print("error: no decks to run", file=sys.stderr)
         return 2
 
@@ -578,17 +687,21 @@ def main() -> int:
     }
 
     results: list[dict] = []
-    total = len(decks) * len(CONFIGS)
-    i = 0
+    plan: list[tuple[Path, str, dict[str, str]]] = []
     for deck in decks:
         for cfg, overrides in CONFIGS:
-            i += 1
-            print(f"[{i}/{total}] {deck.stem} / {cfg} ...", flush=True)
-            r = run_case(args.engine, deck, workdir, cfg, overrides,
-                         args.repeat, args.timeout)
-            status = "ok" if r["ok"] else f"FAILED ({r['reason']})"
-            print(f"          {r['wall_best']:.2f}s  {status}", flush=True)
-            results.append(r)
+            plan.append((deck, cfg, overrides))
+    for deck in real_decks:
+        for cfg, overrides in REAL_CONFIGS:
+            plan.append((deck, cfg, overrides))
+    total = len(plan)
+    for i, (deck, cfg, overrides) in enumerate(plan, start=1):
+        print(f"[{i}/{total}] {deck.stem} / {cfg} ...", flush=True)
+        r = run_case(args.engine, deck, workdir, cfg, overrides,
+                     args.repeat, args.timeout)
+        status = "ok" if r["ok"] else f"FAILED ({r['reason']})"
+        print(f"          {r['wall_best']:.2f}s  {status}", flush=True)
+        results.append(r)
 
     (outdir / "results.json").write_text(
         json.dumps({"meta": meta, "results": results}, indent=2), encoding="utf-8")

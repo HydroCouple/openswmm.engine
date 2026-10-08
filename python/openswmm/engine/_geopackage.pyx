@@ -40,6 +40,24 @@ and performing spatial analysis.
 import numpy as np
 cimport numpy as np
 
+from openswmm.engine._enums import ErrorCode
+from openswmm.engine._exceptions import GeoPackageError, LifecycleError
+
+# Messages the C layer gives for transaction calls made in the wrong state.
+_TRANSACTION_STATE = ("No active transaction", "Transaction already active")
+
+
+def _gpkg_error(str what, str detail):
+    """Typed error for a failed GeoPackage call.
+
+    Transaction misuse (commit without begin, a second begin) is a
+    L{LifecycleError}; anything else is a L{GeoPackageError}. Both are also
+    C{RuntimeError}s.
+    """
+    if detail in _TRANSACTION_STATE:
+        return LifecycleError(ErrorCode.LIFECYCLE, f"{what}: {detail}")
+    return GeoPackageError(ErrorCode.IO, f"{what}: {detail}" if detail else what)
+
 cdef extern from "openswmm_geopackage.h":
     ctypedef void* SWMM_Gpkg
 
@@ -119,6 +137,7 @@ cdef class GeoPackage:
         underlying GeoPackage library.
     """
 
+    cdef object _lock
     cdef SWMM_Gpkg _handle
 
     def __cinit__(self, str path):
@@ -126,12 +145,14 @@ cdef class GeoPackage:
 
         @param path: Path to the C{.gpkg} file.
         @type path: str
-        @raise RuntimeError: If the file cannot be opened.
+        @raise GeoPackageError: If the file cannot be opened.
         """
+        from threading import RLock
+        self._lock = RLock()
         cdef bytes b = path.encode('utf-8')
         self._handle = swmm_gpkg_open(b)
         if self._handle is NULL:
-            raise RuntimeError(f"Failed to open GeoPackage: {path}")
+            raise _gpkg_error(f"Failed to open GeoPackage {path}", "")
 
     def __dealloc__(self):
         """Release the underlying C{SWMM_Gpkg} handle when garbage-collected."""
@@ -143,11 +164,27 @@ cdef class GeoPackage:
     # File lifecycle (open/close)
     # ====================================================================
 
+    cdef void _check_access(self) except *:
+        if not self._lock.acquire(blocking=False):
+            from ._exceptions import LifecycleError
+            from ._enums import ErrorCode
+            raise LifecycleError(ErrorCode.LIFECYCLE, "GeoPackage is in use by another thread")
+        self._lock.release()
+
+    cdef SWMM_Gpkg _h(self) except NULL:
+        self._check_access()
+        if self._handle == NULL:
+            from ._exceptions import BadHandleError
+            from ._enums import ErrorCode
+            raise BadHandleError(ErrorCode.BADHANDLE, "GeoPackage is closed")
+        return self._handle
+
     def close(self):
         """Close the database connection.
 
         Calling C{close} more than once is harmless.
         """
+        self._check_access()
         if self._handle is not NULL:
             swmm_gpkg_close(self._handle)
             self._handle = NULL
@@ -178,7 +215,7 @@ cdef class GeoPackage:
             reported.
         @rtype: str
         """
-        cdef const char* msg = swmm_gpkg_last_error(self._handle)
+        cdef const char* msg = swmm_gpkg_last_error(self._h())
         return msg.decode('utf-8') if msg else ""
 
     # ====================================================================
@@ -188,26 +225,28 @@ cdef class GeoPackage:
     def begin(self):
         """Begin a transaction for bulk operations.
 
-        @raise RuntimeError: If the transaction cannot be started.
+        @raise LifecycleError: If a transaction is already active.
+        @raise GeoPackageError: If the transaction cannot be started.
         """
-        if swmm_gpkg_begin(self._handle) != 0:
-            raise RuntimeError(f"Transaction begin failed: {self.last_error}")
+        if swmm_gpkg_begin(self._h()) != 0:
+            raise _gpkg_error("Transaction begin failed", self.last_error)
 
     def commit(self):
         """Commit the current transaction.
 
-        @raise RuntimeError: If the commit fails.
+        @raise LifecycleError: If no transaction is active.
+        @raise GeoPackageError: If the commit fails.
         """
-        if swmm_gpkg_commit(self._handle) != 0:
-            raise RuntimeError(f"Transaction commit failed: {self.last_error}")
+        if swmm_gpkg_commit(self._h()) != 0:
+            raise _gpkg_error("Transaction commit failed", self.last_error)
 
     def rollback(self):
         """Roll back the current transaction.
 
-        @raise RuntimeError: If the rollback fails.
+        @raise GeoPackageError: If the rollback fails.
         """
-        if swmm_gpkg_rollback(self._handle) != 0:
-            raise RuntimeError(f"Transaction rollback failed: {self.last_error}")
+        if swmm_gpkg_rollback(self._h()) != 0:
+            raise _gpkg_error("Transaction rollback failed", self.last_error)
 
     # ====================================================================
     # Read operations - simulation metadata
@@ -219,7 +258,7 @@ cdef class GeoPackage:
         @return: Simulation count.
         @rtype: int
         """
-        return swmm_gpkg_simulation_count(self._handle)
+        return swmm_gpkg_simulation_count(self._h())
 
     def simulation_ids(self) -> list:
         """Return all simulation IDs as a list of strings.
@@ -227,11 +266,11 @@ cdef class GeoPackage:
         @return: List of simulation identifier strings.
         @rtype: list
         """
-        cdef int n = swmm_gpkg_simulation_count(self._handle)
+        cdef int n = swmm_gpkg_simulation_count(self._h())
         cdef char buf[256]
         result = []
         for i in range(n):
-            if swmm_gpkg_simulation_id(self._handle, i, buf, 256) == 0:
+            if swmm_gpkg_simulation_id(self._h(), i, buf, 256) == 0:
                 result.append(buf.decode('utf-8'))
         return result
 
@@ -246,10 +285,10 @@ cdef class GeoPackage:
         """
         cdef bytes b = sim_id.encode('utf-8')
         return {
-            "nodes": swmm_gpkg_node_count(self._handle, b),
-            "links": swmm_gpkg_link_count(self._handle, b),
-            "subcatchments": swmm_gpkg_subcatch_count(self._handle, b),
-            "gages": swmm_gpkg_gage_count(self._handle, b),
+            "nodes": swmm_gpkg_node_count(self._h(), b),
+            "links": swmm_gpkg_link_count(self._h(), b),
+            "subcatchments": swmm_gpkg_subcatch_count(self._h(), b),
+            "gages": swmm_gpkg_gage_count(self._h(), b),
         }
 
     def variable_count(self) -> int:
@@ -258,7 +297,7 @@ cdef class GeoPackage:
         @return: Variable count.
         @rtype: int
         """
-        return swmm_gpkg_variable_count(self._handle)
+        return swmm_gpkg_variable_count(self._h())
 
     def topology_edge_count(self, str sim_id) -> int:
         """Return the number of topology edges for a simulation.
@@ -269,7 +308,7 @@ cdef class GeoPackage:
         @rtype: int
         """
         cdef bytes b = sim_id.encode('utf-8')
-        return swmm_gpkg_topology_edge_count(self._handle, b)
+        return swmm_gpkg_topology_edge_count(self._h(), b)
 
     # ====================================================================
     # Read operations - result timeseries (zero-copy numpy)
@@ -292,7 +331,7 @@ cdef class GeoPackage:
         @rtype: int
         """
         return swmm_gpkg_result_ts_count(
-            self._handle, sim_id.encode('utf-8'),
+            self._h(), sim_id.encode('utf-8'),
             obj_type.encode('utf-8'), obj_id.encode('utf-8'),
             variable.encode('utf-8'))
 
@@ -314,7 +353,7 @@ cdef class GeoPackage:
         @see: L{result_ts_count}
         """
         cdef int n = swmm_gpkg_result_ts_count(
-            self._handle, sim_id.encode('utf-8'),
+            self._h(), sim_id.encode('utf-8'),
             obj_type.encode('utf-8'), obj_id.encode('utf-8'),
             variable.encode('utf-8'))
         if n <= 0:
@@ -328,7 +367,7 @@ cdef class GeoPackage:
         cdef bytes b_otype = obj_type.encode('utf-8')
         cdef bytes b_oid = obj_id.encode('utf-8')
         cdef bytes b_var = variable.encode('utf-8')
-        cdef SWMM_Gpkg gpkg = self._handle
+        cdef SWMM_Gpkg gpkg = self._h()
         cdef const char* p_sim = b_sim
         cdef const char* p_otype = b_otype
         cdef const char* p_oid = b_oid
@@ -338,10 +377,11 @@ cdef class GeoPackage:
         cdef int read
         # SQL execution can take many milliseconds for large series — worth
         # releasing the GIL so another thread can do useful work meanwhile.
-        with nogil:
-            read = swmm_gpkg_read_result_ts(
-                gpkg, p_sim, p_otype, p_oid, p_var,
-                p_times, p_values, n)
+        with self._lock:
+            with nogil:
+                read = swmm_gpkg_read_result_ts(
+                    gpkg, p_sim, p_otype, p_oid, p_var,
+                    p_times, p_values, n)
         return times[:read], values[:read]
 
     # ====================================================================
@@ -366,7 +406,7 @@ cdef class GeoPackage:
         """
         cdef double v = 0.0
         cdef int rc = swmm_gpkg_read_summary(
-            self._handle, sim_id.encode('utf-8'),
+            self._h(), sim_id.encode('utf-8'),
             obj_type.encode('utf-8'), obj_id.encode('utf-8'),
             variable.encode('utf-8'), &v)
         if rc != 0:
@@ -397,7 +437,7 @@ cdef class GeoPackage:
         @type units: str
         @return: Series ID (M{>= 0}).
         @rtype: int
-        @raise RuntimeError: If the series cannot be created.
+        @raise GeoPackageError: If the series cannot be created.
         """
         # NOTE: keep the encoded bytes alive in locals before extracting the
         # raw `const char*` — under Cython >= 3.0.12 the conditional
@@ -414,11 +454,11 @@ cdef class GeoPackage:
         cdef const char* p_src = <const char*>b_src if source else NULL
         cdef const char* p_units = <const char*>b_units if units else NULL
         cdef int sid = swmm_gpkg_create_observed_series(
-            self._handle,
+            self._h(),
             b_name, b_var,
             p_otype, p_oid, p_src, p_units)
         if sid < 0:
-            raise RuntimeError(f"Failed to create series: {self.last_error}")
+            raise _gpkg_error("Failed to create series", self.last_error)
         return sid
 
     def write_observed_value(self, int series_id, str timestamp,
@@ -435,7 +475,7 @@ cdef class GeoPackage:
         @param flag: Quality flag (e.g. C{"A"}, C{"P"}), or C{""} for
             none.
         @type flag: str
-        @raise RuntimeError: If the write fails.
+        @raise GeoPackageError: If the write fails.
         """
         # See create_observed_series above for the encode/NULL pattern
         # rationale.
@@ -443,10 +483,10 @@ cdef class GeoPackage:
         cdef bytes b_flag = flag.encode('utf-8') if flag else b""
         cdef const char* p_flag = <const char*>b_flag if flag else NULL
         cdef int rc = swmm_gpkg_write_observed_value(
-            self._handle, series_id,
+            self._h(), series_id,
             b_ts, value, p_flag)
         if rc != 0:
-            raise RuntimeError(f"Write failed: {self.last_error}")
+            raise _gpkg_error("Write failed", self.last_error)
 
     def write_observed_values(self, int series_id, timestamps, values,
                                flags=None):
@@ -467,12 +507,20 @@ cdef class GeoPackage:
         @param flags: Optional list of quality-flag strings, one per
             timestamp.
         @type flags: list
-        @raise RuntimeError: If the bulk write fails.
+        @raise GeoPackageError: If the bulk write fails.
         @raise MemoryError: If the C string-pointer arrays cannot be
             allocated.
         """
         cdef int n = len(timestamps)
-        cdef np.ndarray[double, ndim=1] vals = np.asarray(values, dtype=np.float64)
+        cdef np.ndarray[double, ndim=1] vals = np.ascontiguousarray(values, dtype=np.float64)
+
+        self._h()
+        if len(vals) != n:
+            raise ValueError("timestamps and values must have the same length")
+        if flags is not None and len(flags) not in (0, n):
+            raise ValueError("flags must be empty or match the timestamp count")
+        if n == 0:
+            return
 
         # Build C string arrays
         cdef list ts_bytes = [t.encode('utf-8') for t in timestamps]
@@ -486,7 +534,7 @@ cdef class GeoPackage:
             if c_fl: free(c_fl)
             raise MemoryError()
 
-        cdef SWMM_Gpkg gpkg = self._handle
+        cdef SWMM_Gpkg gpkg = self._h()
         cdef const double* p_vals = <const double*>vals.data
         cdef const char** c_fl_arg
         cdef int rc_c
@@ -497,11 +545,12 @@ cdef class GeoPackage:
             c_fl_arg = c_fl if flags else NULL
             # Bulk SQL inserts can take a long time for large series;
             # release the GIL so peer threads continue.
-            with nogil:
-                rc_c = swmm_gpkg_write_observed_values(
-                    gpkg, series_id, c_ts, p_vals, c_fl_arg, n)
+            with self._lock:
+                with nogil:
+                    rc_c = swmm_gpkg_write_observed_values(
+                        gpkg, series_id, c_ts, p_vals, c_fl_arg, n)
             if rc_c != 0:
-                raise RuntimeError(f"Bulk write failed: {self.last_error}")
+                raise _gpkg_error("Bulk write failed", self.last_error)
         finally:
             free(c_ts)
             free(c_fl)
@@ -516,7 +565,7 @@ cdef class GeoPackage:
         @return: Observed-series count.
         @rtype: int
         """
-        return swmm_gpkg_observed_series_count(self._handle)
+        return swmm_gpkg_observed_series_count(self._h())
 
     def observed_value_count(self, int series_id) -> int:
         """Return the number of values in an observed series.
@@ -526,7 +575,7 @@ cdef class GeoPackage:
         @return: Value count.
         @rtype: int
         """
-        return swmm_gpkg_observed_value_count(self._handle, series_id)
+        return swmm_gpkg_observed_value_count(self._h(), series_id)
 
     def read_observed_values(self, int series_id):
         """Read observed-timeseries values.
@@ -538,20 +587,21 @@ cdef class GeoPackage:
             C{float64} array.
         @rtype: tuple
         """
-        cdef int n = swmm_gpkg_observed_value_count(self._handle, series_id)
+        cdef int n = swmm_gpkg_observed_value_count(self._h(), series_id)
         if n <= 0:
             return [], np.empty(0, dtype=np.float64)
 
         cdef int ts_len = 32
         cdef bytearray ts_buf = bytearray(n * ts_len)
         cdef np.ndarray[double, ndim=1] values = np.empty(n, dtype=np.float64)
-        cdef SWMM_Gpkg gpkg = self._handle
+        cdef SWMM_Gpkg gpkg = self._h()
         cdef char* p_ts = <char*>ts_buf
         cdef double* p_v = <double*>values.data
         cdef int read
-        with nogil:
-            read = swmm_gpkg_read_observed_values(
-                gpkg, series_id, p_ts, ts_len, p_v, n)
+        with self._lock:
+            with nogil:
+                read = swmm_gpkg_read_observed_values(
+                    gpkg, series_id, p_ts, ts_len, p_v, n)
 
         timestamps = []
         for i in range(read):
@@ -573,7 +623,7 @@ cdef class GeoPackage:
         @return: Integer result of the query.
         @rtype: int
         """
-        return swmm_gpkg_query_int(self._handle, sql.encode('utf-8'))
+        return swmm_gpkg_query_int(self._h(), sql.encode('utf-8'))
 
     def query_double(self, str sql) -> float:
         """Execute a read-only SQL query and return the first double result.
@@ -582,13 +632,13 @@ cdef class GeoPackage:
         @type sql: str
         @return: Double-precision result of the query.
         @rtype: float
-        @raise RuntimeError: If the query fails.
+        @raise GeoPackageError: If the query fails.
         """
         cdef double v = 0.0
-        cdef int rc = swmm_gpkg_query_double(self._handle,
+        cdef int rc = swmm_gpkg_query_double(self._h(),
                                               sql.encode('utf-8'), &v)
         if rc != 0:
-            raise RuntimeError(f"Query failed: {self.last_error}")
+            raise _gpkg_error("Query failed", self.last_error)
         return v
 
 

@@ -44,6 +44,15 @@ void handle_junctions(SimulationContext& ctx, const std::vector<std::string>& li
  *           parse error (ERR_VJ_EXTRA_TOKENS). Refactored engine only. */
 void handle_virtual_junctions(SimulationContext& ctx, const std::vector<std::string>& lines);
 
+/** @brief Parse [INLET_JUNCTIONS] — virtual junctions that carry a street inlet.
+ *  @details `Name Elev MaxDepth Inlet CaptureNode (#Inlets %Clog Qmax aLocal
+ *           wLocal Placement)`: the node gets is_virtual = is_inlet = 1 and a
+ *           node-hosted InletUsageStore row whose design / capture-node names
+ *           are resolved by PostParseResolver. More than 11 tokens is a parse
+ *           error (ERR_IJ_EXTRA_TOKENS). Implemented in InfraHandler.cpp
+ *           beside the [INLET_USAGE] tail parser it shares. */
+void handle_inlet_junctions(SimulationContext& ctx, const std::vector<std::string>& lines);
+
 /** @brief Parse [OUTFALLS] — sets outfall-specific fields for nodes of type OUTFALL. */
 void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lines);
 

@@ -187,11 +187,15 @@ TEST_F(InitialQualityTest, ErrorMatrix) {
         {"unode", "NODE NOPE TSS 1.0\n",       "unknown node 'NOPE'"},
         {"ulink", "LINK NOPE TSS 1.0\n",       "unknown link 'NOPE'"},
         {"ucons", "NODE J1 HOCL 1.0\n",        "unknown constituent 'HOCL'"},
-        {"umsx",  "NODE J1 HOCL 1.0\n",        "[REACTION_QUALITY] NODE|LINK"},
+        // U2 (2026-09-07): the refusal now names the accepted set, which as
+        // of this changeset includes a reactions-component species.
+        {"umsx",  "NODE J1 HOCL 1.0\n",        "reactions-component species"},
         {"dup",   "NODE J1 TSS 1.0\nNODE J1 TSS 2.0\n", "duplicate row"},
         {"scope", "CELL J1 TSS 1.0\n",         "scope must be NODE or LINK"},
         {"badv",  "NODE J1 TSS abc\n",         "bad value 'abc'"},
-        {"negp",  "NODE J1 TSS -1.0\n",        "negative value for pollutant"},
+        // U2 reworded this to name the constituent, since a species can hit
+        // it too: "negative value for 'TSS' at node 'J1'".
+        {"negp",  "NODE J1 TSS -1.0\n",        "negative value for 'TSS'"},
     };
     for (const auto& c : cases) {
         SWMM_Engine e = swmm_engine_create();

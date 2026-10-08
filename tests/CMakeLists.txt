@@ -126,7 +126,19 @@ endfunction()
 
 # ---- Unit tests (legacy + new engine) ----
 if(OPENSWMM_BUILD_UNIT_TESTS)
+    # D2: the component-discovery test doubles. Added BEFORE unit/, because
+    # they export SMOKE_ENV_DIR / SMOKE_EXPLICIT_DIR into this scope and
+    # unit/engine's loader gate reads them.
+    if(OPENSWMM_WITH_HYDROCOUPLE)
+        add_subdirectory(components/smoke)
+    endif()
+
     add_subdirectory(unit)
+
+    # G1 — the two-zone groundwater numerical gates. Deliberately NOT under
+    # unit/: it needs no gtest and no model, so it can be built and run first
+    # when the kernel is under suspicion.
+    add_subdirectory(verification/gw2d_gates)
 
     # Legacy solver tests
     add_test(NAME test_legacy_solver_api
@@ -196,6 +208,34 @@ if(OPENSWMM_BUILD_UNIT_TESTS)
         CXX_STANDARD_REQUIRED ON)
     openswmm_stage_test_runtime_deps(parity_probe)
 
+    # bench_fv_closure: per-op cost of the explicit-FV cross-section closure
+    # (plans/FV1D_CLOSURE_KERNEL_PERF_PLAN_2026-09-11.md, Phase 0). Same
+    # reasoning as parity_probe: it needs no Google Benchmark, and the
+    # numbers must come from the SAME build the FV gates run in, so it is
+    # built here rather than only in the benchmarks-only tree. tests/benchmarks
+    # guards its own registration with `if(NOT TARGET ...)`.
+    if(NOT TARGET bench_fv_closure)
+        add_executable(bench_fv_closure ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/bench_fv_closure.cpp)
+        # Same link rule as the unit tests, for the same reason: this TU
+        # includes src/engine/core/SWMMEngine.hpp and calls xsect::isOpen,
+        # xsect::setParams, link::translateShape, link::buildXSectParams and
+        # fv::buildGeometry, none of which are dllexported — the DLL is built
+        # with WINDOWS_EXPORT_ALL_SYMBOLS OFF, so on MSVC those are 8
+        # unresolved externals at link. parity_probe above can link
+        # openswmm_engine because it only touches the exported C API. Inside
+        # OPENSWMM_BUILD_UNIT_TESTS, so openswmm_engine_internal exists.
+        target_link_libraries(bench_fv_closure PRIVATE
+            $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>)
+        target_include_directories(bench_fv_closure PRIVATE ${PROJECT_SOURCE_DIR}/include)
+        if(OPENSWMM_FAST_XSECT_LOOKUP)
+            target_compile_definitions(bench_fv_closure PRIVATE SWMM_XSECT_FAST_LOOKUP)
+        endif()
+        set_target_properties(bench_fv_closure PROPERTIES
+            CXX_STANDARD 20
+            CXX_STANDARD_REQUIRED ON)
+        openswmm_stage_test_runtime_deps(bench_fv_closure)
+    endif()
+
     # Determinism gate: two runs of the same build must produce identical
     # artifacts. Without this, a `check` failure after an optimization could
     # not be distinguished from run-to-run noise.
@@ -216,6 +256,51 @@ if(OPENSWMM_BUILD_UNIT_TESTS)
                     --smoke --force
                     --out-dir ${CMAKE_CURRENT_BINARY_DIR}/corpus_smoke)
         set_tests_properties(bench_corpus_generator_smoke PROPERTIES LABELS "unit")
+    endif()
+endif()
+
+# ---- D1 (program plan §C.1): the HydroCouple dependency's two checks ----
+if(OPENSWMM_BUILD_UNIT_TESTS)
+    # (a) The D-C6 guard: no engine target includes or links HydroCoupleSDK.
+    #     Registered in BOTH option states — the rule does not switch off with
+    #     the feature. Two-sided: the real tree must pass AND the planted
+    #     fixtures must fail, or the guard proves nothing (a guard that scans
+    #     nothing also "passes"). `prose_only` pins the other side: files that
+    #     state D-C6 name the SDK, and the guard must not fire on the word.
+    set(_d1_guard  ${PROJECT_SOURCE_DIR}/cmake/CheckNoHydroCoupleSDK.cmake)
+    set(_d1_fix    ${CMAKE_CURRENT_SOURCE_DIR}/unit/engine/data/d1_sdk_guard)
+    # The roots engine TARGETS are built from. Not the whole repository:
+    # tests/output alone is ~118k result files, docs/ and python/build are
+    # not target source, and a guard that takes minutes gets disabled.
+    set(_d1_roots
+        "${PROJECT_SOURCE_DIR}/src;${PROJECT_SOURCE_DIR}/include;${PROJECT_SOURCE_DIR}/cmake;${CMAKE_CURRENT_SOURCE_DIR}/unit;${CMAKE_CURRENT_SOURCE_DIR}/regression;${CMAKE_CURRENT_SOURCE_DIR}/benchmarks;${CMAKE_CURRENT_SOURCE_DIR}/verification;${CMAKE_CURRENT_SOURCE_DIR}/compile_check;${PROJECT_SOURCE_DIR}/python/openswmm;${PROJECT_SOURCE_DIR}/python/cmake")
+    set(_d1_files
+        "${PROJECT_SOURCE_DIR}/CMakeLists.txt;${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt;${PROJECT_SOURCE_DIR}/python/CMakeLists.txt")
+    add_test(NAME d1_no_hydrocouplesdk
+        COMMAND ${CMAKE_COMMAND} "-DROOTS=${_d1_roots}" "-DFILES=${_d1_files}"
+                "-DEXCLUDE=${_d1_fix}" -P ${_d1_guard})
+    add_test(NAME d1_guard_catches_planted_include
+        COMMAND ${CMAKE_COMMAND} -DROOTS=${_d1_fix}/planted_include -P ${_d1_guard})
+    add_test(NAME d1_guard_catches_planted_link
+        COMMAND ${CMAKE_COMMAND} -DROOTS=${_d1_fix}/planted_link -P ${_d1_guard})
+    add_test(NAME d1_guard_ignores_prose
+        COMMAND ${CMAKE_COMMAND} -DROOTS=${_d1_fix}/prose_only -P ${_d1_guard})
+    set_tests_properties(d1_guard_catches_planted_include d1_guard_catches_planted_link
+        PROPERTIES WILL_FAIL TRUE)
+    set_tests_properties(d1_no_hydrocouplesdk d1_guard_catches_planted_include
+        d1_guard_catches_planted_link d1_guard_ignores_prose PROPERTIES LABELS "unit")
+
+    # (b) Compile-check of every HydroCouple header, plus the pin's ABI as a
+    #     static_assert. Only with the option ON (the headers are absent
+    #     otherwise). An OBJECT library in ALL: if it builds, it passed; if the
+    #     headers found are not the pin's ABI, the build fails naming both.
+    if(OPENSWMM_WITH_HYDROCOUPLE)
+        add_library(openswmm_hydrocouple_header_check OBJECT
+            ${CMAKE_CURRENT_SOURCE_DIR}/compile_check/hydrocouple_headers.cpp)
+        target_link_libraries(openswmm_hydrocouple_header_check
+            PRIVATE HydroCouple::HydroCouple)
+        target_compile_definitions(openswmm_hydrocouple_header_check PRIVATE
+            OPENSWMM_HYDROCOUPLE_EXPECTED_ABI=${OPENSWMM_HYDROCOUPLE_EXPECTED_ABI})
     endif()
 endif()
 

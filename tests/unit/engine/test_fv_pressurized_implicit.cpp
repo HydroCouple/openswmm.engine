@@ -18,6 +18,9 @@
  *   plus the degree-3 fold (surcharged tee → the CG component path).
  */
 
+#ifdef _MSC_VER
+#  define _USE_MATH_DEFINES
+#endif
 #include <gtest/gtest.h>
 
 #include <cmath>
@@ -460,6 +463,8 @@ TEST(PressBore, arrivalMatchesTheQuasiSteadyFillAndIsCelerityStable) {
     // The explicit baseline's arrival goes on record, not on a gate: its
     // entrance deficit is the very defect the program exists to remove.
     const double t_off = boreArrival(150.0, false);
+    std::printf("  [bore] implicit c=150: %.0f s, c=660: %.0f s; explicit c=150: %.0f s;"
+                " quasi-steady fill %.1f s\n", t_on, t_on_660, t_off, t_est);
     ::testing::Test::RecordProperty("explicit_arrival_s",
                                     std::to_string(t_off));
     ::testing::Test::RecordProperty("implicit_arrival_s",
@@ -490,9 +495,16 @@ Tee makeTee(double celerity) {
 
     t.mesh.geom.resize(1);
     buildGeometry(circular(3.0), false, celerity, t.mesh.geom[0]);
-    t.mesh.geom[0].roughness = 0.013;
-    t.mesh.geom[0].rough_factor = 32.2 * (0.013 / 1.486) * (0.013 / 1.486);
     t.mesh.geom[0].barrels = 1;
+    t.mesh.conduit_section    = {0, 0, 0};
+    t.mesh.conduit_roughness  = {0.013, 0.013, 0.013};
+    t.mesh.conduit_rough_factor.assign(3, 32.2 * (0.013 / 1.486) * (0.013 / 1.486));
+    t.mesh.conduit_loss_inlet.assign(3, 0.0);
+    t.mesh.conduit_loss_outlet.assign(3, 0.0);
+    t.mesh.conduit_slope.assign(3, 0.0);
+    t.mesh.conduit_culvert_code.assign(3, 0);
+    t.mesh.conduit_culvert_curve.assign(3, hydkernels::CulvertCurve{});
+    t.mesh.conduit_culvert_mitered.assign(3, 0);
 
     // Cells: pipe p occupies [p·nc, (p+1)·nc). All beds flat at 0.
     const int ncell = 3 * nc;

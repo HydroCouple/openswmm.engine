@@ -94,6 +94,13 @@ constexpr double FUDGE         = 0.0001;
 /// @see Legacy: MIN_SURFAREA in consts.h
 constexpr double MIN_SURFAREA  = 12.566;  // 4*pi
 
+/// Lateral-inflow floor (cfs): a node's external, dry-weather or groundwater
+/// inflow whose magnitude is below this is dropped to zero before it joins
+/// the node's lateral inflow.
+/// @see Legacy: FLOW_TOL in consts.h; routing.c addExternalInflows,
+///      addDryWeatherInflows, addGroundwaterInflows
+constexpr double FLOW_TOL      = 0.00001;
+
 /// Minimum elevation drop for conduit slope computation (ft).
 constexpr double MIN_DELTA_Z   = 0.001;
 

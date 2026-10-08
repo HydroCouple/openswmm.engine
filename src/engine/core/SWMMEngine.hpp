@@ -83,6 +83,7 @@
 namespace openswmm::twoD { class Default2DOutputPlugin; }
 #endif
 
+#include <array>
 #include <functional>
 #include <memory>
 #include <string>
@@ -180,6 +181,8 @@ public:
      * @returns SWMM_OK or an error code.
      */
     int step(double* elapsed_time) noexcept;
+    int advanceTo(double seconds, double* actual) noexcept;
+    bool runtimeUpdateAllowed() const noexcept { return !runtime_pipeline_; }
 
     /**
      * @brief End the simulation loop and flush output.
@@ -365,6 +368,9 @@ public:
     Router&       router()       noexcept { return router_; }
     const Router& router() const noexcept { return router_; }
 
+    /// BW-MSX gate access: the pollutant surface-quality store (read-only).
+    const landuse::SurfaceQualitySoA& surfaceQuality() const noexcept { return surface_quality_; }
+
 #ifdef OPENSWMM_HAS_2D
     /** @brief Access the 2D surface router (for C API delegation). */
     twoD::SurfaceRouter2D&       surfaceRouter2D()       noexcept { return surface_router_; }
@@ -402,9 +408,15 @@ private:
     rdii::RDIISolver             rdii_;         ///< RDII (unit hydrograph convolution)
     exfil::ExfilSolver           exfil_;        ///< Storage node exfiltration
     inlet::InletSolver           inlet_;        ///< Street inlet capture
-    std::vector<int>             culvert_links_;///< Pre-built culvert link indices (avoid per-timestep alloc)
     std::vector<double>          gw_frac_perv_; ///< Per-subcatch pervious fraction for GW evap
     std::vector<double>          gw_perv_evap_; ///< Per-subcatch pervious evap rate (ft/sec)
+    /// U3 (track I-b, 2026-09-07): the 2D surface's per-subcatchment
+    /// infiltration recharge, drained from SurfaceRouter2D once per runoff
+    /// step (m³) and converted to the ft/sec-over-full-area rate the GW
+    /// solver's `infil_rate` argument expects.
+    std::vector<double>          gw_2d_recharge_vol_;
+    std::vector<double>          gw_infil_with_2d_;
+    std::vector<double>          gw_infil_rate_;      ///< (Vinfil + VlidInfil) / area / dt, legacy's `infil` (ft/s)
     std::vector<double>          snow_rain_;    ///< Per-subcatch rainfall into snow step (ft/sec)
     std::vector<double>          snow_snow_;    ///< Per-subcatch snowfall into snow step (ft/sec)
     hydstruct::StructureSolver  hydstruct_;    ///< Pumps, orifices, weirs, outlets
@@ -426,12 +438,17 @@ private:
 
     // Event and steady-state tracking
     int next_event_ = 0;                        ///< Index of next event in ctx_.events
+    bool between_events_ = false;               ///< legacy BetweenEvents, as the last stepRouting evaluated it
     bool isBetweenEvents(double current_date) const; ///< Check if between routing events
     bool isInSteadyState(int action_count) const;    ///< Check if system is in steady state
     std::vector<gage::GageState> gage_states_;  ///< Per-gage state (SoA)
 
 #ifdef OPENSWMM_HAS_2D
     twoD::SurfaceRouter2D        surface_router_; ///< Optional 2D surface routing solver
+    /// S4b: per-row unit labels for the 2D species snapshot (pollutant units,
+    /// MSX units, "hours", "degC"), rebuilt by fillSurfaceSnapshot() and
+    /// pointed to by SimulationSnapshot::surface_species_units.
+    mutable std::vector<std::string> surface_species_units_;
     /// Non-owning pointer to the 2D HDF5 output plugin (lifetime owned by
     /// PluginFactory's output_plugins_). Set in open() when [2D_OPTIONS]
     /// OUTPUT_FILE is configured; used in start() to call prepareMeshAndDatasets
@@ -450,6 +467,9 @@ private:
     std::string rpt_path_;  ///< Report file path
     std::string out_path_;  ///< Binary output file path
 
+    bool step_active_ = false, runtime_pipeline_ = false;
+    double exchange_target_ = -1.0;
+
     // Runoff clock (matching legacy OldRunoffTime / NewRunoffTime)
     // Runoff advances on its own timestep (300 sec wet, 3600 sec dry);
     // lateral flows are linearly interpolated between runoff boundaries.
@@ -461,7 +481,15 @@ private:
     // (routing.c:703) and the report-instant runoff weight (output.c) must be
     // formed from MILLISECOND quantities to round identically to legacy.
     double old_runoff_ms_ = 0.0;    ///< legacy OldRunoffTime (msec)
+    double prev_runoff_step_sec_ = 0.0;  ///< span of the runoff step just completed (legacy oldRunoffStep)
     double new_runoff_ms_ = 0.0;    ///< legacy NewRunoffTime (msec)
+    double new_rule_time_ms_ = 0.0; ///< legacy NewRuleTime (msec, routing.c:58)
+
+    // Previous cumulative LID exfiltration / evaporation volumes (ft³), so the
+    // per-step delta can be folded into the runoff-continuity infil / evap
+    // outflow terms once per runoff step (issue #102 — legacy VlidInfil/VlidEvap).
+    double prev_lid_infil_vol_ = 0.0;
+    double prev_lid_evap_vol_  = 0.0;
 
     // PARITY: per-subcatchment interpolated wet-weather / GW inflows saved by
     // the Phase-2 interpolation so assembleLateralInflows() can replay
@@ -470,8 +498,27 @@ private:
     // RDII, iface into Node.newLatFlow. Pre-summing per node and adding in a
     // different source order rounds differently (1-ULP lat-flow drift).
     std::vector<double> wet_q_interp_;  ///< per-subcatch interpolated runoff (cfs; NOT runon — it is already inside runoff[])
+    std::vector<double> lid_drain_q_interp_; ///< per-node interpolated LID drain inflow this routing step (cfs; legacy lid_addDrainInflow)
+    /// The same drain flows PER UNIT as (node, q), in legacy's order
+    /// (subcatchments by index, each one's lidList). Legacy adds each unit's q
+    /// to Node.newLatFlow individually; adding the per-node sum rounds
+    /// differently once two units drain to one node.
+    std::vector<std::pair<int, double>> lid_drain_q_units_;
     std::vector<double> gw_q_interp_;   ///< per-subcatch interpolated GW flow (cfs)
     std::vector<int>    gw_q_node_;     ///< receiving node for gw_q_interp_ (-1 = skip)
+    // Legacy lid_getRunoff volume accumulators, per subcatchment per runoff
+    // step: VlidIn (= sum over units of (captured/area)*area*tStep, ft3) and
+    // qRunoff (= sum of unit surface outflow*area, cfs; *tStep = VlidOut).
+    // subcatch.c:746-751 rebuilds newRunoff from these in the VOLUME domain;
+    // adjusting the runoff RATE incrementally instead rounds differently
+    // (1-ULP runoff drift on every LID deck).
+    std::vector<double> lid_vlidin_vol_;  ///< per-subcatch VlidIn this runoff step (ft3)
+    std::vector<double> lid_qsurf_cfs_;   ///< per-subcatch LID surface outflow to outlet (cfs)
+    /// Previous runoff step's GW flow RATE per subcatch (ft/s per unit area,
+    /// legacy TGroundwater::oldFlow). Legacy interpolates the RATE and
+    /// multiplies by the area afterwards (routing.c:766, subcatch.c:912);
+    /// interpolating the cfs product instead is a 1-ULP different number.
+    std::vector<double> old_gw_rate_;
 
     // Persistent runoff-state flags read by computeRunoffTimestep() on the NEXT
     // runoff step (one-step lag), matching legacy globals HasRunoff/HasSnow in
@@ -496,54 +543,59 @@ private:
     // -----------------------------------------------------------------------
     // When rpt_averages is true, node and link results are accumulated over
     // each routing step and averaged at report boundaries.  Subcatchment
-    // results are always point-in-time (matching legacy).
+    // results are always interpolated point values (matching legacy).
+    // PARITY: the accumulators are float32 DISPLAY-unit sums — legacy's xAvg
+    // slots are REAL4 fed by node_getResults/link_getResults at f = 1.0
+    // (output.c:72, 853-901), so the whole accumulate/divide chain is float
+    // arithmetic on display values. Accumulating doubles (or internal units)
+    // diverges by ~1e-5 rel over a report period.
     struct AvgAccumulator {
         // Node accumulators (6 variables per node)
-        std::vector<double> node_depth;
-        std::vector<double> node_head;
-        std::vector<double> node_volume;
-        std::vector<double> node_lat_inflow;
-        std::vector<double> node_total_inflow;
-        std::vector<double> node_overflow;
+        std::vector<float> node_depth;
+        std::vector<float> node_head;
+        std::vector<float> node_volume;
+        std::vector<float> node_lat_inflow;
+        std::vector<float> node_total_inflow;
+        std::vector<float> node_overflow;
 
         // Link accumulators (5 variables per link)
-        std::vector<double> link_flow;
-        std::vector<double> link_depth;
-        std::vector<double> link_velocity;
-        std::vector<double> link_volume;
-        std::vector<double> link_capacity;
+        std::vector<float> link_flow;
+        std::vector<float> link_depth;
+        std::vector<float> link_velocity;
+        std::vector<float> link_volume;
+        std::vector<float> link_capacity;
 
         int n_steps = 0;  ///< Number of routing steps accumulated
 
         void resize(int n_nodes, int n_links) {
             auto un = static_cast<std::size_t>(n_nodes);
             auto ul = static_cast<std::size_t>(n_links);
-            node_depth.assign(un, 0.0);
-            node_head.assign(un, 0.0);
-            node_volume.assign(un, 0.0);
-            node_lat_inflow.assign(un, 0.0);
-            node_total_inflow.assign(un, 0.0);
-            node_overflow.assign(un, 0.0);
-            link_flow.assign(ul, 0.0);
-            link_depth.assign(ul, 0.0);
-            link_velocity.assign(ul, 0.0);
-            link_volume.assign(ul, 0.0);
-            link_capacity.assign(ul, 0.0);
+            node_depth.assign(un, 0.0f);
+            node_head.assign(un, 0.0f);
+            node_volume.assign(un, 0.0f);
+            node_lat_inflow.assign(un, 0.0f);
+            node_total_inflow.assign(un, 0.0f);
+            node_overflow.assign(un, 0.0f);
+            link_flow.assign(ul, 0.0f);
+            link_depth.assign(ul, 0.0f);
+            link_velocity.assign(ul, 0.0f);
+            link_volume.assign(ul, 0.0f);
+            link_capacity.assign(ul, 0.0f);
             n_steps = 0;
         }
 
         void reset() {
-            std::fill(node_depth.begin(), node_depth.end(), 0.0);
-            std::fill(node_head.begin(), node_head.end(), 0.0);
-            std::fill(node_volume.begin(), node_volume.end(), 0.0);
-            std::fill(node_lat_inflow.begin(), node_lat_inflow.end(), 0.0);
-            std::fill(node_total_inflow.begin(), node_total_inflow.end(), 0.0);
-            std::fill(node_overflow.begin(), node_overflow.end(), 0.0);
-            std::fill(link_flow.begin(), link_flow.end(), 0.0);
-            std::fill(link_depth.begin(), link_depth.end(), 0.0);
-            std::fill(link_velocity.begin(), link_velocity.end(), 0.0);
-            std::fill(link_volume.begin(), link_volume.end(), 0.0);
-            std::fill(link_capacity.begin(), link_capacity.end(), 0.0);
+            std::fill(node_depth.begin(), node_depth.end(), 0.0f);
+            std::fill(node_head.begin(), node_head.end(), 0.0f);
+            std::fill(node_volume.begin(), node_volume.end(), 0.0f);
+            std::fill(node_lat_inflow.begin(), node_lat_inflow.end(), 0.0f);
+            std::fill(node_total_inflow.begin(), node_total_inflow.end(), 0.0f);
+            std::fill(node_overflow.begin(), node_overflow.end(), 0.0f);
+            std::fill(link_flow.begin(), link_flow.end(), 0.0f);
+            std::fill(link_depth.begin(), link_depth.end(), 0.0f);
+            std::fill(link_velocity.begin(), link_velocity.end(), 0.0f);
+            std::fill(link_volume.begin(), link_volume.end(), 0.0f);
+            std::fill(link_capacity.begin(), link_capacity.end(), 0.0f);
             n_steps = 0;
         }
     };
@@ -566,17 +618,10 @@ private:
     /** @brief Rebuild xsp_cache_ if links/xsect state changed (cheap check). */
     void ensureXspCache() noexcept;
 
-    /// Legacy-convention full volume per node for .out NODE_VOLUME reporting:
-    /// 0 for plain junctions/outfalls/dividers (legacy node_getVolume returns 0
-    /// when fullVolume==0), pump wet-well xMax for Type-1 pump inlets. STORAGE
-    /// reports its curve volume directly. This DECOUPLES the reported node volume
-    /// from the internal volume-state (which keeps MIN_SURFAREA*depth for the
-    /// volume-based solver + surcharge detection). See postOutputSnapshot().
-    std::vector<double> report_full_volume_;
 
     /// Legacy-convention reported node volume (mirrors legacy node_getVolume):
     /// STORAGE → curve volume (ctx_.nodes.volume); junction/outfall/divider →
-    /// report_full_volume_·(depth/fullDepth) = 0 for plain junctions. Used for
+    /// nodes.rpt_full_volume·(depth/fullDepth) = 0 for plain junctions. Used for
     /// the .out NODE_VOLUME and the routing mass-balance storage sums so both
     /// match legacy, while the internal volume-state (MIN_SURFAREA) is preserved.
     double reportedNodeVolume(int i) const noexcept;
@@ -639,6 +684,7 @@ private:
      * @param has_snow     True if any subcatchment has snow depth > 0.
      * @returns Runoff timestep in seconds.
      */
+    void setNextEvapDate(double the_date) noexcept;   ///< legacy climate.c setNextEvapDate
     double computeRunoffTimestep(double abs_time, bool is_raining,
                                  bool has_runoff, bool has_snow) noexcept;
 
@@ -656,6 +702,10 @@ private:
      */
     void stepSurfaceQuality(double dt_runoff) noexcept;
 
+    /// Book the washoff mass against the POST-LID volumes (legacy
+    /// surfqual_getWashoff's three bookings), after the units have run.
+    void bookWashoffLoads(double dt_runoff) noexcept;
+
     /**
      * @brief Execute groundwater computation for one substep.
      *
@@ -672,9 +722,11 @@ private:
      *
      * @param dt_routing  Routing timestep (seconds).
      */
-    /** @brief Assemble subcatch-to-subcatch and outfall runon into subcatches.runon_inflow[].
-     *  @param dt_runoff  Runoff timestep (sec) — used to convert outfall_runon_vol to CFS. */
-    void assembleRunon(double dt_runoff) noexcept;
+    /** @brief Assemble the run-on for the runoff step about to be taken —
+     *  outfall return (over the previous step's span), upstream runoff and
+     *  LID drains — into subcatches.runon_rate[] (ft/s, legacy Subcatch.runon)
+     *  and runon_inflow[] (CFS). Legacy runoff.c:247-253 order. */
+    void assembleRunon() noexcept;
 
     /** @brief Pre-compute GW surface water head and available node flow from routing state. */
     void assembleGWCoupling(double dt_runoff) noexcept;
@@ -692,6 +744,24 @@ private:
      * @param dt_routing  Routing timestep (seconds).
      */
     void updateStatistics(double dt_routing) noexcept;
+
+    /**
+     * @brief Per-node routed volume totals (legacy massbal NodeInflow /
+     *        NodeOutflow), accumulated over a half routing step.
+     * @details Legacy routing_execute calls massbal_updateRoutingTotals(dt/2)
+     *          before and after routing on every step, between events too.
+     *          The report's Node Inflow Summary volumes, flow-balance error and
+     *          Highest Continuity Errors read these totals.
+     */
+    void accumulateNodeRoutingTotals(double half_step) noexcept;
+
+    /// True when the last stepRouting() skipped routing as steady state.
+    bool last_step_steady_ = false;
+
+    /// Previous routing step's system flow RATES (cfs) for the eleven routing
+    /// continuity terms — legacy StepFlowTotals as they stood when the next
+    /// step's first massbal_updateRoutingTotals(dt/2) read them.
+    std::array<double, 11> routing_prev_rates_{};
 
     /**
      * @brief Update routing mass balance totals after routing.

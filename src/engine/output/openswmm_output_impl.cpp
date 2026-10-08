@@ -57,6 +57,30 @@ SWMM_ENGINE_API SWMM_Output swmm_output_open(const char* path) {
     return static_cast<SWMM_Output>(reader);
 }
 
+SWMM_ENGINE_API SWMM_Output swmm_output_open_live(const char* path) {
+    if (!path) return nullptr;
+    auto* reader = new (std::nothrow) openswmm::OutputReader();
+    if (!reader) return nullptr;
+    if (!reader->openLive(path)) {
+        delete reader;
+        return nullptr;
+    }
+    return static_cast<SWMM_Output>(reader);
+}
+
+SWMM_ENGINE_API int swmm_output_refresh(SWMM_Output handle, int* periods) {
+    CHECK_READER(handle);
+    const int n = to_reader(handle)->refresh();
+    if (n < 0) return -1;
+    if (periods) *periods = n;
+    return 0;
+}
+
+SWMM_ENGINE_API int swmm_output_is_live(SWMM_Output handle) {
+    if (!handle) return -1;
+    return to_reader(handle)->is_live() ? 1 : 0;
+}
+
 SWMM_ENGINE_API void swmm_output_close(SWMM_Output handle) {
     if (!handle) return;
     auto* reader = to_reader(handle);

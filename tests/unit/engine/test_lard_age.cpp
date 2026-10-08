@@ -110,7 +110,7 @@ void write_deck(const std::string& path, const std::string& tag,
           << "C5 CIRCULAR 2.0 0 0 0\n\n";
     }
     if (s.pollutants)
-        f << "[POLLUTANTS]\nTSS MG/L 0 0 0 " << s.kdecay
+        f << "[POLLUTANTS]\nTSS MG/L 0 0 0 " << (s.kdecay * 86400.0)  // 1/day column (KD1)
           << " NO * 0 0 0\n\n";
     if (s.age_component != nullptr) {
         const std::string age_path = tag + "_src.age";

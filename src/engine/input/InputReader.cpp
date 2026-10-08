@@ -27,6 +27,7 @@
  */
 
 #include "InputReader.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "Tokenizer.hpp"
 #include "../core/ErrorCodes.hpp"
 #include "../core/PerfTimers.hpp"
@@ -39,6 +40,28 @@
 #include <cctype>
 
 namespace openswmm::input {
+
+namespace {
+// Legacy SectWords (keywords.c). findmatch() accepts a header that merely
+// BEGINS with one of them ("[PROFILES]" is "[PROFILE"), so such a header
+// draws no unknown-section warning even when v6 has no handler for it.
+constexpr const char* kLegacySectionWords[] = {
+    "TITLE", "OPTION", "FILE", "RAINGAGE", "TEMPERATURE", "EVAP",
+    "SUBCATCHMENT", "SUBAREA", "INFIL", "AQUIFER", "GROUNDWATER", "SNOWPACK",
+    "JUNC", "OUTFALL", "STORAGE", "DIVIDER", "CONDUIT", "PUMP", "ORIFICE",
+    "WEIR", "OUTLET", "XSECT", "TRANSECT", "LOSS", "CONTROL", "POLLUT",
+    "LANDUSE", "BUILDUP", "WASHOFF", "COVERAGE", "INFLOW", "DWF", "PATTERN",
+    "RDII", "HYDROGRAPH", "LOADING", "TREATMENT", "CURVE", "TIMESERIES",
+    "REPORT", "COORDINATE", "VERTICES", "POLYGON", "LABEL", "SYMBOL",
+    "BACKDROP", "TAG", "PROFILE", "MAP", "LID_CONTROL", "LID_USAGE", "GWF",
+    "ADJUSTMENT", "EVENT", "STREET", "INLET_USAGE", "INLET"};
+
+bool legacy_knows_section(const std::string& tag) {
+    for (const char* w : kLegacySectionWords)
+        if (tag.rfind(w, 0) == 0) return true;
+    return false;
+}
+} // namespace
 
 // ============================================================================
 // Constructor
@@ -53,7 +76,7 @@ InputReader::InputReader(SectionRegistry& registry)
 // ============================================================================
 
 bool InputReader::read(const std::string& path, SimulationContext& ctx) {
-    std::ifstream ifs(path);
+    std::ifstream ifs(openswmm::io::utf8_path(path));
     if (!ifs.is_open()) {
         ctx.error_code    = 2;  // public SWMM_ERR_INPFILE (was 1 = NOMEM)
         ctx.error_message = "InputReader: cannot open file '" + path + "'";
@@ -71,6 +94,14 @@ bool InputReader::read(const std::string& path, SimulationContext& ctx) {
 bool InputReader::read_stream(std::istream& stream, SimulationContext& ctx) {
     lines_read_ = 0;
     skipped_sections_.clear();
+    ctx.unknown_section_headers.clear();
+
+    // An .inp reports no subcatchments, nodes or links unless [REPORT] names
+    // them (legacy RptFlags default FALSE; SWMM manual: default NONE). The
+    // SimulationOptions default of ALL stays for models built through the API.
+    ctx.options.rpt_subcatchments = 0;
+    ctx.options.rpt_nodes = 0;
+    ctx.options.rpt_links = 0;
 
     std::string            current_tag;     // e.g. "OPTIONS"
     std::vector<std::string> section_lines; // accumulated data lines
@@ -108,6 +139,13 @@ bool InputReader::read_stream(std::istream& stream, SimulationContext& ctx) {
             if (!header.empty() && header.back() == ']') {
                 flush_section();
                 current_tag = parse_section_header(header);
+                if (!current_tag.empty() && !registry_.has(current_tag) &&
+                    !legacy_knows_section(current_tag)) {
+                    // legacy names the first token of the line, as written
+                    const auto end = trimmed_raw.find_first_of(" \t");
+                    ctx.unknown_section_headers.emplace_back(
+                        std::string(trimmed_raw.substr(0, end)), lines_read_);
+                }
                 continue;
             }
             // Not a clean header — fall through to data-line handling below.
@@ -126,9 +164,14 @@ bool InputReader::read_stream(std::istream& stream, SimulationContext& ctx) {
         // ';' in a sentence is description, not a comment. Stripping it here
         // truncated titles mid-sentence in the .rpt echo. Every other section
         // strips the inline trailing comment.
-        std::string_view stripped = (current_tag == "TITLE")
-                                        ? trimmed_raw
-                                        : Tokenizer::strip_comment(trimmed_raw);
+        // legacy readTitle copies the RAW line, leading blanks included, so
+        // [TITLE] keeps it untrimmed (the .rpt echo and the .inp round trip
+        // both reproduce it).
+        if (current_tag == "TITLE") {
+            section_lines.emplace_back(raw_line);
+            continue;
+        }
+        std::string_view stripped = Tokenizer::strip_comment(trimmed_raw);
         std::string_view trimmed  = Tokenizer::trim(stripped);
         if (!trimmed.empty() && !current_tag.empty())
             section_lines.emplace_back(std::string(trimmed));
@@ -210,7 +253,7 @@ void InputReader::dispatch_section(
 ) {
     if (registry_.has(tag)) {
         registry_.dispatch(tag, ctx, lines);
-    } else {
+    } else if (!legacy_knows_section(tag)) {
         // Unknown section — record it (caller may wish to warn)
         bool already = false;
         for (const auto& s : skipped_sections_) {

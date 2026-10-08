@@ -18,12 +18,20 @@
 #define OPENSWMM_KERNEL_FN KOKKOS_INLINE_FUNCTION
 
 #include "ExplicitKokkosSurfaceSolver.hpp"
+// Relative, not "core/FileIO.hpp": this TU is also compiled into the STANDALONE
+// GPU plugin targets (openswmm_gpu_omp / _cuda), whose include path is only
+// ../solver and ../data — src/engine is not on it. Matches how every other
+// engine header is reached from this file (../data/MeshData.hpp, etc.).
+#include "../../core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 
+#include "KokkosPerfCounters.hpp"
+#include "KokkosSourceKernels.hpp"
+#include <stdexcept>
 #include "../data/MeshData.hpp"
 #include "../data/SolverOptions2D.hpp"
 #include "../data/SurfaceStateData.hpp"
@@ -80,26 +88,6 @@ void hostRefresh(std::vector<double>& v, const DView& d) {
 // Device twins of the small host-only helpers (bodies copied verbatim from
 // SurfaceFluxCalculator.cpp / NodeCoupling.cpp — bit-identical math).
 // ---------------------------------------------------------------------------
-KOKKOS_INLINE_FUNCTION double devEvapSink(double rate, double depth,
-                                          double dry_depth) {
-    if (rate <= 0.0 || depth <= 0.0) return 0.0;
-    if (depth >= dry_depth) return rate;
-    const double t = depth / dry_depth;
-    return rate * t * t * (3.0 - 2.0 * t);
-}
-
-/// Device twin of SurfaceFluxCalculator.hpp infilSink (plan §5.5, D-I1) —
-/// same body as devEvapSink above, kept as its own function so the two sinks
-/// stay independently greppable and D-I2's ordering reads explicitly at the
-/// call sites.
-KOKKOS_INLINE_FUNCTION double devInfilSink(double rate, double depth,
-                                           double dry_depth) {
-    if (rate <= 0.0 || depth <= 0.0) return 0.0;
-    if (depth >= dry_depth) return rate;
-    const double t = depth / dry_depth;
-    return rate * t * t * (3.0 - 2.0 * t);
-}
-
 constexpr double kOrificeHEps = 0.02;   // == NodeCoupling.cpp ORIFICE_H_EPS
 
 KOKKOS_INLINE_FUNCTION double devOrificePhi(double a) {
@@ -144,9 +132,21 @@ KOKKOS_INLINE_FUNCTION double devWetRamp(double d, double dry_depth) {
 void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
                                              SurfaceStateData& state,
                                              SolverOptions2D& opts) {
+    // Direct plugin users must receive the same restriction as the factory.
+    if (opts.momentum != Momentum2D::LOCAL_INERTIAL || state.transport.active())
+        throw std::invalid_argument("Kokkos marcher requires local-inertial water-only flow");
+    for (int i = 0; i < mesh.n_cells(); ++i)
+        if (mesh.cell_vertex_count(i) != 3)
+            throw std::invalid_argument("Kokkos marcher currently requires triangles");
     mesh_  = &mesh;
     state_ = &state;
     opts_  = &opts;
+
+    // Perf review Phase A2: launch/fence/deep_copy counters (OPENSWMM_PERF).
+    // Installed after Kokkos::initialize (plugin construction), before the
+    // devCopy mirroring below so initialize's uploads are counted too.
+    kperf::install();
+    kperf::reset();
 
     const int nt = mesh.n_triangles();
     if (nt <= 0) return;
@@ -162,9 +162,10 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
     d_vz_       = devCopy("vz", mesh.vz);
     d_vx_       = devCopy("vx", mesh.vx);
     d_vy_       = devCopy("vy", mesh.vy);
-    d_tri_v0_   = devCopy("tri_v0", mesh.tri_v0);
-    d_tri_v1_   = devCopy("tri_v1", mesh.tri_v1);
-    d_tri_v2_   = devCopy("tri_v2", mesh.tri_v2);
+    // Padded [cell*kMaxCellVerts + k] connectivity (MeshData). This plugin
+    // is gated to ALL-TRIANGLE meshes by SurfaceSolverFactory (R6), so the
+    // kernels below read slots 0..2 only.
+    d_cell_v_   = devCopy("cell_v", mesh.cell_v);
     d_vs_ptr_   = devCopy("vs_ptr", mesh.vert_stencil_ptr);
     d_vs_idx_   = devCopy("vs_idx", mesh.vert_stencil_idx);
     d_vs_wt_    = devCopy("vs_wt", mesh.vert_stencil_wt);
@@ -211,8 +212,12 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
     d_coup_ = DView("coup", nt);
     d_evap_ = DView("evap", nt);
     d_infil_ = DView("infil", nt);
+    d_evap_applied_ = DView("evap_applied", nt);
+    evap_applied_host_.assign(static_cast<std::size_t>(nt), 0.0);
     d_infil_applied_ = DView("infil_applied", nt);
     infil_applied_host_.assign(static_cast<std::size_t>(nt), 0.0);
+    d_coupling_applied_ = DView("coupling_applied", nt);
+    coupling_applied_host_.assign(static_cast<std::size_t>(nt), 0.0);
     d_edge_flux_ = DView("edge_flux", state.edge_flux.size());
     d_active_ = IView("active", nt);
     d_pin_t0_ = IView("pin_t0", nt);
@@ -236,13 +241,12 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
     bc_slot_host_.clear();
     if (state.boundary) {
         for (int i = 0; i < nt; ++i) {
-            for (int e = 0; e < 3; ++e) {
-                const int idx = i * 3 + e;
+            const int nvc = mesh.cell_vertex_count(i);
+            for (int e = 0; e < nvc; ++e) {
+                const int idx = MeshData::slot(i, e);
                 const auto ty =
                     static_cast<BoundaryType>(state.boundary->edge_bc_type[idx]);
-                const bool interior = (e == 0   ? mesh.tri_nbr0[i]
-                                       : e == 1 ? mesh.tri_nbr1[i]
-                                                : mesh.tri_nbr2[i]) >= 0;
+                const bool interior = mesh.cell_neighbour(i, e) >= 0;
                 if (!interior && ty != BoundaryType::WALL) {
                     bc_cell_host_.push_back(i);
                     bc_slot_host_.push_back(idx);
@@ -288,11 +292,13 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh,
     d_node_head_      = DView("node_head", nn);
     d_node_depth_     = DView("node_depth", nn);
     d_node_volume_    = DView("node_volume", nn);
+    d_node_fullvol_   = DView("node_fullvol", nn);
     d_node_invert_    = DView("node_invert", nn);
     d_node_fulldepth_ = DView("node_fulldepth", nn);
     if (nn > 0) {
         devRefresh(d_node_invert_, state.nodes_1d->invert_elev);
         devRefresh(d_node_fulldepth_, state.nodes_1d->full_depth);
+        devRefresh(d_node_fullvol_, state.nodes_1d->full_volume);
     }
 
     // Tier-0 pins: BC cells + coupling cells (fastest-changing forcing).
@@ -379,15 +385,15 @@ void ExplicitKokkosSurfaceSolver::reconstructAllDev() {
     const int nt = mesh_->n_triangles();
     auto vol = d_volume_, head = d_head_, depth = d_depth_;
     auto area = d_tri_area_, cz = d_tri_cz_, vz = d_vz_;
-    auto v0 = d_tri_v0_, v1 = d_tri_v1_, v2 = d_tri_v2_;
+    auto cvv = d_cell_v_;
     const bool vfr = (opts_->cell_closure == CellClosure2D::VFR);
     const double mwf = opts_->vfr_min_wet_frac;
     Kokkos::parallel_for(
         "reconstructAll", Kokkos::RangePolicy<ExecSpace>(0, nt),
         KOKKOS_LAMBDA(int i) {
             double e, d;
-            inertial::etaDepthScalar(area(i), cz(i), vz(v0(i)), vz(v1(i)),
-                                     vz(v2(i)), vfr, mwf, vol(i), e, d);
+            inertial::etaDepthScalar(area(i), cz(i), vz(cvv(i * kMaxCellVerts + 0)), vz(cvv(i * kMaxCellVerts + 1)),
+                                     vz(cvv(i * kMaxCellVerts + 2)), vfr, mwf, vol(i), e, d);
             head(i) = e;
             depth(i) = d;
         });
@@ -400,7 +406,7 @@ void ExplicitKokkosSurfaceSolver::settleAccumulatorsDev() {
     auto ptr = d_cell_ptr_, edge = d_cell_edge_;
     auto sign = d_sign_;
     auto area = d_tri_area_, cz = d_tri_cz_, vz = d_vz_;
-    auto v0 = d_tri_v0_, v1 = d_tri_v1_, v2 = d_tri_v2_;
+    auto cvv = d_cell_v_;
     const bool vfr = (opts_->cell_closure == CellClosure2D::VFR);
     const double mwf = opts_->vfr_min_wet_frac;
     Kokkos::parallel_for(
@@ -421,8 +427,8 @@ void ExplicitKokkosSurfaceSolver::settleAccumulatorsDev() {
             double v = vol(i) + pending;
             vol(i) = (v > 0.0) ? v : 0.0;
             double e2, d2;
-            inertial::etaDepthScalar(area(i), cz(i), vz(v0(i)), vz(v1(i)),
-                                     vz(v2(i)), vfr, mwf, vol(i), e2, d2);
+            inertial::etaDepthScalar(area(i), cz(i), vz(cvv(i * kMaxCellVerts + 0)), vz(cvv(i * kMaxCellVerts + 1)),
+                                     vz(cvv(i * kMaxCellVerts + 2)), vfr, mwf, vol(i), e2, d2);
             head(i) = e2;
             depth(i) = d2;
         });
@@ -434,10 +440,12 @@ void ExplicitKokkosSurfaceSolver::lazySourcesDev(double t) {
     const int nt = mesh_->n_triangles();
     auto vol = d_volume_, head = d_head_, depth = d_depth_;
     auto rain = d_rain_, coup = d_coup_, evap = d_evap_, infil = d_infil_;
+    auto evap_app = d_evap_applied_;
     auto infil_app = d_infil_applied_;
+    auto coup_app = d_coupling_applied_;
     auto active = d_active_;
     auto area = d_tri_area_, cz = d_tri_cz_, vz = d_vz_;
-    auto v0 = d_tri_v0_, v1 = d_tri_v1_, v2 = d_tri_v2_;
+    auto cvv = d_cell_v_;
     const bool vfr = (opts_->cell_closure == CellClosure2D::VFR);
     const double mwf = opts_->vfr_min_wet_frac;
     const double dry = opts_->dry_depth;
@@ -445,20 +453,16 @@ void ExplicitKokkosSurfaceSolver::lazySourcesDev(double t) {
         "lazySources", Kokkos::RangePolicy<ExecSpace>(0, nt),
         KOKKOS_LAMBDA(int i) {
             if (active(i)) return;
-            // D-I2 ordering: rainfall source → evaporation → infiltration
-            // against the remaining depth (== ExplicitInertialSolver).
-            const double inf = devInfilSink(infil(i), depth(i), dry);
-            // Book before the early-out, as the serial marcher does.
-            infil_app(i) += inf * dt_lazy;
-            const double src = rain(i) + coup(i)
-                               - devEvapSink(evap(i), depth(i), dry)
-                               - inf;
-            if (src == 0.0) return;
-            double v = vol(i) + dt_lazy * src * area(i);
-            vol(i) = (v > 0.0) ? v : 0.0;
+            const auto budget = sourceBudget(vol(i), depth(i), area(i), dt_lazy,
+                dry, rain(i), coup(i), infil(i), evap(i));
+            if (!budget.applied) return;
+            infil_app(i) += budget.infiltration / area(i);
+            coup_app(i) += budget.coupling;
+            evap_app(i) += budget.evaporation;
+            vol(i) = budget.volume;
             double e2, d2;
-            inertial::etaDepthScalar(area(i), cz(i), vz(v0(i)), vz(v1(i)),
-                                     vz(v2(i)), vfr, mwf, vol(i), e2, d2);
+            inertial::etaDepthScalar(area(i), cz(i), vz(cvv(i * kMaxCellVerts + 0)), vz(cvv(i * kMaxCellVerts + 1)),
+                                     vz(cvv(i * kMaxCellVerts + 2)), vfr, mwf, vol(i), e2, d2);
             head(i) = e2;
             depth(i) = d2;
         });
@@ -491,14 +495,18 @@ void ExplicitKokkosSurfaceSolver::syncAndRebuild(double t) {
     Kokkos::parallel_for(
         "seed_to_active", Kokkos::RangePolicy<ExecSpace>(0, nt),
         KOKKOS_LAMBDA(int i) { active(i) = seed(i); });
-    {   // one-ring halo (benign write race: constant 1)
-        auto cLv = d_cL_, cRv = d_cR_;
-        Kokkos::parallel_for(
-            "halo", Kokkos::RangePolicy<ExecSpace>(0, ne),
-            KOKKOS_LAMBDA(int e) {
-                const int a = cLv(e), b = cRv(e);
-                if (seed(a) && !seed(b)) active(b) = 1;
-                else if (seed(b) && !seed(a)) active(a) = 1;
+    // Gather a cell's halo flag from immutable seeds; concurrent stores of
+    // the same value are still data races on host/device memory models.
+    {
+        auto ptr=d_cell_ptr_, edge=d_cell_edge_, left=d_cL_, right=d_cR_;
+        Kokkos::parallel_for("halo", Kokkos::RangePolicy<ExecSpace>(0, nt),
+            KOKKOS_LAMBDA(int i) {
+                int on=seed(i);
+                for(int p=ptr(i);p<ptr(i+1) && !on;++p) {
+                    const int e=edge(p), j=left(e)==i ? right(e) : left(e);
+                    on=seed(j);
+                }
+                active(i)=on;
             });
     }
 
@@ -616,6 +624,7 @@ void ExplicitKokkosSurfaceSolver::refreshDt0() {
     const int nt = mesh_->n_triangles();
     if (n_active_ == 0) return;
     auto active = d_active_;
+    auto tier = d_tier_;
     auto depth = d_depth_;
     auto lchar = d_lchar_;
     auto qcx = d_qcx_, qcy = d_qcy_;
@@ -631,7 +640,7 @@ void ExplicitKokkosSurfaceSolver::refreshDt0() {
             double speed = 0.0;
             if (perot && h > 1.0e-6)
                 speed = inertial::qMagnitude(qcx(i), qcy(i)) / h;
-            const double dt = inertial::cellCflDt(alpha, lchar(i), h, speed);
+            const double dt = inertial::cellCflDt(alpha, lchar(i), h, speed) / (1 << tier(i));
             if (dt < mn) mn = dt;
         },
         Kokkos::Min<double>(fresh));
@@ -693,8 +702,9 @@ void ExplicitKokkosSurfaceSolver::collapseToGlobalDt() {
 // Marching kernels
 // ===========================================================================
 
-void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f) {
-    const int lo = ftier_off_[k], hi = ftier_off_[k + 1];
+void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f, bool global_step) {
+    const int lo = global_step ? 0 : ftier_off_[k];
+    const int hi = global_step ? ftier_off_[K_] : ftier_off_[k + 1];
     if (lo >= hi) return;
     auto list = d_edges_compact_;
     auto cLv = d_cL_, cRv = d_cR_;
@@ -759,7 +769,7 @@ void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f) {
             qn1 = inertial::froudeCap(qn1, hf, fr_max);
 
             const int exp_cell = (qn1 > 0.0) ? a : b;
-            const int refire = 1 << (tier(exp_cell) - ftier(e));
+            const int refire = global_step ? 1 : (1 << (tier(exp_cell) - ftier(e)));
             const double vmax = vol(exp_cell) > 0.0 ? vol(exp_cell) : 0.0;
             const double budget = beta_share / refire * vmax;
             const double take = std::fabs(qn1) * xi(e) * dt_f;
@@ -773,20 +783,23 @@ void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f) {
     face_passes_ += (hi - lo);
 }
 
-void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
-    const int lo = tier_off_[k], hi = tier_off_[k + 1];
+void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step) {
+    const int lo = global_step ? 0 : tier_off_[k];
+    const int hi = global_step ? tier_off_[K_] : tier_off_[k + 1];
     auto list = d_cells_compact_;
     auto vol = d_volume_, head = d_head_, depth = d_depth_;
     auto faccL = d_faccL_, faccR = d_faccR_;
     auto ptr = d_cell_ptr_, edge = d_cell_edge_;
     auto sign = d_sign_;
     auto rain = d_rain_, coup = d_coup_, evap = d_evap_, infil = d_infil_;
+    auto evap_app = d_evap_applied_;
     auto infil_app = d_infil_applied_;
+    auto coup_app = d_coupling_applied_;
     auto qv = d_q_, xi = d_xi_, mx = d_mx_, my = d_my_;
     auto qcx = d_qcx_, qcy = d_qcy_;
     auto area = d_tri_area_, cz = d_tri_cz_, cx = d_tri_cx_, cy = d_tri_cy_;
     auto vz = d_vz_;
-    auto v0 = d_tri_v0_, v1 = d_tri_v1_, v2 = d_tri_v2_;
+    auto cvv = d_cell_v_;
     const bool vfr = (opts_->cell_closure == CellClosure2D::VFR);
     const double mwf = opts_->vfr_min_wet_frac;
     const bool perot = have_perot_;
@@ -807,18 +820,16 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
                         faccR(e) = 0.0;
                     }
                 }
-                // D-I2 ordering: rainfall source → evaporation → infiltration
-                // against the remaining depth (== ExplicitInertialSolver).
-                const double inf = devInfilSink(infil(i), depth(i), dry);
-                infil_app(i) += inf * dt_c;
-                const double src = rain(i) + coup(i)
-                                   - devEvapSink(evap(i), depth(i), dry)
-                                   - inf;
-                double v = vol(i) + flux_m3 + dt_c * src * area(i);
-                vol(i) = (v > 0.0) ? v : 0.0;
+                const double landed = vol(i) + flux_m3;
+                const auto budget = sourceBudget(landed > 0.0 ? landed : 0.0,
+                    depth(i), area(i), dt_c, dry, rain(i), coup(i), infil(i), evap(i));
+                infil_app(i) += budget.infiltration / area(i);
+                coup_app(i) += budget.coupling;
+                evap_app(i) += budget.evaporation;
+                vol(i) = budget.volume;
                 double e2, d2;
-                inertial::etaDepthScalar(area(i), cz(i), vz(v0(i)), vz(v1(i)),
-                                         vz(v2(i)), vfr, mwf, vol(i), e2, d2);
+                inertial::etaDepthScalar(area(i), cz(i), vz(cvv(i * kMaxCellVerts + 0)), vz(cvv(i * kMaxCellVerts + 1)),
+                                         vz(cvv(i * kMaxCellVerts + 2)), vfr, mwf, vol(i), e2, d2);
                 head(i) = e2;
                 depth(i) = d2;
                 if (perot) {
@@ -876,18 +887,23 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
                         const double S = bc_slope(kk);
                         double h_out = depth(i);
                         if (vfr_face) {
-                            const int e = idx % 3;
-                            const int vv[3] = {v0(i), v1(i), v2(i)};
+                            const int e = idx % kMaxCellVerts;
+                            const int vv[3] = {cvv(i * kMaxCellVerts + 0),
+                                               cvv(i * kMaxCellVerts + 1),
+                                               cvv(i * kMaxCellVerts + 2)};
                             const double za = vz(vv[(e + 1) % 3]);
                             const double zb = vz(vv[(e + 2) % 3]);
                             h_out = inertial::faceDepthFromEta(
                                 head(i), (za < zb) ? za : zb,
                                 (za < zb) ? zb : za);
                         }
-                        if (S > 0.0 && h_out > 0.0 && n > 0.0) {
+                        // Signed slope, as the two CPU marchers: positive
+                        // drains the domain, negative feeds it.
+                        if (S != 0.0 && h_out > 0.0 && n > 0.0) {
+                            const double sgnS = (S > 0.0) ? 1.0 : -1.0;
                             const double h53 =
                                 h_out * std::cbrt(h_out * h_out);
-                            f = -(h53 * std::sqrt(S) / n) * L;
+                            f = -sgnS * (h53 * std::sqrt(S < 0.0 ? -S : S) / n) * L;
                         }
                     } else if (ty == bt_flow || ty == bt_rating) {
                         f = -bc_flow(kk) * L;
@@ -898,8 +914,10 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
                         const double eta_bc = bc_head(kk);
                         double hf;
                         if (vfr_face) {
-                            const int e = idx % 3;
-                            const int vv[3] = {v0(i), v1(i), v2(i)};
+                            const int e = idx % kMaxCellVerts;
+                            const int vv[3] = {cvv(i * kMaxCellVerts + 0),
+                                               cvv(i * kMaxCellVerts + 1),
+                                               cvv(i * kMaxCellVerts + 2)};
                             const double za = vz(vv[(e + 1) % 3]);
                             const double zb = vz(vv[(e + 2) % 3]);
                             const double eta_hi =
@@ -941,7 +959,7 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
                         // overshoot backstop: one substep moves the cell AT
                         // MOST to the prescribed stage.
                         const double v_eq = inertial::volumeFromEtaScalar(
-                            area(i), cz(i), vz(v0(i)), vz(v1(i)), vz(v2(i)),
+                            area(i), cz(i), vz(cvv(i * kMaxCellVerts + 0)), vz(cvv(i * kMaxCellVerts + 1)), vz(cvv(i * kMaxCellVerts + 2)),
                             vfr, mwf, bc_head(kk));
                         if (f < 0.0) {
                             const double lo =
@@ -961,8 +979,8 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
                         vol(i) = v_new;
                         bc_accum(kk) += dt_c * f;
                         double e2, d2;
-                        inertial::etaDepthScalar(area(i), cz(i), vz(v0(i)),
-                                                 vz(v1(i)), vz(v2(i)), vfr,
+                        inertial::etaDepthScalar(area(i), cz(i), vz(cvv(i * kMaxCellVerts + 0)),
+                                                 vz(cvv(i * kMaxCellVerts + 1)), vz(cvv(i * kMaxCellVerts + 2)), vfr,
                                                  mwf, vol(i), e2, d2);
                         head(i) = e2;
                         depth(i) = d2;
@@ -970,8 +988,10 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
                     // Perot completion: add the boundary edge's contribution
                     // the interior-only rebuild missed (== serial marcher).
                     if (perot && bc_q(kk) != 0.0) {
-                        const int e = idx % 3;
-                        const int vv[3] = {v0(i), v1(i), v2(i)};
+                        const int e = idx % kMaxCellVerts;
+                        const int vv[3] = {cvv(i * kMaxCellVerts + 0),
+                                           cvv(i * kMaxCellVerts + 1),
+                                           cvv(i * kMaxCellVerts + 2)};
                         const int va = vv[(e + 1) % 3];
                         const int vb = vv[(e + 2) % 3];
                         const double mxb = 0.5 * (vxv(va) + vxv(vb));
@@ -994,7 +1014,9 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
              cp_node = d_cp_node_;
         auto cp_cd = d_cp_cd_, cp_area = d_cp_area_;
         auto exch = d_exch_, node_drawn = d_node_drawn_;
+        auto coup_app = d_coupling_applied_;
         auto nh = d_node_head_, nd = d_node_depth_, nv = d_node_volume_;
+        auto nfv = d_node_fullvol_;
         auto ninv = d_node_invert_, nfd = d_node_fulldepth_;
         auto active = d_active_;
         auto vs_ptr = d_vs_ptr_, vs_idx = d_vs_idx_;
@@ -1068,8 +1090,14 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
                         const double vmax = vol(ci) > 0.0 ? vol(ci) : 0.0;
                         const double cap = beta * vmax / dt_c;
                         if (Q > cap) Q = cap;
-                    } else {         // 1D → 2D spill: node stored budget
-                        const double avail0 = nv(ni) * vol12 - node_drawn(ni);
+                    } else {
+                        // 1D → 2D spill: PONDED budget only (C3). See the CPU
+                        // marcher for why total node storage is wrong — the
+                        // spill exits at the rim and cannot reach below-crown
+                        // conveyance storage. The two backends must agree.
+                        const double ponded =
+                            (nv(ni) > nfv(ni)) ? (nv(ni) - nfv(ni)) : 0.0;
+                        const double avail0 = ponded * vol12 - node_drawn(ni);
                         const double avail = (avail0 > 0.0) ? avail0 : 0.0;
                         if (avail <= 0.0) continue;
                         const double want = -Q * dt_c;
@@ -1077,12 +1105,17 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c) {
                         node_drawn(ni) += take;
                         Q = -take / dt_c;
                     }
+                    // C1: mirror of the CPU marcher — book the signed
+                    // per-cell abstraction where the node exchange actually
+                    // moves water. The two sites above book `coup`, which
+                    // only carries the FORCING API's prescribed rate.
+                    coup_app(ci) += -Q * dt_c;
                     vol(ci) -= Q * dt_c;
                     if (vol(ci) < 0.0) vol(ci) = 0.0;
                     exch(kk) += Q * dt_c;
                     double e2, d2;
-                    inertial::etaDepthScalar(area(ci), cz(ci), vz(v0(ci)),
-                                             vz(v1(ci)), vz(v2(ci)), vfr, mwf,
+                    inertial::etaDepthScalar(area(ci), cz(ci), vz(cvv(ci * kMaxCellVerts + 0)),
+                                             vz(cvv(ci * kMaxCellVerts + 1)), vz(cvv(ci * kMaxCellVerts + 2)), vfr, mwf,
                                              vol(ci), e2, d2);
                     head(ci) = e2;
                     depth(ci) = d2;
@@ -1099,7 +1132,7 @@ void ExplicitKokkosSurfaceSolver::runMacroCycle(double dt0, int nsub) {
             fireFaces(k, (1 << k) * dt0);
         }
         for (int k = 0; k < K; ++k) {
-            if (s % (1 << k)) continue;
+            if ((s + 1) % (1 << k)) continue;
             fireCells(k, (1 << k) * dt0);
         }
         ++substeps_run_;
@@ -1195,6 +1228,12 @@ void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current,
     hostRefresh(state_->edge_flux, d_edge_flux_);
     if (!exch_host_.empty()) hostRefresh(exch_host_, d_exch_);
 
+    // Fixed cell-order host fold avoids a floating-point device sum and drains
+    // only once per publication, including exact macro-cycle landings.
+    hostRefresh(evap_applied_host_, d_evap_applied_);
+    for (double v : evap_applied_host_) state_->evap_loss_total += v;
+    Kokkos::deep_copy(d_evap_applied_, 0.0);
+
     // Drain the applied-infiltration accumulator ADDITIVELY: the host array is
     // consumed and zeroed by the mass balance on the routing-step cadence,
     // which need not line up with this publish.
@@ -1203,15 +1242,24 @@ void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current,
         for (std::size_t i = 0; i < infil_applied_host_.size(); ++i)
             state_->infil_applied[i] += infil_applied_host_[i];
         Kokkos::deep_copy(d_infil_applied_, 0.0);
+        hostRefresh(coupling_applied_host_, d_coupling_applied_);
+        for (std::size_t i = 0; i < coupling_applied_host_.size(); ++i)
+            state_->coupling_applied[i] += coupling_applied_host_[i];
+        Kokkos::deep_copy(d_coupling_applied_, 0.0);
     }
 }
 
 double ExplicitKokkosSurfaceSolver::advance(double t_current,
                                             double t_target) {
     if (!initialized_ || t_target <= t_current) return t_target;
+    kperf::count_advance();
 
     double t = t_current;
     if (t_last_sync_ > t_current) t_last_sync_ = t_current;
+    // Tools regions (perf review Phase A3): group the advance for external
+    // profilers (nsys via the nvtx connector, kernel-logger). No-ops when no
+    // tool is loaded.
+    Kokkos::Profiling::pushRegion("openswmm_2d_advance_push");
     pushForcings();
     pushNodeState();
     Kokkos::deep_copy(d_bc_accum_, 0.0);
@@ -1219,7 +1267,9 @@ double ExplicitKokkosSurfaceSolver::advance(double t_current,
     Kokkos::deep_copy(d_node_drawn_, 0.0);
     last_steps_ = 0;
     int cycles_since_rebuild = cycles_since_rebuild_;
+    Kokkos::Profiling::popRegion();
 
+    Kokkos::Profiling::pushRegion("openswmm_2d_advance_march");
     while (t < t_target) {
         if (cycles_since_rebuild >= kRebuildEveryCycles) {
             syncAndRebuild(t);
@@ -1233,24 +1283,46 @@ double ExplicitKokkosSurfaceSolver::advance(double t_current,
         if (n_active_ == 0) {
             t = t_target;
             last_dt_ = remaining;
+            cycles_since_rebuild = kRebuildEveryCycles;
             break;
         }
 
-        double dt0 = std::min(dt0_, remaining);
-        int nsub = nsub_full;
-        if (nsub_full * dt0_ > remaining) {
-            collapseToGlobalDt();
-            nsub = 1;
-            cycles_since_rebuild = kRebuildEveryCycles;   // rebuild after tail
+        if (nsub_full * dt0_ <= remaining) {
+            runMacroCycle(dt0_, nsub_full);
+            t += nsub_full * dt0_;
+            last_dt_ = dt0_;
+            ++cycles_since_rebuild;
+            continue;
         }
 
-        runMacroCycle(dt0, nsub);
-        t += nsub * dt0;
-        last_dt_ = dt0;
-        ++cycles_since_rebuild;
+        // Tail: split the WHOLE remaining span into nt EQUAL global
+        // substeps (each in (dt0_/2, dt0_] for nt >= 2 — CFL-safe, never
+        // degenerate) and land exactly. Fire all compact segments with the
+        // global positivity budget, retaining the frozen tier assignments. Mirrors the
+        // CPU marcher's tail (ExplicitInertialSolver::advance).
+        if (remaining <= dt0_ * 1.0e-9) {
+            // Sub-ulp residue of the macro landing: no physics.
+            t = t_target;
+            break;
+        }
+        settleAccumulatorsDev();
+        const int nt = std::max(
+            1, static_cast<int>(std::ceil(remaining / dt0_)));
+        const double dt_tail = remaining / nt;
+        for (int step=0;step<nt;++step) {
+            fireFaces(0, dt_tail, true);
+            fireCells(0, dt_tail, true);
+            ++substeps_run_;
+            ++last_steps_;
+        }
+        last_dt_ = dt_tail;
+        ++cycles_since_rebuild;   // preserve the CPU rebuild cadence
+        t = t_target;   // exact landing — no 1-ulp re-entry
+        break;
     }
 
     cycles_since_rebuild_ = cycles_since_rebuild;
+    settleAccumulatorsDev();
     if (t_target > t_last_sync_) {
         if (cycles_since_rebuild_ >= kRebuildEveryCycles) {
             syncAndRebuild(t_target);
@@ -1259,8 +1331,11 @@ double ExplicitKokkosSurfaceSolver::advance(double t_current,
             lazySourcesDev(t_target);
         }
     }
+    Kokkos::Profiling::popRegion();
 
+    Kokkos::Profiling::pushRegion("openswmm_2d_advance_publish");
     publishAndCopyBack(t_current, t_target);
+    Kokkos::Profiling::popRegion();
     return t_target;
 }
 
@@ -1284,12 +1359,15 @@ void ExplicitKokkosSurfaceSolver::resyncFromVolumes(double /*t0*/) {
     if (!initialized_) return;
     devRefresh(d_volume_, state_->volume);
     reconstructAllDev();
+    // External outfall transfers can activate previously dry cells.
+    cycles_since_rebuild_ = 1000;
 }
 
 void ExplicitKokkosSurfaceSolver::finalize() {
     if (!initialized_) return;
+    kperf::dump();
     if (!telemetry_path_.empty() && !telemetry_.empty()) {
-        if (std::FILE* f = std::fopen(telemetry_path_.c_str(), "w")) {
+        if (std::FILE* f = openswmm::io::fopen_utf8(telemetry_path_, "w")) {
             std::fprintf(f, "t_s,active_cells,active_frac\n");
             const double nt = std::max(1, mesh_ ? mesh_->n_triangles() : 1);
             for (const auto& [t, n] : telemetry_)

@@ -56,7 +56,11 @@
 #ifndef OPENSWMM_ENGINE_DATA_HEAT_DATA_HPP
 #define OPENSWMM_ENGINE_DATA_HEAT_DATA_HPP
 
+#include <limits>
 #include <vector>
+
+#include "BedZoneData.hpp"      // SedimentConfig — H6b's bed zone configuration
+#include "HeatOverrideData.hpp" // HeatElement / HeatAttr / HeatScope — PE
 
 namespace openswmm {
 
@@ -136,11 +140,105 @@ struct ConductionConfig {
 };
 
 /**
+ * @brief Where incoming shortwave `Jin` comes from (plan §2.5, phase H6a).
+ *
+ * @details The three spellings of `[RADIATIVE_FLUXES] SHORTWAVE` are
+ *          **mutually exclusive by parse error, not by precedence**
+ *          (D-H6a-3). A ladder would let a deck configuring two sources run
+ *          plausibly while silently discarding one; the parser refuses
+ *          instead, the way it already refuses an out-of-range fraction
+ *          rather than clamping it.
+ */
+enum class ShortwaveMode : int {
+    CONSTANT   = 0,  ///< `SHORTWAVE GLOBAL <W/m²>` — the H3 spelling.
+    TIMESERIES = 1,  ///< `SHORTWAVE GLOBAL TIMESERIES <name>` — measured.
+    COMPUTED   = 2   ///< `SHORTWAVE GLOBAL COMPUTED` — position + clear-sky.
+};
+
+/**
+ * @brief `[SOLAR_RADIATION]` — site geometry and Bird atmosphere (H6a).
+ *
+ * @warning `latitude`/`longitude` have **no usable default** and the
+ *          COMPUTED branch refuses without them. This is deliberate and is
+ *          stricter than D-H5c's dry-element policy, which does default:
+ *          a dry-element convention has a defensible default, an unstated
+ *          latitude does not. `ClimateState::latitude` cannot stand in —
+ *          it is the `[TEMPERATURE]` SNOWMELT field, defaults to 0, and is
+ *          written only by decks carrying that line, so borrowing it would
+ *          silently model equatorial noon (plan §2.5 trap 1).
+ *
+ * @note `ClimateState::dtlong` cannot stand in for `longitude` either: it
+ *       is a solar-time correction in MINUTES carrying a sentinel (0 means
+ *       "true solar time", which is not "longitude 0"). Plan §2.5 trap 2.
+ */
+struct SolarConfig {
+    double latitude_deg   = 0.0;    ///< +N. REQUIRED under COMPUTED.
+    double longitude_deg  = 0.0;    ///< +E. REQUIRED under COMPUTED.
+    double timezone_hours = 0.0;    ///< Offset from UTC, +E (e.g. MST = -7).
+    bool   has_latitude   = false;  ///< Set by the parser, checked at close.
+    bool   has_longitude  = false;
+    /// Not required — 0 (UTC) is a legal answer — but an OMITTED timezone
+    /// shifts the whole diurnal curve by up to 12 h, which dwarfs every
+    /// other error in this module. Tracked so the parser can WARN.
+    bool   has_timezone   = false;
+
+    /// Site elevation, metres, for the Bird pressure term. Absent means
+    /// "take the climate state's `elev`", which is the usual case.
+    ///
+    /// A `< 0` sentinel was the first spelling and was wrong: the parser
+    /// deliberately admits elevations below sea level (the Dead Sea, the
+    /// Salton Sea), and every one of them would have been silently
+    /// discarded in favour of the climate value. An explicit flag cannot
+    /// collide with a legal value.
+    double elevation_m    = 0.0;
+    bool   has_elevation  = false;
+
+    // ---- Bird & Hulstrom (1981) atmosphere. Defaults are the paper's
+    //      standard atmosphere.
+    double aod380        = 0.30;   ///< Aerosol optical depth at 380 nm
+    double aod500        = 0.20;   ///< Aerosol optical depth at 500 nm
+    double precip_water_cm = 1.42; ///< Precipitable water vapour, cm
+    double ozone_cm        = 0.34; ///< Ozone column, cm (NTP)
+    double ground_albedo   = 0.20; ///< Surface albedo for the sky-ground
+                                   ///< multiple-reflection term. NOT
+                                   ///< `RadiativeConfig::albedo`, which is
+                                   ///< the WATER's reflectance — two
+                                   ///< different surfaces, deliberately two
+                                   ///< different fields.
+};
+
+/**
+ * @brief `[CLOUD_COVER]` — one fraction driving two modules (H6a, D-H6a-2).
+ *
+ * @details Cloud lives here rather than in `RadiativeConfig` because the
+ *          same `C` feeds BOTH shortwave attenuation and the longwave
+ *          emissivity correction. Two modules reading a value from two
+ *          copies is free to drift; D-H5e is the nearest precedent in kind.
+ *
+ * @warning `lw_cloud_k` reaches into the H3-validated Brunt path. The
+ *          factor MUST reduce to exactly 1.0 at `C = 0` — see
+ *          `cloudLongwaveFactor`, which returns a literal 1.0 on the
+ *          `!configured` path rather than evaluating `1 + k·0²`.
+ */
+struct CloudConfig {
+    bool   configured = false;  ///< No `[CLOUD_COVER]` section → clear sky.
+    bool   use_timeseries = false;
+    int    ts_index   = -1;     ///< Index into `ctx.tables`, -1 = none.
+    double fraction   = 0.0;    ///< C ∈ [0,1], constant spelling.
+
+    double sw_atten_k = 0.75;   ///< Kasten–Czeplak k
+    double sw_atten_n = 3.4;    ///< Kasten–Czeplak n
+    double lw_cloud_k = 0.17;   ///< Bolz k_lw
+};
+
+/**
  * @brief `[RADIATIVE_FLUXES]` parameters (heat plan §2.2, phase H3).
  *
  * @details Defaults are RHEComponent's (`rhemodel.cpp:43-47`) except where
  *          noted. GLOBAL scope only in H3; per-element ranges are RHE's
  *          `[RADIATIVE_FLUXES]` semantics and refuse until a later phase.
+ *          H6a keeps GLOBAL scope deliberately — plan §7 records why (the
+ *          per-step solar position is computed once, not per element).
  */
 struct RadiativeConfig {
     double shortwave_wm2   = 0.0;   ///< Incoming solar Jin, W/m² (0 = night)
@@ -151,6 +249,58 @@ struct RadiativeConfig {
     double emiss_landcover = 0.97;  ///< εlc
     double atm_emiss_coeff = 0.5;   ///< Brunt Aa
     double lw_reflection   = 0.03;  ///< RL
+
+    /**
+     * @brief Land-cover radiating temperature, °C. NaN ⇒ use air temperature.
+     *
+     * @details PE2. `RadiativeExchange` computed the land-cover longwave
+     *          term from AIR temperature and its own header recorded that as
+     *          a departure from the reference, which carries a per-element
+     *          `landCoverTemperature`. The consequence is a daytime
+     *          understatement: a sunlit canopy or a concrete wall runs well
+     *          above air temperature and radiates accordingly.
+     *
+     *          The NaN sentinel — not a plausible number — is what keeps
+     *          every pre-PE model bit-identical and makes "the deck set
+     *          this" distinguishable from "the deck did not", the
+     *          `configured_source[]` distinction one struct over. A default
+     *          of, say, 20.0 would be indistinguishable from a deliberate
+     *          20 °C and would change every existing answer.
+     */
+    double landcover_temp = std::numeric_limits<double>::quiet_NaN();
+
+    /// H6a. CONSTANT keeps `shortwave_wm2` load-bearing and is the default,
+    /// so an H3-era deck is unaffected.
+    ShortwaveMode sw_mode = ShortwaveMode::CONSTANT;
+    /// Index into `ctx.tables` under TIMESERIES; -1 otherwise.
+    int sw_ts_index = -1;
+};
+
+/**
+ * @brief Dense per-element attribute storage (PE2, D-PE2).
+ *
+ * @details Sized ONLY when at least one override row targets the family.
+ *          `radiativeFor`/`sedimentFor` return the global when the vector is
+ *          empty, so a model without overrides allocates nothing and passes
+ *          the same object it passed before PE — byte-identity is structural
+ *          rather than tested.
+ *
+ * @warning Do not size these unconditionally "for uniformity". That single
+ *          change would move every heat deck in the corpus, and it would do
+ *          it by writing globals into a vector that then reads back as
+ *          per-element configuration.
+ */
+struct HeatOverrideData {
+    std::vector<HeatOverrideRow> rows;   ///< as parsed; the serializer's input
+
+    std::vector<RadiativeConfig> rad_link;   ///< [link], empty ⇒ use global
+    std::vector<RadiativeConfig> rad_node;   ///< [node], empty ⇒ use global
+    std::vector<SedimentConfig>  sed_link;   ///< [link], empty ⇒ use global
+
+    bool resolved = false;
+
+    bool empty() const noexcept { return rows.empty(); }
+    void clear() { *this = HeatOverrideData{}; }
 };
 
 /**
@@ -198,6 +348,34 @@ struct HeatConfigData {
     /// Parameters for the module above.
     ConductionConfig conduction;
 
+    /// `[HEAT_FLUXES] SEDIMENT_EXCHANGE ON` — the bed / hyporheic transient
+    /// storage zone (plan §2.3, phase H6b). Defaults OFF like every other
+    /// flux module. **Unlike the others it is not a surface flux**: it adds a
+    /// second state variable and is integrated as a coupled pair, which is
+    /// why its physics lives in `BedExchange.hpp` rather than as another
+    /// term in `netFluxOut`. See that header for why the earlier prediction
+    /// that it would be one term was wrong.
+    bool sediment_exchange = false;
+
+    /// `[SEDIMENT_EXCHANGE]` — parameters for the module above. Deliberately
+    /// a SEPARATE struct from `ConductionConfig`: that one describes a
+    /// bioretention soil column (GWComponent, 1970/2758), this one describes
+    /// streambed sediment (HTSComponent, 1670/1807). Sharing them would make
+    /// one number stand for two materials.
+    SedimentConfig sediment;
+
+    /// PE2 — per-element overrides for `radiative` and `sediment` above.
+    /// Empty on every model that does not use them.
+    HeatOverrideData overrides;
+
+    /// `[SOLAR_RADIATION]` — only consulted under `ShortwaveMode::COMPUTED`
+    /// (plan §2.5, phase H6a).
+    SolarConfig solar;
+
+    /// `[CLOUD_COVER]` — consulted by BOTH the shortwave and longwave paths
+    /// (plan §2.5, D-H6a-2).
+    CloudConfig cloud;
+
     /// Default inlet temperature when a source has no row (°C).
     static constexpr double kDefaultTemp = 20.0;
 
@@ -234,11 +412,51 @@ struct HeatConfigData {
  */
 struct HeatState {
     std::vector<double> node_temp_vol_in;  ///< [node], °C·ft³/s
+    /// [node], °C·ft³/s arriving through LID underdrains, accumulated in the
+    /// runoff step beside `nodes.lid_drain_qual_vol` and consumed by the
+    /// wet-weather loader on that same per-runoff-step cadence — the twin of
+    /// `WaterAgeState::node_lid_drain_age_vol_in`. Until this existed the
+    /// drain-to-node loader handed the drain the RAINFALL temperature, so
+    /// H5b's storage-layer temperature reached run-on receivers but never a
+    /// node (LID fix round, 2026-08-30).
+    std::vector<double> node_lid_drain_temp_vol_in;
     std::vector<double> node_temp;         ///< [node], °C
     std::vector<double> link_temp;         ///< [link], °C
 
     /// The LEGACY mirror seeds INITIAL_STATE on its first step.
     bool legacy_seeded = false;
+
+    // ---- H6a per-step solar forcing (plan §2.5). RESOLVED ONCE PER STEP by
+    //      `updateSolarForcing`, then read const by every flux call.
+    //
+    //      This is state, not config, which is why it lives here: `Jin`
+    //      under TIMESERIES or COMPUTED changes every step, while
+    //      `RadiativeConfig::shortwave_wm2` is what the deck wrote and must
+    //      not be overwritten (a hot-started or re-opened model would
+    //      otherwise resume from a stale interpolation rather than from its
+    //      own configuration).
+    //
+    //      It is also what keeps the SPA cost argument honest: shortwave is
+    //      GLOBAL scope, so the position is computed once per step and every
+    //      element reads the same cached number. A per-element solve is
+    //      plan §7 work and would not use this field.
+
+    /// Incoming shortwave at the current step, W/m², cloud already applied.
+    ///
+    /// **NEGATIVE means "not yet resolved this run"**, and that is
+    /// load-bearing, not decorative. `radiativeFluxOut` passes this
+    /// straight into `netRadiativeFluxOut`'s `jin_wm2`, whose documented
+    /// sentinel for "use the configured constant" is a negative value. A
+    /// 0.0 default would make that sentinel unreachable from the
+    /// production path, so any call landing before the step's
+    /// `updateSolarForcing` would silently drop the shortwave term to zero
+    /// instead of falling back on `RadiativeConfig::shortwave_wm2`.
+    /// `updateSolarForcing` never writes a negative (it ends in
+    /// `max(0.0, ...)`), so the sentinel cannot be confused with a
+    /// resolved night-time 0.
+    double shortwave_now = -1.0;
+    /// Cloud fraction at the current step, C ∈ [0,1]. 0 = clear.
+    double cloud_now = 0.0;
 
     // ---- H5a watershed rows. Sized by `resizeWatershed`, NOT by `resize`.
     //      Kept a separate call deliberately: A3 widened `WaterAgeState::
@@ -290,13 +508,28 @@ struct HeatState {
     /// know the interval the consumer will divide by.
     std::vector<double> subcatch_outfall_temp_vol;
 
+    /// LID underdrain water sent to a subcatchment: cfs x temperature,
+    /// accumulated when the units run and handed to the run-on assembly at
+    /// the start of the NEXT runoff step beside the drain's cfs
+    /// (subcatches.lid_drain_runon_cfs) — the run-on assembly is where every
+    /// contributor's flow and temperature are booked together.
+    std::vector<double> subcatch_lid_drain_temp_cfs;
+
     static constexpr int kNSubArea = static_cast<int>(HeatSubArea::COUNT_);
 
     void resize(int n_nodes, int n_links, double initial_temp) {
         node_temp_vol_in.assign(static_cast<std::size_t>(n_nodes), 0.0);
+        node_lid_drain_temp_vol_in.assign(static_cast<std::size_t>(n_nodes), 0.0);
         node_temp.assign(static_cast<std::size_t>(n_nodes), initial_temp);
         link_temp.assign(static_cast<std::size_t>(n_links), initial_temp);
         legacy_seeded = false;
+        // H6a. `clear()` resets these via whole-struct assignment, but
+        // `resize()` is what runs at INITIALIZE — so a re-initialize on an
+        // already-run context would otherwise leave the previous run's
+        // forcing readable, and `swmm_heat_get_current_shortwave` documents
+        // itself as unresolved before the first step.
+        shortwave_now = -1.0;
+        cloud_now     = 0.0;
     }
 
     void resizeWatershed(int n_subcatch, double initial_temp) {
@@ -308,6 +541,7 @@ struct HeatState {
         subcatch_runon_temp_vol_in.assign(n, 0.0);
         subcatch_runon_temp_rate.assign(n, 0.0);
         subcatch_outfall_temp_vol.assign(n, 0.0);
+        subcatch_lid_drain_temp_cfs.assign(n, 0.0);
     }
 
     bool watershedSized(int n_subcatch) const noexcept {

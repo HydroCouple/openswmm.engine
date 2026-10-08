@@ -28,6 +28,7 @@
  */
 
 #include "openswmm_api_common.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "../../../include/openswmm/engine/openswmm_reactions.h"
 
 #include "../transport/components/ReactionModule/ReactionExpression.hpp"
@@ -36,6 +37,7 @@
 #include "../plugins/ProcessComponentRegistry.hpp"
 
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -260,6 +262,8 @@ SWMM_ENGINE_API int swmm_reaction_option_get(SWMM_Engine engine,
         v = std::to_string(rx.atol);
     } else if (k == "RTOL") {
         v = std::to_string(rx.rtol);
+    } else if (k == "TEMPERATURE") {
+        v = std::to_string(rx.default_temp_c);
     } else {
         return SWMM_ERR_BADPARAM;
     }
@@ -348,6 +352,18 @@ SWMM_ENGINE_API int swmm_reaction_species_remove(SWMM_Engine engine,
             rx.init_elem_value.erase(rx.init_elem_value.begin() + ur);
         } else if (rx.init_elem_species[ur] > idx) {
             --rx.init_elem_species[ur];
+        }
+    }
+    // U2: the [INITIAL_QUALITY] rows that encode this species follow the
+    // same rule (their kind is kKindMsxFirst - species).
+    {
+        auto& iq = ctx.initial_quality;
+        for (int r = iq.count() - 1; r >= 0; --r) {
+            const auto ur = static_cast<std::size_t>(r);
+            const int m = openswmm::InitialQualityData::msxSpecies(iq.kind[ur]);
+            if (m < 0) continue;
+            if (m == idx)      iq.erase(r);
+            else if (m > idx)  iq.kind[ur] = openswmm::InitialQualityData::msxKind(m - 1);
         }
     }
     rebuild_msx_registry(ctx, old_base, old_n);
@@ -539,6 +555,13 @@ SWMM_ENGINE_API int swmm_reaction_option_set(SWMM_Engine engine,
         if (!end || *end != '\0' || end == value || d <= 0.0)
             return SWMM_ERR_BADPARAM;
         (k == "ATOL" ? rx.atol : rx.rtol) = d;
+    } else if (k == "TEMPERATURE") {
+        // Any finite value is a temperature (degC); no range gate.
+        char* end = nullptr;
+        const double d = std::strtod(value, &end);
+        if (!end || *end != '\0' || end == value || !std::isfinite(d))
+            return SWMM_ERR_BADPARAM;
+        rx.default_temp_c = d;
     } else {
         return SWMM_ERR_BADPARAM;
     }
@@ -758,7 +781,7 @@ SWMM_ENGINE_API int swmm_reactions_save(SWMM_Engine engine,
 
     const std::string text =
         openswmm::transport::serializeReactionSystem(ctx);
-    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    std::ofstream f(openswmm::io::utf8_path(path), std::ios::binary | std::ios::trunc);
     if (!f.is_open()) return SWMM_ERR_BADPARAM;
     f << text;
     return f.good() ? SWMM_OK : SWMM_ERR_BADPARAM;

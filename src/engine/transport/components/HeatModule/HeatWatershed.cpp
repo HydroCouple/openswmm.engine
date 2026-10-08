@@ -35,6 +35,7 @@
 #include "../../../core/SimulationContext.hpp"
 #include "../../../hydrology/Runoff.hpp"
 #include "../HeatFluxModules/HeatFluxes.hpp"
+#include "../HeatFluxModules/SolarRadiation.hpp"
 #include "../HeatFluxModules/SurfaceExchange.hpp"
 
 namespace openswmm::transport {
@@ -133,6 +134,11 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
     const bool do_surface   = ctx.heat_config.surface_exchange;
     const bool do_radiative = ctx.heat_config.radiative_exchange;
 
+    // H6a: this binding runs on the RUNOFF clock, the node/link one on the
+    // routing clock, so each resolves its own step's solar forcing
+    // (SolarRadiation.hpp). Idempotent within a step.
+    heat::updateSolarForcing(ctx);
+
     for (int i = 0; i < nsc && i < static_cast<int>(soa.area.size()); ++i) {
         const auto ui = static_cast<std::size_t>(i);
 
@@ -145,8 +151,8 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
         const double area = soa.area[ui];
         const double fi   = soa.imperv_pct[ui];
         const double fp   = 1.0 - fi;
-        const double f0   = fi * soa.imperv0_pct[ui];
-        const double f1   = fi * (1.0 - soa.imperv0_pct[ui]);
+        const double f0   = soa.frac_imperv0[ui];
+        const double f1   = soa.frac_imperv1[ui];
 
         const double frac[kNSub]  = {f0, f1, fp};
         const double depth[kNSub] = {soa.depth_imperv0[ui],
@@ -242,8 +248,15 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
                 // such copy in the program, and copies of exactly this sum
                 // are how the LEGACY node/link path ended up relaxing each
                 // module separately toward a different equilibrium.
+                // PE1: a subarea is scoped to its SUBCATCHMENT. There is
+                // no per-subcatchment radiative override table (a
+                // watershed's shading is a land-cover input this program
+                // models elsewhere), so this resolves to the global — but
+                // the token is passed rather than defaulted so the call
+                // site says WHICH element it means.
+                const HeatElement er = HeatElement::subcatch(i);
                 const auto net_out = [&](double tw) {
-                    return heat::netFluxOut(ctx, tw);
+                    return heat::netFluxOut(ctx, er, tw);
                 };
                 // Both flux families are signed POSITIVE OUT of the water, so
                 // they add. There is exactly one sign flip in this program
@@ -297,12 +310,8 @@ void routeSubcatchmentTemperature(SimulationContext& ctx,
                 (out_den > kTinyVol) ? out_num / out_den : t_rain;
     }
 
-    // Per-step rate accumulator, like node_temp_vol_in: zero once consumed
-    // so the next assembly starts clean.
-    std::fill(hs.subcatch_runon_temp_vol_in.begin(),
-              hs.subcatch_runon_temp_vol_in.end(), 0.0);
-    std::fill(hs.subcatch_runon_temp_rate.begin(),
-              hs.subcatch_runon_temp_rate.end(), 0.0);
+    // The run-on accumulators are zeroed by SWMMEngine::assembleRunon at the
+    // start of the next runoff step, beside the flow they describe.
 }
 
 }  // namespace openswmm::transport

@@ -138,13 +138,20 @@ int accumulateOutfallDischargeStep(const std::vector<CouplingPoint>& cps,
  *          −1: accum is 2D→1D-drain-positive, e.g. junction exchange, so the
  *          2D-side source is its negation). coupling_flux is NOT cleared here —
  *          callers zero it once before injecting both accumulators.
+ *
+ * @param node_conc S3 (nullable): the 1D nodes' published concentrations,
+ *                  flat `[node * n_species + s]` with the 2D transport
+ *                  stride. When given, each 2D-source volume also scatters
+ *                  `transport.coupling_src` at the point's node concentration
+ *                  (callers clear coupling_src alongside coupling_flux).
  */
 void injectAccumulatedExchange(const std::vector<CouplingPoint>& cps,
                                const MeshData& mesh,
                                SurfaceStateData& state,
                                const std::vector<double>& accum_m3,
                                double window_dt,
-                               double sign);
+                               double sign,
+                               const std::vector<double>* node_conc = nullptr);
 
 /**
  * @brief Live node-coupling orifice flux for ONE non-outfall coupling point.

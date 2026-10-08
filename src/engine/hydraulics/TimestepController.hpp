@@ -35,13 +35,17 @@
  * REPORT_START are skipped by the writer but the grid still advances
  * (output.c:481).
  *
- * ### Key design decision (R18) — superseded for parity
+ * ### Key design decision (R18) — resolved for parity
  *
  * The original refactored design shortened dt so the clock lands exactly on
  * report boundaries (no interpolation). Legacy instead free-steps and
- * interpolates results to the report instant (output.c:650/682). The clamp
- * is retained temporarily and is removed by the A2 reporting-parity work in
- * favor of legacy-identical interpolation.
+ * interpolates results to the report instant (output.c:650/682). That clamp
+ * was REMOVED by the A2 reporting-parity work: compute_next never aligns to
+ * the report grid, and postOutputSnapshot performs the legacy-identical
+ * interpolation. The only step alignments that remain are legacy-real: the
+ * total-duration clamp (swmm5.c:975-980, 1 ms floor) and the RULE_STEP
+ * control grid (routing.c:196-204, via ctx.dt_controls_remaining set by
+ * SWMMEngine::step from the absolute rule clock).
  *
  * ### Integration with IO thread (Phase 5)
  *

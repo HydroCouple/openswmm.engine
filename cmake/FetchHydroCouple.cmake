@@ -1,0 +1,214 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# HC-1 --- the HydroCouple interface headers, and nothing else.
+#
+# Program plan D-C6: the engine, `src/couplers/*` and SWMMVis link ONLY the
+# header-only `HydroCouple` interfaces. No `HydroCoupleSDK`, anywhere, and
+# that decision is recorded as not re-openable by a later mounting of the SDK.
+# `HydroCouple` is an INTERFACE library exporting `HydroCouple::HydroCouple`,
+# so "link" here costs an include directory and `cxx_std_20` — no objects, no
+# runtime dependency, nothing to ship.
+#
+# THE PIN IS THE POINT. HydroCouple 2.0.0 renumbered `WorkflowStatus` after
+# tagging, without a release: a build against a moving ref compiles fine today
+# and silently changes the meaning of a status enum tomorrow. The program plan's
+# instruction is to pin a commit, so `OPENSWMM_HYDROCOUPLE_GIT_TAG` defaults to
+# a full SHA rather than a branch or a tag, and a tag is accepted only because
+# a caller may deliberately want one.
+#
+# Resolution order:
+#   1. An already-defined `HydroCouple::HydroCouple` target (superbuild).
+#   2. `find_package(HydroCouple CONFIG)` --- a system/vcpkg install, or the
+#      sibling checkout via `CMAKE_PREFIX_PATH` / `HydroCouple_ROOT`. Preferred
+#      in development, because it uses the tree the developer already has.
+#   3. `FetchContent` at the pinned commit.
+#
+# Step 3 is deliberately last: silently downloading a second copy of interfaces
+# the developer already has checked out is how two versions of an ABI end up in
+# one build.
+
+include_guard(GLOBAL)
+
+set(OPENSWMM_HYDROCOUPLE_GIT_REPOSITORY
+    "https://github.com/hydrocouple/HydroCouple.git"
+    CACHE STRING "Git remote for the HydroCouple interface headers")
+
+# The pinned commit. EMPTY on purpose since 2026-09-29, and the empty value is
+# the honest one: the owner chose to target ABI 4 — HydroCouple's in-progress
+# "contract-consistency round (breaking)" — which exists only as uncommitted
+# definitions in the developer's checkout. No pushed commit provides it, so
+# there is nothing a clean machine can fetch, and a pin that could never
+# satisfy OPENSWMM_HYDROCOUPLE_EXPECTED_ABI would only move the failure from a
+# clear configure-time message to a static_assert after a clone.
+#
+# History: bef95cb19310c6560e7f35158515bf27ec57ac29 was the pin for ABI 2
+# (dbb5ac49, ceff514d). When ABI 4 is pushed, set this to that commit's FULL
+# 40-character SHA — never an abbreviation, never a branch: WorkflowStatus was
+# once renumbered without a release, and a moving ref is a silent ABI change.
+set(OPENSWMM_HYDROCOUPLE_GIT_TAG
+    ""
+    CACHE STRING
+    "Pinned HydroCouple commit (full SHA). Empty while the targeted ABI exists \
+only uncommitted; see FETCHCONTENT_SOURCE_DIR_HYDROCOUPLE.")
+
+# D1 (2026-09-29): the ABI the pin stands for, enforced on EVERY resolution
+# path, not only the fetch. Resolution tries a local install before the pinned
+# fetch, so without this the pin governs only machines that have no
+# HydroCouple installed — anyone with a sibling checkout silently compiles
+# against whatever ABI that checkout holds. Measured on the day this was
+# written: pin bef95cb = ABI 2, origin/dev = ABI 3 (7e6d142, releaseState),
+# the developer's uncommitted working tree = ABI 4. HC-1's own "ON via
+# CONFIG" check installed that working tree and compiled against ABI 4
+# believing it was on the pin. `tests/compile_check/hydrocouple_headers.cpp`
+# turns this number into a static_assert, so a mismatch is a build error
+# naming both ABIs rather than a runtime surprise. Bump it together with
+# OPENSWMM_HYDROCOUPLE_GIT_TAG, never separately.
+#
+# 4 since 2026-09-29, by owner decision: the component layer (D2 onward) is
+# written against HydroCouple's ABI-4 contract-consistency round — ownership
+# via std::unique_ptr creators, the normative error channel, the reconciled
+# lifecycle table — rather than ported to it later.
+set(OPENSWMM_HYDROCOUPLE_EXPECTED_ABI "4" CACHE STRING
+    "HYDROCOUPLE_ABI_VERSION the build must compile against; asserted at compile time")
+
+function(_openswmm_hydrocouple_report _how)
+    if(NOT OPENSWMM_HYDROCOUPLE_QUIET)
+        message(STATUS "HydroCouple interfaces: ${_how}")
+    endif()
+endfunction()
+
+# --- 0. an explicit local source tree ----------------------------------------
+#
+# `FETCHCONTENT_SOURCE_DIR_HYDROCOUPLE` is CMake's own override: FetchContent
+# builds the named directory in place instead of cloning. It is the way to
+# compile against UNCOMMITTED HydroCouple definitions, which is what targeting
+# ABI 4 currently requires:
+#
+#   cmake … -DOPENSWMM_WITH_HYDROCOUPLE=ON \
+#           -DFETCHCONTENT_SOURCE_DIR_HYDROCOUPLE=/path/to/HydroCouple
+#
+# It is checked BEFORE find_package, deliberately: a stale install on
+# CMAKE_PREFIX_PATH would otherwise win over the tree the developer named, and
+# a silently-shadowed ABI is the exact failure D1's static_assert exists for.
+# Edits in that tree are picked up on the next build; there is no install step
+# to forget. The compile-check still asserts the ABI, so pointing this at a
+# checkout on the wrong ABI fails the build rather than compiling quietly.
+if(FETCHCONTENT_SOURCE_DIR_HYDROCOUPLE)
+    if(NOT EXISTS "${FETCHCONTENT_SOURCE_DIR_HYDROCOUPLE}/include/hydrocouple.h")
+        message(FATAL_ERROR
+            "FETCHCONTENT_SOURCE_DIR_HYDROCOUPLE='${FETCHCONTENT_SOURCE_DIR_HYDROCOUPLE}' "
+            "does not contain include/hydrocouple.h — not a HydroCouple checkout.")
+    endif()
+    include(FetchContent)
+    set(HYDROCOUPLE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    # GIT_* are required by the declaration but ignored: the source-dir
+    # override short-circuits the download entirely.
+    FetchContent_Declare(HydroCouple
+        GIT_REPOSITORY ${OPENSWMM_HYDROCOUPLE_GIT_REPOSITORY}
+        GIT_TAG        "local-source-override"
+        EXCLUDE_FROM_ALL)
+    FetchContent_MakeAvailable(HydroCouple)
+    if(NOT TARGET HydroCouple::HydroCouple)
+        message(FATAL_ERROR "The HydroCouple tree at "
+            "${FETCHCONTENT_SOURCE_DIR_HYDROCOUPLE} did not define HydroCouple::HydroCouple.")
+    endif()
+    _openswmm_hydrocouple_report(
+        "LOCAL SOURCE ${FETCHCONTENT_SOURCE_DIR_HYDROCOUPLE} (uncommitted definitions "
+        "allowed; ABI ${OPENSWMM_HYDROCOUPLE_EXPECTED_ABI} asserted at compile time)")
+    return()
+endif()
+
+# --- 1. already satisfied -----------------------------------------------------
+if(TARGET HydroCouple::HydroCouple)
+    _openswmm_hydrocouple_report("using the target already defined in this build")
+    return()
+endif()
+
+# --- 2. an installed or sibling copy ----------------------------------------
+find_package(HydroCouple CONFIG QUIET)
+if(HydroCouple_FOUND AND TARGET HydroCouple::HydroCouple)
+    _openswmm_hydrocouple_report(
+        "found ${HydroCouple_VERSION} via CONFIG at ${HydroCouple_DIR}")
+    return()
+endif()
+
+# --- 3. the pinned fetch -----------------------------------------------------
+#
+# History worth keeping: on 2026-09-27 this path was verified BROKEN, because
+# the pin was 6 commits ahead of origin/dev and unpushed — the ABI-2 work the
+# engine targets existed only in the developer's checkout. FetchContent's own
+# message for that is the unhelpful "Failed to checkout tag", which sends the
+# reader looking for a typo. HydroCouple was pushed on 2026-09-29 and this
+# path now resolves; see the verification in the HC-1 commit.
+#
+# What the pre-flight below can and cannot do. `git ls-remote` asks the remote
+# about REFS, so it can prove a branch or tag name is wrong. It cannot ask
+# about an arbitrary commit, so for the SHA pin actually in use an unpushed or
+# mistyped commit still surfaces as FetchContent's opaque checkout error. If
+# you see "Failed to checkout tag" with a SHA pin: check that the commit has
+# been pushed to OPENSWMM_HYDROCOUPLE_GIT_REPOSITORY before anything else.
+if(OPENSWMM_HYDROCOUPLE_GIT_TAG STREQUAL "")
+    message(FATAL_ERROR
+        "OPENSWMM_WITH_HYDROCOUPLE=ON, but this build targets HydroCouple ABI "
+        "${OPENSWMM_HYDROCOUPLE_EXPECTED_ABI}, which no pushed commit provides yet, "
+        "and no installed copy was found.\n"
+        "Build against a local checkout:\n"
+        "  -DFETCHCONTENT_SOURCE_DIR_HYDROCOUPLE=/path/to/HydroCouple\n"
+        "Once that ABI is pushed, set OPENSWMM_HYDROCOUPLE_GIT_TAG to its full SHA.")
+endif()
+
+include(FetchContent)
+
+# Ask the remote whether the pin is even reachable before cloning, so the
+# failure is one message instead of a clone plus a checkout error.
+find_package(Git QUIET)
+if(GIT_EXECUTABLE)
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} ls-remote --exit-code
+                ${OPENSWMM_HYDROCOUPLE_GIT_REPOSITORY} ${OPENSWMM_HYDROCOUPLE_GIT_TAG}
+        RESULT_VARIABLE _hc_lsremote_rc
+        OUTPUT_QUIET ERROR_QUIET)
+    # A SHA is not a ref, so ls-remote failing is expected for one and
+    # meaningful for the other. Only a ref-shaped pin is checked here.
+    if(NOT OPENSWMM_HYDROCOUPLE_GIT_TAG MATCHES "^[0-9a-fA-F]+$"
+       AND NOT _hc_lsremote_rc EQUAL 0)
+        message(FATAL_ERROR
+            "OPENSWMM_HYDROCOUPLE_GIT_TAG '${OPENSWMM_HYDROCOUPLE_GIT_TAG}' is "
+            "not a ref on ${OPENSWMM_HYDROCOUPLE_GIT_REPOSITORY}.")
+    endif()
+endif()
+
+# HydroCouple's own CMakeLists offers tests; we want the interface target only.
+set(HYDROCOUPLE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+    HydroCouple
+    GIT_REPOSITORY ${OPENSWMM_HYDROCOUPLE_GIT_REPOSITORY}
+    GIT_TAG        ${OPENSWMM_HYDROCOUPLE_GIT_TAG}
+    GIT_SHALLOW    FALSE   # a SHA cannot be fetched shallowly from all remotes
+    EXCLUDE_FROM_ALL
+)
+FetchContent_MakeAvailable(HydroCouple)
+
+if(NOT TARGET HydroCouple::HydroCouple)
+    message(FATAL_ERROR
+        "HydroCouple was fetched at ${OPENSWMM_HYDROCOUPLE_GIT_TAG} but did "
+        "not define HydroCouple::HydroCouple. The interface target's name "
+        "changed, or the pin points at a commit that predates it.")
+endif()
+
+_openswmm_hydrocouple_report("fetched at pinned ${OPENSWMM_HYDROCOUPLE_GIT_TAG}")

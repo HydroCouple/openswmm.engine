@@ -1,0 +1,8 @@
+from pathlib import Path
+import shutil,subprocess,json,hashlib
+root=Path.cwd();out=root/'tests/verification/surface_r3_2026-10-05';paths={};build=out/'isolated/build'
+for side,src in [('baseline',root/'tests/verification/surface_r2_2026-10-05/isolated/candidate'),('candidate',build/'src/engine')]:
+ dest=out/'isolated'/side;dest.mkdir(exist_ok=True);lib=dest/'libopenswmm.engine.6.0.0.dylib';cli=dest/'openswmm';shutil.copy2(src/'libopenswmm.engine.6.0.0.dylib',lib);shutil.copy2(src/'openswmm' if side=='baseline' else build/'src/cli/openswmm',cli)
+ links=subprocess.check_output(['otool','-L',str(cli)]).decode().splitlines();old=next(l.strip().split(' (')[0] for l in links if 'libopenswmm.engine.' in l);subprocess.run(['install_name_tool','-id',str(lib),str(lib)],check=True);subprocess.run(['install_name_tool','-change',old,str(lib),str(cli)],check=True);subprocess.run(['codesign','--force','--sign','-',str(lib)],check=True);subprocess.run(['codesign','--force','--sign','-',str(cli)],check=True)
+ paths[side]={'cli_sha256':hashlib.sha256(cli.read_bytes()).hexdigest(),'engine_sha256':hashlib.sha256(lib.read_bytes()).hexdigest(),'engine_link':subprocess.check_output(['otool','-L',str(cli)]).decode()}
+(out/'isolated/provenance.json').write_text(json.dumps({'base_commit':'35547cd082944622b5da459e56967e0e1c7d677c','baseline_origin':'Verified R2 isolated candidate, numerical source matches committed R2 HEAD; copied with isolated library install names.','candidate_origin':'Fresh HEAD archive plus task.patch and new ET test; Release Ninja, same AppleClang, dependency prefix, top-level HDF5 dependency shim and LTO as R2.','binaries':paths},indent=2)+'\n')

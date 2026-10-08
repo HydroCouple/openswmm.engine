@@ -29,6 +29,7 @@
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_links.h"
 #include "../input/PostParseResolver.hpp"
+#include "../hydraulics/Link.hpp"
 #include "../hydraulics/Street.hpp"
 #include "../hydraulics/Transect.hpp"
 #include "TypeHelpers.hpp"
@@ -174,6 +175,9 @@ SWMM_ENGINE_API int swmm_link_pop_last(SWMM_Engine engine, const char* id) {
     if (ctx.link_names.name_of(tail) != id)
         return SWMM_ERR_BADINDEX;
 
+    auto& anchors = ctx.lid_node_outlets;
+    anchors.erase(std::remove_if(anchors.begin(), anchors.end(),
+        [tail](const auto& a) { return a.link == tail; }), anchors.end());
     ctx.link_names.pop_back();
     ctx.links.erase_at(tail);
     ctx.link_subtypes.erase_link(tail, ctx.links.count());
@@ -197,6 +201,15 @@ SWMM_ENGINE_API int swmm_link_set_nodes(SWMM_Engine engine, int idx,
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     ctx.links.node1[static_cast<std::size_t>(idx)] = from_node_idx;
     ctx.links.node2[static_cast<std::size_t>(idx)] = to_node_idx;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_links_restore_authored_orientation(SWMM_Engine engine, int* count) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_GEOMETRY(ctx);
+    const int n = openswmm::input::restore_authored_orientation(ctx);
+    if (count) *count = n;
     return SWMM_OK;
 }
 
@@ -250,13 +263,24 @@ SWMM_ENGINE_API int swmm_link_set_roughness(SWMM_Engine engine, int idx, double 
     return SWMM_OK;
 }
 
+// Link offsets cross the C API as AUTHORED values (what the .inp carries). A
+// resolved FILLED_CIRCULAR conduit stores them raised by the sediment depth
+// (link::filledCircularOffsetBump); the accessors add / remove that amount so a
+// get→set round trip and a saved file both keep the authored value.
+static double offsetBump(const openswmm::SimulationContext& ctx, int idx) {
+    return openswmm::link::filledCircularOffsetBump(
+        ctx.links, static_cast<std::size_t>(idx),
+        ctx.state != openswmm::EngineState::BUILDING);
+}
+
 SWMM_ENGINE_API int swmm_link_set_offset_up(SWMM_Engine engine, int idx, double offset) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    // units: display LENGTH -> internal ft
-    ctx.links.offset1[static_cast<std::size_t>(idx)] = to_internal(ctx, openswmm::ucf::LENGTH, offset);
+    // units: display LENGTH -> internal ft; authored -> stored (sediment bump)
+    ctx.links.offset1[static_cast<std::size_t>(idx)] =
+        to_internal(ctx, openswmm::ucf::LENGTH, offset) + offsetBump(ctx, idx);
     return SWMM_OK;
 }
 
@@ -265,8 +289,9 @@ SWMM_ENGINE_API int swmm_link_set_offset_dn(SWMM_Engine engine, int idx, double 
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    // units: display LENGTH -> internal ft
-    ctx.links.offset2[static_cast<std::size_t>(idx)] = to_internal(ctx, openswmm::ucf::LENGTH, offset);
+    // units: display LENGTH -> internal ft; authored -> stored (sediment bump)
+    ctx.links.offset2[static_cast<std::size_t>(idx)] =
+        to_internal(ctx, openswmm::ucf::LENGTH, offset) + offsetBump(ctx, idx);
     return SWMM_OK;
 }
 
@@ -592,6 +617,15 @@ SWMM_ENGINE_API int swmm_link_set_xsect(SWMM_Engine engine, int idx,
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     auto uidx = static_cast<std::size_t>(idx);
 
+    // The stored offsets of a resolved FILLED_CIRCULAR conduit carry the
+    // sediment bump (see swmm_link_set_offset_up). A shape edit changes that
+    // amount, not the authored offsets, so every exit below re-bases them.
+    const double old_bump = offsetBump(ctx, idx);
+    const auto rebump = [&]() {
+        const double d = offsetBump(ctx, idx) - old_bump;
+        if (d != 0.0) { ctx.links.offset1[uidx] += d; ctx.links.offset2[uidx] += d; }
+    };
+
     auto xs = static_cast<openswmm::XsectShape>(shape);
     ctx.links.xsect_shape[uidx] = xs;
 
@@ -644,6 +678,7 @@ SWMM_ENGINE_API int swmm_link_set_xsect(SWMM_Engine engine, int idx,
         ctx.links.xsect_a_full[uidx] = built.a_full;
         ctx.links.xsect_r_full[uidx] = built.r_full;
         ctx.links.xsect_w_max[uidx]  = built.w_max;
+        rebump();
         return SWMM_OK;
     }
 
@@ -693,6 +728,7 @@ SWMM_ENGINE_API int swmm_link_set_xsect(SWMM_Engine engine, int idx,
         ctx.links.xsect_a_full[uidx] = built.a_full;
         ctx.links.xsect_r_full[uidx] = built.r_full;
         ctx.links.xsect_w_max[uidx]  = built.w_max;
+        rebump();
         return SWMM_OK;
     }
 
@@ -745,6 +781,41 @@ SWMM_ENGINE_API int swmm_link_set_xsect(SWMM_Engine engine, int idx,
             ctx.links.xsect_w_max[uidx]  = tw;
             break;
         }
+        case openswmm::XsectShape::FILLED_CIRCULAR: {
+            // Same single source of truth as PostParseResolver's default arm:
+            // legacy-faithful xsect::setParams on the RAW Geom1–4 retained
+            // above, so the sediment fields (y_bot / a_bot / s_bot / r_bot) and
+            // the reduced full-flow values match a deck open exactly — the
+            // offset bump re-based below reads y_bot. Invalid geometry
+            // (sediment >= diameter) keeps the generic fallback with no bump.
+            const int us = openswmm::ucf::getUnitSystem(
+                static_cast<int>(ctx.options.flow_units));
+            const double ucf_len =
+                openswmm::ucf::Ucf[openswmm::ucf::LENGTH][static_cast<std::size_t>(us)];
+            openswmm::XSectParams xsp;
+            const double p[4] = { ctx.links.xsect_geom1[uidx], ctx.links.xsect_geom2[uidx],
+                                  ctx.links.xsect_geom3[uidx], ctx.links.xsect_geom4[uidx] };
+            if (openswmm::xsect::setParams(xsp, openswmm::link::translateShape(xs), p, ucf_len) == 0 &&
+                xsp.a_full > 0.0) {
+                ctx.links.xsect_y_full[uidx] = xsp.y_full;
+                ctx.links.xsect_a_full[uidx] = xsp.a_full;
+                ctx.links.xsect_r_full[uidx] = xsp.r_full;
+                ctx.links.xsect_s_full[uidx] = xsp.s_full;
+                ctx.links.xsect_s_max[uidx]  = xsp.s_max;
+                ctx.links.xsect_w_max[uidx]  = xsp.w_max;
+                ctx.links.xsect_yw_max[uidx] = xsp.yw_max;
+                ctx.links.xsect_y_bot[uidx]  = xsp.y_bot;
+                ctx.links.xsect_a_bot[uidx]  = xsp.a_bot;
+                ctx.links.xsect_s_bot[uidx]  = xsp.s_bot;
+                ctx.links.xsect_r_bot[uidx]  = xsp.r_bot;
+                break;
+            }
+            ctx.links.xsect_y_full[uidx] = geom1;
+            ctx.links.xsect_a_full[uidx] = geom1 * geom2;
+            ctx.links.xsect_w_max[uidx]  = geom2;
+            ctx.links.xsect_y_bot[uidx]  = 0.0;
+            break;
+        }
         default: {
             // Generic fallback: store geom1 as y_full, compute area if possible
             ctx.links.xsect_y_full[uidx] = geom1;
@@ -755,6 +826,7 @@ SWMM_ENGINE_API int swmm_link_set_xsect(SWMM_Engine engine, int idx,
     }
 
     (void)geom3; (void)geom4;
+    rebump();
     return SWMM_OK;
 }
 
@@ -922,16 +994,24 @@ SWMM_ENGINE_API int swmm_link_get_velocity(SWMM_Engine engine, int idx, double* 
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     if (velocity) {
         auto uidx = static_cast<std::size_t>(idx);
-        double q = ctx.links.flow[uidx];
-        double d = ctx.links.depth[uidx];
-        double y_full = ctx.links.xsect_y_full[uidx];
-        double a_full = ctx.links.xsect_a_full[uidx];
-        // Approximate flow area from depth/y_full ratio times full area
-        double area = (y_full > 0.0 && a_full > 0.0 && d > 0.0)
-                      ? a_full * (d / y_full)
-                      : 0.0;
+        // Same arithmetic as the .out reporting path (link::getVelocity at
+        // the published depth): the true cross-section area replaces the old
+        // linear depth-ratio approximation, and multi-barrel conduits divide
+        // the aggregate flow across barrels. The published depth is clamped
+        // to y_full, so above the crown this is the conveyance velocity —
+        // never diluted by Preissmann-slot area.
+        double v_internal = 0.0;
+        if (ctx.links.xsect_y_full[uidx] > 0.0) {
+            const openswmm::XSectParams xs = openswmm::link::buildXSectParams(
+                ctx.links, uidx, &ctx.transect_tables);
+            const int cr = ctx.link_subtypes.conduit_row(idx);
+            const int nb = (cr >= 0)
+                ? ctx.link_subtypes.conduits.barrels[static_cast<std::size_t>(cr)]
+                : 1;
+            v_internal = openswmm::link::getVelocity(
+                xs, ctx.links.flow[uidx], ctx.links.depth[uidx], nb);
+        }
         // units: internal ft/s -> display LENGTH (velocity carries LENGTH UCF)
-        const double v_internal = (area > 1.0e-12) ? q / area : 0.0;
         *velocity = to_display(ctx, openswmm::ucf::LENGTH, v_internal);
     }
     return SWMM_OK;
@@ -1116,14 +1196,21 @@ SWMM_ENGINE_API int swmm_link_get_velocities_bulk(SWMM_Engine engine, double* bu
     const int n = std::min(count, ctx.n_links());
     for (int i = 0; i < n; ++i) {
         const auto ui = static_cast<std::size_t>(i);
-        const double q = ctx.links.flow[ui];
-        const double d = ctx.links.depth[ui];
-        const double y_full = ctx.links.xsect_y_full[ui];
-        const double a_full = ctx.links.xsect_a_full[ui];
-        const double area = (y_full > 0.0 && a_full > 0.0 && d > 0.0)
-                            ? a_full * (d / y_full) : 0.0;
+        // Verbatim the scalar swmm_link_get_velocity arithmetic (true
+        // cross-section area at the published depth, aggregate flow split
+        // across barrels) so bulk vs scalar stays bit-equivalent.
+        double v_internal = 0.0;
+        if (ctx.links.xsect_y_full[ui] > 0.0) {
+            const openswmm::XSectParams xs = openswmm::link::buildXSectParams(
+                ctx.links, ui, &ctx.transect_tables);
+            const int cr = ctx.link_subtypes.conduit_row(i);
+            const int nb = (cr >= 0)
+                ? ctx.link_subtypes.conduits.barrels[static_cast<std::size_t>(cr)]
+                : 1;
+            v_internal = openswmm::link::getVelocity(
+                xs, ctx.links.flow[ui], ctx.links.depth[ui], nb);
+        }
         // units: internal ft/s -> display LENGTH (velocity carries LENGTH UCF)
-        const double v_internal = (area > 1.0e-12) ? q / area : 0.0;
         buf[i] = to_display(ctx, openswmm::ucf::LENGTH, v_internal);
     }
     return SWMM_OK;
@@ -1516,8 +1603,9 @@ SWMM_ENGINE_API int swmm_link_get_offset_up(SWMM_Engine engine, int idx, double*
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    // units: internal ft -> display LENGTH
-    if (offset) *offset = to_display(ctx, openswmm::ucf::LENGTH, ctx.links.offset1[static_cast<std::size_t>(idx)]);
+    // units: internal ft -> display LENGTH; stored -> authored (sediment bump)
+    if (offset) *offset = to_display(ctx, openswmm::ucf::LENGTH,
+                                     ctx.links.offset1[static_cast<std::size_t>(idx)] - offsetBump(ctx, idx));
     return SWMM_OK;
 }
 
@@ -1525,8 +1613,9 @@ SWMM_ENGINE_API int swmm_link_get_offset_dn(SWMM_Engine engine, int idx, double*
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
-    // units: internal ft -> display LENGTH
-    if (offset) *offset = to_display(ctx, openswmm::ucf::LENGTH, ctx.links.offset2[static_cast<std::size_t>(idx)]);
+    // units: internal ft -> display LENGTH; stored -> authored (sediment bump)
+    if (offset) *offset = to_display(ctx, openswmm::ucf::LENGTH,
+                                     ctx.links.offset2[static_cast<std::size_t>(idx)] - offsetBump(ctx, idx));
     return SWMM_OK;
 }
 

@@ -42,11 +42,17 @@
  *          on the mesh under this engine — the state carries pollutant
  *          rows first (np-aligned) then the MSX rows; the R4b
  *          element-local limitation is LEGACY-only. WALL species fall
- *          back to LEGACY with a warning. Still pending: treatment
- *          interop, sources/BCs, and mass-balance ledger rows (E5);
- *          direct consumption of the FV solver's own cell state instead
- *          of the projection (E2b); storage mixing models beyond CMSTR
- *          (E2b, shared with LARD).
+ *          back to LEGACY with a warning.
+ *
+ *          Treatment interop, sources/BCs and the mass-balance ledger rows
+ *          LANDED with E5a (`cbb9d321`) and E5b (`721ae60c`) — this comment
+ *          listed all three as pending until 2026-08-25, five rounds after
+ *          the fact, and a program-state audit read it as authoritative.
+ *
+ *          Genuinely still pending: direct consumption of the FV solver's
+ *          own cell state instead of the projection (E2b); storage mixing
+ *          models beyond CMSTR (E2b, shared with LARD); tidal reverse-flow
+ *          boundary concentration (E2b, no scaffolding at all).
  *
  * @ingroup engine_transport
  *
@@ -149,6 +155,18 @@ private:
     std::vector<double> node_mass_;
     std::vector<double> node_vol_;
 
+    // Lateral loads at VIRTUAL junctions (plans/VJ_LATERAL_INFLOW_PLAN_
+    // 2026-09-04.md §E4). A virtual junction owns no faces — its conduits
+    // were spliced into one interior face — so a node store there could
+    // never discharge and the per-step resync zeroed it: the load was
+    // destroyed. Its water and mass go straight into the two cells adjoining
+    // the splice, half each, mirroring the hydraulic solver's cell_qlat_
+    // split. Rebuilt every substep; has_vj_src_ gates the whole path so a
+    // deck without a fed virtual junction executes no new arithmetic.
+    std::vector<double> cell_src_vol_;    ///< water (ft³) per cell this substep
+    std::vector<double> cell_src_mass_;   ///< [s * nc + c] mass per cell this substep
+    bool has_vj_src_ = false;
+
     // Kernel scratch (sized once in init; see SpeciesKernelView).
     std::vector<double> f_mass_, f_sstar_, f_phi_l_, f_phi_r_, f_phi_flux_,
         cell_slope_, lo_flux_, anti_flux_, td_, anew_, rplus_, rminus_, cell_u_;
@@ -190,9 +208,23 @@ private:
     /// pollutants and MSX); -1 when WATER_AGE is off.
     int age_row_ = -1;
 
+    /// U2: MSX species rows carried on the mesh (rows np .. np+nm_-1); the
+    /// [INFLOWS] species loads (ReactionData::msx_ext_mass_in) land there.
+    int nm_ = 0;
+
     /// H4: per-cell surface heat exchange (plan §1's source term), the
     /// mesh twin of the LEGACY mirror's whole-link application.
     void applyHeatFluxes(SimulationContext& ctx, double dt);
+
+    /// H6b-ARD: per-cell bed/channel solute exchange (pollutant + MSX rows;
+    /// the reserved age/temperature rows are excluded by construction).
+    void applyBedSoluteExchange(SimulationContext& ctx, double dt);
+
+    /// PE1: the LinkData index a cell belongs to, or -1. Cells resolve to
+    /// their parent link for per-element attribute lookup (D-PE1); -1 makes
+    /// the accessors fall back to the global, which is the safe answer for a
+    /// cell whose conduit row cannot be resolved.
+    int cellLink(std::size_t cell) const noexcept;
 
     /// H4: state row of the reserved __TEMPERATURE__ species — the LAST
     /// row, after age, matching the REPORTED column order fixed in H1 so a

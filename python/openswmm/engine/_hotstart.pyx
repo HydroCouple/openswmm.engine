@@ -53,12 +53,26 @@ is exposed via :attr:`Solver.save_schedule`.
 
 import os
 from collections.abc import MutableSequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, NamedTuple, Optional
 
 from ._common cimport *
 from ._solver cimport Solver
 from ._dates import datetime_to_oadate, oadate_to_datetime
+
+cdef extern from "openswmm/engine/openswmm_hotstart.h":
+    enum:
+        SWMM_ERR_HOTSTART
+    const char* swmm_hotstart_last_io_error()
+
+cdef void _check_io(int rc) except *:
+    cdef const char* detail
+    if rc == SWMM_ERR_HOTSTART:
+        detail = swmm_hotstart_last_io_error()
+        if detail != NULL and detail[0] != 0:
+            from ._exceptions import raise_for_code
+            raise_for_code(rc, detail.decode('utf-8'))
+    _check(rc)
 
 
 cdef class HotStart:
@@ -77,12 +91,13 @@ cdef class HotStart:
     def save_from(Solver solver, path) -> None:
         """Save ``solver`` state to ``path``. Raises on failure."""
         cdef bytes b = os.fspath(path).encode('utf-8')
-        cdef SWMM_Engine h = solver._handle
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>solver.handle
         cdef const char* p = b
         cdef int rc
-        with nogil:
-            rc = swmm_hotstart_save(h, p)
-        _check(rc)
+        with solver._operation(<size_t>h):
+            with nogil:
+                rc = swmm_hotstart_save(h, p)
+            _check_io(rc)
 
     @classmethod
     def open(cls, path) -> "HotStart":
@@ -94,7 +109,7 @@ cdef class HotStart:
         cdef int rc
         with nogil:
             rc = swmm_hotstart_open(p, &hs)
-        _check(rc)
+        _check_io(rc)
         obj._handle = hs
         return obj
 
@@ -123,10 +138,10 @@ cdef class HotStart:
     def apply(self, Solver solver) -> None:
         """Apply this hot start to ``solver``. The solver must be
         INITIALIZED (post-:meth:`Solver.initialize`, pre-:meth:`Solver.start`)."""
-        cdef SWMM_Engine h = solver._handle
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>solver.handle
         cdef SWMM_HotStart hs = self._handle
         cdef int rc
-        with nogil:
+        with solver._operation(<size_t>h):
             rc = swmm_hotstart_apply(h, hs)
         _check(rc)
 
@@ -136,9 +151,17 @@ cdef class HotStart:
 
     @property
     def sim_datetime(self) -> datetime:
-        """Moment at which the saved state was captured."""
+        """Moment at which the saved state was captured: the saving run's
+        start date plus the elapsed simulation time."""
+        cdef double elapsed = 0.0
+        _check(swmm_hotstart_get_sim_time(self._handle, &elapsed))
+        return self.start_datetime + timedelta(seconds=elapsed)
+
+    @property
+    def start_datetime(self) -> datetime:
+        """Start date and time of the run that saved the state."""
         cdef double v = 0.0
-        _check(swmm_hotstart_get_sim_time(self._handle, &v))
+        _check(swmm_hotstart_get_start_date(self._handle, &v))
         return oadate_to_datetime(v)
 
     @property

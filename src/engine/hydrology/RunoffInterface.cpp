@@ -29,6 +29,7 @@
  */
 
 #include "RunoffInterface.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include <cstring>
@@ -48,7 +49,7 @@ constexpr double MIN_RUNOFF = 2.31481e-8;
 
 int RunoffInterfaceFile::openForWrite(const std::string& path, int n_subcatch,
                                       int n_pollut, int flow_units) {
-    fp_ = std::fopen(path.c_str(), "wb");
+    fp_ = openswmm::io::fopen_utf8(path, "wb");
     if (!fp_) return -1;
 
     writing_ = true;
@@ -86,7 +87,7 @@ int RunoffInterfaceFile::openForWrite(const std::string& path, int n_subcatch,
 
 int RunoffInterfaceFile::openForRead(const std::string& path, int n_subcatch,
                                      int n_pollut, int flow_units) {
-    fp_ = std::fopen(path.c_str(), "rb");
+    fp_ = openswmm::io::fopen_utf8(path, "rb");
     if (!fp_) return -1;
 
     writing_ = false;

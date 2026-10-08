@@ -258,7 +258,37 @@ done
 echo "$((${#DECKS[@]} - moved - missing))/${#DECKS[@]} identical, $moved moved, $missing missing"
 echo "provenance: $PROV"
 
+# ---------------------------------------------------------------------------
+# 2D surface decks (overland transport S1a, 2026-09-01).
+#
+# UNIFIED_PLAN_STATUS §8 recorded "0 2D decks" in this corpus for the whole
+# 1D quality program, while a separate 32-deck bitwise script covered the
+# surface solver and was NEVER wired in here.  Overland transport S1 edits
+# fireFaces/fireCells -- the LTS marcher itself -- so "corpus green" from
+# the 1D decks alone would say nothing about the code that changed.
+#
+# The 2D script keeps its own artefact directory and pass/fail accounting;
+# this runner only makes its verdict part of THIS verdict.  Same two
+# binaries, same before/after discipline, no stored baselines.
+# ---------------------------------------------------------------------------
+# Anchored on $HERE (resolved at the top, BEFORE any cd) — a relative
+# BASH_SOURCE re-resolved this late broke once the runner had changed
+# directory, and the 2D section silently degraded to "UNCOVERED".
+TWOD_SCRIPT="$HERE/../scripts/trackI_bitwise_regression.sh"
+twod_rc=0
+if [ -x "$TWOD_SCRIPT" ]; then
+    echo
+    echo "---- 2D surface decks (trackI_bitwise_regression.sh) ----"
+    "$TWOD_SCRIPT" "$BASE_CLI" "$PATCHED_CLI"
+    twod_rc=$?
+    [ $twod_rc -eq 0 ] || echo "2D bitwise regression: NONZERO exit $twod_rc -- attribute it"
+else
+    echo
+    echo "2D surface decks: $TWOD_SCRIPT not executable -- the surface solver is UNCOVERED by this run"
+    twod_rc=3
+fi
+
 # A moved deck is not automatically a defect -- the snow deck is expected to
 # move on a snow change.  It is always something to ATTRIBUTE, which is why
 # this exits nonzero and makes you say so out loud.
-[ $moved -eq 0 ] && [ $missing -eq 0 ]
+[ $moved -eq 0 ] && [ $missing -eq 0 ] && [ $twod_rc -eq 0 ]

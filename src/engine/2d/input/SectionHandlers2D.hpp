@@ -91,6 +91,15 @@ std::string parse2DTriangleLine(const std::vector<std::string>& tokens,
                                  MeshData& mesh);
 
 /**
+ * @brief Parse a single line from the [2D_QUADS] section.
+ *
+ * Format: V1 V2 V3 V4 MANNINGS_N [INIT_DEPTH] [TAG]
+ * Quads are appended after every triangle (cell index = n_triangles + j).
+ */
+std::string parse2DQuadLine(const std::vector<std::string>& tokens,
+                            MeshData& mesh);
+
+/**
  * @brief Parse a single line from the [2D_INITIAL_VELOCITY] section.
  *
  * Format: TRI U V   (m/s; default 0,0 — rows may cover any subset)
@@ -241,8 +250,45 @@ bool is2DRetiredOptionKey(const std::string& key);
  * @return The value token, or an empty string for unknown keys
  *         (and for an unset OUTPUT_FILE, whose value token is optional).
  */
+/**
+ * @brief Token ↔ bitmask helpers for [2D_OPTIONS] REPORT_2D_VARIABLES.
+ *
+ * report2DVarTokens() lists the group tokens in bit order (DEPTH, VELOCITY,
+ * EDGE_FLUX, NODE_HEAD, SPECIES, RAINFALL, INFILTRATION, COUPLING,
+ * GRADIENTS, CONTINUITY, ENVELOPES, BUILDUP (S7), GROUNDWATER, GW_DETAILED
+ * (G-O)). parseReport2DVars() accepts a
+ * whitespace/comma-separated list of those tokens or one of the presets
+ * DEFAULT | MINIMAL | ALL (case-insensitive); it returns an empty error
+ * string on success. formatReport2DVars() writes a preset name when the mask
+ * equals one, else the token list.
+ */
+const std::vector<std::string>& report2DVarTokens();
+std::string parseReport2DVars(const std::string& text, unsigned& mask);
+std::string formatReport2DVars(unsigned mask);
+
 std::string format2DOptionValue(const SolverOptions2D& opts,
                                 const std::string& key);
+
+/**
+ * @brief format2DOptionValue with the E2 infiltration keys resolved against
+ *        the model's [2D_INFILTRATION*] rows: INFIL_STEP falls back to the
+ *        section value, INFIL_DEFAULT_METHOD to the '*' row's method.
+ *        INFILTRATION stays AUTO | YES | NO as stored. @p infil may be null.
+ */
+std::string format2DOptionValueEx(const SolverOptions2D& opts,
+                                  const Infil2D* infil,
+                                  const std::string& key);
+
+/**
+ * @brief As above, and additionally resolves the groundwater enables against
+ *        the `[2D_AQUIFER*]` authoring: GROUNDWATER AUTO reports the YES|NO
+ *        the kernel will actually take, and GW_ET reads the
+ *        `[2D_AQUIFER_OPTIONS]` field that owns it. @p aquifer may be null.
+ */
+std::string format2DOptionValueEx(const SolverOptions2D& opts,
+                                  const Infil2D* infil,
+                                  const SubsurfaceConfig* aquifer,
+                                  const std::string& key);
 
 /**
  * @brief Register all 2D input section handlers with the section registry.
@@ -258,7 +304,19 @@ void register2DSections(MeshData& mesh,
                         SolverOptions2D& options,
                         std::vector<SurfaceRouter2D::PendingBoundaryRow>& pending_bc_rows,
                         std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow>& pending_ec_rows,
+                        std::vector<SurfaceRouter2D::PendingInitialQualityRow>& pending_iq_rows,
+                        std::vector<SurfaceRouter2D::PendingBoundaryQualityRow>& pending_bq_rows,
                         input::SectionRegistry& registry);
+
+/// S1/S2 — one `[2D_INITIAL_QUALITY]` line. Empty string = OK.
+std::string parse2DInitialQualityLine(
+    const std::vector<std::string>& tokens,
+    std::vector<SurfaceRouter2D::PendingInitialQualityRow>& rows);
+
+/// S2 — one `[2D_BOUNDARY_QUALITY]` line (`TRI EDGE SPECIES CONC`). Empty = OK.
+std::string parse2DBoundaryQualityLine(
+    const std::vector<std::string>& tokens,
+    std::vector<SurfaceRouter2D::PendingBoundaryQualityRow>& rows);
 
 /**
  * @brief Load 2D mesh sections from an external file.
@@ -295,7 +353,9 @@ std::string load2DMeshExternalFile(MeshData& mesh,
                                    Infil2D* infil,
                                    const std::string& mesh_file,
                                    const std::string& inp_base_dir,
-                                   std::vector<std::string>* warnings = nullptr);
+                                   std::vector<std::string>* warnings = nullptr,
+                                   std::vector<SurfaceRouter2D::PendingInitialQualityRow>* pending_iq_rows = nullptr,
+                                   std::vector<SurfaceRouter2D::PendingBoundaryQualityRow>* pending_bq_rows = nullptr);
 
 /**
  * @brief Scan @p inp_path for a `;; UNITS: <value>` comment header and set

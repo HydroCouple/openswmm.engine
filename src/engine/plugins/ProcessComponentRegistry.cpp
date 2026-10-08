@@ -24,6 +24,7 @@
  */
 
 #include "ProcessComponentRegistry.hpp"
+#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
 
 #include <algorithm>
 #include <cctype>
@@ -121,9 +122,15 @@ std::string read_component_config(const std::string& path,
     out.sections.clear();
 
     namespace fs = std::filesystem;
-    fs::path p(path);
-    if (p.is_relative() && !base_dir.empty()) p = fs::path(base_dir) / p;
-    out.source_path = p.string();
+    // utf8_path, not fs::path(std::string): the latter decodes in the native
+    // NARROW encoding on Windows (the ANSI code page), which is the issue #7
+    // bug one level up from the open call.
+    fs::path p = openswmm::io::utf8_path(path);
+    if (p.is_relative() && !base_dir.empty())
+        p = openswmm::io::utf8_path(base_dir) / p;
+    // path_utf8, not p.string(): source_path flows on to InpWriter as
+    // pc.resolved_config_path, which re-reads it as UTF-8.
+    out.source_path = openswmm::io::path_utf8(p);
 
     std::ifstream in(p);
     if (!in.is_open())
@@ -157,7 +164,7 @@ ProcessComponentRegistry::ProcessComponentRegistry() {
     };
     for (const auto& pl : planned)
         entries_[pl.id] =
-            ProcessComponentEntry{pl.desc, pl.phase, nullptr};
+            ProcessComponentEntry{pl.desc, pl.phase, nullptr, nullptr};
 }
 
 ProcessComponentRegistry& ProcessComponentRegistry::instance() {
@@ -167,9 +174,11 @@ ProcessComponentRegistry& ProcessComponentRegistry::instance() {
 
 void ProcessComponentRegistry::register_component(const std::string& id,
                                                   std::string description,
-                                                  ComponentConfigApply apply) {
+                                                  ComponentConfigApply apply,
+                                                  ComponentConfigSave save) {
     entries_[id] =
-        ProcessComponentEntry{std::move(description), std::string{}, std::move(apply)};
+        ProcessComponentEntry{std::move(description), std::string{},
+                              std::move(apply), std::move(save)};
 }
 
 const ProcessComponentEntry* ProcessComponentRegistry::find(

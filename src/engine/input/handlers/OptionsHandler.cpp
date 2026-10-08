@@ -32,19 +32,19 @@
  *  FLOW_UNITS           → options.flow_units
  *  INFILTRATION         → options.infiltration
  *  FLOW_ROUTING         → options.routing_model
- *  LINK_OFFSETS         → (ignored — legacy compatibility)
- *  MIN_SLOPE            → (stored in ext_options — not used by new solver yet)
+ *  LINK_OFFSETS         → options.link_offsets (0 = DEPTH, 1 = ELEVATION)
+ *  MIN_SLOPE            → options.min_slope
  *  ALLOW_PONDING        → options.allow_ponding
- *  SKIP_STEADY_STATE    → (ignored)
+ *  SKIP_STEADY_STATE    → options.skip_steady_state
  *  START_DATE           → options.start_date (OADate (days since 12/30/1899))
  *  START_TIME           → combined with START_DATE
  *  END_DATE             → options.end_date
  *  END_TIME             → combined with END_DATE
  *  REPORT_START_DATE    → options.report_start
  *  REPORT_START_TIME    → combined with REPORT_START_DATE
- *  SWEEP_START          → (ext_options)
- *  SWEEP_END            → (ext_options)
- *  DRY_DAYS             → (ext_options)
+ *  SWEEP_START          → options.sweep_start (MM/DD → day-of-year)
+ *  SWEEP_END            → options.sweep_end (MM/DD → day-of-year)
+ *  DRY_DAYS             → options.dry_days
  *  REPORT_STEP          → options.report_step (HH:MM:SS or seconds)
  *  WET_STEP             → options.wet_step
  *  DRY_STEP             → options.dry_step
@@ -100,6 +100,35 @@ static std::string norm(std::string_view sv) {
     return Tokenizer::to_upper(sv);
 }
 
+// legacy findmatch / match (input.c): a keyword matches when it is a
+// case-insensitive PREFIX of the token — `STEADYFLOW` is STEADY, `DYNWAVE2`
+// DYNWAVE. `tok` is already upper-cased by norm().
+static bool legacyPrefix(const std::string& tok, const char* keyword) {
+    const std::size_t n = std::strlen(keyword);
+    return tok.size() >= n && tok.compare(0, n, keyword) == 0;
+}
+
+// legacy OptionWords (keywords.c): project_readOption warns only for a key
+// none of these prefixes.
+static bool legacy_knows_option(const std::string& key) {
+    static const char* const kWords[] = {
+        "FLOW_UNITS", "INFILTRATION", "FLOW_ROUTING", "START_DATE",
+        "START_TIME", "END_DATE", "END_TIME", "REPORT_START_DATE",
+        "REPORT_START_TIME", "SWEEP_START", "SWEEP_END", "DRY_DAYS",
+        "WET_STEP", "DRY_STEP", "ROUTING_STEP", "RULE_STEP", "REPORT_STEP",
+        "ALLOW_PONDING", "INERTIAL_DAMPING", "SLOPE_WEIGHTING",
+        "VARIABLE_STEP", "NORMAL_FLOW_LIMITED", "LENGTHENING_STEP",
+        "MIN_SURFAREA", "COMPATIBILITY", "SKIP_STEADY_STATE", "TEMPDIR",
+        "IGNORE_RAINFALL", "FORCE_MAIN_EQUATION", "LINK_OFFSETS", "MIN_SLOPE",
+        "IGNORE_SNOWMELT", "IGNORE_GROUNDWATER", "IGNORE_ROUTING",
+        "IGNORE_QUALITY", "MAX_TRIALS", "HEAD_TOLERANCE", "SYS_FLOW_TOL",
+        "LAT_FLOW_TOL", "IGNORE_RDII", "MINIMUM_STEP", "THREADS",
+        "SURCHARGE_METHOD", "OUTFALL_BACKFLOW_QUALITY"};
+    for (const char* w : kWords)
+        if (legacyPrefix(key, w)) return true;
+    return false;
+}
+
 // ============================================================================
 // handle_options() — registered as built-in handler for "OPTIONS"
 // ============================================================================
@@ -144,9 +173,13 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
                 opt.infiltration = InfiltrationModel::HORTON;
             else if (iv == "MOD_HORTON" || iv == "MODIFIED_HORTON")
                 opt.infiltration = InfiltrationModel::MOD_HORTON;
-            else if (iv == "GREEN_AMPT"     || iv == "MODIFIED_GREEN_AMPT")
+            else if (iv == "GREEN_AMPT")
                 opt.infiltration = InfiltrationModel::GREEN_AMPT;
-            else if (iv == "MOD_GREEN_AMPT")
+            // Legacy InfilModelWords spells it MODIFIED_GREEN_AMPT (text.h
+            // w_MOD_GREEN_AMPT); MOD_GREEN_AMPT is this engine's own alias.
+            // The deck keyword was mapped to plain GREEN_AMPT — 11 corpus
+            // decks ran the wrong model (F reset between events).
+            else if (iv == "MOD_GREEN_AMPT" || iv == "MODIFIED_GREEN_AMPT")
                 opt.infiltration = InfiltrationModel::MOD_GREEN_AMPT;
             else if (iv == "CURVE_NUMBER")
                 opt.infiltration = InfiltrationModel::CURVE_NUMBER;
@@ -154,19 +187,29 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
 
         } else if (key == "FLOW_ROUTING") {
             const std::string rv = norm(val);
-            if      (rv == "STEADY")   opt.routing_model = RoutingModel::STEADY;
-            else if (rv == "KINWAVE"   || rv == "KINEMATIC_WAVE")
+            // legacy project_readOption ROUTE_MODEL: findmatch over
+            // RouteModelWords {NONE, STEADY, KINWAVE, XKINWAVE, DYNWAVE}, then
+            // OldRouteModelWords {NONE, NF, KW, EKW, DW}, each a prefix test
+            // in that order (routing-steadyflow writes `STEADYFLOW`, which
+            // ran as the dynamic wave here). XKINWAVE / EKW are the kinematic
+            // wave; NONE ignores routing.
+            if      (legacyPrefix(rv, "NONE"))     opt.ignore_routing = true;
+            else if (legacyPrefix(rv, "STEADY"))   opt.routing_model = RoutingModel::STEADY;
+            else if (legacyPrefix(rv, "KINWAVE"))  opt.routing_model = RoutingModel::KINWAVE;
+            else if (legacyPrefix(rv, "XKINWAVE")) opt.routing_model = RoutingModel::KINWAVE;
+            else if (legacyPrefix(rv, "DYNWAVE"))  opt.routing_model = RoutingModel::DYNWAVE;
+            else if (legacyPrefix(rv, "NF"))       opt.routing_model = RoutingModel::STEADY;
+            else if (legacyPrefix(rv, "KW"))       opt.routing_model = RoutingModel::KINWAVE;
+            else if (legacyPrefix(rv, "EKW"))      opt.routing_model = RoutingModel::KINWAVE;
+            else if (legacyPrefix(rv, "DW"))       opt.routing_model = RoutingModel::DYNWAVE;
+            // This engine's own spellings.
+            else if (rv == "KINEMATIC_WAVE")
                 opt.routing_model = RoutingModel::KINWAVE;
-            else if (rv == "DYNWAVE"   || rv == "DYNAMIC_WAVE")
+            else if (rv == "DYNAMIC_WAVE")
                 opt.routing_model = RoutingModel::DYNWAVE;
             else if (rv == "FV" || rv == "FINITE_VOLUME")
                 opt.routing_model = RoutingModel::FV;
-            // Legacy FLOW_ROUTING NONE maps to the NO_ROUTING method and forces
-            // IgnoreRouting = TRUE (project.c:504). The refactored RoutingModel
-            // enum has no NONE value, so realize the same effect by setting the
-            // ignore_routing flag directly (routing_model is unused when routing
-            // is ignored).
-            else if (rv == "NONE" || rv == "NO_ROUTING") opt.ignore_routing = true;
+            else if (rv == "NO_ROUTING") opt.ignore_routing = true;
             else opt.ext_options[key] = val;
 
         } else if (key == "QUALITY_SOLVER") {
@@ -222,7 +265,14 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
         // Timesteps
         // -----------------------------------------------------------------
         } else if (key == "ROUTING_STEP") {
-            opt.routing_step = parse_time_seconds(val);
+            // Legacy project.c:692-694 rejects a step <= 0 (and an
+            // unparseable one, which parses to 0 here) with ERR_NUMBER.
+            const double step = parse_time_seconds(val);
+            if (step <= 0.0) {
+                ctx.errors.push_back(format_error(ERR_NUMBER, val));
+                continue;
+            }
+            opt.routing_step = step;
         } else if (key == "MINIMUM_STEP") {
             opt.min_routing_step = parse_time_seconds(val);
         } else if (key == "DRY_DAYS") {
@@ -353,8 +403,13 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
               if (sp < se) ++sp;
               std::from_chars(sp, se, sd);
             }
+            // NON-leap anchor (2001), matching InpWriter's fmt_sweep and the
+            // 365-day default (sweep_end = 365 = 12/31). The old leap-year
+            // anchor (2000) made 12/31 parse as 366, which fmt_sweep then
+            // wrote back as 1/1 — every date past Feb 28 shifted a day per
+            // save/reopen cycle (found by the H6b save check).
             opt.sweep_start = datetime::dayOfYear(
-                datetime::encodeDate(2000, static_cast<int>(sm), static_cast<int>(sd)));
+                datetime::encodeDate(2001, static_cast<int>(sm), static_cast<int>(sd)));
         } else if (key == "SWEEP_END") {
             unsigned sm = 12, sd = 31;
             { const char* sp = val.data(); const char* se = sp + val.size();
@@ -364,7 +419,7 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
               std::from_chars(sp, se, sd);
             }
             opt.sweep_end = datetime::dayOfYear(
-                datetime::encodeDate(2000, static_cast<int>(sm), static_cast<int>(sd)));
+                datetime::encodeDate(2001, static_cast<int>(sm), static_cast<int>(sd)));
 
         } else if (key == "NORMAL_FLOW_LIMITED") {
             const std::string nv = norm(val);
@@ -391,6 +446,10 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             if      (sv == "EXTRAN")       opt.surcharge_method = 0;
             else if (sv == "SLOT")         opt.surcharge_method = 1;
             else if (sv == "DYNAMIC_SLOT") opt.surcharge_method = 2;
+            else if (sv == "TPA")          opt.surcharge_method = 3;  // issue #156
+
+        } else if (key == "TPA_CELERITY") {  // issue #156
+            opt.tpa_celerity = to_double(val);
 
         } else if (key == "DPS_CELERITY") {
             opt.dps_target_celerity = to_double(val);
@@ -400,6 +459,25 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
 
         } else if (key == "DPS_DECAY_TIME") {
             opt.dps_decay_time = to_double(val);
+
+        // Unsteady friction (issue #156). Accepted-and-INERT, the same
+        // posture as the FV block below: nothing downstream reads either key
+        // yet (the Vitkovsky source term is Phase 2), so parsing them only
+        // stops a deck that names them from drawing an unknown-option warning
+        // and lets the writer carry them across a save.
+        } else if (key == "UNSTEADY_FRICTION") {
+            const std::string uv = norm(val);
+            if      (uv == "NONE")      opt.unsteady_friction = 0;
+            else if (uv == "VITKOVSKY") opt.unsteady_friction = 1;
+
+        } else if (key == "UF_K3") {
+            opt.uf_k3 = to_double(val);
+
+        } else if (key == "REPORT_SIGNED_HEADS") {  // issue #156 O-6
+            const std::string sv2 = norm(val);
+            opt.report_signed_heads =
+                (sv2 == "YES" || sv2 == "TRUE" || sv2 == "ON" || sv2 == "1")
+                    ? 1 : 0;
 
         // -----------------------------------------------------------------
         // Explicit finite-volume solver (FLOW_ROUTING FV).
@@ -454,6 +532,11 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             opt.fv.pressurized_implicit =
                 (pv == "YES" || pv == "TRUE" || pv == "ON" || pv == "1");
 
+        } else if (key == "FV_PRESSURE_CLOSURE") {  // issue #156 Phase 4
+            const std::string pc = norm(val);
+            if      (pc == "SLOT") opt.fv.pressure_closure = 0;
+            else if (pc == "TPA")  opt.fv.pressure_closure = 1;
+
         } else if (key == "FV_DISPERSION") {
             opt.fv.dispersion = to_double(val);
 
@@ -465,11 +548,21 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
                 opt.fv.structure_coupling = fv::StructureCoupling::ROUTING_STEP;
 
         } else if (key == "FV_NODE_COUPLING") {
-            const std::string nv = norm(val);
-            if      (nv == "EXPLICIT")
-                opt.fv.node_coupling = fv::NodeCoupling::EXPLICIT;
-            else if (nv == "SEMI_IMPLICIT")
-                opt.fv.node_coupling = fv::NodeCoupling::SEMI_IMPLICIT;
+            // RETIRED 2026-08-29 with FV_NODE_DT and FV_NODE_PICARD below.
+            // Two retirement tiers, on purpose: these three had an effect and
+            // warn when a deck asks for the behaviour that no longer exists
+            // (a calibrated model would otherwise change answers silently);
+            // FV_NODE_CELL_COUPLING / FV_JUNCTION_MODEL further down were
+            // already no-ops and stay silent. Spelling out the former default
+            // is not warned -- it is what every deck gets.
+            if (norm(val) == "EXPLICIT") {
+                ctx.warnings.push_back(
+                    "WARNING: FV_NODE_COUPLING EXPLICIT is retired and will be "
+                    "treated as SEMI_IMPLICIT - storage nodes are always coupled "
+                    "semi-implicitly (plain junctions are algebraic interfaces "
+                    "under either).");
+                if (ctx.warning_code == 0) ctx.warning_code = 101;
+            }
 
         } else if (key == "FV_COMPACTION") {
             const std::string bv = norm(val);
@@ -503,12 +596,25 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             opt.fv.cfl_census_interval = std::max(1, static_cast<int>(to_double(val)));
 
         } else if (key == "FV_NODE_DT") {
-            const std::string nd = norm(val);
-            if      (nd == "STABILITY") opt.fv.node_dt_limit = fv::NodeDtLimit::STABILITY;
-            else if (nd == "NONE")      opt.fv.node_dt_limit = fv::NodeDtLimit::NONE;
+            // RETIRED 2026-08-29 -- see FV_NODE_COUPLING above.
+            if (norm(val) == "NONE") {
+                ctx.warnings.push_back(
+                    "WARNING: FV_NODE_DT NONE is retired and will be treated as "
+                    "STABILITY - the node accuracy bound is always armed (it "
+                    "binds storage nodes only; algebraic junctions and outfalls "
+                    "are exempt).");
+                if (ctx.warning_code == 0) ctx.warning_code = 101;
+            }
 
         } else if (key == "FV_NODE_PICARD") {
-            opt.fv.node_picard_sweeps = std::max(1, static_cast<int>(to_double(val)));
+            // RETIRED 2026-08-29 -- see FV_NODE_COUPLING above.
+            if (std::max(1, static_cast<int>(to_double(val))) > 1) {
+                ctx.warnings.push_back(
+                    "WARNING: FV_NODE_PICARD " + val + " is retired and will be "
+                    "treated as 1 - the semi-implicit node correction is always "
+                    "a single sweep.");
+                if (ctx.warning_code == 0) ctx.warning_code = 101;
+            }
 
         } else if (key == "FV_NODE_CELL_COUPLING" ||
                    key == "FV_JUNCTION_MODEL") {
@@ -583,13 +689,19 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
         // -----------------------------------------------------------------
         // Unknown key → ext_options (R05)
         // -----------------------------------------------------------------
+        } else if (legacy_knows_option(key)) {
+            // A legacy keyword v6 does not act on (e.g. TEMPDIR): kept for the
+            // round trip, and no warning, as legacy accepts it.
+            opt.ext_options[key] = val;
         } else {
             opt.ext_options[key] = val;
             // Record a warning (non-fatal). Push to ctx.warnings so it reaches
             // the .rpt (legacy project.c warns per unknown keyword); keep the
             // legacy wording, and retain warning_code for the C API.
+            // Leading "\n  " as legacy writes it (report_writeLine): a blank
+            // line first, and the report prints it before the title.
             ctx.warnings.push_back(
-                "WARNING: Unknown option keyword '" + tokens[0] +
+                "\n  WARNING: Unknown option keyword '" + tokens[0] +
                 "' in [OPTIONS] section - option will be ignored.");
             if (ctx.warning_code == 0) {
                 ctx.warning_code = 101;  // SWMM_WARN_UNKNOWN_OPTION

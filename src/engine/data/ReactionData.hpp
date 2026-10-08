@@ -41,9 +41,11 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "ReactionTokens.hpp"
+#include "MsxSurfaceData.hpp"
 
 namespace openswmm {
 
@@ -89,6 +91,10 @@ struct ReactionData {
     double             timestep    = 0.0;   ///< 0 ⇒ follow QUALITY_STEP
     double             atol        = 1.0e-6;
     double             rtol        = 1.0e-4;
+    /// TEMP's value when no heat-transport temperature exists for the
+    /// element (HEAT_TRANSPORT off, or state not yet seeded). 20 degC is
+    /// the standard water-quality reference temperature.
+    double             default_temp_c = 20.0;
 
     // ---- [REACTION_SPECIES] — index-aligned with the SpeciesRegistry MSX
     //      block (registry index = registry_base + i). ------------------------
@@ -132,15 +138,32 @@ struct ReactionData {
     std::vector<RxExprSpan> pipe_expr;       ///< per species (len 0 ⇒ none)
     std::vector<RxExprSpan> tank_expr;       ///< per species
     bool compiled = false;                   ///< R2 compile pass succeeded
+    bool warned_react_failure       = false;
 
     // ---- R4: MSX species element state under QUALITY_SOLVER LEGACY --------
-    // [element * n_species + s]; sized lazily by the legacy binding. MSX
-    // species react per element but are NOT yet transported between elements
-    // under LEGACY (R4b) — warned once per run.
+    // [element * n_species + s]; sized lazily by the legacy binding. R4b
+    // (2026-09-01): species react per element AND advect between elements
+    // (routeLegacyMsx, the CSTR mirror family) — the not-transported
+    // warning and its once-per-run flag are gone with the limitation.
     std::vector<double> msx_node_conc;
     std::vector<double> msx_link_conc;
-    bool warned_msx_not_transported = false;
-    bool warned_react_failure       = false;
+
+    // ---- U2 (2026-09-07): external MSX loads at the node seam ------------
+    // [node * n_species + m], a mass RATE in the species' internal unit
+    // convention (conc-units × ft3/s — the qual_mass_in shape), assembled
+    // every routing step by InflowSolver::computeAll from [INFLOWS] rows
+    // that name a species (CONCEN × node external flow, or MASS ÷ LperFT3).
+    // Empty until a species inflow row exists. Consumed by every quality
+    // engine's node mixing: routeLegacyMsx (LEGACY), ArdEngine stage 1b /
+    // 1a' (EULERIAN_ARD) and the LARD node stage.
+    std::vector<double> msx_ext_mass_in;
+
+    /// BW-MSX (2026-09-19): surface buildup / washoff / sweeping of MSX
+    /// species — rows parked by name at parse, resolved after this component
+    /// is applied, stepped beside the pollutant surface-quality step, and
+    /// delivered into `msx_ext_mass_in` each routing step. See
+    /// `quality/MsxSurfaceQuality.hpp`.
+    MsxSurfaceData surface;
 
     bool configured = false;                 ///< a reactions component applied
 
@@ -163,7 +186,15 @@ struct ReactionData {
         return -1;
     }
 
-    void clear() { *this = ReactionData{}; }
+    /// Reset the component's own state. The `surface` block is authored by
+    /// the .inp ([BUILDUP]/[WASHOFF]/[LOADINGS] rows parked by name before
+    /// the component is applied), so it survives a (re)apply and is bound
+    /// afterwards by msxsurf::resolve().
+    void clear() {
+        MsxSurfaceData keep = std::move(surface);
+        *this = ReactionData{};
+        surface = std::move(keep);
+    }
 };
 
 }  // namespace openswmm
