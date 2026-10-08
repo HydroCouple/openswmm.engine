@@ -1794,9 +1794,15 @@ retroactive.
   liner, corrosion) under FV routing, with `CONSERVE_DEPTH` /
   `CONSERVE_VOLUME` reconciliation policies and a reported displaced
   volume; this is FV-only (DYNWAVE/KINWAVE refuse the call) and is not
-  carried in hotstart files. See `docs/dev/cheb_section.md` for the design
-  rationale and measured performance, and Appendix D's `[XSECTIONS]` /
-  `[CURVES]` reference for the input format.
+  carried in hotstart files. Both are reachable from Python as
+  `link.xsect.set_polygon(x, y, policy)` / `link.xsect.polygon()`, with the
+  new `GeomChangePolicy` enum for the reconciliation choice (it has no
+  default — the two members describe opposite physical events) and a new
+  `GeometryError` for `SWMM_ERR_GEOMETRY`; `XSectShape.POLYGON` and
+  `ErrorCode.GEOMETRY` round out the two enums the shape and the error code
+  belong to. See `docs/dev/cheb_section.md` for the design rationale and
+  measured performance, and Appendix D's `[XSECTIONS]` / `[CURVES]`
+  reference for the input format.
 
 - **`SWMM_FilePathRole` covers the remaining external-file slots.** Three new
   roles — `SWMM_FILE_MESH_2D`, `SWMM_FILE_OUTPUT_2D` and `SWMM_FILE_LID_REPORT` —

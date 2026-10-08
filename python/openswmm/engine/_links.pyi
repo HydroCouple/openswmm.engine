@@ -31,7 +31,10 @@ from typing import Any, Tuple, Union
 import numpy as np
 from numpy.typing import NDArray
 
-from ._enums import LinkType, OrificeType, OutletRatingType, WeirType, XSectShape
+from ._enums import (
+    GeomChangePolicy, LinkType, OrificeType, OutletRatingType, WeirType,
+    XSectShape,
+)
 from ._geometry import CrossSection
 from ._nodes import Node
 from ._solver import Solver
@@ -63,6 +66,9 @@ class XSection:
     def as_tuple(self) -> Tuple[XSectShape, float, float, float, float]: ...
     def info(self) -> CrossSection: ...
     def geometry(self) -> XSectionGeometry: ...
+    def polygon(self) -> Tuple[NDArray[np.float64], NDArray[np.float64]]: ...
+    def set_polygon(self, x: Any, y: Any,
+                    policy: GeomChangePolicy) -> float: ...
     def __iter__(self) -> Iterator[Any]: ...
 
 

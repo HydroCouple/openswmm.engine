@@ -49,7 +49,10 @@ def configure(docs_root, src_root):
     global DOCS, SRC, MANUAL_DIRS, IMAGE_PATHS
     DOCS = Path(docs_root).resolve()
     SRC = Path(src_root).resolve()
-    MANUAL_DIRS = [DOCS / "manuals", DOCS / "authors.md"]
+    # docs/dev is part of the documentation build (docs/Doxyfile lists ./dev
+    # in INPUT), so its @page ids are legitimate @ref targets from the
+    # manuals and the resolver has to see them.
+    MANUAL_DIRS = [DOCS / "manuals", DOCS / "dev", DOCS / "authors.md"]
     IMAGE_PATHS = [
         DOCS / "images",
         DOCS / "figures" / "png",

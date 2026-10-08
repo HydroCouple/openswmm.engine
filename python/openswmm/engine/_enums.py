@@ -64,6 +64,8 @@ class ErrorCode(IntEnum):
     @cvar CRS: Coordinate reference system error.
     @cvar NUMERICAL: Numerical error (e.g., divergence).
     @cvar DEPENDENCY: Object has dependents that block the requested operation.
+    @cvar GEOMETRY: Cross-section geometry is invalid, or cannot be
+        changed in the current state.
     @cvar INTERNAL: Internal/unspecified error.
     """
 
@@ -83,6 +85,7 @@ class ErrorCode(IntEnum):
     CRS = 13
     NUMERICAL = 14
     DEPENDENCY = 15
+    GEOMETRY = 16
     INTERNAL = 99
 
 
@@ -381,6 +384,8 @@ class XSectShape(IntEnum):
     @cvar FORCE_MAIN: Force main (pressurized). geom1=diameter, geom2=roughness.
     @cvar STREET_XSECT: Street cross-section (from ``[STREETS]``). geom1=street index.
     @cvar DUMMY: Dummy — no geometry; all queries return 0.
+    @cvar POLYGON: Arc/line boundary from a ``[CURVES] XPOLYGON`` entry.
+        geom1=scale, geom2=height; the boundary itself comes from the curve.
     """
 
     CIRCULAR = 0
@@ -409,6 +414,26 @@ class XSectShape(IntEnum):
     FORCE_MAIN = 23
     STREET_XSECT = 24
     DUMMY = 25
+    POLYGON = 26
+
+
+
+class GeomChangePolicy(IntEnum):
+    """How water already in a conduit is reconciled when its section changes.
+
+    Passed to :meth:`XSection.set_polygon`. The two describe opposite physical
+    events and there is deliberately no default — choosing wrongly is silent:
+    the run completes and the numbers are wrong.
+
+    @cvar CONSERVE_DEPTH: Solid material INTRUDES (sediment, a CIPP liner).
+        The free surface elevation stays put and the displaced water leaves the
+        conduit; ``set_polygon`` reports how much.
+    @cvar CONSERVE_VOLUME: Material is REMOVED (corrosion, erosion, cleaning).
+        The water stays and the surface moves. Displaced volume is always 0.
+    """
+
+    CONSERVE_DEPTH = 0
+    CONSERVE_VOLUME = 1
 
 
 # =============================================================================

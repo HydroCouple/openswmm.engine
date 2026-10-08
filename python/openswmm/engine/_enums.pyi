@@ -76,6 +76,7 @@ class ErrorCode(IntEnum):
     CRS = 13
     NUMERICAL = 14
     DEPENDENCY = 15
+    GEOMETRY = 16
     INTERNAL = 99
 
 
@@ -328,6 +329,7 @@ class XSectShape(IntEnum):
     @cvar FORCE_MAIN: Force main (pressurized).
     @cvar STREET_XSECT: Street cross-section.
     @cvar DUMMY: Dummy — no geometry.
+    @cvar POLYGON: Arc/line boundary from a ``[CURVES] XPOLYGON`` entry.
     """
 
     CIRCULAR = 0
@@ -356,6 +358,18 @@ class XSectShape(IntEnum):
     FORCE_MAIN = 23
     STREET_XSECT = 24
     DUMMY = 25
+    POLYGON = 26
+
+
+class GeomChangePolicy(IntEnum):
+    """How water already in a conduit is reconciled when its section changes.
+
+    @cvar CONSERVE_DEPTH: Material intrudes; surface stays, water leaves.
+    @cvar CONSERVE_VOLUME: Material is removed; water stays, surface moves.
+    """
+
+    CONSERVE_DEPTH = 0
+    CONSERVE_VOLUME = 1
 
 
 # =============================================================================

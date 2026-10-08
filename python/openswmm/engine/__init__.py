@@ -192,6 +192,7 @@ from ._exceptions import (
     NumericalError,
     CRSError,
     DependencyError,
+    GeometryError,
     GeoPackageError,
     StaleObjectError,
 )
@@ -301,7 +302,7 @@ from ._enums import (
     ErrorCode, EngineState, WarnCode, ObjectType,
     # Hydraulics
     FlowUnits, RouteModel, NodeType, LinkType, OutfallType, StorageShape,
-    XSectShape, OrificeType, WeirType, OutletRatingType,
+    XSectShape, OrificeType, WeirType, OutletRatingType, GeomChangePolicy,
     # Hydrology
     InfilModel, GageDataSource, GageRainType,
     # Water quality / LID
@@ -339,7 +340,8 @@ __all__ = [
     "BadHandleError", "BadIndexError", "BadParamError",
     "LifecycleError", "HotStartError", "PluginError",
     "FileError", "ParseError", "NumericalError",
-    "CRSError", "DependencyError", "GeoPackageError", "StaleObjectError",
+    "CRSError", "DependencyError", "GeometryError", "GeoPackageError",
+    "StaleObjectError",
     # --- Programmatic model building & editing ---
     "ModelBuilder", "ModelEditor", "ImpactEntry", "ConversionResult",
     # --- Geometry helpers ---
@@ -377,7 +379,7 @@ __all__ = [
     # --- Enumerations: hydraulics ---
     "FlowUnits", "RouteModel", "NodeType", "LinkType",
     "OutfallType", "StorageShape", "XSectShape",
-    "OrificeType", "WeirType", "OutletRatingType",
+    "OrificeType", "WeirType", "OutletRatingType", "GeomChangePolicy",
     # --- Enumerations: hydrology ---
     "InfilModel", "GageDataSource", "GageRainType",
     # --- Enumerations: water quality / LID ---
