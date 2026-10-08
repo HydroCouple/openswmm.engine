@@ -332,7 +332,7 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh,
     for (std::size_t b = 0; b < node_beds_.size(); ++b)
         if (node_beds_[b].cell >= 0) cell_beds_[node_beds_[b].cell].push_back(b);
     pending_flag_.assign(static_cast<std::size_t>(n), 0);
-    source_owned_.assign(n,false);source_receipts_.assign(n,{});source_returns_.clear();source_species_.clear();
+    source_owned_.assign(n,false);source_cell_end_.assign(n,0);source_receipts_.assign(n,{});source_returns_.clear();source_species_.clear();
     pending_surface_.clear();
     accumulators_pending_ = false;
     state_.active = true;
@@ -1264,6 +1264,9 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     // receipts cannot be consumed by an owned cell's groundwater firing.
     const bool paired=source_owned_[u];
     if(paired) {
+        if(!std::isfinite(time)||time<0||!std::isfinite(dt)||dt<=0||!std::isfinite(time+dt))
+            throw std::runtime_error("Invalid completed source groundwater firing interval.");
+        if(time<source_cell_end_[u])throw std::runtime_error("Completed source groundwater firing cannot replay.");
         if(source_species_!=tr_.row_names || int(source_species_.size())!=tr_.n_species)
             throw std::runtime_error("Source receipt pollutant layout changed before groundwater firing.");
         double volume=0;std::vector<double> mass(tr_.n_species,0);
@@ -1758,6 +1761,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         emergence(SurfaceReturnKind::PHYSICAL_DUNNE,physical_return,dunne_mass);
         emergence(SurfaceReturnKind::COLUMN_EXCESS,reject_vol-paired_refund,excess_mass);
     }
+    if(paired)source_cell_end_[u]=time+dt;
     state_.hg[u] = hg1;
     // Drying recovers the equivalent wetting-front depth in proportion to
     // the newly created column deficit; no second time constant is authored.

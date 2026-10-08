@@ -7,6 +7,7 @@
 #include "../solver/SurfaceFluxCalculator.hpp"
 #include "../solver/InertialKernels.hpp"
 #include "../../core/SimulationContext.hpp"
+#include "../../core/CompletedSourceArchive.hpp"
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -151,6 +152,29 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
     mesh_=&mesh;surface_=&surface;options_=&options;gw_=&gw;sources_=&sources;donors_=std::move(donors);
     cells_=std::move(cells);owned_=std::move(owned);weather_=preview.mesh_weather_area;
     et_contacts_=std::move(et_contacts);
+    checkpoint_model_=checkpointModel();
+    return {};
+}
+
+std::string CommonSourceStage::checkpointBoundary() const {
+    if(!mesh_||!sources_||!gw_||!surface_||exchange_.planned_)return "Checkpoint requires an attached accepted source boundary.";
+    for(const auto& group:sources_->clocks().groups())
+        if(!group.pending.empty()||group.completed_end!=completedEnd())return "Checkpoint source clocks do not match the accepted boundary.";
+    const auto error=qualityProfile(*sources_,*surface_,*gw_);if(!error.empty())return error;
+    if(surface_->runtime_sources.active()||surface_->runtime_forcings.active()||gw_->runtimeSources().active()||
+       !surface_->transport.runtime_bc_conc.empty())return "Checkpoint runtime provider profile is not qualified.";
+    for(int cell:cells_) {
+        if(gw_->sourceCompletedTime(cell)>completedEnd())return "Checkpoint aquifer firing exceeds the accepted source horizon.";
+        for(const auto& receipt:gw_->pendingSourceReceipts(cell))if(receipt.end>completedEnd())
+            return "Checkpoint intake exceeds the accepted source horizon.";
+    }
+    // Check required pairing and private balances on copies, on save as well as load.
+    try {
+        detail::CompletedSourceArchive a;sources_->checkpoint(a,false);
+        auto source=sources_->waterTrial();detail::CompletedSourceArchive b(a.bytes());source.checkpoint(b,false);b.finish();
+        auto gw=*gw_;detail::CompletedSourceArchive c;gw.checkpoint(c,false);
+        detail::CompletedSourceArchive d(c.bytes());gw.checkpoint(d,false);d.finish();
+    } catch(const std::exception& e){return e.what();}
     return {};
 }
 

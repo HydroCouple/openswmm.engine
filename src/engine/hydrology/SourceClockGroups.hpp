@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+namespace openswmm::detail { class CompletedSourceArchive; }
+
 namespace openswmm::runoff {
 
 struct SourceForcingInterval {
@@ -38,6 +40,7 @@ public:
     void cancel(int group);
     const std::vector<SourceClockGroup>& groups() const { return groups_; }
     int groupForSubcatch(int source) const;
+    void checkpoint(detail::CompletedSourceArchive&,bool model); // internal accepted-boundary IO
 
 private:
     struct RainSeries {

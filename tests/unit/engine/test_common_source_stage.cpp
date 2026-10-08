@@ -12,6 +12,8 @@
 #include <iomanip>
 #include <map>
 #include <limits>
+#include <cstdlib>
+#include "core/CompletedSourceArchive.hpp"
 
 using namespace openswmm;
 using namespace openswmm::twoD;
@@ -756,10 +758,11 @@ TEST(CommonSourceStage, PartialInsideSourcesKeepOutsideLossAndWeatherSeparate) {
     ASSERT_EQ(m.stage.initialize(m.mesh,m.surface,m.options,m.gw,m.sources,m.preview),"");
     EXPECT_DOUBLE_EQ(m.preview.mesh_weather_area[0],3.25);
     for(double end:{.1,.3,1.,2.125,4.}) {
-        ASSERT_EQ(m.stage.advance(m.stage.completedEnd(),end),"");
+        const double start=m.stage.completedEnd();
+        ASSERT_EQ(m.stage.advance(start,end),"");
         for(int sc=0;sc<2;++sc)EXPECT_NEAR(m.sources.balanceResidual(m.sources.clocks().groupForSubcatch(sc)),0,1e-10);
         double spatial=0;for(const auto& r:m.stage.receipts())if(r.request.kind!=SurfaceDonorKind::MESH)spatial+=r.volume;
-        EXPECT_GE(spatial,0);m.gw.assignTiers(end,1);m.gw.fireGwCells(0,end,m.surface,end);etBalance(m);
+        EXPECT_GE(spatial,0);m.gw.assignTiers(end-start,1);m.gw.fireGwCells(0,end-start,m.surface,start);etBalance(m);
         EXPECT_NEAR(m.gw.state().continuityResidual(),0,2e-11);
     }
 }
@@ -1080,5 +1083,206 @@ TEST(CommonSourceStage, FailedSourceTrialLeavesReadyReturnTuplesAndCreditsUntouc
             EXPECT_EQ(m.gw.sourceReturns()[i].mass,returns[i].mass);
         }
         for(const auto& b:m.sources.ledgers())EXPECT_DOUBLE_EQ(b.aquifer_return,0);
+    }
+}
+
+namespace {
+std::filesystem::path restartPath(const std::string& name) {
+    const char* out=std::getenv("SWMM_R4_RESTART_OUT");
+    const auto dir=out?std::filesystem::path(out):std::filesystem::current_path()/"source-restart-evidence";
+    std::filesystem::create_directories(dir);return dir/(name+".source-checkpoint");
+}
+std::string restartBytes(const std::filesystem::path& path) {
+    std::ifstream in(path,std::ios::binary);return {std::istreambuf_iterator<char>(in),{}};
+}
+void checkpointEqual(Model& a,Model& b,const std::string& name) {
+    auto pa=restartPath(name+"-continuous"),pb=restartPath(name+"-resumed");
+    ASSERT_EQ(a.stage.saveCheckpoint(pa.string()),"");ASSERT_EQ(b.stage.saveCheckpoint(pb.string()),"");
+    EXPECT_EQ(restartBytes(pa),restartBytes(pb));
+}
+void advanceRestart(Model& m,double start,double end,bool fire=true) {
+    ASSERT_EQ(m.stage.advance(start,end),"");
+    if(fire)m.gw.fireGwCells(0,end-start,m.surface,start);
+}
+}
+TEST(CommonSourceStage, DiskRestartPreservesPendingIntakeMassAndEtWithoutFutureGather) {
+    AtmosphericInput a;a.pet={.0001,.0002};a.et="BOUNDARY_ET";a.inside={.75,.25};a.impervious={.2,.4};
+    Model continuous;mixedPollutants(continuous,2,a);continuous.room(.001,0);continuous.attach();
+    ASSERT_EQ(continuous.stage.advance(0,1),"");ASSERT_GT(continuous.gw.state().xacc_from_surface[0],0);
+    ASSERT_FALSE(continuous.gw.pendingSourceReceipts(0).empty());
+    const auto file=restartPath("pending-intake-et");ASSERT_EQ(continuous.stage.saveCheckpoint(file.string()),"");
+    Model resumed;mixedPollutants(resumed,2,a);resumed.room(.001,0);resumed.attach();
+    ASSERT_EQ(resumed.stage.loadCheckpoint(file.string()),"");checkpointEqual(continuous,resumed,"pending-initial");
+    const auto before=resumed.gw.state().xacc_from_surface;
+    EXPECT_THROW(resumed.gw.fireGwCells(0,.5,resumed.surface,0),std::runtime_error);
+    EXPECT_THROW(resumed.gw.fireGwCells(0,1,resumed.surface,std::numeric_limits<double>::quiet_NaN()),std::runtime_error);
+    EXPECT_EQ(before,resumed.gw.state().xacc_from_surface);EXPECT_FALSE(resumed.stage.advance(0,1).empty());
+    resumed.gw.fireGwCells(0,1,resumed.surface,0);continuous.gw.fireGwCells(0,1,continuous.surface,0);
+    for(const auto [start,end]:{std::pair{1.,1.25},std::pair{1.25,2.},std::pair{2.,4.}}) {
+        advanceRestart(continuous,start,end);advanceRestart(resumed,start,end);checkpointEqual(continuous,resumed,"pending-"+std::to_string(end));
+    }
+    etBalance(continuous);etBalance(resumed);
+    for(int g=0;g<2;++g){EXPECT_NEAR(resumed.sources.balanceResidual(g),0,1e-9);
+        for(int p=0;p<2;++p)EXPECT_NEAR(resumed.sources.pollutantBalanceResidual(g,p),0,1e-10);}
+}
+TEST(CommonSourceStage, DiskRestartAdoptsRefundAndPhysicalMassExactlyOnceAcrossClosures) {
+    for(auto closure:{GwClosure::CLOSED_FORM,GwClosure::ENSLAVED,GwClosure::SIGMA}) {
+        SCOPED_TRACE(int(closure));AtmosphericInput a;a.closure=closure;
+        Model continuous;mixedPollutants(continuous,1,a);continuous.room(.005);continuous.attach();
+        ASSERT_EQ(continuous.stage.advance(0,1),"");continuous.gw.state().lacc[0]=10;
+        continuous.gw.fireGwCells(0,1,continuous.surface,0);ASSERT_FALSE(continuous.gw.sourceReturns().empty());
+        const auto file=restartPath("ready-returns-"+std::to_string(int(closure)));
+        ASSERT_EQ(continuous.stage.saveCheckpoint(file.string()),"");
+        Model resumed;mixedPollutants(resumed,1,a);resumed.room(.005);resumed.attach();ASSERT_EQ(resumed.stage.loadCheckpoint(file.string()),"");
+        checkpointEqual(continuous,resumed,"returns-initial-"+std::to_string(int(closure)));
+        const auto water=resumed.gw.storage();const auto mass=resumed.gw.transport().sat_mass;
+        EXPECT_THROW(resumed.gw.fireGwCells(0,1,resumed.surface,0),std::runtime_error);
+        EXPECT_DOUBLE_EQ(resumed.gw.storage(),water);EXPECT_EQ(resumed.gw.transport().sat_mass,mass);
+        advanceRestart(continuous,1,2,false);advanceRestart(resumed,1,2,false);
+        EXPECT_TRUE(resumed.gw.sourceReturns().empty());ASSERT_FALSE(resumed.stage.returns().empty());
+        const auto credit=resumed.stage.meshReturn();advanceRestart(continuous,2,3,false);advanceRestart(resumed,2,3,false);
+        EXPECT_TRUE(resumed.stage.returns().empty());EXPECT_DOUBLE_EQ(resumed.stage.meshReturn(),credit);
+        checkpointEqual(continuous,resumed,"returns-final-"+std::to_string(int(closure)));
+    }
+}
+TEST(CommonSourceStage, RestartMatchesNativeLidHistoriesAndConnectedPartialFootprints) {
+    for(const auto& type:{"BC","RG","PP","GR","IT","VS","RB"})for(int method:{0,1,2,3,4}) {
+        SCOPED_TRACE(std::string(type)+":"+std::to_string(method));AtmosphericInput a;a.lid_type=type;a.connected=true;a.inside={.5,.25};
+        a.barrel=std::string(type)=="RB";a.pet={.00001,.00003};a.impervious={.4,.3};
+        const auto configure=[&](Model& m){m.setup(true,1,false,false,false,a);
+            m.context.subcatches.infil_model.assign(2,method);
+            m.context.subcatches.infil_p1.assign(2,method<=1?3.5:method==2?3.5:75);
+            m.context.subcatches.infil_p2.assign(2,.5);m.context.subcatches.infil_p3.assign(2,method<=1?4:method==2?.26:7);
+            m.sources=runoff::SourceWaterDriver{};
+            ASSERT_EQ(m.sources.initialize(m.context,{0,1},{{0,.5},{1,1}}),"");m.attach();};
+        Model continuous;configure(continuous);advanceRestart(continuous,0,.5);advanceRestart(continuous,.5,2);
+        const auto file=restartPath(std::string("native-")+type+"-"+std::to_string(method));ASSERT_EQ(continuous.stage.saveCheckpoint(file.string()),"");
+        Model resumed;configure(resumed);ASSERT_EQ(resumed.stage.loadCheckpoint(file.string()),"");
+        for(const auto [start,end]:{std::pair{2.,3.25},std::pair{3.25,6.}}){advanceRestart(continuous,start,end);advanceRestart(resumed,start,end);}
+        checkpointEqual(continuous,resumed,std::string("native-final-")+type+"-"+std::to_string(method));
+    }
+}
+TEST(CommonSourceStage, RestartPreservesForcingKnotsAndMonthBoundaryWithoutReplay) {
+    const auto configure=[](Model& m){m.setup(true);
+        m.context.options.start_date=datetime::encodeDate(2026,10,31)+datetime::encodeTime(23,59,58);
+        const double t=m.context.options.start_date;m.context.gages.interval_sec[0]=1;
+        m.context.tables.tables[0].x={t,datetime::addSeconds(t,1),datetime::addSeconds(t,2),datetime::addSeconds(t,3)};
+        m.context.tables.tables[0].y={432,0,864,0};m.context.adjust_rain[10]=.25;
+        m.sources=runoff::SourceWaterDriver{};ASSERT_EQ(m.sources.initialize(m.context,{0,1},{{0,.5},{1,1}}),"");
+        GwResolvedSource q;q.cells={{0,1}};q.flow.times={0,.5,1.5,2.5,5};q.flow.values={0,.001,0,.002,0};m.gw.setSources({q});m.attach();};
+    Model continuous;configure(continuous);advanceRestart(continuous,0,2);
+    const auto file=restartPath("forcing-month");ASSERT_EQ(continuous.stage.saveCheckpoint(file.string()),"");
+    Model resumed;configure(resumed);ASSERT_EQ(resumed.stage.loadCheckpoint(file.string()),"");
+    advanceRestart(continuous,2,3.25);advanceRestart(resumed,2,3.25);advanceRestart(continuous,3.25,5);advanceRestart(resumed,3.25,5);
+    checkpointEqual(continuous,resumed,"forcing-month-final");
+}
+TEST(CommonSourceStage, CheckpointRefusesOutstandingTrialsFutureFiringsAndChangedModels) {
+    Model m;mixedPollutants(m);m.attach();const auto file=restartPath("boundary-refusals");
+    ASSERT_EQ(m.stage.saveCheckpoint(file.string()),"");const auto original=restartBytes(file);
+    runoff::SourceWaterDriver::BottomCeiling ceiling=[](int,int,double,double){return 0.;};
+    runoff::RunoffSolver::InfiltrationBoundary boundary=[](int,double,double,double& rate){rate=0;return true;};
+    ASSERT_EQ(m.sources.stage(0,1,1,&boundary,&ceiling),"");EXPECT_FALSE(m.stage.saveCheckpoint(file.string()).empty());
+    EXPECT_EQ(restartBytes(file),original);m.sources.cancel();
+    m.gw.fireGwCells(0,1,m.surface,0);EXPECT_FALSE(m.stage.saveCheckpoint(file.string()).empty());
+    EXPECT_EQ(restartBytes(file),original);ASSERT_EQ(m.stage.advance(0,1),"");ASSERT_EQ(m.stage.saveCheckpoint(file.string()),"");
+    const auto accepted=restartBytes(file);const double meshVolume=m.surface.volume[0];m.surface.volume[0]=-1;
+    EXPECT_FALSE(m.stage.saveCheckpoint(file.string()).empty());EXPECT_EQ(restartBytes(file),accepted);
+    m.surface.volume[0]=meshVolume;
+    const auto blocked=restartPath("publication-directory");std::filesystem::create_directories(blocked);
+    {std::ofstream existing(blocked/"existing.txt");existing<<"preserve this";}
+    EXPECT_FALSE(m.stage.saveCheckpoint(blocked.string()).empty());
+    EXPECT_TRUE(std::filesystem::is_directory(blocked));EXPECT_EQ(restartBytes(blocked/"existing.txt"),"preserve this");
+    EXPECT_FALSE(m.stage.saveCheckpoint((restartPath("missing")/"no-parent").string()).empty());
+    m.gw.state().Ks[0]*=2;
+    EXPECT_FALSE(m.stage.saveCheckpoint(file.string()).empty());EXPECT_EQ(restartBytes(file),accepted);
+}
+TEST(CommonSourceStage, CheckpointModelMismatchAndCorruptFilesLeaveFreshTargetUnchanged) {
+    Model original;mixedPollutants(original);original.attach();advanceRestart(original,0,1);
+    const auto file=restartPath("atomic-source");ASSERT_EQ(original.stage.saveCheckpoint(file.string()),"");const auto bytes=restartBytes(file);
+    for(int change=0;change<6;++change) {
+        Model target;AtmosphericInput a;if(change==0)a.rain=433;if(change==1)a.inside={.5,1};if(change==2)a.lid_bottom=431;
+        mixedPollutants(target,1,a);if(change==3)target.gw.state().alpha[0]*=2;if(change==4)target.mesh.vz[0]+=.1;
+        if(change==5){target.context.forcing.subcatch_evap_value[0]=.001;target.sources=runoff::SourceWaterDriver{};
+            ASSERT_EQ(target.sources.initialize(target.context,{0,1},{{0,.5},{1,1}}),"");}
+        target.attach();const auto before=restartPath("mismatch-before-"+std::to_string(change));ASSERT_EQ(target.stage.saveCheckpoint(before.string()),"");
+        EXPECT_FALSE(target.stage.loadCheckpoint(file.string()).empty());const auto after=restartPath("mismatch-after-"+std::to_string(change));
+        ASSERT_EQ(target.stage.saveCheckpoint(after.string()),"");EXPECT_EQ(restartBytes(before),restartBytes(after));
+    }
+    for(int corruption=0;corruption<5;++corruption) {
+        auto bad=bytes;if(corruption==0)bad.resize(bad.size()/2);if(corruption==1)bad.back()^=1;
+        if(corruption==2)bad[8]^=1;if(corruption==3)bad.append("extra");if(corruption==4)bad.assign(8,'\xff');
+        const auto path=restartPath("corrupt-"+std::to_string(corruption));{std::ofstream out(path,std::ios::binary);out.write(bad.data(),bad.size());}
+        Model target;mixedPollutants(target);target.attach();const auto before=restartPath("corrupt-before");ASSERT_EQ(target.stage.saveCheckpoint(before.string()),"");
+        EXPECT_FALSE(target.stage.loadCheckpoint(path.string()).empty());const auto after=restartPath("corrupt-after");ASSERT_EQ(target.stage.saveCheckpoint(after.string()),"");
+        EXPECT_EQ(restartBytes(before),restartBytes(after));ASSERT_EQ(target.stage.loadCheckpoint(file.string()),"");
+        EXPECT_FALSE(target.stage.loadCheckpoint(file.string()).empty()); // accepted intervals cannot be overwritten/replayed
+    }
+}
+
+TEST(CommonSourceStage, RestartKeepsPrivatePairedReturnsCapturedRoutingAndNativeHistories) {
+    const auto configure=[](Model& m){AtmosphericInput a;a.connected=true;a.impervious={.4,.3};a.inside={.5,.25};
+        a.lid_bottom=0;mixedPollutants(m,1,a);m.context.subcatches.n_perv.assign(2,0);m.context.subcatches.n_imperv.assign(2,0);m.context.lid_usage.from_imperv[0]=60;m.context.lid_usage.from_perv[0]=20;
+        m.context.lid_usage.to_perv[0]=1;m.context.lid_usage.drain_to[0]="S1";m.context.lid_controls.drain[0][0]=43.2;
+        m.sources=runoff::SourceWaterDriver{};ASSERT_EQ(m.sources.initialize(m.context,{0,1},{{0,.5},{1,1}}),"");m.attach();};
+    Model continuous;configure(continuous);advanceRestart(continuous,0,20);
+    runoff::SourceSurfaceReturn a;a.source=0;a.pool=2;a.volume=.1;a.mass={2,7};
+    auto b=a;b.type=int(lid::LIDType::INFIL_TRENCH);b.unit=0;
+    ASSERT_EQ(continuous.sources.creditSurfaceReturns(20,{a,b}),"");ASSERT_GE(continuous.sources.pendingVolume(0),.2);
+    EXPECT_GT(continuous.sources.ledgers()[0].captured,0);
+
+    const auto file=restartPath("private-paired-routing");ASSERT_EQ(continuous.stage.saveCheckpoint(file.string()),"");
+    Model resumed;configure(resumed);ASSERT_EQ(resumed.stage.loadCheckpoint(file.string()),"");
+    EXPECT_DOUBLE_EQ(resumed.sources.pendingVolume(0),continuous.sources.pendingVolume(0));
+    for(const auto [start,end]:{std::pair{20.,30.},std::pair{30.,35.},std::pair{35.,50.}}){advanceRestart(continuous,start,end);advanceRestart(resumed,start,end);}
+    checkpointEqual(continuous,resumed,"private-paired-routing-final");
+    EXPECT_GT(resumed.sources.ledgers()[1].runon,0);
+    for(int p=0;p<2;++p)EXPECT_NEAR(resumed.sources.pollutantBalanceResidual(0,p),0,1e-9);
+}
+TEST(CommonSourceStage, RestartPreservesUnequalGroundwaterCadencesAndLateralNodeLinkQueues) {
+    const auto configure=[](Model& m){m.setup(true,2,false,true);m.gw.state().dt_cell={1,2};m.gw.assignTiers(1,2);m.attach();};
+    Model continuous;configure(continuous);
+    ASSERT_EQ(continuous.stage.advance(0,1),"");continuous.gw.fireGwFaces(0,1);continuous.gw.fireGwCells(0,1,continuous.surface,0);
+    // The coarser owner has not gathered its completed source tuple yet.
+    ASSERT_FALSE(continuous.gw.pendingSourceReceipts(1).empty());
+    continuous.gw.state().lacc[1]=.001;continuous.gw.state().nacc[0]=.0001;
+    const auto file=restartPath("unequal-cadence");ASSERT_EQ(continuous.stage.saveCheckpoint(file.string()),"");
+    Model resumed;configure(resumed);ASSERT_EQ(resumed.stage.loadCheckpoint(file.string()),"");
+    for(Model* m:{&continuous,&resumed}) {
+        ASSERT_EQ(m->stage.advance(1,2),"");m->gw.fireGwFaces(0,1);m->gw.fireGwCells(0,1,m->surface,1);m->gw.fireGwCells(1,2,m->surface,0);
+        ASSERT_EQ(m->stage.advance(2,3),"");m->gw.fireGwFaces(0,1);m->gw.fireGwCells(0,1,m->surface,2);
+        ASSERT_EQ(m->stage.advance(3,4),"");m->gw.fireGwFaces(0,1);m->gw.fireGwCells(0,1,m->surface,3);m->gw.fireGwCells(1,2,m->surface,2);
+    }
+    checkpointEqual(continuous,resumed,"unequal-cadence-final");
+}
+namespace {
+uint32_t restartCrc(const std::string& bytes) {
+    uint32_t crc=~uint32_t(0);for(unsigned char c:bytes){crc^=c;for(int k=0;k<8;++k)crc=(crc>>1)^((crc&1)?0xedb88320u:0u);}return ~crc;
+}
+}
+TEST(CommonSourceStage, SemanticallyInvalidCheckpointWithValidChecksumIsRejectedAtomically) {
+    Model original;mixedPollutants(original);original.attach();advanceRestart(original,0,1);
+    const auto file=restartPath("semantic-original");ASSERT_EQ(original.stage.saveCheckpoint(file.string()),"");
+    for(int change=0;change<5;++change) {
+        detail::CompletedSourceArchive reader(restartBytes(file));std::string magic,model,payload;uint32_t version=0,endian=0,longBytes=0,doubleBytes=0,crc=0;
+        reader(magic,version,endian,longBytes,doubleBytes,model,payload,crc);reader.finish();
+        if(change==0){double future=2;std::memcpy(payload.data(),&future,sizeof(future));}
+        if(change==1){double invalid=std::numeric_limits<double>::quiet_NaN();std::memcpy(payload.data(),&invalid,sizeof(invalid));}
+        if(change==2){version=999;}
+        if(change==3){uint64_t invalid=UINT64_MAX;const auto receiptCount=sizeof(double)+sizeof(long)+3*sizeof(double);std::memcpy(payload.data()+receiptCount,&invalid,sizeof(invalid));}
+        if(change==4) {
+            // Metadata prefix locates the first ET receipt without relying on struct padding.
+            detail::CompletedSourceArchive prefix;auto end=original.stage.completedEnd();auto intervals=original.stage.intervals();
+            auto rain=original.stage.meshRain(),evap=original.stage.meshEvaporation(),back=original.stage.meshReturn();
+            prefix(end,intervals,rain,evap,back);auto receipts=original.stage.receipts();
+            prefix.sequence(receipts,[&](auto& r){auto& q=r.request;prefix(q.kind,q.source,q.unit,q.cell,q.area,q.pond,q.water_ceiling,q.candidate,
+                r.start,r.end,r.volume,r.mass);});
+            const auto offset=prefix.bytes().size()+sizeof(uint64_t);auto invalid=SurfaceEtOwner::LID;
+            std::memcpy(payload.data()+offset,&invalid,sizeof(invalid)); // mesh tuple cannot identify a LID usage
+        }
+        crc=restartCrc(payload);detail::CompletedSourceArchive writer;writer(magic,version,endian,longBytes,doubleBytes,model,payload,crc);
+        const auto bad=restartPath("semantic-invalid-"+std::to_string(change));{std::ofstream out(bad,std::ios::binary);out.write(writer.bytes().data(),writer.bytes().size());}
+        Model target;mixedPollutants(target);target.attach();const auto before=restartPath("semantic-before");ASSERT_EQ(target.stage.saveCheckpoint(before.string()),"");
+        EXPECT_FALSE(target.stage.loadCheckpoint(bad.string()).empty());const auto after=restartPath("semantic-after");ASSERT_EQ(target.stage.saveCheckpoint(after.string()),"");
+        EXPECT_EQ(restartBytes(before),restartBytes(after));ASSERT_EQ(target.stage.loadCheckpoint(file.string()),"");
     }
 }

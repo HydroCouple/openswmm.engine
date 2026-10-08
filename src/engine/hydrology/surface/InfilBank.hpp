@@ -5,6 +5,8 @@
 #include "../Infiltration.hpp"
 #include <vector>
 
+namespace openswmm::detail { class CompletedSourceArchive; }
+
 namespace openswmm { struct SimulationContext; }
 namespace openswmm::surface {
 
@@ -26,6 +28,7 @@ public:
     void unpack(int e, int method, const double state[6]) noexcept;
     const std::vector<double>& cumulative() const noexcept { return cumulative_; }
     void clear();
+    void checkpoint(detail::CompletedSourceArchive&,bool model); // internal accepted-boundary IO
 private:
     std::vector<InfilModel> methods_;
     std::vector<Owner> owners_;

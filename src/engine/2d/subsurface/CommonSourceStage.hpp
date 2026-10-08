@@ -37,10 +37,16 @@ public:
     const std::vector<SurfaceEtReceipt>& etReceipts() const { return et_receipts_; }
     double completedEnd() const { return exchange_.completedEnd(); }
     long intervals() const { return intervals_; }
+    /// Internal component checkpoint, not a production engine hotstart.
+    std::string saveCheckpoint(const std::string& path) const;
+    std::string loadCheckpoint(const std::string& path);
     double meshRain() const { return mesh_rain_; }
     double meshEvaporation() const { return mesh_evap_; }
     double meshReturn() const { return mesh_return_; }
 private:
+    std::string checkpointBoundary() const;
+    std::string checkpointModel() const;
+    std::string checkpoint_model_;
     struct Donor {
         int source=-1, type=-1, unit=-1, identity=-1;
         double area=0;

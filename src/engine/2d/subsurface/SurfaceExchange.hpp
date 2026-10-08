@@ -59,6 +59,7 @@ public:
     const std::vector<SurfaceIntakeReceipt>& receipts() const noexcept { return receipts_; }
     double completedEnd() const noexcept { return completed_end_; }
 private:
+    friend class CommonSourceStage;
     double start_ = 0, end_ = 0, completed_end_ = 0;
     bool planned_ = false;
     const SubsurfaceSolver* receiver_ = nullptr;

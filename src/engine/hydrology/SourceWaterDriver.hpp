@@ -7,6 +7,8 @@
 #include <array>
 #include <memory>
 
+namespace openswmm::detail { class CompletedSourceArchive; }
+
 namespace openswmm::runoff {
 
 struct SourceWaterLedger {
@@ -56,7 +58,8 @@ struct SourceAtmosphericLedger {
 /// Water profile: non-LID runoff and existing subcatchment LID stores. Pollutant
 /// profile: conservative pollutants in non-LID/LID pools and their captured,
 /// returned and connected runoff, without land-use quality or reactions.
-/// Neither profile supports lumped GW, snow, age/heat/MSX or hot starts.
+/// Neither profile supports lumped GW, snow, age/heat/MSX or production hot starts.
+/// The internal accepted-boundary checkpoint requires a matching fresh model.
 /// No production caller yet.
 class SourceWaterDriver {
 public:
@@ -66,6 +69,7 @@ public:
     SourceWaterDriver& operator=(SourceWaterDriver&&) noexcept;
     /// Independent water/clock snapshot for a multi-group receiving trial.
     SourceWaterDriver waterTrial() const;
+    void checkpoint(detail::CompletedSourceArchive&,bool model); // internal accepted-boundary IO
     using BottomCeiling = std::function<double(int type, int unit, double start, double end)>;
     std::string initialize(const SimulationContext&, const std::vector<int>& seeds,
                            const std::vector<std::pair<int, double>>& non_lid_areas = {},

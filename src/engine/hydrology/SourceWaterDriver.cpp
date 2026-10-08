@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Caleb Buahin
 #include "SourceWaterDriver.hpp"
+#include "../core/CompletedSourceArchive.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../transport/components/LidLayerCommon.hpp"
 #include <algorithm>
@@ -618,4 +619,76 @@ void SourceWaterDriver::cancel() {
     if (pending_group_ >= 0) clocks_.cancel(pending_group_);
     trial_.reset(); pending_group_ = -1;
 }
+void SourceWaterDriver::checkpoint(detail::CompletedSourceArchive& a,bool model) {
+    if(!state_ || trial_)throw std::runtime_error("Source checkpoint requires committed water state.");
+    auto& s=*state_;auto& c=s.ctx;auto& sub=c.subcatches;
+    clocks_.checkpoint(a,model);
+    s.runoff.checkpoint(a,model);s.lids.checkpoint(a,model);
+    if(model) {
+        a(s.partitioned,s.inside,s.pollutant_names,c.options.flow_units,c.options.ignore_quality,
+            c.options.ignore_snow_melt,c.options.water_age,c.options.heat_transport);
+        for(int sc=0;sc<c.n_subcatches();++sc){auto name=c.subcatch_names.name_of(sc);a(name);}
+        a(sub.outlet_node,sub.outlet_subcatch,sub.gage,sub.area,sub.width,sub.slope);
+        a(sub.curb_length,sub.rain_scale_factor,sub.snow_scale_factor,sub.frac_imperv,sub.frac_imperv_no_store,sub.pct_zero);
+        a(sub.n_imperv,sub.n_perv,sub.ds_imperv,sub.ds_perv,sub.subarea_routing,sub.pct_routed);
+        a(sub.infil_model,sub.infil_p1,sub.infil_p2,sub.infil_p3,sub.infil_p4,sub.infil_p5);
+        a(sub.total_lid_area_ft2,sub.gw_aquifer,sub.gw_node,sub.snowpack);
+        a(c.subcatch_infil_pattern,c.patterns.factors,c.pollutants.units,c.pollutants.c_rain,
+            c.pollutants.k_decay,c.pollutants.co_pollut,c.pollutants.co_frac,c.pollutants.snow_only);
+        a.sequence(s.atmosphere,[&](auto& b){a(b.kind,b.source,b.type,b.unit,b.area,b.soil_eligible);},true);
+        a.sequence(s.pollutants,[&](auto& b){a(b.source,b.type,b.unit);},true);
+        return;
+    }
+        a.fixed(sub.runoff,sub.rainfall,sub.evap_loss,sub.infil_loss,sub.ponded_depth,sub.old_ponded_depth);
+        a.fixed(sub.washoff_vout1,sub.gw_flow,sub.snow_depth,sub.lid_drain_flow,sub.old_runoff,sub.old_gw_flow);
+        a.fixed(sub.old_snow_depth,sub.old_lid_drain_flow,sub.runon_inflow,sub.old_runon_inflow,sub.runon_rate,sub.outfall_runon_vol);
+        a.fixed(sub.subarea_runoff_rate,sub.lid_return_to_perv_cfs,sub.lid_drain_runon_cfs,sub.stat_precip_vol,sub.stat_evap_vol,sub.stat_infil_vol);
+        a.fixed(sub.stat_imperv_vol,sub.stat_perv_vol,sub.stat_runoff_vol,sub.stat_max_runoff);
+    a.fixed(s.runon,s.pervious_return);
+    a.sequence(s.runon_mass,[&](auto& mass){a.fixed(mass);},true);
+    a.sequence(s.return_mass,[&](auto& mass){a.fixed(mass);},true);
+    a.sequence(s.ledger,[&](auto& b){a(b.initial_storage,b.rain,b.evaporation,b.infiltration,
+        b.spatial_infiltration,b.outside_infiltration,b.aquifer_return,b.outlet,b.captured,b.runon,b.pervious_return);},true);
+    a.sequence(s.atmosphere,[&](auto& b){a(b.potential,b.evaporation);},true);
+    a.sequence(s.pollutants,[&](auto& b){a.fixed(b.layers,b.rain,b.spatial_infiltration,b.outside_infiltration,
+        b.outlet,b.removed,b.surface_mass,b.drain_mass,b.impervious_mass,b.pervious_mass,b.aquifer_return,b.pending_routing,b.incoming);},true);
+    a.sequence(s.deliveries,[&](auto& d){a(d.source,d.node,d.start,d.end,d.volume,d.drain,d.mass);});
+    a.sequence(s.aquifer_returns,[&](auto& q){a(q.source,q.type,q.unit,q.pool,q.volume,q.mass);});
+    if(a.reading()) {
+        const int np=int(s.pollutant_names.size());
+        const auto paired=[&](double volume,const auto& mass) {
+            if(!std::isfinite(volume) || volume<0 || int(mass.size())!=np)throw std::runtime_error("Invalid source restart tuple.");
+            for(double m:mass)if(!std::isfinite(m) || m<0 || (volume==0 && m!=0))throw std::runtime_error("Invalid source restart mass.");
+        };
+        for(std::size_t sc=0;sc<s.runon.size();++sc){paired(s.runon[sc],s.runon_mass[sc]);paired(s.pervious_return[sc],s.return_mass[sc]);}
+        for(const auto& b:s.pollutants) {
+            for(const auto& layer:b.layers)for(double mass:layer)if(!std::isfinite(mass)||mass<0)
+                throw std::runtime_error("Invalid source checkpoint pool mass.");
+        }
+        for(const auto& b:s.atmosphere)if(!std::isfinite(b.potential)||!std::isfinite(b.evaporation)||b.potential<0||
+            b.evaporation<0||b.evaporation>b.potential+1e-10*std::max(1.,b.potential))
+                throw std::runtime_error("Invalid source checkpoint atmospheric budget.");
+        for(const auto& d:s.deliveries) {
+            if(clocks_.groupForSubcatch(d.source)<0 || !std::isfinite(d.start) || !std::isfinite(d.end) || d.start<0 || d.end<=d.start ||
+                d.end>clocks_.groups()[clocks_.groupForSubcatch(d.source)].completed_end)
+                throw std::runtime_error("Invalid source restart delivery interval.");
+            paired(d.volume,d.mass);
+        }
+        // Reuse the normal credit validator without crediting or replaying it.
+        auto probe=waterTrial();probe.state_->aquifer_returns.clear();
+        for(const auto& q:s.aquifer_returns) {
+            paired(q.volume,q.mass);const int group=clocks_.groupForSubcatch(q.source);
+            if(group<0 || !probe.creditSurfaceReturns(clocks_.groups()[group].completed_end,{q}).empty())
+                throw std::runtime_error("Invalid originating source restart pool.");
+        }
+        for(std::size_t g=0;g<clocks_.groups().size();++g) {
+            const double scale=std::max(1.0,ledgers()[clocks_.groups()[g].subcatches[0]].rain);
+            if(!std::isfinite(balanceResidual(int(g))) || std::abs(balanceResidual(int(g)))>1e-8*scale)
+                throw std::runtime_error("Source restart water balance differs.");
+            for(int p=0;p<np;++p)if(!std::isfinite(pollutantBalanceResidual(int(g),p)) || std::abs(pollutantBalanceResidual(int(g),p))>1e-8*scale)
+                throw std::runtime_error("Source restart pollutant balance differs.");
+        }
+    }
+}
+
 }

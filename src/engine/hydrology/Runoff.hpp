@@ -45,6 +45,8 @@
 #include <functional>
 #include <utility>
 
+namespace openswmm::detail { class CompletedSourceArchive; }
+
 namespace openswmm {
 
 struct SimulationContext;
@@ -190,6 +192,7 @@ public:
     double infilFactorUsed(int i) const { return infil_factor_used_[static_cast<std::size_t>(i)]; }
 
     const RunoffSoA& soa() const { return soa_; }
+    void checkpoint(detail::CompletedSourceArchive&,bool model); // internal accepted-boundary IO
     /// Completed water still waiting for next interval's inter-subarea route.
     double pendingRoutingVolume(const SimulationContext& ctx, int source) const;
 

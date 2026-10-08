@@ -81,6 +81,8 @@
 #include <string>
 #include <vector>
 
+namespace openswmm::detail { class CompletedSourceArchive; }
+
 namespace openswmm {
 struct NodeData;
 }  // namespace openswmm
@@ -189,6 +191,7 @@ public:
     std::string configureSourceReceipts(const std::vector<int>& cells);
     void retainSourceReceipt(const SurfaceIntakeReceipt&);
     const std::vector<SurfaceIntakeReceipt>& pendingSourceReceipts(int cell) const { return source_receipts_.at(cell); }
+    double sourceCompletedTime(int cell) const { return source_cell_end_.at(cell); }
     const std::vector<SurfaceReturnReceipt>& sourceReturns() const { return source_returns_; }
     void acknowledgeSourceReturns(double completed_through);
     /// …and takes back what saturation excess and rejection carried up.
@@ -355,6 +358,7 @@ public:
 
     /// Storage now, for the continuity ledger.
     double storage() const noexcept { return state_.storage(); }
+    void checkpoint(detail::CompletedSourceArchive&,bool model); // internal accepted-boundary IO
 
 private:
     void resolveRows(const MeshData& mesh, const GwUnitFactors& uf,
@@ -365,6 +369,7 @@ private:
     void fireCell(int i, double dt, SurfaceStateData& surf, double time);
     std::vector<bool> source_owned_;
     std::vector<std::string> source_species_;
+    std::vector<double> source_cell_end_;
     std::vector<std::vector<SurfaceIntakeReceipt>> source_receipts_;
     std::vector<SurfaceReturnReceipt> source_returns_;
     double source_firing_end_ = 0.0;
