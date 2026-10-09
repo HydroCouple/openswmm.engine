@@ -96,6 +96,7 @@ public:
     double pollutantBalanceResidual(int group, int pollutant, bool trial = false) const;
     double pendingPollutantMass(int group, int pollutant, bool trial = false) const;
     double pendingVolume(int group, bool trial = false) const;
+    double storedVolume(int source) const;
     double balanceResidual(int group, bool trial = false) const;
 private:
     struct State;

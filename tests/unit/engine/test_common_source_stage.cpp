@@ -14,6 +14,10 @@
 #include <limits>
 #include <cstdlib>
 #include "core/CompletedSourceArchive.hpp"
+#include "2d/subsurface/SourceResultHistory.hpp"
+#ifdef OPENSWMM_HAS_HDF5_MODEL
+#include "io/hdf5/Hdf5ModelWriter.hpp"
+#endif
 
 using namespace openswmm;
 using namespace openswmm::twoD;
@@ -1286,3 +1290,139 @@ TEST(CommonSourceStage, SemanticallyInvalidCheckpointWithValidChecksumIsRejected
         EXPECT_EQ(restartBytes(before),restartBytes(after));ASSERT_EQ(target.stage.loadCheckpoint(file.string()),"");
     }
 }
+
+namespace {
+std::filesystem::path sourceResultPath(const std::string& name) {
+    const char* out=std::getenv("SWMM_R4_RESULTS_OUT");
+    const auto dir=out?std::filesystem::path(out):std::filesystem::current_path()/"source-result-evidence";
+    std::filesystem::create_directories(dir);return dir/(name+".h5");
+}
+void resultEqual(const SourceResultHistory& a,const SourceResultHistory& b) {
+    EXPECT_EQ(a.sourceNames(),b.sourceNames());EXPECT_EQ(a.pollutantNames(),b.pollutantNames());
+    EXPECT_EQ(a.pollutantMassUnits(),b.pollutantMassUnits());ASSERT_EQ(a.tables().size(),b.tables().size());
+    for(const auto& [name,t]:a.tables()) {
+        const auto& u=b.tables().at(name);EXPECT_EQ(t.fields,u.fields);EXPECT_EQ(t.units,u.units);EXPECT_EQ(t.columns,u.columns)<<name;
+    }
+}
+}
+TEST(CommonSourceStage, SourceHistoryKeepsAcceptedIntervalsEtAndSourceBalances) {
+    AtmosphericInput a;a.inside={.75,.25};a.impervious={.2,.4};a.pet={.0001,.0002};a.et="BOUNDARY_ET";
+    Model m;mixedPollutants(m,2,a);m.attach();SourceResultHistory history;
+    const auto before=restartPath("history-readonly-before"),after=restartPath("history-readonly-after");
+    ASSERT_EQ(m.stage.saveCheckpoint(before.string()),"");ASSERT_EQ(history.append(m.stage),"");
+    ASSERT_EQ(m.stage.saveCheckpoint(after.string()),"");EXPECT_EQ(restartBytes(before),restartBytes(after));
+    for(const auto [start,end]:{std::pair{0.,.5},std::pair{.5,2.},std::pair{2.,35.}}) {
+        advanceRestart(m,start,end);ASSERT_EQ(history.append(m.stage),"");etBalance(m);
+    }
+    const auto& b=history.tables().at("boundaries");
+    EXPECT_EQ(b.columns[2],(std::vector<double>{0,0,.5,2}));EXPECT_EQ(b.columns[3],(std::vector<double>{0,.5,2,35}));
+    const auto& water=history.tables().at("source_water").columns;
+    for(std::size_t r=0;r<water[0].size();++r)EXPECT_NEAR(water[7][r],water[8][r]+water[9][r],1e-13);
+    const auto& residual=history.tables().at("group_water").columns[3];for(double v:residual)EXPECT_NEAR(v,0,1e-12);
+    for(double v:history.tables().at("group_mass").columns[4])EXPECT_NEAR(v,0,1e-10);
+    EXPECT_FALSE(history.tables().at("et").columns[0].empty());EXPECT_EQ(history.pollutantMassUnits(),(std::vector<std::string>{"mg/L*m3","count/L*m3"}));
+    EXPECT_EQ(history.tables().at("receiver").columns[3].front(),-1); // initially unpublished refresh
+    const auto& footprint=history.tables().at("footprints").columns;
+    std::array<double,2> cell_area{};double outside=0;
+    for(std::size_t r=0;r<footprint[0].size();++r) {
+        if(footprint[5][r]<0)outside+=footprint[6][r];else cell_area[int(footprint[5][r])]+=footprint[6][r];
+    }
+    EXPECT_NEAR(outside,1,1e-12);for(int cell=0;cell<2;++cell)EXPECT_NEAR(cell_area[cell],m.mesh.tri_area[cell],1e-12);
+}
+TEST(CommonSourceStage, SourceHistoryRetainsPendingIntakesAtSlowerReceiverCadence) {
+    Model m;mixedPollutants(m);m.room(.005);m.attach();SourceResultHistory history;
+    ASSERT_EQ(history.append(m.stage),"");ASSERT_EQ(m.stage.advance(0,.5),"");ASSERT_EQ(history.append(m.stage),"");
+    EXPECT_EQ(history.tables().at("receiver").columns[2].back(),0);
+    const auto count=history.tables().at("pending_intake").rows();ASSERT_GT(count,0);
+    ASSERT_EQ(m.stage.advance(.5,2),"");ASSERT_EQ(history.append(m.stage),"");
+    EXPECT_GT(history.tables().at("pending_intake").rows(),count);
+    double volume=0;for(const auto& r:m.gw.pendingSourceReceipts(0))volume+=r.volume;
+    const auto& t=history.tables().at("pending_intake").columns;double saved=0;
+    for(std::size_t r=0;r<t[0].size();++r)if(t[0][r]==2)saved+=t[12][r];EXPECT_NEAR(saved,volume,1e-14);
+    m.gw.fireGwCells(0,2,m.surface,0);ASSERT_EQ(m.stage.advance(2,3),"");ASSERT_EQ(history.append(m.stage),"");
+    EXPECT_EQ(history.tables().at("receiver").columns[2].back(),2);
+}
+TEST(CommonSourceStage, SourceHistoryDistinguishesRefundAvailabilityAndAdoption) {
+    Model m;mixedPollutants(m);m.room(.005);m.attach();SourceResultHistory history;
+    ASSERT_EQ(history.append(m.stage),"");ASSERT_EQ(m.stage.advance(0,1),"");
+    m.gw.state().lacc[0]=4;m.gw.fireGwCells(0,1,m.surface,0);ASSERT_FALSE(m.gw.sourceReturns().empty());
+    ASSERT_EQ(history.append(m.stage),"");ASSERT_GT(history.tables().at("pending_return").rows(),0);
+    ASSERT_EQ(m.stage.advance(1,2),"");ASSERT_EQ(history.append(m.stage),"");
+    const auto& t=history.tables().at("return").columns;int refunds=0,physical=0;
+    for(std::size_t r=0;r<t[0].size();++r) {
+        EXPECT_EQ(t[4][r],1);EXPECT_EQ(t[5][r],1);
+        if(t[2][r]==0){++refunds;EXPECT_GE(t[6][r],0);EXPECT_GT(t[11][r],0);}
+        else{++physical;EXPECT_EQ(t[7][r],-1);}
+    }
+    EXPECT_GT(refunds,0);EXPECT_GT(physical,0);
+    const auto count=t[0].size();ASSERT_EQ(m.stage.advance(2,3),"");ASSERT_EQ(history.append(m.stage),"");
+    EXPECT_EQ(history.tables().at("return").rows(),count); // no replay of adopted credits
+}
+TEST(CommonSourceStage, SourceHistoryRefusesSkippedDuplicateTrialAndChangedModelsAtomically) {
+    Model m;mixedPollutants(m);m.attach();SourceResultHistory history;ASSERT_EQ(history.append(m.stage),"");
+    const auto initial=history;EXPECT_FALSE(history.append(m.stage).empty());resultEqual(history,initial);
+    runoff::SourceWaterDriver::BottomCeiling ceiling=[](int,int,double,double){return 0.;};
+    runoff::RunoffSolver::InfiltrationBoundary boundary=[](int,double,double,double& rate){rate=0;return true;};
+    ASSERT_EQ(m.sources.stage(0,.5,.5,&boundary,&ceiling),"");EXPECT_FALSE(history.append(m.stage).empty());resultEqual(history,initial);m.sources.cancel();
+    Model other;mixedPollutants(other);other.attach();EXPECT_FALSE(history.append(other.stage).empty());resultEqual(history,initial);
+    m.mesh.mannings_n[0]*=2;EXPECT_FALSE(history.append(m.stage).empty());resultEqual(history,initial);m.mesh.mannings_n[0]/=2;
+    ASSERT_EQ(m.stage.advance(0,.5),"");ASSERT_EQ(m.stage.advance(.5,1),"");EXPECT_FALSE(history.append(m.stage).empty());resultEqual(history,initial);
+    SourceResultHistory late;EXPECT_FALSE(late.append(m.stage).empty());EXPECT_TRUE(late.tables().empty());
+}
+#ifdef OPENSWMM_HAS_HDF5_MODEL
+TEST(CommonSourceStage, SourceHistoryHdf5RoundTripPreservesAllColumnsAndNativeUnits) {
+    Model m;mixedPollutants(m);m.attach();SourceResultHistory history;ASSERT_EQ(history.append(m.stage),"");
+    advanceRestart(m,0,.75);ASSERT_EQ(history.append(m.stage),"");advanceRestart(m,.75,2);ASSERT_EQ(history.append(m.stage),"");
+    const auto path=sourceResultPath("round-trip");ASSERT_EQ(history.save(path.string()),"");
+    SourceResultHistory restored;bool available=false;ASSERT_EQ(SourceResultHistory::read(path.string(),restored,available),"");
+    ASSERT_TRUE(available);resultEqual(history,restored);EXPECT_FALSE(restored.append(m.stage).empty());
+    ASSERT_EQ(restored.save(sourceResultPath("copied-history").string()),"");
+}
+TEST(CommonSourceStage, SourceHistoryHdf5ReportsAbsentInsteadOfZeroAndProtectsModelFiles) {
+    Model m;m.setup();m.attach();SourceResultHistory history;ASSERT_EQ(history.append(m.stage),"");const auto original=history;
+    const auto path=sourceResultPath("older-model");ASSERT_EQ(h5io::write_model(path.string(),m.context),0);
+    const auto bytes=restartBytes(path);bool available=true;
+    ASSERT_EQ(SourceResultHistory::read(path.string(),history,available),"");EXPECT_FALSE(available);resultEqual(history,original);
+    EXPECT_FALSE(history.save(path.string()).empty());EXPECT_EQ(restartBytes(path),bytes);
+}
+TEST(CommonSourceStage, SourceHistoryHdf5FailedPublicationPreservesExistingArtifact) {
+    Model m;mixedPollutants(m);m.attach();SourceResultHistory history;ASSERT_EQ(history.append(m.stage),"");
+    advanceRestart(m,0,1);ASSERT_EQ(history.append(m.stage),"");const auto path=sourceResultPath("publication");
+    ASSERT_EQ(history.save(path.string()),"");const auto bytes=restartBytes(path);
+    auto invalid=history;auto& tables=const_cast<std::map<std::string,SourceResultTable>&>(invalid.tables());
+    tables.at("source_water").columns[5].pop_back();EXPECT_FALSE(invalid.save(path.string()).empty());EXPECT_EQ(restartBytes(path),bytes);
+    EXPECT_FALSE(history.save((sourceResultPath("missing-parent")/"history.h5").string()).empty());
+    SourceResultHistory restored;bool available=false;ASSERT_EQ(SourceResultHistory::read(path.string(),restored,available),"");resultEqual(history,restored);
+}
+TEST(CommonSourceStage, SourceHistoryHdf5RejectsTruncationAndUnknownUnitsWithoutPartialLoad) {
+    Model m;mixedPollutants(m);m.attach();SourceResultHistory history;ASSERT_EQ(history.append(m.stage),"");
+    advanceRestart(m,0,1);ASSERT_EQ(history.append(m.stage),"");const auto valid=sourceResultPath("corruption-original");ASSERT_EQ(history.save(valid.string()),"");
+    const auto original=history;const auto bytes=restartBytes(valid);
+    for(int mode=0;mode<3;++mode) {
+        auto corrupt=bytes;
+        if(mode==0)corrupt.resize(bytes.size()/2);
+        if(mode==1){const auto at=corrupt.find("mg/L*m3");ASSERT_NE(at,std::string::npos);corrupt.replace(at,7,"kg/L*m3");}
+        if(mode==2){const auto at=corrupt.find("accepted source intervals");ASSERT_NE(at,std::string::npos);corrupt[at]='X';}
+        const auto path=sourceResultPath("corrupt-"+std::to_string(mode));{std::ofstream out(path,std::ios::binary);out.write(corrupt.data(),corrupt.size());}
+        bool available=true;EXPECT_FALSE(SourceResultHistory::read(path.string(),history,available).empty())<<mode;
+        EXPECT_FALSE(available);resultEqual(history,original);
+    }
+}
+TEST(CommonSourceStage, SourceHistoryHdf5RejectsIncompleteEndpointsAndInvalidTransferSemantics) {
+    Model m;mixedPollutants(m);m.room(.005);m.attach();SourceResultHistory history;ASSERT_EQ(history.append(m.stage),"");
+    ASSERT_EQ(m.stage.advance(0,1),"");m.gw.state().lacc[0]=4;m.gw.fireGwCells(0,1,m.surface,0);ASSERT_EQ(history.append(m.stage),"");
+    ASSERT_EQ(m.stage.advance(1,2),"");ASSERT_EQ(history.append(m.stage),"");
+    ASSERT_EQ(history.save(sourceResultPath("semantic-reference").string()),"");
+    for(int mode=0;mode<6;++mode) {
+        auto invalid=history;auto& t=const_cast<std::map<std::string,SourceResultTable>&>(invalid.tables());
+        if(mode==0)for(auto& c:t.at("source_water").columns)c.pop_back();
+        if(mode==1)t.at("receiver").columns[2].back()=100;
+        if(mode==2)t.at("return").columns[5].back()=0;
+        if(mode==3){const auto& kinds=t.at("return").columns[2];const auto at=std::find(kinds.begin(),kinds.end(),0);ASSERT_NE(at,kinds.end());
+            t.at("return_mass").columns[4][std::size_t(at-kinds.begin())*2]+=1;}
+        if(mode==4)t.at("et").columns[9].back()+=1;
+        if(mode==5)t.at("intake_mass").columns[2].back()=99;
+        EXPECT_FALSE(invalid.save(sourceResultPath("invalid-semantics-"+std::to_string(mode)).string()).empty())<<mode;
+    }
+}
+#endif

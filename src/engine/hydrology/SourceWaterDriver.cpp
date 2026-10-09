@@ -262,6 +262,10 @@ double SourceWaterDriver::pendingVolume(int group, bool trial) const {
     for(const auto& r:s.aquifer_returns)if(clocks_.groupForSubcatch(r.source)==group)v+=r.volume;
     return v;
 }
+double SourceWaterDriver::storedVolume(int source) const {
+    (void)view(false).ledger.at(source);
+    return storage(view(false),source);
+}
 double SourceWaterDriver::balanceResidual(int group, bool trial) const {
     const auto& s = view(trial); double v = -pendingVolume(group, trial);
     for (int sc : clocks_.groups().at(group).subcatches) {
