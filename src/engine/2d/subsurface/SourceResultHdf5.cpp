@@ -107,8 +107,56 @@ void readTable(hid_t root,const std::string& name,SourceResultTable& t,std::size
         require(count==0||H5Dread(d.get(),H5T_NATIVE_DOUBLE,H5S_ALL,H5S_ALL,H5P_DEFAULT,t.columns[c].data())>=0,"Cannot read source result column.");
     }
 }
+void boundary(hid_t group,const std::string& bytes) {
+    hsize_t dim=bytes.size();Handle space(H5Screate_simple(1,&dim,nullptr),Handle::Kind::Space);
+    Handle d(H5Dcreate2(group,"checkpoint_match",H5T_STD_U8LE,space.get(),H5P_DEFAULT,H5P_DEFAULT,H5P_DEFAULT),Handle::Kind::Dataset);
+    require(d.ok()&&H5Dwrite(d.get(),H5T_NATIVE_UCHAR,H5S_ALL,H5S_ALL,H5P_DEFAULT,bytes.data())>=0,"Cannot write source checkpoint match.");
+}
+std::string boundary(hid_t group) {
+    Handle d(H5Dopen2(group,"checkpoint_match",H5P_DEFAULT),Handle::Kind::Dataset);require(d.ok(),"Missing source checkpoint match.");
+    Handle type(H5Dget_type(d.get()),Handle::Kind::Type);Handle space(H5Dget_space(d.get()),Handle::Kind::Space);hsize_t dim=0;
+    require(type.ok()&&H5Tequal(type.get(),H5T_STD_U8LE)>0&&space.ok()&&H5Sget_simple_extent_ndims(space.get())==1&&
+        H5Sget_simple_extent_dims(space.get(),&dim,nullptr)>=0&&dim>0&&dim<=64*1024*1024,"Invalid source checkpoint match shape/type/size.");
+    std::string bytes(std::size_t(dim),'\0');require(H5Dread(d.get(),H5T_NATIVE_UCHAR,H5S_ALL,H5S_ALL,H5P_DEFAULT,bytes.data())>=0,"Cannot read source checkpoint match.");return bytes;
+}
+
 }
 struct SourceResultFile {
+    static void writeGroup(hid_t group,const SourceResultHistory& history) {
+        for(const auto& [key,value]:metadata)attribute(group,key.c_str(),key=="schema_version"&&!history.boundary_.empty()?"2":value);
+        names(group,"source_names",history.sources_);names(group,"pollutant_names",history.pollutants_);names(group,"pollutant_mass_units",history.mass_units_);
+        for(const auto& [name,t]:history.tables_)writeTable(group,name,t);
+        if(!history.boundary_.empty())boundary(group,history.boundary_);
+    }
+    // Publish the optional group inside the engine-owned open HDF5 file.
+    // Other root datasets/time axes are untouched. This is process-failure
+    // rollback, not crash/power-loss atomicity or the production streaming gate.
+    static std::string embed(const SourceResultHistory& history,hid_t file) {
+        const char* staged="__source_history_next",*old="__source_history_previous";
+        bool made=false,moved=false,published=false;
+        QuietErrors quiet;
+        try {
+            const auto invalid=history.validate();if(!invalid.empty())return invalid;
+            require(file>=0&&H5Iis_valid(file)>0,"Source output file is not open.");
+            require(!h5io::has_link(file,staged)&&!h5io::has_link(file,old),"Source output has an unfinished publication.");
+            auto group=h5io::make_group(file,staged);require(group.ok(),"Cannot stage source result group.");made=true;
+            writeGroup(group.get(),history);group.close();
+            require(H5Fflush(file,H5F_SCOPE_GLOBAL)>=0,"Cannot flush staged source results.");
+            if(h5io::has_link(file,"source_history")) {
+                require(H5Lmove(file,"source_history",file,old,H5P_DEFAULT,H5P_DEFAULT)>=0,"Cannot retain previous source results.");moved=true;
+            }
+            require(H5Lmove(file,staged,file,"source_history",H5P_DEFAULT,H5P_DEFAULT)>=0,"Cannot publish source result group.");published=true;
+            require(H5Fflush(file,H5F_SCOPE_GLOBAL)>=0,"Cannot flush published source results.");
+            if(moved)require(H5Ldelete(file,old,H5P_DEFAULT)>=0,"Cannot release previous source result group.");
+            return {};
+        } catch(const std::exception& e) {
+            if(published)H5Ldelete(file,"source_history",H5P_DEFAULT);
+            if(moved)H5Lmove(file,old,file,"source_history",H5P_DEFAULT,H5P_DEFAULT);
+            if(made&&!published)H5Ldelete(file,staged,H5P_DEFAULT);
+            H5Fflush(file,H5F_SCOPE_GLOBAL);return e.what();
+        }
+    }
+
     static std::string save(const SourceResultHistory& history,const std::string& path) {
         std::string part;
         try {
@@ -124,9 +172,7 @@ struct SourceResultFile {
             if(file.id<0){part.clear();return "Cannot create source result publication file.";}
             attribute(file.id,"artifact_kind",artifactKind);
             auto group=h5io::make_group(file.id,"source_history");require(group.ok(),"Cannot create source result history group.");
-            for(const auto& [key,value]:metadata)attribute(group.get(),key.c_str(),value);
-            names(group.get(),"source_names",history.sources_);names(group.get(),"pollutant_names",history.pollutants_);names(group.get(),"pollutant_mass_units",history.mass_units_);
-            for(const auto& [name,t]:history.tables_)writeTable(group.get(),name,t);
+            writeGroup(group.get(),history);
             require(H5Fflush(file.id,H5F_SCOPE_GLOBAL)>=0,"Cannot flush source result file.");
             group.close();file.close();
             std::error_code error;std::filesystem::rename(part,path,error);
@@ -142,10 +188,13 @@ struct SourceResultFile {
             std::error_code error;const auto size=std::filesystem::file_size(path,error);
             require(!error&&size>0&&size<=256*1024*1024,"Source result file missing or exceeds size limit.");
             auto file=h5io::open_file_readonly(path);require(file.ok(),"Cannot open source result HDF5 file.");
+            require(!h5io::has_link(file.get(),"__source_history_next")&&!h5io::has_link(file.get(),"__source_history_previous"),"Source output contains an unfinished publication.");
             if(!h5io::has_link(file.get(),"source_history"))return {};
             auto group=h5io::open_group(file.get(),"source_history");require(group.ok(),"Invalid source result group.");
-            for(const auto& [key,value]:metadata)require(attribute(group.get(),key.c_str())==value,"Unsupported source result metadata or schema.");
+            const auto version=attribute(group.get(),"schema_version");require(version=="1"||version=="2","Unsupported source result schema.");
+            for(const auto& [key,value]:metadata)if(key!="schema_version")require(attribute(group.get(),key.c_str())==value,"Unsupported source result metadata or schema.");
             SourceResultHistory trial;trial.tables_=SourceResultHistory::schema();
+            if(version=="2")trial.boundary_=boundary(group.get());
             trial.sources_=names(group.get(),"source_names");trial.pollutants_=names(group.get(),"pollutant_names");trial.mass_units_=names(group.get(),"pollutant_mass_units");
             std::size_t total=0;for(auto& [name,t]:trial.tables_)readTable(group.get(),name,t,total);
             const auto invalid=trial.validate();if(!invalid.empty())return invalid;
@@ -153,11 +202,13 @@ struct SourceResultFile {
         } catch(const std::exception& e){return e.what();}
     }
 };
+std::string SourceResultHistory::writeIntoOpenResult(std::int64_t file) const {return SourceResultFile::embed(*this,file);}
 std::string SourceResultHistory::save(const std::string& path) const {return SourceResultFile::save(*this,path);}
 std::string SourceResultHistory::read(const std::string& path,SourceResultHistory& out,bool& available){return SourceResultFile::read(path,out,available);}
 }
 #else
 namespace openswmm::twoD {
+std::string SourceResultHistory::writeIntoOpenResult(std::int64_t) const {return "Source result HDF5 support unavailable in this build.";}
 std::string SourceResultHistory::save(const std::string&) const {return "Source result HDF5 support unavailable in this build.";}
 std::string SourceResultHistory::read(const std::string&,SourceResultHistory&,bool& available){available=false;return "Source result HDF5 support unavailable in this build.";}
 }

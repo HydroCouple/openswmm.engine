@@ -102,7 +102,7 @@ std::string CommonSourceStage::checkpointModel() const {
     a.sequence(donors,[&](auto& d){a(d.source,d.type,d.unit,d.identity,d.area,d.contacts);});
     return a.bytes();
 }
-std::string CommonSourceStage::saveCheckpoint(const std::string& path) const {
+std::string CommonSourceStage::checkpointBytes(std::string& bytes) const {
     try {
         const auto error=checkpointBoundary();if(!error.empty())return error;
         if(checkpoint_model_!=checkpointModel())return "Source checkpoint model changed after initial attachment.";
@@ -118,7 +118,13 @@ std::string CommonSourceStage::saveCheckpoint(const std::string& path) const {
         uint32_t longBytes=sizeof(long),doubleBytes=sizeof(double);auto model=checkpoint_model_,payload=state.bytes();
         auto crc=checksum(payload);Archive file;file(magic,version,endian,longBytes,doubleBytes,model,payload,crc);
         if(file.bytes().size()>maxCheckpointBytes)return "Source checkpoint exceeds internal qualification size limit.";
-        publish(path,file.bytes());return {};
+        bytes=file.bytes();return {};
+    } catch(const std::exception& e){return e.what();}
+}
+std::string CommonSourceStage::saveCheckpoint(const std::string& path) const {
+    try {
+        std::string bytes;const auto error=checkpointBytes(bytes);if(!error.empty())return error;
+        publish(path,bytes);return {};
     } catch(const std::exception& e){return e.what();}
 }
 std::string CommonSourceStage::loadCheckpoint(const std::string& path) {

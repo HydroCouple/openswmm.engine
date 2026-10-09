@@ -45,6 +45,7 @@ public:
     double meshReturn() const { return mesh_return_; }
 private:
     friend class SourceResultHistory;
+    std::string checkpointBytes(std::string& bytes) const;
     std::string checkpointBoundary() const;
     std::string checkpointModel() const;
     std::string checkpoint_model_;

@@ -1426,3 +1426,67 @@ TEST(CommonSourceStage, SourceHistoryHdf5RejectsIncompleteEndpointsAndInvalidTra
     }
 }
 #endif
+
+TEST(CommonSourceStage, MarcherHistoryCapturesEveryAcceptedIntervalAfterReceiverFirings) {
+    AtmosphericInput a;a.pet={.0001,.0002};a.et="BOUNDARY_ET";Model m;mixedPollutants(m,2,a);m.attach(true);
+    SourceResultHistory history;m.marcher.setSourceResultHistory(history);
+    EXPECT_THROW(m.marcher.setSourceResultHistory(history),std::invalid_argument);
+    for(const auto [start,end]:{std::pair{0.,.7},std::pair{.7,4.25},std::pair{4.25,7.}})
+        EXPECT_DOUBLE_EQ(m.marcher.advance(start,end),end);
+    const auto& b=history.tables().at("boundaries").columns;
+    EXPECT_EQ(b[0].size(),std::size_t(m.stage.intervals()+1));EXPECT_DOUBLE_EQ(b[3].back(),7);
+    const auto& receiver=history.tables().at("receiver").columns;
+    for(std::size_t r=0;r<receiver[0].size();++r)EXPECT_LE(receiver[2][r],b[3][std::size_t(receiver[0][r])]);
+    EXPECT_GT(receiver[2].back(),0);etBalance(m);
+    const auto original=history;m.marcher.finalize();resultEqual(history,original);
+}
+TEST(CommonSourceStage, MarcherHistoryRegistrationRefusesMissingStageAndLateCapture) {
+    Model no_stage;no_stage.setup();no_stage.marcher.initialize(no_stage.mesh,no_stage.surface,no_stage.options);
+    SourceResultHistory history;EXPECT_THROW(no_stage.marcher.setSourceResultHistory(history),std::invalid_argument);EXPECT_TRUE(history.tables().empty());
+    Model late;mixedPollutants(late);late.attach(true);late.marcher.advance(0,1);
+    EXPECT_THROW(late.marcher.setSourceResultHistory(history),std::invalid_argument);EXPECT_TRUE(history.tables().empty());
+}
+#ifdef OPENSWMM_HAS_HDF5_MODEL
+TEST(CommonSourceStage, SourceHistoryContinuesOnlyFromExactRestoredCheckpointAndPrefix) {
+    AtmosphericInput a;a.pet={.0001,.0002};a.et="BOUNDARY_ET";Model continuous;mixedPollutants(continuous,2,a);continuous.attach();
+    SourceResultHistory history;ASSERT_EQ(history.append(continuous.stage),"");advanceRestart(continuous,0,1,false);ASSERT_EQ(history.append(continuous.stage),"");
+    const auto checkpoint=restartPath("history-continuation"),file=sourceResultPath("history-prefix");
+    ASSERT_EQ(continuous.stage.saveCheckpoint(checkpoint.string()),"");ASSERT_EQ(history.save(file.string()),"");
+    Model resumed;mixedPollutants(resumed,2,a);resumed.attach();ASSERT_EQ(resumed.stage.loadCheckpoint(checkpoint.string()),"");
+    SourceResultHistory prefix;bool available=false;ASSERT_EQ(SourceResultHistory::read(file.string(),prefix,available),"");ASSERT_TRUE(available);
+    ASSERT_EQ(prefix.resume(resumed.stage),"");resultEqual(history,prefix);EXPECT_FALSE(prefix.append(resumed.stage).empty());
+    for(const auto [start,end]:{std::pair{1.,2.},std::pair{2.,4.25}}) {
+        advanceRestart(continuous,start,end);advanceRestart(resumed,start,end);
+        ASSERT_EQ(history.append(continuous.stage),"");ASSERT_EQ(prefix.append(resumed.stage),"");resultEqual(history,prefix);
+    }
+    checkpointEqual(continuous,resumed,"history-continuation-final");ASSERT_EQ(prefix.save(sourceResultPath("history-continued").string()),"");
+}
+TEST(CommonSourceStage, SourceHistoryContinuationRefusesWrongStateClockAndProjectionAtomically) {
+    Model original;mixedPollutants(original);original.attach();SourceResultHistory history;ASSERT_EQ(history.append(original.stage),"");
+    advanceRestart(original,0,1);ASSERT_EQ(history.append(original.stage),"");const auto checkpoint=restartPath("history-mismatch");ASSERT_EQ(original.stage.saveCheckpoint(checkpoint.string()),"");
+    Model target;mixedPollutants(target);target.attach();const auto before=history;EXPECT_FALSE(history.resume(target.stage).empty());resultEqual(history,before);
+    ASSERT_EQ(target.stage.loadCheckpoint(checkpoint.string()),"");target.surface.volume[0]+=.001;
+    EXPECT_FALSE(history.resume(target.stage).empty());resultEqual(history,before);target.surface.volume[0]-=.001;
+    auto edited=history;auto& tables=const_cast<std::map<std::string,SourceResultTable>&>(edited.tables());
+    tables.at("source_water").columns[12].back()+=.001; // diagnostic capture total; balance unchanged
+    const auto changed=edited;EXPECT_FALSE(edited.resume(target.stage).empty());resultEqual(edited,changed);
+    advanceRestart(target,1,2);EXPECT_FALSE(history.resume(target.stage).empty());resultEqual(history,before);
+}
+TEST(CommonSourceStage, InitialSourceHistoryCanRebindWithoutAddingAnInterval) {
+    Model original;mixedPollutants(original);original.attach();SourceResultHistory history;ASSERT_EQ(history.append(original.stage),"");
+    Model other;mixedPollutants(other);other.attach();ASSERT_EQ(history.resume(other.stage),"");EXPECT_EQ(history.tables().at("boundaries").rows(),1);
+    advanceRestart(other,0,1);ASSERT_EQ(history.append(other.stage),"");EXPECT_EQ(history.tables().at("boundaries").rows(),2);
+}
+#endif
+
+#ifdef OPENSWMM_HAS_HDF5_MODEL
+TEST(CommonSourceStage, MarcherSourceHistoryMatchesCheckpointAfterCompletedAdvancePublication) {
+    Model original;original.setup(false,2,false,true);original.surface.volume[1]=.01;
+    original.surface.depth[1]=.0025;original.surface.head[1]=10.0025;original.attach(true);SourceResultHistory history;
+    original.marcher.setSourceResultHistory(history);ASSERT_DOUBLE_EQ(original.marcher.advance(0,3.25),3.25);
+    const auto file=restartPath("marcher-history-boundary");ASSERT_EQ(original.stage.saveCheckpoint(file.string()),"");
+    Model restored;restored.setup(false,2,false,true);restored.surface.volume[1]=.01;
+    restored.surface.depth[1]=.0025;restored.surface.head[1]=10.0025;restored.attach();ASSERT_EQ(restored.stage.loadCheckpoint(file.string()),"");
+    ASSERT_EQ(history.resume(restored.stage),"");
+}
+#endif

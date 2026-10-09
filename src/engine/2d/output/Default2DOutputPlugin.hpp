@@ -39,6 +39,8 @@
 #include "../../../../include/openswmm/plugin_sdk/IOutputPlugin.hpp"
 
 #include <string>
+#include <memory>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 #include <hdf5.h>
@@ -47,6 +49,7 @@ namespace openswmm::twoD {
 
 struct MeshData;          // forward declaration
 struct SolverOptions2D;   // forward declaration
+class SourceResultHistory;
 
 /**
  * @brief Default 2D output plugin: writes CF/UGRID-compliant HDF5 file.
@@ -211,7 +214,17 @@ public:
     /// Bitmask of report2d::Var groups in effect (for tests / the C API).
     unsigned reportVariables() const noexcept { return report_vars_; }
 
+    /// Producer handoff of immutable accepted source histories; HDF5 remains
+    /// exclusively on the output owner thread. Optional internal hook, no
+    /// automatic runtime ownership activation or plugin SDK payload change.
+    void enqueueSourceHistory(std::shared_ptr<const SourceResultHistory> history);
+
+
 private:
+    std::mutex source_mutex_;
+    std::vector<std::shared_ptr<const SourceResultHistory>> source_pending_;
+    std::shared_ptr<const SourceResultHistory> source_written_;
+    int writePendingSourceHistory();
     // ---- results-file size controls (configureOutput) ----
     hid_t    storage_type_ = H5T_NATIVE_DOUBLE;  ///< H5T_IEEE_F32LE when FLOAT32
     int      compression_  = 4;                  ///< zlib level; 0 = none

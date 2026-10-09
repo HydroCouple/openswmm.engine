@@ -9,6 +9,7 @@
 #ifdef OPENSWMM_HAS_2D
 
 #include "Default2DOutputPlugin.hpp"
+#include "../subsurface/SourceResultHistory.hpp"
 #include "../subsurface/SubsurfaceData.hpp"   // G-O: the aquifer ledger at finalize
 #include "../../core/SimulationContext.hpp"
 #include "../../2d/SurfaceRouter2D.hpp"
@@ -20,6 +21,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <cstring>
+#include <stdexcept>
 
 namespace openswmm::twoD {
 
@@ -706,7 +708,24 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
 // update() — append one time step (called from IO thread)
 // ============================================================================
 
+void Default2DOutputPlugin::enqueueSourceHistory(std::shared_ptr<const SourceResultHistory> history) {
+    if(!history)throw std::invalid_argument("Cannot enqueue an absent source history.");
+    std::lock_guard<std::mutex> lock(source_mutex_);source_pending_.push_back(std::move(history));
+}
+int Default2DOutputPlugin::writePendingSourceHistory() {
+    std::vector<std::shared_ptr<const SourceResultHistory>> pending;
+    {std::lock_guard<std::mutex> lock(source_mutex_);pending.swap(source_pending_);}
+    for(const auto& history:pending) {
+        auto error=source_written_?history->extends(*source_written_):std::string{};
+        if(error.empty())error=history->writeIntoOpenResult(file_id_);
+        if(!error.empty()){last_error_=error;state_=PluginState::ERROR;return 1;}
+        source_written_=history;
+    }
+    return 0;
+}
+
 int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
+    if(writePendingSourceHistory()!=0)return 1;
     if (file_id_ < 0 || snap.surface_tri_count == 0) return 0;
 
     // REPORT_2D_STEP cadence: update() arrives every [OPTIONS] REPORT_STEP;
@@ -1169,6 +1188,8 @@ void Default2DOutputPlugin::writeSpeciesRows(const double* all, hsize_t n_specie
 // ============================================================================
 
 int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
+    const bool prior_error=state_==PluginState::ERROR;
+    const int source_error=writePendingSourceHistory()!=0||prior_error?1:0;
     // Write the global 2D mass balance once, now that all terms are final.
     if (file_id_ != H5I_INVALID_HID && ctx.mass_balance_2d.active) {
         const auto& mb = ctx.mass_balance_2d;
@@ -1277,8 +1298,8 @@ int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
         file_id_ = H5I_INVALID_HID;
     }
 
-    state_ = PluginState::FINALIZED;
-    return 0;
+    state_ = source_error?PluginState::ERROR:PluginState::FINALIZED;
+    return source_error;
 }
 
 } // namespace openswmm::twoD

@@ -148,7 +148,53 @@ std::string SourceResultHistory::append(const CommonSourceStage& stage) {
         }
         for(const auto& r:stage.etReceipts())row(ts.at("et"),{double(frame),double(r.owner),double(r.source),double(r.type),double(r.unit),
             double(r.cell),r.start,r.end,r.area,r.potential,r.evaporation,r.soil_demand,r.unused});
+        const auto anchor=stage.checkpointBytes(trial.boundary_);if(!anchor.empty())return anchor;
         const auto invalid=trial.validate();if(!invalid.empty())return invalid;
+        *this=std::move(trial);return {};
+    } catch(const std::exception& e){return e.what();}
+}
+std::string SourceResultHistory::refreshCheckpointMatch(const CommonSourceStage& stage) {
+    if(stage_!=&stage||tables_.empty()||tables_.at("boundaries").rows()!=std::size_t(stage.intervals()+1)||
+       tables_.at("boundaries").columns[3].back()!=stage.completedEnd())return "Source checkpoint match is not at the captured final boundary.";
+    std::string bytes;const auto error=stage.checkpointBytes(bytes);if(!error.empty())return error;
+    boundary_=std::move(bytes);return {};
+}
+std::string SourceResultHistory::extends(const SourceResultHistory& prefix) const {
+    if(sources_!=prefix.sources_||pollutants_!=prefix.pollutants_||mass_units_!=prefix.mass_units_||tables_.size()!=prefix.tables_.size())
+        return "Source result prefix identities differ.";
+    for(const auto& [name,t]:prefix.tables_) {
+        const auto found=tables_.find(name);if(found==tables_.end())return "Source result prefix table is missing.";
+        const auto& next=found->second;
+        if(t.fields!=next.fields||t.units!=next.units||t.columns.size()!=next.columns.size())return "Source result prefix schema differs.";
+        for(std::size_t c=0;c<t.columns.size();++c)if(next.columns[c].size()<t.columns[c].size()||
+            !std::equal(t.columns[c].begin(),t.columns[c].end(),next.columns[c].begin()))return "Source result prefix changed or was truncated.";
+        if((name=="footprints"||name=="lid_usages")&&t.columns!=next.columns)return "Source result ownership prefix changed.";
+    }
+    if(tables_.at("boundaries").rows()==prefix.tables_.at("boundaries").rows()&&boundary_!=prefix.boundary_)
+        return "Source result boundary changed without a new interval.";
+    return {};
+}
+std::string SourceResultHistory::resume(const CommonSourceStage& stage) {
+    try {
+        const auto invalid=validate();if(!invalid.empty())return invalid;
+        if(boundary_.empty())return "Saved source history has no checkpoint match for continuation.";
+        std::string bytes;const auto error=stage.checkpointBytes(bytes);if(!error.empty())return error;
+        if(bytes!=boundary_)return "Source history does not match the restored component checkpoint.";
+        const auto n=tables_.at("boundaries").rows();
+        if(stage.intervals()!=static_cast<long>(n-1)||stage.completedEnd()!=tables_.at("boundaries").columns[3].back())
+            return "Source history final clock differs from restored state.";
+        auto trial=*this;
+        if(n==1)trial=SourceResultHistory{};
+        else {
+            for(auto& [name,t]:trial.tables_)if(name!="footprints"&&name!="lid_usages") {
+                auto at=std::find(t.columns[0].begin(),t.columns[0].end(),double(n-1));
+                const auto keep=std::size_t(at-t.columns[0].begin());for(auto& col:t.columns)col.resize(keep);
+            }
+            trial.stage_=&stage;trial.model_=stage.checkpoint_model_;
+        }
+        const auto captured=trial.append(stage);if(!captured.empty())return captured;
+        const auto differs=trial.extends(*this);if(!differs.empty())return differs;
+        for(const auto& [name,t]:tables_)if(t.columns!=trial.tables_.at(name).columns)return "Source history final diagnostics differ from checkpoint.";
         *this=std::move(trial);return {};
     } catch(const std::exception& e){return e.what();}
 }
