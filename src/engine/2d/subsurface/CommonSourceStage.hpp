@@ -45,7 +45,9 @@ public:
     double meshReturn() const { return mesh_return_; }
 private:
     friend class SourceResultHistory;
+    friend class ExplicitInertialSolver;
     std::string checkpointBytes(std::string& bytes) const;
+    std::string loadCheckpointBytes(std::string bytes);
     std::string checkpointBoundary() const;
     std::string checkpointModel() const;
     std::string checkpoint_model_;

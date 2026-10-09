@@ -496,6 +496,7 @@ if(OPENSWMM_BUILD_2D)
     # CSR layout.
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/InertialEdges.cpp)
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/ExplicitInertialSolver.cpp)
+    list(APPEND OPENSWMM_2D_SOURCES 2d/solver/ExplicitInertialCheckpoint.cpp)
 
     # Runtime backend selector (dlopen of the optional GPU plugin; serial CPU
     # fallback). Lives in the core — it owns the CPU↔plugin decision — but

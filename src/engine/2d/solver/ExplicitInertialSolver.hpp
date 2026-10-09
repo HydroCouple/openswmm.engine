@@ -53,6 +53,7 @@
 #include "InertialEdges.hpp"
 #include "../data/SolverOptions2D.hpp"   // Momentum2D
 
+namespace openswmm::detail { class CompletedSourceArchive; }
 namespace openswmm::twoD {
 
 class SubsurfaceSolver;   // G1: the two-zone groundwater kernel, if authored
@@ -76,6 +77,12 @@ public:
     /// Capture initial state and every finest accepted source interval, after
     /// all due groundwater firings/node sampling; externally owned recorder.
     void setSourceResultHistory(SourceResultHistory& history);
+    /// Internal accepted CPU surface/source boundary, not a whole-engine hotstart.
+    /// First order, no live 1D coupling or external boundary providers.
+    std::string saveCheckpoint(const std::string& path) const;
+    std::string loadCheckpoint(const std::string& path);
+    /// Bind a saved exact source-history prefix after a marcher restore.
+    void resumeSourceResultHistory(SourceResultHistory& history);
     void finalize() override;
     /// Refresh changed perimeter topology between completed advances.
     void refreshBoundaries();
@@ -340,6 +347,9 @@ private:
     double t_last_sync_ = 0.0;          ///< lazy-source clock
     CommonSourceStage* common_stage_ = nullptr;
     SourceResultHistory* source_history_ = nullptr;
+    bool checkpoint_ready_ = false;
+    std::string checkpointBoundary() const;
+    void checkpointState(detail::CompletedSourceArchive& archive);
     void captureSourceResults();
     double source_phase_end_ = 0.0;
     int    cycles_since_rebuild_ = 1000; ///< persists across advances (co-advance)

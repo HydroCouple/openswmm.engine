@@ -1699,7 +1699,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     const double paired_refund=paired ? std::min(reject_vol,infil_vol) : 0;
     std::vector<double> refund_mass,dunne_mass,excess_mass;
     std::vector<SurfaceReturnReceipt> refunds;
-    double return_ready=time+dt;
+    double return_ready=paired ? source_firing_end_ : time+dt;
     if(paired) {
         refund_mass.assign(tr_.n_species,0);dunne_mass.assign(tr_.n_species,0);excess_mass.assign(tr_.n_species,0);
         const double fraction=infil_vol>0 ? paired_refund/infil_vol : 0;
@@ -2008,35 +2008,41 @@ void SubsurfaceSolver::setSources(std::vector<GwResolvedSource> sources) {
             if (cell.first>=0 && cell.first<state_.n_cells)
                 cell_sources_[static_cast<std::size_t>(cell.first)].push_back({row,cell.second});
 }
-void SubsurfaceSolver::fireGwCells(int tier, double dt, SurfaceStateData& surf, double time) {
-    source_firing_end_=time+dt;
+void SubsurfaceSolver::fireGwCells(int tier, double dt, SurfaceStateData& surf, double time,
+                                   double accepted_end) {
+    source_firing_end_=accepted_end>=0 ? accepted_end : time+dt;
     if (!state_.active || !tierHasCells(tier)) return;
     for (const int i : cells_by_tier_[static_cast<std::size_t>(tier)]) {
         const auto u = static_cast<std::size_t>(i);
+        const bool exact=accepted_end>=0 && source_owned_[u];
+        const double cell_time=exact ? source_cell_end_[u] : time;
+        const double cell_dt=exact ? accepted_end-cell_time : dt;
         if (u >= cell_sources_.size() || cell_sources_[u].empty()) {
-            fireCell(i, dt, surf, time);
+            fireCell(i, cell_dt, surf, cell_time);
+            if(exact)source_cell_end_[u]=accepted_end;
             continue;
         }
-        const double end = time + dt;
-        std::vector<double> knots{time, end};
+        const double end = exact ? accepted_end : time + dt;
+        const double start = cell_time;
+        std::vector<double> knots{start, end};
         if (u < cell_sources_.size()) for (const auto& entry : cell_sources_[u]) {
             const auto& source = sources_[entry.first];
             auto add = [&](const GwSourceSignal& signal) {
                 const auto& times=signal.timePoints();
-                for(auto it=std::upper_bound(times.begin(),times.end(),time);it!=times.end()&&*it<end;++it)
+                for(auto it=std::upper_bound(times.begin(),times.end(),start);it!=times.end()&&*it<end;++it)
                     knots.push_back(*it);
             };
             add(source.flow);
             for (const auto& term : source.terms) add(term.signal);
             const auto& times=source.flow.timePoints();
             const auto& values=source.flow.ordinates();
-            const auto first=std::upper_bound(times.begin(),times.end(),time);
+            const auto first=std::upper_bound(times.begin(),times.end(),start);
             for (std::size_t j=std::max<std::size_t>(1,first-times.begin());j<times.size()&&times[j-1]<end;++j) {
                 const double a = values[j-1], b = values[j];
                 if ((a < 0 && b > 0) || (a > 0 && b < 0)) {
                     const double t = times[j-1] +
                         (times[j] - times[j-1]) * (-a) / (b-a);
-                    if (t > time && t < end) knots.push_back(t);
+                    if (t > start && t < end) knots.push_back(t);
                 }
             }
         }
@@ -2049,6 +2055,7 @@ void SubsurfaceSolver::fireGwCells(int tier, double dt, SurfaceStateData& surf, 
             gather_fraction_ = j + 1 == knots.size() ? 1.0 :
                 (knots[j] - knots[j-1]) / (end - knots[j-1]);
             fireCell(i, knots[j] - knots[j-1], surf, knots[j-1]);
+            if(exact)source_cell_end_[u]=knots[j];
         }
         gather_fraction_ = 1.0;
     }

@@ -164,8 +164,8 @@ void pollutantSources(Model& m,int cells=1,double inside_fraction=1) {
     m.surface.transport.resize(2,cells,0);m.surface.transport.row_names=rows.names;
     m.surface.transport.cell_mass.assign(2*cells,19); // unrelated mesh pool must stay intact
 }
-void mixedPollutants(Model& m,int cells=1,const AtmosphericInput& a={}) {
-    m.setup(true,cells,false,false,false,a);
+void mixedPollutants(Model& m,int cells=1,const AtmosphericInput& a={},bool adjacent=false) {
+    m.setup(true,cells,false,adjacent,false,a);
     m.context.pollutant_names.try_add("Dissolved");m.context.pollutant_names.try_add("Counts");
     m.context.pollutants.resize_pollutants(2);m.context.pollutants.c_rain={7,23};
     m.context.pollutants.units[1]=MassUnits::COUNTS_PER_L;m.context.options.ignore_quality=false;
@@ -1490,3 +1490,141 @@ TEST(CommonSourceStage, MarcherSourceHistoryMatchesCheckpointAfterCompletedAdvan
     ASSERT_EQ(history.resume(restored.stage),"");
 }
 #endif
+
+namespace {
+void marcherRestartModel(Model& m,Momentum2D mode=Momentum2D::LOCAL_INERTIAL,GwClosure closure=GwClosure::CLOSED_FORM) {
+    AtmosphericInput a;a.et="ENSLAVED";a.pet={1e-5,2e-5};a.connected=true;a.inside={.7,.4};
+    a.closure=closure;
+    mixedPollutants(m,2,a,true);m.options.momentum=mode;m.options.max_timestep=.3;m.options.cfl_number=.5;
+    m.options.theta=.8;m.options.front_rebuild=1;
+    m.surface.volume[1]=.01;m.surface.depth[1]=.0025;m.surface.head[1]=10.0025;
+    m.surface.evap_rate={1e-5,2e-5};m.room(.03,0);m.attach(true);
+}
+void marcherEqual(const Model& a,const Model& b,const std::string& name) {
+    const auto x=restartPath("cpu-a-"+name),y=restartPath("cpu-b-"+name);
+    ASSERT_EQ(a.marcher.saveCheckpoint(x.string()),"");ASSERT_EQ(b.marcher.saveCheckpoint(y.string()),"");
+    EXPECT_EQ(restartBytes(x),restartBytes(y));
+    EXPECT_EQ(a.surface.volume,b.surface.volume);EXPECT_EQ(a.surface.edge_flux,b.surface.edge_flux);
+    EXPECT_EQ(a.gw.transport().sat_mass,b.gw.transport().sat_mass);
+    EXPECT_DOUBLE_EQ(a.marcher.completedSourceTime(),b.marcher.completedSourceTime());
+}
+}
+TEST(CommonSourceStage, CpuCheckpointContinuesMomentumScheduleAndPendingTuplesExactly) {
+    for(const auto closure:{GwClosure::CLOSED_FORM,GwClosure::SIGMA})
+    for(const auto mode:{Momentum2D::LOCAL_INERTIAL,Momentum2D::FULL_SWE,Momentum2D::DIFFUSIVE_WAVE}) {
+        SCOPED_TRACE(std::to_string(int(closure))+":"+std::to_string(int(mode)));
+        Model continuous;marcherRestartModel(continuous,mode,closure);
+        ASSERT_DOUBLE_EQ(continuous.marcher.advance(0,1.25),1.25);
+        ASSERT_DOUBLE_EQ(continuous.marcher.advance(1.25,3.25),3.25);
+        if(closure==GwClosure::CLOSED_FORM)
+            ASSERT_TRUE(std::any_of(continuous.surface.edge_flux.begin(),continuous.surface.edge_flux.end(),[](double q){return q!=0;}));
+        const auto file=restartPath("cpu-mode-"+std::to_string(int(mode)));
+        ASSERT_EQ(continuous.marcher.saveCheckpoint(file.string()),"");
+        EXPECT_GT(*std::max_element(continuous.gw.state().tier.begin(),continuous.gw.state().tier.end()),0);
+        Model resumed;marcherRestartModel(resumed,mode,closure);ASSERT_EQ(resumed.marcher.loadCheckpoint(file.string()),"");
+        marcherEqual(continuous,resumed,"restored-"+std::to_string(int(mode)));
+        for(const auto [start,end]:{std::pair{3.25,8.},std::pair{8.,9.125},std::pair{9.125,31.5},std::pair{31.5,36.}}) {
+            ASSERT_DOUBLE_EQ(continuous.marcher.advance(start,end),end);ASSERT_DOUBLE_EQ(resumed.marcher.advance(start,end),end);
+            marcherEqual(continuous,resumed,std::to_string(int(mode))+"-"+std::to_string(end));
+            etBalance(resumed);
+        }
+        EXPECT_THROW(resumed.marcher.reinitialize(36),std::runtime_error);
+        EXPECT_THROW(resumed.marcher.resyncFromVolumes(36),std::runtime_error);
+    }
+}
+TEST(CommonSourceStage, CpuCheckpointInvalidClocksCannotAlterAcceptedState) {
+    Model m;marcherRestartModel(m);ASSERT_DOUBLE_EQ(m.marcher.advance(0,1.25),1.25);
+    const auto file=restartPath("cpu-clock");ASSERT_EQ(m.marcher.saveCheckpoint(file.string()),"");const auto before=restartBytes(file);
+    for(const auto [start,end]:{std::pair{0.,2.},std::pair{1.5,2.},std::pair{1.25,1.},
+         std::pair{1.25,std::numeric_limits<double>::quiet_NaN()},std::pair{std::numeric_limits<double>::quiet_NaN(),2.}}) {
+        EXPECT_THROW(m.marcher.advance(start,end),std::invalid_argument);
+        ASSERT_EQ(m.marcher.saveCheckpoint(file.string()),"");EXPECT_EQ(restartBytes(file),before);
+    }
+    EXPECT_DOUBLE_EQ(m.marcher.advance(1.25,1.25),1.25);
+    ASSERT_EQ(m.marcher.saveCheckpoint(file.string()),"");EXPECT_EQ(restartBytes(file),before);
+}
+TEST(CommonSourceStage, CpuCheckpointCorruptionAndModelMismatchRestoreAtomically) {
+    Model original;marcherRestartModel(original);ASSERT_DOUBLE_EQ(original.marcher.advance(0,1.25),1.25);
+    const auto file=restartPath("cpu-corrupt-original");ASSERT_EQ(original.marcher.saveCheckpoint(file.string()),"");const auto saved=restartBytes(file);
+    for(int change=0;change<5;++change) {
+        Model target;marcherRestartModel(target);const auto before=restartPath("cpu-target-before");
+        ASSERT_EQ(target.marcher.saveCheckpoint(before.string()),"");const auto initial=restartBytes(before);
+        auto bytes=saved;
+        if(change==0)bytes.resize(bytes.size()-1);
+        if(change==1)bytes.back()^=1;
+        if(change==2)bytes+="junk";
+        if(change==3)bytes[8]^=1;
+        if(change==4)target.options.max_timestep=.2;
+        const auto bad=restartPath("cpu-corrupt-"+std::to_string(change));std::ofstream(bad,std::ios::binary).write(bytes.data(),bytes.size());
+        EXPECT_FALSE(target.marcher.loadCheckpoint(bad.string()).empty());
+        if(change==4)target.options.max_timestep=.3;
+        ASSERT_EQ(target.marcher.saveCheckpoint(before.string()),"");EXPECT_EQ(restartBytes(before),initial);
+        ASSERT_EQ(target.marcher.loadCheckpoint(file.string()),"");
+        EXPECT_FALSE(target.marcher.loadCheckpoint(file.string()).empty());
+        marcherEqual(original,target,"atomic-"+std::to_string(change));
+    }
+}
+TEST(CommonSourceStage, CpuCheckpointRefusesUnsupportedOrFailedBoundariesAndProtectsFiles) {
+    Model bare;bare.setup();bare.marcher.initialize(bare.mesh,bare.surface,bare.options);
+    const auto file=restartPath("cpu-profile");EXPECT_FALSE(bare.marcher.saveCheckpoint(file.string()).empty());
+    Model m;marcherRestartModel(m);ASSERT_EQ(m.marcher.saveCheckpoint(file.string()),"");const auto original=restartBytes(file);
+    NodeData nodes;m.surface.nodes_1d=&nodes;EXPECT_FALSE(m.marcher.saveCheckpoint(file.string()).empty());
+    EXPECT_EQ(restartBytes(file),original);m.surface.nodes_1d=nullptr;
+    const auto unrelated=restartPath("cpu-unrelated");std::ofstream(unrelated)<<"user model input";
+    EXPECT_FALSE(m.marcher.saveCheckpoint(unrelated.string()).empty());EXPECT_EQ(restartBytes(unrelated),"user model input");
+    runoff::SourceWaterDriver::BottomCeiling ceiling=[](int,int,double,double){return 0.;};
+    runoff::RunoffSolver::InfiltrationBoundary boundary=[](int,double,double,double& rate){rate=0;return true;};
+    ASSERT_EQ(m.sources.stage(0,1,1,&boundary,&ceiling),"");
+    EXPECT_THROW(m.marcher.advance(0,1),std::runtime_error);m.sources.cancel();
+    EXPECT_FALSE(m.marcher.saveCheckpoint(file.string()).empty());EXPECT_EQ(restartBytes(file),original);
+}
+#ifdef OPENSWMM_HAS_HDF5_MODEL
+TEST(CommonSourceStage, CpuCheckpointResumesSavedHistoryAtMatchingBoundaryWithoutReplay) {
+    Model continuous;marcherRestartModel(continuous);SourceResultHistory history;continuous.marcher.setSourceResultHistory(history);
+    ASSERT_DOUBLE_EQ(continuous.marcher.advance(0,3.25),3.25);
+    const auto file=restartPath("cpu-history"),result=sourceResultPath("cpu-history");
+    ASSERT_EQ(continuous.marcher.saveCheckpoint(file.string()),"");ASSERT_EQ(history.save(result.string()),"");
+    Model resumed;marcherRestartModel(resumed);ASSERT_EQ(resumed.marcher.loadCheckpoint(file.string()),"");
+    SourceResultHistory prefix;bool available=false;ASSERT_EQ(SourceResultHistory::read(result.string(),prefix,available),"");ASSERT_TRUE(available);
+    resumed.marcher.resumeSourceResultHistory(prefix);resultEqual(history,prefix);
+    EXPECT_THROW(resumed.marcher.resumeSourceResultHistory(prefix),std::invalid_argument);
+    ASSERT_DOUBLE_EQ(continuous.marcher.advance(3.25,6.125),6.125);ASSERT_DOUBLE_EQ(resumed.marcher.advance(3.25,6.125),6.125);
+    marcherEqual(continuous,resumed,"history-final");resultEqual(history,prefix);
+}
+#endif
+
+TEST(CommonSourceStage, CpuCheckpointValidChecksumCannotHideBadSchedulesOrClocks) {
+    Model original;marcherRestartModel(original);ASSERT_DOUBLE_EQ(original.marcher.advance(0,1.25),1.25);
+    const auto file=restartPath("cpu-semantic");ASSERT_EQ(original.marcher.saveCheckpoint(file.string()),"");
+    for(int change=0;change<7;++change) {
+        detail::CompletedSourceArchive reader(restartBytes(file));std::string magic,payload;
+        uint32_t version=0,endian=0,longBytes=0,crc=0;reader(magic,version,endian,longBytes,payload,crc);reader.finish();
+        const auto count=[&](size_t at){uint64_t n=0;std::memcpy(&n,payload.data()+at,sizeof(n));return n;};
+        size_t offset=sizeof(uint64_t)+count(0);std::array<size_t,20> fields{};
+        for(int field=0;field<20;++field) {
+            fields[field]=offset;const auto n=count(offset);offset+=sizeof(uint64_t);
+            if(field<18)offset+=n*((field>=12 && field<=16)?sizeof(uint8_t):sizeof(double));
+            else for(uint64_t k=0;k<n;++k){const auto size=count(offset);offset+=sizeof(uint64_t)+size*sizeof(int);}
+        }
+        const auto cells=offset;offset+=sizeof(uint64_t)+count(offset)*sizeof(int);
+        offset+=sizeof(uint64_t)+count(offset)*sizeof(int); // active faces; dt0 then completed clocks
+        if(change==0){double nan=std::numeric_limits<double>::quiet_NaN();std::memcpy(payload.data()+fields[0]+8,&nan,sizeof(nan));}
+        if(change==1)payload[fields[13]+8]=char(255); // cell tier outside ladder
+        if(change==2){int bad=999;std::memcpy(payload.data()+cells+8,&bad,sizeof(bad));}
+        if(change==3){double future=2;std::memcpy(payload.data()+offset+8,&future,sizeof(future));std::memcpy(payload.data()+offset+16,&future,sizeof(future));}
+        if(change==4){uint64_t oversized=UINT64_MAX;std::memcpy(payload.data()+fields[0],&oversized,sizeof(oversized));}
+        if(change==5){double pending=.1;std::memcpy(payload.data()+fields[3]+8,&pending,sizeof(pending));}
+        if(change==6)version=999;
+        crc=restartCrc(payload);detail::CompletedSourceArchive writer;writer(magic,version,endian,longBytes,payload,crc);
+        const auto bad=restartPath("cpu-semantic-"+std::to_string(change));std::ofstream(bad,std::ios::binary).write(writer.bytes().data(),writer.bytes().size());
+        Model target;marcherRestartModel(target);const auto before=restartPath("cpu-semantic-before");ASSERT_EQ(target.marcher.saveCheckpoint(before.string()),"");
+        const auto initial=restartBytes(before);EXPECT_FALSE(target.marcher.loadCheckpoint(bad.string()).empty());
+        ASSERT_EQ(target.marcher.saveCheckpoint(before.string()),"");EXPECT_EQ(restartBytes(before),initial);
+        ASSERT_EQ(target.marcher.loadCheckpoint(file.string()),"");marcherEqual(original,target,"semantic-"+std::to_string(change));
+    }
+}
+TEST(CommonSourceStage, CpuInitialCheckpointPreservesFreshScheduleAndStartsOnce) {
+    Model original;marcherRestartModel(original);const auto file=restartPath("cpu-initial");ASSERT_EQ(original.marcher.saveCheckpoint(file.string()),"");
+    Model target;marcherRestartModel(target);ASSERT_EQ(target.marcher.loadCheckpoint(file.string()),"");marcherEqual(original,target,"initial");
+    ASSERT_DOUBLE_EQ(original.marcher.advance(0,1.25),1.25);ASSERT_DOUBLE_EQ(target.marcher.advance(0,1.25),1.25);marcherEqual(original,target,"initial-continued");
+}

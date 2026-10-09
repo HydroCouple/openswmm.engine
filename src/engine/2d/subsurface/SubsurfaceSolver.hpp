@@ -228,7 +228,10 @@ public:
     /// Lateral Darcy on the faces of one tier; books ±ΔV into `eacc_L/R`.
     void fireGwFaces(int tier, double dt);
     /// Gather + closure + node/deep/ET/Dunne for the cells of one tier.
-    void fireGwCells(int tier, double dt, SurfaceStateData& surf, double time = 0.0);
+    /// accepted_end is the common marcher's exact completed endpoint; owned
+    /// cells start at their last completed firing, without rounded clock gaps.
+    void fireGwCells(int tier, double dt, SurfaceStateData& surf, double time = 0.0,
+                     double accepted_end = -1.0);
     RuntimeSources& runtimeSources() noexcept { return runtime_sources_; }
     const RuntimeSources& runtimeSources() const noexcept { return runtime_sources_; }
     void setSources(std::vector<GwResolvedSource> sources);

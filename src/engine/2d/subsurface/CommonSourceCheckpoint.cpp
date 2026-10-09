@@ -129,13 +129,19 @@ std::string CommonSourceStage::saveCheckpoint(const std::string& path) const {
 }
 std::string CommonSourceStage::loadCheckpoint(const std::string& path) {
     try {
-        const auto error=checkpointBoundary();if(!error.empty())return error;
-        if(completedEnd()!=0||intervals_!=0)return "Source checkpoint restore requires a fresh attached stage.";
-        if(checkpoint_model_!=checkpointModel())return "Source checkpoint target model changed after attachment.";
         std::error_code ec;const auto size=std::filesystem::file_size(path,ec);
         if(ec||size==0||size>maxCheckpointBytes)return "Source checkpoint file is missing or exceeds its size limit.";
         std::ifstream in(path,std::ios::binary);std::string bytes(size,'\0');in.read(bytes.data(),bytes.size());
         if(!in||in.peek()!=std::char_traits<char>::eof())return "Source checkpoint read failed.";
+        return loadCheckpointBytes(std::move(bytes));
+    } catch(const std::exception& e){return e.what();}
+}
+std::string CommonSourceStage::loadCheckpointBytes(std::string bytes) {
+    try {
+        const auto error=checkpointBoundary();if(!error.empty())return error;
+        if(completedEnd()!=0||intervals_!=0)return "Source checkpoint restore requires a fresh attached stage.";
+        if(checkpoint_model_!=checkpointModel())return "Source checkpoint target model changed after attachment.";
+        if(bytes.empty()||bytes.size()>maxCheckpointBytes)return "Source checkpoint exceeds its size limit.";
         Archive file(std::move(bytes));std::string magic,model,payload;uint32_t version=0,endian=0,longBytes=0,doubleBytes=0,crc=0;
         file(magic,version,endian,longBytes,doubleBytes,model,payload,crc);file.finish();
         if(magic!="OpenSWMM source boundary"||version!=checkpointVersion||endian!=0x01020304||longBytes!=sizeof(long)||doubleBytes!=sizeof(double))
