@@ -113,6 +113,23 @@ public:
              double evap_rate = 0.0,
              dynwave::DWSolver::NonConduitFlowFunc non_conduit_fn = nullptr);
 
+    /// Internal, opt-in accepted hydraulic component checkpoint. Enable only
+    /// after Router/LID initialization at time zero. Currently qualified for
+    /// water-only DW conduits, ordinary junctions, functional storage (including
+    /// node LIDs), and FREE/NORMAL/FIXED outfalls. No production caller or change
+    /// to the seed hot-start format. External runoff, controls, exfiltration
+    /// solvers, 2D producers and output writers require their own paired state.
+    void enableCheckpointing(SimulationContext& ctx);
+    /// Before saving old state or preparing LID/forcing for a tracked step.
+    /// Preparation failures cannot be mislabeled as an accepted boundary.
+    void beginCheckpointStep(SimulationContext& ctx, double dt);
+    /// Call once after successful step(), LID finishStep(), postprocessing and
+    /// the caller's clock advance. Until then save and another tracked step are
+    /// refused. A returned DW non-convergence is an accepted legacy step.
+    void acceptCheckpointBoundary(SimulationContext& ctx);
+    std::string saveCheckpoint(const SimulationContext& ctx, const std::string& path) const;
+    std::string loadCheckpoint(SimulationContext& ctx, const std::string& path);
+
     /**
      * @brief Compute adaptive timestep (DW only).
      *
@@ -184,6 +201,15 @@ public:
     const std::vector<std::string>& fvErrors()   const { return fv_errors_; }
 
 private:
+    struct RestartState;
+    SimulationContext* checkpoint_context_ = nullptr; // non-owning, stable lifetime
+    std::string checkpoint_model_;
+    double checkpoint_time_ = 0.0, checkpoint_step_end_ = 0.0;
+    bool checkpoint_ready_ = false, checkpoint_prepared_ = false, checkpoint_step_finished_ = false;
+    std::string checkpointModel(const SimulationContext& ctx) const;
+    void checkCheckpointProfile(const SimulationContext& ctx) const;
+    void checkCheckpointStep(SimulationContext& ctx, double dt, double evap_rate, bool callback);
+
     RouteModel model_ = RouteModel::DYNWAVE;
     XSectGroups groups_;
 
