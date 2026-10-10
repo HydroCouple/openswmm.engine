@@ -41,6 +41,9 @@ public:
     long intervals() const { return intervals_; }
     /// Qualification guard against running private and live subcatchment kernels twice.
     const runoff::SourceWaterDriver& sources() const { return *sources_; }
+    std::string creditOutfallReturns(double start,double end,const std::vector<double>& volumes) {
+        return sources_ ? sources_->creditOutfallReturns(start,end,volumes) : "Source stage is not attached.";
+    }
     bool meshOnly() const { return sources_ && sources_->clocks().groups().empty() && donors_.empty(); }
     /// Internal component checkpoint, not a production engine hotstart.
     std::string saveCheckpoint(const std::string& path) const;

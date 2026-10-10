@@ -1822,6 +1822,17 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
     hydraulics::TimestepController::advance(ctx_, dt_next);
 #ifdef OPENSWMM_HAS_2D
     if (source_delivery_) {
+        if(source_stage_->sources().acceptsOutfallReturns()) {
+            std::vector<double> returns(ctx_.n_subcatches(),0);
+            for(int sc=0;sc<ctx_.n_subcatches();++sc)if(ownsSpatialSource(sc))
+                returns[sc]=ctx_.subcatches.outfall_runon_vol[sc];
+            const auto error=source_stage_->creditOutfallReturns(source_delivery_->receiverEnd(),ctx_.current_time,returns);
+            if(!error.empty())throw std::runtime_error(error);
+            for(int sc=0;sc<ctx_.n_subcatches();++sc)if(ownsSpatialSource(sc))ctx_.subcatches.outfall_runon_vol[sc]=0;
+            // The accepted return is now pending source storage. Include it in
+            // the closing balance before validating the paired boundary.
+            computeFinalStorage();
+        }
         auto error=source_delivery_->commit();
         if (!error.empty()) throw std::runtime_error(error);
         error=source_delivery_->capture(source_stage_->sources(),ctx_.current_time);
@@ -5783,7 +5794,7 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                 const int ofr = ctx_.node_subtypes.outfall_row(static_cast<int>(uj));
                 int sc = (ofr >= 0)
                     ? ctx_.node_subtypes.outfalls.route_to[static_cast<std::size_t>(ofr)] : -1;
-                if (sc >= 0 && sc < ctx_.n_subcatches() && q_in > 0.0) {
+                if (sc >= 0 && sc < ctx_.n_subcatches() && !ownsSpatialSource(sc) && q_in > 0.0) {
                     auto usc = static_cast<std::size_t>(sc);
                     ctx_.subcatches.outfall_runon_vol[usc] += q_in * dt_routing;
                     // A4: water returning from an outfall carries that
@@ -5833,6 +5844,12 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                 ctx_.nodes.inflow[uj] = std::fabs(q_sys);
             }
             if (q_sys > 0.0) {
+                // Owned sources receive the same accepted system discharge as
+                // hydraulic continuity. An inflow rewritten by outfall backflow
+                // is not a new return. Ordinary legacy runon above is unchanged.
+                const int row=ctx_.node_subtypes.outfall_row(static_cast<int>(uj));
+                const int sc=row>=0 ? ctx_.node_subtypes.outfalls.route_to[row] : -1;
+                if(ownsSpatialSource(sc))ctx_.subcatches.outfall_runon_vol[sc]+=q_sys*dt_routing;
                 quality_outflow = q_sys;
                 ctx_.mass_balance.routing_outflow += q_sys * dt_routing;
                 ctx_.mass_balance.step_outflow    += q_sys;
@@ -10417,7 +10434,7 @@ std::array<double,6> SWMMEngine::sourceTotals(const runoff::SourceWaterDriver& s
     std::array<double,6> totals{};
     for (int sc=0;sc<ctx_.n_subcatches();++sc) if (bridge.ownsSubcatch(sc)) {
         const auto& b=source.ledgers()[sc];
-        totals[0]+=b.rain;totals[1]+=b.evaporation;totals[2]+=b.infiltration;totals[3]+=b.aquifer_return;
+        totals[0]+=b.rain;totals[1]+=b.evaporation;totals[2]+=b.infiltration;totals[3]+=b.aquifer_return+b.outfall_return;
     }
     for (const auto& b:bridge.received()) {totals[4]+=b.runoff;totals[5]+=b.drain;}
     return totals;

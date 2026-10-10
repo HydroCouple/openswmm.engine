@@ -447,7 +447,7 @@ struct SurfaceSession {
     runoff::SourceWaterDriver sources;
     twoD::CommonSourceStage stage;
     SWMMEngine engine;
-    void start(const std::string& name,int lid=0,int mapped=0,int closure=0,int mode=0,bool track=true,bool spatial=false,bool all_sources=false) {
+    void start(const std::string& name,int lid=0,int mapped=0,int closure=0,int mode=0,bool track=true,bool spatial=false,bool all_sources=false,int outfall_return=-1) {
         SWMMEngine authored;startRunoff(authored,name,mode%5,mode%3,lid,false);authored.close();
         auto p=root()/name;auto deck=bytes(p.string()+".inp");
         deck.replace(deck.find("IGNORE_2D YES"),13,"IGNORE_2D NO");
@@ -461,7 +461,7 @@ struct SurfaceSession {
         mesh.resize_vertices(4);mesh.resize_triangles(2);
         mesh.vx={0,4,0,4};mesh.vy={0,0,2,2};mesh.vz={.5,.5,.5,.5};
         mesh.set_triangle(0,0,1,2);mesh.set_triangle(1,1,3,2);mesh.mannings_n={.03,.03};
-        mesh.tri_init_depth={.04,.003};mesh.tri_coupled_node=mapped==1?std::vector<int>{2,0}:(mapped==2?std::vector<int>{2,2}:std::vector<int>{0,0});
+        mesh.tri_init_depth={.04,.003};mesh.tri_coupled_node=mapped==1?std::vector<int>{2,0}:(mapped==2?std::vector<int>{2,2}:(mapped==3?std::vector<int>{ctx.node_names.find("O"),0}:std::vector<int>{0,0}));
         mesh.tri_coupling_cd={.6,.6};mesh.tri_coupling_area={.002,.003};
         auto& options=router.options();options.mesh_units_si=true;options.num_threads=1;
         options.momentum=twoD::Momentum2D::LOCAL_INERTIAL;options.max_timestep=.21;
@@ -476,7 +476,8 @@ struct SurfaceSession {
             gw.hu[i]=gw.theta_s[i]*(gw.zs[i]-gw.hg[i])-.0001/mesh.tri_area[i];
         }
         if(all_sources)ctx.node_subtypes.outfalls.route_to[0]=-1;
-        auto error=sources.initialize(ctx,spatial ? (all_sources?std::vector<int>{0,2}:std::vector<int>{0}):std::vector<int>{});if(!error.empty())throw std::runtime_error(error);
+        if(outfall_return>=0)std::fill(ctx.node_subtypes.outfalls.route_to.begin(),ctx.node_subtypes.outfalls.route_to.end(),outfall_return);
+        auto error=sources.initialize(ctx,spatial ? (all_sources?std::vector<int>{0,2}:std::vector<int>{0}):std::vector<int>{},{},nullptr,outfall_return>=0);if(!error.empty())throw std::runtime_error(error);
         twoD::SurfaceOwnershipPreview preview;preview.mesh_weather_area=mesh.tri_area;
         if(spatial) {
             constexpr double ft2=.3048*.3048;
@@ -711,7 +712,7 @@ TEST(EngineCheckpoint, SpatialAttachmentIsExplicitAndRefusesOwnedOutfallReturnsA
 
 #ifdef OPENSWMM_HAS_2D
 namespace {
-void startClosedSpatial(SurfaceSession& m,const std::string& name,int node_lid=0,double cadence=.7) {
+void startClosedSpatial(SurfaceSession& m,const std::string& name,int node_lid=0,double cadence=.7,bool returns=false,bool multiple=false) {
     auto path=root()/name;
     std::string deck="[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 10/10/2026\nSTART_TIME 00:00:00\nEND_DATE 10/10/2026\nEND_TIME 00:00:30\nROUTING_STEP "+std::to_string(cadence)+"\nVARIABLE_STEP 0\nINFILTRATION GREEN_AMPT\nRULE_STEP 00:00:02\nREPORT_STEP 00:00:03\nWET_STEP 00:00:01\nDRY_STEP 00:00:07\nIGNORE_QUALITY YES\nIGNORE_SNOWMELT YES\nIGNORE_GROUNDWATER YES\nIGNORE_2D NO\n[STORAGE]\nSINK 0 100 0 FUNCTIONAL 0 0 100 0 0\n[OUTFALLS]\nDRAIN 0 FREE NO\n[RAINGAGES]\nR INTENSITY 0:00:05 1 TIMESERIES Rain\nDry INTENSITY 0:00:05 1 TIMESERIES Zero\n[SUBCATCHMENTS]\nA R B .01 45 10 1 0\nB R SINK .02 65 10 1 0\nD Dry SINK .01 50 10 1 0\n[SUBAREAS]\nA .015 .12 .03 .05 35 PERVIOUS 55\nB .02 .13 .02 .04 25 OUTLET\nD .02 .13 .02 .04 25 OUTLET\n[INFILTRATION]\nA 3 .25 .3\nB 3 .25 .3\nD 3 .25 .3\n[LID_CONTROLS]\nI IT\nI SURFACE 3 .05 .12 1 3\nI STORAGE 6 .667 .1 0\nI DRAIN .5 .5 0 0\n[LID_USAGE]\nA I 1 20 3 70 30 0 * DRAIN\n[EVAPORATION]\nCONSTANT 0\n[TIMESERIES]\nRain 10/10/2026 00:00:00 5\nRain 10/10/2026 00:00:05 0\nZero 10/10/2026 00:00:00 0\n";
     if(node_lid) {
@@ -719,6 +720,7 @@ void startClosedSpatial(SurfaceSession& m,const std::string& name,int node_lid=0
         deck+="[LID_CONTROLS]\nStack NODE\nStack SURFACE 6 .1\nStack MEDIA 12 .45 .2 .08 2 10 3\nStack AGGREGATE 6 .4 100\nStack BOTTOM 0 0\n[LID_NODES]\nSINK Stack 10\n";
         if(node_lid==2)deck+="[LID_RICHARDS]\nStack OPTIONS 4 1e-7 1e-5 30\nStack 2 .03 2 1.6 .5 .0001\nStack 3 .03 2 1.6 .5 .0001\n";
     }
+    if(multiple)deck+="[OUTFALLS]\nDRAIN2 0 FREE NO\n[LID_USAGE]\nB I 1 10 3 70 0 0 * DRAIN2\n";
     write(path.string()+".inp",deck);auto& e=m.engine;
     if(e.open((path.string()+".inp").c_str(),(path.string()+".rpt").c_str(),nullptr))throw std::runtime_error(e.context().error_message);
     auto& router=e.surfaceRouter2D();auto& mesh=router.mesh();mesh.resize_vertices(4);mesh.resize_triangles(2);
@@ -732,7 +734,8 @@ void startClosedSpatial(SurfaceSession& m,const std::string& name,int node_lid=0
     config.options.closure=twoD::GwClosure::CLOSED_FORM;
     twoD::GwAquiferRow row;row.Ks=.000001*3600/.0254;row.zs=2/.3048;row.hg0=1/.3048;row.alpha=2*.3048;config.rows.push_back(row);
     if(e.initialize() || e.start(0))throw std::runtime_error(e.context().error_message);
-    auto error=m.sources.initialize(e.context(),{0});if(!error.empty())throw std::runtime_error(error);
+    if(returns)std::fill(e.context().node_subtypes.outfalls.route_to.begin(),e.context().node_subtypes.outfalls.route_to.end(),0);
+    auto error=m.sources.initialize(e.context(),{0},{},nullptr,returns);if(!error.empty())throw std::runtime_error(error);
     twoD::SurfaceOwnershipPreview preview;preview.mesh_weather_area=mesh.tri_area;constexpr double ft2=.3048*.3048;
     for(int sc:{0,1}) {
         const auto& r=m.sources.runoff().soa();const double lids=m.sources.context().subcatches.total_lid_area_ft2[sc]*ft2;
@@ -861,6 +864,134 @@ TEST(EngineCheckpoint, SpatialSourceReturnPreservesLowStorageAtShortCadence) {
         while(m.engine.context().elapsed_ms<end*1000)ASSERT_NO_THROW(step(m.engine));
         for(int group=0;group<int(m.sources.clocks().groups().size());++group)EXPECT_NEAR(m.sources.balanceResidual(group),0,1e-8);
         if(all) {EXPECT_EQ(m.sources.clocks().groups().size(),2);EXPECT_DOUBLE_EQ(m.engine.context().subcatches.stat_precip_vol[2],0);}
+    }
+}
+#endif
+
+#ifdef OPENSWMM_HAS_2D
+TEST(EngineCheckpoint, OwnedOutfallReturnsPreserveEveryAcceptedVolumeAndRunoffBalance) {
+    for(int lid=0;lid<3;++lid)for(double cadence:{.31,.7,1.}) {
+        const auto name="owned-outfall-closed-"+std::to_string(lid)+"-"+std::to_string(cadence);SCOPED_TRACE(name);
+        const bool multiple=lid==2 && cadence==.31;
+        SurfaceSession a;ASSERT_NO_THROW(startClosedSpatial(a,name,lid,cadence,true,multiple));
+        int steps=0;bool applied=false;
+        while(a.engine.context().elapsed_ms<a.engine.context().options.totalDurationMs()) {
+            ASSERT_NO_THROW(step(a.engine));const auto& c=a.engine.context();const auto* b=a.engine.sourceDelivery();
+            double routed=0;for(int n=0;n<c.n_nodes();++n)if(c.nodes.type[n]==NodeType::OUTFALL)
+                routed+=b->delivered()[n].runoff+b->delivered()[n].drain;
+            EXPECT_NEAR(a.sources.ledgers()[0].outfall_return,routed,1e-10);
+            EXPECT_NEAR(c.mass_balance.routing_outflow,routed,1e-10);
+            EXPECT_NEAR(c.mass_balance.runoff_runon,routed,1e-10);
+            EXPECT_DOUBLE_EQ(c.subcatches.outfall_runon_vol[0],0);
+            EXPECT_DOUBLE_EQ(a.sources.outfallReturnEnd(),c.current_time);
+            EXPECT_NEAR(a.sources.balanceResidual(0),0,1e-8);
+            const auto& mb=c.mass_balance;
+            EXPECT_NEAR(mb.runoff_init_store+mb.runoff_rainfall+mb.runoff_runon-mb.runoff_evap-mb.runoff_infil-
+                        mb.runoff_runoff-mb.runoff_lid_drain-mb.runoff_final_store,0,1e-8);
+            applied|=a.sources.ledgers()[0].runon>0;
+            if(++steps==11) {
+                auto file=root()/(name+".chk");ASSERT_EQ(a.engine.saveCheckpoint(file.string()),"");
+                SurfaceSession restored;ASSERT_NO_THROW(startClosedSpatial(restored,name+"-restored",lid,cadence,true,multiple));
+                ASSERT_EQ(restored.engine.loadCheckpoint(file.string()),"");compare(a.engine,restored.engine,name+"-restored");
+                for(int k=0;k<3;++k){step(a.engine);step(restored.engine);}compare(a.engine,restored.engine,name+"-continued");
+            }
+        }
+        EXPECT_GT(a.sources.ledgers()[0].outfall_return,0);EXPECT_TRUE(applied);
+        if(multiple) {
+            const int second=a.engine.context().node_names.find("DRAIN2");ASSERT_GE(second,0);
+            EXPECT_GT(a.engine.sourceDelivery()->delivered()[second].drain,0);
+        }
+    }
+}
+TEST(EngineCheckpoint, OwnedOutfallReturnsContinueThroughBackwaterVariableStepsAndMultipleGraphs) {
+    for(int lid=0;lid<4;++lid)for(int receiver:{0,2}) {
+        const auto name="owned-outfall-network-"+std::to_string(lid)+"-"+std::to_string(receiver);SCOPED_TRACE(name);
+        SurfaceSession a,b;const bool all=receiver==2;
+        ASSERT_NO_THROW(a.start(name+"-a",lid,0,1,6,true,true,all,receiver));
+        ASSERT_NO_THROW(b.start(name+"-b",lid,0,1,6,true,true,all,receiver));
+        while(a.engine.context().current_time<5)ASSERT_NO_THROW(step(a.engine));
+        auto file=root()/(name+".chk");ASSERT_EQ(a.engine.saveCheckpoint(file.string()),"");
+        ASSERT_EQ(b.engine.loadCheckpoint(file.string()),"");compare(a.engine,b.engine,name+"-opening");
+        int steps=0;double min_dt=1e9,max_dt=0;
+        while(a.engine.context().current_time<35) {
+            const auto before=a.engine.context().current_time;
+            ASSERT_NO_THROW(step(a.engine));
+            ASSERT_NO_THROW(step(b.engine));
+            const auto& c=a.engine.context();const double dt=c.current_time-before;min_dt=std::min(min_dt,dt);max_dt=std::max(max_dt,dt);
+            EXPECT_DOUBLE_EQ(c.subcatches.outfall_runon_vol[receiver],0);
+            EXPECT_NEAR(a.sources.ledgers()[receiver].outfall_return,c.mass_balance.routing_outflow,1e-9);
+            double credits=0;for(const auto& l:a.sources.ledgers())credits+=l.outfall_return+l.aquifer_return;
+            EXPECT_NEAR(credits,c.mass_balance.runoff_runon,1e-9);
+            for(std::size_t g=0;g<a.sources.clocks().groups().size();++g)EXPECT_NEAR(a.sources.balanceResidual(int(g)),0,1e-7);
+            if(++steps%23==0)compare(a.engine,b.engine,name+"-during");
+        }
+        EXPECT_LT(min_dt,max_dt);EXPECT_GT(a.sources.ledgers()[receiver].outfall_return,0);
+        if(lid==3)EXPECT_GT(a.engine.context().mass_balance.routing_external,0);
+        compare(a.engine,b.engine,name+"-final");
+    }
+}
+TEST(EngineCheckpoint, OwnedOutfallReceiptAttachmentBindsTopologyAndRefusesMappedDuplicateDischarge) {
+    SurfaceSession a;ASSERT_NO_THROW(a.start("owned-outfall-topology",2,0,0,0,false,true,false,0));
+    a.engine.context().node_subtypes.outfalls.route_to[0]=1;
+    EXPECT_FALSE(a.engine.enableSpatialSourceCheckpointing(a.stage).empty());EXPECT_EQ(a.engine.sourceDelivery(),nullptr);
+    a.engine.context().node_subtypes.outfalls.route_to[0]=0;ASSERT_EQ(a.engine.enableSpatialSourceCheckpointing(a.stage),"");
+    SurfaceSession mapped;ASSERT_NO_THROW(mapped.start("owned-outfall-mapped",2,3,0,0,false,true,false,0));
+    EXPECT_NE(mapped.engine.enableSpatialSourceCheckpointing(mapped.stage).find("mapped outfall"),std::string::npos);
+    EXPECT_EQ(mapped.engine.sourceDelivery(),nullptr);
+}
+TEST(EngineCheckpoint, OwnedOutfallReceiptCorruptionPreservesAllComponentsAndAllowsValidRetry) {
+    SurfaceSession a;ASSERT_NO_THROW(startClosedSpatial(a,"owned-outfall-atomic",2,.31,true));
+    while(a.engine.context().current_time<5)ASSERT_NO_THROW(step(a.engine));
+    const auto good=root()/"owned-outfall-atomic.chk";ASSERT_EQ(a.engine.saveCheckpoint(good.string()),"");
+    auto valid=bytes(good),surface=engineSurface(valid),surface_data=surfacePayload(surface);
+    auto cpu=nested(surface_data,"OpenSWMM CPU surface/source boundary").second;
+    detail::CompletedSourceArchive ci(cpu);std::string cpu_magic,cpu_data;uint32_t cpu_v,cpu_endian,cpu_long,cpu_sum;
+    ci(cpu_magic,cpu_v,cpu_endian,cpu_long,cpu_data,cpu_sum);ci.finish();
+    auto common=nested(cpu_data,"OpenSWMM source boundary").second;
+    detail::CompletedSourceArchive si(common);std::string source_magic,source_model,source_data;
+    uint32_t source_v,source_endian,source_long,source_double,source_sum;
+    si(source_magic,source_v,source_endian,source_long,source_double,source_model,source_data,source_sum);si.finish();
+    auto end=a.sources.outfallReturnEnd();std::vector<double> volumes;for(const auto& l:a.sources.ledgers())volumes.push_back(l.outfall_return);
+    auto queue=a.sources.pendingOutfallReturns();ASSERT_FALSE(queue.empty());
+    const auto tuples=[](detail::CompletedSourceArchive& ar,std::vector<runoff::SourceOutfallReturn>& rows) {
+        ar.sequence(rows,[&](auto& q){ar(q.source,q.available,q.volume);});
+    };
+    ASSERT_GT(volumes[0],0);uint32_t profile=1;detail::CompletedSourceArchive fields;fields(profile,end);
+    for(auto v:volumes)fields(v);tuples(fields,queue);
+    const auto at=source_data.find(fields.bytes());ASSERT_NE(at,std::string::npos);
+    ASSERT_EQ(source_data.find(fields.bytes(),at+1),std::string::npos);
+    detail::CompletedSourceArchive ei(valid);std::string engine_magic,engine_model,engine_data;uint32_t engine_v,engine_sum;
+    ei(engine_magic,engine_v,engine_model,engine_sum,engine_data);ei.finish();
+    for(int mutation=0;mutation<13;++mutation) {
+        SCOPED_TRACE(mutation);auto changed_end=end;auto changed_volumes=volumes;auto changed_profile=profile;
+        if(mutation==0)changed_profile=2;
+        if(mutation==1)changed_end+=1;
+        if(mutation==2)changed_end-=.1;
+        if(mutation==3)changed_volumes[0]=-1;
+        if(mutation==4)changed_volumes[0]=std::numeric_limits<double>::quiet_NaN();
+        if(mutation==5)changed_volumes[0]+=.1;
+        if(mutation==6)changed_volumes[2]=.1; // unowned catchment
+        auto changed_queue=queue;
+        if(mutation==7)changed_queue[0].available=end+1;
+        if(mutation==8)changed_queue[0].available=0;
+        if(mutation==9)changed_queue[0].source=2;
+        if(mutation==10)changed_queue[0].volume=std::numeric_limits<double>::quiet_NaN();
+        if(mutation==11)changed_queue[0].volume=0;
+        if(mutation==12)changed_queue[0].volume+=1;
+        detail::CompletedSourceArchive replacement;replacement(changed_profile,changed_end);for(auto v:changed_volumes)replacement(v);tuples(replacement,changed_queue);
+        auto changed_source=source_data;changed_source.replace(at,fields.bytes().size(),replacement.bytes());
+        auto sum=crc(changed_source);detail::CompletedSourceArchive so;
+        so(source_magic,source_v,source_endian,source_long,source_double,source_model,changed_source,sum);
+        auto changed_cpu=replaceNested(cpu_data,source_magic,so.bytes());sum=crc(changed_cpu);detail::CompletedSourceArchive co;
+        co(cpu_magic,cpu_v,cpu_endian,cpu_long,changed_cpu,sum);
+        auto changed_surface=withSurfacePayload(surface,replaceNested(surface_data,cpu_magic,co.bytes()));
+        auto changed_engine=replaceNested(engine_data,"OpenSWMM joint DW surface/source boundary",changed_surface);sum=crc(changed_engine);
+        detail::CompletedSourceArchive eo;eo(engine_magic,engine_v,engine_model,sum,changed_engine);
+        const auto bad=root()/("owned-outfall-bad-"+std::to_string(mutation)+".chk");write(bad,eo.bytes());
+        SurfaceSession target;ASSERT_NO_THROW(startClosedSpatial(target,"owned-outfall-target-"+std::to_string(mutation),2,.31,true));
+        const auto before=root()/"owned-outfall-target.chk";ASSERT_EQ(target.engine.saveCheckpoint(before.string()),"");auto fresh=bytes(before);
+        EXPECT_FALSE(target.engine.loadCheckpoint(bad.string()).empty());ASSERT_EQ(target.engine.saveCheckpoint(before.string()),"");EXPECT_EQ(bytes(before),fresh);
+        ASSERT_EQ(target.engine.loadCheckpoint(good.string()),"");compare(a.engine,target.engine,"owned-outfall-retry-"+std::to_string(mutation));
     }
 }
 #endif

@@ -34,7 +34,8 @@ struct SourceClockGroup {
 /// Cancellation restores no water: uncommitted source trials must stay private.
 class SourceClockGroups {
 public:
-    std::string initialize(const SimulationContext&, const std::vector<int>& seeds);
+    std::string initialize(const SimulationContext&, const std::vector<int>& seeds,
+                           bool hydraulic_returns = false);
     std::string stage(int group, double end, double completed_through);
     std::string commit(int group);
     void cancel(int group);

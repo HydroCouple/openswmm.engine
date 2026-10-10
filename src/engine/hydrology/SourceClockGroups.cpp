@@ -21,7 +21,8 @@ double next(const std::vector<double>& times, double t, double end) {
 }
 }
 
-std::string SourceClockGroups::initialize(const SimulationContext& ctx, const std::vector<int>& seeds) {
+std::string SourceClockGroups::initialize(const SimulationContext& ctx, const std::vector<int>& seeds,
+                                         bool hydraulic_returns) {
     for (const auto& g : groups_)
         if (!g.pending.empty() || g.completed_end > 0.0)
             return "Pending or committed source clocks require a fresh adapter for a new simulation.";
@@ -79,9 +80,11 @@ std::string SourceClockGroups::initialize(const SimulationContext& ctx, const st
     // from a future global state. Keep a named refusal until those adapters land.
     if (!ctx.options.ignore_snow_melt) return "Source clock forcing currently requires IGNORE_SNOWMELT YES; snow forcing is not qualified.";
     if (ctx.files.runoff_mode == FileMode::USE) return "Completed source clocks cannot use precomputed USE RUNOFF losses.";
-    for (int sc : ctx.node_subtypes.outfalls.route_to)
-        if (sc >= 0 && result.groupForSubcatch(sc) >= 0)
+    for (int sc : ctx.node_subtypes.outfalls.route_to) {
+        if (hydraulic_returns && (sc < -1 || sc >= n)) return "Invalid hydraulic outfall return destination.";
+        if (!hydraulic_returns && sc >= 0 && result.groupForSubcatch(sc) >= 0)
             return "Source clock graph has an unqualified hydraulic outfall return.";
+    }
     result.evap_method_ = ctx.climate_state.evap_method;
     if (result.evap_method_ != climate::EvapMethod::CONSTANT &&
         result.evap_method_ != climate::EvapMethod::MONTHLY &&

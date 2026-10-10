@@ -337,3 +337,13 @@ TEST(SourceClockGroups, CompletedRunoffVolumeClosesForMixedSubareasAndInstantDra
         EXPECT_GT(output, 0);
     }
 }
+
+TEST(SourceClockGroups, OwnedOutfallTopologyRequiresExplicitReceiptQualification) {
+    auto c=context();c.node_subtypes.outfalls.add_default(0);c.node_subtypes.outfalls.route_to[0]=0;
+    SourceClockGroups ordinary,qualified;
+    EXPECT_FALSE(ordinary.initialize(c,{0}).empty());EXPECT_TRUE(ordinary.groups().empty());
+    ASSERT_EQ(qualified.initialize(c,{0},true),"");ASSERT_EQ(qualified.stage(0,1,1),"");
+    EXPECT_DOUBLE_EQ(supply(qualified.groups()[0],0),0);ASSERT_EQ(qualified.commit(0),"");
+    SourceClockGroups invalid;c.node_subtypes.outfalls.route_to[0]=c.n_subcatches();
+    EXPECT_FALSE(invalid.initialize(c,{0},true).empty());EXPECT_TRUE(invalid.groups().empty());
+}

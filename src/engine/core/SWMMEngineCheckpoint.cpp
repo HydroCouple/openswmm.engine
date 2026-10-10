@@ -344,6 +344,8 @@ struct SWMMEngine::RestartState {
     void validateSource(const SWMMEngine& e,const runoff::SourceWaterDriver& source,
                         const runoff::SourceWaterDeliveryBridge& bridge) const {
         require(bridge.receiverEnd()==boundary[0],"Engine/source receiving clocks differ.");
+        if(source.acceptsOutfallReturns())require(source.outfallReturnEnd()==boundary[0],
+                                                "Engine/source outfall receipt clocks differ.");
         require(source_totals==e.sourceTotals(source,bridge),"Engine/source completed ledgers differ.");
         for(double v:source_totals)require(std::isfinite(v) && v>=0,"Invalid engine completed-source ledger.");
         const auto& s=runoff.soa();double stored=e.spatialSourceStorage(source)+lid.storedVolume(e.ordinarySourceOwners());
@@ -557,10 +559,16 @@ std::string SWMMEngine::enableCheckpointingImpl(
             auto error=bridge->initialize(source);require(error.empty(),error.c_str());
             error=bridge->validateReceiver(ctx_);require(error.empty(),error.c_str());
             for(int sc:ctx_.node_subtypes.outfalls.route_to)
-                require(!bridge->ownsSubcatch(sc),"Outfall returns into owned catchments need a qualified conservative source receipt.");
+                require(!bridge->ownsSubcatch(sc) || source.acceptsOutfallReturns(),
+                        "Outfall returns into owned catchments need an explicit conservative source receipt.");
+            for(const auto& point:surface_router_.coupling_points_)if(point.is_outfall) {
+                const int row=ctx_.node_subtypes.outfall_row(point.node_idx);
+                require(row<0 || !bridge->ownsSubcatch(ctx_.node_subtypes.outfalls.route_to[row]),
+                        "Owned source return cannot also receive a mapped outfall's surface discharge.");
+            }
             std::vector<int> seeds;for(int sc=0;sc<ctx_.n_subcatches();++sc)if(bridge->ownsSubcatch(sc))seeds.push_back(sc);
             runoff::SourceWaterDriver expected;
-            error=expected.initialize(ctx_,seeds,source.runoff().reviewedAreas(),&lid_);require(error.empty(),error.c_str());
+            error=expected.initialize(ctx_,seeds,source.runoff().reviewedAreas(),&lid_,source.acceptsOutfallReturns());require(error.empty(),error.c_str());
             error=expected.configureSpatialCoverage(source.spatialFractions());require(error.empty(),error.c_str());
             auto authored=source.waterTrial();Archive a,b;authored.checkpoint(a,true);expected.checkpoint(b,true);
             require(a.bytes()==b.bytes(),"Spatial source material, forcing or compiled catchment model differs from the live engine.");

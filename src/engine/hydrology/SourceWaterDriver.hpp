@@ -16,6 +16,7 @@ struct SourceWaterLedger {
     /// Completed destination split, ft3; sum equals infiltration.
     double spatial_infiltration = 0.0, outside_infiltration = 0.0;
     double aquifer_return = 0.0; // cumulative paired surface credits, ft3, never rainfall
+    double outfall_return = 0.0; // cumulative hydraulic receipts, ft3, never rainfall
     double outlet = 0.0, captured = 0.0, runon = 0.0, pervious_return = 0.0;
 };
 struct SourceWaterDelivery {
@@ -41,6 +42,10 @@ struct SourceSurfaceReturn {
     int source=-1,type=-1,unit=-1,pool=2; // non-LID subarea or exact LID unit
     double volume=0; // ft3, consumed once at the next source segment
     std::vector<double> mass; // pollutant concentration units times m3
+};
+struct SourceOutfallReturn {
+    int source=-1;
+    double available=0, volume=0; // accepted hydraulic seconds, ft3
 };
 enum class SourceEtKind { PERVIOUS, IMPERVIOUS, LID };
 struct SourceAtmosphericLedger {
@@ -73,12 +78,20 @@ public:
     using BottomCeiling = std::function<double(int type, int unit, double start, double end)>;
     std::string initialize(const SimulationContext&, const std::vector<int>& seeds,
                            const std::vector<std::pair<int, double>>& non_lid_areas = {},
-                           const lid::LIDSolver* initial_lids = nullptr);
+                           const lid::LIDSolver* initial_lids = nullptr,
+                           bool hydraulic_returns = false);
     /// Bind reviewed uniform inside fractions at initial attachment; no water debit.
     std::string configureSpatialCoverage(const std::vector<double>& inside_fractions);
     const std::vector<double>& spatialFractions() const;
     /// Atomic batch on a committed private snapshot, before interval trials.
     std::string creditSurfaceReturns(double start,const std::vector<SourceSurfaceReturn>&);
+    /// Explicit water-only hydraulic receipt profile. Credit an accepted interval
+    /// once; consume over the full physical footprint only from its end onward.
+    /// Source groups may lag in a pending surface batch. Unowned entries are zero.
+    std::string creditOutfallReturns(double start, double end, const std::vector<double>& volumes);
+    bool acceptsOutfallReturns() const;
+    double outfallReturnEnd() const;
+    const std::vector<SourceOutfallReturn>& pendingOutfallReturns() const;
     std::string stage(int group, double end, double completed_through,
                       const RunoffSolver::InfiltrationBoundary* boundary = nullptr,
                       const BottomCeiling* bottom_ceiling = nullptr);

@@ -157,9 +157,12 @@ struct SourceWaterDriver::State {
     RunoffSolver runoff;
     lid::LIDSolver lids;
     bool partitioned=false;
+    bool hydraulic_returns=false;
+    double hydraulic_return_end=0;
     std::vector<double> inside;
     std::vector<double> runon, pervious_return; // pending ft3, never held rates
     std::vector<SourceSurfaceReturn> aquifer_returns;
+    std::vector<SourceOutfallReturn> outfall_returns;
     std::vector<SourceWaterLedger> ledger;
     std::vector<SourceWaterDelivery> deliveries;
     std::vector<SourceAtmosphericLedger> atmosphere;
@@ -168,7 +171,7 @@ struct SourceWaterDriver::State {
     std::vector<std::vector<double>> runon_mass, return_mass; // pending paired transfers, conc*m3
     explicit State(const SimulationContext& c) : ctx(c) {}
     State(const State& s) : ctx(s.ctx), runoff(s.runoff), lids(s.lids.waterTrial()),
-        partitioned(s.partitioned),inside(s.inside),runon(s.runon), pervious_return(s.pervious_return), aquifer_returns(s.aquifer_returns), ledger(s.ledger), deliveries(s.deliveries), atmosphere(s.atmosphere),
+        partitioned(s.partitioned),hydraulic_returns(s.hydraulic_returns),hydraulic_return_end(s.hydraulic_return_end),inside(s.inside),runon(s.runon), pervious_return(s.pervious_return), aquifer_returns(s.aquifer_returns),outfall_returns(s.outfall_returns), ledger(s.ledger), deliveries(s.deliveries), atmosphere(s.atmosphere),
         pollutant_names(s.pollutant_names), pollutants(s.pollutants), runon_mass(s.runon_mass), return_mass(s.return_mass) {}
 };
 SourceWaterDriver::SourceWaterDriver() = default;
@@ -221,6 +224,37 @@ std::string SourceWaterDriver::creditSurfaceReturns(double start,const std::vect
     }
     return {};
 }
+bool SourceWaterDriver::acceptsOutfallReturns() const { return view(false).hydraulic_returns; }
+double SourceWaterDriver::outfallReturnEnd() const { return view(false).hydraulic_return_end; }
+const std::vector<SourceOutfallReturn>& SourceWaterDriver::pendingOutfallReturns() const { return view(false).outfall_returns; }
+std::string SourceWaterDriver::creditOutfallReturns(double start, double end, const std::vector<double>& volumes) {
+    if (!state_ || trial_ || !state_->hydraulic_returns || !std::isfinite(start) || !std::isfinite(end) ||
+        start != state_->hydraulic_return_end || end <= start || !std::isfinite(end-start) ||
+        volumes.size() != state_->runon.size() ||
+        end-state_->ctx.options.totalDurationMs()/1000.>1e-12*std::max(1.,end))
+        return "Outfall return requires the next finite accepted hydraulic interval and explicit water-only ownership.";
+    const auto& s=*state_;
+    for (const auto& g:clocks_.groups())
+        if (!g.pending.empty() || g.completed_end-end>1e-12*std::max(1.,end))
+            return "Outfall return cannot credit an unsettled or future source interval.";
+    for (std::size_t sc=0;sc<volumes.size();++sc) {
+        const double v=volumes[sc];
+        if (!std::isfinite(v) || v<0 || (v>0 && (clocks_.groupForSubcatch(int(sc))<0 ||
+            s.runoff.soa().area[sc]+s.ctx.subcatches.total_lid_area_ft2[sc]<=0)) ||
+            !std::isfinite(s.runon[sc]+v) || !std::isfinite(s.ledger[sc].outfall_return+v))
+            return "Invalid outfall return volume or physical receiver.";
+    }
+    auto pending=s.outfall_returns;
+    for (std::size_t sc=0;sc<volumes.size();++sc)if(volumes[sc]>0)
+        pending.push_back({int(sc),end,volumes[sc]});
+    // Prepare the whole queue before publishing any ledger or cursor change.
+    state_->outfall_returns=std::move(pending);
+    for (std::size_t sc=0;sc<volumes.size();++sc) {
+        state_->ledger[sc].outfall_return+=volumes[sc];
+    }
+    state_->hydraulic_return_end=end;
+    return {};
+}
 const SimulationContext& SourceWaterDriver::context(bool t) const { return view(t).ctx; }
 const RunoffSolver& SourceWaterDriver::runoff(bool t) const { return view(t).runoff; }
 const lid::LIDSolver& SourceWaterDriver::lids(bool t) const { return view(t).lids; }
@@ -262,6 +296,7 @@ double SourceWaterDriver::pendingVolume(int group, bool trial) const {
     for (int sc : clocks_.groups().at(group).subcatches)
         v += s.runon[sc] + s.pervious_return[sc] + s.runoff.pendingRoutingVolume(s.ctx, sc);
     for(const auto& r:s.aquifer_returns)if(clocks_.groupForSubcatch(r.source)==group)v+=r.volume;
+    for(const auto& r:s.outfall_returns)if(clocks_.groupForSubcatch(r.source)==group)v+=r.volume;
     return v;
 }
 double SourceWaterDriver::storedVolume(int source) const {
@@ -272,13 +307,13 @@ double SourceWaterDriver::balanceResidual(int group, bool trial) const {
     const auto& s = view(trial); double v = -pendingVolume(group, trial);
     for (int sc : clocks_.groups().at(group).subcatches) {
         const auto& b = s.ledger[sc];
-        v += b.initial_storage + b.rain + b.aquifer_return - b.evaporation - b.infiltration - b.outlet - storage(s, sc);
+        v += b.initial_storage + b.rain + b.aquifer_return + b.outfall_return - b.evaporation - b.infiltration - b.outlet - storage(s, sc);
     }
     return v;
 }
 std::string SourceWaterDriver::initialize(const SimulationContext& c, const std::vector<int>& seeds,
                                          const std::vector<std::pair<int, double>>& areas,
-                                         const lid::LIDSolver* initial_lids) {
+                                         const lid::LIDSolver* initial_lids, bool hydraulic_returns) {
     if (state_) return "Source water driver already initialized; restart/import is not qualified.";
     if (c.current_time != 0.0 || c.elapsed_ms != 0.0)
         return "Source water driver requires simulation-start state; hot starts are not qualified.";
@@ -286,6 +321,7 @@ std::string SourceWaterDriver::initialize(const SimulationContext& c, const std:
         c.options.heat_transport || c.reactions.n_species() > 0)
         return "Source water driver does not yet pair age, heat or MSX.";
     const int np = c.options.ignore_quality ? 0 : c.n_pollutants();
+    if (hydraulic_returns && np>0) return "Hydraulic source returns require water-only sources.";
     if (np > 0) {
         if (c.n_landuses() > 0) return "Completed source pollutants do not yet support land-use buildup/washoff.";
         const auto& p = c.pollutants;
@@ -299,9 +335,10 @@ std::string SourceWaterDriver::initialize(const SimulationContext& c, const std:
                 return "Completed source pollutants require conservative rain species: " + c.pollutant_names.name_of(j);
         }
     }
-    SourceClockGroups clocks; auto error = clocks.initialize(c, seeds);
+    SourceClockGroups clocks; auto error = clocks.initialize(c, seeds, hydraulic_returns);
     if (!error.empty()) return error;
     auto s = std::make_unique<State>(c);
+    s->hydraulic_returns=hydraulic_returns;
     try {
         s->lids.init(s->ctx);
         if (initial_lids) {
@@ -333,6 +370,11 @@ std::string SourceWaterDriver::initialize(const SimulationContext& c, const std:
                     return "Source water driver does not yet advance lumped groundwater.";
                 if (c.subcatches.runon_rate[sc] != 0 || c.subcatches.lid_return_to_perv_cfs[sc] != 0)
                     return "Source water driver requires empty initial transfer histories.";
+                if (hydraulic_returns && c.subcatches.outfall_runon_vol[sc]!=0)
+                    return "Hydraulic source returns require empty initial outfall receipts.";
+                if (hydraulic_returns && s->runoff.soa().area[sc]+s->ctx.subcatches.total_lid_area_ft2[sc]<=0 &&
+                    std::find(c.node_subtypes.outfalls.route_to.begin(),c.node_subtypes.outfalls.route_to.end(),sc)!=c.node_subtypes.outfalls.route_to.end())
+                    return "Hydraulic source return destination requires positive physical area.";
                 s->ledger[sc].initial_storage = storage(*s, sc);
                 const auto& r = s->runoff.soa();
                 if (np > 0 && r.area[sc] > 0) s->pollutants.push_back(pollutantLedger(sc, -1, -1, np));
@@ -391,6 +433,11 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
     std::vector<const RunoffSourceForcing*> weather_at(c.n_subcatches(), nullptr);
     for (const auto& weather : f.sources) weather_at[weather.subcatch] = &weather;
     const auto selected = [&](int sc) { return sc >= 0 && sc < c.n_subcatches() && weather_at[sc]; };
+    const auto available = [&](const auto& q) {
+        return selected(q.source) && q.available-f.start<=1e-12*std::max(1.,std::max(q.available,f.start));
+    };
+    for(const auto& q:s.outfall_returns)if(available(q))s.runon[q.source]+=q.volume;
+    std::erase_if(s.outfall_returns,available);
     const int np = int(s.pollutant_names.size());
     auto forcing=f.sources;
     std::vector<SourceSurfaceReturn> incoming_aquifer;
@@ -599,10 +646,17 @@ std::string SourceWaterDriver::stage(int group, double end, double completed_thr
     auto error = clocks_.stage(group, end, completed_through); if (!error.empty()) return error;
     trial_ = std::make_unique<State>(*state_); pending_group_ = group;
     try {
-        for (const auto& f : clocks_.groups()[group].pending) advance(*trial_, f, boundary, ceiling);
+        for (const auto& f : clocks_.groups()[group].pending) {
+            std::vector<double> ends{f.end};
+            for(const auto& q:trial_->outfall_returns)if(clocks_.groupForSubcatch(q.source)==group &&
+                q.available-f.start>1e-12*std::max(1.,q.available) && q.available<f.end)ends.push_back(q.available);
+            std::sort(ends.begin(),ends.end());ends.erase(std::unique(ends.begin(),ends.end()),ends.end());
+            auto segment=f;
+            for(double end:ends) {segment.end=end;advance(*trial_,segment,boundary,ceiling);segment.start=end;}
+        }
         double scale = 1;
         for (int sc : clocks_.groups()[group].subcatches)
-            scale += trial_->ledger[sc].initial_storage + trial_->ledger[sc].rain;
+            scale += trial_->ledger[sc].initial_storage + trial_->ledger[sc].rain + trial_->ledger[sc].outfall_return;
         const double residual = balanceResidual(group, true);
         if (!std::isfinite(residual) || std::abs(residual) > 1e-10 * scale) {
             std::ostringstream message;message<<std::setprecision(17)
@@ -648,6 +702,9 @@ void SourceWaterDriver::checkpoint(detail::CompletedSourceArchive& a,bool model)
             c.pollutants.k_decay,c.pollutants.co_pollut,c.pollutants.co_frac,c.pollutants.snow_only);
         a.sequence(s.atmosphere,[&](auto& b){a(b.kind,b.source,b.type,b.unit,b.area,b.soil_eligible);},true);
         a.sequence(s.pollutants,[&](auto& b){a(b.source,b.type,b.unit);},true);
+        if (s.hydraulic_returns) {
+            uint32_t profile=1;a(profile,c.node_subtypes.outfalls.route_to);
+        }
         return;
     }
         a.fixed(sub.runoff,sub.rainfall,sub.evap_loss,sub.infil_loss,sub.ponded_depth,sub.old_ponded_depth);
@@ -665,6 +722,34 @@ void SourceWaterDriver::checkpoint(detail::CompletedSourceArchive& a,bool model)
         b.outlet,b.removed,b.surface_mass,b.drain_mass,b.impervious_mass,b.pervious_mass,b.aquifer_return,b.pending_routing,b.incoming);},true);
     a.sequence(s.deliveries,[&](auto& d){a(d.source,d.node,d.start,d.end,d.volume,d.drain,d.mass);});
     a.sequence(s.aquifer_returns,[&](auto& q){a(q.source,q.type,q.unit,q.pool,q.volume,q.mass);});
+    // Conditional extension: ordinary completed-source model/runtime archives
+    // keep their existing byte layout. Model identity binds the receipt profile.
+    if (s.hydraulic_returns) {
+        uint32_t profile=1;a(profile,s.hydraulic_return_end);
+        if (profile!=1 || !std::isfinite(s.hydraulic_return_end) || s.hydraulic_return_end<0 ||
+            s.hydraulic_return_end-c.options.totalDurationMs()/1000.>1e-12*std::max(1.,s.hydraulic_return_end))
+            throw std::runtime_error("Invalid hydraulic source return checkpoint profile or clock.");
+        for (std::size_t sc=0;sc<s.ledger.size();++sc) {
+            auto& v=s.ledger[sc].outfall_return;a(v);
+            if (!std::isfinite(v) || v<0 || (v>0 && (clocks_.groupForSubcatch(int(sc))<0 || s.hydraulic_return_end==0)))
+                throw std::runtime_error("Invalid hydraulic source return checkpoint ledger.");
+        }
+        a.sequence(s.outfall_returns,[&](auto& q){a(q.source,q.available,q.volume);});
+        std::vector<double> pending(s.ledger.size(),0);
+        double previous=0;
+        for(const auto& q:s.outfall_returns) {
+            const int group=clocks_.groupForSubcatch(q.source);
+            if(group<0 || !std::isfinite(q.available) || q.available<=0 || q.available<previous ||
+                q.available>s.hydraulic_return_end || !std::isfinite(q.volume) || q.volume<=0 ||
+                clocks_.groups()[group].completed_end-q.available>1e-12*std::max(1.,q.available) ||
+                s.runoff.soa().area[q.source]+s.ctx.subcatches.total_lid_area_ft2[q.source]<=0)
+                throw std::runtime_error("Invalid pending hydraulic source return checkpoint.");
+            previous=q.available;pending[q.source]+=q.volume;
+        }
+        for(std::size_t sc=0;sc<pending.size();++sc)if(!std::isfinite(pending[sc]) ||
+            pending[sc]>s.ledger[sc].outfall_return+1e-11*std::max(1.,s.ledger[sc].outfall_return))
+            throw std::runtime_error("Pending hydraulic source return exceeds credited water.");
+    }
     if(a.reading()) {
         const int np=int(s.pollutant_names.size());
         const auto paired=[&](double volume,const auto& mass) {

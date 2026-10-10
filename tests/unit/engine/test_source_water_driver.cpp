@@ -935,3 +935,55 @@ TEST(SourceWaterDriver, CoveredBarrelAcceptsPairedCreditsWithoutRainfallRedirect
     EXPECT_DOUBLE_EQ(d.ledgers()[0].rain,0);EXPECT_DOUBLE_EQ(d.ledgers()[0].pervious_return,0);
     EXPECT_GT(d.lids().group(t).stor_depth[u],0);
 }
+
+TEST(SourceWaterDriver, OutfallReceiptsAreAtomicPastOnlyWaterAndCannotReplay) {
+    auto c=model(3,0);addLid(c,0,"IT",.5);c.subcatches.frac_imperv[0]=.4;
+    c.subcatches.outlet_subcatch[0]=1;c.node_subtypes.outfalls.add_default(0);c.node_subtypes.outfalls.route_to[0]=0;
+    SourceWaterDriver ordinary,d;EXPECT_FALSE(ordinary.initialize(c,{0},areas(c)).empty());
+    ASSERT_EQ(d.initialize(c,{0},areas(c),nullptr,true),"");
+    EXPECT_TRUE(d.acceptsOutfallReturns());EXPECT_FALSE(d.creditOutfallReturns(1,2,{1,0,0}).empty());
+    EXPECT_FALSE(d.creditOutfallReturns(0,86401,{1,0,0}).empty());
+    EXPECT_FALSE(d.creditOutfallReturns(0,1,{1,0,1}).empty());
+    EXPECT_FALSE(d.creditOutfallReturns(0,1,{1,-1,0}).empty());
+    EXPECT_FALSE(d.creditOutfallReturns(0,1,{1,0}).empty());
+    EXPECT_FALSE(d.creditOutfallReturns(0,1,{1,std::numeric_limits<double>::infinity(),0}).empty());
+    EXPECT_DOUBLE_EQ(d.pendingVolume(0),0);EXPECT_DOUBLE_EQ(d.outfallReturnEnd(),0);
+    ASSERT_EQ(d.creditOutfallReturns(0,1,{.1,.2,0}),"");EXPECT_NEAR(d.pendingVolume(0),.3,1e-15);
+    EXPECT_NEAR(d.balanceResidual(0),0,1e-15);EXPECT_DOUBLE_EQ(d.ledgers()[0].rain,0);
+    EXPECT_DOUBLE_EQ(d.ledgers()[0].outfall_return,.1);EXPECT_DOUBLE_EQ(d.ledgers()[1].outfall_return,.2);
+    EXPECT_FALSE(d.creditOutfallReturns(0,1,{.1,.2,0}).empty());
+    step(d,1);EXPECT_DOUBLE_EQ(d.lids().storedVolume(),0);EXPECT_DOUBLE_EQ(d.ledgers()[0].runon,0);
+    ASSERT_EQ(d.stage(0,2,2,&sealed),"");EXPECT_FALSE(d.creditOutfallReturns(1,2,{1,0,0}).empty());d.cancel();
+    EXPECT_NEAR(d.pendingVolume(0),.3,1e-15);step(d,2);
+    EXPECT_DOUBLE_EQ(d.ledgers()[0].runon,.1);EXPECT_DOUBLE_EQ(d.ledgers()[1].runon,.2);
+    EXPECT_GT(d.lids().storedVolume(),0);EXPECT_DOUBLE_EQ(d.ledgers()[0].rain,0);
+    ASSERT_EQ(d.creditOutfallReturns(1,2,{0,0,0}),"");EXPECT_DOUBLE_EQ(d.outfallReturnEnd(),2);
+    step(d,3);EXPECT_DOUBLE_EQ(d.ledgers()[0].outfall_return,.1);
+}
+TEST(SourceWaterDriver, OutfallReceiptAvailabilitySplitsLaggingGroupsWithoutEarlierApplication) {
+    auto c=model(2,0);SourceWaterDriver d,control;
+    ASSERT_EQ(d.initialize(c,{0,1},areas(c),nullptr,true),"");
+    ASSERT_EQ(control.initialize(c,{0,1},areas(c),nullptr,true),"");
+    ASSERT_EQ(d.creditOutfallReturns(0,1,{.1,.2}),"");
+    ASSERT_EQ(control.creditOutfallReturns(0,1,{.1,.2}),"");
+    step(d,2);step(control,1);EXPECT_DOUBLE_EQ(control.storedVolume(0),0);step(control,2);
+    EXPECT_DOUBLE_EQ(d.storedVolume(0),control.storedVolume(0));
+    EXPECT_DOUBLE_EQ(d.ledgers()[0].runon,.1);EXPECT_DOUBLE_EQ(d.ledgers()[1].runon,0);
+    EXPECT_NEAR(d.pendingVolume(1),.2,1e-15);
+    EXPECT_FALSE(d.creditOutfallReturns(1,1.5,{0,0}).empty());
+    ASSERT_EQ(d.creditOutfallReturns(1,2,{0,0}),"");
+    ASSERT_EQ(d.stage(1,3,3,&sealed),"");ASSERT_EQ(d.commit(),"");
+    EXPECT_DOUBLE_EQ(d.ledgers()[1].runon,.2);EXPECT_TRUE(d.pendingOutfallReturns().empty());
+    EXPECT_NEAR(d.balanceResidual(0),0,1e-15);EXPECT_NEAR(d.balanceResidual(1),0,1e-15);
+}
+TEST(SourceWaterDriver, OutfallReceiptProfileRefusesQualityAndInitialPendingWater) {
+    auto c=pollutantLid("IT",0);SourceWaterDriver d;
+    EXPECT_FALSE(d.initialize(c,{0},areas(c),nullptr,true).empty());
+    ASSERT_EQ(d.initialize(c,{0},areas(c)),"");EXPECT_FALSE(d.acceptsOutfallReturns());
+    EXPECT_FALSE(d.creditOutfallReturns(0,1,{.1}).empty());
+    auto water=model(1,0);water.subcatches.outfall_runon_vol[0]=1;SourceWaterDriver fresh;
+    EXPECT_FALSE(fresh.initialize(water,{0},areas(water),nullptr,true).empty());
+    water.subcatches.outfall_runon_vol[0]=0;ASSERT_EQ(fresh.initialize(water,{0},areas(water),nullptr,true),"");
+    water.node_subtypes.outfalls.add_default(0);water.node_subtypes.outfalls.route_to[0]=0;
+    SourceWaterDriver no_area;EXPECT_FALSE(no_area.initialize(water,{0},{{0,0}},nullptr,true).empty());
+}
