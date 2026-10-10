@@ -574,7 +574,7 @@ double completedUnitStorage(const LIDGroupSoA& g,int u) {
         g.stor_depth[u]*g.stor_void[u]+g.pave_depth[u]*g.pave_void[u]*(1-g.pave_imperv_frac[u]))*g.area[u];
 }
 
-double LIDSolver::storedVolume() const {
+double LIDSolver::storedVolume(const std::vector<int>* source_owners) const {
     // Same per-unit water content the water-balance init uses above (and
     // legacy lid_getStoredVolume(), lid.c:1426): void-weighted layer depths
     // times the unit footprint.
@@ -582,6 +582,7 @@ double LIDSolver::storedVolume() const {
     for (const auto& g : groups_) {
         for (int i = 0; i < g.count; ++i) {
             auto ui = static_cast<std::size_t>(i);
+            if (source_owners && g.subcatch_idx[ui] >= 0 && source_owners->at(g.subcatch_idx[ui]) >= 0) continue;
             total += (g.surf_depth[ui] * g.surf_void_frac[ui]
                       + g.soil_moist[ui] * g.soil_thick[ui]
                       + g.stor_depth[ui] * g.stor_void[ui]
@@ -659,6 +660,8 @@ public:
         double outflow = P->surf_alpha * std::pow(delta, 5.0 / 3.0) *
                          P->full_width / P->area;
         outflow = std::min(outflow, delta / Tstep);
+        if (Completed) outflow = std::min(outflow, std::max(0.0,
+            SurfaceInflow + SurfaceVolume / Tstep - SurfaceEvap - SurfaceInfil));
         return outflow;
     }
 
@@ -792,8 +795,8 @@ public:
     // ---- legacy roofFluxRates
     void roofFluxRates(const double x[], double f[]) {
         double surfaceDepth = x[L_SURF];
-        getEvapRates(surfaceDepth, 0.0, 0.0, 0.0, 1.0);
-        SurfaceVolume = surfaceDepth;
+        SurfaceVolume = Completed ? surfaceDepth*P->surf_void : surfaceDepth;
+        getEvapRates(SurfaceVolume, 0.0, 0.0, 0.0, 1.0);
         SurfaceInfil = 0.0;
         if (P->surf_alpha > 0.0)
             SurfaceOutflow = getSurfaceOutflowRate(surfaceDepth);
@@ -801,6 +804,7 @@ public:
         StorageDrain = std::min(P->drain_coeff / P->ucf_rainfall, SurfaceOutflow);
         SurfaceOutflow -= StorageDrain;
         f[L_SURF] = (SurfaceInflow - SurfaceEvap - StorageDrain - SurfaceOutflow);
+        if (Completed) f[L_SURF] /= P->surf_void;
     }
 
     // ---- legacy greenRoofFluxRates
@@ -820,6 +824,9 @@ public:
         StorageVolume = storageDepth * storageVoidFrac;
         availVolume = SoilVolume - soilWiltPoint * soilThickness;
         getEvapRates(SurfaceVolume, 0.0, availVolume, StorageVolume, 1.0);
+        // Completed fluxes must share the water left after surface evaporation.
+        if (Completed) SurfaceInfil = std::min(SurfaceInfil, std::max(0.0,
+            SurfaceInflow + SurfaceVolume / Tstep - SurfaceEvap));
         if (soilTheta >= soilPorosity) StorageEvap = 0.0;
         SoilPerc = getSoilPercRate(soilTheta);
         availVolume = (soilTheta - soilFieldCap) * soilThickness;
@@ -869,6 +876,9 @@ public:
         StorageVolume = storageDepth * storageVoidFrac;
         availVolume = SoilVolume - soilWiltPoint * soilThickness;
         getEvapRates(SurfaceVolume, 0.0, availVolume, StorageVolume, 1.0);
+        // Completed fluxes must share the water left after surface evaporation.
+        if (Completed) SurfaceInfil = std::min(SurfaceInfil, std::max(0.0,
+            SurfaceInflow + SurfaceVolume / Tstep - SurfaceEvap));
         if (soilTheta >= soilPorosity) StorageEvap = 0.0;
         SoilPerc = getSoilPercRate(soilTheta);
         availVolume = (soilTheta - soilFieldCap) * soilThickness;
@@ -1011,6 +1021,7 @@ public:
         if (paveDepth >= paveThickness ||
             (soilThickness > 0.0 && soilTheta >= soilPorosity)) StorageEvap = 0.0;
         SurfaceInfil = SurfaceInflow + (SurfaceVolume / Tstep);
+        if (Completed) SurfaceInfil = std::max(0.0, SurfaceInfil - SurfaceEvap);
         PavePerc = getPavementPermRate() * pervFrac;
         SurfaceInfil = std::min(SurfaceInfil, PavePerc);
         maxRate = PaveVolume / Tstep + SurfaceInfil - PaveEvap;
@@ -1110,6 +1121,9 @@ public:
         }
         SurfaceOutflow = getSurfaceOutflowRate(surfaceDepth);
         f[L_SURF] = SurfaceInflow - SurfaceEvap - SurfaceInfil - SurfaceOutflow;
+        // Completed volumes use the actual void-weighted surface store.
+        // The ordinary legacy pavement depth convention remains unchanged.
+        if (Completed) f[L_SURF] /= P->surf_void;
         f[L_PAVE] = (SurfaceInfil - PaveEvap - PavePerc) / paveVoidFrac;
         if (P->soil_thick > 0.0) {
             f[L_SOIL] = (PavePerc - SoilEvap - SoilPerc) / soilThickness;
@@ -1222,6 +1236,7 @@ public:
         StorageInflow = std::min(StorageInflow, maxValue);
         SurfaceInfil = StorageInflow;
         f[L_SURF] = SurfaceInflow - StorageInflow;
+        if (Completed) f[L_SURF] /= P->surf_void;
         f[L_STOR] = StorageInflow - StorageDrain;
         f[L_SOIL] = 0.0;
     }
@@ -1613,8 +1628,10 @@ void LIDSolver::executeCompleted(double dt, double start, double recovery_factor
 }
 
 void LIDSolver::execute(SimulationContext& ctx, double dt,
-                        double rainfall, double evap_rate) {
+                        double rainfall, double evap_rate, const std::vector<int>* source_owners) {
     constexpr double MIN_RUNOFF = 2.31481e-8;   // legacy consts.h (ft/s)
+    if (source_owners && source_owners->size() != static_cast<std::size_t>(ctx.n_subcatches()))
+        throw std::invalid_argument("Ordinary LID ownership requires a matching source map.");
     (void)rainfall;   // the engine sets each unit's inflow (rain + capture)
     for (auto& g : groups_) {
         if (g.count == 0) continue;
@@ -1625,6 +1642,7 @@ void LIDSolver::execute(SimulationContext& ctx, double dt,
             // kernel divides by it.
             if (g.area[uu] <= 0.0) continue;
             int sc = g.subcatch_idx[uu];
+            if (source_owners && sc >= 0 && (*source_owners)[sc] >= 0) continue;
             const auto usc = static_cast<std::size_t>(sc);
             // legacy subcatch_getEvapRate: an API-prescribed rate first, else
             // 0 under DRY_ONLY while it rains on the subcatchment, else the
@@ -1778,10 +1796,11 @@ void LIDSolver::saveLidReport(SimulationContext& ctx, int gi, LIDGroupSoA& g,
     }
 }
 
-bool LIDSolver::anyWet() const {
+bool LIDSolver::anyWet(const std::vector<int>* source_owners) const {
     for (const auto& g : groups_)
         for (int u = 0; u < g.count; ++u)
-            if (g.is_wet[static_cast<std::size_t>(u)]) return true;
+            if ((!source_owners || g.subcatch_idx[u] < 0 || source_owners->at(g.subcatch_idx[u]) < 0) &&
+                g.is_wet[static_cast<std::size_t>(u)]) return true;
     return false;
 }
 

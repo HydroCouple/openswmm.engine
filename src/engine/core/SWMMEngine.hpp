@@ -80,6 +80,7 @@
 
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/SurfaceRouter2D.hpp"
+#include "../hydrology/SourceWaterDeliveryBridge.hpp"
 namespace openswmm::twoD { class Default2DOutputPlugin; }
 #endif
 
@@ -214,6 +215,9 @@ public:
     // Qualification attachment only: mesh-owned common sources, with ordinary
     // engine runoff outside the mesh. Stage lifetime must cover the session.
     std::string enableCheckpointing(twoD::CommonSourceStage& stage);
+    /// Explicit private spatial-source ownership; no authored/public activation.
+    std::string enableSpatialSourceCheckpointing(twoD::CommonSourceStage& stage);
+    const runoff::SourceWaterDeliveryBridge* sourceDelivery() const { return source_delivery_.get(); }
 #endif
     std::string saveCheckpoint(const std::string& path) const;
     std::string loadCheckpoint(const std::string& path);
@@ -481,11 +485,20 @@ private:
     void checkCheckpointProfile(bool attaching_surface = false) const;
     std::string enableCheckpointingImpl(
 #ifdef OPENSWMM_HAS_2D
-        twoD::CommonSourceStage* stage
+        twoD::CommonSourceStage* stage, bool own_sources = false
 #endif
     );
     std::string checkpointModel() const;
     void checkCheckpointBoundary() const;
+    const std::vector<int>* ordinarySourceOwners() const noexcept;
+    bool ownsSpatialSource(int source) const noexcept;
+#ifdef OPENSWMM_HAS_2D
+    std::unique_ptr<runoff::SourceWaterDeliveryBridge> source_delivery_;
+    twoD::CommonSourceStage* source_stage_ = nullptr; // caller keeps the stage alive
+    std::array<double,6> source_totals_{}; // rain, ET, infiltration, return, runoff, drain (ft3)
+    std::array<double,6> sourceTotals(const runoff::SourceWaterDriver&, const runoff::SourceWaterDeliveryBridge&) const;
+    double spatialSourceStorage(const runoff::SourceWaterDriver&) const;
+#endif
     double exchange_target_ = -1.0;
 
     // Runoff clock (matching legacy OldRunoffTime / NewRunoffTime)

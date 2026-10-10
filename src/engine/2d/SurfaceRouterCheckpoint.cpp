@@ -327,7 +327,8 @@ std::string SurfaceRouter2D::loadCheckpoint(SimulationContext& ctx,const std::st
 }
 std::string SurfaceRouter2D::loadCheckpointBytes(SimulationContext& ctx,std::string bytes,
     const std::array<double,6>* engine_boundary,const std::vector<double>* engine_rainfall,
-    const double* engine_storage,bool engine_routed) {
+    const double* engine_storage,bool engine_routed,
+    const std::function<void(const runoff::SourceWaterDriver&)>* validate_source) {
     try {
         const auto error=sourceBoundary(ctx);if(!error.empty())return error;
         if(sim_time_!=0 || pending_dt_!=0 || ctx.current_time!=0) return "Router checkpoint restore requires a fresh attached router.";
@@ -353,7 +354,7 @@ std::string SurfaceRouter2D::loadCheckpointBytes(SimulationContext& ctx,std::str
             prepared=joint_hydraulic_->prepareCheckpointBytes(ctx,std::move(hydraulic),&clock,&snapshot.delivery,&snapshot.feedback);
             if(engine_storage && clock[0]>0)Router::validateSessionStorage(prepared,ctx,*engine_storage,engine_routed);
         }
-        const auto ce=static_cast<ExplicitInertialSolver*>(solver_.get())->loadCheckpointBytes(std::move(cpu),&expected,snapshot.exchange.pending_.empty()?nullptr:&snapshot.exchange.pending_);if(!ce.empty())return ce;
+        const auto ce=static_cast<ExplicitInertialSolver*>(solver_.get())->loadCheckpointBytes(std::move(cpu),&expected,snapshot.exchange.pending_.empty()?nullptr:&snapshot.exchange.pending_,validate_source);if(!ce.empty())return ce;
         // Parsing/model/ledger/clock checks have all completed. CPU installation
         // above and these remaining explicit moves cannot throw.
         if(joint_hydraulic_)joint_hydraulic_->installCheckpoint(ctx,std::move(prepared));

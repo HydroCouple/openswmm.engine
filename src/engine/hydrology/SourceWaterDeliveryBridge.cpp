@@ -26,6 +26,11 @@ uint64_t digest(const std::vector<SourceWaterDelivery>& records, uint64_t count)
     return h;
 }
 bool nonnegative(double v) { return std::isfinite(v) && v >= 0; }
+// Batched surface and engine clocks add the same intervals in different orders.
+// Admit only roundoff at their shared horizon, never a physical future interval.
+bool past(double time,double horizon) {
+    return time<=horizon || time-horizon<=1e-12*std::max(1.,std::max(time,horizon));
+}
 bool close(double a, double b) {
     return std::isfinite(a) && std::isfinite(b) && std::abs(a-b) <= 1e-11 * (1+std::max(a,b));
 }
@@ -64,7 +69,7 @@ std::string SourceWaterDeliveryBridge::initialize(const SourceWaterDriver& sourc
             if (name.empty()) return "Source delivery requires named hydraulic destinations.";
             prepared.node_names_.push_back(name);
         }
-        prepared.state_.received.resize(c.n_nodes()); prepared.state_.delivered.resize(c.n_nodes());
+        prepared.state_.received.resize(c.n_nodes()); prepared.state_.delivered.resize(c.n_nodes()); prepared.state_.last.resize(c.n_nodes());
         prepared.source_model_ = sourceModel(source); prepared.initialized_ = true;
         prepared.validate(prepared.state_, source);
         *this = std::move(prepared); return {};
@@ -90,7 +95,7 @@ void SourceWaterDeliveryBridge::validate(const State& s, const SourceWaterDriver
         throw std::runtime_error("Source delivery cursor or receiving boundary differs.");
     for (std::size_t g = 0; g < groups.size(); ++g)
         if (!groups[g].pending.empty() || !nonnegative(s.source_ends[g]) ||
-            s.source_ends[g] > groups[g].completed_end || s.source_ends[g] > s.receiver_end)
+            s.source_ends[g] > groups[g].completed_end || !past(s.source_ends[g],s.receiver_end))
             throw std::runtime_error("Source delivery requires completed, past-only group clocks.");
     std::vector<SourceNodeDelivery> received(node_names_.size()), pending(node_names_.size());
     for (uint64_t i = 0; i < s.count; ++i) {
@@ -101,13 +106,30 @@ void SourceWaterDeliveryBridge::validate(const State& s, const SourceWaterDriver
             throw std::runtime_error("Invalid completed source outlet record.");
         add(received[d.node], d);
     }
-    uint64_t ordinal = s.count-s.pending.size();
+    const uint64_t delivered_count = s.count-s.pending.size();
+    if (s.last_begin > delivered_count || !nonnegative(s.last_start) || s.last_start > s.receiver_end ||
+        (s.receiver_end > 0 && s.last_start == s.receiver_end) || s.last.size() != node_names_.size())
+        throw std::runtime_error("Invalid last accepted source receiving interval.");
+    std::vector<SourceNodeDelivery> last(node_names_.size());
+    for (uint64_t i = s.last_begin; i < delivered_count; ++i) {
+        if (!past(records[i].end,s.last_start)) throw std::runtime_error("Last source receipt contains future water.");
+        add(last[records[i].node], records[i]);
+    }
+    for (std::size_t n = 0; n < last.size(); ++n) {
+        const auto& d = s.last[n];
+        const double rate = s.receiver_end > s.last_start ?
+            (last[n].runoff+last[n].drain)/(s.receiver_end-s.last_start) : 0;
+        if (!close(d.runoff,last[n].runoff) || !close(d.drain,last[n].drain) || !close(d.rate,rate) ||
+            !nonnegative(d.runoff) || !nonnegative(d.drain) || !nonnegative(d.rate))
+            throw std::runtime_error("Last source receipt differs from its completed outlet prefix.");
+    }
+    uint64_t ordinal = delivered_count;
     for (const auto& q : s.pending) {
         if (q.ordinal != ordinal++ || !nonnegative(q.available) || q.available != s.receiver_end)
             throw std::runtime_error("Invalid pending source delivery order or availability.");
         const auto& expected = records[q.ordinal]; CompletedSourceArchive a, b;
         auto water = q.water, original = expected; waterRecord(a, water); waterRecord(b, original);
-        if (a.bytes() != b.bytes() || !water.mass.empty() || q.available < water.end)
+        if (a.bytes() != b.bytes() || !water.mass.empty() || !past(water.end,q.available))
             throw std::runtime_error("Pending source delivery differs from its completed outlet.");
         add(pending[water.node], water);
     }
@@ -126,7 +148,7 @@ std::string SourceWaterDeliveryBridge::capture(const SourceWaterDriver& source, 
         validate(state_, source); auto prepared = state_;
         const auto& groups = source.clocks().groups(); const auto& records = source.deliveries();
         for (std::size_t g = 0; g < groups.size(); ++g) {
-            if (groups[g].completed_end > end) return "Source delivery cannot publish a future completed interval.";
+            if (!past(groups[g].completed_end,end)) return "Source delivery cannot publish a future completed interval.";
             prepared.source_ends[g] = groups[g].completed_end;
         }
         for (uint64_t i = prepared.count; i < records.size(); ++i) {
@@ -162,6 +184,8 @@ std::string SourceWaterDeliveryBridge::stage(double start, double end) {
 }
 std::string SourceWaterDeliveryBridge::commit() {
     if (!trial_) return "No staged hydraulic source delivery to accept.";
+    state_.last_begin = state_.count-state_.pending.size(); state_.last_start = state_.receiver_end;
+    state_.last = std::move(trial_->receipts);
     state_.receiver_end = trial_->end; state_.delivered = std::move(trial_->delivered);
     state_.pending.clear(); trial_.reset(); return {};
 }
@@ -174,13 +198,15 @@ void SourceWaterDeliveryBridge::checkpoint(CompletedSourceArchive& a, bool model
     if (model) {
         if (a.reading()) throw std::runtime_error("Source delivery model identity is write-only.");
         validate(state_, source);
-        uint32_t version = 1; a(version, source_model_, node_names_, source_groups_); return;
+        uint32_t version = 2; a(version, source_model_, node_names_, source_groups_); return;
     }
-    State prepared = state_; uint32_t version = 1; a(version);
-    if (version != 1) throw std::runtime_error("Unsupported source delivery checkpoint version.");
+    State prepared = state_; uint32_t version = 2; a(version);
+    if (version != 2) throw std::runtime_error("Unsupported source delivery checkpoint version.");
     a(prepared.count, prepared.digest, prepared.receiver_end); a.fixed(prepared.source_ends);
     a.sequence(prepared.pending, [&](auto& q) { a(q.ordinal, q.available); waterRecord(a, q.water); });
     nodeTotals(a, prepared.received); nodeTotals(a, prepared.delivered);
+    a(prepared.last_begin, prepared.last_start);
+    a.sequence(prepared.last, [&](auto& d) { a(d.runoff,d.drain,d.rate); }, true);
     validate(prepared, source);
     if (prepared.count != source.deliveries().size())
         throw std::runtime_error("Source delivery checkpoint requires all completed outlets to be published.");

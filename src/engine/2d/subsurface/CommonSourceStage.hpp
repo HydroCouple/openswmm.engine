@@ -40,6 +40,7 @@ public:
     double completedEnd() const { return exchange_.completedEnd(); }
     long intervals() const { return intervals_; }
     /// Qualification guard against running private and live subcatchment kernels twice.
+    const runoff::SourceWaterDriver& sources() const { return *sources_; }
     bool meshOnly() const { return sources_ && sources_->clocks().groups().empty() && donors_.empty(); }
     /// Internal component checkpoint, not a production engine hotstart.
     std::string saveCheckpoint(const std::string& path) const;

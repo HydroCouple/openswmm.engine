@@ -280,11 +280,27 @@ double RunoffSolver::nativeInfilFullLid(SimulationContext& ctx, int i, double dt
                          infil_factor_used_[ui], recovery_factor);
 }
 
+std::vector<std::pair<int,double>> RunoffSolver::reviewedAreas() const {
+    std::vector<std::pair<int,double>> areas;
+    constexpr double ft2_to_m2=.3048*.3048;
+    for (int sc=0;sc<int(spatial_full_area_ft2_.size());++sc) if (spatial_full_area_ft2_[sc]>=0) {
+        const double area=soa_.area[sc];double m2=area*ft2_to_m2;
+        if (m2/ft2_to_m2!=area) {
+            const double direction=m2/ft2_to_m2<area ? INFINITY : -INFINITY;
+            m2=std::nextafter(m2,direction);
+        }
+        if (m2/ft2_to_m2!=area) throw std::runtime_error("Reviewed source area cannot be reconstructed exactly.");
+        areas.emplace_back(sc,m2);
+    }
+    return areas;
+}
+
 void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_in,
                            double infil_factor, double recovery_factor, int month,
                            const InfiltrationBoundary* boundary,
                            const std::vector<RunoffSourceForcing>* source_forcing,
-                           const std::vector<double>* spatial_fractions) {
+                           const std::vector<double>* spatial_fractions,
+                           const std::vector<int>* source_owners) {
     int n = soa_.n_subcatch;
     if (source_forcing) {
         if (!std::isfinite(dt) || dt <= 0.0 || ctx.n_subcatches() != n)
@@ -305,6 +321,8 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         for (double f:*spatial_fractions) if(!std::isfinite(f)||f<0||f>1)
             throw std::invalid_argument("Invalid partial spatial intake fraction.");
     }
+    if (source_owners && (source_forcing || source_owners->size() != static_cast<std::size_t>(n)))
+        throw std::invalid_argument("Ordinary runoff ownership requires a matching exclusive source map.");
     if (n == 0) return;
 
     const int count = source_forcing ? static_cast<int>(source_forcing->size()) : n;
@@ -332,6 +350,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
     // re-read — same pattern as the PET forcing below.
     for (int slot = 0; slot < count; ++slot) {
         const int i = source(slot);
+        if (source_owners && (*source_owners)[i] >= 0) continue;
         auto ui = static_cast<std::size_t>(i);
         if (source_forcing) {
             precip_[ui] = (*source_forcing)[slot].rain;
@@ -362,6 +381,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
     // rate is used as-is (bypasses DRY_ONLY); ADD augments the climate rate.
     for (int slot = 0; slot < count; ++slot) {
         const int i = source(slot);
+        if (source_owners && (*source_owners)[i] >= 0) continue;
         auto ui = static_cast<std::size_t>(i);
         if (source_forcing) {
             evap_rate_[ui] = (*source_forcing)[slot].pet;
@@ -379,6 +399,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
     // to replicate the legacy's loss-limiting and inflow-subtraction order.
     for (int slot = 0; slot < count; ++slot) {
         const int i = source(slot);
+        if (source_owners && (*source_owners)[i] >= 0) continue;
         auto ui = static_cast<std::size_t>(i);
         double fi = soa_.imperv_pct[ui];
         double fp = 1.0 - fi;

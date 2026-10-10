@@ -163,6 +163,9 @@ struct SWMMEngine::RestartState {
     std::array<double,6> control_scratch;
     std::vector<controls::PIDState> pid;
     std::vector<double> orifice_area,weir_area;
+#ifdef OPENSWMM_HAS_2D
+    bool spatial=false;std::array<double,6> source_totals{};
+#endif
 #define DECL(v) decltype(SWMMEngine::v) v;
     ENGINE(DECL)
     RUNOFF_ENGINE(DECL)
@@ -179,6 +182,9 @@ struct SWMMEngine::RestartState {
         ENGINE(COPY)
         RUNOFF_ENGINE(COPY)
 #undef COPY
+#ifdef OPENSWMM_HAS_2D
+        spatial=bool(e.source_delivery_);source_totals=e.source_totals_;
+#endif
         int at=0;for(const auto* row:{e.ctx_.max_courant_crit,e.ctx_.max_flow_turns,e.ctx_.max_non_converged,e.ctx_.max_mass_bal_errs})
             for(int i=0;i<SimulationContext::MAX_STATS;++i)tops[at++]=row[i];
         for(const auto& t:e.ctx_.tables.tables)cursors.push_back(t.cursor);
@@ -228,6 +234,9 @@ struct SWMMEngine::RestartState {
 #undef F
         a.sequence(pid,[&](auto& p){fields(a,p.setpoint,p.e1,p.e2);},true);
         a.fixed(orifice_area,weir_area);finite(orifice_area);finite(weir_area);
+#ifdef OPENSWMM_HAS_2D
+        if (spatial) fields(a,source_totals);
+#endif
     }
     void validate(const SWMMEngine& e) const {
         const double time=boundary[0],elapsed=boundary[2],duration=e.ctx_.options.totalDurationMs();
@@ -294,7 +303,7 @@ struct SWMMEngine::RestartState {
             std::vector<std::pair<int,double>> drains;std::vector<double> totals(e.ctx_.n_nodes(),0);
             for(const auto& [type,u]:lid.usageOrder()) {
                 const auto& g=lid.group(type);const int sc=g.subcatch_idx[u];
-                if(sc<0 || std::size_t(sc)>=ns || subcatch.area[sc]<=0 || subcatch.total_lid_area_ft2[sc]<=0)continue;
+                if(sc<0 || std::size_t(sc)>=ns || e.ownsSpatialSource(sc) || subcatch.area[sc]<=0 || subcatch.total_lid_area_ft2[sc]<=0)continue;
                 int node=g.drain_node[u];const int dsc=g.drain_subcatch[u];
                 if(node<0 && (dsc<0 || dsc==sc))node=subcatch.outlet_node[sc];
                 if(node<0 || node>=e.ctx_.n_nodes())continue;
@@ -306,10 +315,10 @@ struct SWMMEngine::RestartState {
         require(balance.runoff_init_store==e.ctx_.mass_balance.runoff_init_store,"Engine initial runoff storage differs.");
         if(time>0) {
             const auto& s=runoff.soa();double stored=0;
-            for(std::size_t i=0;i<ns;++i)stored+=(s.depth_imperv0[i]*s.frac_imperv0[i]+s.depth_imperv1[i]*s.frac_imperv1[i]+
+            for(std::size_t i=0;i<ns;++i)if(!e.ownsSpatialSource(int(i)))stored+=(s.depth_imperv0[i]*s.frac_imperv0[i]+s.depth_imperv1[i]*s.frac_imperv1[i]+
                     s.depth_perv[i]*(1-s.imperv_pct[i]))*s.area[i];
-            stored+=lid.storedVolume();
-            require(std::isfinite(stored) && std::abs(stored-balance.runoff_final_store)<=1e-10*std::max(1.,std::abs(stored)),
+            stored+=lid.storedVolume(e.ordinarySourceOwners());
+            require(std::isfinite(stored) && (spatialProfile(e) || std::abs(stored-balance.runoff_final_store)<=1e-10*std::max(1.,std::abs(stored))),
                     "Engine runoff final storage differs from staged water.");
         }
         for(std::size_t i=0;i<cursors.size();++i)require(cursors[i].index>=0 && cursors[i].index<static_cast<int>(std::max(std::size_t(1),e.ctx_.tables.tables[i].size())) &&
@@ -324,6 +333,35 @@ struct SWMMEngine::RestartState {
         for(const auto* row:{&orifice_area,&weir_area})for(double area:*row)
             require(area>=0,"Negative engine structure surface area.");
     }
+    static bool spatialProfile(const SWMMEngine& e) {
+#ifdef OPENSWMM_HAS_2D
+        return bool(e.source_delivery_);
+#else
+        return false;
+#endif
+    }
+#ifdef OPENSWMM_HAS_2D
+    void validateSource(const SWMMEngine& e,const runoff::SourceWaterDriver& source,
+                        const runoff::SourceWaterDeliveryBridge& bridge) const {
+        require(bridge.receiverEnd()==boundary[0],"Engine/source receiving clocks differ.");
+        require(source_totals==e.sourceTotals(source,bridge),"Engine/source completed ledgers differ.");
+        for(double v:source_totals)require(std::isfinite(v) && v>=0,"Invalid engine completed-source ledger.");
+        const auto& s=runoff.soa();double stored=e.spatialSourceStorage(source)+lid.storedVolume(e.ordinarySourceOwners());
+        for(int i=0;i<e.ctx_.n_subcatches();++i)if(!e.ownsSpatialSource(i))
+            stored+=(s.depth_imperv0[i]*s.frac_imperv0[i]+s.depth_imperv1[i]*s.frac_imperv1[i]+
+                     s.depth_perv[i]*(1-s.imperv_pct[i]))*s.area[i];
+        require(std::isfinite(stored) && std::abs(stored-balance.runoff_final_store)<=1e-10*std::max(1.,stored),
+                "Engine/source final runoff storage differs.");
+        if(boundary[0]>0)require(std::abs(bridge.lastStart()*1000-boundary[3])<=1e-7*std::max(1.,boundary[3]),
+                                "Engine/source last receiving interval differs.");
+        for(int i=0;i<e.ctx_.n_subcatches();++i)if(e.ownsSpatialSource(i)) {
+            require(subcatch.runoff[i]==0 && subcatch.old_runoff[i]==0 && subcatch.runon_inflow[i]==0 &&
+                subcatch.runon_rate[i]==0 && subcatch.outfall_runon_vol[i]==0 && subcatch.lid_return_to_perv_cfs[i]==0 &&
+                subcatch.lid_drain_runon_cfs[i]==0 && subcatch.lid_drain_flow[i]==0 && subcatch.old_lid_drain_flow[i]==0,
+                "Owned catchment has duplicate ordinary transfers.");
+        }
+    }
+#endif
     void install(SWMMEngine& e) noexcept {
         static_assert(std::is_nothrow_move_assignable_v<SimulationContext::MassBalance> &&
                       std::is_nothrow_move_assignable_v<exfil::ExfilSoA> && std::is_nothrow_move_assignable_v<AvgAccumulator> &&
@@ -354,6 +392,9 @@ struct SWMMEngine::RestartState {
         e.controls_.cur_date_=control_scratch[3];e.controls_.cur_time_=control_scratch[4];e.controls_.elapsed_days_=control_scratch[5];
         e.controls_.pid_states_=std::move(pid);
         e.hydstruct_.orifices_.surf_area=std::move(orifice_area);e.hydstruct_.weirs_.surf_area=std::move(weir_area);
+#ifdef OPENSWMM_HAS_2D
+        if (spatial) e.source_totals_=source_totals;
+#endif
         e.xsp_cache_gen_=~uint64_t(0);e.checkpoint_ready_=true;
     }
 };
@@ -370,8 +411,9 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
         require(ctx_.events.empty(),"Surface session checkpoint does not yet recover skipped routing events.");
         require(surface_router_.options_.output_file.empty(),"Surface session checkpoint cannot append surface output.");
         require(attaching_surface || (surface_router_.joint_hydraulic_==&router_ &&
-                surface_router_.common_stage_ && surface_router_.common_stage_->meshOnly()),
-                "Surface session checkpoint requires its mesh-only common stage and engine-owned hydraulic router.");
+                surface_router_.common_stage_ && (surface_router_.common_stage_->meshOnly() ||
+                 (source_delivery_ && source_stage_==surface_router_.common_stage_))),
+                "Surface session checkpoint requires its explicitly attached common stage and engine-owned hydraulic router.");
     } else require(!attaching_surface,"Surface checkpoint attachment requires an active surface router.");
 #else
     (void)attaching_surface;
@@ -463,6 +505,9 @@ std::string SWMMEngine::checkpointModel() const {
       lu.subcatch_index,lu.lid_index,lu.number,lu.area,lu.width,lu.init_sat,lu.from_imperv,lu.to_perv,lu.drain_to,lu.from_perv);
     auto runoff=runoff_;auto lid=lid_.waterTrial();runoff.checkpoint(a,true);lid.checkpoint(a,true);
     auto hydraulic=router_.checkpointModel(ctx_);a(hydraulic);
+#ifdef OPENSWMM_HAS_2D
+    if(source_delivery_) {auto bridge=*source_delivery_;bridge.checkpoint(a,true,source_stage_->sources());}
+#endif
     require(a.bytes().size()<=maxBytes,"Engine checkpoint model exceeds its size limit.");return a.bytes();
 }
 void SWMMEngine::checkCheckpointBoundary() const {
@@ -471,6 +516,11 @@ void SWMMEngine::checkCheckpointBoundary() const {
     RestartState state(*this);Archive out;state.archive(out);state.validate(*this);
 #ifdef OPENSWMM_HAS_2D
     if(surface_router_.isActive()) {auto error=surface_router_.sourceBoundary(ctx_);require(error.empty(),error.c_str());}
+    if(source_delivery_) {
+        auto bridge=*source_delivery_;Archive out;bridge.checkpoint(out,false,source_stage_->sources());
+        state.validateSource(*this,source_stage_->sources(),bridge);
+        auto error=bridge.validateReceiver(ctx_);require(error.empty(),error.c_str());
+    }
 #endif
 }
 std::string SWMMEngine::enableCheckpointing() {
@@ -482,10 +532,11 @@ std::string SWMMEngine::enableCheckpointing() {
 }
 #ifdef OPENSWMM_HAS_2D
 std::string SWMMEngine::enableCheckpointing(twoD::CommonSourceStage& stage) {return enableCheckpointingImpl(&stage);}
+std::string SWMMEngine::enableSpatialSourceCheckpointing(twoD::CommonSourceStage& stage) {return enableCheckpointingImpl(&stage,true);}
 #endif
 std::string SWMMEngine::enableCheckpointingImpl(
 #ifdef OPENSWMM_HAS_2D
-    twoD::CommonSourceStage* stage
+    twoD::CommonSourceStage* stage, bool own_sources
 #endif
 ) {
     const bool owned=router_.checkpoint_owned_session_;
@@ -495,15 +546,49 @@ std::string SWMMEngine::enableCheckpointingImpl(
                 "Enable engine checkpointing at start(0)'s initial session boundary.");
         router_.checkpoint_owned_session_=true;
 #ifdef OPENSWMM_HAS_2D
-        require(!stage || stage->meshOnly(),"Engine source checkpoint does not yet own private subcatchment donors/deliveries.");
+        require(!stage || own_sources || stage->meshOnly(),"Private catchment ownership requires explicit spatial-source attachment.");
+        std::unique_ptr<runoff::SourceWaterDeliveryBridge> bridge;
+        if(own_sources) {
+            require(stage && stage->matches(&surface_router_.mesh_,&surface_router_.state_,&surface_router_.subsurface_),
+                    "Spatial sources require the matching attached surface state.");
+            const auto& source=stage->sources();
+            require(!source.clocks().groups().empty(),"Spatial source attachment requires selected catchment graphs.");
+            bridge=std::make_unique<runoff::SourceWaterDeliveryBridge>();
+            auto error=bridge->initialize(source);require(error.empty(),error.c_str());
+            error=bridge->validateReceiver(ctx_);require(error.empty(),error.c_str());
+            for(int sc:ctx_.node_subtypes.outfalls.route_to)
+                require(!bridge->ownsSubcatch(sc),"Outfall returns into owned catchments need a qualified conservative source receipt.");
+            std::vector<int> seeds;for(int sc=0;sc<ctx_.n_subcatches();++sc)if(bridge->ownsSubcatch(sc))seeds.push_back(sc);
+            runoff::SourceWaterDriver expected;
+            error=expected.initialize(ctx_,seeds,source.runoff().reviewedAreas(),&lid_);require(error.empty(),error.c_str());
+            error=expected.configureSpatialCoverage(source.spatialFractions());require(error.empty(),error.c_str());
+            auto authored=source.waterTrial();Archive a,b;authored.checkpoint(a,true);expected.checkpoint(b,true);
+            require(a.bytes()==b.bytes(),"Spatial source material, forcing or compiled catchment model differs from the live engine.");
+            Archive initial,matching;authored.checkpoint(initial,false);expected.checkpoint(matching,false);
+            require(initial.bytes()==matching.bytes(),"Spatial source initial water differs from the live engine.");
+        }
         checkCheckpointProfile(stage!=nullptr);
 #else
         checkCheckpointProfile();
 #endif
-        auto model=checkpointModel();RestartState state(*this);Archive out;state.archive(out);state.validate(*this);
+        auto model=checkpointModel();
+#ifdef OPENSWMM_HAS_2D
+        if(bridge) {Archive extra;bridge->checkpoint(extra,true,stage->sources());model+=extra.bytes();}
+#endif
+        RestartState state(*this);Archive out;state.archive(out);state.validate(*this);
         router_.enableCheckpointing(ctx_);
 #ifdef OPENSWMM_HAS_2D
         if(stage)surface_router_.setJointSourceStage(ctx_,*stage,router_);
+#endif
+#ifdef OPENSWMM_HAS_2D
+        if(bridge) {
+            source_stage_=stage;source_delivery_=std::move(bridge);
+            double ordinary=0;const auto& s=runoff_.soa();
+            for(int i=0;i<ctx_.n_subcatches();++i)if(!ownsSpatialSource(i))
+                ordinary+=(s.depth_imperv0[i]*s.frac_imperv0[i]+s.depth_imperv1[i]*s.frac_imperv1[i]+s.depth_perv[i]*(1-s.imperv_pct[i]))*s.area[i];
+            ordinary+=lid_.storedVolume(ordinarySourceOwners());
+            ctx_.mass_balance.runoff_init_store=ctx_.mass_balance.runoff_final_store=ordinary+spatialSourceStorage(stage->sources());
+        }
 #endif
         checkpoint_model_=std::move(model);checkpoint_enabled_=checkpoint_ready_=true;return {};
     } catch(const std::exception& e) {
@@ -522,11 +607,14 @@ std::string SWMMEngine::saveCheckpoint(const std::string& path) const {
         RestartState state(*this);Archive payload;state.archive(payload);std::string hydraulic;
         uint32_t version=3;std::string error;
 #ifdef OPENSWMM_HAS_2D
-        if(surface_router_.isActive()) {version=4;error=surface_router_.checkpointBytes(ctx_,hydraulic);}
+        if(surface_router_.isActive()) {version=source_delivery_?5:4;error=surface_router_.checkpointBytes(ctx_,hydraulic);}
         else
 #endif
         error=router_.checkpointBytes(ctx_,hydraulic);
         require(error.empty(),error.c_str());payload(hydraulic);
+#ifdef OPENSWMM_HAS_2D
+        if(source_delivery_) {auto bridge=*source_delivery_;Archive a;bridge.checkpoint(a,false,source_stage_->sources());auto bytes=a.bytes();payload(bytes);}
+#endif
         auto bytes=payload.bytes(),model=checkpoint_model_;auto crc=checksum(bytes);std::string magic=magicName;
         Archive out;out(magic,version,model,crc,bytes);require(out.bytes().size()<=maxBytes,"Engine checkpoint exceeds its size limit.");
         publish(path,out.bytes());return {};
@@ -539,15 +627,30 @@ std::string SWMMEngine::loadCheckpoint(const std::string& path) {
         in(magic,version,model,crc,bytes);in.finish();
         uint32_t expected_version=3;
 #ifdef OPENSWMM_HAS_2D
-        if(surface_router_.isActive())expected_version=4;
+        if(surface_router_.isActive())expected_version=source_delivery_?5:4;
 #endif
         require(magic==magicName && version==expected_version && model==checkpoint_model_ && crc==checksum(bytes),"Engine checkpoint format/model/checksum differs.");
-        RestartState state(*this);Archive payload(std::move(bytes));state.archive(payload);std::string hydraulic;payload(hydraulic);payload.finish();state.validate(*this);
+        RestartState state(*this);Archive payload(std::move(bytes));state.archive(payload);std::string hydraulic;payload(hydraulic);
+#ifdef OPENSWMM_HAS_2D
+        std::string delivery;if(source_delivery_)payload(delivery);
+#endif
+        payload.finish();state.validate(*this);
 #ifdef OPENSWMM_HAS_2D
         if(surface_router_.isActive()) {
+            std::optional<runoff::SourceWaterDeliveryBridge> bridge;
+            std::function<void(const runoff::SourceWaterDriver&)> validate_source;
+            if(source_delivery_) {
+                bridge=*source_delivery_;
+                validate_source=[&](const auto& source) {
+                    Archive a(std::move(delivery));bridge->checkpoint(a,false,source);a.finish();
+                    state.validateSource(*this,source,*bridge);
+                };
+            }
             auto error=surface_router_.loadCheckpointBytes(ctx_,std::move(hydraulic),&state.boundary,&state.gages.rainfall,
-                &state.balance.routing_final_storage,state.stats.sum_iterations>0);
-            require(error.empty(),error.c_str());state.install(*this);return {};
+                &state.balance.routing_final_storage,state.stats.sum_iterations>0,bridge?&validate_source:nullptr);
+            require(error.empty(),error.c_str());
+            if(bridge) {static_assert(std::is_nothrow_move_assignable_v<runoff::SourceWaterDeliveryBridge>);*source_delivery_=std::move(*bridge);}
+            state.install(*this);return {};
         }
 #endif
         auto routing=router_.prepareCheckpointBytes(ctx_,std::move(hydraulic),&state.boundary);

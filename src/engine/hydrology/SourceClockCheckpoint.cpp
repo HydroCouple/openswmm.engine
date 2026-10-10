@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "SourceClockGroups.hpp"
+#include <algorithm>
 #include "../core/CompletedSourceArchive.hpp"
 #include <cmath>
 namespace openswmm::runoff {
@@ -16,7 +17,7 @@ void SourceClockGroups::checkpoint(detail::CompletedSourceArchive& a,bool model)
         else {
             if(!g.pending.empty())throw std::runtime_error("Checkpoint requires committed source clocks.");
             a(g.completed_end);
-            if(!std::isfinite(g.completed_end) || g.completed_end<0 || g.completed_end>duration_)
+            if(!std::isfinite(g.completed_end) || g.completed_end<0 || g.completed_end-duration_>1e-12*std::max(1.,duration_))
                 throw std::runtime_error("Invalid source restart clock.");
         }
     },true);

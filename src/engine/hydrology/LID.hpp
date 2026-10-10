@@ -300,8 +300,9 @@ public:
 
     /// Total water volume currently stored in all LID units (ft³), for the
     /// runoff mass balance (legacy lid_getStoredVolume()). This is the one
-    /// SWMMEngine calls (runoff_init_store / runoff_final_store).
-    double storedVolume() const;
+    /// SWMMEngine calls (runoff_init_store / runoff_final_store). The optional
+    /// internal owner map excludes units belonging to completed source groups.
+    double storedVolume(const std::vector<int>* source_owners = nullptr) const;
     void checkpoint(detail::CompletedSourceArchive&,bool model,bool lazy_buffers=false); // internal accepted-boundary IO
     void validateCheckpoint(const LIDSolver& model,std::size_t runoff_count) const;
 
@@ -337,9 +338,11 @@ public:
      * @param evap_rate Evaporation rate (ft/sec). Per-unit effective rates
      *                  are resolved internally from any prescribed PET
      *                  forcing on each unit's parent subcatchment.
+     * @param source_owners Internal exclusion map: -1 ordinary, nonnegative
+     *                      completed spatial-source group.
      */
     void execute(SimulationContext& ctx, double dt,
-                 double rainfall, double evap_rate);
+                 double rainfall, double evap_rate, const std::vector<int>* source_owners = nullptr);
 
     /// The runoff clock's OLD time (seconds), legacy OldRunoffTime — the
     /// pavement clogging regeneration test reads it (lidproc.c
@@ -362,7 +365,7 @@ public:
 
     /// Legacy HasWetLids: any unit was not dry in the last execute()
     /// (runoff.c keeps the WET step while it holds).
-    bool anyWet() const;
+    bool anyWet(const std::vector<int>* source_owners = nullptr) const;
 
     /// Batch bio-cell flux rates — VECTORISABLE
     static void batchBioCellFlux(LIDGroupSoA& g, double rainfall,

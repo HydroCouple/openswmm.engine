@@ -6,6 +6,8 @@
 #include "../transport/components/LidLayerCommon.hpp"
 #include <algorithm>
 #include <cmath>
+#include <sstream>
+#include <iomanip>
 #include <stdexcept>
 
 namespace openswmm::runoff {
@@ -343,6 +345,7 @@ std::string SourceWaterDriver::initialize(const SimulationContext& c, const std:
             for (const auto& [t, u] : s->lids.usageOrder()) {
                 const auto& g = s->lids.group(t); const int sc = g.subcatch_idx[u];
                 if (clocks.groupForSubcatch(sc) < 0) continue;
+                if(g.surf_void_frac[u]<=0) return "Completed LID surface storage requires a positive void fraction.";
                 if(g.type==lid::LIDType::VEG_SWALE && (g.surf_store[u]<=0 || g.surf_void_frac[u]<=0 || g.unit_area[u]<=0))
                     return "Completed swale requires positive surface height, void fraction and unit area.";
                 const double perv = s->runoff.soa().area[sc] * (1 - c.subcatches.frac_imperv[sc]);
@@ -601,8 +604,12 @@ std::string SourceWaterDriver::stage(int group, double end, double completed_thr
         for (int sc : clocks_.groups()[group].subcatches)
             scale += trial_->ledger[sc].initial_storage + trial_->ledger[sc].rain;
         const double residual = balanceResidual(group, true);
-        if (!std::isfinite(residual) || std::abs(residual) > 1e-10 * scale)
-            throw std::runtime_error("Completed source water trial failed storage/transfer conservation.");
+        if (!std::isfinite(residual) || std::abs(residual) > 1e-10 * scale) {
+            std::ostringstream message;message<<std::setprecision(17)
+                <<"Completed source water trial failed storage/transfer conservation: group "<<group
+                <<", end "<<end<<" s, residual "<<residual<<" ft3, tolerance "<<1e-10*scale<<" ft3.";
+            throw std::runtime_error(message.str());
+        }
         for (std::size_t j = 0; j < trial_->pollutant_names.size(); ++j) {
             double mass_scale = 1;
             for (const auto& b : trial_->pollutants)

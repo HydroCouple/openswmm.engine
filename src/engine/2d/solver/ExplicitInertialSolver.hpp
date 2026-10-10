@@ -45,6 +45,7 @@
 #define OPENSWMM_ENGINE_2D_EXPLICIT_INERTIAL_SOLVER_HPP
 
 #include <array>
+#include <functional>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -54,6 +55,7 @@
 #include "../data/SolverOptions2D.hpp"   // Momentum2D
 
 namespace openswmm::detail { class CompletedSourceArchive; }
+namespace openswmm::runoff { class SourceWaterDriver; }
 namespace openswmm::twoD {
 
 class SubsurfaceSolver;   // G1: the two-zone groundwater kernel, if authored
@@ -107,7 +109,8 @@ private:
     friend class SurfaceRouter2D;
     std::string checkpointBytes(std::string& bytes) const;
     std::string loadCheckpointBytes(std::string bytes, const std::array<double,5>* router_boundary = nullptr,
-                                    const std::vector<double>* pending_outfalls = nullptr);
+                                    const std::vector<double>* pending_outfalls = nullptr,
+        const std::function<void(const runoff::SourceWaterDriver&)>* validate_source = nullptr);
     void refreshSourceResultBoundary();
 
     // Recompute η/depth from state volumes for the whole mesh.

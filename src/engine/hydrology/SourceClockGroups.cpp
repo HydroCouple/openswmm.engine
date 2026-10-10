@@ -191,7 +191,7 @@ std::string SourceClockGroups::stage(int group, double end, double completed_thr
     auto& g = groups_[group];
     if (!g.pending.empty()) return "Source group already has a pending interval.";
     if (!std::isfinite(end) || !std::isfinite(completed_through) || end <= g.completed_end ||
-        end > completed_through || end > duration_) return "Source interval must be completed, contiguous and within the simulation.";
+        end > completed_through || end-duration_ > 1e-12*std::max(1.,duration_)) return "Source interval must be completed, contiguous and within the simulation.";
     std::vector<SourceForcingInterval> intervals;
     for (double t = g.completed_end; t < end;) {
         const double date = datetime::addSeconds(start_date_, t);

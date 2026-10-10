@@ -209,7 +209,8 @@ TEST(SourceWaterDeliveryBridge, VariableCadencesAndRestartPreserveSourceAndDeliv
 
 namespace {
 struct Wire {
-    uint32_t version=1;uint64_t count=0,digest=0;double end=0;
+    uint32_t version=2;uint64_t count=0,digest=0;double end=0;
+    uint64_t last_begin=0;double last_start=0;std::vector<SourceNodeDelivery> last=std::vector<SourceNodeDelivery>(2);
     std::vector<double> clocks={0,0};std::vector<QueuedSourceDelivery> pending;
     std::vector<SourceNodeDelivery> received=std::vector<SourceNodeDelivery>(2),delivered=received;
     void io(CompletedSourceArchive& a) {
@@ -217,6 +218,7 @@ struct Wire {
         a.sequence(pending,[&](auto& q){auto& d=q.water;a(q.ordinal,q.available,d.source,d.node,d.start,d.end,d.volume,d.drain);});
         a.sequence(received,[&](auto& d){a(d.runoff,d.drain);},true);
         a.sequence(delivered,[&](auto& d){a(d.runoff,d.drain);},true);
+        a(last_begin,last_start);a.sequence(last,[&](auto& d){a(d.runoff,d.drain,d.rate);},true);
     }
 };
 }
@@ -226,10 +228,10 @@ TEST(SourceWaterDeliveryBridge, CorruptPairedRestorePreservesBothTargetsAndPermi
     CompletedSourceArchive sa;auto fingerprint=identity(a);sa(fingerprint);a.source.checkpoint(sa,false);
     const auto source_bytes=sa.bytes();Wire original;CompletedSourceArchive read(valid.substr(source_bytes.size()));
     original.io(read);read.finish();ASSERT_GT(original.pending.size(),1);
-    for (int mutation=0;mutation<17;++mutation) {
+    for (int mutation=0;mutation<23;++mutation) {
         SCOPED_TRACE(mutation);auto w=original;
         switch (mutation) {
-        case 0:w.version=2;break;
+        case 0:w.version=1;break;
         case 1:++w.count;break;
         case 2:w.digest^=1;break;
         case 3:w.end=-1;break;
@@ -246,6 +248,12 @@ TEST(SourceWaterDeliveryBridge, CorruptPairedRestorePreservesBothTargetsAndPermi
         case 14:w.delivered[0].runoff=std::numeric_limits<double>::infinity();break;
         case 15:w.received[0].drain=std::numeric_limits<double>::quiet_NaN();break;
         case 16:w.clocks[1]=std::numeric_limits<double>::quiet_NaN();break;
+        case 17:w.last_begin=w.count+1;break;
+        case 18:w.last_start=w.end;break;
+        case 19:w.last[0].runoff+=1;break;
+        case 20:w.last[0].rate=1;break;
+        case 21:w.last[0].drain=-1;break;
+        case 22:w.last_start=std::numeric_limits<double>::quiet_NaN();break;
         }
         CompletedSourceArchive out;w.io(out);Pair target;const auto before=checkpoint(target);
         EXPECT_THROW(restore(target,source_bytes+out.bytes()),std::runtime_error);

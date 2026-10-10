@@ -52,6 +52,7 @@
 #include "mesh/RainfallInterpolator.hpp"
 
 #include <memory>
+#include <functional>
 #include <array>
 #include <unordered_map>
 #include <unordered_set>
@@ -61,6 +62,7 @@
 #include "solver/ISurfaceSolver.hpp"
 #endif
 
+namespace openswmm::runoff { class SourceWaterDriver; }
 namespace openswmm {
 struct SimulationContext;
 class Router;
@@ -488,7 +490,8 @@ private:
     std::string loadCheckpointBytes(SimulationContext&, std::string,
         const std::array<double,6>* engine_boundary = nullptr,
         const std::vector<double>* engine_rainfall = nullptr,
-        const double* engine_storage = nullptr, bool engine_routed = false);
+        const double* engine_storage = nullptr, bool engine_routed = false,
+        const std::function<void(const runoff::SourceWaterDriver&)>* validate_source = nullptr);
     void attachCommonSourceStage(SimulationContext&, CommonSourceStage&, Router*);
     void checkJointRoutingStep(const SimulationContext&, double dt, double start) const;
     Router* joint_hydraulic_ = nullptr; // externally owned, stable lifetime

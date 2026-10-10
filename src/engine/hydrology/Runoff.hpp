@@ -172,15 +172,20 @@ public:
     /// Optional reviewed non-LID areas (source index, m2) bypass the legacy
     /// rounded LANDAREA conversion only for those sources, at initialization.
     void init(SimulationContext& ctx, const std::vector<std::pair<int, double>>& spatial_areas = {});
+    /// Reconstruct the reviewed area overrides for a matching compiled source.
+    std::vector<std::pair<int,double>> reviewedAreas() const;
     /**
      * @param infil_factor    Monthly infiltration rate multiplier (default 1.0).
      * @param recovery_factor Monthly soil recovery multiplier (default 1.0).
+     * @param source_owners   Internal ordinary-path exclusion map: -1 ordinary,
+     *                        nonnegative completed spatial-source group.
      */
     void execute(SimulationContext& ctx, double dt, double evap_rate = 0.0,
                  double infil_factor = 1.0, double recovery_factor = 1.0,
                  int month = -1, const InfiltrationBoundary* boundary = nullptr,
                  const std::vector<RunoffSourceForcing>* source_forcing = nullptr,
-                 const std::vector<double>* spatial_fractions = nullptr);
+                 const std::vector<double>* spatial_fractions = nullptr,
+                 const std::vector<int>* source_owners = nullptr);
 
     /// Legacy findNativeInfil for a subcatchment with no pervious non-LID
     /// area: the native soil's rate for its own rain + runon (advances the

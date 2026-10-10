@@ -72,6 +72,7 @@
 
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/input/SectionHandlers2D.hpp"
+#include "../2d/subsurface/CommonSourceStage.hpp"
 #ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
 #include "../2d/output/Default2DOutputPlugin.hpp"
 #endif
@@ -1704,13 +1705,37 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
     // ---- Full simulation pipeline (matching legacy swmm_step order) ----
     // Reference: swmm5.c::execRouting() → runoff_execute() + routing_execute()
 
+#ifdef OPENSWMM_HAS_2D
+    if (source_delivery_) {
+        const auto error=source_delivery_->stage(ctx_.current_time,ctx_.current_time+dt_next);
+        if (!error.empty()) throw std::runtime_error(error);
+    }
+#endif
     stepRunoff(dt_next);
+#ifdef OPENSWMM_HAS_2D
+    if (source_delivery_) for (int n=0;n<ctx_.n_nodes();++n)
+        ctx_.nodes.runoff_inflow[n] += source_delivery_->receipts()[n].rate;
+#endif
     // IGNORE_ROUTING (legacy `if (DoRouting) routing_execute()`, swmm5.c:997,
     // and massbal.c:299): skip the routing step and its statistics / routing
     // mass-balance accumulation. Runoff and its final-storage bookkeeping still
     // run every step.
     if (do_routing_) {
         accumulateNodeRoutingTotals(dt_next / 2.0);   // routing.c:227
+#ifdef OPENSWMM_HAS_2D
+        // Held source receipts contribute their full accepted volume to node
+        // ordinary-node statistics as well as storage and wet-weather continuity.
+        // Node LID total inflow records mobile hydraulic water after capture;
+        // preserve that convention and expose whole admitted receipts separately.
+        if (source_delivery_) for (int n=0;n<ctx_.n_nodes();++n) if (!lidnode::active(ctx_,n)) {
+            const double half_receipt=(source_delivery_->receipts()[n].rate-
+                source_delivery_->lastReceipts()[n].rate)*dt_next/2;
+            ctx_.nodes.stat_total_inflow_vol[n]+=half_receipt;
+            if (ctx_.nodes.type[n]==NodeType::OUTFALL ||
+                (ctx_.nodes.degree[n]==0 && ctx_.nodes.type[n]!=NodeType::STORAGE))
+                ctx_.nodes.stat_total_outflow_vol[n]+=half_receipt;
+        }
+#endif
         stepRouting(dt_next);
         if (checkpoint_enabled_ && router_.checkpoint_prepared_) {
             // Event/steady skips still advance the accepted engine clock.
@@ -1763,6 +1788,10 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
                 ctx_, dt_next,
                 !between_events_ && step_end >= ctx_.options.report_start);
         }
+#ifdef OPENSWMM_HAS_2D
+        if (source_delivery_) for (int n=0;n<ctx_.n_nodes();++n)
+            routing_prev_rates_[1] += source_delivery_->receipts()[n].rate-source_delivery_->lastReceipts()[n].rate;
+#endif
         const double half = dt_next / 2.0;
         for (int k = 0; k < 11; ++k) {
             const double rate = (dt_next > 0.0)
@@ -1791,6 +1820,19 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
 
     // Advance clock (must happen before output_due check)
     hydraulics::TimestepController::advance(ctx_, dt_next);
+#ifdef OPENSWMM_HAS_2D
+    if (source_delivery_) {
+        auto error=source_delivery_->commit();
+        if (!error.empty()) throw std::runtime_error(error);
+        error=source_delivery_->capture(source_stage_->sources(),ctx_.current_time);
+        if (!error.empty()) throw std::runtime_error(error);
+        const auto totals=sourceTotals(source_stage_->sources(),*source_delivery_);
+        auto& mb=ctx_.mass_balance;
+        double* fields[]{&mb.runoff_rainfall,&mb.runoff_evap,&mb.runoff_infil,&mb.runoff_runon,&mb.runoff_runoff,&mb.runoff_lid_drain};
+        for (int k=0;k<6;++k) *fields[k] += totals[k]-source_totals_[k];
+        source_totals_=totals;
+    }
+#endif
 
     // Advance the control-rule clock when the step landed on its grid
     // (legacy routing.c:407-408, 1 ms tolerance).
@@ -1929,6 +1971,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             ctx_.reactions.surface.washoff_conc_old =
                 ctx_.reactions.surface.washoff_conc;
         for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+            if (ownsSpatialSource(i)) continue;
             auto ui = static_cast<std::size_t>(i);
             ctx_.subcatches.old_gw_flow[ui] = ctx_.subcatches.gw_flow[ui];
             // legacy gw->oldFlow = gw->newFlow: the RATE, not the cfs product.
@@ -1947,6 +1990,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             auto& g = lid_.group(t);
             for (int u = 0; u < g.count; ++u) {
                 auto uu = static_cast<std::size_t>(u);
+                if (ownsSpatialSource(g.subcatch_idx[uu])) continue;
                 g.old_drain_flow[uu] = g.drain_flow[uu];
             }
         }
@@ -2311,6 +2355,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             snow_rain_.assign(un_sc, 0.0);
             snow_snow_.assign(un_sc, 0.0);
             for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+                if (ownsSpatialSource(i)) continue;
                 auto ui = static_cast<std::size_t>(i);
                 if (ctx_.subcatches.snowpack[ui] < 0) continue;
                 // Single source of truth for the split (gage.c:513-523 parity):
@@ -2357,6 +2402,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             // Combined imperv = area-weighted avg of plowable + non-plowable imperv.
             const auto& soa = snow_.state();
             for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+                if (ownsSpatialSource(i)) continue;
                 auto ui = static_cast<std::size_t>(i);
                 if (ctx_.subcatches.snowpack[ui] < 0) continue;
 
@@ -2421,6 +2467,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             // old/new to the report instant (subcatch.c:888-890). Same
             // recompute as the API getter.
             for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+                if (ownsSpatialSource(i)) continue;
                 auto ui = static_cast<std::size_t>(i);
                 ctx_.subcatches.snow_depth[ui] = subcatchSnowDepth(i);
             }
@@ -2438,7 +2485,8 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         //     Runoff solver is self-contained; output is subcatches.runoff[i].
         //     Routing picks it up via Phase 2 interpolation → nodes.runoff_inflow[].
         runoff_.execute(ctx_, dt_runoff, ctx_.climate_state.evap_rate,
-                        ctx_.climate_state.infil_factor, ctx_.climate_state.recovery_factor, mon);
+                        ctx_.climate_state.infil_factor, ctx_.climate_state.recovery_factor, mon,
+                        nullptr, nullptr, nullptr, ordinarySourceOwners());
 
         // A3: subcatchment surface age, immediately after the depths this
         // step produced. Reads the solver's own SoA because
@@ -2474,6 +2522,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         {
             const auto& rsoa = runoff_.soa();
             for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+                if (ownsSpatialSource(i)) continue;
                 auto usi = static_cast<std::size_t>(i);
                 if (ctx_.subcatches.area[usi] == 0.0) continue;
                 if (usi < rsoa.subarea_runoff_rate.size() &&
@@ -2543,6 +2592,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                 const int u = tu_.second;
                 auto uu = static_cast<std::size_t>(u);
                 int sc = g.subcatch_idx[uu];
+                if (ownsSpatialSource(sc)) continue;
                 if (sc < 0 || sc >= ctx_.n_subcatches()) {
                     g.inflow[uu] = 0.0;
                     continue;
@@ -2637,6 +2687,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             std::vector<double> factors(static_cast<std::size_t>(ns_l), 1.0);
             const auto& rs = runoff_.soa();
             for (int i = 0; i < ns_l; ++i) {
+                if (ownsSpatialSource(i)) continue;
                 auto ui = static_cast<std::size_t>(i);
                 const double lid_area = (ui < ctx_.subcatches.total_lid_area_ft2.size())
                     ? ctx_.subcatches.total_lid_area_ft2[ui] : 0.0;
@@ -2657,7 +2708,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             lid_.setInfilFactors(std::move(factors), ctx_.climate_state.recovery_factor);
             lid_.setRunoffTime(old_runoff_time_);
         }
-        lid_.execute(ctx_, dt_runoff, 0.0, ctx_.climate_state.evap_rate);
+        lid_.execute(ctx_, dt_runoff, 0.0, ctx_.climate_state.evap_rate, ordinarySourceOwners());
 
         // A4: LID layer ages, immediately after the depths this step
         // produced — the same slot A3's watershed update occupies relative
@@ -2682,6 +2733,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                 const int u = tu_.second;
                 auto uu = static_cast<std::size_t>(u);
                 int sc = g.subcatch_idx[uu];
+                if (ownsSpatialSource(sc)) continue;
                 if (sc < 0 || sc >= ctx_.n_subcatches()) continue;
                 auto usc = static_cast<std::size_t>(sc);
                 double lid_area = g.area[uu];
@@ -2981,6 +3033,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
         // keep the solver's Voutflow/dt bytes untouched.
         if (dt_runoff > 0.0) {
             for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+                if (ownsSpatialSource(i)) continue;
                 auto ui = static_cast<std::size_t>(i);
                 if (ui >= ctx_.subcatches.total_lid_area_ft2.size() ||
                     ctx_.subcatches.total_lid_area_ft2[ui] <= 0.0) continue;
@@ -3047,6 +3100,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
                     constexpr double MIN_RUNOFF_FTS = 2.31481e-8;
 
                     for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+                        if (ownsSpatialSource(i)) continue;
                         auto ui = static_cast<std::size_t>(i);
 
                         // legacy runoff.c:284 gates on the SUBCATCHMENT's own
@@ -3178,6 +3232,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
             const int u = tu_.second;
             auto uu = static_cast<std::size_t>(u);
             const int sc = g.subcatch_idx[uu];
+            if (ownsSpatialSource(sc)) continue;
             if (sc < 0 || sc >= ctx_.n_subcatches()) continue;
             const auto usc = static_cast<std::size_t>(sc);
             if (!(ctx_.subcatches.area[usc] > 0.0) ||
@@ -3196,6 +3251,7 @@ void SWMMEngine::stepRunoff(double dt_routing) noexcept {
     }
 
     for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+        if (ownsSpatialSource(i)) continue;
         auto ui = static_cast<std::size_t>(i);
         if (ctx_.subcatches.area[ui] <= 0.0) continue;
 
@@ -3366,7 +3422,7 @@ double SWMMEngine::computeRunoffTimestep(double abs_time, bool is_raining,
     // legacy runoff_getTimeStep: the WET step also while any LID unit is wet
     // (HasWetLids, set by lidproc_saveResults when a unit's inflow, outflow,
     // drain, exfiltration or evaporation exceeded MINFLOW).
-    if (is_raining || has_snow || has_runoff || lid_.anyWet())
+    if (is_raining || has_snow || has_runoff || lid_.anyWet(ordinarySourceOwners()))
         time_step = static_cast<long>(ctx_.options.wet_step);
     else
         time_step = static_cast<long>(ctx_.options.dry_step);
@@ -3418,6 +3474,7 @@ void SWMMEngine::accumulateRunoffMassBalance(double dt_runoff) noexcept {
 
     const auto& rsoa = runoff_.soa();
     for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+        if (ownsSpatialSource(i)) continue;
         auto ui = static_cast<std::size_t>(i);
         double area_ft2 = ctx_.subcatches.area[ui] * LANDAREA_TO_FT2;
         // evap_loss / infil_loss are averaged over the NON-LID area only
@@ -3488,6 +3545,7 @@ void SWMMEngine::accumulateRunoffMassBalance(double dt_runoff) noexcept {
         const auto& g = lid_.group(t);
         for (int u = 0; u < g.count; ++u) {
             auto uu = static_cast<std::size_t>(u);
+            if (ownsSpatialSource(g.subcatch_idx[uu])) continue;
             ctx_.mass_balance.runoff_evap  += g.evap_loss[uu] * g.area[uu];
             ctx_.mass_balance.runoff_infil += g.infil_loss[uu] * g.area[uu];
         }
@@ -4878,6 +4936,13 @@ void SWMMEngine::stepRouting(double dt_routing) {
     lidnode::prepareStep(ctx_, dt_routing, ctx_.climate_state.evap_rate);
     // legacy routeFlow: the hydraulic old state rolls only on a routed step.
     ctx_.save_hyd_state();
+#ifdef OPENSWMM_HAS_2D
+    // Ordinary dynamic-wave volume averages endpoint net rates. Replace only
+    // the source part of its old endpoint with this interval's held rate.
+    // Node LID storage already integrates lateral inflow as rate * duration.
+    if (source_delivery_) for (int n=0;n<ctx_.n_nodes();++n) if (!lidnode::active(ctx_,n))
+        ctx_.nodes.old_net_inflow[n] += source_delivery_->receipts()[n].rate-source_delivery_->lastReceipts()[n].rate;
+#endif
 
     // B3. Hydraulic routing (batch xsect geometry → batch momentum)
     //     Includes: conduit flow, pump/orifice/weir/outlet flow,
@@ -5363,8 +5428,11 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
             ctx_.nodes.stat_max_total_inflow[uj] = total_inflow;
             ctx_.nodes.stat_max_inflow_date[uj] = stat_date;
         }
-        ctx_.nodes.stat_lat_inflow_vol[uj] +=
-            (ctx_.nodes.old_lat_flow[uj] + lat) * 0.5 * dt_routing;
+        double lateral_pair=ctx_.nodes.old_lat_flow[uj]+lat;
+#ifdef OPENSWMM_HAS_2D
+        if (source_delivery_) lateral_pair+=source_delivery_->receipts()[uj].rate-source_delivery_->lastReceipts()[uj].rate;
+#endif
+        ctx_.nodes.stat_lat_inflow_vol[uj] += lateral_pair * 0.5 * dt_routing;
         // PARITY stats.c:588 stats_updateStorageStats — a storage unit's peak
         // RELEASE, which is what its outlet structures actually passed. Not
         // interchangeable with peak inflow: attenuating the two is the point.
@@ -5981,6 +6049,7 @@ void SWMMEngine::computeFinalStorage() noexcept {
         const auto& soa = runoff_.soa();
         ctx_.mass_balance.runoff_final_store = 0.0;
         for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+            if (ownsSpatialSource(i)) continue;
             auto ui = static_cast<std::size_t>(i);
             double fi = soa.imperv_pct[ui];
             double fp = 1.0 - fi;
@@ -5994,7 +6063,10 @@ void SWMMEngine::computeFinalStorage() noexcept {
         }
         // Water still held in LID units is runoff-system storage (legacy
         // massbal counts lid_getStoredVolume() in final storage).
-        ctx_.mass_balance.runoff_final_store += lid_.storedVolume();
+        ctx_.mass_balance.runoff_final_store += lid_.storedVolume(ordinarySourceOwners());
+#ifdef OPENSWMM_HAS_2D
+        if (source_delivery_) ctx_.mass_balance.runoff_final_store += spatialSourceStorage(source_stage_->sources());
+#endif
 
         // F8 — the pack still standing, and the snow ploughed out of the
         // system. Legacy massbal.c:671-679.
@@ -7628,6 +7700,9 @@ int SWMMEngine::report() noexcept {
 int SWMMEngine::close() noexcept {
     checkpoint_enabled_ = checkpoint_ready_ = false;
     checkpoint_model_.clear();
+#ifdef OPENSWMM_HAS_2D
+    source_delivery_.reset();source_stage_=nullptr;source_totals_={};
+#endif
     // Load-phase breakdown. Emitted here rather than from end() so it reports
     // for a bare open()+close() too — the benchmark harness times open alone,
     // open+initialize, and the full sequence. (See core/PerfTimers.hpp.)
@@ -9798,6 +9873,7 @@ void SWMMEngine::assembleRunon() noexcept {
     const double dt_prev = prev_runoff_step_sec_;
     if (dt_prev > 0.0) {
         for (int i = 0; i < nsc; ++i) {
+            if (ownsSpatialSource(i)) continue;
             auto ui = static_cast<std::size_t>(i);
             double vol = ctx_.subcatches.outfall_runon_vol[ui];
             if (vol > 0.0) {
@@ -9832,6 +9908,7 @@ void SWMMEngine::assembleRunon() noexcept {
     // subcatchment order (legacy subcatch_getRunon per j; a subcatchment
     // without area is skipped, runoff.c:252).
     for (int i = 0; i < nsc; ++i) {
+        if (ownsSpatialSource(i)) continue;
         auto ui = static_cast<std::size_t>(i);
         if (ctx_.subcatches.area[ui] == 0.0) continue;
         int out_sc = ctx_.subcatches.outlet_subcatch[ui];
@@ -9896,6 +9973,7 @@ void SWMMEngine::assembleRunon() noexcept {
     // Matches legacy lid_addDrainRunon(): LID drain flow reaching a subcatch is
     // treated as runon inflow to that subcatch for the next runoff step.
     for (int i = 0; i < nsc; ++i) {
+        if (ownsSpatialSource(i)) continue;
         auto ui = static_cast<std::size_t>(i);
         double q = ctx_.subcatches.lid_drain_runon_cfs[ui];
         if (q > 0.0) {
@@ -10106,6 +10184,9 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
 
         ctx_.nodes.lat_flow[uj] += q_user
                                  + ctx_.nodes.coupling_inflow[uj];
+#ifdef OPENSWMM_HAS_2D
+        if (source_delivery_) ctx_.nodes.lat_flow[uj] += source_delivery_->receipts()[uj].rate;
+#endif
     }
 
     ctx_.mass_balance.step_dw_inflow   = sum_dw;
@@ -10318,3 +10399,36 @@ void SWMMEngine::initMassBalance() noexcept {
 }
 
 } /* namespace openswmm */
+
+namespace openswmm {
+const std::vector<int>* SWMMEngine::ordinarySourceOwners() const noexcept {
+#ifdef OPENSWMM_HAS_2D
+    if (source_delivery_) return &source_delivery_->sourceGroups();
+#endif
+    return nullptr;
+}
+bool SWMMEngine::ownsSpatialSource(int source) const noexcept {
+    const auto* owners=ordinarySourceOwners();
+    return owners && source>=0 && static_cast<std::size_t>(source)<owners->size() && (*owners)[source]>=0;
+}
+#ifdef OPENSWMM_HAS_2D
+std::array<double,6> SWMMEngine::sourceTotals(const runoff::SourceWaterDriver& source,
+    const runoff::SourceWaterDeliveryBridge& bridge) const {
+    std::array<double,6> totals{};
+    for (int sc=0;sc<ctx_.n_subcatches();++sc) if (bridge.ownsSubcatch(sc)) {
+        const auto& b=source.ledgers()[sc];
+        totals[0]+=b.rain;totals[1]+=b.evaporation;totals[2]+=b.infiltration;totals[3]+=b.aquifer_return;
+    }
+    for (const auto& b:bridge.received()) {totals[4]+=b.runoff;totals[5]+=b.drain;}
+    return totals;
+}
+double SWMMEngine::spatialSourceStorage(const runoff::SourceWaterDriver& source) const {
+    double total=0;
+    for (const auto& g:source.clocks().groups()) {
+        for (int sc:g.subcatches) total+=source.storedVolume(sc);
+        total+=source.pendingVolume(source.clocks().groupForSubcatch(g.subcatches.front()));
+    }
+    return total;
+}
+#endif
+}

@@ -5,6 +5,7 @@
 #include "core/DateTime.hpp"
 #ifdef OPENSWMM_HAS_2D
 #include "2d/subsurface/CommonSourceStage.hpp"
+#include "hydrology/LidNode.hpp"
 #include "2d/subsurface/SourceResultHistory.hpp"
 #include "2d/mesh/MeshBuilder.hpp"
 #endif
@@ -132,7 +133,7 @@ void startRunoff(SWMMEngine& e,const std::string& name,int method=0,int rain=0,i
 }
 void step(SWMMEngine& e) {
     double t=-1;auto result=e.step(&t);
-    if(result)throw std::runtime_error("step: "+e.context().error_message);
+    if(result)throw std::runtime_error("step at "+std::to_string(e.context().current_time)+": "+e.context().error_message);
 }
 void compare(SWMMEngine& a,SWMMEngine& b,const std::string& name) {
     auto pa=root()/(name+"-a.chk"),pb=root()/(name+"-b.chk");
@@ -401,7 +402,8 @@ TEST(EngineCheckpoint, RunoffCorruptionAndUnsupportedProfilesPreserveFreshTarget
         ASSERT_EQ(b.loadCheckpoint(good.string()),"");compare(a,b,name+"-retry");
     }
     for(int k=0;k<6;++k) {
-        SWMMEngine b;ASSERT_NO_THROW(startRunoff(b,"runoff-profile-"+std::to_string(k),0,0,0,false));
+        SWMMEngine b;
+        ASSERT_NO_THROW(startRunoff(b,"runoff-profile-"+std::to_string(k),0,0,0,false));
         if(k==0)b.context().options.ignore_snow_melt=false;
         if(k==1)b.context().options.ignore_groundwater=false;
         if(k==2)b.context().gages.source[0]=RainSource::FILE_RAIN;
@@ -410,7 +412,8 @@ TEST(EngineCheckpoint, RunoffCorruptionAndUnsupportedProfilesPreserveFreshTarget
         if(k==5)b.context().subcatches.gw_aquifer[0]=0;
         EXPECT_FALSE(b.enableCheckpointing().empty());
     }
-    SWMMEngine changed;ASSERT_NO_THROW(startRunoff(changed,"runoff-model-change",2,2,2));
+    SWMMEngine changed;
+        ASSERT_NO_THROW(startRunoff(changed,"runoff-model-change",2,2,2));
     changed.context().subcatches.infil_p1[0]+=1;
     EXPECT_FALSE(changed.loadCheckpoint(good.string()).empty());
     EXPECT_FALSE(changed.saveCheckpoint((root()/"runoff-changed.chk").string()).empty());
@@ -444,7 +447,7 @@ struct SurfaceSession {
     runoff::SourceWaterDriver sources;
     twoD::CommonSourceStage stage;
     SWMMEngine engine;
-    void start(const std::string& name,int lid=0,int mapped=0,int closure=0,int mode=0,bool track=true) {
+    void start(const std::string& name,int lid=0,int mapped=0,int closure=0,int mode=0,bool track=true,bool spatial=false,bool all_sources=false) {
         SWMMEngine authored;startRunoff(authored,name,mode%5,mode%3,lid,false);authored.close();
         auto p=root()/name;auto deck=bytes(p.string()+".inp");
         deck.replace(deck.find("IGNORE_2D YES"),13,"IGNORE_2D NO");
@@ -472,11 +475,25 @@ struct SurfaceSession {
             if(closure)gw.hg[i]=gw.zs[i]-.0001;
             gw.hu[i]=gw.theta_s[i]*(gw.zs[i]-gw.hg[i])-.0001/mesh.tri_area[i];
         }
-        auto error=sources.initialize(ctx,{});if(!error.empty())throw std::runtime_error(error);
+        if(all_sources)ctx.node_subtypes.outfalls.route_to[0]=-1;
+        auto error=sources.initialize(ctx,spatial ? (all_sources?std::vector<int>{0,2}:std::vector<int>{0}):std::vector<int>{});if(!error.empty())throw std::runtime_error(error);
         twoD::SurfaceOwnershipPreview preview;preview.mesh_weather_area=mesh.tri_area;
-        error=stage.initialize(mesh,router.state(),options,router.subsurface(),sources,preview,true);
+        if(spatial) {
+            constexpr double ft2=.3048*.3048;
+            for(const auto& group:sources.clocks().groups())for(int sc:group.subcatches) {
+                const auto& r=sources.runoff().soa();const double lid_area=sources.context().subcatches.total_lid_area_ft2[sc]*ft2;
+                const double full=r.area[sc]*ft2+lid_area;const double inside=.5;const int cell=sc%2;
+                twoD::SurfaceOwnerObject object;object.subcatch=sc;object.reviewed=true;object.declared_area=full;
+                object.inside_area=inside;object.outside_area=full-inside;preview.objects.push_back(object);
+                twoD::SurfaceOwnerShare share;share.subcatch=sc;share.cell=cell;share.weather_area=inside;
+                share.pervious_area=inside*r.area[sc]*(1-r.imperv_pct[sc])*ft2/full;
+                share.impervious_area=inside*r.area[sc]*r.imperv_pct[sc]*ft2/full;share.lid_area=inside*lid_area/full;
+                preview.shares.push_back(share);preview.mesh_weather_area[cell]-=inside;
+            }
+        }
+        error=stage.initialize(mesh,router.state(),options,router.subsurface(),sources,preview,!spatial);
         if(!error.empty())throw std::runtime_error(error);
-        if(track) {error=e.enableCheckpointing(stage);if(!error.empty())throw std::runtime_error(error);}
+        if(track) {error=spatial?e.enableSpatialSourceCheckpointing(stage):e.enableCheckpointing(stage);if(!error.empty())throw std::runtime_error(error);}
     }
 };
 }
@@ -484,7 +501,8 @@ struct SurfaceSession {
 TEST(EngineCheckpoint, SurfaceSessionRestoresActualEngineRainfallPidLidAndPendingBatches) {
     for(int lid=0;lid<4;++lid)for(int mapped=0;mapped<3;++mapped)for(int closure=0;closure<2;++closure) {
         auto name="surface-session-"+std::to_string(lid)+"-"+std::to_string(mapped)+"-"+std::to_string(closure);SCOPED_TRACE(name);
-        SurfaceSession a,b;ASSERT_NO_THROW(a.start(name+"-a",lid,mapped,closure,mapped));
+        SurfaceSession a,b;
+        ASSERT_NO_THROW(a.start(name+"-a",lid,mapped,closure,mapped));
         ASSERT_NO_THROW(b.start(name+"-b",lid,mapped,closure,mapped));
         while(a.engine.context().current_time<2.1)ASSERT_NO_THROW(step(a.engine));
         if(closure)a.engine.surfaceRouter2D().subsurface().bookLinkSeepage(0,.01); // Accepted recharge, not a live provider.
@@ -551,7 +569,8 @@ std::string withSurfacePayload(const std::string& bytes,std::string payload) {
 }
 }
 TEST(EngineCheckpoint, SurfaceNestedFailuresPreserveEveryComponentAndAllowValidRetry) {
-    SurfaceSession a;ASSERT_NO_THROW(a.start("surface-atomic-source",2,1));
+    SurfaceSession a;
+        ASSERT_NO_THROW(a.start("surface-atomic-source",2,1));
     while(a.engine.context().current_time<43.1)ASSERT_NO_THROW(step(a.engine));
     auto good=root()/"surface-atomic-good.chk";ASSERT_EQ(a.engine.saveCheckpoint(good.string()),"");
     const double savedStorage=a.engine.context().mass_balance.routing_final_storage;
@@ -565,7 +584,8 @@ TEST(EngineCheckpoint, SurfaceNestedFailuresPreserveEveryComponentAndAllowValidR
     auto later=root()/"surface-other-time.chk";ASSERT_EQ(a.engine.saveCheckpoint(later.string()),"");
     auto otherSurface=engineSurface(bytes(later)),otherData=surfacePayload(otherSurface);
     for(int k=0;k<9;++k) {
-        SCOPED_TRACE(k);SurfaceSession b;ASSERT_NO_THROW(b.start("surface-mutant-"+std::to_string(k),2,1));
+        SCOPED_TRACE(k);SurfaceSession b;
+        ASSERT_NO_THROW(b.start("surface-mutant-"+std::to_string(k),2,1));
         auto before=root()/"surface-atomic-before.chk",after=root()/"surface-atomic-after.chk",bad=root()/"surface-atomic-bad.chk";
         ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");
         auto changed=surface,body=payload;uint32_t v=version;
@@ -611,5 +631,236 @@ TEST(EngineCheckpoint, SurfaceSessionRejectsComponentOnlyRestoreAndUnsupportedDo
     EXPECT_THROW(r.setSourceResultHistory(history),std::invalid_argument);
     ASSERT_EQ(a.engine.saveCheckpoint(file.string()),"");
     EXPECT_EQ(bytes(file),original);
+}
+#endif
+
+#ifdef OPENSWMM_HAS_2D
+TEST(EngineCheckpoint, SpatialSourcesOwnGraphsDeliverWetWeatherAndContinueVariableEngineSteps) {
+    for(int method=0;method<5;++method)for(int rain=0;rain<3;++rain)for(int lid=0;lid<4;++lid) {
+        const int mode=method+5*rain;auto name="spatial-"+std::to_string(mode)+"-"+std::to_string(lid);SCOPED_TRACE(name);
+        SurfaceSession a,b;
+        ASSERT_NO_THROW(a.start(name+"-a",lid,rain%3,method%2,mode,true,true));
+        ASSERT_NO_THROW(b.start(name+"-b",lid,rain%3,method%2,mode,true,true));
+        const auto* bridge=a.engine.sourceDelivery();ASSERT_NE(bridge,nullptr);
+        EXPECT_TRUE(bridge->ownsSubcatch(0));EXPECT_TRUE(bridge->ownsSubcatch(1));EXPECT_FALSE(bridge->ownsSubcatch(2));
+        const auto initial=a.engine.lid().waterTrial();
+        while(a.engine.context().current_time<2.1)ASSERT_NO_THROW(step(a.engine));
+        const auto file=root()/(name+".chk");ASSERT_EQ(a.engine.saveCheckpoint(file.string()),"");
+        ASSERT_EQ(b.engine.loadCheckpoint(file.string()),"");compare(a.engine,b.engine,name+"-restored");
+        double min_dt=1e9,max_dt=0;int steps=0;bool runoff=false,drain=false,returning=false;
+        while(a.engine.context().elapsed_ms<a.engine.context().options.totalDurationMs()) {
+            const double before=a.engine.context().current_time;
+            ASSERT_NO_THROW(step(a.engine));
+            ASSERT_NO_THROW(step(b.engine));
+            const double dt=a.engine.context().current_time-before;min_dt=std::min(min_dt,dt);max_dt=std::max(max_dt,dt);
+            const auto& c=a.engine.context();
+            for(int sc:{0,1}) {
+                EXPECT_DOUBLE_EQ(c.subcatches.runoff[sc],0);EXPECT_DOUBLE_EQ(c.subcatches.rainfall[sc],0);
+                EXPECT_DOUBLE_EQ(c.subcatches.infil_loss[sc],0);EXPECT_DOUBLE_EQ(c.subcatches.lid_drain_flow[sc],0);
+            }
+            EXPECT_NEAR(a.sources.balanceResidual(0),0,1e-6);
+            for(const auto& d:bridge->delivered()) {runoff|=d.runoff>0;drain|=d.drain>0;}
+            for(int sc:{0,1})returning|=a.sources.ledgers()[sc].aquifer_return>0;
+            if(++steps%41==0)compare(a.engine,b.engine,name+"-continued");
+        }
+        EXPECT_LT(min_dt,max_dt);EXPECT_TRUE(runoff);EXPECT_TRUE(drain);
+        EXPECT_GT(a.engine.context().subcatches.stat_precip_vol[2],0);
+        EXPECT_GT(a.engine.context().mass_balance.runoff_rainfall,0);
+        EXPECT_GT(a.engine.context().mass_balance.routing_wet_weather,0);
+        EXPECT_EQ(a.sources.deliveries().size(),bridge->capturedCount());
+        compare(a.engine,b.engine,name+"-final");
+        EXPECT_EQ(a.sources.context().subcatches.runoff,b.sources.context().subcatches.runoff);
+        if(method%2)EXPECT_TRUE(returning);
+        for(const auto& [t,u]:initial.usageOrder())if(bridge->ownsSubcatch(initial.group(t).subcatch_idx[u])) {
+            const auto& g=a.engine.lid().group(t);const auto& original=initial.group(t);
+            EXPECT_DOUBLE_EQ(g.surf_depth[u],original.surf_depth[u]);EXPECT_DOUBLE_EQ(g.soil_moist[u],original.soil_moist[u]);
+            EXPECT_DOUBLE_EQ(g.stor_depth[u],original.stor_depth[u]);EXPECT_DOUBLE_EQ(g.drain_flow[u],original.drain_flow[u]);
+            EXPECT_DOUBLE_EQ(g.wb_inflow[u],original.wb_inflow[u]);EXPECT_DOUBLE_EQ(g.wb_infil[u],original.wb_infil[u]);
+        }
+        a.engine.end();b.engine.end();
+    }
+}
+TEST(EngineCheckpoint, SpatialAttachmentIsExplicitAndRefusesOwnedOutfallReturnsAndChangedSourceMaterials) {
+    SurfaceSession a;
+        ASSERT_NO_THROW(a.start("spatial-guard",2,0,0,0,false,true));
+    EXPECT_FALSE(a.engine.enableCheckpointing(a.stage).empty());EXPECT_EQ(a.engine.sourceDelivery(),nullptr);
+    a.engine.context().node_subtypes.outfalls.route_to[0]=0;
+    EXPECT_FALSE(a.engine.enableSpatialSourceCheckpointing(a.stage).empty());EXPECT_EQ(a.engine.sourceDelivery(),nullptr);
+    a.engine.context().node_subtypes.outfalls.route_to[0]=2;
+    ASSERT_EQ(a.engine.enableSpatialSourceCheckpointing(a.stage),"");
+    EXPECT_FALSE(a.engine.enableSpatialSourceCheckpointing(a.stage).empty());
+    SurfaceSession b;
+        ASSERT_NO_THROW(b.start("spatial-material",2,0,0,0,false,true));
+    b.engine.context().subcatches.width[0]+=1;
+    EXPECT_FALSE(b.engine.enableSpatialSourceCheckpointing(b.stage).empty());EXPECT_EQ(b.engine.sourceDelivery(),nullptr);
+    b.engine.context().subcatches.width[0]-=1;ASSERT_EQ(b.engine.enableSpatialSourceCheckpointing(b.stage),"");
+    SurfaceSession c;
+        ASSERT_NO_THROW(c.start("spatial-all-sources",2,0,0,0,false,true,true));
+    c.engine.context().node_subtypes.outfalls.route_to[0]=2;
+    EXPECT_FALSE(c.engine.enableSpatialSourceCheckpointing(c.stage).empty());
+    c.engine.context().node_subtypes.outfalls.route_to[0]=-1;
+    ASSERT_EQ(c.engine.enableSpatialSourceCheckpointing(c.stage),"");
+    auto invalid_lid=c.engine.lid().waterTrial();auto& g=invalid_lid.group(int(lid::LIDType::BIO_CELL));ASSERT_GT(g.count,0);g.surf_void_frac[0]=0;
+    runoff::SourceWaterDriver refused;EXPECT_FALSE(refused.initialize(c.engine.context(),{0},{},&invalid_lid).empty());
+    ASSERT_EQ(refused.initialize(c.engine.context(),{0}),"");
+    ASSERT_NO_THROW(step(c.engine));
+    EXPECT_FALSE(c.engine.saveCheckpoint((root()/"spatial-invalid-mode.chk").string()).size());
+    ASSERT_EQ(c.engine.close(),0);EXPECT_EQ(c.engine.sourceDelivery(),nullptr);
+}
+#endif
+
+#ifdef OPENSWMM_HAS_2D
+namespace {
+void startClosedSpatial(SurfaceSession& m,const std::string& name,int node_lid=0,double cadence=.7) {
+    auto path=root()/name;
+    std::string deck="[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 10/10/2026\nSTART_TIME 00:00:00\nEND_DATE 10/10/2026\nEND_TIME 00:00:30\nROUTING_STEP "+std::to_string(cadence)+"\nVARIABLE_STEP 0\nINFILTRATION GREEN_AMPT\nRULE_STEP 00:00:02\nREPORT_STEP 00:00:03\nWET_STEP 00:00:01\nDRY_STEP 00:00:07\nIGNORE_QUALITY YES\nIGNORE_SNOWMELT YES\nIGNORE_GROUNDWATER YES\nIGNORE_2D NO\n[STORAGE]\nSINK 0 100 0 FUNCTIONAL 0 0 100 0 0\n[OUTFALLS]\nDRAIN 0 FREE NO\n[RAINGAGES]\nR INTENSITY 0:00:05 1 TIMESERIES Rain\nDry INTENSITY 0:00:05 1 TIMESERIES Zero\n[SUBCATCHMENTS]\nA R B .01 45 10 1 0\nB R SINK .02 65 10 1 0\nD Dry SINK .01 50 10 1 0\n[SUBAREAS]\nA .015 .12 .03 .05 35 PERVIOUS 55\nB .02 .13 .02 .04 25 OUTLET\nD .02 .13 .02 .04 25 OUTLET\n[INFILTRATION]\nA 3 .25 .3\nB 3 .25 .3\nD 3 .25 .3\n[LID_CONTROLS]\nI IT\nI SURFACE 3 .05 .12 1 3\nI STORAGE 6 .667 .1 0\nI DRAIN .5 .5 0 0\n[LID_USAGE]\nA I 1 20 3 70 30 0 * DRAIN\n[EVAPORATION]\nCONSTANT 0\n[TIMESERIES]\nRain 10/10/2026 00:00:00 5\nRain 10/10/2026 00:00:05 0\nZero 10/10/2026 00:00:00 0\n";
+    if(node_lid) {
+        deck.replace(deck.find("SINK 0 100 0"),12,"SINK 0 2 0");
+        deck+="[LID_CONTROLS]\nStack NODE\nStack SURFACE 6 .1\nStack MEDIA 12 .45 .2 .08 2 10 3\nStack AGGREGATE 6 .4 100\nStack BOTTOM 0 0\n[LID_NODES]\nSINK Stack 10\n";
+        if(node_lid==2)deck+="[LID_RICHARDS]\nStack OPTIONS 4 1e-7 1e-5 30\nStack 2 .03 2 1.6 .5 .0001\nStack 3 .03 2 1.6 .5 .0001\n";
+    }
+    write(path.string()+".inp",deck);auto& e=m.engine;
+    if(e.open((path.string()+".inp").c_str(),(path.string()+".rpt").c_str(),nullptr))throw std::runtime_error(e.context().error_message);
+    auto& router=e.surfaceRouter2D();auto& mesh=router.mesh();mesh.resize_vertices(4);mesh.resize_triangles(2);
+    mesh.vx={0,2,0,2};mesh.vy={0,0,2,2};mesh.vz={0,0,0,0};mesh.set_triangle(0,0,1,2);mesh.set_triangle(1,1,3,2);
+    mesh.mannings_n={.03,.03};mesh.tri_init_depth={0,0};mesh.tri_coupled_node={e.context().node_names.find("SINK"),-1};
+    // Retain a joint coupling identity while closing hydraulic exchange.
+    mesh.tri_coupling_cd={0,0};mesh.tri_coupling_area={1,1};
+    auto& options=router.options();options.mesh_units_si=true;options.num_threads=1;options.max_timestep=.21;
+    options.coupling_sync=3.5;options.evaporation=2;options.rainfall_mode=twoD::RainfallMode::SYSTEM;
+    auto& config=router.aquiferConfig();config.options.authored=true;config.options.force_closed_form=true;
+    config.options.closure=twoD::GwClosure::CLOSED_FORM;
+    twoD::GwAquiferRow row;row.Ks=.000001*3600/.0254;row.zs=2/.3048;row.hg0=1/.3048;row.alpha=2*.3048;config.rows.push_back(row);
+    if(e.initialize() || e.start(0))throw std::runtime_error(e.context().error_message);
+    auto error=m.sources.initialize(e.context(),{0});if(!error.empty())throw std::runtime_error(error);
+    twoD::SurfaceOwnershipPreview preview;preview.mesh_weather_area=mesh.tri_area;constexpr double ft2=.3048*.3048;
+    for(int sc:{0,1}) {
+        const auto& r=m.sources.runoff().soa();const double lids=m.sources.context().subcatches.total_lid_area_ft2[sc]*ft2;
+        const double full=r.area[sc]*ft2+lids,inside=.5;
+        twoD::SurfaceOwnerObject object;object.subcatch=sc;object.reviewed=true;object.declared_area=full;
+        object.inside_area=inside;object.outside_area=full-inside;preview.objects.push_back(object);
+        twoD::SurfaceOwnerShare share;share.subcatch=sc;share.cell=sc;share.weather_area=inside;
+        share.pervious_area=inside*r.area[sc]*(1-r.imperv_pct[sc])*ft2/full;
+        share.impervious_area=inside*r.area[sc]*r.imperv_pct[sc]*ft2/full;share.lid_area=inside*lids/full;
+        preview.shares.push_back(share);preview.mesh_weather_area[sc]-=inside;
+    }
+    error=m.stage.initialize(mesh,router.state(),options,router.subsurface(),m.sources,preview);
+    if(error.empty())error=e.enableSpatialSourceCheckpointing(m.stage);if(!error.empty())throw std::runtime_error(error);
+}
+struct SpatialBridgeWire {
+    uint32_t version=2;uint64_t count=0,digest=0,last_begin=0;double end=0,last_start=0;
+    std::vector<double> clocks;std::vector<runoff::QueuedSourceDelivery> pending;
+    std::vector<runoff::SourceNodeDelivery> received,delivered,last;
+    explicit SpatialBridgeWire(const runoff::SourceWaterDeliveryBridge& b,std::size_t groups) :
+        clocks(groups),received(b.received().size()),delivered(received),last(received) {}
+    void io(detail::CompletedSourceArchive& a) {
+        a(version,count,digest,end);a.fixed(clocks);
+        a.sequence(pending,[&](auto& q){auto& d=q.water;a(q.ordinal,q.available,d.source,d.node,d.start,d.end,d.volume,d.drain);});
+        a.sequence(received,[&](auto& d){a(d.runoff,d.drain);},true);
+        a.sequence(delivered,[&](auto& d){a(d.runoff,d.drain);},true);
+        a(last_begin,last_start);a.sequence(last,[&](auto& d){a(d.runoff,d.drain,d.rate);},true);
+    }
+};
+}
+TEST(EngineCheckpoint, SpatialReceiptsPreserveVolumesAtEveryClosedReceiverStepAndCadence) {
+    for(int lid=0;lid<3;++lid)for(double cadence:{.7,.31,1.}) {
+        const auto name="spatial-closed-"+std::to_string(lid)+"-"+std::to_string(cadence);SCOPED_TRACE(name);
+        SurfaceSession m;ASSERT_NO_THROW(startClosedSpatial(m,name,lid,cadence));
+        const auto& c=m.engine.context();const double initial=c.mass_balance.routing_init_storage;
+        const auto initial_inflow=c.nodes.stat_total_inflow_vol;
+        double previous=0;int steps=0;bool pending=false;
+        while(c.elapsed_ms<c.options.totalDurationMs()) {
+            ASSERT_NO_THROW(step(m.engine));const auto* b=m.engine.sourceDelivery();
+            double sink=0,outfall=0,total=0,queued=0;
+            for(int n=0;n<c.n_nodes();++n) {
+                const double v=b->delivered()[n].runoff+b->delivered()[n].drain;total+=v;
+                if(!lidnode::active(c,n))EXPECT_NEAR(c.nodes.stat_total_inflow_vol[n]-initial_inflow[n],v,1e-9);
+                EXPECT_NEAR(c.nodes.stat_lat_inflow_vol[n],v,1e-9);
+                if(c.nodes.type[n]==NodeType::OUTFALL) {
+                    outfall+=v;EXPECT_NEAR(c.nodes.stat_total_outflow_vol[n],v,1e-9);
+                } else sink+=v;
+            }
+            for(const auto& q:b->pending())queued+=q.water.volume;pending|=queued>0;
+            EXPECT_NEAR(c.mass_balance.routing_final_storage-initial,sink,1e-9);
+            EXPECT_NEAR(c.mass_balance.routing_outflow,outfall,1e-9);
+            EXPECT_NEAR(c.mass_balance.routing_wet_weather,total,1e-9);
+            EXPECT_NEAR(c.mass_balance.routing_report[1],total,1e-9);
+            EXPECT_DOUBLE_EQ(c.mass_balance.routing_external,0);
+            EXPECT_NEAR(c.mass_balance.runoff_runoff+c.mass_balance.runoff_lid_drain,total+queued,1e-9);
+            EXPECT_NEAR(m.sources.balanceResidual(0),0,1e-8);
+            EXPECT_GE(total,previous);previous=total;
+            if(++steps==11) {
+                auto path=root()/(name+".chk");ASSERT_EQ(m.engine.saveCheckpoint(path.string()),"");
+                SurfaceSession restored;ASSERT_NO_THROW(startClosedSpatial(restored,name+"-restored",lid,cadence));
+                ASSERT_EQ(restored.engine.loadCheckpoint(path.string()),"");compare(m.engine,restored.engine,name+"-opening");
+                for(int k=0;k<3;++k) {step(m.engine);step(restored.engine);}compare(m.engine,restored.engine,name+"-continued");
+            }
+        }
+        EXPECT_TRUE(pending);EXPECT_GT(previous,0);m.engine.end();
+    }
+}
+TEST(EngineCheckpoint, SpatialBridgeCorruptionRejectsBeforeEveryComponentInstallation) {
+    SurfaceSession a;ASSERT_NO_THROW(a.start("spatial-atomic-source",2,2,1,0,true,true));
+    while(a.engine.context().current_time<16 || a.engine.sourceDelivery()->pending().empty())ASSERT_NO_THROW(step(a.engine));
+    const auto good=root()/"spatial-atomic.chk";ASSERT_EQ(a.engine.saveCheckpoint(good.string()),"");
+    detail::CompletedSourceArchive input(bytes(good));std::string magic,model,payload;uint32_t version,sum;
+    input(magic,version,model,sum,payload);input.finish();ASSERT_EQ(version,5);
+    auto bridge=*a.engine.sourceDelivery();detail::CompletedSourceArchive saved;bridge.checkpoint(saved,false,a.sources);
+    auto water=saved.bytes();detail::CompletedSourceArchive encoded;encoded(water);const auto location=payload.find(encoded.bytes());ASSERT_NE(location,std::string::npos);
+    SpatialBridgeWire original(bridge,a.sources.clocks().groups().size());detail::CompletedSourceArchive read(water);original.io(read);read.finish();
+    ASSERT_FALSE(original.pending.empty());
+    std::array<double,6> totals{};
+    for(int sc=0;sc<a.engine.context().n_subcatches();++sc)if(bridge.ownsSubcatch(sc)) {
+        const auto& b=a.sources.ledgers()[sc];
+        totals[0]+=b.rain;totals[1]+=b.evaporation;totals[2]+=b.infiltration;totals[3]+=b.aquifer_return;
+    }
+    for(const auto& b:bridge.received()) {totals[4]+=b.runoff;totals[5]+=b.drain;}
+    detail::CompletedSourceArchive stored_totals;stored_totals(totals);
+    const auto totals_at=payload.find(stored_totals.bytes());ASSERT_NE(totals_at,std::string::npos);
+    ASSERT_EQ(payload.find(stored_totals.bytes(),totals_at+1),std::string::npos);
+    for(int mutation=0;mutation<22;++mutation) {
+        SCOPED_TRACE(mutation);auto w=original;
+        switch(mutation) {
+        case 0:w.version=1;break;
+        case 1:++w.count;break;
+        case 2:w.digest^=1;break;
+        case 3:w.end+=.1;break;
+        case 4:w.clocks[0]+=1;break;
+        case 5:w.pending[0].available+=1;break;
+        case 6:w.pending[0].water.volume+=1;break;
+        case 7:w.pending[0].water.node=99;break;
+        case 8:w.delivered[0].runoff+=1;break;
+        case 9:w.last_start=w.end;break;
+        case 10:w.last_begin=w.count+1;break;
+        case 11:w.last[0].rate+=1;break;
+        case 12:w.last[0].drain=std::numeric_limits<double>::quiet_NaN();break;
+        }
+        detail::CompletedSourceArchive changed;w.io(changed);auto badwater=changed.bytes();detail::CompletedSourceArchive newfield;newfield(badwater);
+        auto bad=payload;bad.replace(location,encoded.bytes().size(),newfield.bytes());
+        if(mutation>=13 && mutation<19) {
+            auto inconsistent=totals;inconsistent[mutation-13]+=.1;
+            detail::CompletedSourceArchive fields;fields(inconsistent);bad.replace(totals_at,stored_totals.bytes().size(),fields.bytes());
+        }
+        auto checksum=crc(bad);auto format=mutation==19?uint32_t(4):version;
+        detail::CompletedSourceArchive out;out(magic,format,model,checksum,bad);auto invalid=out.bytes();
+        if(mutation==20)invalid.pop_back();if(mutation==21)invalid.push_back('x');
+        auto path=root()/("spatial-bad-"+std::to_string(mutation)+".chk");write(path,invalid);
+        SurfaceSession target;ASSERT_NO_THROW(target.start("spatial-atomic-target-"+std::to_string(mutation),2,2,1,0,true,true));
+        const auto before=root()/"spatial-target-before.chk";ASSERT_EQ(target.engine.saveCheckpoint(before.string()),"");auto fresh=bytes(before);
+        EXPECT_FALSE(target.engine.loadCheckpoint(path.string()).empty());ASSERT_EQ(target.engine.saveCheckpoint(before.string()),"");EXPECT_EQ(bytes(before),fresh);
+        ASSERT_EQ(target.engine.loadCheckpoint(good.string()),"");compare(a.engine,target.engine,"spatial-valid-retry-"+std::to_string(mutation));
+    }
+}
+#endif
+
+#ifdef OPENSWMM_HAS_2D
+TEST(EngineCheckpoint, SpatialSourceReturnPreservesLowStorageAtShortCadence) {
+    for(bool all:{false,true}) {
+        SCOPED_TRACE(all);SurfaceSession m;ASSERT_NO_THROW(m.start("spatial-low-storage-"+std::to_string(all),3,1,1,6,true,true,all));
+        const auto end=all?m.engine.context().options.totalDurationMs()/1000:100;
+        while(m.engine.context().elapsed_ms<end*1000)ASSERT_NO_THROW(step(m.engine));
+        for(int group=0;group<int(m.sources.clocks().groups().size());++group)EXPECT_NEAR(m.sources.balanceResidual(group),0,1e-8);
+        if(all) {EXPECT_EQ(m.sources.clocks().groups().size(),2);EXPECT_DOUBLE_EQ(m.engine.context().subcatches.stat_precip_vol[2],0);}
+    }
 }
 #endif

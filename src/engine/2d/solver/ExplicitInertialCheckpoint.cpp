@@ -169,7 +169,8 @@ std::string ExplicitInertialSolver::loadCheckpoint(const std::string& path) {
     catch(const std::exception& e) { return e.what(); }
 }
 
-std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const std::array<double,5>* router_boundary,const std::vector<double>* pending_outfalls) {
+std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const std::array<double,5>* router_boundary,const std::vector<double>* pending_outfalls,
+    const std::function<void(const runoff::SourceWaterDriver&)>* validate_source) {
     try {
         const auto error=checkpointBoundary(); if(!error.empty()) return error;
         if(t_last_sync_!=0 || common_stage_->intervals()!=0 || source_history_)
@@ -198,6 +199,7 @@ std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const 
                 if(surface.coupling_applied[c]!=(pending_outfalls?(*pending_outfalls)[c]:0))
                     return "Router checkpoint undrained coupling differs from its outfall receipts.";
         }
+        if (validate_source) (*validate_source)(source);
         // All parsing, model, shape, schedule and component checks preceded
         // installation. Moves cannot throw; restored pointers retain ownership.
         static_assert(std::is_nothrow_move_assignable_v<ExplicitInertialSolver>);
