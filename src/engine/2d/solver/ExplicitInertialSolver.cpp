@@ -2672,6 +2672,7 @@ void ExplicitInertialSolver::finalize() {
     common_stage_ = nullptr;
     source_history_ = nullptr;
     checkpoint_ready_ = false;
+    joint_checkpoint_ = false;
     if (initialized_) { settleAccumulators(); flushSourceLedgers(); }
     if (!telemetry_path_.empty() && !telemetry_.empty()) {
         if (std::FILE* f = openswmm::io::fopen_utf8(telemetry_path_, "w")) {

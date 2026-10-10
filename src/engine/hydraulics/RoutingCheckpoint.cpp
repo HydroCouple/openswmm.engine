@@ -416,7 +416,7 @@ std::string Router::checkpointModel(const SimulationContext& c) const {
       o.dps_target_celerity,o.dps_alpha,o.dps_decay_time,o.unsteady_friction,o.uf_k3,o.tpa_celerity,
       o.virtual_junction_momentum,o.ignore_quality,o.water_age,o.heat_transport);
     auto nodes=c.nodes;auto links=c.links;auto st=c.node_subtypes.storages;auto out=c.node_subtypes.outfalls;
-    auto cd=c.link_subtypes.conduits;auto ns=c.node_subtypes.subtype_row,ls=c.link_subtypes.subtype_row;
+    auto cd=c.link_subtypes.conduits;auto ns=c.node_subtypes.subtype_row,ls=c.link_subtypes.subtype_row;auto coupled=c.coupled_node;
 #define FIELD(v) a(nodes.v);
     NODE_MODEL(FIELD)
 #undef FIELD
@@ -429,7 +429,7 @@ std::string Router::checkpointModel(const SimulationContext& c) const {
 #define FIELD(v) a(cd.v);
     CONDUIT_MODEL(FIELD)
 #undef FIELD
-    a(ns,ls,nodes.aquifer2d_bed,out.node_idx,out.bc_type,out.param,out.param_name,out.has_flap_gate,out.route_to,out.link_idx,out.link_offset);
+    a(ns,ls,coupled,nodes.aquifer2d_bed,out.node_idx,out.bc_type,out.param,out.param_name,out.has_flap_gate,out.route_to,out.link_idx,out.link_offset);
     for(int n=0;n<c.n_nodes();++n) {auto name=c.node_names.name_of(n);a(name);}
     for(int j=0;j<c.n_links();++j) {auto name=c.link_names.name_of(j);a(name);}
     for(std::size_t r=0;r<st.lid.size();++r) {
@@ -483,7 +483,7 @@ void Router::acceptCheckpointBoundary(SimulationContext& c) {
     checkCheckpointProfile(c);require(checkpoint_model_==checkpointModel(c), "Hydraulic checkpoint model changed after attachment.");
     RestartState s(*this,c);s.validate(*this,c);checkpoint_time_=c.current_time;checkpoint_ready_=true;checkpoint_step_finished_=false;
 }
-std::string Router::saveCheckpoint(const SimulationContext& c,const std::string& path) const {
+std::string Router::checkpointBytes(const SimulationContext& c,std::string& result) const {
     try {
         require(&c==checkpoint_context_ && checkpoint_ready_ && c.current_time==checkpoint_time_,
                 "Hydraulic checkpoint requires a completed accepted routing boundary.");
@@ -491,19 +491,42 @@ std::string Router::saveCheckpoint(const SimulationContext& c,const std::string&
         RestartState s(*this,c);s.validate(*this,c);Archive payload;s.archive(payload);
         auto bytes=payload.bytes(),model=checkpoint_model_;auto crc=checksum(bytes);std::string magic=magicName;uint32_t version=1;
         Archive out;out(magic,version,model,crc,bytes);require(out.bytes().size()<=maxBytes,"Hydraulic checkpoint exceeds its size limit.");
-        publish(path,out.bytes());return {};
+        result=out.bytes();return {};
     } catch(const std::exception& e) {return e.what();}
 }
-std::string Router::loadCheckpoint(SimulationContext& c,const std::string& path) {
+std::string Router::saveCheckpoint(const SimulationContext& c,const std::string& path) const {
     try {
-        require(&c==checkpoint_context_, "Hydraulic checkpoint restore requires an enabled routing component.");
-        checkCheckpointProfile(c);require(checkpoint_model_==checkpointModel(c), "Hydraulic checkpoint target model changed.");
-        Archive in(readFile(path));std::string magic,model,bytes;uint32_t version=0,crc=0;in(magic,version,model,crc,bytes);in.finish();
-        require(magic==magicName && version==1 && model==checkpoint_model_ && crc==checksum(bytes),
-                "Hydraulic checkpoint format/model/checksum differs.");
-        RestartState s(*this,c);Archive payload(std::move(bytes));s.archive(payload);payload.finish();s.validate(*this,c);
-        s.install(*this,c);return {};
+        std::string bytes;const auto error=checkpointBytes(c,bytes);if(!error.empty())return error;
+        publish(path,bytes);return {};
     } catch(const std::exception& e) {return e.what();}
+}
+std::shared_ptr<Router::RestartState> Router::prepareCheckpointBytes(const SimulationContext& c,std::string bytes,
+                                                                   const std::array<double,6>* boundary,const double* delivery) const {
+    require(&c==checkpoint_context_, "Hydraulic checkpoint restore requires an enabled routing component.");
+    checkCheckpointProfile(c);require(checkpoint_model_==checkpointModel(c), "Hydraulic checkpoint target model changed.");
+    require(!bytes.empty() && bytes.size()<=maxBytes,"Hydraulic checkpoint exceeds its size limit.");
+    Archive in(std::move(bytes));std::string magic,model,payload;uint32_t version=0,crc=0;in(magic,version,model,crc,payload);in.finish();
+    require(magic==magicName && version==1 && model==checkpoint_model_ && crc==checksum(payload),
+            "Hydraulic checkpoint format/model/checksum differs.");
+    auto s=std::make_shared<RestartState>(*this,c);Archive state(std::move(payload));s->archive(state);state.finish();s->validate(*this,c);
+    if(boundary) require(*boundary==std::array<double,6>{s->time,s->date,s->elapsed,s->old_elapsed,s->next_report,s->evap},
+                         "Joint hydraulic/surface checkpoint clocks or shared forcing differ.");
+    if(delivery)validateJointDelivery(s->nodes,c.coupled_node,*delivery);
+    return s;
+}
+void Router::validateJointDelivery(const NodeData& nodes,const std::vector<uint8_t>& coupled,double delivery) {
+    require(std::isfinite(delivery) && delivery>=0 && coupled.size()==std::size_t(nodes.count()) &&
+            nodes.coupling_queue.size()==coupled.size() && nodes.coupling_volume.size()==coupled.size() &&
+            nodes.coupling_inflow.size()==coupled.size(), "Joint checkpoint delivery layout differs.");
+    for(std::size_t n=0;n<coupled.size();++n)
+        require(coupled[n]<=1 && std::isfinite(nodes.coupling_queue[n]) && nodes.coupling_volume[n]==0 &&
+                (coupled[n] || (nodes.coupling_queue[n]==0 && nodes.coupling_inflow[n]==0)) &&
+                (delivery>0 || nodes.coupling_queue[n]==0), "Joint checkpoint has unpaired or undeliverable node exchange.");
+}
+void Router::installCheckpoint(SimulationContext& c,std::shared_ptr<RestartState> s) noexcept {s->install(*this,c);}
+std::string Router::loadCheckpoint(SimulationContext& c,const std::string& path) {
+    try {auto s=prepareCheckpointBytes(c,readFile(path));installCheckpoint(c,std::move(s));return {};}
+    catch(const std::exception& e) {return e.what();}
 }
 #undef NODE_MODEL
 #undef LINK_MODEL

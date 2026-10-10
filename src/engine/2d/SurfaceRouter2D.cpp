@@ -206,6 +206,7 @@ void SurfaceRouter2D::prepareForEdit() {
 void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     common_stage_ = nullptr;
     source_context_ = nullptr;
+    joint_hydraulic_ = nullptr;
     source_router_model_.clear();
     source_boundary_ready_ = false;
     if(!aquifer_cfg_.surface_owners.empty())
@@ -1657,6 +1658,10 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt,
     // uniform rate over the batch span instead of a single-step pulse —
     // cleared then accumulated so points sharing a node sum correctly.
     const std::vector<double>& exch = solver_->last_coupling_exchange();
+    if (common_stage_) {
+        for (std::size_t k=0; k<exch.size(); ++k)
+            coupling_cum_applied_[static_cast<std::size_t>(node_coupling_points_[k].cell_idx)] -= exch[k];
+    }
     if (!exch.empty()) {
         for (const auto& cp : node_coupling_points_)
             ctx.nodes.coupling_volume[static_cast<std::size_t>(cp.node_idx)] =
@@ -2099,6 +2104,7 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
             !std::isfinite(routing_dt) || routing_dt <= 0 || !std::isfinite(start + routing_dt) ||
             start + routing_dt <= start || std::abs(t - start) > 1e-12 * std::max(1.0, start))
             throw std::invalid_argument("Common-source router requires the next accepted routing interval.");
+        checkJointRoutingStep(ctx, routing_dt, t);
         source_boundary_ready_ = false;
     }
     // Consume only the accepted hydraulic exchange, against reservations
@@ -2340,6 +2346,7 @@ void SurfaceRouter2D::finalize(SimulationContext& ctx) {
     active_ = false;
     common_stage_ = nullptr;
     source_context_ = nullptr;
+    joint_hydraulic_ = nullptr;
     source_boundary_ready_ = false;
 }
 

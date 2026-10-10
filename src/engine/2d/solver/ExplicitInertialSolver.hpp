@@ -352,6 +352,7 @@ private:
     CommonSourceStage* common_stage_ = nullptr;
     SourceResultHistory* source_history_ = nullptr;
     bool checkpoint_ready_ = false;
+    bool joint_checkpoint_ = false; // only SurfaceRouter2D may restore live 1D pairing
     std::string checkpointBoundary() const;
     void checkpointState(detail::CompletedSourceArchive& archive);
     void captureSourceResults();

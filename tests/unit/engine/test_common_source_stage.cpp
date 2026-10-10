@@ -5,6 +5,9 @@
 #include "2d/solver/ExplicitInertialSolver.hpp"
 #include "2d/SurfaceRouter2D.hpp"
 #include "hydraulics/TimestepController.hpp"
+#include "hydraulics/Routing.hpp"
+#include "hydraulics/Node.hpp"
+#include "hydrology/LidNode.hpp"
 #include "2d/mesh/MeshBuilder.hpp"
 #include "2d/data/SurfaceStateData.hpp"
 #include "core/SimulationContext.hpp"
@@ -1636,8 +1639,10 @@ namespace {
 struct RouterSourceModel {
     Model source;
     SurfaceRouter2D router;
-    void setup(Momentum2D momentum=Momentum2D::LOCAL_INERTIAL,GwClosure closure=GwClosure::CLOSED_FORM,bool quality=false,double report=2.3) {
-        AtmosphericInput a;a.inside={.75,.25};a.pet={.0001,.0002};a.et="BOUNDARY_ET";a.closure=closure;
+    Router hydraulic;
+    int joint_profile=0;
+    void setup(Momentum2D momentum=Momentum2D::LOCAL_INERTIAL,GwClosure closure=GwClosure::CLOSED_FORM,bool quality=false,double report=2.3,int joint=0,int surcharge=0,bool shared=false) {
+        AtmosphericInput a;a.inside={.75,.25};a.pet={.0001,.0002};a.et="BOUNDARY_ET";a.closure=closure;if(joint)a.ks=1.e-5;
         if(quality) mixedPollutants(source,2,a,true);else source.setup(true,2,false,true,false,a);
         auto& ctx=source.context;ctx.options.num_threads=1;ctx.options.routing_step=.7;ctx.options.wet_step=1.4;ctx.options.report_step=report;
         ctx.current_date=ctx.options.start_date;ctx.next_report_ms=1000*report;ctx.gages.rainfall[0]=432;
@@ -1645,6 +1650,44 @@ struct RouterSourceModel {
         router.options()=source.options;router.options().mesh_units_si=true;router.options().momentum=momentum;
         router.options().max_timestep=.21;router.options().coupling_sync=3.5;router.options().evaporation=2;
         router.options().rainfall_mode=RainfallMode::SYSTEM;ctx.climate_state.evap_rate=.0001;
+        joint_profile=joint;
+        if(joint) {
+            ctx.options.routing_model=RoutingModel::DYNWAVE;ctx.options.surcharge_method=surcharge;ctx.options.max_trials=20;
+            ctx.options.allow_ponding=true;ctx.options.anderson_accel=true;
+            ctx.nodes.resize(3);ctx.node_names.try_add("A");ctx.node_names.try_add("B");ctx.node_names.try_add("O");
+            for(int n=0;n<2;++n) {
+                ctx.node_subtypes.set_node_type(ctx.nodes,n,NodeType::STORAGE);
+                auto row=ctx.node_subtypes.storage_row(n);ctx.node_subtypes.storages.c[row]=20;
+                ctx.node_subtypes.storages.evap_frac[row]=.8;
+                ctx.nodes.invert_elev[n]=10/.3048-(joint>1?1.5:2);ctx.nodes.full_depth[n]=joint>1?1.5:2;
+                ctx.nodes.depth[n]=ctx.nodes.init_depth[n]=joint==1?(n?1.8:4):0;
+                ctx.nodes.head[n]=ctx.nodes.invert_elev[n]+ctx.nodes.depth[n];
+                ctx.nodes.crown_elev[n]=ctx.nodes.invert_elev[n]+.5;ctx.nodes.degree[n]=2;
+            }
+            auto row=ctx.node_subtypes.set_node_type(ctx.nodes,2,NodeType::OUTFALL);
+            ctx.nodes.invert_elev[2]=10/.3048-1.5;ctx.nodes.full_depth[2]=2;ctx.nodes.degree[2]=2;
+            ctx.node_subtypes.outfalls.bc_type[row]=OutfallType::FIXED;ctx.node_subtypes.outfalls.param[row]=10/.3048-.8;
+            ctx.nodes.head[2]=ctx.node_subtypes.outfalls.param[row];ctx.nodes.depth[2]=.7;
+            ctx.links.resize(3);ctx.link_names.try_add("AO");ctx.link_names.try_add("BO");ctx.link_names.try_add("AB");
+            for(int j=0;j<3;++j) {
+                auto cr=ctx.link_subtypes.set_link_type(ctx.links,j,LinkType::CONDUIT);auto& cd=ctx.link_subtypes.conduits;
+                ctx.links.node1[j]=j==1?1:0;ctx.links.node2[j]=j==2?1:2;
+                ctx.links.offset1[j]=joint>1?.5:0;ctx.links.offset2[j]=j==2?ctx.links.offset1[j]:0;
+                ctx.links.xsect_shape[j]=XsectShape::CIRCULAR;ctx.links.xsect_y_full[j]=.1;
+                cd.length[cr]=cd.true_length[cr]=cd.mod_length[cr]=10;cd.roughness[cr]=.013;cd.slope[cr]=.01;cd.barrels[cr]=j==2?6:1;
+            }
+            if(joint>1) {
+                ctx.lid_controls.names.push_back("NodeStack");ctx.lid_controls.lid_type.push_back("NODE");ctx.lid_controls.node_layers.resize(2);
+                LidNodeLayer top;top.kind=LidNodeLayerKind::Surface;top.params={6,.1};
+                LidNodeLayer media;media.kind=LidNodeLayerKind::Media;media.params={12,.45,.2,.08,2,10,3};
+                LidNodeLayer bottom;bottom.kind=LidNodeLayerKind::Bottom;bottom.params={.5,0};
+                if(joint==3) {top.flow={true,3,1.e-7,1.e-5,30};media.retention={.03,2,1.6,.5,1.e-4};}
+                ctx.lid_controls.node_layers[1]={top,media,bottom};
+                for(auto& lid:ctx.node_subtypes.storages.lid)lid={1,10};
+                ctx.lid_node_outlets={{0,1,false},{1,1,false}};lidnode::initialize(ctx);
+            } else for(int n=0;n<2;++n)ctx.nodes.volume[n]=20*ctx.nodes.depth[n];
+            router.mesh().tri_coupled_node=shared?std::vector<int>{0,0}:std::vector<int>{0,1};router.mesh().tri_coupling_cd={.6,.6};router.mesh().tri_coupling_area={.002,.003};
+        }
         router.aquiferConfig()=source.config;router.aquiferConfig().node_beds.clear();
         auto& row=router.aquiferConfig().rows[0];row.Ks=a.ks*3600/.0254;row.zs=2/.3048;row.hg0=1/.3048;row.alpha=2*.3048;
         ctx.twod_io.mesh=&router.mesh();ctx.twod_io.options=&router.options();
@@ -1652,16 +1695,45 @@ struct RouterSourceModel {
         ASSERT_NO_THROW(router.initialize(ctx));
         if(quality) router.state().transport.cell_mass.assign(4,19);
         auto& gw=router.subsurface().state();
-        for(int i=0;i<2;++i)gw.hu[i]=gw.theta_s[i]*(gw.zs[i]-gw.hg[i])-.0001/router.mesh().tri_area[i];
+        for(int i=0;i<2;++i) {
+            if(joint && closure==GwClosure::ENSLAVED)gw.hg[i]=gw.zs[i]-.0001;
+            gw.hu[i]=gw.theta_s[i]*(gw.zs[i]-gw.hg[i])-.0001/router.mesh().tri_area[i];
+        }
         ASSERT_EQ(source.stage.initialize(router.mesh(),router.state(),router.options(),router.subsurface(),source.sources,source.preview),"");
-        ASSERT_NO_THROW(router.setCommonSourceStage(ctx,source.stage));
+        if(joint) {
+            for(int n=0;n<2;++n) {
+                ctx.nodes.full_volume[n]=0;
+                ctx.nodes.full_volume[n]=ctx.nodes.rpt_full_volume[n]=node::getVolume(ctx.nodes,n,ctx.nodes.full_depth[n],&ctx.tables,0,&ctx.node_subtypes);
+                ctx.nodes.depth[n]=ctx.nodes.volume[n]>ctx.nodes.full_volume[n]?ctx.nodes.full_depth[n]+(ctx.nodes.volume[n]-ctx.nodes.full_volume[n])/ctx.nodes.ponded_area[n]:node::getDepth(ctx.nodes,n,ctx.nodes.volume[n],&ctx.tables,0,&ctx.node_subtypes);
+                ctx.nodes.head[n]=ctx.nodes.invert_elev[n]+ctx.nodes.depth[n];
+            }
+            hydraulic.init(ctx,RouteModel::DYNWAVE);hydraulic.setDWNumThreads(1);hydraulic.enableLinkStepStats(ctx);hydraulic.enableCheckpointing(ctx);
+            ASSERT_NO_THROW(router.setJointSourceStage(ctx,source.stage,hydraulic));
+        } else ASSERT_NO_THROW(router.setCommonSourceStage(ctx,source.stage));
         router.bookGageRates(ctx,0);
     }
     void tick(double dt=.7) {
         auto& ctx=source.context;
-        try {router.step(ctx,dt,ctx.current_time);}
+        if(joint_profile) {
+            hydraulic.beginCheckpointStep(ctx,dt);ctx.nodes.save_state();ctx.links.save_state();
+            for(int n=0;n<ctx.n_nodes();++n) {
+                double rate=0;
+                if(ctx.nodes.coupling_queue[n]!=0) {
+                    if(ctx.coupling_delivery_remaining>dt) {rate=ctx.nodes.coupling_queue[n]/ctx.coupling_delivery_remaining;ctx.nodes.coupling_queue[n]-=rate*dt;}
+                    else {rate=ctx.nodes.coupling_queue[n]/dt;ctx.nodes.coupling_queue[n]=0;}
+                }
+                rate+=ctx.nodes.coupling_volume[n]/dt;ctx.nodes.coupling_volume[n]=0;
+                ctx.nodes.coupling_inflow[n]=rate;ctx.nodes.lat_flow[n]=rate+(n<2 && ctx.current_time<12?.05*(n+1):0);
+            }
+            ctx.coupling_delivery_remaining=std::max(0.,ctx.coupling_delivery_remaining-dt);
+            lidnode::prepareStep(ctx,dt,ctx.climate_state.evap_rate);
+            router.updateOutfallsPreRouting(ctx,dt);hydraulic.step(ctx,dt,ctx.climate_state.evap_rate);
+            lidnode::finishStep(ctx);hydraulic.accumulateLinkStepStats(ctx,dt,true);
+        }
+        try {router.advancePostRouting(ctx,dt,ctx.current_time);}
         catch(const std::runtime_error& e) {std::ostringstream message;message<<std::setprecision(17)<<e.what()<<" boundary="<<source.stage.completedEnd()<<" infil="<<router.subsurface().state().infil_refresh[0]<<" et="<<router.subsurface().state().et_refresh[0];throw std::runtime_error(message.str());}
         hydraulics::TimestepController::advance(ctx,dt);
+        if(joint_profile)hydraulic.acceptCheckpointBoundary(ctx);
     }
     void weather(double rate) {
         auto& ctx=source.context;ctx.gages.rainfall[0]=rate;router.bookGageRates(ctx,ctx.current_time);
@@ -1823,4 +1895,125 @@ TEST(CommonSourceStage, RouterFailedSourceTrialCannotPublishOrContinuePartialRou
     EXPECT_THROW(m.tick(),std::runtime_error);m.source.sources.cancel();
     EXPECT_FALSE(m.router.saveCheckpoint(m.source.context,file.string()).empty());EXPECT_EQ(restartBytes(file),initial);
     EXPECT_THROW(m.tick(),std::invalid_argument);
+}
+
+
+TEST(CommonSourceStage, JointCheckpointPreservesLiveQueuesLidPortsAndPartialSurfaceBatch) {
+    for(int profile:{1,2,3})for(auto mode:{Momentum2D::LOCAL_INERTIAL,Momentum2D::DIFFUSIVE_WAVE,Momentum2D::FULL_SWE})
+    for(auto closure:{GwClosure::CLOSED_FORM,GwClosure::SIGMA}) {
+        SCOPED_TRACE(std::to_string(profile)+"/"+std::to_string(int(mode))+"/"+std::to_string(int(closure)));
+        RouterSourceModel a;a.setup(mode,closure,false,2.3,profile);ASSERT_FALSE(HasFatalFailure());
+        for(int i=0;i<6;++i)a.tick();
+        EXPECT_LT(a.source.stage.completedEnd(),a.source.context.current_time);EXPECT_GT(a.source.context.coupling_delivery_remaining,0);
+        double net=0;for(double v:a.router.couplingCumulative())net+=v;EXPECT_NE(net,0);
+        EXPECT_NE(a.source.context.nodes.coupling_queue[0],0);
+        const auto checkpoint=restartPath("joint-continuation");ASSERT_EQ(a.router.saveCheckpoint(a.source.context,checkpoint.string()),"");
+        RouterSourceModel b;b.setup(mode,closure,false,2.3,profile);ASSERT_FALSE(HasFatalFailure());
+        ASSERT_EQ(b.router.loadCheckpoint(b.source.context,checkpoint.string()),"");routerEqual(a,b,"joint-restored");
+        EXPECT_EQ(a.source.context.nodes.coupling_queue,b.source.context.nodes.coupling_queue);
+        EXPECT_EQ(a.source.context.coupling_delivery_remaining,b.source.context.coupling_delivery_remaining);
+        for(int i=6;i<42;++i) {
+            if(i==10) {a.weather(0);b.weather(0);}
+            const double dt=i%3==0?.31:.7;
+            ASSERT_NO_THROW(a.tick(dt));
+            ASSERT_NO_THROW(b.tick(dt));
+            EXPECT_EQ(a.source.context.nodes.head,b.source.context.nodes.head);EXPECT_EQ(a.source.context.links.flow,b.source.context.links.flow);
+            EXPECT_EQ(a.source.context.nodes.coupling_queue,b.source.context.nodes.coupling_queue);
+        }
+        a.router.flushPendingBatch(a.source.context);b.router.flushPendingBatch(b.source.context);
+        routerEqual(a,b,"joint-final");
+        // The net signed surface series agrees with the live point ledger;
+        // groundwater return is kept on its own ledger.
+        net=0;for(double v:a.router.couplingCumulative())net+=v;
+        EXPECT_NEAR(net,a.source.context.mass_balance_2d.coupling_1d_to_2d_in-a.source.context.mass_balance_2d.coupling_2d_to_1d_out,1e-12);
+        EXPECT_FALSE(b.router.loadCheckpoint(b.source.context,checkpoint.string()).empty());
+    }
+}
+
+namespace {
+std::string jointMutant(const std::string& file,int change,const std::string& otherHydraulic={}) {
+    using A=detail::CompletedSourceArchive;A reader(file);std::string magic,model,payload;uint32_t version,endian,longBytes,crc;
+    reader(magic,version,endian,longBytes,model,payload,crc);reader.finish();
+    const auto cursor=payload.find("OpenSWMM CPU surface/source boundary")-2*sizeof(uint64_t);
+    A tail(payload.substr(cursor));std::string cpu,hydraulic;double delivery;tail(cpu,hydraulic,delivery);tail.finish();
+    if(change==0)hydraulic.back()^=1;
+    if(change==1)cpu.back()^=1;
+    if(change==2)delivery=std::numeric_limits<double>::infinity();
+    if(change==3)delivery=-1;
+    if(change==4)hydraulic=otherHydraulic;
+    if(change==5)delivery=0;
+    A suffix;suffix(cpu,hydraulic,delivery);payload=payload.substr(0,cursor)+suffix.bytes();crc=restartCrc(payload);
+    A out;out(magic,version,endian,longBytes,model,payload,crc);return out.bytes();
+}
+}
+TEST(CommonSourceStage, JointCheckpointRejectsEitherComponentAndSharedClockBeforeAnyInstallation) {
+    RouterSourceModel original;original.setup(Momentum2D::LOCAL_INERTIAL,GwClosure::CLOSED_FORM,false,2.3,3);
+    ASSERT_FALSE(HasFatalFailure());for(int i=0;i<6;++i)original.tick();
+    const auto good=restartPath("joint-good"),bad=restartPath("joint-bad"),before=restartPath("joint-before");
+    ASSERT_EQ(original.router.saveCheckpoint(original.source.context,good.string()),"");const auto bytes=restartBytes(good);
+    original.tick();const auto different=restartPath("joint-different-clock");ASSERT_EQ(original.hydraulic.saveCheckpoint(original.source.context,different.string()),"");
+    for(int variant=0;variant<9;++variant) {
+        RouterSourceModel target;target.setup(Momentum2D::LOCAL_INERTIAL,GwClosure::CLOSED_FORM,false,2.3,3);ASSERT_FALSE(HasFatalFailure());
+        ASSERT_EQ(target.router.saveCheckpoint(target.source.context,before.string()),"");const auto initial=restartBytes(before);
+        auto mutant=variant<6?jointMutant(bytes,variant,restartBytes(different)):bytes;
+        if(variant==6)mutant.resize(mutant.size()/2);
+        if(variant==7)mutant+="trailing";
+        if(variant==8)target.router.mesh().tri_coupling_area[0]*=2;
+        std::ofstream(bad,std::ios::binary).write(mutant.data(),mutant.size());
+        EXPECT_FALSE(target.router.loadCheckpoint(target.source.context,bad.string()).empty());
+        if(variant==8)target.router.mesh().tri_coupling_area[0]/=2;
+        ASSERT_EQ(target.router.saveCheckpoint(target.source.context,before.string()),"");EXPECT_EQ(restartBytes(before),initial);
+        EXPECT_EQ(target.router.loadCheckpoint(target.source.context,good.string()),"");
+    }
+}
+TEST(CommonSourceStage, JointCheckpointRequiresHydraulicAcceptanceAndProtectsUnrelatedFiles) {
+    RouterSourceModel m;m.setup(Momentum2D::LOCAL_INERTIAL,GwClosure::CLOSED_FORM,false,2.3,2);ASSERT_FALSE(HasFatalFailure());
+    const auto good=restartPath("joint-initial"),other=restartPath("joint-protected");
+    ASSERT_EQ(m.router.saveCheckpoint(m.source.context,good.string()),"");auto bytes=restartBytes(good);
+    RouterSourceModel fresh;fresh.setup(Momentum2D::LOCAL_INERTIAL,GwClosure::CLOSED_FORM,false,2.3,2);
+    ASSERT_EQ(fresh.router.loadCheckpoint(fresh.source.context,good.string()),"");routerEqual(m,fresh,"joint-initial-match");
+    EXPECT_THROW(m.router.advancePostRouting(m.source.context,.7,0),std::invalid_argument);
+    ASSERT_EQ(m.router.saveCheckpoint(m.source.context,good.string()),"");EXPECT_EQ(restartBytes(good),bytes);
+    std::ofstream(other)<<"existing project";EXPECT_FALSE(m.router.saveCheckpoint(m.source.context,other.string()).empty());
+    EXPECT_EQ(restartBytes(other),"existing project");
+    m.hydraulic.beginCheckpointStep(m.source.context,.7);
+    EXPECT_THROW(m.router.advancePostRouting(m.source.context,.7,0),std::invalid_argument);
+    EXPECT_FALSE(m.router.saveCheckpoint(m.source.context,good.string()).empty());EXPECT_EQ(restartBytes(good),bytes);
+    EXPECT_THROW(m.hydraulic.beginCheckpointStep(m.source.context,.7),std::runtime_error);
+}
+
+TEST(CommonSourceStage, JointCheckpointKeepsRealAquiferReturnSeparateFromBidirectionalNodeExchange) {
+    for(int profile:{1,2,3}) {
+        RouterSourceModel a;a.setup(Momentum2D::LOCAL_INERTIAL,GwClosure::ENSLAVED,false,2.3,profile);ASSERT_FALSE(HasFatalFailure());
+        for(int i=0;i<3;++i)a.tick();
+        a.router.subsurface().bookLinkSeepage(0,.01); // already accepted recharge, before the saved boundary
+        for(int i=3;i<6;++i)a.tick();
+        const auto good=restartPath("joint-dunne");ASSERT_EQ(a.router.saveCheckpoint(a.source.context,good.string()),"");
+        RouterSourceModel b;b.setup(Momentum2D::LOCAL_INERTIAL,GwClosure::ENSLAVED,false,2.3,profile);
+        ASSERT_EQ(b.router.loadCheckpoint(b.source.context,good.string()),"");
+        for(int i=0;i<16;++i){a.tick(i%2?.7:.31);b.tick(i%2?.7:.31);}
+        a.router.flushPendingBatch(a.source.context);b.router.flushPendingBatch(b.source.context);routerEqual(a,b,"joint-dunne-final");
+        EXPECT_GT(a.source.stage.meshReturn(),0);
+        EXPECT_EQ(a.source.context.mass_balance_2d.aquifer_in,a.source.stage.meshReturn());
+        double net=0;for(double v:a.router.couplingCumulative())net+=v;
+        EXPECT_NEAR(net,a.source.context.mass_balance_2d.coupling_1d_to_2d_in-a.source.context.mass_balance_2d.coupling_2d_to_1d_out,1e-12);
+        if(profile==1) {
+            EXPECT_GT(a.source.context.mass_balance_2d.coupling_1d_to_2d_in,0);
+            EXPECT_GT(a.source.context.mass_balance_2d.coupling_2d_to_1d_out,0);
+        }
+    }
+}
+
+TEST(CommonSourceStage, JointCheckpointPreservesSharedNodePointsAndDpsTpaMemory) {
+    for(int method:{2,3})for(int profile:{1,3})for(bool shared:{false,true}) {
+        SCOPED_TRACE(std::to_string(method)+"/"+std::to_string(profile)+"/"+std::to_string(shared));
+        RouterSourceModel a;a.setup(Momentum2D::LOCAL_INERTIAL,GwClosure::CLOSED_FORM,false,2.3,profile,method,shared);
+        ASSERT_FALSE(HasFatalFailure());for(int i=0;i<6;++i)a.tick();
+        const auto good=restartPath("joint-shared");ASSERT_EQ(a.router.saveCheckpoint(a.source.context,good.string()),"");
+        RouterSourceModel b;b.setup(Momentum2D::LOCAL_INERTIAL,GwClosure::CLOSED_FORM,false,2.3,profile,method,shared);
+        ASSERT_EQ(b.router.loadCheckpoint(b.source.context,good.string()),"");
+        for(int i=0;i<12;++i) {a.tick(i%2?.7:.31);b.tick(i%2?.7:.31);}
+        routerEqual(a,b,"joint-shared-final");
+        if(shared)EXPECT_EQ(a.source.context.nodes.coupling_queue[1],0);
+    }
 }

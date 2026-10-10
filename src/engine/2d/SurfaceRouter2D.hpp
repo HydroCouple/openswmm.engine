@@ -62,6 +62,7 @@
 
 namespace openswmm {
 struct SimulationContext;
+class Router;
 }
 
 namespace openswmm::twoD {
@@ -94,6 +95,11 @@ public:
     /// Internal qualification hook: externally owned stage, all cells managed,
     /// wall boundaries, no live 1D exchanges. Does not activate authored ownership.
     void setCommonSourceStage(SimulationContext& ctx, CommonSourceStage& stage);
+    /// Internal water-only joint DW/source checkpoint, including non-outfall
+    /// surface exchange and pending node delivery. Attach after both routers
+    /// and LID initialization; the hydraulic router must track accepted steps.
+    /// External providers, node beds and whole-engine/output state remain excluded.
+    void setJointSourceStage(SimulationContext& ctx, CommonSourceStage& stage, Router& hydraulic);
     void setSourceResultHistory(SourceResultHistory& history);
     void resumeSourceResultHistory(SourceResultHistory& history);
     /// Internal router/CPU/source boundary; not a full-project hotstart.
@@ -475,6 +481,9 @@ public:
 
 private:
     struct RestartState;
+    void attachCommonSourceStage(SimulationContext&, CommonSourceStage&, Router*);
+    void checkJointRoutingStep(const SimulationContext&, double dt, double start) const;
+    Router* joint_hydraulic_ = nullptr; // externally owned, stable lifetime
     static double couplingSyncSpan(const SimulationContext&, const SolverOptions2D&);
     CommonSourceStage* common_stage_ = nullptr;
     SimulationContext* source_context_ = nullptr;

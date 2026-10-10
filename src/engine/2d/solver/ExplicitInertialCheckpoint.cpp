@@ -5,6 +5,8 @@
 #include "../data/MeshData.hpp"
 #include "../data/SurfaceStateData.hpp"
 #include "../data/BoundaryData.hpp"
+#include "../coupling/NodeCoupling.hpp"
+#include "../../data/NodeData.hpp"
 #include "../../core/CompletedSourceArchive.hpp"
 #include <algorithm>
 #include <atomic>
@@ -54,8 +56,17 @@ std::string ExplicitInertialSolver::checkpointBoundary() const {
        !common_stage_->matches(mesh_,state_,gw_)) return "CPU checkpoint requires an accepted attached first-order source marcher.";
     if(t_last_sync_!=common_stage_->completedEnd() || source_phase_end_!=t_last_sync_)
         return "CPU/source completed clocks differ.";
-    if(state_->nodes_1d || state_->node_coupling || state_->node_row_conc || !exch_head_slope_.empty() || !bc_cell_.empty())
+    if((!joint_checkpoint_ && (state_->nodes_1d || state_->node_coupling)) || state_->node_row_conc || !exch_head_slope_.empty() || !bc_cell_.empty())
         return "CPU checkpoint live 1D coupling and external boundary providers are not qualified.";
+    if(joint_checkpoint_) {
+        if(!state_->nodes_1d || !state_->node_coupling || state_->transport.active() ||
+           node_drawn_.size()!=std::size_t(state_->nodes_1d->count()) || exch_.size()!=state_->node_coupling->size())
+            return "Joint CPU checkpoint coupling layout differs.";
+        for(const auto& cp:*state_->node_coupling)
+            if(cp.is_outfall || cp.cell_idx<0 || cp.cell_idx>=mesh_->n_cells() || cp.node_idx<0 ||
+               cp.node_idx>=state_->nodes_1d->count() || !std::isfinite(cp.cd) || cp.cd<0 || !std::isfinite(cp.area) || cp.area<=0)
+                return "Joint CPU checkpoint requires valid non-outfall exchange points.";
+    }
     if(state_->boundary) {
         if(!state_->boundary->runtime_original.empty()) return "CPU checkpoint boundary runtime providers are not qualified.";
         for(int c=0;c<mesh_->n_cells();++c) for(int k=0;k<mesh_->cell_vertex_count(c);++k)
@@ -77,6 +88,11 @@ void ExplicitInertialSolver::checkpointState(Archive& a) {
       accumulators_pending_,front_breach_,h_on_front_,exch_tau_,spill_deficit_,substeps_run_,face_passes_,
       last_steps_,last_dt_,active_frac_min_,active_frac_max_,active_frac_sum_,active_samples_,tier_occupancy_,
       saved_telemetry,telemetry_);
+    if(joint_checkpoint_) {
+        a.fixed(exch_,node_drawn_);
+        for(double v:exch_) if(!std::isfinite(v)) throw std::runtime_error("Nonfinite joint CPU exchange.");
+        for(double v:node_drawn_) if(!std::isfinite(v) || v<0) throw std::runtime_error("Invalid joint CPU donor withdrawal.");
+    }
     if(pin_t0_!=pins || saved_telemetry!=telemetry_enabled) throw std::runtime_error("CPU checkpoint pin/telemetry configuration differs.");
     for(const auto* row:{&q_,&qcx_,&qcy_,&facc_L_,&facc_R_,&macc_x_L_,&macc_x_R_,&macc_y_L_,&macc_y_R_,
         &sacc_L_,&sacc_R_,&dw_slope_,&source_ledgers_})
@@ -87,7 +103,7 @@ void ExplicitInertialSolver::checkpointState(Archive& a) {
                   active_frac_min_,active_frac_max_,active_frac_sum_})
         if(!std::isfinite(v)) throw std::runtime_error("Nonfinite CPU checkpoint clock/statistic.");
     if(t_last_sync_<0 || source_phase_end_!=t_last_sync_ || dt0_<0 || (t_last_sync_>0 && dt0_<=0) ||
-       h_on_front_<0 || exch_tau_<0 || spill_deficit_!=0 || last_dt_<0 || accumulators_pending_ ||
+       h_on_front_<0 || exch_tau_<0 || spill_deficit_<0 || (!joint_checkpoint_ && spill_deficit_!=0) || last_dt_<0 || accumulators_pending_ ||
        cycles_since_rebuild_<0 || cycles_since_rebuild_>(t_last_sync_==0?1000:4) ||
        substeps_run_<0 || face_passes_<0 || last_steps_<0 || last_steps_>substeps_run_ || active_samples_<0)
         throw std::runtime_error("Invalid CPU checkpoint boundary/schedule.");
@@ -127,6 +143,7 @@ void ExplicitInertialSolver::checkpointState(Archive& a) {
 
 std::string ExplicitInertialSolver::saveCheckpoint(const std::string& path) const {
     try {
+        if(joint_checkpoint_) return "Live coupling requires the joint router checkpoint.";
         std::string bytes; const auto error=checkpointBytes(bytes);
         if(!error.empty()) return error;
         publish(path,bytes); return {};
@@ -147,7 +164,7 @@ std::string ExplicitInertialSolver::checkpointBytes(std::string& bytes) const {
 }
 
 std::string ExplicitInertialSolver::loadCheckpoint(const std::string& path) {
-    try { return loadCheckpointBytes(readFile(path)); }
+    try { if(joint_checkpoint_) return "Live coupling requires the joint router checkpoint."; return loadCheckpointBytes(readFile(path)); }
     catch(const std::exception& e) { return e.what(); }
 }
 
