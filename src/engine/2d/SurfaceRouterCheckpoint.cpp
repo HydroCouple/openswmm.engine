@@ -135,8 +135,13 @@ struct SurfaceRouter2D::RestartState {
            (!report_old_valid_ && report_window_old_ms_!=0) || (sim_time_>0 && co_forcing_first_))
             throw std::runtime_error("Invalid router checkpoint clocks/report window.");
         double rain=0,infil=0;for(std::size_t i=0;i<n;++i) {rain+=rain_cum_[i];infil+=infil_cum_applied_[i]*r.mesh_.tri_area[i];}
-        for(double v:{mb.init_storage,mb.final_storage,mb.rainfall_in,mb.evap_out,mb.infil_out,mb.aquifer_in})
+        for(double v:{mb.init_storage,mb.rainfall_in,mb.evap_out,mb.infil_out,mb.aquifer_in})
             if(!std::isfinite(v) || v<0) throw std::runtime_error("Invalid router checkpoint mass balance.");
+        // Incremental outfall accounting can leave an ulp below zero when all
+        // cells are empty. Loaded cell water stays nonnegative and the CPU
+        // transaction separately matches its sum to this diagnostic total.
+        if(!std::isfinite(mb.final_storage) || mb.final_storage<-1e-12)
+            throw std::runtime_error("Invalid router checkpoint final storage.");
         if(!mb.active || !close(rain,mb.rainfall_in) || !close(infil,mb.infil_out) || mb.init_storage!=c.mass_balance_2d.init_storage ||
            mb.external_in!=0 || mb.external_out!=0 || (!r.joint_hydraulic_ && (mb.coupling_1d_to_2d_in!=0 || mb.coupling_2d_to_1d_out!=0)) ||
            (!r.joint_hydraulic_ && (mb.outfall_in!=0 || mb.outfall_out!=0)) || mb.boundary_in!=0 || mb.boundary_out!=0 ||
@@ -219,6 +224,8 @@ std::string SurfaceRouter2D::sourceBoundary(const SimulationContext& ctx) const 
             return "Router checkpoint requires aquifer-owned cells without external coupling donors.";
     const auto* cpu=dynamic_cast<ExplicitInertialSolver*>(solver_.get());
     if(!cpu) return "Router checkpoint requires the first-order CPU marcher.";
+    if(joint_hydraulic_ && joint_hydraulic_->checkpoint_owned_session_ && cpu->source_history_)
+        return "Engine checkpoint does not recover a source history recorder.";
     const auto error=cpu->checkpointBoundary(); if(!error.empty()) return error;
     if(cpu->completedSourceTime()!=sim_time_) return "Router/source completed clocks differ.";
     if(source_router_model_!=sourceRouterModel(ctx)) return "Router checkpoint model changed after attachment.";
@@ -282,6 +289,14 @@ void SurfaceRouter2D::resumeSourceResultHistory(SourceResultHistory& history) {
 }
 std::string SurfaceRouter2D::saveCheckpoint(const SimulationContext& ctx,const std::string& path) const {
     try {
+        if(joint_hydraulic_ && joint_hydraulic_->checkpoint_owned_session_)
+            return "Engine-owned surface restart requires the engine session checkpoint.";
+        std::string bytes;const auto error=checkpointBytes(ctx,bytes);if(!error.empty())return error;
+        publish(path,bytes,joint_hydraulic_?jointMagic:magicName);return {};
+    } catch(const std::exception& e) {return e.what();}
+}
+std::string SurfaceRouter2D::checkpointBytes(const SimulationContext& ctx,std::string& result) const {
+    try {
         const auto error=sourceBoundary(ctx);if(!error.empty())return error;
         RestartState snapshot(*this,ctx);snapshot.validate(*this,ctx);
         if(joint_hydraulic_ && state_.coupling_applied.size()!=mesh_.tri_area.size()) return "Joint surface coupling receipt shape differs.";
@@ -299,14 +314,25 @@ std::string SurfaceRouter2D::saveCheckpoint(const SimulationContext& ctx,const s
         uint32_t version=joint_hydraulic_?2:1,endian=0x01020304,longBytes=sizeof(long),crc=checksum(payload);
         Archive file;file(magic,version,endian,longBytes,model,payload,crc);
         if(file.bytes().size()>maxBytes)return "Router checkpoint exceeds its size limit.";
-        publish(path,file.bytes(),joint_hydraulic_?jointMagic:magicName);return {};
+        result=file.bytes();return {};
     } catch(const std::exception& e) { return e.what(); }
 }
 std::string SurfaceRouter2D::loadCheckpoint(SimulationContext& ctx,const std::string& path) {
     try {
+        if(joint_hydraulic_ && joint_hydraulic_->checkpoint_owned_session_)
+            return "Engine-owned surface restart requires the engine session checkpoint.";
+        return loadCheckpointBytes(ctx,readFile(path));
+    }
+    catch(const std::exception& e) {return e.what();}
+}
+std::string SurfaceRouter2D::loadCheckpointBytes(SimulationContext& ctx,std::string bytes,
+    const std::array<double,6>* engine_boundary,const std::vector<double>* engine_rainfall,
+    const double* engine_storage,bool engine_routed) {
+    try {
         const auto error=sourceBoundary(ctx);if(!error.empty())return error;
         if(sim_time_!=0 || pending_dt_!=0 || ctx.current_time!=0) return "Router checkpoint restore requires a fresh attached router.";
-        Archive file(readFile(path));std::string magic,model,payload;uint32_t version=0,endian=0,longBytes=0,crc=0;
+        if(bytes.empty() || bytes.size()>maxBytes)return "Router checkpoint exceeds its size limit.";
+        Archive file(std::move(bytes));std::string magic,model,payload;uint32_t version=0,endian=0,longBytes=0,crc=0;
         file(magic,version,endian,longBytes,model,payload,crc);file.finish();
         if(magic!=(joint_hydraulic_?jointMagic:magicName) || version!=(joint_hydraulic_?2u:1u) || endian!=0x01020304 || longBytes!=sizeof(long)) return "Unsupported router checkpoint version/platform.";
         if(model!=source_router_model_) return "Router checkpoint report/weather model differs.";
@@ -315,14 +341,17 @@ std::string SurfaceRouter2D::loadCheckpoint(SimulationContext& ctx,const std::st
         if(joint_hydraulic_) {state(hydraulic,snapshot.delivery);snapshot.archiveJoint(state);}
         state.finish();
         snapshot.validate(*this,ctx);
+        const std::array<double,6> clock{snapshot.current_time,snapshot.current_date,snapshot.elapsed_ms,
+            snapshot.old_elapsed_ms,snapshot.next_report_ms,snapshot.evap_rate};
+        if(engine_boundary && clock!=*engine_boundary)return "Engine/surface checkpoint clocks differ.";
+        if(engine_rainfall && snapshot.rainfall!=*engine_rainfall)return "Engine/surface checkpoint rainfall differs.";
         const std::array<double,5> expected{snapshot.sim_time_,snapshot.mb.rainfall_in,snapshot.mb.evap_out,snapshot.mb.aquifer_in,snapshot.mb.final_storage};
         // Stage hydraulic state and cross-check the duplicated shared clock
         // before the CPU/source transaction can install anything.
         std::shared_ptr<Router::RestartState> prepared;
         if(joint_hydraulic_) {
-            const std::array<double,6> clock{snapshot.current_time,snapshot.current_date,snapshot.elapsed_ms,
-                snapshot.old_elapsed_ms,snapshot.next_report_ms,snapshot.evap_rate};
             prepared=joint_hydraulic_->prepareCheckpointBytes(ctx,std::move(hydraulic),&clock,&snapshot.delivery,&snapshot.feedback);
+            if(engine_storage && clock[0]>0)Router::validateSessionStorage(prepared,ctx,*engine_storage,engine_routed);
         }
         const auto ce=static_cast<ExplicitInertialSolver*>(solver_.get())->loadCheckpointBytes(std::move(cpu),&expected,snapshot.exchange.pending_.empty()?nullptr:&snapshot.exchange.pending_);if(!ce.empty())return ce;
         // Parsing/model/ledger/clock checks have all completed. CPU installation

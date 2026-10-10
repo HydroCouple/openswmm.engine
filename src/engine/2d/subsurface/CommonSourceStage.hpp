@@ -23,8 +23,10 @@ struct SurfaceEtReceipt {
 /// Whole-context snapshots are qualification scaffolding, not runtime activation.
 class CommonSourceStage {
 public:
+    // mesh_only explicitly assigns the whole mesh weather footprint with no
+    // private subcatchment groups; default reviewed-source behavior is unchanged.
     std::string initialize(const MeshData&, SurfaceStateData&, const SolverOptions2D&, SubsurfaceSolver&,
-                           runoff::SourceWaterDriver&, const SurfaceOwnershipPreview&);
+                           runoff::SourceWaterDriver&, const SurfaceOwnershipPreview&, bool mesh_only = false);
     bool matches(const MeshData* m,const SurfaceStateData* s,const SubsurfaceSolver* g) const {
         return mesh_==m && surface_==s && gw_==g && mesh_;
     }
@@ -37,6 +39,8 @@ public:
     const std::vector<SurfaceEtReceipt>& etReceipts() const { return et_receipts_; }
     double completedEnd() const { return exchange_.completedEnd(); }
     long intervals() const { return intervals_; }
+    /// Qualification guard against running private and live subcatchment kernels twice.
+    bool meshOnly() const { return sources_ && sources_->clocks().groups().empty() && donors_.empty(); }
     /// Internal component checkpoint, not a production engine hotstart.
     std::string saveCheckpoint(const std::string& path) const;
     std::string loadCheckpoint(const std::string& path);

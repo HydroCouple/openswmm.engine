@@ -52,6 +52,7 @@
 #include "mesh/RainfallInterpolator.hpp"
 
 #include <memory>
+#include <array>
 #include <unordered_map>
 #include <unordered_set>
 #include <string>
@@ -63,6 +64,7 @@
 namespace openswmm {
 struct SimulationContext;
 class Router;
+class SWMMEngine;
 }
 
 namespace openswmm::twoD {
@@ -480,7 +482,13 @@ public:
     const std::string& backendName() const noexcept { return backend_name_; }
 
 private:
+    friend class openswmm::SWMMEngine;
     struct RestartState;
+    std::string checkpointBytes(const SimulationContext&, std::string&) const;
+    std::string loadCheckpointBytes(SimulationContext&, std::string,
+        const std::array<double,6>* engine_boundary = nullptr,
+        const std::vector<double>* engine_rainfall = nullptr,
+        const double* engine_storage = nullptr, bool engine_routed = false);
     void attachCommonSourceStage(SimulationContext&, CommonSourceStage&, Router*);
     void checkJointRoutingStep(const SimulationContext&, double dt, double start) const;
     Router* joint_hydraulic_ = nullptr; // externally owned, stable lifetime

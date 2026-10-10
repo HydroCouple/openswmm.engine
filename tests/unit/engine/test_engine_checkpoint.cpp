@@ -3,6 +3,11 @@
 #include "core/SWMMEngine.hpp"
 #include "core/CompletedSourceArchive.hpp"
 #include "core/DateTime.hpp"
+#ifdef OPENSWMM_HAS_2D
+#include "2d/subsurface/CommonSourceStage.hpp"
+#include "2d/subsurface/SourceResultHistory.hpp"
+#include "2d/mesh/MeshBuilder.hpp"
+#endif
 #include <filesystem>
 #include <fstream>
 #include <cstdlib>
@@ -431,3 +436,180 @@ TEST(EngineCheckpoint, RunoffGapDryRecessionAndIgnoredRainRestore) {
         if(phase==2)EXPECT_EQ(a.context().mass_balance.runoff_rainfall,0);
     }
 }
+
+#ifdef OPENSWMM_HAS_2D
+namespace {
+struct SurfaceSession {
+    // The qualification source objects outlive the engine's non-owning attachment.
+    runoff::SourceWaterDriver sources;
+    twoD::CommonSourceStage stage;
+    SWMMEngine engine;
+    void start(const std::string& name,int lid=0,int mapped=0,int closure=0,int mode=0,bool track=true) {
+        SWMMEngine authored;startRunoff(authored,name,mode%5,mode%3,lid,false);authored.close();
+        auto p=root()/name;auto deck=bytes(p.string()+".inp");
+        deck.replace(deck.find("IGNORE_2D YES"),13,"IGNORE_2D NO");
+        // Surface advances on every routing step; routing-event skips are outside this profile.
+        write(p.string()+".inp",deck);
+        auto& e=engine;
+        if(e.open((p.string()+".inp").c_str(),(p.string()+".rpt").c_str(),nullptr))throw std::runtime_error(e.context().error_message);
+        auto& ctx=e.context();ctx.options.num_threads=1;ctx.options.surcharge_method=mode%4;
+        ctx.events.clear();ctx.gages.scale_factor[1]=1.3;ctx.node_subtypes.outfalls.route_to[0]=2;
+        auto& router=e.surfaceRouter2D();auto& mesh=router.mesh();
+        mesh.resize_vertices(4);mesh.resize_triangles(2);
+        mesh.vx={0,4,0,4};mesh.vy={0,0,2,2};mesh.vz={.5,.5,.5,.5};
+        mesh.set_triangle(0,0,1,2);mesh.set_triangle(1,1,3,2);mesh.mannings_n={.03,.03};
+        mesh.tri_init_depth={.04,.003};mesh.tri_coupled_node=mapped==1?std::vector<int>{2,0}:(mapped==2?std::vector<int>{2,2}:std::vector<int>{0,0});
+        mesh.tri_coupling_cd={.6,.6};mesh.tri_coupling_area={.002,.003};
+        auto& options=router.options();options.mesh_units_si=true;options.num_threads=1;
+        options.momentum=twoD::Momentum2D::LOCAL_INERTIAL;options.max_timestep=.21;
+        options.coupling_sync=3.5;options.evaporation=2;options.rainfall_mode=twoD::RainfallMode::SYSTEM;
+        auto& config=router.aquiferConfig();config.options.authored=true;config.options.force_closed_form=true;
+        config.options.gw_et="BOUNDARY_ET";config.options.closure=closure?twoD::GwClosure::ENSLAVED:twoD::GwClosure::CLOSED_FORM;
+        twoD::GwAquiferRow row;row.Ks=.000001*3600/.0254;row.zs=2/.3048;row.hg0=1/.3048;row.alpha=2*.3048;config.rows.push_back(row);
+        if(e.initialize() || e.start(0))throw std::runtime_error("surface start: "+ctx.error_message);
+        auto& gw=router.subsurface().state();
+        for(int i=0;i<2;++i) {
+            if(closure)gw.hg[i]=gw.zs[i]-.0001;
+            gw.hu[i]=gw.theta_s[i]*(gw.zs[i]-gw.hg[i])-.0001/mesh.tri_area[i];
+        }
+        auto error=sources.initialize(ctx,{});if(!error.empty())throw std::runtime_error(error);
+        twoD::SurfaceOwnershipPreview preview;preview.mesh_weather_area=mesh.tri_area;
+        error=stage.initialize(mesh,router.state(),options,router.subsurface(),sources,preview,true);
+        if(!error.empty())throw std::runtime_error(error);
+        if(track) {error=e.enableCheckpointing(stage);if(!error.empty())throw std::runtime_error(error);}
+    }
+};
+}
+
+TEST(EngineCheckpoint, SurfaceSessionRestoresActualEngineRainfallPidLidAndPendingBatches) {
+    for(int lid=0;lid<4;++lid)for(int mapped=0;mapped<3;++mapped)for(int closure=0;closure<2;++closure) {
+        auto name="surface-session-"+std::to_string(lid)+"-"+std::to_string(mapped)+"-"+std::to_string(closure);SCOPED_TRACE(name);
+        SurfaceSession a,b;ASSERT_NO_THROW(a.start(name+"-a",lid,mapped,closure,mapped));
+        ASSERT_NO_THROW(b.start(name+"-b",lid,mapped,closure,mapped));
+        while(a.engine.context().current_time<2.1)ASSERT_NO_THROW(step(a.engine));
+        if(closure)a.engine.surfaceRouter2D().subsurface().bookLinkSeepage(0,.01); // Accepted recharge, not a live provider.
+        while(a.engine.context().current_time<43.1)ASSERT_NO_THROW(step(a.engine));
+        const auto file=root()/(name+".chk");ASSERT_EQ(a.engine.saveCheckpoint(file.string()),"") << "surface stores=" << a.engine.context().mass_balance_2d.init_storage << "," << a.engine.context().mass_balance_2d.final_storage << " rain=" << a.engine.context().mass_balance_2d.rainfall_in << " ET=" << a.engine.context().mass_balance_2d.evap_out << " infil=" << a.engine.context().mass_balance_2d.infil_out << " return=" << a.engine.context().mass_balance_2d.aquifer_in;
+        ASSERT_GT(a.stage.intervals(),0);EXPECT_LT(a.stage.completedEnd(),a.engine.context().current_time);
+        ASSERT_EQ(b.engine.loadCheckpoint(file.string()),"");compare(a.engine,b.engine,name+"-restored");
+        int count=0;
+        while(a.engine.context().elapsed_ms<a.engine.context().options.totalDurationMs()) {
+            ASSERT_NO_THROW(step(a.engine));
+            ASSERT_NO_THROW(step(b.engine));
+            ASSERT_EQ(a.engine.context().current_time,b.engine.context().current_time);
+            if(++count%17==0)compare(a.engine,b.engine,name+"-continued");
+        }
+        compare(a.engine,b.engine,name+"-final");
+        EXPECT_GT(a.stage.meshRain(),0);EXPECT_GT(a.stage.meshEvaporation(),0);
+        EXPECT_GT(a.engine.context().mass_balance.runoff_rainfall,0);
+        EXPECT_EQ(a.stage.meshReturn(),b.stage.meshReturn());
+        if(closure)EXPECT_GT(a.stage.meshReturn(),0);
+    }
+}
+
+TEST(EngineCheckpoint, SurfaceAttachmentGuardsAreRetryableAtInitialBoundary) {
+    SurfaceSession a,b;
+    ASSERT_NO_THROW(a.start("surface-guard-a",2,1,0,0,false));
+    ASSERT_NO_THROW(b.start("surface-guard-b",2,1,0,0,false));
+    EXPECT_FALSE(a.engine.enableCheckpointing().empty());
+    EXPECT_FALSE(a.engine.enableCheckpointing(b.stage).empty());
+    auto& ctx=a.engine.context();ctx.events={{ctx.options.start_date,datetime::addSeconds(ctx.options.start_date,50)}};
+    EXPECT_FALSE(a.engine.enableCheckpointing(a.stage).empty());ctx.events.clear();
+    a.engine.surfaceRouter2D().options().output_file="not-opened.h5";
+    EXPECT_FALSE(a.engine.enableCheckpointing(a.stage).empty());
+    a.engine.surfaceRouter2D().options().output_file="";
+    ASSERT_EQ(a.engine.enableCheckpointing(a.stage),"");
+    ASSERT_EQ(b.engine.enableCheckpointing(b.stage),"");compare(a.engine,b.engine,"surface-initial");
+    EXPECT_FALSE(a.engine.enableCheckpointing(a.stage).empty());
+    ASSERT_NO_THROW(step(a.engine));
+}
+
+namespace {
+std::pair<std::size_t,std::string> nested(const std::string& payload,const std::string& magic) {
+    auto at=payload.find(magic);
+    if(at==std::string::npos || at<16)throw std::runtime_error("Missing nested checkpoint record");
+    at-=16;uint64_t size;std::memcpy(&size,payload.data()+at,8);
+    if(size>payload.size()-at-8)throw std::runtime_error("Invalid nested checkpoint span");
+    return {at,payload.substr(at+8,size)};
+}
+std::string replaceNested(std::string payload,const std::string& magic,const std::string& replacement) {
+    auto [at,old]=nested(payload,magic);detail::CompletedSourceArchive record;auto copy=replacement;record(copy);
+    payload.replace(at,old.size()+8,record.bytes());return payload;
+}
+std::string engineSurface(const std::string& bytes) {
+    detail::CompletedSourceArchive file(bytes);std::string magic,model,payload;uint32_t version,sum;
+    file(magic,version,model,sum,payload);file.finish();return nested(payload,"OpenSWMM joint DW surface/source boundary").second;
+}
+std::string surfacePayload(const std::string& bytes) {
+    detail::CompletedSourceArchive file(bytes);std::string magic,model,payload;uint32_t version,endian,longBytes,sum;
+    file(magic,version,endian,longBytes,model,payload,sum);file.finish();return payload;
+}
+std::string withSurfacePayload(const std::string& bytes,std::string payload) {
+    detail::CompletedSourceArchive file(bytes);std::string magic,model,old;uint32_t version,endian,longBytes,sum;
+    file(magic,version,endian,longBytes,model,old,sum);file.finish();sum=crc(payload);
+    detail::CompletedSourceArchive out;out(magic,version,endian,longBytes,model,payload,sum);return out.bytes();
+}
+}
+TEST(EngineCheckpoint, SurfaceNestedFailuresPreserveEveryComponentAndAllowValidRetry) {
+    SurfaceSession a;ASSERT_NO_THROW(a.start("surface-atomic-source",2,1));
+    while(a.engine.context().current_time<43.1)ASSERT_NO_THROW(step(a.engine));
+    auto good=root()/"surface-atomic-good.chk";ASSERT_EQ(a.engine.saveCheckpoint(good.string()),"");
+    const double savedStorage=a.engine.context().mass_balance.routing_final_storage;
+    auto valid=bytes(good),surface=engineSurface(valid),data=surfacePayload(surface);
+    detail::CompletedSourceArchive in(valid);std::string magic,model,payload;uint32_t version,sum;
+    in(magic,version,model,sum,payload);in.finish();ASSERT_EQ(version,4);
+    a.engine.context().gages.rainfall[0]+=1;
+    auto rain=root()/"surface-other-rain.chk";ASSERT_EQ(a.engine.saveCheckpoint(rain.string()),"");
+    auto otherRain=engineSurface(bytes(rain));a.engine.context().gages.rainfall[0]-=1;
+    for(int i=0;i<4;++i)ASSERT_NO_THROW(step(a.engine));
+    auto later=root()/"surface-other-time.chk";ASSERT_EQ(a.engine.saveCheckpoint(later.string()),"");
+    auto otherSurface=engineSurface(bytes(later)),otherData=surfacePayload(otherSurface);
+    for(int k=0;k<9;++k) {
+        SCOPED_TRACE(k);SurfaceSession b;ASSERT_NO_THROW(b.start("surface-mutant-"+std::to_string(k),2,1));
+        auto before=root()/"surface-atomic-before.chk",after=root()/"surface-atomic-after.chk",bad=root()/"surface-atomic-bad.chk";
+        ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");
+        auto changed=surface,body=payload;uint32_t v=version;
+        if(k==0)v=3;
+        if(k==1)changed=otherSurface; // Individually valid, mismatched engine time.
+        if(k==2)changed=otherRain; // Individually valid, mismatched shared gage rainfall.
+        if(k>=3 && k<=6) {
+            const std::string tag=k%2?"OpenSWMM CPU surface/source boundary":"OpenSWMM accepted DW hydraulic boundary";
+            auto replacement=nested(k<=4?data:otherData,tag).second;
+            if(k<=4)replacement.back()^=1; // Outer checksums remain valid.
+            changed=withSurfacePayload(surface,replaceNested(data,tag,replacement));
+        }
+        if(k==7) {
+            const auto offset=7*sizeof(double)+6*sizeof(double)+2*sizeof(int)+4*sizeof(bool)+2*sizeof(double)+11*sizeof(double)+sizeof(uint64_t)+a.engine.context().n_nodes()*sizeof(double)+23*sizeof(double);
+            double stored;std::memcpy(&stored,body.data()+offset,sizeof(stored));
+            ASSERT_EQ(stored,savedStorage);stored+=1;std::memcpy(body.data()+offset,&stored,sizeof(stored));
+        }
+        body=replaceNested(body,"OpenSWMM joint DW surface/source boundary",changed);sum=crc(body);
+        detail::CompletedSourceArchive out;out(magic,v,model,sum,body);auto mutant=out.bytes();if(k==8)mutant.resize(mutant.size()/2);
+        write(bad,mutant);EXPECT_FALSE(b.engine.loadCheckpoint(bad.string()).empty());
+        ASSERT_EQ(b.engine.saveCheckpoint(after.string()),"");EXPECT_EQ(bytes(before),bytes(after));
+        EXPECT_EQ(b.stage.completedEnd(),0);EXPECT_EQ(b.stage.intervals(),0);
+        ASSERT_EQ(b.engine.loadCheckpoint(good.string()),"");
+        // Compare against the saved boundary, before the source was advanced again.
+        ASSERT_EQ(b.engine.saveCheckpoint(after.string()),"");EXPECT_EQ(bytes(good),bytes(after));
+    }
+}
+TEST(EngineCheckpoint, SurfaceSessionRejectsComponentOnlyRestoreAndUnsupportedDonorAttachment) {
+    twoD::SourceResultHistory history;SurfaceSession a;
+    ASSERT_NO_THROW(a.start("surface-component-guard",2,2,0,0,false));
+    runoff::SourceWaterDriver donors;ASSERT_EQ(donors.initialize(a.engine.context(),{0}),"");
+    twoD::CommonSourceStage rejected;twoD::SurfaceOwnershipPreview preview;auto& r=a.engine.surfaceRouter2D();
+    preview.mesh_weather_area=r.mesh().tri_area;
+    EXPECT_FALSE(rejected.initialize(r.mesh(),r.state(),r.options(),r.subsurface(),donors,preview,true).empty());
+    EXPECT_FALSE(a.engine.enableCheckpointing(rejected).empty());
+    ASSERT_EQ(a.engine.enableCheckpointing(a.stage),"");
+    auto file=root()/"surface-component-guard.chk";
+    ASSERT_EQ(a.engine.saveCheckpoint(file.string()),"") << "surface stores=" << a.engine.context().mass_balance_2d.init_storage << "," << a.engine.context().mass_balance_2d.final_storage << " rain=" << a.engine.context().mass_balance_2d.rainfall_in << " ET=" << a.engine.context().mass_balance_2d.evap_out << " infil=" << a.engine.context().mass_balance_2d.infil_out << " return=" << a.engine.context().mass_balance_2d.aquifer_in;auto original=bytes(file);
+    EXPECT_FALSE(r.saveCheckpoint(a.engine.context(),file.string()).empty());
+    EXPECT_FALSE(r.loadCheckpoint(a.engine.context(),file.string()).empty());
+    EXPECT_EQ(bytes(file),original);
+    // Private, unadvanced catchments have no qualified source-result endpoints.
+    EXPECT_THROW(r.setSourceResultHistory(history),std::invalid_argument);
+    ASSERT_EQ(a.engine.saveCheckpoint(file.string()),"");
+    EXPECT_EQ(bytes(file),original);
+}
+#endif

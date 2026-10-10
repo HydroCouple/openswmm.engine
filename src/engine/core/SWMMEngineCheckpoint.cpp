@@ -2,6 +2,9 @@
 // Copyright 2026 Caleb Buahin
 #include "SWMMEngine.hpp"
 #include "CompletedSourceArchive.hpp"
+#ifdef OPENSWMM_HAS_2D
+#include "../2d/subsurface/CommonSourceStage.hpp"
+#endif
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -355,7 +358,7 @@ struct SWMMEngine::RestartState {
     }
 };
 
-void SWMMEngine::checkCheckpointProfile() const {
+void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
     require(exchange_target_<0,"Engine session checkpoint does not yet support runtime advance/coupling targets.");
     require(ctx_.state==EngineState::RUNNING && ctx_.error_code==0 && do_routing_ && save_results_==0,
             "Engine checkpoint requires a running water-only start(0) hydraulic session.");
@@ -363,7 +366,15 @@ void SWMMEngine::checkCheckpointProfile() const {
             !runoff_iface_file_ && !ctx_.runtime_coupling_used && ctx_.process_component_specs.empty(),
             "Engine checkpoint does not recover RDII, interface files, providers or process components.");
 #ifdef OPENSWMM_HAS_2D
-    require(!surface_router_.isActive(),"Engine session checkpoint does not yet pair live surface/source routing.");
+    if(surface_router_.isActive()) {
+        require(ctx_.events.empty(),"Surface session checkpoint does not yet recover skipped routing events.");
+        require(surface_router_.options_.output_file.empty(),"Surface session checkpoint cannot append surface output.");
+        require(attaching_surface || (surface_router_.joint_hydraulic_==&router_ &&
+                surface_router_.common_stage_ && surface_router_.common_stage_->meshOnly()),
+                "Surface session checkpoint requires its mesh-only common stage and engine-owned hydraulic router.");
+    } else require(!attaching_surface,"Surface checkpoint attachment requires an active surface router.");
+#else
+    (void)attaching_surface;
 #endif
     require(!callbacks_.on_progress && !callbacks_.on_warning && !callbacks_.on_step_begin && !callbacks_.on_step_end,
             "Engine checkpoint does not recover external callbacks.");
@@ -458,23 +469,65 @@ void SWMMEngine::checkCheckpointBoundary() const {
     require(checkpoint_enabled_ && checkpoint_ready_,"Engine checkpoint requires a completed accepted session boundary.");
     checkCheckpointProfile();require(checkpoint_model_==checkpointModel(),"Engine checkpoint model changed after attachment.");
     RestartState state(*this);Archive out;state.archive(out);state.validate(*this);
+#ifdef OPENSWMM_HAS_2D
+    if(surface_router_.isActive()) {auto error=surface_router_.sourceBoundary(ctx_);require(error.empty(),error.c_str());}
+#endif
 }
 std::string SWMMEngine::enableCheckpointing() {
+    return enableCheckpointingImpl(
+#ifdef OPENSWMM_HAS_2D
+        nullptr
+#endif
+    );
+}
+#ifdef OPENSWMM_HAS_2D
+std::string SWMMEngine::enableCheckpointing(twoD::CommonSourceStage& stage) {return enableCheckpointingImpl(&stage);}
+#endif
+std::string SWMMEngine::enableCheckpointingImpl(
+#ifdef OPENSWMM_HAS_2D
+    twoD::CommonSourceStage* stage
+#endif
+) {
     const bool owned=router_.checkpoint_owned_session_;
+    const bool fresh_router=router_.checkpoint_context_==nullptr;
     try {
         require(!step_active_ && !runtime_pipeline_ && exchange_target_<0 && !checkpoint_enabled_ && ctx_.current_time==0,
                 "Enable engine checkpointing at start(0)'s initial session boundary.");
         router_.checkpoint_owned_session_=true;
-        checkCheckpointProfile();auto model=checkpointModel();RestartState state(*this);Archive out;state.archive(out);state.validate(*this);
-        router_.enableCheckpointing(ctx_);checkpoint_model_=std::move(model);checkpoint_enabled_=checkpoint_ready_=true;return {};
-    } catch(const std::exception& e) {router_.checkpoint_owned_session_=owned;return e.what();}
+#ifdef OPENSWMM_HAS_2D
+        require(!stage || stage->meshOnly(),"Engine source checkpoint does not yet own private subcatchment donors/deliveries.");
+        checkCheckpointProfile(stage!=nullptr);
+#else
+        checkCheckpointProfile();
+#endif
+        auto model=checkpointModel();RestartState state(*this);Archive out;state.archive(out);state.validate(*this);
+        router_.enableCheckpointing(ctx_);
+#ifdef OPENSWMM_HAS_2D
+        if(stage)surface_router_.setJointSourceStage(ctx_,*stage,router_);
+#endif
+        checkpoint_model_=std::move(model);checkpoint_enabled_=checkpoint_ready_=true;return {};
+    } catch(const std::exception& e) {
+        router_.checkpoint_owned_session_=owned;
+        if(fresh_router) {
+            router_.checkpoint_context_=nullptr;router_.checkpoint_model_.clear();
+            router_.checkpoint_time_=router_.checkpoint_step_end_=0;
+            router_.checkpoint_ready_=router_.checkpoint_prepared_=router_.checkpoint_step_finished_=false;
+        }
+        return e.what();
+    }
 }
 std::string SWMMEngine::saveCheckpoint(const std::string& path) const {
     try {
         require(!step_active_ && !runtime_pipeline_ && exchange_target_<0,"Cannot save an active engine pipeline.");checkCheckpointBoundary();
         RestartState state(*this);Archive payload;state.archive(payload);std::string hydraulic;
-        auto error=router_.checkpointBytes(ctx_,hydraulic);require(error.empty(),error.c_str());payload(hydraulic);
-        auto bytes=payload.bytes(),model=checkpoint_model_;auto crc=checksum(bytes);uint32_t version=3;std::string magic=magicName;
+        uint32_t version=3;std::string error;
+#ifdef OPENSWMM_HAS_2D
+        if(surface_router_.isActive()) {version=4;error=surface_router_.checkpointBytes(ctx_,hydraulic);}
+        else
+#endif
+        error=router_.checkpointBytes(ctx_,hydraulic);
+        require(error.empty(),error.c_str());payload(hydraulic);
+        auto bytes=payload.bytes(),model=checkpoint_model_;auto crc=checksum(bytes);std::string magic=magicName;
         Archive out;out(magic,version,model,crc,bytes);require(out.bytes().size()<=maxBytes,"Engine checkpoint exceeds its size limit.");
         publish(path,out.bytes());return {};
     } catch(const std::exception& e) {return e.what();}
@@ -484,8 +537,19 @@ std::string SWMMEngine::loadCheckpoint(const std::string& path) {
         require(!step_active_ && !runtime_pipeline_ && exchange_target_<0 && ctx_.current_time==0,"Engine restore requires an identically initialized fresh session.");
         checkCheckpointBoundary();Archive in(readFile(path));std::string magic,model,bytes;uint32_t version=0,crc=0;
         in(magic,version,model,crc,bytes);in.finish();
-        require(magic==magicName && version==3 && model==checkpoint_model_ && crc==checksum(bytes),"Engine checkpoint format/model/checksum differs.");
+        uint32_t expected_version=3;
+#ifdef OPENSWMM_HAS_2D
+        if(surface_router_.isActive())expected_version=4;
+#endif
+        require(magic==magicName && version==expected_version && model==checkpoint_model_ && crc==checksum(bytes),"Engine checkpoint format/model/checksum differs.");
         RestartState state(*this);Archive payload(std::move(bytes));state.archive(payload);std::string hydraulic;payload(hydraulic);payload.finish();state.validate(*this);
+#ifdef OPENSWMM_HAS_2D
+        if(surface_router_.isActive()) {
+            auto error=surface_router_.loadCheckpointBytes(ctx_,std::move(hydraulic),&state.boundary,&state.gages.rainfall,
+                &state.balance.routing_final_storage,state.stats.sum_iterations>0);
+            require(error.empty(),error.c_str());state.install(*this);return {};
+        }
+#endif
         auto routing=router_.prepareCheckpointBytes(ctx_,std::move(hydraulic),&state.boundary);
         if(state.boundary[0]>0)Router::validateSessionStorage(routing,ctx_,state.balance.routing_final_storage,state.stats.sum_iterations>0);
         // All throwing parse/model/shape/ledger checks precede installation.

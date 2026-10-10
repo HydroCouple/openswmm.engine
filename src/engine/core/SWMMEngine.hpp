@@ -208,8 +208,13 @@ public:
 
     // Internal, same-platform water-only hydraulic session restart. Enable at
     // start(0)'s initial boundary; restore into an identically initialized fresh
-    // session. No public C API, runoff/2D/provider recovery or output append.
+    // session. No public C API, provider recovery or output append.
     std::string enableCheckpointing();
+#ifdef OPENSWMM_HAS_2D
+    // Qualification attachment only: mesh-owned common sources, with ordinary
+    // engine runoff outside the mesh. Stage lifetime must cover the session.
+    std::string enableCheckpointing(twoD::CommonSourceStage& stage);
+#endif
     std::string saveCheckpoint(const std::string& path) const;
     std::string loadCheckpoint(const std::string& path);
 
@@ -473,7 +478,12 @@ private:
     struct RestartState;
     bool checkpoint_enabled_ = false, checkpoint_ready_ = false;
     std::string checkpoint_model_;
-    void checkCheckpointProfile() const;
+    void checkCheckpointProfile(bool attaching_surface = false) const;
+    std::string enableCheckpointingImpl(
+#ifdef OPENSWMM_HAS_2D
+        twoD::CommonSourceStage* stage
+#endif
+    );
     std::string checkpointModel() const;
     void checkCheckpointBoundary() const;
     double exchange_target_ = -1.0;

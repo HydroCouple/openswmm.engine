@@ -46,7 +46,7 @@ std::string qualityProfile(const runoff::SourceWaterDriver& sources,
 }
 
 std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData& surface,
-    const SolverOptions2D& options,SubsurfaceSolver& gw,runoff::SourceWaterDriver& sources,const SurfaceOwnershipPreview& preview) {
+    const SolverOptions2D& options,SubsurfaceSolver& gw,runoff::SourceWaterDriver& sources,const SurfaceOwnershipPreview& preview,bool mesh_only) {
     if(mesh_) return "Common source stage already initialized.";
     if(!gw.active() || !preview.valid() || preview.cancelled || preview.mesh_weather_area.size()!=mesh.tri_area.size())
         return "Common source stage requires a valid reviewed mesh/receiver snapshot.";
@@ -58,7 +58,9 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
     for(const auto& g:sources.clocks().groups()) if(g.completed_end!=0 || !g.pending.empty())
         return "Common source stage must attach at the initial source clock.";
     const auto& c=sources.context(); const auto& r=sources.runoff().soa();
-    std::vector<Donor> donors;std::vector<bool> owned(mesh.tri_area.size(),false);
+    if(mesh_only && (!sources.clocks().groups().empty() || !preview.objects.empty() || !preview.shares.empty()))
+        return "Mesh-only source stage cannot own private subcatchment sources.";
+    std::vector<Donor> donors;std::vector<bool> owned(mesh.tri_area.size(),mesh_only);
     std::vector<double> coverage(mesh.tri_area.size(),0);
     std::vector<bool> resolved(c.n_subcatches(),false);
     std::vector<double> fractions(c.n_subcatches(),0);
