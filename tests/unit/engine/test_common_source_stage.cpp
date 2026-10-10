@@ -1641,7 +1641,7 @@ struct RouterSourceModel {
     SurfaceRouter2D router;
     Router hydraulic;
     int joint_profile=0;
-    void setup(Momentum2D momentum=Momentum2D::LOCAL_INERTIAL,GwClosure closure=GwClosure::CLOSED_FORM,bool quality=false,double report=2.3,int joint=0,int surcharge=0,bool shared=false) {
+    void setup(Momentum2D momentum=Momentum2D::LOCAL_INERTIAL,GwClosure closure=GwClosure::CLOSED_FORM,bool quality=false,double report=2.3,int joint=0,int surcharge=0,bool shared=false,int mapped=0,OutfallType boundary=OutfallType::FIXED,bool flap=false,double initial_depth=-1) {
         AtmosphericInput a;a.inside={.75,.25};a.pet={.0001,.0002};a.et="BOUNDARY_ET";a.closure=closure;if(joint)a.ks=1.e-5;
         if(quality) mixedPollutants(source,2,a,true);else source.setup(true,2,false,true,false,a);
         auto& ctx=source.context;ctx.options.num_threads=1;ctx.options.routing_step=.7;ctx.options.wet_step=1.4;ctx.options.report_step=report;
@@ -1654,7 +1654,7 @@ struct RouterSourceModel {
         if(joint) {
             ctx.options.routing_model=RoutingModel::DYNWAVE;ctx.options.surcharge_method=surcharge;ctx.options.max_trials=20;
             ctx.options.allow_ponding=true;ctx.options.anderson_accel=true;
-            ctx.nodes.resize(3);ctx.node_names.try_add("A");ctx.node_names.try_add("B");ctx.node_names.try_add("O");
+            ctx.nodes.resize(mapped==3 || mapped==4?4:3);ctx.node_names.try_add("A");ctx.node_names.try_add("B");ctx.node_names.try_add("O");
             for(int n=0;n<2;++n) {
                 ctx.node_subtypes.set_node_type(ctx.nodes,n,NodeType::STORAGE);
                 auto row=ctx.node_subtypes.storage_row(n);ctx.node_subtypes.storages.c[row]=20;
@@ -1662,19 +1662,28 @@ struct RouterSourceModel {
                 ctx.nodes.invert_elev[n]=10/.3048-(joint>1?1.5:2);ctx.nodes.full_depth[n]=joint>1?1.5:2;
                 ctx.nodes.depth[n]=ctx.nodes.init_depth[n]=joint==1?(n?1.8:4):0;
                 ctx.nodes.head[n]=ctx.nodes.invert_elev[n]+ctx.nodes.depth[n];
-                ctx.nodes.crown_elev[n]=ctx.nodes.invert_elev[n]+.5;ctx.nodes.degree[n]=2;
+                ctx.nodes.crown_elev[n]=ctx.nodes.invert_elev[n]+.5;ctx.nodes.degree[n]=mapped && n==0 && (mapped==3 || mapped==4)?3:2;
+                if(mapped)ctx.nodes.ponded_area[n]=20;
             }
             auto row=ctx.node_subtypes.set_node_type(ctx.nodes,2,NodeType::OUTFALL);
             ctx.nodes.invert_elev[2]=10/.3048-1.5;ctx.nodes.full_depth[2]=2;ctx.nodes.degree[2]=2;
             ctx.node_subtypes.outfalls.bc_type[row]=OutfallType::FIXED;ctx.node_subtypes.outfalls.param[row]=10/.3048-.8;
             ctx.nodes.head[2]=ctx.node_subtypes.outfalls.param[row];ctx.nodes.depth[2]=.7;
-            ctx.links.resize(3);ctx.link_names.try_add("AO");ctx.link_names.try_add("BO");ctx.link_names.try_add("AB");
-            for(int j=0;j<3;++j) {
+            ctx.node_subtypes.outfalls.bc_type[row]=boundary;ctx.node_subtypes.outfalls.has_flap_gate[row]=flap;
+            if(mapped==3 || mapped==4) {
+                ctx.node_names.try_add("P");auto pr=ctx.node_subtypes.set_node_type(ctx.nodes,3,NodeType::OUTFALL);
+                ctx.nodes.invert_elev[3]=ctx.nodes.invert_elev[2];ctx.nodes.full_depth[3]=2;ctx.nodes.degree[3]=1;
+                ctx.node_subtypes.outfalls.bc_type[pr]=boundary;ctx.node_subtypes.outfalls.param[pr]=ctx.node_subtypes.outfalls.param[row];
+                ctx.node_subtypes.outfalls.has_flap_gate[pr]=flap;ctx.nodes.head[3]=ctx.nodes.head[2];ctx.nodes.depth[3]=.7;
+            }
+            ctx.links.resize(ctx.n_nodes()==4?4:3);ctx.link_names.try_add("AO");ctx.link_names.try_add("BO");ctx.link_names.try_add("AB");
+            if(mapped==3 || mapped==4)ctx.link_names.try_add("AP");
+            for(int j=0;j<ctx.n_links();++j) {
                 auto cr=ctx.link_subtypes.set_link_type(ctx.links,j,LinkType::CONDUIT);auto& cd=ctx.link_subtypes.conduits;
-                ctx.links.node1[j]=j==1?1:0;ctx.links.node2[j]=j==2?1:2;
+                ctx.links.node1[j]=j==1?1:0;ctx.links.node2[j]=j==3?3:(j==2?1:2);
                 ctx.links.offset1[j]=joint>1?.5:0;ctx.links.offset2[j]=j==2?ctx.links.offset1[j]:0;
                 ctx.links.xsect_shape[j]=XsectShape::CIRCULAR;ctx.links.xsect_y_full[j]=.1;
-                cd.length[cr]=cd.true_length[cr]=cd.mod_length[cr]=10;cd.roughness[cr]=.013;cd.slope[cr]=.01;cd.barrels[cr]=j==2?6:1;
+                cd.length[cr]=cd.true_length[cr]=cd.mod_length[cr]=10;cd.roughness[cr]=.013;cd.slope[cr]=.01;cd.barrels[cr]=j==2?6:(j==3?3:1);
             }
             if(joint>1) {
                 ctx.lid_controls.names.push_back("NodeStack");ctx.lid_controls.lid_type.push_back("NODE");ctx.lid_controls.node_layers.resize(2);
@@ -1687,7 +1696,17 @@ struct RouterSourceModel {
                 ctx.lid_node_outlets={{0,1,false},{1,1,false}};lidnode::initialize(ctx);
             } else for(int n=0;n<2;++n)ctx.nodes.volume[n]=20*ctx.nodes.depth[n];
             router.mesh().tri_coupled_node=shared?std::vector<int>{0,0}:std::vector<int>{0,1};router.mesh().tri_coupling_cd={.6,.6};router.mesh().tri_coupling_area={.002,.003};
+            if(mapped==1)router.mesh().tri_coupled_node={2,0};
+            if(mapped==2)router.mesh().tri_coupled_node={2,2};
+            if(mapped==3)router.mesh().tri_coupled_node={2,3};
+            if(mapped==4 || mapped==5 || mapped==6) {
+                if(mapped!=5)router.mesh().tri_coupled_node={-1,-1};
+                router.mesh().vert_coupled_node.assign(router.mesh().n_vertices(),-1);
+                router.mesh().vert_coupled_node[1]=2;
+                if(mapped!=5)router.mesh().vert_coupled_node[2]=mapped==4?3:2;
+            }
         }
+        if(initial_depth>=0)router.mesh().tri_init_depth={initial_depth,initial_depth};
         router.aquiferConfig()=source.config;router.aquiferConfig().node_beds.clear();
         auto& row=router.aquiferConfig().rows[0];row.Ks=a.ks*3600/.0254;row.zs=2/.3048;row.hg0=1/.3048;row.alpha=2*.3048;
         ctx.twod_io.mesh=&router.mesh();ctx.twod_io.options=&router.options();
@@ -1712,7 +1731,7 @@ struct RouterSourceModel {
         } else ASSERT_NO_THROW(router.setCommonSourceStage(ctx,source.stage));
         router.bookGageRates(ctx,0);
     }
-    void tick(double dt=.7) {
+    void tick(double dt=.7,double external_multiplier=1) {
         auto& ctx=source.context;
         if(joint_profile) {
             hydraulic.beginCheckpointStep(ctx,dt);ctx.nodes.save_state();ctx.links.save_state();
@@ -1723,7 +1742,7 @@ struct RouterSourceModel {
                     else {rate=ctx.nodes.coupling_queue[n]/dt;ctx.nodes.coupling_queue[n]=0;}
                 }
                 rate+=ctx.nodes.coupling_volume[n]/dt;ctx.nodes.coupling_volume[n]=0;
-                ctx.nodes.coupling_inflow[n]=rate;ctx.nodes.lat_flow[n]=rate+(n<2 && ctx.current_time<12?.05*(n+1):0);
+                ctx.nodes.coupling_inflow[n]=rate;ctx.nodes.lat_flow[n]=rate+(n<2 && ctx.current_time<12?external_multiplier*.05*(n+1):0);
             }
             ctx.coupling_delivery_remaining=std::max(0.,ctx.coupling_delivery_remaining-dt);
             lidnode::prepareStep(ctx,dt,ctx.climate_state.evap_rate);
@@ -1935,14 +1954,15 @@ std::string jointMutant(const std::string& file,int change,const std::string& ot
     using A=detail::CompletedSourceArchive;A reader(file);std::string magic,model,payload;uint32_t version,endian,longBytes,crc;
     reader(magic,version,endian,longBytes,model,payload,crc);reader.finish();
     const auto cursor=payload.find("OpenSWMM CPU surface/source boundary")-2*sizeof(uint64_t);
-    A tail(payload.substr(cursor));std::string cpu,hydraulic;double delivery;tail(cpu,hydraulic,delivery);tail.finish();
+    A tail(payload.substr(cursor));std::string cpu,hydraulic;double delivery;tail(cpu,hydraulic,delivery);
+    const auto rest=payload.substr(cursor+2*sizeof(uint64_t)+cpu.size()+hydraulic.size()+sizeof(double));
     if(change==0)hydraulic.back()^=1;
     if(change==1)cpu.back()^=1;
     if(change==2)delivery=std::numeric_limits<double>::infinity();
     if(change==3)delivery=-1;
     if(change==4)hydraulic=otherHydraulic;
     if(change==5)delivery=0;
-    A suffix;suffix(cpu,hydraulic,delivery);payload=payload.substr(0,cursor)+suffix.bytes();crc=restartCrc(payload);
+    A suffix;suffix(cpu,hydraulic,delivery);payload=payload.substr(0,cursor)+suffix.bytes()+rest;crc=restartCrc(payload);
     A out;out(magic,version,endian,longBytes,model,payload,crc);return out.bytes();
 }
 }
@@ -2015,5 +2035,122 @@ TEST(CommonSourceStage, JointCheckpointPreservesSharedNodePointsAndDpsTpaMemory)
         for(int i=0;i<12;++i) {a.tick(i%2?.7:.31);b.tick(i%2?.7:.31);}
         routerEqual(a,b,"joint-shared-final");
         if(shared)EXPECT_EQ(a.source.context.nodes.coupling_queue[1],0);
+    }
+}
+
+
+TEST(CommonSourceStage, JointOutfallCheckpointPreservesSharedDonorsFeedbackAndLidState) {
+    int pending_receipts=0,bidirectional=0;double inflow=0,outflow=0;
+    const std::array<Momentum2D,3> modes{Momentum2D::LOCAL_INERTIAL,Momentum2D::DIFFUSIVE_WAVE,Momentum2D::FULL_SWE};
+    for(int mapping=1;mapping<=6;++mapping)for(int profile:{1,2,3})for(auto boundary:{OutfallType::FREE,OutfallType::NORMAL,OutfallType::FIXED}) {
+        const auto mode=modes[(mapping+profile)%3];const bool flap=(mapping+profile)%2==0;
+        SCOPED_TRACE(std::to_string(mapping)+"/"+std::to_string(profile)+"/"+std::to_string(int(boundary)));
+        RouterSourceModel a;a.setup(mode,GwClosure::CLOSED_FORM,false,2.3,profile,0,false,mapping,boundary,flap);ASSERT_FALSE(HasFatalFailure());
+        for(int i=0;i<6;++i)a.tick();
+        EXPECT_LT(a.source.stage.completedEnd(),a.source.context.current_time);
+        for(double v:a.router.state().coupling_applied)if(v!=0)++pending_receipts;
+        const auto file=restartPath("joint-outfall");ASSERT_EQ(a.router.saveCheckpoint(a.source.context,file.string()),"");
+        RouterSourceModel b;b.setup(mode,GwClosure::CLOSED_FORM,false,2.3,profile,0,false,mapping,boundary,flap);ASSERT_FALSE(HasFatalFailure());
+        ASSERT_EQ(b.router.loadCheckpoint(b.source.context,file.string()),"");routerEqual(a,b,"joint-outfall-restored");
+        for(int i=6;i<38;++i) {
+            if(i==10 || i==22){a.weather(i==10?0:216);b.weather(i==10?0:216);}
+            const double dt=i%4==0?.31:.7;a.tick(dt,i>=14?40:1);b.tick(dt,i>=14?40:1);
+            EXPECT_EQ(a.router.state().volume,b.router.state().volume);
+            EXPECT_EQ(a.source.context.surface_outfall_link_limit,b.source.context.surface_outfall_link_limit);
+            EXPECT_EQ(a.source.context.node_subtypes.outfalls.head_2d,b.source.context.node_subtypes.outfalls.head_2d);
+            EXPECT_EQ(a.source.context.node_subtypes.outfalls.ramp_2d,b.source.context.node_subtypes.outfalls.ramp_2d);
+            for(double v:b.router.state().volume)EXPECT_GE(v,0);
+        }
+        routerEqual(a,b,"joint-outfall-continued");
+        inflow+=a.source.context.mass_balance_2d.outfall_in;outflow+=a.source.context.mass_balance_2d.outfall_out;
+        if(a.source.context.mass_balance_2d.outfall_in>0 && a.source.context.mass_balance_2d.outfall_out>0)++bidirectional;
+    }
+    EXPECT_GT(pending_receipts,0);EXPECT_GT(inflow,0);EXPECT_GT(outflow,0);EXPECT_GT(bidirectional,0);
+}
+
+namespace {
+std::string outfallMutant(const std::string& file,int change) {
+    using A=detail::CompletedSourceArchive;A reader(file);std::string magic,model,payload;uint32_t version,endian,longBytes,crc;
+    reader(magic,version,endian,longBytes,model,payload,crc);reader.finish();
+    const auto cursor=payload.find("OpenSWMM CPU surface/source boundary")-2*sizeof(uint64_t);
+    A tail(payload.substr(cursor));std::string cpu,hydraulic;double delivery,dt,total0,total1;bool changed,prepared;
+    std::vector<double> points,pending,reserved,r0,r1,limits,heads,ramps;
+    tail(cpu,hydraulic,delivery,points,changed,pending,reserved,dt,prepared,r0,total0,r1,total1,limits,heads,ramps);tail.finish();
+    if(change==0)pending[0]+=1;
+    if(change==1)pending[0]=std::numeric_limits<double>::infinity();
+    if(change==2)total0+=1;
+    if(change==3)reserved[2]+=1;
+    if(change==4)limits[2]+=1;
+    if(change==5)changed=false;
+    if(change==6)prepared=true;
+    if(change==7)dt=-1;
+    if(change==8)heads[0]+=.125; // locally valid, disagrees with embedded hydraulic feedback
+    if(change==9)ramps[0]=2;
+    if(change==10)r0[0]=-1;
+    if(change==11)points[0]=std::numeric_limits<double>::quiet_NaN();
+    if(change==12)pending.clear();
+    if(change==13)version=1;
+    A suffix;suffix(cpu,hydraulic,delivery,points,changed,pending,reserved,dt,prepared,r0,total0,r1,total1,limits,heads,ramps);
+    payload=payload.substr(0,cursor)+suffix.bytes();
+    if(change==14) {
+        A prefix(payload);double clock;std::vector<double> infil,coupling;prefix(clock,infil,coupling);
+        const auto end=sizeof(double)+2*sizeof(uint64_t)+sizeof(double)*(infil.size()+coupling.size());
+        for(double& v:coupling)v=1.e308;
+        A invalid;invalid(clock,infil,coupling);payload=invalid.bytes()+payload.substr(end);
+    }
+    crc=restartCrc(payload);
+    A out;out(magic,version,endian,longBytes,model,payload,crc);return out.bytes();
+}
+}
+TEST(CommonSourceStage, JointOutfallCheckpointRejectsSpentBudgetsAndMismatchedReceiptsAtomically) {
+    RouterSourceModel a;a.setup(Momentum2D::LOCAL_INERTIAL,GwClosure::CLOSED_FORM,false,2.3,1,0,false,4);ASSERT_FALSE(HasFatalFailure());
+    for(int i=0;i<6;++i)a.tick();
+    ASSERT_NE(a.router.state().coupling_applied[0],0);
+    const auto good=restartPath("outfall-good"),bad=restartPath("outfall-mutant"),before=restartPath("outfall-before");
+    ASSERT_EQ(a.router.saveCheckpoint(a.source.context,good.string()),"");const auto bytes=restartBytes(good);
+    for(int variant=0;variant<15;++variant) {
+        SCOPED_TRACE(variant);RouterSourceModel target;target.setup(Momentum2D::LOCAL_INERTIAL,GwClosure::CLOSED_FORM,false,2.3,1,0,false,4);
+        ASSERT_FALSE(HasFatalFailure());ASSERT_EQ(target.router.saveCheckpoint(target.source.context,before.string()),"");const auto initial=restartBytes(before);
+        const auto mutant=outfallMutant(bytes,variant);std::ofstream(bad,std::ios::binary).write(mutant.data(),mutant.size());
+        EXPECT_FALSE(target.router.loadCheckpoint(target.source.context,bad.string()).empty());
+        ASSERT_EQ(target.router.saveCheckpoint(target.source.context,before.string()),"");EXPECT_EQ(restartBytes(before),initial);
+        ASSERT_EQ(target.router.loadCheckpoint(target.source.context,good.string()),"");routerEqual(a,target,"outfall-retry");
+    }
+}
+
+TEST(CommonSourceStage, JointOutfallPreparationCannotBeReplayedOrUsedOutsideItsHydraulicInterval) {
+    RouterSourceModel m;m.setup(Momentum2D::LOCAL_INERTIAL,GwClosure::CLOSED_FORM,false,2.3,3,0,false,5);ASSERT_FALSE(HasFatalFailure());
+    const auto file=restartPath("outfall-initial");ASSERT_EQ(m.router.saveCheckpoint(m.source.context,file.string()),"");
+    const auto initial=restartBytes(file);
+    m.router.state().coupling_applied.push_back(0);
+    EXPECT_FALSE(m.router.saveCheckpoint(m.source.context,file.string()).empty());
+    m.router.state().coupling_applied.pop_back();EXPECT_EQ(restartBytes(file),initial);
+    EXPECT_THROW(m.router.updateOutfallsPreRouting(m.source.context,.7),std::invalid_argument);
+    ASSERT_EQ(m.router.saveCheckpoint(m.source.context,file.string()),"");EXPECT_EQ(restartBytes(file),initial);
+    RouterSourceModel restored;restored.setup(Momentum2D::LOCAL_INERTIAL,GwClosure::CLOSED_FORM,false,2.3,3,0,false,5);
+    ASSERT_EQ(restored.router.loadCheckpoint(restored.source.context,file.string()),"");
+    m.tick();restored.tick();routerEqual(m,restored,"outfall-initial-continued");
+    m.hydraulic.beginCheckpointStep(m.source.context,.7);
+    EXPECT_THROW(m.router.updateOutfallsPreRouting(m.source.context,.31),std::invalid_argument);
+    ASSERT_NO_THROW(m.router.updateOutfallsPreRouting(m.source.context,.7));
+    EXPECT_THROW(m.router.updateOutfallsPreRouting(m.source.context,.7),std::invalid_argument);
+    EXPECT_FALSE(m.router.saveCheckpoint(m.source.context,file.string()).empty());
+    EXPECT_EQ(restartBytes(file),initial);
+}
+
+
+TEST(CommonSourceStage, JointOutfallCheckpointKeepsSampledDryTransitionFeedbackAcrossPendingBatch) {
+    for(double multiplier:{0.,1.25,3.})for(auto closure:{GwClosure::CLOSED_FORM,GwClosure::SIGMA}) {
+        RouterSourceModel a;const double film=.0001*multiplier;
+        a.setup(Momentum2D::LOCAL_INERTIAL,closure,false,2.3,3,0,false,2,OutfallType::FREE,false,film);ASSERT_FALSE(HasFatalFailure());
+        const double actual=a.router.state().depth[1];const double threshold=a.router.options().dry_depth;
+        const double t=std::clamp((actual-threshold)/threshold,0.,1.);const double expected=t*t*(3-2*t);
+        a.tick();EXPECT_DOUBLE_EQ(a.source.context.node_subtypes.outfalls.ramp_2d[0],expected);
+        const auto file=restartPath("outfall-film");ASSERT_EQ(a.router.saveCheckpoint(a.source.context,file.string()),"");
+        RouterSourceModel b;b.setup(Momentum2D::LOCAL_INERTIAL,closure,false,2.3,3,0,false,2,OutfallType::FREE,false,film);
+        ASSERT_FALSE(HasFatalFailure());ASSERT_EQ(b.router.loadCheckpoint(b.source.context,file.string()),"");
+        routerEqual(a,b,"outfall-film-restored");
+        for(int i=0;i<15;++i){a.tick();b.tick();EXPECT_EQ(a.router.state().volume,b.router.state().volume);}
+        routerEqual(a,b,"outfall-film-continued");
     }
 }

@@ -501,7 +501,7 @@ std::string Router::saveCheckpoint(const SimulationContext& c,const std::string&
     } catch(const std::exception& e) {return e.what();}
 }
 std::shared_ptr<Router::RestartState> Router::prepareCheckpointBytes(const SimulationContext& c,std::string bytes,
-                                                                   const std::array<double,6>* boundary,const double* delivery) const {
+                                                                   const std::array<double,6>* boundary,const double* delivery,const OutfallData* feedback) const {
     require(&c==checkpoint_context_, "Hydraulic checkpoint restore requires an enabled routing component.");
     checkCheckpointProfile(c);require(checkpoint_model_==checkpointModel(c), "Hydraulic checkpoint target model changed.");
     require(!bytes.empty() && bytes.size()<=maxBytes,"Hydraulic checkpoint exceeds its size limit.");
@@ -512,6 +512,14 @@ std::shared_ptr<Router::RestartState> Router::prepareCheckpointBytes(const Simul
     if(boundary) require(*boundary==std::array<double,6>{s->time,s->date,s->elapsed,s->old_elapsed,s->next_report,s->evap},
                          "Joint hydraulic/surface checkpoint clocks or shared forcing differ.");
     if(delivery)validateJointDelivery(s->nodes,c.coupled_node,*delivery);
+    if(feedback) {
+        const auto& heads=feedback->head_2d;
+        require(heads.size()==s->outfalls.head_2d.size() && feedback->ramp_2d==s->outfalls.ramp_2d,
+                "Joint outfall feedback shape or wetness differs.");
+        for(std::size_t row=0;row<heads.size();++row)
+            require(heads[row]==s->outfalls.head_2d[row] || (std::isnan(heads[row]) && std::isnan(s->outfalls.head_2d[row])),
+                    "Joint hydraulic/surface tailwater feedback differs.");
+    }
     return s;
 }
 void Router::validateJointDelivery(const NodeData& nodes,const std::vector<uint8_t>& coupled,double delivery) {

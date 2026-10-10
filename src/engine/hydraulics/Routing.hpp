@@ -54,6 +54,7 @@ namespace openswmm {
 namespace twoD { class SurfaceRouter2D; }
 
 struct SimulationContext;
+struct OutfallData;
 
 // ============================================================================
 // Routing model enum
@@ -208,7 +209,8 @@ private:
     std::string checkpointBytes(const SimulationContext&, std::string&) const;
     std::shared_ptr<RestartState> prepareCheckpointBytes(const SimulationContext&, std::string,
                                                        const std::array<double,6>* boundary = nullptr,
-                                                       const double* delivery = nullptr) const;
+                                                       const double* delivery = nullptr,
+                                                       const OutfallData* feedback = nullptr) const;
     static void validateJointDelivery(const NodeData&, const std::vector<uint8_t>&, double);
     void installCheckpoint(SimulationContext&, std::shared_ptr<RestartState>) noexcept;
     SimulationContext* checkpoint_context_ = nullptr; // non-owning, stable lifetime

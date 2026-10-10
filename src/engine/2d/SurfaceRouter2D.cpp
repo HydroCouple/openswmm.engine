@@ -8,6 +8,7 @@
 
 #include "SurfaceRouter2D.hpp"
 #include "../hydrology/LidNode.hpp"
+#include "../hydraulics/Routing.hpp"
 #include "gw/GwSourceResolver.hpp"
 #include "mesh/MeshBuilder.hpp"
 #include "mesh/VertexReconstruction.hpp"
@@ -1408,6 +1409,12 @@ void SurfaceRouter2D::step(SimulationContext& ctx, double dt, double t) {
 
 void SurfaceRouter2D::updateOutfallsPreRouting(SimulationContext& ctx, double dt) {
     if (!active_) return;
+    if (joint_hydraulic_ && !outfall_exchange_.points_.empty() &&
+        (!source_boundary_ready_ || outfall_exchange_.prepared_ || !std::isfinite(dt) || dt <= 0 ||
+         joint_hydraulic_->checkpoint_context_ != &ctx || !joint_hydraulic_->checkpoint_prepared_ ||
+         joint_hydraulic_->checkpoint_time_ != ctx.current_time ||
+         joint_hydraulic_->checkpoint_step_end_ != ctx.current_time + dt))
+        throw std::invalid_argument("Joint outfall preparation requires its tracked hydraulic interval and an unused reservation.");
     updateOutfallBoundaries(coupling_points_, mesh_, state_, ctx, options_);
     outfall_exchange_.prepare(mesh_, state_, options_, ctx, dt);
 }
@@ -2105,6 +2112,9 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
             start + routing_dt <= start || std::abs(t - start) > 1e-12 * std::max(1.0, start))
             throw std::invalid_argument("Common-source router requires the next accepted routing interval.");
         checkJointRoutingStep(ctx, routing_dt, t);
+        if (joint_hydraulic_ && !outfall_exchange_.points_.empty() &&
+            (!outfall_exchange_.prepared_ || outfall_exchange_.prepared_dt_ != routing_dt))
+            throw std::invalid_argument("Joint outfall advance requires its matching pre-routing reservation.");
         source_boundary_ready_ = false;
     }
     // Consume only the accepted hydraulic exchange, against reservations
@@ -2112,7 +2122,8 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
     publishNodeRows(ctx);
     outfall_state_changed_ = outfall_exchange_.apply(
         mesh_, state_, options_, ctx, routing_dt, window_outfall_accum_,
-        node_row_conc_.empty() ? nullptr : &node_row_conc_) || outfall_state_changed_;
+        node_row_conc_.empty() ? nullptr : &node_row_conc_,
+        common_stage_ ? &coupling_cum_applied_ : nullptr) || outfall_state_changed_;
 
 
     // Windowless co-advance: live in-marcher exchange, no CFL clamp on the
@@ -2294,6 +2305,7 @@ void SurfaceRouter2D::applyAgingAndReactions(SimulationContext& ctx, double dt) 
 
 void SurfaceRouter2D::resetWindowAccumulators() {
     std::fill(window_outfall_accum_.begin(), window_outfall_accum_.end(), 0.0);
+    outfall_exchange_.resetWindow();
 
 }
 

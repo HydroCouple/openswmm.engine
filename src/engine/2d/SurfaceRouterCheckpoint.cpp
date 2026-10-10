@@ -75,10 +75,16 @@ struct SurfaceRouter2D::RestartState {
     std::vector<double> rainfall;
     SimulationContext::MassBalance2D mb;
     double delivery=0;
+    OutfallExchange exchange;
+    std::vector<double> window_outfall_accum_, limits;
+    bool outfall_state_changed_=false;
+    OutfallData feedback;
     RestartState(const SurfaceRouter2D& r,const SimulationContext& c) {
 #define COPY(v) v=r.v;
         ROUTER_FIELDS(COPY)
 #undef COPY
+        exchange=r.outfall_exchange_;window_outfall_accum_=r.window_outfall_accum_;outfall_state_changed_=r.outfall_state_changed_;
+        limits=c.surface_outfall_link_limit;feedback.head_2d=c.node_subtypes.outfalls.head_2d;feedback.ramp_2d=c.node_subtypes.outfalls.ramp_2d;
         current_time=c.current_time;current_date=c.current_date;elapsed_ms=c.elapsed_ms;
         old_elapsed_ms=c.old_elapsed_ms;next_report_ms=c.next_report_ms;
         evap_rate=c.climate_state.evap_rate;rainfall=c.gages.rainfall;mb=c.mass_balance_2d;delivery=c.coupling_delivery_remaining;
@@ -89,6 +95,10 @@ struct SurfaceRouter2D::RestartState {
 #undef FIELD
         a(current_time,current_date,elapsed_ms,old_elapsed_ms,next_report_ms,evap_rate,rainfall);
         massBalance(a,mb);
+    }
+    void archiveJoint(Archive& a) {
+        a(window_outfall_accum_,outfall_state_changed_);exchange.checkpoint(a);
+        a.fixed(limits,feedback.head_2d,feedback.ramp_2d);
     }
     void validate(const SurfaceRouter2D& r,const SimulationContext& c) const {
         const auto n=static_cast<std::size_t>(r.mesh_.n_cells()),ng=static_cast<std::size_t>(c.n_gages());
@@ -129,18 +139,33 @@ struct SurfaceRouter2D::RestartState {
             if(!std::isfinite(v) || v<0) throw std::runtime_error("Invalid router checkpoint mass balance.");
         if(!mb.active || !close(rain,mb.rainfall_in) || !close(infil,mb.infil_out) || mb.init_storage!=c.mass_balance_2d.init_storage ||
            mb.external_in!=0 || mb.external_out!=0 || (!r.joint_hydraulic_ && (mb.coupling_1d_to_2d_in!=0 || mb.coupling_2d_to_1d_out!=0)) ||
-           mb.outfall_in!=0 || mb.outfall_out!=0 || mb.boundary_in!=0 || mb.boundary_out!=0 ||
+           (!r.joint_hydraulic_ && (mb.outfall_in!=0 || mb.outfall_out!=0)) || mb.boundary_in!=0 || mb.boundary_out!=0 ||
            mb.infil_to_aquifer!=0 || mb.infil_aquifer_pending!=0 || mb.solver_nsteps!=-1 || mb.solver_nrhs!=0 ||
            mb.solver_avg_h!=0 || mb.solver_last_h!=0 || mb.solver_active_min!=-1 || mb.solver_active_mean!=-1 ||
            mb.solver_active_max!=-1 || mb.solver_n_tiers!=0)
             throw std::runtime_error("Router checkpoint ledgers differ or include unqualified exchanges.");
         if(r.joint_hydraulic_) {
+            if(window_outfall_accum_.size()!=r.coupling_points_.size() ||
+               (pending_dt_==0 && outfall_state_changed_) ||
+               feedback.head_2d.size()!=c.node_subtypes.outfalls.head_2d.size() || feedback.ramp_2d.size()!=feedback.head_2d.size())
+                throw std::runtime_error("Joint outfall checkpoint batch/feedback shape differs.");
+            if(!exchange.points_.empty() && ((current_time==0)!=(exchange.prepared_dt_==0) ||
+               exchange.prepared_dt_>c.options.routing_step))
+                throw std::runtime_error("Invalid joint outfall reservation duration.");
+            exchange.validateCheckpoint(r.options_,limits,window_outfall_accum_,outfall_state_changed_,{mb.outfall_in,mb.outfall_out});
+            for(const auto& p:exchange.points_) {
+                const int row=c.node_subtypes.outfall_row(p.node);
+                if(row<0 || std::size_t(row)>=feedback.head_2d.size() || std::isinf(feedback.head_2d[row]) || (exchange.prepared_dt_>0 && !std::isfinite(feedback.head_2d[row])) ||
+                   !std::isfinite(feedback.ramp_2d[row]) || feedback.ramp_2d[row]<0 || feedback.ramp_2d[row]>1)
+                    throw std::runtime_error("Invalid joint outfall tailwater feedback.");
+            }
             double net=0;for(double v:coupling_cum_applied_)net+=v;
-            if(!std::isfinite(delivery) || delivery<0 || delivery>r.couplingSyncSpan(c,r.options_)+c.options.routing_step ||
+            if(!std::isfinite(net) || !std::isfinite(delivery) || delivery<0 || delivery>r.couplingSyncSpan(c,r.options_)+c.options.routing_step ||
                !std::isfinite(mb.coupling_1d_to_2d_in) || mb.coupling_1d_to_2d_in<0 ||
                !std::isfinite(mb.coupling_2d_to_1d_out) || mb.coupling_2d_to_1d_out<0 ||
-               std::abs(net-(mb.coupling_1d_to_2d_in-mb.coupling_2d_to_1d_out))>
-                   1e-12*std::max({1.0,std::abs(net),mb.coupling_1d_to_2d_in,mb.coupling_2d_to_1d_out}))
+               !std::isfinite(mb.outfall_in) || mb.outfall_in<0 || !std::isfinite(mb.outfall_out) || mb.outfall_out<0 ||
+               std::abs(net-(mb.coupling_1d_to_2d_in-mb.coupling_2d_to_1d_out+mb.outfall_in-mb.outfall_out))>
+                   1e-12*std::max({1.0,std::abs(net),mb.coupling_1d_to_2d_in,mb.coupling_2d_to_1d_out,mb.outfall_in,mb.outfall_out}))
                 throw std::runtime_error("Joint checkpoint delivery or surface exchange ledger differs.");
         }
         for(long v:mb.solver_tier_cells) if(v!=0) throw std::runtime_error("Router checkpoint has finalized statistics.");
@@ -151,7 +176,13 @@ struct SurfaceRouter2D::RestartState {
 #undef MOVE
         c.current_time=current_time;c.current_date=current_date;c.elapsed_ms=elapsed_ms;c.old_elapsed_ms=old_elapsed_ms;
         c.next_report_ms=next_report_ms;c.climate_state.evap_rate=evap_rate;c.gages.rainfall=std::move(rainfall);
-        c.mass_balance_2d=mb;if(r.joint_hydraulic_)c.coupling_delivery_remaining=delivery;r.source_boundary_ready_=true;
+        c.mass_balance_2d=mb;
+        if(r.joint_hydraulic_) {
+            static_assert(std::is_nothrow_move_assignable_v<OutfallExchange>);
+            c.coupling_delivery_remaining=delivery;c.surface_outfall_link_limit=std::move(limits);
+            r.outfall_exchange_=std::move(exchange);r.window_outfall_accum_=std::move(window_outfall_accum_);r.outfall_state_changed_=outfall_state_changed_;
+        }
+        r.source_boundary_ready_=true;
     }
 };
 #undef ROUTER_FIELDS
@@ -162,7 +193,7 @@ std::string SurfaceRouter2D::sourceRouterModel(const SimulationContext& ctx) con
       o.ignore_quality,o.ignore_snow_melt,o.ignore_2d,o.water_age,o.heat_transport,x,y,step,sync);
     for(int g=0;g<ctx.n_gages();++g) {auto name=ctx.gage_names.name_of(g);a(name);}
     if(joint_hydraulic_) {
-        auto points=node_coupling_points_;
+        auto points=coupling_points_;
         a.sequence(points,[&](auto& p){a(p.cell_idx,p.vertex_idx,p.node_idx,p.cd,p.area,p.is_outfall,p.has_flap_gate,p.area_authored);});
     }
     return a.bytes();
@@ -173,14 +204,14 @@ std::string SurfaceRouter2D::sourceBoundary(const SimulationContext& ctx) const 
         return "Router checkpoint requires an accepted attached all-cell source boundary.";
     if((!joint_hydraulic_ && (ctx.n_nodes()!=0 || ctx.n_links()!=0 || !coupling_points_.empty())) || !aquifer_link_shares_.empty() ||
        !subcatch_recharge_.empty() || !cell_subcatch_.empty() || surface_quality_.active() || runtimeActive() ||
-       !ramp_prev_head_.empty() || outfall_state_changed_ || (!joint_hydraulic_ && !window_outfall_accum_.empty()))
+       !ramp_prev_head_.empty() || (!joint_hydraulic_ && (outfall_state_changed_ || !window_outfall_accum_.empty())))
         return "Router checkpoint live 1D, land-use quality and external providers are not qualified.";
     if(joint_hydraulic_) {
-        if(state_.nodes_1d!=&ctx.nodes || state_.node_coupling!=&node_coupling_points_ ||
-           node_coupling_points_.empty() || ctx.n_pollutants()!=0 || !subsurface_.nodeBeds().empty())
+        if(state_.nodes_1d!=(node_coupling_points_.empty()?nullptr:&ctx.nodes) ||
+           state_.node_coupling!=(node_coupling_points_.empty()?nullptr:&node_coupling_points_) ||
+           coupling_points_.empty() || ctx.n_pollutants()!=0 || !subsurface_.nodeBeds().empty())
             return "Joint router checkpoint coupling/receiver layout differs.";
-        for(const auto& p:coupling_points_)if(p.is_outfall) return "Joint checkpoint mapped outfalls are not qualified.";
-        for(double v:window_outfall_accum_)if(v!=0) return "Joint checkpoint has pending outfall exchange.";
+        if(outfall_exchange_.prepared_) return "Joint checkpoint has an unconsumed outfall reservation.";
     }
     if(infil_.resolvedRows().size()!=mesh_.tri_area.size()) return "Router checkpoint requires aquifer-owned infiltration rows.";
     for(int i=0;i<mesh_.n_cells();++i)
@@ -221,10 +252,9 @@ void SurfaceRouter2D::attachCommonSourceStage(SimulationContext& ctx,CommonSourc
         std::string bytes;const auto error=hydraulic->checkpointBytes(ctx,bytes);
         const char* ramp=std::getenv("OPENSWMM_2D_HEAD_RAMP");
         if(!error.empty())throw std::invalid_argument(error);
-        if((ramp && ramp[0]=='1') || node_coupling_points_.empty() || ctx.n_pollutants()!=0 ||
+        if((ramp && ramp[0]=='1') || coupling_points_.empty() || ctx.n_pollutants()!=0 ||
            state_.transport.active() || !subsurface_.nodeBeds().empty() || !aquifer_link_shares_.empty())
-            throw std::invalid_argument("Joint source attachment requires water-only non-outfall coupling without head ramps or node/link beds.");
-        for(const auto& p:coupling_points_)if(p.is_outfall)throw std::invalid_argument("Joint source mapped outfalls are not qualified.");
+            throw std::invalid_argument("Joint source attachment requires water-only coupling without head ramps or node/link beds.");
     }
     for(int i=0;i<mesh_.n_cells();++i) {
         if(state_.coupling_flux[i]!=0 || state_.coupling_forced[i]!=0 || infil_.resolvedRows()[i].has_method)
@@ -236,7 +266,7 @@ void SurfaceRouter2D::attachCommonSourceStage(SimulationContext& ctx,CommonSourc
     // Empty node row publishers do not represent a live node provider.
     if(node_row_conc_.empty()) state_.node_row_conc=nullptr;
     // Construct the joint identity before installing any attachment pointers.
-    auto points=node_coupling_points_;Archive identity;
+    auto points=coupling_points_;Archive identity;
     if(hydraulic)identity.sequence(points,[&](auto& p){identity(p.cell_idx,p.vertex_idx,p.node_idx,p.cd,p.area,p.is_outfall,p.has_flap_gate,p.area_authored);});
     auto model=sourceRouterModel(ctx)+identity.bytes();
     cpu->setCommonSourceStage(stage);cpu->joint_checkpoint_=hydraulic!=nullptr;
@@ -254,15 +284,19 @@ std::string SurfaceRouter2D::saveCheckpoint(const SimulationContext& ctx,const s
     try {
         const auto error=sourceBoundary(ctx);if(!error.empty())return error;
         RestartState snapshot(*this,ctx);snapshot.validate(*this,ctx);
+        if(joint_hydraulic_ && state_.coupling_applied.size()!=mesh_.tri_area.size()) return "Joint surface coupling receipt shape differs.";
+        if(joint_hydraulic_)for(std::size_t c=0;c<state_.coupling_applied.size();++c)
+            if(state_.coupling_applied[c]!=(snapshot.exchange.pending_.empty()?0:snapshot.exchange.pending_[c]))
+                return "Joint outfall receipts differ from undrained surface coupling.";
         std::string cpu;const auto ce=static_cast<ExplicitInertialSolver*>(solver_.get())->checkpointBytes(cpu);if(!ce.empty())return ce;
         Archive state;snapshot.archive(state);state(cpu);
         if(joint_hydraulic_) {
             Router::validateJointDelivery(ctx.nodes,ctx.coupled_node,snapshot.delivery);
             std::string hydraulic;const auto he=joint_hydraulic_->checkpointBytes(ctx,hydraulic);if(!he.empty())return he;
-            state(hydraulic,snapshot.delivery);
+            state(hydraulic,snapshot.delivery);snapshot.archiveJoint(state);
         }
         auto payload=state.bytes(),model=source_router_model_;auto magic=std::string(joint_hydraulic_?jointMagic:magicName);
-        uint32_t version=1,endian=0x01020304,longBytes=sizeof(long),crc=checksum(payload);
+        uint32_t version=joint_hydraulic_?2:1,endian=0x01020304,longBytes=sizeof(long),crc=checksum(payload);
         Archive file;file(magic,version,endian,longBytes,model,payload,crc);
         if(file.bytes().size()>maxBytes)return "Router checkpoint exceeds its size limit.";
         publish(path,file.bytes(),joint_hydraulic_?jointMagic:magicName);return {};
@@ -274,11 +308,11 @@ std::string SurfaceRouter2D::loadCheckpoint(SimulationContext& ctx,const std::st
         if(sim_time_!=0 || pending_dt_!=0 || ctx.current_time!=0) return "Router checkpoint restore requires a fresh attached router.";
         Archive file(readFile(path));std::string magic,model,payload;uint32_t version=0,endian=0,longBytes=0,crc=0;
         file(magic,version,endian,longBytes,model,payload,crc);file.finish();
-        if(magic!=(joint_hydraulic_?jointMagic:magicName) || version!=1 || endian!=0x01020304 || longBytes!=sizeof(long)) return "Unsupported router checkpoint version/platform.";
+        if(magic!=(joint_hydraulic_?jointMagic:magicName) || version!=(joint_hydraulic_?2u:1u) || endian!=0x01020304 || longBytes!=sizeof(long)) return "Unsupported router checkpoint version/platform.";
         if(model!=source_router_model_) return "Router checkpoint report/weather model differs.";
         if(crc!=checksum(payload)) return "Router checkpoint checksum differs.";
         RestartState snapshot(*this,ctx);Archive state(std::move(payload));snapshot.archive(state);std::string cpu,hydraulic;state(cpu);
-        if(joint_hydraulic_)state(hydraulic,snapshot.delivery);
+        if(joint_hydraulic_) {state(hydraulic,snapshot.delivery);snapshot.archiveJoint(state);}
         state.finish();
         snapshot.validate(*this,ctx);
         const std::array<double,5> expected{snapshot.sim_time_,snapshot.mb.rainfall_in,snapshot.mb.evap_out,snapshot.mb.aquifer_in,snapshot.mb.final_storage};
@@ -288,9 +322,9 @@ std::string SurfaceRouter2D::loadCheckpoint(SimulationContext& ctx,const std::st
         if(joint_hydraulic_) {
             const std::array<double,6> clock{snapshot.current_time,snapshot.current_date,snapshot.elapsed_ms,
                 snapshot.old_elapsed_ms,snapshot.next_report_ms,snapshot.evap_rate};
-            prepared=joint_hydraulic_->prepareCheckpointBytes(ctx,std::move(hydraulic),&clock,&snapshot.delivery);
+            prepared=joint_hydraulic_->prepareCheckpointBytes(ctx,std::move(hydraulic),&clock,&snapshot.delivery,&snapshot.feedback);
         }
-        const auto ce=static_cast<ExplicitInertialSolver*>(solver_.get())->loadCheckpointBytes(std::move(cpu),&expected);if(!ce.empty())return ce;
+        const auto ce=static_cast<ExplicitInertialSolver*>(solver_.get())->loadCheckpointBytes(std::move(cpu),&expected,snapshot.exchange.pending_.empty()?nullptr:&snapshot.exchange.pending_);if(!ce.empty())return ce;
         // Parsing/model/ledger/clock checks have all completed. CPU installation
         // above and these remaining explicit moves cannot throw.
         if(joint_hydraulic_)joint_hydraulic_->installCheckpoint(ctx,std::move(prepared));

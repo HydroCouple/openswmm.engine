@@ -59,10 +59,11 @@ std::string ExplicitInertialSolver::checkpointBoundary() const {
     if((!joint_checkpoint_ && (state_->nodes_1d || state_->node_coupling)) || state_->node_row_conc || !exch_head_slope_.empty() || !bc_cell_.empty())
         return "CPU checkpoint live 1D coupling and external boundary providers are not qualified.";
     if(joint_checkpoint_) {
-        if(!state_->nodes_1d || !state_->node_coupling || state_->transport.active() ||
-           node_drawn_.size()!=std::size_t(state_->nodes_1d->count()) || exch_.size()!=state_->node_coupling->size())
+        if(bool(state_->nodes_1d)!=bool(state_->node_coupling) || state_->transport.active() ||
+           node_drawn_.size()!=(state_->nodes_1d?std::size_t(state_->nodes_1d->count()):0) ||
+           exch_.size()!=(state_->node_coupling?state_->node_coupling->size():0))
             return "Joint CPU checkpoint coupling layout differs.";
-        for(const auto& cp:*state_->node_coupling)
+        if(state_->node_coupling)for(const auto& cp:*state_->node_coupling)
             if(cp.is_outfall || cp.cell_idx<0 || cp.cell_idx>=mesh_->n_cells() || cp.node_idx<0 ||
                cp.node_idx>=state_->nodes_1d->count() || !std::isfinite(cp.cd) || cp.cd<0 || !std::isfinite(cp.area) || cp.area<=0)
                 return "Joint CPU checkpoint requires valid non-outfall exchange points.";
@@ -168,7 +169,7 @@ std::string ExplicitInertialSolver::loadCheckpoint(const std::string& path) {
     catch(const std::exception& e) { return e.what(); }
 }
 
-std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const std::array<double,5>* router_boundary) {
+std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const std::array<double,5>* router_boundary,const std::vector<double>* pending_outfalls) {
     try {
         const auto error=checkpointBoundary(); if(!error.empty()) return error;
         if(t_last_sync_!=0 || common_stage_->intervals()!=0 || source_history_)
@@ -192,7 +193,10 @@ std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const 
             for(int k=0;k<4;++k) if(std::abs(ledger[k]-(*router_boundary)[k+1])>1e-12*std::max(1.0,std::abs(ledger[k])))
                 return "Router/source checkpoint ledgers differ.";
             for(double v:surface.infil_applied) if(v!=0) return "Router checkpoint has undrained infiltration.";
-            for(double v:surface.coupling_applied) if(v!=0) return "Router checkpoint has undrained coupling.";
+            if(pending_outfalls && pending_outfalls->size()!=surface.coupling_applied.size()) return "Router outfall receipt shape differs.";
+            for(std::size_t c=0;c<surface.coupling_applied.size();++c)
+                if(surface.coupling_applied[c]!=(pending_outfalls?(*pending_outfalls)[c]:0))
+                    return "Router checkpoint undrained coupling differs from its outfall receipts.";
         }
         // All parsing, model, shape, schedule and component checks preceded
         // installation. Moves cannot throw; restored pointers retain ownership.

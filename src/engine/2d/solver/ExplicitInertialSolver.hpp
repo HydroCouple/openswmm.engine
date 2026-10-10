@@ -106,7 +106,8 @@ private:
     friend struct ExplicitInertialSolverTestAccess;
     friend class SurfaceRouter2D;
     std::string checkpointBytes(std::string& bytes) const;
-    std::string loadCheckpointBytes(std::string bytes, const std::array<double,5>* router_boundary = nullptr);
+    std::string loadCheckpointBytes(std::string bytes, const std::array<double,5>* router_boundary = nullptr,
+                                    const std::vector<double>* pending_outfalls = nullptr);
     void refreshSourceResultBoundary();
 
     // Recompute η/depth from state volumes for the whole mesh.
