@@ -205,6 +205,7 @@ public:
 
 private:
     friend class twoD::SurfaceRouter2D;
+    friend class SWMMEngine;
     struct RestartState;
     std::string checkpointBytes(const SimulationContext&, std::string&) const;
     std::shared_ptr<RestartState> prepareCheckpointBytes(const SimulationContext&, std::string,
@@ -212,8 +213,10 @@ private:
                                                        const double* delivery = nullptr,
                                                        const OutfallData* feedback = nullptr) const;
     static void validateJointDelivery(const NodeData&, const std::vector<uint8_t>&, double);
+    static void validateSessionStorage(const std::shared_ptr<RestartState>&, const SimulationContext&, double, bool);
     void installCheckpoint(SimulationContext&, std::shared_ptr<RestartState>) noexcept;
     SimulationContext* checkpoint_context_ = nullptr; // non-owning, stable lifetime
+    bool checkpoint_owned_session_ = false; // engine owns controls; links remain conduits only
     std::string checkpoint_model_;
     double checkpoint_time_ = 0.0, checkpoint_step_end_ = 0.0;
     bool checkpoint_ready_ = false, checkpoint_prepared_ = false, checkpoint_step_finished_ = false;

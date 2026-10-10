@@ -292,6 +292,7 @@ void applyConduitLengthening(SimulationContext& ctx, RouteModel model) {
 
 void Router::init(SimulationContext& ctx, RouteModel model) {
     checkpoint_context_ = nullptr;
+    checkpoint_owned_session_ = false;
     checkpoint_model_.clear();
     checkpoint_time_ = checkpoint_step_end_ = 0.0;
     checkpoint_ready_ = checkpoint_prepared_ = checkpoint_step_finished_ = false;

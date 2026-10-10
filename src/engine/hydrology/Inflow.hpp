@@ -40,6 +40,7 @@
 namespace openswmm {
 
 struct SimulationContext;
+class SWMMEngine;
 
 namespace inflow {
 
@@ -167,6 +168,7 @@ public:
     void computeAll(SimulationContext& ctx, double current_date, double dt);
 
 private:
+    friend class openswmm::SWMMEngine;
     ExtInflowSoA ext_inflows_;
     DwfInflowSoA dwf_inflows_;
     std::vector<TimePattern> patterns_;

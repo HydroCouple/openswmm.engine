@@ -287,6 +287,7 @@ target_compile_definitions(test_engine_groundwater PRIVATE
     "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
 )
 add_gtest_unit(test_engine_routing          test_routing.cpp)
+add_gtest_unit(test_engine_checkpoint       test_engine_checkpoint.cpp)
 target_compile_definitions(test_engine_routing PRIVATE
     "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
 )

@@ -185,7 +185,8 @@ struct Router::RestartState {
                 "Invalid hydraulic checkpoint link-step sampling span.");
         require(c.options.total_duration_ms<0 || elapsed<=c.options.total_duration_ms,
                 "Hydraulic checkpoint exceeds the model duration.");
-        require(dw.surcharge_method!=dynwave::SurchargeMethod::DYNAMIC_SLOT || close(dw.sim_time_,time),
+        require(dw.surcharge_method!=dynwave::SurchargeMethod::DYNAMIC_SLOT ||
+                (router.checkpoint_owned_session_ ? dw.sim_time_<=time+1.e-11*std::max(1.,time) : close(dw.sim_time_,time)),
                 "Hydraulic/DPS completed clocks differ.");
 #define FINITE(v) finite(nodes.v);
         NODE_STATE(FINITE)
@@ -223,7 +224,7 @@ struct Router::RestartState {
             require(s.richards==initial.richards && s.infiltration_cell==initial.infiltration_cell,
                     "Hydraulic checkpoint LID formulation differs.");
             require(s.quality_mass.empty() && s.quality_outlet_conc.empty() &&
-                    ((time==0 && s.quality_old_water.empty()) || s.quality_old_water.size()==s.cells.size()),
+                    (((time==0 || router.checkpoint_owned_session_) && s.quality_old_water.empty()) || s.quality_old_water.size()==s.cells.size()),
                     "Unqualified hydraulic checkpoint LID quality shape.");
             finite(s.richards_water);finite(s.richards_pressure);finite(s.port_delta);finite(s.quality_old_water);
             double held=0;
@@ -307,9 +308,9 @@ struct Router::RestartState {
                     report.newton>=0 && std::isfinite(report.min_step) && report.min_step>=0 &&
                     std::isfinite(report.bottom_volume) && std::isfinite(report.evaporation) && report.evaporation>=0 &&
                     std::isfinite(report.balance), "Invalid hydraulic checkpoint Richards diagnostic.");
-            if (s.richards && time>0)
+            if (s.richards && time>0 && (!router.checkpoint_owned_session_ || !s.quality_old_water.empty()))
                 require(report.accepted>0 && report.min_step>0 &&
-                        (report.min_step<=time-old_elapsed/1000 || close(report.min_step,time-old_elapsed/1000)) && report.rhs>0 && report.newton>0,
+                        (report.min_step<=(router.checkpoint_owned_session_ ? time : time-old_elapsed/1000) || close(report.min_step,time-old_elapsed/1000)) && report.rhs>0 && report.newton>0,
                         "Hydraulic checkpoint lacks an accepted Richards interval.");
             for (const auto& t:report.transfers)
                 require(validCell(t.from) && validCell(t.to) && std::isfinite(t.volume) && t.volume>=0,
@@ -362,7 +363,8 @@ void Router::checkCheckpointProfile(const SimulationContext& c) const {
             "Hydraulic checkpoint requires an initialized DW routing component.");
     require(c.n_pollutants()==0 && !c.options.water_age && !c.options.heat_transport &&
             !c.nodes.coupling_tuple_age && !c.nodes.coupling_tuple_temp && c.nodes.conc_n_pollutants==0 &&
-            c.links.conc_n_pollutants==0 && c.nodes.stat_n_pollutants==0 && c.links.stat_n_pollutants==0 && !structures_,
+            c.links.conc_n_pollutants==0 && c.nodes.stat_n_pollutants==0 && c.links.stat_n_pollutants==0 &&
+            (!structures_ || checkpoint_owned_session_),
             "Hydraulic checkpoint quality, age, heat and structure/control solvers are not qualified.");
     require(c.nodes.aquifer2d_bed.empty() || c.nodes.aquifer2d_bed.size()==std::size_t(c.n_nodes()),
             "Hydraulic checkpoint node-bed flag shape differs.");
@@ -450,6 +452,9 @@ std::string Router::checkpointModel(const SimulationContext& c) const {
     auto d=dw_solver_;
     a(d.num_threads_,d.head_tol,d.max_trials,d.omega,d.surcharge_method,d.node_continuity,d.anderson_accel,
       d.unsteady_friction,d.uf_k3,d.tpa_celerity,d.dps_config_.c_pT,d.dps_config_.alpha,d.dps_config_.r);
+    if (checkpoint_owned_session_) {
+        std::string owner="engine session owns controls";a(owner);
+    }
     require(a.bytes().size()<=maxBytes, "Hydraulic checkpoint model exceeds its size limit.");
     return a.bytes();
 }
@@ -462,7 +467,8 @@ void Router::enableCheckpointing(SimulationContext& c) {
 void Router::beginCheckpointStep(SimulationContext& c,double dt) {
     require(&c==checkpoint_context_ && checkpoint_ready_ && c.current_time==checkpoint_time_ &&
             std::isfinite(dt) && dt>0 && std::isfinite(c.current_time+dt) && c.current_time+dt>c.current_time &&
-            (c.options.total_duration_ms<0 || 1000*(c.current_time+dt)<=c.options.total_duration_ms),
+            (c.options.total_duration_ms<0 || 1000*(c.current_time+dt)<=c.options.total_duration_ms ||
+             (checkpoint_owned_session_ && close(1000*(c.current_time+dt),c.options.total_duration_ms))),
             "Tracked hydraulic preparation requires an accepted chronological boundary.");
     checkCheckpointProfile(c);
     require(checkpoint_model_==checkpointModel(c), "Hydraulic checkpoint model changed after attachment.");
@@ -521,6 +527,25 @@ std::shared_ptr<Router::RestartState> Router::prepareCheckpointBytes(const Simul
                     "Joint hydraulic/surface tailwater feedback differs.");
     }
     return s;
+}
+void Router::validateSessionStorage(const std::shared_ptr<RestartState>& s,const SimulationContext& c,double expected,bool routed) {
+    // Same reported mobile + retained storage convention as SWMMEngine.
+    double volume=0;
+    for (std::size_t n=0;n<s->nodes.depth.size();++n) {
+        const auto& nodes=s->nodes;
+        if (nodes.type[n]==NodeType::STORAGE) {
+            volume+=nodes.volume[n];
+            const int row=c.node_subtypes.storage_row(static_cast<int>(n));
+            const auto& lid=s->storages.lid_state[static_cast<std::size_t>(row)];
+            require(!routed || lid.quality_old_water.size()==lid.cells.size(),"Engine routed LID previous-water shape differs.");
+            volume+=lid.held_volume;
+        } else if (nodes.full_depth[n]>0) {
+            volume+=(c.options.allow_ponding && nodes.ponded_area[n]>0 && nodes.depth[n]>nodes.full_depth[n])
+                ? nodes.volume[n] : nodes.rpt_full_volume[n]*(nodes.depth[n]/nodes.full_depth[n]);
+        }
+    }
+    for (double v:s->links.volume) volume+=v;
+    require(std::isfinite(expected) && close(volume,expected), "Engine continuity storage differs from hydraulic inventories.");
 }
 void Router::validateJointDelivery(const NodeData& nodes,const std::vector<uint8_t>& coupled,double delivery) {
     require(std::isfinite(delivery) && delivery>=0 && coupled.size()==std::size_t(nodes.count()) &&

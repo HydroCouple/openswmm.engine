@@ -47,6 +47,7 @@
 namespace openswmm {
 
 struct SimulationContext;
+class SWMMEngine;
 
 namespace controls {
 
@@ -302,6 +303,7 @@ public:
                             double current_time, double half_step);
 
 private:
+    friend class openswmm::SWMMEngine;
     int last_action_count_ = 0;     ///< Actions taken in last evaluate() call
     std::vector<Rule>        rules_;
     std::vector<PIDState>    pid_states_;

@@ -206,6 +206,13 @@ public:
      */
     int close() noexcept;
 
+    // Internal, same-platform water-only hydraulic session restart. Enable at
+    // start(0)'s initial boundary; restore into an identically initialized fresh
+    // session. No public C API, runoff/2D/provider recovery or output append.
+    std::string enableCheckpointing();
+    std::string saveCheckpoint(const std::string& path) const;
+    std::string loadCheckpoint(const std::string& path);
+
     // =========================================================================
     // Callback registration
     // =========================================================================
@@ -463,6 +470,12 @@ private:
     std::string out_path_;  ///< Binary output file path
 
     bool step_active_ = false, runtime_pipeline_ = false;
+    struct RestartState;
+    bool checkpoint_enabled_ = false, checkpoint_ready_ = false;
+    std::string checkpoint_model_;
+    void checkCheckpointProfile() const;
+    std::string checkpointModel() const;
+    void checkCheckpointBoundary() const;
     double exchange_target_ = -1.0;
 
     // Runoff clock (matching legacy OldRunoffTime / NewRunoffTime)
@@ -731,7 +744,7 @@ private:
      *                     coupling rate from the carried per-window exchange volume. */
     void assembleLateralInflows(double dt_routing) noexcept;
 
-    void stepRouting(double dt_routing) noexcept;
+    void stepRouting(double dt_routing);
 
     /**
      * @brief Update node and link statistics after routing.

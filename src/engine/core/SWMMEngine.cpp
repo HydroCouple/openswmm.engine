@@ -1576,6 +1576,11 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
     }
 
     // Compute next explicit timestep using CFL-based adaptive stepping
+    try {
+    if (checkpoint_enabled_) {
+        checkCheckpointBoundary();
+        checkpoint_ready_ = false; // also covers adaptive-step preparation failures
+    }
     double dt_next;
     if (!do_routing_) {
         // IGNORE_ROUTING (legacy DoRouting == false, swmm5.c:963): with routing
@@ -1687,6 +1692,7 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
     // node/link _setOldHydState): a SKIP_STEADY_STATE step keeps the last
     // routed step's old/new pair, which its reports interpolate and its
     // steady test (oldFlowInflow vs inflow) compares.
+    if (checkpoint_enabled_) router_.beginCheckpointStep(ctx_, dt_next);
     ctx_.save_lat_qual_state();
 
     // Reset mass balance accumulators (matching legacy massbal_initTimeStepTotals)
@@ -1706,6 +1712,11 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
     if (do_routing_) {
         accumulateNodeRoutingTotals(dt_next / 2.0);   // routing.c:227
         stepRouting(dt_next);
+        if (checkpoint_enabled_ && router_.checkpoint_prepared_) {
+            // Event/steady skips still advance the accepted engine clock.
+            router_.checkCheckpointStep(ctx_, dt_next, ctx_.climate_state.evap_rate, false);
+            router_.checkpoint_step_finished_ = true;
+        }
         if (const int drc = checkRoutingDiverged(); drc != SWMM_OK)
             return drc;
         // Legacy keeps BOTH of these inside the !BetweenEvents branch of
@@ -1831,8 +1842,18 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         );
     }
 
+    if (checkpoint_enabled_) {
+        router_.acceptCheckpointBoundary(ctx_);
+        checkpoint_ready_ = true;
+        checkCheckpointBoundary();
+    }
     if (elapsed_time) *elapsed_time = ctx_.current_time / hydraulics::TimestepController::SEC_PER_DAY;
     return SWMM_OK;
+    } catch (const std::exception& e) {
+        checkpoint_ready_ = false;
+        set_error(SWMM_ERR_WRONG_STATE, e.what());
+        return SWMM_ERR_WRONG_STATE;
+    }
 }
 
 // ============================================================================
@@ -4692,7 +4713,7 @@ void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
  *
  * @param dt_routing  Routing timestep (seconds).
  */
-void SWMMEngine::stepRouting(double dt_routing) noexcept {
+void SWMMEngine::stepRouting(double dt_routing) {
     last_step_steady_ = false;
 
     // ================================================================
@@ -5008,7 +5029,9 @@ void SWMMEngine::stepRouting(double dt_routing) noexcept {
     int iters;
     {
         openswmm::perf::ScopedTimer _pt_1d(openswmm::perf::sec_1d_step);
-        iters = router_.step(ctx_, dt_routing, ctx_.climate_state.evap_rate, non_conduit_fn);
+        iters = checkpoint_enabled_
+            ? router_.step(ctx_, dt_routing, ctx_.climate_state.evap_rate)
+            : router_.step(ctx_, dt_routing, ctx_.climate_state.evap_rate, non_conduit_fn);
     }
     lidnode::finishStep(ctx_);
     // Legacy counts a step as non-converging from the ACTUAL final Picard flag,
@@ -7603,6 +7626,8 @@ int SWMMEngine::report() noexcept {
 // ============================================================================
 
 int SWMMEngine::close() noexcept {
+    checkpoint_enabled_ = checkpoint_ready_ = false;
+    checkpoint_model_.clear();
     // Load-phase breakdown. Emitted here rather than from end() so it reports
     // for a bare open()+close() too — the benchmark harness times open alone,
     // open+initialize, and the full sequence. (See core/PerfTimers.hpp.)
