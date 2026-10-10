@@ -59,6 +59,7 @@
 #include "DateTime.hpp"
 #include "UnitConversion.hpp"
 #include "../input/PostParseResolver.hpp"
+#include "../input/Tokenizer.hpp"
 
 // 2D model definition (plain define-free data structs; reached at runtime
 // through ctx.twod_io — null in non-2D engine builds).
@@ -99,6 +100,19 @@ namespace inp_writer {
 
 static void sec(FILE* f, const char* name) {
     std::fprintf(f, "\n[%s]\n", name);
+}
+
+// Preserve filename whitespace and characters with input-format meaning.
+static std::string quote_path(const std::string& path) {
+    return path.empty() || path.find_first_of(" \t\r\n\v\f;,") != std::string::npos
+        ? "\"" + path + "\"" : path;
+}
+
+// Embedded quotes (file="folder name/output.h5") already protect an argument.
+// Whole quoted arguments lose their outer quotes on read, so restore them.
+static std::string quote_argument(const std::string& arg) {
+    const auto tokens = input::Tokenizer::tokenize(arg);
+    return tokens.size() == 1 && tokens[0] == arg ? arg : "\"" + arg + "\"";
 }
 
 // Format an OADate as MM/DD/YYYY
@@ -614,7 +628,7 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
             sec(f, "GW_INITIAL_QUALITY");
             if (!gw->initial_quality_file.empty())
                 std::fprintf(f, "%-16s %s\n", "FILE",
-                             gw->initial_quality_file.c_str());
+                             quote_path(gw->initial_quality_file).c_str());
             std::fprintf(f, ";;%-14s %-14s %-16s %s\n", "Scope", "Zone",
                          "Species", "Value");
             for (const auto& r : gw->initial_quality) {
@@ -773,7 +787,7 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx,
         const std::string of_tok =
             emit_path_token(o.output_file, dst_dir, force_abs_paths, warnings);
         if (!of_tok.empty())
-            std::fprintf(f, "%-22s %s\n", "OUTPUT_FILE", of_tok.c_str());
+            std::fprintf(f, "%-22s %s\n", "OUTPUT_FILE", quote_path(of_tok).c_str());
     }
     // Results-file size controls — option-default rule: only non-defaults are
     // emitted so pre-2026-09 files round-trip byte-identically.
@@ -847,7 +861,7 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx,
             tok = emit_path_token(o.mesh_file, dst_dir, force_abs_paths, warnings);
         }
         sec(f, "2D_MESH_FILE");
-        std::fprintf(f, "FILE %s\n", tok.c_str());
+        std::fprintf(f, "FILE %s\n", quote_path(tok).c_str());
 
         // External mode means "the mesh lives in a sidecar": write the
         // CURRENT in-memory state to the .2dm the emitted reference resolves
@@ -2916,7 +2930,7 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // U2: the CSV sidecar is referenced, not expanded — its rows carry
     // from_file and are skipped below.
     if(!ctx.initial_quality.file.empty())
-        std::fprintf(f,"%-8s %s\n","FILE",ctx.initial_quality.file.c_str());
+        std::fprintf(f,"%-8s %s\n","FILE",quote_path(ctx.initial_quality.file).c_str());
     std::fprintf(f,";;%-8s %-16s %-16s %-10s\n","Scope","Element","Constituent","Value");
     std::fprintf(f,";;%-8s %-16s %-16s %-10s\n","--------","----------------","----------------","----------");
     for(int j=0;j<ctx.initial_quality.count();++j){auto u=static_cast<size_t>(j);
@@ -3507,8 +3521,8 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     // [PLUGINS]
     if(swmm5&&!ctx.plugin_specs.empty()) note("[PLUGINS] omitted (SWMM 5.x profile)");
     if(!swmm5&&!ctx.plugin_specs.empty()){sec(f,"PLUGINS");
-    for(const auto&ps:ctx.plugin_specs){std::fprintf(f,"%s",ps.path.c_str());
-    for(const auto&a:ps.init_args)std::fprintf(f," %s",a.c_str());std::fprintf(f,"\n");
+    for(const auto&ps:ctx.plugin_specs){std::fprintf(f,"%s",quote_path(ps.path).c_str());
+    for(const auto&a:ps.init_args)std::fprintf(f," %s",quote_argument(a).c_str());std::fprintf(f,"\n");
     }}
 
     // Do not publish component files after a detected main-output failure.

@@ -49,28 +49,22 @@
 #endif
 
 #include <cstdio>
-#include <sstream>
 
 namespace {
 
-// Split a space-separated args string into a vector<string>, dropping
-// empty tokens.  Mirrors the [PLUGINS]-line tokenizer for the common
-// (no-quoting) case the GUI's free-form args field produces.
+// Use the same quoting rules as [PLUGINS] when args come from the C API.
 std::vector<std::string> split_args(const char* s) {
-    std::vector<std::string> out;
-    if (!s || s[0] == '\0') return out;
-    std::istringstream is(s);
-    std::string tok;
-    while (is >> tok) out.push_back(std::move(tok));
-    return out;
+    return s ? openswmm::input::Tokenizer::tokenize(s) : std::vector<std::string>{};
 }
 
-// Inverse: join init_args with single spaces.
+// Reconstruct an editable argument string without losing token boundaries.
 std::string join_args(const std::vector<std::string>& args) {
     std::string out;
     for (std::size_t i = 0; i < args.size(); ++i) {
         if (i) out += ' ';
-        out += args[i];
+        const auto tokens = openswmm::input::Tokenizer::tokenize(args[i]);
+        out += tokens.size() == 1 && tokens[0] == args[i]
+            ? args[i] : "\"" + args[i] + "\"";
     }
     return out;
 }

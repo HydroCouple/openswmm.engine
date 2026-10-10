@@ -1308,13 +1308,17 @@ void register2DSections(MeshData& mesh,
             for (const auto& raw : lines) {
                 auto tokens = openswmm::input::Tokenizer::tokenize(raw);
                 if (tokens.size() >= 2 && iequals(tokens[0], "FILE")) {
-                    // Path may contain spaces; the tokenizer split an unquoted
-                    // path, so rejoin the tokens after FILE (a quoted path is a
-                    // single token already). Fixes meshes like "My Model.2dm".
+                    // Standard FILE rows consume the raw tail so unquoted
+                    // filenames retain repeated spaces. Keep CSV compatibility.
+                    const auto line = openswmm::input::Tokenizer::trim(
+                        openswmm::input::Tokenizer::strip_comment(raw));
                     std::string path = tokens[1];
                     for (std::size_t k = 2; k < tokens.size(); ++k) { path += ' '; path += tokens[k]; }
-                    if (path.size() >= 2 && path.front() == '"' && path.back() == '"')
-                        path = path.substr(1, path.size() - 2);
+                    if (line.size() > 4 && std::isspace(static_cast<unsigned char>(line[4]))) {
+                        const auto tail = openswmm::input::Tokenizer::trim(line.substr(4));
+                        if (!tail.empty() && tail.front() != '"' && tail.front() != ',')
+                            path = std::string(tail);
+                    }
                     options.mesh_file = path;
                     return; // only first FILE line
                 }

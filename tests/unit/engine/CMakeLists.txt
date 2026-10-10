@@ -84,6 +84,7 @@ endfunction()
 #       engine component is written (see MASTER_IMPLEMENTATION_PLAN.md phases).
 
 add_gtest_unit(test_engine_tokenizer         test_tokenizer.cpp)
+add_gtest_unit(test_engine_inp_path_spaces   test_inp_path_spaces.cpp)
 add_gtest_unit(test_engine_name_index        test_name_index.cpp)
 add_gtest_unit(test_engine_name_case_parity  test_name_case_parity.cpp)
 add_gtest_unit(test_engine_options_parser    test_options_parser.cpp)
