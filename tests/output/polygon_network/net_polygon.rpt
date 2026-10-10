@@ -1,0 +1,219 @@
+
+  OPENSWMM ENGINE - VERSION 6.0.0-alpha.3
+  ------------------------------------------------------------
+
+  
+  *************
+  Element Count
+  *************
+  Number of rain gages ...... 0
+  Number of subcatchments ... 0
+  Number of nodes ........... 3
+  Number of links ........... 2
+  Number of pollutants ...... 0
+  Number of land uses ....... 0
+  
+  
+  ************
+  Node Summary
+  ************
+                                           Invert      Max.    Ponded    External
+  Name                 Type                 Elev.     Depth      Area    Inflow  
+  -------------------------------------------------------------------------------
+  J0                   JUNCTION             40.00     12.00       0.0    Yes
+  J1                   JUNCTION             39.60     12.00       0.0
+  O1                   OUTFALL              39.20      4.00       0.0
+  
+  
+  ************
+  Link Summary
+  ************
+  Name             From Node        To Node          Type            Length    %Slope Roughness
+  ---------------------------------------------------------------------------------------------
+  C0               J0               J1               CONDUIT          200.0    0.2000    0.0130
+  C1               J1               O1               CONDUIT          200.0    0.2000    0.0130
+  
+  
+  *********************
+  Cross Section Summary
+  *********************
+                                        Full     Full     Hyd.     Max.   No. of     Full
+  Conduit          Shape               Depth     Area     Rad.    Width  Barrels     Flow
+  ---------------------------------------------------------------------------------------
+  C0               POLYGON              4.00    12.57     1.00     4.00        1    64.24
+  C1               CIRCULAR             4.00    12.57     1.00     4.00        1    64.24
+  
+  
+  
+  ****************
+  Analysis Options
+  ****************
+  Flow Units ............... CFS
+  Process Models:
+    Rainfall/Runoff ........ NO
+    RDII ................... NO
+    Snowmelt ............... NO
+    Groundwater ............ NO
+    Flow Routing ........... YES
+    Ponding Allowed ........ NO
+    Water Quality .......... NO
+  Flow Routing Method ...... FV
+  Cross-Section Geometry ... LEGACY
+  Compiled Cross-Sections .. 1 link -> 1 unique section
+  Starting Date ............ 01/01/2026 00:00:00
+  Ending Date .............. 01/01/2026 02:00:00
+  Antecedent Dry Days ...... 0.0
+  Report Time Step ......... 00:01:00
+  Routing Time Step ........ 5.00 sec
+  
+  
+  **************************        Volume        Volume
+  Flow Routing Continuity        acre-feet      10^6 gal
+  **************************     ---------     ---------
+  Dry Weather Inflow .......         0.000         0.000
+  Wet Weather Inflow .......         0.000         0.000
+  Groundwater Inflow .......         0.000         0.000
+  RDII Inflow ..............         0.000         0.000
+  External Inflow ..........         1.983         0.646
+  External Outflow .........         1.955         0.637
+  Flooding Loss ............         0.000         0.000
+  Evaporation Loss .........         0.000         0.000
+  Exfiltration Loss ........         0.000         0.000
+  Initial Stored Volume ....         0.000         0.000
+  Final Stored Volume ......         0.028         0.009
+  Continuity Error (%) .....        -0.009
+  
+  
+  
+  
+  
+  
+  ********************************
+  Highest Flow Instability Indexes
+  ********************************
+  All links are stable.
+  
+  
+  
+  
+  *************************
+  Routing Time Step Summary
+  *************************
+  Minimum Time Step           :     1.25 sec
+  Average Time Step           :     3.75 sec
+  Maximum Time Step           :     5.00 sec
+  % of Time in Steady State   :     0.00
+  Average Substeps per Step   :     2.00
+  % of Steps Not Converging   :      n/a
+  
+  
+  *********************
+  FV Solver Statistics
+  *********************
+  Explicit Substeps ........          3838
+  Face Flux Evaluations ....         38380
+  Avg Substep (s) ..........      1.875977
+  Min Substep (s) ..........      0.974021
+  Last Substep (s) .........      1.250000
+  LTS Macro Cycles Fired ...             0
+  LTS Macro Cycles Rejected              0
+  Active Faces min/mean/max    100.0 /100.0 /100.0  (%)
+  dt Argmin Pressurized (%)            0.0
+  dt Argmin Taper Band (%) .           0.0
+  dt Argmin Free (%) .......         100.0
+  dt Argmin Node Bound (%) .           0.0
+  LTS Tier 0 Occupancy (%) .         100.0
+  
+  
+  
+  
+  
+  
+  ******************
+  Node Depth Summary
+  ******************
+
+  ---------------------------------------------------------------------------------
+                                 Average  Maximum  Maximum  Time of Max    Reported
+                                   Depth    Depth      HGL   Occurrence   Max Depth
+  Node                 Type         Feet     Feet     Feet  days hr:min        Feet
+  ---------------------------------------------------------------------------------
+  J0                   JUNCTION     1.17     1.17    41.17     0  00:34        1.17
+  J1                   JUNCTION     1.18     1.18    40.78     0  00:44        1.18
+  O1                   OUTFALL      1.00     1.01    40.21     0  00:36        1.01
+  
+  
+  *******************
+  Node Inflow Summary
+  *******************
+
+  -------------------------------------------------------------------------------------------------
+                                  Maximum  Maximum                  Lateral       Total        Flow
+                                  Lateral    Total  Time of Max      Inflow      Inflow     Balance
+                                   Inflow   Inflow   Occurrence      Volume      Volume       Error
+  Node                 Type           CFS      CFS  days hr:min    10^6 gal    10^6 gal     Percent
+  -------------------------------------------------------------------------------------------------
+  J0                   JUNCTION     12.00    12.00     0  00:00       0.646       0.646      -0.017
+  J1                   JUNCTION      0.00    12.00     0  02:00           0       0.641      -0.017
+  O1                   OUTFALL       0.00    12.00     0  02:00           0       0.637      -0.015
+  
+  
+  
+  
+  *********************
+  Node Flooding Summary
+  *********************
+  
+  No nodes were flooded.
+  
+  
+  ***********************
+  Outfall Loading Summary
+  ***********************
+ 
+  ----------------------------------------------------------- 
+                         Flow       Avg       Max       Total 
+                         Freq      Flow      Flow      Volume 
+  Outfall Node           Pcnt       CFS       CFS    10^6 gal 
+  -----------------------------------------------------------
+  O1                    99.64     11.88     12.00       0.637 
+  -----------------------------------------------------------
+  System                99.64     11.88     12.00       0.637
+  
+  
+  ********************
+  Link Flow Summary
+  ********************
+
+  -----------------------------------------------------------------------------
+                                 Maximum  Time of Max   Maximum    Max/    Max/
+                                  |Flow|   Occurrence   |Veloc|    Full    Full
+  Link                 Type          CFS  days hr:min    ft/sec    Flow   Depth
+  -----------------------------------------------------------------------------
+  C0                   CONDUIT     12.00     0  02:00      5.11    0.19    0.30
+  C1                   CONDUIT     12.00     0  02:00      5.30    0.19    0.29
+  
+  
+  ***************************
+  Flow Classification Summary
+  ***************************
+
+  -------------------------------------------------------------------------------------
+                      Adjusted    ---------- Fraction of Time in Flow Class ---------- 
+                       /Actual         Up    Down  Sub   Sup   Up    Down  Norm  Inlet 
+  Conduit               Length    Dry  Dry   Dry   Crit  Crit  Crit  Crit  Ltd   Ctrl  
+  -------------------------------------------------------------------------------------
+  C0                      1.00   0.00  0.00  0.00  0.99  0.01  0.00  0.00  0.00  0.00
+  C1                      1.00   0.00  0.00  0.00  0.99  0.01  0.00  0.00  0.00  0.00
+  
+  *************************
+  Conduit Surcharge Summary
+  *************************
+  
+  No conduits were surcharged.
+  
+  
+
+  Analysis begun on:  Wed Oct  7 22:42:56 2026
+  Analysis ended on:  Wed Oct  7 22:42:56 2026
+  Total elapsed time: < 1 sec

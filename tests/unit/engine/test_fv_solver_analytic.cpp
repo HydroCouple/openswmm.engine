@@ -23,6 +23,9 @@
 #include <fstream>
 
 #include "fv_test_support.hpp"
+#include "hydraulics/ChebSection.hpp"
+#include "hydraulics/LegacyShapeBoundary.hpp"
+#include "hydraulics/XSectBoundary.hpp"
 
 using namespace fvtest;
 namespace k = openswmm::fv::kernels;
@@ -491,3 +494,230 @@ TEST(FvAnalytic, Rk2StaysWellBalanced) {
     s.finalize();
 }
 
+
+// ---------------------------------------------------------------------------
+// Well-balancedness on a COMPILED section (XSECT_GEOMETRY EXACT)
+// ---------------------------------------------------------------------------
+
+TEST(FvAnalytic, CompiledSectionIsAtLeastAsWellBalancedAsLegacy) {
+    // The two lake-at-rest tests above cover an OPEN channel and a fully
+    // PRESSURIZED pipe. Neither covers a partly-full CLOSED pipe, which is
+    // the regime where FvKernels::depthOfArea actually iterates — and which
+    // this work changed, replacing Brent with a seeded Newton on the
+    // compiled boundary.
+    //
+    // HISTORY, because this test's own premise turned out to be wrong and the
+    // correction is the interesting part. It originally recorded that a
+    // partly-full closed pipe over a slope break does NOT hold lake-at-rest
+    // in either geometry mode (worst drift 5.6e-5 compiled / 7.4e-5
+    // tabulated), and attributed that to "a pre-existing property of the
+    // closure, most likely the Preissmann taper band". It asserted only the
+    // comparative property on those grounds, saying outright that demanding
+    // 1e-9 "would simply be asserting something untrue of the solver".
+    //
+    // It was not the taper band. It was i1OfDepth: its table nodes are
+    // accumulated with Simpson while its in-interval refinement is a
+    // trapezoid, so the discrete pressure term jumped at every table node and
+    // was not a continuous antiderivative of the A the mass update uses —
+    // which is what well-balancedness actually requires. See the residual
+    // term and its note in FvKernels.hpp. With that closed, both modes hold
+    // level to ~1e-15, so the bound below is now the real 1e-9 the sibling
+    // lake-at-rest gates demand, and the comparative check is kept only as a
+    // backend-parity guard.
+    //
+    // Lesson worth keeping: "measured floor" is a claim about the code as it
+    // stands, not a law. This one hardened into a documented limitation, was
+    // cited as such in three places, and dissolved once the mechanism was
+    // actually traced instead of attributed.
+    auto bed = [](double x) {
+        if (x < 150.0) return 10.0 - 0.02 * x;
+        if (x < 300.0) return 7.0 + 0.02 * (x - 150.0);
+        return 10.0 - 0.01 * (x - 300.0);
+    };
+    const double eta = 9.0;                 // partly full over the low reach
+
+    openswmm::chebsec::ChebSection cs{};
+    XSectParams xs_legacy = circular(4.0);
+    std::vector<openswmm::xsboundary::BElem> elems;
+    ASSERT_TRUE(openswmm::xsboundary::buildLegacyBoundary(
+        openswmm::XSectShape::CIRCULAR, xs_legacy, elems));
+    ASSERT_EQ(openswmm::chebsec::compile(cs, elems.data(),
+                                         static_cast<int>(elems.size()), false), 0);
+    XSectParams xs_cheb = xs_legacy;
+    xs_cheb.cheb = &cs;
+
+    // Worst free-surface drift and worst spurious discharge over the run.
+    auto worstDrift = [&](const XSectParams& xs, int* partly_full_out) {
+        Channel ch = makeWalledChannel(xs, 150, 3.0, bed, 0.014);
+        seedLevel(ch, eta);
+        FvOptions o = defaultOptions();
+        run(ch, o, 600.0, 60.0);
+        double worst = 0.0;
+        int partly = 0;
+        for (int i = 0; i < ch.n; ++i) {
+            const auto ui = static_cast<std::size_t>(i);
+            const double h = ch.state.cell_h[ui];
+            if (h <= k::kDryDepth) continue;
+            if (h < ch.mesh.geom[0].y_full) ++partly;
+            worst = std::max(worst, std::fabs(ch.mesh.cell_zb[ui] + h - eta));
+        }
+        if (partly_full_out) *partly_full_out = partly;
+        return worst;
+    };
+
+    int partly_cheb = 0, partly_legacy = 0;
+    const double drift_cheb   = worstDrift(xs_cheb,   &partly_cheb);
+    const double drift_legacy = worstDrift(xs_legacy, &partly_legacy);
+
+    // Non-vacuity: the compiled depth inversion must actually have run, which
+    // it only does for cells below the crown.
+    EXPECT_GT(partly_cheb, 10)
+        << "no partly-full cell — the compiled depth inversion never ran";
+
+    // Backend parity. Both modes now sit at the floating-point floor, so the
+    // comparison is between two rounding-noise values and cannot be a strict
+    // ordering — 1 ulp either way is meaningless. The allowance keeps it a
+    // real guard against the compiled path genuinely degrading while staying
+    // insensitive to which mode happens to land on exact zero.
+    EXPECT_LE(drift_cheb, std::max(drift_legacy, 1.0e-12))
+        << "compiled geometry is LESS well-balanced than the legacy tables "
+           "(compiled=" << drift_cheb << " legacy=" << drift_legacy << ")";
+
+    // The real target, now that it is achievable: the same 1e-9 every other
+    // lake-at-rest gate in this suite demands. Both modes measure ~1e-15.
+    EXPECT_LT(drift_cheb, 1.0e-9)
+        << "compiled free-surface drift regressed: " << drift_cheb;
+    EXPECT_LT(drift_legacy, 1.0e-9)
+        << "tabulated free-surface drift regressed: " << drift_legacy;
+}
+
+// ---------------------------------------------------------------------------
+// Test 21 — well-balancedness must not depend on the geometry backend
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Compile an OPEN rectangular channel as a POLYGON boundary — the same
+/// section rectOpen() builds from a shape code, reached instead through the
+/// arc/line boundary compiler.
+XSectParams polygonRectOpen(openswmm::chebsec::ChebSection& cs,
+                            double width, double y_full) {
+    const double hw = 0.5 * width;
+    const double px[4] = {-hw, hw, hw, -hw};
+    const double py[4] = {0.0, 0.0, y_full, y_full};
+    std::vector<openswmm::xsboundary::BElem> elems;
+    EXPECT_EQ(openswmm::xsboundary::fromPolyline(px, py, 4, elems), 0);
+    EXPECT_EQ(openswmm::chebsec::compile(cs, elems.data(),
+                                         static_cast<int>(elems.size()),
+                                         /*is_open=*/true), 0);
+    XSectParams xs = rectOpen(width, y_full);
+    xs.cheb = &cs;
+    return xs;
+}
+
+/// Compile a CLOSED circle as a POLYGON boundary (four quarter-arc bulges).
+XSectParams polygonCircle(openswmm::chebsec::ChebSection& cs, double d) {
+    const double r = 0.5 * d;
+    const double b = std::tan(0.25 * 3.14159265358979323846 / 2.0);
+    const double px[4] = {r, 0.0, -r, 0.0};
+    const double py[4] = {0.0, r, 0.0, -r};
+    const double pb[4] = {b, b, b, b};
+    std::vector<openswmm::xsboundary::BElem> elems;
+    EXPECT_EQ(openswmm::xsboundary::fromArcSpec(px, py, pb, 4, elems), 0);
+    EXPECT_EQ(openswmm::chebsec::compile(cs, elems.data(),
+                                         static_cast<int>(elems.size()),
+                                         /*is_open=*/false), 0);
+    XSectParams xs = circular(d);
+    xs.cheb = &cs;
+    return xs;
+}
+
+} // namespace
+
+TEST(FvAnalytic, LakeAtRestOverASlopeBreakOnAPolygonChannel) {
+    // Test 21, open half. This is LakeAtRestOverASlopeBreak's bed, seed and
+    // tolerance exactly — the only thing changed is that the section arrives
+    // as a compiled arc/line boundary instead of a RECT_OPEN shape code.
+    // Well-balancedness is a property of the SCHEME (the hydrostatic
+    // reconstruction and the cell state sharing one closure), so swapping
+    // the geometry backend underneath must not move it at all. Holding the
+    // identical 1e-9 the shape-code version asserts is the whole point; a
+    // relaxed tolerance here would be conceding exactly what is being denied.
+    auto bed = [](double x) {
+        if (x < 200.0) return 10.0 - 0.02 * x;
+        if (x < 400.0) return 6.0 + 0.03 * (x - 200.0) +
+                              1.5 * std::exp(-std::pow((x - 300.0) / 30.0, 2));
+        return 12.0 - 0.01 * (x - 400.0);
+    };
+    openswmm::chebsec::ChebSection cs{};
+    const XSectParams xs = polygonRectOpen(cs, 20.0, 30.0);
+    ASSERT_TRUE(openswmm::xsect::isOpen(xs)) << "compiled section must read OPEN";
+
+    Channel ch = makeWalledChannel(xs, 200, 3.0, bed, 0.015);
+    ASSERT_NE(ch.mesh.geom[0].xs.cheb, nullptr) << "boundary not attached";
+    // The open-section signature (FvClosure.OpenSectionsGetNoSlotAndExtend-
+    // Vertically): no Preissmann slot, so the crown IS the full depth and
+    // `t_slot` carries w_max as a vertical WALL extension rather than a slot
+    // width. Checked because it is what proves `is_open` survived the trip
+    // through compile() into the closure — if it had not, this would build
+    // a closed section with a real slot and the run below would still look
+    // plausible while testing the wrong thing.
+    ASSERT_EQ(ch.mesh.geom[0].is_open, 1);
+    ASSERT_DOUBLE_EQ(ch.mesh.geom[0].y_crown, ch.mesh.geom[0].y_full);
+    ASSERT_DOUBLE_EQ(ch.mesh.geom[0].t_slot, 20.0);
+
+    const double eta = 14.0;
+    seedLevel(ch, eta);
+    FvOptions o = defaultOptions();
+    run(ch, o, 600.0, 60.0);
+    dumpProfile(ch, "lake_at_rest_slope_break_polygon");
+
+    int wet = 0;
+    for (int i = 0; i < ch.n; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        const double h = ch.state.cell_h[ui];
+        if (h <= k::kDryDepth) continue;
+        ++wet;
+        EXPECT_NEAR(ch.mesh.cell_zb[ui] + h, eta, 1.0e-9)
+            << "free surface drifted at cell " << i;
+        EXPECT_NEAR(ch.state.cell_q[ui], 0.0, 1.0e-9)
+            << "spurious discharge at cell " << i;
+    }
+    EXPECT_GT(wet, 50) << "too few wet cells for this to mean anything";
+}
+
+TEST(FvAnalytic, LakeAtRestWhilePressurizedOnAPolygonCircle) {
+    // Test 21, closed/pressurized half — mirrors LakeAtRestWhilePressurized.
+    // Above the crown a compiled circle and a tabulated one are bit-identical
+    // through the closure (test_fv_solver_closure.cpp pins that directly), so
+    // this must reach the same 1e-9 the shape-code version does. It is worth
+    // running anyway rather than inferring: the bit-identity was established
+    // for areaOfDepth/widthOfDepth, whereas what runs here additionally
+    // includes I1 — which is NOT bit-identical between backends, because it
+    // integrates the below-crown area difference from zero — inside the
+    // hydrostatic reconstruction. This asserts that difference is a constant
+    // offset the well-balanced construction cancels, rather than a gradient
+    // it does not.
+    auto bed = [](double x) { return 10.0 - 0.004 * x; };
+    openswmm::chebsec::ChebSection cs{};
+    const XSectParams xs = polygonCircle(cs, 3.0);
+    ASSERT_FALSE(openswmm::xsect::isOpen(xs)) << "compiled section must read CLOSED";
+
+    Channel ch = makeWalledChannel(xs, 120, 5.0, bed, 0.013);
+    ASSERT_NE(ch.mesh.geom[0].xs.cheb, nullptr) << "boundary not attached";
+    ASSERT_GT(ch.mesh.geom[0].t_slot, 0.0) << "a closed section needs a slot";
+
+    const double eta = 20.0;                     // ~7 ft above the crown
+    seedLevel(ch, eta);
+    FvOptions o = defaultOptions();
+    run(ch, o, 300.0, 30.0);
+    dumpProfile(ch, "lake_at_rest_pressurized_polygon");
+
+    for (int i = 0; i < ch.n; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        EXPECT_GT(ch.state.cell_h[ui], ch.mesh.geom[0].y_full)
+            << "cell " << i << " unexpectedly depressurized";
+        EXPECT_NEAR(ch.mesh.cell_zb[ui] + ch.state.cell_h[ui], eta, 1.0e-9);
+        EXPECT_NEAR(ch.state.cell_q[ui], 0.0, 1.0e-8);
+    }
+}

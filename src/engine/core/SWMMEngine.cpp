@@ -996,7 +996,8 @@ int SWMMEngine::initialize() noexcept {
         if (ctx_.links.type[uj] == LinkType::CONDUIT && q0 != 0.0) {
             const int cr = ctx_.link_subtypes.conduit_row(j);
             const auto& CD = ctx_.link_subtypes.conduits;
-            XSectParams xs = link::buildXSectParams(ctx_.links, uj, &ctx_.transect_tables);
+            XSectParams xs = link::buildXSectParams(ctx_.links, uj, &ctx_.transect_tables,
+                                                     &ctx_.cheb_sections);
             int barrels = (cr >= 0) ? CD.barrels[static_cast<std::size_t>(cr)] : 1;
             double q_per_barrel = std::fabs(q0) / std::max(barrels, 1);
             double beta = (cr >= 0) ? CD.beta[static_cast<std::size_t>(cr)] : 0.0;
@@ -1105,7 +1106,7 @@ int SWMMEngine::initialize() noexcept {
         ctx_.links.depth[uj]     = y;
         ctx_.links.old_depth[uj] = y;
         XSectParams xs = link::buildXSectParams(ctx_.links, uj,
-                                                &ctx_.transect_tables);
+                                                &ctx_.transect_tables, &ctx_.cheb_sections);
         const int cr = ctx_.link_subtypes.conduit_row(j);
         const auto& CD = ctx_.link_subtypes.conduits;
         int barrels = std::max((cr >= 0) ? CD.barrels[static_cast<std::size_t>(cr)] : 1, 1);
@@ -1172,7 +1173,7 @@ int SWMMEngine::initialize() noexcept {
                 double y = ctx_.links.depth[uj];
                 ctx_.links.old_depth[uj] = y;
                 XSectParams xs = link::buildXSectParams(ctx_.links, uj,
-                                                        &ctx_.transect_tables);
+                                                        &ctx_.transect_tables, &ctx_.cheb_sections);
                 const int cr = ctx_.link_subtypes.conduit_row(j);
                 const auto& CD = ctx_.link_subtypes.conduits;
                 int barrels = std::max((cr >= 0) ? CD.barrels[static_cast<std::size_t>(cr)] : 1, 1);
@@ -5244,7 +5245,7 @@ void SWMMEngine::ensureXspCache() noexcept {
     xsp_cache_.resize(n);
     for (std::size_t uj = 0; uj < n; ++uj)
         xsp_cache_[uj] = link::buildXSectParams(ctx_.links, uj,
-                                                &ctx_.transect_tables);
+                                                &ctx_.transect_tables, &ctx_.cheb_sections);
     xsp_cache_gen_ = ctx_.xsect_generation;
 }
 
@@ -7509,6 +7510,21 @@ int SWMMEngine::end() noexcept {
     // hotstart_save (swmm5.c). Datetime-suffixed intermediate saves are a
     // follow-up (not exercised by the QA suite). Legacy .hsf format so the file
     // round-trips through USE HOTSTART (apply_legacy_routing).
+    // Gap E: a hotstart carries state, not geometry. Warn rather than write a
+    // file that would silently reload the .inp section under the changed run's
+    // depths. Serialising the boundary chain would need a new .hsf version the
+    // legacy reader could not consume, so the limitation is documented and
+    // announced instead of half-solved.
+    if (!ctx_.xsect_runtime_changed_links.empty() &&
+        !ctx_.files.hotstart_saves.empty()) {
+        ctx_.warnings.push_back(
+            "SAVE HOTSTART: " +
+            std::to_string(ctx_.xsect_runtime_changed_links.size()) +
+            " link(s) had their cross-section changed at run time. Hot start "
+            "files do not carry geometry, so reloading this file restores the "
+            "input-file cross-sections under these depths. Re-apply the "
+            "polygons after loading.");
+    }
     for (const auto& entry : ctx_.files.hotstart_saves) {
         if (entry.datetime != 0.0) continue;   // intermediate save — not yet
         const std::string& sp = !entry.path.absolute.empty()

@@ -130,6 +130,9 @@ typedef enum SWMM_ErrorCode {
     SWMM_ERR_CRS         = 13,
     SWMM_ERR_NUMERICAL   = 14,
     SWMM_ERR_DEPENDENCY  = 15,  /**< Object has dependents that would be affected by deletion. */
+    SWMM_ERR_GEOMETRY    = 16,  /**< Cross-section geometry is invalid, or cannot be
+                                 *   changed at run time in the active routing model.
+                                 *   @see swmm_link_set_polygon. */
     SWMM_ERR_INTERNAL    = 99
 } SWMM_ErrorCode;
 

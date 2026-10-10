@@ -1541,6 +1541,119 @@ retroactive.
   Built-in plugin metadata (`IPluginComponentInfo::license_type`) now reports
   `"Apache-2.0"`.
 
+### Fixed
+
+- **The legacy bit-parity contract is now enforced by the build, not merely
+  declared.** `-ffp-contract=off` was applied only under
+  `OPENSWMM_ENGINE_FORCE_OPTIMIZED`, which defaults **OFF**, so a default build
+  had no floating-point contraction control at all — not on the engine, not on
+  the legacy engine, not on the tests. The compiler was free to fuse `a*b + c`
+  into an FMA in one inlining context and not another, making the SAME source
+  expression differ by 1–2 ulp depending on where it was inlined.
+
+  Five assertions were failing on that alone, and had been carried as
+  "pre-existing ulp noise" for months: two in
+  `test_engine_xsect_kernels_parity`, three in `test_engine_xsect_parity` —
+  including comparisons of new code against **new** code
+  (`perlink_tabulated` vs `perlink_tabulated_pair`, `XsectEval::getAofY` vs
+  `xsect::getAofY`) and the committed golden hash. All five now pass, and the
+  golden matches its committed value again, which shows the golden was correct
+  and the build had drifted away from it.
+
+  The flags are now unconditional on the engine, the legacy engine, and all
+  test translation units. The test-side application matters independently: the
+  hot geometry kernels are header-inline, so each test TU compiles its own copy
+  under its own flags.
+
+  Verified on Bellinge (1015 conduits, 180 MB output): the **legacy engine is
+  byte-identical**; DYNWAVE differs in 174 float values out of ~45 M (worst
+  relative 4.5e-6, on a quantity of magnitude 1e-10) and `XSECT_GEOMETRY EXACT`
+  in 3465 (worst 2.0e-5), with the only report change in either being the
+  day-of-maximum column on junctions whose maximum depth is 0.00 ft — an
+  arbitrary tie-break on a permanently dry node.
+
+  **FV results do shift materially** (~26% of stored values; routing continuity
+  −2.989% → −3.124% on a 4 h Bellinge window). That is FV being a chaotic
+  explicit substepping scheme in which any bit-level change compounds, not a
+  defect in the flags; FV is deliberately outside the bit-parity contract.
+  Cost measured at roughly 7% wall time on Bellinge DYNWAVE.
+
+- **`test_engine_2d_surface` no longer fails in every default build.** The
+  engine compiles its 2D sources only under `OPENSWMM_BUILD_2D`, but the test
+  executable was created unconditionally, so a default build produced a target
+  that could not link (undefined `twoD::validateMesh`, `twoD::is2DOptionKey`)
+  and `make` aborted before finishing. The target is now gated on the same
+  option. A default build completes cleanly and `ctest` reports 160/160.
+
+- **`-DOPENSWMM_BUILD_2D=ON` no longer aborts on HDF5 distributions that export
+  non-canonical target names.** Finding an `hdf5` CONFIG package that defines
+  neither `hdf5::hdf5-shared` nor `hdf5::hdf5-static` raised `FATAL_ERROR` and
+  killed the whole configure — on Homebrew among others — even though
+  `FindHDF5` resolves those installs correctly. That case now falls through to
+  the module path, the same route taken when no CONFIG package exists.
+
+- **The FV pressure term was discontinuous, and it was the real cause of the
+  "partly-full pipe cannot hold lake-at-rest" limitation.** `i1OfDepth`
+  accumulates its table nodes with composite Simpson (or `exactI1` for a
+  compiled boundary) but refines within an interval with a trapezoid. Those
+  two quadratures disagree, so I₁ jumped at EVERY table node — by up to **8%
+  relative** near the invert, and **7.1e-5 ft³** at the taper onset where the
+  area curve is sharpest. Well-balancedness does not merely need I₁ to be
+  single-valued in depth (as a comment here previously claimed); it needs a
+  continuous antiderivative of the same area the mass update uses.
+
+  The refinement now carries a smoothstep-ramped residual that makes it land
+  exactly on the next table node. The ramp's derivative vanishes at both ends,
+  so dI₁/dh still equals A exactly at every node. Measured on a still pool
+  over a slope break, worst free-surface drift across a 12-level fill sweep:
+  **7.4e-5 ft → 4.4e-14 ft**, and the specific case this project had recorded
+  as a permanent limitation now drifts by exactly zero. Absolute I₁ accuracy
+  improves 2.4x as a side effect.
+
+  A plain cubic Hermite interpolant is more accurate in isolation (4.7e-6 vs
+  2.9e-5 worst absolute) and was rejected on measurement: it never reads the
+  exact area the caller already computed, and decoupling I₁ from that area
+  moved storage-node routing continuity from −0.023% to +0.058%, failing its
+  gate. Consistency with A, not interpolant accuracy, is the objective.
+
+- **FV substep acceptance was decided by a floating-point tie, costing up to
+  20x the substeps.** A step far past CFL saturates the positivity limiter,
+  which clamps outflow to `vol/dt` and so caps the Courant number at exactly
+  1. The post-step census then returns exactly `cfl*dt` — a pure function of
+  the step taken, carrying no information about whether that step was
+  admissible. With the default `cfl` equal to `kStepAcceptRatio` (both 0.5),
+  the acceptance comparison became the exact tie `0.5*dt >= 0.5*dt`, resolved
+  by whichever way the last bit fell.
+
+  Measured on the R2 pressurized head-loss fixture: substeps to reach steady
+  flow across a slot-celerity sweep ran 204 at c=700, 2975 at 800, 204 at 900,
+  4196 at 1000, 6701 at 1100, then 204 again at 1500 — non-monotone by a
+  factor of 30, which no `dt ~ 1/c` law can produce. The oversized accepted
+  first step injected a spurious water hammer, and the thousands of substeps
+  that followed were resolving the solver's own artifact.
+
+  The comparison now carries a small relative margin, so the degenerate case
+  rejects deterministically and the retry ladder descends to a genuinely
+  admissible step. The sweep flattens to 204-207 over c = 100..2000 and c=1000
+  drops from 4196 substeps to 204 — strictly less work, because the artifact
+  is never created. This also fixes
+  `PressCensus.substepCountIsCelerityInvariantAndFarBelowExplicit`, which had
+  been failing on a clean `swmm6_rel` checkout: the assertion was correct and
+  the solver was at fault. Found while investigating that failure during the
+  POLYGON geometry work; the geometry work itself is unrelated to it.
+
+- **A still pool straddling a pipe's crown drifted off level under FV.**
+  Both existing lake-at-rest gates surcharge every cell, so neither covered
+  the mixed state where part of a pipe is pressurized and part is still
+  open-channel. Sweeping fill level instead of testing one found worst
+  free-surface drift of **3.3e-2 ft** there with `FV_PRESSURIZED_IMPLICIT`
+  off, against **2.1e-14 ft** with it on — 440x. Now pinned by
+  `PressLakeAtRest.holdsWhileStraddlingTheCrown`, at the same 1e-9 its
+  sibling gates demand, with a non-vacuity guard asserting the fixture really
+  does straddle. Note this is distinct from the ~7.4e-5 ft floor a partly-full
+  pipe shows when NO cell reaches the crown, which is a separate pre-existing
+  limitation of the Preissmann taper band that this option cannot affect.
+
 ### Added
 
 - **Two-component pressure approach (TPA) — sub-atmospheric pressurized flow
@@ -1598,6 +1711,35 @@ retroactive.
   uniform-depth cell seed and was measured to drive a pressurized study deck
   from 0.000 % to −19 % continuity. Decks without VJs are bitwise untouched.
 
+- **A register of known defects in the legacy SWMM 5.2.4 solver.**
+  `docs/dev/legacy_defects.md` (Doxygen page `legacy_defects`, linked from the
+  Manuals index) catalogues defects OpenSWMM inherits from EPA SWMM 5.2.4 and
+  deliberately preserves under the LEGACY bit-parity contract, so that the
+  behavior is discoverable rather than folklore. Each entry records what is
+  wrong, what was measured, which code paths can reach it, and how to avoid
+  it. Four entries at introduction: the mutual inconsistency of the tabulated
+  shapes' area and width tables (`GOTHIC` worst, 439%); the shallow-depth
+  interpolation error of those tables (470% below `y/D = 0.10` on CIRCULAR);
+  the discontinuous, non-monotone conveyance inverse near full
+  (`generic_getAofS`); and the critical-depth solver's `O(y_full/25)`
+  precision floor. Nothing in `src/legacy/` or on any LEGACY code path was
+  changed.
+
+- **Critical depth is now solved to full precision on compiled boundaries.**
+  `generic_getYcrit`'s 25-step enumeration closes with a single linear
+  interpolation across a `y_full/25` bracket, leaving an `O(dy)` error —
+  worst measured **8.6e-3 ft** on a D=4 ft circle, three orders above the
+  1e-6 ft targeted elsewhere in the geometry pipeline. For a section carrying
+  a compiled boundary (`XSectParams::cheb` — every `POLYGON` link, and every
+  shape under `XSECT_GEOMETRY EXACT`), the bracket the enumeration already
+  produced is now polished with Ridder's method to `kYcritTolCheb`, since
+  `chebAWofY` resolves `A` and `W` far more sharply than the bracket does.
+  Worst error over `q` in [0.25, 100] cfs falls to **4.1e-8 ft**, a ~2e5x
+  improvement. LEGACY keeps the coarse enumeration by design — its tables are
+  themselves only good to ~1e-2, so refining inside one of their brackets
+  would be false precision — and is asserted untouched by
+  `ChebSection.CriticalDepthOnACompiledCircleMatchesTheAnalyticFormula`.
+
 - **A Lagrangian transport engine (LARD) joins the quality solvers.**
   `QUALITY_SOLVER LAGRANGIAN` routes pollutants with a Lagrangian
   advection–reaction–dispersion scheme in place of the legacy complete-mix
@@ -1626,6 +1768,41 @@ retroactive.
   prints a `[PERF-FV]` line whose bracketed phases sum to `total`, beside the
   whole-router `step`; the difference between them is unattributed time and is
   meant to be read as a finding rather than smoothed away.
+
+- **`POLYGON` cross-section — exact circular-arc/line boundary geometry
+  compressed to a piecewise Chebyshev series — plus a fused FV closure
+  evaluation and `swmm_link_set_polygon()` for run-time geometry updates.**
+  A conduit's boundary can now be given directly as a chain of straight
+  segments and circular arcs (`[CURVES] XPOLYGON`, DXF-style bulge
+  convention), rather than approximated from a normalized width table —
+  area, perimeter, top width, and the first moment of area are exact in
+  closed form (Green's theorem) at every depth, and are then compiled to a
+  compact piecewise Chebyshev series (split at every critical height, with
+  a coordinate change removing the square-root singularities a round
+  invert or crown otherwise introduces) for constant-time evaluation in the
+  hot loop. `[OPTIONS] XSECT_GEOMETRY LEGACY | EXACT` (default `LEGACY`)
+  additionally routes every built-in rounded shape (EGG, HORSESHOE, GOTHIC,
+  ARCH, ...) through the same compiled path, replacing EPA's interpolated
+  shape tables (21 to 51 points, depending on shape and field) — measured to carry large low-fill error (up to 41%
+  area error below 5% of full depth for the 51-point CUSTOM table; several
+  hundred percent relative error in the lowest panel of the 51-point
+  CIRCULAR table) — with the exact reconstruction; this deliberately breaks
+  bit-parity with legacy EPA SWMM results for those shapes, is alpha/
+  experimental, and is opt-in (`LEGACY` is unaffected and remains the
+  default). `swmm_link_set_polygon()` / `swmm_link_get_polygon()` let a
+  conduit's boundary be changed mid-run (sediment deposition, a CIPP
+  liner, corrosion) under FV routing, with `CONSERVE_DEPTH` /
+  `CONSERVE_VOLUME` reconciliation policies and a reported displaced
+  volume; this is FV-only (DYNWAVE/KINWAVE refuse the call) and is not
+  carried in hotstart files. Both are reachable from Python as
+  `link.xsect.set_polygon(x, y, policy)` / `link.xsect.polygon()`, with the
+  new `GeomChangePolicy` enum for the reconciliation choice (it has no
+  default — the two members describe opposite physical events) and a new
+  `GeometryError` for `SWMM_ERR_GEOMETRY`; `XSectShape.POLYGON` and
+  `ErrorCode.GEOMETRY` round out the two enums the shape and the error code
+  belong to. See `docs/dev/cheb_section.md` for the design rationale and
+  measured performance, and Appendix D's `[XSECTIONS]` / `[CURVES]`
+  reference for the input format.
 
 - **`SWMM_FilePathRole` covers the remaining external-file slots.** Three new
   roles — `SWMM_FILE_MESH_2D`, `SWMM_FILE_OUTPUT_2D` and `SWMM_FILE_LID_REPORT` —

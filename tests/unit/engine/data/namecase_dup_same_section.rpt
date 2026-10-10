@@ -1,0 +1,39 @@
+
+  OPENSWMM ENGINE - VERSION 6.0.0-alpha.3
+  ------------------------------------------------------------
+
+  Duplicate junction ID within one section (J1 twice) — legacy input.c 
+  addObject rejects with ERROR 207; refactored engine must too. 
+  ERROR 207: duplicate ID name J1.
+  
+  ****************
+  Analysis Options
+  ****************
+  Flow Units ............... CFS
+  Process Models:
+    Rainfall/Runoff ........ NO
+    RDII ................... NO
+    Snowmelt ............... NO
+    Groundwater ............ NO
+    Flow Routing ........... YES
+    Ponding Allowed ........ NO
+    Water Quality .......... NO
+  Flow Routing Method ...... DYNWAVE
+  Cross-Section Geometry ... LEGACY
+  Surcharge Method ......... EXTRAN
+  Node Continuity .......... EXPLICIT
+  Anderson Acceleration .... NO
+  Surcharge Method ......... EXTRAN
+  Starting Date ............ 01/01/2026 00:00:00
+  Ending Date .............. 01/01/2026 01:00:00
+  Antecedent Dry Days ...... 0.0
+  Report Time Step ......... 00:05:00
+  Routing Time Step ........ 5.00 sec
+  Variable Time Step ....... YES
+  Maximum Trials ........... 8
+  Number of Threads ........ 1
+  Head Tolerance ........... 0.005000 ft
+  
+  
+
+  [Report interrupted — simulation did not complete normally]

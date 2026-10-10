@@ -310,6 +310,13 @@ cdef extern from "openswmm_links.h":
     cdef int swmm_link_set_nodes(SWMM_Engine e, int idx, int from_node, int to_node)
     cdef int swmm_link_get_from_node(SWMM_Engine e, int idx, int* node_idx)
     cdef int swmm_link_get_to_node(SWMM_Engine e, int idx, int* node_idx)
+    # Run-time cross-section replacement (POLYGON boundary)
+    cdef int swmm_link_set_polygon(SWMM_Engine e, int link,
+                                   const double* x, const double* y,
+                                   int n, int policy,
+                                   double* displaced_volume_out)
+    cdef int swmm_link_get_polygon(SWMM_Engine e, int link,
+                                   double* x, double* y, int* n)
     # Geometry setters
     cdef int swmm_link_set_length(SWMM_Engine e, int idx, double length)
     cdef int swmm_link_set_roughness(SWMM_Engine e, int idx, double n)

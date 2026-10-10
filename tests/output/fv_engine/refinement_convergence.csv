@@ -1,0 +1,4 @@
+cell_length_ft,mean_rel_peak_flow_error_vs_dw,mean_rel_peak_flow_error_vs_dx10
+coarse(1 cell/conduit),0.0297988,0.0142926
+50,0.0351394,0.0120843
+20,0.0319738,0.0039019

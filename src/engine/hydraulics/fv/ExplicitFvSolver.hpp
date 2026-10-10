@@ -94,6 +94,9 @@ public:
         step_sink_user_ = user;
     }
 
+    double refreshConduitGeometry(int conduit, const FvGeometry& g_new,
+                                  double t_now, GeomChangePolicy policy) override;
+
     /// Per-node net exchange VOLUME (ft³) accumulated over the last advance().
     /// Signed positive INTO the node. The Router glue turns this into the node
     /// inflow/outflow rates the reporting and mass-balance paths expect.
@@ -743,6 +746,35 @@ private:
     int         div_link_  = -1;       ///< engine link index, -1 = clean
     double      div_value_ = 0.0;
     const char* div_what_  = nullptr;
+
+    /// Relative margin on the acceptance comparison, so a step that lands
+    /// EXACTLY on the threshold is rejected deterministically instead of by
+    /// last-bit rounding.
+    ///
+    /// This is not defensive paranoia about floats — it is the one case the
+    /// acceptance test most needs to catch, and without the margin it is a
+    /// coin flip. A step far past CFL saturates the positivity limiter, which
+    /// clamps outflow to `vol/dt` and so caps `|u|` at `dx/dt` — Courant
+    /// exactly 1. The post-step census then returns
+    /// `cfl*dx / (dx/dt) == cfl*dt`: a pure function of `dt`, carrying no
+    /// information about whether the step was admissible. With the default
+    /// `cfl == kStepAcceptRatio == 0.5` the comparison becomes the exact tie
+    /// `0.5*dt >= 0.5*dt`, resolved by whichever way the last bit happens to
+    /// fall.
+    ///
+    /// Measured on the R2 pressurized head-loss fixture (64 cells, D=3 pipe,
+    /// `pressurized_implicit` on): the tie alone decided the first substep,
+    /// and through it the whole startup. Substeps to reach steady flow across
+    /// a celerity sweep were 204 at c=700, 2975 at 800, 204 at 900, 4196 at
+    /// 1000, 6701 at 1100, then 204 again at 1500 — non-monotone by a factor
+    /// of 30, which no `dt ~ 1/c` law can produce. The oversized accepted
+    /// first step injected a spurious water hammer, and the thousands of
+    /// substeps that followed were resolving the solver's own artifact.
+    /// Rejecting the tie flattens the sweep to 204-207 over c = 100..2000 and
+    /// cuts c=1000 from 4196 substeps to 204 — strictly LESS work, because
+    /// the artifact is never created. See
+    /// `PressCensus.substepCountIsCelerityInvariantAndFarBelowExplicit`.
+    static constexpr double kStepAcceptEps = 1.0e-9;
 
     // Work lists (plan §5.2.1). `halo_` is the compaction safety margin: a wet
     // front advances at most CFL cells per substep, so a halo of `rebuild_

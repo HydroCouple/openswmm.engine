@@ -57,6 +57,9 @@ namespace openswmm {
 static XSectParams buildXSP(const SimulationContext& ctx, std::size_t uk) {
     const LinkData& links = ctx.links;
     XSectParams xs{};
+    // link::translateShape is the canonical LinkData-enum -> batch-enum
+    // translation (Link.cpp) — POLYGON=26 was appended to both enums at the
+    // same numeric value, breaking the flat +1 offset.
     auto ls = links.xsect_shape[uk];
     xs.type   = link::translateShape(ls);
     xs.y_full = links.xsect_y_full[uk];
@@ -87,6 +90,12 @@ static XSectParams buildXSP(const SimulationContext& ctx, std::size_t uk) {
             xs.area_lut          = &td.area_lut;
             xs.transect_tbl_size = transect::N_TRANSECT_TBL;
         }
+    }
+
+    {
+        const int ci = links.xsect_cheb_idx[uk];
+        if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.cheb_sections.size())
+            xs.cheb = &ctx.cheb_sections[static_cast<std::size_t>(ci)];
     }
     return xs;
 }
@@ -290,56 +299,21 @@ void applyConduitLengthening(SimulationContext& ctx, RouteModel model) {
 // Init
 // ============================================================================
 
-void Router::init(SimulationContext& ctx, RouteModel model) {
-    model_ = model;
+namespace {
 
-    int n_links = ctx.n_links();
-    int n_nodes = ctx.n_nodes();
-
-    // Build XSectParams array from ctx.links SoA fields
-    // NOTE: LinkData::XsectShape and XSectBatch::XSectShape have different
-    //       orderings. LinkData follows legacy enums.h (CIRCULAR=0), while
-    //       XSectBatch prepends DUMMY=0 and reorders some shapes.
-    //       Use explicit mapping to avoid misalignment.
-    auto translateShape = [](XsectShape link_shape) -> int {
-        switch (link_shape) {
-            case XsectShape::CIRCULAR:        return static_cast<int>(XSectShape::CIRCULAR);
-            case XsectShape::FILLED_CIRCULAR: return static_cast<int>(XSectShape::FILLED_CIRCULAR);
-            case XsectShape::RECT_CLOSED:     return static_cast<int>(XSectShape::RECT_CLOSED);
-            case XsectShape::RECT_OPEN:       return static_cast<int>(XSectShape::RECT_OPEN);
-            case XsectShape::TRAPEZOIDAL:     return static_cast<int>(XSectShape::TRAPEZOIDAL);
-            case XsectShape::TRIANGULAR:      return static_cast<int>(XSectShape::TRIANGULAR);
-            case XsectShape::PARABOLIC:       return static_cast<int>(XSectShape::PARABOLIC);
-            case XsectShape::POWER:           return static_cast<int>(XSectShape::POWERFUNC);
-            case XsectShape::MODBASKETHANDLE: return static_cast<int>(XSectShape::MOD_BASKET);
-            case XsectShape::EGGSHAPED:       return static_cast<int>(XSectShape::EGGSHAPED);
-            case XsectShape::HORSESHOE:       return static_cast<int>(XSectShape::HORSESHOE);
-            case XsectShape::GOTHIC:          return static_cast<int>(XSectShape::GOTHIC);
-            case XsectShape::CATENARY:        return static_cast<int>(XSectShape::CATENARY);
-            case XsectShape::SEMIELLIPTICAL:  return static_cast<int>(XSectShape::SEMIELLIPTICAL);
-            case XsectShape::BASKETHANDLE:    return static_cast<int>(XSectShape::BASKETHANDLE);
-            case XsectShape::SEMICIRCULAR:    return static_cast<int>(XSectShape::SEMICIRCULAR);
-            case XsectShape::RECT_TRIANG:     return static_cast<int>(XSectShape::RECT_TRIANG);
-            case XsectShape::RECT_ROUND:      return static_cast<int>(XSectShape::RECT_ROUND);
-            case XsectShape::HORIZ_ELLIPSE:   return static_cast<int>(XSectShape::HORIZ_ELLIPSE);
-            case XsectShape::VERT_ELLIPSE:    return static_cast<int>(XSectShape::VERT_ELLIPSE);
-            case XsectShape::ARCH:            return static_cast<int>(XSectShape::ARCH);
-            case XsectShape::IRREGULAR:       return static_cast<int>(XSectShape::IRREGULAR);
-            case XsectShape::CUSTOM:          return static_cast<int>(XSectShape::CUSTOM);
-            case XsectShape::FORCE_MAIN:      return static_cast<int>(XSectShape::FORCE_MAIN);
-            case XsectShape::STREET_XSECT:    return static_cast<int>(XSectShape::STREET_XSECT);
-            case XsectShape::DUMMY:           return static_cast<int>(XSectShape::DUMMY);
-            default:                          return static_cast<int>(XSectShape::DUMMY);
-        }
-    };
-
-    std::vector<XSectParams> xsect_params(static_cast<std::size_t>(n_links));
+/// Assemble the per-link XSectParams the batch layer is grouped from.
+///
+/// Factored out of Router::init so Router::refreshConduitGeometry can rebuild
+/// the groups after a run-time cross-section change without a second, drifting
+/// copy of this field list. @p out must already be sized to ctx.n_links().
+void fillXSectParamsArray(SimulationContext& ctx, std::vector<XSectParams>& out) {
+    const int n_links = static_cast<int>(out.size());
     for (int j = 0; j < n_links; ++j) {
         auto uj = static_cast<std::size_t>(j);
         if (ctx.links.type[uj] != LinkType::CONDUIT) continue;
 
-        auto& xs = xsect_params[uj];
-        xs.type   = translateShape(ctx.links.xsect_shape[uj]);
+        auto& xs = out[uj];
+        xs.type   = link::translateShape(ctx.links.xsect_shape[uj]);
         // Cache translated shape code to avoid per-timestep switch dispatch
         ctx.links.xsect_batch_shape[uj] = xs.type;
         xs.y_full = ctx.links.xsect_y_full[uj];
@@ -365,6 +339,23 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
             ctx.links.xsect_w_max[uj]  = xs.w_max;
         }
     }
+}
+
+}  // namespace
+
+void Router::init(SimulationContext& ctx, RouteModel model) {
+    model_ = model;
+
+    int n_links = ctx.n_links();
+    int n_nodes = ctx.n_nodes();
+
+    // Build XSectParams array from ctx.links SoA fields. LinkData::XsectShape
+    // and XSectBatch::XSectShape have different orderings (LinkData follows
+    // legacy enums.h with CIRCULAR=0; XSectBatch prepends DUMMY=0 and
+    // reorders some shapes) — link::translateShape (Link.cpp) is the single
+    // canonical mapping between them.
+    std::vector<XSectParams> xsect_params(static_cast<std::size_t>(n_links));
+    fillXSectParamsArray(ctx, xsect_params);
 
     applyConduitLengthening(ctx, model);
 
@@ -374,6 +365,10 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
 
     // Attach transect tables for IRREGULAR cross-sections
     groups_.attachTransectTables(ctx);
+
+    // Attach compiled Chebyshev boundaries for POLYGON cross-sections (and,
+    // under XSECT_GEOMETRY EXACT, any other shape too).
+    groups_.attachChebSections(ctx);
 
     // Cache outfall → connecting-conduit mapping so setAllOutfallDepths
     // skips an O(n_links) inner scan on every Picard iteration.
@@ -800,6 +795,14 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
             if (length <= 0.0) length = CD.length[ucr];
             if (length <= 0.0) length = CD.mod_length[ucr];
             int batch_shape = links.xsect_batch_shape[uj];
+            // isOpen(int) can't classify a compiled boundary (POLYGON, or any
+            // shape under XSECT_GEOMETRY EXACT) — look up ChebSection::is_open
+            // directly rather than building a full XSectParams for this check.
+            const int cheb_idx = links.xsect_cheb_idx[uj];
+            const bool isOpenShape =
+                (cheb_idx >= 0 && static_cast<std::size_t>(cheb_idx) < ctx.cheb_sections.size())
+                    ? ctx.cheb_sections[static_cast<std::size_t>(cheb_idx)].is_open
+                    : xsect::isOpen(batch_shape);
 
             // Evaporation for open conduits only.
             //
@@ -823,7 +826,9 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
             const bool gw_two_way = !CD.gw_coupled.empty() &&
                                     CD.gw_coupled[ucr] != 0;
             const double k_seep = gw_two_way ? CD.gw_kc[ucr] : CD.seep_rate[ucr];
-            const bool wantEvap = xsect::isOpen(batch_shape) && evap_rate > 0.0;
+            // isOpenShape (above) is the cheb-aware test; xsect::isOpen(batch_shape)
+            // would be blind to a POLYGON / EXACT compiled boundary.
+            const bool wantEvap = isOpenShape && evap_rate > 0.0;
             const bool wantSeep = k_seep > 0.0;
             if (wantEvap || wantSeep) {
                 // Faithful params (matching DynamicWave.cpp::buildXSP): the
@@ -863,6 +868,8 @@ void Router::computeConduitLosses(SimulationContext& ctx, double dt, double evap
                         xs.transect_tbl_size = transect::N_TRANSECT_TBL;
                     }
                 }
+                if (cheb_idx >= 0 && static_cast<std::size_t>(cheb_idx) < ctx.cheb_sections.size())
+                    xs.cheb = &ctx.cheb_sections[static_cast<std::size_t>(cheb_idx)];
 
                 if (wantEvap) {
                     double top_width;
@@ -1989,4 +1996,91 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
     }
 }
 
+// ============================================================================
+// Router::refreshConduitGeometry — run-time cross-section change (Phase 7)
+// ============================================================================
+
+bool Router::refreshConduitGeometry(SimulationContext& ctx, int link_j,
+                                    fv::GeomChangePolicy policy, double t_now,
+                                    double bed_offset, double* displaced) {
+    if (displaced) *displaced = 0.0;
+    if (model_ != RouteModel::FV || !fv_solver_) return false;
+    if (link_j < 0 || link_j >= ctx.n_links()) return false;
+
+    // Batch SoA first: the FV closure is built from an XSectParams assembled
+    // out of the same link fields, so a stale group entry would otherwise be
+    // the one copy that still describes the old section.
+    if (!groups_.refreshLink(ctx, link_j)) {
+        std::vector<XSectParams> params(static_cast<std::size_t>(ctx.n_links()));
+        fillXSectParamsArray(ctx, params);
+        groups_.build(params.data(), ctx.n_links());
+        groups_.attachTransectTables(ctx);
+        groups_.attachChebSections(ctx);
+    }
+
+    // Find the conduit row this link owns a mesh entry for. conduit_link is the
+    // mesh's own row -> link map, so this stays correct even if the FV mesh
+    // skipped conduits the context still carries.
+    int row = -1;
+    for (int r = 0; r < fv_mesh_.n_conduits(); ++r) {
+        if (fv_mesh_.conduit_link[static_cast<std::size_t>(r)] == link_j) { row = r; break; }
+    }
+    if (row < 0) return false;
+
+    const auto ur = static_cast<std::size_t>(row);
+    XSectParams xs = link::buildXSectParams(ctx.links,
+                                            static_cast<std::size_t>(link_j),
+                                            &ctx.transect_tables,
+                                            &ctx.cheb_sections);
+    if (!(xs.y_full > 0.0) || !(xs.a_full > 0.0)) return false;
+
+    fv::FvGeometry g_new{};
+    // mesh.geom is indexed by SECTION (sections are shared between conduits
+    // with identical geometry), not by conduit row — conduit_section maps one
+    // to the other.
+    fv::buildGeometry(
+        xs, xsect::isOpen(xs), fv_opts_.slot_celerity, g_new,
+        fv_mesh_.geom[static_cast<std::size_t>(fv_mesh_.conduit_section[ur])].barrels);
+
+    // A section whose area does not grow with depth above the crown has no
+    // invertible closure: depthOfArea's `y_full + (a - a_crown)/t_slot` branch
+    // divides by t_slot, so t_slot == 0 turns any surcharged cell into an
+    // infinite depth. buildGeometry only produces that from a degenerate
+    // section, and refusing here converts a mid-run NaN into a rejected call.
+    if (!(g_new.t_slot > 0.0)) return false;
+
+    // Friction and loss scalars are per-CONDUIT, not per-section — and since
+    // the shared-section refactor they LIVE per conduit, on the mesh
+    // (conduit_roughness / _rough_factor / _loss_inlet / _loss_outlet /
+    // _slope), not on FvGeometry. So a replacement section carries none of
+    // them and there is nothing to copy across: the conduit keeps its own
+    // roughness and losses untouched. (This used to copy them off the old
+    // FvGeometry, which also indexed mesh.geom by conduit ROW — wrong now
+    // that geom is indexed by SECTION via mesh.conduit_section.)
+    g_new.bed_offset = bed_offset;
+
+    const double vol = fv_solver_->refreshConduitGeometry(row, g_new, t_now, policy);
+
+    // Re-derive the link's reported storage from the reconciled cells. Without
+    // this the cached value stays at whatever the last completed routing step
+    // wrote, so the displaced volume would be invisible to every consumer that
+    // reads links.volume — and, more practically, unverifiable: the identity
+    // that makes the returned number checkable is
+    // `volume_before - volume_after == displaced`.
+    {
+        const int c0 = fv_mesh_.conduit_cell_begin[ur];
+        const int nc = fv_mesh_.conduit_cell_count[ur];
+        double v = 0.0;
+        for (int i = 0; i < nc; ++i) {
+            const auto uc = static_cast<std::size_t>(c0 + i);
+            v += fv_state_.cell_a[uc] * fv_mesh_.cell_dx[uc];
+        }
+        ctx.links.volume[static_cast<std::size_t>(link_j)] = v;
+    }
+
+    if (displaced) *displaced = vol;
+    return true;
+}
+
 } // namespace openswmm
+

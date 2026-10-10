@@ -1,0 +1,86 @@
+[TITLE]
+Chained storage-node LIDs: 02_passive_backwater
+Synthetic research example; parameters are not calibrated design values.
+[OPTIONS]
+FLOW_UNITS CFS
+FLOW_ROUTING DYNWAVE
+START_DATE 01/01/2004
+START_TIME 00:00:00
+REPORT_START_DATE 01/01/2004
+REPORT_START_TIME 00:00:00
+END_DATE 01/02/2004
+END_TIME 00:00:00
+ROUTING_STEP 0.5
+VARIABLE_STEP 0
+REPORT_STEP 00:05:00
+QUALITY_SOLVER LEGACY
+LINK_OFFSETS DEPTH
+[STORAGE]
+; constant footprint 1000 ft2; maximum depth = authored thickness sum
+A .3 2.5 0 FUNCTIONAL 0 0 1000 0 0
+B 0 2.5 0 FUNCTIONAL 0 0 1000 0 0
+[OUTFALLS]
+R 0 TIMESERIES Tailwater NO
+FA 0 FREE NO
+FB 0 FREE NO
+[ORIFICES]
+; A-to-B uses explicit offset: common opening invert = .35 ft datum
+V_AB A B SIDE .05 .6 NO 0
+V_BR B R SIDE 0 .6 NO 0
+[XSECTIONS]
+V_AB CIRCULAR .15 0 0 0
+V_BR CIRCULAR .10 0 0 0
+W_A RECT_OPEN .5 4 0 0
+W_B RECT_OPEN .5 4 0 0
+[WEIRS]
+W_A A FA TRANSVERSE 2.0 3.3 NO 0 0 NO
+W_B B FB TRANSVERSE 2.0 3.3 NO 0 0 NO
+[POLLUTANTS]
+; REACTIVE is a hypothetical first-order treatable constituent, not calibrated TSS/N/P
+REACTIVE MG/L 0 0 0 0 NO * 0 0 0
+TRACER MG/L 0 0 0 0 NO * 0 0 0
+[INFLOWS]
+A FLOW Pulse FLOW 1 1 0
+A REACTIVE Load CONCEN 1 1 0
+A TRACER Load CONCEN 1 1 0
+[LID_CONTROLS]
+Train NODE
+Train SURFACE 6 .1
+Train AGGREGATE 12 .45 100
+Train AGGREGATE 12 .40 100
+Train BOTTOM 0 0
+[LID_NODES]
+A Train 0
+B Train 0
+[LID_NODE_OUTLETS]
+; anchors select a single LID endpoint; V_AB must use an explicit offset
+V_BR 3 BOTTOM
+[LID_LAYER_TREATMENT]
+Train 2 REACTIVE 0 2 -
+Train 3 REACTIVE 0 2 -
+[CONTROLS]
+
+[TIMESERIES]
+Pulse 00:00 0
+Pulse 01:00 .30
+Pulse 02:00 0
+Pulse 24:00 0
+Load 00:00 20
+Load 24:00 20
+Tailwater 00:00 0
+Tailwater 03:00 0
+Tailwater 04:00 0.00
+Tailwater 07:00 0.00
+Tailwater 09:00 0
+Tailwater 24:00 0
+[REPORT]
+INPUT NO
+CONTROLS YES
+NODES ALL
+LINKS ALL
+[COORDINATES]
+A 0 30
+B 100 30
+R 200 30
+FA 0 -30
+FB 100 -30

@@ -40,6 +40,7 @@
 #include "../core/UnitConversion.hpp"
 #include "../hydraulics/xsect_tables.hpp"
 #include "../hydraulics/XSectBatch.hpp"
+#include "../hydraulics/LegacyShapeBoundary.hpp"
 #include "../hydraulics/Link.hpp"
 #include "../hydraulics/Street.hpp"
 #include "../hydraulics/ForceMain.hpp"
@@ -65,6 +66,7 @@
 #include <map>
 #include <string>
 #include <system_error>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 
@@ -3120,6 +3122,100 @@ void resolve_cross_references(SimulationContext& ctx) {
         }
     }
 
+    // Resolve POLYGON shape curves — [CURVES] XPOLYGON arc/line boundaries,
+    // compiled to a piecewise-Chebyshev section (Phase 4/5). Mirrors the
+    // CUSTOM block above: memoized by (curve, scale, open) so every link
+    // sharing a curve, a scale AND the same open/closed flag shares one
+    // compiled ChebSection, exactly like CUSTOM shares one TransectData per
+    // (curve, y_full).
+    //
+    // promptperf.md Phase C (dedup by geometric identity): `is_open` is part
+    // of that identity, not incidental to it — chebsec::compile() bakes it
+    // directly into ChebSection::is_open and into a_max/s_max (compile()
+    // takes a different branch for each), so two links that reference the
+    // SAME curve+scale but set Geom2 differently (one open channel, one
+    // closed conduit off the same profile) are NOT the same compiled
+    // section. Keying on (curve, scale) alone — the original memoization —
+    // let the second link silently inherit the first's is_open, a_max and
+    // s_max: a real, exact-bit-equality gap of the kind Phase C's own
+    // "near-equal geometries are different geometries" rule exists to catch,
+    // just applied to a boolean parameter instead of a numeric one.
+    {
+        int n_tables = static_cast<int>(ctx.tables.tables.size());
+        std::map<std::tuple<int, double, bool>, int> polygon_memo;
+        const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+        const double ucf_len = ucf::Ucf[ucf::LENGTH][static_cast<std::size_t>(us)];
+        for (int j = 0; j < n_links; ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx.links.xsect_shape[uj] != XsectShape::POLYGON) continue;
+
+            const auto& cname = ctx.links.pump_curve_name[uj];
+            if (cname.empty()) continue;
+
+            int ci = ctx.find_curve(cname);
+            if (ci < 0 || ci >= n_tables) continue;
+
+            // Geom1 = scale (raw, display length units — 0/unset means "no
+            // scale given", taken as 1.0 rather than collapsing the section
+            // to zero size). Geom2 = open-channel flag (0/1).
+            double scale = ctx.links.xsect_geom1[uj];
+            if (scale <= 0.0) scale = 1.0;
+            scale /= ucf_len;
+            const bool is_open = ctx.links.xsect_geom2[uj] != 0.0;
+
+            const auto memo = polygon_memo.find({ci, scale, is_open});
+            if (memo != polygon_memo.end()) {
+                const auto& shared = ctx.cheb_sections[static_cast<std::size_t>(memo->second)];
+                ctx.links.xsect_y_full[uj]   = shared.y_full;
+                ctx.links.xsect_a_full[uj]   = shared.a_full;
+                ctx.links.xsect_r_full[uj]   = shared.r_full;
+                ctx.links.xsect_w_max[uj]    = shared.w_max;
+                ctx.links.xsect_cheb_idx[uj] = memo->second;
+                continue;
+            }
+
+            const auto& tbl = ctx.tables.tables[static_cast<std::size_t>(ci)];
+            if (tbl.x.size() < 3) continue;   // too few points; a_full stays 0
+
+            // Scale the raw curve coordinates (bulge is a dimensionless
+            // angle ratio, tan(theta/4) — it does NOT scale).
+            std::vector<double> px(tbl.x.size()), py(tbl.y.size());
+            for (std::size_t i = 0; i < tbl.x.size(); ++i) {
+                px[i] = tbl.x[i] * scale;
+                py[i] = tbl.y[i] * scale;
+            }
+            const double* bulge_ptr = tbl.bulge.empty() ? nullptr : tbl.bulge.data();
+
+            std::vector<xsboundary::BElem> elems;
+            int rc = xsboundary::fromArcSpec(px.data(), py.data(), bulge_ptr,
+                                             static_cast<int>(px.size()), elems);
+            if (rc != 0) {
+                ctx.errors.push_back(format_error(ERR_CURVE_SEQUENCE, cname,
+                    "POLYGON boundary error " + std::to_string(rc)));
+                continue;
+            }
+
+            chebsec::ChebSection cs{};
+            rc = chebsec::compile(cs, elems.data(), static_cast<int>(elems.size()), is_open);
+            if (rc != 0) {
+                ctx.errors.push_back(format_error(ERR_CURVE_SEQUENCE, cname,
+                    "POLYGON compile error " + std::to_string(rc)));
+                continue;
+            }
+
+            const int cheb_idx = static_cast<int>(ctx.cheb_sections.size());
+            ctx.cheb_sections.push_back(cs);
+            ctx.cheb_boundaries.push_back(std::move(elems));
+
+            ctx.links.xsect_y_full[uj]   = cs.y_full;
+            ctx.links.xsect_a_full[uj]   = cs.a_full;
+            ctx.links.xsect_r_full[uj]   = cs.r_full;
+            ctx.links.xsect_w_max[uj]    = cs.w_max;
+            ctx.links.xsect_cheb_idx[uj] = cheb_idx;
+            polygon_memo.emplace(std::tuple<int, double, bool>{ci, scale, is_open}, cheb_idx);
+        }
+    }
+
     // Resolve STREET cross-sections — build a transect from each referenced
     // [STREETS] entry (gutter + road crown + backing) and attach it like an
     // IRREGULAR/CUSTOM table. Slopes are %→fraction and lengths display→ft,
@@ -3211,6 +3307,14 @@ void resolve_cross_references(SimulationContext& ctx) {
     // ORIFICE, WEIR). Orifice/weir flow equations use xsect_a_full, y_full,
     // and w_max from the [XSECTIONS] section — skipping them leaves a_full=0
     // which causes zero flow for all orifices.
+    //
+    // Under XSECT_GEOMETRY EXACT, a handful of self-contained shapes also get
+    // compiled to a Chebyshev boundary here (see LegacyShapeBoundary.hpp for
+    // which ones, and why the rest are left on LEGACY). Memoized by (batch
+    // shape, y_full, w_max) — the only inputs buildLegacyBoundary reads —
+    // so every link sharing a diameter/height shares one compiled section,
+    // same as the POLYGON and CUSTOM memoization above.
+    std::map<std::tuple<int, double, double>, int> legacy_exact_memo;
     for (int j = 0; j < n_links; ++j) {
         auto uj = static_cast<std::size_t>(j);
         auto lt = ctx.links.type[uj];
@@ -3242,6 +3346,29 @@ void resolve_cross_references(SimulationContext& ctx) {
                 a_full = xs.a_full; r_full = xs.r_full; w_max = xs.w_max;
                 s_full = xs.s_full; s_max = xs.s_max; yw_max = xs.yw_max;
                 ctx.links.xsect_a_bot[uj] = xs.a_bot;
+            }
+            break;
+        }
+
+        case XsectShape::POLYGON: {
+            // Properties already set from the compiled ChebSection above.
+            // Unlike CUSTOM's normalized curve, ChebSection carries s_full/
+            // s_max/yw_max directly — no separate y_full-scaling step needed.
+            a_full = ctx.links.xsect_a_full[uj];
+            r_full = ctx.links.xsect_r_full[uj];
+            w_max  = ctx.links.xsect_w_max[uj];
+            int ci = ctx.links.xsect_cheb_idx[uj];
+            if (ci >= 0 && static_cast<std::size_t>(ci) < ctx.cheb_sections.size()) {
+                const auto& cs = ctx.cheb_sections[static_cast<std::size_t>(ci)];
+                y_full = cs.y_full; a_full = cs.a_full; r_full = cs.r_full;
+                w_max  = cs.w_max;  s_full = cs.s_full; s_max  = cs.s_max;
+                yw_max = cs.yw_max;
+            } else {
+                // Not resolved (bad curve name, compile error, etc.) —
+                // fallback matches CUSTOM's own unresolved fallback.
+                s_full = a_full * std::pow(r_full, 2.0 / 3.0);
+                s_max  = s_full;
+                yw_max = y_full;
             }
             break;
         }
@@ -3331,6 +3458,35 @@ void resolve_cross_references(SimulationContext& ctx) {
                         static_cast<int>(forcemain::FrictionModel::DARCY_WEISBACH)) {
                     ctx.links.xsect_r_bot[uj] /=
                         ucf::Ucf[ucf::RAINDEPTH][static_cast<std::size_t>(us)];
+                }
+
+                if (ctx.options.xsect_geometry == XsectGeometryMode::EXACT) {
+                    const int batch_shape = xs.type;
+                    const auto key = std::tuple<int, double, double>{
+                        batch_shape, xs.y_full, xs.w_max};
+                    const auto memo = legacy_exact_memo.find(key);
+                    if (memo != legacy_exact_memo.end()) {
+                        ctx.links.xsect_cheb_idx[uj] = memo->second;
+                    } else {
+                        std::vector<xsboundary::BElem> elems;
+                        if (xsboundary::buildLegacyBoundary(
+                                static_cast<XSectShape>(batch_shape), xs, elems)) {
+                            chebsec::ChebSection cs{};
+                            const int crc = chebsec::compile(
+                                cs, elems.data(), static_cast<int>(elems.size()), false);
+                            if (crc == 0) {
+                                const int cheb_idx = static_cast<int>(ctx.cheb_sections.size());
+                                ctx.cheb_sections.push_back(cs);
+                                ctx.cheb_boundaries.push_back(std::move(elems));
+                                ctx.links.xsect_cheb_idx[uj] = cheb_idx;
+                                legacy_exact_memo.emplace(key, cheb_idx);
+                            }
+                            // compile() failure: EXACT is alpha/best-effort for
+                            // a shape LEGACY already evaluates correctly, so
+                            // silently keep the LEGACY path (xsect_cheb_idx
+                            // stays -1) rather than failing the whole model.
+                        }
+                    }
                 }
             } else {
                 if (rc != 0) {
@@ -3530,6 +3686,15 @@ void resolve_cross_references(SimulationContext& ctx) {
     // empty) and are skipped; their boundaries are validated on load.
     // -------------------------------------------------------------------------
     for (const auto& tbl : ctx.tables.tables) {
+        // XPOLYGON is exempt, and not as a special case: its x/y are boundary
+        // COORDINATES tracing a closed chain, not an (independent, dependent)
+        // function pair, so the abscissa necessarily decreases and repeats —
+        // a 4-arc circle goes (r,0) (0,r) (-r,0) (0,-r). Monotonicity is
+        // meaningless here; the chain's real invariants (closed, non
+        // self-intersecting, |bulge| <= 1) are enforced by fromArcSpec. This
+        // also keeps the "mirror ONLY legacy's monotonicity test" intent
+        // above intact, legacy having no XPOLYGON curve type at all.
+        if (tbl.type == TableType::CURVE_XPOLYGON) continue;
         const bool is_ts = (tbl.type == TableType::TIMESERIES);
         for (std::size_t k = 1; k < tbl.x.size(); ++k) {
             if (tbl.x[k] - tbl.x[k - 1] <= 0.0) {

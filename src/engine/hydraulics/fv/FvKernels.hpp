@@ -65,6 +65,7 @@
 
 #include "FvOptions.hpp"
 #include "NetworkMeshData.hpp"
+#include "../ChebSectionBatch.hpp"   // chebAWRofY — the fused closure path
 
 // Portable kernel-function marker — identical convention to
 // 2d/solver/InertialKernels.hpp:45. Host builds get plain `inline`; the GPU
@@ -176,7 +177,43 @@ OPENSWMM_KERNEL_FN double i1OfDepth(const FvGeometry& g, double h,
  *          measured round trip ≤ 1.2e-15·y_full over the whole depth range,
  *          slot band included. The polynomial class inverts in closed form.
  */
+/**
+ * @brief Evaluate the whole closure at one depth in a single pass.
+ *
+ * Semantically identical to calling areaOfDepth / widthOfDepth / hydRadOfDepth
+ * / i1OfDepth separately, and asserted bit-identical to them by
+ * `FvClosure.F1_ClosureAllIsBitIdenticalToUnfusedPath_*`.
+ *
+ * @note Kept as the fused facade over the four kernels above after the
+ *       FvClosure rework replaced this branch's own fusion: the solver's hot
+ *       path now calls `closureEval` directly (one panel locate for A, T and
+ *       I₁), so this is the convenience entry point and the invariant the
+ *       acceptance test pins, not a performance path.
+ */
+OPENSWMM_KERNEL_FN void closureAll(const FvGeometry& g, double h,
+                                   double* a, double* w, double* r,
+                                   double* i1) noexcept {
+    const ClosureEval e = closureEval(g.closure_tbl, h);
+    if (a)  *a  = e.a;
+    if (w)  *w  = e.t;
+    if (i1) *i1 = e.i1;
+    if (r)  *r  = hydRadOfDepth(g, h);
+}
+
 OPENSWMM_KERNEL_FN double depthOfArea(const FvGeometry& g, double a) noexcept {
+    // NOTE (promptperf.md Phase E, carried forward): a COMPILED inverse was
+    // built here and rejected. Seeding from chebYofA and running Newton on the
+    // true areaOfDepth measured 264 s -> 162 s on Bellinge FV EXACT (2 h), but
+    // stopping on a 1e-15*y_full step leaves the iterate short of a true fixed
+    // point and this function's contract is to be the EXACT inverse of
+    // areaOfDepth: worst free-surface drift on a partly-full closed pipe went
+    // 5.6e-5 -> 1.1e-4 ft, and lake-at-rest is the property the whole
+    // well-balanced construction exists to deliver. Tightening to a
+    // machine-precision fixed point is unreachable (areaOfDepth carries ~1e-16
+    // relative noise, so the step jitters at the noise floor) and measured
+    // SLOWER than doing nothing. The bracket is what makes the root reachable
+    // on a noisy function; closureDepthOfArea keeps one. Anyone revisiting
+    // should attack the number of CALLS, not the cost of one.
     return closureDepthOfArea(g.closure_tbl, a);
 }
 
