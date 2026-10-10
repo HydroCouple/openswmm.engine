@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "Runoff.hpp"
 #include "../core/CompletedSourceArchive.hpp"
+#include <cmath>
 namespace openswmm::runoff {
 void RunoffSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) {
     if(model) {
@@ -25,4 +26,19 @@ void RunoffSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) {
         infil_bank_.checkpoint(a,false);
     }
 }
+void RunoffSolver::validateCheckpoint(const RunoffSolver& model) const {
+    const auto require=[](bool ok){if(!ok)throw std::runtime_error("Invalid runoff checkpoint state.");};
+    require(soa_.n_subcatch==model.soa_.n_subcatch && soa_.area==model.soa_.area);
+    for(const auto* row:{&soa_.depth_imperv0,&soa_.depth_imperv1,&soa_.depth_perv,&soa_.old_runoff_imperv0,
+            &soa_.old_runoff_imperv1,&soa_.old_runoff_perv,&soa_.runoff,&soa_.evap_loss,&soa_.infil_loss,
+            &soa_.perv_evap_vol,&soa_.actual_perv_evap_vol,&soa_.spatial_infil_vol,&soa_.native_infil_rate,
+            &soa_.infil_vol,&soa_.subarea_runoff_rate,&soa_.imperv_runoff_cfs,&soa_.perv_runoff_cfs,
+            &soa_.outflow_vol,&infil_factor_used_,&completed_step_seconds_,&precip_,&evap_rate_,&infil_rate_})
+        for(double v:*row)require(std::isfinite(v) && v>=0);
+    for(const auto& pools:soa_.completed)for(const auto& w:pools)
+        for(double v:{w.area,w.opening,w.rain,w.runon,w.evaporation,w.infiltration,w.spatial_infiltration,w.outflow,w.outlet,w.closing})
+            require(std::isfinite(v) && v>=0);
+    infil_bank_.validateCheckpoint(model.infil_bank_);
+}
+
 }

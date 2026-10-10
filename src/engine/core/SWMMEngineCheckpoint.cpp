@@ -100,6 +100,23 @@ void publish(const std::string& path,const std::string& bytes) {
     X(old_runoff_time_) X(new_runoff_time_) X(old_runoff_ms_) X(new_runoff_ms_) X(prev_runoff_step_sec_) X(new_rule_time_ms_) \
     X(next_event_) X(between_events_) X(last_melt_doy_) X(prev_lid_infil_vol_) X(prev_lid_evap_vol_) X(has_runoff_) \
     X(has_snow_) X(last_step_steady_) X(routing_prev_rates_) X(lid_drain_q_interp_)
+// Only water runtime fields are decoded; authored data stays in the fresh model.
+#define SUBCATCH_WATER(X) \
+    X(runoff) X(rainfall) X(evap_loss) X(infil_loss) X(ponded_depth) X(old_ponded_depth) X(washoff_vout1) \
+    X(gw_flow) X(snow_depth) X(lid_drain_flow) X(old_runoff) X(old_gw_flow) X(old_snow_depth) X(old_lid_drain_flow) \
+    X(runon_inflow) X(old_runon_inflow) X(runon_rate) X(outfall_runon_vol) X(gw_sw_head) X(gw_node_avail_flow) X(gw_max_infil_vol) \
+    X(subarea_runoff_rate) X(lid_return_to_perv_cfs) X(lid_drain_runon_cfs) X(stat_precip_vol) X(stat_evap_vol) X(stat_infil_vol) \
+    X(stat_imperv_vol) X(stat_perv_vol) X(stat_runoff_vol) X(stat_max_runoff) X(stat_gw_infil_vol) X(stat_gw_upper_evap_vol) \
+    X(stat_gw_lower_evap_vol) X(stat_gw_deep_perc_vol) X(stat_gw_flow_vol) X(stat_gw_max_flow) X(stat_gw_sum_theta) \
+    X(stat_gw_sum_depth) X(stat_gw_final_theta) X(stat_gw_final_depth) X(stat_gw_steps) X(snow_net_imperv) X(snow_net_perv) \
+    X(snow_melt_imperv) X(snow_melt_perv) X(snow_melt_age_imperv) X(snow_melt_age_perv)
+#define GAGE_WATER(X) \
+    X(rainfall) X(next_rainfall) X(api_rainfall) X(next_rain_date) X(is_raining) X(st_cur) X(st_next) X(st_rain) \
+    X(st_init) X(st_used) X(past_rain) X(past_rain_accum) X(past_rain_time) X(cumul_rain_accum)
+#define LID_USAGE_WATER(X) \
+    X(wb_inflow) X(wb_evap) X(wb_infil) X(wb_surf_flow) X(wb_drain_flow) X(wb_init_vol) X(wb_final_vol)
+#define RUNOFF_ENGINE(X) \
+    X(wet_q_interp_) X(gw_q_interp_) X(gw_q_node_) X(lid_vlidin_vol_) X(lid_qsurf_cfs_) X(old_gw_rate_) X(lid_drain_q_units_)
 void climateState(Archive& a,climate::ClimateState& s) {
 #define F(v) field(a,s.v);
     CLIMATE(F)
@@ -128,6 +145,12 @@ struct SWMMEngine::RestartState {
     climate::ClimateState climate;
     exfil::ExfilSoA exfil;
     AvgAccumulator avg;
+    runoff::RunoffSolver runoff;
+    lid::LIDSolver lid;
+    SubcatchData subcatch;
+    GageData gages;
+    LidUsageStore lid_usage;
+    double runoff_interp;
     std::array<double,6> boundary;
     double controls_remaining;
     std::vector<TableCursor> cursors;
@@ -139,9 +162,11 @@ struct SWMMEngine::RestartState {
     std::vector<double> orifice_area,weir_area;
 #define DECL(v) decltype(SWMMEngine::v) v;
     ENGINE(DECL)
+    RUNOFF_ENGINE(DECL)
 #undef DECL
     explicit RestartState(const SWMMEngine& e) : balance(e.ctx_.mass_balance),stats(e.ctx_.routing_stats),negsrc(e.ctx_.negsrc),
-        climate(e.ctx_.climate_state),exfil(e.exfil_.state()),avg(e.avg_),
+        climate(e.ctx_.climate_state),exfil(e.exfil_.state()),avg(e.avg_),runoff(e.runoff_),lid(e.lid_.waterTrial()),
+        subcatch(e.ctx_.subcatches),gages(e.ctx_.gages),lid_usage(e.ctx_.lid_usage),runoff_interp(e.ctx_.runoff_interp_f),
         boundary{e.ctx_.current_time,e.ctx_.current_date,e.ctx_.elapsed_ms,e.ctx_.old_elapsed_ms,e.ctx_.next_report_ms,e.ctx_.climate_state.evap_rate},
         controls_remaining(e.ctx_.dt_controls_remaining),pending(e.controls_.pending_actions_),
         slots(e.controls_.action_slots_),action_count(e.controls_.last_action_count_),
@@ -149,6 +174,7 @@ struct SWMMEngine::RestartState {
         pid(e.controls_.pid_states_),orifice_area(e.hydstruct_.orifices_.surf_area),weir_area(e.hydstruct_.weirs_.surf_area) {
 #define COPY(v) v=e.v;
         ENGINE(COPY)
+        RUNOFF_ENGINE(COPY)
 #undef COPY
         int at=0;for(const auto* row:{e.ctx_.max_courant_crit,e.ctx_.max_flow_turns,e.ctx_.max_non_converged,e.ctx_.max_mass_bal_errs})
             for(int i=0;i<SimulationContext::MAX_STATS;++i)tops[at++]=row[i];
@@ -178,6 +204,25 @@ struct SWMMEngine::RestartState {
                             &avg.link_flow,&avg.link_depth,&avg.link_velocity,&avg.link_volume,&avg.link_capacity})finite(*row);
         a.sequence(pending,[&](auto& p){fields(a,p.link_idx,p.value,p.priority,p.rule_idx,p.type);});
         fields(a,slots,action_count,control_scratch);
+        std::string marker="engine runoff/rainfall boundary v3";a(marker);
+        require(marker=="engine runoff/rainfall boundary v3","Invalid engine hydrology record.");
+        std::string water,units;
+        if(!a.reading()) {Archive r,l;runoff.checkpoint(r,false);lid.checkpoint(l,false,true);water=r.bytes();units=l.bytes();}
+        a(water,units);
+        if(a.reading()) {Archive r(std::move(water)),l(std::move(units));runoff.checkpoint(r,false);r.finish();lid.checkpoint(l,false,true);l.finish();}
+#define F(v) stateField(a,subcatch.v);
+        SUBCATCH_WATER(F)
+#undef F
+#define F(v) stateField(a,gages.v);
+        GAGE_WATER(F)
+#undef F
+#define F(v) stateField(a,lid_usage.v);
+        LID_USAGE_WATER(F)
+#undef F
+        field(a,runoff_interp);
+#define F(v) a(v);
+        RUNOFF_ENGINE(F)
+#undef F
         a.sequence(pid,[&](auto& p){fields(a,p.setpoint,p.e1,p.e2);},true);
         a.fixed(orifice_area,weir_area);finite(orifice_area);finite(weir_area);
     }
@@ -201,7 +246,69 @@ struct SWMMEngine::RestartState {
         require(balance.routing_init_storage>=0 && balance.routing_final_storage>=0,"Negative engine continuity storage.");
         require(balance.routing_init_storage==e.ctx_.mass_balance.routing_init_storage,"Engine initial continuity storage differs.");
         require(lid_drain_q_interp_.empty() || lid_drain_q_interp_.size()==std::size_t(e.ctx_.n_nodes()),"Invalid engine LID-drain interpolation shape.");
-        for(double q:lid_drain_q_interp_)require(q==0,"Engine checkpoint has unqualified runoff LID drains.");
+        for(double q:lid_drain_q_interp_)require(q>=0,"Negative engine LID drain interpolation.");
+        runoff.validateCheckpoint(e.runoff_);lid.validateCheckpoint(e.lid_,std::size_t(e.ctx_.n_subcatches()));
+        require(runoff_interp>=0 && runoff_interp<=1 && std::isfinite(runoff_interp) && !has_snow_,"Invalid engine runoff interpolation.");
+        const auto ns=std::size_t(e.ctx_.n_subcatches());
+        for(const auto* row:{&wet_q_interp_,&gw_q_interp_,&lid_vlidin_vol_,&lid_qsurf_cfs_,&old_gw_rate_}) {
+            require(row->empty() || row->size()==ns,"Invalid engine runoff buffer shape.");
+            for(double v:*row)require(std::isfinite(v) && v>=0,"Invalid engine runoff interpolation water.");
+        }
+        require(gw_q_node_.empty() || gw_q_node_.size()==ns,"Invalid engine groundwater receiver shape.");
+        for(int node:gw_q_node_)require(node==-1,"Unqualified engine groundwater receiver.");
+        for(const auto* row:{&gw_q_interp_,&old_gw_rate_})for(double v:*row)require(v==0,"Unqualified engine groundwater flow.");
+        std::size_t max_units=0;for(int n:e.ctx_.lid_usage.number)max_units+=std::size_t(n);
+        require(lid_drain_q_units_.size()<=max_units,"Invalid engine LID drain unit count.");
+        for(const auto& [node,q]:lid_drain_q_units_)require(node>=0 && node<e.ctx_.n_nodes() && std::isfinite(q) && q>=0,
+                "Invalid engine LID drain receiver/flow.");
+        for(const auto* row:{&subcatch.runoff,&subcatch.rainfall,&subcatch.evap_loss,&subcatch.infil_loss,&subcatch.ponded_depth,
+                &subcatch.old_ponded_depth,&subcatch.old_runoff,&subcatch.lid_drain_flow,&subcatch.old_lid_drain_flow,
+                &subcatch.runon_inflow,&subcatch.old_runon_inflow,&subcatch.runon_rate,&subcatch.outfall_runon_vol,
+                &subcatch.lid_return_to_perv_cfs,&subcatch.lid_drain_runon_cfs,&subcatch.stat_precip_vol,&subcatch.stat_evap_vol,
+                &subcatch.stat_infil_vol,&subcatch.stat_imperv_vol,&subcatch.stat_perv_vol,&subcatch.stat_runoff_vol,&subcatch.stat_max_runoff})
+            for(double v:*row)require(v>=0,"Negative engine subcatchment water.");
+        for(const auto* row:{&gages.rainfall,&gages.next_rainfall,&gages.st_rain,&gages.past_rain,&gages.past_rain_accum,&gages.cumul_rain_accum})
+            for(double v:*row)require(v>=0,"Negative engine rainfall history.");
+        for(std::size_t i=0;i<gages.st_cur.size();++i) {
+            auto count=e.ctx_.tables.tables[gages.ts_index[i]].size();
+            require(gages.st_cur[i]>=-2 && (gages.st_cur[i]<0 || std::size_t(gages.st_cur[i])<count) &&
+                    gages.st_next[i]>=-1 && (gages.st_next[i]<0 || std::size_t(gages.st_next[i])<count) &&
+                    gages.st_init[i]<=1 && gages.st_used[i]<=1 && gages.api_rainfall[i]==-1 &&
+                    (!gages.st_init[i] || bool(gages.st_used[i])==gage::gageIsUsed(e.ctx_,int(i))) &&
+                    (gages.st_init[i] || (gages.st_cur[i]==-2 && gages.st_next[i]==-1 && gages.st_used[i]==0)) &&
+                    (gages.st_next[i]<0 || gages.st_next[i]>gages.st_cur[i]),
+                    "Invalid engine rainfall cursor/override.");
+        }
+        if(time>0 && ns>0) {
+            require(wet_q_interp_.size()==ns && gw_q_interp_.size()==ns && old_gw_rate_.size()==ns && gw_q_node_.size()==ns,
+                    "Missing engine runoff interpolation state.");
+            for(std::size_t i=0;i<ns;++i) {
+                const int out=subcatch.outlet_node[i];
+                const double q=subcatch.area[i]>0 && out>=0 && out<e.ctx_.n_nodes() ?
+                    (1-runoff_interp)*subcatch.old_runoff[i]+runoff_interp*subcatch.runoff[i] : 0;
+                require(wet_q_interp_[i]==q,"Engine runoff interpolation differs from staged water.");
+            }
+            std::vector<std::pair<int,double>> drains;std::vector<double> totals(e.ctx_.n_nodes(),0);
+            for(const auto& [type,u]:lid.usageOrder()) {
+                const auto& g=lid.group(type);const int sc=g.subcatch_idx[u];
+                if(sc<0 || std::size_t(sc)>=ns || subcatch.area[sc]<=0 || subcatch.total_lid_area_ft2[sc]<=0)continue;
+                int node=g.drain_node[u];const int dsc=g.drain_subcatch[u];
+                if(node<0 && (dsc<0 || dsc==sc))node=subcatch.outlet_node[sc];
+                if(node<0 || node>=e.ctx_.n_nodes())continue;
+                const double q=(1-runoff_interp)*(g.old_drain_flow[u]*g.area[u])+runoff_interp*(g.drain_flow[u]*g.area[u]);
+                drains.emplace_back(node,q);totals[node]+=q;
+            }
+            require(drains==lid_drain_q_units_ && totals==lid_drain_q_interp_,"Engine ordered LID drain interpolation differs.");
+        }
+        require(balance.runoff_init_store==e.ctx_.mass_balance.runoff_init_store,"Engine initial runoff storage differs.");
+        if(time>0) {
+            const auto& s=runoff.soa();double stored=0;
+            for(std::size_t i=0;i<ns;++i)stored+=(s.depth_imperv0[i]*s.frac_imperv0[i]+s.depth_imperv1[i]*s.frac_imperv1[i]+
+                    s.depth_perv[i]*(1-s.imperv_pct[i]))*s.area[i];
+            stored+=lid.storedVolume();
+            require(std::isfinite(stored) && std::abs(stored-balance.runoff_final_store)<=1e-10*std::max(1.,std::abs(stored)),
+                    "Engine runoff final storage differs from staged water.");
+        }
         for(std::size_t i=0;i<cursors.size();++i)require(cursors[i].index>=0 && cursors[i].index<static_cast<int>(std::max(std::size_t(1),e.ctx_.tables.tables[i].size())) &&
                 (cursors[i].direction==1 || cursors[i].direction==-1),"Invalid engine table cursor.");
         for(std::size_t i=0;i<exfil.btm_ga.size();++i) {checkGreenAmpt(exfil.btm_ga[i],e.exfil_.state().btm_ga[i]);checkGreenAmpt(exfil.bank_ga[i],e.exfil_.state().bank_ga[i]);}
@@ -216,9 +323,21 @@ struct SWMMEngine::RestartState {
     }
     void install(SWMMEngine& e) noexcept {
         static_assert(std::is_nothrow_move_assignable_v<SimulationContext::MassBalance> &&
-                      std::is_nothrow_move_assignable_v<exfil::ExfilSoA> && std::is_nothrow_move_assignable_v<AvgAccumulator>);
+                      std::is_nothrow_move_assignable_v<exfil::ExfilSoA> && std::is_nothrow_move_assignable_v<AvgAccumulator> &&
+                      std::is_nothrow_move_assignable_v<runoff::RunoffSolver> && std::is_nothrow_move_assignable_v<lid::LIDSolver>);
 #define COPY(v) e.v=std::move(v);
         ENGINE(COPY)
+        RUNOFF_ENGINE(COPY)
+#undef COPY
+        e.runoff_=std::move(runoff);e.lid_=std::move(lid);e.ctx_.runoff_interp_f=runoff_interp;
+#define COPY(v) e.ctx_.subcatches.v=std::move(subcatch.v);
+        SUBCATCH_WATER(COPY)
+#undef COPY
+#define COPY(v) e.ctx_.gages.v=std::move(gages.v);
+        GAGE_WATER(COPY)
+#undef COPY
+#define COPY(v) e.ctx_.lid_usage.v=std::move(lid_usage.v);
+        LID_USAGE_WATER(COPY)
 #undef COPY
         e.ctx_.mass_balance=std::move(balance);e.ctx_.routing_stats=stats;e.ctx_.negsrc=negsrc;
         int at=0;for(auto* row:{e.ctx_.max_courant_crit,e.ctx_.max_flow_turns,e.ctx_.max_non_converged,e.ctx_.max_mass_bal_errs})
@@ -240,9 +359,9 @@ void SWMMEngine::checkCheckpointProfile() const {
     require(exchange_target_<0,"Engine session checkpoint does not yet support runtime advance/coupling targets.");
     require(ctx_.state==EngineState::RUNNING && ctx_.error_code==0 && do_routing_ && save_results_==0,
             "Engine checkpoint requires a running water-only start(0) hydraulic session.");
-    require(ctx_.n_subcatches()==0 && ctx_.n_gages()==0 && ctx_.rdii_assigns.count()==0 && !ctx_.files.has_any() &&
+    require(ctx_.rdii_assigns.count()==0 && !ctx_.files.has_any() &&
             !runoff_iface_file_ && !ctx_.runtime_coupling_used && ctx_.process_component_specs.empty(),
-            "Engine checkpoint does not recover runoff, rainfall, interface files, providers or process components.");
+            "Engine checkpoint does not recover RDII, interface files, providers or process components.");
 #ifdef OPENSWMM_HAS_2D
     require(!surface_router_.isActive(),"Engine session checkpoint does not yet pair live surface/source routing.");
 #endif
@@ -259,12 +378,19 @@ void SWMMEngine::checkCheckpointProfile() const {
         for(auto mode:*row)require(mode==ForcingMode::NONE,"Engine checkpoint cannot recover runtime forcing.");
     require(f.climate_temperature_mode==ForcingMode::NONE && f.climate_wind_mode==ForcingMode::NONE && f.climate_evap_mode==ForcingMode::NONE,
             "Engine checkpoint cannot recover runtime climate forcing.");
-    for(const auto* row:{&wet_q_interp_,&gw_q_interp_,&lid_vlidin_vol_,&lid_qsurf_cfs_,&old_gw_rate_,
-                        &gw_frac_perv_,&gw_perv_evap_,&gw_2d_recharge_vol_,&gw_infil_with_2d_,&gw_infil_rate_,&snow_rain_,&snow_snow_})
+    require(ctx_.n_subcatches()==0 || (ctx_.options.ignore_snow_melt && ctx_.options.ignore_groundwater),
+            "Runoff session checkpoint currently requires IGNORE_SNOWMELT and IGNORE_GROUNDWATER.");
+    for(int pack:ctx_.subcatches.snowpack)require(pack<0,"Engine checkpoint does not recover assigned snowpacks.");
+    for(int aquifer:ctx_.subcatches.gw_aquifer)require(aquifer<0,"Engine checkpoint does not recover assigned groundwater.");
+    for(const auto& path:ctx_.lid_usage.rpt_file)require(path.empty(),"Engine checkpoint cannot append detailed LID reports.");
+    require(gage_states_.size()==std::size_t(ctx_.n_gages()),"Engine rainfall state shape differs.");
+    for(std::size_t i=0;i<ctx_.gages.source.size();++i)require(ctx_.gages.source[i]==RainSource::TIMESERIES &&
+            ctx_.gages.ts_index[i]>=0 && ctx_.gages.ts_index[i]<ctx_.n_tables() && ctx_.gages.file_path[i].empty() &&
+            ctx_.gages.rain_series[i].empty() && ctx_.gages.api_rainfall[i]==-1,
+            "Engine checkpoint supports inline rainfall without API overrides.");
+    for(const auto* row:{&gw_frac_perv_,&gw_perv_evap_,&gw_2d_recharge_vol_,&gw_infil_with_2d_,&gw_infil_rate_,&snow_rain_,&snow_snow_})
         require(row->empty(),"Engine checkpoint has unqualified hydrology interpolation state.");
-    require(lid_drain_q_units_.empty() && gw_q_node_.empty() && gage_states_.empty(),"Engine checkpoint has unqualified hydrology receivers.");
     require(lid_drain_q_interp_.empty() || lid_drain_q_interp_.size()==std::size_t(ctx_.n_nodes()),"Engine checkpoint LID-drain shape differs.");
-    for(double q:lid_drain_q_interp_)require(q==0,"Engine checkpoint has unqualified runoff LID drains.");
     require(router_.structures_==&hydstruct_,"Engine checkpoint structure solver ownership differs.");
     if(ctx_.routing_stats.sum_iterations>0)for(const auto& lid:ctx_.node_subtypes.storages.lid_state)
         require(lid.quality_old_water.size()==lid.cells.size(),"Engine routed LID previous-water shape differs.");
@@ -313,6 +439,18 @@ std::string SWMMEngine::checkpointModel() const {
     auto x=exfil_.state();a(x.count,x.node_idx,x.btm_area,x.bank_min_depth,x.bank_max_depth,x.bank_max_area);
     for(auto* row:{&x.btm_ga,&x.bank_ga})a.sequence(*row,[&](auto& g){a(g.S,g.Ks,g.IMDmax,g.Fumax,g.Lu);});
     for(auto* row:{ctx_.adjust_temp,ctx_.adjust_evap,ctx_.adjust_rain,ctx_.adjust_hydcon})for(int i=0;i<12;++i){auto v=row[i];a(v);}
+    auto sub=ctx_.subcatches;auto g=ctx_.gages;auto lc=ctx_.lid_controls;auto lu=ctx_.lid_usage;
+    auto sn=ctx_.subcatch_names.names();auto gn=ctx_.gage_names.names();a(sn,gn);
+    a(sub.outlet_node,sub.outlet_subcatch,sub.outlet_name,sub.gage_name,sub.gage,sub.area,sub.width,sub.slope,sub.curb_length,
+      sub.rain_scale_factor,sub.snow_scale_factor,sub.frac_imperv,sub.frac_imperv_no_store,sub.pct_zero,sub.n_imperv,sub.n_perv,
+      sub.ds_imperv,sub.ds_perv,sub.subarea_routing,sub.pct_routed,sub.infil_model,sub.infil_p1,sub.infil_p2,sub.infil_p3,sub.infil_p4,
+      sub.infil_p5,sub.snowpack,sub.snowpack_name,sub.gw_aquifer,sub.gw_node,sub.total_lid_area_ft2,sub.comments,sub.tags,sub.rpt_flag);
+    auto adj=ctx_.subcatch_infil_pattern,np=ctx_.subcatch_n_perv_pattern,ds=ctx_.subcatch_d_store_pattern;auto has=ctx_.has_subcatch_adj_patterns;a(adj,np,ds,has);
+    a(g.rain_type,g.source,g.ts_index,g.ts_name,g.interval_sec,g.snow_factor,g.scale_factor,g.co_gage_index,g.comments);
+    for(int i=0;i<ctx_.n_gages();++i){auto used=gage::gageIsUsed(ctx_,i);a(used);}
+    a(lc.names,lc.lid_type,lc.surface,lc.soil,lc.pavement,lc.storage,lc.drain,lc.drainmat,lc.removals,
+      lu.subcatch_index,lu.lid_index,lu.number,lu.area,lu.width,lu.init_sat,lu.from_imperv,lu.to_perv,lu.drain_to,lu.from_perv);
+    auto runoff=runoff_;auto lid=lid_.waterTrial();runoff.checkpoint(a,true);lid.checkpoint(a,true);
     auto hydraulic=router_.checkpointModel(ctx_);a(hydraulic);
     require(a.bytes().size()<=maxBytes,"Engine checkpoint model exceeds its size limit.");return a.bytes();
 }
@@ -336,7 +474,7 @@ std::string SWMMEngine::saveCheckpoint(const std::string& path) const {
         require(!step_active_ && !runtime_pipeline_ && exchange_target_<0,"Cannot save an active engine pipeline.");checkCheckpointBoundary();
         RestartState state(*this);Archive payload;state.archive(payload);std::string hydraulic;
         auto error=router_.checkpointBytes(ctx_,hydraulic);require(error.empty(),error.c_str());payload(hydraulic);
-        auto bytes=payload.bytes(),model=checkpoint_model_;auto crc=checksum(bytes);uint32_t version=2;std::string magic=magicName;
+        auto bytes=payload.bytes(),model=checkpoint_model_;auto crc=checksum(bytes);uint32_t version=3;std::string magic=magicName;
         Archive out;out(magic,version,model,crc,bytes);require(out.bytes().size()<=maxBytes,"Engine checkpoint exceeds its size limit.");
         publish(path,out.bytes());return {};
     } catch(const std::exception& e) {return e.what();}
@@ -346,7 +484,7 @@ std::string SWMMEngine::loadCheckpoint(const std::string& path) {
         require(!step_active_ && !runtime_pipeline_ && exchange_target_<0 && ctx_.current_time==0,"Engine restore requires an identically initialized fresh session.");
         checkCheckpointBoundary();Archive in(readFile(path));std::string magic,model,bytes;uint32_t version=0,crc=0;
         in(magic,version,model,crc,bytes);in.finish();
-        require(magic==magicName && version==2 && model==checkpoint_model_ && crc==checksum(bytes),"Engine checkpoint format/model/checksum differs.");
+        require(magic==magicName && version==3 && model==checkpoint_model_ && crc==checksum(bytes),"Engine checkpoint format/model/checksum differs.");
         RestartState state(*this);Archive payload(std::move(bytes));state.archive(payload);std::string hydraulic;payload(hydraulic);payload.finish();state.validate(*this);
         auto routing=router_.prepareCheckpointBytes(ctx_,std::move(hydraulic),&state.boundary);
         if(state.boundary[0]>0)Router::validateSessionStorage(routing,ctx_,state.balance.routing_final_storage,state.stats.sum_iterations>0);

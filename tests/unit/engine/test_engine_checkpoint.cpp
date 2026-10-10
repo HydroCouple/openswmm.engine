@@ -87,6 +87,44 @@ void startStructures(SWMMEngine& e,const std::string& name,int mode=0,int lid=0,
     if(e.initialize() || e.start(0))throw std::runtime_error("structure start: "+e.context().error_message);
     if(checkpoint) {auto error=e.enableCheckpointing();if(!error.empty())throw std::runtime_error(error);}
 }
+// Rainfall, upstream run-on, outfall feedback and all eight legacy LID types
+// share the actual engine scheduler/structure/node-LID pipeline.
+void startRunoff(SWMMEngine& e,const std::string& name,int method=0,int rain=0,int node_lid=0,bool checkpoint=true) {
+    SWMMEngine authored;startStructures(authored,name,method%4,node_lid,0,false);
+    if(authored.close())throw std::runtime_error("runoff fixture close failed");
+    auto p=root()/name;auto deck=bytes(p.string()+".inp");
+    deck.replace(deck.find("END_TIME 00:01:00"),std::string("END_TIME 00:01:00").size(),"END_TIME 00:03:00");
+    deck+="[OPTIONS]\nIGNORE_SNOWMELT YES\nIGNORE_GROUNDWATER YES\nWET_STEP 00:00:07\nDRY_STEP 00:00:23\n";
+    const char* methods[]={"HORTON","MODIFIED_HORTON","GREEN_AMPT","MODIFIED_GREEN_AMPT","CURVE_NUMBER"};
+    deck+="INFILTRATION "+std::string(methods[method])+"\n[RAINGAGES]\n";
+    const char* formats[]={"INTENSITY","VOLUME","CUMULATIVE"};
+    for(const char* g:{"R1","R2","Unused"})deck+=std::string(g)+" "+formats[rain]+" 0:01 1 TIMESERIES Rain\n";
+    deck+="[SUBCATCHMENTS]\nA R1 B .05 45 30 1 0\nB R2 S .08 65 40 2 0\nD R1 S .06 35 35 1 0\n[SUBAREAS]\nA .015 .12 .03 .05 35 PERVIOUS 55\nB .02 .13 .02 .04 25 IMPERVIOUS 45\nD .02 .13 .02 .04 25 OUTLET\n[INFILTRATION]\n";
+    for(const char* sub:{"A","B","D"})deck+=std::string(sub)+(method<2 ? " 3 .2 4 7 2\n" : (method<4 ? " 3 .25 .3\n" : " 75 .25 7\n"));
+    deck+="[LID_CONTROLS]\n";
+    for(const char* type:{"BC","RG","GR","IT","PP","RB","RD","VS"}) {
+        auto n=std::string("U")+type;deck+=n+" "+type+"\n"+n+" SURFACE 3 .05 .12 1 3\n";
+        if(n=="UBC" || n=="URG" || n=="UGR" || n=="UPP")deck+=n+" SOIL 6 .45 .2 .08 1 10 3\n";
+        if(n=="UPP")deck+=n+" PAVEMENT 3 .2 0 1 0 0 0\n";
+        if(n=="UBC" || n=="UIT" || n=="UPP" || n=="URB")deck+=n+" STORAGE 6 .667 .1 0\n";
+        if(n=="UGR")deck+=n+" DRAINMAT 2 .5 .1\n";
+        if(n=="UBC" || n=="UIT" || n=="UPP" || n=="URB")deck+=n+" DRAIN .5 .5 0 0\n";
+        if(n=="URD")deck+=n+" DRAIN 2 0 0 0\n";
+    }
+    deck+="[LID_USAGE]\nA UBC 2 20 3 70 30 1 * B\nA URG 1 20 3 50 30 1\nA UGR 1 20 3 50 20 0 * S\nB UIT 1 20 3 70 20 0 * S\nB UPP 1 20 3 70 20 0 * S\nB URB 1 20 3 70 20 0 * A\nD URD 1 20 3 0 30 1\nD UVS 1 20 3 0 30 0\n";
+    deck+="[TIMESERIES]\nRain 01/31/2004 23:59:12 ";deck+=rain==0 ? "5" : ".08";
+    deck+="\nRain 02/01/2004 00:00:12 ";deck+=rain==2 ? ".14" : (rain==0 ? "3" : ".05");
+    deck+="\nRain 02/01/2004 00:01:12 ";deck+=rain==2 ? ".14" : "0";
+    deck+="\nRain 02/01/2004 00:02:12 ";deck+=rain==0 ? "4" : ".04";
+    deck+="\n[PATTERNS]\nMonth MONTHLY .8 1.2 1 1 1 1 1 1 1 1 1 1\n[ADJUSTMENTS]\nRAIN .9 1.2 1 1 1 1 1 1 1 1 1 1\nINFIL A Month\nN-PERV B Month\nDSTORE D Month\n";
+    write(p.string()+".inp",deck);
+    if(e.open((p.string()+".inp").c_str(),(p.string()+".rpt").c_str(),nullptr))throw std::runtime_error("runoff open: "+e.context().error_message+" "+(e.context().errors.empty()?"":e.context().errors.front()));
+    e.context().gages.scale_factor[1]=1.3;
+    e.context().subcatches.rain_scale_factor[1]=.8;
+    e.context().node_subtypes.outfalls.route_to[0]=2;
+    if(e.initialize() || e.start(0))throw std::runtime_error("runoff start: "+e.context().error_message+" "+(e.context().errors.empty()?"":e.context().errors.front()));
+    if(checkpoint) {auto error=e.enableCheckpointing();if(!error.empty())throw std::runtime_error(error);}
+}
 void step(SWMMEngine& e) {
     double t=-1;auto result=e.step(&t);
     if(result)throw std::runtime_error("step: "+e.context().error_message);
@@ -250,7 +288,7 @@ TEST(EngineCheckpoint, StructuralStateCorruptionAndMaterialChangePreserveFreshTa
     for(int i=0;i<71;++i)ASSERT_NO_THROW(step(a));
     auto good=root()/"structural-atomic.chk";ASSERT_EQ(a.saveCheckpoint(good.string()),"");
     detail::CompletedSourceArchive in(bytes(good));std::string magic,model,payload;uint32_t version,sum;
-    in(magic,version,model,sum,payload);in.finish();ASSERT_EQ(version,2);
+    in(magic,version,model,sum,payload);in.finish();ASSERT_EQ(version,3);
     auto hydraulic=payload.find("OpenSWMM accepted DW hydraulic boundary");ASSERT_NE(hydraulic,std::string::npos);
     // Two fixed PID rows (3 doubles each), one orifice and one weir area precede
     // the length-prefixed nested archive. This fixture keeps those shapes explicit.
@@ -265,7 +303,7 @@ TEST(EngineCheckpoint, StructuralStateCorruptionAndMaterialChangePreserveFreshTa
         if(k==0) {double nan=std::numeric_limits<double>::quiet_NaN();std::memcpy(data.data()+begin+sizeof(uint64_t),&nan,sizeof(nan));}
         if(k==1) {uint64_t wrong=3;std::memcpy(data.data()+begin,&wrong,sizeof(wrong));}
         if(k==2 || k==3) {double negative=-1;auto area=begin+2*sizeof(uint64_t)+6*sizeof(double)+(k==3 ? sizeof(uint64_t)+sizeof(double) : 0);std::memcpy(data.data()+area,&negative,sizeof(negative));}
-        if(k==4)v=1;
+        if(k==4)v=version-1;
         sum=crc(data);detail::CompletedSourceArchive out;out(magic,v,model,sum,data);write(bad,out.bytes());
         EXPECT_FALSE(b.loadCheckpoint(bad.string()).empty());ASSERT_EQ(b.saveCheckpoint(after.string()),"");EXPECT_EQ(bytes(before),bytes(after));
         ASSERT_EQ(b.loadCheckpoint(good.string()),"");compare(a,b,name+"-retry");
@@ -276,4 +314,120 @@ TEST(EngineCheckpoint, StructuralStateCorruptionAndMaterialChangePreserveFreshTa
     c.context().link_subtypes.orifices.orate[0]+=1;
     EXPECT_FALSE(c.saveCheckpoint((root()/"structural-changed.chk").string()).empty());
     EXPECT_NE(c.step(nullptr),0);
+}
+
+
+TEST(EngineCheckpoint, RunoffRainfallAndLegacyLIDContinuationPreservePendingWater) {
+    for(int method=0;method<5;++method)for(int rain=0;rain<3;++rain)for(int node=0;node<3;++node) {
+        auto name="runoff-"+std::to_string(method)+"-"+std::to_string(rain)+"-"+std::to_string(node);SCOPED_TRACE(name);
+        SWMMEngine a,b;
+        ASSERT_NO_THROW(startRunoff(a,name+"-a",method,rain,node));
+        ASSERT_NO_THROW(startRunoff(b,name+"-b",method,rain,node));
+        // Initial rain state has a gap before its first record.
+        auto initial=root()/(name+"-initial.chk");ASSERT_EQ(a.saveCheckpoint(initial.string()),"");
+        ASSERT_EQ(b.loadCheckpoint(initial.string()),"");compare(a,b,name+"-initial");
+        while(a.context().current_time<47)ASSERT_NO_THROW(step(a));
+        EXPECT_GT(a.context().subcatches.outfall_runon_vol[2],0);
+        EXPECT_GT(a.context().mass_balance.runoff_rainfall,0);
+        EXPECT_EQ(a.context().gages.co_gage_index[1],0);
+        EXPECT_GT(a.context().gages.past_rain_accum[0],0);
+        auto saved=root()/(name+".chk");ASSERT_EQ(a.saveCheckpoint(saved.string()),"");
+        ASSERT_EQ(b.loadCheckpoint(saved.string()),"");compare(a,b,name);
+        bool dry=false,drain=false,return_to_perv=false,runon=false;int count=0;
+        while(a.context().elapsed_ms<a.context().options.totalDurationMs()) {
+            ASSERT_NO_THROW(step(a));
+            ASSERT_NO_THROW(step(b));
+            ASSERT_EQ(a.context().current_time,b.context().current_time);
+            dry |= a.context().subcatches.rainfall[0]==0;
+            for(double v:a.context().subcatches.lid_drain_flow)drain|=v>0;
+            for(double v:a.context().subcatches.lid_return_to_perv_cfs)return_to_perv|=v>0;
+            for(double v:a.context().subcatches.runon_inflow)runon|=v>0;
+            if(++count%37==0)compare(a,b,name);
+        }
+        compare(a,b,name);EXPECT_TRUE(dry);EXPECT_TRUE(drain);EXPECT_TRUE(return_to_perv);EXPECT_TRUE(runon);
+        ASSERT_EQ(a.end(),0);ASSERT_EQ(b.end(),0);
+        EXPECT_EQ(a.context().mass_balance.runoff_error(),b.context().mass_balance.runoff_error());
+        EXPECT_EQ(a.context().lid_usage.wb_inflow,b.context().lid_usage.wb_inflow);
+        EXPECT_EQ(a.context().lid_usage.wb_final_vol,b.context().lid_usage.wb_final_vol);
+    }
+}
+
+TEST(EngineCheckpoint, RunoffCorruptionAndUnsupportedProfilesPreserveFreshTargets) {
+    SWMMEngine a;
+    ASSERT_NO_THROW(startRunoff(a,"runoff-atomic-source",2,2,2));
+    while(a.context().current_time<47)ASSERT_NO_THROW(step(a));
+    auto good=root()/"runoff-atomic.chk";ASSERT_EQ(a.saveCheckpoint(good.string()),"");
+    detail::CompletedSourceArchive in(bytes(good));std::string magic,model,payload;uint32_t version,sum;
+    in(magic,version,model,sum,payload);in.finish();
+    const std::string tag="engine runoff/rainfall boundary v3";auto begin=payload.find(tag);ASSERT_NE(begin,std::string::npos);
+    begin+=tag.size();detail::CompletedSourceArchive water_in(payload.substr(begin));std::string water,units;water_in(water,units);
+    const auto runoff_at=begin+sizeof(uint64_t),lid_at=runoff_at+water.size()+sizeof(uint64_t);
+    const auto sub_at=lid_at+units.size();
+    // Walk only the explicit nested layout; mutations retain a valid CRC.
+    auto skip=[](const std::string& data,std::size_t& offset,std::size_t width=sizeof(double)) {
+        uint64_t n;std::memcpy(&n,data.data()+offset,sizeof(n));offset+=sizeof(n)+n*width;
+    };
+    std::size_t bank=0;for(int i=0;i<23;++i)skip(water,bank);
+    uint64_t n;std::memcpy(&n,water.data()+bank,sizeof(n));ASSERT_EQ(n,3);bank+=sizeof(n)+n*3*10*sizeof(double);
+    skip(water,bank);skip(water,bank,8*sizeof(double)); // cumulative, Horton rows
+    const auto ga=bank+sizeof(uint64_t);
+    for(int k=0;k<9;++k) {
+        SWMMEngine b;auto name="runoff-mutant-"+std::to_string(k);SCOPED_TRACE(name);
+        ASSERT_NO_THROW(startRunoff(b,name,2,2,2));
+        auto before=root()/(name+"-before.chk"),after=root()/(name+"-after.chk"),bad=root()/(name+"-bad.chk");
+        ASSERT_EQ(b.saveCheckpoint(before.string()),"");auto data=payload;
+        auto put=[&](std::size_t at,double v){std::memcpy(data.data()+at,&v,sizeof(v));};
+        if(k==0)put(runoff_at+sizeof(uint64_t),-1);
+        if(k==1)put(runoff_at+sizeof(uint64_t),std::numeric_limits<double>::quiet_NaN());
+        if(k==2) {uint64_t wrong=4;std::memcpy(data.data()+runoff_at,&wrong,sizeof(wrong));}
+        if(k==3)put(runoff_at+ga,123); // GA material
+        if(k==4)put(runoff_at+ga+3*sizeof(double),2); // GA moisture deficit
+        if(k==5) {std::size_t at=sizeof(uint64_t);for(int i=0;i<6;++i)skip(units,at);skip(units,at,sizeof(int));skip(units,at);skip(units,at);put(lid_at+at+sizeof(uint64_t),-1);}
+        if(k==6)put(sub_at+sizeof(uint64_t),-1);
+        if(k==7) {
+            detail::CompletedSourceArchive cursors;auto cur=a.context().gages.st_cur,next=a.context().gages.st_next;cursors(cur,next);
+            auto at=data.find(cursors.bytes(),sub_at);ASSERT_NE(at,std::string::npos);
+            int wrong=999;std::memcpy(data.data()+at+sizeof(uint64_t),&wrong,sizeof(wrong));
+        }
+        if(k==8) {double stored=a.context().mass_balance.runoff_final_store;detail::CompletedSourceArchive value;value(stored);
+            auto at=data.find(value.bytes());ASSERT_NE(at,std::string::npos);put(at,stored+1);}
+        sum=crc(data);detail::CompletedSourceArchive out;out(magic,version,model,sum,data);write(bad,out.bytes());
+        EXPECT_FALSE(b.loadCheckpoint(bad.string()).empty());ASSERT_EQ(b.saveCheckpoint(after.string()),"");EXPECT_EQ(bytes(before),bytes(after));
+        ASSERT_EQ(b.loadCheckpoint(good.string()),"");compare(a,b,name+"-retry");
+    }
+    for(int k=0;k<6;++k) {
+        SWMMEngine b;ASSERT_NO_THROW(startRunoff(b,"runoff-profile-"+std::to_string(k),0,0,0,false));
+        if(k==0)b.context().options.ignore_snow_melt=false;
+        if(k==1)b.context().options.ignore_groundwater=false;
+        if(k==2)b.context().gages.source[0]=RainSource::FILE_RAIN;
+        if(k==3)b.context().gages.api_rainfall[0]=1;
+        if(k==4)b.context().lid_usage.rpt_file[0]="detailed.txt";
+        if(k==5)b.context().subcatches.gw_aquifer[0]=0;
+        EXPECT_FALSE(b.enableCheckpointing().empty());
+    }
+    SWMMEngine changed;ASSERT_NO_THROW(startRunoff(changed,"runoff-model-change",2,2,2));
+    changed.context().subcatches.infil_p1[0]+=1;
+    EXPECT_FALSE(changed.loadCheckpoint(good.string()).empty());
+    EXPECT_FALSE(changed.saveCheckpoint((root()/"runoff-changed.chk").string()).empty());
+}
+
+
+TEST(EngineCheckpoint, RunoffGapDryRecessionAndIgnoredRainRestore) {
+    for(int method=0;method<5;++method)for(int phase=0;phase<3;++phase) {
+        auto name="runoff-phase-"+std::to_string(method)+"-"+std::to_string(phase);SCOPED_TRACE(name);
+        SWMMEngine a,b;
+        ASSERT_NO_THROW(startRunoff(a,name+"-a",method,2,2,false));
+        ASSERT_NO_THROW(startRunoff(b,name+"-b",method,2,2,false));
+        if(phase==2){a.context().options.ignore_rainfall=true;b.context().options.ignore_rainfall=true;}
+        ASSERT_EQ(a.enableCheckpointing(),"");ASSERT_EQ(b.enableCheckpointing(),"");
+        while(a.context().current_time<(phase==0 ? 5 : 150))ASSERT_NO_THROW(step(a));
+        EXPECT_EQ(a.context().subcatches.rainfall[0],0);
+        auto p=root()/(name+".chk");ASSERT_EQ(a.saveCheckpoint(p.string()),"");ASSERT_EQ(b.loadCheckpoint(p.string()),"");
+        while(a.context().elapsed_ms<a.context().options.totalDurationMs()) {
+            ASSERT_NO_THROW(step(a));
+            ASSERT_NO_THROW(step(b));
+        }
+        compare(a,b,name);
+        if(phase==2)EXPECT_EQ(a.context().mass_balance.runoff_rainfall,0);
+    }
 }

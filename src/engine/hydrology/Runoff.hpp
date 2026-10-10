@@ -193,6 +193,7 @@ public:
 
     const RunoffSoA& soa() const { return soa_; }
     void checkpoint(detail::CompletedSourceArchive&,bool model); // internal accepted-boundary IO
+    void validateCheckpoint(const RunoffSolver& model) const;
     /// Completed water still waiting for next interval's inter-subarea route.
     double pendingRoutingVolume(const SimulationContext& ctx, int source) const;
 

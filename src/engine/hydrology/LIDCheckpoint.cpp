@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "LID.hpp"
 #include "../core/CompletedSourceArchive.hpp"
+#include <cmath>
 namespace openswmm::lid {
-void LIDSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) {
+void LIDSolver::checkpoint(detail::CompletedSourceArchive& a,bool model,bool lazy_buffers) {
     if(model)a(usage_order_);
     a.sequence(groups_,[&](auto& g) {
         if(model) {
@@ -28,6 +29,40 @@ void LIDSolver::checkpoint(detail::CompletedSourceArchive& a,bool model) {
         }
     },true);
     if(!model){a(old_runoff_sec_,recovery_factor_);
-            a.fixed(native_infil_,max_native_infil_,infil_factor_);}
+            // Engine sessions restore into fresh, still-unallocated runoff buffers.
+            // Default component archives retain their fixed-shape read contract.
+            if(lazy_buffers)a(native_infil_,max_native_infil_,infil_factor_);
+            else a.fixed(native_infil_,max_native_infil_,infil_factor_);}
 }
+void LIDSolver::validateCheckpoint(const LIDSolver& model,std::size_t runoff_count) const {
+    const auto require=[](bool ok){if(!ok)throw std::runtime_error("Invalid subcatchment LID checkpoint/material.");};
+    require(groups_.size()==model.groups_.size() && std::isfinite(old_runoff_sec_) && old_runoff_sec_>=0 &&
+            std::isfinite(recovery_factor_) && recovery_factor_>=0 && rpt_files_.empty());
+    for(const auto* row:{&native_infil_,&max_native_infil_,&infil_factor_}) {
+        require(row->empty() || row->size()==runoff_count);
+        for(double v:*row)require(std::isfinite(v) && v>=0);
+    }
+    for(std::size_t k=0;k<groups_.size();++k) {
+        const auto& g=groups_[k];const auto& m=model.groups_[k];require(g.count==m.count && g.soil_infil.size()==m.soil_infil.size());
+        for(const auto* row:{&g.inflow,&g.evap_rate_unit,&g.subcatch_rain,&g.rpt_surf_infil,&g.rpt_pave_perc,&g.rpt_soil_perc,
+                &g.next_regen_day,&g.dry_time,&g.surf_depth,&g.soil_moist,&g.stor_depth,&g.pave_depth,&g.old_drain_flow,
+                &g.surface_runoff,&g.drain_flow,&g.evap_loss,&g.infil_loss,&g.in_surf,&g.in_pave,&g.in_soil,&g.in_stor,
+                &g.evap_surf,&g.evap_pave,&g.evap_soil,&g.evap_stor,&g.f_old_surf,&g.f_old_soil,&g.f_old_stor,&g.f_old_pave,
+                &g.wb_inflow,&g.wb_evap,&g.spatial_infil_loss,&g.wb_spatial_infil,&g.wb_infil,&g.wb_surf_flow,
+                &g.wb_drain_flow,&g.wb_init_vol,&g.wb_final_vol,&g.vol_treated})for(double v:*row)require(std::isfinite(v));
+        for(int u=0;u<g.count;++u) {
+            require(g.surf_depth[u]>=-1e-12 && g.stor_depth[u]>=-1e-12 && g.pave_depth[u]>=-1e-12 &&
+                    g.soil_moist[u]>=-1e-12 && (g.soil_thick[u]<=0 || g.soil_moist[u]<=g.soil_poros[u]+1e-8) &&
+                    g.dry_time[u]>=0 && g.old_drain_flow[u]>=0 && g.drain_open[u]>=0 && g.drain_open[u]<=1 && g.is_wet[u]<=1);
+            for(double v:{g.wb_inflow[u],g.wb_evap[u],g.wb_infil[u],g.wb_spatial_infil[u],g.wb_surf_flow[u],
+                    g.wb_drain_flow[u],g.wb_init_vol[u],g.wb_final_vol[u],g.vol_treated[u]})require(v>=-1e-12);
+            require(g.wb_init_vol[u]==m.wb_init_vol[u]);
+            const auto& h=g.soil_infil[u];const auto& b=m.soil_infil[u];
+            require(h.S==b.S && h.Ks==b.Ks && h.IMDmax==b.IMDmax && h.Fumax==b.Fumax && h.Lu==b.Lu);
+            for(double v:{h.S,h.Ks,h.IMDmax,h.IMD,h.F,h.Fu,h.Fumax,h.Lu,h.T})require(std::isfinite(v));
+            require(h.IMD>=0 && h.IMD<=h.IMDmax && h.F>=0 && h.Fu>=0);
+        }
+    }
+}
+
 }

@@ -29,6 +29,7 @@ public:
     const std::vector<double>& cumulative() const noexcept { return cumulative_; }
     void clear();
     void checkpoint(detail::CompletedSourceArchive&,bool model); // internal accepted-boundary IO
+    void validateCheckpoint(const InfilBank& model) const;
 private:
     std::vector<InfilModel> methods_;
     std::vector<Owner> owners_;

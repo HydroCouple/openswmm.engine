@@ -302,7 +302,8 @@ public:
     /// runoff mass balance (legacy lid_getStoredVolume()). This is the one
     /// SWMMEngine calls (runoff_init_store / runoff_final_store).
     double storedVolume() const;
-    void checkpoint(detail::CompletedSourceArchive&,bool model); // internal accepted-boundary IO
+    void checkpoint(detail::CompletedSourceArchive&,bool model,bool lazy_buffers=false); // internal accepted-boundary IO
+    void validateCheckpoint(const LIDSolver& model,std::size_t runoff_count) const;
 
     /// Water-balance-ledger volume queries (#102 C), summing the per-unit
     /// `wb_*` accumulators over the unit footprints.
