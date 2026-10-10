@@ -487,8 +487,13 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
 int Router::step(SimulationContext& ctx, double dt,
                  double evap_rate,
                  dynwave::DWSolver::NonConduitFlowFunc non_conduit_fn) {
+    return stepImpl(ctx, dt, evap_rate, std::move(non_conduit_fn), false);
+}
+
+int Router::stepImpl(SimulationContext& ctx, double dt, double evap_rate,
+                     dynwave::DWSolver::NonConduitFlowFunc non_conduit_fn, bool owned_callback) {
     if (checkpoint_context_)
-        checkCheckpointStep(ctx, dt, evap_rate, bool(non_conduit_fn));
+        checkCheckpointStep(ctx, dt, evap_rate, bool(non_conduit_fn), owned_callback);
     // 1. Old states are saved ONCE per step by SWMMEngine::step() BEFORE
     //    lateral inflows are assembled — matching legacy routing_execute,
     //    which snapshots old hyd state / oldLatFlow (initSystemInflows,

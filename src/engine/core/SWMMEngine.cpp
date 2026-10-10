@@ -5030,7 +5030,7 @@ void SWMMEngine::stepRouting(double dt_routing) {
     {
         openswmm::perf::ScopedTimer _pt_1d(openswmm::perf::sec_1d_step);
         iters = checkpoint_enabled_
-            ? router_.step(ctx_, dt_routing, ctx_.climate_state.evap_rate)
+            ? router_.stepImpl(ctx_, dt_routing, ctx_.climate_state.evap_rate, non_conduit_fn, true)
             : router_.step(ctx_, dt_routing, ctx_.climate_state.evap_rate, non_conduit_fn);
     }
     lidnode::finishStep(ctx_);

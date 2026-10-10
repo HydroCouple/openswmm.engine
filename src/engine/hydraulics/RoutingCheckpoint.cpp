@@ -384,11 +384,22 @@ void Router::checkCheckpointProfile(const SimulationContext& c) const {
                     "Hydraulic checkpoint time-dependent outfall providers are not qualified.");
         }
     }
-    require(c.link_subtypes.conduits.count()==c.n_links(), "Hydraulic checkpoint requires conduit-only links.");
+    const auto& sub=c.link_subtypes;
+    require(checkpoint_owned_session_ ? structures_ &&
+            sub.conduits.count()+sub.pumps.count()+sub.orifices.count()+sub.weirs.count()+sub.outlets.count()==c.n_links() :
+            sub.conduits.count()==c.n_links(), "Hydraulic checkpoint link subtype layout differs.");
     for (int j=0;j<c.n_links();++j) {
-        require(c.links.type[j]==LinkType::CONDUIT && c.link_subtypes.conduit_row(j)>=0 &&
+        int row=-1;
+        switch(c.links.type[j]) {
+            case LinkType::CONDUIT: row=sub.conduit_row(j);break;
+            case LinkType::PUMP: if(checkpoint_owned_session_)row=sub.pump_row(j);break;
+            case LinkType::ORIFICE: if(checkpoint_owned_session_)row=sub.orifice_row(j);break;
+            case LinkType::WEIR: if(checkpoint_owned_session_)row=sub.weir_row(j);break;
+            case LinkType::OUTLET: if(checkpoint_owned_session_)row=sub.outlet_row(j);break;
+        }
+        require(row>=0 &&
                 c.links.node1[j]>=0 && c.links.node1[j]<c.n_nodes() && c.links.node2[j]>=0 && c.links.node2[j]<c.n_nodes(),
-                "Hydraulic checkpoint conduit topology differs.");
+                "Hydraulic checkpoint link topology differs.");
         auto shape=c.links.xsect_shape[j];
         require(shape!=XsectShape::IRREGULAR && shape!=XsectShape::CUSTOM && shape!=XsectShape::STREET_XSECT,
                 "Hydraulic checkpoint external geometry tables are not qualified.");
@@ -453,7 +464,7 @@ std::string Router::checkpointModel(const SimulationContext& c) const {
     a(d.num_threads_,d.head_tol,d.max_trials,d.omega,d.surcharge_method,d.node_continuity,d.anderson_accel,
       d.unsteady_friction,d.uf_k3,d.tpa_celerity,d.dps_config_.c_pT,d.dps_config_.alpha,d.dps_config_.r);
     if (checkpoint_owned_session_) {
-        std::string owner="engine session owns controls";a(owner);
+        std::string owner="engine session owns structures and controls";a(owner);
     }
     require(a.bytes().size()<=maxBytes, "Hydraulic checkpoint model exceeds its size limit.");
     return a.bytes();
@@ -474,10 +485,10 @@ void Router::beginCheckpointStep(SimulationContext& c,double dt) {
     require(checkpoint_model_==checkpointModel(c), "Hydraulic checkpoint model changed after attachment.");
     checkpoint_step_end_=c.current_time+dt;checkpoint_ready_=false;checkpoint_prepared_=true;checkpoint_step_finished_=false;
 }
-void Router::checkCheckpointStep(SimulationContext& c,double dt,double evap_rate,bool callback) {
+void Router::checkCheckpointStep(SimulationContext& c,double dt,double evap_rate,bool callback,bool owned_callback) {
     require(&c==checkpoint_context_ && checkpoint_prepared_ && !checkpoint_ready_ && c.current_time==checkpoint_time_ &&
             std::isfinite(dt) && dt>0 && c.current_time+dt==checkpoint_step_end_ &&
-            std::isfinite(evap_rate) && evap_rate>=0 && !callback,
+            std::isfinite(evap_rate) && evap_rate>=0 && (!callback || (checkpoint_owned_session_ && owned_callback)),
             "Tracked hydraulic step requires prior preparation, its scheduled duration and no external callbacks.");
     checkCheckpointProfile(c);
     require(checkpoint_model_==checkpointModel(c), "Hydraulic checkpoint model changed after attachment.");

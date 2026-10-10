@@ -135,6 +135,8 @@ struct SWMMEngine::RestartState {
     std::vector<int> slots;
     int action_count;
     std::array<double,6> control_scratch;
+    std::vector<controls::PIDState> pid;
+    std::vector<double> orifice_area,weir_area;
 #define DECL(v) decltype(SWMMEngine::v) v;
     ENGINE(DECL)
 #undef DECL
@@ -143,7 +145,8 @@ struct SWMMEngine::RestartState {
         boundary{e.ctx_.current_time,e.ctx_.current_date,e.ctx_.elapsed_ms,e.ctx_.old_elapsed_ms,e.ctx_.next_report_ms,e.ctx_.climate_state.evap_rate},
         controls_remaining(e.ctx_.dt_controls_remaining),pending(e.controls_.pending_actions_),
         slots(e.controls_.action_slots_),action_count(e.controls_.last_action_count_),
-        control_scratch{e.controls_.control_value_,e.controls_.set_point_,e.controls_.eval_date_,e.controls_.cur_date_,e.controls_.cur_time_,e.controls_.elapsed_days_} {
+        control_scratch{e.controls_.control_value_,e.controls_.set_point_,e.controls_.eval_date_,e.controls_.cur_date_,e.controls_.cur_time_,e.controls_.elapsed_days_},
+        pid(e.controls_.pid_states_),orifice_area(e.hydstruct_.orifices_.surf_area),weir_area(e.hydstruct_.weirs_.surf_area) {
 #define COPY(v) v=e.v;
         ENGINE(COPY)
 #undef COPY
@@ -175,6 +178,8 @@ struct SWMMEngine::RestartState {
                             &avg.link_flow,&avg.link_depth,&avg.link_velocity,&avg.link_volume,&avg.link_capacity})finite(*row);
         a.sequence(pending,[&](auto& p){fields(a,p.link_idx,p.value,p.priority,p.rule_idx,p.type);});
         fields(a,slots,action_count,control_scratch);
+        a.sequence(pid,[&](auto& p){fields(a,p.setpoint,p.e1,p.e2);},true);
+        a.fixed(orifice_area,weir_area);finite(orifice_area);finite(weir_area);
     }
     void validate(const SWMMEngine& e) const {
         const double time=boundary[0],elapsed=boundary[2],duration=e.ctx_.options.totalDurationMs();
@@ -206,6 +211,8 @@ struct SWMMEngine::RestartState {
                 p.type>=controls::ActionType::NUMERIC && p.type<=controls::ActionType::PID,"Invalid engine pending control action.");
         require(slots.size()<=e.ctx_.links.setting.size(),"Invalid engine control slot shape.");
         for(int slot:slots)require(slot>=-1 && slot<static_cast<int>(pending.size()),"Invalid engine control slot index.");
+        for(const auto* row:{&orifice_area,&weir_area})for(double area:*row)
+            require(area>=0,"Negative engine structure surface area.");
     }
     void install(SWMMEngine& e) noexcept {
         static_assert(std::is_nothrow_move_assignable_v<SimulationContext::MassBalance> &&
@@ -223,6 +230,8 @@ struct SWMMEngine::RestartState {
         e.controls_.last_action_count_=action_count;
         e.controls_.control_value_=control_scratch[0];e.controls_.set_point_=control_scratch[1];e.controls_.eval_date_=control_scratch[2];
         e.controls_.cur_date_=control_scratch[3];e.controls_.cur_time_=control_scratch[4];e.controls_.elapsed_days_=control_scratch[5];
+        e.controls_.pid_states_=std::move(pid);
+        e.hydstruct_.orifices_.surf_area=std::move(orifice_area);e.hydstruct_.weirs_.surf_area=std::move(weir_area);
         e.xsp_cache_gen_=~uint64_t(0);e.checkpoint_ready_=true;
     }
 };
@@ -256,7 +265,7 @@ void SWMMEngine::checkCheckpointProfile() const {
     require(lid_drain_q_units_.empty() && gw_q_node_.empty() && gage_states_.empty(),"Engine checkpoint has unqualified hydrology receivers.");
     require(lid_drain_q_interp_.empty() || lid_drain_q_interp_.size()==std::size_t(ctx_.n_nodes()),"Engine checkpoint LID-drain shape differs.");
     for(double q:lid_drain_q_interp_)require(q==0,"Engine checkpoint has unqualified runoff LID drains.");
-    require(controls_.pid_states_.empty(),"Engine checkpoint does not yet recover structural-link PID controls.");
+    require(router_.structures_==&hydstruct_,"Engine checkpoint structure solver ownership differs.");
     if(ctx_.routing_stats.sum_iterations>0)for(const auto& lid:ctx_.node_subtypes.storages.lid_state)
         require(lid.quality_old_water.size()==lid.cells.size(),"Engine routed LID previous-water shape differs.");
     router_.checkCheckpointProfile(ctx_);
@@ -286,6 +295,21 @@ std::string SWMMEngine::checkpointModel() const {
         });
     });
     a.sequence(named,[&](auto& n){a(n.name,n.var,n.idx);});
+    auto pid=controls_.pid_states_;
+    a.sequence(pid,[&](auto& p){fields(a,p.kp,p.ki,p.kd,p.action_idx);});
+    auto pumps=ctx_.link_subtypes.pumps;auto orifices=ctx_.link_subtypes.orifices;
+    auto weirs=ctx_.link_subtypes.weirs;auto outlets=ctx_.link_subtypes.outlets;
+    a(pumps.link_idx,pumps.curve,pumps.init_state,pumps.startup,pumps.shutoff,pumps.curve_type,
+      orifices.link_idx,orifices.orifice_type,orifices.cd,orifices.orate,
+      weirs.link_idx,weirs.weir_type,weirs.cd,weirs.end_contractions,weirs.crest_height,weirs.cd2,weirs.can_surcharge,
+      weirs.road_width,weirs.road_surface,weirs.cd_curve,
+      outlets.link_idx,outlets.outlet_type,outlets.crest_height,outlets.coeff,outlets.expon,outlets.curve);
+    // Frozen compiled groups/iteration order; only the held surface areas are mutable.
+    auto h=hydstruct_;auto& p=h.pumps_;auto& ori=h.orifices_;auto& w=h.weirs_;auto& q=h.outlets_;
+    a(h.nc_indices_,h.nc_group_k_,p.count,p.link_idx,p.curve_idx,p.curve_type,p.speed,p.y_on,p.y_off,
+      ori.count,ori.link_idx,ori.shape,ori.length_eff,
+      w.count,w.link_idx,w.weir_type,w.c_disch1,w.c_disch2,w.end_con,w.slope,w.cd_curve,w.road_width,w.road_surface,w.length_eff,w.can_surcharge,
+      q.count,q.link_idx,q.curve_idx,q.q_coeff,q.q_expon);
     auto x=exfil_.state();a(x.count,x.node_idx,x.btm_area,x.bank_min_depth,x.bank_max_depth,x.bank_max_area);
     for(auto* row:{&x.btm_ga,&x.bank_ga})a.sequence(*row,[&](auto& g){a(g.S,g.Ks,g.IMDmax,g.Fumax,g.Lu);});
     for(auto* row:{ctx_.adjust_temp,ctx_.adjust_evap,ctx_.adjust_rain,ctx_.adjust_hydcon})for(int i=0;i<12;++i){auto v=row[i];a(v);}
@@ -312,7 +336,7 @@ std::string SWMMEngine::saveCheckpoint(const std::string& path) const {
         require(!step_active_ && !runtime_pipeline_ && exchange_target_<0,"Cannot save an active engine pipeline.");checkCheckpointBoundary();
         RestartState state(*this);Archive payload;state.archive(payload);std::string hydraulic;
         auto error=router_.checkpointBytes(ctx_,hydraulic);require(error.empty(),error.c_str());payload(hydraulic);
-        auto bytes=payload.bytes(),model=checkpoint_model_;auto crc=checksum(bytes);uint32_t version=1;std::string magic=magicName;
+        auto bytes=payload.bytes(),model=checkpoint_model_;auto crc=checksum(bytes);uint32_t version=2;std::string magic=magicName;
         Archive out;out(magic,version,model,crc,bytes);require(out.bytes().size()<=maxBytes,"Engine checkpoint exceeds its size limit.");
         publish(path,out.bytes());return {};
     } catch(const std::exception& e) {return e.what();}
@@ -322,7 +346,7 @@ std::string SWMMEngine::loadCheckpoint(const std::string& path) {
         require(!step_active_ && !runtime_pipeline_ && exchange_target_<0 && ctx_.current_time==0,"Engine restore requires an identically initialized fresh session.");
         checkCheckpointBoundary();Archive in(readFile(path));std::string magic,model,bytes;uint32_t version=0,crc=0;
         in(magic,version,model,crc,bytes);in.finish();
-        require(magic==magicName && version==1 && model==checkpoint_model_ && crc==checksum(bytes),"Engine checkpoint format/model/checksum differs.");
+        require(magic==magicName && version==2 && model==checkpoint_model_ && crc==checksum(bytes),"Engine checkpoint format/model/checksum differs.");
         RestartState state(*this);Archive payload(std::move(bytes));state.archive(payload);std::string hydraulic;payload(hydraulic);payload.finish();state.validate(*this);
         auto routing=router_.prepareCheckpointBytes(ctx_,std::move(hydraulic),&state.boundary);
         if(state.boundary[0]>0)Router::validateSessionStorage(routing,ctx_,state.balance.routing_final_storage,state.stats.sum_iterations>0);

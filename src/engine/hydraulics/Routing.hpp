@@ -216,13 +216,15 @@ private:
     static void validateSessionStorage(const std::shared_ptr<RestartState>&, const SimulationContext&, double, bool);
     void installCheckpoint(SimulationContext&, std::shared_ptr<RestartState>) noexcept;
     SimulationContext* checkpoint_context_ = nullptr; // non-owning, stable lifetime
-    bool checkpoint_owned_session_ = false; // engine owns controls; links remain conduits only
+    bool checkpoint_owned_session_ = false; // engine owns structure/control memory
     std::string checkpoint_model_;
     double checkpoint_time_ = 0.0, checkpoint_step_end_ = 0.0;
     bool checkpoint_ready_ = false, checkpoint_prepared_ = false, checkpoint_step_finished_ = false;
     std::string checkpointModel(const SimulationContext& ctx) const;
     void checkCheckpointProfile(const SimulationContext& ctx) const;
-    void checkCheckpointStep(SimulationContext& ctx, double dt, double evap_rate, bool callback);
+    void checkCheckpointStep(SimulationContext& ctx, double dt, double evap_rate, bool callback, bool owned_callback = false);
+    int stepImpl(SimulationContext& ctx, double dt, double evap_rate,
+                 dynwave::DWSolver::NonConduitFlowFunc non_conduit_fn, bool owned_callback);
 
     RouteModel model_ = RouteModel::DYNWAVE;
     XSectGroups groups_;
