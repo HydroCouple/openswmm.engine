@@ -2544,14 +2544,18 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
         for (std::size_t k = 0; k < bc_cell_.size(); ++k)
             state_->edge_flux[bc_slot_[k]] = bc_accum_[k] / span;
 
+    refreshSourceResultBoundary();
+    checkpoint_ready_ = true;
+    return t_target;
+}
+
+void ExplicitInertialSolver::refreshSourceResultBoundary() {
     if(source_history_) {
         // Final render/face publication belongs to the accepted boundary too.
         // Update only its checkpoint match, never add a second source interval.
         const auto error=source_history_->refreshCheckpointMatch(*common_stage_);
         if(!error.empty())throw std::runtime_error("[2D_SOURCE_RESULTS] " + error);
     }
-    checkpoint_ready_ = true;
-    return t_target;
 }
 
 void ExplicitInertialSolver::reinitialize(double /*t0*/) {

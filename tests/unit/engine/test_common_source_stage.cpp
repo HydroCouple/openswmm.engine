@@ -3,6 +3,8 @@
 #include "2d/subsurface/CommonSourceStage.hpp"
 #include "2d/subsurface/SubsurfaceSolver.hpp"
 #include "2d/solver/ExplicitInertialSolver.hpp"
+#include "2d/SurfaceRouter2D.hpp"
+#include "hydraulics/TimestepController.hpp"
 #include "2d/mesh/MeshBuilder.hpp"
 #include "2d/data/SurfaceStateData.hpp"
 #include "core/SimulationContext.hpp"
@@ -10,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <sstream>
 #include <map>
 #include <limits>
 #include <cstdlib>
@@ -1627,4 +1630,197 @@ TEST(CommonSourceStage, CpuInitialCheckpointPreservesFreshScheduleAndStartsOnce)
     Model original;marcherRestartModel(original);const auto file=restartPath("cpu-initial");ASSERT_EQ(original.marcher.saveCheckpoint(file.string()),"");
     Model target;marcherRestartModel(target);ASSERT_EQ(target.marcher.loadCheckpoint(file.string()),"");marcherEqual(original,target,"initial");
     ASSERT_DOUBLE_EQ(original.marcher.advance(0,1.25),1.25);ASSERT_DOUBLE_EQ(target.marcher.advance(0,1.25),1.25);marcherEqual(original,target,"initial-continued");
+}
+
+namespace {
+struct RouterSourceModel {
+    Model source;
+    SurfaceRouter2D router;
+    void setup(Momentum2D momentum=Momentum2D::LOCAL_INERTIAL,GwClosure closure=GwClosure::CLOSED_FORM,bool quality=false,double report=2.3) {
+        AtmosphericInput a;a.inside={.75,.25};a.pet={.0001,.0002};a.et="BOUNDARY_ET";a.closure=closure;
+        if(quality) mixedPollutants(source,2,a,true);else source.setup(true,2,false,true,false,a);
+        auto& ctx=source.context;ctx.options.num_threads=1;ctx.options.routing_step=.7;ctx.options.wet_step=1.4;ctx.options.report_step=report;
+        ctx.current_date=ctx.options.start_date;ctx.next_report_ms=1000*report;ctx.gages.rainfall[0]=432;
+        router.mesh()=source.mesh;router.mesh().tri_init_depth={.02,.003};
+        router.options()=source.options;router.options().mesh_units_si=true;router.options().momentum=momentum;
+        router.options().max_timestep=.21;router.options().coupling_sync=3.5;router.options().evaporation=2;
+        router.options().rainfall_mode=RainfallMode::SYSTEM;ctx.climate_state.evap_rate=.0001;
+        router.aquiferConfig()=source.config;router.aquiferConfig().node_beds.clear();
+        auto& row=router.aquiferConfig().rows[0];row.Ks=a.ks*3600/.0254;row.zs=2/.3048;row.hg0=1/.3048;row.alpha=2*.3048;
+        ctx.twod_io.mesh=&router.mesh();ctx.twod_io.options=&router.options();
+        ctx.twod_io.gw=&router.gwTransport();ctx.twod_io.aquifer_state=&router.subsurface().state();
+        ASSERT_NO_THROW(router.initialize(ctx));
+        if(quality) router.state().transport.cell_mass.assign(4,19);
+        auto& gw=router.subsurface().state();
+        for(int i=0;i<2;++i)gw.hu[i]=gw.theta_s[i]*(gw.zs[i]-gw.hg[i])-.0001/router.mesh().tri_area[i];
+        ASSERT_EQ(source.stage.initialize(router.mesh(),router.state(),router.options(),router.subsurface(),source.sources,source.preview),"");
+        ASSERT_NO_THROW(router.setCommonSourceStage(ctx,source.stage));
+        router.bookGageRates(ctx,0);
+    }
+    void tick(double dt=.7) {
+        auto& ctx=source.context;
+        try {router.step(ctx,dt,ctx.current_time);}
+        catch(const std::runtime_error& e) {std::ostringstream message;message<<std::setprecision(17)<<e.what()<<" boundary="<<source.stage.completedEnd()<<" infil="<<router.subsurface().state().infil_refresh[0]<<" et="<<router.subsurface().state().et_refresh[0];throw std::runtime_error(message.str());}
+        hydraulics::TimestepController::advance(ctx,dt);
+    }
+    void weather(double rate) {
+        auto& ctx=source.context;ctx.gages.rainfall[0]=rate;router.bookGageRates(ctx,ctx.current_time);
+    }
+};
+void routerEqual(RouterSourceModel& a,RouterSourceModel& b,const std::string& label) {
+    const auto pa=restartPath(label+"-router-continuous"),pb=restartPath(label+"-router-resumed");
+    ASSERT_EQ(a.router.saveCheckpoint(a.source.context,pa.string()),"");
+    ASSERT_EQ(b.router.saveCheckpoint(b.source.context,pb.string()),"");
+    EXPECT_EQ(restartBytes(pa),restartBytes(pb));
+    EXPECT_NEAR(a.source.context.mass_balance_2d.error(),0,1e-12);
+    EXPECT_NEAR(b.source.context.mass_balance_2d.error(),0,1e-12);
+}
+}
+TEST(CommonSourceStage, RouterCheckpointPreservesPartialBatchWeatherReportFramesAndLedgers) {
+    for(auto momentum:{Momentum2D::LOCAL_INERTIAL,Momentum2D::DIFFUSIVE_WAVE,Momentum2D::FULL_SWE})
+    for(auto closure:{GwClosure::CLOSED_FORM,GwClosure::SIGMA}) {
+        RouterSourceModel continuous;continuous.setup(momentum,closure,true);
+        for(int i=0;i<6;++i) {if(i==2)continuous.weather(216);
+            ASSERT_NO_THROW(continuous.tick());}
+        EXPECT_LT(continuous.source.stage.completedEnd(),continuous.source.context.current_time);
+        EXPECT_GT(continuous.router.reportWeight(2300),0);EXPECT_LT(continuous.router.reportWeight(2300),1);
+        EXPECT_DOUBLE_EQ(continuous.source.context.mass_balance_2d.rainfall_in,continuous.source.stage.meshRain());
+        EXPECT_DOUBLE_EQ(continuous.source.context.mass_balance_2d.aquifer_in,continuous.source.stage.meshReturn());
+        for(double v:continuous.router.couplingCumulative())EXPECT_DOUBLE_EQ(v,0);
+        const auto file=restartPath("router-batch-"+std::to_string(int(momentum))+"-"+std::to_string(int(closure)));
+        ASSERT_EQ(continuous.router.saveCheckpoint(continuous.source.context,file.string()),"");
+        RouterSourceModel resumed;resumed.setup(momentum,closure,true);
+        ASSERT_EQ(resumed.router.loadCheckpoint(resumed.source.context,file.string()),"");
+        routerEqual(continuous,resumed,"router-initial");
+        EXPECT_EQ(continuous.router.reportOldDepth(),resumed.router.reportOldDepth());
+        EXPECT_EQ(continuous.router.reportOldHead(),resumed.router.reportOldHead());
+        EXPECT_EQ(continuous.router.reportRainCumulative(2300),resumed.router.reportRainCumulative(2300));
+        for(int i=6;i<15;++i) {
+            if(i==8) {continuous.weather(0);resumed.weather(0);}
+            if(i==11) {continuous.source.context.next_report_ms=9200;resumed.source.context.next_report_ms=9200;}
+            ASSERT_NO_THROW(continuous.tick());
+            ASSERT_NO_THROW(resumed.tick());
+        }
+        continuous.router.flushPendingBatch(continuous.source.context);resumed.router.flushPendingBatch(resumed.source.context);
+        routerEqual(continuous,resumed,"router-final");
+        EXPECT_FALSE(resumed.router.loadCheckpoint(resumed.source.context,file.string()).empty());
+    }
+}
+TEST(CommonSourceStage, RouterCheckpointRejectsCorruptionModelChangesAndUnsupportedProfilesWithoutMutation) {
+    RouterSourceModel continuous;continuous.setup();for(int i=0;i<6;++i)continuous.tick();
+    const auto file=restartPath("router-corrupt");ASSERT_EQ(continuous.router.saveCheckpoint(continuous.source.context,file.string()),"");
+    const auto original=restartBytes(file);
+    for(int variant=0;variant<5;++variant) {
+        auto bytes=original;if(variant==0)bytes.resize(bytes.size()/2);if(variant==1)bytes.back()^=1;if(variant==2)bytes+='x';
+        const auto bad=restartPath("router-corrupt-"+std::to_string(variant));std::ofstream(bad,std::ios::binary).write(bytes.data(),bytes.size());
+        RouterSourceModel fresh;fresh.setup(Momentum2D::LOCAL_INERTIAL,GwClosure::CLOSED_FORM,false,variant==3?3:2.3);
+        if(variant==4)fresh.router.options().max_timestep=.3;
+        const auto before=restartPath("router-before-"+std::to_string(variant)),after=restartPath("router-after-"+std::to_string(variant));
+        if(variant<4)ASSERT_EQ(fresh.router.saveCheckpoint(fresh.source.context,before.string()),"");
+        const auto volume=fresh.router.state().volume;const auto time=fresh.source.context.current_time;
+        EXPECT_FALSE(fresh.router.loadCheckpoint(fresh.source.context,bad.string()).empty());
+        EXPECT_EQ(fresh.router.state().volume,volume);EXPECT_DOUBLE_EQ(fresh.source.context.current_time,time);
+        if(variant<4) {ASSERT_EQ(fresh.router.saveCheckpoint(fresh.source.context,after.string()),"");EXPECT_EQ(restartBytes(before),restartBytes(after));}
+    }
+    const auto unrelated=restartPath("router-unrelated");std::ofstream(unrelated)<<"user result file";
+    EXPECT_FALSE(continuous.router.saveCheckpoint(continuous.source.context,unrelated.string()).empty());EXPECT_EQ(restartBytes(unrelated),"user result file");
+    const auto before=continuous.router.state().volume;
+    for(auto pair:{std::pair{0.,4.2},std::pair{.7,0.},std::pair{.7,std::numeric_limits<double>::infinity()}})
+        EXPECT_THROW(continuous.router.advancePostRouting(continuous.source.context,pair.first,pair.second),std::invalid_argument);
+    EXPECT_EQ(continuous.router.state().volume,before);
+    EXPECT_EQ(continuous.router.saveCheckpoint(continuous.source.context,file.string()),"");EXPECT_EQ(restartBytes(file),original);
+    continuous.router.state().coupling_forced[0]=1;
+    EXPECT_FALSE(continuous.router.saveCheckpoint(continuous.source.context,file.string()).empty());EXPECT_EQ(restartBytes(file),original);
+}
+TEST(CommonSourceStage, RouterCheckpointSupportsInitialAndExplicitTailFlushAndOnDemandRender) {
+    RouterSourceModel initial;initial.setup();const auto file=restartPath("router-zero");
+    ASSERT_EQ(initial.router.saveCheckpoint(initial.source.context,file.string()),"");
+    RouterSourceModel fresh;fresh.setup();ASSERT_EQ(fresh.router.loadCheckpoint(fresh.source.context,file.string()),"");routerEqual(initial,fresh,"router-zero");
+    for(int i=0;i<7;++i) {initial.tick(.1);fresh.tick(.1);}
+    initial.router.flushPendingBatch(initial.source.context);fresh.router.flushPendingBatch(fresh.source.context);
+    initial.router.refreshRenderFieldsIfStale();fresh.router.refreshRenderFieldsIfStale();routerEqual(initial,fresh,"router-render");
+    initial.router.finalize(initial.source.context);fresh.router.finalize(fresh.source.context);
+    EXPECT_NO_THROW(initial.router.refreshRenderFieldsIfStale());
+    EXPECT_FALSE(initial.router.saveCheckpoint(initial.source.context,file.string()).empty());
+}
+#ifdef OPENSWMM_HAS_HDF5_MODEL
+TEST(CommonSourceStage, RouterCheckpointResumesSavedSourceHistoryAfterPostprocessingAndRenderWithoutReplay) {
+    RouterSourceModel continuous;continuous.setup(Momentum2D::LOCAL_INERTIAL,GwClosure::CLOSED_FORM,true,.8);
+    SourceResultHistory history;continuous.router.setSourceResultHistory(history);
+    for(int i=0;i<6;++i)continuous.tick();continuous.router.refreshRenderFieldsIfStale();
+    const auto file=restartPath("router-history"),result=sourceResultPath("router-history");
+    ASSERT_EQ(continuous.router.saveCheckpoint(continuous.source.context,file.string()),"");ASSERT_EQ(history.save(result.string()),"");
+    RouterSourceModel resumed;resumed.setup(Momentum2D::LOCAL_INERTIAL,GwClosure::CLOSED_FORM,true,.8);
+    ASSERT_EQ(resumed.router.loadCheckpoint(resumed.source.context,file.string()),"");
+    SourceResultHistory prefix;bool available=false;ASSERT_EQ(SourceResultHistory::read(result.string(),prefix,available),"");ASSERT_TRUE(available);
+    ASSERT_NO_THROW(resumed.router.resumeSourceResultHistory(prefix));resultEqual(history,prefix);
+    for(int i=6;i<11;++i) {continuous.tick();resumed.tick();}
+    continuous.router.flushPendingBatch(continuous.source.context);resumed.router.flushPendingBatch(resumed.source.context);
+    routerEqual(continuous,resumed,"router-history");resultEqual(history,prefix);
+}
+#endif
+
+TEST(CommonSourceStage, RouterLedgerUsesActualWeatherFootprintAndReturnsWithoutInventingNodeSpill) {
+    RouterSourceModel m;m.setup(Momentum2D::LOCAL_INERTIAL,GwClosure::CLOSED_FORM,true);ASSERT_FALSE(HasFatalFailure());
+    for(int i=0;i<5;++i) {if(i==2)m.weather(216);m.tick();}
+    const double rain=7*.0254/3600*(432*1.4+216*2.1);
+    EXPECT_NEAR(m.source.context.mass_balance_2d.rainfall_in,rain,1e-14);
+    double per_cell=0;for(double v:m.router.rainCumulative())per_cell+=v;EXPECT_NEAR(per_cell,rain,1e-14);
+    const double report=7*.0254/3600*(432*1.4+216*.9);
+    double per_report=0;for(double v:m.router.reportRainCumulative(2300))per_report+=v;EXPECT_NEAR(per_report,report,1e-14);
+    // Controlled groundwater rise exercises real Dunne return ownership.
+    m.router.subsurface().bookLinkSeepage(0,10);
+    for(int i=0;i<50;++i)m.tick();m.router.flushPendingBatch(m.source.context);
+    EXPECT_GT(m.source.stage.meshReturn(),0);EXPECT_DOUBLE_EQ(m.source.context.mass_balance_2d.aquifer_in,m.source.stage.meshReturn());
+    for(double v:m.router.couplingCumulative())EXPECT_DOUBLE_EQ(v,0);
+    EXPECT_NEAR(m.source.context.mass_balance_2d.error(),0,1e-12);
+}
+TEST(CommonSourceStage, RouterCheckpointValidChecksumStillRejectsSemanticClocksShapesAndCrossComponentLedgers) {
+    RouterSourceModel original;original.setup();for(int i=0;i<6;++i)original.tick();
+    const auto file=restartPath("router-semantic");ASSERT_EQ(original.router.saveCheckpoint(original.source.context,file.string()),"");
+    for(int change=0;change<9;++change) {
+        detail::CompletedSourceArchive reader(restartBytes(file));std::string magic,model,payload;
+        uint32_t version=0,endian=0,longBytes=0,crc=0;reader(magic,version,endian,longBytes,model,payload,crc);reader.finish();
+        const auto count=[&](size_t at){uint64_t n=0;std::memcpy(&n,payload.data()+at,sizeof(n));return n;};
+        const std::array<int,28> types{8,0,0,0,8,8,1,8,1,8,8,0,0,8,8,1,8,1,1,0,0,0,0,0,8,0,0,8};
+        std::array<size_t,28> fields{};size_t offset=0;
+        for(int i=0;i<28;++i) {fields[i]=offset;offset+=types[i]?types[i]:8+count(offset)*sizeof(double);}
+        const auto clocks=offset;offset+=6*sizeof(double);offset+=8+count(offset)*sizeof(double);const auto ledger=offset;
+        const auto put=[&](size_t at,double value){std::memcpy(payload.data()+at,&value,sizeof(value));};
+        if(change==0)put(fields[0],std::numeric_limits<double>::quiet_NaN());
+        if(change==1)put(fields[10],-1);
+        if(change==2)payload[fields[6]]=char(2);
+        if(change==3){uint64_t huge=UINT64_MAX;std::memcpy(payload.data()+fields[3],&huge,sizeof(huge));}
+        if(change==4)put(fields[13],9000);
+        if(change==5)put(clocks+2*sizeof(double),-1);
+        if(change==6) { // Router clocks close internally but disagree with the embedded CPU/source clock.
+            put(fields[9],original.source.stage.completedEnd()+.5);
+            put(fields[10],original.source.context.current_time-original.source.stage.completedEnd()-.5);
+            put(fields[14],1000*(original.source.stage.completedEnd()+.5));
+        }
+        if(change==7)put(ledger+sizeof(double),original.source.context.mass_balance_2d.final_storage+.001);
+        if(change==8) { // Router rainfall totals agree with each other, but not with source receipts.
+            put(fields[3]+8,original.router.rainCumulative()[0]+.001);
+            put(ledger+4*sizeof(double),original.source.context.mass_balance_2d.rainfall_in+.001);
+        }
+        crc=restartCrc(payload);detail::CompletedSourceArchive writer;writer(magic,version,endian,longBytes,model,payload,crc);
+        const auto bad=restartPath("router-semantic-"+std::to_string(change));std::ofstream(bad,std::ios::binary).write(writer.bytes().data(),writer.bytes().size());
+        RouterSourceModel target;target.setup();const auto before=restartPath("router-semantic-before");
+        ASSERT_EQ(target.router.saveCheckpoint(target.source.context,before.string()),"");const auto initial=restartBytes(before);
+        EXPECT_FALSE(target.router.loadCheckpoint(target.source.context,bad.string()).empty());
+        ASSERT_EQ(target.router.saveCheckpoint(target.source.context,before.string()),"");EXPECT_EQ(restartBytes(before),initial);
+        ASSERT_EQ(target.router.loadCheckpoint(target.source.context,file.string()),"");routerEqual(original,target,"router-semantic-retry");
+    }
+}
+TEST(CommonSourceStage, RouterFailedSourceTrialCannotPublishOrContinuePartialRouterState) {
+    RouterSourceModel m;m.setup();const auto file=restartPath("router-failed");ASSERT_EQ(m.router.saveCheckpoint(m.source.context,file.string()),"");
+    const auto initial=restartBytes(file);
+    runoff::SourceWaterDriver::BottomCeiling ceiling=[](int,int,double,double){return 0.;};
+    runoff::RunoffSolver::InfiltrationBoundary boundary=[](int,double,double,double& rate){rate=0;return true;};
+    ASSERT_EQ(m.source.sources.stage(0,1,1,&boundary,&ceiling),"");
+    EXPECT_NO_THROW(m.router.flushPendingBatch(m.source.context));
+    for(int i=0;i<4;++i)m.tick();
+    EXPECT_THROW(m.tick(),std::runtime_error);m.source.sources.cancel();
+    EXPECT_FALSE(m.router.saveCheckpoint(m.source.context,file.string()).empty());EXPECT_EQ(restartBytes(file),initial);
+    EXPECT_THROW(m.tick(),std::invalid_argument);
 }

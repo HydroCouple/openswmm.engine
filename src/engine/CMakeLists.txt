@@ -489,6 +489,7 @@ if(OPENSWMM_BUILD_2D)
         2d/coupling/*.cpp
         2d/input/*.cpp
         2d/SurfaceRouter2D.cpp
+        2d/SurfaceRouterCheckpoint.cpp
         2d/api/*.cpp
     )
 

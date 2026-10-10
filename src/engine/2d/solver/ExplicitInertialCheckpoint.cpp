@@ -127,6 +127,14 @@ void ExplicitInertialSolver::checkpointState(Archive& a) {
 
 std::string ExplicitInertialSolver::saveCheckpoint(const std::string& path) const {
     try {
+        std::string bytes; const auto error=checkpointBytes(bytes);
+        if(!error.empty()) return error;
+        publish(path,bytes); return {};
+    } catch(const std::exception& e) { return e.what(); }
+}
+
+std::string ExplicitInertialSolver::checkpointBytes(std::string& bytes) const {
+    try {
         const auto error=checkpointBoundary(); if(!error.empty()) return error;
         std::string component; const auto state_error=common_stage_->checkpointBytes(component);
         if(!state_error.empty()) return state_error;
@@ -134,16 +142,22 @@ std::string ExplicitInertialSolver::saveCheckpoint(const std::string& path) cons
         std::string magic=magicName,payload=state.bytes(); uint32_t version=1,endian=0x01020304,longBytes=sizeof(long),crc=checksum(payload);
         Archive file; file(magic,version,endian,longBytes,payload,crc);
         if(file.bytes().size()>maxBytes) return "CPU checkpoint exceeds internal qualification size limit.";
-        publish(path,file.bytes()); return {};
+        bytes=file.bytes(); return {};
     } catch(const std::exception& e) { return e.what(); }
 }
 
 std::string ExplicitInertialSolver::loadCheckpoint(const std::string& path) {
+    try { return loadCheckpointBytes(readFile(path)); }
+    catch(const std::exception& e) { return e.what(); }
+}
+
+std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const std::array<double,5>* router_boundary) {
     try {
         const auto error=checkpointBoundary(); if(!error.empty()) return error;
         if(t_last_sync_!=0 || common_stage_->intervals()!=0 || source_history_)
             return "CPU checkpoint restore requires a fresh marcher without a history recorder.";
-        Archive file(readFile(path)); std::string magic,payload;
+        if(bytes.empty() || bytes.size()>maxBytes) return "CPU checkpoint exceeds its size limit.";
+        Archive file(std::move(bytes)); std::string magic,payload;
         uint32_t version=0,endian=0,longBytes=0,crc=0; file(magic,version,endian,longBytes,payload,crc); file.finish();
         if(magic!=magicName || version!=1 || endian!=0x01020304 || longBytes!=sizeof(long))
             return "Unsupported CPU checkpoint version/platform.";
@@ -154,6 +168,15 @@ std::string ExplicitInertialSolver::loadCheckpoint(const std::string& path) {
         Archive state(std::move(payload)); std::string component; state(component); trial.checkpointState(state); state.finish();
         const auto component_error=stage.loadCheckpointBytes(std::move(component)); if(!component_error.empty()) return component_error;
         const auto invalid=trial.checkpointBoundary(); if(!invalid.empty()) return invalid;
+        if(router_boundary) {
+            if(trial.t_last_sync_!=(*router_boundary)[0]) return "Router/CPU checkpoint clocks differ.";
+            double volume=0; for(double v:surface.volume) volume+=v;
+            const std::array<double,4> ledger{stage.meshRain(),stage.meshEvaporation(),stage.meshReturn(),volume};
+            for(int k=0;k<4;++k) if(std::abs(ledger[k]-(*router_boundary)[k+1])>1e-12*std::max(1.0,std::abs(ledger[k])))
+                return "Router/source checkpoint ledgers differ.";
+            for(double v:surface.infil_applied) if(v!=0) return "Router checkpoint has undrained infiltration.";
+            for(double v:surface.coupling_applied) if(v!=0) return "Router checkpoint has undrained coupling.";
+        }
         // All parsing, model, shape, schedule and component checks preceded
         // installation. Moves cannot throw; restored pointers retain ownership.
         static_assert(std::is_nothrow_move_assignable_v<ExplicitInertialSolver>);

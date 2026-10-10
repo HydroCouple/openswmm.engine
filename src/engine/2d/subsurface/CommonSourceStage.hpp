@@ -43,6 +43,7 @@ public:
     double meshRain() const { return mesh_rain_; }
     double meshEvaporation() const { return mesh_evap_; }
     double meshReturn() const { return mesh_return_; }
+    double meshWeatherArea(int cell) const { return weather_.at(cell); }
 private:
     friend class SourceResultHistory;
     friend class ExplicitInertialSolver;

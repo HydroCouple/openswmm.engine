@@ -1,0 +1,235 @@
+// SPDX-License-Identifier: Apache-2.0
+#include "SurfaceRouter2D.hpp"
+#include "solver/ExplicitInertialSolver.hpp"
+#include "subsurface/CommonSourceStage.hpp"
+#include "../core/CompletedSourceArchive.hpp"
+#include "../core/SimulationContext.hpp"
+#include "../core/DateTime.hpp"
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <stdexcept>
+
+namespace openswmm::twoD {
+namespace {
+using Archive=detail::CompletedSourceArchive;
+constexpr uint64_t maxBytes=64*1024*1024;
+constexpr const char* magicName="OpenSWMM source router boundary";
+bool close(double a,double b) { return std::abs(a-b)<=1e-12*std::max({1.0,std::abs(a),std::abs(b)}); }
+uint32_t checksum(const std::string& bytes) {
+    uint32_t crc=~uint32_t(0);
+    for(unsigned char c:bytes) { crc^=c; for(int k=0;k<8;++k) crc=(crc>>1)^((crc&1)?0xedb88320u:0u); }
+    return ~crc;
+}
+std::string readFile(const std::string& path) {
+    std::error_code ec; const auto size=std::filesystem::file_size(path,ec);
+    if(ec || size==0 || size>maxBytes) throw std::runtime_error("Router checkpoint is missing or exceeds its size limit.");
+    std::ifstream in(path,std::ios::binary); std::string bytes(size,'\0'); in.read(bytes.data(),bytes.size());
+    if(!in || in.peek()!=std::char_traits<char>::eof()) throw std::runtime_error("Router checkpoint read failed.");
+    return bytes;
+}
+void publish(const std::string& path,const std::string& bytes) {
+    if(std::filesystem::exists(path)) {
+        Archive old(readFile(path)); std::string magic; old(magic);
+        if(magic!=magicName) throw std::runtime_error("Router checkpoint destination is an unrelated file.");
+    }
+    static std::atomic<uint64_t> serial{0}; const auto part=path+".router-part-"+std::to_string(++serial);
+    FILE* file=std::fopen(part.c_str(),"wbx");
+    if(!file) throw std::runtime_error("Cannot create router checkpoint publication file.");
+    const bool written=std::fwrite(bytes.data(),1,bytes.size(),file)==bytes.size();
+    const bool closed=std::fclose(file)==0;
+    if(!written || !closed) { std::filesystem::remove(part); throw std::runtime_error("Router checkpoint write failed."); }
+    std::error_code ec; std::filesystem::rename(part,path,ec);
+    if(ec) { std::filesystem::remove(part); throw std::runtime_error("Cannot publish router checkpoint: "+ec.message()); }
+}
+void massBalance(Archive& a,SimulationContext::MassBalance2D& m) {
+    a(m.init_storage,m.final_storage,m.external_in,m.external_out,m.rainfall_in,m.coupling_1d_to_2d_in,
+      m.coupling_2d_to_1d_out,m.outfall_in,m.outfall_out,m.boundary_in,m.boundary_out,m.evap_out,
+      m.infil_out,m.infil_to_aquifer,m.infil_aquifer_pending,m.aquifer_in,m.active,
+      m.solver_nsteps,m.solver_nrhs,m.solver_avg_h,m.solver_last_h,m.solver_active_min,
+      m.solver_active_mean,m.solver_active_max,m.solver_n_tiers);
+    for(auto& v:m.solver_tier_cells) a(v);
+}
+// Explicit router prognostic fields; scratch, model geometry, provider resources
+// and live 1D stores are excluded. They are forbidden by this qualification profile.
+#define ROUTER_FIELDS(X) \
+    X(infil_elapsed_) X(infil_cum_applied_) X(coupling_cum_applied_) X(rain_cum_) \
+    X(co_refresh_elapsed_) X(co_render_elapsed_) X(render_dirty_) X(co_forcing_elapsed_) X(co_forcing_first_) \
+    X(sim_time_) X(pending_dt_) X(report_old_depth_) X(report_old_head_) X(report_window_old_ms_) \
+    X(report_window_new_ms_) X(report_old_valid_) X(last_t_) X(boundary_names_resolved_) \
+    X(bc_nonwall_dirty_) X(rain_gage_last_) X(gage_rate_) X(gage_cum_) X(gage_window_depth_) \
+    X(gage_window_rate_) X(gage_since_) X(gage_report_depth_) X(report_rain_cum_) X(report_rain_ms_)
+}
+
+struct SurfaceRouter2D::RestartState {
+#define DECLARE(v) decltype(SurfaceRouter2D::v) v;
+    ROUTER_FIELDS(DECLARE)
+#undef DECLARE
+    double current_time,current_date,elapsed_ms,old_elapsed_ms,next_report_ms,evap_rate;
+    std::vector<double> rainfall;
+    SimulationContext::MassBalance2D mb;
+    RestartState(const SurfaceRouter2D& r,const SimulationContext& c) {
+#define COPY(v) v=r.v;
+        ROUTER_FIELDS(COPY)
+#undef COPY
+        current_time=c.current_time;current_date=c.current_date;elapsed_ms=c.elapsed_ms;
+        old_elapsed_ms=c.old_elapsed_ms;next_report_ms=c.next_report_ms;
+        evap_rate=c.climate_state.evap_rate;rainfall=c.gages.rainfall;mb=c.mass_balance_2d;
+    }
+    void archive(Archive& a) {
+#define FIELD(v) a(v);
+        ROUTER_FIELDS(FIELD)
+#undef FIELD
+        a(current_time,current_date,elapsed_ms,old_elapsed_ms,next_report_ms,evap_rate,rainfall);
+        massBalance(a,mb);
+    }
+    void validate(const SurfaceRouter2D& r,const SimulationContext& c) const {
+        const auto n=static_cast<std::size_t>(r.mesh_.n_cells()),ng=static_cast<std::size_t>(c.n_gages());
+        for(const auto* row:{&infil_cum_applied_,&coupling_cum_applied_,&rain_cum_,&report_old_depth_,&report_old_head_})
+            if(row->size()!=n) throw std::runtime_error("Router checkpoint cell shape differs.");
+        if(report_rain_cum_.size()!=(report_rain_ms_>=0?n:0) || rainfall.size()!=ng)
+            throw std::runtime_error("Router checkpoint report/weather shape differs.");
+        const auto booked=gage_rate_.size();
+        if(booked!=0 && booked!=ng) throw std::runtime_error("Router checkpoint gage shape differs.");
+        for(const auto* row:{&gage_cum_,&gage_window_depth_,&gage_report_depth_})
+            if(row->size()!=booked) throw std::runtime_error("Router checkpoint gage integral shape differs.");
+        for(const auto* row:{&gage_window_rate_,&rain_gage_last_})
+            if(row->size()!=0 && row->size()!=ng) throw std::runtime_error("Router checkpoint gage rate shape differs.");
+        for(const auto* row:{&infil_cum_applied_,&coupling_cum_applied_,&rain_cum_,&report_old_depth_,&report_old_head_,
+            &rain_gage_last_,&gage_rate_,&gage_cum_,&gage_window_depth_,&gage_window_rate_,&gage_report_depth_,&report_rain_cum_,&rainfall})
+            for(double v:*row) if(!std::isfinite(v)) throw std::runtime_error("Nonfinite router checkpoint field.");
+        for(const auto* row:{&infil_cum_applied_,&rain_cum_,&report_old_depth_,&gage_cum_,&gage_window_depth_,&gage_report_depth_,&report_rain_cum_})
+            for(double v:*row) if(v<0) throw std::runtime_error("Negative router checkpoint water/integral.");
+        for(double v:coupling_cum_applied_) if(v!=0) throw std::runtime_error("Unqualified router checkpoint coupling.");
+        for(double v:{infil_elapsed_,co_refresh_elapsed_,co_render_elapsed_,co_forcing_elapsed_,sim_time_,pending_dt_,
+            report_window_old_ms_,report_window_new_ms_,last_t_,gage_since_,current_time,current_date,
+            elapsed_ms,old_elapsed_ms,next_report_ms,evap_rate,report_rain_ms_})
+            if(!std::isfinite(v)) throw std::runtime_error("Nonfinite router checkpoint clock.");
+        if(sim_time_<0 || pending_dt_<0 || infil_elapsed_<0 || co_refresh_elapsed_<0 || co_render_elapsed_<0 ||
+           co_forcing_elapsed_<0 || co_refresh_elapsed_>=30 || co_forcing_elapsed_>=30 ||
+           co_render_elapsed_>=(c.options.report_step>0?c.options.report_step:30) ||
+           (!render_dirty_ && co_render_elapsed_!=0) || infil_elapsed_>=r.infil_.stepSeconds() ||
+           pending_dt_>=r.couplingSyncSpan(c,r.options_) || last_t_<0 || last_t_>current_time || gage_since_<0 ||
+           !close(current_time,sim_time_+pending_dt_) || !close(elapsed_ms,1000*current_time) ||
+           old_elapsed_ms<0 || old_elapsed_ms>elapsed_ms || next_report_ms<=0 ||
+           current_date!=datetime::addSeconds(c.options.start_date,current_time) ||
+           report_window_old_ms_<0 || report_window_old_ms_>report_window_new_ms_ ||
+           !close(report_window_new_ms_,1000*sim_time_) || report_rain_ms_<-1 || report_rain_ms_>report_window_new_ms_ ||
+           (!report_old_valid_ && report_window_old_ms_!=0) || (sim_time_>0 && co_forcing_first_))
+            throw std::runtime_error("Invalid router checkpoint clocks/report window.");
+        double rain=0,infil=0;for(std::size_t i=0;i<n;++i) {rain+=rain_cum_[i];infil+=infil_cum_applied_[i]*r.mesh_.tri_area[i];}
+        for(double v:{mb.init_storage,mb.final_storage,mb.rainfall_in,mb.evap_out,mb.infil_out,mb.aquifer_in})
+            if(!std::isfinite(v) || v<0) throw std::runtime_error("Invalid router checkpoint mass balance.");
+        if(!mb.active || !close(rain,mb.rainfall_in) || !close(infil,mb.infil_out) || mb.init_storage!=c.mass_balance_2d.init_storage ||
+           mb.external_in!=0 || mb.external_out!=0 || mb.coupling_1d_to_2d_in!=0 || mb.coupling_2d_to_1d_out!=0 ||
+           mb.outfall_in!=0 || mb.outfall_out!=0 || mb.boundary_in!=0 || mb.boundary_out!=0 ||
+           mb.infil_to_aquifer!=0 || mb.infil_aquifer_pending!=0 || mb.solver_nsteps!=-1 || mb.solver_nrhs!=0 ||
+           mb.solver_avg_h!=0 || mb.solver_last_h!=0 || mb.solver_active_min!=-1 || mb.solver_active_mean!=-1 ||
+           mb.solver_active_max!=-1 || mb.solver_n_tiers!=0)
+            throw std::runtime_error("Router checkpoint ledgers differ or include unqualified exchanges.");
+        for(long v:mb.solver_tier_cells) if(v!=0) throw std::runtime_error("Router checkpoint has finalized statistics.");
+    }
+    void install(SurfaceRouter2D& r,SimulationContext& c) noexcept {
+#define MOVE(v) static_assert(std::is_nothrow_move_assignable_v<decltype(v)>);r.v=std::move(v);
+        ROUTER_FIELDS(MOVE)
+#undef MOVE
+        c.current_time=current_time;c.current_date=current_date;c.elapsed_ms=elapsed_ms;c.old_elapsed_ms=old_elapsed_ms;
+        c.next_report_ms=next_report_ms;c.climate_state.evap_rate=evap_rate;c.gages.rainfall=std::move(rainfall);
+        c.mass_balance_2d=mb;r.source_boundary_ready_=true;
+    }
+};
+#undef ROUTER_FIELDS
+
+std::string SurfaceRouter2D::sourceRouterModel(const SimulationContext& ctx) const {
+    Archive a;auto o=ctx.options;auto x=ctx.spatial.gage_x,y=ctx.spatial.gage_y;auto step=infil_.stepSeconds();auto sync=couplingSyncSpan(ctx,options_);
+    a(o.start_date,o.total_duration_ms,o.flow_units,o.routing_step,o.wet_step,o.report_step,
+      o.ignore_quality,o.ignore_snow_melt,o.ignore_2d,o.water_age,o.heat_transport,x,y,step,sync);
+    for(int g=0;g<ctx.n_gages();++g) {auto name=ctx.gage_names.name_of(g);a(name);}
+    return a.bytes();
+}
+std::string SurfaceRouter2D::sourceBoundary(const SimulationContext& ctx) const {
+    if(!active_ || !common_stage_ || !source_boundary_ready_ || &ctx!=source_context_ ||
+       !common_stage_->matches(&mesh_,&state_,&subsurface_) || int(common_stage_->cells().size())!=mesh_.n_cells())
+        return "Router checkpoint requires an accepted attached all-cell source boundary.";
+    if(ctx.n_nodes()!=0 || ctx.n_links()!=0 || !coupling_points_.empty() || !aquifer_link_shares_.empty() ||
+       !subcatch_recharge_.empty() || !cell_subcatch_.empty() || surface_quality_.active() || runtimeActive() ||
+       !ramp_prev_head_.empty() || outfall_state_changed_ || !window_outfall_accum_.empty())
+        return "Router checkpoint live 1D, land-use quality and external providers are not qualified.";
+    if(infil_.resolvedRows().size()!=mesh_.tri_area.size()) return "Router checkpoint requires aquifer-owned infiltration rows.";
+    for(int i=0;i<mesh_.n_cells();++i)
+        if(state_.coupling_flux[i]!=0 || state_.coupling_forced[i]!=0 || infil_.resolvedRows()[i].has_method)
+            return "Router checkpoint requires aquifer-owned cells without external coupling donors.";
+    const auto* cpu=dynamic_cast<ExplicitInertialSolver*>(solver_.get());
+    if(!cpu) return "Router checkpoint requires the first-order CPU marcher.";
+    const auto error=cpu->checkpointBoundary(); if(!error.empty()) return error;
+    if(cpu->completedSourceTime()!=sim_time_) return "Router/source completed clocks differ.";
+    if(source_router_model_!=sourceRouterModel(ctx)) return "Router checkpoint model changed after attachment.";
+    if(!close(ctx.mass_balance_2d.rainfall_in,common_stage_->meshRain()) ||
+       !close(ctx.mass_balance_2d.evap_out,common_stage_->meshEvaporation()) ||
+       !close(ctx.mass_balance_2d.aquifer_in,common_stage_->meshReturn()) ||
+       !close(ctx.mass_balance_2d.final_storage,totalVolume())) return "Router/source completed ledgers differ.";
+    return {};
+}
+void SurfaceRouter2D::setCommonSourceStage(SimulationContext& ctx,CommonSourceStage& stage) {
+    auto* cpu=dynamic_cast<ExplicitInertialSolver*>(solver_.get());
+    if(common_stage_ || !active_ || !cpu || sim_time_!=0 || pending_dt_!=0 || ctx.current_time!=0 ||
+       !stage.matches(&mesh_,&state_,&subsurface_) || int(stage.cells().size())!=mesh_.n_cells() ||
+       ctx.n_nodes()!=0 || ctx.n_links()!=0 || !coupling_points_.empty() || !subcatch_recharge_.empty() ||
+       infil_.resolvedRows().size()!=mesh_.tri_area.size() ||
+       !cell_subcatch_.empty() || surface_quality_.active() || runtimeActive())
+        throw std::invalid_argument("Router source attachment requires an initial CPU/all-cell profile without live 1D exchanges.");
+    for(int i=0;i<mesh_.n_cells();++i) {
+        if(state_.coupling_flux[i]!=0 || state_.coupling_forced[i]!=0 || infil_.resolvedRows()[i].has_method)
+            throw std::invalid_argument("Router source attachment requires aquifer-owned cells without external coupling donors.");
+        for(int k=0;k<mesh_.cell_vertex_count(i);++k) if(mesh_.cell_neighbour(i,k)<0 &&
+            boundary_.edge_bc_type.at(MeshData::slot(i,k))!=int8_t(BoundaryType::WALL))
+            throw std::invalid_argument("Router source attachment requires wall boundaries.");
+    }
+    // Empty node row publishers do not represent a live node provider.
+    if(node_row_conc_.empty()) state_.node_row_conc=nullptr;
+    auto model=sourceRouterModel(ctx);
+    cpu->setCommonSourceStage(stage);
+    common_stage_=&stage;source_context_=&ctx;source_router_model_=std::move(model);source_boundary_ready_=true;
+}
+void SurfaceRouter2D::setSourceResultHistory(SourceResultHistory& history) {
+    if(!common_stage_) throw std::invalid_argument("Router source results require an attached stage.");
+    static_cast<ExplicitInertialSolver*>(solver_.get())->setSourceResultHistory(history);
+}
+void SurfaceRouter2D::resumeSourceResultHistory(SourceResultHistory& history) {
+    if(!common_stage_ || !source_boundary_ready_) throw std::invalid_argument("Router source history requires an accepted boundary.");
+    static_cast<ExplicitInertialSolver*>(solver_.get())->resumeSourceResultHistory(history);
+}
+std::string SurfaceRouter2D::saveCheckpoint(const SimulationContext& ctx,const std::string& path) const {
+    try {
+        const auto error=sourceBoundary(ctx);if(!error.empty())return error;
+        RestartState snapshot(*this,ctx);snapshot.validate(*this,ctx);
+        std::string cpu;const auto ce=static_cast<ExplicitInertialSolver*>(solver_.get())->checkpointBytes(cpu);if(!ce.empty())return ce;
+        Archive state;snapshot.archive(state);state(cpu);auto payload=state.bytes(),model=source_router_model_;auto magic=std::string(magicName);
+        uint32_t version=1,endian=0x01020304,longBytes=sizeof(long),crc=checksum(payload);
+        Archive file;file(magic,version,endian,longBytes,model,payload,crc);
+        if(file.bytes().size()>maxBytes)return "Router checkpoint exceeds its size limit.";
+        publish(path,file.bytes());return {};
+    } catch(const std::exception& e) { return e.what(); }
+}
+std::string SurfaceRouter2D::loadCheckpoint(SimulationContext& ctx,const std::string& path) {
+    try {
+        const auto error=sourceBoundary(ctx);if(!error.empty())return error;
+        if(sim_time_!=0 || pending_dt_!=0 || ctx.current_time!=0) return "Router checkpoint restore requires a fresh attached router.";
+        Archive file(readFile(path));std::string magic,model,payload;uint32_t version=0,endian=0,longBytes=0,crc=0;
+        file(magic,version,endian,longBytes,model,payload,crc);file.finish();
+        if(magic!=magicName || version!=1 || endian!=0x01020304 || longBytes!=sizeof(long)) return "Unsupported router checkpoint version/platform.";
+        if(model!=source_router_model_) return "Router checkpoint report/weather model differs.";
+        if(crc!=checksum(payload)) return "Router checkpoint checksum differs.";
+        RestartState snapshot(*this,ctx);Archive state(std::move(payload));snapshot.archive(state);std::string cpu;state(cpu);state.finish();
+        snapshot.validate(*this,ctx);
+        const std::array<double,5> expected{snapshot.sim_time_,snapshot.mb.rainfall_in,snapshot.mb.evap_out,snapshot.mb.aquifer_in,snapshot.mb.final_storage};
+        const auto ce=static_cast<ExplicitInertialSolver*>(solver_.get())->loadCheckpointBytes(std::move(cpu),&expected);if(!ce.empty())return ce;
+        // Parsing/model/ledger/clock checks have all completed. CPU installation
+        // above and these remaining explicit moves cannot throw.
+        snapshot.install(*this,ctx);return {};
+    } catch(const std::exception& e) { return e.what(); }
+}
+}

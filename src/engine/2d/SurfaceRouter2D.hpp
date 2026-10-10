@@ -65,6 +65,8 @@ struct SimulationContext;
 }
 
 namespace openswmm::twoD {
+class CommonSourceStage;
+class SourceResultHistory;
 
 /**
  * @brief Top-level orchestrator for the 2D surface routing module.
@@ -89,6 +91,14 @@ public:
      * @param ctx Simulation context (must have mesh_2d populated from parsing).
      */
     void initialize(SimulationContext& ctx);
+    /// Internal qualification hook: externally owned stage, all cells managed,
+    /// wall boundaries, no live 1D exchanges. Does not activate authored ownership.
+    void setCommonSourceStage(SimulationContext& ctx, CommonSourceStage& stage);
+    void setSourceResultHistory(SourceResultHistory& history);
+    void resumeSourceResultHistory(SourceResultHistory& history);
+    /// Internal router/CPU/source boundary; not a full-project hotstart.
+    std::string saveCheckpoint(const SimulationContext& ctx, const std::string& path) const;
+    std::string loadCheckpoint(SimulationContext& ctx, const std::string& path);
 
     /**
      * @brief Advance the 2D surface routing by one SWMM routing step.
@@ -464,6 +474,14 @@ public:
     const std::string& backendName() const noexcept { return backend_name_; }
 
 private:
+    struct RestartState;
+    static double couplingSyncSpan(const SimulationContext&, const SolverOptions2D&);
+    CommonSourceStage* common_stage_ = nullptr;
+    SimulationContext* source_context_ = nullptr;
+    std::string source_router_model_;
+    bool source_boundary_ready_ = false;
+    std::string sourceBoundary(const SimulationContext& ctx) const;
+    std::string sourceRouterModel(const SimulationContext& ctx) const;
     /// Drain pending [2D_BOUNDARY_CONDITIONS] / [2D_EDGE_CONVEYANCE] rows into
     /// BoundaryData / mesh edge slots and flip pending_rows_drained. Shared by
     /// initialize() and prepareForEdit(); idempotent.

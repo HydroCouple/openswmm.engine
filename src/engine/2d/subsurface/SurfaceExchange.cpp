@@ -64,14 +64,20 @@ std::string SurfaceExchange::plan(const SubsurfaceSolver& gw, double start, doub
     std::map<int, long double> demand;
     for (const auto& a : proposed) demand[a.request.cell] += a.demand;
     std::map<int, double> headroom;
-    std::map<int, long double> remaining;
+    std::map<int, long double> remaining, allocated;
     for (const auto& [cell, sum] : demand) remaining[cell] = headroom[cell] = gw.infiltrationHeadroom(cell);
     for (auto& a : proposed) {
         const int c = a.request.cell;
         const long double scale = demand[c] > headroom[c] ? headroom[c] / demand[c] : 1;
         a.maximum = static_cast<double>(std::min(remaining[c], a.demand * scale));
         if (a.maximum > remaining[c]) a.maximum = std::nextafter(a.maximum, 0.0);
-        remaining[c] -= a.maximum;
+        // Use the same ascending sum as commit, including platforms where
+        // long double is double. Repeated remainder subtraction can award
+        // one ulp more than the shared headroom at a nearly saturated cell.
+        while (allocated[c] + a.maximum > headroom[c])
+            a.maximum = std::nextafter(a.maximum, 0.0);
+        allocated[c] += a.maximum;
+        remaining[c] = headroom[c] - allocated[c];
     }
     awards_ = std::move(proposed); start_ = start; end_ = end; planned_ = true; receiver_ = &gw;
     return {};
