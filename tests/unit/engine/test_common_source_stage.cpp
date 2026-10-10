@@ -8,6 +8,7 @@
 #include "hydraulics/Routing.hpp"
 #include "hydraulics/Node.hpp"
 #include "hydrology/LidNode.hpp"
+#include "hydrology/SourceWaterDeliveryBridge.hpp"
 #include "2d/mesh/MeshBuilder.hpp"
 #include "2d/data/SurfaceStateData.hpp"
 #include "core/SimulationContext.hpp"
@@ -492,6 +493,47 @@ TEST(CommonSourceStage, NativeLidBottomAndNonLidCompeteWithMeshAndRemainPaired) 
     EXPECT_GT(m.sources.lids().storedVolume(),initial);
     EXPECT_NEAR(m.receipts(SurfaceDonorKind::MESH)+m.receipts(SurfaceDonorKind::NON_LID)+bottom,.001,1e-12);
     EXPECT_NEAR(m.sources.balanceResidual(0),0,1e-10);EXPECT_NEAR(m.sources.balanceResidual(1),0,1e-10);
+}
+
+TEST(CommonSourceStage, CompletedSpatialOutletsReachTheHydraulicBridgeAfterSettlement) {
+    AtmosphericInput a;a.impervious={.5,.75};a.inside={.5,.25};a.lid_bottom=.432;
+    Model m;m.setup(true,1,false,false,false,a);ASSERT_FALSE(HasFatalFailure());
+    m.context.nodes.resize(1);m.context.node_names.try_add("RECEIVER");
+    m.context.subcatches.outlet_node={0,0};
+    m.context.lid_controls.drain[0][0]=43.2;
+    m.sources=runoff::SourceWaterDriver{};
+    ASSERT_EQ(m.sources.initialize(m.context,{0,1},{{0,.5},{1,1}}),"");
+    m.attach(true);ASSERT_FALSE(HasFatalFailure());
+    runoff::SourceWaterDeliveryBridge bridge;ASSERT_EQ(bridge.initialize(m.sources),"");
+    double initial=m.sources.ledgers()[0].initial_storage+m.sources.ledgers()[1].initial_storage;
+    bool saw_drain=false,saw_runoff=false,saw_recharge=false;double start=0;
+    for(double end:{.3,.7,1.2,2.7,5.,8.5}) {
+        ASSERT_EQ(bridge.stage(start,end),"");const auto receipt=bridge.receipts()[0];
+        saw_drain|=receipt.drain>0;saw_runoff|=receipt.runoff>0;
+        ASSERT_EQ(bridge.commit(),"");
+        ASSERT_DOUBLE_EQ(m.marcher.advance(start,end),end);
+        const auto aquifer_pending=m.gw.state().xacc_from_surface;
+        ASSERT_EQ(bridge.capture(m.sources,end),"");
+        EXPECT_EQ(m.gw.state().xacc_from_surface,aquifer_pending);
+        for(const auto& r:m.stage.receipts())saw_recharge|=r.volume>0;
+        double outlet=0,rain=0,evap=0,infil=0,stored=0;
+        for(int sc=0;sc<2;++sc) {
+            const auto& b=m.sources.ledgers()[sc];outlet+=b.outlet;rain+=b.rain;
+            evap+=b.evaporation;infil+=b.infiltration;stored+=m.sources.storedVolume(sc);
+            EXPECT_NEAR(m.sources.balanceResidual(sc),0,1e-9);
+        }
+        double pending=0;for(const auto& q:bridge.pending()) {
+            EXPECT_LE(q.water.end,q.available);pending+=q.water.volume;
+        }
+        EXPECT_NEAR(outlet,bridge.delivered()[0].runoff+bridge.delivered()[0].drain+pending,1e-9);
+        EXPECT_NEAR(initial+rain,evap+infil+outlet+stored,1e-9);
+        detail::CompletedSourceArchive cp;bridge.checkpoint(cp,false,m.sources);
+        auto restored=bridge;detail::CompletedSourceArchive read(cp.bytes());
+        restored.checkpoint(read,false,m.sources);read.finish();
+        EXPECT_EQ(restored.capturedCount(),bridge.capturedCount());
+        start=end;
+    }
+    EXPECT_TRUE(saw_drain);EXPECT_TRUE(saw_runoff);EXPECT_TRUE(saw_recharge);
 }
 
 TEST(CommonSourceStage, DeniedCellShareNeverMigratesToAnotherReceiver) {
