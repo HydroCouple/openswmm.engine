@@ -2,6 +2,10 @@
 // Copyright 2026 Caleb Buahin
 #include "SWMMEngine.hpp"
 #include "CompletedSourceArchive.hpp"
+#include "FileIO.hpp"
+#include "../plugins/DefaultOutputPlugin.hpp"
+#include "../plugins/DefaultStateIOPlugin.hpp"
+#include "../plugins/DefaultReportPlugin.hpp"
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/subsurface/CommonSourceStage.hpp"
 #include "../2d/subsurface/EngineSourceResultHistory.hpp"
@@ -405,8 +409,16 @@ struct SWMMEngine::RestartState {
 
 void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
     require(exchange_target_<0,"Engine session checkpoint does not yet support runtime advance/coupling targets.");
-    require(ctx_.state==EngineState::RUNNING && ctx_.error_code==0 && do_routing_ && save_results_==0,
-            "Engine checkpoint requires a running water-only start(0) hydraulic session.");
+    require(ctx_.state==EngineState::RUNNING && ctx_.error_code==0 && do_routing_ &&
+            save_results_==(checkpoint_output_?1:0),
+            "Engine checkpoint requires a running water-only session with its prepared output mode.");
+    if(checkpoint_output_)require(binary_output_plugin_ && binary_output_plugin_->checkpoint_fresh_ &&
+            binary_output_plugin_->out_file_ && ctx_.plugin_specs.empty() && plugins_.output_plugins().size()==1 &&
+            plugins_.output_plugins().front()==binary_output_plugin_ && plugins_.input_plugins().size()==1 &&
+            plugins_.state_io_plugins().size()==1 && dynamic_cast<DefaultStateIOPlugin*>(plugins_.state_io_plugins().front()) &&
+            plugins_.report_plugins().size()==(rpt_path_.empty()?0u:1u) &&
+            (rpt_path_.empty() || dynamic_cast<DefaultReportPlugin*>(plugins_.report_plugins().front())),
+            "Binary output checkpoint supports only the built-in binary writer.");
     require(ctx_.rdii_assigns.count()==0 && !ctx_.files.has_any() &&
             !runoff_iface_file_ && !ctx_.runtime_coupling_used && ctx_.process_component_specs.empty(),
             "Engine checkpoint does not recover RDII, interface files, providers or process components.");
@@ -534,6 +546,26 @@ std::string SWMMEngine::enableCheckpointing() {
 #endif
     );
 }
+std::string SWMMEngine::prepareOutputCheckpointing() {
+    try {
+        require(ctx_.state==EngineState::INITIALIZED && !step_active_ && !runtime_pipeline_ &&
+                !checkpoint_enabled_ && !checkpoint_output_ && ctx_.current_time==0 && binary_output_plugin_,
+                "Prepare binary output checkpointing after initialize and before start(1).");
+        require(ctx_.plugin_specs.empty() && plugins_.output_plugins().size()==1 &&
+                plugins_.output_plugins().front()==binary_output_plugin_ && plugins_.input_plugins().size()==1 &&
+                plugins_.state_io_plugins().size()==1 && dynamic_cast<DefaultStateIOPlugin*>(plugins_.state_io_plugins().front()) &&
+                plugins_.report_plugins().size()==(rpt_path_.empty()?0u:1u) &&
+                (rpt_path_.empty() || dynamic_cast<DefaultReportPlugin*>(plugins_.report_plugins().front())),
+                "Binary output checkpoint supports only the built-in binary writer.");
+#ifdef OPENSWMM_HAS_2D
+        require(surface_router_.options_.output_file.empty(),"Surface output continuation is not yet qualified.");
+#endif
+        std::error_code ec;const auto status=std::filesystem::symlink_status(io::utf8_path(out_path_),ec);
+        require((!ec || ec==std::errc::no_such_file_or_directory) && !std::filesystem::exists(status),
+                "Binary output checkpoint requires a new output destination.");
+        checkpoint_output_=true;binary_output_plugin_->checkpoint_fresh_=true;return {};
+    } catch(const std::exception& e) {return e.what();}
+}
 #ifdef OPENSWMM_HAS_2D
 std::string SWMMEngine::enableCheckpointing(twoD::CommonSourceStage& stage) {return enableCheckpointingImpl(&stage);}
 std::string SWMMEngine::enableSpatialSourceCheckpointing(twoD::CommonSourceStage& stage) {return enableCheckpointingImpl(&stage,true);}
@@ -547,7 +579,7 @@ std::string SWMMEngine::enableCheckpointingImpl(
     const bool fresh_router=router_.checkpoint_context_==nullptr;
     try {
         require(!step_active_ && !runtime_pipeline_ && exchange_target_<0 && !checkpoint_enabled_ && ctx_.current_time==0,
-                "Enable engine checkpointing at start(0)'s initial session boundary.");
+                "Enable engine checkpointing at start's initial session boundary.");
         router_.checkpoint_owned_session_=true;
 #ifdef OPENSWMM_HAS_2D
         require(!stage || own_sources || stage->meshOnly(),"Private catchment ownership requires explicit spatial-source attachment.");
@@ -625,6 +657,10 @@ std::string SWMMEngine::checkpointBytes(std::string& result) const {
 #ifdef OPENSWMM_HAS_2D
         if(source_delivery_) {auto bridge=*source_delivery_;Archive a;bridge.checkpoint(a,false,source_stage_->sources());auto bytes=a.bytes();payload(bytes);}
 #endif
+        if(checkpoint_output_) {
+            require(io_thread_.flush()==0,"Cannot checkpoint failed output writes.");
+            auto output=binary_output_plugin_->checkpointBytes(ctx_,ctx_.next_report_ms);payload(output);version+=3;
+        }
         auto bytes=payload.bytes(),model=checkpoint_model_;auto crc=checksum(bytes);std::string magic=magicName;
         Archive out;out(magic,version,model,crc,bytes);require(out.bytes().size()<=maxBytes,"Engine checkpoint exceeds its size limit.");
         result=out.bytes();return {};
@@ -681,12 +717,21 @@ std::string SWMMEngine::loadCheckpoint(const std::string& path) {
 #ifdef OPENSWMM_HAS_2D
         if(surface_router_.isActive())expected_version=source_delivery_?5:4;
 #endif
+        if(checkpoint_output_)expected_version+=3;
         require(magic==magicName && version==expected_version && model==checkpoint_model_ && crc==checksum(bytes),"Engine checkpoint format/model/checksum differs.");
         RestartState state(*this);Archive payload(std::move(bytes));state.archive(payload);std::string hydraulic;payload(hydraulic);
 #ifdef OPENSWMM_HAS_2D
         std::string delivery;if(source_delivery_)payload(delivery);
 #endif
+        std::string output;if(checkpoint_output_)payload(output);
         payload.finish();state.validate(*this);
+        std::shared_ptr<DefaultOutputPlugin::PreparedCheckpoint> prepared_output;
+        std::function<void()> publish_output;
+        if(checkpoint_output_) {
+            require(io_thread_.flush()==0,"Cannot restore failed output writes.");
+            prepared_output=binary_output_plugin_->prepareCheckpoint(ctx_,state.boundary[4],std::move(output));
+            publish_output=[&]{binary_output_plugin_->installCheckpoint(*prepared_output);};
+        }
 #ifdef OPENSWMM_HAS_2D
         if(surface_router_.isActive()) {
             std::optional<runoff::SourceWaterDeliveryBridge> bridge;
@@ -699,7 +744,8 @@ std::string SWMMEngine::loadCheckpoint(const std::string& path) {
                 };
             }
             auto error=surface_router_.loadCheckpointBytes(ctx_,std::move(hydraulic),&state.boundary,&state.gages.rainfall,
-                &state.balance.routing_final_storage,state.stats.sum_iterations>0,bridge?&validate_source:nullptr);
+                &state.balance.routing_final_storage,state.stats.sum_iterations>0,bridge?&validate_source:nullptr,
+                prepared_output?&publish_output:nullptr);
             require(error.empty(),error.c_str());
             if(bridge) {static_assert(std::is_nothrow_move_assignable_v<runoff::SourceWaterDeliveryBridge>);*source_delivery_=std::move(*bridge);}
             state.install(*this);return {};
@@ -708,6 +754,7 @@ std::string SWMMEngine::loadCheckpoint(const std::string& path) {
         auto routing=router_.prepareCheckpointBytes(ctx_,std::move(hydraulic),&state.boundary);
         if(state.boundary[0]>0)Router::validateSessionStorage(routing,ctx_,state.balance.routing_final_storage,state.stats.sum_iterations>0);
         // All throwing parse/model/shape/ledger checks precede installation.
+        if(prepared_output)publish_output();
         router_.installCheckpoint(ctx_,std::move(routing));state.install(*this);return {};
     } catch(const std::exception& e) {return e.what();}
 }

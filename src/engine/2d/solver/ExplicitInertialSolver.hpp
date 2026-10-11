@@ -113,7 +113,8 @@ private:
     std::string checkpointBytes(std::string& bytes) const;
     std::string loadCheckpointBytes(std::string bytes, const std::array<double,5>* router_boundary = nullptr,
                                     const std::vector<double>* pending_outfalls = nullptr,
-        const std::function<void(const runoff::SourceWaterDriver&)>* validate_source = nullptr);
+        const std::function<void(const runoff::SourceWaterDriver&)>* validate_source = nullptr,
+        const std::function<void()>* before_install = nullptr);
     void refreshSourceResultBoundary();
 
     // Recompute η/depth from state volumes for the whole mesh.

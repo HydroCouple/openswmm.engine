@@ -45,6 +45,7 @@
 #include <atomic>
 #include <cstdio>
 #include <vector>
+#include <memory>
 
 namespace openswmm {
 
@@ -87,6 +88,16 @@ public:
     }
 
 private:
+    friend class SWMMEngine;
+    struct PreparedCheckpoint;
+    bool checkpoint_fresh_ = false;
+    std::string checkpoint_header_;
+    std::string checkpointBytes(const SimulationContext&, double next_report_ms) const;
+    std::shared_ptr<PreparedCheckpoint> prepareCheckpoint(const SimulationContext&, double next_report_ms, std::string);
+    void installCheckpoint(PreparedCheckpoint&);
+    void validateCheckpoint(const SimulationContext&, double next_report_ms, int periods, const std::string&) const;
+    std::string readPrefix() const;
+
     std::string         out_path_;
     PluginState         state_      = PluginState::UNLOADED;
     std::string         last_error_;

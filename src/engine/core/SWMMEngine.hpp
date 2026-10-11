@@ -100,6 +100,8 @@ extern "C" {
 
 namespace openswmm {
 
+class DefaultOutputPlugin;
+
 /**
  * @brief Registered callback bundle (all optional).
  * @ingroup engine_core
@@ -208,8 +210,11 @@ public:
     int close() noexcept;
 
     // Internal, same-platform water-only hydraulic session restart. Enable at
-    // start(0)'s initial boundary; restore into an identically initialized fresh
-    // session. No public C API, provider recovery or output append.
+    // start()'s initial boundary; restore into an identically initialized fresh
+    // session. No public C API or provider recovery.
+    // Private binary-output qualification: initialize(), prepare this mode,
+    // start(1), then enable checkpointing. Requires a new output destination.
+    std::string prepareOutputCheckpointing();
     std::string enableCheckpointing();
 #ifdef OPENSWMM_HAS_2D
     // Qualification attachment only: mesh-owned common sources, with ordinary
@@ -485,6 +490,8 @@ private:
     bool step_active_ = false, runtime_pipeline_ = false;
     struct RestartState;
     bool checkpoint_enabled_ = false, checkpoint_ready_ = false;
+    bool checkpoint_output_ = false;
+    DefaultOutputPlugin* binary_output_plugin_ = nullptr; // owned by PluginFactory
     std::string checkpoint_model_;
     void checkCheckpointProfile(bool attaching_surface = false) const;
     std::string enableCheckpointingImpl(

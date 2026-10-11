@@ -664,6 +664,7 @@ int SWMMEngine::open(const char* inp_path,
         op->initialize({}, nullptr);
         op->validate(ctx_);
         plugins_.add_output_plugin(op);
+        binary_output_plugin_ = op;
     }
     if (!rpt_path_.empty()) {
         auto* rp = new DefaultReportPlugin(rpt_path_);
@@ -6704,10 +6705,12 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             // REPORT_STEP grid; bring them up to date first for the case where
             // the report instant does not land on a co-advance batch boundary.
 #ifdef OPENSWMM_HAS_2D
-            if (surface_router_.isActive()) {
+            if (surface_router_.isActive() && (!checkpoint_output_ || !checkpoint_enabled_ || surface_output_plugin_)) {
                 // Close any pending (COUPLING_SYNC-batched) 2D window first
                 // so the report-time blend brackets the report instant; a
                 // no-op under default per-routing-step coupling.
+                // The private binary-only restart profile has no mesh writer:
+                // leave its accepted source/batch schedule unchanged.
                 surface_router_.flushPendingBatch(ctx_);
                 surface_router_.refreshRenderFieldsIfStale();
             }
@@ -7731,6 +7734,8 @@ int SWMMEngine::report() noexcept {
 
 int SWMMEngine::close() noexcept {
     checkpoint_enabled_ = checkpoint_ready_ = false;
+    checkpoint_output_ = false;
+    binary_output_plugin_ = nullptr;
     checkpoint_model_.clear();
 #ifdef OPENSWMM_HAS_2D
     detachEngineSourceHistory();source_delivery_.reset();source_stage_=nullptr;source_totals_={};
