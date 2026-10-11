@@ -62,6 +62,36 @@ void publish(const std::string& path,const std::string& bytes) {
     std::error_code ec;std::filesystem::rename(part,path,ec);
     if(ec) {std::filesystem::remove(part);throw std::runtime_error("Cannot publish engine checkpoint: "+ec.message());}
 }
+#ifdef OPENSWMM_HAS_2D
+using WaterDriver=twoD::RuntimeWaterDriverCheckpoint;
+constexpr uint64_t maxDriverBytes=8*1024*1024;
+void driverSnapshotOk(const WaterDriver::Snapshot& s,double time) {
+    require(std::isfinite(s.next_update_seconds) && (s.next_update_seconds==-1 || s.next_update_seconds>=time),
+            "Water driver next update precedes the accepted boundary.");
+    require(s.state.size()<=maxDriverBytes,"Water driver state exceeds its size limit.");
+}
+std::string captureDriver(const WaterDriver& driver,double time,const std::string& hydraulic) {
+    auto state=driver.capture(time);driverSnapshotOk(state,time);
+    require(state.next_update_seconds==driver.nextUpdateSeconds(),"Water driver captured schedule differs from its live cursor.");
+    auto trial=driver.prepareRestore(state,time);require(bool(trial),"Water driver returned no prepared restore.");
+    Archive payload;payload(state.next_sequence,state.next_update_seconds,state.state);
+    auto identity=driver.identity(),bytes=payload.bytes();auto crc=checksum(bytes),water_crc=checksum(hydraulic);
+    uint32_t version=1,endian=0x01020304;std::string magic="OpenSWMM external water driver";
+    Archive out;out(magic,version,endian,identity,time,water_crc,bytes,crc);return out.bytes();
+}
+std::unique_ptr<WaterDriver::PreparedRestore> prepareDriver(const WaterDriver& driver,double time,
+    const std::string& hydraulic,std::string bytes) {
+    require(bytes.size()<=maxDriverBytes+8192,"Water driver archive exceeds its size limit.");
+    Archive in(std::move(bytes));std::string magic,identity,payload;uint32_t version,endian,water_crc,crc;double saved;
+    in(magic,version,endian,identity,saved,water_crc,payload,crc);in.finish();
+    require(magic=="OpenSWMM external water driver" && version==1 && endian==0x01020304 &&
+            identity==driver.identity() && saved==time && water_crc==checksum(hydraulic) && crc==checksum(payload),
+            "Water driver checkpoint identity/time/prescription binding differs.");
+    WaterDriver::Snapshot state;Archive p(std::move(payload));p(state.next_sequence,state.next_update_seconds,state.state);p.finish();
+    driverSnapshotOk(state,time);
+    auto prepared=driver.prepareRestore(state,time);require(bool(prepared),"Water driver returned no prepared restore.");return prepared;
+}
+#endif
 // Explicit fields: no padding, file handles, plugins or compiled expressions.
 #define BALANCE(X) \
     X(runoff_rainfall) X(runoff_runon) X(runoff_evap) X(runoff_infil) X(runoff_runoff) X(runoff_lid_drain) \
@@ -434,6 +464,14 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
 #ifdef OPENSWMM_HAS_2D
     require(!ctx_.runtime_coupling_used || surface_router_.runtimeWaterCheckpointing(),
             "Engine checkpoint runtime providers require their initial mesh water profile.");
+    if(runtime_water_driver_) {
+        require(surface_router_.runtimeWaterCheckpointing() && surface_router_.common_stage_ &&
+                runtime_water_driver_->identity()==surface_router_.common_stage_->runtimeWaterIdentity() &&
+                !runtime_water_driver_->identity().empty() && runtime_water_driver_->identity().size()<=4096,
+                "Water driver requires its matching immutable mesh water identity.");
+        const auto next=runtime_water_driver_->nextUpdateSeconds();
+        require(std::isfinite(next) && (next==-1 || next>=ctx_.current_time),"Water driver cursor is behind the engine.");
+    }
     if(surface_router_.isActive()) {
         require(ctx_.events.empty(),"Surface session checkpoint does not yet recover skipped routing events.");
         require(surface_router_.options_.output_file.empty() || checkpoint_surface_output_,
@@ -549,6 +587,7 @@ std::string SWMMEngine::checkpointModel() const {
     auto hydraulic=router_.checkpointModel(ctx_);a(hydraulic);
 #ifdef OPENSWMM_HAS_2D
     if(source_delivery_) {auto bridge=*source_delivery_;bridge.checkpoint(a,true,source_stage_->sources());}
+    if(runtime_water_driver_) {auto identity=runtime_water_driver_->identity();a(identity);}
 #endif
     require(a.bytes().size()<=maxBytes,"Engine checkpoint model exceeds its size limit.");return a.bytes();
 }
@@ -648,6 +687,21 @@ std::string SWMMEngine::prepareCombinedOutputCheckpointing() {
 }
 std::string SWMMEngine::enableCheckpointing(twoD::CommonSourceStage& stage) {return enableCheckpointingImpl(&stage);}
 std::string SWMMEngine::enableSpatialSourceCheckpointing(twoD::CommonSourceStage& stage) {return enableCheckpointingImpl(&stage,true);}
+std::string SWMMEngine::attachRuntimeWaterDriverCheckpoint(twoD::RuntimeWaterDriverCheckpoint& driver) {
+    try {
+        require(!step_active_ && !runtime_pipeline_ && !runtime_water_driver_ && !engine_source_history_ &&
+                ctx_.current_time==0 && checkpoint_enabled_ && surface_router_.runtimeWaterCheckpointing(),
+                "Attach a water driver at the initial mesh water checkpoint boundary.");
+        checkCheckpointBoundary();
+        const auto identity=driver.identity();
+        require(!identity.empty() && identity.size()<=4096 && identity==surface_router_.common_stage_->runtimeWaterIdentity(),
+                "Water driver immutable replay identity differs from the mesh water profile.");
+        std::string hydraulic;const auto error=surface_router_.checkpointBytes(ctx_,hydraulic);require(error.empty(),error.c_str());
+        captureDriver(driver,0,hydraulic);
+        Archive extra;auto id=identity;extra(id);auto model=checkpoint_model_+extra.bytes();
+        checkpoint_model_=std::move(model);runtime_water_driver_=&driver;return {};
+    } catch(const std::exception& e) {return e.what();}
+}
 #endif
 std::string SWMMEngine::enableCheckpointingImpl(
 #ifdef OPENSWMM_HAS_2D
@@ -734,10 +788,12 @@ std::string SWMMEngine::checkpointBytes(std::string& result) const {
         error=router_.checkpointBytes(ctx_,hydraulic);
 #ifdef OPENSWMM_HAS_2D
         if(surface_router_.runtimeWaterCheckpointing())version+=20;
+        if(runtime_water_driver_)version+=40;
 #endif
         require(error.empty(),error.c_str());payload(hydraulic);
 #ifdef OPENSWMM_HAS_2D
         if(source_delivery_) {auto bridge=*source_delivery_;Archive a;bridge.checkpoint(a,false,source_stage_->sources());auto bytes=a.bytes();payload(bytes);}
+        if(runtime_water_driver_) {auto driver=captureDriver(*runtime_water_driver_,ctx_.current_time,hydraulic);payload(driver);}
 #endif
         if(checkpoint_output_) {
             require(io_thread_.flush()==0,"Cannot checkpoint failed output writes.");
@@ -806,6 +862,7 @@ std::string SWMMEngine::loadCheckpoint(const std::string& path) {
 #ifdef OPENSWMM_HAS_2D
         if(surface_router_.isActive())expected_version=source_delivery_?5:4;
         if(surface_router_.runtimeWaterCheckpointing())expected_version+=20;
+        if(runtime_water_driver_)expected_version+=40;
 #endif
         if(checkpoint_output_)expected_version+=3;
 #ifdef OPENSWMM_HAS_2D
@@ -815,6 +872,7 @@ std::string SWMMEngine::loadCheckpoint(const std::string& path) {
         RestartState state(*this);Archive payload(std::move(bytes));state.archive(payload);std::string hydraulic;payload(hydraulic);
 #ifdef OPENSWMM_HAS_2D
         std::string delivery;if(source_delivery_)payload(delivery);
+        std::string driver;if(runtime_water_driver_)payload(driver);
 #endif
         std::string output;if(checkpoint_output_)payload(output);
         std::string mesh_output;
@@ -822,6 +880,10 @@ std::string SWMMEngine::loadCheckpoint(const std::string& path) {
         if(checkpoint_surface_output_)payload(mesh_output);
 #endif
         payload.finish();state.validate(*this);
+#ifdef OPENSWMM_HAS_2D
+        std::unique_ptr<WaterDriver::PreparedRestore> prepared_driver;
+        if(runtime_water_driver_)prepared_driver=prepareDriver(*runtime_water_driver_,state.boundary[0],hydraulic,std::move(driver));
+#endif
         std::shared_ptr<DefaultOutputPlugin::PreparedCheckpoint> prepared_output;
         std::function<void()> publish_output;
         if(checkpoint_output_) {
@@ -851,6 +913,11 @@ std::string SWMMEngine::loadCheckpoint(const std::string& path) {
 #endif
 #ifdef OPENSWMM_HAS_2D
         if(surface_router_.isActive()) {
+            std::function<void()> before_install;
+            if(publish_output || prepared_driver)before_install=[&] {
+                if(publish_output)publish_output();
+                if(prepared_driver)prepared_driver->install();
+            };
             std::optional<runoff::SourceWaterDeliveryBridge> bridge;
             std::function<void(const runoff::SourceWaterDriver&)> validate_source;
             if(source_delivery_) {
@@ -862,7 +929,7 @@ std::string SWMMEngine::loadCheckpoint(const std::string& path) {
             }
             auto error=surface_router_.loadCheckpointBytes(ctx_,std::move(hydraulic),&state.boundary,&state.gages.rainfall,
                 &state.balance.routing_final_storage,state.stats.sum_iterations>0,bridge?&validate_source:nullptr,
-                publish_output?&publish_output:nullptr);
+                before_install?&before_install:nullptr);
             require(error.empty(),error.c_str());
             if(bridge) {static_assert(std::is_nothrow_move_assignable_v<runoff::SourceWaterDeliveryBridge>);*source_delivery_=std::move(*bridge);}
             state.install(*this);return {};

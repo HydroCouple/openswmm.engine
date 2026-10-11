@@ -1563,6 +1563,13 @@ int SWMMEngine::advanceTo(double seconds, double* actual) noexcept {
 
 int SWMMEngine::step(double* elapsed_time) noexcept {
     if (step_active_) return CFFI_ERR_LIFECYCLE;
+#ifdef OPENSWMM_HAS_2D
+    // A due driver update is a caller-owned transaction. Refuse before changing
+    // readiness, stores or outputs; the caller may send it and retry the step.
+    if (runtime_water_driver_ && runtime_water_driver_->nextUpdateSeconds() >= 0 &&
+        runtime_water_driver_->nextUpdateSeconds() <= ctx_.elapsed_ms/1000.0)
+        return CFFI_ERR_LIFECYCLE;
+#endif
     step_active_ = true;
     struct StepGuard {
         bool& active; bool& pipeline;
@@ -1675,6 +1682,8 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         if (exchange_target_ >= 0.0) dt_next = std::min(dt_next, exchange_target_-now);
 #ifdef OPENSWMM_HAS_2D
         dt_next = std::min(dt_next, surface_router_.nextRuntimeTime(now)-now);
+        if (runtime_water_driver_ && runtime_water_driver_->nextUpdateSeconds() >= 0)
+            dt_next = std::min(dt_next, runtime_water_driver_->nextUpdateSeconds()-now);
 #endif
     };
     bound_runtime_step();
@@ -7769,6 +7778,7 @@ int SWMMEngine::close() noexcept {
     checkpoint_model_.clear();
 #ifdef OPENSWMM_HAS_2D
     checkpoint_surface_output_ = false;
+    runtime_water_driver_ = nullptr;
     surface_output_plugin_ = nullptr;
     detachEngineSourceHistory();source_delivery_.reset();source_stage_=nullptr;source_totals_={};
 #endif

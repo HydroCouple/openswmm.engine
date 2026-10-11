@@ -80,6 +80,7 @@
 
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/SurfaceRouter2D.hpp"
+#include "../2d/coupling/RuntimeWaterDriverCheckpoint.hpp"
 #include "../hydrology/SourceWaterDeliveryBridge.hpp"
 namespace openswmm::twoD { class Default2DOutputPlugin; class EngineSourceResultHistory; }
 #endif
@@ -211,7 +212,7 @@ public:
 
     // Internal, same-platform water-only hydraulic session restart. Enable at
     // start()'s initial boundary; restore into an identically initialized fresh
-    // session. No public C API or provider recovery.
+    // session. No public C API; external water drivers require their participant.
     // Private binary-output qualification: initialize(), prepare this mode,
     // start(1), then enable checkpointing. Requires a new output destination.
     std::string prepareOutputCheckpointing();
@@ -227,6 +228,9 @@ public:
     std::string enableCheckpointing(twoD::CommonSourceStage& stage);
     /// Explicit private spatial-source ownership; no authored/public activation.
     std::string enableSpatialSourceCheckpointing(twoD::CommonSourceStage& stage);
+    /// Attach at the initial checkpoint boundary after the mesh water stage.
+    /// Caller owns the driver through close; it must send due updates itself.
+    std::string attachRuntimeWaterDriverCheckpoint(twoD::RuntimeWaterDriverCheckpoint&);
     const runoff::SourceWaterDeliveryBridge* sourceDelivery() const { return source_delivery_.get(); }
     // Accepted-engine water history, separate from source-interval recording.
     // Caller keeps the recorder alive through end/close. Restore first, then resume.
@@ -480,6 +484,7 @@ private:
     /// once the mesh is built.
     twoD::Default2DOutputPlugin* surface_output_plugin_ = nullptr;
     bool checkpoint_surface_output_ = false;
+    twoD::RuntimeWaterDriverCheckpoint* runtime_water_driver_ = nullptr;
 
     /// Point ctx_.twod_io at surface_router_'s mesh/options/boundary and
     /// pending parse rows so serialization consumers (InpWriter, GeoPackage

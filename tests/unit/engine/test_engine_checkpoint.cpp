@@ -2170,5 +2170,224 @@ TEST(EngineCheckpoint, RuntimeWaterCombinedOutputsContinueReportAndExpiryBoundar
         sameBinary(name,name+"-resumed",80);sameMesh(name,name+"-resumed",40);
     }
 }
+
+namespace {
+// A synchronous stateful adapter: future rates depend on its consumed cursor
+// and accumulator. The queue, schema and immutable inputs validate privately.
+class TestWaterDriver final : public twoD::RuntimeWaterDriverCheckpoint {
+public:
+    std::string revision="mesh water driver revision 1";
+    const std::vector<double> schedule{0,4.2,7.75,9.25,12.125};
+    std::vector<double> pending=schedule;
+    uint64_t cursor=0;
+    double accumulator=0;
+    bool reject=false,null_plan=false,oversized=false;
+    mutable int installs=0;
+    std::string identity() const override {return revision;}
+    double nextUpdateSeconds() const noexcept override {return pending.empty()?-1:pending.front();}
+    Snapshot capture(double) const override {
+        detail::CompletedSourceArchive a;uint32_t version=1;auto c=cursor;auto value=accumulator;auto queue=pending;
+        a(version,c,value,queue);return {cursor,nextUpdateSeconds(),oversized?std::string(8*1024*1024+1,'x'):a.bytes()};
+    }
+    std::unique_ptr<PreparedRestore> prepareRestore(const Snapshot& s,double time) const override {
+        if(reject)throw std::runtime_error("Driver rejected its private preparation");
+        if(null_plan)return {};
+        detail::CompletedSourceArchive a(s.state);uint32_t version;uint64_t c;double value;std::vector<double> queue;
+        a(version,c,value,queue);a.finish();
+        if(version!=1 || c>schedule.size() || c!=s.next_sequence || !std::isfinite(value) ||
+           value!=double(c*(c+1))/2 || queue!=std::vector<double>(schedule.begin()+c,schedule.end()) ||
+           s.next_update_seconds!=(queue.empty()?-1:queue.front()) ||
+           (c && schedule[c-1]>time+1e-12) || (!queue.empty() && queue.front()<time-1e-12))
+            throw std::runtime_error("Driver schema, cursor, mutable state or pending updates differ");
+        struct Plan final : PreparedRestore {
+            TestWaterDriver& target;uint64_t cursor;double value;std::vector<double> pending;
+            Plan(TestWaterDriver& t,uint64_t c,double v,std::vector<double> p):target(t),cursor(c),value(v),pending(std::move(p)){}
+            void install() noexcept override {target.cursor=cursor;target.accumulator=value;target.pending=std::move(pending);++target.installs;}
+        };
+        return std::make_unique<Plan>(*const_cast<TestWaterDriver*>(this),c,value,std::move(queue));
+    }
+    void send(SWMMEngine& e) {
+        if(pending.empty() || std::abs(e.context().current_time-pending.front())>1e-12)
+            throw std::runtime_error("Driver dispatch missed its accepted boundary");
+        int rc;
+        if(cursor==0)rc=providerFrame(e);
+        else {
+            const SWMM_CouplingSource row{sizeof(row),"adaptive",int(cursor%2),0,.003+accumulator*.0001,0,0,0,nullptr,nullptr};
+            const SWMM_CouplingFrame frame{sizeof(frame),1,"water",1,&row,0,nullptr,0,nullptr,0,nullptr};
+            rc=swmm_coupling_apply_frame(reinterpret_cast<SWMM_Engine>(&e),&frame);
+        }
+        if(rc!=SWMM_OK)throw std::runtime_error("Driver coupling frame failed");
+        ++cursor;accumulator+=cursor;pending.erase(pending.begin());
+    }
+};
+void drive(SWMMEngine& e,TestWaterDriver& d,double target) {
+    while(e.context().current_time<target-1e-12) {
+        if(d.nextUpdateSeconds()>=0 && d.nextUpdateSeconds()<=e.context().current_time+1e-12)d.send(e);
+        else step(e);
+    }
+}
+std::string driverState(const TestWaterDriver& d,double time) {
+    auto s=d.capture(time);detail::CompletedSourceArchive a;a(s.next_sequence,s.next_update_seconds,s.state);return a.bytes();
+}
+std::string changeDriverRecord(const std::string& original,int mutation) {
+    using A=detail::CompletedSourceArchive;
+    A engine(original);std::string em,model,payload;uint32_t ev,sum;engine(em,ev,model,sum,payload);engine.finish();
+    const auto driver=nested(payload,"OpenSWMM external water driver").second;
+    A record(driver);std::string magic,identity,state;uint32_t version,endian,water_crc;double time;
+    record(magic,version,endian,identity,time,water_crc,state,sum);record.finish();
+    uint64_t cursor;double next;std::string opaque;A body(state);body(cursor,next,opaque);body.finish();
+    if(mutation==0)identity+="changed";
+    if(mutation==1)time+=.125;
+    if(mutation==2)water_crc++;
+    if(mutation==3)version++;
+    if(mutation==4)cursor=999;
+    if(mutation==5)next=time-.5;
+    if(mutation==6)next+=.5;
+    if(mutation==7)next=std::numeric_limits<double>::quiet_NaN();
+    if(mutation==8)opaque.pop_back();
+    if(mutation==9) {
+        uint32_t v;uint64_t c;double value;std::vector<double> queue;A read(opaque);read(v,c,value,queue);read.finish();
+        queue.back()+=1;A out;out(v,c,value,queue);opaque=out.bytes();
+    }
+    if(mutation==11)water_crc=crc(engineSurface(original));
+    A updated;updated(cursor,next,opaque);state=updated.bytes();sum=crc(state);
+    A out;out(magic,version,endian,identity,time,water_crc,state,sum);auto changed=out.bytes();
+    if(mutation==10)changed.pop_back();
+    payload=replaceNested(payload,"OpenSWMM external water driver",changed);sum=crc(payload);
+    A result;result(em,ev,model,sum,payload);return result.bytes();
+}
+}
+
+TEST(EngineCheckpoint, ExternalWaterDriverFreshRestartPreservesStateCursorAndFutureUpdates) {
+    for(int lid:{0,1,2})for(int closure:{0,1,2}) {
+        const auto name="driver-session-"+std::to_string(lid)+"-"+std::to_string(closure);SCOPED_TRACE(name);
+        TestWaterDriver da,db;SurfaceSession a,b;
+        ASSERT_NO_THROW(startProvider(a,name+"-a",lid,closure));
+        ASSERT_NO_THROW(startProvider(b,name+"-b",lid,closure));
+        ASSERT_EQ(a.engine.attachRuntimeWaterDriverCheckpoint(da),"");
+        ASSERT_EQ(b.engine.attachRuntimeWaterDriverCheckpoint(db),"");
+        ASSERT_NO_THROW(drive(a.engine,da,4.2));EXPECT_NEAR(a.engine.context().current_time,4.2,1e-12);EXPECT_EQ(da.cursor,1);
+        const auto cp=root()/(name+".chk");
+        ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+        ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");EXPECT_EQ(db.installs,1);
+        EXPECT_EQ(driverState(da,4.2),driverState(db,4.2));compare(a.engine,b.engine,name+"-restored");
+        while(a.engine.context().current_time<20.125) {
+            if(da.nextUpdateSeconds()>=0 && da.nextUpdateSeconds()<=a.engine.context().current_time+1e-12) {
+                ASSERT_NO_THROW(da.send(a.engine));
+                ASSERT_NO_THROW(db.send(b.engine));
+            } else {
+                ASSERT_NO_THROW(step(a.engine));
+                ASSERT_NO_THROW(step(b.engine));
+            }
+            EXPECT_EQ(driverState(da,a.engine.context().current_time),driverState(db,b.engine.context().current_time));
+            compare(a.engine,b.engine,name+"-continued");
+        }
+        EXPECT_EQ(da.cursor,5);EXPECT_EQ(db.nextUpdateSeconds(),-1);
+        TestWaterDriver dc;SurfaceSession c;
+        ASSERT_NO_THROW(startProvider(c,name+"-exhausted",lid,closure));
+        ASSERT_EQ(c.engine.attachRuntimeWaterDriverCheckpoint(dc),"");
+        ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+        ASSERT_EQ(c.engine.loadCheckpoint(cp.string()),"");EXPECT_EQ(dc.nextUpdateSeconds(),-1);
+        compare(a.engine,c.engine,name+"-exhausted-restored");
+    }
+}
+
+TEST(EngineCheckpoint, ExternalWaterDriverDueUpdateStopsBeforeMutationAndAllowsRetry) {
+    TestWaterDriver d;SurfaceSession s;
+        ASSERT_NO_THROW(startProvider(s,"driver-due",2,0,true,2));
+    ASSERT_EQ(s.engine.attachRuntimeWaterDriverCheckpoint(d),"");
+    const auto cp=root()/"driver-due.chk";
+        ASSERT_EQ(s.engine.saveCheckpoint(cp.string()),"");
+    const auto before=bytes(cp),binary=bytes(root()/"driver-due.out"),mesh=bytes(root()/"driver-due.h5");
+    double elapsed=123;EXPECT_EQ(s.engine.step(&elapsed),SWMM_ERR_LIFECYCLE);EXPECT_EQ(elapsed,123);
+    ASSERT_EQ(s.engine.saveCheckpoint(cp.string()),"");EXPECT_EQ(bytes(cp),before);
+    EXPECT_EQ(bytes(root()/"driver-due.out"),binary);EXPECT_EQ(bytes(root()/"driver-due.h5"),mesh);EXPECT_EQ(d.cursor,0);
+    ASSERT_NO_THROW(drive(s.engine,d,4.2));EXPECT_NEAR(s.engine.context().current_time,4.2,1e-12);
+    ASSERT_EQ(s.engine.saveCheckpoint(cp.string()),"");const auto due=bytes(cp);
+    EXPECT_EQ(s.engine.step(&elapsed),SWMM_ERR_LIFECYCLE);
+        ASSERT_EQ(s.engine.saveCheckpoint(cp.string()),"");EXPECT_EQ(bytes(cp),due);
+    ASSERT_NO_THROW(d.send(s.engine));
+        ASSERT_NO_THROW(step(s.engine));EXPECT_EQ(d.cursor,2);
+}
+
+TEST(EngineCheckpoint, ExternalWaterDriverNestedGuardsPreserveDriverPhysicsAndBothOutputs) {
+    TestWaterDriver da;SurfaceSession a;
+        ASSERT_NO_THROW(startProvider(a,"driver-guard-source",2,0,true,2));
+    ASSERT_EQ(a.engine.attachRuntimeWaterDriverCheckpoint(da),"");
+        ASSERT_NO_THROW(drive(a.engine,da,5.375));
+    const auto good=root()/"driver-guard-good.chk";
+        ASSERT_EQ(a.engine.saveCheckpoint(good.string()),"");
+    for(int mutation=0;mutation<15;++mutation) {
+        SCOPED_TRACE(mutation);const auto name="driver-guard-"+std::to_string(mutation);
+        TestWaterDriver db;SurfaceSession b;
+        ASSERT_NO_THROW(startProvider(b,name,2,0,true,2));
+        ASSERT_EQ(b.engine.attachRuntimeWaterDriverCheckpoint(db),"");
+        const auto before=root()/(name+"-before.chk");
+        ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");
+        const auto initial=bytes(before),ds=driverState(db,0),binary=bytes(root()/(name+".out")),mesh=bytes(root()/(name+".h5"));
+        auto bad=good;
+        if(mutation<11) {bad=root()/(name+"-bad.chk");write(bad,changeDriverRecord(bytes(good),mutation));}
+        if(mutation==11)db.reject=true;
+        if(mutation==12)db.null_plan=true;
+        if(mutation==13) {bad=root()/(name+"-physical-bad.chk");write(bad,changeDriverRecord(changeProviderRecord(bytes(good),7),11));}
+        if(mutation==14)std::filesystem::permissions(root()/(name+".h5"),std::filesystem::perms::owner_read);
+        EXPECT_FALSE(b.engine.loadCheckpoint(bad.string()).empty());EXPECT_EQ(db.installs,0);
+        db.reject=db.null_plan=false;
+        if(mutation==14)std::filesystem::permissions(root()/(name+".h5"),std::filesystem::perms::owner_read|std::filesystem::perms::owner_write);
+        ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");EXPECT_EQ(bytes(before),initial);EXPECT_EQ(driverState(db,0),ds);
+        EXPECT_EQ(bytes(root()/(name+".out")),binary);EXPECT_EQ(bytes(root()/(name+".h5")),mesh);
+        ASSERT_EQ(b.engine.loadCheckpoint(good.string()),"");EXPECT_EQ(db.installs,1);
+        EXPECT_EQ(driverState(da,a.engine.context().current_time),driverState(db,b.engine.context().current_time));
+        compareMesh(a.engine,b.engine,name+"-retry");
+    }
+}
+
+TEST(EngineCheckpoint, ExternalWaterDriverCombinedOutputsContinueExactlyAcrossReports) {
+    for(int lid:{0,1,2})for(int format:{1,2}) {
+        const auto name="driver-combined-"+std::to_string(lid)+"-"+std::to_string(format);SCOPED_TRACE(name);
+        TestWaterDriver da,db;SurfaceSession a,b;
+        ASSERT_NO_THROW(startProvider(a,name,lid,0,true,format));
+        ASSERT_NO_THROW(startProvider(b,name+"-resumed",lid,0,true,format));
+        ASSERT_EQ(a.engine.attachRuntimeWaterDriverCheckpoint(da),"");
+        ASSERT_EQ(b.engine.attachRuntimeWaterDriverCheckpoint(db),"");
+        ASSERT_NO_THROW(drive(a.engine,da,9.25));
+        const auto cp=root()/(name+".chk");
+        ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+        ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");
+        ASSERT_NO_THROW(drive(a.engine,da,13));
+        ASSERT_NO_THROW(drive(b.engine,db,13));
+        while(a.engine.context().elapsed_ms<a.engine.context().options.totalDurationMs()) {
+            ASSERT_NO_THROW(step(a.engine));
+            ASSERT_NO_THROW(step(b.engine));
+        }
+        compareMesh(a.engine,b.engine,name+"-final");
+        ASSERT_EQ(a.engine.end(),0);
+        ASSERT_EQ(b.engine.end(),0);
+        sameBinary(name,name+"-resumed",80);sameMesh(name,name+"-resumed",40);
+    }
+}
+
+TEST(EngineCheckpoint, ExternalWaterDriverAttachmentAndCaptureRejectUnsupportedState) {
+    TestWaterDriver d;SurfaceSession s;
+        ASSERT_NO_THROW(startProvider(s,"driver-attach",2));
+    d.revision="changed inputs";EXPECT_FALSE(s.engine.attachRuntimeWaterDriverCheckpoint(d).empty());
+    d.revision="mesh water driver revision 1";d.null_plan=true;EXPECT_FALSE(s.engine.attachRuntimeWaterDriverCheckpoint(d).empty());
+    d.null_plan=false;
+        ASSERT_EQ(s.engine.attachRuntimeWaterDriverCheckpoint(d),"");
+    EXPECT_FALSE(s.engine.attachRuntimeWaterDriverCheckpoint(d).empty());
+    const auto cp=root()/"driver-capture-guard.chk";
+        ASSERT_EQ(s.engine.saveCheckpoint(cp.string()),"");const auto initial=bytes(cp);
+    d.oversized=true;EXPECT_FALSE(s.engine.saveCheckpoint(cp.string()).empty());EXPECT_EQ(bytes(cp),initial);d.oversized=false;
+    d.revision+="changed";EXPECT_FALSE(s.engine.saveCheckpoint(cp.string()).empty());EXPECT_EQ(bytes(cp),initial);
+    d.revision="mesh water driver revision 1";
+        ASSERT_NO_THROW(drive(s.engine,d,1));
+    TestWaterDriver late;EXPECT_FALSE(s.engine.attachRuntimeWaterDriverCheckpoint(late).empty());
+    SurfaceSession unqualified;
+        ASSERT_NO_THROW(unqualified.start("driver-unqualified",0));
+    EXPECT_FALSE(unqualified.engine.attachRuntimeWaterDriverCheckpoint(late).empty());
+    TestWaterDriver absent;SurfaceSession target;
+        ASSERT_NO_THROW(startProvider(target,"driver-absent",2));
+    EXPECT_FALSE(target.engine.loadCheckpoint(cp.string()).empty());
+}
 #endif
 #endif
