@@ -640,7 +640,7 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
 
 std::string SourceWaterDriver::stage(int group, double end, double completed_through,
                                     const RunoffSolver::InfiltrationBoundary* boundary,
-                                    const BottomCeiling* ceiling) {
+                                    const BottomCeiling* ceiling,const ForcingTransform* forcing) {
     if (!state_) return "Source water driver is not initialized.";
     if (trial_) return "Source water driver already has an unsettled trial.";
     auto error = clocks_.stage(group, end, completed_through); if (!error.empty()) return error;
@@ -651,8 +651,12 @@ std::string SourceWaterDriver::stage(int group, double end, double completed_thr
             for(const auto& q:trial_->outfall_returns)if(clocks_.groupForSubcatch(q.source)==group &&
                 q.available-f.start>1e-12*std::max(1.,q.available) && q.available<f.end)ends.push_back(q.available);
             std::sort(ends.begin(),ends.end());ends.erase(std::unique(ends.begin(),ends.end()),ends.end());
-            auto segment=f;
-            for(double end:ends) {segment.end=end;advance(*trial_,segment,boundary,ceiling);segment.start=end;}
+            double start=f.start;
+            for(double end:ends) {
+                auto segment=f;segment.start=start;segment.end=end;
+                if(forcing)(*forcing)(segment);
+                advance(*trial_,segment,boundary,ceiling);start=end;
+            }
         }
         double scale = 1;
         for (int sc : clocks_.groups()[group].subcatches)

@@ -2293,3 +2293,104 @@ TEST(CommonSourceStage, JointOutfallCheckpointKeepsSampledDryTransitionFeedbackA
         routerEqual(a,b,"outfall-film-continued");
     }
 }
+
+namespace {
+void catchmentProviders(Model& m) {
+    ASSERT_EQ(m.stage.initialize(m.mesh,m.surface,m.options,m.gw,m.sources,m.preview,false,"reviewed catchment revision 1",false,true),"");
+}
+void localForcing(Model& m,int channel,int cell,double rate,int mode=1,double expiry=100) {
+    RuntimeForcing r;r.channel=channel;r.cell=cell;r.rate=rate;r.mode=mode;r.until=expiry;r.owner="weather";
+    m.surface.runtime_forcings.replace(std::move(r));m.surface.runtime_forcings.rebuild(m.mesh.n_cells());
+}
+}
+TEST(CommonSourceStage, CatchmentProviderWeatherCountsMixedAreasAndDemandOnce) {
+    for(const std::array<double,2> inside: {std::array<double,2>{0,.75},std::array<double,2>{.5,.75},std::array<double,2>{1,1}}) {
+    AtmosphericInput input;input.inside=inside;input.pet={.001,.002};input.impervious={.4,.6};
+    Model m;m.setup(true,2,false,false,false,input);catchmentProviders(m);ASSERT_FALSE(HasFatalFailure());
+    m.surface.rainfall={.0007,.0009};m.surface.evap_rate={.0002,.0003};
+    localForcing(m,1,0,.012);localForcing(m,1,1,.001,2);
+    localForcing(m,2,0,0);localForcing(m,2,1,.0006);
+    ASSERT_EQ(m.stage.advance(0,1),"");
+    const double native=.01*.3048;
+    for(int sc=0;sc<2;++sc) {
+        const double inside=input.inside[sc],p=input.pet[sc]*.3048;
+        const double rain=(1-inside)*native+inside*.5*(.012+native+.001);
+        const double pet=(1-inside)*p+inside*.5*.0006;
+        EXPECT_NEAR(m.sources.ledgers()[sc].rain*ft3,rain,1e-13);
+        double potential=0,evaporation=0;
+        for(const auto& r:m.stage.etReceipts())if(r.source==sc) {
+            potential+=r.potential;evaporation+=r.evaporation;
+            const double expected=r.area*(r.cell==0?0:r.cell==1?.0006:p);
+            EXPECT_NEAR(r.potential,expected,1e-14);EXPECT_LE(r.evaporation,r.potential+1e-14);
+            if(r.cell==0)EXPECT_DOUBLE_EQ(r.evaporation,0);
+        }
+        EXPECT_NEAR(potential,pet,1e-13);EXPECT_NEAR(evaporation,m.sources.ledgers()[sc].evaporation*ft3,1e-13);
+        EXPECT_NEAR(m.sources.balanceResidual(sc),0,1e-10);
+    }
+    EXPECT_NEAR(m.stage.meshRain(),.012*m.stage.meshWeatherArea(0)+.0019*m.stage.meshWeatherArea(1),1e-13);
+    etBalance(m);
+    }
+}
+TEST(CommonSourceStage, CatchmentProviderInfiltrationReceiptsPairAllEligibleDonorsAndOutsideLoss) {
+    for(double headroom:{.0001,1.}) {
+    AtmosphericInput input;input.inside={.5,.75};input.ks=0;input.lid_saturation=80;
+    Model m;m.setup(true,2,false,false,false,input);catchmentProviders(m);ASSERT_FALSE(HasFatalFailure());
+    m.room(headroom);
+    localForcing(m,3,0,.002);localForcing(m,3,1,0);
+    double incoming=0,private_intake=0;
+    for(int step=0;step<3;++step) {
+        ASSERT_EQ(m.stage.advance(step,step+1),"");
+        for(const auto& r:m.stage.receipts()) {
+            if(r.request.cell==1)EXPECT_DOUBLE_EQ(r.volume,0);
+            else {incoming+=r.volume;if(r.request.kind!=SurfaceDonorKind::MESH)private_intake+=r.volume;}
+        }
+    }
+    EXPECT_GT(private_intake,0);EXPECT_NEAR(m.surface.runtime_forcings.find(3,0)->receipt.applied,incoming,1e-13);
+    EXPECT_LE(incoming,headroom+1e-13);
+    EXPECT_LE(incoming,m.surface.runtime_forcings.find(3,0)->receipt.requested+1e-13);
+    EXPECT_DOUBLE_EQ(m.surface.runtime_forcings.find(3,1)->receipt.applied,0);
+    EXPECT_GT(m.sources.ledgers()[0].outside_infiltration,0);
+    for(int group=0;group<2;++group)EXPECT_NEAR(m.sources.balanceResidual(group),0,1e-10);
+    }
+}
+TEST(CommonSourceStage, CatchmentProviderExpiryRestoresCurrentWeatherAndCheckpointBindsOwnership) {
+    AtmosphericInput input;input.inside={.5,.75};
+    Model a,b;a.setup(true,2,false,false,true,input);b.setup(true,2,false,false,true,input);
+    catchmentProviders(a);catchmentProviders(b);ASSERT_FALSE(HasFatalFailure());
+    localForcing(a,1,-1,.004,1,1);localForcing(a,2,0,.0002,1,2);
+    ASSERT_EQ(a.stage.advance(0,1),"");a.surface.runtime_forcings.expire(1);
+    auto file=restartPath("catchment-provider");ASSERT_EQ(a.stage.saveCheckpoint(file.string()),"");
+    ASSERT_EQ(b.stage.loadCheckpoint(file.string()),"");
+    const double old=a.sources.ledgers()[0].rain;
+    auto clock=a.sources.clocks();ASSERT_EQ(clock.stage(0,2,2),"");double native_rain=0;
+    for(const auto& f:clock.groups()[0].pending)native_rain+=f.sources[0].rain*.3048*(f.end-f.start);
+    ASSERT_EQ(a.stage.advance(1,2),"");ASSERT_EQ(b.stage.advance(1,2),"");
+    EXPECT_NEAR((a.sources.ledgers()[0].rain-old)*ft3,native_rain,1e-13);
+    EXPECT_EQ(a.surface.volume,b.surface.volume);EXPECT_EQ(a.gw.state().xacc_from_surface,b.gw.state().xacc_from_surface);
+    EXPECT_DOUBLE_EQ(a.sources.ledgers()[0].rain,b.sources.ledgers()[0].rain);
+    a.surface.runtime_forcings.expire(2);b.surface.runtime_forcings.expire(2);
+    ASSERT_EQ(a.stage.advance(2,3),"");ASSERT_EQ(b.stage.advance(2,3),"");
+    EXPECT_EQ(a.surface.volume,b.surface.volume);EXPECT_DOUBLE_EQ(a.sources.ledgers()[0].rain,b.sources.ledgers()[0].rain);
+    Model changed;input.inside={.25,.75};changed.setup(true,2,false,false,true,input);catchmentProviders(changed);
+    EXPECT_FALSE(changed.stage.loadCheckpoint(file.string()).empty());EXPECT_DOUBLE_EQ(changed.stage.completedEnd(),0);
+}
+TEST(CommonSourceStage, CatchmentProviderProfileRequiresExplicitWaterOnlyReviewedAttachment) {
+    Model m;m.setup();
+    EXPECT_FALSE(m.stage.initialize(m.mesh,m.surface,m.options,m.gw,m.sources,m.preview,false,"revision 1").empty());
+    EXPECT_FALSE(m.stage.initialize(m.mesh,m.surface,m.options,m.gw,m.sources,m.preview,false,"",false,true).empty());
+    m.preview.objects[0].reviewed=false;
+    EXPECT_FALSE(m.stage.initialize(m.mesh,m.surface,m.options,m.gw,m.sources,m.preview,false,"revision 1",false,true).empty());
+    m.preview.objects[0].reviewed=true;catchmentProviders(m);ASSERT_FALSE(HasFatalFailure());
+}
+TEST(CommonSourceStage, CatchmentProviderCheckpointBindsExactWeatherContactsWithinGeometryTolerance) {
+    AtmosphericInput input;input.inside={.5,.75};Model a,b;
+    a.setup(true,2,false,false,false,input);b.setup(true,2,false,false,false,input);
+    catchmentProviders(a);ASSERT_FALSE(HasFatalFailure());
+    // Component and per-cell totals remain identical. Weather shares can
+    // differ within closure roundoff, but are still distinct forcing inputs.
+    b.preview.shares[0].weather_area+=1e-10;b.preview.shares[1].weather_area-=1e-10;
+    b.preview.shares[2].weather_area-=1e-10;b.preview.shares[3].weather_area+=1e-10;
+    catchmentProviders(b);ASSERT_FALSE(HasFatalFailure());
+    const auto file=restartPath("catchment-contact-binding");ASSERT_EQ(a.stage.saveCheckpoint(file.string()),"");
+    EXPECT_FALSE(b.stage.loadCheckpoint(file.string()).empty());EXPECT_DOUBLE_EQ(b.stage.completedEnd(),0);
+}

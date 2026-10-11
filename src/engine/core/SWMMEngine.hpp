@@ -232,6 +232,9 @@ public:
     /// Caller owns the driver through close; it must send due updates itself.
     std::string attachRuntimeWaterDriverCheckpoint(twoD::RuntimeWaterDriverCheckpoint&);
     const runoff::SourceWaterDeliveryBridge* sourceDelivery() const { return source_delivery_.get(); }
+    /// Settle past surface work and publish newly completed private outlets
+    /// before adopting a future runtime prescription at the accepted engine time.
+    void flushRuntimeCouplingBoundary();
     // Accepted-engine water history, separate from source-interval recording.
     // Caller keeps the recorder alive through end/close. Restore first, then resume.
     std::string setEngineSourceResultHistory(twoD::EngineSourceResultHistory&,bool detailed_source_intervals=false);

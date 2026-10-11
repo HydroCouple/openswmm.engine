@@ -47,16 +47,18 @@ std::string qualityProfile(const runoff::SourceWaterDriver& sources,
 
 std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData& surface,
     const SolverOptions2D& options,SubsurfaceSolver& gw,runoff::SourceWaterDriver& sources,const SurfaceOwnershipPreview& preview,bool mesh_only,
-    const std::string& runtime_water_identity,bool runtime_boundaries) {
+    const std::string& runtime_water_identity,bool runtime_boundaries,bool runtime_catchment_forcing) {
     if(mesh_) return "Common source stage already initialized.";
     if(!gw.active() || !preview.valid() || preview.cancelled || preview.mesh_weather_area.size()!=mesh.tri_area.size())
         return "Common source stage requires a valid reviewed mesh/receiver snapshot.";
     const auto quality_error=qualityProfile(sources,surface,gw);if(!quality_error.empty())return quality_error;
-    if(!runtime_water_identity.empty() && (!mesh_only || !sources.pollutantNames().empty() ||
+    if(runtime_catchment_forcing && (mesh_only || runtime_water_identity.empty() || sources.clocks().groups().empty()))
+        return "Catchment provider forcing requires its explicit reviewed private water profile.";
+    if(!runtime_water_identity.empty() && ((!mesh_only && !runtime_catchment_forcing) || !sources.pollutantNames().empty() ||
        runtime_water_identity.size()>=64*1024*1024))
-        return "Runtime water source stage requires a water-only mesh-owned footprint and bounded replay identity.";
+        return "Runtime water source stage requires an explicit water-only footprint and bounded replay identity.";
     if(runtime_boundaries && (runtime_water_identity.empty() || !surface.boundary))
-        return "Runtime boundaries require the initial mesh-owned water profile and authored wall model.";
+        return "Runtime boundaries require the initial water profile and authored boundary model.";
     if(surface.runtime_sources.active() || surface.runtime_forcings.active() || gw.runtimeSources().active())
         return "Common source stage runtime coupling providers are not qualified.";
     if(surface.volume.size()!=mesh.tri_area.size() || gw.state().n_cells!=mesh.n_cells())
@@ -70,6 +72,7 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
     std::vector<double> coverage(mesh.tri_area.size(),0);
     std::vector<bool> resolved(c.n_subcatches(),false);
     std::vector<double> fractions(c.n_subcatches(),0);
+    std::vector<std::vector<std::pair<int,double>>> forcing_contacts(c.n_subcatches());
     for(const auto& o:preview.objects) {
         const int sc=o.subcatch;
         if(sc<0 || sc>=c.n_subcatches())return "Invalid reviewed common source.";
@@ -91,6 +94,12 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
             if(!closeArea(share.weather_area,share.pervious_area+share.impervious_area+share.lid_area))
                 return "Reviewed component areas do not close their weather footprint.";
             if(share.weather_area>0){owned[share.cell]=true;coverage[share.cell]+=share.weather_area;}
+            if(share.weather_area>0) {
+                auto& contacts=forcing_contacts[sc];
+                const auto found=std::find_if(contacts.begin(),contacts.end(),[&](const auto& x){return x.first==share.cell;});
+                if(found==contacts.end())contacts.emplace_back(share.cell,share.weather_area);
+                else found->second+=share.weather_area;
+            }
             weather+=share.weather_area;pervious+=share.pervious_area;
             impervious+=share.impervious_area;lid_area+=share.lid_area;
             if(share.pervious_area>0)d.contacts.emplace_back(share.cell,share.pervious_area);
@@ -170,6 +179,7 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
     cells_=std::move(cells);owned_=std::move(owned);weather_=preview.mesh_weather_area;
     et_contacts_=std::move(et_contacts);
     runtime_water_identity_=runtime_water_identity;runtime_boundaries_=runtime_boundaries;
+    runtime_catchment_forcing_=runtime_catchment_forcing;forcing_contacts_=std::move(forcing_contacts);
     if(runtime_boundaries)authored_boundary_=*surface.boundary;
     checkpoint_model_=checkpointModel();
     return {};
@@ -348,14 +358,44 @@ std::string CommonSourceStage::advance(double start,double end) {
     auto credited=sources_->waterTrial();
     const auto return_error=credited.creditSurfaceReturns(start,source_returns);if(!return_error.empty())return return_error;
     auto proposal=credited.waterTrial();
+    // The reviewed uniform source still has one physical store. Only inside
+    // shares inherit cell prescriptions; outside shares keep resolved native weather.
+    std::vector<std::map<int,double>> pet_span(runtime_catchment_forcing_?sources_->context().n_subcatches():0);
+    std::vector<double> outside_pet_span(pet_span.size(),0);
+    const auto transform=[&](runoff::SourceForcingInterval& f,bool collect) {
+        for(auto& w:f.sources) {
+            const int sc=w.subcatch;const double outside=1-sources_->spatialFractions()[sc];
+            const double full=(sources_->runoff().soa().area[sc]+sources_->context().subcatches.total_lid_area_ft2[sc])*ft2;
+            double rain=w.rain*.3048*full*outside,pet=w.pet*.3048*full*outside;
+            bool rain_changed=false,pet_changed=false;
+            if(collect)outside_pet_span[sc]+=w.pet*.3048*(f.end-f.start);
+            for(const auto& [cell,area]:forcing_contacts_[sc]) {
+                const double r=surface_->runtime_forcings.rate(1,cell,w.rain*.3048);
+                const double p=surface_->runtime_forcings.rate(2,cell,w.pet*.3048);
+                rain_changed|=surface_->runtime_forcings.get(1,cell)!=nullptr;
+                pet_changed|=surface_->runtime_forcings.get(2,cell)!=nullptr;
+                rain+=area*r;pet+=area*p;
+                if(collect)pet_span[sc][cell]+=p*(f.end-f.start);
+            }
+            if(rain_changed)w.rain=rain/full/.3048;
+            if(pet_changed)w.pet=pet/full/.3048;
+        }
+    };
+    runoff::SourceWaterDriver::ForcingTransform proposal_weather=[&](auto& f){transform(f,false);};
+    runoff::SourceWaterDriver::ForcingTransform bounded_weather=[&](auto& f){transform(f,true);};
     const auto findDonor=[&](int sc,int t=-1,int u=-1)->int {
         for(std::size_t j=0;j<donors_.size();++j) if(donors_[j].source==sc && donors_[j].type==t && donors_[j].unit==u) return int(j);
         return -1;
     };
     std::vector<double> pond(donors_.size(),1e30);
+    const auto intakeRate=[&](int cell,double p,double span) {
+        if(runtime_catchment_forcing_)if(const auto* row=surface_->runtime_forcings.get(3,cell))
+            return std::max(0.0,infilSink(row->rate,p,options_->dry_depth));
+        return gw_->sourceInfiltrationCapacity(cell,p,span);
+    };
     const auto capacity=[&](int j,double p) {
         pond[j]=std::min(pond[j],p);double total=0;
-        for(const auto& [cell,area]:donors_[j].contacts) total+=gw_->sourceInfiltrationCapacity(cell,p,dt)*area;
+        for(const auto& [cell,area]:donors_[j].contacts) total+=intakeRate(cell,p,dt)*area;
         return total/donors_[j].area/.3048;
     };
     runoff::RunoffSolver::InfiltrationBoundary candidate=[&](int sc,double p,double,double& rate) {
@@ -366,7 +406,7 @@ std::string CommonSourceStage::advance(double start,double end) {
         return j<0 ? 1e10 : capacity(j,std::max(0.0,g.type==lid::LIDType::VEG_SWALE ? g.surf_depth[u] : g.stor_depth[u])*.3048);
     };
     for(std::size_t group=0;group<proposal.clocks().groups().size();++group) {
-        auto error=proposal.stage(int(group),end,end,&candidate,&bottom);
+        auto error=proposal.stage(int(group),end,end,&candidate,&bottom,runtime_catchment_forcing_?&proposal_weather:nullptr);
         if(!error.empty()) return error;
         error=proposal.commit();if(!error.empty()) return error;
     }
@@ -390,19 +430,19 @@ std::string CommonSourceStage::advance(double start,double end) {
     for(std::size_t j=0;j<donors_.size();++j) {
         const auto& d=donors_[j];const double volume=std::max(0.0,donorVolume(proposal,int(j)));
         const double p=pond[j]==1e30 ? 0 : pond[j];double total=0;
-        for(const auto& [cell,area]:d.contacts) total+=gw_->sourceInfiltrationCapacity(cell,p,dt)*area;
+        for(const auto& [cell,area]:d.contacts) total+=intakeRate(cell,p,dt)*area;
         const auto kind=d.type<0 ? SurfaceDonorKind::NON_LID : SurfaceDonorKind::LID_BOTTOM;
         const auto name=sources_->context().subcatch_names.name_of(d.source);
         donor_index[{kind,name,d.identity}]=int(j);
         for(const auto& [cell,area]:d.contacts) {
-            const double weight=total>0 ? gw_->sourceInfiltrationCapacity(cell,p,dt)*area/total : 0;
+            const double weight=total>0 ? intakeRate(cell,p,dt)*area/total : 0;
             requests.push_back({kind,name,d.identity,cell,area,p,volume,volume*weight});
         }
     }
     SurfaceExchange::Capacity capacity_override=[&](const SurfaceIntakeRequest& r,double span) {
         if(r.kind==SurfaceDonorKind::MESH)if(const auto* row=surface_->runtime_forcings.get(3,r.cell))
             return std::max(0.0,infilSink(row->rate,surface_->depth[r.cell],options_->dry_depth))*r.area*span;
-        return gw_->sourceInfiltrationCapacity(r.cell,r.pond,span)*r.area*span;
+        return intakeRate(r.cell,r.pond,span)*r.area*span;
     };
     const auto* prescribed_capacity=runtimeWaterEnabled()?&capacity_override:nullptr;
     auto error=exchange_.plan(*gw_,start,end,end,requests,prescribed_capacity);if(!error.empty()) return error;
@@ -421,7 +461,7 @@ std::string CommonSourceStage::advance(double start,double end) {
         const int j=findDonor(bounded.lids(true).group(t).subcatch_idx[u],t,u);return j<0 ? 1e10 : rate(j);
     };
     for(std::size_t group=0;group<bounded.clocks().groups().size();++group) {
-        error=bounded.stage(int(group),end,end,&limit,&bottom_limit);
+        error=bounded.stage(int(group),end,end,&limit,&bottom_limit,runtime_catchment_forcing_?&bounded_weather:nullptr);
         if(error.empty()) error=bounded.commit();
         if(!error.empty()) { exchange_.cancel();return error; }
     }
@@ -481,14 +521,21 @@ std::string CommonSourceStage::advance(double start,double end) {
         const auto owner=a.kind==runoff::SourceEtKind::PERVIOUS ? SurfaceEtOwner::PERVIOUS :
             a.kind==runoff::SourceEtKind::IMPERVIOUS ? SurfaceEtOwner::IMPERVIOUS : SurfaceEtOwner::LID;
         for(const auto& [cell,area]:et_contacts_[j]) {
-            const double fraction=area/(a.area*ft2);
+            const double area_fraction=area/(a.area*ft2);
+            const double potential=runtime_catchment_forcing_?pet_span[a.source][cell]*area:
+                (a.potential-b.potential)*ft3*area_fraction;
+            const double fraction=runtime_catchment_forcing_?(a.potential>b.potential?potential/((a.potential-b.potential)*ft3):0):area_fraction;
             addEt({owner,a.source,a.type,a.unit,cell,start,end,area,
-                (a.potential-b.potential)*ft3*fraction,(a.evaporation-b.evaporation)*ft3*fraction},a.soil_eligible);
+                potential,(a.evaporation-b.evaporation)*ft3*fraction},a.soil_eligible);
         }
         const double outside_area=a.area*ft2*(1-bounded.spatialFractions()[a.source]);
-        if(outside_area>0){const double fraction=outside_area/(a.area*ft2);
+        if(outside_area>0){
+            const double area_fraction=outside_area/(a.area*ft2);
+            const double potential=runtime_catchment_forcing_?outside_pet_span[a.source]*outside_area:
+                (a.potential-b.potential)*ft3*area_fraction;
+            const double fraction=runtime_catchment_forcing_?(a.potential>b.potential?potential/((a.potential-b.potential)*ft3):0):area_fraction;
             addEt({owner,a.source,a.type,a.unit,-1,start,end,outside_area,
-                (a.potential-b.potential)*ft3*fraction,(a.evaporation-b.evaporation)*ft3*fraction},false);
+                potential,(a.evaporation-b.evaporation)*ft3*fraction},false);
         }
     }
     // Validate all atmospheric volumes before either receiver or owner changes.
@@ -499,13 +546,24 @@ std::string CommonSourceStage::advance(double start,double end) {
             exchange_.cancel();return "Common source atmospheric area budget does not close.";
         }
     }
+    // Prepare provider receipts before receiver booking, including zero-intake
+    // cells, so this additional accounting cannot allocate after the transfer.
+    std::vector<std::pair<double,double>> provider_intake(runtime_catchment_forcing_?mesh_->n_cells():0);
+    for(std::size_t j=0;j<exchange_.awards().size();++j) {
+        const auto& q=exchange_.awards()[j].request;
+        if(runtime_catchment_forcing_ && q.kind!=SurfaceDonorKind::MESH && surface_->runtime_forcings.get(3,q.cell)) {
+            auto& r=provider_intake[q.cell];r.first+=q.candidate;r.second+=actual[j].volume;
+        }
+    }
     // Revalidation and receiver booking happen before any managed source debit.
     error=exchange_.commit(*gw_,actual,prescribed_capacity);if(!error.empty()) { exchange_.cancel();return error; }
     for(const auto& m:mesh_trials) {
         const double infil=mesh_awarded[m.cell],A=mesh_->tri_area[m.cell];
         if(auto* row=const_cast<RuntimeForcing*>(surface_->runtime_forcings.get(3,m.cell))) {
-            auto& r=row->receipt;r.requested+=m.requested_infil;r.applied+=infil;r.water_out+=infil;
-            r.last_flow=infil/dt;r.last_dt=dt;
+            const auto extra=runtime_catchment_forcing_?provider_intake[m.cell]:std::pair<double,double>{};
+            const double total=infil+extra.second;
+            auto& r=row->receipt;r.requested+=m.requested_infil+extra.first;r.applied+=total;r.water_out+=total;
+            r.last_flow=total/dt;r.last_dt=dt;
         }
         surface_->volume[m.cell]=std::max(0.0,surface_->volume[m.cell]+m.incoming-m.evap-m.out-infil);
         surface_->infil_applied[m.cell]+=infil/A;

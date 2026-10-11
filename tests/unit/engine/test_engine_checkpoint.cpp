@@ -473,7 +473,7 @@ struct SurfaceSession {
     runoff::SourceWaterDriver sources;
     twoD::CommonSourceStage stage;
     SWMMEngine engine;
-    void start(const std::string& name,int lid=0,int mapped=0,int closure=0,int mode=0,bool track=true,bool spatial=false,bool all_sources=false,int outfall_return=-1,bool output=false,int mesh_output=0,bool average=false,const std::string& runtime_identity={},bool runtime_boundaries=false,int authored_boundary=0,int signal_variant=0) {
+    void start(const std::string& name,int lid=0,int mapped=0,int closure=0,int mode=0,bool track=true,bool spatial=false,bool all_sources=false,int outfall_return=-1,bool output=false,int mesh_output=0,bool average=false,const std::string& runtime_identity={},bool runtime_boundaries=false,int authored_boundary=0,int signal_variant=0,bool catchment_forcing=false) {
         SWMMEngine authored;startRunoff(authored,name,mode%5,mode%3,lid,false);authored.close();
         auto p=root()/name;auto deck=bytes(p.string()+".inp");
         deck.replace(deck.find("IGNORE_2D YES"),13,"IGNORE_2D NO");
@@ -544,7 +544,7 @@ struct SurfaceSession {
                 preview.shares.push_back(share);preview.mesh_weather_area[cell]-=inside;
             }
         }
-        error=stage.initialize(mesh,router.state(),options,router.subsurface(),sources,preview,!spatial,runtime_identity,runtime_boundaries);
+        error=stage.initialize(mesh,router.state(),options,router.subsurface(),sources,preview,!spatial,runtime_identity,runtime_boundaries,catchment_forcing);
         if(!error.empty())throw std::runtime_error(error);
         if(track) {error=spatial?e.enableSpatialSourceCheckpointing(stage):e.enableCheckpointing(stage);if(!error.empty())throw std::runtime_error(error);}
     }
@@ -2877,4 +2877,137 @@ TEST(EngineCheckpoint, AuthoredBoundaryDueDriverRestoreKeepsSignalsAndPublicatio
 }
 
 #endif
+#endif
+
+#ifdef OPENSWMM_HAS_2D
+namespace {
+void startCatchmentProvider(SurfaceSession& s,const std::string& name,int lid=0,int closure=0,
+                           bool output=false,int format=0,const std::string& identity="mesh water driver revision 1",
+                           bool boundaries=false) {
+    s.start(name,lid,1,closure,0,true,true,false,-1,output,format,output,identity,boundaries,boundaries?7:0,0,true);
+}
+void compareCatchmentProvider(SurfaceSession& a,SurfaceSession& b,const std::string& name,bool output=false) {
+    if(output)compareMesh(a.engine,b.engine,name);else compare(a.engine,b.engine,name);
+    EXPECT_EQ(a.engine.surfaceRouter2D().state().volume,b.engine.surfaceRouter2D().state().volume);
+    EXPECT_EQ(a.engine.surfaceRouter2D().subsurface().state().hu,b.engine.surfaceRouter2D().subsurface().state().hu);
+    EXPECT_EQ(a.sources.runoff().soa().depth_perv,b.sources.runoff().soa().depth_perv);
+    EXPECT_EQ(a.sources.runoff().soa().depth_imperv0,b.sources.runoff().soa().depth_imperv0);
+    for(int sc:{0,1}) {
+        const auto& x=a.sources.ledgers()[sc];const auto& y=b.sources.ledgers()[sc];
+        EXPECT_DOUBLE_EQ(x.rain,y.rain);EXPECT_DOUBLE_EQ(x.evaporation,y.evaporation);
+        EXPECT_DOUBLE_EQ(x.spatial_infiltration,y.spatial_infiltration);EXPECT_DOUBLE_EQ(x.outside_infiltration,y.outside_infiltration);
+        EXPECT_NEAR(a.sources.balanceResidual(0),0,1e-6);
+    }
+}
+}
+TEST(EngineCheckpoint, CatchmentProviderSessionRestoresPrivateStoresAndNodeLidProfiles) {
+    for(int lid:{0,1,2})for(int closure:{0,1,2}) {
+        const auto name="catchment-provider-"+std::to_string(lid)+"-"+std::to_string(closure);SCOPED_TRACE(name);
+        SurfaceSession a,b;
+        ASSERT_NO_THROW(startCatchmentProvider(a,name+"-a",lid,closure));
+        ASSERT_NO_THROW(startCatchmentProvider(b,name+"-b",lid,closure));
+        ASSERT_TRUE(a.stage.runtimeCatchmentForcingEnabled());ASSERT_FALSE(a.stage.meshOnly());
+        ASSERT_EQ(providerFrame(a.engine),SWMM_OK);
+        ASSERT_NO_THROW(until(a.engine,4.2));
+        const auto cp=root()/(name+".chk");ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+        ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");compareCatchmentProvider(a,b,name+"-restored");
+        ASSERT_NO_THROW(until(a.engine,13.1));
+        ASSERT_NO_THROW(until(b.engine,13.1));
+        compareCatchmentProvider(a,b,name+"-expired");
+        const SWMM_CouplingForcing rain{sizeof(rain),1,0,2,.003,20,0,nullptr};
+        const SWMM_CouplingFrame frame{sizeof(frame),1,"water",0,nullptr,0,nullptr,1,&rain,0,nullptr};
+        ASSERT_EQ(swmm_coupling_apply_frame(reinterpret_cast<SWMM_Engine>(&a.engine),&frame),SWMM_OK);
+        ASSERT_EQ(swmm_coupling_apply_frame(reinterpret_cast<SWMM_Engine>(&b.engine),&frame),SWMM_OK);
+        ASSERT_NO_THROW(until(a.engine,23.1));
+        ASSERT_NO_THROW(until(b.engine,23.1));
+        compareCatchmentProvider(a,b,name+"-continued");
+    }
+}
+TEST(EngineCheckpoint, CatchmentProviderIdentityAndFutureFrameRefusalPreserveAcceptedSources) {
+    SurfaceSession a,b;
+    ASSERT_NO_THROW(startCatchmentProvider(a,"catchment-bind-a",2));
+    ASSERT_NO_THROW(startCatchmentProvider(b,"catchment-bind-b",2,0,false,0,"different revision"));
+    ASSERT_EQ(providerFrame(a.engine),SWMM_OK);
+    ASSERT_NO_THROW(until(a.engine,4.2));
+    const auto cp=root()/"catchment-binding.chk",before=root()/"catchment-binding-before.chk";
+    ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");
+    const auto initial=bytes(before);EXPECT_FALSE(b.engine.loadCheckpoint(cp.string()).empty());
+    ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");EXPECT_EQ(bytes(before),initial);
+    const auto end=a.stage.completedEnd(),rain=a.sources.ledgers()[0].rain;
+    SWMM_CouplingForcing bad{sizeof(bad),1,0,1,.1,10,0,nullptr};
+    SWMM_CouplingFrame frame{sizeof(frame),1,"other-owner",0,nullptr,0,nullptr,1,&bad,0,nullptr};
+    EXPECT_EQ(swmm_coupling_apply_frame(reinterpret_cast<SWMM_Engine>(&a.engine),&frame),SWMM_ERR_BADPARAM);
+    EXPECT_DOUBLE_EQ(a.stage.completedEnd(),end);EXPECT_DOUBLE_EQ(a.sources.ledgers()[0].rain,rain);
+}
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+TEST(EngineCheckpoint, CatchmentProviderNestedDamagePreservesPrivateStoresAndBothHeaders) {
+    SurfaceSession a;
+    ASSERT_NO_THROW(startCatchmentProvider(a,"catchment-atomic-a",2,0,true,2));
+    ASSERT_EQ(providerFrame(a.engine),SWMM_OK);
+    ASSERT_NO_THROW(until(a.engine,4.2));
+    const auto cp=root()/"catchment-atomic.chk";ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+    for(int mutation=0;mutation<9;++mutation) {
+        SCOPED_TRACE(mutation);const auto name="catchment-atomic-"+std::to_string(mutation);SurfaceSession b;
+        ASSERT_NO_THROW(startCatchmentProvider(b,name,2,0,true,2));
+        const auto before=root()/(name+"-before.chk"),bad=root()/(name+"-bad.chk");
+        ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");const auto initial=bytes(before);
+        const auto binary=bytes(root()/(name+".out")),mesh=bytes(root()/(name+".h5"));
+        write(bad,changeProviderRecord(bytes(cp),mutation));EXPECT_FALSE(b.engine.loadCheckpoint(bad.string()).empty());
+        ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");EXPECT_EQ(bytes(before),initial);
+        EXPECT_EQ(bytes(root()/(name+".out")),binary);EXPECT_EQ(bytes(root()/(name+".h5")),mesh);
+        ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");compareCatchmentProvider(a,b,name+"-retry",true);
+    }
+}
+TEST(EngineCheckpoint, CatchmentProviderCombinedReportsRetainPrivateAndMeshWeatherAcrossExpiry) {
+    for(int lid:{0,1,2})for(int format:{1,2}) {
+        const auto name="catchment-output-"+std::to_string(lid)+"-"+std::to_string(format);SCOPED_TRACE(name);SurfaceSession a,b;
+        ASSERT_NO_THROW(startCatchmentProvider(a,name,lid,0,true,format));
+        ASSERT_NO_THROW(startCatchmentProvider(b,name+"-resumed",lid,0,true,format));
+        ASSERT_EQ(providerFrame(a.engine),SWMM_OK);
+        ASSERT_NO_THROW(until(a.engine,4.2));
+        const auto cp=root()/(name+".chk");ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");
+        while(a.engine.context().elapsed_ms<a.engine.context().options.totalDurationMs()) {
+            ASSERT_NO_THROW(step(a.engine));
+            ASSERT_NO_THROW(step(b.engine));
+        }
+        compareCatchmentProvider(a,b,name+"-final",true);ASSERT_EQ(a.engine.end(),0);ASSERT_EQ(b.engine.end(),0);
+        sameBinary(name,name+"-resumed",80);sameMesh(name,name+"-resumed",40);
+    }
+}
+TEST(EngineCheckpoint, CatchmentProviderDueDriverAndAuthoredBoundaryRestoreTogether) {
+    SurfaceSession a,b;TestWaterDriver da,db;
+    ASSERT_NO_THROW(startCatchmentProvider(a,"catchment-driver-a",2,0,true,2,"mesh water driver revision 1",true));
+    ASSERT_NO_THROW(startCatchmentProvider(b,"catchment-driver-b",2,0,true,2,"mesh water driver revision 1",true));
+    ASSERT_EQ(a.engine.attachRuntimeWaterDriverCheckpoint(da),"");ASSERT_EQ(b.engine.attachRuntimeWaterDriverCheckpoint(db),"");
+    ASSERT_EQ(authoredBoundaryFrame(a.engine),SWMM_OK);
+    ASSERT_NO_THROW(drive(a.engine,da,4.2));
+    const auto cp=root()/"catchment-driver.chk";ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");
+    EXPECT_EQ(da.cursor,db.cursor);EXPECT_DOUBLE_EQ(da.nextUpdateSeconds(),db.nextUpdateSeconds());
+    ASSERT_EQ(authoredBoundaryFrame(a.engine,2),SWMM_OK);ASSERT_EQ(authoredBoundaryFrame(b.engine,2),SWMM_OK);
+    ASSERT_NO_THROW(drive(a.engine,da,13.1));
+    ASSERT_NO_THROW(drive(b.engine,db,13.1));
+    compareCatchmentProvider(a,b,"catchment-driver",true);compareBoundary(a,b,"catchment-driver-boundary",true);
+    EXPECT_EQ(da.cursor,db.cursor);
+}
+#endif
+#endif
+#ifdef OPENSWMM_HAS_2D
+TEST(EngineCheckpoint, CatchmentProviderAdvanceToPublishesInactivePendingBatchBeforeCheckpoint) {
+    for(int lid:{0,1,2})for(int closure:{0,1,2}) {
+    const auto name="catchment-advance-"+std::to_string(lid)+"-"+std::to_string(closure);SCOPED_TRACE(name);
+    SurfaceSession a,b;
+    ASSERT_NO_THROW(startCatchmentProvider(a,name+"-a",lid,closure));
+    ASSERT_NO_THROW(startCatchmentProvider(b,name+"-b",lid,closure));
+    ASSERT_EQ(providerFrame(a.engine),SWMM_OK);
+    ASSERT_NO_THROW(until(a.engine,13.1));
+    ASSERT_FALSE(a.engine.surfaceRouter2D().runtimeActive());
+    double actual=0;ASSERT_EQ(a.engine.advanceTo(16.125,&actual),SWMM_OK);EXPECT_DOUBLE_EQ(actual,16.125);
+    EXPECT_EQ(a.engine.sourceDelivery()->capturedCount(),a.sources.deliveries().size());
+    const auto cp=root()/(name+".chk");ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+    ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");compareCatchmentProvider(a,b,name+"-restored");
+    double resumed=0;ASSERT_EQ(a.engine.advanceTo(19.125,&actual),SWMM_OK);
+    ASSERT_EQ(b.engine.advanceTo(19.125,&resumed),SWMM_OK);EXPECT_DOUBLE_EQ(actual,resumed);
+    compareCatchmentProvider(a,b,name+"-continued");
+    }
+}
 #endif

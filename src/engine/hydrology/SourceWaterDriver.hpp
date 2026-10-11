@@ -76,6 +76,9 @@ public:
     SourceWaterDriver waterTrial() const;
     void checkpoint(detail::CompletedSourceArchive&,bool model); // internal accepted-boundary IO
     using BottomCeiling = std::function<double(int type, int unit, double start, double end)>;
+    /// Transform a private copy of each resolved native weather segment.
+    /// The caller supplies completed-interval prescriptions; native clocks stay immutable.
+    using ForcingTransform = std::function<void(SourceForcingInterval&)>;
     std::string initialize(const SimulationContext&, const std::vector<int>& seeds,
                            const std::vector<std::pair<int, double>>& non_lid_areas = {},
                            const lid::LIDSolver* initial_lids = nullptr,
@@ -94,7 +97,8 @@ public:
     const std::vector<SourceOutfallReturn>& pendingOutfallReturns() const;
     std::string stage(int group, double end, double completed_through,
                       const RunoffSolver::InfiltrationBoundary* boundary = nullptr,
-                      const BottomCeiling* bottom_ceiling = nullptr);
+                      const BottomCeiling* bottom_ceiling = nullptr,
+                      const ForcingTransform* forcing = nullptr);
     std::string commit();
     void cancel();
     const SourceClockGroups& clocks() const { return clocks_; }

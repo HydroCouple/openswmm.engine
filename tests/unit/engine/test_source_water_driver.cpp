@@ -987,3 +987,30 @@ TEST(SourceWaterDriver, OutfallReceiptProfileRefusesQualityAndInitialPendingWate
     water.node_subtypes.outfalls.add_default(0);water.node_subtypes.outfalls.route_to[0]=0;
     SourceWaterDriver no_area;EXPECT_FALSE(no_area.initialize(water,{0},{{0,0}},nullptr,true).empty());
 }
+
+TEST(SourceWaterDriver, ProviderWeatherTrialsKeepNativeSegmentsAndCancelWithoutReplay) {
+    auto c=model(1,0);SourceWaterDriver d;
+    ASSERT_EQ(d.initialize(c,{0},areas(c),nullptr,true),"");
+    ASSERT_EQ(d.creditOutfallReturns(0,1,{.1}),"");
+    int segments=0;
+    SourceWaterDriver::ForcingTransform forcing=[&](auto& f) {
+        ++segments;for(auto& w:f.sources){EXPECT_DOUBLE_EQ(w.rain,0);w.rain+=.01;}
+    };
+    ASSERT_EQ(d.stage(0,2,2,&sealed,nullptr,&forcing),"");
+    EXPECT_EQ(segments,2);EXPECT_NEAR(d.ledgers(true)[0].rain,.02/ft2,1e-14);
+    EXPECT_DOUBLE_EQ(d.ledgers()[0].rain,0);d.cancel();
+    EXPECT_DOUBLE_EQ(d.clocks().groups()[0].completed_end,0);EXPECT_NEAR(d.pendingVolume(0),.1,1e-15);
+    ASSERT_EQ(d.stage(0,2,2,&sealed,nullptr,&forcing),"");ASSERT_EQ(d.commit(),"");
+    EXPECT_EQ(segments,4);EXPECT_NEAR(d.ledgers()[0].rain,.02/ft2,1e-14);
+    ASSERT_EQ(d.stage(0,3,3,&sealed),"");ASSERT_EQ(d.commit(),"");
+    EXPECT_NEAR(d.ledgers()[0].rain,.02/ft2,1e-14);EXPECT_NEAR(d.balanceResidual(0),0,1e-14);
+}
+TEST(SourceWaterDriver, ProviderWeatherFailureLeavesPrivateStateAndClockRetryable) {
+    auto c=model(1,0);SourceWaterDriver d;ASSERT_EQ(d.initialize(c,{0},areas(c)),"");
+    SourceWaterDriver::ForcingTransform bad=[](auto& f){f.sources[0].rain=std::numeric_limits<double>::quiet_NaN();};
+    EXPECT_FALSE(d.stage(0,1,1,&sealed,nullptr,&bad).empty());
+    EXPECT_DOUBLE_EQ(d.ledgers()[0].rain,0);EXPECT_TRUE(d.clocks().groups()[0].pending.empty());
+    SourceWaterDriver::ForcingTransform good=[](auto& f){f.sources[0].rain=.01;};
+    ASSERT_EQ(d.stage(0,1,1,&sealed,nullptr,&good),"");ASSERT_EQ(d.commit(),"");
+    EXPECT_NEAR(d.ledgers()[0].rain,.01/ft2,1e-14);EXPECT_NEAR(d.balanceResidual(0),0,1e-14);
+}

@@ -217,7 +217,7 @@ int swmm_coupling_apply_frame(SWMM_Engine h,const SWMM_CouplingFrame* f) {
         }
         // All validation/allocation precedes the barrier. Preserve cumulative
         // physics belonging to the old prescription, then commit by moves.
-        router.flushPendingBatch(eng->context());
+        eng->flushRuntimeCouplingBoundary();
         for(int d=0;d<2;++d) if(next[d]) next[d]->syncReceipts(sources(*eng,d));
         if(bc) {
             for(auto& entry:bc->receipts) {

@@ -101,6 +101,9 @@ std::string CommonSourceStage::checkpointModel() const {
     a(owned,weather,cells,et);
     a.sequence(donors,[&](auto& d){a(d.source,d.type,d.unit,d.identity,d.area,d.contacts);});
     if(runtimeWaterEnabled()) {auto identity=runtime_water_identity_;a(identity);}
+    if(runtimeCatchmentForcingEnabled()) {
+        std::string profile="reviewed catchment provider forcing v1";auto contacts=forcing_contacts_;a(profile,contacts);
+    }
     if(runtimeBoundariesEnabled()) {auto model=RuntimeWaterCheckpoint::boundaryModel(authored_boundary_,&sources_->context().tables);a(model);}
     return a.bytes();
 }
@@ -124,7 +127,7 @@ std::string CommonSourceStage::checkpointBytes(std::string& bytes) const {
                 mesh.runtime_sources,gw.runtimeSources(),mesh.runtime_forcings,providers,runtimeBoundariesEnabled()?mesh.boundary:nullptr);
             if(!invalid.empty())return invalid;state(providers);
         }
-        std::string magic="OpenSWMM source boundary";uint32_t version=runtimeBoundariesEnabled()?3:runtimeWaterEnabled()?2:checkpointVersion,endian=0x01020304;
+        std::string magic="OpenSWMM source boundary";uint32_t version=runtimeCatchmentForcingEnabled()?(runtimeBoundariesEnabled()?5:4):runtimeBoundariesEnabled()?3:runtimeWaterEnabled()?2:checkpointVersion,endian=0x01020304;
         uint32_t longBytes=sizeof(long),doubleBytes=sizeof(double);auto model=checkpoint_model_,payload=state.bytes();
         auto crc=checksum(payload);Archive file;file(magic,version,endian,longBytes,doubleBytes,model,payload,crc);
         if(file.bytes().size()>maxCheckpointBytes)return "Source checkpoint exceeds internal qualification size limit.";
@@ -157,7 +160,7 @@ std::string CommonSourceStage::loadCheckpointBytes(std::string bytes,const std::
         if(bytes.empty()||bytes.size()>maxCheckpointBytes)return "Source checkpoint exceeds its size limit.";
         Archive file(std::move(bytes));std::string magic,model,payload;uint32_t version=0,endian=0,longBytes=0,doubleBytes=0,crc=0;
         file(magic,version,endian,longBytes,doubleBytes,model,payload,crc);file.finish();
-        if(magic!="OpenSWMM source boundary"||version!=(runtimeBoundariesEnabled()?3u:runtimeWaterEnabled()?2u:checkpointVersion)||endian!=0x01020304||longBytes!=sizeof(long)||doubleBytes!=sizeof(double))
+        if(magic!="OpenSWMM source boundary"||version!=(runtimeCatchmentForcingEnabled()?(runtimeBoundariesEnabled()?5u:4u):runtimeBoundariesEnabled()?3u:runtimeWaterEnabled()?2u:checkpointVersion)||endian!=0x01020304||longBytes!=sizeof(long)||doubleBytes!=sizeof(double))
             return "Unsupported source checkpoint version or platform.";
         if(model!=checkpoint_model_)return "Source checkpoint model, forcing, species or reviewed ownership differs.";
         if(crc!=checksum(payload))return "Source checkpoint checksum differs.";

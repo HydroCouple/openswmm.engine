@@ -1555,7 +1555,7 @@ int SWMMEngine::advanceTo(double seconds, double* actual) noexcept {
     }
     exchange_target_ = -1.0;
 #ifdef OPENSWMM_HAS_2D
-    surface_router_.flushPendingBatch(ctx_);
+    flushRuntimeCouplingBoundary();
 #endif
     *actual = ctx_.elapsed_ms/1000.0;
     return rc;

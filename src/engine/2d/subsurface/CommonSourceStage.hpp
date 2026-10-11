@@ -29,7 +29,8 @@ public:
     // private subcatchment groups; default reviewed-source behavior is unchanged.
     std::string initialize(const MeshData&, SurfaceStateData&, const SolverOptions2D&, SubsurfaceSolver&,
                            runoff::SourceWaterDriver&, const SurfaceOwnershipPreview&, bool mesh_only = false,
-                           const std::string& runtime_water_identity = {}, bool runtime_boundaries = false);
+                           const std::string& runtime_water_identity = {}, bool runtime_boundaries = false,
+                           bool runtime_catchment_forcing = false);
     bool matches(const MeshData* m,const SurfaceStateData* s,const SubsurfaceSolver* g) const {
         return mesh_==m && surface_==s && gw_==g && mesh_;
     }
@@ -52,6 +53,7 @@ public:
     // recovered by its immutable replay identity. No authored/public activation.
     bool runtimeWaterEnabled() const { return !runtime_water_identity_.empty(); }
     bool runtimeBoundariesEnabled() const { return runtime_boundaries_; }
+    bool runtimeCatchmentForcingEnabled() const { return runtime_catchment_forcing_; }
     const std::string& runtimeWaterIdentity() const { return runtime_water_identity_; }
     std::string validateRuntimeWater(const RuntimeSources&,const RuntimeSources&,const RuntimeForcings&,double time,const BoundaryData* boundary=nullptr) const;
     /// Internal component checkpoint, not a production engine hotstart.
@@ -75,6 +77,8 @@ private:
     RuntimeWaterCheckpointBinding runtimeWaterBinding(double time) const;
     std::string runtime_water_identity_;
     bool runtime_boundaries_=false;
+    bool runtime_catchment_forcing_=false;
+    std::vector<std::vector<std::pair<int,double>>> forcing_contacts_; // source -> cell, m2
     BoundaryData authored_boundary_;
     struct Donor {
         int source=-1, type=-1, unit=-1, identity=-1;

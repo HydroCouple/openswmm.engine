@@ -442,7 +442,11 @@ struct SWMMEngine::RestartState {
 };
 
 void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
-    require(exchange_target_<0,"Engine session checkpoint does not yet support runtime advance/coupling targets.");
+    bool advancing_catchments=false;
+#ifdef OPENSWMM_HAS_2D
+    advancing_catchments=step_active_ && source_stage_ && source_stage_->runtimeCatchmentForcingEnabled();
+#endif
+    require(exchange_target_<0 || advancing_catchments,"Engine session checkpoint does not yet support runtime advance/coupling targets.");
     require(ctx_.state==EngineState::RUNNING && ctx_.error_code==0 && do_routing_ &&
             save_results_==(checkpoint_output_?1:0),
             "Engine checkpoint requires a running water-only session with its prepared output mode.");
@@ -701,6 +705,21 @@ std::string SWMMEngine::attachRuntimeWaterDriverCheckpoint(twoD::RuntimeWaterDri
         Archive extra;auto id=identity;extra(id);auto model=checkpoint_model_+extra.bytes();
         checkpoint_model_=std::move(model);runtime_water_driver_=&driver;return {};
     } catch(const std::exception& e) {return e.what();}
+}
+#endif
+#ifdef OPENSWMM_HAS_2D
+void SWMMEngine::flushRuntimeCouplingBoundary() {
+    surface_router_.flushPendingBatch(ctx_);
+    if(source_delivery_) {
+        const auto error=source_delivery_->capture(source_stage_->sources(),ctx_.current_time);
+        if(!error.empty())throw std::runtime_error(error);
+        const auto totals=sourceTotals(source_stage_->sources(),*source_delivery_);
+        auto& mb=ctx_.mass_balance;
+        double* fields[]{&mb.runoff_rainfall,&mb.runoff_evap,&mb.runoff_infil,&mb.runoff_runon,&mb.runoff_runoff,&mb.runoff_lid_drain};
+        for(int k=0;k<6;++k)*fields[k]+=totals[k]-source_totals_[k];
+        source_totals_=totals;
+        computeFinalStorage();
+    }
 }
 #endif
 std::string SWMMEngine::enableCheckpointingImpl(
