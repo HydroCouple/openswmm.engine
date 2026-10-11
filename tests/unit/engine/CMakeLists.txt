@@ -655,6 +655,17 @@ if(OPENSWMM_BUILD_2D)
         target_link_libraries(test_engine_2d_output_options PRIVATE ${HDF5_C_LIBRARIES})
         target_include_directories(test_engine_2d_output_options PRIVATE ${HDF5_INCLUDE_DIRS})
     endif()
+    if(OPENSWMM_2D_HDF5_OUTPUT)
+        target_compile_definitions(test_engine_checkpoint PRIVATE OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST=1)
+        if(TARGET hdf5::hdf5-shared)
+            target_link_libraries(test_engine_checkpoint PRIVATE hdf5::hdf5-shared)
+        elseif(TARGET hdf5::hdf5-static)
+            target_link_libraries(test_engine_checkpoint PRIVATE hdf5::hdf5-static)
+        else()
+            target_link_libraries(test_engine_checkpoint PRIVATE ${HDF5_C_LIBRARIES})
+            target_include_directories(test_engine_checkpoint PRIVATE ${HDF5_INCLUDE_DIRS})
+        endif()
+    endif()
     # E2 (2026-09-07) — TransportPolicy (Domain x Species matrix),
     # swmm_get_transport_matrix, the .rpt matrix block and the [2D_OPTIONS]
     # process keys (TRANSPORT_*, INFILTRATION, INFIL_STEP alias,

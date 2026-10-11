@@ -11,6 +11,9 @@
 #include "2d/subsurface/SourceResultHistory.hpp"
 #include "2d/subsurface/EngineSourceResultHistory.hpp"
 #include "2d/mesh/MeshBuilder.hpp"
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+#include "2d/output/Default2DOutputPlugin.hpp"
+#endif
 #endif
 #include <filesystem>
 #include <fstream>
@@ -469,11 +472,17 @@ struct SurfaceSession {
     runoff::SourceWaterDriver sources;
     twoD::CommonSourceStage stage;
     SWMMEngine engine;
-    void start(const std::string& name,int lid=0,int mapped=0,int closure=0,int mode=0,bool track=true,bool spatial=false,bool all_sources=false,int outfall_return=-1,bool output=false) {
+    void start(const std::string& name,int lid=0,int mapped=0,int closure=0,int mode=0,bool track=true,bool spatial=false,bool all_sources=false,int outfall_return=-1,bool output=false,int mesh_output=0) {
         SWMMEngine authored;startRunoff(authored,name,mode%5,mode%3,lid,false);authored.close();
         auto p=root()/name;auto deck=bytes(p.string()+".inp");
         deck.replace(deck.find("IGNORE_2D YES"),13,"IGNORE_2D NO");
         // Surface advances on every routing step; routing-event skips are outside this profile.
+        if(mesh_output) {
+            std::filesystem::remove(p.string()+".h5");
+            deck+="[2D_OPTIONS]\nOUTPUT_FILE "+p.string()+".h5\nOUTPUT_PRECISION "+(mesh_output==2?std::string("FLOAT32"):std::string("FLOAT64"))+"\nOUTPUT_COMPRESSION "+(mesh_output==2?std::string("4"):std::string("0"))+"\nREPORT_2D_STEP 00:00:06\n";
+            if(mesh_output==3)deck+="REPORT_2D_VARIABLES MINIMAL\n";
+        if(mesh_output==4)deck+="[OPTIONS]\nREPORT_START_DATE 10/10/2026\nREPORT_START_TIME 00:00:13\n";
+        }
         write(p.string()+".inp",deck);
         auto& e=engine;
         if(output)std::filesystem::remove(p.string()+".out");
@@ -494,6 +503,7 @@ struct SurfaceSession {
         twoD::GwAquiferRow row;row.Ks=.000001*3600/.0254;row.zs=2/.3048;row.hg0=1/.3048;row.alpha=2*.3048;config.rows.push_back(row);
         if(e.initialize())throw std::runtime_error("surface initialize: "+ctx.error_message);
         if(output) {auto error=e.prepareOutputCheckpointing();if(!error.empty())throw std::runtime_error(error);}
+    if(mesh_output) {auto error=e.prepareSurfaceOutputCheckpointing();if(!error.empty())throw std::runtime_error(error);}
         if(e.start(output?1:0))throw std::runtime_error("surface start: "+ctx.error_message);
         auto& gw=router.subsurface().state();
         for(int i=0;i<2;++i) {
@@ -737,7 +747,7 @@ TEST(EngineCheckpoint, SpatialAttachmentIsExplicitAndRefusesOwnedOutfallReturnsA
 
 #ifdef OPENSWMM_HAS_2D
 namespace {
-void startClosedSpatial(SurfaceSession& m,const std::string& name,int node_lid=0,double cadence=.7,bool returns=false,bool multiple=false,bool output=false) {
+void startClosedSpatial(SurfaceSession& m,const std::string& name,int node_lid=0,double cadence=.7,bool returns=false,bool multiple=false,bool output=false,int mesh_output=0) {
     auto path=root()/name;
     std::string deck="[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 10/10/2026\nSTART_TIME 00:00:00\nEND_DATE 10/10/2026\nEND_TIME 00:00:30\nROUTING_STEP "+std::to_string(cadence)+"\nVARIABLE_STEP 0\nINFILTRATION GREEN_AMPT\nRULE_STEP 00:00:02\nREPORT_STEP 00:00:03\nWET_STEP 00:00:01\nDRY_STEP 00:00:07\nIGNORE_QUALITY YES\nIGNORE_SNOWMELT YES\nIGNORE_GROUNDWATER YES\nIGNORE_2D NO\n[STORAGE]\nSINK 0 100 0 FUNCTIONAL 0 0 100 0 0\n[OUTFALLS]\nDRAIN 0 FREE NO\n[RAINGAGES]\nR INTENSITY 0:00:05 1 TIMESERIES Rain\nDry INTENSITY 0:00:05 1 TIMESERIES Zero\n[SUBCATCHMENTS]\nA R B .01 45 10 1 0\nB R SINK .02 65 10 1 0\nD Dry SINK .01 50 10 1 0\n[SUBAREAS]\nA .015 .12 .03 .05 35 PERVIOUS 55\nB .02 .13 .02 .04 25 OUTLET\nD .02 .13 .02 .04 25 OUTLET\n[INFILTRATION]\nA 3 .25 .3\nB 3 .25 .3\nD 3 .25 .3\n[LID_CONTROLS]\nI IT\nI SURFACE 3 .05 .12 1 3\nI STORAGE 6 .667 .1 0\nI DRAIN .5 .5 0 0\n[LID_USAGE]\nA I 1 20 3 70 30 0 * DRAIN\n[EVAPORATION]\nCONSTANT 0\n[TIMESERIES]\nRain 10/10/2026 00:00:00 5\nRain 10/10/2026 00:00:05 0\nZero 10/10/2026 00:00:00 0\n";
     if(node_lid) {
@@ -746,6 +756,12 @@ void startClosedSpatial(SurfaceSession& m,const std::string& name,int node_lid=0
         if(node_lid==2)deck+="[LID_RICHARDS]\nStack OPTIONS 4 1e-7 1e-5 30\nStack 2 .03 2 1.6 .5 .0001\nStack 3 .03 2 1.6 .5 .0001\n";
     }
     if(multiple)deck+="[OUTFALLS]\nDRAIN2 0 FREE NO\n[LID_USAGE]\nB I 1 10 3 70 0 0 * DRAIN2\n";
+    if(mesh_output) {
+        std::filesystem::remove(path.string()+".h5");
+        deck+="[2D_OPTIONS]\nOUTPUT_FILE "+path.string()+".h5\nOUTPUT_PRECISION "+(mesh_output==2?std::string("FLOAT32"):std::string("FLOAT64"))+"\nOUTPUT_COMPRESSION "+(mesh_output==2?std::string("4"):std::string("0"))+"\nREPORT_2D_STEP 00:00:06\n";
+        if(mesh_output==3)deck+="REPORT_2D_VARIABLES MINIMAL\n";
+        if(mesh_output==4)deck+="[OPTIONS]\nREPORT_START_DATE 10/10/2026\nREPORT_START_TIME 00:00:13\n";
+    }
     write(path.string()+".inp",deck);auto& e=m.engine;
     if(output)std::filesystem::remove(path.string()+".out");
     if(e.open((path.string()+".inp").c_str(),(path.string()+".rpt").c_str(),output?(path.string()+".out").c_str():nullptr))throw std::runtime_error(e.context().error_message);
@@ -761,6 +777,7 @@ void startClosedSpatial(SurfaceSession& m,const std::string& name,int node_lid=0
     twoD::GwAquiferRow row;row.Ks=.000001*3600/.0254;row.zs=2/.3048;row.hg0=1/.3048;row.alpha=2*.3048;config.rows.push_back(row);
     if(e.initialize())throw std::runtime_error(e.context().error_message);
     if(output) {auto error=e.prepareOutputCheckpointing();if(!error.empty())throw std::runtime_error(error);}
+    if(mesh_output) {auto error=e.prepareSurfaceOutputCheckpointing();if(!error.empty())throw std::runtime_error(error);}
     if(e.start(output?1:0))throw std::runtime_error(e.context().error_message);
     if(returns)std::fill(e.context().node_subtypes.outfalls.route_to.begin(),e.context().node_subtypes.outfalls.route_to.end(),0);
     auto error=m.sources.initialize(e.context(),{0},{},nullptr,returns);if(!error.empty())throw std::runtime_error(error);
@@ -1511,6 +1528,249 @@ TEST(EngineCheckpoint, ValidBinaryPrefixIsNotPublishedWhenSpatialCheckpointValid
     for(const auto& file:std::filesystem::directory_iterator(root()))
         EXPECT_FALSE(file.path().filename().string().starts_with("binary-spatial-invalid-b.out.report-part-"));
     ASSERT_EQ(b.engine.loadCheckpoint(good.string()),"");compare(a.engine,b.engine,"binary-spatial-invalid-retry");
+    ASSERT_EQ(a.engine.end(),0);ASSERT_EQ(b.engine.end(),0);
+}
+#endif
+
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+namespace {
+struct MeshOutputWire {
+    uint32_t version=1; double step=0; hsize_t count=0; double due=-1; bool groundwater=false; std::string image;
+    void io(detail::CompletedSourceArchive& a) {a(version,step,count,due,groundwater,image);}
+};
+std::string meshPhysical(std::string checkpoint) {
+    detail::CompletedSourceArchive in(std::move(checkpoint));std::string magic,model,payload;uint32_t version,sum;
+    in(magic,version,model,sum,payload);in.finish();
+    const auto image=payload.rfind(std::string("\211HDF\r\n\032\n",8));
+    if(image==std::string::npos)throw std::runtime_error("Absent mesh checkpoint image");
+    const auto begin=image-sizeof(uint64_t)-sizeof(bool)-sizeof(double)-sizeof(hsize_t)-sizeof(double)-sizeof(uint32_t);
+    MeshOutputWire wire;detail::CompletedSourceArchive tail(payload.substr(begin));wire.io(tail);tail.finish();
+    payload.resize(begin-sizeof(uint64_t));version-=6;sum=crc(payload);detail::CompletedSourceArchive out;
+    out(magic,version,model,sum,payload);return out.bytes();
+}
+void compareMesh(SWMMEngine& a,SWMMEngine& b,const std::string& name) {
+    const auto x=root()/(name+"-a.chk"),y=root()/(name+"-b.chk");
+    ASSERT_EQ(a.saveCheckpoint(x.string()),"");ASSERT_EQ(b.saveCheckpoint(y.string()),"");
+    EXPECT_EQ(meshPhysical(bytes(x)),meshPhysical(bytes(y)));
+}
+twoD::Default2DOutputPlugin& meshWriter(SWMMEngine& e) {
+    for(auto* p:e.plugin_factory().output_plugins())if(auto* w=dynamic_cast<twoD::Default2DOutputPlugin*>(p))return *w;
+    throw std::runtime_error("Absent mesh writer");
+}
+void sameMesh(const std::string& a,const std::string& b,int periods) {
+    hid_t x=H5Fopen((root()/(a+".h5")).string().c_str(),H5F_ACC_RDONLY,H5P_DEFAULT);
+    hid_t y=H5Fopen((root()/(b+".h5")).string().c_str(),H5F_ACC_RDONLY,H5P_DEFAULT);
+    ASSERT_GE(x,0);ASSERT_GE(y,0);H5G_info_t xi{},yi{};
+    ASSERT_GE(H5Gget_info(x,&xi),0);ASSERT_GE(H5Gget_info(y,&yi),0);EXPECT_EQ(xi.nlinks,yi.nlinks);
+    for(hsize_t k=0;k<xi.nlinks;++k) {
+        char name[256];ASSERT_GE(H5Lget_name_by_idx(x,".",H5_INDEX_NAME,H5_ITER_INC,k,name,sizeof(name),H5P_DEFAULT),0);
+        ASSERT_GT(H5Lexists(y,name,H5P_DEFAULT),0);H5O_info_t info{};ASSERT_GE(H5Oget_info_by_name(x,name,&info,H5O_INFO_BASIC,H5P_DEFAULT),0);
+        if(info.type!=H5O_TYPE_DATASET)continue;
+        hid_t xd=H5Dopen2(x,name,H5P_DEFAULT),yd=H5Dopen2(y,name,H5P_DEFAULT);
+        hid_t xs=H5Dget_space(xd),ys=H5Dget_space(yd);const auto n=H5Sget_simple_extent_npoints(xs);
+        EXPECT_EQ(n,H5Sget_simple_extent_npoints(ys));
+        if(std::string(name)=="time")EXPECT_EQ(n,periods);
+        std::vector<double> xv(n),yv(n);ASSERT_GE(H5Dread(xd,H5T_NATIVE_DOUBLE,H5S_ALL,H5S_ALL,H5P_DEFAULT,xv.data()),0);
+        ASSERT_GE(H5Dread(yd,H5T_NATIVE_DOUBLE,H5S_ALL,H5S_ALL,H5P_DEFAULT,yv.data()),0);EXPECT_EQ(xv,yv)<<name;
+        H5Sclose(xs);H5Sclose(ys);H5Dclose(xd);H5Dclose(yd);
+    }
+    H5Fclose(x);H5Fclose(y);
+}
+}
+TEST(EngineCheckpoint, MeshOutputContinuesCadenceGroundwaterAndCurrentNodeLIDStores) {
+    for(int lid=0;lid<3;++lid)for(int format=1;format<5;++format)for(double boundary:{0.,2.1,3.,7.1}) {
+        const auto name="mesh-closed-"+std::to_string(lid)+"-"+std::to_string(format)+"-"+std::to_string(boundary);SCOPED_TRACE(name);
+        SurfaceSession a,b;
+        ASSERT_NO_THROW(startClosedSpatial(a,name,lid,.7,true,true,false,format));
+        ASSERT_NO_THROW(startClosedSpatial(b,name+"-resumed",lid,.7,true,true,false,format));
+        while(a.engine.context().current_time<boundary)ASSERT_NO_THROW(step(a.engine));
+        const auto checkpoint=root()/(name+".chk");ASSERT_EQ(a.engine.saveCheckpoint(checkpoint.string()),"");
+        ASSERT_EQ(b.engine.loadCheckpoint(checkpoint.string()),"");compareMesh(a.engine,b.engine,name+"-restored");
+        int steps=0;
+        while(a.engine.context().elapsed_ms<a.engine.context().options.totalDurationMs()) {
+            ASSERT_NO_THROW(step(a.engine));
+            ASSERT_NO_THROW(step(b.engine));
+            if(++steps%5==0)compareMesh(a.engine,b.engine,name+"-continued");
+        }
+        compareMesh(a.engine,b.engine,name+"-final");
+        ASSERT_EQ(a.engine.end(),0);ASSERT_EQ(b.engine.end(),0);sameMesh(name,name+"-resumed",format==4?3:5);
+    }
+}
+TEST(EngineCheckpoint, MeshOutputContinuesQueuedSourceHistoryAndPairedAcceptedHistory) {
+    for(double cadence:{.7,.31}) {
+        const auto name="mesh-history-"+std::to_string(cadence);SurfaceSession a,b;
+        twoD::EngineSourceResultHistory history,resumed;
+        ASSERT_NO_THROW(startClosedSpatial(a,name,2,cadence,true,true,false,2));
+        ASSERT_EQ(a.engine.setEngineSourceResultHistory(history,true),"");
+        while(a.engine.context().current_time<7.1) {
+            meshWriter(a.engine).enqueueSourceHistory(std::make_shared<twoD::SourceResultHistory>(*history.sourceIntervals()));
+            ASSERT_NO_THROW(step(a.engine));
+        }
+        const auto checkpoint=root()/(name+".chk");ASSERT_EQ(a.engine.saveCheckpoint(checkpoint.string()),"");resumed=history;
+        ASSERT_NO_THROW(startClosedSpatial(b,name+"-resumed",2,cadence,true,true,false,2));
+        ASSERT_EQ(b.engine.loadCheckpoint(checkpoint.string()),"");ASSERT_EQ(b.engine.resumeEngineSourceResultHistory(resumed),"");
+        while(a.engine.context().elapsed_ms<a.engine.context().options.totalDurationMs()) {
+            meshWriter(a.engine).enqueueSourceHistory(std::make_shared<twoD::SourceResultHistory>(*history.sourceIntervals()));
+            meshWriter(b.engine).enqueueSourceHistory(std::make_shared<twoD::SourceResultHistory>(*resumed.sourceIntervals()));
+            ASSERT_NO_THROW(step(a.engine));
+            ASSERT_NO_THROW(step(b.engine));sameEngineHistory(history,resumed);
+            compareMesh(a.engine,b.engine,name+"-continued");
+        }
+        ASSERT_EQ(a.engine.end(),0);ASSERT_EQ(b.engine.end(),0);sameMesh(name,name+"-resumed",5);
+        twoD::SourceResultHistory left,right;bool available=false;
+        ASSERT_EQ(twoD::SourceResultHistory::read((root()/(name+".h5")).string(),left,available),"");ASSERT_TRUE(available);
+        ASSERT_EQ(twoD::SourceResultHistory::read((root()/(name+"-resumed.h5")).string(),right,available),"");ASSERT_TRUE(available);
+        ASSERT_EQ(left.tables().size(),right.tables().size());
+        for(const auto& [n,t]:left.tables())EXPECT_EQ(t.columns,right.tables().at(n).columns)<<n;
+    }
+}
+
+namespace {
+std::string changeMesh(const std::string& original,const std::string& name,int kind) {
+    detail::CompletedSourceArchive in(original);std::string magic,model,payload;uint32_t version,sum;
+    in(magic,version,model,sum,payload);in.finish();
+    const auto at=payload.rfind(std::string("\211HDF\r\n\032\n",8));
+    const auto begin=at-sizeof(uint64_t)-sizeof(bool)-sizeof(double)-sizeof(hsize_t)-sizeof(double)-sizeof(uint32_t);
+    MeshOutputWire wire;detail::CompletedSourceArchive tail(payload.substr(begin));wire.io(tail);tail.finish();
+    switch(kind) {
+    case 0:++wire.count;break;
+    case 1:wire.due+=.01;break;
+    case 2:wire.step*=2;break;
+    case 3:wire.groundwater=!wire.groundwater;break;
+    case 4:++wire.version;break;
+    case 5:wire.image.resize(9);break;
+    default: {
+        const auto file=root()/(name+"-mutant.h5");write(file,wire.image);
+        hid_t h5=H5Fopen(file.string().c_str(),H5F_ACC_RDWR,H5P_DEFAULT);
+        if(h5<0)throw std::runtime_error("Cannot edit test HDF5 prefix");
+        auto change=[&](const char* path,double value,bool add=false) {
+            hid_t d=H5Dopen2(h5,path,H5P_DEFAULT),sp=H5Dget_space(d);
+            std::vector<double> v(H5Sget_simple_extent_npoints(sp));H5Dread(d,H5T_NATIVE_DOUBLE,H5S_ALL,H5S_ALL,H5P_DEFAULT,v.data());
+            v[0]=add?v[0]+value:value;H5Dwrite(d,H5T_NATIVE_DOUBLE,H5S_ALL,H5S_ALL,H5P_DEFAULT,v.data());H5Sclose(sp);H5Dclose(d);
+        };
+        switch(kind) {
+        case 6:change("time",.001,true);break;
+        case 7:change("Mesh2_face_depth",std::numeric_limits<double>::quiet_NaN());break;
+        case 8:change("Mesh2_node_x",1,true);break;
+        case 9:H5Ldelete(h5,"Mesh2_face_head",H5P_DEFAULT);break;
+        case 10:{hid_t d=H5Dopen2(h5,"Mesh2_face_depth",H5P_DEFAULT);hsize_t dims[2]={wire.count+1,2};H5Dset_extent(d,dims);H5Dclose(d);break;}
+        case 11:H5Adelete(h5,"Conventions");break;
+        case 12:{hid_t space=H5Screate(H5S_SCALAR);hid_t d=H5Dcreate2(h5,"unexpected",H5T_NATIVE_DOUBLE,space,H5P_DEFAULT,H5P_DEFAULT,H5P_DEFAULT);H5Dclose(d);H5Sclose(space);break;}
+        case 13:{H5Ldelete(h5,"Mesh2_face_depth",H5P_DEFAULT);hsize_t dims[2]={wire.count,2};hid_t space=H5Screate_simple(2,dims,nullptr);hid_t d=H5Dcreate2(h5,"Mesh2_face_depth",H5T_NATIVE_FLOAT,space,H5P_DEFAULT,H5P_DEFAULT,H5P_DEFAULT);H5Dclose(d);H5Sclose(space);break;}
+        case 14:H5Ldelete(h5,"Mesh2_face_depth",H5P_DEFAULT);H5Lcreate_external("absent-external-file.h5","depth",h5,"Mesh2_face_depth",H5P_DEFAULT,H5P_DEFAULT);break;
+        case 15:{hid_t g=H5Gcreate2(h5,"source_history",H5P_DEFAULT,H5P_DEFAULT,H5P_DEFAULT);H5Gclose(g);break;}
+        case 16:{hid_t g=H5Gcreate2(h5,"source_history",H5P_DEFAULT,H5P_DEFAULT,H5P_DEFAULT);H5Lcreate_external("absent-external-file.h5","history",g,"boundaries",H5P_DEFAULT,H5P_DEFAULT);H5Gclose(g);break;}
+        case 17:change("Mesh2_face_gw_bed_elev",1,true);break;
+        case 18:change("groundwater_ledger",std::numeric_limits<double>::infinity());break;
+        }
+        H5Fclose(h5);wire.image=bytes(file);break;
+    }
+    }
+    detail::CompletedSourceArchive out_tail;wire.io(out_tail);std::string output=out_tail.bytes();
+    detail::CompletedSourceArchive length;length(output);payload.resize(begin-sizeof(uint64_t));payload+=length.bytes();
+    sum=crc(payload);detail::CompletedSourceArchive out;out(magic,version,model,sum,payload);return out.bytes();
+}
+}
+TEST(EngineCheckpoint, MeshOutputMalformedPrefixesPreserveFreshEngineAndPermitRetry) {
+    SurfaceSession a;ASSERT_NO_THROW(startClosedSpatial(a,"mesh-invalid-source",2,.31,true,true,false,1));
+    while(a.engine.context().current_time<9.1)ASSERT_NO_THROW(step(a.engine));
+    const auto good=root()/"mesh-invalid-good.chk";ASSERT_EQ(a.engine.saveCheckpoint(good.string()),"");
+    for(int kind=0;kind<19;++kind) {
+        const auto name="mesh-invalid-"+std::to_string(kind);SCOPED_TRACE(name);SurfaceSession b;
+        ASSERT_NO_THROW(startClosedSpatial(b,name,2,.31,true,true,false,1));
+        const auto before=root()/(name+"-before.chk"),bad=root()/(name+"-bad.chk"),output=root()/(name+".h5");
+        ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");const auto saved=bytes(before),header=bytes(output);
+        write(bad,changeMesh(bytes(good),name,kind));EXPECT_FALSE(b.engine.loadCheckpoint(bad.string()).empty());
+        ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");EXPECT_EQ(bytes(before),saved);EXPECT_EQ(bytes(output),header);
+        for(const auto& file:std::filesystem::directory_iterator(root()))EXPECT_FALSE(file.path().filename().string().starts_with(name+".h5.mesh-part-"));
+        ASSERT_EQ(b.engine.loadCheckpoint(good.string()),"");compareMesh(a.engine,b.engine,name+"-retry");ASSERT_EQ(b.engine.end(),0);
+    }
+    ASSERT_EQ(a.engine.end(),0);
+}
+TEST(EngineCheckpoint, MeshOutputPublicationAndSpatialFailuresPreserveAllTargetComponents) {
+    SurfaceSession a;ASSERT_NO_THROW(startClosedSpatial(a,"mesh-atomic-source",2,.31,true,true,false,2));
+    while(a.engine.context().current_time<9.1)ASSERT_NO_THROW(step(a.engine));
+    const auto good=root()/"mesh-atomic-good.chk";ASSERT_EQ(a.engine.saveCheckpoint(good.string()),"");
+    for(bool spatial:{false,true}) {
+        const auto name=std::string("mesh-atomic-")+(spatial?"spatial":"publication");SurfaceSession b;
+        ASSERT_NO_THROW(startClosedSpatial(b,name,2,.31,true,true,false,2));
+        const auto before=root()/(name+"-before.chk"),output=root()/(name+".h5");
+        ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");const auto saved=bytes(before),header=bytes(output);
+        auto checkpoint=good;
+        if(spatial) {
+            detail::CompletedSourceArchive in(bytes(good));std::string magic,model,payload;uint32_t version,sum;in(magic,version,model,sum,payload);in.finish();
+            auto surface=engineSurface(bytes(good)),body=surfacePayload(surface);const std::string tag="OpenSWMM CPU surface/source boundary";
+            auto cpu=nested(body,tag).second;cpu.back()^=1;surface=withSurfacePayload(surface,replaceNested(body,tag,cpu));
+            payload=replaceNested(payload,"OpenSWMM joint DW surface/source boundary",surface);sum=crc(payload);
+            detail::CompletedSourceArchive out;out(magic,version,model,sum,payload);checkpoint=root()/(name+"-bad.chk");write(checkpoint,out.bytes());
+        } else std::filesystem::permissions(output,std::filesystem::perms::owner_read);
+        EXPECT_FALSE(b.engine.loadCheckpoint(checkpoint.string()).empty());
+        ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");EXPECT_EQ(bytes(before),saved);EXPECT_EQ(bytes(output),header);
+        std::filesystem::permissions(output,std::filesystem::perms::owner_read|std::filesystem::perms::owner_write);
+        for(const auto& file:std::filesystem::directory_iterator(root()))EXPECT_FALSE(file.path().filename().string().starts_with(name+".h5.mesh-part-"));
+        ASSERT_EQ(b.engine.loadCheckpoint(good.string()),"");compareMesh(a.engine,b.engine,name+"-retry");ASSERT_EQ(b.engine.end(),0);
+    }
+    ASSERT_EQ(a.engine.end(),0);
+}
+TEST(EngineCheckpoint, MeshOutputProtectsExistingDestinationsAndExclusiveStart) {
+    SurfaceSession authored;ASSERT_NO_THROW(startClosedSpatial(authored,"mesh-guard",0,.7,false,false,false,1));
+    ASSERT_EQ(authored.engine.end(),0);ASSERT_EQ(authored.engine.close(),0);
+    const auto inp=root()/"mesh-guard.inp",destination=root()/"mesh-guard.h5";write(destination,"existing results");
+    SWMMEngine e;ASSERT_EQ(e.open(inp.string().c_str(),nullptr,nullptr),0);EXPECT_FALSE(e.prepareSurfaceOutputCheckpointing().empty());
+    ASSERT_EQ(e.initialize(),0);EXPECT_FALSE(e.prepareSurfaceOutputCheckpointing().empty());EXPECT_EQ(bytes(destination),"existing results");
+    std::filesystem::remove(destination);ASSERT_EQ(e.prepareSurfaceOutputCheckpointing(),"");
+    write(destination,"intervening creator");EXPECT_NE(e.start(0),0);EXPECT_EQ(bytes(destination),"intervening creator");ASSERT_EQ(e.close(),0);
+    SWMMEngine binary;ASSERT_EQ(binary.open(inp.string().c_str(),nullptr,(root()/"mesh-guard.out").string().c_str()),0);
+    ASSERT_EQ(binary.initialize(),0);EXPECT_FALSE(binary.prepareSurfaceOutputCheckpointing().empty());EXPECT_FALSE(binary.prepareOutputCheckpointing().empty());
+    ASSERT_EQ(binary.close(),0);
+}
+
+TEST(EngineCheckpoint, MeshOutputMappedVectorRichardsAndBackwaterContinueExactly) {
+    for(bool spatial:{false,true}) {
+        const auto name=std::string("mesh-vector-")+(spatial?"spatial":"mesh-owned");SurfaceSession a,b;
+        ASSERT_NO_THROW(a.start(name,3,spatial?0:1,1,6,true,spatial,spatial,spatial?2:-1,false,1));
+        ASSERT_NO_THROW(b.start(name+"-resumed",3,spatial?0:1,1,6,true,spatial,spatial,spatial?2:-1,false,1));
+        while(a.engine.context().current_time<43.1)ASSERT_NO_THROW(step(a.engine));
+        const auto checkpoint=root()/(name+".chk");ASSERT_EQ(a.engine.saveCheckpoint(checkpoint.string()),"");
+        ASSERT_EQ(b.engine.loadCheckpoint(checkpoint.string()),"");compareMesh(a.engine,b.engine,name+"-restored");
+        int steps=0;
+        while(a.engine.context().elapsed_ms<a.engine.context().options.totalDurationMs()) {
+            ASSERT_NO_THROW(step(a.engine));
+            ASSERT_NO_THROW(step(b.engine));
+            if(++steps%19==0)compareMesh(a.engine,b.engine,name+"-continued");
+        }
+        compareMesh(a.engine,b.engine,name+"-final");ASSERT_EQ(a.engine.end(),0);ASSERT_EQ(b.engine.end(),0);
+        sameMesh(name,name+"-resumed",40);
+    }
+}
+
+TEST(EngineCheckpoint, MeshOutputRejectsChangedSourceHistoryOwnershipBeforePublication) {
+    SurfaceSession a;twoD::EngineSourceResultHistory history;
+    ASSERT_NO_THROW(startClosedSpatial(a,"mesh-source-identity",2,.31,true,true,false,1));
+    ASSERT_EQ(a.engine.setEngineSourceResultHistory(history,true),"");
+    while(a.engine.context().current_time<7.1) {
+        meshWriter(a.engine).enqueueSourceHistory(std::make_shared<twoD::SourceResultHistory>(*history.sourceIntervals()));
+        ASSERT_NO_THROW(step(a.engine));
+    }
+    const auto good=root()/"mesh-source-identity.chk";ASSERT_EQ(a.engine.saveCheckpoint(good.string()),"");
+    detail::CompletedSourceArchive in(bytes(good));std::string magic,model,payload;uint32_t version,sum;in(magic,version,model,sum,payload);in.finish();
+    const auto at=payload.rfind(std::string("\211HDF\r\n\032\n",8));
+    const auto begin=at-sizeof(uint64_t)-sizeof(bool)-sizeof(double)-sizeof(hsize_t)-sizeof(double)-sizeof(uint32_t);
+    MeshOutputWire wire;detail::CompletedSourceArchive tail(payload.substr(begin));wire.io(tail);tail.finish();
+    const auto image=root()/"mesh-source-identity-mutant.h5";write(image,wire.image);
+    hid_t file=H5Fopen(image.string().c_str(),H5F_ACC_RDWR,H5P_DEFAULT);
+    ASSERT_GE(file,0);hid_t ds=H5Dopen2(file,"source_history/footprints/area",H5P_DEFAULT);ASSERT_GE(ds,0);
+    hid_t space=H5Dget_space(ds);std::vector<double> areas(H5Sget_simple_extent_npoints(space));
+    ASSERT_GE(H5Dread(ds,H5T_NATIVE_DOUBLE,H5S_ALL,H5S_ALL,H5P_DEFAULT,areas.data()),0);areas[0]+=.01;
+    ASSERT_GE(H5Dwrite(ds,H5T_NATIVE_DOUBLE,H5S_ALL,H5S_ALL,H5P_DEFAULT,areas.data()),0);H5Sclose(space);H5Dclose(ds);H5Fclose(file);
+    wire.image=bytes(image);detail::CompletedSourceArchive component;wire.io(component);std::string output=component.bytes();
+    detail::CompletedSourceArchive length;length(output);payload.resize(begin-sizeof(uint64_t));payload+=length.bytes();sum=crc(payload);
+    detail::CompletedSourceArchive out;out(magic,version,model,sum,payload);const auto bad=root()/"mesh-source-identity-bad.chk";write(bad,out.bytes());
+    SurfaceSession b;ASSERT_NO_THROW(startClosedSpatial(b,"mesh-source-identity-target",2,.31,true,true,false,1));
+    const auto before=root()/"mesh-source-identity-before.chk",destination=root()/"mesh-source-identity-target.h5";
+    ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");const auto saved=bytes(before),header=bytes(destination);
+    EXPECT_FALSE(b.engine.loadCheckpoint(bad.string()).empty());ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");
+    EXPECT_EQ(bytes(before),saved);EXPECT_EQ(bytes(destination),header);ASSERT_EQ(b.engine.loadCheckpoint(good.string()),"");
     ASSERT_EQ(a.engine.end(),0);ASSERT_EQ(b.engine.end(),0);
 }
 #endif

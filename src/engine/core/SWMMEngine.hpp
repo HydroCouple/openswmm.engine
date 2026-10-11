@@ -217,6 +217,9 @@ public:
     std::string prepareOutputCheckpointing();
     std::string enableCheckpointing();
 #ifdef OPENSWMM_HAS_2D
+    // Separate single-file mesh output qualification; initialize(), prepare,
+    // start(0), then attach the common source checkpoint stage.
+    std::string prepareSurfaceOutputCheckpointing();
     // Qualification attachment only: mesh-owned common sources, with ordinary
     // engine runoff outside the mesh. Stage lifetime must cover the session.
     std::string enableCheckpointing(twoD::CommonSourceStage& stage);
@@ -474,6 +477,7 @@ private:
     /// OUTPUT_FILE is configured; used in start() to call prepareMeshAndDatasets
     /// once the mesh is built.
     twoD::Default2DOutputPlugin* surface_output_plugin_ = nullptr;
+    bool checkpoint_surface_output_ = false;
 
     /// Point ctx_.twod_io at surface_router_'s mesh/options/boundary and
     /// pending parse rows so serialization consumers (InpWriter, GeoPackage

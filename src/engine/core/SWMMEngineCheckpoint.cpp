@@ -10,6 +10,9 @@
 #include "../2d/subsurface/CommonSourceStage.hpp"
 #include "../2d/subsurface/EngineSourceResultHistory.hpp"
 #include "../2d/solver/ExplicitInertialSolver.hpp"
+#ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
+#include "../2d/output/Default2DOutputPlugin.hpp"
+#endif
 #endif
 #include <algorithm>
 #include <atomic>
@@ -425,7 +428,20 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
 #ifdef OPENSWMM_HAS_2D
     if(surface_router_.isActive()) {
         require(ctx_.events.empty(),"Surface session checkpoint does not yet recover skipped routing events.");
-        require(surface_router_.options_.output_file.empty(),"Surface session checkpoint cannot append surface output.");
+        require(surface_router_.options_.output_file.empty() || checkpoint_surface_output_,
+                "Surface session checkpoint requires its prepared mesh output mode.");
+#ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
+        if(checkpoint_surface_output_)require(!checkpoint_output_ && surface_output_plugin_ &&
+                surface_output_plugin_->checkpoint_fresh_ && ctx_.plugin_specs.empty() &&
+                plugins_.output_plugins().size()==1 && plugins_.output_plugins().front()==surface_output_plugin_ &&
+                plugins_.input_plugins().size()==1 && plugins_.state_io_plugins().size()==1 &&
+                dynamic_cast<DefaultStateIOPlugin*>(plugins_.state_io_plugins().front()) &&
+                plugins_.report_plugins().size()==(rpt_path_.empty()?0u:1u) &&
+                (rpt_path_.empty() || dynamic_cast<DefaultReportPlugin*>(plugins_.report_plugins().front())),
+                "Mesh output checkpoint supports only the built-in mesh writer.");
+#else
+        require(!checkpoint_surface_output_,"Mesh output checkpoint support is unavailable.");
+#endif
         require(attaching_surface || (surface_router_.joint_hydraulic_==&router_ &&
                 surface_router_.common_stage_ && (surface_router_.common_stage_->meshOnly() ||
                  (source_delivery_ && source_stage_==surface_router_.common_stage_))),
@@ -567,6 +583,28 @@ std::string SWMMEngine::prepareOutputCheckpointing() {
     } catch(const std::exception& e) {return e.what();}
 }
 #ifdef OPENSWMM_HAS_2D
+std::string SWMMEngine::prepareSurfaceOutputCheckpointing() {
+#ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
+    try {
+        require(ctx_.state==EngineState::INITIALIZED && !step_active_ && !runtime_pipeline_ &&
+                !checkpoint_enabled_ && !checkpoint_output_ && !checkpoint_surface_output_ && ctx_.current_time==0 &&
+                surface_output_plugin_ && !binary_output_plugin_,
+                "Prepare mesh output checkpointing after initialize and before start(0), without a binary writer.");
+        require(ctx_.plugin_specs.empty() && plugins_.output_plugins().size()==1 &&
+                plugins_.output_plugins().front()==surface_output_plugin_ && plugins_.input_plugins().size()==1 &&
+                plugins_.state_io_plugins().size()==1 && dynamic_cast<DefaultStateIOPlugin*>(plugins_.state_io_plugins().front()) &&
+                plugins_.report_plugins().size()==(rpt_path_.empty()?0u:1u) &&
+                (rpt_path_.empty() || dynamic_cast<DefaultReportPlugin*>(plugins_.report_plugins().front())),
+                "Mesh checkpoint requires the built-in mesh writer alone.");
+        std::error_code ec;const auto status=std::filesystem::symlink_status(io::utf8_path(surface_output_plugin_->h5_path_),ec);
+        require((!ec || ec==std::errc::no_such_file_or_directory) && !std::filesystem::exists(status),
+                "Mesh output checkpoint requires a new output destination.");
+        checkpoint_surface_output_=true;surface_output_plugin_->checkpoint_fresh_=true;return {};
+    } catch(const std::exception& e) {return e.what();}
+#else
+    return "Mesh output checkpoint support is unavailable in this build.";
+#endif
+}
 std::string SWMMEngine::enableCheckpointing(twoD::CommonSourceStage& stage) {return enableCheckpointingImpl(&stage);}
 std::string SWMMEngine::enableSpatialSourceCheckpointing(twoD::CommonSourceStage& stage) {return enableCheckpointingImpl(&stage,true);}
 #endif
@@ -661,6 +699,13 @@ std::string SWMMEngine::checkpointBytes(std::string& result) const {
             require(io_thread_.flush()==0,"Cannot checkpoint failed output writes.");
             auto output=binary_output_plugin_->checkpointBytes(ctx_,ctx_.next_report_ms);payload(output);version+=3;
         }
+#ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
+        if(checkpoint_surface_output_) {
+            require(io_thread_.flush()==0,"Cannot checkpoint failed mesh writes.");
+            SimulationSnapshot snap;fillSurfaceSnapshot(snap);
+            auto output=surface_output_plugin_->checkpointBytes(ctx_,ctx_.next_report_ms,snap);payload(output);version+=6;
+        }
+#endif
         auto bytes=payload.bytes(),model=checkpoint_model_;auto crc=checksum(bytes);std::string magic=magicName;
         Archive out;out(magic,version,model,crc,bytes);require(out.bytes().size()<=maxBytes,"Engine checkpoint exceeds its size limit.");
         result=out.bytes();return {};
@@ -718,12 +763,18 @@ std::string SWMMEngine::loadCheckpoint(const std::string& path) {
         if(surface_router_.isActive())expected_version=source_delivery_?5:4;
 #endif
         if(checkpoint_output_)expected_version+=3;
+#ifdef OPENSWMM_HAS_2D
+        if(checkpoint_surface_output_)expected_version+=6;
+#endif
         require(magic==magicName && version==expected_version && model==checkpoint_model_ && crc==checksum(bytes),"Engine checkpoint format/model/checksum differs.");
         RestartState state(*this);Archive payload(std::move(bytes));state.archive(payload);std::string hydraulic;payload(hydraulic);
 #ifdef OPENSWMM_HAS_2D
         std::string delivery;if(source_delivery_)payload(delivery);
 #endif
         std::string output;if(checkpoint_output_)payload(output);
+#ifdef OPENSWMM_HAS_2D
+        if(checkpoint_surface_output_)payload(output);
+#endif
         payload.finish();state.validate(*this);
         std::shared_ptr<DefaultOutputPlugin::PreparedCheckpoint> prepared_output;
         std::function<void()> publish_output;
@@ -732,6 +783,18 @@ std::string SWMMEngine::loadCheckpoint(const std::string& path) {
             prepared_output=binary_output_plugin_->prepareCheckpoint(ctx_,state.boundary[4],std::move(output));
             publish_output=[&]{binary_output_plugin_->installCheckpoint(*prepared_output);};
         }
+#ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
+        std::shared_ptr<twoD::Default2DOutputPlugin::PreparedCheckpoint> prepared_mesh;
+        if(checkpoint_surface_output_) {
+            require(io_thread_.flush()==0,"Cannot restore failed mesh writes.");
+            SimulationSnapshot snap;fillSurfaceSnapshot(snap);snap.sim_time=state.boundary[0];
+            twoD::SourceResultHistory initial;
+            if(source_stage_) {const auto error=initial.append(*source_stage_);require(error.empty(),error.c_str());}
+            prepared_mesh=surface_output_plugin_->prepareCheckpoint(ctx_,state.boundary[4],snap,
+                source_stage_?&initial:nullptr,std::move(output));
+            publish_output=[&]{surface_output_plugin_->installCheckpoint(*prepared_mesh);};
+        }
+#endif
 #ifdef OPENSWMM_HAS_2D
         if(surface_router_.isActive()) {
             std::optional<runoff::SourceWaterDeliveryBridge> bridge;
@@ -745,7 +808,7 @@ std::string SWMMEngine::loadCheckpoint(const std::string& path) {
             }
             auto error=surface_router_.loadCheckpointBytes(ctx_,std::move(hydraulic),&state.boundary,&state.gages.rainfall,
                 &state.balance.routing_final_storage,state.stats.sum_iterations>0,bridge?&validate_source:nullptr,
-                prepared_output?&publish_output:nullptr);
+                publish_output?&publish_output:nullptr);
             require(error.empty(),error.c_str());
             if(bridge) {static_assert(std::is_nothrow_move_assignable_v<runoff::SourceWaterDeliveryBridge>);*source_delivery_=std::move(*bridge);}
             state.install(*this);return {};

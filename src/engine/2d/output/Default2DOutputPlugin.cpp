@@ -9,6 +9,7 @@
 #ifdef OPENSWMM_HAS_2D
 
 #include "Default2DOutputPlugin.hpp"
+#include "../../io/Hdf5Mutex.hpp"
 #include "../subsurface/SourceResultHistory.hpp"
 #include "../subsurface/SubsurfaceData.hpp"   // G-O: the aquifer ledger at finalize
 #include "../../core/SimulationContext.hpp"
@@ -42,7 +43,7 @@ void Default2DOutputPlugin::writeStringAttr(hid_t loc, const char* name,
 
     hid_t aspace = H5Screate(H5S_SCALAR);
     hid_t attr   = H5Acreate2(loc, name, atype, aspace, H5P_DEFAULT, H5P_DEFAULT);
-    H5Awrite(attr, atype, value);
+    checkpointWriteStatus(H5Awrite(attr, atype, value));
     H5Aclose(attr);
     H5Sclose(aspace);
     H5Tclose(atype);
@@ -81,17 +82,17 @@ void Default2DOutputPlugin::extendAndWrite2D(hid_t ds, const double* data,
                                                hsize_t n_cols) {
     // Extend dataset by one row in the time dimension
     hsize_t new_dims[2] = { n_steps_ + 1, n_cols };
-    H5Dset_extent(ds, new_dims);
+    checkpointWriteStatus(H5Dset_extent(ds, new_dims));
 
     // Select the new row hyperslab
     hid_t filespace = H5Dget_space(ds);
     hsize_t offset[2] = { n_steps_, 0 };
     hsize_t count[2]  = { 1, n_cols };
-    H5Sselect_hyperslab(filespace, H5S_SELECT_SET, offset, nullptr, count, nullptr);
+    checkpointWriteStatus(H5Sselect_hyperslab(filespace, H5S_SELECT_SET, offset, nullptr, count, nullptr));
 
     // Memory space for one row
     hid_t memspace = H5Screate_simple(2, count, nullptr);
-    H5Dwrite(ds, H5T_NATIVE_DOUBLE, memspace, filespace, H5P_DEFAULT, data);
+    checkpointWriteStatus(H5Dwrite(ds, H5T_NATIVE_DOUBLE, memspace, filespace, H5P_DEFAULT, data));
     H5Sclose(memspace);
     H5Sclose(filespace);
 }
@@ -99,15 +100,15 @@ void Default2DOutputPlugin::extendAndWrite2D(hid_t ds, const double* data,
 void Default2DOutputPlugin::extendAndWrite3D(hid_t ds, const double* data,
                                                hsize_t dim1, hsize_t dim2) {
     hsize_t new_dims[3] = { n_steps_ + 1, dim1, dim2 };
-    H5Dset_extent(ds, new_dims);
+    checkpointWriteStatus(H5Dset_extent(ds, new_dims));
 
     hid_t filespace = H5Dget_space(ds);
     hsize_t offset[3] = { n_steps_, 0, 0 };
     hsize_t count[3]  = { 1, dim1, dim2 };
-    H5Sselect_hyperslab(filespace, H5S_SELECT_SET, offset, nullptr, count, nullptr);
+    checkpointWriteStatus(H5Sselect_hyperslab(filespace, H5S_SELECT_SET, offset, nullptr, count, nullptr));
 
     hid_t memspace = H5Screate_simple(3, count, nullptr);
-    H5Dwrite(ds, H5T_NATIVE_DOUBLE, memspace, filespace, H5P_DEFAULT, data);
+    checkpointWriteStatus(H5Dwrite(ds, H5T_NATIVE_DOUBLE, memspace, filespace, H5P_DEFAULT, data));
     H5Sclose(memspace);
     H5Sclose(filespace);
 }
@@ -117,7 +118,7 @@ void Default2DOutputPlugin::writeDoubleAttr(hid_t loc, const char* name,
     hid_t aspace = H5Screate(H5S_SCALAR);
     hid_t attr   = H5Acreate2(loc, name, H5T_NATIVE_DOUBLE, aspace,
                                H5P_DEFAULT, H5P_DEFAULT);
-    H5Awrite(attr, H5T_NATIVE_DOUBLE, &value);
+    checkpointWriteStatus(H5Awrite(attr, H5T_NATIVE_DOUBLE, &value));
     H5Aclose(attr);
     H5Sclose(aspace);
 }
@@ -141,7 +142,7 @@ hid_t Default2DOutputPlugin::createFaceEnvelopeDataset(const char* name,
 
 void Default2DOutputPlugin::writeFaceEnvelope(hid_t ds, const double* data) {
     if (ds == H5I_INVALID_HID) return;
-    H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, data);
+    checkpointWriteStatus(H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, data));
 }
 
 // ============================================================================
@@ -152,6 +153,8 @@ Default2DOutputPlugin::Default2DOutputPlugin(std::string h5_path)
     : h5_path_(std::move(h5_path)) {}
 
 Default2DOutputPlugin::~Default2DOutputPlugin() {
+    std::lock_guard<std::recursive_mutex> lock(io::resultHdf5Mutex());
+    closeDatasets();
     if (file_id_ != H5I_INVALID_HID) {
         H5Fclose(file_id_);
         file_id_ = H5I_INVALID_HID;
@@ -199,8 +202,10 @@ void Default2DOutputPlugin::writeMeshTopology(const SimulationContext& ctx) {
 }
 
 int Default2DOutputPlugin::prepare(const SimulationContext& ctx) {
+    std::lock_guard<std::recursive_mutex> lock(io::resultHdf5Mutex());
     // Create HDF5 file (truncate if exists)
-    file_id_ = H5Fcreate(h5_path_.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
+    file_id_ = H5Fcreate(h5_path_.c_str(), checkpoint_fresh_ ? H5F_ACC_EXCL : H5F_ACC_TRUNC,
+                        H5P_DEFAULT, H5P_DEFAULT);
     if (file_id_ < 0) {
         last_error_ = "Default2DOutputPlugin: cannot create file '" + h5_path_ + "'";
         state_ = PluginState::ERROR;
@@ -243,8 +248,8 @@ int Default2DOutputPlugin::prepare(const SimulationContext& ctx) {
     native_species_units_["__WATER_AGE__"]="s";
     native_species_units_["__TEMPERATURE__"]="degC";
 
-    state_ = PluginState::PREPARED;
-    return 0;
+    state_ = checkpoint_write_failed_ ? PluginState::ERROR : PluginState::PREPARED;
+    return checkpoint_write_failed_ ? 1 : 0;
 }
 
 void Default2DOutputPlugin::setMeshCoordinateScale(double metres_per_model_unit) {
@@ -314,7 +319,7 @@ void Default2DOutputPlugin::writeCrsVariable() {
     }
 
     int dummy = 0;
-    H5Dwrite(ds, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &dummy);
+    checkpointWriteStatus(H5Dwrite(ds, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &dummy));
     H5Dclose(ds);
     H5Sclose(space);
 }
@@ -325,7 +330,7 @@ void Default2DOutputPlugin::writeCrsVariable() {
 
 void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
                       hsize_t& n_faces, hsize_t& n_nodes, hsize_t& edge_stride,
-                      auto& writeStringAttrFn) {
+                      auto& writeStringAttrFn, auto& writeStatusFn) {
     n_faces = static_cast<hsize_t>(mesh.n_triangles());
     n_nodes = static_cast<hsize_t>(mesh.n_vertices());
     // UGRID mixed topology: [nFace, max_nv] with _FillValue in the padding.
@@ -348,7 +353,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
 
         // Write a dummy value
         int dummy = 0;
-        H5Dwrite(ds, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &dummy);
+        writeStatusFn(H5Dwrite(ds, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &dummy));
         H5Dclose(ds);
         H5Sclose(space);
     }
@@ -361,7 +366,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         // Mesh2_node_x
         hid_t ds_x = H5Dcreate2(file_id, "Mesh2_node_x", H5T_NATIVE_DOUBLE,
                                   space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-        H5Dwrite(ds_x, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.vx.data());
+        writeStatusFn(H5Dwrite(ds_x, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.vx.data()));
         writeStringAttrFn(ds_x, "standard_name", "projection_x_coordinate");
         writeStringAttrFn(ds_x, "units", "m");
         writeStringAttrFn(ds_x, "openswmm_crs", "crs");
@@ -370,7 +375,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         // Mesh2_node_y
         hid_t ds_y = H5Dcreate2(file_id, "Mesh2_node_y", H5T_NATIVE_DOUBLE,
                                   space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-        H5Dwrite(ds_y, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.vy.data());
+        writeStatusFn(H5Dwrite(ds_y, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.vy.data()));
         writeStringAttrFn(ds_y, "standard_name", "projection_y_coordinate");
         writeStringAttrFn(ds_y, "units", "m");
         writeStringAttrFn(ds_y, "openswmm_crs", "crs");
@@ -379,7 +384,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         // Mesh2_node_z (elevation)
         hid_t ds_z = H5Dcreate2(file_id, "Mesh2_node_z", H5T_NATIVE_DOUBLE,
                                   space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-        H5Dwrite(ds_z, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.vz.data());
+        writeStatusFn(H5Dwrite(ds_z, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.vz.data()));
         writeStringAttrFn(ds_z, "standard_name", "altitude");
         writeStringAttrFn(ds_z, "units", "m");
         writeStringAttrFn(ds_z, "positive", "up");
@@ -412,7 +417,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
                 conn[i * edge_stride + static_cast<hsize_t>(k)] =
                     (k < nv) ? mesh.cell_vertex(c, k) : -1;
         }
-        H5Dwrite(ds, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, conn.data());
+        writeStatusFn(H5Dwrite(ds, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, conn.data()));
 
         writeStringAttrFn(ds, "cf_role", "face_node_connectivity");
         writeStringAttrFn(ds, "start_index", "0");
@@ -421,7 +426,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
             hid_t aspace = H5Screate(H5S_SCALAR);
             hid_t attr   = H5Acreate2(ds, "_FillValue", H5T_NATIVE_INT, aspace,
                                       H5P_DEFAULT, H5P_DEFAULT);
-            H5Awrite(attr, H5T_NATIVE_INT, &fill);
+            writeStatusFn(H5Awrite(attr, H5T_NATIVE_INT, &fill));
             H5Aclose(attr);
             H5Sclose(aspace);
         }
@@ -438,7 +443,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         std::vector<int8_t> nv(n_faces);
         for (hsize_t i = 0; i < n_faces; ++i)
             nv[i] = static_cast<int8_t>(mesh.cell_vertex_count(static_cast<int>(i)));
-        H5Dwrite(ds, H5T_NATIVE_INT8, H5S_ALL, H5S_ALL, H5P_DEFAULT, nv.data());
+        writeStatusFn(H5Dwrite(ds, H5T_NATIVE_INT8, H5S_ALL, H5S_ALL, H5P_DEFAULT, nv.data()));
         writeStringAttrFn(ds, "long_name", "vertices per face (3 = triangle, 4 = quadrilateral)");
         writeStringAttrFn(ds, "mesh", "Mesh2");
         writeStringAttrFn(ds, "location", "face");
@@ -453,28 +458,28 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
 
         hid_t ds_cx = H5Dcreate2(file_id, "Mesh2_face_x", H5T_NATIVE_DOUBLE,
                                    space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-        H5Dwrite(ds_cx, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.tri_cx.data());
+        writeStatusFn(H5Dwrite(ds_cx, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.tri_cx.data()));
         writeStringAttrFn(ds_cx, "units", "m");
         writeStringAttrFn(ds_cx, "openswmm_crs", "crs");
         H5Dclose(ds_cx);
 
         hid_t ds_cy = H5Dcreate2(file_id, "Mesh2_face_y", H5T_NATIVE_DOUBLE,
                                    space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-        H5Dwrite(ds_cy, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.tri_cy.data());
+        writeStatusFn(H5Dwrite(ds_cy, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.tri_cy.data()));
         writeStringAttrFn(ds_cy, "units", "m");
         writeStringAttrFn(ds_cy, "openswmm_crs", "crs");
         H5Dclose(ds_cy);
 
         hid_t ds_cz = H5Dcreate2(file_id, "Mesh2_face_z", H5T_NATIVE_DOUBLE,
                                    space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-        H5Dwrite(ds_cz, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.tri_cz.data());
+        writeStatusFn(H5Dwrite(ds_cz, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.tri_cz.data()));
         writeStringAttrFn(ds_cz, "units", "m");
         H5Dclose(ds_cz);
 
         // Manning's n
         hid_t ds_n = H5Dcreate2(file_id, "Mesh2_face_mannings_n", H5T_NATIVE_DOUBLE,
                                   space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-        H5Dwrite(ds_n, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.mannings_n.data());
+        writeStatusFn(H5Dwrite(ds_n, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.mannings_n.data()));
         writeStringAttrFn(ds_n, "long_name", "Manning roughness coefficient");
         writeStringAttrFn(ds_n, "units", "s m^(-1/3)");
         writeStringAttrFn(ds_n, "mesh", "Mesh2");
@@ -484,7 +489,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
         // Face area
         hid_t ds_a = H5Dcreate2(file_id, "Mesh2_face_area", H5T_NATIVE_DOUBLE,
                                   space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-        H5Dwrite(ds_a, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.tri_area.data());
+        writeStatusFn(H5Dwrite(ds_a, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, mesh.tri_area.data()));
         writeStringAttrFn(ds_a, "long_name", "face planimetric area");
         writeStringAttrFn(ds_a, "units", "m2");
         writeStringAttrFn(ds_a, "mesh", "Mesh2");
@@ -518,8 +523,8 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
 
         hid_t ds_len = H5Dcreate2(file_id, "Mesh2_edge_length", H5T_NATIVE_DOUBLE,
                                     space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-        H5Dwrite(ds_len, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
-                 len_p.data());
+        writeStatusFn(H5Dwrite(ds_len, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
+                 len_p.data()));
         writeStringAttrFn(ds_len, "long_name", "edge length");
         writeStringAttrFn(ds_len, "units", "m");
         writeStringAttrFn(ds_len, "mesh", "Mesh2");
@@ -528,8 +533,8 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
 
         hid_t ds_nx = H5Dcreate2(file_id, "Mesh2_edge_nx", H5T_NATIVE_DOUBLE,
                                    space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-        H5Dwrite(ds_nx, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
-                 nx_p.data());
+        writeStatusFn(H5Dwrite(ds_nx, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
+                 nx_p.data()));
         writeStringAttrFn(ds_nx, "long_name", "edge outward unit normal x component");
         writeStringAttrFn(ds_nx, "units", "1");
         writeStringAttrFn(ds_nx, "mesh", "Mesh2");
@@ -538,8 +543,8 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
 
         hid_t ds_ny = H5Dcreate2(file_id, "Mesh2_edge_ny", H5T_NATIVE_DOUBLE,
                                    space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-        H5Dwrite(ds_ny, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
-                 ny_p.data());
+        writeStatusFn(H5Dwrite(ds_ny, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT,
+                 ny_p.data()));
         writeStringAttrFn(ds_ny, "long_name", "edge outward unit normal y component");
         writeStringAttrFn(ds_ny, "units", "1");
         writeStringAttrFn(ds_ny, "mesh", "Mesh2");
@@ -551,6 +556,7 @@ void writeMeshToHDF5(hid_t file_id, const MeshData& mesh,
 }
 
 void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
+    std::lock_guard<std::recursive_mutex> lock(io::resultHdf5Mutex());
     // Written first so the `openswmm_crs = "crs"` attributes the mesh
     // variables carry resolve against a variable that already exists.
     writeCrsVariable();
@@ -570,7 +576,8 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
     auto writeAttr = [this](hid_t loc, const char* name, const char* val) {
         writeStringAttr(loc, name, val);
     };
-    writeMeshToHDF5(file_id_, mesh, n_faces_, n_nodes_, edge_stride_, writeAttr);
+    auto writeStatus=[this](herr_t status){checkpointWriteStatus(status);};
+    writeMeshToHDF5(file_id_, mesh, n_faces_, n_nodes_, edge_stride_, writeAttr, writeStatus);
 
     // --- Create time-varying datasets with unlimited time dimension ---
     // Chunk size: 1 time step x all faces (or nodes)
@@ -702,6 +709,12 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
                 "Mesh2_face_max_continuity_err",
                 "maximum absolute per-cell continuity residual", "m3 s-1");
     }
+    if (checkpoint_fresh_ && !checkpoint_write_failed_) {
+        try { checkpoint_header_ = fileBytes(); }
+        catch(const std::exception& e) {
+            checkpoint_write_failed_=true;state_=PluginState::ERROR;last_error_=e.what();
+        }
+    }
 }
 
 // ============================================================================
@@ -725,6 +738,7 @@ int Default2DOutputPlugin::writePendingSourceHistory() {
 }
 
 int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
+    std::lock_guard<std::recursive_mutex> lock(io::resultHdf5Mutex());
     if(writePendingSourceHistory()!=0)return 1;
     if (file_id_ < 0 || snap.surface_tri_count == 0) return 0;
 
@@ -741,12 +755,12 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
     // Write time value
     {
         hsize_t new_dim = n_steps_ + 1;
-        H5Dset_extent(ds_time_, &new_dim);
+        checkpointWriteStatus(H5Dset_extent(ds_time_, &new_dim));
         hid_t fspace = H5Dget_space(ds_time_);
         hsize_t offset = n_steps_, count = 1;
-        H5Sselect_hyperslab(fspace, H5S_SELECT_SET, &offset, nullptr, &count, nullptr);
+        checkpointWriteStatus(H5Sselect_hyperslab(fspace, H5S_SELECT_SET, &offset, nullptr, &count, nullptr));
         hid_t mspace = H5Screate_simple(1, &count, nullptr);
-        H5Dwrite(ds_time_, H5T_NATIVE_DOUBLE, mspace, fspace, H5P_DEFAULT, &snap.sim_time);
+        checkpointWriteStatus(H5Dwrite(ds_time_, H5T_NATIVE_DOUBLE, mspace, fspace, H5P_DEFAULT, &snap.sim_time));
         H5Sclose(mspace);
         H5Sclose(fspace);
     }
@@ -971,6 +985,7 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
         writeFaceEnvelope(ds_face_max_continuity_err_,
                           snap.surface_stat_max_cont_err.data());
 
+    if(checkpoint_write_failed_)return 1;
     ++n_steps_;
     return 0;
 }
@@ -1026,7 +1041,7 @@ void Default2DOutputPlugin::createGroundwaterDatasets(const SimulationSnapshot& 
         hid_t space = H5Screate_simple(1, &n_faces_, nullptr);
         hid_t ds = H5Dcreate2(file_id_, "Mesh2_face_gw_bed_elev", H5T_NATIVE_DOUBLE, space,
                                H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-        H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, snap.gw2d_bed_elev.data());
+        checkpointWriteStatus(H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, snap.gw2d_bed_elev.data()));
         writeStringAttr(ds, "long_name", "aquifer bottom elevation (cell bed minus soil column thickness)");
         writeStringAttr(ds, "units", "m");
         writeStringAttr(ds, "mesh", "Mesh2");
@@ -1038,7 +1053,7 @@ void Default2DOutputPlugin::createGroundwaterDatasets(const SimulationSnapshot& 
         hid_t space = H5Screate_simple(1, &n_faces_, nullptr);
         hid_t ds = H5Dcreate2(file_id_, "Mesh2_face_gw_closure", H5T_NATIVE_INT, space,
                                H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-        H5Dwrite(ds, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, snap.gw2d_closure.data());
+        checkpointWriteStatus(H5Dwrite(ds, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, snap.gw2d_closure.data()));
         writeStringAttr(ds, "long_name", "resolved unsaturated-zone closure per cell");
         writeStringAttr(ds, "flag_values", "0 1 2");
         writeStringAttr(ds, "flag_meanings", "closed_form enslaved sigma");
@@ -1188,6 +1203,7 @@ void Default2DOutputPlugin::writeSpeciesRows(const double* all, hsize_t n_specie
 // ============================================================================
 
 int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
+    std::lock_guard<std::recursive_mutex> lock(io::resultHdf5Mutex());
     const bool prior_error=state_==PluginState::ERROR;
     const int source_error=writePendingSourceHistory()!=0||prior_error?1:0;
     // Write the global 2D mass balance once, now that all terms are final.
@@ -1195,12 +1211,13 @@ int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
         const auto& mb = ctx.mass_balance_2d;
         hid_t grp = H5Gcreate2(file_id_, "/mass_balance_2d",
                                 H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        checkpointWriteStatus(grp>=0?0:-1);
         if (grp >= 0) {
             auto writeScalar = [this](hid_t loc, const char* name, double v) {
                 hid_t space = H5Screate(H5S_SCALAR);
                 hid_t ds = H5Dcreate2(loc, name, H5T_NATIVE_DOUBLE, space,
                                        H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-                H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, &v);
+                checkpointWriteStatus(H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, &v));
                 writeStringAttr(ds, "units", "m3");
                 H5Dclose(ds);
                 H5Sclose(space);
@@ -1230,12 +1247,13 @@ int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
         const auto& g = *ctx.twod_io.aquifer_state;
         hid_t grp = H5Gcreate2(file_id_, "/groundwater_2d",
                                 H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        checkpointWriteStatus(grp>=0?0:-1);
         if (grp >= 0) {
             auto writeScalar = [this](hid_t loc, const char* name, double v) {
                 hid_t space = H5Screate(H5S_SCALAR);
                 hid_t ds = H5Dcreate2(loc, name, H5T_NATIVE_DOUBLE, space,
                                        H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-                H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, &v);
+                checkpointWriteStatus(H5Dwrite(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, &v));
                 writeStringAttr(ds, "units", "m3");
                 H5Dclose(ds);
                 H5Sclose(space);
@@ -1258,6 +1276,30 @@ int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
         }
     }
 
+    closeDatasets();
+
+    if (file_id_ != H5I_INVALID_HID) {
+        checkpointWriteStatus(H5Fclose(file_id_));
+        file_id_ = H5I_INVALID_HID;
+    }
+
+    state_ = source_error||checkpoint_write_failed_?PluginState::ERROR:PluginState::FINALIZED;
+    return source_error||checkpoint_write_failed_?1:0;
+}
+
+void Default2DOutputPlugin::checkpointWriteStatus(herr_t status) {
+    if(checkpoint_fresh_ && status<0) {
+        checkpoint_write_failed_=true;state_=PluginState::ERROR;
+        last_error_="Mesh checkpoint output write failed.";
+    }
+}
+
+std::vector<hid_t*> Default2DOutputPlugin::checkpointDatasets() {
+    std::vector<hid_t*> ids{&ds_time_, &ds_face_depth_, &ds_face_head_, &ds_face_grad_hx_, &ds_face_grad_hy_, &ds_face_grad_hx_lim_, &ds_face_grad_hy_lim_, &ds_face_rainfall_, &ds_face_coupling_flux_, &ds_face_net_source_, &ds_face_infil_rate_, &ds_face_infil_cum_, &ds_face_rain_cum_, &ds_face_species_conc_, &ds_face_buildup_, &ds_gw_sat_conc_, &ds_gw_unsat_conc_, &ds_gw_species_ledger_, &ds_gw_ledger_, &ds_gw_bed_exchange_, &ds_gw_theta_, &ds_face_vx_, &ds_face_vy_, &ds_face_continuity_err_, &ds_edge_flux_, &ds_node_head_, &ds_node_depth_, &ds_face_max_depth_, &ds_face_max_velocity_, &ds_face_max_continuity_err_};
+    for (auto& id : ds_gw_face_) ids.push_back(&id);
+    return ids;
+}
+void Default2DOutputPlugin::closeDatasets() noexcept {
     // Close all datasets
     auto closeDS = [](hid_t& ds) {
         if (ds != H5I_INVALID_HID) { H5Dclose(ds); ds = H5I_INVALID_HID; }
@@ -1293,13 +1335,6 @@ int Default2DOutputPlugin::finalize(const SimulationContext& ctx) {
     closeDS(ds_face_max_velocity_);
     closeDS(ds_face_max_continuity_err_);
 
-    if (file_id_ != H5I_INVALID_HID) {
-        H5Fclose(file_id_);
-        file_id_ = H5I_INVALID_HID;
-    }
-
-    state_ = source_error?PluginState::ERROR:PluginState::FINALIZED;
-    return source_error;
 }
 
 } // namespace openswmm::twoD

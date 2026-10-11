@@ -510,7 +510,8 @@ if(OPENSWMM_BUILD_2D)
     # WebAssembly build does): OUTPUT_FILE is then ignored with a warning and
     # results are read through the swmm_2d_* API.
     if(OPENSWMM_2D_HDF5_OUTPUT)
-        list(APPEND OPENSWMM_2D_SOURCES 2d/output/Default2DOutputPlugin.cpp)
+        list(APPEND OPENSWMM_2D_SOURCES 2d/output/Default2DOutputPlugin.cpp
+            2d/output/Default2DOutputCheckpoint.cpp)
     endif()
 
     target_sources(openswmm_engine PRIVATE ${OPENSWMM_2D_SOURCES})

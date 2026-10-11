@@ -1492,6 +1492,10 @@ int SWMMEngine::start(int save_results) noexcept {
             if (!cfg_err.empty()) push_report_warning(cfg_err, 0);
         }
         surface_output_plugin_->prepareMeshAndDatasets(surface_router_.mesh());
+        if(surface_output_plugin_->state()==PluginState::ERROR) {
+            set_error(SWMM_ERR_PLUGIN,surface_output_plugin_->last_error_message());
+            return SWMM_ERR_PLUGIN;
+        }
     }
 #endif
 
@@ -1808,6 +1812,13 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
 #ifdef OPENSWMM_HAS_2D
     if (surface_router_.runtimeActive() || exchange_target_ >= 0.0)
         surface_router_.flushPendingBatch(ctx_);
+    if (checkpoint_surface_output_ && checkpoint_enabled_ &&
+        ctx_.elapsed_ms + 1000.0 * dt_next >= ctx_.next_report_ms &&
+        datetime::addSeconds(ctx_.options.start_date,(ctx_.next_report_ms+1.0)/1000.0)>=ctx_.options.report_start) {
+        // Complete the reporting batch before crediting the closing hydraulic
+        // return. A source snapshot must not contain credits from a later step.
+        surface_router_.flushPendingBatch(ctx_);
+    }
 #endif
     reassertNodeStateOverrides(ctx_);
     computeFinalStorage();
@@ -1881,6 +1892,23 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
     // All subcatch/node/link state arrays still reflect the end of the
     // just-completed routing step — advance only updates timers, not state.
     postOutputSnapshot(dt_next);
+
+#ifdef OPENSWMM_HAS_2D
+    if (checkpoint_surface_output_ && checkpoint_enabled_) {
+        // A mesh report may close another source interval. Capture its queues
+        // and closing stores before accepting this whole-engine boundary.
+        computeFinalStorage();
+        if (source_delivery_) {
+            const auto error=source_delivery_->capture(source_stage_->sources(),ctx_.current_time);
+            if(!error.empty())throw std::runtime_error(error);
+            const auto totals=sourceTotals(source_stage_->sources(),*source_delivery_);
+            auto& mb=ctx_.mass_balance;
+            double* fields[]{&mb.runoff_rainfall,&mb.runoff_evap,&mb.runoff_infil,&mb.runoff_runon,&mb.runoff_runoff,&mb.runoff_lid_drain};
+            for(int k=0;k<6;++k)*fields[k]+=totals[k]-source_totals_[k];
+            source_totals_=totals;
+        }
+    }
+#endif
 
     if (avg_out_due && !avg_exact) {
         accumulateAvgResults();
@@ -7125,7 +7153,8 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
             // never consumed; DefaultReportPlugin::update() is a no-op.
             SimulationSnapshot snap;
             snap.sim_time = report_date;
-            surface_router_.flushPendingBatch(ctx_);
+            if (!checkpoint_surface_output_ || !checkpoint_enabled_)
+                surface_router_.flushPendingBatch(ctx_);
             surface_router_.refreshRenderFieldsIfStale();
             fillSurfaceSnapshot(snap);
             io_thread_.post(std::move(snap));
@@ -7738,6 +7767,8 @@ int SWMMEngine::close() noexcept {
     binary_output_plugin_ = nullptr;
     checkpoint_model_.clear();
 #ifdef OPENSWMM_HAS_2D
+    checkpoint_surface_output_ = false;
+    surface_output_plugin_ = nullptr;
     detachEngineSourceHistory();source_delivery_.reset();source_stage_=nullptr;source_totals_={};
 #endif
     // Load-phase breakdown. Emitted here rather than from end() so it reports

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "SourceResultHistory.hpp"
+#include "../../io/Hdf5Mutex.hpp"
 #include "EngineSourceResultHistory.hpp"
 #ifdef OPENSWMM_HAS_HDF5_MODEL
 #include "../../io/hdf5/Hdf5Util.hpp"
@@ -212,9 +213,9 @@ struct SourceResultFile {
         } catch(const std::exception& e){return e.what();}
     }
 };
-std::string SourceResultHistory::writeIntoOpenResult(std::int64_t file) const {return SourceResultFile::embed(*this,file);}
-std::string SourceResultHistory::save(const std::string& path) const {return SourceResultFile::save(*this,path);}
-std::string SourceResultHistory::read(const std::string& path,SourceResultHistory& out,bool& available){return SourceResultFile::read(path,out,available);}
+std::string SourceResultHistory::writeIntoOpenResult(std::int64_t file) const {std::lock_guard<std::recursive_mutex> lock(io::resultHdf5Mutex());return SourceResultFile::embed(*this,file);}
+std::string SourceResultHistory::save(const std::string& path) const {std::lock_guard<std::recursive_mutex> lock(io::resultHdf5Mutex());return SourceResultFile::save(*this,path);}
+std::string SourceResultHistory::read(const std::string& path,SourceResultHistory& out,bool& available){std::lock_guard<std::recursive_mutex> lock(io::resultHdf5Mutex());return SourceResultFile::read(path,out,available);}
 
 struct EngineSourceResultFile {
     static constexpr const char* kind="OpenSWMM internal accepted engine source result history";
@@ -276,8 +277,8 @@ struct EngineSourceResultFile {
         } catch(const std::exception& e){return e.what();}
     }
 };
-std::string EngineSourceResultHistory::save(const std::string& path) const {return EngineSourceResultFile::save(*this,path);}
-std::string EngineSourceResultHistory::read(const std::string& path,EngineSourceResultHistory& out,bool& available){return EngineSourceResultFile::read(path,out,available);}
+std::string EngineSourceResultHistory::save(const std::string& path) const {std::lock_guard<std::recursive_mutex> lock(io::resultHdf5Mutex());return EngineSourceResultFile::save(*this,path);}
+std::string EngineSourceResultHistory::read(const std::string& path,EngineSourceResultHistory& out,bool& available){std::lock_guard<std::recursive_mutex> lock(io::resultHdf5Mutex());return EngineSourceResultFile::read(path,out,available);}
 }
 #else
 namespace openswmm::twoD {

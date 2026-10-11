@@ -45,6 +45,7 @@
 #include <vector>
 #include <hdf5.h>
 
+namespace openswmm { class SWMMEngine; }
 namespace openswmm::twoD {
 
 struct MeshData;          // forward declaration
@@ -221,6 +222,23 @@ public:
 
 
 private:
+    friend class openswmm::SWMMEngine;
+    // Internal single-file, water-only continuation. IO must be idle.
+    bool checkpoint_fresh_ = false;
+    bool checkpoint_write_failed_ = false;
+    void checkpointWriteStatus(herr_t);
+    std::string checkpoint_header_;
+    struct PreparedCheckpoint;
+    std::string checkpointBytes(const SimulationContext&, double next_report_ms,
+                                const SimulationSnapshot&);
+    std::shared_ptr<PreparedCheckpoint> prepareCheckpoint(const SimulationContext&,
+        double next_report_ms, const SimulationSnapshot&, const SourceResultHistory*, std::string);
+    void installCheckpoint(PreparedCheckpoint&);
+    void validateCheckpoint(hid_t, const SimulationContext&, double, const SimulationSnapshot&,
+                            hsize_t, double, bool) const;
+    std::vector<hid_t*> checkpointDatasets();
+    void closeDatasets() noexcept;
+    std::string fileBytes() const;
     std::mutex source_mutex_;
     std::vector<std::shared_ptr<const SourceResultHistory>> source_pending_;
     std::shared_ptr<const SourceResultHistory> source_written_;
