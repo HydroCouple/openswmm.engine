@@ -148,6 +148,7 @@ add_gtest_unit(test_engine_outfall_backflow       test_outfall_backflow_quality.
 add_gtest_unit(test_engine_negative_sources       test_negative_sources.cpp)
 add_gtest_unit(test_engine_water_age_api          test_water_age_api.cpp)
 add_gtest_unit(test_engine_transport_options_api  test_transport_options_api.cpp)
+add_gtest_unit(test_engine_capi_gap_closures     test_capi_gap_closures.cpp)
 add_gtest_unit(test_engine_options_malformed      test_options_malformed_values.cpp)
 add_gtest_unit(test_engine_water_age              test_water_age.cpp)
 add_gtest_unit(test_engine_water_age_watershed    test_water_age_watershed.cpp)

@@ -1377,6 +1377,12 @@ class SimulationOptions(MutableMapping):
         # DW surcharge method + TPA celerity (issue #156 Phase 5; adding
         # SURCHARGE_METHOD also closes the long-standing known-keys gap).
         "SURCHARGE_METHOD", "TPA_CELERITY",
+        # Physical constants (heat transport) and FV node feedback.
+        "WATER_DENSITY", "WATER_SPECIFIC_HEAT_CAPACITY", "WIND_FUNC_COEFF_A",
+        "WIND_FUNC_COEFF_B", "PRESSURE_RATIO", "FV_NODE_FEEDBACK_DT",
+        # Legacy / retired keywords: COMPATIBILITY round-trips verbatim;
+        # VIRTUAL_JUNCTION_MOMENTUM reads NONE and refuses FULL.
+        "COMPATIBILITY", "VIRTUAL_JUNCTION_MOMENTUM",
     )
 
     def __getitem__(self, key: str) -> str:

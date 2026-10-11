@@ -83,6 +83,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -1563,6 +1564,8 @@ int writeInpFile(const SimulationContext&  ctx_internal,
         std::fprintf(f,"%-20s %g\n", "FV_SLOT_CELERITY", fvo.slot_celerity);
         if (fvo.pressurized_implicit)
             std::fprintf(f,"%-20s %s\n", "FV_PRESSURIZED_IMPLICIT", "YES");
+        if (fvo.node_feedback_dt)   // non-default only
+            std::fprintf(f,"%-20s %s\n", "FV_NODE_FEEDBACK_DT", "YES");
         if (fvo.pressure_closure == 1)  // issue #156: non-default only
             std::fprintf(f,"%-20s %s\n", "FV_PRESSURE_CLOSURE", "TPA");
         if (fvo.dispersion > 0.0)
@@ -1590,6 +1593,25 @@ int writeInpFile(const SimulationContext&  ctx_internal,
     }
     if (o.write_absolute_paths)
         std::fprintf(f,"%-20s %s\n",  "WRITE_ABSOLUTE_PATHS", "YES");
+    if (!swmm5) {
+        // v6-only physical constants: written when they differ from the
+        // SimulationOptions defaults (option-default rule), at full precision.
+        const SimulationOptions defaults{};
+        auto put = [&](const char* name, double v, double dflt) {
+            if (v == dflt) return;
+            char b[40];   // shortest form that reads back to exactly v
+            for (int prec = 15; prec <= 17; ++prec) {
+                std::snprintf(b, sizeof(b), "%.*g", prec, v);
+                if (std::strtod(b, nullptr) == v) break;
+            }
+            std::fprintf(f, "%-20s %s\n", name, b);
+        };
+        put("WATER_DENSITY",                o.water_density,       defaults.water_density);
+        put("WATER_SPECIFIC_HEAT_CAPACITY", o.water_specific_heat, defaults.water_specific_heat);
+        put("WIND_FUNC_COEFF_A",            o.wind_func_coeff_a,   defaults.wind_func_coeff_a);
+        put("WIND_FUNC_COEFF_B",            o.wind_func_coeff_b,   defaults.wind_func_coeff_b);
+        put("PRESSURE_RATIO",               o.pressure_ratio,      defaults.pressure_ratio);
+    }
     for (const auto& kv : o.ext_options) {
         // "GWF:<subcatch>:<type>" entries are the parsed [GWF] section, not real
         // options — they are re-emitted by the [GWF] writer. Round-tripping them

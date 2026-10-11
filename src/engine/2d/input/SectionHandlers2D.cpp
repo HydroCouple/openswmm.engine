@@ -408,7 +408,7 @@ bool is2DRetiredOptionKey(const std::string& key) {
 
 bool is2DOptionKey(const std::string& key) {
     static const char* kKeys[] = {
-        "MAX_TIMESTEP", "DRY_DEPTH", "COUPLING_CD", "COUPLING_SYNC",
+        "MAX_TIMESTEP", "DRY_DEPTH", "COUPLING_CD", "COUPLING_SYNC", "DISPERSION",
         "LIMITER_EPSILON", "FLUX_DH_EPS", "RAINFALL_MODE", "REPORT_2D",
         "CELL_CLOSURE", "FACE_RECONSTRUCTION", "VFR_MIN_WET_FRAC",
         "OUTPUT_FILE",
@@ -453,6 +453,7 @@ std::string format2DOptionValue(const SolverOptions2D& opts,
     if (iequals(key, "LIMITER_EPSILON"))   return fmt_g(opts.limiter_epsilon);
     if (iequals(key, "FLUX_DH_EPS"))       return fmt_g(opts.flux_dh_eps);
     if (iequals(key, "COUPLING_CD"))       return fmt_g(opts.coupling_cd);
+    if (iequals(key, "DISPERSION"))        return fmt_g(opts.dispersion);
     if (iequals(key, "COUPLING_SYNC"))     return fmt_g(opts.coupling_sync);
     if (iequals(key, "REPORT_2D"))         return opts.report_2d ? "YES" : "NO";
     if (iequals(key, "OUTPUT_FILE"))       return opts.output_file;
