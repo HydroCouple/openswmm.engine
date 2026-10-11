@@ -5,7 +5,6 @@
   "G1:PROFILES": "input-only by design (proposed): GUI passthrough, replayed verbatim by InpWriter; no engine semantics",
   "G1:2D_AQUIFER_LINKS": "backlog (pending triage 2026-10-11): link rows (cfg.link_rows) have no count/get/add/remove API",
   "G1:MAP": "backlog (pending triage 2026-10-11): [MAP] DIMENSIONS/UNITS not readable or writable (CRS is, via swmm_spatial_*_crs)",
-  "G1:SEDIMENT_EXCHANGE": "backlog (pending triage 2026-10-11): heat sediment exchange parameters have no swmm_heat_* accessor",
   "G1:STORAGE_MIXING": "not implemented: the ARD parser rejects [STORAGE_MIXING] ('arrives with plan phase E2b'); there is no stored data to expose, so its C API arrives with the feature",
   "G3:2D_INITIAL_QUALITY": "backlog (pending triage 2026-10-11): cell concentrations readable; initial-quality rows not writable",
   "G4:2D_BOUNDARY_QUALITY": "backlog (pending triage 2026-10-11): swmm_2d_set_edge_bc_concentrations has no getter"

@@ -1444,6 +1444,17 @@ cdef extern from "openswmm_heat.h":
     cdef int swmm_heat_remove_node_override(SWMM_Engine e, int index)
     cdef int swmm_heat_get_effective_source_temp(SWMM_Engine e, int source,
                                                   int node, double* temp_c)
+    cdef int swmm_heat_get_sediment(SWMM_Engine e, int param, double* value)
+    cdef int swmm_heat_set_sediment(SWMM_Engine e, int param, double value)
+    cdef int swmm_heat_get_sediment_ground_timeseries(SWMM_Engine e, char* buf, int buflen)
+    cdef int swmm_heat_set_sediment_ground_timeseries(SWMM_Engine e, const char* name)
+    cdef int swmm_heat_element_override_count(SWMM_Engine e, int* count)
+    cdef int swmm_heat_get_element_override(SWMM_Engine e, int index, int* attr,
+                                            int* scope, char* name, int name_len,
+                                            double* value)
+    cdef int swmm_heat_set_element_override(SWMM_Engine e, int attr, int scope,
+                                            const char* name, double value)
+    cdef int swmm_heat_remove_element_override(SWMM_Engine e, int index)
 
 
 cdef extern from "openswmm_water_age.h":

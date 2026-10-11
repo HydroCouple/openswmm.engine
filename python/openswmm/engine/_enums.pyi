@@ -994,6 +994,41 @@ class HeatCloudParam(IntEnum):
     LW_CLOUD_K = 3
 
 
+class HeatSedimentParam(IntEnum):
+    """``[SEDIMENT_EXCHANGE]`` GLOBAL parameters. Mirrors ``SWMM_HeatSedimentParam``."""
+    THERMAL_DIFFUSIVITY = 0
+    SOLUTE_DIFFUSIVITY = 1
+    BED_THICKNESS = 2
+    GROUND_DEPTH = 3
+    GROUND_TEMPERATURE = 4
+    HYPORHEIC_VELOCITY = 5
+    DENSITY = 6
+    SPECIFIC_HEAT = 7
+    INITIAL_TEMPERATURE = 8
+
+class HeatAttr(IntEnum):
+    """Per-element heat override attributes. Mirrors ``SWMM_HeatAttr``."""
+    ALBEDO = 0
+    SHADE_FACTOR = 1
+    SKY_VIEW = 2
+    EMISS_WATER = 3
+    EMISS_LANDCOVER = 4
+    LANDCOVER_TEMPERATURE = 5
+    THERMAL_DIFFUSIVITY = 6
+    SOLUTE_DIFFUSIVITY = 7
+    BED_THICKNESS = 8
+    GROUND_DEPTH = 9
+    GROUND_TEMPERATURE = 10
+    HYPORHEIC_VELOCITY = 11
+    SEDIMENT_DENSITY = 12
+    SEDIMENT_SPECIFIC_HEAT = 13
+
+class HeatOverrideScope(IntEnum):
+    """Per-element override scope. Mirrors ``SWMM_HeatOverrideScope``."""
+    TAG = 1
+    NODE = 2
+    LINK = 3
+
 class HeatSourceKind(IntEnum):
     """``[HEAT_SOURCES]`` water sources. Mirrors ``SWMM_HeatSourceKind``."""
 

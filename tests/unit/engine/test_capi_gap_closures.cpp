@@ -43,6 +43,7 @@
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_transport.h>
+#include <openswmm/engine/openswmm_heat.h>
 
 #include "core/SWMMEngine.hpp"
 
@@ -392,4 +393,136 @@ TEST(CapiGapTransport, EditsAreRefusedOnceTheRunStarts) {
     ASSERT_EQ(swmm_engine_initialize(d.e), SWMM_OK);
     EXPECT_EQ(swmm_transport_set_boundary(d.e, "J1", "X", 0, 1.0, nullptr), SWMM_ERR_LIFECYCLE);
     EXPECT_EQ(swmm_transport_set_detailed_output(d.e, "x.csv"), SWMM_ERR_LIFECYCLE);
+}
+
+// ---------------------------------------------------------------------------
+// [SEDIMENT_EXCHANGE] GLOBAL parameters and per-element attribute overrides
+// (radiative and sediment) had no C API.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+fs::path writeHeatDeck(const std::string& stem, const std::string& heat) {
+    const fs::path dir = artifactDir();
+    writeText(dir / (stem + ".heat"), heat);
+    std::string deck = kDeck1D;
+    // HEAT_TRANSPORT must sit inside [OPTIONS]: insert it after FLOW_UNITS.
+    const std::string key = "FLOW_UNITS           CFS\n";
+    deck.insert(deck.find(key) + key.size(), "HEAT_TRANSPORT       ON\n");
+    deck += "\n[TIMESERIES]\nground_ts 0 10.0\nground_ts 24 14.0\n\n"
+            "[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.heat config=\"" + stem + ".heat\"\n\n"
+            "[TAGS]\nLink C1 SHADED\nLink C2 SHADED\n";
+    const fs::path inp = dir / (stem + ".inp");
+    writeText(inp, deck);
+    return inp;
+}
+
+const char* kHeatCfg =
+    "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
+    "[HEAT_FLUXES]\nSEDIMENT_EXCHANGE ON\n\n"
+    "[SEDIMENT_EXCHANGE]\nBED_THICKNESS GLOBAL 0.3\nBED_THICKNESS LINK C1 0.5\n";
+
+double sed(SWMM_Engine e, int p) { double v = -1; swmm_heat_get_sediment(e, p, &v); return v; }
+int overrideCount(SWMM_Engine e) { int n = -1; swmm_heat_element_override_count(e, &n); return n; }
+
+}  // namespace
+
+TEST(CapiGapHeat, SedimentGlobalsReadAndWrite) {
+    OpenedDeck d(writeHeatDeck("heat_sed", kHeatCfg));
+    ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
+    EXPECT_DOUBLE_EQ(sed(d.e, SWMM_HEAT_SED_BED_THICKNESS), 0.3);       // parsed
+    EXPECT_DOUBLE_EQ(sed(d.e, SWMM_HEAT_SED_GROUND_DEPTH), 2.0);        // default
+    ASSERT_EQ(swmm_heat_set_sediment(d.e, SWMM_HEAT_SED_HYPORHEIC_VELOCITY, 1e-5), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_sediment(d.e, SWMM_HEAT_SED_GROUND_TEMPERATURE, 9.5), SWMM_OK);
+    const auto& sd = cpp(d.e).context().heat_config.sediment;
+    EXPECT_DOUBLE_EQ(sd.hyporheic_velocity, 1e-5);
+    EXPECT_DOUBLE_EQ(sd.ground_temp, 9.5);
+    EXPECT_TRUE(sd.has_ground_temp);
+
+    // The parser's refusals, unchanged values afterwards.
+    EXPECT_EQ(swmm_heat_set_sediment(d.e, SWMM_HEAT_SED_BED_THICKNESS, 0.0), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_heat_set_sediment(d.e, SWMM_HEAT_SED_HYPORHEIC_VELOCITY, -1.0), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_heat_set_sediment(d.e, SWMM_HEAT_SED_SOLUTE_DIFFUSIVITY, -1e-9), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_heat_set_sediment(d.e, 99, 1.0), SWMM_ERR_BADINDEX);
+    EXPECT_DOUBLE_EQ(sd.bed_thickness, 0.3);
+
+    // Ground temperature from a timeseries, then back to the constant.
+    ASSERT_EQ(swmm_heat_set_sediment_ground_timeseries(d.e, "ground_ts"), SWMM_OK);
+    char buf[64] = {};
+    ASSERT_EQ(swmm_heat_get_sediment_ground_timeseries(d.e, buf, sizeof(buf)), SWMM_OK);
+    EXPECT_STREQ(buf, "ground_ts");
+    EXPECT_EQ(swmm_heat_set_sediment_ground_timeseries(d.e, "missing"), SWMM_ERR_BADPARAM);
+    ASSERT_EQ(swmm_heat_set_sediment_ground_timeseries(d.e, ""), SWMM_OK);
+    ASSERT_EQ(swmm_heat_get_sediment_ground_timeseries(d.e, buf, sizeof(buf)), SWMM_OK);
+    EXPECT_STREQ(buf, "");
+}
+
+TEST(CapiGapHeat, ElementOverridesResolveOrAreRefused) {
+    OpenedDeck d(writeHeatDeck("heat_over", kHeatCfg));
+    ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
+    ASSERT_EQ(overrideCount(d.e), 1);  // BED_THICKNESS LINK C1
+    int attr = -1, scope = -1;
+    char name[64] = {};
+    double v = 0;
+    ASSERT_EQ(swmm_heat_get_element_override(d.e, 0, &attr, &scope, name, 64, &v), SWMM_OK);
+    EXPECT_EQ(attr, SWMM_HEAT_ATTR_BED_THICKNESS);
+    EXPECT_EQ(scope, SWMM_HEAT_SCOPE_LINK);
+    EXPECT_STREQ(name, "C1");
+    EXPECT_DOUBLE_EQ(v, 0.5);
+
+    const auto& ov = cpp(d.e).context().heat_config.overrides;
+    const int c1 = swmm_link_index(d.e, "C1");
+    ASSERT_EQ(swmm_heat_set_element_override(d.e, SWMM_HEAT_ATTR_BED_THICKNESS,
+                                             SWMM_HEAT_SCOPE_LINK, "C1", 0.75), SWMM_OK);
+    EXPECT_EQ(overrideCount(d.e), 1);  // updated in place
+    ASSERT_GT(ov.sed_link.size(), static_cast<std::size_t>(c1));
+    EXPECT_DOUBLE_EQ(ov.sed_link[c1].bed_thickness, 0.75);
+
+    ASSERT_EQ(swmm_heat_set_element_override(d.e, SWMM_HEAT_ATTR_SHADE_FACTOR,
+                                             SWMM_HEAT_SCOPE_TAG, "SHADED", 0.4), SWMM_OK);
+    EXPECT_EQ(overrideCount(d.e), 2);
+
+    // A global edit refreshes the per-link copies of non-overridden attributes.
+    ASSERT_EQ(swmm_heat_set_sediment(d.e, SWMM_HEAT_SED_GROUND_DEPTH, 3.0), SWMM_OK);
+    EXPECT_DOUBLE_EQ(ov.sed_link[c1].ground_depth, 3.0);
+    EXPECT_DOUBLE_EQ(ov.sed_link[c1].bed_thickness, 0.75);
+
+    // Refusals leave the rows as they were.
+    EXPECT_EQ(swmm_heat_set_element_override(d.e, SWMM_HEAT_ATTR_BED_THICKNESS,
+                                             SWMM_HEAT_SCOPE_NODE, "J1", 0.5), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_heat_set_element_override(d.e, SWMM_HEAT_ATTR_ALBEDO,
+                                             SWMM_HEAT_SCOPE_LINK, "C1", 1.5), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_heat_set_element_override(d.e, SWMM_HEAT_ATTR_ALBEDO,
+                                             SWMM_HEAT_SCOPE_LINK, "NOPE", 0.5), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(overrideCount(d.e), 2);
+
+    ASSERT_EQ(swmm_heat_remove_element_override(d.e, 0), SWMM_OK);
+    ASSERT_EQ(swmm_heat_remove_element_override(d.e, 0), SWMM_OK);
+    EXPECT_EQ(overrideCount(d.e), 0);
+    EXPECT_TRUE(ov.sed_link.empty()) << "removing the last row left stale per-link copies";
+    EXPECT_EQ(swmm_heat_remove_element_override(d.e, 0), SWMM_ERR_BADINDEX);
+}
+
+TEST(CapiGapHeat, EditsSurviveSaveAndReopen) {
+    const fs::path inp = writeHeatDeck("heat_save", kHeatCfg);
+    const fs::path saved = artifactDir() / "heat_save_out.inp";
+    {
+        OpenedDeck d(inp);
+        ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
+        ASSERT_EQ(swmm_heat_set_sediment(d.e, SWMM_HEAT_SED_DENSITY, 1800.0), SWMM_OK);
+        ASSERT_EQ(swmm_heat_set_sediment(d.e, SWMM_HEAT_SED_INITIAL_TEMPERATURE, 11.0), SWMM_OK);
+        ASSERT_EQ(swmm_heat_set_sediment_ground_timeseries(d.e, "ground_ts"), SWMM_OK);
+        ASSERT_EQ(swmm_heat_set_element_override(d.e, SWMM_HEAT_ATTR_SHADE_FACTOR,
+                                                 SWMM_HEAT_SCOPE_TAG, "SHADED", 0.4), SWMM_OK);
+        ASSERT_EQ(swmm_model_write(d.e, saved.string().c_str()), SWMM_OK)
+            << swmm_get_last_error_msg(d.e);
+    }
+    OpenedDeck r(saved);
+    ASSERT_EQ(r.rc, SWMM_OK) << swmm_get_last_error_msg(r.e);
+    EXPECT_DOUBLE_EQ(sed(r.e, SWMM_HEAT_SED_DENSITY), 1800.0);
+    EXPECT_DOUBLE_EQ(sed(r.e, SWMM_HEAT_SED_INITIAL_TEMPERATURE), 11.0);
+    char buf[64] = {};
+    ASSERT_EQ(swmm_heat_get_sediment_ground_timeseries(r.e, buf, sizeof(buf)), SWMM_OK);
+    EXPECT_STREQ(buf, "ground_ts");
+    EXPECT_EQ(overrideCount(r.e), 2);
 }

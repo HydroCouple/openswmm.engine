@@ -1359,6 +1359,13 @@ std::string saveHeatConfig(const SimulationContext& ctx) {
 
 }  // namespace
 
+bool heatAttrValueOk(HeatAttr attr, double value) noexcept {
+    const AttrSpec* spec = findAttr(attr);
+    if (spec == nullptr || !std::isfinite(value)) return false;
+    std::vector<std::string> ignored;
+    return validateAttr(*spec, value, "", "", ignored);
+}
+
 void registerHeatComponent() {
     components::ProcessComponentRegistry::instance().register_component(
         kHeatId,

@@ -4,8 +4,7 @@ from collections.abc import Iterator
 from typing import NamedTuple, Union
 
 from ._enums import (
-    HeatCloudParam, HeatFluxModule, HeatRadiativeParam, HeatShortwaveMode,
-    HeatSolarParam, HeatSourceKind,
+    HeatAttr, HeatCloudParam, HeatFluxModule, HeatOverrideScope, HeatRadiativeParam, HeatSedimentParam, HeatShortwaveMode, HeatSolarParam, HeatSourceKind,
 )
 from ._solver import Solver
 
@@ -86,6 +85,32 @@ class _HeatNodeOverrides:
     def remove(self, row_index: int) -> None: ...
 
 
+class HeatElementOverride(NamedTuple):
+    attr: HeatAttr
+    scope: HeatOverrideScope
+    name: str
+    value: float
+
+
+class _HeatSediment:
+    def __init__(self, solver: Solver) -> None: ...
+    def __len__(self) -> int: ...
+    def __iter__(self) -> Iterator[HeatSedimentParam]: ...
+    def __getitem__(self, key: Union[HeatSedimentParam, int, str]) -> float: ...
+    def __setitem__(self, key: Union[HeatSedimentParam, int, str], value: float) -> None: ...
+    ground_timeseries: str
+
+
+class _HeatElementOverrides:
+    def __init__(self, solver: Solver) -> None: ...
+    def __len__(self) -> int: ...
+    def __iter__(self) -> Iterator[HeatElementOverride]: ...
+    def __getitem__(self, row_index: int) -> HeatElementOverride: ...
+    def set(self, attr: Union[HeatAttr, int, str], scope: Union[HeatOverrideScope, int, str],
+            name: str, value: float) -> None: ...
+    def remove(self, row_index: int) -> None: ...
+
+
 class Heat:
     @property
     def shortwave_timeseries(self) -> str: ...
@@ -103,5 +128,7 @@ class Heat:
     cloud: _HeatCloud
     sources: _HeatSources
     node_overrides: _HeatNodeOverrides
+    sediment: _HeatSediment
+    element_overrides: _HeatElementOverrides
 
     def set_shortwave_timeseries(self, name: str) -> None: ...

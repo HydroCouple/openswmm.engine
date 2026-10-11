@@ -1211,6 +1211,64 @@ class HeatCloudParam(IntEnum):
     LW_CLOUD_K = 3
 
 
+class HeatSedimentParam(IntEnum):
+    """C{[SEDIMENT_EXCHANGE]} GLOBAL parameters (bed zone beneath conduits).
+
+    Mirrors C{SWMM_HeatSedimentParam}.
+
+    @cvar THERMAL_DIFFUSIVITY: Bed thermal diffusivity, m2/s, > 0.
+    @cvar SOLUTE_DIFFUSIVITY: Bed solute diffusivity, m2/s, >= 0.
+    @cvar BED_THICKNESS: Bed layer thickness, m, > 0.
+    @cvar GROUND_DEPTH: Depth to the deep-ground boundary, m, > 0.
+    @cvar GROUND_TEMPERATURE: Deep-ground temperature, degC (constant spelling).
+    @cvar HYPORHEIC_VELOCITY: Exchange velocity, m/s, >= 0.
+    @cvar DENSITY: Bed bulk density, kg/m3, > 0.
+    @cvar SPECIFIC_HEAT: Bed specific heat, J/kg/K, > 0.
+    @cvar INITIAL_TEMPERATURE: Initial bed temperature, degC.
+    """
+
+    THERMAL_DIFFUSIVITY = 0
+    SOLUTE_DIFFUSIVITY = 1
+    BED_THICKNESS = 2
+    GROUND_DEPTH = 3
+    GROUND_TEMPERATURE = 4
+    HYPORHEIC_VELOCITY = 5
+    DENSITY = 6
+    SPECIFIC_HEAT = 7
+    INITIAL_TEMPERATURE = 8
+
+
+class HeatAttr(IntEnum):
+    """Heat attributes that take per-element overrides.
+
+    Mirrors C{SWMM_HeatAttr}: the C{[RADIATIVE_FLUXES]} attributes, then the
+    C{[SEDIMENT_EXCHANGE]} ones (LINK or TAG scope only).
+    """
+
+    ALBEDO = 0
+    SHADE_FACTOR = 1
+    SKY_VIEW = 2
+    EMISS_WATER = 3
+    EMISS_LANDCOVER = 4
+    LANDCOVER_TEMPERATURE = 5
+    THERMAL_DIFFUSIVITY = 6
+    SOLUTE_DIFFUSIVITY = 7
+    BED_THICKNESS = 8
+    GROUND_DEPTH = 9
+    GROUND_TEMPERATURE = 10
+    HYPORHEIC_VELOCITY = 11
+    SEDIMENT_DENSITY = 12
+    SEDIMENT_SPECIFIC_HEAT = 13
+
+
+class HeatOverrideScope(IntEnum):
+    """Scope of a per-element heat override row. Mirrors C{SWMM_HeatOverrideScope}."""
+
+    TAG = 1
+    NODE = 2
+    LINK = 3
+
+
 class HeatSourceKind(IntEnum):
     """C{[HEAT_SOURCES]} water sources.
 

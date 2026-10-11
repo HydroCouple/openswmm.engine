@@ -321,7 +321,8 @@ from ._enums import (
     TableType, FilePathRole, UserFlagType,
     # Transport processes — heat, water age, reactions
     HeatFluxModule, HeatShortwaveMode, HeatRadiativeParam, HeatSolarParam,
-    HeatCloudParam, HeatSourceKind, WaterAgeSource,
+    HeatCloudParam, HeatSourceKind, HeatSedimentParam, HeatAttr, HeatOverrideScope,
+    WaterAgeSource,
     ReactionScope, ReactionExprForm,
     # Street inlets
     InletType, GrateType, ThroatType, InletCurveKind,
@@ -395,7 +396,8 @@ __all__ = [
     "TableType", "FilePathRole", "UserFlagType",
     # --- Enumerations: transport processes ---
     "HeatFluxModule", "HeatShortwaveMode", "HeatRadiativeParam", "HeatSolarParam",
-    "HeatCloudParam", "HeatSourceKind", "WaterAgeSource",
+    "HeatCloudParam", "HeatSourceKind", "HeatSedimentParam", "HeatAttr",
+    "HeatOverrideScope", "WaterAgeSource",
     "ReactionScope", "ReactionExprForm",
     # --- Enumerations: street inlets ---
     "InletType", "GrateType", "ThroatType", "InletCurveKind",
