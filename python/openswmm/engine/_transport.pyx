@@ -23,6 +23,14 @@ cdef extern from "openswmm/engine/openswmm_transport.h":
     int swmm_transport_get_boundary(SWMM_Engine engine, int index, char* element, int elem_len, char* species, int spec_len, int* is_ts, double* value, char* ts_name, int ts_len)
     int swmm_transport_source_count(SWMM_Engine engine, int* count)
     int swmm_transport_get_source(SWMM_Engine engine, int index, char* element, int elem_len, char* species, int spec_len, int* is_ts, double* value, char* ts_name, int ts_len)
+    int swmm_transport_get_detailed_output(SWMM_Engine engine, char* buf, int buflen)
+    int swmm_transport_set_detailed_output(SWMM_Engine engine, const char* path)
+    int swmm_transport_set_conduit_disp(SWMM_Engine engine, int link_index, double value)
+    int swmm_transport_remove_conduit_disp(SWMM_Engine engine, int index)
+    int swmm_transport_set_boundary(SWMM_Engine engine, const char* element, const char* species, int is_ts, double value, const char* ts_name)
+    int swmm_transport_remove_boundary(SWMM_Engine engine, int index)
+    int swmm_transport_set_source(SWMM_Engine engine, const char* element, const char* species, int is_ts, double value, const char* ts_name)
+    int swmm_transport_remove_source(SWMM_Engine engine, int index)
 
 cdef extern from "openswmm/engine/openswmm_engine.h":
     ctypedef struct SWMM_ThreadInfo:
@@ -209,3 +217,52 @@ class Transport:
             rows.append(TransportRow(element.decode('utf-8'), species.decode('utf-8'),
                         bool(is_ts), value, series.decode('utf-8')))
         return tuple(rows)
+
+    @property
+    def detailed_output(self):
+        """[TRANSPORT_OPTIONS] DETAILED_OUTPUT path ('' when off)."""
+        cdef char buf[4096]
+        _check(swmm_transport_get_detailed_output(_h(self._owner), buf, 4096))
+        return buf.decode('utf-8')
+
+    @detailed_output.setter
+    def detailed_output(self, value):
+        cdef bytes path = (value or '').encode('utf-8')
+        _check(swmm_transport_set_detailed_output(_h(self._owner), path))
+
+    def set_conduit_dispersion(self, int link_index, double value):
+        """Add or replace a conduit's dispersion override (display len²/s, >= 0)."""
+        _check(swmm_transport_set_conduit_disp(_h(self._owner), link_index, value))
+
+    def remove_conduit_dispersion(self, int index):
+        """Remove the [CONDUIT_DISPERSION] row at ``index``."""
+        _check(swmm_transport_remove_conduit_disp(_h(self._owner), index))
+
+    def set_boundary(self, element, species, value=0.0, timeseries=None):
+        """Add or replace a boundary row for node ``element`` and ``species``.
+
+        Pass a concentration ``value`` (>= 0), or ``timeseries`` by name.
+        """
+        cdef bytes e = element.encode('utf-8'), s = species.encode('utf-8')
+        cdef bytes ts = (timeseries or '').encode('utf-8')
+        _check(swmm_transport_set_boundary(_h(self._owner), e, s,
+                                           1 if timeseries else 0, value, ts))
+
+    def remove_boundary(self, int index):
+        """Remove the [TRANSPORT_BOUNDARIES] row at ``index``."""
+        _check(swmm_transport_remove_boundary(_h(self._owner), index))
+
+    def set_source(self, element, species, value=0.0, timeseries=None):
+        """Add or replace a distributed source on conduit ``element``.
+
+        ``value`` is a mass rate in species mass units per second (negative
+        is extraction), or pass ``timeseries`` by name.
+        """
+        cdef bytes e = element.encode('utf-8'), s = species.encode('utf-8')
+        cdef bytes ts = (timeseries or '').encode('utf-8')
+        _check(swmm_transport_set_source(_h(self._owner), e, s,
+                                         1 if timeseries else 0, value, ts))
+
+    def remove_source(self, int index):
+        """Remove the [TRANSPORT_SOURCES] row at ``index``."""
+        _check(swmm_transport_remove_source(_h(self._owner), index))

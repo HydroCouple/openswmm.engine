@@ -38,9 +38,11 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_transport.h>
 
 #include "core/SWMMEngine.hpp"
 
@@ -246,3 +248,148 @@ TEST(CapiGap2DOptions, DispersionReachesTheSolverOptions) {
     EXPECT_DOUBLE_EQ(std::stod(getext(r.e, "DISPERSION")), 0.25);
 }
 #endif
+
+// ---------------------------------------------------------------------------
+// transport.ard authoring: DETAILED_OUTPUT, [CONDUIT_DISPERSION],
+// [TRANSPORT_BOUNDARIES] and [TRANSPORT_SOURCES] were read-only.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+void writeText(const fs::path& p, const std::string& text) { std::ofstream(p) << text; }
+
+std::string slurp(const fs::path& p) {
+    std::ifstream f(p, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+}
+
+/// Deck with an inert reactions component (species X) and a transport.ard
+/// component; files live in the artifact directory under @p stem.
+fs::path writeArdDeck(const std::string& stem, const std::string& ard) {
+    const fs::path dir = artifactDir();
+    writeText(dir / (stem + ".rxn"),
+              "[REACTION_OPTIONS]\nRATE_UNITS SEC\n[REACTION_SPECIES]\nBULK X MG\n"
+              "[REACTION_PIPES]\nRATE X 0\n[REACTION_TANKS]\nRATE X 0\n");
+    writeText(dir / (stem + ".ard"), ard);
+    std::string deck = kDeck1D;
+    deck += "\n[TIMESERIES]\nsrc_ts 0 1.0\nsrc_ts 1 1.0\n\n[PROCESS_COMPONENTS]\n"
+            "org.hydrocouple.openswmm.reactions config=\"" + stem + ".rxn\"\n"
+            "org.hydrocouple.openswmm.transport.ard config=\"" + stem + ".ard\"\n";
+    const fs::path inp = dir / (stem + ".inp");
+    writeText(inp, deck);
+    return inp;
+}
+
+int boundaryCount(SWMM_Engine e) { int n = -1; swmm_transport_boundary_count(e, &n); return n; }
+int sourceCount(SWMM_Engine e) { int n = -1; swmm_transport_source_count(e, &n); return n; }
+
+}  // namespace
+
+TEST(CapiGapTransport, DetailedOutputReadsAndWrites) {
+    OpenedDeck d(writeArdDeck("ard_detail", "[TRANSPORT_OPTIONS]\nDETAILED_OUTPUT cells.csv\n"));
+    ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
+    char buf[1024] = {};
+    ASSERT_EQ(swmm_transport_get_detailed_output(d.e, buf, sizeof(buf)), SWMM_OK);
+    EXPECT_EQ(fs::path(buf).filename(), "cells.csv");  // resolved against the .ard dir
+    ASSERT_EQ(swmm_transport_set_detailed_output(d.e, "other.csv"), SWMM_OK);
+    ASSERT_EQ(swmm_transport_get_detailed_output(d.e, buf, sizeof(buf)), SWMM_OK);
+    EXPECT_STREQ(buf, "other.csv");
+    EXPECT_EQ(cpp(d.e).context().ard_config.detailed_output_path, "other.csv");
+    ASSERT_EQ(swmm_transport_set_detailed_output(d.e, ""), SWMM_OK);
+    EXPECT_TRUE(cpp(d.e).context().ard_config.detailed_output_path.empty());
+}
+
+TEST(CapiGapTransport, ConduitDispersionUpsertAndRemove) {
+    OpenedDeck d(writeArdDeck("ard_disp", "[TRANSPORT_OPTIONS]\nDISPERSION 0\n"));
+    ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
+    const int c2 = swmm_link_index(d.e, "C2");
+    ASSERT_EQ(swmm_transport_set_conduit_disp(d.e, c2, 0.5), SWMM_OK);
+    ASSERT_EQ(swmm_transport_set_conduit_disp(d.e, c2, 0.75), SWMM_OK);  // replaces
+    int n = 0, link = -1;
+    double v = 0;
+    ASSERT_EQ(swmm_transport_conduit_disp_count(d.e, &n), SWMM_OK);
+    EXPECT_EQ(n, 1);
+    ASSERT_EQ(swmm_transport_get_conduit_disp(d.e, 0, &link, &v), SWMM_OK);
+    EXPECT_EQ(link, c2);
+    EXPECT_DOUBLE_EQ(v, 0.75);
+    EXPECT_EQ(swmm_transport_set_conduit_disp(d.e, c2, -1.0), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_transport_set_conduit_disp(d.e, 99, 1.0), SWMM_ERR_BADINDEX);
+    ASSERT_EQ(swmm_transport_remove_conduit_disp(d.e, 0), SWMM_OK);
+    ASSERT_EQ(swmm_transport_conduit_disp_count(d.e, &n), SWMM_OK);
+    EXPECT_EQ(n, 0);
+    EXPECT_EQ(swmm_transport_remove_conduit_disp(d.e, 0), SWMM_ERR_BADINDEX);
+}
+
+TEST(CapiGapTransport, BoundaryAndSourceRowsResolveOrAreRefused) {
+    OpenedDeck d(writeArdDeck("ard_rows", "[TRANSPORT_OPTIONS]\nDISPERSION 0\n"));
+    ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
+    const auto& cfg = cpp(d.e).context().ard_config;
+
+    ASSERT_EQ(swmm_transport_set_boundary(d.e, "J1", "X", 0, 8.25, nullptr), SWMM_OK);
+    EXPECT_EQ(boundaryCount(d.e), 1);
+    ASSERT_EQ(cfg.bc_node.size(), 1u);  // resolved, so the run sees it
+    EXPECT_EQ(cfg.bc_node[0], swmm_node_index(d.e, "J1"));
+    EXPECT_DOUBLE_EQ(cfg.bc_value[0], 8.25);
+    ASSERT_EQ(swmm_transport_set_boundary(d.e, "J1", "X", 0, 4.0, nullptr), SWMM_OK);
+    EXPECT_EQ(boundaryCount(d.e), 1);  // same node + species replaces
+    EXPECT_DOUBLE_EQ(cfg.bc_value[0], 4.0);
+
+    // Refusals leave the configuration as it was.
+    EXPECT_EQ(swmm_transport_set_boundary(d.e, "NOPE", "X", 0, 1.0, nullptr), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_transport_set_boundary(d.e, "J2", "Y", 0, 1.0, nullptr), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_transport_set_boundary(d.e, "J2", "X", 0, -1.0, nullptr), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_transport_set_boundary(d.e, "J2", "X", 1, 0.0, "no_ts"), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(boundaryCount(d.e), 1);
+    EXPECT_EQ(cfg.bc_node.size(), 1u);
+
+    ASSERT_EQ(swmm_transport_set_source(d.e, "C1", "X", 1, 0.0, "src_ts"), SWMM_OK);
+    ASSERT_EQ(swmm_transport_set_source(d.e, "C2", "X", 0, -0.5, nullptr), SWMM_OK);  // extraction
+    EXPECT_EQ(sourceCount(d.e), 2);
+    EXPECT_EQ(cfg.src_link.size(), 2u);
+    EXPECT_EQ(swmm_transport_set_source(d.e, "J1", "X", 0, 1.0, nullptr), SWMM_ERR_BADPARAM);
+
+    ASSERT_EQ(swmm_transport_remove_source(d.e, 0), SWMM_OK);
+    EXPECT_EQ(sourceCount(d.e), 1);
+    EXPECT_EQ(cfg.src_link.size(), 1u);
+    ASSERT_EQ(swmm_transport_remove_boundary(d.e, 0), SWMM_OK);
+    EXPECT_EQ(boundaryCount(d.e), 0);
+    EXPECT_TRUE(cfg.bc_node.empty());
+    EXPECT_EQ(swmm_transport_remove_boundary(d.e, 0), SWMM_ERR_BADINDEX);
+}
+
+TEST(CapiGapTransport, EditsSurviveSaveAndReopen) {
+    const fs::path inp = writeArdDeck("ard_save", "[TRANSPORT_OPTIONS]\nDISPERSION 0\n");
+    const fs::path saved = artifactDir() / "ard_save_out.inp";
+    {
+        OpenedDeck d(inp);
+        ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
+        ASSERT_EQ(swmm_transport_set_detailed_output(d.e, "cells.csv"), SWMM_OK);
+        ASSERT_EQ(swmm_transport_set_conduit_disp(d.e, swmm_link_index(d.e, "C2"), 0.75), SWMM_OK);
+        ASSERT_EQ(swmm_transport_set_boundary(d.e, "J1", "X", 0, 8.25, nullptr), SWMM_OK);
+        ASSERT_EQ(swmm_transport_set_source(d.e, "C1", "X", 1, 0.0, "src_ts"), SWMM_OK);
+        ASSERT_EQ(swmm_model_write(d.e, saved.string().c_str()), SWMM_OK)
+            << swmm_get_last_error_msg(d.e);
+    }
+    const std::string ard = slurp(artifactDir() / "ard_save.ard");
+    EXPECT_NE(ard.find("DETAILED_OUTPUT"), std::string::npos) << ard;
+    EXPECT_NE(ard.find("[CONDUIT_DISPERSION]"), std::string::npos) << ard;
+
+    OpenedDeck r(saved);
+    ASSERT_EQ(r.rc, SWMM_OK) << swmm_get_last_error_msg(r.e);
+    char buf[1024] = {};
+    ASSERT_EQ(swmm_transport_get_detailed_output(r.e, buf, sizeof(buf)), SWMM_OK);
+    EXPECT_EQ(fs::path(buf).filename(), "cells.csv");
+    int n = 0;
+    ASSERT_EQ(swmm_transport_conduit_disp_count(r.e, &n), SWMM_OK);
+    EXPECT_EQ(n, 1);
+    EXPECT_EQ(boundaryCount(r.e), 1);
+    EXPECT_EQ(sourceCount(r.e), 1);
+}
+
+TEST(CapiGapTransport, EditsAreRefusedOnceTheRunStarts) {
+    OpenedDeck d(writeArdDeck("ard_lifecycle", "[TRANSPORT_OPTIONS]\nDISPERSION 0\n"));
+    ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
+    ASSERT_EQ(swmm_engine_initialize(d.e), SWMM_OK);
+    EXPECT_EQ(swmm_transport_set_boundary(d.e, "J1", "X", 0, 1.0, nullptr), SWMM_ERR_LIFECYCLE);
+    EXPECT_EQ(swmm_transport_set_detailed_output(d.e, "x.csv"), SWMM_ERR_LIFECYCLE);
+}
