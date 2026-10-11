@@ -6739,7 +6739,8 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) noexcept {
                 // no-op under default per-routing-step coupling.
                 // The private binary-only restart profile has no mesh writer:
                 // leave its accepted source/batch schedule unchanged.
-                surface_router_.flushPendingBatch(ctx_);
+                if (!checkpoint_surface_output_ || !checkpoint_enabled_)
+                    surface_router_.flushPendingBatch(ctx_);
                 surface_router_.refreshRenderFieldsIfStale();
             }
 #endif

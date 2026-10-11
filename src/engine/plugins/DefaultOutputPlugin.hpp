@@ -41,6 +41,7 @@
 
 #include "../../../include/openswmm/plugin_sdk/IOutputPlugin.hpp"
 
+#include "../io/CheckpointOutputPublication.hpp"
 #include <string>
 #include <atomic>
 #include <cstdio>
@@ -95,6 +96,8 @@ private:
     std::string checkpointBytes(const SimulationContext&, double next_report_ms) const;
     std::shared_ptr<PreparedCheckpoint> prepareCheckpoint(const SimulationContext&, double next_report_ms, std::string);
     void installCheckpoint(PreparedCheckpoint&);
+    io::CheckpointOutputPublication::Output checkpointPublication(const PreparedCheckpoint&) const;
+    void adoptCheckpoint(PreparedCheckpoint&) noexcept;
     void validateCheckpoint(const SimulationContext&, double next_report_ms, int periods, const std::string&) const;
     std::string readPrefix() const;
 

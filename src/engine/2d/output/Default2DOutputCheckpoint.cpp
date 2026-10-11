@@ -274,14 +274,21 @@ std::shared_ptr<Default2DOutputPlugin::PreparedCheckpoint> Default2DOutputPlugin
     return result;
 }
 
+io::CheckpointOutputPublication::Output Default2DOutputPlugin::checkpointPublication(const PreparedCheckpoint& prepared) const {
+    const auto properties=H5Fget_access_plist(file_id_);require(properties>=0,"Cannot inspect mesh output driver.");
+    const bool sec2=H5Pget_driver(properties)==H5FD_SEC2;H5Pclose(properties);
+    void* handle=nullptr;
+    require(sec2 && H5Fget_vfd_handle(file_id_,H5P_DEFAULT,&handle)>=0 && handle,
+            "Mesh checkpoint publication requires the native file descriptor driver.");
+    return {prepared.staging,io::utf8_path(h5_path_),checkpoint_header_,*static_cast<int*>(handle)};
+}
 void Default2DOutputPlugin::installCheckpoint(PreparedCheckpoint& prepared) {
     std::lock_guard<std::recursive_mutex> lock(io::resultHdf5Mutex());
-    const auto path = io::utf8_path(h5_path_); std::error_code ec; const auto status = std::filesystem::symlink_status(path, ec);
-    const auto writable = std::filesystem::perms::owner_write | std::filesystem::perms::group_write | std::filesystem::perms::others_write;
-    require(!ec && std::filesystem::is_regular_file(status) && (status.permissions() & writable) != std::filesystem::perms::none &&
-            readFile(path) == checkpoint_header_, "Mesh restore destination is no longer its fresh result header.");
-    std::filesystem::permissions(prepared.staging, status.permissions(), ec); require(!ec, "Cannot preserve mesh destination permissions.");
-    std::filesystem::rename(prepared.staging, path, ec); require(!ec, "Cannot publish restored mesh prefix.");
+    io::CheckpointOutputPublication publication({checkpointPublication(prepared)});
+    publication.publish();adoptCheckpoint(prepared);
+}
+// Caller holds the result HDF5 mutex before publication and adoption.
+void Default2DOutputPlugin::adoptCheckpoint(PreparedCheckpoint& prepared) noexcept {
     // All throwing checks and ID opens precede publication. The solver moves next.
     closeDatasets(); H5Fclose(file_id_); file_id_ = prepared.file; prepared.file = H5I_INVALID_HID;
     for (auto& [target, id] : prepared.datasets) { *target = id; id = H5I_INVALID_HID; }

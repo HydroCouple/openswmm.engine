@@ -472,7 +472,7 @@ struct SurfaceSession {
     runoff::SourceWaterDriver sources;
     twoD::CommonSourceStage stage;
     SWMMEngine engine;
-    void start(const std::string& name,int lid=0,int mapped=0,int closure=0,int mode=0,bool track=true,bool spatial=false,bool all_sources=false,int outfall_return=-1,bool output=false,int mesh_output=0) {
+    void start(const std::string& name,int lid=0,int mapped=0,int closure=0,int mode=0,bool track=true,bool spatial=false,bool all_sources=false,int outfall_return=-1,bool output=false,int mesh_output=0,bool average=false) {
         SWMMEngine authored;startRunoff(authored,name,mode%5,mode%3,lid,false);authored.close();
         auto p=root()/name;auto deck=bytes(p.string()+".inp");
         deck.replace(deck.find("IGNORE_2D YES"),13,"IGNORE_2D NO");
@@ -501,9 +501,11 @@ struct SurfaceSession {
         auto& config=router.aquiferConfig();config.options.authored=true;config.options.force_closed_form=true;
         config.options.gw_et="BOUNDARY_ET";config.options.closure=closure?twoD::GwClosure::ENSLAVED:twoD::GwClosure::CLOSED_FORM;
         twoD::GwAquiferRow row;row.Ks=.000001*3600/.0254;row.zs=2/.3048;row.hg0=1/.3048;row.alpha=2*.3048;config.rows.push_back(row);
+        ctx.options.rpt_averages=average;
         if(e.initialize())throw std::runtime_error("surface initialize: "+ctx.error_message);
-        if(output) {auto error=e.prepareOutputCheckpointing();if(!error.empty())throw std::runtime_error(error);}
-    if(mesh_output) {auto error=e.prepareSurfaceOutputCheckpointing();if(!error.empty())throw std::runtime_error(error);}
+        if(output && mesh_output) {auto error=e.prepareCombinedOutputCheckpointing();if(!error.empty())throw std::runtime_error(error);}
+        else if(output) {auto error=e.prepareOutputCheckpointing();if(!error.empty())throw std::runtime_error(error);}
+        else if(mesh_output) {auto error=e.prepareSurfaceOutputCheckpointing();if(!error.empty())throw std::runtime_error(error);}
         if(e.start(output?1:0))throw std::runtime_error("surface start: "+ctx.error_message);
         auto& gw=router.subsurface().state();
         for(int i=0;i<2;++i) {
@@ -747,7 +749,7 @@ TEST(EngineCheckpoint, SpatialAttachmentIsExplicitAndRefusesOwnedOutfallReturnsA
 
 #ifdef OPENSWMM_HAS_2D
 namespace {
-void startClosedSpatial(SurfaceSession& m,const std::string& name,int node_lid=0,double cadence=.7,bool returns=false,bool multiple=false,bool output=false,int mesh_output=0) {
+void startClosedSpatial(SurfaceSession& m,const std::string& name,int node_lid=0,double cadence=.7,bool returns=false,bool multiple=false,bool output=false,int mesh_output=0,bool average=false) {
     auto path=root()/name;
     std::string deck="[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 10/10/2026\nSTART_TIME 00:00:00\nEND_DATE 10/10/2026\nEND_TIME 00:00:30\nROUTING_STEP "+std::to_string(cadence)+"\nVARIABLE_STEP 0\nINFILTRATION GREEN_AMPT\nRULE_STEP 00:00:02\nREPORT_STEP 00:00:03\nWET_STEP 00:00:01\nDRY_STEP 00:00:07\nIGNORE_QUALITY YES\nIGNORE_SNOWMELT YES\nIGNORE_GROUNDWATER YES\nIGNORE_2D NO\n[STORAGE]\nSINK 0 100 0 FUNCTIONAL 0 0 100 0 0\n[OUTFALLS]\nDRAIN 0 FREE NO\n[RAINGAGES]\nR INTENSITY 0:00:05 1 TIMESERIES Rain\nDry INTENSITY 0:00:05 1 TIMESERIES Zero\n[SUBCATCHMENTS]\nA R B .01 45 10 1 0\nB R SINK .02 65 10 1 0\nD Dry SINK .01 50 10 1 0\n[SUBAREAS]\nA .015 .12 .03 .05 35 PERVIOUS 55\nB .02 .13 .02 .04 25 OUTLET\nD .02 .13 .02 .04 25 OUTLET\n[INFILTRATION]\nA 3 .25 .3\nB 3 .25 .3\nD 3 .25 .3\n[LID_CONTROLS]\nI IT\nI SURFACE 3 .05 .12 1 3\nI STORAGE 6 .667 .1 0\nI DRAIN .5 .5 0 0\n[LID_USAGE]\nA I 1 20 3 70 30 0 * DRAIN\n[EVAPORATION]\nCONSTANT 0\n[TIMESERIES]\nRain 10/10/2026 00:00:00 5\nRain 10/10/2026 00:00:05 0\nZero 10/10/2026 00:00:00 0\n";
     if(node_lid) {
@@ -775,9 +777,11 @@ void startClosedSpatial(SurfaceSession& m,const std::string& name,int node_lid=0
     auto& config=router.aquiferConfig();config.options.authored=true;config.options.force_closed_form=true;
     config.options.closure=twoD::GwClosure::CLOSED_FORM;
     twoD::GwAquiferRow row;row.Ks=.000001*3600/.0254;row.zs=2/.3048;row.hg0=1/.3048;row.alpha=2*.3048;config.rows.push_back(row);
+    e.context().options.rpt_averages=average;
     if(e.initialize())throw std::runtime_error(e.context().error_message);
-    if(output) {auto error=e.prepareOutputCheckpointing();if(!error.empty())throw std::runtime_error(error);}
-    if(mesh_output) {auto error=e.prepareSurfaceOutputCheckpointing();if(!error.empty())throw std::runtime_error(error);}
+    if(output && mesh_output) {auto error=e.prepareCombinedOutputCheckpointing();if(!error.empty())throw std::runtime_error(error);}
+    else if(output) {auto error=e.prepareOutputCheckpointing();if(!error.empty())throw std::runtime_error(error);}
+    else if(mesh_output) {auto error=e.prepareSurfaceOutputCheckpointing();if(!error.empty())throw std::runtime_error(error);}
     if(e.start(output?1:0))throw std::runtime_error(e.context().error_message);
     if(returns)std::fill(e.context().node_subtypes.outfalls.route_to.begin(),e.context().node_subtypes.outfalls.route_to.end(),0);
     auto error=m.sources.initialize(e.context(),{0},{},nullptr,returns);if(!error.empty())throw std::runtime_error(error);
@@ -1773,4 +1777,168 @@ TEST(EngineCheckpoint, MeshOutputRejectsChangedSourceHistoryOwnershipBeforePubli
     EXPECT_EQ(bytes(before),saved);EXPECT_EQ(bytes(destination),header);ASSERT_EQ(b.engine.loadCheckpoint(good.string()),"");
     ASSERT_EQ(a.engine.end(),0);ASSERT_EQ(b.engine.end(),0);
 }
+
+TEST(EngineCheckpoint, CombinedOutputContinuesBothReportClocksAndAveragingWindows) {
+    for(int lid=0;lid<3;++lid)for(int format:{1,2,3,4})for(double boundary:{0.,2.1,3.,7.1}) {
+        const auto name="combined-closed-"+std::to_string(lid)+"-"+std::to_string(format)+"-"+std::to_string(boundary);SCOPED_TRACE(name);
+        SurfaceSession a,b;const bool average=format%2==0;
+        ASSERT_NO_THROW(startClosedSpatial(a,name,lid,.7,true,true,true,format,average));
+        ASSERT_NO_THROW(startClosedSpatial(b,name+"-resumed",lid,.7,true,true,true,format,average));
+        while(a.engine.context().current_time<boundary)ASSERT_NO_THROW(step(a.engine));
+        const auto checkpoint=root()/(name+".chk");ASSERT_EQ(a.engine.saveCheckpoint(checkpoint.string()),"");
+        ASSERT_EQ(b.engine.loadCheckpoint(checkpoint.string()),"");compareMesh(a.engine,b.engine,name+"-restored");
+        int steps=0;
+        while(a.engine.context().elapsed_ms<a.engine.context().options.totalDurationMs()) {
+            ASSERT_NO_THROW(step(a.engine));
+            ASSERT_NO_THROW(step(b.engine));
+            if(++steps%7==0)compareMesh(a.engine,b.engine,name+"-continued");
+        }
+        compareMesh(a.engine,b.engine,name+"-final");ASSERT_EQ(a.engine.end(),0);ASSERT_EQ(b.engine.end(),0);
+        sameBinary(name,name+"-resumed",format==4?6:10);sameMesh(name,name+"-resumed",format==4?3:5);
+    }
+}
+TEST(EngineCheckpoint, CombinedOutputContinuesPairedHistoriesAndVectorRichardsBackwater) {
+    for(int scenario=0;scenario<4;++scenario) {
+        const auto name="combined-paired-"+std::to_string(scenario);SurfaceSession a,b;
+        const bool spatial=scenario!=2;const double cadence=scenario==0?.7:.31;
+        if(scenario<2) {
+            ASSERT_NO_THROW(startClosedSpatial(a,name,2,cadence,true,true,true,2,true));
+            ASSERT_NO_THROW(startClosedSpatial(b,name+"-resumed",2,cadence,true,true,true,2,true));
+        } else {
+            ASSERT_NO_THROW(a.start(name,3,spatial?0:1,1,6,true,spatial,spatial,spatial?2:-1,true,2,true));
+            ASSERT_NO_THROW(b.start(name+"-resumed",3,spatial?0:1,1,6,true,spatial,spatial,spatial?2:-1,true,2,true));
+        }
+        twoD::EngineSourceResultHistory history,resumed;
+        if(spatial)ASSERT_EQ(a.engine.setEngineSourceResultHistory(history,true),"");
+        while(a.engine.context().current_time<(scenario<2?7.1:43.1)) {
+            if(spatial)meshWriter(a.engine).enqueueSourceHistory(std::make_shared<twoD::SourceResultHistory>(*history.sourceIntervals()));
+            ASSERT_NO_THROW(step(a.engine));
+        }
+        const auto checkpoint=root()/(name+".chk");ASSERT_EQ(a.engine.saveCheckpoint(checkpoint.string()),"");
+        ASSERT_EQ(b.engine.loadCheckpoint(checkpoint.string()),"");
+        if(spatial) {resumed=history;ASSERT_EQ(b.engine.resumeEngineSourceResultHistory(resumed),"");}
+        int steps=0;
+        while(a.engine.context().elapsed_ms<a.engine.context().options.totalDurationMs()) {
+            if(spatial) {
+                meshWriter(a.engine).enqueueSourceHistory(std::make_shared<twoD::SourceResultHistory>(*history.sourceIntervals()));
+                meshWriter(b.engine).enqueueSourceHistory(std::make_shared<twoD::SourceResultHistory>(*resumed.sourceIntervals()));
+            }
+            ASSERT_NO_THROW(step(a.engine));
+            ASSERT_NO_THROW(step(b.engine));
+            if(++steps%19==0) {compareMesh(a.engine,b.engine,name+"-continued");if(spatial)sameEngineHistory(history,resumed);}
+        }
+        compareMesh(a.engine,b.engine,name+"-final");if(spatial)sameEngineHistory(history,resumed);
+        ASSERT_EQ(a.engine.end(),0);ASSERT_EQ(b.engine.end(),0);
+        sameBinary(name,name+"-resumed",scenario<2?10:80);sameMesh(name,name+"-resumed",scenario<2?5:40);
+        if(spatial) {
+            twoD::SourceResultHistory x,y;bool available=false;
+            ASSERT_EQ(twoD::SourceResultHistory::read((root()/(name+".h5")).string(),x,available),"");ASSERT_TRUE(available);
+            ASSERT_EQ(twoD::SourceResultHistory::read((root()/(name+"-resumed.h5")).string(),y,available),"");ASSERT_TRUE(available);
+            for(const auto& [n,t]:x.tables())EXPECT_EQ(t.columns,y.tables().at(n).columns)<<n;
+        }
+    }
+}
+namespace {
+std::string changeCombinedBinary(const std::string& original,int mutation) {
+    // Binary mutation helper expects the binary suffix; temporarily remove and
+    // then restore the separately length-prefixed mesh record.
+    const auto physical=meshPhysical(original);
+    detail::CompletedSourceArchive x(original);std::string magic,model,payload;uint32_t version,sum;
+    x(magic,version,model,sum,payload);x.finish();
+    detail::CompletedSourceArchive p(physical);std::string m,md,body;uint32_t v,c;p(m,v,md,c,body);p.finish();
+    const auto mesh_suffix=payload.substr(body.size());
+    detail::CompletedSourceArchive changed(changeBinary(physical,mutation));changed(m,v,md,c,body);changed.finish();
+    body+=mesh_suffix;v+=6;c=crc(body);detail::CompletedSourceArchive out;out(m,v,md,c,body);return out.bytes();
+}
+void noOutputStaging(const std::string& name) {
+    for(const auto& f:std::filesystem::directory_iterator(root())) {
+        const auto path=f.path().filename().string();
+        if(path.starts_with(name+".out.") || path.starts_with(name+".h5."))EXPECT_FALSE(
+            path.find("report-part-")!=std::string::npos || path.find("mesh-part-")!=std::string::npos || path.find("checkpoint-backup-")!=std::string::npos)<<path;
+    }
+}
+}
+TEST(EngineCheckpoint, CombinedOutputRejectsEitherMalformedPrefixWithoutPublishingTheOther) {
+    SurfaceSession a;ASSERT_NO_THROW(startClosedSpatial(a,"combined-invalid-source",2,.31,true,true,true,2,true));
+    while(a.engine.context().current_time<9.1)ASSERT_NO_THROW(step(a.engine));
+    const auto good=root()/"combined-invalid-good.chk";ASSERT_EQ(a.engine.saveCheckpoint(good.string()),"");
+    for(int mutation=0;mutation<28;++mutation) {
+        const auto name="combined-invalid-"+std::to_string(mutation);SCOPED_TRACE(name);SurfaceSession b;
+        ASSERT_NO_THROW(startClosedSpatial(b,name,2,.31,true,true,true,2,true));
+        const auto before=root()/(name+"-before.chk"),bad=root()/(name+"-bad.chk");ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");
+        const auto saved=bytes(before),binary=bytes(root()/(name+".out")),mesh=bytes(root()/(name+".h5"));
+        write(bad,mutation<9?changeCombinedBinary(bytes(good),mutation):changeMesh(bytes(good),name,mutation-9));
+        EXPECT_FALSE(b.engine.loadCheckpoint(bad.string()).empty());ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");
+        EXPECT_EQ(bytes(before),saved);EXPECT_EQ(bytes(root()/(name+".out")),binary);EXPECT_EQ(bytes(root()/(name+".h5")),mesh);
+        noOutputStaging(name);ASSERT_EQ(b.engine.loadCheckpoint(good.string()),"");compareMesh(a.engine,b.engine,name+"-retry");ASSERT_EQ(b.engine.end(),0);
+    }
+    ASSERT_EQ(a.engine.end(),0);
+}
+TEST(EngineCheckpoint, CombinedOutputPublicationAndSpatialFailuresPreserveBothWriters) {
+    SurfaceSession a;ASSERT_NO_THROW(startClosedSpatial(a,"combined-atomic-source",2,.31,true,true,true,2));
+    while(a.engine.context().current_time<9.1)ASSERT_NO_THROW(step(a.engine));
+    const auto good=root()/"combined-atomic-good.chk";ASSERT_EQ(a.engine.saveCheckpoint(good.string()),"");
+    for(int failure=0;failure<5;++failure) {
+        const auto name="combined-atomic-"+std::to_string(failure);SurfaceSession b;
+        ASSERT_NO_THROW(startClosedSpatial(b,name,2,.31,true,true,true,2));
+        const auto before=root()/(name+"-before.chk"),binary=root()/(name+".out"),mesh=root()/(name+".h5");
+        ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");const auto saved=bytes(before),bh=bytes(binary),mh=bytes(mesh);auto checkpoint=good;
+        if(failure<2)std::filesystem::permissions(failure?mesh:binary,std::filesystem::perms::owner_read);
+        else if(failure==2) {
+            detail::CompletedSourceArchive in(bytes(good));std::string magic,model,payload;uint32_t version,sum;in(magic,version,model,sum,payload);in.finish();
+            auto surface=engineSurface(bytes(good)),body=surfacePayload(surface);const std::string tag="OpenSWMM CPU surface/source boundary";
+            auto cpu=nested(body,tag).second;cpu.back()^=1;surface=withSurfacePayload(surface,replaceNested(body,tag,cpu));
+            payload=replaceNested(payload,"OpenSWMM joint DW surface/source boundary",surface);sum=crc(payload);
+            detail::CompletedSourceArchive out;out(magic,version,model,sum,payload);checkpoint=root()/(name+"-bad.chk");write(checkpoint,out.bytes());
+        }
+        const auto changed=failure==3?binary:mesh,original=root()/(name+"-original-header");
+        if(failure>=3) {std::filesystem::rename(changed,original);write(changed,failure==3?bh:mh);}
+        EXPECT_FALSE(b.engine.loadCheckpoint(checkpoint.string()).empty());ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");
+        EXPECT_EQ(bytes(before),saved);EXPECT_EQ(bytes(binary),bh);EXPECT_EQ(bytes(mesh),mh);noOutputStaging(name);
+        if(failure>=3) {std::filesystem::remove(changed);std::filesystem::rename(original,changed);}
+        for(const auto& path:{binary,mesh})std::filesystem::permissions(path,std::filesystem::perms::owner_read|std::filesystem::perms::owner_write);
+        ASSERT_EQ(b.engine.loadCheckpoint(good.string()),"");compareMesh(a.engine,b.engine,name+"-retry");ASSERT_EQ(b.engine.end(),0);
+    }
+    ASSERT_EQ(a.engine.end(),0);
+}
+TEST(EngineCheckpoint, OutputPublicationRollsBackAnEarlierRenameAndProtectsAliasedPaths) {
+    const auto a=root()/"publication-a",b=root()/"publication-b",sa=root()/"publication-a-stage",sb=root()/"publication-b-stage";
+    write(a,"header-a");write(b,"header-b");write(sa,"prefix-a");write(sb,"prefix-b");
+    {
+        io::CheckpointOutputPublication publication({{sa,a,"header-a"},{sb,b,"header-b"}});
+        // Simulate loss of the second prepared staging file after preparation.
+        std::filesystem::remove(sb);EXPECT_THROW(publication.publish(),std::runtime_error);
+        EXPECT_EQ(bytes(a),"header-a");EXPECT_EQ(bytes(b),"header-b");
+    }
+    write(sa,"prefix-a");write(sb,"prefix-b");
+    EXPECT_THROW((io::CheckpointOutputPublication({{sa,a,"header-a"},{sb,a,"header-a"}})),std::runtime_error);
+    const auto alias=root()/"publication-hardlink";std::filesystem::remove(alias);std::filesystem::create_hard_link(a,alias);
+    EXPECT_THROW((io::CheckpointOutputPublication({{sa,a,"header-a"},{sb,alias,"header-a"}})),std::runtime_error);
+    std::filesystem::remove(alias);
+    {
+        io::CheckpointOutputPublication publication({{sa,a,"header-a"},{sb,b,"header-b"}});publication.publish();
+    }
+    EXPECT_EQ(bytes(a),"prefix-a");EXPECT_EQ(bytes(b),"prefix-b");
+    for(const auto& f:std::filesystem::directory_iterator(root()))EXPECT_EQ(f.path().filename().string().find("publication-a.checkpoint-backup-"),std::string::npos);
+}
+TEST(EngineCheckpoint, CombinedOutputPreparationProtectsLifecycleAndBothFreshDestinations) {
+    SurfaceSession valid;ASSERT_NO_THROW(startClosedSpatial(valid,"combined-guard",2,.7,true,true,true,2));
+    EXPECT_FALSE(valid.engine.prepareCombinedOutputCheckpointing().empty());
+    SurfaceSession mesh;ASSERT_NO_THROW(startClosedSpatial(mesh,"combined-mesh-only",2,.7,true,true,false,2));
+    EXPECT_FALSE(mesh.engine.prepareCombinedOutputCheckpointing().empty());
+    SurfaceSession binary;ASSERT_NO_THROW(startClosedSpatial(binary,"combined-binary-only",2,.7,true,true,true));
+    EXPECT_FALSE(binary.engine.prepareCombinedOutputCheckpointing().empty());
+    const auto geometry=valid.engine.surfaceRouter2D().mesh();
+    ASSERT_EQ(valid.engine.end(),0);ASSERT_EQ(valid.engine.close(),0);
+    const auto inp=root()/"combined-guard.inp",destination=root()/"combined-guard.out",h5=root()/"combined-guard.h5";
+    SWMMEngine e;ASSERT_EQ(e.open(inp.string().c_str(),nullptr,destination.string().c_str()),0);
+    e.surfaceRouter2D().mesh()=geometry;
+    const auto binary_header=bytes(destination),mesh_header=bytes(h5);
+    EXPECT_FALSE(e.prepareCombinedOutputCheckpointing().empty());ASSERT_EQ(e.initialize(),0);
+    EXPECT_FALSE(e.prepareCombinedOutputCheckpointing().empty());EXPECT_EQ(bytes(destination),binary_header);EXPECT_EQ(bytes(h5),mesh_header);
+    std::filesystem::remove(destination);EXPECT_FALSE(e.prepareCombinedOutputCheckpointing().empty());EXPECT_EQ(bytes(h5),mesh_header);
+    std::filesystem::remove(h5);ASSERT_EQ(e.prepareCombinedOutputCheckpointing(),"");
+    write(h5,"intervening creator");EXPECT_NE(e.start(1),0);EXPECT_EQ(bytes(h5),"intervening creator");ASSERT_EQ(e.close(),0);
+}
+
 #endif

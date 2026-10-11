@@ -220,6 +220,8 @@ public:
     // Separate single-file mesh output qualification; initialize(), prepare,
     // start(0), then attach the common source checkpoint stage.
     std::string prepareSurfaceOutputCheckpointing();
+    /// Internal water-only joint binary/mesh continuation with recoverable publication.
+    std::string prepareCombinedOutputCheckpointing();
     // Qualification attachment only: mesh-owned common sources, with ordinary
     // engine runoff outside the mesh. Stage lifetime must cover the session.
     std::string enableCheckpointing(twoD::CommonSourceStage& stage);

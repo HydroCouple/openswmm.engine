@@ -9,7 +9,6 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
 #include <limits>
 #include <stdexcept>
 
@@ -17,16 +16,6 @@ namespace openswmm {
 namespace {
 constexpr std::size_t maxBytes = 64 * 1024 * 1024;
 void require(bool ok, const char* message) { if (!ok) throw std::runtime_error(message); }
-std::string readFile(const std::filesystem::path& path) {
-    std::error_code ec;
-    const auto size = std::filesystem::file_size(path, ec);
-    require(!ec && size <= maxBytes, "Binary report prefix is missing or exceeds its checkpoint limit.");
-    std::ifstream in(path, std::ios::binary);
-    std::string bytes(size, '\0');
-    in.read(bytes.data(), bytes.size());
-    require(bool(in) && in.peek() == std::char_traits<char>::eof(), "Cannot read binary report prefix.");
-    return bytes;
-}
 template<class T> T scalar(const std::string& bytes, std::size_t offset) {
     T value; std::memcpy(&value, bytes.data() + offset, sizeof(T)); return value;
 }
@@ -131,16 +120,14 @@ std::shared_ptr<DefaultOutputPlugin::PreparedCheckpoint> DefaultOutputPlugin::pr
     return prepared;
 }
 
+io::CheckpointOutputPublication::Output DefaultOutputPlugin::checkpointPublication(const PreparedCheckpoint& prepared) const {
+    return {prepared.staging,io::utf8_path(out_path_),checkpoint_header_,io::checkpointFileDescriptor(out_file_)};
+}
 void DefaultOutputPlugin::installCheckpoint(PreparedCheckpoint& prepared) {
-    const auto path = io::utf8_path(out_path_); std::error_code ec;
-    const auto status = std::filesystem::symlink_status(path, ec);
-    const auto writable = std::filesystem::perms::owner_write | std::filesystem::perms::group_write | std::filesystem::perms::others_write;
-    require(!ec && std::filesystem::is_regular_file(status) && (status.permissions() & writable) != std::filesystem::perms::none &&
-            readFile(path) == checkpoint_header_, "Binary output restore destination is no longer its fresh report header.");
-    std::filesystem::permissions(prepared.staging, status.permissions(), ec);
-    require(!ec, "Cannot preserve binary output destination permissions.");
-    std::filesystem::rename(prepared.staging, path, ec);
-    require(!ec, "Cannot publish restored binary report prefix.");
+    io::CheckpointOutputPublication publication({checkpointPublication(prepared)});
+    publication.publish();adoptCheckpoint(prepared);
+}
+void DefaultOutputPlugin::adoptCheckpoint(PreparedCheckpoint& prepared) noexcept {
     // No throwing operation after successful publication.
     std::fclose(out_file_); out_file_ = prepared.stream; prepared.stream = nullptr;
     prepared.staging.clear(); n_periods_ = step_count_ = prepared.periods;
