@@ -279,6 +279,25 @@ SWMM_ENGINE_API int swmm_gw2d_node_set_exchange(SWMM_Engine engine, int index,
                                                 int exchange);
 
 /* =========================================================================
+ * [2D_AQUIFER_LINKS] conduit beds (closed C-API gap 2026-10-11)
+ * ========================================================================= */
+
+SWMM_ENGINE_API int swmm_gw2d_link_count(SWMM_Engine engine, int* count);
+
+/** Add a conduit bed row. @p kc in the [LOSSES] seepage units (0 = the
+ *  conduit's own seep rate), @p dc in ft | m (0 = the conduit's full depth);
+ *  both >= 0. @p exchange 0 keeps the conduit a legacy loss (EXCHANGE NO).
+ *  The link name resolves at initialize, as for node beds. */
+SWMM_ENGINE_API int swmm_gw2d_link_add(SWMM_Engine engine, const char* link,
+                                       double kc, double dc, int exchange);
+
+SWMM_ENGINE_API int swmm_gw2d_link_get(SWMM_Engine engine, int index,
+                                       char* link, int linklen, double* kc,
+                                       double* dc, int* exchange);
+
+SWMM_ENGINE_API int swmm_gw2d_link_remove(SWMM_Engine engine, int index);
+
+/* =========================================================================
  * Running state — SI throughout
  * ========================================================================= */
 

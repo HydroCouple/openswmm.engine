@@ -44,6 +44,9 @@
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_transport.h>
 #include <openswmm/engine/openswmm_heat.h>
+#ifdef OPENSWMM_HAS_2D
+#include <openswmm/engine/openswmm_gw2d.h>
+#endif
 
 #include "core/SWMMEngine.hpp"
 
@@ -526,3 +529,80 @@ TEST(CapiGapHeat, EditsSurviveSaveAndReopen) {
     EXPECT_STREQ(buf, "ground_ts");
     EXPECT_EQ(overrideCount(r.e), 2);
 }
+
+// ---------------------------------------------------------------------------
+// [2D_AQUIFER_LINKS]: conduit-bed rows had no count/get/add/remove.
+// ---------------------------------------------------------------------------
+
+#ifdef OPENSWMM_HAS_2D
+namespace {
+
+std::string aquiferDeck(const std::string& link_rows) {
+    std::string d =
+        "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\n"
+        "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:10:00\n"
+        "REPORT_STEP 00:01:00\nROUTING_STEP 5\n\n"
+        "[JUNCTIONS]\nJ1 -5.00 6.0 0 0 0\n\n[OUTFALLS]\nO1 -5.05 FREE NO\n\n"
+        "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n\n"
+        "[LOSSES]\nC1 0 0 0 NO 100\n\n"
+        "[COORDINATES]\nJ1 1.0 5.0\nO1 9.0 5.0\n\n"
+        "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\nREPORT_2D NO\n\n"
+        "[2D_VERTICES]\n0.0 0.0 0.0\n10.0 0.0 0.0\n10.0 10.0 0.0\n0.0 10.0 0.0\n\n"
+        "[2D_TRIANGLES]\n0 1 2 0.03 0.0\n0 2 3 0.03 0.0\n\n"
+        "[2D_AQUIFER_OPTIONS]\nCLOSURE CLOSED_FORM\nNODE_ENROLMENT ROWS\n\n"
+        "[2D_AQUIFER]\n*  36.0  8.0  0.45  0.10  2.0  HG0 2.0\n\n";
+    if (!link_rows.empty()) d += "[2D_AQUIFER_LINKS]\n" + link_rows + "\n";
+    return d + "[REPORT]\nINPUT NO\n";
+}
+
+int linkCount(SWMM_Engine e) { int n = -1; swmm_gw2d_link_count(e, &n); return n; }
+
+}  // namespace
+
+TEST(CapiGapAquiferLinks, ParsedRowsReadAndEdit) {
+    OpenedDeck d(writeDeck("aquifer_links.inp",
+                           aquiferDeck("C1 KC 2.5 DC 0.3 EXCHANGE NO\n").c_str()));
+    ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
+    ASSERT_EQ(linkCount(d.e), 1);
+    char name[64] = {};
+    double kc = -1, dc = -1;
+    int exch = -1;
+    ASSERT_EQ(swmm_gw2d_link_get(d.e, 0, name, 64, &kc, &dc, &exch), SWMM_OK);
+    EXPECT_STREQ(name, "C1");
+    EXPECT_DOUBLE_EQ(kc, 2.5);
+    EXPECT_DOUBLE_EQ(dc, 0.3);
+    EXPECT_EQ(exch, 0);
+
+    EXPECT_EQ(swmm_gw2d_link_add(d.e, "C1", -1.0, 0.0, 1), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_gw2d_link_add(d.e, "", 1.0, 0.0, 1), SWMM_ERR_BADPARAM);
+    ASSERT_EQ(swmm_gw2d_link_remove(d.e, 0), SWMM_OK);
+    EXPECT_EQ(linkCount(d.e), 0);
+    EXPECT_EQ(swmm_gw2d_link_remove(d.e, 0), SWMM_ERR_BADPARAM);
+}
+
+TEST(CapiGapAquiferLinks, AddedRowSurvivesSaveAndRuns) {
+    const fs::path saved = artifactDir() / "aquifer_links_saved.inp";
+    {
+        OpenedDeck d(writeDeck("aquifer_links_add.inp", aquiferDeck("").c_str()));
+        ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
+        ASSERT_EQ(linkCount(d.e), 0);
+        ASSERT_EQ(swmm_gw2d_link_add(d.e, "C1", 2.5, 0.3, 1), SWMM_OK);
+        ASSERT_EQ(swmm_model_write(d.e, saved.string().c_str()), SWMM_OK)
+            << swmm_get_last_error_msg(d.e);
+        ASSERT_EQ(swmm_engine_initialize(d.e), SWMM_OK) << swmm_get_last_error_msg(d.e);
+        EXPECT_EQ(swmm_gw2d_link_add(d.e, "C1", 1.0, 0.0, 1), SWMM_ERR_LIFECYCLE);
+        EXPECT_EQ(swmm_gw2d_link_remove(d.e, 0), SWMM_ERR_LIFECYCLE);
+    }
+    OpenedDeck r(saved);
+    ASSERT_EQ(r.rc, SWMM_OK) << swmm_get_last_error_msg(r.e);
+    ASSERT_EQ(linkCount(r.e), 1);
+    char name[64] = {};
+    double kc = -1, dc = -1;
+    int exch = -1;
+    ASSERT_EQ(swmm_gw2d_link_get(r.e, 0, name, 64, &kc, &dc, &exch), SWMM_OK);
+    EXPECT_STREQ(name, "C1");
+    EXPECT_DOUBLE_EQ(kc, 2.5);
+    EXPECT_DOUBLE_EQ(dc, 0.3);
+    EXPECT_EQ(exch, 1);
+}
+#endif

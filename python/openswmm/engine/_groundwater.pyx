@@ -33,6 +33,10 @@ cdef extern from "openswmm/engine/openswmm_gw2d.h":
     int swmm_gw2d_node_remove(SWMM_Engine engine, int index) nogil
     int swmm_gw2d_node_get_flags(SWMM_Engine engine, int index, int* locate, int* exchange, int* automatic) nogil
     int swmm_gw2d_node_set_exchange(SWMM_Engine engine, int index, int exchange) nogil
+    int swmm_gw2d_link_count(SWMM_Engine engine, int* count) nogil
+    int swmm_gw2d_link_add(SWMM_Engine engine, const char* link, double kc, double dc, int exchange) nogil
+    int swmm_gw2d_link_get(SWMM_Engine engine, int index, char* link, int linklen, double* kc, double* dc, int* exchange) nogil
+    int swmm_gw2d_link_remove(SWMM_Engine engine, int index) nogil
     int swmm_gw2d_is_active(SWMM_Engine engine, int* active) nogil
     int swmm_gw2d_get_dimensions(SWMM_Engine engine, int* n_cells, int* m_layers) nogil
     int swmm_gw2d_get_cell(SWMM_Engine engine, int cell, int var, double* value) nogil
@@ -68,6 +72,14 @@ class AquiferNode:
     locate: bool
     exchange: bool
     automatic: bool
+
+@dataclass(frozen=True)
+class AquiferLink:
+    """[2D_AQUIFER_LINKS] conduit-bed row; kc in seepage units, dc in project length."""
+    link: str
+    kc: float
+    dc: float
+    exchange: bool
 
 class AquiferOptions(EngineView, MutableMapping):
     """Text options using the native INP key/value spellings."""
@@ -189,6 +201,30 @@ class Groundwater(EngineView):
     def set_node_exchange(self, int index, bint enabled):
         """Enable or opt out of groundwater exchange for one authored bed."""
         _check(swmm_gw2d_node_set_exchange(_h(self), index, int(enabled)))
+
+    @property
+    def links(self):
+        """[2D_AQUIFER_LINKS] conduit-bed rows."""
+        cdef SWMM_Engine h = _h(self)
+        cdef int count=0, index, exchange=0
+        cdef double kc=0, dc=0
+        cdef char link[512]
+        _check(swmm_gw2d_link_count(h, &count))
+        rows = []
+        for index in range(count):
+            _check(swmm_gw2d_link_get(h, index, link, 512, &kc, &dc, &exchange))
+            rows.append(AquiferLink(link.decode('utf-8'), kc, dc, bool(exchange)))
+        return tuple(rows)
+
+    def add_link(self, str link, double kc=0, double dc=0, bint exchange=True):
+        """Add a conduit bed: kc in [LOSSES] seepage units (0 = the conduit's
+        seep rate), dc in ft or m (0 = full depth). Edit before initialization."""
+        cdef bytes name = link.encode('utf-8')
+        _check(swmm_gw2d_link_add(_h(self), name, kc, dc, int(exchange)))
+
+    def remove_link(self, int index):
+        """Remove a conduit-bed row; subsequent indices shift."""
+        _check(swmm_gw2d_link_remove(_h(self), index))
 
     @property
     def active(self):

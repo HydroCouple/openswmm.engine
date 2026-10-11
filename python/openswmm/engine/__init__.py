@@ -429,8 +429,8 @@ __all__ += ["KnownProcessComponent", "ComponentLibrary"]
 from ._enums import (CellScope as CellScope, GroundwaterSoil as GroundwaterSoil, GroundwaterClosure as GroundwaterClosure, GroundwaterVariable as GroundwaterVariable, GroundwaterLedger as GroundwaterLedger, GroundwaterZone as GroundwaterZone, GroundwaterSpeciesLedger as GroundwaterSpeciesLedger)
 __all__ += ['CellScope', 'GroundwaterSoil', 'GroundwaterClosure', 'GroundwaterVariable', 'GroundwaterLedger', 'GroundwaterZone', 'GroundwaterSpeciesLedger']
 if HAS_2D:
-    from ._groundwater import Groundwater, AquiferRow, AquiferNode
-    __all__ += ["Groundwater", "AquiferRow", "AquiferNode"]
+    from ._groundwater import Groundwater, AquiferRow, AquiferNode, AquiferLink
+    __all__ += ["Groundwater", "AquiferRow", "AquiferNode", "AquiferLink"]
 
 from ._enums import GroundwaterTransportZone as GroundwaterTransportZone
 __all__.append("GroundwaterTransportZone")

@@ -50,6 +50,7 @@ namespace {
 using openswmm::twoD::GwAquiferRow;
 using openswmm::twoD::GwClosure;
 using openswmm::twoD::GwLinkMode;   // G-X4
+using openswmm::twoD::GwLinkRow;
 using openswmm::twoD::GwNodeBed;
 using openswmm::twoD::SoilChar;
 using openswmm::twoD::SubsurfaceConfig;
@@ -369,6 +370,64 @@ SWMM_ENGINE_API int swmm_gw2d_node_remove(SWMM_Engine engine, int index) {
         return SWMM_ERR_BADPARAM;
     cfg.node_beds.erase(cfg.node_beds.begin() + index);
     auto& names = eng->surfaceRouter2D().aquiferNodeNames();
+    if (index < static_cast<int>(names.size()))
+        names.erase(names.begin() + index);
+    return SWMM_OK;
+}
+
+// ---------------------------------------------------------------------------
+// [2D_AQUIFER_LINKS]
+// ---------------------------------------------------------------------------
+
+SWMM_ENGINE_API int swmm_gw2d_link_count(SWMM_Engine engine, int* count) {
+    AQ_CFG(engine);
+    if (!count) return SWMM_ERR_BADPARAM;
+    *count = static_cast<int>(cfg.link_rows.size());
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gw2d_link_add(SWMM_Engine engine, const char* link,
+                                       double kc, double dc, int exchange) {
+    AQ_CFG(engine);
+    AQ_EDITABLE(eng);
+    if (!link || link[0] == '\0') return SWMM_ERR_BADPARAM;
+    if (!(kc >= 0.0) || !(dc >= 0.0)) return SWMM_ERR_BADPARAM;   // parser rule
+    GwLinkRow r;
+    r.Kc = kc;
+    r.dC = dc;
+    r.exchange = (exchange != 0);
+    cfg.link_rows.push_back(r);
+    eng->surfaceRouter2D().aquiferLinkNames().emplace_back(link);
+    cfg.options.authored = true;
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gw2d_link_get(SWMM_Engine engine, int index,
+                                       char* link, int linklen, double* kc,
+                                       double* dc, int* exchange) {
+    AQ_CFG(engine);
+    if (index < 0 || index >= static_cast<int>(cfg.link_rows.size()))
+        return SWMM_ERR_BADPARAM;
+    const auto& r = cfg.link_rows[static_cast<std::size_t>(index)];
+    if (kc)       *kc       = r.Kc;
+    if (dc)       *dc       = r.dC;
+    if (exchange) *exchange = r.exchange ? 1 : 0;
+    if (link) {
+        const auto& names = eng->surfaceRouter2D().aquiferLinkNames();
+        copy_to(index < static_cast<int>(names.size())
+                    ? names[static_cast<std::size_t>(index)] : std::string{},
+                link, linklen);
+    }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_gw2d_link_remove(SWMM_Engine engine, int index) {
+    AQ_CFG(engine);
+    AQ_EDITABLE(eng);
+    if (index < 0 || index >= static_cast<int>(cfg.link_rows.size()))
+        return SWMM_ERR_BADPARAM;
+    cfg.link_rows.erase(cfg.link_rows.begin() + index);
+    auto& names = eng->surfaceRouter2D().aquiferLinkNames();
     if (index < static_cast<int>(names.size()))
         names.erase(names.begin() + index);
     return SWMM_OK;

@@ -32,6 +32,13 @@ class AquiferNode:
     exchange: bool
     automatic: bool
 
+@dataclass(frozen=True)
+class AquiferLink:
+    link: str
+    kc: float
+    dc: float
+    exchange: bool
+
 from ._gw_transport import GroundwaterTransport
 
 class AquiferOptions(MutableMapping[str, str]):
@@ -62,6 +69,10 @@ class Groundwater:
     def add_node(self, node: str, cell: int, kc: float, dc: float, area: float = ...) -> None: ...
     def remove_node(self, index: int) -> None: ...
     def set_node_exchange(self, index: int, enabled: bool) -> None: ...
+    @property
+    def links(self) -> tuple[AquiferLink, ...]: ...
+    def add_link(self, link: str, kc: float = ..., dc: float = ..., exchange: bool = ...) -> None: ...
+    def remove_link(self, index: int) -> None: ...
     @property
     def active(self) -> bool: ...
     @property
