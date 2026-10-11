@@ -4,6 +4,7 @@
 #include "CompletedSourceArchive.hpp"
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/subsurface/CommonSourceStage.hpp"
+#include "../2d/subsurface/EngineSourceResultHistory.hpp"
 #endif
 #include <algorithm>
 #include <atomic>
@@ -609,9 +610,9 @@ std::string SWMMEngine::enableCheckpointingImpl(
         return e.what();
     }
 }
-std::string SWMMEngine::saveCheckpoint(const std::string& path) const {
+std::string SWMMEngine::checkpointBytes(std::string& result) const {
     try {
-        require(!step_active_ && !runtime_pipeline_ && exchange_target_<0,"Cannot save an active engine pipeline.");checkCheckpointBoundary();
+        checkCheckpointBoundary();
         RestartState state(*this);Archive payload;state.archive(payload);std::string hydraulic;
         uint32_t version=3;std::string error;
 #ifdef OPENSWMM_HAS_2D
@@ -625,12 +626,40 @@ std::string SWMMEngine::saveCheckpoint(const std::string& path) const {
 #endif
         auto bytes=payload.bytes(),model=checkpoint_model_;auto crc=checksum(bytes);std::string magic=magicName;
         Archive out;out(magic,version,model,crc,bytes);require(out.bytes().size()<=maxBytes,"Engine checkpoint exceeds its size limit.");
-        publish(path,out.bytes());return {};
+        result=out.bytes();return {};
     } catch(const std::exception& e) {return e.what();}
 }
+std::string SWMMEngine::saveCheckpoint(const std::string& path) const {
+    try {
+        require(!step_active_ && !runtime_pipeline_ && exchange_target_<0,"Cannot save an active engine pipeline.");
+        std::string bytes;const auto error=checkpointBytes(bytes);require(error.empty(),error.c_str());
+#ifdef OPENSWMM_HAS_2D
+        require(!engine_source_history_ || engine_source_history_->boundary_==bytes,"Engine source history is not at the accepted checkpoint.");
+#endif
+        publish(path,bytes);return {};
+    } catch(const std::exception& e) {return e.what();}
+}
+#ifdef OPENSWMM_HAS_2D
+std::string SWMMEngine::setEngineSourceResultHistory(twoD::EngineSourceResultHistory& history) {
+    try {
+        require(!step_active_ && !runtime_pipeline_ && !engine_source_history_ && ctx_.current_time==0 && history.tables().empty(),
+                "Attach an empty engine source recorder at the initial accepted boundary.");
+        const auto error=history.append(*this,0);require(error.empty(),error.c_str());engine_source_history_=&history;return {};
+    } catch(const std::exception& e) {return e.what();}
+}
+std::string SWMMEngine::resumeEngineSourceResultHistory(twoD::EngineSourceResultHistory& history) {
+    try {
+        require(!step_active_ && !runtime_pipeline_ && !engine_source_history_,"Resume engine source history after restoring the engine checkpoint.");
+        const auto error=history.resume(*this);require(error.empty(),error.c_str());engine_source_history_=&history;return {};
+    } catch(const std::exception& e) {return e.what();}
+}
+#endif
 std::string SWMMEngine::loadCheckpoint(const std::string& path) {
     try {
         require(!step_active_ && !runtime_pipeline_ && exchange_target_<0 && ctx_.current_time==0,"Engine restore requires an identically initialized fresh session.");
+#ifdef OPENSWMM_HAS_2D
+        require(!engine_source_history_,"Restore the engine checkpoint before attaching its source history.");
+#endif
         checkCheckpointBoundary();Archive in(readFile(path));std::string magic,model,bytes;uint32_t version=0,crc=0;
         in(magic,version,model,crc,bytes);in.finish();
         uint32_t expected_version=3;

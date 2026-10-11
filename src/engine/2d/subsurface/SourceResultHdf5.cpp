@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "SourceResultHistory.hpp"
+#include "EngineSourceResultHistory.hpp"
 #ifdef OPENSWMM_HAS_HDF5_MODEL
 #include "../../io/hdf5/Hdf5Util.hpp"
 #include <algorithm>
@@ -210,11 +211,63 @@ struct SourceResultFile {
 std::string SourceResultHistory::writeIntoOpenResult(std::int64_t file) const {return SourceResultFile::embed(*this,file);}
 std::string SourceResultHistory::save(const std::string& path) const {return SourceResultFile::save(*this,path);}
 std::string SourceResultHistory::read(const std::string& path,SourceResultHistory& out,bool& available){return SourceResultFile::read(path,out,available);}
+
+struct EngineSourceResultFile {
+    static constexpr const char* kind="OpenSWMM internal accepted engine source result history";
+    static constexpr const char* semantics="accepted engine steps; frame 0 initial; source clocks may repeat; cumulative water; queues are snapshots not additive events; whole-engine checkpoint match; no hydraulic output append";
+    static std::string save(const EngineSourceResultHistory& history,const std::string& path) {
+        std::string part;
+        try {
+            const auto invalid=history.validate();if(!invalid.empty())return invalid;
+            QuietErrors quiet;
+            if(std::filesystem::exists(path)) {
+                auto existing=h5io::open_file_readonly(path);
+                require(existing.ok()&&attribute(existing.get(),"artifact_kind")==kind,"Destination is not a standalone engine source result artifact.");
+            }
+            static std::atomic<unsigned long> serial{0};part=path+".engine-source-results-part-"+std::to_string(++serial);
+            PublicationFile file(part);if(file.id<0){part.clear();return "Cannot create engine source result publication file.";}
+            attribute(file.id,"artifact_kind",kind);
+            auto group=h5io::make_group(file.id,"engine_source_history");require(group.ok(),"Cannot create engine source history group.");
+            attribute(group.get(),"schema_version","1");attribute(group.get(),"temporal_meaning",semantics);
+            attribute(group.get(),"outfall_returns",history.outfall_returns_?"1":"0");
+            names(group.get(),"source_names",history.sources_);names(group.get(),"node_names",history.nodes_);
+            for(const auto& [name,t]:history.tables_)writeTable(group.get(),name,t);
+            boundary(group.get(),history.boundary_);
+            require(H5Fflush(file.id,H5F_SCOPE_GLOBAL)>=0,"Cannot flush engine source result file.");
+            group.close();file.close();std::error_code error;std::filesystem::rename(part,path,error);
+            require(!error,"Cannot publish engine source result file.");part.clear();return {};
+        } catch(const std::exception& e) {
+            if(!part.empty()){std::error_code ignored;std::filesystem::remove(part,ignored);}return e.what();
+        }
+    }
+    static std::string read(const std::string& path,EngineSourceResultHistory& out,bool& available) {
+        available=false;
+        try {
+            QuietErrors quiet;std::error_code error;const auto size=std::filesystem::file_size(path,error);
+            require(!error&&size>0&&size<=256*1024*1024,"Engine source result file missing or exceeds size limit.");
+            auto file=h5io::open_file_readonly(path);require(file.ok(),"Cannot open engine source result HDF5 file.");
+            if(!h5io::has_link(file.get(),"engine_source_history"))return {};
+            auto group=h5io::open_group(file.get(),"engine_source_history");require(group.ok(),"Invalid engine source history group.");
+            require(attribute(group.get(),"schema_version")=="1" && attribute(group.get(),"temporal_meaning")==semantics,"Unsupported engine source result schema or metadata.");
+            const auto returns=attribute(group.get(),"outfall_returns");require(returns=="0"||returns=="1","Invalid engine source return capability.");
+            EngineSourceResultHistory trial;trial.outfall_returns_=returns=="1";trial.tables_=EngineSourceResultHistory::schema(trial.outfall_returns_);
+            trial.sources_=names(group.get(),"source_names");trial.nodes_=names(group.get(),"node_names");trial.boundary_=boundary(group.get());
+            std::size_t total=0;for(auto& [name,t]:trial.tables_)readTable(group.get(),name,t,total);
+            const auto& dates=trial.tables_.at("boundaries").columns[6];require(!dates.empty(),"Missing engine source start date.");trial.start_date_=dates.front();
+            const auto invalid=trial.validate();if(!invalid.empty())return invalid;
+            out=std::move(trial);available=true;return {};
+        } catch(const std::exception& e){return e.what();}
+    }
+};
+std::string EngineSourceResultHistory::save(const std::string& path) const {return EngineSourceResultFile::save(*this,path);}
+std::string EngineSourceResultHistory::read(const std::string& path,EngineSourceResultHistory& out,bool& available){return EngineSourceResultFile::read(path,out,available);}
 }
 #else
 namespace openswmm::twoD {
 std::string SourceResultHistory::writeIntoOpenResult(std::int64_t) const {return "Source result HDF5 support unavailable in this build.";}
 std::string SourceResultHistory::save(const std::string&) const {return "Source result HDF5 support unavailable in this build.";}
 std::string SourceResultHistory::read(const std::string&,SourceResultHistory&,bool& available){available=false;return "Source result HDF5 support unavailable in this build.";}
+std::string EngineSourceResultHistory::save(const std::string&) const {return "Engine source result HDF5 support unavailable in this build.";}
+std::string EngineSourceResultHistory::read(const std::string&,EngineSourceResultHistory&,bool& available){available=false;return "Engine source result HDF5 support unavailable in this build.";}
 }
 #endif

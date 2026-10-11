@@ -73,6 +73,7 @@
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/input/SectionHandlers2D.hpp"
 #include "../2d/subsurface/CommonSourceStage.hpp"
+#include "../2d/subsurface/EngineSourceResultHistory.hpp"
 #ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
 #include "../2d/output/Default2DOutputPlugin.hpp"
 #endif
@@ -1819,6 +1820,9 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
     ctx_.forcing.clear_reset_entries();
 
     // Advance clock (must happen before output_due check)
+#ifdef OPENSWMM_HAS_2D
+    const double engine_source_start=ctx_.current_time;
+#endif
     hydraulics::TimestepController::advance(ctx_, dt_next);
 #ifdef OPENSWMM_HAS_2D
     if (source_delivery_) {
@@ -1899,6 +1903,12 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         router_.acceptCheckpointBoundary(ctx_);
         checkpoint_ready_ = true;
         checkCheckpointBoundary();
+#ifdef OPENSWMM_HAS_2D
+        if(engine_source_history_) {
+            const auto error=engine_source_history_->append(*this,engine_source_start);
+            if(!error.empty())throw std::runtime_error(error);
+        }
+#endif
     }
     if (elapsed_time) *elapsed_time = ctx_.current_time / hydraulics::TimestepController::SEC_PER_DAY;
     return SWMM_OK;
@@ -7647,6 +7657,9 @@ int SWMMEngine::end() noexcept {
         plugins_.finalize_all(ctx_);
     }
 
+#ifdef OPENSWMM_HAS_2D
+    engine_source_history_=nullptr;
+#endif
     ctx_.state = EngineState::ENDED;
     return SWMM_OK;
 }
@@ -7718,7 +7731,7 @@ int SWMMEngine::close() noexcept {
     checkpoint_enabled_ = checkpoint_ready_ = false;
     checkpoint_model_.clear();
 #ifdef OPENSWMM_HAS_2D
-    source_delivery_.reset();source_stage_=nullptr;source_totals_={};
+    engine_source_history_=nullptr;source_delivery_.reset();source_stage_=nullptr;source_totals_={};
 #endif
     // Load-phase breakdown. Emitted here rather than from end() so it reports
     // for a bare open()+close() too — the benchmark harness times open alone,

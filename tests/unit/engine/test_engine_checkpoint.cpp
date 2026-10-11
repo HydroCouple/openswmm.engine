@@ -7,6 +7,7 @@
 #include "2d/subsurface/CommonSourceStage.hpp"
 #include "hydrology/LidNode.hpp"
 #include "2d/subsurface/SourceResultHistory.hpp"
+#include "2d/subsurface/EngineSourceResultHistory.hpp"
 #include "2d/mesh/MeshBuilder.hpp"
 #endif
 #include <filesystem>
@@ -994,4 +995,138 @@ TEST(EngineCheckpoint, OwnedOutfallReceiptCorruptionPreservesAllComponentsAndAll
         ASSERT_EQ(target.engine.loadCheckpoint(good.string()),"");compare(a.engine,target.engine,"owned-outfall-retry-"+std::to_string(mutation));
     }
 }
+
+namespace {
+void sameEngineHistory(const twoD::EngineSourceResultHistory& a,const twoD::EngineSourceResultHistory& b) {
+    ASSERT_EQ(a.sourceNames(),b.sourceNames());ASSERT_EQ(a.nodeNames(),b.nodeNames());
+    ASSERT_EQ(a.outfallReturnsAvailable(),b.outfallReturnsAvailable());ASSERT_EQ(a.simulationStartDate(),b.simulationStartDate());
+    ASSERT_EQ(a.tables().size(),b.tables().size());
+    for(const auto& [name,t]:a.tables()) {
+        const auto& next=b.tables().at(name);EXPECT_EQ(t.fields,next.fields)<<name;EXPECT_EQ(t.units,next.units)<<name;EXPECT_EQ(t.columns,next.columns)<<name;
+    }
+}
+}
+TEST(EngineCheckpoint, AcceptedSourceHistoryPreservesEveryEngineStepAndExactContinuation) {
+    for(int lid=0;lid<3;++lid)for(double cadence:{.31,.7}) {
+        const auto name="engine-history-"+std::to_string(lid)+"-"+std::to_string(cadence);SCOPED_TRACE(name);
+        twoD::EngineSourceResultHistory history,resumed;SurfaceSession a,control,b;
+        const bool multiple=lid==2;
+        ASSERT_NO_THROW(startClosedSpatial(a,name,lid,cadence,true,multiple));
+        ASSERT_NO_THROW(startClosedSpatial(control,name+"-control",lid,cadence,true,multiple));
+        ASSERT_EQ(a.engine.setEngineSourceResultHistory(history),"");
+        EXPECT_DOUBLE_EQ(history.tables().at("boundaries").columns[2][0],0);
+        EXPECT_TRUE(history.outfallReturnsAvailable());
+        bool repeated=false,leading=false,pending=false;int steps=0;bool restored=false;
+        while(a.engine.context().elapsed_ms<a.engine.context().options.totalDurationMs()) {
+            ASSERT_NO_THROW({step(a.engine);step(control.engine);});++steps;
+            const auto& boundaries=history.tables().at("boundaries").columns;
+            ASSERT_EQ(boundaries[0].size(),std::size_t(steps+1));
+            EXPECT_DOUBLE_EQ(boundaries[2].back(),a.engine.context().current_time);
+            EXPECT_DOUBLE_EQ(boundaries[4].back(),a.stage.completedEnd());EXPECT_DOUBLE_EQ(boundaries[5].back(),a.sources.outfallReturnEnd());
+            repeated|=boundaries[3].back()==boundaries[3][boundaries[3].size()-2];leading|=boundaries[5].back()>boundaries[4].back();
+            pending|=history.tables().at("pending_outfall_return").rows()>0;
+            compare(a.engine,control.engine,name+"-physics");
+            if(restored) {ASSERT_NO_THROW(step(b.engine));sameEngineHistory(history,resumed);compare(a.engine,b.engine,name+"-continued");}
+            if(steps==25) {
+                const auto checkpoint=root()/(name+".chk");ASSERT_EQ(a.engine.saveCheckpoint(checkpoint.string()),"");
+#ifdef OPENSWMM_HAS_HDF5_MODEL
+                const auto file=root()/(name+".h5");ASSERT_EQ(history.save(file.string()),"");bool available=false;
+                ASSERT_EQ(twoD::EngineSourceResultHistory::read(file.string(),resumed,available),"");ASSERT_TRUE(available);sameEngineHistory(history,resumed);
+                twoD::SourceResultHistory component;available=true;
+                EXPECT_EQ(twoD::SourceResultHistory::read(file.string(),component,available),"");EXPECT_FALSE(available);
+#else
+                resumed=history;
+#endif
+                ASSERT_NO_THROW(startClosedSpatial(b,name+"-resumed",lid,cadence,true,multiple));
+                const auto original=history.tables().at("boundaries").columns;
+                EXPECT_FALSE(b.engine.resumeEngineSourceResultHistory(resumed).empty());
+                ASSERT_EQ(b.engine.loadCheckpoint(checkpoint.string()),"");ASSERT_EQ(b.engine.resumeEngineSourceResultHistory(resumed),"");
+                EXPECT_EQ(history.tables().at("boundaries").columns,original);sameEngineHistory(history,resumed);restored=true;
+            }
+        }
+        EXPECT_TRUE(repeated);EXPECT_TRUE(leading);EXPECT_TRUE(pending);EXPECT_TRUE(restored);
+        const auto& credits=history.tables().at("source_water").columns[16];
+        EXPECT_GT(*std::max_element(credits.begin(),credits.end()),0);
+        const auto last=history.tables().at("boundaries").columns;double elapsed=0;
+        ASSERT_EQ(a.engine.step(&elapsed),0);EXPECT_EQ(history.tables().at("boundaries").columns,last);
+        ASSERT_EQ(a.engine.end(),0);
+#ifdef OPENSWMM_HAS_HDF5_MODEL
+        EXPECT_EQ(history.save((root()/(name+"-final.h5")).string()),"");
+#endif
+    }
+}
+TEST(EngineCheckpoint, AcceptedSourceHistoryRefusesWrongProfilesRestoreOrderAndFinalProjection) {
+    twoD::EngineSourceResultHistory empty,history;SWMMEngine ordinary;
+    ASSERT_NO_THROW(start(ordinary,"engine-history-ordinary",0,true,0,false,true));
+    EXPECT_FALSE(ordinary.setEngineSourceResultHistory(empty).empty());EXPECT_TRUE(empty.tables().empty());
+    SurfaceSession mesh;ASSERT_NO_THROW(mesh.start("engine-history-mesh"));
+    EXPECT_FALSE(mesh.engine.setEngineSourceResultHistory(empty).empty());EXPECT_TRUE(empty.tables().empty());
+    SurfaceSession a;ASSERT_NO_THROW(startClosedSpatial(a,"engine-history-guards",2,.31,true));
+    ASSERT_EQ(a.engine.setEngineSourceResultHistory(history),"");EXPECT_FALSE(a.engine.setEngineSourceResultHistory(empty).empty());
+    for(int k=0;k<25;++k)ASSERT_NO_THROW(step(a.engine));
+    const auto good=root()/"engine-history-guards.chk";ASSERT_EQ(a.engine.saveCheckpoint(good.string()),"");
+    twoD::EngineSourceResultHistory attached;SurfaceSession initial;
+    ASSERT_NO_THROW(startClosedSpatial(initial,"engine-history-attached",2,.31,true));
+    ASSERT_EQ(initial.engine.setEngineSourceResultHistory(attached),"");
+    const auto before=root()/"engine-history-attached.chk";ASSERT_EQ(initial.engine.saveCheckpoint(before.string()),"");auto original=bytes(before);
+    EXPECT_FALSE(initial.engine.loadCheckpoint(good.string()).empty());ASSERT_EQ(initial.engine.saveCheckpoint(before.string()),"");EXPECT_EQ(bytes(before),original);
+    for(int mutation=0;mutation<10;++mutation) {
+        SCOPED_TRACE(mutation);auto edited=history;
+        auto& t=const_cast<std::map<std::string,twoD::SourceResultTable>&>(edited.tables());
+        switch(mutation) {
+        case 0:t.at("boundaries").columns[2].back()+=.001;break;
+        case 1:t.at("boundaries").columns[7].back()+=1;break; // semantic but false final projection
+        case 2:for(auto& v:t.at("source_water").columns[3])v=.25;break; // valid fraction, false identity
+        case 3:t.at("group_water").columns[3].back()+=1;break;
+        case 4:t.at("node_delivery").columns[4].back()+=1;break;
+        case 5:t.at("boundaries").units[2]="h";break;
+        case 6:const_cast<std::vector<std::string>&>(edited.sourceNames())[0]="other catchment";break;
+        case 7:t.at("boundaries").columns[3].back()+=1;break;
+        case 8:t.at("source_water").columns[16].back()=-1;break;
+        case 9:ASSERT_GT(t.at("pending_outfall_return").rows(),0u);t.at("pending_outfall_return").columns[4].back()+=1;break;
+        }
+        SurfaceSession target;ASSERT_NO_THROW(startClosedSpatial(target,"engine-history-mutant-"+std::to_string(mutation),2,.31,true));
+        ASSERT_EQ(target.engine.loadCheckpoint(good.string()),"");
+        const auto path=root()/("engine-history-mutant-"+std::to_string(mutation)+".chk");ASSERT_EQ(target.engine.saveCheckpoint(path.string()),"");const auto bytes_before=bytes(path);
+        const auto columns=t.at("boundaries").columns;
+        EXPECT_FALSE(target.engine.resumeEngineSourceResultHistory(edited).empty());EXPECT_EQ(t.at("boundaries").columns,columns);
+        ASSERT_EQ(target.engine.saveCheckpoint(path.string()),"");EXPECT_EQ(bytes(path),bytes_before);
+        auto valid=history;ASSERT_EQ(target.engine.resumeEngineSourceResultHistory(valid),"");ASSERT_NO_THROW(step(target.engine));
+    }
+}
+TEST(EngineCheckpoint, AcceptedSourceHistoryKeepsDisabledReturnsUnavailableAndVectorRichardsBackwater) {
+    for(bool returns:{false,true}) {
+        twoD::EngineSourceResultHistory history,resumed;SurfaceSession a,b;
+        const auto name=std::string("engine-history-vector-")+(returns?"returns":"ordinary");
+        ASSERT_NO_THROW(a.start(name,3,0,1,6,true,true,true,returns?2:-1));
+        ASSERT_EQ(a.engine.setEngineSourceResultHistory(history),"");EXPECT_EQ(history.outfallReturnsAvailable(),returns);
+        EXPECT_EQ(history.tables().count("pending_outfall_return"),returns?1u:0u);
+        for(int k=0;k<16;++k)ASSERT_NO_THROW(step(a.engine));
+        const auto file=root()/(name+".chk");ASSERT_EQ(a.engine.saveCheckpoint(file.string()),"");resumed=history;
+        ASSERT_NO_THROW(b.start(name+"-resumed",3,0,1,6,true,true,true,returns?2:-1));
+        ASSERT_EQ(b.engine.loadCheckpoint(file.string()),"");ASSERT_EQ(b.engine.resumeEngineSourceResultHistory(resumed),"");
+        for(int k=0;k<4;++k){ASSERT_NO_THROW({step(a.engine);step(b.engine);});sameEngineHistory(history,resumed);compare(a.engine,b.engine,name);}
+#ifdef OPENSWMM_HAS_HDF5_MODEL
+        const auto h5=root()/(name+".h5");ASSERT_EQ(history.save(h5.string()),"");twoD::EngineSourceResultHistory read;bool available=false;
+        ASSERT_EQ(twoD::EngineSourceResultHistory::read(h5.string(),read,available),"");ASSERT_TRUE(available);sameEngineHistory(history,read);
+#endif
+    }
+}
+#ifdef OPENSWMM_HAS_HDF5_MODEL
+TEST(EngineCheckpoint, AcceptedSourceHistoryPublicationAndMalformedReaderPreservePreviousArtifacts) {
+    twoD::EngineSourceResultHistory history;SurfaceSession a;
+    ASSERT_NO_THROW(startClosedSpatial(a,"engine-history-files",0,.7,true));ASSERT_EQ(a.engine.setEngineSourceResultHistory(history),"");
+    for(int k=0;k<12;++k)ASSERT_NO_THROW(step(a.engine));
+    const auto good=root()/"engine-history-files.h5";ASSERT_EQ(history.save(good.string()),"");const auto original=bytes(good);
+    auto invalid=history;const_cast<std::map<std::string,twoD::SourceResultTable>&>(invalid.tables()).at("boundaries").columns[5].back()=0;
+    EXPECT_FALSE(invalid.save(good.string()).empty());EXPECT_EQ(bytes(good),original);
+    auto unrelated=root()/"engine-history-unrelated.h5";write(unrelated,"keep unrelated data");
+    EXPECT_FALSE(history.save(unrelated.string()).empty());EXPECT_EQ(bytes(unrelated),"keep unrelated data");
+    const auto broken=root()/"engine-history-broken.h5";write(broken,original.substr(0,original.size()/2));
+    twoD::EngineSourceResultHistory out=history;bool available=true;
+    EXPECT_FALSE(twoD::EngineSourceResultHistory::read(broken.string(),out,available).empty());EXPECT_FALSE(available);sameEngineHistory(history,out);
+    available=true;EXPECT_FALSE(twoD::EngineSourceResultHistory::read((root()/"missing-engine-history.h5").string(),out,available).empty());EXPECT_FALSE(available);sameEngineHistory(history,out);
+    ASSERT_EQ(twoD::EngineSourceResultHistory::read(good.string(),out,available),"");ASSERT_TRUE(available);sameEngineHistory(history,out);
+}
+#endif
 #endif
