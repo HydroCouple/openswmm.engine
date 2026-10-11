@@ -257,3 +257,28 @@ class TestPrintSummary(unittest.TestCase):
         print(f"    of which allowlisted:          {len(KNOWN_UNBOUND):>4}")
         print(f"    of which unjustified:          {len(unjustified):>4}")
         print(f"  Declared in .pxd but not called: {len(declared_not_called):>4}")
+
+
+# ---------------------------------------------------------------------------
+# Public surface: every member declared in a .pyi stub is implemented in the
+# matching .pyx/.py class (directly or through a base class). Other bindings
+# (the WebAssembly package) mirror the API from the stubs, so a stub member
+# with no implementation would be copied as a phantom.
+# ---------------------------------------------------------------------------
+_surface_spec = importlib.util.spec_from_file_location(
+    "_python_surface", _PYTHON_DIR / "scripts/python_surface.py")
+_surface = importlib.util.module_from_spec(_surface_spec)
+_surface_spec.loader.exec_module(_surface)
+
+
+class TestPublicSurface(unittest.TestCase):
+    def test_every_stub_member_is_implemented(self):
+        missing = _surface.check()
+        self.assertEqual(missing, [], "stub members without an implementation:\n  - "
+                         + "\n  - ".join(missing))
+
+    def test_surface_covers_the_main_classes(self):
+        surface = _surface.collect()
+        self.assertIn("Solver", surface["_solver"]["classes"])
+        self.assertIn("step", surface["_solver"]["classes"]["Solver"]["members"])
+        self.assertIn("__len__", surface["_nodes"]["classes"]["Nodes"]["members"])
