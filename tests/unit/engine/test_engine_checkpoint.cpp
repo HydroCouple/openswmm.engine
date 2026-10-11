@@ -473,7 +473,7 @@ struct SurfaceSession {
     runoff::SourceWaterDriver sources;
     twoD::CommonSourceStage stage;
     SWMMEngine engine;
-    void start(const std::string& name,int lid=0,int mapped=0,int closure=0,int mode=0,bool track=true,bool spatial=false,bool all_sources=false,int outfall_return=-1,bool output=false,int mesh_output=0,bool average=false,const std::string& runtime_identity={}) {
+    void start(const std::string& name,int lid=0,int mapped=0,int closure=0,int mode=0,bool track=true,bool spatial=false,bool all_sources=false,int outfall_return=-1,bool output=false,int mesh_output=0,bool average=false,const std::string& runtime_identity={},bool runtime_boundaries=false) {
         SWMMEngine authored;startRunoff(authored,name,mode%5,mode%3,lid,false);authored.close();
         auto p=root()/name;auto deck=bytes(p.string()+".inp");
         deck.replace(deck.find("IGNORE_2D YES"),13,"IGNORE_2D NO");
@@ -530,7 +530,7 @@ struct SurfaceSession {
                 preview.shares.push_back(share);preview.mesh_weather_area[cell]-=inside;
             }
         }
-        error=stage.initialize(mesh,router.state(),options,router.subsurface(),sources,preview,!spatial,runtime_identity);
+        error=stage.initialize(mesh,router.state(),options,router.subsurface(),sources,preview,!spatial,runtime_identity,runtime_boundaries);
         if(!error.empty())throw std::runtime_error(error);
         if(track) {error=spatial?e.enableSpatialSourceCheckpointing(stage):e.enableCheckpointing(stage);if(!error.empty())throw std::runtime_error(error);}
     }
@@ -2390,4 +2390,254 @@ TEST(EngineCheckpoint, ExternalWaterDriverAttachmentAndCaptureRejectUnsupportedS
     EXPECT_FALSE(target.engine.loadCheckpoint(cp.string()).empty());
 }
 #endif
+#endif
+
+#ifdef OPENSWMM_HAS_2D
+namespace {
+void startBoundary(SurfaceSession& s,const std::string& name,int lid=0,int closure=0,bool output=false,int mesh_output=0) {
+    s.start(name,lid,1,closure,0,true,false,false,-1,output,mesh_output,output,"mesh water driver revision 1",true);
+}
+int exterior(const SWMMEngine& e,int cell) {
+    const auto& m=const_cast<SWMMEngine&>(e).surfaceRouter2D().mesh();
+    for(int edge=0;edge<m.cell_vertex_count(cell);++edge)if(m.cell_neighbour(cell,edge)<0)return edge;
+    throw std::runtime_error("Fixture has no exterior edge");
+}
+int boundaryFrame(SWMMEngine& e,int phase=0,const char* owner="edge-water") {
+    const int a=exterior(e,0),b=exterior(e,1);
+    const SWMM_CouplingBoundary rows[]={
+        {sizeof(SWMM_CouplingBoundary),0,0,a,phase==2?0:phase==1?2:1,phase==1?.5:.75,0,nullptr},
+        {sizeof(SWMM_CouplingBoundary),0,1,b,phase==2?0:2,phase==1?-.005:.5,0,nullptr},
+        {sizeof(SWMM_CouplingBoundary),1,0,a,phase==2?0:1,phase==1?-.5:1.55,0,nullptr},
+        {sizeof(SWMM_CouplingBoundary),1,1,b,phase==2?0:2,phase==1?-.01:2.,0,nullptr}};
+    const SWMM_CouplingFrame frame{sizeof(frame),1,owner,0,nullptr,4,rows,0,nullptr,0,nullptr};
+    return swmm_coupling_apply_frame(reinterpret_cast<SWMM_Engine>(&e),&frame);
+}
+void compareBoundary(SurfaceSession& a,SurfaceSession& b,const std::string& name,bool output=false) {
+    if(output)compareMesh(a.engine,b.engine,name);else compare(a.engine,b.engine,name);
+    const auto x=root()/(name+"-a.chk"),y=root()/(name+"-b.chk");
+    ASSERT_EQ(a.engine.saveCheckpoint(x.string()),"");
+        ASSERT_EQ(b.engine.saveCheckpoint(y.string()),"");
+    if(output)EXPECT_EQ(engineSurface(bytes(x)),engineSurface(bytes(y)));
+    else EXPECT_EQ(bytes(x),bytes(y));
+}
+// Rewrite a semantic boundary record, then rebuild every enclosing checksum.
+std::string changeBoundaryRecord(const std::string& original,int mutation) {
+    using A=detail::CompletedSourceArchive;
+    A engine(original);std::string em,model,payload;uint32_t ev,sum;engine(em,ev,model,sum,payload);engine.finish();
+    auto surface=engineSurface(original),surface_data=surfacePayload(surface);
+    auto cpu=nested(surface_data,"OpenSWMM CPU surface/source boundary").second;
+    A ca(cpu);std::string cm,cp;uint32_t cv,endian,long_bytes;ca(cm,cv,endian,long_bytes,cp,sum);ca.finish();
+    auto source=nested(cp,"OpenSWMM source boundary").second;
+    A sa(source);std::string sm,source_model,sp;uint32_t sv,se,sl,sd;sa(sm,sv,se,sl,sd,source_model,sp,sum);sa.finish();
+    auto provider=nested(sp,"OpenSWMM Runtime Water").second;
+    A pa(provider);std::string pm,identity,pp,boundary_model;uint32_t pv,pe,pi,pr;
+    std::vector<bool> cells,edges;double time;pa(pm,pv,pe,pi,pr,identity,cells,time,edges,boundary_model,pp,sum);pa.finish();
+    twoD::RuntimeSources s,g;twoD::RuntimeForcings f;twoD::BoundaryData boundary;boundary.resize(int(edges.size()));
+    struct Row {int slot=0;twoD::BoundaryData::RuntimeOriginal old{};std::string owner;};std::vector<Row> overrides;
+    std::vector<std::pair<int,twoD::RuntimeReceipt>> receipts;
+    const auto receipt=[](A& a,twoD::RuntimeReceipt& r){a(r.requested,r.applied,r.water_in,r.water_out,r.last_flow,r.last_dt);};
+    const auto fields=[&](A& a) {
+        const auto row=[&](auto& r){a(r.id,r.owner,r.cell,r.flow,r.until,r.enabled,r.boundary_edge,r.boundary_head);receipt(a,r.receipt);};
+        a.sequence(s.rows,row);a.sequence(g.rows,row);
+        a.sequence(f.rows,[&](auto& r){a(r.channel,r.cell,r.mode,r.rate,r.until,r.enabled,r.owner);receipt(a,r.receipt);});
+        a.fixed(boundary.edge_bc_type,boundary.edge_bed_slope,boundary.edge_bc_head,boundary.edge_bc_tseries,
+            boundary.edge_bc_tseries_name,boundary.edge_bc_flow,boundary.edge_bc_flow_tseries,boundary.edge_bc_flow_tseries_name,
+            boundary.edge_bc_rating_curve,boundary.edge_bc_rating_curve_name,boundary.edge_bc_cum_flux);
+        a.sequence(overrides,[&](auto& r){a(r.slot);auto& v=r.old;a(v.type,v.head,v.flow,v.slope,v.stage_ts,v.flow_ts,v.rating,v.stage_name,v.flow_name,v.rating_name);a(r.owner);});
+        a.sequence(receipts,[&](auto& r){a(r.first);receipt(a,r.second);});
+    };
+    A read(pp);fields(read);read.finish();const int slot=overrides.at(0).slot;
+    switch(mutation) {
+    case 0:edges[slot]=false;break;
+    case 1:boundary_model.back()^=1;break;
+    case 2:overrides[0].old.type=int8_t(twoD::BoundaryType::NORMAL_FLOW);break;
+    case 3:overrides[0].owner="bad/owner";break;
+    case 4:overrides.push_back(overrides[0]);break;
+    case 5:boundary.edge_bc_head[slot]=std::numeric_limits<double>::infinity();break;
+    case 6:boundary.edge_bc_cum_flux[slot]+=.01;break;
+    case 7:receipts[0].second.water_out=-1;break;
+    case 8:receipts[0].first=0;break; // cell 0 edge 0 is interior
+    case 9:g.rows[0].boundary_edge=0;g.rows[0].id="boundary/0/0";break;
+    case 10:g.rows[0].boundary_head=std::numeric_limits<double>::infinity();break;
+    case 11:overrides[0].old.stage_ts=0;break;
+    case 12:overrides[0].slot=1000;break;
+    case 13:boundary.edge_bc_tseries[slot]=0;break;
+    case 14:receipts.push_back(receipts[0]);break;
+    case 15:pv=1;break;
+    case 16:time+=.1;break;
+    }
+    A updated;fields(updated);pp=updated.bytes();sum=crc(pp);A po;po(pm,pv,pe,pi,pr,identity,cells,time,edges,boundary_model,pp,sum);
+    sp=replaceNested(sp,"OpenSWMM Runtime Water",po.bytes());sum=crc(sp);A so;so(sm,sv,se,sl,sd,source_model,sp,sum);
+    cp=replaceNested(cp,"OpenSWMM source boundary",so.bytes());
+    if(mutation>=17 && mutation<=19) {
+        std::vector<int> bc_cells{0,1},bc_slots{1,4};A index;index(bc_cells,bc_slots);
+        const auto offset=cp.rfind(index.bytes());
+        if(offset==std::string::npos)throw std::runtime_error("Missing saved CPU boundary layout");
+        if(mutation==17) {const int bad_cell=1000;std::memcpy(cp.data()+offset+sizeof(uint64_t),&bad_cell,sizeof(bad_cell));}
+        if(mutation==18) {const double bad_q=std::numeric_limits<double>::quiet_NaN();std::memcpy(cp.data()+offset+index.bytes().size()+sizeof(uint64_t),&bad_q,sizeof(bad_q));}
+        if(mutation==19) {const int bad_wall=1000; // wall slots immediately follow q, accumulators and the CSR pointer
+            const auto at=offset+index.bytes().size()+2*(sizeof(uint64_t)+2*sizeof(double))+(sizeof(uint64_t)+3*sizeof(int))+sizeof(uint64_t);
+            std::memcpy(cp.data()+at,&bad_wall,sizeof(bad_wall));}
+    }
+    sum=crc(cp);A co;co(cm,cv,endian,long_bytes,cp,sum);
+    surface_data=replaceNested(surface_data,"OpenSWMM CPU surface/source boundary",co.bytes());
+    if(mutation==20) {
+        std::vector<int> slots{1,4};A index;index(slots);
+        const auto at=surface_data.find(index.bytes());
+        if(at==std::string::npos)throw std::runtime_error("Missing saved router boundary index");
+        const int exterior_wrong=2;std::memcpy(surface_data.data()+at+sizeof(uint64_t),&exterior_wrong,sizeof(exterior_wrong));
+    }
+    surface=withSurfacePayload(surface,surface_data);
+    payload=replaceNested(payload,"OpenSWMM joint DW surface/source boundary",surface);sum=crc(payload);A result;result(em,ev,model,sum,payload);return result.bytes();
+}
+}
+TEST(EngineCheckpoint, RuntimeBoundaryActiveRestartPreservesMomentumFallbackAndGrossWater) {
+    for(int lid:{0,1,2})for(int closure:{0,1,2}) {
+        const auto name="boundary-active-"+std::to_string(lid)+"-"+std::to_string(closure);SCOPED_TRACE(name);SurfaceSession a,b;
+        ASSERT_NO_THROW(startBoundary(a,name+"-a",lid,closure));
+        ASSERT_NO_THROW(startBoundary(b,name+"-b",lid,closure));
+        ASSERT_EQ(boundaryFrame(a.engine),SWMM_OK);
+        ASSERT_NO_THROW(until(a.engine,3.1));
+        const auto file=root()/(name+".chk");
+        ASSERT_EQ(a.engine.saveCheckpoint(file.string()),"");
+        ASSERT_EQ(b.engine.loadCheckpoint(file.string()),"");
+        compareBoundary(a,b,name+"-restored");
+        ASSERT_NO_THROW(until(a.engine,4.2));
+        ASSERT_NO_THROW(until(b.engine,4.2));
+        ASSERT_EQ(boundaryFrame(a.engine,1),SWMM_OK);
+        ASSERT_EQ(boundaryFrame(b.engine,1),SWMM_OK);
+        for(int k=0;k<7;++k) {ASSERT_NO_THROW(step(a.engine));
+        ASSERT_NO_THROW(step(b.engine));compareBoundary(a,b,name+"-continued");}
+        const auto& mb=a.engine.context().mass_balance_2d;
+        EXPECT_GT(mb.boundary_in,0);
+        EXPECT_GT(mb.boundary_out,0);
+        EXPECT_GT(a.engine.surfaceRouter2D().subsurface().state().led_source_in,0);
+        EXPECT_GT(a.engine.surfaceRouter2D().subsurface().state().led_source_out,0);
+        ASSERT_EQ(boundaryFrame(a.engine,2),SWMM_OK);
+        ASSERT_EQ(boundaryFrame(b.engine,2),SWMM_OK);
+        EXPECT_TRUE(a.engine.surfaceRouter2D().boundary().runtime_original.empty());
+        EXPECT_TRUE(a.engine.surfaceRouter2D().boundary().runtime_owner.empty());
+        compareBoundary(a,b,name+"-cleared");
+        for(const auto& r:a.engine.surfaceRouter2D().boundary().receipts)EXPECT_NEAR(a.engine.surfaceRouter2D().boundary().edge_bc_cum_flux[r.first],-r.second.applied,1e-12);
+    }
+}
+TEST(EngineCheckpoint, RuntimeBoundaryClearedHistoryRestoresPendingWorkAndNewOwnership) {
+    SurfaceSession a,b;
+        ASSERT_NO_THROW(startBoundary(a,"boundary-idle-a",2));
+        ASSERT_NO_THROW(startBoundary(b,"boundary-idle-b",2));
+    ASSERT_EQ(boundaryFrame(a.engine),SWMM_OK);
+        ASSERT_NO_THROW(until(a.engine,2.1));
+        ASSERT_EQ(boundaryFrame(a.engine,2),SWMM_OK);
+    ASSERT_NO_THROW(step(a.engine));
+        ASSERT_LT(a.stage.completedEnd(),a.engine.context().current_time);
+    const auto good=root()/"boundary-idle.chk";
+        ASSERT_EQ(a.engine.saveCheckpoint(good.string()),"");
+        ASSERT_EQ(b.engine.loadCheckpoint(good.string()),"");
+    compareBoundary(a,b,"boundary-idle-restored");
+    const auto old=a.engine.context().mass_balance_2d.boundary_in;
+    ASSERT_EQ(boundaryFrame(a.engine,1,"replacement"),SWMM_OK);
+        ASSERT_EQ(boundaryFrame(b.engine,1,"replacement"),SWMM_OK);
+    EXPECT_EQ(a.engine.context().mass_balance_2d.boundary_in,old);
+    ASSERT_NO_THROW(until(a.engine,10));
+        ASSERT_NO_THROW(until(b.engine,10));compareBoundary(a,b,"boundary-new-owner");
+    EXPECT_EQ(b.engine.surfaceRouter2D().boundary().runtime_owner.begin()->second,"replacement");
+}
+TEST(EngineCheckpoint, RuntimeBoundaryInvalidNestedStatePreservesPhysicsBothOutputsAndAllowsRetry) {
+    SurfaceSession a;
+        ASSERT_NO_THROW(startBoundary(a,"boundary-guard-a",2,0,true,2));
+        ASSERT_EQ(boundaryFrame(a.engine),SWMM_OK);
+    ASSERT_NO_THROW(until(a.engine,8.4));const auto good=root()/"boundary-guard.chk";
+        ASSERT_EQ(a.engine.saveCheckpoint(good.string()),"");
+    for(int mutation=0;mutation<21;++mutation) {
+        const auto name="boundary-guard-"+std::to_string(mutation);SCOPED_TRACE(name);SurfaceSession b;
+        ASSERT_NO_THROW(startBoundary(b,name,2,0,true,2));
+        const auto before=root()/(name+"-before.chk"),bad=root()/(name+"-bad.chk");
+        ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");
+        const auto saved=bytes(before),binary=bytes(root()/(name+".out")),mesh=bytes(root()/(name+".h5"));write(bad,changeBoundaryRecord(bytes(good),mutation));
+        EXPECT_FALSE(b.engine.loadCheckpoint(bad.string()).empty());
+        ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");
+        EXPECT_EQ(bytes(before),saved);
+        EXPECT_EQ(bytes(root()/(name+".out")),binary);
+        EXPECT_EQ(bytes(root()/(name+".h5")),mesh);noOutputStaging(name);
+        ASSERT_EQ(b.engine.loadCheckpoint(good.string()),"");compareMesh(a.engine,b.engine,name+"-valid-retry");
+    }
+}
+TEST(EngineCheckpoint, RuntimeBoundaryFramesRejectOwnershipGeometryAndQualityBeforeBarrier) {
+    SurfaceSession a;
+        ASSERT_NO_THROW(startBoundary(a,"boundary-api-guard",2));
+        ASSERT_EQ(boundaryFrame(a.engine),SWMM_OK);
+        ASSERT_NO_THROW(until(a.engine,2.1));
+    const auto file=root()/"boundary-api-before.chk";
+        ASSERT_EQ(a.engine.saveCheckpoint(file.string()),"");const auto saved=bytes(file);
+    EXPECT_EQ(boundaryFrame(a.engine,1,"other"),SWMM_ERR_BADPARAM);
+        EXPECT_EQ(boundaryFrame(a.engine,2,"other"),SWMM_ERR_BADPARAM);
+    for(int mutation=0;mutation<4;++mutation) {
+        const double concentration=1;
+        SWMM_CouplingBoundary row{sizeof(row),0,0,exterior(a.engine,0),1,.75,0,nullptr};
+        if(mutation==0)row.edge=0;if(mutation==1)row.edge=3;if(mutation==2)row.value=std::numeric_limits<double>::infinity();
+        if(mutation==3) {row.species_count=1;row.concentrations=&concentration;}
+        SWMM_CouplingFrame frame{sizeof(frame),1,"edge-water",0,nullptr,1,&row,0,nullptr,0,nullptr};
+        EXPECT_NE(swmm_coupling_apply_frame(reinterpret_cast<SWMM_Engine>(&a.engine),&frame),SWMM_OK);
+        ASSERT_EQ(a.engine.saveCheckpoint(file.string()),"");
+        EXPECT_EQ(bytes(file),saved);
+    }
+    auto& boundary=a.engine.surfaceRouter2D().boundary();const auto slot=boundary.runtime_original.begin()->first;
+    const auto original=boundary.runtime_original.at(slot);boundary.runtime_original.at(slot).stage_ts=0;
+    EXPECT_FALSE(a.engine.saveCheckpoint(file.string()).empty());EXPECT_EQ(bytes(file),saved);
+    boundary.runtime_original.at(slot)=original;ASSERT_EQ(a.engine.saveCheckpoint(file.string()),"");EXPECT_EQ(bytes(file),saved);
+    SurfaceSession no_identity;EXPECT_THROW(no_identity.start("boundary-needs-water",2,1,0,0,true,false,false,-1,false,0,false,"",true),std::runtime_error);
+    SurfaceSession old;
+        ASSERT_NO_THROW(startProvider(old,"boundary-old-profile",2));
+        EXPECT_EQ(boundaryFrame(old.engine),SWMM_ERR_PLUGIN);
+    EXPECT_FALSE(old.engine.loadCheckpoint(file.string()).empty());
+}
+TEST(EngineCheckpoint, RuntimeBoundaryCombinedReportsContinueAcrossClearAndReacquisition) {
+    for(int format:{1,2})for(int lid:{0,1,2}) {
+        const auto name="boundary-output-"+std::to_string(format)+"-"+std::to_string(lid);SCOPED_TRACE(name);SurfaceSession a,b;
+        ASSERT_NO_THROW(startBoundary(a,name,lid,0,true,format));
+        ASSERT_NO_THROW(startBoundary(b,name+"-resumed",lid,0,true,format));
+        ASSERT_EQ(boundaryFrame(a.engine),SWMM_OK);
+        ASSERT_NO_THROW(until(a.engine,9.1));
+        const auto checkpoint=root()/(name+".chk");
+        ASSERT_EQ(a.engine.saveCheckpoint(checkpoint.string()),"");
+        ASSERT_EQ(b.engine.loadCheckpoint(checkpoint.string()),"");
+        ASSERT_EQ(boundaryFrame(a.engine,2),SWMM_OK);
+        ASSERT_EQ(boundaryFrame(b.engine,2),SWMM_OK);
+        ASSERT_NO_THROW(until(a.engine,13.1));
+        ASSERT_NO_THROW(until(b.engine,13.1));
+        ASSERT_EQ(boundaryFrame(a.engine,1,"new-owner"),SWMM_OK);
+        ASSERT_EQ(boundaryFrame(b.engine,1,"new-owner"),SWMM_OK);
+        while(a.engine.context().elapsed_ms<a.engine.context().options.totalDurationMs()) {ASSERT_NO_THROW(step(a.engine));
+        ASSERT_NO_THROW(step(b.engine));}
+        compareMesh(a.engine,b.engine,name+"-final");
+        ASSERT_EQ(a.engine.end(),0);
+        ASSERT_EQ(b.engine.end(),0);
+        sameBinary(name,name+"-resumed",80);sameMesh(name,name+"-resumed",40);
+    }
+}
+TEST(EngineCheckpoint, RuntimeBoundaryDriverDueUpdateAndPublicationFailureRemainRetryable) {
+    TestWaterDriver da,db;SurfaceSession a,b;
+    ASSERT_NO_THROW(startBoundary(a,"boundary-driver-a",2,0,true,2));
+        ASSERT_NO_THROW(startBoundary(b,"boundary-driver-b",2,0,true,2));
+    ASSERT_EQ(a.engine.attachRuntimeWaterDriverCheckpoint(da),"");
+        ASSERT_EQ(b.engine.attachRuntimeWaterDriverCheckpoint(db),"");
+    ASSERT_EQ(boundaryFrame(a.engine),SWMM_OK);
+        ASSERT_NO_THROW(drive(a.engine,da,4.2));
+    const auto good=root()/"boundary-driver.chk";
+        ASSERT_EQ(a.engine.saveCheckpoint(good.string()),"");
+    const auto before=root()/"boundary-driver-before.chk";
+        ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");const auto saved=bytes(before),state=driverState(db,0);
+    const auto binary=root()/"boundary-driver-b.out",mesh=root()/"boundary-driver-b.h5";const auto bh=bytes(binary),mh=bytes(mesh);
+    std::filesystem::permissions(mesh,std::filesystem::perms::owner_read);
+    EXPECT_FALSE(b.engine.loadCheckpoint(good.string()).empty());
+        EXPECT_EQ(driverState(db,0),state);
+        ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");
+    EXPECT_EQ(bytes(before),saved);
+        EXPECT_EQ(bytes(binary),bh);
+        EXPECT_EQ(bytes(mesh),mh);noOutputStaging("boundary-driver-b");
+    std::filesystem::permissions(mesh,std::filesystem::perms::owner_read|std::filesystem::perms::owner_write);
+    ASSERT_EQ(b.engine.loadCheckpoint(good.string()),"");compareBoundary(a,b,"boundary-driver-restored",true);
+    ASSERT_NO_THROW(drive(a.engine,da,15));
+        ASSERT_NO_THROW(drive(b.engine,db,15));compareBoundary(a,b,"boundary-driver-continued",true);
+}
 #endif

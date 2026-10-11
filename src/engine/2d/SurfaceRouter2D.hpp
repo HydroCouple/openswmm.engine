@@ -276,7 +276,8 @@ public:
     RuntimeSources& runtimeSources() noexcept { return state_.runtime_sources; }
     bool commonSourceAttached() const noexcept { return common_stage_!=nullptr; }
     bool runtimeWaterCheckpointing() const noexcept;
-    std::string validateRuntimeWater(const RuntimeSources&,const RuntimeSources&,const RuntimeForcings&,double time) const;
+    bool runtimeBoundaryCheckpointing() const noexcept;
+    std::string validateRuntimeWater(const RuntimeSources&,const RuntimeSources&,const RuntimeForcings&,double time,const BoundaryData* boundary=nullptr) const;
     bool runtimeActive() const noexcept {
         return state_.runtime_sources.active() || subsurface_.runtimeSources().active() ||
                !boundary_.runtime_original.empty() || state_.runtime_forcings.active();

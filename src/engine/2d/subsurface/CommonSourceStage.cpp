@@ -47,7 +47,7 @@ std::string qualityProfile(const runoff::SourceWaterDriver& sources,
 
 std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData& surface,
     const SolverOptions2D& options,SubsurfaceSolver& gw,runoff::SourceWaterDriver& sources,const SurfaceOwnershipPreview& preview,bool mesh_only,
-    const std::string& runtime_water_identity) {
+    const std::string& runtime_water_identity,bool runtime_boundaries) {
     if(mesh_) return "Common source stage already initialized.";
     if(!gw.active() || !preview.valid() || preview.cancelled || preview.mesh_weather_area.size()!=mesh.tri_area.size())
         return "Common source stage requires a valid reviewed mesh/receiver snapshot.";
@@ -55,6 +55,8 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
     if(!runtime_water_identity.empty() && (!mesh_only || !sources.pollutantNames().empty() ||
        runtime_water_identity.size()>=64*1024*1024))
         return "Runtime water source stage requires a water-only mesh-owned footprint and bounded replay identity.";
+    if(runtime_boundaries && (runtime_water_identity.empty() || !surface.boundary))
+        return "Runtime boundaries require the initial mesh-owned water profile and authored wall model.";
     if(surface.runtime_sources.active() || surface.runtime_forcings.active() || gw.runtimeSources().active())
         return "Common source stage runtime coupling providers are not qualified.";
     if(surface.volume.size()!=mesh.tri_area.size() || gw.state().n_cells!=mesh.n_cells())
@@ -152,13 +154,23 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
             if(gw.transport().xacc_from_surface[gw.transport().idx(p,i)]!=0 || gw.transport().xacc_to_surface[gw.transport().idx(p,i)]!=0)
                 return "Common source ownership must bind before pending aquifer mass exchange.";
     }
+    if(runtime_boundaries) {
+        RuntimeWaterCheckpointBinding binding;binding.identity=runtime_water_identity;binding.authored_boundary=surface.boundary;
+        for(double zs:gw.state().zs)binding.groundwater_cells.push_back(zs>0);
+        binding.boundary_slots.assign(mesh.n_cells()*kMaxCellVerts,false);
+        for(int c=0;c<mesh.n_cells();++c)for(int edge=0;edge<mesh.cell_vertex_count(c);++edge)
+            if(mesh.cell_neighbour(c,edge)<0)binding.boundary_slots[MeshData::slot(c,edge)]=true;
+        const auto invalid=RuntimeWaterCheckpoint::validate(binding,surface.runtime_sources,gw.runtimeSources(),surface.runtime_forcings,surface.boundary);
+        if(!invalid.empty())return invalid;
+    }
     const auto partition_error=sources.configureSpatialCoverage(fractions);
     if(!partition_error.empty())return partition_error;
     const auto receipt_error=gw.configureSourceReceipts(cells);if(!receipt_error.empty())return receipt_error;
     mesh_=&mesh;surface_=&surface;options_=&options;gw_=&gw;sources_=&sources;donors_=std::move(donors);
     cells_=std::move(cells);owned_=std::move(owned);weather_=preview.mesh_weather_area;
     et_contacts_=std::move(et_contacts);
-    runtime_water_identity_=runtime_water_identity;
+    runtime_water_identity_=runtime_water_identity;runtime_boundaries_=runtime_boundaries;
+    if(runtime_boundaries)authored_boundary_=*surface.boundary;
     checkpoint_model_=checkpointModel();
     return {};
 }
@@ -166,12 +178,18 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
 RuntimeWaterCheckpointBinding CommonSourceStage::runtimeWaterBinding(double time) const {
     RuntimeWaterCheckpointBinding b;b.identity=checkpoint_model_;b.completed_time=time;
     for(double zs:gw_->state().zs)b.groundwater_cells.push_back(zs>0);
+    if(runtime_boundaries_) {
+        b.authored_boundary=&authored_boundary_;b.boundary_slots.assign(mesh_->n_cells()*kMaxCellVerts,false);
+        for(int c=0;c<mesh_->n_cells();++c)for(int e=0;e<mesh_->cell_vertex_count(c);++e)
+            if(mesh_->cell_neighbour(c,e)<0)b.boundary_slots[MeshData::slot(c,e)]=true;
+    }
     return b;
 }
 std::string CommonSourceStage::validateRuntimeWater(const RuntimeSources& surface,const RuntimeSources& groundwater,
-    const RuntimeForcings& forcing,double time) const {
+    const RuntimeForcings& forcing,double time,const BoundaryData* boundary) const {
     if(!runtimeWaterEnabled())return "Common source runtime providers require their initial water profile.";
-    return RuntimeWaterCheckpoint::validate(runtimeWaterBinding(time),surface,groundwater,forcing);
+    return RuntimeWaterCheckpoint::validate(runtimeWaterBinding(time),surface,groundwater,forcing,
+        runtime_boundaries_?(boundary?boundary:surface_->boundary):nullptr);
 }
 
 std::string CommonSourceStage::checkpointBoundary() const {
@@ -184,6 +202,15 @@ std::string CommonSourceStage::checkpointBoundary() const {
         auto surface=surface_->runtime_sources,groundwater=gw_->runtimeSources();auto forcing=surface_->runtime_forcings;
         surface.expire(completedEnd());groundwater.expire(completedEnd());forcing.expire(completedEnd());
         const auto invalid=validateRuntimeWater(surface,groundwater,forcing,completedEnd());if(!invalid.empty())return invalid;
+        if(runtime_boundaries_) {
+            double incoming=0,outgoing=0;
+            for(const auto& r:groundwater.rows) {incoming+=r.receipt.water_in;outgoing+=r.receipt.water_out;}
+            const auto& state=gw_->state();
+            if(!std::isfinite(state.led_source_in) || !std::isfinite(state.led_source_out) ||
+               incoming>state.led_source_in+1e-10*std::max(1.,incoming) ||
+               outgoing>state.led_source_out+1e-10*std::max(1.,outgoing))
+                return "Groundwater provider receipts exceed their completed physical source ledgers.";
+        }
     } else if(!surface_->runtime_sources.rows.empty()||!surface_->runtime_forcings.rows.empty()||!gw_->runtimeSources().rows.empty())
         return "Checkpoint runtime provider history is not qualified.";
     for(int cell:cells_) {
@@ -209,7 +236,11 @@ std::string CommonSourceStage::advance(double start,double end) {
     const auto quality_error=qualityProfile(*sources_,*surface_,*gw_);if(!quality_error.empty())return quality_error;
     const int np=int(sources_->pollutantNames().size());
     if(runtimeWaterEnabled()) {
-        const auto invalid=validateRuntimeWater(surface_->runtime_sources,gw_->runtimeSources(),surface_->runtime_forcings,start);
+        // Boundary face receipts have just advanced, while the router books
+        // cumulative edge flux after this source interval. Check descriptors
+        // here; accepted checkpoint validation pairs the completed ledgers.
+        const auto invalid=RuntimeWaterCheckpoint::validate(runtimeWaterBinding(start),surface_->runtime_sources,
+            gw_->runtimeSources(),surface_->runtime_forcings,runtime_boundaries_?surface_->boundary:nullptr,false);
         if(!invalid.empty())return invalid;
         if(end>std::min({surface_->runtime_sources.nextTime(start),gw_->runtimeSources().nextTime(start),
             surface_->runtime_forcings.nextTime(start)}))return "Common source interval crosses provider expiry.";

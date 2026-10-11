@@ -78,7 +78,7 @@ int swmm_coupling_apply_frame(SWMM_Engine h,const SWMM_CouplingFrame* f) {
         const std::string owner=f->provider ? f->provider : "";
         if(owner.find('/')!=std::string::npos) return SWMM_ERR_BADPARAM;
         auto& router=eng->surfaceRouter2D(); auto& tr=router.state().transport;
-        if(router.commonSourceAttached() && f->boundary_count)return SWMM_ERR_PLUGIN;
+        if(router.commonSourceAttached() && f->boundary_count && !router.runtimeBoundaryCheckpointing())return SWMM_ERR_PLUGIN;
         const auto& mesh=router.mesh(); const int nc=mesh.n_cells();
         const double now=eng->context().elapsed_ms/1000.0;
         std::optional<RuntimeSources> next[2];
@@ -148,8 +148,9 @@ int swmm_coupling_apply_frame(SWMM_Engine h,const SWMM_CouplingFrame* f) {
                     bc->edge_bc_flow_tseries[slot]=-1; bc->edge_bc_flow_tseries_name[slot].clear();
                     bc->edge_bc_rating_curve[slot]=-1; bc->edge_bc_rating_curve_name[slot].clear();
                 }
-                auto& tuple=(*concentrations)[slot]; tuple.clear();
-                if(in.species_count) tuple.assign(in.concentrations,in.concentrations+in.species_count);
+                if(router.runtimeBoundaryCheckpointing())concentrations->erase(slot);
+                else {auto& tuple=(*concentrations)[slot];tuple.clear();
+                    if(in.species_count)tuple.assign(in.concentrations,in.concentrations+in.species_count);}
             } else {
                 auto& store=editSources(1); const auto id=boundaryId(in.cell,in.edge);
                 const auto* old=store.find(id,in.cell);
@@ -205,9 +206,9 @@ int swmm_coupling_apply_frame(SWMM_Engine h,const SWMM_CouplingFrame* f) {
         for(int d=0;d<2;++d) if(next[d]) next[d]->rebuild(nc);
         if(forcing) forcing->rebuild(nc);
         if(router.commonSourceAttached() && (f->source_count || f->boundary_count || f->forcing_count || f->clear_count)) {
-            if(f->boundary_count || !router.runtimeWaterCheckpointing())return SWMM_ERR_PLUGIN;
+            if(!router.runtimeWaterCheckpointing())return SWMM_ERR_PLUGIN;
             const auto invalid=router.validateRuntimeWater(next[0]?*next[0]:sources(*eng,0),
-                next[1]?*next[1]:sources(*eng,1),forcing?*forcing:router.state().runtime_forcings,now);
+                next[1]?*next[1]:sources(*eng,1),forcing?*forcing:router.state().runtime_forcings,now,bc?&*bc:nullptr);
             if(!invalid.empty())return SWMM_ERR_PLUGIN;
         }
         // All validation/allocation precedes the barrier. Preserve cumulative

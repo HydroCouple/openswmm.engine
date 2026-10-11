@@ -2204,9 +2204,12 @@ void SurfaceRouter2D::flushPendingBatch(SimulationContext& ctx) {
 bool SurfaceRouter2D::runtimeWaterCheckpointing() const noexcept {
     return common_stage_ && common_stage_->runtimeWaterEnabled();
 }
+bool SurfaceRouter2D::runtimeBoundaryCheckpointing() const noexcept {
+    return common_stage_ && common_stage_->runtimeBoundariesEnabled();
+}
 std::string SurfaceRouter2D::validateRuntimeWater(const RuntimeSources& surface,const RuntimeSources& groundwater,
-    const RuntimeForcings& forcing,double time) const {
-    return common_stage_ ? common_stage_->validateRuntimeWater(surface,groundwater,forcing,time) : std::string{};
+    const RuntimeForcings& forcing,double time,const BoundaryData* boundary) const {
+    return common_stage_ ? common_stage_->validateRuntimeWater(surface,groundwater,forcing,time,boundary) : std::string{};
 }
 
 

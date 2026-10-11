@@ -307,3 +307,39 @@ CLOSURE )"<<closure<<R"(
         EXPECT_TRUE(a->context().runtime_coupling_used);EXPECT_TRUE(b->context().runtime_coupling_used);
     }
 }
+
+TEST(RuntimeWaterCheckpoint, BoundaryProfileRoundTripTruncationBindingsAndTargetsAreAtomic) {
+    BoundaryData authored,live,target;authored.resize(12);live=target=authored;
+    auto b=binding();b.boundary_slots.assign(12,false);b.boundary_slots[1]=b.boundary_slots[4]=true;b.authored_boundary=&authored;
+    live.saveRuntime(1);live.runtime_owner[1]="edge";live.ensureReceipt(1,0);
+    live.edge_bc_type[1]=int8_t(BoundaryType::SPECIFIED_STAGE);live.edge_bc_head[1]=.75;
+    live.receipts[1]={.03,.02,.02,0,0,0,.01,2,{},{}};live.edge_bc_cum_flux[1]=-.02;
+    Stores s,restored;auto gw=source("edge","unused",1,-.01);gw.id="boundary/1/0";gw.boundary_edge=0;
+    gw.receipt={-.02,-.02,0,.02,0,0,-.01,2,{},{}};s.groundwater.replace(gw);s.groundwater.rebuild(3);
+    std::string good;ASSERT_EQ(RuntimeWaterCheckpoint::capture(b,s.surface,s.groundwater,s.forcing,good,&live),"");
+    ASSERT_EQ(RuntimeWaterCheckpoint::restore(b,good,restored.surface,restored.groundwater,restored.forcing,&target),"");
+    const auto captured=[&]() {std::string value;EXPECT_EQ(RuntimeWaterCheckpoint::capture(b,restored.surface,restored.groundwater,restored.forcing,value,&target),"");return value;};
+    EXPECT_EQ(captured(),good);EXPECT_EQ(target.runtime_owner.at(1),"edge");EXPECT_EQ(target.runtime_original.at(1).type,int8_t(BoundaryType::WALL));
+    for(std::size_t size=0;size<good.size();++size) {
+        SCOPED_TRACE(size);EXPECT_NE(RuntimeWaterCheckpoint::restore(b,good.substr(0,size),restored.surface,restored.groundwater,restored.forcing,&target),"");EXPECT_EQ(captured(),good);
+    }
+    for(int change=0;change<5;++change) {
+        auto changed=b;auto base=authored;changed.authored_boundary=&base;
+        if(change==0)changed.boundary_slots[1]=false;
+        if(change==1)base.edge_bc_head[1]=1;
+        if(change==2)changed.groundwater_cells[1]=false;
+        if(change==3)changed.completed_time+=.1;
+        if(change==4)changed.boundary_slots.pop_back();
+        EXPECT_NE(RuntimeWaterCheckpoint::restore(changed,good,restored.surface,restored.groundwater,restored.forcing,&target),"");EXPECT_EQ(captured(),good);
+    }
+    EXPECT_NE(RuntimeWaterCheckpoint::restore(b,good,restored.surface,restored.groundwater,restored.forcing),"");EXPECT_EQ(captured(),good);
+    auto overflow=restored;overflow.groundwater.rows[0].receipt.water_in=1e308;overflow.groundwater.rows[0].receipt.applied=1e308;
+    auto extra=source("other","in",1,0);extra.receipt.water_in=extra.receipt.applied=1e308;
+    overflow.groundwater.replace(extra);overflow.groundwater.rebuild(3);std::string sentinel="unchanged";
+    EXPECT_NE(RuntimeWaterCheckpoint::capture(b,overflow.surface,overflow.groundwater,overflow.forcing,sentinel,&target),"");EXPECT_EQ(sentinel,"unchanged");
+    target.clearRuntime(1);target.edge_bc_cum_flux[1]=0;target.receipts.clear();std::string before;
+    ASSERT_EQ(RuntimeWaterCheckpoint::capture(b,restored.surface,restored.groundwater,restored.forcing,before,&target),"");
+    auto unsupported=b;auto nonwall=authored;nonwall.edge_bc_type[1]=int8_t(BoundaryType::RATING_CURVE);unsupported.authored_boundary=&nonwall;
+    std::string unchanged="unchanged";EXPECT_NE(RuntimeWaterCheckpoint::capture(unsupported,restored.surface,restored.groundwater,restored.forcing,unchanged,&target),"");EXPECT_EQ(unchanged,"unchanged");
+    ASSERT_EQ(RuntimeWaterCheckpoint::restore(b,good,restored.surface,restored.groundwater,restored.forcing,&target),"");EXPECT_EQ(captured(),good);
+}

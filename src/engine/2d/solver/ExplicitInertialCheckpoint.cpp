@@ -56,7 +56,7 @@ std::string ExplicitInertialSolver::checkpointBoundary() const {
        !common_stage_->matches(mesh_,state_,gw_)) return "CPU checkpoint requires an accepted attached first-order source marcher.";
     if(t_last_sync_!=common_stage_->completedEnd() || source_phase_end_!=t_last_sync_)
         return "CPU/source completed clocks differ.";
-    if((!joint_checkpoint_ && (state_->nodes_1d || state_->node_coupling)) || state_->node_row_conc || !exch_head_slope_.empty() || !bc_cell_.empty())
+    if((!joint_checkpoint_ && (state_->nodes_1d || state_->node_coupling)) || state_->node_row_conc || !exch_head_slope_.empty() || (!common_stage_->runtimeBoundariesEnabled() && !bc_cell_.empty()))
         return "CPU checkpoint live 1D coupling and external boundary providers are not qualified.";
     if(joint_checkpoint_) {
         if(bool(state_->nodes_1d)!=bool(state_->node_coupling) || state_->transport.active() ||
@@ -68,12 +68,30 @@ std::string ExplicitInertialSolver::checkpointBoundary() const {
                cp.node_idx>=state_->nodes_1d->count() || !std::isfinite(cp.cd) || cp.cd<0 || !std::isfinite(cp.area) || cp.area<=0)
                 return "Joint CPU checkpoint requires valid non-outfall exchange points.";
     }
-    if(state_->boundary) {
+    if(state_->boundary && !common_stage_->runtimeBoundariesEnabled()) {
         if(!state_->boundary->runtime_original.empty()) return "CPU checkpoint boundary runtime providers are not qualified.";
         for(int c=0;c<mesh_->n_cells();++c) for(int k=0;k<mesh_->cell_vertex_count(c);++k)
             if(mesh_->cell_neighbour(c,k)<0 &&
                state_->boundary->edge_bc_type.at(MeshData::slot(c,k))!=int8_t(BoundaryType::WALL))
                 return "CPU checkpoint requires wall boundaries.";
+    }
+    if(common_stage_->runtimeBoundariesEnabled()) {
+        if(!state_->boundary)return "CPU boundary checkpoint has no boundary model.";
+        std::vector<int> cells,slots,walls,ptr{0};
+        for(int c=0;c<mesh_->n_cells();++c) {
+            for(int e=0;e<mesh_->cell_vertex_count(c);++e)if(mesh_->cell_neighbour(c,e)<0) {
+                const int k=MeshData::slot(c,e);
+                if(state_->boundary->edge_bc_type.at(k)==int8_t(BoundaryType::WALL))walls.push_back(k);
+                else {cells.push_back(c);slots.push_back(k);}
+            }
+            ptr.push_back(int(walls.size()));
+        }
+        const bool unused_walls=wall_slot_.empty() && wall_ptr_.empty() && slots.empty() && state_->boundary->receipts.empty();
+        if(cells!=bc_cell_ || slots!=bc_slot_ || (!unused_walls && (walls!=wall_slot_ || ptr!=wall_ptr_)) ||
+           bc_q_.size()!=slots.size() || bc_accum_.size()!=slots.size())
+            return "CPU checkpoint boundary layout differs from its exterior-edge model.";
+        for(const auto* row:{&bc_q_,&bc_accum_})for(double v:*row)if(!std::isfinite(v))
+            return "CPU checkpoint boundary momentum or accumulator is nonfinite.";
     }
     return common_stage_->checkpointBoundary();
 }
@@ -89,6 +107,7 @@ void ExplicitInertialSolver::checkpointState(Archive& a) {
       accumulators_pending_,front_breach_,h_on_front_,exch_tau_,spill_deficit_,substeps_run_,face_passes_,
       last_steps_,last_dt_,active_frac_min_,active_frac_max_,active_frac_sum_,active_samples_,tier_occupancy_,
       saved_telemetry,telemetry_);
+    if(common_stage_->runtimeBoundariesEnabled())a(bc_cell_,bc_slot_,bc_q_,bc_accum_,wall_ptr_,wall_slot_);
     if(joint_checkpoint_) {
         a.fixed(exch_,node_drawn_);
         for(double v:exch_) if(!std::isfinite(v)) throw std::runtime_error("Nonfinite joint CPU exchange.");
@@ -157,7 +176,7 @@ std::string ExplicitInertialSolver::checkpointBytes(std::string& bytes) const {
         std::string component; const auto state_error=common_stage_->checkpointBytes(component);
         if(!state_error.empty()) return state_error;
         auto trial=*this; Archive state; state(component); trial.checkpointState(state);
-        std::string magic=magicName,payload=state.bytes(); uint32_t version=1,endian=0x01020304,longBytes=sizeof(long),crc=checksum(payload);
+        std::string magic=magicName,payload=state.bytes(); uint32_t version=common_stage_->runtimeBoundariesEnabled()?2:1,endian=0x01020304,longBytes=sizeof(long),crc=checksum(payload);
         Archive file; file(magic,version,endian,longBytes,payload,crc);
         if(file.bytes().size()>maxBytes) return "CPU checkpoint exceeds internal qualification size limit.";
         bytes=file.bytes(); return {};
@@ -169,9 +188,9 @@ std::string ExplicitInertialSolver::loadCheckpoint(const std::string& path) {
     catch(const std::exception& e) { return e.what(); }
 }
 
-std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const std::array<double,8>* router_boundary,const std::vector<double>* pending_outfalls,
+std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const std::array<double,10>* router_boundary,const std::vector<double>* pending_outfalls,
     const std::function<void(const runoff::SourceWaterDriver&)>* validate_source,
-    const std::function<void()>* before_install) {
+    const std::function<void()>* before_install,const std::vector<int>* boundary_slots) {
     try {
         const auto error=checkpointBoundary(); if(!error.empty()) return error;
         if(t_last_sync_!=0 || common_stage_->intervals()!=0 || source_history_ || engine_source_history_)
@@ -179,15 +198,17 @@ std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const 
         if(bytes.empty() || bytes.size()>maxBytes) return "CPU checkpoint exceeds its size limit.";
         Archive file(std::move(bytes)); std::string magic,payload;
         uint32_t version=0,endian=0,longBytes=0,crc=0; file(magic,version,endian,longBytes,payload,crc); file.finish();
-        if(magic!=magicName || version!=1 || endian!=0x01020304 || longBytes!=sizeof(long))
+        if(magic!=magicName || version!=(common_stage_->runtimeBoundariesEnabled()?2u:1u) || endian!=0x01020304 || longBytes!=sizeof(long))
             return "Unsupported CPU checkpoint version/platform.";
         if(crc!=checksum(payload)) return "CPU checkpoint checksum differs.";
         auto source=common_stage_->sources_->waterTrial(); auto gw=*gw_; auto surface=*state_; auto stage=*common_stage_; auto trial=*this;
+        BoundaryData boundary;if(common_stage_->runtimeBoundariesEnabled()) {boundary=*state_->boundary;surface.boundary=&boundary;}
         stage.sources_=&source; stage.gw_=&gw; stage.surface_=&surface;
         trial.gw_=&gw; trial.state_=&surface; trial.common_stage_=&stage;
         Archive state(std::move(payload)); std::string component; state(component); trial.checkpointState(state); state.finish();
         const auto component_error=stage.loadCheckpointBytes(std::move(component)); if(!component_error.empty()) return component_error;
         const auto invalid=trial.checkpointBoundary(); if(!invalid.empty()) return invalid;
+        if(boundary_slots && trial.bc_slot_!=*boundary_slots)return "Router/CPU checkpoint boundary indices differ.";
         if(router_boundary) {
             if(trial.t_last_sync_!=(*router_boundary)[0]) return "Router/CPU checkpoint clocks differ.";
             double volume=0; for(double v:surface.volume) volume+=v;
@@ -200,8 +221,14 @@ std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const 
                std::abs(incoming-(*router_boundary)[5])>1e-12*std::max(1.,incoming) ||
                std::abs(outgoing-(*router_boundary)[6])>1e-12*std::max(1.,outgoing))
                 return "Router/provider checkpoint water receipts differ.";
+            double boundary_in=0,boundary_out=0;
+            if(surface.boundary)for(const auto& [slot,r]:surface.boundary->receipts) {boundary_in+=r.water_in;boundary_out+=r.water_out;}
+            if(!std::isfinite(boundary_in) || !std::isfinite(boundary_out) ||
+               std::abs(boundary_in-(*router_boundary)[8])>1e-12*std::max(1.,boundary_in) ||
+               std::abs(boundary_out-(*router_boundary)[9])>1e-12*std::max(1.,boundary_out))
+                return "Router/boundary checkpoint water receipts differ.";
             if((*router_boundary)[7]==0 && (!surface.runtime_sources.rows.empty() || !gw.runtimeSources().rows.empty() ||
-                !surface.runtime_forcings.rows.empty()))return "Router checkpoint lost its provider-use history.";
+                !surface.runtime_forcings.rows.empty() || (surface.boundary && (!surface.boundary->runtime_original.empty() || !surface.boundary->receipts.empty()))))return "Router checkpoint lost its provider-use history.";
             for(double v:surface.infil_applied) if(v!=0) return "Router checkpoint has undrained infiltration.";
             if(pending_outfalls && pending_outfalls->size()!=surface.coupling_applied.size()) return "Router outfall receipt shape differs.";
             for(std::size_t c=0;c<surface.coupling_applied.size();++c)
@@ -217,6 +244,9 @@ std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const 
         static_assert(std::is_nothrow_move_assignable_v<runoff::SourceWaterDriver>);
         static_assert(std::is_nothrow_move_assignable_v<SubsurfaceSolver>);
         static_assert(std::is_nothrow_move_assignable_v<SurfaceStateData>);
+        if(common_stage_->runtimeBoundariesEnabled()) {
+            *const_cast<BoundaryData*>(state_->boundary)=std::move(boundary);surface.boundary=state_->boundary;
+        }
         stage.sources_=common_stage_->sources_; stage.gw_=gw_; stage.surface_=state_;
         trial.gw_=gw_; trial.state_=state_; trial.common_stage_=common_stage_;
         *stage.sources_=std::move(source); *gw_=std::move(gw); *state_=std::move(surface);

@@ -78,7 +78,9 @@ struct SurfaceRouter2D::RestartState {
     OutfallExchange exchange;
     std::vector<double> window_outfall_accum_, limits;
     bool outfall_state_changed_=false;
-    bool runtime_water=false,runtime_used=false;
+    bool runtime_water=false,runtime_used=false,boundary_water=false;
+    std::vector<int> boundary_slots;
+    double boundary_in=0,boundary_out=0;
     OutfallData feedback;
     RestartState(const SurfaceRouter2D& r,const SimulationContext& c) {
 #define COPY(v) v=r.v;
@@ -90,6 +92,8 @@ struct SurfaceRouter2D::RestartState {
         old_elapsed_ms=c.old_elapsed_ms;next_report_ms=c.next_report_ms;
         evap_rate=c.climate_state.evap_rate;rainfall=c.gages.rainfall;mb=c.mass_balance_2d;delivery=c.coupling_delivery_remaining;
         runtime_water=r.runtimeWaterCheckpointing();runtime_used=c.runtime_coupling_used;
+        boundary_water=r.runtimeBoundaryCheckpointing();boundary_slots=r.bc_nonwall_slots_;
+        boundary_in=r.prev_boundary_in_;boundary_out=r.prev_boundary_out_;
     }
     void archive(Archive& a) {
 #define FIELD(v) a(v);
@@ -98,6 +102,7 @@ struct SurfaceRouter2D::RestartState {
         a(current_time,current_date,elapsed_ms,old_elapsed_ms,next_report_ms,evap_rate,rainfall);
         massBalance(a,mb);
         if(runtime_water)a(runtime_used);
+        if(boundary_water)a(boundary_slots,boundary_in,boundary_out);
     }
     void archiveJoint(Archive& a) {
         a(window_outfall_accum_,outfall_state_changed_);exchange.checkpoint(a);
@@ -138,7 +143,7 @@ struct SurfaceRouter2D::RestartState {
            (!report_old_valid_ && report_window_old_ms_!=0) || (sim_time_>0 && co_forcing_first_))
             throw std::runtime_error("Invalid router checkpoint clocks/report window.");
         double rain=0,infil=0;for(std::size_t i=0;i<n;++i) {rain+=rain_cum_[i];infil+=infil_cum_applied_[i]*r.mesh_.tri_area[i];}
-        for(double v:{mb.init_storage,mb.rainfall_in,mb.evap_out,mb.infil_out,mb.aquifer_in,mb.external_in,mb.external_out})
+        for(double v:{mb.init_storage,mb.rainfall_in,mb.evap_out,mb.infil_out,mb.aquifer_in,mb.external_in,mb.external_out,mb.boundary_in,mb.boundary_out})
             if(!std::isfinite(v) || v<0) throw std::runtime_error("Invalid router checkpoint mass balance.");
         // Incremental outfall accounting can leave an ulp below zero when all
         // cells are empty. Loaded cell water stays nonnegative and the CPU
@@ -147,11 +152,21 @@ struct SurfaceRouter2D::RestartState {
             throw std::runtime_error("Invalid router checkpoint final storage.");
         if(!mb.active || !close(rain,mb.rainfall_in) || !close(infil,mb.infil_out) || mb.init_storage!=c.mass_balance_2d.init_storage ||
            (!r.runtimeWaterCheckpointing() && (mb.external_in!=0 || mb.external_out!=0)) || (!r.joint_hydraulic_ && (mb.coupling_1d_to_2d_in!=0 || mb.coupling_2d_to_1d_out!=0)) ||
-           (!r.joint_hydraulic_ && (mb.outfall_in!=0 || mb.outfall_out!=0)) || mb.boundary_in!=0 || mb.boundary_out!=0 ||
+           (!r.joint_hydraulic_ && (mb.outfall_in!=0 || mb.outfall_out!=0)) || (!boundary_water && (mb.boundary_in!=0 || mb.boundary_out!=0)) ||
            mb.infil_to_aquifer!=0 || mb.infil_aquifer_pending!=0 || mb.solver_nsteps!=-1 || mb.solver_nrhs!=0 ||
            mb.solver_avg_h!=0 || mb.solver_last_h!=0 || mb.solver_active_min!=-1 || mb.solver_active_mean!=-1 ||
            mb.solver_active_max!=-1 || mb.solver_n_tiers!=0)
             throw std::runtime_error("Router checkpoint ledgers differ or include unqualified exchanges.");
+        if(boundary_water) {
+            if(!close(boundary_in,mb.boundary_in) || !close(boundary_out,mb.boundary_out) ||
+               !std::is_sorted(boundary_slots.begin(),boundary_slots.end()) ||
+               std::adjacent_find(boundary_slots.begin(),boundary_slots.end())!=boundary_slots.end())
+                throw std::runtime_error("Router boundary checkpoint counters or index differ.");
+            for(int slot:boundary_slots)if(slot<0 || slot>=r.boundary_.size() ||
+                MeshData::slot_local(slot)>=r.mesh_.cell_vertex_count(MeshData::slot_cell(slot)) ||
+                r.mesh_.cell_neighbour(MeshData::slot_cell(slot),MeshData::slot_local(slot))>=0)
+                throw std::runtime_error("Router boundary checkpoint index is not an exterior edge.");
+        }
         if(r.joint_hydraulic_) {
             if(window_outfall_accum_.size()!=r.coupling_points_.size() ||
                (pending_dt_==0 && outfall_state_changed_) ||
@@ -186,6 +201,7 @@ struct SurfaceRouter2D::RestartState {
         c.next_report_ms=next_report_ms;c.climate_state.evap_rate=evap_rate;c.gages.rainfall=std::move(rainfall);
         c.mass_balance_2d=mb;
         if(runtime_water)c.runtime_coupling_used=runtime_used;
+        if(boundary_water) {r.bc_nonwall_slots_=std::move(boundary_slots);r.prev_boundary_in_=boundary_in;r.prev_boundary_out_=boundary_out;}
         if(r.joint_hydraulic_) {
             static_assert(std::is_nothrow_move_assignable_v<OutfallExchange>);
             c.coupling_delivery_remaining=delivery;c.surface_outfall_link_limit=std::move(limits);
@@ -235,6 +251,11 @@ std::string SurfaceRouter2D::sourceBoundary(const SimulationContext& ctx) const 
     for(const auto& row:state_.runtime_sources.rows) {incoming+=row.receipt.water_in;outgoing+=row.receipt.water_out;}
     if(!close(incoming,ctx.mass_balance_2d.external_in) || !close(outgoing,ctx.mass_balance_2d.external_out))
         return "Router/provider completed water receipts differ.";
+    double boundary_in=0,boundary_out=0;std::vector<int> slots;
+    for(const auto& [slot,receipt]:boundary_.receipts) {boundary_in+=receipt.water_in;boundary_out+=receipt.water_out;}
+    for(int k=0;k<boundary_.size();++k)if(boundary_.edge_bc_type[k]!=int8_t(BoundaryType::WALL))slots.push_back(k);
+    if(!close(boundary_in,ctx.mass_balance_2d.boundary_in) || !close(boundary_out,ctx.mass_balance_2d.boundary_out) ||
+       (!bc_nonwall_dirty_ && slots!=bc_nonwall_slots_))return "Router completed boundary receipts or index differ.";
     if(cpu->completedSourceTime()!=sim_time_) return "Router/source completed clocks differ.";
     if(source_router_model_!=sourceRouterModel(ctx)) return "Router checkpoint model changed after attachment.";
     if(!close(ctx.mass_balance_2d.rainfall_in,common_stage_->meshRain()) ||
@@ -321,6 +342,7 @@ std::string SurfaceRouter2D::checkpointBytes(const SimulationContext& ctx,std::s
         auto payload=state.bytes(),model=source_router_model_;auto magic=std::string(joint_hydraulic_?jointMagic:magicName);
         uint32_t version=joint_hydraulic_?2:1,endian=0x01020304,longBytes=sizeof(long),crc=checksum(payload);
         if(runtimeWaterCheckpointing())version+=2;
+        if(runtimeBoundaryCheckpointing())version+=2;
         Archive file;file(magic,version,endian,longBytes,model,payload,crc);
         if(file.bytes().size()>maxBytes)return "Router checkpoint exceeds its size limit.";
         result=file.bytes();return {};
@@ -345,7 +367,7 @@ std::string SurfaceRouter2D::loadCheckpointBytes(SimulationContext& ctx,std::str
         if(bytes.empty() || bytes.size()>maxBytes)return "Router checkpoint exceeds its size limit.";
         Archive file(std::move(bytes));std::string magic,model,payload;uint32_t version=0,endian=0,longBytes=0,crc=0;
         file(magic,version,endian,longBytes,model,payload,crc);file.finish();
-        if(magic!=(joint_hydraulic_?jointMagic:magicName) || version!=(joint_hydraulic_?2u:1u)+(runtimeWaterCheckpointing()?2u:0u) || endian!=0x01020304 || longBytes!=sizeof(long)) return "Unsupported router checkpoint version/platform.";
+        if(magic!=(joint_hydraulic_?jointMagic:magicName) || version!=(joint_hydraulic_?2u:1u)+(runtimeWaterCheckpointing()?2u:0u)+(runtimeBoundaryCheckpointing()?2u:0u) || endian!=0x01020304 || longBytes!=sizeof(long)) return "Unsupported router checkpoint version/platform.";
         if(model!=source_router_model_) return "Router checkpoint report/weather model differs.";
         if(crc!=checksum(payload)) return "Router checkpoint checksum differs.";
         RestartState snapshot(*this,ctx);Archive state(std::move(payload));snapshot.archive(state);std::string cpu,hydraulic;state(cpu);
@@ -356,8 +378,8 @@ std::string SurfaceRouter2D::loadCheckpointBytes(SimulationContext& ctx,std::str
             snapshot.old_elapsed_ms,snapshot.next_report_ms,snapshot.evap_rate};
         if(engine_boundary && clock!=*engine_boundary)return "Engine/surface checkpoint clocks differ.";
         if(engine_rainfall && snapshot.rainfall!=*engine_rainfall)return "Engine/surface checkpoint rainfall differs.";
-        const std::array<double,8> expected{snapshot.sim_time_,snapshot.mb.rainfall_in,snapshot.mb.evap_out,snapshot.mb.aquifer_in,snapshot.mb.final_storage,
-            snapshot.mb.external_in,snapshot.mb.external_out,double(snapshot.runtime_used)};
+        const std::array<double,10> expected{snapshot.sim_time_,snapshot.mb.rainfall_in,snapshot.mb.evap_out,snapshot.mb.aquifer_in,snapshot.mb.final_storage,
+            snapshot.mb.external_in,snapshot.mb.external_out,double(snapshot.runtime_used),snapshot.mb.boundary_in,snapshot.mb.boundary_out};
         // Stage hydraulic state and cross-check the duplicated shared clock
         // before the CPU/source transaction can install anything.
         std::shared_ptr<Router::RestartState> prepared;
@@ -365,7 +387,7 @@ std::string SurfaceRouter2D::loadCheckpointBytes(SimulationContext& ctx,std::str
             prepared=joint_hydraulic_->prepareCheckpointBytes(ctx,std::move(hydraulic),&clock,&snapshot.delivery,&snapshot.feedback);
             if(engine_storage && clock[0]>0)Router::validateSessionStorage(prepared,ctx,*engine_storage,engine_routed);
         }
-        const auto ce=static_cast<ExplicitInertialSolver*>(solver_.get())->loadCheckpointBytes(std::move(cpu),&expected,snapshot.exchange.pending_.empty()?nullptr:&snapshot.exchange.pending_,validate_source,before_install);if(!ce.empty())return ce;
+        const auto ce=static_cast<ExplicitInertialSolver*>(solver_.get())->loadCheckpointBytes(std::move(cpu),&expected,snapshot.exchange.pending_.empty()?nullptr:&snapshot.exchange.pending_,validate_source,before_install,snapshot.boundary_water && !snapshot.bc_nonwall_dirty_?&snapshot.boundary_slots:nullptr);if(!ce.empty())return ce;
         // Parsing/model/ledger/clock checks have all completed. CPU installation
         // above and these remaining explicit moves cannot throw.
         if(joint_hydraulic_)joint_hydraulic_->installCheckpoint(ctx,std::move(prepared));

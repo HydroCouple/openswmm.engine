@@ -29,7 +29,7 @@ public:
     // private subcatchment groups; default reviewed-source behavior is unchanged.
     std::string initialize(const MeshData&, SurfaceStateData&, const SolverOptions2D&, SubsurfaceSolver&,
                            runoff::SourceWaterDriver&, const SurfaceOwnershipPreview&, bool mesh_only = false,
-                           const std::string& runtime_water_identity = {});
+                           const std::string& runtime_water_identity = {}, bool runtime_boundaries = false);
     bool matches(const MeshData* m,const SurfaceStateData* s,const SubsurfaceSolver* g) const {
         return mesh_==m && surface_==s && gw_==g && mesh_;
     }
@@ -51,8 +51,9 @@ public:
     // Initial internal qualification profile. External program state is not
     // recovered by its immutable replay identity. No authored/public activation.
     bool runtimeWaterEnabled() const { return !runtime_water_identity_.empty(); }
+    bool runtimeBoundariesEnabled() const { return runtime_boundaries_; }
     const std::string& runtimeWaterIdentity() const { return runtime_water_identity_; }
-    std::string validateRuntimeWater(const RuntimeSources&,const RuntimeSources&,const RuntimeForcings&,double time) const;
+    std::string validateRuntimeWater(const RuntimeSources&,const RuntimeSources&,const RuntimeForcings&,double time,const BoundaryData* boundary=nullptr) const;
     /// Internal component checkpoint, not a production engine hotstart.
     std::string saveCheckpoint(const std::string& path) const;
     std::string loadCheckpoint(const std::string& path);
@@ -73,6 +74,8 @@ private:
     std::string checkpoint_model_;
     RuntimeWaterCheckpointBinding runtimeWaterBinding(double time) const;
     std::string runtime_water_identity_;
+    bool runtime_boundaries_=false;
+    BoundaryData authored_boundary_;
     struct Donor {
         int source=-1, type=-1, unit=-1, identity=-1;
         double area=0;

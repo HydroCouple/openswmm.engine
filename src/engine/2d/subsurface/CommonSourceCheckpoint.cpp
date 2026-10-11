@@ -101,6 +101,7 @@ std::string CommonSourceStage::checkpointModel() const {
     a(owned,weather,cells,et);
     a.sequence(donors,[&](auto& d){a(d.source,d.type,d.unit,d.identity,d.area,d.contacts);});
     if(runtimeWaterEnabled()) {auto identity=runtime_water_identity_;a(identity);}
+    if(runtimeBoundariesEnabled()) {auto model=RuntimeWaterCheckpoint::boundaryModel(authored_boundary_);a(model);}
     return a.bytes();
 }
 std::string CommonSourceStage::checkpointBytes(std::string& bytes) const {
@@ -120,10 +121,10 @@ std::string CommonSourceStage::checkpointBytes(std::string& bytes) const {
             // immutable completed snapshot has no still-active expired rows.
             mesh.runtime_sources.expire(end);gw.runtimeSources().expire(end);mesh.runtime_forcings.expire(end);
             std::string providers;auto invalid=RuntimeWaterCheckpoint::capture(runtimeWaterBinding(end),
-                mesh.runtime_sources,gw.runtimeSources(),mesh.runtime_forcings,providers);
+                mesh.runtime_sources,gw.runtimeSources(),mesh.runtime_forcings,providers,runtimeBoundariesEnabled()?mesh.boundary:nullptr);
             if(!invalid.empty())return invalid;state(providers);
         }
-        std::string magic="OpenSWMM source boundary";uint32_t version=runtimeWaterEnabled()?2:checkpointVersion,endian=0x01020304;
+        std::string magic="OpenSWMM source boundary";uint32_t version=runtimeBoundariesEnabled()?3:runtimeWaterEnabled()?2:checkpointVersion,endian=0x01020304;
         uint32_t longBytes=sizeof(long),doubleBytes=sizeof(double);auto model=checkpoint_model_,payload=state.bytes();
         auto crc=checksum(payload);Archive file;file(magic,version,endian,longBytes,doubleBytes,model,payload,crc);
         if(file.bytes().size()>maxCheckpointBytes)return "Source checkpoint exceeds internal qualification size limit.";
@@ -156,12 +157,14 @@ std::string CommonSourceStage::loadCheckpointBytes(std::string bytes,const std::
         if(bytes.empty()||bytes.size()>maxCheckpointBytes)return "Source checkpoint exceeds its size limit.";
         Archive file(std::move(bytes));std::string magic,model,payload;uint32_t version=0,endian=0,longBytes=0,doubleBytes=0,crc=0;
         file(magic,version,endian,longBytes,doubleBytes,model,payload,crc);file.finish();
-        if(magic!="OpenSWMM source boundary"||version!=(runtimeWaterEnabled()?2u:checkpointVersion)||endian!=0x01020304||longBytes!=sizeof(long)||doubleBytes!=sizeof(double))
+        if(magic!="OpenSWMM source boundary"||version!=(runtimeBoundariesEnabled()?3u:runtimeWaterEnabled()?2u:checkpointVersion)||endian!=0x01020304||longBytes!=sizeof(long)||doubleBytes!=sizeof(double))
             return "Unsupported source checkpoint version or platform.";
         if(model!=checkpoint_model_)return "Source checkpoint model, forcing, species or reviewed ownership differs.";
         if(crc!=checksum(payload))return "Source checkpoint checksum differs.";
         // Every parse and semantic check targets private copies. Failed loads change nothing.
-        auto source=sources_->waterTrial();auto gw=*gw_;auto mesh=*surface_;auto trial=*this;Archive state(std::move(payload));
+        auto source=sources_->waterTrial();auto gw=*gw_;auto mesh=*surface_;auto trial=*this;
+        BoundaryData boundary;if(runtimeBoundariesEnabled()) {boundary=*surface_->boundary;mesh.boundary=&boundary;}
+        Archive state(std::move(payload));
         state(trial.exchange_.completed_end_,trial.intervals_,trial.mesh_rain_,trial.mesh_evap_,trial.mesh_return_);
         state.sequence(trial.exchange_.receipts_,[&](auto& r){intake(state,r);});
         state.sequence(trial.et_receipts_,[&](auto& r){state(r.owner,r.source,r.type,r.unit,r.cell,r.start,r.end,r.area,r.potential,r.evaporation,r.soil_demand,r.unused);});
@@ -170,7 +173,7 @@ std::string CommonSourceStage::loadCheckpointBytes(std::string bytes,const std::
         if(runtimeWaterEnabled()) {
             std::string providers;state(providers);
             const auto invalid=RuntimeWaterCheckpoint::restore(runtimeWaterBinding(trial.completedEnd()),
-                std::move(providers),mesh.runtime_sources,gw.runtimeSources(),mesh.runtime_forcings);
+                std::move(providers),mesh.runtime_sources,gw.runtimeSources(),mesh.runtime_forcings,runtimeBoundariesEnabled()?&boundary:nullptr);
             if(!invalid.empty())return invalid;
         }
         state.finish();
@@ -222,6 +225,9 @@ std::string CommonSourceStage::loadCheckpointBytes(std::string bytes,const std::
         // There is no active exchange transaction at an accepted boundary.
         trial.exchange_.start_=trial.exchange_.end_=end;trial.exchange_.receiver_=nullptr;trial.exchange_.awards_.clear();
         if(inspect)return (*inspect)(trial);
+        if(runtimeBoundariesEnabled()) {
+            *const_cast<BoundaryData*>(surface_->boundary)=std::move(boundary);mesh.boundary=surface_->boundary;
+        }
         trial.sources_=sources_;trial.gw_=gw_;trial.surface_=surface_;
         *sources_=std::move(source);*gw_=std::move(gw);*surface_=std::move(mesh);*this=std::move(trial);
         return {};
