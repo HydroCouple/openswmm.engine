@@ -13,13 +13,14 @@ namespace openswmm::twoD {
 namespace {
 constexpr double ft3=.3048*.3048*.3048;
 constexpr std::size_t maxValues=8*1024*1024;
-void row(SourceResultTable& t,std::initializer_list<double> values) {
-    if(values.size()!=t.columns.size())throw std::runtime_error("Source result row differs from schema.");
+void row(SourceResultTable& t,std::initializer_list<double> values,std::initializer_list<double> extra={}) {
+    if(values.size()+extra.size()!=t.columns.size())throw std::runtime_error("Source result row differs from schema.");
     std::size_t i=0;for(double v:values)t.columns[i++].push_back(v);
+    for(double v:extra)t.columns[i++].push_back(v);
 }
 bool index(double v,std::size_t n) { return std::isfinite(v)&&v>=0&&v<double(n)&&std::floor(v)==v; }
 }
-std::map<std::string,SourceResultTable> SourceResultHistory::schema() {
+std::map<std::string,SourceResultTable> SourceResultHistory::schema(bool outfall_returns) {
     std::map<std::string,SourceResultTable> tables;
     const auto add=[&](const char* name,std::initializer_list<std::pair<const char*,const char*>> fields){
         auto& t=tables[name];for(const auto& f:fields){t.fields.push_back(f.first);t.units.push_back(f.second);t.columns.emplace_back();}
@@ -58,6 +59,12 @@ std::map<std::string,SourceResultTable> SourceResultHistory::schema() {
     }
     add("et",{{"frame","1"},{"owner","1"},{"source","1"},{"type","1"},{"unit","1"},{"cell","1"},
         {"start","s"},{"end","s"},{"area","m2"},{"potential","m3"},{"evaporation","m3"},{"soil_demand","m3"},{"unused","m3"}});
+    if(outfall_returns) {
+        auto& water=tables.at("source_water");
+        water.fields.push_back("outfall_return");water.units.push_back("m3");water.columns.emplace_back();
+        add("outfall_clock",{{"frame","1"},{"completed_time","s"}});
+        add("pending_outfall_return",{{"frame","1"},{"row","1"},{"source","1"},{"available_at","s"},{"volume","m3"}});
+    }
     return tables;
 }
 std::string SourceResultHistory::append(const CommonSourceStage& stage) {
@@ -73,7 +80,8 @@ std::string SourceResultHistory::append(const CommonSourceStage& stage) {
         const auto& s=*stage.sources_;const auto& ctx=s.context();const auto& names=s.pollutantNames();
         const int np=int(names.size());
         if(frame==0) {
-            trial.tables_=schema();trial.stage_=&stage;trial.model_=stage.checkpoint_model_;
+            trial.outfall_returns_=s.acceptsOutfallReturns();
+            trial.tables_=schema(trial.outfall_returns_);trial.stage_=&stage;trial.model_=stage.checkpoint_model_;
             for(int sc=0;sc<ctx.n_subcatches();++sc)trial.sources_.push_back(ctx.subcatch_names.name_of(sc));
             trial.pollutants_=names;
             for(int p=0;p<np;++p) {
@@ -104,14 +112,25 @@ std::string SourceResultHistory::append(const CommonSourceStage& stage) {
         }
         auto& ts=trial.tables_;const double end=stage.completedEnd();
         row(ts.at("boundaries"),{double(frame),double(stage.intervals()),start,end,stage.meshRain(),stage.meshEvaporation(),stage.meshReturn()});
+        if(trial.outfall_returns_) {
+            row(ts.at("outfall_clock"),{double(frame),s.outfallReturnEnd()});
+            for(const auto& q:s.pendingOutfallReturns()) {
+                auto& pending=ts.at("pending_outfall_return");
+                row(pending,{double(frame),double(pending.rows()),double(q.source),q.available,q.volume*ft3});
+            }
+        }
         for(std::size_t group=0;group<s.clocks().groups().size();++group) {
             row(ts.at("group_water"),{double(frame),double(group),s.pendingVolume(int(group))*ft3,s.balanceResidual(int(group))*ft3});
             for(int p=0;p<np;++p)row(ts.at("group_mass"),{double(frame),double(group),double(p),s.pendingPollutantMass(int(group),p),s.pollutantBalanceResidual(int(group),p)});
             for(int sc:s.clocks().groups()[group].subcatches) {
                 const auto& b=s.ledgers()[sc];
-                row(ts.at("source_water"),{double(frame),double(sc),double(group),s.spatialFractions()[sc],
+                // Keep the profile-off schema and old column positions intact.
+                auto& water=ts.at("source_water");
+                const std::initializer_list<double> values{double(frame),double(sc),double(group),s.spatialFractions()[sc],
                     b.initial_storage*ft3,b.rain*ft3,b.evaporation*ft3,b.infiltration*ft3,b.spatial_infiltration*ft3,
-                    b.outside_infiltration*ft3,b.aquifer_return*ft3,b.outlet*ft3,b.captured*ft3,b.runon*ft3,b.pervious_return*ft3,s.storedVolume(sc)*ft3});
+                    b.outside_infiltration*ft3,b.aquifer_return*ft3,b.outlet*ft3,b.captured*ft3,b.runon*ft3,b.pervious_return*ft3,s.storedVolume(sc)*ft3};
+                if(trial.outfall_returns_)row(water,values,{b.outfall_return*ft3});
+                else row(water,values);
             }
         }
         for(const auto& b:s.pollutants())for(int p=0;p<np;++p) {
@@ -160,7 +179,7 @@ std::string SourceResultHistory::refreshCheckpointMatch(const CommonSourceStage&
     boundary_=std::move(bytes);return {};
 }
 std::string SourceResultHistory::extends(const SourceResultHistory& prefix) const {
-    if(sources_!=prefix.sources_||pollutants_!=prefix.pollutants_||mass_units_!=prefix.mass_units_||tables_.size()!=prefix.tables_.size())
+    if(outfall_returns_!=prefix.outfall_returns_||sources_!=prefix.sources_||pollutants_!=prefix.pollutants_||mass_units_!=prefix.mass_units_||tables_.size()!=prefix.tables_.size())
         return "Source result prefix identities differ.";
     for(const auto& [name,t]:prefix.tables_) {
         const auto found=tables_.find(name);if(found==tables_.end())return "Source result prefix table is missing.";
@@ -179,6 +198,8 @@ std::string SourceResultHistory::resume(const CommonSourceStage& stage) {
         const auto invalid=validate();if(!invalid.empty())return invalid;
         if(boundary_.empty())return "Saved source history has no checkpoint match for continuation.";
         std::string bytes;const auto error=stage.checkpointBytes(bytes);if(!error.empty())return error;
+        if(outfall_returns_!=stage.sources().acceptsOutfallReturns())
+            return "Source history hydraulic-return capability differs from restored source profile.";
         if(bytes!=boundary_)return "Source history does not match the restored component checkpoint.";
         const auto n=tables_.at("boundaries").rows();
         if(stage.intervals()!=static_cast<long>(n-1)||stage.completedEnd()!=tables_.at("boundaries").columns[3].back())
@@ -200,7 +221,7 @@ std::string SourceResultHistory::resume(const CommonSourceStage& stage) {
 }
 std::string SourceResultHistory::validate() const {
     try {
-        const auto expected=schema();if(tables_.size()!=expected.size())return "Missing source result tables.";
+        const auto expected=schema(outfall_returns_);if(tables_.size()!=expected.size())return "Missing source result tables.";
         std::size_t total=0;
         for(const auto& [name,t]:tables_) {
             const auto& s=expected.at(name);
@@ -239,7 +260,8 @@ std::string SourceResultHistory::validate() const {
                     const auto& f=t.fields[c];const double v=t.columns[c][r];
                     if(f=="source"&&v!=-1&&!index(v,sources_.size()))return "Invalid source result source.";
                     if(f=="species"&&!index(v,pollutants_.size()))return "Invalid source result species.";
-                    if((f=="end"||f=="available_at"||f=="completed_time"||f=="intake_refresh"||f=="et_refresh")&&v>b[3][frame])return "Source result looks beyond accepted time.";
+                    if(name!="outfall_clock"&&name!="pending_outfall_return"&&
+                       (f=="end"||f=="available_at"||f=="completed_time"||f=="intake_refresh"||f=="et_refresh")&&v>b[3][frame])return "Source result looks beyond accepted time.";
                 }
             }
         }
@@ -275,10 +297,43 @@ std::string SourceResultHistory::validate() const {
         for(std::size_t r=0;r<gw[0].size();++r) {
             double residual=-gw[2][r],scale=1;bool found=false;
             for(std::size_t k=0;k<water[0].size();++k)if(water[0][k]==gw[0][r]&&water[2][k]==gw[1][r]) {
-                found=true;residual+=water[4][k]+water[5][k]+water[10][k]-water[6][k]-water[7][k]-water[11][k]-water[15][k];
-                scale+=water[4][k]+water[5][k]+water[10][k];
+                const double outfall=outfall_returns_?water[16][k]:0;
+                found=true;residual+=water[4][k]+water[5][k]+water[10][k]+outfall-water[6][k]-water[7][k]-water[11][k]-water[15][k];
+                scale+=water[4][k]+water[5][k]+water[10][k]+outfall;
             }
             if(!found||std::abs(residual-gw[3][r])>1e-10*scale)return "Source water residual differs from saved stores and transfers.";
+        }
+        if(outfall_returns_) {
+            if(!pollutants_.empty())return "Outfall source results require water-only sources.";
+            const auto& clock=tables_.at("outfall_clock").columns;
+            const auto& pending=tables_.at("pending_outfall_return").columns;
+            if(clock[0].size()!=nf)return "Missing outfall source result clocks.";
+            for(std::size_t f=0;f<nf;++f)if(clock[0][f]!=double(f)||
+                (f?clock[1][f]<clock[1][f-1]:clock[1][f]!=0))return "Invalid outfall source result clock.";
+            std::vector<std::map<double,double>> amounts(nf);
+            std::vector<std::set<std::pair<double,double>>> identities(nf);
+            for(std::size_t r=0;r<pending[0].size();++r) {
+                const auto f=std::size_t(pending[0][r]);
+                if(pending[1][r]!=double(r)||pending[2][r]<0||pending[4][r]<=0||
+                   pending[3][r]>clock[1][f]||b[3][f]-pending[3][r]>1e-12*std::max(1.,b[3][f])||
+                   (r&&pending[0][r]==pending[0][r-1]&&pending[3][r]<pending[3][r-1])||
+                   !identities[f].insert({pending[2][r],pending[3][r]}).second)
+                    return "Invalid pending outfall source return.";
+                amounts[f][pending[2][r]]+=pending[4][r];
+            }
+            std::map<double,double> previous;
+            std::vector<std::map<double,double>> groups(nf);
+            for(std::size_t r=0;r<water[0].size();++r) {
+                const auto f=std::size_t(water[0][r]);const double source=water[1][r],credit=water[16][r];
+                const auto found=amounts[f].find(source);const double queued=found==amounts[f].end()?0:found->second;
+                if(credit<previous[source]||queued-credit>1e-10*std::max(1.,credit)||(f==0&&credit!=0))
+                    return "Outfall source return exceeds cumulative credits.";
+                previous[source]=credit;groups[f][water[2][r]]+=queued;
+                if(found!=amounts[f].end())amounts[f].erase(found);
+            }
+            for(const auto& unknown:amounts)if(!unknown.empty())return "Pending outfall source return has no owned source.";
+            for(std::size_t r=0;r<gw[0].size();++r)if(groups[std::size_t(gw[0][r])][gw[1][r]]-gw[2][r]>1e-10*std::max(1.,gw[2][r]))
+                return "Pending outfall source return exceeds group storage.";
         }
         const auto& sm=tables_.at("source_mass").columns;const auto& gm=tables_.at("group_mass").columns;
         for(std::size_t r=0;r<sm[0].size();++r) {

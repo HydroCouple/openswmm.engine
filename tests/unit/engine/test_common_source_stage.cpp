@@ -1346,12 +1346,46 @@ std::filesystem::path sourceResultPath(const std::string& name) {
     std::filesystem::create_directories(dir);return dir/(name+".h5");
 }
 void resultEqual(const SourceResultHistory& a,const SourceResultHistory& b) {
+    EXPECT_EQ(a.outfallReturnsAvailable(),b.outfallReturnsAvailable());
     EXPECT_EQ(a.sourceNames(),b.sourceNames());EXPECT_EQ(a.pollutantNames(),b.pollutantNames());
     EXPECT_EQ(a.pollutantMassUnits(),b.pollutantMassUnits());ASSERT_EQ(a.tables().size(),b.tables().size());
     for(const auto& [name,t]:a.tables()) {
         const auto& u=b.tables().at(name);EXPECT_EQ(t.fields,u.fields);EXPECT_EQ(t.units,u.units);EXPECT_EQ(t.columns,u.columns)<<name;
     }
 }
+void outfallResultModel(Model& m,bool trench=true,GwClosure closure=GwClosure::CLOSED_FORM,double coverage=.5) {
+    AtmosphericInput a;a.rain=0;a.closure=closure;a.inside={.75,.25};a.lid_area=coverage;
+    m.setup(trench,2,false,false,false,a);m.sources=runoff::SourceWaterDriver{};
+    ASSERT_EQ(m.sources.initialize(m.context,{0,1},{{0,trench?1-coverage:1},{1,1}},nullptr,true),"");
+    m.attach();
+}
+}
+TEST(CommonSourceStage, SourceHistorySeparatesOutfallCreditsQueuesAndHydraulicClock) {
+    Model m;outfallResultModel(m);SourceResultHistory history;
+    const auto before=restartPath("outfall-history-readonly-before"),after=restartPath("outfall-history-readonly-after");
+    ASSERT_EQ(history.append(m.stage),"");EXPECT_TRUE(history.outfallReturnsAvailable());
+    ASSERT_EQ(m.stage.creditOutfallReturns(0,1,{.1,.2}),"");
+    ASSERT_EQ(m.stage.creditOutfallReturns(1,2,{.3,0}),"");
+    advanceRestart(m,0,.5);ASSERT_EQ(m.stage.saveCheckpoint(before.string()),"");
+    ASSERT_EQ(history.append(m.stage),"");ASSERT_EQ(m.stage.saveCheckpoint(after.string()),"");
+    EXPECT_EQ(restartBytes(before),restartBytes(after));
+    const auto& clock=history.tables().at("outfall_clock").columns;
+    EXPECT_EQ(clock[1],(std::vector<double>{0,2}));
+    EXPECT_EQ(history.tables().at("boundaries").columns[3].back(),.5);
+    const auto& water=history.tables().at("source_water");
+    EXPECT_EQ(water.fields.back(),"outfall_return");EXPECT_EQ(water.units.back(),"m3");
+    EXPECT_NEAR(water.columns[16][2],.4*ft3,1e-15);EXPECT_NEAR(water.columns[16][3],.2*ft3,1e-15);
+    ASSERT_EQ(history.tables().at("pending_outfall_return").rows(),3);
+    double queued=0;for(double v:history.tables().at("pending_outfall_return").columns[4])queued+=v;
+    EXPECT_NEAR(queued,.6*ft3,1e-15); // Repeated queue snapshots must not be summed as new credits.
+    advanceRestart(m,.5,2);ASSERT_EQ(history.append(m.stage),"");
+    ASSERT_EQ(m.sources.pendingOutfallReturns().size(),1);EXPECT_EQ(m.sources.pendingOutfallReturns()[0].available,2);
+    advanceRestart(m,2,3);ASSERT_EQ(history.append(m.stage),"");EXPECT_TRUE(m.sources.pendingOutfallReturns().empty());
+    const auto& pending=history.tables().at("pending_outfall_return").columns;
+    EXPECT_EQ(pending[0],(std::vector<double>{1,1,1,2}));EXPECT_EQ(pending[3],(std::vector<double>{1,1,2,2}));
+    EXPECT_NEAR(m.sources.ledgers()[0].runon,.4,1e-14);EXPECT_NEAR(m.sources.ledgers()[1].runon,.2,1e-14);
+    for(double v:history.tables().at("group_water").columns[3])EXPECT_NEAR(v,0,1e-12);
+    const auto saved=history;EXPECT_FALSE(history.append(m.stage).empty());resultEqual(history,saved);
 }
 TEST(CommonSourceStage, SourceHistoryKeepsAcceptedIntervalsEtAndSourceBalances) {
     AtmosphericInput a;a.inside={.75,.25};a.impervious={.2,.4};a.pet={.0001,.0002};a.et="BOUNDARY_ET";
@@ -1418,6 +1452,55 @@ TEST(CommonSourceStage, SourceHistoryRefusesSkippedDuplicateTrialAndChangedModel
     SourceResultHistory late;EXPECT_FALSE(late.append(m.stage).empty());EXPECT_TRUE(late.tables().empty());
 }
 #ifdef OPENSWMM_HAS_HDF5_MODEL
+TEST(CommonSourceStage, OutfallSourceHistoryContinuesPendingQueuesAcrossExactComponentRestart) {
+    for(auto closure:{GwClosure::CLOSED_FORM,GwClosure::SIGMA})for(double coverage:{0.,.5,1.}) {
+        SCOPED_TRACE(std::to_string(int(closure))+"/"+std::to_string(coverage));
+        Model original;outfallResultModel(original,coverage>0,closure,coverage);SourceResultHistory history;
+        ASSERT_EQ(history.append(original.stage),"");ASSERT_EQ(original.stage.creditOutfallReturns(0,2,{.1,.2}),"");
+        advanceRestart(original,0,.5);ASSERT_EQ(history.append(original.stage),"");
+        const auto checkpoint=restartPath("outfall-history-match"),file=sourceResultPath("outfall-history-prefix");
+        ASSERT_EQ(original.stage.saveCheckpoint(checkpoint.string()),"");ASSERT_EQ(history.save(file.string()),"");
+        Model resumed;outfallResultModel(resumed,coverage>0,closure,coverage);
+        ASSERT_EQ(resumed.stage.loadCheckpoint(checkpoint.string()),"");SourceResultHistory prefix;bool available=false;
+        ASSERT_EQ(SourceResultHistory::read(file.string(),prefix,available),"");ASSERT_TRUE(available);
+        EXPECT_TRUE(prefix.outfallReturnsAvailable());resultEqual(history,prefix);ASSERT_EQ(prefix.resume(resumed.stage),"");
+        for(const auto [start,end]:{std::pair{.5,2.},std::pair{2.,3.},std::pair{3.,4.}}) {
+            advanceRestart(original,start,end);advanceRestart(resumed,start,end);
+            if(end>2) {
+                ASSERT_EQ(original.stage.creditOutfallReturns(end-1,end,{end==3?.3:0,0}),"");
+                ASSERT_EQ(resumed.stage.creditOutfallReturns(end-1,end,{end==3?.3:0,0}),"");
+            }
+            ASSERT_EQ(history.append(original.stage),"");ASSERT_EQ(prefix.append(resumed.stage),"");resultEqual(history,prefix);
+        }
+        checkpointEqual(original,resumed,"outfall-history-final");ASSERT_EQ(prefix.save(sourceResultPath("outfall-history-continued").string()),"");
+        EXPECT_TRUE(resumed.sources.pendingOutfallReturns().empty());EXPECT_NEAR(resumed.sources.ledgers()[0].runon,.4,1e-14);
+    }
+}
+TEST(CommonSourceStage, OutfallSourceHistoryRejectsInvalidClockCreditsAndQueueWithoutPublication) {
+    Model m;outfallResultModel(m);SourceResultHistory history;ASSERT_EQ(history.append(m.stage),"");
+    ASSERT_EQ(m.stage.creditOutfallReturns(0,2,{.1,.2}),"");advanceRestart(m,0,.5);ASSERT_EQ(history.append(m.stage),"");
+    const auto file=sourceResultPath("outfall-history-invalid");ASSERT_EQ(history.save(file.string()),"");const auto bytes=restartBytes(file);
+    for(int mode=0;mode<11;++mode) {
+        SCOPED_TRACE(mode);auto invalid=history;auto& t=const_cast<std::map<std::string,SourceResultTable>&>(invalid.tables());
+        if(mode==0)t.erase("outfall_clock");
+        if(mode==1)t.at("outfall_clock").columns[1].back()=1;
+        if(mode==2)t.at("outfall_clock").columns[1].front()=1;
+        if(mode==3)t.at("pending_outfall_return").columns[2].back()=99;
+        if(mode==4)t.at("pending_outfall_return").columns[3].back()=.1;
+        if(mode==5)t.at("pending_outfall_return").columns[4].back()=0;
+        if(mode==6)t.at("pending_outfall_return").columns[4].back()=1;
+        if(mode==7)t.at("pending_outfall_return").columns[2].back()=0;
+        if(mode==8)t.at("source_water").columns[16].back()=0;
+        if(mode==9)t.at("pending_outfall_return").columns[1].back()=99;
+        if(mode==10)t.at("source_water").columns[16].pop_back();
+        EXPECT_FALSE(invalid.save(file.string()).empty());EXPECT_EQ(restartBytes(file),bytes);
+    }
+    // A diagnostic edit can preserve balance yet still fail the final projection.
+    auto edited=history;auto& t=const_cast<std::map<std::string,SourceResultTable>&>(edited.tables());
+    t.at("pending_outfall_return").columns[4].back()*=.5;
+    ASSERT_EQ(edited.save(sourceResultPath("outfall-history-edited").string()),"");const auto changed=edited;
+    EXPECT_FALSE(edited.resume(m.stage).empty());resultEqual(edited,changed);
+}
 TEST(CommonSourceStage, SourceHistoryHdf5RoundTripPreservesAllColumnsAndNativeUnits) {
     Model m;mixedPollutants(m);m.attach();SourceResultHistory history;ASSERT_EQ(history.append(m.stage),"");
     advanceRestart(m,0,.75);ASSERT_EQ(history.append(m.stage),"");advanceRestart(m,.75,2);ASSERT_EQ(history.append(m.stage),"");

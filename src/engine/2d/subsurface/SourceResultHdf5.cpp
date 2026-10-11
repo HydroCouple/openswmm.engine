@@ -14,6 +14,7 @@ using h5io::Handle;
 constexpr std::size_t maxValues=8*1024*1024, nameBytes=512, maxNames=65536;
 const std::string artifactKind="OpenSWMM internal source result history";
 const std::string semantics="accepted source intervals; frame 0 initial; receiver and queues at capture; cumulative ledgers; not hydraulic report time";
+const std::string outfallSemantics="water-only accepted hydraulic credits; separate completed hydraulic cursor; queued availability may exceed source end; pending snapshots not additive; no per-outfall or adoption events";
 const std::map<std::string,std::string> metadata={
     {"schema_version","1"},{"temporal_meaning",semantics},
     {"sign_convention","nonnegative amounts; signed residual; -1 unavailable identity/adoption/refresh"},
@@ -123,7 +124,9 @@ std::string boundary(hid_t group) {
 }
 struct SourceResultFile {
     static void writeGroup(hid_t group,const SourceResultHistory& history) {
-        for(const auto& [key,value]:metadata)attribute(group,key.c_str(),key=="schema_version"&&!history.boundary_.empty()?"2":value);
+        for(const auto& [key,value]:metadata)attribute(group,key.c_str(),key=="schema_version"?
+            (history.outfall_returns_?"3":!history.boundary_.empty()?"2":"1"):value);
+        if(history.outfall_returns_)attribute(group,"outfall_return_convention",outfallSemantics);
         names(group,"source_names",history.sources_);names(group,"pollutant_names",history.pollutants_);names(group,"pollutant_mass_units",history.mass_units_);
         for(const auto& [name,t]:history.tables_)writeTable(group,name,t);
         if(!history.boundary_.empty())boundary(group,history.boundary_);
@@ -191,10 +194,12 @@ struct SourceResultFile {
             require(!h5io::has_link(file.get(),"__source_history_next")&&!h5io::has_link(file.get(),"__source_history_previous"),"Source output contains an unfinished publication.");
             if(!h5io::has_link(file.get(),"source_history"))return {};
             auto group=h5io::open_group(file.get(),"source_history");require(group.ok(),"Invalid source result group.");
-            const auto version=attribute(group.get(),"schema_version");require(version=="1"||version=="2","Unsupported source result schema.");
+            const auto version=attribute(group.get(),"schema_version");require(version=="1"||version=="2"||version=="3","Unsupported source result schema.");
             for(const auto& [key,value]:metadata)if(key!="schema_version")require(attribute(group.get(),key.c_str())==value,"Unsupported source result metadata or schema.");
-            SourceResultHistory trial;trial.tables_=SourceResultHistory::schema();
-            if(version=="2")trial.boundary_=boundary(group.get());
+            SourceResultHistory trial;trial.outfall_returns_=version=="3";
+            if(trial.outfall_returns_)require(attribute(group.get(),"outfall_return_convention")==outfallSemantics,"Unsupported outfall source result metadata.");
+            trial.tables_=SourceResultHistory::schema(trial.outfall_returns_);
+            if(version!="1")trial.boundary_=boundary(group.get());
             trial.sources_=names(group.get(),"source_names");trial.pollutants_=names(group.get(),"pollutant_names");trial.mass_units_=names(group.get(),"pollutant_mass_units");
             std::size_t total=0;for(auto& [name,t]:trial.tables_)readTable(group.get(),name,t,total);
             const auto invalid=trial.validate();if(!invalid.empty())return invalid;

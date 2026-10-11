@@ -1009,7 +1009,7 @@ struct SourceOutputModel {
     MeshData mesh=unitSquare();SurfaceStateData surface;SolverOptions2D options;
     InertialEdges edges;SubsurfaceSolver gw;openswmm::SimulationContext context;
     openswmm::runoff::SourceWaterDriver sources;CommonSourceStage stage;SourceResultHistory history;
-    void setup() {
+    void setup(bool outfall_returns=false) {
         surface.resize(2,mesh.n_edge_slots());surface.volume={.04,.04};surface.depth={.08,.08};surface.head={.08,.08};
         edges.build(mesh);SubsurfaceConfig config;config.options.authored=true;config.options.force_closed_form=true;
         GwAquiferRow soil;soil.zs=2;soil.hg0=1;soil.Ks=.01;config.rows.push_back(soil);std::vector<std::string> warnings;
@@ -1024,7 +1024,7 @@ struct SourceOutputModel {
         context.subcatches.area[0]=.25/(43560*.3048*.3048);context.subcatches.width[0]=1;context.subcatches.n_perv[0]=.1;
         context.subcatches.frac_imperv[0]=0;context.subcatches.infil_model[0]=2;
         context.subcatches.infil_p1[0]=3.5;context.subcatches.infil_p2[0]=.5;context.subcatches.infil_p3[0]=.26;
-        ASSERT_EQ(sources.initialize(context,{0},{{0,.25}}),"");
+        ASSERT_EQ(sources.initialize(context,{0},{{0,.25}},nullptr,outfall_returns),"");
         SurfaceOwnershipPreview reviewed;SurfaceOwnerObject owner;owner.subcatch=0;owner.reviewed=true;
         owner.declared_area=.25;owner.inside_area=.25;reviewed.objects.push_back(owner);
         reviewed.mesh_weather_area={.375,.375};reviewed.shares={{0,0,.125,.125,0,0,0},{0,1,.125,.125,0,0,0}};
@@ -1035,6 +1035,7 @@ struct SourceOutputModel {
     }
 };
 void historyColumnsEqual(const SourceResultHistory& a,const SourceResultHistory& b) {
+    EXPECT_EQ(a.outfallReturnsAvailable(),b.outfallReturnsAvailable());
     EXPECT_EQ(a.sourceNames(),b.sourceNames());ASSERT_EQ(a.tables().size(),b.tables().size());
     for(const auto& [name,t]:a.tables())EXPECT_EQ(t.columns,b.tables().at(name).columns)<<name;
 }
@@ -1083,7 +1084,7 @@ TEST(Output2DSourceHistory, VersionOneHistoryRemainsReadableWithoutContinuationM
     const auto a=H5Aopen(g,"schema_version",H5P_DEFAULT),t=H5Aget_type(a);char value[512]={};value[0]='1';
     ASSERT_GE(H5Awrite(a,t,value),0);H5Tclose(t);H5Aclose(a);ASSERT_GE(H5Ldelete(g,"checkpoint_match",H5P_DEFAULT),0);H5Gclose(g);H5Fclose(f);
     SourceResultHistory read;bool available=false;ASSERT_EQ(SourceResultHistory::read(file.string(),read,available),"");ASSERT_TRUE(available);
-    historyColumnsEqual(m.history,read);EXPECT_FALSE(read.resume(m.stage).empty());
+    historyColumnsEqual(m.history,read);EXPECT_FALSE(read.outfallReturnsAvailable());EXPECT_FALSE(read.resume(m.stage).empty());
 }
 TEST(Output2DSourceHistory, RestoredPrefixContinuesInsideTheSameMeshResultFile) {
     fs::create_directories(kOutDir);const auto file=kOutDir/"source_history_continued.h5",checkpoint=kOutDir/"source_history_match.checkpoint";
@@ -1097,5 +1098,70 @@ TEST(Output2DSourceHistory, RestoredPrefixContinuesInsideTheSameMeshResultFile) 
     writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(restored.history));ASSERT_EQ(writer.update(makeSnap(2./86400,.08,.08)),0);
     ASSERT_EQ(writer.finalize(m.context),0);SourceResultHistory read;ASSERT_EQ(SourceResultHistory::read(file.string(),read,available),"");
     historyColumnsEqual(m.history,read);H5File h5(file);EXPECT_EQ(h5.dims("/time"),(std::vector<hsize_t>{3}));
+}
+TEST(Output2DSourceHistory, OutfallHistorySavesFutureAvailabilityAndContinuesThroughSkippedReports) {
+    fs::create_directories(kOutDir);const auto file=kOutDir/"outfall_history_continued.h5",checkpoint=kOutDir/"outfall_history_match.checkpoint";
+    SourceOutputModel m;m.setup(true);Default2DOutputPlugin writer(file.string());ASSERT_EQ(writer.prepare(m.context),0);
+    auto opts=m.options;opts.report_2d_step=120;ASSERT_EQ(writer.configureOutput(opts,60),"");writer.prepareMeshAndDatasets(m.mesh);
+    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));ASSERT_EQ(writer.update(makeSnap(0,.08,.08)),0);
+    ASSERT_EQ(m.stage.creditOutfallReturns(0,2,{.1}),"");m.step(0,.5);
+    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));ASSERT_EQ(writer.update(makeSnap(60./86400,.08,.08)),0);
+    ASSERT_EQ(m.stage.saveCheckpoint(checkpoint.string()),"");SourceOutputModel restored;restored.setup(true);
+    ASSERT_EQ(restored.stage.loadCheckpoint(checkpoint.string()),"");bool available=false;
+    ASSERT_EQ(SourceResultHistory::read(file.string(),restored.history,available),"");ASSERT_TRUE(available);
+    EXPECT_TRUE(restored.history.outfallReturnsAvailable());ASSERT_EQ(restored.history.resume(restored.stage),"");
+    EXPECT_EQ(restored.history.tables().at("pending_outfall_return").columns[3].back(),2);
+    m.step(.5,3);restored.step(.5,3);historyColumnsEqual(m.history,restored.history);
+    EXPECT_TRUE(restored.sources.pendingOutfallReturns().empty());
+    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(restored.history));ASSERT_EQ(writer.finalize(m.context),0);
+    SourceResultHistory read;ASSERT_EQ(SourceResultHistory::read(file.string(),read,available),"");historyColumnsEqual(m.history,read);
+    H5File h5(file);EXPECT_EQ(h5.dims("/time"),(std::vector<hsize_t>{1}));
+    EXPECT_TRUE(h5.has("/source_history/source_water/outfall_return"));EXPECT_TRUE(h5.has("/Mesh2_face_depth"));
+}
+TEST(Output2DSourceHistory, OutfallHistoryRefusesChangedProfilesAndMissingRequiredDataAtomically) {
+    fs::create_directories(kOutDir);const auto file=kOutDir/"outfall_history_schema.h5";
+    SourceOutputModel m;m.setup(true);Default2DOutputPlugin writer(file.string());ASSERT_EQ(writer.prepare(m.context),0);writer.prepareMeshAndDatasets(m.mesh);
+    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));ASSERT_EQ(writer.update(makeSnap(0,.08,.08)),0);
+    SourceOutputModel ordinary;ordinary.setup();EXPECT_FALSE(ordinary.history.outfallReturnsAvailable());
+    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(ordinary.history));EXPECT_NE(writer.update(makeSnap(1./86400,.08,.08)),0);
+    EXPECT_NE(writer.finalize(m.context),0);SourceResultHistory read;bool available=false;
+    ASSERT_EQ(SourceResultHistory::read(file.string(),read,available),"");historyColumnsEqual(m.history,read);
+    // Use this test's HDF5 instance after the engine writer closes, so malformed
+    // files exercise the public reader rather than its in-memory validator.
+    for(int mode=0;mode<4;++mode) {
+        const auto bad=kOutDir/("outfall_history_bad_"+std::to_string(mode)+".h5");fs::copy_file(file,bad,fs::copy_options::overwrite_existing);
+        const auto f=H5Fopen(bad.string().c_str(),H5F_ACC_RDWR,H5P_DEFAULT);ASSERT_GE(f,0);
+        if(mode==0)ASSERT_GE(H5Ldelete(f,"/source_history/outfall_clock/completed_time",H5P_DEFAULT),0);
+        if(mode==1)ASSERT_GE(H5Ldelete(f,"/source_history/source_water/outfall_return",H5P_DEFAULT),0);
+        if(mode==2) {
+            const auto g=H5Gopen2(f,"/source_history",H5P_DEFAULT);ASSERT_GE(g,0);
+            ASSERT_GE(H5Adelete(g,"outfall_return_convention"),0);H5Gclose(g);
+        }
+        if(mode==3)ASSERT_GE(H5Ldelete(f,"/source_history/checkpoint_match",H5P_DEFAULT),0);
+        H5Fclose(f);const auto before=read;available=true;
+        EXPECT_FALSE(SourceResultHistory::read(bad.string(),read,available).empty());EXPECT_FALSE(available);historyColumnsEqual(read,before);
+    }
+}
+TEST(Output2DSourceHistory, OlderHistoryCannotResumeReturnProfileWithoutItsRequiredDiagnostics) {
+    fs::create_directories(kOutDir);const auto file=kOutDir/"outfall_history_legacy_prefix.h5";
+    SourceOutputModel m;m.setup(true);m.step(0,1);Default2DOutputPlugin writer(file.string());
+    ASSERT_EQ(writer.prepare(m.context),0);writer.prepareMeshAndDatasets(m.mesh);
+    writer.enqueueSourceHistory(std::make_shared<const SourceResultHistory>(m.history));ASSERT_EQ(writer.finalize(m.context),0);
+    // A pre-version-3 recorder could save a matching enabled profile before
+    // any positive returns, without knowing how to record later credits.
+    const auto f=H5Fopen(file.string().c_str(),H5F_ACC_RDWR,H5P_DEFAULT);ASSERT_GE(f,0);
+    const auto g=H5Gopen2(f,"/source_history",H5P_DEFAULT);ASSERT_GE(g,0);
+    const auto a=H5Aopen(g,"schema_version",H5P_DEFAULT),t=H5Aget_type(a);char version[512]={};version[0]='2';
+    ASSERT_GE(H5Awrite(a,t,version),0);H5Tclose(t);H5Aclose(a);
+    ASSERT_GE(H5Adelete(g,"outfall_return_convention"),0);
+    for(const char* name:{"outfall_clock","pending_outfall_return","source_water/outfall_return"})
+        ASSERT_GE(H5Ldelete(g,name,H5P_DEFAULT),0);
+    H5Gclose(g);H5Fclose(f);SourceResultHistory read;bool available=false;
+    ASSERT_EQ(SourceResultHistory::read(file.string(),read,available),"");ASSERT_TRUE(available);EXPECT_FALSE(read.outfallReturnsAvailable());
+    const auto before=read;
+    CommonSourceStage unattached;EXPECT_FALSE(read.resume(unattached).empty());historyColumnsEqual(read,before);
+    EXPECT_NE(read.resume(m.stage).find("capability"),std::string::npos);historyColumnsEqual(read,before);
+    ASSERT_EQ(m.stage.creditOutfallReturns(0,1,{.1}),"");m.step(1,2); // The version-3 recorder continues correctly.
+    EXPECT_NEAR(m.history.tables().at("source_water").columns.back().back(),.1*.3048*.3048*.3048,1e-15);
 }
 #endif

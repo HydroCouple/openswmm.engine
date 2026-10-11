@@ -31,6 +31,9 @@ public:
     const std::vector<std::string>& sourceNames() const { return sources_; }
     const std::vector<std::string>& pollutantNames() const { return pollutants_; }
     const std::vector<std::string>& pollutantMassUnits() const { return mass_units_; }
+    /// Optional water-only hydraulic-return diagnostics. Older histories and
+    /// profile-off runs have no such capability; absence is not a zero series.
+    bool outfallReturnsAvailable() const { return outfall_returns_; }
     /// Standalone HDF5 result artifact; atomically replaces ONLY this artifact.
     /// Never pass an existing hydraulic results/model file as the destination.
     std::string save(const std::string& path) const;
@@ -44,9 +47,10 @@ private:
     std::string refreshCheckpointMatch(const CommonSourceStage&);
     std::string writeIntoOpenResult(std::int64_t file) const; // engine's HDF5 instance only
     std::string extends(const SourceResultHistory& prefix) const;
-    static std::map<std::string,SourceResultTable> schema();
+    static std::map<std::string,SourceResultTable> schema(bool outfall_returns=false);
     std::string validate() const;
     const CommonSourceStage* stage_=nullptr;
+    bool outfall_returns_=false;
     std::string model_, boundary_;
     std::vector<std::string> sources_,pollutants_,mass_units_;
     std::map<std::string,SourceResultTable> tables_;
