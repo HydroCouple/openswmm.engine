@@ -186,6 +186,8 @@ public:
      */
     int step(double* elapsed_time) noexcept;
     int advanceTo(double seconds, double* actual) noexcept;
+    /// Internal coupling clock: accepted seconds for the explicit private profile.
+    double runtimeCouplingTime() const noexcept;
     bool runtimeUpdateAllowed() const noexcept { return !runtime_pipeline_; }
 
     /**
@@ -234,7 +236,7 @@ public:
     const runoff::SourceWaterDeliveryBridge* sourceDelivery() const { return source_delivery_.get(); }
     /// Settle past surface work and publish newly completed private outlets
     /// before adopting a future runtime prescription at the accepted engine time.
-    void flushRuntimeCouplingBoundary();
+    void flushRuntimeCouplingBoundary(bool changing_prescription=false);
     // Accepted-engine water history, separate from source-interval recording.
     // Caller keeps the recorder alive through end/close. Restore first, then resume.
     std::string setEngineSourceResultHistory(twoD::EngineSourceResultHistory&,bool detailed_source_intervals=false);

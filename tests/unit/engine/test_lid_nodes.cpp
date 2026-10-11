@@ -1150,3 +1150,23 @@ TEST(LidNodes, RichardsRoutedBackwaterSupplySeepageAndQualityConserve) {
         e.close();
     }
 }
+
+TEST(LidNodes, DryClassicalMobileRoundoffCannotBecomeNegativeHydraulicInventory) {
+    auto c=model();lidnode::initialize(c);auto& s=c.node_subtypes.storages.lid_state[0];
+    for(auto& cell:s.cells)cell.conductivity=0;
+    c.nodes.volume[0]=0;c.nodes.depth[0]=0;c.nodes.lat_flow[0]=0;
+    const double held=std::accumulate(s.cells.begin(),s.cells.end(),0.,[](double v,const auto& cell){return v+cell.theta*cell.geometric_volume;});
+    ASSERT_GT(held,0);s.held_volume=std::nextafter(held,0.);const auto before=s.held_volume;
+    lidnode::prepareStep(c,.7,0);
+    EXPECT_GE(c.nodes.volume[0],0);EXPECT_DOUBLE_EQ(c.nodes.volume[0],0);
+    EXPECT_NEAR(c.nodes.volume[0]+s.held_volume,before,16*std::numeric_limits<double>::epsilon()*std::max(1.,held));
+    EXPECT_DOUBLE_EQ(s.evap_volume,0);EXPECT_DOUBLE_EQ(c.nodes.lat_flow[0],0);
+}
+TEST(LidNodes, ClassicalMobileCorrectionDoesNotHideMaterialWaterDeficits) {
+    auto c=model();lidnode::initialize(c);auto& s=c.node_subtypes.storages.lid_state[0];
+    for(auto& cell:s.cells)cell.conductivity=0;
+    c.nodes.volume[0]=0;c.nodes.depth[0]=0;c.nodes.lat_flow[0]=0;
+    const double held=std::accumulate(s.cells.begin(),s.cells.end(),0.,[](double v,const auto& cell){return v+cell.theta*cell.geometric_volume;});
+    s.held_volume=held-1e-4;lidnode::prepareStep(c,.7,0);
+    EXPECT_LT(c.nodes.volume[0],-1e-5);
+}

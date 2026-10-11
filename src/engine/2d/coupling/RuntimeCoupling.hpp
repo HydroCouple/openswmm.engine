@@ -87,7 +87,7 @@ struct RuntimeSources {
     }
     bool expire(double now) {
         bool changed=false;
-        for(auto& r:rows) if(r.enabled && r.until<=now+1e-10){ r.enabled=false; changed=true; }
+        for(auto& r:rows) if(r.enabled && r.until<=now){ r.enabled=false; changed=true; }
         if(changed) prune();
         return changed;
     }
@@ -138,7 +138,7 @@ struct RuntimeForcings {
         return time;
     }
     void expire(double now) noexcept {
-        for(auto& row:rows) if(row.enabled && row.until<=now+1e-10) row.enabled=false;
+        for(auto& row:rows) if(row.enabled && row.until<=now) row.enabled=false;
     }
 };
 } // namespace openswmm::twoD

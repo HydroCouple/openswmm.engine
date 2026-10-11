@@ -708,7 +708,13 @@ std::string SWMMEngine::attachRuntimeWaterDriverCheckpoint(twoD::RuntimeWaterDri
 }
 #endif
 #ifdef OPENSWMM_HAS_2D
-void SWMMEngine::flushRuntimeCouplingBoundary() {
+void SWMMEngine::flushRuntimeCouplingBoundary(bool changing_prescription) {
+    // The qualification recorder has only accepted-step frames. Until explicit
+    // barrier events are supported, reject before closing work or changing its
+    // checkpoint anchor between those frames.
+    if (engine_source_history_ && !step_active_ &&
+        (changing_prescription || surface_router_.pending_dt_>0))
+        throw std::invalid_argument("Engine source history does not yet support completed coupling barriers.");
     surface_router_.flushPendingBatch(ctx_);
     if(source_delivery_) {
         const auto error=source_delivery_->capture(source_stage_->sources(),ctx_.current_time);

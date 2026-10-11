@@ -1539,15 +1539,33 @@ void reassertNodeStateOverrides(SimulationContext& ctx) noexcept {
 }
 }  // namespace
 
+double SWMMEngine::runtimeCouplingTime() const noexcept {
+#ifdef OPENSWMM_HAS_2D
+    // Private source and delivery clocks use accepted elapsed seconds. Keep
+    // their target/expiry arithmetic on that clock instead of the ms recurrence.
+    if (source_stage_ && source_stage_->runtimeCatchmentForcingEnabled())
+        return ctx_.current_time;
+#endif
+    return ctx_.elapsed_ms/1000.0;
+}
+
 int SWMMEngine::advanceTo(double seconds, double* actual) noexcept {
     if (!actual || !std::isfinite(seconds)) return CFFI_ERR_BADPARAM;
-    *actual = ctx_.elapsed_ms / 1000.0;
+    *actual = runtimeCouplingTime();
     if (step_active_ || ctx_.state != EngineState::RUNNING) return CFFI_ERR_LIFECYCLE;
     if (seconds < *actual || seconds > ctx_.options.totalDurationMs()/1000.0)
         return CFFI_ERR_BADPARAM;
+#ifdef OPENSWMM_HAS_2D
+    if (runtime_water_driver_ && runtime_water_driver_->nextUpdateSeconds() >= 0 &&
+        runtime_water_driver_->nextUpdateSeconds() <= *actual)
+        return CFFI_ERR_LIFECYCLE;
+    if (engine_source_history_ && seconds==*actual && surface_router_.pending_dt_>0)
+        return CFFI_ERR_LIFECYCLE;
+#endif
+    try {
     exchange_target_ = seconds;
     int rc = SWMM_OK;
-    while (ctx_.elapsed_ms/1000.0 < seconds) {
+    while (runtimeCouplingTime() < seconds) {
         const double before = ctx_.elapsed_ms;
         double days;
         rc = step(&days);
@@ -1555,10 +1573,16 @@ int SWMMEngine::advanceTo(double seconds, double* actual) noexcept {
     }
     exchange_target_ = -1.0;
 #ifdef OPENSWMM_HAS_2D
-    flushRuntimeCouplingBoundary();
+    if (rc == SWMM_OK) flushRuntimeCouplingBoundary();
 #endif
-    *actual = ctx_.elapsed_ms/1000.0;
+    *actual = runtimeCouplingTime();
     return rc;
+    } catch (const std::exception& e) {
+        exchange_target_ = -1.0;
+        *actual = runtimeCouplingTime();
+        set_error(SWMM_ERR_WRONG_STATE, e.what());
+        return SWMM_ERR_WRONG_STATE;
+    }
 }
 
 int SWMMEngine::step(double* elapsed_time) noexcept {
@@ -1567,7 +1591,7 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
     // A due driver update is a caller-owned transaction. Refuse before changing
     // readiness, stores or outputs; the caller may send it and retry the step.
     if (runtime_water_driver_ && runtime_water_driver_->nextUpdateSeconds() >= 0 &&
-        runtime_water_driver_->nextUpdateSeconds() <= ctx_.elapsed_ms/1000.0)
+        runtime_water_driver_->nextUpdateSeconds() <= runtimeCouplingTime())
         return CFFI_ERR_LIFECYCLE;
 #endif
     step_active_ = true;
@@ -1678,7 +1702,7 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
     }
 
     const auto bound_runtime_step = [&]() {
-        const double now = ctx_.elapsed_ms/1000.0;
+        const double now = runtimeCouplingTime();
         if (exchange_target_ >= 0.0) dt_next = std::min(dt_next, exchange_target_-now);
 #ifdef OPENSWMM_HAS_2D
         dt_next = std::min(dt_next, surface_router_.nextRuntimeTime(now)-now);
@@ -1924,7 +1948,7 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
     }
 
 #ifdef OPENSWMM_HAS_2D
-    surface_router_.expireRuntime(ctx_.elapsed_ms/1000.0);
+    surface_router_.expireRuntime(runtimeCouplingTime());
 #endif
     runtime_pipeline_ = false;
     // Fire step-end callback

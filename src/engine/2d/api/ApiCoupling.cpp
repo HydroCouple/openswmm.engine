@@ -80,7 +80,7 @@ int swmm_coupling_apply_frame(SWMM_Engine h,const SWMM_CouplingFrame* f) {
         auto& router=eng->surfaceRouter2D(); auto& tr=router.state().transport;
         if(router.commonSourceAttached() && f->boundary_count && !router.runtimeBoundaryCheckpointing())return SWMM_ERR_PLUGIN;
         const auto& mesh=router.mesh(); const int nc=mesh.n_cells();
-        const double now=eng->context().elapsed_ms/1000.0;
+        const double now=eng->runtimeCouplingTime();
         std::optional<RuntimeSources> next[2];
         const auto editSources=[&](int d)->RuntimeSources& {
             if(!next[d]) next[d]=sources(*eng,d); return *next[d];
@@ -217,7 +217,7 @@ int swmm_coupling_apply_frame(SWMM_Engine h,const SWMM_CouplingFrame* f) {
         }
         // All validation/allocation precedes the barrier. Preserve cumulative
         // physics belonging to the old prescription, then commit by moves.
-        eng->flushRuntimeCouplingBoundary();
+        eng->flushRuntimeCouplingBoundary(f->source_count || f->boundary_count || f->forcing_count || f->clear_count);
         for(int d=0;d<2;++d) if(next[d]) next[d]->syncReceipts(sources(*eng,d));
         if(bc) {
             for(auto& entry:bc->receipts) {

@@ -517,6 +517,13 @@ void prepareStep(SimulationContext& ctx, double dt, double evaporation) {
         state.held_volume = 0.0;
         for (const auto& c : state.cells) state.held_volume += c.theta * c.geometric_volume;
         ctx.nodes.volume[n] += before + capture - state.evap_volume - state.held_volume;
+        // Independent retained/mobile sums can leave an empty mobile store a
+        // few ULPs below zero. Keep larger deficits visible to validation.
+        const double roundoff = 16 * std::numeric_limits<double>::epsilon() *
+            std::max({1.0, std::abs(state.quality_old_mobile), before, capture,
+                      state.evap_volume, state.held_volume});
+        if (ctx.nodes.volume[n] < 0.0 && ctx.nodes.volume[n] >= -roundoff)
+            ctx.nodes.volume[n] = 0.0;
         // This is an internal redistribution before the routing step, so both
         // storage capacity and the initial hydraulic head must be refreshed.
         ctx.nodes.full_volume[n] = 0.0;

@@ -473,7 +473,7 @@ struct SurfaceSession {
     runoff::SourceWaterDriver sources;
     twoD::CommonSourceStage stage;
     SWMMEngine engine;
-    void start(const std::string& name,int lid=0,int mapped=0,int closure=0,int mode=0,bool track=true,bool spatial=false,bool all_sources=false,int outfall_return=-1,bool output=false,int mesh_output=0,bool average=false,const std::string& runtime_identity={},bool runtime_boundaries=false,int authored_boundary=0,int signal_variant=0,bool catchment_forcing=false) {
+    void start(const std::string& name,int lid=0,int mapped=0,int closure=0,int mode=0,bool track=true,bool spatial=false,bool all_sources=false,int outfall_return=-1,bool output=false,int mesh_output=0,bool average=false,const std::string& runtime_identity={},bool runtime_boundaries=false,int authored_boundary=0,int signal_variant=0,bool catchment_forcing=false,double routing_cadence=0) {
         SWMMEngine authored;startRunoff(authored,name,mode%5,mode%3,lid,false);authored.close();
         auto p=root()/name;auto deck=bytes(p.string()+".inp");
         deck.replace(deck.find("IGNORE_2D YES"),13,"IGNORE_2D NO");
@@ -503,6 +503,7 @@ struct SurfaceSession {
         if(output)std::filesystem::remove(p.string()+".out");
         if(e.open((p.string()+".inp").c_str(),(p.string()+".rpt").c_str(),output?(p.string()+".out").c_str():nullptr))throw std::runtime_error(e.context().error_message);
         auto& ctx=e.context();ctx.options.num_threads=1;ctx.options.surcharge_method=mode%4;
+        if(routing_cadence>0){ctx.options.routing_step=routing_cadence;ctx.options.variable_step=0;}
         ctx.events.clear();ctx.gages.scale_factor[1]=1.3;ctx.node_subtypes.outfalls.route_to[0]=2;
         auto& router=e.surfaceRouter2D();auto& mesh=router.mesh();
         mesh.resize_vertices(4);mesh.resize_triangles(2);
@@ -3009,5 +3010,138 @@ TEST(EngineCheckpoint, CatchmentProviderAdvanceToPublishesInactivePendingBatchBe
     ASSERT_EQ(b.engine.advanceTo(19.125,&resumed),SWMM_OK);EXPECT_DOUBLE_EQ(actual,resumed);
     compareCatchmentProvider(a,b,name+"-continued");
     }
+}
+#endif
+
+#ifdef OPENSWMM_HAS_2D
+TEST(EngineCheckpoint, RuntimeExpiryPreservesAdjacentFutureTimesUntilTheirExactBoundary) {
+    for(double now:{0.,1.25,1000000.}) {
+        SCOPED_TRACE(now);const double end=std::nextafter(now,std::numeric_limits<double>::infinity());
+        twoD::RuntimeSources sources;twoD::RuntimeSource source;source.id="future";source.cell=0;source.until=end;
+        sources.replace(source);sources.rebuild(1);
+        twoD::RuntimeForcings forcings;twoD::RuntimeForcing rain;rain.channel=1;rain.cell=0;rain.until=end;
+        forcings.replace(rain);forcings.rebuild(1);
+        EXPECT_FALSE(sources.expire(now));forcings.expire(now);
+        EXPECT_TRUE(sources.active());EXPECT_NE(forcings.get(1,0),nullptr);
+        EXPECT_DOUBLE_EQ(sources.nextTime(now),end);EXPECT_DOUBLE_EQ(forcings.nextTime(now),end);
+        EXPECT_TRUE(sources.expire(end));forcings.expire(end);
+        EXPECT_FALSE(sources.active());EXPECT_EQ(forcings.get(1,0),nullptr);EXPECT_TRUE(sources.cells[0].empty());
+    }
+}
+TEST(EngineCheckpoint, CatchmentSchedulerDueAdvancePreservesPendingWorkAndCheckpoint) {
+    SurfaceSession s;TestWaterDriver driver;
+    ASSERT_NO_THROW(startCatchmentProvider(s,"schedule-due",2));
+    ASSERT_EQ(s.engine.attachRuntimeWaterDriverCheckpoint(driver),"");ASSERT_NO_THROW(driver.send(s.engine));
+    const SWMM_CouplingClear clears[]={{0,-1,"in"},{0,-1,"out"},{1,-1,"in"},{1,-1,"out"}};
+    const SWMM_CouplingForcing off[]={{sizeof(SWMM_CouplingForcing),1,-1,0,0,0,0,nullptr},
+        {sizeof(SWMM_CouplingForcing),1,0,0,0,0,0,nullptr},{sizeof(SWMM_CouplingForcing),2,-1,0,0,0,0,nullptr},
+        {sizeof(SWMM_CouplingForcing),3,0,0,0,0,0,nullptr}};
+    const SWMM_CouplingFrame clear{sizeof(clear),1,"water",0,nullptr,0,nullptr,4,off,4,clears};
+    ASSERT_EQ(swmm_coupling_apply_frame(reinterpret_cast<SWMM_Engine>(&s.engine),&clear),SWMM_OK);
+    ASSERT_FALSE(s.engine.surfaceRouter2D().runtimeActive());ASSERT_NO_THROW(until(s.engine,4.2));
+    ASSERT_DOUBLE_EQ(s.engine.context().current_time,driver.nextUpdateSeconds());
+    ASSERT_LT(s.stage.completedEnd(),s.engine.context().current_time);
+    const auto before=root()/"schedule-due-before.chk",after=root()/"schedule-due-after.chk";
+    ASSERT_EQ(s.engine.saveCheckpoint(before.string()),"");const auto saved=bytes(before),state=driverState(driver,4.2);
+    double actual=-1;EXPECT_EQ(s.engine.advanceTo(5,&actual),SWMM_ERR_LIFECYCLE);EXPECT_DOUBLE_EQ(actual,4.2);
+    ASSERT_EQ(s.engine.saveCheckpoint(after.string()),"");EXPECT_EQ(bytes(after),saved);EXPECT_EQ(driverState(driver,4.2),state);
+    ASSERT_NO_THROW(driver.send(s.engine));ASSERT_EQ(s.engine.advanceTo(5,&actual),SWMM_OK);EXPECT_DOUBLE_EQ(actual,5);
+}
+TEST(EngineCheckpoint, CatchmentSchedulerAdvanceReportsFlushFailureWithoutTerminating) {
+    SurfaceSession s;ASSERT_NO_THROW(startCatchmentProvider(s,"schedule-flush-failure"));
+    ASSERT_NO_THROW(until(s.engine,1.4));ASSERT_LT(s.stage.completedEnd(),s.engine.context().current_time);
+    auto& clock=const_cast<runoff::SourceClockGroups&>(s.sources.clocks());
+    ASSERT_EQ(clock.stage(0,2,2),""); // Deliberately unsettled trusted internal source trial.
+    const auto now=s.engine.context().current_time;double actual=-1;
+    EXPECT_NE(s.engine.advanceTo(now,&actual),SWMM_OK);EXPECT_DOUBLE_EQ(actual,now);
+    EXPECT_FALSE(s.engine.context().error_message.empty());
+}
+TEST(EngineCheckpoint, CatchmentSchedulerRefinementPreservesWeightedRainAndExactExpiry) {
+    constexpr double ft2=.3048*.3048,ft3=ft2*.3048;
+    for(int lid:{0,1,2})for(int closure:{0,1,2})for(double cadence:{.7,.35,.175}) {
+        const auto name="schedule-refine-"+std::to_string(lid)+"-"+std::to_string(closure)+"-"+std::to_string(cadence);SCOPED_TRACE(name);
+        SurfaceSession s;s.start(name,lid,1,closure,0,true,true,false,-1,false,0,false,"mesh water driver revision 1",false,0,0,true,cadence);
+        auto native=s.sources.clocks();ASSERT_EQ(native.stage(0,4.375,4.375),"");
+        std::vector<double> expected(s.sources.context().n_subcatches(),0);
+        const auto& area=s.sources.runoff().soa().area;
+        for(const auto& f:native.groups()[0].pending)for(const auto& w:f.sources) {
+            const double full=(area[w.subcatch]+s.sources.context().subcatches.total_lid_area_ft2[w.subcatch])*ft2;
+            expected[w.subcatch]+=(full-.5)*w.rain*.3048*(f.end-f.start);
+            expected[w.subcatch]+=.5*(w.subcatch%2==0?.002*2.125+.001*(4.375-2.125):.001*4.375)*(f.end-f.start)/4.375;
+        }
+        const SWMM_CouplingForcing rows[]={{sizeof(SWMM_CouplingForcing),1,-1,1,.001,4.375,0,nullptr},
+            {sizeof(SWMM_CouplingForcing),1,0,1,.002,2.125,0,nullptr}};
+        const SWMM_CouplingFrame frame{sizeof(frame),1,"water",0,nullptr,0,nullptr,2,rows,0,nullptr};
+        ASSERT_EQ(swmm_coupling_apply_frame(reinterpret_cast<SWMM_Engine>(&s.engine),&frame),SWMM_OK);
+        double actual=-1;ASSERT_EQ(s.engine.advanceTo(2.125,&actual),SWMM_OK);EXPECT_DOUBLE_EQ(actual,2.125);
+        EXPECT_FALSE(s.engine.surfaceRouter2D().state().runtime_forcings.find(1,0)->enabled);
+        EXPECT_TRUE(s.engine.surfaceRouter2D().state().runtime_forcings.find(1,-1)->enabled);
+        ASSERT_EQ(s.engine.advanceTo(4.375,&actual),SWMM_OK);EXPECT_DOUBLE_EQ(actual,4.375);EXPECT_FALSE(s.engine.surfaceRouter2D().runtimeActive());
+        EXPECT_DOUBLE_EQ(s.stage.completedEnd(),4.375);
+        for(const auto& group:s.sources.clocks().groups())for(int sc:group.subcatches)
+            EXPECT_NEAR(s.sources.ledgers()[sc].rain*ft3,expected[sc],1e-10*std::max(1.,expected[sc]));
+        EXPECT_NEAR(s.stage.meshRain(),3.5*(.002*2.125+.001*(4.375-2.125)) + 3.5*.001*4.375,1e-12);
+        EXPECT_NEAR(s.sources.balanceResidual(0),0,1e-6);
+        const auto cp=root()/(name+".chk");EXPECT_EQ(s.engine.saveCheckpoint(cp.string()),"");
+    }
+}
+
+#endif
+
+#ifdef OPENSWMM_HAS_2D
+TEST(EngineCheckpoint, CatchmentSchedulerRefusesCheckpointCallbacksBeforePhysicalAdvance) {
+    SurfaceSession s;ASSERT_NO_THROW(startCatchmentProvider(s,"schedule-callback-refusal",2));
+    const auto volume=s.engine.surfaceRouter2D().state().volume;const auto source=s.sources.runoff().soa().depth_perv;
+    int calls=0;s.engine.set_step_begin_callback([](void*,double,double,void* data){++*static_cast<int*>(data);},&calls);
+    double elapsed=-1;EXPECT_NE(s.engine.step(&elapsed),SWMM_OK);EXPECT_EQ(calls,0);
+    EXPECT_DOUBLE_EQ(s.engine.context().current_time,0);EXPECT_EQ(s.stage.intervals(),0);
+    EXPECT_EQ(s.engine.surfaceRouter2D().state().volume,volume);EXPECT_EQ(s.sources.runoff().soa().depth_perv,source);
+    EXPECT_NE(std::string(s.engine.last_error_message()).find("callbacks"),std::string::npos);
+}
+#endif
+
+#ifdef OPENSWMM_HAS_2D
+TEST(EngineCheckpoint, CatchmentSchedulerHistoryRefusesUnqualifiedBarriersWithoutMutation) {
+    for(bool detailed:{false,true})for(int lid:{0,1,2}) {
+        const auto name="schedule-history-guard-"+std::to_string(detailed)+"-"+std::to_string(lid);SCOPED_TRACE(name);
+        twoD::EngineSourceResultHistory history;SurfaceSession s;ASSERT_NO_THROW(startCatchmentProvider(s,name,lid));
+        ASSERT_EQ(s.engine.setEngineSourceResultHistory(history,detailed),"");ASSERT_NO_THROW(until(s.engine,1.4));
+        ASSERT_LT(s.stage.completedEnd(),s.engine.context().current_time);
+        const auto before=root()/(name+"-before.chk"),after=root()/(name+"-after.chk");
+        ASSERT_EQ(s.engine.saveCheckpoint(before.string()),"");const auto saved=bytes(before);const auto time=s.engine.context().current_time;
+        const auto tables=history.tables();const auto source_tables=detailed?history.sourceIntervals()->tables():std::map<std::string,twoD::SourceResultTable>{};
+        SWMM_CouplingForcing row{sizeof(row),1,0,1,.003,5,0,nullptr};
+        SWMM_CouplingFrame f{sizeof(f),1,"water",0,nullptr,0,nullptr,1,&row,0,nullptr};
+        EXPECT_NE(swmm_coupling_apply_frame(reinterpret_cast<SWMM_Engine>(&s.engine),&f),SWMM_OK);
+        double actual=-1;EXPECT_EQ(s.engine.advanceTo(time,&actual),SWMM_ERR_LIFECYCLE);EXPECT_DOUBLE_EQ(actual,time);
+        ASSERT_EQ(s.engine.saveCheckpoint(after.string()),"");EXPECT_EQ(bytes(after),saved);
+        for(const auto& [key,t]:tables)EXPECT_EQ(history.tables().at(key).columns,t.columns);
+        for(const auto& [key,t]:source_tables)EXPECT_EQ(history.sourceIntervals()->tables().at(key).columns,t.columns);
+        EXPECT_DOUBLE_EQ(s.engine.context().current_time,time);EXPECT_EQ(s.engine.context().error_code,0);
+        // A real accepted step settles pending work through the existing capture
+        // path and remains supported; the refusal does not poison the session.
+        ASSERT_EQ(s.engine.advanceTo(2.125,&actual),SWMM_OK);EXPECT_DOUBLE_EQ(actual,2.125);
+        EXPECT_EQ(s.engine.saveCheckpoint(after.string()),"");
+    }
+}
+#endif
+
+#ifdef OPENSWMM_HAS_2D
+TEST(EngineCheckpoint, CatchmentSchedulerFramesValidateExpiryAgainstAcceptedSourceClock) {
+    SurfaceSession s;s.start("schedule-frame-clock",2,1,0,0,true,true,false,-1,false,0,false,"mesh water driver revision 1",false,0,0,true,.1);
+    for(int i=0;i<3;++i)ASSERT_NO_THROW(step(s.engine));
+    const double now=s.engine.context().current_time;
+    ASSERT_GT(now,s.engine.context().elapsed_ms/1000.0); // Separate FP recurrences differ by one ULP.
+    const auto before=root()/"schedule-frame-clock-before.chk",after=root()/"schedule-frame-clock-after.chk";
+    ASSERT_EQ(s.engine.saveCheckpoint(before.string()),"");const auto saved=bytes(before);
+    SWMM_CouplingForcing rain{sizeof(rain),1,0,1,.001,now,0,nullptr};
+    SWMM_CouplingFrame f{sizeof(f),1,"water",0,nullptr,0,nullptr,1,&rain,0,nullptr};
+    EXPECT_EQ(swmm_coupling_apply_frame(reinterpret_cast<SWMM_Engine>(&s.engine),&f),SWMM_ERR_BADPARAM);
+    ASSERT_EQ(s.engine.saveCheckpoint(after.string()),"");EXPECT_EQ(bytes(after),saved);
+    rain.until_seconds=std::nextafter(now,std::numeric_limits<double>::infinity());
+    ASSERT_EQ(swmm_coupling_apply_frame(reinterpret_cast<SWMM_Engine>(&s.engine),&f),SWMM_OK);
+    const auto* row=s.engine.surfaceRouter2D().state().runtime_forcings.find(1,0);
+    ASSERT_NE(row,nullptr);EXPECT_TRUE(row->enabled);EXPECT_GT(row->until,now);
+    EXPECT_EQ(s.engine.saveCheckpoint(after.string()),"");
 }
 #endif
