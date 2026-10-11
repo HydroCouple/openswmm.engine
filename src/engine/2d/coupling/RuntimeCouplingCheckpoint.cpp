@@ -2,6 +2,7 @@
 #include "RuntimeCouplingCheckpoint.hpp"
 #include "../../core/CompletedSourceArchive.hpp"
 #include "../data/MeshData.hpp"
+#include "../../data/TableData.hpp"
 #include <map>
 #include <stdexcept>
 #include <type_traits>
@@ -77,6 +78,36 @@ bool same(const BoundaryData::RuntimeOriginal& a,const BoundaryData::RuntimeOrig
     return std::tie(a.type,a.head,a.flow,a.slope,a.stage_ts,a.flow_ts,a.rating,a.stage_name,a.flow_name,a.rating_name)==
         std::tie(b.type,b.head,b.flow,b.slope,b.stage_ts,b.flow_ts,b.rating,b.stage_name,b.flow_name,b.rating_name);
 }
+// Resolved values are work state; the authored signal and its table remain
+// the fallback model. Clearing re-evaluates it before the next native flux.
+int reference(int index,const std::string& name,const TableData* tables,bool timeseries) {
+    if(index==-1) {require(name.empty(),"Unexpected authored boundary signal name.");return -1;}
+    require(tables && index>=-2,"Boundary signal model is missing.");
+    const int resolved=index==-2 ? tables->find_by_kind(name,timeseries) : index;
+    require(resolved>=0 && resolved<int(tables->tables.size()) &&
+        (name.empty() ? index>=0 : tables->find_by_kind(name,timeseries)==resolved),
+        "Boundary signal name or table index differs.");
+    const auto& t=tables->tables[resolved];
+    require((t.type==TableType::TIMESERIES)==timeseries && !t.is_file_based && !t.file_handle &&
+        t.num_cols==1 && !t.x.empty() && t.y.size()==t.x.size(),"Boundary signal requires a single-column in-memory table of its authored kind.");
+    for(std::size_t i=0;i<t.x.size();++i)require(std::isfinite(t.x[i]) && std::isfinite(t.y[i]) &&
+        (i==0 || t.x[i]>t.x[i-1]),"Invalid authored boundary signal records.");
+    return resolved;
+}
+bool fallback(const BoundaryData::RuntimeOriginal& value,const BoundaryData::RuntimeOriginal& base,const TableData* tables) {
+    auto expected=base,current=value;
+    const auto signal=[&](int& a,int& b,const std::string& name,bool ts) {
+        const int resolved=reference(b,name,tables,ts);
+        if(a!=b && a!=resolved)return false;
+        a=b;return true;
+    };
+    if(!signal(current.stage_ts,expected.stage_ts,base.stage_name,true) ||
+       !signal(current.flow_ts,expected.flow_ts,base.flow_name,true) ||
+       !signal(current.rating,expected.rating,base.rating_name,false))return false;
+    if(base.stage_ts!=-1)current.head=base.head;
+    if(base.flow_ts!=-1 || base.rating!=-1)current.flow=base.flow;
+    return std::isfinite(value.head) && std::isfinite(value.flow) && same(current,expected);
+}
 void boundaryFields(Archive& a,BoundaryData& b) {
     a.fixed(b.edge_bc_type,b.edge_bed_slope,b.edge_bc_head,b.edge_bc_tseries,b.edge_bc_tseries_name,
         b.edge_bc_flow,b.edge_bc_flow_tseries,b.edge_bc_flow_tseries_name,b.edge_bc_rating_curve,b.edge_bc_rating_curve_name);
@@ -98,14 +129,20 @@ void boundaryOk(const BoundaryData& v,const RuntimeWaterCheckpointBinding& b,boo
         "Boundary checkpoint flux shape or ownership differs.");
     for(std::size_t k=0;k<b.boundary_slots.size();++k) {
         const auto base=descriptor(authored,int(k)),current=descriptor(v,int(k));
-        require(base.type==int8_t(BoundaryType::WALL) && std::isfinite(base.head) && std::isfinite(base.flow) &&
-            std::isfinite(base.slope) && base.slope>=0 && base.stage_ts==-1 && base.flow_ts==-1 && base.rating==-1 &&
-            base.stage_name.empty() && base.flow_name.empty() && base.rating_name.empty(),
-            "Boundary checkpoint requires an authored wall model without table references.");
+        require(base.type>=int8_t(BoundaryType::WALL) && base.type<=int8_t(BoundaryType::RATING_CURVE) &&
+            std::isfinite(base.head) && std::isfinite(base.flow) && std::isfinite(base.slope) && base.slope>=0 &&
+            (b.boundary_slots[k] || base.type==int8_t(BoundaryType::WALL)) &&
+            (base.type==int8_t(BoundaryType::SPECIFIED_STAGE) || (base.stage_ts==-1 && base.stage_name.empty())) &&
+            (base.type==int8_t(BoundaryType::SPECIFIED_FLOW) || (base.flow_ts==-1 && base.flow_name.empty())) &&
+            (base.type==int8_t(BoundaryType::RATING_CURVE) ? base.rating!=-1 : (base.rating==-1 && base.rating_name.empty())),
+            "Invalid authored boundary fallback descriptor.");
+        reference(base.stage_ts,base.stage_name,b.boundary_tables,true);
+        reference(base.flow_ts,base.flow_name,b.boundary_tables,true);
+        reference(base.rating,base.rating_name,b.boundary_tables,false);
         const auto old=v.runtime_original.find(int(k));
-        if(old==v.runtime_original.end()) require(same(current,base) && !v.runtime_owner.count(int(k)),
+        if(old==v.runtime_original.end()) require(fallback(current,base,b.boundary_tables) && !v.runtime_owner.count(int(k)),
             "Boundary checkpoint changed its authored fallback without an override.");
-        else require(b.boundary_slots[k] && same(old->second,base) &&
+        else require(b.boundary_slots[k] && fallback(old->second,base,b.boundary_tables) &&
             v.runtime_owner.count(int(k)) && ownerOk(v.runtime_owner.at(int(k))) && v.receipts.count(int(k)) &&
             (current.type==int8_t(BoundaryType::SPECIFIED_STAGE) || current.type==int8_t(BoundaryType::SPECIFIED_FLOW)) &&
             std::isfinite(current.head) && std::isfinite(current.flow) && current.slope==base.slope &&
@@ -247,7 +284,19 @@ State privateState(const RuntimeWaterCheckpointBinding& b,const RuntimeSources& 
     return {s,g,f,boundary?*boundary:BoundaryData{}};
 }
 }
-std::string RuntimeWaterCheckpoint::boundaryModel(const BoundaryData& b) {auto copy=b;Archive a;boundaryFields(a,copy);return a.bytes();}
+std::string RuntimeWaterCheckpoint::boundaryModel(const BoundaryData& b,const TableData* tables) {
+    auto copy=b;Archive a;boundaryFields(a,copy);std::vector<int> used;
+    for(int k=0;k<b.size();++k)for(int i:{reference(b.edge_bc_tseries.at(k),b.edge_bc_tseries_name.at(k),tables,true),
+        reference(b.edge_bc_flow_tseries.at(k),b.edge_bc_flow_tseries_name.at(k),tables,true),
+        reference(b.edge_bc_rating_curve.at(k),b.edge_bc_rating_curve_name.at(k),tables,false)})
+        if(i>=0)used.push_back(i);
+    std::sort(used.begin(),used.end());used.erase(std::unique(used.begin(),used.end()),used.end());
+    // Preserve the existing wall/constant model bytes. Referenced tables bind
+    // identity, type, records and relative-time anchoring, excluding cursors.
+    if(!used.empty()) {std::string tag="authored boundary signals v1";a(tag,used);
+        for(int i:used) {auto t=tables->tables.at(i);a(t.id,t.type,t.x,t.y,t.n_relative,t.rel_anchor,t.num_cols,t.column_ids);}}
+    return a.bytes();
+}
 std::string RuntimeWaterCheckpoint::validate(const RuntimeWaterCheckpointBinding& b,
     const RuntimeSources& surface, const RuntimeSources& groundwater, const RuntimeForcings& forcing, const BoundaryData* boundary,bool completed_boundary) {
     try {
@@ -267,7 +316,7 @@ std::string RuntimeWaterCheckpoint::capture(const RuntimeWaterCheckpointBinding&
         auto identity=b.identity; auto cells=b.groundwater_cells; auto time=b.completed_time;
         auto data=payload.bytes(); auto crc=checksum(data);
         Archive record; record(magic,version,endian,integer_size,real_size,identity,cells,time);
-        if(boundaries) {auto slots=b.boundary_slots;auto model=boundaryModel(*b.authored_boundary);record(slots,model);}
+        if(boundaries) {auto slots=b.boundary_slots;auto model=boundaryModel(*b.authored_boundary,b.boundary_tables);record(slots,model);}
         record(data,crc);
         require(record.bytes().size() <= maxBytes, "Runtime water checkpoint exceeds 64 MiB.");
         auto prepared=record.bytes(); bytes.swap(prepared); return {};
@@ -285,7 +334,7 @@ std::string RuntimeWaterCheckpoint::restore(const RuntimeWaterCheckpointBinding&
         const bool boundaries=!b.boundary_slots.empty();
         require(boundaries ? boundary && b.authored_boundary : !boundary,"Boundary checkpoint profile or target differs.");
         if(boundaries) {std::vector<bool> slots;std::string model;record(slots,model);
-            require(slots==b.boundary_slots && model==boundaryModel(*b.authored_boundary),"Boundary checkpoint edge or authored model differs.");}
+            require(slots==b.boundary_slots && model==boundaryModel(*b.authored_boundary,b.boundary_tables),"Boundary checkpoint edge or authored model differs.");}
         record(data,crc);record.finish();
         require(magic == "OpenSWMM Runtime Water" && version == (boundaries?2u:1u) && endian == 0x01020304 &&
             integer_size == sizeof(int) && real_size == sizeof(double),

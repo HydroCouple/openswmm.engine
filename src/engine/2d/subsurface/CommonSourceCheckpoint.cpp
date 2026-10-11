@@ -101,7 +101,7 @@ std::string CommonSourceStage::checkpointModel() const {
     a(owned,weather,cells,et);
     a.sequence(donors,[&](auto& d){a(d.source,d.type,d.unit,d.identity,d.area,d.contacts);});
     if(runtimeWaterEnabled()) {auto identity=runtime_water_identity_;a(identity);}
-    if(runtimeBoundariesEnabled()) {auto model=RuntimeWaterCheckpoint::boundaryModel(authored_boundary_);a(model);}
+    if(runtimeBoundariesEnabled()) {auto model=RuntimeWaterCheckpoint::boundaryModel(authored_boundary_,&sources_->context().tables);a(model);}
     return a.bytes();
 }
 std::string CommonSourceStage::checkpointBytes(std::string& bytes) const {

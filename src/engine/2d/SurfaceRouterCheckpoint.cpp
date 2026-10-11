@@ -295,7 +295,7 @@ void SurfaceRouter2D::attachCommonSourceStage(SimulationContext& ctx,CommonSourc
     for(int i=0;i<mesh_.n_cells();++i) {
         if(state_.coupling_flux[i]!=0 || state_.coupling_forced[i]!=0 || infil_.resolvedRows()[i].has_method)
             throw std::invalid_argument("Router source attachment requires aquifer-owned cells without external coupling donors.");
-        for(int k=0;k<mesh_.cell_vertex_count(i);++k) if(mesh_.cell_neighbour(i,k)<0 &&
+        for(int k=0;k<mesh_.cell_vertex_count(i);++k) if(!stage.runtimeBoundariesEnabled() && mesh_.cell_neighbour(i,k)<0 &&
             boundary_.edge_bc_type.at(MeshData::slot(i,k))!=int8_t(BoundaryType::WALL))
             throw std::invalid_argument("Router source attachment requires wall boundaries.");
     }

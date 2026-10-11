@@ -343,3 +343,56 @@ TEST(RuntimeWaterCheckpoint, BoundaryProfileRoundTripTruncationBindingsAndTarget
     std::string unchanged="unchanged";EXPECT_NE(RuntimeWaterCheckpoint::capture(unsupported,restored.surface,restored.groundwater,restored.forcing,unchanged,&target),"");EXPECT_EQ(unchanged,"unchanged");
     ASSERT_EQ(RuntimeWaterCheckpoint::restore(b,good,restored.surface,restored.groundwater,restored.forcing,&target),"");EXPECT_EQ(captured(),good);
 }
+
+TEST(RuntimeWaterCheckpoint, AuthoredBoundarySignalsBindRecordsAndValidateFallbackAtomically) {
+    openswmm::TableData tables;
+    for(const auto& item:std::vector<std::pair<const char*,openswmm::TableType>>{{"Stage",openswmm::TableType::TIMESERIES},
+        {"Flow",openswmm::TableType::TIMESERIES},{"Rating",openswmm::TableType::CURVE_RATING}}) {
+        openswmm::Table t;t.id=item.first;t.type=item.second;t.x={0,1,2};t.y={0,.5,1};tables.tables.push_back(t);
+    }
+    tables.rebuild_index();BoundaryData authored;authored.resize(12);
+    authored.edge_bc_type[1]=int8_t(BoundaryType::NORMAL_FLOW);authored.edge_bed_slope[1]=.03;
+    authored.edge_bc_type[4]=int8_t(BoundaryType::SPECIFIED_STAGE);authored.edge_bc_head[4]=.5;
+    authored.edge_bc_type[5]=int8_t(BoundaryType::SPECIFIED_FLOW);authored.edge_bc_flow[5]=.01;
+    authored.edge_bc_type[8]=int8_t(BoundaryType::SPECIFIED_STAGE);authored.edge_bc_tseries[8]=-2;authored.edge_bc_tseries_name[8]="Stage";
+    authored.edge_bc_type[9]=int8_t(BoundaryType::SPECIFIED_FLOW);authored.edge_bc_flow_tseries[9]=-2;authored.edge_bc_flow_tseries_name[9]="Flow";
+    authored.edge_bc_type[10]=int8_t(BoundaryType::RATING_CURVE);authored.edge_bc_rating_curve[10]=-2;authored.edge_bc_rating_curve_name[10]="Rating";
+    auto b=binding();b.boundary_slots.assign(12,false);for(int k:{1,4,5,8,9,10})b.boundary_slots[k]=true;b.authored_boundary=&authored;b.boundary_tables=&tables;
+    auto live=authored,target=authored;live.edge_bc_tseries[8]=0;live.edge_bc_head[8]=.7;
+    live.edge_bc_flow_tseries[9]=1;live.edge_bc_flow[9]=.2;live.edge_bc_rating_curve[10]=2;live.edge_bc_flow[10]=.3;
+    live.saveRuntime(8);live.runtime_owner[8]="edge";live.ensureReceipt(8,0);live.edge_bc_tseries[8]=-1;live.edge_bc_tseries_name[8].clear();live.edge_bc_head[8]=.8;
+    Stores s,c;std::string good;ASSERT_EQ(RuntimeWaterCheckpoint::capture(b,s.surface,s.groundwater,s.forcing,good,&live),"");
+    ASSERT_EQ(RuntimeWaterCheckpoint::restore(b,good,c.surface,c.groundwater,c.forcing,&target),"");
+    auto captureBoundary=[&] {std::string result;EXPECT_EQ(RuntimeWaterCheckpoint::capture(b,c.surface,c.groundwater,c.forcing,result,&target),"");return result;};
+    EXPECT_EQ(captureBoundary(),good);
+    for(std::size_t size=0;size<good.size();++size) {SCOPED_TRACE(size);
+        EXPECT_NE(RuntimeWaterCheckpoint::restore(b,good.substr(0,size),c.surface,c.groundwater,c.forcing,&target),"");EXPECT_EQ(captureBoundary(),good);
+    }
+    for(int mutation=0;mutation<8;++mutation) {
+        SCOPED_TRACE(mutation);auto changed=tables;auto binding=b;binding.boundary_tables=&changed;
+        if(mutation==0)changed.tables[0].y[1]+=.1;
+        if(mutation==1)changed.tables[0].type=openswmm::TableType::CURVE_RATING;
+        if(mutation==2)changed.tables[0].is_file_based=true;
+        if(mutation==3)changed.tables[0].num_cols=2;
+        if(mutation==4)changed.tables[0].x[1]=std::numeric_limits<double>::quiet_NaN();
+        if(mutation==5)changed.tables[0].x[1]=0;
+        if(mutation==6)changed.tables[0].id="Other";
+        if(mutation==7)binding.boundary_tables=nullptr;
+        changed.rebuild_index();EXPECT_NE(RuntimeWaterCheckpoint::restore(binding,good,c.surface,c.groundwater,c.forcing,&target),"");EXPECT_EQ(captureBoundary(),good);
+    }
+    for(int mutation=0;mutation<6;++mutation) {
+        SCOPED_TRACE(mutation);auto changed=target;
+        if(mutation==0)changed.runtime_original.at(8).stage_name="Flow";
+        if(mutation==1)changed.runtime_original.at(8).stage_ts=1;
+        if(mutation==2)changed.edge_bc_flow_tseries[9]=0;
+        if(mutation==3)changed.edge_bc_rating_curve[10]=0;
+        if(mutation==4)changed.edge_bed_slope[1]+=.01;
+        if(mutation==5)changed.edge_bc_head[4]+=.1;
+        std::string result="unchanged";EXPECT_NE(RuntimeWaterCheckpoint::capture(b,c.surface,c.groundwater,c.forcing,result,&changed),"");EXPECT_EQ(result,"unchanged");EXPECT_EQ(captureBoundary(),good);
+    }
+    target.clearRuntime(8);EXPECT_EQ(target.edge_bc_tseries[8],0);EXPECT_EQ(target.edge_bc_tseries_name[8],"Stage");
+    std::string cleared;ASSERT_EQ(RuntimeWaterCheckpoint::capture(b,c.surface,c.groundwater,c.forcing,cleared,&target),"");
+    // Mutable cursor hints do not change the immutable signal model.
+    tables.tables[0].cursor.index=1;tables.tables[0].cursor.direction=-1;
+    ASSERT_EQ(RuntimeWaterCheckpoint::restore(b,cleared,c.surface,c.groundwater,c.forcing,&target),"");
+}

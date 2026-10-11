@@ -140,6 +140,10 @@ int swmm_coupling_apply_frame(SWMM_Engine h,const SWMM_CouplingFrame* f) {
                 if(in.kind==0) { bc->clearRuntime(slot); concentrations->erase(slot); continue; }
                 bc->saveRuntime(slot); bc->runtime_owner[slot]=owner;
                 bc->ensureReceipt(slot,tr.n_species);
+                // Save all authored bindings, then disconnect every signal
+                // while an external stage or flow prescription owns the edge.
+                bc->edge_bc_tseries[slot]=bc->edge_bc_flow_tseries[slot]=bc->edge_bc_rating_curve[slot]=-1;
+                bc->edge_bc_tseries_name[slot].clear();bc->edge_bc_flow_tseries_name[slot].clear();bc->edge_bc_rating_curve_name[slot].clear();
                 bc->edge_bc_type[slot]=in.kind==1 ? SWMM_2D_BC_SPECIFIED_STAGE : SWMM_2D_BC_SPECIFIED_FLOW;
                 if(in.kind==1) {
                     bc->edge_bc_head[slot]=in.value; bc->edge_bc_tseries[slot]=-1; bc->edge_bc_tseries_name[slot].clear();

@@ -155,7 +155,7 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
                 return "Common source ownership must bind before pending aquifer mass exchange.";
     }
     if(runtime_boundaries) {
-        RuntimeWaterCheckpointBinding binding;binding.identity=runtime_water_identity;binding.authored_boundary=surface.boundary;
+        RuntimeWaterCheckpointBinding binding;binding.identity=runtime_water_identity;binding.authored_boundary=surface.boundary;binding.boundary_tables=&sources.context().tables;
         for(double zs:gw.state().zs)binding.groundwater_cells.push_back(zs>0);
         binding.boundary_slots.assign(mesh.n_cells()*kMaxCellVerts,false);
         for(int c=0;c<mesh.n_cells();++c)for(int edge=0;edge<mesh.cell_vertex_count(c);++edge)
@@ -179,7 +179,7 @@ RuntimeWaterCheckpointBinding CommonSourceStage::runtimeWaterBinding(double time
     RuntimeWaterCheckpointBinding b;b.identity=checkpoint_model_;b.completed_time=time;
     for(double zs:gw_->state().zs)b.groundwater_cells.push_back(zs>0);
     if(runtime_boundaries_) {
-        b.authored_boundary=&authored_boundary_;b.boundary_slots.assign(mesh_->n_cells()*kMaxCellVerts,false);
+        b.authored_boundary=&authored_boundary_;b.boundary_tables=&sources_->context().tables;b.boundary_slots.assign(mesh_->n_cells()*kMaxCellVerts,false);
         for(int c=0;c<mesh_->n_cells();++c)for(int e=0;e<mesh_->cell_vertex_count(c);++e)
             if(mesh_->cell_neighbour(c,e)<0)b.boundary_slots[MeshData::slot(c,e)]=true;
     }

@@ -86,7 +86,10 @@ std::string ExplicitInertialSolver::checkpointBoundary() const {
             }
             ptr.push_back(int(walls.size()));
         }
-        const bool unused_walls=wall_slot_.empty() && wall_ptr_.empty() && slots.empty() && state_->boundary->receipts.empty();
+        const bool unused_walls=wall_slot_.empty() && wall_ptr_.empty() && state_->boundary->runtime_original.empty() &&
+            std::all_of(state_->boundary->receipts.begin(),state_->boundary->receipts.end(),[&](const auto& row) {
+                return common_stage_->authored_boundary_.edge_bc_type.at(row.first)!=int8_t(BoundaryType::WALL);
+            });
         if(cells!=bc_cell_ || slots!=bc_slot_ || (!unused_walls && (walls!=wall_slot_ || ptr!=wall_ptr_)) ||
            bc_q_.size()!=slots.size() || bc_accum_.size()!=slots.size())
             return "CPU checkpoint boundary layout differs from its exterior-edge model.";
@@ -228,7 +231,10 @@ std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const 
                std::abs(boundary_out-(*router_boundary)[9])>1e-12*std::max(1.,boundary_out))
                 return "Router/boundary checkpoint water receipts differ.";
             if((*router_boundary)[7]==0 && (!surface.runtime_sources.rows.empty() || !gw.runtimeSources().rows.empty() ||
-                !surface.runtime_forcings.rows.empty() || (surface.boundary && (!surface.boundary->runtime_original.empty() || !surface.boundary->receipts.empty()))))return "Router checkpoint lost its provider-use history.";
+                !surface.runtime_forcings.rows.empty() || (surface.boundary && (!surface.boundary->runtime_original.empty() ||
+                    std::any_of(surface.boundary->receipts.begin(),surface.boundary->receipts.end(),[&](const auto& row) {
+                        return stage.authored_boundary_.edge_bc_type.at(row.first)==int8_t(BoundaryType::WALL);
+                    })))))return "Router checkpoint lost its provider-use history.";
             for(double v:surface.infil_applied) if(v!=0) return "Router checkpoint has undrained infiltration.";
             if(pending_outfalls && pending_outfalls->size()!=surface.coupling_applied.size()) return "Router outfall receipt shape differs.";
             for(std::size_t c=0;c<surface.coupling_applied.size();++c)

@@ -473,7 +473,7 @@ struct SurfaceSession {
     runoff::SourceWaterDriver sources;
     twoD::CommonSourceStage stage;
     SWMMEngine engine;
-    void start(const std::string& name,int lid=0,int mapped=0,int closure=0,int mode=0,bool track=true,bool spatial=false,bool all_sources=false,int outfall_return=-1,bool output=false,int mesh_output=0,bool average=false,const std::string& runtime_identity={},bool runtime_boundaries=false) {
+    void start(const std::string& name,int lid=0,int mapped=0,int closure=0,int mode=0,bool track=true,bool spatial=false,bool all_sources=false,int outfall_return=-1,bool output=false,int mesh_output=0,bool average=false,const std::string& runtime_identity={},bool runtime_boundaries=false,int authored_boundary=0,int signal_variant=0) {
         SWMMEngine authored;startRunoff(authored,name,mode%5,mode%3,lid,false);authored.close();
         auto p=root()/name;auto deck=bytes(p.string()+".inp");
         deck.replace(deck.find("IGNORE_2D YES"),13,"IGNORE_2D NO");
@@ -483,6 +483,20 @@ struct SurfaceSession {
             deck+="[2D_OPTIONS]\nOUTPUT_FILE "+p.string()+".h5\nOUTPUT_PRECISION "+(mesh_output==2?std::string("FLOAT32"):std::string("FLOAT64"))+"\nOUTPUT_COMPRESSION "+(mesh_output==2?std::string("4"):std::string("0"))+"\nREPORT_2D_STEP 00:00:06\n";
             if(mesh_output==3)deck+="REPORT_2D_VARIABLES MINIMAL\n";
         if(mesh_output==4)deck+="[OPTIONS]\nREPORT_START_DATE 10/10/2026\nREPORT_START_TIME 00:00:13\n";
+        }
+        if(authored_boundary) {
+            const char* rows[]={"", "0 1 NORMAL_FLOW .03\n", "0 1 SPECIFIED_STAGE .52\n", "0 1 SPECIFIED_FLOW .0005\n",
+                "0 1 RATING_CURVE EdgeRating\n", "0 1 TS_STAGE EdgeStage\n", "0 1 TS_FLOW EdgeFlow\n",
+                "0 1 TS_STAGE EdgeStage\n0 2 TS_FLOW EdgeFlow\n1 0 RATING_CURVE EdgeRating\n1 2 NORMAL_FLOW .03\n"};
+            deck+="[2D_BOUNDARY_CONDITIONS]\n"+std::string(rows[std::min(authored_boundary,7)]);
+            deck+="[TIMESERIES]\n";
+            // Relative records are anchored to the model start; dated records
+            // represent the same signal in the model's absolute calendar.
+            for(const auto& row:std::vector<std::pair<const char*,double>>{{"00",1.7},{"04",1.95},{"08",1.65},{"20",1.8}})
+                deck+="EdgeStage "+std::string(authored_boundary==8?"01/31/2004 23:59:":"00:00:")+row.first+" "+
+                    std::to_string(row.second+(signal_variant==1?.1:0))+"\n";
+            deck+="EdgeFlow 00:00:00 -.01\nEdgeFlow 00:00:04 .015\nEdgeFlow 00:00:08 -.008\nEdgeFlow 00:00:20 .012\n";
+            deck+="[CURVES]\nEdgeRating RATING 0 0\nEdgeRating 1.6 .005\nEdgeRating 2.5 .025\nEdgeRating 20 .03\n";
         }
         write(p.string()+".inp",deck);
         auto& e=engine;
@@ -2465,6 +2479,10 @@ std::string changeBoundaryRecord(const std::string& original,int mutation) {
     case 14:receipts.push_back(receipts[0]);break;
     case 15:pv=1;break;
     case 16:time+=.1;break;
+    case 21:overrides[0].old.stage_name="EdgeFlow";break;
+    case 22:overrides[0].old.stage_ts=0;overrides[0].old.stage_name.clear();break;
+    case 23:overrides.at(2).old.rating=0;break;
+    case 24:overrides[0].old.head=std::numeric_limits<double>::quiet_NaN();break;
     }
     A updated;fields(updated);pp=updated.bytes();sum=crc(pp);A po;po(pm,pv,pe,pi,pr,identity,cells,time,edges,boundary_model,pp,sum);
     sp=replaceNested(sp,"OpenSWMM Runtime Water",po.bytes());sum=crc(sp);A so;so(sm,sv,se,sl,sd,source_model,sp,sum);
@@ -2640,4 +2658,223 @@ TEST(EngineCheckpoint, RuntimeBoundaryDriverDueUpdateAndPublicationFailureRemain
     ASSERT_NO_THROW(drive(a.engine,da,15));
         ASSERT_NO_THROW(drive(b.engine,db,15));compareBoundary(a,b,"boundary-driver-continued",true);
 }
+#endif
+
+#ifdef OPENSWMM_HAS_2D
+namespace {
+void startAuthoredBoundary(SurfaceSession& s,const std::string& name,int authored=7,int lid=2,int closure=0,
+    bool output=false,int precision=0,int variant=0,bool track=true,bool profile=true) {
+    s.start(name,lid,1,closure,0,track,false,false,-1,output,precision,output,
+        "mesh water driver revision 1",profile,authored,variant);
+}
+int authoredBoundaryFrame(SWMMEngine& e,int phase=0,const char* owner="authored-edge") {
+    std::vector<SWMM_CouplingBoundary> rows;
+    const auto& mesh=e.surfaceRouter2D().mesh();
+    for(int cell=0;cell<mesh.n_cells();++cell)for(int edge=0;edge<mesh.cell_vertex_count(cell);++edge) {
+        if(mesh.cell_neighbour(cell,edge)>=0)continue;
+        const int kind=phase==2?0:(phase==1?2:1);
+        rows.push_back({sizeof(SWMM_CouplingBoundary),0,cell,edge,kind,phase==1?-.002:.62,0,nullptr});
+    }
+    for(int cell=0;cell<mesh.n_cells();++cell)rows.push_back({sizeof(SWMM_CouplingBoundary),1,cell,
+        exterior(e,cell),phase==2?0:1,1.55,0,nullptr});
+    SWMM_CouplingFrame frame{sizeof(frame),1,owner,0,nullptr,int(rows.size()),rows.data(),0,nullptr,0,nullptr};
+    return swmm_coupling_apply_frame(reinterpret_cast<SWMM_Engine>(&e),&frame);
+}
+void flushBoundary(SWMMEngine& e) {e.surfaceRouter2D().flushPendingBatch(e.context());}
+}
+TEST(EngineCheckpoint, AuthoredBoundaryOnlyContinuationKeepsPhysicalFluxSeparateFromProviderUse) {
+    for(int authored=1;authored<=8;++authored)for(int lid:{0,1,2})for(int closure:{0,1,2}) {
+        const auto name="authored-only-"+std::to_string(authored)+"-"+std::to_string(lid)+"-"+std::to_string(closure);
+        SCOPED_TRACE(name);SurfaceSession a,b;
+        ASSERT_NO_THROW(startAuthoredBoundary(a,name+"-a",authored,lid,closure));
+        ASSERT_NO_THROW(startAuthoredBoundary(b,name+"-b",authored,lid,closure));
+        ASSERT_NO_THROW(until(a.engine,9.1));
+        EXPECT_FALSE(a.engine.context().runtime_coupling_used);
+        const auto cp=root()/(name+".chk");
+        ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+        ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");compareBoundary(a,b,name+"-restored");
+        ASSERT_NO_THROW(until(a.engine,23.1));
+        ASSERT_NO_THROW(until(b.engine,23.1));
+        ASSERT_NO_THROW(flushBoundary(a.engine));
+        ASSERT_NO_THROW(flushBoundary(b.engine));
+        compareBoundary(a,b,name+"-continued");
+        EXPECT_FALSE(b.engine.context().runtime_coupling_used);
+        const auto& mb=a.engine.context().mass_balance_2d;
+        EXPECT_GT(mb.boundary_in+mb.boundary_out,0);
+    }
+}
+TEST(EngineCheckpoint, AuthoredBoundaryActiveOverridesClearToCurrentSignalsAndReacquire) {
+    for(int authored:{7,8})for(int lid:{0,1,2})for(int closure:{0,1,2}) {
+        const auto name="authored-active-"+std::to_string(authored)+"-"+std::to_string(lid)+"-"+std::to_string(closure);
+        SCOPED_TRACE(name);SurfaceSession a,b;
+        ASSERT_NO_THROW(startAuthoredBoundary(a,name+"-a",authored,lid,closure));
+        ASSERT_NO_THROW(startAuthoredBoundary(b,name+"-b",authored,lid,closure));
+        ASSERT_NO_THROW(until(a.engine,4.1));
+        ASSERT_EQ(authoredBoundaryFrame(a.engine),SWMM_OK);
+        ASSERT_NO_THROW(until(a.engine,9.1));
+        const auto cp=root()/(name+".chk");
+        ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+        ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");compareBoundary(a,b,name+"-restored");
+        ASSERT_EQ(authoredBoundaryFrame(a.engine,1),SWMM_OK);
+        ASSERT_EQ(authoredBoundaryFrame(b.engine,1),SWMM_OK);
+        ASSERT_NO_THROW(until(a.engine,12.1));
+        ASSERT_NO_THROW(until(b.engine,12.1));
+        ASSERT_EQ(authoredBoundaryFrame(a.engine,2),SWMM_OK);
+        ASSERT_EQ(authoredBoundaryFrame(b.engine,2),SWMM_OK);
+        compareBoundary(a,b,name+"-clear");
+        auto& r=a.engine.surfaceRouter2D();const auto& mesh=r.mesh();const int stage=twoD::MeshData::slot(0,1),flow=twoD::MeshData::slot(0,2),rating=twoD::MeshData::slot(1,0);
+        const double time=a.stage.completedEnd(),head=r.state().head[1];
+        auto st=a.engine.context().tables.tables.at(a.engine.context().find_timeseries("EdgeStage"));
+        auto ft=a.engine.context().tables.tables.at(a.engine.context().find_timeseries("EdgeFlow"));
+        const auto curve=a.engine.context().tables.tables.at(a.engine.context().find_curve("EdgeRating"));
+        ASSERT_NO_THROW(step(a.engine));
+        ASSERT_NO_THROW(step(b.engine));
+        ASSERT_NO_THROW(flushBoundary(a.engine));
+        ASSERT_NO_THROW(flushBoundary(b.engine));
+        const double at=datetime::addSeconds(a.engine.context().options.start_date,time);
+        EXPECT_DOUBLE_EQ(r.boundary().edge_bc_head[stage],.3048*table_lookup_cursor(st,at));
+        EXPECT_DOUBLE_EQ(r.boundary().edge_bc_flow[flow],.028316846592*table_lookup_cursor(ft,at));
+        EXPECT_DOUBLE_EQ(r.boundary().edge_bc_flow[rating],.028316846592*table_lookupEx(curve,head/.3048));
+        EXPECT_TRUE(r.boundary().runtime_original.empty());
+        EXPECT_TRUE(r.boundary().runtime_owner.empty());
+        compareBoundary(a,b,name+"-fallback");
+        ASSERT_EQ(authoredBoundaryFrame(a.engine,0,"new-edge-owner"),SWMM_OK);
+        ASSERT_EQ(authoredBoundaryFrame(b.engine,0,"new-edge-owner"),SWMM_OK);
+        ASSERT_NO_THROW(until(a.engine,25.1));
+        ASSERT_NO_THROW(until(b.engine,25.1));
+        compareBoundary(a,b,name+"-reacquired");
+    }
+}
+TEST(EngineCheckpoint, AuthoredBoundaryDeferredSignalsRestoreBeforeFirstEvaluationAndAfterClear) {
+    SurfaceSession a,b,c;
+    ASSERT_NO_THROW(startAuthoredBoundary(a,"authored-deferred-a"));
+    ASSERT_NO_THROW(startAuthoredBoundary(b,"authored-deferred-b"));
+    ASSERT_NO_THROW(startAuthoredBoundary(c,"authored-deferred-c"));
+    ASSERT_EQ(authoredBoundaryFrame(a.engine),SWMM_OK);
+    const auto cp=root()/"authored-deferred.chk";
+        ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+    ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");compareBoundary(a,b,"authored-deferred-restore");
+    ASSERT_NO_THROW(until(a.engine,8.1));
+        ASSERT_NO_THROW(until(b.engine,8.1));
+    ASSERT_EQ(authoredBoundaryFrame(a.engine,2),SWMM_OK);
+        ASSERT_EQ(authoredBoundaryFrame(b.engine,2),SWMM_OK);
+    ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+        ASSERT_EQ(c.engine.loadCheckpoint(cp.string()),"");
+    ASSERT_NO_THROW(until(a.engine,24.1));
+        ASSERT_NO_THROW(until(b.engine,24.1));
+        ASSERT_NO_THROW(until(c.engine,24.1));
+    compareBoundary(a,b,"authored-deferred-b-final");compareBoundary(a,c,"authored-deferred-c-final");
+}
+TEST(EngineCheckpoint, AuthoredBoundarySignalBindingsAndOldProfilesRejectChangedTargets) {
+    SurfaceSession a;
+        ASSERT_NO_THROW(startAuthoredBoundary(a,"authored-bind-source"));
+    ASSERT_NO_THROW(until(a.engine,5.1));
+        ASSERT_EQ(authoredBoundaryFrame(a.engine),SWMM_OK);
+    const auto cp=root()/"authored-bind.chk";
+        ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+    SurfaceSession changed;
+        ASSERT_NO_THROW(startAuthoredBoundary(changed,"authored-bind-changed",7,2,0,false,0,1));
+    const auto before=root()/"authored-bind-before.chk";
+        ASSERT_EQ(changed.engine.saveCheckpoint(before.string()),"");const auto initial=bytes(before);
+    EXPECT_FALSE(changed.engine.loadCheckpoint(cp.string()).empty());
+        ASSERT_EQ(changed.engine.saveCheckpoint(before.string()),"");
+        EXPECT_EQ(bytes(before),initial);
+    SurfaceSession old;
+        EXPECT_THROW(startAuthoredBoundary(old,"authored-bind-old",7,2,0,false,0,0,true,false),std::runtime_error);
+    auto& boundary=a.engine.surfaceRouter2D().boundary();const auto slot=boundary.runtime_original.begin()->first;
+    const auto descriptor=boundary.runtime_original.at(slot);const auto saved=bytes(cp);
+    boundary.runtime_original.at(slot).stage_name="EdgeFlow";
+        EXPECT_FALSE(a.engine.saveCheckpoint(cp.string()).empty());
+        EXPECT_EQ(bytes(cp),saved);
+    boundary.runtime_original.at(slot)=descriptor;
+    auto& table=a.engine.context().tables.tables.at(a.engine.context().find_timeseries("EdgeStage"));const auto y=table.y;
+    table.y[0]+=.1;
+        EXPECT_FALSE(a.engine.saveCheckpoint(cp.string()).empty());
+        EXPECT_EQ(bytes(cp),saved);table.y=y;
+    ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+        EXPECT_EQ(bytes(cp),saved);
+}
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+TEST(EngineCheckpoint, AuthoredBoundaryNestedSignalDamageAndPublicationFailurePreserveBothOutputs) {
+    SurfaceSession a;
+        ASSERT_NO_THROW(startAuthoredBoundary(a,"authored-atomic-source",7,2,0,true,2));
+    ASSERT_NO_THROW(until(a.engine,4.1));
+        ASSERT_EQ(authoredBoundaryFrame(a.engine),SWMM_OK);
+    ASSERT_NO_THROW(until(a.engine,9.1));const auto cp=root()/"authored-atomic.chk";
+        ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+    for(int mutation:{0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,21,22,23,24,25}) {
+        const auto name="authored-mutant-"+std::to_string(mutation);SCOPED_TRACE(name);SurfaceSession b;
+        ASSERT_NO_THROW(startAuthoredBoundary(b,name,7,2,0,true,2));
+        const auto before=root()/(name+"-before.chk");
+        ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");const auto initial=bytes(before);
+        const auto binary=bytes(root()/(name+".out")),mesh=bytes(root()/(name+".h5"));
+        auto bad=cp;
+        if(mutation<25) {bad=root()/(name+"-bad.chk");write(bad,changeBoundaryRecord(bytes(cp),mutation));}
+        else std::filesystem::permissions(root()/(name+".h5"),std::filesystem::perms::owner_read);
+        EXPECT_FALSE(b.engine.loadCheckpoint(bad.string()).empty());
+        if(mutation==25)std::filesystem::permissions(root()/(name+".h5"),std::filesystem::perms::owner_read|std::filesystem::perms::owner_write);
+        ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");
+        EXPECT_EQ(bytes(before),initial);
+        EXPECT_EQ(bytes(root()/(name+".out")),binary);
+        EXPECT_EQ(bytes(root()/(name+".h5")),mesh);
+        ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");compareBoundary(a,b,name+"-retry",true);
+    }
+}
+TEST(EngineCheckpoint, AuthoredBoundaryCombinedReportsContinueAcrossCurrentTimeFallback) {
+    for(int format:{1,2})for(int lid:{0,1,2}) {
+        const auto name="authored-output-"+std::to_string(format)+"-"+std::to_string(lid);SCOPED_TRACE(name);SurfaceSession a,b;
+        ASSERT_NO_THROW(startAuthoredBoundary(a,name,8,lid,0,true,format));
+        ASSERT_NO_THROW(startAuthoredBoundary(b,name+"-resumed",8,lid,0,true,format));
+        ASSERT_NO_THROW(until(a.engine,4.1));
+        ASSERT_EQ(authoredBoundaryFrame(a.engine),SWMM_OK);
+        ASSERT_NO_THROW(until(a.engine,9.1));const auto cp=root()/(name+".chk");
+        ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+        ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");
+        ASSERT_EQ(authoredBoundaryFrame(a.engine,2),SWMM_OK);
+        ASSERT_EQ(authoredBoundaryFrame(b.engine,2),SWMM_OK);
+        ASSERT_NO_THROW(until(a.engine,23.1));
+        ASSERT_NO_THROW(until(b.engine,23.1));
+        ASSERT_EQ(authoredBoundaryFrame(a.engine,1,"resumed-owner"),SWMM_OK);
+        ASSERT_EQ(authoredBoundaryFrame(b.engine,1,"resumed-owner"),SWMM_OK);
+        while(a.engine.context().elapsed_ms<a.engine.context().options.totalDurationMs()) {ASSERT_NO_THROW(step(a.engine));
+        ASSERT_NO_THROW(step(b.engine));}
+        compareBoundary(a,b,name+"-final",true);
+        ASSERT_EQ(a.engine.end(),0);
+        ASSERT_EQ(b.engine.end(),0);
+        sameBinary(name,name+"-resumed",80);sameMesh(name,name+"-resumed",40);
+    }
+}
+TEST(EngineCheckpoint, AuthoredBoundaryDueDriverRestoreKeepsSignalsAndPublicationRetryAtomic) {
+    TestWaterDriver da,db;SurfaceSession a,b;
+    ASSERT_NO_THROW(startAuthoredBoundary(a,"authored-driver-a",7,2,0,true,2));
+    ASSERT_NO_THROW(startAuthoredBoundary(b,"authored-driver-b",7,2,0,true,2));
+    ASSERT_EQ(a.engine.attachRuntimeWaterDriverCheckpoint(da),"");
+    ASSERT_EQ(b.engine.attachRuntimeWaterDriverCheckpoint(db),"");
+    ASSERT_EQ(authoredBoundaryFrame(a.engine),SWMM_OK);
+    ASSERT_NO_THROW(drive(a.engine,da,4.2));
+    EXPECT_DOUBLE_EQ(da.nextUpdateSeconds(),a.engine.context().current_time);
+    const auto cp=root()/"authored-driver.chk",before=root()/"authored-driver-before.chk";
+    ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+    ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");
+    const auto initial=bytes(before),driver=driverState(db,0);
+    const auto binary=root()/"authored-driver-b.out",mesh=root()/"authored-driver-b.h5";
+    const auto bh=bytes(binary),mh=bytes(mesh);
+    std::filesystem::permissions(mesh,std::filesystem::perms::owner_read);
+    EXPECT_FALSE(b.engine.loadCheckpoint(cp.string()).empty());
+    EXPECT_EQ(driverState(db,0),driver);
+    EXPECT_EQ(db.installs,0);
+    ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");
+    EXPECT_EQ(bytes(before),initial);EXPECT_EQ(bytes(binary),bh);EXPECT_EQ(bytes(mesh),mh);
+    std::filesystem::permissions(mesh,std::filesystem::perms::owner_read|std::filesystem::perms::owner_write);
+    ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");
+    EXPECT_EQ(db.installs,1);compareBoundary(a,b,"authored-driver-restored",true);
+    ASSERT_EQ(authoredBoundaryFrame(a.engine,2),SWMM_OK);
+    ASSERT_EQ(authoredBoundaryFrame(b.engine,2),SWMM_OK);
+    ASSERT_NO_THROW(drive(a.engine,da,25));
+    ASSERT_NO_THROW(drive(b.engine,db,25));
+    EXPECT_EQ(driverState(da,a.engine.context().current_time),driverState(db,b.engine.context().current_time));
+    compareBoundary(a,b,"authored-driver-final",true);
+}
+
+#endif
 #endif
