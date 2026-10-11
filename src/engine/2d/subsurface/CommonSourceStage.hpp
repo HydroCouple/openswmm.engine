@@ -2,6 +2,7 @@
 #pragma once
 #include "SurfaceExchange.hpp"
 #include "SurfaceOwnership.hpp"
+#include "../coupling/RuntimeCouplingCheckpoint.hpp"
 #include "../../hydrology/SourceWaterDriver.hpp"
 #include <functional>
 
@@ -27,7 +28,8 @@ public:
     // mesh_only explicitly assigns the whole mesh weather footprint with no
     // private subcatchment groups; default reviewed-source behavior is unchanged.
     std::string initialize(const MeshData&, SurfaceStateData&, const SolverOptions2D&, SubsurfaceSolver&,
-                           runoff::SourceWaterDriver&, const SurfaceOwnershipPreview&, bool mesh_only = false);
+                           runoff::SourceWaterDriver&, const SurfaceOwnershipPreview&, bool mesh_only = false,
+                           const std::string& runtime_water_identity = {});
     bool matches(const MeshData* m,const SurfaceStateData* s,const SubsurfaceSolver* g) const {
         return mesh_==m && surface_==s && gw_==g && mesh_;
     }
@@ -46,6 +48,11 @@ public:
         return sources_ ? sources_->creditOutfallReturns(start,end,volumes) : "Source stage is not attached.";
     }
     bool meshOnly() const { return sources_ && sources_->clocks().groups().empty() && donors_.empty(); }
+    // Initial internal qualification profile. External program state is not
+    // recovered by its immutable replay identity. No authored/public activation.
+    bool runtimeWaterEnabled() const { return !runtime_water_identity_.empty(); }
+    const std::string& runtimeWaterIdentity() const { return runtime_water_identity_; }
+    std::string validateRuntimeWater(const RuntimeSources&,const RuntimeSources&,const RuntimeForcings&,double time) const;
     /// Internal component checkpoint, not a production engine hotstart.
     std::string saveCheckpoint(const std::string& path) const;
     std::string loadCheckpoint(const std::string& path);
@@ -64,6 +71,8 @@ private:
     std::string checkpointBoundary() const;
     std::string checkpointModel() const;
     std::string checkpoint_model_;
+    RuntimeWaterCheckpointBinding runtimeWaterBinding(double time) const;
+    std::string runtime_water_identity_;
     struct Donor {
         int source=-1, type=-1, unit=-1, identity=-1;
         double area=0;

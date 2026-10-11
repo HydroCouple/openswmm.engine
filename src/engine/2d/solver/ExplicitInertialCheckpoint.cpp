@@ -169,7 +169,7 @@ std::string ExplicitInertialSolver::loadCheckpoint(const std::string& path) {
     catch(const std::exception& e) { return e.what(); }
 }
 
-std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const std::array<double,5>* router_boundary,const std::vector<double>* pending_outfalls,
+std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const std::array<double,8>* router_boundary,const std::vector<double>* pending_outfalls,
     const std::function<void(const runoff::SourceWaterDriver&)>* validate_source,
     const std::function<void()>* before_install) {
     try {
@@ -194,6 +194,14 @@ std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const 
             const std::array<double,4> ledger{stage.meshRain(),stage.meshEvaporation(),stage.meshReturn(),volume};
             for(int k=0;k<4;++k) if(std::abs(ledger[k]-(*router_boundary)[k+1])>1e-12*std::max(1.0,std::abs(ledger[k])))
                 return "Router/source checkpoint ledgers differ.";
+            double incoming=0,outgoing=0;
+            for(const auto& row:surface.runtime_sources.rows) {incoming+=row.receipt.water_in;outgoing+=row.receipt.water_out;}
+            if(!std::isfinite(incoming) || !std::isfinite(outgoing) ||
+               std::abs(incoming-(*router_boundary)[5])>1e-12*std::max(1.,incoming) ||
+               std::abs(outgoing-(*router_boundary)[6])>1e-12*std::max(1.,outgoing))
+                return "Router/provider checkpoint water receipts differ.";
+            if((*router_boundary)[7]==0 && (!surface.runtime_sources.rows.empty() || !gw.runtimeSources().rows.empty() ||
+                !surface.runtime_forcings.rows.empty()))return "Router checkpoint lost its provider-use history.";
             for(double v:surface.infil_applied) if(v!=0) return "Router checkpoint has undrained infiltration.";
             if(pending_outfalls && pending_outfalls->size()!=surface.coupling_applied.size()) return "Router outfall receipt shape differs.";
             for(std::size_t c=0;c<surface.coupling_applied.size();++c)

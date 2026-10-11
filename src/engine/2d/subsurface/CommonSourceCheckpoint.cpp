@@ -100,6 +100,7 @@ std::string CommonSourceStage::checkpointModel() const {
     auto owned=owned_;auto weather=weather_;auto cells=cells_;auto donors=donors_;auto et=et_contacts_;
     a(owned,weather,cells,et);
     a.sequence(donors,[&](auto& d){a(d.source,d.type,d.unit,d.identity,d.area,d.contacts);});
+    if(runtimeWaterEnabled()) {auto identity=runtime_water_identity_;a(identity);}
     return a.bytes();
 }
 std::string CommonSourceStage::checkpointBytes(std::string& bytes) const {
@@ -114,7 +115,15 @@ std::string CommonSourceStage::checkpointBytes(std::string& bytes) const {
         state.sequence(et,[&](auto& r){state(r.owner,r.source,r.type,r.unit,r.cell,r.start,r.end,r.area,r.potential,r.evaporation,r.soil_demand,r.unused);});
         state.sequence(returns,[&](auto& r){returned(state,r);});
         source.checkpoint(state,false);gw.checkpoint(state,false);meshState(state,mesh);
-        std::string magic="OpenSWMM source boundary";uint32_t version=checkpointVersion,endian=0x01020304;
+        if(runtimeWaterEnabled()) {
+            // Source result capture precedes the engine's expiry pass. Its
+            // immutable completed snapshot has no still-active expired rows.
+            mesh.runtime_sources.expire(end);gw.runtimeSources().expire(end);mesh.runtime_forcings.expire(end);
+            std::string providers;auto invalid=RuntimeWaterCheckpoint::capture(runtimeWaterBinding(end),
+                mesh.runtime_sources,gw.runtimeSources(),mesh.runtime_forcings,providers);
+            if(!invalid.empty())return invalid;state(providers);
+        }
+        std::string magic="OpenSWMM source boundary";uint32_t version=runtimeWaterEnabled()?2:checkpointVersion,endian=0x01020304;
         uint32_t longBytes=sizeof(long),doubleBytes=sizeof(double);auto model=checkpoint_model_,payload=state.bytes();
         auto crc=checksum(payload);Archive file;file(magic,version,endian,longBytes,doubleBytes,model,payload,crc);
         if(file.bytes().size()>maxCheckpointBytes)return "Source checkpoint exceeds internal qualification size limit.";
@@ -147,7 +156,7 @@ std::string CommonSourceStage::loadCheckpointBytes(std::string bytes,const std::
         if(bytes.empty()||bytes.size()>maxCheckpointBytes)return "Source checkpoint exceeds its size limit.";
         Archive file(std::move(bytes));std::string magic,model,payload;uint32_t version=0,endian=0,longBytes=0,doubleBytes=0,crc=0;
         file(magic,version,endian,longBytes,doubleBytes,model,payload,crc);file.finish();
-        if(magic!="OpenSWMM source boundary"||version!=checkpointVersion||endian!=0x01020304||longBytes!=sizeof(long)||doubleBytes!=sizeof(double))
+        if(magic!="OpenSWMM source boundary"||version!=(runtimeWaterEnabled()?2u:checkpointVersion)||endian!=0x01020304||longBytes!=sizeof(long)||doubleBytes!=sizeof(double))
             return "Unsupported source checkpoint version or platform.";
         if(model!=checkpoint_model_)return "Source checkpoint model, forcing, species or reviewed ownership differs.";
         if(crc!=checksum(payload))return "Source checkpoint checksum differs.";
@@ -157,7 +166,14 @@ std::string CommonSourceStage::loadCheckpointBytes(std::string bytes,const std::
         state.sequence(trial.exchange_.receipts_,[&](auto& r){intake(state,r);});
         state.sequence(trial.et_receipts_,[&](auto& r){state(r.owner,r.source,r.type,r.unit,r.cell,r.start,r.end,r.area,r.potential,r.evaporation,r.soil_demand,r.unused);});
         state.sequence(trial.returns_,[&](auto& r){returned(state,r);});
-        source.checkpoint(state,false);gw.checkpoint(state,false);meshState(state,mesh);state.finish();
+        source.checkpoint(state,false);gw.checkpoint(state,false);meshState(state,mesh);
+        if(runtimeWaterEnabled()) {
+            std::string providers;state(providers);
+            const auto invalid=RuntimeWaterCheckpoint::restore(runtimeWaterBinding(trial.completedEnd()),
+                std::move(providers),mesh.runtime_sources,gw.runtimeSources(),mesh.runtime_forcings);
+            if(!invalid.empty())return invalid;
+        }
+        state.finish();
         trial.sources_=&source;trial.gw_=&gw;trial.surface_=&mesh;
         const auto invalid=trial.checkpointBoundary();if(!invalid.empty())return invalid;
         const double end=trial.completedEnd();const int np=int(source.pollutantNames().size());

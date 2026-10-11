@@ -530,7 +530,8 @@ OPENSWMM_SOURCE_INLINE void ExplicitInertialSolver::applyCellSourceRow(
 }
 
 bool ExplicitInertialSolver::applyCellSources(int i, double dt) {
-    if (common_stage_ && common_stage_->ownsCell(i)) return false;
+    if (common_stage_ && common_stage_->ownsCell(i))
+        return common_stage_->runtimeWaterEnabled() && applyRuntimeSources(i,dt);
     CellSourceStep source;
     if (!prepareCellSources(i, dt, source)) return applyRuntimeSources(i, dt);
     if (species_on_) {

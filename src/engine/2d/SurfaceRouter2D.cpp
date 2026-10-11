@@ -2201,6 +2201,14 @@ void SurfaceRouter2D::flushPendingBatch(SimulationContext& ctx) {
     }
 }
 
+bool SurfaceRouter2D::runtimeWaterCheckpointing() const noexcept {
+    return common_stage_ && common_stage_->runtimeWaterEnabled();
+}
+std::string SurfaceRouter2D::validateRuntimeWater(const RuntimeSources& surface,const RuntimeSources& groundwater,
+    const RuntimeForcings& forcing,double time) const {
+    return common_stage_ ? common_stage_->validateRuntimeWater(surface,groundwater,forcing,time) : std::string{};
+}
+
 
 double SurfaceRouter2D::reportWeight(double report_ms) const noexcept {
     if (!report_old_valid_) return 1.0;
@@ -2581,7 +2589,7 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
         const auto ui = static_cast<std::size_t>(i);
         const double area = mesh_.tri_area[ui];
         const double weather_area = common_stage_ ? common_stage_->meshWeatherArea(i) : area;
-        const double rain_rate = common_stage_ ? std::max(0.0, state_.rainfall[ui]) : state_.rainfall[ui];
+        const double rain_rate = common_stage_ ? std::max(0.0, state_.runtime_forcings.rate(1,i,state_.rainfall[ui])) : state_.rainfall[ui];
         rain_vol += rain_rate * weather_area;
         rain_cum_[ui] += rain_rate * weather_area * dt;
         evap_vol += evapSink(state_.evap_rate[ui], state_.depth[ui],

@@ -429,9 +429,11 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
             (rpt_path_.empty() || dynamic_cast<DefaultReportPlugin*>(plugins_.report_plugins().front())),
             "Binary output checkpoint supports only the built-in binary writer.");
     require(ctx_.rdii_assigns.count()==0 && !ctx_.files.has_any() &&
-            !runoff_iface_file_ && !ctx_.runtime_coupling_used && ctx_.process_component_specs.empty(),
+            !runoff_iface_file_ && ctx_.process_component_specs.empty(),
             "Engine checkpoint does not recover RDII, interface files, providers or process components.");
 #ifdef OPENSWMM_HAS_2D
+    require(!ctx_.runtime_coupling_used || surface_router_.runtimeWaterCheckpointing(),
+            "Engine checkpoint runtime providers require their initial mesh water profile.");
     if(surface_router_.isActive()) {
         require(ctx_.events.empty(),"Surface session checkpoint does not yet recover skipped routing events.");
         require(surface_router_.options_.output_file.empty() || checkpoint_surface_output_,
@@ -456,6 +458,7 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
     } else require(!attaching_surface,"Surface checkpoint attachment requires an active surface router.");
 #else
     (void)attaching_surface;
+    require(!ctx_.runtime_coupling_used,"Engine checkpoint runtime providers are not qualified.");
 #endif
     require(!callbacks_.on_progress && !callbacks_.on_warning && !callbacks_.on_step_begin && !callbacks_.on_step_end,
             "Engine checkpoint does not recover external callbacks.");
@@ -729,6 +732,9 @@ std::string SWMMEngine::checkpointBytes(std::string& result) const {
         else
 #endif
         error=router_.checkpointBytes(ctx_,hydraulic);
+#ifdef OPENSWMM_HAS_2D
+        if(surface_router_.runtimeWaterCheckpointing())version+=20;
+#endif
         require(error.empty(),error.c_str());payload(hydraulic);
 #ifdef OPENSWMM_HAS_2D
         if(source_delivery_) {auto bridge=*source_delivery_;Archive a;bridge.checkpoint(a,false,source_stage_->sources());auto bytes=a.bytes();payload(bytes);}
@@ -799,6 +805,7 @@ std::string SWMMEngine::loadCheckpoint(const std::string& path) {
         uint32_t expected_version=3;
 #ifdef OPENSWMM_HAS_2D
         if(surface_router_.isActive())expected_version=source_delivery_?5:4;
+        if(surface_router_.runtimeWaterCheckpointing())expected_version+=20;
 #endif
         if(checkpoint_output_)expected_version+=3;
 #ifdef OPENSWMM_HAS_2D

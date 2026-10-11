@@ -2,6 +2,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <functional>
 
 namespace openswmm::twoD {
 class SubsurfaceSolver;
@@ -51,9 +52,12 @@ struct SurfaceIntakeActual {
 // the production ownership gate remains closed.
 class SurfaceExchange {
 public:
+    // Optional qualified mesh prescription; returns a capacity volume in m3.
+    // Both planning and settlement use it; donor/receiver ceilings still apply.
+    using Capacity = std::function<double(const SurfaceIntakeRequest&,double)>;
     std::string plan(const SubsurfaceSolver&, double start, double end,
-                     double completed_through, const std::vector<SurfaceIntakeRequest>&);
-    std::string commit(SubsurfaceSolver&, const std::vector<SurfaceIntakeActual>&);
+                     double completed_through, const std::vector<SurfaceIntakeRequest>&, const Capacity* = nullptr);
+    std::string commit(SubsurfaceSolver&, const std::vector<SurfaceIntakeActual>&, const Capacity* = nullptr);
     void cancel() noexcept;
     const std::vector<SurfaceIntakeAward>& awards() const noexcept { return awards_; }
     const std::vector<SurfaceIntakeReceipt>& receipts() const noexcept { return receipts_; }

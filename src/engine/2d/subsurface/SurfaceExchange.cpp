@@ -14,7 +14,7 @@ bool nonnegative(double v) { return std::isfinite(v) && v >= 0; }
 }
 
 std::string SurfaceExchange::plan(const SubsurfaceSolver& gw, double start, double end,
-                                 double completed, const std::vector<SurfaceIntakeRequest>& requests) {
+                                 double completed, const std::vector<SurfaceIntakeRequest>& requests, const Capacity* prescribed) {
     if (planned_) return "Settle or cancel the previous source interval first.";
     if (!nonnegative(start) || !std::isfinite(end) || !std::isfinite(completed) ||
         start != completed_end_ || end <= start || end > completed)
@@ -29,9 +29,9 @@ std::string SurfaceExchange::plan(const SubsurfaceSolver& gw, double start, doub
             !nonnegative(r.water_ceiling) || !nonnegative(r.candidate) ||
             !(gw.state().area[r.cell] > 0) || !std::isfinite(gw.state().area[r.cell]))
             return "Invalid source identity, receiver, contact area, head or water request.";
-        const double capacity = gw.sourceInfiltrationCapacity(r.cell, r.pond, end - start);
-        const double volume = capacity * r.area * (end - start);
-        if (!std::isfinite(volume)) return "Source capacity volume overflow.";
+        const double volume = prescribed ? (*prescribed)(r,end-start) :
+            gw.sourceInfiltrationCapacity(r.cell,r.pond,end-start)*r.area*(end-start);
+        if (!nonnegative(volume)) return "Invalid source capacity volume.";
         proposed.push_back({r, std::min(r.candidate, volume), 0});
         contact[r.cell] += r.area;
     }
@@ -83,7 +83,7 @@ std::string SurfaceExchange::plan(const SubsurfaceSolver& gw, double start, doub
     return {};
 }
 
-std::string SurfaceExchange::commit(SubsurfaceSolver& gw, const std::vector<SurfaceIntakeActual>& actual) {
+std::string SurfaceExchange::commit(SubsurfaceSolver& gw, const std::vector<SurfaceIntakeActual>& actual, const Capacity* prescribed) {
     if (!planned_ || receiver_ != &gw || actual.size() != awards_.size()) return "No matching source interval to settle.";
     const int ns = gw.transport().active() ? gw.transport().n_species : 0;
     std::map<int, long double> totals;
@@ -94,8 +94,9 @@ std::string SurfaceExchange::commit(SubsurfaceSolver& gw, const std::vector<Surf
             return "Actual source transfer exceeds its award or has incompatible species.";
         for (const double m : x.mass) if (!nonnegative(m) || (x.volume == 0 && m != 0))
             return "Source water and constituent mass must be paired.";
-        const double capacity_volume = gw.sourceInfiltrationCapacity(a.request.cell, a.request.pond, end_-start_) * a.request.area * (end_-start_);
-        if (x.volume > capacity_volume)
+        const double capacity_volume = prescribed ? (*prescribed)(a.request,end_-start_) :
+            gw.sourceInfiltrationCapacity(a.request.cell,a.request.pond,end_-start_)*a.request.area*(end_-start_);
+        if (!nonnegative(capacity_volume) || x.volume > capacity_volume)
             return "Receiver capacity changed; cancel and recompute source trials before withdrawal.";
         totals[a.request.cell] += x.volume;
         receipts.push_back({a.request, start_, end_, x.volume, x.mass});

@@ -17,6 +17,9 @@ struct RuntimeWaterCheckpointBinding {
 /// tables are rebuilt, never serialized. Failure preserves every output.
 class RuntimeWaterCheckpoint {
 public:
+    static std::string validate(const RuntimeWaterCheckpointBinding&,
+        const RuntimeSources& surface, const RuntimeSources& groundwater,
+        const RuntimeForcings&);
     static std::string capture(const RuntimeWaterCheckpointBinding&,
         const RuntimeSources& surface, const RuntimeSources& groundwater,
         const RuntimeForcings&, std::string& bytes);

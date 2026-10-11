@@ -11,6 +11,7 @@
 #include "2d/subsurface/SourceResultHistory.hpp"
 #include "2d/subsurface/EngineSourceResultHistory.hpp"
 #include "2d/mesh/MeshBuilder.hpp"
+#include <openswmm/engine/openswmm_coupling.h>
 #ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
 #include "2d/output/Default2DOutputPlugin.hpp"
 #endif
@@ -472,7 +473,7 @@ struct SurfaceSession {
     runoff::SourceWaterDriver sources;
     twoD::CommonSourceStage stage;
     SWMMEngine engine;
-    void start(const std::string& name,int lid=0,int mapped=0,int closure=0,int mode=0,bool track=true,bool spatial=false,bool all_sources=false,int outfall_return=-1,bool output=false,int mesh_output=0,bool average=false) {
+    void start(const std::string& name,int lid=0,int mapped=0,int closure=0,int mode=0,bool track=true,bool spatial=false,bool all_sources=false,int outfall_return=-1,bool output=false,int mesh_output=0,bool average=false,const std::string& runtime_identity={}) {
         SWMMEngine authored;startRunoff(authored,name,mode%5,mode%3,lid,false);authored.close();
         auto p=root()/name;auto deck=bytes(p.string()+".inp");
         deck.replace(deck.find("IGNORE_2D YES"),13,"IGNORE_2D NO");
@@ -499,7 +500,7 @@ struct SurfaceSession {
         options.momentum=twoD::Momentum2D::LOCAL_INERTIAL;options.max_timestep=.21;
         options.coupling_sync=3.5;options.evaporation=2;options.rainfall_mode=twoD::RainfallMode::SYSTEM;
         auto& config=router.aquiferConfig();config.options.authored=true;config.options.force_closed_form=true;
-        config.options.gw_et="BOUNDARY_ET";config.options.closure=closure?twoD::GwClosure::ENSLAVED:twoD::GwClosure::CLOSED_FORM;
+        config.options.gw_et="BOUNDARY_ET";config.options.closure=closure==2?twoD::GwClosure::SIGMA:closure?twoD::GwClosure::ENSLAVED:twoD::GwClosure::CLOSED_FORM;
         twoD::GwAquiferRow row;row.Ks=.000001*3600/.0254;row.zs=2/.3048;row.hg0=1/.3048;row.alpha=2*.3048;config.rows.push_back(row);
         ctx.options.rpt_averages=average;
         if(e.initialize())throw std::runtime_error("surface initialize: "+ctx.error_message);
@@ -508,7 +509,7 @@ struct SurfaceSession {
         else if(mesh_output) {auto error=e.prepareSurfaceOutputCheckpointing();if(!error.empty())throw std::runtime_error(error);}
         if(e.start(output?1:0))throw std::runtime_error("surface start: "+ctx.error_message);
         auto& gw=router.subsurface().state();
-        for(int i=0;i<2;++i) {
+        for(int i=0;i<2 && closure<2;++i) {
             if(closure)gw.hg[i]=gw.zs[i]-.0001;
             gw.hu[i]=gw.theta_s[i]*(gw.zs[i]-gw.hg[i])-.0001/mesh.tri_area[i];
         }
@@ -529,7 +530,7 @@ struct SurfaceSession {
                 preview.shares.push_back(share);preview.mesh_weather_area[cell]-=inside;
             }
         }
-        error=stage.initialize(mesh,router.state(),options,router.subsurface(),sources,preview,!spatial);
+        error=stage.initialize(mesh,router.state(),options,router.subsurface(),sources,preview,!spatial,runtime_identity);
         if(!error.empty())throw std::runtime_error(error);
         if(track) {error=spatial?e.enableSpatialSourceCheckpointing(stage):e.enableCheckpointing(stage);if(!error.empty())throw std::runtime_error(error);}
     }
@@ -1941,4 +1942,233 @@ TEST(EngineCheckpoint, CombinedOutputPreparationProtectsLifecycleAndBothFreshDes
     write(h5,"intervening creator");EXPECT_NE(e.start(1),0);EXPECT_EQ(bytes(h5),"intervening creator");ASSERT_EQ(e.close(),0);
 }
 
+#endif
+
+
+#ifdef OPENSWMM_HAS_2D
+namespace {
+void startProvider(SurfaceSession& s,const std::string& name,int lid=0,int closure=0,bool output=false,int mesh_output=0,
+                   const std::string& identity="mesh water driver revision 1") {
+    s.start(name,lid,1,closure,0,true,false,false,-1,output,mesh_output,output,identity);
+}
+int providerFrame(SWMMEngine& e,double until=9.25,double incoming=.01) {
+    const SWMM_CouplingSource sources[]={
+        {sizeof(SWMM_CouplingSource),"in",0,0,incoming,0,until,0,nullptr,nullptr},
+        {sizeof(SWMM_CouplingSource),"out",0,1,-2.,0,until,0,nullptr,nullptr},
+        {sizeof(SWMM_CouplingSource),"in",1,0,.02,0,until,0,nullptr,nullptr},
+        {sizeof(SWMM_CouplingSource),"out",1,1,-2.,0,until,0,nullptr,nullptr}};
+    const SWMM_CouplingForcing weather[]={
+        {sizeof(SWMM_CouplingForcing),1,-1,1,.001,until,0,nullptr},
+        {sizeof(SWMM_CouplingForcing),1,0,1,.002,7.75,0,nullptr},
+        {sizeof(SWMM_CouplingForcing),2,-1,2,.0001,until,0,nullptr},
+        {sizeof(SWMM_CouplingForcing),3,0,1,.02,until,0,nullptr}};
+    const SWMM_CouplingFrame frame{sizeof(frame),1,"water",4,sources,0,nullptr,4,weather,0,nullptr};
+    return swmm_coupling_apply_frame(reinterpret_cast<SWMM_Engine>(&e),&frame);
+}
+void until(SWMMEngine& e,double target) {while(e.context().current_time<target-1e-12)step(e);}
+std::string changeProviderRecord(const std::string& original,int mutation) {
+    using A=detail::CompletedSourceArchive;
+    A engine(original);std::string em,model,payload;uint32_t ev,sum;engine(em,ev,model,sum,payload);engine.finish();
+    auto surface=engineSurface(original),surface_data=surfacePayload(surface);
+    if(mutation==6) {
+        surface_data[nested(surface_data,"OpenSWMM CPU surface/source boundary").first-1]=0;
+        payload=replaceNested(payload,"OpenSWMM joint DW surface/source boundary",withSurfacePayload(surface,surface_data));
+        sum=crc(payload);A result;result(em,ev,model,sum,payload);return result.bytes();
+    }
+    auto cpu=nested(surface_data,"OpenSWMM CPU surface/source boundary").second;
+    A ca(cpu);std::string cm,cp;uint32_t cv,endian,long_bytes;ca(cm,cv,endian,long_bytes,cp,sum);ca.finish();
+    auto source=nested(cp,"OpenSWMM source boundary").second;
+    A sa(source);std::string sm,source_model,sp;uint32_t sv,se,sl,sd;
+    sa(sm,sv,se,sl,sd,source_model,sp,sum);sa.finish();
+    auto provider=nested(sp,"OpenSWMM Runtime Water").second;
+    A pa(provider);std::string pm,identity,pp;uint32_t pv,pe,pi,pr;std::vector<bool> cells;double time;
+    pa(pm,pv,pe,pi,pr,identity,cells,time,pp,sum);pa.finish();
+    if(mutation==0)identity+="changed";
+    if(mutation==1)time+=.125;
+    if(mutation==2)cells[0]=false;
+    if(mutation==3)pp.pop_back();
+    if(mutation==4)pv++;
+    if(mutation>=7) {
+        twoD::RuntimeSources s,g;twoD::RuntimeForcings f;
+        const auto receipt=[](A& a,twoD::RuntimeReceipt& r){a(r.requested,r.applied,r.water_in,r.water_out,r.last_flow,r.last_dt);};
+        const auto fields=[&](A& a) {
+            const auto row=[&](auto& r){a(r.id,r.owner,r.cell,r.flow,r.until,r.enabled);receipt(a,r.receipt);};
+            a.sequence(s.rows,row);a.sequence(g.rows,row);
+            a.sequence(f.rows,[&](auto& r){a(r.channel,r.cell,r.mode,r.rate,r.until,r.enabled,r.owner);receipt(a,r.receipt);});
+        };
+        A read(pp);fields(read);read.finish();s.rows[0].receipt.water_in+=.001;s.rows[0].receipt.applied+=.001;
+        if(mutation==8)for(auto& r:s.rows) {
+            r.receipt.water_in=1e308;r.receipt.applied=r.receipt.water_in-r.receipt.water_out;
+        }
+        A updated;fields(updated);pp=updated.bytes();
+    }
+    if(mutation==5)provider.pop_back();
+    else {sum=crc(pp);A po;po(pm,pv,pe,pi,pr,identity,cells,time,pp,sum);provider=po.bytes();}
+    sp=replaceNested(sp,"OpenSWMM Runtime Water",provider);sum=crc(sp);A so;so(sm,sv,se,sl,sd,source_model,sp,sum);
+    cp=replaceNested(cp,"OpenSWMM source boundary",so.bytes());sum=crc(cp);A co;co(cm,cv,endian,long_bytes,cp,sum);
+    surface_data=replaceNested(surface_data,"OpenSWMM CPU surface/source boundary",co.bytes());
+    surface=withSurfacePayload(surface,surface_data);
+    payload=replaceNested(payload,"OpenSWMM joint DW surface/source boundary",surface);sum=crc(payload);
+    A result;result(em,ev,model,sum,payload);return result.bytes();
+}
+}
+
+TEST(EngineCheckpoint, RuntimeWaterWholeSessionContinuesStoresAndNodeLidProfiles) {
+    for(int lid:{0,1,2})for(int closure:{0,1,2}) {
+        const auto name="provider-session-"+std::to_string(lid)+"-"+std::to_string(closure);SCOPED_TRACE(name);
+        SurfaceSession a,b;
+    ASSERT_NO_THROW(startProvider(a,name+"-a",lid,closure));
+    ASSERT_NO_THROW(startProvider(b,name+"-b",lid,closure));
+        ASSERT_EQ(providerFrame(a.engine),SWMM_OK);
+    ASSERT_NO_THROW(until(a.engine,3.1));
+        ASSERT_LE(a.stage.completedEnd(),a.engine.context().current_time);
+        auto checkpoint=root()/(name+".chk");ASSERT_EQ(a.engine.saveCheckpoint(checkpoint.string()),"");
+        ASSERT_EQ(b.engine.loadCheckpoint(checkpoint.string()),"");EXPECT_TRUE(b.engine.context().runtime_coupling_used);
+        compare(a.engine,b.engine,name+"-restored");
+        while(a.engine.context().current_time<20.125) {
+            ASSERT_NO_THROW(step(a.engine));
+    ASSERT_NO_THROW(step(b.engine));
+            compare(a.engine,b.engine,name+"-step");
+        }
+        auto& router=a.engine.surfaceRouter2D();EXPECT_FALSE(router.runtimeActive());
+        const auto* in=router.runtimeSources().find("provider/water/in",0);ASSERT_NE(in,nullptr);
+        EXPECT_NEAR(in->receipt.requested,.01*9.25,1e-12);EXPECT_GT(in->receipt.water_in,0);
+        const auto* gw=router.subsurface().runtimeSources().find("provider/water/in",0);ASSERT_NE(gw,nullptr);
+        EXPECT_NEAR(gw->receipt.requested,.02*9.25,1e-12);
+        EXPECT_GT(router.state().runtime_forcings.find(3,0)->receipt.requested,0);
+        EXPECT_GT(router.runtimeSources().find("provider/water/out",1)->receipt.water_out,0);
+        EXPECT_LE(router.runtimeSources().find("provider/water/out",1)->receipt.water_out,2*9.25);
+    }
+}
+TEST(EngineCheckpoint, RuntimeWaterExpiryIsAnExactPhysicalBarrierAndInactiveHistoryRestores) {
+    SurfaceSession a,b;
+    ASSERT_NO_THROW(startProvider(a,"provider-expiry-a"));
+    ASSERT_NO_THROW(startProvider(b,"provider-expiry-b"));
+    ASSERT_EQ(providerFrame(a.engine),SWMM_OK);
+    ASSERT_NO_THROW(until(a.engine,7.75));
+    EXPECT_NEAR(a.engine.context().current_time,7.75,1e-12);EXPECT_NEAR(a.stage.completedEnd(),7.75,1e-12);
+    auto& forcing=a.engine.surfaceRouter2D().state().runtime_forcings;
+    EXPECT_FALSE(forcing.find(1,0)->enabled);ASSERT_NE(forcing.get(1,0),nullptr);EXPECT_EQ(forcing.get(1,0)->cell,-1);
+    ASSERT_NO_THROW(until(a.engine,9.25));EXPECT_NEAR(a.engine.context().current_time,9.25,1e-12);EXPECT_NEAR(a.stage.completedEnd(),9.25,1e-12);
+    EXPECT_FALSE(a.engine.surfaceRouter2D().runtimeActive());EXPECT_TRUE(a.engine.context().runtime_coupling_used);
+    ASSERT_NO_THROW(step(a.engine));
+    ASSERT_LT(a.stage.completedEnd(),a.engine.context().current_time);
+    auto checkpoint=root()/"provider-expired.chk";ASSERT_EQ(a.engine.saveCheckpoint(checkpoint.string()),"");
+    ASSERT_EQ(b.engine.loadCheckpoint(checkpoint.string()),"");EXPECT_TRUE(b.engine.context().runtime_coupling_used);
+    EXPECT_FALSE(b.engine.surfaceRouter2D().runtimeActive());compare(a.engine,b.engine,"provider-expired");
+    const auto before=root()/"provider-inactive-before.chk";ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");
+    const auto saved=bytes(before);const double prior=b.stage.completedEnd();
+    const SWMM_CouplingBoundary boundary{sizeof(boundary),0,0,0,1,1.,0,nullptr};
+    const SWMM_CouplingFrame unsupported{sizeof(unsupported),1,"water",0,nullptr,1,&boundary,0,nullptr,0,nullptr};
+    EXPECT_EQ(swmm_coupling_apply_frame(reinterpret_cast<SWMM_Engine>(&b.engine),&unsupported),SWMM_ERR_PLUGIN);
+    EXPECT_EQ(b.stage.completedEnd(),prior);ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");EXPECT_EQ(bytes(before),saved);
+    for(auto* engine:{&a.engine,&b.engine})ASSERT_EQ(swmm_coupling_set_source(reinterpret_cast<SWMM_Engine>(engine),
+        "future",0,0,.01,0,nullptr,nullptr,0,20.125),SWMM_OK);
+    EXPECT_EQ(a.stage.completedEnd(),a.engine.context().current_time);compare(a.engine,b.engine,"provider-future-barrier");
+    ASSERT_NO_THROW(step(a.engine));
+    ASSERT_NO_THROW(step(b.engine));compare(a.engine,b.engine,"provider-native-fallback");
+    const auto& router=b.engine.surfaceRouter2D();EXPECT_EQ(router.state().runtime_forcings.rate(1,0,router.state().rainfall[0]),router.state().rainfall[0]);
+}
+TEST(EngineCheckpoint, RuntimeWaterFutureFramesPreservePastReceiptsAndRejectBeforeFlushing) {
+    SurfaceSession a,b;
+    ASSERT_NO_THROW(startProvider(a,"provider-update-a"));
+    ASSERT_NO_THROW(startProvider(b,"provider-update-b"));
+    ASSERT_EQ(providerFrame(a.engine),SWMM_OK);
+    ASSERT_NO_THROW(until(a.engine,4.2));
+    auto checkpoint=root()/"provider-before-update.chk";ASSERT_EQ(a.engine.saveCheckpoint(checkpoint.string()),"");ASSERT_EQ(b.engine.loadCheckpoint(checkpoint.string()),"");
+    const auto before=bytes(checkpoint);const double source_end=b.stage.completedEnd();
+    const SWMM_CouplingBoundary boundary{sizeof(boundary),0,0,0,1,1.,0,nullptr};
+    const SWMM_CouplingFrame bad{sizeof(bad),1,"water",0,nullptr,1,&boundary,0,nullptr,0,nullptr};
+    EXPECT_EQ(swmm_coupling_apply_frame(reinterpret_cast<SWMM_Engine>(&b.engine),&bad),SWMM_ERR_PLUGIN);
+    EXPECT_EQ(b.stage.completedEnd(),source_end);ASSERT_EQ(b.engine.saveCheckpoint(checkpoint.string()),"");EXPECT_EQ(bytes(checkpoint),before);
+    const SWMM_CouplingForcing unsupported{sizeof(unsupported),4,0,1,0,0,0,nullptr};
+    const SWMM_CouplingFrame quality{sizeof(quality),1,"water",0,nullptr,0,nullptr,1,&unsupported,0,nullptr};
+    EXPECT_EQ(swmm_coupling_apply_frame(reinterpret_cast<SWMM_Engine>(&b.engine),&quality),SWMM_ERR_PLUGIN);
+    EXPECT_EQ(b.stage.completedEnd(),source_end);ASSERT_EQ(b.engine.saveCheckpoint(checkpoint.string()),"");EXPECT_EQ(bytes(checkpoint),before);
+    const double changed_at=a.engine.context().current_time;
+    ASSERT_EQ(providerFrame(a.engine,12.5,.03),SWMM_OK);ASSERT_EQ(providerFrame(b.engine,12.5,.03),SWMM_OK);
+    EXPECT_EQ(a.stage.completedEnd(),changed_at);compare(a.engine,b.engine,"provider-changed");
+    ASSERT_NO_THROW(until(a.engine,12.5));
+    ASSERT_NO_THROW(until(b.engine,12.5));compare(a.engine,b.engine,"provider-changed-expired");
+    const auto* row=b.engine.surfaceRouter2D().runtimeSources().find("provider/water/in",0);
+    EXPECT_NEAR(row->receipt.requested,.01*changed_at+.03*(12.5-changed_at),1e-12);
+    EXPECT_NEAR(a.stage.completedEnd(),12.5,1e-12);
+}
+TEST(EngineCheckpoint, RuntimeWaterPairedInfiltrationReplacesRateAndSharesFiniteWater) {
+    SurfaceSession a;
+    ASSERT_NO_THROW(startProvider(a,"provider-infiltration"));
+    auto& router=a.engine.surfaceRouter2D();
+    const double natural=router.subsurface().sourceInfiltrationCapacity(0,router.state().depth[0],.7);
+    const SWMM_CouplingForcing rows[]={
+        {sizeof(SWMM_CouplingForcing),1,-1,1,0,0,0,nullptr},
+        {sizeof(SWMM_CouplingForcing),2,-1,1,1,0,0,nullptr},
+        {sizeof(SWMM_CouplingForcing),3,0,1,1,0,0,nullptr},
+        {sizeof(SWMM_CouplingForcing),3,1,1,0,0,0,nullptr}};
+    const SWMM_CouplingFrame f{sizeof(f),1,"soil",0,nullptr,0,nullptr,4,rows,0,nullptr};
+    ASSERT_EQ(swmm_coupling_apply_frame(reinterpret_cast<SWMM_Engine>(&a.engine),&f),SWMM_OK);
+    ASSERT_NO_THROW(until(a.engine,3.5));const auto* prescribed=router.state().runtime_forcings.find(3,0);
+    EXPECT_GT(prescribed->receipt.requested,natural*router.mesh().tri_area[0]*3.5);
+    EXPECT_GT(prescribed->receipt.applied,0);EXPECT_LT(prescribed->receipt.applied,prescribed->receipt.requested);
+    EXPECT_EQ(prescribed->receipt.water_out,prescribed->receipt.applied);EXPECT_EQ(router.state().runtime_forcings.find(3,1)->receipt.applied,0);
+    double intake=0;for(double v:router.subsurface().state().xacc_from_surface)intake+=v;
+    EXPECT_GE(intake,0);for(double v:router.state().volume)EXPECT_GE(v,0);
+    EXPECT_GT(a.stage.meshEvaporation(),0);
+    ASSERT_EQ(a.engine.saveCheckpoint((root()/"provider-infiltration.chk").string()),"");
+}
+TEST(EngineCheckpoint, RuntimeWaterProfileRejectsChangedReplayIdentityAndPrivateFootprints) {
+    SurfaceSession a,b;
+    ASSERT_NO_THROW(startProvider(a,"provider-identity-a"));
+    ASSERT_NO_THROW(startProvider(b,"provider-identity-b",0,0,false,0,"driver revision 2"));
+    ASSERT_EQ(providerFrame(a.engine),SWMM_OK);
+    ASSERT_NO_THROW(until(a.engine,4.2));
+    auto good=root()/"provider-identity.chk";ASSERT_EQ(a.engine.saveCheckpoint(good.string()),"");
+    auto before=root()/"provider-identity-target.chk";ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");const auto initial=bytes(before);
+    EXPECT_FALSE(b.engine.loadCheckpoint(good.string()).empty());ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");EXPECT_EQ(bytes(before),initial);
+    EXPECT_FALSE(b.engine.context().runtime_coupling_used);
+    SurfaceSession private_sources;
+    EXPECT_THROW(private_sources.start("provider-private-footprint",0,0,0,0,true,true,false,-1,false,0,false,"driver revision 1"),std::runtime_error);
+    SurfaceSession unqualified;
+    ASSERT_NO_THROW(unqualified.start("provider-no-profile"));
+    const auto end=unqualified.stage.completedEnd();EXPECT_EQ(providerFrame(unqualified.engine),SWMM_ERR_PLUGIN);
+    EXPECT_EQ(unqualified.stage.completedEnd(),end);EXPECT_FALSE(unqualified.engine.context().runtime_coupling_used);
+}
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+TEST(EngineCheckpoint, RuntimeWaterMalformedNestedRecordsPreserveBothOutputsAndAllowRetry) {
+    SurfaceSession a;
+    ASSERT_NO_THROW(startProvider(a,"provider-atomic-source",2,0,true,2));
+    ASSERT_EQ(providerFrame(a.engine),SWMM_OK);
+    ASSERT_NO_THROW(until(a.engine,4.2));
+    auto good=root()/"provider-atomic-good.chk";ASSERT_EQ(a.engine.saveCheckpoint(good.string()),"");
+    for(int mutation=0;mutation<9;++mutation) {
+        const auto name="provider-atomic-target-"+std::to_string(mutation);SCOPED_TRACE(name);
+        SurfaceSession b;
+    ASSERT_NO_THROW(startProvider(b,name,2,0,true,2));
+        const auto before=root()/(name+"-before.chk");ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");
+        const auto initial=bytes(before),binary=bytes(root()/(name+".out")),mesh=bytes(root()/(name+".h5"));
+        const auto bad=root()/(name+"-bad.chk");write(bad,changeProviderRecord(bytes(good),mutation));
+        EXPECT_FALSE(b.engine.loadCheckpoint(bad.string()).empty());EXPECT_FALSE(b.engine.context().runtime_coupling_used);
+        ASSERT_EQ(b.engine.saveCheckpoint(before.string()),"");EXPECT_EQ(bytes(before),initial);
+        EXPECT_EQ(bytes(root()/(name+".out")),binary);EXPECT_EQ(bytes(root()/(name+".h5")),mesh);
+        ASSERT_EQ(b.engine.loadCheckpoint(good.string()),"");compareMesh(a.engine,b.engine,name+"-retry");
+    }
+}
+TEST(EngineCheckpoint, RuntimeWaterCombinedOutputsContinueReportAndExpiryBoundaries) {
+    for(int lid:{0,1,2})for(int format:{1,2}) {
+        const auto name="provider-combined-"+std::to_string(lid)+"-"+std::to_string(format);SCOPED_TRACE(name);
+        SurfaceSession a,b;
+    ASSERT_NO_THROW(startProvider(a,name,lid,0,true,format));
+    ASSERT_NO_THROW(startProvider(b,name+"-resumed",lid,0,true,format));
+        ASSERT_EQ(providerFrame(a.engine),SWMM_OK);
+    ASSERT_NO_THROW(until(a.engine,4.2));
+        const auto cp=root()/(name+".chk");ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");
+        compareMesh(a.engine,b.engine,name+"-restored");
+        while(a.engine.context().elapsed_ms<a.engine.context().options.totalDurationMs()) {
+            ASSERT_NO_THROW(step(a.engine));
+    ASSERT_NO_THROW(step(b.engine));
+        }
+        compareMesh(a.engine,b.engine,name+"-final");ASSERT_EQ(a.engine.end(),0);ASSERT_EQ(b.engine.end(),0);
+        sameBinary(name,name+"-resumed",80);sameMesh(name,name+"-resumed",40);
+    }
+}
+#endif
 #endif

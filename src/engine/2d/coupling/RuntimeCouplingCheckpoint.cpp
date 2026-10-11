@@ -87,7 +87,7 @@ void sourceStore(RuntimeSources& store, const RuntimeWaterCheckpointBinding& b, 
         "Runtime water checkpoint source lookup differs from its records.");
     store=std::move(next);
 }
-void validate(State& s, const RuntimeWaterCheckpointBinding& b, bool check) {
+void validateState(State& s, const RuntimeWaterCheckpointBinding& b, bool check) {
     bindingOk(b); sourceStore(s.surface,b,check); sourceStore(s.groundwater,b,check);
     for (const auto& r:s.groundwater.rows) require(b.groundwater_cells[r.cell],
         "Runtime water checkpoint source has no groundwater receiver.");
@@ -151,12 +151,19 @@ void state(Archive& a, State& s) {
     });
 }
 }
+std::string RuntimeWaterCheckpoint::validate(const RuntimeWaterCheckpointBinding& b,
+    const RuntimeSources& surface, const RuntimeSources& groundwater, const RuntimeForcings& forcing) {
+    try {
+        require(&surface != &groundwater, "Runtime water checkpoint source domains must be distinct.");
+        State s{surface,groundwater,forcing}; validateState(s,b,true); return {};
+    } catch (const std::exception& e) { return e.what(); }
+}
 std::string RuntimeWaterCheckpoint::capture(const RuntimeWaterCheckpointBinding& b,
     const RuntimeSources& surface, const RuntimeSources& groundwater,
     const RuntimeForcings& forcing, std::string& bytes) {
     try {
         require(&surface != &groundwater, "Runtime water checkpoint source domains must be distinct.");
-        State s{surface,groundwater,forcing}; validate(s,b,true);
+        State s{surface,groundwater,forcing}; validateState(s,b,true);
         Archive payload; state(payload,s);
         std::string magic="OpenSWMM Runtime Water"; uint32_t version=1;
         uint32_t endian=0x01020304, integer_size=sizeof(int), real_size=sizeof(double);
@@ -182,7 +189,7 @@ std::string RuntimeWaterCheckpoint::restore(const RuntimeWaterCheckpointBinding&
         require(identity == b.identity && cells == b.groundwater_cells && time == b.completed_time,
             "Runtime water checkpoint model, driver identity, receivers or completed time differs.");
         require(crc == checksum(data), "Runtime water checkpoint checksum differs.");
-        State s; Archive payload(std::move(data)); state(payload,s); payload.finish(); validate(s,b,false);
+        State s; Archive payload(std::move(data)); state(payload,s); payload.finish(); validateState(s,b,false);
         surface=std::move(s.surface); groundwater=std::move(s.groundwater); forcing=std::move(s.forcing);
         return {};
     } catch (const std::exception& e) { return e.what(); }

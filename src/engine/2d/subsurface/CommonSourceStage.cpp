@@ -46,11 +46,15 @@ std::string qualityProfile(const runoff::SourceWaterDriver& sources,
 }
 
 std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData& surface,
-    const SolverOptions2D& options,SubsurfaceSolver& gw,runoff::SourceWaterDriver& sources,const SurfaceOwnershipPreview& preview,bool mesh_only) {
+    const SolverOptions2D& options,SubsurfaceSolver& gw,runoff::SourceWaterDriver& sources,const SurfaceOwnershipPreview& preview,bool mesh_only,
+    const std::string& runtime_water_identity) {
     if(mesh_) return "Common source stage already initialized.";
     if(!gw.active() || !preview.valid() || preview.cancelled || preview.mesh_weather_area.size()!=mesh.tri_area.size())
         return "Common source stage requires a valid reviewed mesh/receiver snapshot.";
     const auto quality_error=qualityProfile(sources,surface,gw);if(!quality_error.empty())return quality_error;
+    if(!runtime_water_identity.empty() && (!mesh_only || !sources.pollutantNames().empty() ||
+       runtime_water_identity.size()>=64*1024*1024))
+        return "Runtime water source stage requires a water-only mesh-owned footprint and bounded replay identity.";
     if(surface.runtime_sources.active() || surface.runtime_forcings.active() || gw.runtimeSources().active())
         return "Common source stage runtime coupling providers are not qualified.";
     if(surface.volume.size()!=mesh.tri_area.size() || gw.state().n_cells!=mesh.n_cells())
@@ -154,8 +158,20 @@ std::string CommonSourceStage::initialize(const MeshData& mesh,SurfaceStateData&
     mesh_=&mesh;surface_=&surface;options_=&options;gw_=&gw;sources_=&sources;donors_=std::move(donors);
     cells_=std::move(cells);owned_=std::move(owned);weather_=preview.mesh_weather_area;
     et_contacts_=std::move(et_contacts);
+    runtime_water_identity_=runtime_water_identity;
     checkpoint_model_=checkpointModel();
     return {};
+}
+
+RuntimeWaterCheckpointBinding CommonSourceStage::runtimeWaterBinding(double time) const {
+    RuntimeWaterCheckpointBinding b;b.identity=checkpoint_model_;b.completed_time=time;
+    for(double zs:gw_->state().zs)b.groundwater_cells.push_back(zs>0);
+    return b;
+}
+std::string CommonSourceStage::validateRuntimeWater(const RuntimeSources& surface,const RuntimeSources& groundwater,
+    const RuntimeForcings& forcing,double time) const {
+    if(!runtimeWaterEnabled())return "Common source runtime providers require their initial water profile.";
+    return RuntimeWaterCheckpoint::validate(runtimeWaterBinding(time),surface,groundwater,forcing);
 }
 
 std::string CommonSourceStage::checkpointBoundary() const {
@@ -163,8 +179,13 @@ std::string CommonSourceStage::checkpointBoundary() const {
     for(const auto& group:sources_->clocks().groups())
         if(!group.pending.empty()||group.completed_end!=completedEnd())return "Checkpoint source clocks do not match the accepted boundary.";
     const auto error=qualityProfile(*sources_,*surface_,*gw_);if(!error.empty())return error;
-    if(surface_->runtime_sources.active()||surface_->runtime_forcings.active()||gw_->runtimeSources().active()||
-       !surface_->transport.runtime_bc_conc.empty())return "Checkpoint runtime provider profile is not qualified.";
+    if(!surface_->transport.runtime_bc_conc.empty())return "Checkpoint runtime boundary quality is not qualified.";
+    if(runtimeWaterEnabled()) {
+        auto surface=surface_->runtime_sources,groundwater=gw_->runtimeSources();auto forcing=surface_->runtime_forcings;
+        surface.expire(completedEnd());groundwater.expire(completedEnd());forcing.expire(completedEnd());
+        const auto invalid=validateRuntimeWater(surface,groundwater,forcing,completedEnd());if(!invalid.empty())return invalid;
+    } else if(!surface_->runtime_sources.rows.empty()||!surface_->runtime_forcings.rows.empty()||!gw_->runtimeSources().rows.empty())
+        return "Checkpoint runtime provider history is not qualified.";
     for(int cell:cells_) {
         if(gw_->sourceCompletedTime(cell)>completedEnd())return "Checkpoint aquifer firing exceeds the accepted source horizon.";
         for(const auto& receipt:gw_->pendingSourceReceipts(cell))if(receipt.end>completedEnd())
@@ -187,7 +208,12 @@ std::string CommonSourceStage::advance(double start,double end) {
         return "Common source clocks do not match the accepted mesh source interval.";
     const auto quality_error=qualityProfile(*sources_,*surface_,*gw_);if(!quality_error.empty())return quality_error;
     const int np=int(sources_->pollutantNames().size());
-    if(surface_->runtime_sources.active() || surface_->runtime_forcings.active() || gw_->runtimeSources().active())
+    if(runtimeWaterEnabled()) {
+        const auto invalid=validateRuntimeWater(surface_->runtime_sources,gw_->runtimeSources(),surface_->runtime_forcings,start);
+        if(!invalid.empty())return invalid;
+        if(end>std::min({surface_->runtime_sources.nextTime(start),gw_->runtimeSources().nextTime(start),
+            surface_->runtime_forcings.nextTime(start)}))return "Common source interval crosses provider expiry.";
+    } else if(surface_->runtime_sources.active() || surface_->runtime_forcings.active() || gw_->runtimeSources().active())
         return "Common source runtime provider profile changed to an unsupported configuration.";
     std::vector<SurfaceReturnReceipt> ready_returns;
     std::vector<runoff::SourceSurfaceReturn> source_returns;
@@ -246,7 +272,7 @@ std::string CommonSourceStage::advance(double start,double end) {
         }
         ready_returns.push_back(r);
     }
-    struct MeshTrial { int cell;double rain,evap,out,incoming,available;std::vector<double> mass,rain_mass; };
+    struct MeshTrial { int cell;double rain,evap,out,incoming,available,requested_infil,et_rate;std::vector<double> mass,rain_mass; };
     std::vector<MeshTrial> mesh_trials;
     std::vector<int> mesh_index(mesh_->n_cells(),-1);
     std::vector<SurfaceIntakeRequest> requests;
@@ -264,15 +290,18 @@ std::string CommonSourceStage::advance(double start,double end) {
                 return "Common LID pollutant pairing needs qualified paired source returns.";
         }
         const double A=mesh_->tri_area[i],w=weather_[i];
-        const double rain=std::max(0.0,surface_->rainfall[i])*w*dt;
+        const double rain=std::max(0.0,surface_->runtime_forcings.rate(1,i,surface_->rainfall[i]))*w*dt;
         const double coupling=surface_->coupling_flux[i]*A*dt;
         const double incoming=rain+std::max(coupling,0.0)+mesh_return[i];
         const double available=std::max(0.0,surface_->volume[i]+incoming);
-        const double evap=evapSink(surface_->evap_rate[i],surface_->depth[i],options_->dry_depth)*w*dt;
+        const double et_rate=surface_->runtime_forcings.rate(2,i,surface_->evap_rate[i]);
+        const double evap=evapSink(et_rate,surface_->depth[i],options_->dry_depth)*w*dt;
         const double out=std::max(-coupling,0.0);
-        const double cap=gw_->sourceInfiltrationCapacity(i,std::max(0.0,surface_->depth[i]),dt)*w*dt;
+        const auto* prescribed=surface_->runtime_forcings.get(3,i);
+        const double cap=(prescribed ? std::max(0.0,infilSink(prescribed->rate,surface_->depth[i],options_->dry_depth)) :
+            gw_->sourceInfiltrationCapacity(i,std::max(0.0,surface_->depth[i]),dt))*w*dt;
         const double sum=cap+evap+out,scale=sum>available && sum>0 ? available/sum : 1;
-        MeshTrial trial{i,rain,evap*scale,out*scale,incoming,available,std::vector<double>(np,0),std::vector<double>(np,0)};
+        MeshTrial trial{i,rain,evap*scale,out*scale,incoming,available,cap,et_rate,std::vector<double>(np,0),std::vector<double>(np,0)};
         const auto& tr=surface_->transport;
         for(int p=0;p<np;++p) {
             const double opening=tr.cell_mass[tr.idx(p,i)];
@@ -339,7 +368,13 @@ std::string CommonSourceStage::advance(double start,double end) {
             requests.push_back({kind,name,d.identity,cell,area,p,volume,volume*weight});
         }
     }
-    auto error=exchange_.plan(*gw_,start,end,end,requests);if(!error.empty()) return error;
+    SurfaceExchange::Capacity capacity_override=[&](const SurfaceIntakeRequest& r,double span) {
+        if(r.kind==SurfaceDonorKind::MESH)if(const auto* row=surface_->runtime_forcings.get(3,r.cell))
+            return std::max(0.0,infilSink(row->rate,surface_->depth[r.cell],options_->dry_depth))*r.area*span;
+        return gw_->sourceInfiltrationCapacity(r.cell,r.pond,span)*r.area*span;
+    };
+    const auto* prescribed_capacity=runtimeWaterEnabled()?&capacity_override:nullptr;
+    auto error=exchange_.plan(*gw_,start,end,end,requests,prescribed_capacity);if(!error.empty()) return error;
     std::vector<double> awarded(donors_.size(),0);
     std::map<int,double> mesh_awarded;
     for(const auto& a:exchange_.awards()) {
@@ -409,7 +444,7 @@ std::string CommonSourceStage::advance(double start,double end) {
         et_receipts.push_back(r);
     };
     for(const auto& m:mesh_trials) addEt({SurfaceEtOwner::MESH,-1,-1,-1,m.cell,start,end,weather_[m.cell],
-        std::max(0.0,surface_->evap_rate[m.cell])*weather_[m.cell]*dt,m.evap},true);
+        std::max(0.0,m.et_rate)*weather_[m.cell]*dt,m.evap},true);
     for(std::size_t j=0;j<bounded.atmosphere().size();++j) {
         const auto& a=bounded.atmosphere()[j];const auto& b=sources_->atmosphere()[j];
         const auto owner=a.kind==runoff::SourceEtKind::PERVIOUS ? SurfaceEtOwner::PERVIOUS :
@@ -434,9 +469,13 @@ std::string CommonSourceStage::advance(double start,double end) {
         }
     }
     // Revalidation and receiver booking happen before any managed source debit.
-    error=exchange_.commit(*gw_,actual);if(!error.empty()) { exchange_.cancel();return error; }
+    error=exchange_.commit(*gw_,actual,prescribed_capacity);if(!error.empty()) { exchange_.cancel();return error; }
     for(const auto& m:mesh_trials) {
         const double infil=mesh_awarded[m.cell],A=mesh_->tri_area[m.cell];
+        if(auto* row=const_cast<RuntimeForcing*>(surface_->runtime_forcings.get(3,m.cell))) {
+            auto& r=row->receipt;r.requested+=m.requested_infil;r.applied+=infil;r.water_out+=infil;
+            r.last_flow=infil/dt;r.last_dt=dt;
+        }
         surface_->volume[m.cell]=std::max(0.0,surface_->volume[m.cell]+m.incoming-m.evap-m.out-infil);
         surface_->infil_applied[m.cell]+=infil/A;
         surface_->coupling_applied[m.cell]+=m.incoming-m.rain-m.out;
