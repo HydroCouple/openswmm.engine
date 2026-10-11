@@ -173,7 +173,7 @@ std::string ExplicitInertialSolver::loadCheckpointBytes(std::string bytes,const 
     const std::function<void(const runoff::SourceWaterDriver&)>* validate_source) {
     try {
         const auto error=checkpointBoundary(); if(!error.empty()) return error;
-        if(t_last_sync_!=0 || common_stage_->intervals()!=0 || source_history_)
+        if(t_last_sync_!=0 || common_stage_->intervals()!=0 || source_history_ || engine_source_history_)
             return "CPU checkpoint restore requires a fresh marcher without a history recorder.";
         if(bytes.empty() || bytes.size()>maxBytes) return "CPU checkpoint exceeds its size limit.";
         Archive file(std::move(bytes)); std::string magic,payload;

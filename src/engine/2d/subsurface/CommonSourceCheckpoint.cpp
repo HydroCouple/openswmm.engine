@@ -136,10 +136,13 @@ std::string CommonSourceStage::loadCheckpoint(const std::string& path) {
         return loadCheckpointBytes(std::move(bytes));
     } catch(const std::exception& e){return e.what();}
 }
-std::string CommonSourceStage::loadCheckpointBytes(std::string bytes) {
+std::string CommonSourceStage::inspectCheckpointBytes(std::string bytes,const std::function<std::string(const CommonSourceStage&)>& inspect) const {
+    auto trial=*this;return trial.loadCheckpointBytes(std::move(bytes),&inspect);
+}
+std::string CommonSourceStage::loadCheckpointBytes(std::string bytes,const std::function<std::string(const CommonSourceStage&)>* inspect) {
     try {
         const auto error=checkpointBoundary();if(!error.empty())return error;
-        if(completedEnd()!=0||intervals_!=0)return "Source checkpoint restore requires a fresh attached stage.";
+        if(!inspect && (completedEnd()!=0||intervals_!=0))return "Source checkpoint restore requires a fresh attached stage.";
         if(checkpoint_model_!=checkpointModel())return "Source checkpoint target model changed after attachment.";
         if(bytes.empty()||bytes.size()>maxCheckpointBytes)return "Source checkpoint exceeds its size limit.";
         Archive file(std::move(bytes));std::string magic,model,payload;uint32_t version=0,endian=0,longBytes=0,doubleBytes=0,crc=0;
@@ -202,6 +205,7 @@ std::string CommonSourceStage::loadCheckpointBytes(std::string bytes) {
         }
         // There is no active exchange transaction at an accepted boundary.
         trial.exchange_.start_=trial.exchange_.end_=end;trial.exchange_.receiver_=nullptr;trial.exchange_.awards_.clear();
+        if(inspect)return (*inspect)(trial);
         trial.sources_=sources_;trial.gw_=gw_;trial.surface_=surface_;
         *sources_=std::move(source);*gw_=std::move(gw);*surface_=std::move(mesh);*this=std::move(trial);
         return {};

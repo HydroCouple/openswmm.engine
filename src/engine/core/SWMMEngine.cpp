@@ -7541,6 +7541,11 @@ int SWMMEngine::end() noexcept {
         return SWMM_ERR_WRONG_STATE;
     }
 
+#ifdef OPENSWMM_HAS_2D
+    // Histories close at the last accepted engine checkpoint. Teardown may
+    // flush a remaining surface batch, outside the accepted-step timeline.
+    detachEngineSourceHistory();
+#endif
     // Compute final GW storage for mass balance reporting
     {
         auto& gw = groundwater_.state();
@@ -7657,9 +7662,6 @@ int SWMMEngine::end() noexcept {
         plugins_.finalize_all(ctx_);
     }
 
-#ifdef OPENSWMM_HAS_2D
-    engine_source_history_=nullptr;
-#endif
     ctx_.state = EngineState::ENDED;
     return SWMM_OK;
 }
@@ -7731,7 +7733,7 @@ int SWMMEngine::close() noexcept {
     checkpoint_enabled_ = checkpoint_ready_ = false;
     checkpoint_model_.clear();
 #ifdef OPENSWMM_HAS_2D
-    engine_source_history_=nullptr;source_delivery_.reset();source_stage_=nullptr;source_totals_={};
+    detachEngineSourceHistory();source_delivery_.reset();source_stage_=nullptr;source_totals_={};
 #endif
     // Load-phase breakdown. Emitted here rather than from end() so it reports
     // for a bare open()+close() too — the benchmark harness times open alone,

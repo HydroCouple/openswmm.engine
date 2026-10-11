@@ -86,7 +86,14 @@ std::string EngineSourceResultHistory::append(const SWMMEngine& e,double start) 
         require(frame ? engine_==&e && start==tables_.at("boundaries").columns[2].back() && e.ctx_.current_time>start :
             start==0 && e.ctx_.current_time==0,"Capture initial state and every accepted engine step exactly once.");
         auto current=projection(e,frame,start);auto trial=*this;
-        if(!frame)trial=std::move(current);
+        if(!frame) {
+            current.detailed_=detailed_;
+            if(detailed_) {
+                error=current.source_intervals_.append(*e.source_stage_);
+                if(!error.empty())return error;
+            }
+            trial=std::move(current);
+        }
         else {
             require(sources_==current.sources_ && nodes_==current.nodes_ && outfall_returns_==current.outfall_returns_ &&
                 start_date_==current.start_date_,"Engine source result identities changed.");
@@ -119,7 +126,12 @@ std::string EngineSourceResultHistory::resume(const SWMMEngine& e) {
                 require(t.columns[c][offset+r]==expected.columns[c][r]+(c==1 && name.starts_with("pending_")?double(offset):0),
                     "Engine source final diagnostics differ from checkpoint.");
         }
-        engine_=&e;return {};
+        auto trial=*this;
+        if(detailed_) {
+            error=trial.source_intervals_.resumeCapturedBoundary(*e.source_stage_);
+            if(!error.empty())return error;
+        }
+        trial.engine_=&e;*this=std::move(trial);return {};
     } catch(const std::exception& e){return e.what();}
 }
 std::string EngineSourceResultHistory::validate() const {
@@ -213,6 +225,68 @@ std::string EngineSourceResultHistory::validate() const {
                     close(n[10][r],f?(n[6][r]+n[7][r])/(b[2][f]-b[1][f]):0),"Invalid source node delivery balance or rate.");
                 if(f)require(close(n[4][r]-n[4][r-nodes_.size()],n[6][r]) && close(n[5][r]-n[5][r-nodes_.size()],n[7][r]),"Invalid accepted source delivery increment.");
             }
+        }
+        return validatePairing();
+    } catch(const std::exception& e){return e.what();}
+}
+std::string EngineSourceResultHistory::captureSourceInterval(const CommonSourceStage& stage) {
+    if(!detailed_ || !engine_ || engine_->source_stage_!=&stage || !engine_->step_active_)
+        return "Detailed source capture requires the attached active engine step.";
+    return source_intervals_.append(stage);
+}
+std::string EngineSourceResultHistory::validatePairing() const {
+    try {
+        if(!detailed_) {
+            require(source_intervals_.tables_.empty(),"Unexpected detailed source history in engine-only profile.");return {};
+        }
+        const auto invalid=source_intervals_.validate();if(!invalid.empty())return invalid;
+        std::size_t total=0;
+        for(const auto* tables:{&tables_,&source_intervals_.tables_})for(const auto& [name,t]:*tables)for(const auto& c:t.columns) {
+            require(c.size()<=8*1024*1024-total,"Combined paired history exceeds its value limit.");total+=c.size();
+        }
+        require(!source_intervals_.boundary_.empty() && source_intervals_.sources_==sources_ &&
+            source_intervals_.pollutants_.empty() && source_intervals_.outfall_returns_==outfall_returns_,
+            "Paired source history identities, checkpoint or capabilities differ.");
+        const auto& st=source_intervals_.tables_;const auto& sb=st.at("boundaries").columns;
+        const auto& eb=tables_.at("boundaries").columns;
+        require(sb[0].size()==std::size_t(eb[3].back())+1,"Paired source history omits or extends completed intervals.");
+        const auto offsets=[](const SourceResultTable& t,std::size_t frames) {
+            std::vector<std::size_t> at(frames+1);std::size_t r=0;
+            for(std::size_t f=0;f<frames;++f) {at[f]=r;while(r<t.rows() && t.columns[0][r]==double(f))++r;}
+            at[frames]=r;return at;
+        };
+        const auto sw=offsets(st.at("source_water"),sb[0].size()),ew=offsets(tables_.at("source_water"),eb[0].size());
+        const auto sg=offsets(st.at("group_water"),sb[0].size()),eg=offsets(tables_.at("group_water"),eb[0].size());
+        const auto& s=st.at("source_water").columns;const auto& w=tables_.at("source_water").columns;
+        const auto& gs=st.at("group_water").columns;const auto& ge=tables_.at("group_water").columns;
+        for(std::size_t f=0;f<eb[0].size();++f) {
+            const auto n=std::size_t(eb[3][f]);
+            require(sb[3][n]==eb[4][f],"Paired source and engine clocks differ.");
+            for(std::size_t c=4;c<7;++c)require(sb[c][n]==eb[c+3][f],"Paired cumulative mesh water differs.");
+            require(sw[n+1]-sw[n]==ew[f+1]-ew[f] && sg[n+1]-sg[n]==eg[f+1]-eg[f],"Paired source ownership shape differs.");
+            std::vector<double> extra(eg[f+1]-eg[f],0);
+            for(std::size_t r=sw[n];r<sw[n+1];++r) {
+                const auto er=ew[f]+r-sw[n];
+                for(std::size_t c=1;c<16;++c)require(s[c][r]==w[c][er],"Paired source water differs from engine snapshot.");
+                if(outfall_returns_) {
+                    require(w[16][er]>=s[16][r],"Engine outfall credit precedes source capture.");
+                    extra[std::size_t(s[2][r])]+=w[16][er]-s[16][r];
+                }
+            }
+            for(std::size_t r=sg[n];r<sg[n+1];++r) {
+                const auto er=eg[f]+r-sg[n];
+                require(gs[1][r]==ge[1][er] && close(gs[2][r]+extra[r-sg[n]],ge[2][er]) && close(gs[3][r],ge[3][er]),
+                    "Paired pending water or group residual differs.");
+            }
+        }
+        // Fine source intervals are captured before this step's native outfall
+        // credits. Preserve that earlier clock; never relabel their old rows.
+        std::size_t f=0;
+        for(std::size_t n=0;n<sb[0].size();++n) {
+            while(f+1<eb[0].size() && eb[3][f]<double(n))++f;
+            require(sb[3][n]<=eb[2][f]+1e-12*std::max(1.,eb[2][f]),"Source interval extends its accepted engine step.");
+            if(outfall_returns_)require(st.at("outfall_clock").columns[1][n]<=eb[1][f]+1e-12*std::max(1.,eb[1][f]),
+                "Source snapshot includes outfall credits from a later engine step.");
         }
         return {};
     } catch(const std::exception& e){return e.what();}

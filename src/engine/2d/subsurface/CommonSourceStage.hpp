@@ -3,6 +3,7 @@
 #include "SurfaceExchange.hpp"
 #include "SurfaceOwnership.hpp"
 #include "../../hydrology/SourceWaterDriver.hpp"
+#include <functional>
 
 namespace openswmm::twoD {
 struct MeshData; struct SurfaceStateData; struct SolverOptions2D; class SubsurfaceSolver;
@@ -56,7 +57,10 @@ private:
     friend class SourceResultHistory;
     friend class ExplicitInertialSolver;
     std::string checkpointBytes(std::string& bytes) const;
-    std::string loadCheckpointBytes(std::string bytes);
+    std::string loadCheckpointBytes(std::string bytes,const std::function<std::string(const CommonSourceStage&)>* inspect=nullptr);
+    // Validate a captured earlier source boundary on private source/GW/mesh
+    // copies. Never install it into the current accepted engine state.
+    std::string inspectCheckpointBytes(std::string,const std::function<std::string(const CommonSourceStage&)>&) const;
     std::string checkpointBoundary() const;
     std::string checkpointModel() const;
     std::string checkpoint_model_;

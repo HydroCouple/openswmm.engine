@@ -55,12 +55,14 @@
 #include "../data/SolverOptions2D.hpp"   // Momentum2D
 
 namespace openswmm::detail { class CompletedSourceArchive; }
+namespace openswmm { class SWMMEngine; }
 namespace openswmm::runoff { class SourceWaterDriver; }
 namespace openswmm::twoD {
 
 class SubsurfaceSolver;   // G1: the two-zone groundwater kernel, if authored
 class CommonSourceStage;
 class SourceResultHistory;
+class EngineSourceResultHistory;
 
 class ExplicitInertialSolver final : public ISurfaceSolver {
 public:
@@ -107,6 +109,7 @@ public:
 private:
     friend struct ExplicitInertialSolverTestAccess;
     friend class SurfaceRouter2D;
+    friend class openswmm::SWMMEngine;
     std::string checkpointBytes(std::string& bytes) const;
     std::string loadCheckpointBytes(std::string bytes, const std::array<double,5>* router_boundary = nullptr,
                                     const std::vector<double>* pending_outfalls = nullptr,
@@ -355,6 +358,7 @@ private:
     double t_last_sync_ = 0.0;          ///< lazy-source clock
     CommonSourceStage* common_stage_ = nullptr;
     SourceResultHistory* source_history_ = nullptr;
+    EngineSourceResultHistory* engine_source_history_ = nullptr;
     bool checkpoint_ready_ = false;
     bool joint_checkpoint_ = false; // only SurfaceRouter2D may restore live 1D pairing
     std::string checkpointBoundary() const;

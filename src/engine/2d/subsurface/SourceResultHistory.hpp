@@ -9,7 +9,7 @@ namespace openswmm::twoD {
 class CommonSourceStage;
 
 /// Columnar diagnostics. Identifiers refer to the saved name/usage tables;
-/// frame is an accepted source boundary, never the hydraulic report index.
+/// Frame meaning belongs to its recorder, never to the hydraulic report index.
 struct SourceResultTable {
     std::vector<std::string> fields, units;
     std::vector<std::vector<double>> columns;
@@ -20,7 +20,8 @@ struct SourceResultTable {
 /// and EVERY accepted source interval. Capture failure changes neither physics
 /// nor history. Receiver clocks and pending queues are endpoint snapshots.
 /// Optional marcher/writer hooks remain behind the reviewed runtime gate.
-/// Whole-engine restart and production streaming are not qualified here.
+/// Paired engine continuation uses EngineSourceResultHistory; production
+/// streaming remains unqualified.
 class SourceResultHistory {
 public:
     std::string append(const CommonSourceStage&);
@@ -42,9 +43,13 @@ public:
     static std::string read(const std::string& path, SourceResultHistory& out, bool& available);
 private:
     friend struct SourceResultFile;
+    friend struct EngineSourceResultFile;
+    friend class EngineSourceResultHistory;
     friend class Default2DOutputPlugin;
     friend class ExplicitInertialSolver;
     std::string refreshCheckpointMatch(const CommonSourceStage&);
+    void initializeIdentity(const CommonSourceStage&);
+    std::string resumeCapturedBoundary(const CommonSourceStage&);
     std::string writeIntoOpenResult(std::int64_t file) const; // engine's HDF5 instance only
     std::string extends(const SourceResultHistory& prefix) const;
     static std::map<std::string,SourceResultTable> schema(bool outfall_returns=false);

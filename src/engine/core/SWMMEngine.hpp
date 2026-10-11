@@ -220,7 +220,7 @@ public:
     const runoff::SourceWaterDeliveryBridge* sourceDelivery() const { return source_delivery_.get(); }
     // Accepted-engine water history, separate from source-interval recording.
     // Caller keeps the recorder alive through end/close. Restore first, then resume.
-    std::string setEngineSourceResultHistory(twoD::EngineSourceResultHistory&);
+    std::string setEngineSourceResultHistory(twoD::EngineSourceResultHistory&,bool detailed_source_intervals=false);
     std::string resumeEngineSourceResultHistory(twoD::EngineSourceResultHistory&);
 #endif
     std::string saveCheckpoint(const std::string& path) const;
@@ -500,6 +500,7 @@ private:
 #ifdef OPENSWMM_HAS_2D
     friend class twoD::EngineSourceResultHistory;
     twoD::EngineSourceResultHistory* engine_source_history_ = nullptr;
+    void detachEngineSourceHistory() noexcept;
     std::unique_ptr<runoff::SourceWaterDeliveryBridge> source_delivery_;
     twoD::CommonSourceStage* source_stage_ = nullptr; // caller keeps the stage alive
     std::array<double,6> source_totals_{}; // rain, ET, infiltration, return, runoff, drain (ft3)

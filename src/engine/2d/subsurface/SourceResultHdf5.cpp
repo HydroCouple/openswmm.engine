@@ -185,6 +185,18 @@ struct SourceResultFile {
             if(!part.empty()){std::error_code ignored;std::filesystem::remove(part,ignored);}return e.what();
         }
     }
+    static SourceResultHistory readGroup(hid_t group,std::size_t& total) {
+        const auto version=attribute(group,"schema_version");require(version=="1"||version=="2"||version=="3","Unsupported source result schema.");
+        for(const auto& [key,value]:metadata)if(key!="schema_version")require(attribute(group,key.c_str())==value,"Unsupported source result metadata or schema.");
+        SourceResultHistory trial;trial.outfall_returns_=version=="3";
+        if(trial.outfall_returns_)require(attribute(group,"outfall_return_convention")==outfallSemantics,"Unsupported outfall source result metadata.");
+        trial.tables_=SourceResultHistory::schema(trial.outfall_returns_);
+        if(version!="1")trial.boundary_=boundary(group);
+        trial.sources_=names(group,"source_names");trial.pollutants_=names(group,"pollutant_names");trial.mass_units_=names(group,"pollutant_mass_units");
+        for(auto& [name,t]:trial.tables_)readTable(group,name,t,total);
+        const auto invalid=trial.validate();require(invalid.empty(),invalid.c_str());
+        return trial;
+    }
     static std::string read(const std::string& path,SourceResultHistory& out,bool& available) {
         available=false;
         try {
@@ -195,15 +207,7 @@ struct SourceResultFile {
             require(!h5io::has_link(file.get(),"__source_history_next")&&!h5io::has_link(file.get(),"__source_history_previous"),"Source output contains an unfinished publication.");
             if(!h5io::has_link(file.get(),"source_history"))return {};
             auto group=h5io::open_group(file.get(),"source_history");require(group.ok(),"Invalid source result group.");
-            const auto version=attribute(group.get(),"schema_version");require(version=="1"||version=="2"||version=="3","Unsupported source result schema.");
-            for(const auto& [key,value]:metadata)if(key!="schema_version")require(attribute(group.get(),key.c_str())==value,"Unsupported source result metadata or schema.");
-            SourceResultHistory trial;trial.outfall_returns_=version=="3";
-            if(trial.outfall_returns_)require(attribute(group.get(),"outfall_return_convention")==outfallSemantics,"Unsupported outfall source result metadata.");
-            trial.tables_=SourceResultHistory::schema(trial.outfall_returns_);
-            if(version!="1")trial.boundary_=boundary(group.get());
-            trial.sources_=names(group.get(),"source_names");trial.pollutants_=names(group.get(),"pollutant_names");trial.mass_units_=names(group.get(),"pollutant_mass_units");
-            std::size_t total=0;for(auto& [name,t]:trial.tables_)readTable(group.get(),name,t,total);
-            const auto invalid=trial.validate();if(!invalid.empty())return invalid;
+            std::size_t total=0;auto trial=readGroup(group.get(),total);
             out=std::move(trial);available=true;return {};
         } catch(const std::exception& e){return e.what();}
     }
@@ -215,6 +219,7 @@ std::string SourceResultHistory::read(const std::string& path,SourceResultHistor
 struct EngineSourceResultFile {
     static constexpr const char* kind="OpenSWMM internal accepted engine source result history";
     static constexpr const char* semantics="accepted engine steps; frame 0 initial; source clocks may repeat; cumulative water; queues are snapshots not additive events; whole-engine checkpoint match; no hydraulic output append";
+    static constexpr const char* pairedSemantics="immutable source intervals on their own axis; earlier source capture checkpoint inspected privately; continuation requires containing whole-engine checkpoint";
     static std::string save(const EngineSourceResultHistory& history,const std::string& path) {
         std::string part;
         try {
@@ -228,11 +233,16 @@ struct EngineSourceResultFile {
             PublicationFile file(part);if(file.id<0){part.clear();return "Cannot create engine source result publication file.";}
             attribute(file.id,"artifact_kind",kind);
             auto group=h5io::make_group(file.id,"engine_source_history");require(group.ok(),"Cannot create engine source history group.");
-            attribute(group.get(),"schema_version","1");attribute(group.get(),"temporal_meaning",semantics);
+            attribute(group.get(),"schema_version",history.detailed_?"2":"1");attribute(group.get(),"temporal_meaning",semantics);
             attribute(group.get(),"outfall_returns",history.outfall_returns_?"1":"0");
             names(group.get(),"source_names",history.sources_);names(group.get(),"node_names",history.nodes_);
             for(const auto& [name,t]:history.tables_)writeTable(group.get(),name,t);
             boundary(group.get(),history.boundary_);
+            if(history.detailed_) {
+                attribute(group.get(),"source_interval_convention",pairedSemantics);
+                auto source=h5io::make_group(group.get(),"source_intervals");require(source.ok(),"Cannot create paired source interval group.");
+                SourceResultFile::writeGroup(source.get(),history.source_intervals_);
+            }
             require(H5Fflush(file.id,H5F_SCOPE_GLOBAL)>=0,"Cannot flush engine source result file.");
             group.close();file.close();std::error_code error;std::filesystem::rename(part,path,error);
             require(!error,"Cannot publish engine source result file.");part.clear();return {};
@@ -248,11 +258,18 @@ struct EngineSourceResultFile {
             auto file=h5io::open_file_readonly(path);require(file.ok(),"Cannot open engine source result HDF5 file.");
             if(!h5io::has_link(file.get(),"engine_source_history"))return {};
             auto group=h5io::open_group(file.get(),"engine_source_history");require(group.ok(),"Invalid engine source history group.");
-            require(attribute(group.get(),"schema_version")=="1" && attribute(group.get(),"temporal_meaning")==semantics,"Unsupported engine source result schema or metadata.");
+            const auto version=attribute(group.get(),"schema_version");
+            require((version=="1" || version=="2") && attribute(group.get(),"temporal_meaning")==semantics,"Unsupported engine source result schema or metadata.");
+            require((version=="2")==h5io::has_link(group.get(),"source_intervals"),"Engine source interval capability differs from schema.");
             const auto returns=attribute(group.get(),"outfall_returns");require(returns=="0"||returns=="1","Invalid engine source return capability.");
-            EngineSourceResultHistory trial;trial.outfall_returns_=returns=="1";trial.tables_=EngineSourceResultHistory::schema(trial.outfall_returns_);
+            EngineSourceResultHistory trial;trial.detailed_=version=="2";trial.outfall_returns_=returns=="1";trial.tables_=EngineSourceResultHistory::schema(trial.outfall_returns_);
             trial.sources_=names(group.get(),"source_names");trial.nodes_=names(group.get(),"node_names");trial.boundary_=boundary(group.get());
             std::size_t total=0;for(auto& [name,t]:trial.tables_)readTable(group.get(),name,t,total);
+            if(trial.detailed_) {
+                require(attribute(group.get(),"source_interval_convention")==pairedSemantics,"Unsupported paired source interval convention.");
+                auto source=h5io::open_group(group.get(),"source_intervals");require(source.ok(),"Missing paired source interval group.");
+                trial.source_intervals_=SourceResultFile::readGroup(source.get(),total);
+            }
             const auto& dates=trial.tables_.at("boundaries").columns[6];require(!dates.empty(),"Missing engine source start date.");trial.start_date_=dates.front();
             const auto invalid=trial.validate();if(!invalid.empty())return invalid;
             out=std::move(trial);available=true;return {};

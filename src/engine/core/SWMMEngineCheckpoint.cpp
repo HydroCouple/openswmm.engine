@@ -5,6 +5,7 @@
 #ifdef OPENSWMM_HAS_2D
 #include "../2d/subsurface/CommonSourceStage.hpp"
 #include "../2d/subsurface/EngineSourceResultHistory.hpp"
+#include "../2d/solver/ExplicitInertialSolver.hpp"
 #endif
 #include <algorithm>
 #include <atomic>
@@ -640,17 +641,31 @@ std::string SWMMEngine::saveCheckpoint(const std::string& path) const {
     } catch(const std::exception& e) {return e.what();}
 }
 #ifdef OPENSWMM_HAS_2D
-std::string SWMMEngine::setEngineSourceResultHistory(twoD::EngineSourceResultHistory& history) {
+void SWMMEngine::detachEngineSourceHistory() noexcept {
+    if(auto* cpu=dynamic_cast<twoD::ExplicitInertialSolver*>(surface_router_.solver_.get()))cpu->engine_source_history_=nullptr;
+    engine_source_history_=nullptr;
+}
+std::string SWMMEngine::setEngineSourceResultHistory(twoD::EngineSourceResultHistory& history,bool detailed_source_intervals) {
     try {
         require(!step_active_ && !runtime_pipeline_ && !engine_source_history_ && ctx_.current_time==0 && history.tables().empty(),
                 "Attach an empty engine source recorder at the initial accepted boundary.");
-        const auto error=history.append(*this,0);require(error.empty(),error.c_str());engine_source_history_=&history;return {};
+        auto* cpu=dynamic_cast<twoD::ExplicitInertialSolver*>(surface_router_.solver_.get());
+        require(cpu && !cpu->source_history_ && !cpu->engine_source_history_,"Engine source history requires its unbound CPU marcher.");
+        auto trial=history;trial.detailed_=detailed_source_intervals;
+        const auto error=trial.append(*this,0);require(error.empty(),error.c_str());
+        history=std::move(trial);engine_source_history_=&history;
+        if(detailed_source_intervals)cpu->engine_source_history_=&history;
+        return {};
     } catch(const std::exception& e) {return e.what();}
 }
 std::string SWMMEngine::resumeEngineSourceResultHistory(twoD::EngineSourceResultHistory& history) {
     try {
         require(!step_active_ && !runtime_pipeline_ && !engine_source_history_,"Resume engine source history after restoring the engine checkpoint.");
-        const auto error=history.resume(*this);require(error.empty(),error.c_str());engine_source_history_=&history;return {};
+        auto* cpu=dynamic_cast<twoD::ExplicitInertialSolver*>(surface_router_.solver_.get());
+        require(cpu && !cpu->source_history_ && !cpu->engine_source_history_,"Engine source history requires its unbound CPU marcher.");
+        const auto error=history.resume(*this);require(error.empty(),error.c_str());engine_source_history_=&history;
+        if(history.detailed_)cpu->engine_source_history_=&history;
+        return {};
     } catch(const std::exception& e) {return e.what();}
 }
 #endif

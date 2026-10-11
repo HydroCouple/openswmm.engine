@@ -1000,6 +1000,16 @@ namespace {
 void sameEngineHistory(const twoD::EngineSourceResultHistory& a,const twoD::EngineSourceResultHistory& b) {
     ASSERT_EQ(a.sourceNames(),b.sourceNames());ASSERT_EQ(a.nodeNames(),b.nodeNames());
     ASSERT_EQ(a.outfallReturnsAvailable(),b.outfallReturnsAvailable());ASSERT_EQ(a.simulationStartDate(),b.simulationStartDate());
+    ASSERT_EQ(a.detailedSourceIntervalsAvailable(),b.detailedSourceIntervalsAvailable());
+    if(a.sourceIntervals()) {
+        const auto& x=*a.sourceIntervals();const auto& y=*b.sourceIntervals();
+        ASSERT_EQ(x.sourceNames(),y.sourceNames());ASSERT_EQ(x.pollutantNames(),y.pollutantNames());
+        ASSERT_EQ(x.pollutantMassUnits(),y.pollutantMassUnits());ASSERT_EQ(x.outfallReturnsAvailable(),y.outfallReturnsAvailable());
+        ASSERT_EQ(x.tables().size(),y.tables().size());
+        for(const auto& [name,t]:x.tables()) {
+            const auto& next=y.tables().at(name);EXPECT_EQ(t.fields,next.fields)<<name;EXPECT_EQ(t.units,next.units)<<name;EXPECT_EQ(t.columns,next.columns)<<name;
+        }
+    }
     ASSERT_EQ(a.tables().size(),b.tables().size());
     for(const auto& [name,t]:a.tables()) {
         const auto& next=b.tables().at(name);EXPECT_EQ(t.fields,next.fields)<<name;EXPECT_EQ(t.units,next.units)<<name;EXPECT_EQ(t.columns,next.columns)<<name;
@@ -1052,6 +1062,105 @@ TEST(EngineCheckpoint, AcceptedSourceHistoryPreservesEveryEngineStepAndExactCont
         ASSERT_EQ(a.engine.end(),0);
 #ifdef OPENSWMM_HAS_HDF5_MODEL
         EXPECT_EQ(history.save((root()/(name+"-final.h5")).string()),"");
+#endif
+    }
+}
+TEST(EngineCheckpoint, PairedSourceIntervalsPreserveBothClocksWaterAndRestoredContinuation) {
+    for(int lid=0;lid<3;++lid)for(double cadence:{.31,.7}) {
+        const auto name="paired-history-"+std::to_string(lid)+"-"+std::to_string(cadence);SCOPED_TRACE(name);
+        twoD::EngineSourceResultHistory history,resumed;SurfaceSession a,control,b;
+        const bool returns=lid!=0,multiple=lid==2;
+        ASSERT_NO_THROW(startClosedSpatial(a,name,lid,cadence,returns,multiple));
+        ASSERT_NO_THROW(startClosedSpatial(control,name+"-control",lid,cadence,returns,multiple));
+        ASSERT_EQ(a.engine.setEngineSourceResultHistory(history,true),"");
+        ASSERT_TRUE(history.sourceIntervals());EXPECT_EQ(history.sourceIntervals()->tables().at("boundaries").rows(),1u);
+        twoD::SourceResultHistory separate;EXPECT_THROW(a.engine.surfaceRouter2D().setSourceResultHistory(separate),std::invalid_argument);
+        bool repeated=false,multiple_intervals=false,earlier_credits=false,restored=false;int steps=0;
+        while(steps<45 && a.engine.context().elapsed_ms<a.engine.context().options.totalDurationMs()) {
+            ASSERT_NO_THROW({step(a.engine);step(control.engine);});++steps;
+            const auto& engine=history.tables().at("boundaries").columns;
+            const auto& source=history.sourceIntervals()->tables().at("boundaries").columns;
+            ASSERT_EQ(source[0].size(),std::size_t(a.stage.intervals()+1));
+            EXPECT_EQ(source[3].back(),a.stage.completedEnd());EXPECT_EQ(source[3].back(),engine[4].back());
+            repeated|=engine[3].back()==engine[3][engine[3].size()-2];
+            multiple_intervals|=engine[3].back()-engine[3][engine[3].size()-2]>1;
+            if(returns)earlier_credits|=history.sourceIntervals()->tables().at("outfall_clock").columns[1].back()<engine[5].back();
+            compare(a.engine,control.engine,name+"-physics");
+            if(restored) {ASSERT_NO_THROW(step(b.engine));sameEngineHistory(history,resumed);compare(a.engine,b.engine,name+"-continued");}
+            if(steps==25) {
+                const auto checkpoint=root()/(name+".chk");ASSERT_EQ(a.engine.saveCheckpoint(checkpoint.string()),"");
+#ifdef OPENSWMM_HAS_HDF5_MODEL
+                const auto file=root()/(name+".h5");ASSERT_EQ(history.save(file.string()),"");bool available=false;
+                ASSERT_EQ(twoD::EngineSourceResultHistory::read(file.string(),resumed,available),"");ASSERT_TRUE(available);sameEngineHistory(history,resumed);
+                twoD::SourceResultHistory component;available=true;
+                EXPECT_EQ(twoD::SourceResultHistory::read(file.string(),component,available),"");EXPECT_FALSE(available);
+#else
+                resumed=history;
+#endif
+                ASSERT_NO_THROW(startClosedSpatial(b,name+"-resumed",lid,cadence,returns,multiple));
+                const auto prefix=history;EXPECT_FALSE(b.engine.resumeEngineSourceResultHistory(resumed).empty());
+                ASSERT_EQ(b.engine.loadCheckpoint(checkpoint.string()),"");ASSERT_EQ(b.engine.resumeEngineSourceResultHistory(resumed),"");
+                sameEngineHistory(history,prefix);sameEngineHistory(history,resumed);compare(a.engine,b.engine,name+"-rebind");restored=true;
+            }
+        }
+        EXPECT_TRUE(repeated);EXPECT_TRUE(multiple_intervals);EXPECT_TRUE(restored);EXPECT_EQ(earlier_credits,returns);
+        const auto prefix=history;
+        ASSERT_EQ(a.engine.end(),0);ASSERT_EQ(control.engine.end(),0);sameEngineHistory(history,prefix);
+        EXPECT_EQ(a.stage.intervals(),control.stage.intervals());EXPECT_EQ(a.stage.completedEnd(),control.stage.completedEnd());
+        EXPECT_EQ(a.sources.ledgers()[0].outfall_return,control.sources.ledgers()[0].outfall_return);
+        EXPECT_EQ(a.engine.surfaceRouter2D().state().depth,control.engine.surfaceRouter2D().state().depth);
+#ifdef OPENSWMM_HAS_HDF5_MODEL
+        EXPECT_EQ(history.save((root()/(name+"-final.h5")).string()),"");
+#endif
+    }
+}
+TEST(EngineCheckpoint, PairedSourceHistoryInspectsEarlierSnapshotsAndOwnershipWithoutRollingBackEngine) {
+    SurfaceSession a;ASSERT_NO_THROW(startClosedSpatial(a,"paired-guards",2,.31,true,true));
+    twoD::EngineSourceResultHistory history;ASSERT_EQ(a.engine.setEngineSourceResultHistory(history,true),"");
+    for(int k=0;k<25;++k)ASSERT_NO_THROW(step(a.engine));
+    ASSERT_GT(history.sourceIntervals()->tables().at("boundaries").rows(),1u);
+    const auto checkpoint=root()/"paired-guards.chk";ASSERT_EQ(a.engine.saveCheckpoint(checkpoint.string()),"");
+    for(int mutation=0;mutation<7;++mutation) {
+        SCOPED_TRACE(mutation);auto edited=history;
+        auto& source=*const_cast<twoD::SourceResultHistory*>(edited.sourceIntervals());
+        auto& t=const_cast<std::map<std::string,twoD::SourceResultTable>&>(source.tables());
+        switch(mutation) {
+        case 0:t.at("footprints").columns[6][0]+=.001;break; // valid weather area, false static identity
+        case 1:t.at("lid_usages").columns[4][0]+=.001;break;
+        case 2:t.at("receiver").columns[6].back()+=.001;break; // pending ET invisible to engine water snapshot
+        case 3:for(auto& c:t.at("boundaries").columns)c.pop_back();break;
+        case 4:t.at("outfall_clock").columns[1].back()=a.sources.outfallReturnEnd();break;
+        case 5:const_cast<std::vector<std::string>&>(source.sourceNames())[0]="different";break;
+        case 6:t.at("boundaries").columns[3].back()+=.001;break;
+        }
+        const auto original=edited;SurfaceSession target;
+        ASSERT_NO_THROW(startClosedSpatial(target,"paired-target-"+std::to_string(mutation),2,.31,true,true));
+        ASSERT_EQ(target.engine.loadCheckpoint(checkpoint.string()),"");
+        const auto before=root()/("paired-target-"+std::to_string(mutation)+".chk");ASSERT_EQ(target.engine.saveCheckpoint(before.string()),"");const auto saved=bytes(before);
+        EXPECT_FALSE(target.engine.resumeEngineSourceResultHistory(edited).empty());sameEngineHistory(edited,original);
+        ASSERT_EQ(target.engine.saveCheckpoint(before.string()),"");EXPECT_EQ(bytes(before),saved);
+        auto valid=history;ASSERT_EQ(target.engine.resumeEngineSourceResultHistory(valid),"");
+        ASSERT_EQ(target.engine.saveCheckpoint(before.string()),"");EXPECT_EQ(bytes(before),saved);
+        ASSERT_NO_THROW(step(target.engine));
+    }
+}
+TEST(EngineCheckpoint, PairedSourceHistorySupportsInitialRebindAndVectorRichardsBackwater) {
+    for(bool returns:{false,true}) {
+        const auto name=std::string("paired-vector-")+(returns?"returns":"ordinary");
+        SurfaceSession a,b,control;twoD::EngineSourceResultHistory history,resumed;
+        ASSERT_NO_THROW(a.start(name,3,0,1,6,true,true,true,returns?2:-1));
+        ASSERT_NO_THROW(control.start(name+"-control",3,0,1,6,true,true,true,returns?2:-1));
+        ASSERT_EQ(a.engine.setEngineSourceResultHistory(history,true),"");resumed=history;
+        const auto initial=root()/(name+"-initial.chk");ASSERT_EQ(a.engine.saveCheckpoint(initial.string()),"");
+        ASSERT_NO_THROW(b.start(name+"-resumed",3,0,1,6,true,true,true,returns?2:-1));
+        ASSERT_EQ(b.engine.loadCheckpoint(initial.string()),"");ASSERT_EQ(b.engine.resumeEngineSourceResultHistory(resumed),"");
+        for(int k=0;k<20;++k) {
+            ASSERT_NO_THROW({step(a.engine);step(b.engine);step(control.engine);});sameEngineHistory(history,resumed);
+            compare(a.engine,b.engine,name+"-continued");compare(a.engine,control.engine,name+"-physics");
+        }
+#ifdef OPENSWMM_HAS_HDF5_MODEL
+        const auto h5=root()/(name+".h5");ASSERT_EQ(history.save(h5.string()),"");twoD::EngineSourceResultHistory read;bool available=false;
+        ASSERT_EQ(twoD::EngineSourceResultHistory::read(h5.string(),read,available),"");ASSERT_TRUE(available);sameEngineHistory(history,read);
 #endif
     }
 }

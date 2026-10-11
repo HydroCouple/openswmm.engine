@@ -67,6 +67,39 @@ std::map<std::string,SourceResultTable> SourceResultHistory::schema(bool outfall
     }
     return tables;
 }
+void SourceResultHistory::initializeIdentity(const CommonSourceStage& stage) {
+    const auto& s=*stage.sources_;const auto& ctx=s.context();const auto& names=s.pollutantNames();const int np=int(names.size());
+    sources_.clear();mass_units_.clear();
+    outfall_returns_=s.acceptsOutfallReturns();
+    tables_=schema(outfall_returns_);stage_=&stage;model_=stage.checkpoint_model_;
+    for(int sc=0;sc<ctx.n_subcatches();++sc)sources_.push_back(ctx.subcatch_names.name_of(sc));
+    pollutants_=names;
+    for(int p=0;p<np;++p) {
+        switch(ctx.pollutants.units.at(p)) {
+        case MassUnits::MG_PER_L:mass_units_.push_back("mg/L*m3");break;
+        case MassUnits::UG_PER_L:mass_units_.push_back("ug/L*m3");break;
+        case MassUnits::COUNTS_PER_L:mass_units_.push_back("count/L*m3");break;
+        default:throw std::runtime_error("Unknown pollutant units for source results.");
+        }
+    }
+    for(std::size_t id=0;id<s.lids().usageOrder().size();++id) {
+        const auto [t,u]=s.lids().usageOrder()[id];const auto& g=s.lids().group(t);
+        row(tables_.at("lid_usages"),{double(id),double(t),double(u),double(g.subcatch_idx[u]),g.area[u]*.3048*.3048});
+    }
+    for(int cell:stage.cells())row(tables_.at("footprints"),{0,-1,-1,-1,-1,double(cell),stage.weather_[cell]});
+    for(std::size_t i=0;i<s.atmosphere().size();++i) {
+        const auto& a=s.atmosphere()[i];
+        const double owner=a.kind==runoff::SourceEtKind::PERVIOUS?1:a.kind==runoff::SourceEtKind::IMPERVIOUS?2:3;
+        double usage=-1,total=0;
+        if(owner==3)for(std::size_t u=0;u<s.lids().usageOrder().size();++u)
+            if(s.lids().usageOrder()[u]==std::pair{a.type,a.unit})usage=double(u);
+        for(const auto& [cell,area]:stage.et_contacts_[i]) {
+            row(tables_.at("footprints"),{owner,double(a.source),double(a.type),double(a.unit),usage,double(cell),area});total+=area;
+        }
+        const double outside=a.area*.3048*.3048-total;
+        if(outside>1e-12)row(tables_.at("footprints"),{owner,double(a.source),double(a.type),double(a.unit),usage,-1,outside});
+    }
+}
 std::string SourceResultHistory::append(const CommonSourceStage& stage) {
     try {
         const auto error=stage.checkpointBoundary();if(!error.empty())return error;
@@ -79,37 +112,7 @@ std::string SourceResultHistory::append(const CommonSourceStage& stage) {
         auto trial=*this; // Qualification recorder: strong failure guarantee, not the optimized production writer.
         const auto& s=*stage.sources_;const auto& ctx=s.context();const auto& names=s.pollutantNames();
         const int np=int(names.size());
-        if(frame==0) {
-            trial.outfall_returns_=s.acceptsOutfallReturns();
-            trial.tables_=schema(trial.outfall_returns_);trial.stage_=&stage;trial.model_=stage.checkpoint_model_;
-            for(int sc=0;sc<ctx.n_subcatches();++sc)trial.sources_.push_back(ctx.subcatch_names.name_of(sc));
-            trial.pollutants_=names;
-            for(int p=0;p<np;++p) {
-                switch(ctx.pollutants.units.at(p)) {
-                case MassUnits::MG_PER_L:trial.mass_units_.push_back("mg/L*m3");break;
-                case MassUnits::UG_PER_L:trial.mass_units_.push_back("ug/L*m3");break;
-                case MassUnits::COUNTS_PER_L:trial.mass_units_.push_back("count/L*m3");break;
-                default:return "Unknown pollutant units for source results.";
-                }
-            }
-            for(std::size_t id=0;id<s.lids().usageOrder().size();++id) {
-                const auto [t,u]=s.lids().usageOrder()[id];const auto& g=s.lids().group(t);
-                row(trial.tables_.at("lid_usages"),{double(id),double(t),double(u),double(g.subcatch_idx[u]),g.area[u]*.3048*.3048});
-            }
-            for(int cell:stage.cells())row(trial.tables_.at("footprints"),{0,-1,-1,-1,-1,double(cell),stage.weather_[cell]});
-            for(std::size_t i=0;i<s.atmosphere().size();++i) {
-                const auto& a=s.atmosphere()[i];
-                const double owner=a.kind==runoff::SourceEtKind::PERVIOUS?1:a.kind==runoff::SourceEtKind::IMPERVIOUS?2:3;
-                double usage=-1,total=0;
-                if(owner==3)for(std::size_t u=0;u<s.lids().usageOrder().size();++u)
-                    if(s.lids().usageOrder()[u]==std::pair{a.type,a.unit})usage=double(u);
-                for(const auto& [cell,area]:stage.et_contacts_[i]) {
-                    row(trial.tables_.at("footprints"),{owner,double(a.source),double(a.type),double(a.unit),usage,double(cell),area});total+=area;
-                }
-                const double outside=a.area*.3048*.3048-total;
-                if(outside>1e-12)row(trial.tables_.at("footprints"),{owner,double(a.source),double(a.type),double(a.unit),usage,-1,outside});
-            }
-        }
+        if(frame==0)trial.initializeIdentity(stage);
         auto& ts=trial.tables_;const double end=stage.completedEnd();
         row(ts.at("boundaries"),{double(frame),double(stage.intervals()),start,end,stage.meshRain(),stage.meshEvaporation(),stage.meshReturn()});
         if(trial.outfall_returns_) {
@@ -204,6 +207,11 @@ std::string SourceResultHistory::resume(const CommonSourceStage& stage) {
         const auto n=tables_.at("boundaries").rows();
         if(stage.intervals()!=static_cast<long>(n-1)||stage.completedEnd()!=tables_.at("boundaries").columns[3].back())
             return "Source history final clock differs from restored state.";
+        SourceResultHistory identity;identity.initializeIdentity(stage);
+        if(sources_!=identity.sources_ || pollutants_!=identity.pollutants_ || mass_units_!=identity.mass_units_ ||
+           tables_.at("footprints").columns!=identity.tables_.at("footprints").columns ||
+           tables_.at("lid_usages").columns!=identity.tables_.at("lid_usages").columns)
+            return "Source history identities or ownership differ from checkpoint.";
         auto trial=*this;
         if(n==1)trial=SourceResultHistory{};
         else {
@@ -216,6 +224,15 @@ std::string SourceResultHistory::resume(const CommonSourceStage& stage) {
         const auto captured=trial.append(stage);if(!captured.empty())return captured;
         const auto differs=trial.extends(*this);if(!differs.empty())return differs;
         for(const auto& [name,t]:tables_)if(t.columns!=trial.tables_.at(name).columns)return "Source history final diagnostics differ from checkpoint.";
+        *this=std::move(trial);return {};
+    } catch(const std::exception& e){return e.what();}
+}
+std::string SourceResultHistory::resumeCapturedBoundary(const CommonSourceStage& stage) {
+    try {
+        auto trial=*this;
+        const auto error=stage.inspectCheckpointBytes(boundary_,[&](const CommonSourceStage& captured){return trial.resume(captured);});
+        if(!error.empty())return error;
+        trial.stage_=&stage;trial.model_=stage.checkpoint_model_;
         *this=std::move(trial);return {};
     } catch(const std::exception& e){return e.what();}
 }

@@ -1603,6 +1603,20 @@ TEST(CommonSourceStage, SourceHistoryContinuationRefusesWrongStateClockAndProjec
     const auto changed=edited;EXPECT_FALSE(edited.resume(target.stage).empty());resultEqual(edited,changed);
     advanceRestart(target,1,2);EXPECT_FALSE(history.resume(target.stage).empty());resultEqual(history,before);
 }
+TEST(CommonSourceStage, SourceHistoryResumeVerifiesStaticOwnershipAfterInitialFrame) {
+    Model original;mixedPollutants(original);original.attach();SourceResultHistory history;ASSERT_EQ(history.append(original.stage),"");
+    advanceRestart(original,0,1);ASSERT_EQ(history.append(original.stage),"");
+    const auto checkpoint=restartPath("history-static-identity");ASSERT_EQ(original.stage.saveCheckpoint(checkpoint.string()),"");
+    Model target;mixedPollutants(target);target.attach();ASSERT_EQ(target.stage.loadCheckpoint(checkpoint.string()),"");
+    auto edited=history;auto& t=const_cast<std::map<std::string,SourceResultTable>&>(edited.tables());
+    ASSERT_GT(t.at("footprints").rows(),0u);t.at("footprints").columns[6][0]+=.001;
+    const auto before=edited;
+    ASSERT_EQ(edited.save(sourceResultPath("history-static-valid-shape").string()),"");
+    EXPECT_FALSE(edited.resume(target.stage).empty());resultEqual(edited,before);
+    auto valid=history;ASSERT_EQ(valid.resume(target.stage),"");
+    advanceRestart(original,1,2);advanceRestart(target,1,2);ASSERT_EQ(history.append(original.stage),"");ASSERT_EQ(valid.append(target.stage),"");
+    resultEqual(history,valid);checkpointEqual(original,target,"history-static-retry");
+}
 TEST(CommonSourceStage, InitialSourceHistoryCanRebindWithoutAddingAnInterval) {
     Model original;mixedPollutants(original);original.attach();SourceResultHistory history;ASSERT_EQ(history.append(original.stage),"");
     Model other;mixedPollutants(other);other.attach();ASSERT_EQ(history.resume(other.stage),"");EXPECT_EQ(history.tables().at("boundaries").rows(),1);

@@ -30,6 +30,7 @@
 #include "../subsurface/SubsurfaceSolver.hpp"
 #include "../subsurface/CommonSourceStage.hpp"
 #include "../subsurface/SourceResultHistory.hpp"
+#include "../subsurface/EngineSourceResultHistory.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -84,6 +85,7 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
     opts_  = &opts;
     common_stage_ = nullptr;
     source_history_ = nullptr;
+    engine_source_history_ = nullptr;
     checkpoint_ready_ = true;
     source_phase_end_ = 0.0;
 
@@ -2648,20 +2650,24 @@ void ExplicitInertialSolver::setCommonSourceStage(CommonSourceStage& stage) {
 }
 
 void ExplicitInertialSolver::setSourceResultHistory(SourceResultHistory& history) {
-    if (!common_stage_ || source_history_ || t_last_sync_ != 0.0 || !history.tables().empty())
+    if (!common_stage_ || source_history_ || engine_source_history_ || t_last_sync_ != 0.0 || !history.tables().empty())
         throw std::invalid_argument("Source results require an empty recorder and initial common source stage.");
     const auto error = history.append(*common_stage_);
     if (!error.empty()) throw std::invalid_argument(error);
     source_history_ = &history;
 }
 void ExplicitInertialSolver::captureSourceResults() {
+    if(engine_source_history_) {
+        const auto error=engine_source_history_->captureSourceInterval(*common_stage_);
+        if(!error.empty())throw std::runtime_error("[2D_SOURCE_RESULTS] " + error);
+    }
     if (!source_history_) return;
     const auto error = source_history_->append(*common_stage_);
     if (!error.empty()) throw std::runtime_error("[2D_SOURCE_RESULTS] " + error);
 }
 void ExplicitInertialSolver::resumeSourceResultHistory(SourceResultHistory& history) {
     const auto error = checkpointBoundary();
-    if (!error.empty() || source_history_)
+    if (!error.empty() || source_history_ || engine_source_history_)
         throw std::invalid_argument(error.empty() ? "Source history already attached." : error);
     const auto match = history.resume(*common_stage_);
     if (!match.empty()) throw std::invalid_argument(match);
@@ -2671,6 +2677,7 @@ void ExplicitInertialSolver::resumeSourceResultHistory(SourceResultHistory& hist
 void ExplicitInertialSolver::finalize() {
     common_stage_ = nullptr;
     source_history_ = nullptr;
+    engine_source_history_ = nullptr;
     checkpoint_ready_ = false;
     joint_checkpoint_ = false;
     if (initialized_) { settleAccumulators(); flushSourceLedgers(); }
