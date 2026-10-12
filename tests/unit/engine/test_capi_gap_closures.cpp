@@ -44,6 +44,7 @@
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_transport.h>
 #include <openswmm/engine/openswmm_heat.h>
+#include <openswmm/engine/openswmm_spatial.h>
 #ifdef OPENSWMM_HAS_2D
 #include <openswmm/engine/openswmm_gw2d.h>
 #endif
@@ -694,3 +695,74 @@ TEST(CapiGap2DQuality, EditsSurviveSaveAndAreRefusedAfterInitialize) {
     EXPECT_EQ(bqCount(r.e), 1);
 }
 #endif
+
+// ---------------------------------------------------------------------------
+// [MAP] DIMENSIONS/UNITS and the GUI annotation sections ([LABELS],
+// [BACKDROP], [PROFILE], [PROFILES]) had no C API.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+std::string annotation(SWMM_Engine e, const char* section) {
+    int need = 0;
+    if (swmm_spatial_get_annotation(e, section, nullptr, 0, &need) != SWMM_OK) return "<ERR>";
+    std::string buf(static_cast<std::size_t>(need), '\0');
+    swmm_spatial_get_annotation(e, section, buf.data(), need, nullptr);
+    buf.resize(static_cast<std::size_t>(need - 1));
+    return buf;
+}
+
+const char* kMapExtra =
+    "\n[MAP]\nDIMENSIONS 0.0 0.0 1000.0 500.0\nUnits Meters\n\n"
+    "[LABELS]\n;;X Y Label\n100.0 200.0 \"Outfall structure\" \"\" \"Arial\" 10 0 0\n\n"
+    "[PROFILES]\n\"profileA        \" C1 C2\n";
+
+}  // namespace
+
+TEST(CapiGapSpatial, MapExtentAndUnits) {
+    OpenedDeck d(writeDeck("map.inp", (std::string(kDeck1D) + kMapExtra).c_str()));
+    ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
+    double x1 = -1, y1 = -1, x2 = -1, y2 = -1;
+    ASSERT_EQ(swmm_spatial_get_map_dimensions(d.e, &x1, &y1, &x2, &y2), SWMM_OK);
+    EXPECT_DOUBLE_EQ(x2, 1000.0);
+    EXPECT_DOUBLE_EQ(y2, 500.0);
+    char u[32] = {};
+    ASSERT_EQ(swmm_spatial_get_map_units(d.e, u, sizeof(u)), SWMM_OK);
+    EXPECT_STREQ(u, "METERS");
+    ASSERT_EQ(swmm_spatial_set_map_dimensions(d.e, -10, -20, 30, 40), SWMM_OK);
+    ASSERT_EQ(swmm_spatial_set_map_units(d.e, "feet"), SWMM_OK);
+    EXPECT_EQ(cpp(d.e).context().spatial.map_units, "FEET");
+    EXPECT_EQ(swmm_spatial_set_map_dimensions(d.e, NAN, 0, 1, 1), SWMM_ERR_BADPARAM);
+    EXPECT_DOUBLE_EQ(cpp(d.e).context().spatial.map_x1, -10.0);
+}
+
+TEST(CapiGapSpatial, AnnotationSectionsReadWriteAndSurviveSave) {
+    const fs::path saved = artifactDir() / "map_saved.inp";
+    {
+        OpenedDeck d(writeDeck("annot.inp", (std::string(kDeck1D) + kMapExtra).c_str()));
+        ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
+        const std::string labels = annotation(d.e, "labels");  // case-insensitive
+        EXPECT_NE(labels.find("\"Outfall structure\""), std::string::npos) << labels;
+        EXPECT_NE(annotation(d.e, "PROFILES").find("\"profileA        \""), std::string::npos);
+        EXPECT_EQ(annotation(d.e, "BACKDROP"), "");
+        EXPECT_EQ(annotation(d.e, "JUNCTIONS"), "<ERR>");  // not an annotation section
+
+        ASSERT_EQ(swmm_spatial_set_annotation(d.e, "BACKDROP",
+                      "DIMENSIONS 0 0 1000 500\nFILE \"Site Post.jpg\"\n"), SWMM_OK);
+        ASSERT_EQ(swmm_spatial_set_annotation(d.e, "LABELS", ""), SWMM_OK);  // removes
+        EXPECT_EQ(annotation(d.e, "LABELS"), "");
+        EXPECT_EQ(swmm_spatial_set_annotation(d.e, "OPTIONS", "x"), SWMM_ERR_BADPARAM);
+        ASSERT_EQ(swmm_spatial_set_map_dimensions(d.e, -10, -20, 30, 40), SWMM_OK);
+        ASSERT_EQ(swmm_model_write(d.e, saved.string().c_str()), SWMM_OK);
+    }
+    OpenedDeck r(saved);
+    ASSERT_EQ(r.rc, SWMM_OK) << swmm_get_last_error_msg(r.e);
+    EXPECT_EQ(annotation(r.e, "BACKDROP"), "DIMENSIONS 0 0 1000 500\nFILE \"Site Post.jpg\"");
+    EXPECT_EQ(annotation(r.e, "LABELS"), "");
+    EXPECT_NE(annotation(r.e, "PROFILES").find("profileA"), std::string::npos)
+        << "the [PROFILES] spelling must survive";
+    double x1 = 0, y2 = 0;
+    ASSERT_EQ(swmm_spatial_get_map_dimensions(r.e, &x1, nullptr, nullptr, &y2), SWMM_OK);
+    EXPECT_DOUBLE_EQ(x1, -10.0);
+    EXPECT_DOUBLE_EQ(y2, 40.0);
+}

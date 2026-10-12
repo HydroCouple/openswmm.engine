@@ -1038,6 +1038,12 @@ cdef extern from "openswmm_spatial.h":
     # CRS
     cdef int swmm_spatial_set_crs(SWMM_Engine e, const char* crs)
     cdef int swmm_spatial_get_crs(SWMM_Engine e, char* buf, int buflen)
+    cdef int swmm_spatial_get_map_dimensions(SWMM_Engine e, double* x1, double* y1, double* x2, double* y2)
+    cdef int swmm_spatial_set_map_dimensions(SWMM_Engine e, double x1, double y1, double x2, double y2)
+    cdef int swmm_spatial_get_map_units(SWMM_Engine e, char* buf, int buflen)
+    cdef int swmm_spatial_set_map_units(SWMM_Engine e, const char* units)
+    cdef int swmm_spatial_get_annotation(SWMM_Engine e, const char* section, char* buf, int buflen, int* required)
+    cdef int swmm_spatial_set_annotation(SWMM_Engine e, const char* section, const char* text)
     # Node coordinates
     cdef int swmm_spatial_set_node_coord(SWMM_Engine e, int idx, double x, double y)
     cdef int swmm_spatial_get_node_coord(SWMM_Engine e, int idx, double* x, double* y)

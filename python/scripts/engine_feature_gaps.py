@@ -139,12 +139,12 @@ SECTION_API: dict[str, list[str]] = {
     "VERTICES": [r"^swmm_spatial_.*link_vert"],
     "POLYGONS": [r"^swmm_spatial_.*polygon"],
     "SYMBOLS": [r"^swmm_spatial_.*gage_coord"],
-    "MAP": [r"^swmm_spatial_.*(map|bound|dimension|extent|units)"],
+    "MAP": [r"^swmm_spatial_.*map_"],
     "TAGS": [r"^swmm_(node|link|subcatch|gage)_(get|set)_tag"],
-    "LABELS": [r"label"],
-    "BACKDROP": [r"backdrop"],
-    "PROFILE": [r"profile"],
-    "PROFILES": [r"profile"],
+    "LABELS": [r"^swmm_spatial_.*annotation"],
+    "BACKDROP": [r"^swmm_spatial_.*annotation"],
+    "PROFILE": [r"^swmm_spatial_.*annotation"],
+    "PROFILES": [r"^swmm_spatial_.*annotation"],
     # 2D surface
     "2D_OPTIONS": [r"^swmm_options_(get|set)_ext$"],
     "2D_MESH_FILE": [r"^swmm_options_(get|set)_ext$"],  # MESH_FILE ext key

@@ -1,8 +1,3 @@
 {
-  "G1:BACKDROP": "input-only by design (proposed): GUI passthrough, replayed verbatim by InpWriter; no engine semantics",
-  "G1:LABELS": "input-only by design (proposed): GUI passthrough, replayed verbatim by InpWriter; no engine semantics",
-  "G1:PROFILE": "input-only by design (proposed): GUI passthrough, replayed verbatim by InpWriter; no engine semantics",
-  "G1:PROFILES": "input-only by design (proposed): GUI passthrough, replayed verbatim by InpWriter; no engine semantics",
-  "G1:MAP": "backlog (pending triage 2026-10-11): [MAP] DIMENSIONS/UNITS not readable or writable (CRS is, via swmm_spatial_*_crs)",
   "G1:STORAGE_MIXING": "not implemented: the ARD parser rejects [STORAGE_MIXING] ('arrives with plan phase E2b'); there is no stored data to expose, so its C API arrives with the feature"
 }
