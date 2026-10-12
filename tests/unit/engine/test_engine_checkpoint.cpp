@@ -11,6 +11,8 @@
 #include "2d/subsurface/SourceResultHistory.hpp"
 #include "2d/subsurface/EngineSourceResultHistory.hpp"
 #include "2d/subsurface/EngineSourceResultStream.hpp"
+#include "io/CheckpointFile.hpp"
+#include "core/FileIO.hpp"
 #include "2d/mesh/MeshBuilder.hpp"
 #include <openswmm/engine/openswmm_coupling.h>
 #ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
@@ -168,6 +170,10 @@ void step(SWMMEngine& e) {
 }
 std::string physicalCheckpoint(std::string bytes) {
     detail::CompletedSourceArchive peek(bytes);std::string magic;peek(magic);
+    if(magic=="OpenSWMM file-backed water engine session") {
+        detail::CompletedSourceArchive in(std::move(bytes));uint32_t version,checksum;std::string physical,binary,mesh,source;
+        in(magic,version,checksum,physical,binary,mesh,source);in.finish();return physical;
+    }
     if(magic!="OpenSWMM engine session with source stream")return bytes;
     detail::CompletedSourceArchive in(std::move(bytes));uint32_t version,checksum;std::string physical,contract;
     in(magic,version,checksum,physical,contract);in.finish();return physical;
@@ -493,7 +499,7 @@ struct SurfaceSession {
             std::filesystem::remove(p.string()+".h5");
             deck+="[2D_OPTIONS]\nOUTPUT_FILE "+p.string()+".h5\nOUTPUT_PRECISION "+(mesh_output==2?std::string("FLOAT32"):std::string("FLOAT64"))+"\nOUTPUT_COMPRESSION "+(mesh_output==2?std::string("4"):std::string("0"))+"\nREPORT_2D_STEP 00:00:06\n";
             if(mesh_output==3)deck+="REPORT_2D_VARIABLES MINIMAL\n";
-        if(mesh_output==4)deck+="[OPTIONS]\nREPORT_START_DATE 10/10/2026\nREPORT_START_TIME 00:00:13\n";
+        if(mesh_output==4)deck+="[OPTIONS]\nREPORT_START_DATE 01/31/2004\nREPORT_START_TIME 23:59:13\n";
         }
         if(authored_boundary) {
             const char* rows[]={"", "0 1 NORMAL_FLOW .03\n", "0 1 SPECIFIED_STAGE .52\n", "0 1 SPECIFIED_FLOW .0005\n",
@@ -3424,5 +3430,181 @@ TEST(EngineCheckpoint, StreamStagingCollisionPreservesUnownedFileAndFreshStateWi
     EXPECT_DOUBLE_EQ(b.engine.context().current_time,0);EXPECT_EQ(resumed.cursor(),cursor);EXPECT_TRUE(bytes(resumed.path())==fresh);
     ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");EXPECT_EQ(bytes(unowned),"unrelated recovery file");
     compareCatchmentProvider(a,b,"stream-staging-restored");equalStreamPrefix(recorded,resumed);
+}
+#endif
+#if defined(OPENSWMM_HAS_2D) && defined(OPENSWMM_HAS_HDF5_MODEL)
+namespace {
+uint64_t fileTestHash(const std::string& data) {
+    uint64_t value=14695981039346656037ULL;
+    for(unsigned char c:data){value^=c;value*=1099511628211ULL;}
+    return value;
+}
+struct FileBundle {
+    std::string physical,binary,mesh,source;
+    explicit FileBundle(const std::filesystem::path& path) {
+        detail::CompletedSourceArchive a(bytes(path));std::string magic;uint32_t version,sum;a(magic,version,sum,physical,binary,mesh,source);a.finish();
+        if(magic!="OpenSWMM file-backed water engine session"||version!=1)throw std::runtime_error("Not a file bundle.");
+    }
+    io::CheckpointFile binaryFile() const {
+        detail::CompletedSourceArchive a(binary);uint32_t version;int periods;std::string file;a(version,periods,file);a.finish();return io::CheckpointFile::decode(file);
+    }
+    io::CheckpointFile meshFile() const {
+        detail::CompletedSourceArchive a(mesh);uint32_t version;double cadence,due;hsize_t steps;bool gw;std::string file;a(version,cadence,steps,due,gw,file);a.finish();return io::CheckpointFile::decode(file);
+    }
+    std::string encode() {
+        using A=detail::CompletedSourceArchive;
+        A binding;binding(physical,binary,mesh);
+        A saved(source);std::string path,cursor;uint64_t anchor,whole;saved(path,cursor,anchor,whole);saved.finish();
+        whole=fileTestHash(binding.bytes());A contract;contract(path,cursor,anchor,whole);auto updated=contract.bytes();
+        A data;data(physical,binary,mesh,updated);auto sum=crc(data.bytes());uint32_t version=1;std::string magic="OpenSWMM file-backed water engine session";
+        A out;out(magic,version,sum,physical,binary,mesh,updated);return out.bytes();
+    }
+    void rehash(bool binary_file) {
+        auto file=binary_file?binaryFile():meshFile();file.bytes=io::checkpointFileSize(file.path);file.fingerprint=fileTestHash(bytes(file.path));
+        using A=detail::CompletedSourceArchive;A out;auto descriptor=file.encode();
+        if(binary_file){A in(binary);uint32_t version;int periods;std::string old;in(version,periods,old);in.finish();out(version,periods,descriptor);binary=out.bytes();}
+        else {A in(mesh);uint32_t version;double cadence,due;hsize_t steps;bool gw;std::string old;in(version,cadence,steps,due,gw,old);in.finish();out(version,cadence,steps,due,gw,descriptor);mesh=out.bytes();}
+    }
+};
+void startFileBundle(SurfaceSession& s,Stream& stream,const std::string& name,int lid=2,int closure=0,int format=2,bool detailed=true) {
+    startCatchmentProvider(s,name,lid,closure,true,format);
+    const auto error=s.engine.setEngineSourceResultStream(stream,streamPath(name).string(),detailed);if(!error.empty())throw std::runtime_error(error);
+    const auto selected=s.engine.enableFileOutputCheckpointing();if(!selected.empty())throw std::runtime_error(selected);
+}
+}
+TEST(EngineCheckpoint, FileOutputsContinuePendingBatchesAllNodeGroundwaterAndStorageProfiles) {
+    for(bool detailed:{false,true})for(int lid:{0,1,2})for(int closure:{0,1,2}) {
+        const int format=1+(lid+closure)%4;const auto name="file-outputs-"+std::to_string(detailed)+"-"+std::to_string(lid)+"-"+std::to_string(closure);SCOPED_TRACE(name);
+        Stream recorded,resumed;SurfaceSession a,b;
+        ASSERT_NO_THROW(startFileBundle(a,recorded,name,lid,closure,format,detailed));
+        ASSERT_NO_THROW(startFileBundle(b,resumed,name+"-resumed",lid,closure,format,detailed));
+        ASSERT_NO_THROW(until(a.engine,1.4));ASSERT_LT(a.stage.completedEnd(),a.engine.context().current_time);
+        const auto cp=root()/(name+".chk");
+        ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+        const auto accepted_time=a.engine.context().current_time;FileBundle saved(cp);EXPECT_LT(bytes(cp).size(),saved.physical.size()+16384);EXPECT_TRUE(std::filesystem::exists(saved.binaryFile().path));EXPECT_TRUE(std::filesystem::exists(saved.meshFile().path));
+        const auto previous=root()/(name+"-previous.chk");write(previous,bytes(cp));
+        double left,right;
+        ASSERT_EQ(a.engine.advanceTo(25,&left),SWMM_OK);
+        ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+        // A copied older envelope keeps its immutable companions and stream prefix
+        // while the live HDF5 file and the latest checkpoint continue to change.
+        ASSERT_NO_THROW(saved.binaryFile().verify());
+    ASSERT_NO_THROW(saved.meshFile().verify());
+        ASSERT_EQ(b.engine.loadCheckpoint(previous.string()),"");EXPECT_DOUBLE_EQ(b.engine.context().current_time,accepted_time);
+        ASSERT_EQ(b.engine.advanceTo(25,&right),SWMM_OK);EXPECT_DOUBLE_EQ(left,right);
+        compareCatchmentProvider(a,b,name+"-continued");equalStreamPrefix(recorded,resumed);
+        ASSERT_EQ(a.engine.end(),0);
+        ASSERT_EQ(b.engine.end(),0);sameBinary(name,name+"-resumed",format==4?4:8);sameMesh(name,name+"-resumed",format==4?2:4);
+    }
+}
+TEST(EngineCheckpoint, FileOutputsDamagedCompanionsPreserveDriverPhysicsAndAllFreshOutputsWithRetry) {
+    Stream recorded;TestWaterDriver driver;SurfaceSession a;
+    ASSERT_NO_THROW(startCatchmentProvider(a,"file-damage-source",2,2,true,2));
+    ASSERT_EQ(a.engine.attachRuntimeWaterDriverCheckpoint(driver),"");
+    ASSERT_EQ(a.engine.setEngineSourceResultStream(recorded,streamPath("file-damage-source").string(),true),"");
+    ASSERT_EQ(a.engine.enableFileOutputCheckpointing(),"");
+    ASSERT_NO_THROW(drive(a.engine,driver,4.2));const auto cp=root()/"file-damage.chk";
+        ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");FileBundle bundle(cp);
+    for(int variant=0;variant<6;++variant) {
+        const auto name="file-damage-target-"+std::to_string(variant);SCOPED_TRACE(name);Stream target;TestWaterDriver target_driver;SurfaceSession b;
+        ASSERT_NO_THROW(startCatchmentProvider(b,name,2,2,true,2));
+        ASSERT_EQ(b.engine.attachRuntimeWaterDriverCheckpoint(target_driver),"");
+        ASSERT_EQ(b.engine.setEngineSourceResultStream(target,streamPath(name).string(),true),"");
+        ASSERT_EQ(b.engine.enableFileOutputCheckpointing(),"");
+        const auto binary=root()/(name+".out"),mesh=root()/(name+".h5");const auto bh=bytes(binary),mh=bytes(mesh),sh=bytes(target.path());const auto cursor=target.cursor();const auto initial=driverState(target_driver,0);
+        const auto damaged=variant<3?bundle.binaryFile().path:bundle.meshFile().path;const auto original=bytes(damaged);
+        if(variant%3==0)std::filesystem::rename(damaged,damaged.string()+".hidden");
+        else {auto altered=original;if(variant%3==1)altered.resize(altered.size()-1);else altered[altered.size()/2]^=1;write(damaged,altered);}
+        EXPECT_FALSE(b.engine.loadCheckpoint(cp.string()).empty());EXPECT_DOUBLE_EQ(b.engine.context().current_time,0);EXPECT_EQ(bytes(binary),bh);EXPECT_EQ(bytes(mesh),mh);EXPECT_EQ(bytes(target.path()),sh);EXPECT_EQ(target.cursor(),cursor);EXPECT_EQ(driverState(target_driver,0),initial);
+        if(variant%3==0)std::filesystem::rename(damaged.string()+".hidden",damaged);else write(damaged,original);
+        ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");compareCatchmentProvider(a,b,name+"-restored");equalStreamPrefix(recorded,target);
+        const auto due=target.cursor();double actual;EXPECT_EQ(b.engine.advanceTo(5,&actual),SWMM_ERR_LIFECYCLE);EXPECT_EQ(target.cursor(),due);
+    }
+}
+TEST(EngineCheckpoint, FileOutputsFailedPublicationAndUnsupportedEmbeddedHistoryPreserveAcceptedCheckpoint) {
+    Stream recorded,resumed;SurfaceSession a,b;
+    ASSERT_NO_THROW(startFileBundle(a,recorded,"file-publish-source"));
+    ASSERT_NO_THROW(startFileBundle(b,resumed,"file-publish-target"));
+    ASSERT_NO_THROW(until(a.engine,9.1));const auto cp=root()/"file-publish.chk";
+        ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+    const auto binary=root()/"file-publish-target.out",mesh=root()/"file-publish-target.h5";const auto bh=bytes(binary),mh=bytes(mesh),sh=bytes(resumed.path());
+    std::filesystem::permissions(mesh,std::filesystem::perms::owner_read);
+    EXPECT_FALSE(b.engine.loadCheckpoint(cp.string()).empty());EXPECT_DOUBLE_EQ(b.engine.context().current_time,0);EXPECT_EQ(bytes(binary),bh);EXPECT_EQ(bytes(mesh),mh);EXPECT_EQ(bytes(resumed.path()),sh);
+    std::filesystem::permissions(mesh,std::filesystem::perms::owner_read|std::filesystem::perms::owner_write);
+    ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");compareCatchmentProvider(a,b,"file-publish-retry");
+    // The new profile refuses a growing embedded legacy history rather than
+    // silently reading it into an unbounded checkpoint participant.
+    const auto checkpoint=bytes(cp);twoD::SourceResultHistory history;
+    SurfaceSession unused;
+        ASSERT_NO_THROW(startCatchmentProvider(unused,"file-embedded-initial",2,0,true,2));
+        ASSERT_EQ(history.append(unused.stage),"");
+    meshWriter(a.engine).enqueueSourceHistory(std::make_shared<twoD::SourceResultHistory>(history));
+    EXPECT_FALSE(a.engine.saveCheckpoint(cp.string()).empty());EXPECT_EQ(bytes(cp),checkpoint);
+}
+TEST(EngineCheckpoint, FileOutputsValidateFiniteValuesDatesAndSchemaBeyondFileIntegrity) {
+    Stream recorded;SurfaceSession a;
+    ASSERT_NO_THROW(startFileBundle(a,recorded,"file-semantic-source"));
+    ASSERT_NO_THROW(until(a.engine,9.1));
+    const auto cp=root()/"file-semantic.chk";ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+    for(int variant=0;variant<4;++variant) {
+        const auto name="file-semantic-target-"+std::to_string(variant);SCOPED_TRACE(name);
+        Stream target;SurfaceSession b;
+    ASSERT_NO_THROW(startFileBundle(b,target,name));FileBundle changed(cp);
+        const auto companion=variant==0?changed.binaryFile().path:changed.meshFile().path;const auto original=bytes(companion);
+        if(variant==0) {
+            auto damaged=original;const float value=std::numeric_limits<float>::quiet_NaN();
+            std::memcpy(damaged.data()+damaged.size()-sizeof(value),&value,sizeof(value));write(companion,damaged);
+        } else {
+            const auto file=H5Fopen(companion.string().c_str(),H5F_ACC_RDWR,H5P_DEFAULT);ASSERT_GE(file,0);
+            const auto time=H5Dopen2(file,"time",H5P_DEFAULT);ASSERT_GE(time,0);
+            if(variant<3) {
+                const auto space=H5Dget_space(time);const auto count=H5Sget_simple_extent_npoints(space);ASSERT_GT(count,0);
+                std::vector<double> dates(count);ASSERT_GE(H5Dread(time,H5T_NATIVE_DOUBLE,H5S_ALL,H5S_ALL,H5P_DEFAULT,dates.data()),0);
+                dates[0]=variant==1?0:std::numeric_limits<double>::infinity();
+                ASSERT_GE(H5Dwrite(time,H5T_NATIVE_DOUBLE,H5S_ALL,H5S_ALL,H5P_DEFAULT,dates.data()),0);H5Sclose(space);
+            } else {const hsize_t wrong=3;ASSERT_GE(H5Dset_extent(time,&wrong),0);}
+            H5Dclose(time);ASSERT_GE(H5Fclose(file),0);
+        }
+        // Rebuild the accidental-damage checks so semantic validation is exercised.
+        changed.rehash(variant==0);const auto bad=root()/(name+".chk");write(bad,changed.encode());
+        const auto binary=root()/(name+".out"),mesh=root()/(name+".h5");const auto bh=bytes(binary),mh=bytes(mesh),sh=bytes(target.path());
+        EXPECT_FALSE(b.engine.loadCheckpoint(bad.string()).empty());EXPECT_DOUBLE_EQ(b.engine.context().current_time,0);
+        EXPECT_EQ(bytes(binary),bh);EXPECT_EQ(bytes(mesh),mh);EXPECT_EQ(bytes(target.path()),sh);
+        write(companion,original);ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");compareCatchmentProvider(a,b,name+"-retry");equalStreamPrefix(recorded,target);
+    }
+}
+TEST(EngineCheckpoint, FileOutputsRequireExplicitFreshCombinedStreamProfileAndSupportInitialCheckpoint) {
+    Stream recorded;SurfaceSession a;
+    ASSERT_NO_THROW(startCatchmentProvider(a,"file-profile-source",2,0,true,2));
+    EXPECT_FALSE(a.engine.enableFileOutputCheckpointing().empty());
+    ASSERT_EQ(a.engine.setEngineSourceResultStream(recorded,streamPath("file-profile-source").string(),true),"");
+    ASSERT_EQ(a.engine.enableFileOutputCheckpointing(),"");EXPECT_FALSE(a.engine.enableFileOutputCheckpointing().empty());
+    const auto cp=root()/"file-profile.chk";ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+    Stream target;SurfaceSession b;
+    ASSERT_NO_THROW(startCatchmentProvider(b,"file-profile-target",2,0,true,2));
+    ASSERT_EQ(b.engine.setEngineSourceResultStream(target,streamPath("file-profile-target").string(),true),"");
+    const auto fresh=bytes(target.path());EXPECT_FALSE(b.engine.loadCheckpoint(cp.string()).empty());EXPECT_EQ(bytes(target.path()),fresh);
+    ASSERT_EQ(b.engine.enableFileOutputCheckpointing(),"");ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");equalStreamPrefix(recorded,target);
+    ASSERT_NO_THROW(step(a.engine));
+    ASSERT_NO_THROW(step(b.engine));compareCatchmentProvider(a,b,"file-profile-continued");equalStreamPrefix(recorded,target);
+    Stream late;SurfaceSession c;
+    ASSERT_NO_THROW(startCatchmentProvider(c,"file-profile-late",2,0,true,2));
+    ASSERT_EQ(c.engine.setEngineSourceResultStream(late,streamPath("file-profile-late").string(),true),"");
+    ASSERT_NO_THROW(step(c.engine));
+    EXPECT_FALSE(c.engine.enableFileOutputCheckpointing().empty());
+}
+TEST(EngineCheckpoint, FileOutputCopiesValidateLargePrefixesAndNeverDeleteUnownedStagingFiles) {
+    const auto source=root()/"file-large-prefix.bin";FILE* file=io::fopen_path(source,"wb");ASSERT_NE(file,nullptr);
+    std::array<char,65536> block{};block[7]=42;for(int i=0;i<1280;++i)ASSERT_EQ(std::fwrite(block.data(),1,block.size(),file),block.size());
+        ASSERT_EQ(std::fclose(file),0);
+    auto first=io::copyCheckpointFile(source,io::checkpointFileSize(source),root()/"file-large-copy");EXPECT_EQ(first->file.bytes,80*1024*1024ULL);
+        ASSERT_NO_THROW(first->file.verify());
+    auto second=io::copyCheckpointFile(first->file.path,first->file.bytes,root()/"file-large-resumed");EXPECT_EQ(second->file.fingerprint,first->file.fingerprint);
+    // Every candidate staging name collides with an existing recovery artifact.
+    // Exclusive creation must leave all these files intact on failure.
+    const auto name=second->file.path.filename().string();const auto next=std::stoull(name.substr(name.rfind(".file-part-")+11))+1;
+    const auto base=root()/"file-unowned-staging";for(uint64_t i=next;i<next+32;++i)write(base.string()+".file-part-"+std::to_string(i),"recovery");
+    EXPECT_THROW(io::copyCheckpointFile(source,first->file.bytes,base),std::runtime_error);
+    for(uint64_t i=next;i<next+32;++i){auto path=base.string()+".file-part-"+std::to_string(i);EXPECT_EQ(bytes(path),"recovery");std::filesystem::remove(path);}
 }
 #endif

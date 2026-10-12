@@ -42,6 +42,7 @@
 #include "../../../include/openswmm/plugin_sdk/IOutputPlugin.hpp"
 
 #include "../io/CheckpointOutputPublication.hpp"
+#include "../io/CheckpointFile.hpp"
 #include <string>
 #include <atomic>
 #include <cstdio>
@@ -100,6 +101,10 @@ private:
     void adoptCheckpoint(PreparedCheckpoint&) noexcept;
     void validateCheckpoint(const SimulationContext&, double next_report_ms, int periods, const std::string&) const;
     std::string readPrefix() const;
+    std::string captureFileCheckpoint(const SimulationContext&,double,const std::filesystem::path&,
+        std::shared_ptr<io::OwnedCheckpointFile>&) const;
+    std::shared_ptr<PreparedCheckpoint> prepareFileCheckpoint(const SimulationContext&,double,std::string);
+    void validateFileCheckpoint(FILE*,uint64_t,const SimulationContext&,double,int) const;
 
     std::string         out_path_;
     PluginState         state_      = PluginState::UNLOADED;

@@ -39,6 +39,7 @@
 #include "../../../../include/openswmm/plugin_sdk/IOutputPlugin.hpp"
 
 #include "../../io/CheckpointOutputPublication.hpp"
+#include "../../io/CheckpointFile.hpp"
 #include <string>
 #include <memory>
 #include <mutex>
@@ -242,6 +243,10 @@ private:
     std::vector<hid_t*> checkpointDatasets();
     void closeDatasets() noexcept;
     std::string fileBytes() const;
+    std::string captureFileCheckpoint(const SimulationContext&,double,const SimulationSnapshot&,const std::filesystem::path&,
+        std::shared_ptr<io::OwnedCheckpointFile>&);
+    std::shared_ptr<PreparedCheckpoint> prepareFileCheckpoint(const SimulationContext&,double,const SimulationSnapshot&,std::string);
+    void resolveCheckpointDatasets(PreparedCheckpoint&,const SimulationSnapshot&);
     std::mutex source_mutex_;
     std::vector<std::shared_ptr<const SourceResultHistory>> source_pending_;
     std::shared_ptr<const SourceResultHistory> source_written_;

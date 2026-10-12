@@ -244,6 +244,8 @@ public:
     /// Distinct internal full-history stream; no public GUI/API activation.
     std::string setEngineSourceResultStream(twoD::EngineSourceResultStream&,const std::string& path,bool detailed=false);
     void recordRuntimeCouplingPrescription();
+    /// Internal combined-output companions, selected at the initial stream boundary.
+    std::string enableFileOutputCheckpointing();
 #endif
     std::string saveCheckpoint(const std::string& path) const;
     std::string loadCheckpoint(const std::string& path);
@@ -492,6 +494,7 @@ private:
     /// once the mesh is built.
     twoD::Default2DOutputPlugin* surface_output_plugin_ = nullptr;
     bool checkpoint_surface_output_ = false;
+    bool checkpoint_file_outputs_ = false;
     twoD::RuntimeWaterDriverCheckpoint* runtime_water_driver_ = nullptr;
 
     /// Point ctx_.twod_io at surface_router_'s mesh/options/boundary and
@@ -521,7 +524,11 @@ private:
     std::string checkpointModel() const;
     void checkCheckpointBoundary() const;
     std::string checkpointBytes(std::string&,bool include_outputs=true) const;
-    std::string loadCheckpointBytes(std::string,const std::string& stream_contract={});
+    std::string loadCheckpointBytes(std::string,const std::string& stream_contract={},
+        const std::string& binary_file={},const std::string& mesh_file={},uint64_t whole_binding=0);
+#ifdef OPENSWMM_HAS_2D
+    std::string saveFileOutputCheckpoint(const std::string&) const;
+#endif
     const std::vector<int>* ordinarySourceOwners() const noexcept;
     bool ownsSpatialSource(int source) const noexcept;
 #ifdef OPENSWMM_HAS_2D

@@ -14,6 +14,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <limits>
 #include <set>
 #include <stdexcept>
@@ -106,14 +107,25 @@ bool storage(hid_t a, hid_t b) {
     }
     return true;
 }
-std::vector<double> numbers(hid_t dataset) {
-    Handle space{H5Dget_space(dataset), H5Sclose}; const auto n = H5Sget_simple_extent_npoints(space.id);
-    require(n >= 0 && std::size_t(n) <= maxBytes / sizeof(double), "Mesh numeric dataset exceeds its limit.");
-    std::vector<double> values(n);
-    require(H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, values.data()) >= 0,
-            "Cannot read mesh numeric dataset.");
-    for (double v : values) require(std::isfinite(v), "Nonfinite mesh checkpoint result.");
-    return values;
+
+// Rectangular hyperslabs bound series reads even when one row is very wide.
+void visitNumbers(hid_t dataset,const std::function<void(double)>& visit={}) {
+    auto dims=shape(dataset);if(std::any_of(dims.begin(),dims.end(),[](auto n){return n==0;}))return;
+    std::vector<hsize_t> at(dims.size(),0),tile(dims.size(),1);hsize_t capacity=65536;
+    for(int d=int(dims.size())-1;d>=0;--d){tile[d]=std::min(dims[d],capacity);capacity=std::max<hsize_t>(1,capacity/tile[d]);}
+    // HDF5 also allocates workspace per selected chunk. Bound the reporting
+    // axis as well as numeric values when histories use one chunk per report.
+    const auto maximum=shape(dataset,true);
+    if(!maximum.empty()&&maximum[0]==H5S_UNLIMITED)tile[0]=std::min<hsize_t>(tile[0],256);
+    Handle space{H5Dget_space(dataset),H5Sclose};bool done=false;
+    while(!done){auto count=tile;hsize_t n=1;for(std::size_t d=0;d<dims.size();++d){count[d]=std::min(tile[d],dims[d]-at[d]);n*=count[d];}
+        if(!dims.empty())require(H5Sselect_hyperslab(space.id,H5S_SELECT_SET,at.data(),nullptr,count.data(),nullptr)>=0,"Cannot select mesh checkpoint block.");
+        Handle memory{H5Screate_simple(1,&n,nullptr),H5Sclose};std::vector<double> values(n);
+        require(H5Dread(dataset,H5T_NATIVE_DOUBLE,memory.id,space.id,H5P_DEFAULT,values.data())>=0,"Cannot read mesh checkpoint block.");
+        for(double v:values){require(std::isfinite(v),"Nonfinite mesh checkpoint result.");if(visit)visit(v);}
+        if(dims.empty())break;
+        for(int d=int(dims.size())-1;d>=0;--d){at[d]+=tile[d];if(at[d]<dims[d])break;at[d]=0;if(d==0)done=true;}
+    }
 }
 std::string datasetName(hid_t id) {
     const auto len = H5Iget_name(id, nullptr, 0); require(len > 0 && len < 256, "Invalid mesh dataset handle.");
@@ -143,11 +155,12 @@ struct Default2DOutputPlugin::PreparedCheckpoint {
     double next_due = -1;
     bool groundwater = false;
     std::shared_ptr<const SourceResultHistory> history;
+    std::shared_ptr<io::OwnedCheckpointFile> file_copy;
     ~PreparedCheckpoint() {
         std::lock_guard<std::recursive_mutex> lock(io::resultHdf5Mutex());
         for (auto& [target, id] : datasets) if (id >= 0) H5Dclose(id);
         if (file >= 0) H5Fclose(file);
-        if (!staging.empty()) { std::error_code ec; std::filesystem::remove(staging, ec); }
+        if (!file_copy && !staging.empty()) { std::error_code ec; std::filesystem::remove(staging, ec); }
     }
 };
 
@@ -182,7 +195,7 @@ void Default2DOutputPlugin::validateCheckpoint(hid_t file, const SimulationConte
         const bool series = !maximum.empty() && maximum[0] == H5S_UNLIMITED;
         if (series) dims[0] = steps;
         require(dims == shape(b.id) && maximum == shape(b.id, true), "Mesh checkpoint dataset shape differs.");
-        numbers(b.id);
+        visitNumbers(b.id);
         if (!series && name.find("Mesh2_face_max_") != 0)
             require(raw(a.id, false) == raw(b.id, false), "Mesh checkpoint static geometry or aquifer identity differs.");
     }
@@ -198,15 +211,11 @@ void Default2DOutputPlugin::validateCheckpoint(hid_t file, const SimulationConte
     require(std::isfinite(ratio) && ratio >= 1 && ratio <= std::numeric_limits<int>::max(), "Invalid mesh reporting interval.");
     const int stride = static_cast<int>(std::round(ratio));
     require(steps == (first > completed ? 0 : 1 + (completed - first) / stride), "Mesh report count differs.");
-    Handle times{H5Dopen2(file, "time", H5P_DEFAULT), H5Dclose}; const auto values = numbers(times.id);
-    double due = -1;
-    for (std::size_t k = 0; k < values.size(); ++k) {
-        require(values[k] == date(first + static_cast<int>(k) * stride), "Mesh checkpoint report date differs.");
-        if (report_2d_step_days_ > 0) {
-            if (due < 0) due = values[k];
-            while (due <= values[k] + 1e-9) due += report_2d_step_days_;
-        }
-    }
+    Handle times{H5Dopen2(file, "time", H5P_DEFAULT), H5Dclose};double due=-1;std::size_t k=0;
+    visitNumbers(times.id,[&](double value){
+        require(value==date(first+static_cast<int>(k)*stride),"Mesh checkpoint report date differs.");++k;
+        if(report_2d_step_days_>0){if(due<0)due=value;while(due<=value+1e-9)due+=report_2d_step_days_;}
+    });
     require(std::isfinite(next_due) && next_due == due, "Mesh checkpoint cadence cursor differs.");
 }
 
@@ -243,20 +252,7 @@ std::shared_ptr<Default2DOutputPlugin::PreparedCheckpoint> Default2DOutputPlugin
     result->file = H5Fopen(result->staging.string().c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
     require(result->file >= 0, "Cannot reopen staged mesh result prefix.");
     validateCheckpoint(result->file, ctx, next_report_ms, snap, result->steps, result->next_due, result->groundwater);
-    // Resolve all IDs while failure still leaves the live engine and writer untouched.
-    Default2DOutputPlugin reference(""); reference.file_id_ = openImage(checkpoint_header_);
-    reference.n_faces_ = n_faces_; reference.report_vars_ = report_vars_;
-    reference.storage_type_ = storage_type_; reference.compression_ = compression_;
-    if (result->groundwater) reference.createGroundwaterDatasets(snap);
-    const auto targets = checkpointDatasets(), gw = reference.checkpointDatasets();
-    result->datasets.reserve(targets.size());
-    for (std::size_t k = 0; k < targets.size(); ++k) {
-        const hid_t known = *targets[k] >= 0 ? *targets[k] : *gw[k];
-        if (known < 0) continue;
-        const auto name = datasetName(known); const auto id = H5Dopen2(result->file, name.c_str(), H5P_DEFAULT);
-        require(id >= 0, "Cannot reopen mesh checkpoint dataset."); result->datasets.emplace_back(targets[k], id);
-    }
-    result->beds = reference.n_gw_beds_; result->layers = reference.n_gw_layers_;
+    resolveCheckpointDatasets(*result,snap);
     if(H5Lexists(result->file,"source_history",H5P_DEFAULT)>0) {
         Handle group{H5Gopen2(result->file,"source_history",H5P_DEFAULT),H5Gclose};
         require(group.id>=0,"Invalid mesh source result group.");localHistory(group.id);
@@ -272,6 +268,45 @@ std::shared_ptr<Default2DOutputPlugin::PreparedCheckpoint> Default2DOutputPlugin
         result->history = std::make_shared<SourceResultHistory>(std::move(history));
     }
     return result;
+}
+
+void Default2DOutputPlugin::resolveCheckpointDatasets(PreparedCheckpoint& result,const SimulationSnapshot& snap) {
+    // Resolve all IDs while failure still leaves the live engine and writer untouched.
+    Default2DOutputPlugin reference(""); reference.file_id_ = openImage(checkpoint_header_);
+    reference.n_faces_ = n_faces_; reference.report_vars_ = report_vars_;
+    reference.storage_type_ = storage_type_; reference.compression_ = compression_;
+    if (result.groundwater) reference.createGroundwaterDatasets(snap);
+    const auto targets = checkpointDatasets(), gw = reference.checkpointDatasets();
+    result.datasets.reserve(targets.size());
+    for (std::size_t k = 0; k < targets.size(); ++k) {
+        const hid_t known = *targets[k] >= 0 ? *targets[k] : *gw[k];
+        if (known < 0) continue;
+        const auto name = datasetName(known); const auto id = H5Dopen2(result.file, name.c_str(), H5P_DEFAULT);
+        require(id >= 0, "Cannot reopen mesh checkpoint dataset."); result.datasets.emplace_back(targets[k], id);
+    }
+    result.beds = reference.n_gw_beds_; result.layers = reference.n_gw_layers_;
+ }
+
+std::string Default2DOutputPlugin::captureFileCheckpoint(const SimulationContext& ctx,double next,const SimulationSnapshot& snap,
+    const std::filesystem::path& base,std::shared_ptr<io::OwnedCheckpointFile>& artifact) {
+    std::lock_guard<std::recursive_mutex> lock(io::resultHdf5Mutex());
+    {std::lock_guard<std::mutex> source_lock(source_mutex_);require(source_pending_.empty()&&!source_written_,"File checkpoint uses its separate full source stream.");}
+    require(!checkpoint_write_failed_&&file_id_>=0&&H5Lexists(file_id_,"source_history",H5P_DEFAULT)==0&&H5Fflush(file_id_,H5F_SCOPE_GLOBAL)>=0,"Cannot settle mesh file checkpoint or embedded source history.");
+    validateCheckpoint(file_id_,ctx,next,snap,n_steps_,next_due_days_,gw_created_);
+    const auto path=io::utf8_path(h5_path_);auto copy=io::copyCheckpointFile(path,io::checkpointFileSize(path),base);
+    detail::CompletedSourceArchive a;uint32_t version=1;auto step=report_2d_step_days_;auto descriptor=copy->file.encode();a(version,step,n_steps_,next_due_days_,gw_created_,descriptor);artifact=std::move(copy);return a.bytes();
+}
+std::shared_ptr<Default2DOutputPlugin::PreparedCheckpoint> Default2DOutputPlugin::prepareFileCheckpoint(const SimulationContext& ctx,
+    double next,const SimulationSnapshot& snap,std::string bytes) {
+    std::lock_guard<std::recursive_mutex> lock(io::resultHdf5Mutex());
+    {std::lock_guard<std::mutex> source_lock(source_mutex_);require(source_pending_.empty()&&!source_written_,"File restore requires its separate source stream.");}
+    require(n_steps_==0&&fileBytes()==checkpoint_header_,"Mesh file restore requires its fresh header.");
+    detail::CompletedSourceArchive a(std::move(bytes));uint32_t version;double step;std::string descriptor;auto result=std::make_shared<PreparedCheckpoint>();
+    a(version,step,result->steps,result->next_due,result->groundwater,descriptor);a.finish();require(version==1&&step==report_2d_step_days_,"Mesh file checkpoint version or cadence differs.");
+    auto saved=io::CheckpointFile::decode(std::move(descriptor));saved.verify();result->file_copy=io::copyCheckpointFile(saved.path,saved.bytes,io::utf8_path(h5_path_));
+    require(result->file_copy->file.fingerprint==saved.fingerprint,"Mesh companion changed during copying.");result->staging=result->file_copy->file.path;
+    result->file=H5Fopen(result->staging.string().c_str(),H5F_ACC_RDWR,H5P_DEFAULT);require(result->file>=0&&H5Lexists(result->file,"source_history",H5P_DEFAULT)==0,"Mesh file checkpoint contains unsupported embedded history.");
+    validateCheckpoint(result->file,ctx,next,snap,result->steps,result->next_due,result->groundwater);resolveCheckpointDatasets(*result,snap);return result;
 }
 
 io::CheckpointOutputPublication::Output Default2DOutputPlugin::checkpointPublication(const PreparedCheckpoint& prepared) const {
@@ -292,6 +327,7 @@ void Default2DOutputPlugin::adoptCheckpoint(PreparedCheckpoint& prepared) noexce
     // All throwing checks and ID opens precede publication. The solver moves next.
     closeDatasets(); H5Fclose(file_id_); file_id_ = prepared.file; prepared.file = H5I_INVALID_HID;
     for (auto& [target, id] : prepared.datasets) { *target = id; id = H5I_INVALID_HID; }
+    if(prepared.file_copy)prepared.file_copy->retain();
     prepared.staging.clear(); n_steps_ = prepared.steps; next_due_days_ = prepared.next_due;
     gw_created_ = prepared.groundwater; n_gw_beds_ = prepared.beds; n_gw_layers_ = prepared.layers;
     source_written_ = std::move(prepared.history);

@@ -3,6 +3,7 @@
 #include "SWMMEngine.hpp"
 #include "CompletedSourceArchive.hpp"
 #include "FileIO.hpp"
+#include "../io/CheckpointFile.hpp"
 #include "../plugins/DefaultOutputPlugin.hpp"
 #include "../plugins/DefaultStateIOPlugin.hpp"
 #include "../plugins/DefaultReportPlugin.hpp"
@@ -29,6 +30,7 @@ namespace {
 using Archive=detail::CompletedSourceArchive;
 constexpr uint64_t maxBytes=64*1024*1024;
 constexpr const char* magicName="OpenSWMM accepted water-only engine session";
+constexpr const char* fileMagic="OpenSWMM file-backed water engine session";
 constexpr const char* streamMagic="OpenSWMM engine session with source stream";
 void require(bool ok,const char* message) { if(!ok)throw std::runtime_error(message); }
 template<class T> void finite(const T& v) {
@@ -56,7 +58,7 @@ void publish(const std::string& path,const std::string& bytes) {
     if(std::filesystem::exists(path)) {
         Archive old(readFile(path));std::string magic;old(magic);
         Archive incoming(bytes);std::string next;incoming(next);
-        require(magic==next && (magic==magicName || magic==streamMagic),"Engine checkpoint destination is an unrelated file.");
+        require(magic==next && (magic==magicName || magic==streamMagic || magic==fileMagic),"Engine checkpoint destination is an unrelated file.");
     }
     static std::atomic<uint64_t> serial{0};auto part=path+".session-part-"+std::to_string(++serial);
     FILE* f=std::fopen(part.c_str(),"wbx");require(f,"Cannot create engine checkpoint publication file.");
@@ -857,6 +859,9 @@ std::string SWMMEngine::checkpointBytes(std::string& result,bool include_outputs
 std::string SWMMEngine::saveCheckpoint(const std::string& path) const {
     try {
         require(!step_active_ && !runtime_pipeline_ && exchange_target_<0,"Cannot save an active engine pipeline.");
+        #ifdef OPENSWMM_HAS_2D
+        if(checkpoint_file_outputs_)return saveFileOutputCheckpoint(path);
+        #endif
         std::string bytes;const auto error=checkpointBytes(bytes);require(error.empty(),error.c_str());
 #ifdef OPENSWMM_HAS_2D
         require(!engine_source_history_ || engine_source_history_->boundary_==bytes,"Engine source history is not at the accepted checkpoint.");
@@ -884,7 +889,7 @@ void SWMMEngine::detachEngineSourceHistory() noexcept {
         cpu->engine_source_history_=nullptr;cpu->engine_source_stream_=nullptr;
     }
     if(engine_source_stream_)engine_source_stream_->engine_=nullptr;
-    engine_source_stream_=nullptr;engine_source_history_=nullptr;
+    engine_source_stream_=nullptr;engine_source_history_=nullptr;checkpoint_file_outputs_=false;
 }
 std::string SWMMEngine::setEngineSourceResultHistory(twoD::EngineSourceResultHistory& history,bool detailed_source_intervals) {
     try {
@@ -920,10 +925,55 @@ std::string SWMMEngine::setEngineSourceResultStream(twoD::EngineSourceResultStre
     } catch(const std::exception& e){return e.what();}
 }
 
+std::string SWMMEngine::enableFileOutputCheckpointing() {
+#ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
+    try {
+        require(!step_active_ && !runtime_pipeline_ && ctx_.current_time==0 && engine_source_stream_ && checkpoint_output_ && checkpoint_surface_output_ && !checkpoint_file_outputs_,
+            "Select file companions at the initial combined-output source-stream boundary.");
+        checkCheckpointBoundary();checkpoint_file_outputs_=true;return {};
+    }catch(const std::exception& e){return e.what();}
+#else
+    return "File-backed combined output checkpoints unavailable in this build.";
+#endif
+}
+std::string SWMMEngine::saveFileOutputCheckpoint(const std::string& path) const {
+#ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
+    try {
+        require(checkpoint_file_outputs_ && engine_source_stream_ && checkpoint_output_ && checkpoint_surface_output_,"File checkpoint profile differs.");
+        require(io_thread_.flush()==0,"Cannot checkpoint failed output writes.");
+        std::string physical;const auto error=checkpointBytes(physical,false);require(error.empty(),error.c_str());using Stream=twoD::EngineSourceResultStream;
+        const auto hash=Stream::fingerprint(physical);
+        if(engine_source_stream_->pending_capture_ || engine_source_stream_->latest_.kind==Stream::Kind::SourceInterval || engine_source_stream_->latest_.boundary_fingerprint!=hash) {
+            const bool missing=engine_source_stream_->engine_end_<ctx_.current_time;
+            const auto captured=engine_source_stream_->capture(*this,engine_source_stream_->pending_capture_?engine_source_stream_->pending_kind_:(missing?Stream::Kind::EngineStep:Stream::Kind::Checkpoint),
+                engine_source_stream_->pending_capture_?engine_source_stream_->pending_start_:(missing?engine_source_stream_->engine_end_:ctx_.current_time),hash);require(captured.empty(),captured.c_str());
+        }
+        std::shared_ptr<io::OwnedCheckpointFile> binary_copy,mesh_copy;
+        auto binary=binary_output_plugin_->captureFileCheckpoint(ctx_,ctx_.next_report_ms,io::utf8_path(path+".binary"),binary_copy);
+        SimulationSnapshot snap;fillSurfaceSnapshot(snap);auto mesh=surface_output_plugin_->captureFileCheckpoint(ctx_,ctx_.next_report_ms,snap,io::utf8_path(path+".mesh"),mesh_copy);
+        Archive binding;binding(physical,binary,mesh);auto source=engine_source_stream_->checkpointContract(hash,Stream::fingerprint(binding.bytes()));
+        Archive data;data(physical,binary,mesh,source);auto crc=checksum(data.bytes());std::string magic=fileMagic;uint32_t version=1;Archive out;out(magic,version,crc,physical,binary,mesh,source);
+        require(out.bytes().size()<=maxBytes,"File-backed physical checkpoint exceeds its model-state limit.");publish(path,out.bytes());binary_copy->retain();mesh_copy->retain();return {};
+    }catch(const std::exception& e){return e.what();}
+#else
+    return "File-backed combined output checkpoints unavailable in this build.";
+#endif
+}
+
 #endif
 std::string SWMMEngine::loadCheckpoint(const std::string& path) {
     try {
         auto bytes=readFile(path);Archive peek(bytes);std::string magic;peek(magic);
+        if(magic==fileMagic) {
+#ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
+            require(checkpoint_file_outputs_,"Select the file-backed output profile before restore.");
+            Archive in(std::move(bytes));uint32_t version,crc;std::string physical,binary,mesh,source;in(magic,version,crc,physical,binary,mesh,source);in.finish();Archive data;data(physical,binary,mesh,source);
+            require(version==1&&crc==checksum(data.bytes()),"File-backed checkpoint checksum or version differs.");Archive binding;binding(physical,binary,mesh);
+            return loadCheckpointBytes(std::move(physical),source,binary,mesh,twoD::EngineSourceResultStream::fingerprint(binding.bytes()));
+#else
+            return "File-backed output checkpoints unavailable in this build.";
+#endif
+        }
         if(magic!=streamMagic)return loadCheckpointBytes(std::move(bytes));
 #ifdef OPENSWMM_HAS_2D
         Archive in(std::move(bytes));uint32_t version,crc;std::string physical,contract;in(magic,version,crc,physical,contract);in.finish();
@@ -934,7 +984,8 @@ std::string SWMMEngine::loadCheckpoint(const std::string& path) {
 #endif
     }catch(const std::exception& e){return e.what();}
 }
-std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,const std::string& stream_contract) {
+std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,const std::string& stream_contract,
+    const std::string& binary_file,const std::string& mesh_file,uint64_t whole_binding) {
     try {
         require(!step_active_ && !runtime_pipeline_ && exchange_target_<0 && ctx_.current_time==0,"Engine restore requires an identically initialized fresh session.");
 #ifdef OPENSWMM_HAS_2D
@@ -942,23 +993,25 @@ std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,const std::st
 #endif
         checkCheckpointBoundary();
 #ifdef OPENSWMM_HAS_2D
+        require(checkpoint_file_outputs_==(!binary_file.empty()&&!mesh_file.empty()),"Checkpoint file-output profile differs.");
         require(bool(engine_source_stream_)==!stream_contract.empty(),"Stream checkpoints require their fresh stream destination; old checkpoints require no stream.");
         std::unique_ptr<twoD::EngineSourceResultStream::PreparedRestore> prepared_stream;
-        if(engine_source_stream_)prepared_stream=engine_source_stream_->prepareRestore(stream_contract,twoD::EngineSourceResultStream::fingerprint(checkpoint));
+        if(engine_source_stream_)prepared_stream=engine_source_stream_->prepareRestore(stream_contract,whole_binding?whole_binding:twoD::EngineSourceResultStream::fingerprint(checkpoint));
 #else
-        require(stream_contract.empty(),"Source stream support unavailable.");
+        require(stream_contract.empty()&&binary_file.empty()&&mesh_file.empty(),"Source stream/file checkpoint support unavailable.");
 #endif
         Archive in(std::move(checkpoint));std::string magic,model,bytes;uint32_t version=0,crc=0;
         in(magic,version,model,crc,bytes);in.finish();
+        const bool files=!binary_file.empty();
         uint32_t expected_version=3;
 #ifdef OPENSWMM_HAS_2D
         if(surface_router_.isActive())expected_version=source_delivery_?5:4;
         if(surface_router_.runtimeWaterCheckpointing())expected_version+=20;
         if(runtime_water_driver_)expected_version+=40;
 #endif
-        if(checkpoint_output_)expected_version+=3;
+        if(checkpoint_output_&&!files)expected_version+=3;
 #ifdef OPENSWMM_HAS_2D
-        if(checkpoint_surface_output_)expected_version+=6;
+        if(checkpoint_surface_output_&&!files)expected_version+=6;
 #endif
         require(magic==magicName && version==expected_version && model==checkpoint_model_ && crc==checksum(bytes),"Engine checkpoint format/model/checksum differs.");
         RestartState state(*this);Archive payload(std::move(bytes));state.archive(payload);std::string hydraulic;payload(hydraulic);
@@ -966,10 +1019,10 @@ std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,const std::st
         std::string delivery;if(source_delivery_)payload(delivery);
         std::string driver;if(runtime_water_driver_)payload(driver);
 #endif
-        std::string output;if(checkpoint_output_)payload(output);
+        std::string output;if(checkpoint_output_&&!files)payload(output);
         std::string mesh_output;
 #ifdef OPENSWMM_HAS_2D
-        if(checkpoint_surface_output_)payload(mesh_output);
+        if(checkpoint_surface_output_&&!files)payload(mesh_output);
 #endif
         payload.finish();state.validate(*this);
 #ifdef OPENSWMM_HAS_2D
@@ -980,7 +1033,8 @@ std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,const std::st
         std::function<void()> publish_output;
         if(checkpoint_output_) {
             require(io_thread_.flush()==0,"Cannot restore failed output writes.");
-            prepared_output=binary_output_plugin_->prepareCheckpoint(ctx_,state.boundary[4],std::move(output));
+            prepared_output=files?binary_output_plugin_->prepareFileCheckpoint(ctx_,state.boundary[4],binary_file):
+                binary_output_plugin_->prepareCheckpoint(ctx_,state.boundary[4],std::move(output));
             publish_output=[&]{binary_output_plugin_->installCheckpoint(*prepared_output);};
         }
 #ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
@@ -990,8 +1044,8 @@ std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,const std::st
             SimulationSnapshot snap;fillSurfaceSnapshot(snap);snap.sim_time=state.boundary[0];
             twoD::SourceResultHistory initial;
             if(source_stage_) {const auto error=initial.append(*source_stage_);require(error.empty(),error.c_str());}
-            prepared_mesh=surface_output_plugin_->prepareCheckpoint(ctx_,state.boundary[4],snap,
-                source_stage_?&initial:nullptr,std::move(mesh_output));
+            prepared_mesh=files?surface_output_plugin_->prepareFileCheckpoint(ctx_,state.boundary[4],snap,mesh_file):
+                surface_output_plugin_->prepareCheckpoint(ctx_,state.boundary[4],snap,source_stage_?&initial:nullptr,std::move(mesh_output));
             publish_output=[&]{
                 if(!prepared_output) {surface_output_plugin_->installCheckpoint(*prepared_mesh);return;}
                 std::lock_guard<std::recursive_mutex> lock(io::resultHdf5Mutex());

@@ -6,6 +6,8 @@
 #include "core/FileIO.hpp"
 #include "core/SimulationContext.hpp"
 #include <atomic>
+#include <array>
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -28,9 +30,10 @@ struct DefaultOutputPlugin::PreparedCheckpoint {
     std::filesystem::path staging;
     FILE* stream = nullptr;
     int periods = 0;
+    std::shared_ptr<io::OwnedCheckpointFile> file_copy;
     ~PreparedCheckpoint() {
         if (stream) std::fclose(stream);
-        if (!staging.empty()) { std::error_code ec; std::filesystem::remove(staging, ec); }
+        if (!file_copy && !staging.empty()) { std::error_code ec; std::filesystem::remove(staging, ec); }
     }
 };
 
@@ -130,7 +133,43 @@ void DefaultOutputPlugin::installCheckpoint(PreparedCheckpoint& prepared) {
 void DefaultOutputPlugin::adoptCheckpoint(PreparedCheckpoint& prepared) noexcept {
     // No throwing operation after successful publication.
     std::fclose(out_file_); out_file_ = prepared.stream; prepared.stream = nullptr;
+    if(prepared.file_copy)prepared.file_copy->retain();
     prepared.staging.clear(); n_periods_ = step_count_ = prepared.periods;
     state_ = n_periods_ ? PluginState::UPDATING : PluginState::PREPARED;
+}
+
+void DefaultOutputPlugin::validateFileCheckpoint(FILE* file,uint64_t bytes,const SimulationContext& ctx,double next,int periods) const {
+    require(checkpoint_fresh_ && file && !checkpoint_header_.empty() && periods>=0,"Binary file checkpoint writer is not prepared.");
+    const uint64_t values=uint64_t(n_subcatch_)*n_subcatch_vars_+uint64_t(n_nodes_)*n_node_vars_+uint64_t(n_links_)*n_link_vars_+MAX_SYS_RESULTS;
+    const uint64_t width=sizeof(double)+values*sizeof(float);
+    require(uint64_t(periods)<=(UINT64_MAX-checkpoint_header_.size())/width && bytes==checkpoint_header_.size()+uint64_t(periods)*width,"Binary file checkpoint shape differs.");
+    const double step=1000*ctx.options.report_step,grid=std::round(next/step);
+    require(std::isfinite(step)&&step>0&&std::isfinite(grid)&&grid>=1&&grid<=std::numeric_limits<int>::max()&&grid*step==next,"Binary file checkpoint clock differs.");
+    const int completed=int(grid)-1;const auto date=[&](int k){return datetime::addSeconds(ctx.options.start_date,(k*step+1)/1000);};
+    int first=1,upper=completed+1;while(first<upper){const int mid=first+(upper-first)/2;if(date(mid)<ctx.options.report_start)first=mid+1;else upper=mid;}
+    require(periods==completed-first+1,"Binary file checkpoint report count differs.");
+    io::checkpointSeek(file,0);std::string header(checkpoint_header_.size(),'\0');
+    require(std::fread(header.data(),1,header.size(),file)==header.size()&&header==checkpoint_header_,"Binary file checkpoint header differs.");
+    std::array<float,16384> buffer{};
+    for(int p=0;p<periods;++p){double time;require(std::fread(&time,sizeof(time),1,file)==1&&time==date(first+p),"Binary file checkpoint date differs.");
+        uint64_t left=values;while(left){const auto n=std::min(left,uint64_t(buffer.size()));require(std::fread(buffer.data(),sizeof(float),n,file)==n,"Binary file checkpoint is truncated.");for(uint64_t i=0;i<n;++i)require(std::isfinite(buffer[i]),"Nonfinite binary file checkpoint value.");left-=n;}}
+    require(std::fgetc(file)==EOF&&!std::ferror(file),"Binary file checkpoint contains extra data.");
+}
+std::string DefaultOutputPlugin::captureFileCheckpoint(const SimulationContext& ctx,double next,const std::filesystem::path& base,
+    std::shared_ptr<io::OwnedCheckpointFile>& artifact) const {
+    require(out_file_ && std::fflush(out_file_)==0 && !std::ferror(out_file_) && step_count_==n_periods_,"Cannot settle binary file checkpoint.");
+    auto copy=io::copyCheckpointFile(io::utf8_path(out_path_),io::checkpointFileSize(io::utf8_path(out_path_)),base);
+    FILE* f=io::fopen_path(copy->file.path,"rb");require(f,"Cannot validate binary companion.");
+    try{validateFileCheckpoint(f,copy->file.bytes,ctx,next,n_periods_);}catch(...){std::fclose(f);throw;}std::fclose(f);
+    detail::CompletedSourceArchive a;uint32_t version=1;auto periods=n_periods_;auto file=copy->file.encode();a(version,periods,file);artifact=std::move(copy);return a.bytes();
+}
+std::shared_ptr<DefaultOutputPlugin::PreparedCheckpoint> DefaultOutputPlugin::prepareFileCheckpoint(const SimulationContext& ctx,double next,std::string bytes) {
+    require(n_periods_==0&&step_count_==0&&readPrefix()==checkpoint_header_,"Binary file restore requires its fresh writer.");
+    detail::CompletedSourceArchive a(std::move(bytes));uint32_t version;int periods;std::string descriptor;a(version,periods,descriptor);a.finish();require(version==1,"Binary file checkpoint version differs.");
+    auto saved=io::CheckpointFile::decode(std::move(descriptor));saved.verify();
+    auto prepared=std::make_shared<PreparedCheckpoint>();prepared->periods=periods;prepared->file_copy=io::copyCheckpointFile(saved.path,saved.bytes,io::utf8_path(out_path_));
+    require(prepared->file_copy->file.fingerprint==saved.fingerprint,"Binary companion changed during copying.");
+    prepared->staging=prepared->file_copy->file.path;prepared->stream=io::fopen_path(prepared->staging,"r+b");require(prepared->stream,"Cannot open staged binary companion.");
+    validateFileCheckpoint(prepared->stream,saved.bytes,ctx,next,periods);io::checkpointSeek(prepared->stream,saved.bytes);return prepared;
 }
 } // namespace openswmm
