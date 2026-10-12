@@ -249,6 +249,9 @@ public:
 #endif
     std::string saveCheckpoint(const std::string& path) const;
     std::string loadCheckpoint(const std::string& path);
+    /// Internal same-platform directory transport of a saved file checkpoint.
+    /// Copies the accepted prefix; model/provider initialization is still required.
+    static std::string packageCheckpointBundle(const std::string& checkpoint,const std::string& directory);
 
     // =========================================================================
     // Callback registration

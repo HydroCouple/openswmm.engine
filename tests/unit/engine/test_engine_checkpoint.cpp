@@ -12,6 +12,7 @@
 #include "2d/subsurface/EngineSourceResultHistory.hpp"
 #include "2d/subsurface/EngineSourceResultStream.hpp"
 #include "io/CheckpointFile.hpp"
+#include "io/CheckpointDirectory.hpp"
 #include "core/FileIO.hpp"
 #include "2d/mesh/MeshBuilder.hpp"
 #include <openswmm/engine/openswmm_coupling.h>
@@ -3440,10 +3441,11 @@ uint64_t fileTestHash(const std::string& data) {
     return value;
 }
 struct FileBundle {
+    uint32_t version=1;
     std::string physical,binary,mesh,source;
     explicit FileBundle(const std::filesystem::path& path) {
-        detail::CompletedSourceArchive a(bytes(path));std::string magic;uint32_t version,sum;a(magic,version,sum,physical,binary,mesh,source);a.finish();
-        if(magic!="OpenSWMM file-backed water engine session"||version!=1)throw std::runtime_error("Not a file bundle.");
+        detail::CompletedSourceArchive a(bytes(path));std::string magic;uint32_t sum;a(magic,version,sum,physical,binary,mesh,source);a.finish();
+        if(magic!="OpenSWMM file-backed water engine session"||(version!=1&&version!=2))throw std::runtime_error("Not a file bundle.");
     }
     io::CheckpointFile binaryFile() const {
         detail::CompletedSourceArchive a(binary);uint32_t version;int periods;std::string file;a(version,periods,file);a.finish();return io::CheckpointFile::decode(file);
@@ -3456,7 +3458,7 @@ struct FileBundle {
         A binding;binding(physical,binary,mesh);
         A saved(source);std::string path,cursor;uint64_t anchor,whole;saved(path,cursor,anchor,whole);saved.finish();
         whole=fileTestHash(binding.bytes());A contract;contract(path,cursor,anchor,whole);auto updated=contract.bytes();
-        A data;data(physical,binary,mesh,updated);auto sum=crc(data.bytes());uint32_t version=1;std::string magic="OpenSWMM file-backed water engine session";
+        A data;data(physical,binary,mesh,updated);auto sum=crc(data.bytes());std::string magic="OpenSWMM file-backed water engine session";
         A out;out(magic,version,sum,physical,binary,mesh,updated);return out.bytes();
     }
     void rehash(bool binary_file) {
@@ -3606,5 +3608,139 @@ TEST(EngineCheckpoint, FileOutputCopiesValidateLargePrefixesAndNeverDeleteUnowne
     const auto base=root()/"file-unowned-staging";for(uint64_t i=next;i<next+32;++i)write(base.string()+".file-part-"+std::to_string(i),"recovery");
     EXPECT_THROW(io::copyCheckpointFile(source,first->file.bytes,base),std::runtime_error);
     for(uint64_t i=next;i<next+32;++i){auto path=base.string()+".file-part-"+std::to_string(i);EXPECT_EQ(bytes(path),"recovery");std::filesystem::remove(path);}
+}
+
+namespace {
+void changeBundlePath(FileBundle& bundle,int member,const std::string& path) {
+    using A=detail::CompletedSourceArchive;A out;
+    if(member==2) {
+        A in(bundle.source);std::string old,cursor;uint64_t anchor,whole;in(old,cursor,anchor,whole);in.finish();
+        auto updated=path;out(updated,cursor,anchor,whole);bundle.source=out.bytes();return;
+    }
+    auto file=member==0?bundle.binaryFile():bundle.meshFile();file.path=io::utf8_path(path);auto descriptor=file.encode();
+    if(member==0){A in(bundle.binary);uint32_t version;int periods;std::string old;in(version,periods,old);in.finish();out(version,periods,descriptor);bundle.binary=out.bytes();}
+    else{A in(bundle.mesh);uint32_t version;double cadence,due;hsize_t steps;bool gw;std::string old;in(version,cadence,steps,due,gw,old);in.finish();out(version,cadence,steps,due,gw,descriptor);bundle.mesh=out.bytes();}
+}
+}
+TEST(EngineCheckpoint, BundleRelocationContinuesSavedPrefixesAcrossNodeAndGroundwaterProfiles) {
+    for(bool detailed:{false,true})for(int lid:{0,1,2})for(int closure:{0,1,2}) {
+        const auto name="bundle-profiles-"+std::to_string(detailed)+"-"+std::to_string(lid)+"-"+std::to_string(closure);SCOPED_TRACE(name);
+        const int format=1+(lid+closure)%4;Stream recorded,resumed;SurfaceSession a,b;
+        ASSERT_NO_THROW(startFileBundle(a,recorded,name,lid,closure,format,detailed));
+        ASSERT_NO_THROW(startFileBundle(b,resumed,name+"-resumed",lid,closure,format,detailed));
+        const double phase=(lid+closure)%3==0?0:(lid+closure)%3==1?1.4:9.1;
+        if(phase>0)ASSERT_NO_THROW(until(a.engine,phase));
+        const auto cp=root()/(name+".chk");ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+        const auto cursor=recorded.cursor();const double time=a.engine.context().current_time;
+        // Package the older accepted checkpoint after the live journal has advanced.
+        double actual;ASSERT_EQ(a.engine.advanceTo(25,&actual),SWMM_OK);ASSERT_GT(recorded.cursor().bytes,cursor.bytes);
+        const auto folder=root()/(name+" export λ");ASSERT_EQ(SWMMEngine::packageCheckpointBundle(cp.string(),io::path_utf8(folder)),"");
+        FileBundle bundle(folder/"session.chk");EXPECT_EQ(bundle.version,2);EXPECT_EQ(bundle.binaryFile().path,"binary.out");EXPECT_EQ(bundle.meshFile().path,"mesh.h5");
+        EXPECT_EQ(bytes(folder/"source.history"),bytes(recorded.path()).substr(0,cursor.bytes));
+        EXPECT_EQ(std::distance(std::filesystem::directory_iterator(folder),std::filesystem::directory_iterator{}),4);
+        const auto moved=root()/(name+" moved λ");std::filesystem::rename(folder,moved);
+        ASSERT_EQ(b.engine.loadCheckpoint(io::path_utf8(moved/"session.chk")),"");EXPECT_DOUBLE_EQ(b.engine.context().current_time,time);EXPECT_EQ(resumed.cursor(),cursor);
+        ASSERT_EQ(b.engine.advanceTo(25,&actual),SWMM_OK);compareCatchmentProvider(a,b,name+"-continued");equalStreamPrefix(recorded,resumed);
+        ASSERT_EQ(a.engine.end(),0);ASSERT_EQ(b.engine.end(),0);sameBinary(name,name+"-resumed",format==4?4:8);sameMesh(name,name+"-resumed",format==4?2:4);
+    }
+}
+TEST(EngineCheckpoint, BundleRepackagesAfterOriginalFilesDisappearAndRestoresDueDriverWithoutMutation) {
+    Stream recorded;TestWaterDriver driver;SurfaceSession a;
+    ASSERT_NO_THROW(startCatchmentProvider(a,"bundle-detached-source",2,2,true,2));
+    ASSERT_EQ(a.engine.attachRuntimeWaterDriverCheckpoint(driver),"");
+    ASSERT_EQ(a.engine.setEngineSourceResultStream(recorded,streamPath("bundle-detached-source").string(),true),"");
+    ASSERT_EQ(a.engine.enableFileOutputCheckpointing(),"");ASSERT_NO_THROW(drive(a.engine,driver,4.2));
+    const auto cp=root()/"bundle-detached.chk";ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+    const auto cursor=recorded.cursor();const auto state=driverState(driver,a.engine.context().current_time);FileBundle original(cp);
+    const auto folder=root()/"bundle-detached-export";ASSERT_EQ(SWMMEngine::packageCheckpointBundle(cp.string(),folder.string()),"");
+    ASSERT_EQ(a.engine.end(),0);ASSERT_EQ(a.engine.close(),0);
+    for(const auto& file:{cp,original.binaryFile().path,original.meshFile().path,io::utf8_path(recorded.path())})ASSERT_TRUE(std::filesystem::remove(file));
+    const auto moved=root()/"bundle-detached-moved";std::filesystem::rename(folder,moved);write(moved/"unrelated.txt","keep");
+    const auto repacked=root()/"bundle-detached-repacked";ASSERT_EQ(SWMMEngine::packageCheckpointBundle((moved/"session.chk").string(),repacked.string()),"");
+    EXPECT_EQ(std::distance(std::filesystem::directory_iterator(repacked),std::filesystem::directory_iterator{}),4);EXPECT_EQ(bytes(moved/"unrelated.txt"),"keep");
+    std::filesystem::rename(moved,root()/"bundle-detached-no-longer-needed");
+    Stream resumed;TestWaterDriver target;SurfaceSession b;
+    ASSERT_NO_THROW(startCatchmentProvider(b,"bundle-detached-target",2,2,true,2));
+    ASSERT_EQ(b.engine.attachRuntimeWaterDriverCheckpoint(target),"");
+    ASSERT_EQ(b.engine.setEngineSourceResultStream(resumed,streamPath("bundle-detached-target").string(),true),"");
+    ASSERT_EQ(b.engine.enableFileOutputCheckpointing(),"");ASSERT_EQ(b.engine.loadCheckpoint((repacked/"session.chk").string()),"");
+    EXPECT_EQ(resumed.cursor(),cursor);EXPECT_EQ(driverState(target,b.engine.context().current_time),state);
+    const auto fresh=bytes(resumed.path());const auto binary=bytes(root()/"bundle-detached-target.out"),mesh=bytes(root()/"bundle-detached-target.h5");
+    double actual;EXPECT_EQ(b.engine.advanceTo(5,&actual),SWMM_ERR_LIFECYCLE);EXPECT_EQ(bytes(resumed.path()),fresh);EXPECT_EQ(bytes(root()/"bundle-detached-target.out"),binary);EXPECT_EQ(bytes(root()/"bundle-detached-target.h5"),mesh);
+    ASSERT_NO_THROW(drive(b.engine,target,25));EXPECT_EQ(target.cursor,5);EXPECT_EQ(target.nextUpdateSeconds(),-1);
+}
+TEST(EngineCheckpoint, BundleDamagedAndEscapingMembersPreserveFreshOutputsAndAllowRetry) {
+    Stream recorded;SurfaceSession a;
+    ASSERT_NO_THROW(startFileBundle(a,recorded,"bundle-damage-source"));
+    ASSERT_NO_THROW(until(a.engine,9.1));const auto cp=root()/"bundle-damage.chk";ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+    const auto folder=root()/"bundle-damage-export";ASSERT_EQ(SWMMEngine::packageCheckpointBundle(cp.string(),folder.string()),"");
+    const auto manifest=bytes(folder/"session.chk");
+    for(int variant=0;variant<11;++variant) {
+        const auto name="bundle-damage-target-"+std::to_string(variant);SCOPED_TRACE(name);Stream resumed;SurfaceSession b;
+        ASSERT_NO_THROW(startFileBundle(b,resumed,name));
+        auto input=folder/"session.chk";std::filesystem::path altered;std::string original;FileBundle bad(input);
+        if(variant<4) {
+            altered=folder/(variant<2?"source.history":variant==2?"binary.out":"mesh.h5");original=bytes(altered);
+            if(variant==0)std::filesystem::rename(altered,altered.string()+".missing");
+            else{auto data=original;if(variant==1)data+="extra tail";else if(variant==2)data[data.size()/2]^=1;else data.resize(data.size()-1);write(altered,data);}
+        } else if(variant<8) {
+            if(variant==4)changeBundlePath(bad,0,"../binary.out");
+            if(variant==5)changeBundlePath(bad,1,io::path_utf8(FileBundle(cp).meshFile().path));
+            if(variant==6)changeBundlePath(bad,2,"../source.history");
+            if(variant==7)changeBundlePath(bad,0,"renamed.out");
+            write(input,bad.encode());
+        } else if(variant==8) {
+#ifndef _WIN32
+            altered=folder/"source.history";std::filesystem::rename(altered,altered.string()+".original");std::filesystem::create_symlink(altered.string()+".original",altered);
+#else
+            continue;
+#endif
+        } else if(variant==9) {
+#ifndef _WIN32
+            input=folder/"linked.chk";std::filesystem::create_symlink(folder/"session.chk",input);
+#else
+            continue;
+#endif
+        } else std::filesystem::permissions(root()/(name+".h5"),std::filesystem::perms::owner_read);
+        const auto binary=root()/(name+".out"),mesh=root()/(name+".h5");const auto bh=bytes(binary),mh=bytes(mesh),sh=bytes(resumed.path());const auto cursor=resumed.cursor();
+        EXPECT_FALSE(b.engine.loadCheckpoint(input.string()).empty());EXPECT_DOUBLE_EQ(b.engine.context().current_time,0);EXPECT_EQ(bytes(binary),bh);EXPECT_EQ(bytes(mesh),mh);EXPECT_EQ(bytes(resumed.path()),sh);EXPECT_EQ(resumed.cursor(),cursor);
+        if(variant==0)std::filesystem::rename(altered.string()+".missing",altered);
+        else if(variant<4)write(altered,original);
+        else if(variant<8)write(folder/"session.chk",manifest);
+        else if(variant==8){std::filesystem::remove(altered);std::filesystem::rename(altered.string()+".original",altered);}
+        else if(variant==9)std::filesystem::remove(input);
+        else std::filesystem::permissions(mesh,std::filesystem::perms::owner_read|std::filesystem::perms::owner_write);
+        ASSERT_EQ(b.engine.loadCheckpoint((folder/"session.chk").string()),"");compareCatchmentProvider(a,b,name+"-retry");equalStreamPrefix(recorded,resumed);
+    }
+}
+TEST(EngineCheckpoint, BundlePackagingRejectsBrokenBindingsAndPreservesDestinationsAndSourceState) {
+    Stream recorded;SurfaceSession a;
+    ASSERT_NO_THROW(startFileBundle(a,recorded,"bundle-package-guards"));
+    ASSERT_NO_THROW(until(a.engine,9.1));const auto cp=root()/"bundle-package-guards.chk";ASSERT_EQ(a.engine.saveCheckpoint(cp.string()),"");
+    const auto before=bytes(cp),source=bytes(recorded.path());const auto cursor=recorded.cursor();const auto time=a.engine.context().current_time;
+    for(int variant=0;variant<5;++variant) {
+        const auto destination=root()/("bundle-package-invalid-"+std::to_string(variant));FileBundle bad(cp);
+        if(variant==0){detail::CompletedSourceArchive in(bad.source);std::string path,saved;uint64_t anchor,whole;in(path,saved,anchor,whole);++anchor;detail::CompletedSourceArchive out;out(path,saved,anchor,whole);bad.source=out.bytes();}
+        else if(variant==1){auto f=bad.binaryFile();f.fingerprint^=1;detail::CompletedSourceArchive in(bad.binary);uint32_t version;int periods;std::string old;in(version,periods,old);auto descriptor=f.encode();detail::CompletedSourceArchive out;out(version,periods,descriptor);bad.binary=out.bytes();}
+        else if(variant==2){bad.physical.back()^=1;}
+        const auto input=root()/("bundle-package-bad-"+std::to_string(variant)+".chk");auto data=bad.encode();if(variant==3)data.back()^=1;write(input,data);
+        if(variant==4){std::filesystem::create_directory(destination);write(destination/"recovery","unrelated");}
+        EXPECT_FALSE(SWMMEngine::packageCheckpointBundle(input.string(),destination.string()).empty());
+        if(variant==4)EXPECT_EQ(bytes(destination/"recovery"),"unrelated");else EXPECT_FALSE(std::filesystem::exists(destination));
+        EXPECT_EQ(bytes(cp),before);EXPECT_EQ(bytes(recorded.path()),source);EXPECT_EQ(recorded.cursor(),cursor);EXPECT_DOUBLE_EQ(a.engine.context().current_time,time);
+    }
+    const auto file=root()/"bundle-unrelated-destination";write(file,"unrelated");EXPECT_FALSE(SWMMEngine::packageCheckpointBundle(cp.string(),file.string()).empty());EXPECT_EQ(bytes(file),"unrelated");
+    const auto retry=root()/"bundle-package-retry";ASSERT_EQ(SWMMEngine::packageCheckpointBundle(cp.string(),retry.string()),"");
+}
+TEST(EngineCheckpoint, BundleDirectoryCollisionsAndConcurrentDestinationNeverRemoveUnownedFiles) {
+    const auto first=root()/"bundle-directory-first";uint64_t next;
+    {io::CheckpointDirectory stage(first);const auto name=stage.staging().filename().string();next=std::stoull(name.substr(name.rfind(".bundle-part-")+13))+1;}
+    const auto destination=root()/"bundle-directory-collisions";
+    for(uint64_t k=next;k<next+32;++k){auto path=std::filesystem::path(destination.string()+".bundle-part-"+std::to_string(k));std::filesystem::create_directory(path);write(path/"recovery","unowned");}
+    EXPECT_THROW(io::CheckpointDirectory stage(destination),std::runtime_error);
+    for(uint64_t k=next;k<next+32;++k){auto path=std::filesystem::path(destination.string()+".bundle-part-"+std::to_string(k));EXPECT_EQ(bytes(path/"recovery"),"unowned");std::filesystem::remove_all(path);}
+    const auto raced=root()/"bundle-directory-raced";std::filesystem::path private_folder;
+    {io::CheckpointDirectory stage(raced);private_folder=stage.staging();write(private_folder/"session.chk","owned");std::filesystem::create_directory(raced);EXPECT_THROW(stage.publish(),std::runtime_error);EXPECT_TRUE(std::filesystem::is_directory(raced));EXPECT_TRUE(std::filesystem::is_empty(raced));}
+    EXPECT_FALSE(std::filesystem::exists(private_folder));EXPECT_TRUE(std::filesystem::is_directory(raced));
 }
 #endif

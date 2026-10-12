@@ -4,6 +4,7 @@
 #include "CompletedSourceArchive.hpp"
 #include "FileIO.hpp"
 #include "../io/CheckpointFile.hpp"
+#include "../io/CheckpointDirectory.hpp"
 #include "../plugins/DefaultOutputPlugin.hpp"
 #include "../plugins/DefaultStateIOPlugin.hpp"
 #include "../plugins/DefaultReportPlugin.hpp"
@@ -49,24 +50,86 @@ uint32_t checksum(const std::string& bytes) {
     return ~crc;
 }
 std::string readFile(const std::string& path) {
-    std::error_code ec;auto size=std::filesystem::file_size(path,ec);
+    std::error_code ec;auto size=std::filesystem::file_size(io::utf8_path(path),ec);
     require(!ec && size>0 && size<=maxBytes,"Engine checkpoint is missing or exceeds its size limit.");
-    std::ifstream in(path,std::ios::binary);std::string bytes(size,'\0');in.read(bytes.data(),bytes.size());
+    std::ifstream in(io::utf8_path(path),std::ios::binary);std::string bytes(size,'\0');in.read(bytes.data(),bytes.size());
     require(bool(in) && in.peek()==std::char_traits<char>::eof(),"Engine checkpoint read failed.");return bytes;
 }
 void publish(const std::string& path,const std::string& bytes) {
-    if(std::filesystem::exists(path)) {
+    if(std::filesystem::exists(io::utf8_path(path))) {
         Archive old(readFile(path));std::string magic;old(magic);
         Archive incoming(bytes);std::string next;incoming(next);
         require(magic==next && (magic==magicName || magic==streamMagic || magic==fileMagic),"Engine checkpoint destination is an unrelated file.");
     }
     static std::atomic<uint64_t> serial{0};auto part=path+".session-part-"+std::to_string(++serial);
-    FILE* f=std::fopen(part.c_str(),"wbx");require(f,"Cannot create engine checkpoint publication file.");
+    FILE* f=io::fopen_path(io::utf8_path(part),"wbx");require(f,"Cannot create engine checkpoint publication file.");
     bool written=std::fwrite(bytes.data(),1,bytes.size(),f)==bytes.size();bool closed=std::fclose(f)==0;
-    if(!written || !closed) {std::filesystem::remove(part);throw std::runtime_error("Engine checkpoint write failed.");}
-    std::error_code ec;std::filesystem::rename(part,path,ec);
-    if(ec) {std::filesystem::remove(part);throw std::runtime_error("Cannot publish engine checkpoint: "+ec.message());}
+    if(!written || !closed) {std::filesystem::remove(io::utf8_path(part));throw std::runtime_error("Engine checkpoint write failed.");}
+    std::error_code ec;std::filesystem::rename(io::utf8_path(part),io::utf8_path(path),ec);
+    if(ec) {std::filesystem::remove(io::utf8_path(part));throw std::runtime_error("Cannot publish engine checkpoint: "+ec.message());}
 }
+#ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
+struct FileCheckpointEnvelope {
+    uint32_t version=1;
+    std::string physical,binary,mesh,source;
+    explicit FileCheckpointEnvelope(std::string bytes) {
+        Archive in(std::move(bytes));std::string magic;uint32_t crc;
+        in(magic,version,crc,physical,binary,mesh,source);in.finish();
+        Archive data;data(physical,binary,mesh,source);
+        require(magic==fileMagic && (version==1||version==2) && crc==checksum(data.bytes()),
+            "File-backed checkpoint checksum or version differs.");
+    }
+    std::string binding() {Archive a;a(physical,binary,mesh);return a.bytes();}
+    std::string encode() {
+        Archive data;data(physical,binary,mesh,source);auto crc=checksum(data.bytes());
+        std::string magic=fileMagic;Archive out;out(magic,version,crc,physical,binary,mesh,source);
+        require(out.bytes().size()<=maxBytes,"File checkpoint exceeds its model-state limit.");return out.bytes();
+    }
+};
+struct FileOutputContract {
+    uint32_t version=1;
+    int periods=0;
+    double cadence=0,due=-1;
+    hsize_t steps=0;
+    bool groundwater=false;
+    io::CheckpointFile file;
+    FileOutputContract(std::string bytes,bool mesh) {
+        require(bytes.size()<32768,"File output contract exceeds its limit.");
+        Archive in(std::move(bytes));std::string descriptor;
+        if(mesh)in(version,cadence,steps,due,groundwater,descriptor);else in(version,periods,descriptor);
+        in.finish();require(version==1&&periods>=0&&std::isfinite(cadence)&&std::isfinite(due),"Invalid file output contract.");
+        file=io::CheckpointFile::decode(std::move(descriptor));
+    }
+    std::string encode(bool mesh) {
+        Archive out;auto descriptor=file.encode();
+        if(mesh)out(version,cadence,steps,due,groundwater,descriptor);else out(version,periods,descriptor);
+        return out.bytes();
+    }
+};
+struct StreamContract {
+    std::string path,cursor;
+    uint64_t anchor=0,whole=0;
+    explicit StreamContract(std::string bytes) {
+        require(bytes.size()<32768,"Source stream contract exceeds its limit.");
+        Archive in(std::move(bytes));in(path,cursor,anchor,whole);in.finish();
+        require(!path.empty()&&path.size()<8192&&path.find('\0')==std::string::npos,"Invalid source stream path.");
+    }
+    std::string encode() {Archive out;out(path,cursor,anchor,whole);return out.bytes();}
+};
+// Bundle v2 contains only fixed relative member names. Resolve after computing
+// the saved manifest binding, which includes the original relative descriptors.
+void resolveBundle(FileCheckpointEnvelope& saved,const std::string& checkpoint) {
+    if(saved.version!=2)return;
+    const auto path=io::utf8_path(checkpoint);io::checkpointFileSize(path);
+    const auto root=std::filesystem::canonical(std::filesystem::absolute(path).parent_path());
+    FileOutputContract binary(saved.binary,false),mesh(saved.mesh,true);StreamContract source(saved.source);
+    require(binary.file.path==io::utf8_path("binary.out")&&mesh.file.path==io::utf8_path("mesh.h5")&&source.path=="source.history",
+        "Bundle references must use their fixed relative member names.");
+    binary.file.path=root/"binary.out";mesh.file.path=root/"mesh.h5";source.path=io::path_utf8(root/"source.history");
+    io::checkpointFileSize(binary.file.path);io::checkpointFileSize(mesh.file.path);io::checkpointFileSize(root/"source.history");
+    saved.binary=binary.encode(false);saved.mesh=mesh.encode(true);saved.source=source.encode();
+}
+#endif
 #ifdef OPENSWMM_HAS_2D
 using WaterDriver=twoD::RuntimeWaterDriverCheckpoint;
 constexpr uint64_t maxDriverBytes=8*1024*1024;
@@ -967,9 +1030,15 @@ std::string SWMMEngine::loadCheckpoint(const std::string& path) {
         if(magic==fileMagic) {
 #ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
             require(checkpoint_file_outputs_,"Select the file-backed output profile before restore.");
-            Archive in(std::move(bytes));uint32_t version,crc;std::string physical,binary,mesh,source;in(magic,version,crc,physical,binary,mesh,source);in.finish();Archive data;data(physical,binary,mesh,source);
-            require(version==1&&crc==checksum(data.bytes()),"File-backed checkpoint checksum or version differs.");Archive binding;binding(physical,binary,mesh);
-            return loadCheckpointBytes(std::move(physical),source,binary,mesh,twoD::EngineSourceResultStream::fingerprint(binding.bytes()));
+            FileCheckpointEnvelope saved(std::move(bytes));
+            const auto binding=twoD::EngineSourceResultStream::fingerprint(saved.binding());
+            resolveBundle(saved,path);
+            if(saved.version==2) {
+                StreamContract source(saved.source);
+                const auto cursor=twoD::EngineSourceResultStream::decodeCursor(source.cursor);
+                require(io::checkpointFileSize(io::utf8_path(source.path))==cursor.bytes,"Bundle source prefix size changed.");
+            }
+            return loadCheckpointBytes(std::move(saved.physical),saved.source,saved.binary,saved.mesh,binding);
 #else
             return "File-backed output checkpoints unavailable in this build.";
 #endif
@@ -984,6 +1053,51 @@ std::string SWMMEngine::loadCheckpoint(const std::string& path) {
 #endif
     }catch(const std::exception& e){return e.what();}
 }
+std::string SWMMEngine::packageCheckpointBundle(const std::string& checkpoint,const std::string& directory) {
+#ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
+    try {
+        require(!checkpoint.empty()&&checkpoint.find('\0')==std::string::npos&&
+            !directory.empty()&&directory.find('\0')==std::string::npos,"Invalid checkpoint bundle path.");
+        FileCheckpointEnvelope saved(readFile(checkpoint));using Stream=twoD::EngineSourceResultStream;
+        const auto binding=Stream::fingerprint(saved.binding());resolveBundle(saved,checkpoint);
+        FileOutputContract binary(saved.binary,false),mesh(saved.mesh,true);StreamContract source(saved.source);
+        require(source.whole==binding&&source.anchor==Stream::fingerprint(saved.physical),"Bundle physical/source binding differs.");
+        Archive physical(saved.physical);std::string magic,model,state;uint32_t version,crc;
+        physical(magic,version,model,crc,state);physical.finish();
+        require(magic==magicName&&crc==checksum(state),"Bundle physical envelope checksum differs.");
+        const auto cursor=Stream::decodeCursor(source.cursor);
+        const auto size=io::checkpointFileSize(io::utf8_path(source.path));
+        require(saved.version==2?size==cursor.bytes:size>=cursor.bytes,"Bundle source prefix size differs.");
+        auto validate_source=[&](const std::string& path) {
+            uint64_t anchor=0;Stream::Kind kind=Stream::Kind::SourceInterval;
+            const auto error=Stream::visit(path,cursor,[&](const auto& frame){anchor=frame.boundary_fingerprint;kind=frame.kind;});
+            require(error.empty(),error.c_str());
+            require(kind!=Stream::Kind::SourceInterval&&anchor==source.anchor,"Bundle source prefix does not match its physical state.");
+        };
+        validate_source(source.path);binary.file.verify();mesh.file.verify();
+        io::CheckpointDirectory bundle(std::filesystem::absolute(io::utf8_path(directory)));
+        auto copy=[&](const std::filesystem::path& path,uint64_t bytes,const char* name) {
+            const auto target=bundle.staging()/name;
+            auto owned=io::copyCheckpointFile(path,bytes,target);
+            std::filesystem::rename(owned->file.path,target);owned->file.path=target;owned->retain();
+            return owned->file;
+        };
+        const auto binary_copy=copy(binary.file.path,binary.file.bytes,"binary.out");
+        const auto mesh_copy=copy(mesh.file.path,mesh.file.bytes,"mesh.h5");
+        require(binary_copy.fingerprint==binary.file.fingerprint&&mesh_copy.fingerprint==mesh.file.fingerprint,
+            "Bundle companion changed while copying.");
+        const auto source_copy=copy(io::utf8_path(source.path),cursor.bytes,"source.history");
+        validate_source(io::path_utf8(source_copy.path));
+        binary.file.path=io::utf8_path("binary.out");mesh.file.path=io::utf8_path("mesh.h5");
+        saved.binary=binary.encode(false);saved.mesh=mesh.encode(true);
+        source.path="source.history";source.whole=Stream::fingerprint(saved.binding());saved.source=source.encode();saved.version=2;
+        const auto bytes=saved.encode(),manifest=io::path_utf8(bundle.staging()/"session.chk");
+        publish(manifest,bytes);require(readFile(manifest)==bytes,"Cannot verify staged bundle manifest.");bundle.publish();return {};
+    }catch(const std::exception& e){return e.what();}
+#else
+    return "Checkpoint bundle packaging unavailable in this build.";
+#endif
+}
 std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,const std::string& stream_contract,
     const std::string& binary_file,const std::string& mesh_file,uint64_t whole_binding) {
     try {
@@ -996,7 +1110,7 @@ std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,const std::st
         require(checkpoint_file_outputs_==(!binary_file.empty()&&!mesh_file.empty()),"Checkpoint file-output profile differs.");
         require(bool(engine_source_stream_)==!stream_contract.empty(),"Stream checkpoints require their fresh stream destination; old checkpoints require no stream.");
         std::unique_ptr<twoD::EngineSourceResultStream::PreparedRestore> prepared_stream;
-        if(engine_source_stream_)prepared_stream=engine_source_stream_->prepareRestore(stream_contract,whole_binding?whole_binding:twoD::EngineSourceResultStream::fingerprint(checkpoint));
+        if(engine_source_stream_)prepared_stream=engine_source_stream_->prepareRestore(stream_contract,!binary_file.empty()?whole_binding:twoD::EngineSourceResultStream::fingerprint(checkpoint));
 #else
         require(stream_contract.empty()&&binary_file.empty()&&mesh_file.empty(),"Source stream/file checkpoint support unavailable.");
 #endif
