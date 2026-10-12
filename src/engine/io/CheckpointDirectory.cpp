@@ -18,6 +18,13 @@
 #include <unistd.h>
 #endif
 namespace openswmm::io {
+bool checkpointNoReplaceAvailable() noexcept {
+#if defined(_WIN32) || defined(__APPLE__) || (defined(__linux__) && defined(SYS_renameat2))
+    return true;
+#else
+    return false;
+#endif
+}
 CheckpointDirectory::CheckpointDirectory(std::filesystem::path destination)
     :destination_(std::move(destination)) {
     if(std::filesystem::exists(std::filesystem::symlink_status(destination_)))
@@ -36,18 +43,20 @@ CheckpointDirectory::~CheckpointDirectory() {
 }
 void CheckpointDirectory::publish() {
     if(!owned_)throw std::runtime_error("Checkpoint bundle staging directory is not owned.");
+    publishCheckpointNoReplace(staging_,destination_);owned_=false;
+}
+void publishCheckpointNoReplace(const std::filesystem::path& staging,const std::filesystem::path& destination) {
     // Plain filesystem::rename can replace an empty directory on POSIX.
     // Use each platform's atomic no-replace operation instead.
 #ifdef _WIN32
-    const bool ok=MoveFileExW(staging_.c_str(),destination_.c_str(),MOVEFILE_WRITE_THROUGH)!=0;
+    const bool ok=MoveFileExW(staging.c_str(),destination.c_str(),MOVEFILE_WRITE_THROUGH)!=0;
 #elif defined(__APPLE__)
-    const bool ok=renameatx_np(AT_FDCWD,staging_.c_str(),AT_FDCWD,destination_.c_str(),RENAME_EXCL)==0;
+    const bool ok=renameatx_np(AT_FDCWD,staging.c_str(),AT_FDCWD,destination.c_str(),RENAME_EXCL)==0;
 #elif defined(__linux__) && defined(SYS_renameat2)
-    const bool ok=syscall(SYS_renameat2,AT_FDCWD,staging_.c_str(),AT_FDCWD,destination_.c_str(),1 /* RENAME_NOREPLACE */)==0;
+    const bool ok=syscall(SYS_renameat2,AT_FDCWD,staging.c_str(),AT_FDCWD,destination.c_str(),1 /* RENAME_NOREPLACE */)==0;
 #else
     const bool ok=false;
 #endif
-    if(!ok)throw std::runtime_error("Cannot publish checkpoint bundle without replacing its destination.");
-    owned_=false;
+    if(!ok)throw std::runtime_error("Cannot publish checkpoint without replacing its destination.");
 }
 }

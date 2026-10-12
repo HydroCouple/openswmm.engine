@@ -3,6 +3,9 @@
 #include <filesystem>
 
 namespace openswmm::io {
+bool checkpointNoReplaceAvailable() noexcept;
+/// Atomically publish a private file/directory without replacing any destination.
+void publishCheckpointNoReplace(const std::filesystem::path& staging,const std::filesystem::path& destination);
 /// Own an exclusively created private directory. Publish the complete bundle
 /// without replacing an existing destination, including an empty directory.
 class CheckpointDirectory {

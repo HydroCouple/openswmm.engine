@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace openswmm {
@@ -40,6 +41,9 @@ struct CheckpointInspection {
     bool file_outputs=false,relocatable_bundle=false,detailed_sources=false;
     uint64_t source_frames=0,source_prefix_bytes=0;
     std::vector<Companion> companions;
+    /// Exact metadata serialization; rejects unknown schema/nonfinite/invalid UTF-8.
+    std::string json() const;
     bool operator==(const CheckpointInspection&) const = default;
 };
+namespace detail { bool checkpointUtf8(std::string_view) noexcept; }
 }

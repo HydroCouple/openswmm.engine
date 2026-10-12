@@ -4,6 +4,11 @@
 #include "core/CompletedSourceArchive.hpp"
 #include "core/CheckpointInspection.hpp"
 #include "core/DateTime.hpp"
+#include "io/CheckpointDirectory.hpp"
+#include "core/FileIO.hpp"
+#include <openswmm/engine/openswmm_checkpoint.h>
+#include <atomic>
+#include <future>
 #include "output/OutputReader.hpp"
 #include <openswmm/plugin_sdk/IOutputPlugin.hpp>
 #ifdef OPENSWMM_HAS_2D
@@ -13,8 +18,6 @@
 #include "2d/subsurface/EngineSourceResultHistory.hpp"
 #include "2d/subsurface/EngineSourceResultStream.hpp"
 #include "io/CheckpointFile.hpp"
-#include "io/CheckpointDirectory.hpp"
-#include "core/FileIO.hpp"
 #include "2d/mesh/MeshBuilder.hpp"
 #include <openswmm/engine/openswmm_coupling.h>
 #ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
@@ -4121,6 +4124,197 @@ TEST(EngineCheckpoint, InspectionRejectionPreservesMetadataDriverAndAllFreshOutp
         ASSERT_EQ(b.engine.inspectCheckpoint(cp.string(),info),"");ASSERT_TRUE(info.driver);EXPECT_EQ(db.installs,0);
         ASSERT_EQ(b.engine.loadCheckpoint(cp.string()),"");EXPECT_EQ(db.installs,1);compare(a.engine,b.engine,target+"-restored");equalStreamPrefix(recorded,resumed);
     }
+}
+#endif
+#endif
+
+namespace {
+struct PublicInspection {
+    SWMM_CheckpointInspection handle=nullptr;
+    ~PublicInspection(){swmm_checkpoint_inspection_destroy(handle);}
+    std::string json() const {
+        size_t size=0;
+        if(swmm_checkpoint_inspection_json(handle,nullptr,0,&size)!=SWMM_OK)throw std::runtime_error(swmm_checkpoint_last_error_msg());
+        std::string buffer(size,'!');
+        if(swmm_checkpoint_inspection_json(handle,buffer.data(),buffer.size(),&size)!=SWMM_OK)throw std::runtime_error(swmm_checkpoint_last_error_msg());
+        if(buffer.back()!=0)throw std::runtime_error("Inspection JSON is not terminated.");buffer.pop_back();return buffer;
+    }
+};
+}
+TEST(EngineCheckpoint, PublicMetadataJsonPreservesLargeCountsUnicodeAndRejectsInvalidFields) {
+    CheckpointInspection info;info.engine_seconds=12.125;info.engine_date=36526.000000011576;
+    info.binary.enabled=true;info.binary.records=UINT64_MAX;info.binary.first_date=info.engine_date;info.binary.last_date=info.engine_date;
+    info.source_frames=9007199254740993ULL;info.checkpoint_bytes=UINT64_MAX;
+    info.driver=CheckpointInspection::Driver{std::string("révision \"雪\"\n\\\t")+char(0),UINT64_MAX,-1};
+    info.companions.push_back({CheckpointInspection::Companion::Role::Source,"folder/"+std::string(5000,'x')+"/café 雪.history",UINT64_MAX});
+    const auto json=info.json();write(root()/"public-metadata-schema.json",json);
+    EXPECT_NE(json.find("\"records\":\"18446744073709551615\""),std::string::npos);
+    EXPECT_NE(json.find("\"source_frames\":\"9007199254740993\""),std::string::npos);
+    EXPECT_NE(json.find("\"next_update_seconds\":-1"),std::string::npos);
+    EXPECT_NE(json.find("\"completed_source_seconds\":null"),std::string::npos);
+    EXPECT_NE(json.find("\\u000a\\\\\\u0009\\u0000"),std::string::npos);
+    EXPECT_NE(json.find("café 雪.history"),std::string::npos);
+    EXPECT_NE(json.find("\"engine_seconds\":12.125"),std::string::npos);
+    info.schema_version=2;EXPECT_THROW(info.json(),std::logic_error);info.schema_version=1;
+    info.engine_date=std::numeric_limits<double>::infinity();EXPECT_THROW(info.json(),std::logic_error);info.engine_date=1;
+    info.driver->identity=std::string("\xed\xa0\x80",3);EXPECT_THROW(info.json(),std::logic_error);
+    for(const std::string invalid:{std::string("\xc0\x80",2),std::string("\xf4\x90\x80\x80",4),std::string("\xe2\x82",2),std::string("\x80",1)})EXPECT_FALSE(detail::checkpointUtf8(invalid));
+    EXPECT_TRUE(detail::checkpointUtf8("café 雪 🌊"));
+}
+TEST(EngineCheckpoint, PublicCapabilitiesAndLifecycleDoNotAttachOrMutateOrdinarySessions) {
+    SWMMEngine e;unsigned long flags=123,ready=123;
+    EXPECT_EQ(swmm_checkpoint_capabilities(nullptr,&flags),SWMM_ERR_BADHANDLE);EXPECT_EQ(flags,123);
+    EXPECT_EQ(swmm_checkpoint_capabilities(&e,nullptr),SWMM_ERR_BADPARAM);
+    ASSERT_EQ(swmm_checkpoint_capabilities(&e,&flags),SWMM_OK);
+    EXPECT_TRUE(flags&SWMM_CHECKPOINT_INSPECTION);EXPECT_TRUE(flags&SWMM_CHECKPOINT_RESTORE);EXPECT_TRUE(flags&SWMM_CHECKPOINT_BINARY_PROFILE);
+    EXPECT_EQ(bool(flags&SWMM_CHECKPOINT_SAVE_NEW),io::checkpointNoReplaceAvailable());
+#ifdef OPENSWMM_HAS_2D
+    EXPECT_TRUE(flags&SWMM_CHECKPOINT_SURFACE_PROFILE);EXPECT_TRUE(flags&SWMM_CHECKPOINT_SOURCE_STREAM);
+#else
+    EXPECT_FALSE(flags&SWMM_CHECKPOINT_SURFACE_PROFILE);EXPECT_FALSE(flags&SWMM_CHECKPOINT_SOURCE_STREAM);
+#endif
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+    EXPECT_TRUE(flags&SWMM_CHECKPOINT_FILE_PROFILE);EXPECT_EQ(bool(flags&SWMM_CHECKPOINT_BUNDLE_EXPORT),io::checkpointNoReplaceAvailable());
+#else
+    EXPECT_FALSE(flags&SWMM_CHECKPOINT_FILE_PROFILE);EXPECT_FALSE(flags&SWMM_CHECKPOINT_BUNDLE_EXPORT);
+    EXPECT_EQ(swmm_checkpoint_export_bundle("a.chk","new-folder"),SWMM_ERR_LIFECYCLE);
+#endif
+    ASSERT_EQ(swmm_checkpoint_session_status(&e,&ready),SWMM_OK);EXPECT_EQ(ready,0);
+    PublicInspection saved;EXPECT_EQ(swmm_checkpoint_inspect(&e,"a.chk",&saved.handle),SWMM_ERR_LIFECYCLE);EXPECT_EQ(saved.handle,nullptr);
+    EXPECT_EQ(swmm_checkpoint_save(&e,"a.chk"),SWMM_ERR_LIFECYCLE);EXPECT_EQ(swmm_checkpoint_restore(&e,"a.chk"),SWMM_ERR_LIFECYCLE);
+    ASSERT_NO_THROW(start(e,"public-unattached",0,0,false,false));
+    ASSERT_EQ(swmm_checkpoint_session_status(&e,&ready),SWMM_OK);EXPECT_EQ(ready,0);
+    EXPECT_EQ(swmm_checkpoint_save(&e,"a.chk"),SWMM_ERR_LIFECYCLE);EXPECT_EQ(e.context().error_code,0);
+    ASSERT_EQ(e.enableCheckpointing(),"");ASSERT_EQ(swmm_checkpoint_session_status(&e,&ready),SWMM_OK);
+    EXPECT_EQ(ready,SWMM_CHECKPOINT_SESSION_ATTACHED|SWMM_CHECKPOINT_SESSION_BOUNDARY|SWMM_CHECKPOINT_SESSION_FRESH);
+    ASSERT_NO_THROW(step(e));ASSERT_EQ(swmm_checkpoint_session_status(&e,&ready),SWMM_OK);
+    EXPECT_EQ(ready,SWMM_CHECKPOINT_SESSION_ATTACHED|SWMM_CHECKPOINT_SESSION_BOUNDARY);
+    EXPECT_EQ(swmm_checkpoint_inspect(&e,"a.chk",&saved.handle),SWMM_ERR_LIFECYCLE);
+    e.close();ASSERT_EQ(swmm_checkpoint_session_status(&e,&ready),SWMM_OK);EXPECT_FALSE(ready&SWMM_CHECKPOINT_SESSION_BOUNDARY);
+}
+TEST(EngineCheckpoint, PublicInspectionOwnsSnapshotAndPreservesFreshBinaryStateAcrossFailures) {
+    for(bool late:{false,true}) {
+        const auto name=late?"public-binary-late":"public-binary";SWMMEngine a;auto b=std::make_unique<SWMMEngine>();
+        ASSERT_NO_THROW(startBinary(a,name,2,false,late));
+        ASSERT_NO_THROW(startBinary(*b,std::string(name)+"-fresh",2,false,late));
+        while(a.context().current_time<8)ASSERT_NO_THROW(step(a));
+        const auto cp=root()/(std::string(name)+" café 雪.chk"),before=root()/(std::string(name)+"-before.chk"),after=root()/(std::string(name)+"-after.chk");
+        const auto cp_name=io::path_utf8(cp);ASSERT_EQ(swmm_checkpoint_save(&a,cp_name.c_str()),SWMM_OK);ASSERT_EQ(b->saveCheckpoint(before.string()),"");
+        const auto fresh=bytes(root()/(std::string(name)+"-fresh.out"));CheckpointInspection native;
+        ASSERT_EQ(b->inspectCheckpoint(cp_name,native),"");PublicInspection snapshot;
+        ASSERT_EQ(swmm_checkpoint_inspect(b.get(),cp_name.c_str(),&snapshot.handle),SWMM_OK);
+        const auto json=snapshot.json();EXPECT_EQ(json,native.json());write(root()/(std::string(name)+".json"),json);
+        EXPECT_EQ(b->context().current_time,0);EXPECT_EQ(bytes(root()/(std::string(name)+"-fresh.out")),fresh);
+        size_t required=123;char buffer[17];std::fill(std::begin(buffer),std::end(buffer),'!');
+        EXPECT_EQ(swmm_checkpoint_inspection_json(snapshot.handle,buffer,sizeof buffer,&required),SWMM_ERR_BADPARAM);
+        EXPECT_EQ(required,json.size()+1);EXPECT_EQ(std::string(buffer,sizeof buffer),std::string(sizeof buffer,'!'));
+        required=123;EXPECT_EQ(swmm_checkpoint_inspection_json(snapshot.handle,nullptr,1,&required),SWMM_ERR_BADPARAM);EXPECT_EQ(required,123);
+        EXPECT_EQ(swmm_checkpoint_inspection_json(snapshot.handle,buffer,sizeof buffer,nullptr),SWMM_ERR_BADPARAM);
+        EXPECT_EQ(swmm_checkpoint_inspection_json(nullptr,buffer,sizeof buffer,&required),SWMM_ERR_BADHANDLE);EXPECT_EQ(required,123);
+        const auto original=snapshot.handle;
+        const auto bad=root()/(std::string(name)+"-bad.chk");auto corrupted=bytes(cp);corrupted.back()^=1;write(bad,corrupted);
+        EXPECT_EQ(swmm_checkpoint_inspect(b.get(),bad.string().c_str(),&snapshot.handle),SWMM_ERR_IO);EXPECT_EQ(snapshot.handle,original);
+        const std::string diagnostic=swmm_checkpoint_last_error_msg();EXPECT_FALSE(diagnostic.empty());EXPECT_EQ(b->context().error_code,0);
+        EXPECT_EQ(swmm_checkpoint_inspect(b.get(),nullptr,&snapshot.handle),SWMM_ERR_BADPARAM);EXPECT_EQ(snapshot.handle,original);
+        EXPECT_EQ(swmm_checkpoint_inspect(b.get(),"",&snapshot.handle),SWMM_ERR_BADPARAM);
+        EXPECT_EQ(swmm_checkpoint_inspect(b.get(),"\xc0\x80",&snapshot.handle),SWMM_ERR_BADPARAM);
+        EXPECT_EQ(swmm_checkpoint_inspect(b.get(),cp_name.c_str(),nullptr),SWMM_ERR_BADPARAM);
+        ASSERT_EQ(b->saveCheckpoint(after.string()),"");EXPECT_EQ(bytes(before),bytes(after));
+        ASSERT_EQ(swmm_checkpoint_restore(b.get(),cp_name.c_str()),SWMM_OK);compare(a,*b,std::string(name)+"-restored");
+        EXPECT_EQ(swmm_checkpoint_inspect(b.get(),cp_name.c_str(),&snapshot.handle),SWMM_ERR_LIFECYCLE);EXPECT_EQ(snapshot.handle,original);
+        b.reset();EXPECT_EQ(snapshot.json(),json);EXPECT_EQ(snapshot.json(),json);
+    }
+    swmm_checkpoint_inspection_destroy(nullptr);
+}
+TEST(EngineCheckpoint, PublicSaveRefusesFilesDirectoriesAndSymlinksButInternalReplaceRemains) {
+    SWMMEngine a;ASSERT_NO_THROW(start(a,"public-new-save",2));
+    const auto cp=root()/"public-new-save.chk";ASSERT_EQ(swmm_checkpoint_save(&a,cp.string().c_str()),SWMM_OK);
+    const auto original=bytes(cp);ASSERT_NO_THROW(step(a));
+    EXPECT_EQ(swmm_checkpoint_save(&a,cp.string().c_str()),SWMM_ERR_IO);EXPECT_EQ(bytes(cp),original);
+    ASSERT_EQ(a.saveCheckpoint(cp.string()),"");EXPECT_NE(bytes(cp),original);
+    const auto unrelated=root()/"public-unrelated.chk";write(unrelated,"untouched");
+    EXPECT_EQ(swmm_checkpoint_save(&a,unrelated.string().c_str()),SWMM_ERR_IO);EXPECT_EQ(bytes(unrelated),"untouched");
+    const auto dir=root()/"public-save-directory";std::filesystem::create_directory(dir);
+    EXPECT_EQ(swmm_checkpoint_save(&a,dir.string().c_str()),SWMM_ERR_IO);EXPECT_TRUE(std::filesystem::is_directory(dir));
+    const auto link=root()/"public-save-symlink";std::filesystem::create_symlink(root()/"public-absent-target",link);
+    EXPECT_EQ(swmm_checkpoint_save(&a,link.string().c_str()),SWMM_ERR_IO);EXPECT_TRUE(std::filesystem::is_symlink(link));
+    EXPECT_FALSE(std::filesystem::exists(root()/"public-absent-target"));
+    EXPECT_EQ(swmm_checkpoint_save(&a,""),SWMM_ERR_BADPARAM);EXPECT_EQ(swmm_checkpoint_save(&a,"\xf4\x90\x80\x80"),SWMM_ERR_BADPARAM);
+    EXPECT_EQ(a.context().error_code,0);
+}
+TEST(EngineCheckpoint, PublicSaveConcurrentWritersPublishOneCompleteCheckpoint) {
+    SWMMEngine a,b;ASSERT_NO_THROW(start(a,"public-race-a",1));
+    ASSERT_NO_THROW(start(b,"public-race-b",1));
+    ASSERT_NO_THROW(step(a));
+    ASSERT_NO_THROW(step(b));
+    ASSERT_NO_THROW(step(b));
+    const auto expected_a=root()/"public-race-a.chk",expected_b=root()/"public-race-b.chk",destination=root()/"public-race.chk";
+    ASSERT_EQ(a.saveCheckpoint(expected_a.string()),"");ASSERT_EQ(b.saveCheckpoint(expected_b.string()),"");
+    std::promise<void> begin;auto trigger=begin.get_future().share();
+    auto save=[&](SWMMEngine& e){trigger.wait();const auto rc=swmm_checkpoint_save(&e,destination.string().c_str());return std::pair{rc,std::string(swmm_checkpoint_last_error_msg())};};
+    auto left=std::async(std::launch::async,[&]{return save(a);});auto right=std::async(std::launch::async,[&]{return save(b);});begin.set_value();
+    const auto l=left.get(),r=right.get();EXPECT_NE(l.first==SWMM_OK,r.first==SWMM_OK);
+    EXPECT_EQ(l.first==SWMM_OK?r.first:l.first,SWMM_ERR_IO);EXPECT_FALSE(l.first==SWMM_OK?r.second.empty():l.second.empty());
+    EXPECT_EQ(bytes(destination),bytes(l.first==SWMM_OK?expected_a:expected_b));
+    for(const auto& p:std::filesystem::directory_iterator(root()))EXPECT_FALSE(p.path().filename().string().starts_with("public-race.chk.session-part-"));
+}
+TEST(EngineCheckpoint, PublicNoReplaceRefusesDestinationCreatedAfterPrivatePreparation) {
+    const auto staging=root()/"public-no-replace-private",destination=root()/"public-no-replace-target";
+    write(staging,"complete prepared state");write(destination,"concurrent owner");
+    EXPECT_THROW(io::publishCheckpointNoReplace(staging,destination),std::runtime_error);
+    EXPECT_EQ(bytes(destination),"concurrent owner");EXPECT_EQ(bytes(staging),"complete prepared state");
+    std::filesystem::remove(destination);ASSERT_NO_THROW(io::publishCheckpointNoReplace(staging,destination));
+    EXPECT_EQ(bytes(destination),"complete prepared state");EXPECT_FALSE(std::filesystem::exists(staging));
+}
+TEST(EngineCheckpoint, PublicDiagnosticsRemainIndependentAcrossThreadsAndEngineErrors) {
+    SWMMEngine e;ASSERT_NO_THROW(start(e,"public-diagnostic"));
+    EXPECT_EQ(swmm_checkpoint_save(nullptr,"x.chk"),SWMM_ERR_BADHANDLE);const std::string message=swmm_checkpoint_last_error_msg();
+    auto other=std::async(std::launch::async,[]{size_t required=17;const auto rc=swmm_checkpoint_inspection_json(nullptr,nullptr,0,&required);return std::pair{rc,std::string(swmm_checkpoint_last_error_msg())};});
+    const auto child=other.get();EXPECT_EQ(child.first,SWMM_ERR_BADHANDLE);EXPECT_NE(child.second,message);EXPECT_EQ(swmm_checkpoint_last_error_msg(),message);
+    EXPECT_EQ(e.context().error_code,0);EXPECT_TRUE(e.context().error_message.empty());
+    unsigned long supported=0;ASSERT_EQ(swmm_checkpoint_capabilities(&e,&supported),SWMM_OK);EXPECT_STREQ(swmm_checkpoint_last_error_msg(),"");
+    EXPECT_EQ(swmm_checkpoint_restore(&e,""),SWMM_ERR_BADPARAM);const std::string last=swmm_checkpoint_last_error_msg();e.close();EXPECT_EQ(swmm_checkpoint_last_error_msg(),last);
+}
+#ifdef OPENSWMM_HAS_2D
+TEST(EngineCheckpoint, PublicInspectionPreservesSourceDueDriversAcrossLidAndAquiferProfiles) {
+    for(int lid:{0,1,2})for(int closure:{0,1,2}) {
+        const auto name="public-source-"+std::to_string(lid)+"-"+std::to_string(closure);TestWaterDriver da,db;Stream recorded,resumed;SurfaceSession a,b;
+        ASSERT_NO_THROW(startCatchmentProvider(a,name,lid,closure));
+        ASSERT_NO_THROW(startCatchmentProvider(b,name+"-fresh",lid,closure));
+        ASSERT_EQ(a.engine.attachRuntimeWaterDriverCheckpoint(da),"");ASSERT_EQ(b.engine.attachRuntimeWaterDriverCheckpoint(db),"");
+        ASSERT_EQ(a.engine.setEngineSourceResultStream(recorded,streamPath(name).string(),true),"");ASSERT_EQ(b.engine.setEngineSourceResultStream(resumed,streamPath(name+"-fresh").string(),true),"");
+        ASSERT_NO_THROW(drive(a.engine,da,4.2));const auto cp=root()/(name+".chk");ASSERT_EQ(swmm_checkpoint_save(&a.engine,cp.string().c_str()),SWMM_OK);
+        const auto cursor=resumed.cursor();const auto fresh=bytes(resumed.path());const auto files=inspectionFiles();CheckpointInspection native;
+        ASSERT_EQ(b.engine.inspectCheckpoint(cp.string(),native),"");PublicInspection snapshot;
+        ASSERT_EQ(swmm_checkpoint_inspect(&b.engine,cp.string().c_str(),&snapshot.handle),SWMM_OK);EXPECT_EQ(snapshot.json(),native.json());
+        ASSERT_TRUE(native.driver);EXPECT_EQ(native.driver->next_update_seconds,native.engine_seconds);EXPECT_EQ(db.installs,0);EXPECT_EQ(db.cursor,0);
+        EXPECT_EQ(resumed.cursor(),cursor);EXPECT_EQ(bytes(resumed.path()),fresh);EXPECT_EQ(files,inspectionFiles());
+        write(root()/(name+".json"),snapshot.json());
+        ASSERT_EQ(swmm_checkpoint_restore(&b.engine,cp.string().c_str()),SWMM_OK);EXPECT_EQ(db.installs,1);equalStreamPrefix(recorded,resumed);
+        ASSERT_NO_THROW(drive(a.engine,da,5.5));
+        ASSERT_NO_THROW(drive(b.engine,db,5.5));compare(a.engine,b.engine,name+"-continued");equalStreamPrefix(recorded,resumed);
+    }
+}
+#ifdef OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST
+TEST(EngineCheckpoint, PublicFileSaveAndBundleExportKeepSavedPrefixAndPairedCoverage) {
+    TestWaterDriver da,db;Stream recorded,resumed;SurfaceSession a,b;
+    ASSERT_NO_THROW(startCatchmentProvider(a,"public-file",2,1,true,2));ASSERT_EQ(a.engine.attachRuntimeWaterDriverCheckpoint(da),"");
+    ASSERT_EQ(a.engine.setEngineSourceResultStream(recorded,streamPath("public-file").string(),true),"");ASSERT_EQ(a.engine.enableFileOutputCheckpointing(),"");
+    ASSERT_NO_THROW(drive(a.engine,da,7.75));const auto cp=root()/"public-file.chk";ASSERT_EQ(swmm_checkpoint_save(&a.engine,cp.string().c_str()),SWMM_OK);
+    const auto saved=bytes(cp);FileBundle envelope(cp);const auto source=recorded.cursor();const auto binary=bytes(envelope.binaryFile().path),mesh=bytes(envelope.meshFile().path);
+    const auto files=inspectionFiles();ASSERT_NO_THROW(drive(a.engine,da,13.2));EXPECT_EQ(swmm_checkpoint_save(&a.engine,cp.string().c_str()),SWMM_ERR_IO);
+    EXPECT_EQ(bytes(cp),saved);EXPECT_EQ(bytes(envelope.binaryFile().path),binary);EXPECT_EQ(bytes(envelope.meshFile().path),mesh);EXPECT_EQ(inspectionFiles(),files);
+    const auto folder=root()/"public export café 雪";ASSERT_EQ(swmm_checkpoint_export_bundle(cp.string().c_str(),io::path_utf8(folder).c_str()),SWMM_OK);
+    EXPECT_EQ(std::filesystem::file_size(folder/"source.history"),source.bytes);EXPECT_EQ(bytes(folder/"binary.out"),binary);EXPECT_EQ(bytes(folder/"mesh.h5"),mesh);
+    EXPECT_EQ(swmm_checkpoint_export_bundle(cp.string().c_str(),io::path_utf8(folder).c_str()),SWMM_ERR_IO);EXPECT_EQ(bytes(folder/"binary.out"),binary);
+    const auto moved=root()/"public moved café 雪";std::filesystem::rename(folder,moved);const auto bundled=moved/"session.chk";
+    ASSERT_NO_THROW(startCatchmentProvider(b,"public-file-fresh",2,1,true,2));ASSERT_EQ(b.engine.attachRuntimeWaterDriverCheckpoint(db),"");
+    ASSERT_EQ(b.engine.setEngineSourceResultStream(resumed,streamPath("public-file-fresh").string(),true),"");ASSERT_EQ(b.engine.enableFileOutputCheckpointing(),"");
+    CheckpointInspection native;ASSERT_EQ(b.engine.inspectCheckpoint(io::path_utf8(bundled),native),"");PublicInspection snapshot;
+    ASSERT_EQ(swmm_checkpoint_inspect(&b.engine,io::path_utf8(bundled).c_str(),&snapshot.handle),SWMM_OK);EXPECT_EQ(snapshot.json(),native.json());
+    write(root()/"public-file.json",snapshot.json());EXPECT_TRUE(native.relocatable_bundle);EXPECT_EQ(native.source_prefix_bytes,source.bytes);EXPECT_TRUE(native.binary.enabled);EXPECT_TRUE(native.mesh.enabled);
+    EXPECT_EQ(db.installs,0);ASSERT_EQ(swmm_checkpoint_restore(&b.engine,io::path_utf8(bundled).c_str()),SWMM_OK);EXPECT_EQ(db.installs,1);
+    ASSERT_NO_THROW(drive(b.engine,db,13.2));compare(a.engine,b.engine,"public-file-continued");equalStreamPrefix(recorded,resumed);
 }
 #endif
 #endif

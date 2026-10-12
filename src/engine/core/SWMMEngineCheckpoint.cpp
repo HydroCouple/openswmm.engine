@@ -7,6 +7,7 @@
 #include "FileIO.hpp"
 #include "../io/CheckpointFile.hpp"
 #include "../io/CheckpointDirectory.hpp"
+#include <openswmm/engine/openswmm_checkpoint.h>
 #include "../plugins/DefaultOutputPlugin.hpp"
 #include "../plugins/DefaultStateIOPlugin.hpp"
 #include "../plugins/DefaultReportPlugin.hpp"
@@ -58,8 +59,9 @@ std::string readFile(const std::string& path) {
     std::ifstream in(io::utf8_path(path),std::ios::binary);std::string bytes(size,'\0');in.read(bytes.data(),bytes.size());
     require(bool(in) && in.peek()==std::char_traits<char>::eof(),"Engine checkpoint read failed.");return bytes;
 }
-void publish(const std::string& path,const std::string& bytes) {
-    if(std::filesystem::exists(io::utf8_path(path))) {
+void publish(const std::string& path,const std::string& bytes,bool exclusive=false) {
+    if(exclusive)require(!std::filesystem::exists(std::filesystem::symlink_status(io::utf8_path(path))),"Checkpoint destination already exists.");
+    else if(std::filesystem::exists(io::utf8_path(path))) {
         Archive old(readFile(path));std::string magic;old(magic);
         Archive incoming(bytes);std::string next;incoming(next);
         require(magic==next && (magic==magicName || magic==streamMagic || magic==fileMagic),"Engine checkpoint destination is an unrelated file.");
@@ -68,6 +70,11 @@ void publish(const std::string& path,const std::string& bytes) {
     FILE* f=io::fopen_path(io::utf8_path(part),"wbx");require(f,"Cannot create engine checkpoint publication file.");
     bool written=std::fwrite(bytes.data(),1,bytes.size(),f)==bytes.size();bool closed=std::fclose(f)==0;
     if(!written || !closed) {std::filesystem::remove(io::utf8_path(part));throw std::runtime_error("Engine checkpoint write failed.");}
+    if(exclusive) {
+        try {io::publishCheckpointNoReplace(io::utf8_path(part),io::utf8_path(path));}
+        catch(...){std::error_code ignored;std::filesystem::remove(io::utf8_path(part),ignored);throw;}
+        return;
+    }
     std::error_code ec;std::filesystem::rename(io::utf8_path(part),io::utf8_path(path),ec);
     if(ec) {std::filesystem::remove(io::utf8_path(part));throw std::runtime_error("Cannot publish engine checkpoint: "+ec.message());}
 }
@@ -949,10 +956,30 @@ std::string SWMMEngine::checkpointBytes(std::string& result,bool include_outputs
     } catch(const std::exception& e) {return e.what();}
 }
 std::string SWMMEngine::saveCheckpoint(const std::string& path) const {
+    return saveCheckpointImpl(path,false);
+}
+std::string SWMMEngine::saveCheckpointNew(const std::string& path) const {
+    return saveCheckpointImpl(path,true);
+}
+unsigned long SWMMEngine::checkpointSessionStatus() const noexcept {
+    unsigned long flags=checkpoint_enabled_?SWMM_CHECKPOINT_SESSION_ATTACHED:0;
+    if(checkpoint_enabled_&&checkpoint_ready_&&!step_active_&&!runtime_pipeline_&&exchange_target_<0&&
+        ctx_.state==EngineState::RUNNING&&ctx_.error_code==0&&do_routing_) {
+        flags|=SWMM_CHECKPOINT_SESSION_BOUNDARY;
+        if(ctx_.current_time==0)flags|=SWMM_CHECKPOINT_SESSION_FRESH;
+    }
+    return flags;
+}
+std::string SWMMEngine::saveCheckpointImpl(const std::string& path,bool exclusive) const {
     try {
+        if(exclusive) {
+            require(!path.empty()&&path.find('\0')==std::string::npos,"Invalid checkpoint destination.");
+            require(io::checkpointNoReplaceAvailable(),"Exclusive checkpoint publication unavailable in this build.");
+            require(!std::filesystem::exists(std::filesystem::symlink_status(io::utf8_path(path))),"Checkpoint destination already exists.");
+        }
         require(!step_active_ && !runtime_pipeline_ && exchange_target_<0,"Cannot save an active engine pipeline.");
         #ifdef OPENSWMM_HAS_2D
-        if(checkpoint_file_outputs_)return saveFileOutputCheckpoint(path);
+        if(checkpoint_file_outputs_)return saveFileOutputCheckpoint(path,exclusive);
         #endif
         std::string bytes;const auto error=checkpointBytes(bytes);require(error.empty(),error.c_str());
 #ifdef OPENSWMM_HAS_2D
@@ -972,7 +999,7 @@ std::string SWMMEngine::saveCheckpoint(const std::string& path) const {
             require(bytes.size()<=maxBytes,"Stream-bound engine checkpoint exceeds its size limit.");
         }
 #endif
-        publish(path,bytes);return {};
+        publish(path,bytes,exclusive);return {};
     } catch(const std::exception& e) {return e.what();}
 }
 #ifdef OPENSWMM_HAS_2D
@@ -1028,7 +1055,7 @@ std::string SWMMEngine::enableFileOutputCheckpointing() {
     return "File-backed combined output checkpoints unavailable in this build.";
 #endif
 }
-std::string SWMMEngine::saveFileOutputCheckpoint(const std::string& path) const {
+std::string SWMMEngine::saveFileOutputCheckpoint(const std::string& path,bool exclusive) const {
 #ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
     try {
         require(checkpoint_file_outputs_ && engine_source_stream_ && checkpoint_output_ && checkpoint_surface_output_,"File checkpoint profile differs.");
@@ -1045,7 +1072,7 @@ std::string SWMMEngine::saveFileOutputCheckpoint(const std::string& path) const 
         SimulationSnapshot snap;fillSurfaceSnapshot(snap);auto mesh=surface_output_plugin_->captureFileCheckpoint(ctx_,ctx_.next_report_ms,snap,io::utf8_path(path+".mesh"),mesh_copy);
         Archive binding;binding(physical,binary,mesh);auto source=engine_source_stream_->checkpointContract(hash,Stream::fingerprint(binding.bytes()));
         Archive data;data(physical,binary,mesh,source);auto crc=checksum(data.bytes());std::string magic=fileMagic;uint32_t version=1;Archive out;out(magic,version,crc,physical,binary,mesh,source);
-        require(out.bytes().size()<=maxBytes,"File-backed physical checkpoint exceeds its model-state limit.");publish(path,out.bytes());binary_copy->retain();mesh_copy->retain();return {};
+        require(out.bytes().size()<=maxBytes,"File-backed physical checkpoint exceeds its model-state limit.");publish(path,out.bytes(),exclusive);binary_copy->retain();mesh_copy->retain();return {};
     }catch(const std::exception& e){return e.what();}
 #else
     return "File-backed combined output checkpoints unavailable in this build.";

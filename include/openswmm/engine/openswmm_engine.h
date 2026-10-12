@@ -598,6 +598,7 @@ SWMM_ENGINE_API int swmm_runoff_iface_close(SWMM_Engine engine);
 #include "openswmm_forcing.h"
 #include "openswmm_climate.h"
 #include "openswmm_edit.h"
+#include "openswmm_checkpoint.h"
 
 #ifdef OPENSWMM_HAS_2D
 #include "openswmm_2d.h"

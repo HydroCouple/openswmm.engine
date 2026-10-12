@@ -215,7 +215,8 @@ public:
 
     // Internal, same-platform water-only hydraulic session restart. Enable at
     // start()'s initial boundary; restore into an identically initialized fresh
-    // session. No public C API; external water drivers require their participant.
+    // session. Session preparation is internal; public operations require this
+    // attachment. External water drivers require their participant.
     // Private binary-output qualification: initialize(), prepare this mode,
     // start(1), then enable checkpointing. Requires a new output destination.
     std::string prepareOutputCheckpointing();
@@ -249,6 +250,9 @@ public:
     std::string enableFileOutputCheckpointing();
 #endif
     std::string saveCheckpoint(const std::string& path) const;
+    std::string saveCheckpointNew(const std::string& path) const;
+    /// Attachment/lifecycle hints only; full model/physical validation is separate.
+    unsigned long checkpointSessionStatus() const noexcept;
     std::string loadCheckpoint(const std::string& path);
     /// Internal review metadata after restore's parse/model/physics/schema checks,
     /// on a matching fresh session. Temporary output copies are discarded; nothing
@@ -533,12 +537,13 @@ private:
     std::string checkpointModel() const;
     void checkCheckpointBoundary() const;
     std::string checkpointBytes(std::string&,bool include_outputs=true) const;
+    std::string saveCheckpointImpl(const std::string&,bool exclusive) const;
     std::string loadCheckpointBytes(std::string,const std::string& stream_contract={},
         const std::string& binary_file={},const std::string& mesh_file={},uint64_t whole_binding=0,
         CheckpointInspection* inspection=nullptr);
     std::string loadCheckpointPath(const std::string&,CheckpointInspection*);
 #ifdef OPENSWMM_HAS_2D
-    std::string saveFileOutputCheckpoint(const std::string&) const;
+    std::string saveFileOutputCheckpoint(const std::string&,bool exclusive) const;
 #endif
     const std::vector<int>* ordinarySourceOwners() const noexcept;
     bool ownsSpatialSource(int source) const noexcept;
