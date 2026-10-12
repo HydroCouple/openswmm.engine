@@ -895,6 +895,48 @@ SWMM_ENGINE_API int swmm_2d_set_edge_bc_concentrations(SWMM_Engine engine, int c
     const double* values, int species_count);
 SWMM_ENGINE_API int swmm_2d_clear_edge_bc(SWMM_Engine engine, int cell, int edge);
 
+/* -------------------------------------------------------------------------
+ * Authored [2D_INITIAL_QUALITY] and [2D_BOUNDARY_QUALITY] rows
+ * (closed C-API gaps 2026-10-11)
+ *
+ * The rows the deck spells, resolved against the mesh, tags and species at
+ * swmm_engine_initialize() and written back on save. Editable while BUILDING
+ * or OPENED (SWMM_ERR_LIFECYCLE afterwards); concentrations are in species
+ * units, finite and >= 0, as the parser requires. Cell indices are 0-based
+ * here (the deck's CELL rows are 1-based). A set with the same key as an
+ * existing row replaces it.
+ * ------------------------------------------------------------------------- */
+
+#define SWMM_2D_QUAL_SCOPE_GLOBAL 0   /**< the `*` row */
+#define SWMM_2D_QUAL_SCOPE_TAG    1   /**< every cell carrying a tag */
+#define SWMM_2D_QUAL_SCOPE_CELL   2   /**< one cell */
+
+SWMM_ENGINE_API int swmm_2d_initial_quality_count(SWMM_Engine engine, int* count);
+
+/** @brief Read one [2D_INITIAL_QUALITY] row. Any out-pointer may be NULL. */
+SWMM_ENGINE_API int swmm_2d_get_initial_quality(SWMM_Engine engine, int index,
+        int* scope, char* tag, int tag_len, int* cell,
+        char* species, int species_len, double* conc);
+
+/** @brief Add or replace a row keyed by (scope, tag | cell, species). */
+SWMM_ENGINE_API int swmm_2d_set_initial_quality(SWMM_Engine engine, int scope,
+        const char* tag, int cell, const char* species, double conc);
+
+SWMM_ENGINE_API int swmm_2d_remove_initial_quality(SWMM_Engine engine, int index);
+
+SWMM_ENGINE_API int swmm_2d_boundary_quality_count(SWMM_Engine engine, int* count);
+
+/** @brief Read one [2D_BOUNDARY_QUALITY] row (inflow concentration through a
+ *         boundary edge). Any out-pointer may be NULL. */
+SWMM_ENGINE_API int swmm_2d_get_boundary_quality(SWMM_Engine engine, int index,
+        int* cell, int* edge, char* species, int species_len, double* conc);
+
+/** @brief Add or replace the row keyed by (cell, edge, species). */
+SWMM_ENGINE_API int swmm_2d_set_boundary_quality(SWMM_Engine engine, int cell,
+        int edge, const char* species, double conc);
+
+SWMM_ENGINE_API int swmm_2d_remove_boundary_quality(SWMM_Engine engine, int index);
+
 /** @brief Set boundary condition type for an edge.
  *  @ingroup engine_2d */
 SWMM_ENGINE_API int swmm_2d_set_edge_bc_type(SWMM_Engine engine,

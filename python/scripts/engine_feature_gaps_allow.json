@@ -4,7 +4,5 @@
   "G1:PROFILE": "input-only by design (proposed): GUI passthrough, replayed verbatim by InpWriter; no engine semantics",
   "G1:PROFILES": "input-only by design (proposed): GUI passthrough, replayed verbatim by InpWriter; no engine semantics",
   "G1:MAP": "backlog (pending triage 2026-10-11): [MAP] DIMENSIONS/UNITS not readable or writable (CRS is, via swmm_spatial_*_crs)",
-  "G1:STORAGE_MIXING": "not implemented: the ARD parser rejects [STORAGE_MIXING] ('arrives with plan phase E2b'); there is no stored data to expose, so its C API arrives with the feature",
-  "G3:2D_INITIAL_QUALITY": "backlog (pending triage 2026-10-11): cell concentrations readable; initial-quality rows not writable",
-  "G4:2D_BOUNDARY_QUALITY": "backlog (pending triage 2026-10-11): swmm_2d_set_edge_bc_concentrations has no getter"
+  "G1:STORAGE_MIXING": "not implemented: the ARD parser rejects [STORAGE_MIXING] ('arrives with plan phase E2b'); there is no stored data to expose, so its C API arrives with the feature"
 }

@@ -157,7 +157,7 @@ SECTION_API: dict[str, list[str]] = {
     "2D_BOUNDARY_CONDITIONS": [r"^swmm_2d_.*edge_bc"],
     "2D_EDGE_CONVEYANCE": [r"^swmm_2d_.*conveyance"],
     "2D_INITIAL_QUALITY": [r"^swmm_2d_.*(initial_(quality|conc)|cell_conc)"],
-    "2D_BOUNDARY_QUALITY": [r"^swmm_2d_.*bc_conc"],
+    "2D_BOUNDARY_QUALITY": [r"^swmm_2d_.*(bc_conc|boundary_quality)"],
     "2D_INFILTRATION_OPTIONS": [r"^swmm_infil2d_.*option"],
     "2D_INFILTRATION_DEFAULTS": [r"^swmm_infil2d_.*default"],
     "2D_INFILTRATION": [r"^swmm_infil2d_"],

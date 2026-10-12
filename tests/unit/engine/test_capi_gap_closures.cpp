@@ -606,3 +606,91 @@ TEST(CapiGapAquiferLinks, AddedRowSurvivesSaveAndRuns) {
     EXPECT_EQ(exch, 1);
 }
 #endif
+
+// ---------------------------------------------------------------------------
+// [2D_INITIAL_QUALITY] was read-only through the API (cell concentrations
+// only) and [2D_BOUNDARY_QUALITY] write-only (runtime override, no getter):
+// the authored rows now have count/get/set/remove.
+// ---------------------------------------------------------------------------
+
+#ifdef OPENSWMM_HAS_2D
+namespace {
+
+fs::path writeQuality2DDeck(const std::string& stem, const std::string& extra) {
+    std::string deck = slurp("../../../../examples/2d_complete_example.inp");
+    deck += "\n[POLLUTANTS]\nTSS MG/L 0 0 0 0 NO * 0 0 0\n\n" + extra;
+    const fs::path inp = artifactDir() / (stem + ".inp");
+    writeText(inp, deck);
+    return inp;
+}
+
+int iqCount(SWMM_Engine e) { int n = -1; swmm_2d_initial_quality_count(e, &n); return n; }
+int bqCount(SWMM_Engine e) { int n = -1; swmm_2d_boundary_quality_count(e, &n); return n; }
+
+}  // namespace
+
+TEST(CapiGap2DQuality, InitialQualityRows) {
+    OpenedDeck d(writeQuality2DDeck("q2d_iq", "[2D_INITIAL_QUALITY]\n* TSS 5.0\nCELL 2 TSS 7.5\n"));
+    ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
+    ASSERT_EQ(iqCount(d.e), 2);
+    int scope = -1, cell = -9;
+    char tag[64] = {}, sp[64] = {};
+    double c = -1;
+    ASSERT_EQ(swmm_2d_get_initial_quality(d.e, 1, &scope, tag, 64, &cell, sp, 64, &c), SWMM_OK);
+    EXPECT_EQ(scope, SWMM_2D_QUAL_SCOPE_CELL);
+    EXPECT_EQ(cell, 1);  // CELL 2 in the deck is 1-based
+    EXPECT_STREQ(sp, "TSS");
+    EXPECT_DOUBLE_EQ(c, 7.5);
+
+    ASSERT_EQ(swmm_2d_set_initial_quality(d.e, SWMM_2D_QUAL_SCOPE_CELL, nullptr, 1, "TSS", 9.0), SWMM_OK);
+    EXPECT_EQ(iqCount(d.e), 2);  // same key replaces
+    ASSERT_EQ(swmm_2d_set_initial_quality(d.e, SWMM_2D_QUAL_SCOPE_TAG, "east", -1, "TSS", 1.0), SWMM_OK);
+    EXPECT_EQ(iqCount(d.e), 3);
+    EXPECT_EQ(swmm_2d_set_initial_quality(d.e, SWMM_2D_QUAL_SCOPE_CELL, nullptr, 999, "TSS", 1.0), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_2d_set_initial_quality(d.e, SWMM_2D_QUAL_SCOPE_GLOBAL, nullptr, -1, "TSS", -1.0), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_2d_set_initial_quality(d.e, SWMM_2D_QUAL_SCOPE_TAG, "", -1, "TSS", 1.0), SWMM_ERR_BADPARAM);
+    ASSERT_EQ(swmm_2d_remove_initial_quality(d.e, 2), SWMM_OK);
+    EXPECT_EQ(iqCount(d.e), 2);
+    EXPECT_EQ(swmm_2d_remove_initial_quality(d.e, 5), SWMM_ERR_BADINDEX);
+}
+
+TEST(CapiGap2DQuality, BoundaryQualityRows) {
+    OpenedDeck d(writeQuality2DDeck("q2d_bq", "[2D_BOUNDARY_QUALITY]\n0 2 TSS 12.0\n"));
+    ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
+    ASSERT_EQ(bqCount(d.e), 1);
+    int cell = -1, edge = -1;
+    char sp[64] = {};
+    double c = -1;
+    ASSERT_EQ(swmm_2d_get_boundary_quality(d.e, 0, &cell, &edge, sp, 64, &c), SWMM_OK);
+    EXPECT_EQ(cell, 0);
+    EXPECT_EQ(edge, 2);
+    EXPECT_STREQ(sp, "TSS");
+    EXPECT_DOUBLE_EQ(c, 12.0);
+    ASSERT_EQ(swmm_2d_set_boundary_quality(d.e, 0, 2, "TSS", 3.0), SWMM_OK);
+    EXPECT_EQ(bqCount(d.e), 1);
+    ASSERT_EQ(swmm_2d_set_boundary_quality(d.e, 2, 2, "TSS", 4.0), SWMM_OK);
+    EXPECT_EQ(bqCount(d.e), 2);
+    EXPECT_EQ(swmm_2d_set_boundary_quality(d.e, 0, 7, "TSS", 1.0), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_2d_set_boundary_quality(d.e, 0, 2, "TSS", -1.0), SWMM_ERR_BADPARAM);
+    ASSERT_EQ(swmm_2d_remove_boundary_quality(d.e, 0), SWMM_OK);
+    EXPECT_EQ(bqCount(d.e), 1);
+}
+
+TEST(CapiGap2DQuality, EditsSurviveSaveAndAreRefusedAfterInitialize) {
+    const fs::path saved = artifactDir() / "q2d_saved.inp";
+    {
+        OpenedDeck d(writeQuality2DDeck("q2d_save", ""));
+        ASSERT_EQ(d.rc, SWMM_OK) << swmm_get_last_error_msg(d.e);
+        ASSERT_EQ(swmm_2d_set_initial_quality(d.e, SWMM_2D_QUAL_SCOPE_GLOBAL, nullptr, -1, "TSS", 5.0), SWMM_OK);
+        ASSERT_EQ(swmm_2d_set_boundary_quality(d.e, 0, 2, "TSS", 12.0), SWMM_OK);
+        ASSERT_EQ(swmm_model_write(d.e, saved.string().c_str()), SWMM_OK) << swmm_get_last_error_msg(d.e);
+        ASSERT_EQ(swmm_engine_initialize(d.e), SWMM_OK) << swmm_get_last_error_msg(d.e);
+        EXPECT_EQ(swmm_2d_set_boundary_quality(d.e, 0, 2, "TSS", 1.0), SWMM_ERR_LIFECYCLE);
+        EXPECT_EQ(swmm_2d_remove_initial_quality(d.e, 0), SWMM_ERR_LIFECYCLE);
+    }
+    OpenedDeck r(saved);
+    ASSERT_EQ(r.rc, SWMM_OK) << swmm_get_last_error_msg(r.e);
+    EXPECT_EQ(iqCount(r.e), 1);
+    EXPECT_EQ(bqCount(r.e), 1);
+}
+#endif

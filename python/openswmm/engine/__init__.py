@@ -272,7 +272,7 @@ from ._spatial import Spatial
 # =============================================================================
 try:
     from ._2d import (Surface2D, Infiltration2DView, Infil2DDefaults,
-                      Infil2DRow, Infil2DCell)
+                      Infil2DRow, Infil2DCell, InitialQuality2D, BoundaryQuality2D)
     HAS_2D = True
 except ModuleNotFoundError as error:
     if error.name != __name__ + "._2d":

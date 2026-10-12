@@ -51,6 +51,19 @@ from ._enums import (
 )
 
 
+class InitialQuality2D(NamedTuple):
+    scope: int
+    tag: str
+    cell: int
+    species: str
+    conc: float
+
+class BoundaryQuality2D(NamedTuple):
+    cell: int
+    edge: int
+    species: str
+    conc: float
+
 class Surface2D:
     """Read/write interface to the optional 2D surface routing module.
 
@@ -904,6 +917,15 @@ class Surface2D:
     def clear_boundary(self, cell: int, edge: int) -> None: ...
     def boundary_flow(self, cell: int, edge: int) -> float: ...
     def set_edge_bc_concentrations(self, cell: int, edge: int, concentrations: Mapping[str, float]) -> None: ...
+    @property
+    def initial_quality(self) -> tuple[InitialQuality2D, ...]: ...
+    def set_initial_quality(self, species: str, conc: float, *, tag: str | None = ...,
+                            cell: int | None = ...) -> None: ...
+    def remove_initial_quality(self, index: int) -> None: ...
+    @property
+    def boundary_quality(self) -> tuple[BoundaryQuality2D, ...]: ...
+    def set_boundary_quality(self, cell: int, edge: int, species: str, conc: float) -> None: ...
+    def remove_boundary_quality(self, index: int) -> None: ...
     def clear_edge_bc(self, cell: int, edge: int) -> None: ...
 
     def set_edge_bc_type(

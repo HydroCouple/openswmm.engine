@@ -48,6 +48,11 @@ from ._common cimport _check
 from ._access import resolve_owner
 from ._exceptions import StaleObjectError, raise_for_code
 
+#: An authored [2D_INITIAL_QUALITY] row; scope 0 = '*', 1 = TAG, 2 = CELL (0-based).
+InitialQuality2D = namedtuple('InitialQuality2D', 'scope tag cell species conc')
+#: An authored [2D_BOUNDARY_QUALITY] row: inflow concentration through a boundary edge.
+BoundaryQuality2D = namedtuple('BoundaryQuality2D', 'cell edge species conc')
+
 
 cdef object _surface_owner_indices(object rows):
     from operator import index
@@ -1586,6 +1591,63 @@ cdef class Surface2D:
     def clear_edge_bc(self, int cell, int edge):
         """Restore the boundary prescription that preceded runtime API edits."""
         _check(swmm_2d_clear_edge_bc(self._h(), cell, edge))
+
+    @property
+    def initial_quality(self):
+        """Authored [2D_INITIAL_QUALITY] rows (:class:`InitialQuality2D`)."""
+        cdef void* h = self._h()
+        cdef int count = 0, index, scope = 0, cell = -1
+        cdef double conc = 0
+        cdef char tag[512]
+        cdef char species[512]
+        _check(swmm_2d_initial_quality_count(h, &count))
+        rows = []
+        for index in range(count):
+            _check(swmm_2d_get_initial_quality(h, index, &scope, tag, 512, &cell,
+                                               species, 512, &conc))
+            rows.append(InitialQuality2D(scope, tag.decode('utf-8'), cell,
+                                         species.decode('utf-8'), conc))
+        return tuple(rows)
+
+    def set_initial_quality(self, str species, double conc, *, tag=None, cell=None):
+        """Add or replace an initial-concentration row (species units, >= 0).
+
+        Give ``cell`` (0-based) or ``tag``; neither means the ``*`` row.
+        Edit before initialization.
+        """
+        cdef int scope = 2 if cell is not None else (1 if tag else 0)
+        cdef bytes t = (tag or '').encode('utf-8')
+        cdef bytes sp = species.encode('utf-8')
+        _check(swmm_2d_set_initial_quality(self._h(), scope, t,
+                                           cell if cell is not None else -1, sp, conc))
+
+    def remove_initial_quality(self, int index):
+        """Remove an initial-quality row; later rows shift down."""
+        _check(swmm_2d_remove_initial_quality(self._h(), index))
+
+    @property
+    def boundary_quality(self):
+        """Authored [2D_BOUNDARY_QUALITY] rows (:class:`BoundaryQuality2D`)."""
+        cdef void* h = self._h()
+        cdef int count = 0, index, cell = 0, edge = 0
+        cdef double conc = 0
+        cdef char species[512]
+        _check(swmm_2d_boundary_quality_count(h, &count))
+        rows = []
+        for index in range(count):
+            _check(swmm_2d_get_boundary_quality(h, index, &cell, &edge, species, 512, &conc))
+            rows.append(BoundaryQuality2D(cell, edge, species.decode('utf-8'), conc))
+        return tuple(rows)
+
+    def set_boundary_quality(self, int cell, int edge, str species, double conc):
+        """Add or replace the inflow concentration of ``species`` through a
+        boundary edge (species units, >= 0). Edit before initialization."""
+        cdef bytes sp = species.encode('utf-8')
+        _check(swmm_2d_set_boundary_quality(self._h(), cell, edge, sp, conc))
+
+    def remove_boundary_quality(self, int index):
+        """Remove a boundary-quality row; later rows shift down."""
+        _check(swmm_2d_remove_boundary_quality(self._h(), index))
 
     def set_edge_bc_type(self, int tri_idx, int edge, bc_type):
         """Set the boundary condition type for a triangle edge.
